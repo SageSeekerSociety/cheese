@@ -90,6 +90,123 @@ async function select(page: Page, handFocusAway = false) {
   await page.mouse.up()
   await expect(page.getByPlaceholder('说明要改什么')).toBeVisible()
 }
+
+// Exercise both unchanged standalone callers, with decoded PNG bytes and a
+// physical pointer gesture. Controlled null remains the main panel's boundary.
+function standaloneFixture(kind: 'file' | 'version' | 'controlled') {
+  return `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><body><div id="fixture"></div><script type="module">
+import {createApp,h,ref} from '/node_modules/.vite/deps/vue.js';
+import FileBytesPreview from '/src/components/common/FileBytesPreview.vue';
+import ArtifactVersionPreview from '/src/components/ArtifactVersionPreview.vue';
+import DesignImage from '/src/components/panels/preview/DesignImage.vue';
+import i18n,{setLocale} from '/src/i18n/index.ts';
+import '/src/style.css';
+setLocale('zh-CN');
+const source=ref('snapshot-a'),active=ref(null),enabled=ref(true);
+const bytes=Uint8Array.from(atob('${bytes.toString('base64')}'),c=>c.charCodeAt(0));
+const src=URL.createObjectURL(new Blob([bytes],{type:'image/png'}));
+window.fetch=async()=>new Response(bytes,{headers:{'Content-Type':'image/png'}});
+window.selections=[];window.fixture={replace:()=>source.value='snapshot-b',accept:()=>active.value=window.selections.at(-1).region,clear:()=>active.value=null,disable:()=>enabled.value=false};
+createApp({setup(){return()=>h('main',{style:'padding:24px;width:860px;height:660px;display:flex'},[
+ '${kind}'==='file'?h(FileBytesPreview,{filename:'design.png',source:source.value,read:async()=>bytes.buffer}):
+ '${kind}'==='version'?h(ArtifactVersionPreview,{projectId:'project',artifactId:'artifact',bare:true,version:{kind:'file',filename:'design.png',number:1,card_id:source.value}}):
+ h(DesignImage,{src,alt:'design.png',identity:source.value,selectionEnabled:enabled.value,activeRegion:active.value,onRegion:selection=>window.selections.push(selection)})
+])}}).use(i18n).mount('#fixture');
+</script></body></html>`
+}
+async function dragImage(page: Page, small = false) {
+  await page.getByRole('button', { name: '选择图片区域', exact: true }).click()
+  const image = await page.locator('.design-image img').boundingBox()
+  if (!image) throw new Error('No decoded image layout')
+  await page.mouse.move(image.x + (small ? 20 : 80), image.y + (small ? 8 : 70))
+  await page.mouse.down()
+  await page.mouse.move(image.x + (small ? 60 : 180), image.y + (small ? 24 : 140), { steps: 8 })
+  await page.mouse.up()
+}
+for (const kind of ['file', 'version'] as const) {
+  test(`${kind} standalone caller retains its natural-pixel selection and retires it with the resource`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 1280, height: 760 })
+    await page.route('**/__standalone-region__', route => route.fulfill({ contentType: 'text/html', body: standaloneFixture(kind) }))
+    await page.goto('/__standalone-region__', { waitUntil: 'commit' })
+    await expect(page.getByRole('button', { name: '选择图片区域', exact: true })).toBeEnabled({ timeout: 60_000 })
+    await dragImage(page)
+    await expect(page.locator('.design-image__selection')).toHaveCount(1)
+    const region = page.locator('.design-image > output')
+    const original = await region.textContent()
+    expect(original).toMatch(/原图像素：x=\d+，y=\d+，宽=\d+，高=\d+/)
+    await page.getByRole('button', { name: '放大内容', exact: true }).click()
+    await expect(page.locator('.design-image__selection')).toHaveCount(1)
+    expect(await region.textContent()).toBe(original)
+    await testInfo.attach(`${kind}-retained`, { body: await page.screenshot(), contentType: 'image/png' })
+    await page.evaluate(() => (window as unknown as { fixture: { replace: () => void } }).fixture.replace())
+    await expect(page.locator('.design-image__selection')).toHaveCount(0)
+    await expect(region).toHaveCount(0)
+    await expect(page.getByRole('button', { name: '选择图片区域', exact: true })).toBeEnabled()
+    await dragImage(page)
+    await expect(page.locator('.design-image__selection')).toHaveCount(1)
+  })
+}
+test('explicit controlled null never displays an unaccepted region and clears accepted selection', async ({ page }) => {
+  await page.route('**/__controlled-region__', route => route.fulfill({ contentType: 'text/html', body: standaloneFixture('controlled') }))
+  await page.goto('/__controlled-region__', { waitUntil: 'commit' })
+  await expect(page.getByRole('button', { name: '选择图片区域', exact: true })).toBeEnabled({ timeout: 60_000 })
+  await dragImage(page)
+  expect(await page.evaluate(() => (window as unknown as { selections: unknown[] }).selections.length)).toBe(1)
+  await expect(page.locator('.design-image__selection')).toHaveCount(0)
+  await expect(page.locator('.design-image > output')).toHaveCount(0)
+  await page.evaluate(() => (window as unknown as { fixture: { accept: () => void } }).fixture.accept())
+  await expect(page.locator('.design-image__selection')).toHaveCount(1)
+  await page.evaluate(() => (window as unknown as { fixture: { clear: () => void } }).fixture.clear())
+  await expect(page.locator('.design-image__selection')).toHaveCount(0)
+  await dragImage(page)
+  await expect(page.locator('.design-image__selection')).toHaveCount(0)
+})
+test('the initially focused compact entry cancels once with Escape and hands focus back', async ({ page }, testInfo) => {
+  await open(page)
+  await page.evaluate(() => {
+    const fixture = (window as unknown as { fixture: { resize: (width: number) => void; height: (height: number) => void } }).fixture
+    fixture.resize(240)
+    fixture.height(150)
+  })
+  await dragImage(page, true)
+  const entry = page.getByRole('button', { name: '说明要改什么', exact: true })
+  await expect(entry).toBeFocused()
+  await testInfo.attach('compact-initial-focus', { body: await page.screenshot(), contentType: 'image/png' })
+  await entry.press('Escape')
+  await expect(page.locator('[data-region-note]')).toHaveCount(0)
+  await expect(page.locator('.design-image__selection')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '选择图片区域', exact: true })).toBeFocused()
+  expect(await page.evaluate(() => (window as unknown as { notes: string[] }).notes)).toHaveLength(0)
+})
+test('a short wide real panel settles into one compact placement without measurement feedback', async ({ page }, testInfo) => {
+  const errors: string[] = []
+  page.on('pageerror', error => errors.push(error.message))
+  await open(page)
+  await page.evaluate(() => (window as unknown as { fixture: { height: (height: number) => void } }).fixture.height(150))
+  await dragImage(page, true)
+  await expect(page.locator('[data-region-note]')).toHaveCount(1)
+  const samples = await page.evaluate(async () => {
+    const samples = []
+    for (let frame = 0; frame < 84; frame++) {
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+      const note = document.querySelector<HTMLElement>('[data-region-note]')!
+      const box = note.getBoundingClientRect()
+      const panel = document.querySelector('.panel-preview')!.getBoundingClientRect()
+      if (frame >= 24) samples.push({
+        placement: note.dataset.placement, compact: !!note.querySelector('.design-region-note__expand'),
+        height: box.height, top: box.top, bottom: box.bottom, panelBottom: panel.bottom,
+        focus: document.activeElement?.className || document.activeElement?.tagName,
+      })
+    }
+    return samples
+  })
+  await testInfo.attach('steady-layout-samples', { body: JSON.stringify({ samples, errors }, null, 2), contentType: 'application/json' })
+  await testInfo.attach('short-wide-panel', { body: await page.screenshot(), contentType: 'image/png' })
+  expect(new Set(samples.map(sample => `${sample.placement}:${sample.compact}:${sample.top}:${sample.height}`)).size).toBe(1)
+  expect(samples.every(sample => sample.compact && sample.bottom <= sample.panelBottom)).toBe(true)
+  await expect(page.getByRole('button', { name: '说明要改什么', exact: true })).toBeFocused()
+  expect(errors).toEqual([])
+})
 async function insidePane(page: Page) {
   await expect.poll(async () => {
     const { card, pane } = await geometry(page)

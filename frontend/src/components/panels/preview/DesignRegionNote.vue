@@ -42,8 +42,9 @@ watch(
     if (!element) return
     observer = new ResizeObserver(() => {
       const rect = element.getBoundingClientRect()
-      // Measure unconstrained content so a smaller pane cannot lock in its height.
-      size.value = { width: 300, height: Math.max(rect.height, element.scrollHeight) }
+      // The collapsed entry must not become the full composer's required height:
+      // otherwise its smaller measurement flips a short viewport back to expanded.
+      size.value = { width: 300, height: Math.max(100, rect.height, element.scrollHeight) }
     })
     observer.observe(element)
   },
@@ -99,6 +100,7 @@ onBeforeUnmount(() => observer?.disconnect())
     :class="{ 'design-region-note--compact': position?.compact }"
     :data-placement="position?.placement"
     :style="style"
+    @keydown.esc="close('cancel', $event)"
   >
     <div v-show="!compact" class="design-region-note__where">
       <span class="t-meta">{{ target.label }}</span>
@@ -118,7 +120,6 @@ onBeforeUnmount(() => observer?.disconnect())
         :placeholder="t('work.room.preview.locatorPlaceholder')"
         @input="emit('update:note', ($event.target as HTMLInputElement).value)"
         @keydown.enter="close('send', $event)"
-        @keydown.esc="close('cancel', $event)"
       />
       <button type="button" class="design-region-note__send" :disabled="!note.trim()" @click="close('send', $event)">
         {{ t('work.room.preview.send') }}

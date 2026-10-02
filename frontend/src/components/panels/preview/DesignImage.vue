@@ -14,11 +14,12 @@ const props = withDefaults(
     alt: string
     identity: string
     selectionEnabled?: boolean
+    /** Undefined keeps standalone selection; null is an explicitly cleared controlled region. */
     activeRegion?: RasterRegion | null
   }>(),
   {
     selectionEnabled: true,
-    activeRegion: null,
+    activeRegion: undefined,
   }
 )
 const emit = defineEmits<{ region: [selection: RasterSelection] }>()
@@ -34,7 +35,8 @@ const available = ref(0)
 const zoom = ref(1)
 const fitted = ref(true)
 const selecting = ref(false)
-const selectedRegion = computed(() => props.activeRegion)
+const standaloneRegion = ref<RasterRegion | null>(null)
+const selectedRegion = computed(() => (props.activeRegion === undefined ? standaloneRegion.value : props.activeRegion))
 const regionIdentity = computed(() => `${props.identity}:${scale.value}:${available.value}`)
 const scale = computed(() => {
   if (!fitted.value) return zoom.value
@@ -67,7 +69,7 @@ function measure() {
   const host = viewport.value
   const element = pane.value
   const selected = selectedBox.value
-  if (!host || !element || !selected || !props.activeRegion) {
+  if (!host || !element || !selected || !selectedRegion.value) {
     geometry.value = null
     return
   }
@@ -157,6 +159,7 @@ watch(
   () => {
     natural.value = { width: 0, height: 0 }
     selecting.value = false
+    standaloneRegion.value = null
     geometry.value = null
     fitted.value = true
   },
@@ -166,6 +169,7 @@ watch(
   () => props.selectionEnabled,
   () => {
     selecting.value = false
+    standaloneRegion.value = null
     geometry.value = null
   },
   { flush: 'sync' }
@@ -192,9 +196,17 @@ function selected(selection: RasterSelection) {
   )
     return
   selecting.value = false
+  if (props.activeRegion === undefined) standaloneRegion.value = selection.region
   emit('region', { ...selection, identity: props.identity })
 }
-watch([scale, available, () => props.activeRegion, selectedBox], scheduleMeasure, { flush: 'post' })
+watch(
+  () => props.activeRegion,
+  () => {
+    standaloneRegion.value = null
+  },
+  { flush: 'sync' }
+)
+watch([scale, available, selectedRegion, selectedBox], scheduleMeasure, { flush: 'post' })
 onMounted(() => {
   document.addEventListener('scroll', scheduleMeasure, true)
   window.addEventListener('resize', scheduleMeasure)
