@@ -45,6 +45,7 @@ const SECTIONS = [
   { name: 'SpacesDetailSettingsTemplates', label: 'spaces.settings.tabs.templates', icon: 'mdi-file-document-outline' },
   { name: 'SpacesDetailSettingsInviteCodes', label: 'spaces.settings.tabs.inviteCodes', icon: 'mdi-ticket-outline' },
   { name: 'SpacesDetailSettingsDomainGroups', label: 'spaces.settings.tabs.domainGroups', icon: 'mdi-email-outline' },
+  { name: 'SpacesDetailSettingsMaterials', label: 'spaces.settings.tabs.materials', icon: 'mdi-folder-outline' },
 ]
 
 const groups = computed(() => [

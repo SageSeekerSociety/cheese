@@ -151,3 +151,27 @@ export type DomainGroup = {
   createdAt: number
   updatedAt: number
 }
+
+/**
+ * 一块题目板的共用资料库里的一个条目（`SpacesApi.listMaterials`）。
+ *
+ * **没有 `url`，这是刻意的。** 素材的 `url` 是 `/uploads/…` 下一条公开可猜的
+ * 路径 —— 交出去，「仅管理员」这一档就只剩一个标签。要字节走
+ * `SpacesApi.downloadMaterial` 那条判权限的路由。
+ */
+export type SpaceMaterial = {
+  id: number
+  name: string
+  /** `image` / `video` / `audio` / `file`。服务端按 MIME 判，不是人挑的。 */
+  type: string
+  visibility: SpaceMaterialVisibility
+  /** 字节数；元数据里没这一格就是 `null`，不是 0。 */
+  size: number | null
+  mime: string | null
+  uploaderId: number | null
+  createdAt: number
+  downloadCount: number
+}
+
+/** 谁能看见这一份。两档，没有第三档。 */
+export type SpaceMaterialVisibility = 'members' | 'admins'
