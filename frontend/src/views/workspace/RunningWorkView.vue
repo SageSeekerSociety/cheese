@@ -20,7 +20,6 @@ import { useRoute, useRouter } from 'vue-router'
 import { avatarColor, avatarInitial } from '@/utils/avatar'
 import { getAvatarUrl } from '@/utils/materials'
 
-import { listProjectTasks } from '@/api'
 import ArtifactManifest from '@/components/ArtifactManifest.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import AppPage from '@/components/common/AppPage.vue'
@@ -29,6 +28,7 @@ import NeedsYou from '@/components/NeedsYou.vue'
 import { t } from '@/i18n'
 import { isAgentHandle } from '@/lib/authorship'
 import { BOARD_COLUMNS, columnDotStyle, columnLabel, compareTasks, liveBoardTasks, phraseLabel } from '@/lib/board'
+import { readProjectTasks } from '@/lib/projectTasks'
 import { relTime } from '@/lib/relTime'
 import { topicTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
@@ -73,7 +73,8 @@ async function load(silent = false) {
     errorMsg.value = null
   }
   try {
-    const payload = await listProjectTasks(pid)
+    // 每次都真读（板是进项目的第一屏），只是和同一刻别处发出的那一次合并。
+    const payload = await readProjectTasks(pid)
     if (props.projectId === pid) {
       rows.value = payload.data
       // 上一次前台加载失败过、这一次悄悄成功了：把错误收掉，人不用自己点重试。
