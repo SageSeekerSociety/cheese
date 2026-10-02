@@ -14,7 +14,6 @@ import type { PluginKey } from '@tiptap/pm/state'
 import type { SuggestionProps } from '@tiptap/suggestion'
 import type { DocSession } from '../../../composables/useDocCollab'
 import type { Block, Topic } from '../../../cx_types'
-import type { DocSelectionSnapshot } from '../../../lib/docAiSelection'
 import type { DocLinkTarget } from '../../../lib/docLinks'
 import type { SlashItem } from '../../../lib/docSlashMenu'
 
@@ -23,7 +22,6 @@ import Collaboration from '@tiptap/extension-collaboration'
 import CollaborationCaret from '@tiptap/extension-collaboration-caret'
 import { Editor, EditorContent } from '@tiptap/vue-3'
 
-import { captureDocSelection } from '../../../lib/docAiSelection'
 import { renderCaret } from '../../../lib/docCaret'
 import {
   commentMarkKey,
@@ -72,8 +70,6 @@ const props = withDefaults(
     pulse: () => void
     /** 页面每收到一次正文区的滚动就加一：滚动时收起代码块工具条。 */
     scrollTick?: number
-    /** 选中浮条上给不给「问 AI」。 */
-    canAsk?: boolean
   }>(),
   {
     topicList: () => [],
@@ -81,14 +77,12 @@ const props = withDefaults(
     commentMarkIndex: () => new Map<number, { id: string; quote: string }[]>(),
     openCommentId: null,
     scrollTick: 0,
-    canAsk: true,
     title: '',
   }
 )
 
 // 动作一律往上发：「换了个值」下面自己接住，「做了个动作」交给拿着状态的那一层。
 const emit = defineEmits<{
-  (e: 'open-ai', selection: DocSelectionSnapshot | null): void
   (e: 'open-topic', topicId: string): void
   (e: 'mention-click', handle: string): void
   (e: 'open-file', path: string): void
@@ -409,21 +403,17 @@ watch(
   (v) => editor.value?.setEditable(v, false)
 )
 
-/** 编辑器里现在这一版正文（markdown）：文档 AI 拿它和已存的那一版比，看两边是不是一回事。 */
+/** 编辑器里现在这一版正文（markdown）。 */
 function serializeVisual(): string | null {
   return editor.value ? serializeDoc(editor.value) : null
 }
 
-function captureSelection() {
-  return editor.value ? captureDocSelection(editor.value) : null
-}
 defineExpose({
   editor,
   serializeVisual,
   highlightTurn,
   highlightNode,
   commentQuoteState,
-  captureSelection,
 })
 
 // 空文档里的灰字住在 CSS 的 ::before 里；按当前语言取值，带上引号交给 content。
@@ -450,9 +440,7 @@ const emptyPlaceholder = computed(() => JSON.stringify(t('work.room.doc.emptyPla
       :fetch-doc-nodes="fetchDocNodes"
       :slash-menu="slashMenu"
       :scroll-tick="scrollTick"
-      :can-ask="canAsk"
       @open-comment="emit('open-comment', $event)"
-      @open-ai="emit('open-ai', $event)"
       @open-link="openLink"
       @error="emit('error', $event)"
       @pick="runSlashItem"

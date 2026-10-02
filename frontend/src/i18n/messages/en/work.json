@@ -189,49 +189,9 @@
   },
   "room": {
     "docTools": {
-      "title": "Document tools",
       "backToDocument": "Back to document",
       "float": "Open in a floating window",
       "dock": "Dock to sidebar"
-    },
-    "docAi": {
-      "review": "Review changes",
-      "explanation": "Explanation",
-      "comparison": "Original and suggested text",
-      "closeReview": "Close comparison",
-      "original": "Original",
-      "suggested": "Suggested text",
-      "staleProposal": "The document has changed. This suggestion can no longer be applied directly",
-      "title": "Document AI",
-      "selectionToolbar": "Selection actions",
-      "failed": "Request failed; input retained",
-      "signIn": "Sign in to use document AI",
-      "unverified": "The selection could not be verified against saved source. Save, resolve conflicts, or select supported text again.",
-      "refresh": "Refresh records",
-      "close": "Close AI panel and retain draft",
-      "unknown": "Outcome unknown. Recover the original operation to avoid duplicate requests.",
-      "recover": "Recover operation",
-      "question": "Question or rewrite instructions",
-      "contextQuestion": "Original question",
-      "contextSelection": "Selected original text",
-      "contextDocument": "Ask about the whole document",
-      "contextUnavailable": "Original text for this version is unavailable",
-      "contextInvalid": "Original text could not be verified",
-      "ask": "Ask AI",
-      "propose": "Propose rewrite",
-      "aiProposal": "AI request and proposal",
-      "replacement": "Proposed source replacement",
-      "baseVersion": "Based on document version {version}",
-      "humanAccept": "Accept and save as me",
-      "accepted": "Accepted by {actor}, saved as version {version}",
-      "cancel": "Cancel request",
-      "state": {
-        "pending": "Pending",
-        "running": "Generating",
-        "succeeded": "Completed",
-        "failed": "Failed",
-        "cancelled": "Cancelled"
-      }
     },
     "docLink": {
       "title": "Link actions",
@@ -811,7 +771,8 @@
       "liveRefTitle": "“{title}” · {status}. Click to open",
       "thisTask": "This task",
       "subtopic": "Subtopic",
-      "topic": "Topic"
+      "topic": "Topic",
+      "selectionToolbar": "Selection actions"
     },
     "comments": {
       "comment": "Comment",

@@ -99,12 +99,7 @@ async function mountDoc(html: string, fetch?: () => Promise<Block[]>) {
   const view = render(
     defineComponent({
       setup() {
-        data = usePanelDoc(
-          { topic: null, activityTick: 0, topicList: [] },
-          {
-            serializeVisual: () => surface.value?.serializeVisual() ?? null,
-          }
-        )
+        data = usePanelDoc({ topic: null, activityTick: 0, topicList: [] })
         data.anchorNodes.value = nodes
         return () =>
           h('div', { class: 'doc-reading' }, [

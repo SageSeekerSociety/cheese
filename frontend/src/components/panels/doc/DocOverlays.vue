@@ -13,7 +13,6 @@ import type { Editor as CoreEditor } from '@tiptap/core'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import type { Selection } from '@tiptap/pm/state'
 import type { Block } from '../../../cx_types'
-import type { DocSelectionSnapshot } from '../../../lib/docAiSelection'
 import type { DocLinkTarget } from '../../../lib/docLinks'
 import type { SlashItem } from '../../../lib/docSlashMenu'
 
@@ -40,10 +39,8 @@ const props = withDefaults(
     slashMenu?: { items: SlashItem[]; index: number; top: number; left: number } | null
     /** 父层每收到一次正文区的滚动就加一：滚动时收起代码块工具条。 */
     scrollTick?: number
-    /** 浮条上给不给「问 AI」。 */
-    canAsk?: boolean
   }>(),
-  { editor: null, slashMenu: null, scrollTick: 0, canAsk: true }
+  { editor: null, slashMenu: null, scrollTick: 0 }
 )
 
 const emit = defineEmits<{
@@ -57,7 +54,6 @@ const emit = defineEmits<{
   (e: 'hover', index: number): void
   /** ＋ 手柄往新块里种了一个「/」：菜单关掉时若是它种的那一个，要收回去。 */
   (e: 'planted'): void
-  (e: 'open-ai', snapshot: DocSelectionSnapshot): void
   (e: 'open-link', target: DocLinkTarget): void
 }>()
 
@@ -462,11 +458,6 @@ function newLink() {
   const target = captureNewDocLink(cta.editor, cta.selection)
   if (target) emit('open-link', target)
 }
-function askSelection() {
-  const cta = commentCta.value
-  if (!cta || !(cta.selection instanceof TextSelection) || cta.editor.state.doc !== cta.doc) return
-  emit('open-ai', { editor: cta.editor, doc: cta.doc, from: cta.selection.from, to: cta.selection.to })
-}
 defineExpose({ onHover, onEdited })
 </script>
 
@@ -477,7 +468,7 @@ defineExpose({ onHover, onEdited })
     v-if="commentCta"
     ref="toolbar"
     role="toolbar"
-    :aria-label="t('work.room.docAi.selectionToolbar')"
+    :aria-label="t('work.room.doc.selectionToolbar')"
     class="doc-comment-cta"
     :style="{ top: `${commentCta.top}px`, left: `${commentCta.left}px` }"
     @mousedown.prevent
@@ -485,9 +476,6 @@ defineExpose({ onHover, onEdited })
     <button type="button" :aria-label="t('work.room.doc.commentOnSelection')" @click="commentOnSelection">
       <v-icon size="14">mdi-comment-plus-outline</v-icon>
       {{ t('work.room.comments.comment') }}
-    </button>
-    <button v-if="canAsk && commentCta.selection instanceof TextSelection" type="button" @click="askSelection">
-      {{ t('work.room.docAi.ask') }}
     </button>
     <button type="button" @click="newLink">{{ t('work.room.docLink.title') }}</button>
   </div>

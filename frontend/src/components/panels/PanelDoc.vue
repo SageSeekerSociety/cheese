@@ -19,11 +19,9 @@ import type { Topic } from '../../cx_types'
 
 import { ref } from 'vue'
 
-import { useDocAi } from '../../composables/useDocAi'
 import { useDocThreads } from '../../composables/useDocThreads'
 import { usePanelDoc } from '../../composables/usePanelDoc'
 
-import DocAiPanel from './doc/DocAiPanel.vue'
 import PanelDocView from './PanelDocView.vue'
 
 import { t } from '@/i18n'
@@ -54,27 +52,11 @@ const emit = defineEmits<{
   (e: 'open-file', path: string): void
 }>()
 
-// 组合式函数要读编辑器里现在这一版（文档 AI 拿它和已存的那一版比）。中间隔着两层（这
-// 一层 → 展示组件 → 编辑器），组合式函数在 setup 里就要拿到它，那时 ref 还是空的，所以只
-// 能给箭头函数（调用发生在挂载之后）。
 const viewRef = ref<InstanceType<typeof PanelDocView> | null>(null)
 
-const doc = usePanelDoc(props, {
-  serializeVisual: () => viewRef.value?.serializeVisual() ?? null,
-})
+const doc = usePanelDoc(props)
 
 const threads = useDocThreads(() => props.topic?.id ?? null)
-// 文档 AI 的选区按已存原文定位：屏幕上这一份和已存的那一版不一致时（还有字没存回、
-// 还没连上），它既不提问也不采纳，等存回之后再说。
-const aiBlocked = () => doc.loading.value || !doc.matchesStored()
-const ai = useDocAi({
-  topic: () => props.topic?.id ?? null,
-  raw: () => doc.rawDoc.value,
-  prefix: () => '',
-  version: () => doc.docVersion.value,
-  blocked: aiBlocked,
-  reload: doc.reloadStored,
-})
 
 // Dev-only probe hook: lets Playwright inspect the live document without
 // guessing at DOM classes (observability rule).
@@ -82,7 +64,6 @@ if (import.meta.env.DEV) {
   ;(window as unknown as Record<string, unknown>).__docPanel = {
     getMarkdown: () => viewRef.value?.serializeVisual() ?? null,
     connection: () => doc.connection.value,
-    matchesStored: () => doc.matchesStored(),
   }
 }
 
@@ -111,7 +92,6 @@ defineExpose({ pulse, highlightTurn })
     :connection="doc.connection.value"
     :peers="doc.peers.value"
     :error-msg="doc.errorMsg.value"
-    :ai-opened="ai.opened.value"
     :comments="doc.comments.value"
     :comment-author="doc.commentAuthor"
     :send-comment="doc.sendComment"
@@ -128,30 +108,5 @@ defineExpose({ pulse, highlightTurn })
     @open-topic="emit('open-topic', $event)"
     @mention-click="emit('mention-click', $event)"
     @open-file="emit('open-file', $event)"
-    @open-ai="ai.prepare($event)"
-    @close-ai="ai.opened.value = false"
-  >
-    <template v-if="!props.bare" #ai>
-      <DocAiPanel
-        docked
-        :opened="ai.opened.value"
-        :cards="ai.cards.value"
-        :question="ai.question.value"
-        :busy="ai.busy.value"
-        :error="ai.error.value"
-        :selection-status="ai.selectionStatus.value"
-        :prepared-context="ai.preparedContext.value"
-        :has-selection="ai.preparedContext.value.state === 'verified' && !!ai.selection.value"
-        :blocked="aiBlocked()"
-        :unknown="!!ai.unknown.value"
-        :version="doc.docVersion.value"
-        @update:question="ai.question.value = $event"
-        @submit="ai.submit"
-        @accept="ai.accept"
-        @cancel="ai.cancel"
-        @recover="ai.recover"
-        @close="ai.opened.value = false"
-      />
-    </template>
-  </PanelDocView>
+  />
 </template>

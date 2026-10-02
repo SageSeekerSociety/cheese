@@ -189,49 +189,9 @@
   },
   "room": {
     "docTools": {
-      "title": "文档工具",
       "backToDocument": "返回正文",
       "float": "在浮窗中打开",
       "dock": "停靠到侧栏"
-    },
-    "docAi": {
-      "review": "查看修改",
-      "explanation": "修改说明",
-      "comparison": "原文与建议",
-      "closeReview": "关闭对照",
-      "original": "原文",
-      "suggested": "建议文字",
-      "staleProposal": "文档已有更新，这份建议无法直接采纳",
-      "title": "文档 AI",
-      "selectionToolbar": "选区操作",
-      "failed": "请求失败，输入已保留",
-      "signIn": "请登录后使用文档 AI",
-      "unverified": "选区未通过当前已保存原文核验。请先保存、处理冲突，或重新选择受支持的正文。",
-      "refresh": "刷新记录",
-      "close": "关闭 AI 面板，保留草稿",
-      "unknown": "请求结果未知。按原操作恢复，避免重复发送。",
-      "recover": "恢复原操作",
-      "question": "问题或修改要求",
-      "contextQuestion": "原问题",
-      "contextSelection": "已选原文",
-      "contextDocument": "针对整篇文档",
-      "contextUnavailable": "该版本原文暂不可用",
-      "contextInvalid": "原文校验未通过",
-      "ask": "问 AI",
-      "propose": "生成修改提案",
-      "aiProposal": "AI 请求与提案",
-      "replacement": "建议替换原文",
-      "baseVersion": "基于文档第 {version} 版",
-      "humanAccept": "由我采纳并保存",
-      "accepted": "{actor} 已采纳，保存为第 {version} 版",
-      "cancel": "取消请求",
-      "state": {
-        "pending": "等待执行",
-        "running": "生成中",
-        "succeeded": "已完成",
-        "failed": "失败",
-        "cancelled": "已取消"
-      }
     },
     "docLink": {
       "title": "链接操作",
@@ -811,7 +771,8 @@
       "liveRefTitle": "「{title}」· {status} — 点击打开",
       "thisTask": "这件任务",
       "subtopic": "子话题",
-      "topic": "话题"
+      "topic": "话题",
+      "selectionToolbar": "选区操作"
     },
     "comments": {
       "comment": "评论",

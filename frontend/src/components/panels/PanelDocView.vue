@@ -8,7 +8,6 @@
 import type { DocConnection, DocPeer, DocSession } from '../../composables/useDocCollab'
 import type { SendDocComment } from '../../composables/useDocCommentDraft'
 import type { Block, Topic } from '../../cx_types'
-import type { DocSelectionSnapshot } from '../../lib/docAiSelection'
 import type { DocThreadActions, DocThreadState } from '../../lib/docThreadTypes'
 
 import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
@@ -47,7 +46,6 @@ const props = withDefaults(
     /** 同一篇文档打开着的其他人。 */
     peers: DocPeer[]
     errorMsg: string | null
-    aiOpened?: boolean
     // ---- 评论区 ----
     comments: Block[]
     commentAuthor?: string
@@ -80,8 +78,6 @@ const emit = defineEmits<{
   (e: 'open-topic', topicId: string): void
   (e: 'mention-click', handle: string): void
   (e: 'open-file', path: string): void
-  (e: 'open-ai', snapshot: DocSelectionSnapshot | null): void
-  (e: 'close-ai'): void
 }>()
 
 // 评论区自己是一个组件：列表、折叠、写评论的输入框都在里面。这一层只负责把它开出来 ——
@@ -132,20 +128,14 @@ function openComment(payload: { anchorId: string | null; quote: string }) {
 function locateComment(commentId: string) {
   commentsRef.value?.locate(commentId)
 }
-function openAi(snapshot: DocSelectionSnapshot | null) {
-  emit('open-ai', snapshot)
-  void commentsRef.value?.showAi(snapshot !== null)
-}
 watch([() => props.topic?.id, () => props.commentAuthor], () => {
   openId.value = null
-  emit('close-ai')
 })
 function quoteState(id: string) {
   return surfaceRef.value?.commentQuoteState(id) ?? 'missing'
 }
 
-// 组合式函数要读编辑器里现在这一版（文档 AI 拿它和已存的那一版比），只有这里知道
-// 编辑器在哪。
+// 编辑器里现在这一版正文（开发时的探针读它），只有这里知道编辑器在哪。
 defineExpose({
   pulse,
   highlightTurn,
@@ -199,20 +189,9 @@ defineExpose({
               variant="text"
               :aria-label="t('work.room.comments.title')"
               :title="t('work.room.comments.title')"
-              :aria-expanded="(commentsRef?.opened && commentsRef.activeTool === 'comments') ?? false"
+              :aria-expanded="commentsRef?.opened ?? false"
               @click="commentsRef?.toggle()"
             />
-            <!-- 文档 AI 按已存的那一版核对选区，已存的那一版靠房间推来的消息刷新；页面上
-               没有房间，核对永远过不去，所以不给这颗按钮。 -->
-            <v-btn
-              v-if="!bare"
-              size="small"
-              variant="text"
-              :aria-expanded="(commentsRef?.opened && commentsRef.activeTool === 'ai') ?? false"
-              @mousedown.prevent
-              @click="openAi(surfaceRef?.captureSelection() ?? null)"
-              >{{ t('work.room.docAi.title') }}</v-btn
-            >
             <v-menu v-if="!readOnly" location="bottom end">
               <template #activator="{ props: menuProps }">
                 <v-btn
@@ -246,13 +225,9 @@ defineExpose({
           :comments="comments"
           :anchor-nodes="anchorNodes"
           :quote-state="quoteState"
-          :ai-opened="aiOpened"
           @locate-node="highlightNode"
           @posted="refreshComments"
-          @open-ai="emit('open-ai', null)"
-          @close-ai="emit('close-ai')"
         >
-          <template v-if="$slots.ai" #ai><slot name="ai" /></template>
           <div
             ref="bodyRef"
             class="doc-body overflow-y-auto"
@@ -278,12 +253,10 @@ defineExpose({
                 :image-src="imageSrc"
                 :pulse="pulse"
                 :scroll-tick="scrollTick"
-                :can-ask="!bare"
                 @open-topic="emit('open-topic', $event)"
                 @mention-click="emit('mention-click', $event)"
                 @open-file="emit('open-file', $event)"
                 @open-comment="openComment"
-                @open-ai="openAi"
                 @locate-comment="locateComment"
                 @error="setError"
               />

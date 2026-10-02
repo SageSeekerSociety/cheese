@@ -27,15 +27,10 @@ vi.mock('../api', async () => {
   const actual = await vi.importActual<typeof import('../api')>('../api')
   return {
     ...actual,
-    getDoc: async () => null,
     getComments: async () => ({ data: [] }),
     getDocNodes: async () => ({ data: [] }),
   }
 })
-vi.mock('@/api/docAi', async () => ({
-  ...(await vi.importActual<typeof import('@/api/docAi')>('@/api/docAi')),
-  listDocAiRequests: async () => ({ requests: [] }),
-}))
 vi.mock('@tiptap/extension-drag-handle-vue-3', () => ({ DragHandle: { render: () => null } }))
 vi.mock('../composables/useDocCollab', async () => ({
   useDocCollab: (await import('../test/fakeDocCollab')).useFakeDocCollab,
