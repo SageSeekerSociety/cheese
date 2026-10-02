@@ -9,6 +9,7 @@ in the order they were sent.
 
 import uuid
 
+from tests.conftest import wait_work_idle
 from tests.integration.conftest import (
     chat_ws_url,
     join_project_team,
@@ -17,6 +18,62 @@ from tests.integration.conftest import (
     room_agent_seat,
     session_auth_headers,
 )
+from tests.support.quoted_context import slide_quote
+
+
+def test_a_retried_send_returns_the_first_saved_quote(client, stub_hooks):
+    _, topic_id = _room(client)
+    agent = room_agent_seat(client, topic_id)
+    started = []
+    stub_hooks.on_start = lambda: started.append(1)
+    request_id = str(uuid.uuid4())
+    first_quote = slide_quote("  最初的页面 @评审\n")
+    first = post_message(
+        client,
+        topic_id,
+        "alice",
+        {
+            "content": f"<@{agent}> 解释页面",
+            "request_id": request_id,
+            "quoted_context": first_quote,
+        },
+    )
+    wait_work_idle()
+    again = post_message(
+        client,
+        topic_id,
+        "alice",
+        {
+            "content": f"<@{agent}> 解释页面",
+            "request_id": request_id,
+            "quoted_context": {
+                **first_quote,
+                "version": "version-b",
+                "text": "后来变了",
+            },
+        },
+    )
+    wait_work_idle()
+    assert again["id"] == first["id"]
+    assert again["meta"]["quoted_context"] == first_quote
+    assert started == [1]
+    saved = next(b for b in _messages(client, topic_id) if b["id"] == first["id"])
+    assert saved["meta"]["quoted_context"] == first_quote
+
+
+def test_oversized_combined_question_and_quote_is_refused_without_landing(client):
+    _, topic_id = _room(client)
+    response = client.post(
+        f"/topics/{topic_id}/messages",
+        headers=session_auth_headers("alice"),
+        json={
+            "content": "a" * 99980,
+            "request_id": str(uuid.uuid4()),
+            "quoted_context": slide_quote("引用文字"),
+        },
+    )
+    assert response.status_code == 422, response.text
+    assert _messages(client, topic_id) == []
 
 
 def _room(client, owner: str = "alice", *, members: tuple[str, ...] = ()) -> tuple:
