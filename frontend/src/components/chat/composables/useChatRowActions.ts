@@ -9,7 +9,7 @@ import type { ComputedRef, Ref } from 'vue'
 import type { useTimeline } from '../../room/composables/useTimeline'
 
 import { computed, nextTick, reactive, ref, watch } from 'vue'
-import { useEventListener } from '@vueuse/core'
+import { useEventListener, useResizeObserver } from '@vueuse/core'
 
 import { useLongPress } from '../../../composables/useLongPress'
 
@@ -101,20 +101,21 @@ export function useChatRowActions(deps: ChatRowActionsDeps) {
 
   // 它停着的那一行上面的东西变了（往上翻拼进来一页、上面一条长高了），行的位置跟着
   // 变：重新量一次，直接落过去，不演滑动——这一下不是指针在动。
-  watch(
-    rows,
-    () =>
-      void nextTick(() => {
-        if (!bar.shown || !bar.id) return
-        const row = scrollRef.value?.querySelector<HTMLElement>(`[data-mid="${bar.id}"]`)
-        const top = row ? rowTop(row) : null
-        if (top === null) return (bar.shown = false)
-        if (top === bar.top) return
-        bar.jump = true
-        bar.top = top
-        requestAnimationFrame(() => requestAnimationFrame(() => (bar.jump = false)))
-      })
-  )
+  function repositionBar() {
+    // 指针已移出时，焦点或菜单仍会保留这条动作栏；位置也继续属于原消息。
+    if (!bar.id) return
+    const row = scrollRef.value?.querySelector<HTMLElement>(`[data-mid="${bar.id}"]`)
+    const top = row ? rowTop(row) : null
+    if (top === null) return (bar.shown = false)
+    if (top === bar.top) return
+    bar.jump = true
+    bar.top = top
+    requestAnimationFrame(() => requestAnimationFrame(() => (bar.jump = false)))
+  }
+  watch(rows, () => void nextTick(repositionBar))
+  // 实际聊天列改宽度、正文换行或图片长高都不会改rows数组。
+  // 观察内容层的宽/高，在浏览器完成布局后重新量同一条消息。
+  useResizeObserver(contentRef, repositionBar)
   watch(reactionPickerFor, (open) => {
     if (!open && !scrollRef.value?.matches(':hover')) bar.shown = false
   })

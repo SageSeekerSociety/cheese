@@ -467,9 +467,30 @@ test("compact desktop menu keeps all actions on its captured message after hover
   const row = page.locator('[data-mid="before"]');
   const menu = page.locator(".v-overlay--active .v-list");
   const open = async (id: string) => {
+    // Reply changes the composer height; its ResizeObserver follows the bottom
+    // in the layout turn. Settle that turn before choosing a new pointer target.
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        ),
+    );
     await page.locator(`[data-mid="${id}"] .im-text`).hover();
     const more = page.locator(".hover-bar__more");
     await expect(more).toBeVisible();
+    await expect
+      .poll(() =>
+        page.evaluate((targetId) => {
+          const bar = document
+            .querySelector(".hover-bar")!
+            .getBoundingClientRect();
+          const header = document
+            .querySelector(`[data-mid="${targetId}"] .im-meta`)!
+            .getBoundingClientRect();
+          return bar.top - header.top;
+        }, id),
+      )
+      .toBe(0);
     const box = await more.boundingBox();
     if (!box) throw new Error("compact action has no visible box");
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, {
@@ -603,6 +624,44 @@ test("focused message actions survive both directions of desktop pane resize", a
   await expect(page.locator('[data-mid="self"]')).toBeVisible({
     timeout: 30_000,
   });
+  await page.evaluate(() => {
+    const main = document.querySelector<HTMLElement>("main")!;
+    const handle = document.createElement("div");
+    handle.id = "pane-drag";
+    handle.style.cssText =
+      "position:absolute;top:32px;height:100px;width:10px;cursor:col-resize;z-index:10000";
+    const position = () => {
+      handle.style.left = `${main.getBoundingClientRect().right}px`;
+    };
+    position();
+    document.body.append(handle);
+    let dragging = false;
+    handle.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      dragging = true;
+    });
+    window.addEventListener("mousemove", (event) => {
+      if (!dragging) return;
+      main.style.width = `${Math.max(180, Math.min(460, event.clientX - main.getBoundingClientRect().left - 5))}px`;
+      position();
+    });
+    window.addEventListener("mouseup", () => {
+      dragging = false;
+    });
+  });
+  const dragPane = async (width: number) => {
+    const handle = await page.locator("#pane-drag").boundingBox();
+    if (!handle) throw new Error("pane drag handle is missing");
+    await page.mouse.move(handle.x + 5, handle.y + 20);
+    await page.mouse.down();
+    await page.mouse.move(32 + width + 5, handle.y + 20, { steps: 12 });
+    await page.mouse.up();
+    await expect
+      .poll(() =>
+        page.locator("main").evaluate((el) => el.getBoundingClientRect().width),
+      )
+      .toBe(width);
+  };
   await page.locator('[data-mid="self"] .im-text').hover();
   await page.locator(".hover-bar__wide .rx-toggle").focus();
   await page.keyboard.press("Tab");
@@ -610,9 +669,7 @@ test("focused message actions survive both directions of desktop pane resize", a
     page.locator('.hover-bar__wide button[title="回复"]'),
   ).toBeFocused();
   await page.mouse.move(800, 700);
-  await page.locator("main").evaluate((el) => {
-    el.style.width = "180px";
-  });
+  await dragPane(180);
   const more = page.locator(".hover-bar__more");
   const state = () =>
     page.locator(".hover-bar").evaluate((el) => ({
@@ -635,6 +692,27 @@ test("focused message actions survive both directions of desktop pane resize", a
     body: JSON.stringify(await state(), null, 2),
     contentType: "application/json",
   });
+  const anchor = () =>
+    page.evaluate(() => ({
+      bar: document
+        .querySelector(".hover-bar")!
+        .getBoundingClientRect()
+        .toJSON(),
+      header: document
+        .querySelector('[data-mid="self"] .im-meta')!
+        .getBoundingClientRect()
+        .toJSON(),
+    }));
+  await test.info().attach("resized-target-header", {
+    body: JSON.stringify(await anchor(), null, 2),
+    contentType: "application/json",
+  });
+  await expect
+    .poll(async () => {
+      const geometry = await anchor();
+      return geometry.bar.top - geometry.header.top;
+    })
+    .toBe(0);
   await expect(more).toBeFocused();
   await expect(more).toBeVisible();
   await expect(page.locator(".hover-bar")).toHaveAttribute(
@@ -651,9 +729,13 @@ test("focused message actions survive both directions of desktop pane resize", a
   await expect(menu.getByText("编辑", { exact: true })).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(more).toBeFocused();
-  await page.locator("main").evaluate((el) => {
-    el.style.width = "460px";
-  });
+  await dragPane(460);
+  await expect
+    .poll(async () => {
+      const geometry = await anchor();
+      return geometry.bar.top - geometry.header.top;
+    })
+    .toBe(0);
   await expect(more).toBeVisible();
   await expect(more).toBeFocused();
   await page.keyboard.press("Enter");
