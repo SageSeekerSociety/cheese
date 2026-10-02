@@ -6,7 +6,11 @@
 """
 
 import time
+import uuid
 
+from app.api.deps import get_chat_service
+from app.domain.agent.harness.channel import ScreenSetupError
+from tests.conftest import settle_turn
 from tests.integration.conftest import (
     chat_ws_url,
     post_message,
@@ -145,14 +149,12 @@ def _say(client, topic_id: str, text: str, author: str = "alice") -> None:
 
 
 def _its_turns_die(channel, monkeypatch) -> None:
-    """让这个房间里的轮次死在收尾之前：起得来、读得到话，然后没有下文。
+    """原生输入登记之前启动失败；这批话确认未送达，可以明确重试。"""
 
-    这正是「重试」按钮出现的那个状态（`test_replay_visibility` 里那份
-    `SilentScreen` 同源）。轮次没干净收尾，它读进去的那批消息就不会被盖上读过的
-    戳，于是还留在待读窗口里 —— 待读窗口里有消息，才是那一下点击的前提。
-    """
-    channel.alive = False
-    monkeypatch.setattr(channel, "emit_turn", lambda *a, **k: None)
+    async def failed_launch(session, opening, live=None):
+        raise ScreenSetupError("The executor could not be launched")
+
+    monkeypatch.setattr(channel, "ensure", failed_launch)
 
 
 def _handed_over(client, topic_id: str) -> list[str]:
@@ -186,7 +188,9 @@ def test_summon_hands_the_room_to_the_teammate_the_messages_named(
     topic_id, teammate = _a_room_with_two_teammates(client)
     _its_turns_die(stub_hooks, monkeypatch)
     _say(client, topic_id, f"<@{teammate}> 这个分页方案你看下")
-    # 那一轮死在收尾之前，所以这条消息还等着有人读；下面那一下就是「重试」。
+    service = client.app.dependency_overrides[get_chat_service]()
+    client.portal.call(settle_turn, service, uuid.UUID(topic_id))
+    # 启动失败前没有送入原生输入，下面那一下才是明确安全的「重试」。
 
     r = client.post(
         f"/topics/{topic_id}/summon",
