@@ -170,6 +170,7 @@ defineExpose({ pulse, highlightTurn })
     :lossy-confirm-open="lossyConfirmOpen"
     :source-mode="sourceMode"
     :source-draft="sourceDraft"
+    :ai-opened="ai.opened.value"
     :pending-edits="pendingEdits"
     :has-pending-edits="hasPendingEdits"
     :external-doc="externalDoc"
@@ -203,16 +204,18 @@ defineExpose({ pulse, highlightTurn })
     @edited="markEdited"
     @close-lossy-confirm="lossyConfirmOpen = false"
     @open-ai="ai.prepare($event)"
+    @close-ai="ai.opened.value = false"
   >
     <template #ai>
       <DocAiPanel
-        v-if="ai.opened.value"
+        docked
         :cards="ai.cards.value"
         :question="ai.question.value"
         :busy="ai.busy.value"
         :error="ai.error.value"
         :selection-status="ai.selectionStatus.value"
-        :has-selection="!!ai.selection.value"
+        :prepared-context="ai.preparedContext.value"
+        :has-selection="ai.preparedContext.value.state === 'verified' && !!ai.selection.value"
         :blocked="aiBlocked()"
         :unknown="!!ai.unknown.value"
         :version="docVersion"

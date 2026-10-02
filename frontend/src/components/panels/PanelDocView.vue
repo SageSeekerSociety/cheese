@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 文档那一格的**画**：横条、源码模式、正文、可调整的评论侧栏与两个对话框。
+// 文档那一格的**画**：横条、源码模式、正文、共用的工具侧栏与两个对话框。
 //
 // 它只凭 props 渲染，不认识接口也不认识路由 —— 正文的读写、评论、节点、自动保存的那
 // 只时钟都在 composables/usePanelDoc.ts 里（#2143）。正文编辑器本身在
@@ -46,6 +46,7 @@ const props = withDefaults(
     lossyConfirmOpen: boolean
     sourceMode: boolean
     sourceDraft: string
+    aiOpened?: boolean
     // ---- 军规 1 的三种「还没落地」 ----
     pendingEdits: string[]
     hasPendingEdits: boolean
@@ -92,6 +93,7 @@ const emit = defineEmits<{
   /** 有人在正文里改了东西（装配服务端那一版时不算）。 */
   (e: 'edited'): void
   (e: 'open-ai', snapshot: DocSelectionSnapshot | null): void
+  (e: 'close-ai'): void
   /** 这个确认框里「取消」/ 点外面关掉：状态那一半归组合式函数管。 */
   (e: 'close-lossy-confirm'): void
 }>()
@@ -148,8 +150,13 @@ function openComment(payload: { anchorId: string | null; quote: string }) {
 function locateComment(commentId: string) {
   commentsRef.value?.locate(commentId)
 }
+function openAi(snapshot: DocSelectionSnapshot | null) {
+  emit('open-ai', snapshot)
+  void commentsRef.value?.showAi()
+}
 watch([() => props.topic?.id, () => props.commentAuthor], () => {
   openId.value = null
+  emit('close-ai')
 })
 function quoteState(id: string) {
   return surfaceRef.value?.commentQuoteState(id) ?? 'missing'
@@ -263,15 +270,16 @@ defineExpose({
               variant="text"
               :aria-label="t('work.room.comments.title')"
               :title="t('work.room.comments.title')"
-              :aria-expanded="commentsRef?.opened ?? false"
+              :aria-expanded="(commentsRef?.opened && commentsRef.activeTool === 'comments') ?? false"
               @click="commentsRef?.toggle()"
             />
             <v-btn
               v-if="!sourceMode"
               size="small"
               variant="text"
+              :aria-expanded="(commentsRef?.opened && commentsRef.activeTool === 'ai') ?? false"
               @mousedown.prevent
-              @click="emit('open-ai', surfaceRef?.captureSelection() ?? null)"
+              @click="openAi(surfaceRef?.captureSelection() ?? null)"
               >{{ t('work.room.docAi.title') }}</v-btn
             >
             <v-menu v-if="!editingBlocked || mdAndUp" location="bottom end">
@@ -306,7 +314,6 @@ defineExpose({
             </v-menu>
           </div>
         </div>
-        <slot name="ai" />
         <!-- 源码模式: the raw markdown file in Monaco. Full-bleed (no page
            column) — this is the file itself, not the document view. -->
         <div v-if="sourceMode" class="doc-source" @keydown="handleDocKeydown">
@@ -331,9 +338,13 @@ defineExpose({
           :comments="comments"
           :anchor-nodes="anchorNodes"
           :quote-state="quoteState"
+          :ai-opened="aiOpened"
           @locate-node="highlightNode"
           @posted="refreshComments"
+          @open-ai="emit('open-ai', null)"
+          @close-ai="emit('close-ai')"
         >
+          <template v-if="$slots.ai" #ai><slot name="ai" /></template>
           <div
             ref="bodyRef"
             class="doc-body overflow-y-auto"
@@ -375,7 +386,7 @@ defineExpose({
                 @mention-click="emit('mention-click', $event)"
                 @open-file="emit('open-file', $event)"
                 @open-comment="openComment"
-                @open-ai="emit('open-ai', $event)"
+                @open-ai="openAi"
                 @locate-comment="locateComment"
                 @error="setError"
               />

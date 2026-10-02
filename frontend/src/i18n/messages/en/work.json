@@ -186,6 +186,10 @@
     "loading": "Loading resource limits…"
   },
   "room": {
+    "docTools": {
+      "title": "Document tools",
+      "backToDocument": "Back to document"
+    },
     "docAi": {
       "title": "Document AI",
       "selectionToolbar": "Selection actions",
@@ -197,6 +201,11 @@
       "unknown": "Outcome unknown. Recover the original operation to avoid duplicate requests.",
       "recover": "Recover operation",
       "question": "Question or rewrite instructions",
+      "contextQuestion": "Original question",
+      "contextSelection": "Selected original text",
+      "contextDocument": "Ask about the whole document",
+      "contextUnavailable": "Original text for this version is unavailable",
+      "contextInvalid": "Original text could not be verified",
       "ask": "Ask AI",
       "propose": "Propose rewrite",
       "aiProposal": "AI request and proposal",
@@ -831,7 +840,6 @@
       "locate": "Go to the paragraph",
       "anchorChanged": "The original paragraph has changed",
       "anchorAmbiguous": "This quote occurs more than once; the original selection cannot be identified",
-      "closePanel": "Close comments panel",
       "resize": "Resize comments panel",
       "waitForSend": "Comment is sending; wait for the result",
       "closeDraft": "Close composer",

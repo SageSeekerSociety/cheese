@@ -132,6 +132,15 @@ async def read_request(
             "generation": row.generation,
             "answer": row.answer,
             "error": row.error,
+            "frozen_context": {
+                "question": row.question,
+                "document_id": str(row.document_id),
+                "base_version": row.base_version,
+                "source": row.source,
+                "source_hash": row.source_hash,
+                "selection": row.selection,
+                "offset_unit": "utf8-bytes",
+            },
         }
     )
 
