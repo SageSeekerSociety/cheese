@@ -4,7 +4,9 @@ Comments are passive: recording one starts nothing. Only a comment (or a reply
 in a comment thread) that @-mentions an agent seated in the room starts a turn
 of that agent, as the commenter's — so what it changes in the document is
 recorded as done at their request. The agent answers in the thread
-(``cheese_doc_comment_reply``), not in the chat.
+(``cheese_doc_comment_reply``), not in the chat, and only looks at the
+workspace: a comment is a question about a document, and changing the code is
+work to be handed over in the conversation.
 """
 
 import uuid
@@ -55,6 +57,8 @@ def hand_to_agent(
             f"（评论线程 `{thread_id}`）：\n\n---\n{content}\n---\n\n"
             "在这个评论线程里回答，用 cheese_doc_comment_reply，不要回到聊天里。"
             "要你改文档就用 cheese_doc_edit 直接改，改完在线程里说一句改了什么。"
+            "工作区只读：可以读文件、运行命令来查证，但不改仓库里的文件、不提交、"
+            "不推送；要改代码，就在线程里说明要改什么，请人在对话里交给你。"
         ),
         addressed=addressed_to_agent(seat),
         nudge_event=say(
