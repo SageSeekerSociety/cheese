@@ -10,7 +10,7 @@ import { getAgentControl, getRoomMcpServers, sendAgentControl } from '../api'
 
 import SessionInspector from './SessionInspector.vue'
 
-import { setLocale } from '@/i18n'
+import i18n, { setLocale } from '@/i18n'
 
 vi.mock('../api', () => ({
   getAgentControl: vi.fn(),
@@ -38,7 +38,7 @@ const ask = (view: ReturnType<typeof render>) =>
 const mount = () =>
   render(SessionInspector, {
     props: { topicId: 'topic1', active: true },
-    global: { plugins: [createVuetify({ components, directives })] },
+    global: { plugins: [createVuetify({ components, directives }), i18n] },
   })
 
 it("lists the session's tasks without offering to move or stop them", async () => {
@@ -130,7 +130,7 @@ it('takes the room session state off the socket instead of asking again', async 
   const props = { topicId: 'topic1', active: true }
   const view = render(SessionInspector, {
     props: { ...props, pushed: null },
-    global: { plugins: [createVuetify({ components, directives })] },
+    global: { plugins: [createVuetify({ components, directives }), i18n] },
   })
   await view.rerender({
     ...props,
@@ -167,5 +167,8 @@ it("says where each of the project's MCP servers comes from", async () => {
   const list = await view.findByTestId('room-mcp-servers')
   const rows = within(list).getAllByRole('listitem')
   expect(rows[0].textContent).toContain('来自项目的 .mcp.json')
+  // Only the file name is code; the sentence around it is the UI's own font.
+  expect(within(rows[0]).getByText('.mcp.json').tagName).toBe('CODE')
+  expect(within(rows[1]).getByTestId('mcp-source').querySelector('code')).toBeNull()
   expect(rows[1].textContent).toContain('由 代码评审、审计 类型声明')
 })

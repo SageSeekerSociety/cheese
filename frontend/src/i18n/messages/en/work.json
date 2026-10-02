@@ -1183,7 +1183,7 @@
       "disconnected": "Not connected"
     },
     "source": {
-      "project": "From the project's .mcp.json",
+      "project": "From the project's {file}",
       "types": "Declared by the {types} type | Declared by the {types} types"
     },
     "action": {
