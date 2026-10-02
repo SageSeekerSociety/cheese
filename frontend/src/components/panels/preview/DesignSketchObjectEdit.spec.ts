@@ -285,3 +285,136 @@ it('拖角把手 + Shift 把矩形改成正方形', async () => {
   await waitFor(() => expect(Number(box.getAttribute('width'))).toBe(350))
   expect(Number(box.getAttribute('height'))).toBe(350)
 })
+
+/** 文字工具下点一下、输入、回车：屏上多一条文字。 */
+async function placeText(ui: ReturnType<typeof render>, clientX = 110, clientY = 120, text = '标签') {
+  await fireEvent.click(ui.getByRole('button', { name: '文字' }))
+  const layer = ui.getByRole('application', { name: '图片标注画布' })
+  layer.setPointerCapture = vi.fn()
+  await fireEvent.pointerDown(layer, { button: 0, pointerId: 12, clientX, clientY })
+  const field = ui.getByPlaceholderText('输入文字，回车确认')
+  await fireEvent.update(field, text)
+  await fireEvent.keyDown(field, { key: 'Enter' })
+  await waitFor(() => expect(ui.container.querySelector('.sketch-overlay text')).toBeTruthy())
+}
+
+it('屏上文字锚在左上角，和命中框、选中框、导出用同一个基准', async () => {
+  const ui = mount()
+  await painted(ui)
+  await placeText(ui)
+  // `at` 处处当左上角用（命中框、选中框、导出时的 textBaseline='top'）；SVG 的默认
+  // 基线是中下，不显式改掉就差半个字高，框和字对不上。
+  expect(ui.container.querySelector('.sketch-overlay text')!.getAttribute('dominant-baseline')).toBe('text-before-edge')
+})
+
+it('编辑文字时按下编辑框不抢：光标放得下，文字不会被顺手拖走', async () => {
+  const ui = mount()
+  await painted(ui)
+  await placeText(ui)
+  const text = () => ui.container.querySelector('.sketch-overlay text')!
+  const x = text().getAttribute('x')
+  const y = text().getAttribute('y')
+
+  await fireEvent.dblClick(sheet(ui), { clientX: 110, clientY: 120 })
+  const editor = ui.getByPlaceholderText('输入文字，回车确认') as HTMLInputElement
+  // 在编辑框里按下并拖动。输入框是 sheet 的子元素，sheet 的 capture 监听在祖先上
+  // 先跑，输入框自己的 @pointerdown.stop 拦不住它 —— 这里必须让开。
+  await fireEvent.pointerDown(editor, { button: 0, pointerId: 91, clientX: 110, clientY: 120 })
+  await fireEvent.pointerMove(editor, { pointerId: 91, clientX: 190, clientY: 190 })
+  await fireEvent.pointerUp(editor, { pointerId: 91, clientX: 190, clientY: 190 })
+  // 编辑没被打断，文字也没被挪走。
+  expect(ui.getByPlaceholderText('输入文字，回车确认')).toBe(editor)
+  await fireEvent.keyDown(editor, { key: 'Enter' })
+  await waitFor(() => expect(text()).toBeTruthy())
+  expect(text().getAttribute('x')).toBe(x)
+  expect(text().getAttribute('y')).toBe(y)
+})
+
+it('编辑文字时点别处：先把编辑落下来，这一下不再顺手开始框区域', async () => {
+  const ui = mount()
+  await painted(ui)
+  await placeText(ui)
+  await fireEvent.dblClick(sheet(ui), { clientX: 110, clientY: 120 })
+  const editor = ui.getByPlaceholderText('输入文字，回车确认') as HTMLInputElement
+  await fireEvent.update(editor, '标签')
+
+  // 编辑期间区域选择器整个不挂出来：这一下只该把编辑落下来，不该开始框区域。
+  expect(ui.container.querySelector('.raster-region')).toBeNull()
+
+  const layer = sheet(ui)
+  await fireEvent.pointerDown(layer, { button: 0, pointerId: 92, clientX: 400, clientY: 200 })
+  await fireEvent.pointerMove(layer, { pointerId: 92, clientX: 460, clientY: 240 })
+  await fireEvent.pointerUp(layer, { pointerId: 92, clientX: 460, clientY: 240 })
+  await waitFor(() => expect(ui.container.querySelector('.sketch-overlay text')).toBeTruthy())
+  expect(ui.emitted('region')).toBeUndefined()
+})
+
+it('把矩形拖到退化（宽高全零）等于删掉它，撤销能把这一笔找回来', async () => {
+  const ui = mount()
+  await painted(ui)
+  await drawRect(ui)
+  const layer = sheet(ui)
+  // 抓右下角 client (310,220)，一路拖到左上角 client (60,70)：框退化成一点。
+  await fireEvent.pointerDown(layer, { button: 0, pointerId: 93, clientX: 310, clientY: 220 })
+  await fireEvent.pointerMove(layer, { pointerId: 93, clientX: 60, clientY: 70 })
+  await fireEvent.pointerUp(layer, { pointerId: 93, clientX: 60, clientY: 70 })
+  await waitFor(() => expect(strokeRects(ui)).toHaveLength(0))
+  await fireEvent.keyDown(window, { key: 'z', code: 'KeyZ', metaKey: true })
+  await waitFor(() => expect(strokeRects(ui)).toHaveLength(1))
+})
+
+it('拖到一半按删除：删除照做，松手也不会再多记一条历史', async () => {
+  const ui = mount()
+  await painted(ui)
+  await drawRect(ui)
+  const layer = sheet(ui)
+  await fireEvent.pointerDown(layer, { button: 0, pointerId: 94, clientX: 120, clientY: 70 })
+  await fireEvent.pointerMove(layer, { pointerId: 94, clientX: 140, clientY: 70 })
+  await fireEvent.keyDown(window, { key: 'Delete' })
+  await waitFor(() => expect(strokeRects(ui)).toHaveLength(0))
+  // 手势已经被收掉，松手不该再往历史里塞东西。
+  await fireEvent.pointerUp(layer, { pointerId: 94, clientX: 140, clientY: 70 })
+  await fireEvent.keyDown(window, { key: 'z', code: 'KeyZ', metaKey: true })
+  await waitFor(() => expect(strokeRects(ui)).toHaveLength(1))
+  // 再撤一次：画的那一笔也没了。若松手多记了一条，这一下会还原成拖动后的样子。
+  await fireEvent.keyDown(window, { key: 'z', code: 'KeyZ', metaKey: true })
+  await waitFor(() => expect(strokeRects(ui)).toHaveLength(0))
+})
+
+it('指针捕获无故丢失：退回按下前的样子，不记历史', async () => {
+  const ui = mount()
+  await painted(ui)
+  await drawRect(ui)
+  const layer = sheet(ui)
+  await fireEvent.pointerDown(layer, { button: 0, pointerId: 95, clientX: 120, clientY: 70 })
+  await fireEvent.pointerMove(layer, { pointerId: 95, clientX: 140, clientY: 70 })
+  await waitFor(() => expect(overlayRect(ui).getAttribute('x')).toBe('70'))
+  await fireEvent.lostPointerCapture(layer, { pointerId: 95 })
+  await waitFor(() => expect(overlayRect(ui).getAttribute('x')).toBe('50'))
+  // 只撤销一次：画的那一笔没了，说明断开这一下没往历史里加东西。
+  await fireEvent.keyDown(window, { key: 'z', code: 'KeyZ', metaKey: true })
+  await waitFor(() => expect(strokeRects(ui)).toHaveLength(0))
+})
+
+it('小对象能整支拖走：抓取半径跟着对象收，不整支陷进把手的圈里', async () => {
+  const ui = mount()
+  await painted(ui)
+  // 画一个小矩形：client (60,70)→(110,95) 即原图 (100,100)-(200,150)，屏上 (50,50)-(100,75)。
+  await fireEvent.click(ui.getByRole('button', { name: '矩形' }))
+  const layer = ui.getByRole('application', { name: '图片标注画布' })
+  layer.setPointerCapture = vi.fn()
+  await fireEvent.pointerDown(layer, { button: 0, pointerId: 96, clientX: 60, clientY: 70 })
+  await fireEvent.pointerMove(layer, { pointerId: 96, clientX: 110, clientY: 95 })
+  await fireEvent.pointerUp(layer, { pointerId: 96, clientX: 110, clientY: 95 })
+  await waitFor(() => expect(strokeRects(ui)).toHaveLength(1))
+
+  const canvas = sheet(ui)
+  // 上边中点 client (85,70) 即显示 (75,50)：离两个上角各 25。抓取半径收到 12.5，
+  // 这一下该判成「整支拖动」；半径固定 48 时会误判成缩放。
+  await fireEvent.pointerDown(canvas, { button: 0, pointerId: 97, clientX: 85, clientY: 70 })
+  await fireEvent.pointerMove(canvas, { pointerId: 97, clientX: 105, clientY: 70 })
+  await fireEvent.pointerUp(canvas, { pointerId: 97, clientX: 105, clientY: 70 })
+  await waitFor(() => expect(overlayRect(ui).getAttribute('x')).toBe('70'))
+  expect(overlayRect(ui).getAttribute('width')).toBe('50')
+  expect(overlayRect(ui).getAttribute('height')).toBe('25')
+})

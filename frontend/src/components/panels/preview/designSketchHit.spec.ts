@@ -5,7 +5,15 @@ import type { SketchStroke } from './designSketch'
 
 import { describe, expect, it } from 'vitest'
 
-import { ELLIPSE_SAMPLES, hitStroke, hitTest, hitTolerance, MOUSE_TOLERANCE, TOUCH_TOLERANCE } from './designSketchHit'
+import {
+  distanceToEllipse,
+  ELLIPSE_SAMPLES,
+  hitStroke,
+  hitTest,
+  hitTolerance,
+  MOUSE_TOLERANCE,
+  TOUCH_TOLERANCE,
+} from './designSketchHit'
 import { strokeBox } from './designSketchSelection'
 
 const rect: SketchStroke = {
@@ -163,5 +171,20 @@ describe('显示缩放', () => {
     // 原图笔画在 (0,0)-(100,0)，放大两倍后屏上是 (0,0)-(200,0)。
     expect(hitStroke(line, { x: 100, y: 3 }, { scale: 2 })).toBe(true)
     expect(hitStroke(line, { x: 100, y: 30 }, { scale: 2 })).toBe(false)
+  })
+})
+
+describe('distanceToEllipse', () => {
+  it('真边界上的点距离接近 0，不受 64 点采样弦长的影响', () => {
+    // 2000x1000 的椭圆相邻采样点之间弦长约 98px：只比采样点近远，中间那一段全是「命不中」。
+    const big = { x: 0, y: 0, width: 2000, height: 1000 }
+    expect(distanceToEllipse({ x: 1000, y: 999.4 }, big)).toBeLessThan(1)
+    expect(distanceToEllipse({ x: 1000, y: 900 }, big)).toBeCloseTo(100, 0)
+  })
+
+  it('退化的椭圆不返回 NaN：rx=0 时按到中心的距离算', () => {
+    const flat = { x: 100, y: 100, width: 0, height: 100 }
+    expect(distanceToEllipse({ x: 100, y: 150 }, flat)).toBe(0)
+    expect(distanceToEllipse({ x: 104, y: 150 }, flat)).toBe(4)
   })
 })

@@ -135,10 +135,14 @@ const dash = SELECT_DASH.join(' ')
         :stroke="item.stroke.color"
         :stroke-width="item.stroke.width * scale"
       />
+      <!-- `at` 处处当左上角用：命中盒、选中虚线框、输入框、导出画布（textBaseline
+           = 'top'）都是这样。只有这里原来按默认基线画，字会掉到框下面一个字号，
+           于是「点在字上不中、点在字下面的空白却中」。 -->
       <text
         v-else-if="item.stroke.tool === 'text'"
         :x="item.toDisplay(item.stroke.at).x"
         :y="item.toDisplay(item.stroke.at).y"
+        dominant-baseline="text-before-edge"
         :fill="item.stroke.color"
         :font-size="fontSize(naturalWidth) * scale"
       >

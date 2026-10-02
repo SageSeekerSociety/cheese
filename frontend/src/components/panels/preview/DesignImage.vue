@@ -8,23 +8,12 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, watchEffect
 
 import { clearAnnotationGuard, setAnnotationGuard } from './annotationDiscard'
 import DesignRasterRegion from './DesignRasterRegion.vue'
-import { composeSketch, fontSize, sampleImage, SKETCH_COLORS, strokeWidth } from './designSketch'
+import { composeSketch, sampleImage, SKETCH_COLORS, strokeWidth } from './designSketch'
 import DesignSketchCanvas from './DesignSketchCanvas.vue'
-import { hitTest } from './designSketchHit'
 import DesignSketchOverlay from './DesignSketchOverlay.vue'
-import {
-  applyResize,
-  canResize,
-  HANDLE_HIT_RADIUS,
-  type HandleRole,
-  isEmptyStroke,
-  isSelectableStroke,
-  moveStroke,
-  nearestHandle,
-  strokeHandles,
-} from './designSketchSelection'
 import DesignSketchToolbar from './DesignSketchToolbar.vue'
 import { blockAt, contentProfile } from './designSnap'
+import { useSketchObjectEdit } from './useSketchObjectEdit'
 
 import { t } from '@/i18n'
 
@@ -89,22 +78,58 @@ const standaloneRegion = ref<RasterRegion | null>(null)
 
 const tool = ref<SketchTool>('select')
 const color = ref<string>(SKETCH_COLORS[0])
-const strokes = ref<SketchStroke[]>([])
+
+const scale = computed(() => {
+  if (!fitted.value) return zoom.value
+  const width = natural.value.width
+  if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(available.value)) return 0
+  return Math.min(1, Math.max(0, (available.value - 32) / width))
+})
+
 /**
- * 撤销栈：一整份快照一条。
- *
- * 拖动/缩放只在**松手且真的动过**时才在松手那一刻记一条，移动途中不记；加一笔、删除、
- * 改色、文字编辑提交、清空各算一条。上限 100。
+ * 对象级编辑整块（选中、拖动/缩放、改色、删除、文字编辑、撤销历史）在
+ * `useSketchObjectEdit` 里：这个组件本来就贴着 file-size 闸门的边，再摊在这里就过不
+ * 去了（见 .claude/rules/architecture.md）。那边只管数据，屏幕上怎么画还是这里的事；
+ * 显示像素换算成原图像素靠 `imageGeometry` 传进去。
  */
-const HISTORY_LIMIT = 100
-const undoStack = ref<SketchStroke[][]>([])
-const redoStack = ref<SketchStroke[][]>([])
-/** 选中的是哪一条（按索引）；除自由笔外都能选中、编辑。 */
-const selectedStroke = ref<number | null>(null)
-/** 正在编辑的那条已有文字：原文字不画，由输入框呈现。 */
-const editingText = ref<{ index: number; value: string } | null>(null)
-/** 正在拖/缩一笔（挂在 sheet 上的手势）：撤销/重做这时要拒绝。 */
-const interacting = ref(false)
+const {
+  strokes,
+  selectedStroke,
+  editingText,
+  textEditing: editingExistingText,
+  editField,
+  canUndo,
+  canRedo,
+  busy,
+  editStyle,
+  addStroke,
+  undo,
+  redo,
+  clearStrokes,
+  dropAnnotations,
+  reset: resetStrokes,
+  recolor,
+  deleteSelected,
+  cancelGesture,
+  commitTextEdit,
+  cancelTextEdit,
+  openTextEditor,
+  onEditEnter,
+  onEditEscape,
+  sheetDown,
+  sheetMove,
+  sheetUp,
+  sheetCancel,
+  sheetDoubleClick,
+} = useSketchObjectEdit({
+  geometry: imageGeometry,
+  natural,
+  scale,
+  tool,
+  color,
+  canvasBusy: () => canvas.value?.busy === true,
+})
+
 /**
  * 有没有「画了但还没发出去」的笔画。
  *
@@ -142,7 +167,15 @@ const discardOrigin = ref<HTMLElement | null>(null)
 /** 图上画得下箭头，说不清「改成什么」，所以那一句是必填的。 */
 const note = ref('')
 const profile = ref<ContentProfile | null>(null)
-const textEditing = ref(false)
+/** 画布自带的那个输入框开着（正在**新画**一条文字；改已有的那条走 editingExistingText）。 */
+const drawingText = ref(false)
+/**
+ * 图上有没有正在打字的输入框：新画的（画布自己那个）或改已有的（`editingExistingText`）。
+ *
+ * 两条路各有一个开关，但对外只该有一个说法——发消息要拦住、Esc 要先收输入框、改文字
+ * 期间区域选择器要整个不挂，这三处都只关心「有没有在打字」，不关心是哪条路进来的。
+ */
+const textEditing = computed(() => drawingText.value || editingExistingText.value)
 const exporting = ref(false)
 /** 合成失败时的那一句：它发生在这里（画布在这一层），上传失败那句在外面。 */
 const sendError = ref('')
@@ -153,27 +186,12 @@ const panning = ref(false)
 const selecting = computed(() => tool.value === 'select')
 const drawing = computed(() => tool.value !== 'select')
 const penWidth = computed(() => strokeWidth(natural.value.width))
-const canUndo = computed(() => undoStack.value.length > 0)
-const canRedo = computed(() => redoStack.value.length > 0)
 const canSend = computed(() => strokes.value.length > 0 && note.value.trim().length > 0 && !textEditing.value)
-/** 选中的那一笔。 */
-const selectedShape = computed(() => {
-  const index = selectedStroke.value
-  if (index === null) return null
-  const stroke = strokes.value[index]
-  return stroke && isSelectableStroke(stroke) ? stroke : null
-})
 /** 真会丢掉东西的时候（画了、且还没发），才值得拦一道。 */
 const wouldLoseStrokes = computed(() => strokes.value.length > 0 && unsent.value)
 
 const selectedRegion = computed(() => (props.activeRegion === undefined ? standaloneRegion.value : props.activeRegion))
 const regionIdentity = computed(() => `${props.identity}:${scale.value}:${available.value}`)
-const scale = computed(() => {
-  if (!fitted.value) return zoom.value
-  const width = natural.value.width
-  if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(available.value)) return 0
-  return Math.min(1, Math.max(0, (available.value - 32) / width))
-})
 const dimensions = computed(() =>
   natural.value.width
     ? {
@@ -291,11 +309,7 @@ watch(
     standaloneRegion.value = null
     geometry.value = null
     fitted.value = true
-    strokes.value = []
-    undoStack.value = []
-    redoStack.value = []
-    selectedStroke.value = null
-    editingText.value = null
+    resetStrokes()
     sentStrokes.value = null
     note.value = ''
     profile.value = null
@@ -405,73 +419,6 @@ function selected(selection: RasterSelection) {
   if (props.activeRegion === undefined) standaloneRegion.value = selection.region
   emit('region', { ...selection, identity: props.identity })
 }
-/** 记一条历史快照（整份笔画数组），并把重做栈清掉。 */
-function pushHistory(before: SketchStroke[]) {
-  undoStack.value = [...undoStack.value, before].slice(-HISTORY_LIMIT)
-  redoStack.value = []
-}
-function addStroke(stroke: SketchStroke) {
-  const before = strokes.value
-  strokes.value = [...before, stroke]
-  pushHistory(before)
-  // 画完一笔非自由笔的图形就选中它、把工具交回 select；自由笔连着画，不打断。
-  if (stroke.tool !== 'pen') {
-    selectedStroke.value = strokes.value.length - 1
-    tool.value = 'select'
-  }
-}
-function undo() {
-  const before = undoStack.value.at(-1)
-  if (!before) return
-  redoStack.value = [...redoStack.value, strokes.value]
-  undoStack.value = undoStack.value.slice(0, -1)
-  strokes.value = before
-  selectedStroke.value = null
-}
-function redo() {
-  const next = redoStack.value.at(-1)
-  if (!next) return
-  undoStack.value = [...undoStack.value, strokes.value]
-  redoStack.value = redoStack.value.slice(0, -1)
-  strokes.value = next
-  selectedStroke.value = null
-}
-function clearStrokes() {
-  if (!strokes.value.length) return
-  pushHistory(strokes.value)
-  strokes.value = []
-  selectedStroke.value = null
-}
-/** 丢弃那次「放弃这些标注？」：连历史一起清掉，不给撤回来的机会。 */
-function dropAnnotations() {
-  strokes.value = []
-  undoStack.value = []
-  redoStack.value = []
-  selectedStroke.value = null
-  editingText.value = null
-  textEditing.value = false
-}
-/** 改选中对象的颜色；没选中就只改「下一笔的颜色」。 */
-function recolor(swatch: string) {
-  const index = selectedStroke.value
-  const stroke = index === null ? null : strokes.value[index]
-  if (stroke && isSelectableStroke(stroke)) {
-    const before = strokes.value
-    strokes.value = before.map((current, at) => (at === index ? { ...current, color: swatch } : current))
-    pushHistory(before)
-  }
-  color.value = swatch
-}
-/** Backspace / Delete 删掉选中的那一笔。 */
-function deleteSelected() {
-  const index = selectedStroke.value
-  if (index === null || !strokes.value[index]) return
-  const before = strokes.value
-  strokes.value = before.filter((_, at) => at !== index)
-  pushHistory(before)
-  selectedStroke.value = null
-}
-
 /** 图片当前在屏幕上的几何：命中测试与手势都拿它把显示像素换算成原图像素。 */
 function imageGeometry() {
   const element = image.value
@@ -485,215 +432,6 @@ function imageGeometry() {
   }
 }
 
-/** 一次按下开始的手势：拖动整笔，或拖某个把手缩放。松手时若动过才记一条历史。 */
-type Gesture = {
-  kind: 'move' | 'resize'
-  role: HandleRole | null
-  index: number
-  origin: Exclude<SketchStroke, { tool: 'pen' }>
-  before: SketchStroke[]
-  /** 原图像素：按下时指针落在哪儿，用来算位移。 */
-  start: Point
-  /** 屏幕像素：按下时指针落在哪儿，用来算 3px / 10px 门槛。 */
-  client: Point
-  touch: boolean
-  started: boolean
-}
-let gesture: Gesture | null = null
-let gesturePointer: number | null = null
-
-function beginGesture(
-  index: number,
-  role: HandleRole | null,
-  kind: 'move' | 'resize',
-  event: PointerEvent,
-  geometry: { left: number; top: number; scale: number }
-) {
-  const stroke = strokes.value[index]
-  if (!stroke || !isSelectableStroke(stroke)) return
-  gesture = {
-    kind,
-    role,
-    index,
-    origin: stroke,
-    before: strokes.value,
-    start: { x: (event.clientX - geometry.left) / geometry.scale, y: (event.clientY - geometry.top) / geometry.scale },
-    client: { x: event.clientX, y: event.clientY },
-    touch: event.pointerType === 'touch',
-    started: false,
-  }
-  gesturePointer = event.pointerId
-  interacting.value = true
-  ;(event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId)
-  event.preventDefault()
-  event.stopPropagation()
-}
-
-/**
- * 选中工具下按下：先看把手，再看对象，都没中就放下选中、把指针让给区域选择器。
- *
- * 用 capture 拦截：区域选择器是 sheet 的子层，不先拦一道，它会先吃掉这一下。
- */
-function sheetDown(event: PointerEvent) {
-  if (event.button !== 0 || tool.value !== 'select') return
-  const geometry = imageGeometry()
-  if (!geometry) return
-  const display = { x: event.clientX - geometry.left, y: event.clientY - geometry.top }
-  const touch = event.pointerType === 'touch'
-  const current = selectedShape.value
-  const currentIndex = selectedStroke.value
-  if (current && currentIndex !== null) {
-    const role = nearestHandle(strokeHandles(current, geometry.scale, natural.value.width), display, HANDLE_HIT_RADIUS)
-    if (role) {
-      // 文字没有可缩的框：拖它的把手等于平移。
-      beginGesture(currentIndex, role, canResize(current) ? 'resize' : 'move', event, geometry)
-      return
-    }
-  }
-  const index = hitTest(strokes.value, display, { touch, scale: geometry.scale, naturalWidth: natural.value.width })
-  if (index === null) {
-    // 点在空白处：放下选中，让指针落到下面的区域选择器上（交给芝士）。
-    selectedStroke.value = null
-    return
-  }
-  selectedStroke.value = index
-  beginGesture(index, null, 'move', event, geometry)
-}
-
-function sheetMove(event: PointerEvent) {
-  const active = gesture
-  if (!active || event.pointerId !== gesturePointer) return
-  const geometry = imageGeometry()
-  if (!geometry) return
-  if (!active.started) {
-    const moved = Math.hypot(event.clientX - active.client.x, event.clientY - active.client.y)
-    if (moved < (active.touch ? 10 : 3)) return
-    active.started = true
-  }
-  const point = {
-    x: (event.clientX - geometry.left) / geometry.scale,
-    y: (event.clientY - geometry.top) / geometry.scale,
-  }
-  const next =
-    active.kind === 'resize' && active.role
-      ? applyResize(active.origin, active.role, point, event.shiftKey)
-      : moveStroke(
-          active.origin,
-          point.x - active.start.x,
-          point.y - active.start.y,
-          natural.value.width,
-          natural.value.height
-        )
-  strokes.value = strokes.value.map((stroke, index) => (index === active.index ? next : stroke))
-  event.preventDefault()
-  event.stopPropagation()
-}
-
-function sheetUp(event: PointerEvent) {
-  const active = gesture
-  if (!active || (gesturePointer !== null && event.pointerId !== gesturePointer)) return
-  gesture = null
-  gesturePointer = null
-  interacting.value = false
-  if (!active.started) return
-  const moved = strokes.value[active.index]
-  if (moved && isEmptyStroke(moved)) {
-    strokes.value = strokes.value.filter((_, index) => index !== active.index)
-    selectedStroke.value = null
-    return
-  }
-  pushHistory(active.before)
-}
-
-/** 手势被打断（指针取消）：退回按下前的样子，不记历史。 */
-function sheetCancel(event: PointerEvent) {
-  const active = gesture
-  if (!active || (gesturePointer !== null && event.pointerId !== gesturePointer)) return
-  gesture = null
-  gesturePointer = null
-  interacting.value = false
-  if (active.started) strokes.value = active.before
-}
-
-/** select 工具下双击文字进编辑。 */
-function sheetDoubleClick(event: MouseEvent) {
-  if (tool.value !== 'select') return
-  const geometry = imageGeometry()
-  if (!geometry) return
-  const display = { x: event.clientX - geometry.left, y: event.clientY - geometry.top }
-  const index = hitTest(strokes.value, display, { scale: geometry.scale, naturalWidth: natural.value.width })
-  if (index === null) return
-  if (strokes.value[index]?.tool !== 'text') return
-  openTextEditor(index)
-}
-
-const editField = ref<HTMLInputElement | null>(null)
-/** 编辑一条已有文字：原文字不画，由这个输入框呈现。 */
-function openTextEditor(index: number) {
-  const stroke = strokes.value[index]
-  if (!stroke || stroke.tool !== 'text') return
-  if (editingText.value?.index === index) return
-  if (editingText.value) commitTextEdit()
-  tool.value = 'select'
-  selectedStroke.value = index
-  editingText.value = { index, value: stroke.text }
-  textEditing.value = true
-  void nextTick(() => {
-    editField.value?.focus()
-    editField.value?.select()
-  })
-}
-/** 提交文字编辑；trim 为空就把这条文字对象删掉。 */
-function commitTextEdit() {
-  const edit = editingText.value
-  if (!edit) return
-  editingText.value = null
-  textEditing.value = false
-  const before = strokes.value
-  const stroke = before[edit.index]
-  if (!stroke || stroke.tool !== 'text') return
-  const text = edit.value.trim()
-  if (!text) {
-    strokes.value = before.filter((_, index) => index !== edit.index)
-    pushHistory(before)
-    selectedStroke.value = null
-    return
-  }
-  if (text === stroke.text) return
-  strokes.value = before.map((current, index) => (index === edit.index ? { ...stroke, text } : current))
-  pushHistory(before)
-}
-/** 取消文字编辑：原文照旧留着。 */
-function cancelTextEdit() {
-  if (!editingText.value) return
-  editingText.value = null
-  textEditing.value = false
-}
-function onEditEnter(event: KeyboardEvent) {
-  event.stopPropagation()
-  if (event.isComposing || event.keyCode === 229) return
-  event.preventDefault()
-  commitTextEdit()
-}
-function onEditEscape(event: KeyboardEvent) {
-  event.stopPropagation()
-  if (event.isComposing || event.keyCode === 229) return
-  event.preventDefault()
-  cancelTextEdit()
-}
-const editStyle = computed(() => {
-  const edit = editingText.value
-  const stroke = edit ? strokes.value[edit.index] : null
-  if (!edit || stroke?.tool !== 'text') return {}
-  return {
-    left: `${stroke.at.x * scale.value}px`,
-    top: `${stroke.at.y * scale.value}px`,
-    color: stroke.color,
-    fontSize: `${fontSize(natural.value.width) * scale.value}px`,
-  }
-})
-/** 正在画或正在拖的时候，撤销/重做要被拒绝。 */
-const busy = computed(() => interacting.value || canvas.value?.busy === true)
 /** 点一下内容块：不画东西，直接把那一块框出来并编上号。 */
 function pickBlock(point: Point) {
   const bounds = profile.value
@@ -803,6 +541,9 @@ function keyDown(event: KeyboardEvent) {
   }
   // Backspace / Delete 删掉选中的那一笔。
   if (event.key === 'Backspace' || event.key === 'Delete') {
+    // 手上还按着拖动时，先把这个手势收掉再删。不收就直接删，松手时 sheetUp 会拿着
+    // 已经不存在的 index 再记一条历史，撤销栈错位；而删除是明确的意图，不该被拖动作废。
+    cancelGesture()
     if (selectedStroke.value !== null) {
       event.preventDefault()
       deleteSelected()
@@ -972,6 +713,7 @@ onBeforeUnmount(() => {
           @pointermove.capture="sheetMove"
           @pointerup.capture="sheetUp"
           @pointercancel.capture="sheetCancel"
+          @lostpointercapture.capture="sheetCancel"
           @dblclick.capture="sheetDoubleClick"
         >
           <img :key="`${identity}:${src}`" ref="image" :src="src" :alt="alt" draggable="false" @load="loaded" />
@@ -992,7 +734,7 @@ onBeforeUnmount(() => {
           />
           <DesignRasterRegion
             :image="image"
-            :enabled="selecting && selectionEnabled"
+            :enabled="selecting && selectionEnabled && !textEditing"
             :identity="regionIdentity"
             :profile="profile"
             @select="selected"
@@ -1026,7 +768,7 @@ onBeforeUnmount(() => {
             @stroke="addStroke"
             @pick-block="pickBlock"
             @edit-text="openTextEditor"
-            @text-editing="textEditing = $event"
+            @text-editing="drawingText = $event"
           />
         </div>
       </div>

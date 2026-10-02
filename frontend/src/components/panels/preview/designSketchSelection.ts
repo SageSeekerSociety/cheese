@@ -1,7 +1,7 @@
 import type { Point, RasterRegion } from './designRegion'
 import type { SketchStroke, TextStroke } from './designSketch'
 
-import { fontSize } from './designSketch'
+import { fontSize, isShapeStroke } from './designSketch'
 
 /**
  * 选中一笔已画好的标注之后的把手与几何。参数照参考物（Claude 桌面版那套标注器）：
@@ -19,6 +19,8 @@ export const SELECT_DASH: readonly [number, number] = [5, 4]
 export const HANDLE_RADIUS = 3.5
 export const HANDLE_HIT_RADIUS = 48
 export const HANDLE_STROKE_WIDTH = 1
+/** 抓取半径收到底也不再小于这个值，否则把手会小到抓不住。 */
+export const MIN_HANDLE_GRAB = 8
 /** 文字选中框的虚线描边；比把手粗一点，看得清。 */
 export const TEXT_BOX_STROKE_WIDTH = 1.5
 /** 文字选中框每边向外扩这么多。 */
@@ -85,12 +87,12 @@ export function canResize(stroke: Exclude<SketchStroke, { tool: 'pen' }>): boole
  */
 export function strokeBox(stroke: Exclude<SketchStroke, { tool: 'pen' }>, naturalWidth: number): RasterRegion {
   if (stroke.tool === 'text') return textBox(stroke, naturalWidth)
-  if (stroke.tool === 'line' || stroke.tool === 'arrow') {
-    const x = Math.min(stroke.from.x, stroke.to.x)
-    const y = Math.min(stroke.from.y, stroke.to.y)
-    return { x, y, width: Math.abs(stroke.to.x - stroke.from.x), height: Math.abs(stroke.to.y - stroke.from.y) }
-  }
-  return stroke.region
+  // 块状那一支走断言函数收窄：`tool === 'line' || tool === 'arrow'` 这种把某个成员的
+  // 判别式全列出来的写法，在不成立的支上并不会把那个成员排除掉（见 designSketch.ts）。
+  if (isShapeStroke(stroke)) return stroke.region
+  const x = Math.min(stroke.from.x, stroke.to.x)
+  const y = Math.min(stroke.from.y, stroke.to.y)
+  return { x, y, width: Math.abs(stroke.to.x - stroke.from.x), height: Math.abs(stroke.to.y - stroke.from.y) }
 }
 
 /**
@@ -146,6 +148,25 @@ export function strokeHandles(
   return boxHandles(box, stroke.tool === 'text' ? Infinity : HANDLE_SPLIT)
 }
 
+/**
+ * 抓一个把手时可以离多远（屏幕像素）。默认 48 是给正常大小的对象留的余量，但小对象
+ * 整支都落在这 48 里面：一个 40×40 的框，四个角都在中心 28.3 之内，按中心就变成缩放，
+ * 平移不了。所以半径跟着对象收：取「短边的一半退一点」，短线则看长度的一半（中点离
+ * 端点最远）。收到底也不小于 `MIN_HANDLE_GRAB`。
+ */
+export function handleGrabRadius(
+  stroke: Exclude<SketchStroke, { tool: 'pen' }>,
+  scale: number,
+  naturalWidth: number
+): number {
+  const box = scaleRegion(strokeBox(stroke, naturalWidth), scale)
+  const reach =
+    stroke.tool === 'line' || stroke.tool === 'arrow'
+      ? Math.max(box.width, box.height) / 2
+      : Math.min(box.width, box.height) / 2
+  return Math.max(MIN_HANDLE_GRAB, Math.min(HANDLE_HIT_RADIUS, reach - 1))
+}
+
 /** 离 `point` 最近、且在抓取半径内的那个把手；没有就是 null。 */
 export function nearestHandle(
   handles: readonly { role: HandleRole; x: number; y: number }[],
@@ -171,11 +192,11 @@ function cornerAnchor(region: RasterRegion, role: BoxHandleRole): Point {
   return { x: role.includes('w') ? right : region.x, y: role.includes('n') ? bottom : region.y }
 }
 
-/** 把角上的点拽成正方形：取 |dx|、|dy| 里大的那个，方向各按原符号。 */
-export function squarePoint(anchor: Point, point: Point): Point {
+/** 把角上的点拽成正方形：取 |dx|、|dy| 里大的那个，方向各按原符号；边长不小于 `min`。 */
+export function squarePoint(anchor: Point, point: Point, min = 0): Point {
   const dx = point.x - anchor.x
   const dy = point.y - anchor.y
-  const size = Math.max(Math.abs(dx), Math.abs(dy))
+  const size = Math.max(Math.abs(dx), Math.abs(dy), min)
   return { x: anchor.x + (dx < 0 ? -size : size), y: anchor.y + (dy < 0 ? -size : size) }
 }
 
@@ -197,6 +218,9 @@ export function resizeRegion(region: RasterRegion, role: BoxHandleRole, point: P
 
 /**
  * 拖一个框把手：角把手 + Shift 时先拽成正方形再缩放；边把手不受 Shift 影响。
+ *
+ * 正方形那条路要**从锚点把整个框重建出来**，不能只挪被拖的那两条边：把角拖到锚点
+ * 另一侧时正方形朝反方向长，而「只挪两条边」会把宽或高截成 0，正方形就没了。
  */
 export function resizeBox(
   region: RasterRegion,
@@ -205,8 +229,17 @@ export function resizeBox(
   shift = false,
   min = 0
 ): RasterRegion {
-  const target = shift && role.length === 2 ? squarePoint(cornerAnchor(region, role), point) : point
-  return resizeRegion(region, role, target, min)
+  if (shift && role.length === 2) {
+    const anchor = cornerAnchor(region, role)
+    const corner = squarePoint(anchor, point, Math.max(min, 1))
+    return {
+      x: Math.min(anchor.x, corner.x),
+      y: Math.min(anchor.y, corner.y),
+      width: Math.abs(corner.x - anchor.x),
+      height: Math.abs(corner.y - anchor.y),
+    }
+  }
+  return resizeRegion(region, role, point, min)
 }
 
 /** 整个框跟着指针平移的量（文字那种「只有锚点、改不了大小」的标注用它）。 */
@@ -272,15 +305,15 @@ export function shiftStroke(
   dx: number,
   dy: number
 ): Exclude<SketchStroke, { tool: 'pen' }> {
-  if (stroke.tool === 'line' || stroke.tool === 'arrow') {
-    return {
-      ...stroke,
-      from: { x: stroke.from.x + dx, y: stroke.from.y + dy },
-      to: { x: stroke.to.x + dx, y: stroke.to.y + dy },
-    }
+  if (isShapeStroke(stroke)) {
+    return { ...stroke, region: { ...stroke.region, x: stroke.region.x + dx, y: stroke.region.y + dy } }
   }
   if (stroke.tool === 'text') return { ...stroke, at: { x: stroke.at.x + dx, y: stroke.at.y + dy } }
-  return { ...stroke, region: { ...stroke.region, x: stroke.region.x + dx, y: stroke.region.y + dy } }
+  return {
+    ...stroke,
+    from: { x: stroke.from.x + dx, y: stroke.from.y + dy },
+    to: { x: stroke.to.x + dx, y: stroke.to.y + dy },
+  }
 }
 
 /**
@@ -291,10 +324,8 @@ export function shiftStroke(
  */
 export function isEmptyStroke(stroke: SketchStroke): boolean {
   if (stroke.tool === 'pen') return stroke.points.length < 2
-  if (stroke.tool === 'line' || stroke.tool === 'arrow') {
-    return stroke.from.x === stroke.to.x && stroke.from.y === stroke.to.y
-  }
   if (stroke.tool === 'text') return stroke.text.trim().length === 0
+  if (!isShapeStroke(stroke)) return stroke.from.x === stroke.to.x && stroke.from.y === stroke.to.y
   const { width, height } = stroke.region
   if (stroke.tool === 'redact') return (width === 0 && height === 0) || Math.hypot(width, height) < 4
   return width === 0 && height === 0
@@ -312,14 +343,14 @@ export function applyResize(
   point: Point,
   shift: boolean
 ): Exclude<SketchStroke, { tool: 'pen' }> {
-  if (stroke.tool === 'line' || stroke.tool === 'arrow') {
-    const end: LineHandleRole = role === 'start' ? 'start' : 'end'
-    return { ...stroke, ...resizeLine(stroke, end, point, shift) }
-  }
-  if (stroke.tool !== 'text') {
+  if (isShapeStroke(stroke)) {
     const boxRole = (role === 'start' || role === 'end' ? 'se' : role) as BoxHandleRole
     return { ...stroke, region: resizeBox(stroke.region, boxRole, point, shift) }
   }
-  // 文字没有可缩的框，把手拖动归到平移（见 `moveStroke`）。
-  return stroke
+  if (stroke.tool === 'text') {
+    // 文字没有可缩的框，把手拖动归到平移（见 `moveStroke`）。
+    return stroke
+  }
+  const end: LineHandleRole = role === 'start' ? 'start' : 'end'
+  return { ...stroke, ...resizeLine(stroke, end, point, shift) }
 }

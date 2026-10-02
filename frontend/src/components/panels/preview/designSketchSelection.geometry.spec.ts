@@ -9,8 +9,10 @@ import {
   HANDLE_RADIUS,
   HANDLE_SPLIT,
   HANDLE_STROKE_WIDTH,
+  handleGrabRadius,
   isEmptyStroke,
   isSelectableStroke,
+  MIN_HANDLE_GRAB,
   moveRegion,
   moveStroke,
   nearestHandle,
@@ -25,6 +27,8 @@ import {
 } from './designSketchSelection'
 
 const box: RasterRegion = { x: 100, y: 100, width: 200, height: 100 }
+/** 抓取半径只对可编辑的标注有意义；自由笔不在这套里。 */
+type SketchShape = Exclude<SketchStroke, { tool: 'pen' }>
 
 describe('选中框的参数', () => {
   it('照参考物：虚线 5,4、把手半径 3.5、抓取半径 48、把手描边 1、文字框描边 1.5', () => {
@@ -117,6 +121,56 @@ describe('resizeRegion / resizeBox', () => {
     expect(resizeBox(box, 'se', { x: 400, y: 150 }, true)).toEqual({ x: 100, y: 100, width: 300, height: 300 })
     // 不按 Shift 就各算各的。
     expect(resizeBox(box, 'se', { x: 400, y: 150 }, false)).toEqual({ x: 100, y: 100, width: 300, height: 50 })
+  })
+
+  it('角 + Shift 拖过对角：框翻到锚点另一侧，不塌成零', () => {
+    // 锚点是右下角的对角 (100,100)，横向拖过了头（点跑到锚点左边）。只取 |dx| 重建，
+    // 边长 300 照旧，但框要翻到锚点左边去。
+    expect(resizeBox({ x: 100, y: 100, width: 100, height: 100 }, 'se', { x: 50, y: 400 }, true)).toEqual({
+      x: -200,
+      y: 100,
+      width: 300,
+      height: 300,
+    })
+  })
+
+  it('角 + Shift 从零点起步：边长至少 1，别锁死成 0', () => {
+    expect(resizeBox({ x: 0, y: 0, width: 0, height: 0 }, 'se', { x: 100, y: 50 }, true)).toEqual({
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 100,
+    })
+  })
+})
+
+describe('handleGrabRadius（抓取半径跟着对象收）', () => {
+  const rect = (width: number, height: number): SketchShape => ({
+    tool: 'rect',
+    color: '#000',
+    width: 2,
+    region: { x: 0, y: 0, width, height },
+  })
+
+  it('大到一定程度就是 48，不缩', () => {
+    expect(handleGrabRadius(rect(200, 200), 1, 1000)).toBe(HANDLE_HIT_RADIUS)
+  })
+
+  it('小对象收到半个短边，整支还抓得动', () => {
+    // 40x40：min(48, 20-1) = 19 —— 上边中点离角 20，判成拖动而不是缩放。
+    expect(handleGrabRadius(rect(40, 40), 1, 1000)).toBe(19)
+    // 小到 2x2 也不能变成零或负数。
+    expect(handleGrabRadius(rect(2, 2), 1, 1000)).toBe(MIN_HANDLE_GRAB)
+  })
+
+  it('线按长度收，两端点的圈不互相咬住', () => {
+    const line: SketchShape = { tool: 'line', color: '#000', width: 2, from: { x: 0, y: 0 }, to: { x: 60, y: 0 } }
+    expect(handleGrabRadius(line, 1, 1000)).toBe(29)
+  })
+
+  it('按屏上尺寸算：缩小显示时整支更好抓', () => {
+    // 原图 200x200，显示成 0.25 倍即屏上 50x50 → min(48, 25-1) = 24。
+    expect(handleGrabRadius(rect(200, 200), 0.25, 1000)).toBe(24)
   })
 })
 
