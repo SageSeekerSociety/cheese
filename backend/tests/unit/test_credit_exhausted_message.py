@@ -173,3 +173,58 @@ async def test_an_unstamped_stop_failure_keeps_todays_notice(db_factory, tmp_pat
     lines = await _system_event_lines(db_factory, topic_id)
     assert any("Invalid API key" in line for line in lines)
     assert CREDITS_EXHAUSTED_EVENT not in lines
+
+
+@pytest.mark.anyio
+async def test_a_refused_turn_ending_says_when_the_credits_come_back(
+    db_factory, tmp_path
+):
+    """The turn's own end repeats what admission said: the month is spent and
+    the day it resets, not a bare "spent"."""
+    from app.domain.topic.services import TopicService
+    from app.domain.usage.ledger import Ledger, month_end, month_of, payer_for_project
+    from tests.integration.conftest import set_free_plan_credits
+
+    topic_id = await a_topic(db_factory)
+    turn_id = uuid.uuid4()
+    async with db_factory() as session:
+        await set_free_plan_credits(session, 1)
+        topic = await TopicService(session).get(topic_id)
+        assert topic is not None
+        payer = await payer_for_project(session, topic.project_id)
+        await Ledger(session).record(
+            payer,
+            credits=1,
+            model="m",
+            input_tokens=1,
+            output_tokens=1,
+            cost_usd=0.0,
+            route="gateway",
+        )
+        await AgentTurnRepository(session).open(
+            turn_id=turn_id,
+            topic_id=topic_id,
+            continuation_id=turn_id,
+            author="u",
+            content="做事",
+            is_resume=False,
+            resendable=False,
+            started_at=datetime.now(UTC),
+        )
+        await AgentTurnRepository(session).mark_credits_refused(
+            turn_id, datetime.now(UTC)
+        )
+        await session.commit()
+
+    chat = ChatService(
+        session_factory=db_factory,
+        compute=stub_compute(_CreditsRefusedScreen()),
+        base_system_prompt="你是芝士。",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    await _run_refused_turn(chat, topic_id, turn_id)
+
+    resets = month_end(month_of(datetime.now(UTC)))
+    lines = await _system_event_lines(db_factory, topic_id)
+    assert any(f"{resets.month}月{resets.day}日重置" in line for line in lines)
+    assert not any("Invalid API key" in line for line in lines)
