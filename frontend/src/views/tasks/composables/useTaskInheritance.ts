@@ -26,6 +26,10 @@ export function useTaskInheritance(taskId: MaybeRefOrGetter<number | null | unde
   async function load() {
     const id = toValue(taskId)
     if (!id) {
+      // 空也当一次「换了一道题」：号一加，在途的那一份回来时就对不上，丢掉。
+      // 少了这一下，题被清空（对话框关掉、题撤下）之后，上一个请求的响应还会
+      // 把已经作废的清单写回屏幕上。
+      seq += 1
       inheritance.value = null
       loadedFor.value = null
       inFlight.value = null

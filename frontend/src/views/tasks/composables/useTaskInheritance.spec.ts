@@ -71,6 +71,24 @@ describe('会继承什么：取数那一半', () => {
     expect(inheritance.value?.resourcePack).toEqual({ compute_credits: 200 })
   })
 
+  it('在途时被清空：晚到的旧响应不许把清单写回来', async () => {
+    const first = deferred()
+    mocks.inheritance.mockImplementation(() => first.promise)
+
+    const taskId = ref<number | null>(1)
+    const { inheritance } = useTaskInheritance(taskId)
+    expect(mocks.inheritance).toHaveBeenCalledWith(1)
+
+    // 还没回来，题已经空了（对话框关掉、题被撤下）。
+    taskId.value = null
+    await nextTick()
+
+    first.resolve({ data: payload(1) })
+    await flush()
+
+    expect(inheritance.value).toBeNull()
+  })
+
   it('同一道题不重复取', async () => {
     mocks.inheritance.mockResolvedValue({ data: payload(7) })
     const taskId = ref<number | null>(7)
