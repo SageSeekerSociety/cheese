@@ -26,7 +26,7 @@ SENTENCE = "Claude Code 启动失败：这个房间的工作电脑还在准备"
 
 
 class DiesOnItsWayUp(StubChannel):
-    async def ensure(self, session, opening):
+    async def ensure(self, session, opening, live=None):
         del session, opening
         raise startup_refused(LOG, harness="Claude Code")
 

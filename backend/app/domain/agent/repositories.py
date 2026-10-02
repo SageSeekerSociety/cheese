@@ -33,6 +33,10 @@ class TurnRecord:
     delivered_at: datetime | None
     # The seat this turn ran in, None when it was never assembled.
     agent_handle: str | None = None
+    # The conversation this turn ran in (FB-56 legacy③): the identity a
+    # termination is matched by. None for rows written before it was
+    # recorded — and those are not attributable to any conversation's death.
+    session_id: str | None = None
 
     @property
     def delivered(self) -> bool:
@@ -61,6 +65,7 @@ class AgentTurnRepository:
         started_at: datetime,
         delivered_at: datetime | None = None,
         agent_handle: str | None = None,
+        session_id: str | None = None,
         exists_ok: bool = False,
     ) -> None:
         # `delivered_at` is for a turn that has no 投喂 phase to stamp later — it
@@ -83,6 +88,7 @@ class AgentTurnRepository:
                     started_at=started_at,
                     delivered_at=delivered_at,
                     agent_handle=agent_handle,
+                    session_id=session_id,
                 )
                 .on_conflict_do_nothing(index_elements=[AgentTurn.id])
             )
@@ -98,6 +104,7 @@ class AgentTurnRepository:
                 resendable=resendable,
                 started_at=started_at,
                 delivered_at=delivered_at,
+                session_id=session_id,
                 agent_handle=agent_handle,
             )
         )
@@ -253,12 +260,16 @@ class AgentTurnRepository:
             .values(stopped_at=at)
         )
 
-    async def close_for_topic(self, topic_id: uuid.UUID, at: datetime) -> int:
-        """End every DELIVERED open interval on one topic; returns how many.
+    async def close_one(
+        self, topic_id: uuid.UUID, turn_id: uuid.UUID, at: datetime
+    ) -> int:
+        """End exactly one DELIVERED open interval, the one the Stop names (FB-56).
 
-        What the harness's Stop acts on: it says the session finished, not which
-        turn id the platform had filed that under — and after a restart those
-        are not the same thing, because the coroutine holding the id is gone.
+        The harness's Stop ends the session's current work, and the event
+        carries that work's id end to end: the platform fed the session with
+        ``work_id=turn_id`` and the session stamps it back. So the row the
+        Stop may close is the one it names — never a neighbour's, a second
+        teammate still working least of all.
 
         Delivered, because the interval is 投喂 → Stop and a turn that was never
         fed cannot be what this Stop is ending. A turn spends its first seconds
@@ -267,10 +278,15 @@ class AgentTurnRepository:
         that window would otherwise close it, and a turn with no open interval is
         invisible to every future sweep — the silent death this table exists to
         end. Its own coroutine closes it by id, delivered or not.
+
+        An id that names no such row — stale, replayed, or simply not this
+        room's — closes nothing: the owner cannot be located, and guessing a
+        scope for it is how a teammate's turn dies.
         """
         result = await self._session.execute(
             update(AgentTurn)
             .where(
+                AgentTurn.id == turn_id,
                 AgentTurn.topic_id == topic_id,
                 # The room's own line. A Stop is the room's session finishing,
                 # and the intervals a thread left behind when work was still a
@@ -324,6 +340,7 @@ class AgentTurnRepository:
                 delivered_at=(
                     None if row.delivered_at is None else _aware(row.delivered_at)
                 ),
+                session_id=row.session_id,
                 agent_handle=row.agent_handle,
             )
             for row in rows

@@ -39,7 +39,6 @@ import type {
   MarketNodes,
   MarketPools,
   MemberSummary,
-  MilestoneFull,
   OAuthConnectionInfo,
   OverviewAuto,
   PrChecks,
@@ -74,6 +73,7 @@ import { createPreviewPdfReader } from './lib/previewPdf'
 import { refreshSession } from './lib/session'
 import { TOPIC_TITLE_MAX_LENGTH } from './lib/topicTitle'
 import { isTransportFailure, transportFailureMessage } from './lib/transportFailure'
+import { t } from './i18n'
 
 export { TOPIC_TITLE_MAX_LENGTH }
 
@@ -159,7 +159,7 @@ export class ApiError extends Error {
 
 export class RequestTimeoutError extends Error {
   constructor() {
-    super('请求等待超时，请重试')
+    super(t('global.request.timeout'))
     this.name = 'RequestTimeoutError'
   }
 }
@@ -171,14 +171,14 @@ async function withinBudget<T>(
   ms: number,
   outer?: AbortSignal | null
 ): Promise<T> {
-  if (outer?.aborted) throw outer.reason ?? new DOMException('请求已取消', 'AbortError')
+  if (outer?.aborted) throw outer.reason ?? new DOMException(t('global.request.canceled'), 'AbortError')
   const controller = new AbortController()
   let timer: ReturnType<typeof setTimeout> | undefined
   let onAbort: (() => void) | undefined
   const cancelled = new Promise<never>((_, reject) => {
     onAbort = () => {
       controller.abort(outer?.reason)
-      reject(outer?.reason ?? new DOMException('请求已取消', 'AbortError'))
+      reject(outer?.reason ?? new DOMException(t('global.request.canceled'), 'AbortError'))
     }
     if (outer?.aborted) onAbort()
     else outer?.addEventListener('abort', onAbort, { once: true })
@@ -350,7 +350,7 @@ async function performRequest<T>(path: string, init?: RequestInit): Promise<T> {
       const serverSaid = refusalText(body, details.error?.message || details.message || '')
       throw new ApiError(
         res.status,
-        serverSaid || `请求失败（HTTP ${res.status}）`,
+        serverSaid || t('global.request.failed', { status: res.status }),
         details.error?.name,
         res.headers?.get('X-Request-ID') ?? undefined,
         details.error?.retryable
@@ -590,7 +590,7 @@ export function listProjectsForTask(taskId: number): Promise<ListPayload<Project
   return request<ListPayload<Project>>(`/projects/by-task/${taskId}`)
 }
 
-// Single project card (includes `summary`, the 一页纸总结).
+// Single project card.
 export function getProject(projectId: string): Promise<Project> {
   return request<Project>(`/projects/${encodeURIComponent(projectId)}`)
 }
@@ -634,11 +634,6 @@ export function requestSiteSession(projectId: string): Promise<{ url: string; gr
     method: 'POST',
   })
 }
-
-// NOTE: there is deliberately no `generateSummary` wrapper here. The POST it
-// called is parked (see `backend/app/api/routes/activities.py`), so keeping the
-// wrapper would only leave a 404 waiting for its first caller. `summary` still
-// arrives on the project card above — it just has no trigger in the UI.
 
 // A 1:1 private chat as a normal Topic (open the chat WS on its id). `peerHandle`
 // is a person-to-person DM between the two humans (shared by both); `agentHandle`
@@ -890,11 +885,11 @@ export function unarchiveTopic(topicId: string, by: string): Promise<Topic> {
 // 房间里的消息升级出来的是一条**支线**；私聊里的升级出来的是一个真房间——私聊
 // 不在话题树里，支线在那儿没人打得开。所以回答有两种形状。
 /** 升级一条消息。房间里的消息变成这个房间的一张**卡**（回来的是 RoomTask），
- *  私聊里的变成一个新房间（回来的是 Topic）。 */
-export function upgradeBlock(blockId: string, createdBy: string): Promise<Topic | RoomTask> {
+ *  私聊里的变成一个新房间（回来的是 Topic）。升级的人由会话认，不由请求体说。 */
+export function upgradeBlock(blockId: string): Promise<Topic | RoomTask> {
   return request<Topic | RoomTask>(`/blocks/${encodeURIComponent(blockId)}/upgrade`, {
     method: 'POST',
-    body: JSON.stringify({ created_by: createdBy }),
+    body: JSON.stringify({}),
   })
 }
 
@@ -1329,17 +1324,17 @@ export function listBlocks(
   return request<BlockPage>(`/topics/${encodeURIComponent(topicId)}/blocks${query}`)
 }
 
-// Emoji reactions (Slack semantics): toggles (emoji, author) on a block and
-// returns the block's fresh aggregate. Other clients get the same aggregate
-// pushed as a `reaction` WS frame on the topic channel.
+// Emoji reactions (Slack semantics): toggles (emoji, caller) on a block and
+// returns the block's fresh aggregate. The caller is whoever the session names.
+// Other clients get the same aggregate pushed as a `reaction` WS frame on the
+// topic channel.
 export function toggleReaction(
   blockId: string,
-  emoji: string,
-  author: string
+  emoji: string
 ): Promise<{ toggled: 'added' | 'removed'; reactions: ReactionAgg[] }> {
   return request<{ toggled: 'added' | 'removed'; reactions: ReactionAgg[] }>(
     `/blocks/${encodeURIComponent(blockId)}/reactions`,
-    { method: 'POST', body: JSON.stringify({ emoji, author }) }
+    { method: 'POST', body: JSON.stringify({ emoji }) }
   )
 }
 
@@ -1601,7 +1596,7 @@ export async function artifactVersionBytes(
   } catch {
     /* Keep the HTTP error when the server sent no JSON. */
   }
-  throw new Error(message || `未能读取这一版（HTTP ${response.status}）`)
+  throw new Error(message || t('global.request.versionReadFailed', { status: response.status }))
 }
 
 export function getProjectArtifact(projectId: string, artifactId: string): Promise<ProjectArtifactDetail> {
@@ -1685,7 +1680,7 @@ export async function attachLibraryFile(topicId: string, libraryPath: string): P
   })
   const envelope = (await res.json().catch(() => null)) as ApiEnvelope<ChatAttachment> | null
   if (!res.ok || !envelope || envelope.code !== 200) {
-    throw new Error(envelope?.message || `添加失败（HTTP ${res.status}）`)
+    throw new Error(envelope?.message || t('global.request.addFailed', { status: res.status }))
   }
   return envelope.data
 }
@@ -1710,7 +1705,7 @@ export async function uploadAttachment(
   })
   const envelope = (await res.json().catch(() => null)) as ApiEnvelope<ChatAttachment> | null
   if (!res.ok || !envelope || envelope.code !== 200) {
-    throw new Error(envelope?.message || `上传失败（HTTP ${res.status}）`)
+    throw new Error(envelope?.message || t('global.request.uploadFailed', { status: res.status }))
   }
   return envelope.data
 }
@@ -1740,7 +1735,7 @@ export function attachmentRawUrl(
  */
 export async function attachmentImageUrl(topicId: string, path: string): Promise<string> {
   const res = await fetch(attachmentRawUrl(topicId, path), { headers: authHeaders() })
-  if (!res.ok) throw new Error(`图片加载失败（HTTP ${res.status}）`)
+  if (!res.ok) throw new Error(t('global.request.imageFailed', { status: res.status }))
   return URL.createObjectURL(await res.blob())
 }
 
@@ -1756,7 +1751,7 @@ export async function previewFileBytes(
   const res = await fetch(`${attachmentRawUrl(topicId, path, task, source)}&download=true`, {
     headers: authHeaders(),
   })
-  if (!res.ok) throw new Error(`读取文件失败（HTTP ${res.status}）`)
+  if (!res.ok) throw new Error(t('global.request.fileReadFailed', { status: res.status }))
   return res.arrayBuffer()
 }
 
@@ -1818,7 +1813,7 @@ export async function previewDocumentPdf(
 // Downloads carry the same credentials as API requests, including token-only sessions.
 export async function downloadFile(rawUrl: string, filename: string): Promise<void> {
   const res = await fetch(`${rawUrl}${rawUrl.includes('?') ? '&' : '?'}download=true`, { headers: authHeaders() })
-  if (!res.ok) throw new Error(`下载失败（HTTP ${res.status}）`)
+  if (!res.ok) throw new Error(t('global.request.downloadFailed', { status: res.status }))
   const url = URL.createObjectURL(await res.blob())
   const link = document.createElement('a')
   link.href = url
@@ -1835,7 +1830,7 @@ export function getDoc(topicId: string): Promise<Block | null> {
   return request<Block | null>(`/topics/${encodeURIComponent(topicId)}/doc`)
 }
 
-// 项目总览的自动区 (#1889): the overview room's ②~④, structured so the doc
+// 项目总览的自动区 (#1889): the overview room's ②③, structured so the doc
 // panel can render them below the body and make each line clickable. Only the
 // project's root topic has one — any other room answers 404 — and the caller
 // must be able to read the room, same as the doc itself.
@@ -1897,14 +1892,6 @@ export function addComment(
 // the room it was written in via `topic_id`.
 export function getProjectWeeklies(projectId: string): Promise<ListPayload<Block>> {
   return request<ListPayload<Block>>(`/projects/${encodeURIComponent(projectId)}/weeklies`)
-}
-
-// 选项问题 (cheese_ask): one-click answer.
-export function answerOptions(blockId: string, option: string, author: string): Promise<Block> {
-  return request<Block>(`/topics/blocks/${encodeURIComponent(blockId)}/answer`, {
-    method: 'POST',
-    body: JSON.stringify({ option, author }),
-  })
 }
 
 // 叫芝士现在就读它还没读到的消息（一轮失败之后的「重试」）。不发新消息 —— 那些
@@ -2340,18 +2327,6 @@ export function sayOnRoomTask(roomId: string, taskId: string, content: string, a
     method: 'POST',
     body: JSON.stringify({ content, author }),
   })
-}
-
-// ---- 日历 / 里程碑 (§7.2) ----
-
-// Upcoming milestones (already sorted by due date).
-export function getCalendar(projectId: string): Promise<ListPayload<MilestoneFull>> {
-  return request<ListPayload<MilestoneFull>>(`/projects/${encodeURIComponent(projectId)}/calendar`)
-}
-
-// All milestones (any status), for showing done ones faded.
-export function listMilestones(projectId: string): Promise<ListPayload<MilestoneFull>> {
-  return request<ListPayload<MilestoneFull>>(`/projects/${encodeURIComponent(projectId)}/milestones`)
 }
 
 // ---- 反馈 (feedback) ----
@@ -3417,16 +3392,15 @@ export async function downloadRoomFileRevision(topicId: string, revision: RoomFi
     `${BASE}/topics/${encodeURIComponent(topicId)}/files/revisions/${encodeURIComponent(revision.id)}/raw`,
     { headers: authHeaders() }
   )
-  if (!res.ok) throw new Error(`下载失败（HTTP ${res.status}）`)
+  if (!res.ok) throw new Error(t('global.request.downloadFailed', { status: res.status }))
   const blob = await res.blob()
   const leaf = revision.path.split('/').pop() ?? 'file'
   const dot = leaf.lastIndexOf('.')
-  const name =
-    dot > 0 ? `${leaf.slice(0, dot)}（第${revision.seq}版）${leaf.slice(dot)}` : `${leaf}（第${revision.seq}版）`
+  const [base, ext] = dot > 0 ? [leaf.slice(0, dot), leaf.slice(dot)] : [leaf, '']
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = name
+  a.download = t('global.request.revisionFileName', { name: base, seq: revision.seq, ext })
   a.click()
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }

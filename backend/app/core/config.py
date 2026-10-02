@@ -645,9 +645,9 @@ class Settings(BaseSettings):
     microcloud_account_name: str = "compute"
     microcloud_initial_funds: float = 1000.0
     # How long a SETTLED machine may go without being re-checked against
-    # MicroCloud. Zero would put a provider round-trip on every read; never
-    # would let a machine destroyed upstream sit here as `running` forever
-    # (which happened, and also consumed the per-project limit).
+    # MicroCloud by the sweep. Never would let a machine destroyed upstream sit
+    # here as `running` forever (which happened, and also consumed the
+    # per-project limit).
     microcloud_reconcile_interval_s: float = 120.0
     # How often to sweep for machines that came up and still need enrolling as
     # devices. Ten seconds, not sixty: a Cloud topic's first turn waits on this

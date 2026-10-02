@@ -1496,6 +1496,69 @@ def journal(binary, root):
         stop_remote(session)
 
 
+def streamed(kind, block=None, delta=None):
+    """A main-thread `stream_event` of this kind, starting a block of type
+    `block` or carrying a delta of type `delta`."""
+
+    def match(event):
+        inner = event.get("event") or {}
+        started = (inner.get("content_block") or {}).get("type")
+        carried = (inner.get("delta") or {}).get("type")
+        return (
+            event.get("type") == "stream_event"
+            and event.get("parent_tool_use_id") is None
+            and inner.get("type") == kind
+            and block in (None, started)
+            and delta in (None, carried)
+        )
+
+    return match
+
+
+def partial(binary, root):
+    """The block being written, streamed while it is written: what the runner
+    shows and never journals (`claude_code/runner.py` `stream`)."""
+    session = Session(binary, root, "partial", DRIVER)
+    try:
+        mark = session.user(do("Bash", command="echo PARTIAL", description="say it"))
+        end, _ = session.wait(is_("result"), 90, mark)
+        assert end is not None, "the turn never ended"
+        start, opened = session.wait(
+            streamed("content_block_start", "tool_use"), 1, mark
+        )
+        arguments = [
+            (event["event"]["delta"].get("partial_json") or "")
+            for event in session.events[mark:end]
+            if streamed("content_block_delta", delta="input_json_delta")(event)
+        ]
+        yield (
+            "a tool call starts with its name and its arguments stream as raw JSON",
+            opened is not None
+            and opened["event"]["content_block"].get("name") == "Bash"
+            and json.loads("".join(arguments)).get("command") == "echo PARTIAL",
+            json.dumps({"start": opened and opened["event"], "arguments": arguments}),
+        )
+        text = [
+            event["event"]["delta"].get("text") or ""
+            for event in session.events[mark:end]
+            if streamed("content_block_delta", delta="text_delta")(event)
+        ]
+        yield (
+            "text streams as text_delta",
+            "".join(text) == "ACCEPTANCE_DONE",
+            json.dumps(text),
+        )
+        record, _ = session.wait(is_("assistant"), 1, start or mark)
+        stop, _ = session.wait(streamed("content_block_stop"), 1, start or mark)
+        yield (
+            "a finished block's assistant record comes before its content_block_stop",
+            None not in (start, record, stop) and start < record < stop,
+            f"start at {start}, assistant at {record}, stop at {stop}",
+        )
+    finally:
+        session.stop()
+
+
 def remote(binary, root, name, args, env=None, trusted_hook=None, untrusted_hook=None):
     """A -p session launched the way a room's central session is, against a local executor.
 
@@ -1763,6 +1826,7 @@ SCENARIOS = {
     "nesting": nesting,
     "unattended": unattended,
     "journal": journal,
+    "partial": partial,
     "functionhooks": functionhooks,
     "remotebackground": remotebackground,
 }

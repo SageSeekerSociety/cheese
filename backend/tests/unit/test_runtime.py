@@ -108,6 +108,31 @@ async def test_reaction_frames_fan_out_but_never_buffer():
 
 
 @pytest.mark.anyio
+async def test_what_an_agent_is_writing_is_live_only(monkeypatch):
+    """A draft goes to whoever watches the room now and is kept nowhere: a
+    client that joins mid-turn is not handed an old one."""
+    from app.domain.agent import runtime as agent_runtime
+    from app.domain.agent.live_frames import publish_live
+
+    broker = InProcessBroker()
+    monkeypatch.setattr(agent_runtime, "get_broker", lambda: broker)
+    topic, turn = uuid.uuid4(), uuid.uuid4()
+    await broker.publish(str(topic), {"type": "turn_started", "turn_id": str(turn)})
+    async with broker.subscribe(str(topic)) as q:
+        await publish_live(topic, turn, "cheese", [{"type": "text", "text": "Hel"}])
+        frame = await asyncio.wait_for(q.get(), 1)
+    assert frame == {
+        "type": "live",
+        "turn_id": str(turn),
+        "agent": "cheese",
+        "blocks": [{"type": "text", "text": "Hel"}],
+    }
+    async with broker.subscribe(str(topic), replay=True) as q:
+        replayed = [q.get_nowait()["type"] for _ in range(q.qsize())]
+    assert replayed == ["turn_started"]
+
+
+@pytest.mark.anyio
 async def test_replay_catches_up_a_mid_turn_subscriber():
     # R3: a connection that subscribes mid-turn gets the in-progress frames.
     broker = InProcessBroker()
@@ -1005,21 +1030,129 @@ async def test_sweep_spares_a_turn_grinding_through_tools(db_factory):
 
 
 class _SweepChat:
-    """The two things a sweep asks of a ChatService, and a log of what it said."""
+    """The three things a sweep asks of a ChatService, and a log of what it said."""
 
-    def __init__(self, db_factory, *, live_screen: bool = False):
+    def __init__(
+        self,
+        db_factory,
+        *,
+        live_screen: bool = False,
+        seat_state: str | None = None,
+        dead_sessions: set[str] = frozenset(),
+    ):
         self.session_factory = db_factory
         self._live_screen = live_screen
+        self._seat_state = seat_state or ("live" if live_screen else "dead")
+        # Conversations with real termination evidence — the double's stand-in
+        # for ChatService._dead_sessions. A seat flag is NOT evidence (FB-56):
+        # a row closes only when its own conversation is in here.
+        self._dead_sessions = set(dead_sessions)
         self.texts: list[str] = []
 
     def has_live_screen(self, topic_id, agent_handle=None):
         del topic_id
         return self._live_screen
 
+    def seat_state(self, topic_id, agent_handle):
+        del topic_id, agent_handle
+        return self._seat_state
+
+    def row_is_dead(self, topic_id, agent_handle, session_id):
+        del topic_id, agent_handle
+        if session_id is None:
+            return False
+        return session_id in self._dead_sessions
+
     async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
         del topic_id, turn_id, meta
         self.texts.append(text)
         return {"id": "b1", "content": text}
+
+
+@pytest.mark.anyio
+async def test_a_rejected_takeover_does_not_close_the_still_living_predecessor(
+    db_factory,
+):
+    """T 把 standing 写成了自己（send 时），随即被拒，而 S 还在那个会话上
+    真的跑着：standing ≠ S 不是 S 的证据，seat 还活着，sweep 一个行都不关
+    （FB-56 legacy③ 修正 1——相等才作保守保留，不等不作任何推断）。"""
+    topic = await a_topic(db_factory)
+    turn_s = await open_turn(db_factory, topic, delivered=True, age_s=3600)
+    runner = AgentWorkRunner(InProcessBroker())
+    chat = _SweepChat(db_factory, live_screen=True, seat_state="live")
+    resumed = await runner.sweep_orphans(chat)
+    row = await turn_row(db_factory, turn_s)
+    assert row.stopped_at is None, "seat 活着：S 被判 adopted，standing 怎么写都不关"
+    assert resumed == 0
+
+
+@pytest.mark.anyio
+async def test_an_unjudged_seat_keeps_its_rows_open(db_factory):
+    """seat 没人持有、也没人看见它死（unknown）：sweep 在收集 orphan 之前就
+    把它排除——行保持 open，不是被 fallback 判死（FB-56 legacy③ 修正 2）。"""
+    topic = await a_topic(db_factory)
+    turn_s = await open_turn(db_factory, topic, delivered=True, age_s=3600)
+    runner = AgentWorkRunner(InProcessBroker())
+    chat = _SweepChat(db_factory, live_screen=False, seat_state="unknown")
+    resumed = await runner.sweep_orphans(chat)
+    row = await turn_row(db_factory, turn_s)
+    assert row.stopped_at is None, "unknown 不是 dead：不收、不关"
+    assert resumed == 0
+
+
+@pytest.mark.anyio
+async def test_a_delivered_row_without_a_death_probe_is_unknown_not_dead(db_factory):
+    """探针缺失 = 观测缺失（FB-56 legacy③）：double 连 row_is_dead 都没有时，
+    delivered 行保持 open——「没有探针」不能当「死了」用，正对照见下一条
+    dead_seats_rows（有精确来源证据才收）。未 delivered 行的 dispatch/retry
+    分支不受影响。"""
+    topic = await a_topic(db_factory)
+    turn_s = await open_turn(
+        db_factory, topic, delivered=True, age_s=3600, resendable=False
+    )
+
+    class _NoProbe:
+        def __init__(self, factory) -> None:
+            self.session_factory = factory
+            self.texts: list[str] = []
+
+        def has_live_screen(self, topic_id, agent_handle=None):
+            del topic_id, agent_handle
+            return False
+
+        async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
+            del topic_id, turn_id, meta
+            self.texts.append(text)
+            return {"id": "b1", "content": text}
+
+    runner = AgentWorkRunner(InProcessBroker())
+    chat = _NoProbe(db_factory)
+    resumed = await runner.sweep_orphans(chat)
+    row = await turn_row(db_factory, turn_s)
+    assert row.stopped_at is None, "探针缺失=unknown：不收、不关"
+    assert resumed == 0
+    assert chat.texts == [], "没有收殓就没有收殓公告"
+
+
+@pytest.mark.anyio
+async def test_a_dead_seats_rows_are_still_claimed(db_factory):
+    """unknown 的对照：行自己的会话有真实终止证据时，行照既有规则收殓。
+    证据跟着会话走（dead_sessions 点名的是那一条 conversation），不跟着
+    seat 的状态旗走 —— seat 状态本身不是证据（FB-56）。"""
+    topic = await a_topic(db_factory)
+    turn_s = await open_turn(
+        db_factory,
+        topic,
+        delivered=True,
+        age_s=3600,
+        resendable=False,
+        session_id="sess-s-dead",
+    )
+    runner = AgentWorkRunner(InProcessBroker())
+    chat = _SweepChat(db_factory, live_screen=False, dead_sessions={"sess-s-dead"})
+    await runner.sweep_orphans(chat)
+    row = await turn_row(db_factory, turn_s)
+    assert row.stopped_at is not None, "有真实终止证据：照既有规则收殓"
 
 
 # 会话被自己的 worker 唤醒、自己跑完的那一轮：署的是这个房间的席位 handle，而
@@ -1032,7 +1165,7 @@ async def test_a_self_started_turn_opens_an_interval_nothing_will_re_send(db_fac
     """会话自己开的一轮也是一轮 —— 但它是**没有提示词**的那一种。
 
     没人喂过它，所以没有原文可以重发；`resendable` 为假就是这件事写进表里。而
-    `delivered` 反过来必须盖上：`close_for_topic` 只关送达过的行，一行永远关不掉
+    `delivered` 必须盖上：Stop 的 `close_one` 只关送达过的那**一**行，一行永远关不掉
     的轮次比没有这一行更糟。
     """
     topic = await a_topic(db_factory)
@@ -1096,6 +1229,9 @@ async def test_a_self_started_turn_that_went_quiet_is_swept_but_not_re_sent(db_f
     而它的屏幕是房间自己的、在它背后那件事早就停了以后照样答「我还在」（所以
     `_adopted` 一直说是）。不让收尸看见它，这一行就永远开着。
 
+    静默只让它成为候选（wedged 绕过 `_adopted`）；关掉它靠的是它归属的那条
+    会话有真实终止证据 —— 没有证据的 quiet 行不关，见下面那条反例。
+
     收得掉，但**绝不重发** —— 它压根没有可发的东西。
     """
     from datetime import UTC, datetime, timedelta
@@ -1103,10 +1239,15 @@ async def test_a_self_started_turn_that_went_quiet_is_swept_but_not_re_sent(db_f
     topic = await a_topic(db_factory)
     turn_id = uuid.uuid4()
     runner = AgentWorkRunner(InProcessBroker())
-    # 屏幕还活着 —— 这正是老路放过它的原因。
-    chat = _SweepChat(db_factory, live_screen=True)
+    # 屏幕还活着 —— 这正是老路放过它的原因；收殓证据是这条会话真的死了。
+    chat = _SweepChat(db_factory, live_screen=True, dead_sessions={"sess-quiet-1"})
     await runner.open_turn_the_session_started(
-        chat, topic, turn_id, author=_SESSION_SEAT, agent_handle="cheese"
+        chat,
+        topic,
+        turn_id,
+        author=_SESSION_SEAT,
+        agent_handle="cheese",
+        session_id="sess-quiet-1",
     )
     runner._last_frame_at[str(turn_id)] = time.monotonic() - 3 * 3600
 
@@ -1123,6 +1264,43 @@ async def test_a_self_started_turn_that_went_quiet_is_swept_but_not_re_sent(db_f
     # 内存里的标记也得跟着走，否则下一次收尸会再捡一遍同一具尸体。
     assert str(turn_id) not in runner._last_frame_at
     assert str(turn_id) not in runner._live_topics
+
+
+@pytest.mark.anyio
+async def test_a_quiet_turn_whose_conversation_was_never_seen_dead_stays_open(
+    db_factory,
+):
+    """quiet 不是证据（FB-56）：和上面那条同样安静了 3 小时、同样没有协程、
+    屏幕同样答「我还在」，但它归属的会话从来没有真实终止证据 —— 没被看见死，
+    也没被恢复时的完整枚举排除。unknown 的行保持 open，收尸不动它、不发公告。"""
+    from datetime import UTC, datetime, timedelta
+
+    topic = await a_topic(db_factory)
+    turn_id = uuid.uuid4()
+    runner = AgentWorkRunner(InProcessBroker())
+    chat = _SweepChat(db_factory, live_screen=True)
+    await runner.open_turn_the_session_started(
+        chat,
+        topic,
+        turn_id,
+        author=_SESSION_SEAT,
+        agent_handle="cheese",
+        session_id="sess-quiet-unknown",
+    )
+    runner._last_frame_at[str(turn_id)] = time.monotonic() - 3 * 3600
+
+    async def _last_block(topic_ids):
+        assert topic_ids == {topic}
+        return {topic: datetime.now(UTC) - timedelta(hours=3)}
+
+    remedied = await runner.sweep_orphans(
+        chat, min_age_s=0.0, last_activity=_last_block
+    )
+    assert remedied == 0
+    assert await open_turn_ids(db_factory) == {turn_id}, (
+        "quiet 但 native 未知：不关、不收"
+    )
+    assert chat.texts == [], "没有收殓就没有收殓公告"
 
 
 @pytest.mark.anyio

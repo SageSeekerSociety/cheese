@@ -106,20 +106,22 @@ describe('侧栏那只慢钟', () => {
   // 已经不早了、但还没到五分钟：挂载那一刻什么都不该亮。
   function waitingTopic(minutes: number): Topic[] {
     const since = new Date(Date.now() - minutes * 60_000).toISOString()
-    return topics.map((t) => (t.id === 'a' ? ({ ...t, awaiting_reply_since: since } as Topic) : t))
+    return topics.map((t) =>
+      t.id === 'a' ? ({ ...t, waits: [{ member: 'cheese-a1', reason: 'mention', since }] } as Topic) : t
+    )
   }
 
-  it('时间自己走满五分钟，红灯不用等下一次刷新就亮起来', async () => {
+  it('时间自己走满五分钟，红标不用等下一次刷新就亮起来', async () => {
     // 假钟必须在挂载**之前**装上：这只钟是 onMounted 里上的发条。
     vi.useFakeTimers()
     const { container } = mount({ topics: waitingTopic(4.5) })
     await nextTick()
-    expect(rowFor(container, 'a').querySelector('.stalled-dot')).toBeNull()
+    expect(rowFor(container, 'a').querySelector('[data-state="stalled"]')).toBeNull()
 
     // 没有换过任何一份数据，只是钟往前走了 —— 灯要自己亮。
     await vi.advanceTimersByTimeAsync(60_000)
     await nextTick()
-    expect(rowFor(container, 'a').querySelector('.stalled-dot')).not.toBeNull()
+    expect(rowFor(container, 'a').querySelector('[data-state="stalled"]')).not.toBeNull()
   })
 
   it('还没到点就不亮：钟走过去之前，多拨几下也还是暗的', async () => {
@@ -129,7 +131,7 @@ describe('侧栏那只慢钟', () => {
     // 三次滴答 = 三十秒，离五分钟还远。
     await vi.advanceTimersByTimeAsync(30_000)
     await nextTick()
-    expect(rowFor(container, 'a').querySelector('.stalled-dot')).toBeNull()
+    expect(rowFor(container, 'a').querySelector('[data-state="stalled"]')).toBeNull()
   })
 
   it('没在等的话题不受影响：拨多久都不会亮', async () => {
@@ -137,14 +139,14 @@ describe('侧栏那只慢钟', () => {
     const { container } = mount({ topics: waitingTopic(4.5) })
     await vi.advanceTimersByTimeAsync(10 * 60_000)
     await nextTick()
-    expect(rowFor(container, 'b').querySelector('.stalled-dot')).toBeNull()
+    expect(rowFor(container, 'b').querySelector('[data-state="stalled"]')).toBeNull()
   })
 
   it('红灯那一句说的是谁在等、等了多久', async () => {
     vi.useFakeTimers()
     const { container } = mount({ topics: waitingTopic(10) })
     await nextTick()
-    const dot = rowFor(container, 'a').querySelector('.stalled-dot') as HTMLElement
+    const dot = rowFor(container, 'a').querySelector('[data-state="stalled"]') as HTMLElement
     expect(dot.title).toContain('分钟')
     expect(dot.title).not.toBe('')
   })

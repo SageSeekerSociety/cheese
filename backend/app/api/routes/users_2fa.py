@@ -54,11 +54,8 @@ from typing import Annotated
 from fastapi import APIRouter, Body, Depends, Path
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.routes.users import (
-    PasskeyRepository,
-    SudoTicketRequest,
-    get_user_auth_service,
-)
+from app.api.deps import get_user_auth_service
+from app.api.routes.users import PasskeyRepository, SudoTicketRequest
 from app.api.routes.users_common import _spend_sudo_ticket
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo

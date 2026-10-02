@@ -42,6 +42,7 @@ class Journal(journal.Journal):
                 "INSERT INTO records(recorded_at, record) VALUES (?, ?)",
                 (datetime.now(UTC).isoformat(), json.dumps(record)),
             )
+        self.grew()
 
     def import_page(self, rows: list[dict]) -> None:
         with self.connection:

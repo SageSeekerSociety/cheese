@@ -158,9 +158,9 @@ before you type user-facing Chinese:
   (can't). Buttons are verbs that say what happens; a confirm dialog's button
   repeats the action (`移出`), not `确定`. No dashes, no exclamation marks.
 - **No implementation words on screen.** 跑沙箱 / 干活 → 运行任务; system prompt /
-  注入 → 角色设定; 算力节点 / 连接器 → 设备; 小队 → 团队; 一页纸总结 → 概要;
-  知是基座 → 默认镜像. Test: *would someone opening this product for the first
-  time understand the word?* If not, it is jargon. §8.2 carries the running list
+  注入 → 角色设定; 算力节点 / 连接器 → 设备; 小队 → 团队; 知是基座 → 默认镜像.
+  Test: *would someone opening this product for the first time understand the
+  word?* If not, it is jargon. §8.2 carries the running list
   — add to it when you find a new one.
 - **Empty states are always 「暂无 X」**, no trailing period, and nothing after
   it explaining how to make something appear there. Short strings (labels,

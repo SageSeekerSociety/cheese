@@ -99,7 +99,9 @@ def channel(client, monkeypatch, executors=("executor",)):
     executor._device_api_base = AsyncMock(return_value="http://execution-api")
     central: Any = CentralChannel(executor)
     central._device_api_base = AsyncMock(return_value="http://central-api")
-    central._ensure_screen = AsyncMock(return_value=SimpleNamespace(device_id="center"))
+    central._ensure_screen = AsyncMock(
+        return_value=SimpleNamespace(device_id="center", sid="s1")
+    )
     central.test_client = client
     monkeypatch.setattr(session_work, "device_hub", hub)
     # A switch first pushes the session's work on the machine it leaves

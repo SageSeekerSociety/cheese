@@ -35,7 +35,14 @@ async def receive(
         since = await on_disk(journal.recall, "received")
         while True:
             page = (await call("entries", {"since": since}))["entries"]
-            await on_disk(journal.import_entries, page)
+            # The runner holds its own records too, under ids it knows, so the
+            # cursor moves past them: a read that waits for news would find
+            # them new for ever otherwise.
+            await on_disk(
+                journal.import_entries,
+                page,
+                cursor=("received", page[-1]["id"]) if page else None,
+            )
             if len(page) < PAGE:
                 return
             since = page[-1]["id"]
@@ -62,10 +69,15 @@ class Subscription(subscription.Subscription[PiBacklog]):
         self.session_id = session_id
 
     async def receive(self) -> None:
-        await receive(self.path, self.call, self.on_disk)
+        await receive(self.path, self.read, self.on_disk)
 
     def reader(self) -> PiBacklog:
-        return PiBacklog(self.path, self.session_id)
+        return PiBacklog(
+            self.path,
+            self.session_id,
+            harness=self.session.harness,
+            attachment=getattr(self, "attachment_id", None),
+        )
 
     def starts_turn(self, record: dict, reader: PiBacklog) -> bool:
         # A subagent's prompt, or its closing message, is its own run and not

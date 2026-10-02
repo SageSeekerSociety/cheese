@@ -44,6 +44,7 @@ async def open_turn(
     is_resume: bool = False,
     resendable: bool = True,
     delivered: bool = False,
+    session_id: str | None = None,
 ) -> uuid.UUID:
     """One turn interval left open — what a process that died mid-turn leaves.
 
@@ -62,6 +63,7 @@ async def open_turn(
             is_resume=is_resume,
             resendable=resendable,
             started_at=started_at,
+            session_id=session_id,
         )
         if delivered:
             await AgentTurnRepository(session).mark_delivered(turn_id, started_at)

@@ -2,14 +2,14 @@
 
 MicroCloud (the team's IaaS control plane) owns the machine itself; cheese only
 remembers which machine belongs to which project, plus the tenant-side ids it
-needs to talk about it again. Everything authoritative — status, IP — is
-refreshed from MicroCloud on read, so this table can never be the reason cheese
-shows a stale machine.
+needs to talk about it again. Everything authoritative — status, IP — is kept
+in line with MicroCloud by the machine sweep (`MachineService.refresh_due`), and
+reads report what it last learned.
 """
 
 import enum
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import (
     BigInteger,
@@ -87,6 +87,14 @@ GONE = {MachineStatus.deleted}
 # problem to look at, not something to keep SSHing at forever.
 MAX_ENROLL_ATTEMPTS = 5
 
+# A room's machine that the provider reports `error` before it was ever enrolled
+# is deleted and replaced. MicroCloud refuses quota, offering and spec problems
+# at create time, so `error` is a failure while building the machine (a Proxmox
+# task, SSH, init). One that fails every time would be replaced forever, so the
+# room stops asking once this many of its machines failed within the window.
+MAX_PROVIDER_ERRORS = 3
+PROVIDER_ERROR_WINDOW = timedelta(hours=1)
+
 
 class WarmMachine(UuidPk, Timestamps, Base):
     """Unused platform capacity; claim intent survives a provider timeout."""
@@ -140,8 +148,9 @@ class ProjectMachine(UuidPk, Timestamps, Base):
     # Keep the durable lease owner even if its session is deleted: an external
     # VM must not disappear from the resource ledger through a cascading FK.
     session_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
-    # A session switched away from this VM. Its files and quota remain until
-    # it is deleted: at once when the switch pushed the session's work first
+    # A session switched away from this VM, or the provider failed to create it
+    # and the room asked for another. Its files and quota remain until it is
+    # deleted: at once when nothing of the session's work is only there
     # (``release_left_machine``), otherwise by the room's cleanup.
     superseded_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
@@ -171,7 +180,7 @@ class ProjectMachine(UuidPk, Timestamps, Base):
     memory_mb: Mapped[int] = mapped_column(BigInteger)
     disk_gb: Mapped[int] = mapped_column(BigInteger)
 
-    # Last known values, refreshed from MicroCloud whenever we read the machine.
+    # Last known values, refreshed from MicroCloud by the machine sweep.
     status: Mapped[MachineStatus] = mapped_column(
         Enum(MachineStatus, native_enum=False, length=16),
         default=MachineStatus.provisioning,
@@ -213,7 +222,7 @@ class ProjectMachine(UuidPk, Timestamps, Base):
     # When MicroCloud last answered about this machine at all. `updated_at` is
     # not a substitute: it only moves when a field actually changes, so a
     # machine reconciled repeatedly with the same answer would look permanently
-    # stale and be re-fetched on every read.
+    # stale and be re-fetched on every sweep.
     last_seen_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

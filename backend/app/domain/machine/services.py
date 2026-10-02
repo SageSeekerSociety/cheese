@@ -40,12 +40,20 @@ from app.domain.machine.models import (
     AI_TRANSITIONAL,
     GONE,
     MAX_ENROLL_ATTEMPTS,
+    MAX_PROVIDER_ERRORS,
+    PROVIDER_ERROR_WINDOW,
     TRANSITIONAL,
     AiStatus,
     MachineStatus,
     ProjectMachine,
 )
-from app.domain.machine.progress import SETTLE_WINDOW, startup_progress
+from app.domain.machine.progress import (
+    SETTLE_WINDOW,
+    provider_errors,
+    publish_line,
+    startup_progress,
+    tell_machine_replaced,
+)
 from app.domain.machine.repositories import ProjectMachineRepository
 from app.domain.machine.supply import SupplyRange, check_choice, pick_offering
 from app.domain.project.repositories import ProjectRepository
@@ -77,6 +85,19 @@ def derive_hostname(project_name: str, project_id: uuid.UUID, index: int) -> str
 # waits here, holding no database lock, until the first has recorded the
 # machine. One lock per room ever provisioned, so this stays small.
 _create_locks: dict[uuid.UUID, asyncio.Lock] = {}
+
+
+class CloudKeepsFailing(Exception):
+    """The provider failed every machine the room asked for lately; the
+    message is what the session is told instead of a machine."""
+
+    def __init__(self, failures: int) -> None:
+        minutes = int(PROVIDER_ERROR_WINDOW.total_seconds() // 60)
+        super().__init__(
+            f"云端工作电脑创建失败：供应方连续 {failures} 次报告错误，"
+            f"每次都已删除出错的机器并换一台重试，仍未成功。"
+            f"{minutes} 分钟内不再自动申请。对话和平台工具仍可用。"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -504,9 +525,19 @@ class MachineService:
                 await self.refresh(existing)
             if existing.status == MachineStatus.suspended:
                 await self.resume(existing)
+            if existing.status == MachineStatus.error and existing.device_id is None:
+                await self._replace_failed(existing)
+                # The locks were let go around the provider; look again.
+                return await self.ensure_session_machine(
+                    session_id, actor=actor, choice=choice
+                )
             if existing.status not in GONE:
                 return existing
             await self.forget(existing)
+
+        failures = await provider_errors(self._session, topic_id)
+        if failures >= MAX_PROVIDER_ERRORS:
+            raise CloudKeepsFailing(failures)
 
         instance = await self._session.scalar(
             select(AgentInstance).where(
@@ -529,6 +560,22 @@ class MachineService:
             memory_mb=choice.memory_mb,
             disk_gb=choice.disk_gb,
         )
+
+    async def _replace_failed(self, machine: ProjectMachine) -> None:
+        """Let go of a room's machine the provider failed to create.
+
+        It was never enrolled, so none of the room's work is on it. Detaching
+        it is what lets the room ask for another; the provider delete follows
+        with no transaction open, and one it refuses leaves the machine to
+        ``release_left_machines``.
+        """
+        assert machine.topic_id is not None
+        failures = await provider_errors(self._session, machine.topic_id) + 1
+        machine.superseded_at = datetime.now(UTC)
+        line = await tell_machine_replaced(self._session, machine, failures=failures)
+        await self._session.commit()
+        await publish_line(machine.topic_id, line)
+        await self.release_left_machine(machine.id)
 
     async def supersede_session_machine(
         self, session_id: uuid.UUID, *, actor: Actor
@@ -738,7 +785,7 @@ class MachineService:
             # downgrade on a blip: it would report a healthy machine as broken.
             # Keep what we last knew; `last_seen_at` says how old that is, and
             # recording the attempt is also what stops a provider outage from
-            # putting a 30s timeout on every read.
+            # sending every sweep back to the same machines.
             now = datetime.now(UTC)
             if settled_before:
                 return await self._repo.touch_seen(machine, when=now)
@@ -795,11 +842,15 @@ class MachineService:
         ]
 
     async def list_for_project(self, project_id: uuid.UUID) -> list[ProjectMachine]:
+        """What this table last learned; the sweep keeps it current.
+
+        A read never asks MicroCloud. Pages poll this every few seconds, and a
+        provider round-trip per machine on the request path let one open page
+        on a 48-machine project hold the backend's CPU (2026-10-01).
+        """
         machines = await self._repo.list_for_project(project_id)
         alive: list[ProjectMachine] = []
         for machine in machines:
-            if _still_moving(machine) or _stale(machine):
-                await self.refresh(machine)
             if machine.status in GONE:
                 # MicroCloud has forgotten it, so there is nothing left to
                 # report or to bill. Forgetting also removes the connector
@@ -985,26 +1036,28 @@ class MachineService:
             machine, device_id=device.device_id, when=datetime.now(UTC)
         )
 
-    async def refresh_unsettled(self, limit: int = 10) -> int:
-        """Poll MicroCloud for machines whose lifecycle can still change.
+    async def refresh_due(self, limit: int = 10) -> int:
+        """Poll MicroCloud for machines still changing and for settled ones not
+        re-checked within `microcloud_reconcile_interval_s`.
 
-        Nothing else does this outside a read: `list_for_project` refreshes what
-        it returns, so a machine that settles while nobody has the project open
-        keeps its last-read state forever, and enrolment and a room's lease
-        both wait on exactly the values that go stale. Machine 473 sat unused
-        for 13 minutes on 2026-08-14 while MicroCloud had it settled
-        throughout.
+        This sweep is what keeps the table current; reads only report it.
+        Enrolment and a room's lease wait on a machine settling (machine 473 sat
+        unused for 13 minutes on 2026-08-14 while MicroCloud had it settled),
+        and a settled machine destroyed upstream must stop counting against the
+        project's limit (three did on 2026-08-02).
         """
-        machines = await self._repo.list_unsettled(limit)
+        machines = await self._repo.list_due(
+            limit,
+            seen_before=datetime.now(UTC)
+            - timedelta(seconds=settings.microcloud_reconcile_interval_s),
+        )
         for machine in machines:
             try:
                 if machine.status not in {MachineStatus.suspended, *GONE}:
                     await self.refresh(machine)
                 if machine.status in GONE:
-                    # Gone at the provider: dropped here as every read that
-                    # learns it does. Left for a read, a row nobody reads again
-                    # stays an unreleased lease on a machine that no longer
-                    # exists.
+                    # Gone at the provider. Left alone, the row stays an
+                    # unreleased lease on a machine that no longer exists.
                     await self.forget(machine)
                     continue
                 if (

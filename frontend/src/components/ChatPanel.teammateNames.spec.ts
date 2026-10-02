@@ -198,16 +198,18 @@ describe('一间房里几位队友，各署各的名', () => {
     expect(find('编辑了文档')).toEqual({ avatar: null, name: null })
   })
 
-  it('轮次帧写的是队友自己的 handle，「谁在干活」报它的名字', async () => {
+  it('成员动态写的是队友自己的 handle，「谁在干活」报它的名字', async () => {
     listBlocks.mockResolvedValue({ data: [], has_more: false })
     const view = mount()
     await flush()
 
     const socket = FakeWebSocket.instances.at(-1)!
-    socket.emit({ type: 'turn_started', turn_id: 'k', agent: KIMI.own })
-    socket.emit({ type: 'turn_started', turn_id: 'o', agent: OPUS.own })
+    socket.emit({ type: 'activity', member: KIMI.own, kind: 'working', active: true, since: 1 })
+    socket.emit({ type: 'activity', member: OPUS.own, kind: 'working', active: true, since: 2 })
     await flush()
 
-    expect(view.emitted('working-agents')?.at(-1)).toEqual([['芝士K', '芝士Opus']])
+    const calls = (view.emitted('activity') ?? []) as { name: string }[][][]
+    const lines = calls.at(-1)?.[0] ?? []
+    expect(lines.map((l) => l.name)).toEqual(['芝士K', '芝士Opus'])
   })
 })

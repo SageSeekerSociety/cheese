@@ -26,7 +26,8 @@ from sqlalchemy import select
 from app.core.background import hold
 from app.core.errors import AppError
 from app.core.obs import bind_context, clear_context
-from app.domain.agent import dispatch_log
+from app.domain.agent import death_evidence, dispatch_log, turn_inputs
+from app.domain.agent.activity import RoomActivity
 from app.domain.agent.admission import (
     HOST_BUSY_META,
     QUEUED_META,
@@ -140,19 +141,11 @@ async def _open_turn(session_factory, **fields) -> None:
 
 
 async def _stamp_delivery(session_factory, turn_id: uuid.UUID) -> None:
-    """Record that the transport accepted this turn's prompt.
-
-    Swallows its own failure, unlike opening the interval. This runs mid-turn on
-    a turn that is working: losing the stamp costs at most one duplicate re-send
-    if the process then dies, while raising here would kill the live turn to
-    protect it from a hypothetical one — a trade nobody would make deliberately.
-    """
-    try:
-        async with session_factory() as session:
-            await AgentTurnRepository(session).mark_delivered(turn_id, _utcnow())
-            await session.commit()
-    except Exception:  # noqa: BLE001 — bookkeeping must not kill a working turn
-        logger.exception("could not stamp delivery for turn %s", turn_id)
+    """Record that the transport accepted this turn's prompt (the ledger's own
+    helper; mid-turn bookkeeping that must never kill a working turn)."""
+    await turn_inputs.stamp_delivery_fact(
+        session_factory, turn_id=turn_id, at=_utcnow()
+    )
 
 
 async def _close_turns(session_factory, turn_ids) -> None:
@@ -190,7 +183,8 @@ class InProcessBroker:
         self._buffer: dict[str, list[Frame]] = {}
         self._active: dict[str, set[str]] = {}
         self._active_since: dict[tuple[str, str], float] = {}
-        self._active_agents: dict[tuple[str, str], str] = {}
+        # Who is typing or working here; reads the turn starts above.
+        self.activity = RoomActivity(self._active_since)
         self._last_activity_at: dict[str, float] = {}
         self._replay_size = replay_size
         self._message_subscriber: Callable[..., None] | None = None
@@ -205,7 +199,7 @@ class InProcessBroker:
         self._buffer.clear()
         self._active.clear()
         self._active_since.clear()
-        self._active_agents.clear()
+        self.activity.reset()
         self._last_activity_at.clear()
 
     async def receive_message(
@@ -321,27 +315,27 @@ class InProcessBroker:
 
     async def publish(self, channel: str, frame: Frame) -> None:
         kind = frame.get("type")
-        # Reaction frames are standalone state updates, not turn progress: they
-        # can fire on an idle channel (a human reacting between turns) and are
-        # rebuilt from GET /blocks on (re)connect — so they are fanned out live
-        # but never buffered (buffering would also make an idle channel look
-        # in_flight forever).
-        # `agent_control` is the same kind of fact: the room's session state
-        # changed, and a client that missed the frame reads the whole of it back
-        # from GET /topics/{id}/agent/control, so buffering it would only replay
-        # a state that has since moved on.
-        if kind in ("reaction", "agent_control"):
-            for q in list(self._subs.get(channel, ())):
-                q.put_nowait(frame)
+        # Standalone facts, not turn progress: fanned out live, never buffered.
+        # A reconnect reads each back whole — reactions from GET /blocks, session
+        # state from GET /topics/{id}/agent/control, member activity from the
+        # snapshot on connect — and buffering would replay states that have since
+        # moved on (`live`, each frame all of what an agent is writing, would
+        # replay a draft), and make an idle channel look in_flight forever.
+        if kind in ("reaction", "agent_control", "live", "activity"):
+            self._fan_out(channel, frame)
             return
-
+        # A person's message landing ends their typing in this room.
+        author = (frame.get("block") or {}).get("author")
+        if kind == "user_block" and author:
+            await self.typing(channel, str(author), active=False)
+        followed: Frame | None = None
         if kind == "turn_started":
             turn_id = str(frame.get("turn_id") or "")
             if turn_id:
                 self._active.setdefault(channel, set()).add(turn_id)
                 self._active_since.setdefault((channel, turn_id), time.time())
                 if agent := frame.get("agent"):
-                    self._active_agents[(channel, turn_id)] = str(agent)
+                    followed = self.activity.turn_started(channel, turn_id, str(agent))
 
         if self._active.get(channel):
             self._last_activity_at[channel] = time.monotonic()
@@ -360,15 +354,25 @@ class InProcessBroker:
             active = self._active.get(channel)
             if active is not None:
                 active.discard(turn_id)
+                followed = self.activity.turn_finished(channel, turn_id)
                 self._active_since.pop((channel, turn_id), None)
-                self._active_agents.pop((channel, turn_id), None)
                 if not active:
                     self._active.pop(channel, None)
                     self._buffer.pop(channel, None)
                     self._last_activity_at.pop(channel, None)
 
+        self._fan_out(channel, frame)
+        if followed is not None:
+            self._fan_out(channel, followed)
+
+    def _fan_out(self, channel: str, frame: Frame) -> None:
         for q in list(self._subs.get(channel, ())):
             q.put_nowait(frame)
+
+    async def typing(self, channel: str, member: str, *, active: bool) -> None:
+        """A person composing in this room's input (or stopping)."""
+        if (frame := self.activity.typing(channel, member, active)) is not None:
+            self._fan_out(channel, frame)
 
     def in_flight(self, channel: str) -> bool:
         """True while at least one explicitly-started turn is active. Lets a
@@ -381,22 +385,11 @@ class InProcessBroker:
         return sorted(self._active.get(channel, ()))
 
     def active_turns_since(self, channel: str) -> dict[str, float]:
-        """When each live turn on this channel started, in epoch seconds — so a
-        client that joins halfway through can say how long it has been going."""
+        """When each live turn on this channel started, in epoch seconds."""
         return {
             turn_id: self._active_since[(channel, turn_id)]
             for turn_id in self.active_turn_ids(channel)
             if (channel, turn_id) in self._active_since
-        }
-
-    def active_turn_agents(self, channel: str) -> dict[str, str]:
-        """Which seat each live turn on this channel is running on — so a
-        client that joins halfway through names every worker, not just the
-        one that happened to start after it arrived."""
-        return {
-            turn_id: self._active_agents[(channel, turn_id)]
-            for turn_id in self.active_turn_ids(channel)
-            if (channel, turn_id) in self._active_agents
         }
 
     def active_channels(self) -> set[str]:
@@ -753,10 +746,9 @@ class AgentWorkRunner:
         return None
 
     def running_topic_ids(self) -> set[uuid.UUID]:
-        """Every topic with a turn currently in flight — for bulk UI signals
-        (e.g. the sidebar's "还在说话" indicator) that can't afford one
-        `topic_work()` lookup per row. Same "newest record per topic wins"
-        rule as `topic_work()`, just collected across all topics at once."""
+        """Every topic with a turn currently in flight — for the board's bulk
+        read, which can't afford one `topic_work()` lookup per row. Same "newest
+        record per topic wins" rule as `topic_work()`, across all topics."""
         seen: set[str] = set()
         running: set[uuid.UUID] = set()
         for channel in self._broker.active_channels():
@@ -1010,6 +1002,7 @@ class AgentWorkRunner:
         *,
         author: str,
         agent_handle: str,
+        session_id: str | None = None,
     ) -> None:
         """Register an interval for work the SESSION started on its own.
 
@@ -1025,7 +1018,7 @@ class AgentWorkRunner:
         right there. What retired with 结论 13 is the author value nobody ever
         wrote (the literal 「会话」), not the record.
 
-        Opened DELIVERED, and that is not laziness: `close_for_topic` only closes
+        Opened DELIVERED, and that is not laziness: the Stop's close_one closes
         delivered intervals because 投喂 → Stop is what an interval means for a fed
         turn, so an undelivered row here would be one nothing could ever close.
         What delivery guards against — a Stop from the previous conversation
@@ -1068,6 +1061,7 @@ class AgentWorkRunner:
             # sweep from ever picking one of these as a re-send candidate.
             resendable=False,
             started_at=now,
+            session_id=session_id,
             # Stamped in the same write, not after it: a row that exists for even
             # a moment without it is a row a Stop landing in that moment cannot
             # close, and nothing would ever come back to close it.
@@ -1431,11 +1425,14 @@ class AgentWorkRunner:
             if record.age_s(now) >= min_age_s
         }
         wedged = await self._wedged_turns(old_enough, last_activity, silence_s, now)
+        # A row the process cannot judge is not a dead row (FB-56 legacy③):
+        # it stays open and is listed, never closed (`death_evidence.unknown_row`).
         orphans = {
             tid: record
             for tid, record in old_enough.items()
             if (str(tid) not in self._live or tid in wedged)
             and not self._adopted(chat_service, record, wedged)
+            and not death_evidence.unknown_row(chat_service, record)
         }
         if not orphans:
             return 0
@@ -2839,16 +2836,16 @@ class AgentWorkRunner:
                         verdict.message,
                         meta=verdict.event_meta,
                     )
-        # The interval ends here. Closing, not deleting: this turn's id is on
-        # every block it produced, and an interval erased at its end is one
-        # nobody can ask about afterwards.
-        #
-        # Failing to close is survivable and must not be reported as the turn
-        # failing — the turn is over and its work landed. What is left open gets
-        # picked up by the next sweep, which sees a delivered prompt and
-        # attaches rather than re-sending it.
-        try:
-            await _close_turns(chat_service.session_factory, [turn_id])
-        except Exception:  # noqa: BLE001 — the turn already finished
-            logger.exception("could not close the interval for turn %s", turn_id)
+        # A session that adopted this exact turn owns its interval's ending.
+        # Returning after input injection is not the native work ending.
+        session_owns_ending = (
+            rec["status"] == "done"
+            and lifecycle["session_owned"]
+            and chat_service.session_took_over(topic_id, turn_id)
+        )
+        if not session_owns_ending:
+            try:
+                await _close_turns(chat_service.session_factory, [turn_id])
+            except Exception:  # noqa: BLE001 — the turn already finished
+                logger.exception("could not close the interval for turn %s", turn_id)
         clear_context("turn", "topic")

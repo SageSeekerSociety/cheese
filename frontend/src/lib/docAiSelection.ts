@@ -1,5 +1,6 @@
 import type { Editor } from '@tiptap/core'
 import type { Node as PMNode } from '@tiptap/pm/model'
+import type { Token } from 'marked'
 import type { DocAiSelection, DocAiSource } from './docAiTypes'
 
 import { TextSelection } from '@tiptap/pm/state'
@@ -22,14 +23,17 @@ interface Line {
 }
 
 /** Token raw slices carry provenance. No rendered quote is searched in source. */
-function inline(line: Line): Unit[] | null {
+function inline(
+  line: Line,
+  lex: (raw: string) => Token[] = (raw) => marked.Lexer.lexInline(raw, { gfm: true })
+): Unit[] | null {
   const units: Unit[] = []
   const append = (text: string, start: number, end: number) => {
     units.push({ text, start: line.offsets[start], end: line.offsets[end] })
   }
   const visit = (raw: string, at: number): boolean => {
     let cursor = at
-    for (const token of marked.Lexer.lexInline(raw, { gfm: true })) {
+    for (const token of lex(raw)) {
       if (line.text.slice(cursor, cursor + token.raw.length) !== token.raw) return false
       if (token.type === 'text' && token.raw === token.text) {
         for (let i = 0; i < token.raw.length; ) {
@@ -115,6 +119,94 @@ function sourceBlocks(source: string, prefix: number): Unit[][] | null {
   return flush() ? blocks : null
 }
 
+type SourceBlock = { units: Unit[]; node: PMNode; pos: number }
+
+/** Preserve every sibling's source and schema slot; only a single prose
+ * paragraph has proven selectable character provenance in this path. */
+function mixedParagraph(
+  editor: Editor,
+  source: string,
+  prefix: number,
+  canonicalDoc: PMNode,
+  from: number,
+  to: number
+): SourceBlock | null {
+  const markdown = editor.markdown
+  if (!markdown) return null
+  // Marked normalizes CRLF/CR before lexing. Keep its boundaries tied to the
+  // original source; bytes and the hash must still include the original CRs.
+  const body = source.slice(prefix)
+  let normalized = ''
+  const offsets = [prefix]
+  for (let i = 0; i < body.length; ) {
+    if (body[i] === '\r') {
+      normalized += '\n'
+      i += body[i + 1] === '\n' ? 2 : 1
+    } else normalized += body[i++]
+    offsets.push(prefix + i)
+  }
+  const lexer = new markdown.instance.Lexer(markdown.instance.defaults)
+  const tokens = lexer.lex(normalized)
+  const visibleIndexes = tokens.flatMap((token, index) => (token.type === 'space' ? [] : [index]))
+  const expected: Record<string, string[]> = {
+    paragraph: ['paragraph'],
+    table: ['table'],
+    code: ['codeBlock'],
+    heading: ['heading'],
+    list: ['bulletList', 'orderedList', 'taskList'],
+    blockquote: ['blockquote'],
+    hr: ['horizontalRule'],
+  }
+  let cursor = 0
+  let child = 0
+  let pos = 0
+  let selected: SourceBlock | null = null
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index]
+    if (normalized.slice(cursor, cursor + token.raw.length) !== token.raw) return null
+    if (token.type === 'space') {
+      // Internal separators do not create a caret paragraph. Extra blank
+      // paragraphs need their own provenance rule and remain unsupported.
+      const separators = token.raw.match(/\n\n/g)?.length ?? 0
+      const internal = index > visibleIndexes[0] && index < visibleIndexes.at(-1)!
+      if (Math.max(separators - (internal ? 1 : 0), 0)) return null
+    } else {
+      if (!expected[token.type]) return null
+      const fragment = editor.schema.nodeFromJSON(markdown.parse(token.raw))
+      if (!fragment.childCount) return null
+      for (let slot = 0; slot < fragment.childCount; slot++) {
+        const node = fragment.child(slot)
+        if (
+          !expected[token.type].includes(node.type.name) ||
+          child >= canonicalDoc.childCount ||
+          !node.eq(canonicalDoc.child(child))
+        )
+          return null
+        if (token.type === 'paragraph') {
+          if (fragment.childCount !== 1 || !node.content.size) return null
+          const text = token.raw.replace(/\n+$/, '')
+          const units = inline({ text, offsets: offsets.slice(cursor, cursor + text.length + 1) }, (raw) =>
+            new markdown.instance.Lexer(markdown.instance.defaults).inlineTokens(raw)
+          )
+          if (
+            !units ||
+            node.textContent !== units.map((unit) => unit.text).join('') ||
+            node.content.content.some((content) => !content.isText)
+          )
+            return null
+          if (from >= pos + 1 && to <= pos + node.nodeSize - 1) {
+            selected = { units, node, pos }
+          }
+        }
+        child++
+        pos += node.nodeSize
+      }
+    }
+    cursor += token.raw.length
+  }
+  return cursor === normalized.length && child === canonicalDoc.childCount ? selected : null
+}
+
 export function captureDocSelection(editor: Editor): DocSelectionSnapshot | null {
   const selection = editor.state.selection
   if (!(selection instanceof TextSelection) || selection.empty) return null
@@ -149,21 +241,26 @@ export async function validateDocSelection(
     doc.content.cut(0, doc.content.size - doc.lastChild.nodeSize).eq(canonicalDoc.content)
   if (!canonicalDoc.eq(doc) && !trailingCaret) return null
   const blocks = sourceBlocks(raw, titlePrefix.length)
-  if (!blocks) return null
-  const textblocks: { node: PMNode; pos: number }[] = []
-  doc.descendants((node, pos) => {
-    if (node.isTextblock) {
-      textblocks.push({ node, pos })
-      return false
-    }
-  })
-  if (trailingCaret) textblocks.pop()
-  if (blocks.length !== textblocks.length) return null
+  let candidates: SourceBlock[]
+  if (blocks) {
+    const textblocks: { node: PMNode; pos: number }[] = []
+    doc.descendants((node, pos) => {
+      if (node.isTextblock) {
+        textblocks.push({ node, pos })
+        return false
+      }
+    })
+    if (trailingCaret) textblocks.pop()
+    if (blocks.length !== textblocks.length) return null
+    candidates = textblocks.map((block, index) => ({ ...block, units: blocks[index] }))
+  } else {
+    const paragraph = mixedParagraph(editor, raw, titlePrefix.length, canonicalDoc, from, to)
+    if (!paragraph) return null
+    candidates = [paragraph]
+  }
   let start: number | undefined
   let end: number | undefined
-  for (let i = 0; i < blocks.length; i++) {
-    const { node, pos } = textblocks[i]
-    const units = blocks[i]
+  for (const { node, pos, units } of candidates) {
     if (
       node.textContent !== units.map((unit) => unit.text).join('') ||
       node.content.content.some((child) => !child.isText)

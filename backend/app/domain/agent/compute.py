@@ -253,16 +253,78 @@ class ComputePool:
                 return await recover(topic_id, agent_handle)
         return False
 
+    def seat_state(self, topic_id, agent_handle) -> str:
+        """ "live" / "dead" / "unknown" for the seat, by whichever runtime
+        can answer (FB-56 legacy③). A runtime without the probe cannot tell
+        a watched death from an unanswered question — it says "unknown" by
+        not having one, which is the safe answer."""
+        seat = (topic_id, agent_handle)
+        for runtime in self._runtimes():
+            probe = getattr(runtime, "seat_state", None)
+            if probe is None:
+                continue
+            state = probe(seat)
+            if state != "unknown":
+                return state
+        return "unknown"
+
+    def dead_conversations(self, topic_id, agent_handle) -> set[str]:
+        """The conversations on this seat some runtime watched die
+        (FB-56 legacy③) — conversation-scoped, never the seat's flag."""
+        seat = (topic_id, agent_handle)
+        found: set[str] = set()
+        for runtime in self._runtimes():
+            probe = getattr(runtime, "dead_conversations", None)
+            if probe is not None:
+                found.update(probe(seat))
+        return found
+
+    def terminal_conversations(self, topic_id, agent_handle) -> set[str]:
+        """The conversations on this seat an authority's own per-conversation
+        terminal answer named dead this recover round (FB-56 legacy③) —
+        never a complement of somebody else's success."""
+        seat = (topic_id, agent_handle)
+        found: set[str] = set()
+        for runtime in self._runtimes():
+            found.update(
+                conversation
+                for pair_seat, conversation in getattr(
+                    runtime, "terminal_conversations", set()
+                )
+                if pair_seat == seat
+            )
+        return found
+
+    def found_conversations(self, topic_id, agent_handle) -> set[str]:
+        """The conversations on this seat recovery actually reached and
+        re-attached (FB-56 legacy③)."""
+        seat = (topic_id, agent_handle)
+        found: set[str] = set()
+        for runtime in self._runtimes():
+            found.update(
+                conversation
+                for pair_seat, conversation in getattr(
+                    runtime, "found_conversations", set()
+                )
+                if pair_seat == seat
+            )
+        return found
+
     def bind_events(
         self,
         consumer: "EventConsumer",
         activity: "ActivityConsumer | None" = None,
     ) -> None:
-        """Give every runtime the room-side persistence and activity owners."""
+        """Give every runtime the room-side persistence and activity owners,
+        and the room's ear for what an agent is in the middle of writing."""
+        from app.domain.agent.live_frames import publish_live
+
         for runtime in self._runtimes():
             runtime.bind_events(consumer)
             if activity is not None:
                 runtime.bind_activity(activity)
+            if (bind_live := getattr(runtime, "bind_live", None)) is not None:
+                bind_live(publish_live)
 
     def bind_receipts(self, consumer: "ReceiptConsumer") -> None:
         """Give every runtime the owner of prompt receipts — the consumed-stamp
@@ -342,16 +404,6 @@ class ComputePool:
             runtime.holds(topic_id, agent_handle) for runtime in self._runtimes()
         )
 
-    def wake(self, topic_id: uuid.UUID, agent_handle: str) -> bool:
-        """Read this seat's journal now: its runner wrote records nobody has
-        read. False when no backend in this process reads that seat."""
-        woken = False
-        for runtime in self._runtimes():
-            wake = getattr(runtime, "wake", None)
-            if wake is not None and wake(topic_id, agent_handle):
-                woken = True
-        return woken
-
     async def recover_sessions(
         self, device_id: str | None = None
     ) -> list["SessionRef"]:
@@ -376,11 +428,11 @@ class ComputePool:
             await runtime.replay(session, known_texts=known_texts)
 
     def platform_work(self, provider_id: str | None = None) -> ComputeProvider:
-        """The backend for work the PLATFORM starts — the activity digest and
-        the project summary.
+        """The backend for work the PLATFORM starts — the memory
+        consolidation (dream).
 
-        No agent type stands behind these, so there is no harness to honour and
-        nothing to refuse: they run on whatever the machine runs. Never None,
+        No agent type stands behind it, so there is no harness to honour and
+        nothing to refuse: it runs on whatever the machine runs. Never None,
         unlike ``select`` — a caller with no type to satisfy always has an
         answer, and falling back to the default machine is a better one than
         crashing on a wiring gap.

@@ -96,7 +96,7 @@ const refresh = inject(refreshInjectionKey, () => {})
 const acceptAnswer = async () => {
   if (!question.value) return
   await QuestionApi.acceptAnswer(question.value.id, answer.value.id)
-  toast.success('采纳成功')
+  toast.success(t('questions.answer.acceptSuccess'))
   refresh()
 }
 

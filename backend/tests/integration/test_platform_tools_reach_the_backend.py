@@ -155,7 +155,6 @@ def test_a_task_is_opened_without_the_machine(client, room):
     ("tool", "arguments"),
     [
         ("cheese_title", {"text": "推荐原型"}),
-        ("cheese_milestone", {"title": "中期汇报", "due": "2026-10-20"}),
         ("cheese_members", {}),
         ("cheese_status", {}),
         ("cheese_library_ls", {}),

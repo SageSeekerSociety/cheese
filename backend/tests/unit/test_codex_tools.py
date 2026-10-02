@@ -69,9 +69,9 @@ async def test_schema_pages_and_multimodal_results_keep_their_content(monkeypatc
             }
         }
 
-    tools = RemoteTools({})
+    tools = RemoteTools({"mcp_servers": ["docs"]})
     monkeypatch.setattr(tools.client, "call", call)
-    schemas = await tools.discover(["docs"])
+    schemas = await tools.discover()
     names = [tool["name"] for tool in schemas]
     assert names[:2] == ["Bash", "mcp__docs__view"]
     assert all(tool["inputSchema"] == schema for tool in schemas[:2])
@@ -123,7 +123,7 @@ async def test_platform_tools_are_listed_and_answered_by_the_backend(monkeypatch
     tools = RemoteTools({})
     monkeypatch.setattr(tools.client, "call", call)
     monkeypatch.setattr(tools.client, "platform_request", platform_request)
-    names = {tool["name"] for tool in await tools.discover([])}
+    names = {tool["name"] for tool in await tools.discover()}
     assert {"chat_send", "cheese_notify", "cheese_task"} <= names
 
     executor_calls.clear()

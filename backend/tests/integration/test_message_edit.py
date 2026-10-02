@@ -102,7 +102,11 @@ def test_an_unedited_message_carries_no_edited_mark(client):
 def test_an_edit_keeps_the_reactions_on_the_message(client):
     room, _ = _room(client)
     said = _say(client, room, "alice", "周五交初稿")
-    client.post(f"/blocks/{said}/reactions", json={"emoji": "👍", "author": "bob"})
+    client.post(
+        f"/blocks/{said}/reactions",
+        json={"emoji": "👍"},
+        headers=session_auth_headers("bob"),
+    )
     with client.websocket_connect(chat_ws_url(room, "bob")) as bob:
         _edit(client, said, "周六交初稿", session_auth_headers("alice"))
         seen = _next_update(bob)

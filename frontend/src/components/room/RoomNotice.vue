@@ -128,7 +128,6 @@ const ACTION_META: Record<string, { btn: string }> = {
   split: { btn: 'work.room.notice.action.split' },
   // 平台自动改了标题：行尾是撤销，不是「去看看」，见下面的模板分支。
   title: { btn: 'work.room.notice.action.undo' },
-  milestone: { btn: 'work.room.notice.action.milestone' },
   accept: { btn: 'work.room.notice.action.accept' },
   notify: { btn: '' },
 }

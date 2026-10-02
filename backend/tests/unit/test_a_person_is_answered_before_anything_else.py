@@ -434,7 +434,6 @@ async def codex(tmp_path: Path, steps: list):
                     "workspace": str(machine),
                 },
                 "opening": {"system_prompt": "FIXTURE"},
-                "mcp_servers": [],
                 "binary": codex_binary(),
                 "cwd": str(workspace),
             },

@@ -115,14 +115,17 @@ function renderPlain(text: string): string {
 }
 
 // 芝士的回复里每个代码块右上角一颗「复制」。按钮是渲染之后加上去的，文字取自
-// 这一处自己的文案，不来自消息内容，所以不必再过一遍净化。
+// 这一处自己的文案，不来自消息内容，所以不必再过一遍净化。还没落库的那条（正在写、
+// 正在送）不带：它的代码块还在长。
 const agentHtml = computed(() =>
-  renderMarkdown(props.block.content)
-    .replaceAll(
-      '<pre>',
-      `<div class="md-pre"><button type="button" class="md-copy">${t('work.room.message.copy')}</button><pre>`
-    )
-    .replaceAll('</pre>', '</pre></div>')
+  props.outgoing
+    ? renderMarkdown(props.block.content)
+    : renderMarkdown(props.block.content)
+        .replaceAll(
+          '<pre>',
+          `<div class="md-pre"><button type="button" class="md-copy">${t('work.room.message.copy')}</button><pre>`
+        )
+        .replaceAll('</pre>', '</pre></div>')
 )
 
 const COPIED_MS = 1500
@@ -139,6 +142,8 @@ async function copyText(text: string): Promise<boolean> {
 // 请求没成（askBusy 落回去了、也没有答案）就松手，几个选项回到原样。
 const picked = ref<string | null>(null)
 function pick(option: string) {
+  // 问的人不答自己的题：按钮在他那里是灰的，这一行是灰按钮之外的第二道。
+  if (props.mine) return
   picked.value = option
   emit('answer', props.block, option)
 }
@@ -292,8 +297,9 @@ async function onAgentTextClick(e: MouseEvent) {
           {{ t('work.room.outbox.edit') }}
         </button>
       </div>
-      <!-- 选项问题 (cheese_ask): one-click answer buttons; answered
-         state shows the pick + who made it (everyone sees it). -->
+      <!-- 带选项的问题: one-click answer buttons; answered state shows the
+         pick + who made it (everyone sees it). The asker sees the options
+         but does not answer their own question. -->
       <Transition name="ask-swap" mode="out-in">
         <div v-if="askOptions(block) && !askAnswered(block)" key="options" class="ask-row">
           <button
@@ -302,7 +308,7 @@ async function onAgentTextClick(e: MouseEvent) {
             type="button"
             class="ask-option"
             :class="{ 'ask-option--picked': picked === opt, 'ask-option--dim': picked !== null && picked !== opt }"
-            :disabled="askBusy || picked !== null"
+            :disabled="askBusy || picked !== null || mine"
             @click="pick(opt)"
           >
             {{ opt }}
@@ -512,7 +518,7 @@ async function onAgentTextClick(e: MouseEvent) {
    markup 的地方用——动作卡和系统事件行里的同款 chip 不在 .im-text 里面，写在组件
    的 scoped 块里就只有对话栏看得见；现场那一栏也渲染同一份 chip。 */
 
-/* 选项问题 buttons (cheese_ask): quiet outlined buttons. 悬停只加深一档，不上琥珀：
+/* 带选项的问题 buttons: quiet outlined buttons. 悬停只加深一档，不上琥珀：
    一排选项里没有哪一个是「主操作」。 */
 .ask-row {
   display: flex;

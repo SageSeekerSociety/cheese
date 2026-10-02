@@ -161,6 +161,10 @@ async def upgrade_block(
     落一张卡，`created_by` 填谁它就是谁的。凭据由 resolve/authorize_topic 认
     （`app.api.auth`：会话说 token、agent 的 scoped token、或沙箱 token），房间由
     block 自己带 —— block 的 `topic_id` 就是那个房间，不是它自己去请求体里说。
+
+    升级的人也一样由凭据说：请求体里没有 `created_by` 这一栏。登录的成员升级出来
+    的卡（或房间）就是他自己的；只凭沙箱 token 进来的调用没有人可认，这里传
+    None，归属走 `_resolve_owner` 那条梯子（房间主人 → 项目主人 → 团队主人）。
     """
     block = await BlockRepository(db).get(block_id)
     if block is None:
@@ -172,9 +176,10 @@ async def upgrade_block(
     await resolver.authorize_topic(
         actor, project_id=parent.project_id, topic_id=parent.id
     )
+    created_by = actor.handle if actor.authenticated else None
     room, thread, created = await TopicService(db).upgrade_block_to_place(
         block_id=block_id,
-        created_by=body.created_by,
+        created_by=created_by,
         reviewer_handle=body.reviewer_handle,
     )
     out = (
@@ -186,7 +191,7 @@ async def upgrade_block(
         # 负责人：卡是递给验收人的，没写验收人就是升级的那个人自己。事件和投递写在
         # 同一个事务里，和这次升级一起提交 —— 回滚了就不会留下一条指向不存在的活的
         # 通知。**幂等**：重复升级（created=False）不再落第二条事件。
-        owner = (body.reviewer_handle or body.created_by or "").strip()
+        owner = (body.reviewer_handle or created_by or "").strip()
         await announce(
             db,
             place_id=room.id,

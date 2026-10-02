@@ -219,7 +219,6 @@ ignore_imports =
     app.api.routes.topics -> app.domain.topic.models
     app.api.routes.topics_tasks -> app.domain.notification.models
     app.api.routes.users -> app.domain.passkey.models
-    app.api.routes.users -> app.domain.team.models
     app.api.routes.users -> app.domain.user.models
     app.api.routes.workspace -> app.domain.room_task.models
     app.api.routes.workspace -> app.domain.topic.models
@@ -304,7 +303,6 @@ ignore_imports =
     app.domain.mentions -> app.domain.membership.roster
     app.domain.mentions -> app.domain.topic.models
     app.domain.mentions -> app.domain.topic.repositories
-    app.domain.milestone.services -> app.domain.project.repositories
     app.domain.notification.legacy_queue -> app.domain.delivery.models
     app.domain.notification.outbox -> app.domain.delivery.models
     app.domain.notification.outbox -> app.domain.notification.maintenance

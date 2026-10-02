@@ -1,6 +1,12 @@
 {
   "image": {
-    "tooltip": "Insert image"
+    "tooltip": "Insert image",
+    "uploading": "Uploading image"
   },
-  "renderError": "Couldn't render: {text}"
+  "renderError": "Couldn't render: {text}",
+  "placeholder": "Type here…",
+  "question": {
+    "placeholder": "Describe your question",
+    "headingPlaceholder": "Heading"
+  }
 }

@@ -126,7 +126,6 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 | 页面 | 档 | 卡在哪 |
 |---|---|---|
 | `views/404.vue` | A | 只吃 props 和事件 |
-| `views/CalendarView.vue` | C | 直接取数（`api.ts`） |
 | `views/ConnectView.vue` | D | 读路由；直接取数（`api.ts`） |
 | `views/InboxView.vue` | C | 直接取数（`api.ts`） |
 | `views/MarketView.vue` | C | 直接取数（`api.ts`） |
@@ -271,7 +270,6 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 | `components/panels/PanelProgress.vue` | C | 直接取数（`api.ts`） |
 | `components/panels/PanelSite.vue` | C | 直接取数（`api.ts`） |
 | `components/panels/PanelTabs.vue` | A | 只吃 props 和事件 |
-| `components/panels/SiteStatusBar.vue` | A | 只吃 props 和事件 |
 | `components/panels/SiteStepOutput.vue` | C | 直接取数（`api.ts`） |
 | `components/panels/TaskProgress.vue` | C | 直接取数（`api.ts`） |
 | `components/panels/TodoChecklist.vue` | A | 只吃 props 和事件 |
@@ -319,7 +317,7 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 ## 下一步 {#next}
 
 1. **已经拆出来的三个视图挂上目录**：`PanelChangesView`、`PanelPreviewView`、`PanelDocView`，每个带 loading / 空 / 有数据 / 出错几种状态。上一版已经做了。
-2. **A 档的先补目录**，成本几乎为零：`--list` 现在会打出 16 个没挂的（7 个页面 + 9 个面板：`ChangesFileTree`、`PanelOverview`、`SiteStatusBar`、`TodoChecklist`、`doc/DocOverlays`、`doc/DocSlashMenu`、`doc/DocSurface`、`preview/PreviewPages`、`preview/PreviewSheet`）。挂上去之后，改外观和改排版就有地方看效果。
+2. **A 档的先补目录**，成本几乎为零：`--list` 现在会打出 15 个没挂的（7 个页面 + 8 个面板：`ChangesFileTree`、`PanelOverview`、`TodoChecklist`、`doc/DocOverlays`、`doc/DocSlashMenu`、`doc/DocSurface`、`preview/PreviewPages`、`preview/PreviewSheet`）。挂上去之后，改外观和改排版就有地方看效果。
 3. **C 档按「外壳 / 内容」拆**：取数留在外层 composable，视图只收 props，一次一个页签；每拆出一个就跑 `pnpm run lint:scenes:update` 把它从 `debt` 搬进 `ready`。
 4. **D 档要单独排**，不是一页一页能拆完的：读路由那一批要先定「参数从哪进来」。`views/account/`、`views/workspace/`、`views/spaces/` 三块各要一个方案，动哪块由产品定。
 5. **剩下的就是搬 `debt`。** `ready` 只增不减、`debt` 只减不增（[规则](#ratchet)之后没有别的口子），所以这条曲线只有一个方向：128 → 0。

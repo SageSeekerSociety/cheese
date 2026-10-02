@@ -17,6 +17,7 @@ import ChatErrorToast from './chat/ChatErrorToast.vue'
 import ChatNewMessagesPill from './chat/ChatNewMessagesPill.vue'
 import ChatPanelHeader from './chat/ChatPanelHeader.vue'
 import ChatTimeline from './chat/ChatTimeline.vue'
+import MemberActivity from './room/MemberActivity.vue'
 import RoomComposer from './room/RoomComposer.vue'
 import RoomMessageSheet from './room/RoomMessageSheet.vue'
 
@@ -97,6 +98,7 @@ const {
   agentSeat,
   awaitingReply,
   agentFaces,
+  activityLines,
   prShortId,
   prState,
   composerHint,
@@ -119,6 +121,7 @@ const {
   outgoingState,
   retrySend,
   outbox,
+  typingRows,
   clearReply,
   noticeAgent,
   parentOf,
@@ -180,6 +183,7 @@ const {
   pickOption,
   postChecklist,
   changeChecklist,
+  askQuestion,
   onReact,
   setReply,
   undoTitle,
@@ -259,6 +263,7 @@ defineExpose({ send, connected })
         :agent-name="agentName"
         :refs="refMaps"
         :outbox="outbox"
+        :typing="typingRows"
         :editing-id="editingId"
         :edit-saving="editSaving"
         :ask-busy="askBusy"
@@ -345,6 +350,7 @@ defineExpose({ send, connected })
         :atts-uploading="attsUploading"
         :reply-label="replyLabel"
         :post-checklist="postChecklist"
+        :post-ask="askQuestion"
         @send="onComposerSend"
         @clear-reply="clearReply"
         @files="(files) => void addFiles(files)"
@@ -355,6 +361,9 @@ defineExpose({ send, connected })
       >
         <template #composer-chips><slot name="composer-chips" /></template>
       </RoomComposer>
+      <!-- 谁在这个房间里忙，和 Slack 一样贴在输入框正下方：「Alice 正在输入…」
+           「Cedar 正在工作…」。说的是成员，不是房间。 -->
+      <MemberActivity v-if="showComposer" class="composer-activity" :lines="activityLines" reserve />
     </template>
   </div>
 </template>
@@ -371,7 +380,8 @@ defineExpose({ send, connected })
 }
 /* 手机外壳里输入框收成和对话同一栏（时间线那一份在 ChatTimeline）。 */
 @media (max-width: 959.98px) {
-  .composer {
+  .composer,
+  .composer-activity {
     width: 100%;
     max-width: var(--page-w);
     margin-inline: auto;

@@ -26,9 +26,9 @@ async def _project(db_session, handle: str = "alice") -> uuid.UUID:
     await db_session.execute(
         text(
             "INSERT INTO projects"
-            " (id, name, owner_handle, team_id, ai_mode, summary, settings,"
+            " (id, name, owner_handle, team_id, ai_mode, settings,"
             " created_at, updated_at)"
-            " VALUES (:id, :name, :owner, :team, 'off', '', '{}', now(), now())"
+            " VALUES (:id, :name, :owner, :team, 'off', '{}', now(), now())"
         ),
         {
             "id": project_id,
@@ -69,7 +69,7 @@ def test_a_project_can_be_checked_when_a_column_it_never_used_is_gone(
 ):
     async def ask():
         project_id = await _project(db_session, handle="alice")
-        await _without_column(db_session, "projects", "last_heartbeat_at")
+        await _without_column(db_session, "projects", "intent")
         return await owner_reads.project_owner(db_session, project_id)
 
     assert _portal.call(ask) == "alice"

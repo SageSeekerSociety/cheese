@@ -7,6 +7,7 @@ from sqlalchemy import or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.device.models import DeviceTopicRow
+from app.domain.machine.live import note_change
 from app.domain.machine.models import (
     AI_TRANSITIONAL,
     GONE,
@@ -69,6 +70,7 @@ class ProjectMachineRepository:
         self._session.add(machine)
         await self._session.flush()
         await self._session.refresh(machine)
+        note_change(self._session, machine.project_id)
         return machine
 
     async def get(self, machine_row_id: uuid.UUID) -> ProjectMachine | None:
@@ -271,6 +273,7 @@ class ProjectMachineRepository:
         seen_at: datetime | None = None,
         machine_id: int | None = None,
     ) -> ProjectMachine:
+        shown = (machine.status, machine.ai_status, machine.ip)
         if machine_id is not None:
             machine.machine_id = machine_id
         machine.status = status
@@ -285,6 +288,9 @@ class ProjectMachineRepository:
         if ip:
             machine.ip = ip
         await self._session.flush()
+        # A re-check that learned nothing new is not a change a page must reread.
+        if (machine.status, machine.ai_status, machine.ip) != shown:
+            note_change(self._session, machine.project_id)
         return machine
 
     async def touch_seen(
@@ -300,6 +306,7 @@ class ProjectMachineRepository:
     async def delete(self, machine: ProjectMachine) -> None:
         await self._session.delete(machine)
         await self._session.flush()
+        note_change(self._session, machine.project_id)
 
     async def list_reservations_older_than(
         self, cutoff: datetime
@@ -330,6 +337,7 @@ class ProjectMachineRepository:
     ) -> ProjectMachine:
         machine.released_at = when
         await self._session.flush()
+        note_change(self._session, machine.project_id)
         return machine
 
     async def mark_enrolled(
@@ -346,6 +354,7 @@ class ProjectMachineRepository:
         # standing way into the machine that nobody asked for.
         machine.bootstrap_key = None
         await self._session.flush()
+        note_change(self._session, machine.project_id)
         return machine
 
     async def mark_enroll_failed(
@@ -354,6 +363,7 @@ class ProjectMachineRepository:
         machine.enroll_error = error[:1000]
         machine.enroll_attempts = (machine.enroll_attempts or 0) + 1
         await self._session.flush()
+        note_change(self._session, machine.project_id)
         return machine
 
     async def list_awaiting_enrollment(self, limit: int) -> list[ProjectMachine]:
@@ -373,33 +383,46 @@ class ProjectMachineRepository:
         )
         return list(result.scalars())
 
-    async def list_unsettled(self, limit: int) -> list[ProjectMachine]:
-        """Machines whose lifecycle can still change on its own.
+    async def list_due(
+        self, limit: int, *, seen_before: datetime
+    ) -> list[ProjectMachine]:
+        """Machines the sweep must bring in line with MicroCloud.
 
-        The sweep needs this because the ONLY place that refreshes a machine
-        from MicroCloud is `list_for_project` — a read path, so a machine that
-        finishes provisioning while nobody has the project open keeps whatever
-        state it had at the last read. A room's lease waits on both `status`
-        and `ai_status`, so a row frozen at a transitional value is a machine
-        that never becomes compute: observed live 2026-08-14, machine 473 sat
-        unused for 13 minutes while MicroCloud had reported it settled the
-        whole time.
+        Those whose lifecycle can still change, since a room's lease waits on
+        both `status` and `ai_status`; settled ones last checked before
+        `seen_before`, since MicroCloud may have destroyed them; and the dormant
+        and gone ones the sweep handles without a poll.
         """
+        changing = or_(
+            ProjectMachine.status.in_(TRANSITIONAL),
+            ProjectMachine.status == MachineStatus.unknown,
+            ProjectMachine.ai_status.in_(AI_TRANSITIONAL),
+            ProjectMachine.ai_status == AiStatus.unknown,
+        )
+        live = ProjectMachine.status.not_in((*GONE, MachineStatus.suspended))
         result = await self._session.execute(
             select(ProjectMachine)
-            .where(
-                ProjectMachine.status.not_in((*GONE, MachineStatus.suspended)),
-                or_(
-                    ProjectMachine.status.in_(TRANSITIONAL),
-                    ProjectMachine.status == MachineStatus.unknown,
-                    ProjectMachine.ai_status.in_(AI_TRANSITIONAL),
-                    ProjectMachine.ai_status == AiStatus.unknown,
-                ),
-            )
+            .where(live, changing)
             .order_by(ProjectMachine.created_at)
             .limit(limit)
         )
         moving = list(result.scalars())
+        # Oldest check first, so every settled machine is reached in turn.
+        stale = await self._session.scalars(
+            select(ProjectMachine)
+            .where(
+                live,
+                ~changing,
+                ProjectMachine.machine_id.is_not(None),
+                ProjectMachine.warm_claim_pending.is_(False),
+                or_(
+                    ProjectMachine.last_seen_at.is_(None),
+                    ProjectMachine.last_seen_at < seen_before,
+                ),
+            )
+            .order_by(ProjectMachine.last_seen_at.asc().nulls_first())
+            .limit(limit)
+        )
         suspended = await self._session.scalars(
             select(ProjectMachine).where(
                 ProjectMachine.status == MachineStatus.suspended,
@@ -416,7 +439,7 @@ class ProjectMachineRepository:
             )
         )
         # Dormant machines need no provider poll and must not consume the poll budget.
-        return moving + list(suspended) + list(gone)
+        return moving + list(stale) + list(suspended) + list(gone)
 
     # `is_provisioned_device` lived here until #282 决定 2. It answered "was this
     # device provisioned by the platform" by asking whether any row in THIS table

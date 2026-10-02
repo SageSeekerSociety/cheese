@@ -31,7 +31,6 @@ vi.mock('../../api', async () => {
     // 面板打开时顺手要的东西 —— 安静地给空答案。
     chatWsUrl: () => 'ws://test/ws',
     attachmentRawUrl: () => '',
-    answerOptions: vi.fn(),
     toggleReaction: vi.fn(),
   }
 })

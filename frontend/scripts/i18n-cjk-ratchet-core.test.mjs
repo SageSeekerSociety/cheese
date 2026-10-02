@@ -169,6 +169,24 @@ const b = \`第一行
   assert.deepEqual(scanSource('src/a.ts', ts), [1, 2, 3])
 })
 
+test('scanSource: code inside ${…} is code — its comments are not counted, its strings are', () => {
+  const ts = `const q = \`/feedback\${build({
+  // 四个筛选，空值不传
+  a: 1,
+})}\`
+const b = \`\${ok ? '成功' : 'x'}\`
+const c = '确定'
+`
+  assert.deepEqual(scanSource('src/a.ts', ts), [5, 6])
+})
+
+test('scanSource: a template logged to the console stays a developer log after its ${…}', () => {
+  const ts = `console.error(\`加载 \${id} 失败\`)
+console.warn(\`\${a ? '甲' : ''} 乙\`)
+`
+  assert.deepEqual(scanSource('src/a.ts', ts), [])
+})
+
 test('scanSource: one line counts once however many strings it holds', () => {
   const ts = `const a = '甲' + '乙' + '丙'
 `

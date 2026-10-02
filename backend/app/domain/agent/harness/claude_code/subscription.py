@@ -70,7 +70,7 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
     async def receive(self) -> None:
         if self.known is None:
             self.known = await self.on_disk(Known.read, self.path)
-        if await receive(self.path, self.call, self.on_disk, self.known):
+        if await receive(self.path, self.read, self.on_disk, self.known):
             await self.announce()
 
     def reader(self) -> ClaudeCodeBacklog:

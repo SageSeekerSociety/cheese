@@ -31,6 +31,7 @@ async def test_discovery_releases_database_and_skips_a_dead_runner(failure):
             uuid.uuid4(),
             "a",
             "codex",
+            None,
             SessionPlace(
                 machine="center",
                 channel="central",

@@ -151,7 +151,9 @@ def channel(client, monkeypatch):
     executor._device_api_base = AsyncMock(return_value="http://execution-api")
     central: Any = CentralChannel(executor)
     central._device_api_base = AsyncMock(return_value="http://central-api")
-    central._ensure_screen = AsyncMock(return_value=SimpleNamespace(device_id="center"))
+    central._ensure_screen = AsyncMock(
+        return_value=SimpleNamespace(device_id="center", sid="s1")
+    )
     return central
 
 
@@ -229,7 +231,7 @@ async def test_commits_use_the_authenticated_teammate_not_the_room_identity(
     monkeypatch.setattr(launch, "script", bootstrap)
     selected = central if central_execution else central.executor
     selected._ensure_screen = AsyncMock(
-        return_value=SimpleNamespace(device_id="center")
+        return_value=SimpleNamespace(device_id="center", sid="s1")
     )
 
     async def exercise():
@@ -446,7 +448,7 @@ async def test_a_room_stays_writable_while_its_agent_is_starting(
         async def slow_screen(*args, **kwargs):
             opening.set()
             await opened.wait()
-            return SimpleNamespace(device_id="center")
+            return SimpleNamespace(device_id="center", sid="s1")
 
         central._ensure_screen = AsyncMock(side_effect=slow_screen)
 
@@ -1263,7 +1265,7 @@ async def test_a_room_session_is_the_runner_its_screen_started(
                 start_new_session=True,
             )
         )
-        return SimpleNamespace(device_id="center")
+        return SimpleNamespace(device_id="center", sid="s1")
 
     central = channel(client, monkeypatch)
     central._hub.call_executor = call_executor

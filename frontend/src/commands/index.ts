@@ -106,7 +106,7 @@ function unregister(id: number) {
  * 条，不然第一帧页头是空的，下一帧按钮才冒出来。
  */
 export function useCommands(commands: () => Command[]) {
-  if (!getCurrentInstance()) throw new Error('useCommands 只能在组件的 setup 里调用')
+  if (!getCurrentInstance()) throw new Error('useCommands must be called from a component setup()')
   const id = nextId++
   register(id, commands)
   onActivated(() => register(id, commands))

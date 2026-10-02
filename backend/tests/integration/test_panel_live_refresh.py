@@ -110,19 +110,6 @@ def test_a_notification_about_a_room_refreshes_that_room(client, frames):
     assert _stale(frames, rid) == ["notify"]
 
 
-def test_a_milestone_from_a_room_refreshes_that_room(client, frames):
-    # The room's own agent, the way `cheese_milestone` sends it: the room it
-    # came from is named, and that is where the call is authorized.
-    pid, rid = _room(client)
-    r = client.post(
-        f"/projects/{pid}/milestones",
-        json={"title": "交初稿", "source_topic_id": rid},
-        headers=_agent(pid, rid),
-    )
-    assert r.status_code == 200, r.text
-    assert _stale(frames, rid) == ["milestone"]
-
-
 @pytest.mark.usefixtures("app_world")
 def test_filing_and_correcting_a_card_refreshes_the_accept_panel(client, frames):
     pid, rid = _room(client)
@@ -248,7 +235,7 @@ def _turn_frames(client, tmp_path, channel: StubChannel) -> list[dict]:
     [
         ("mcp__native__cheese_doc_set", {"path": "/tmp/x.md"}),
         ("mcp__native__cheese_accept_request", {"task": "t", "subject": "fix: x"}),
-        ("mcp__native__cheese_milestone", {"title": "中期汇报"}),
+        ("mcp__native__cheese_notify", {"title": "中期汇报"}),
     ],
 )
 def test_a_call_the_backend_never_received_refreshes_nothing(
@@ -269,21 +256,21 @@ def test_the_turn_still_files_its_action_card(client, tmp_path):
     """The action card for what the turn did is a separate record and stays."""
 
     class _Pins(_CallsATool):
-        tool = "mcp__native__cheese_milestone"
+        tool = "mcp__native__cheese_notify"
         arguments = {"title": "中期汇报"}
 
     seen = _turn_frames(client, tmp_path, _Pins())
     assert any(
         f["type"] == "event_block"
-        and (f["block"].get("meta") or {}).get("action") == "milestone"
+        and (f["block"].get("meta") or {}).get("action") == "notify"
         for f in seen
     )
 
 
-def _is_milestone_card(frame: dict) -> bool:
+def _is_notify_card(frame: dict) -> bool:
     return (
         frame["type"] == "event_block"
-        and (frame["block"].get("meta") or {}).get("action") == "milestone"
+        and (frame["block"].get("meta") or {}).get("action") == "notify"
     )
 
 
@@ -300,9 +287,9 @@ def test_a_turn_announces_what_it_did_while_it_is_still_running(client, tmp_path
             del prompt, reply
             self.starts(topic_id)
             self.uses(
-                topic_id, "mcp__native__cheese_milestone", eid="e-1", title="中期汇报"
+                topic_id, "mcp__native__cheese_notify", eid="e-1", title="中期汇报"
             )
-            self.says(topic_id, "钉好了，接着改代码")
+            self.says(topic_id, "发好了，接着改代码")
 
     channel = _PinsAndKeepsGoing()
     service = ChatService(
@@ -319,10 +306,10 @@ def test_a_turn_announces_what_it_did_while_it_is_still_running(client, tmp_path
             rows = await session.scalars(
                 select(Block).where(Block.topic_id == uuid.UUID(topic_id))
             )
-            return sum((row.meta or {}).get("action") == "milestone" for row in rows)
+            return sum((row.meta or {}).get("action") == "notify" for row in rows)
 
     with client.websocket_connect(chat_ws_url(topic_id, "alice")):
-        post_message(client, topic_id, "alice", {"content": "@芝士 钉一个里程碑"})
+        post_message(client, topic_id, "alice", {"content": "@芝士 发个通知"})
         deadline = time.monotonic() + 5
         while asyncio.run(cards()) != 1:
             assert time.monotonic() < deadline, "the running turn announced nothing"
@@ -343,12 +330,12 @@ def test_a_turn_announces_each_kind_of_action_once(client, tmp_path):
             del prompt
             self.starts(topic_id)
             self.uses(
-                topic_id, "mcp__native__cheese_milestone", eid="e-1", title="中期汇报"
+                topic_id, "mcp__native__cheese_notify", eid="e-1", title="中期汇报"
             )
             self.uses(
-                topic_id, "mcp__native__cheese_milestone", eid="e-2", title="终期答辩"
+                topic_id, "mcp__native__cheese_notify", eid="e-2", title="终期答辩"
             )
             self.stops(topic_id, reply)
 
     seen = _turn_frames(client, tmp_path, _PinsTwice())
-    assert len([f for f in seen if _is_milestone_card(f)]) == 1
+    assert len([f for f in seen if _is_notify_card(f)]) == 1

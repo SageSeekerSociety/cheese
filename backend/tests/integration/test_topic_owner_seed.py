@@ -22,6 +22,7 @@ import uuid
 
 from sqlalchemy import delete, select
 
+from app.core.sandbox_auth import mint_scoped_token
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import Topic, TopicMembership, TopicRole
@@ -255,17 +256,20 @@ def _insert_block(client, project_id: str, topic_id: str, content: str) -> str:
 
 
 def test_upgraded_block_falls_back_to_project_owner(client):
-    """讨论升级 is normally the 分身's own suggestion, so `created_by` is an agent
-    handle — which seed() drops. Without the ladder the upgraded room was born
-    ownerless, the last path still producing them after create()/split were fixed.
+    """讨论升级 is normally the 分身's own suggestion, so the caller is the room's
+    agent — whose handle seed() drops. Without the ladder the upgraded room was
+    born ownerless, the last path still producing them after create()/split were
+    fixed.
     """
     p = _project(client, owner="alice")
     room = _create_topic(client, p["id"], headers=session_auth_headers("alice"))
     block_id = _insert_block(client, p["id"], room["id"], "这块值得单独开一个话题")
+    token = mint_scoped_token(project_id=p["id"], topic_id=room["id"])
 
     upgraded = client.post(
         f"/blocks/{block_id}/upgrade",
-        json={"created_by": "cheese", "reviewer_handle": "alice"},
+        json={"reviewer_handle": "alice"},
+        headers={"X-Cheese-Token": token},
     ).json()["data"]
     _wait_work_idle()  # kickoff runs in the background; don't race its writes
 
@@ -274,8 +278,8 @@ def test_upgraded_block_falls_back_to_project_owner(client):
 
 
 def test_upgraded_block_without_a_creator_is_not_ownerless(client):
-    """The web UI sends `created_by: ""` when its session token is missing, and
-    this route resolves no actor of its own — it trusts the body verbatim."""
+    """Only the trusted dev credential behind the call: it names nobody, so
+    there is no creator to own the card and the ladder has to answer."""
     p = _project(client, owner="alice")
     room = _create_topic(client, p["id"], headers=session_auth_headers("alice"))
     block_id = _insert_block(client, p["id"], room["id"], "这块值得单独开一个话题")

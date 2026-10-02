@@ -30,6 +30,8 @@ const props = defineProps<{
   agentName: string
   /** 能不能在这儿发一张清单（房间给了发清单的路才有这一颗）。 */
   canChecklist?: boolean
+  /** 「带选项提问」那一颗。和芝士私聊时没有：那里没有别人来答。 */
+  canAsk?: boolean
   /** 「提醒我」那一颗。房间还没定下来（没有话题）时不给。 */
   canRemind?: boolean
 }>()
@@ -40,6 +42,7 @@ const emit = defineEmits<{
   (e: 'pick-images'): void
   (e: 'checklist'): void
   (e: 'toggle-summon'): void
+  (e: 'ask'): void
   (e: 'remind'): void
   (e: 'send'): void
 }>()
@@ -90,7 +93,7 @@ const summonText = computed(() => ({
       variant="text"
       size="small"
       color="medium-emphasis"
-      title="上传文件（每个最大 10MB）"
+      :title="t('work.room.composer.attachFiles')"
       @click="pickFiles"
     />
     <!-- 手机上多一颗「照片」：那儿没有截图可贴、也没有东西可拖，从文件
@@ -102,7 +105,7 @@ const summonText = computed(() => ({
       variant="text"
       size="small"
       color="medium-emphasis"
-      title="发送照片"
+      :title="t('work.room.composer.sendPhotos')"
       @click="pickImages"
     />
     <!-- 发一张自己的清单：也是「这条消息本身」，所以和附件站在左边。 -->
@@ -116,6 +119,18 @@ const summonText = computed(() => ({
       :title="t('work.room.checklist.compose')"
       :aria-label="t('work.room.checklist.compose')"
       @click="emit('checklist')"
+    />
+    <!-- 带选项提问：问房间里的人，点一个选项就是回答。也是「这条消息本身」。 -->
+    <v-btn
+      v-if="canAsk"
+      class="composer-icon"
+      icon="mdi-chat-question-outline"
+      variant="text"
+      size="small"
+      color="medium-emphasis"
+      :title="t('work.room.ask.title')"
+      :aria-label="t('work.room.ask.title')"
+      @click="emit('ask')"
     />
     <!-- 「提醒我」：到点给自己发一条通知。它说的是这个房间里的一件事，不是这条
          消息本身，但和附件一样是安静的图标，不跟右边「怎么发出去」那几样并列。 -->
@@ -161,7 +176,7 @@ const summonText = computed(() => ({
       variant="flat"
       icon="mdi-send"
       size="small"
-      title="发送"
+      :title="t('work.room.composer.send')"
       :disabled="uploading || !canSend"
       @click="emit('send')"
     />

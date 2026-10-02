@@ -116,6 +116,9 @@ class AgentTurn(Base):
     route: Mapped[str | None] = mapped_column(String(32), default=None)
     reply_to: Mapped[uuid.UUID | None] = mapped_column(Uuid, default=None)
     # Whose conversation this turn ran in: the agent's handle in its project,
+    # …and the conversation itself, stamped from the session's own info
+    # (FB-56 legacy③; NULL on rows older than the column).
+    session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # the same key its session is kept under. A room seats several teammates
     # side by side, so the room alone does not say whether this turn's session
     # is the one still answering. NULL until the turn is assembled — before

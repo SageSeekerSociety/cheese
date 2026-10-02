@@ -1,8 +1,8 @@
-// 现场顶上那一行：此刻它在干什么。
+// 一位队友在跑的那一轮，此刻在干什么：它的头像跟着变脸（lib/agentFace），输入框下面
+// 「Cedar 正在工作 · 思考中」那一句也说它。
 //
 // 一轮在跑的时候，现场可以好几分钟一行都不长——模型在想、请求在重
-// 试、机器断了，从外面看都是「没动静」。这一行把它们分开说，而且只要一轮在跑就
-// 不留白。
+// 试、机器断了，从外面看都是「没动静」。这里把它们分开说。
 //
 // 能从时间线本身读出来的都从时间线读：一步刚开始（工具行）、平台说它在重试、在压缩
 // 上下文或在等机器（三种提示行，原地更新）。读不出来的那一种——请求发出去了、还没有任何东西回
@@ -12,7 +12,7 @@ import type { Block } from '../cx_types'
 
 import { eventFailed, eventVerb, isNarration } from './siteLog'
 
-export type SiteState = 'thinking' | 'acting' | 'retrying' | 'compacting' | 'waiting' | 'stopped' | 'idle'
+export type SiteState = 'thinking' | 'acting' | 'retrying' | 'compacting' | 'waiting'
 
 export interface SiteStatus {
   state: SiteState
@@ -22,8 +22,6 @@ export interface SiteStatus {
   attempt?: number | null
   /** 最早那个在跑的轮次从什么时候开始（毫秒）。不知道就是 null。 */
   startedAt: number | null
-  /** 最近一次有动静（毫秒）。一行都没有就是 null。 */
-  lastAt: number | null
 }
 
 /** 这一轮以失败收场的提示：房间停下来不是因为做完了。 */
@@ -36,7 +34,7 @@ function eventType(b: Block): string {
 }
 
 /** 一行最近一次变的时刻。原地改过的提示（重试次数涨了、机器回来了）带着 `meta.at`。 */
-export function touchedAt(b: Block): number {
+function touchedAt(b: Block): number {
   const created = Date.parse(b.created_at)
   const at = typeof b.meta?.at === 'string' ? Date.parse(b.meta.at) : Number.NaN
   return Number.isFinite(at) ? Math.max(at, created) : created
@@ -49,25 +47,15 @@ function latest(blocks: Block[]): Block | undefined {
 }
 
 /**
- * @param blocks  现场时间线（这一栏正在显示的那些行）
- * @param working 房间里有没有活在跑（对话栏说了算）
+ * @param blocks  时间线上的块
  * @param turns   在跑的轮次 id → 开始时间（毫秒）
  */
-export function siteStatus(blocks: Block[], working: boolean, turns: Record<string, number>): SiteStatus {
-  if (!working) {
-    const last = latest(blocks)
-    const lastTurn = last?.turn_id ?? null
-    const stopped =
-      last !== undefined &&
-      (lastTurn ? blocks.filter((b) => b.turn_id === lastTurn) : [last]).some((b) => STOPPED.has(eventType(b)))
-    return { state: stopped ? 'stopped' : 'idle', startedAt: null, lastAt: last ? touchedAt(last) : null }
-  }
-
+export function siteStatus(blocks: Block[], turns: Record<string, number>): SiteStatus {
   const starts = Object.values(turns)
   const startedAt = starts.length ? Math.min(...starts) : null
   const running = blocks.filter((b) => b.turn_id && b.turn_id in turns)
   const last = latest(running)
-  const base = { startedAt, lastAt: last ? touchedAt(last) : startedAt }
+  const base = { startedAt }
 
   if (!last) {
     // 还没有这一轮的任何一行。工作电脑还在起来的话，它在等的是机器，不是在想。
