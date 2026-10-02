@@ -689,8 +689,22 @@ test("pane resize recovery leaves external focus and unmounted messages alone", 
   await page.locator(".hover-bar__wide .rx-toggle").focus();
   await page.keyboard.press("Tab");
   await page.evaluate(() => {
+    const external = document.querySelector<HTMLElement>("#external-focus")!;
+    document.querySelector(".hover-bar__wide")!.addEventListener(
+      "focusout",
+      (event) => {
+        const left = event as FocusEvent;
+        external.dataset.hiddenBlur = String(
+          left.relatedTarget === null &&
+            !(left.target as HTMLElement).getClientRects().length,
+        );
+        // Run after the bar's own bubbling handler has queued recovery, before
+        // its animation frame. Removing the active-element guard must steal focus.
+        queueMicrotask(() => external.focus());
+      },
+      { once: true },
+    );
     document.querySelector<HTMLElement>("main")!.style.width = "180px";
-    document.querySelector<HTMLElement>("#external-focus")!.focus();
   });
   await page.evaluate(
     () =>
@@ -698,6 +712,7 @@ test("pane resize recovery leaves external focus and unmounted messages alone", 
         requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
       ),
   );
+  await expect(external).toHaveAttribute("data-hidden-blur", "true");
   await expect(external).toBeFocused();
   await page.locator("main").evaluate((el) => {
     el.style.width = "460px";
@@ -706,12 +721,25 @@ test("pane resize recovery leaves external focus and unmounted messages alone", 
   await page.locator(".hover-bar__wide .rx-toggle").focus();
   await page.keyboard.press("Tab");
   await page.evaluate(() => {
+    const external = document.querySelector<HTMLElement>("#external-focus")!;
+    document.querySelector(".hover-bar__wide")!.addEventListener(
+      "focusout",
+      (event) => {
+        const left = event as FocusEvent;
+        external.dataset.unmountHiddenBlur = String(
+          left.relatedTarget === null &&
+            !(left.target as HTMLElement).getClientRects().length,
+        );
+        queueMicrotask(() => {
+          (
+            window as typeof window & { fixtureApp: { unmount(): void } }
+          ).fixtureApp.unmount();
+          external.focus();
+        });
+      },
+      { once: true },
+    );
     document.querySelector<HTMLElement>("main")!.style.width = "180px";
-    document.querySelector(".hover-bar__wide")!.getBoundingClientRect();
-    (
-      window as typeof window & { fixtureApp: { unmount(): void } }
-    ).fixtureApp.unmount();
-    document.querySelector<HTMLElement>("#external-focus")!.focus();
   });
   await page.evaluate(
     () =>
@@ -719,6 +747,7 @@ test("pane resize recovery leaves external focus and unmounted messages alone", 
         requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
       ),
   );
+  await expect(external).toHaveAttribute("data-unmount-hidden-blur", "true");
   await expect(page.locator(".hover-bar")).toHaveCount(0);
   await expect(external).toBeFocused();
 });
