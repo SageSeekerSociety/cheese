@@ -210,9 +210,7 @@ def test_a_non_admin_cannot_write_the_space_default(
 ):
     board = _new_board(user_client, api_client)
     outsider = user_client.create_user()
-    outsider_token = user_client.login(
-        api_client, outsider.username, outsider.password
-    )
+    outsider_token = user_client.login(api_client, outsider.username, outsider.password)
 
     resp = api_client.patch(
         f"/spaces/{board['space_id']}",
@@ -281,9 +279,7 @@ def test_a_stranger_cannot_write_a_task_override(
     task = _publish_task(api_client, board, name="别人的题")
 
     outsider = user_client.create_user()
-    outsider_token = user_client.login(
-        api_client, outsider.username, outsider.password
-    )
+    outsider_token = user_client.login(api_client, outsider.username, outsider.password)
     resp = api_client.patch(
         f"/tasks/{task['id']}",
         json={"teaching": {"currentWeek": 9}},
@@ -312,9 +308,7 @@ def test_the_task_override_beats_the_space_default_on_the_real_read_path(
         name="覆盖空间默认的题",
         teaching={"systemPrompt": "题目的", "currentWeek": 3},
     )
-    project_id = _project_under(
-        api_client, user_client, board, task_id=task["id"]
-    )
+    project_id = _project_under(api_client, user_client, board, task_id=task["id"])
 
     context = _for_project(_portal, db_session, project_id)
 
