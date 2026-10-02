@@ -54,19 +54,14 @@ defineExpose({
       ref="descriptionEditor"
       v-model="description"
       output="json"
-      rounded
       :min-height="200"
       :max-height="1000"
-      editor-class="tiptap-editor"
+      :aria-label="t('tasks.form.taskDescription')"
     />
   </TaskFormSection>
 </template>
 
 <style scoped>
-.tiptap-editor {
-  margin-top: 0;
-}
-
 .markdown-textarea :deep(.v-textarea__textarea) {
   font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', monospace;
   font-size: 0.9rem;

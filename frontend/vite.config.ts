@@ -426,9 +426,6 @@ export default defineConfig({
             if (id.includes('viewerjs')) {
               return 'viewerjs'
             }
-            if (id.includes('vuetify-pro-tiptap')) {
-              return 'vuetify-pro-tiptap'
-            }
             if (id.includes('tiptap')) {
               return 'tiptap'
             }
@@ -579,7 +576,6 @@ export default defineConfig({
       'vuetify/components/transitions',
       // 目录入口（插件也会引它们）与 labs：
       'vuetify',
-      'vuetify-pro-tiptap',
       'vuetify-sonner',
       'vuetify/components',
       'vuetify/directives',

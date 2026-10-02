@@ -197,7 +197,7 @@ async function remove(a: SpaceAnnouncement) {
           density="comfortable"
           maxlength="255"
         />
-        <TipTapEditor v-model="draftContent" output="html" :label="t('spaces.announcements.form.content')" />
+        <TipTapEditor v-model="draftContent" output="html" :aria-label="t('spaces.announcements.form.content')" />
         <div class="ann__opts">
           <!-- 置顶只在发布时一起选；已经发出去的公告走卡片上那个单独的动作。 -->
           <v-checkbox

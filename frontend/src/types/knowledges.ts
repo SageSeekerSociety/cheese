@@ -1,4 +1,4 @@
-import type { JSONContent } from 'vuetify-pro-tiptap'
+import type { JSONContent } from '@tiptap/core'
 import type { User } from '.'
 import type { Material, MaterialType } from './materials'
 

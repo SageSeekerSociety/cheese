@@ -134,10 +134,8 @@
           <TipTapEditor
             v-model="template.content"
             output="json"
-            rounded
             :min-height="200"
             :max-height="1000"
-            editor-class="tiptap-editor"
             :aria-label="t('spaces.detail.templateForm.contestDescription')"
           />
         </div>
@@ -152,7 +150,7 @@
 </template>
 
 <script setup lang="ts">
-import type { JSONContent } from 'vuetify-pro-tiptap'
+import type { JSONContent } from '@tiptap/core'
 
 import { computed, defineAsyncComponent, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'

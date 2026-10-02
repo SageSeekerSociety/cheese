@@ -11,7 +11,7 @@
 - **不挂在任何题上的文件**：上传者本人；此外**图片**对登录用户放行，其余只有上传者。
   图片这一条是前端契约，不是宽容：公告与讨论里嵌的图（``AttachmentImage`` 节点带的是
   ``attachmentId``）由**每个看得见那段内容的人**通过这条路由解析成 url
-  （``frontend/src/plugins/tiptap/extensions/image/ImageView.vue``、
+  （``frontend/src/composables/useAttachmentImages.ts``、
   ``frontend/src/views/spaces/detail/Discussions.vue``），掐掉它板上所有人看到的都是
   裂图。而 ``type=file`` 的散件（交作业的材料、建题前先传上去的文件）没有任何一处前端
   跨用户读它，所以收紧到上传者本人。

@@ -327,12 +327,6 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
       },
     ],
   },
-  // 这一件没有「富文本题」那一格：真把 TipTap 编辑器挂起来会报一条
-  // `[tiptap warn] Duplicate extension names found: ['hardBreak']` —— `plugins/tiptap`
-  // 那份扩展表里 BaseKit 已经带了 hardBreak，后面又显式加了一个 tiptap v3 的
-  // `HardBreak`（两版包各带一份，所以名字撞上了）。这一份验收一条警告都不许有，
-  // 所以这里只摆 Markdown 那一格和「整张卡不画」那一格。那条警告是编辑器自己的
-  // 老毛病（在真站点里发一次题也会打），不是这次拆出来的，也就没在这里顺手改。
   {
     id: 'task-form-description-card',
     title: 'TaskFormDescriptionCard',
@@ -351,6 +345,23 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
           parametersOnly: false,
         },
         expect: '题目详情（Markdown 格式）',
+      },
+      {
+        name: '富文本题',
+        note: '其余的题走富文本编辑器，存 JSON；工具栏与实况文档是同一排，另加代码块、插图和表格。',
+        props: {
+          descriptionFormat: 'tiptap',
+          markdownDescription: '',
+          description: {
+            type: 'doc',
+            content: [
+              { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: '题目' }] },
+              { type: 'paragraph', content: [{ type: 'text', text: '把 flag 找出来。' }] },
+            ],
+          },
+          parametersOnly: false,
+        },
+        expect: '把 flag 找出来。',
       },
       {
         name: '只发参数（整张卡不画）',
@@ -443,7 +454,7 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '新发一道题',
-        note: '这一层自己不画字段：值走 `v-model:<字段>`、`defineField` 的另一半走 `:control`，规矩都在 composable 里。题面固定用 Markdown 那一路 —— 富文本那台编辑器挂起来会报 `[tiptap warn]: Duplicate extension names`（`plugins/tiptap` 的扩展表里 `hardBreak` 写了两遍），而预览站容不下任何一条警告；这是编辑器自己的老毛病，不是这次拆出来的，所以这里不盖它。',
+        note: '这一层自己不画字段：值走 `v-model:<字段>`、`defineField` 的另一半走 `:control`，规矩都在 composable 里。题面用 Markdown 那一路，富文本那一格在 TaskFormDescriptionCard 里。',
         props: { submitButtonText: '提交', classificationTopics: [], descriptionFormat: 'markdown' },
         expect: '基本信息',
       },
