@@ -107,6 +107,24 @@ function current(el: HTMLElement) {
 }
 
 describe('actual comment panel', () => {
+  it('floats a selected comment and pins the same draft without sending or remounting it', async () => {
+    const f = await mountPanel()
+    await f.panel.value!.open({ anchorId: 'paragraph', quote: '选中原文' })
+    await nextTick()
+    const input = screen.getByRole('textbox') as HTMLTextAreaElement
+    await fireEvent.update(input, '正在填写的评论')
+    expect(screen.getByRole('dialog')).toBeTruthy()
+    await fireEvent.click(screen.getByRole('button', { name: '停靠到侧栏' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.getByRole('textbox')).toBe(input)
+    expect(input.value).toBe('正在填写的评论')
+    await fireEvent.click(screen.getByRole('button', { name: '在浮窗中打开' }))
+    expect(screen.getByRole('dialog')).toBeTruthy()
+    expect(screen.getByRole('textbox')).toBe(input)
+    expect(input.value).toBe('正在填写的评论')
+    expect(f.sendComment).not.toHaveBeenCalled()
+  })
+
   it('uses actual pane width, not a wide window, and keeps the document mounted', async () => {
     paneWidth = 390
     const f = await mountPanel()
@@ -115,10 +133,7 @@ describe('actual comment panel', () => {
     expect(screen.getByRole('dialog')).toBeTruthy()
     expect(document.querySelector('[data-comments-drawer]')).not.toBeNull()
     expect(screen.getByText('正文')).toBeTruthy()
-    const separator = screen.getByRole('separator')
-    expect(separator.getAttribute('aria-orientation')).toBe('vertical')
-    expect(separator.tabIndex).toBe(0)
-    expect(current(separator)).toBeLessThanOrEqual(374)
+    expect(screen.queryByRole('separator')).toBeNull()
     paneWidth = 1000
     await remeasure()
     expect(screen.queryByRole('dialog')).toBeNull()
@@ -141,16 +156,20 @@ describe('actual comment panel', () => {
     next.panel.value!.toggle()
     await nextTick()
     expect(current(screen.getByRole('separator'))).toBe(380)
-    paneWidth = 300
+    paneWidth = 720
     await remeasure()
     await fireEvent.dblClick(screen.getByRole('separator'))
-    expect(current(screen.getByRole('separator'))).toBe(284)
-    expect(localStorage.getItem(WIDTH_KEY)).toBe('284')
+    expect(current(screen.getByRole('separator'))).toBe(320)
+    expect(localStorage.getItem(WIDTH_KEY)).toBe('320')
+    paneWidth = 300
+    await remeasure()
+    expect(screen.queryByRole('separator')).toBeNull()
+    expect(localStorage.getItem(WIDTH_KEY)).toBe('320')
   })
 
   it('captures pointers, restores preference on cancel, and commits only on pointerup', async () => {
     localStorage.setItem(WIDTH_KEY, '500')
-    paneWidth = 390
+    paneWidth = 1000
     const f = await mountPanel()
     f.panel.value!.toggle()
     await nextTick()
@@ -161,7 +180,7 @@ describe('actual comment panel', () => {
     pointer(separator, 'pointerdown', 400)
     pointer(separator, 'pointermove', 450)
     await nextTick()
-    expect(current(separator)).toBe(324)
+    expect(current(separator)).toBe(450)
     pointer(separator, 'pointercancel', 450)
     await nextTick()
     expect(calls.set).toHaveBeenCalledWith(7)

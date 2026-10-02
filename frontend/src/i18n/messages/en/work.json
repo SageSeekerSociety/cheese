@@ -188,9 +188,16 @@
   "room": {
     "docTools": {
       "title": "Document tools",
-      "backToDocument": "Back to document"
+      "backToDocument": "Back to document",
+      "float": "Open in a floating window",
+      "dock": "Dock to sidebar"
     },
     "docAi": {
+      "review": "Review changes",
+      "closeReview": "Close comparison",
+      "original": "Original",
+      "suggested": "Suggested text",
+      "staleProposal": "The document has changed. This suggestion can no longer be applied directly",
       "title": "Document AI",
       "selectionToolbar": "Selection actions",
       "failed": "Request failed; input retained",
@@ -845,6 +852,7 @@
       "closeDraft": "Close composer",
       "discardDraft": "Discard draft",
       "resumeDraft": "Resume draft",
+      "all": "All comments",
       "unavailable": "This host has not provided a comment posting interface",
       "showMore": "Show more",
       "showLess": "Show less"
