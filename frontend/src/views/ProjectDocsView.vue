@@ -1,16 +1,14 @@
 <script setup lang="ts">
 import type { MemoryEntryOut } from '../api'
-import type { Block } from '../cx_types'
+import type { Block, Topic } from '../cx_types'
 
-import { computed } from 'vue'
+import { computed, getCurrentInstance } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { useCachedResource } from '@/composables/useCachedResource'
 
-import { deleteMemory, getProject, getProjectWeeklies, listMemory } from '../api'
-import DocEditor from '../components/DocEditor.vue'
-import DocPresence from '../components/panels/doc/DocPresence.vue'
-import { useDocCollab } from '../composables/useDocCollab'
+import { deleteMemory, getProject, getProjectWeeklies, getTopic, listMemory } from '../api'
+import PanelDoc from '../components/panels/PanelDoc.vue'
 import { relTime } from '../lib/relTime'
 import { myHandle } from '../me'
 
@@ -18,6 +16,7 @@ import { useCommands } from '@/commands'
 import AppPage from '@/components/common/AppPage.vue'
 import i18n, { t } from '@/i18n'
 import { markdown, sanitizeRendered } from '@/lib/markdown'
+import { useWorkspaceStore } from '@/stores/workspace'
 
 // 项目级文档 (spec §7.1): 章程 / 周报集 / 记忆 — one address each
 // (`/projects/:id/docs/:kind`), inside the project frame. Which document to show
@@ -36,6 +35,8 @@ const props = defineProps<{
 
 const AUTHOR = myHandle()
 const router = useRouter()
+// 单测里这一页是孤立渲染的，没有 store：队友名字就用默认的。
+const workspace = getCurrentInstance()?.appContext.config.globalProperties.$pinia ? useWorkspaceStore() : null
 
 const kind = computed<Kind>(() => (KINDS.includes(props.kind as Kind) ? (props.kind as Kind) : 'charter'))
 
@@ -50,6 +51,8 @@ function openKind(next: unknown) {
 
 interface DocsPayload {
   rootTopicId: string | null
+  /** 章程就是这个房间的文档，编辑器要的是整个房间。 */
+  rootTopic: Topic | null
   weeklies: Block[]
   memoryEntries: MemoryEntryOut[]
 }
@@ -60,12 +63,14 @@ const { data, loading, error } = useCachedResource(
   async (): Promise<DocsPayload> => {
     const project = await getProject(props.projectId)
     const payload: DocsPayload = {
-      // DocEditor loads/persists the doc itself once rootTopicId is set.
       rootTopicId: project.root_topic_id ?? null,
+      rootTopic: null,
       weeklies: [],
       memoryEntries: [],
     }
-    if (kind.value === 'memory') {
+    if (kind.value === 'charter' && project.root_topic_id) {
+      payload.rootTopic = await getTopic(project.root_topic_id)
+    } else if (kind.value === 'memory') {
       payload.memoryEntries = (await listMemory(props.projectId, AUTHOR)).data
     } else if (kind.value === 'weeklies') {
       // 一份周报是一条项目级记录，不是标题里带「周报」两个字的房间 —— 按后者
@@ -79,19 +84,18 @@ const { data, loading, error } = useCachedResource(
 const weeklies = computed<Block[]>(() => data.value?.weeklies ?? [])
 const memoryEntries = computed<MemoryEntryOut[]>(() => data.value?.memoryEntries ?? [])
 const errorMessage = computed<string | null>(() =>
-  error.value ? error.value.message || t('project.docs.loadFailed') : charter.error.value ?? null
+  error.value ? error.value.message || t('project.docs.loadFailed') : null
 )
 
 function renderMarkdown(text: string): string {
   return sanitizeRendered(markdown.parse(text, { async: false }) as string)
 }
 
-// ---- 章程: the root topic's living doc (改了就等于给芝士下指令). Edited live,
-// together with the room's own doc panel and anyone else who has it open: the
-// editor binds to the collaborative document opened here, and the collaboration
-// service stores it. There is no save and nothing to save. ----
+// ---- 章程: the root topic's living doc (改了就等于给芝士下指令). It is that
+// room's own doc panel, drawn on a page: the same live document, toolbar,
+// selection bubble, `/` menu and comments, so the two never drift apart. ----
 const rootTopicId = computed<string | null>(() => data.value?.rootTopicId ?? null)
-const charter = useDocCollab(() => (kind.value === 'charter' ? rootTopicId.value : null))
+const rootTopic = computed<Topic | null>(() => data.value?.rootTopic ?? null)
 
 function fmtDate(d: string | null): string {
   if (!d) return ''
@@ -163,15 +167,13 @@ useCommands(() => {
 </script>
 
 <template>
-  <AppPage :title="t('navigation.project.docs')">
-    <!-- 没有状态时不给这一格：手机上页头只为状态画（AppPage），空着也画会留一条白带。 -->
-    <template
-      v-if="kind === 'charter' && (charter.connection.value !== 'connected' || charter.peers.value.length)"
-      #meta
-    >
-      <DocPresence :peers="charter.peers.value" :connection="charter.connection.value" />
-    </template>
-    <div class="mb-6">
+  <!-- 章程是一整篇文档，自己带工具条、自己滚、评论栏停在它旁边：这一页不滚，把高度让给它。 -->
+  <AppPage
+    :title="t('navigation.project.docs')"
+    :width="kind === 'charter' ? 'full' : 'read'"
+    :fill="kind === 'charter'"
+  >
+    <div :class="kind === 'charter' ? 'docs-head docs-head--page' : 'mb-6'">
       <v-tabs
         :model-value="kind"
         density="compact"
@@ -225,23 +227,19 @@ useCommands(() => {
         </v-card>
       </template>
 
-      <!-- ===== 章程: project root doc, read/edit with the rich tiptap
-             editor — the SAME editing experience as the workspace doc panel
-             (drag handle, tables, task lists, code highlighting), and the same
-             live document. ===== -->
+      <!-- ===== 章程: the project room's own doc panel, on a page ===== -->
       <template v-else-if="kind === 'charter'">
-        <!-- 一整篇文档，不是列表里的一个对象 —— 根面是白底之后，把它框进一张
-               白卡片只是给白底加了个轮廓。直接铺在页面上。 -->
-        <div class="charter-body">
-          <DocEditor
-            v-if="rootTopicId"
-            :session="charter.session.value"
-            :loading="!charter.synced.value"
-            :editable="!charter.readOnly.value"
-            :placeholder="t('project.docs.charterPlaceholder')"
-          />
-          <div v-else class="text-medium-emphasis text-body-2 py-2">{{ t('project.docs.noCharter') }}</div>
-        </div>
+        <PanelDoc
+          v-if="rootTopic"
+          bare
+          class="charter-doc"
+          :topic="rootTopic"
+          :activity-tick="0"
+          :agent-name="workspace?.agentName"
+          :topic-list="workspace?.topics ?? []"
+          @open-topic="(id: string) => router.push(topicTo(id))"
+        />
+        <div v-else class="text-medium-emphasis text-body-2 py-2">{{ t('project.docs.noCharter') }}</div>
       </template>
 
       <!-- ===== 周报集 ===== -->
@@ -300,10 +298,18 @@ useCommands(() => {
   border-bottom: 1px solid var(--line);
 }
 
-/* 章程: 页面本身就是那张纸。左右不再补内边距 —— DocEditor 在桌面上自带 56px 的
-   左侧拖拽手柄槽，再叠一层会把正文推得离页头更远。 */
-.charter-body {
-  padding: 4px 0 40px;
+/* 章程：编辑器整页宽、占满剩下的高度、自己滚；页签那一行仍摆在阅读宽度的那一栏里，
+   切到周报集、记忆时不跳。 */
+.docs-head--page {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: calc(var(--page-w) + 32px);
+  margin-inline: auto;
+  padding: 24px 16px 8px;
+}
+.charter-doc {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 /* 周报集: 一份周报 = 一个对象，卡片保留（描边来自全局 VCard 默认的

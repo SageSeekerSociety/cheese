@@ -32,6 +32,8 @@ const props = withDefaults(
     agentName?: string
     /** 项目话题表：正文里的支线徽章、`<#id>` chip 都靠它认名字与状态。 */
     topicList?: Topic[]
+    /** 画在一整页里（项目文档的章程）：页头已经说了这是什么，不再画大标题和总览自动区。 */
+    bare?: boolean
     // ---- 这一篇现在是什么状态 ----
     /** 这一篇的协同文档；还没打开时是 null。 */
     session: DocSession | null
@@ -65,7 +67,13 @@ const props = withDefaults(
     toggleEditable: () => void
     setError: (message: string | null) => void
   }>(),
-  { agentName: () => t('work.room.defaultAgentName'), topicList: () => [], commentAuthor: '', sendComment: undefined }
+  {
+    agentName: () => t('work.room.defaultAgentName'),
+    topicList: () => [],
+    bare: false,
+    commentAuthor: '',
+    sendComment: undefined,
+  }
 )
 
 const emit = defineEmits<{
@@ -194,7 +202,10 @@ defineExpose({
               :aria-expanded="(commentsRef?.opened && commentsRef.activeTool === 'comments') ?? false"
               @click="commentsRef?.toggle()"
             />
+            <!-- 文档 AI 按已存的那一版核对选区，已存的那一版靠房间推来的消息刷新；页面上
+               没有房间，核对永远过不去，所以不给这颗按钮。 -->
             <v-btn
+              v-if="!bare"
               size="small"
               variant="text"
               :aria-expanded="(commentsRef?.opened && commentsRef.activeTool === 'ai') ?? false"
@@ -250,7 +261,7 @@ defineExpose({
           >
             <div class="doc-page" :class="{ 'doc-pulse': pulsing }">
               <!-- Large document title (Feishu Docs), = the topic title -->
-              <h1 class="doc-page__title">{{ topicTitle(topic) }}</h1>
+              <h1 v-if="!bare" class="doc-page__title">{{ topicTitle(topic) }}</h1>
               <!-- 正文本身。 -->
               <DocSurface
                 ref="surfaceRef"
@@ -267,6 +278,7 @@ defineExpose({
                 :image-src="imageSrc"
                 :pulse="pulse"
                 :scroll-tick="scrollTick"
+                :can-ask="!bare"
                 @open-topic="emit('open-topic', $event)"
                 @mention-click="emit('mention-click', $event)"
                 @open-file="emit('open-file', $event)"
@@ -279,7 +291,7 @@ defineExpose({
               <!-- 总览房间的其余两块（#1889 ②③）紧跟正文。评论在独立侧栏。只有根话题
                  有——别的房间的文档就是它自己那一份，没有人从那里看项目全局。 -->
               <OverviewAuto
-                v-if="topic?.kind === 'root'"
+                v-if="topic?.kind === 'root' && !bare"
                 :topic="topic"
                 :activity-tick="activityTick"
                 @open-topic="emit('open-topic', $event)"

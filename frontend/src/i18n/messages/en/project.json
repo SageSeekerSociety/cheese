@@ -84,7 +84,6 @@
     "memoryUser": "Personal memory",
     "memoryProject": "Project memory",
     "memoryDelete": "Delete this memory",
-    "charterPlaceholder": "Cheese hasn't written the charter yet. It will keep this document up to date once you set the project's direction. You can also write here directly; it saves automatically.",
     "noCharter": "This project has no editable charter yet",
     "fromTopic": "From topic",
     "weekliesEmpty": "No weekly reports",

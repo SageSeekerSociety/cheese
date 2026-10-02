@@ -10,7 +10,7 @@ How the living document is stored, who may write it, and through which path.
 
 ## Stored contract
 
-The living document is a Yjs document held live by the collaboration service (`frontend/collab/`, a Hocuspocus server built from the frontend package so it runs the editors' own schema, `frontend/src/lib/docSchema`). The editors (`usePanelDoc → PanelDocView → DocSurface`, and `ProjectDocsView → DocEditor` for the charter) bind to it over one WebSocket each, with a ticket from `GET /topics/{id}/doc/ticket`; nothing in the browser saves.
+The living document is a Yjs document held live by the collaboration service (`frontend/collab/`, a Hocuspocus server built from the frontend package so it runs the editors' own schema, `frontend/src/lib/docSchema`). The editors (`usePanelDoc → PanelDocView → DocSurface`, which the charter page renders too) bind to it over one WebSocket each, with a ticket from `GET /topics/{id}/doc/ticket`; nothing in the browser saves.
 
 The service stores the document back a few seconds after the typing stops: `PUT /internal/collab/documents/room:{id}` carries the Yjs state, the Markdown exported from it and the handles whose changes it holds. That store (`api/doc_store.py`) is the one path that records a version: one transaction under `living_doc_locks` writes `living_doc_states`, the root content, the node tree, the raw history row, the conversation event and, for an idempotent write, the operation receipt. The Markdown is derived: it is what `cheese_doc_get`, version history, AI selection and export read.
 
