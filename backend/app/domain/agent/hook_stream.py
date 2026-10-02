@@ -31,8 +31,10 @@ from typing import Protocol
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from app.domain.agent import attachments, turn_inputs
 from app.domain.agent.announce import announce
 from app.domain.agent.event_lines import _is_platform_tool, _short_tool_name
+from app.domain.agent.nonce import nonce_in
 from app.domain.agent.platform_failures import (
     SESSION_START_CODES,
     TURN_TIMEOUT_MESSAGE,
@@ -72,9 +74,11 @@ from app.domain.agent.service import (
     AgentSubagentStop,
     AgentToolResult,
     AgentToolUse,
+    AgentUserEntry,
     proves_output,
 )
 from app.domain.agent.step_output import without_output
+from app.domain.agent.turn_inputs import bind, mark_session_for_turn, transition
 from app.domain.block.notice_text import NoticeText, say
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
@@ -175,6 +179,7 @@ class _HookStream(Protocol):
         *,
         opened: bool = False,
         agent_handle: str | None = None,
+        session_id: str | None = None,
     ) -> _HookWorkState | None: ...
 
     async def _work_of_worker(
@@ -222,7 +227,9 @@ class _HookStream(Protocol):
 
     async def _turn_credits_refused(self, turn_id: uuid.UUID) -> bool: ...
 
-    async def _close_open_turns(self, topic_id: uuid.UUID) -> None: ...
+    async def _close_open_turns(
+        self, topic_id: uuid.UUID, turn_id: uuid.UUID
+    ) -> None: ...
 
     async def _close_hook_work(
         self, state: _HookWorkState, result: AgentResult
@@ -326,6 +333,151 @@ def _with_log(meta: dict, log: str | None) -> dict:
     return {**meta, "failed": True, "error": log.strip()}
 
 
+async def _drop_takeover_marks(
+    sessions,
+    hook_work,
+    work_runner: "_WorkRunner",
+    topic_id: uuid.UUID,
+    seat: str,
+    generation: uuid.UUID,
+) -> None:
+    """Drop the memory side of exactly the predecessor this seat's owner
+    record names as retired (FB-56 P2-2).
+
+    The target comes from the durable owner record — the takeover wrote it
+    there in the same transaction as the crown — never from scanning the
+    topic: another seat's self-started work, an earlier generation's, and
+    anything whose interval is still open is left alone, and a caller
+    cancelled between commit and cleanup is finished by the next replay,
+    because the closed row plus the recorded id is the whole predicate.
+    """
+    from sqlalchemy import select
+
+    from app.domain.agent.models import AgentTurn
+    from app.domain.agent.turn_inputs import AgentSeatOwner
+
+    async with sessions() as session:
+        owner = await session.get(AgentSeatOwner, (topic_id, seat, generation))
+        retired = owner.retired_turn_id if owner is not None else None
+        if retired is None:
+            return
+        state = hook_work.get((topic_id, retired))
+        if state is None or not state.self_started:
+            return
+        closed = await session.scalar(
+            select(AgentTurn.stopped_at).where(AgentTurn.id == retired)
+        )
+    if closed is None:
+        return
+    if hook_work.pop((topic_id, retired), None) is not None:
+        work_runner.close_turn_the_session_started(retired)
+
+
+async def _bind_user_entry(
+    sessions,
+    hook_work,
+    work_runner: "_WorkRunner",
+    *,
+    topic_id: uuid.UUID,
+    seat: str | None,
+    event: AgentUserEntry,
+) -> None:
+    """Bind one native user entry to its platform input, and walk the owner.
+
+    The entry is the one durable proof that an input was consumed (FB-56):
+    its marker names the input in the platform's own ledger, the input names
+    the work, and the owner walk retires exactly the predecessor's interval
+    — never a page, never a position.
+
+    The active-source check and the mutation share one transaction: the
+    seat's pointer is read in the same session that binds and walks, so a
+    reader that looked before the pointer moved — a new session, a new
+    generation, or a detach — cannot write through (P2-1). A refusal moves
+    nothing: ledger, owner, head, retirements and marks are all untouched.
+
+    The memory side of a takeover is dropped only after the database side
+    is durable, and re-derived from the durable rows rather than from the
+    outcome in memory (P2-2): a commit that fails rolls the database back
+    and leaves the memory in place; a caller cancelled between commit and
+    cleanup is finished by the next replay, because the closed row is the
+    predicate.
+    """
+    nonce = nonce_in(event.text)
+    if nonce is None or seat is None or not event.generation:
+        return
+    generation = uuid.UUID(event.generation)
+    # The whole mutation holds the seat's attachment lock: a detach/attach
+    # can only land whole-before or whole-after it, and an event draining
+    # from a superseded subscription is refused at the lock — including when
+    # the seat has NO live subscription at all (`current` is None), where
+    # anything arriving is by definition not from the active source (FB-56).
+    seat_tuple = (topic_id, seat)
+    async with attachments.lock(seat_tuple):
+        if (
+            event.attachment is not None
+            and attachments.current(seat_tuple) != event.attachment
+        ):
+            return
+        async with sessions() as session:
+            if event.session_id and event.harness:
+                # The seat's pointer row is LOCKED for the mutation's whole
+                # transaction: a detach or a new session's attachment takes the
+                # same row lock on its write side, so a pointer that moves has
+                # either already moved (we see it and refuse) or waits for us
+                # (FB-56 P2-1 — a read alone, even in this transaction, would
+                # race the next write under READ COMMITTED).
+                from sqlalchemy import select
+
+                from app.domain.agent_session.models import AgentSession
+
+                current = await session.scalar(
+                    select(AgentSession.resume_token)
+                    .where(
+                        AgentSession.topic_id == topic_id,
+                        AgentSession.agent_handle == seat,
+                        AgentSession.harness == event.harness,
+                    )
+                    .with_for_update()
+                )
+                if current is not None and current != event.session_id:
+                    return
+            row = await bind(
+                session,
+                nonce=nonce,
+                entry_id=event.entry_id,
+                pos=event.pos,
+                generation=generation,
+                session_id=event.session_id,
+                at=datetime.now(UTC),
+            )
+            if row is not None:
+                # The native entry IS consumption proof — acceptance evidence
+                # a caller cancelling after the transport took the write
+                # cannot take away (FB-56 P1): the parent interval and the
+                # input are stamped delivered here, monotone, in the bind's
+                # own transaction. An early Stop then has a delivered row to
+                # close; nothing native is declared ended by it.
+                await turn_inputs.stamp_delivered(
+                    session, turn_id=row.turn_id, at=datetime.now(UTC)
+                )
+                await transition(
+                    session,
+                    topic_id=topic_id,
+                    agent_handle=seat,
+                    session_id=event.session_id or row.session_id,
+                    generation=generation,
+                    work_id=row.turn_id,
+                    input_id=row.id,
+                    entry_id=event.entry_id,
+                    pos=event.pos,
+                    at=datetime.now(UTC),
+                )
+            await session.commit()
+    await _drop_takeover_marks(
+        sessions, hook_work, work_runner, topic_id, seat, generation
+    )
+
+
 async def _consume_hook_event(
     service: _HookStream,
     sessions: async_sessionmaker,
@@ -367,6 +519,7 @@ async def _consume_hook_event(
             # "whose session this output came from".
             agent_handle=getattr(event, "agent_handle", None)
             or room_session_agents.get(topic_id),
+            session_id=getattr(event, "session_id", None),
         )
     # Whose work this is. Deliberately NOT asked of AgentResult: that event
     # is the turn ending, which is the session's business no matter what id
@@ -409,6 +562,25 @@ async def _consume_hook_event(
             event.session_id,
             agent_handle=event.agent_handle,
             harness=event.harness,
+        )
+        async with sessions() as session:
+            await mark_session_for_turn(
+                session, turn_id=turn_id, session_id=event.session_id
+            )
+            await session.commit()
+    elif isinstance(event, AgentUserEntry):
+        seat = (
+            event.agent_handle
+            or (state.acting_agent if state is not None else None)
+            or room_session_agents.get(topic_id)
+        )
+        await _bind_user_entry(
+            sessions,
+            hook_work,
+            work_runner,
+            topic_id=topic_id,
+            seat=seat,
+            event=event,
         )
     elif isinstance(event, AgentSubagentStart | AgentSubagentStop):
         service._note_worker_agent(topic_id, event)
@@ -624,7 +796,7 @@ async def _consume_hook_event(
         # if nothing had happened. A turn whose coroutine is alive closes the
         # same row a moment later and finds it already closed, which is the
         # correct answer either way.
-        await service._close_open_turns(topic_id)
+        await service._close_open_turns(topic_id, turn_id)
         if state is not None:
             try:
                 for close_frame in await service._close_hook_work(state, event):

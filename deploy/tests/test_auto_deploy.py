@@ -158,6 +158,21 @@ class ReleaseOrdering(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(output.read_text(), "skip=false\n")
 
+    def test_automatic_dispatch_takes_the_policy(self):
+        # desktop.yml dispatches with automatic=true after rebuilding the images;
+        # that release must run the guard, not take the manual bypass. Without
+        # the policy script in the working directory, running the guard fails.
+        workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text())
+        step = next(step for step in workflow["jobs"]["deploy"]["steps"] if step.get("id") == "release")
+        with tempfile.TemporaryDirectory(dir=ROOT / ".tmp") as directory:
+            output = Path(directory) / "output"
+            environment = {**os.environ, "HOME": directory, "GITHUB_EVENT_NAME": "workflow_dispatch",
+                           "AUTOMATIC": "true", "CANDIDATE_SHA": "a" * 40, "GITHUB_OUTPUT": str(output)}
+            result = subprocess.run(["bash", "-eu", "-c", step["run"]], cwd=directory, env=environment, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("check-auto-deploy.py", result.stderr)
+            self.assertFalse(output.exists() and output.read_text())
+
     def test_skipped_release_stays_skipped_before_candidate_checkout(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text())
         checkout = next(step for step in workflow["jobs"]["deploy"]["steps"]

@@ -134,6 +134,11 @@ def marks_of(events: list[AgentEvent]) -> set[str]:
 
 
 class Subscription[B: Backlog]:
+    #: The attachment instance this subscription IS (FB-56): minted by the
+    #: runtime under the seat lock at attach time; events stamp it back so a
+    #: drain from a superseded subscription is refused.
+    attachment_id: str | None = None
+
     def __init__(
         self,
         session: SessionRef,

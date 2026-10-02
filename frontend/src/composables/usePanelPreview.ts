@@ -420,7 +420,8 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     task: () => docIdentity.value?.taskId ?? null,
     source: () => docIdentity.value?.source ?? 'live',
     nonce: () => docNonce.value,
-    enabled: () => !!documentType.value && documentType.value.view !== 'markdown',
+    enabled: () =>
+      (!!documentType.value && documentType.value.view !== 'markdown') || (!!props.path && isImageArtifact.value),
   })
   const slideContext = computed(() => {
     const current = docIdentity.value

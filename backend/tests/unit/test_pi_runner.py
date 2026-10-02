@@ -17,6 +17,7 @@ import pytest
 from app.domain.agent.harness import Opening, SessionRef
 from app.domain.agent.harness.pi.runner import Runner, socket_path
 from app.domain.agent.harness.pi.subscription import Subscription
+from app.domain.agent.nonce import new_nonce
 from tests.support.room_machine import NO_MACHINE, room_machine
 
 FAKE = Path(__file__).resolve().parents[1] / "support/fake_pi.py"
@@ -122,14 +123,23 @@ async def test_an_input_reaches_the_model_once_however_often_it_is_resent(tmp_pa
     try:
         identifier = str(uuid.uuid4())
         work = str(uuid.uuid4())
-        payload = {"input_id": identifier, "text": "改一下 greet", "work_id": work}
+        payload = {
+            "input_id": identifier,
+            "text": "改一下 greet ⟪w:00000000000000000000f001⟫",
+            "work_id": work,
+        }
         first = await call(runner.state, "send", payload)
         # A backend that never saw the answer resends the same id.
         assert await call(runner.state, "send", payload) == first
 
         entries = (await call(runner.state, "entries"))["entries"]
         assert len(entries) == len(json.loads(FIXTURE.read_text())["entries"])
-        assert {entry["cheese"]["work_id"] for entry in entries} == {work}
+        # Session metadata (model/thinking changes) belongs to no turn and
+        # carries no work_id by design (FB-56); the turn's entries all
+        # carry this turn's.
+        worked = [entry for entry in entries if entry["type"] == "message"]
+        assert worked
+        assert {entry["cheese"]["work_id"] for entry in worked} == {work}
         assert {entry["cheese"]["harness"] for entry in entries} == {"pi"}
 
         # One prompt reached pi, not two.
@@ -242,8 +252,29 @@ _WRITING = {
 async def test_the_message_pi_is_writing_is_shown_as_it_grows_and_never_kept(
     tmp_path,
 ):
+    text = f"go on {new_nonce()}"
+    user_entry = {
+        "type": "message",
+        "id": "e-user",
+        "parentId": None,
+        "timestamp": "2026-10-01T00:00:00.000Z",
+        "message": {
+            "role": "user",
+            "content": [{"type": "text", "text": text}],
+        },
+    }
     recording = tmp_path / "writing.json"
-    recording.write_text(json.dumps(_WRITING))
+    recording.write_text(
+        json.dumps(
+            {
+                "stream": [
+                    {"entry": user_entry},
+                    {"pause": True},
+                    *_WRITING["stream"],
+                ]
+            }
+        )
+    )
     binary = tmp_path / "pi"
     binary.write_text(f'#!/bin/sh\nexec {sys.executable} {FAKE} {recording} "$@"\n')
     binary.chmod(0o700)
@@ -267,12 +298,15 @@ async def test_the_message_pi_is_writing_is_shown_as_it_grows_and_never_kept(
         await call(
             runner.state,
             method,
-            {"input_id": str(uuid.uuid4()), "text": "go on", "work_id": work},
+            {"input_id": str(uuid.uuid4()), "text": text, "work_id": work},
         )
 
     try:
         mark = runner.live_mark()
         await step("send")
+        # Consume the native user entry before the assistant starts writing.
+        await call(runner.state, "entries")
+        await step("steer")
         live = await shown(mark)
         assert live["work_id"] == work
         assert live["blocks"] == [{"type": "text", "text": "Hel"}]
@@ -301,7 +335,7 @@ async def test_the_message_pi_is_writing_is_shown_as_it_grows_and_never_kept(
         await runner.close()
 
     # The finished message is the record; what was shown of it never was.
-    assert [entry["id"] for entry in entries] == ["e-reply"]
+    assert [entry["id"] for entry in entries] == ["e-user", "e-reply"]
 
 
 @pytest.mark.anyio
@@ -309,11 +343,26 @@ async def test_a_record_of_the_runners_own_is_news_once(tmp_path):
     """The runner writes records of its own into the log (a compaction, a
     failed call's verdict). Once a backend has them, a read that waits is not
     answered with them again: it waits for something new."""
+    text = f"go {new_nonce()}"
+    work = str(uuid.uuid4())
     recording = tmp_path / "compacting.json"
     recording.write_text(
         json.dumps(
             {
                 "stream": [
+                    {
+                        "entry": {
+                            "type": "message",
+                            "id": "e-user",
+                            "parentId": None,
+                            "timestamp": "2026-10-01T00:00:00.000Z",
+                            "message": {
+                                "role": "user",
+                                "content": [{"type": "text", "text": text}],
+                            },
+                        }
+                    },
+                    {"pause": True},
                     {"event": {"type": "agent_start"}},
                     {"event": {"type": "compaction_start", "reason": "threshold"}},
                     {"event": {"type": "compaction_end", "reason": "threshold"}},
@@ -355,7 +404,15 @@ async def test_a_record_of_the_runners_own_is_news_once(tmp_path):
         await call(
             runner.state,
             "send",
-            {"input_id": str(uuid.uuid4()), "text": "go", "work_id": str(uuid.uuid4())},
+            {"input_id": str(uuid.uuid4()), "text": text, "work_id": work},
+        )
+        # Consume only the user prelude; compaction starts with the next steer.
+        await mirror.drain()
+        landed.clear()
+        await call(
+            runner.state,
+            "steer",
+            {"input_id": str(uuid.uuid4()), "text": "go", "work_id": work},
         )
         async with asyncio.timeout(10):
             while not any(

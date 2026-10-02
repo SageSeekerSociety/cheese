@@ -168,7 +168,7 @@ class CodexChannel:
         handles = []
         async with factory() as db:
             sessions = await AgentSessionService(db).placed_sessions()
-        for project_id, room_id, handle, harness, place in sessions:
+        for project_id, room_id, handle, harness, _token, place in sessions:
             if harness != "codex" or place.channel != self.name:
                 continue
             center = place.machine

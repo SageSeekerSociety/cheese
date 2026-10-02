@@ -10,5 +10,7 @@
   "fit": "Fit viewport",
   "region": "Select image region",
   "cancelRegion": "Cancel region selection",
-  "selectedRegion": "Natural image pixels: x={x}, y={y}, width={width}, height={height}"
+  "selectedRegion": "Natural image pixels: x={x}, y={y}, width={width}, height={height}",
+  "regionUnavailable": "The image version has not been verified. Region selection is unavailable.",
+  "regionMessage": "Image region: {path}\ntopic={topicId} source={source} task={task} version={version}\nNatural image: {naturalWidth} × {naturalHeight}\nx={x} y={y} width={width} height={height}\nNote: {note}"
 }

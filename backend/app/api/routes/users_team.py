@@ -19,12 +19,11 @@ that nothing else in `users.py` used.
 
 Two things stay behind, and why.
 
-`_parse_application_status` stays in `users.py`, which this module imports it
-from. It turns the `?status=` query into the domain's `ApplicationStatus`, and a
-route module may not import that model directly (`routes-touch-no-models` in
-`.importlinter`; `users.py` already carries the frozen exemption for exactly
-that import). Teaching the domain to parse its own vocabulary is a change of its
-own, not this slice's.
+`parse_application_status` lives in `app/domain/team/vocabulary.py`, which
+this module imports it from. It turns the `?status=` query into the
+domain's `ApplicationStatus`, and a route module may not import that model
+directly (`routes-touch-no-models` in `.importlinter`), so the domain
+parses its own vocabulary.
 
 The application-to-JSON shape stays in `routes/teams.py`, which grows a small
 public facade for it: `application_to_api_model` and `load_application_maps` are
@@ -49,7 +48,6 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Path, Query, Response, status
 
 from app.api.routes.teams import application_to_api_model, load_application_maps
-from app.api.routes.users import _parse_application_status
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.db.session import get_db
@@ -59,6 +57,7 @@ from app.domain.team.repositories import (
     TeamRepository,
 )
 from app.domain.team.services import TeamService
+from app.domain.team.vocabulary import parse_application_status
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -149,7 +148,7 @@ async def list_my_team_requests(
     membership_service: TeamMembershipService = Depends(get_team_membership_service),
     db=Depends(get_db),
 ) -> dict:
-    status_enum = _parse_application_status(status)
+    status_enum = parse_application_status(status)
     apps, page = await membership_service.list_my_join_requests(
         user_id=auth_user.user_id,
         status=status_enum,
@@ -185,7 +184,7 @@ async def list_my_team_invitations(
     membership_service: TeamMembershipService = Depends(get_team_membership_service),
     db=Depends(get_db),
 ) -> dict:
-    status_enum = _parse_application_status(status)
+    status_enum = parse_application_status(status)
     apps, page = await membership_service.list_my_invitations(
         user_id=auth_user.user_id,
         status=status_enum,
