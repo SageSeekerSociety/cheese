@@ -454,6 +454,7 @@
       "placeholder": "输入消息，{'@'}{name} 交给它处理",
       "attachFiles": "上传文件（每个最大 10MB）",
       "sendPhotos": "发送照片",
+      "more": "更多操作",
       "send": "发送"
     },
     "ask": {

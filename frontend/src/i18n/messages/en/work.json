@@ -454,6 +454,7 @@
       "placeholder": "Type a message, or {'@'}{name} to hand it over",
       "attachFiles": "Upload files (up to 10 MB each)",
       "sendPhotos": "Send photos",
+      "more": "More actions",
       "send": "Send"
     },
     "ask": {

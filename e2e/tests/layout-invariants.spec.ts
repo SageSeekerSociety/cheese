@@ -1,4 +1,4 @@
-import { test, expect, type Locator } from '@playwright/test';
+import { test, expect, type Locator, type Page } from '@playwright/test';
 import { api, apiLogin, openFirstProject } from './helpers';
 
 // 表单字段的几何不变量。
@@ -664,4 +664,96 @@ test('手机外壳：顶栏和底栏上每一颗按钮，手指能点的范围�
     expect(count, `${path}：顶栏和底栏上一颗按钮都没量到`).toBeGreaterThan(0);
     expect(misses, path).toEqual([]);
   }
+});
+
+// 房间的输入框：输入框下面那一行按钮只会越加越多（附件、照片、清单、提问、提醒、
+// 交给芝士、发送）。触屏上按钮之间要拉开、能点的范围要撑到 44×44，同样几颗在桌面
+// 上放得下，到手机上就会顶出输入框的边、或者互相盖住。所以这里在真触屏（pointer:
+// coarse）的手机宽度和桌面宽度各量一次：没有一颗伸出输入框，每一颗手指都点得中。
+test.describe('房间输入框：下面那一行放得下，手指点得中', () => {
+  test.use({ hasTouch: true, isMobile: true });
+
+  async function measureComposer(page: Page) {
+    return page.evaluate(() => {
+      // 量按钮自己的盒子，不量这一行的 scrollWidth：触屏上每颗按钮的伪元素把能点的
+      // 范围撑到 44×44，最右边那颗发送键的撑开部分本来就探出这一行 8px，那不算伸出去。
+      const box = document.querySelector<HTMLElement>('.composer-box');
+      const row = document.querySelector<HTMLElement>('.composer-actions');
+      if (!box || !row) return null;
+      const edge = box.getBoundingClientRect();
+      const controls = [...row.querySelectorAll<HTMLElement>('button')].filter((el) => {
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+      });
+      const outside: string[] = [];
+      const wrapped: string[] = [];
+      const misses: string[] = [];
+      for (const el of controls) {
+        const r = el.getBoundingClientRect();
+        const name = (el.getAttribute('aria-label') || el.getAttribute('title') || el.textContent || '').trim().slice(0, 16);
+        if (r.left < edge.left - 0.5 || r.right > edge.right + 0.5) outside.push(`「${name}」${Math.round(r.left)}–${Math.round(r.right)}`);
+        // 挤不下时按钮先被压窄，字折成两行（「交给」竖着排），还没伸出去就已经坏了。
+        // 只量字（文字节点），图标和 Vuetify 的叠层不算行。
+        const lines = new Set<number>();
+        const walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+        for (let node = walk.nextNode(); node; node = walk.nextNode()) {
+          if (!node.textContent?.trim()) continue;
+          const range = document.createRange();
+          range.selectNodeContents(node);
+          for (const line of range.getClientRects()) if (line.width > 0) lines.add(Math.round(line.top));
+        }
+        if (lines.size > 1) wrapped.push(`「${name}」折成了 ${lines.size} 行`);
+        if (!matchMedia('(pointer: coarse)').matches) continue;
+        const cx = r.left + r.width / 2;
+        const cy = r.top + r.height / 2;
+        for (const [dx, dy] of [[-21, 0], [21, 0], [0, -21], [0, 21]]) {
+          const x = Math.min(Math.max(cx + dx, 0), innerWidth - 1);
+          const y = Math.min(Math.max(cy + dy, 0), innerHeight - 1);
+          const hit = document.elementFromPoint(x, y);
+          if (!hit || !(hit === el || el.contains(hit))) {
+            misses.push(`「${name}」(${dx}, ${dy}) 处点到的是别的`);
+            break;
+          }
+        }
+      }
+      return {
+        coarse: matchMedia('(pointer: coarse)').matches,
+        count: controls.length,
+        outside,
+        wrapped,
+        misses,
+      };
+    });
+  }
+
+  test('手机（触屏）和桌面两档', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await apiLogin(page);
+    const rows = await openFirstProject(page);
+    await rows.first().click();
+    await page.waitForURL(/\/topics\//);
+    const topicHref = new URL(page.url()).pathname;
+
+    for (const size of [
+      { width: 375, height: 812 },
+      { width: 1280, height: 800 },
+    ]) {
+      await page.setViewportSize(size);
+      await page.goto(topicHref);
+      // 手机上房间先开在别的页签，对话在「对话」页签里。
+      const chatTab = page.getByRole('tab', { name: '对话', exact: true });
+      if (size.width < 960) await chatTab.click();
+      await expect(page.locator('.composer-actions')).toBeVisible();
+      // 有字时发送键才可点（禁用的按钮不接点击，量不出来）。只填不发。
+      await page.locator('.composer-input textarea:not([aria-hidden])').fill('量一下');
+      const got = await measureComposer(page);
+      expect(got, `${size.width}：没找到输入框`).not.toBeNull();
+      if (size.width < 960) expect(got!.coarse, '手机这一档要在触屏下量').toBe(true);
+      // 附件 + 交给芝士 + 发送，至少这三颗；一颗都没量到就是范围选错了。
+      expect(got!.count, `${size.width}`).toBeGreaterThanOrEqual(3);
+      expect(got!.outside, `${size.width}：伸出输入框的按钮`).toEqual([]);
+      expect(got!.wrapped, `${size.width}：被压窄、字折了行的按钮`).toEqual([]);
+      expect(got!.misses, `${size.width}`).toEqual([]);
+    }
+  });
 });
