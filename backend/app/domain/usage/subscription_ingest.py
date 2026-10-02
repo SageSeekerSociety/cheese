@@ -13,10 +13,19 @@ what it never committed. The reader consumes only complete lines — a torn tail
 line stays for the next pass — and a fingerprint of the file's head detects
 rotation: a replaced file is a new generation and restarts from zero.
 
-Credits: a subscription row has no USD price, so it burns the flat token rate
-(``tokens_to_credits``) over ALL four buckets — cache reads are not free and
-they dominate (one observed task: 2.9M cached vs 141k fresh). This matches the
-proxy's own cap arithmetic, so the two brakes count the same thing.
+Credits: a subscription call is priced like a gateway call. The gateway's
+model table (``feature_stats.pricing.model_rates``) carries price-only entries
+for the Claude models, and each call's buckets — fresh input, output, cache
+reads, cache writes to the five-minute and to the one-hour cache — are billed at
+that model's rates; the credits are
+that cost over ``llm_gateway_credit_usd``, the same quotient as gateway rows.
+Cache reads dominate (one observed task: 2.9M cached vs 141k fresh) and are
+billed at the cache-read rate, not as fresh input.
+
+A model with no price still lands its usage row, at cost 0 and no credits, and
+the pass logs which models those were. The table is read once per pass; when
+the gateway is configured but cannot be asked, the pass lands nothing and the
+checkpoint stays put, so an outage never makes a stretch of the log free.
 
 ``ingest_once`` runs on its own interval (``app/core/background.py``) when
 ``SUBSCRIPTION_USAGE_LOG`` is set.
@@ -25,22 +34,26 @@ proxy's own cap arithmetic, so the two brakes count the same thing.
 import hashlib
 import json
 import logging
+import re
 import uuid
 from bisect import bisect_right
+from collections import Counter
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.db import SessionFactory
 from app.domain.block.models import Block
+from app.domain.feature_stats import pricing
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import Topic
-from app.domain.usage.credits import tokens_to_credits
-from app.domain.usage.ledger import Ledger, payer_for_project
+from app.domain.usage.credits import spend_to_credits
+from app.domain.usage.ledger import Ledger, Rates, payer_for_project
 from app.domain.usage.models import IngestCheckpoint
-from app.domain.usage.tokens import input_output_tokens
 
 logger = logging.getLogger("cheese.usage.ingest")
 
@@ -95,6 +108,30 @@ def read_new_lines(
             if isinstance(parsed, dict):
                 rows.append(parsed)
     return rows, consumed
+
+
+def _count(value: object) -> int:
+    """A token count off a JSON line: ``None``, strings and missing keys all
+    show up in practice, and none of them may stop the pass."""
+    if value is None:
+        return 0
+    try:
+        return max(0, int(value))  # type: ignore[call-overload]
+    except (TypeError, ValueError):
+        return 0
+
+
+# A dated snapshot name (``claude-haiku-4-5-20251001``) is priced as its model.
+_SNAPSHOT = re.compile(r"-\d{8}$")
+
+
+def rates_for(model: str, table: Mapping[str, tuple]) -> Rates | None:
+    """``model``'s rates in the gateway's table, None when it has none."""
+    for name in (model, _SNAPSHOT.sub("", model)):
+        rate = table.get(name)
+        if rate is not None:
+            return Rates(*rate)
+    return None
 
 
 def _uuid_or_none(value: object) -> uuid.UUID | None:
@@ -163,7 +200,13 @@ class WorkIndex:
         return [(started, work_id) for work_id, started in rows if work_id and started]
 
 
-async def _land_row(session: AsyncSession, row: dict, work_index: WorkIndex) -> bool:
+async def _land_row(
+    session: AsyncSession,
+    row: dict,
+    work_index: WorkIndex,
+    table: Mapping[str, tuple],
+    unpriced: Counter[str],
+) -> bool:
     """One proxy record → one usage row + credit deduction. False = skipped
     (unattributable or unknown project) — the numbers still exist in the log,
     but nothing here can say whose books they belong in."""
@@ -186,24 +229,43 @@ async def _land_row(session: AsyncSession, row: dict, work_index: WorkIndex) -> 
                 project_id,
             )
             topic_id = None
-    # Cache reads fold into the input count — AgentUsage has no cache field,
-    # and leaving them out would under-report work by more than it reports.
-    input_tokens, output_tokens = input_output_tokens(row)
+    # The proxy logs Anthropic's wire buckets: ``input_tokens`` is fresh input
+    # only, the cache reads and writes are reported beside it.
+    fresh = _count(row.get("input_tokens"))
+    cache_read = _count(row.get("cache_read_input_tokens"))
+    cache_write = _count(row.get("cache_creation_input_tokens"))
+    if "cache_creation_1h_input_tokens" in row:
+        cache_write_1h = min(cache_write, _count(row["cache_creation_1h_input_tokens"]))
+    else:
+        # A line that does not split its writes by lifetime (written before the
+        # proxy logged the split) is priced as all one-hour writes: Claude Code
+        # caches for an hour, and over-charging a guess is safer than
+        # under-charging it.
+        cache_write_1h = cache_write
+    output_tokens = _count(row.get("output_tokens"))
+    input_tokens = fresh + cache_read + cache_write
     if input_tokens + output_tokens <= 0:
         return False
-    total = int(row.get("total_tokens") or 0) or (input_tokens + output_tokens)
+    model = str(row.get("model") or "")
+    rates = rates_for(model, table)
+    cost = 0.0
+    if rates is None:
+        unpriced[model] += 1
+    else:
+        cost = rates.cost_usd(
+            input_tokens, output_tokens, cache_read, cache_write, cache_write_1h
+        )
     await Ledger(session).record(
         await payer_for_project(session, project_id),
-        credits=tokens_to_credits(total),
+        credits=spend_to_credits(cost),
         topic_id=topic_id,
-        model=str(row.get("model") or ""),
+        model=model,
         input_tokens=input_tokens,
+        cache_read_tokens=cache_read,
+        cache_write_tokens=cache_write,
+        cache_write_1h_tokens=cache_write_1h,
         output_tokens=output_tokens,
-        # A subscription is billed by the month, not by the token: this row has
-        # no USD price and never will. 0.0 here means "no price", NOT "free" —
-        # the aggregate keeps them apart via `unpriced_tokens` so the panel can
-        # say 未知 instead of printing $0.0000 over 2.28M tokens.
-        cost_usd=0.0,
+        cost_usd=cost,
         route="subscription",
         # The proxy log has no work id and one attributed unit can make many
         # /v1/messages calls. Use the nearest block-carried id by timestamp.
@@ -218,6 +280,14 @@ async def ingest_once(
     """One ingestion pass. Returns counters (for logs and tests)."""
     if not path.is_file():
         return {"landed": 0, "skipped": 0}
+    table = await pricing.model_rates()
+    if table is None:
+        if settings.llm_gateway_admin_base:
+            # Configured but not answering: wait for it rather than land a
+            # stretch of the log at no price.
+            logger.warning("model rates unavailable; subscription ingest deferred")
+            return {"landed": 0, "skipped": 0}
+        table = {}
     size = path.stat().st_size
     landed = skipped = 0
     async with session_factory() as session:
@@ -233,8 +303,9 @@ async def ingest_once(
             offset = 0
         rows, new_offset = read_new_lines(path, offset)
         work_index = WorkIndex()
+        unpriced: Counter[str] = Counter()
         for row in rows:
-            if await _land_row(session, row, work_index):
+            if await _land_row(session, row, work_index, table, unpriced):
                 landed += 1
             else:
                 skipped += 1
@@ -244,6 +315,11 @@ async def ingest_once(
         ckpt.byte_offset = new_offset
         ckpt.fingerprint = head_fingerprint(path, min(_FINGERPRINT_BYTES, new_offset))
         await session.commit()
+    if unpriced:
+        logger.warning(
+            "subscription usage recorded without a price, nothing charged: %s",
+            ", ".join(f"{m or '(no model)'} x{n}" for m, n in unpriced.most_common()),
+        )
     if landed or skipped:
         logger.info(
             "subscription usage ingested: %d landed, %d skipped, offset %d",

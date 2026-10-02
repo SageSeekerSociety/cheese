@@ -167,17 +167,8 @@ const creditMeters = computed(() => {
   return rows
 })
 
-/** 「额度燃尽」标题旁的口径 tip：那句互斥集合的说明，追加按实价/扁平率的拆分明细
- *  （`credits.burn` 的两个分量，原是响应里没人读的两个数）。 */
-const creditsNote = computed(() => {
-  const base = t('feedback.dashboard.credits.note')
-  const c = credits.value
-  if (!c) return base
-  return `${base} ${t('feedback.dashboard.credits.burnDetail', {
-    priced: fmtNum(c.burn.priced_credits),
-    flat: fmtNum(c.burn.flat_credits),
-  })}`
-})
+/** 「额度燃尽」标题旁的口径 tip：那句互斥集合的说明。 */
+const creditsNote = computed(() => t('feedback.dashboard.credits.note'))
 
 /** 日期轴的标签：这一屏的 series。 */
 const xLabels = computed(() => (usage.value?.series ?? []).map((row) => dayLabel(row.date)))

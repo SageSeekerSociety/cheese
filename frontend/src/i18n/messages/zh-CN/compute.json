@@ -20,8 +20,8 @@
   },
   "usage": {
     "unknown": "未知",
-    "partlySubscription": "另有 {tokens} token 走订阅计费，按月付费，不逐 token 计价",
-    "allSubscription": "{tokens} token 走订阅计费，按月付费，不逐 token 计价，因此这里不显示金额"
+    "partlyUnpriced": "另有 {tokens} token 没有单价，不计入金额",
+    "allUnpriced": "{tokens} token 没有单价，因此这里不显示金额"
   },
   "desktop": {
     "approveFailed": "批准失败：{reason}",

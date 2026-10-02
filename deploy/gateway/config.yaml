@@ -128,6 +128,111 @@ model_list:
       supports_adaptive_thinking: true
       supports_output_config: true
 
+  # Price-only entries: the Claude models served through the platform's
+  # subscription (the metering proxy), never through this gateway. Their tokens
+  # are billed at these rates when the backend ingests the proxy's usage log,
+  # so subscription and gateway traffic are charged by one price table.
+  # `blocked: true` makes the router refuse them; no credential is configured.
+  # Anthropic's public API prices per million tokens (input, output, cache
+  # read, 5-minute cache write, 1-hour cache write),
+  # https://platform.claude.com/docs/en/about-claude/pricing read 2026-10-02.
+  - model_name: claude-sonnet-5
+    litellm_params:
+      model: anthropic/claude-sonnet-5
+      # $2 / $10 / $0.20 / $2.50 / $4
+      input_cost_per_token: 0.000002
+      output_cost_per_token: 0.00001
+      cache_read_input_token_cost: 0.0000002
+      cache_creation_input_token_cost: 0.0000025
+      cache_creation_input_token_cost_above_1hr: 0.000004
+    model_info:
+      blocked: true
+
+  - model_name: claude-sonnet-5-5
+    litellm_params:
+      model: anthropic/claude-sonnet-5-5
+      # $2 / $10 / $0.20 / $2.50 / $4
+      input_cost_per_token: 0.000002
+      output_cost_per_token: 0.00001
+      cache_read_input_token_cost: 0.0000002
+      cache_creation_input_token_cost: 0.0000025
+      cache_creation_input_token_cost_above_1hr: 0.000004
+    model_info:
+      blocked: true
+
+  - model_name: claude-opus-5
+    litellm_params:
+      model: anthropic/claude-opus-5
+      # $5 / $25 / $0.50 / $6.25 / $10
+      input_cost_per_token: 0.000005
+      output_cost_per_token: 0.000025
+      cache_read_input_token_cost: 0.0000005
+      cache_creation_input_token_cost: 0.00000625
+      cache_creation_input_token_cost_above_1hr: 0.00001
+    model_info:
+      blocked: true
+
+  - model_name: claude-opus-5-5
+    litellm_params:
+      model: anthropic/claude-opus-5-5
+      # $4 / $20 / $0.20 / $5 / $8
+      input_cost_per_token: 0.000004
+      output_cost_per_token: 0.00002
+      cache_read_input_token_cost: 0.0000002
+      cache_creation_input_token_cost: 0.000005
+      cache_creation_input_token_cost_above_1hr: 0.000008
+    model_info:
+      blocked: true
+
+  - model_name: claude-opus-4-8
+    litellm_params:
+      model: anthropic/claude-opus-4-8
+      # $5 / $25 / $0.50 / $6.25 / $10
+      input_cost_per_token: 0.000005
+      output_cost_per_token: 0.000025
+      cache_read_input_token_cost: 0.0000005
+      cache_creation_input_token_cost: 0.00000625
+      cache_creation_input_token_cost_above_1hr: 0.00001
+    model_info:
+      blocked: true
+
+  - model_name: claude-fable-5
+    litellm_params:
+      model: anthropic/claude-fable-5
+      # $10 / $50 / $1 / $12.50 / $20
+      input_cost_per_token: 0.00001
+      output_cost_per_token: 0.00005
+      cache_read_input_token_cost: 0.000001
+      cache_creation_input_token_cost: 0.0000125
+      cache_creation_input_token_cost_above_1hr: 0.00002
+    model_info:
+      blocked: true
+
+  - model_name: claude-fable-5-1
+    litellm_params:
+      model: anthropic/claude-fable-5-1
+      # $10 / $50 / $0.25 / $12.50 / $20
+      input_cost_per_token: 0.00001
+      output_cost_per_token: 0.00005
+      cache_read_input_token_cost: 0.00000025
+      cache_creation_input_token_cost: 0.0000125
+      cache_creation_input_token_cost_above_1hr: 0.00002
+    model_info:
+      blocked: true
+
+  # Claude Code's own small requests on the subscription stay on Haiku.
+  - model_name: claude-haiku-4-5
+    litellm_params:
+      model: anthropic/claude-haiku-4-5
+      # $1 / $5 / $0.10 / $1.25 / $2
+      input_cost_per_token: 0.000001
+      output_cost_per_token: 0.000005
+      cache_read_input_token_cost: 0.0000001
+      cache_creation_input_token_cost: 0.00000125
+      cache_creation_input_token_cost_above_1hr: 0.000002
+    model_info:
+      blocked: true
+
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
   database_url: os.environ/DATABASE_URL

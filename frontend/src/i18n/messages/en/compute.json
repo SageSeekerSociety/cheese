@@ -20,8 +20,8 @@
   },
   "usage": {
     "unknown": "Unknown",
-    "partlySubscription": "Another {tokens} tokens went through a subscription, billed monthly rather than per token",
-    "allSubscription": "{tokens} tokens went through a subscription, billed monthly rather than per token, so no amount is shown here"
+    "partlyUnpriced": "Another {tokens} tokens have no rate and are not in the amount",
+    "allUnpriced": "{tokens} tokens have no rate, so no amount is shown here"
   },
   "desktop": {
     "approveFailed": "Approval failed: {reason}",
