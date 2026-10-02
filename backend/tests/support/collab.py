@@ -11,6 +11,8 @@ the internal route's authentication and parsing, the store transaction and the
 error it answers with.
 
 ``type_in`` is somebody typing in an editor: a store carrying their handle.
+``type_unsaved`` is typing the service holds but has not stored yet; like the
+service, this one stores it before refusing a writer that did not see it.
 """
 
 import base64
@@ -30,6 +32,8 @@ class FakeCollab:
         #: tested there); here a test says what it would answer: (message, line)
         #: for every checked write, or None to take them.
         self.refuse_writes: tuple[str, int] | None = None
+        #: Per document: (text, handle) typed since the last store.
+        self._unsaved: dict[str, tuple[str, str]] = {}
 
     def _client(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(
@@ -49,9 +53,15 @@ class FakeCollab:
             )
         async with self._client() as backend:
             loaded = (await backend.get(f"/internal/collab/documents/{name}")).json()
-            live = loaded["content"]
+            unsaved = self._unsaved.pop(name, None)
+            live = unsaved[0] if unsaved else loaded["content"]
             stale = live.strip() if body["base"] is None else live != body["base"]
             if stale:
+                if unsaved:
+                    await self._store(backend, name, *unsaved)
+                    loaded = (
+                        await backend.get(f"/internal/collab/documents/{name}")
+                    ).json()
                 return httpx.Response(409, json={"doc_version": loaded["doc_version"]})
             stored = await backend.put(
                 f"/internal/collab/documents/{name}",
@@ -76,14 +86,25 @@ class FakeCollab:
 
     async def type_in(self, room_id: uuid.UUID, content: str, *actors: str) -> dict:
         async with self._client() as backend:
-            response = await backend.put(
-                f"/internal/collab/documents/{collab.document_name(room_id)}",
-                json={
-                    "state": base64.b64encode(b"yjs").decode(),
-                    "content": content,
-                    "actors": list(actors),
-                },
+            return await self._store(
+                backend, collab.document_name(room_id), content, *actors
             )
+
+    def type_unsaved(self, room_id: uuid.UUID, content: str, actor: str) -> None:
+        self._unsaved[collab.document_name(room_id)] = (content, actor)
+
+    @staticmethod
+    async def _store(
+        backend: httpx.AsyncClient, name: str, content: str, *actors: str
+    ) -> dict:
+        response = await backend.put(
+            f"/internal/collab/documents/{name}",
+            json={
+                "state": base64.b64encode(b"yjs").decode(),
+                "content": content,
+                "actors": list(actors),
+            },
+        )
         response.raise_for_status()
         return response.json()
 

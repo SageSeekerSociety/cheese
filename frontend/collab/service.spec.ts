@@ -86,7 +86,7 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
 })
 
-async function setup(seed = '') {
+async function setup(seed = '', { debounceMs = 50, maxDebounceMs = 200 } = {}) {
   const backend = new FakeBackend(seed)
   const backendUrl = await backend.listen()
   cleanups.push(() => new Promise<void>((resolve) => backend.server.close(() => resolve())))
@@ -94,8 +94,8 @@ async function setup(seed = '') {
     port: 0,
     backendUrl,
     secret: SECRET,
-    debounceMs: 50,
-    maxDebounceMs: 200,
+    debounceMs,
+    maxDebounceMs,
     retryMs: 50,
     quiet: true,
   })
@@ -240,6 +240,23 @@ describe('the live document', () => {
     expect((await response.json()).doc_version).toBe(backend.versions.length)
     await new Promise((r) => setTimeout(r, 200))
     expect(exportMarkdown(a.doc)).not.toContain('芝士的版本')
+  })
+
+  it('takes a writer that read again after a conflict and retries while nobody types', async () => {
+    // Long enough that only the conflict itself can store the typing.
+    const { backend, url, http } = await setup('第一段。\n', { debounceMs: 10_000, maxDebounceMs: 30_000 })
+    const a = client(url, ticket('xiaowang'))
+    await until(() => exportMarkdown(a.doc).includes('第一段'))
+    const read = backend.content
+    writeMarkdown(a.doc, '第一段，人刚改的。\n')
+    await until(() => !a.provider.hasUnsyncedChanges)
+    const refused = await replace(http, { content: '芝士的版本。\n', base: read, actor: 'cheese-agent' })
+    expect(refused.status).toBe(409)
+    const reread = backend.content
+    const retried = await replace(http, { content: reread + '\n芝士补的。\n', base: reread, actor: 'cheese-agent' })
+    expect(retried.status).toBe(200)
+    await until(() => exportMarkdown(a.doc).includes('芝士补的'))
+    expect(exportMarkdown(a.doc)).toContain('人刚改的')
   })
 
   it('refuses a Markdown write that would lose visible text, says which line, and changes nothing', async () => {

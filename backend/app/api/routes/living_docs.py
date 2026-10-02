@@ -99,21 +99,33 @@ async def _frozen(db, place: Place) -> bool:
 
 
 async def _base(db, place: Place, expected_version: int) -> str | None:
-    """The document a writer based its change on, if it is still current.
+    """The document a writer based its change on: the version it read.
 
-    The stored version can only trail the live document, never lead it, so a
-    writer behind the stored version is behind the live one too and is refused
-    here. A writer AT the stored version may still be behind the live document
-    (typing not stored yet); the service decides that one.
+    Whether that is still the live document is for the service to decide, even
+    when the stored version has moved past it. The stored version trails the
+    live document by up to a store cycle; refused here, the writer would read
+    it again and come back already behind. The service refuses only after
+    storing what was typed since, so the writer reads the live document and
+    its retry lands unless somebody types again.
     """
     doc = await TopicService(db).doc_of_room(place.room_id)
     current = doc.doc_version if doc is not None else 0
-    if expected_version != current:
-        raise ConflictError(
-            "实况文档已经被改过了，你手上这份是旧的",
-            data={"doc_version": current},
+    if expected_version == current:
+        return doc.content if doc is not None else None
+    if expected_version == 0:
+        return None
+    read = None
+    if expected_version < current:
+        read = await DocumentJournal(db).version_content(
+            place.room_id, expected_version
         )
-    return doc.content if doc is not None else None
+    if read is not None:
+        return read
+    # A version that was never recorded: nothing to compare.
+    raise ConflictError(
+        "实况文档已经被改过了，你手上这份是旧的",
+        data={"doc_version": current},
+    )
 
 
 @router.put("/{topic_id}/doc")

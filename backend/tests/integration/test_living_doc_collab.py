@@ -142,6 +142,30 @@ def test_a_backend_write_based_on_an_older_document_is_refused_not_applied(clien
     assert [row["content"] for row in history] == ["人先写的", "人又改了", "按新版写的"]
 
 
+def test_a_writer_that_reads_again_after_a_conflict_gets_its_retry_in(client):
+    room = _topic(client)
+    client.portal.call(client.collab.type_in, uuid.UUID(room), "人先写的", "owner")
+    read = client.get(f"/topics/{room}/doc").json()["data"]
+    # Somebody keeps typing: one store lands, and more is typed after it that
+    # the service holds but has not stored yet.
+    client.portal.call(client.collab.type_in, uuid.UUID(room), "人又改了", "owner")
+    client.collab.type_unsaved(uuid.UUID(room), "人又改了，还在写", "owner")
+    stale = client.put(
+        f"/topics/{room}/doc",
+        json={"content": "按旧版写的", "expected_version": read["doc_version"]},
+    )
+    assert stale.status_code == 409
+    # Nobody types after the refusal: what the writer reads now is the document.
+    again = client.get(f"/topics/{room}/doc").json()["data"]
+    assert again["content"] == "人又改了，还在写"
+    retried = client.put(
+        f"/topics/{room}/doc",
+        json={"content": "按新版写的", "expected_version": again["doc_version"]},
+    )
+    assert retried.status_code == 200, retried.text
+    assert client.get(f"/topics/{room}/doc").json()["data"]["content"] == "按新版写的"
+
+
 def test_writes_fail_plainly_when_the_service_is_unreachable(client, monkeypatch):
     import httpx
 
