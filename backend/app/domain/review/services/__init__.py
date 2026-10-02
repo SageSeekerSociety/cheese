@@ -98,7 +98,14 @@ if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
     from app.domain.review.github_pr import PullRequestStatus
 
 from app.domain.review.services import accept as _accept
-from app.domain.review.services import cards, decisions, merge_queue, polling, reviewers
+from app.domain.review.services import (
+    cards,
+    decisions,
+    merge_queue,
+    notices,
+    polling,
+    reviewers,
+)
 from app.domain.review.services._shared import (
     _ACCEPT_NO_BRANCH_PREFIX,
     _ACCEPT_PR_OPEN_FAILED_PREFIX,
@@ -229,12 +236,12 @@ class AcceptService:
     async def _announce_filed(
         self, topic: Topic, card: AcceptCard, task: Task, *, artifact: str
     ) -> None:
-        return await _announce_filed(
-            self._session, topic, card, task, artifact=artifact
+        return await notices._announce_filed(
+            self, topic=topic, card=card, task=task, artifact=artifact
         )
 
     async def _announce_new_artifact(self, topic: Topic, name: str) -> None:
-        return await _announce_new_artifact(self._session, topic, name)
+        return await notices._announce_new_artifact(self, topic=topic, name=name)
 
     async def _warn_about_a_second_pending_migration(
         self, topic: Topic, task_id: uuid.UUID
@@ -326,7 +333,9 @@ class AcceptService:
     def _notify_merge_result(
         self, topic: Topic, content: str, *, meta: dict | None = None
     ) -> None:
-        return _notify_merge_result(async_session_factory, topic, content, meta=meta)
+        return notices._notify_merge_result(
+            self, topic=topic, content=content, meta=meta
+        )
 
     @staticmethod
     def _seen_head(card: AcceptCard, head_sha: str | None, action: str) -> str | None:
@@ -591,7 +600,7 @@ class AcceptService:
         return await polling.note_poll_crashed(self, card_id=card_id, exc=exc)
 
     def _note_poll_failed(self, card: AcceptCard, exc: BaseException) -> None:
-        return _note_poll_failed(card, exc)
+        return notices._note_poll_failed(self, card=card, exc=exc)
 
     async def _poll_pr_card(
         self,
@@ -649,12 +658,12 @@ class AcceptService:
         meta: dict,
         also: Sequence[str] = (),
     ) -> None:
-        return await _tell_the_reviewer(
-            self._session, card, topic, content, meta=meta, also=also
+        return await notices._tell_the_reviewer(
+            self, card=card, topic=topic, content=content, meta=meta, also=also
         )
 
     async def _notify_ready(self, card: AcceptCard, topic: Topic) -> None:
-        return await _notify_ready(self._session, card, topic)
+        return await notices._notify_ready(self, card=card, topic=topic)
 
     def _required_absence_overdue(self, card: AcceptCard) -> bool:
         return reviewers._required_absence_overdue(self, card=card)
@@ -693,8 +702,8 @@ class AcceptService:
         reason: str,
         explain: str | None = None,
     ) -> None:
-        return await _note_needs_human(
-            self._session, card=card, topic=topic, reason=reason, explain=explain
+        return await notices._note_needs_human(
+            self, card=card, topic=topic, reason=reason, explain=explain
         )
 
     async def _settle_external_merge(
@@ -708,13 +717,8 @@ class AcceptService:
         return await _accept._void_closed_pr_card(self, card=card, topic=topic)
 
     async def _record_task_nudge(self, *, topic, task, content, headline, meta):
-        return await _record_task_nudge(
-            self._session,
-            topic=topic,
-            task=task,
-            content=content,
-            headline=headline,
-            meta=meta,
+        return await notices._record_task_nudge(
+            self, topic=topic, task=task, content=content, headline=headline, meta=meta
         )
 
     async def _note_merge_blocked(
@@ -726,71 +730,13 @@ class AcceptService:
         chat_service,
         runner,
     ) -> None:
-        """Put GitHub's merge refusal on the card's `note` AND wake 芝士 up.
-        Before this existed a refusal left `note` empty, so a permanently-
-        unmergeable PR looked exactly like a healthy one still waiting on CI.
-
-        The note alone was still not enough (2026-08-11): a note is something
-        you have to be looking at. The most common refusal — merge conflicts —
-        is exactly the kind 芝士 can fix in its own workspace, so this summons
-        it the same way `_ci_nudge` does for a red check. Without the
-        summon nobody is working the card and the topic just sits there
-        forever (真实案例: PR #242). Note that the conflict dispatch in
-        `routes/accept.py` never covers this — that one only runs for the
-        synchronous merge at the moment a human clicks 采纳, not for the poll.
-
-        Three things the 60s poll makes mandatory:
-
-        - **No spam.** The note is rewritten only when the text actually
-          changes, so an unchanging reason costs one write, not one per poll.
-          (Stricter than the nudge ledger's content signature, which cannot
-          notice a 405 turning into a 409 — same reason, same string.)
-        - **One summon per reason.** The dispatch hangs off that same "the note
-          really changed" test, so a 405 that turns into a 409 gets a fresh
-          nudge while an unchanging one stays quiet.
-        """
-        # GitHub 的原话是外部字符串，而它要被贴进芝士的终端（见
-        # `pr_signals.sanitize_external`）。
-        reason = pr_signals.sanitize_external(reason)
-        note = f"PR #{card.pr_number} GitHub 拒绝合并：{reason}"
-        current_note = await self._session.scalar(
-            select(AcceptCard.note).where(AcceptCard.id == card.id).with_for_update()
-        )
-        if current_note == note:
-            return
-        notes.record(card, notes.NoteCode.merge_refused, note)
-        logger.warning("PR merge refused for card %s: %s", card.id, reason)
-        task = (
-            await TaskService(self._session).get(card.task_id) if card.task_id else None
-        )
-        actionable = task is not None and task.status == TaskStatus.open
-        action = (
-            f'先执行 cd "$(cheese worktree {card.task_id})" 进入任务目录。'
-            "检查 GitHub 返回的具体原因；若是冲突，确认 PR 当前目标分支后再合入，"
-            "解决并验证后提交，用 cheese push-fix 更新原 PR。"
-            "采纳由人决定；只有人已启用自动合并且项目条件满足时才会自动合并。\n"
-            "如果原因不是冲突（比如仓库禁用了这种合并方式），工作区里改不动，"
-            "请在话题里说清楚卡在哪、需要谁做什么。"
-            if actionable
-            else "原任务已关闭或不存在；如需继续修改，请由新任务承接。"
-        )
-        await self._record_task_nudge(
+        return await notices._note_merge_blocked(
+            self,
+            card=card,
             topic=topic,
-            task=task,
-            content=(
-                f"任务 {card.task_id} 的 PR #{card.pr_number}（{card.pr_url}）"
-                "被 GitHub 拒绝合并：\n"
-                f"```\n{reason[:1500]}\n```\n"
-                f"{action}"
-            ),
-            headline=say("mergeRefused", pr=card.pr_number),
-            meta=notice(
-                EVENT_MERGE_REFUSED,
-                severity=SEVERITY_ERROR,
-                who=WHO_CHEESE,
-                detail=reason[:1500],
-                detail_label=say("labelGithubReason"),
-            ),
+            reason=reason,
+            chat_service=chat_service,
+            runner=runner,
         )
 
     def _ci_nudge(
@@ -802,7 +748,9 @@ class AcceptService:
         owner: str,
         repo: str,
     ) -> pr_signals.PendingNudge | None:
-        return _ci_nudge(card=card, tail=tail, stage=stage, owner=owner, repo=repo)
+        return notices._ci_nudge(
+            self, card=card, tail=tail, stage=stage, owner=owner, repo=repo
+        )
 
     async def _review_nudge(
         self,
@@ -814,7 +762,8 @@ class AcceptService:
         client,
         status,
     ) -> pr_signals.PendingNudge | None:
-        return await _review_nudge(
+        return await notices._review_nudge(
+            self,
             card=card,
             owner=owner,
             repo=repo,
@@ -826,7 +775,7 @@ class AcceptService:
     def _conflict_nudge(
         self, *, card: AcceptCard, status
     ) -> pr_signals.PendingNudge | None:
-        return _conflict_nudge(card=card, status=status)
+        return notices._conflict_nudge(self, card=card, status=status)
 
     async def _dispatch_nudges(
         self,
@@ -837,53 +786,14 @@ class AcceptService:
         chat_service,
         runner,
     ) -> None:
-        """Lock the card, then record each new event and parent intent.
-
-        Signatures, task events and recipient intent commit together. A failed
-        producer transaction leaves none of them; the next poll may recreate
-        the event. Only committed intent can reach a native session.
-        """
-        saved_state = await self._session.scalar(
-            select(AcceptCard.nudge_state)
-            .where(AcceptCard.id == card.id)
-            .with_for_update()
+        return await notices._dispatch_nudges(
+            self,
+            card=card,
+            topic=topic,
+            pending=pending,
+            chat_service=chat_service,
+            runner=runner,
         )
-        ledger = pr_signals.NudgeLedger.load(saved_state)
-        fresh = [p for p in pending if not ledger.already_sent(p.kind, p.signature)]
-        if not fresh:
-            return
-        task = (
-            await TaskService(self._session).get(card.task_id) if card.task_id else None
-        )
-        actionable = task is not None and task.status == TaskStatus.open
-        for nudge in fresh:
-            if nudge.capped:
-                continue
-            await self._record_task_nudge(
-                topic=topic,
-                task=task,
-                content=(
-                    f"任务 {card.task_id}："
-                    f'先执行 cd "$(cheese worktree {card.task_id})"。\n' + nudge.content
-                    if actionable
-                    else f"{nudge.event}。原任务已关闭或不存在；"
-                    "如需继续修改，请由新任务承接。"
-                ),
-                headline=nudge.event,
-                meta=notice(
-                    nudge.event_type,
-                    severity=SEVERITY_ERROR,
-                    who=WHO_CHEESE,
-                    detail=nudge.detail or None,
-                    detail_label=nudge.detail_label or None,
-                ),
-            )
-        loudest = max(fresh, key=lambda n: pr_signals.NOTE_PRIORITY[n.kind])
-        if loudest.note:
-            notes.record(card, loudest.note_code, loudest.note)
-        for nudge in fresh:
-            ledger.record(nudge.kind, nudge.signature)
-        card.nudge_state = ledger.dump()
 
     async def _finish_pr_accept(
         self,
@@ -922,7 +832,9 @@ class AcceptService:
     async def _note_outside_accept_txn(
         self, card_id: uuid.UUID, code: notes.NoteCode, note: str
     ) -> None:
-        return await _note_outside_accept_txn(self._session, card_id, code, note)
+        return await notices._note_outside_accept_txn(
+            self, card_id=card_id, code=code, note=note
+        )
 
     async def merge_queued_pr(self, task_id: uuid.UUID) -> int | None:
         return await merge_queue.merge_queued_pr(self, task_id=task_id)
