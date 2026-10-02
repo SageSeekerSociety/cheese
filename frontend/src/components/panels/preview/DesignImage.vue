@@ -23,10 +23,18 @@ const props = withDefaults(
     selectionEnabled?: boolean
     /** Undefined keeps standalone selection; null is an explicitly cleared controlled region. */
     activeRegion?: RasterRegion | null
+    /**
+     * 滚轮是不是用来缩放的。
+     *
+     * 面板里这张图嵌在一段要滚的正文里，滚轮得先把那段滚下去；只有图铺满整个
+     * 屏幕（全屏）时，把滚轮让给缩放才不抢东西。
+     */
+    zoomOnWheel?: boolean
   }>(),
   {
     selectionEnabled: true,
     activeRegion: undefined,
+    zoomOnWheel: false,
   }
 )
 const emit = defineEmits<{
@@ -234,6 +242,9 @@ function setZoom(value: number) {
 /** 滚轮缩放：光标底下那个点不动，缩放才不「跑掉」。 */
 let anchor: { clientX: number; clientY: number; naturalX: number; naturalY: number } | null = null
 function wheel(event: WheelEvent) {
+  // 不缩放时什么都不做，让滚轮去干它本来那件事：滚这段。
+  if (!props.zoomOnWheel) return
+  event.preventDefault()
   const current = image.value
   const bounds = current?.getBoundingClientRect()
   if (!current || !bounds?.width || !natural.value.width) return
@@ -447,7 +458,7 @@ onBeforeUnmount(() => {
       @pointerup.capture="panEnd"
       @pointercancel.capture="panEnd"
     >
-      <div ref="pane" class="design-image__pane" @wheel.prevent="wheel">
+      <div ref="pane" class="design-image__pane" @wheel="wheel">
         <div class="design-image__sheet" :style="dimensions">
           <img :key="`${identity}:${src}`" ref="image" :src="src" :alt="alt" draggable="false" @load="loaded" />
           <DesignSketchOverlay v-if="strokes.length" :strokes="strokes" :scale="scale" :natural-width="natural.width" />

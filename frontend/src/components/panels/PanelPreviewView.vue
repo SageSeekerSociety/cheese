@@ -399,8 +399,10 @@ async function onAnnotate(payload: {
           :title="t(displayedFrame?.live ? 'work.room.preview.openLatestPreview' : 'work.room.preview.openInNewTab')"
           @click="openPreviewInNewTab()"
         />
+        <!-- 图片也要全屏：它正是那种「放大才画得准」的东西，而滚轮缩放只在全屏里
+             开着（见 DesignImage 的 zoomOnWheel）。 -->
         <v-btn
-          v-if="fullscreenSupported && previewUrl"
+          v-if="fullscreenSupported && (previewUrl || isImageArtifact)"
           :icon="previewFull ? 'mdi-fullscreen-exit' : 'mdi-arrow-expand-all'"
           size="small"
           variant="text"
@@ -693,6 +695,7 @@ async function onAnnotate(payload: {
         :identity="imageRegion.imageIdentity.value"
         :selection-enabled="imageRegion.selectionEnabled.value"
         :active-region="imageRegion.target.value?.selection.region ?? null"
+        :zoom-on-wheel="previewFull"
         @region="onImageRegion"
         @annotate="onAnnotate"
       >
