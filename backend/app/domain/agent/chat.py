@@ -2648,9 +2648,12 @@ class ChatService(SessionRecovery):
                     turn_id=state.work_id,
                 )
             elif state.route != "gateway" or self._gateway is None:
+                payer = await payer_for_project(session, state.project_id)
+                priced = state.route == "gateway"
                 for u in usages:
-                    await UsageRepository(session).add(
-                        project_id=state.project_id,
+                    await Ledger(session).record(
+                        payer,
+                        credits=usage_to_credits(u, spend_priced=priced),
                         topic_id=state.topic_id,
                         model=u.model or state.model or settings.agent_model,
                         input_tokens=u.input_tokens,
@@ -2659,9 +2662,6 @@ class ChatService(SessionRecovery):
                         route=state.route,
                         turn_id=state.work_id,
                     )
-                    payer = await payer_for_project(session, state.project_id)
-                    credits = usage_to_credits(u, spend_priced=state.route == "gateway")
-                    await Ledger(session).charge(payer, credits)
             # What this session was fed, including by a process that is gone.
             # Settled either way: a failed session must also drop the batches
             # an earlier process fed it, or a later clean Stop would read them
