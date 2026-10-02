@@ -155,5 +155,4 @@ counted against the principal it verifiably comes from
   request. The web client retries a GET once when the wait is 10 s or less.
 
 The numbers are settings (`request_rate_per_s`, `request_rate_burst`,
-`request_concurrency`, `request_queue_depth`, `request_queue_timeout_s`);
-`request_limits_enabled=false` turns the limits off.
+`request_concurrency`, `request_queue_depth`, `request_queue_timeout_s`).

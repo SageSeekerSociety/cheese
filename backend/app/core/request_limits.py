@@ -307,7 +307,7 @@ class RequestLimits:
         self.concurrency = ConcurrencyLimiter()
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http" or not settings.request_limits_enabled:
+        if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
         path: str = scope.get("path", "")

@@ -22,8 +22,15 @@ from tests.integration.conftest import session_auth_headers, session_token
 
 @pytest.fixture
 def limits(monkeypatch):
-    """Limits on, at the shipped defaults unless a test narrows them."""
-    monkeypatch.setattr(settings, "request_limits_enabled", True)
+    """The shipped numbers, unless a test narrows them."""
+    for name in (
+        "request_rate_per_s",
+        "request_rate_burst",
+        "request_concurrency",
+        "request_queue_depth",
+        "request_queue_timeout_s",
+    ):
+        monkeypatch.setattr(settings, name, type(settings).model_fields[name].default)
 
     def narrow(**values) -> None:
         for name, value in values.items():

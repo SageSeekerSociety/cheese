@@ -149,7 +149,6 @@ class Settings(BaseSettings):
     # shared deployment, a normal browser peaks at 14 requests in flight, 14/s
     # and 111/min — a page fans out one request per project — so these sit
     # above that and below what one runaway page did to the whole process.
-    request_limits_enabled: bool = True
     request_rate_per_s: float = Field(default=20.0, gt=0)
     request_rate_burst: int = Field(default=100, ge=1)
     request_concurrency: int = Field(default=16, ge=1)
