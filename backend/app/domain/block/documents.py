@@ -123,7 +123,8 @@ class DocumentWriter:
 
         Returns ``(None, None)`` when there is nothing to record: the text did
         not change, or a room with no document stored an empty one. A
-        ``quiet`` version gets no conversation event, like a brief seed.
+        ``quiet`` version gets no conversation event, like a brief seed, and
+        leaves the document's author as it was.
         """
         if not actors:
             raise ValueError("a document version needs the actor who wrote it")
@@ -165,8 +166,11 @@ class DocumentWriter:
             )
         # The root records the latest editor; unchanged nodes keep their author,
         # and _sync_doc_nodes attributes only newly written nodes to this editor.
-        doc.author = author
-        doc.author_type = AuthorType.participant
+        # A quiet version only respells the text and is nobody's edit: the
+        # document stays its last editor's, respelled nodes included.
+        if not quiet:
+            doc.author = author
+            doc.author_type = AuthorType.participant
         # B1: also sync the structured node tree (struct_parent children) so the
         # doc's blocks get stable ids for cross-view highlight / comments later.
         await self._sync_doc_nodes(doc, content)
