@@ -29,6 +29,8 @@ const catalogTargets = [
   { path: '/legal/terms', name: 'LegalTerms', component: blank },
   { path: '/legal/privacy', name: 'LegalPrivacy', component: blank },
   { path: '/feedback/:id', name: 'FeedbackDetail', component: blank },
+  { path: '/teams/:handle/credits', name: 'TeamsDetailCredits', component: blank },
+  { path: '/projects/:projectId', name: 'workspace-project', component: blank },
 ]
 
 export function demoRouter() {
