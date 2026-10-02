@@ -298,27 +298,28 @@ class CentralChannel(DeviceChannel):
                 else DEFERRED_WORKSPACE,
                 "mcp_servers": [],
             }
-            # The project's remote MCP servers need no machine: the platform
-            # holds their credentials and calls them (`remote_mcp`), so they are
-            # the session's from its start. Only the usable ones: a server
-            # someone still has to connect is a capability line in the prompt
-            # instead. Part of the target, so connecting one relaunches an idle
-            # session with it (`screen_identity.launch_identity`).
-            async with factory() as db:
-                remote = await remote_mcp.session_target(
-                    db, project_id, topic_id, agent_handle
-                )
-                own = await agent_stdio_servers(db, project_id, agent_handle)
-            if remote is not None:
-                target["remote_mcp"] = remote
-            # The teammate's type's own stdio servers, as definitions: they run
-            # on the room's machine like the checkout's `.mcp.json` ones, and
-            # `RemoteClient` hands the machine the definition with each call.
-            # Part of the target, so a changed type relaunches an idle session.
-            if own:
-                target["agent_mcp"] = own
         else:
             target = private_chat.scratch_target(project_id, resource, device_id=center)
+        # The project's remote MCP servers need no machine: the platform holds
+        # their credentials and calls them (`remote_mcp`), so they are the
+        # session's from its start, in a room or a private chat alike. Only the
+        # usable ones: a server someone still has to connect is a capability
+        # line in the prompt instead. Part of the target, so connecting one
+        # relaunches an idle session with it (`screen_identity.launch_identity`).
+        async with factory() as db:
+            remote = await remote_mcp.session_target(
+                db, project_id, topic_id, agent_handle
+            )
+            own = await agent_stdio_servers(db, project_id, agent_handle)
+        if remote is not None:
+            target["remote_mcp"] = remote
+        # The teammate's type's own stdio servers, as definitions: they run
+        # where the session's commands run — the room's machine, beside the
+        # checkout's `.mcp.json` ones, or a private chat's scratch container —
+        # and `RemoteClient` hands the executor the definition with each call.
+        # Part of the target, so a changed type relaunches an idle session.
+        if own:
+            target["agent_mcp"] = own
         location = {
             "device_id": center,
             "resource_id": str(resource),

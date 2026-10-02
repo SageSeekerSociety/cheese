@@ -8,7 +8,7 @@
 
 ## Central sessions and private chat execution
 
-All Claude Code sessions run, each under its runner, on the central device configured by `AGENT_SESSION_DEVICE_ID`. Ordinary rooms keep their selected machine for project files, shell commands, environment scripts, custom stdio MCP processes and preview. Platform tools (chat, living document, task cards, acceptance, memory) run on the session host against the backend and do not depend on that machine. Private chats use a temporary container on the central host. A missing or offline session host produces an explicit setup failure.
+All Claude Code sessions run, each under its runner, on the central device configured by `AGENT_SESSION_DEVICE_ID`. Ordinary rooms keep their selected machine for project files, shell commands, environment scripts, custom stdio MCP processes and preview. Platform tools (chat, living document, task cards, acceptance, memory) run on the session host against the backend and do not depend on that machine. Private chats use a temporary container on the central host, which also runs the stdio MCP servers the teammate's agent type declares. A missing or offline session host produces an explicit setup failure.
 
 A person's 芝士 outside any project (the task page's 问芝士) also runs on the session host: one pi session per conversation, with no machine and no execution environment at all, only its three read-only tools, which the backend runs as that person. It needs no machine and claims none. Each such session has its own 512 MB memory cap, exits after three idle minutes, and a person keeps at most two running. The details are in [个人芝士](manual/dev/assistant.md#session).
 
