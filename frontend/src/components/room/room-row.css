@@ -97,6 +97,23 @@
   gap: 8px;
   margin-bottom: 2px;
 }
+/* 续话不重复署名。鼠标设备在同一行的 header 内留出动作位置，正文仍用整宽；
+   留白在悬停之前就存在，指针进入不会把内容推开。触屏仍走长按操作面板。 */
+.im-row--cont .im-meta {
+  display: none;
+}
+@media (hover: hover) {
+  .im-row[data-actions] .im-meta {
+    display: flex;
+    flex-wrap: wrap;
+    min-height: 28px;
+    padding-right: 148px;
+  }
+  .im-row[data-actions] .im-meta .im-name {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+}
 /* 头像和名字是按钮（点了去成员页），但长得和原来一样：只在悬停时给名字一条下划线。 */
 .im-person {
   display: inline-flex;

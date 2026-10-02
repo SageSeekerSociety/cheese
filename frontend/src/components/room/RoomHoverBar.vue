@@ -1,9 +1,10 @@
 <script setup lang="ts">
-// 消息的悬停条：整列只有这一个，指针落在哪条消息上，它就滑到哪条的右上角。
+// 消息的悬停条：整列只有这一个，停在当前消息 header 的右侧动作位置。
 //
 // 原来每条消息各带一个，指针换一行就是旧的淡出、新的淡入，两处同时在动，而且看
 // 不出它们是同一个东西。只留一个之后，它在行与行之间滑过去，只有移出整列时才淡
-// 出（设计系统 §9.7：一次只有一个焦点在动）。表情选择条挂在它下面，一起走。
+// 出。现在行内 header 给动作留了位置，换行直接落到对应区域，不穿过消息正文。
+// 表情选择条挂在它下面，一起走。
 //
 // 它不认识时间线：停在哪条消息上、离顶多远，都是房间算好传进来的。
 import type { Block } from '../../cx_types'
@@ -116,32 +117,28 @@ async function copy() {
 </template>
 
 <style scoped>
-/* 挂在时间线内容那一层的右上角，靠 translateY 落到那条消息的顶边上方一点。
-   换一行时它滑过去（transform），出现和收起只改透明度。 */
+/* 挂在时间线内容层，落在消息 header 留好的动作位置。换行直接到位，避免动画
+   穿过其他消息时截获正文点击；出现和收起只改透明度。 */
 .hover-bar {
   position: absolute;
-  top: -12px;
+  top: 4px;
   right: 16px;
   z-index: 4;
   display: flex;
   gap: 2px;
-  padding: 3px;
+  padding: 0;
   background: var(--surface);
   border: 1px solid var(--line-2);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-1);
   opacity: 0;
   pointer-events: none;
-  transition:
-    opacity var(--dur-quick) var(--ease-in),
-    transform var(--dur-base) var(--ease-standard);
+  transition: opacity var(--dur-quick) var(--ease-in);
 }
 .hover-bar--shown {
   opacity: 1;
   pointer-events: auto;
-  transition:
-    opacity var(--dur-quick) var(--ease-out),
-    transform var(--dur-base) var(--ease-standard);
+  transition: opacity var(--dur-quick) var(--ease-out);
 }
 /* 从收起状态出现时直接落到位，只淡入：从上一次停的那一行滑过来，说的是一件没
    发生的事。 */
