@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import type { SketchTool } from './designSketch'
+import type { RedactStyle, SketchTool } from './designSketch'
 import type { ToolbarTier } from './designToolbar'
 
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
-import { DRAW_TOOLS, SKETCH_COLORS } from './designSketch'
+import { DRAW_TOOLS, REDACT_STYLES, SKETCH_COLORS } from './designSketch'
 import { toolbarTier } from './designToolbar'
+import RedactStyleSwatch from './RedactStyleSwatch.vue'
 
 import { t } from '@/i18n'
 
@@ -21,6 +22,10 @@ const props = defineProps<{
   busy?: boolean
   /** 图上正有一个文字框在编辑：这时发送是禁用的，原因要说得出。 */
   textEditing?: boolean
+  /** 用涂黑工具、或选中的是一块涂黑：颜色轮换成涂黑样式行。 */
+  redact?: boolean
+  /** 当前涂黑样式；样式行里高亮哪一颗。 */
+  redactStyle?: RedactStyle
 }>()
 /** 图上的字说不清「改成什么」，所以那一句和「加入对话」摆在一起。 */
 const note = defineModel<string>('note', { default: '' })
@@ -30,6 +35,8 @@ defineExpose({ selectButton })
 const emit = defineEmits<{
   pick: [tool: SketchTool]
   recolor: [color: string]
+  /** 改涂黑样式（选中的涂黑，或下一块涂黑）。 */
+  restyle: [style: RedactStyle]
   undo: []
   redo: []
   clear: []
@@ -147,19 +154,39 @@ const TOOL_ICON: Record<SketchTool, string> = {
       <span class="sketch-toolbar__gap" />
       <!-- 窄到一定档就把颜色轮收掉：它一排五颗最占地方，工具和历史更要紧。 -->
       <template v-if="showColors">
-        <button
-          v-for="swatch in SKETCH_COLORS"
-          :key="swatch"
-          type="button"
-          class="sketch-toolbar__color"
-          :class="{ 'is-active': props.color === swatch }"
-          :style="{ color: swatch }"
-          :aria-pressed="props.color === swatch"
-          :aria-label="t('design.sketchColor', { color: swatch })"
-          @click="emit('recolor', swatch)"
-        >
-          ●
-        </button>
+        <!-- 涂黑不看颜色：用涂黑工具、或选中的是一块涂黑时，颜色轮换成样式行。 -->
+        <template v-if="props.redact">
+          <span class="sketch-toolbar__styles" role="group" :aria-label="t('design.redactStyles')">
+            <button
+              v-for="style in REDACT_STYLES"
+              :key="style"
+              type="button"
+              class="sketch-toolbar__style"
+              :class="{ 'is-active': props.redactStyle === style }"
+              :aria-pressed="props.redactStyle === style"
+              :aria-label="t(`design.redactStyle.${style}`)"
+              :title="t(`design.redactStyle.${style}`)"
+              @click="emit('restyle', style)"
+            >
+              <RedactStyleSwatch :style="style" />
+            </button>
+          </span>
+        </template>
+        <template v-else>
+          <button
+            v-for="swatch in SKETCH_COLORS"
+            :key="swatch"
+            type="button"
+            class="sketch-toolbar__color"
+            :class="{ 'is-active': props.color === swatch }"
+            :style="{ color: swatch }"
+            :aria-pressed="props.color === swatch"
+            :aria-label="t('design.sketchColor', { color: swatch })"
+            @click="emit('recolor', swatch)"
+          >
+            ●
+          </button>
+        </template>
       </template>
       <span class="sketch-toolbar__gap" />
       <button
@@ -294,6 +321,20 @@ const TOOL_ICON: Record<SketchTool, string> = {
   line-height: 1;
 }
 .sketch-toolbar__color.is-active {
+  outline: 2px solid var(--accent);
+}
+/* 涂黑样式那一组：`display: contents` 让三颗按钮仍按外层横滚那一行的间距排，
+   这一层只是给读屏一个组名。 */
+.sketch-toolbar__styles {
+  display: contents;
+}
+/* 涂黑样式那三颗：里面是各样式自己的小图，外面一圈高亮表示选中。 */
+.sketch-toolbar__style {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+}
+.sketch-toolbar__style.is-active {
   outline: 2px solid var(--accent);
 }
 .sketch-toolbar__note {

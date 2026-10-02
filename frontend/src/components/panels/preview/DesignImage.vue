@@ -12,7 +12,7 @@ import { composeSketch, sampleImage, SKETCH_COLORS, strokeWidth } from './design
 import DesignSketchCanvas from './DesignSketchCanvas.vue'
 import DesignSketchOverlay from './DesignSketchOverlay.vue'
 import DesignSketchToolbar from './DesignSketchToolbar.vue'
-import { blockAt, contentProfile } from './designSnap'
+import { blockAt, blockUnder, contentProfile } from './designSnap'
 import { useSketchObjectEdit } from './useSketchObjectEdit'
 
 import { t } from '@/i18n'
@@ -109,6 +109,10 @@ const {
   dropAnnotations,
   reset: resetStrokes,
   recolor,
+  restyle,
+  redactStyle,
+  redactToolbar,
+  redactToolbarStyle,
   deleteSelected,
   cancelGesture,
   commitTextEdit,
@@ -432,12 +436,34 @@ function imageGeometry() {
   }
 }
 
-/** 点一下内容块：不画东西，直接把那一块框出来并编上号。 */
+/**
+ * 点一下内容块：不画东西，直接拿光标下那一块，按当前工具落成一条笔画。
+ *
+ * 两种工具不一样：
+ *
+ * - 矩形 / 椭圆：点在空白处就框住整张图（画个圈，看得出来，也随手能删）。
+ * - 涂黑：点在空白处什么都不做。涂黑是盖住，猜出来的整张图会被真的涂掉，
+ *   而这一下只是点到空白——没有框就不猜。
+ */
 function pickBlock(point: Point) {
   const bounds = profile.value
   if (!bounds || !natural.value.width) return
+  const active = tool.value
+  if (active === 'redact') {
+    const hit = blockUnder(point, bounds)
+    if (!hit) return
+    addStroke({
+      tool: 'redact',
+      color: color.value,
+      width: penWidth.value,
+      region: hit,
+      redactStyle: redactStyle.value,
+    })
+    return
+  }
+  if (active !== 'rect' && active !== 'ellipse') return
   addStroke({
-    tool: 'rect',
+    tool: active,
     color: color.value,
     width: penWidth.value,
     region: blockAt(point, bounds, natural.value.width, natural.value.height),
@@ -685,8 +711,11 @@ onBeforeUnmount(() => {
       :can-select="selectionEnabled && !!natural.width"
       :busy="exporting"
       :text-editing="textEditing"
+      :redact="redactToolbar"
+      :redact-style="redactToolbarStyle"
       @pick="tool = $event"
       @recolor="recolor"
+      @restyle="restyle"
       @undo="undo"
       @redo="redo"
       @clear="clearStrokes"
@@ -763,6 +792,7 @@ onBeforeUnmount(() => {
             :tool="tool"
             :color="color"
             :width="penWidth"
+            :redact-style="redactStyle"
             :profile="profile"
             :strokes="strokes"
             @stroke="addStroke"

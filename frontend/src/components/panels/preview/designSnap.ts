@@ -359,17 +359,25 @@ export function snapRegion(region: RasterRegion, profile: ContentProfile, tolera
 
 /**
  * 点落在哪个内容框里——面积最小的那个，也就是一个词；词与词之间的空隙
- * 落到包含它的那一行。点在空白处（或没有框）时给出整张图。
+ * 落到包含它的那一行。点在空白处（或没有框）时给出 null。
+ *
+ * 「没有框」和「整张图」是两件事，调用方要分开用：框住整张图只是画个圈，
+ * 而涂黑整张图是真的盖掉。见 blockAt。
  */
+export function blockUnder(point: Point, profile: ContentProfile): RasterRegion | null {
+  for (const box of profile.boxes) {
+    if (point.x >= box.x && point.x <= box.x + box.width && point.y >= box.y && point.y <= box.y + box.height)
+      return box
+  }
+  return null
+}
+
+/** 和 blockUnder 一样，只是点在空白处时给出整张图。 */
 export function blockAt(
   point: Point,
   profile: ContentProfile,
   naturalWidth: number,
   naturalHeight: number
 ): RasterRegion {
-  for (const box of profile.boxes) {
-    if (point.x >= box.x && point.x <= box.x + box.width && point.y >= box.y && point.y <= box.y + box.height)
-      return box
-  }
-  return { x: 0, y: 0, width: naturalWidth, height: naturalHeight }
+  return blockUnder(point, profile) ?? { x: 0, y: 0, width: naturalWidth, height: naturalHeight }
 }

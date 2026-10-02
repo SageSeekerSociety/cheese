@@ -5,7 +5,7 @@
 // 路由都留在组件里；这里只认「笔画这份数据该怎么被改」，换算坐标用的几何由外面传进来。
 import type { Ref } from 'vue'
 import type { Point } from './designRegion'
-import type { SketchStroke, SketchTool } from './designSketch'
+import type { RedactStyle, SketchStroke, SketchTool } from './designSketch'
 import type { HandleRole } from './designSketchSelection'
 
 import { computed, nextTick, ref } from 'vue'
@@ -72,6 +72,8 @@ export function useSketchObjectEdit(options: {
   /** 正在拖/缩一笔（挂在 sheet 上的手势）：撤销/重做这时要拒绝。 */
   const interacting = ref(false)
   const editField = ref<HTMLInputElement | null>(null)
+  /** 下一块涂黑用哪种样式；参考物缺省实心。 */
+  const redactStyle = ref<RedactStyle>('solid')
 
   let gesture: Gesture | null = null
   let gesturePointer: number | null = null
@@ -87,6 +89,15 @@ export function useSketchObjectEdit(options: {
     const stroke = strokes.value[index]
     return stroke && isSelectableStroke(stroke) ? stroke : null
   })
+  /** 选中的那一块涂黑；涂黑不看颜色，样式行按它高亮。 */
+  const selectedRedact = computed(() => {
+    const stroke = selectedShape.value
+    return stroke && stroke.tool === 'redact' ? stroke : null
+  })
+  /** 涂黑样式行该不该顶掉颜色轮：用涂黑工具，或选中的是一块涂黑。 */
+  const redactToolbar = computed(() => tool.value === 'redact' || selectedRedact.value !== null)
+  /** 样式行高亮哪一颗：选中的涂黑用它的样式，否则用下一块的默认样式。 */
+  const redactToolbarStyle = computed(() => selectedRedact.value?.redactStyle ?? redactStyle.value)
 
   /** 记一条历史快照（整份笔画数组），并把重做栈清掉。 */
   function pushHistory(before: SketchStroke[]) {
@@ -150,12 +161,25 @@ export function useSketchObjectEdit(options: {
   function recolor(swatch: string) {
     const index = selectedStroke.value
     const stroke = index === null ? null : strokes.value[index]
+    // 涂黑不看颜色：改一块选中的涂黑是空操作（参考物的 recolorSelection 对涂黑也空转）。
+    if (stroke && stroke.tool === 'redact') return
     if (stroke && isSelectableStroke(stroke)) {
       const before = strokes.value
       strokes.value = before.map((current, at) => (at === index ? { ...current, color: swatch } : current))
       pushHistory(before)
     }
     color.value = swatch
+  }
+  /** 改涂黑样式：选中的是一块涂黑就改它（参考物 restyleSelection），否则只改「下一块」。 */
+  function restyle(next: RedactStyle) {
+    const index = selectedStroke.value
+    const stroke = index === null ? null : strokes.value[index]
+    if (stroke && stroke.tool === 'redact') {
+      const before = strokes.value
+      strokes.value = before.map((current, at) => (at === index ? { ...current, redactStyle: next } : current))
+      pushHistory(before)
+    }
+    redactStyle.value = next
   }
   /** Backspace / Delete 删掉选中的那一笔。 */
   function deleteSelected() {
@@ -396,6 +420,10 @@ export function useSketchObjectEdit(options: {
     canRedo,
     busy,
     selectedShape,
+    selectedRedact,
+    redactStyle,
+    redactToolbar,
+    redactToolbarStyle,
     editStyle,
     addStroke,
     undo,
@@ -404,6 +432,7 @@ export function useSketchObjectEdit(options: {
     dropAnnotations,
     reset,
     recolor,
+    restyle,
     deleteSelected,
     cancelGesture,
     commitTextEdit,

@@ -25,6 +25,12 @@
     "redact": "涂黑"
   },
   "sketchColor": "标注颜色 {color}",
+  "redactStyles": "涂黑样式",
+  "redactStyle": {
+    "solid": "实心",
+    "mosaic": "马赛克",
+    "noise": "噪点"
+  },
   "undo": "撤销",
   "undoShortcut": "撤销（⌘Z / Ctrl+Z）",
   "redo": "重做",

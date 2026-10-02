@@ -255,6 +255,48 @@ it('没有选中对象时，色板只改下一笔的颜色', async () => {
   expect(overlayRect(ui).getAttribute('stroke')).toBe('#2F9E44')
 })
 
+/** 用涂黑工具画一块：client (60,70)→(310,220)。 */
+async function drawRedact(ui: ReturnType<typeof render>) {
+  await ready(ui)
+  await pickTool(ui, '涂黑')
+  const layer = ui.getByRole('application', { name: '图片标注画布' })
+  layer.setPointerCapture = vi.fn()
+  await fireEvent.pointerDown(layer, { button: 0, pointerId: 61, clientX: 60, clientY: 70 })
+  await fireEvent.pointerMove(layer, { pointerId: 61, clientX: 310, clientY: 220 })
+  await fireEvent.pointerUp(layer, { pointerId: 61, clientX: 310, clientY: 220 })
+  try {
+    await waitFor(() => expect(strokeRects(ui)).toHaveLength(1), { timeout: 5000 })
+  } catch (error) {
+    throw new Error(`${probe(ui)}\n${error}`)
+  }
+}
+
+it('涂黑工具选中时：颜色轮换成样式行', async () => {
+  const ui = mount()
+  await painted(ui)
+  await pickTool(ui, '涂黑')
+  expect(ui.container.querySelectorAll('.sketch-toolbar__color')).toHaveLength(0)
+  expect(ui.container.querySelectorAll('.sketch-toolbar__style')).toHaveLength(3)
+})
+
+it('涂黑不看颜色：画出来就是纯黑，不跟着默认红', async () => {
+  const ui = mount()
+  await painted(ui)
+  await drawRedact(ui)
+  expect(overlayRect(ui).getAttribute('fill')).toBe('#000000')
+  expect(overlayRect(ui).getAttribute('stroke')).toBe('#000000')
+})
+
+it('改选中涂黑的样式：样式行的高亮跟着走', async () => {
+  const ui = mount()
+  await painted(ui)
+  await drawRedact(ui)
+  const active = () => ui.container.querySelector('.sketch-toolbar__style.is-active')?.getAttribute('aria-label')
+  expect(active()).toBe('实心')
+  await fireEvent.click(ui.getByRole('button', { name: '噪点' }))
+  await waitFor(() => expect(active()).toBe('噪点'))
+})
+
 it('select 工具下双击文字进编辑，提交为空就删掉这条文字', async () => {
   const ui = mount()
   await painted(ui)
