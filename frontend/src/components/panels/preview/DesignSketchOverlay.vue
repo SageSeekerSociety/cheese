@@ -4,7 +4,7 @@ import type { ShapeStroke, SketchStroke } from './designSketch'
 
 import { computed } from 'vue'
 
-import { arrowHead, fontSize, numberedStrokes } from './designSketch'
+import { arrowHeadPoints, fontSize, numberedStrokes } from './designSketch'
 
 /** 屏幕上已画好的笔画。坐标一律原图像素，显示时乘 `scale`。 */
 const props = defineProps<{ strokes: readonly SketchStroke[]; scale: number; naturalWidth: number }>()
@@ -65,7 +65,7 @@ function badge(entry: { index: number; stroke: ShapeStroke }) {
         <polygon
           v-if="item.stroke.tool === 'arrow'"
           :points="
-            arrowHead(item.stroke.from, item.stroke.to, item.stroke.width)
+            arrowHeadPoints(item.stroke.from, item.stroke.to, item.stroke.width)
               .map((point) => `${item.toDisplay(point).x},${item.toDisplay(point).y}`)
               .join(' ')
           "

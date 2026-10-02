@@ -59,6 +59,18 @@ export function numberedStrokes(strokes: readonly SketchStroke[]): { index: numb
   return numbered
 }
 
+/**
+ * 箭头的三个角：左翼、箭尖、右翼。屏幕和导出都照这三个点画，两边不会长得不一样。
+ *
+ * 光有两翼是个退化图形——两个点围不出面，屏幕上的 `<polygon>` 会一个字都不画，
+ * 于是「箭头」画出来只是一条直线（导出那条路自己补了箭尖，所以只有屏幕上缺）。
+ * 箭尖必须在这一串里，别把两翼拆开单独用。
+ */
+export function arrowHeadPoints(from: Point, to: Point, width: number): Point[] {
+  const [left, right] = arrowHead(from, to, width)
+  return [left, to, right]
+}
+
 /** 箭头两翼，屏幕和导出共用一套几何，两边不会长得不一样。 */
 export function arrowHead(from: Point, to: Point, width: number): [Point, Point] {
   const length = Math.hypot(to.x - from.x, to.y - from.y)
@@ -151,10 +163,10 @@ function paintStroke(context: CanvasRenderingContext2D, stroke: SketchStroke, sc
     context.lineTo(to.x, to.y)
     context.stroke()
     if (stroke.tool === 'arrow') {
-      const [left, right] = arrowHead(stroke.from, stroke.to, stroke.width)
+      const [left, tip, right] = arrowHeadPoints(stroke.from, stroke.to, stroke.width)
       context.beginPath()
       context.moveTo(left.x * scale, left.y * scale)
-      context.lineTo(to.x, to.y)
+      context.lineTo(tip.x * scale, tip.y * scale)
       context.lineTo(right.x * scale, right.y * scale)
       context.closePath()
       context.fill()
