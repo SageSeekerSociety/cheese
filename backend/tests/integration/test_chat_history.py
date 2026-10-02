@@ -12,7 +12,7 @@ from tests.unit.test_platform_tool_runner import cheese as tools
 
 
 def _room(client):
-    response = post_project(client, json={"name": "History", "owner_handle": "alice"})
+    response = post_project(client, json={"name": "History"}, owner="alice")
     assert response.status_code == 200, response.text
     project = response.json()["data"]
     return project["id"], project["root_topic_id"]

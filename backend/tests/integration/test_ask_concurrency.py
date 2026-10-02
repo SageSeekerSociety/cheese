@@ -27,10 +27,14 @@ from tests.integration.conftest import post_project, session_auth_headers
     "case", ["same_operation", "different_operations", "corrections"]
 )
 def test_overlapping_answers_keep_one_winner(client, monkeypatch, case):
-    project = post_project(client, json={"name": "Overlapping answers"}).json()["data"]
+    auth = session_auth_headers("user-1")
+    project = post_project(
+        client, json={"name": "Overlapping answers"}, headers=auth
+    ).json()["data"]
     topic = client.post(
         "/topics",
-        json={"project_id": project["id"], "title": "T", "created_by": "user-1"},
+        json={"project_id": project["id"], "title": "T"},
+        headers=auth,
     ).json()["data"]["id"]
     question = legacy_question(client, topic, question="Choose the next step")
     block_id = uuid.UUID(question["id"])
@@ -42,7 +46,9 @@ def test_overlapping_answers_keep_one_winner(client, monkeypatch, case):
         "client_op_id": "initial",
     }
     if case == "corrections":
-        response = client.post(f"/topics/blocks/{block_id}/answers", json=initial)
+        response = client.post(
+            f"/topics/blocks/{block_id}/answers", json=initial, headers=auth
+        )
         assert response.status_code == 200, response.text
 
     a = {

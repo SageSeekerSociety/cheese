@@ -71,11 +71,7 @@ async def set_title(
     it had just been handed would have renamed the whole room around it.
     """
     place = await TopicService(db).place_or_404(topic_id)
-    actor = await resolver.resolve(
-        fallback_handle=body.get("by"),
-        topic_id=place.room_id,
-        project_id=place.project_id,
-    )
+    actor = await resolver.resolve(topic_id=place.room_id, project_id=place.project_id)
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id
     )
@@ -101,9 +97,7 @@ async def _title_actor(
 ) -> tuple[Topic, str]:
     """The room and the signed-in person acting on its title."""
     room = await TopicService(db).get_or_404(topic_id)
-    actor = await resolver.resolve(
-        fallback_handle=None, topic_id=room.id, project_id=room.project_id
-    )
+    actor = await resolver.resolve(topic_id=room.id, project_id=room.project_id)
     await resolver.authorize_topic(actor, project_id=room.project_id, topic_id=room.id)
     if not actor.authenticated:
         raise ForbiddenError("改标题需要登录")

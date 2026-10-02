@@ -33,11 +33,11 @@ WEEK_THREE = {
 
 
 def _project(client, *, external_task_id: int | None = None, name: str = "团队") -> int:
-    body: dict = {"name": name, "owner_handle": OWNER}
+    body: dict = {"name": name}
     if external_task_id is not None:
         seed_claim(client, external_task_id, handle=OWNER)
         body["external_task_id"] = external_task_id
-    return post_project(client, json=body).json()["data"]["id"]
+    return post_project(client, json=body, owner=OWNER).json()["data"]["id"]
 
 
 def _seed_reference_rows(client, *, material: str, knowledge: str) -> tuple[int, int]:

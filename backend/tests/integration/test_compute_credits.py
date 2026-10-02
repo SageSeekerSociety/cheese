@@ -131,7 +131,7 @@ def _credits(client, project_id: str) -> dict:
 def _mk_topic(client, project_id: str) -> str:
     r = client.post(
         "/topics",
-        json={"project_id": project_id, "title": "聊聊", "created_by": "u1"},
+        json={"project_id": project_id, "title": "聊聊"},
     )
     assert r.status_code == 200
     return r.json()["data"]["id"]

@@ -20,9 +20,9 @@ from tests.integration.test_file_panel_safety import (
 
 
 def test_listing_a_projects_files_needs_a_credential(client):
-    project = post_project(
-        client, json={"name": "Secret", "owner_handle": "alice"}
-    ).json()["data"]
+    project = post_project(client, json={"name": "Secret"}, owner="alice").json()[
+        "data"
+    ]
 
     resp = client.get(f"/projects/{project['id']}/files")
 
@@ -32,9 +32,9 @@ def test_listing_a_projects_files_needs_a_credential(client):
 
 
 def test_reading_a_file_needs_a_credential(client):
-    project = post_project(
-        client, json={"name": "Secret2", "owner_handle": "alice"}
-    ).json()["data"]
+    project = post_project(client, json={"name": "Secret2"}, owner="alice").json()[
+        "data"
+    ]
 
     resp = client.get(f"/projects/{project['id']}/file", params={"path": "README.md"})
 

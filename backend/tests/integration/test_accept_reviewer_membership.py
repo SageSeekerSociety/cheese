@@ -51,7 +51,9 @@ def _default_reviewer(client, pid: str, handle: str) -> None:
 
 def _room(client, pid: str) -> str:
     r = client.post(
-        "/topics", json={"project_id": pid, "title": "房间", "created_by": OWNER}
+        "/topics",
+        json={"project_id": pid, "title": "房间"},
+        headers=session_auth_headers(OWNER),
     )
     assert r.status_code == 200, r.text
     return r.json()["data"]["id"]

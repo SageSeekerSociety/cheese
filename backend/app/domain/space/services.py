@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
+from app.domain.space.material_service import member_readable_material_ids
 from app.domain.space.models import (
     Space,
     SpaceAdminRelation,
@@ -80,6 +81,7 @@ async def ensure_teaching_references(
     *,
     knowledge_service: "KnowledgeService | None",
     material_service: "MaterialService | None",
+    session: "AsyncSession | None",
     teaching: dict,
     actor_user_id: int | None,
 ) -> None:
@@ -100,9 +102,13 @@ async def ensure_teaching_references(
 
     `KnowledgeService.ensure_readable` is the very criterion
     `GET /knowledge/{id}` uses — a teacher may point at 知识 they could already
-    open, nobody else's. A 课件 has no owning team to check (any signed-in
-    reader may fetch any material), so only existence is required of
-    `material_ids`.
+    open, nobody else's. A 课件 has no owning team to check, but it does have a
+    visibility tier: a plain `Material` is open to any signed-in reader, while
+    one placed in a board's「仅管理员」tier is not
+    (`SpaceMaterialService.may_read_outside_space`). So a `material_ids` entry
+    must both exist and be one an ordinary member could read; naming an
+    admins-only 课件 is refused by the field's name, rather than accepted here
+    and silently dropped by `for_project` later.
     """
     knowledge_ids = teaching.get("knowledge_ids") or []
     if knowledge_ids and knowledge_service is not None:
@@ -127,6 +133,20 @@ async def ensure_teaching_references(
                 "teaching.materialIds names a material that does not exist",
                 data={"field": "materialIds", "id": _error_data_id(exc)},
             ) from exc
+        if session is not None:
+            # The read side keeps a config safe when a 课件's tier is flipped
+            # afterwards, but this is a form somebody is looking at: say which
+            # field is wrong instead of quietly leaving a 课件 out this week.
+            readable = await member_readable_material_ids(
+                session, material_ids=material_ids
+            )
+            locked = [mid for mid in material_ids if mid not in readable]
+            if locked:
+                raise BadRequestError(
+                    "teaching.materialIds names a 课件 that is only visible to a "
+                    "board's managers",
+                    data={"field": "materialIds", "id": locked[0]},
+                )
 
 
 @dataclass(frozen=True)
@@ -167,6 +187,7 @@ class SpaceService:
         invite_code_repo: SpaceInviteCodeRepository | None = None,
         knowledge_service: "KnowledgeService | None" = None,
         material_service: "MaterialService | None" = None,
+        session: "AsyncSession | None" = None,
     ) -> None:
         self._repo = repo
         self._category_repo = category_repo
@@ -180,6 +201,7 @@ class SpaceService:
         self._invite_code_repo = invite_code_repo
         self._knowledge_service = knowledge_service
         self._material_service = material_service
+        self._session = session
 
     # ------------------------------------------------------------------
     # Classification topics
@@ -458,10 +480,11 @@ class SpaceService:
         self, *, teaching: dict, actor_user_id: int | None
     ) -> None:
         """The service's wiring of `ensure_teaching_references` — see it for the
-        rule; this only hands in the two lookups the route builds."""
+        rule; this only hands in the lookups and the session the route builds."""
         await ensure_teaching_references(
             knowledge_service=self._knowledge_service,
             material_service=self._material_service,
+            session=self._session,
             teaching=teaching,
             actor_user_id=actor_user_id,
         )

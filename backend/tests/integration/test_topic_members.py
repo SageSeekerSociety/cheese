@@ -24,12 +24,13 @@ def _agent(client, tid: str) -> str:
 def _topic(client, created_by: str = "alice") -> str:
     """A room in a project whose team has bob and carol on it — a room seats
     only people who are in the project."""
-    p = post_project(client, json={"name": "P"}).json()["data"]
-    for handle in ("bob", "carol"):
+    p = post_project(client, json={"name": "P"}, owner=created_by).json()["data"]
+    for handle in {"bob", "carol"} - {created_by}:
         join_project_team(client, p["id"], handle)
     t = client.post(
         "/topics",
-        json={"project_id": p["id"], "title": "T", "created_by": created_by},
+        json={"project_id": p["id"], "title": "T"},
+        headers=session_auth_headers(created_by),
     ).json()["data"]
     return t["id"]
 
@@ -231,10 +232,11 @@ def test_each_agent_row_is_named_after_the_agent_seated_there(client):
     它那一行、头像上那个字，读的都是这里。座位账号自己的昵称是建号那一刻写死的
     常量，照原样报出去，两个队友就成了同一个名字。
     """
-    p = post_project(client, json={"name": "P"}).json()["data"]
+    p = post_project(client, json={"name": "P"}, owner="alice").json()["data"]
     tid = client.post(
         "/topics",
-        json={"project_id": p["id"], "title": "T", "created_by": "alice"},
+        json={"project_id": p["id"], "title": "T"},
+        headers=session_auth_headers("alice"),
     ).json()["data"]["id"]
 
     seat = _agent(client, tid)

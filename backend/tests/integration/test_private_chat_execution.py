@@ -151,7 +151,6 @@ async def test_chat_runs_through_a_session(client, tmp_path, private):
             headers=headers,
             json={
                 "content": "# Private draft",
-                "author": "cheese",
                 "expected_version": 0,
             },
         )

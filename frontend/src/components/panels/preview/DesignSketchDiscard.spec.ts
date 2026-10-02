@@ -7,6 +7,7 @@ import { confirmAnnotationDiscard, hasUnsentAnnotations } from './annotationDisc
 import DesignImage from './DesignImage.vue'
 
 import { setLocale } from '@/i18n'
+import { nextMillisecond } from '@/test/nextMillisecond'
 
 // 合成标注图要真 canvas，测试环境里没有；只把这一步换成成功，别的照旧。
 vi.mock('./designSketch', async (importOriginal) => {
@@ -34,6 +35,30 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+/** 量测落在 rAF 里（happy-dom 用 setImmediate 实现）：手势之前先让排着的那一帧跑完。 */
+async function settled() {
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  await new Promise((resolve) => setTimeout(resolve, 0))
+}
+
+/**
+ * 手势之前的体检。
+ *
+ * `down()` 拿不到完整的量测就静默什么都不画——按不出笔画，测试里只看到「等了半天什么都没有」。
+ * 量测的三样（img 的 complete、它的 rect、pane 的宽度）全是测试按元素打上去的补丁，元素被
+ * 换掉或那一帧没跑就一起失效，所以这里先摆出来：哪一样不对，失败信息里直接是那个对象。
+ */
+async function ready(ui: ReturnType<typeof render>) {
+  await settled()
+  const pane = ui.container.querySelector('.design-image__pane') as HTMLElement | null
+  const live = pane?.querySelector('img') as HTMLImageElement | null
+  expect({
+    complete: live?.complete === true,
+    rect: live?.getBoundingClientRect().width ?? 0,
+    paneWidth: pane?.clientWidth ?? 0,
+  }).toEqual({ complete: true, rect: 500, paneWidth: 532 })
+}
+
 async function painted(ui: ReturnType<typeof render>) {
   await waitFor(() => expect(ui.container.querySelector('.design-image__pane img')).toBeTruthy())
   const pane = ui.container.querySelector('.design-image__pane') as HTMLElement
@@ -48,6 +73,7 @@ async function painted(ui: ReturnType<typeof render>) {
   await waitFor(() => expect(observed.has(pane)).toBe(true))
   observed.get(pane)!([], {} as ResizeObserver)
   await fireEvent.load(image)
+  await ready(ui)
   return image
 }
 
@@ -55,15 +81,31 @@ function mount() {
   return render(DesignImage, { props: { src: 'blob:sketch', alt: 'design.png', identity: 'v1' } })
 }
 
+/** 挑一个工具，等它显示成选中、并跨过挂载那一毫秒再动手。见 DesignSketchObjectEdit.spec.ts 里的同名函数。 */
+async function pickTool(ui: ReturnType<typeof render>, label: string) {
+  await fireEvent.click(ui.getByRole('button', { name: label }))
+  await waitFor(() =>
+    expect(
+      ui.container.querySelector(`.sketch-toolbar__tool[aria-label="${label}"]`)?.getAttribute('aria-pressed')
+    ).toBe('true')
+  )
+  await nextMillisecond()
+}
+
+const rects = (ui: ReturnType<typeof render>) => ui.container.querySelectorAll('.sketch-overlay rect').length
+
+/** 画一个矩形，并且等它真的落在屏上：后面每一条断言都从「这一笔在」出发。 */
 async function drawRect(ui: ReturnType<typeof render>) {
-  await fireEvent.click(ui.getByRole('button', { name: '矩形' }))
+  await ready(ui)
+  const before = rects(ui)
+  await pickTool(ui, '矩形')
   const layer = ui.getByRole('application', { name: '图片标注画布' })
   layer.setPointerCapture = vi.fn()
   await fireEvent.pointerDown(layer, { button: 0, pointerId: 11, clientX: 60, clientY: 70 })
   await fireEvent.pointerMove(layer, { pointerId: 11, clientX: 160, clientY: 120 })
   await fireEvent.pointerUp(layer, { pointerId: 11, clientX: 160, clientY: 120 })
+  await waitFor(() => expect(rects(ui)).toBeGreaterThan(before), { timeout: 5000 })
 }
-const rects = (ui: ReturnType<typeof render>) => ui.container.querySelectorAll('.sketch-overlay rect').length
 
 describe('离开前问一句', () => {
   it('没画东西不拦：默认放行', async () => {
@@ -156,7 +198,7 @@ describe('离开前问一句', () => {
     await painted(ui)
     await drawRect(ui)
     await waitFor(() => expect(hasUnsentAnnotations()).toBe(true))
-    await fireEvent.click(ui.getByRole('button', { name: '自由画笔' }))
+    await pickTool(ui, '自由画笔')
     expect(ui.queryByRole('alertdialog')).toBeNull()
     expect(hasUnsentAnnotations()).toBe(true)
     expect(rects(ui)).toBe(1)

@@ -20,6 +20,7 @@ from app.domain.block.repositories import BlockRepository
 from tests.ask_fixtures import active_ask, legacy_question
 from tests.integration.conftest import (
     chat_ws_url,
+    join_project_team,
     post_project,
     room_agent_seat,
     session_auth_headers,
@@ -27,10 +28,12 @@ from tests.integration.conftest import (
 
 
 def _topic(client) -> str:
-    p = post_project(client, json={"name": "P"}).json()["data"]
+    auth = session_auth_headers("user-1")
+    p = post_project(client, json={"name": "P"}, headers=auth).json()["data"]
     t = client.post(
         "/topics",
-        json={"project_id": p["id"], "title": "T", "created_by": "user-1"},
+        json={"project_id": p["id"], "title": "T"},
+        headers=auth,
     ).json()["data"]
     return t["id"]
 
@@ -62,6 +65,7 @@ def _answer(client, block_id: str, payload: dict, handle: str = "user-1") -> dic
     return client.post(
         f"/topics/blocks/{block_id}/answers",
         json={"author": handle, **payload},
+        headers=session_auth_headers(handle),
     )
 
 
@@ -255,10 +259,11 @@ def test_answer_goes_back_to_the_teammate_that_asked(client):
     之前点的是房间的默认席位：芝士Opus 问的题，一点选项就换成默认芝士来接，
     而默认芝士手上没有那道题的来龙去脉。
     """
-    p = post_project(client, json={"name": "P", "owner_handle": "alice"}).json()["data"]
+    p = post_project(client, json={"name": "P"}, owner="alice").json()["data"]
     tid = client.post(
         "/topics",
-        json={"project_id": p["id"], "title": "T", "created_by": "alice"},
+        json={"project_id": p["id"], "title": "T"},
+        headers=session_auth_headers("alice"),
     ).json()["data"]["id"]
     default = room_agent_seat(client, tid)
     made = client.post(f"/projects/{p['id']}/agents", json={"handle": "opus"})
@@ -307,6 +312,10 @@ def test_only_the_original_answerer_can_correct(client):
     这个话题的成员」。
     """
     tid = _topic(client)
+    project_id = client.get(f"/topics/{tid}").json()["data"]["project_id"]
+    # user-2 is a room member too, so its refusal is the room rule (422), not the
+    # non-member 403 the answer route raises before it.
+    join_project_team(client, project_id, "user-2")
     blk = legacy_question(client, tid)
 
     first = _answer(client, blk["id"], _op("op-1", kind="option", option="cursor"))
@@ -452,12 +461,11 @@ def test_an_unfinished_group_is_not_shadowed_by_a_later_one(
     分开取：组按组取未答成员，不参加那个「最近一题」的 distinct，所以 B 组答完
     不会把 A 组藏掉。
     """
-    project = post_project(client, json={"name": "P", "owner_handle": "alice"}).json()[
-        "data"
-    ]
+    project = post_project(client, json={"name": "P"}, owner="alice").json()["data"]
     room = client.post(
         "/topics",
-        json={"project_id": project["id"], "title": "周会", "created_by": "alice"},
+        json={"project_id": project["id"], "title": "周会"},
+        headers=session_auth_headers("alice"),
     ).json()["data"]["id"]
 
     with active_ask(client, stub_hooks, monkeypatch, room, actor="alice") as headers:

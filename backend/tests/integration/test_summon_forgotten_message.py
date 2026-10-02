@@ -21,9 +21,11 @@ from tests.integration.conftest import (
 
 
 def _project_and_topic(client, owner: str = "user-1") -> str:
-    p = post_project(client, json={"name": "P", "owner_handle": owner}).json()["data"]
+    p = post_project(client, json={"name": "P"}, owner=owner).json()["data"]
     t = client.post(
-        "/topics", json={"project_id": p["id"], "title": "T", "created_by": owner}
+        "/topics",
+        json={"project_id": p["id"], "title": "T"},
+        headers=session_auth_headers(owner),
     ).json()["data"]
     return t["id"]
 
@@ -48,7 +50,9 @@ def test_summon_hands_over_what_nobody_addressed(client, stub_hooks):
     _say_without_summoning(client, topic_id, "这个分页方案你看下")
     assert "这个分页方案你看下" not in (stub_hooks.last_prompt or "")
 
-    r = client.post(f"/topics/{topic_id}/summon", json={"author": "user-1"})
+    r = client.post(
+        f"/topics/{topic_id}/summon", json={}, headers=session_auth_headers("user-1")
+    )
     assert r.status_code == 200
     assert r.json()["data"]["started"] is True
 
@@ -60,7 +64,9 @@ def test_summon_does_not_repost_the_message(client, stub_hooks):
     topic_id = _project_and_topic(client)
     _say_without_summoning(client, topic_id, "这个分页方案你看下")
 
-    client.post(f"/topics/{topic_id}/summon", json={"author": "user-1"})
+    client.post(
+        f"/topics/{topic_id}/summon", json={}, headers=session_auth_headers("user-1")
+    )
     _wait_for_prompt(stub_hooks, "这个分页方案你看下")
 
     blocks = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
@@ -91,24 +97,32 @@ def _wait_until_read(client, topic_id: str) -> None:
 def test_summon_while_it_is_already_working_starts_nothing(client, stub_hooks):
     topic_id = _project_and_topic(client)
     _say_without_summoning(client, topic_id, "这个分页方案你看下")
-    client.post(f"/topics/{topic_id}/summon", json={"author": "user-1"})
+    client.post(
+        f"/topics/{topic_id}/summon", json={}, headers=session_auth_headers("user-1")
+    )
     _wait_for_prompt(stub_hooks, "这个分页方案你看下")
 
     # 正在跑的那一轮会自己把后来的消息接过去，再开一轮只是排在它后面白烧算力。
-    r = client.post(f"/topics/{topic_id}/summon", json={"author": "user-1"})
+    r = client.post(
+        f"/topics/{topic_id}/summon", json={}, headers=session_auth_headers("user-1")
+    )
     assert r.json()["data"] == {"started": False, "reason": "working"}
 
 
 def test_summon_after_someone_else_already_asked_starts_nothing(client, stub_hooks):
     topic_id = _project_and_topic(client)
     _say_without_summoning(client, topic_id, "这个分页方案你看下")
-    client.post(f"/topics/{topic_id}/summon", json={"author": "user-1"})
+    client.post(
+        f"/topics/{topic_id}/summon", json={}, headers=session_auth_headers("user-1")
+    )
     _wait_for_prompt(stub_hooks, "这个分页方案你看下")
     _wait_until_read(client, topic_id)
     before = client.get(f"/topics/{topic_id}/blocks").json()["data"]["total"]
 
     # 那条消息已经被读进去了。两个人先后按这一下，第二下不该再花一次钱。
-    r = client.post(f"/topics/{topic_id}/summon", json={"author": "user-1"})
+    r = client.post(
+        f"/topics/{topic_id}/summon", json={}, headers=session_auth_headers("user-1")
+    )
     assert r.json()["data"] == {"started": False, "reason": "nothing_pending"}
     time.sleep(0.3)
     assert client.get(f"/topics/{topic_id}/blocks").json()["data"]["total"] == before
@@ -121,10 +135,11 @@ def _a_room_with_two_teammates(client) -> tuple[str, str]:
     BEFORE the second one joins: `room_agent_seat` answers only for a room that
     hosts exactly one agent, which is the point of asking it here.
     """
-    p = post_project(client, json={"name": "P", "owner_handle": "alice"}).json()["data"]
+    p = post_project(client, json={"name": "P"}, owner="alice").json()["data"]
     topic_id = client.post(
         "/topics",
-        json={"project_id": p["id"], "title": "T", "created_by": "alice"},
+        json={"project_id": p["id"], "title": "T"},
+        headers=session_auth_headers("alice"),
     ).json()["data"]["id"]
     default = room_agent_seat(client, topic_id)
     made = client.post(f"/projects/{p['id']}/agents", json={"handle": "opus"})
@@ -194,7 +209,7 @@ def test_summon_hands_the_room_to_the_teammate_the_messages_named(
 
     r = client.post(
         f"/topics/{topic_id}/summon",
-        json={"author": "alice"},
+        json={},
         headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200, r.text

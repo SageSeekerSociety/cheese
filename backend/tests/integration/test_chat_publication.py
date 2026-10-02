@@ -20,10 +20,13 @@ from tests.integration.conftest import (
 
 
 def room(client):
-    project = post_project(client, json={"name": "Publication"}).json()["data"]
+    project = post_project(client, json={"name": "Publication"}, owner="alice").json()[
+        "data"
+    ]
     topic = client.post(
         "/topics",
-        json={"project_id": project["id"], "title": "Work", "created_by": "alice"},
+        json={"project_id": project["id"], "title": "Work"},
+        headers=session_auth_headers("alice"),
     ).json()["data"]
     token = mint_scoped_token(project_id=project["id"], topic_id=topic["id"])
     return topic["id"], {"X-Cheese-Token": token}
@@ -31,9 +34,9 @@ def room(client):
 
 def private_room(client):
     """一个成员和项目队友的私聊，外加那个队友的凭据。"""
-    project = post_project(
-        client, json={"name": "Publication", "owner_handle": "user-1"}
-    ).json()["data"]
+    project = post_project(client, json={"name": "Publication"}, owner="user-1").json()[
+        "data"
+    ]
     topic = client.get(
         f"/projects/{project['id']}/private-chat", params={"user_handle": "user-1"}
     ).json()["data"]

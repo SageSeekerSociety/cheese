@@ -112,9 +112,7 @@ async def _readable_rooms(
         place = await TopicService(db).place_or_404(topic)
         if place.project_id != project_id:
             raise NotFoundError("Topic not found")
-        actor = await resolver.resolve(
-            fallback_handle=None, project_id=project_id, topic_id=topic
-        )
+        actor = await resolver.resolve(project_id=project_id, topic_id=topic)
         await resolver.authorize_topic(
             actor, project_id=project_id, topic_id=topic, enforce=True
         )
@@ -123,7 +121,7 @@ async def _readable_rooms(
             seat = await TopicMemberService(db).resolve_agent_handle(place.room_id)
             actor = Actor(handle=seat, user_id=None, via="cheese")
     else:
-        actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+        actor = await resolver.resolve(project_id=project_id)
         await resolver.authorize_project(actor, project_id=project_id)
 
     rooms = list(await db.scalars(select(Topic).where(Topic.project_id == project_id)))

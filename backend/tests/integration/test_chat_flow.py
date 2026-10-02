@@ -16,13 +16,14 @@ from tests.integration.conftest import (
 
 
 def _create_project_and_topic(client, owner: str = "user-1") -> tuple[str, str]:
-    pr = post_project(client, json={"name": "Demo", "owner_handle": owner})
+    pr = post_project(client, json={"name": "Demo"}, owner=owner)
     assert pr.status_code == 200
     project_id = pr.json()["data"]["id"]
 
     tr = client.post(
         "/topics",
-        json={"project_id": project_id, "title": "第一个话题", "created_by": owner},
+        json={"project_id": project_id, "title": "第一个话题"},
+        headers=session_auth_headers(owner),
     )
     assert tr.status_code == 200
     topic_id = tr.json()["data"]["id"]
@@ -152,9 +153,9 @@ def test_a_doc_edit_between_turns_reaches_the_next_turns_prompt(client, stub_hoo
                 f"/topics/{topic_id}/doc",
                 json={
                     "content": content,
-                    "author": "user-1",
                     "expected_version": version,
                 },
+                headers=session_auth_headers("user-1"),
             ).status_code
             == 200
         )

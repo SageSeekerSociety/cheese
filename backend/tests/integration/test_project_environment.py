@@ -1,14 +1,16 @@
 """Project scripts: human stewardship, room pinning, and explicit application."""
 
 from tests.conftest import seed_user
-from tests.integration.conftest import join_project_team, post_project
+from tests.integration.conftest import (
+    join_project_team,
+    post_project,
+    session_auth_headers,
+)
 
 
 def project(client):
     headers = {"Authorization": f"Bearer {seed_user(client, 'alice')}"}
-    response = post_project(
-        client, json={"name": "Environment", "owner_handle": "alice"}
-    )
+    response = post_project(client, json={"name": "Environment"}, owner="alice")
     assert response.status_code == 200, response.text
     return response.json()["data"]["id"], headers
 
@@ -16,7 +18,8 @@ def project(client):
 def room(client, project_id):
     response = client.post(
         "/topics",
-        json={"project_id": project_id, "title": "Room", "created_by": "alice"},
+        json={"project_id": project_id, "title": "Room"},
+        headers=session_auth_headers("alice"),
     )
     assert response.status_code == 200, response.text
     return response.json()["data"]["id"]

@@ -16,7 +16,7 @@ from sqlalchemy import text
 from app.core.config import settings
 from app.domain.agent.compute_configs import ComputeChoice
 from tests.conftest import seed_user
-from tests.integration.conftest import post_project
+from tests.integration.conftest import post_project, session_auth_headers
 
 SPECS = {"device_id": None, "cores": None, "memory_mb": None, "disk_gb": None}
 
@@ -25,9 +25,7 @@ def _project(client, monkeypatch) -> str:
     monkeypatch.setattr(settings, "microcloud_base_url", "https://example.invalid")
     monkeypatch.setattr(settings, "microcloud_tenant_secret", "test-only")
     client.headers["Authorization"] = f"Bearer {seed_user(client, 'names_owner')}"
-    response = post_project(
-        client, json={"name": "Names", "owner_handle": "names_owner"}
-    )
+    response = post_project(client, json={"name": "Names"}, owner="names_owner")
     assert response.status_code == 200, response.text
     return response.json()["data"]["id"]
 
@@ -35,7 +33,8 @@ def _project(client, monkeypatch) -> str:
 def _room(client, pid: str) -> str:
     response = client.post(
         "/topics",
-        json={"project_id": pid, "title": "Room", "created_by": "names_owner"},
+        json={"project_id": pid, "title": "Room"},
+        headers=session_auth_headers("names_owner"),
     )
     assert response.status_code == 200, response.text
     return response.json()["data"]["id"]

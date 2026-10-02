@@ -48,7 +48,7 @@ def _service(client, channel: StubChannel) -> ChatService:
 
 def _room_with_a_teammate(client) -> str:
     """A room holding the project's own agent and a second one, "Second"."""
-    project = post_project(client, {"name": "Handover", "owner_handle": "alice"})
+    project = post_project(client, {"name": "Handover"}, owner="alice")
     data = project.json()["data"]
 
     async def seat() -> None:
@@ -307,7 +307,7 @@ def _seat_teammate(
 
 
 def _room_with_two_teammates(client) -> str:
-    project = post_project(client, {"name": "Handover3", "owner_handle": "alice"})
+    project = post_project(client, {"name": "Handover3"}, owner="alice")
     data = project.json()["data"]
     room = data["root_topic_id"]
     _seat_teammate(client, data, room, "second", "Second")

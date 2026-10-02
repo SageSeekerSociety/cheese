@@ -215,7 +215,7 @@ def test_split_does_not_spawn_a_second_subtopic(client, in_a_turn, monkeypatch):
     )
     pid = _project(client)
     tid = _topic(client, pid)
-    body = {"title": "数据清洗", "brief": "把脏数据洗掉", "created_by": "cheese"}
+    body = {"title": "数据清洗", "brief": "把脏数据洗掉"}
 
     first = client.post(
         f"/topics/{tid}/split", json=dict(reviewer_handle="alice", **body)
@@ -332,7 +332,7 @@ def test_without_a_running_turn_nothing_is_deduped(client, monkeypatch):
                 f"/topics/{tid}/split",
                 json=dict(
                     reviewer_handle="alice",
-                    **{"title": "同一个子话题", "created_by": "cheese"},
+                    **{"title": "同一个子话题"},
                 ),
             ).status_code
             == 200

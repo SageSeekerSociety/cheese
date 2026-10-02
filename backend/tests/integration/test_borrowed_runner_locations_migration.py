@@ -49,7 +49,7 @@ def test_a_row_on_another_teammates_runner_is_no_longer_found(client):
     rooms = [
         client.post(
             "/topics",
-            json={"project_id": project, "title": title, "created_by": "alice"},
+            json={"project_id": project, "title": title},
         ).json()["data"]["id"]
         for title in ("Shared", "Alone")
     ]

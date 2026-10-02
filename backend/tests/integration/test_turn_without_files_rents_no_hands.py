@@ -62,12 +62,13 @@ INSTALLED = {
 
 @pytest.fixture
 def room(client):
-    project = post_project(
-        client, json={"name": "No hands", "owner_handle": "alice"}
-    ).json()["data"]
+    project = post_project(client, json={"name": "No hands"}, owner="alice").json()[
+        "data"
+    ]
     topic = client.post(
         "/topics",
-        json={"project_id": project["id"], "title": "Work", "created_by": "alice"},
+        json={"project_id": project["id"], "title": "Work"},
+        headers=session_auth_headers("alice"),
     ).json()["data"]
     return uuid.UUID(project["id"]), uuid.UUID(topic["id"])
 

@@ -34,13 +34,12 @@ from tests.integration.conftest import (
 
 def _room(client) -> tuple[str, str]:
     """A room of alice's project that bob is also in; returns (room, project)."""
-    project = post_project(client, json={"name": "P", "owner_handle": "alice"}).json()[
-        "data"
-    ]
+    project = post_project(client, json={"name": "P"}, owner="alice").json()["data"]
     join_project_team(client, project["id"], "bob")
     room = client.post(
         "/topics",
-        json={"project_id": project["id"], "title": "话题", "created_by": "alice"},
+        json={"project_id": project["id"], "title": "话题"},
+        headers=session_auth_headers("alice"),
     ).json()["data"]
     return room["id"], project["id"]
 
@@ -184,9 +183,7 @@ SAID = "@bob 和 @芝士 看一下，@alice 也看"
 
 def _private_room(client) -> tuple[str, str, str]:
     """A private chat between a member and the project's agent."""
-    project = post_project(client, json={"name": "P", "owner_handle": "user-1"}).json()[
-        "data"
-    ]
+    project = post_project(client, json={"name": "P"}, owner="user-1").json()["data"]
     room = client.get(
         f"/projects/{project['id']}/private-chat", params={"user_handle": "user-1"}
     ).json()["data"]

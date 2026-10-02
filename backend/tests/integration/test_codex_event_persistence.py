@@ -13,21 +13,21 @@ from app.domain.agent.harness.codex.events import Assembler
 from app.domain.agent.harness.codex.subscription import Subscription
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.repositories import BlockRepository
-from tests.integration.conftest import post_project
+from tests.integration.conftest import post_project, session_auth_headers
 
 
 @pytest.mark.anyio
 async def test_replayed_codex_reply_is_not_persisted_twice(client, tmp_path):
-    project = post_project(
-        client, json={"name": "Codex events", "owner_handle": "alice"}
-    ).json()["data"]
+    project = post_project(client, json={"name": "Codex events"}, owner="alice").json()[
+        "data"
+    ]
     topic = client.post(
         "/topics",
         json={
             "project_id": project["id"],
             "title": "Room",
-            "created_by": "alice",
         },
+        headers=session_auth_headers("alice"),
     ).json()["data"]
     project_id, topic_id = uuid.UUID(project["id"]), uuid.UUID(topic["id"])
     factory = client.test_request_factory
@@ -80,15 +80,15 @@ async def test_replayed_codex_reply_is_not_persisted_twice(client, tmp_path):
 @pytest.mark.anyio
 async def test_same_agent_resumes_each_harness_history_independently(client):
     project = post_project(
-        client, json={"name": "Harness sessions", "owner_handle": "alice"}
+        client, json={"name": "Harness sessions"}, owner="alice"
     ).json()["data"]
     topic = client.post(
         "/topics",
         json={
             "project_id": project["id"],
             "title": "Room",
-            "created_by": "alice",
         },
+        headers=session_auth_headers("alice"),
     ).json()["data"]
     topic_id = uuid.UUID(topic["id"])
 
@@ -134,16 +134,16 @@ async def test_late_session_event_preserves_original_teammate_and_harness(
         client,
         json={
             "name": "Late owner",
-            "owner_handle": "alice",
         },
+        owner="alice",
     ).json()["data"]
     topic = client.post(
         "/topics",
         json={
             "project_id": project["id"],
             "title": "Different current teammate",
-            "created_by": "alice",
         },
+        headers=session_auth_headers("alice"),
     ).json()["data"]
     project_id, topic_id = uuid.UUID(project["id"]), uuid.UUID(topic["id"])
 
@@ -214,16 +214,16 @@ async def test_reply_committed_before_reader_crash_is_not_duplicated(client, tmp
         client,
         json={
             "name": "Reader crash",
-            "owner_handle": "alice",
         },
+        owner="alice",
     ).json()["data"]
     topic = client.post(
         "/topics",
         json={
             "project_id": project["id"],
             "title": "Room",
-            "created_by": "alice",
         },
+        headers=session_auth_headers("alice"),
     ).json()["data"]
     session = SessionRef(
         uuid.UUID(project["id"]), uuid.UUID(topic["id"]), harness="codex"

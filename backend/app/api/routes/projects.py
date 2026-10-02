@@ -37,7 +37,6 @@ from app.domain.block.queries import (
     weeklies_for_project,
 )
 from app.domain.identity.actor import Actor
-from app.domain.identity.handles import ANONYMOUS_HANDLE
 from app.domain.machine.limits import get_machine_limit
 from app.domain.membership.services import MemberService
 from app.domain.project.models import Project
@@ -118,12 +117,11 @@ async def _project_payload(db: DbSession, project: Project) -> dict:
 async def _require_team_membership(db: DbSession, who: Actor, team_id: int) -> None:
     """把项目生在一个团队里的，只能是那个团队的人。
 
-    ``body.team_id`` 以前原样送到 ``ProjectService.create``，于是任何人——包括一个
-    什么凭据都没带的调用方——都能把项目种进别人的团队：它会出现在那个团队的
-    ``GET /projects?team_id=`` 列表里，挂着那个团队的名字和调用方自己的
-    ``owner_handle``。团队域的路由用 ``require_permission(Action.X, Resource.Y,
-    "teamId")`` 回答同一个问题；这里团队是**请求体**里给的、不是路径里的，所以同一个
-    判断得显式做一遍。
+    ``body.team_id`` 以前原样送到 ``ProjectService.create``，于是任何人都能把项目
+    种进别人的团队：它会出现在那个团队的 ``GET /projects?team_id=`` 列表里，挂着
+    那个团队的名字和调用方自己的 ``owner_handle``。团队域的路由用
+    ``require_permission(Action.X, Resource.Y, "teamId")`` 回答同一个问题；
+    这里团队是**请求体**里给的、不是路径里的，所以同一个判断得显式做一遍。
 
     和 ``ActorResolver.authorize_team`` 的关键区别：这里**不挂**
     ``authz_enforce_topic_access`` 那个开关。开关管的是「谁能**读**别人项目的对话」，
@@ -132,10 +130,8 @@ async def _require_team_membership(db: DbSession, who: Actor, team_id: int) -> N
 
     正常创建路径一点不受影响：前端送来的 ``team_id`` 永远是调用者自己的团队；个人项目
     根本不送 ``team_id``（由 ``_resolve_personal_team_id`` 从所有者推出来）。这里挡住的
-    是「点名一个自己不在的团队」，以及按构造不在任何团队里的匿名调用方。
+    是「点名一个自己不在的团队」。调用方此时一定已登录（``create_project`` 先查了）。
     """
-    if not who.authenticated:
-        raise AuthenticationRequiredError(say("teamProjectSignIn"))
     if who.user_id is None or not await team_service(db).is_team_member(
         team_id, who.user_id
     ):
@@ -150,7 +146,7 @@ async def _require_claim(
     个人题看建项目的这个人有没有领，团队题看项目要挂的那个团队有没有领。等批的申请
     也算领了（领题那一刻就给它开了项目）；被拒绝或退出的不算。
     """
-    if not who.authenticated or who.user_id is None:
+    if who.user_id is None:
         raise AuthenticationRequiredError(say("challengeProjectSignIn"))
     if not await claim_backs_project(
         db, task_id=task_id, user_id=who.user_id, team_id=team_id
@@ -173,52 +169,27 @@ async def resource_limits(db: DbSession) -> dict:
 async def create_project(
     body: ProjectCreate, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    # Whoever creates a project owns it unless they say otherwise. Without this
-    # the listing — now scoped to the caller — would hide a project from the very
-    # person who just made it.
-    who = await resolver.resolve(fallback_handle=body.owner_handle)
-    # 项目归团队 (v4) 的那支外键也是**请求体**给的，所以它跟 owner_handle 一样要在这里
-    # 过一道：问的不是「这个团队在不在」，是「你是不是这个团队的人」。
+    # Whoever creates a project owns it, and who that is comes from the
+    # credential alone. Nothing in the body can name another owner: the request
+    # schema has no field for it. There is no "create on someone's behalf" flow
+    # to serve — a 赛题 team's workspace is opened by the claim flow
+    # (`ProjectService.for_participation`), and handing a project over is
+    # `PUT /{id}/owner`, which only the project's steward may call.
+    who = await resolver.resolve()
+    if not who.authenticated:
+        resolver.reject_failed_credential(who)
+        raise AuthenticationRequiredError(say("projectCreateSignIn"))
+    # 项目归团队 (v4) 的那支外键是**请求体**给的，所以要在这里过一道：问的不是
+    # 「这个团队在不在」，是「你是不是这个团队的人」。
     if body.team_id is not None:
         await _require_team_membership(db, who, body.team_id)
     # 领了这道题才能用它新建项目：项目带着题目的访问权和资源包，不能凭一个题号拿到。
     if body.external_task_id is not None:
         await _require_claim(db, who, body.external_task_id, body.team_id)
-    # An unidentified caller resolves to the literal `anonymous` (auth.py), and
-    # storing that as the owner is worse than storing nothing: it reads like a
-    # person everywhere downstream, and it blocks the ownerless-room escape
-    # hatch, which opens only on an ABSENT owner and deliberately refuses to
-    # judge a handle by its name. NULL is the honest value for "we do not know".
-    owner_handle = body.owner_handle or (
-        who.handle if who.authenticated and who.handle else None
-    )
-    if not owner_handle or owner_handle == ANONYMOUS_HANDLE:
-        # Silence is how this got expensive (#315). A project whose owner is not
-        # a real person can be repaired — PUT /{id}/owner exists now — but
-        # nothing else in the system will ever mention it: every reader of the
-        # field falls back to the team's admins without erroring, so the gap
-        # surfaces only as "why can only they do anything here", days later.
-        #
-        # The check covers `anonymous` as well as empty, because the empty case
-        # is no longer the one that happens. `resolve()` hands back the literal
-        # handle `anonymous` rather than nothing, so an unidentified creator now
-        # produces a *populated* owner column that still matches no user — the
-        # same collapse onto the team's admins, wearing a value.
-        #
-        # It does NOT ask whether the owner is a person. An agent instance is a
-        # participant like anybody else, so a handle
-        # that names one is an owner this log has nothing to warn about; reading
-        # the handle's SHAPE to decide otherwise was the platform guessing at a
-        # participant's kind from its name.
-        logger.warning(
-            "project created without a real owner name=%r owner=%r",
-            body.name,
-            owner_handle,
-        )
     project = await ProjectService(db).create(
-        **body.model_dump(exclude={"id", "owner_handle"}),
+        **body.model_dump(exclude={"id"}),
         project_id=body.id,
-        owner_handle=owner_handle,
+        owner_handle=who.handle,
     )
     # The caller can create a room as soon as this response arrives; the
     # request-scoped dependency commits only after sending the response.
@@ -253,15 +224,13 @@ async def list_projects(
         # this answered "which projects does that team have, and what are their
         # ids" to anyone who asked — including callers with no credential at
         # all, while the SAME route without `team_id` was strict.
-        await resolver.authorize_team(
-            await resolver.resolve(fallback_handle=None), team_id=team_id
-        )
+        await resolver.authorize_team(await resolver.resolve(), team_id=team_id)
         projects = [
             p for p in await service.list_for_team(team_id) if p.archived_at is None
         ]
         total = len(projects)
     else:
-        who = await resolver.resolve(fallback_handle=None)
+        who = await resolver.resolve()
         if who.authenticated:
             projects = await ProjectRepository(db).list_visible_to(
                 handle=who.handle, user_id=who.user_id
@@ -314,7 +283,7 @@ async def projects_for_task(
     judgment — and the 出题者 (``Task.creator_id``) is the caller this exists
     for.
     """
-    actor = await resolver.resolve(fallback_handle=None)
+    actor = await resolver.resolve()
     await resolver.authorize_task(actor, task_id=task_id)
     projects = await ProjectRepository(db).list_for_external_task(task_id)
     items = await _project_payloads(db, projects)
@@ -334,7 +303,7 @@ async def project_for_team(
     guessable id and had no door at all, so the parameter was the guarded way in
     and the path was the way around it.
     """
-    actor = await resolver.resolve(fallback_handle=None)
+    actor = await resolver.resolve()
     await resolver.authorize_team(actor, team_id=team_id)
     project = await ProjectRepository(db).get_by_team(team_id)
     data = await _project_payload(db, project) if project is not None else None
@@ -345,7 +314,7 @@ async def project_for_team(
 async def get_project(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     project = await ProjectService(db).get_or_404(project_id)
     payload = await _project_payload(db, project)
@@ -525,7 +494,7 @@ async def get_project_forge(
 ) -> dict:
     from app.domain.project.forge import binding_for_project
 
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     project = await ProjectService(db).get_or_404(project_id)
     binding = await binding_for_project(project_id, db)
@@ -547,7 +516,7 @@ async def get_forge_attribution(
 ) -> dict:
     from app.domain.repository.identity import requester_credit_enabled
 
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     project = await ProjectService(db).get_or_404(project_id)
     return ok(
@@ -568,7 +537,7 @@ async def save_forge_attribution(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     await MemberService(db).require_manager(project_id, actor)
     project = await ProjectService(db).get_or_404(project_id)
@@ -589,7 +558,7 @@ async def get_topic_naming(
     """话题命名: ``auto`` (the platform names rooms and renames them when their
     direction changes; the default) or ``manual`` (rooms are named by people).
     See ``topic/naming.py``."""
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     project = await ProjectService(db).get_or_404(project_id)
     can_manage = True
@@ -612,7 +581,7 @@ async def set_topic_naming(
 ) -> dict:
     """Switch the project's rooms between automatic and manual naming. Rooms a
     person named keep their names either way."""
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     await MemberService(db).require_manager(project_id, actor)
     mode = body.get("mode")
@@ -638,7 +607,7 @@ async def require_project_steward(
 
     Returns the caller's handle so a route can record who acted.
     """
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    actor = await resolver.resolve(project_id=project_id)
     if not actor.authenticated:
         raise NotFoundError("Project not found")
     handle = actor.handle
@@ -848,7 +817,7 @@ async def get_branch_protection(
     ``github_protection``（GitHub 自己开没开保护 —— 开了的话设置页把同名规则灰
     掉，两处都能改就是两套配置）。GitHub 查询失败一律降级成 unknown，绝不 500。
     """
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     project = await ProjectRepository(db).get(project_id)
     if project is None:
@@ -938,7 +907,7 @@ async def get_project_upstream(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     """The GitHub repository selected for the installation flow."""
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     project = await ProjectService(db).get_or_404(project_id)
     return ok({"url": (project.settings or {}).get("github_repository_url")})
@@ -952,7 +921,7 @@ async def set_project_upstream(
     from app.domain.project.forge import binding_for_project
     from app.domain.review.github_pr import parse_github_repo
 
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     await MemberService(db).require_manager(project_id, actor)
     project = await ProjectService(db).get_or_404(project_id)

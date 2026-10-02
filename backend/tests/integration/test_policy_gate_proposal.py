@@ -48,14 +48,14 @@ def _user_id(client, handle: str) -> int:
 
 
 def _project(client, owner: str = "andyl") -> str:
-    return post_project(client, json={"name": "P", "owner_handle": owner}).json()[
-        "data"
-    ]["id"]
+    return post_project(client, json={"name": "P"}, owner=owner).json()["data"]["id"]
 
 
 def _topic(client, pid: str) -> str:
     return client.post(
-        "/topics", json={"project_id": pid, "title": "T", "created_by": "andyl"}
+        "/topics",
+        json={"project_id": pid, "title": "T"},
+        headers=session_auth_headers("andyl"),
     ).json()["data"]["id"]
 
 

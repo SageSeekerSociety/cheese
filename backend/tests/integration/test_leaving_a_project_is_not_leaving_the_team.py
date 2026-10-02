@@ -91,7 +91,7 @@ def project_in(client, team_id: int, *, owner: str, name: str = "P") -> str:
     """小队里的一个项目，``owner`` 建的。返回项目 id。"""
     r = client.post(
         "/projects",
-        json={"name": name, "owner_handle": owner, "team_id": team_id},
+        json={"name": name, "team_id": team_id},
         headers=auth(seed_user(client, owner)),
     )
     assert r.status_code == 200, r.text
@@ -110,7 +110,7 @@ def root_topic(client, pid: str, *, who: str) -> str:
 def new_room(client, pid: str, *, created_by: str, title: str) -> str:
     r = client.post(
         "/topics",
-        json={"project_id": pid, "title": title, "created_by": created_by},
+        json={"project_id": pid, "title": title},
         headers=auth(seed_user(client, created_by)),
     )
     assert r.status_code == 200, r.text

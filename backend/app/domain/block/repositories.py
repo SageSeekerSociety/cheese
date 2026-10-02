@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.work_context import current_work_id
 from app.domain.block.authorship import is_participant, participant_blocks
-from app.domain.block.indexed_rows import QUESTION_ROWS
+from app.domain.block.indexed_rows import CLOUD_PROVISIONING_ROWS, QUESTION_ROWS
 from app.domain.block.models import (
     AGENT_NOTICE_META_KEY,
     CHECKLIST_META_KEY,
@@ -805,7 +805,7 @@ class BlockRepository:
             .where(
                 *place,
                 Block.kind.not_in(self.NON_TIMELINE),
-                Block.meta["event_type"].as_string() == "cloud_provisioning",
+                CLOUD_PROVISIONING_ROWS,
             )
             .order_by(Block.created_at.desc(), Block.id.desc())
             .limit(1)

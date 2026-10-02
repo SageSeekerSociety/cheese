@@ -75,9 +75,7 @@ async def group_data(db, rows, *, operation=None):
 
 
 async def authorize_group(resolver, place):
-    actor = await resolver.resolve(
-        fallback_handle=None, project_id=place.project_id, topic_id=place.room_id
-    )
+    actor = await resolver.resolve(project_id=place.project_id, topic_id=place.room_id)
     if not actor.authenticated:
         raise ForbiddenError("要登录才能读取或提交问题组")
     await resolver.authorize_topic(
@@ -294,12 +292,8 @@ async def submit_versioned_answer(
     if blk is None:
         raise NotFoundError(say("optionQuestionNotFound"))
 
-    # A body author is an addressing fallback, never authentication.
-    actor = await resolver.resolve(
-        fallback_handle=body.get("author"),
-        topic_id=blk.topic_id,
-        project_id=blk.project_id,
-    )
+    # Identity comes only from the credential; the body never names the caller.
+    actor = await resolver.resolve(topic_id=blk.topic_id, project_id=blk.project_id)
     await resolver.authorize_topic(
         actor, project_id=blk.project_id, topic_id=blk.topic_id
     )

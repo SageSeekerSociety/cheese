@@ -27,9 +27,7 @@ def _now() -> datetime:
 
 
 def _project(client, name: str = "P") -> str:
-    return post_project(client, json={"name": name, "owner_handle": "andyl"}).json()[
-        "data"
-    ]["id"]
+    return post_project(client, json={"name": name}, owner="andyl").json()["data"]["id"]
 
 
 def test_project_can_use_a_device_registered_for_its_team(client):

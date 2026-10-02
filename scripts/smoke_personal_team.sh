@@ -41,10 +41,9 @@ curl -sf -X POST "$BASE/connector/my/devices/$DEVICE/teams" -H "$AUTH" \
   jq -c '{device_id, team_ids}'
 
 say "create a personal project (no team)"
-# NB: /api/projects is the cheesex surface (owner_handle, no team); bare
-# /projects is the main app's team-scoped project API.
+# The owner is whoever $AUTH signs in as; the body cannot name one.
 PID=$(curl -sf "$BASE/api/projects" -H "$AUTH" -H 'content-type: application/json' \
-  -d "{\"name\":\"smoke-personal-$$\",\"owner_handle\":\"alice\"}" | jq -r '.data.id')
+  -d "{\"name\":\"smoke-personal-$$\"}" | jq -r '.data.id')
 [ -n "$PID" ] && [ "$PID" != "null" ] || fail "project create"
 echo "project: $PID"
 

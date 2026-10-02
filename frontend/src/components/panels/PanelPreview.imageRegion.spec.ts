@@ -8,6 +8,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import * as api from '../../api'
 import { setLocale } from '../../i18n'
+import { nextMillisecond } from '../../test/nextMillisecond'
 
 import DesignImage from './preview/DesignImage.vue'
 import PanelPreview from './PanelPreview.vue'
@@ -93,10 +94,16 @@ async function paint(ui: ReturnType<typeof mount>) {
 }
 async function select(ui: ReturnType<typeof mount>) {
   await fireEvent.click(ui.getByRole('button', { name: '选择图片区域' }))
+  // The layer has only just mounted; a pointer in that same millisecond is dropped by Vue as an
+  // event older than its listener (see nextMillisecond). No real hand is that fast.
+  await nextMillisecond()
   const overlay = ui.getByRole('group', { name: '选择图片区域' })
   overlay.setPointerCapture = vi.fn()
   await fireEvent.pointerDown(overlay, { button: 0, pointerId: 7, clientX: 60, clientY: 70 })
   await fireEvent.pointerUp(overlay, { pointerId: 7, clientX: 160, clientY: 120 })
+  // Letting go mounts the region note, and its card listens for Esc while the input inside it
+  // listens for Enter: a key pressed in that same millisecond would reach only the input.
+  await nextMillisecond()
 }
 it('routes a confirmed natural-pixel region from the actual named image and verified byte source', async () => {
   const ui = mount()
@@ -224,6 +231,9 @@ function stubCanvas() {
 }
 async function draw(ui: ReturnType<typeof mount>) {
   await fireEvent.click(ui.getByRole('button', { name: '矩形' }))
+  // The layer has only just mounted; a pointer in that same millisecond is dropped by Vue as an
+  // event older than its listener (see nextMillisecond). No real hand is that fast.
+  await nextMillisecond()
   const layer = ui.getByRole('application', { name: '图片标注画布' })
   layer.setPointerCapture = vi.fn()
   await fireEvent.pointerDown(layer, { button: 0, pointerId: 11, clientX: 60, clientY: 70 })

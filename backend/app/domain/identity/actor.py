@@ -15,9 +15,9 @@ Resolution order (fusion-design §4: "actor 在信任边界注入,永不从 body
    verified handle, `via="token"`.
 2. **Agent scoped token** (``X-Cheese-Token`` on a cheese-gated route) — resolves
    to the ``cheese`` agent-user, `via="cheese"`.
-3. **Phase-0 handle fallback** — the handle a caller passed in the body/param,
-   `via="handle"`. Deprecated (logged); kept so no existing call breaks while the
-   frontend migrates to tokens.
+
+Nothing else names the caller. A handle in a body or a query parameter is never
+an identity, so a request with neither credential resolves to nobody.
 
 Pure + adapter-injected (照 reference attribution.py / viewer_authz.py): the
 resolution rule is unit-tested without a request, DB or WebSocket. The concrete
@@ -51,13 +51,12 @@ class Actor:
 
     handle: str
     user_id: int | None
-    via: str  # "token" | "cheese" | "handle"
+    via: str  # "token" | "cheese" | "anonymous"
 
     @property
     def authenticated(self) -> bool:
         """True when the actor came from a verified credential (token or the
-        agent's scoped token), False for a caller-supplied handle. A claimed
-        handle can describe authorship but grants no membership or role."""
+        agent's scoped token), False for the anonymous placeholder."""
         return self.via in ("token", "cheese")
 
 
@@ -67,11 +66,10 @@ async def resolve_actor(
     verify_token: TokenVerifier,
     cheese_valid: CheeseVerifier,
     cheese_handle: str,
-    fallback_handle: str | None,
 ) -> Actor | None:
-    """Resolve a request to its actor. Returns ``None`` only when nothing
-    identifies the caller (no token, no valid cheese token, no fallback handle) —
-    the caller decides whether that is anonymous-ok or a 401."""
+    """Resolve a request to its actor. Returns ``None`` when no credential
+    identifies the caller (no valid token, no valid cheese token) — the caller
+    decides whether that is anonymous-ok or a 401."""
     # 1. Human session token wins — the handle is the token's, never the body's.
     if bearer_token:
         identity = verify_token(bearer_token)
@@ -88,12 +86,4 @@ async def resolve_actor(
             user_id=None,
             via="cheese",
         )
-    # 3. Phase-0 fallback: trust the passed handle (deprecated).
-    handle = (fallback_handle or "").strip()
-    if not handle:
-        return None
-    return Actor(
-        handle=handle,
-        user_id=None,
-        via="handle",
-    )
+    return None

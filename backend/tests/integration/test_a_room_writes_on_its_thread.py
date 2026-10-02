@@ -24,20 +24,20 @@ from tests.integration.conftest import (
 
 
 def _project(client) -> dict:
-    return post_project(client, json={"name": "P"}).json()["data"]
+    return post_project(client, json={"name": "P"}, owner="user-1").json()["data"]
 
 
 def _room(client, project_id: str, title: str = "房间") -> dict:
     return client.post(
         "/topics",
-        json={"project_id": project_id, "title": title, "created_by": "user-1"},
+        json={"project_id": project_id, "title": title},
     ).json()["data"]
 
 
 def _split(client, room_id: str, title: str) -> dict:
     task = client.post(
         f"/topics/{room_id}/split",
-        json={"title": title, "created_by": "user-1", "reviewer_handle": "alice"},
+        json={"title": title, "reviewer_handle": "alice"},
     ).json()["data"]
     wait_work_idle()
     return task

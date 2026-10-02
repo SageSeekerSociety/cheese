@@ -144,9 +144,7 @@ async def edit_topic_doc(
 ) -> dict:
     topics = TopicService(db)
     place = await topics.place_or_404(topic_id)
-    actor = await resolver.resolve(
-        fallback_handle=body.author, topic_id=place.room_id, project_id=place.project_id
-    )
+    actor = await resolver.resolve(topic_id=place.room_id, project_id=place.project_id)
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id
     )
@@ -201,9 +199,7 @@ async def edit_doc_passages(
     be; a refusal names the edit (``data.index``)."""
     topics = TopicService(db)
     place = await topics.place_or_404(topic_id)
-    actor = await resolver.resolve(
-        fallback_handle=body.author, topic_id=place.room_id, project_id=place.project_id
-    )
+    actor = await resolver.resolve(topic_id=place.room_id, project_id=place.project_id)
     if not actor.authenticated:
         raise AuthenticationRequiredError("修改文档需要已认证的写入者")
     await resolver.authorize_topic(

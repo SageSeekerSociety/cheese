@@ -18,7 +18,8 @@ pytestmark = pytest.mark.usefixtures("github_binding_user")
 def _project(client, name: str = "P") -> str:
     return post_project(
         client,
-        json={"name": name, "owner_handle": "alice", "forge_kind": "github_app"},
+        json={"name": name, "forge_kind": "github_app"},
+        owner="alice",
     ).json()["data"]["id"]
 
 

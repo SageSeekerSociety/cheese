@@ -24,7 +24,7 @@ from app.domain.team.models import TeamMemberRole, TeamUserRelation
 from app.domain.topic.models import Topic
 from app.domain.user.models import User
 from tests.executor_release import running
-from tests.integration.conftest import post_project, registered
+from tests.integration.conftest import post_project, registered, session_auth_headers
 
 pytestmark = pytest.mark.anyio
 
@@ -36,9 +36,9 @@ def _signed_in(user_id, handle):
 async def _project_on_a_device(client):
     """Alice's project with three rooms whose agents work on her device "old":
     one idle, one mid-turn, and a private room of Bob's she cannot open."""
-    project = post_project(
-        client, json={"name": "Orchard", "owner_handle": "alice"}
-    ).json()["data"]
+    project = post_project(client, json={"name": "Orchard"}, owner="alice").json()[
+        "data"
+    ]
     project_id = uuid.UUID(project["id"])
     async with client.test_factory() as db:
         bob = await registered(db, "bob")
@@ -58,7 +58,8 @@ async def _project_on_a_device(client):
         rooms[title] = uuid.UUID(
             client.post(
                 "/topics",
-                json={"project_id": project["id"], "title": title, "created_by": by},
+                json={"project_id": project["id"], "title": title},
+                headers=session_auth_headers(by),
             ).json()["data"]["id"]
         )
     async with client.test_factory() as db:

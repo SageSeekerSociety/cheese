@@ -15,12 +15,13 @@ from tests.integration.conftest import (
 
 
 def _rooms(client):
-    project = post_project(
-        client, json={"name": "Permissions", "owner_handle": "alice"}
-    ).json()["data"]
+    project = post_project(client, json={"name": "Permissions"}, owner="alice").json()[
+        "data"
+    ]
     other = client.post(
         "/topics",
-        json={"project_id": project["id"], "title": "Other", "created_by": "alice"},
+        json={"project_id": project["id"], "title": "Other"},
+        headers=session_auth_headers("alice"),
     ).json()["data"]["id"]
     return project, project["root_topic_id"], other
 

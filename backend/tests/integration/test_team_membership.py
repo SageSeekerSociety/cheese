@@ -9,6 +9,7 @@ import asyncio
 from datetime import UTC, datetime
 
 from tests.conftest import seed_user
+from tests.integration.conftest import session_auth_headers
 
 
 def auth(token: str) -> dict[str, str]:
@@ -88,7 +89,7 @@ def leave_team(client, team_id: int, handle: str) -> None:
 def project_in(client, team_id: int, *, owner: str, name: str = "P") -> str:
     r = client.post(
         "/projects",
-        json={"name": name, "owner_handle": owner, "team_id": team_id},
+        json={"name": name, "team_id": team_id},
         headers=auth(seed_user(client, owner)),
     )
     assert r.status_code == 200, r.text
@@ -126,7 +127,9 @@ def accept(client, invitation_id: str, who: str) -> None:
 
 def test_a_project_needs_a_team(client):
     r = client.post(
-        "/projects", json={"name": "loose", "owner_handle": "nobody-registered"}
+        "/projects",
+        json={"name": "loose"},
+        headers=session_auth_headers("nobody-registered"),
     )
     assert r.status_code == 422
     assert "团队" in r.text
@@ -134,9 +137,7 @@ def test_a_project_needs_a_team(client):
 
 def test_a_personal_project_belongs_to_the_owners_personal_team(client):
     token = seed_user(client, "solo1")
-    r = client.post(
-        "/projects", json={"name": "mine", "owner_handle": "solo1"}, headers=auth(token)
-    )
+    r = client.post("/projects", json={"name": "mine"}, headers=auth(token))
     assert r.status_code == 200, r.text
     assert r.json()["data"]["team_handle"] == "solo1"
 
@@ -282,7 +283,7 @@ def test_a_room_only_takes_the_projects_people(client):
     token = seed_user(client, "own9")
     room = client.post(
         "/topics",
-        json={"project_id": pid, "title": "Room", "created_by": "own9"},
+        json={"project_id": pid, "title": "Room"},
         headers=auth(token),
     ).json()["data"]
     seed_user(client, "stranger9")

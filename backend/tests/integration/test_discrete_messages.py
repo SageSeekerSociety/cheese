@@ -5,7 +5,11 @@ import uuid
 import pytest
 
 from tests.conftest import StubChannel
-from tests.integration.conftest import chat_ws_url, post_message, post_project
+from tests.integration.conftest import (
+    chat_ws_url,
+    post_message,
+    post_project,
+)
 
 
 class MultiMessageScreen(StubChannel):
@@ -37,10 +41,10 @@ def stub_hooks() -> MultiMessageScreen:
 
 
 def _run_turn(client) -> tuple[str, list[dict]]:
-    p = post_project(client, json={"name": "P"}).json()["data"]
+    p = post_project(client, json={"name": "P"}, owner="alice").json()["data"]
     t = client.post(
         "/topics",
-        json={"project_id": p["id"], "title": "话题", "created_by": "alice"},
+        json={"project_id": p["id"], "title": "话题"},
     ).json()["data"]
     with client.websocket_connect(chat_ws_url(t["id"], "alice")) as ws:
         post_message(client, t["id"], "alice", {"content": "@芝士 帮我看看"})

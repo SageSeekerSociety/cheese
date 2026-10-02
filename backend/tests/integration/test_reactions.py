@@ -23,12 +23,13 @@ from tests.integration.conftest import (
 
 
 def _create_topic(client, owner: str = "alice") -> str:
-    p = post_project(client, json={"name": "P"}).json()["data"]
+    p = post_project(client, json={"name": "P"}, owner=owner).json()["data"]
     for teammate in ("bob", "carol"):
         join_project_team(client, p["id"], teammate)
     t = client.post(
         "/topics",
-        json={"project_id": p["id"], "title": "话题", "created_by": owner},
+        json={"project_id": p["id"], "title": "话题"},
+        headers=session_auth_headers(owner),
     ).json()["data"]
     return t["id"]
 

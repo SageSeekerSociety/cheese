@@ -150,9 +150,11 @@ def create_alerts_table(client) -> None:
 def _room(client) -> tuple[str, str]:
     """一个项目 + 一个房间，名册上是 alice、bob 和一个 agent。"""
     create_alerts_table(client)
-    pid = post_project(client, json={"name": "并表"}).json()["data"]["id"]
+    pid = post_project(client, json={"name": "并表"}, owner="bob").json()["data"]["id"]
     tid = client.post(
-        "/topics", json={"project_id": pid, "title": "房间", "created_by": "alice"}
+        "/topics",
+        json={"project_id": pid, "title": "房间"},
+        headers=session_auth_headers("bob"),
     ).json()["data"]["id"]
     _join(client, pid, tid, "alice", "bob")
     _join(client, None, tid, AGENT)

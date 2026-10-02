@@ -17,7 +17,7 @@ OWNER = "user-1"
 
 def _project(client) -> str:
     r = post_project(
-        client, json={"name": f"上下文-{uuid.uuid4().hex[:6]}", "owner_handle": OWNER}
+        client, json={"name": f"上下文-{uuid.uuid4().hex[:6]}"}, owner=OWNER
     )
     assert r.status_code == 200, r.text
     return r.json()["data"]["id"]
@@ -25,7 +25,9 @@ def _project(client) -> str:
 
 def _room(client, project_id: str, title: str) -> str:
     r = client.post(
-        "/topics", json={"project_id": project_id, "title": title, "created_by": OWNER}
+        "/topics",
+        json={"project_id": project_id, "title": title},
+        headers=session_auth_headers(OWNER),
     )
     assert r.status_code == 200, r.text
     return r.json()["data"]["id"]

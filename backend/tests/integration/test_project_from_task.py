@@ -17,9 +17,7 @@ def _claimed_task(client) -> int:
 
 
 def _create(client, **body):
-    return post_project(
-        client, json={"name": "赛题项目", "owner_handle": OWNER, **body}
-    )
+    return post_project(client, json={"name": "赛题项目", **body}, owner=OWNER)
 
 
 def test_a_project_created_from_a_task_remembers_it(client):

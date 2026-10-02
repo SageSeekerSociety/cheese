@@ -76,7 +76,7 @@
   "scheduleHourlyMinute": "每小时执行要给出第几分钟（0–59）",
   "scheduleWeeklyDays": "每周执行要给出星期几（0=周一 … 6=周日）",
   "scheduleMonthlyDay": "每月执行要给出几号（1–31）",
-  "teamProjectSignIn": "登录后才能把项目建在团队里",
+  "projectCreateSignIn": "登录后才能新建项目",
   "teamProjectNotMember": "你不是这个团队的成员，不能把项目建在这个团队里",
   "challengeProjectSignIn": "登录后才能用题目新建项目",
   "challengeProjectClaimFirst": "领取这道题之后才能用它新建项目",

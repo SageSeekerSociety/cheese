@@ -76,7 +76,7 @@
   "scheduleHourlyMinute": "An hourly routine needs the minute to run at (0–59)",
   "scheduleWeeklyDays": "A weekly routine needs the days of the week (0 = Monday … 6 = Sunday)",
   "scheduleMonthlyDay": "A monthly routine needs the day of the month (1–31)",
-  "teamProjectSignIn": "Sign in to create a project in a team",
+  "projectCreateSignIn": "Sign in to create a project",
   "teamProjectNotMember": "You're not a member of this team, so you can't create a project in it",
   "challengeProjectSignIn": "Sign in to create a project from a challenge",
   "challengeProjectClaimFirst": "Claim this challenge before creating a project from it",

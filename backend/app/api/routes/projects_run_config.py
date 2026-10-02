@@ -103,15 +103,14 @@ def _default_model_state(project_settings: dict | None, access: ModelAccess) -> 
     # plan would; the picker shows that plan and does not offer the model.
     choices = [access.mark(c) for c in model_choices(project_settings)]
     chosen = (project_settings or {}).get("default_model")
-    # 落在目录里才是「真的设了」——历史数据可能写过部署兜底算不出来的名字，
-    # 那种情况按没设处理，由调用方决定要不要报。这里只读，不修。
-    known_ids = {c["id"] for c in choices}
-    effective = chosen if isinstance(chosen, str) and chosen in known_ids else None
+    # The saved name goes back as saved, even when it has left the catalog: turns
+    # refuse it (binding.resolve) rather than fall back to the deployment default,
+    # so the picker must show it as unavailable, not show the default in its place.
     deployment_settings = dict(project_settings or {})
     deployment_settings.pop("default_model", None)
     deployment_choices = model_choices(deployment_settings)
     return {
-        "model": effective,
+        "model": chosen if isinstance(chosen, str) and chosen else None,
         "subagent_model": (project_settings or {}).get("default_subagent_model"),
         "deployment_default": next(
             (c["id"] for c in deployment_choices if c["default"]), None
@@ -128,7 +127,7 @@ def _default_model_state(project_settings: dict | None, access: ModelAccess) -> 
 async def get_default_model(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     project = await ProjectRepository(db).get(project_id)
     if project is None:
@@ -151,7 +150,7 @@ async def save_default_model(
     resolver: ActorResolverDep,
 ) -> dict:
     """设/清项目默认模型。设一个目录里没有的名字直接拒，不静默换池（I27）。"""
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     await MemberService(db).require_manager(project_id, actor)
     project = await ProjectService(db).get_or_404(project_id)
@@ -192,7 +191,7 @@ async def get_compute_configs(
     from app.domain.agent.device_hub import device_hub
     from app.domain.device.wiring import sql_device_service
 
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     project = await ProjectRepository(db).get(project_id)
     if project is None:
@@ -243,7 +242,7 @@ async def list_device_sessions(
     """
     from app.domain.machine.session_work import device_sessions
 
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     await MemberService(db).require_manager(project_id, actor)
     listed, hidden = [], 0
@@ -266,7 +265,7 @@ async def save_compute_configs(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     project = await ProjectRepository(db).get(project_id)
     if project is None:
@@ -294,7 +293,7 @@ async def get_tier_policy(
     `tiers` 一并给出目录里现在存在的档位，所以调用方不必自己维护一份档位表——
     那正是闸门拒绝按型号列白名单的同一个理由（`domain/policy/gate.py`）。
     """
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     project = await ProjectService(db).get_or_404(project_id)
     policy = gate.policy_of(project.settings)
@@ -322,7 +321,7 @@ async def set_tier_policy(
     发生。身上带的档位名不做存在性校验：目录里的档位随部署变（接一个新池就多一
     档），而一条指向不存在档位的策略只是更严，不会让任何调用悄悄放行。
     """
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     await MemberService(db).require_manager(project_id, actor)
     project = await ProjectService(db).get_or_404(project_id)

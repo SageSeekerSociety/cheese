@@ -721,7 +721,6 @@ async function confirmNewProject() {
   try {
     const project = await createProject(
       name,
-      myHandle(),
       newProjectTeamId.value,
       sourceTask.value?.id,
       newProjectForgeKind.value,

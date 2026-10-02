@@ -6,11 +6,11 @@ from a room — that would give two agents in one room the same name, and one
 agent two names in two rooms. It is derived from the agent.
 """
 
-from tests.integration.conftest import post_project
+from tests.integration.conftest import post_project, session_auth_headers
 
 
 def _project(client, name: str = "Identity") -> str:
-    r = post_project(client, json={"name": name})
+    r = post_project(client, json={"name": name}, owner="u")
     assert r.status_code == 200, r.text
     return r.json()["data"]["id"]
 
@@ -55,14 +55,14 @@ def test_the_identity_does_not_come_from_a_room(client):
     A handle derived from the room would have given this agent two names, and
     given a second agent in either room this one's name."""
     from app.domain.identity.handles import agent_instance_handle
-    from tests.integration.conftest import session_auth_headers
 
     project = _project(client)
     made = _agent(client, project, "planner", "规划师")
     rooms = [
         client.post(
             "/topics",
-            json={"project_id": project, "title": t, "created_by": "u"},
+            json={"project_id": project, "title": t},
+            headers=session_auth_headers("u"),
         ).json()["data"]["id"]
         for t in ("one", "two")
     ]

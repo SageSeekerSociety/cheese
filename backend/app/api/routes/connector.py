@@ -221,7 +221,7 @@ async def device_connect(
     """Approve a device on behalf of the logged-in human (fusion-design §4: approve is
     behind a login). Mints an agent-user + ``device`` binding, binds the device to the
     owner, and optionally assigns it to ``project_id``."""
-    actor = await resolver.resolve(fallback_handle=None)
+    actor = await resolver.resolve()
     if not actor.authenticated or actor.user_id is None:
         raise UnauthorizedError("Approving a device requires a logged-in user")
 
@@ -500,7 +500,7 @@ class BindTeamRequest(BaseModel):
 
 
 async def _require_user(resolver: ActorResolverDep) -> int:
-    actor = await resolver.resolve(fallback_handle=None)
+    actor = await resolver.resolve()
     if not actor.authenticated or actor.user_id is None:
         raise UnauthorizedError("Managing devices requires a logged-in user")
     return actor.user_id

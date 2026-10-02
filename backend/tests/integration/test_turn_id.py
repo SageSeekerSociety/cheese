@@ -3,14 +3,18 @@
 import uuid
 
 from app.core.sandbox_auth import SANDBOX_TOKEN
-from tests.integration.conftest import chat_ws_url, post_message, post_project
+from tests.integration.conftest import (
+    chat_ws_url,
+    post_message,
+    post_project,
+)
 
 
 def _topic(client) -> str:
-    p = post_project(client, json={"name": "P"}).json()["data"]
+    p = post_project(client, json={"name": "P"}, owner="user-1").json()["data"]
     t = client.post(
         "/topics",
-        json={"project_id": p["id"], "title": "T", "created_by": "user-1"},
+        json={"project_id": p["id"], "title": "T"},
     ).json()["data"]
     return t["id"]
 

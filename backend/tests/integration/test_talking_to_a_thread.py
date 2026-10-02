@@ -23,15 +23,14 @@ from tests.integration.conftest import (
 
 
 def _project(client) -> dict:
-    return post_project(client, json={"name": "P", "owner_handle": "user-1"}).json()[
-        "data"
-    ]
+    return post_project(client, json={"name": "P"}, owner="user-1").json()["data"]
 
 
 def _room(client, project_id: str) -> dict:
     return client.post(
         "/topics",
-        json={"project_id": project_id, "title": "大话题", "created_by": "user-1"},
+        json={"project_id": project_id, "title": "大话题"},
+        headers=session_auth_headers("user-1"),
     ).json()["data"]
 
 
@@ -78,7 +77,8 @@ def _card_blocks(client, room_id: str, task_id: str) -> list[dict]:
 def _say_on_card(client, room_id: str, task_id: str, content: str):
     return client.post(
         f"/topics/{room_id}/tasks/{task_id}/messages",
-        json={"content": content, "author": "user-1"},
+        json={"content": content},
+        headers=session_auth_headers("user-1"),
     )
 
 

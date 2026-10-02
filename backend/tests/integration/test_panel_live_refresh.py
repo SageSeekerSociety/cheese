@@ -49,11 +49,11 @@ def frames(monkeypatch) -> list[tuple[str, dict]]:
 
 
 def _room(client) -> tuple[str, str]:
-    pid = post_project(client, json={"name": "P", "owner_handle": "alice"}).json()[
-        "data"
-    ]["id"]
+    pid = post_project(client, json={"name": "P"}, owner="alice").json()["data"]["id"]
     rid = client.post(
-        "/topics", json={"project_id": pid, "title": "房间", "created_by": "alice"}
+        "/topics",
+        json={"project_id": pid, "title": "房间"},
+        headers=session_auth_headers("alice"),
     ).json()["data"]["id"]
     return pid, rid
 

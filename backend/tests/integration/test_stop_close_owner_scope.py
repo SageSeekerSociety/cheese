@@ -29,7 +29,7 @@ from tests.integration.conftest import post_project
 
 
 def _room(client) -> uuid.UUID:
-    project = post_project(client, {"name": "StopScope", "owner_handle": "alice"})
+    project = post_project(client, {"name": "StopScope"}, owner="alice")
     return uuid.UUID(project.json()["data"]["root_topic_id"])
 
 

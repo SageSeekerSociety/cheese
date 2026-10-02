@@ -173,7 +173,7 @@ def _finish(output: Path, archive: Path, manifest: dict) -> None:
 async def create_archive(
     project_id: uuid.UUID, db: AsyncSession, resolver: ActorResolver
 ) -> tuple[Path, Path]:
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    actor = await resolver.resolve(project_id=project_id)
     if actor.via != "token" or actor.user_id is None:
         raise AuthenticationRequiredError("Project export requires a human login")
     if await IdentityService(db).is_agent(actor.handle) or not await may_read_project(

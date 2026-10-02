@@ -1,12 +1,17 @@
 """B3: replying to a message threads the reply under it (reply_to)."""
 
-from tests.integration.conftest import chat_ws_url, post_message, post_project
+from tests.integration.conftest import (
+    chat_ws_url,
+    post_message,
+    post_project,
+)
 
 
 def _topic(client) -> str:
-    p = post_project(client, json={"name": "P"}).json()["data"]
+    p = post_project(client, json={"name": "P"}, owner="u").json()["data"]
     t = client.post(
-        "/topics", json={"project_id": p["id"], "title": "T", "created_by": "u"}
+        "/topics",
+        json={"project_id": p["id"], "title": "T"},
     ).json()["data"]
     return t["id"]
 

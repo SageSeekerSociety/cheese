@@ -28,7 +28,7 @@ _MIGRATION = next(
 
 
 def _room(client) -> tuple[str, str]:
-    p = post_project(client, json={"name": "P", "owner_handle": "alice"})
+    p = post_project(client, json={"name": "P"}, owner="alice")
     project_id = p.json()["data"]["id"]
     r = client.post("/topics", json={"project_id": project_id, "title": "排期"})
     return project_id, r.json()["data"]["id"]

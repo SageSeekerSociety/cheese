@@ -462,7 +462,7 @@ def warm_case(client, monkeypatch):
     topics = [
         client.post(
             "/topics",
-            json={"project_id": project, "title": title, "created_by": "owner"},
+            json={"project_id": project, "title": title},
         ).json()["data"]["id"]
         for title in ("One", "Two")
     ]

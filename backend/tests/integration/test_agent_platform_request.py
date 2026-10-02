@@ -75,10 +75,12 @@ class AgentHost:
 @pytest.fixture
 def room(client):
     """alice's room in alice's project, its agent, and bob on the project's team."""
-    project = post_project(client, json={"name": "P", "owner_handle": "alice"})
+    project = post_project(client, json={"name": "P"}, owner="alice")
     pid = project.json()["data"]["id"]
     tid = client.post(
-        "/topics", json={"project_id": pid, "title": "T", "created_by": "alice"}
+        "/topics",
+        json={"project_id": pid, "title": "T"},
+        headers=session_auth_headers("alice"),
     ).json()["data"]["id"]
     join_project_team(client, pid, "bob")
     seat = room_agent_seat(client, tid)
@@ -127,7 +129,9 @@ def test_the_agent_reacts_to_a_message_in_its_room(client, room):
 def test_the_agent_cannot_react_in_a_room_it_does_not_sit_in(client, room):
     pid, _, seat, agent = room
     other = client.post(
-        "/topics", json={"project_id": pid, "title": "U", "created_by": "alice"}
+        "/topics",
+        json={"project_id": pid, "title": "U"},
+        headers=session_auth_headers("alice"),
     ).json()["data"]["id"]
     block = post_message(client, other, "alice", {"content": "要不要？"})["id"]
     r = client.delete(

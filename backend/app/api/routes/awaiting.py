@@ -67,7 +67,7 @@ async def list_awaiting_me(
     访客拿到空列表，不是错误：这个清单的定义就是「点到了我的那些」，而没有身份的调
     用者没有被任何一件事点到。
     """
-    who = await resolver.resolve(fallback_handle=None)
+    who = await resolver.resolve()
     if not who.authenticated or not who.handle:
         return ok(page([], 0))
     items = await waiting_items(db, chat, handle=who.handle, user_id=who.user_id)

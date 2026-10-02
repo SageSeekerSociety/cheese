@@ -36,7 +36,7 @@ def _wire(moment: datetime) -> str:
 
 
 def _project(client) -> str:
-    r = post_project(client, json={"name": "P", "owner_handle": "alice"})
+    r = post_project(client, json={"name": "P"}, owner="alice")
     assert r.status_code == 200, r.text
     return r.json()["data"]["id"]
 

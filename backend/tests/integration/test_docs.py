@@ -1,6 +1,6 @@
 """Living doc: docs-out display + docs-in edit (evals B1/B2)."""
 
-from tests.integration.conftest import post_project
+from tests.integration.conftest import post_project, session_auth_headers
 
 
 def _topic(client) -> str:
@@ -20,9 +20,9 @@ def test_doc_absent_then_created_and_updated(client):
         f"/topics/{tid}/doc",
         json={
             "content": "## 目标\n做推荐系统",
-            "author": "user-1",
             "expected_version": 0,
         },
+        headers=session_auth_headers("owner"),
     )
     assert r.status_code == 200
     doc = r.json()["data"]
@@ -38,9 +38,9 @@ def test_doc_absent_then_created_and_updated(client):
         f"/topics/{tid}/doc",
         json={
             "content": "## 目标\n改成做问答系统",
-            "author": "user-1",
             "expected_version": 1,
         },
+        headers=session_auth_headers("owner"),
     )
     updated = client.get(f"/topics/{tid}/doc").json()["data"]
     assert updated["id"] == doc["id"]
@@ -54,7 +54,8 @@ def test_doc_edit_emits_conversation_event(client):
     tid = _topic(client)
     client.put(
         f"/topics/{tid}/doc",
-        json={"content": "x", "author": "user-1", "expected_version": 0},
+        json={"content": "x", "expected_version": 0},
+        headers=session_auth_headers("owner"),
     )
     blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
     # An append-only event block records the edit (spec H1 / eval B2).
@@ -68,7 +69,8 @@ def test_empty_editor_paragraph_is_saved_without_a_contribution_notice(client):
     ):
         response = client.put(
             f"/topics/{tid}/doc",
-            json={"content": content, "author": "user-1", "expected_version": version},
+            json={"content": content, "expected_version": version},
+            headers=session_auth_headers("owner"),
         )
         assert response.status_code == 200
         assert response.json()["data"]["content"] == content
@@ -86,9 +88,9 @@ def test_literal_entity_in_code_remains_in_edit_evidence(client):
         f"/topics/{tid}/doc",
         json={
             "content": "```html\n&nbsp;\n```",
-            "author": "user-1",
             "expected_version": 0,
         },
+        headers=session_auth_headers("owner"),
     )
     blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
     edits = [b for b in blocks if (b.get("meta") or {}).get("action") == "doc"]
@@ -110,7 +112,8 @@ def test_document_save_pushes_persisted_notice_and_refresh_to_teammates(
     frames.clear()
     response = client.put(
         f"/topics/{tid}/doc",
-        json={"content": "调查安排", "author": "user-1", "expected_version": 0},
+        json={"content": "调查安排", "expected_version": 0},
+        headers=session_auth_headers("owner"),
     )
     assert response.status_code == 200
     assert [frame["type"] for _, frame in frames] == ["event_block", "state"]
@@ -122,9 +125,9 @@ def test_document_save_pushes_persisted_notice_and_refresh_to_teammates(
         f"/topics/{tid}/doc",
         json={
             "content": "调查安排\n\n&nbsp;",
-            "author": "user-1",
             "expected_version": 1,
         },
+        headers=session_auth_headers("owner"),
     )
     assert [frame["type"] for _, frame in frames] == ["state"]
 
@@ -132,9 +135,7 @@ def test_document_save_pushes_persisted_notice_and_refresh_to_teammates(
 def test_doc_canonicalizes_friendly_mentions(client, bearer):
     """A + backstop: friendly "@handle / @话题名" in doc content is rewritten to
     structured tokens on PUT, same as chat replies (裸名 stays untouched)."""
-    p = post_project(client, json={"name": "P", "owner_handle": "user-1"}).json()[
-        "data"
-    ]
+    p = post_project(client, json={"name": "P"}, owner="user-1").json()["data"]
     t = client.post("/topics", json={"project_id": p["id"], "title": "主话题"}).json()[
         "data"
     ]
@@ -146,7 +147,6 @@ def test_doc_canonicalizes_friendly_mentions(client, bearer):
         f"/topics/{t['id']}/doc",
         json={
             "content": "待办：@user-1 跟进，结论同步到 @分页调研。裸名 user-1 不动",
-            "author": "cheese",
             "expected_version": 0,
         },
     )
@@ -166,23 +166,22 @@ def test_a_write_based_on_an_old_version_is_refused(client):
     tid = _topic(client)
     client.put(
         f"/topics/{tid}/doc",
-        json={"content": "# 目标\n做推荐", "author": "cheese", "expected_version": 0},
+        json={"content": "# 目标\n做推荐", "expected_version": 0},
     )
     stale = client.get(f"/topics/{tid}/doc").json()["data"]["doc_version"]
     client.put(
         f"/topics/{tid}/doc",
         json={
             "content": "# 目标\n做推荐\n\n先跑通召回",
-            "author": "user-1",
             "expected_version": stale,
         },
+        headers=session_auth_headers("owner"),
     )
 
     r = client.put(
         f"/topics/{tid}/doc",
         json={
             "content": "# 目标\n做问答",
-            "author": "cheese",
             "expected_version": stale,
         },
     )
@@ -202,13 +201,14 @@ def test_a_refused_write_announces_nothing(client):
     tid = _topic(client)
     client.put(
         f"/topics/{tid}/doc",
-        json={"content": "# 甲", "author": "user-1", "expected_version": 0},
+        json={"content": "# 甲", "expected_version": 0},
+        headers=session_auth_headers("owner"),
     )
     before = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
 
     r = client.put(
         f"/topics/{tid}/doc",
-        json={"content": "# 乙", "author": "cheese", "expected_version": 0},
+        json={"content": "# 乙", "expected_version": 0},
     )
     assert r.status_code == 409
 
@@ -225,14 +225,15 @@ def test_creating_the_first_doc_expects_no_doc(client):
     tid = _topic(client)
     first = client.put(
         f"/topics/{tid}/doc",
-        json={"content": "# 甲", "author": "user-1", "expected_version": 0},
+        json={"content": "# 甲", "expected_version": 0},
+        headers=session_auth_headers("owner"),
     )
     assert first.status_code == 200
     assert first.json()["data"]["doc_version"] == 1
 
     second = client.put(
         f"/topics/{tid}/doc",
-        json={"content": "# 乙", "author": "cheese", "expected_version": 0},
+        json={"content": "# 乙", "expected_version": 0},
     )
     assert second.status_code == 409
     assert client.get(f"/topics/{tid}/doc").json()["data"]["content"] == "# 甲"
@@ -254,7 +255,8 @@ def test_a_doc_that_reads_like_a_log_is_written_anyway_and_flagged(client):
 
     r = client.put(
         f"/topics/{tid}/doc",
-        json={"content": logged, "author": "user-1", "expected_version": 0},
+        json={"content": logged, "expected_version": 0},
+        headers=session_auth_headers("owner"),
     )
 
     assert r.status_code == 200
@@ -269,7 +271,8 @@ def test_a_doc_written_as_state_comes_back_with_no_warnings(client):
 
     r = client.put(
         f"/topics/{tid}/doc",
-        json={"content": state, "author": "user-1", "expected_version": 0},
+        json={"content": state, "expected_version": 0},
+        headers=session_auth_headers("owner"),
     )
 
     assert r.status_code == 200
