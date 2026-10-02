@@ -68,8 +68,7 @@
       "passwordReset": "密码已重置，请使用新密码登录"
     },
     "lastUsed": "上次使用",
-    "emailCode": "使用邮箱验证码登录",
-    "continueInBrowser": "已在浏览器中打开 {provider} 登录，完成后会回到这里"
+    "emailCode": "使用邮箱验证码登录"
   },
   "attempts": {
     "wrongPassword": "用户名或密码错误",
@@ -217,12 +216,16 @@
       "pageTitle": "OAuth 账户选择"
     },
     "app": {
-      "leaving": "正在前往 {provider}",
       "backTitle": "回到 Cheese app",
       "backLede": "如果 Cheese app 没有自动打开，请点击下方按钮。之后可以关闭此页面。",
       "open": "打开 Cheese",
       "handOffFailed": "无法把这次登录交给 Cheese app，请在 app 中重新登录",
-      "expired": "这次登录已失效，请重新登录"
+      "expired": "这次登录已失效，请重新登录",
+      "confirmTitle": "登录 Cheese app",
+      "confirmLede": "将以 {name}（{'@'}{handle}）的身份登录 Cheese app。如果不是你刚才在 app 里发起的，请点击取消。",
+      "confirm": "继续",
+      "switchAccount": "换个账号",
+      "cancel": "取消"
     }
   },
   "sudo": {
@@ -558,5 +561,28 @@
       "port": "端口",
       "security": "加密方式"
     }
+  },
+  "appSignIn": {
+    "lede": "登录会在浏览器中完成，那里有你保存的密码、通行密钥和第三方账号。完成后会自动回到这里。",
+    "signin": {
+      "title": "登录 Cheese",
+      "open": "在浏览器中登录"
+    },
+    "signup": {
+      "title": "注册 Cheese",
+      "open": "在浏览器中注册"
+    },
+    "recover": {
+      "title": "找回密码",
+      "open": "在浏览器中找回密码"
+    },
+    "waiting": "已在浏览器中打开。完成后会回到这里。",
+    "openAgain": "再次打开浏览器",
+    "copyLink": "复制链接，手动粘贴到浏览器",
+    "copied": "已复制链接",
+    "copyFailed": "无法复制，请再次点击上方按钮打开浏览器",
+    "failed": "无法打开浏览器，请重试",
+    "haveAccount": "已有账号？",
+    "toSignIn": "登录"
   }
 }
