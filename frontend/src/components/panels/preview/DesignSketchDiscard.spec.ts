@@ -7,6 +7,7 @@ import { confirmAnnotationDiscard, hasUnsentAnnotations } from './annotationDisc
 import DesignImage from './DesignImage.vue'
 
 import { setLocale } from '@/i18n'
+import { nextMillisecond } from '@/test/nextMillisecond'
 
 // 合成标注图要真 canvas，测试环境里没有；只把这一步换成成功，别的照旧。
 vi.mock('./designSketch', async (importOriginal) => {
@@ -57,6 +58,9 @@ function mount() {
 
 async function drawRect(ui: ReturnType<typeof render>) {
   await fireEvent.click(ui.getByRole('button', { name: '矩形' }))
+  // 点工具才挂上画布；同一毫秒里紧跟着的那一下按下会被 Vue 当成「挂上之前的事件」丢掉
+  // （见 nextMillisecond）。真人的手没这么快，等时钟走过这一毫秒再按。
+  await nextMillisecond()
   const layer = ui.getByRole('application', { name: '图片标注画布' })
   layer.setPointerCapture = vi.fn()
   await fireEvent.pointerDown(layer, { button: 0, pointerId: 11, clientX: 60, clientY: 70 })

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import DesignImage from './DesignImage.vue'
 
 import { setLocale } from '@/i18n'
+import { nextMillisecond } from '@/test/nextMillisecond'
 
 let observed: Map<Element, ResizeObserverCallback>
 beforeEach(() => {
@@ -45,6 +46,9 @@ async function painted(ui: ReturnType<typeof render>) {
 
 async function drawRect(ui: ReturnType<typeof render>) {
   await fireEvent.click(ui.getByRole('button', { name: '矩形' }))
+  // 点工具才挂上画布；同一毫秒里紧跟着的那一下按下会被 Vue 当成「挂上之前的事件」丢掉
+  // （见 nextMillisecond）。真人的手没这么快，等时钟走过这一毫秒再按。
+  await nextMillisecond()
   const layer = ui.getByRole('application', { name: '图片标注画布' })
   layer.setPointerCapture = vi.fn()
   await fireEvent.pointerDown(layer, { button: 0, pointerId: 11, clientX: 60, clientY: 70 })
@@ -58,10 +62,13 @@ it('选中已画好的矩形：出现虚线框和把手，拖右下角把手把�
   await drawRect(ui)
   // 切回默认的框选工具，选中层才挂上。
   await fireEvent.click(ui.getByRole('button', { name: '选择图片区域' }))
+  await nextMillisecond()
 
   const pick = ui.container.querySelector('.sketch-selection__pick') as SVGRectElement
   expect(pick).toBeTruthy()
   await fireEvent.pointerDown(pick, { button: 0, pointerId: 3, clientX: 100, clientY: 100 })
+  // 选中才挂上框和把手：下面按把手那一下也得落在下一毫秒。
+  await nextMillisecond()
 
   const box = ui.container.querySelector('.sketch-selection__box') as SVGRectElement
   expect(box).toBeTruthy()
