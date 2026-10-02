@@ -10,11 +10,9 @@
 import type { Knowledge, KnowledgeContentData } from '@/types'
 import type { AudioMeta, FileMeta, ImageMeta, VideoMeta } from '@/types/materials'
 
-import { computed } from 'vue'
-
 import { getAvatarUrl } from '@/utils/materials'
 
-import TipTapEditor from '@/components/common/Editor/TipTapEditor.vue'
+import TipTapViewer from '@/components/common/Editor/TipTapViewer.vue'
 import { t } from '@/i18n'
 import {
   canEditKnowledge,
@@ -28,7 +26,7 @@ import {
 
 defineOptions({ name: 'KnowledgeDetailDialog' })
 
-const props = defineProps<{
+defineProps<{
   modelValue: boolean
   resource: Knowledge | null
   content: KnowledgeContentData
@@ -37,16 +35,9 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
-  'update:content': [value: KnowledgeContentData]
   openLink: [resource: Knowledge]
   delete: [resource: Knowledge]
 }>()
-
-/** 富文本预览那一格：编辑器在只读之外还能被敲两下，所以要把改动交回去。 */
-const richText = computed({
-  get: () => props.content.richText,
-  set: (value) => emit('update:content', { ...props.content, richText: value }),
-})
 </script>
 
 <template>
@@ -122,8 +113,7 @@ const richText = computed({
           <!-- 富文本内容预览 -->
           <v-sheet v-else-if="resource.type === 'TEXT' && content.richText" class="pa-4 text-preview rounded-lg">
             <div class="rich-text-preview">
-              <!-- 这里应该渲染富文本内容，可以用TipTap的只读模式 -->
-              <TipTapEditor v-model="richText" hide-toolbar output="json" :min-height="150" />
+              <TipTapViewer :value="content.richText" />
             </div>
           </v-sheet>
 
@@ -293,16 +283,6 @@ const richText = computed({
   flex-direction: column;
   align-items: center;
   justify-content: center;
-}
-
-.rich-text-preview :deep(.tiptap-editor) {
-  background-color: transparent;
-  padding: 0;
-
-  .ProseMirror {
-    padding: 0;
-    min-height: auto !important;
-  }
 }
 
 /* 代码块：故意反色的元素，两块颜色是 `src/style.css` 里的 `--code-bg` /

@@ -15,7 +15,7 @@
    也是审计点名的那个洞。
 2. **不挂在任何题上的文件**：图片对登录用户放行，其余只有上传者本人能读。理由是另
    一条前端契约：公告与讨论里嵌的图（`AttachmentImage` 节点带的是 `attachmentId`）
-   由**所有能看见那段内容的人**通过这条通用路由解析出来（`ImageView.vue`、
+   由**所有能看见那段内容的人**通过这条通用路由解析出来（`useAttachmentImages.ts`、
    `Discussions.vue`），把它们掐掉就是一片裂图。而 `type=file` 的散件（交作业的材料、
    建题前先传上去的文件）没有任何一处前端会跨用户用这条路由去读，所以收紧到上传者本人。
 
@@ -290,7 +290,7 @@ def test_an_image_embedded_in_a_document_is_still_readable_by_another_viewer(
     """缺口被钉在这里，不让它悄悄变。
 
     公告与讨论里嵌的图就是一张散图：`AttachmentImage` 节点带 `attachmentId`，每个能
-    看见那段内容的人都靠这条通用路由把它解析成 url（`ImageView.vue`、
+    看见那段内容的人都靠这条通用路由把它解析成 url（`useAttachmentImages.ts`、
     `Discussions.vue`）。收紧到「只有上传者本人」会让板上所有人看到的都是裂图。
     `attachment` 上没有归属列、富文本里的 id 也反查不到容器，所以这一侧只能维持现状
     —— 这是设计缺口，不是判据。

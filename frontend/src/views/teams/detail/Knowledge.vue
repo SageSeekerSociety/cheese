@@ -97,7 +97,6 @@ async function onSubmitUpload(draft: Parameters<typeof createKnowledge>[0]) {
       :resource="selectedResource"
       :content="selectedResourceContent"
       :owner-id="ownerId"
-      @update:content="selectedResourceContent = $event"
       @open-link="openResourceLink"
       @delete="confirmDeleteResource"
     />

@@ -9,7 +9,7 @@
  * 于是：类型放这儿给对话框当 v-model 的形状，换算放这儿给 composable 调。这个
  * 文件不 import api、store 或路由。
  */
-import type { JSONContent } from 'vuetify-pro-tiptap'
+import type { JSONContent } from '@tiptap/core'
 import type { KnowledgeContentData, KnowledgeType } from '@/types'
 import type { MaterialType } from '@/types/materials'
 
