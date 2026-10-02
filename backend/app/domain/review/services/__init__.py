@@ -4,83 +4,51 @@ Spec §4.4 (AI 不能验收自己做的东西), §6.3 (采纳即归档/merge, �
 This is deterministic platform code, not AI.
 """
 
+# ruff: noqa: F401  # 过渡期的兼容门面：再导出却不被本文件用到的名字就是这一批，
+# 它们仍要留在 `app.domain.review.services` 的名字空间里（P9 收敛成门面后删掉这行）。
 from __future__ import annotations
 
-import asyncio as asyncio
-import logging as logging
-import time as time
-import uuid as uuid
-from collections.abc import Awaitable as Awaitable
-from collections.abc import Callable as Callable
-from collections.abc import Sequence as Sequence
-from dataclasses import dataclass as dataclass
-from datetime import UTC as UTC
-from datetime import datetime as datetime
-from pathlib import PurePosixPath as PurePosixPath
-from typing import TYPE_CHECKING as TYPE_CHECKING
-from typing import Final as Final
-from typing import NoReturn as NoReturn
+import asyncio
+import logging
+import time
+import uuid
+from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import PurePosixPath
+from typing import TYPE_CHECKING, Final, NoReturn
 
-from sqlalchemy import select as select
-from sqlalchemy.ext.asyncio import AsyncSession as AsyncSession
-from sqlalchemy.ext.asyncio import async_sessionmaker as async_sessionmaker
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.core.config import settings as settings
-from app.core.db import async_session_factory as async_session_factory
-from app.core.errors import ForbiddenError as ForbiddenError
-from app.core.errors import NotFoundError as NotFoundError
-from app.core.errors import ValidationError as ValidationError
-from app.domain.block.about import EventAbout as EventAbout
-from app.domain.block.about import landing as landing
-from app.domain.block.models import AuthorType as AuthorType
-from app.domain.block.models import BlockKind as BlockKind
-from app.domain.block.notice_text import NoticeText as NoticeText
-from app.domain.block.notice_text import say as say
-from app.domain.identity.handles import (
-    looks_like_agent_handle as looks_like_agent_handle,
-)
+from app.core.config import settings
+from app.core.db import async_session_factory
+from app.core.errors import ForbiddenError, NotFoundError, ValidationError
+from app.domain.block.about import EventAbout, landing
+from app.domain.block.models import AuthorType, BlockKind
+from app.domain.block.notice_text import NoticeText, say
+from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.library import service as library
-from app.domain.membership.services import MemberService as MemberService
-from app.domain.project import artifacts as artifacts
-from app.domain.project.models import AiMode as AiMode
-from app.domain.project.models import Project as Project
-from app.domain.repository import identity as identity
+from app.domain.membership.services import MemberService
+from app.domain.project import artifacts
+from app.domain.project.models import AiMode, Project
+from app.domain.repository import identity
 from app.domain.review import (
-    archive as archive,
-)
-from app.domain.review import (
-    commit_message as commit_message,
+    archive,
+    commit_message,
+    merge_state,
+    notes,
+    pr_publish,
+    pr_signals,
+    pr_text,
 )
 from app.domain.review import forge as forge_mod
-from app.domain.review import (
-    merge_state as merge_state,
-)
-from app.domain.review import (
-    notes as notes,
-)
-from app.domain.review import (
-    pr_publish as pr_publish,
-)
-from app.domain.review import (
-    pr_signals as pr_signals,
-)
-from app.domain.review import (
-    pr_text as pr_text,
-)
-from app.domain.review.merge_state import MergeVerdict as MergeVerdict
-from app.domain.review.merge_state import Who as Who
-from app.domain.review.merge_state import whose_move as whose_move
+from app.domain.review.merge_state import MergeVerdict, Who, whose_move
 from app.domain.review.models import (
-    AcceptCard as AcceptCard,
-)
-from app.domain.review.models import (
-    AcceptStatus as AcceptStatus,
-)
-from app.domain.review.models import (
-    DeliverableKind as DeliverableKind,
-)
-from app.domain.review.models import (
-    GateOutcome as GateOutcome,
+    AcceptCard,
+    AcceptStatus,
+    DeliverableKind,
+    GateOutcome,
 )
 from app.domain.review.nudges import _NUDGE_TAIL_LIMIT as _NUDGE_TAIL_LIMIT
 
@@ -91,15 +59,11 @@ from app.domain.review.nudges import _NUDGE_TAIL_LIMIT as _NUDGE_TAIL_LIMIT
 # 路径上（`as` 是 ruff 认的那种「这是再导出，不是没用上」的写法）；两段措辞辅助
 # `_ci_log_howto` / `_nudge_note_prefix` 随三条待发一起搬走，没有别的取用者。
 from app.domain.review.nudges import (
-    _ci_nudge as _ci_nudge,
+    _ci_nudge,
+    _conflict_nudge,
+    _review_nudge,
 )
-from app.domain.review.nudges import (
-    _conflict_nudge as _conflict_nudge,
-)
-from app.domain.review.nudges import (
-    _review_nudge as _review_nudge,
-)
-from app.domain.review.repositories import AcceptCardRepository as AcceptCardRepository
+from app.domain.review.repositories import AcceptCardRepository
 
 # 兼容门面：一件事做完之后「怎么说出去」（房间里那一行、卡上那条 note、要不要点
 # 名）搬去了 `room_notices.py`。这里重新导出，`app.domain.review.services` 仍是既
@@ -112,206 +76,83 @@ from app.domain.review.repositories import AcceptCardRepository as AcceptCardRep
 # 伸手去拿模块级单例——集成测试正是在 `services` 这个名字上换掉它
 # （`test_accept_pr.py`、`forgejo/test_live.py`），放在这里读，换法照旧有效。
 from app.domain.review.room_notices import (
-    _announce_filed as _announce_filed,
+    _announce_filed,
+    _announce_new_artifact,
+    _note_needs_human,
+    _note_outside_accept_txn,
+    _note_poll_failed,
+    _notify_merge_result,
+    _notify_ready,
+    _record_task_nudge,
+    _tell_the_reviewer,
 )
-from app.domain.review.room_notices import (
-    _announce_new_artifact as _announce_new_artifact,
-)
-from app.domain.review.room_notices import (
-    _note_needs_human as _note_needs_human,
-)
-from app.domain.review.room_notices import (
-    _note_outside_accept_txn as _note_outside_accept_txn,
-)
-from app.domain.review.room_notices import (
-    _note_poll_failed as _note_poll_failed,
-)
-from app.domain.review.room_notices import (
-    _notify_merge_result as _notify_merge_result,
-)
-from app.domain.review.room_notices import (
-    _notify_ready as _notify_ready,
-)
-from app.domain.review.room_notices import (
-    _record_task_nudge as _record_task_nudge,
-)
-from app.domain.review.room_notices import (
-    _tell_the_reviewer as _tell_the_reviewer,
-)
-from app.domain.review.schemas import AcceptCardOut as AcceptCardOut
-from app.domain.room_task.checkouts import after_close as after_close
-from app.domain.room_task.models import Task as Task
-from app.domain.room_task.models import TaskStatus as TaskStatus
-from app.domain.room_task.place import PlaceResolver as PlaceResolver
-from app.domain.room_task.services import TaskService as TaskService
-from app.domain.topic.models import Topic as Topic
-from app.domain.topic.models import TopicStatus as TopicStatus
+from app.domain.review.schemas import AcceptCardOut
+from app.domain.room_task.checkouts import after_close
+from app.domain.room_task.models import Task, TaskStatus
+from app.domain.room_task.place import PlaceResolver
+from app.domain.room_task.services import TaskService
+from app.domain.topic.models import Topic, TopicStatus
 
 if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
     from app.domain.project.protection import BranchProtection
     from app.domain.review.github_pr import PullRequestStatus
 
+from app.domain.review.services import cards
 from app.domain.review.services._shared import (
-    _ACCEPT_NO_BRANCH_PREFIX as _ACCEPT_NO_BRANCH_PREFIX,
-)
-from app.domain.review.services._shared import (
-    _ACCEPT_PR_OPEN_FAILED_PREFIX as _ACCEPT_PR_OPEN_FAILED_PREFIX,
-)
-from app.domain.review.services._shared import (
-    _ACCEPT_PR_STALLED_PREFIX as _ACCEPT_PR_STALLED_PREFIX,
-)
-from app.domain.review.services._shared import (
-    _ALEMBIC_VERSIONS_DIR as _ALEMBIC_VERSIONS_DIR,
-)
-from app.domain.review.services._shared import (
-    _ARTIFACT_ACTION_BOTH as _ARTIFACT_ACTION_BOTH,
-)
-from app.domain.review.services._shared import (
-    _ARTIFACT_ACTION_MISSING as _ARTIFACT_ACTION_MISSING,
-)
-from app.domain.review.services._shared import (
-    _ARTIFACT_ACTION_UNWANTED as _ARTIFACT_ACTION_UNWANTED,
-)
-from app.domain.review.services._shared import (
-    _BLOCKED_BY_CARD_MESSAGES as _BLOCKED_BY_CARD_MESSAGES,
-)
-from app.domain.review.services._shared import (
-    _CARD_BLOCKS_NEW_CARD as _CARD_BLOCKS_NEW_CARD,
-)
-from app.domain.review.services._shared import (
-    _DELIVERABLE_BOTH as _DELIVERABLE_BOTH,
-)
-from app.domain.review.services._shared import (
-    _DELIVERABLE_MAX_BYTES as _DELIVERABLE_MAX_BYTES,
-)
-from app.domain.review.services._shared import (
-    _FORCE_MERGE_VERDICTS as _FORCE_MERGE_VERDICTS,
-)
-from app.domain.review.services._shared import (
-    _GITHUB_ENFORCES_TTL_S as _GITHUB_ENFORCES_TTL_S,
-)
-from app.domain.review.services._shared import (
-    _MERGE_FAILED_MESSAGE as _MERGE_FAILED_MESSAGE,
-)
-from app.domain.review.services._shared import (
-    _MISSING_SUBJECT as _MISSING_SUBJECT,
-)
-from app.domain.review.services._shared import (
-    _NOT_THIS_ROOMS_WORK as _NOT_THIS_ROOMS_WORK,
-)
-from app.domain.review.services._shared import (
-    _NOTHING_TO_DELIVER as _NOTHING_TO_DELIVER,
-)
-from app.domain.review.services._shared import (
-    _REQUIRED_CHECK_GRACE_MINUTES as _REQUIRED_CHECK_GRACE_MINUTES,
-)
-from app.domain.review.services._shared import (
-    EVENT_ACCEPT_DISMISSED as EVENT_ACCEPT_DISMISSED,
-)
-from app.domain.review.services._shared import (
-    EVENT_ACCEPT_DONE as EVENT_ACCEPT_DONE,
-)
-from app.domain.review.services._shared import (
-    EVENT_ACCEPT_STOPPED as EVENT_ACCEPT_STOPPED,
-)
-from app.domain.review.services._shared import (
-    EVENT_CARD_REDESCRIBED as EVENT_CARD_REDESCRIBED,
-)
-from app.domain.review.services._shared import (
-    EVENT_CARD_VOIDED as EVENT_CARD_VOIDED,
-)
-from app.domain.review.services._shared import (
-    EVENT_FORCE_MERGED as EVENT_FORCE_MERGED,
-)
-from app.domain.review.services._shared import (
-    EVENT_MERGE_REFUSED as EVENT_MERGE_REFUSED,
-)
-from app.domain.review.services._shared import (
-    EVENT_MIGRATION_COLLISION as EVENT_MIGRATION_COLLISION,
-)
-from app.domain.review.services._shared import (
-    EVENT_PR_CLOSED as EVENT_PR_CLOSED,
-)
-from app.domain.review.services._shared import (
-    FORCE_MERGED_PREFIX as FORCE_MERGED_PREFIX,
-)
-from app.domain.review.services._shared import (
-    GATE_ABANDONED_PREFIX as GATE_ABANDONED_PREFIX,
-)
-from app.domain.review.services._shared import (
-    SEVERITY_ERROR as SEVERITY_ERROR,
-)
-from app.domain.review.services._shared import (
-    SEVERITY_INFO as SEVERITY_INFO,
-)
-from app.domain.review.services._shared import (
-    SEVERITY_WARN as SEVERITY_WARN,
-)
-from app.domain.review.services._shared import (
-    VOIDED_PREFIX as VOIDED_PREFIX,
-)
-from app.domain.review.services._shared import (
-    WHO_CHEESE as WHO_CHEESE,
-)
-from app.domain.review.services._shared import (
-    WHO_HUMAN as WHO_HUMAN,
-)
-from app.domain.review.services._shared import (
-    WHO_PLATFORM as WHO_PLATFORM,
-)
-from app.domain.review.services._shared import (
-    BlockRepository as BlockRepository,
-)
-from app.domain.review.services._shared import (
-    ProjectRepository as ProjectRepository,
-)
-from app.domain.review.services._shared import (
-    ReviewerAdmission as ReviewerAdmission,
-)
-from app.domain.review.services._shared import (
-    TopicRepository as TopicRepository,
-)
-from app.domain.review.services._shared import (
-    _capped as _capped,
-)
-from app.domain.review.services._shared import (
-    _force_merge_verdict as _force_merge_verdict,
-)
-from app.domain.review.services._shared import (
-    _github_enforces as _github_enforces,
-)
-from app.domain.review.services._shared import (
-    _github_enforces_cache as _github_enforces_cache,
-)
-from app.domain.review.services._shared import (
-    _GitHubCredentials as _GitHubCredentials,
-)
-from app.domain.review.services._shared import (
-    _never_shown_message as _never_shown_message,
-)
-from app.domain.review.services._shared import (
-    _no_artifact_action as _no_artifact_action,
-)
-from app.domain.review.services._shared import (
-    _one_artifact_action as _one_artifact_action,
-)
-from app.domain.review.services._shared import (
-    _one_deliverable as _one_deliverable,
-)
-from app.domain.review.services._shared import (
-    _read_deliverable as _read_deliverable,
-)
-from app.domain.review.services._shared import (
-    _stale_view_message as _stale_view_message,
-)
-from app.domain.review.services._shared import (
-    approvals_required_of as approvals_required_of,
-)
-from app.domain.review.services._shared import (
-    logger as logger,
-)
-from app.domain.review.services._shared import (
-    notice as notice,
+    _ACCEPT_NO_BRANCH_PREFIX,
+    _ACCEPT_PR_OPEN_FAILED_PREFIX,
+    _ACCEPT_PR_STALLED_PREFIX,
+    _ALEMBIC_VERSIONS_DIR,
+    _ARTIFACT_ACTION_BOTH,
+    _ARTIFACT_ACTION_MISSING,
+    _ARTIFACT_ACTION_UNWANTED,
+    _BLOCKED_BY_CARD_MESSAGES,
+    _CARD_BLOCKS_NEW_CARD,
+    _DELIVERABLE_BOTH,
+    _DELIVERABLE_MAX_BYTES,
+    _FORCE_MERGE_VERDICTS,
+    _GITHUB_ENFORCES_TTL_S,
+    _MERGE_FAILED_MESSAGE,
+    _MISSING_SUBJECT,
+    _NOT_THIS_ROOMS_WORK,
+    _NOTHING_TO_DELIVER,
+    _REQUIRED_CHECK_GRACE_MINUTES,
+    EVENT_ACCEPT_DISMISSED,
+    EVENT_ACCEPT_DONE,
+    EVENT_ACCEPT_STOPPED,
+    EVENT_CARD_REDESCRIBED,
+    EVENT_CARD_VOIDED,
+    EVENT_FORCE_MERGED,
+    EVENT_MERGE_REFUSED,
+    EVENT_MIGRATION_COLLISION,
+    EVENT_PR_CLOSED,
+    FORCE_MERGED_PREFIX,
+    GATE_ABANDONED_PREFIX,
+    SEVERITY_ERROR,
+    SEVERITY_INFO,
+    SEVERITY_WARN,
+    VOIDED_PREFIX,
+    WHO_CHEESE,
+    WHO_HUMAN,
+    WHO_PLATFORM,
+    BlockRepository,
+    ProjectRepository,
+    ReviewerAdmission,
+    TopicRepository,
+    _capped,
+    _force_merge_verdict,
+    _github_enforces,
+    _github_enforces_cache,
+    _GitHubCredentials,
+    _never_shown_message,
+    _no_artifact_action,
+    _one_artifact_action,
+    _one_deliverable,
+    _read_deliverable,
+    _stale_view_message,
+    approvals_required_of,
+    logger,
+    notice,
 )
 
 
@@ -324,45 +165,15 @@ class AcceptService:
         self._projects = ProjectRepository(session)
 
     async def _topic_or_404(self, topic_id: uuid.UUID) -> Topic:
-        """The ROOM a place id names — a card is read in a room either way.
-
-        `topic_id` here is a place id and is usually a thread's: a card is what a
-        piece of work ends in. Everything this service does with the answer —
-        rendering, notifying, the branch it pushes — belongs to the room, so the
-        room is what it returns; which thread the card is FOR is on the card.
-        """
-        place = await PlaceResolver(self._session).resolve(topic_id)
-        if place is None:
-            raise NotFoundError("Topic not found")
-        return place.room
+        return await cards._topic_or_404(self, topic_id=topic_id)
 
     async def _stamp_delivery(
         self, card: AcceptCard, topic: Topic, *, by: str | None, at: datetime | None
     ) -> None:
-        """Mark what was delivered — the THREAD when the card is a thread's.
-
-        交付完成 ≠ 这个地方结束 (#442 decision 1): this is the delivery marker and
-        nothing else; `status` is untouched and putting a place away stays a
-        person's decision.
-
-        Which row carries it matters: a room accumulates work forever, so
-        stamping the room would say "this room was delivered" every time any one
-        piece of work in it was, and the next reader cannot tell which. Passing
-        `by=None` clears it (撤回采纳).
-        """
-        target: Topic | Task = topic
-        if card.task_id is not None:
-            thread = await TaskService(self._session).get(card.task_id)
-            if thread is not None:
-                target = thread
-        target.accepted_by = by
-        target.accepted_at = at
+        return await cards._stamp_delivery(self, card=card, topic=topic, by=by, at=at)
 
     async def _card_or_404(self, card_id: uuid.UUID) -> AcceptCard:
-        card = await self._repo.get(card_id)
-        if card is None:
-            raise NotFoundError("Accept card not found")
-        return card
+        return await cards._card_or_404(self, card_id=card_id)
 
     async def _reviewer_or_project_default(
         self,
@@ -465,121 +276,21 @@ class AcceptService:
         deliver_url: str | None = None,
         admits_reviewer: ReviewerAdmission,
     ) -> AcceptCard:
-        topic = await self._topic_or_404(topic_id)
-        task = await TaskService(self._session).require_in_room(topic_id, task_id)
-        if topic.status == TopicStatus.archived:
-            raise ValidationError("话题已归档，不能再提交验收")
-        if task.status != TaskStatus.open or not task.branch_name:
-            raise ValidationError("这条任务已结束或没有工作分支")
-        subject = (change_subject or "").strip()
-        if not subject:
-            raise ValidationError(_MISSING_SUBJECT)
-        try:
-            subject = commit_message.check_subject(subject)
-        except commit_message.InvalidSubject as exc:
-            raise ValidationError(str(exc)) from exc
-        # 这次交付更新了哪一项产物 (#1085 结论三)。先验参数、后落行：一张递不上
-        # 去的卡（分支没提交、已经有一张未决的卡）不该在清单上留下一项。
-        #
-        # 交出去的是什么，决定了产物还要不要声明 —— 所以先问这一句。合并交出去的
-        # 是项目那个仓库，一个项目只有一个，平台自己认得出；只有交文件、交地址才
-        # 真的有得选。
-        _one_deliverable(deliver, deliver_url)
-        hands_over_repository = (
-            not (deliver or "").strip() and not (deliver_url or "").strip()
-        )
-        if hands_over_repository:
-            _no_artifact_action(artifact, new_artifact, about)
-        else:
-            _one_artifact_action(artifact, new_artifact)
-        about = artifacts.clean_about(about, subject=subject)
-        existing = await self._repo.list_for_task(task.id)
-        blocking = next(
-            (c for c in existing if c.status in _CARD_BLOCKS_NEW_CARD), None
-        )
-        if blocking is not None:
-            raise ValidationError(_BLOCKED_BY_CARD_MESSAGES[blocking.status])
-        from app.domain.repository.forge_files import ProjectFiles
-
-        comparison = await ProjectFiles(
-            self._session, task.project_id, task.id
-        ).comparison()
-        if not comparison or not comparison.get("total_commits"):
-            raise ValidationError(f"任务分支 {task.branch_name} 没有可交付的提交")
-        reviewer_handle = await self._reviewer_or_project_default(
-            await self._projects.get(topic.project_id),
-            reviewer_handle,
-            from_work=[task],
-        )
-        await self._require_reviewer_in_room(topic, reviewer_handle, admits_reviewer)
-        # 这一版交出去的那一份，在它还存在的时候读下来 (#1085 结论五)。构建产物只
-        # 活在这一轮的工作目录里，采纳时那个目录可能已经不在了 —— 建卡是唯一抓得
-        # 住它的时刻。读在声明之前：路径写错这张卡递不上去，而一张递不上去的卡不该
-        # 在清单上留下一项。
-        handed_over = (deliver or "").strip()
-        snapshot = (
-            await _read_deliverable(
-                self._session, task.project_id, task.id, handed_over
-            )
-            if handed_over
-            else None
-        )
-        is_new = bool((new_artifact or "").strip())
-        if hands_over_repository:
-            project = await self._projects.get(topic.project_id)
-            declared = await artifacts.for_repository(
-                self._session,
-                project_id=topic.project_id,
-                project_name=project.name if project else "项目",
-            )
-        elif is_new:
-            declared = await artifacts.claim(
-                self._session,
-                project_id=topic.project_id,
-                name=new_artifact or "",
-                about=about,
-            )
-        else:
-            declared = await artifacts.reuse(
-                self._session, project_id=topic.project_id, artifact_id=artifact or ""
-            )
-            await artifacts.describe(self._session, declared, about=about)
-        card = await self._repo.add(
+        return await cards.create_card(
+            self,
             topic_id=topic_id,
-            task_id=task.id,
+            task_id=task_id,
             reviewer_handle=reviewer_handle,
             routing_reason=routing_reason,
-            status=AcceptStatus.pending,
-            change_subject=subject,
-            change_body=change_body or None,
-            delivered_task_ids=[task.id],
-            artifact_id=declared.id,
-            # 和上面那个「要不要声明产物」问的是同一句话，所以答案从同一个地方来：
-            # 两处各算一次的话，有一天它们会对不上，而对不上的那一天没有任何报错。
-            deliverable_kind=(
-                DeliverableKind.merge
-                if hands_over_repository
-                else DeliverableKind.file
-                if snapshot is not None
-                else DeliverableKind.link
-            ),
-            deliverable_name=snapshot[0] if snapshot else None,
-            deliverable_url=(deliver_url or "").strip() or None,
+            change_subject=change_subject,
+            change_body=change_body,
+            artifact=artifact,
+            new_artifact=new_artifact,
+            about=about,
+            deliver=deliver,
+            deliver_url=deliver_url,
+            admits_reviewer=admits_reviewer,
         )
-        if snapshot is not None:
-            await asyncio.to_thread(
-                library.write_artifact_snapshot,
-                task.project_id,
-                card.id,
-                snapshot[0],
-                snapshot[1],
-            )
-        card.pr_number, card.pr_url = task.pr_number, task.pr_url
-        await self._announce_filed(topic, card, task, artifact=declared.name)
-        if is_new:
-            await self._announce_new_artifact(topic, declared.name)
-        await self._warn_about_a_second_pending_migration(topic, task.id)
-        return card
 
     async def _announce_filed(
         self, topic: Topic, card: AcceptCard, task: Task, *, artifact: str
@@ -594,378 +305,49 @@ class AcceptService:
     async def _warn_about_a_second_pending_migration(
         self, topic: Topic, task_id: uuid.UUID
     ) -> None:
-        """两张未决卡各带一个新迁移 → 在房间里说一声 (#314).
-
-        The narrow, clean half of "two rooms doing the same work". Two branches
-        editing the same existing file is ordinary — parent and child legitimately
-        touch one file each. Two branches each CREATING an alembic revision is
-        not: at best it forks the chain the moment both land (#312), at worst the
-        two are the same feature implemented twice, which is what happened on
-        2026-08-11 — `topics.progress` (a column) and `topic_progress` (a table),
-        two incompatible data models, each with a green card.
-
-        Deliberately a notice, not a block. The judgement "these two are the same
-        work" needs a human; what a machine can contribute is making sure the
-        human is looking at the moment there is something to look at. Both cards
-        being individually green is exactly the state that hides this.
-
-        Best-effort throughout: a git read that fails, or a room that won't take
-        the message, must never stop someone filing a card.
-        """
-        from app.domain.repository.forge_files import ProjectFiles
-
-        async def migrations(task_id: uuid.UUID) -> list[str]:
-            try:
-                comparison = await ProjectFiles(
-                    self._session, topic.project_id, task_id
-                ).comparison()
-                added = [
-                    entry["filename"]
-                    for entry in (comparison or {}).get("files", [])
-                    if entry.get("status") == "added"
-                ]
-            except Exception:  # noqa: BLE001 — a diagnostic must not break 递卡
-                return []
-            return [p for p in added if _ALEMBIC_VERSIONS_DIR in p]
-
-        mine = await migrations(task_id)
-        if not mine:
-            return
-        others = await self._repo.list_live_in_project(
-            topic.project_id, statuses=_CARD_BLOCKS_NEW_CARD
-        )
-        collisions = [
-            other
-            for other in others
-            if other.task_id is not None
-            and other.task_id != task_id
-            and await migrations(other.task_id)
-        ]
-        if not collisions:
-            return
-        rooms = []
-        for other in collisions:
-            sibling = await self._topics.get(other.topic_id)
-            rooms.append(f"「{sibling.title}」" if sibling else str(other.topic_id))
-        self._notify_merge_result(
-            topic,
-            say("migrationCollision"),
-            meta=notice(
-                EVENT_MIGRATION_COLLISION,
-                severity=SEVERITY_WARN,
-                who=WHO_HUMAN,
-                detail=say("migrationCollisionDetail", rooms="、".join(rooms)),
-                detail_label=say("labelReason"),
-            ),
+        return await cards._warn_about_a_second_pending_migration(
+            self, topic=topic, task_id=task_id
         )
 
     async def project_id_for_topic(self, topic_id: uuid.UUID) -> uuid.UUID:
-        """The topic's project id — what the PR-publish dispatch needs to resolve
-        the App installation and upstream (采纳即合并 #296)."""
-        topic = await self._topic_or_404(topic_id)
-        return topic.project_id
+        return await cards.project_id_for_topic(self, topic_id=topic_id)
 
     async def mark_gate_started(self, *, card_id: uuid.UUID) -> AcceptCard:
-        """闸门开跑打点 (孤儿卡, 2026-08-11). Idempotent-ish and deliberately
-        forgiving: if the card already left `pending_gate` (swept as abandoned,
-        or voided by a human) this is a no-op rather than an error — a
-        diagnostic timestamp must never resurrect a closed card, and it must
-        never be the thing that fails a check that is about to run anyway."""
-        card = await self._card_or_404(card_id)
-        if card.status != AcceptStatus.pending_gate:
-            return card
-        card.gate_started_at = datetime.now(UTC)
-        await self._session.flush()
-        await self._session.refresh(card)
-        return card
+        return await cards.mark_gate_started(self, card_id=card_id)
 
     async def finish_gate(
         self, *, card_id: uuid.UUID, outcome: GateOutcome, output_tail: str
     ) -> AcceptCard:
-        """Settle a pending_gate card: 绿 → pending (卡片这才递到验收人手上),
-        红 → gate_failed (卡片作废，芝士被 nudge 去修), 没跑成 → gate_blocked
-        (同样不递出去，但检查对代码没有结论，别说成"未通过")."""
-        card = await self._card_or_404(card_id)
-        if card.status != AcceptStatus.pending_gate:
-            raise ValidationError("只有等待检查的验收卡能记录检查结果")
-        card.gate_output = output_tail
-        if outcome == GateOutcome.passed:
-            card.status = AcceptStatus.pending
-            card.gate_passed_at = datetime.now(UTC)
-        elif outcome == GateOutcome.blocked:
-            card.status = AcceptStatus.gate_blocked
-        else:
-            card.status = AcceptStatus.gate_failed
-        await self._session.flush()
-        await self._session.refresh(card)
-        return card
+        return await cards.finish_gate(
+            self, card_id=card_id, outcome=outcome, output_tail=output_tail
+        )
 
     async def list_for_topic(self, topic_id: uuid.UUID) -> tuple[list[AcceptCard], int]:
-        cards = await self._repo.list_for_topic(topic_id)
-        return cards, len(cards)
+        return await cards.list_for_topic(self, topic_id=topic_id)
 
     async def open_pr_card_ids(
         self, project_id: uuid.UUID | None = None
     ) -> list[uuid.UUID]:
-        """Pending PR cards and returned batches awaiting external merge.
-
-        只回 id 不回对象：调度器一张卡一个事务，跨事务复用 ORM 对象拿到的是过期状态。
-        「哪张卡算在等」是本领域的知识，所以判断留在这里，而不是让调度器自己去查
-        ``AcceptCardRepository``。
-
-        孤儿卡修复 (2026-08-10) 的那条判据也在这里面：已归档话题上的卡不算——
-        跟进它们等于拿 GitHub 凭据去动没人跟的活儿。
-        """
-        cards = await self._repo.list_awaiting_merge_on_active_topics(project_id)
-        return [c.id for c in cards]
+        return await cards.open_pr_card_ids(self, project_id=project_id)
 
     async def anybody_still_waiting(self, place_ids: list[uuid.UUID]) -> bool:
-        """这些地点里，还有没有一张卡等着人决议 —— 收起/归档前必须问的那一句。
-
-        归档会把非终态的卡当场收敛掉（`review/archive.py`），所以任何**平台自己
-        发起**的归档（结论卡默认采信就是）都得先问这一句，否则会把一张验收人还
-        没看见的卡作废掉。判据（哪些状态算"还等着"）留在本领域，调用方不该自己
-        去数状态——这正是 `close_cards_for_archived_topic` 收敛的那一张表。
-
-        一组而不是一个：归档一个房间会把它里面的活一起收起，那些活的卡同样会
-        被收掉，所以它们同样构成「先别动手」的理由。
-        """
-        return bool(
-            await self._repo.list_live_for_places(
-                place_ids, statuses=archive.OPEN_CARD_STATUSES
-            )
-        )
+        return await cards.anybody_still_waiting(self, place_ids=place_ids)
 
     async def latest_decision_at(self, place_ids: list[uuid.UUID]) -> datetime | None:
-        """这些地点上最后一张卡是什么时候有结果的 —— None = 从来没有过卡。
-
-        给"卡决议之后留一个重新递卡的窗口"用：驳回的意思是回去改了再来，而归档
-        话题递不出新卡，所以窗口从这一刻起算。
-        """
-        return await self._repo.latest_decision_at(place_ids)
+        return await cards.latest_decision_at(self, place_ids=place_ids)
 
     async def reviewer_topic_ids(
         self, topic_ids: list[uuid.UUID], reviewer_handle: str
     ) -> dict[uuid.UUID, bool]:
-        """{话题: 这上面还有没有一张卡在等这个人} —— 只有点过名给他的话题会出现。
-
-        给话题列表的「与我的相关性」用，一次查完：**在不在 key 里**是「这话题
-        点过我的名」（采纳完也还算我的事），**value** 是「现在就等我动手」。
-        """
-        return await self._repo.reviewer_topic_ids(topic_ids, reviewer_handle)
+        return await cards.reviewer_topic_ids(
+            self, topic_ids=topic_ids, reviewer_handle=reviewer_handle
+        )
 
     async def describe(self, card: AcceptCard) -> dict:
-        """AcceptCardOut payload enriched with the vote state (approvals live in
-        their own table; the requirement is a project setting)."""
-        data = AcceptCardOut.model_validate(card).model_dump(mode="json")
-        # 「这条 note 有多严重」是它的状态码算出来的（domain/review/notes.py），
-        # 随卡下发。浏览器过去自己按 emoji 开头猜，而那份硬编码列表漏掉了后来加
-        # 的 `🌿` 和 `🚪`——两条都是「停住了」，却和「还在等」画成同一个颜色。
-        level = notes.note_level(card.note_code, card.note)
-        data["note_level"] = level.value if level else None
-        # 这次交付更新的是哪一项产物。卡面上要有它：验收的人正在决定这一版要不要
-        # 成为《报告》的当前版本，而卡上别的字段一个都没说出这件事。
-        declared = (
-            await artifacts.summary(self._session, card.artifact_id)
-            if card.artifact_id is not None
-            else None
-        )
-        data["artifact"] = (
-            None
-            if declared is None
-            else {
-                "id": str(declared.id),
-                "name": declared.name,
-                # 这张卡自己是第几版。`ArtifactSummary.version` 数的是已采纳的卡
-                # （`artifacts._claims`），所以还没采纳的这一张要自己加上一版：人
-                # 正在决定的是「这一版要不要成为《报告》的当前版本」，卡上写着前
-                # 一版的号码等于把他要定的那件事写错。
-                "version": declared.version
-                + (0 if card.status is AcceptStatus.accepted else 1),
-            }
-        )
-        # 这一版交出去的是什么。卡面上要有它，因为验收的人要审的正是这一份：文件
-        # 在递卡那一刻就落下来了，所以他能在点采纳之前打开它。
-        data["deliverable"] = (
-            None
-            if card.deliverable_kind is None
-            else {
-                "kind": card.deliverable_kind.value,
-                "filename": card.deliverable_name,
-                "url": card.deliverable_url,
-            }
-        )
-        data["approvals"] = await self._repo.list_approver_handles(card.id)
-        topic = await self._topic_or_404(card.topic_id)
-        project = await self._projects.get(topic.project_id)
-        try:
-            forge: forge_mod.Forge | None = await self._resolve_forge(
-                topic.project_id, card=card
-            )
-        except ValidationError:
-            # 读一张卡不是挑一条车道。采纳那一侧照旧 fail-closed（#362）：读不出
-            # 事实就拒绝，绝不摸黑合一次。但这条读路径上同样的失败过去会把整个
-            # 卡列表端点打成 422 —— 一个项目的 git 出问题，所有项目的卡都看不
-            # 了。这里改成在卡面上如实说「暂时读不出」，失败一点没被盖住（I19），
-            # 只是不再连累别的卡。
-            forge = None
-        caps = forge.capabilities if forge is not None else None
-        # 托管方身份在卡生成的那一刻就在卡上（I23）：这一份是唯一的一份，卡片渲染
-        # 「托管方是谁」只从这里取，人点完采纳之后不再补写任何一条 note。
-        #
-        # 「项目有没有绑外部仓库」不在这里（不变量 I21②）。它是一个能力位，由
-        # `PlatformForge` 读去决定卡上说哪句话，说完就已经在 `declaration` 里；
-        # 再发一遍，就是把那个布尔摆到产品面前请它自己分叉，而这正是按能力分派
-        # 要取消的那件事。
-        data["forge"] = (
-            {
-                "kind": forge.kind.value,
-                "reports_checks": caps.reports_checks,
-                "hosts_proposals": caps.hosts_proposals,
-                "can_write_remote": caps.can_write_remote,
-                "pushes_to_external_remote": caps.pushes_to_external_remote,
-                "identity": caps.identity.value,
-                "declaration": forge.declaration,
-            }
-            if forge is not None and caps is not None
-            else {
-                "kind": forge_mod.FORGE_KIND_UNKNOWN,
-                # 一位都不敢说是，因为一位都没读出来。界面上每一处「这个托管方能
-                # 做什么」的判断因此都收敛到最保守的那一边。
-                "reports_checks": False,
-                "hosts_proposals": False,
-                "can_write_remote": False,
-                "pushes_to_external_remote": False,
-                "identity": forge_mod.ForgeIdentity.platform.value,
-                "declaration": forge_mod.FORGE_UNKNOWN_DECLARATION,
-            }
-        )
-        data["approvals_required"] = approvals_required_of(project)
-        # External checks stay unknown until the PR has a mirrored state.
-        # Local acceptance has no checks; only a recorded merge conflict blocks it.
-        if caps is None:
-            # 按钮灰着，理由就写在卡上：后端这会儿真去采纳也会拒（同一个失败），
-            # 所以闸门和采纳还是同一条线。
-            data["merge_state"] = {
-                "state": "unknown",
-                "who": "platform",
-                "reasons": [
-                    {
-                        "kind": "no_signal",
-                        "checks": [],
-                        "detail": forge_mod.FORGE_UNKNOWN_DECLARATION,
-                    }
-                ],
-                "head_sha": None,
-                "checked_at": None,
-                "since": None,
-            }
-        elif caps.reports_checks:
-            mirror = card.merge_state if isinstance(card.merge_state, dict) else None
-            data["merge_state"] = mirror or {
-                "state": "unknown",
-                "who": "platform",
-                "reasons": [
-                    {
-                        "kind": "no_signal",
-                        "checks": [],
-                        "detail": (
-                            "平台还没看过这个 PR 的合并态"
-                            if card.pr_number is not None
-                            else "PR 尚未创建，检查状态未知"
-                        ),
-                    }
-                ],
-                "head_sha": card.pr_head_sha,
-                "checked_at": None,
-                "since": None,
-            }
-        else:
-            local = merge_state.local_merge_state(
-                conflicts_with_trunk=(card.status == AcceptStatus.conflict)
-            )
-            data["merge_state"] = {
-                "state": local.state,
-                "who": "human",
-                "reasons": [
-                    {"kind": r.kind, "checks": list(r.checks), "detail": r.detail}
-                    for r in local.reasons
-                ],
-                "head_sha": None,
-                "checked_at": None,
-                "since": None,
-            }
-        # 绿了自动合 (#718)：开了 auto_merge_allowed 的项目，验收人可以在
-        # BLOCKED / BEHIND 时布防。
-        from app.domain.project.protection import branch_protection_of
-
-        data["auto_merge"] = {
-            "allowed": (
-                caps is not None
-                and branch_protection_of(project).auto_merge_allowed
-                and caps.reports_checks
-                and card.pr_number is not None
-            ),
-            "armed_by": card.auto_merge_armed_by,
-            "armed_at": (
-                card.auto_merge_armed_at.isoformat()
-                if card.auto_merge_armed_at
-                else None
-            ),
-        }
-        # 快检说了什么。Gates nothing — the PR's real CI decides (#296) — but a
-        # red one has to be in front of the person about to accept. A check
-        # whose result goes nowhere is a check nobody runs.
-        tree = (
-            await TaskService(self._session).get(card.task_id)
-            if card.task_id is not None
-            else None
-        )
-        data["quick_check"] = (
-            None
-            if tree is None or tree.last_check_at is None
-            else {
-                "ok": tree.last_check_ok,
-                "at": tree.last_check_at.isoformat(),
-                "detail": tree.last_check_detail,
-            }
-        )
-        return data
+        return await cards.describe(self, card=card)
 
     async def _enforce_protocol(self, topic: Topic, decided_by: str) -> None:
-        """机构协议 (spec §4.2/§4.4): a 赛题 may require a mentor to accept a
-        particular topic, and a project created from that 赛题 accepted the terms.
-
-        Reads them from the 赛题's 项目集 (with the 赛题's own override — #370
-        option (c)), reached through `project.external_task_id`. That is the link
-        the 赛题 page's 「从这道赛题创建项目」 button writes; the cheesex
-        `project_task_links` chain it replaced pointed at a 题目 hierarchy that
-        had no way to be created.
-        """
-        from app.domain.task.models import Task
-        from app.domain.task.teaching import protocol_for_task
-
-        project = await self._projects.get(topic.project_id)
-        task_id = getattr(project, "external_task_id", None) if project else None
-        if not task_id:
-            return
-        task = await self._session.get(Task, task_id)
-        if task is None:
-            return
-        protocol = await protocol_for_task(self._session, task)
-        if not protocol.mentor_required_for(topic.title):
-            return
-        # The condition asks for someone from outside the team to sign off: an
-        # external member of this project.
-        from app.domain.membership.roster import roster
-
-        outside = {
-            m.handle
-            for m in await roster(self._session, topic.project_id)
-            if m.source == "external"
-        }
-        if decided_by not in outside:
-            raise ValidationError(say("protocolExternalAccept"))
+        return await cards._enforce_protocol(self, topic=topic, decided_by=decided_by)
 
     async def reassign(
         self,
