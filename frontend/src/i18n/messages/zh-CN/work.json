@@ -775,7 +775,7 @@
       "history": "修改记录",
       "exportMarkdown": "导出 Markdown",
       "suggestionCount": "{n} 处建议",
-      "historyFor": "{requester} 让{who}改",
+      "historyFor": "{requester}让{who}改",
       "historyCurrent": "当前版本",
       "historyMore": "更早的版本",
       "historyEmpty": "暂无修改记录",

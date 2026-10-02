@@ -292,6 +292,13 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', closeBlocks, tru
 .doc-bubble__agent {
   font-weight: 600;
 }
+/* 深色的浮条上，AI 队友的头像反过来画：浅色的脸、深色的眼睛。 */
+.doc-bubble--float .doc-bubble__agent :deep(.cheese-avatar__tile) {
+  fill: var(--inverse-ink);
+}
+.doc-bubble--float .doc-bubble__agent :deep(.cheese-avatar__eye) {
+  fill: var(--inverse-surface);
+}
 /* 手机上键盘上方的那一条：浅色，按钮按手指的大小，放不下时横着滑。 */
 .doc-bubble--bar {
   width: 100%;
