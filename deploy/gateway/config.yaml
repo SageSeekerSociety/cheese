@@ -148,6 +148,17 @@ model_list:
     model_info:
       blocked: true
 
+  - model_name: claude-sonnet-5-5
+    litellm_params:
+      model: anthropic/claude-sonnet-5-5
+      # $2 / $10 / $0.20 / $2.50
+      input_cost_per_token: 0.000002
+      output_cost_per_token: 0.00001
+      cache_read_input_token_cost: 0.0000002
+      cache_creation_input_token_cost: 0.0000025
+    model_info:
+      blocked: true
+
   - model_name: claude-opus-5
     litellm_params:
       model: anthropic/claude-opus-5
@@ -188,6 +199,17 @@ model_list:
       input_cost_per_token: 0.00001
       output_cost_per_token: 0.00005
       cache_read_input_token_cost: 0.000001
+      cache_creation_input_token_cost: 0.0000125
+    model_info:
+      blocked: true
+
+  - model_name: claude-fable-5-1
+    litellm_params:
+      model: anthropic/claude-fable-5-1
+      # $10 / $50 / $0.25 / $12.50
+      input_cost_per_token: 0.00001
+      output_cost_per_token: 0.00005
+      cache_read_input_token_cost: 0.00000025
       cache_creation_input_token_cost: 0.0000125
     model_info:
       blocked: true

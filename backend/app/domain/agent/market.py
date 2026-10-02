@@ -267,6 +267,14 @@ _SUB_MODELS: list[tuple[str, str, str, str, bool, str]] = [
         True,
         TIER_PREMIUM,
     ),
+    (
+        "sonnet-5.5",
+        "Claude Sonnet 5.5",
+        "Sonnet 的新一代：同样均衡省额度，复杂任务表现更好。",
+        "claude-sonnet-5-5",
+        False,
+        TIER_PREMIUM,
+    ),
     # Full model ids from here down, not CLI aliases: Fable falls back to
     # Opus 4.8 specifically (safety classifiers on cyber/bio topics reroute
     # there, Anthropic-official, <5% of sessions — plus quota-style silent
@@ -304,6 +312,14 @@ _SUB_MODELS: list[tuple[str, str, str, str, bool, str]] = [
         "配额受限时会被自动降级到 Opus 4.8，且降级可能持续到会话结束"
         "（重开会话恢复）。",
         "claude-fable-5",
+        False,
+        TIER_FRONTIER,
+    ),
+    (
+        "fable-5.1",
+        "Claude Fable 5.1",
+        "Fable 的新一代：长时间、多步骤的复杂任务表现更好，最快消耗订阅额度。",
+        "claude-fable-5-1",
         False,
         TIER_FRONTIER,
     ),
