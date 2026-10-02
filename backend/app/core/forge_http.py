@@ -13,6 +13,10 @@ connections from one pool kept open for the life of the application
 other event loop than the one the pool was opened on, a client is built exactly
 as before. A caller that passes its own transport (a test's fake forge) keeps
 it.
+
+Every client also reads the quota GitHub reports on each answer into
+`forge_quota`, so that what one call learned (the installation is out of quota
+until a given time) reaches the next caller before it spends a request.
 """
 
 from __future__ import annotations
@@ -23,6 +27,8 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import httpx
+
+from app.core import forge_quota
 
 #: GitHub closes a connection that has sat idle somewhere between 20 and 60
 #: seconds (measured from the deployment). Letting go of it first means a call
@@ -75,4 +81,6 @@ def forge_client(
             transport = borrowed
     if transport is not None:
         kwargs["transport"] = transport
-    return httpx.AsyncClient(**kwargs)
+    hooks = dict(kwargs.pop("event_hooks", None) or {})
+    hooks["response"] = [*hooks.get("response", []), forge_quota.observe]
+    return httpx.AsyncClient(event_hooks=hooks, **kwargs)
