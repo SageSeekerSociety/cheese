@@ -414,7 +414,7 @@ def test_people_and_agents_record_weeklies_but_only_live_agents_create_questions
     client, stub_hooks, monkeypatch
 ):
     project, origin, _ = _rooms(client)
-    client.headers.pop("X-Cheese-Token", None)
+    setup_token = client.headers.pop("X-Cheese-Token", None)
     for handle, auth in (
         ("alice", session_auth_headers("alice")),
         (_seated_agent(client, origin), _agent(client, project, origin)),
@@ -442,6 +442,8 @@ def test_people_and_agents_record_weeklies_but_only_live_agents_create_questions
             == 403
         )
     seat = _seated_agent(client, origin)
+    if setup_token is not None:
+        client.headers["X-Cheese-Token"] = setup_token
     with active_ask(client, stub_hooks, monkeypatch, origin, actor="alice", seat=seat):
         response = client.post(
             f"/topics/{origin}/asks",
