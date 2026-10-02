@@ -784,7 +784,9 @@
       "restoreFailed": "Restore failed",
       "close": "Close",
       "you": "you",
-      "emptyLineHint": "Type, or / to insert"
+      "emptyLineHint": "Type, or / to insert",
+      "undo": "Undo",
+      "redo": "Redo"
     },
     "comments": {
       "comment": "Comment",

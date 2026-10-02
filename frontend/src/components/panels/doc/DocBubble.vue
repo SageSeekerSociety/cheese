@@ -2,6 +2,9 @@
 // 选中文字后浮在上面的那一条：AI 队友、评论，能改时再加上块样式和几种字的格式、链接；
 // 不能改时把格式换成「复制」。
 //
+// 手机上（`variant: 'bar'`）它是键盘上方的一条，编辑时一直在：没选中字时 AI 队友和
+// 评论按不了，格式对着光标处要打的字；末尾多了撤销、重做（手机上没有快捷键）。
+//
 // 位置由 DocOverlays 算好递进来；这里只画，以及就地改格式。改格式的那一笔带着
 // BUBBLE_META（lib/docBubble.ts）：浮条看到正文变了本该收起（光标底下的字换了），而这一笔是它自己改的，
 // 选区还是那一段，浮条应当留着。
@@ -15,17 +18,23 @@ import CheeseAvatar from '../../CheeseAvatar.vue'
 
 import { t } from '@/i18n'
 
-const props = defineProps<{
-  editor: Editor
-  agentName: string
-  agentHandle?: string | null
-  /** 能改：给格式和链接；不能改：给「复制」。 */
-  editable: boolean
-  /** 选区在一段之内：给「正文 ▾」。 */
-  singleBlock: boolean
-  /** 浮条上给不给 AI 队友。 */
-  canAgent: boolean
-}>()
+const props = withDefaults(
+  defineProps<{
+    editor: Editor
+    agentName: string
+    agentHandle?: string | null
+    /** 能改：给格式和链接；不能改：给「复制」。 */
+    editable: boolean
+    /** 选区在一段之内：给「正文 ▾」。不给时照编辑器里现在的选区算（键盘上方那一条）。 */
+    singleBlock?: boolean
+    /** 浮条上给不给 AI 队友。 */
+    canAgent: boolean
+    variant?: 'float' | 'bar'
+    /** 选中了字（键盘上方那一条在没选中时也在）。 */
+    hasSelection?: boolean
+  }>(),
+  { agentHandle: null, singleBlock: undefined, variant: 'float', hasSelection: true }
+)
 const emit = defineEmits<{
   (e: 'agent'): void
   (e: 'comment'): void
@@ -53,14 +62,27 @@ const MARKS = [
   { key: 'highlight', icon: 'mdi-marker', mark: 'highlight' },
 ] as const
 
+const BAR_MARKS = new Set(['bold', 'italic', 'highlight'])
 const marks = computed(() => {
   void revision.value
   const editor = toRaw(props.editor)
-  return MARKS.map((item) => ({
+  // 键盘上方那一条地方小，只留最常用的三样。
+  const shown = props.variant === 'bar' ? MARKS.filter((item) => BAR_MARKS.has(item.key)) : MARKS
+  return shown.map((item) => ({
     ...item,
     active: editor.isActive(item.mark),
     disabled: !editor.can().toggleMark(item.mark),
   }))
+})
+
+// 键盘上方那一条：在手机上只有它能撤销。只看撤销栈，不分在不在格式化。
+const canUndo = computed(() => {
+  void revision.value
+  return toRaw(props.editor).can().undo()
+})
+const canRedo = computed(() => {
+  void revision.value
+  return toRaw(props.editor).can().redo()
 })
 
 function format(run: (chain: ChainedCommands) => ChainedCommands) {
@@ -70,6 +92,12 @@ function format(run: (chain: ChainedCommands) => ChainedCommands) {
 
 // ---- 「正文 ▾」：把选区所在的这一块换成别的块。和 slash 菜单是同一张表，去掉插入新
 // 东西的那几项（表格、分隔线）。
+const blockMenu = computed(() => {
+  if (props.singleBlock !== undefined) return props.singleBlock
+  void revision.value
+  const { $from, $to } = toRaw(props.editor).state.selection
+  return $from.depth > 0 && $from.sameParent($to)
+})
 const BLOCKS = SLASH_ITEMS.filter((item) => item.key !== 'table' && item.key !== 'hr')
 const blockOpen = ref(false)
 const currentBlock = computed(() => {
@@ -112,18 +140,36 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', closeBlocks, tru
 </script>
 
 <template>
-  <div class="doc-bubble" role="toolbar" :aria-label="t('work.room.doc.selectionToolbar')" @mousedown.prevent>
-    <button v-if="canAgent" type="button" class="doc-bubble__agent" :aria-label="agentName" @click="emit('agent')">
+  <div
+    class="doc-bubble"
+    :class="`doc-bubble--${variant}`"
+    role="toolbar"
+    :aria-label="t('work.room.doc.selectionToolbar')"
+    @mousedown.prevent
+  >
+    <button
+      v-if="canAgent"
+      type="button"
+      class="doc-bubble__agent"
+      :aria-label="agentName"
+      :disabled="!hasSelection"
+      @click="emit('agent')"
+    >
       <CheeseAvatar :size="16" :name="agentName" :handle="agentHandle" />
       {{ agentName }}
     </button>
     <span v-if="canAgent" class="doc-bubble__sep" aria-hidden="true" />
-    <button type="button" :aria-label="t('work.room.doc.commentOnSelection')" @click="emit('comment')">
+    <button
+      type="button"
+      :aria-label="t('work.room.doc.commentOnSelection')"
+      :disabled="!hasSelection"
+      @click="emit('comment')"
+    >
       {{ t('work.room.comments.comment') }}
     </button>
     <template v-if="editable">
       <span class="doc-bubble__sep" aria-hidden="true" />
-      <div v-if="singleBlock" class="doc-bubble__blocks">
+      <div v-if="blockMenu" class="doc-bubble__blocks">
         <button
           type="button"
           :aria-label="t('work.room.doc.blockType')"
@@ -163,6 +209,7 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', closeBlocks, tru
         <v-icon size="17">{{ item.icon }}</v-icon>
       </button>
       <button
+        v-if="variant === 'float'"
         type="button"
         class="doc-bubble__icon"
         :aria-label="t('work.room.docLink.title')"
@@ -171,8 +218,29 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', closeBlocks, tru
       >
         <v-icon size="17">mdi-link-variant</v-icon>
       </button>
+      <template v-else>
+        <span class="doc-bubble__sep" aria-hidden="true" />
+        <button
+          type="button"
+          class="doc-bubble__icon"
+          :aria-label="t('work.room.doc.undo')"
+          :disabled="!canUndo"
+          @click="format((c) => c.undo())"
+        >
+          <v-icon size="17">mdi-undo</v-icon>
+        </button>
+        <button
+          type="button"
+          class="doc-bubble__icon"
+          :aria-label="t('work.room.doc.redo')"
+          :disabled="!canRedo"
+          @click="format((c) => c.redo())"
+        >
+          <v-icon size="17">mdi-redo</v-icon>
+        </button>
+      </template>
     </template>
-    <button v-else type="button" @click="emit('copy')">{{ t('work.room.doc.copy') }}</button>
+    <button v-else type="button" :disabled="!hasSelection" @click="emit('copy')">{{ t('work.room.doc.copy') }}</button>
   </div>
 </template>
 
@@ -223,6 +291,42 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', closeBlocks, tru
 }
 .doc-bubble__agent {
   font-weight: 600;
+}
+/* 手机上键盘上方的那一条：浅色，按钮按手指的大小，放不下时横着滑。 */
+.doc-bubble--bar {
+  width: 100%;
+  gap: 0;
+  padding: 2px 4px;
+  border-top: 1px solid var(--line-2);
+  border-radius: 0;
+  background: var(--surface);
+  box-shadow: none;
+  color: var(--text);
+  overflow-x: auto;
+}
+.doc-bubble--bar button {
+  flex: 0 0 auto;
+  height: 44px;
+  font-size: 14px;
+}
+.doc-bubble--bar .doc-bubble__icon {
+  width: 44px;
+}
+.doc-bubble--bar button:hover:not(:disabled),
+.doc-bubble--bar button[aria-pressed='true'],
+.doc-bubble--bar button[aria-expanded='true'] {
+  background: var(--fill);
+}
+.doc-bubble--bar .doc-bubble__sep {
+  flex: 0 0 auto;
+  background: var(--line-2);
+}
+/* 键盘上方那一条在屏幕最下面：块样式的菜单往上开。 */
+.doc-bubble--bar .doc-bubble__menu {
+  position: fixed;
+  top: auto;
+  bottom: calc(var(--doc-keyboard-bar-bottom, 0px) + 52px);
+  left: 8px;
 }
 .doc-bubble__sep {
   width: 1px;

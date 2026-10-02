@@ -27,6 +27,7 @@ import { BUBBLE_META } from '../../../lib/docBubble'
 import { captureNewDocLink } from '../../../lib/docLinks'
 
 import DocBubble from './DocBubble.vue'
+import DocKeyboardBar from './DocKeyboardBar.vue'
 import DocSlashMenu from './DocSlashMenu.vue'
 
 import { t } from '@/i18n'
@@ -83,6 +84,14 @@ interface CommentCta {
   topicId: string
 }
 const commentCta = shallowRef<CommentCta | null>(null)
+// 手指点的屏幕上（手机、平板），能改时浮条换成键盘上方的那一条：系统自己的选区菜单会
+// 压在浮条上。
+const TOUCH = '(hover: none) and (pointer: coarse)'
+const touchQuery = typeof window.matchMedia === 'function' ? window.matchMedia(TOUCH) : null
+const touch = ref(touchQuery?.matches ?? false)
+const onTouchChange = (e: MediaQueryListEvent) => (touch.value = e.matches)
+touchQuery?.addEventListener?.('change', onTouchChange)
+onBeforeUnmount(() => touchQuery?.removeEventListener?.('change', onTouchChange))
 const toolbar = ref<HTMLElement | null>(null)
 let dismissed: { editor: CoreEditor; doc: PMNode; selection: Selection } | null = null
 let frame = 0
@@ -509,7 +518,7 @@ defineExpose({ onHover, onEdited })
 <template>
   <!-- 选中文字后的浮条：贴着选区，跟着正文滚。 -->
   <div
-    v-if="commentCta"
+    v-if="commentCta && !(touch && editable)"
     ref="toolbar"
     class="doc-comment-cta"
     :style="{ top: `${commentCta.top}px`, left: `${commentCta.left}px` }"
@@ -527,6 +536,22 @@ defineExpose({ onHover, onEdited })
       @copy="copySelection"
     />
   </div>
+  <!-- 手机上能改时：键盘上方的那一条代替浮条，没选中字时也在。 -->
+  <DocKeyboardBar v-if="touch && editable && editor" :editor="editor">
+    <DocBubble
+      variant="bar"
+      :editor="editor"
+      :agent-name="agentName"
+      :agent-handle="agentHandle"
+      :editable="editor.isEditable"
+      :can-agent="canAgent"
+      :has-selection="!!commentCta"
+      @agent="agentOnSelection"
+      @comment="commentOnSelection"
+      @link="newLink"
+      @copy="copySelection"
+    />
+  </DocKeyboardBar>
   <!-- Notion-style slash menu: anchored to the caret (suggestion
      clientRect), wrap-relative like the other overlays. Keyboard
      (↑↓/Enter/Esc) is handled in the suggestion plugin; the mouse
