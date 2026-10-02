@@ -382,6 +382,7 @@ async def test_a_message_read_mid_turn_is_not_failed_when_the_session_goes_idle(
             Opening(system_prompt="", agent_handle="cheese"),
             work_id=second,
             on_mark=lambda _: None,
+            register_input=room.register_input("and the linter too"),
         )
         room.channel.returns(room.topic, "Bash", "42 passed")
         room.channel.acknowledges(room.topic, "and the linter too")

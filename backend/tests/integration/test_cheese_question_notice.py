@@ -290,7 +290,9 @@ def test_a_question_with_no_turn_at_all_reaches_nobody(client):
     assert _questions(client, alice) == []
 
 
-def test_answering_the_question_settles_its_notification(client):
+def test_answering_the_question_settles_its_notification(
+    client, stub_hooks, monkeypatch
+):
     """点了选项之后，通知里那一条不再是未读，也不再说「待你回答」。
 
     实况：人在房间里点完了选项，首页「动态」里那条还是未读，还写着「已暂停，待你
@@ -298,16 +300,16 @@ def test_answering_the_question_settles_its_notification(client):
     """
     alice = seed_user(client, "alice")
     _pid, room = _room(client)
-    _open_turn(client, room)
-    block = _ask(client, room)
+    with active_ask(client, stub_hooks, monkeypatch, room, actor="alice") as headers:
+        data = _ask(client, room, headers)
     (before,) = _questions(client, alice)
     assert before["read"] is False
 
-    _answer(client, block, "按项目")
+    _settle(client, data, by="alice")
 
     (row,) = _questions(client, alice)
     assert row["read"] is True
-    assert row["contextMetadata"]["answered"] == "按项目"
+    assert row["contextMetadata"]["answered"] == "按部门"
     unread = client.get(
         "/notifications/unread-count", headers={"Authorization": f"Bearer {alice}"}
     )

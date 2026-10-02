@@ -36,6 +36,7 @@ from app.domain.delivery.ask_wake import (
     record_single_answer_wake,
     single_answer_wake,
 )
+from app.domain.delivery.ledger import settle as settle_delivery
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 
@@ -233,6 +234,22 @@ async def settle_ask_group(
         content=text,
         kind=BlockKind.message,
         meta=meta,
+    )
+    # 结掉等回答的那条通知：人已交卷，它不该还躺着说「待你回答」。整组只发过一条
+    # 通知（`notify_question` 收 `rows[0]`），这里就结那一条，记下生效答案。
+    first_log = (rows[0].meta or {}).get("answer_log") or []
+    await settle_delivery(
+        db,
+        rows[0].id,
+        {
+            "answered": (
+                first_log[-1].get("option")
+                or first_log[-1].get("note")
+                or first_log[-1].get("kind")
+            )
+        }
+        if first_log
+        else {},
     )
     data = await group_data(db, rows)
     wake_out = BlockOut.model_validate(wake).model_dump(mode="json")
