@@ -589,3 +589,136 @@ test("compact menu returns visible focus and preserves it when the pane grows", 
   await expect(more).not.toBeFocused();
   await expect(more).toBeHidden();
 });
+
+// Removing the CSS resize recovery must fail this owner: a focused wide Reply
+// used to disappear into BODY when TopicView's desktop pane became narrow.
+test("focused message actions survive both directions of desktop pane resize", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 820 });
+  await page.route("**/__chat-file-hit-fixture__", (route) =>
+    route.fulfill({ contentType: "text/html", body: narrowFixture }),
+  );
+  await page.goto("/__chat-file-hit-fixture__", { waitUntil: "commit" });
+  await expect(page.locator('[data-mid="self"]')).toBeVisible({
+    timeout: 30_000,
+  });
+  await page.locator('[data-mid="self"] .im-text').hover();
+  await page.locator(".hover-bar__wide .rx-toggle").focus();
+  await page.keyboard.press("Tab");
+  await expect(
+    page.locator('.hover-bar__wide button[title="回复"]'),
+  ).toBeFocused();
+  await page.mouse.move(800, 700);
+  await page.locator("main").evaluate((el) => {
+    el.style.width = "180px";
+  });
+  const more = page.locator(".hover-bar__more");
+  const state = () =>
+    page.locator(".hover-bar").evaluate((el) => ({
+      activeTag: document.activeElement?.tagName,
+      activeTitle: document.activeElement?.getAttribute("title"),
+      moreFocused:
+        el.querySelector(".hover-bar__more") === document.activeElement,
+      ariaHidden: el.getAttribute("aria-hidden"),
+      opacity: getComputedStyle(el).opacity,
+      wideDisplay: getComputedStyle(el.querySelector(".hover-bar__wide")!)
+        .display,
+    }));
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
+  await test.info().attach("wide-to-narrow-focus", {
+    body: JSON.stringify(await state(), null, 2),
+    contentType: "application/json",
+  });
+  await expect(more).toBeFocused();
+  await expect(more).toBeVisible();
+  await expect(page.locator(".hover-bar")).toHaveAttribute(
+    "aria-hidden",
+    "false",
+  );
+  await expect
+    .poll(() =>
+      page.locator(".hover-bar").evaluate((el) => getComputedStyle(el).opacity),
+    )
+    .toBe("1");
+  await page.keyboard.press("Enter");
+  const menu = page.locator(".v-overlay--active .v-list");
+  await expect(menu.getByText("编辑", { exact: true })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(more).toBeFocused();
+  await page.locator("main").evaluate((el) => {
+    el.style.width = "460px";
+  });
+  await expect(more).toBeVisible();
+  await expect(more).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(menu.getByText("回复", { exact: true })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Tab");
+  await expect(more).not.toBeFocused();
+  await expect(more).toBeHidden();
+});
+
+test("pane resize recovery leaves external focus and unmounted messages alone", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 820 });
+  const unmountable = narrowFixture
+    .replace("createApp({ render:", "window.fixtureApp = createApp({ render:")
+    .replace(".mount('#fixture');", ";window.fixtureApp.mount('#fixture');");
+  await page.route("**/__chat-file-hit-fixture__", (route) =>
+    route.fulfill({ contentType: "text/html", body: unmountable }),
+  );
+  await page.goto("/__chat-file-hit-fixture__", { waitUntil: "commit" });
+  await expect(page.locator('[data-mid="self"]')).toBeVisible({
+    timeout: 30_000,
+  });
+  await page.evaluate(() => {
+    const external = document.createElement("button");
+    external.id = "external-focus";
+    external.textContent = "外部控件";
+    document.body.append(external);
+  });
+  const external = page.locator("#external-focus");
+  await page.locator('[data-mid="self"] .im-text').hover();
+  await page.locator(".hover-bar__wide .rx-toggle").focus();
+  await page.keyboard.press("Tab");
+  await page.evaluate(() => {
+    document.querySelector<HTMLElement>("main")!.style.width = "180px";
+    document.querySelector<HTMLElement>("#external-focus")!.focus();
+  });
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
+  await expect(external).toBeFocused();
+  await page.locator("main").evaluate((el) => {
+    el.style.width = "460px";
+  });
+  await page.locator('[data-mid="self"] .im-text').hover();
+  await page.locator(".hover-bar__wide .rx-toggle").focus();
+  await page.keyboard.press("Tab");
+  await page.evaluate(() => {
+    document.querySelector<HTMLElement>("main")!.style.width = "180px";
+    document.querySelector(".hover-bar__wide")!.getBoundingClientRect();
+    (
+      window as typeof window & { fixtureApp: { unmount(): void } }
+    ).fixtureApp.unmount();
+    document.querySelector<HTMLElement>("#external-focus")!.focus();
+  });
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
+  await expect(page.locator(".hover-bar")).toHaveCount(0);
+  await expect(external).toBeFocused();
+});

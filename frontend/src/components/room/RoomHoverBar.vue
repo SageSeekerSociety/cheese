@@ -46,18 +46,27 @@ const copied = ref(false)
 const menuOpen = ref(false)
 const focusWithin = ref(false)
 let copiedTimer: ReturnType<typeof setTimeout> | undefined
+let focusRecoveryFrame: number | undefined
+function cancelFocusRecovery() {
+  if (focusRecoveryFrame !== undefined) cancelAnimationFrame(focusRecoveryFrame)
+  focusRecoveryFrame = undefined
+}
 watch(
   () => props.block?.id,
   () => {
     copied.value = false
     clearTimeout(copiedTimer)
     if (!props.block) {
+      cancelFocusRecovery()
       menuOpen.value = false
       focusWithin.value = false
     }
   }
 )
-onBeforeUnmount(() => clearTimeout(copiedTimer))
+onBeforeUnmount(() => {
+  clearTimeout(copiedTimer)
+  cancelFocusRecovery()
+})
 
 async function copy() {
   await copyBlock(props.block, props.isAgent)
@@ -117,8 +126,36 @@ function menuReact(emoji: string) {
   emit('react', menuTarget.value.block, emoji)
 }
 function onFocusOut(event: FocusEvent) {
-  focusWithin.value =
-    event.relatedTarget instanceof Node && (event.currentTarget as HTMLElement).contains(event.relatedTarget)
+  cancelFocusRecovery()
+  const bar = event.currentTarget as HTMLElement
+  focusWithin.value = event.relatedTarget instanceof Node && bar.contains(event.relatedTarget)
+  const previous = event.target
+  // CSS container缩窄会隐藏当前宽栏按钮，浏览器把焦点交给body。
+  // 只接回这一次属于本栏的失焦；用户已选了外部控件时不迁移。
+  if (
+    event.relatedTarget !== null ||
+    !(previous instanceof HTMLElement) ||
+    !previous.closest('.hover-bar__wide') ||
+    previous.getClientRects().length
+  )
+    return
+  const blockId = props.block?.id
+  focusRecoveryFrame = requestAnimationFrame(() => {
+    focusRecoveryFrame = undefined
+    if (
+      !bar.isConnected ||
+      !previous.isConnected ||
+      !bar.contains(previous) ||
+      !blockId ||
+      props.block?.id !== blockId ||
+      previous.getClientRects().length ||
+      !document.hasFocus() ||
+      (document.activeElement !== document.body && document.activeElement !== previous)
+    )
+      return
+    const more = bar.querySelector<HTMLButtonElement>('.hover-bar__more')
+    if (more?.getClientRects().length) more.focus({ preventScroll: true })
+  })
 }
 </script>
 
