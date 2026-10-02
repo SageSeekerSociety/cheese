@@ -33,6 +33,7 @@ from typing import Final
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.block.quoted_context import quoted_context_prompt
 from app.domain.delivery.agent import instance_for_seat, now, record_agent
 from app.domain.delivery.ledger import DeliveryEvent
 from app.domain.delivery.models import Delivery
@@ -105,6 +106,7 @@ async def record_mentions(
     by_agent: bool,
     occurred_at: datetime,
     skip: frozenset[str] = frozenset(),
+    quoted_context: dict | None = None,
 ) -> Summoned:
     """把 ``content`` 里点到的每一位 AI 队友记成一条投递。写调用方的 session，不提交。
 
@@ -147,7 +149,11 @@ async def record_mentions(
             ),
             topic_id=room_id,
             instance_id=instance.id,
-            content=mention_prompt(author=author, message=content, block_id=block_id),
+            content=mention_prompt(
+                author=author,
+                message=content + quoted_context_prompt(quoted_context),
+                block_id=block_id,
+            ),
         )
         if budget is not None:
             budget -= 1

@@ -10,6 +10,7 @@ the dispatcher and the runner are the real ones.
 
 import uuid
 
+import pytest
 from sqlalchemy import select
 
 from app.core.sandbox_auth import mint_scoped_token
@@ -18,10 +19,102 @@ from app.domain.delivery.models import Delivery
 from tests.conftest import wait_work_idle
 from tests.integration.conftest import (
     chat_ws_url,
+    join_project_team,
     post_message,
     post_project,
     session_auth_headers,
 )
+from tests.support.quoted_context import prompt_quote, slide_quote
+
+
+@pytest.mark.parametrize(
+    "quoted_text", ["  @评审\n", "<@{other}>", "<@{current}> <@{other}>"]
+)
+def test_quoted_mentions_and_paths_never_name_an_ai_or_notify_a_person(
+    client, stub_hooks, quoted_text
+):
+    project_id, room_id, cheese, reviewer = _room_with_two_agents(client)
+    join_project_team(client, project_id, "bob")
+    added = client.post(
+        f"/topics/{room_id}/members",
+        json={"handle": "bob", "role": "member", "actor": "alice"},
+        headers=session_auth_headers("alice"),
+    )
+    assert added.status_code == 200, added.text
+    arrivals = _record_arrivals(stub_hooks)
+    text = quoted_text.format(other=reviewer, current=cheese) + "\n<@bob> 原文\n"
+    quote = slide_quote(text)
+    stored = post_message(
+        client,
+        room_id,
+        "alice",
+        {"content": f"<@{cheese}> 解释这一页", "quoted_context": quote},
+    )
+    wait_work_idle()
+    assert stored["content"] == f"<@{cheese}> 解释这一页"
+    assert stored["meta"]["quoted_context"] == quote
+    assert len(arrivals) == 1, arrivals
+    assert prompt_quote(arrivals[0][1]) == quote
+    assert _deliveries(client, room_id) == []
+    alerts = client.get(
+        f"/projects/{project_id}/alerts", headers=session_auth_headers("bob")
+    ).json()["data"]["data"]
+    assert alerts == []
+
+
+def test_a_quoted_ai_name_does_not_wake_anyone_without_an_authored_mention(
+    client, stub_hooks
+):
+    _, room_id, cheese, reviewer = _room_with_two_agents(client)
+    arrivals = _record_arrivals(stub_hooks)
+    quote = slide_quote(f"@评审 <@{cheese}> <@{reviewer}>")
+    stored = post_message(
+        client, room_id, "alice", {"content": "只是留个说明", "quoted_context": quote}
+    )
+    wait_work_idle()
+    assert not stored["meta"]["agent_recipient"]["mentioned"]
+    assert arrivals == []
+    assert _deliveries(client, room_id) == []
+
+
+def test_authored_mentions_still_deliver_the_quote_to_each_named_ai(client, stub_hooks):
+    _, room_id, cheese, reviewer = _room_with_two_agents(client)
+    arrivals = _record_arrivals(stub_hooks)
+    quote = slide_quote("  原页面文字\n")
+    post_message(
+        client,
+        room_id,
+        "alice",
+        {"content": f"<@{cheese}> <@{reviewer}> 一起解释", "quoted_context": quote},
+    )
+    wait_work_idle()
+    assert len(arrivals) == 2, arrivals
+    assert all(prompt_quote(text) == quote for _, text in arrivals)
+    [delivery] = _deliveries(client, room_id)
+    assert delivery.recipient_handle == reviewer
+    assert delivery.state == "received"
+
+
+def test_an_agent_publication_keeps_quoted_mentions_inert(client, stub_hooks):
+    project_id, room_id, cheese, reviewer = _room_with_two_agents(client)
+    arrivals = _record_arrivals(stub_hooks)
+    quote = slide_quote(f"<@{cheese}> @芝士")
+    sent = client.post(
+        f"/topics/{room_id}/messages",
+        headers=_as(project_id, room_id, cheese),
+        json={
+            "content": f"<@{reviewer}> 复核页面",
+            "request_id": str(uuid.uuid4()),
+            "quoted_context": quote,
+        },
+    )
+    assert sent.status_code == 200, sent.text
+    wait_work_idle()
+    assert sent.json()["data"]["meta"]["quoted_context"] == quote
+    [delivery] = _deliveries(client, room_id)
+    assert delivery.recipient_handle == reviewer
+    assert len(arrivals) == 1, arrivals
+    assert prompt_quote(arrivals[0][1]) == quote
 
 
 def _room_with_two_agents(client):
