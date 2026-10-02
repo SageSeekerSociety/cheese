@@ -74,6 +74,16 @@ describe('芝士额度', () => {
     expect(view.queryByText(/还剩/)).toBeNull()
   })
 
+  it("the legend's three lines add up to the month's used share", async () => {
+    const view = show(usage())
+    const month = await view.findByRole('region', { name: '本月' })
+    expect(within(month).getByText('58%')).toBeTruthy()
+    // 0.58 × (0.6, 0.3, 0.1)
+    expect(within(month).getByText('35%')).toBeTruthy()
+    expect(within(month).getByText('17%')).toBeTruthy()
+    expect(within(month).getByText('6%')).toBeTruthy()
+  })
+
   it('shows the other credits only when there are some', async () => {
     const without = show(usage())
     await without.findByText('我的项目')

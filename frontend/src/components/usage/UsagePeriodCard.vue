@@ -25,7 +25,7 @@ const remaining = computed(() => props.period.remaining_ratio)
 const tone = computed(() => remainingTone(remaining.value))
 const usedUp = computed(() => tone.value === 'out')
 
-/** 三色条每一段的宽度：已用的比例按各产品线的份额分。 */
+/** 三色条每一段的宽度，也是图例上的数：已用的比例按各产品线的份额分，三段加起来就是已用。 */
 const segments = computed(() => {
   const u = used.value ?? 0
   if (!props.lines) return [{ line: 'collab' as UsageLine, width: u }]
@@ -72,7 +72,7 @@ const segments = computed(() => {
       <span v-for="line in USAGE_LINES" :key="line" class="upc__key">
         <span :class="`upc__dot upc__seg--${line}`" aria-hidden="true" />
         {{ t(LINE_KEY[line]) }}
-        <span class="upc__keypct t-num">{{ pct(lines[line] ?? 0) }}</span>
+        <span class="upc__keypct t-num">{{ pct((used ?? 0) * (lines[line] ?? 0)) }}</span>
       </span>
     </div>
 
