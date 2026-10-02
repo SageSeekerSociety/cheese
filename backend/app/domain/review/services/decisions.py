@@ -489,7 +489,7 @@ async def _override_github_checks(
             say(
                 "githubMergeRefused",
                 pr=number,
-                reason=result.blocked_reason or "未说明原因",
+                reason=result.blocked_reason or say("reasonUnstated"),
             )
         )
 

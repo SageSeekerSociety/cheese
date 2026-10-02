@@ -31,10 +31,35 @@ function isMessage(value: unknown): value is NoticeMessage {
   return typeof key === 'string' && /^\w+$/.test(key)
 }
 
-// A parameter can itself be a sentence (a word the line chooses), or a list of
-// them, one per line — the rows of a detail.
+/** Several items said as one parameter (`listing()` in `notice_text.py`). */
+interface NoticeListing {
+  list: unknown[]
+  quoted?: boolean
+}
+
+function isListing(value: unknown): value is NoticeListing {
+  return !!value && typeof value === 'object' && Array.isArray((value as { list?: unknown }).list)
+}
+
+// Joined the way the reader's language joins a list. Chinese takes the narrow
+// style: the long one ends in 「和」, which the stored sentence never had.
+function joined(items: string[]): string {
+  const locale = String(i18n.global.locale.value)
+  return new Intl.ListFormat(locale, {
+    type: 'conjunction',
+    style: locale.startsWith('zh') ? 'narrow' : 'long',
+  }).format(items)
+}
+
+// A parameter can itself be a sentence (a word the line chooses), a listing
+// said inside the sentence, or a list of sentences, one per line — the rows of
+// a detail.
 function param(value: unknown): unknown {
   if (Array.isArray(value)) return value.map((item) => String(param(item))).join('\n')
+  if (isListing(value)) {
+    const items = value.list.map((item) => String(param(item)))
+    return joined(value.quoted ? items.map((item) => i18n.global.t('global.listItemQuoted', { item })) : items)
+  }
   return isMessage(value) ? renderNoticeMessage(value, '') : value
 }
 

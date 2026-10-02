@@ -30,6 +30,7 @@ from app.domain.block.notice_text import (
     MESSAGES,
     NOTICE_MESSAGES,
     from_descriptor,
+    listing,
     notice_message,
     say,
     with_keys,
@@ -211,6 +212,34 @@ def test_nested_and_list_parameters_are_stored_as_keys():
             ]
         },
     }
+
+
+def test_a_list_said_inside_a_sentence_keeps_its_items():
+    rooms = listing(["定价", "搜索"], quoted=True)
+    line = say("migrationCollisionDetail", rooms=rooms)
+    assert line.startswith("另一项改动在：「定价」、「搜索」。")
+    assert line.descriptor()["params"]["rooms"] == {
+        "list": ["定价", "搜索"],
+        "quoted": True,
+    }
+
+    # An item may be a sentence of its own; unquoted items are joined bare.
+    edited = say("docEdited", actor=listing(["<@ana>", say("actorCheese")]))
+    assert edited == "<@ana>、芝士 编辑了文档"
+    assert edited.descriptor()["params"]["actor"] == {
+        "list": ["<@ana>", {"key": "actorCheese", "params": {}}],
+        "quoted": False,
+    }
+
+
+def test_a_list_parameter_survives_json():
+    line = say("revisionNumbersMissing", rows=listing([3, 5]), total=4)
+    stored = json.loads(json.dumps(line.descriptor(), ensure_ascii=False))
+
+    replayed = from_descriptor(stored)
+
+    assert replayed == line
+    assert replayed is not None and replayed.descriptor() == stored
 
 
 def test_a_key_survives_meta_copied_through_json():

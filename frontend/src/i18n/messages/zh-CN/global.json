@@ -49,5 +49,6 @@
     "alertTitle": "提示",
     "promptTitle": "输入"
   },
-  "unknownError": "未知错误"
+  "unknownError": "未知错误",
+  "listItemQuoted": "「{item}」"
 }
