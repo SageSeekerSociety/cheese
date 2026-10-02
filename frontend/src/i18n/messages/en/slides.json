@@ -20,5 +20,9 @@
   "noPageText": "This page has no extractable text",
   "textFailed": "Cannot read this page's text",
   "wholePage": "Whole-page PDF text context",
-  "pageMessage": "Question about <&{path}> page {page} (whole-page PDF text context).\nFile identity: topic={topicId} source={source} task={task} version={version}\nQuestion: {note}\n\nWhole-page text:\n{text}"
+  "quotedPage": "Quoted text from page {page}",
+  "sourceCommitted": "Committed file",
+  "sourceLive": "Current working file",
+  "removeQuote": "Remove reference",
+  "draftQuoteConflict": "The composer already has another reference. Send or remove it first."
 }

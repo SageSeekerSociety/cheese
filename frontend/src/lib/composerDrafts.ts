@@ -34,6 +34,9 @@
  */
 
 import type { Block, ChatAttachment } from '@/cx_types'
+import type { QuotedContext } from './quotedContext'
+
+import { frozenQuote, isQuotedContext } from './quotedContext'
 
 const KEY_PREFIX = 'cheese.composer.v1:'
 
@@ -53,6 +56,7 @@ export interface StoredComposerDraft {
   /** 写入时刻，用来判过期和淘汰。 */
   savedAt: number
   draft: string
+  quotedContext?: QuotedContext
   reply: Block | null
   atts: ChatAttachment[]
 }
@@ -63,6 +67,7 @@ export interface Outgoing {
   content: string
   replyTo?: string
   atts?: ChatAttachment[]
+  quotedContext?: QuotedContext
   /** queued = 还没送出去（排在前一条后面，或连不上在等重试）; sending = 请求在路上; failed = 后端拒了 */
   state: 'queued' | 'sending' | 'failed'
   /** 服务端拒了这一条时它说的话。 */
@@ -72,6 +77,7 @@ export interface Outgoing {
 /** 内存层存的一份：磁盘那份的全部，加上发件箱。 */
 export interface ComposerMemory {
   draft: string
+  quotedContext?: QuotedContext
   reply: Block | null
   atts: ChatAttachment[]
   /** 还没落库的消息。它们是发给**这个**话题的，跟着它走，不跟着屏幕走。 */
@@ -89,7 +95,7 @@ const composerMemory = new Map<string, ComposerMemory>()
 
 /** 空的等于没有：正文、回复目标、附件、发件箱全空就删掉这条记录。 */
 function memoryIsEmpty(value: ComposerMemory): boolean {
-  return !value.draft.trim() && !value.reply && !value.atts.length && !value.outbox.length
+  return !value.draft.trim() && !value.quotedContext && !value.reply && !value.atts.length && !value.outbox.length
 }
 
 /** 记下这个话题的输入状态（含发件箱）。 */
@@ -134,7 +140,14 @@ function parse(raw: string, now: number): StoredComposerDraft | null {
   const reply = parsed.reply ?? null
   if (reply !== null && typeof reply !== 'object') return null
   const atts = Array.isArray(parsed.atts) ? parsed.atts.filter(validAttachment) : []
-  return { savedAt: parsed.savedAt, draft: parsed.draft, reply: reply as Block | null, atts }
+  if (parsed.quotedContext !== undefined && !isQuotedContext(parsed.quotedContext)) return null
+  return {
+    savedAt: parsed.savedAt,
+    draft: parsed.draft,
+    reply: reply as Block | null,
+    atts,
+    ...(parsed.quotedContext ? { quotedContext: frozenQuote(parsed.quotedContext) } : {}),
+  }
 }
 
 /** 记着的话题太多时，把最旧的几条丢掉（连带过期的）。 */
@@ -163,13 +176,13 @@ function prune(store: Storage, now: number) {
  */
 export function saveComposerDraft(
   topicId: string,
-  draft: Pick<StoredComposerDraft, 'draft' | 'reply' | 'atts'>,
+  draft: Pick<StoredComposerDraft, 'draft' | 'reply' | 'atts' | 'quotedContext'>,
   now: number = Date.now()
 ): void {
   const key = storageKey(topicId)
   const store = storage()
   if (!key || !store) return
-  const empty = !draft.draft.trim() && !draft.reply && !draft.atts.length
+  const empty = !draft.draft.trim() && !draft.quotedContext && !draft.reply && !draft.atts.length
   if (empty) {
     forgetComposerDraft(topicId)
     return
@@ -180,6 +193,7 @@ export function saveComposerDraft(
       draft: draft.draft,
       reply: draft.reply,
       atts: draft.atts,
+      ...(draft.quotedContext ? { quotedContext: draft.quotedContext } : {}),
     }
     const serialized = JSON.stringify(record)
     if (serialized.length > MAX_CHARS) return

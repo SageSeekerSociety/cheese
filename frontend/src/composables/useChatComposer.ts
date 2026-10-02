@@ -15,6 +15,7 @@ import type { ComputedRef, Ref } from 'vue'
 import type { Block, ChatAttachment, Topic } from '../cx_types'
 import type { ComposerMemory, Outgoing, StoredComposerDraft } from '../lib/composerDrafts'
 import type { NoticeRow } from '../lib/platformNotice'
+import type { QuotedContext } from '../lib/quotedContext'
 
 import { computed, ref, watch } from 'vue'
 import { useEventListener } from '@vueuse/core'
@@ -24,6 +25,7 @@ import { uploaded, usePendingAttachments } from '../lib/attachments'
 import { isAgentBlock } from '../lib/authorship'
 import { replySnippet } from '../lib/blockDisplay'
 import { loadComposerDraft, loadComposerMemory, saveComposerDraft, saveComposerMemory } from '../lib/composerDrafts'
+import { frozenQuote } from '../lib/quotedContext'
 import { editableText } from '../lib/renderMessage'
 
 import { t } from '@/i18n'
@@ -53,7 +55,7 @@ export interface ChatComposerDeps {
   editing: Set<string>
   isMine: (m: Block) => boolean
   displayName: (m: Block) => string
-  send: (content: string, summon: boolean, atts?: ChatAttachment[]) => boolean
+  send: (content: string, summon: boolean, atts?: ChatAttachment[], quote?: QuotedContext) => boolean
   dropSend: (clientId: string) => void
 }
 
@@ -128,6 +130,15 @@ export function useChatComposer(deps: ChatComposerDeps) {
   // 发送失败之后的「编辑」：这一条从发件箱里拿掉，原文、回复对象和附件放回输入框，
   // 改完再发就是一条新的。输入框里已经有字的话，原文放在前面，一个字都不覆盖。
   function editSend(item: Outgoing) {
+    if (
+      draftQuote.value &&
+      item.quotedContext &&
+      JSON.stringify(draftQuote.value) !== JSON.stringify(item.quotedContext)
+    ) {
+      errorMsg.value = t('slides.draftQuoteConflict')
+      return
+    }
+    if (item.quotedContext) draftQuote.value = frozenQuote(item.quotedContext)
     editing.add(item.clientId)
     dropSend(item.clientId)
     draft.value = draft.value.trim() ? `${item.content}\n${draft.value}` : item.content
@@ -139,6 +150,10 @@ export function useChatComposer(deps: ChatComposerDeps) {
 
   // ---- Self-contained composer (only when showComposer) ----
   const draft = ref('')
+  const draftQuote = ref<QuotedContext>()
+  function clearDraftQuote() {
+    draftQuote.value = undefined
+  }
   const composerRef = ref<{ focus: () => void } | null>(null)
 
   const starterPrompts = computed(() =>
@@ -229,8 +244,9 @@ export function useChatComposer(deps: ChatComposerDeps) {
 
   // 输入区只知道正文和「这条叫不叫它」。待发附件在这一层，因为它要跟着话题走。
   function onComposerSend({ content, summon }: { content: string; summon: boolean }) {
-    if (send(content, summon, uploaded(pendingAtts.value))) {
+    if (send(content, summon, uploaded(pendingAtts.value), draftQuote.value)) {
       draft.value = ''
+      clearDraftQuote()
       clearPendingAtts()
     }
   }
@@ -253,6 +269,7 @@ export function useChatComposer(deps: ChatComposerDeps) {
     // 只可能对其中一层是对的。
     saveComposerMemory(topicId, {
       draft: draft.value,
+      quotedContext: draftQuote.value,
       reply: replyTarget.value,
       atts: uploaded(pendingAtts.value),
       outbox: outbox.value.slice(),
@@ -260,6 +277,7 @@ export function useChatComposer(deps: ChatComposerDeps) {
     // 落到磁盘上的那份不含发件箱，见 lib/composerDrafts.ts 的解释。
     saveComposerDraft(topicId, {
       draft: draft.value,
+      quotedContext: draftQuote.value,
       reply: replyTarget.value,
       atts: uploaded(pendingAtts.value),
     })
@@ -267,7 +285,9 @@ export function useChatComposer(deps: ChatComposerDeps) {
 
   /** 落盘的那份没有发件箱（它不跨刷新，也不该跨）。 */
   function asComposerDraft(stored: StoredComposerDraft | null): ComposerMemory | undefined {
-    return stored ? { draft: stored.draft, reply: stored.reply, atts: stored.atts, outbox: [] } : undefined
+    return stored
+      ? { draft: stored.draft, quotedContext: stored.quotedContext, reply: stored.reply, atts: stored.atts, outbox: [] }
+      : undefined
   }
 
   function restoreComposer(topicId: string | undefined) {
@@ -275,6 +295,7 @@ export function useChatComposer(deps: ChatComposerDeps) {
     // 磁盘上那份。
     const saved = topicId ? loadComposerMemory(topicId) ?? asComposerDraft(loadComposerDraft(topicId)) : undefined
     draft.value = saved?.draft ?? ''
+    draftQuote.value = saved?.quotedContext
     replyTarget.value = saved?.reply ?? null
     pendingAtts.value = saved?.atts ?? []
     // 换话题时在飞的那一条被叫停了，回到队列，回到这个话题时带同一个 id 再发
@@ -293,13 +314,14 @@ export function useChatComposer(deps: ChatComposerDeps) {
     }
     saveComposerDraft(topicId, {
       draft: draft.value,
+      quotedContext: draftQuote.value,
       reply: replyTarget.value,
       atts: uploaded(pendingAtts.value),
     })
   }
 
   watch(
-    [draft, replyTarget, pendingAtts],
+    [draft, draftQuote, replyTarget, pendingAtts],
     () => {
       const topicId = topic()?.id
       if (!topicId) return
@@ -327,6 +349,8 @@ export function useChatComposer(deps: ChatComposerDeps) {
 
   return {
     draft,
+    draftQuote,
+    clearDraftQuote,
     composerRef,
     starterPrompts,
     showStarters,

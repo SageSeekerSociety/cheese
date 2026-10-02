@@ -14,6 +14,7 @@ import type { PreviewFrame, PreviewNavigation } from '../../composables/usePrevi
 import type { FileContent } from '../../cx_types'
 import type { DocumentIdentity, DocumentSnapshot } from '../../lib/documentBytes'
 import type { FileKind } from '../../lib/fileKind'
+import type { SubmitPreviewQuestion } from '../../lib/previewQuestion'
 import type { RasterSelection } from './preview/designRegion'
 import type { SlidePageContext, SlideSource } from './preview/slidesContext'
 
@@ -42,6 +43,7 @@ const RoomFileHistory = defineAsyncComponent(() => import('./preview/RoomFileHis
 const props = withDefaults(
   defineProps<{
     topicId: string | null
+    submitQuestion?: SubmitPreviewQuestion
     projectId: string | null
     /**
      * 这一格看的是房间里指定的哪一份文件（工作面板自由区的一个页签）。不给就是
@@ -82,6 +84,7 @@ const props = withDefaults(
     docRendererMissing: boolean
   }>(),
   {
+    submitQuestion: undefined,
     path: null,
     frames: undefined,
     displayedFrame: null,
@@ -293,17 +296,21 @@ function sendLocator() {
   if (pageContext.value) {
     const payload = pageContext.value
     if (!canUsePageContext(payload.context)) return
-    emit(
-      'locate',
-      t('slides.pageMessage', {
-        ...payload.context,
-        task: payload.context.taskId ?? '',
+    const accepted = props.submitQuestion?.({
+      intent: 'ask-agent',
+      topicId: payload.context.topicId,
+      content: note,
+      quotedContext: {
+        kind: 'slide-page',
+        path: payload.context.path,
+        source: payload.context.source,
+        version: payload.context.version,
+        task_id: payload.context.taskId ?? null,
         page: payload.page,
         text: payload.text,
-        note,
-      })
-    )
-    clearLocator()
+      },
+    })
+    if (accepted) clearLocator()
     return
   }
   emit(
