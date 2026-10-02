@@ -86,6 +86,14 @@ watch(expanded, async (open) => {
     mcpServers.value = []
   }
 })
+// 和项目设置里同一句：项目的 .mcp.json，或声明它的那几个队友类型。
+function mcpSource(server: RoomMcpServer) {
+  const types = server.declared_by
+  if (!types) return t('work.mcp.source.project')
+  const titles = types.map((type) => type.title || type.name).join(t('work.mcp.listSeparator'))
+  return t('work.mcp.source.types', { types: titles }, types.length)
+}
+
 function mcpState(server: RoomMcpServer) {
   const keys: Record<RoomMcpServer['status'], string> = {
     connected: 'work.mcp.status.connected',
@@ -192,7 +200,7 @@ const formattedOutput = computed(() => {
           <li v-for="server in mcpServers" :key="server.name">
             <span class="c-ink">{{ server.name }}</span>
             <span class="c-muted">
-              ·
+              · <span data-testid="mcp-source">{{ mcpSource(server) }}</span> ·
               <i18n-t
                 v-if="server.status === 'connected' && server.authorized_by"
                 keypath="work.mcp.status.connectedBy"

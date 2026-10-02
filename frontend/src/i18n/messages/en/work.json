@@ -1171,6 +1171,10 @@
       "missingValues": "Needs {names}",
       "disconnected": "Not connected"
     },
+    "source": {
+      "project": "From the project's .mcp.json",
+      "types": "Declared by the {types} type | Declared by the {types} types"
+    },
     "action": {
       "connect": "Connect",
       "reconnect": "Reconnect",

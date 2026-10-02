@@ -65,6 +65,20 @@ You trace tickets.
     (tmp_path / "plain.md").write_text(
         "---\nname: plain\n---\nYou help.", encoding="utf-8"
     )
+    # A second type that declares the same remote server, defined the same way.
+    (tmp_path / "auditor.md").write_text(
+        f"""---
+name: auditor
+title: Auditor
+mcpServers:
+  - ticket:
+      type: http
+      url: {upstream.base}/mcp
+---
+You audit tickets.
+""",
+        encoding="utf-8",
+    )
     library = load_type_library(tmp_path)
     monkeypatch.setattr(agent_instances, "preset_types", lambda: library)
     return library
@@ -157,6 +171,38 @@ def test_a_types_remote_server_uses_the_projects_connection_for_its_teammates(
     )
     assert "error" in refused and "result" not in refused
     assert len(upstream.tool_calls) == reached, "another type never reaches it"
+
+
+def test_each_remote_server_says_where_it_comes_from(client, upstream, types):
+    """Project settings and the room's read-only list say, for each remote
+    server, whether the project's `.mcp.json` declares it or which of its
+    teammates' types do."""
+    pid = _project(client, upstream)
+    tid = _topic(client, pid)
+    _teammate(client, pid, "tracer-1", "tracer")
+    _teammate(client, pid, "plain-1", "plain")
+
+    listed = _servers(client, pid)
+    assert listed["tracker"]["declared_by"] is None
+    # A type reusing a name the project declares does not make it the type's.
+    assert listed["search"]["declared_by"] is None
+    assert listed["ticket"]["declared_by"] == [{"name": "tracer", "title": "Tracer"}]
+
+    # Once a teammate of another type that declares it joins, both are named.
+    _teammate(client, pid, "auditor-1", "auditor")
+    declared_by = _servers(client, pid)["ticket"]["declared_by"]
+    assert sorted(t["name"] for t in declared_by) == ["auditor", "tracer"]
+
+    room = client.get(
+        f"/topics/{tid}/mcp/servers", headers=session_auth_headers("alice")
+    )
+    assert room.status_code == 200, room.text
+    by_name = {s["name"]: s for s in room.json()["data"]["servers"]}
+    assert by_name["tracker"]["declared_by"] is None
+    assert sorted(t["title"] for t in by_name["ticket"]["declared_by"]) == [
+        "Auditor",
+        "Tracer",
+    ]
 
 
 @pytest.fixture
