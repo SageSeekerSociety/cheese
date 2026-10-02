@@ -795,10 +795,53 @@ class FeedbackService:
             # rather than a second timeline entry, because two identical entries
             # a second apart read as a bug in the history.
             return row
+        await self._move(row, status, by_handle=by_handle, note=note)
+        return row
+
+    async def advance(
+        self,
+        row: Feedback,
+        status: FeedbackStatus,
+        *,
+        by_handle: str | None,
+        note: str | None = None,
+        at: datetime | None = None,
+    ) -> bool:
+        """Record that a report reached `status`, if it has not reached it yet.
+
+        The platform's own steps come through here — 处理中 when someone is
+        assigned, 已修复 when the fixing PR merges. People rarely press those two
+        buttons (a fix can land minutes after the report), and a ladder reading
+        已上线 above a 处理中 that says 「未开始」 contradicts itself. Unlike
+        `set_status` this only moves forward: a report already at or past
+        `status` is left where it is, and so is one off the ladder (`declined`,
+        a person's answer), so an automatic step never undoes what a person
+        decided.
+
+        `at` is when the event happened, when that is not now — a merge is
+        recorded at the PR's merge time, not at the deploy that noticed it.
+        """
+        if row.status not in STATUS_LADDER:
+            return False
+        if STATUS_LADDER.index(row.status) >= STATUS_LADDER.index(status):
+            return False
+        await self._move(row, status, by_handle=by_handle, note=note, at=at)
+        return True
+
+    async def _move(
+        self,
+        row: Feedback,
+        status: FeedbackStatus,
+        *,
+        by_handle: str | None,
+        note: str | None,
+        at: datetime | None = None,
+    ) -> None:
         await self._repo.set_status(row, status)
         entry = await self._repo.append_timeline(row.id, status, by_handle)
         entry.note = note
-        return row
+        if at is not None:
+            entry.at = at
 
     async def patch_admin(
         self, feedback_id: uuid.UUID, body: FeedbackPatch, *, by_handle: str
@@ -812,6 +855,14 @@ class FeedbackService:
             # Empty string clears the assignee; a handle assigns. `None` means
             # "not in this request" — see FeedbackPatch.
             await self._repo.set_assignee(row, body.assignee_handle or None)
+            if body.assignee_handle:
+                # Someone is on it from this moment: that is 处理中.
+                await self.advance(
+                    row,
+                    FeedbackStatus.in_progress,
+                    by_handle=by_handle,
+                    note=f"已指派给 {body.assignee_handle}",
+                )
         if body.security is not None and body.security != row.security:
             await self._repo.set_security(row, body.security)
             # Marking something a security matter is a routing decision the

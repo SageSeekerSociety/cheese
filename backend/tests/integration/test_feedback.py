@@ -571,6 +571,82 @@ def test_setting_the_same_status_twice_is_a_no_op_not_a_second_timeline_row(
     assert len(r.json()["data"]["timeline"]) == 2  # received + one in_progress
 
 
+def _assign(client, admin: str, feedback_id: str, assignee: str) -> None:
+    r = client.patch(
+        f"/admin/feedback/{feedback_id}",
+        json={"assignee_handle": assignee},
+        headers=session_auth_headers(admin),
+    )
+    assert r.status_code == 200, r.text
+
+
+def _reporter_view(client, feedback_id: str) -> dict:
+    r = client.get(f"/feedback/{feedback_id}", headers=session_auth_headers(REPORTER))
+    assert r.status_code == 200, r.text
+    return r.json()["data"]
+
+
+def test_assigning_a_report_shows_its_reporter_that_it_is_being_handled(
+    client, as_admin
+):
+    """Nobody presses 处理中 by hand; being assigned is the moment it starts."""
+    row = _report(client, REPORTER)
+    before = datetime.now(UTC)
+
+    _assign(client, as_admin, row["id"], STRANGER)
+
+    detail = _reporter_view(client, row["id"])
+    assert detail["status"] == "in_progress"
+    step = next(t for t in detail["timeline"] if t["status"] == "in_progress")
+    assert step["by_handle"] == as_admin
+    assert STRANGER in step["note"]
+    assert before <= datetime.fromisoformat(step["at"]) <= datetime.now(UTC)
+
+
+def test_assigning_a_report_already_past_in_progress_leaves_it_there(client, as_admin):
+    row = _report(client, REPORTER)
+    r = client.post(
+        f"/admin/feedback/{row['id']}/status",
+        json={"status": "resolved"},
+        headers=session_auth_headers(as_admin),
+    )
+    assert r.status_code == 200, r.text
+
+    _assign(client, as_admin, row["id"], STRANGER)
+
+    detail = _reporter_view(client, row["id"])
+    assert detail["status"] == "resolved"
+    assert [t["status"] for t in detail["timeline"]] == ["received", "resolved"]
+
+
+def test_assigning_a_declined_report_leaves_it_declined(client, as_admin):
+    row = _report(client, REPORTER)
+    r = client.post(
+        f"/admin/feedback/{row['id']}/status",
+        json={"status": "declined"},
+        headers=session_auth_headers(as_admin),
+    )
+    assert r.status_code == 200, r.text
+
+    _assign(client, as_admin, row["id"], STRANGER)
+
+    detail = _reporter_view(client, row["id"])
+    assert detail["status"] == "declined"
+    assert [t["status"] for t in detail["timeline"]] == ["received", "declined"]
+
+
+def test_reassigning_or_unassigning_adds_no_second_in_progress_step(client, as_admin):
+    row = _report(client, REPORTER)
+
+    _assign(client, as_admin, row["id"], STRANGER)
+    _assign(client, as_admin, row["id"], as_admin)
+    _assign(client, as_admin, row["id"], "")
+
+    detail = _reporter_view(client, row["id"])
+    assert detail["status"] == "in_progress"
+    assert [t["status"] for t in detail["timeline"]] == ["received", "in_progress"]
+
+
 # --- 支持 -------------------------------------------------------------------
 
 
