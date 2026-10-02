@@ -45,9 +45,14 @@ const problem = computed(() => props.error || failure.value)
 const ready = computed(() => !loading.value && !failure.value && count.value > 0)
 /** 这一页现在还能不能带身份地指出去。
  *
- *  和 canAskPage 分开：整页提问要等取文字那一步空闲（它自己要跑一趟），而选中一段
- *  只拿页面上已有的选区，转换在后台重跑、bytes 还没换时（busy）照样算数 —— 屏幕上
- *  那张就是读者看着的那张。 */
+ *  和 canAskPage 分开：整页提问要等取文字那一步空闲（`pageText` 自己要跑一趟，
+ *  `busy` 里还压着父级正在取的字节），而选中一段只拿屏上已有的选区，不必等那趟。
+ *
+ *  但两条都建在 `ready` 上——这一页得先画出来，才有选区可谈、才知道选的是哪一版。
+ *  所以转换在后台重跑（`loading` 还没落地）的那一下，两条都是假，选中一段退回那句
+ *  不带版本的拼话。这不是「反正屏上那张就是读者看着的那张」：真发出去之前父级还会
+ *  把身份整个再核一遍（`PanelPreviewView.canUsePageContext`），这里松一档只会选出
+ *  一场白选。 */
 const canQuote = computed(() => ready.value && !!props.context && !problem.value && !props.rendererMissing)
 const canAskPage = computed(() => canQuote.value && !busy.value)
 const showRail = computed(() => ready.value && !presenting.value && (railOverride.value ?? !narrow.value))
@@ -107,8 +112,10 @@ function quote() {
   if (!selection?.rangeCount || !sheet.value) return
   const range = selection.getRangeAt(0)
   if (!sheet.value.contains(range.startContainer) || !sheet.value.contains(range.endContainer)) return
-  const text = selection.toString().trim()
-  if (!text) return
+  // 和父级 `onQuote` 同一条门槛：先归一化空白，再要求不止一个字。一个字的选中说不出
+  // 「哪儿不对」，带上身份也只是把噪声包装得更正式。两条出口都过这一关。
+  const text = selection.toString().replace(/\s+/g, ' ').trim()
+  if (text.length < 2) return
   // 选中一句和整页提问走同一条出口：同一个冻结引用，带文件身份和版本，只是
   // scope 说这是这一页里的一段。没有已验证的身份时才退回原来那句拼好的话 ——
   // 它不带版本，但也不撒谎。

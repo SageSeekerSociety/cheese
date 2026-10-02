@@ -265,6 +265,28 @@ describe('slide reader contract (PDF.js substituted)', () => {
     selection.removeAllRanges()
   })
 
+  it('drops a selection too short to point at anything, with or without identity', async () => {
+    const ui = await loaded(3)
+    const span = ui.container.querySelector('[data-page="1"] span')!.firstChild!
+    const selection = window.getSelection()!
+    // 一个字、一个空格：两条都过不了「归一化之后至少两个字」这一关。带上身份发出去
+    // 只是把噪声包装得更正式，所以有身份的那条出口也一样拦。
+    for (const [start, end] of [
+      [0, 1],
+      [10, 11],
+    ]) {
+      const range = document.createRange()
+      range.setStart(span, start)
+      range.setEnd(span, end)
+      selection.removeAllRanges()
+      selection.addRange(range)
+      await fireEvent.mouseUp(ui.container.querySelector('[data-page="1"]')!)
+    }
+    expect(ui.emitted().quote).toBeUndefined()
+    expect(ui.emitted().pageContext).toBeUndefined()
+    selection.removeAllRanges()
+  })
+
   it('exposes original download in loading, missing-renderer, and error states', async () => {
     const ui = render(PreviewSlides, { props: { data: null, pending: true, canDownload: true } })
     expect(ui.getByRole('status').textContent).toContain('正在加载')

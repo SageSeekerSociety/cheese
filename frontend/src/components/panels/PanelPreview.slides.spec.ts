@@ -176,7 +176,10 @@ it('drops a selected run whose version moved on before send, like the whole-page
   await ui.rerender({ ...props, previewFile: { ...props.previewFile, version: 'v8' } })
   await fireEvent.click(ui.getByText('发送'))
   expect(submit).not.toHaveBeenCalled()
-  expect(ui.emitted().locate).toBeUndefined()
+  // 被挡下的是「这一下」，不是这段说明：引用原样留在输入框里，读者把版本对回来就能
+  // 再发一次。换成 `emitted().locate` 是测不出东西的——这一支只发 `pageContext`，
+  // 回退那句拼话根本不在这条路上。
+  expect(ui.getByPlaceholderText('说明要改什么')).toBeTruthy()
 })
 it('retires the locator when bytes or source identity change and routes PDF to the existing reader', async () => {
   const ui = mount()
