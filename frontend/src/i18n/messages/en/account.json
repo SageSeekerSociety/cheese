@@ -68,8 +68,7 @@
       "passwordReset": "Your password has been reset. Sign in with the new one."
     },
     "lastUsed": "Last used",
-    "emailCode": "Sign in with an email code",
-    "continueInBrowser": "Sign-in with {provider} opened in your browser. You will come back here when it is done."
+    "emailCode": "Sign in with an email code"
   },
   "attempts": {
     "wrongPassword": "Wrong username or password.",
@@ -217,12 +216,16 @@
       "pageTitle": "Choose an account"
     },
     "app": {
-      "leaving": "Going to {provider}",
       "backTitle": "Back to the Cheese app",
       "backLede": "If the Cheese app did not open, use the button below. You can close this page afterwards.",
       "open": "Open Cheese",
       "handOffFailed": "This sign-in could not be handed to the Cheese app. Sign in again in the app.",
-      "expired": "This sign-in has expired. Sign in again."
+      "expired": "This sign-in has expired. Sign in again.",
+      "confirmTitle": "Sign in to the Cheese app",
+      "confirmLede": "You will be signed in to the Cheese app as {name} ({'@'}{handle}). If you did not just start this in the app, click Cancel.",
+      "confirm": "Continue",
+      "switchAccount": "Use another account",
+      "cancel": "Cancel"
     }
   },
   "sudo": {
@@ -558,5 +561,28 @@
       "port": "Port",
       "security": "Encryption"
     }
+  },
+  "appSignIn": {
+    "lede": "You sign in in your browser, where your saved passwords, passkeys and other accounts are. You will come back here when it is done.",
+    "signin": {
+      "title": "Sign in to Cheese",
+      "open": "Sign in with your browser"
+    },
+    "signup": {
+      "title": "Create a Cheese account",
+      "open": "Sign up with your browser"
+    },
+    "recover": {
+      "title": "Reset your password",
+      "open": "Reset it in your browser"
+    },
+    "waiting": "Opened in your browser. You will come back here when it is done.",
+    "openAgain": "Open the browser again",
+    "copyLink": "Copy the link to paste into a browser",
+    "copied": "Link copied",
+    "copyFailed": "Could not copy. Click the button above to open the browser again.",
+    "failed": "Could not open the browser. Try again.",
+    "haveAccount": "Already have an account?",
+    "toSignIn": "Sign in"
   }
 }
