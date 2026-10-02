@@ -45,6 +45,7 @@ class SocketChannel:
             descriptor["agent"],
             Path(descriptor["mirror"]),
             descriptor["protocol"],
+            frozenset(descriptor.get("capabilities") or ()),
         )
         self.calls = []
         self.input_states = []

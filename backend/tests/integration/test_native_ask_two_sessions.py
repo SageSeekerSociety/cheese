@@ -88,6 +88,7 @@ def test_http_group_answer_resumes_asking_session_while_other_native_session_is_
                     seat,
                     machine.root / "mirror.sqlite",
                     INPUT_PROTOCOL,
+                    frozenset(runner.capabilities),
                 )
             assert handles[seat].session == session
             return handles[seat]

@@ -102,6 +102,7 @@ def test_http_answer_continues_original_native_executor(
                     opening.agent_handle or session.agent_handle,
                     tmp_path / "mirror.sqlite",
                     INPUT_PROTOCOL,
+                    frozenset(native_runner.capabilities),
                 )
             assert session == handle.session
             return handle

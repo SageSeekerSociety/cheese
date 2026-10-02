@@ -106,6 +106,7 @@ def test_new_full_service_process_reuses_original_native_executor(
                     opening.agent_handle or session.agent_handle,
                     tmp_path / "mirror.sqlite",
                     status["input_protocol"],
+                    frozenset(status.get("capabilities") or ()),
                 )
             return handle
 
@@ -217,6 +218,7 @@ def test_new_full_service_process_reuses_original_native_executor(
                 "state": handle.state,
                 "native": handle.session_id,
                 "protocol": handle.input_protocol,
+                "capabilities": list(status.get("capabilities") or ()),
                 "mirror": str(handle.mirror),
                 "workspace": str(machine.workspace),
                 "work": first_work,

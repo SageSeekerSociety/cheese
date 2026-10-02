@@ -77,6 +77,7 @@ def test_native_original_executor_survives_full_service_recovery_and_busy_input(
                     opening.agent_handle or session.agent_handle,
                     tmp_path / "mirror.sqlite",
                     INPUT_PROTOCOL,
+                    frozenset(runner.capabilities),
                 )
             return handle
 
