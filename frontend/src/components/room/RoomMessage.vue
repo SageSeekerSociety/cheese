@@ -190,8 +190,11 @@ async function onAgentTextClick(e: MouseEvent) {
         :data-handle="block.author"
         :data-site="faceLabel ? '' : undefined"
         :aria-label="personLabel"
-        :title="personLabel"
+        :title="faceLabel ? undefined : personLabel"
       >
+        <!-- 在动的头像那一句带着秒数，每秒换一次字。原生 title 一换字就收起再弹，
+             悬停时每秒闪一下；这个气泡原地换字。 -->
+        <v-tooltip v-if="faceLabel" activator="parent" location="top" :text="personLabel" />
         <CheeseAvatar v-if="isAgent" :size="28" :name="authorName" :handle="block.author" :state="face ?? null" />
         <!-- 真头像；取不到或加载失败退回按 handle 哈希的彩色首字母。
            底色的种子继续用 handle（换成昵称会让每个人的颜色都变）,
