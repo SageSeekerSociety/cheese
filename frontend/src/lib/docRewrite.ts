@@ -17,7 +17,7 @@ import type { Node as PMNode } from '@tiptap/pm/model'
 import type { EditorState } from '@tiptap/pm/state'
 
 import { plainOf } from './docEdits'
-import { withoutSuggestions } from './docSchema'
+import { nodeMarkdown, withoutSuggestions } from './docSchema'
 
 export interface RewriteTarget {
   /** The block's Markdown. */
@@ -35,14 +35,8 @@ const squash = (text: string) => text.replace(/\s+/g, ' ').trim()
 
 /** The block and offsets for the selection `[from, to)`, or null when the
  *  selection cannot be sent: it spans blocks, is empty, overlaps a pending
- *  suggestion, or cuts through formatting. `serialize` writes a document as
- *  the editor's Markdown. */
-export function rewriteTarget(
-  state: EditorState,
-  from: number,
-  to: number,
-  serialize: (doc: PMNode) => string
-): RewriteTarget | null {
+ *  suggestion, or cuts through formatting. */
+export function rewriteTarget(state: EditorState, from: number, to: number): RewriteTarget | null {
   const { doc, schema } = state
   if (from >= to) return null
   const $from = doc.resolve(from)
@@ -54,14 +48,14 @@ export function rewriteTarget(
   const index = $from.index(0)
   const marked = state.tr.insertText(CLOSE, to).insertText(OPEN, from).doc.child(index)
   const wrap = (node: PMNode) => withoutSuggestions(schema.topNodeType.create(null, [node]))
-  const withMarkers = serialize(wrap(marked)).trimEnd()
+  const withMarkers = nodeMarkdown(wrap(marked)).trimEnd()
   const start = withMarkers.indexOf(OPEN)
   const close = withMarkers.indexOf(CLOSE)
   if (start < 0 || close < start || withMarkers.indexOf(OPEN, start + 1) >= 0) return null
   const block = withMarkers.replace(OPEN, '').replace(CLOSE, '')
   const end = close - 1
   // The markers must not have changed how the rest of the block is written.
-  if (block !== serialize(wrap(doc.child(index))).trimEnd()) return null
+  if (block !== nodeMarkdown(wrap(doc.child(index))).trimEnd()) return null
   if (!parsesTo(block.slice(start, end), text)) return null
   return { block, start, end, text }
 }

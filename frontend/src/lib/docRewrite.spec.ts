@@ -3,8 +3,6 @@
 // where the selection sits in it. The service replaces exactly that range, so
 // replacing it must give the document with exactly the selected text replaced
 // — and a selection that has no such range is not sent at all.
-import type { Node as PMNode } from '@tiptap/pm/model'
-
 import { transformToSuggestionTransaction } from '@handlewithcare/prosemirror-suggest-changes'
 import { Editor } from '@tiptap/core'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -22,7 +20,6 @@ function open(markdown: string) {
   editors.push(editor)
   return editor
 }
-const serialize = (editor: Editor) => (doc: PMNode) => finishMarkdown(editor.markdown!.serialize(doc.toJSON()))
 
 /** The positions of the `nth` occurrence of `text` as it reads. */
 function find(editor: Editor, text: string, nth = 0): { from: number; to: number } {
@@ -58,7 +55,7 @@ describe('a selection rewrite', () => {
   ])('replaces exactly the selected text: %s', (_case, markdown, selected, nth) => {
     const editor = open(markdown)
     const { from, to } = find(editor, selected, nth)
-    const target = rewriteTarget(editor.state, from, to, serialize(editor))
+    const target = rewriteTarget(editor.state, from, to)
     expect(target).not.toBeNull()
 
     const expected = editor.state.tr.insertText('新的字', from, to).doc
@@ -69,14 +66,12 @@ describe('a selection rewrite', () => {
     const editor = open('数据量到**一千万行**时开始评估迁移。')
     const start = find(editor, '万行').from
     const end = find(editor, '时开始').to
-    expect(rewriteTarget(editor.state, start, end, serialize(editor))).toBeNull()
+    expect(rewriteTarget(editor.state, start, end)).toBeNull()
   })
 
   it('is not sent when the selection spans two blocks', () => {
     const editor = open('第一段。\n\n第二段。')
-    expect(
-      rewriteTarget(editor.state, find(editor, '一段').from, find(editor, '第二').to, serialize(editor))
-    ).toBeNull()
+    expect(rewriteTarget(editor.state, find(editor, '一段').from, find(editor, '第二').to)).toBeNull()
   })
 
   it('names the block as stored, with a pending suggestion in it left out', () => {
@@ -85,12 +80,7 @@ describe('a selection rewrite', () => {
     const tr = editor.state.tr.insertText('五百万', at.from, at.to)
     editor.view.dispatch(transformToSuggestionTransaction(tr, editor.state, () => suggestionId('cheese')))
 
-    const target = rewriteTarget(
-      editor.state,
-      find(editor, '开始评估').from,
-      find(editor, '开始评估').to,
-      serialize(editor)
-    )
+    const target = rewriteTarget(editor.state, find(editor, '开始评估').from, find(editor, '开始评估').to)
     expect(target?.block).toBe('数据量到一千万行时开始评估迁移。')
     expect(target && target.block.slice(target.start, target.end)).toBe('开始评估')
   })

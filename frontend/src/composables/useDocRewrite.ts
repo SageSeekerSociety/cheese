@@ -14,7 +14,6 @@ import { onScopeDispose, ref, shallowRef } from 'vue'
 import { editMarks, nearestText, setEditMarks } from '../lib/docEditMarks'
 import { editFailure, plainOf } from '../lib/docEdits'
 import { rewriteTarget } from '../lib/docRewrite'
-import { finishMarkdown } from '../lib/docSchema'
 
 import { t } from '@/i18n'
 
@@ -32,11 +31,6 @@ export interface DocRewriteOptions {
 const ARRIVAL_MS = 10_000
 /** 新的字亮多久。 */
 const FLASH_MS = 2400
-
-function serializer(editor: Editor) {
-  return (doc: Parameters<typeof rewriteTarget>[0]['doc']) =>
-    finishMarkdown(editor.markdown?.serialize(doc.toJSON()) ?? '')
-}
 
 export function useDocRewrite(options: DocRewriteOptions) {
   const phase = ref<RewritePhase>('idle')
@@ -122,7 +116,7 @@ export function useDocRewrite(options: DocRewriteOptions) {
     const range = editor && target(editor)
     const text = instruction.trim()
     if (!editor || !rewrite || !range || !text || phase.value !== 'asking') return
-    const request = rewriteTarget(editor.state, range.from, range.to, serializer(editor))
+    const request = rewriteTarget(editor.state, range.from, range.to)
     if (!request) {
       close()
       options.onError(t('work.room.docEdit.unmappable'))
