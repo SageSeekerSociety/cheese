@@ -68,9 +68,11 @@ def test_http_group_answer_resumes_asking_session_while_other_native_session_is_
         async def prepare_topic(self, **kwargs):
             return True, ""
 
-        async def ensure(self, session, opening):
+        async def ensure(self, session, opening, live=None):
             seat = opening.agent_handle or session.agent_handle
             assert seat in machines
+            if live is not None:
+                return live
             if seat not in handles:
                 machine = machines[seat]
                 runner = runners[seat] = Runner(machine.state)

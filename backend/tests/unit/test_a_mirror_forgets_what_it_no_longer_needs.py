@@ -140,6 +140,7 @@ def _mirror(tmp_path, journal: list[dict], landed: list[object]) -> Subscription
         consume,
         nothing,
         session_id=None,
+        recipient_handle="cheese",
         announce=nothing,
     )
 
