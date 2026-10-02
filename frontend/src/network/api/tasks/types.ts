@@ -206,3 +206,37 @@ export type PostTaskSubmissionReviewRequestData = {
 }
 
 export type PatchTaskSubmissionReviewRequestData = Partial<PostTaskSubmissionReviewRequestData>
+
+/**
+ * Which level the composed guidance came from — `null` when no level said
+ * anything. Shown so a student reads 「来自项目集」 rather than a bare result;
+ * carried by the same resolution loop that picks the value (server side).
+ */
+export type TaskInheritanceSource = 'space' | 'category' | 'task' | 'project'
+
+/** A board's 资料 row as the inheritance list reports it — never a `url`. */
+export interface TaskInheritanceMaterial {
+  id: number
+  name: string
+  type: string
+  visibility: string
+  size: number | null
+  mime: string | null
+  uploaderId: number
+  createdAt: number
+  downloadCount: number
+}
+
+/** The composed 给 AI 队友的指导, plus the level it came from. */
+export interface TaskInheritanceTeaching extends SpaceTeaching {
+  source: TaskInheritanceSource | null
+}
+
+/** What building a project from a challenge hands over — `GET /tasks/{id}/inheritance`. */
+export interface TaskInheritanceData {
+  taskId: number
+  spaceId: number
+  resourcePack: Record<string, unknown>
+  teaching: TaskInheritanceTeaching
+  materials: TaskInheritanceMaterial[]
+}

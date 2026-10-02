@@ -111,6 +111,7 @@ from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.block.message_input import ChatAttachmentIn, ChatMessageIn  # noqa: F401
 from app.domain.block.notice_text import say
 from app.domain.block.schemas import OptionAnswerIn
+from app.domain.delivery.ledger import settle
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 
@@ -421,6 +422,9 @@ async def answer_options(
     meta["answered"] = option
     meta["answered_by"] = author
     blk.meta = meta
+    # 芝士问出口时通知过等这个回答的人（`notify_question`，事件身份就是这道题）。
+    # 题答完了，那条通知跟着结掉，不再说「待你回答」。
+    await settle(db, blk.id, {"answered": option})
     await db.flush()
     updated = BlockOut.model_validate(blk).model_dump(mode="json")
     await db.commit()
