@@ -8,7 +8,7 @@ project's forge credential, so they must ask it too.
 
 import pytest
 
-from app.core.sandbox_auth import mint_scoped_token
+from app.domain.agent.harness.channel import mint_session_token
 from tests.delivery import delivery_task
 from tests.integration.conftest import (
     post_project,
@@ -26,11 +26,7 @@ def seated(client):
     ).json()["data"]["id"]
     seat = room_agent_seat(client, tid)
     task = delivery_task(client, tid, commit=False)
-    headers = {
-        "X-Cheese-Token": mint_scoped_token(
-            project_id=pid, topic_id=tid, agent_handle=seat
-        )
-    }
+    headers = {"X-Cheese-Token": mint_session_token(pid, tid, seat)}
     return pid, tid, seat, task, headers
 
 
@@ -69,6 +65,16 @@ def test_a_removed_agent_cannot_read_or_write_its_old_tasks(client, seated):
         headers={**headers, "X-Cheese-Head": "b" * 40, "X-Content-Sha256": "c" * 64},
     )
     assert saved.status_code == 403
+
+
+def test_a_seated_agent_is_not_refused_the_forge_credential(client, seated):
+    _, _, _, _, headers = seated
+    # No forge is bound in this project, so the answer is about the project,
+    # not a refusal of the caller.
+    assert client.get("/sandbox/forge-token", headers=headers).status_code not in (
+        401,
+        403,
+    )
 
 
 def test_a_removed_agent_gets_no_forge_credential(client, seated):
