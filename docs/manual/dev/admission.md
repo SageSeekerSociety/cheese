@@ -45,7 +45,7 @@ covers:
 ## 预算这一半 {#budget}
 
 - 项目来自 scoped token 的已验证 claims（`claims["p"]`），不是请求头——头是可以自称的。没有 token 或没有 `p` 就是 401。
-- `ComputeGrantRepository.summary()` 给出 `credits_used` 与 `credits_total`；`unlimited` 时 `limit` 是 `None`。`budget_proxy.decide` 是纯函数，三种答案：`unlimited`、`{remaining:.4f} of budget remaining`、`budget spent: {spent:.4f} of {limit:.4f}`。
+- `UsageService.project_credits()`（`usage/ledger.py` 的余额）给出 `credits_used` 与 `credits_total`；`unlimited` 时 `limit` 是 `None`。`budget_proxy.decide` 是纯函数，三种答案：`unlimited`、`{remaining:.4f} of budget remaining`、`budget spent: {spent:.4f} of {limit:.4f}`。
 - 同一个计算额度余额，网关那把 `max_budget` 也是按它折成美元价——**一个预算，两个执行点**。
 - 拒绝时顺手告诉房间：`note_credits_refusal(place)` 给正在跑的那个回合发一条额度耗尽事件（#715）。它用自己的数据库会话。
 
