@@ -4,8 +4,8 @@ from datetime import UTC, datetime
 
 from sqlalchemy import and_, select
 
-from app.domain.agent.models import AgentTurn
 from app.domain.block.models import Block, consumed_turn
+from app.domain.delivery.agent import work_interval_is_over
 from app.domain.delivery.models import Delivery, NativeInput
 
 
@@ -110,24 +110,6 @@ async def reconcile_answer(session, delivery_id, attempt_id):
     return True
 
 
-def _work_interval_is_over():
-    """This input's own work interval is one the platform has ended.
-
-    Correlated on the input row: an input names its work by ``work_id``, and
-    the platform ends work by stamping that interval's ``stopped_at``. A work
-    the platform has no row for is not over — silence is not a conclusion.
-    """
-    return (
-        select(AgentTurn.id)
-        .where(
-            AgentTurn.id == NativeInput.work_id,
-            AgentTurn.topic_id == NativeInput.topic_id,
-            AgentTurn.stopped_at.is_not(None),
-        )
-        .exists()
-    )
-
-
 def unread_input_with_over_work():
     """No native receipt can settle this input any more, so it may not hold.
 
@@ -142,12 +124,14 @@ def unread_input_with_over_work():
     not allow. A batch that was an addition to another work (a mid-turn
     delivery) is different: a transport error does not prove the working
     session did not read it, so its outcome stays unknown and it keeps holding
-    and blocking the seat.
+    and blocking the seat. Whether that work is over is the turn interval's
+    fact (:func:`app.domain.delivery.agent.work_interval_is_over`) — a work the
+    platform has no row for is not over, silence is not a conclusion.
     """
     return and_(
         NativeInput.echoed_at.is_(None),
         NativeInput.input_id == NativeInput.work_id,
-        _work_interval_is_over(),
+        work_interval_is_over(),
     )
 
 

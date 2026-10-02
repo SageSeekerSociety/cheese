@@ -22,7 +22,7 @@ from app.domain.delivery.ask_receipt_wait import (
     AskReceiptPending,
 )
 from app.domain.delivery.ledger import DeliveryEvent, dedup_key
-from app.domain.delivery.models import Delivery, TimedDelivery
+from app.domain.delivery.models import Delivery, NativeInput, TimedDelivery
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import Topic, TopicStatus
@@ -38,6 +38,23 @@ class DeliveryTargetChanged(ValidationError):
 
 def now():
     return datetime.now(UTC)
+
+
+def work_interval_is_over():
+    """Whether this input's own work interval is one the platform ended.
+
+    A correlated EXISTS over the turn intervals, anchored on the input row that
+    names its work (``work_id``/``topic_id``). The fact belongs to the agent
+    domain's turn intervals, and that domain already imports this one (it reads
+    answer ownership), so the question goes out through this seam — importing
+    the turn models on the delivery side would close a domain cycle (C3 in
+    backend/.importlinter).
+    """
+    from app.domain.agent.runtime import AgentTurnRepository
+
+    return AgentTurnRepository.interval_is_over(
+        turn_id=NativeInput.work_id, topic_id=NativeInput.topic_id
+    )
 
 
 async def instance_for_seat(session, project_id, seat):
