@@ -247,11 +247,6 @@ async def lifespan(_: FastAPI):
             ),
             sessions=async_session_factory,
         )
-        from app.api.doc_ai_runtime import scan_document_ai
-
-        jobs.append(
-            background.PeriodicRunner("document AI requests", 5, scan_document_ai)
-        )
         runs = JobRuns(async_session_factory)
         try:
             last_runs = await runs.load(

@@ -23,8 +23,6 @@ from app.domain.block.documents import DocumentWriter, persisted_notice
 from app.domain.block.models import Block
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
-from app.domain.doc_ai import acceptance
-from app.domain.doc_ai.acceptance import ProposalAcceptance
 from app.domain.living_doc.services import DocumentJournal, content_hash
 from app.domain.topic import naming
 from app.domain.topic.doc_change import summarize_doc_change
@@ -59,11 +57,22 @@ async def store(
     actors: list[str],
     operation: dict | None,
     quiet: bool = False,
+    suggestions: list[dict] | None = None,
+    requested_by: str | None = None,
+    edits: list[dict] | None = None,
+    suggested: bool = False,
+    reason: str | None = None,
 ) -> Stored:
     """Record one store. ``content`` None stores the Yjs state alone. A
     ``quiet`` store records its version without a conversation event: the
     service's first conversion of a Markdown document, which only respells
-    it."""
+    it.
+
+    ``suggestions`` are the ones pending in the stored state, kept with it on
+    every store. A ``suggested`` store proposed ``edits`` (each with its
+    ``suggestion_id``) without changing the text: no version, only the line
+    that says so. ``requested_by`` is who an edit was made for.
+    """
     place = await TopicService(db).place_or_404(room_id)
     journal = DocumentJournal(db)
     await journal.lock(room_id)
@@ -78,16 +87,36 @@ async def store(
             operation_id=operation_id,
             payload=operation["payload"],
         )
-    await journal.put_state(room_id, state)
+    proposed = [e["suggestion_id"] for e in edits or [] if e.get("suggestion_id")]
+    await journal.put_state(
+        room_id,
+        state,
+        suggestions,
+        reasons={sid: reason for sid in proposed} if reason else None,
+    )
     if claim is not None and claim.receipt is not None:
         # A replayed operation: its version is already recorded. The state the
         # service sent still holds it, so keeping that state loses nothing.
         return Stored(answer=claim.receipt)
     blocks = BlockRepository(db)
+    writer = DocumentWriter(db, summarize_doc_change)
+    if suggested:
+        notice = await writer.suggest(
+            room_id=room_id,
+            project_id=place.project_id,
+            actor=actors[0],
+            suggestion_ids=proposed,
+            reason=reason,
+        )
+        doc = await blocks.doc_root(room_id)
+        return Stored(
+            answer=snapshot(doc, None) if doc else {"doc_version": 0},
+            notice=notice,
+            merged=writer.notice_merged,
+        )
     if content is None:
         doc = await blocks.doc_root(room_id)
         return Stored(answer={"doc_version": doc.doc_version if doc else 0})
-    writer = DocumentWriter(db, summarize_doc_change)
     doc, notice = await writer.record(
         room_id=room_id,
         project_id=place.project_id,
@@ -95,6 +124,8 @@ async def store(
         actors=actors,
         operation_id=operation_id,
         quiet=quiet,
+        requested_by=requested_by,
+        edits=edits,
     )
     changed = doc is not None
     if doc is None:
@@ -109,14 +140,6 @@ async def store(
     if doc is None:
         # An operation that wrote an empty document into a room that has none.
         receipt = {"doc_version": 0, "operation_id": str(operation_id)}
-    elif claim.action == acceptance.ACTION:
-        receipt = await ProposalAcceptance(db).complete(
-            room_id=room_id,
-            payload=operation["payload"],
-            operation_id=operation_id,
-            verified_actor=operation["actor"],
-            doc=doc,
-        )
     else:
         receipt = snapshot(doc, operation_id)
     await journal.finish(claim, receipt)
@@ -141,7 +164,7 @@ async def announce(room_id: uuid.UUID, stored: Stored, chat: ChatService) -> Non
             await chat.notify_running_turn(room_id, line, blocks=[stored.notice.id])
     if stored.changed:
         # The editors already hold the text; what refreshes on this frame is
-        # everything derived from the stored version — comment anchors, the
-        # document AI's source, the overview.
+        # everything derived from the stored version — comment anchors and the
+        # overview.
         await broker.publish(str(room_id), {"type": "state", "resource": "doc"})
         naming.nudge(room_id, "signal")

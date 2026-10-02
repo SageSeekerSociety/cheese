@@ -81,11 +81,13 @@ export function useDocCommentDraft(
   const sending = computed(() => current.value?.sending ?? false)
   const errorMsg = computed(() => current.value?.error ?? null)
 
-  function open(target: Target) {
+  /** 开一段评论草稿。`prefill` 只写进还空着的草稿：同一处已经写了的字不被换掉。 */
+  function open(target: Target, prefill?: string) {
     const s = state.value
     if (!s) return
     const key = JSON.stringify([target.anchorId, target.quote])
     s.drafts[key] ??= { target: { ...target }, text: '', revision: 0, sending: false, error: null }
+    if (prefill && !s.drafts[key].text.trim()) s.drafts[key].text = prefill
     s.active = key
     s.hidden = false
   }

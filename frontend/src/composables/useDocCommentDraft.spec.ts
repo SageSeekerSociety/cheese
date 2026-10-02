@@ -162,3 +162,24 @@ describe('closing is distinct from discarding comment drafts', () => {
     d.scope.stop()
   })
 })
+
+describe('asking the AI teammate about a selection', () => {
+  it('starts the comment with the mention, and sends it with the mention', async () => {
+    const d = fixture()
+    d.open(first, '@芝士 ')
+    expect(d.text.value).toBe('@芝士 ')
+    d.text.value += '这个数字是怎么来的'
+    await d.submit()
+    expect(d.send).toHaveBeenCalledWith(d.topic.value, '@芝士 这个数字是怎么来的', first.anchorId, first.quote)
+    d.scope.stop()
+  })
+
+  it('keeps what was already written on the same selection', () => {
+    const d = fixture()
+    d.open(first)
+    d.text.value = '写了一半的评论'
+    d.open(first, '@芝士 ')
+    expect(d.text.value).toBe('写了一半的评论')
+    d.scope.stop()
+  })
+})

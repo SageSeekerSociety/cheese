@@ -1,6 +1,8 @@
 // The backend's side of a document: where it is loaded from and stored to
 // (backend/app/api/routes/living_docs.py, the internal router).
 
+import type { PendingSuggestion } from '../src/lib/docSchema'
+
 export interface Loaded {
   /** The stored Yjs state, base64; null for a document never opened live. */
   state: string | null
@@ -17,6 +19,15 @@ export interface StoreBody {
   operation?: Record<string, unknown> | null
   /** The first conversion from Markdown: recorded without a conversation event. */
   converted?: boolean
+  /** Every suggestion still waiting for a decision, after this store. */
+  suggestions: PendingSuggestion[]
+  /** An edit applied for someone: who asked for it. */
+  requested_by?: string | null
+  /** An edit's passages, as the writer named them. */
+  edits?: { old: string; new: string; suggestion_id?: string }[] | null
+  /** The edit was proposed, not applied: the text did not change. */
+  suggested?: boolean
+  reason?: string | null
 }
 
 /** The backend's error envelope (backend/app/core/errors.py). */

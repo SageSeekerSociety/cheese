@@ -11,6 +11,7 @@
 // 传进来。它不认识名册，也不认识 socket。
 import type { Block } from '../../cx_types'
 import type { FaceState } from '../../lib/agentFace'
+import type { DocReviewRequest } from '../../lib/docReview'
 import type { NoticeAgent, PlatformNotice } from '../../lib/platformNotice'
 
 import { computed, nextTick, ref, watch } from 'vue'
@@ -57,7 +58,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (e: 'open-resource', resource: string, turnId?: string): void
+  (e: 'open-resource', resource: string, turnId?: string, review?: DocReviewRequest): void
   (e: 'open-card', taskId: string): void
   (e: 'retry'): void
   // 「标题自动更新为…」那一行的撤销：带着这一行自己的 id，后端据此找回原标题。
@@ -120,6 +121,17 @@ const splitTask = computed(() => {
   const id = (props.block.meta as Record<string, unknown> | null | undefined)?.task_id
   return typeof id === 'string' && id ? id : null
 })
+
+// 有人让 AI 队友改的文档：行尾是「改了 N 处 · 查看改动」，打开文档一处处看、可以还原。
+// 名字按房间里的叫法（昵称），找不到就用 handle。
+const docRequest = computed(() => (props.notice.mode === 'action' ? props.notice.docRequest ?? null : null))
+function reviewDoc() {
+  const req = docRequest.value
+  if (!req) return
+  const requester = props.refs.mentionNames[req.requestedBy] || req.requestedBy
+  emit('open-resource', 'doc', props.block.turn_id ?? undefined, { requester, edits: req.edits })
+}
+const docSuggestions = computed(() => (props.notice.mode === 'action' ? props.notice.docSuggestions ?? 0 : 0))
 
 // 哪些资源的行尾带一颗「去看看」按钮，以及那颗按钮上写什么（目录里的键）。
 const ACTION_META: Record<string, { btn: string }> = {
@@ -226,8 +238,23 @@ const ACTION_META: Record<string, { btn: string }> = {
          through the shared token→chip path so the actor is clickable. -->
         <span class="sys-text">
           <span v-html="renderPlain(notice.text)" />
+          <template v-if="docRequest">
+            <span class="sys-sep"> · </span>
+            <span>{{ t('work.room.notice.docEditCount', { n: docRequest.edits.length }) }}</span>
+            <button type="button" class="sys-btn sys-btn--inline" @click="reviewDoc">
+              {{ t('work.room.notice.viewChanges') }}
+            </button>
+          </template>
           <button
-            v-if="ACTION_META[notice.resource]?.btn"
+            v-else-if="docSuggestions"
+            type="button"
+            class="sys-btn sys-btn--inline"
+            @click="emit('open-resource', 'doc', block.turn_id ?? undefined)"
+          >
+            {{ t('work.room.notice.viewSuggestions') }}
+          </button>
+          <button
+            v-else-if="ACTION_META[notice.resource]?.btn"
             type="button"
             class="sys-btn sys-btn--inline"
             @click="
@@ -242,7 +269,8 @@ const ACTION_META: Record<string, { btn: string }> = {
           </button>
         </span>
       </div>
-      <details v-if="notice.detail" class="sys-more">
+      <!-- 有人让改的那一种，改了哪几处在「查看改动」里看，不再摊一份差异。 -->
+      <details v-if="notice.detail && !docRequest" class="sys-more">
         <summary class="sys-line">
           <span class="sys-text">{{ notice.detailLabel || t('work.room.notice.showDetail') }}</span>
           <v-icon class="sys-chev" size="14">mdi-chevron-right</v-icon>

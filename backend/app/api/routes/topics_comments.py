@@ -12,9 +12,10 @@ What moves, verbatim: `GET /topics/{topic_id}/docs` (the living doc's
 structured node tree, B1 spec §5, in document order) and
 `GET`/`POST /topics/{topic_id}/comments` (段落评论, eval B4: inline comments,
 each anchored to a doc node via `reply_to`, plus the write side that lands one
-without starting a room-agent turn). They are one group because they are two
-halves of one surface -- the tree the comment panel draws and the comments that
-hang off it: the read side of the doc panel's annotations.
+and starts a room-agent turn only when it @-mentions the agent). They are one
+group because they are two halves of one surface -- the tree the comment panel
+draws and the comments that hang off it: the read side of the doc panel's
+annotations.
 
 What stays behind, and why. `/doc` and `/overview` stay in topics.py. Moving
 `edit_topic_doc` would orphan `agent_notice`, its only reader there, and
@@ -50,10 +51,13 @@ the same prefix and tags, is all it takes.
 """
 
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from app.api.auth import ActorResolverDep
+from app.api.deps import get_chat_service, get_work_runner
+from app.api.doc_comment_mentions import hand_to_agent, mentioned_seat
 from app.api.response import ok, page
 from app.api.routes.topics import (
     AuthorType,
@@ -63,6 +67,8 @@ from app.api.routes.topics import (
     _actor_in_place,
 )
 from app.core.errors import ValidationError
+from app.domain.agent.chat import ChatService
+from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.block.comment_threads import CommentThreads
 from app.domain.block.notice_text import say
 from app.domain.block.schemas import BlockOut
@@ -108,9 +114,13 @@ async def add_comment(
     body: dict,
     db: DbSession,
     resolver: ActorResolverDep,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+    runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
 ) -> dict:
     """Add an inline comment anchored to a doc node (eval B4). Dual-use like the
-    doc panel — a human selects text and comments; not cheese-gated."""
+    doc panel — a human selects text and comments; not cheese-gated. A person's
+    comment that @-mentions the room's agent hands it to that agent
+    (``app.api.doc_comment_mentions``); any other comment starts nothing."""
     place = await TopicService(db).place_or_404(topic_id)
     await DocumentJournal(db).lock(place.room_id)
     anchor = (body.get("anchor") or "").strip()
@@ -164,5 +174,17 @@ async def add_comment(
     )
     await CommentThreads(db).capture(comment, current=True)
     payload = BlockOut.model_validate(comment).model_dump(mode="json")
+    seat = await mentioned_seat(db, place, actor, content)
     await db.commit()
+    if seat is not None:
+        hand_to_agent(
+            chat,
+            runner,
+            place=place,
+            actor=actor,
+            seat=seat,
+            thread_id=comment.id,
+            content=content,
+            quote=quote,
+        )
     return ok(payload)

@@ -19,7 +19,6 @@ import * as directives from 'vuetify/directives'
 import { render, waitFor } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const getDoc = vi.fn()
 const getComments = vi.fn()
 const getDocNodes = vi.fn()
 
@@ -30,7 +29,6 @@ vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
   return {
     ...actual,
-    getDoc: (...a: unknown[]) => getDoc(...a),
     getComments: (...a: unknown[]) => getComments(...a),
     getDocNodes: (...a: unknown[]) => getDocNodes(...a),
   }
@@ -63,10 +61,6 @@ function sub(id: string, title: string, status: string): Topic {
   return { ...topic, id, parent_id: 't1', title, status } as Topic
 }
 
-function doc(content: string, version = 1): Block {
-  return { id: 'd1', kind: 'doc', content, doc_version: version } as unknown as Block
-}
-
 let vuetify: ReturnType<typeof createVuetify>
 
 beforeAll(() => {
@@ -75,7 +69,6 @@ beforeAll(() => {
 
 beforeEach(() => {
   resetRooms()
-  getDoc.mockReset()
   getComments.mockReset()
   getDocNodes.mockReset()
   getComments.mockResolvedValue({ data: [], total: 0 })
@@ -92,7 +85,6 @@ function para(container: HTMLElement, text: string): HTMLElement {
 describe('文档存回之后重读已存的那一版时', () => {
   it('编辑器里的段落原样不动', async () => {
     const same = '# 标题\n\n第一段\n'
-    getDoc.mockResolvedValue(doc(same, 1))
     seedRoom(topic.id, same)
     const { container, rerender } = render(Doc, {
       props: { topic, activityTick: 0, topicList: [] },
@@ -101,11 +93,9 @@ describe('文档存回之后重读已存的那一版时', () => {
     await waitFor(() => expect(container.textContent).toContain('第一段'))
     const before = para(container as HTMLElement, '第一段')
 
-    getDoc.mockResolvedValue(doc(same, 2))
-
     seedRoom(topic.id, same)
     await rerender({ topic, activityTick: 1, topicList: [] })
-    await waitFor(() => expect(getDoc).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(getDocNodes).toHaveBeenCalledTimes(2))
 
     expect(para(container as HTMLElement, '第一段')).toBe(before)
   })
@@ -113,7 +103,6 @@ describe('文档存回之后重读已存的那一版时', () => {
 
 describe('侧栏话题列表变化时', () => {
   it('列表换了新数组但内容没变，不再重拉文档节点和评论', async () => {
-    getDoc.mockResolvedValue(doc('第一段\n', 1))
     seedRoom(topic.id, '第一段\n')
     const list = [sub('s1', '一件活', 'active')]
     const { container, rerender } = render(Doc, {
@@ -132,7 +121,6 @@ describe('侧栏话题列表变化时', () => {
   })
 
   it('支线换了标题就重新读，徽章跟着改字', async () => {
-    getDoc.mockResolvedValue(doc('第一段\n', 1))
     seedRoom(topic.id, '第一段\n')
     getDocNodes.mockResolvedValue({
       data: [{ id: 'n1', kind: 'doc_node', content: '第一段', upgraded_to_topic_id: 's1' } as unknown as Block],

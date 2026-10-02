@@ -1,13 +1,18 @@
 """Room document replies and resolution share member authorization and receipts."""
 
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from app.api.auth import ActorResolverDep
+from app.api.deps import get_chat_service, get_work_runner
+from app.api.doc_comment_mentions import hand_to_agent, mentioned_seat
 from app.api.doc_identity import operation_actor
 from app.api.response import ok, page
 from app.api.routes.topics import DbSession, _actor_in_place
+from app.domain.agent.chat import ChatService
+from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.block.comment_schemas import ReplyIn, ThreadMutation
 from app.domain.block.comment_threads import CommentThreads
 from app.domain.living_doc.services import DocumentJournal
@@ -56,7 +61,9 @@ async def read_thread(
     return ok(result)
 
 
-async def mutate(db, resolver, topic_id, comment_id, body, action):
+async def mutate(db, resolver, topic_id, comment_id, body, action, hand_off=None):
+    """Apply one thread mutation once per operation id. ``hand_off(place,
+    actor)`` runs after a first application commits, never on a replay."""
     place, actor, identity = await member_in_room(db, resolver, topic_id)
     journal = DocumentJournal(db)
     operation = await journal.claim(
@@ -83,7 +90,10 @@ async def mutate(db, resolver, topic_id, comment_id, body, action):
     )
     receipt = ok(result)
     await journal.finish(operation, receipt)
+    after = await hand_off(db, place, actor) if hand_off else None
     await db.commit()
+    if after is not None:
+        after()
     return receipt
 
 
@@ -94,8 +104,29 @@ async def reply(
     body: ReplyIn,
     db: DbSession,
     resolver: ActorResolverDep,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+    runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
 ) -> dict:
-    return await mutate(db, resolver, topic_id, comment_id, body, "reply")
+    """A reply that @-mentions the room's agent hands the thread to it
+    (``app.api.doc_comment_mentions``)."""
+
+    async def hand_off(db, place, actor):
+        seat = await mentioned_seat(db, place, actor, body.content)
+        if seat is None:
+            return None
+        root = await CommentThreads(db).root(place.room_id, comment_id)
+        return lambda: hand_to_agent(
+            chat,
+            runner,
+            place=place,
+            actor=actor,
+            seat=seat,
+            thread_id=comment_id,
+            content=body.content,
+            quote=root.anchor_quote,
+        )
+
+    return await mutate(db, resolver, topic_id, comment_id, body, "reply", hand_off)
 
 
 @router.post("/{topic_id}/comments/{comment_id}/resolve")

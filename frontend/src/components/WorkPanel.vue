@@ -24,6 +24,7 @@
 // 话，聊一小时能攒出二十个页签。
 import type { OpenFileTab } from '../composables/useTopicMemory'
 import type { AgentControlState, Block, PreviewInfo, Topic } from '../cx_types'
+import type { DocReviewRequest } from '../lib/docReview'
 import type { MemberActivityLine } from '../lib/memberActivity'
 import type { SubmitPreviewQuestion } from '../lib/previewQuestion'
 import type { CardPhase } from '../lib/topicState'
@@ -85,6 +86,8 @@ const props = withDefaults(
     memberNames?: Record<string, string>
     /** 项目 AI 队友的名字（项目可以给它改名），提示和空态里用它，不写死「芝士」。 */
     agentName?: string
+    /** 项目 AI 队友的 handle：文档评论里「问…」点的是它。 */
+    agentHandle?: string | null
     // 此刻谁在这个房间里忙（对话栏从 socket 上学来）。现场那一格画其中在干活的队友。
     activity?: MemberActivityLine[]
   }>(),
@@ -101,6 +104,7 @@ const props = withDefaults(
     cardPhase: undefined,
     withChat: false,
     agentName: () => t('work.room.defaultAgentName'),
+    agentHandle: null,
     activity: () => [],
   }
 )
@@ -465,6 +469,10 @@ function highlightTurn(turnId: string) {
   setTab('overview')
   void nextTick(() => overviewRef.value?.highlightTurn(turnId))
 }
+function reviewDoc(request: DocReviewRequest) {
+  setTab('overview')
+  void nextTick(() => overviewRef.value?.reviewEdits(request))
+}
 // A chip is a path with no store, and a room has three: its own files (what 芝士
 // delivered and what people uploaded — no branch, no history), a task's worktree,
 // and the project's current code. So find the file FIRST and pick the tab from
@@ -557,7 +565,7 @@ function siteBlock(block: Block) {
   siteRef.value?.receive(block)
 }
 
-defineExpose({ pulse, highlightTurn, openFile, siteBlock })
+defineExpose({ pulse, highlightTurn, reviewDoc, openFile, siteBlock })
 </script>
 
 <template>
@@ -594,6 +602,7 @@ defineExpose({ pulse, highlightTurn, openFile, siteBlock })
           ref="overviewRef"
           :class="enterClass('overview')"
           :agent-name="agentName"
+          :agent-handle="agentHandle"
           :topic="topic"
           :activity-tick="activityTick"
           :topic-list="topicList"

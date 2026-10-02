@@ -4,7 +4,7 @@
  * 是它自己。在那些房间里再挂一份项目全局，读的人会以为这两块说的是这个房间。
  */
 import type { Component } from 'vue'
-import type { Block, Topic } from '../../cx_types'
+import type { Topic } from '../../cx_types'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -12,7 +12,6 @@ import * as directives from 'vuetify/directives'
 import { render, waitFor } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const getDoc = vi.fn()
 const getComments = vi.fn()
 const getDocNodes = vi.fn()
 const getOverviewAuto = vi.fn()
@@ -24,7 +23,6 @@ vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
   return {
     ...actual,
-    getDoc: (...a: unknown[]) => getDoc(...a),
     getComments: (...a: unknown[]) => getComments(...a),
     getDocNodes: (...a: unknown[]) => getDocNodes(...a),
     getOverviewAuto: (...a: unknown[]) => getOverviewAuto(...a),
@@ -61,10 +59,6 @@ const BLOCKS = [
   },
 ]
 
-function doc(content: string): Block {
-  return { id: 'd1', kind: 'doc', content, doc_version: 3 } as unknown as Block
-}
-
 let vuetify: ReturnType<typeof createVuetify>
 
 beforeAll(() => {
@@ -73,9 +67,7 @@ beforeAll(() => {
 
 beforeEach(() => {
   setLocale('zh-CN')
-  getDoc.mockReset()
   getOverviewAuto.mockReset()
-  getDoc.mockResolvedValue(doc('## 项目是什么\n\n给高中生做算法课。'))
   seedRoom(ROOT.id, '## 项目是什么\n\n给高中生做算法课。')
   seedRoom(ROOM.id, '## 项目是什么\n\n给高中生做算法课。')
   getComments.mockResolvedValue({ data: [], total: 0 })
