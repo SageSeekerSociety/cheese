@@ -788,7 +788,7 @@ async function onAnnotate(payload: AnnotateDraft) {
 }
 .file-image__error {
   padding: 6px 8px;
-  color: var(--danger, #e5484d);
+  color: var(--danger-ink);
   font-size: 13px;
   line-height: var(--lh-13);
 }

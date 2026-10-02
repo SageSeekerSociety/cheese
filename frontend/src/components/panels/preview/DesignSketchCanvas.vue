@@ -336,7 +336,7 @@ const textStyle = computed(() => {
   position: absolute;
   min-width: 80px;
   border: 1px dashed var(--accent);
-  background: var(--surface, #fff);
+  background: var(--surface);
   font: inherit;
   padding: 1px 2px;
 }
