@@ -381,6 +381,7 @@ async def test_a_send_that_lands_as_the_reader_starts_to_wait_is_read_at_once(
             Opening("system"),
             work_id=uuid.uuid4(),
             on_mark=lambda _: None,
+            register_input=AsyncMock(),
         )
     )
     await asyncio.sleep(0.1)

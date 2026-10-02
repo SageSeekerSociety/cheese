@@ -101,7 +101,9 @@ async def test_a_seat_whose_previous_runner_is_gone_is_taken_anyway(gone):
     await pool.activate(session, pi)
 
     native.close.assert_awaited_once()
-    assert await pool.deliver(session.topic_id, "follow up")
+    assert await pool.deliver(
+        session.topic_id, "follow up", register_input=AsyncMock()
+    )
     native.deliver.assert_not_awaited()
     pi.deliver.assert_awaited_once()
 
