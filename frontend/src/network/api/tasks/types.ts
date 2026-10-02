@@ -1,4 +1,10 @@
-import type { Task, TaskSubmissionSchemaEntry, TaskSubmitterType, TaskTeamMembershipLockPolicy } from '@/types'
+import type {
+  SpaceTeaching,
+  Task,
+  TaskSubmissionSchemaEntry,
+  TaskSubmitterType,
+  TaskTeamMembershipLockPolicy,
+} from '@/types'
 
 // 添加参与者身份类型
 export interface TaskParticipationIdentity {
@@ -42,6 +48,9 @@ export type PostTaskRequestData = {
   /** 随题一起发出去的材料。文件先经 `AttachmentsApi`（`POST /attachments`）传上来拿到
    *  id，建题时一次挂上——见 `TaskAttachmentPicker` 里对这条顺序的说明。 */
   attachmentIds?: number[]
+  /** 这道题自己的「给 AI 队友的指导」覆盖（#944）。整份替换；不带它 = 没说，
+   *  让空间的默认生效。 */
+  teaching?: SpaceTeaching
 }
 
 /** 一道题上的一份材料。**没有 url**：存储给的是直链，发出来就等于绕过下载那道门，
@@ -159,6 +168,8 @@ export type PatchTaskRequestData = {
   accessControlEnabled?: boolean
   accessDomainGroupIds?: number[]
   videoUrl?: string | null
+  /** 这道题自己的「给 AI 队友的指导」覆盖（#944）。整份替换；省掉它 = 不动。 */
+  teaching?: SpaceTeaching
   endedAt?: number | null
   hasEndedAt?: boolean
 }

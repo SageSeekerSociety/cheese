@@ -15,7 +15,7 @@
 </template>
 
 <script setup lang="ts">
-// 空间设置：盖在整个窗口上的一层（components/common/SettingsOverlay），左边五栏，
+// 空间设置：盖在整个窗口上的一层（components/common/SettingsOverlay），左边六栏，
 // 每一栏是 `manage/settings` 下的一条子路由，可以单独链接。关掉回到打开之前的那一页；
 // 直接从链接打开时回这个空间的题目列表。
 import { computed, watch } from 'vue'
@@ -45,6 +45,7 @@ const SECTIONS = [
   { name: 'SpacesDetailSettingsTemplates', label: 'spaces.settings.tabs.templates', icon: 'mdi-file-document-outline' },
   { name: 'SpacesDetailSettingsInviteCodes', label: 'spaces.settings.tabs.inviteCodes', icon: 'mdi-ticket-outline' },
   { name: 'SpacesDetailSettingsDomainGroups', label: 'spaces.settings.tabs.domainGroups', icon: 'mdi-email-outline' },
+  { name: 'SpacesDetailSettingsGuidance', label: 'spaces.settings.tabs.guidance', icon: 'mdi-robot-outline' },
 ]
 
 const groups = computed(() => [

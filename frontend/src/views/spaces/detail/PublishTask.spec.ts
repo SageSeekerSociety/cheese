@@ -493,6 +493,91 @@ describe('发题页：手写一道', () => {
   })
 })
 
+// ============ 给 AI 队友的指导（#944）============
+//
+// 这道题自己的那一层覆盖：六格全空 = 不设，仍旧听空间（与项目集）的默认；写了一格
+// 就整份带上。两条发题路都要带它 —— 手写一道走 `POST /tasks`，PDF 批量走
+// `taskOptions`。
+
+describe('发题页：给 AI 队友的指导', () => {
+  it('这一栏在页面上；六格全空就不带它 —— 让空间的默认生效', async () => {
+    await boardAs(MEMBER)
+    const view = await mount()
+
+    expect(view.getByTestId('publish-teaching')).toBeTruthy()
+
+    await fillRequired(view)
+    await waitFor(() => expect(textOf(view.container, 'publish-ok')).toBe('看起来没问题。'))
+    await submitForm(view)
+    await waitFor(() => expect(createTask).toHaveBeenCalledTimes(1))
+
+    // 键在、值是 `undefined`（与 `attachmentIds` 同一个写法）：后端读到的与「没有
+    // 这一项」一样，所以这道题没有覆盖，仍旧用空间的默认。
+    expect((createTask.mock.calls[0][0] as { teaching?: unknown }).teaching).toBeUndefined()
+  })
+
+  it('写了角色设定与周次：整份 POST 出去，空格子落成空数组', async () => {
+    await boardAs(MEMBER)
+    const view = await mount()
+    await fillRequired(view)
+
+    await fireEvent.update(view.getByLabelText('角色设定'), '第 {current_week} 周：讲完链表了。')
+    await fireEvent.update(view.getByLabelText('当前周次'), '3')
+
+    await waitFor(() => expect(textOf(view.container, 'publish-ok')).toBe('看起来没问题。'))
+    await submitForm(view)
+    await waitFor(() => expect(createTask).toHaveBeenCalledTimes(1))
+
+    expect((createTask.mock.calls[0][0] as { teaching?: unknown }).teaching).toEqual({
+      systemPrompt: '第 {current_week} 周：讲完链表了。',
+      currentWeek: 3,
+      allowedTopics: [],
+      avoidInCode: [],
+      materialIds: [],
+      knowledgeIds: [],
+    })
+  })
+
+  it('高级选项里的清单也一起走：逗号分隔、中英文都认', async () => {
+    await boardAs(MEMBER)
+    const view = await mount()
+    await fillRequired(view)
+
+    await fireEvent.click(view.getByText('高级选项'))
+    const topics = await view.findByLabelText('目前的内容范围')
+    await fireEvent.update(topics, '链表，栈, 队列')
+
+    await waitFor(() => expect(textOf(view.container, 'publish-ok')).toBe('看起来没问题。'))
+    await submitForm(view)
+    await waitFor(() => expect(createTask).toHaveBeenCalledTimes(1))
+
+    expect((createTask.mock.calls[0][0] as { teaching: { allowedTopics: string[] } }).teaching.allowedTopics).toEqual([
+      '链表',
+      '栈',
+      '队列',
+    ])
+  })
+
+  it('PDF 批量那条路带着同一份指导（taskOptions 里）', async () => {
+    await boardAs(MEMBER)
+    const view = await mount()
+
+    // 写在切换之前：PDF 那一态里没有这张卡（它属于「手写一道」那一半），但这一页的
+    // 状态活着，切过去照样带得走。
+    await fireEvent.update(view.getByLabelText('当前周次'), '5')
+    await switchToPdf(view)
+    await pick(view.getByLabelText('上传题目 PDF') as HTMLInputElement, pdfFile())
+    await fireEvent.click(view.getByRole('button', { name: '解析成题目草稿' }))
+    await waitFor(() => expect(view.container.querySelector('[data-testid="pdf-meta"]')).not.toBeNull())
+
+    await fireEvent.click(view.getByRole('button', { name: '确认发布 2 道' }))
+    await waitFor(() => expect(confirmFromPdf).toHaveBeenCalledTimes(1))
+
+    const sent = confirmFromPdf.mock.calls[0][0] as { taskOptions: { teaching?: { currentWeek?: number } } }
+    expect(sent.taskOptions.teaching?.currentWeek).toBe(5)
+  })
+})
+
 // ============ 从 PDF 生成 ============
 //
 // 这一条路是原型那一版：解析、逐条改、勾着发、就地给回执。断言量与第五批同一套
