@@ -18,6 +18,7 @@ import StarterKit from '@tiptap/starter-kit'
 import { common, createLowlight } from 'lowlight'
 
 import { docMarked } from './markdown'
+import { suggestionMarks } from './suggestions'
 
 // One lowlight instance (common ≈ 37 languages), shared by every editor.
 const lowlight = createLowlight(common)
@@ -227,5 +228,8 @@ export function docExtensions(opts: DocExtensionsOptions = {}): AnyExtension[] {
     }),
     DocCodeBlock.configure({ lowlight }),
     MarkdownLinkInput,
+    // Suggested changes belong to the shared document; a form field is written
+    // by one person and has nobody to suggest to.
+    ...(opts.standalone ? [] : suggestionMarks),
   ]
 }
