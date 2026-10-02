@@ -4,8 +4,10 @@
 export type PlanAudience = 'personal' | 'team' | 'both'
 export type ModelTier = 'included' | 'premium' | 'frontier'
 
+/** 时间窗口：按小时（从团队第一次调用起算）或按周、按月（日历重置），二者给一个。 */
 export interface PlanWindow {
-  hours: number
+  hours?: number
+  calendar?: 'week' | 'month'
   credits: number
 }
 
@@ -13,14 +15,17 @@ export interface Plan {
   key: string
   name: string
   audience: PlanAudience
-  /** 每期发放的额度；`null` 与 `unlimited` 一起出现时表示不限。 */
+  /** 每月发放的额度；按时间窗口限额或不限的方案为 `null`。 */
   credits_per_period: number | null
   period: string
+  /** 按时间窗口限额的方案的窗口；按月发放的方案为空。 */
   windows: PlanWindow[]
   /** `null` = 不限档位。 */
   model_tiers: ModelTier[] | null
   unlimited: boolean
   admin_only: boolean
+  /** 排序，小的在前：列表按它排，模型选择提示「需要哪个方案」时取排在最前、又能用的那个。 */
+  rank: number
   /** 有多少个团队在这个方案上。 */
   team_count: number
   /** 新团队默认挂在这个方案上。 */
@@ -98,9 +103,11 @@ export interface CreditAudit {
 export interface PlanInput {
   name: string
   audience: PlanAudience
+  /** 不限的方案两样都不传。 */
   credits_per_period?: number | null
-  windows: PlanWindow[]
+  windows?: PlanWindow[]
   model_tiers: ModelTier[] | null
+  rank: number
 }
 
 export interface GrantInput {
@@ -138,14 +145,16 @@ export function meterTone(ratio: number): MeterTone {
   return 'ink'
 }
 
-/** 本月方案额度那一格画什么：不限、还没发，或已用多少。 */
+/** 本月方案额度那一格画什么：不限、按时间窗口限额（不发月额度）、还没发，或已用多少。 */
 export type PeriodUse =
   | { kind: 'unlimited' }
+  | { kind: 'windows' }
   | { kind: 'notIssued' }
   | { kind: 'used'; used: number; total: number; ratio: number }
 
-export function periodUse(period: CreditPeriod, plan: Pick<Plan, 'unlimited'> | null): PeriodUse {
+export function periodUse(period: CreditPeriod, plan: Pick<Plan, 'unlimited' | 'windows'> | null): PeriodUse {
   if (plan?.unlimited) return { kind: 'unlimited' }
+  if (plan?.windows.length) return { kind: 'windows' }
   if (period.credits_total === null) return { kind: 'notIssued' }
   const total = period.credits_total
   const ratio = total > 0 ? Math.min(1, period.credits_used / total) : 1
@@ -153,15 +162,19 @@ export function periodUse(period: CreditPeriod, plan: Pick<Plan, 'unlimited'> | 
 }
 
 /** 可用余额：手上还能花的额度之和。本月方案额度还没发时，把方案这个月要发的那一份
- *  算进去（第一次调用时就会发）。方案不限时为 `null`。 */
+ *  算进去（第一次调用时就会发）。按时间窗口限额的方案不动用方案额度，只算方案之外的
+ *  额度。方案不限时为 `null`。 */
 export function availableCredits(
   packs: CreditPack[],
   period: CreditPeriod,
-  plan: Pick<Plan, 'unlimited' | 'credits_per_period'> | null
+  plan: Pick<Plan, 'unlimited' | 'credits_per_period' | 'windows'> | null
 ): number | null {
   if (plan?.unlimited) return null
-  const held = packs.reduce((sum, pack) => sum + Math.max(0, pack.credits_total - pack.credits_used), 0)
-  return period.credits_total === null ? held + (plan?.credits_per_period ?? 0) : held
+  const windowed = !!plan?.windows.length
+  const held = packs
+    .filter((pack) => !(windowed && pack.source === 'plan_period'))
+    .reduce((sum, pack) => sum + Math.max(0, pack.credits_total - pack.credits_used), 0)
+  return period.credits_total === null && !windowed ? held + (plan?.credits_per_period ?? 0) : held
 }
 
 export type TeamKind = 'personal' | 'team'

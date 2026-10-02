@@ -31,6 +31,11 @@ beforeEach(() => setLocale('zh-CN'))
 
 // Monaco does not load under happy-dom (and is not what is under test): stand in
 // a textarea that speaks the same v-model / @save contract.
+// The document's version history: the last edit is read on open; none here.
+vi.mock('../../api/docHistory', () => ({
+  getDocVersions: async () => ({ versions: [], cursor: null }),
+  restoreDocVersion: async () => ({}),
+}))
 vi.mock('../CodeEditor.vue', () => ({
   default: {
     name: 'CodeEditor',

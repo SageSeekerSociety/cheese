@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { Plan } from '@/lib/adminCredits'
+import type { Plan, PlanWindow } from '@/lib/adminCredits'
 
 import { useI18n } from 'vue-i18n'
 
@@ -25,16 +25,16 @@ function creditsText(plan: Plan): string {
   return plan.credits_per_period === null ? '—' : fmtCredits(plan.credits_per_period, locale.value)
 }
 
+function windowText(w: PlanWindow): string {
+  const credits = fmtCredits(w.credits, locale.value)
+  if (w.calendar === 'week') return t('credits.plans.windowWeek', { credits })
+  if (w.calendar === 'month') return t('credits.plans.windowMonth', { credits })
+  return t('credits.plans.window', { hours: fmtCredits(w.hours ?? 0, locale.value), credits })
+}
+
 function windowsText(plan: Plan): string {
   if (!plan.windows.length) return t('credits.plans.noWindows')
-  return plan.windows
-    .map((w) =>
-      t('credits.plans.window', {
-        hours: fmtCredits(w.hours, locale.value),
-        credits: fmtCredits(w.credits, locale.value),
-      })
-    )
-    .join(locale.value === 'en' ? '; ' : '；')
+  return plan.windows.map(windowText).join(locale.value === 'en' ? '; ' : '；')
 }
 
 function tiersText(plan: Plan): string {

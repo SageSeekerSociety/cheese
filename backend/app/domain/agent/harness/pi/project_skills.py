@@ -2,9 +2,10 @@
 
 A room starts pi with `--no-skills`, which keeps out what the machine's owner
 keeps in their own home and also drops every skill the project itself carries.
-The project's come back through `--skill`, named here in the order pi 0.85.1
+The project's come back through `--skill`, named here in the order pi 1.0.0
 resolves them when it opens the project, trusted, on its own
-(`src/core/package-manager.ts` at tag v0.85.1):
+(`src/core/package-manager.ts` at tag v1.0.0; 0.85.1 到 1.0.0 之间这份文件只动
+了内建扩展与 npm 命令的解析，技能发现一个字没变):
 
 1. the plain paths in the project's `.pi/settings.json` `skills` array,
    relative to `.pi/`;

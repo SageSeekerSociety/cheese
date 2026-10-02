@@ -397,3 +397,47 @@ export function createTitleEcho(opts: { title: () => string | null | undefined }
     },
   })
 }
+
+// ---- 光标停在一个空段落上：段落里写一行淡字，说能打字，也能打「/」插入别的内容。整篇
+// 都是空的时候不用它（那时另有一句说这篇文档是空的），不能改、不在编辑时也不出现。----
+const emptyLineFocusKey = new PluginKey<boolean>('cheeseEmptyLineFocus')
+
+export function createEmptyLineHint(): Extension {
+  return TiptapExtension.create({
+    name: 'cheeseEmptyLineHint',
+    addProseMirrorPlugins() {
+      const editor = this.editor
+      return [
+        new Plugin<boolean>({
+          key: emptyLineFocusKey,
+          // 在不在编辑：焦点进出编辑区时记一笔，淡字跟着出现、消失。
+          state: {
+            init: () => false,
+            apply: (tr, focused) => (tr.getMeta(emptyLineFocusKey) as boolean | undefined) ?? focused,
+          },
+          props: {
+            handleDOMEvents: {
+              focus: (view) => {
+                view.dispatch(view.state.tr.setMeta(emptyLineFocusKey, true))
+                return false
+              },
+              blur: (view) => {
+                view.dispatch(view.state.tr.setMeta(emptyLineFocusKey, false))
+                return false
+              },
+            },
+            decorations(state) {
+              if (!editor.isEditable || !emptyLineFocusKey.getState(state)) return null
+              const { selection, doc } = state
+              const parent = selection.$from.parent
+              if (!selection.empty || parent.type.name !== 'paragraph' || parent.content.size > 0) return null
+              if (doc.childCount === 1 && doc.firstChild === parent) return null
+              const at = selection.$from.before()
+              return DecorationSet.create(doc, [Decoration.node(at, at + parent.nodeSize, { class: 'doc-empty-line' })])
+            },
+          },
+        }),
+      ]
+    },
+  })
+}

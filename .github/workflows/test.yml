@@ -111,9 +111,7 @@ jobs:
   # default from 23.6, and the alternative is carrying an experimental flag
   # that exists only to say so.
   extension:
-    # A merge-queue run takes this job on the cheese-ci pool, so it does not
-    # wait behind pull-request runs for one of the hosted runners.
-    runs-on: ${{ github.event_name == 'merge_group' && fromJSON('["self-hosted","cheese-ci"]') || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -356,6 +354,10 @@ jobs:
           TEST_SHARD: ${{ matrix.shard }}
         run: |
           mkdir -p "$RUNNER_TEMP/backend-results"
+          # The annotation step below can only name a shard's real reason if it
+          # can read the run's own output, so tee it here. pipefail keeps the
+          # step's status pytest's, not tee's — a bare pipe would report success.
+          set -o pipefail
           if [ "$TEST_LAYER" = pure ]; then
             export TEST_PG_BASE=postgresql+asyncpg://postgres:postgres@localhost:1
             export DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:1/no_database_here
@@ -369,7 +371,22 @@ jobs:
             -p scripts.ci_shard --ci-shard "$TEST_SHARD" \
             --ci-selection-output="$RUNNER_TEMP/backend-results" \
             --dist worksteal --tb=short --durations=30 \
-            --junitxml="$RUNNER_TEMP/backend-results/results.xml"
+            --junitxml="$RUNNER_TEMP/backend-results/results.xml" 2>&1 \
+            | tee "$RUNNER_TEMP/backend-results/pytest.log"
+
+      # A failing shard's check run used to carry one annotation: "Process
+      # completed with exit code 1." The reason is in the JUnit report pytest
+      # wrote and the log nobody can read back (the App has no actions:read), so
+      # restate the report — or, when collection died before it existed, the
+      # captured output — as annotations that name the tests that broke.
+      # failure() keeps this off the happy path; the script always exits 0, so
+      # it can never be the reason the job is red.
+      - name: Annotate the shard's failing cases
+        if: ${{ failure() }}
+        run: >-
+          uv run python -m scripts.report_failed_cases
+          "$RUNNER_TEMP/backend-results/results.xml"
+          --log "$RUNNER_TEMP/backend-results/pytest.log"
 
       - name: Verify the partition ran without skips
         if: ${{ !cancelled() }}
@@ -394,9 +411,7 @@ jobs:
     name: Backend coverage complete
     needs: [lint, test]
     if: ${{ !cancelled() }}
-    # A merge-queue run takes this job on the cheese-ci pool, so it does not
-    # wait behind pull-request runs for one of the hosted runners.
-    runs-on: ${{ github.event_name == 'merge_group' && fromJSON('["self-hosted","cheese-ci"]') || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

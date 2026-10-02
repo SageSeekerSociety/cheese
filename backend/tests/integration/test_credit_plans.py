@@ -132,26 +132,82 @@ def test_issued_credits_must_be_positive_and_lapse_in_the_future(client, admin):
     assert _teams(client, admin, "cplab")[0]["packs"] == []
 
 
-def test_an_administrator_edits_what_a_plan_issues(client, admin):
-    r = client.put(
-        "/admin/plans/free",
-        json={
-            "credits_per_period": 80,
-            "windows": [{"hours": 5, "credits": 20}],
-        },
-        headers=admin,
-    )
+def _plans(client, admin: dict) -> dict[str, dict]:
+    r = client.get("/admin/plans", headers=admin)
     assert r.status_code == 200, r.text
-    plans = {
-        p["key"]: p
-        for p in client.get("/admin/plans", headers=admin).json()["data"]["plans"]
-    }
+    return {p["key"]: p for p in r.json()["data"]["plans"]}
+
+
+def test_an_administrator_edits_what_a_plan_issues(client, admin):
+    r = client.put("/admin/plans/free", json={"credits_per_period": 80}, headers=admin)
+    assert r.status_code == 200, r.text
+    plans = _plans(client, admin)
     assert plans["free"]["credits_per_period"] == 80
-    assert plans["free"]["windows"] == [{"hours": 5, "credits": 20}]
     assert plans["reserve"]["unlimited"] is True
 
     r = client.put("/admin/plans/free", json={"model_tiers": ["gold"]}, headers=admin)
     assert r.status_code == 400
+
+
+def test_a_plan_bills_by_its_month_or_by_its_windows_never_both(client, admin):
+    windows = [{"hours": 5, "credits": 20}, {"calendar": "week", "credits": 60}]
+    both = {"name": "Both", "credits_per_period": 80, "windows": windows}
+    neither = {"name": "Neither"}
+    for body in (both, neither):
+        assert client.post("/admin/plans", json=body, headers=admin).status_code == 400
+    r = client.put("/admin/plans/free", json={"windows": windows}, headers=admin)
+    assert r.status_code == 400
+
+    r = client.put(
+        "/admin/plans/free",
+        json={"credits_per_period": None, "windows": windows},
+        headers=admin,
+    )
+    assert r.status_code == 200, r.text
+    free = _plans(client, admin)["free"]
+    assert free["credits_per_period"] is None
+    assert free["windows"] == windows
+
+    duplicate = [{"calendar": "week", "credits": 1}, {"calendar": "week", "credits": 2}]
+    empty = [{"hours": 5, "credits": 0}]
+    for bad in (duplicate, empty):
+        r = client.put("/admin/plans/free", json={"windows": bad}, headers=admin)
+        assert r.status_code in (400, 422), bad
+
+
+def test_a_plan_no_team_is_on_can_be_deleted_and_free_never(client, admin):
+    r = client.post(
+        "/admin/plans",
+        json={"key": "trial", "name": "Trial", "credits_per_period": 10},
+        headers=admin,
+    )
+    assert r.status_code == 201, r.text
+    team = _shared_team(client, _auth(client, "cp-owner"), "cplab")
+    r = client.put(
+        f"/admin/teams/{team}/plan", json={"plan_key": "trial"}, headers=admin
+    )
+    assert r.status_code == 200, r.text
+
+    assert client.delete("/admin/plans/trial", headers=admin).status_code == 400
+    assert client.delete("/admin/plans/free", headers=admin).status_code == 400
+    assert "trial" in _plans(client, admin)
+
+    r = client.put(
+        f"/admin/teams/{team}/plan", json={"plan_key": "free"}, headers=admin
+    )
+    assert r.status_code == 200, r.text
+    r = client.delete("/admin/plans/trial", headers=admin)
+    assert r.status_code == 200, r.text
+    assert "trial" not in _plans(client, admin)
+    audit = client.get("/admin/credits/audit", headers=admin).json()["data"]
+    actions = [e["action"] for e in audit["items"]]
+    assert "plan.delete" in actions
+
+    owner = _auth(client, "cp-owner")
+    assert client.delete("/admin/plans/reserve", headers=owner).status_code in (
+        401,
+        403,
+    )
 
 
 def test_the_migration_puts_every_existing_team_on_free(client):
@@ -233,7 +289,6 @@ def test_an_administrator_creates_a_plan_and_puts_a_matching_team_on_it(client, 
             "name": "School",
             "audience": "team",
             "credits_per_period": 500,
-            "windows": [{"hours": 168, "credits": 200}],
             "model_tiers": ["included", "premium"],
         },
         headers=admin,

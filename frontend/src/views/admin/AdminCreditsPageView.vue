@@ -60,6 +60,7 @@ const emit = defineEmits<{
   'open-plan': [plan: Plan | null]
   'update:planDialogOpen': [open: boolean]
   'save-plan': [input: PlanInput]
+  'delete-plan': []
   'update:query': [value: string]
   'update:planFilter': [value: string | null]
   'update:kindFilter': [value: TeamKind | null]
@@ -174,6 +175,7 @@ const kindOptions = computed(() => [
       :tier-models="props.tierModels"
       @update:model-value="emit('update:planDialogOpen', $event)"
       @submit="emit('save-plan', $event)"
+      @delete="emit('delete-plan')"
     />
 
     <AdminCreditTeamPanel

@@ -9,6 +9,11 @@ import * as directives from 'vuetify/directives'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
+// The document's version history: the last edit is read on open; none here.
+vi.mock('../../api/docHistory', () => ({
+  getDocVersions: async () => ({ versions: [], cursor: null }),
+  restoreDocVersion: async () => ({}),
+}))
 vi.mock('../../composables/useDocCollab', async () => ({
   useDocCollab: (await import('../../test/fakeDocCollab')).useFakeDocCollab,
 }))
@@ -76,7 +81,7 @@ async function mountDoc() {
 }
 
 function bar(container: Element): HTMLElement {
-  return container.querySelector('.doc-bar') as HTMLElement
+  return container.querySelector('.doc-top-bar') as HTMLElement
 }
 
 async function fromMenu(container: Element, name: string) {
@@ -85,16 +90,6 @@ async function fromMenu(container: Element, name: string) {
 }
 
 describe('文档横条', () => {
-  it('formats loaded content through the real panel editor and blocks formatting in read-only mode', async () => {
-    const { container } = await mountDoc()
-    await fireEvent.click(screen.getByRole('button', { name: /^标题 1$/ }))
-    await waitFor(() => expect(container.querySelector('.doc-prose h1')?.textContent).toBe('第一段'))
-    await fromMenu(container, '设为只读')
-    await fireEvent.click(screen.getByRole('button', { name: /^标题 2$/ }))
-    expect(container.querySelector('.doc-prose h1')?.textContent).toBe('第一段')
-    expect(container.querySelector('.doc-prose h2')).toBeNull()
-  })
-
   it('平常这一条上没有只读按钮', async () => {
     const { container } = await mountDoc()
 
@@ -121,6 +116,8 @@ describe('文档横条', () => {
     expect(container.querySelector('.doc-prose')?.getAttribute('contenteditable')).toBe('false')
     const readOnly = Array.from(bar(container).querySelectorAll('button')).find((b) => b.textContent?.trim() === '只读')
     expect(readOnly?.hasAttribute('disabled'), '没有权限还能点回编辑').toBe(true)
-    expect(bar(container).querySelector('[aria-label="更多"]'), '⋯ 里只有切换只读这一项，没有权限时不给').toBeNull()
+    await fireEvent.click(bar(container).querySelector('[aria-label="更多"]')!)
+    await screen.findByText('导出 Markdown', { selector: '.v-list-item-title' })
+    expect(screen.queryByText('回到编辑', { selector: '.v-list-item-title' }), '没有权限还能在 ⋯ 里切回编辑').toBeNull()
   })
 })

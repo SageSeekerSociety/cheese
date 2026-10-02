@@ -3,9 +3,9 @@
 
 A plan allows model tiers; a person picking a model never sees a tier. A model
 the team's plan does not allow is shown with the cheapest plan that does, by
-its name. Plans carry no price yet, so "cheapest" is an order over what they
-do have: a plan anyone can be put on before an administrator's own, a plan with
-a monthly pack before an unlimited one, a smaller pack before a larger one.
+its name. Plans carry no price yet, so "cheapest" is the order an administrator
+gives them (``Plan.rank``), with a plan anyone can be put on before an
+administrator's own.
 Only plans the team could be put on count: a personal team is never told it
 needs a plan only shared teams may have.
 """
@@ -29,12 +29,7 @@ def _allows(plan: Plan, tier: str) -> bool:
 
 
 def _cheapness(plan: Plan) -> tuple:
-    return (
-        plan.admin_only,
-        plan.unlimited,
-        plan.credits_per_period or 0.0,
-        plan.key,
-    )
+    return (plan.admin_only, plan.rank, plan.key)
 
 
 @dataclass(frozen=True)

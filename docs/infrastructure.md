@@ -228,12 +228,9 @@ uv run python -m pytest tests/ --ignore=tests/forgejo -m integration \
 
 Every suite Required CI selects runs on GitHub-hosted Ubuntu runners, including
 the CLI boot e2e and remote-execution acceptance. The organisation is on the
-Free plan, whose documented limit is 20 concurrent hosted jobs; what this
-repository actually gets is about 40 (on 2026-09-30 running hosted jobs held at
-39-42 whenever others were waiting). Pull-request runs use most of it, so a
-merge-queue run takes its `scope`, `CI required`, `Backend coverage complete`,
-guards, docs and pi-extension jobs on this pool instead, and waits for no hosted
-runner between its stages.
+Free plan, whose documented limit is 20 concurrent hosted jobs; this repository
+is not held to it. Over 2026-09-30/10-01 up to 61 hosted jobs ran at once, and
+merge-queue jobs waited 0.1 minutes for a runner at the 90th percentile.
 The **cheese-ci** label is a pool of MicroCloud VMs (prod tenant, customer
 `cheese-ci`, offering 103 standard-vm, 8c/8G/40G, `cheese-ci-runner-{1..3}` at
 `192.168.30.{3..5}`, two runner slots each), NOT on the dev box. The box
@@ -614,19 +611,40 @@ Bare SSH from the dev box's egress to etrip :22 stalls in the key exchange for
 several minutes at a time, several times a day. The TCP connection and the
 server banner still get through, and other hosts reach the same sshd without
 trouble, so neither the host nor the tunnel's keepalive settings are the cause.
-TLS on :443 over the same egress keeps working through most of those periods;
-when it does not, both tunnels go down together.
+TLS on :443 over the same egress keeps working through most of those periods,
+but not all: on 09-30 and 10-01 that egress passed no data to etrip :443 for
+8 to 17 minutes at a time.
+
+So the two tunnels leave the dev box by different lines:
+
+- The 18443 tunnel takes the default route: router-2 (192.168.16.2, Clash) hands
+  it to the dorm OpenWrt's proxy (192.168.200.1:7891), which exits through a
+  Beijing Unicom line.
+- The 18444 tunnel binds source ports 41000-41099 (`TLS_PROXY_SOURCE_PORTS` in
+  its unit), and a policy route on the dev box (`route-b.sh`, run before every
+  start) sends those connections to 192.168.16.1, the 119pve host, which
+  masquerades them out its campus uplink (seen outside as 211.71.28.46).
+  119pve needs two raw-table rules that put these connections in conntrack
+  zone 1 on `fwbr115i0`; without them, traffic routed through the host past
+  the VM's firewall bridge never gets its NAT reply back.
+
+A failure of either line leaves the other tunnel up. The campus uplink depends
+on 119pve's campus portal login, which expired once (09-24), so it backs the
+Unicom line up rather than replacing it.
 
 | Box | Path | What it is |
 |---|---|---|
 | dev | `/etc/systemd/system/cheese-hk-relay-tls443.service` | tunnel on 18443 (enabled) |
-| dev | `/etc/systemd/system/cheese-hk-relay-tls443-b.service` | identical tunnel on 18444 (enabled) |
-| dev | `/usr/local/libexec/cheese-hk-relay/tls-proxy.py` | the tunnels' `ProxyCommand` |
+| dev | `/etc/systemd/system/cheese-hk-relay-tls443-b.service` | second tunnel on 18444, out the campus line (enabled) |
+| 119pve | `/etc/network/interfaces`, `vmbr0` post-up | raw-table conntrack zone rules for source ports 41000-41099 |
+| dev | `/usr/local/libexec/cheese-hk-relay/tls-proxy.py` | the tunnels' `ProxyCommand`; binds a source port from `TLS_PROXY_SOURCE_PORTS` when set |
+| dev | `/usr/local/libexec/cheese-hk-relay/route-b.sh` | policy route for the 18444 tunnel: table 18443, rule priority 18443 |
 | dev | `/home/nictheboy/.ssh/id_hkrelay`, `relay-okcheese.crt` | login key; the certificate `tls-proxy.py` pins etrip to |
 | dev | `/etc/systemd/system/cheese-hk-relay-tls.service` | previous tunnel, bare SSH on :22; installed but disabled |
 | dev | `/etc/systemd/system/cheese-hk-relay.service` | plain relay to `127.0.0.1:18080`; nothing routes there; installed but disabled |
 | etrip | `/etc/systemd/system/cheese-ssh-relay-tls.service` | socat, TLS on 127.0.0.1:2222 to sshd |
-| etrip | `/etc/systemd/system/cheese-relay-watchdog.service`, `/usr/local/libexec/cheese-hk-relay/relay-watchdog.sh` | frees a port held by a dead tunnel session |
+| etrip | `/etc/systemd/system/cheese-relay-watchdog.service`, `/usr/local/libexec/cheese-hk-relay/relay-watchdog.sh` | frees a port held by a dead tunnel session; pages when both are down |
+| etrip | `/etc/cheese-hk-relay/alert.env` | `FEISHU_ALERT_WEBHOOK`, the same webhook the backend alerts use |
 | etrip | `/etc/ssl/relay/relay.pem` | certificate and key for `relay.okcheese.com` |
 | etrip | `~hkrelay/.ssh/authorized_keys` | the key may only open `127.0.0.1:18080`, `:18443` and `:18444` |
 | etrip | `/etc/ssh/sshd_config`, last block | `Match User hkrelay`: forwarding only, 10 s × 2 keepalive |
@@ -653,6 +671,9 @@ bind it again (`remote port forwarding failed for listen port 18443`).
   in a row get no HTTP answer, it kills the `sshd: hkrelay` process holding
   that port. The port closes, Caddy stops choosing it, and the dev box binds it
   again on its next attempt, about 25 s after the path died.
+- When neither port has carried a request for 30 s, the site is down for
+  everyone, and the watchdog posts to the Feishu alert group; it posts again
+  with the duration when a port comes back.
 
 Each tunnel restarts after 5 s, with no growing backoff: systemd never resets
 its restart-step counter after a healthy run, so a backoff would add its
@@ -660,7 +681,13 @@ maximum to every later reconnect. A login that stalls after TLS is set up holds
 one of etrip sshd's ten unauthenticated slots for up to two minutes; one
 attempt per tunnel every 25 s or so stays under that.
 
-Rollback, on the dev box. Back to one tunnel:
+Rollback, on the dev box. Second tunnel back onto the default route: restore
+`cheese-hk-relay-tls443-b.service` from its `.bak-*` copy (drops
+`TLS_PROXY_SOURCE_PORTS` and the `route-b.sh` step), then
+
+    sudo ip rule del priority 18443; sudo systemctl daemon-reload && sudo systemctl restart cheese-hk-relay-tls443-b
+
+Back to one tunnel:
 
     sudo systemctl disable --now cheese-hk-relay-tls443-b
 

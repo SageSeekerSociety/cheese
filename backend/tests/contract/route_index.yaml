@@ -382,6 +382,7 @@ routes:
   - {protocol: "http", method: "GET", path: "/admin/plans", auth: "platform.admin", owner: "usage.plans"}
   - {protocol: "http", method: "POST", path: "/admin/plans", auth: "platform.admin", owner: "usage.plans"}
   - {protocol: "http", method: "PUT", path: "/admin/plans/{key}", auth: "platform.admin", owner: "usage.plans"}
+  - {protocol: "http", method: "DELETE", path: "/admin/plans/{key}", auth: "platform.admin", owner: "usage.plans"}
   - {protocol: "http", method: "GET", path: "/admin/teams", auth: "platform.admin", owner: "usage.plans"}
   - {protocol: "http", method: "GET", path: "/admin/teams/{teamId}", auth: "platform.admin", owner: "usage.plans"}
   - {protocol: "http", method: "GET", path: "/admin/teams/{teamId}/history", auth: "platform.admin", owner: "usage.plans"}

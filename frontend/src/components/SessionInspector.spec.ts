@@ -6,14 +6,15 @@ import * as directives from 'vuetify/directives'
 import { cleanup, fireEvent, render, within } from '@testing-library/vue'
 import { afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest'
 
-import { getAgentControl, sendAgentControl } from '../api'
+import { getAgentControl, getRoomMcpServers, sendAgentControl } from '../api'
 
 import SessionInspector from './SessionInspector.vue'
 
-import { setLocale } from '@/i18n'
+import i18n, { setLocale } from '@/i18n'
 
 vi.mock('../api', () => ({
   getAgentControl: vi.fn(),
+  getRoomMcpServers: vi.fn(),
   sendAgentControl: vi.fn(),
 }))
 
@@ -24,6 +25,7 @@ beforeEach(() => {
   vi.stubGlobal('visualViewport', new EventTarget())
   vi.stubGlobal('devicePixelRatio', 1)
   vi.mocked(getAgentControl).mockResolvedValue({ id: 's1', connected: true })
+  vi.mocked(getRoomMcpServers).mockResolvedValue({ servers: [] })
 })
 afterEach(() => {
   cleanup()
@@ -36,7 +38,7 @@ const ask = (view: ReturnType<typeof render>) =>
 const mount = () =>
   render(SessionInspector, {
     props: { topicId: 'topic1', active: true },
-    global: { plugins: [createVuetify({ components, directives })] },
+    global: { plugins: [createVuetify({ components, directives }), i18n] },
   })
 
 it("lists the session's tasks without offering to move or stop them", async () => {
@@ -128,7 +130,7 @@ it('takes the room session state off the socket instead of asking again', async 
   const props = { topicId: 'topic1', active: true }
   const view = render(SessionInspector, {
     props: { ...props, pushed: null },
-    global: { plugins: [createVuetify({ components, directives })] },
+    global: { plugins: [createVuetify({ components, directives }), i18n] },
   })
   await view.rerender({
     ...props,
@@ -142,4 +144,31 @@ it('takes the room session state off the socket instead of asking again', async 
   await view.findByText('长命令 · 运行中')
   await vi.advanceTimersByTimeAsync(6000)
   expect(getAgentControl).toHaveBeenCalledTimes(1)
+})
+
+it("says where each of the project's MCP servers comes from", async () => {
+  const server = { host: 'mcp.example.test', auth: 'oauth', authorized_by: null, authorized_at: null } as const
+  vi.mocked(getRoomMcpServers).mockResolvedValue({
+    servers: [
+      { ...server, name: 'tracker', status: 'ready', declared_by: null },
+      {
+        ...server,
+        name: 'ticket',
+        status: 'disconnected',
+        declared_by: [
+          { name: 'code-review', title: '代码评审' },
+          { name: 'auditor', title: '审计' },
+        ],
+      },
+    ],
+  })
+  const view = mount()
+  await fireEvent.click(await view.findByText('查看详情'))
+  const list = await view.findByTestId('room-mcp-servers')
+  const rows = within(list).getAllByRole('listitem')
+  expect(rows[0].textContent).toContain('来自项目的 .mcp.json')
+  // Only the file name is code; the sentence around it is the UI's own font.
+  expect(within(rows[0]).getByText('.mcp.json').tagName).toBe('CODE')
+  expect(within(rows[1]).getByTestId('mcp-source').querySelector('code')).toBeNull()
+  expect(rows[1].textContent).toContain('由 代码评审、审计 类型声明')
 })

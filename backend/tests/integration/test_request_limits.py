@@ -12,6 +12,7 @@ from starlette.routing import Route, WebSocketRoute
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocket
 
+from app.core import request_limits
 from app.core.config import settings
 from app.core.redis import get_redis_client
 from app.core.request_limits import RequestLimits
@@ -31,6 +32,12 @@ def limits(monkeypatch):
         "request_queue_timeout_s",
     ):
         monkeypatch.setattr(settings, name, type(settings).model_fields[name].default)
+    # The Redis-down warning is said at most once a minute per process, so a
+    # test that met an unreachable Redis earlier in this worker would silence
+    # the next one's warning. Each test starts with its own minute.
+    monkeypatch.setattr(
+        request_limits, "_redis_warning", request_limits._RedisWarning()
+    )
 
     def narrow(**values) -> None:
         for name, value in values.items():

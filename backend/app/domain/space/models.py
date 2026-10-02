@@ -196,14 +196,35 @@ class SpaceMaterial(Base):
     """
 
     __tablename__ = "space_material"
+    # 两个索引与迁移 ``c1f7a09b34d2`` 一一对齐。挪进模型是因为这里是
+    # ``Base.metadata`` 的来源：少写一个，下一次 ``alembic revision --autogenerate``
+    # 就会生一条「删掉这个索引」的假迁移。同 ``SpaceMember`` / ``SpaceAnnouncement``。
+    __table_args__ = (
+        # 同一块板上同一份文件只挂一次。部分索引（``deleted_at IS NULL``）：撤下来
+        # 之后再传回去是允许的，那时它是一条新的生命。
+        Index(
+            "uq_space_material_live",
+            "space_id",
+            "material_id",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        # 「这份文件在不在某块板的仅管理员档里」—— 通用读路由 ``GET /materials/{id}``
+        # 每次都要问一句，按 ``material_id`` 找。
+        Index("ix_space_material_material_id", "material_id"),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, space_material_seq, primary_key=True)
     space_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("space.id"), nullable=False
     )
     # ``material.id`` 是 Integer（autoincrement），外键类型必须一致。
+    # ``ondelete="CASCADE"``：素材行被 ``DELETE /materials/{id}`` 删掉时，这条关联
+    # 跟着走 —— 关联指的是那份文件，文件没了它就无从谈起。没有它这条外键会把一条
+    # 既有接口打坏（那张表是整张 schema 里唯一指向 ``material.id`` 的外键，删除
+    # 会撞 500）。
     material_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("material.id"), nullable=False
+        Integer, ForeignKey("material.id", ondelete="CASCADE"), nullable=False
     )
     visibility: Mapped[str] = mapped_column(
         String(20), nullable=False, default=SpaceMaterialVisibility.MEMBERS.value

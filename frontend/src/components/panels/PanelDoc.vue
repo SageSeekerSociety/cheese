@@ -42,8 +42,16 @@ const props = withDefaults(
     agentHandle?: string | null
     /** 画在一整页里，见 PanelDocView。 */
     bare?: boolean
+    /** 顶栏画到页面上的哪个位置，见 PanelDocView。 */
+    barTo?: string
   }>(),
-  { topicList: () => [], agentName: () => t('work.room.defaultAgentName'), agentHandle: null, bare: false }
+  {
+    topicList: () => [],
+    agentName: () => t('work.room.defaultAgentName'),
+    agentHandle: null,
+    bare: false,
+    barTo: undefined,
+  }
 )
 
 // open-topic (A2): a doc live-ref chip was clicked — the parent navigates to the
@@ -100,6 +108,7 @@ defineExpose({ pulse, highlightTurn, reviewEdits })
     :agent-name="props.agentName"
     :agent-handle="props.agentHandle"
     :bare="props.bare"
+    :bar-to="props.barTo"
     :session="doc.session.value"
     :editable="doc.editable.value"
     :read-only="doc.readOnly.value"
@@ -124,7 +133,13 @@ defineExpose({ pulse, highlightTurn, reviewEdits })
     :toggle-editable="doc.toggleEditable"
     :set-error="doc.setError"
     :rewrite-selection="doc.rewriteSelection"
+    :ask-agent="doc.askAgent"
+    :answer-of="doc.answerOf"
     :apply-doc-edits="doc.applyEdits"
+    :last-edit="doc.lastEdit.value"
+    :name-of="doc.nameOf"
+    :load-versions="doc.loadVersions"
+    :restore-version="doc.restoreVersion"
     @open-topic="emit('open-topic', $event)"
     @mention-click="emit('mention-click', $event)"
     @open-file="emit('open-file', $event)"

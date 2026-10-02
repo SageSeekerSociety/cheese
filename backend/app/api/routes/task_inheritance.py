@@ -96,9 +96,15 @@ async def get_task_inheritance(
         raise NotFoundError("Task not found", data={"type": "task", "id": task_id})
 
     try:
-        listed = await SpaceMaterialService(
-            session=db, storage=get_storage_backend()
-        ).list_for_space(space_id=found.space_id, user_id=auth_user.user_id)
+        # ``list_for_space`` 答的是 ``{"materials": [...], "canManage": bool}`` ——
+        # 它自己按档位过滤：非管理员拿不到「仅管理员」那一档。这里再收一道到
+        # 「所有成员」档：这份清单是**这道题会给出去的东西**，板子上的管理员档
+        # 素材不属于任何一个成员建出来的项目。
+        listed = (
+            await SpaceMaterialService(
+                session=db, storage=get_storage_backend()
+            ).list_for_space(space_id=found.space_id, user_id=auth_user.user_id)
+        )["materials"]
     except NotFoundError:
         listed = []
     materials = [

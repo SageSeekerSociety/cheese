@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "c1f7a09b34d2"
-down_revision = "d4b7e19a2c55"
+down_revision = "b0caecc81d00"
 branch_labels = None
 depends_on = None
 
@@ -50,7 +50,8 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
         sa.ForeignKeyConstraint(["space_id"], ["space.id"]),
-        sa.ForeignKeyConstraint(["material_id"], ["material.id"]),
+        # ondelete=CASCADE：素材行被删掉时关联跟着走，见 models.py 里同一条外键。
+        sa.ForeignKeyConstraint(["material_id"], ["material.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
     # 同一块板上同一份文件只挂一次。部分索引（deleted_at IS NULL）：撤下来之后再
