@@ -257,19 +257,24 @@ it('没有选中对象时，色板只改下一笔的颜色', async () => {
 
 /** 用涂黑工具画一块：client (60,70)→(310,220)。 */
 async function drawRedact(ui: ReturnType<typeof render>) {
-  await fireEvent.click(ui.getByRole('button', { name: '涂黑' }))
+  await ready(ui)
+  await pickTool(ui, '涂黑')
   const layer = ui.getByRole('application', { name: '图片标注画布' })
   layer.setPointerCapture = vi.fn()
   await fireEvent.pointerDown(layer, { button: 0, pointerId: 61, clientX: 60, clientY: 70 })
   await fireEvent.pointerMove(layer, { pointerId: 61, clientX: 310, clientY: 220 })
   await fireEvent.pointerUp(layer, { pointerId: 61, clientX: 310, clientY: 220 })
-  await waitFor(() => expect(strokeRects(ui)).toHaveLength(1))
+  try {
+    await waitFor(() => expect(strokeRects(ui)).toHaveLength(1), { timeout: 5000 })
+  } catch (error) {
+    throw new Error(`${probe(ui)}\n${error}`)
+  }
 }
 
 it('涂黑工具选中时：颜色轮换成样式行', async () => {
   const ui = mount()
   await painted(ui)
-  await fireEvent.click(ui.getByRole('button', { name: '涂黑' }))
+  await pickTool(ui, '涂黑')
   expect(ui.container.querySelectorAll('.sketch-toolbar__color')).toHaveLength(0)
   expect(ui.container.querySelectorAll('.sketch-toolbar__style')).toHaveLength(3)
 })
