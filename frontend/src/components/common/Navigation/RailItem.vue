@@ -5,6 +5,7 @@
        否则悬停会同时冒出浏览器气泡和这个浮层。 -->
   <v-card
     v-if="item.type === 'item'"
+    ref="tileRef"
     :to="item.to"
     rounded="lg"
     :border="false"
@@ -37,7 +38,7 @@
     </AdaptiveMenu>
     <!-- Discord-style hover flyout: name + ⌘N quick-switch key -->
     <!-- 右键菜单开着时让开：两个浮层都贴在这一格右边，提示会压住菜单的上沿。 -->
-    <v-tooltip activator="parent" location="end" content-class="rail-flyout" :disabled="menuOpen">
+    <v-tooltip v-model="flyoutOpen" activator="parent" location="end" content-class="rail-flyout" :disabled="menuOpen">
       <div class="rail-flyout__inner">
         <span class="rail-flyout__name">{{ item.title }}</span>
         <template v-if="item.shortcut">
@@ -74,8 +75,9 @@
 <script lang="ts" setup>
 import type { DropEdge } from '@/lib/projectOrder'
 
-import { computed, ref, toRefs } from 'vue'
+import { type ComponentPublicInstance, computed, ref, toRefs } from 'vue'
 import { useRouter } from 'vue-router'
+import { useEventListener } from '@vueuse/core'
 
 import { useNavigation } from '@/composables/useNavigation'
 
@@ -126,6 +128,22 @@ const current = computed(() => {
   if (item.value.type !== 'item' || !item.value.match) return undefined
   return item.value.match(nav?.route?.path ?? '') ? 'page' : undefined
 })
+
+// v-tooltip 内部写死了 persistent，点别处、按 Esc 都关不掉它，能关它的只有这一格自己
+// 的 mouseleave 和失焦，而这两样都会落空：键盘焦点打开的浮层，指针怎么移都不关；rail
+// 被 keep-alive 收起时浮层留在 <body> 里，再也等不到这一格的事件；浏览器丢一次
+// mouseleave 也一样。所以浮层开着的时候盯住指针，它在这一格之外一动，浮层就收起。
+const tileRef = ref<ComponentPublicInstance>()
+const flyoutOpen = ref(false)
+useEventListener(
+  () => (flyoutOpen.value ? document : null),
+  'pointermove',
+  (e: PointerEvent) => {
+    const tile = tileRef.value?.$el as Element | undefined
+    if (!tile?.contains(e.target as Node)) flyoutOpen.value = false
+  },
+  { passive: true }
+)
 
 const menu = computed(() => (item.value.type === 'item' ? item.value.menu ?? [] : []))
 const menuOpen = ref(false)
