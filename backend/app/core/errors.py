@@ -254,11 +254,26 @@ async def http_exception_handler(
     )
 
 
+def _validator_sentence(exc: RequestValidationError) -> str | None:
+    """The first sentence a validator refused with, said with ``say()``.
+
+    A rule a person can break from a form (an environment variable's name, a
+    quote with no message) is raised as ``ValueError(say(...))``; its sentence
+    is the answer, with its key, instead of the generic one. Pydantic keeps the
+    raised exception in ``ctx["error"]``."""
+    for error in exc.errors():
+        cause = (error.get("ctx") or {}).get("error")
+        said = cause.args[0] if isinstance(cause, Exception) and cause.args else None
+        if isinstance(said, str) and message_key(said) is not None:
+            return said
+    return None
+
+
 async def validation_exception_handler(
     request: Request, exc: RequestValidationError
 ) -> JSONResponse | PlainTextResponse:
     accept = request.headers.get("accept") or ""
-    message = "Invalid request parameters"
+    message = _validator_sentence(exc) or "Invalid request parameters"
     if "text/event-stream" in accept:
         body = f"event: error\ndata: {message}\n\n"
         return PlainTextResponse(

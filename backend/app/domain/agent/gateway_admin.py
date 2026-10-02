@@ -19,6 +19,7 @@ from urllib.parse import quote
 import httpx
 
 from app.domain.agent.gateway import price_is_set
+from app.domain.block.notice_text import say
 
 logger = logging.getLogger(__name__)
 
@@ -184,14 +185,16 @@ class GatewayAdmin:
                 _error_message(exc.response), status=exc.response.status_code
             ) from exc
         except httpx.HTTPError as exc:
-            raise GatewayUnreachable(f"网关不可达:{_short(exc)}") from exc
+            raise GatewayUnreachable(
+                say("gatewayUnreachableWith", error=_short(exc))
+            ) from exc
 
     @staticmethod
     async def _json(response: httpx.Response) -> object:
         try:
             return response.json()
         except ValueError as exc:
-            raise GatewayRefused("网关返回了非 JSON 响应") from exc
+            raise GatewayRefused(say("gatewayNotJson")) from exc
 
     async def readiness(self) -> str | None:
         """页面顶上那颗「网关在不在」的灯。不可达给 None,不抛。
@@ -222,7 +225,9 @@ class GatewayAdmin:
         payload = await self._json(response)
         rows = payload.get("data") if isinstance(payload, dict) else None
         if not isinstance(rows, list):
-            raise GatewayRefused("网关 /model/info 的响应里没有 data 列表")
+            raise GatewayRefused(
+                say("gatewayMissingList", path="/model/info", field="data")
+            )
         out: list[AdminModel] = []
         seen: set[str] = set()
         for row in rows:
@@ -252,7 +257,9 @@ class GatewayAdmin:
             payload = await self._json(response)
             rows = payload.get("keys") if isinstance(payload, dict) else None
             if not isinstance(rows, list):
-                raise GatewayRefused("网关 /key/list 的响应里没有 keys 列表")
+                raise GatewayRefused(
+                    say("gatewayMissingList", path="/key/list", field="keys")
+                )
             for row in rows:
                 if isinstance(row, dict):
                     out.append(_admin_key(row))
@@ -278,7 +285,7 @@ class GatewayAdmin:
         payload = await self._json(response)
         results = payload.get("results") if isinstance(payload, dict) else None
         if not isinstance(results, list):
-            raise GatewayRefused("网关用量接口的响应里没有 results 列表")
+            raise GatewayRefused(say("gatewayUsageMissingResults"))
 
         daily: list[dict] = []
         by_model: dict[str, ModelUsage] = {}
@@ -352,7 +359,7 @@ class GatewayAdmin:
         payload = await self._json(response)
         model_id = payload.get("model_id") if isinstance(payload, dict) else None
         if not isinstance(model_id, str) or not model_id:
-            raise GatewayRefused("网关没有返回新模型的 model_id")
+            raise GatewayRefused(say("gatewayNoModelId"))
         return model_id
 
     async def update_model(

@@ -287,14 +287,14 @@ class FeedbackService:
         deployed_since: datetime | None = None,
     ) -> tuple[list[Feedback], int]:
         if tab not in ADMIN_TABS:
-            raise BadRequestError(f"未知的管理视图：{tab}")
+            raise BadRequestError(say("feedbackUnknownView", tab=tab))
         if sort not in SORTS:
             # Refused rather than coerced to `new`, same reasoning as `tab` above
             # and it bites harder here: a client asking for `hottest` and getting
             # `new` reads the top of the page as "the most supported reports".
             # The ordering is the answer, so answering in a different order is
             # answering a different question under the same heading.
-            raise BadRequestError(f"未知的排序：{sort}")
+            raise BadRequestError(say("feedbackUnknownSort", sort=sort))
         return await self._repo.list_admin(
             tab=tab,
             assignee=assignee,
@@ -789,7 +789,7 @@ class FeedbackService:
         """
         row = await self._repo.get(feedback_id)
         if row is None:
-            raise NotFoundError("反馈不存在")
+            raise NotFoundError(say("feedbackNotFound"))
         if row.status == status:
             # Idempotent, but not silent: re-setting the same status is a no-op
             # rather than a second timeline entry, because two identical entries
@@ -848,7 +848,7 @@ class FeedbackService:
     ) -> Feedback:
         row = await self._repo.get(feedback_id)
         if row is None:
-            raise NotFoundError("反馈不存在")
+            raise NotFoundError(say("feedbackNotFound"))
         if body.priority is not None:
             await self._repo.set_priority(row, body.priority)
         if body.assignee_handle is not None:
@@ -1053,5 +1053,5 @@ class FeedbackService:
         """Admin-only internal note. Append-only (see `FeedbackNote`)."""
         row = await self._repo.get(feedback_id)
         if row is None:
-            raise NotFoundError("反馈不存在")
+            raise NotFoundError(say("feedbackNotFound"))
         await self._repo.add_note(row.id, author_handle, body)

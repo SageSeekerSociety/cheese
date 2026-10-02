@@ -9,7 +9,7 @@ import AdminGrid from '@/components/admin/AdminGrid.vue'
 import AdminModelPriceCell from '@/components/admin/AdminModelPriceCell.vue'
 import AdminSparkline from '@/components/admin/AdminSparkline.vue'
 import { MODEL_TIERS, TIER_KEY } from '@/lib/adminCredits'
-import { displayName, failRate, originKey, statusQuiet } from '@/lib/adminModels'
+import { blockedReasonText, displayName, failRate, originKey, statusQuiet } from '@/lib/adminModels'
 import { fmtCost, fmtNum, fmtSI } from '@/lib/usageFormat'
 
 // 模型那一段：网关上有哪些模型、上没上架、什么价、跑了多少。页面的主语。
@@ -152,10 +152,10 @@ function rateTitle(row: ModelRow): string {
             <span v-else-if="row.offered" class="amd__tag amd__tag--on">{{ t('models.table.offered.on') }}</span>
             <span v-else class="amd__tag">{{ t('models.table.offered.off') }}</span>
             <span
-              v-if="!row.offered && row.blocked_reason"
+              v-if="!row.offered && blockedReasonText(row)"
               class="t-meta-read amd__dim amd__reason"
-              :title="row.blocked_reason"
-              >{{ row.blocked_reason }}</span
+              :title="blockedReasonText(row)"
+              >{{ blockedReasonText(row) }}</span
             >
           </span>
         </td>

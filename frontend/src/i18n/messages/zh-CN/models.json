@@ -37,6 +37,13 @@
     "empty": "暂无模型",
     "calls": "次调用",
     "blocked": "已停用",
+    "blockedReason": {
+      "blocked": "已在网关停用，选择器不会提供它",
+      "unlisted": "未上架（网关里没有标 cheese_selectable）",
+      "unpriced": "未定价：缺输入或输出单价，上架会让项目的 max_budget 这道刹车静默失效",
+      "pending": "等待网关读回",
+      "separator": "；"
+    },
     "howToEdit": "只读 · 查看改法",
     "failRate": "失败率 {rate}",
     "sparklineHint": "逐日 token 用量",

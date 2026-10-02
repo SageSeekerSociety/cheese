@@ -5,6 +5,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.domain.block.notice_text import say
+
 
 class QuotedContextIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -36,11 +38,11 @@ class ChatMessageIn(BaseModel):
     def quote_is_bounded_message_data(self):
         if self.quoted_context is not None:
             if not self.content.strip():
-                raise ValueError("quoted context requires authored message content")
+                raise ValueError(say("quoteNeedsMessage"))
             strings = self.quoted_context.model_dump(mode="json").values()
             if (
                 len(self.content) + sum(len(v) for v in strings if isinstance(v, str))
                 > 100000
             ):
-                raise ValueError("message and quoted context exceed 100000 characters")
+                raise ValueError(say("quoteTooLong", limit=100000))
         return self

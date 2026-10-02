@@ -13,6 +13,8 @@
 
 import { fmtPercent } from './usageFormat'
 
+import { t } from '@/i18n'
+
 /** 一段窗口里的用量（契约 §3.1 的 `usage`）。三段各有一份，口径相同。 */
 export interface ModelUsage {
   spend_usd: number
@@ -30,7 +32,8 @@ export interface ModelRow {
   selectable: boolean
   priced: boolean
   offered: boolean
-  blocked_reason: string | null
+  /** 没上架的原因码（`blocked` / `unlisted` / `unpriced` / `pending`），`blockedReasonText` 按读者的语言说。 */
+  blocked_reasons: string[]
   unpriced_reason: string | null
   upstream: { model: string; host: string | null; provider: string }
   prices: Record<string, number | null | undefined>
@@ -90,6 +93,15 @@ export interface AuditItem {
   /** 改动前后的字段快照（写入时已脱敏）。「查看改动」按钮与 diff 展开的数据。 */
   before: Record<string, unknown> | null
   after: Record<string, unknown> | null
+}
+
+const BLOCKED_REASONS = new Set(['blocked', 'unlisted', 'unpriced', 'pending'])
+
+/** 没上架的原因，全部列上（只说第一个会让人改完发现还是上不了架）。不认识的码照原样。 */
+export function blockedReasonText(row: { blocked_reasons?: string[] | null }): string {
+  return (row.blocked_reasons ?? [])
+    .map((code) => (BLOCKED_REASONS.has(code) ? t(`models.table.blockedReason.${code}`) : code))
+    .join(t('models.table.blockedReason.separator'))
 }
 
 /** 模型的显示名。`label` 缺失时退回 `name`（网关里的人给名字时才带 label）。 */

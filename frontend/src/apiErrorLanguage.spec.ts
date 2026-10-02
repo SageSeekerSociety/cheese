@@ -51,6 +51,21 @@ describe('服务器拒绝的那句话', () => {
     expect((await refusedWith(pending)).message).toBe('已经邀请过这个人，正在等他答复')
   })
 
+  it('a rule a form broke is said in English with its parameters', async () => {
+    setLocale('en')
+    const e = await refusedWith({
+      message: '环境变量 PATH 是保留名，或者不是合法的变量名',
+      i18n: { key: 'environmentVariableNameInvalid', params: { name: 'PATH' } },
+    })
+    expect(e.message).toBe("The environment variable PATH is reserved or isn't a valid name")
+  })
+
+  it('an admin refusal is said in English', async () => {
+    setLocale('en')
+    const e = await refusedWith({ message: '需要平台管理员', i18n: { key: 'platformAdminRequired', params: {} } })
+    expect(e.message).toBe('Only platform admins can do this')
+  })
+
   it('这一版不认识的键，照服务器的原话显示', async () => {
     setLocale('en')
     const e = await refusedWith({ message: '一句新加的话', i18n: { key: 'somethingNewer', params: {} } })

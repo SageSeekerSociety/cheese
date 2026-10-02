@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import BadRequestError, NotFoundError
+from app.domain.block.notice_text import say
 from app.domain.usage.ledger import Ledger, month_of
 from app.domain.usage.models import (
     ComputeGrant,
@@ -165,7 +166,7 @@ class PlanService:
     async def _plan(self, key: str) -> Plan:
         plan = await self._session.get(Plan, key)
         if plan is None:
-            raise NotFoundError(f"没有方案 {key}")
+            raise NotFoundError(say("planNotFound", plan=key))
         return plan
 
     async def create_plan(self, *, handle: str, data: dict) -> dict:
@@ -175,7 +176,7 @@ class PlanService:
         data = _plan_fields(data)
         _check_plan_fields(data)
         if await self._session.get(Plan, key) is not None:
-            raise BadRequestError(f"方案 {key} 已经存在")
+            raise BadRequestError(say("planExists", plan=key))
         plan = Plan(
             key=key,
             name=data.get("name") or key,
@@ -232,13 +233,13 @@ class PlanService:
 
         team = await team_service(self._session).get_team(team_id)
         if team is None:
-            raise NotFoundError(f"没有团队 {team_id}")
+            raise NotFoundError(say("teamNotFoundById", team_id=team_id))
         plan = await self._plan(key)
         personal = team.personal_owner_user_id is not None
         if plan.audience == "personal" and not personal:
-            raise BadRequestError(f"方案「{plan.name}」只给个人")
+            raise BadRequestError(say("planPersonalOnly", name=plan.name))
         if plan.audience == "team" and personal:
-            raise BadRequestError(f"方案「{plan.name}」只给团队")
+            raise BadRequestError(say("planTeamOnly", name=plan.name))
         before = {"plan_key": team.plan_key}
         team.plan_key = key
         await self._session.flush()
@@ -259,9 +260,9 @@ class PlanService:
         from app.domain.team.services import team_service
 
         if await team_service(self._session).get_team(team_id) is None:
-            raise NotFoundError(f"没有团队 {team_id}")
+            raise NotFoundError(say("teamNotFoundById", team_id=team_id))
         if expires_at is not None and expires_at <= datetime.now(UTC):
-            raise BadRequestError("到期时间必须在将来")
+            raise BadRequestError(say("grantExpiryPast"))
         try:
             pack = await Ledger(self._session).grant(
                 team_id,
@@ -271,7 +272,7 @@ class PlanService:
                 reason=reason,
             )
         except ValueError as exc:
-            raise BadRequestError("额度必须是正数") from exc
+            raise BadRequestError(say("grantAmountPositive")) from exc
         out = pack_out(pack)
         await self._audit(handle, "team.grant", str(team_id), None, out)
         return out
@@ -352,7 +353,7 @@ class PlanService:
         teams_svc = team_service(self._session)
         team = await teams_svc.get_team(team_id)
         if team is None:
-            raise NotFoundError(f"没有团队 {team_id}")
+            raise NotFoundError(say("teamNotFoundById", team_id=team_id))
         plan = await self._plan(team.plan_key)
         held = (await Ledger(self._session).live_packs([team.id])).get(team.id, [])
         owner = team.personal_owner_user_id

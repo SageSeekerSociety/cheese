@@ -3014,7 +3014,7 @@ export interface GatewayUpstream {
  *
  *  `origin` 决定它是只读还是可改：`config` 来自 config.yaml、页面上只读；`runtime` 是
  *  网关里新增的，可改可删可停用。`offered = selectable && priced && !blocked`，是选择器
- *  真正会给出的那些；`blocked_reason` / `unpriced_reason` 在它没上架时给出人话。 */
+ *  真正会给出的那些；`blocked_reasons` 是没上架的原因码，`unpriced_reason` 是网关的说明。 */
 export interface GatewayModelInfo {
   name: string
   model_id: string
@@ -3024,7 +3024,7 @@ export interface GatewayModelInfo {
   selectable: boolean
   priced: boolean
   offered: boolean
-  blocked_reason: string | null
+  blocked_reasons: string[]
   unpriced_reason: string | null
   upstream: GatewayUpstream
   prices: GatewayPrices

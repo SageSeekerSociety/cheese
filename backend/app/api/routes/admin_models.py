@@ -45,6 +45,7 @@ from app.domain.agent.schemas import (
     ModelCreate,
     ModelUpdate,
 )
+from app.domain.block.notice_text import exception_text
 
 router = APIRouter(prefix="/admin/gateway", tags=["admin"])
 
@@ -91,9 +92,9 @@ async def _answered(awaitable: Awaitable[dict]) -> dict:
     try:
         return await awaitable
     except GatewayUnreachable as exc:
-        raise GatewayUnavailableError(str(exc)) from exc
+        raise GatewayUnavailableError(exception_text(exc)) from exc
     except GatewayRefused as exc:
-        raise BaseError(HTTP_502_BAD_GATEWAY, str(exc)) from exc
+        raise BaseError(HTTP_502_BAD_GATEWAY, exception_text(exc)) from exc
 
 
 # ---- 模型 ----
