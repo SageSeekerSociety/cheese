@@ -127,6 +127,7 @@
   "deviceWaiting": "Waiting for the machine to connect",
   "dispatchUnknown": "Tool calls with no result: {count}. The platform will not retry them on its own",
   "dispatchUnknownDetail": "These calls were sent, but the machine never returned a result, so only that machine knows whether they ran: {calls}. Resending them automatically could apply a change that already took effect a second time. Once you have checked, you can retry and it will continue from there.",
+  "docCommentMentioned": "{person} mentioned {agent} in a doc comment",
   "docCommented": "{actor} commented on the doc",
   "docCommentedHandedTo": "{actor} commented on the doc; handed to {seat}",
   "docEdited": "{actor} edited the doc",
