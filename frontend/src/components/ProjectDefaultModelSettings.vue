@@ -7,7 +7,7 @@ import { holdRevealGate } from '@/composables/useRevealGate'
 
 import { getProjectDefaultModel, setProjectDefaultModel } from '../api'
 import { t } from '../i18n'
-import { modelChoiceProps } from '../lib/modelChoices'
+import { modelChoiceProps, withSaved } from '../lib/modelChoices'
 
 // 项目默认模型：#1365 之后主线（房间聊天）读 binding.resolve(None, …)，它拿
 // catalog 里 default=True 的那条；catalog 由 model_choices 算，项目 settings 里
@@ -33,6 +33,13 @@ const effective = computed({
     draft.value = model
   },
 })
+
+const mainItems = computed(() => (state.value ? withSaved(state.value.choices, state.value.model) : []))
+const subagentItems = computed(() =>
+  state.value
+    ? [{ id: null, label: t('work.models.inheritMain') }, ...withSaved(state.value.choices, state.value.subagent_model)]
+    : []
+)
 
 const dirty = computed(() => {
   if (!state.value) return false
@@ -86,7 +93,7 @@ watch(() => props.projectId, load)
       <div class="d-flex flex-column" style="gap: 24px; max-width: 480px">
         <v-select
           v-model="effective"
-          :items="state.choices"
+          :items="mainItems"
           item-title="label"
           item-value="id"
           :item-props="modelChoiceProps"
@@ -99,7 +106,7 @@ watch(() => props.projectId, load)
         />
         <v-select
           v-model="subagentDraft"
-          :items="[{ id: null, label: t('work.models.inheritMain') }, ...state.choices]"
+          :items="subagentItems"
           item-title="label"
           item-value="id"
           :item-props="modelChoiceProps"

@@ -12,10 +12,27 @@ export interface AgentFieldChoice {
   requires_plan: string | null
 }
 
+// A saved model the catalog no longer offers. Turns refuse it rather than fall
+// back, so the picker shows it as saved and unavailable instead of blank.
+interface SavedUnavailable {
+  id: string
+  label: string
+  unavailable: true
+}
+
+export function withSaved<T extends { id: string | null }>(
+  choices: T[],
+  saved: string | null | undefined
+): (T | SavedUnavailable)[] {
+  if (!saved || choices.some((choice) => choice.id === saved)) return choices
+  return [{ id: saved, label: saved, unavailable: true }, ...choices]
+}
+
 // `v-select` 的 `item-props`：方案不允许的模型不能选，下方写明需要哪个方案。
 // 「跟随项目主模型」那一项没有这两个字段，照常可选。
 export function modelChoiceProps(item: object): Record<string, unknown> {
-  const choice = item as Partial<AgentFieldChoice>
+  const choice = item as Partial<AgentFieldChoice & SavedUnavailable>
+  if (choice.unavailable) return { disabled: true, subtitle: t('work.models.unavailable') }
   if (choice.allowed !== false) return {}
   return {
     disabled: true,
