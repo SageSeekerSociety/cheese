@@ -7,6 +7,23 @@ import json
 from app.domain.agent.harness.codex.bundle import build
 
 
+def launch_identity(config: dict) -> str:
+    """What of a launch the host holds a running runner to (``host.configure``):
+    the execution target and the opening's owner, teammate and model. The host
+    refuses a running runner a different target, owner or teammate, and moves it
+    to a different model; everything else a launch carries reaches only a runner
+    it starts."""
+    opening = config["opening"]
+    return json.dumps(
+        [
+            config["execution_target"],
+            *(opening.get(key) for key in ("owner", "agent_handle", "model")),
+        ],
+        sort_keys=True,
+        default=str,
+    )
+
+
 def script(
     *, state: str, config: dict, codex_config: str, env: dict[str, str], ship: bool
 ) -> str:

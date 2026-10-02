@@ -19,7 +19,7 @@ from app.domain.agent.harness.channel import (
     mint_session_token,
     startup_refused,
 )
-from app.domain.agent.harness.codex.launch import script
+from app.domain.agent.harness.codex.launch import launch_identity, script
 from app.domain.agent.harness.codex.runtime import Handle
 from app.domain.agent.harness.launch import ExecutorLaunch
 from app.domain.agent_session.services import AgentSessionService
@@ -132,6 +132,16 @@ class CodexChannel:
                 'wire_api = "responses"\nenv_key = "CHEESE_TOKEN"\n'
                 "requires_openai_auth = false\n[analytics]\nenabled = false\n"
             )
+            identity = launch_identity(config)
+            if (
+                live is not None
+                and (live.device_id, live.state, live.launch)
+                == (prepared.device_id, state, identity)
+                and opening.resume_token in (None, "", live.thread_id)
+            ):
+                # The runner that answered the last read was ensured with this
+                # launch, so the host would only say so again.
+                return live
             launch = {
                 "state": state,
                 "config": config,
@@ -151,6 +161,7 @@ class CodexChannel:
                 agent,
                 self._mirror(session, str(prepared.env["CHEESE_RESOURCE_ID"]) + agent),
                 frozenset(status.get("capabilities") or ()),
+                launch=identity,
             )
 
     async def _run(self, device_id: str, program: str) -> dict:

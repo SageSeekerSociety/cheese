@@ -1,5 +1,6 @@
 """A Codex seat's runner archive crosses to the session host only when the host
-lacks it.
+lacks it, and a seat whose runner is known to be alive is not launched again
+while nothing the host holds a running runner to has changed.
 
 The channel as a room's sends reach it, against a session host that keeps the
 archives it was given by digest and the one runner of the seat, and keeps every
@@ -90,5 +91,37 @@ async def test_codex_is_sent_its_runner_only_when_the_host_does_not_hold_it(
         host.programs.clear()
         await codex.ensure(session, opening)
         assert [_carried_archive(each) for each in host.programs] == [False, True]
+
+    client.portal.call(exercise)
+
+
+@pytest.mark.anyio
+async def test_a_live_codex_seat_is_launched_again_only_when_its_launch_changed(
+    client, room, monkeypatch
+):
+    project, topic = room
+    host, codex = codex_seat(client, monkeypatch)
+    session = SessionRef(project, topic, AGENT, harness="codex")
+
+    async def exercise():
+        first = await codex.ensure(session, Opening("System", model="fixture"))
+        host.programs.clear()
+        # A warm turn: another system prompt, nothing the runner is held to.
+        again = await codex.ensure(
+            session, Opening("Another prompt", model="fixture"), first
+        )
+        assert again is first
+        assert host.programs == []
+
+        # A new model has to reach the running runner.
+        moved = await codex.ensure(session, Opening("System", model="another"), first)
+        assert len(host.programs) == 1
+        assert host.model == "another"
+        assert moved.launch != first.launch
+
+        # Nobody vouches for the seat: the host is asked.
+        host.programs.clear()
+        await codex.ensure(session, Opening("System", model="another"))
+        assert len(host.programs) == 1
 
     client.portal.call(exercise)
