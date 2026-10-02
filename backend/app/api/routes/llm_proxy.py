@@ -49,7 +49,6 @@ from app.core.sandbox_auth import (
     personal_claims,
     scoped_token_claims,
 )
-from app.domain.agent.budget_proxy import BudgetState, decide
 from app.domain.agent.chat import ChatService
 from app.domain.agent.supply import GATEWAY
 from app.domain.agent_instance import configuration
@@ -209,14 +208,9 @@ async def admission(
     except ValueError as exc:
         raise NotFoundError("Unknown project") from exc
     project = await ProjectRepository(db).get(project_uuid)
-    state = BudgetState(spent=0.0, limit=None)
+    refused = None
     if project is not None:
-        summary = await UsageService(db).project_credits(project_uuid)
-        state = BudgetState(
-            spent=summary["credits_used"],
-            limit=None if summary["unlimited"] else summary["credits_total"],
-        )
-    decision = decide(state)
+        refused = await UsageService(db).admit_project(project_uuid)
     # The supply decision rides along with the admission answer: the proxy has
     # to ask before every turn anyway, and one round trip that says both "may
     # it run" and "where does it go" keeps the data plane from needing a second
@@ -294,7 +288,10 @@ async def admission(
                     tier=choice["tier"],
                     approver=project.owner_handle or "",
                 ),
-                gate.policy_of(project.settings),
+                gate.policy_of(
+                    project.settings,
+                    await UsageService(db).plan_model_tiers(project.team_id),
+                ),
                 actor=claims.get("a") or "",
             )
             if outcome is not None:
@@ -329,7 +326,7 @@ async def admission(
     # session. Returning this read connection first prevents concurrent
     # admissions from exhausting the pool while they wait.
     await release_read_session(db)
-    if not decision.allow:
+    if refused is not None:
         # Tell the running room when credits run out (#715); the room write
         # uses its own database session.
         place = claims.get("t")
@@ -347,7 +344,7 @@ async def admission(
     # route. Anyone else (a pi runner admitting a subagent) gets the decision.
     if (
         pool == GATEWAY
-        and decision.allow
+        and refused is None
         and is_global_sandbox_token(request.headers.get("x-cheese-token") or "")
     ):
         # Minted lazily and cached on the project; never keep the admission
@@ -356,8 +353,8 @@ async def admission(
 
     return ok(
         {
-            "allow": decision.allow,
-            "reason": decision.reason,
+            "allow": refused is None,
+            "reason": "admitted" if refused is None else str(refused.message),
             "reason_kind": "budget",
             "supply": supply,
         }

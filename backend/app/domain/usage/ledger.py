@@ -16,8 +16,12 @@ A charge drains the packs that apply in this order:
 The last call may overdraw; it was admitted with credits left, and what it
 spent is spent either way.
 
-Whether a payer holding no pack at all may run is ``settings.credits_unlimited``,
-a deployment's explicit choice rather than what a missing row happens to mean.
+Every team is on a plan (``Plan``). A plan issues its pack for the month the
+first time a call of that month is charged; until then the balance counts it
+as already there, so reading a balance never writes. A plan may cap what a team
+spends within time windows: once a window is full, only bought or granted
+credits may be spent until it reopens. An unlimited plan refuses nothing, issues
+nothing and draws on nothing; its usage is still recorded.
 """
 
 import math
@@ -33,8 +37,9 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.domain.block.notice_text import NoticeText, say
 from app.domain.usage.credits import usage_to_credits
-from app.domain.usage.models import ComputeGrant, GrantSource
+from app.domain.usage.models import ComputeGrant, GrantSource, Plan
 from app.domain.usage.repositories import UsageRepository
 
 # Where a month starts and ends for the people using the platform.
@@ -94,11 +99,64 @@ class Rates:
 
 
 @dataclass(frozen=True)
+class Terms:
+    """What a team's plan says about spending."""
+
+    key: str
+    unlimited: bool = False
+    credits_per_period: float | None = None
+    # ``(hours, credits)``: at most that many credits within that many hours.
+    windows: tuple[tuple[float, float], ...] = ()
+    # The model tiers the plan allows; None is every tier.
+    model_tiers: frozenset[str] | None = None
+
+    @classmethod
+    def of(cls, plan: Plan) -> "Terms":
+        return cls(
+            key=plan.key,
+            unlimited=plan.unlimited,
+            credits_per_period=plan.credits_per_period,
+            windows=tuple(
+                (float(w["hours"]), float(w["credits"])) for w in plan.windows or []
+            ),
+            model_tiers=(
+                None if plan.model_tiers is None else frozenset(plan.model_tiers)
+            ),
+        )
+
+    @property
+    def issues(self) -> float:
+        """The pack the plan issues each month; 0 when it issues none."""
+        if self.unlimited or not self.credits_per_period:
+            return 0.0
+        return float(self.credits_per_period)
+
+
+async def terms_of(session: AsyncSession, plan_keys: Iterable[str]) -> dict:
+    """Plan key → ``Terms``, for every key given."""
+    keys = sorted(set(plan_keys))
+    if not keys:
+        return {}
+    rows = await session.execute(select(Plan).where(Plan.key.in_(keys)))
+    return {plan.key: Terms.of(plan) for plan in rows.scalars()}
+
+
+async def team_terms(session: AsyncSession, team_id: int) -> Terms:
+    """The terms of the plan a team is on."""
+    from app.domain.team.services import team_service
+
+    team = await team_service(session).get_team(team_id)
+    key = team.plan_key if team is not None else "free"
+    return (await terms_of(session, [key]))[key]
+
+
+@dataclass(frozen=True)
 class Payer:
-    """The team that pays for a call, the project it happens in if any, and
-    whether that team is someone's personal team."""
+    """The team that pays for a call, the project it happens in if any, whether
+    that team is someone's personal team, and what its plan allows."""
 
     team_id: int
+    terms: Terms
     project_id: uuid.UUID | None = None
     personal: bool = False
 
@@ -108,7 +166,8 @@ async def payer_for_person(session: AsyncSession, user_id: int) -> Payer:
     from app.domain.team.services import team_service
 
     team = await team_service(session).ensure_personal_team(user_id)
-    return Payer(team_id=team.id, personal=True)
+    terms = (await terms_of(session, [team.plan_key]))[team.plan_key]
+    return Payer(team_id=team.id, terms=terms, personal=True)
 
 
 async def payers_for_projects(
@@ -120,11 +179,13 @@ async def payers_for_projects(
     teams = await team_service(session).get_teams_by_ids(
         sorted({p.team_id for p in projects})
     )
+    terms = await terms_of(session, [t.plan_key for t in teams.values()] + ["free"])
     out: dict[uuid.UUID, Payer] = {}
     for project in projects:
         team = teams.get(project.team_id)
         out[project.id] = Payer(
             team_id=project.team_id,
+            terms=terms[team.plan_key if team is not None else "free"],
             project_id=project.id,
             personal=team is not None and team.personal_owner_user_id is not None,
         )
@@ -138,20 +199,7 @@ async def payer_for_project(session: AsyncSession, project_id: uuid.UUID) -> Pay
     return (await payers_for_projects(session, [project]))[project.id]
 
 
-def _personal_plan_held_back(pack: ComputeGrant, payer: Payer) -> bool:
-    """Until plans land (#2397, PR B), a personal team's monthly plan pack
-    pays only for what its owner asks outside a project: their projects run as
-    they did before it existed. PR B deletes this rule."""
-    return (
-        payer.personal
-        and payer.project_id is not None
-        and pack.source == GrantSource.PLAN_PERIOD
-    )
-
-
 def _applies(pack: ComputeGrant, payer: Payer) -> bool:
-    if _personal_plan_held_back(pack, payer):
-        return False
     if pack.project_id is not None:
         return pack.project_id == payer.project_id
     return pack.team_id == payer.team_id
@@ -171,6 +219,33 @@ def _rank(pack: ComputeGrant) -> int:
 
 _FAR = datetime.max.replace(tzinfo=UTC)
 
+#: What a team may still spend once a plan's time window is full.
+_BOUGHT = (GrantSource.PURCHASE, GrantSource.ADMIN_GRANT)
+
+
+@dataclass(frozen=True)
+class Refusal:
+    """Why a call may not run, and when it may."""
+
+    message: NoticeText
+    reopens_at: datetime | None
+
+    def retry_after_s(self) -> int:
+        """Seconds a refused caller should wait, an hour when nothing will
+        change on its own."""
+        if self.reopens_at is None:
+            return 3600
+        return max(60, int((self.reopens_at - datetime.now(UTC)).total_seconds()))
+
+
+def _hours(hours: float) -> str:
+    return str(int(hours)) if float(hours).is_integer() else f"{hours:g}"
+
+
+def _day(at: datetime) -> dict:
+    local = at.astimezone(_TZ)
+    return {"month": local.month, "day": local.day, "time": local.strftime("%H:%M")}
+
 
 def _order(pack: ComputeGrant) -> tuple:
     # Within a rank, what lapses first is spent first.
@@ -182,11 +257,8 @@ class Balance:
     unlimited: bool
     credits_total: float
     credits_used: float
-    # When the payer's plan next issues a pack; None when no plan pack applies.
+    # When the payer's plan next issues a pack; None when it issues none.
     resets_at: datetime | None
-    # Every pack the payer could ever have drawn on, lapsed ones included:
-    # the gateway's brake compares against a key's lifetime spend.
-    ever_granted: float = 0.0
     packs: tuple[ComputeGrant, ...] = ()
 
     @property
@@ -197,19 +269,18 @@ class Balance:
     def exhausted(self) -> bool:
         return not self.unlimited and self.credits_remaining <= 0
 
-    def exhausted_message(self) -> str:
-        at = self.resets_at
-        if at is None:
-            return "芝士额度已用完。"
-        at = at.astimezone(_TZ)
-        return f"本月的芝士额度已用完，{at.month}月{at.day}日重置。"
+    def bought_remaining(self) -> float:
+        return sum(
+            p.credits_total - p.credits_used for p in self.packs if p.source in _BOUGHT
+        )
 
-    def retry_after_s(self) -> int:
-        """Seconds a refused caller should wait: until the plan's next pack,
-        and an hour when nothing will be issued on its own."""
+    def refusal(self) -> Refusal:
         if self.resets_at is None:
-            return 3600
-        return max(60, int((self.resets_at - datetime.now(UTC)).total_seconds()))
+            return Refusal(say("creditsSpent"), None)
+        at = self.resets_at.astimezone(_TZ)
+        return Refusal(
+            say("creditsMonthSpent", month=at.month, day=at.day), self.resets_at
+        )
 
     def summary(self) -> dict:
         """The shape the credit endpoints have always answered with."""
@@ -218,7 +289,6 @@ class Balance:
             "credits_total": self.credits_total,
             "credits_used": self.credits_used,
             "credits_remaining": self.credits_remaining,
-            "ever_granted": self.ever_granted,
             "grants": list(self.packs),
         }
 
@@ -232,19 +302,30 @@ def _spendable(candidates: Iterable[ComputeGrant], payer: Payer) -> list:
     )
 
 
+def _issued_this_month(candidates: Iterable[ComputeGrant], payer: Payer) -> bool:
+    month = month_of(datetime.now(UTC))
+    return any(
+        p.source == GrantSource.PLAN_PERIOD
+        and p.team_id == payer.team_id
+        and p.period_start == month
+        for p in candidates
+    )
+
+
 def _balance(candidates: list[ComputeGrant], payer: Payer) -> Balance:
     packs = _spendable(candidates, payer)
-    expiring = [
-        p.expires_at
-        for p in packs
-        if p.source == GrantSource.PLAN_PERIOD and p.expires_at is not None
-    ]
+    # The month's plan pack counts before its first charge writes it.
+    unissued = 0.0
+    if payer.terms.issues and not _issued_this_month(candidates, payer):
+        unissued = payer.terms.issues
+    resets_at = None
+    if payer.terms.issues:
+        resets_at = month_end(month_of(datetime.now(UTC)))
     return Balance(
-        unlimited=not packs and settings.credits_unlimited,
-        credits_total=sum(p.credits_total for p in packs),
+        unlimited=payer.terms.unlimited,
+        credits_total=sum(p.credits_total for p in packs) + unissued,
         credits_used=sum(p.credits_used for p in packs),
-        resets_at=min(expiring) if expiring else None,
-        ever_granted=sum(p.credits_total for p in candidates if _applies(p, payer)),
+        resets_at=resets_at,
         packs=tuple(packs),
     )
 
@@ -276,17 +357,46 @@ class Ledger:
             stmt = stmt.with_for_update().execution_options(populate_existing=True)
         return list((await self._session.execute(stmt)).scalars())
 
-    async def _payer_candidates(
-        self, payer: Payer, *, lock: bool = False
-    ) -> list[ComputeGrant]:
-        # A person asking outside any project is the moment their personal
-        # team's plan pack for the month comes into being.
-        if payer.project_id is None and payer.personal:
-            await self._plan_pack(payer.team_id)
-        return await self._candidates([payer], lock=lock)
-
     async def balance(self, payer: Payer) -> Balance:
-        return _balance(await self._payer_candidates(payer), payer)
+        return _balance(await self._candidates([payer]), payer)
+
+    async def admit(self, payer: Payer) -> Refusal | None:
+        """Whether a call ``payer`` would pay for may run now; None if it may.
+
+        A full time window leaves only bought or granted credits to spend; with
+        none, the call waits for the window to reopen."""
+        if payer.terms.unlimited:
+            return None
+        balance = await self.balance(payer)
+        full = await self._full_window(payer)
+        if full is not None:
+            if balance.bought_remaining() > 0:
+                return None
+            hours, reopens_at = full
+            return Refusal(
+                say("creditsWindowFull", hours=_hours(hours), **_day(reopens_at)),
+                reopens_at,
+            )
+        if balance.exhausted:
+            return balance.refusal()
+        return None
+
+    async def _full_window(self, payer: Payer) -> tuple[float, datetime] | None:
+        """The plan's window that is full, and when it reopens: the longest
+        wait when several are."""
+        full: tuple[float, datetime] | None = None
+        now = datetime.now(UTC)
+        repo = UsageRepository(self._session)
+        for hours, cap in payer.terms.windows:
+            used, oldest = await repo.team_window(
+                payer.team_id, since=now - timedelta(hours=hours)
+            )
+            if used < cap or oldest is None:
+                continue
+            reopens_at = oldest + timedelta(hours=hours)
+            if full is None or reopens_at > full[1]:
+                full = (hours, reopens_at)
+        return full
 
     async def balances(self, payers: Mapping[uuid.UUID, Payer]) -> dict:
         """``balance`` for many payers at once, in one query."""
@@ -333,10 +443,16 @@ class Ledger:
         room for lands on the last one, or, with none live, on the newest pack
         the payer ever had, so recorded consumption stays truthful. Returns the
         credits deducted."""
-        if credits <= 0:
+        if credits <= 0 or payer.terms.unlimited:
             return 0.0
-        candidates = await self._payer_candidates(payer, lock=True)
+        if payer.terms.issues:
+            await self._plan_pack(payer.team_id, payer.terms.issues)
+        candidates = await self._candidates([payer], lock=True)
         packs = _spendable(candidates, payer)
+        if packs and await self._full_window(payer) is not None:
+            # A full window leaves only bought credits; with none left, the
+            # call was admitted on what remained and lands in the usual order.
+            packs = [p for p in packs if p.source in _BOUGHT] or packs
         if not packs:
             everything = [p for p in candidates if _applies(p, payer)]
             if not everything:
@@ -435,10 +551,13 @@ class Ledger:
         topic_id: uuid.UUID | None = None,
         turn_id: uuid.UUID | None = None,
         user_id: int | None = None,
+        metered: bool = True,
     ) -> float:
         """Write one usage row, naming the team that paid and the credits it
         cost, and charge those credits: the row and the deduction cannot come
-        apart. Returns the credits deducted."""
+        apart. Every usage row is written here, an unmetered one (work done,
+        tokens unknown) too, so each names the team it belongs to. Returns the
+        credits deducted."""
         await UsageRepository(self._session).add(
             project_id=payer.project_id,
             topic_id=topic_id,
@@ -452,14 +571,15 @@ class Ledger:
             user_id=user_id,
             team_id=payer.team_id,
             credits=credits,
+            metered=metered,
         )
         return await self.charge(payer, credits)
 
     # ---- issuing -----------------------------------------------------------
 
-    async def _plan_pack(self, team_id: int) -> None:
-        """This month's plan pack for a personal team, written the first time
-        it is needed, so two first requests racing each other still write one."""
+    async def _plan_pack(self, team_id: int, credits: float) -> None:
+        """This month's plan pack, written the first time a call of the month
+        is charged, so two first charges racing each other still write one."""
         month = month_of(datetime.now(UTC))
         await self._session.execute(
             insert(ComputeGrant)
@@ -469,7 +589,7 @@ class Ledger:
                 source=GrantSource.PLAN_PERIOD.value,
                 period_start=month,
                 expires_at=month_end(month),
-                credits_total=settings.personal_credits_monthly,
+                credits_total=credits,
                 credits_used=0.0,
                 created_at=datetime.now(UTC),
                 updated_at=datetime.now(UTC),

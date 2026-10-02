@@ -745,3 +745,36 @@ def github_binding_user(client, monkeypatch):
         return "test-github-user-token"
 
     monkeypatch.setattr(OAuthService, "get_github_user_token", token)
+
+
+async def set_free_plan_credits(session, credits: float) -> None:
+    """Give the Free plan ``credits`` a month, so a test can spend one out."""
+    from sqlalchemy import update
+
+    from app.domain.usage.models import Plan
+
+    await session.execute(
+        update(Plan).where(Plan.key == "free").values(credits_per_period=credits)
+    )
+    await session.commit()
+
+
+def free_plan_credits(client, credits: float) -> None:
+    """``set_free_plan_credits`` for a test driving the ``client`` fixture."""
+    import asyncio
+
+    async def run() -> None:
+        async with client.test_factory() as session:  # type: ignore[attr-defined]
+            await set_free_plan_credits(session, credits)
+
+    asyncio.run(run())
+
+
+async def put_on_plan(session, team_id: int, key: str) -> None:
+    """Move a team to plan ``key``: a test running the Claude subscription
+    models needs a plan that allows them, which Free does not."""
+    from sqlalchemy import update
+
+    from app.domain.team.models import Team
+
+    await session.execute(update(Team).where(Team.id == team_id).values(plan_key=key))

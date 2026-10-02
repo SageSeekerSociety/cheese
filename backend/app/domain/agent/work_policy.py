@@ -31,7 +31,7 @@ async def work_policy(sessions, compute, topic_id: uuid.UUID) -> dict | None:
         if topic is None:
             return None
         project = await ProjectRepository(session).get(topic.project_id)
-        balance = await Ledger(session).balance(
+        refused = await Ledger(session).admit(
             await payer_for_project(session, topic.project_id)
         )
     project_settings = project.settings if project else None
@@ -48,6 +48,8 @@ async def work_policy(sessions, compute, topic_id: uuid.UUID) -> dict | None:
     return {
         "project_id": str(topic.project_id),
         "max_concurrent_turns": max_concurrent,
-        "credits_exhausted": balance.exhausted,
+        # Why the project's credits refuse a turn now (a sentence the room
+        # shows), or None when they admit it.
+        "credits_exhausted": refused.message if refused is not None else None,
         "on_session_host": provider is not None,
     }

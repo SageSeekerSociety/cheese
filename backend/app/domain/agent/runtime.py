@@ -2001,14 +2001,13 @@ class AgentWorkRunner:
         is_message_turn: bool,
         message_landed: bool = False,
     ) -> None:
-        """Refuse a turn for exhausted credits. A human's message still lands
-        (speaking is free — only the AI turn is metered): it goes through a
-        summon=False converse pass, then the structured platform event says why
-        芝士 isn't coming. The copy is the PLATFORM's, never the model's."""
-        from app.domain.usage.credits import (
-            CREDITS_EXHAUSTED_EVENT,
-            CREDITS_EXHAUSTED_META,
-        )
+        """Refuse a turn the credits do not admit. A human's message still lands
+        (only the AI turn is metered); the platform's own event says why."""
+        from app.domain.usage.credits import CREDITS_EXHAUSTED_META, credits_event
+
+        policy = await chat_service.work_policy(topic_id)
+        reason = (policy or {}).get("credits_exhausted")
+        event = credits_event(reason)
 
         channel = str(topic_id)
         if is_message_turn and not message_landed and (content or attachments):
@@ -2030,14 +2029,14 @@ class AgentWorkRunner:
             chat_service,
             topic_id,
             turn_id,
-            CREDITS_EXHAUSTED_EVENT,
+            event,
             meta=CREDITS_EXHAUSTED_META,
         )
         await self._broker.publish(
             channel,
             {
                 "type": "error",
-                "message": CREDITS_EXHAUSTED_EVENT,
+                "message": event,
                 "persisted": posted,
             },
         )

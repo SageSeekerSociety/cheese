@@ -5,7 +5,6 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ValidationError
-from app.domain.agent.budget_proxy import BudgetState, decide
 from app.domain.agent.supply import GATEWAY
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.policy import gate
@@ -49,20 +48,17 @@ async def admit(session: AsyncSession, project_id: uuid.UUID, frozen: dict) -> N
             tier=choice["tier"],
             approver=project.owner_handle or "",
         ),
-        gate.policy_of(project.settings),
+        gate.policy_of(
+            project.settings,
+            await UsageService(session).plan_model_tiers(project.team_id),
+        ),
         actor=frozen["agent_handle"],
     )
     if isinstance(result, gate.Proposal):
         raise ValidationError(result.content)
-    summary = await UsageService(session).project_credits(project_id)
-    decision = decide(
-        BudgetState(
-            spent=summary["credits_used"],
-            limit=None if summary["unlimited"] else summary["credits_total"],
-        )
-    )
-    if not decision.allow:
-        raise ValidationError(decision.reason)
+    refused = await UsageService(session).admit_project(project_id)
+    if refused is not None:
+        raise ValidationError(refused.message)
     if bound.supply != GATEWAY:
         raise ValidationError(
             "所选订阅模型尚不支持无工具文档 completion；没有切换模型或供给"

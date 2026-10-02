@@ -634,9 +634,7 @@ async def get_team_resource_quotas(
         raise NotFoundError("Resource team not found")
     machines = await MachineService(db).quota_machines(team_id)
     grants = await UsageService(db).team_packs(team_id)
-    shared = [g for g in grants if g.project_id is None]
-    total = sum(g.credits_total for g in shared)
-    used = sum(g.credits_used for g in shared)
+    pool = await UsageService(db).team_credits(team_id)
     projects = await ProjectService(db).list_for_team(team_id)
     usage = UsageRepository(db)
     return {
@@ -649,10 +647,10 @@ async def get_team_resource_quotas(
                 "limit": await get_machine_limit(db, team_id),
             },
             "credits": {
-                "unlimited": not shared and settings.credits_unlimited,
-                "credits_total": total,
-                "credits_used": used,
-                "credits_remaining": total - used,
+                "unlimited": pool["unlimited"],
+                "credits_total": pool["credits_total"],
+                "credits_used": pool["credits_used"],
+                "credits_remaining": pool["credits_remaining"],
                 "tokens_per_credit": settings.compute_credit_tokens,
             },
             "projects": [

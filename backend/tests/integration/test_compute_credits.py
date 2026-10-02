@@ -15,7 +15,12 @@ import time
 import pytest
 
 from tests.conftest import seed_task_with_protocol, seed_user, wait_work_idle
-from tests.integration.conftest import chat_ws_url, post_message, post_project
+from tests.integration.conftest import (
+    chat_ws_url,
+    free_plan_credits,
+    post_message,
+    post_project,
+)
 
 # A Claude Code session reports no usage of its own: the metering proxy logs
 # each model response it carried, and that log is what burns credits. Each
@@ -164,11 +169,25 @@ def _run_turn(client, topic_id: str, meter=None) -> list[dict]:
     return frames
 
 
-def test_a_project_from_no_赛题_is_unlimited(client):
+def _free_month(client) -> float:
+    async def read() -> float:
+        from app.domain.usage.models import Plan
+
+        async with client.test_factory() as session:  # type: ignore[attr-defined]
+            plan = await session.get(Plan, "free")
+            assert plan is not None and plan.credits_per_period is not None
+            return plan.credits_per_period
+
+    import asyncio as _asyncio
+
+    return _asyncio.run(read())
+
+
+def test_a_project_from_no_赛题_spends_its_teams_free_month(client):
     project_id = _mk_project(client)
     data = _credits(client, project_id)
-    assert data["unlimited"] is True
-    assert data["grants"] == []
+    assert data["unlimited"] is False
+    assert data["credits_remaining"] == _free_month(client)
 
 
 def test_creating_a_project_from_a_赛题_issues_its_资源包(client):
@@ -177,19 +196,18 @@ def test_creating_a_project_from_a_赛题_issues_its_资源包(client):
     project_id = _mk_project(client, from_task=task_id)
 
     data = _credits(client, project_id)
-    assert data["unlimited"] is False
-    assert data["credits_total"] == 1000.0
+    assert data["credits_total"] == 1000.0 + _free_month(client)
     assert data["credits_used"] == 0.0
-    assert data["credits_remaining"] == 1000.0
-    assert len(data["grants"]) == 1
-    assert data["grants"][0]["source_task_id"] == task_id
+    assert [(g["source_task_id"], g["credits_total"]) for g in data["grants"]] == [
+        (task_id, 1000.0)
+    ]
 
 
 def test_a_赛题_with_no_credits_pack_grants_nothing(client):
     task_id = _mk_task(client, compute_credits=None)
     project_id = _mk_project(client, from_task=task_id)
     data = _credits(client, project_id)
-    assert data["unlimited"] is True  # no grant issued → still自治/unlimited
+    assert data["grants"] == []  # no 资源包: only the team's plan pays
 
 
 def test_turn_deducts_credits_from_grant(client, tmp_path):
@@ -204,8 +222,9 @@ def test_turn_deducts_credits_from_grant(client, tmp_path):
     assert frames[-1]["type"] == "done"
 
     data = _credits(client, project_id)
+    [earmark] = [g for g in data["grants"] if g["source_task_id"] == task_id]
+    assert earmark["credits_used"] == pytest.approx(CREDITS_PER_TURN)
     assert data["credits_used"] == pytest.approx(CREDITS_PER_TURN)
-    assert data["credits_remaining"] == pytest.approx(1 - CREDITS_PER_TURN)
 
 
 def test_deduction_drains_oldest_grant_first(client, tmp_path):
@@ -228,7 +247,9 @@ def test_deduction_drains_oldest_grant_first(client, tmp_path):
 
 
 def test_exhausted_credits_refuse_next_turn(client, tmp_path):
-    # One turn more than exhausts this grant (0.0001 < 0.0015).
+    # One turn more than exhausts this grant (0.0001 < 0.0015), and the team's
+    # plan issues nothing to fall back on.
+    free_plan_credits(client, 0.0)
     task_id = _mk_task(client, compute_credits=0.0001)
     project_id = _mk_project(client, from_task=task_id)
 
@@ -249,13 +270,13 @@ def test_exhausted_credits_refuse_next_turn(client, tmp_path):
     # The human's message still lands; the agent never replies — instead the
     # platform's structured exhaustion event closes the turn.
     assert types == ["user_block", "event_block", "error"]
-    assert "tokens 额度已用完" in second[1]["block"]["content"]
+    assert "额度已用完" in second[1]["block"]["content"]
     assert second[-1]["persisted"] is True
     assert not any(t == "assistant_block" for t in types)
 
     # The refusal event is persisted in the topic 现场 (survives reload).
     blocks = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
-    assert any("tokens 额度已用完" in b["content"] for b in blocks)
+    assert any("额度已用完" in b["content"] for b in blocks)
 
     # And no further credits were burned by the refused turn.
     after = client.get(f"/projects/{project_id}/credits").json()["data"]

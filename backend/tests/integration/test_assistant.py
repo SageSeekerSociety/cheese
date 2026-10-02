@@ -43,6 +43,7 @@ from app.domain.usage.models import ComputeGrant, ResourceUsage
 from app.domain.user.models import User
 from app.main import app
 from tests.conftest import seed_task_with_protocol, seed_user
+from tests.integration.conftest import free_plan_credits
 from tests.support.session_host import DEVICE, Host, install_pi, stop_all
 
 USAGE = {
@@ -508,8 +509,8 @@ def test_a_person_who_cannot_open_the_task_cannot_ask_about_it(client, gateway):
     assert gateway.requests == []
 
 
-def test_with_no_credits_left_the_model_is_not_asked(client, gateway, monkeypatch):
-    monkeypatch.setattr(settings, "personal_credits_monthly", 1.0)
+def test_with_no_credits_left_the_model_is_not_asked(client, gateway):
+    free_plan_credits(client, 1.0)
     me = _auth(client, "asker")
     task_id = _task(client)
     conversation = _start(client, task_id, me)
@@ -572,8 +573,8 @@ def test_the_retired_task_advice_is_gone(client, gateway):
         assert client.get(path, headers=me).status_code == 404, path
 
 
-def test_a_refused_question_leaves_nothing_in_the_list(client, gateway, monkeypatch):
-    monkeypatch.setattr(settings, "personal_credits_monthly", 0.0)
+def test_a_refused_question_leaves_nothing_in_the_list(client, gateway):
+    free_plan_credits(client, 0.0)
     me = _auth(client, "asker")
     task_id = _task(client)
     conversation = _start(client, task_id, me)
