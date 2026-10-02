@@ -169,7 +169,11 @@ describe('离开前问一句', () => {
     const ui = mount()
     await painted(ui)
     await drawRect(ui)
-    await waitFor(() => expect(hasUnsentAnnotations()).toBe(true))
+    // 分两步：先等框上屏，再断言登记。两步分开是为了区分「笔画根本没落下来」和
+    // 「笔画落下来了但没登记」——它们坏的是两个地方，而上屏的那一步有 DOM 变化，
+    // waitFor 的观察器一到就叫醒，不靠轮询撞。
+    await waitFor(() => expect(rects(ui)).toBe(1))
+    expect(hasUnsentAnnotations()).toBe(true)
 
     const first = confirmAnnotationDiscard()
     await ui.findByRole('alertdialog', { name: '放弃这些标注？' })

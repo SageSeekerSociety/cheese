@@ -565,10 +565,15 @@ function trapDiscardFocus(event: KeyboardEvent) {
 }
 // 只有「此刻在看着的、且有没发出去的笔画」的那一块才登记：收起来的页签（v-show 留着
 // 的）也在跑，但它们没在看，不该拦住别人。
-watchEffect(() => {
-  if (props.active && wouldLoseStrokes.value) setAnnotationGuard(discardGuard)
-  else clearAnnotationGuard(discardGuard)
-})
+// flush: 'sync' —— 这道登记是被同步读的（路由守卫、关页签、切文件都在同一拍里读它），
+// 落在一拍之后的刷新队列里就等于「刚画完那一瞬间还没登记」。同步跑，登记和写笔画是同一拍。
+watchEffect(
+  () => {
+    if (props.active && wouldLoseStrokes.value) setAnnotationGuard(discardGuard)
+    else clearAnnotationGuard(discardGuard)
+  },
+  { flush: 'sync' }
+)
 watch(
   () => props.activeRegion,
   () => {
