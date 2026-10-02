@@ -75,7 +75,7 @@ describe('deciding the AI teammate’s suggestions', () => {
     suggest(other, '一周', '两周')
 
     await screen.findByText(t('work.room.docSuggest.pending', { agent: '芝士', n: 2 }))
-    await fireEvent.click(screen.getByRole('button', { name: t('work.room.docSuggest.next') }))
+    await fireEvent.click(screen.getByRole('button', { name: t('work.room.docEdit.next') }))
     await fireEvent.click(await screen.findByRole('button', { name: t('work.room.docSuggest.accept') }))
 
     await waitFor(() => expect(exportMarkdown(theirs)).toContain('数据量到五百万行'))

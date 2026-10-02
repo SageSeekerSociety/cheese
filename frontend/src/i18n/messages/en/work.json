@@ -393,7 +393,9 @@
       "detail": "Details",
       "docDiff": "Document changes",
       "added": "Added",
-      "removed": "Removed"
+      "removed": "Removed",
+      "docEditCount": "Changes: {n}",
+      "viewSuggestions": "View"
     },
     "message": {
       "copy": "Copy",
@@ -961,20 +963,28 @@
       "failedRetry": "Edit failed. Try again later",
       "stale": "This text has changed. Select it again",
       "unmappable": "This selection can't be edited on its own. Select it again",
-      "unavailable": "This document can't be edited right now"
+      "unavailable": "This document can't be edited right now",
+      "prev": "Previous",
+      "next": "Next"
     },
     "docSuggest": {
       "title": "{agent}'s suggestion",
-      "pending": "{agent}'s suggestions · {n} left to review",
-      "prev": "Previous",
-      "next": "Next",
+      "pending": "{agent}'s suggestions · Left to review: {n}",
       "rejectAll": "Reject all",
       "acceptAll": "Accept all",
-      "allDone": "All of {agent}'s suggestions reviewed: {accepted} accepted, {rejected} rejected",
+      "allDone": "All of {agent}'s suggestions reviewed · Accepted: {accepted} · Rejected: {rejected}",
       "dismiss": "Close",
       "position": "{i}/{n}",
       "reject": "Reject",
       "accept": "Accept"
+    },
+    "docReview": {
+      "label": "Changes",
+      "title": "Changes {requester} asked {agent} to make: {n}",
+      "allRestored": "All changes {requester} asked {agent} to make are restored",
+      "close": "Hide changes",
+      "position": "Change {i} of {n}",
+      "restore": "Restore this"
     }
   },
   "board": {

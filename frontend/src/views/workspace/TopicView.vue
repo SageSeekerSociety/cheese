@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { AgentControlState, Block, Topic, TopicMemberRow } from '@/cx_types'
+import type { DocReviewRequest } from '@/lib/docReview'
 import type { MemberActivityLine } from '@/lib/memberActivity'
 import type { CardPhase } from '@/lib/topicState'
 import type { SubmitPreviewQuestion } from '../../lib/previewQuestion'
@@ -149,6 +150,7 @@ const panelRef = ref<{
   highlightTurn: (turnId: string) => void
   openFile?: (path: string, taskId?: string | null) => void
   siteBlock?: (block: Block) => void
+  reviewDoc?: (request: DocReviewRequest) => void
 } | null>(null)
 const chatColumn = ref<{
   connected: boolean
@@ -261,7 +263,7 @@ function handleStateChanged(resource: string) {
 }
 
 // An action card's button → open the relevant view (§3.1.1 控件).
-async function handleOpenResource(resource: string, turnId?: string) {
+async function handleOpenResource(resource: string, turnId?: string, review?: DocReviewRequest) {
   if (resource === 'site') {
     // 对话里在动的那个头像：它此刻在干什么，去现场看。
     focusMode.value = false
@@ -279,7 +281,9 @@ async function handleOpenResource(resource: string, turnId?: string) {
     // settle before highlightTurn tags + flashes, or the flash is wiped instantly.
     focusMode.value = false
     await nextTick()
-    if (turnId) panelRef.value?.highlightTurn(turnId)
+    // 「查看改动」：在正文里一处处标出这个人让 AI 队友改的那几处。
+    if (review) panelRef.value?.reviewDoc?.(review)
+    else if (turnId) panelRef.value?.highlightTurn(turnId)
     else panelRef.value?.pulse()
   }
   // topics: the topic panel is already in view next to the chat.

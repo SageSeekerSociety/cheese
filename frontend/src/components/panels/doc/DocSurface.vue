@@ -525,6 +525,22 @@ const emptyPlaceholder = computed(() => JSON.stringify(t('work.room.doc.emptyPla
   outline: 2px solid color-mix(in srgb, var(--ok) 45%, transparent);
   outline-offset: 1px;
 }
+/* 「查看改动」：改后的字淡绿底，原来的字删除线在它前面（lib/docEditMarks.ts）。 */
+.doc-editor :deep(.doc-review-new) {
+  background: var(--ok-wash);
+  cursor: pointer;
+}
+.doc-editor :deep(.doc-review-old) {
+  margin-right: 2px;
+  color: var(--danger-ink);
+  text-decoration: line-through var(--danger);
+  user-select: none;
+}
+.doc-editor :deep(.doc-review-new.is-active),
+.doc-editor :deep(.doc-review-old.is-active) {
+  outline: 2px solid color-mix(in srgb, var(--ok) 45%, transparent);
+  outline-offset: 1px;
+}
 /* 让 AI 队友改的那一段（lib/docEditMarks.ts）：选中、改写中（带一个写着名字的光标）、
    刚改好时亮一下。 */
 .doc-editor :deep(.doc-edit-target--select),

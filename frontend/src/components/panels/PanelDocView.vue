@@ -9,10 +9,12 @@ import type { DocConnection, DocPeer, DocSession } from '../../composables/useDo
 import type { SendDocComment } from '../../composables/useDocCommentDraft'
 import type { Block, Topic } from '../../cx_types'
 import type { DocEdit, DocRewriteRequest, DocRewriteResult } from '../../lib/docEdits'
+import type { DocReviewRequest } from '../../lib/docReview'
 import type { DocThreadActions, DocThreadState } from '../../lib/docThreadTypes'
 
 import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
+import { useDocReview } from '../../composables/useDocReview'
 import { useDocRewrite } from '../../composables/useDocRewrite'
 import { useDocSuggestions } from '../../composables/useDocSuggestions'
 import { topicTitle } from '../../lib/topicState'
@@ -21,6 +23,7 @@ import DocCommentPanel from './doc/DocCommentPanel.vue'
 import DocEditLayer from './doc/DocEditLayer.vue'
 import DocFormatToolbar from './doc/DocFormatToolbar.vue'
 import DocPresence from './doc/DocPresence.vue'
+import DocReviewStrip from './doc/DocReviewStrip.vue'
 import DocSuggestionStrip from './doc/DocSuggestionStrip.vue'
 import DocSurface from './doc/DocSurface.vue'
 import OverviewAuto from './doc/OverviewAuto.vue'
@@ -146,12 +149,23 @@ const rewrite = useDocRewrite({
   onError: (message) => props.setError(message),
 })
 const suggestions = useDocSuggestions(() => surfaceRef.value?.editor ?? null)
+const review = useDocReview({
+  editor: () => surfaceRef.value?.editor ?? null,
+  applyEdits: () => props.applyDocEdits,
+  onError: (message) => props.setError(message),
+})
+/** 「查看改动」：在正文里一处处标出某个人让 AI 队友改的那几处。 */
+function reviewEdits(request: DocReviewRequest) {
+  rewrite.close()
+  review.open(request)
+}
 function locateComment(commentId: string) {
   commentsRef.value?.locate(commentId)
 }
 watch([() => props.topic?.id, () => props.commentAuthor], () => {
   openId.value = null
   rewrite.close()
+  review.close()
 })
 function quoteState(id: string) {
   return surfaceRef.value?.commentQuoteState(id) ?? 'missing'
@@ -161,6 +175,7 @@ function quoteState(id: string) {
 defineExpose({
   pulse,
   highlightTurn,
+  reviewEdits,
   serializeVisual: () => surfaceRef.value?.serializeVisual() ?? null,
 })
 </script>
@@ -235,6 +250,14 @@ defineExpose({
             </v-menu>
           </div>
         </div>
+        <DocReviewStrip
+          v-if="review.request.value"
+          :agent-name="agentName"
+          :requester="review.request.value.requester"
+          :count="review.live.value.length"
+          @step="review.step"
+          @close="review.close"
+        />
         <DocSuggestionStrip
           :agent-name="agentName"
           :count="suggestions.list.value.length"
@@ -301,6 +324,7 @@ defineExpose({
                 :agent-name="agentName"
                 :editable="editable"
                 :rewrite="rewrite"
+                :review="review"
                 :suggestions="suggestions"
               />
 

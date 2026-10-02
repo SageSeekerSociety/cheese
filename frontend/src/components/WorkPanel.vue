@@ -24,6 +24,7 @@
 // 话，聊一小时能攒出二十个页签。
 import type { OpenFileTab } from '../composables/useTopicMemory'
 import type { AgentControlState, Block, PreviewInfo, Topic } from '../cx_types'
+import type { DocReviewRequest } from '../lib/docReview'
 import type { MemberActivityLine } from '../lib/memberActivity'
 import type { SubmitPreviewQuestion } from '../lib/previewQuestion'
 import type { CardPhase } from '../lib/topicState'
@@ -465,6 +466,10 @@ function highlightTurn(turnId: string) {
   setTab('overview')
   void nextTick(() => overviewRef.value?.highlightTurn(turnId))
 }
+function reviewDoc(request: DocReviewRequest) {
+  setTab('overview')
+  void nextTick(() => overviewRef.value?.reviewEdits(request))
+}
 // A chip is a path with no store, and a room has three: its own files (what 芝士
 // delivered and what people uploaded — no branch, no history), a task's worktree,
 // and the project's current code. So find the file FIRST and pick the tab from
@@ -557,7 +562,7 @@ function siteBlock(block: Block) {
   siteRef.value?.receive(block)
 }
 
-defineExpose({ pulse, highlightTurn, openFile, siteBlock })
+defineExpose({ pulse, highlightTurn, reviewDoc, openFile, siteBlock })
 </script>
 
 <template>

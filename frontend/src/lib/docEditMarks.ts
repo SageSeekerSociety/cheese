@@ -1,7 +1,8 @@
 // What the document shows around a change the AI teammate is making or made:
 // the selection it was asked to rewrite (and the caret saying it is at work),
-// the new text lit up for a moment, the suggestion being looked at, and room
-// under a block for the card that talks about it.
+// the new text lit up for a moment, the suggestion being looked at, the
+// changes someone asked it for (new text marked, the old text struck before
+// it), and room under a block for the card that talks about it.
 //
 // None of it is part of the document: these are decorations, drawn from state
 // the panel sets through `setEditMarks`.
@@ -17,6 +18,7 @@
 import type { Node as PMNode } from '@tiptap/pm/model'
 import type { EditorState, Transaction } from '@tiptap/pm/state'
 import type * as Y from 'yjs'
+import type { DocEdit } from './docEdits'
 
 import { Extension } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
@@ -28,6 +30,7 @@ import {
 } from '@tiptap/y-tiptap'
 
 import { flatText, occurrences, rangeOf } from './docEdits'
+import { locateEdits } from './docReview'
 import { suggestionRanges } from './docSuggestionList'
 
 /** How the target range is drawn: chosen for a rewrite, being rewritten,
@@ -54,15 +57,23 @@ export interface EditMarksState {
   gap: { index: number; px: number } | null
   /** The suggestion being looked at. */
   suggestion: string | null
+  /** The changes under review, and which one is looked at. */
+  review: ReviewMarks | null
+}
+
+export interface ReviewMarks {
+  edits: DocEdit[]
+  active: number | null
 }
 
 export interface EditMarksPatch {
   target?: EditTarget | null
   gap?: { index: number; px: number } | null
   suggestion?: string | null
+  review?: ReviewMarks | null
 }
 
-const EMPTY: EditMarksState = { target: null, gap: null, suggestion: null }
+const EMPTY: EditMarksState = { target: null, gap: null, suggestion: null, review: null }
 
 export const editMarksKey = new PluginKey<EditMarksState>('cheeseDocEditMarks')
 
@@ -129,6 +140,13 @@ export function nearestText(doc: PMNode, text: string, near: number): { from: nu
   return rangeOf(flat, best, best + text.length)
 }
 
+function struck(text: string, active: boolean): HTMLElement {
+  const el = document.createElement('del')
+  el.className = active ? 'doc-review-old is-active' : 'doc-review-old'
+  el.textContent = text
+  return el
+}
+
 function caret(label: string): HTMLElement {
   const el = document.createElement('span')
   el.className = 'doc-edit-caret'
@@ -139,9 +157,19 @@ function caret(label: string): HTMLElement {
   return el
 }
 
+// Drawn once per document and state: the editor asks on every update.
+let drawn: { doc: PMNode; marks: EditMarksState; set: DecorationSet } | null = null
+
 function decorations(state: EditorState): DecorationSet {
-  const { target, gap, suggestion } = editMarks(state)
-  const doc = state.doc
+  const marks = editMarks(state)
+  if (drawn && drawn.doc === state.doc && drawn.marks === marks) return drawn.set
+  const set = draw(state.doc, marks)
+  drawn = { doc: state.doc, marks, set }
+  return set
+}
+
+function draw(doc: PMNode, marks: EditMarksState): DecorationSet {
+  const { target, gap, suggestion, review } = marks
   const out: Decoration[] = []
   if (target && target.to > target.from && target.mode !== 'anchor') {
     out.push(Decoration.inline(target.from, target.to, { class: `doc-edit-target doc-edit-target--${target.mode}` }))
@@ -152,6 +180,29 @@ function decorations(state: EditorState): DecorationSet {
   if (suggestion) {
     for (const range of suggestionRanges(doc).filter((r) => r.id === suggestion)) {
       for (const span of range.spans) out.push(Decoration.inline(span.from, span.to, { class: 'doc-suggestion-focus' }))
+    }
+  }
+  if (review) {
+    for (const change of locateEdits(doc, review.edits)) {
+      if (!change.live) continue
+      const active = change.index === review.active ? ' is-active' : ''
+      if (change.oldText) {
+        const old = change.oldText
+        out.push(
+          Decoration.widget(change.from, () => struck(old, !!active), {
+            side: -1,
+            key: `old:${change.index}:${active}:${old}`,
+          })
+        )
+      }
+      if (change.to > change.from) {
+        out.push(
+          Decoration.inline(change.from, change.to, {
+            class: `doc-review-new${active}`,
+            'data-review': String(change.index),
+          })
+        )
+      }
     }
   }
   if (gap && gap.index < doc.childCount) {
@@ -176,6 +227,7 @@ export function createEditMarks() {
               let target = prev.target ? moveTarget(prev.target, tr, next) : null
               let gap = prev.gap
               let suggestion = prev.suggestion
+              let review = prev.review
               const patch = tr.getMeta(editMarksKey) as EditMarksPatch | undefined
               if (patch && 'target' in patch) {
                 const set = patch.target
@@ -183,8 +235,10 @@ export function createEditMarks() {
               }
               if (patch && 'gap' in patch) gap = patch.gap ?? null
               if (patch && 'suggestion' in patch) suggestion = patch.suggestion ?? null
-              if (target === prev.target && gap === prev.gap && suggestion === prev.suggestion) return prev
-              return { target, gap, suggestion }
+              if (patch && 'review' in patch) review = patch.review ?? null
+              const same = target === prev.target && gap === prev.gap && suggestion === prev.suggestion
+              if (same && review === prev.review) return prev
+              return { target, gap, suggestion, review }
             },
           },
           // After every update the shared document has caught up with this

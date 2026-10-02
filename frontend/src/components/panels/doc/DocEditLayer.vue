@@ -1,11 +1,12 @@
 <script setup lang="ts">
-// 贴在正文里某一段下面的那张卡：「让{agent}改」的输入框和改好之后的条子，或者正看着的
-// 那一处修改建议。同一时刻只有一张，改写优先。
+// 贴在正文里某一段下面的那张卡：「让{agent}改」的输入框和改好之后的条子、正看着的那一处
+// 改动，或者正看着的那一处修改建议。同一时刻只有一张，按这个次序。
 //
 // 卡不进编辑器（ProseMirror 会撤掉别人加进可编辑区的东西），而是浮在正文上面、量着那
 // 一段的位置摆；那一段下面用装饰留出一块同样高的空白，卡就不压住后面的字。卡和空白
 // 都跟着正文的每一次变化重新量。
 import type { Editor } from '@tiptap/core'
+import type { DocReviewController } from '../../../composables/useDocReview'
 import type { DocRewriteController } from '../../../composables/useDocRewrite'
 import type { DocSuggestionsController } from '../../../composables/useDocSuggestions'
 
@@ -13,6 +14,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 import { editMarks, setEditMarks } from '../../../lib/docEditMarks'
 
+import DocReviewCard from './DocReviewCard.vue'
 import DocRewriteBar from './DocRewriteBar.vue'
 import DocRewriteBox from './DocRewriteBox.vue'
 import DocSuggestionCard from './DocSuggestionCard.vue'
@@ -22,6 +24,7 @@ const props = defineProps<{
   agentName: string
   editable: boolean
   rewrite: DocRewriteController
+  review: DocReviewController
   suggestions: DocSuggestionsController
 }>()
 
@@ -41,6 +44,8 @@ const anchor = computed(() => {
     if (target)
       return { kind: 'rewrite' as const, from: target.from, to: target.to, width: phase === 'asking' ? 460 : 0 }
   }
+  const change = props.review.current.value
+  if (change) return { kind: 'review' as const, from: change.from, to: change.to, width: 540 }
   const suggestion = props.suggestions.active.value
   if (suggestion) return { kind: 'suggestion' as const, from: suggestion.from, to: suggestion.to, width: 540 }
   return null
@@ -111,6 +116,7 @@ function bind(editor: Editor | null) {
 watch(() => props.editor, bind, { immediate: true })
 watch(() => props.rewrite.phase.value, schedule)
 watch(() => props.suggestions.current.value, schedule)
+watch(() => props.review.current.value, schedule)
 const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(schedule) : null
 watch(card, (el, old) => {
   if (old) observer?.unobserve(old)
@@ -145,8 +151,16 @@ onBeforeUnmount(() => {
       class="doc-edit-layer__card"
       :style="{ top: `${place.top}px`, left: `${place.left}px`, width: place.width ? `${place.width}px` : undefined }"
     >
+      <DocReviewCard
+        v-if="anchor.kind === 'review' && review.current.value"
+        :index="review.live.value.indexOf(review.current.value)"
+        :total="review.live.value.length"
+        :busy="review.busy.value"
+        :editable="editable"
+        @restore="review.restore(review.current.value.index)"
+      />
       <DocSuggestionCard
-        v-if="anchor.kind === 'suggestion' && suggestions.active.value"
+        v-else-if="anchor.kind === 'suggestion' && suggestions.active.value"
         :agent-name="agentName"
         :agent-handle="suggestions.active.value.author || null"
         :index="suggestions.index.value"

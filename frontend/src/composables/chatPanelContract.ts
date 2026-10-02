@@ -5,6 +5,7 @@
 // the panel itself is the socket, the window of history and the timers, and a
 // list of events is neither.
 import type { AgentControlState, Block, ProjectMemberRow, Topic } from '../cx_types'
+import type { DocReviewRequest } from '../lib/docReview'
 import type { MemberActivityLine } from '../lib/memberActivity'
 
 /** The events this panel surfaces to whoever owns the address it is rendered at. */
@@ -44,8 +45,9 @@ export interface ChatPanelEmit {
   (e: 'mention-click', name: string): void
   // A <&path> file chip was clicked — the parent opens it in the 文件 drawer.
   (e: 'open-file', path: string, taskId?: string | null): void
-  // An action card's button (doc → highlight the turn, changes → diff tab…).
-  (e: 'open-resource', resource: string, turnId?: string): void
+  // An action card's button (doc → highlight the turn, or review the changes
+  // someone asked the agent for; changes → diff tab…).
+  (e: 'open-resource', resource: string, turnId?: string, review?: DocReviewRequest): void
 }
 
 /** Everything the panel reads off its props, as accessors: a composable is not

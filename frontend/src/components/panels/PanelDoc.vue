@@ -16,6 +16,7 @@
 // 在展示组件里加，这一只基本不再长。props 一次摊开而不是 v-bind 一整包：这二十来样东西
 // 就是这一格的接口，谁传谁看得见；将来哪一样不传了，typecheck 也会点名。
 import type { Topic } from '../../cx_types'
+import type { DocReviewRequest } from '../../lib/docReview'
 
 import { ref } from 'vue'
 
@@ -73,8 +74,11 @@ function pulse() {
 function highlightTurn(turnId: string) {
   viewRef.value?.highlightTurn(turnId)
 }
+function reviewEdits(request: DocReviewRequest) {
+  viewRef.value?.reviewEdits(request)
+}
 
-defineExpose({ pulse, highlightTurn })
+defineExpose({ pulse, highlightTurn, reviewEdits })
 </script>
 
 <template>

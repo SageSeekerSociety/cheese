@@ -36,8 +36,8 @@ const emit = defineEmits<{
     <button
       type="button"
       class="doc-suggestion-strip__nav"
-      :aria-label="t('work.room.docSuggest.prev')"
-      :title="t('work.room.docSuggest.prev')"
+      :aria-label="t('work.room.docEdit.prev')"
+      :title="t('work.room.docEdit.prev')"
       @click="emit('step', -1)"
     >
       <v-icon size="16">mdi-arrow-up</v-icon>
@@ -45,8 +45,8 @@ const emit = defineEmits<{
     <button
       type="button"
       class="doc-suggestion-strip__nav"
-      :aria-label="t('work.room.docSuggest.next')"
-      :title="t('work.room.docSuggest.next')"
+      :aria-label="t('work.room.docEdit.next')"
+      :title="t('work.room.docEdit.next')"
       @click="emit('step', 1)"
     >
       <v-icon size="16">mdi-arrow-down</v-icon>
