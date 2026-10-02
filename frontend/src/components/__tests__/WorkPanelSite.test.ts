@@ -42,7 +42,6 @@ vi.mock('../../api', async () => {
     getAgentControl: vi.fn().mockResolvedValue({ id: null, connected: false, tasks: {} }),
     // Everything else the panel calls on mount — quiet, empty answers.
     getDoc: vi.fn().mockResolvedValue({ markdown: '', title: '' }),
-    putDoc: vi.fn().mockResolvedValue({}),
     getComments: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getDocNodes: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listFiles: vi.fn().mockResolvedValue({ data: [], total: 0 }),
