@@ -56,6 +56,11 @@ def month_end(month: date) -> datetime:
     return datetime(following.year, following.month, 1, tzinfo=_TZ)
 
 
+#: One model's row in the gateway's rate table: input, output, cache read,
+#: five-minute cache write and, when the gateway names it, one-hour cache write.
+RateRow = tuple[float, float, float, float, float | None]
+
+
 @dataclass(frozen=True)
 class Rates:
     """USD per token for the model a call will use: fresh prompt tokens, output
@@ -96,9 +101,7 @@ class Rates:
         )
 
     @classmethod
-    def of(
-        cls, model: str, table: Mapping[str, tuple[float, float, float, float]] | None
-    ) -> "Rates | None":
+    def of(cls, model: str, table: Mapping[str, RateRow] | None) -> "Rates | None":
         """``model``'s rates from the gateway's rate table
         (``feature_stats.pricing.model_rates``); None when a call to it cannot
         be charged."""
