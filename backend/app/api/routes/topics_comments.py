@@ -56,8 +56,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 
 from app.api.auth import ActorResolverDep
-from app.api.deps import get_chat_service, get_work_runner
-from app.api.doc_comment_mentions import hand_to_agent, mentioned_seat
+from app.api.deps import get_chat_service, get_handless_sessions
+from app.api.doc_agent import hand_to_agent, mentioned_seat
 from app.api.response import ok, page
 from app.api.routes.topics import (
     AuthorType,
@@ -68,7 +68,7 @@ from app.api.routes.topics import (
 )
 from app.core.errors import ValidationError
 from app.domain.agent.chat import ChatService
-from app.domain.agent.runtime import AgentWorkRunner
+from app.domain.agent.harness.pi.handless import HandlessSessions
 from app.domain.block.comment_threads import CommentThreads
 from app.domain.block.notice_text import say
 from app.domain.block.schemas import BlockOut
@@ -115,12 +115,12 @@ async def add_comment(
     db: DbSession,
     resolver: ActorResolverDep,
     chat: Annotated[ChatService, Depends(get_chat_service)],
-    runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
+    sessions: Annotated[HandlessSessions, Depends(get_handless_sessions)],
 ) -> dict:
     """Add an inline comment anchored to a doc node (eval B4). Dual-use like the
     doc panel — a human selects text and comments; not cheese-gated. A person's
     comment that @-mentions the room's agent hands it to that agent
-    (``app.api.doc_comment_mentions``); any other comment starts nothing."""
+    (``app.api.doc_agent``); any other comment starts nothing."""
     place = await TopicService(db).place_or_404(topic_id)
     await DocumentJournal(db).lock(place.room_id)
     anchor = (body.get("anchor") or "").strip()
@@ -179,12 +179,10 @@ async def add_comment(
     if seat is not None:
         hand_to_agent(
             chat,
-            runner,
+            sessions,
             place=place,
             actor=actor,
             seat=seat,
             thread_id=comment.id,
-            content=content,
-            quote=quote,
         )
     return ok(payload)
