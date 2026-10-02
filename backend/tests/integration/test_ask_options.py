@@ -109,34 +109,70 @@ def test_ask_requires_a_valid_topic_scoped_credential(client):
 
 
 def test_answer_records_choice_and_posts_reply(client):
-    tid = _topic(client)
-    blk = _ask(client, tid)
+    room, _ = _shared_room(client)
+    blk = _ask(client, room)
 
-    r = client.post(
-        f"/topics/blocks/{blk['id']}/answer",
-        json={"option": "cursor", "author": "user-1"},
-    )
+    r = _answer(client, blk["id"], "cursor", "bob")
     assert r.status_code == 200
     data = r.json()["data"]
     assert data["meta"]["answered"] == "cursor"
-    assert data["meta"]["answered_by"] == "user-1"
+    assert data["meta"]["answered_by"] == "bob"
 
     # The choice lands as the answerer's own message and summons 芝士. Drive
     # the submitted turn to completion the repo way: hold the WS open (replay
     # catches frames already published) until done/error.
-    with client.websocket_connect(chat_ws_url(tid, "user-1")) as ws:
+    with client.websocket_connect(chat_ws_url(room, "bob")) as ws:
         while True:
             frame = ws.receive_json()
             if frame["type"] in ("done", "error"):
                 break
-    blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
+    blocks = client.get(f"/topics/{room}/blocks").json()["data"]["data"]
     debug = [(b["author"], b["kind"], b["content"][:30]) for b in blocks]
     # 选项落成回答者自己的一条消息，并且在正文里点了问问题的那个席位的名 —— 召唤
     # 写在正文里，时间线上这条消息因此自己说明了它叫的是谁。
-    seat = room_agent_seat(client, tid)
+    seat = room_agent_seat(client, room)
     assert any(
-        b["author"] == "user-1" and b["content"] == f"<@{seat}> cursor" for b in blocks
+        b["author"] == "bob" and b["content"] == f"<@{seat}> cursor" for b in blocks
     ), f"choice message never landed: {debug}"
+
+
+def test_a_name_in_the_body_does_not_change_who_answered(client):
+    """bob 登录着，请求体里写的是 alice：答案记在 bob 名下，
+    时间线上那句也是 bob 说的。"""
+    room, _ = _shared_room(client)
+    blk = _ask(client, room)
+
+    r = client.post(
+        f"/topics/blocks/{blk['id']}/answer",
+        json={"option": "cursor", "author": "alice"},
+        headers=session_auth_headers("bob"),
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["meta"]["answered_by"] == "bob"
+    seat = room_agent_seat(client, room)
+    assert _messages_by(client, room, "bob") == [f"<@{seat}> cursor"]
+    assert not any("cursor" in text for text in _messages_by(client, room, "alice"))
+
+
+def test_the_dev_credential_alone_names_nobody_to_answer_as(client):
+    """沙箱 token 开得了门，但它不是任何人：请求体里写了谁也一样，题还开着。"""
+    room, _ = _shared_room(client)
+    blk = _ask(client, room)
+
+    r = client.post(
+        f"/topics/blocks/{blk['id']}/answer",
+        json={"option": "cursor", "author": "bob"},
+    )
+
+    assert r.status_code == 401, r.text
+    shown = next(
+        b
+        for b in client.get(f"/topics/{room}/blocks").json()["data"]["data"]
+        if b["id"] == blk["id"]
+    )
+    assert not shown["meta"].get("answered")
+    assert _answer(client, blk["id"], "cursor", "bob").status_code == 200
 
 
 def test_answer_goes_back_to_the_teammate_that_asked(client):
@@ -177,7 +213,7 @@ def test_answer_goes_back_to_the_teammate_that_asked(client):
 
     r = client.post(
         f"/topics/blocks/{blk['id']}/answer",
-        json={"option": "cursor", "author": "alice"},
+        json={"option": "cursor"},
         headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200, r.text
@@ -192,24 +228,13 @@ def test_answer_goes_back_to_the_teammate_that_asked(client):
 
 
 def test_answer_validates_option_and_single_shot(client):
-    tid = _topic(client)
-    blk = _ask(client, tid)
+    room, _ = _shared_room(client)
+    blk = _ask(client, room)
 
-    r = client.post(
-        f"/topics/blocks/{blk['id']}/answer",
-        json={"option": "不存在的", "author": "user-1"},
-    )
-    assert r.status_code == 422
+    assert _answer(client, blk["id"], "不存在的", "bob").status_code == 422
 
-    client.post(
-        f"/topics/blocks/{blk['id']}/answer",
-        json={"option": "cursor", "author": "user-1"},
-    )
-    r = client.post(
-        f"/topics/blocks/{blk['id']}/answer",
-        json={"option": "pageStart", "author": "user-2"},
-    )
-    assert r.status_code == 422
+    assert _answer(client, blk["id"], "cursor", "bob").status_code == 200
+    assert _answer(client, blk["id"], "pageStart", "alice").status_code == 422
 
 
 # ---- A person's question: any member asks the room, the answer goes back to them.

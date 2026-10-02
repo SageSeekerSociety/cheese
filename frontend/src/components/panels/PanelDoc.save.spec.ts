@@ -111,7 +111,7 @@ beforeEach(() => {
   mocks.getComments.mockResolvedValue({ data: [], total: 0 })
   mocks.getDocNodes.mockResolvedValue({ data: [], total: 0 })
   mocks.getDoc.mockResolvedValue(doc('第一段\n', 1))
-  mocks.putDoc.mockImplementation((_topic: string, content: string, _author: string, version: number) =>
+  mocks.putDoc.mockImplementation((_topic: string, content: string, version: number) =>
     Promise.resolve(doc(content, version + 1))
   )
   vuetify = createVuetify({ components, directives })
@@ -157,7 +157,7 @@ describe('写完一篇文档', () => {
     vi.useRealTimers()
 
     await waitFor(() => expect(mocks.putDoc).toHaveBeenCalledTimes(1))
-    const [topicId, content, , version] = mocks.putDoc.mock.calls[0]
+    const [topicId, content, version] = mocks.putDoc.mock.calls[0]
     expect(topicId, '存回的是这个房间').toBe('t1')
     expect(content, '存的是编辑器里那一版').toContain('新写的一段')
     expect(version, '带上读到的那一版，服务端才拦得住覆盖').toBe(1)
@@ -255,7 +255,7 @@ describe('canonical snapshot timing', () => {
     await tick(view, 2)
     await waitFor(() => expect(body(view)).toBe('第三版'))
     await typeAndSave(view, '后续编辑')
-    expect(mocks.putDoc.mock.calls[0][3]).toBe(3)
+    expect(mocks.putDoc.mock.calls[0][2]).toBe(3)
     expect(mocks.putDoc.mock.calls[0][1]).toContain('第三版')
   })
 
@@ -272,7 +272,7 @@ describe('canonical snapshot timing', () => {
     await waitFor(() => expect(body(view)).toContain('远端追加'))
     await typeAndSave(view, '又一次编辑')
     expect(mocks.getDoc).toHaveBeenCalledTimes(2)
-    expect(mocks.putDoc.mock.calls[1][3]).toBe(3)
+    expect(mocks.putDoc.mock.calls[1][2]).toBe(3)
   })
 
   it('late older GET cannot replace a newer displayed version or the next save base', async () => {
@@ -289,7 +289,7 @@ describe('canonical snapshot timing', () => {
     await settle()
     expect(body(view)).toBe('第三版')
     await typeAndSave(view, '后续编辑')
-    expect(mocks.putDoc.mock.calls[0][3]).toBe(3)
+    expect(mocks.putDoc.mock.calls[0][2]).toBe(3)
     expect(mocks.putDoc.mock.calls[0][1]).toContain('第三版')
   })
 
@@ -305,7 +305,7 @@ describe('canonical snapshot timing', () => {
     await waitFor(() => expect(body(view)).toContain('远端追加'))
     expect(mocks.getDoc).toHaveBeenCalledTimes(2)
     await typeAndSave(view, '又一次编辑')
-    expect(mocks.putDoc.mock.calls[1][3]).toBe(3)
+    expect(mocks.putDoc.mock.calls[1][2]).toBe(3)
     expect(mocks.putDoc.mock.calls[1][1]).toContain('远端追加')
   })
 
@@ -321,7 +321,7 @@ describe('canonical snapshot timing', () => {
     get.resolve(doc('第一段\n', 1))
     await settle()
     await typeAndSave(view, '下一次')
-    expect(mocks.putDoc.mock.calls[1][3]).toBe(2)
+    expect(mocks.putDoc.mock.calls[1][2]).toBe(2)
     expect(mocks.putDoc.mock.calls[1][1]).toContain('我的写入')
   })
 
@@ -331,7 +331,7 @@ describe('canonical snapshot timing', () => {
     await typeAndSave(view, '提交稿')
     await waitFor(() => expect(body(view)).toBe('服务端规范正文'))
     await typeAndSave(view, '下一次')
-    expect(mocks.putDoc.mock.calls[1][3]).toBe(2)
+    expect(mocks.putDoc.mock.calls[1][2]).toBe(2)
     expect(mocks.putDoc.mock.calls[1][1]).toContain('服务端规范正文')
     expect(mocks.putDoc.mock.calls[1][1]).not.toContain('提交稿')
   })
@@ -369,7 +369,7 @@ describe('canonical snapshot timing', () => {
     expect(bar(view.container)).toContain('编辑中')
     await fireEvent.keyDown(view.container.querySelector('.doc-source')!, { key: 's', metaKey: true })
     await waitFor(() => expect(mocks.putDoc).toHaveBeenCalledTimes(2))
-    expect(mocks.putDoc.mock.calls[1][3]).toBe(2)
+    expect(mocks.putDoc.mock.calls[1][2]).toBe(2)
     expect(mocks.putDoc.mock.calls[1][1]).toContain('继续输入')
   })
 
@@ -406,7 +406,7 @@ describe('canonical snapshot timing', () => {
     await fireEvent.keyDown(view.container.querySelector('.doc-prose')!, { key: 's', metaKey: true })
     await waitFor(() => expect(mocks.putDoc).toHaveBeenCalledTimes(2))
     expect(mocks.putDoc.mock.calls[1][0]).toBe('t2')
-    expect(mocks.putDoc.mock.calls[1][3]).toBe(1)
+    expect(mocks.putDoc.mock.calls[1][2]).toBe(1)
     expect(mocks.putDoc.mock.calls[1][1]).toContain('新话题正文')
   })
 
@@ -436,7 +436,7 @@ describe('canonical snapshot timing', () => {
     await tick(view, 2)
     expect(body(view)).toBe('第三版')
     await typeAndSave(view, '新输入')
-    expect(mocks.putDoc.mock.calls[0][3]).toBe(3)
+    expect(mocks.putDoc.mock.calls[0][2]).toBe(3)
   })
 
   it('an unmounted panel ignores the pending PUT and does not refresh', async () => {

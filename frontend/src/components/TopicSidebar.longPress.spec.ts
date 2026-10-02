@@ -161,7 +161,7 @@ describe('手机话题列表：长按一行', () => {
     // 面板里的归档：mdi 图标名说的是哪一项，文案不进断言。
     const archive = sheetItems(baseElement).find((el) => el.querySelector('.mdi-archive-arrow-down-outline'))
     await fireEvent.click(archive as Element)
-    expect(archiveTopic).toHaveBeenCalledWith('b', expect.anything())
+    expect(archiveTopic).toHaveBeenCalledWith('b')
   })
 
   it('轻点一行是打开它，不升起面板', async () => {

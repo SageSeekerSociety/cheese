@@ -18,8 +18,6 @@ import { t } from '@/i18n'
 
 export function useOptionQuestions(opts: {
   topicId: () => string | undefined
-  /** 回答时署的名字（后端认凭据，没有凭据时才读它）。 */
-  author: string
   /** 刚问出的这一条放上时间线。 */
   push: (block: Block) => void
   /** 把答过的这一条换进时间线（在的话）。 */
@@ -33,7 +31,7 @@ export function useOptionQuestions(opts: {
     if (askBusy.value) return
     askBusy.value = m.id
     try {
-      opts.show(await answerOptions(m.id, option, opts.author))
+      opts.show(await answerOptions(m.id, option))
     } catch (e) {
       opts.fail(e)
     } finally {
