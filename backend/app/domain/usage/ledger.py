@@ -602,20 +602,29 @@ class Ledger:
         input_tokens: int,
         output_tokens: int,
         cost_usd: float,
+        project_id: uuid.UUID | None = None,
+        topic_id: uuid.UUID | None = None,
+        turn_id: uuid.UUID | None = None,
+        metered: bool = True,
+        route: str = "gateway",
     ) -> None:
         """Write the usage row of a call the platform made on its own (naming a
-        room, sorting old memories). The platform pays: the row names no team,
-        project or person and costs no credits, so no balance, time window or
-        usage page counts it (#2233)."""
+        room, sorting old memories, consolidating a project's memory). The
+        platform pays: the row names no team or person and costs no credits,
+        so no balance, time window or usage page counts it (#2233). Work done
+        inside a project keeps the project, so its own records can still find
+        it."""
         await UsageRepository(self._session).add(
-            project_id=None,
-            topic_id=None,
+            project_id=project_id,
+            topic_id=topic_id,
             model=model,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             cost_usd=cost_usd,
             kind=kind,
-            route="gateway",
+            metered=metered,
+            route=route,
+            turn_id=turn_id,
         )
 
     # ---- issuing -----------------------------------------------------------
