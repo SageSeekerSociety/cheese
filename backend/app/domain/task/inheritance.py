@@ -7,14 +7,16 @@
 —— 所以这里把它们收成**一份**读结果。
 
 **为什么不在这里重算一遍。** 这个模块不解析继承，它**问**。协议走
-``protocol.resolve()`` 那一句，连「来自哪一层」也是那一个循环带出来的
+``teaching.protocol_for_task()`` 那一句（它自己再落到 ``resolve``），连「来自
+哪一层」也是那一个循环带出来的
 （``Protocol.teaching_source``），不另写一份判层逻辑。合成只有一份 —— 这一页说
 「你会拿到空间那份指导」，项目的 agent 下一秒读到的就必须是同一份；两份合成迟早
 会在某次编辑后对不上，而那一天没人会同时看到两个界面。
 
 **判据和上层那条读法完全一样**：这题看不见就不给清单（返回 None，调用方转成
-404，``TaskVisibilityService.can_view_task``）。层行的取法也复用
-``teaching.load_levels``，不自己写第二个 join。
+404，``TaskVisibilityService.can_view_task``）。层次行的取法复用
+``teaching.protocol_for_task``（项目集 / 空间两级在那一处补齐后再 ``resolve``），
+不自己写第二个 join。
 
 **资料（「会被带上的资料」）不在这里。** 板上的资料是 ``app.domain.space`` 那一
 域的行，取它要经 ``SpaceMaterialService``。这一域去 import 它是跨域的边，
@@ -28,8 +30,9 @@ from dataclasses import dataclass, field
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.task.protocol import Teaching, resolve
-from app.domain.task.teaching import load_levels
+from app.domain.task.models import Task
+from app.domain.task.protocol import Teaching
+from app.domain.task.teaching import protocol_for_task
 from app.domain.task.visibility_service import TaskVisibilityService
 
 
@@ -57,16 +60,15 @@ async def for_task(
 
     判据与 ``GET /tasks/{id}`` 同一句：看不见这题就当它不存在。
     """
-    levels = await load_levels(session=session, task_id=task_id)
-    if levels is None:
+    task = await session.get(Task, task_id)
+    if task is None:
         return None
-    task, category, space = levels
     if not await TaskVisibilityService(session=session).can_view_task(
         task=task, user_id=user_id
     ):
         return None
 
-    protocol = resolve(space=space, category=category, task=task)
+    protocol = await protocol_for_task(session, task)
     return TaskInheritance(
         task_id=task.id,
         space_id=task.space_id,

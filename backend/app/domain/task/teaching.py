@@ -68,34 +68,6 @@ class TeachingContext:
     knowledge: list[dict] = field(default_factory=list)
 
 
-async def load_levels(
-    *, session: AsyncSession, task_id: int
-) -> tuple[Task, SpaceCategory | None, Space | None] | None:
-    """一道题的三个继承层 —— 题、它的项目集、它所在的板；题不在就是 None。
-
-    取这一组行的唯一地方：``for_project``（建出来的项目读指导）和
-    ``app.domain.task.inheritance.for_task``（建之前学生看清单）问的是同一句
-    select。两份各自的 join 迟早会在某次改动后读到不同的行，而那一天两个界面
-    会同时显示两种答案。
-    """
-    row = (
-        await session.execute(
-            select(Task, SpaceCategory, Space)
-            # outerjoin: a 赛题 whose 项目集 was deleted still carries its own
-            # `protocol_override`, and that override is a teaching config too.
-            # The 空间 joins on the 赛题's own `space_id`, not through the
-            # 项目集, so a 赛题 still reaches its board's default with the
-            # 项目集 gone.
-            .outerjoin(SpaceCategory, SpaceCategory.id == Task.category_id)
-            .outerjoin(Space, Space.id == Task.space_id)
-            .where(Task.id == task_id)
-        )
-    ).first()
-    if row is None:
-        return None
-    return row[0], row[1], row[2]
-
-
 async def for_project(
     *, session: AsyncSession, project: Project | None
 ) -> TeachingContext | None:
@@ -109,10 +81,22 @@ async def for_project(
     """
     if project is None or project.external_task_id is None:
         return None
-    levels = await load_levels(session=session, task_id=project.external_task_id)
-    if levels is None:
+    row = (
+        await session.execute(
+            select(Task, SpaceCategory, Space)
+            # outerjoin: a 赛题 whose 项目集 was deleted still carries its own
+            # `protocol_override`, and that override is a teaching config too.
+            # The 空间 joins on the 赛题's own `space_id`, not through the
+            # 项目集, so a 赛题 still reaches its board's default with the
+            # 项目集 gone.
+            .outerjoin(SpaceCategory, SpaceCategory.id == Task.category_id)
+            .outerjoin(Space, Space.id == Task.space_id)
+            .where(Task.id == project.external_task_id)
+        )
+    ).first()
+    if row is None:
         return None
-    task, category, space = levels
+    task, category, space = row
     teaching = resolve(
         space=space, category=category, task=task, project=project
     ).teaching
