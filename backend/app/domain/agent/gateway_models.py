@@ -490,6 +490,7 @@ class GatewayModelsService:
             label=data.get("label"),
             selectable=selectable,
             capabilities=data.get("capabilities") or {},
+            tier=data.get("tier"),
         )
         await self._after_write()
         return await self._read_back(name, data, model_id)
@@ -534,7 +535,7 @@ class GatewayModelsService:
         _require_price_when_selectable(bool(selectable), effective_prices)
 
         kwargs: dict[str, Any] = {"model_id": current.model_id}
-        for field in ("upstream_model", "api_base", "label", "selectable"):
+        for field in ("upstream_model", "api_base", "label", "selectable", "tier"):
             if field in data:
                 kwargs[field] = data[field]
         # 编辑界面不回显上游凭据，所以「没填 key」是常态、不能当成「清空 key」。
@@ -722,6 +723,7 @@ class GatewayModelsService:
             "blocked": model.blocked,
             "selectable": model.selectable,
             "priced": model.priced,
+            "tier": model.tier,
             "offered": offered,
             "blocked_reason": None if offered else _offered_reason(model),
             "unpriced_reason": None if model.priced else model.supports_notes,
@@ -932,6 +934,7 @@ def _config_yaml(model: AdminModel) -> str:
     lines.append("  model_info:")
     lines.append(f"    cheese_selectable: {'true' if model.selectable else 'false'}")
     lines.append(f"    cheese_label: {model.label}")
+    lines.append(f"    cheese_tier: {model.tier}")
     for capability, enabled in model.capabilities.items():
         if enabled:
             lines.append(f"    supports_{capability}: true")
@@ -951,6 +954,7 @@ def _model_snapshot(model: AdminModel) -> dict:
         "blocked": model.blocked,
         "selectable": model.selectable,
         "priced": model.priced,
+        "tier": model.tier,
         "upstream_model": model.upstream_model,
         "api_base": model.api_base,
         "provider": model.provider,
@@ -990,6 +994,7 @@ def _item_from_payload(
         "blocked": False,
         "selectable": selectable,
         "priced": priced,
+        "tier": data.get("tier") or "included",
         "offered": selectable and priced,
         "blocked_reason": None if (selectable and priced) else "等待网关读回",
         "unpriced_reason": None if priced else "网关尚未读回单价",

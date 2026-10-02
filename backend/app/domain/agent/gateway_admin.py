@@ -86,6 +86,8 @@ class AdminModel:
     blocked: bool
     selectable: bool
     priced: bool
+    # 档位（网关的 ``cheese_tier``）,缺省 ``included``:方案按它限定可用的模型。
+    tier: str
     upstream_model: str
     api_base: str | None
     provider: str
@@ -319,6 +321,7 @@ class GatewayAdmin:
         label: str | None = None,
         selectable: bool = False,
         capabilities: Mapping[str, bool] | None = None,
+        tier: str | None = None,
     ) -> str:
         """新建一条运行时模型,返回网关给的 model_id。
 
@@ -335,6 +338,8 @@ class GatewayAdmin:
         info["cheese_selectable"] = bool(selectable)
         if label is not None:
             info["cheese_label"] = label
+        if tier is not None:
+            info["cheese_tier"] = tier
         response = await self._request(
             "POST",
             "/model/new",
@@ -361,6 +366,7 @@ class GatewayAdmin:
         label: str | None = None,
         selectable: bool | None = None,
         capabilities: Mapping[str, bool] | None = None,
+        tier: str | None = None,
     ) -> None:
         """改一条运行时模型。``None`` 一律表示「这次不动它」。
 
@@ -384,6 +390,8 @@ class GatewayAdmin:
             info["cheese_label"] = label
         if selectable is not None:
             info["cheese_selectable"] = bool(selectable)
+        if tier is not None:
+            info["cheese_tier"] = tier
         info.update(_capability_params(capabilities))
         params: dict[str, object] = {}
         if upstream_model is not None:
@@ -658,6 +666,7 @@ def _admin_model(name: str, row: dict) -> AdminModel:
         )
     model_id = info.get("id")
     label = info.get("cheese_label")
+    tier = info.get("cheese_tier")
     return AdminModel(
         name=name,
         model_id=model_id if isinstance(model_id, str) and model_id else name,
@@ -666,6 +675,7 @@ def _admin_model(name: str, row: dict) -> AdminModel:
         blocked=info.get("blocked") is True,
         selectable=info.get("cheese_selectable") is True,
         priced=price_is_set(params, info),
+        tier=tier if isinstance(tier, str) and tier else "included",
         upstream_model=upstream if isinstance(upstream, str) else "",
         api_base=api_base if isinstance(api_base, str) and api_base else None,
         provider=provider,

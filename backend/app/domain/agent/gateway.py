@@ -248,8 +248,9 @@ class LlmGateway:
             logger.warning("gateway revoke_key failed", exc_info=True)
             return False
 
-    async def set_key_budget(self, key: str, max_budget_usd: float) -> bool:
-        """L2: cap the key's lifetime spend; the gateway rejects calls past it."""
+    async def set_key_budget(self, key: str, max_budget_usd: float | None) -> bool:
+        """L2: cap the key's lifetime spend; the gateway rejects calls past it.
+        ``None`` clears the cap."""
         try:
             async with self._client() as client:
                 r = await client.post(

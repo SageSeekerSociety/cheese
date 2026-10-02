@@ -6,7 +6,7 @@
 # and a price here before it can be served at all, and a second list over there
 # could only ever drift out of step with this one.
 #
-# Two keys under `model_info` are cheese's, both optional passthrough metadata:
+# Three keys under `model_info` are cheese's, all optional passthrough metadata:
 #
 #   cheese_selectable: true    offer it in agent settings. OPT-IN, because the
 #                              gateway also routes models that are not menu
@@ -14,6 +14,8 @@
 #                              points, and nobody should be handed a model we
 #                              route to on their behalf as though they chose it.
 #   cheese_label: "GLM-5.2"    what to call it; the model_name when absent.
+#   cheese_tier: premium       which plans may use it (included / premium /
+#                              frontier); included when absent.
 #
 # A selectable model with no price is not offered — see the pricing note below
 # for why a missing price is worse than a missing model.
