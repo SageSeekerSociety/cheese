@@ -10,11 +10,9 @@
 import type { Knowledge, KnowledgeContentData } from '@/types'
 import type { AudioMeta, FileMeta, ImageMeta, VideoMeta } from '@/types/materials'
 
-import { computed } from 'vue'
-
 import { getAvatarUrl } from '@/utils/materials'
 
-import TipTapEditor from '@/components/common/Editor/TipTapEditor.vue'
+import TipTapViewer from '@/components/common/Editor/TipTapViewer.vue'
 import { t } from '@/i18n'
 import {
   canEditKnowledge,
@@ -28,7 +26,7 @@ import {
 
 defineOptions({ name: 'KnowledgeDetailDialog' })
 
-const props = defineProps<{
+defineProps<{
   modelValue: boolean
   resource: Knowledge | null
   content: KnowledgeContentData
@@ -37,16 +35,9 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
-  'update:content': [value: KnowledgeContentData]
   openLink: [resource: Knowledge]
   delete: [resource: Knowledge]
 }>()
-
-/** 富文本预览那一格：编辑器在只读之外还能被敲两下，所以要把改动交回去。 */
-const richText = computed({
-  get: () => props.content.richText,
-  set: (value) => emit('update:content', { ...props.content, richText: value }),
-})
 </script>
 
 <template>
@@ -122,7 +113,7 @@ const richText = computed({
           <!-- 富文本内容预览 -->
           <v-sheet v-else-if="resource.type === 'TEXT' && content.richText" class="pa-4 text-preview rounded-lg">
             <div class="rich-text-preview">
-              <TipTapEditor v-model="richText" hide-toolbar output="json" :min-height="150" />
+              <TipTapViewer :value="content.richText" />
             </div>
           </v-sheet>
 
