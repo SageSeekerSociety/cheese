@@ -2,13 +2,14 @@ import type { Block, ChatMessageBody } from '../cx_types'
 import type { Outgoing } from './composerDrafts'
 
 export function outgoingMessageBody(item: Outgoing): ChatMessageBody {
-  return {
+  const body: ChatMessageBody = {
     content: item.content,
     request_id: item.clientId,
     reply_to: item.replyTo,
     attachments: item.atts,
     quoted_context: item.quotedContext,
   }
+  return body
 }
 
 /** Pending rows carry the same quote as the HTTP message they will become. */
