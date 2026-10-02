@@ -80,16 +80,30 @@ function mount() {
   return render(DesignImage, { props: { src: 'blob:sketch', alt: 'design.png', identity: 'v1' } })
 }
 
+/** 挑一个工具，等它真的显示成选中再动手。见 DesignSketchObjectEdit.spec.ts 里的同名函数。 */
+async function pickTool(ui: ReturnType<typeof render>, label: string) {
+  await fireEvent.click(ui.getByRole('button', { name: label }))
+  await waitFor(() =>
+    expect(
+      ui.container.querySelector(`.sketch-toolbar__tool[aria-label="${label}"]`)?.getAttribute('aria-pressed')
+    ).toBe('true')
+  )
+}
+
+const rects = (ui: ReturnType<typeof render>) => ui.container.querySelectorAll('.sketch-overlay rect').length
+
+/** 画一个矩形，并且等它真的落在屏上：后面每一条断言都从「这一笔在」出发。 */
 async function drawRect(ui: ReturnType<typeof render>) {
   await ready(ui)
-  await fireEvent.click(ui.getByRole('button', { name: '矩形' }))
+  const before = rects(ui)
+  await pickTool(ui, '矩形')
   const layer = ui.getByRole('application', { name: '图片标注画布' })
   layer.setPointerCapture = vi.fn()
   await fireEvent.pointerDown(layer, { button: 0, pointerId: 11, clientX: 60, clientY: 70 })
   await fireEvent.pointerMove(layer, { pointerId: 11, clientX: 160, clientY: 120 })
   await fireEvent.pointerUp(layer, { pointerId: 11, clientX: 160, clientY: 120 })
+  await waitFor(() => expect(rects(ui)).toBeGreaterThan(before), { timeout: 5000 })
 }
-const rects = (ui: ReturnType<typeof render>) => ui.container.querySelectorAll('.sketch-overlay rect').length
 
 describe('离开前问一句', () => {
   it('没画东西不拦：默认放行', async () => {
@@ -182,7 +196,7 @@ describe('离开前问一句', () => {
     await painted(ui)
     await drawRect(ui)
     await waitFor(() => expect(hasUnsentAnnotations()).toBe(true))
-    await fireEvent.click(ui.getByRole('button', { name: '自由画笔' }))
+    await pickTool(ui, '自由画笔')
     expect(ui.queryByRole('alertdialog')).toBeNull()
     expect(hasUnsentAnnotations()).toBe(true)
     expect(rects(ui)).toBe(1)

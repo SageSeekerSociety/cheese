@@ -54,6 +54,23 @@ async function ready(ui: ReturnType<typeof render>) {
 }
 
 /**
+ * 挑一个工具，等它真的显示成选中再动手。
+ *
+ * `fireEvent.click` 只等到 Vue 那一次 flush。工具是 DesignImage 的 ref 再当 prop 递给
+ * 画布，机器慢的时候这一下未必已经落到工具栏的 aria-pressed 上，手势就按下去了——
+ * `down()` 看见的还是上一个工具，要是 select 它直接什么都不做：一笔画不出来、输入框也
+ * 不出现，测试里只看到「等了半天什么都没有」。
+ */
+async function pickTool(ui: ReturnType<typeof render>, label: string) {
+  await fireEvent.click(ui.getByRole('button', { name: label }))
+  await waitFor(() =>
+    expect(
+      ui.container.querySelector(`.sketch-toolbar__tool[aria-label="${label}"]`)?.getAttribute('aria-pressed')
+    ).toBe('true')
+  )
+}
+
+/**
  * 输入框没来时的现场。
  *
  * 手势到输入框之间有好几处会静默退出（量测拿不到、命中不到、工具已经切回 select），
@@ -114,13 +131,17 @@ const handleCount = (ui: ReturnType<typeof render>) => ui.container.querySelecto
 /** 画一个够大的矩形：client (60,70)→(310,220) 即原图 (100,100)→(600,400)。 */
 async function drawRect(ui: ReturnType<typeof render>) {
   await ready(ui)
-  await fireEvent.click(ui.getByRole('button', { name: '矩形' }))
+  await pickTool(ui, '矩形')
   const layer = ui.getByRole('application', { name: '图片标注画布' })
   layer.setPointerCapture = vi.fn()
   await fireEvent.pointerDown(layer, { button: 0, pointerId: 11, clientX: 60, clientY: 70 })
   await fireEvent.pointerMove(layer, { pointerId: 11, clientX: 310, clientY: 220 })
   await fireEvent.pointerUp(layer, { pointerId: 11, clientX: 310, clientY: 220 })
-  await waitFor(() => expect(strokeRects(ui)).toHaveLength(1))
+  try {
+    await waitFor(() => expect(strokeRects(ui)).toHaveLength(1), { timeout: 5000 })
+  } catch (error) {
+    throw new Error(`${probe(ui)}\n${error}`)
+  }
 }
 
 function mount() {
@@ -140,9 +161,9 @@ it('点中已画好的矩形就选中它（出现把手）', async () => {
   await painted(ui)
   await drawRect(ui)
   // 先切到别的工具放下选中，再回来点它。
-  await fireEvent.click(ui.getByRole('button', { name: '椭圆' }))
+  await pickTool(ui, '椭圆')
   expect(handleCount(ui)).toBe(0)
-  await fireEvent.click(ui.getByRole('button', { name: '选择图片区域' }))
+  await pickTool(ui, '选择图片区域')
   // 矩形屏上外框 (50,50)-(300,200)，点上边 (110,50)。
   await fireEvent.pointerDown(sheet(ui), { button: 0, pointerId: 21, clientX: 120, clientY: 70 })
   expect(handleCount(ui)).toBe(8)
@@ -229,7 +250,7 @@ it('select 工具下双击文字进编辑，提交为空就删掉这条文字', 
   await painted(ui)
   // 文字工具点一下 -> 输入 '标签' -> 回车。
   await ready(ui)
-  await fireEvent.click(ui.getByRole('button', { name: '文字' }))
+  await pickTool(ui, '文字')
   const canvas = ui.getByRole('application', { name: '图片标注画布' })
   canvas.setPointerCapture = vi.fn()
   await fireEvent.pointerDown(canvas, { button: 0, pointerId: 41, clientX: 110, clientY: 120 })
@@ -258,7 +279,7 @@ it('text 工具下单击已有文字也进编辑', async () => {
   const ui = mount()
   await painted(ui)
   await ready(ui)
-  await fireEvent.click(ui.getByRole('button', { name: '文字' }))
+  await pickTool(ui, '文字')
   const canvas = ui.getByRole('application', { name: '图片标注画布' })
   canvas.setPointerCapture = vi.fn()
   await fireEvent.pointerDown(canvas, { button: 0, pointerId: 51, clientX: 110, clientY: 120 })
@@ -269,7 +290,7 @@ it('text 工具下单击已有文字也进编辑', async () => {
 
   // 再点文字工具，点已有文字 -> 进编辑（带出原文）。
   await ready(ui)
-  await fireEvent.click(ui.getByRole('button', { name: '文字' }))
+  await pickTool(ui, '文字')
   const layer = ui.getByRole('application', { name: '图片标注画布' })
   await fireEvent.pointerDown(layer, { button: 0, pointerId: 52, clientX: 110, clientY: 120 })
   const editor = await textField(ui)
@@ -305,7 +326,7 @@ it('已有选中时点空白：放下选中，空白拖照旧给区域选择', a
 it('自由笔不可选：画完不自动选中，工具也不回 select', async () => {
   const ui = mount()
   await painted(ui)
-  await fireEvent.click(ui.getByRole('button', { name: '自由画笔' }))
+  await pickTool(ui, '自由画笔')
   const layer = ui.getByRole('application', { name: '图片标注画布' })
   layer.setPointerCapture = vi.fn()
   await fireEvent.pointerDown(layer, { button: 0, pointerId: 71, clientX: 60, clientY: 70 })
@@ -352,7 +373,7 @@ it('文字的角只挪不改大小：文字没有缩放这一档', async () => {
   await placeText(ui)
   // 放完文字，选中的是它，但工具还停在「文字」上（再点一下是接着放，不是拖动）。
   // 切回选择会放下选中，所以还要点它一下把选中找回来。
-  await fireEvent.click(ui.getByRole('button', { name: '选择图片区域' }))
+  await pickTool(ui, '选择图片区域')
   const layer = sheet(ui)
   await fireEvent.pointerDown(layer, { button: 0, pointerId: 80, clientX: 110, clientY: 120 })
   await fireEvent.pointerUp(layer, { button: 0, pointerId: 80, clientX: 110, clientY: 120 })
@@ -385,7 +406,7 @@ it('文字的角只挪不改大小：文字没有缩放这一档', async () => {
 /** 文字工具下点一下、输入、回车：屏上多一条文字。 */
 async function placeText(ui: ReturnType<typeof render>, clientX = 110, clientY = 120, text = '标签') {
   await ready(ui)
-  await fireEvent.click(ui.getByRole('button', { name: '文字' }))
+  await pickTool(ui, '文字')
   const layer = ui.getByRole('application', { name: '图片标注画布' })
   layer.setPointerCapture = vi.fn()
   await fireEvent.pointerDown(layer, { button: 0, pointerId: 12, clientX, clientY })
@@ -497,7 +518,7 @@ it('小对象能整支拖走：抓取半径跟着对象收，不整支陷进把�
   const ui = mount()
   await painted(ui)
   // 画一个小矩形：client (60,70)→(110,95) 即原图 (100,100)-(200,150)，屏上 (50,50)-(100,75)。
-  await fireEvent.click(ui.getByRole('button', { name: '矩形' }))
+  await pickTool(ui, '矩形')
   const layer = ui.getByRole('application', { name: '图片标注画布' })
   layer.setPointerCapture = vi.fn()
   await fireEvent.pointerDown(layer, { button: 0, pointerId: 96, clientX: 60, clientY: 70 })
