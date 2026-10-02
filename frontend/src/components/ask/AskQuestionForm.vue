@@ -25,6 +25,13 @@ const locked = computed(
   () => !allowed.value || !props.state?.fresh || props.state.busy || !!props.state.pending || props.state.storageBlocked
 )
 const customReply = computed(() => props.grouped && !!props.block.meta?.allow_other)
+const replyPlaceholder = computed(() =>
+  customReply.value
+    ? props.block.meta?.options?.length
+      ? t('ask.form.replyPlaceholder')
+      : t('ask.form.emptyReplyPlaceholder')
+    : undefined
+)
 const replyField = ref<HTMLTextAreaElement | null>(null)
 const canSubmit = computed(
   () =>
@@ -77,15 +84,39 @@ function selectOption(text: string) {
     option: text,
   })
 }
-function keydown(event: KeyboardEvent) {
-  if (!props.grouped || locked.value || event.isComposing || event.ctrlKey || event.altKey || event.metaKey) return
-  if ((event.target as HTMLElement).closest('textarea, input:not([type="radio"]), [contenteditable="true"]')) return
-  const index = Number(event.key) - 1
-  const option = /^[1-9]$/.test(event.key) ? props.block.meta?.options?.[index] : undefined
-  if (!option) return
-  event.preventDefault()
-  selectOption(option.text)
+function focusReply(): boolean {
+  const field = replyField.value
+  if (locked.value || !editing.value || !field || field.disabled) return false
+  field.focus({ preventScroll: true })
+  return document.activeElement === field
 }
+function handleShortcut(event: KeyboardEvent): boolean {
+  if (
+    event.defaultPrevented ||
+    !props.grouped ||
+    locked.value ||
+    event.isComposing ||
+    event.ctrlKey ||
+    event.altKey ||
+    event.metaKey
+  )
+    return false
+  if ((event.target as HTMLElement).closest('textarea, input:not([type="radio"]), [contenteditable="true"]'))
+    return false
+  if (!/^[1-9]$/.test(event.key)) return false
+  const index = Number(event.key) - 1
+  const options = props.block.meta?.options ?? []
+  const option = options[index]
+  if (!option && !(options.length > 0 && index === options.length && customReply.value)) return false
+  event.preventDefault()
+  if (option) selectOption(option.text)
+  else {
+    change({ kind: 'note', option: '' })
+    void nextTick(focusReply)
+  }
+  return true
+}
+defineExpose({ focusReply, handleShortcut })
 function submit() {
   if (!props.grouped && !props.block.meta?.ask_group && canSubmit.value) emit('action', { type: 'submit' })
 }
@@ -96,7 +127,7 @@ function submit() {
     class="ask-form"
     :class="{ 'ask-form-grouped': grouped }"
     :aria-label="t('ask.form.title')"
-    @keydown="keydown"
+    @keydown="handleShortcut"
   >
     <template v-if="answers.length">
       <p class="ask-form-saved">{{ t('ask.flow.answerSaved') }}</p>
@@ -149,8 +180,11 @@ function submit() {
             </span>
             <span v-if="option.explain" class="ask-form-explain">{{ option.explain }}</span>
           </span>
-          <svg v-if="grouped" class="ask-form-arrow" viewBox="0 0 20 20" aria-hidden="true">
-            <path d="M4 10h12m-5-5 5 5-5 5" />
+          <svg v-if="grouped" class="ask-form-arrow" viewBox="0 0 16 16" aria-hidden="true">
+            <path
+              d="M6.96231 2.96214C7.16727 2.7574 7.49953 2.75742 7.7045 2.96214C7.90913 3.16712 7.9092 3.49939 7.7045 3.70433L3.93301 7.47483H13.3334C13.6232 7.47501 13.8578 7.71038 13.8578 8.00022C13.8577 8.28999 13.6232 8.52544 13.3334 8.52562H3.93301L7.7045 12.2951C7.90924 12.5001 7.90909 12.8323 7.7045 13.0373C7.49953 13.2423 7.16735 13.2422 6.96231 13.0373L2.53067 8.60667L2.47208 8.54124C2.21571 8.22666 2.21566 7.77279 2.47208 7.45823L2.53067 7.3928L6.96231 2.96214Z"
+              fill="currentColor"
+            />
           </svg>
         </label>
         <label v-if="block.meta?.allow_other && !grouped" class="ask-form-option">
@@ -184,7 +218,7 @@ function submit() {
           maxlength="2000"
           autocomplete="off"
           :rows="grouped ? 1 : 3"
-          :placeholder="customReply ? t('ask.form.replyPlaceholder') : undefined"
+          :placeholder="replyPlaceholder"
           @input="reply(($event.target as HTMLTextAreaElement).value)"
         />
         <slot name="actions" />
@@ -309,6 +343,7 @@ function submit() {
   margin-top: 4px;
   font-size: 13px;
   color: var(--muted);
+  overflow-wrap: anywhere;
 }
 
 .ask-form-note {
@@ -475,7 +510,7 @@ function submit() {
 
 .ask-form-grouped textarea {
   box-sizing: border-box;
-  max-height: calc(var(--lh-13) * 8 + 12px);
+  max-height: min(25dvh, var(--ask-reply-max-height, 25dvh));
   min-height: 32px;
   padding: 6px 8px;
   line-height: var(--lh-13);
@@ -580,11 +615,10 @@ function submit() {
   width: 16px;
   height: 16px;
   fill: none;
-  stroke: var(--muted);
-  stroke-width: 1.5;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+  color: var(--muted);
+  stroke: none;
   opacity: 0;
+  transform: rotate(180deg);
 }
 
 .ask-form-option-picked .ask-form-arrow,

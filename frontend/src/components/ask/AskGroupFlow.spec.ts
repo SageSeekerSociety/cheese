@@ -80,6 +80,104 @@ beforeEach(() => setLocale('zh-CN'))
 afterEach(cleanup)
 
 describe('group question presentation', () => {
+  it('keeps a failed pending submission visible when collapsed and preserves its draft', async () => {
+    const state = fixture()
+    state.busy = true
+    state.forms.q1!.draft = { ...emptyAskDraft(), kind: 'option', option: 'A', note: 'keep this detail' }
+    const ui = render(AskGroupFlow, { props: { state, viewer: 'alice', names: {} } })
+    await fireEvent.click(ui.getByRole('button', { name: '收起提问' }))
+    const failed = { ...state, busy: false, error: 'Submission result unknown; original operation retained' }
+    await ui.rerender({ state: failed })
+    expect(ui.getByRole('alert').textContent).toBe(failed.error)
+    expect(ui.queryByRole('heading', { name: '问题 1' })).toBeNull()
+    expect(ui.emitted().action).toBeUndefined()
+    await fireEvent.click(ui.getByRole('button', { name: '展开提问' }))
+    expect((ui.getByRole('radio', { name: /A/ }) as HTMLInputElement).checked).toBe(true)
+    expect((ui.getByRole('textbox') as HTMLTextAreaElement).value).toBe('keep this detail')
+    expect(ui.getByRole('alert').textContent).toBe(failed.error)
+  })
+
+  it('selects a numbered draft from the card once and leaves typing or modified keys alone', async () => {
+    const state = fixture()
+    state.data!.blocks[0]!.meta!.allow_other = true
+    state.forms.q1!.draft.note = 'Keep this detail'
+    const ui = render(AskGroupFlow, { props: { state, viewer: 'alice', names: {} } })
+    const card = ui.getByRole('region', { name: '整组回答' })
+    await fireEvent.keyDown(card, { key: '2' })
+    expect(ui.emitted().action).toEqual([
+      [
+        {
+          type: 'question',
+          blockId: 'q1',
+          action: { type: 'draft', draft: { ...state.forms.q1!.draft, kind: 'option', option: 'B' } },
+        },
+      ],
+    ])
+    await fireEvent.keyDown(ui.getAllByRole('radio')[0]!, { key: '1' })
+    expect(ui.emitted().action).toHaveLength(2)
+    const reply = ui.getByRole('textbox', { name: '你的回答' })
+    await fireEvent.keyDown(reply, { key: '2' })
+    await fireEvent.keyDown(card, { key: '1', isComposing: true })
+    await fireEvent.keyDown(card, { key: '1', ctrlKey: true })
+    await fireEvent.keyDown(card, { key: '1', altKey: true })
+    await fireEvent.keyDown(card, { key: '1', metaKey: true })
+    expect(ui.emitted().action).toHaveLength(2)
+    await fireEvent.keyDown(card, { key: '3' })
+    expect(ui.emitted().action?.at(-1)).toEqual([
+      {
+        type: 'question',
+        blockId: 'q1',
+        action: { type: 'draft', draft: { ...state.forms.q1!.draft, kind: 'note', option: '' } },
+      },
+    ])
+    await waitFor(() => expect(document.activeElement).toBe(reply))
+    expect(ui.emitted().action).toHaveLength(3)
+  })
+
+  it('routes deliberate question navigation to the answer while refresh preserves another input focus', async () => {
+    const state = fixture()
+    state.data!.blocks[1]!.meta!.options = []
+    state.data!.blocks[1]!.meta!.allow_other = true
+    const external = document.createElement('textarea')
+    document.body.append(external)
+    external.focus()
+    try {
+      const ui = render(AskGroupFlow, { props: { state, viewer: 'alice', names: {}, focusBlock: 'q1' } })
+      expect(document.activeElement).toBe(external)
+      await fireEvent.click(ui.getByRole('button', { name: '下一题' }))
+      await waitFor(() => expect(document.activeElement).toBe(ui.getByRole('textbox', { name: '你的回答' })))
+      await fireEvent.click(ui.getByRole('button', { name: '上一题' }))
+      await waitFor(() => expect(document.activeElement).toBe(ui.getByRole('region', { name: '整组回答' })))
+      await ui.rerender({ autoFocus: true, focusBlock: 'q2' })
+      await waitFor(() => expect(document.activeElement).toBe(ui.getByRole('textbox', { name: '你的回答' })))
+      external.focus()
+      await ui.rerender({ state: { ...state, data: { ...state.data!, blocks: state.data!.blocks.slice() } } })
+      expect(document.activeElement).toBe(external)
+    } finally {
+      external.remove()
+    }
+  })
+
+  it('does not offer a numbered custom shortcut beyond nine or edit a locked question', async () => {
+    const state = fixture()
+    state.data!.blocks[0]!.meta!.options = Array.from({ length: 9 }, (_, i) => ({ text: `Option ${i + 1}` }))
+    state.data!.blocks[0]!.meta!.allow_other = true
+    const ui = render(AskGroupFlow, { props: { state, viewer: 'alice', names: {} } })
+    const card = ui.getByRole('region', { name: '整组回答' })
+    await fireEvent.keyDown(card, { key: '9' })
+    expect(ui.emitted().action?.at(-1)).toEqual([
+      expect.objectContaining({
+        action: expect.objectContaining({ draft: expect.objectContaining({ option: 'Option 9' }) }),
+      }),
+    ])
+    await fireEvent.keyDown(card, { key: '0' })
+    await fireEvent.keyDown(card, { key: '10' })
+    expect(ui.emitted().action).toHaveLength(1)
+    await ui.rerender({ state: { ...state, forms: { ...state.forms, q1: { ...state.forms.q1!, fresh: false } } } })
+    await fireEvent.keyDown(card, { key: '1' })
+    expect(ui.emitted().action).toHaveLength(1)
+  })
+
   it('offers a retry after the initial question group could not be loaded', async () => {
     const state = fixture()
     state.data = null

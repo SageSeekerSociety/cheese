@@ -19,7 +19,8 @@
     "waitingFor": "Waiting for {name} to answer",
     "unknownAnswerer": "the designated respondent",
     "recommended": "Recommended",
-    "replyPlaceholder": "Or write your own response"
+    "replyPlaceholder": "Or write your own response",
+    "emptyReplyPlaceholder": "Reply…"
   },
   "history": {
     "version": "Version {version} · {name}",

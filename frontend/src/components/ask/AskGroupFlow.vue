@@ -2,7 +2,7 @@
 import type { AskReceipt } from '../../lib/askGroup'
 import type { AskGroupAction, AskGroupState } from '../../lib/askGroupState'
 
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 
 import { t } from '../../i18n'
 import { canAnswer, validAskDraft } from '../../lib/askState'
@@ -14,11 +14,15 @@ const props = defineProps<{
   viewer: string
   names: Record<string, string>
   focusBlock?: string | null
+  autoFocus?: boolean
 }>()
 const emit = defineEmits<{ (e: 'action', action: AskGroupAction): void }>()
 const cursor = ref(0)
 const navigationOpen = ref(false)
 const minimized = ref(false)
+const card = ref<HTMLElement | null>(null)
+const minimizeButton = ref<HTMLButtonElement | null>(null)
+const questionForm = ref<InstanceType<typeof AskQuestionForm> | null>(null)
 watch(
   () => props.state.scope,
   () => {
@@ -40,6 +44,30 @@ watch(
 )
 const blocks = computed(() => props.state.data?.blocks ?? [])
 const block = computed(() => blocks.value[cursor.value])
+function focusCurrent() {
+  if (minimized.value || !block.value) return
+  if (!block.value.meta?.options?.length && block.value.meta?.allow_other && questionForm.value?.focusReply()) return
+  card.value?.focus({ preventScroll: true })
+}
+watch(
+  [() => props.autoFocus, () => props.focusBlock, () => block.value?.id, () => minimized.value],
+  () => {
+    if (props.autoFocus && !minimized.value) void nextTick(focusCurrent)
+  },
+  { immediate: true }
+)
+function minimize() {
+  minimized.value = true
+  navigationOpen.value = false
+  void nextTick(() => minimizeButton.value?.focus({ preventScroll: true }))
+}
+function toggleMinimized() {
+  if (!minimized.value) minimize()
+  else {
+    minimized.value = false
+    void nextTick(focusCurrent)
+  }
+}
 const answered = computed(() => blocks.value.filter((b) => b.meta?.answer_log?.length).length)
 const draftCount = computed(
   () =>
@@ -60,15 +88,16 @@ const allowed = computed(() => blocks.value.some((b) => canAnswer(b, props.viewe
 function move(index: number) {
   cursor.value = Math.max(0, Math.min(blocks.value.length - 1, index))
   navigationOpen.value = false
+  void nextTick(focusCurrent)
 }
 function keydown(event: KeyboardEvent) {
-  if (event.isComposing || event.ctrlKey || event.altKey || event.metaKey) return
+  if (event.defaultPrevented || event.isComposing || event.ctrlKey || event.altKey || event.metaKey) return
   if (event.key === 'Escape') {
     event.preventDefault()
-    minimized.value = true
-    navigationOpen.value = false
+    minimize()
     return
   }
+  if (questionForm.value?.handleShortcut(event)) return
   if ((event.target as HTMLElement).closest('input, textarea, [contenteditable="true"]')) return
   if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
     event.preventDefault()
@@ -95,7 +124,7 @@ function receiptLabel(r: AskReceipt | null | undefined) {
 </script>
 
 <template>
-  <section class="ask-group" :aria-label="t('ask.group.title')" tabindex="0" @keydown="keydown">
+  <section ref="card" class="ask-group" :aria-label="t('ask.group.title')" tabindex="0" @keydown="keydown">
     <header class="ask-group-header">
       <span class="ask-group-title"
         ><svg
@@ -164,11 +193,12 @@ function receiptLabel(r: AskReceipt | null | undefined) {
           </button>
         </template>
         <button
+          ref="minimizeButton"
           type="button"
           class="ask-group-icon"
           :class="{ 'ask-group-collapse': !minimized }"
           :aria-label="minimized ? t('ask.group.expand') : t('ask.group.collapse')"
-          @click="minimized = !minimized"
+          @click="toggleMinimized"
         >
           <svg :viewBox="minimized ? '0 0 20 20' : '0 0 16 16'" aria-hidden="true">
             <path v-if="minimized" d="m6 8 4 4 4-4" />
@@ -181,6 +211,7 @@ function receiptLabel(r: AskReceipt | null | undefined) {
         </button>
       </div>
     </header>
+    <p v-if="minimized && state.error" role="alert" class="ask-group-error">{{ state.error }}</p>
     <div v-show="!minimized">
       <p v-if="state.busy" class="ask-group-notice" role="status">{{ t('ask.form.submitting') }}</p>
       <p v-if="state.error" role="alert" class="ask-group-error">{{ state.error }}</p>
@@ -204,6 +235,7 @@ function receiptLabel(r: AskReceipt | null | undefined) {
         <template v-if="block">
           <h3 class="ask-group-question">{{ block.content }}</h3>
           <AskQuestionForm
+            ref="questionForm"
             class="ask-group-form"
             :block="block"
             :viewer="viewer"

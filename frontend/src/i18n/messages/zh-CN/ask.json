@@ -19,7 +19,8 @@
     "waitingFor": "等待 {name} 回答",
     "unknownAnswerer": "指定回答者",
     "recommended": "推荐",
-    "replyPlaceholder": "或自行撰写回复"
+    "replyPlaceholder": "或自行撰写回复",
+    "emptyReplyPlaceholder": "回复…"
   },
   "history": {
     "version": "第 {version} 版 · {name}",

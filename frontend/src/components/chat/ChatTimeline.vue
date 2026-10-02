@@ -400,6 +400,7 @@ function emitOutboxLeave(el: Element, done: () => void) {
               :viewer="viewer"
               :names="refs.mentionNames"
               :focus-block="groupFocus[groupKey(groupFor(m)!.scope)] ?? m.id"
+              :auto-focus="!!groupFocus[groupKey(groupFor(m)!.scope)]"
               @action="emit('ask-group-action', groupFor(m)!.scope, $event)"
             />
             <button v-else-if="groupFor(m)" type="button" @click="focusGroup(m)">{{ t('ask.group.open') }}</button>
