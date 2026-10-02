@@ -1,5 +1,6 @@
 """Run inside the pinned gateway image to check its real request transformation."""
 
+import asyncio
 import copy
 import json
 from datetime import datetime, timezone
@@ -138,6 +139,40 @@ def main() -> None:
         assert info["output_cost_per_token"] > 0, (
             f"{name}: output tokens must remain billable"
         )
+    # Price-only entries carry the prices of the Claude models the platform's
+    # subscription serves; the backend reads them back through /model/info to
+    # bill that traffic. They must never route, and must carry all four prices.
+    price_only = [
+        item
+        for item in router.model_list
+        if item.get("model_info", {}).get("blocked") is True
+    ]
+    assert price_only, "No price-only entry; subscription traffic would go unpriced"
+    for deployment in price_only:
+        name = deployment["model_name"]
+        assert router._is_model_fully_blocked(name), f"{name}: must not route"
+        try:
+            asyncio.run(
+                router.async_get_available_deployment(
+                    model=name,
+                    messages=[{"role": "user", "content": "x"}],
+                    request_kwargs={},
+                )
+            )
+        except (TypeError, AttributeError):
+            raise  # the check itself is broken, not a refusal
+        except Exception:  # noqa: BLE001 - the router's refusal is the point
+            pass
+        else:
+            raise AssertionError(f"{name}: a price-only entry was routed")
+        info = litellm.model_cost[deployment["model_info"]["id"]]
+        for field in (
+            "input_cost_per_token",
+            "output_cost_per_token",
+            "cache_read_input_token_cost",
+            "cache_creation_input_token_cost",
+        ):
+            assert info.get(field, 0) > 0, f"{name}: {field} must be priced"
     # Messages usage reports uncached, cache-read and cache-written input separately.
     # Verify the bill, including the one-hour cache-write rate, not just metadata.
     kimi = next(item for item in router.model_list if item["model_name"] == "kimi-k3")
@@ -239,7 +274,8 @@ def main() -> None:
         "PASS: DeepSeek thinking, Kimi effort, and MiMo thinking verified; "
         "Kimi/MiMo image and tool history preserved; "
         "Kimi buffered/streamed cache costs verified; "
-        f"{len(offered)} offered model(s) billable on both directions"
+        f"{len(offered)} offered model(s) billable on both directions; "
+        f"{len(price_only)} price-only model(s) refused and fully priced"
     )
 
 

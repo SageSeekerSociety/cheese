@@ -132,6 +132,18 @@ Check the loaded configuration's request transformation and nonzero token prices
 docker exec -i cheese-gateway-litellm-1 python - /app/config.yaml < deploy/gateway/check_config.py
 ```
 
+## Prices for subscription models
+
+The Claude models served through the platform's subscription never pass
+through this gateway, but their usage is charged at the same prices as gateway
+traffic. `config.yaml` therefore carries a price-only entry for each of them:
+`model_info.blocked: true`, so the router refuses to route it, and no
+credential. The backend reads these prices back through `/model/info` when it
+ingests the metering proxy's usage log. A new subscription model needs an entry
+here; until it has one, its usage is recorded and nothing is charged.
+`check_config.py` asserts that every blocked entry is refused by the router and
+carries all four prices.
+
 ## Health checks
 
 The gateway keeps up to five 20 MB log files; recreating its container does not preserve its stdout history.
