@@ -145,6 +145,17 @@ def test_http_answer_continues_original_native_executor(
             workspace_root=str(machine.workspace),
             compute=ComputePool([runtime], channel.name),
         )
+        if mode == "project-seat":
+            # Admission caches the project's semaphore on its first turn.
+            # Establish this fixture's one-slot policy before that turn.
+            async def policy(_topic):
+                return {
+                    "project_id": project_id,
+                    "max_concurrent_turns": 1,
+                    "credits_exhausted": False,
+                }
+
+            monkeypatch.setattr(chat, "work_policy", policy)
         app.dependency_overrides[get_chat_service] = lambda: chat
         if not mode.startswith("history-multi"):
             started = machine.workspace / "ask-http-gate-started"
@@ -598,36 +609,45 @@ def test_http_answer_continues_original_native_executor(
                 None,
             ]
         if mode == "project-seat":
-            import app.domain.agent.runtime as work_runtime
-
             runner = get_work_runner()
-            opener = work_runtime._open_turn
             normal_turn = uuid.uuid4()
             normal_opened, normal_release = asyncio.Event(), asyncio.Event()
             answer_queued = asyncio.Event()
             admit = runner._admit
 
-            async def pause_open(factory, **fields):
-                if fields["turn_id"] == normal_turn:
-                    normal_opened.set()
-                    await normal_release.wait()
-                await opener(factory, **fields)
-
             async def observed_admit(service, room, turn):
-                if turn != normal_turn:
-                    answer_queued.set()
-                return await admit(service, room, turn)
+                if room == topic and turn != normal_turn:
+                    async with service.session_factory() as session:
+                        delivery = await session.scalar(
+                            select(Delivery).where(
+                                Delivery.topic_id == topic,
+                                Delivery.attempt_id == turn,
+                                Delivery.recipient_handle == asker,
+                            )
+                        )
+                        if (
+                            delivery is not None
+                            and delivery.payload.get("ask_group")
+                            == group["group"]["id"]
+                            and delivery.payload.get("answer_to") == question["id"]
+                        ):
+                            answer_queued.set()
+                verdict, gate = await admit(service, room, turn)
+                if room == topic and turn == normal_turn:
+                    # Hold the real project slot before any seat lock. The
+                    # answer can now reach project admission without waiting
+                    # for the seat lock held by a paused initial prompt.
+                    normal_opened.set()
+                    try:
+                        await normal_release.wait()
+                    except asyncio.CancelledError:
+                        # _run cannot return this slot until _admit returns it.
+                        if gate is not None:
+                            gate.release()
+                        raise
+                return verdict, gate
 
-            async def policy(_topic):
-                return {
-                    "project_id": project_id,
-                    "max_concurrent_turns": 1,
-                    "credits_exhausted": False,
-                }
-
-            monkeypatch.setattr(work_runtime, "_open_turn", pause_open)
             monkeypatch.setattr(runner, "_admit", observed_admit)
-            monkeypatch.setattr(chat, "work_policy", policy)
 
             async def start_normal():
                 runner.submit(
