@@ -53,6 +53,8 @@ const props = withDefaults(
     /** 正文还在路上。 */
     loading: boolean
     connection: DocConnection
+    /** 协同服务已换了新版的文档格式，这一页得刷新才能再打开文档。 */
+    outdated?: boolean
     /** 同一篇文档打开着的其他人。 */
     peers: DocPeer[]
     errorMsg: string | null
@@ -88,6 +90,7 @@ const props = withDefaults(
     agentHandle: null,
     topicList: () => [],
     bare: false,
+    outdated: false,
     commentAuthor: '',
     sendComment: undefined,
     rewriteSelection: undefined,
@@ -134,6 +137,10 @@ onBeforeUnmount(() => {
 // 正文区的滚动：代码块工具条贴在 <pre> 上，正文一滚它就指错地方了。往上发一次
 // 「滚了」，由拿着编辑器的正文那一半收起来。
 const scrollTick = ref(0)
+function reload() {
+  window.location.reload()
+}
+
 function onBodyScroll() {
   scrollTick.value++
 }
@@ -209,6 +216,13 @@ defineExpose({
       <div class="text-center">
         <v-icon size="48" class="mb-2 text-disabled">mdi-file-document-outline</v-icon>
         <div>{{ t('work.room.doc.pickTopic') }}</div>
+      </div>
+    </div>
+
+    <div v-else-if="outdated" class="flex-grow-1 d-flex align-center justify-center">
+      <div class="text-center">
+        <div class="t-body mb-3">{{ t('work.room.doc.outdated') }}</div>
+        <v-btn color="primary" variant="flat" size="small" @click="reload">{{ t('work.room.doc.reload') }}</v-btn>
       </div>
     </div>
 

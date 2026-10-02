@@ -92,6 +92,18 @@ describe('打开一篇协同文档', () => {
     expect(container.querySelector('.doc-prose')).toBeNull()
   })
 
+  it('协同服务换了文档格式时，不摆编辑器，点刷新重新载入页面', async () => {
+    seedRoom('t1', '第一段', { outdated: true })
+    const reload = vi.fn()
+    vi.stubGlobal('location', { ...window.location, reload })
+    const { container, findByRole } = open(room('t1'))
+
+    ;(await findByRole('button', { name: '刷新' })).click()
+    expect(reload).toHaveBeenCalled()
+    expect(container.querySelector('.doc-prose')).toBeNull()
+    vi.unstubAllGlobals()
+  })
+
   it('别人写的字实时出现在编辑器里', async () => {
     seedRoom('t1', '第一段')
     const { container } = open(room('t1'))

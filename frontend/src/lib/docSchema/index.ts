@@ -23,6 +23,7 @@ export { compareRoundTrip, normalizeMarkdown } from './fidelity'
 export { docMarked, finishMarkdown, serializeDoc } from './markdown'
 export type { PendingSuggestion } from './suggestions'
 export { pendingSuggestions, suggestionAuthor, suggestionId, withoutSuggestions } from './suggestions'
+export { DOC_SCHEMA_MISMATCH, DOC_SCHEMA_PARAM, DOC_SCHEMA_VERSION } from './version'
 export {
   exportMarkdown,
   FIELD,

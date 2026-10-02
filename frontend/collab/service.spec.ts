@@ -11,7 +11,16 @@ import { HocuspocusProvider, HocuspocusProviderWebsocket } from '@hocuspocus/pro
 import { afterEach, describe, expect, it } from 'vitest'
 import * as Y from 'yjs'
 
-import { compareRoundTrip, exportMarkdown, liveNode, liveSuggestions, writeMarkdown } from '../src/lib/docSchema'
+import {
+  compareRoundTrip,
+  DOC_SCHEMA_MISMATCH,
+  DOC_SCHEMA_PARAM,
+  DOC_SCHEMA_VERSION,
+  exportMarkdown,
+  liveNode,
+  liveSuggestions,
+  writeMarkdown,
+} from '../src/lib/docSchema'
 
 import { deriveKey } from './auth'
 import { applyEdits, writeNode } from './edit'
@@ -117,17 +126,21 @@ async function setup(seed = '', { debounceMs = 50, maxDebounceMs = 200 } = {}) {
   return { backend, server, url: server.webSocketURL, http: server.httpURL }
 }
 
-function client(url: string, token: string) {
+/** A page connecting to the service. It speaks this build's document schema
+ *  unless `schema` says otherwise (null: a build that sends none). */
+function client(url: string, token: string, { schema = String(DOC_SCHEMA_VERSION) as string | null } = {}) {
   const doc = new Y.Doc()
-  const socket = new HocuspocusProviderWebsocket({ url })
-  let failed = false
+  const address = new URL(url)
+  if (schema !== null) address.searchParams.set(DOC_SCHEMA_PARAM, schema)
+  const socket = new HocuspocusProviderWebsocket({ url: address.toString() })
+  let failed: string | null = null
   const provider = new HocuspocusProvider({
     websocketProvider: socket,
     name: DOC,
     document: doc,
     token,
-    onAuthenticationFailed: () => {
-      failed = true
+    onAuthenticationFailed: ({ reason }) => {
+      failed = reason
     },
   })
   provider.attach()
@@ -135,7 +148,7 @@ function client(url: string, token: string) {
     provider.destroy()
     socket.destroy()
   })
-  return { doc, provider, failed: () => failed }
+  return { doc, provider, failed: () => failed !== null, reason: () => failed }
 }
 
 async function until(check: () => boolean, ms = 5000) {
@@ -208,6 +221,35 @@ describe('the live document', () => {
     const elsewhere = client(url, ticket('mallory', { doc: 'room:00000000-0000-0000-0000-000000000000' }))
     await until(() => forged.failed() && elsewhere.failed())
     expect(forged.doc.getXmlFragment('default').length).toBe(0)
+  })
+
+  it('refuses a page built with another document schema, and the document is left as it was', async () => {
+    const { backend, url } = await setup('第一段。\n\n第二段。\n')
+    const current = client(url, ticket('xiaowang'))
+    await until(() => exportMarkdown(current.doc).includes('第二段') && backend.state !== null)
+    const stores = backend.stores
+    const stored = backend.content
+
+    // An older page (no version) and one of another build, each holding a
+    // document that reads differently — what dropping unknown content looks like.
+    const older = client(url, ticket('teacher'), { schema: null })
+    const other = client(url, ticket('teacher'), { schema: String(DOC_SCHEMA_VERSION + 1) })
+    writeMarkdown(older.doc, '第一段。\n')
+    writeMarkdown(other.doc, '另一份。\n')
+    await until(() => older.failed() && other.failed())
+    expect(older.reason()).toBe(DOC_SCHEMA_MISMATCH)
+    expect(other.reason()).toBe(DOC_SCHEMA_MISMATCH)
+    // Neither got the document, and nothing they hold reached it.
+    expect(exportMarkdown(older.doc)).not.toContain('第二段')
+    await new Promise((r) => setTimeout(r, 300))
+    expect(exportMarkdown(current.doc)).toBe(stored)
+    expect(backend.stores).toBe(stores)
+    expect(backend.content).toBe(stored)
+
+    // A page of this build opens it as before.
+    const later = client(url, ticket('teacher'))
+    await until(() => exportMarkdown(later.doc) === stored)
+    expect(later.failed()).toBe(false)
   })
 
   it('drops changes from a read-only connection', async () => {

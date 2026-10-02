@@ -32,6 +32,9 @@ import * as Y from 'yjs'
 
 import {
   compareRoundTrip,
+  DOC_SCHEMA_MISMATCH,
+  DOC_SCHEMA_PARAM,
+  DOC_SCHEMA_VERSION,
   exportMarkdown,
   liveNode,
   liveSuggestions,
@@ -126,7 +129,14 @@ export function createCollabServer(config: CollabConfig): Server {
   }
 
   const documents: Extension = {
-    async onAuthenticate({ token, documentName, connectionConfig }) {
+    async onAuthenticate({ token, documentName, connectionConfig, requestParameters }) {
+      // A page built with another schema would drop what it cannot parse and
+      // write the drop back as a deletion (see docSchema/version.ts). It is
+      // refused before the document is loaded or synced; the reason tells a
+      // current page to ask for a refresh.
+      if (requestParameters.get(DOC_SCHEMA_PARAM) !== String(DOC_SCHEMA_VERSION)) {
+        throw Object.assign(new Error('the page speaks another document schema'), { reason: DOC_SCHEMA_MISMATCH })
+      }
       const ticket = verifyTicket(token, ticketKey)
       if (ticket.doc !== documentName) throw new Error('the ticket opens another document')
       connectionConfig.readOnly = ticket.ro

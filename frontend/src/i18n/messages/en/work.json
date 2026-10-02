@@ -721,6 +721,8 @@
     },
     "doc": {
       "pickTopic": "Select a topic to see its document",
+      "outdated": "This page has been updated. Refresh to keep editing",
+      "reload": "Refresh",
       "loading": "Loading…",
       "connecting": "Connecting…",
       "offline": "Offline",

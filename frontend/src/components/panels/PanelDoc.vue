@@ -105,6 +105,7 @@ defineExpose({ pulse, highlightTurn, reviewEdits })
     :read-only="doc.readOnly.value"
     :loading="doc.loading.value"
     :connection="doc.connection.value"
+    :outdated="doc.outdated.value"
     :peers="doc.peers.value"
     :error-msg="doc.errorMsg.value"
     :comments="doc.comments.value"

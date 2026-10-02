@@ -721,6 +721,8 @@
     },
     "doc": {
       "pickTopic": "选择一个话题查看文档",
+      "outdated": "页面已更新，刷新后继续编辑",
+      "reload": "刷新",
       "loading": "加载中…",
       "connecting": "连接中…",
       "offline": "未连接",

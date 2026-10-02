@@ -46,7 +46,7 @@ export function usePanelDoc(props: PanelDocProps) {
   // 自己切的只读（⋯ 里那一项）。没有编辑权限时它不起作用：那由凭证决定。
   const wantsEditable = ref(true)
   const editable = computed(() => wantsEditable.value && !collab.readOnly.value)
-  const loading = computed(() => !!props.topic && !collab.synced.value && !collab.error.value)
+  const loading = computed(() => !!props.topic && !collab.synced.value && !collab.error.value && !collab.outdated.value)
   // 当场要说的失败（复制代码失败这一类），和文档打不开的原因，说同一个地方。
   const localError = ref<string | null>(null)
   const errorMsg = computed(() => localError.value ?? collab.error.value)
@@ -210,6 +210,7 @@ export function usePanelDoc(props: PanelDocProps) {
     // 协同文档
     session: collab.session,
     connection: collab.connection,
+    outdated: collab.outdated,
     peers: collab.peers,
     readOnly: collab.readOnly,
     // 这一篇现在是什么状态
