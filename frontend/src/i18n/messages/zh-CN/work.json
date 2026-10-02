@@ -783,7 +783,8 @@
       "restore": "恢复到这一版",
       "restoreFailed": "恢复失败",
       "close": "关闭",
-      "you": "你"
+      "you": "你",
+      "emptyLineHint": "输入 / 插入内容"
     },
     "comments": {
       "comment": "评论",

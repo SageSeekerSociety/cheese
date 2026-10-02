@@ -783,7 +783,8 @@
       "restore": "Restore this version",
       "restoreFailed": "Restore failed",
       "close": "Close",
-      "you": "you"
+      "you": "you",
+      "emptyLineHint": "Type, or / to insert"
     },
     "comments": {
       "comment": "Comment",

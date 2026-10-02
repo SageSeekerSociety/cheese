@@ -29,6 +29,7 @@ import {
   commentMarkKey,
   commentQuoteRanges,
   createCommentMarks,
+  createEmptyLineHint,
   createLiveRefBadges,
   createTitleEcho,
   createTokenChips,
@@ -329,6 +330,7 @@ function buildEditor(session: DocSession): Editor {
       }),
       createCommentMarks({ index: () => props.commentMarkIndex, openId: () => props.openCommentId ?? null }),
       createEditMarks(),
+      createEmptyLineHint(),
       createSlashCommands({
         onStart: showSlashMenu,
         onUpdate: showSlashMenu,
@@ -428,6 +430,7 @@ defineExpose({
 
 // 空文档里的灰字住在 CSS 的 ::before 里；按当前语言取值，带上引号交给 content。
 const emptyPlaceholder = computed(() => JSON.stringify(t('work.room.doc.emptyPlaceholder')))
+const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHint')))
 </script>
 
 <template>
@@ -480,6 +483,14 @@ const emptyPlaceholder = computed(() => JSON.stringify(t('work.room.doc.emptyPla
 .doc-editor :deep(.doc-prose > p:first-child:last-child:has(> br.ProseMirror-trailingBreak:only-child))::before {
   content: v-bind(emptyPlaceholder);
   color: rgba(var(--v-theme-on-surface), 0.38);
+  pointer-events: none;
+  float: left;
+  height: 0;
+}
+/* 光标所在的空段落里那一行淡字（lib/docDecorations.ts 的 createEmptyLineHint）。 */
+.doc-editor :deep(.doc-empty-line)::before {
+  content: v-bind(emptyLineHint);
+  color: var(--faint);
   pointer-events: none;
   float: left;
   height: 0;
