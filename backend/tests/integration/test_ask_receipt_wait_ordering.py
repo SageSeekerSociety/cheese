@@ -277,9 +277,14 @@ def test_ask_correction_retries_once_after_its_group_echo(client, monkeypatch, o
                 assert row.retry_at > datetime.now(UTC)
                 assert row.sent_at is None
                 assert row.payload[ASK_RECEIPT_WAIT]["ask_group"] == group_id
-                assert await session.scalar(
-                    select(NativeInput.id).where(NativeInput.delivery_id == delivery2)
-                ) is None
+                assert (
+                    await session.scalar(
+                        select(NativeInput.id).where(
+                            NativeInput.delivery_id == delivery2
+                        )
+                    )
+                    is None
+                )
                 first_row = await session.scalar(
                     select(NativeInput).where(NativeInput.input_id == first.input_id)
                 )
@@ -417,7 +422,9 @@ def test_ask_correction_retries_once_after_its_group_echo(client, monkeypatch, o
             for delivery_id, expected in sentinels.items():
                 sentinel = await session.get(Delivery, delivery_id)
                 assert (
-                    sentinel.state, sentinel.attempt_id, sentinel.attempts
+                    sentinel.state,
+                    sentinel.attempt_id,
+                    sentinel.attempts,
                 ) == expected
                 assert sentinel.sent_at is None
         # A duplicate real receipt may schedule a scan, but cannot send again.

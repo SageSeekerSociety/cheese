@@ -354,9 +354,7 @@ async def _shared_ask_continuation(
         )
 
     by_event = {
-        previous.event_id: previous
-        for previous in deliveries
-        if same_group(previous)
+        previous.event_id: previous for previous in deliveries if same_group(previous)
     }
     remaining = set(overlap)
     proven = False

@@ -214,9 +214,7 @@ def test_http_answer_continues_original_native_executor(
                 client, str(topic), "alice", {"content": f"<@{asker}> " + content}
             )
             if mode.startswith("history-multi"):
-                observed = _until(
-                    ws, lambda frame: frame["type"] in ("done", "error")
-                )
+                observed = _until(ws, lambda frame: frame["type"] in ("done", "error"))
                 assert observed["type"] != "error", observed
             else:
                 client.portal.call(wait_initial_gate)
