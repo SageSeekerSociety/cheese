@@ -37,10 +37,11 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
+from tests.support.work_chat import WorkChat
 from tests.turn_log import a_topic, open_turn, open_turn_ids
 
 
-class _Chat:
+class _Chat(WorkChat):
     """ChatService stand-in for sweep flows: serves the evidence probe, records
     events, and any turn the sweep actually submits."""
 

@@ -23,10 +23,11 @@ from app.domain.agent.runtime import (
     addressed_to_agent,
 )
 from tests.support.hang import HANG_S
+from tests.support.work_chat import WorkChat
 from tests.turn_log import a_topic
 
 
-class _Backend:
+class _Backend(WorkChat):
     """够用的 chat service 替身。`submit` 收的那个对象既产 frame 又落系统事件，
     所以这里也是一个对象扮两个角色（和 test_turn_continuation 的 `_Quiet` 同形）。
 

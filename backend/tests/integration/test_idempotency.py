@@ -83,6 +83,8 @@ class _SameMessageTwice(StubChannel):
     """A 芝士 that says the exact same thing on both attempts — which is what a
     resumed session with no memory of the first attempt does."""
 
+    new_session_id = "s1"
+
     def __init__(self, text: str) -> None:
         super().__init__()
         self._text = text

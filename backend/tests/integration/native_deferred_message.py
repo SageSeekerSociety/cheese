@@ -36,6 +36,10 @@ async def finish_deferred_message(
     take_recovery,
 ):
     import app.domain.agent.chat as chat_module
+    from app.domain.agent import pending_messages
+
+    monkeypatch.setattr(pending_messages, "_runner", get_work_runner())
+    assert pending_messages.current_runner() is get_work_runner()
 
     complete = chat_module.complete_work_inputs
     refused = asyncio.Event()

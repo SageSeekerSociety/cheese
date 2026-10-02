@@ -214,6 +214,8 @@ class SlowScreen(StubChannel):
 
 
 class InstantScreen(StubChannel):
+    new_session_id = "s-affinity"
+
     def emit_turn(
         self,
         topic_id: uuid.UUID,
@@ -404,6 +406,8 @@ async def test_receiving_a_message_mints_no_second_agent(business_db_factory, tm
 
 class ProcessNotesScreen(StubChannel):
     """A turn that narrates as it works: two assistant messages, then the end."""
+
+    new_session_id = "s-notes"
 
     def emit_turn(
         self,
@@ -1188,17 +1192,21 @@ async def test_summon_during_active_work_is_injected_without_a_second_done(
 
 
 @pytest.mark.anyio
-async def test_failed_live_delivery_reports_error_then_queues_work(
+async def test_unconfirmed_live_delivery_reports_error_without_queuing_work(
     business_db_factory, tmp_path
 ):
-    """A failed live handoff is visible before the message runs from the queue."""
+    """A transport exception after registration keeps the input for reconciliation."""
     from app.domain.agent.compute import ComputePool
+    from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
+    from app.domain.block.models import consumed_turn
+    from app.domain.delivery.answer_ownership import seat_has_unfinished_input
+    from tests.conftest import close_topic_subscriptions
 
     factory = business_db_factory  # type: ignore[attr-defined]
 
     class _NoScreen(_SlowLiveScreen):
-        """The live handoff fails at the transport: the second write does not
-        land on the screen, so the message has to run from the queue instead."""
+        """The transport fails after the attempt starts, without proving whether
+        the remote session took the input."""
 
         name = "fake-noscreen"
 
@@ -1209,10 +1217,20 @@ async def test_failed_live_delivery_reports_error_then_queues_work(
             # the whole subject, and it either happens while the first turn is
             # still working or it does not happen at all.
             self.tried = asyncio.Event()
+            self.attempted: InputIdentity | None = None
 
         async def call(self, handle, method: str, params: dict) -> dict:
             if method == "steer":
                 self.delivered.append(params["text"])
+                self.attempted = InputIdentity(
+                    handle.session.project_id,
+                    handle.session.topic_id,
+                    handle.agent_handle,
+                    self.runtime.harness,
+                    handle.session_id,
+                    uuid.UUID(params["input_id"]),
+                    uuid.UUID(params["work_id"]),
+                )
                 self.tried.set()
                 raise ScreenSetupError("屏幕没了")
             return await super().call(handle, method, params)
@@ -1242,46 +1260,96 @@ async def test_failed_live_delivery_reports_error_then_queues_work(
             )
         ]
 
+    async def assert_unknown_input() -> set[uuid.UUID]:
+        identity = provider.attempted
+        assert identity is not None
+        async with factory() as session:
+            history = await BlockRepository(session).list_for_topic(topic_id)
+            messages = [block for block in history if block.content == "第二件事"]
+            assert len(messages) == 1
+            message = messages[0]
+            assert consumed_turn(message) is None
+            rows = list(
+                await session.scalars(
+                    select(NativeInput).where(NativeInput.topic_id == topic_id)
+                )
+            )
+            assert len(rows) == 2  # original prompt and the one attempted steer
+            held = [row for row in rows if str(message.id) in row.held_block_ids]
+            assert len(held) == 1
+            row = held[0]
+            assert all(
+                getattr(row, field) == getattr(identity, field)
+                for field in InputIdentity.__dataclass_fields__
+            )
+            assert row.held_block_ids == [str(message.id)]
+            assert row.block_ids == [str(message.id)]
+            assert row.released_block_ids == []
+            assert row.registered_at is not None
+            assert row.accepted_at is None
+            assert row.echoed_at is None
+            assert row.execution_work_id is None
+            assert row.settled_at is None
+            assert row.completed_at is None
+            assert row.terminated_at is None
+            assert await seat_has_unfinished_input(
+                session, topic_id, identity.recipient_handle
+            )
+            return {row.id for row in rows}
+
     first = asyncio.create_task(summoned("user-1", "第一件事"))
-    await asyncio.wait_for(provider.started.wait(), 5)
+    second = None
+    try:
+        await asyncio.wait_for(provider.started.wait(), HANG_S)
+        second = asyncio.create_task(summoned("user-2", "第二件事"))
+        await asyncio.wait_for(provider.tried.wait(), HANG_S)
+        second_frames = await asyncio.wait_for(second, HANG_S)
+        notices = [
+            frame["block"]
+            for frame in second_frames
+            if frame["type"] == "event_block"
+            and "发送结果正在核对" in frame["block"]["content"]
+        ]
+        assert len(notices) == 1
+        assert notices[0]["content"] == "输入已登记，发送结果正在核对；不会重复发送"
+        assert notices[0]["author_type"] == "platform"
+        assert all(frame["type"] not in {"done", "error"} for frame in second_frames)
+        assert not any(
+            frame["type"] == "event_block"
+            and (frame["block"].get("meta") or {}).get("event_type")
+            == "delivery_fallback"
+            for frame in second_frames
+        )
+        original_rows = await assert_unknown_input()
+        assert len(provider.sessions) == 1
+        assert provider.runs == 1
 
-    second = asyncio.create_task(summoned("user-2", "第二件事"))
-    # Wait for the write to be attempted, not for a slice of wall clock. A tenth
-    # of a second used to stand in for "the second message has got as far as the
-    # live handoff"; a loaded box does not honour that, and then the first turn
-    # is released before the handoff happens — `deliver` finds no work in
-    # flight, returns False without ever reaching the screen, and the test fails
-    # on an empty `delivered` that says nothing about what it meant to check.
-    await asyncio.wait_for(provider.tried.wait(), 5)
-    assert not second.done()  # queued behind the lock, exactly as before
-
-    provider.release.set()
-    await asyncio.wait_for(first, 5)
-    second_frames = await asyncio.wait_for(second, 5)
-    assert provider.runs == 2
-    assert [p.split("\n\n", 1)[0] for p in provider.delivered] == ["[user-2]: 第二件事"]
-
-    fallback_frames = [
-        frame
-        for frame in second_frames
-        if frame["type"] == "event_block"
-        and frame["block"]["meta"].get("event_type") == "delivery_fallback"
-    ]
-    assert len(fallback_frames) == 1
-    fallback = fallback_frames[0]["block"]
-    assert fallback["meta"]["severity"] == "error"
-    assert fallback["meta"]["who"] == "platform"
-    assert all(frame["type"] != "error" for frame in second_frames)
-
-    async with factory() as session:
-        history = await BlockRepository(session).list_for_topic(topic_id)
-    persisted = [
-        block
-        for block in history
-        if (block.meta or {}).get("event_type") == "delivery_fallback"
-    ]
-    assert len(persisted) == 1
-    await finish_turn(svc, topic_id)
+        # The original prompt's clean completion cannot settle an input that
+        # never appeared in its native journal. A recovery scan also keeps it.
+        provider.release.set()
+        await asyncio.wait_for(first, HANG_S)
+        await finish_turn(svc, topic_id)
+        runner = AgentWorkRunner(InProcessBroker())
+        assert await runner.resume_lost_messages(svc, topic_id=topic_id) == 0
+        assert await assert_unknown_input() == original_rows
+        assert len(provider.sessions) == 1
+        assert provider.runs == 1
+        assert [p.split("\n\n", 1)[0] for p in provider.delivered] == [
+            "[user-2]: 第二件事"
+        ]
+        async with factory() as session:
+            history = await BlockRepository(session).list_for_topic(topic_id)
+        assert [
+            block.id for block in history if "发送结果正在核对" in block.content
+        ] == [uuid.UUID(notices[0]["id"])]
+    finally:
+        provider.release.set()
+        tasks = [first] if second is None else [first, second]
+        await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), HANG_S)
+        try:
+            await finish_turn(svc, topic_id)
+        finally:
+            await close_topic_subscriptions(svc, topic_id)
 
 
 @pytest.mark.anyio

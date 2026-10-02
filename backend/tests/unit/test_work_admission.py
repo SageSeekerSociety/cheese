@@ -18,10 +18,11 @@ from app.domain.agent.runtime import (
     addressed_to_agent,
 )
 from tests.support.hang import HANG_S
+from tests.support.work_chat import WorkChat
 from tests.turn_log import a_topic
 
 
-class FakeChat:
+class FakeChat(WorkChat):
     """Controllable stand-in for ChatService: converse turns block until
     released, so tests can observe concurrency and queue order."""
 
@@ -233,7 +234,7 @@ async def test_message_to_another_teammate_starts_its_turn_beside_a_live_one(
         await broker.receive_message(
             chat, topic, author="u", content="<@cheese-seat> A's task"
         )
-        await chat.a_started.wait()
+        await asyncio.wait_for(chat.a_started.wait(), HANG_S)
         chat.selected = "cheese-b"
         await broker.receive_message(
             chat, topic, author="u", content="<@cheese-seat> B's task"

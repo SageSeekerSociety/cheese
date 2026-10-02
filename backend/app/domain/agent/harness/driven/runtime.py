@@ -1220,13 +1220,13 @@ class DrivenRuntime[H: Handle]:
                 SessionRef(project_id, topic_id, session_agent, harness=self.harness),
                 prompt,
                 Opening(
-                    system_prompt,
-                    resume_session_id,
-                    model,
-                    env,
-                    memory_scope,
-                    owner,
-                    agent_handle,
+                    system_prompt=system_prompt,
+                    resume_token=resume_session_id,
+                    model=model,
+                    env=env,
+                    memory_scope=memory_scope,
+                    owner=owner,
+                    agent_handle=agent_handle,
                     # 平台自己起的那几轮走这条入口，今天照旧租手：它们跑在项目工
                     # 作机的根话题沙箱里。写出来是为了让这条老路看得见，改不改是
                     # 另一件事 (P21 只动房间里的那一轮)。
