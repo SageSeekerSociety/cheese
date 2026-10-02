@@ -188,12 +188,32 @@ class TeamService:
         return await self._repo.list_teams(query=query, limit=limit, offset=offset)
 
     async def list_all_teams(
-        self, *, query: str | None, owner_ids: Sequence[int], limit: int, offset: int
+        self,
+        *,
+        query: str | None,
+        owner_ids: Sequence[int],
+        limit: int,
+        offset: int,
+        plan_key: str | None = None,
+        personal: bool | None = None,
     ) -> tuple[list[Team], int]:
         """Every live team for the platform console, and how many match."""
         return await self._repo.list_all(
-            query=query, owner_ids=owner_ids, limit=limit, offset=offset
+            query=query,
+            owner_ids=owner_ids,
+            limit=limit,
+            offset=offset,
+            plan_key=plan_key,
+            personal=personal,
         )
+
+    async def teams_per_plan(self) -> dict[str, int]:
+        """plan key -> how many live teams are on it."""
+        return await self._repo.count_by_plan()
+
+    async def member_counts(self, team_ids: Sequence[int]) -> dict[int, int]:
+        """team id -> how many members it has."""
+        return await self._repo.member_counts(team_ids)
 
     async def get_teams_by_ids(self, ids: Sequence[int]) -> dict[int, Team]:
         return await self._repo.get_by_ids(ids)

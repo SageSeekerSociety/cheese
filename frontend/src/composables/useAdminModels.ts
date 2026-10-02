@@ -14,6 +14,7 @@
 // 不该把模型表也一起清空，审计读不到不该显示「暂无操作」——
 // 三种失败在这一页是三句话，由三段各自说，页顶那条横条只说**写**失败。
 import type { ModelFormPayload } from '@/components/admin/AdminModelFormDialog.vue'
+import type { ModelTier } from '@/lib/adminCredits'
 import type { AuditItem, ModelRow, ModelsListing, ModelUsage, ProjectRow, ProjectsPayload } from '@/lib/adminModels'
 
 import { computed, onMounted, ref } from 'vue'
@@ -29,6 +30,7 @@ import {
   setGatewayProjectBudget,
   updateGatewayModel,
 } from '@/api'
+import { setGatewayModelTier } from '@/api/adminCredits'
 import { relTime } from '@/lib/relTime'
 import { fmtCost, fmtNum, fmtSI } from '@/lib/usageFormat'
 
@@ -342,6 +344,18 @@ export function useAdminModels() {
     }
   }
 
+  /** 改一条模型的档位：方案按档位限定可用的模型。成功后整表重拉，失败落到写失败那条横条。 */
+  async function setTier(row: ModelRow, tier: ModelTier) {
+    if (row.tier === tier) return
+    writeError.value = null
+    try {
+      await setGatewayModelTier(row.name, tier)
+      await load()
+    } catch (e) {
+      writeError.value = message(e, t('models.table.tierFailed'))
+    }
+  }
+
   function openBudget(row: ProjectRow) {
     budgetError.value = null
     budgetProject.value = row
@@ -426,6 +440,7 @@ export function useAdminModels() {
     askBlock,
     closeBlock,
     confirmBlock,
+    setTier,
     // 详情抽屉
     drawerOpen,
     drawerName,

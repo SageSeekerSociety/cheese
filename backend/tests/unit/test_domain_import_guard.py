@@ -272,7 +272,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # `set_topic_compute_profile` 里读一次，随它搬走。拆模块没有新增跨包的边，
         # 只是发起方从 topics.py 换成了 topics_compute.py，所以按同一笔债入账。
         ("app.api.routes.users", "app.domain.answers.repositories"),
-        ("app.api.routes.users", "app.domain.passkey.repositories"),
         ("app.api.routes.users", "app.domain.questions.repositories"),
         ("app.api.routes.users", "app.domain.user.repositories"),
         # --- users_team --- (#2143) the six /users/me/team* routes left

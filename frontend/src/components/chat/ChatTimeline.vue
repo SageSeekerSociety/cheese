@@ -494,6 +494,8 @@ function emitOutboxLeave(el: Element, done: () => void) {
 /* 骨架到货时淡出。离场时它脱离文档流，下面已经排好的真行不会被它推一下。 */
 .tl-content {
   position: relative;
+  /* 动作按这一列的可用宽度收起，桌面分栏也能比手机视口窄。 */
+  container: chat-timeline / inline-size;
 }
 /* 手机外壳里对话不铺满整屏：平板竖屏上一行会排到六十多个字。时间线和输入框收成同
    一栏居中（贴在输入框上的那一条由放它进来的那一栏收，见 TopicChatColumn）；滚动的

@@ -15,6 +15,7 @@
  */
 import type { RouteLocationRaw } from 'vue-router'
 import type { MenuCommand } from '@/commands'
+import type { DocConnection, DocPeer, DocSession } from '@/composables/useDocCollab'
 import type { OpenFileTab } from '@/composables/useTopicMemory'
 import type {
   AcceptCard,
@@ -32,7 +33,6 @@ import type {
 } from '@/cx_types'
 import type { Outgoing } from '@/lib/composerDrafts'
 import type { FileDiff } from '@/lib/diff'
-import type { DocSaveStatus } from '@/lib/docEditState'
 import type { RailMemberMark } from '@/lib/memberActivity'
 import type { VisibleRow } from '@/lib/topicTree'
 import type { SpaceLearningExcerpt } from '@/network/api/spaces/types'
@@ -47,6 +47,7 @@ import { SCENES } from './scenes'
 
 import { dayLabelsFor, runEdgeBetween } from '@/lib/chatGrouping'
 import { parseDiffLines, splitDiffByFile } from '@/lib/diff'
+import { localDocSession } from '@/lib/docLocalSession'
 import { DOCUMENT_TYPES } from '@/lib/fileKind'
 import { mergeBadgeOf, visibleReasons } from '@/lib/mergeState'
 import { collapseNotices, type PlatformNotice } from '@/lib/platformNotice'
@@ -835,44 +836,30 @@ const DOC_BASE = {
   activityTick: 0,
   agentName: AGENT_NAME,
   topicList: [DOC_TOPIC],
-  mdAndUp: true,
+  session: null as DocSession | null,
   editable: true,
-  editingBlocked: false,
+  readOnly: false,
   loading: false,
-  saveStatus: 'saved' as DocSaveStatus,
-  paused: false,
-  pausedHint: '',
+  connection: 'connected' as DocConnection,
+  peers: [] as DocPeer[],
   errorMsg: null,
-  lossy: false,
-  lossyConfirmOpen: false,
-  sourceMode: false,
-  sourceDraft: '',
-  pendingEdits: [],
-  hasPendingEdits: false,
-  externalDoc: null,
   comments: [],
   anchorNodes: [],
   liveRefIndex: new Map<number, string>(),
   commentMarkIndex: new Map<number, { id: string; quote: string }[]>(),
   fetchDocNodes: async () => [],
   imageSrc: (src: string) => src,
-  save: noopAsync,
-  confirmLossySave: noop,
-  handleBlur: noop,
-  handleDocKeydown: noop,
-  handleSourceInput: noop,
   refreshComments: noopAsync,
   toggleEditable: noop,
-  toggleSourceMode: noop,
-  enterSourceMode: noop,
-  applyPendingEdits: noop,
-  discardPendingEdits: noop,
-  viewExternalDoc: noop,
-  overwriteWithMine: noop,
   setError: noop,
 }
 
-/** 文档那一格的整串 props（正文本身由容器在取到之后装进去，不由 props 进）。 */
+/** 一篇只活在这一页里的协同文档：预览站上正文是它，不连任何服务。 */
+export function docSession(markdown: string): DocSession {
+  return localDocSession(markdown, DEMO_TOPIC)
+}
+
+/** 文档那一格的整串 props。 */
 export function docPanelProps(): typeof DOC_BASE
 export function docPanelProps<T extends Record<string, unknown>>(over: T): Omit<typeof DOC_BASE, keyof T> & T
 export function docPanelProps(over: Record<string, unknown> = {}): Record<string, unknown> {

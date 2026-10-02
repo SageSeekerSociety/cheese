@@ -8,8 +8,8 @@ import { useAppTheme } from '../theme'
 // The actual VS Code editor (Monaco) — loaded the first time an editor mounts,
 // not when this file is imported. Monaco is 4MB (1MB gzipped), and the panels
 // that hold an editor sit on the room page: importing it statically made every
-// room download it before showing anything, for a file editor and a source mode
-// most visits never open.
+// room download it before showing anything, for a file editor most visits never
+// open.
 let monaco: typeof Monaco | null = null
 let loading: Promise<typeof Monaco> | null = null
 

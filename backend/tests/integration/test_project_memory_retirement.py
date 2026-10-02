@@ -19,6 +19,7 @@ from tests.integration.test_what_everyone_sees_is_a_document import (
     _legacy_memory,
     _run_migration,
 )
+from tests.support.living_doc import write_doc
 
 
 @pytest.fixture
@@ -64,11 +65,11 @@ def test_window_rows_land_retired_rows_stay_out_and_paragraph_anchors_survive(
             name="Migration test", owner_handle="owner", forge_kind="github_app"
         )
         topics = TopicService(db_session)
-        await topics.edit_doc(
-            topic_id=project.root_topic_id,
-            content="## Goal\n\nKeep this paragraph.",
-            author="owner",
-            expected_version=0,
+        await write_doc(
+            db_session,
+            project.root_topic_id,
+            "## Goal\n\nKeep this paragraph.",
+            "owner",
         )
         old_nodes = await BlockRepository(db_session).list_doc_nodes(
             project.root_topic_id
@@ -142,11 +143,8 @@ def test_a_copy_with_different_content_cannot_authorize_deletion(
         project = await ProjectService(db_session).create(
             name="Copy test", owner_handle="owner", forge_kind="github_app"
         )
-        await TopicService(db_session).edit_doc(
-            topic_id=project.root_topic_id,
-            content="Fact with the wrong value: 12.",
-            author="owner",
-            expected_version=0,
+        await write_doc(
+            db_session, project.root_topic_id, "Fact with the wrong value: 12.", "owner"
         )
         await _legacy_memory(db_session, project.id, "Fact with the right value: 21.")
         before = await _rows(db_session)
@@ -200,12 +198,7 @@ def test_a_later_migration_failure_rolls_back_rows_and_document_nodes(
         )
         topic_id = project.root_topic_id
         topics = TopicService(db_session)
-        await topics.edit_doc(
-            topic_id=topic_id,
-            content="Original document.",
-            author="owner",
-            expected_version=0,
-        )
+        await write_doc(db_session, topic_id, "Original document.", "owner")
         await _legacy_memory(db_session, project.id, "A pending migration fact.")
         before = await _rows(db_session)
         with pytest.raises(RuntimeError, match="later migration failed"):

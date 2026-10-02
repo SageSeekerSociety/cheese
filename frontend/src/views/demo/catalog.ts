@@ -13,15 +13,19 @@
  */
 import type { Component } from 'vue'
 
+import { avatarColor } from '@/utils/avatar'
+
 import { ACCEPT_ENTRIES } from './catalogAccept'
 import { ASK_ENTRIES } from './catalogAsk'
 import { CHAT_ENTRIES } from './catalogChat'
+import { CREDITS_ENTRIES } from './catalogCredits'
 import { DASHBOARD_ENTRIES } from './catalogDashboard'
 import {
   ACCEPT_CARD,
   ACCEPT_DONE,
   ACTION_ROWS,
   ADMIN_QUEUE,
+  AGENT_NAME,
   ASK_ANSWERED,
   ASK_OPEN,
   BAR_ROWS,
@@ -34,6 +38,7 @@ import {
   CLOUD_SUPPLY_UNKNOWN,
   COMPUTE_DEVICES,
   docPanelProps,
+  docSession,
   EXCERPTS,
   FEEDBACK_ROWS,
   KPI_STATES,
@@ -682,6 +687,8 @@ export const CATALOG: CatalogEntry[] = [
   // 模型管理那六件（从 1428 行的 AdminModelsPage 拆出来的三段 + 页头 + 那条横条 +
   // 确认框）在自己的文件里：`catalogModels.ts`（数据在 `catalogModelsFixtures.ts`）。
   ...MODELS_ENTRIES,
+  // 方案与额度那五件在自己的文件里：`catalogCredits.ts`。
+  ...CREDITS_ENTRIES,
   // 验收卡那一组（从 1215 行的 TopicAcceptCard 拆出来的八件，数据在
   // `catalogFixtures.ts`）在自己的文件里：`catalogAccept.ts`。
   ...ACCEPT_ENTRIES,
@@ -904,31 +911,47 @@ export const CATALOG: CatalogEntry[] = [
       {
         name: '文档还在路上的时候',
         note: '加载期间摆的是骨架，编辑器让位 —— 空编辑器会亮出「芝士会在这里维护文档」，那句话的意思是「这篇是空的」，而它还没到。',
-        props: docPanelProps({ loading: true, saveStatus: 'loading' }),
+        props: docPanelProps({ loading: true }),
       },
       {
         name: '一篇文档',
-        note: '标题（话题名）、工具条、正文和评论入口都在。正文由容器取到之后装进编辑器，不由 props 进。',
-        props: docPanelProps(),
+        note: '标题（话题名）、工具条、正文和评论入口都在。正文是一份协同文档，几个人同时打开时横条上是他们的头像。',
+        props: docPanelProps({
+          session: docSession(
+            '## 课程资料\n\n每周一更新一次，作业在这里登记。\n\n- 第一周：读书报告\n- 第二周：小组讨论'
+          ),
+          peers: [
+            {
+              clientId: 2,
+              handle: 'li-laoshi',
+              agent: false,
+              name: '李老师',
+              avatar: '',
+              color: avatarColor('li-laoshi'),
+            },
+            {
+              clientId: 3,
+              handle: 'cheese-demo',
+              agent: true,
+              name: AGENT_NAME,
+              avatar: '',
+              color: avatarColor('cheese-demo'),
+            },
+          ],
+        }),
         expect: '课程资料',
       },
       {
-        name: '芝士也改了这篇',
-        note: '服务端和你手上都动了：两个版本都留着，谁都不静默赢 —— 上面一条说清楚，两条出路（看它的 / 留我的）。',
-        props: docPanelProps({ externalDoc: '# 课程资料\n\n芝士刚写的一版。', saveStatus: 'dirty' }),
-        expect: '更新了这篇文档',
+        name: '没连上',
+        note: '断开时改动留在本地，连上后自动合并：横条上说的是状态，不是错误。',
+        props: docPanelProps({ session: docSession('还没同步的改动也在这里。'), connection: 'offline' }),
+        expect: '未连接',
       },
       {
-        name: '这篇里有编辑器存不下的格式',
-        note: '自动保存停下并说明原因（保存会丢格式），源码模式是无损的那条出路。',
-        props: docPanelProps({ lossy: true, saveStatus: 'paused', paused: true, pausedHint: '编辑器无法显示部分格式' }),
-        expect: '保存会丢失这些格式',
-      },
-      {
-        name: '保存失败',
-        note: '存不上时说清是保存失败，不是把改动悄悄吞掉。',
-        props: docPanelProps({ errorMsg: '保存失败：请求超时', saveStatus: 'dirty' }),
-        expect: '保存失败',
+        name: '没有编辑权限',
+        note: '只读由凭证决定：横条上写着只读，点不回编辑，⋯ 里也没有那一项。',
+        props: docPanelProps({ session: docSession('只能看，不能改。'), editable: false, readOnly: true }),
+        expect: '只读',
       },
     ],
   },

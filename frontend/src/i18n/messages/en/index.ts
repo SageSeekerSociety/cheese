@@ -3,6 +3,7 @@ import admin from './admin.json'
 import apiError from './apiError.json'
 import ask from './ask.json'
 import compute from './compute.json'
+import credits from './credits.json'
 import design from './design.json'
 import editor from './editor.json'
 import featureStats from './featureStats.json'
@@ -38,6 +39,7 @@ import work from './work.json'
 // that check; write the translation and delete the keys from that list instead.
 export default {
   ask,
+  credits,
   global,
   home,
   integrations,

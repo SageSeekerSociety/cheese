@@ -48,12 +48,11 @@ purpose: retiring drops the roster entry, not the agent's identity, and what it
 signed is still the agent's history.
 
 Revision ID: e5a1c7d3b284
-Revises: b84d0f9ac721
+Revises: c3e8a51f0d27
 Create Date: 2026-09-30
 
-Main advanced to ``b42af333ed1d`` while this answer-log revision remained
-unreleased. Re-chain this first Ask revision onto that deployed chain's tip;
-the following Ask revisions retain their order and released parents stay intact.
+This unreleased first Ask revision follows the current main head. The following
+Ask revisions retain their order and released parents stay intact.
 
 """
 
@@ -62,7 +61,7 @@ from collections.abc import Sequence
 from alembic import op
 
 revision: str = "e5a1c7d3b284"
-down_revision: str | Sequence[str] | None = "b42af333ed1d"
+down_revision: str | Sequence[str] | None = "c3e8a51f0d27"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

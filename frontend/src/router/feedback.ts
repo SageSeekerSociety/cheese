@@ -127,6 +127,13 @@ export default [
         meta: { titleKey: 'navigation.admin.models', isFullPage: true },
       },
       {
+        // 方案与额度：方案、团队挂哪个方案、给团队发额度（#2397）。
+        path: 'credits',
+        name: 'AdminCredits',
+        component: () => import('@/views/admin/AdminCreditsPage.vue'),
+        meta: { titleKey: 'navigation.admin.credits', isFullPage: true },
+      },
+      {
         // main 后加的这一块（开板申请：有人申请开一个新题目板，平台管理员批准 / 驳回），
         // 地址与分区名都跟着它自己的 PR 走。
         path: 'spaces',

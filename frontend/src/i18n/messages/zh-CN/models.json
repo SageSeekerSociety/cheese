@@ -48,7 +48,8 @@
       "usage": "窗口内用量",
       "offered": "上架",
       "status": "状态",
-      "actions": "操作"
+      "actions": "操作",
+      "tier": "档位"
     },
     "origin": {
       "config": "配置文件",
@@ -64,7 +65,8 @@
       "block": "停用",
       "unblock": "启用"
     },
-    "loadFailed": "模型加载失败"
+    "loadFailed": "模型加载失败",
+    "tierFailed": "更改档位失败"
   },
   "price": {
     "input": "输入",

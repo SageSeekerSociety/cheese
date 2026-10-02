@@ -17,6 +17,9 @@ const getComments = vi.fn()
 const getDocNodes = vi.fn()
 const getOverviewAuto = vi.fn()
 
+vi.mock('../../composables/useDocCollab', async () => ({
+  useDocCollab: (await import('../../test/fakeDocCollab')).useFakeDocCollab,
+}))
 vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
   return {
@@ -27,6 +30,8 @@ vi.mock('../../api', async () => {
     getOverviewAuto: (...a: unknown[]) => getOverviewAuto(...a),
   }
 })
+
+import { seedRoom } from '../../test/fakeDocCollab'
 
 import PanelDoc from './PanelDoc.vue'
 
@@ -71,6 +76,8 @@ beforeEach(() => {
   getDoc.mockReset()
   getOverviewAuto.mockReset()
   getDoc.mockResolvedValue(doc('## 项目是什么\n\n给高中生做算法课。'))
+  seedRoom(ROOT.id, '## 项目是什么\n\n给高中生做算法课。')
+  seedRoom(ROOM.id, '## 项目是什么\n\n给高中生做算法课。')
   getComments.mockResolvedValue({ data: [], total: 0 })
   getDocNodes.mockResolvedValue({ data: [], total: 0 })
   getOverviewAuto.mockResolvedValue({ root_topic_id: 'root-1', blocks: BLOCKS })

@@ -294,6 +294,23 @@ def test_a_refused_set_says_how_to_recover():
     assert "cheese_doc_get" in str(refused.value)
 
 
+def test_a_set_that_would_lose_text_shows_the_platforms_reason():
+    """The platform names the line and the fix; that sentence is all the
+    agent sees of a refused write, so it has to arrive whole."""
+    host = _doc_host()
+    reason = (
+        "第 3 行是脚注定义（[^1]: 注），实况文档不支持脚注。"
+        "请把脚注内容改成正文里的括注。"
+    )
+    host.answers[("PUT", f"/topics/{_ROOM}/doc")] = cheese.PlatformHTTPError(
+        422, json.dumps({"error": {"message": reason, "data": {"line": 3}}})
+    )
+    with pytest.raises(cheese.PlatformToolError) as refused:
+        run("cheese_doc_set", {"path": "notes/d.md"}, host)
+    assert reason in str(refused.value)
+    assert "没有变" in str(refused.value)
+
+
 def test_an_empty_doc_says_so_instead_of_answering_nothing():
     host = Host({("GET", f"/topics/{_ROOM}/doc"): None})
     assert "还没有实况文档" in run("cheese_doc_get", {}, host)

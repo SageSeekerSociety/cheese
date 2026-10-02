@@ -1374,7 +1374,19 @@ def _doc_set(args: dict, host) -> str:
     except Exception as exc:
         # Any host's HTTP error carries `status`/`body` (this file's
         # `PlatformHTTPError`, or the transport's, which this file cannot import).
-        if getattr(exc, "status", None) != 409:
+        status = getattr(exc, "status", None)
+        if status == 422:
+            # The document is blocks and this file is Markdown: a write that
+            # would lose text on the way in is refused, and the platform says
+            # which line and what to write instead. Nothing was changed.
+            try:
+                why = json.loads(exc.body)["error"]["message"]  # type: ignore[attr-defined]
+            except (ValueError, KeyError, TypeError):
+                raise exc from None
+            raise PlatformToolError(
+                f"没写进去，文档没有变：{why} 改好 {args['path']} 再 cheese_doc_set。"
+            ) from exc
+        if status != 409:
             raise
         try:
             current = json.loads(exc.body)["error"]["data"]["doc_version"]  # type: ignore[attr-defined]

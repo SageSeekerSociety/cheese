@@ -255,10 +255,9 @@ def visibility_listings() -> list[PoolListing]:
 # Models available to agents using the subscription supply.
 # (id, label, description, explicit --model identifier, creation default, tier).
 #
-# 最后一列是档位，也就是这个模型吃订阅额度的速度——它就是每一行 description 里已
-# 经写给人看的那句话（「最省订阅额度」/「更快消耗订阅额度」/「前沿」）的可判形式。
-# 档位策略拿它比对，所以它必须和那句话在同一行，否则文案改了而档没跟上，用户读到
-# 的和闸门判的是两回事。
+# 最后一列是档位。订阅模型没有一个在 included 档：方案按档位限定团队能用的模型
+# （#2397），默认方案只给 included，订阅模型因此一律从 premium 起，前沿的 Fable 是
+# frontier。项目的档位策略拿的也是这一列。
 _SUB_MODELS: list[tuple[str, str, str, str, bool, str]] = [
     (
         "sonnet",
@@ -266,7 +265,7 @@ _SUB_MODELS: list[tuple[str, str, str, str, bool, str]] = [
         "均衡：足够聪明，最省订阅额度，适合绝大多数项目。",
         "claude-sonnet-5",
         True,
-        TIER_INCLUDED,
+        TIER_PREMIUM,
     ),
     # Full model ids from here down, not CLI aliases: Fable falls back to
     # Opus 4.8 specifically (safety classifiers on cyber/bio topics reroute

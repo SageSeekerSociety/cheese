@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { usePanelDoc } from '../../../composables/usePanelDoc'
 import { commentMarkKey } from '../../../lib/docDecorations'
+import { localDocSession } from '../../../lib/docLocalSession'
 
 import DocSurface from './DocSurface.vue'
 
@@ -94,6 +95,7 @@ async function mountDoc(html: string, fetch?: () => Promise<Block[]>) {
   const captured: { anchorId: string | null; quote: string }[] = []
   const located: string[] = []
   const fetchNodes = vi.fn(fetch ?? (async () => nodes))
+  const session = localDocSession()
   const view = render(
     defineComponent({
       setup() {
@@ -101,7 +103,6 @@ async function mountDoc(html: string, fetch?: () => Promise<Block[]>) {
           { topic: null, activityTick: 0, topicList: [] },
           {
             serializeVisual: () => surface.value?.serializeVisual() ?? null,
-            installMarkdown: (md) => surface.value?.installMarkdown(md),
           }
         )
         data.anchorNodes.value = nodes
@@ -113,6 +114,7 @@ async function mountDoc(html: string, fetch?: () => Promise<Block[]>) {
                 topicId: topicId.value,
                 editable: editable.value,
                 loading: false,
+                session,
                 imageSrc: (src: string) => src,
                 pulse: () => {},
                 fetchDocNodes: fetchNodes,

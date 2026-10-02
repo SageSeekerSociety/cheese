@@ -48,7 +48,8 @@
       "usage": "Usage in window",
       "offered": "Offered",
       "status": "Status",
-      "actions": "Actions"
+      "actions": "Actions",
+      "tier": "Tier"
     },
     "origin": {
       "config": "Config file",
@@ -64,7 +65,8 @@
       "block": "Block",
       "unblock": "Unblock"
     },
-    "loadFailed": "Models failed to load"
+    "loadFailed": "Models failed to load",
+    "tierFailed": "Couldn't change the tier"
   },
   "price": {
     "input": "Input",

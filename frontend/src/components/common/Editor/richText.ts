@@ -16,7 +16,7 @@ import { Color, FontFamily, FontSize, TextStyle } from '@tiptap/extension-text-s
 
 import { AttachmentImage } from './attachmentImage'
 
-import { docExtensions } from '@/lib/docMarkdown'
+import { docExtensions } from '@/lib/docSchema'
 
 // 老编辑器存字号存的是不带单位的数（`"16"`），自己画的时候补 px。原样存回去，只在画的时候补。
 const BARE_NUMBER = /^\d+(\.\d+)?$/
@@ -66,7 +66,7 @@ export function richTextExtensions(): AnyExtension[] {
   return [
     // 实况文档的 `image` 节点按地址引外链图；这几处的图一律是附件（下面的 attachmentImage），
     // 粘贴进来的外链图原先也不收，这里照旧。
-    ...docExtensions().filter((extension) => extension.name !== 'image'),
+    ...docExtensions({ standalone: true }).filter((extension) => extension.name !== 'image'),
     TextAlign.configure({ types: ['heading', 'paragraph'] }),
     TextStyle,
     Color,

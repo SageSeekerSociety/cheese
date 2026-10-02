@@ -225,6 +225,16 @@ jobs:
       - name: Unit tests
         run: pnpm exec vitest run --dir src
 
+      # The collaboration service (collab/) lives in this package because it
+      # runs the editors' own document schema, but it is a Node process, not
+      # part of the app: its own types (Node, no DOM app), and tests that start
+      # a real server and real clients over real sockets.
+      - name: Collaboration service type check
+        run: pnpm run typecheck:collab
+
+      - name: Collaboration service tests
+        run: pnpm run test:collab
+
       # One check that belongs here is deliberately absent, so that nobody
       # reads a green tick as covering it:
       #

@@ -20,8 +20,8 @@ operations, so it is imported from users_common beside the ticket spender.
 The three writes and the precise read each spend a sudo ticket; that is the
 decision this slice had to make once for all three of its modules, and it is
 recorded on `users_common.py`, which is where `_spend_sudo_ticket` now lives.
-`get_user_realname_service` is a FastAPI dependency defined in `users.py` and
-imported here the same way `users_password.py` imports `get_user_auth_service`.
+`get_user_realname_service` is a FastAPI dependency assembled in `app/api/deps.py`,
+alongside the other account service dependencies.
 
 Ordering. This module sorts after `users.py` and `users_2fa.py`, and before
 `users_passkey.py`, so its paths mount after every path that stays. A moved
@@ -43,7 +43,7 @@ from typing import Annotated
 from fastapi import APIRouter, Body, Depends, Path, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.api.routes.users import get_user_realname_service
+from app.api.deps import get_user_realname_service
 from app.api.routes.users_common import SudoTicketRequest, _spend_sudo_ticket
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo

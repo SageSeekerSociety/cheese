@@ -88,6 +88,26 @@ export default [
       ],
     },
   },
+  {
+    // The document schema module is shared with code that runs outside the
+    // browser bundle, so it may import packages and its own files only — never
+    // the app (see src/lib/docSchema/index.ts).
+    files: ['src/lib/docSchema/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            { group: ['@/*', '../*'], message: 'src/lib/docSchema may not import the app; it is shared outside it.' },
+            {
+              group: ['vue', 'vuetify', 'vuetify/*', '@tiptap/vue-3'],
+              message: 'src/lib/docSchema is framework-free.',
+            },
+          ],
+        },
+      ],
+    },
+  },
   prettier,
   {
     rules: {
