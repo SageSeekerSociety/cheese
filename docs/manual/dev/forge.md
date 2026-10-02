@@ -48,7 +48,7 @@ covers:
 
 ## 令牌 {#tokens}
 
-**GitHub 侧只有一把长期凭据：App 私钥**，它留在主 API 上，**绝不交给沙箱**（`domain/agent/github_app.py`）。机器要写仓库时，带着自己的 scoped cheese token 调 `/sandbox/forge-token`，后端用 App 的授权在**那个绑定仓库**上签一枚安装令牌：
+**GitHub 侧只有一把长期凭据：App 私钥**，它留在主 API 上，**绝不交给沙箱**（`domain/agent/github_app.py`）。机器要写仓库时，带着自己的 scoped cheese token 调 `/sandbox/forge-token`，后端先确认这枚 token 所属的 agent 现在还在它的房间或项目里（`api/auth.py` 的 `require_seated_agent`；被移出的 agent 拿着没过期的 token 也只得到 403，经平台中转的 git 流量和隧道同样如此），再用 App 的授权在**那个绑定仓库**上签一枚安装令牌：
 
 - 一小时有效，缓存到剩不到 20 分钟才重签（一次密集调用只花一次上游签发）。
 - App JWT 的 TTL 是 540 秒（GitHub 的上限是 10 分钟，留出时钟偏差）。

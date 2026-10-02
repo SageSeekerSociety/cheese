@@ -8,6 +8,7 @@ from typing import Annotated, BinaryIO, cast
 from fastapi import APIRouter, Depends, Header, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import require_seated_agent
 from app.api.response import ok
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, NotFoundError, ValidationError
@@ -30,6 +31,7 @@ async def _task_for(db, project_id, task_id, token):
         )
     ):
         raise NotFoundError("这个房间里没有这条工作任务")
+    await require_seated_agent(db, token, project_id=project_id, topic_id=task.room_id)
     return task
 
 
@@ -154,6 +156,9 @@ async def task_workspace(
         x_cheese_token or "", project_id=str(project_id), topic_id=str(task.room_id)
     ):
         raise NotFoundError("这个房间里没有这条工作任务")
+    await require_seated_agent(
+        db, x_cheese_token, project_id=project_id, topic_id=task.room_id
+    )
     binding = await binding_for_project(project_id, db)
     if binding is None:
         raise NotFoundError("这个项目还没有代码仓库")
