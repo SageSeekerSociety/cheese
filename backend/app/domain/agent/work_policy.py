@@ -11,7 +11,7 @@ from app.core.config import settings
 from app.domain.agent.compute_configs import project_configs, room_choice
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.repositories import TopicRepository
-from app.domain.usage.repositories import ComputeGrantRepository
+from app.domain.usage.ledger import Ledger, payer_for_project
 
 
 def resolve_compute_id(project_settings: dict | None, topic=None) -> str | None:
@@ -31,7 +31,9 @@ async def work_policy(sessions, compute, topic_id: uuid.UUID) -> dict | None:
         if topic is None:
             return None
         project = await ProjectRepository(session).get(topic.project_id)
-        balance = await ComputeGrantRepository(session).summary(topic.project_id)
+        balance = await Ledger(session).balance(
+            await payer_for_project(session, topic.project_id)
+        )
     project_settings = project.settings if project else None
     max_concurrent = settings.max_concurrent_turns
     override = (project_settings or {}).get("max_concurrent_turns")
@@ -46,9 +48,6 @@ async def work_policy(sessions, compute, topic_id: uuid.UUID) -> dict | None:
     return {
         "project_id": str(topic.project_id),
         "max_concurrent_turns": max_concurrent,
-        # A project with no grants is unlimited (spec §4 自治项目不设限).
-        "credits_exhausted": (
-            not balance["unlimited"] and balance["credits_remaining"] <= 0
-        ),
+        "credits_exhausted": balance.exhausted,
         "on_session_host": provider is not None,
     }

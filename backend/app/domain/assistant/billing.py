@@ -25,7 +25,7 @@ from app.core.config import settings
 from app.domain.agent.gateway import LlmGateway, drain_new_usage
 from app.domain.assistant.models import AssistantGatewayKey
 from app.domain.service_keys import gateway_base, gateway_configured
-from app.domain.usage.personal import PersonalCredits
+from app.domain.usage.ledger import Ledger, payer_for_person
 
 logger = logging.getLogger(__name__)
 
@@ -71,10 +71,12 @@ async def charge_new_spend(
         if row.usage_ckpt != ckpt:
             # Another read charged this window first.
             return False
-        credits = PersonalCredits(session)
+        ledger = Ledger(session)
+        payer = await payer_for_person(session, user_id)
         for model in spent:
-            await credits.charge_spent(
-                user_id,
+            await ledger.charge_spent(
+                payer,
+                user_id=user_id,
                 model=model.model or settings.assistant_model,
                 input_tokens=model.prompt_tokens,
                 output_tokens=model.completion_tokens,

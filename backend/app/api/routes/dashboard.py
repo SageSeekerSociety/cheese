@@ -25,7 +25,8 @@ from app.domain.dashboard.services import DashboardService
 from app.domain.memory.store import forget_fact_about
 from app.domain.project.repositories import ProjectRepository
 from app.domain.space.services import SpaceService
-from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
+from app.domain.usage.repositories import UsageRepository
+from app.domain.usage.services import UsageService
 
 _log = get_logger("cheesex.dashboard")
 
@@ -130,7 +131,7 @@ async def project_credits(
 ) -> dict:
     """Credits this project can spend from its team's pool and restricted grants."""
     await _require_project_access(project_id, db, resolver)
-    summary = await ComputeGrantRepository(db).summary(project_id)
+    summary = await UsageService(db).project_credits(project_id)
     return ok(
         {
             "team_id": await ProjectRepository(db).team_for_project(project_id),
@@ -149,6 +150,8 @@ async def project_credits(
                     "source_task_id": g.source_task_id,
                     "credits_total": g.credits_total,
                     "credits_used": g.credits_used,
+                    "source": g.source,
+                    "expires_at": g.expires_at.isoformat() if g.expires_at else None,
                     "created_at": g.created_at.isoformat(),
                 }
                 for g in summary["grants"]

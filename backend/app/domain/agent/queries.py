@@ -43,7 +43,7 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task.place import Place
 from app.domain.topic.models import Topic
 from app.domain.topic_membership.services import TopicMemberService
-from app.domain.usage.repositories import ComputeGrantRepository
+from app.domain.usage.ledger import Ledger, payer_for_project
 
 logger = logging.getLogger(__name__)
 
@@ -162,10 +162,12 @@ async def _gateway_budget_target(
     key's budget already in step has nothing to write and nothing to lock."""
     if not settings.llm_gateway_credit_usd:
         return None
-    summary = await ComputeGrantRepository(session).summary(project_id)
-    if summary["unlimited"]:
+    balance = await Ledger(session).balance(
+        await payer_for_project(session, project_id)
+    )
+    if balance.unlimited:
         return None
-    return round(summary["credits_total"] * settings.llm_gateway_credit_usd, 6)
+    return round(balance.ever_granted * settings.llm_gateway_credit_usd, 6)
 
 
 async def _pass_policy_gate(

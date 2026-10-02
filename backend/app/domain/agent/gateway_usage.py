@@ -56,7 +56,8 @@ from app.domain.room_task import binding
 from app.domain.topic.models import TopicKind
 from app.domain.topic.repositories import TopicRepository
 from app.domain.usage.credits import usage_to_credits
-from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
+from app.domain.usage.ledger import Ledger, payer_for_project
+from app.domain.usage.repositories import UsageRepository
 
 logger = logging.getLogger(__name__)
 
@@ -500,8 +501,8 @@ async def _drain_gateway_usage(
                             route="gateway",
                             turn_id=turn_id,
                         )
-                        await ComputeGrantRepository(session).consume(
-                            project_id,
+                        await Ledger(session).charge(
+                            await payer_for_project(session, project_id),
                             usage_to_credits(usage, spend_priced=True),
                         )
                     s[_GW_CKPT] = next_ckpt

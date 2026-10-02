@@ -13,8 +13,10 @@ import pytest
 
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
+from app.domain.usage.ledger import Ledger
 from app.domain.usage.models import ResourceUsage
-from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
+from app.domain.usage.repositories import UsageRepository
+from app.domain.usage.services import UsageService
 from app.domain.usage.subscription_ingest import ingest_once
 from tests.integration.conftest import registered
 
@@ -27,7 +29,7 @@ async def _seed(factory, credits: float | None = 100.0):
             project_id=project.id, title="T", created_by="u"
         )
         if credits is not None:
-            await ComputeGrantRepository(session).grant(
+            await Ledger(session).grant_earmark(
                 project_id=project.id, source_task_id=None, credits_total=credits
             )
         pid, tid = project.id, topic.id
@@ -74,7 +76,7 @@ async def test_rows_land_once_with_route_and_credits(
     assert again == {"landed": 0, "skipped": 0}  # checkpoint: exactly-once
     async with business_db_factory() as session:
         agg = await UsageRepository(session).for_topic(tid)
-        balance = await ComputeGrantRepository(session).summary(pid)
+        balance = await UsageService(session).project_credits(pid)
     # Cache reads fold into input; credits burn the full 10k tokens = 1 credit.
     assert (agg["input_tokens"], agg["output_tokens"]) == (9950, 50)
     assert agg["turns"] == 1
