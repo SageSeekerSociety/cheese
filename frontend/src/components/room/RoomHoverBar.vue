@@ -116,11 +116,11 @@ async function copy() {
 </template>
 
 <style scoped>
-/* 挂在时间线内容那一层的右上角，靠 translateY 落到那条消息的顶边上方一点。
+/* 整条放在消息顶边之上；续话没有名字行，探入行内就会挡住正文里的链接。
    换一行时它滑过去（transform），出现和收起只改透明度。 */
 .hover-bar {
   position: absolute;
-  top: -12px;
+  top: 0;
   right: 16px;
   z-index: 4;
   display: flex;
@@ -130,6 +130,7 @@ async function copy() {
   border: 1px solid var(--line-2);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-1);
+  translate: 0 -100%;
   opacity: 0;
   pointer-events: none;
   transition:
