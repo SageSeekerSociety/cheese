@@ -171,6 +171,10 @@ async def _shared_ask_members(
     Read immutable identities without adding a Block-to-Input/Delivery lock edge.
     """
     origin = delivery.payload["ask_origin"]
+    if origin.get("work_id") != str(identity.work_id):
+        return await _shared_ask_continuation(
+            session, identity, input_row_id, delivery, members, overlap, blocks
+        )
     group_id = delivery.payload.get("ask_group")
     member_ids = {str(member) for member in members}
     questions = [block for block in blocks if block.id in members]
@@ -237,6 +241,144 @@ async def _shared_ask_members(
             return False
         remaining.difference_update(shared)
     return not remaining
+
+
+async def _shared_ask_continuation(
+    session, identity, input_row_id, delivery, members, overlap, blocks
+):
+    """Share questions after this same native session echoed their answer wake.
+
+    The question keeps the work which asked it. The continuation's execution
+    owner comes only from a live settled native echo carrying this group's wake.
+    Registration hints and unrelated prompt echoes cannot provide that proof.
+    All additional reads are unlocked; the caller already locked the questions.
+    """
+    origin = delivery.payload["ask_origin"]
+    group_id = delivery.payload.get("ask_group")
+    member_ids = {str(member) for member in members}
+    questions = [block for block in blocks if block.id in members]
+    try:
+        asked_work = uuid.UUID(origin["work_id"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    if (
+        not group_id
+        or len(questions) != len(member_ids)
+        or any(
+            block.author != identity.recipient_handle
+            or block.turn_id != asked_work
+            or block.meta.get("ask_origin") != origin
+            or block.meta.get("ask_group", {}).get("id") != group_id
+            or block.meta.get("ask_group", {}).get("asked_by")
+            != identity.recipient_handle
+            or set(block.meta.get("ask_group", {}).get("members", [])) != member_ids
+            for block in questions
+        )
+    ):
+        return False
+    inputs = list(
+        await session.execute(
+            select(NativeInput, Delivery)
+            .outerjoin(Delivery, Delivery.id == NativeInput.delivery_id)
+            .where(
+                NativeInput.project_id == identity.project_id,
+                NativeInput.topic_id == identity.topic_id,
+                NativeInput.recipient_handle == identity.recipient_handle,
+                NativeInput.id != input_row_id,
+            )
+            .execution_options(populate_existing=True)
+        )
+    )
+    holders = []
+    wake_ids = set()
+    for prior, previous in inputs:
+        held = {uuid.UUID(value) for value in prior.held_block_ids}
+        held.difference_update(uuid.UUID(value) for value in prior.released_block_ids)
+        if not held.intersection(overlap):
+            continue
+        if (
+            prior.harness != identity.harness
+            or prior.native_session_id != identity.native_session_id
+            or prior.work_id != identity.work_id
+            or prior.execution_work_id not in (None, identity.work_id)
+            or prior.completed_at is not None
+        ):
+            return False
+        holders.append((prior, previous, held))
+        wake_ids.update(held.difference(members))
+    wakes = list(
+        await session.scalars(
+            select(Block)
+            .where(
+                Block.project_id == identity.project_id,
+                Block.topic_id == identity.topic_id,
+                Block.id.in_(wake_ids),
+            )
+            .execution_options(populate_existing=True)
+        )
+    )
+    wake_events = {}
+    for wake in wakes:
+        meta = wake.meta or {}
+        if (
+            meta.get("answer_group") != group_id
+            or meta.get("answer_to") not in member_ids
+        ):
+            continue
+        try:
+            wake_events[wake.id] = uuid.UUID(meta["delivery_event_id"])
+        except (KeyError, TypeError, ValueError):
+            return False
+    deliveries = list(
+        await session.scalars(
+            select(Delivery)
+            .where(
+                Delivery.topic_id == identity.topic_id,
+                Delivery.recipient_handle == identity.recipient_handle,
+                Delivery.event_id.in_(set(wake_events.values())),
+            )
+            .execution_options(populate_existing=True)
+        )
+    )
+
+    def same_group(previous):
+        return (
+            previous is not None
+            and previous.topic_id == identity.topic_id
+            and previous.recipient_handle == identity.recipient_handle
+            and previous.payload.get("ask_origin") == origin
+            and previous.payload.get("ask_group") == group_id
+            and previous.payload.get("block_ids") == delivery.payload["block_ids"]
+            and previous.payload.get("answer_to") in member_ids
+        )
+
+    by_event = {
+        previous.event_id: previous
+        for previous in deliveries
+        if same_group(previous)
+    }
+    remaining = set(overlap)
+    proven = False
+    for prior, previous, held in holders:
+        if prior.delivery_id is not None and (
+            not same_group(previous) or prior.event_id != previous.event_id
+        ):
+            return False
+        matching_wake = any(
+            wake_id in held
+            and event in by_event
+            and (prior.delivery_id is None or by_event[event].id == prior.delivery_id)
+            for wake_id, event in wake_events.items()
+        )
+        if not matching_wake:
+            return False
+        proven = proven or (
+            prior.execution_work_id == identity.work_id
+            and prior.echoed_at is not None
+            and prior.settled_at is not None
+        )
+        remaining.difference_update(held.intersection(overlap))
+    return proven and not remaining
 
 
 async def _lock_blocks(session, identity: InputIdentity, ids: set[uuid.UUID]):
