@@ -23,6 +23,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.block.authorship import participant_blocks
+from app.domain.block.indexed_rows import FAILED_TURN_ROWS, MACHINE_EVENT_ROWS
 from app.domain.block.models import (
     CONSUMED_TURN_META_KEY,
     PROMPTED_TURN_META_KEY,
@@ -35,16 +36,6 @@ from app.domain.identity.handles import agent_handle_column, recipient_seat
 #: answered a week ago is not that any more, and without a bound these queries
 #: scan every message the project ever had.
 REPLY_LOOKBACK = timedelta(days=7)
-
-#: Platform events on the machine side. When one landed during a wait, the
-#: member is most likely not stuck: the machine under it is not ready yet, and
-#: the sidebar picks a longer threshold and different words for it.
-MACHINE_EVENTS = (
-    "machine_provisioning",
-    "device_waiting",
-    "sandbox_rebuilt",
-    "environment_repaired",
-)
 
 #: Platform events that hand work to an agent: review comments on a PR, a red
 #: check, a merge that will not go in, a rejected card. Each says the agent is
@@ -62,11 +53,6 @@ CHECKS_FOR_THE_AGENT = (
     "migration_collision",
     "card_rejected",
 )
-
-#: "This turn broke": an unclassified failure (HTTP 502/404, an exception's own
-#: words) and a classified platform fault. Timeouts and deploy interruptions are
-#: warnings — the platform carries on by itself — and do not count.
-FAILED_TURN_EVENTS = ("turn_failed", "platform_error")
 
 #: The reason a failed turn is reported under.
 FAILED = "failed"
@@ -87,8 +73,8 @@ class MemberWait:
     `reason`: `failed` (its turn ended in an error); `mention` (a person
     addressed it); `check` / `conflict` / `rejected` / `gate` (a card is stuck
     on an agent fix, see `presentation.agent_fix_kind`); or the type of the
-    newest machine event that landed during the wait (`MACHINE_EVENTS`). `pr` is
-    the stuck card's PR number.
+    newest machine event that landed during the wait
+    (`indexed_rows.MACHINE_EVENTS`). `pr` is the stuck card's PR number.
     """
 
     member: str | None
@@ -272,7 +258,7 @@ class MemberWaits:
                 Block.topic_id.in_(topic_ids),
                 Block.created_at >= since,
                 ~participant_blocks(),
-                event.in_(MACHINE_EVENTS),
+                MACHINE_EVENT_ROWS,
             )
             .order_by(Block.topic_id, Block.created_at.desc())
             .distinct(Block.topic_id)
@@ -297,8 +283,7 @@ class MemberWaits:
                 Block.task_id.is_(None),
                 Block.created_at >= since,
                 ~participant_blocks(),
-                Block.meta["event_type"].as_string().in_(FAILED_TURN_EVENTS),
-                Block.meta["severity"].as_string() == "error",
+                FAILED_TURN_ROWS,
             )
             .order_by(Block.created_at)
         )
