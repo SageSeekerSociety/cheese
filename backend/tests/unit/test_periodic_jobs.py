@@ -10,12 +10,14 @@
 """
 
 import asyncio
+import contextlib
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
 
 from app.core.background import PeriodicRunner
+from tests.support.hang import HANG_S
 
 pytestmark = pytest.mark.anyio
 
@@ -147,14 +149,18 @@ async def test_interval_zero_means_this_box_does_not_run_it():
 
 async def test_stopping_ends_the_loop():
     calls = 0
+    ran = asyncio.Event()
 
     async def job():
         nonlocal calls
         calls += 1
+        ran.set()
 
     runner = PeriodicRunner("test job", 0.01, job)
     runner.start(_Runs())
-    await asyncio.sleep(0.05)
+    # Stopped once it has run, however long a loaded machine takes to get there.
+    with contextlib.suppress(TimeoutError):
+        await asyncio.wait_for(ran.wait(), timeout=HANG_S)
     await runner.stop()
 
     ran_by_stop = calls

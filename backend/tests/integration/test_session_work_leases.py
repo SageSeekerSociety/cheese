@@ -25,6 +25,7 @@ from app.domain.topic.models import Topic
 from app.domain.user.models import User
 from tests.executor_release import running
 from tests.integration.conftest import post_project, session_auth_headers
+from tests.support.hang import HANG_S
 
 pytestmark = pytest.mark.anyio
 
@@ -652,10 +653,19 @@ async def test_lazy_executor_lifecycle_keeps_the_same_allocation(
             timeout=5,
         )
         recorded = helper.with_suffix(".args")
-        deadline = time.monotonic() + 5
-        while not recorded.exists() and time.monotonic() < deadline:
+
+        def written() -> list[str] | None:
+            # The helper runs detached and writes its arguments in one go, but
+            # the file exists, empty, a moment before they land in it.
+            try:
+                return json.loads(recorded.read_text())
+            except (FileNotFoundError, json.JSONDecodeError):
+                return None
+
+        deadline = time.monotonic() + HANG_S
+        while (args := written()) is None:
+            assert time.monotonic() < deadline, "the preview helper never started"
             time.sleep(0.01)
-        args = json.loads(recorded.read_text())
         assert args[args.index("--url") + 1] == launch_env["CHEESE_PREVIEW_URL"]
     assert launch_env["CHEESE_AUTHOR"] == actor_handle
     assert launch_env["GIT_AUTHOR_NAME"] == actor_handle
