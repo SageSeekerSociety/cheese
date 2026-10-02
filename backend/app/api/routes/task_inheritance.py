@@ -10,7 +10,9 @@
 指导，连「来自哪一层」都是那一个循环带出来的）。资料是 ``app.domain.space`` 那一域
 的行，只能经 ``SpaceMaterialService`` 拿 —— 路由 import 一个域服务是允许的（
 ``routes/spaces_materials.py`` 就是这么用的），而 ``app.domain.task`` 去 import 它就
-是跨域的新边，``.importlinter`` 的 C3 不许新增。
+是在 ``.importlinter`` 的 C3 棘轮上多记一条跨域边 —— 那张表是「解开这个结要付的
+代价」，只为**必需**的边记账（``task.teaching`` 已经为过滤课件记了一条），所以资源
+清单这一层由路由来做，不再往上加第二条。
 
 **这个模块不 import 任何 ``app.domain.*.models``**（``.importlinter`` 的 C2），也不
 import 任何 repository（``tests/unit/test_domain_import_guard.py`` 的棘轮）：两条判据

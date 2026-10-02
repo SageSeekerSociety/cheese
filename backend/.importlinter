@@ -382,6 +382,7 @@ ignore_imports =
     app.domain.task.services -> app.domain.space.rank_service
     app.domain.task.services -> app.domain.space.repositories
     app.domain.task.teaching -> app.domain.project.models
+    app.domain.task.teaching -> app.domain.space.material_service
     app.domain.task.teaching -> app.domain.space.models
     app.domain.task.visibility_service -> app.domain.space.repositories
     app.domain.team.membership_services -> app.domain.delivery.addressing
