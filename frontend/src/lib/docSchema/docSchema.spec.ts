@@ -3,8 +3,8 @@
 //
 // Every case asserts: parse(markdown) → serialize ≡ original under the
 // documented normalization rules (see fidelity.ts). A failing case here is
-// syntax the visual editor would corrupt on save — either fix the editor
-// config or make sure the lossy-load banner covers it.
+// syntax converting a Markdown document into the live document would corrupt —
+// fix the editor config, or make sure compareRoundTrip reports it.
 import { Editor } from '@tiptap/core'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
@@ -326,8 +326,8 @@ describe('round-trip corpus', () => {
   })
 })
 
-// Syntax the editor is KNOWN to renormalize/lose — these must be caught by
-// the lossy detector (banner + autosave pause), which is the 军规 1 backstop.
+// Syntax the editor is KNOWN to renormalize/lose — these must be reported by
+// the round-trip comparison, which is what says a conversion changed a document.
 describe('known-lossy constructs are detected', () => {
   function expectDetected(md: string) {
     const report = compareRoundTrip(md, roundTrip(md))

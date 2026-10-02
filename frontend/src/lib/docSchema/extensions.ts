@@ -138,7 +138,7 @@ export interface DocExtensionsOptions {
 }
 
 // Keep standalone Markdown comments as invisible document nodes. Dropping them
-// would lose source annotations and correctly trip the save-fidelity guard.
+// would lose source annotations from the document.
 const DocComment = Node.create({
   name: 'docComment',
   group: 'block',
