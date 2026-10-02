@@ -57,10 +57,12 @@ def gateway(monkeypatch: pytest.MonkeyPatch) -> dict:
             content = answer if isinstance(answer, str) else json.dumps(answer)
             return httpx.Response(
                 200,
+                headers={"x-litellm-response-cost": "0.0004"},
                 json={
                     "choices": [
                         {"message": {"content": content}, "finish_reason": "stop"}
-                    ]
+                    ],
+                    "usage": {"prompt_tokens": 300, "completion_tokens": 12},
                 },
             )
         return httpx.Response(404)
@@ -252,6 +254,48 @@ def test_an_unnamed_room_waits_for_something_worth_naming_it_by(client, alice, g
     # Naming an unnamed room is not announced; it is recorded.
     assert _events(client, rid) == []
     assert _history(client, rid) == [("dev 外网访问慢排查", "auto", "name")]
+
+
+def test_naming_is_recorded_as_the_platforms_spend_and_charges_no_team(
+    client, alice, gateway
+):
+    """Naming a room is work the platform does unasked (#2233): what it spent
+    is on the platform's books, and no team's credits or usage move."""
+    from app.domain.usage.ledger import Ledger, payer_for_project
+    from app.domain.usage.models import ResourceUsage
+
+    pid = _project(client, alice)
+    rid = _room(client, alice, pid)
+    _say(client, rid, "帮我排查一下 dev 机器从外网访问很慢的问题")
+    gateway["answers"].append({"keep": False, "title": "dev 外网访问慢排查"})
+    assert _run(client, rid, "message") is not None
+
+    async def read():
+        async with client.test_factory() as s:
+            rows = list(
+                await s.scalars(
+                    select(ResourceUsage).where(ResourceUsage.kind == "topic_naming")
+                )
+            )
+            payer = await payer_for_project(s, uuid.UUID(pid))
+            balance = await Ledger(s).balance(payer)
+            team_rows = list(
+                await s.scalars(
+                    select(ResourceUsage).where(
+                        (ResourceUsage.team_id == payer.team_id)
+                        | (ResourceUsage.project_id == uuid.UUID(pid))
+                    )
+                )
+            )
+            return rows, balance, team_rows
+
+    rows, balance, team_rows = client.portal.call(read)
+    assert [(r.input_tokens, r.output_tokens, r.cost_usd) for r in rows] == [
+        (300, 12, 0.0004)
+    ]
+    assert rows[0].team_id is None and rows[0].credits == 0
+    assert balance.credits_used == 0
+    assert team_rows == []
 
 
 def test_an_at_sign_in_the_middle_of_a_sentence_is_not_a_mention(
