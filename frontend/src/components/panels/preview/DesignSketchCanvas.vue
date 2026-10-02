@@ -1,12 +1,20 @@
 <script setup lang="ts">
 import type { ImageGeometry, Point, RasterRegion } from './designRegion'
-import type { RedactStyle, SketchStroke, SketchTool, TextStroke } from './designSketch'
+import type { RedactStyle, ShapeStroke, SketchStroke, SketchTool, TextStroke } from './designSketch'
 import type { ContentProfile } from './designSnap'
 
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, ref, useId, watch } from 'vue'
 
 import { imagePoint, imageRegion } from './designRegion'
-import { arrowHeadPoints, fontSize, isShapeStroke, REDACT_INK } from './designSketch'
+import {
+  arrowHeadPoints,
+  fontSize,
+  isShapeStroke,
+  REDACT_INK,
+  REDACT_TILE,
+  redactAnchor,
+  redactTileDataUrl,
+} from './designSketch'
 import { hitTest } from './designSketchHit'
 import { isEmptyStroke } from './designSketchSelection'
 import { snapRegion } from './designSnap'
@@ -103,6 +111,19 @@ const scale = computed(() => {
   return size && size.naturalWidth ? size.width / size.naturalWidth : 1
 })
 const naturalWidth = computed(() => geometry.value?.naturalWidth ?? 0)
+/** 这个画布的 pattern id 前缀：同一页里可能挂不止一块画布，id 不能撞。
+ *  计数变量写在 `<script setup>` 里每建一个实例就归零，起不到区分作用——用 useId。 */
+const draftMaskId = `redact-draft-${useId()}`
+
+/** 正在画的这一块涂黑的贴图：和导出的那块 tile 是同一份，画的过程中就看得出样式。 */
+function redactMask(stroke: ShapeStroke) {
+  const url = redactTileDataUrl(stroke.redactStyle ?? 'solid')
+  const size = REDACT_TILE * scale.value
+  if (!url || !(size > 0)) return null
+  const anchor = redactAnchor(stroke.region.x, stroke.region.y)
+  return { id: draftMaskId, url, size, x: anchor.x * scale.value, y: anchor.y * scale.value }
+}
+
 const displayed = computed(() => {
   const stroke = draft.value
   if (!stroke || !geometry.value) return null
@@ -114,14 +135,26 @@ const displayed = computed(() => {
     height: region.height * scale.value,
   })
   if (stroke.tool === 'pen')
-    return { kind: 'pen' as const, points: stroke.points.map(toDisplay), width: stroke.width * scale.value }
-  if (isShapeStroke(stroke)) return { kind: stroke.tool, box: box(stroke.region), width: stroke.width * scale.value }
+    return {
+      kind: 'pen' as const,
+      points: stroke.points.map(toDisplay),
+      width: stroke.width * scale.value,
+      mask: null,
+    }
+  if (isShapeStroke(stroke))
+    return {
+      kind: stroke.tool,
+      box: box(stroke.region),
+      width: stroke.width * scale.value,
+      mask: stroke.tool === 'redact' ? redactMask(stroke) : null,
+    }
   return {
     kind: stroke.tool,
     from: toDisplay(stroke.from),
     to: toDisplay(stroke.to),
     width: stroke.width * scale.value,
     head: arrowHeadPoints(stroke.from, stroke.to, stroke.width).map(toDisplay),
+    mask: null,
   }
 })
 
@@ -272,6 +305,18 @@ const textStyle = computed(() => {
     @keydown.esc.prevent="cancel"
   >
     <svg v-if="displayed" class="sketch-layer__draft" aria-hidden="true">
+      <defs v-if="displayed.mask">
+        <pattern
+          :id="displayed.mask.id"
+          patternUnits="userSpaceOnUse"
+          :x="displayed.mask.x"
+          :y="displayed.mask.y"
+          :width="displayed.mask.size"
+          :height="displayed.mask.size"
+        >
+          <image :href="displayed.mask.url" :width="displayed.mask.size" :height="displayed.mask.size" />
+        </pattern>
+      </defs>
       <polyline
         v-if="displayed.kind === 'pen'"
         :points="displayed.points.map((point) => `${point.x},${point.y}`).join(' ')"
@@ -303,7 +348,13 @@ const textStyle = computed(() => {
         :y="displayed.box.y"
         :width="displayed.box.width"
         :height="displayed.box.height"
-        :fill="displayed.kind === 'redact' ? REDACT_INK : 'none'"
+        :fill="
+          displayed.kind === 'redact' && displayed.mask
+            ? `url(#${displayed.mask.id})`
+            : displayed.kind === 'redact'
+              ? REDACT_INK
+              : 'none'
+        "
         :stroke="displayed.kind === 'redact' ? REDACT_INK : color"
         :stroke-width="displayed.width"
       />

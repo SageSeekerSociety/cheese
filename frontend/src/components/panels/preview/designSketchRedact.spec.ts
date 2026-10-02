@@ -31,7 +31,9 @@ function recordingContext() {
     arc() {},
     fill() {},
     stroke() {},
-    strokeRect() {},
+    strokeRect(x: number, y: number, w: number, h: number) {
+      calls.push({ type: 'strokeRect', args: [x, y, w, h] })
+    },
     ellipse() {},
     fillText() {},
     strokeStyle: '',
@@ -125,21 +127,19 @@ describe('图案相位', () => {
   })
 
   it('同一个区域给出稳定的相位（重画不滑）', () => {
-    const a = redactAnchor(360, 240)
-    const b = redactAnchor(360, 240)
-    expect(a).toEqual(b)
+    // 写死具体值，不拿函数跟自己对：一个永远返回 {0,0} 的实现也是「稳定」的。
+    // 360 mod 96 = 72、240 mod 96 = 48。
+    expect(redactAnchor(360, 240)).toEqual({ x: 72, y: 48 })
+    expect(redactAnchor(360, 240)).toEqual(redactAnchor(360, 240))
   })
 
   it('平移一个 tile 的整数倍，相位不变', () => {
+    expect(redactAnchor(100, 50)).toEqual({ x: 4, y: 50 })
     expect(redactAnchor(100, 50)).toEqual(redactAnchor(100 + 96 * 3, 50 + 96 * 2))
   })
 
-  it('负坐标也落在 [0, tile)', () => {
-    const anchor = redactAnchor(-1, -97)
-    expect(anchor.x).toBeGreaterThanOrEqual(0)
-    expect(anchor.x).toBeLessThan(REDACT_TILE)
-    expect(anchor.y).toBeGreaterThanOrEqual(0)
-    expect(anchor.y).toBeLessThan(REDACT_TILE)
+  it('负坐标也落在 [0, tile)：-1 → 95、-97 → 95', () => {
+    expect(redactAnchor(-1, -97)).toEqual({ x: 95, y: 95 })
   })
 })
 
@@ -157,11 +157,12 @@ describe('paintStroke：三块涂黑', () => {
     expect(ctx.calls.some((call) => call.type === 'translate')).toBe(false)
   })
 
-  it('涂黑不认颜色：描边给红色，铺底仍是纯黑', () => {
+  it('涂黑不认颜色：叠图案的样式里铺底也是纯黑，不是那条红', () => {
     const ctx = recordingContext()
-    paintStroke(ctx as never, { tool: 'redact', color: '#E03131', width: 2, region, redactStyle: 'solid' }, 1, 1000)
+    paintStroke(ctx as never, { tool: 'redact', color: '#E03131', width: 2, region, redactStyle: 'mosaic' }, 1, 1000)
     const fills = ctx.calls.filter((call) => call.type === 'fillRect')
     expect(fills[0].fill).toBe(REDACT_INK)
+    expect(ctx.calls.some((call) => call.type === 'strokeRect')).toBe(false)
   })
 
   it('马赛克：先纯黑，再叠图案；关掉平滑；按相位平移', () => {
@@ -171,12 +172,12 @@ describe('paintStroke：三块涂黑', () => {
     // 第一层纯黑铺满整个区域。
     expect(fills[0].fill).toBe(REDACT_INK)
     expect(fills[0].args).toEqual([100, 50, 40, 20])
-    // 第二层是图案，从区域左上角对 tile 取模之后的位置铺。
-    const anchor = redactAnchor(100, 50)
+    // 第二层是图案，从区域左上角对 tile 取模之后的位置铺（100 mod 96 = 4、50 mod 96 = 50）。
+    // 期望值写死，不拿 redactAnchor 算：那样锚点这一环错了测试也不会红。
     expect(ctx.calls.some((call) => call.type === 'createPattern')).toBe(true)
     const patternFill = fills.find((call) => call.fill !== REDACT_INK)
-    expect(patternFill?.args).toEqual([100 - anchor.x, 50 - anchor.y, 40, 20])
-    expect(ctx.calls.find((call) => call.type === 'translate')?.args).toEqual([anchor.x, anchor.y])
+    expect(patternFill?.args).toEqual([100 - 4, 50 - 50, 40, 20])
+    expect(ctx.calls.find((call) => call.type === 'translate')?.args).toEqual([4, 50])
     expect(ctx.imageSmoothingEnabled).toBe(false)
   })
 

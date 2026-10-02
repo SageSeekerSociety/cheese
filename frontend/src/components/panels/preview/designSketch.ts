@@ -202,6 +202,29 @@ export function redactTile(style: RedactStyle): HTMLCanvasElement | null {
   return tile
 }
 
+/** tile 的 data URL，按样式缓存；SVG 里当贴图用（屏幕上也要看得见这三种样式）。 */
+const tileUrls = new Map<RedactStyle, string | null>()
+
+/**
+ * 某种样式的 tile 转成 data URL，给屏幕上的 SVG 当 `<image>` 用。
+ *
+ * 和导出走同一块 tile（`redactTile` 缓存着），所以屏幕上看到的纹理和导出的那一块是
+ * 同一份，不是各画各的。没有画布的宿主（jsdom、画布被禁）给 null，调用方退回纯黑。
+ */
+export function redactTileDataUrl(style: RedactStyle): string | null {
+  if (style === 'solid') return null
+  if (tileUrls.has(style)) return tileUrls.get(style) ?? null
+  let url: string | null = null
+  try {
+    const tile = redactTile(style)
+    if (tile && typeof tile.toDataURL === 'function') url = tile.toDataURL()
+  } catch {
+    url = null
+  }
+  tileUrls.set(style, url)
+  return url
+}
+
 /** CanvasPattern 按上下文缓存（参考物：tile 进 Map，pattern 进 WeakMap）。 */
 const patterns = new WeakMap<CanvasRenderingContext2D, Map<RedactStyle, CanvasPattern>>()
 
