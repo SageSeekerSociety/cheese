@@ -33,7 +33,14 @@ import { EditorState, type Transaction } from '@tiptap/pm/state'
 import { updateYFragment } from '@tiptap/y-tiptap'
 import * as Y from 'yjs'
 
-import { FIELD, nodeMarkdown, parseMarkdown, suggestionId } from '../src/lib/docSchema'
+import {
+  FIELD,
+  nodeMarkdown,
+  parseMarkdown,
+  pendingSuggestions,
+  suggestionId,
+  withoutSuggestions,
+} from '../src/lib/docSchema'
 
 import { checkMarkdownWrite } from './writeCheck'
 
@@ -173,16 +180,22 @@ function suggestionAt(doc: PMNode, from: number, to: number): boolean {
 
 /** The change as a suggestion, or null when it cannot be one. A suggestion
  *  marks text: the document's blocks cannot carry a suggestion mark, so a
- *  change that adds, removes or reshapes whole blocks (a new paragraph, a
- *  paragraph turned into a list) can only be made directly. */
+ *  change that reshapes whole blocks (a paragraph turned into a list, two
+ *  paragraphs joined) can only be made directly. So can one that leaves no
+ *  text to accept or reject, or that would change the document's text before
+ *  anyone accepts it. */
 function suggestAs(tr: Transaction, state: EditorState, id: string): PMNode | null {
+  let doc: PMNode
   try {
-    const doc = transformToSuggestionTransaction(tr, state, () => id).doc
+    doc = transformToSuggestionTransaction(tr, state, () => id).doc
     doc.check()
-    return doc
   } catch {
     return null
   }
+  const proposed = pendingSuggestions(doc).find((item) => item.id === id)
+  if (!proposed || (!proposed.old && !proposed.new)) return null
+  if (nodeMarkdown(withoutSuggestions(doc)) !== nodeMarkdown(withoutSuggestions(state.doc))) return null
+  return doc
 }
 
 /** The live document with `edits` applied by `actor`, or why they cannot be. */

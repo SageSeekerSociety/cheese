@@ -463,17 +463,17 @@ describe('an edit to part of the live document', () => {
     expect(exportMarkdown(a.doc)).toBe(TWO)
   })
 
-  it('cannot suggest turning a paragraph into a list, and changes nothing', async () => {
+  it('cannot suggest reshaping paragraphs, and changes nothing', async () => {
     const { backend, http, a } = await opened()
-    const stores = backend.stores
-    const response = await edit(http, {
-      edits: [{ old: '第二段讲范围。', new: '- 第二段讲范围。' }],
-      actor: 'cheese-agent',
-      mode: 'suggest',
-    })
-    expect(response.status).toBe(422)
-    expect(await response.json()).toMatchObject({ error: 'edit', index: 0, reason: 'structure' })
-    expect(backend.stores).toBe(stores)
+    const versions = backend.versions.length
+    for (const change of ['- 第二段讲范围。', '第一段讲目标。第二段讲范围。']) {
+      const old = change.startsWith('-') ? '第二段讲范围。' : TWO
+      const response = await edit(http, { edits: [{ old, new: change }], actor: 'cheese-agent', mode: 'suggest' })
+      expect(response.status).toBe(422)
+      expect(await response.json()).toMatchObject({ error: 'edit', index: 0, reason: 'structure' })
+    }
+    expect(backend.versions.length).toBe(versions)
+    expect(backend.sent.some((sent) => sent.suggested || sent.suggestions.length)).toBe(false)
     expect(liveSuggestions(a.doc)).toEqual([])
   })
 
