@@ -95,6 +95,14 @@ describe('round-trip corpus', () => {
     expectClean('# 一级标题\n\n## 二级 Heading\n\n### 三级\n\n#### 四级标题')
   })
 
+  it('highlight', () => {
+    expectClean('这一句里有 <mark>要先看的</mark> 几个字，**<mark>加粗的高亮</mark>**也一样。')
+  })
+
+  it('double equals in prose stay text', () => {
+    expectClean('当 a == b 并且 c == d 时成立。')
+  })
+
   it('bold / italic / strike / inline code', () => {
     expectClean('正文有 **粗体** 和 *斜体*，还有 ~~删除线~~ 与 `inline_code()` 混排。')
   })

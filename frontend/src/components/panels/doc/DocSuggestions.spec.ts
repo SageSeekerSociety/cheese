@@ -72,14 +72,19 @@ function suggest(editor: Editor, from: string, to: string, id = suggestionId('ch
   editor.view.dispatch(transformToSuggestionTransaction(tr, editor.state, () => id))
 }
 
+/** Open the suggestions from the top bar: it starts at the first one. */
+async function openSuggestions(n: number) {
+  await fireEvent.click(await screen.findByRole('button', { name: t('work.room.doc.suggestionCount', { n }) }))
+}
+
 describe('deciding the AI teammate’s suggestions', () => {
   it('accepting one makes its text final for the other reader', async () => {
     const { theirs, other } = twoReaders()
     suggest(other, '一千万', '五百万')
     suggest(other, '一周', '两周')
 
+    await openSuggestions(2)
     await screen.findByText(t('work.room.docSuggest.pending', { agent: '芝士', n: 2 }))
-    await fireEvent.click(screen.getByRole('button', { name: t('work.room.docEdit.next') }))
     await fireEvent.click(await screen.findByRole('button', { name: t('work.room.docSuggest.accept') }))
 
     await waitFor(() => expect(exportMarkdown(theirs)).toContain('数据量到五百万行'))
@@ -92,6 +97,7 @@ describe('deciding the AI teammate’s suggestions', () => {
     suggest(other, '一千万', '五百万')
     suggest(other, '一周', '两周')
 
+    await openSuggestions(2)
     await fireEvent.click(await screen.findByRole('button', { name: t('work.room.docSuggest.rejectAll') }))
 
     await waitFor(() => expect(liveSuggestions(theirs)).toEqual([]))
@@ -103,7 +109,7 @@ describe('deciding the AI teammate’s suggestions', () => {
     const { other } = twoReaders({ 'cheese:limit': '测试里五百万行时已经到 120 ms' })
     suggest(other, '一千万', '五百万', 'cheese:limit')
 
-    await fireEvent.click(await screen.findByRole('button', { name: t('work.room.docEdit.next') }))
+    await openSuggestions(1)
 
     expect(await screen.findByText('测试里五百万行时已经到 120 ms')).toBeTruthy()
   })

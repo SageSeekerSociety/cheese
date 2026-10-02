@@ -26,7 +26,7 @@ import type { OpenFileTab } from '../composables/useTopicMemory'
 import type { AgentControlState, Block, PreviewInfo, Topic } from '../cx_types'
 import type { DocReviewRequest } from '../lib/docReview'
 import type { MemberActivityLine } from '../lib/memberActivity'
-import type { SubmitPreviewQuestion } from '../lib/previewQuestion'
+import type { PreviewLocate, SubmitPreviewQuestion } from '../lib/previewQuestion'
 import type { CardPhase } from '../lib/topicState'
 import type { TabDef, TabKey } from './panels/panelTabList'
 
@@ -116,8 +116,9 @@ const emit = defineEmits<{
   (e: 'review'): void
   (e: 'mention-click', handle: string): void
   (e: 'update:tab', key: string): void
-  // 预览面板里读者指着文档说的那一句，交给拿着对话的那一层。
-  (e: 'locate', message: string): void
+  // 预览面板里读者指着文档说的那一句，交给拿着对话的那一层；图上画过东西时
+  // 随行带那张合成图。
+  (e: 'locate', payload: PreviewLocate): void
 }>()
 
 // 有哪几格、各叫什么、挂哪个图标在 `panels/panelTabList.ts`：文档里的演示照着

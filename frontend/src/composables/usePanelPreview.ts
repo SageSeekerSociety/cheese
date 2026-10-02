@@ -10,12 +10,19 @@
 // 这一层管「拿到什么」：当前预览是哪一件、它读成的字节是什么、授权签下来没有、文档
 // 那一页的字节是哪一版。用哪种查看器画、空态写哪句话、全屏按钮在不在，是画的那一半
 // 的事（判据都在递下去的 props 里）。
-import type { FileContent, PreviewInfo } from '../cx_types'
+import type { ChatAttachment, FileContent, PreviewInfo } from '../cx_types'
 import type { DocumentIdentity } from '../lib/documentBytes'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
-import { attachmentRawUrl, downloadFile, getPreview, readPreviewFile, requestPreviewSession } from '../api'
+import {
+  attachmentRawUrl,
+  downloadFile,
+  getPreview,
+  readPreviewFile,
+  requestPreviewSession,
+  uploadAttachment,
+} from '../api'
 import { sameDocumentIdentity, useDocumentBytes } from '../lib/documentBytes'
 import { DOCUMENT_TYPES, IMAGE_SUFFIXES, isWebPage, suffixOf, webMimeOf } from '../lib/fileKind'
 import { roomFileDestination } from '../lib/previewSession'
@@ -51,6 +58,19 @@ export interface PanelPreviewOptions {
    */
   onLoaded?: (artifactId: string | null) => void
 }
+
+/** 图上画完的那张合成图：展示组件把它做出来，取数这一层把它送进房间。 */
+export interface AnnotateDraft {
+  blob: Blob
+  filename: string
+  naturalWidth: number
+  naturalHeight: number
+  count: number
+  note: string
+}
+
+/** 传一张标注图、换回一条能挂到消息上的附件。组件按 prop 拿它，自己不碰 fetch。 */
+export type UploadAnnotation = (topicId: string, draft: AnnotateDraft) => Promise<ChatAttachment>
 
 /** 「预览」这一格的全部取数：状态进、动作出，一个组件都不碰。 */
 export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewOptions) {
@@ -447,6 +467,18 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     docNonce.value += 1
   }
 
+  /**
+   * 标注合成图要进房间：上传是取数这一层的事。
+   *
+   * 附件路径是上传给的，消息得等它回来才拼得出来，所以这一步交给这一层、由画的那
+   * 一半按 prop 调；origin 用 clipboard —— 它是那句话的配图，不是一份要进资料库供
+   * 人浏览的文档。
+   */
+  async function uploadAnnotation(topicId: string, draft: AnnotateDraft): Promise<ChatAttachment> {
+    const file = new File([draft.blob], draft.filename, { type: 'image/png' })
+    return uploadAttachment(topicId, file, 'clipboard')
+  }
+
   return {
     // 这一格现在画的是什么
     frames: host.frames,
@@ -482,5 +514,6 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     load,
     downloadArtifact,
     refreshDocument,
+    uploadAnnotation,
   }
 }

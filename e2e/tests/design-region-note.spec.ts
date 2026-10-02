@@ -176,7 +176,7 @@ test('the initially focused compact entry cancels once with Escape and hands foc
   await expect(page.locator('[data-region-note]')).toHaveCount(0)
   await expect(page.locator('.design-image__selection')).toHaveCount(0)
   await expect(page.getByRole('button', { name: '选择图片区域', exact: true })).toBeFocused()
-  expect(await page.evaluate(() => (window as unknown as { notes: string[] }).notes)).toHaveLength(0)
+  expect(await page.evaluate(() => (window as unknown as { notes: { message: string }[] }).notes)).toHaveLength(0)
 })
 test('a short wide real panel settles into one compact placement without measurement feedback', async ({ page }, testInfo) => {
   const errors: string[] = []
@@ -236,7 +236,10 @@ test('accepted image region keeps its note beside the visible region in the real
   expect(measured.card.right).toBeLessThanOrEqual(measured.pane.right - 7)
   await input.press('Enter')
   await expect(input).toHaveCount(0)
-  expect(await page.evaluate(() => (window as unknown as { notes: string[] }).notes)).toEqual([expect.stringContaining(`version=${version}`)])
+  const located = await page.evaluate(() =>
+    (window as unknown as { notes: { message: string }[] }).notes.map(note => note.message)
+  )
+  expect(located).toEqual([expect.stringContaining(`version=${version}`)])
   await expect(page.locator('.design-image__selection')).toHaveCount(0)
 })
 
@@ -275,7 +278,9 @@ test('zoom, scroll and local resize retain the same input, draft and original re
   expect(await page.evaluate(() => (window as unknown as { focusedAgain: number }).focusedAgain)).toBe(0)
   await testInfo.attach('resized-layout', { body: JSON.stringify(await geometry(page)), contentType: 'application/json' })
   await input.press('Enter')
-  const notes = await page.evaluate(() => (window as unknown as { notes: string[] }).notes)
+  const notes = await page.evaluate(() =>
+    (window as unknown as { notes: { message: string }[] }).notes.map(note => note.message)
+  )
   expect(notes).toHaveLength(1)
   expect(notes[0]).toContain('x=')
   expect(notes[0]).toContain('保留中文草稿')
@@ -288,7 +293,7 @@ test('composition, explicit cancellation and external focus respect draft owners
   await expect(input).toBeFocused()
   await input.fill('正在输入中文')
   await input.evaluate(element => element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 229, isComposing: true, bubbles: true })))
-  expect(await page.evaluate(() => (window as unknown as { notes: string[] }).notes)).toHaveLength(0)
+  expect(await page.evaluate(() => (window as unknown as { notes: { message: string }[] }).notes)).toHaveLength(0)
   await input.press('Escape')
   await expect(page.getByRole('button', { name: '选择图片区域', exact: true })).toBeFocused()
   await expect(page.locator('.design-image__selection')).toHaveCount(0)
@@ -296,7 +301,7 @@ test('composition, explicit cancellation and external focus respect draft owners
   await page.getByLabel('聊天输入', { exact: true }).focus()
   await page.getByRole('button', { name: '取消', exact: true }).evaluate(element => (element as HTMLButtonElement).click())
   await expect(page.getByLabel('聊天输入', { exact: true })).toBeFocused()
-  expect(await page.evaluate(() => (window as unknown as { notes: string[] }).notes)).toHaveLength(0)
+  expect(await page.evaluate(() => (window as unknown as { notes: { message: string }[] }).notes)).toHaveLength(0)
 })
 
 test('replacement metadata retires the draft while new bytes are pending, without restoring old focus', async ({ page }) => {
@@ -316,7 +321,7 @@ test('replacement metadata retires the draft while new bytes are pending, withou
   await expect(page.getByLabel('聊天输入', { exact: true })).toBeFocused()
   await page.evaluate(() => (window as unknown as { fixture: { unmount: () => void } }).fixture.unmount())
   await expect(page.getByLabel('聊天输入', { exact: true })).toBeFocused()
-  expect(await page.evaluate(() => (window as unknown as { notes: string[] }).notes)).toHaveLength(0)
+  expect(await page.evaluate(() => (window as unknown as { notes: { message: string }[] }).notes)).toHaveLength(0)
 })
 
 test('a compact image viewport keeps the draft entry and close button physically reachable', async ({ page }, testInfo) => {

@@ -149,3 +149,56 @@ def test_a_long_failure_keeps_its_ending():
 
     assert failed.text.endswith("FAILED test_y")
     assert len(failed.text) == STEP_ERROR_MAX
+
+
+# ---- pi 1.0 记进日志、而我们不翻的那两条 ----
+#
+# Both shapes below were read off a real 1.0.0 binary on 2026-10-02, not
+# invented: the pin moved 0.85.1 -> 1.0.0 and these two entries appear in its
+# log where 0.85.1 wrote neither. What the test holds is that they land
+# nothing, so a later translator change that starts reading them is a decision
+# rather than an accident.
+
+
+def test_a_system_message_entry_lands_nothing():
+    """1.0 records the opening prompt as a `system` message entry.
+
+    It is a message, so it reaches the role split — and it is neither the
+    person's nor the agent's.
+    """
+    entry = {
+        "type": "message",
+        "id": "120b2497",
+        "parentId": "b2265ecb",
+        "timestamp": "2026-10-02T17:17:02.318Z",
+        "message": {
+            "role": "system",
+            "content": "",
+            "sections": {
+                "preamble": "You are the probe.",
+                "cwd": "<cwd>\n/tmp/probe/workspace\n</cwd>",
+            },
+            "timestamp": 1790961422318,
+        },
+    }
+
+    assert Assembler("session-1", harness="pi").accept(entry) == []
+
+
+def test_a_context_edit_entry_lands_nothing():
+    """1.0 drops a retried call from the context with a `context_edit` entry.
+
+    ``replacement`` is null: the entry removes the failed call rather than
+    rewriting it. Nothing about the turn changes for the room — the retry it
+    belongs to is already on the log as the runner's own mark.
+    """
+    entry = {
+        "type": "context_edit",
+        "id": "9645501e",
+        "parentId": "657b9f63",
+        "timestamp": "2026-10-02T17:17:02.388Z",
+        "targetId": "657b9f63",
+        "replacement": None,
+    }
+
+    assert Assembler("session-1", harness="pi").accept(entry) == []

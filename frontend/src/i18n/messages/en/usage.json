@@ -18,8 +18,10 @@
     "usedAria": "{pct} used this month"
   },
   "windows": {
+    "title": "Usage limits",
     "used": "{pct} used in {hours} h",
-    "reopens": "Reopens {at}"
+    "week": "{pct} used this week",
+    "month": "{pct} used this month"
   },
   "packs": {
     "title": "Other credits",

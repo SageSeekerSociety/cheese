@@ -243,23 +243,42 @@ function applyProjectHooks(pi: any, spec: Manifest) {
 // model is told.
 //
 // What the repository says about itself (its AGENTS.md, CLAUDE.md and rules) is
-// read on the machine by the runner (repository.py) and appended to every
-// turn: appended, never prepended, because everything before it is the same on
-// every turn of the session and is what a provider cache matches on.
+// read on the machine by the runner (repository.py) and given to every turn.
+//
+// Both are said through pi's own prompt sections, never by rewriting the
+// rendered text. pi 1.0 renders the system prompt from
+// `event.systemPromptOptions` and diffs it against what the transcript already
+// holds, so a section we set is a delta pi records and the model reads; a
+// string substitution across the rendered prompt, which is what this did for
+// pi 0.85.1, is a guess about wording pi owns — and 1.0 changed that wording
+// ("Current working directory: <dir>" became a `<cwd>` block), which made the
+// rewrite a no-op that said nothing.
+
+/** The prompt options of a `before_agent_start`, or nothing with the reason
+ *  written where a launch failure is read.
+ *
+ * A pi that does not carry them cannot be told where the session is, and every
+ * tool below works on the room's machine — so a directory left as the session
+ * host's is a session working in the wrong place. Saying so on stderr is the
+ * point: this is the shape that broke silently once. */
+function promptOptions(event: any): any {
+  const options = event.systemPromptOptions;
+  if (options) return options;
+  process.stderr.write("[cheese] before_agent_start carries no systemPromptOptions\n");
+  return undefined;
+}
 
 function placeTheSession(pi: any, spec: Manifest) {
-  pi.on("before_agent_start", async (event: any, ctx: any) => {
-    let prompt: string = event.systemPrompt;
-    const here = ctx?.cwd ?? process.cwd();
-    if (spec.workspace && here !== spec.workspace) {
-      prompt = prompt
-        .split(`Current working directory: ${here}`)
-        .join(`Current working directory: ${spec.workspace}`);
-    }
+  pi.on("before_agent_start", async (event: any) => {
+    const options = promptOptions(event);
+    if (!options) return;
+    if (spec.workspace) options.cwd = spec.workspace;
     const { context } = spec.socket ? await ask(spec.socket, "context", {}) : { context: "" };
-    if (context) prompt = `${prompt}\n\n${context}`;
-    if (prompt === event.systemPrompt) return;
-    return { systemPrompt: prompt };
+    // Appended as a section of its own, which pi renders after the rest and
+    // records as a delta: the prompt before it is identical on every turn of
+    // the session, and that is what a provider cache matches on.
+    if (context) options.sections.repository = context;
+    else delete options.sections.repository;
   });
 }
 
@@ -1143,15 +1162,17 @@ function registerSubagentTools(pi: any, spec: Manifest) {
 // listed are all it has. pi is started with only those tools enabled, so its own
 // read, bash, edit and write are not there to be left in place, and nothing here
 // reaches for a machine, a repository, hooks, subagents or background jobs.
-// pi still ends its system prompt with the directory it runs in, which on the
-// session host is nothing of the person's; that line goes.
+// pi still names the directory it runs in, which on the session host is nothing
+// of the person's; that section goes.
 
 function withoutHands(pi: any, spec: Manifest) {
   pi.on("before_agent_start", async (event: any) => {
-    const prompt: string = event.systemPrompt ?? "";
-    const at = prompt.lastIndexOf("\nCurrent working directory: ");
-    if (at < 0) return;
-    return { systemPrompt: prompt.slice(0, at).trimEnd() + "\n" };
+    const options = promptOptions(event);
+    if (!options) return;
+    // Emptied rather than dropped: which sections exist is pi's to decide
+    // (`buildSystemPromptSections` writes `cwd` for every session), and what
+    // this session has to say about its directory is that it has none.
+    options.cwd = "";
   });
   registerPlatformTools(pi, spec);
 }

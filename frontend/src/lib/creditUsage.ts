@@ -20,11 +20,13 @@ export interface UsagePeriod {
   resets_at: string | null
 }
 
+/** 按时间窗口限额的方案里的一个窗口：按小时（从第一次使用起算）或按周、按月。 */
 export interface UsageWindow {
-  hours: number
+  hours: number | null
+  calendar: 'week' | 'month' | null
   used_ratio: number
-  /** 窗口满了时什么时候恢复；没满为 `null`。 */
-  reopens_at: string | null
+  /** 什么时候清零；按小时的窗口还没开始时为 `null`。 */
+  resets_at: string | null
 }
 
 export interface UsagePack {
@@ -63,7 +65,8 @@ export interface UsageTeam {
 
 export interface CreditUsage {
   plan: { key: string; name: string }
-  period: UsagePeriod
+  /** 按月发放的方案（或不限）；按时间窗口限额的方案为 `null`，看 `windows`。 */
+  period: UsagePeriod | null
   windows: UsageWindow[]
   packs: UsagePack[]
   days: UsageDay[]
