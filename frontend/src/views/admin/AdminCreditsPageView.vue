@@ -8,8 +8,10 @@ import type {
   ModelTier,
   Plan,
   PlanInput,
+  TeamKind,
 } from '@/lib/adminCredits'
 
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import AdminPage from '@/components/admin/AdminPage.vue'
@@ -18,6 +20,7 @@ import AdminCreditTeamsTable from '@/components/admin/credits/AdminCreditTeamsTa
 import AdminGrantDialog from '@/components/admin/credits/AdminGrantDialog.vue'
 import AdminPlanDialog from '@/components/admin/credits/AdminPlanDialog.vue'
 import AdminPlansTable from '@/components/admin/credits/AdminPlansTable.vue'
+import { teamTitle } from '@/lib/adminCredits'
 
 // 方案与额度（`/admin/credits`）的画法：方案一览、团队一览，点开一个团队是右边的面板。
 // 取数与写在 `useAdminCredits`，这里只吃数据、往上报动作。
@@ -33,6 +36,8 @@ const props = defineProps<{
   planSaving: boolean
   planSaveError: string | null
   query: string
+  planFilter: string | null
+  kindFilter: TeamKind | null
   teams: CreditTeamPage | null
   teamsLoading: boolean
   teamsError: string | null
@@ -56,6 +61,8 @@ const emit = defineEmits<{
   'update:planDialogOpen': [open: boolean]
   'save-plan': [input: PlanInput]
   'update:query': [value: string]
+  'update:planFilter': [value: string | null]
+  'update:kindFilter': [value: TeamKind | null]
   page: [page: number]
   'retry-teams': []
   'open-team': [row: CreditTeamRow]
@@ -69,6 +76,17 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+
+/** 筛选的「全部」是空值：服务端不带这一项就是不筛。 */
+const planOptions = computed(() => [
+  { value: null, title: t('credits.teams.all') },
+  ...(props.plans ?? []).map((plan) => ({ value: plan.key, title: plan.name })),
+])
+const kindOptions = computed(() => [
+  { value: null, title: t('credits.teams.all') },
+  { value: 'personal', title: t('credits.teams.kindPersonal') },
+  { value: 'team', title: t('credits.teams.kindTeam') },
+])
 </script>
 
 <template>
@@ -77,7 +95,7 @@ const { t } = useI18n()
       <section class="acr__section">
         <div class="acr__sectionhead">
           <h2 class="acr__h t-title">{{ t('credits.plans.title') }}</h2>
-          <v-btn variant="outlined" size="small" prepend-icon="mdi-plus" @click="emit('open-plan', null)">
+          <v-btn color="primary" size="small" prepend-icon="mdi-plus" @click="emit('open-plan', null)">
             {{ t('credits.plans.add') }}
           </v-btn>
         </div>
@@ -93,19 +111,47 @@ const { t } = useI18n()
       <section class="acr__section">
         <div class="acr__sectionhead">
           <h2 class="acr__h t-title">{{ t('credits.teams.title') }}</h2>
-          <v-text-field
-            :model-value="props.query"
-            autocomplete="off"
-            type="search"
-            variant="outlined"
-            density="compact"
-            prepend-inner-icon="mdi-magnify"
-            :placeholder="t('credits.teams.search')"
-            :aria-label="t('credits.teams.search')"
-            hide-details
-            class="acr__search"
-            @update:model-value="emit('update:query', $event)"
-          />
+          <div class="acr__filters">
+            <v-select
+              autocomplete="off"
+              :model-value="props.planFilter"
+              :items="planOptions"
+              item-title="title"
+              item-value="value"
+              variant="outlined"
+              density="compact"
+              :label="t('credits.teams.filterPlan')"
+              hide-details
+              class="acr__filter"
+              @update:model-value="emit('update:planFilter', $event)"
+            />
+            <v-select
+              autocomplete="off"
+              :model-value="props.kindFilter"
+              :items="kindOptions"
+              item-title="title"
+              item-value="value"
+              variant="outlined"
+              density="compact"
+              :label="t('credits.teams.filterKind')"
+              hide-details
+              class="acr__filter"
+              @update:model-value="emit('update:kindFilter', $event)"
+            />
+            <v-text-field
+              :model-value="props.query"
+              autocomplete="off"
+              type="search"
+              variant="outlined"
+              density="compact"
+              prepend-inner-icon="mdi-magnify"
+              :placeholder="t('credits.teams.search')"
+              :aria-label="t('credits.teams.search')"
+              hide-details
+              class="acr__search"
+              @update:model-value="emit('update:query', $event)"
+            />
+          </div>
         </div>
         <AdminCreditTeamsTable
           :page="props.teams"
@@ -149,7 +195,7 @@ const { t } = useI18n()
 
     <AdminGrantDialog
       :model-value="props.grantOpen"
-      :team-name="props.team?.personal_owner ? `@${props.team.personal_owner}` : props.team?.name ?? ''"
+      :team-name="props.team ? teamTitle(props.team) : ''"
       :saving="props.grantSaving"
       :error="props.grantError"
       @update:model-value="emit('update:grantOpen', $event)"
@@ -182,7 +228,21 @@ const { t } = useI18n()
   color: var(--ink);
 }
 
+.acr__filters {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.acr__filter {
+  flex: 0 0 140px;
+}
+
 .acr__search {
-  flex: 0 1 280px;
+  flex: 0 1 260px;
 }
 </style>

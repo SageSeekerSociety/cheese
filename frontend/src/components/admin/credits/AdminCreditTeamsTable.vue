@@ -7,7 +7,7 @@ import { useI18n } from 'vue-i18n'
 import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminGrid from '@/components/admin/AdminGrid.vue'
 import AdminMeterBar from '@/components/admin/AdminMeterBar.vue'
-import { availableCredits, fmtCredits, meterTone, periodUse } from '@/lib/adminCredits'
+import { availableCredits, fmtCredits, meterTone, periodUse, teamTitle } from '@/lib/adminCredits'
 
 // 团队一览：挂在哪个方案上、本月方案额度用了多少、手上还能花多少。点一行打开这个团队。
 const props = defineProps<{
@@ -28,12 +28,13 @@ const { t, locale } = useI18n()
 const planByKey = computed(() => new Map(props.plans.map((plan) => [plan.key, plan])))
 const pageCount = computed(() => (props.page ? Math.max(1, Math.ceil(props.page.total / props.page.page_size)) : 1))
 
-function teamName(row: CreditTeamRow): string {
-  return row.personal_owner ? `@${row.personal_owner}` : row.name
-}
-
 function teamMeta(row: CreditTeamRow): string {
-  return row.personal_owner ? t('credits.teams.kindPersonal') : `${t('credits.teams.kindTeam')} · @${row.handle}`
+  if (row.personal_owner) {
+    return `${t('credits.teams.kindPersonal')} · @${row.personal_owner}`
+  }
+  return row.member_count === null
+    ? t('credits.teams.kindTeam')
+    : `${t('credits.teams.kindTeam')} · ${t('credits.teams.members', { n: row.member_count })}`
 }
 
 /** 本月方案额度那一格：不限画空心槽，还没发只写一句，发了画已用的比例。 */
@@ -66,7 +67,7 @@ function meter(row: CreditTeamRow) {
 }
 
 function balanceText(row: CreditTeamRow): string {
-  const left = availableCredits(row.packs, planByKey.value.get(row.plan_key) ?? null)
+  const left = availableCredits(row.packs, row.period, planByKey.value.get(row.plan_key) ?? null)
   return left === null ? t('credits.unlimited') : fmtCredits(left, locale.value)
 }
 </script>
@@ -113,7 +114,7 @@ function balanceText(row: CreditTeamRow): string {
       <td data-card="primary">
         <!-- 名字是打开这个团队的入口：键盘和读屏走它，整行点击是给指针的便利。 -->
         <button type="button" class="act__team" @click.stop="emit('open', row)">
-          <span class="act__name">{{ teamName(row) }}</span>
+          <span class="act__name">{{ teamTitle(row) }}</span>
           <span class="act__meta t-meta-read">{{ teamMeta(row) }}</span>
         </button>
       </td>

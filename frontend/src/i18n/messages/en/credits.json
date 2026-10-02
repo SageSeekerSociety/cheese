@@ -21,7 +21,8 @@
       "credits": "Monthly credits",
       "windows": "Usage caps",
       "tiers": "Models",
-      "actions": "Actions"
+      "actions": "Actions",
+      "teams": "Teams"
     },
     "tagDefault": "Default",
     "tagAdminOnly": "Admin only",
@@ -72,7 +73,11 @@
     "empty": "No teams yet",
     "noMatch": "No matching teams",
     "loadFailed": "Couldn't load teams",
-    "retry": "Retry"
+    "retry": "Retry",
+    "filterPlan": "Plan",
+    "filterKind": "Type",
+    "all": "All",
+    "members": "{n} members"
   },
   "panel": {
     "close": "Close",

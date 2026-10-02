@@ -23,9 +23,10 @@ const FREE: Plan = {
   period: 'month',
   windows: [],
   model_tiers: ['included'],
-  allows_subscription: false,
   unlimited: false,
   admin_only: false,
+  team_count: 213,
+  is_default: true,
 }
 
 const RESERVE: Plan = {
@@ -36,9 +37,10 @@ const RESERVE: Plan = {
   period: 'month',
   windows: [],
   model_tiers: null,
-  allows_subscription: true,
   unlimited: true,
   admin_only: true,
+  team_count: 1,
+  is_default: false,
 }
 
 const CLASSROOM: Plan = {
@@ -49,9 +51,10 @@ const CLASSROOM: Plan = {
   period: 'month',
   windows: [{ hours: 5, credits: 20 }],
   model_tiers: ['included', 'premium'],
-  allows_subscription: false,
   unlimited: false,
   admin_only: false,
+  team_count: 1,
+  is_default: false,
 }
 
 const PLANS = [FREE, RESERVE, CLASSROOM]
@@ -104,6 +107,8 @@ const TEAMS: CreditTeamPage = {
       name: 'Cheese 开发组',
       handle: 'cheese-dev',
       personal_owner: null,
+      personal_owner_nickname: null,
+      member_count: 9,
       plan_key: 'reserve',
       period: { start: '2026-10-01T00:00:00+00:00', credits_total: null, credits_used: 0 },
       packs: [],
@@ -113,6 +118,8 @@ const TEAMS: CreditTeamPage = {
       name: '城市数据实验室',
       handle: 'citylab',
       personal_owner: null,
+      personal_owner_nickname: null,
+      member_count: 6,
       plan_key: 'free',
       period: { start: '2026-10-01T00:00:00+00:00', credits_total: 125, credits_used: 115 },
       packs: LAB_PACKS,
@@ -122,6 +129,8 @@ const TEAMS: CreditTeamPage = {
       name: '个人',
       handle: 'linzy-personal',
       personal_owner: 'linzy',
+      personal_owner_nickname: '林知远',
+      member_count: null,
       plan_key: 'free',
       period: { start: '2026-10-01T00:00:00+00:00', credits_total: 125, credits_used: 46 },
       packs: [pack({ id: 'p4', credits_used: 46 })],
@@ -131,6 +140,8 @@ const TEAMS: CreditTeamPage = {
       name: '机器人社',
       handle: 'robotics',
       personal_owner: null,
+      personal_owner_nickname: null,
+      member_count: 12,
       plan_key: 'free',
       period: { start: '2026-10-01T00:00:00+00:00', credits_total: null, credits_used: 0 },
       packs: [],
@@ -146,6 +157,8 @@ const LAB: CreditTeamDetail = {
   name: '城市数据实验室',
   handle: 'citylab',
   personal_owner: null,
+  personal_owner_nickname: null,
+  member_count: 6,
   plan: FREE,
   period: { start: '2026-10-01T00:00:00+00:00', credits_total: 125, credits_used: 115 },
   packs: LAB_PACKS,
@@ -203,9 +216,9 @@ export const CREDITS_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '一页团队',
-        note: '个人团队写主人的 handle；本月方案额度还没发时写「本月尚未发放」，不画成 0。',
+        note: '个人团队写主人的昵称和 handle，团队写成员数；本月方案额度还没发时写「本月尚未发放」，不画成 0。',
         props: { page: TEAMS, plans: PLANS, loading: false, error: null, searching: false },
-        expect: '@linzy',
+        expect: '林知远',
       },
       {
         name: '搜不到',

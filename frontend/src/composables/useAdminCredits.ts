@@ -9,6 +9,7 @@ import type {
   ModelTier,
   Plan,
   PlanInput,
+  TeamKind,
 } from '@/lib/adminCredits'
 
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
@@ -101,6 +102,8 @@ export function useAdminCredits() {
 
   // ---- 团队 ----
   const query = ref('')
+  const planFilter = ref<string | null>(null)
+  const kindFilter = ref<TeamKind | null>(null)
   const page = ref(1)
   const teams = ref<CreditTeamPage | null>(null)
   const teamsLoading = ref(false)
@@ -115,6 +118,8 @@ export function useAdminCredits() {
     try {
       const result = await listCreditTeams({
         q: query.value.trim() || undefined,
+        plan: planFilter.value ?? undefined,
+        kind: kindFilter.value ?? undefined,
         page: page.value,
         pageSize: PAGE_SIZE,
       })
@@ -138,12 +143,25 @@ export function useAdminCredits() {
     searchTimer = setTimeout(() => void loadTeams(), SEARCH_DEBOUNCE_MS)
   }
 
+  function setPlanFilter(value: string | null) {
+    planFilter.value = value
+    page.value = 1
+    void loadTeams()
+  }
+
+  function setKindFilter(value: TeamKind | null) {
+    kindFilter.value = value
+    page.value = 1
+    void loadTeams()
+  }
+
   function setPage(value: number) {
     page.value = value
     void loadTeams()
   }
 
-  const searching = computed(() => query.value.trim() !== '')
+  /** 在搜索或筛选：空态说「没有匹配的」而不是「还没有团队」。 */
+  const searching = computed(() => query.value.trim() !== '' || planFilter.value !== null || kindFilter.value !== null)
 
   // ---- 一个团队 ----
   const panelOpen = ref(false)
@@ -254,6 +272,10 @@ export function useAdminCredits() {
     openPlan,
     savePlan,
     query,
+    planFilter,
+    kindFilter,
+    setPlanFilter,
+    setKindFilter,
     teams,
     teamsLoading,
     teamsError,

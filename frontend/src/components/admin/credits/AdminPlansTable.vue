@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n'
 
 import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminGrid from '@/components/admin/AdminGrid.vue'
-import { AUDIENCE_KEY, DEFAULT_PLAN_KEY, fmtCredits, planTiers, TIER_KEY } from '@/lib/adminCredits'
+import { AUDIENCE_KEY, fmtCredits, planTiers, TIER_KEY } from '@/lib/adminCredits'
 
 // 方案一览：每个方案发多少、限多少、能用哪几档模型。
 const props = defineProps<{
@@ -48,7 +48,7 @@ function tiersText(plan: Plan): string {
   <AdminGrid
     class="acp"
     :label="t('credits.plans.label')"
-    :cols="[null, '120px', '120px', '200px', '220px', '88px']"
+    :cols="[null, '120px', '120px', '200px', '220px', '88px', '88px']"
     :loading="props.loading && !props.plans"
     :skeleton-rows="2"
     :state="props.error !== null ? 'error' : 'rows'"
@@ -62,6 +62,7 @@ function tiersText(plan: Plan): string {
         <th scope="col">{{ t('credits.plans.column.credits') }}</th>
         <th scope="col">{{ t('credits.plans.column.windows') }}</th>
         <th scope="col">{{ t('credits.plans.column.tiers') }}</th>
+        <th scope="col" class="acp__num">{{ t('credits.plans.column.teams') }}</th>
         <th scope="col" class="acp__num">{{ t('credits.plans.column.actions') }}</th>
       </tr>
     </template>
@@ -81,7 +82,7 @@ function tiersText(plan: Plan): string {
       <td data-card="primary">
         <span class="acp__name">
           <span class="acp__title">{{ plan.name }}</span>
-          <span v-if="plan.key === DEFAULT_PLAN_KEY" class="acp__tag">{{ t('credits.plans.tagDefault') }}</span>
+          <span v-if="plan.is_default" class="acp__tag">{{ t('credits.plans.tagDefault') }}</span>
           <span v-if="plan.admin_only" class="acp__tag">{{ t('credits.plans.tagAdminOnly') }}</span>
         </span>
       </td>
@@ -89,6 +90,9 @@ function tiersText(plan: Plan): string {
       <td class="t-num" :data-label="t('credits.plans.column.credits')">{{ creditsText(plan) }}</td>
       <td :data-label="t('credits.plans.column.windows')">{{ windowsText(plan) }}</td>
       <td :data-label="t('credits.plans.column.tiers')">{{ tiersText(plan) }}</td>
+      <td class="acp__num t-num" :data-label="t('credits.plans.column.teams')">
+        {{ fmtCredits(plan.team_count, locale) }}
+      </td>
       <td class="acp__num" :data-label="t('credits.plans.column.actions')">
         <v-btn variant="text" size="small" @click="emit('edit', plan)">{{ t('credits.plans.edit') }}</v-btn>
       </td>

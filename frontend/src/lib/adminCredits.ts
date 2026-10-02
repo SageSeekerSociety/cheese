@@ -19,9 +19,12 @@ export interface Plan {
   windows: PlanWindow[]
   /** `null` = 不限档位。 */
   model_tiers: ModelTier[] | null
-  allows_subscription: boolean
   unlimited: boolean
   admin_only: boolean
+  /** 有多少个团队在这个方案上。 */
+  team_count: number
+  /** 新团队默认挂在这个方案上。 */
+  is_default: boolean
 }
 
 export type PackSource = 'plan_period' | 'task_earmark' | 'purchase' | 'admin_grant'
@@ -55,6 +58,10 @@ export interface CreditTeamRow {
   handle: string
   /** 个人团队的主人（handle）；共享团队为 `null`。 */
   personal_owner: string | null
+  /** 个人团队主人的昵称；没设或共享团队为 `null`。 */
+  personal_owner_nickname: string | null
+  /** 共享团队的成员数；个人团队为 `null`。 */
+  member_count: number | null
   plan_key: string
   period: CreditPeriod
   packs: CreditPack[]
@@ -72,6 +79,8 @@ export interface CreditTeamDetail {
   name: string
   handle: string
   personal_owner: string | null
+  personal_owner_nickname: string | null
+  member_count: number | null
   plan: Plan
   period: CreditPeriod
   packs: CreditPack[]
@@ -116,9 +125,6 @@ export const AUDIENCE_KEY: Record<PlanAudience, string> = {
   both: 'credits.audience.both',
 }
 
-/** 默认方案：每个团队建出来就在它上面（服务端 `team.plan_key` 的缺省值）。 */
-export const DEFAULT_PLAN_KEY = 'free'
-
 /** `model_tiers: null` 是不限档位，等于三档全开。 */
 export function planTiers(plan: Pick<Plan, 'model_tiers'>): ModelTier[] {
   return plan.model_tiers === null ? [...MODEL_TIERS] : MODEL_TIERS.filter((tier) => plan.model_tiers?.includes(tier))
@@ -146,10 +152,24 @@ export function periodUse(period: CreditPeriod, plan: Pick<Plan, 'unlimited'> | 
   return { kind: 'used', used: period.credits_used, total, ratio }
 }
 
-/** 可用余额：手上还能花的额度之和。方案不限时为 `null`。 */
-export function availableCredits(packs: CreditPack[], plan: Pick<Plan, 'unlimited'> | null): number | null {
+/** 可用余额：手上还能花的额度之和。本月方案额度还没发时，把方案这个月要发的那一份
+ *  算进去（第一次调用时就会发）。方案不限时为 `null`。 */
+export function availableCredits(
+  packs: CreditPack[],
+  period: CreditPeriod,
+  plan: Pick<Plan, 'unlimited' | 'credits_per_period'> | null
+): number | null {
   if (plan?.unlimited) return null
-  return packs.reduce((sum, pack) => sum + Math.max(0, pack.credits_total - pack.credits_used), 0)
+  const held = packs.reduce((sum, pack) => sum + Math.max(0, pack.credits_total - pack.credits_used), 0)
+  return period.credits_total === null ? held + (plan?.credits_per_period ?? 0) : held
+}
+
+export type TeamKind = 'personal' | 'team'
+
+/** 列表和面板里怎么称呼一个团队：个人团队用主人的昵称（没有就用 handle）。 */
+export function teamTitle(team: Pick<CreditTeamRow, 'name' | 'personal_owner' | 'personal_owner_nickname'>): string {
+  if (!team.personal_owner) return team.name
+  return team.personal_owner_nickname || `@${team.personal_owner}`
 }
 
 /** 额度保留到一位小数；整数不带小数点。 */

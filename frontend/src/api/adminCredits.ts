@@ -9,6 +9,7 @@ import type {
   ModelTier,
   Plan,
   PlanInput,
+  TeamKind,
 } from '@/lib/adminCredits'
 
 import { request } from '../api'
@@ -26,9 +27,17 @@ export function updatePlan(key: string, body: Partial<PlanInput>): Promise<Plan>
   return request<Plan>(`/admin/plans/${encodeURIComponent(key)}`, { method: 'PUT', body: JSON.stringify(body) })
 }
 
-export function listCreditTeams(params: { q?: string; page: number; pageSize: number }): Promise<CreditTeamPage> {
+export function listCreditTeams(params: {
+  q?: string
+  plan?: string
+  kind?: TeamKind
+  page: number
+  pageSize: number
+}): Promise<CreditTeamPage> {
   const search = new URLSearchParams()
   if (params.q) search.set('q', params.q)
+  if (params.plan) search.set('plan', params.plan)
+  if (params.kind) search.set('kind', params.kind)
   search.set('page', String(params.page))
   search.set('page_size', String(params.pageSize))
   return request<CreditTeamPage>(`/admin/teams?${search.toString()}`)

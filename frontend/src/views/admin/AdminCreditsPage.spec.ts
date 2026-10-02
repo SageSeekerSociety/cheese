@@ -49,9 +49,10 @@ const FREE = {
   period: 'month',
   windows: [],
   model_tiers: ['included'],
-  allows_subscription: false,
   unlimited: false,
   admin_only: false,
+  team_count: 3,
+  is_default: true,
 }
 const RESERVE = {
   key: 'reserve',
@@ -61,9 +62,10 @@ const RESERVE = {
   period: 'month',
   windows: [],
   model_tiers: null,
-  allows_subscription: true,
   unlimited: true,
   admin_only: true,
+  team_count: 0,
+  is_default: false,
 }
 
 const PERIOD_PACK = {
@@ -84,6 +86,8 @@ const ROW = {
   name: '个人',
   handle: 'linzy-personal',
   personal_owner: 'linzy',
+  personal_owner_nickname: null,
+  member_count: null,
   plan_key: 'free',
   period: { start: '2026-10-01T00:00:00+00:00', credits_total: 125, credits_used: 46 },
   packs: [PERIOD_PACK],
@@ -220,5 +224,37 @@ describe('plans and credits', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('filtering by plan asks the server for the first page of teams on that plan', async () => {
+    const page = mountPage()
+    await page.findByRole('button', { name: /@linzy/ })
+
+    const body = within(document.body)
+    const [planFilter] = body.getAllByRole('combobox')
+    await fireEvent.mouseDown(planFilter)
+    const menu = await body.findByRole('listbox')
+    await fireEvent.click(within(menu).getByText('Reserve'))
+
+    await waitFor(() =>
+      expect(listCreditTeams).toHaveBeenLastCalledWith(expect.objectContaining({ plan: 'reserve', page: 1 }))
+    )
+  })
+
+  it("a team whose month's plan credits are not issued yet can spend the plan's monthly amount", async () => {
+    listCreditTeams.mockResolvedValue({
+      items: [{ ...ROW, period: { ...ROW.period, credits_total: null, credits_used: 0 }, packs: [] }],
+      total: 1,
+      page: 1,
+      page_size: 20,
+    })
+    const page = mountPage()
+    await page.findByRole('button', { name: /@linzy/ })
+
+    const teams = page.getByRole('table', { name: 'credits.teams.label' })
+    const row = within(teams)
+      .getByRole('button', { name: /@linzy/ })
+      .closest('tr') as HTMLElement
+    expect(within(row).getByText('125')).toBeTruthy()
   })
 })

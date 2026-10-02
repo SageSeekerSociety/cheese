@@ -8,7 +8,7 @@ import { useDisplay } from 'vuetify'
 import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminFlash from '@/components/admin/AdminFlash.vue'
 import AdminMeterBar from '@/components/admin/AdminMeterBar.vue'
-import { fmtCredits, fmtDate, fmtDateTime, fmtMonth, meterTone } from '@/lib/adminCredits'
+import { fmtCredits, fmtDate, fmtDateTime, fmtMonth, meterTone, teamTitle } from '@/lib/adminCredits'
 
 // 一个团队的额度：挂哪个方案、手上每一笔额度用了多少、管理员对它做过什么。
 const props = withDefaults(
@@ -45,13 +45,16 @@ const planOptions = computed(() => props.plans.map((plan) => ({ value: plan.key,
 const title = computed(() => {
   const team = props.team
   if (!team) return ''
-  return team.personal_owner ? `@${team.personal_owner}` : team.name
+  return teamTitle(team)
 })
 
 const meta = computed(() => {
   const team = props.team
   if (!team) return ''
-  return team.personal_owner ? t('credits.teams.kindPersonal') : `${t('credits.teams.kindTeam')} · @${team.handle}`
+  if (team.personal_owner) return `${t('credits.teams.kindPersonal')} · @${team.personal_owner}`
+  return team.member_count === null
+    ? t('credits.teams.kindTeam')
+    : `${t('credits.teams.kindTeam')} · ${t('credits.teams.members', { n: team.member_count })}`
 })
 
 function packName(pack: CreditPack): string {

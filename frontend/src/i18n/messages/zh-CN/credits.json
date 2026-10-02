@@ -21,7 +21,8 @@
       "credits": "每月额度",
       "windows": "使用上限",
       "tiers": "可用模型",
-      "actions": "操作"
+      "actions": "操作",
+      "teams": "团队数"
     },
     "tagDefault": "默认",
     "tagAdminOnly": "仅后台",
@@ -72,7 +73,11 @@
     "empty": "暂无团队",
     "noMatch": "暂无匹配的团队",
     "loadFailed": "无法读取团队",
-    "retry": "重试"
+    "retry": "重试",
+    "filterPlan": "方案",
+    "filterKind": "类型",
+    "all": "全部",
+    "members": "{n} 名成员"
   },
   "panel": {
     "close": "关闭",
