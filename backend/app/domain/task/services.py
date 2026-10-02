@@ -1466,3 +1466,29 @@ async def bind_review_path(
         raise NotFoundError.for_resource("submission", submission_id)
 
     return task, membership
+
+
+async def ensure_task_joinable(
+    *,
+    session: AsyncSession,
+    task: Task,
+    user_id: int,
+) -> None:
+    """加入（领取 / 报名）之前那一段「你至少得看得见这道题」的判断。
+
+    三条 join 路由（``create_task_participant``、``join_task_as_user``、
+    ``join_task_as_team``）共用同一句：禁止「看不到但能加入」。用的是
+    ``can_view_task``（题目没开可见范围时对任何登录用户放行），**不是**题目详情
+    那三道闸 ``ensure_task_readable`` —— 后者把「未审批」也挡在外面，而这里先判
+    可见、approved 由各自的调用方单独判，两条错误各说各的话。可见性不通过答 404
+    「这道题不存在」（与详情同一句），随后再过 ``visibleTaskLimit`` 那道闸。
+    """
+    if not await TaskVisibilityService(session=session).can_view_task(
+        task=task, user_id=user_id
+    ):
+        raise NotFoundError(
+            "Resource task not found", data={"type": "task", "id": task.id}
+        )
+    await ensure_task_visible_for_ordinary_user(
+        session=session, task=task, user_id=user_id
+    )

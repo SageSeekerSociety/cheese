@@ -84,15 +84,12 @@ from app.domain.task.services import (
     bind_review_path,
     count_distinct_participants,
     ensure_domain_groups_belong_to_space,
+    ensure_task_joinable,
     ensure_task_readable,
-    ensure_task_visible_for_ordinary_user,
     validate_and_get_category_id,
 )
 from app.domain.task.task_pdf_draft_service import TaskPdfDraftService
-from app.domain.task.visibility_service import (
-    TaskVisibilityService,
-    resolve_user_email_domain,
-)
+from app.domain.task.visibility_service import resolve_user_email_domain
 from app.domain.team.repositories import TeamRepository
 from app.domain.team.services import TeamService
 from app.domain.team.summary import team_summary
@@ -1052,17 +1049,7 @@ async def create_task_participant(
         raise BadRequestError("Cannot join an ended task")
 
     # 可见性检查：禁止"看不到但能加入"
-    visibility_service = TaskVisibilityService(session=db)
-    can_view = await visibility_service.can_view_task(
-        task=task, user_id=auth_user.user_id
-    )
-    if not can_view:
-        raise NotFoundError(
-            "Resource task not found", data={"type": "task", "id": task_id}
-        )
-    await ensure_task_visible_for_ordinary_user(
-        session=db, task=task, user_id=auth_user.user_id
-    )
+    await ensure_task_joinable(session=db, task=task, user_id=auth_user.user_id)
 
     # Rank check mirrors NT TaskMembershipEligibilityService.checkRankEligibility:
     # only gates the request when APPLICATION_RANK_CHECK_ENFORCED=true. The
@@ -1149,17 +1136,7 @@ async def join_task_as_user(
         )
 
     # 可见性检查：禁止"看不到但能加入"
-    visibility_service = TaskVisibilityService(session=db)
-    can_view = await visibility_service.can_view_task(
-        task=task, user_id=auth_user.user_id
-    )
-    if not can_view:
-        raise NotFoundError(
-            "Resource task not found", data={"type": "task", "id": task_id}
-        )
-    await ensure_task_visible_for_ordinary_user(
-        session=db, task=task, user_id=auth_user.user_id
-    )
+    await ensure_task_joinable(session=db, task=task, user_id=auth_user.user_id)
 
     deadline_dt: datetime | None = None
     if payload.deadline is not None:
@@ -1225,17 +1202,7 @@ async def join_task_as_team(
         )
 
     # 可见性检查：禁止"看不到但能加入"
-    visibility_service = TaskVisibilityService(session=db)
-    can_view = await visibility_service.can_view_task(
-        task=task, user_id=auth_user.user_id
-    )
-    if not can_view:
-        raise NotFoundError(
-            "Resource task not found", data={"type": "task", "id": task_id}
-        )
-    await ensure_task_visible_for_ordinary_user(
-        session=db, task=task, user_id=auth_user.user_id
-    )
+    await ensure_task_joinable(session=db, task=task, user_id=auth_user.user_id)
 
     deadline_dt: datetime | None = None
     if payload.deadline is not None:
