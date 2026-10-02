@@ -4,6 +4,7 @@ import uuid
 from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Literal, overload
 
 from sqlalchemy import Text, and_, cast, func, or_, select, tuple_, update
 from sqlalchemy.dialects.postgresql import JSONB, array
@@ -584,6 +585,24 @@ class BlockRepository:
             await self._awaiting_an_answer(Block.task_id, task_ids, with_blocks=True),
         )
 
+    @overload
+    async def _awaiting_an_answer(
+        self,
+        place_column,
+        place_ids: list[uuid.UUID],
+        *extra,
+        with_blocks: Literal[False] = False,
+    ) -> dict[uuid.UUID, str | None]: ...
+
+    @overload
+    async def _awaiting_an_answer(
+        self,
+        place_column,
+        place_ids: list[uuid.UUID],
+        *extra,
+        with_blocks: Literal[True],
+    ) -> dict[uuid.UUID, tuple[str | None, uuid.UUID]]: ...
+
     async def _awaiting_an_answer(
         self, place_column, place_ids: list[uuid.UUID], *extra, with_blocks=False
     ):
@@ -645,16 +664,19 @@ class BlockRepository:
                 # rows alone — see `e5a1c7d3b284`).
                 continue
             candidates.append((at, place_id, meta, asker, block_id))
-        seen_groups: set[str] = set()
-        for place_id, meta, _, _, _ in grouped_rows:
+        seen_groups: set[tuple[uuid.UUID, str, str]] = set()
+        for place_id, meta, _, asker, _ in grouped_rows:
             if place_id is None:
                 continue
             meta = meta or {}
             group = meta.get("ask_group") or {}
             group_id = group.get("id")
-            if group_id is None or group_id in seen_groups:
+            if group_id is None:
                 continue
-            seen_groups.add(group_id)
+            group_key = (place_id, asker, group_id)
+            if group_key in seen_groups:
+                continue
+            seen_groups.add(group_key)
             # A wake or follow-up message must not erase deferred members.
             pending = [
                 members[key]
@@ -669,7 +691,9 @@ class BlockRepository:
             )
         rows = []
         selected = {}
-        for at, place_id, meta, asker, block_id in sorted(candidates, key=lambda c: c[0]):
+        for at, place_id, meta, asker, block_id in sorted(
+            candidates, key=lambda c: c[0]
+        ):
             rows.append((place_id, meta, at, asker, block_id))
         if not rows:
             return {}

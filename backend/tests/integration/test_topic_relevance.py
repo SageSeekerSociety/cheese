@@ -277,7 +277,9 @@ def test_a_card_already_approved_and_waiting_to_merge_is_off_the_desk(client):
 # ---- the fields are per-caller, and per-topic ----------------------------
 
 
-def test_a_question_waits_on_whoever_summoned_the_agent(client, stub_hooks, monkeypatch):
+def test_a_question_waits_on_whoever_summoned_the_agent(
+    client, stub_hooks, monkeypatch
+):
     """点芝士名的那个人发起了一轮，题就记在他头上 —— 不能谁都不等。
 
     提问是这轮里发生的，所以「它在回应谁」就是发起这轮的人：题问出口那一刻就

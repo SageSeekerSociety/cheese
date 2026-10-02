@@ -29,6 +29,9 @@ def bind_runner(runner):
     _runner = runner
 
 
+def current_runner():
+    return _runner
+
 async def finish_work(chat, completion, settle):
     """Only a committed native completion can wake a deferred message."""
     async with chat.session_factory() as session:

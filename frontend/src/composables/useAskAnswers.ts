@@ -3,7 +3,8 @@ import type { AskAction, AskFormState } from '../lib/askPresentation'
 
 import { computed, reactive, watch } from 'vue'
 
-import { answerOptions, ApiError, listBlocks } from '../api'
+import { ApiError, listBlocks } from '../api'
+import { answerOptions } from '../api/answers'
 import { t } from '../i18n'
 import {
   acknowledgeAsk,

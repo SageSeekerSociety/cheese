@@ -151,24 +151,14 @@ export function useChatPanel(opts: ChatPanelOptions) {
 
   const { askStates, askAction, askViewer, askAccount } = useAskAnswers({
     blocks: () => messages.value,
-    replace: (updated) => {
-      if (timeline.find(updated.id)) {
-        timeline.replace(updated)
-        historyChanges?.set(updated.id, updated)
-      }
-    },
+    replace: replaceShown,
   })
 
   const { askGroups, askGroupAction } = useAskGroups({
     blocks: () => messages.value,
     account: () => askAccount.value,
     viewer: () => askViewer.value,
-    replace: (updated) => {
-      if (timeline.find(updated.id)) {
-        timeline.replace(updated)
-        historyChanges?.set(updated.id, updated)
-      }
-    },
+    replace: replaceShown,
   })
   /** 把这一条换进时间线（在的话）。 */
   function replaceShown(block: Block) {

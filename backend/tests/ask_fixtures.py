@@ -36,7 +36,14 @@ def agent_credential(project, topic, seat) -> dict[str, str]:
 
 @contextmanager
 def active_ask(
-    client, stub_hooks, monkeypatch, topic, *, actor="user-1", seat=None, platform_turn=False
+    client,
+    stub_hooks,
+    monkeypatch,
+    topic,
+    *,
+    actor="user-1",
+    seat=None,
+    platform_turn=False,
 ):
     """Hold one admitted input until the caller finishes creating its questions.
 

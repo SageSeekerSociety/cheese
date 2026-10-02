@@ -157,7 +157,7 @@ def test_ask_correction_retries_once_after_its_group_echo(client, monkeypatch, o
     async def run():
         factory = client.test_request_factory
         runner = _NativeBoundary(factory)
-        monkeypatch.setattr("app.api.deps.get_work_runner", lambda: runner)
+        monkeypatch.setattr("app.domain.agent.pending_messages._runner", runner)
         chat = ChatService(
             session_factory=factory,
             base_system_prompt="fixture",

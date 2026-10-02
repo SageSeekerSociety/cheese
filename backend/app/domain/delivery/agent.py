@@ -20,7 +20,6 @@ from app.domain.agent_instance.models import AgentInstance
 from app.domain.delivery.ask_receipt_wait import (
     ASK_RECEIPT_WAIT,
     AskReceiptPending,
-    nudge_ask_receipts,
 )
 from app.domain.delivery.ledger import DeliveryEvent, dedup_key
 from app.domain.delivery.models import Delivery, TimedDelivery
@@ -310,7 +309,7 @@ async def run_attempt(sessions, delivery_id, attempt_id, work, *, chat=None):
 
     if waiting is not None and chat is not None:
         # Covers the receipt that committed before the wait marker was stored.
-        nudge_ask_receipts(chat, waiting.identity)
+        chat.nudge_ask_receipts(waiting.identity)
 
 
 async def begin_send(sessions, delivery_id, attempt_id, *, parent_session_id=None):

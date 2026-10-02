@@ -234,7 +234,6 @@ from app.domain.block.schemas import BlockOut
 from app.domain.delivery.ask_wake import expected_ask_session
 from app.domain.delivery.input_identity import (
     InputEffects,
-    InputIdentity,
     InputOutcomeUnconfirmed,
     InputReceipt,
     InputReconciliationPending,
@@ -244,8 +243,6 @@ from app.domain.delivery.input_identity import (
 from app.domain.delivery.receipts import (
     complete_work_inputs,
     held_blocks,
-    record_receipt,
-    register_input,
 )
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
@@ -1308,25 +1305,16 @@ class ChatService(SessionRecovery):
         fence_delivery: bool = False,
         parent_session_id: str | None = None,
     ) -> InputRegistrar:
-        async def persist(identity: InputIdentity) -> None:
-            async with self._sessions() as session:
-                if fence_delivery and effects.delivery_id is not None:
-                    from app.domain.delivery.agent import fence_send
+        from app.domain.agent.input_registration import input_registrar
 
-                    await fence_send(
-                        session,
-                        effects.delivery_id,
-                        effects.attempt_id,
-                        parent_session_id=parent_session_id,
-                    )
-                await register_input(session, identity, effects)
-                await session.commit()
-            if probe_unread:
-                self._unread_inputs.setdefault(identity.topic_id, {}).setdefault(
-                    identity.input_id, time.monotonic()
-                )
-
-        return persist
+        return input_registrar(
+            self._sessions,
+            effects,
+            self._unread_inputs,
+            probe_unread=probe_unread,
+            fence_delivery=fence_delivery,
+            parent_session_id=parent_session_id,
+        )
 
     async def confirm_prompt_receipt(self, receipt: InputReceipt) -> None:
         """Commit identity-bound effects before the journal may acknowledge.
@@ -1334,35 +1322,14 @@ class ChatService(SessionRecovery):
         No in-memory candidate is needed. Commit failure propagates so the same
         journal input is retried, even by a newly reconstructed ChatService.
         """
-        async with self._sessions() as session:
-            row = await record_receipt(session, receipt)
-            if row is None:
-                # Unknown evidence cannot settle another input. Keep it replayable
-                # rather than advancing the journal past a missing registration.
-                raise ValidationError("Native receipt identity is unknown or conflicts")
-            seen_ids = [uuid.UUID(block) for block in row.seen_block_ids]
-            reactions = (
-                await BlockRepository(session).reactions_for_blocks(seen_ids)
-                if row.settled_at is not None
-                else {}
-            )
-            await session.commit()
-        if receipt.evidence != "native_echo":
-            return
-        from app.domain.delivery.ask_receipt_wait import nudge_ask_receipts
+        from app.domain.agent.input_registration import confirm_receipt
 
-        # Echo commits before a waiting correction re-enters normal admission.
-        nudge_ask_receipts(self, receipt.identity)
-        pending = self._unread_inputs.get(receipt.identity.topic_id)
-        if pending is not None:
-            pending.pop(receipt.identity.input_id, None)
-        from app.domain.agent.runtime import get_broker
+        await confirm_receipt(self, receipt)
 
-        for block_id, value in reactions.items():
-            await get_broker().publish(
-                str(receipt.identity.topic_id),
-                {"type": "reaction", "block_id": str(block_id), "reactions": value},
-            )
+    def nudge_ask_receipts(self, identity):
+        from app.domain.agent.ask_receipt_wait import nudge_ask_receipts
+
+        nudge_ask_receipts(self, identity)
 
     async def confirm_work_completion(self, completion: WorkCompletion) -> None:
         """Settle a journaled completion without process-local work context."""

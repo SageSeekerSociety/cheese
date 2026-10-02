@@ -12,8 +12,6 @@
   "inviteNotYours": "只有被邀请的人能答复这张邀请",
   "cursorMessageNotFound": "游标消息不存在",
   "optionQuestionNotFound": "问题不存在",
-  "optionTaken": "已由 {by} 选过：{option}",
-  "optionOwnQuestion": "自己发起的问题由别人来选",
   "titleUndoStale": "标题之后又改过了，这一次改名已经不能撤销",
   "roomArchiveManagerOnly": "只有房间的 owner / admin 能归档或取消归档",
   "projectHasNoCheese": "这个项目还没有芝士，答不出这间房里「我是谁」",

@@ -62,17 +62,18 @@ def _set_reporter(client, room: str, handle: str) -> None:
     client.portal.call(go)
 
 
-def _ask(client, room: str, headers: dict[str, str]) -> None:
+def _ask(client, room: str, headers: dict[str, str], *, group_id=None) -> None:
     """芝士在这一轮里问出口的题 —— 凭据是这轮自己的那位队友。"""
     r = client.post(
         f"/topics/{room}/asks",
         json={
+            **({"ask_group": group_id} if group_id is not None else {}),
             "questions": [
                 {
                     "question": "预算按哪个口径统计",
                     "options": [{"text": "按部门"}, {"text": "按项目"}],
                 }
-            ]
+            ],
         },
         headers=headers,
     )
@@ -161,7 +162,9 @@ def test_a_leftover_turn_does_not_decide_who_the_question_waits_on(
     project = _project(client, "alice")
     room = _room(client, project, "alice")
     client.portal.call(
-        lambda: open_turn(client.test_factory, uuid.UUID(room), author="bob", age_s=3600)
+        lambda: open_turn(
+            client.test_factory, uuid.UUID(room), author="bob", age_s=3600
+        )
     )
 
     with active_ask(client, stub_hooks, monkeypatch, room, actor="alice") as headers:
@@ -193,6 +196,25 @@ def test_an_idle_room_is_not_something_to_process(client):
     _room(client, project, "alice")
 
     assert _mine(client, "alice") == []
+
+
+def test_equal_group_names_in_two_rooms_both_remain_on_my_list(
+    client, stub_hooks, monkeypatch
+):
+    project = _project(client, "alice")
+    rooms = [_room(client, project, "alice", title) for title in ("预算", "发布")]
+    for room in rooms:
+        with active_ask(
+            client, stub_hooks, monkeypatch, room, actor="alice"
+        ) as headers:
+            _ask(client, room, headers, group_id="decision")
+
+    questions = [
+        item
+        for item in _mine(client, "alice")
+        if item["phrase"] == NeedsYou.awaiting_answer
+    ]
+    assert {item["topicId"] for item in questions} == set(rooms)
 
 
 def test_a_visitor_has_nothing_to_process(client):

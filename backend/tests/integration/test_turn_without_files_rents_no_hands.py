@@ -43,8 +43,8 @@ from app.domain.project.services import ProjectService
 from app.domain.topic.models import Topic, TopicKind
 from app.domain.topic.services import TopicService
 from app.domain.user.models import User
-from tests.conftest import StubChannel, finish_turn, settle_turn
 from tests.ask_fixtures import legacy_question
+from tests.conftest import StubChannel, finish_turn, settle_turn
 from tests.integration.conftest import (
     post_project,
     registered,

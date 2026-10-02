@@ -10,11 +10,11 @@ import { useAskAnswers } from './useAskAnswers'
 const mocks = vi.hoisted(() => ({ read: vi.fn(), answer: vi.fn(), owner: 'alice-id' }))
 vi.mock('../api', () => ({
   listBlocks: mocks.read,
-  answerOptions: mocks.answer,
   ApiError: class extends Error {
     status = 500
   },
 }))
+vi.mock('../api/answers', () => ({ answerOptions: mocks.answer }))
 vi.mock('../me', () => ({ myId: () => mocks.owner, myHandle: () => (mocks.owner === 'alice-id' ? 'alice' : 'bob') }))
 vi.mock('../services/account', async () => {
   const { ref } = await import('vue')

@@ -163,7 +163,14 @@ def test_two_equal_options_are_refused(client, stub_hooks, monkeypatch):
     with active_ask(client, stub_hooks, monkeypatch, tid) as headers:
         r = client.post(
             f"/topics/{tid}/asks",
-            json={"questions": [{"question": "选哪个？", "options": [{"text": "行"}, {"text": "行"}]}]},
+            json={
+                "questions": [
+                    {
+                        "question": "选哪个？",
+                        "options": [{"text": "行"}, {"text": "行"}],
+                    }
+                ]
+            },
             headers=headers,
         )
         assert r.status_code == 422, r.text
@@ -517,11 +524,13 @@ def test_an_unfinished_group_is_not_shadowed_by_a_later_one(
         headers=session_auth_headers("alice"),
     )
     assert answered.status_code == 200, answered.text
-    assert answered.json()["data"]["blocks"][0]["meta"]["answer_log"][-1]["option"] == "行"
+    assert (
+        answered.json()["data"]["blocks"][0]["meta"]["answer_log"][-1]["option"] == "行"
+    )
 
-    detail = client.get(f"/topics/{room}", headers=session_auth_headers("alice")).json()[
-        "data"
-    ]
+    detail = client.get(
+        f"/topics/{room}", headers=session_auth_headers("alice")
+    ).json()["data"]
     assert detail["presentation"]["phrase"] == "awaiting_answer", (
         "A 组里还有没答的成员，房间不该显示成没有待答"
     )
@@ -536,4 +545,6 @@ def test_an_unfinished_group_is_not_shadowed_by_a_later_one(
     rooms = client.portal.call(read_rooms)
     asked, pending_id = rooms[uuid.UUID(room)]
     assert asked == "alice", "挂在的人是 A 组的发起人，不是已答完的 B 组"
-    assert pending_id == uuid.UUID(group_a[0]["id"]), "选中的必须是 A 组那个未答成员，不是 B 组"
+    assert pending_id == uuid.UUID(group_a[0]["id"]), (
+        "选中的必须是 A 组那个未答成员，不是 B 组"
+    )
