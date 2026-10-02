@@ -25,6 +25,7 @@
 import type { OpenFileTab } from '../composables/useTopicMemory'
 import type { AgentControlState, Block, PreviewInfo, Topic } from '../cx_types'
 import type { MemberActivityLine } from '../lib/memberActivity'
+import type { SubmitPreviewQuestion } from '../lib/previewQuestion'
 import type { CardPhase } from '../lib/topicState'
 import type { TabDef, TabKey } from './panels/panelTabList'
 
@@ -50,6 +51,7 @@ import { t } from '@/i18n'
 const props = withDefaults(
   defineProps<{
     topic: Topic | null
+    submitQuestion?: SubmitPreviewQuestion
     // Bumped by the parent on AI activity (turn-done / a platform resource the
     // turn changed) so 文档 reloads the doc 芝士 just wrote. See TopicView
     // activityTick.
@@ -87,6 +89,7 @@ const props = withDefaults(
     activity?: MemberActivityLine[]
   }>(),
   {
+    submitQuestion: undefined,
     working: false,
     agentControl: null,
     siteTurns: () => ({}),
@@ -638,6 +641,7 @@ defineExpose({ pulse, highlightTurn, openFile, siteBlock })
         <PanelPreview
           v-if="mounted.has('preview')"
           v-show="active === 'preview'"
+          :submit-question="submitQuestion"
           :class="enterClass('preview')"
           :topic-id="topicId"
           :project-id="projectId"
@@ -661,6 +665,7 @@ defineExpose({ pulse, highlightTurn, openFile, siteBlock })
           <PanelPreview
             v-if="mounted.has(fileKey(f.path))"
             v-show="active === fileKey(f.path)"
+            :submit-question="submitQuestion"
             :class="enterClass(fileKey(f.path))"
             :topic-id="topicId"
             :project-id="projectId"

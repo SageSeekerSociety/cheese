@@ -12,6 +12,7 @@ import type { ProjectMemberRow, Topic } from '../cx_types'
 import { computed } from 'vue'
 
 import { type ChatPanelEmit, useChatPanel } from '../composables/useChatPanel'
+import { createQuestionSubmit } from '../lib/previewQuestion'
 
 import ChatErrorToast from './chat/ChatErrorToast.vue'
 import ChatNewMessagesPill from './chat/ChatNewMessagesPill.vue'
@@ -205,7 +206,14 @@ const barEditable = computed(() => !!barBlock.value && canEdit(barBlock.value))
 
 // The page that owns the address drives the composer through this (TopicView
 // keeps its own input bar for the root topic), so it stays exposed.
-defineExpose({ send, connected })
+const submitQuestion = createQuestionSubmit({
+  topic: () => props.topic,
+  agentSeat: () => agentSeat.value,
+  mentionPool: () => mentionPool.value,
+  topicList: () => props.topicList,
+  send,
+})
+defineExpose({ send, connected, submitQuestion })
 </script>
 
 <template>

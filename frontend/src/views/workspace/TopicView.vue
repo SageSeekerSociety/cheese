@@ -2,6 +2,7 @@
 import type { AgentControlState, Block, Topic, TopicMemberRow } from '@/cx_types'
 import type { MemberActivityLine } from '@/lib/memberActivity'
 import type { CardPhase } from '@/lib/topicState'
+import type { SubmitPreviewQuestion } from '../../lib/previewQuestion'
 
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -154,6 +155,7 @@ const chatColumn = ref<{
   reloadAccept: (silent?: boolean) => void
   reloadFeedback: () => void
   say: (content: string) => boolean
+  submitQuestion: SubmitPreviewQuestion
 } | null>(null)
 
 // Drag the chat|panel splitter: set chat's width as a % of the panes row.
@@ -189,6 +191,7 @@ const composerReady = computed(() => !!chatColumn.value?.connected)
 function onLocate(message: string) {
   chatColumn.value?.say(message)
 }
+const submitQuestion: SubmitPreviewQuestion = (request) => chatColumn.value?.submitQuestion(request) ?? false
 
 // 对话那一栏在两端挂在不同位置（左栏 / tab 栏第一格），但接的是同一组事件。
 const chatEvents = {
@@ -390,6 +393,7 @@ void openPlace()
         />
         <WorkPanel
           ref="panelRef"
+          :submit-question="submitQuestion"
           :agent-name="store.agentName"
           :activity="activity"
           class="col col-doc"
