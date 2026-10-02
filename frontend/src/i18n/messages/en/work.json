@@ -752,7 +752,8 @@
         "bullet": "Bulleted list",
         "ordered": "Numbered list",
         "task": "Task list",
-        "quote": "Quote"
+        "quote": "Quote",
+        "highlight": "Highlight"
       },
       "slash": {
         "text": "Text",
@@ -776,7 +777,9 @@
       "thisTask": "This task",
       "subtopic": "Subtopic",
       "topic": "Topic",
-      "selectionToolbar": "Selection actions"
+      "selectionToolbar": "Selection actions",
+      "copy": "Copy",
+      "blockType": "Paragraph style"
     },
     "comments": {
       "comment": "Comment",
@@ -943,10 +946,8 @@
       "separator": " · "
     },
     "docEdit": {
-      "ask": "Ask {agent}",
-      "rewrite": "Have {agent} edit",
-      "boxLabel": "Have {agent} edit the selected text",
-      "boxPlaceholder": "Describe the change",
+      "boxLabel": "Have {agent} edit this, or ask it",
+      "boxPlaceholder": "Describe a change or ask a question",
       "boxKeyHint": "Enter to send, Shift+Enter for a new line",
       "preset": {
         "concise": "More concise",
@@ -967,7 +968,11 @@
       "unmappable": "This selection can't be edited on its own. Select it again",
       "unavailable": "This document can't be edited right now",
       "prev": "Previous",
-      "next": "Next"
+      "next": "Next",
+      "thinking": "{agent} is looking…",
+      "noAnswerYet": "{agent} hasn't replied yet. The reply will appear in the comments",
+      "openThread": "View in comments",
+      "dismiss": "Dismiss"
     },
     "docSuggest": {
       "title": "{agent}'s suggestion",

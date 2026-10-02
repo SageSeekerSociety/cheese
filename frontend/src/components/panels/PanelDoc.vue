@@ -124,6 +124,8 @@ defineExpose({ pulse, highlightTurn, reviewEdits })
     :toggle-editable="doc.toggleEditable"
     :set-error="doc.setError"
     :rewrite-selection="doc.rewriteSelection"
+    :ask-agent="doc.askAgent"
+    :answer-of="doc.answerOf"
     :apply-doc-edits="doc.applyEdits"
     @open-topic="emit('open-topic', $event)"
     @mention-click="emit('mention-click', $event)"

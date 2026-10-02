@@ -1,34 +1,39 @@
 <script setup lang="ts">
-// 贴在正文里某一段下面的那张卡：「让{agent}改」的输入框和改好之后的条子、正看着的那一处
-// 改动，或者正看着的那一处修改建议。同一时刻只有一张，按这个次序。
+// 贴在正文里某一段下面的那张卡：选中文字后点 AI 队友开出的输入框、改好之后的条子、问了
+// 它之后的小卡，正看着的那一处改动，或者正看着的那一处修改建议。同一时刻只有一张，按这个
+// 次序。
 //
 // 卡不进编辑器（ProseMirror 会撤掉别人加进可编辑区的东西），而是浮在正文上面、量着那
 // 一段的位置摆；那一段下面用装饰留出一块同样高的空白，卡就不压住后面的字。卡和空白
 // 都跟着正文的每一次变化重新量。
 import type { Editor } from '@tiptap/core'
+import type { DocAgentController } from '../../../composables/useDocAgent'
 import type { DocReviewController } from '../../../composables/useDocReview'
-import type { DocRewriteController } from '../../../composables/useDocRewrite'
 import type { DocSuggestionsController } from '../../../composables/useDocSuggestions'
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 import { editMarks, setEditMarks } from '../../../lib/docEditMarks'
 
+import DocAgentAnswer from './DocAgentAnswer.vue'
+import DocAgentBox from './DocAgentBox.vue'
 import DocReviewCard from './DocReviewCard.vue'
 import DocRewriteBar from './DocRewriteBar.vue'
-import DocRewriteBox from './DocRewriteBox.vue'
 import DocSuggestionCard from './DocSuggestionCard.vue'
 
 const props = defineProps<{
   editor: Editor | null
   agentName: string
   editable: boolean
-  rewrite: DocRewriteController
+  rewrite: DocAgentController
   review: DocReviewController
   suggestions: DocSuggestionsController
   /** 修改建议的理由（建议 id → 理由）。 */
   suggestionReasons: Record<string, string>
+  /** handle → 名字：回答里的点名读成名字。 */
+  mentionNames: Record<string, string>
 }>()
+const emit = defineEmits<{ (e: 'open-thread', id: string): void }>()
 
 const root = ref<HTMLElement | null>(null)
 const card = ref<HTMLElement | null>(null)
@@ -44,7 +49,12 @@ const anchor = computed(() => {
   if (phase !== 'idle' && phase !== 'pending') {
     const target = editMarks(editor.state).target
     if (target)
-      return { kind: 'rewrite' as const, from: target.from, to: target.to, width: phase === 'asking' ? 460 : 0 }
+      return {
+        kind: 'rewrite' as const,
+        from: target.from,
+        to: target.to,
+        width: phase === 'asking' || phase === 'waiting' || phase === 'answered' ? 460 : 0,
+      }
   }
   const change = props.review.current.value
   if (change) return { kind: 'review' as const, from: change.from, to: change.to, width: 540 }
@@ -134,7 +144,7 @@ window.addEventListener('resize', schedule)
 function onPointerDown(e: MouseEvent) {
   if (e.target instanceof Node && card.value?.contains(e.target)) return
   const phase = props.rewrite.phase.value
-  if (phase === 'asking' || phase === 'done' || phase === 'undone') props.rewrite.close()
+  if (phase === 'asking' || phase === 'done' || phase === 'undone' || phase === 'answered') props.rewrite.close()
   // 建议卡：点到别处就收起，点到另一处建议则换成那一处（正文的点击会接着说是哪一处）。
   else if (props.suggestions.current.value) props.suggestions.close()
 }
@@ -176,11 +186,23 @@ onBeforeUnmount(() => {
         @accept="suggestions.decide(suggestions.active.value.id, true)"
         @reject="suggestions.decide(suggestions.active.value.id, false)"
       />
-      <DocRewriteBox
+      <DocAgentBox
         v-else-if="rewrite.phase.value === 'asking'"
         :agent-name="agentName"
-        @send="rewrite.send"
+        :editable="rewrite.editable.value"
+        @edit="rewrite.edit"
+        @ask="rewrite.question"
         @cancel="rewrite.close"
+      />
+      <DocAgentAnswer
+        v-else-if="rewrite.phase.value === 'waiting' || rewrite.phase.value === 'answered'"
+        :agent-name="agentName"
+        :waiting="rewrite.phase.value === 'waiting'"
+        :answer="rewrite.answer.value"
+        :posted="!!rewrite.threadId.value"
+        :mention-names="mentionNames"
+        @open-thread="rewrite.threadId.value && emit('open-thread', rewrite.threadId.value)"
+        @close="rewrite.close"
       />
       <DocRewriteBar
         v-else

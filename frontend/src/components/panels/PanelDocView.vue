@@ -8,14 +8,15 @@
 import type { DocConnection, DocPeer, DocSession } from '../../composables/useDocCollab'
 import type { SendDocComment } from '../../composables/useDocCommentDraft'
 import type { Block, Topic } from '../../cx_types'
+import type { SelectionTarget } from '../../lib/docBubble'
 import type { DocEdit, DocRewriteRequest, DocRewriteResult } from '../../lib/docEdits'
 import type { DocReviewRequest } from '../../lib/docReview'
 import type { DocThreadActions, DocThreadState } from '../../lib/docThreadTypes'
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
+import { useDocAgent } from '../../composables/useDocAgent'
 import { useDocReview } from '../../composables/useDocReview'
-import { useDocRewrite } from '../../composables/useDocRewrite'
 import { useDocSuggestions } from '../../composables/useDocSuggestions'
 import { topicTitle } from '../../lib/topicState'
 
@@ -80,8 +81,12 @@ const props = withDefaults(
     refreshComments: () => Promise<void>
     toggleEditable: () => void
     setError: (message: string | null) => void
-    /** 让 AI 队友改选中的字；没有时浮条上不给「让…改」。 */
+    /** 让 AI 队友改选中的字；没有时输入框里不给常用的说法。 */
     rewriteSelection?: (request: DocRewriteRequest) => Promise<DocRewriteResult>
+    /** 问 AI 队友：一句话连同选中的字发成点了它名的评论，回执是那条评论的 id。 */
+    askAgent?: (target: SelectionTarget, question: string) => Promise<string>
+    /** 那条评论下 AI 队友的回答；还没有时是 null。 */
+    answerOf?: (threadId: string) => Promise<string | null>
     /** 以自己的名义替换正文里的字（撤销、还原 AI 队友的修改）。 */
     applyDocEdits?: (edits: DocEdit[]) => Promise<unknown>
   }>(),
@@ -94,6 +99,8 @@ const props = withDefaults(
     commentAuthor: '',
     sendComment: undefined,
     rewriteSelection: undefined,
+    askAgent: undefined,
+    answerOf: undefined,
     suggestionReasons: () => ({}),
     fetchSuggestionReasons: undefined,
     applyDocEdits: undefined,
@@ -152,9 +159,8 @@ function highlightTurn(turnId: string) {
 function highlightNode(nodeId: string) {
   void surfaceRef.value?.highlightNode(nodeId)
 }
-function openComment(payload: { anchorId: string | null; quote: string; ask: boolean }) {
-  const { anchorId, quote } = payload
-  commentsRef.value?.open({ anchorId, quote }, payload.ask ? `@${props.agentName} ` : undefined)
+function openComment(target: SelectionTarget) {
+  commentsRef.value?.open(target)
 }
 
 // 评论里的点名（`<@handle>`）读成名字。
@@ -162,9 +168,11 @@ const mentionNames = computed<Record<string, string>>(() =>
   props.agentHandle ? { [props.agentHandle]: props.agentName } : {}
 )
 
-const rewrite = useDocRewrite({
+const rewrite = useDocAgent({
   editor: () => surfaceRef.value?.editor ?? null,
-  rewrite: () => props.rewriteSelection,
+  rewrite: () => (props.editable ? props.rewriteSelection : undefined),
+  ask: () => props.askAgent,
+  answerOf: (threadId) => props.answerOf?.(threadId) ?? Promise.resolve(null),
   applyEdits: () => props.applyDocEdits,
   agentName: () => props.agentName,
   onError: (message) => props.setError(message),
@@ -344,13 +352,12 @@ defineExpose({
                 :pulse="pulse"
                 :scroll-tick="scrollTick"
                 :agent-name="agentName"
-                :can-rewrite="!!rewriteSelection && editable"
-                :can-ask-agent="!!agentHandle"
+                :agent-handle="agentHandle"
                 @open-topic="emit('open-topic', $event)"
                 @mention-click="emit('mention-click', $event)"
                 @open-file="emit('open-file', $event)"
                 @open-comment="openComment"
-                @rewrite="rewrite.open($event.from, $event.to)"
+                @agent="rewrite.open($event.from, $event.to, $event)"
                 @locate-comment="locateComment"
                 @error="setError"
               />
@@ -363,6 +370,8 @@ defineExpose({
                 :review="review"
                 :suggestions="suggestions"
                 :suggestion-reasons="suggestionReasons"
+                :mention-names="mentionNames"
+                @open-thread="locateComment"
               />
 
               <!-- 总览房间的其余两块（#1889 ②③）紧跟正文。评论在独立侧栏。只有根话题

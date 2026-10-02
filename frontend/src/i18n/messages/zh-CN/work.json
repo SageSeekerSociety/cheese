@@ -752,7 +752,8 @@
         "bullet": "无序列表",
         "ordered": "有序列表",
         "task": "任务列表",
-        "quote": "引用"
+        "quote": "引用",
+        "highlight": "高亮"
       },
       "slash": {
         "text": "正文",
@@ -776,7 +777,9 @@
       "thisTask": "这件任务",
       "subtopic": "子话题",
       "topic": "话题",
-      "selectionToolbar": "选区操作"
+      "selectionToolbar": "选区操作",
+      "copy": "复制",
+      "blockType": "段落格式"
     },
     "comments": {
       "comment": "评论",
@@ -943,10 +946,8 @@
       "separator": " · "
     },
     "docEdit": {
-      "ask": "问{agent}",
-      "rewrite": "让{agent}改",
-      "boxLabel": "让{agent}改选中的文字",
-      "boxPlaceholder": "写下修改要求",
+      "boxLabel": "让{agent}改，或者问它",
+      "boxPlaceholder": "写下要求或问题",
       "boxKeyHint": "Enter 发送，Shift+Enter 换行",
       "preset": {
         "concise": "更简洁",
@@ -967,7 +968,11 @@
       "unmappable": "无法单独修改这段选区，重新选一下",
       "unavailable": "这篇文档暂时无法修改",
       "prev": "上一处",
-      "next": "下一处"
+      "next": "下一处",
+      "thinking": "{agent} 正在看…",
+      "noAnswerYet": "{agent} 还没有回复，回复会出现在评论里",
+      "openThread": "在评论里查看",
+      "dismiss": "收起"
     },
     "docSuggest": {
       "title": "{agent}的建议",

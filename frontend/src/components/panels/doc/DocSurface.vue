@@ -14,6 +14,7 @@ import type { PluginKey } from '@tiptap/pm/state'
 import type { SuggestionProps } from '@tiptap/suggestion'
 import type { DocSession } from '../../../composables/useDocCollab'
 import type { Block, Topic } from '../../../cx_types'
+import type { SelectionTarget } from '../../../lib/docBubble'
 import type { DocLinkTarget } from '../../../lib/docLinks'
 import type { SlashItem } from '../../../lib/docSlashMenu'
 
@@ -22,6 +23,7 @@ import Collaboration from '@tiptap/extension-collaboration'
 import CollaborationCaret from '@tiptap/extension-collaboration-caret'
 import { Editor, EditorContent } from '@tiptap/vue-3'
 
+import { BUBBLE_META } from '../../../lib/docBubble'
 import { renderCaret } from '../../../lib/docCaret'
 import {
   commentMarkKey,
@@ -71,12 +73,9 @@ const props = withDefaults(
     pulse: () => void
     /** 页面每收到一次正文区的滚动就加一：滚动时收起代码块工具条。 */
     scrollTick?: number
-    /** 项目 AI 队友的名字（选中浮条上用）。 */
+    /** 项目 AI 队友的名字和 handle（选中浮条上用）。 */
     agentName: string
-    /** 选中浮条上给不给「让…改」。 */
-    canRewrite?: boolean
-    /** 选中浮条上给不给「问…」。 */
-    canAskAgent?: boolean
+    agentHandle?: string | null
   }>(),
   {
     topicList: () => [],
@@ -84,8 +83,7 @@ const props = withDefaults(
     commentMarkIndex: () => new Map<number, { id: string; quote: string }[]>(),
     openCommentId: null,
     scrollTick: 0,
-    canRewrite: false,
-    canAskAgent: false,
+    agentHandle: null,
     title: '',
   }
 )
@@ -98,9 +96,9 @@ const emit = defineEmits<{
   /** 点了正文里的评论下划线：滚到文档底部那张卡。 */
   (e: 'locate-comment', commentId: string): void
   /** 选中一段正文点了「评论」：浮层算好了锚点，转给页面去开写评论的框。 */
-  (e: 'open-comment', payload: { anchorId: string | null; quote: string; ask: boolean }): void
-  /** 选中一段正文点了「让…改」。 */
-  (e: 'rewrite', range: { from: number; to: number }): void
+  (e: 'open-comment', payload: SelectionTarget): void
+  /** 选中一段正文点了 AI 队友。 */
+  (e: 'agent', payload: SelectionTarget & { from: number; to: number }): void
   /** 当场要说的失败（目前只有复制代码失败）。 */
   (e: 'error', message: string): void
 }>()
@@ -346,9 +344,9 @@ function buildEditor(session: DocSession): Editor {
       displayTick.value++
       if (transaction.docChanged) commentIndexStale.value = true
     },
-    onUpdate: () => {
-      // 正文在光标底下换了：那个「评论」按钮指着的段落已经不是原来那一段了。
-      overlaysRef.value?.onEdited()
+    onUpdate: ({ transaction }) => {
+      // 正文在光标底下换了：浮条指着的段落已经不是原来那一段了。浮条自己改的格式除外。
+      if (!transaction.getMeta(BUBBLE_META)) overlaysRef.value?.onEdited()
     },
   })
 }
@@ -453,10 +451,10 @@ const emptyPlaceholder = computed(() => JSON.stringify(t('work.room.doc.emptyPla
       :slash-menu="slashMenu"
       :scroll-tick="scrollTick"
       :agent-name="agentName"
-      :can-rewrite="canRewrite"
-      :can-ask-agent="canAskAgent"
+      :agent-handle="agentHandle"
+      :can-agent="!!agentHandle"
       @open-comment="emit('open-comment', $event)"
-      @rewrite="emit('rewrite', $event)"
+      @agent="emit('agent', $event)"
       @open-link="openLink"
       @error="emit('error', $event)"
       @pick="runSlashItem"
@@ -750,7 +748,7 @@ const emptyPlaceholder = computed(() => JSON.stringify(t('work.room.doc.emptyPla
   font-weight: 600;
 }
 .doc-editor :deep(mark) {
-  border-radius: 2px;
+  border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--signal-yellow) 32%, transparent);
   color: inherit;
 }

@@ -9,12 +9,15 @@
 // 同一份，协同服务在停手几秒后把它存回去。评论锚着的是服务端那一侧的节点，存回之后房
 // 间里会收到一帧 state/doc，父层把它变成 activityTick，这一层据此重读评论和节点。
 import type { Block, Topic } from '../cx_types'
+import type { SelectionTarget } from '../lib/docBubble'
 import type { DocEdit, DocRewriteRequest } from '../lib/docEdits'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { addComment, getComments, getDocNodes, workspaceFileRawUrl } from '../api'
 import { applyDocEdits, getPendingSuggestions, rewriteDocSelection } from '../api/docEdits'
+import { getDocThread } from '../api/docThreads'
+import { isAgentBlock } from '../lib/authorship'
 import { expandMentions } from '../lib/expandMentions'
 import { myHandle } from '../me'
 
@@ -153,6 +156,24 @@ export function usePanelDoc(props: PanelDocProps) {
     return rewriteDocSelection(tid, request)
   }
 
+  /** 问 AI 队友：一句话连同选中的字发成点了它名的评论，回答回到这条评论下面。 */
+  async function askAgent(target: SelectionTarget, question: string): Promise<string> {
+    const tid = props.topic?.id
+    if (!tid || !props.agentHandle) throw new Error(t('work.room.comments.unavailable'))
+    const content = `<@${props.agentHandle}> ${question}`
+    const posted = await addComment(tid, content, target.anchorId ?? undefined, target.quote)
+    void refreshComments()
+    return posted.id
+  }
+
+  /** 那条评论下 AI 队友的第一条回答。 */
+  async function answerOf(threadId: string): Promise<string | null> {
+    const tid = props.topic?.id
+    if (!tid) return null
+    const thread = await getDocThread(tid, threadId)
+    return thread.replies.find((reply) => isAgentBlock(reply.comment))?.comment.content ?? null
+  }
+
   /** 以自己的名义替换正文里的字：撤销、还原 AI 队友的修改都走这里。 */
   function applyEdits(edits: DocEdit[]) {
     const tid = props.topic?.id
@@ -229,6 +250,8 @@ export function usePanelDoc(props: PanelDocProps) {
     commentAuthor: AUTHOR,
     sendComment: (topicId: string, content: string, anchor?: string, quote?: string) =>
       addComment(topicId, withMentions(content), anchor, quote),
+    askAgent,
+    answerOf,
     withMentions,
     toggleEditable,
     setError,
