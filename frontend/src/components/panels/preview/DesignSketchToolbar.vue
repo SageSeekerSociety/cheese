@@ -38,16 +38,22 @@ function onNoteEnter(event: KeyboardEvent) {
   event.preventDefault()
   emit('send')
 }
-/** 每个工具的示意图标；不引图标库，路径就写在这里，省一个依赖。 */
-const GLYPH: Record<SketchTool, string> = {
-  select: 'M3 3h6M3 3v6M15 3h-6M15 3v6M3 15v-6M15 15h-6M15 15v-6',
-  pen: 'M3 17c3-1 5-3 6-6s3-6 6-8',
-  line: 'M3 15 15 5',
-  arrow: 'M3 15 15 5M15 5h-5M15 5v5',
-  rect: 'M3 5h12v10H3z',
-  ellipse: 'M9 5c3.3 0 6 2.2 6 5s-2.7 5-6 5-6-2.2-6-5 2.7-5 6-5z',
-  text: 'M4 5h10M9 5v10M6.5 15h5',
-  redact: 'M3 7h12v6H3z',
+/**
+ * 工具栏只画图标，名字一律走 `aria-label` 和 `title`。
+ *
+ * 一排十六颗按钮里，中文标签比图标宽一倍多，窄面板（240px）里横滚的距离随之翻倍；
+ * 而这几件事各网站都用同一套图形。名字没被丢掉，只是移到了悬停提示和读屏里——
+ * 「加入对话」除外，它是提交动作不是工具，留着文字更清楚（参考物也写着 Add to chat）。
+ */
+const TOOL_ICON: Record<SketchTool, string> = {
+  select: 'mdi-cursor-default-outline',
+  pen: 'mdi-pencil',
+  line: 'mdi-vector-line',
+  arrow: 'mdi-arrow-top-right',
+  rect: 'mdi-rectangle-outline',
+  ellipse: 'mdi-ellipse-outline',
+  text: 'mdi-format-text',
+  redact: 'mdi-eye-off-outline',
 }
 </script>
 
@@ -64,9 +70,7 @@ const GLYPH: Record<SketchTool, string> = {
       :title="t('design.tools.select')"
       @click="emit('pick', 'select')"
     >
-      <svg viewBox="0 0 18 20" width="16" height="18" aria-hidden="true">
-        <path :d="GLYPH.select" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
-      </svg>
+      <i :class="`mdi ${TOOL_ICON.select}`" class="sketch-toolbar__icon" aria-hidden="true" />
     </button>
     <button
       v-for="item in DRAW_TOOLS"
@@ -79,9 +83,7 @@ const GLYPH: Record<SketchTool, string> = {
       :title="t(`design.tools.${item}`)"
       @click="emit('pick', item)"
     >
-      <svg viewBox="0 0 18 20" width="16" height="18" aria-hidden="true">
-        <path :d="GLYPH[item]" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
-      </svg>
+      <i :class="`mdi ${TOOL_ICON[item]}`" class="sketch-toolbar__icon" aria-hidden="true" />
     </button>
     <span class="sketch-toolbar__gap" />
     <button
@@ -100,23 +102,36 @@ const GLYPH: Record<SketchTool, string> = {
     <span class="sketch-toolbar__gap" />
     <button
       type="button"
+      class="sketch-toolbar__tool"
       :disabled="!canUndo"
       aria-keyshortcuts="Meta+Z Control+Z"
+      :aria-label="t('design.undo')"
       :title="t('design.undoShortcut')"
       @click="emit('undo')"
     >
-      {{ t('design.undo') }}
+      <i class="mdi mdi-undo sketch-toolbar__icon" aria-hidden="true" />
     </button>
     <button
       type="button"
+      class="sketch-toolbar__tool"
       :disabled="!canRedo"
       aria-keyshortcuts="Meta+Shift+Z Control+Shift+Z Control+Y"
+      :aria-label="t('design.redo')"
       :title="t('design.redoShortcut')"
       @click="emit('redo')"
     >
-      {{ t('design.redo') }}
+      <i class="mdi mdi-redo sketch-toolbar__icon" aria-hidden="true" />
     </button>
-    <button type="button" :disabled="!hasStrokes" @click="emit('clear')">{{ t('design.clear') }}</button>
+    <button
+      type="button"
+      class="sketch-toolbar__tool"
+      :disabled="!hasStrokes"
+      :aria-label="t('design.clear')"
+      :title="t('design.clear')"
+      @click="emit('clear')"
+    >
+      <i class="mdi mdi-delete-sweep-outline sketch-toolbar__icon" aria-hidden="true" />
+    </button>
     <input
       v-if="hasStrokes"
       v-model="note"
@@ -136,10 +151,12 @@ const GLYPH: Record<SketchTool, string> = {
 <style scoped>
 .sketch-toolbar {
   display: flex;
-  flex-wrap: wrap;
+  /* 窄面板（240px）里让它换行会占掉三四行，图就没地方了——排成一行，横向滚。 */
+  flex-wrap: nowrap;
   align-items: center;
   gap: 4px;
-  padding: 6px 8px;
+  padding: 4px 8px;
+  overflow-x: auto;
   border-bottom: 1px solid var(--line);
 }
 .sketch-toolbar__gap {
@@ -150,12 +167,17 @@ const GLYPH: Record<SketchTool, string> = {
   border-radius: var(--radius-sm);
   font-size: 13px;
   line-height: var(--lh-13);
+  white-space: nowrap;
 }
 .sketch-toolbar button:hover:not(:disabled) {
   background: var(--fill-2);
 }
+/* 禁用态光靠颜色深浅分不出来：#747a82 的灰和正文的灰在窄条上差别很小，而这几颗
+ * 按钮「现在能不能按」正是撤销/重做要回答的问题。淡到看得见的一档，加上默认光标。 */
 .sketch-toolbar button:disabled {
   color: var(--faint);
+  opacity: 0.45;
+  cursor: default;
 }
 .sketch-toolbar button.is-active {
   background: var(--fill-2);
@@ -164,7 +186,8 @@ const GLYPH: Record<SketchTool, string> = {
 .sketch-toolbar button.is-primary {
   margin-left: auto;
   background: var(--accent);
-  color: #fff;
+  /* 和发送键同一对：琥珀底上的字 */
+  color: rgb(var(--v-theme-on-primary));
 }
 .sketch-toolbar button.is-primary:disabled {
   background: var(--fill-2);
@@ -174,6 +197,11 @@ const GLYPH: Record<SketchTool, string> = {
   display: inline-flex;
   align-items: center;
 }
+/* 图标是字体字形，尺寸跟着 font-size 走；不设为 1 的话行高会把这一条顶高几像素。 */
+.sketch-toolbar__icon {
+  font-size: 18px;
+  line-height: 1;
+}
 .sketch-toolbar__color {
   font-size: 15px;
   line-height: 1;
@@ -182,8 +210,7 @@ const GLYPH: Record<SketchTool, string> = {
   outline: 2px solid var(--accent);
 }
 .sketch-toolbar__note {
-  flex: 1 1 160px;
-  min-width: 120px;
+  flex: 0 0 160px;
   padding: 4px 8px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
