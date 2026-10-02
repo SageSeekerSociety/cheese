@@ -23,8 +23,8 @@ every sign-in route calls it. `_spend_sudo_ticket` is the shared helper and
 lives in `users_common.py`, and `issue_session` joined it there: every way
 of signing in ends in it, so the mint sits beside the ticket these modules
 already share, imported here the way `app_sign_in.py` imports it.
-`get_passkey_service` is defined in `users.py` and imported from there.
-`get_user_auth_service` is a FastAPI dependency in `app/api/deps.py`.
+`get_passkey_service` and `get_user_auth_service` are FastAPI dependencies
+assembled in `app/api/deps.py`.
 
 Ordering. This module sorts after `users.py`, `users_2fa.py` and
 `users_identity.py`, so its paths mount after every path that stays. The two
@@ -50,8 +50,7 @@ from fastapi import APIRouter, Body, Depends, Path, Request, Response
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_user_auth_service
-from app.api.routes.users import get_passkey_service
+from app.api.deps import get_passkey_service, get_user_auth_service
 from app.api.routes.users_common import (
     SudoTicketRequest,
     _spend_sudo_ticket,

@@ -1,6 +1,6 @@
-import { defineComponent, h, ref } from 'vue'
+import { ref } from 'vue'
 import { createVuetify } from 'vuetify'
-import { fireEvent, render } from '@testing-library/vue'
+import { render, waitFor } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { setLocale } from '@/i18n'
@@ -22,6 +22,12 @@ vi.mock('@/composables/useCachedResource', () => ({
   }),
 }))
 vi.mock('../me', () => ({ myHandle: () => 'writer' }))
+vi.mock('@tiptap/extension-drag-handle-vue-3', () => ({ DragHandle: { render: () => null } }))
+vi.mock('../composables/useDocCollab', async () => ({
+  useDocCollab: (await import('../test/fakeDocCollab')).useFakeDocCollab,
+}))
+
+import { remoteEdit, seedRoom } from '../test/fakeDocCollab'
 
 import ProjectDocsView from './ProjectDocsView.vue'
 
@@ -92,38 +98,18 @@ describe('in English', () => {
   })
 })
 
-describe('charter save errors', () => {
-  it('keeps the same editor and draft mounted after a conflict, and clears the error after saving', async () => {
-    const Editor = defineComponent({
-      emits: ['error', 'saved'],
-      setup(_props, { emit }) {
-        const draft = ref('')
-        return () =>
-          h('div', [
-            h('input', {
-              'aria-label': '草稿',
-              value: draft.value,
-              onInput: (e: Event) => {
-                draft.value = (e.target as HTMLInputElement).value
-              },
-            }),
-            h('button', { onClick: () => emit('error', '文档版本冲突') }, '模拟冲突'),
-            h('button', { onClick: () => emit('saved') }, '保存成功'),
-          ])
-      },
-    })
+describe('章程', () => {
+  it('打开的是项目房间那一篇协同文档，谁在房间里改的都在这儿', async () => {
+    seedRoom('root', '我们给高中生做算法课。')
     const view = render(ProjectDocsView, {
       props: { projectId: 'p', kind: 'charter' },
-      global: { plugins: [createVuetify()], stubs: { DocEditor: Editor } },
+      global: { plugins: [createVuetify()] },
     })
-    const input = view.getByLabelText('草稿') as HTMLInputElement
-    await fireEvent.update(input, '本地未保存的修改')
-    await fireEvent.click(view.getByText('模拟冲突'))
-    expect(view.getByText('文档版本冲突')).toBeTruthy()
-    expect(view.getByLabelText('草稿')).toBe(input)
-    expect(input.value).toBe('本地未保存的修改')
-    await fireEvent.click(view.getByText('保存成功'))
-    expect(view.queryByText('文档版本冲突')).toBeNull()
+    await waitFor(() => expect(view.container.querySelector('.doc-prose')?.textContent).toContain('算法课'))
+
+    remoteEdit('root', '我们给高中生做算法课。\n\n每周二上课。')
+
+    await waitFor(() => expect(view.container.querySelector('.doc-prose')?.textContent).toContain('每周二上课'))
     view.unmount()
   })
 })

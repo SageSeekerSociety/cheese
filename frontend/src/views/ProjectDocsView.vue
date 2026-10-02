@@ -2,13 +2,15 @@
 import type { MemoryEntryOut } from '../api'
 import type { Block } from '../cx_types'
 
-import { computed, ref, watch } from 'vue'
+import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { useCachedResource } from '@/composables/useCachedResource'
 
 import { deleteMemory, getProject, getProjectWeeklies, listMemory } from '../api'
 import DocEditor from '../components/DocEditor.vue'
+import DocPresence from '../components/panels/doc/DocPresence.vue'
+import { useDocCollab } from '../composables/useDocCollab'
 import { relTime } from '../lib/relTime'
 import { myHandle } from '../me'
 
@@ -76,52 +78,20 @@ const { data, loading, error } = useCachedResource(
 
 const weeklies = computed<Block[]>(() => data.value?.weeklies ?? [])
 const memoryEntries = computed<MemoryEntryOut[]>(() => data.value?.memoryEntries ?? [])
-// 章程的保存失败是「刚才那一下没成」，跟「这一页加载不出来」分开报。
-const saveError = ref<string | null>(null)
-const errorMessage = computed<string | null>(
-  () => saveError.value ?? (error.value ? error.value.message || t('project.docs.loadFailed') : null)
+const errorMessage = computed<string | null>(() =>
+  error.value ? error.value.message || t('project.docs.loadFailed') : charter.error.value ?? null
 )
 
 function renderMarkdown(text: string): string {
   return sanitizeRendered(markdown.parse(text, { async: false }) as string)
 }
 
-// ---- 章程: the root topic's living doc (改了就等于给芝士下指令). The rich
-// editor (DocEditor) owns loading/saving the doc's markdown via the same
-// getDoc/putDoc API PanelDoc uses. Like the workspace PanelDoc, it is ALWAYS
-// editable and autosaves (debounce + ⌘S + blur) — no 编辑 toggle. Here we only
-// mirror the save-status indicator it emits. ----
+// ---- 章程: the root topic's living doc (改了就等于给芝士下指令). Edited live,
+// together with the room's own doc panel and anyone else who has it open: the
+// editor binds to the collaborative document opened here, and the collaboration
+// service stores it. There is no save and nothing to save. ----
 const rootTopicId = computed<string | null>(() => data.value?.rootTopicId ?? null)
-const saving = ref(false)
-const savedAt = ref<number | null>(null)
-const charterDirty = ref(false)
-
-// 换一个 tab（或换一个项目）等于换一篇文档，上一篇的保存状态不能跟过来。
-watch([kind, () => props.projectId], () => {
-  saving.value = false
-  savedAt.value = null
-  charterDirty.value = false
-  saveError.value = null
-})
-
-function onCharterSaving() {
-  saving.value = true
-  savedAt.value = null
-}
-function onCharterSaved() {
-  saving.value = false
-  charterDirty.value = false
-  savedAt.value = Date.now()
-  saveError.value = null
-}
-function onCharterDirty() {
-  charterDirty.value = true
-  savedAt.value = null
-}
-function onCharterError(message: string) {
-  saving.value = false
-  saveError.value = message
-}
+const charter = useDocCollab(() => (kind.value === 'charter' ? rootTopicId.value : null))
 
 function fmtDate(d: string | null): string {
   if (!d) return ''
@@ -195,12 +165,11 @@ useCommands(() => {
 <template>
   <AppPage :title="t('navigation.project.docs')">
     <!-- 没有状态时不给这一格：手机上页头只为状态画（AppPage），空着也画会留一条白带。 -->
-    <template v-if="kind === 'charter' && (saving || savedAt || charterDirty)" #meta>
-      <span v-if="saving">{{ t('project.docs.saving') }}</span>
-      <span v-else-if="savedAt" class="d-inline-flex align-center ga-1">
-        <span class="status-dot status-dot--ok" />{{ t('project.docs.saved') }}
-      </span>
-      <span v-else-if="charterDirty">{{ t('project.docs.unsaved') }}</span>
+    <template
+      v-if="kind === 'charter' && (charter.connection.value !== 'connected' || charter.peers.value.length)"
+      #meta
+    >
+      <DocPresence :peers="charter.peers.value" :connection="charter.connection.value" />
     </template>
     <div class="mb-6">
       <v-tabs
@@ -223,7 +192,6 @@ useCommands(() => {
       {{ errorMessage }}
     </v-alert>
 
-    <!-- A save error must not unmount the editor holding the local draft. -->
     <template v-if="!loading && !error">
       <!-- ===== 记忆: what 芝士 remembers, human-prunable ===== -->
       <template v-if="kind === 'memory'">
@@ -259,21 +227,18 @@ useCommands(() => {
 
       <!-- ===== 章程: project root doc, read/edit with the rich tiptap
              editor — the SAME editing experience as the workspace doc panel
-             (drag handle, tables, task lists, code highlighting), persisted via
-             the same getDoc/putDoc API. ===== -->
+             (drag handle, tables, task lists, code highlighting), and the same
+             live document. ===== -->
       <template v-else-if="kind === 'charter'">
         <!-- 一整篇文档，不是列表里的一个对象 —— 根面是白底之后，把它框进一张
                白卡片只是给白底加了个轮廓。直接铺在页面上。 -->
         <div class="charter-body">
           <DocEditor
             v-if="rootTopicId"
-            :topic-id="rootTopicId"
-            :editable="true"
+            :session="charter.session.value"
+            :loading="!charter.synced.value"
+            :editable="!charter.readOnly.value"
             :placeholder="t('project.docs.charterPlaceholder')"
-            @saving="onCharterSaving"
-            @saved="onCharterSaved"
-            @dirty="onCharterDirty"
-            @error="onCharterError"
           />
           <div v-else class="text-medium-emphasis text-body-2 py-2">{{ t('project.docs.noCharter') }}</div>
         </div>

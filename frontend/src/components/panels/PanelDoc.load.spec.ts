@@ -1,10 +1,8 @@
-// 文档那一格的读：文档、评论、节点分别什么时候来，来了画成什么，读不到时说什么。
+// 文档那一格打开一篇协同文档：正文从协同文档来，别人改的实时出现，评论和节点照旧
+// 从接口读，打不开时说原因。
 //
-// 和 PanelDoc.save.spec.ts 一样，是「把取数搬进组合式函数」那一步（#2143）的安全
-// 网。这一格一次读三样东西（正文 / 评论 / 节点），其中后两样还要喂给编辑器里的
-// 两种装饰：评论下划线、支线徽章。拆的时候接错了不会崩 —— 只是下划线不再出现，
-// 或者服务端的新版本被本地草稿无声地顶掉。
-import type { Editor as CoreEditor } from '@tiptap/core'
+// 协同服务由 src/test/fakeDocCollab.ts 代替：每个房间一份「服务端」文档，面板打开
+// 时拿到一份和它保持同步的客户端文档 —— 没有 socket，其余和真的一样。
 import type { Component } from 'vue'
 import type { Block, Topic } from '../../cx_types'
 
@@ -14,11 +12,13 @@ import * as directives from 'vuetify/directives'
 import { cleanup, render, waitFor } from '@testing-library/vue'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { exportMarkdown } from '../../lib/docSchema'
+import { remoteEdit, resetRooms, seedRoom, serverDoc } from '../../test/fakeDocCollab'
+
 const mocks = vi.hoisted(() => ({
   getDoc: vi.fn(),
   getComments: vi.fn(),
   getDocNodes: vi.fn(),
-  editor: null as CoreEditor | null,
 }))
 
 vi.mock('../../api', async () => {
@@ -30,44 +30,30 @@ vi.mock('../../api', async () => {
     getDocNodes: (...a: unknown[]) => mocks.getDocNodes(...a),
   }
 })
-
-vi.mock('@tiptap/vue-3', async () => {
-  const actual = await vi.importActual<typeof import('@tiptap/vue-3')>('@tiptap/vue-3')
-  return {
-    ...actual,
-    useEditor: (...args: Parameters<typeof actual.useEditor>) => {
-      const result = actual.useEditor(...args)
-      setTimeout(() => {
-        mocks.editor = result.value ?? null
-      }, 0)
-      return result
-    },
-  }
-})
+vi.mock('../../composables/useDocCollab', async () => ({
+  useDocCollab: (await import('../../test/fakeDocCollab')).useFakeDocCollab,
+}))
 
 import PanelDoc from './PanelDoc.vue'
 
 import { setLocale } from '@/i18n'
 
-// 断言按中文文案写：默认 locale 是 en，这里钉回 zh-CN。
 beforeEach(() => setLocale('zh-CN'))
 
 const Doc = PanelDoc as unknown as Component
 
-const topic = {
-  id: 't1',
-  project_id: 'p1',
-  parent_id: null,
-  title: '房间',
-  kind: 'topic',
-  status: 'active',
-  created_by: 'u',
-  created_at: '2026-09-01T00:00:00Z',
-  updated_at: '2026-09-01T00:00:00Z',
-} as Topic
-
-function doc(content: string, version = 1): Block {
-  return { id: 'd1', kind: 'doc', content, doc_version: version } as unknown as Block
+function room(id: string): Topic {
+  return {
+    id,
+    project_id: 'p1',
+    parent_id: null,
+    title: `房间 ${id}`,
+    kind: 'topic',
+    status: 'active',
+    created_by: 'u',
+    created_at: '2026-09-01T00:00:00Z',
+    updated_at: '2026-09-01T00:00:00Z',
+  } as Topic
 }
 
 let vuetify: ReturnType<typeof createVuetify>
@@ -77,48 +63,89 @@ beforeAll(() => {
 })
 
 beforeEach(() => {
-  mocks.editor = null
+  resetRooms()
   mocks.getDoc.mockReset()
   mocks.getComments.mockReset()
   mocks.getDocNodes.mockReset()
+  mocks.getDoc.mockResolvedValue(null)
   mocks.getComments.mockResolvedValue({ data: [], total: 0 })
   mocks.getDocNodes.mockResolvedValue({ data: [], total: 0 })
 })
 
 afterEach(cleanup)
 
-function deferred<T>() {
-  let resolve!: (value: T) => void
-  const promise = new Promise<T>((ok) => {
-    resolve = ok
-  })
-  return { promise, resolve }
-}
-async function settle() {
-  for (let i = 0; i < 12; i++) await Promise.resolve()
-}
-
-function open(props: Record<string, unknown> = {}) {
+function open(topic: Topic) {
   return render(Doc, {
-    props: { topic, activityTick: 0, topicList: [], ...props },
+    props: { topic, activityTick: 0, topicList: [] },
     global: { plugins: [vuetify] },
   })
 }
 
-describe('文档读进来', () => {
-  it('文档读不到时，错误条上是服务端的原话，评论也就不再去问', async () => {
-    mocks.getDoc.mockRejectedValue(new Error('502 坏网关'))
-    const { container } = open()
+function prose(container: Element): string {
+  return container.querySelector('.doc-prose')?.textContent ?? ''
+}
 
-    await waitFor(() => expect(container.querySelector('.doc-error-toast')?.textContent).toContain('502 坏网关'))
-    expect(container.querySelector('.doc-skel'), '读完了就不该还摆着骨架').toBeNull()
-    // 评论跟在正文后面读；正文都没读到，那两条请求没有理由发出去。
-    expect(mocks.getComments).not.toHaveBeenCalled()
-    expect(mocks.getDocNodes).not.toHaveBeenCalled()
+describe('打开一篇协同文档', () => {
+  it('打不开时说原因，不摆一个空编辑器冒充空文档', async () => {
+    seedRoom('t1', '', { error: '你不是这个房间的成员' })
+    const { container } = open(room('t1'))
+
+    await waitFor(() =>
+      expect(container.querySelector('.doc-error-toast')?.textContent).toContain('不是这个房间的成员')
+    )
+    expect(container.querySelector('.doc-prose')).toBeNull()
+  })
+
+  it('别人写的字实时出现在编辑器里', async () => {
+    seedRoom('t1', '第一段')
+    const { container } = open(room('t1'))
+    await waitFor(() => expect(prose(container)).toContain('第一段'))
+
+    remoteEdit('t1', '第一段\n\n别人刚写的第二段')
+
+    await waitFor(() => expect(prose(container)).toContain('别人刚写的第二段'))
+  })
+
+  it('在编辑器里打的字进了协同文档', async () => {
+    seedRoom('t1', '第一段')
+    const { container } = open(room('t1'))
+    await waitFor(() => expect(prose(container)).toContain('第一段'))
+
+    const paragraph = container.querySelector('.doc-prose p') as HTMLElement
+    paragraph.textContent = '第一段，我改的'
+    await waitFor(() => expect(exportMarkdown(serverDoc('t1'))).toContain('我改的'))
+  })
+
+  it('换一个房间就换一篇文档，上一篇的字不留在编辑器里', async () => {
+    seedRoom('a', '甲房间的文档')
+    seedRoom('b', '乙房间的文档')
+    const view = open(room('a'))
+    await waitFor(() => expect(prose(view.container)).toContain('甲房间'))
+
+    await view.rerender({ topic: room('b'), activityTick: 0, topicList: [] })
+
+    await waitFor(() => expect(prose(view.container)).toContain('乙房间'))
+    expect(prose(view.container)).not.toContain('甲房间')
+  })
+
+  it('存回之后，屏幕上这一份和已存的那一版是同一份；还有字没存回时不是', async () => {
+    const markdown = '# 题目\n\n* 一\n* 二\n\n| 列 | 值 |\n| --- | --- |\n| a | 1 |\n'
+    seedRoom('t1', markdown)
+    // 协同服务存回的是它导出的那一份正文。
+    mocks.getDoc.mockResolvedValue({ id: 'd1', kind: 'doc', content: exportMarkdown(serverDoc('t1')), doc_version: 2 })
+    const { container } = open(room('t1'))
+    await waitFor(() => expect(prose(container)).toContain('题目'))
+    const probe = (window as unknown as { __docPanel: { matchesStored: () => boolean } }).__docPanel
+
+    await waitFor(() => expect(probe.matchesStored(), '文档 AI 会把它当成没存回而拒绝').toBe(true))
+
+    remoteEdit('t1', markdown + '\n还没存回的一句\n')
+    await waitFor(() => expect(prose(container)).toContain('还没存回'))
+    expect(probe.matchesStored()).toBe(false)
   })
 
   it('锚在某一句话上的评论，在正文里画一条下划线', async () => {
-    mocks.getDoc.mockResolvedValue(doc('第一段\n', 1))
+    seedRoom('t1', '第一段')
     mocks.getDocNodes.mockResolvedValue({
       data: [{ id: 'n1', kind: 'doc_node', content: '第一段' } as unknown as Block],
       total: 1,
@@ -135,89 +162,11 @@ describe('文档读进来', () => {
       ],
       total: 1,
     })
-    const { container } = open()
+    const { container } = open(room('t1'))
 
     await waitFor(() => expect(container.querySelector('.comment-anchor')).not.toBeNull())
     const anchor = container.querySelector('.comment-anchor') as HTMLElement
     expect(anchor.textContent, '下划线要正好压在被引用的那几个字上').toBe('第一段')
     expect(anchor.dataset.comment).toBe('c1')
-  })
-
-  it('AI 动过一次、服务端内容也变了，而本地没改：编辑器换成新的那一版', async () => {
-    mocks.getDoc.mockResolvedValue(doc('第一段\n', 1))
-    const view = open()
-    await waitFor(() => expect(view.container.querySelector('.doc-prose')?.textContent).toContain('第一段'))
-
-    mocks.getDoc.mockResolvedValue(doc('第二段\n', 2))
-    await view.rerender({ topic, activityTick: 1, topicList: [] })
-
-    await waitFor(() => expect(view.container.querySelector('.doc-prose')?.textContent).toContain('第二段'))
-    expect(view.container.querySelector('.doc-prose')?.textContent, '旧的正文该退场').not.toContain('第一段')
-    expect(view.container.querySelector('.doc-notice--conflict'), '没人有未保存的改动，就没有冲突可言').toBeNull()
-  })
-
-  it('服务端和本地都改了：两个版本都留着，等人来选', async () => {
-    mocks.getDoc.mockResolvedValue(doc('第一段\n', 1))
-    const view = open()
-    await waitFor(() => expect(mocks.editor).not.toBeNull())
-
-    mocks.editor!.commands.insertContent('我的话')
-    mocks.getDoc.mockResolvedValue(doc('芝士换掉的一段\n', 2))
-    await view.rerender({ topic, activityTick: 1, topicList: [] })
-
-    await waitFor(() => expect(view.container.querySelector('.doc-notice--conflict')).not.toBeNull())
-    expect(view.container.querySelector('.doc-prose')?.textContent, '没选之前轮不到服务端那一版上屏').toContain(
-      '我的话'
-    )
-    expect(view.container.querySelector('.doc-prose')?.textContent).not.toContain('芝士换掉的一段')
-  })
-
-  it('a slow initial GET cannot replace a newer activity snapshot', async () => {
-    const initial = deferred<Block>()
-    mocks.getDoc.mockReturnValueOnce(initial.promise).mockResolvedValue(doc('新版\n', 3))
-    const view = open()
-    await view.rerender({ topic, activityTick: 1 })
-    await waitFor(() => expect(view.container.querySelector('.doc-prose')?.textContent).toContain('新版'))
-    initial.resolve(doc('旧版\n', 1))
-    await settle()
-    expect(view.container.querySelector('.doc-prose')?.textContent).toContain('新版')
-    expect(view.container.querySelector('.doc-prose')?.textContent).not.toContain('旧版')
-  })
-
-  it('local input made while GET is pending remains beside the incoming conflict', async () => {
-    mocks.getDoc.mockResolvedValue(doc('第一段\n', 1))
-    const view = open()
-    await waitFor(() => expect(mocks.editor).not.toBeNull())
-    const refresh = deferred<Block>()
-    mocks.getDoc.mockReturnValueOnce(refresh.promise)
-    await view.rerender({ topic, activityTick: 1 })
-    mocks.editor!.commands.insertContent('请求中输入')
-    refresh.resolve(doc('远端新版\n', 2))
-    await waitFor(() => expect(view.container.querySelector('.doc-notice--conflict')).not.toBeNull())
-    expect(view.container.querySelector('.doc-prose')?.textContent).toContain('请求中输入')
-  })
-
-  it('topic identity fences pending content and comments without requiring unmount', async () => {
-    const initial = deferred<Block>()
-    mocks.getDoc.mockReturnValueOnce(initial.promise).mockResolvedValue(doc('新话题正文\n', 1))
-    const view = open()
-    const nextTopic = { ...topic, id: 't2', title: '新话题' }
-    await view.rerender({ topic: nextTopic, activityTick: 0 })
-    await waitFor(() => expect(view.container.querySelector('.doc-prose')?.textContent).toContain('新话题正文'))
-    initial.resolve(doc('旧话题正文\n', 9))
-    await settle()
-    expect(view.container.querySelector('.doc-prose')?.textContent).not.toContain('旧话题正文')
-    expect(mocks.getComments.mock.calls.every(([id]) => id === 't2')).toBe(true)
-  })
-
-  it('unmounting before the initial GET settles prevents follow-up requests', async () => {
-    const initial = deferred<Block>()
-    mocks.getDoc.mockReturnValueOnce(initial.promise)
-    const view = open()
-    view.unmount()
-    initial.resolve(doc('迟到正文\n', 1))
-    await settle()
-    expect(mocks.getComments).not.toHaveBeenCalled()
-    expect(mocks.getDocNodes).not.toHaveBeenCalled()
   })
 })

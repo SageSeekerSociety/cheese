@@ -7,16 +7,14 @@ import pytest
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 
+from app.api.doc_store import store
 from app.core.errors import ConflictError
+from app.domain.block.documents import DocumentWriter
 from app.domain.block.models import Block, BlockKind
-from app.domain.living_doc.delivery import dispatch_pending
-from app.domain.living_doc.models import (
-    DocumentOperation,
-    DocumentRefresh,
-    DocumentVersion,
-)
+from app.domain.living_doc.models import DocumentOperation, DocumentVersion
 from app.domain.living_doc.services import DocumentJournal, content_hash
 from app.domain.project.services import ProjectService
+from app.domain.topic.doc_change import summarize_doc_change
 from app.domain.topic.services import TopicService
 from tests.integration.conftest import registered, session_auth_headers
 from tests.integration.test_docs import _topic
@@ -30,61 +28,75 @@ async def seed(factory):
         return project.root_topic_id
 
 
+async def stored(factory, room, content, *actors, operation=None):
+    """One store from the collaboration service, as its own transaction."""
+    async with factory() as session:
+        result = await store(
+            session,
+            room,
+            state=b"yjs",
+            content=content,
+            actors=list(actors) or ["alice"],
+            operation=operation,
+        )
+        await session.commit()
+        return result.answer
+
+
 @pytest.mark.anyio
-@pytest.mark.parametrize("initial", [None, "初稿"])
-async def test_independent_sessions_have_exactly_one_cas_winner(
-    business_db_factory, initial
-):
+async def test_concurrent_stores_each_record_a_version_in_order(business_db_factory):
     factory = business_db_factory
     room = await seed(factory)
-    base = 0
-    if initial is not None:
-        async with factory() as session:
-            await TopicService(session).edit_doc(
-                topic_id=room, content=initial, author="alice", expected_version=0
-            )
-            await session.commit()
-        base = 1
+    await stored(factory, room, "初稿")
     start = asyncio.Event()
 
     async def write(content):
-        async with factory() as session:
-            await start.wait()
-            try:
-                doc, _ = await TopicService(session).edit_doc(
-                    topic_id=room,
-                    content=content,
-                    author="alice",
-                    expected_version=base,
-                )
-                await session.commit()
-                return doc.content
-            except ConflictError:
-                await session.rollback()
-                return None
+        await start.wait()
+        return await stored(factory, room, content)
 
-    tasks = [asyncio.create_task(write(text)) for text in ["赢家甲", "赢家乙"]]
+    tasks = [asyncio.create_task(write(text)) for text in ["第二版", "第三版"]]
     start.set()
-    results = await asyncio.gather(*tasks)
-    winner = next(value for value in results if value is not None)
-    assert results.count(None) == 1
+    await asyncio.gather(*tasks)
     async with factory() as session:
         doc = await TopicService(session).get_doc(room)
-        assert doc.content == winner
-        assert doc.doc_version == base + 1
         versions = await DocumentJournal(session).history(room)
-        assert len(versions) == base + 1
-        assert versions[-1]["content"] == winner
-        assert versions[-1]["content_hash"] == content_hash(winner)
-        blocks = list(
-            await session.scalars(select(Block).where(Block.topic_id == room))
-        )
-        assert sum(block.kind == BlockKind.doc for block in blocks) == 1
-        assert [
-            block.content for block in blocks if block.kind == BlockKind.doc_node
-        ] == [winner]
-        edits = [block for block in blocks if (block.meta or {}).get("action") == "doc"]
-        assert len(edits) == base + 1
+        assert [row["version"] for row in versions] == [1, 2, 3]
+        assert doc.doc_version == 3
+        assert doc.content == versions[-1]["content"]
+        assert versions[-1]["content_hash"] == content_hash(doc.content)
+        assert {row["content"] for row in versions[1:]} == {"第二版", "第三版"}
+
+
+@pytest.mark.anyio
+async def test_a_store_that_changes_no_text_records_no_version(business_db_factory):
+    factory = business_db_factory
+    room = await seed(factory)
+    await stored(factory, room, "")
+    await stored(factory, room, "同一句")
+    await stored(factory, room, "同一句", "bob")
+    async with factory() as session:
+        versions = await DocumentJournal(session).history(room)
+        assert [row["content"] for row in versions] == ["同一句"]
+        assert await DocumentJournal(session).state(room) == b"yjs"
+
+
+@pytest.mark.anyio
+async def test_a_store_names_everyone_whose_changes_it_holds(business_db_factory):
+    factory = business_db_factory
+    room = await seed(factory)
+    await stored(factory, room, "第一句", "alice")
+    await stored(factory, room, "第一句\n\n第二句", "bob", "alice")
+    async with factory() as session:
+        versions = await DocumentJournal(session).history(room)
+        assert versions[-1]["actor"] == "bob"
+        events = [
+            block
+            for block in await session.scalars(
+                select(Block).where(Block.kind == BlockKind.event)
+            )
+            if (block.meta or {}).get("action") == "doc"
+        ]
+        assert "<@bob>" in events[-1].content and "<@alice>" in events[-1].content
 
 
 def test_lost_response_replays_original_receipt_without_second_effect(client):
@@ -166,11 +178,11 @@ async def test_rollback_leaves_no_document_nodes_event_history_or_claim(
             operation_id=operation_id,
             payload={"content": "未提交", "expected_version": 0},
         )
-        await TopicService(session).edit_doc(
-            topic_id=room,
+        await DocumentWriter(session, summarize_doc_change).record(
+            room_id=room,
+            project_id=(await TopicService(session).get(room)).project_id,
             content="未提交",
-            author="alice",
-            expected_version=0,
+            actors=["alice"],
             operation_id=operation_id,
         )
         await session.rollback()
@@ -224,11 +236,7 @@ async def test_database_rejects_history_mutation_and_incomplete_receipts(
 ):
     factory = business_db_factory
     room = await seed(factory)
-    async with factory() as session:
-        await TopicService(session).edit_doc(
-            topic_id=room, content="不可变😀\r\n", author="alice", expected_version=0
-        )
-        await session.commit()
+    await stored(factory, room, "不可变😀\r\n")
     for mutation in [
         update(DocumentVersion).values(content="伪造"),
         delete(DocumentVersion),
@@ -246,11 +254,11 @@ async def test_database_rejects_history_mutation_and_incomplete_receipts(
             operation_id=operation_id,
             payload={"content": "不能提交", "expected_version": 1},
         )
-        await TopicService(session).edit_doc(
-            topic_id=room,
+        await DocumentWriter(session, summarize_doc_change).record(
+            room_id=room,
+            project_id=(await TopicService(session).get(room)).project_id,
             content="不能提交",
-            author="alice",
-            expected_version=1,
+            actors=["alice"],
         )
         with pytest.raises(IntegrityError, match="must commit its receipt"):
             await session.commit()
@@ -262,45 +270,6 @@ async def test_database_rejects_history_mutation_and_incomplete_receipts(
             await session.scalar(select(func.count()).select_from(DocumentOperation))
             == 0
         )
-        assert len(await DocumentJournal(session).refreshes(room)) == 1
-
-
-@pytest.mark.anyio
-async def test_durable_refresh_recovers_failure_and_keeps_reconnect_cursor(
-    business_db_factory,
-):
-    factory = business_db_factory
-    room = await seed(factory)
-    async with factory() as session:
-        await TopicService(session).edit_doc(
-            topic_id=room, content="已提交", author="alice", expected_version=0
-        )
-        await session.commit()
-    frames = []
-
-    async def unavailable(channel, message):
-        raise OSError("offline subscriber transport")
-
-    async with factory() as session:
-        with pytest.raises(OSError, match="offline subscriber transport"):
-            await dispatch_pending(session, unavailable)
-        await session.rollback()
-    async with factory() as session:
-        assert (await session.scalar(select(DocumentRefresh))).dispatched_at is None
-        assert (await TopicService(session).get_doc(room)).content == "已提交"
-
-    async def publish(channel, message):
-        frames.append((channel, message))
-
-    async with factory() as session:
-        assert await dispatch_pending(session, publish) == 1
-    async with factory() as session:
-        assert await dispatch_pending(session, publish) == 0
-        hints = await DocumentJournal(session).refreshes(room, after=0)
-        assert frames == [(str(room), hints[0])]
-        assert hints[0]["cursor"] == 1
-        assert hints[0]["content_hash"] == content_hash("已提交")
-        assert await DocumentJournal(session).refreshes(room, after=1) == []
 
 
 @pytest.mark.anyio
@@ -312,33 +281,21 @@ async def test_independent_operation_claims_apply_once(business_db_factory, diff
     start = asyncio.Event()
 
     async def write(content):
-        async with factory() as session:
-            await start.wait()
-            journal = DocumentJournal(session)
-            try:
-                operation = await journal.claim(
-                    room_id=room,
-                    actor="alice",
-                    action="replace",
-                    operation_id=operation_id,
-                    payload={"content": content, "expected_version": 0},
-                )
-                if operation.receipt is not None:
-                    return operation.receipt
-                doc, _ = await TopicService(session).edit_doc(
-                    topic_id=room,
-                    content=content,
-                    author="alice",
-                    expected_version=0,
-                    operation_id=operation_id,
-                )
-                receipt = {"content": doc.content, "version": doc.doc_version}
-                await journal.finish(operation, receipt)
-                await session.commit()
-                return receipt
-            except ConflictError:
-                await session.rollback()
-                return None
+        await start.wait()
+        try:
+            return await stored(
+                factory,
+                room,
+                content,
+                operation={
+                    "actor": "alice",
+                    "action": "replace",
+                    "operation_id": str(operation_id),
+                    "payload": {"content": content, "expected_version": 0},
+                },
+            )
+        except ConflictError:
+            return None
 
     tasks = [
         asyncio.create_task(write(text))
@@ -353,7 +310,6 @@ async def test_independent_operation_claims_apply_once(business_db_factory, diff
     async with factory() as session:
         assert (await TopicService(session).get_doc(room)).doc_version == 1
         assert len(await DocumentJournal(session).history(room)) == 1
-        assert len(await DocumentJournal(session).refreshes(room)) == 1
         assert (
             await session.scalar(select(func.count()).select_from(DocumentOperation))
             == 1
@@ -438,18 +394,13 @@ def test_operation_requires_real_owner_and_ignores_claimed_author(client, monkey
         client.get(f"/topics/{room}/doc/operations/{operation}", headers=owner).json()
         == saved.json()
     )
-    for endpoint in ["history", "refreshes"]:
-        assert (
-            client.get(f"/topics/{room}/doc/{endpoint}", headers=outsider).status_code
-            == 403
-        )
-    hints = client.get(f"/topics/{room}/doc/refreshes", headers=owner).json()["data"]
-    assert hints["cursor"] == 1
-    assert len(hints["refreshes"]) == 1
+    assert (
+        client.get(f"/topics/{room}/doc/history", headers=outsider).status_code == 403
+    )
 
 
 def test_committed_response_failure_replays_one_persisted_effect(client, monkeypatch):
-    from app.api.routes import living_docs
+    from app.api import doc_store
 
     room = _topic(client)
     client.headers.update(session_auth_headers("owner"))
@@ -459,15 +410,15 @@ def test_committed_response_failure_replays_one_persisted_effect(client, monkeyp
         "expected_version": 0,
         "operation_id": operation,
     }
-    original = living_docs.get_broker().publish
+    original = doc_store.get_broker().publish
 
     async def failed_publish(channel, message):
         raise OSError("injected after commit")
 
-    monkeypatch.setattr(living_docs.get_broker(), "publish", failed_publish)
-    with pytest.raises(OSError, match="injected after commit"):
-        client.put(f"/topics/{room}/doc", json=payload)
-    monkeypatch.setattr(living_docs.get_broker(), "publish", original)
+    # The store committed; telling the room failed, so the writer never heard.
+    monkeypatch.setattr(doc_store.get_broker(), "publish", failed_publish)
+    assert client.put(f"/topics/{room}/doc", json=payload).status_code != 200
+    monkeypatch.setattr(doc_store.get_broker(), "publish", original)
     queried = client.get(f"/topics/{room}/doc/operations/{operation}")
     assert queried.status_code == 200
     replay = client.put(f"/topics/{room}/doc", json=payload)
@@ -476,8 +427,4 @@ def test_committed_response_failure_replays_one_persisted_effect(client, monkeyp
     assert client.get(f"/topics/{room}/doc").json()["data"]["doc_version"] == 1
     assert (
         len(client.get(f"/topics/{room}/doc/history").json()["data"]["versions"]) == 1
-    )
-    assert (
-        len(client.get(f"/topics/{room}/doc/refreshes").json()["data"]["refreshes"])
-        == 1
     )

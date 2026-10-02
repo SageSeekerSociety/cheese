@@ -43,6 +43,9 @@ const previewDocumentPdfSnapshot = vi.fn()
 const documentRevisions = vi.fn()
 const decideDocumentRevisions = vi.fn()
 
+vi.mock('../../composables/useDocCollab', async () => ({
+  useDocCollab: (await import('../../test/fakeDocCollab')).useFakeDocCollab,
+}))
 vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
   return {
@@ -70,7 +73,6 @@ vi.mock('../../api', async () => {
     decideDocumentRevisions: (...a: unknown[]) => decideDocumentRevisions(...a),
     writeFile: vi.fn().mockResolvedValue({ path: 'x', version: 'v2' }),
     getDoc: vi.fn().mockResolvedValue({ markdown: '', title: '' }),
-    putDoc: vi.fn().mockResolvedValue({}),
     getComments: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getDocNodes: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getTranscript: vi.fn().mockResolvedValue({ data: [], total: 0 }),

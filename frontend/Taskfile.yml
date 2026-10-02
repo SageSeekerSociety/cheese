@@ -14,6 +14,15 @@ tasks:
     deps: [install]
     cmds:
       - pnpm run dev
+  dev:collab:
+    desc: Start the collaboration service against the dev backend
+    deps: [install]
+    env:
+      COLLAB_SECRET: '{{.COLLAB_SECRET | default "dev-collab-secret"}}'
+      COLLAB_BACKEND_URL: '{{.COLLAB_BACKEND_URL | default "http://127.0.0.1:8081"}}'
+    cmds:
+      - pnpm run build:collab
+      - node dist-collab/main.mjs
   build:
     desc: Build frontend for production
     deps: [install]

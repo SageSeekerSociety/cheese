@@ -9,7 +9,7 @@
 //   </AdaptiveMenu>
 //
 // 激活器的 props 两端都要 v-bind 上：桌面上它们是 v-menu 的，手机上是打开面板的
-// onClick。#header 只在手机面板上画（一排表情、一行标题）。
+// onClick。#header 只在手机面板上画；#desktopHeader 可在桌面菜单项前放一排表情等内容。
 import type { MenuAction } from './menuAction'
 
 import { useDisplay } from 'vuetify'
@@ -34,6 +34,7 @@ const props = withDefaults(
 defineSlots<{
   activator: (scope: { props: Record<string, unknown> }) => unknown
   header?: () => unknown
+  desktopHeader?: () => unknown
 }>()
 
 const { mdAndUp } = useDisplay()
@@ -65,6 +66,7 @@ const sheetActivator = () => ({
       <slot name="activator" :props="activator" />
     </template>
     <v-list min-width="160">
+      <slot name="desktopHeader" />
       <v-list-item
         v-for="action in props.actions"
         :key="action.key"

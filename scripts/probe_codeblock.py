@@ -79,13 +79,11 @@ async def main() -> None:
         print("menu after outside click:", menu_open)
         await pg.screenshot(path="tmp_review/codeblock-tab-lang.png",
             clip={"x": 930, "y": 100, "width": 560, "height": 400})
-        # autosave (2.5s debounce) must persist the language change even
-        # though focus sits on the picker button (outside the ⌘S listener).
-        state = await pg.evaluate("() => ({dirty: window.__docPanel?.isDirty(), updates: window.__docPanel?.updates, md: window.__docPanel?.getMarkdown()?.slice(0, 40)})")
+        # The collaboration service stores the language change a few seconds
+        # after the last edit, wherever focus sits.
+        state = await pg.evaluate("() => ({md: window.__docPanel?.getMarkdown()?.slice(0, 40)})")
         print("after pick:", state)
         await pg.wait_for_timeout(4000)
-        state2 = await pg.evaluate("() => ({dirty: window.__docPanel?.isDirty()})")
-        print("after 4s:", state2)
         doc = _req(f"{API}/api/topics/{tid}/doc")
         print("disk markdown:", json.dumps((doc or {}).get("content", "")))
         _req(f"{API}/api/topics/{tid}/archive", "POST", {"by": "mentor-1"})

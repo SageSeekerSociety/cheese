@@ -28,7 +28,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 from redis.asyncio import from_url
-from sqlalchemy import select, update
+from sqlalchemy import select, text, update
 
 from app.api.deps import get_personal_sessions
 from app.api.routes import assistant as route
@@ -319,6 +319,13 @@ def _events(text: str) -> list[tuple[str, dict]]:
 def _ledger(client, handle: str):
     async def read():
         async with client.test_factory() as s:
+            # One snapshot for the whole read. Under READ COMMITTED each SELECT
+            # takes its own, so the single transaction that writes the usage row
+            # and the grant deduction landing in between reads as a charged call
+            # on a grant still untouched — and _charged returns on the usage
+            # alone, before the deduction exists to it. Every poll opens its own
+            # transaction here, so the next one sees the settled pair together.
+            await s.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ"))
             user = (
                 await s.execute(select(User).where(User.username == handle))
             ).scalar_one()

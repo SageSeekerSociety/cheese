@@ -682,6 +682,7 @@ def api_client(
     db_session: AsyncSession,
     _portal: "BlockingPortal",
     stub_project_forge,
+    monkeypatch,
 ) -> Generator["TestClient"]:
     """In-process FastAPI TestClient with ``get_db`` overridden to share the
     per-test transactional session. The TestClient is forced to use the
@@ -705,6 +706,10 @@ def api_client(
     # repeatedly — which would also start every periodic job the platform runs
     # (app/core/background.py), once per test.
     client.portal = _portal  # type: ignore[assignment]
+    # The living document is written through the collaboration service.
+    from tests.support.collab import install as install_collab
+
+    client.collab = install_collab(monkeypatch, app)  # type: ignore[attr-defined]
     try:
         yield client
     finally:

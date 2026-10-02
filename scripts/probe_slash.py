@@ -147,11 +147,9 @@ async def main() -> None:
         check("turn-into: paragraph → 标题2, text kept", "## 段二待转换标题。" in md, f"md={md!r}")
         await pg.screenshot(path=str(SHOTS / "slash-turninto.png"))
 
-        # 6) autosave lands; disk has the fence + the heading
-        await pg.wait_for_timeout(3500)
-        dirty = await pg.evaluate("() => window.__docPanel.isDirty()")
+        # 6) the live document is stored; disk has the fence + the heading
+        await pg.wait_for_timeout(4500)
         disk = (_req(f"{API}/api/topics/{ta}/doc") or {}).get("content", "")
-        check("autosave clean after slash edits", dirty is False, f"dirty={dirty}")
         check("disk doc has code fence + h2",
               "```" in disk and "## 段二待转换标题。" in disk, f"disk={disk!r}")
 

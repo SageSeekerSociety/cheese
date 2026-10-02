@@ -22,7 +22,11 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_oauth_service, get_user_auth_service
+from app.api.deps import (
+    get_oauth_service,
+    get_passkey_service,
+    get_user_auth_service,
+)
 from app.api.routes.admin_common import PlatformAdminDep
 from app.api.routes.legal import client_context
 from app.api.routes.users_common import (
@@ -64,22 +68,18 @@ from app.domain.legal.documents import check_current
 from app.domain.legal.services import CONSENT_METHODS, ConsentService
 from app.domain.oauth.services import OAuthService
 from app.domain.passkey.prompt import PasskeyPromptService
-from app.domain.passkey.repositories import PasskeyRepository
 from app.domain.passkey.services import PasskeyService
 from app.domain.questions.repositories import (
     QuestionRepository,
     QuestionTopicRepository,
 )
-from app.domain.space.services import SpaceLabels
 from app.domain.user.models import (
     UserSession,
     UserTrustedDevice,
 )
 from app.domain.user.passwords import require_new_password
-from app.domain.user.realname_services import UserRealNameService
 from app.domain.user.repositories import (
     UserProfileRepository,
-    UserRealNameRepository,
     UserRepository,
     UserStatisticsRepository,
 )
@@ -556,28 +556,6 @@ async def get_user_profile_service(
 ) -> UserProfileService:
     profile_repo = UserProfileRepository(session=db)
     return UserProfileService(profile_repo=profile_repo)
-
-
-async def get_user_realname_service(
-    db=Depends(get_db),
-) -> UserRealNameService:
-    user_repo = UserRepository(session=db)
-    profile_repo = UserProfileRepository(session=db)
-    realname_repo = UserRealNameRepository(session=db)
-    return UserRealNameService(
-        session=db,
-        user_repo=user_repo,
-        profile_repo=profile_repo,
-        realname_repo=realname_repo,
-        space_labels=SpaceLabels(session=db),
-    )
-
-
-async def get_passkey_service(
-    db=Depends(get_db),
-) -> PasskeyService:
-    repo = PasskeyRepository(session=db)
-    return PasskeyService(repo=repo)
 
 
 @router.get(

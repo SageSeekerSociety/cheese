@@ -29,8 +29,13 @@ from app.domain.machine.services import MachineService
 from app.domain.machine.wakeup import WAKE_NOTICE, WAKE_PROMPT, CloudWakeup
 from app.domain.oauth.repositories import OAuthConnectionRepository
 from app.domain.oauth.services import OAuthService
+from app.domain.passkey.repositories import PasskeyRepository
+from app.domain.passkey.services import PasskeyService
+from app.domain.space.services import SpaceLabels
+from app.domain.user.realname_services import UserRealNameService
 from app.domain.user.repositories import (
     UserProfileRepository,
+    UserRealNameRepository,
     UserRepository,
     UserStatisticsRepository,
 )
@@ -44,6 +49,8 @@ __all__ = [
     "get_broker",
     "get_work_runner",
     "get_cloud_wakeup",
+    "get_passkey_service",
+    "get_user_realname_service",
     "project_device_online",
     "team_device_online",
 ]
@@ -298,3 +305,25 @@ async def get_oauth_service(
     db=Depends(get_db),
 ) -> OAuthService:
     return OAuthService(repo=OAuthConnectionRepository(session=db))
+
+
+async def get_user_realname_service(
+    db=Depends(get_db),
+) -> UserRealNameService:
+    user_repo = UserRepository(session=db)
+    profile_repo = UserProfileRepository(session=db)
+    realname_repo = UserRealNameRepository(session=db)
+    return UserRealNameService(
+        session=db,
+        user_repo=user_repo,
+        profile_repo=profile_repo,
+        realname_repo=realname_repo,
+        space_labels=SpaceLabels(session=db),
+    )
+
+
+async def get_passkey_service(
+    db=Depends(get_db),
+) -> PasskeyService:
+    repo = PasskeyRepository(session=db)
+    return PasskeyService(repo=repo)

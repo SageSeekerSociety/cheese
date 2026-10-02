@@ -29,7 +29,6 @@
     "src/components/common/VersionBadge.vue": 1,
     "src/components/DeviceLiveViewer.vue": 1,
     "src/components/DeviceSessionsSwitch.vue": 1,
-    "src/components/DocEditor.vue": 1,
     "src/components/feedback/AgentFeedbackCard.vue": 1,
     "src/components/LeaveProjectDialog.vue": 2,
     "src/components/NeedsYou.vue": 2,

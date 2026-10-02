@@ -23,6 +23,9 @@ const getDoc = vi.fn()
 const getComments = vi.fn()
 const getDocNodes = vi.fn()
 
+vi.mock('../../composables/useDocCollab', async () => ({
+  useDocCollab: (await import('../../test/fakeDocCollab')).useFakeDocCollab,
+}))
 vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
   return {
@@ -32,6 +35,8 @@ vi.mock('../../api', async () => {
     getDocNodes: (...a: unknown[]) => getDocNodes(...a),
   }
 })
+
+import { resetRooms, seedRoom } from '../../test/fakeDocCollab'
 
 import PanelDoc from './PanelDoc.vue'
 
@@ -69,6 +74,7 @@ beforeAll(() => {
 })
 
 beforeEach(() => {
+  resetRooms()
   getDoc.mockReset()
   getComments.mockReset()
   getDocNodes.mockReset()
@@ -83,10 +89,11 @@ function para(container: HTMLElement, text: string): HTMLElement {
   return hit as HTMLElement
 }
 
-describe('实况文档被服务端更新时', () => {
-  it('内容一个字都没变时，编辑器不动', async () => {
+describe('文档存回之后重读已存的那一版时', () => {
+  it('编辑器里的段落原样不动', async () => {
     const same = '# 标题\n\n第一段\n'
     getDoc.mockResolvedValue(doc(same, 1))
+    seedRoom(topic.id, same)
     const { container, rerender } = render(Doc, {
       props: { topic, activityTick: 0, topicList: [] },
       global: { plugins: [vuetify] },
@@ -95,6 +102,8 @@ describe('实况文档被服务端更新时', () => {
     const before = para(container as HTMLElement, '第一段')
 
     getDoc.mockResolvedValue(doc(same, 2))
+
+    seedRoom(topic.id, same)
     await rerender({ topic, activityTick: 1, topicList: [] })
     await waitFor(() => expect(getDoc).toHaveBeenCalledTimes(2))
 
@@ -105,6 +114,7 @@ describe('实况文档被服务端更新时', () => {
 describe('侧栏话题列表变化时', () => {
   it('列表换了新数组但内容没变，不再重拉文档节点和评论', async () => {
     getDoc.mockResolvedValue(doc('第一段\n', 1))
+    seedRoom(topic.id, '第一段\n')
     const list = [sub('s1', '一件活', 'active')]
     const { container, rerender } = render(Doc, {
       props: { topic, activityTick: 0, topicList: list },
@@ -123,6 +133,7 @@ describe('侧栏话题列表变化时', () => {
 
   it('支线换了标题就重新读，徽章跟着改字', async () => {
     getDoc.mockResolvedValue(doc('第一段\n', 1))
+    seedRoom(topic.id, '第一段\n')
     getDocNodes.mockResolvedValue({
       data: [{ id: 'n1', kind: 'doc_node', content: '第一段', upgraded_to_topic_id: 's1' } as unknown as Block],
       total: 1,
