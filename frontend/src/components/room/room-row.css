@@ -113,6 +113,13 @@
     min-width: 0;
     overflow-wrap: anywhere;
   }
+  /* 310px 列扣掉 gutter/padding 后有240px正文：完整动作148px之外
+     还能给署名92px。再窄时只留28px更多入口和8px间隔。 */
+  @container chat-timeline (width < 310px) {
+    .im-row[data-actions] .im-meta {
+      padding-right: 36px;
+    }
+  }
 }
 /* 头像和名字是按钮（点了去成员页），但长得和原来一样：只在悬停时给名字一条下划线。 */
 .im-person {

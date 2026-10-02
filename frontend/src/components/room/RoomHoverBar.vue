@@ -8,8 +8,11 @@
 //
 // 它不认识时间线：停在哪条消息上、离顶多远，都是房间算好传进来的。
 import type { Block } from '../../cx_types'
+import type { MenuAction } from '../common/menuAction'
 
-import { onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
+
+import AdaptiveMenu from '../common/AdaptiveMenu.vue'
 
 import { copyMessage, QUICK_EMOJIS } from './messageActions'
 
@@ -40,69 +43,156 @@ const emit = defineEmits<{
 // 复制之后原地说一声「已复制」，一会儿再换回来；换了一条消息就不再说。
 const COPIED_MS = 1500
 const copied = ref(false)
+const menuOpen = ref(false)
 let copiedTimer: ReturnType<typeof setTimeout> | undefined
 watch(
   () => props.block?.id,
   () => {
     copied.value = false
     clearTimeout(copiedTimer)
+    if (!props.block) menuOpen.value = false
   }
 )
 onBeforeUnmount(() => clearTimeout(copiedTimer))
 
 async function copy() {
-  if (!props.block || !(await copyMessage(props.block, props.isAgent))) return
+  await copyBlock(props.block, props.isAgent)
+}
+async function copyBlock(block: Block | null, isAgent: boolean) {
+  if (!block || !(await copyMessage(block, isAgent))) return
   copied.value = true
   clearTimeout(copiedTimer)
   copiedTimer = setTimeout(() => (copied.value = false), COPIED_MS)
+}
+
+// 浮层里鼠标已不在消息上：操作仍属于打开菜单时的那一条。
+const menuTarget = shallowRef<{ block: Block; isAgent: boolean; editable: boolean } | null>(null)
+watch(
+  menuOpen,
+  (open) => {
+    if (open && props.block) menuTarget.value = { block: props.block, isAgent: props.isAgent, editable: props.editable }
+  },
+  { flush: 'sync' }
+)
+const menuActions = computed<MenuAction[]>(() => {
+  const target = menuTarget.value
+  if (!target) return []
+  const block = target.block
+  const actions: MenuAction[] = [
+    {
+      key: 'reply',
+      label: t('work.room.message.reply'),
+      icon: 'mdi-reply-outline',
+      onSelect: () => emit('reply', block),
+    },
+    {
+      key: 'copy',
+      label: t('work.room.message.copy'),
+      icon: 'mdi-content-copy',
+      onSelect: () => void copyBlock(block, target.isAgent),
+    },
+  ]
+  if (target.editable)
+    actions.push({
+      key: 'edit',
+      label: t('work.room.message.edit'),
+      icon: 'mdi-pencil-outline',
+      onSelect: () => emit('edit', block),
+    })
+  actions.push({
+    key: 'upgrade',
+    label: t('work.room.message.upgrade'),
+    icon: 'mdi-comment-arrow-right-outline',
+    onSelect: () => emit('upgrade', block.id),
+  })
+  return actions
+})
+function menuReact(emoji: string) {
+  if (!menuTarget.value) return
+  menuOpen.value = false
+  emit('react', menuTarget.value.block, emoji)
 }
 </script>
 
 <template>
   <div
     class="hover-bar"
-    :class="{ 'hover-bar--shown': shown, 'hover-bar--jump': jump }"
+    :class="{ 'hover-bar--shown': shown || menuOpen, 'hover-bar--jump': jump }"
     :style="{ transform: `translateY(${top}px)` }"
-    :aria-hidden="!shown"
+    :aria-hidden="!shown && !menuOpen"
   >
     <template v-if="block">
-      <button
-        type="button"
-        class="hover-bar__act rx-toggle"
-        :class="{ 'hover-bar__act--on': pickerOpen }"
-        :title="t('work.room.message.react')"
-        @click="emit('toggle-picker', block.id)"
-      >
-        <v-icon size="15">mdi-emoticon-happy-outline</v-icon>
-      </button>
-      <button type="button" class="hover-bar__act" :title="t('work.room.message.reply')" @click="emit('reply', block)">
-        <v-icon size="15">mdi-reply-outline</v-icon>
-      </button>
-      <button
-        v-if="editable"
-        type="button"
-        class="hover-bar__act"
-        :title="t('work.room.message.edit')"
-        @click="emit('edit', block)"
-      >
-        <v-icon size="15">mdi-pencil-outline</v-icon>
-      </button>
-      <button
-        type="button"
-        class="hover-bar__act"
-        :title="copied ? t('work.room.message.copied') : t('work.room.message.copy')"
-        @click="copy"
-      >
-        <v-icon size="15">{{ copied ? 'mdi-check' : 'mdi-content-copy' }}</v-icon>
-      </button>
-      <button
-        type="button"
-        class="hover-bar__act"
-        :title="t('work.room.message.upgrade')"
-        @click="emit('upgrade', block.id)"
-      >
-        <v-icon size="15">mdi-comment-arrow-right-outline</v-icon>
-      </button>
+      <div class="hover-bar__wide">
+        <button
+          type="button"
+          class="hover-bar__act rx-toggle"
+          :class="{ 'hover-bar__act--on': pickerOpen }"
+          :title="t('work.room.message.react')"
+          @click="emit('toggle-picker', block.id)"
+        >
+          <v-icon size="15">mdi-emoticon-happy-outline</v-icon>
+        </button>
+        <button
+          type="button"
+          class="hover-bar__act"
+          :title="t('work.room.message.reply')"
+          @click="emit('reply', block)"
+        >
+          <v-icon size="15">mdi-reply-outline</v-icon>
+        </button>
+        <button
+          v-if="editable"
+          type="button"
+          class="hover-bar__act"
+          :title="t('work.room.message.edit')"
+          @click="emit('edit', block)"
+        >
+          <v-icon size="15">mdi-pencil-outline</v-icon>
+        </button>
+        <button
+          type="button"
+          class="hover-bar__act"
+          :title="copied ? t('work.room.message.copied') : t('work.room.message.copy')"
+          @click="copy"
+        >
+          <v-icon size="15">{{ copied ? 'mdi-check' : 'mdi-content-copy' }}</v-icon>
+        </button>
+        <button
+          type="button"
+          class="hover-bar__act"
+          :title="t('work.room.message.upgrade')"
+          @click="emit('upgrade', block.id)"
+        >
+          <v-icon size="15">mdi-comment-arrow-right-outline</v-icon>
+        </button>
+      </div>
+      <AdaptiveMenu v-model="menuOpen" :actions="menuActions">
+        <template #activator="{ props: menu }">
+          <button
+            v-bind="menu"
+            type="button"
+            class="hover-bar__act hover-bar__more"
+            :title="t('work.room.composer.more')"
+            :aria-label="t('work.room.composer.more')"
+          >
+            <v-icon size="15">mdi-dots-horizontal</v-icon>
+          </button>
+        </template>
+        <template #desktopHeader>
+          <div class="hover-menu__emojis" role="group" :aria-label="t('work.room.message.react')">
+            <button v-for="emoji in QUICK_EMOJIS" :key="emoji" type="button" class="rx-pick" @click="menuReact(emoji)">
+              {{ emoji }}
+            </button>
+          </div>
+        </template>
+        <template #header>
+          <div class="hover-menu__emojis" role="group" :aria-label="t('work.room.message.react')">
+            <button v-for="emoji in QUICK_EMOJIS" :key="emoji" type="button" class="rx-pick" @click="menuReact(emoji)">
+              {{ emoji }}
+            </button>
+          </div>
+        </template>
+      </AdaptiveMenu>
       <!-- MVP emoji picker: the 8 common reactions, Slack-style. 从那颗按钮下面长
            出来，收回也回到那里。 -->
       <Transition name="rx-picker">
@@ -168,6 +258,25 @@ async function copy() {
 .hover-bar__act--on {
   background: var(--line-2);
   color: var(--ink);
+}
+.hover-bar__wide {
+  display: contents;
+}
+.hover-bar__more {
+  display: none;
+}
+@container chat-timeline (width < 310px) {
+  .hover-bar__wide {
+    display: none;
+  }
+  .hover-bar__more {
+    display: inline-flex;
+  }
+}
+.hover-menu__emojis {
+  display: flex;
+  gap: 2px;
+  padding: 4px;
 }
 .rx-picker-enter-active {
   transition:

@@ -186,6 +186,7 @@ test("first-row actions stay in the scroll viewport and remain clickable on poin
 for (const scene of [
   { name: "460px light", width: 1280, theme: "light" },
   { name: "390px dark", width: 390, theme: "dark" },
+  { name: "180px desktop pane dark", width: 1280, column: 180, theme: "dark" },
 ] as const) {
   test(`adjacent continuation files survive the ten-point pointer return (${scene.name})`, async ({
     page,
@@ -210,6 +211,11 @@ for (const scene of [
       route.fulfill({ contentType: "text/html", body: adjacent }),
     );
     await page.goto("/__chat-file-hit-fixture__", { waitUntil: "commit" });
+    if ("column" in scene) {
+      await page.locator("main").evaluate((el, width) => {
+        el.style.width = `${width}px`;
+      }, scene.column);
+    }
     const previous = page.locator('[data-mid="before"] [data-file]');
     const current = page.locator('[data-mid="file"] [data-file]');
     await expect(previous).toBeVisible({ timeout: 30_000 });
@@ -290,12 +296,10 @@ for (const scene of [
       body: JSON.stringify({ beforeHover: boxes, path, hit }, null, 2),
       contentType: "application/json",
     });
-    await test
-      .info()
-      .attach("adjacent-file-hit-area", {
-        body: await page.screenshot(),
-        contentType: "image/png",
-      });
+    await test.info().attach("adjacent-file-hit-area", {
+      body: await page.screenshot(),
+      contentType: "image/png",
+    });
     expect(
       hit.file,
       "the previous file must own its center after approaching from the later row",
@@ -329,3 +333,221 @@ for (const scene of [
     });
   });
 }
+
+// TopicView permits a 25% desktop split and its columns have min-width: 0.
+// A narrow pane is therefore reachable while the viewport is still desktop.
+const narrowFixture = fixture
+  .replace("author: 'me'", "author: 'external'")
+  .replace("'前一条消息。\\n'.repeat(8)", "'前一条消息。'")
+  .replace(
+    "total: 2, has_more: false",
+    "total: history.length, has_more: false",
+  )
+  .replace(
+    "window.fetch = async (url) => {",
+    `history.push({ ...message('self', '自己的消息。', '2026-10-02T09:19:00Z'), author: 'me' });
+Object.defineProperty(navigator, 'clipboard', { value: {
+  writeText: async text => { document.querySelector('#opened').dataset.copied = text; },
+} });
+window.fetch = async (url, init) => {`,
+  )
+  .replace(
+    "if (u.includes('/members'))",
+    `if (u.includes('/reactions')) {
+    document.querySelector('#opened').dataset.reaction = u;
+    data = { reactions: [] };
+  } else if (u.includes('/members'))`,
+  )
+  .replace(
+    "{ id: '1', member_handle: 'me', name: '我', role: 'owner', agent: false },",
+    `{ id: '1', member_handle: 'me', name: '我', role: 'owner', agent: false },
+    { id: '2', member_handle: 'external', name: '王陈设计验收外部协作成员', role: 'member', agent: false },`,
+  )
+  .replace(
+    "topic, hideHeader: true, showComposer: true,",
+    `topic, hideHeader: true, showComposer: true,
+  members: [
+    { user_handle: 'me', name: '我', source: 'owner' },
+    { user_handle: 'external', name: '王陈设计验收外部协作成员', source: 'external' },
+  ],
+  onMentionClick: handle => { document.querySelector('#opened').dataset.member = handle; },
+  onUpgradeMessage: id => { document.querySelector('#opened').dataset.upgraded = id; },`,
+  );
+
+test("180px desktop pane preserves author clicks and keeps actions within the header", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 820 });
+  await page.route("**/__chat-file-hit-fixture__", (route) =>
+    route.fulfill({ contentType: "text/html", body: narrowFixture }),
+  );
+  await page.goto("/__chat-file-hit-fixture__", { waitUntil: "commit" });
+  const row = page.locator('[data-mid="before"]');
+  await expect(row.locator(".external-tag")).toBeVisible({ timeout: 30_000 });
+  await page.locator("main").evaluate((el) => {
+    el.style.width = "180px";
+  });
+  await page.getByTestId("chat-scroll").evaluate((el) => {
+    el.scrollTop = 0;
+  });
+  await page.evaluate(() => document.fonts.ready);
+  const before = await row.locator(".im-text").boundingBox();
+  await row.locator(".im-text").hover();
+  const geometry = await page.evaluate(() => {
+    const row = document.querySelector('[data-mid="before"]')!;
+    const author = row.querySelector(".im-name")!;
+    const header = row.querySelector(".im-meta")!;
+    const bar = document.querySelector(".hover-bar--shown")!;
+    const scroll = document.querySelector(".messages")!;
+    const rect = (el: Element) => el.getBoundingClientRect().toJSON();
+    const a = rect(author);
+    const point = { x: a.x + 6, y: a.y + 9 };
+    return {
+      author: a,
+      header: rect(header),
+      bar: rect(bar),
+      body: rect(row.querySelector(".im-text")!),
+      point,
+      authorOwned:
+        document.elementFromPoint(point.x, point.y)?.closest(".im-name") ===
+        author,
+      clientWidth: scroll.clientWidth,
+      scrollWidth: scroll.scrollWidth,
+    };
+  });
+  await test
+    .info()
+    .attach("180px-desktop-header", {
+      body: JSON.stringify(geometry, null, 2),
+      contentType: "application/json",
+    });
+  expect(geometry.clientWidth).toBe(180);
+  expect(geometry.scrollWidth).toBe(geometry.clientWidth);
+  expect(geometry.body.width).toBe(110);
+  expect(geometry.author.width).toBeGreaterThan(0);
+  expect(geometry.authorOwned).toBe(true);
+  expect(geometry.bar.left).toBeGreaterThanOrEqual(geometry.header.left);
+  expect(geometry.bar.right).toBeLessThanOrEqual(geometry.header.right);
+  expect(geometry.bar.bottom).toBeLessThanOrEqual(geometry.body.top);
+  expect(await row.locator(".im-text").boundingBox()).toEqual(before);
+  await page.mouse.click(geometry.point.x, geometry.point.y);
+  await expect(page.locator("#opened")).toHaveAttribute(
+    "data-member",
+    "external",
+  );
+  await expect(page.locator(".rx-picker")).toHaveCount(0);
+  await expect(page.locator(".hover-bar__more")).toBeVisible();
+  await test
+    .info()
+    .attach("180px-desktop-header", {
+      body: await page.screenshot(),
+      contentType: "image/png",
+    });
+  await page.locator("main").evaluate((el) => {
+    el.style.width = "460px";
+  });
+  await expect(page.locator(".hover-bar__more")).toBeHidden();
+  await expect(
+    page
+      .locator(".hover-bar")
+      .getByRole("button", { name: "回复", exact: true }),
+  ).toBeVisible();
+});
+
+test("compact desktop menu keeps all actions on its captured message after hovering another row", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 820 });
+  await page.route("**/__chat-file-hit-fixture__", (route) =>
+    route.fulfill({ contentType: "text/html", body: narrowFixture }),
+  );
+  await page.goto("/__chat-file-hit-fixture__", { waitUntil: "commit" });
+  await expect(page.locator('[data-mid="self"]')).toBeVisible({
+    timeout: 30_000,
+  });
+  await page.locator("main").evaluate((el) => {
+    el.style.width = "180px";
+  });
+  const row = page.locator('[data-mid="before"]');
+  const menu = page.locator(".v-overlay--active .v-list");
+  const open = async (id: string) => {
+    await page.locator(`[data-mid="${id}"] .im-text`).hover();
+    const more = page.locator(".hover-bar__more");
+    await expect(more).toBeVisible();
+    const box = await more.boundingBox();
+    if (!box) throw new Error("compact action has no visible box");
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, {
+      steps: 10,
+    });
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await expect(menu).toBeVisible();
+  };
+  await open("before");
+  await expect(menu.locator(".hover-menu__emojis button")).toHaveCount(8);
+  for (const label of ["回复", "复制", "转为话题"]) {
+    await expect(menu.getByText(label, { exact: true })).toBeVisible();
+  }
+  await expect(menu.getByText("编辑", { exact: true })).toHaveCount(0);
+  await test
+    .info()
+    .attach("180px-desktop-actions", {
+      body: await page.screenshot(),
+      contentType: "image/png",
+    });
+  // Move the physical pointer to another row while the menu is open. The menu
+  // must keep its original target even though the single timeline bar moves.
+  const next = await page.locator('[data-mid="self"] .im-text').boundingBox();
+  if (!next) throw new Error("next row has no visible box");
+  await page.mouse.move(next.x + next.width - 4, next.y + next.height / 2);
+  const hoverTarget = await page.evaluate(
+    ({ x, y }) => ({
+      row: document.elementFromPoint(x, y)?.closest<HTMLElement>("[data-mid]")
+        ?.dataset.mid,
+      barTop: document
+        .querySelector(".hover-bar--shown")!
+        .getBoundingClientRect().top,
+      rowTop: document
+        .querySelector('[data-mid="self"]')!
+        .getBoundingClientRect().top,
+    }),
+    { x: next.x + next.width - 4, y: next.y + next.height / 2 },
+  );
+  expect(hoverTarget.row).toBe("self");
+  expect(hoverTarget.barTop).toBe(hoverTarget.rowTop + 4);
+  await test
+    .info()
+    .attach("compact-menu-hover-retarget", {
+      body: JSON.stringify(hoverTarget, null, 2),
+      contentType: "application/json",
+    });
+  await menu.getByText("回复", { exact: true }).click();
+  await expect(page.locator(".reply-chip")).toContainText("前一条消息。");
+  await expect(page.locator(".reply-chip")).not.toContainText("自己的消息。");
+
+  await open("before");
+  await menu.getByText("复制", { exact: true }).click();
+  await expect(page.locator("#opened")).toHaveAttribute(
+    "data-copied",
+    "前一条消息。",
+  );
+  await open("before");
+  await menu.getByText("转为话题", { exact: true }).click();
+  await expect(page.locator("#opened")).toHaveAttribute(
+    "data-upgraded",
+    "before",
+  );
+  await open("before");
+  await menu.getByRole("button", { name: "👍", exact: true }).click();
+  await expect(page.locator("#opened")).toHaveAttribute(
+    "data-reaction",
+    /before/,
+  );
+  await expect(page.locator(".rx-picker")).toHaveCount(0);
+  await open("self");
+  await menu.getByText("编辑", { exact: true }).click();
+  await expect(page.locator('[data-mid="self"] .im-text')).toHaveCount(0);
+  await expect(page.locator('[data-mid="self"] textarea')).toHaveValue(
+    "自己的消息。",
+  );
+  await expect(row.locator(".im-text")).toContainText("前一条消息。");
+});
