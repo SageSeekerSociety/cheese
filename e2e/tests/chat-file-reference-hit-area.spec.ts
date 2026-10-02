@@ -467,8 +467,8 @@ test("compact desktop menu keeps all actions on its captured message after hover
   const row = page.locator('[data-mid="before"]');
   const menu = page.locator(".v-overlay--active .v-list");
   const open = async (id: string) => {
-    // Reply changes the composer height; its ResizeObserver follows the bottom
-    // in the layout turn. Settle that turn before choosing a new pointer target.
+    // Let ResizeObserver finish the layout turn after the reply-row transition
+    // boundary below, before choosing a new physical pointer target.
     await page.evaluate(
       () =>
         new Promise<void>((resolve) =>
@@ -536,6 +536,10 @@ test("compact desktop menu keeps all actions on its captured message after hover
   await menu.getByText("回复", { exact: true }).click();
   await expect(page.locator(".reply-chip")).toContainText("前一条消息。");
   await expect(page.locator(".reply-chip")).not.toContainText("自己的消息。");
+  // The label appears before its row finishes growing. Finish that real layout
+  // transition before hovering again: bottom-follow otherwise moves the next
+  // message under the physical pointer after Playwright chooses its point.
+  await expect(page.locator(".chip-row-enter-active")).toHaveCount(0);
 
   await open("before");
   await menu.getByText("复制", { exact: true }).click();
