@@ -15,6 +15,8 @@ export interface StoreBody {
   content: string | null
   actors: string[]
   operation?: Record<string, unknown> | null
+  /** The first conversion from Markdown: recorded without a conversation event. */
+  converted?: boolean
 }
 
 /** The backend's error envelope (backend/app/core/errors.py). */

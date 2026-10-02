@@ -22,6 +22,7 @@ const DOC = 'room:6f1c0a52-8a51-4f8e-9d55-2f4d2b1f8a10'
 interface Version {
   content: string
   actors: string[]
+  converted?: boolean
 }
 
 /** The backend's side, kept in memory: what was stored, and by whom. */
@@ -58,7 +59,7 @@ class FakeBackend {
         this.state = Buffer.from(body.state, 'base64')
         if (body.content !== null && body.content !== this.content) {
           this.content = body.content
-          this.versions.push({ content: body.content, actors: body.actors })
+          this.versions.push({ content: body.content, actors: body.actors, converted: !!body.converted })
         }
         res.end(JSON.stringify({ doc_version: this.versions.length }))
       })
@@ -159,14 +160,16 @@ const SEED = [
 ].join('\n')
 
 describe('the live document', () => {
-  it('converts a Markdown document on first open without losing content or adding a version', async () => {
+  it('converts a Markdown document on first open without losing content, and stores the text it exports', async () => {
     const { backend, url } = await setup(SEED)
     const a = client(url, ticket('xiaowang'))
     await until(() => a.doc.getXmlFragment('default').length > 0)
     expect(compareRoundTrip(SEED, exportMarkdown(a.doc)).clean).toBe(true)
     await until(() => backend.state !== null)
-    expect(backend.versions).toEqual([])
-    expect(backend.content).toBe(SEED)
+    // What the backend hands out from now on is what the people editing see,
+    // and the respelling is the platform's, not the person who opened it.
+    expect(backend.content).toBe(exportMarkdown(a.doc))
+    expect(backend.versions.map((v) => v.actors)).toEqual([['system']])
   })
 
   it('converges when two people edit at the same time, and stores what both see', async () => {

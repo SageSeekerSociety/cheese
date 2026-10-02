@@ -71,41 +71,39 @@ def _service():
     return {"Authorization": f"Bearer {collab._key('internal')}"}
 
 
-def test_a_document_converted_on_first_open_keeps_its_text_and_version(client):
+def _doc_events(client, room, owner):
+    blocks = client.get(f"/topics/{room}/blocks", headers=owner).json()["data"]["data"]
+    return [b for b in blocks if (b.get("meta") or {}).get("action") == "doc"]
+
+
+def test_converting_a_markdown_document_is_recorded_quietly(client):
     room = _topic(client)
     owner = session_auth_headers("owner")
-    original = "# 原稿\r\n\r\n- 一\r\n- 二\r\n"
-    assert (
-        client.put(
-            f"/topics/{room}/doc",
-            json={"content": original, "expected_version": 0},
-            headers=owner,
-        ).status_code
-        == 200
-    )
+    original = "# 原稿\r\n\r\n* 一\r\n* 二\r\n"
+    client.portal.call(client.collab.type_in, uuid.UUID(room), original, "owner")
     name = f"room:{room}"
-    loaded = client.get(f"/internal/collab/documents/{name}", headers=_service()).json()
-    assert loaded["content"] == original
-    # The stand-in stored a state with the write; a converting service stores
-    # the state alone, which changes nothing a reader sees.
-    state = base64.b64encode(b"converted").decode()
+    events = len(_doc_events(client, room, owner))
+    # The service converts it on first open and stores the text it exports.
+    exported = "# 原稿\n\n- 一\n- 二"
     client.put(
         f"/internal/collab/documents/{name}",
-        json={"state": state, "content": None},
+        json={
+            "state": base64.b64encode(b"converted").decode(),
+            "content": exported,
+            "actors": ["system"],
+            "converted": True,
+        },
         headers=_service(),
     ).raise_for_status()
     loaded = client.get(f"/internal/collab/documents/{name}", headers=_service()).json()
-    assert loaded["state"] == state
-    assert loaded["content"] == original
-    assert loaded["doc_version"] == 1
-    assert (
-        len(
-            client.get(f"/topics/{room}/doc/history", headers=owner).json()["data"][
-                "versions"
-            ]
-        )
-        == 1
-    )
+    assert loaded["state"] == base64.b64encode(b"converted").decode()
+    assert client.get(f"/topics/{room}/doc").json()["data"]["content"] == exported
+    history = client.get(f"/topics/{room}/doc/history", headers=owner).json()["data"]
+    assert [row["actor"] for row in history["versions"]] == ["owner", "system"]
+    # The original stays readable, and nobody in the room is told about a
+    # respelling as if somebody had edited.
+    assert history["versions"][0]["content"] == original
+    assert len(_doc_events(client, room, owner)) == events
 
 
 def test_people_typing_record_a_version_under_their_own_names(client):

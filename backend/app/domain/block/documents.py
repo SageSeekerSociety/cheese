@@ -85,6 +85,7 @@ class DocumentWriter:
         content: str,
         actors: list[str],
         operation_id: uuid.UUID | None = None,
+        quiet: bool = False,
     ) -> tuple[Block | None, Block | None]:
         """改文档即指令 (eval B2): record a new version of the room's living doc
         and drop a '编辑了文档' event into the conversation. The agent reads the
@@ -97,7 +98,8 @@ class DocumentWriter:
         to compare here — whatever the service stores is the document.
 
         Returns ``(None, None)`` when there is nothing to record: the text did
-        not change, or a room with no document stored an empty one.
+        not change, or a room with no document stored an empty one. A
+        ``quiet`` version gets no conversation event, like a brief seed.
         """
         if not actors:
             raise ValueError("a document version needs the actor who wrote it")
@@ -146,7 +148,7 @@ class DocumentWriter:
         # Append-only conversation event (spec H1): the doc edit is visible.
         before_lines = _doc_edit_lines(previous_content)
         after_lines = _doc_edit_lines(content)
-        if before_lines == after_lines:
+        if quiet or before_lines == after_lines:
             await journal.append(
                 room_id=room_id,
                 document_id=doc.id,

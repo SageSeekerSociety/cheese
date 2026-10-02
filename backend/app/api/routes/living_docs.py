@@ -280,7 +280,8 @@ def _room(name: str) -> uuid.UUID:
 async def load_document(name: str, db: DbSession, _: ServiceOnly) -> dict:
     """What the service builds a live document from: the stored Yjs state, or
     — for a document never opened live — its Markdown, which the service
-    converts and stores back before anyone edits it."""
+    converts and stores back, with the text it exports, before anyone edits
+    it."""
     room_id = _room(name)
     topics = TopicService(db)
     await topics.place_or_404(room_id)
@@ -300,6 +301,9 @@ class StoreIn(BaseModel):
     #: Handles whose changes this store holds, the most changes first.
     actors: list[str] = Field(default_factory=list)
     operation: dict | None = None
+    #: The service's first conversion of a Markdown document: it respells the
+    #: text the way the document exports it, and is not news to the room.
+    converted: bool = False
 
 
 @internal.put("/documents/{name}")
@@ -320,6 +324,7 @@ async def store_document(
         # under a shared Redis) is still a version; it is the platform's.
         actors=body.actors or ["system"],
         operation=body.operation,
+        quiet=body.converted,
     )
     await db.commit()
     await announce(room_id, stored, chat)

@@ -96,9 +96,12 @@ export function createCollabServer(config: CollabConfig): Server {
       })
     } catch (error) {
       putBack(name, counts)
-      // The document stays in memory, unsaved. Try again on our own rather than
-      // waiting for the next keystroke, which may never come.
-      if (!retries.has(name)) {
+      // A refusal (the room is gone, the request is wrong) will not change by
+      // asking again.
+      const refused = error instanceof BackendError && error.status >= 400 && error.status < 500
+      // Otherwise the document stays in memory, unsaved. Try again on our own
+      // rather than waiting for the next keystroke, which may never come.
+      if (!refused && !retries.has(name)) {
         retries.set(
           name,
           setTimeout(() => {
@@ -138,12 +141,22 @@ export function createCollabServer(config: CollabConfig): Server {
       }
       if (!loaded.content.trim()) return document
       writeMarkdown(document, loaded.content)
-      const report = compareRoundTrip(loaded.content, exportMarkdown(document))
+      const exported = exportMarkdown(document)
+      const report = compareRoundTrip(loaded.content, exported)
       if (!report.clean) {
         // The original stays in the version history; this says where to look.
         console.warn(`[collab] ${documentName}: converting changed the Markdown\n${report.diff}`)
       }
-      await backend.store(documentName, { state: Y.encodeStateAsUpdate(document), content: null, actors: [] })
+      // From here on the stored text is what the document exports, so whatever
+      // reads it (芝士, the document AI's offsets) reads the document people see.
+      // A conversion that only respells the text is the platform's, and is not
+      // news to anyone in the room.
+      await backend.store(documentName, {
+        state: Y.encodeStateAsUpdate(document),
+        content: exported === loaded.content ? null : exported,
+        actors: ['system'],
+        converted: true,
+      })
       return document
     },
 

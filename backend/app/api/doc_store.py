@@ -56,10 +56,12 @@ async def store(
     content: str | None,
     actors: list[str],
     operation: dict | None,
+    quiet: bool = False,
 ) -> Stored:
-    """Record one store. ``content`` None stores the Yjs state alone: the
-    service converting a document it loaded from Markdown, which changes no
-    text and so records no version."""
+    """Record one store. ``content`` None stores the Yjs state alone. A
+    ``quiet`` store records its version without a conversation event: the
+    service's first conversion of a Markdown document, which only respells
+    it."""
     place = await TopicService(db).place_or_404(room_id)
     journal = DocumentJournal(db)
     await journal.lock(room_id)
@@ -89,6 +91,7 @@ async def store(
         content=content,
         actors=actors,
         operation_id=operation_id,
+        quiet=quiet,
     )
     changed = doc is not None
     if doc is None:

@@ -167,7 +167,8 @@ defineExpose({
             :disabled-reason="loading ? t('work.room.doc.loading') : !editable ? t('work.room.doc.readOnly') : ''"
           />
           <div class="doc-bar">
-            <span v-if="loading" class="t-meta me-2">{{ t('work.room.doc.loading') }}</span>
+            <!-- 没连上时说没连上，哪怕正文还没到：那一刻「加载中」会一直挂着。 -->
+            <span v-if="loading && connection !== 'offline'" class="t-meta me-2">{{ t('work.room.doc.loading') }}</span>
             <DocPresence v-else :peers="peers" :connection="connection" class="me-2" />
 
             <!-- 只读是「这一格现在不照常」：开着的时候写在这一条上，点它就回去。没有编辑

@@ -128,6 +128,22 @@ describe('打开一篇协同文档', () => {
     expect(prose(view.container)).not.toContain('甲房间')
   })
 
+  it('存回之后，屏幕上这一份和已存的那一版是同一份；还有字没存回时不是', async () => {
+    const markdown = '# 题目\n\n* 一\n* 二\n\n| 列 | 值 |\n| --- | --- |\n| a | 1 |\n'
+    seedRoom('t1', markdown)
+    // 协同服务存回的是它导出的那一份正文。
+    mocks.getDoc.mockResolvedValue({ id: 'd1', kind: 'doc', content: exportMarkdown(serverDoc('t1')), doc_version: 2 })
+    const { container } = open(room('t1'))
+    await waitFor(() => expect(prose(container)).toContain('题目'))
+    const probe = (window as unknown as { __docPanel: { matchesStored: () => boolean } }).__docPanel
+
+    await waitFor(() => expect(probe.matchesStored(), '文档 AI 会把它当成没存回而拒绝').toBe(true))
+
+    remoteEdit('t1', markdown + '\n还没存回的一句\n')
+    await waitFor(() => expect(prose(container)).toContain('还没存回'))
+    expect(probe.matchesStored()).toBe(false)
+  })
+
   it('锚在某一句话上的评论，在正文里画一条下划线', async () => {
     seedRoom('t1', '第一段')
     mocks.getDocNodes.mockResolvedValue({
