@@ -2,6 +2,7 @@ import account from './account.json'
 import admin from './admin.json'
 import apiError from './apiError.json'
 import compute from './compute.json'
+import credits from './credits.json'
 import design from './design.json'
 import editor from './editor.json'
 import featureStats from './featureStats.json'
@@ -36,6 +37,7 @@ import work from './work.json'
 // `frontend/src/i18n/catalog.spec.ts` — do not add an empty namespace to silence
 // that check; write the translation and delete the keys from that list instead.
 export default {
+  credits,
   global,
   home,
   integrations,

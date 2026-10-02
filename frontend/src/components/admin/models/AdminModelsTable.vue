@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import type { ModelRow, ModelsListing } from '@/lib/adminModels'
 
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminGrid from '@/components/admin/AdminGrid.vue'
 import AdminModelPriceCell from '@/components/admin/AdminModelPriceCell.vue'
 import AdminSparkline from '@/components/admin/AdminSparkline.vue'
+import { MODEL_TIERS, TIER_KEY } from '@/lib/adminCredits'
 import { displayName, failRate, originKey, statusQuiet } from '@/lib/adminModels'
 import { fmtCost, fmtNum, fmtSI } from '@/lib/usageFormat'
 
@@ -35,9 +37,12 @@ const emit = defineEmits<{
   edit: [row: ModelRow]
   block: [row: ModelRow]
   delete: [row: ModelRow]
+  tier: [row: ModelRow, tier: 'included' | 'premium' | 'frontier']
 }>()
 
 const { t } = useI18n()
+
+const tierOptions = computed(() => MODEL_TIERS.map((value) => ({ value, title: t(TIER_KEY[value]) })))
 
 /** 失败率那一格的 title。0 请求时是空串（那一格画的是 `—`，没有比率可解释）——
  *  这一句要 `t`，所以拼不成纯函数，留在画的那一边。 */
@@ -51,8 +56,8 @@ function rateTitle(row: ModelRow): string {
   <div class="amd__gridwrap">
     <AdminGrid
       :label="t('models.table.label')"
-      :cols="[null, '96px', '150px', '210px', '180px', '110px', '140px']"
-      :bone-widths="['64%', '54%', '70%', '58%', '62%', '50%', '46%']"
+      :cols="[null, '96px', '150px', '150px', '210px', '180px', '110px', '140px']"
+      :bone-widths="['64%', '54%', '70%', '60%', '58%', '62%', '50%', '46%']"
       :loading="props.loading && !props.models"
       :skeleton-rows="6"
       :state="props.state"
@@ -64,6 +69,7 @@ function rateTitle(row: ModelRow): string {
           <th scope="col">{{ t('models.table.column.name') }}</th>
           <th scope="col">{{ t('models.table.column.origin') }}</th>
           <th scope="col">{{ t('models.table.column.price') }}</th>
+          <th scope="col">{{ t('models.table.column.tier') }}</th>
           <th scope="col">{{ t('models.table.column.usage') }}</th>
           <th scope="col">{{ t('models.table.column.offered') }}</th>
           <th scope="col">{{ t('models.table.column.status') }}</th>
@@ -103,6 +109,22 @@ function rateTitle(row: ModelRow): string {
         </td>
         <td class="amd__cell" :data-label="t('models.table.column.price')">
           <AdminModelPriceCell :priced="row.priced" :prices="row.prices" :reason="row.unpriced_reason" />
+        </td>
+        <td class="amd__cell" :data-label="t('models.table.column.tier')">
+          <!-- 配置文件里来的模型改不了档位（网关不支持改它），只显示。 -->
+          <v-select
+            autocomplete="off"
+            :model-value="row.tier ?? 'included'"
+            :items="tierOptions"
+            item-title="title"
+            item-value="value"
+            variant="outlined"
+            density="compact"
+            hide-details
+            :disabled="row.origin === 'config'"
+            :aria-label="t('models.table.column.tier')"
+            @update:model-value="emit('tier', row, $event)"
+          />
         </td>
         <td class="amd__cell" :data-label="t('models.table.column.usage')">
           <span class="amd__usage">

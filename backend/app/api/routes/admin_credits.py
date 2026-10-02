@@ -38,7 +38,6 @@ class PlanCreate(BaseModel):
     credits_per_period: float | None = Field(default=None, ge=0)
     windows: list[PlanWindow] = []
     model_tiers: list[Tier] | None = ["included"]
-    allows_subscription: bool = False
 
 
 class PlanUpdate(BaseModel):
@@ -49,7 +48,6 @@ class PlanUpdate(BaseModel):
     credits_per_period: float | None = Field(default=None, ge=0)
     windows: list[PlanWindow] | None = None
     model_tiers: list[Tier] | None = None
-    allows_subscription: bool | None = None
 
 
 class TeamPlanUpdate(BaseModel):
@@ -97,10 +95,22 @@ async def list_teams(
     db: DbSession,
     handle: PlatformAdminDep,
     q: str | None = Query(default=None, max_length=100),
+    plan: str | None = Query(default=None, max_length=32),
+    kind: Literal["personal", "team"] | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
 ) -> dict:
-    return ok(await PlanService(db).teams(query=q, page=page, page_size=page_size))
+    """``plan`` keeps the teams on that plan; ``kind`` keeps personal or shared
+    teams. Both narrow the list before it is paged, so ``total`` counts them."""
+    return ok(
+        await PlanService(db).teams(
+            query=q,
+            page=page,
+            page_size=page_size,
+            plan_key=plan,
+            personal=None if kind is None else kind == "personal",
+        )
+    )
 
 
 @router.get("/teams/{teamId}")

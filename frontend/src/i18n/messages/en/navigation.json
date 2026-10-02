@@ -35,7 +35,8 @@
     "members": "Members",
     "integrations": "Feishu app",
     "featureStats": "Feature data",
-    "ratchet": "Ratchet"
+    "ratchet": "Ratchet",
+    "credits": "Plans & credits"
   },
   "userMenu": {
     "profile": "Profile",

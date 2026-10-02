@@ -52,6 +52,7 @@ const SECTION_LABELS: Record<string, string> = {
   'navigation.admin.queue': '队列',
   'navigation.admin.dashboard': '看板',
   'navigation.admin.models': '模型',
+  'navigation.admin.credits': '方案与额度',
   'navigation.admin.spaces': '空间申请',
   'navigation.admin.members': '成员',
   'navigation.admin.integrations': '飞书应用',
@@ -175,6 +176,7 @@ describe('管理后台外壳', () => {
     expect(queryByText('队列')).toBeTruthy()
     expect(queryByText('看板')).toBeTruthy()
     expect(queryByText('成员')).toBeTruthy()
+    expect(queryByText('方案与额度')).toBeTruthy()
     expect(queryByText('反馈中心')).toBeNull()
     // 未读数来自 `counts`，不是从列表长度推的 —— 列表那一页只有 20 条。
     expect(await findByText('12')).toBeTruthy()
@@ -254,5 +256,6 @@ describe('外壳上的全局键', () => {
     expect(queryByText('成员管理的名单')).toBeNull()
     expect(queryByText('看板')).toBeNull()
     expect(queryByText('成员')).toBeNull()
+    expect(queryByText('方案与额度')).toBeNull()
   })
 })
