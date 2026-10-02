@@ -125,10 +125,10 @@ const {
           <AdminKpiCard v-for="kpi in kpis" :key="kpi.key" :label="kpi.label" :value="kpi.value" :loading="loading" />
         </div>
 
-        <!-- 模型段。页面上唯一的主操作（新增模型）在这一段，所以琥珀只出现在这里一处。 -->
+        <!-- 模型段。页面上唯一的主操作（新增模型）在这一段，所以琥珀只出现在这里一处。
+             这一段不另写小标题：页头已经叫「模型」。 -->
         <section class="amd__section">
           <div class="amd__sectiontools">
-            <h2 class="amd__sectionlabel t-title">{{ t('models.page.section.models') }}</h2>
             <span class="amd__count t-meta-read">{{ num(models?.models.length) }}</span>
             <div class="amd__spacer" />
             <v-btn color="primary" size="small" prepend-icon="mdi-plus" :disabled="gatewayDown" @click="openAdd">

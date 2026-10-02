@@ -12,7 +12,6 @@
     "blockFailed": "没改成功，请重试。",
     "budgetFailed": "额度没设上，请重试。",
     "section": {
-      "models": "模型",
       "budgets": "额度",
       "audit": "最近操作"
     },

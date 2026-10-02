@@ -12,7 +12,6 @@
     "blockFailed": "Could not change. Try again.",
     "budgetFailed": "Could not set the limit. Try again.",
     "section": {
-      "models": "Models",
       "budgets": "Limits",
       "audit": "Recent actions"
     },
