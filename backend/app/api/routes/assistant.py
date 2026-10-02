@@ -7,32 +7,51 @@ Asking about a task takes the same judgment as reading the task page
 it either.
 
 A question is admitted only when it can be charged — the model is priced on the
-gateway and the person has credits left this month — and only one question at a
-time per conversation.
+gateway, the person has a key there, and they have credits left this month —
+when the session host is there to answer it, and only one question at a time
+per conversation. Its session is started before the answer begins, so a host
+that cannot start one is a refusal rather than a broken stream.
 """
 
 import logging
+import time
 import uuid
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Path
+from fastapi import APIRouter, Depends, Path, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
+from app.api.deps import get_personal_sessions
 from app.api.response import ok
 from app.api.routes.admin_common import DbSession
 from app.api.routes.tasks import _ensure_task_readable
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
+from app.core.background import spawn
 from app.core.config import settings
 from app.core.db import async_session_factory
-from app.core.errors import NotFoundError
+from app.core.errors import (
+    AuthenticationRequiredError,
+    BaseError,
+    ForbiddenError,
+    NotFoundError,
+)
 from app.core.redis import get_redis_client
-from app.domain.assistant import agent as assistant_agent
+from app.core.sandbox_auth import personal_claims
+from app.domain.agent.harness.pi.personal import (
+    HostFull,
+    Launch,
+    PersonalSessionError,
+    PersonalSessions,
+)
+from app.domain.assistant import asking
 from app.domain.assistant import service as assistant
+from app.domain.assistant import tools as personal_tools
+from app.domain.assistant.keys import person_key
+from app.domain.assistant.prompt import task_brief
 from app.domain.feature_stats import pricing
-from app.domain.service_keys import service_key
 from app.domain.task.services import TaskService
 from app.domain.usage.personal import PersonalCredits, Rates
 
@@ -40,9 +59,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/assistant", tags=["assistant"])
 
 AuthUser = Annotated[AuthUserInfo, Depends(require_auth_user)]
-#: How long one question may hold its conversation before another is let in
-#: even without the first one finishing (a crashed worker must not lock it).
-BUSY_SECONDS = 180
+People = Annotated[PersonalSessions, Depends(get_personal_sessions)]
 
 
 def _task_place(task_id: int) -> assistant.Place:
@@ -108,9 +125,25 @@ async def read_conversation(
     conversation_id: Annotated[uuid.UUID, Path(alias="conversationId")],
     db: DbSession,
     auth: AuthUser,
+    people: People,
 ) -> dict:
+    """The conversation and what was said in it.
+
+    Opening a conversation is what precedes asking in it, so its session is
+    started now, in the background, if it is not running: the first question
+    then finds it ready."""
     row = await _owned(db, auth.user_id, conversation_id)
     messages = await assistant.AssistantConversations(db).messages(row.id)
+    if people.available():
+        try:
+            place = await _place(db, row, auth)
+        except BaseError:
+            place = None
+        if place is not None:
+            spawn(
+                _prestart(people, assistant.launch(auth.user_id, row.id, place)),
+                name=f"assistant-prestart-{row.id}",
+            )
     return ok(
         {
             **_conversation_out(row),
@@ -124,6 +157,21 @@ async def read_conversation(
             ],
         }
     )
+
+
+async def _prestart(people: PersonalSessions, started: Launch) -> None:
+    try:
+        await people.ensure(started)
+    except Exception:  # noqa: BLE001 — the question starts it, or says why not
+        logger.info("pre-starting a person's session failed", exc_info=True)
+
+
+async def _place(db, row, auth: AuthUserInfo) -> str:
+    """Where the conversation is, written out for 芝士; it takes the same
+    judgment as reading that place."""
+    if row.place_kind == "task":
+        return task_brief(await _readable_task(db, int(row.place_id), auth))
+    return ""
 
 
 class AskIn(BaseModel):
@@ -151,19 +199,16 @@ async def ask(
     body: AskIn,
     db: DbSession,
     auth: AuthUser,
+    people: People,
 ):
     """Answer one question, streamed as server-sent events: ``delta`` (text),
     ``tool`` (what 芝士 is looking at), ``error``, ``done``."""
     row = await _owned(db, auth.user_id, conversation_id)
-    place = ""
-    if row.place_kind == "task":
-        place = assistant_agent.task_brief(
-            await _readable_task(db, int(row.place_id), auth)
-        )
+    place = await _place(db, row, auth)
 
     rates = Rates.of(settings.assistant_model, await pricing.model_rates())
-    key = await service_key(db, assistant_agent.key_spec())
-    if rates is None or key is None:
+    key = await person_key(db, auth.user_id, async_session_factory)
+    if rates is None or key is None or not people.available():
         return _refuse(503, "芝士暂未开放，稍后再试。", 60)
     balance = await PersonalCredits(db).balance(auth.user_id)
     await db.commit()
@@ -174,27 +219,71 @@ async def ask(
         )
 
     redis = get_redis_client()
-    busy = f"assistant:busy:{conversation_id}"
-    if redis is None or not await redis.set(busy, "1", nx=True, ex=BUSY_SECONDS):
+    if redis is None or not await asking.hold(redis, conversation_id):
         return _refuse(429, "上一个问题还在回答，等它答完再问。", 5)
+    held_at = time.monotonic()
 
     async def release() -> None:
         try:
-            await redis.delete(busy)
+            await asking.release(redis, conversation_id)
         except Exception:  # noqa: BLE001 — the lock expires by itself
             pass
+
+    started = assistant.launch(auth.user_id, conversation_id, place)
+    try:
+        await people.ensure(started)
+    except HostFull:
+        await release()
+        return _refuse(503, "芝士这会儿太忙，稍后再试。", 10)
+    except PersonalSessionError as exc:
+        logger.warning("a person's session did not start: %s", exc)
+        await release()
+        return _refuse(503, assistant.FAILED, 10)
 
     return StreamingResponse(
         assistant.ask(
             sessions=async_session_factory,
-            key=key,
-            rates=rates,
-            user_id=auth.user_id,
-            conversation_id=conversation_id,
+            people=people,
+            started=started,
             question=body.question,
-            place=place,
+            held_at=held_at,
             on_done=release,
         ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
     )
+
+
+@router.post("/tools/{name}", include_in_schema=False)
+async def personal_tool(name: str, request: Request, db: DbSession) -> dict:
+    """One tool call of a person's 芝士, run as that person.
+
+    The session presents its personal credential, and nothing else opens this:
+    not a person's login, not a room's or a project's credential, not the
+    platform's own secret. The conversation it names must still be the person's.
+    """
+    claims = personal_claims(request.headers.get("x-cheese-token") or "")
+    if claims is None:
+        raise AuthenticationRequiredError("A personal credential is required")
+    try:
+        conversation_id = uuid.UUID(claims.conversation_id)
+        await assistant.AssistantConversations(db).owned(
+            claims.user_id, conversation_id
+        )
+    except (ValueError, assistant.ConversationNotFound) as exc:
+        raise ForbiddenError("This credential's conversation is gone") from exc
+    if name not in personal_tools.NAMES:
+        raise NotFoundError.for_resource("tool", name)
+    try:
+        arguments = await request.json()
+    except ValueError:
+        # What the model wrote is not ours to crash on; the tool reads it as
+        # no arguments and says so in its answer.
+        arguments = {}
+    text = await personal_tools.run(
+        name,
+        arguments if isinstance(arguments, dict) else {},
+        user_id=claims.user_id,
+        sessions=async_session_factory,
+    )
+    return ok({"text": text})

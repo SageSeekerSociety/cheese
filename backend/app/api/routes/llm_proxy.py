@@ -15,7 +15,8 @@ does not control and make spend unattributable. So the machine carries only its
 own scoped cheese token; this route authenticates it, swaps in the project's
 virtual gateway key — the same key its local turns run on, so budget and
 attribution are unchanged — and streams the upstream response back verbatim. The
-credential never leaves the box.
+credential never leaves the box. A person's 芝士 comes here the same way with a
+personal credential instead, and is given that person's own key (``_person_key``).
 
 Protocol-agnostic on purpose: whatever path the client asks for is forwarded
 as-is, so a client-side protocol change needs no change here.
@@ -33,18 +34,27 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_chat_service, get_db
 from app.api.response import ok
 from app.core.config import settings
-from app.core.db import release_read_session
+from app.core.db import async_session_factory, release_read_session
 from app.core.errors import (
     AuthenticationRequiredError,
+    ForbiddenError,
     GatewayUnavailableError,
     NotFoundError,
     ValidationError,
 )
-from app.core.sandbox_auth import is_global_sandbox_token, scoped_token_claims
+from app.core.redis import get_redis_client
+from app.core.sandbox_auth import (
+    PersonalClaims,
+    is_global_sandbox_token,
+    personal_claims,
+    scoped_token_claims,
+)
 from app.domain.agent.budget_proxy import BudgetState, decide
 from app.domain.agent.chat import ChatService
 from app.domain.agent.supply import GATEWAY
 from app.domain.agent_instance import configuration
+from app.domain.assistant.asking import answering
+from app.domain.assistant.keys import stored_key
 from app.domain.policy import gate
 from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task import binding
@@ -352,6 +362,22 @@ async def admission(
     )
 
 
+async def _person_key(claims: PersonalClaims) -> str | None:
+    """The key a person's 芝士 calls the model on, while — and only while — a
+    question that person asked in that conversation is being answered.
+
+    Every call on the key is charged to the person, and they are charged only
+    for what they asked for (#2233): a session reaching for the model with no
+    question open, or after its question was answered, is refused here rather
+    than billed. Their own key, never the pool's credential or a project's.
+    """
+    redis = get_redis_client()
+    if redis is None or not await answering(redis, claims.conversation_id):
+        raise ForbiddenError("No question of this conversation is being answered")
+    async with async_session_factory() as session:
+        return await stored_key(session, claims.user_id)
+
+
 @router.api_route("/{path:path}", methods=["GET", "POST"], include_in_schema=False)
 async def proxy(
     path: str,
@@ -359,18 +385,24 @@ async def proxy(
     chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> StreamingResponse:
     token = _caller_token(request)
-    claims = scoped_token_claims(token) if token else None
-    if not claims or not claims.get("p"):
+    person = personal_claims(token) if token else None
+    claims = scoped_token_claims(token) if token and person is None else None
+    if person is None and (not claims or not claims.get("p")):
         raise AuthenticationRequiredError("A scoped cheese token is required")
     if not settings.anthropic_base_url:
         raise GatewayUnavailableError("No model pool is configured for this deployment")
 
-    project_id = claims["p"]
-    try:
-        project_uuid = uuid.UUID(project_id)
-    except ValueError as exc:
-        raise NotFoundError("Unknown project") from exc
-    key = await chat.project_gateway_key(project_uuid)
+    if person is not None:
+        project_id = f"user:{person.user_id}"
+        key = await _person_key(person)
+    else:
+        assert claims is not None
+        project_id = claims["p"]
+        try:
+            project_uuid = uuid.UUID(project_id)
+        except ValueError as exc:
+            raise NotFoundError("Unknown project") from exc
+        key = await chat.project_gateway_key(project_uuid)
     if not key:
         # Same rule as a local turn: refuse rather than fall back to the pool's
         # own credential, which would bill every project to one bucket.

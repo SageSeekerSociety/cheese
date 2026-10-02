@@ -209,6 +209,45 @@ class LlmGateway:
             logger.warning("gateway mint_project_key failed", exc_info=True)
             return None
 
+    async def mint_person_key(self, user_id: int, model: str) -> str | None:
+        """Create a person's virtual key for their 芝士: attributed to them, and
+        good for ``model`` alone, so a credential that reaches it can spend on
+        nothing else. No budget on the gateway — what it spends is charged to
+        the person's credits. Not idempotent either; the caller stores it."""
+        try:
+            async with self._client() as client:
+                r = await client.post(
+                    f"{self._base}/key/generate",
+                    headers=self._headers,
+                    json={
+                        "key_alias": f"user-{user_id}",
+                        "user_id": f"user:{user_id}",
+                        "models": [model],
+                        "metadata": {"cheesex_user": user_id, "purpose": "assistant"},
+                    },
+                )
+                r.raise_for_status()
+                key = r.json().get("key")
+                return key if isinstance(key, str) and key else None
+        except Exception:  # noqa: BLE001 — the person is told 芝士 is unavailable
+            logger.warning("gateway mint_person_key failed", exc_info=True)
+            return None
+
+    async def revoke_key(self, key: str) -> bool:
+        """Delete a virtual key on the gateway, so nothing can call on it."""
+        try:
+            async with self._client() as client:
+                r = await client.post(
+                    f"{self._base}/key/delete",
+                    headers=self._headers,
+                    json={"keys": [key]},
+                )
+                r.raise_for_status()
+                return True
+        except Exception:  # noqa: BLE001 — the caller says what was left
+            logger.warning("gateway revoke_key failed", exc_info=True)
+            return False
+
     async def set_key_budget(self, key: str, max_budget_usd: float) -> bool:
         """L2: cap the key's lifetime spend; the gateway rejects calls past it."""
         try:

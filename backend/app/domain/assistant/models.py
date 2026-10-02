@@ -4,15 +4,9 @@ There is one 芝士 per person and many conversations; each belongs to the place
 it was started, named by ``place_kind`` and ``place_id`` — a task today, other
 places later. A conversation is visible to its owner only.
 
-Two records of the same conversation are kept, because they answer different
-questions once history is compacted:
-
-* ``AssistantMessage`` rows are what the person said and was told, in order,
-  and never shrink: the panel renders them.
-* ``AssistantConversation.history`` is what the model is sent: the Pydantic AI
-  message list (tool calls and their results included), cut back to the recent
-  turns once it grows past the cap, with what was cut summarised in
-  ``summary``.
+What was said is kept as ``AssistantMessage`` rows, in order; the panel shows
+them. The model's own copy of the conversation is its session's, on the session
+host (``agent.harness.pi.personal``).
 """
 
 import uuid
@@ -58,8 +52,27 @@ class AssistantConversation(UuidPk, Timestamps, Base):
     last_active_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
-    history: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
-    summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+
+class AssistantGatewayKey(Timestamps, Base):
+    """A person's own virtual key on the gateway, and how far its spend has been
+    charged to them.
+
+    Every model call a person's 芝士 makes is made on this key, so what the
+    gateway records under it is exactly what that person asked for, priced the
+    way the gateway prices it (cache reads at the cache rate). ``usage_ckpt`` is
+    the cumulative spend already charged, in the shape a project's checkpoint
+    has (``agent.gateway.drain_new_usage``)."""
+
+    __tablename__ = "assistant_gateway_keys"
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"), primary_key=True
+    )
+    key: Mapped[str] = mapped_column(Text, nullable=False)
+    # The one model the key may call (``keys.person_key``).
+    model: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    usage_ckpt: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
 
 class AssistantMessage(UuidPk, Timestamps, Base):
