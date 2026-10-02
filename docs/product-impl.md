@@ -48,7 +48,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 ### 1.3 话题生命周期
 
 `TopicStatus`：`active`（进行中）/ `archived`（已归档）/ `draft`（草稿）。
-**归档即工作面冻结**（spec §6.3；采纳不再顺手归档，#442 决定 1）：归档房间禁止派活、禁止改文档、禁止升级块、禁止写文件、禁止再递验收卡（Batch A/G/J 在 split / edit_doc / upgrade / write_file / create_card 五处统一加守卫）。
+**归档即工作面冻结**（spec §6.3；采纳不再顺手归档，#442 决定 1）：归档房间禁止派活、禁止改文档、禁止升级块、禁止写文件、禁止再递验收卡（Batch A/G/J 在 split / 文档写入 / upgrade / write_file / create_card 五处统一加守卫）。
 
 ### 1.4 项目 = git 仓库
 
@@ -123,9 +123,9 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 ### 3.4 实况文档（改文档即指令）  ✅ / 🟡
 
 - **行为**：右栏是芝士维护的 markdown 实况文档（状态，不是流水账）；用户可直接编辑，**改了等于给芝士下指令**——正在跑的那一轮当场收到「第几版 + 一句改了哪」的通知，不在跑就由下一轮开头读到最新文档。
-- **实现**：`GET/PUT /api/topics/{id}/doc`（`TopicService.get_doc/edit_doc`），doc 块 `kind=doc`。归档话题文档定格(只读)。
-- **只有整块写法**，所以每次写入都要带 `expected_version`（读到的那一版，0 = 还没有文档），不匹配就 409。芝士侧 `cheese_doc_get` 记住它给出的版本、`cheese_doc_set` 按那一版写——版本是读过的证据，没有让它自己声明的口子。
-- 🟡 未做：编辑文档后对话流出现「编辑了文档」系统事件（edit_doc 已写 event 块，但前端对话流过滤了 ai-event；human/system event 会显示）。
+- **实现**：文档是协同服务（`frontend/collab/`，Hocuspocus）里的一份 Yjs 文档，几个人同时编辑、看得到彼此的光标；协同服务停手几秒后把它存回后端，那一次存回才记一版（`api/doc_store.py`）。doc 块 `kind=doc` 里的 Markdown 是从它导出的。归档话题文档只读。细节见 `docs/docs-canonical-data-map.md`。
+- **编辑器以外的写入都经过协同服务**：`PUT /api/topics/{id}/doc` 带 `expected_version`（读到的那一版，0 = 还没有文档），协同服务只在实时文档还是那一版时应用，否则 409。芝士侧 `cheese_doc_get` 记住它给出的版本、`cheese_doc_set` 按那一版写——版本是读过的证据，没有让它自己声明的口子。
+- 🟡 未做：编辑文档后对话流出现「编辑了文档」系统事件（存回时已写 event 块，但前端对话流过滤了 ai-event；human/system event 会显示）。
 
 ### 3.5 验收 / 采纳（状态机）  ✅
 

@@ -28,7 +28,7 @@ covers:
 
 ## 镜像按提交号构建 {#images}
 
-`.github/workflows/build.yml` 每个提交构建一组镜像：`backend`、`frontend`、`sandbox`、`browser-render`、`office-render`、`gateway`、`metering-proxy`、`private-executor`，都以提交号为标签；没有变化的镜像直接给旧镜像打上新的提交号标签。发版就是 `deploy-docker.sh <提交号>`：拉取这组镜像、跑数据库迁移、替换主 API 和前端，健康检查不过就回滚到上一组镜像引用。
+`.github/workflows/build.yml` 每个提交构建一组镜像：`backend`、`frontend`、`sandbox`、`browser-render`、`office-render`、`gateway`、`metering-proxy`、`private-executor`、`collab`，都以提交号为标签；没有变化的镜像直接给旧镜像打上新的提交号标签。发版就是 `deploy-docker.sh <提交号>`：拉取这组镜像、跑数据库迁移、替换主 API、文档协同服务和前端，健康检查不过就回滚到上一组镜像引用。
 
 ## 随发版替换的 vs 常驻的 {#planes}
 
