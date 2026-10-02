@@ -199,10 +199,17 @@ class StreamingUsageExtractor:
         if not self.model and isinstance(model, str):
             self.model = model
         for src in (msg.get("usage"), evt.get("usage")):
-            if isinstance(src, dict):
-                self.usage.update(
-                    {k: v for k, v in src.items() if type(v) is int and v >= 0}
-                )
+            if not isinstance(src, dict):
+                continue
+            for key, value in src.items():
+                if type(value) is int and value >= 0:
+                    self.usage[key] = value
+                elif key == "cache_creation" and isinstance(value, dict):
+                    # The cache writes split by lifetime; the 1-hour ones are
+                    # billed at a higher rate than the 5-minute ones.
+                    self.usage[key] = {
+                        k: v for k, v in value.items() if type(v) is int and v >= 0
+                    }
 
 
 def usage_from_sse(body: bytes) -> tuple[dict, str]:
@@ -278,6 +285,16 @@ class Meter:
             "total_tokens": total,
             "provider": "subscription",
         }
+        split = usage.get("cache_creation")
+        if isinstance(split, dict):
+            # Written only when the response split its cache writes by
+            # lifetime, so a reader can tell "all 5-minute" from "not said".
+            rec["cache_creation_5m_input_tokens"] = int(
+                split.get("ephemeral_5m_input_tokens", 0)
+            )
+            rec["cache_creation_1h_input_tokens"] = int(
+                split.get("ephemeral_1h_input_tokens", 0)
+            )
         with self._lock:
             self._events.append((now, total))
             self._prune(now)

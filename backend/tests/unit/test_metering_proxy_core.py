@@ -215,6 +215,39 @@ def test_meter_records_and_caps_over_the_window(tmp_path):
     assert again.used() == 100
 
 
+def test_the_log_keeps_cache_writes_split_by_lifetime(tmp_path):
+    """One-hour cache writes cost more than five-minute ones, so the log line
+    carries both counts beside the total the cap counts."""
+    body = b"\n".join(
+        [
+            b'data: {"type":"message_start","message":{"model":"claude-opus-5",'
+            b'"usage":{"input_tokens":7,"cache_creation_input_tokens":300,'
+            b'"cache_creation":{"ephemeral_5m_input_tokens":100,'
+            b'"ephemeral_1h_input_tokens":200}}}}',
+            b'data: {"type":"message_delta","usage":{"output_tokens":5}}',
+        ]
+    )
+    usage, model = core.usage_from_sse(body)
+    meter = core.Meter(tmp_path / "usage.jsonl", cap_window_s=3600)
+    meter.record("p1", "t1", usage, model)
+
+    rec = json.loads((tmp_path / "usage.jsonl").read_text().strip())
+    assert rec["cache_creation_input_tokens"] == 300
+    assert rec["cache_creation_5m_input_tokens"] == 100
+    assert rec["cache_creation_1h_input_tokens"] == 200
+    assert meter.used() == 7 + 300 + 5
+
+
+def test_a_response_without_the_split_logs_no_split(tmp_path):
+    """Absent is not "all five-minute": the reader must be able to tell."""
+    meter = core.Meter(tmp_path / "usage.jsonl", cap_window_s=3600)
+    meter.record("p1", "t1", {"input_tokens": 1, "cache_creation_input_tokens": 9}, "m")
+
+    rec = json.loads((tmp_path / "usage.jsonl").read_text().strip())
+    assert "cache_creation_1h_input_tokens" not in rec
+    assert "cache_creation_5m_input_tokens" not in rec
+
+
 def test_admission_verdict_carries_the_supply_decision():
     """The same answer says both 'may it run' and 'where does it go' (#243)."""
 
