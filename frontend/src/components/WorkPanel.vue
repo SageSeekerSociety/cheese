@@ -167,12 +167,20 @@ function ensureFileFromUrl(key: string | null) {
 //
 // 换页签会离开图片那格，图上没发出去的标注就跟着没了，所以先问一句（确认不了就
 // 留在原地）。切工具不算——那件小事不经过这里。
-async function setTab(key: string) {
-  if (key !== active.value && !(await confirmAnnotationDiscard())) return
+//
+// `guard: false` 是给「不是用户主动离开图」的入口用的：`pulse` / `highlightTurn` /
+// `reviewDoc` 是聊天里点「查看改动 / 看这一轮」掀开总览，图那格用 `v-show` 留着、笔画
+// 不会丢——拦住它们只会平白弹一次框，再把这次点击变成一次没落地的空操作。
+//
+// 返回「到底切没切」：调用方要接着在目标那一格上做事（开文件）时，被拦下就得当场
+// 放弃，不能拿着旧的引用假装做过了。
+async function setTab(key: string, opts: { guard?: boolean } = {}): Promise<boolean> {
+  if (key !== active.value && opts.guard !== false && !(await confirmAnnotationDiscard())) return false
   settled.value = true
   active.value = key
   if (key === 'changes') markChangesSeen()
   emit('update:tab', key)
+  return true
 }
 
 // ---- 开在哪个 tab 上 (规则 3) ----
@@ -467,17 +475,22 @@ watch(
 )
 
 // ---- The panel's outward API (TopicView holds a ref) ----
-function pulse() {
-  setTab('overview')
-  void nextTick(() => overviewRef.value?.pulse())
+// 这三样都是「把总览里某样东西掀到眼前」（聊天里点了「查看改动 / 看这一轮」），不是
+// 用户主动离开正在标注的那张图：绕过守卫切过去，切换与随后的那一下都真的发生。
+async function pulse() {
+  await setTab('overview', { guard: false })
+  await nextTick()
+  overviewRef.value?.pulse()
 }
-function highlightTurn(turnId: string) {
-  setTab('overview')
-  void nextTick(() => overviewRef.value?.highlightTurn(turnId))
+async function highlightTurn(turnId: string) {
+  await setTab('overview', { guard: false })
+  await nextTick()
+  overviewRef.value?.highlightTurn(turnId)
 }
-function reviewDoc(request: DocReviewRequest) {
-  setTab('overview')
-  void nextTick(() => overviewRef.value?.reviewEdits(request))
+async function reviewDoc(request: DocReviewRequest) {
+  await setTab('overview', { guard: false })
+  await nextTick()
+  overviewRef.value?.reviewEdits(request)
 }
 // A chip is a path with no store, and a room has three: its own files (what 芝士
 // delivered and what people uploaded — no branch, no history), a task's worktree,
@@ -500,10 +513,13 @@ async function openFile(path: string, taskId?: string | null) {
   // 的东西，这里手上那份记录要等这一轮结束才更新。
   await pollPreviewPointer()
   if (want === previewPath.value) {
-    setTab('preview')
+    await setTab('preview')
     return
   }
-  setTab('changes')
+  // 这一步是用户点了一份文件，该走守卫问一句。问不到「可以走」就当场收手：`setTab`
+  // 停在原地，`changesRef` 要么是空的、要么指向一份没露面的「改动」——再往下走就是
+  // 一次没有落地、也没人知道的假动作。
+  if (!(await setTab('changes'))) return
   await nextTick()
   // `undefined`, not `null`: a message under no card says nothing about which
   // source holds the file, while `null` means 「项目当前代码」 — and a file this

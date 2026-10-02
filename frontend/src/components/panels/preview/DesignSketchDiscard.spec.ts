@@ -117,6 +117,40 @@ describe('离开前问一句', () => {
     await expect(confirmAnnotationDiscard()).resolves.toBe(true)
   })
 
+  it('发过之后撤销再重做：屏上又跟发出去的一样了，不该再拦', async () => {
+    const ui = mount()
+    await painted(ui)
+    await drawRect(ui)
+    await waitFor(() => expect(hasUnsentAnnotations()).toBe(true))
+    await fireEvent.update(ui.getByPlaceholderText('说一句要改什么，回车发送'), '改成蓝色')
+    await fireEvent.click(ui.getByRole('button', { name: '加入对话' }))
+    await waitFor(() => expect(hasUnsentAnnotations()).toBe(false))
+
+    // 撤销再重做，净变化为零：屏上那几笔又是发出去时的样子，没欠谁。
+    await fireEvent.click(ui.getByRole('button', { name: '撤销' }))
+    await fireEvent.click(ui.getByRole('button', { name: '重做' }))
+    expect(rects(ui)).toBe(1)
+    await waitFor(() => expect(hasUnsentAnnotations()).toBe(false))
+    await expect(confirmAnnotationDiscard()).resolves.toBe(true)
+  })
+
+  it('发过之后只撤销（没重做）：屏上少了东西，得重新拦', async () => {
+    const ui = mount()
+    await painted(ui)
+    await drawRect(ui)
+    await drawRect(ui)
+    await waitFor(() => expect(rects(ui)).toBe(2))
+    await waitFor(() => expect(hasUnsentAnnotations()).toBe(true))
+    await fireEvent.update(ui.getByPlaceholderText('说一句要改什么，回车发送'), '改成蓝色')
+    await fireEvent.click(ui.getByRole('button', { name: '加入对话' }))
+    await waitFor(() => expect(hasUnsentAnnotations()).toBe(false))
+
+    // 只撤销一笔：屏上跟发出去的已经不一样了，该重新拦。
+    await fireEvent.click(ui.getByRole('button', { name: '撤销' }))
+    expect(rects(ui)).toBe(1)
+    await waitFor(() => expect(hasUnsentAnnotations()).toBe(true))
+  })
+
   it('换个工具不算离开：不弹框，没发出去的笔画照旧登记着', async () => {
     const ui = mount()
     await painted(ui)
@@ -126,6 +160,90 @@ describe('离开前问一句', () => {
     expect(ui.queryByRole('alertdialog')).toBeNull()
     expect(hasUnsentAnnotations()).toBe(true)
     expect(rects(ui)).toBe(1)
+  })
+
+  // 对话框还开着的时候又来一次导航（双击页签、先点页签再点关闭、快捷键与点击几乎
+  // 同时触发两次 setTab/closeFile）。第二次不该把第一次的 Promise 顶掉：那样第一次
+  // 永远等不到答复，它该做的切换/关闭就静默丢了。一次回答要答得住两次。
+  it('弹框还开着时又来一次导航：两次请求共用一个答复，没有悬着的 Promise', async () => {
+    const ui = mount()
+    await painted(ui)
+    await drawRect(ui)
+    await waitFor(() => expect(hasUnsentAnnotations()).toBe(true))
+
+    const first = confirmAnnotationDiscard()
+    await ui.findByRole('alertdialog', { name: '放弃这些标注？' })
+    const second = confirmAnnotationDiscard()
+    // 合并进同一个弹框，不是再弹一个。
+    expect(ui.getAllByRole('alertdialog')).toHaveLength(1)
+
+    await fireEvent.click(ui.getByRole('button', { name: '保留' }))
+    await expect(second).resolves.toBe(false)
+    // 第一次也得跟着同一个答复落下来，不能悬着。
+    const firstOutcome = await Promise.race([
+      first.then((go) => `resolved:${go}`),
+      new Promise<string>((resolve) => setTimeout(() => resolve('pending'), 100)),
+    ])
+    expect(firstOutcome).toBe('resolved:false')
+    // 「保留」什么都不丢。
+    expect(rects(ui)).toBe(1)
+    expect(hasUnsentAnnotations()).toBe(true)
+  })
+
+  it('开着时第二次选了「放弃」：两次都说可以走，笔画只清一次', async () => {
+    const ui = mount()
+    await painted(ui)
+    await drawRect(ui)
+    await waitFor(() => expect(hasUnsentAnnotations()).toBe(true))
+
+    const first = confirmAnnotationDiscard()
+    await ui.findByRole('alertdialog', { name: '放弃这些标注？' })
+    const second = confirmAnnotationDiscard()
+    await fireEvent.click(ui.getByRole('button', { name: '放弃' }))
+    await expect(first).resolves.toBe(true)
+    await expect(second).resolves.toBe(true)
+    await waitFor(() => expect(rects(ui)).toBe(0))
+    expect(hasUnsentAnnotations()).toBe(false)
+    // 答过之后不该再有第四个悬着的东西：再问直接放行。
+    await expect(confirmAnnotationDiscard()).resolves.toBe(true)
+  })
+
+  it('焦点先落在「保留」上，关掉之后还给原来那个地方', async () => {
+    const ui = mount()
+    await painted(ui)
+    await drawRect(ui)
+    await waitFor(() => expect(hasUnsentAnnotations()).toBe(true))
+
+    const origin = ui.getByRole('button', { name: '矩形' })
+    origin.focus()
+    expect(document.activeElement).toBe(origin)
+
+    const asked = confirmAnnotationDiscard()
+    const keep = await ui.findByRole('button', { name: '保留' })
+    await waitFor(() => expect(document.activeElement).toBe(keep))
+    await fireEvent.click(keep)
+    await expect(asked).resolves.toBe(false)
+    expect(document.activeElement).toBe(origin)
+  })
+
+  it('Tab 在弹框里绕圈，不漏到后面那份界面上', async () => {
+    const ui = mount()
+    await painted(ui)
+    await drawRect(ui)
+    await waitFor(() => expect(hasUnsentAnnotations()).toBe(true))
+
+    confirmAnnotationDiscard()
+    const keep = await ui.findByRole('button', { name: '保留' })
+    const discard = ui.getByRole('button', { name: '放弃' })
+    keep.focus()
+    await fireEvent.keyDown(keep, { key: 'Tab' })
+    expect(document.activeElement).toBe(discard)
+    await fireEvent.keyDown(discard, { key: 'Tab' })
+    expect(document.activeElement).toBe(keep)
+    await fireEvent.keyDown(keep, { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(discard)
+    // 收尾：答一句，免得弹框留在那儿。
+    await fireEvent.click(keep)
   })
 
   it('这一页没在看了就不登记：画了东西、但收起来的那一页不拦别人', async () => {
