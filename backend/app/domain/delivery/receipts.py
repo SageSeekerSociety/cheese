@@ -628,10 +628,15 @@ async def record_receipt(session, receipt: InputReceipt) -> NativeInput | None:
     if receipt.evidence != "native_echo":
         return None
     execution_work = receipt.execution_work_id
-    if execution_work is not None and row.execution_work_id not in (
-        None,
-        execution_work,
+    if (
+        execution_work is not None
+        and row.execution_work_id not in (None, execution_work)
+        and row.execution_work_id != identity.work_id
     ):
+        # Two work stamps that disagree. The input's own work is exempt: that
+        # value is the provisional default the bare-echo path below writes, not
+        # a stamp the runner proved, so real evidence naming the executing work
+        # (a retained interval completed under an adopted work) supersedes it.
         raise ValidationError("Native input has a different execution owner")
     if execution_work is None and row.execution_work_id is None:
         # An echo that names no execution work is an echo under the input's own
