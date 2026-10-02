@@ -34,6 +34,19 @@ vi.mock('./preview/PreviewSlides.vue', () => ({
             },
             'page'
           ),
+          h(
+            'button',
+            {
+              onClick: () =>
+                emit('pageContext', {
+                  text: 'Selected run on the slide',
+                  page: 2,
+                  scope: 'selection',
+                  context: props.context,
+                }),
+            },
+            'selection'
+          ),
         ])
     },
   },
@@ -132,8 +145,38 @@ it('sends whole-page PDF context with complete text and the verified file identi
     task_id: 'task',
     version: 'v7',
     page: 2,
+    scope: 'page',
     text,
   })
+})
+it('sends a selected run on the slide as a quoted context, marked as a selection', async () => {
+  const submit = vi.fn().mockReturnValue(true)
+  const ui = mount(submit)
+  await fireEvent.click(ui.getByText('selection'))
+  await fireEvent.update(ui.getByPlaceholderText('说明要改什么'), 'this line is wrong')
+  await fireEvent.click(ui.getByText('发送'))
+  const request = submit.mock.calls[0]?.[0]
+  expect(request.content).toBe('this line is wrong')
+  expect(request.quotedContext).toEqual({
+    kind: 'slide-page',
+    path: 'deck.pptx',
+    source: 'committed',
+    task_id: 'task',
+    version: 'v7',
+    page: 2,
+    scope: 'selection',
+    text: 'Selected run on the slide',
+  })
+})
+it('drops a selected run whose version moved on before send, like the whole-page path', async () => {
+  const submit = vi.fn().mockReturnValue(true)
+  const ui = mount(submit)
+  await fireEvent.click(ui.getByText('selection'))
+  await fireEvent.update(ui.getByPlaceholderText('说明要改什么'), 'this line is wrong')
+  await ui.rerender({ ...props, previewFile: { ...props.previewFile, version: 'v8' } })
+  await fireEvent.click(ui.getByText('发送'))
+  expect(submit).not.toHaveBeenCalled()
+  expect(ui.emitted().locate).toBeUndefined()
 })
 it('retires the locator when bytes or source identity change and routes PDF to the existing reader', async () => {
   const ui = mount()
@@ -267,6 +310,7 @@ it('whole-page ask posts the current canonical AI mention through the normal mes
     task_id: 'task',
     version: 'v7',
     page: 2,
+    scope: 'page',
     text,
   })
   expect(ui.posted[0].body.request_id).toMatch(/^[0-9a-f-]{36}$/)

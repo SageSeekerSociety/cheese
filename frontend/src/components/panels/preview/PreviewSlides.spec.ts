@@ -223,7 +223,7 @@ describe('slide reader contract (PDF.js substituted)', () => {
     expect(pdf.renders.every((render) => render.cancel.mock.calls.length > 0)).toBe(true)
   })
 
-  it('emits real full PDF text separately from quotes, retaining source, task, path and version', async () => {
+  it('emits the whole page and a selected run through the same frozen context, told apart by scope', async () => {
     const ui = await loaded()
     await fireEvent.click(ui.getByRole('button', { name: '下一页' }))
     await fireEvent.click(ui.getByRole('button', { name: '对整页提问' }))
@@ -239,7 +239,29 @@ describe('slide reader contract (PDF.js substituted)', () => {
     selection.removeAllRanges()
     selection.addRange(range)
     await fireEvent.mouseUp(ui.container.querySelector('[data-page="2"]')!)
-    expect(ui.emitted().quote![0]).toEqual([{ text: 'Selectable original text', page: 2 }])
+    await waitFor(() => expect(ui.emitted().pageContext).toHaveLength(2))
+    expect(ui.emitted().pageContext![1]).toEqual([
+      { text: 'Selectable original text', page: 2, scope: 'selection', context: identity },
+    ])
+    // 选中一句也带着身份出去了，不再走那句拼好的话。
+    expect(ui.emitted().quote).toBeUndefined()
+    selection.removeAllRanges()
+  })
+
+  it('falls back to the plain sentence when no verified identity is available', async () => {
+    const ui = render(PreviewSlides, { props: { data: new ArrayBuffer(8) } })
+    await waitFor(() => expect(pdf.requests).toHaveLength(1))
+    pdf.requests[0]!.resolve(documentFixture(3))
+    await waitFor(() => expect(ui.container.querySelector('[data-page="1"] span')).toBeTruthy())
+    const text = ui.container.querySelector('[data-page="1"] span')!.firstChild!
+    const range = document.createRange()
+    range.selectNodeContents(text)
+    const selection = window.getSelection()!
+    selection.removeAllRanges()
+    selection.addRange(range)
+    await fireEvent.mouseUp(ui.container.querySelector('[data-page="1"]')!)
+    expect(ui.emitted().quote![0]).toEqual([{ text: 'Selectable original text', page: 1 }])
+    expect(ui.emitted().pageContext).toBeUndefined()
     selection.removeAllRanges()
   })
 

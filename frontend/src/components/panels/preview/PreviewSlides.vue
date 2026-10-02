@@ -43,9 +43,13 @@ const busy = computed(() => props.pending || loading.value)
 const problem = computed(() => props.error || failure.value)
 // Refresh state describes the next conversion; already displayed bytes remain readable.
 const ready = computed(() => !loading.value && !failure.value && count.value > 0)
-const canAskPage = computed(
-  () => ready.value && !!props.context && !busy.value && !problem.value && !props.rendererMissing
-)
+/** 这一页现在还能不能带身份地指出去。
+ *
+ *  和 canAskPage 分开：整页提问要等取文字那一步空闲（它自己要跑一趟），而选中一段
+ *  只拿页面上已有的选区，转换在后台重跑、bytes 还没换时（busy）照样算数 —— 屏幕上
+ *  那张就是读者看着的那张。 */
+const canQuote = computed(() => ready.value && !!props.context && !problem.value && !props.rendererMissing)
+const canAskPage = computed(() => canQuote.value && !busy.value)
 const showRail = computed(() => ready.value && !presenting.value && (railOverride.value ?? !narrow.value))
 let observer: ResizeObserver | null = null
 let restoreFocus: HTMLElement | null = null
@@ -104,7 +108,15 @@ function quote() {
   const range = selection.getRangeAt(0)
   if (!sheet.value.contains(range.startContainer) || !sheet.value.contains(range.endContainer)) return
   const text = selection.toString().trim()
-  if (text) emit('quote', { text, page: current.value })
+  if (!text) return
+  // 选中一句和整页提问走同一条出口：同一个冻结引用，带文件身份和版本，只是
+  // scope 说这是这一页里的一段。没有已验证的身份时才退回原来那句拼好的话 ——
+  // 它不带版本，但也不撒谎。
+  if (canQuote.value && props.context) {
+    emit('pageContext', { text, page: current.value, scope: 'selection', context: { ...props.context } })
+    return
+  }
+  emit('quote', { text, page: current.value })
 }
 async function askPage() {
   if (!props.context || !canAskPage.value || pageBusy.value) return
