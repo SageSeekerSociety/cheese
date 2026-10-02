@@ -275,7 +275,9 @@ def parse_snapshot(text: str) -> tuple[dict, list[dict]]:
 
 
 def _sync(
-    index_file: str, records: list[RouteRecord], annotations_file: str | Path | None = None
+    index_file: str,
+    records: list[RouteRecord],
+    annotations_file: str | Path | None = None,
 ) -> int:
     """One drift check: profile, ordered leaf rows, complete handwritten notes."""
     path = Path(index_file)
@@ -316,7 +318,8 @@ def _sync(
         print(f"route annotations invalid: {exc}")
         return 1
     print(
-        f"route index in sync ({len(indexed)} registrations; {keys} annotated addresses)"
+        f"route index in sync ({len(indexed)} registrations; "
+        f"{keys} annotated addresses)"
     )
     return 0
 

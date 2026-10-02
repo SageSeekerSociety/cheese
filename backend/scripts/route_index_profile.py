@@ -74,9 +74,7 @@ def run_profiled(
     backend; use absolute paths for artifacts outside that directory.
     """
     child_env = {
-        key: value
-        for key in _OS_ENV_KEYS
-        if (value := os.environ.get(key)) is not None
+        key: value for key in _OS_ENV_KEYS if (value := os.environ.get(key)) is not None
     }
     child_env["PYTHONUTF8"] = "1"
     return subprocess.run(

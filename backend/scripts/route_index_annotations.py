@@ -9,7 +9,9 @@ from pathlib import Path
 
 import yaml
 
-DEFAULT_SIDECAR = Path(__file__).resolve().parents[1] / "tests/contract/route_index.yaml"
+DEFAULT_SIDECAR = (
+    Path(__file__).resolve().parents[1] / "tests/contract/route_index.yaml"
+)
 
 
 class _UniqueLoader(yaml.SafeLoader):
@@ -140,6 +142,7 @@ def check_annotation_coverage(rows: list[dict], path: str | Path) -> int:
     orphan = sorted(annotations.keys() - keys)
     if missing or orphan:
         raise ValueError(
-            f"route annotations coverage mismatch: missing={missing!r}; orphan={orphan!r}"
+            f"route annotations coverage mismatch: "
+            f"missing={missing!r}; orphan={orphan!r}"
         )
     return len(keys)

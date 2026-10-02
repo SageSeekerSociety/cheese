@@ -30,7 +30,8 @@ def record(index, path, methods=("GET",), protocol="http"):
 def write_index(tmp_path, records):
     path = tmp_path / "index.json"
     path.write_text(
-        json.dumps({"settings_profile": profile_header()}) + "\n"
+        json.dumps({"settings_profile": profile_header()})
+        + "\n"
         + "\n".join(
             json.dumps(
                 {
@@ -111,9 +112,9 @@ def test_sync_preserves_order_leaf_and_multiplicity(tmp_path, mutation):
 
 def test_sync_preserves_matching_duplicate_registrations(tmp_path):
     records = [record(0, "/same"), replace(record(0, "/same"), index=1)]
-    assert _sync(
-        write_index(tmp_path, records), records, tmp_path / "sidecar.yaml"
-    ) == 0
+    assert (
+        _sync(write_index(tmp_path, records), records, tmp_path / "sidecar.yaml") == 0
+    )
 
 
 def test_annotations_cover_every_http_method_and_explicit_ws(tmp_path):
