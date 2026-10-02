@@ -33,6 +33,7 @@ import { compareRoundTrip, exportMarkdown, readsAs, writeMarkdown } from '../src
 
 import { deriveKey, verifyBearer, verifyTicket } from './auth'
 import { Backend, BackendError } from './backend'
+import { checkMarkdownWrite } from './writeCheck'
 
 export interface CollabConfig {
   port: number
@@ -187,6 +188,13 @@ export function createCollabServer(config: CollabConfig): Server {
         base: string | null
         actor: string
         operation?: Record<string, unknown> | null
+        /** A write in Markdown from outside an editor: refuse it if it would lose text. */
+        check?: boolean
+      }
+      const problem = body.check ? checkMarkdownWrite(body.content) : null
+      if (problem) {
+        respond(response, 422, { error: 'content', message: problem.message, line: problem.line })
+        throw null
       }
       const connection = await instance.openDirectConnection(name, { handle: body.actor, agent: true })
       try {

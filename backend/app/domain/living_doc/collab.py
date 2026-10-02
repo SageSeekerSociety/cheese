@@ -24,7 +24,7 @@ import httpx
 import jwt
 
 from app.core.config import settings
-from app.core.errors import ConflictError, SystemBusyError
+from app.core.errors import ConflictError, SystemBusyError, UnprocessableEntityError
 
 #: How long a ticket opens a connection for. The connection outlives it; a
 #: reconnect asks for a new one.
@@ -97,6 +97,7 @@ async def replace(
     base: str | None,
     actor: str,
     operation: dict | None = None,
+    check: bool = False,
 ) -> dict:
     """Make the live document read ``content``, as ``actor``.
 
@@ -108,6 +109,9 @@ async def replace(
 
     ``operation`` rides through to the store so an idempotent write claims and
     completes its receipt in the same transaction as the version it records.
+    ``check`` is for a write in Markdown from outside an editor: the service
+    refuses it, unapplied, when converting it would lose visible text, and says
+    where and how to fix it (UnprocessableEntityError, ``data.line``).
     Returns what the store answered.
     """
     url = (
@@ -125,12 +129,15 @@ async def replace(
                     "base": base,
                     "actor": actor,
                     "operation": operation,
+                    "check": check,
                 },
                 headers={"Authorization": f"Bearer {_key('internal')}"},
             )
     except httpx.HTTPError as exc:
         raise SystemBusyError("文档协同服务暂时无法访问，稍后重试") from exc
     body = response.json() if response.content else {}
+    if response.status_code == 422 and body.get("error") == "content":
+        raise UnprocessableEntityError(body["message"], data={"line": body.get("line")})
     if response.status_code == 409:
         if body.get("error") == "operation":
             raise ConflictError(body.get("message") or "文档操作冲突")

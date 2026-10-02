@@ -133,7 +133,7 @@ async function until(check: () => boolean, ms = 5000) {
   }
 }
 
-function replace(http: string, body: { content: string; base: string | null; actor: string }) {
+function replace(http: string, body: { content: string; base: string | null; actor: string; check?: boolean }) {
   return fetch(`${http}/internal/documents/${encodeURIComponent(DOC)}/replace`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${deriveKey(SECRET, 'internal')}`, 'Content-Type': 'application/json' },
@@ -240,5 +240,44 @@ describe('the live document', () => {
     expect((await response.json()).doc_version).toBe(backend.versions.length)
     await new Promise((r) => setTimeout(r, 200))
     expect(exportMarkdown(a.doc)).not.toContain('芝士的版本')
+  })
+
+  it('refuses a Markdown write that would lose visible text, says which line, and changes nothing', async () => {
+    const { backend, url, http } = await setup('第一段。\n')
+    const a = client(url, ticket('xiaowang'))
+    await until(() => exportMarkdown(a.doc).includes('第一段'))
+    const versions = backend.versions.length
+    const footnote = '第一段。[^1]\n\n## 资料\n\n[^1]: 出自教务处二〇二五年的数据\n'
+    const table = '第一段。\n\n| 项目 | 分值 |\n| --- | --- |\n| 完成度 | 60 | 备注写在这里 |\n'
+    for (const [content, line] of [
+      [footnote, 5],
+      [table, 5],
+    ] as const) {
+      const response = await replace(http, { content, base: backend.content, actor: 'cheese-agent', check: true })
+      expect(response.status).toBe(422)
+      const body = await response.json()
+      expect(body.line).toBe(line)
+      expect(body.message).toContain(`第 ${line} 行`)
+    }
+    await new Promise((r) => setTimeout(r, 200))
+    expect(backend.versions.length).toBe(versions)
+    expect(exportMarkdown(a.doc)).not.toContain('教务处')
+    expect(exportMarkdown(a.doc)).not.toContain('备注')
+  })
+
+  it('takes a Markdown write that only differs in how it is spelled', async () => {
+    const { backend, url, http } = await setup('第一段。\n')
+    const a = client(url, ticket('xiaowang'))
+    await until(() => exportMarkdown(a.doc).includes('第一段'))
+    const respelled =
+      '第一段。\n\n* 星号列表\n+ 加号列表\n\n1) 括号编号\n\n转义 \\* 号、&nbsp;实体、<span>字面标签</span>、$x^2$\n\n|a|b|\n|-|-|\n|1|2|\n'
+    const response = await replace(http, {
+      content: respelled,
+      base: backend.content,
+      actor: 'cheese-agent',
+      check: true,
+    })
+    expect(response.status).toBe(200)
+    await until(() => exportMarkdown(a.doc).includes('字面标签'))
   })
 })

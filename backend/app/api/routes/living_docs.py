@@ -155,12 +155,15 @@ async def edit_topic_doc(
     # Nothing of this request may stay open across the call: the service's
     # store takes the room's lock in a transaction of its own.
     await db.commit()
+    # Markdown is how this caller speaks; the document is blocks. A write that
+    # would lose visible text on the way in is refused with what to change.
     return await collab.replace(
         place.room_id,
         content=content,
         base=base,
         actor=actor.handle,
         operation=operation,
+        check=True,
     )
 
 

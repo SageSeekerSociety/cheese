@@ -26,6 +26,10 @@ SECRET = "test-collab-secret"
 class FakeCollab:
     def __init__(self, app):
         self._app = app
+        #: The service's write check is its own (frontend/collab/writeCheck.ts,
+        #: tested there); here a test says what it would answer: (message, line)
+        #: for every checked write, or None to take them.
+        self.refuse_writes: tuple[str, int] | None = None
 
     def _client(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(
@@ -38,6 +42,11 @@ class FakeCollab:
     async def handle(self, request: httpx.Request) -> httpx.Response:
         name = request.url.path.split("/")[3]
         body = _json(request)
+        if body.get("check") and self.refuse_writes is not None:
+            message, line = self.refuse_writes
+            return httpx.Response(
+                422, json={"error": "content", "message": message, "line": line}
+            )
         async with self._client() as backend:
             loaded = (await backend.get(f"/internal/collab/documents/{name}")).json()
             live = loaded["content"]

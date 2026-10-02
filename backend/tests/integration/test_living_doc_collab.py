@@ -155,3 +155,29 @@ def test_writes_fail_plainly_when_the_service_is_unreachable(client, monkeypatch
     )
     assert response.status_code == 503
     assert client.get(f"/topics/{room}/doc").json()["data"] is None
+
+
+def test_a_markdown_write_that_would_lose_text_is_refused_with_the_reason(client):
+    room = _topic(client)
+    owner = session_auth_headers("owner")
+    client.portal.call(client.collab.type_in, uuid.UUID(room), "原文", "owner")
+    reason = (
+        "第 3 行是脚注定义（[^1]: 注），实况文档不支持脚注。"
+        "请把脚注内容改成正文里的括注。"
+    )
+    client.collab.refuse_writes = (reason, 3)
+    refused = client.put(
+        f"/topics/{room}/doc",
+        json={"content": "原文[^1]\n\n[^1]: 注\n", "expected_version": 1},
+    )
+    assert refused.status_code == 422
+    assert refused.json()["error"]["message"] == reason
+    assert refused.json()["error"]["data"]["line"] == 3
+    assert client.get(f"/topics/{room}/doc").json()["data"]["content"] == "原文"
+    # Restoring a stored version is not a Markdown write and is not checked.
+    restored = client.post(
+        f"/topics/{room}/doc/restore",
+        json={"version": 1, "expected_version": 1, "operation_id": str(uuid.uuid4())},
+        headers=owner,
+    )
+    assert restored.status_code == 200, restored.text
