@@ -22,7 +22,7 @@ from fastapi import APIRouter, Depends, Path, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
-from app.api.deps import get_personal_sessions
+from app.api.deps import get_handless_sessions
 from app.api.response import ok
 from app.api.routes.admin_common import DbSession
 from app.api.routes.tasks import _ensure_task_readable
@@ -40,12 +40,12 @@ from app.core.errors import (
 )
 from app.core.redis import get_redis_client
 from app.core.sandbox_auth import personal_claims
-from app.domain.agent.harness.pi.personal import (
+from app.domain.agent.harness.pi.handless import (
+    HandlessSessions,
     HostFull,
-    Launch,
-    PersonalSessionError,
-    PersonalSessions,
+    SessionError,
 )
+from app.domain.agent.harness.pi.personal import Launch
 from app.domain.assistant import asking
 from app.domain.assistant import service as assistant
 from app.domain.assistant import tools as personal_tools
@@ -59,7 +59,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/assistant", tags=["assistant"])
 
 AuthUser = Annotated[AuthUserInfo, Depends(require_auth_user)]
-People = Annotated[PersonalSessions, Depends(get_personal_sessions)]
+People = Annotated[HandlessSessions, Depends(get_handless_sessions)]
 
 
 def _task_place(task_id: int) -> assistant.Place:
@@ -159,7 +159,7 @@ async def read_conversation(
     )
 
 
-async def _prestart(people: PersonalSessions, started: Launch) -> None:
+async def _prestart(people: HandlessSessions, started: Launch) -> None:
     try:
         await people.ensure(started)
     except Exception:  # noqa: BLE001 — the question starts it, or says why not
@@ -235,7 +235,7 @@ async def ask(
     except HostFull:
         await release()
         return _refuse(503, "芝士这会儿太忙，稍后再试。", 10)
-    except PersonalSessionError as exc:
+    except SessionError as exc:
         logger.warning("a person's session did not start: %s", exc)
         await release()
         return _refuse(503, assistant.FAILED, 10)
