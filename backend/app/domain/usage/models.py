@@ -179,14 +179,18 @@ class ResourceUsage(UuidPk, Timestamps, Base):
     # cannot be attributed; each such row remains one unit in aggregate reports.
     turn_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
     model: Mapped[str] = mapped_column(String(64), default="")
-    # Every prompt token, cached ones included; the two cache columns are the
-    # shares of it read from and written to the provider's cache, 0 where the
-    # supply reports only the total (the gateway's daily drain).
+    # Every prompt token, cached ones included; the cache columns are the
+    # shares of it read from and written to the provider's cache, and of the
+    # writes, those to the one-hour cache. 0 where the supply reports only the
+    # total (the gateway's daily drain).
     input_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
     cache_read_tokens: Mapped[int] = mapped_column(
         BigInteger, default=0, server_default="0"
     )
     cache_write_tokens: Mapped[int] = mapped_column(
+        BigInteger, default=0, server_default="0"
+    )
+    cache_write_1h_tokens: Mapped[int] = mapped_column(
         BigInteger, default=0, server_default="0"
     )
     output_tokens: Mapped[int] = mapped_column(BigInteger, default=0)

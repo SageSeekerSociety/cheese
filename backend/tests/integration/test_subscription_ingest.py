@@ -40,9 +40,10 @@ async def _seed(factory, credits: float | None = 100.0):
     return pid, tid
 
 
-# USD per token: fresh input, output, cache read, cache write.
-OPUS = (5e-6, 25e-6, 5e-7, 6.25e-6)
-HAIKU = (1e-6, 5e-6, 1e-7, 1.25e-6)
+# USD per token: fresh input, output, cache read, 5-minute cache write,
+# 1-hour cache write.
+OPUS = (5e-6, 25e-6, 5e-7, 6.25e-6, 10e-6)
+HAIKU = (1e-6, 5e-6, 1e-7, 1.25e-6, 2e-6)
 CREDIT_USD = 0.01
 
 
@@ -67,11 +68,30 @@ async def _rows(factory, pid) -> list[ResourceUsage]:
         )
 
 
-def _row(pid, tid, *, inp=100, out=50, cache_read=0, cache_write=0, model=None):
+def _row(
+    pid,
+    tid,
+    *,
+    inp=100,
+    out=50,
+    cache_read=0,
+    cache_write=0,
+    model=None,
+    split: tuple[int, int] | None = None,
+):
+    """One proxy log line; ``split`` is its (5-minute, 1-hour) cache writes,
+    absent on lines the proxy wrote before it logged the split."""
     total = inp + out + cache_read + cache_write
+    extra = {}
+    if split is not None:
+        extra = {
+            "cache_creation_5m_input_tokens": split[0],
+            "cache_creation_1h_input_tokens": split[1],
+        }
     return (
         json.dumps(
-            {
+            extra
+            | {
                 "ts": 1786000000.0,
                 "project_id": str(pid),
                 "topic_id": str(tid),
@@ -103,7 +123,8 @@ async def test_a_row_records_all_four_buckets_and_a_cost_once(
     assert first == {"landed": 1, "skipped": 0}
     assert again == {"landed": 0, "skipped": 0}  # checkpoint: exactly-once
     [row] = await _rows(business_db_factory, pid)
-    cost = 100 * OPUS[0] + 50 * OPUS[1] + 9850 * OPUS[2] + 40 * OPUS[3]
+    # No split on the line: its writes are priced at the 1-hour rate.
+    cost = 100 * OPUS[0] + 50 * OPUS[1] + 9850 * OPUS[2] + 40 * OPUS[4]
     assert row.route == "subscription"
     # Input counts every prompt token; the cache shares are kept beside it.
     assert (row.input_tokens, row.output_tokens) == (9990, 50)
@@ -137,13 +158,46 @@ async def test_cache_reads_are_charged_at_the_cache_read_rate(
 
 
 @pytest.mark.anyio
+async def test_cache_writes_are_charged_by_their_lifetime(
+    business_db_factory, tmp_path, monkeypatch
+):
+    _price(monkeypatch, {"claude-opus-5": OPUS})
+    pid, tid = await _seed(business_db_factory)
+    log = tmp_path / "usage.jsonl"
+    log.write_text(
+        # 1-hour writes only; both lifetimes; a line written before the split.
+        _row(pid, tid, inp=0, out=0, cache_write=1000, split=(0, 1000))
+        + _row(pid, tid, inp=0, out=0, cache_write=2000, split=(1500, 500))
+        + _row(pid, tid, inp=0, out=0, cache_write=3000)
+    )
+
+    await ingest_once(business_db_factory, log)
+
+    hour, both, unsplit = await _rows(business_db_factory, pid)
+    assert hour.cost_usd == pytest.approx(1000 * OPUS[4])
+    assert both.cost_usd == pytest.approx(1500 * OPUS[3] + 500 * OPUS[4])
+    assert unsplit.cost_usd == pytest.approx(3000 * OPUS[4])
+    assert (both.cache_write_tokens, both.cache_write_1h_tokens) == (2000, 500)
+
+
+@pytest.mark.anyio
 async def test_same_tokens_cost_the_same_credits_on_gateway_and_subscription(
     business_db_factory, tmp_path, monkeypatch
 ):
     _price(monkeypatch, {"claude-opus-5": OPUS})
     pid, tid = await _seed(business_db_factory)
     log = tmp_path / "usage.jsonl"
-    log.write_text(_row(pid, tid, inp=300, out=200, cache_read=5000, cache_write=700))
+    log.write_text(
+        _row(
+            pid,
+            tid,
+            inp=300,
+            out=200,
+            cache_read=5000,
+            cache_write=700,
+            split=(700, 0),
+        )
+    )
     await ingest_once(business_db_factory, log)
 
     async with business_db_factory() as session:

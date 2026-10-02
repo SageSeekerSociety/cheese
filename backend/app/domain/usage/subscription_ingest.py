@@ -15,8 +15,9 @@ rotation: a replaced file is a new generation and restarts from zero.
 
 Credits: a subscription call is priced like a gateway call. The gateway's
 model table (``feature_stats.pricing.model_rates``) carries price-only entries
-for the Claude models, and each call's four buckets — fresh input, output,
-cache reads, cache writes — are billed at that model's rates; the credits are
+for the Claude models, and each call's buckets — fresh input, output, cache
+reads, cache writes to the five-minute and to the one-hour cache — are billed at
+that model's rates; the credits are
 that cost over ``llm_gateway_credit_usd``, the same quotient as gateway rows.
 Cache reads dominate (one observed task: 2.9M cached vs 141k fresh) and are
 billed at the cache-read rate, not as fresh input.
@@ -124,12 +125,12 @@ def _count(value: object) -> int:
 _SNAPSHOT = re.compile(r"-\d{8}$")
 
 
-def rates_for(model: str, table: Mapping[str, tuple[float, ...]]) -> Rates | None:
+def rates_for(model: str, table: Mapping[str, tuple]) -> Rates | None:
     """``model``'s rates in the gateway's table, None when it has none."""
     for name in (model, _SNAPSHOT.sub("", model)):
         rate = table.get(name)
         if rate is not None:
-            return Rates(*rate[:4])
+            return Rates(*rate)
     return None
 
 
@@ -203,7 +204,7 @@ async def _land_row(
     session: AsyncSession,
     row: dict,
     work_index: WorkIndex,
-    table: Mapping[str, tuple[float, ...]],
+    table: Mapping[str, tuple],
     unpriced: Counter[str],
 ) -> bool:
     """One proxy record → one usage row + credit deduction. False = skipped
@@ -233,6 +234,14 @@ async def _land_row(
     fresh = _count(row.get("input_tokens"))
     cache_read = _count(row.get("cache_read_input_tokens"))
     cache_write = _count(row.get("cache_creation_input_tokens"))
+    if "cache_creation_1h_input_tokens" in row:
+        cache_write_1h = min(cache_write, _count(row["cache_creation_1h_input_tokens"]))
+    else:
+        # A line that does not split its writes by lifetime (written before the
+        # proxy logged the split) is priced as all one-hour writes: Claude Code
+        # caches for an hour, and over-charging a guess is safer than
+        # under-charging it.
+        cache_write_1h = cache_write
     output_tokens = _count(row.get("output_tokens"))
     input_tokens = fresh + cache_read + cache_write
     if input_tokens + output_tokens <= 0:
@@ -243,7 +252,9 @@ async def _land_row(
     if rates is None:
         unpriced[model] += 1
     else:
-        cost = rates.cost_usd(input_tokens, output_tokens, cache_read, cache_write)
+        cost = rates.cost_usd(
+            input_tokens, output_tokens, cache_read, cache_write, cache_write_1h
+        )
     await Ledger(session).record(
         await payer_for_project(session, project_id),
         credits=spend_to_credits(cost),
@@ -252,6 +263,7 @@ async def _land_row(
         input_tokens=input_tokens,
         cache_read_tokens=cache_read,
         cache_write_tokens=cache_write,
+        cache_write_1h_tokens=cache_write_1h,
         output_tokens=output_tokens,
         cost_usd=cost,
         route="subscription",

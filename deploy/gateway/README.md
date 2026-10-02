@@ -142,7 +142,8 @@ credential. The backend reads these prices back through `/model/info` when it
 ingests the metering proxy's usage log. A new subscription model needs an entry
 here; until it has one, its usage is recorded and nothing is charged.
 `check_config.py` asserts that every blocked entry is refused by the router and
-carries all four prices.
+carries every price: input, output, cache read, and the 5-minute and 1-hour
+cache writes.
 
 ## Health checks
 

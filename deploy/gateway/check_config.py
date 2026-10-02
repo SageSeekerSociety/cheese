@@ -141,7 +141,8 @@ def main() -> None:
         )
     # Price-only entries carry the prices of the Claude models the platform's
     # subscription serves; the backend reads them back through /model/info to
-    # bill that traffic. They must never route, and must carry all four prices.
+    # bill that traffic. They must never route, and must carry every price,
+    # the one-hour cache write included.
     price_only = [
         item
         for item in router.model_list
@@ -171,6 +172,7 @@ def main() -> None:
             "output_cost_per_token",
             "cache_read_input_token_cost",
             "cache_creation_input_token_cost",
+            "cache_creation_input_token_cost_above_1hr",
         ):
             assert info.get(field, 0) > 0, f"{name}: {field} must be priced"
     # Messages usage reports uncached, cache-read and cache-written input separately.

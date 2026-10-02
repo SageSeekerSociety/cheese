@@ -59,13 +59,15 @@ def month_end(month: date) -> datetime:
 @dataclass(frozen=True)
 class Rates:
     """USD per token for the model a call will use: fresh prompt tokens, output
-    tokens, prompt tokens read from the provider's cache, and prompt tokens
-    written to it."""
+    tokens, prompt tokens read from the provider's cache, prompt tokens written
+    to its five-minute cache, and to its one-hour cache (the five-minute rate
+    when the table names none)."""
 
     input: float
     output: float
     cache_read: float
     cache_write: float
+    cache_write_1h: float | None = None
 
     def cost_usd(
         self,
@@ -73,15 +75,23 @@ class Rates:
         output_tokens: int,
         cache_read_tokens: int = 0,
         cache_write_tokens: int = 0,
+        cache_write_1h_tokens: int = 0,
     ) -> float:
         """What a call costs at these rates, billed the way the gateway bills
         it: ``input_tokens`` counts every prompt token, cached ones included,
-        and the cached shares are billed at their own rates."""
+        and the cached shares are billed at their own rates.
+        ``cache_write_1h_tokens`` is the share of ``cache_write_tokens`` that
+        went to the one-hour cache."""
         fresh = max(0, input_tokens - cache_read_tokens - cache_write_tokens)
+        hour = min(cache_write_1h_tokens, cache_write_tokens)
+        hour_rate = (
+            self.cache_write if self.cache_write_1h is None else self.cache_write_1h
+        )
         return (
             fresh * self.input
             + cache_read_tokens * self.cache_read
-            + cache_write_tokens * self.cache_write
+            + (cache_write_tokens - hour) * self.cache_write
+            + hour * hour_rate
             + output_tokens * self.output
         )
 
@@ -549,6 +559,7 @@ class Ledger:
         route: str,
         cache_read_tokens: int = 0,
         cache_write_tokens: int = 0,
+        cache_write_1h_tokens: int = 0,
         kind: str = "chat",
         topic_id: uuid.UUID | None = None,
         turn_id: uuid.UUID | None = None,
@@ -567,6 +578,7 @@ class Ledger:
             input_tokens=input_tokens,
             cache_read_tokens=cache_read_tokens,
             cache_write_tokens=cache_write_tokens,
+            cache_write_1h_tokens=cache_write_1h_tokens,
             output_tokens=output_tokens,
             cost_usd=cost_usd,
             kind=kind,
