@@ -27,18 +27,16 @@ hand-written example URLs. Three layers:
    registered first).
 """
 
-import importlib
-import pkgutil
 import re
 from collections import defaultdict
 from pathlib import Path
 
 import pytest
-from fastapi import APIRouter
 from fastapi.testclient import TestClient
 
-import app.api.routes as _routes_pkg
 from app.main import app
+from scripts.route_index import parse_snapshot
+from scripts.route_index_profile import run_profiled
 
 # nginx's `location /api/ { proxy_pass …:8081/; }`, as far as a caller is concerned:
 # the one leading segment named below is removed, and the rest reaches the backend
@@ -190,35 +188,68 @@ def test_every_family_answers_at_its_published_url(
 # the layer). The pinned collision set went with it, having reached zero.
 
 
-def _module_routers() -> dict[str, list[tuple[str, frozenset[str]]]]:
-    """(path, methods) per route module, from the routers the app mounts.
+@pytest.fixture(scope="module")
+def profiled_route_rows() -> list[dict]:
+    """The real effective inventory, in the same child used for snapshots.
 
-    The same walk ``app.main._discover_routers`` performs: every module-level
-    ``APIRouter`` in ``app.api.routes``, deduplicated by object identity so a
-    router imported into a second module is counted once. This reads the live
-    registration objects, not source text.
+    The ordinary parent app remains available to the HTTP probes above;
+    constructing the fixed Settings and importing conditional routers happens
+    only inside run_profiled's fresh child process.
     """
-    seen: set[int] = set()
+    result = run_profiled(["--emit"])
+    assert result.returncode == 0, result.stdout + result.stderr
+    _, rows = parse_snapshot(result.stdout)
+    return rows
+
+
+def _module_routers(rows: list[dict]) -> dict[str, list[tuple[str, frozenset[str]]]]:
+    """Keep the existing HTTP normalization rules on the profiled inventory.
+
+    Every effective leaf is kept; handler modules are diagnostic labels, not
+    keys that deduplicate registrations. WebSockets are checked separately.
+    """
     per_module: dict[str, list[tuple[str, frozenset[str]]]] = defaultdict(list)
-    for module_info in pkgutil.iter_modules(_routes_pkg.__path__):
-        module = importlib.import_module(f"{_routes_pkg.__name__}.{module_info.name}")
-        for value in vars(module).values():
-            if isinstance(value, APIRouter) and id(value) not in seen:
-                seen.add(id(value))
-                for route in value.routes:
-                    methods = frozenset(getattr(route, "methods", None) or []) - {
-                        "HEAD"
-                    }
-                    path = getattr(route, "path", None)
-                    if methods and path:
-                        per_module[module_info.name].append((path, methods))
+    for row in rows:
+        if row["protocol"] != "http":
+            continue
+        methods = frozenset(row["methods"]) - {"HEAD"}
+        if methods:
+            module = row["endpoint"].rsplit(".", 1)[0]
+            per_module[module].append((row["path"], methods))
     return per_module
+
+
+def test_the_profiled_app_expands_exactly_the_effective_routes(profiled_route_rows):
+    rows = profiled_route_rows
+    assert len(rows) > 600, "the whole effective surface is collected"
+    assert [row["index"] for row in rows] == list(range(len(rows))), (
+        "global leaf registration order is preserved"
+    )
+    assert sum(row["protocol"] == "ws" for row in rows) == 7, (
+        "the seven WebSocket routes are collected despite having no methods"
+    )
+    assert (
+        "/topics/{topic_id}/tasks/{task_id}/accept-card",
+        "app.api.routes.accept.create_accept_card",
+    ) in {(row["path"], row["endpoint"]) for row in rows}
+
+
+def test_the_profiled_first_match_guard_uses_exact_frozen_registrations():
+    # Match the child's effective regex/matcher, never recompile emitted rows.
+    result = run_profiled(["--check"])
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_the_committed_index_uses_the_same_profile_and_ordered_inventory():
+    snapshot = Path(__file__).resolve().parents[2] / "scripts" / "route_index.json"
+    result = run_profiled(["--sync", str(snapshot)])
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 # Every module whose routes live under the 2.0 prefix. A module listed here that
 # stops declaring /api paths means its prefix was flattened; an unlisted module
 # that starts declaring them is a new 2.0 module and belongs in this list.
-def test_no_router_carries_the_gateway_prefix_any_more() -> None:
+def test_no_router_carries_the_gateway_prefix_any_more(profiled_route_rows) -> None:
     """No route may declare `/api` itself (#370 step 2), and this is the inverse
     of the guard it replaces.
 
@@ -234,7 +265,7 @@ def test_no_router_carries_the_gateway_prefix_any_more() -> None:
     """
     offenders = {
         module: sorted(p for p, _ in routes if p == "/api" or p.startswith("/api/"))
-        for module, routes in _module_routers().items()
+        for module, routes in _module_routers(profiled_route_rows).items()
     }
     offenders = {m: paths for m, paths in offenders.items() if paths}
 
@@ -244,7 +275,7 @@ def test_no_router_carries_the_gateway_prefix_any_more() -> None:
     )
 
 
-def test_no_two_routes_claim_the_same_path_and_method() -> None:
+def test_no_two_routes_claim_the_same_path_and_method(profiled_route_rows) -> None:
     """A duplicate registration is a silent amputation, not an error.
 
     FastAPI routes first-registered-wins: give two routers the same path and
@@ -253,7 +284,7 @@ def test_no_two_routes_claim_the_same_path_and_method() -> None:
     prefix hands its traffic to 1.0, so duplicates are banned outright.
     """
     claims: dict[tuple[str, str], list[str]] = defaultdict(list)
-    for module, routes in _module_routers().items():
+    for module, routes in _module_routers(profiled_route_rows).items():
         for path, methods in routes:
             for method in methods:
                 claims[(re.sub(r"\{[^}]+\}", "{}", path), method)].append(module)
@@ -265,7 +296,7 @@ def test_no_two_routes_claim_the_same_path_and_method() -> None:
     )
 
 
-def test_no_two_routes_want_the_same_url_from_a_caller() -> None:
+def test_no_two_routes_want_the_same_url_from_a_caller(profiled_route_rows) -> None:
     """Two routes may never be reachable at the SAME external URL (#370 step 3).
 
     The test above bans duplicate BACKEND paths. This one asks the question a
@@ -282,7 +313,7 @@ def test_no_two_routes_want_the_same_url_from_a_caller() -> None:
     guards now is every route added from here on.
     """
     claims: dict[tuple[str, str], list[str]] = defaultdict(list)
-    for module, routes in _module_routers().items():
+    for module, routes in _module_routers(profiled_route_rows).items():
         for path, methods in routes:
             external = _GATEWAY_PREFIX + re.sub(r"\{[^}]+\}", "{}", path)
             for method in methods:

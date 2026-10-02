@@ -252,18 +252,41 @@ def checked_findings(records, frozen):
     ]
 
 
-def _sync(index_file: str, records: list[RouteRecord]) -> int:
-    """Compare generated columns row by row; keep multiplicity and leaf index.
+def parse_snapshot(text: str) -> tuple[dict, list[dict]]:
+    """Read the existing JSONL index, validating its profile before any rows.
 
-    Handwritten auth/owner validation is a separate, still-open pilot slice.
+    The first line is metadata; effective leaf rows keep their original shape,
+    order and multiplicity. Extra handwritten row columns remain untouched.
     """
+    from scripts.route_index_profile import profile_header
+
+    lines = [line for line in text.splitlines() if line.strip()]
+    if not lines:
+        raise ValueError("route index settings profile header missing")
+    header = json.loads(lines[0])
+    if not isinstance(header, dict) or "settings_profile" not in header:
+        raise ValueError("route index settings profile header missing")
+    if header["settings_profile"] != profile_header():
+        raise ValueError("route index settings profile mismatch")
+    rows = [json.loads(line) for line in lines[1:]]
+    if any(not isinstance(row, dict) for row in rows):
+        raise ValueError("route index rows must be JSON objects")
+    return header, rows
+
+
+def _sync(
+    index_file: str, records: list[RouteRecord], annotations_file: str | Path | None = None
+) -> int:
+    """One drift check: profile, ordered leaf rows, complete handwritten notes."""
     path = Path(index_file)
     if not path.exists():
         print(f"route index missing: {index_file}")
         return 1
-    indexed = [
-        json.loads(line) for line in path.read_text().splitlines() if line.strip()
-    ]
+    try:
+        _, indexed = parse_snapshot(path.read_text(encoding="utf-8"))
+    except ValueError as exc:
+        print(f"route index invalid: {exc}")
+        return 1
     live = [
         {
             "index": r.index,
@@ -282,26 +305,61 @@ def _sync(index_file: str, records: list[RouteRecord]) -> int:
                 print(f"[row {position}] indexed={old!r} live={new!r}")
         print(f"route index out of sync: {len(indexed)} indexed / {len(live)} live")
         return 1
-    empty = [row["path"] for row in indexed if not row.get("auth")]
-    print(f"route index in sync ({len(indexed)} routes); {len(empty)} auth notes owed")
+    from scripts.route_index_annotations import (
+        DEFAULT_SIDECAR,
+        check_annotation_coverage,
+    )
+
+    try:
+        keys = check_annotation_coverage(indexed, annotations_file or DEFAULT_SIDECAR)
+    except ValueError as exc:
+        print(f"route annotations invalid: {exc}")
+        return 1
+    print(
+        f"route index in sync ({len(indexed)} registrations; {keys} annotated addresses)"
+    )
     return 0
 
 
 def main() -> int:
+    from scripts.route_index_profile import (
+        in_profile_worker,
+        profile_header,
+        run_profiled,
+    )
+
+    # Application imports (including Settings/.env and engines) stay in the
+    # isolated worker, for emission and every live inventory assertion alike.
+    if not in_profile_worker():
+        result = run_profiled(sys.argv[1:])
+        sys.stdout.write(result.stdout)
+        sys.stderr.write(result.stderr)
+        return result.returncode
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--emit", action="store_true", help="print the index as JSON lines"
+        "--emit",
+        action="store_true",
+        help="print the profile header and index as JSON lines",
     )
     parser.add_argument(
         "--check", action="store_true", help="run the first-match guard"
     )
-    parser.add_argument("--sync", metavar="FILE", help="verify generated index columns")
+    parser.add_argument(
+        "--sync", metavar="FILE", help="verify ordered index and handwritten notes"
+    )
+    parser.add_argument(
+        "--annotations",
+        metavar="FILE",
+        help="override the route annotation sidecar for --sync",
+    )
     args = parser.parse_args()
 
     from app.main import app
 
     records = collect(app)
     if args.emit:
+        print(json.dumps({"settings_profile": profile_header()}, ensure_ascii=False))
         for record in records:
             print(
                 json.dumps(
@@ -340,7 +398,7 @@ def main() -> int:
         print(f"first-match guard: clean ({len(findings)} witness-only pairs)")
         return 0
     if args.sync:
-        return _sync(args.sync, records)
+        return _sync(args.sync, records, args.annotations)
     parser.print_help()
     return 2
 

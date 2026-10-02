@@ -1,8 +1,8 @@
 """The route-index collector and first-match guard (v6 reading-boundary
 pilot): the counter-example set — real shadows are provable, parameterized
 later routes are witnesses, frozen pairs cite exact registrations, and
-protocols never cross. The real-app assertions pin the fixed profile's
-effective expansion, including the seven WebSocket routes.
+protocols never cross. Real-app inventory assertions run under the fixed
+profile in the existing API-addressing contract suite.
 """
 
 import json
@@ -12,10 +12,10 @@ from fastapi import APIRouter, FastAPI
 from scripts.route_index import (
     RouteRecord,
     _full,
-    checked_findings,
     collect,
     first_match_findings,
 )
+from scripts.route_index_profile import profile_header
 
 
 def _app_with(*routes) -> FastAPI:
@@ -82,43 +82,6 @@ def test_different_methods_and_protocols_never_shadow():
     assert first_match_findings(collect(app)) == []
 
 
-def test_the_real_app_expands_exactly_the_effective_routes():
-    from app.main import app
-
-    records = collect(app)
-    assert len(records) > 600, "the whole effective surface is collected"
-    assert [r.index for r in records] == list(range(len(records))), (
-        "registration order is preserved"
-    )
-    assert sum(1 for r in records if r.protocol == "ws") == 7, (
-        "the seven WebSocket routes are marked by type, not by name"
-    )
-    endpoints = {(r.path, r.endpoint) for r in records}
-    assert (
-        "/topics/{topic_id}/tasks/{task_id}/accept-card",
-        "app.api.routes.accept.create_accept_card",
-    ) in endpoints
-
-
-def test_the_real_apps_one_known_shadow_is_the_documented_one():
-    from app.main import app
-    from scripts.route_index_frozen import FROZEN
-
-    records = collect(app)
-    findings = first_match_findings(records)
-    assert [
-        (f.earlier.path, f.later.path, f.kind)
-        for f in findings
-        if f.kind == "unreachable"
-    ] == [("/users/{userId}", "/users/invite-codes", "unreachable")], (
-        "only the users.py:3367-documented provable shadow exists today"
-    )
-    remaining = checked_findings(records, FROZEN)
-    assert all(f.kind == "witness" for f in remaining), (
-        "exact frozen debt is valid and no new provable shadow is exempt"
-    )
-
-
 def test_a_frozen_tuple_suppresses_exactly_itself():
     from scripts.route_index_frozen import FROZEN
 
@@ -157,7 +120,8 @@ def test_records_keep_their_methods_for_the_http_intersection():
 
 def _write_index(tmp_path, records, auth="") -> str:
     path = tmp_path / "index.json"
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(json.dumps({"settings_profile": profile_header()}) + "\n")
         for record in records:
             fh.write(
                 json.dumps(
@@ -173,6 +137,31 @@ def _write_index(tmp_path, records, auth="") -> str:
                 )
                 + "\n"
             )
+    keys = {
+        (r.protocol, method, r.path)
+        for r in records
+        for method in (sorted(r.methods) if r.protocol == "http" else ["WS"])
+    }
+    (tmp_path / "sidecar.yaml").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "auth_entries": {"fixture": "Synthetic fixture authorization"},
+                "owners": {"fixture": "Synthetic fixture owner"},
+                "routes": [
+                    {
+                        "protocol": p,
+                        "method": m,
+                        "path": value,
+                        "auth": "fixture",
+                        "owner": "fixture",
+                    }
+                    for p, m, value in sorted(keys)
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
     return str(path)
 
 
@@ -182,7 +171,9 @@ def test_the_sync_check_catches_drift_both_ways(tmp_path):
     app = _app_with((["GET"], "/users/{user_id}", "get_user"))
     records = collect(app)
     good = _write_index(tmp_path, records)
-    assert _sync(good, records) == 0, "an exact index is in sync"
+    assert _sync(good, records, tmp_path / "sidecar.yaml") == 0, (
+        "an exact index is in sync"
+    )
 
     drifted = _write_index(tmp_path, records[1:])
     assert _sync(drifted, records) == 1, "a missing row fails"
@@ -201,10 +192,3 @@ def test_the_sync_check_catches_drift_both_ways(tmp_path):
         ],
     )
     assert _sync(renamed, records) == 1, "a re-pointed row fails"
-
-
-def test_the_real_index_is_the_collectors_truth():
-    from app.main import app
-    from scripts.route_index import _sync
-
-    assert _sync("scripts/route_index.json", collect(app)) == 0
