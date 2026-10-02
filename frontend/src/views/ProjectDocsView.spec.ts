@@ -21,7 +21,21 @@ vi.mock('@/composables/useCachedResource', () => ({
     error: ref(null),
   }),
 }))
-vi.mock('../me', () => ({ myHandle: () => 'writer' }))
+vi.mock('../me', () => ({ myHandle: () => 'writer', myId: () => 'writer' }))
+// 章程是项目房间的文档面板：评论和节点照旧从接口读，这里给空的。
+vi.mock('../api', async () => {
+  const actual = await vi.importActual<typeof import('../api')>('../api')
+  return {
+    ...actual,
+    getDoc: async () => null,
+    getComments: async () => ({ data: [] }),
+    getDocNodes: async () => ({ data: [] }),
+  }
+})
+vi.mock('@/api/docAi', async () => ({
+  ...(await vi.importActual<typeof import('@/api/docAi')>('@/api/docAi')),
+  listDocAiRequests: async () => ({ requests: [] }),
+}))
 vi.mock('@tiptap/extension-drag-handle-vue-3', () => ({ DragHandle: { render: () => null } }))
 vi.mock('../composables/useDocCollab', async () => ({
   useDocCollab: (await import('../test/fakeDocCollab')).useFakeDocCollab,
@@ -101,6 +115,7 @@ describe('in English', () => {
 describe('章程', () => {
   it('打开的是项目房间那一篇协同文档，谁在房间里改的都在这儿', async () => {
     seedRoom('root', '我们给高中生做算法课。')
+    state.payload = { rootTopic: { id: 'root', kind: 'root', title: '项目', project_id: 'p' } }
     const view = render(ProjectDocsView, {
       props: { projectId: 'p', kind: 'charter' },
       global: { plugins: [createVuetify()] },

@@ -40,8 +40,10 @@ const props = withDefaults(
     slashMenu?: { items: SlashItem[]; index: number; top: number; left: number } | null
     /** 父层每收到一次正文区的滚动就加一：滚动时收起代码块工具条。 */
     scrollTick?: number
+    /** 浮条上给不给「问 AI」。 */
+    canAsk?: boolean
   }>(),
-  { editor: null, slashMenu: null, scrollTick: 0 }
+  { editor: null, slashMenu: null, scrollTick: 0, canAsk: true }
 )
 
 const emit = defineEmits<{
@@ -484,7 +486,7 @@ defineExpose({ onHover, onEdited })
       <v-icon size="14">mdi-comment-plus-outline</v-icon>
       {{ t('work.room.comments.comment') }}
     </button>
-    <button v-if="commentCta.selection instanceof TextSelection" type="button" @click="askSelection">
+    <button v-if="canAsk && commentCta.selection instanceof TextSelection" type="button" @click="askSelection">
       {{ t('work.room.docAi.ask') }}
     </button>
     <button type="button" @click="newLink">{{ t('work.room.docLink.title') }}</button>

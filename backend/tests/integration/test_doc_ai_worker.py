@@ -421,13 +421,14 @@ async def test_executable_completion_fails_with_usage_but_no_proposal_or_doc_eff
 
 @pytest.mark.anyio
 async def test_crash_before_settle_and_late_spend_reconcile_without_double_charge(
-    business_db_factory, tmp_path
+    business_db_factory, tmp_path, monkeypatch
 ):
     from app.domain.agent import gateway as gw
     from app.domain.agent.chat import ChatService
     from tests.conftest import stub_compute
     from tests.integration.test_gateway_usage import FakeGateway
 
+    monkeypatch.setattr(settings, "llm_gateway_credit_usd", 0.01)
     factory = business_db_factory
     room, request_id, _ = await pending(factory)
     fake = FakeGateway()

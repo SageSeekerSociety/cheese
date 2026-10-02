@@ -386,8 +386,6 @@ export const DASH_USAGE: StatsUsage = {
     burn: {
       credits_in_window: 42,
       credits_per_day: 6,
-      priced_credits: 30,
-      flat_credits: 12,
       method: 'derived_from_resource_usage',
     },
   },

@@ -8,12 +8,19 @@ worked out before the first one) and what one of its rows is as a
 ``HarnessEvent``; the paging, the cursor and retention are the same for all.
 """
 
+import contextlib
 import json
+import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from app.domain.agent.harness import HarnessEvent
 from app.domain.agent.harness.driven.journal import Journal
+
+#: The share of a mirror's pages left free after retention above which it is
+#: rewritten (``compact``). Rewriting costs a read and a write of the whole
+#: file, on the thread every read of that seat waits on.
+VACUUM_FREE_SHARE = 0.25
 
 
 class JournalBacklog[J: Journal]:
@@ -99,15 +106,36 @@ class JournalBacklog[J: Journal]:
         return given_up
 
     def forget(self, *, older_than_s: float) -> None:
+        """Drop what the mirror no longer needs, and give the space back."""
         if self.path is None or not self.path.exists():
             return
+        before = (datetime.now(UTC) - timedelta(seconds=older_than_s)).isoformat()
         journal = self.journal(self.path)
         try:
-            journal.prune(
-                (datetime.now(UTC) - timedelta(seconds=older_than_s)).isoformat()
-            )
+            journal.prune(before)
+            self.forget_state(journal, before=before)
+            compact(journal.connection)
         finally:
             journal.close()
+
+    def forget_state(self, journal: J, *, before: str) -> None:
+        """What a harness keeps beside its records and no longer needs: kept
+        since before ``before`` and not about anything still going on."""
+
+
+def compact(connection: sqlite3.Connection) -> None:
+    """Rewrite the mirror once most of what retention freed is still on disk:
+    sqlite reuses a deleted page but never gives it back on its own, so a
+    mirror stays the size of the busiest day it ever had."""
+    (free,) = connection.execute("PRAGMA freelist_count").fetchone()
+    (pages,) = connection.execute("PRAGMA page_count").fetchone()
+    if not pages or free / pages <= VACUUM_FREE_SHARE:
+        return
+    # A route reading the controls may hold the file this moment; the next
+    # round of retention tries again.
+    with contextlib.suppress(sqlite3.OperationalError):
+        connection.execute("VACUUM")
+        connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
 
 
 def age(row: dict, now: datetime) -> float:

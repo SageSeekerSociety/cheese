@@ -7,6 +7,7 @@ import { holdRevealGate } from '@/composables/useRevealGate'
 
 import { getProjectDefaultModel, setProjectDefaultModel } from '../api'
 import { t } from '../i18n'
+import { modelChoiceProps } from '../lib/modelChoices'
 
 // 项目默认模型：#1365 之后主线（房间聊天）读 binding.resolve(None, …)，它拿
 // catalog 里 default=True 的那条；catalog 由 model_choices 算，项目 settings 里
@@ -88,6 +89,7 @@ watch(() => props.projectId, load)
           :items="state.choices"
           item-title="label"
           item-value="id"
+          :item-props="modelChoiceProps"
           :disabled="busy || !state.can_manage"
           autocomplete="off"
           density="compact"
@@ -100,6 +102,7 @@ watch(() => props.projectId, load)
           :items="[{ id: null, label: t('work.models.inheritMain') }, ...state.choices]"
           item-title="label"
           item-value="id"
+          :item-props="modelChoiceProps"
           :disabled="busy || !state.can_manage"
           autocomplete="off"
           density="compact"

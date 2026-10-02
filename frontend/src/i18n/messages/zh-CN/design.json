@@ -12,5 +12,6 @@
   "cancelRegion": "取消区域选择",
   "selectedRegion": "原图像素：x={x}，y={y}，宽={width}，高={height}",
   "regionUnavailable": "图片版本尚未验证，暂时无法选择区域",
+  "regionOutsideView": "所选区域在当前视图外",
   "regionMessage": "图片区域：{path}\ntopic={topicId} source={source} task={task} version={version}\n原图：{naturalWidth} × {naturalHeight}\nx={x} y={y} width={width} height={height}\n说明：{note}"
 }

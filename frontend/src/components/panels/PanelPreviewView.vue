@@ -27,6 +27,7 @@ import { markdown, sanitizeRendered } from '../../lib/markdown'
 import { roomFileDestination } from '../../lib/previewSession'
 
 import DesignImage from './preview/DesignImage.vue'
+import DesignRegionNote from './preview/DesignRegionNote.vue'
 import PreviewLocator from './preview/PreviewLocator.vue'
 import PreviewPages from './preview/PreviewPages.vue'
 import PreviewSheet from './preview/PreviewSheet.vue'
@@ -646,8 +647,22 @@ function sendLocator() {
         :alt="documentName"
         :identity="imageRegion.imageIdentity.value"
         :selection-enabled="imageRegion.selectionEnabled.value"
+        :active-region="imageRegion.target.value?.selection.region ?? null"
         @region="onImageRegion"
       >
+        <template #region-note="{ geometry, restoreFocus, focusOrigin }">
+          <DesignRegionNote
+            v-if="imageRegion.target.value && locator"
+            v-model:note="locatorNote"
+            :target="locator"
+            :geometry="geometry"
+            :resource-key="imageRegion.imageIdentity.value"
+            :restore-focus="restoreFocus"
+            :focus-origin="focusOrigin"
+            @send="sendLocator"
+            @cancel="clearLocator"
+          />
+        </template>
         <template #actions
           ><a class="image-open" :href="imageRegion.imageSrc.value" target="_blank" rel="noopener">{{
             t('work.room.preview.openInNewWindow')
@@ -680,7 +695,12 @@ function sendLocator() {
       <div>{{ t('work.room.preview.empty') }}</div>
     </div>
 
-    <PreviewLocator v-model:note="locatorNote" :target="locator" @send="sendLocator" @cancel="clearLocator" />
+    <PreviewLocator
+      v-model:note="locatorNote"
+      :target="imageRegion.target.value ? null : locator"
+      @send="sendLocator"
+      @cancel="clearLocator"
+    />
     <!-- 这个房间里摆出来过的东西，以及把其中一份留进资料库的那个动作 (#1085 结
          论四)。上面那块预览只看得到最后一样，而那个动作只有人能按。 -->
     <RoomOutputs v-if="!path" :topic-id="topicId" @open="emit('open-file', $event)" />

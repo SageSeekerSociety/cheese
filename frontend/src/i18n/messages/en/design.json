@@ -12,5 +12,6 @@
   "cancelRegion": "Cancel region selection",
   "selectedRegion": "Natural image pixels: x={x}, y={y}, width={width}, height={height}",
   "regionUnavailable": "The image version has not been verified. Region selection is unavailable.",
+  "regionOutsideView": "The selected region is outside the current view",
   "regionMessage": "Image region: {path}\ntopic={topicId} source={source} task={task} version={version}\nNatural image: {naturalWidth} × {naturalHeight}\nx={x} y={y} width={width} height={height}\nNote: {note}"
 }

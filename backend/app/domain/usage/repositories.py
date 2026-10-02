@@ -15,9 +15,9 @@ from app.domain.usage.models import ResourceUsage
 def unpriced_tokens() -> Any:
     """Tokens whose USD price is not knowable — one definition, three readers.
 
-    A subscription is billed by the month, so its rows carry ``cost_usd = 0.0``
-    meaning "no price", not "free". Reported separately so the UI can say 未知
-    instead of printing $0.0000 over millions of tokens ("未知冒充零").
+    A row of a model with no rate carries ``cost_usd = 0.0`` meaning "no
+    price", not "free". Reported separately so the UI can say 未知 instead of
+    printing $0.0000 over millions of tokens ("未知冒充零").
 
     Written once because the per-key aggregate (`_agg`) and the platform-wide one
     (`platform_totals`) must agree about what 「未定价」 means; two copies of this
@@ -48,6 +48,9 @@ class UsageRepository:
         input_tokens: int,
         output_tokens: int,
         cost_usd: float,
+        cache_read_tokens: int = 0,
+        cache_write_tokens: int = 0,
+        cache_write_1h_tokens: int = 0,
         kind: str = "chat",
         metered: bool = True,
         route: str = "",
@@ -81,6 +84,9 @@ class UsageRepository:
             turn_id=turn_id,
             model=model,
             input_tokens=input_tokens,
+            cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=cache_write_tokens,
+            cache_write_1h_tokens=cache_write_1h_tokens,
             output_tokens=output_tokens,
             total_tokens=input_tokens + output_tokens,
             cost_usd=cost_usd,
@@ -294,12 +300,12 @@ class UsageRepository:
         """窗口内按**模型**拆的用量 —— 「钱花在哪个模型上」。
 
         `route` 那一栏是「这笔供给从哪条路来的」（网关 / 订阅 / 自带凭据），和模型
-        是两个正交的切口：同一个模型可以走订阅也可以走网关，而订阅那一半没有单价。
-        两个一起给，「贵的是模型还是计费方式」这个问题才答得出来。
+        是两个正交的切口：同一个模型可以走订阅也可以走网关。两个一起给，「贵的是
+        模型还是计费方式」这个问题才答得出来。
 
         `cost_usd` 与 `unpriced_tokens` 同时出现在每一行上，理由和 `platform_totals`
-        一样：订阅那一半的 0 是「没有价」不是「免费」，少写这一列，一根柱子会在几百万
-        token 上印一个 `$0.0000`。
+        一样：没有单价的那部分 0 是「没有价」不是「免费」，少写这一列，一根柱子会在
+        几百万 token 上印一个 `$0.0000`。
         """
         day_unused = None  # 窗口聚合与 by_day 同源，这里只按模型分组
         del day_unused
@@ -335,8 +341,7 @@ class UsageRepository:
         """窗口内按**供给通路**拆的用量 —— 网关 / 订阅 / 自带凭据。
 
         这是「未定价 token 到底是哪来的」的那个答案：`unpriced_tokens` 只告诉读者
-        「有一部分算不出价」，而按通路拆开之后能看到那部分全在 `subscription` 上
-        （订阅按月计费，行上的 `cost_usd = 0.0` 是「没有单价」）。行数就是通路的
+        「有一部分算不出价」，按通路拆开之后能看到那部分在哪条路上。行数就是通路的
         个数（三条），所以不设 limit。
         """
         stmt = (

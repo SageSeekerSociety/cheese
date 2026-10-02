@@ -227,6 +227,8 @@ class _HookStream(Protocol):
 
     async def _turn_credits_refused(self, turn_id: uuid.UUID) -> bool: ...
 
+    async def work_policy(self, topic_id: uuid.UUID) -> dict | None: ...
+
     async def _close_open_turns(
         self, topic_id: uuid.UUID, turn_id: uuid.UUID
     ) -> None: ...
@@ -741,14 +743,16 @@ async def _consume_hook_event(
                 # (#715): it refused every `/v1/messages` call for spent
                 # credits, and Claude Code's own reading of that refusal
                 # — "Invalid API key" — is wrong advice for a spent
-                # balance. Repeat the platform's own line rather than
-                # Claude Code's text, however the hook happened to word it.
+                # balance. Repeat the platform's own line, with the reason
+                # the credits give now, rather than Claude Code's text.
                 from app.domain.usage.credits import (
-                    CREDITS_EXHAUSTED_EVENT,
                     CREDITS_EXHAUSTED_META,
+                    credits_event,
                 )
 
-                line, meta = CREDITS_EXHAUSTED_EVENT, CREDITS_EXHAUSTED_META
+                policy = await service.work_policy(topic_id)
+                line = credits_event((policy or {}).get("credits_exhausted"))
+                meta = CREDITS_EXHAUSTED_META
             else:
                 line, meta = _turn_failure_notice(
                     event.text, event.failure_code, log=event.log

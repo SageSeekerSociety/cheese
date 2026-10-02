@@ -50,6 +50,7 @@ from app.core.sandbox_auth import (
     scoped_token_claims,
 )
 from app.domain.agent.chat import ChatService
+from app.domain.agent.credits_notice import note_credits_refusal
 from app.domain.agent.supply import GATEWAY
 from app.domain.agent_instance import configuration
 from app.domain.assistant.asking import answering
@@ -336,7 +337,9 @@ async def admission(
             except ValueError:
                 place_uuid = None
             if place_uuid is not None:
-                await chat.note_credits_refusal(place_uuid)
+                await note_credits_refusal(
+                    chat.session_factory, place_uuid, refused.message
+                )
     # The key goes only to the metering proxy, which proves itself with its
     # own credential beside the session's bearer. The bearer alone names the
     # room, and the session holds that same token: answering it with the key

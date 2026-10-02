@@ -9,6 +9,7 @@ shares included, so the caller can charge it at the model's price.
 """
 
 import logging
+import math
 from dataclasses import dataclass
 
 import httpx
@@ -62,6 +63,18 @@ class Usage:
 class Completion:
     content: str
     usage: Usage
+    #: The gateway's price for the call; 0.0 when it named none.
+    cost_usd: float = 0.0
+
+
+def response_cost(response: httpx.Response) -> float:
+    """The price the gateway put on a call (``x-litellm-response-cost``); 0.0,
+    read as unpriced, when it put none."""
+    try:
+        cost = float(response.headers.get("x-litellm-response-cost") or 0.0)
+    except ValueError:
+        return 0.0
+    return cost if math.isfinite(cost) and cost > 0 else 0.0
 
 
 class GatewayCallError(Exception):
@@ -123,4 +136,4 @@ class GatewayChat:
         payload = r.json()
         choices = payload.get("choices") or [{}]
         content = (choices[0].get("message") or {}).get("content") or ""
-        return Completion(content, Usage.of(payload.get("usage")))
+        return Completion(content, Usage.of(payload.get("usage")), response_cost(r))

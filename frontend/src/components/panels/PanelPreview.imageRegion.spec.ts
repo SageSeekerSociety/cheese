@@ -157,6 +157,7 @@ it('cancels the region note without posting a message', async () => {
   await fireEvent.update(input, '未发送的说明')
   await fireEvent.keyDown(input, { key: 'Escape' })
   expect(ui.queryByPlaceholderText('说明要改什么')).toBeNull()
+  expect(ui.container.querySelector('.design-image__selection')).toBeNull()
   expect(ui.emitted().locate).toBeUndefined()
 })
 it('does not send on composition Enter and sends once on an explicit committed Enter', async () => {

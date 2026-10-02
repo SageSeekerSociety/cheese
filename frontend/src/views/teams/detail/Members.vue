@@ -1,5 +1,5 @@
 <template>
-  <v-container class="px-6 py-4">
+  <div>
     <!-- 操作区 -->
     <div class="d-flex align-center mb-4">
       <v-spacer></v-spacer>
@@ -303,7 +303,7 @@
         </v-card>
       </v-window-item>
     </v-window>
-  </v-container>
+  </div>
 </template>
 
 <script setup lang="ts">

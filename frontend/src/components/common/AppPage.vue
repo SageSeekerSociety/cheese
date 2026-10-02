@@ -12,6 +12,7 @@
 //
 // 宽度也归这里：`read` 是读和填表的那一栏（--page-w），`full` 给多列的工作面（看
 // 板），`admin` 是管理后台的工作台（--page-w-admin）。页面不再各自写一个数字。
+// `read` 和 `admin` 的页头标题和正文列从同一条左沿开始。
 import type { NavTarget } from '@/lib/navTarget'
 
 import { useDisplay } from 'vuetify'
@@ -26,8 +27,10 @@ withDefaults(
     // 这一页是另一页里的一项（成员名册里的一个人）：页头写成「成员 / 名字」，前
     // 一段点回去。
     parent?: { label: string; to: NavTarget }
+    // 正文自己会滚（一整篇文档、带自己的工具条和评论栏）：这一层不滚，把整个高度让给它。
+    fill?: boolean
   }>(),
-  { width: 'read', parent: undefined }
+  { width: 'read', parent: undefined, fill: false }
 )
 
 defineSlots<{
@@ -90,8 +93,8 @@ const { mdAndUp } = useDisplay()
         </div>
       </div>
     </header>
-    <div class="app-page__body" :class="`app-page__body--${width}`">
-      <div class="app-page__column" :class="`app-page__column--${width}`">
+    <div class="app-page__body" :class="[`app-page__body--${width}`, { 'app-page__body--fill': fill }]">
+      <div class="app-page__column" :class="[`app-page__column--${width}`, { 'app-page__column--fill': fill }]">
         <slot />
       </div>
     </div>
@@ -118,27 +121,42 @@ const { mdAndUp } = useDisplay()
 .app-page__head-row {
   display: contents;
 }
-/* 后台那一档的内容列 1440 封顶、居中。页头那一行跟着它一起封顶居中，标题和正文在任何
-   宽度下都从同一条竖线开始。正文滚动时右边有滚动条，页头和正文都留出同样宽的滚动条
-   槽位（`scrollbar-gutter`），两边居中的基准才是同一个宽度。 */
+/* 读的那一档（--page-w）和后台那一档（--page-w-admin）的内容列封顶、居中。页头那一行
+   跟着它一起封顶居中，标题和正文在任何宽度下都从同一条竖线开始。正文滚动时右边有滚动
+   条，页头和正文都留出同样宽的滚动条槽位（`scrollbar-gutter`），两边居中的基准才是同
+   一个宽度。满宽那一档见下面。 */
+.app-page__head--read,
+.app-page__body--read,
 .app-page__head--admin,
 .app-page__body--admin {
   scrollbar-gutter: stable;
 }
+.app-page__head--read,
 .app-page__head--admin {
   display: block;
   overflow: hidden;
   padding: 0;
 }
+.app-page__head--read .app-page__head-row,
 .app-page__head--admin .app-page__head-row {
   display: flex;
   align-items: center;
   gap: 12px;
   box-sizing: border-box;
-  max-width: var(--page-w-admin);
   height: 100%;
   margin-inline: auto;
   padding: 0 16px;
+}
+.app-page__head--read .app-page__head-row {
+  max-width: calc(var(--page-w) + 32px);
+}
+.app-page__head--admin .app-page__head-row {
+  max-width: var(--page-w-admin);
+}
+/* 满宽那一档的正文自己管内边距，铺满内容区的几页（看板、资料库、团队的项目、知识库、
+   工作电脑）都离左边 24。页头标题跟着它们缩进同样的距离。 */
+.app-page__head--full {
+  padding: 0 24px;
 }
 .app-page__title {
   min-width: 0;
@@ -190,6 +208,18 @@ const { mdAndUp } = useDisplay()
 .app-page__column {
   margin-inline: auto;
   padding: 24px 16px 48px;
+}
+.app-page__body--fill {
+  display: flex;
+  overflow: hidden;
+}
+.app-page__column--fill {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding-bottom: 0;
 }
 .app-page__column--read {
   max-width: calc(var(--page-w) + 32px);

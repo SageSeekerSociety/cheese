@@ -11,7 +11,7 @@ import json
 from collections import ChainMap
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -24,8 +24,13 @@ from app.domain.agent.service import AgentEvent
 
 FACT = "fact:"
 CONTROL = "control:"
+TASK = CONTROL + "task:"
 #: How many finished tasks the controls keep listing.
 TASKS_KEPT = 50
+#: When the mirror last learned each fact and task, so retention can tell an
+#: old one from one still in use. The backend's alone: the runner's journal
+#: has no such table.
+LEARNED = "CREATE TABLE IF NOT EXISTS learned (key TEXT PRIMARY KEY, at TEXT NOT NULL)"
 
 
 def control_facts(record: dict, known: Mapping[str, str]) -> dict[str, str]:
@@ -139,8 +144,33 @@ def _import(path: Path, entries: list[dict], learned: dict[str, str]) -> None:
     journal = Journal(path)
     try:
         journal.import_records(entries, learned)
+        if learned:
+            now = datetime.now(UTC).isoformat()
+            with journal.connection:
+                journal.connection.execute(LEARNED)
+                journal.connection.executemany(
+                    "INSERT INTO learned VALUES (?, ?) "
+                    "ON CONFLICT(key) DO UPDATE SET at=excluded.at",
+                    [(key, now) for key in learned],
+                )
     finally:
         journal.close()
+
+
+def _going_on(running: list[dict]) -> set[str]:
+    """The facts that tasks still running are read by: the task's kind, the
+    card its agent works on, the call that started it, and the agents a
+    workflow started."""
+    kept: set[str] = set()
+    for task in running:
+        task_id = task.get("task_id")
+        kept |= {f"{FACT}task:{task_id}", f"{FACT}agent:{task_id}"}
+        if call := task.get("tool_use_id"):
+            kept |= {f"{FACT}call:{call}", f"{FACT}spawned:{call}"}
+        for entry in task.get("workflow_progress") or []:
+            if isinstance(entry, dict) and entry.get("agentId"):
+                kept.add(f"{FACT}agent:{entry['agentId']}")
+    return kept
 
 
 def control_state(path: Path | None) -> dict:
@@ -171,19 +201,67 @@ class ClaudeCodeBacklog(JournalBacklog[Journal]):
         self,
         path: Path | None,
         session_id: str | None = None,
-        facts: dict[str, str] | None = None,
+        known: Known | None = None,
     ):
         # What the pass learns while it reads stays with the pass: the mirror's
         # facts are ahead of the landing cursor, and replaying older records
         # must not write back over what they already say. A caller that keeps
         # them (`Known`) hands them over; one that does not has them read here.
-        self.given = facts
-        self.assembler = Assembler(ChainMap({}, facts or {}), session_id)
+        self.known = known
+        self.assembler = Assembler(
+            ChainMap({}, known.facts if known else {}), session_id
+        )
         super().__init__(path)
 
     def prepare(self, journal: Journal) -> None:
-        if self.given is None:
+        if self.known is None:
             self.assembler.facts = ChainMap({}, journal.facts(FACT))
+
+    def forget_state(self, journal: Journal, *, before: str) -> None:
+        """Facts learned before ``before`` that no running task is read by,
+        and the finished tasks the controls no longer list."""
+        connection = journal.connection
+        with connection:
+            connection.execute(LEARNED)
+            # What was learned before the mirror kept this table is taken as
+            # learned now, not as old: a turn that was open across the deploy
+            # still reads it.
+            connection.execute(
+                "INSERT OR IGNORE INTO learned SELECT key, ? FROM state "
+                "WHERE key LIKE ? OR key LIKE ?",
+                (datetime.now(UTC).isoformat(), FACT + "%", TASK + "%"),
+            )
+            tasks = {
+                key: json.loads(value)
+                for key, value in connection.execute(
+                    "SELECT key, value FROM state WHERE key LIKE ? ORDER BY rowid",
+                    (TASK + "%",),
+                )
+            }
+            running = [t for t in tasks.values() if t.get("status") == "running"]
+            finished = [k for k, t in tasks.items() if t.get("status") != "running"]
+            gone = set(finished[:-TASKS_KEPT])
+            old = {
+                key
+                for (key,) in connection.execute(
+                    "SELECT key FROM learned WHERE at < ? AND key LIKE ?",
+                    (before, FACT + "%"),
+                )
+            }
+            # The last error is one fact every turn rewrites, not one per call.
+            gone |= old - _going_on(running) - {FACT + "error"}
+            connection.executemany(
+                "DELETE FROM state WHERE key=?", [(key,) for key in gone]
+            )
+            connection.executemany(
+                "DELETE FROM learned WHERE key=?", [(key,) for key in gone]
+            )
+        if self.known is not None:
+            for key in gone:
+                if key.startswith(FACT):
+                    self.known.facts.pop(key.removeprefix(FACT), None)
+                else:
+                    self.known.controls.pop(key, None)
 
     def event(self, row: dict, now: datetime) -> HarnessEvent:
         record = row["record"]

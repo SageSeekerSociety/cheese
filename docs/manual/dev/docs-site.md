@@ -133,7 +133,7 @@ fence 的正文是 YAML 的一个很小的子集：顶格的 `key: value`；`key
 | [记忆](/dev/memory#limits) | 三个上限分别在哪一步拦住什么 | `demo-memory` | `domain/memory/files.py` 的常数，`gen/memory_limits.py` 读出来，和 `fit_index` / `limit_breach` 对过 |
 | [记忆](/dev/memory) | 一轮里记忆怎么流转 | `demo-steps` + `embed: memory` | 这一页各节；画面是剧本 `scenes/memory.json` |
 | [设备与机器接入](/dev/machines) | 一台机器怎么接进来、出错时怎么办 | `demo-steps` + `embed: machines` | 这一页各节；画面是剧本 `scenes/machines.json` |
-| [计费流程](/dev/billing) | 两道刹车各在什么时候拦 | `demo-sim` | 这一页 1 额度 = 1 万 token 的折算 |
+| [计费流程](/dev/billing) | 两道刹车各在什么时候拦 | `demo-sim` | 这一页「额度 = 花费 ÷ 每额度价格」的折算 |
 
 ## 首页与截图 {#home}
 

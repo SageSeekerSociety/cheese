@@ -34,10 +34,9 @@ export function fmtCost(n: number): string {
 /**
  * 费用 as the books can honestly state it.
  *
- * Subscription-routed tokens carry no USD price (the plan is billed monthly),
- * so their rows record 0.0 meaning "no price" — never "free". Printing that as
- * $0.0000 over 2.28M tokens is 未知冒充零, which reads as "this cost nothing"
- * and is worse than showing nothing at all.
+ * Tokens of a model with no rate record 0.0 meaning "no price" — never
+ * "free". Printing that as $0.0000 over 2.28M tokens is 未知冒充零, which reads
+ * as "this cost nothing" and is worse than showing nothing at all.
  */
 export function costLabel(u: UsageStats): string {
   if (!u.unpriced_tokens) return fmtCost(u.cost_usd)
@@ -49,9 +48,7 @@ export function costLabel(u: UsageStats): string {
 export function costNote(u: UsageStats): string {
   if (!u.unpriced_tokens) return ''
   const tokens = fmtNum(u.unpriced_tokens)
-  return u.cost_usd > 0
-    ? t('compute.usage.partlySubscription', { tokens })
-    : t('compute.usage.allSubscription', { tokens })
+  return u.cost_usd > 0 ? t('compute.usage.partlyUnpriced', { tokens }) : t('compute.usage.allUnpriced', { tokens })
 }
 
 /**

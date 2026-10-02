@@ -170,7 +170,7 @@
     "cost": {
       "kpi": "Cost",
       "unpricedLabel": "Unpriced tokens",
-      "note": "Priced by the gateway's per-token rate. Unpriced tokens come from plans billed monthly, so they carry no rate and are not in that figure."
+      "note": "Priced at each model's rate in the gateway's price table; subscription calls are estimated at the same model's rate. Unpriced tokens have no rate and are not in that figure."
     },
     "empty": {
       "title": "No data yet",
@@ -222,7 +222,7 @@
       "byModel": "By model",
       "byModelNote": "Bar is tokens; the last two columns are money and unpriced tokens. All three together answer \"is it the model or the billing\".",
       "byRoute": "By supply route",
-      "byRouteNote": "Subscriptions are billed monthly, so their tokens carry no rate — that's where the unpriced column concentrates, and where the KPI's number comes from.",
+      "byRouteNote": "The unpriced column is tokens with no rate; split by route, it shows which route they came from, and where the KPI's number comes from.",
       "unknownModel": "(unlabelled model)",
       "route": {
         "gateway": "Gateway",
@@ -416,7 +416,6 @@
       "unlimited": "Unlimited",
       "burn": "Burn rate",
       "eta": "Exhaust eta",
-      "burnDetail": "Priced {priced}, flat-rate {flat}",
       "note": "Exhausted / low / unlimited are three mutually exclusive sets — unlimited is the ABSENCE of a grant. Burn rate is derived from resource_usage (compute_grants has no deduction ledger). ETA is linear extrapolation; unlimited and zero-burn both render —."
     },
     "extras": {

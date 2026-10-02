@@ -106,6 +106,27 @@ def test_converting_a_markdown_document_is_recorded_quietly(client):
     assert len(_doc_events(client, room, owner)) == events
 
 
+def test_converting_a_markdown_document_keeps_its_author(client):
+    room = _topic(client)
+    original = "# 原稿\r\n\r\n* 一\r\n* 二\r\n"
+    client.portal.call(client.collab.type_in, uuid.UUID(room), original, "owner")
+    client.put(
+        f"/internal/collab/documents/room:{room}",
+        json={
+            "state": base64.b64encode(b"converted").decode(),
+            "content": "# 原稿\n\n- 一\n- 二",
+            "actors": ["system"],
+            "converted": True,
+        },
+        headers=_service(),
+    ).raise_for_status()
+    # A respelling is nobody's edit: the document is still the owner's.
+    assert client.get(f"/topics/{room}/doc").json()["data"]["author"] == "owner"
+    nodes = client.get(f"/topics/{room}/docs").json()["data"]["data"]
+    assert nodes
+    assert {node["author"] for node in nodes} == {"owner"}
+
+
 def test_people_typing_record_a_version_under_their_own_names(client):
     room = _topic(client)
     owner = session_auth_headers("owner")
@@ -140,6 +161,30 @@ def test_a_backend_write_based_on_an_older_document_is_refused_not_applied(clien
         "versions"
     ]
     assert [row["content"] for row in history] == ["人先写的", "人又改了", "按新版写的"]
+
+
+def test_a_writer_that_reads_again_after_a_conflict_gets_its_retry_in(client):
+    room = _topic(client)
+    client.portal.call(client.collab.type_in, uuid.UUID(room), "人先写的", "owner")
+    read = client.get(f"/topics/{room}/doc").json()["data"]
+    # Somebody keeps typing: one store lands, and more is typed after it that
+    # the service holds but has not stored yet.
+    client.portal.call(client.collab.type_in, uuid.UUID(room), "人又改了", "owner")
+    client.collab.type_unsaved(uuid.UUID(room), "人又改了，还在写", "owner")
+    stale = client.put(
+        f"/topics/{room}/doc",
+        json={"content": "按旧版写的", "expected_version": read["doc_version"]},
+    )
+    assert stale.status_code == 409
+    # Nobody types after the refusal: what the writer reads now is the document.
+    again = client.get(f"/topics/{room}/doc").json()["data"]
+    assert again["content"] == "人又改了，还在写"
+    retried = client.put(
+        f"/topics/{room}/doc",
+        json={"content": "按新版写的", "expected_version": again["doc_version"]},
+    )
+    assert retried.status_code == 200, retried.text
+    assert client.get(f"/topics/{room}/doc").json()["data"]["content"] == "按新版写的"
 
 
 def test_writes_fail_plainly_when_the_service_is_unreachable(client, monkeypatch):

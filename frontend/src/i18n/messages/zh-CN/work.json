@@ -10,7 +10,9 @@
     "agent": "队友模型",
     "inheritHint": "不指定时使用项目主模型",
     "chooseAvailable": "选择当前项目可用的模型",
-    "loadError": "加载模型列表失败"
+    "loadError": "加载模型列表失败",
+    "requiresPlan": "需要 {plan} 方案",
+    "notInPlan": "当前方案不含此模型"
   },
   "teammate": {
     "title": "项目的 AI 队友",
@@ -1292,7 +1294,6 @@
     },
     "credits": {
       "title": "额度",
-      "rate": "1 额度 = {n} tokens",
       "none": "暂无额度信息",
       "unlimited": "未设置额度上限",
       "remaining": "额度剩余",

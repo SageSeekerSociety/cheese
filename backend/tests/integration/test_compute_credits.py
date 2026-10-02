@@ -3,8 +3,8 @@
 Issuance: a project created FROM a 赛题 whose 项目集 carries a compute_credits
 资源包 gets a ComputeGrant (#370 — this used to be a separate "link a cheesex
 task" step). Deduction: the tokens a turn spent, as the metering proxy logs
-them, fold into credits (1 credit = settings.compute_credit_tokens tokens) and
-deduct oldest grant first. Exhaustion: a project whose grants are spent gets
+them, are priced at the model's rates and charged as cost over the price per
+credit, oldest grant first. Exhaustion: a project whose grants are spent gets
 its turn refused with the platform's structured event; a project belonging to
 no 赛题 is unlimited.
 """
@@ -24,10 +24,25 @@ from tests.integration.conftest import (
 
 # A Claude Code session reports no usage of its own: the metering proxy logs
 # each model response it carried, and that log is what burns credits. Each
-# turn here is metered at 10 input + 5 output tokens; at the default rate
-# (1 credit = 10k tokens) one turn costs 0.0015 credits.
+# turn here is metered at 10 input + 5 output tokens of a model priced at $5 /
+# $25 per million, at $0.01 per credit.
 STUB_TURN_TOKENS = 15
-CREDITS_PER_TURN = STUB_TURN_TOKENS / 10_000
+_RATES = {"claude-opus-5": (5e-6, 25e-6, 5e-7, 6.25e-6)}
+_CREDIT_USD = 0.01
+CREDITS_PER_TURN = (10 * 5e-6 + 5 * 25e-6) / _CREDIT_USD
+
+
+@pytest.fixture(autouse=True)
+def _priced(monkeypatch):
+    """The gateway's price table and the deployment's price per credit."""
+    from app.core.config import settings
+    from app.domain.feature_stats import pricing
+
+    async def rates(transport=None):
+        return _RATES
+
+    monkeypatch.setattr(pricing, "model_rates", rates)
+    monkeypatch.setattr(settings, "llm_gateway_credit_usd", _CREDIT_USD)
 
 
 def _mk_project(client, name: str = "Demo", *, from_task: int | None = None) -> str:
@@ -247,7 +262,7 @@ def test_deduction_drains_oldest_grant_first(client, tmp_path):
 
 
 def test_exhausted_credits_refuse_next_turn(client, tmp_path):
-    # One turn more than exhausts this grant (0.0001 < 0.0015), and the team's
+    # One turn more than exhausts this grant (0.0001 < 0.0175), and the team's
     # plan issues nothing to fall back on.
     free_plan_credits(client, 0.0)
     task_id = _mk_task(client, compute_credits=0.0001)

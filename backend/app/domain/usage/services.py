@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.domain.usage import ledger
 from app.domain.usage import repositories as repo
+from app.domain.usage.model_access import ModelAccess, model_access
 
 
 def _gateway_budget(balance: ledger.Balance, spent_usd: float) -> float | None:
@@ -51,6 +52,11 @@ class UsageService:
         """The model tiers the team's plan allows; None is every tier."""
         return (await ledger.team_terms(self._session, team_id)).model_tiers
 
+    async def model_access(self, team_id: int) -> ModelAccess:
+        """Which models the team's plan lets it pick, and which plan each of
+        the others needs."""
+        return await model_access(self._session, team_id)
+
     async def admit_project(self, project_id: uuid.UUID):
         """Whether a call in this project may run now: None, or the
         ``ledger.Refusal`` saying why not and until when."""
@@ -78,7 +84,7 @@ class UsageService:
     async def platform_totals(self, *, since: datetime, until: datetime) -> dict:
         """窗口内的总量：tokens / calls / cost_usd / unpriced_tokens。
 
-        `unpriced_tokens` 必须和 `cost_usd` 一起给：订阅按月计费，行上的
+        `unpriced_tokens` 必须和 `cost_usd` 一起给：没有单价的模型，行上的
         `cost_usd = 0.0` 意思是**没有价**而不是免费，少了它，几百万 token 上印一个
         `$0.0000` 读起来像「这个月没花钱」。
         """

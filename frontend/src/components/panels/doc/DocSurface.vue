@@ -72,6 +72,8 @@ const props = withDefaults(
     pulse: () => void
     /** 页面每收到一次正文区的滚动就加一：滚动时收起代码块工具条。 */
     scrollTick?: number
+    /** 选中浮条上给不给「问 AI」。 */
+    canAsk?: boolean
   }>(),
   {
     topicList: () => [],
@@ -79,6 +81,7 @@ const props = withDefaults(
     commentMarkIndex: () => new Map<number, { id: string; quote: string }[]>(),
     openCommentId: null,
     scrollTick: 0,
+    canAsk: true,
     title: '',
   }
 )
@@ -447,6 +450,7 @@ const emptyPlaceholder = computed(() => JSON.stringify(t('work.room.doc.emptyPla
       :fetch-doc-nodes="fetchDocNodes"
       :slash-menu="slashMenu"
       :scroll-tick="scrollTick"
+      :can-ask="canAsk"
       @open-comment="emit('open-comment', $event)"
       @open-ai="emit('open-ai', $event)"
       @open-link="openLink"

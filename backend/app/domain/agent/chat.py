@@ -279,7 +279,7 @@ from app.domain.topic import doc_nudge, naming
 from app.domain.topic.models import TitleSource, Topic, TopicStatus
 from app.domain.topic.repositories import TopicProgressRepository, TopicRepository
 from app.domain.topic_membership.services import TopicMemberService
-from app.domain.usage.credits import usage_to_credits
+from app.domain.usage.credits import spend_to_credits
 from app.domain.usage.ledger import Ledger, payer_for_project, team_terms
 from app.domain.usage.models import ResourceUsage
 
@@ -1545,66 +1545,6 @@ class ChatService(SessionRecovery):
         except Exception:  # noqa: BLE001 — the Stop matters more than the row
             logger.exception("could not close open turns for topic %s", topic_id)
 
-    async def note_credits_refusal(self, topic_id: uuid.UUID) -> None:
-        """Admission just refused a `/v1/messages` call at this place because
-        the project's compute credits are spent (#715). If a turn is running
-        here, stamp it once and say so in the room right away — the same
-        `CREDITS_EXHAUSTED_EVENT` a turn-start refusal already posts — instead
-        of waiting for Claude Code's ten retries to end in `StopFailure` with a
-        reading of the 429 that says "Invalid API key".
-
-        Nothing to stamp (no turn in flight at this place) is not an error:
-        the turn-start refusal path already covers a turn that has not begun.
-        Never raises — the proxy fails OPEN on an admission error, so a
-        bookkeeping bug here must not become a reason to let a refused turn
-        through.
-        """
-        from datetime import UTC, datetime
-
-        from app.domain.agent.repositories import AgentTurnRepository
-        from app.domain.usage.credits import (
-            CREDITS_EXHAUSTED_EVENT,
-            CREDITS_EXHAUSTED_META,
-        )
-
-        turn_id: uuid.UUID | None = None
-        try:
-            async with self._sessions() as session:
-                repo = AgentTurnRepository(session)
-                turn_id = await repo.open_turn_id_for_topic(topic_id)
-                if turn_id is None:
-                    return
-                flipped = await repo.mark_credits_refused(turn_id, datetime.now(UTC))
-                if flipped:
-                    await session.commit()
-        except Exception:  # noqa: BLE001 — see docstring
-            logger.exception("could not stamp credits-refused for topic %s", topic_id)
-            return
-        if not flipped or turn_id is None:
-            return
-        try:
-            payload = await self.post_system_event(
-                topic_id,
-                CREDITS_EXHAUSTED_EVENT,
-                turn_id,
-                meta=CREDITS_EXHAUSTED_META,
-            )
-            if payload is not None:
-                from app.domain.agent.runtime import get_broker
-
-                await get_broker().publish(
-                    str(topic_id),
-                    {
-                        "type": "error",
-                        "message": CREDITS_EXHAUSTED_EVENT,
-                        "persisted": True,
-                    },
-                )
-        except Exception:  # noqa: BLE001 — see docstring
-            logger.exception(
-                "could not post credits-refused notice for topic %s", topic_id
-            )
-
     async def _turn_credits_refused(self, turn_id: uuid.UUID) -> bool:
         """Was `turn_id` ever stamped refused-for-credits by admission? What
         the turn's own end (`StopFailure`) reads to decide whose wording —
@@ -2678,11 +2618,10 @@ class ChatService(SessionRecovery):
                 )
             elif state.route != "gateway" or self._gateway is None:
                 payer = await payer_for_project(session, state.project_id)
-                priced = state.route == "gateway"
                 for u in usages:
                     await Ledger(session).record(
                         payer,
-                        credits=usage_to_credits(u, spend_priced=priced),
+                        credits=spend_to_credits(u.cost_usd),
                         topic_id=state.topic_id,
                         model=u.model or state.model or settings.agent_model,
                         input_tokens=u.input_tokens,
