@@ -2189,6 +2189,7 @@ def seed_task_with_protocol(
     teaching: dict | None = None,
     override: dict | None = None,
     space_id: int | None = None,
+    space_teaching: dict | None = None,
 ) -> int:
     """A 项目集 carrying 机构协议 + one 赛题 under it; returns the 赛题's int id.
 
@@ -2198,6 +2199,9 @@ def seed_task_with_protocol(
     option (c)). `shell` and `override` carry the 壳 layer the same way, so a
     项目集-level 壳 and a 赛题-level one are set up in one call. `teaching` is
     the 课程级教学配置 (#8d772257), on the same row and by the same route.
+    `space_teaching` is the OUTERMOST level of the same key (#944): the 空间
+    default every 项目集 on the board inherits — set on the `Space` row this call
+    creates, so it only applies when `space_id` is not passed.
     """
     import asyncio as _asyncio
     from datetime import UTC, datetime
@@ -2217,6 +2221,7 @@ def seed_task_with_protocol(
                     intro="",
                     description="",
                     task_templates=[],
+                    teaching=space_teaching or {},
                     created_at=now,
                     updated_at=now,
                 )

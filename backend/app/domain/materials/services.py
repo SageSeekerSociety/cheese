@@ -92,6 +92,19 @@ class MaterialService:
             raise NotFoundError("Material not found", data={"id": material_id})
         return _material_to_dto(material)
 
+    async def material_row(self, material_id: int) -> Material:
+        """这条素材的行本身，给**别的领域**用（#944：题目板上那份共用资料库）。
+
+        与 ``get_material`` 的差别只是形状：那边回一个给 HTTP 用的 DTO，这边回
+        ORM 行，因为调用方要的不是展示字段 —— 它要 ``meta`` 里的 ``storageKey``
+        才能把字节取出来。跨领域的调用方经 service 拿、不摸本模块的 repository，
+        这是 ``tests/unit/test_domain_import_guard.py`` 要求的正路。
+        """
+        material = await self._repo.get_by_id(material_id)
+        if material is None:
+            raise NotFoundError("Material not found", data={"id": material_id})
+        return material
+
     async def create_material(
         self,
         *,

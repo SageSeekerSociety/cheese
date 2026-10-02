@@ -58,6 +58,9 @@ export type PatchSpaceRequestData = {
   classificationTopics?: number[]
   defaultCategoryId?: number
   visibleTaskLimit?: number | null
+  /** 这块板的默认「给 AI 队友的指导」。写上就**整份替换**（协议那套整键语义），
+   *  省掉它则原样不动；`{}` 是清空，于是没有任何默认。 */
+  teaching?: SpaceTeaching
 }
 
 export type PostSpaceAnnouncementRequestData = {

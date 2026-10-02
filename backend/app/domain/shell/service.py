@@ -41,13 +41,18 @@ def declared_name(*, settings: dict | None, protocol_shell: str | None) -> str |
     return (settings or {}).get(SHELL_KEY) or protocol_shell
 
 
-def resolve_shell(*, project, task=None, category=None) -> Shell:
-    """The 壳 ``project`` runs under, given its 赛题 and that 赛题's 项目集.
+def resolve_shell(*, project, task=None, category=None, space=None) -> Shell:
+    """The 壳 ``project`` runs under, given its 赛题, that 赛题's 项目集, and its 空间.
 
     Takes the rows rather than a session because the caller has usually loaded
     them already (and a list route must not go back to the database per project).
+
+    ``space`` rides the chain because the protocol is resolved as a whole: a 壳
+    is not set at the 空间 level today, but resolving ``protocol`` without the
+    outer level here and with it elsewhere is exactly the two-answers drift the
+    shared resolver exists to prevent.
     """
-    protocol = resolve_protocol(category=category, task=task)
+    protocol = resolve_protocol(space=space, category=category, task=task)
     name = declared_name(
         settings=getattr(project, "settings", None), protocol_shell=protocol.shell
     )
@@ -73,7 +78,7 @@ async def effective_shells(
     projects all declare their own 壳 (or declare none at all) reads no 赛题 and
     no 项目集.
     """
-    from app.domain.space.models import SpaceCategory
+    from app.domain.space.models import Space, SpaceCategory
     from app.domain.task.models import Task
 
     rows = list(projects)
@@ -82,6 +87,7 @@ async def effective_shells(
     }
     tasks: dict[int, Task] = {}
     categories: dict[int, SpaceCategory] = {}
+    spaces: dict[int, Space] = {}
     if task_ids:
         found = (
             await session.execute(select(Task).where(Task.id.in_(task_ids)))
@@ -95,12 +101,21 @@ async def effective_shells(
                 )
             ).scalars()
             categories = {c.id: c for c in cats}
+        space_ids = {t.space_id for t in tasks.values() if t.space_id}
+        if space_ids:
+            boards = (
+                await session.execute(select(Space).where(Space.id.in_(space_ids)))
+            ).scalars()
+            spaces = {b.id: b for b in boards}
     out: dict[uuid.UUID, Shell] = {}
     for project in rows:
         external_task_id = getattr(project, "external_task_id", None)
         task = tasks.get(external_task_id) if external_task_id else None
         category = categories.get(task.category_id) if task is not None else None
-        out[project.id] = resolve_shell(project=project, task=task, category=category)
+        space = spaces.get(task.space_id) if task is not None else None
+        out[project.id] = resolve_shell(
+            project=project, task=task, category=category, space=space
+        )
     return out
 
 
