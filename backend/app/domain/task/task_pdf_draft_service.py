@@ -45,6 +45,21 @@ class UploadedIllustration:
     file_hash: str
 
 
+@dataclass(frozen=True)
+class PageSource:
+    """一页纸的两种读法。
+
+    有文字层的页，``markdown`` 是 ``pymupdf4llm`` 读出来的正文（``images`` 是它
+    顺手写出来的插图文件）。没有文字层的扫描页 ``markdown`` 为空、``scan_png`` 是
+    整页渲染出来的 PNG：这条兜底把它当图片发给能读图的模型，而不是像以前那样直接
+    报「这页读不出文字」把整份 PDF 打回。
+    """
+
+    markdown: str
+    images: dict[str, str]
+    scan_png: bytes | None = None
+
+
 def task_draft_key_spec() -> KeySpec:
     """The gateway key drafts are made on. No budget of its own: each preview
     is paid for from the publisher's personal credits."""
@@ -59,6 +74,26 @@ def task_draft_key_spec() -> KeySpec:
 
 RateTable = Mapping[str, RateRow]
 _NOT_OPEN = "从 PDF 生成草稿暂未开放，稍后再试。"
+
+# 整页渲染的清晰度，与读文档那条路（backend/sandbox/skills/documents/scripts/
+# read.py 的 ``--render``）同档：够模型看清正文，又不至于把一页顶到几十 MB。
+_RENDER_DPI = 150
+
+
+def _scanned_page_without_vision(page_number: int, model: str) -> str:
+    """这页没有文字层，而当前模型读不了图 —— 兜底根本没机会跑。"""
+    return (
+        f"第 {page_number} 页没有文字层（扫描件/图片页），渲染成图片也读不出来："
+        f"当前草稿模型 {model} 读不了图片。换一个能读图的草稿模型再试。"
+    )
+
+
+def _scan_fallback_failed(page_number: int, detail: str) -> str:
+    """渲染后模型也没读出内容 —— 说清是这条兜底路自己没读出来。"""
+    return (
+        f"第 {page_number} 页是扫描件（没有文字层）：已把这一页渲染成图片发给模型，"
+        f"但模型仍没读出可用内容（{detail}）。"
+    )
 
 
 class TaskPdfDraftService:
@@ -187,61 +222,90 @@ class TaskPdfDraftService:
         if page_count > self._max_pages:
             raise BadRequestError(f"PDF can contain at most {self._max_pages} pages")
 
-    def _split_pdf_to_pages(
-        self, pdf_bytes: bytes
-    ) -> tuple[list[tuple[str, dict[str, str]]], str]:
+    def _split_pdf_to_pages(self, pdf_bytes: bytes) -> tuple[list[PageSource], str]:
         import fitz
 
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
         page_count = doc.page_count
-        doc.close()
 
-        self._validate_page_count(page_count)
-
-        temp_dir = tempfile.mkdtemp(prefix="pdf_extract_")
         try:
-            tmp_path = os.path.join(temp_dir, "input.pdf")
-            with open(tmp_path, "wb") as f:
-                f.write(pdf_bytes)
+            self._validate_page_count(page_count)
 
-            page_data: list[tuple[str, dict[str, str]]] = []
-            for page_num in range(page_count):
-                page_images_dir = pathlib.Path(temp_dir) / f"images_p{page_num}"
-                page_images_dir.mkdir(exist_ok=True)
+            temp_dir = tempfile.mkdtemp(prefix="pdf_extract_")
+            try:
+                tmp_path = os.path.join(temp_dir, "input.pdf")
+                with open(tmp_path, "wb") as f:
+                    f.write(pdf_bytes)
 
-                # pymupdf4llm.to_markdown is an untyped wrapper whose inferred
-                # return is str | list[dict] (the list only in page_chunks mode).
-                # With page_chunks unset (default False) it always returns str.
-                markdown_text = cast(
-                    str,
-                    pymupdf4llm.to_markdown(
-                        tmp_path,
-                        pages=[page_num],
-                        use_ocr=False,
-                        write_images=True,
-                        image_path=str(page_images_dir),
-                        image_format="png",
-                    ),
-                )
+                page_data: list[PageSource] = []
+                for page_num in range(page_count):
+                    page_images_dir = pathlib.Path(temp_dir) / f"images_p{page_num}"
+                    page_images_dir.mkdir(exist_ok=True)
 
-                if not markdown_text or not markdown_text.strip():
-                    raise BadRequestError(
-                        f"Unable to extract readable text from page {page_num + 1}"
+                    # pymupdf4llm.to_markdown is an untyped wrapper whose inferred
+                    # return is str | list[dict] (the list only in page_chunks mode).
+                    # With page_chunks unset (default False) it always returns str.
+                    markdown_text = cast(
+                        str,
+                        pymupdf4llm.to_markdown(
+                            tmp_path,
+                            pages=[page_num],
+                            use_ocr=False,
+                            write_images=True,
+                            image_path=str(page_images_dir),
+                            image_format="png",
+                        ),
                     )
 
-                image_map: dict[str, str] = {}
-                if page_images_dir.exists():
-                    for img_file in page_images_dir.iterdir():
-                        if img_file.is_file():
-                            image_map[img_file.name] = str(img_file)
+                    scan_png = self._scanned_page_png(doc, page_num, markdown_text)
 
-                page_data.append((markdown_text, image_map))
+                    image_map: dict[str, str] = {}
+                    if page_images_dir.exists():
+                        for img_file in page_images_dir.iterdir():
+                            if img_file.is_file():
+                                image_map[img_file.name] = str(img_file)
 
-            return page_data, temp_dir
-        except BaseException:
-            if os.path.isdir(temp_dir):
-                shutil.rmtree(temp_dir, ignore_errors=True)
-            raise
+                    page_data.append(
+                        PageSource(markdown_text or "", image_map, scan_png)
+                    )
+
+                return page_data, temp_dir
+            except BaseException:
+                if os.path.isdir(temp_dir):
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+                raise
+        finally:
+            doc.close()
+
+    def _scanned_page_png(
+        self, doc: Any, page_num: int, markdown_text: str
+    ) -> bytes | None:
+        """这一页要当图片发给模型吗？要，就渲染成 PNG 交出去。
+
+        判据是「这一页没有文字层」，而不是「``pymupdf4llm`` 读出的 markdown 为空」：
+        一页只有图形、没有文字时，``pymupdf4llm`` 会把整页渲染成一张图并只留下一个
+        ``![](…)`` 占位标记 —— markdown 非空，可发进提示词的却是一句模型看不见的本地
+        路径。所以以 ``get_text()`` 探文字层为准，markdown 空也一并算作读不出。
+
+        模型读不了图时**早早地在这里失败**：这页注定读不出，与其把整份 PDF 拖到逐页
+        调用那一步、再让它淹没在「所有页都失败」里，不如当场说清是哪一页、为什么。
+        """
+        page_text = doc.load_page(page_num).get_text()
+        if page_text.strip() and markdown_text.strip():
+            return None
+        if not self._model_reads_images():
+            raise BadRequestError(
+                _scanned_page_without_vision(page_num + 1, self.model)
+            )
+        return doc.load_page(page_num).get_pixmap(dpi=_RENDER_DPI).tobytes("png")
+
+    def _model_reads_images(self) -> bool:
+        """这一版的草稿模型读不读图。
+
+        默认草稿模型是文本模型 —— 一份 PNG 发给读不了图的模型只是白白花一次调用的
+        钱，所以只有部署在 ``task_draft_vision_models`` 里点过名的模型才走兜底。
+        """
+        return self.model in settings.task_draft_vision_models
 
     async def generate_task_payloads_from_pdf(
         self,
@@ -267,17 +331,32 @@ class TaskPdfDraftService:
         try:
 
             async def process_page(
-                markdown_text: str,
+                page_source: PageSource, page_number: int
             ) -> tuple[list[dict[str, Any]], int]:
-                payloads, token_used = await self.generate_task_payloads_from_text(
-                    text=markdown_text,
-                    template=template,
-                    space_id=space_id,
-                    category_id=category_id,
-                    forced_submitter_type=forced_submitter_type,
-                    user_id=user_id,
-                    default_topic_ids=default_topic_ids,
-                )
+                if page_source.scan_png is not None:
+                    (
+                        payloads,
+                        token_used,
+                    ) = await self.generate_task_payloads_from_page_image(
+                        image=page_source.scan_png,
+                        page_number=page_number,
+                        template=template,
+                        space_id=space_id,
+                        category_id=category_id,
+                        forced_submitter_type=forced_submitter_type,
+                        user_id=user_id,
+                        default_topic_ids=default_topic_ids,
+                    )
+                else:
+                    payloads, token_used = await self.generate_task_payloads_from_text(
+                        text=page_source.markdown,
+                        template=template,
+                        space_id=space_id,
+                        category_id=category_id,
+                        forced_submitter_type=forced_submitter_type,
+                        user_id=user_id,
+                        default_topic_ids=default_topic_ids,
+                    )
 
                 return payloads, token_used
 
@@ -285,11 +364,15 @@ class TaskPdfDraftService:
             illustrations: list[UploadedIllustration] = []
             total_tokens = 0
             failed_pages: list[int] = []
+            failure_reasons: list[str] = []
             attempted_pages = 0
             for batch_start in range(0, len(page_data), self._max_concurrency):
                 batch = page_data[batch_start : batch_start + self._max_concurrency]
                 results = await asyncio.gather(
-                    *[process_page(markdown_text) for markdown_text, _ in batch],
+                    *[
+                        process_page(page_source, batch_start + offset + 1)
+                        for offset, page_source in enumerate(batch)
+                    ],
                     return_exceptions=True,
                 )
                 attempted_pages += len(batch)
@@ -298,6 +381,7 @@ class TaskPdfDraftService:
                     page_index = batch_start + offset
                     if isinstance(result, BaseException):
                         failed_pages.append(page_index + 1)
+                        failure_reasons.append(str(result))
                         logger.warning(
                             "PDF page %d LLM processing failed: %s",
                             page_index + 1,
@@ -309,7 +393,7 @@ class TaskPdfDraftService:
                     total_tokens += tokens
                     remaining = max_tasks - len(all_payloads)
                     selected_payloads = payloads[:remaining]
-                    image_map = page_data[page_index][1]
+                    image_map = page_data[page_index].images
                     for payload in selected_payloads:
                         if payload.get("description") and image_map:
                             (
@@ -326,8 +410,11 @@ class TaskPdfDraftService:
                     break
 
             if not all_payloads:
+                # 每一页为什么失败都带上：扫描页那条兜底路自己没读出来时，正是靠
+                # 这里的那句话（第 N 页是扫描件…）而不是一句笼统的「所有页都失败」
+                # 让调用方知道下一步该怎么办。
                 raise BadRequestError(
-                    f"All {attempted_pages} attempted page(s) failed to process"
+                    self._all_pages_failed_message(attempted_pages, failure_reasons)
                 )
 
             if failed_pages:
@@ -392,6 +479,60 @@ class TaskPdfDraftService:
             )
             for candidate in candidates
         ]
+
+        return payloads, response.usage.total_tokens
+
+    async def generate_task_payloads_from_page_image(
+        self,
+        *,
+        image: bytes,
+        page_number: int,
+        template: dict[str, Any],
+        space_id: int,
+        category_id: int | None,
+        forced_submitter_type: str | None,
+        user_id: int,
+        default_topic_ids: list[int] | None = None,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """一页没有文字层时的兜底：把整页渲染图当图片发给模型。
+
+        与文字那条路的差别只有「喂进去的是图片而不是 markdown」。读不出来时抛出的
+        错误要说清是这条兜底路自己没读出来（第 N 页是扫描件、渲染后模型也没读出来），
+        而不是回到那句笼统的「读不出文字」—— 后者正是这条路要消灭的东西。
+        """
+        # ``_scanned_page_png`` 已经拦下读不了图的模型；这里再断言一次，让这个方法
+        # 直接调用时也守得住「绝不把图片发给读不了图的模型」这条线。
+        if not self._model_reads_images():
+            raise BadRequestError(_scanned_page_without_vision(page_number, self.model))
+
+        try:
+            response = await self._chat.complete(
+                system=self._build_system_prompt(),
+                prompt=self._build_scan_user_prompt(),
+                images=[image],
+                json_response=True,
+                timeout=self._timeout_seconds,
+            )
+        except GatewayCallError as exc:
+            raise BadRequestError(_scan_fallback_failed(page_number, str(exc))) from exc
+        self.spent += response.usage
+
+        try:
+            parsed = self._parse_llm_json(response.content)
+            candidates = self._extract_task_candidates(parsed)
+            payloads = [
+                self._normalize_task_payload(
+                    llm_result=candidate,
+                    template=template,
+                    forced_submitter_type=forced_submitter_type,
+                    space_id=space_id,
+                    category_id=category_id,
+                    default_topic_ids=default_topic_ids,
+                )
+                for candidate in candidates
+            ]
+        except BadRequestError as exc:
+            raise BadRequestError(_scan_fallback_failed(page_number, str(exc))) from exc
 
         return payloads, response.usage.total_tokens
 
@@ -507,6 +648,21 @@ class TaskPdfDraftService:
             "请基于以上内容生成一个 JSON 对象，"
             "其中 `description` 字段放置修正排版后的完整 Markdown。"
         )
+
+    def _build_scan_user_prompt(self) -> str:
+        """扫描页那条兜底路喂给模型的话：图片就在这一轮里，直接读。"""
+        return (
+            "这一页没有文字层，是一张扫描/图片页。附上的图片就是这一页的整页渲染，"
+            "请直接阅读图片内容，按图片里的正文整理出一份 Markdown。\n"
+            "请基于图片内容生成一个 JSON 对象，"
+            "其中 `description` 字段放置整理排版后的完整 Markdown。"
+        )
+
+    @staticmethod
+    def _all_pages_failed_message(attempted_pages: int, reasons: list[str]) -> str:
+        base = f"All {attempted_pages} attempted page(s) failed to process"
+        detail = "; ".join(reason for reason in reasons if reason)
+        return f"{base}: {detail}" if detail else base
 
     def _parse_llm_json(self, content: str) -> dict[str, Any]:
         # Strip markdown code fences if present (e.g. ```json ... ```)

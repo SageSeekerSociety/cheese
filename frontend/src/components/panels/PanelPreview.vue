@@ -13,7 +13,7 @@
 //     → `components/panels/PanelPreviewView.vue`，只凭 props 渲染
 // 这一只只负责把两边接起来：状态递下去、事件接回来。加取数动作在组合式函数里加，
 // 加画法在展示组件里加，这一只基本不再长。
-import type { SubmitPreviewQuestion } from '../../lib/previewQuestion'
+import type { PreviewLocate, SubmitPreviewQuestion } from '../../lib/previewQuestion'
 
 import { useId } from 'vue'
 
@@ -37,8 +37,8 @@ const props = withDefaults(
 )
 const emit = defineEmits<{
   (e: 'loaded', artifactId: string | null): void
-  /** 读者指着文档里的一处提了一句话，交给房间的对话。 */
-  (e: 'locate', message: string): void
+  /** 读者指着文档里的一处提了一句话，交给房间的对话；图上画过东西时随行带那张图。 */
+  (e: 'locate', payload: PreviewLocate): void
   /** 「这个房间里的东西」里点开了一份：开成自由区的一个页签。 */
   (e: 'open-file', path: string): void
 }>()
@@ -81,6 +81,7 @@ const {
   load,
   downloadArtifact,
   refreshDocument,
+  uploadAnnotation,
 } = usePanelPreview(props, {
   frameName,
   // 元数据回来一次就报一次：房间拿它标「预览有新内容」。
@@ -100,6 +101,8 @@ function refresh() {
   <PanelPreviewView
     :topic-id="props.topicId"
     :submit-question="props.submitQuestion"
+    :upload-annotation="uploadAnnotation"
+    :active="props.active"
     :project-id="props.projectId"
     :path="props.path"
     :frame-name="frameName"

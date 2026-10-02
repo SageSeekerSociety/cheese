@@ -128,6 +128,11 @@ it('labels each server with where it comes from: the .mcp.json, or the types tha
   expect(await source('tracker')).toBe('来自项目的 .mcp.json')
   expect(await source('ticket')).toBe('由 代码评审 类型声明')
   expect(await source('docs')).toBe('由 代码评审、写作 类型声明')
+  // The line is in the UI's own font; only the file name is code.
+  const line = (name: string) => view.container.querySelector(`[data-server="${name}"] [data-testid="mcp-source"]`)!
+  expect(line('tracker').querySelector('code')?.textContent).toBe('.mcp.json')
+  expect(line('ticket').querySelector('code')).toBeNull()
+  expect(line('ticket').classList.contains('t-meta')).toBe(false)
 
   setLocale('en')
   await waitFor(() => expect(view.container.textContent).toContain('Declared by the 代码评审 type'))

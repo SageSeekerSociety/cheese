@@ -18,6 +18,7 @@ import { useI18n } from 'vue-i18n'
 import { getGatewayModels } from '@/api'
 import {
   createPlan,
+  deletePlan,
   getCreditTeam,
   getCreditTeamHistory,
   grantTeamCredits,
@@ -83,6 +84,23 @@ export function useAdminCredits() {
     planEditing.value = plan
     planSaveError.value = null
     planDialogOpen.value = true
+  }
+
+  /** 删掉正在编辑的方案；有团队在用或是默认方案时服务端会拒绝，原话显示在框里。 */
+  async function removePlan() {
+    const plan = planEditing.value
+    if (!plan) return
+    planSaving.value = true
+    planSaveError.value = null
+    try {
+      await deletePlan(plan.key)
+      planDialogOpen.value = false
+      await loadPlans()
+    } catch (e) {
+      planSaveError.value = message(e, t('credits.planDialog.deleteFailed'))
+    } finally {
+      planSaving.value = false
+    }
   }
 
   async function savePlan(input: PlanInput) {
@@ -271,6 +289,7 @@ export function useAdminCredits() {
     planSaveError,
     openPlan,
     savePlan,
+    removePlan,
     query,
     planFilter,
     kindFilter,

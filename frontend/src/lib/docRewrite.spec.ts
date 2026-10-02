@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-// A selection rewrite sends the Markdown of the block holding the selection and
-// where the selection sits in it. The service replaces exactly that range, so
+// A selection rewrite sends the Markdown of the blocks holding the selection and
+// where the selection sits in them. The service replaces exactly that range, so
 // replacing it must give the document with exactly the selected text replaced
 // — and a selection that has no such range is not sent at all.
 import { transformToSuggestionTransaction } from '@handlewithcare/prosemirror-suggest-changes'
@@ -52,6 +52,8 @@ describe('a selection rewrite', () => {
     ['the second of two equal phrases', '先评估，再评估。', '评估', 1],
     ['an item in a list', '- 第一项\n- 第二项要改\n- 第三项', '第二项要改', 0],
     ['a heading', '# 存储选型\n\n正文', '存储选型', 0],
+    ['text across two paragraphs', '第一段。\n\n第二段。\n\n第三段。', '一段。\n第二', 0],
+    ['text from a heading into the paragraph under it', '# 存储选型\n\n正文', '选型\n正', 0],
   ])('replaces exactly the selected text: %s', (_case, markdown, selected, nth) => {
     const editor = open(markdown)
     const { from, to } = find(editor, selected, nth)
@@ -67,11 +69,6 @@ describe('a selection rewrite', () => {
     const start = find(editor, '万行').from
     const end = find(editor, '时开始').to
     expect(rewriteTarget(editor.state, start, end)).toBeNull()
-  })
-
-  it('is not sent when the selection spans two blocks', () => {
-    const editor = open('第一段。\n\n第二段。')
-    expect(rewriteTarget(editor.state, find(editor, '一段').from, find(editor, '第二').to)).toBeNull()
   })
 
   it('names the block as stored, with a pending suggestion in it left out', () => {

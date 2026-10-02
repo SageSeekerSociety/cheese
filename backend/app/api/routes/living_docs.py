@@ -326,13 +326,23 @@ async def document_history(
     db: DbSession,
     resolver: ActorResolverDep,
     after: int = Query(default=0, ge=0),
+    newest: bool = Query(default=False),
+    before: int | None = Query(default=None, ge=1),
+    limit: int = Query(default=30, ge=1, le=50),
 ) -> dict:
+    """The document's versions: oldest first from ``after``, or with ``newest``
+    the latest ``limit`` first, those below ``before`` (the page's ``cursor``)
+    when given."""
     place = await TopicService(db).place_or_404(topic_id)
     actor = await _actor_in_place(resolver, place)
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
     )
-    rows = await DocumentJournal(db).history(place.room_id, after=after)
+    journal = DocumentJournal(db)
+    if newest:
+        rows = await journal.recent(place.room_id, before=before, limit=limit)
+        return ok({"versions": rows, "cursor": rows[-1]["version"] if rows else None})
+    rows = await journal.history(place.room_id, after=after)
     return ok({"versions": rows, "cursor": rows[-1]["version"] if rows else after})
 
 

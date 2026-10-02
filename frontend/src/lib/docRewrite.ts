@@ -1,13 +1,14 @@
-// What a selection rewrite sends: the Markdown of the top-level block holding
-// the selection, and where the selected text sits in that Markdown.
+// What a selection rewrite sends: the Markdown of the top-level blocks holding
+// the selection (one, or a run of them when it spans paragraphs), and where the
+// selected text sits in that Markdown.
 //
-// The service finds the block in the document's Markdown and replaces the
+// The service finds the blocks in the document's Markdown and replaces the
 // range, so both have to be exactly what the shared schema's serializer writes,
 // with pending suggestions rejected (that is the document's text; see
 // lib/docSchema/suggestions.ts).
 //
 // Where the selection lands in the Markdown is found by writing two markers into
-// a copy of the block at the selection's ends and serializing that: the markers
+// a copy of the blocks at the selection's ends and serializing that: the markers
 // come out wherever the serializer put that character, past escapes, list
 // markers and formatting. A selection that starts inside a bold run and ends
 // outside it has no Markdown range of its own (`ld** cc` is not text); it is
@@ -20,7 +21,7 @@ import { plainOf } from './docEdits'
 import { nodeMarkdown, withoutSuggestions } from './docSchema'
 
 export interface RewriteTarget {
-  /** The block's Markdown. */
+  /** The Markdown of the blocks holding the selection. */
   block: string
   start: number
   end: number
@@ -33,29 +34,35 @@ const CLOSE = ''
 
 const squash = (text: string) => text.replace(/\s+/g, ' ').trim()
 
-/** The block and offsets for the selection `[from, to)`, or null when the
- *  selection cannot be sent: it spans blocks, is empty, overlaps a pending
- *  suggestion, or cuts through formatting. */
+/** The blocks and offsets for the selection `[from, to)`, or null when the
+ *  selection cannot be sent: it is empty, overlaps a pending suggestion, or
+ *  cuts through formatting. */
 export function rewriteTarget(state: EditorState, from: number, to: number): RewriteTarget | null {
   const { doc, schema } = state
   if (from >= to) return null
   const $from = doc.resolve(from)
   const $to = doc.resolve(to)
-  if ($from.depth < 1 || $to.depth < 1 || $from.before(1) !== $to.before(1)) return null
+  if ($from.depth < 1 || $to.depth < 1) return null
   const text = doc.textBetween(from, to, '\n')
   if (!squash(text)) return null
 
-  const index = $from.index(0)
-  const marked = state.tr.insertText(CLOSE, to).insertText(OPEN, from).doc.child(index)
-  const wrap = (node: PMNode) => withoutSuggestions(schema.topNodeType.create(null, [node]))
-  const withMarkers = nodeMarkdown(wrap(marked)).trimEnd()
+  const first = $from.index(0)
+  const last = $to.index(0)
+  const blocks = (root: PMNode) => {
+    const out: PMNode[] = []
+    for (let i = first; i <= last; i++) out.push(root.child(i))
+    return out
+  }
+  const marked = state.tr.insertText(CLOSE, to).insertText(OPEN, from).doc
+  const wrap = (nodes: PMNode[]) => withoutSuggestions(schema.topNodeType.create(null, nodes))
+  const withMarkers = nodeMarkdown(wrap(blocks(marked))).trimEnd()
   const start = withMarkers.indexOf(OPEN)
   const close = withMarkers.indexOf(CLOSE)
   if (start < 0 || close < start || withMarkers.indexOf(OPEN, start + 1) >= 0) return null
   const block = withMarkers.replace(OPEN, '').replace(CLOSE, '')
   const end = close - 1
   // The markers must not have changed how the rest of the block is written.
-  if (block !== nodeMarkdown(wrap(doc.child(index))).trimEnd()) return null
+  if (block !== nodeMarkdown(wrap(blocks(doc))).trimEnd()) return null
   if (!parsesTo(block.slice(start, end), text)) return null
   return { block, start, end, text }
 }

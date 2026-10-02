@@ -190,7 +190,7 @@ it('turns a pointed-at cell into a message naming the file and the address', asy
   await fireEvent.click(screen.getByText('发送'))
 
   await waitFor(() => expect(emitted().locate).toBeTruthy())
-  expect((emitted().locate as unknown[][])[0][0]).toBe(
+  expect((emitted().locate as { message: string }[][])[0][0].message).toBe(
     '在 output/预算表.xlsx 的 Sheet1!B7（「1200」）：这个数字应该按季度摊'
   )
 })
@@ -205,7 +205,9 @@ it('a CSV has no sheet, so its address is the cell alone', async () => {
   await fireEvent.click(screen.getByText('发送'))
 
   await waitFor(() => expect(emitted().locate).toBeTruthy())
-  expect((emitted().locate as unknown[][])[0][0]).toBe('在 output/报名名单.csv 的 B7（「1200」）：这一行重复了')
+  expect((emitted().locate as { message: string }[][])[0][0].message).toBe(
+    '在 output/报名名单.csv 的 B7（「1200」）：这一行重复了'
+  )
 })
 
 it('turns a selected sentence into a message naming the page it came from', async () => {
@@ -216,7 +218,7 @@ it('turns a selected sentence into a message naming the page it came from', asyn
   await fireEvent.click(screen.getByText('发送'))
 
   await waitFor(() => expect(emitted().locate).toBeTruthy())
-  expect((emitted().locate as unknown[][])[0][0]).toBe(
+  expect((emitted().locate as { message: string }[][])[0][0].message).toBe(
     '在 output/评审简报.docx 的 第 2 页（「平台在真实课程中完成了部署」）：这句话和摘要对不上'
   )
 })

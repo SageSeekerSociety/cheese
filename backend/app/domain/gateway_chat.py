@@ -8,8 +8,10 @@ on its own. What comes back carries the usage the gateway reported, cache
 shares included, so the caller can charge it at the model's price.
 """
 
+import base64
 import logging
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import httpx
@@ -106,12 +108,13 @@ class GatewayChat:
         prompt: str,
         timeout: float,
         json_response: bool = False,
+        images: Sequence[bytes] | None = None,
     ) -> Completion:
         body: dict = {
             "model": self._model,
             "messages": [
                 {"role": "system", "content": system},
-                {"role": "user", "content": prompt},
+                {"role": "user", "content": self._user_content(prompt, images)},
             ],
             "max_tokens": self._max_tokens,
         }
@@ -137,3 +140,25 @@ class GatewayChat:
         choices = payload.get("choices") or [{}]
         content = (choices[0].get("message") or {}).get("content") or ""
         return Completion(content, Usage.of(payload.get("usage")), response_cost(r))
+
+    @staticmethod
+    def _user_content(prompt: str, images: Sequence[bytes] | None) -> str | list[dict]:
+        """The user turn: plain text, or text plus inline PNGs when there are any.
+
+        The gateway speaks the OpenAI chat-completions shape, where an image rides
+        in a content list beside the text as a ``data:`` URL. A caller that passes
+        no images gets the plain string it always did, so nothing about the
+        text-only path changes.
+        """
+        if not images:
+            return prompt
+        blocks: list[dict] = [{"type": "text", "text": prompt}]
+        for image in images:
+            encoded = base64.b64encode(image).decode("ascii")
+            blocks.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{encoded}"},
+                }
+            )
+        return blocks

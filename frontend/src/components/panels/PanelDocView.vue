@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 文档那一格的**画**：横条、正文、共用的工具侧栏。
+// 文档那一格的**画**：顶栏、正文、共用的工具侧栏。
 //
 // 它只凭 props 渲染，不认识接口也不认识路由 —— 打开协同文档、评论、节点都在
 // composables/usePanelDoc.ts 里（#2143）。正文编辑器本身在 doc/DocSurface.vue：这里画出
@@ -8,24 +8,28 @@
 import type { DocConnection, DocPeer, DocSession } from '../../composables/useDocCollab'
 import type { SendDocComment } from '../../composables/useDocCommentDraft'
 import type { Block, Topic } from '../../cx_types'
+import type { SelectionTarget } from '../../lib/docBubble'
 import type { DocEdit, DocRewriteRequest, DocRewriteResult } from '../../lib/docEdits'
+import type { DocVersionPage } from '../../lib/docHistory'
 import type { DocReviewRequest } from '../../lib/docReview'
 import type { DocThreadActions, DocThreadState } from '../../lib/docThreadTypes'
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
+import { useDocAgent } from '../../composables/useDocAgent'
+import { useDocAsk } from '../../composables/useDocAsk'
 import { useDocReview } from '../../composables/useDocReview'
-import { useDocRewrite } from '../../composables/useDocRewrite'
 import { useDocSuggestions } from '../../composables/useDocSuggestions'
+import { exportMarkdown } from '../../lib/docSchema'
 import { topicTitle } from '../../lib/topicState'
 
 import DocCommentPanel from './doc/DocCommentPanel.vue'
 import DocEditLayer from './doc/DocEditLayer.vue'
-import DocFormatToolbar from './doc/DocFormatToolbar.vue'
-import DocPresence from './doc/DocPresence.vue'
+import DocHistory from './doc/DocHistory.vue'
 import DocReviewStrip from './doc/DocReviewStrip.vue'
 import DocSuggestionStrip from './doc/DocSuggestionStrip.vue'
 import DocSurface from './doc/DocSurface.vue'
+import DocTopBar from './doc/DocTopBar.vue'
 import OverviewAuto from './doc/OverviewAuto.vue'
 
 import { t } from '@/i18n'
@@ -43,6 +47,8 @@ const props = withDefaults(
     topicList?: Topic[]
     /** 画在一整页里（项目文档的章程）：页头已经说了这是什么，不再画大标题和总览自动区。 */
     bare?: boolean
+    /** 顶栏画到页面上的这个位置（CSS 选择器），和页面自己的那一行并成一行。 */
+    barTo?: string
     // ---- 这一篇现在是什么状态 ----
     /** 这一篇的协同文档；还没打开时是 null。 */
     session: DocSession | null
@@ -80,23 +86,41 @@ const props = withDefaults(
     refreshComments: () => Promise<void>
     toggleEditable: () => void
     setError: (message: string | null) => void
-    /** 让 AI 队友改选中的字；没有时浮条上不给「让…改」。 */
+    /** 让 AI 队友改选中的字；没有时输入框里不给常用的说法。 */
     rewriteSelection?: (request: DocRewriteRequest) => Promise<DocRewriteResult>
+    /** 问 AI 队友：一句话连同选中的字发成点了它名的评论，回执是那条评论的 id。 */
+    askAgent?: (target: SelectionTarget, question: string) => Promise<string>
+    /** 那条评论下 AI 队友的回答；还没有时是 null。 */
+    answerOf?: (threadId: string) => Promise<string | null>
     /** 以自己的名义替换正文里的字（撤销、还原 AI 队友的修改）。 */
     applyDocEdits?: (edits: DocEdit[]) => Promise<unknown>
+    // ---- 修改记录 ----
+    /** 最近一次编辑：谁（读成名字）、什么时候。 */
+    lastEdit?: { name: string; at: string } | null
+    /** handle 读成名字。 */
+    nameOf?: (handle: string) => string
+    loadVersions?: (before?: number) => Promise<DocVersionPage>
+    restoreVersion?: (version: number, expected: number) => Promise<unknown>
   }>(),
   {
     agentName: () => t('work.room.defaultAgentName'),
     agentHandle: null,
     topicList: () => [],
     bare: false,
+    barTo: undefined,
     outdated: false,
     commentAuthor: '',
     sendComment: undefined,
     rewriteSelection: undefined,
+    askAgent: undefined,
+    answerOf: undefined,
     suggestionReasons: () => ({}),
     fetchSuggestionReasons: undefined,
     applyDocEdits: undefined,
+    lastEdit: null,
+    nameOf: (handle: string) => handle,
+    loadVersions: undefined,
+    restoreVersion: undefined,
   }
 )
 
@@ -152,9 +176,8 @@ function highlightTurn(turnId: string) {
 function highlightNode(nodeId: string) {
   void surfaceRef.value?.highlightNode(nodeId)
 }
-function openComment(payload: { anchorId: string | null; quote: string; ask: boolean }) {
-  const { anchorId, quote } = payload
-  commentsRef.value?.open({ anchorId, quote }, payload.ask ? `@${props.agentName} ` : undefined)
+function openComment(target: SelectionTarget) {
+  commentsRef.value?.open(target)
 }
 
 // 评论里的点名（`<@handle>`）读成名字。
@@ -162,14 +185,45 @@ const mentionNames = computed<Record<string, string>>(() =>
   props.agentHandle ? { [props.agentHandle]: props.agentName } : {}
 )
 
-const rewrite = useDocRewrite({
+const rewrite = useDocAgent({
   editor: () => surfaceRef.value?.editor ?? null,
-  rewrite: () => props.rewriteSelection,
+  rewrite: () => (props.editable ? props.rewriteSelection : undefined),
+  ask: () => props.askAgent,
+  answerOf: (threadId) => props.answerOf?.(threadId) ?? Promise.resolve(null),
   applyEdits: () => props.applyDocEdits,
   agentName: () => props.agentName,
   onError: (message) => props.setError(message),
 })
+// 对整篇问 AI 队友（顶栏上那一个）。
+const docAsk = useDocAsk({
+  ask: () => props.askAgent,
+  answerOf: (threadId) => props.answerOf?.(threadId) ?? Promise.resolve(null),
+  onError: (message) => props.setError(message),
+})
+const canAskDocument = computed(() => !!props.agentHandle && !!props.askAgent)
 const suggestions = useDocSuggestions(() => surfaceRef.value?.editor ?? null)
+// 建议那一条：点顶栏上的「N 处建议」打开，从第一处看起。
+const suggestionsOpen = ref(false)
+function toggleSuggestions() {
+  suggestionsOpen.value = !suggestionsOpen.value
+  if (suggestionsOpen.value) suggestions.step(1)
+}
+function dismissSuggestions() {
+  suggestions.dismissDone()
+  suggestionsOpen.value = false
+}
+const historyOpen = ref(false)
+/** 导出 Markdown：文档现在的样子，待处理的建议不算在内。 */
+function exportDoc() {
+  if (!props.session) return
+  const blob = new Blob([exportMarkdown(props.session.doc)], { type: 'text/markdown;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `${(props.topic && topicTitle(props.topic)) || 'document'}.md`
+  link.click()
+  URL.revokeObjectURL(url)
+}
 watch(
   () => suggestions.list.value.map((s) => s.id).join(' '),
   (ids, before) => {
@@ -193,6 +247,9 @@ watch([() => props.topic?.id, () => props.commentAuthor], () => {
   openId.value = null
   rewrite.close()
   review.close()
+  docAsk.close()
+  suggestionsOpen.value = false
+  historyOpen.value = false
 })
 function quoteState(id: string) {
   return surfaceRef.value?.commentQuoteState(id) ?? 'missing'
@@ -229,61 +286,32 @@ defineExpose({
     <template v-else>
       <!-- Stage: the editor + (optionally) a docked tool panel beside it. -->
       <div class="doc-stage flex-grow-1">
-        <div class="doc-tools">
-          <DocFormatToolbar
-            :editor="surfaceRef?.editor ?? null"
-            :disabled="loading || !editable"
-            :disabled-reason="loading ? t('work.room.doc.loading') : !editable ? t('work.room.doc.readOnly') : ''"
+        <Teleport :to="barTo || 'body'" defer :disabled="!barTo">
+          <DocTopBar
+            class="doc-top"
+            :class="{ 'doc-top--inline': !!barTo }"
+            :loading="loading"
+            :connection="connection"
+            :peers="peers"
+            :editable="editable"
+            :read-only="readOnly"
+            :last-edit="lastEdit"
+            :suggestion-count="suggestions.list.value.length"
+            :suggestions-open="suggestionsOpen"
+            :comment-count="comments.length"
+            :comments-open="commentsRef?.opened ?? false"
+            :agent-name="agentName"
+            :agent-handle="agentHandle"
+            :ask="canAskDocument ? docAsk : undefined"
+            :mention-names="mentionNames"
+            @toggle-suggestions="toggleSuggestions"
+            @toggle-comments="commentsRef?.toggle()"
+            @toggle-editable="toggleEditable"
+            @history="historyOpen = true"
+            @export="exportDoc"
+            @open-thread="locateComment"
           />
-          <div class="doc-bar">
-            <!-- 没连上时说没连上，哪怕正文还没到：那一刻「加载中」会一直挂着。 -->
-            <span v-if="loading && connection !== 'offline'" class="t-meta me-2">{{ t('work.room.doc.loading') }}</span>
-            <DocPresence v-else :peers="peers" :connection="connection" class="me-2" />
-
-            <!-- 只读是「这一格现在不照常」：开着的时候写在这一条上，点它就回去。没有编辑
-               权限时它只是说明，回不去。平常用不上，进去的入口在 ⋯ 里。 -->
-            <v-btn
-              v-if="!editable"
-              size="small"
-              variant="text"
-              color="medium-emphasis"
-              class="me-1"
-              :disabled="readOnly"
-              :title="readOnly ? t('work.room.doc.noEditAccess') : t('work.room.doc.backToEdit')"
-              @click="toggleEditable"
-            >
-              {{ t('work.room.doc.readOnly') }}
-            </v-btn>
-            <v-btn
-              icon="mdi-comment-text-outline"
-              size="small"
-              variant="text"
-              :aria-label="t('work.room.comments.title')"
-              :title="t('work.room.comments.title')"
-              :aria-expanded="commentsRef?.opened ?? false"
-              @click="commentsRef?.toggle()"
-            />
-            <v-menu v-if="!readOnly" location="bottom end">
-              <template #activator="{ props: menuProps }">
-                <v-btn
-                  v-bind="menuProps"
-                  icon="mdi-dots-horizontal"
-                  size="small"
-                  variant="text"
-                  color="medium-emphasis"
-                  :title="t('work.room.menu.more')"
-                  :aria-label="t('work.room.menu.more')"
-                />
-              </template>
-              <v-list density="compact" :aria-label="t('work.room.doc.options')">
-                <v-list-item
-                  :title="editable ? t('work.room.doc.setReadOnly') : t('work.room.doc.backToEdit')"
-                  @click="toggleEditable"
-                />
-              </v-list>
-            </v-menu>
-          </div>
-        </div>
+        </Teleport>
         <DocReviewStrip
           v-if="review.request.value"
           :agent-name="agentName"
@@ -293,6 +321,7 @@ defineExpose({
           @close="review.close"
         />
         <DocSuggestionStrip
+          v-if="suggestionsOpen"
           :agent-name="agentName"
           :count="suggestions.list.value.length"
           :decided="suggestions.decided.value"
@@ -300,7 +329,7 @@ defineExpose({
           @step="suggestions.step"
           @accept-all="suggestions.decideAll(true)"
           @reject-all="suggestions.decideAll(false)"
-          @dismiss="suggestions.dismissDone"
+          @dismiss="dismissSuggestions"
         />
         <!-- Editor surface — a Feishu Docs page: white, padded, centered column. -->
         <DocCommentPanel
@@ -344,13 +373,12 @@ defineExpose({
                 :pulse="pulse"
                 :scroll-tick="scrollTick"
                 :agent-name="agentName"
-                :can-rewrite="!!rewriteSelection && editable"
-                :can-ask-agent="!!agentHandle"
+                :agent-handle="agentHandle"
                 @open-topic="emit('open-topic', $event)"
                 @mention-click="emit('mention-click', $event)"
                 @open-file="emit('open-file', $event)"
                 @open-comment="openComment"
-                @rewrite="rewrite.open($event.from, $event.to)"
+                @agent="rewrite.open($event.from, $event.to, $event)"
                 @locate-comment="locateComment"
                 @error="setError"
               />
@@ -363,6 +391,8 @@ defineExpose({
                 :review="review"
                 :suggestions="suggestions"
                 :suggestion-reasons="suggestionReasons"
+                :mention-names="mentionNames"
+                @open-thread="locateComment"
               />
 
               <!-- 总览房间的其余两块（#1889 ②③）紧跟正文。评论在独立侧栏。只有根话题
@@ -378,6 +408,16 @@ defineExpose({
         </DocCommentPanel>
       </div>
       <!-- /.doc-stage -->
+
+      <DocHistory
+        v-if="loadVersions"
+        v-model:open="historyOpen"
+        :load="loadVersions"
+        :restore="restoreVersion"
+        :editable="editable"
+        :name-of="nameOf"
+        :mention-names="mentionNames"
+      />
 
       <!-- Floating, never clipped: the old flow-layout alert sat below the
            scroll stage and rendered half-hidden at the panel edge. -->
@@ -396,21 +436,21 @@ defineExpose({
 </template>
 
 <style scoped>
-.doc-tools {
-  display: flex;
-  align-items: center;
+.doc-top {
   flex: 0 0 auto;
-  min-width: 0;
   border-bottom: 0.5px solid var(--line);
   background: var(--surface);
 }
-.doc-bar {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  min-height: 40px;
-  padding: 0 6px;
-  background: var(--surface);
+/* 并进页面那一行时，下边线和底色是那一行的，整条靠右。 */
+.doc-top--inline {
+  flex: 0 1 auto;
+  min-width: 0;
+  padding: 0;
+  border-bottom: none;
+  background: transparent;
+}
+.doc-top--inline :deep(.doc-top-bar__state) {
+  flex: 0 1 auto;
 }
 .doc {
   /* In the split workspace the doc is a full white surface that fills the pane —

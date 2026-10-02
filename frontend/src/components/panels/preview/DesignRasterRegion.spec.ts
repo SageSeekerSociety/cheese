@@ -64,6 +64,139 @@ it('rejects a drag when the image source changes before pointerup', async () => 
   expect(ui.emitted().select).toBeUndefined()
 })
 
+// ---- 点一下 = 框住指针底下那一块；拖 = 自由框选 ----
+// 有内容分界线时，按下到松开几乎没有位移就算「点」：直接用 blockAt 框住那一块，
+// 不用先切工具、也不用拖准。真拖了（位移过阈值）还是自由框选，只是四条边吸到近处
+// 的分界线上。没有分界线（跨域读像素失败等）时两条都退化成原来的自由拖。
+// 内容框只有左下那一块（原图像素 100..300 × 100..300，显示 1:2 所以是 100 见方），
+// 另外三条分界线在 (100,300) 上——它们归吸附用，点选按框走。
+const lines = { columns: [100, 300], rows: [100, 300], boxes: [{ x: 100, y: 100, width: 200, height: 200 }] }
+function mapped(region: { x: number; y: number; width: number; height: number }) {
+  return [{ region, identity: 'v1', src: '', naturalWidth: 1000, naturalHeight: 500 }]
+}
+/** 取样图 1000×500 铺在 500×250 上、左上角在 (10,20)：1 显示像素 = 2 原图像素。 */
+async function gesture(ui: ReturnType<typeof render>, from: [number, number], to: [number, number] = from) {
+  const overlay = ui.getByRole('group', { name: '选择图片区域' })
+  overlay.setPointerCapture = vi.fn()
+  await fireEvent.pointerDown(overlay, { button: 0, pointerId: 7, clientX: from[0], clientY: from[1] })
+  await fireEvent.pointerUp(overlay, { pointerId: 7, clientX: to[0], clientY: to[1] })
+}
+it('a tap picks the content block under the pointer without switching tools', async () => {
+  const ui = render(DesignRasterRegion, {
+    props: { image: imageFixture(), enabled: true, identity: 'v1', profile: lines },
+  })
+  await gesture(ui, [110, 120])
+  expect(ui.emitted().select![0]).toEqual(mapped({ x: 100, y: 100, width: 200, height: 200 }))
+})
+it('a sub-threshold wiggle is still a tap, so a shaky finger picks the block', async () => {
+  const ui = render(DesignRasterRegion, {
+    props: { image: imageFixture(), enabled: true, identity: 'v1', profile: lines },
+  })
+  await gesture(ui, [60, 70], [62, 71])
+  expect(ui.emitted().select![0]).toEqual(mapped({ x: 100, y: 100, width: 200, height: 200 }))
+})
+it('a real drag stays a free box and snaps its edges to nearby content lines', async () => {
+  const ui = render(DesignRasterRegion, {
+    props: { image: imageFixture(), enabled: true, identity: 'v1', profile: lines },
+  })
+  await gesture(ui, [65, 73], [158, 168])
+  expect(ui.emitted().select![0]).toEqual(mapped({ x: 100, y: 100, width: 200, height: 200 }))
+})
+it('a tap on blank space frames the whole image', async () => {
+  const ui = render(DesignRasterRegion, {
+    props: { image: imageFixture(), enabled: true, identity: 'v1', profile: lines },
+  })
+  await gesture(ui, [20, 30])
+  expect(ui.emitted().select![0]).toEqual(mapped({ x: 0, y: 0, width: 1000, height: 500 }))
+})
+it('without a content profile a tap selects nothing and leaves free drag untouched', async () => {
+  const ui = render(DesignRasterRegion, { props: { image: imageFixture(), enabled: true, identity: 'v1' } })
+  await gesture(ui, [110, 120])
+  expect(ui.emitted().select).toBeUndefined()
+})
+it('without a content profile a drag still maps to natural pixels', async () => {
+  const ui = render(DesignRasterRegion, { props: { image: imageFixture(), enabled: true, identity: 'v1' } })
+  await gesture(ui, [60, 70], [160, 120])
+  expect(ui.emitted().select![0]).toEqual(mapped({ x: 100, y: 100, width: 200, height: 100 }))
+})
+
+// ---- 划过就看得见会框住哪一块 ----
+// 「智能识别」要在按下去之前就看得见：鼠标还没按，光标底下那一块先虚着框出来。
+// 上面的 `lines` 分界线把图切成四块，每块 200×200 原图像素；显示比例 1:2，
+// 所以中转出来的框是 100×100 显示像素。
+function hoverBox(ui: ReturnType<typeof render>) {
+  return ui.container.querySelector('.raster-region__hover') as HTMLElement | null
+}
+async function hover(ui: ReturnType<typeof render>, at: [number, number]) {
+  await fireEvent.pointerMove(ui.getByRole('group', { name: '选择图片区域' }), {
+    pointerId: 7,
+    clientX: at[0],
+    clientY: at[1],
+  })
+}
+it('shows the block under the pointer before any press', async () => {
+  const ui = render(DesignRasterRegion, {
+    props: { image: imageFixture(), enabled: true, identity: 'v1', profile: lines },
+  })
+  await hover(ui, [110, 120])
+  const box = hoverBox(ui)!
+  expect(box.style.left).toBe('50px')
+  expect(box.style.top).toBe('50px')
+  expect(box.style.width).toBe('100px')
+  expect(box.style.height).toBe('100px')
+  // 光划一下不发选择——选择还是那一次点击的事。
+  expect(ui.emitted().select).toBeUndefined()
+})
+it('re-frames the candidate box as the pointer moves, down to the whole image off the band', async () => {
+  const ui = render(DesignRasterRegion, {
+    props: { image: imageFixture(), enabled: true, identity: 'v1', profile: lines },
+  })
+  await hover(ui, [110, 120])
+  expect(hoverBox(ui)!.style.width).toBe('100px')
+  // (210,220) 在内容带外：底下没有「那一块」，候选框退回整张图——和点空白处一致。
+  await hover(ui, [210, 220])
+  expect(hoverBox(ui)!.style.left).toBe('0px')
+  expect(hoverBox(ui)!.style.top).toBe('0px')
+  expect(hoverBox(ui)!.style.width).toBe('500px')
+  expect(hoverBox(ui)!.style.height).toBe('250px')
+})
+it('drops the candidate box when the pointer leaves the image', async () => {
+  const ui = render(DesignRasterRegion, {
+    props: { image: imageFixture(), enabled: true, identity: 'v1', profile: lines },
+  })
+  await hover(ui, [110, 120])
+  await fireEvent.pointerLeave(ui.getByRole('group', { name: '选择图片区域' }))
+  expect(hoverBox(ui)).toBeNull()
+})
+it('yields the candidate box to the real one as soon as the press lands', async () => {
+  const ui = render(DesignRasterRegion, {
+    props: { image: imageFixture(), enabled: true, identity: 'v1', profile: lines },
+  })
+  await hover(ui, [110, 120])
+  const overlay = ui.getByRole('group', { name: '选择图片区域' })
+  overlay.setPointerCapture = vi.fn()
+  await fireEvent.pointerDown(overlay, { button: 0, pointerId: 7, clientX: 110, clientY: 120 })
+  await fireEvent.pointerMove(overlay, { pointerId: 7, clientX: 160, clientY: 170 })
+  expect(hoverBox(ui)).toBeNull()
+  expect(ui.container.querySelector('.raster-region__box')).toBeTruthy()
+})
+it('swaps the cursor only while a block is actually under the pointer', async () => {
+  const ui = render(DesignRasterRegion, {
+    props: { image: imageFixture(), enabled: true, identity: 'v1', profile: lines },
+  })
+  const overlay = ui.getByRole('group', { name: '选择图片区域' })
+  await hover(ui, [110, 120])
+  expect(overlay.classList.contains('is-targeting')).toBe(true)
+  // 退回整张图时没有「那一块」可言，光标也回普通的十字。
+  await hover(ui, [210, 220])
+  expect(overlay.classList.contains('is-targeting')).toBe(false)
+})
+it('without a content profile there is nothing to preview', async () => {
+  const ui = render(DesignRasterRegion, { props: { image: imageFixture(), enabled: true, identity: 'v1' } })
+  await hover(ui, [110, 120])
+  expect(hoverBox(ui)).toBeNull()
+})
+
 describe('Design image fit in owning previews (DOM geometry doubles)', () => {
   let observed: Map<Element, ResizeObserverCallback>
   let urls: string[]

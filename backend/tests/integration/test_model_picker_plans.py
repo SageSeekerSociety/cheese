@@ -1,9 +1,9 @@
 """A team picks only the models its plan allows (#2397).
 
 Every model in a project's picker says whether the team's plan allows it, and
-for one it does not, the cheapest plan that would, by that plan's name; the
-tier itself is never the answer. Saving a model the plan does not allow is
-refused, as the project default, as the default for 分身 and as a teammate's
+for one it does not, the first plan the administrator ranks that would, by its
+name; the tier itself is never the answer. Saving a model the plan does not
+allow is refused, as the project default, as the default for 分身 and as a teammate's
 own model.
 """
 
@@ -144,3 +144,35 @@ def test_a_personal_team_is_not_told_of_a_plan_it_cannot_be_put_on(client):
     sonnet = _choices(client, pid, owner)["sonnet"]
     assert sonnet["allowed"] is False
     assert sonnet["requires_plan"] is None
+
+
+def test_the_plan_named_is_the_first_the_administrator_ranks_that_allows_it(client):
+    """Plans carry no price, so the administrator's order decides which plan a
+    model is said to need, whatever each plan issues."""
+    owner = _auth("mp-ranked", client)
+    pid = _shared_project(client, owner, "mpranked")["id"]
+
+    async def plans(pro_rank: int, team_rank: int) -> None:
+        async with client.test_request_factory() as session:
+            for key, name, credits, rank in (
+                ("pro", "Pro", 100.0, pro_rank),
+                ("team", "Team", 1000.0, team_rank),
+            ):
+                plan = await session.get(Plan, key)
+                if plan is None:
+                    plan = Plan(
+                        key=key,
+                        name=name,
+                        audience="team",
+                        credits_per_period=credits,
+                        windows=[],
+                        model_tiers=["included", "premium"],
+                    )
+                    session.add(plan)
+                plan.rank = rank
+            await session.commit()
+
+    client.portal.call(plans, 20, 10)
+    assert _choices(client, pid, owner)["sonnet"]["requires_plan"] == "Team"
+    client.portal.call(plans, 10, 20)
+    assert _choices(client, pid, owner)["sonnet"]["requires_plan"] == "Pro"
