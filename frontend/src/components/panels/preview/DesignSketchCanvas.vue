@@ -7,6 +7,8 @@ import { computed, nextTick, ref, watch } from 'vue'
 
 import { imagePoint, imageRegion } from './designRegion'
 import { arrowHeadPoints, fontSize, isShapeStroke } from './designSketch'
+import { hitTest } from './designSketchHit'
+import { isEmptyStroke } from './designSketchSelection'
 import { snapRegion } from './designSnap'
 
 import { t } from '@/i18n'
@@ -18,11 +20,14 @@ const props = defineProps<{
   color: string
   width: number
   profile?: ContentProfile | null
+  /** 屏上已有的笔画：文字工具点中已有文字时，改成编辑它而不是新画一条。 */
+  strokes?: readonly SketchStroke[]
 }>()
 const emit = defineEmits<{
   stroke: [stroke: SketchStroke]
   'pick-block': [point: Point]
   'text-editing': [editing: boolean]
+  'edit-text': [index: number]
 }>()
 const start = ref<Point | null>(null)
 /** 正在拖、还没撒手的那一笔。文字不经过这里：它有输入框，撒手即成品。 */
@@ -87,7 +92,9 @@ function onTextEscape(event: KeyboardEvent) {
   event.preventDefault()
   cancelText()
 }
-defineExpose({ cancel })
+/** 手里压着一笔或一个文字框：撤销/重做这时该被拒绝（见 DesignImage 的 keyDown）。 */
+const busy = computed(() => start.value !== null || draft.value !== null || textAt.value !== null)
+defineExpose({ cancel, busy })
 
 const scale = computed(() => {
   const size = geometry.value
@@ -136,6 +143,19 @@ function down(event: PointerEvent) {
   const point = imagePoint({ x: event.clientX, y: event.clientY }, size)
   if (!point) return
   if (props.tool === 'text') {
+    // 文字工具点中已有文字：改成编辑那一条，而不是在它上面再叠一条。
+    const scale = size.width / size.naturalWidth
+    const index = hitTest(
+      props.strokes ?? [],
+      { x: event.clientX - size.left, y: event.clientY - size.top },
+      { touch: event.pointerType === 'touch', scale, naturalWidth: size.naturalWidth }
+    )
+    const existing = index === null ? null : (props.strokes ?? [])[index]
+    if (existing && existing.tool === 'text' && index !== null) {
+      emit('edit-text', index)
+      event.preventDefault()
+      return
+    }
     textAt.value = point
     textValue.value = ''
     emit('text-editing', true)
@@ -201,12 +221,8 @@ function up(event: PointerEvent) {
     if (stroke.points.length >= 2) emit('stroke', stroke)
     return
   }
-  if (stroke.tool === 'line' || stroke.tool === 'arrow') {
-    if (Math.hypot(stroke.to.x - stroke.from.x, stroke.to.y - stroke.from.y) >= 2) emit('stroke', stroke)
-    return
-  }
-  if (!isShapeStroke(stroke)) return
-  if (stroke.region.width >= 2 && stroke.region.height >= 2) emit('stroke', stroke)
+  // 退化成「空」的图形丢掉（除涂黑外只要宽高都为 0 才算空，见 isEmptyStroke）。
+  if (!isEmptyStroke(stroke)) emit('stroke', stroke)
 }
 
 function commitText() {
