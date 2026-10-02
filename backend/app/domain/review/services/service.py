@@ -27,17 +27,6 @@ from app.domain.review.models import (
     GateOutcome,
 )
 from app.domain.review.repositories import AcceptCardRepository
-from app.domain.review.services import (
-    accept as _accept,
-)
-from app.domain.review.services import (
-    cards,
-    decisions,
-    merge_queue,
-    notices,
-    polling,
-    reviewers,
-)
 from app.domain.review.services._shared import (
     ProjectRepository,
     ReviewerAdmission,
@@ -46,6 +35,12 @@ from app.domain.review.services._shared import (
 )
 from app.domain.room_task.models import Task
 from app.domain.topic.models import Topic
+
+# 同级子模块从**定义它们的模块**取，不经过包 `__init__` 的名字空间：
+# `from . import x` 在名字尚未绑定时会回落去导入子模块本身，所以这里的
+# 导入顺序不依赖 `__init__.py` 把 `cards` 等名字先绑定好。
+from . import accept as _accept
+from . import cards, decisions, merge_queue, notices, polling, reviewers
 
 if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
     from app.domain.project.protection import BranchProtection
