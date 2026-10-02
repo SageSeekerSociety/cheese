@@ -27,6 +27,11 @@ export function updatePlan(key: string, body: Partial<PlanInput>): Promise<Plan>
   return request<Plan>(`/admin/plans/${encodeURIComponent(key)}`, { method: 'PUT', body: JSON.stringify(body) })
 }
 
+/** 只能删没有团队在用的方案；新团队默认的方案不能删。 */
+export function deletePlan(key: string): Promise<{ key: string }> {
+  return request<{ key: string }>(`/admin/plans/${encodeURIComponent(key)}`, { method: 'DELETE' })
+}
+
 export function listCreditTeams(params: {
   q?: string
   plan?: string

@@ -25,6 +25,7 @@ const FREE: Plan = {
   model_tiers: ['included'],
   unlimited: false,
   admin_only: false,
+  rank: 0,
   team_count: 213,
   is_default: true,
 }
@@ -39,6 +40,7 @@ const RESERVE: Plan = {
   model_tiers: null,
   unlimited: true,
   admin_only: true,
+  rank: 100,
   team_count: 1,
   is_default: false,
 }
@@ -47,12 +49,16 @@ const CLASSROOM: Plan = {
   key: 'classroom',
   name: 'Classroom',
   audience: 'team',
-  credits_per_period: 400,
+  credits_per_period: null,
   period: 'month',
-  windows: [{ hours: 5, credits: 20 }],
+  windows: [
+    { hours: 5, credits: 20 },
+    { calendar: 'week', credits: 100 },
+  ],
   model_tiers: ['included', 'premium'],
   unlimited: false,
   admin_only: false,
+  rank: 10,
   team_count: 1,
   is_default: false,
 }

@@ -7,21 +7,27 @@ team pays: a team's project, that team; a call outside any project or in the
 person's own project, their personal team — including when someone else in
 that project's room summons 芝士.
 
-A charge drains the packs that apply in this order:
+Every team is on a plan (``Plan``), and a plan bills one of two ways.
+
+A monthly plan issues a pack for the month the first time a call of that month
+is charged; until then the balance counts it as already there, so reading a
+balance never writes. A charge drains the packs that apply in this order:
 
 1. what a task earmarked for this project;
-2. the paying team's plan pack for the period;
+2. the paying team's plan pack for the month;
 3. credits bought or granted by an administrator, what lapses first first.
 
-The last call may overdraw; it was admitted with credits left, and what it
-spent is spent either way.
+A windowed plan issues no pack. It lets a team spend up to a cap inside each
+of its time windows: an hours window starts at the team's first call and
+resets that many hours later, a week or month window resets every Monday or
+every first of the month (Asia/Shanghai). A charge drains a task's earmark
+first, which never fills a window; the rest fills every window. Once any window
+is full, the rest drains bought or granted credits instead, and with none the
+call waits for the window to reset.
 
-Every team is on a plan (``Plan``). A plan issues its pack for the month the
-first time a call of that month is charged; until then the balance counts it
-as already there, so reading a balance never writes. A plan may cap what a team
-spends within time windows: once a window is full, only bought or granted
-credits may be spent until it reopens. An unlimited plan refuses nothing, issues
-nothing and draws on nothing; its usage is still recorded.
+The last call may overdraw; it was admitted with credits left, and what it
+spent is spent either way. An unlimited plan refuses nothing, issues nothing
+and draws on nothing; its usage is still recorded.
 """
 
 import math
@@ -31,14 +37,14 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import and_, or_, select, text, update
+from sqlalchemy import and_, case, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.domain.block.notice_text import NoticeText, say
 from app.domain.usage.credits import spend_to_credits
-from app.domain.usage.models import ComputeGrant, GrantSource, Plan
+from app.domain.usage.models import ComputeGrant, GrantSource, Plan, PlanWindowUse
 from app.domain.usage.repositories import UsageRepository
 
 # Where a month starts and ends for the people using the platform.
@@ -54,6 +60,82 @@ def month_end(month: date) -> datetime:
     """When the month's plan pack lapses and the next month's becomes available."""
     following = (month.replace(day=28) + timedelta(days=4)).replace(day=1)
     return datetime(following.year, following.month, 1, tzinfo=_TZ)
+
+
+def week_of(moment: datetime) -> datetime:
+    """The Monday midnight that starts the week ``moment`` falls in."""
+    local = moment.astimezone(_TZ)
+    monday = local.date() - timedelta(days=local.weekday())
+    return datetime(monday.year, monday.month, monday.day, tzinfo=_TZ)
+
+
+@dataclass(frozen=True)
+class Window:
+    """One of a plan's time windows: at most ``credits`` inside it. An hours
+    window starts at a team's first call; a ``calendar`` one is a week or a
+    month."""
+
+    credits: float
+    hours: float | None = None
+    calendar: str | None = None
+
+    @classmethod
+    def of(cls, raw: Mapping) -> "Window":
+        if raw.get("calendar") is not None:
+            return cls(credits=float(raw["credits"]), calendar=str(raw["calendar"]))
+        return cls(credits=float(raw["credits"]), hours=float(raw["hours"]))
+
+    @property
+    def key(self) -> str:
+        """The window's row in ``plan_window_use``."""
+        return self.calendar or f"{self.hours:g}h"
+
+    def fresh_since(self, now: datetime) -> datetime:
+        """A round that started before this has run out."""
+        if self.calendar == "week":
+            return week_of(now)
+        if self.calendar == "month":
+            return datetime.combine(month_of(now), datetime.min.time(), tzinfo=_TZ)
+        assert self.hours is not None
+        return now - timedelta(hours=self.hours)
+
+    def start(self, now: datetime) -> datetime:
+        """When a round that starts with a call at ``now`` began."""
+        return now if self.calendar is None else self.fresh_since(now)
+
+    def resets_at(self, started_at: datetime) -> datetime:
+        if self.calendar == "week":
+            return started_at + timedelta(days=7)
+        if self.calendar == "month":
+            return month_end(month_of(started_at))
+        assert self.hours is not None
+        return started_at + timedelta(hours=self.hours)
+
+
+@dataclass(frozen=True)
+class WindowUse:
+    """How full one window is now. ``resets_at`` is None for an hours window no
+    call has started yet."""
+
+    window: Window
+    credits_used: float
+    resets_at: datetime | None
+
+    @property
+    def full(self) -> bool:
+        return self.credits_used >= self.window.credits
+
+    @property
+    def room(self) -> float:
+        return max(0.0, self.window.credits - self.credits_used)
+
+
+def _window_use(window: Window, row: PlanWindowUse | None, now: datetime) -> WindowUse:
+    if row is not None and row.started_at >= window.fresh_since(now):
+        return WindowUse(window, row.credits_used, window.resets_at(row.started_at))
+    if window.calendar is None:
+        return WindowUse(window, 0.0, None)
+    return WindowUse(window, 0.0, window.resets_at(window.start(now)))
 
 
 #: One model's row in the gateway's rate table: input, output, cache read,
@@ -117,8 +199,8 @@ class Terms:
     key: str
     unlimited: bool = False
     credits_per_period: float | None = None
-    # ``(hours, credits)``: at most that many credits within that many hours.
-    windows: tuple[tuple[float, float], ...] = ()
+    # A windowed plan's windows; a monthly plan has none.
+    windows: tuple[Window, ...] = ()
     # The model tiers the plan allows; None is every tier.
     model_tiers: frozenset[str] | None = None
 
@@ -128,9 +210,7 @@ class Terms:
             key=plan.key,
             unlimited=plan.unlimited,
             credits_per_period=plan.credits_per_period,
-            windows=tuple(
-                (float(w["hours"]), float(w["credits"])) for w in plan.windows or []
-            ),
+            windows=tuple(Window.of(w) for w in plan.windows or []),
             model_tiers=(
                 None if plan.model_tiers is None else frozenset(plan.model_tiers)
             ),
@@ -139,9 +219,13 @@ class Terms:
     @property
     def issues(self) -> float:
         """The pack the plan issues each month; 0 when it issues none."""
-        if self.unlimited or not self.credits_per_period:
+        if self.unlimited or self.windowed or not self.credits_per_period:
             return 0.0
         return float(self.credits_per_period)
+
+    @property
+    def windowed(self) -> bool:
+        return not self.unlimited and bool(self.windows)
 
 
 async def terms_of(session: AsyncSession, plan_keys: Iterable[str]) -> dict:
@@ -231,9 +315,6 @@ def _rank(pack: ComputeGrant) -> int:
 
 _FAR = datetime.max.replace(tzinfo=UTC)
 
-#: What a team may still spend once a plan's time window is full.
-_BOUGHT = (GrantSource.PURCHASE, GrantSource.ADMIN_GRANT)
-
 
 @dataclass(frozen=True)
 class Refusal:
@@ -251,7 +332,7 @@ class Refusal:
 
 
 def _hours(hours: float) -> str:
-    return str(int(hours)) if float(hours).is_integer() else f"{hours:g}"
+    return f"{hours:g}"
 
 
 def _day(at: datetime) -> dict:
@@ -264,14 +345,33 @@ def _order(pack: ComputeGrant) -> tuple:
     return (_rank(pack), pack.expires_at or _FAR, pack.created_at, pack.id)
 
 
+def _window_refusal(use: WindowUse) -> Refusal:
+    at = use.resets_at
+    assert at is not None
+    if use.window.calendar == "week":
+        return Refusal(say("creditsWeekFull", **_day(at)), at)
+    if use.window.calendar == "month":
+        local = at.astimezone(_TZ)
+        return Refusal(say("creditsMonthFull", month=local.month, day=local.day), at)
+    assert use.window.hours is not None
+    return Refusal(
+        say("creditsWindowFull", hours=_hours(use.window.hours), **_day(at)), at
+    )
+
+
 @dataclass(frozen=True)
 class Balance:
+    """What a payer may still spend. For a windowed plan, what its fullest
+    window still allows counts alongside the packs, as if it were one."""
+
     unlimited: bool
     credits_total: float
     credits_used: float
     # When the payer's plan next issues a pack; None when it issues none.
     resets_at: datetime | None
     packs: tuple[ComputeGrant, ...] = ()
+    # A windowed plan's windows, each as full as it is now.
+    windows: tuple[WindowUse, ...] = ()
 
     @property
     def credits_remaining(self) -> float:
@@ -281,12 +381,18 @@ class Balance:
     def exhausted(self) -> bool:
         return not self.unlimited and self.credits_remaining <= 0
 
-    def bought_remaining(self) -> float:
+    def packs_remaining(self) -> float:
+        """What is left of every pack besides the plan's own."""
         return sum(
-            p.credits_total - p.credits_used for p in self.packs if p.source in _BOUGHT
+            p.credits_total - p.credits_used
+            for p in self.packs
+            if p.source != GrantSource.PLAN_PERIOD
         )
 
     def refusal(self) -> Refusal:
+        full = [w for w in self.windows if w.full]
+        if full:
+            return _window_refusal(max(full, key=lambda w: w.resets_at or _FAR))
         if self.resets_at is None:
             return Refusal(say("creditsSpent"), None)
         at = self.resets_at.astimezone(_TZ)
@@ -307,10 +413,18 @@ class Balance:
 
 def _spendable(candidates: Iterable[ComputeGrant], payer: Payer) -> list:
     """Of ``candidates``, what ``payer`` may spend now, in the order a charge
-    drains them."""
+    drains them. A windowed plan spends no plan pack, even one issued for this
+    month before the plan stopped issuing them."""
     now = datetime.now(UTC)
     return sorted(
-        (p for p in candidates if _applies(p, payer) and _live(p, now)), key=_order
+        (
+            p
+            for p in candidates
+            if _applies(p, payer)
+            and _live(p, now)
+            and not (payer.terms.windowed and p.source == GrantSource.PLAN_PERIOD)
+        ),
+        key=_order,
     )
 
 
@@ -324,7 +438,11 @@ def _issued_this_month(candidates: Iterable[ComputeGrant], payer: Payer) -> bool
     )
 
 
-def _balance(candidates: list[ComputeGrant], payer: Payer) -> Balance:
+def _balance(
+    candidates: list[ComputeGrant],
+    payer: Payer,
+    rows: Mapping[tuple[int, str], PlanWindowUse],
+) -> Balance:
     packs = _spendable(candidates, payer)
     # The month's plan pack counts before its first charge writes it.
     unissued = 0.0
@@ -333,12 +451,22 @@ def _balance(candidates: list[ComputeGrant], payer: Payer) -> Balance:
     resets_at = None
     if payer.terms.issues:
         resets_at = month_end(month_of(datetime.now(UTC)))
+    windows: tuple[WindowUse, ...] = ()
+    room = 0.0
+    if payer.terms.windowed:
+        now = datetime.now(UTC)
+        windows = tuple(
+            _window_use(w, rows.get((payer.team_id, w.key)), now)
+            for w in payer.terms.windows
+        )
+        room = min(w.room for w in windows)
     return Balance(
         unlimited=payer.terms.unlimited,
-        credits_total=sum(p.credits_total for p in packs) + unissued,
+        credits_total=sum(p.credits_total for p in packs) + unissued + room,
         credits_used=sum(p.credits_used for p in packs),
         resets_at=resets_at,
         packs=tuple(packs),
+        windows=windows,
     )
 
 
@@ -369,51 +497,64 @@ class Ledger:
             stmt = stmt.with_for_update().execution_options(populate_existing=True)
         return list((await self._session.execute(stmt)).scalars())
 
+    async def _window_rows(
+        self, payers: Iterable[Payer]
+    ) -> dict[tuple[int, str], PlanWindowUse]:
+        """The window rows of every windowed plan among ``payers``' teams."""
+        teams = {p.team_id for p in payers if p.terms.windowed}
+        if not teams:
+            return {}
+        rows = await self._session.execute(
+            select(PlanWindowUse).where(PlanWindowUse.team_id.in_(teams))
+        )
+        return {(r.team_id, r.window): r for r in rows.scalars()}
+
+    async def window_uses(
+        self, payers: Iterable[Payer]
+    ) -> dict[int, tuple[WindowUse, ...]]:
+        """Team → how full each of its plan's windows is now; only teams on a
+        windowed plan."""
+        payers = list(payers)
+        rows = await self._window_rows(payers)
+        now = datetime.now(UTC)
+        return {
+            p.team_id: tuple(
+                _window_use(w, rows.get((p.team_id, w.key)), now)
+                for w in p.terms.windows
+            )
+            for p in payers
+            if p.terms.windowed
+        }
+
     async def balance(self, payer: Payer) -> Balance:
-        return _balance(await self._candidates([payer]), payer)
+        return _balance(
+            await self._candidates([payer]), payer, await self._window_rows([payer])
+        )
 
     async def admit(self, payer: Payer) -> Refusal | None:
         """Whether a call ``payer`` would pay for may run now; None if it may.
 
-        A full time window leaves only bought or granted credits to spend; with
-        none, the call waits for the window to reopen."""
+        A windowed plan admits while every window has room. Once one is full,
+        only an earmark or bought or granted credits may be spent; with none,
+        the call waits for the window to reset."""
         if payer.terms.unlimited:
             return None
         balance = await self.balance(payer)
-        full = await self._full_window(payer)
-        if full is not None:
-            if balance.bought_remaining() > 0:
+        if payer.terms.windowed:
+            if not any(w.full for w in balance.windows):
                 return None
-            hours, reopens_at = full
-            return Refusal(
-                say("creditsWindowFull", hours=_hours(hours), **_day(reopens_at)),
-                reopens_at,
-            )
+            if balance.packs_remaining() > 0:
+                return None
+            return balance.refusal()
         if balance.exhausted:
             return balance.refusal()
         return None
 
-    async def _full_window(self, payer: Payer) -> tuple[float, datetime] | None:
-        """The plan's window that is full, and when it reopens: the longest
-        wait when several are."""
-        full: tuple[float, datetime] | None = None
-        now = datetime.now(UTC)
-        repo = UsageRepository(self._session)
-        for hours, cap in payer.terms.windows:
-            used, oldest = await repo.team_window(
-                payer.team_id, since=now - timedelta(hours=hours)
-            )
-            if used < cap or oldest is None:
-                continue
-            reopens_at = oldest + timedelta(hours=hours)
-            if full is None or reopens_at > full[1]:
-                full = (hours, reopens_at)
-        return full
-
     async def balances(self, payers: Mapping[uuid.UUID, Payer]) -> dict:
-        """``balance`` for many payers at once, in one query."""
+        """``balance`` for many payers at once, in two queries."""
         candidates = await self._candidates(payers.values())
-        return {key: _balance(candidates, payer) for key, payer in payers.items()}
+        rows = await self._window_rows(payers.values())
+        return {key: _balance(candidates, payer, rows) for key, payer in payers.items()}
 
     async def earmarks(self, project_id: uuid.UUID) -> list[ComputeGrant]:
         """Every pack ever earmarked for one project, lapsed ones included."""
@@ -451,25 +592,54 @@ class Ledger:
     # ---- charging ----------------------------------------------------------
 
     async def charge(self, payer: Payer, credits: float) -> float:
-        """Deduct ``credits`` from ``payer``'s packs in order. What no pack has
-        room for lands on the last one, or, with none live, on the newest pack
-        the payer ever had, so recorded consumption stays truthful. Returns the
-        credits deducted."""
+        """Charge ``credits`` to ``payer`` in the order its plan sets. On a
+        monthly plan, what no pack has room for lands on the last one, or, with
+        none live, on the newest pack the payer ever had, so recorded
+        consumption stays truthful. Returns the credits charged."""
         if credits <= 0 or payer.terms.unlimited:
             return 0.0
+        if payer.terms.windowed:
+            return await self._charge_windowed(payer, credits)
         if payer.terms.issues:
             await self._plan_pack(payer.team_id, payer.terms.issues)
         candidates = await self._candidates([payer], lock=True)
         packs = _spendable(candidates, payer)
-        if packs and await self._full_window(payer) is not None:
-            # A full window leaves only bought credits; with none left, the
-            # call was admitted on what remained and lands in the usual order.
-            packs = [p for p in packs if p.source in _BOUGHT] or packs
         if not packs:
             everything = [p for p in candidates if _applies(p, payer)]
             if not everything:
                 return 0.0
             packs = [max(everything, key=lambda p: (p.created_at, p.id))]
+        left = await self._drain(packs, credits)
+        if left > 0:
+            await self._deduct(packs[-1].id, left)
+        return credits
+
+    async def _charge_windowed(self, payer: Payer, credits: float) -> float:
+        """A windowed plan's charge: the earmark first, then every window while
+        none is full, then bought or granted credits. What those have no room
+        for fills the windows anyway; the call was admitted on what remained."""
+        candidates = await self._candidates([payer], lock=True)
+        packs = _spendable(candidates, payer)
+        left = await self._drain(
+            [p for p in packs if p.project_id is not None], credits
+        )
+        if left <= 0:
+            return credits
+        rows = await self._window_rows([payer])
+        now = datetime.now(UTC)
+        full = any(
+            _window_use(w, rows.get((payer.team_id, w.key)), now).full
+            for w in payer.terms.windows
+        )
+        if full:
+            left = await self._drain([p for p in packs if p.project_id is None], left)
+        if left > 0:
+            await self._fill_windows(payer, left, now)
+        return credits
+
+    async def _drain(self, packs: list[ComputeGrant], credits: float) -> float:
+        """Deduct ``credits`` from ``packs`` in order, as far as they have room.
+        Returns what is left over."""
         left = credits
         for pack in packs:
             room = pack.credits_total - pack.credits_used
@@ -480,9 +650,35 @@ class Ledger:
             left -= take
             if left <= 0:
                 break
-        if left > 0:
-            await self._deduct(packs[-1].id, left)
-        return credits
+        return max(0.0, left)
+
+    async def _fill_windows(self, payer: Payer, credits: float, now: datetime) -> None:
+        """Add ``credits`` to every window of ``payer``'s plan. A round that has
+        run out starts again at this call; two charges at once both count."""
+        for window in payer.terms.windows:
+            stale = PlanWindowUse.started_at < window.fresh_since(now)
+            start = window.start(now)
+            await self._session.execute(
+                insert(PlanWindowUse)
+                .values(
+                    team_id=payer.team_id,
+                    window=window.key,
+                    started_at=start,
+                    credits_used=credits,
+                )
+                .on_conflict_do_update(
+                    index_elements=["team_id", "window"],
+                    set_={
+                        "started_at": case(
+                            (stale, start), else_=PlanWindowUse.started_at
+                        ),
+                        "credits_used": case(
+                            (stale, credits),
+                            else_=PlanWindowUse.credits_used + credits,
+                        ),
+                    },
+                )
+            )
 
     async def _deduct(self, pack_id: uuid.UUID, amount: float) -> None:
         # An increment, not a write of a value read earlier: two calls settling

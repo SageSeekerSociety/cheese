@@ -37,11 +37,21 @@ function teamMeta(row: CreditTeamRow): string {
     : `${t('credits.teams.kindTeam')} · ${t('credits.teams.members', { n: row.member_count })}`
 }
 
-/** 本月方案额度那一格：不限画空心槽，还没发只写一句，发了画已用的比例。 */
+/** 本月方案额度那一格：不限画空心槽，按时间窗口限额或还没发只写一句，发了画已用的比例。 */
 function meter(row: CreditTeamRow) {
   const use = periodUse(row.period, planByKey.value.get(row.plan_key) ?? null)
   if (use.kind === 'unlimited') {
     return { kind: use.kind, label: t('credits.unlimited'), value: '', limit: null, ratio: 0, tone: 'ink' as const }
+  }
+  if (use.kind === 'windows') {
+    return {
+      kind: use.kind,
+      label: t('credits.teams.windowed'),
+      value: '',
+      limit: null,
+      ratio: 0,
+      tone: 'ink' as const,
+    }
   }
   if (use.kind === 'notIssued') {
     return {
@@ -122,7 +132,11 @@ function balanceText(row: CreditTeamRow): string {
         {{ planByKey.get(row.plan_key)?.name ?? row.plan_key }}
       </td>
       <td :data-label="t('credits.teams.column.period')">
-        <span v-if="meter(row).kind === 'notIssued'" class="act__notissued t-meta-read">{{ meter(row).label }}</span>
+        <span
+          v-if="meter(row).kind === 'notIssued' || meter(row).kind === 'windows'"
+          class="act__notissued t-meta-read"
+          >{{ meter(row).label }}</span
+        >
         <AdminMeterBar
           v-else
           :label="meter(row).label"
