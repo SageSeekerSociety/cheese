@@ -40,6 +40,9 @@ const readFile = vi.fn()
 const previewDocumentPdfSnapshot = vi.fn()
 const documentRevisions = vi.fn()
 
+vi.mock('../../composables/useDocCollab', async () => ({
+  useDocCollab: (await import('../../test/fakeDocCollab')).useFakeDocCollab,
+}))
 vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
   return {
@@ -54,7 +57,6 @@ vi.mock('../../api', async () => {
     documentRevisions: (...a: unknown[]) => documentRevisions(...a),
     getPreview: vi.fn().mockResolvedValue(null),
     requestPreviewSession: vi.fn().mockResolvedValue({ url: 'https://p.example/s', grant: 'g' }),
-    putDoc: vi.fn().mockResolvedValue({}),
     getComments: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getDocNodes: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getGitLog: vi.fn().mockResolvedValue({ data: [], total: 0 }),
@@ -71,7 +73,14 @@ vi.mock('../../api', async () => {
   }
 })
 
+import { seedRoom } from '../../test/fakeDocCollab'
 import WorkPanel from '../WorkPanel.vue'
+
+// 文档那一格的正文在协同文档里，已存的那一版在 getDoc 里：两边说的是同一篇。
+function docSays(content: string) {
+  getDoc.mockResolvedValue({ content })
+  seedRoom('topic-A', content)
+}
 
 function topic(id: string): Topic {
   return { id, project_id: 'p1', title: `话题 ${id}`, status: 'active' } as Topic
@@ -138,7 +147,7 @@ beforeAll(() => {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  getDoc.mockResolvedValue({ content: '' })
+  docSays('')
   listFiles.mockResolvedValue({ data: [{ path: 'src/b.ts', bytes: 20 }], total: 1 })
   readFile.mockResolvedValue({
     path: 'src/b.ts',
@@ -155,7 +164,7 @@ beforeEach(() => {
 
 describe('点一个文件，落在它真的在的那一格', () => {
   it('芝士交付的那份文档 → 开成它自己的页签，改动那一格没被切过去', async () => {
-    getDoc.mockResolvedValue({ content: '初稿见 <&报告.docx>\n' })
+    docSays('初稿见 <&报告.docx>\n')
     readPreviewFile.mockResolvedValue({
       path: '报告.docx',
       content: null,
@@ -178,7 +187,7 @@ describe('点一个文件，落在它真的在的那一格', () => {
   })
 
   it('工作树里的源文件 → 照旧开在改动上', async () => {
-    getDoc.mockResolvedValue({ content: '详见 <&src/b.ts>\n' })
+    docSays('详见 <&src/b.ts>\n')
 
     const { container } = mountPanel()
     await flush()
@@ -191,7 +200,7 @@ describe('点一个文件，落在它真的在的那一格', () => {
   })
 
   it('哪个库里都没有 → 说一句它不在这里，不发那次会失败的读取', async () => {
-    getDoc.mockResolvedValue({ content: '旧稿在 <&归档/老稿.docx>\n' })
+    docSays('旧稿在 <&归档/老稿.docx>\n')
 
     const { container } = mountPanel()
     await flush()
@@ -205,7 +214,7 @@ describe('点一个文件，落在它真的在的那一格', () => {
   })
 
   it('仓库树里的 .html 去「改动」：那是源码，不是房间里的那一份', async () => {
-    getDoc.mockResolvedValue({ content: '源码见 <&site/index.html>\n' })
+    docSays('源码见 <&site/index.html>\n')
 
     const { container } = mountPanel()
     await flush()
@@ -228,7 +237,7 @@ describe('自由区', () => {
   })
 
   it('单击开的是临时位：下一份换掉它，而不是再开一格', async () => {
-    getDoc.mockResolvedValue({ content: '见 <&一.docx> 和 <&二.docx>\n' })
+    docSays('见 <&一.docx> 和 <&二.docx>\n')
     const { container } = mountPanel()
     await flush()
 
@@ -244,7 +253,7 @@ describe('自由区', () => {
   })
 
   it('双击固定之后，再开一份就排在它后面', async () => {
-    getDoc.mockResolvedValue({ content: '见 <&一.docx> 和 <&二.docx>\n' })
+    docSays('见 <&一.docx> 和 <&二.docx>\n')
     const { container } = mountPanel()
     await flush()
     const chips = await docChips(container)
@@ -259,7 +268,7 @@ describe('自由区', () => {
   })
 
   it('关掉正看着的那一格，落到它旁边那一格；都关了回总览', async () => {
-    getDoc.mockResolvedValue({ content: '见 <&一.docx> 和 <&二.docx>\n' })
+    docSays('见 <&一.docx> 和 <&二.docx>\n')
     const { container } = mountPanel()
     await flush()
     const chips = await docChips(container)
@@ -294,7 +303,7 @@ describe('自由区', () => {
   })
 
   it('房间里的网页开成它自己的页签：内容域按路径画得了它', async () => {
-    getDoc.mockResolvedValue({ content: '成品见 <&site/index.html>\n' })
+    docSays('成品见 <&site/index.html>\n')
     readPreviewFile.mockResolvedValue({
       path: 'site/index.html',
       content: '<h1>成品</h1>',
@@ -313,7 +322,7 @@ describe('自由区', () => {
   })
 
   it('仓库树里的 .html 仍然去「改动」那格：那是源码，不是房间里的那一份', async () => {
-    getDoc.mockResolvedValue({ content: '源码见 <&site/index.html>\n' })
+    docSays('源码见 <&site/index.html>\n')
     const { container } = mountPanel()
     await flush()
 
@@ -333,7 +342,7 @@ describe('自由区', () => {
       artifact_id: 'a1',
       version: 'v1',
     } as Awaited<ReturnType<typeof getPreview>>)
-    getDoc.mockResolvedValue({ content: '初稿见 <&报告.docx>\n' })
+    docSays('初稿见 <&报告.docx>\n')
     const { container } = mountPanel()
     await flush()
 

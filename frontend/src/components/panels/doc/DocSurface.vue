@@ -1,37 +1,41 @@
 <script setup lang="ts">
-// 文档正文的编辑器本身 —— tiptap 实例、三种装饰、以及「装上服务端那一版 / 把现在这一
-// 版交出去」。
+// 文档正文的编辑器本身 —— tiptap 实例、几种装饰，和别人的光标。
 //
 // 为什么单独一个组件：正文的样式里全是 `:deep()`，而 `:deep()` 只有 .vue 的
 // `<style scoped>` 才被 stylelint 认（放进独立 .css 会红）——所以画正文的那一半必须是
-// 一个 .vue。它同时是唯一拿着编辑器的地方，取数那一半只通过两个口子跟它说话：
-// `installMarkdown`（装进去）和 `serializeVisual`（拿出来），判据留在取数那一半。
+// 一个 .vue。它同时是唯一拿着编辑器的地方。
+//
+// 正文不经过 props：编辑器直接绑在递进来的那份协同文档上（`session`），谁改了什么都
+// 从那里来、到那里去，这一层不装也不存。换一间房就是换一份文档，编辑器跟着重建。
 //
 // 压在正文上的那几块浮层在 doc/DocOverlays.vue；这里只留一个坐标系的壳。
 // 这里没有一处 import 取数层：节点树、话题表、图片地址都由上面递进来，动作往上发。
-import type { Editor as CoreEditor } from '@tiptap/core'
 import type { PluginKey } from '@tiptap/pm/state'
 import type { SuggestionProps } from '@tiptap/suggestion'
+import type { DocSession } from '../../../composables/useDocCollab'
 import type { Block, Topic } from '../../../cx_types'
 import type { DocSelectionSnapshot } from '../../../lib/docAiSelection'
 import type { DocLinkTarget } from '../../../lib/docLinks'
 import type { SlashItem } from '../../../lib/docSlashMenu'
 
-import { computed, nextTick, ref, shallowRef, watch } from 'vue'
-import { EditorContent, useEditor } from '@tiptap/vue-3'
+import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
+import Collaboration from '@tiptap/extension-collaboration'
+import CollaborationCaret from '@tiptap/extension-collaboration-caret'
+import { Editor, EditorContent } from '@tiptap/vue-3'
 
 import { captureDocSelection } from '../../../lib/docAiSelection'
+import { renderCaret } from '../../../lib/docCaret'
 import {
   commentMarkKey,
   commentQuoteRanges,
   createCommentMarks,
   createLiveRefBadges,
+  createTitleEcho,
   createTokenChips,
   liveRefKey,
   mappedCommentQuoteState,
 } from '../../../lib/docDecorations'
 import { captureDocLink, safeDocHref } from '../../../lib/docLinks'
-import { docReplaceRange } from '../../../lib/docReplaceRange'
 import { docExtensions, serializeDoc } from '../../../lib/docSchema'
 import { createSlashCommands } from '../../../lib/docSlashMenu'
 import LoadingSkeleton from '../../common/LoadingSkeleton.vue'
@@ -48,7 +52,11 @@ const props = withDefaults(
     editable: boolean
     /** 正文还在路上：画骨架，编辑器让位。 */
     loading: boolean
+    /** 这一篇的协同文档；还没打开时是 null。 */
+    session: DocSession | null
     topicId: string | null
+    /** 话题标题：文档第一行若是同样的一级标题就不再画一遍。 */
+    title?: string
     /** 项目话题表：支线徽章的标题与状态、`<#id>` 话题 chip 的标题都从这里查。 */
     topicList?: Topic[]
     /** 段落 index → 支线 id（装饰的原料，取数那一半算好的）。 */
@@ -71,13 +79,12 @@ const props = withDefaults(
     commentMarkIndex: () => new Map<number, { id: string; quote: string }[]>(),
     openCommentId: null,
     scrollTick: 0,
+    title: '',
   }
 )
 
 // 动作一律往上发：「换了个值」下面自己接住，「做了个动作」交给拿着状态的那一层。
 const emit = defineEmits<{
-  /** 有人在编辑器里改了东西（装配服务端那一版时不算）。 */
-  (e: 'edited'): void
   (e: 'open-ai', selection: DocSelectionSnapshot | null): void
   (e: 'open-topic', topicId: string): void
   (e: 'mention-click', handle: string): void
@@ -290,54 +297,63 @@ function onHover(e: MouseEvent) {
   overlaysRef.value?.onHover(e)
 }
 
-// Guard: when we programmatically setContent from a server reload we don't want
-// onUpdate to flag the doc as dirty.
-const loadingFromServer = ref(false)
 const displayTick = ref(0)
 const commentIndexStale = ref(false)
 
-const editor = useEditor({
-  content: '',
-  extensions: [
-    ...docExtensions({ resolveImageSrc: (src) => props.imageSrc(src) }),
-    // 三种装饰都只读递进来的两份输入（哪一段有装饰、装饰上写什么），扩展本身不认识
-    // 面板 —— 见 lib/docDecorations.ts。
-    createTokenChips({ titleOf: (tid) => props.topicList.find((t) => t.id === tid)?.title }),
-    createLiveRefBadges({
-      index: () => props.liveRefIndex,
-      factsOf: (topicId) => {
-        const sub = props.topicList.find((t) => t.id === topicId)
-        return { title: sub?.title ?? null, status: sub?.status ?? '' }
-      },
-    }),
-    createCommentMarks({ index: () => props.commentMarkIndex, openId: () => props.openCommentId ?? null }),
-    createSlashCommands({
-      onStart: showSlashMenu,
-      onUpdate: showSlashMenu,
-      onExit: onSlashExit,
-      onKeyDown: onSlashKeyDown,
-    }),
-  ],
-  editable: props.editable,
-  editorProps: {
-    attributes: { class: 'doc-prose' },
+// 编辑器绑在这一份协同文档上：文档换了（换房间、重连拿到的是另一份）就整个重建，
+// 因为 Collaboration 扩展只在建编辑器时认一次文档。
+const editor = shallowRef<Editor | undefined>()
+
+function buildEditor(session: DocSession): Editor {
+  return new Editor({
+    extensions: [
+      ...docExtensions({ resolveImageSrc: (src) => props.imageSrc(src) }),
+      Collaboration.configure({ document: session.doc }),
+      CollaborationCaret.configure({ provider: session.provider, user: session.user, render: renderCaret }),
+      // 几种装饰都只读递进来的输入（哪一段有装饰、装饰上写什么），扩展本身不认识
+      // 面板 —— 见 lib/docDecorations.ts。
+      createTitleEcho({ title: () => props.title }),
+      createTokenChips({ titleOf: (tid) => props.topicList.find((t) => t.id === tid)?.title }),
+      createLiveRefBadges({
+        index: () => props.liveRefIndex,
+        factsOf: (topicId) => {
+          const sub = props.topicList.find((t) => t.id === topicId)
+          return { title: sub?.title ?? null, status: sub?.status ?? '' }
+        },
+      }),
+      createCommentMarks({ index: () => props.commentMarkIndex, openId: () => props.openCommentId ?? null }),
+      createSlashCommands({
+        onStart: showSlashMenu,
+        onUpdate: showSlashMenu,
+        onExit: onSlashExit,
+        onKeyDown: onSlashKeyDown,
+      }),
+    ],
+    editable: props.editable,
+    editorProps: {
+      attributes: { class: 'doc-prose' },
+    },
+    onTransaction: ({ transaction }) => {
+      displayTick.value++
+      if (transaction.docChanged) commentIndexStale.value = true
+    },
+    onUpdate: () => {
+      // 正文在光标底下换了：那个「评论」按钮指着的段落已经不是原来那一段了。
+      overlaysRef.value?.onEdited()
+    },
+  })
+}
+
+watch(
+  () => props.session,
+  (session) => {
+    editor.value?.destroy()
+    editor.value = session ? buildEditor(session) : undefined
+    linkTarget.value = null
   },
-  onTransaction: ({ transaction }) => {
-    displayTick.value++
-    if (transaction.docChanged) commentIndexStale.value = true
-  },
-  onUpdate: () => {
-    if (import.meta.env.DEV) {
-      const hook = (window as unknown as Record<string, { updates?: number }>).__docPanel
-      if (hook) hook.updates = (hook.updates ?? 0) + 1
-    }
-    // 装配服务端那一版不是人做的编辑。
-    if (loadingFromServer.value) return
-    // 正文在光标底下换了：那个「评论」按钮指着的段落已经不是原来那一段了。
-    overlaysRef.value?.onEdited()
-    emit('edited')
-  },
-})
+  { immediate: true }
+)
+onBeforeUnmount(() => editor.value?.destroy())
 
 // 取数那一半把最新的索引递下来时，装饰要立刻照着重建 —— 它算不出 DOM 在哪儿，编辑器
 // 在哪儿只有这一层知道。watch 让这一步和索引的更新同一拍发生。
@@ -383,66 +399,14 @@ function commentQuoteState(id: string): 'unique' | 'missing' | 'ambiguous' {
   return status
 }
 
-// 能不能改这件事两边都要知道：取数那一半拿它判「现在不许自动保存」，这一层拿它判
-// tiptap 收不收键盘。emitUpdate=false：tiptap v3 的 setEditable 默认会发一次假 update
-// （正文一个字没动），那一下会被当成人在打字，而只读时自动保存又不跑，于是「编辑中…」
-// 永远挂在横条上。
+// 能不能改：tiptap 收不收键盘。emitUpdate=false：tiptap v3 的 setEditable 默认会发一次
+// 假 update（正文一个字没动），评论按钮会把它当成正文换了。
 watch(
   () => props.editable,
   (v) => editor.value?.setEditable(v, false)
 )
 
-// 把服务端的这一版落进编辑器，只替换真正变了的那一段。
-//
-// 整份 `setContent` 会把所有位置都映射一遍（那一步在语义上先删光再插入），于是停在
-// 没变的段落里的光标会被甩到文末。而这篇文档是可以点进去的：点一下只是「我在看这
-// 儿」，不会让它变 dirty，所以芝士的下一次更新照常装进来，把人的插入点带走。只重写
-// 差异区间就没这回事——区间之前的每一个位置都没被碰过。
-//
-// 不是为了少重绘：prosemirror-view 本来就逐节点比对、复用没变的 DOM，整份替换也不
-// 会把每个段落重建一遍（这一点写过测试，见 lib/docReplaceRange.spec.ts）。
-//
-// 解析走的是 tiptap 自己那条路：`setContent(md, { contentType: 'markdown' })` 内部
-// 也是先 `editor.markdown.parse(md)` 再装 JSON，所以两边解析出来的文档一模一样。
-function setEditorMarkdown(md: string) {
-  const ed = editor.value
-  if (!ed) return
-  loadingFromServer.value = true
-  try {
-    if (!replaceChangedNodes(ed, md)) ed.commands.setContent(md, { contentType: 'markdown' })
-  } finally {
-    // 整份替换那条兜底路径会抛（解析失败、区间不合法），标志位必须还原，否则之后每一次
-    // 真的编辑都不再算 dirty，autosave 就永远不跑了。
-    loadingFromServer.value = false
-  }
-}
-
-/** 返回 false = 这条路走不通（没有 markdown 管理器、解析失败、区间装不进去），
- *  调用方退回整份替换。 */
-function replaceChangedNodes(ed: CoreEditor, md: string): boolean {
-  const manager = ed.markdown
-  if (!manager) return false
-  try {
-    const next = ed.schema.nodeFromJSON(manager.parse(md))
-    const range = docReplaceRange(ed.state.doc, next)
-    // null = 两版一模一样。屏幕上已经是它了，一个字都不用动。
-    if (!range) return true
-    const tr = ed.state.tr.replace(range.from, range.to, next.slice(range.from, range.sliceTo))
-    // 服务端刷新不是人做的编辑，不该占一格撤销。
-    tr.setMeta('addToHistory', false)
-    ed.view.dispatch(tr)
-    return true
-  } catch {
-    return false
-  }
-}
-
-/** 取数那一半的两个口子之一：把服务端的正文装进编辑器。 */
-function installMarkdown(body: string) {
-  setEditorMarkdown(body)
-}
-
-/** 取数那一半的另一个口子：编辑器里现在这一版正文（markdown）。 */
+/** 编辑器里现在这一版正文（markdown）：文档 AI 拿它和已存的那一版比，看两边是不是一回事。 */
 function serializeVisual(): string | null {
   return editor.value ? serializeDoc(editor.value) : null
 }
@@ -452,7 +416,6 @@ function captureSelection() {
 }
 defineExpose({
   editor,
-  installMarkdown,
   serializeVisual,
   highlightTurn,
   highlightNode,
@@ -514,6 +477,32 @@ const emptyPlaceholder = computed(() => JSON.stringify(t('work.room.doc.emptyPla
   pointer-events: none;
   float: left;
   height: 0;
+}
+/* 与话题标题一模一样的第一行大标题：面板上方已经有了，不画第二遍。 */
+.doc-editor :deep(.doc-title-echo) {
+  display: none;
+}
+/* 别人的光标：一条竖线和名字。颜色是那个人的，由 lib/docCaret.ts 写在元素上。 */
+.doc-editor :deep(.collaboration-carets__caret) {
+  position: relative;
+  margin-left: -1px;
+  margin-right: -1px;
+  border-left: 1px solid;
+  border-right: 1px solid;
+  word-break: normal;
+  pointer-events: none;
+}
+.doc-editor :deep(.collaboration-carets__label) {
+  position: absolute;
+  top: -1.4em;
+  left: -1px;
+  padding: 0 4px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: var(--lh-12);
+  white-space: nowrap;
+  user-select: none;
 }
 /* B1 Phase 2: flash the exact paragraph(s) a turn produced. Rendered as an
    overlay (not a class on the paragraph) because ProseMirror reverts foreign

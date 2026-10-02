@@ -1,199 +1,83 @@
 <script setup lang="ts">
 // A self-contained living-doc editor: the same tiptap experience as PanelDoc
-// (drag handle, StarterKit + tables + task lists + code highlighting), but
-// WITHOUT the workspace chrome (comments, live-refs, tool drawers, git panels).
+// (drag handle, StarterKit + tables + task lists + code highlighting, other
+// people's carets), but WITHOUT the workspace chrome (comments, live-refs, tool
+// drawers, git panels).
 //
-// It reuses the ONE shared extension list in lib/docSchema — so this editor
-// and PanelDoc can never drift apart on schema/round-trip fidelity — and the
-// same getDoc/putDoc API + autosave contract, so 项目文档 edits persist exactly
-// like the workspace doc does.
+// It reuses the ONE shared extension list in lib/docSchema, so this editor and
+// PanelDoc can never drift apart on schema, and it binds to the same live
+// document (`session`, opened by the page): what anyone types here is in the
+// room's document as they type it, and the collaboration service stores it.
 import type { Node as PMNode } from '@tiptap/pm/model'
+import type { DocSession } from '../composables/useDocCollab'
 
-import { onBeforeUnmount, ref, watch } from 'vue'
-import { useMediaQuery, useWebSocket } from '@vueuse/core'
+import { onBeforeUnmount, ref, shallowRef, watch } from 'vue'
+import { useMediaQuery } from '@vueuse/core'
+import Collaboration from '@tiptap/extension-collaboration'
+import CollaborationCaret from '@tiptap/extension-collaboration-caret'
 import { DragHandle } from '@tiptap/extension-drag-handle-vue-3'
-import { EditorContent, useEditor } from '@tiptap/vue-3'
+import { Editor, EditorContent } from '@tiptap/vue-3'
 
-import { ApiError, chatWsUrl, getDoc, putDoc } from '../api'
-import { compareRoundTrip, docExtensions, serializeDoc } from '../lib/docSchema'
+import { renderCaret } from '../lib/docCaret'
+import { docExtensions } from '../lib/docSchema'
 
 import { t } from '@/i18n'
 
 const props = withDefaults(
   defineProps<{
-    // The topic whose living doc we edit (章程 = the project's root topic).
-    topicId: string | null
+    // The live document (章程 = the project's root topic's); null until open.
+    session: DocSession | null
+    // The document has not arrived yet.
+    loading?: boolean
     // Read-only render vs. editable rich editor.
     editable?: boolean
     // Placeholder shown when the doc is empty.
     placeholder?: string
   }>(),
   {
+    loading: false,
     editable: true,
     placeholder: '',
   }
 )
-
-// State surfaced to the parent so it can show 保存中… / 已保存 / 未保存.
-const emit = defineEmits<{
-  (e: 'saving'): void
-  (e: 'saved'): void
-  (e: 'dirty'): void
-  (e: 'error', message: string): void
-}>()
 
 // 块手柄（＋ / ⠿）跟着鼠标悬停出现、靠拖动排序，手机上用不了：不画，也不留那条
 // 56px 的槽，正文贴着页边排（样式里 --doc-gutter 在手机上是 0）。960 是外壳换成手机
 // 形态的那条线（Vuetify 的 md）。
 const mdAndUp = useMediaQuery('(min-width: 960px)')
 
-const loading = ref(false)
-const saving = ref(false)
-const dirty = ref(false)
-// True while WE are installing server content — suppresses the onUpdate dirty
-// flip that tiptap's setContent would otherwise trigger.
-const loadingFromServer = ref(false)
+const empty = ref(true)
 
-// The raw doc exactly as stored on the server (git-tracked markdown file).
-const rawDoc = ref<string>('')
-// 军规 1: a lossy load (parse→serialize differs from disk) pauses autosave so a
-// visual edit can't silently rewrite unsupported syntax.
-const lossy = ref(false)
-// The doc_version this editor's content is based on; every save sends it.
-const docVersion = ref(0)
-// A save the backend refused because the doc moved. Pauses autosave for the
-// same reason `lossy` does: retrying on a timer would either fail forever or,
-// worse, succeed by overwriting. ⌘S is the way out — the person deciding.
-const conflict = ref(false)
-
-// ---- Editor: the SHARED extension list, plus the DragHandle in the template. ----
-const editor = useEditor({
-  content: '',
-  extensions: [...docExtensions()],
-  editable: props.editable,
-  editorProps: {
-    attributes: { class: 'doc-prose' },
+// ---- Editor: the SHARED extension list, bound to the live document. A new
+// document (another project) is a new editor: Collaboration reads its document
+// once, when the editor is built. ----
+const editor = shallowRef<Editor | undefined>()
+watch(
+  () => props.session,
+  (session) => {
+    editor.value?.destroy()
+    editor.value = session
+      ? new Editor({
+          extensions: [
+            ...docExtensions(),
+            Collaboration.configure({ document: session.doc }),
+            CollaborationCaret.configure({ provider: session.provider, user: session.user, render: renderCaret }),
+          ],
+          editable: props.editable,
+          editorProps: {
+            attributes: { class: 'doc-prose' },
+          },
+          onUpdate: ({ editor: ed }) => {
+            empty.value = ed.isEmpty
+          },
+          onCreate: ({ editor: ed }) => {
+            empty.value = ed.isEmpty
+          },
+        })
+      : undefined
   },
-  onUpdate: () => {
-    if (loadingFromServer.value) return
-    dirty.value = true
-    emit('dirty')
-    queueAutosave()
-  },
-})
-
-function currentMarkdown(): string {
-  const ed = editor.value
-  if (!ed) return rawDoc.value
-  return serializeDoc(ed)
-}
-
-function setEditorMarkdown(md: string) {
-  const ed = editor.value
-  if (!ed) return
-  loadingFromServer.value = true
-  ed.commands.setContent(md, { contentType: 'markdown' })
-  loadingFromServer.value = false
-}
-
-function installDoc(full: string) {
-  rawDoc.value = full
-  setEditorMarkdown(full)
-  const ed = editor.value
-  if (ed) {
-    const report = compareRoundTrip(full, serializeDoc(ed))
-    lossy.value = !report.clean
-  }
-}
-
-async function loadDoc(topicId: string) {
-  loading.value = true
-  try {
-    const block = await getDoc(topicId)
-    if (props.topicId !== topicId) return // guard against fast switches
-    installDoc(block?.content ?? '')
-    docVersion.value = block?.doc_version ?? 0
-    conflict.value = false
-    dirty.value = false
-  } catch (e) {
-    emit('error', e instanceof Error ? e.message : t('work.room.doc.loadFailed'))
-  } finally {
-    if (props.topicId === topicId) loading.value = false
-  }
-}
-
-// Feishu-style autosave, debounced from the last keystroke. 军规 1: a lossy doc
-// pauses visual autosave — writing the round-tripped doc back would destroy the
-// unsupported syntax.
-let autosaveTimer: ReturnType<typeof setTimeout> | null = null
-function queueAutosave() {
-  if (autosaveTimer) clearTimeout(autosaveTimer)
-  autosaveTimer = setTimeout(() => {
-    if (lossy.value || conflict.value) return
-    if (dirty.value && props.editable && !saving.value) void save()
-  }, 2500)
-}
-
-async function save() {
-  const topicId = props.topicId
-  if (!topicId || saving.value) return
-  const full = currentMarkdown()
-  if (full === rawDoc.value) {
-    dirty.value = false
-    return
-  }
-  saving.value = true
-  emit('saving')
-  try {
-    const saved = await putDoc(topicId, full, docVersion.value)
-    docVersion.value = saved.doc_version ?? docVersion.value + 1
-    conflict.value = false
-    rawDoc.value = full
-    // Lost-update guard: an edit that landed while the save was in flight must
-    // not have its dirty flag wiped by this completion.
-    if (currentMarkdown() === full) {
-      dirty.value = false
-      emit('saved')
-    } else {
-      dirty.value = true
-      queueAutosave()
-    }
-  } catch (e) {
-    if (e instanceof ApiError && e.status === 409) {
-      // Somebody else wrote this doc since we read it. Say so, stop the timer
-      // from retrying into the same wall, and adopt their version so the next
-      // save the PERSON asks for is an overwrite they chose.
-      conflict.value = true
-      await adoptServerVersion(topicId)
-      emit('error', t('work.room.doc.conflictOverwrite'))
-    } else {
-      emit('error', e instanceof Error ? e.message : t('work.room.doc.saveFailed'))
-    }
-  } finally {
-    saving.value = false
-  }
-}
-
-async function adoptServerVersion(topicId: string) {
-  try {
-    const block = await getDoc(topicId)
-    if (props.topicId === topicId) docVersion.value = block?.doc_version ?? 0
-  } catch {
-    // Leave the old version in place: the next save is refused again, which is
-    // the safe direction.
-  }
-}
-
-function onBlur() {
-  if (dirty.value && props.editable && !lossy.value && !conflict.value) void save()
-}
-
-function onKeydown(e: KeyboardEvent) {
-  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
-    e.preventDefault()
-    if (dirty.value && props.editable) void save()
-  }
-}
+  { immediate: true }
+)
 
 // ---- DragHandle: track the hovered block so ＋ inserts below / ⠿ reorders. ----
 const hoverPos = ref<number | null>(null)
@@ -222,67 +106,14 @@ function addBlockBelow() {
     .run()
 }
 
-// Topic switch: full reload.
-watch(
-  () => props.topicId,
-  (id) => {
-    if (id) void loadDoc(id)
-    else {
-      rawDoc.value = ''
-      dirty.value = false
-      setEditorMarkdown('')
-    }
-  },
-  { immediate: true }
-)
-
 // Editable toggle from the parent: setEditable(v, false) so tiptap's synthetic
-// 'update' doesn't mark the doc dirty. Leaving edit mode flushes unsaved edits.
+// 'update' is not mistaken for typing.
 watch(
   () => props.editable,
-  (v) => {
-    editor.value?.setEditable(v, false)
-    if (!v && dirty.value && !lossy.value && !conflict.value) void save()
-  }
+  (v) => editor.value?.setEditable(v, false)
 )
 
-// Reload from the server (e.g. AI activity). Respects unsaved local edits.
-async function reload() {
-  const id = props.topicId
-  if (!id || dirty.value || saving.value || loading.value) return
-  const version = docVersion.value
-  try {
-    const block = await getDoc(id)
-    // Typing or a save may have started while the request was in flight.
-    if (props.topicId !== id || dirty.value || saving.value || docVersion.value !== version) return
-    const full = block?.content ?? ''
-    if (full !== rawDoc.value) installDoc(full)
-    docVersion.value = block?.doc_version ?? 0
-  } catch {
-    // best-effort
-  }
-}
-
-// The charter has no chat panel to relay document notifications. Subscribe to
-// the same room channel; reconnect also catches edits made while disconnected.
-useWebSocket(() => (props.topicId ? chatWsUrl(props.topicId) : undefined), {
-  autoReconnect: { delay: 2000 },
-  onConnected: () => void reload(),
-  onMessage: (_socket, event) => {
-    let frame
-    try {
-      frame = JSON.parse(event.data)
-    } catch {
-      return
-    }
-    if (frame.type === 'state' && frame.resource === 'doc') void reload()
-  },
-})
-
-defineExpose({ save, reload })
-
 onBeforeUnmount(() => {
-  if (autosaveTimer) clearTimeout(autosaveTimer)
   editor.value?.destroy()
 })
 </script>
@@ -292,10 +123,10 @@ onBeforeUnmount(() => {
     <div v-if="loading" class="d-flex justify-center py-8">
       <v-progress-circular indeterminate color="primary" size="28" />
     </div>
-    <div class="doc-editor" @keydown="onKeydown" @focusout="onBlur">
+    <div class="doc-editor">
       <EditorContent v-if="editor" :editor="editor" />
       <!-- Empty-doc hint: a soft placeholder over the blank editor. -->
-      <div v-if="editor && !loading && rawDoc.trim() === '' && placeholder" class="doc-editor__placeholder">
+      <div v-if="editor && !loading && empty && placeholder" class="doc-editor__placeholder">
         {{ placeholder }}
       </div>
       <!-- Feishu-style left gutter block handles: ＋ inserts below, ⠿ reorders.
@@ -325,6 +156,29 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+/* Other people's carets: a line and their name, coloured per person by
+   lib/docCaret.ts. */
+.doc-editor :deep(.collaboration-carets__caret) {
+  position: relative;
+  margin-left: -1px;
+  margin-right: -1px;
+  border-left: 1px solid;
+  border-right: 1px solid;
+  word-break: normal;
+  pointer-events: none;
+}
+.doc-editor :deep(.collaboration-carets__label) {
+  position: absolute;
+  top: -1.4em;
+  left: -1px;
+  padding: 0 4px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: var(--lh-12);
+  white-space: nowrap;
+  user-select: none;
+}
 /* Mirrors PanelDoc's editor styling so 项目文档 reads identically to the
    workspace doc. Kept to the CORE surface (no workspace-only selectors like
    comments / live-refs / mentions). */

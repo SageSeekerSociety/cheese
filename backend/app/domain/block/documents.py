@@ -77,40 +77,40 @@ class DocumentWriter:
             base_version=0,
         )
 
-    async def edit_doc(
+    async def record(
         self,
         *,
         room_id: uuid.UUID,
         project_id: uuid.UUID,
         content: str,
-        author: str,
-        expected_version: int,
-        author_type: AuthorType = AuthorType.participant,
+        actors: list[str],
         operation_id: uuid.UUID | None = None,
-    ) -> tuple[Block, Block | None]:
-        """改文档即指令 (eval B2): upsert the topic's living doc and drop a
-        '编辑了文档' event into the conversation. The agent reads the latest doc
-        on its next turn, so the edit acts as an instruction.
+    ) -> tuple[Block | None, Block | None]:
+        """改文档即指令 (eval B2): record a new version of the room's living doc
+        and drop a '编辑了文档' event into the conversation. The agent reads the
+        latest doc on its next turn, so the edit acts as an instruction.
 
-        ``expected_version`` is the ``doc_version`` the writer read; ``0`` says
-        it expects no doc to exist yet. A write based on any other version is
-        refused, because this doc is only ever written whole — 芝士 setting back
-        a document it assembled from a ten-minute-old copy erases whatever a
-        person typed in between, with nothing left to recover it from.
+        ``content`` is what the collaboration service exported from the live
+        document, and ``actors`` are the handles whose changes it holds, the
+        one with the most changes first. The caller holds the room's journal
+        lock: the live document is the only writer, so there is no base version
+        to compare here — whatever the service stores is the document.
 
-        The refusal comes BEFORE any of the write's effects: no node tree, no
-        '编辑了文档' event. A rejected write that still announced itself would
-        put a change in the room that is not in the document.
+        Returns ``(None, None)`` when there is nothing to record: the text did
+        not change, or a room with no document stored an empty one.
         """
+        if not actors:
+            raise ValueError("a document version needs the actor who wrote it")
+        author = actors[0]
         journal = DocumentJournal(self._session)
-        await journal.lock(room_id)
         doc = await self._blocks.doc_root(room_id)
-        previous_content = doc.content if doc is not None else ""
+        previous_content = ""
         if doc is not None:
             await self._session.refresh(doc)
             previous_content = doc.content
-            if doc.doc_version != expected_version:
-                raise _doc_conflict(doc.doc_version)
+            if previous_content == content:
+                return None, None
+            base_version = doc.doc_version
             await journal.seed_existing(
                 room_id=room_id,
                 document_id=doc.id,
@@ -119,26 +119,27 @@ class DocumentWriter:
                 actor=doc.author,
             )
             updated = await self._blocks.set_doc_content(
-                doc, content, expected_version=expected_version
+                doc, content, expected_version=base_version
             )
             if updated is None:
                 raise _doc_conflict(doc.doc_version)
             doc = updated
         else:
-            if expected_version != 0:
-                raise _doc_conflict(0)
+            if not content.strip():
+                return None, None
+            base_version = 0
             doc = await self._blocks.add(
                 project_id=project_id,
                 topic_id=room_id,
                 author=author,
-                author_type=author_type,
+                author_type=AuthorType.participant,
                 content=content,
                 kind=BlockKind.doc,
             )
         # The root records the latest editor; unchanged nodes keep their author,
         # and _sync_doc_nodes attributes only newly written nodes to this editor.
         doc.author = author
-        doc.author_type = author_type
+        doc.author_type = AuthorType.participant
         # B1: also sync the structured node tree (struct_parent children) so the
         # doc's blocks get stable ids for cross-view highlight / comments later.
         await self._sync_doc_nodes(doc, content)
@@ -152,7 +153,7 @@ class DocumentWriter:
                 version=doc.doc_version,
                 content=doc.content,
                 actor=author,
-                base_version=expected_version,
+                base_version=base_version,
                 operation_id=operation_id,
             )
             return doc, None
@@ -161,8 +162,17 @@ class DocumentWriter:
         # via the roster) — NOT prose we later pattern-match. 芝士 is one familiar
         # name whichever 分身 wrote it: each authors under its own
         # ``cheese-<topic hex>`` handle, which is not what a reader should see.
-        by_agent = looks_like_agent_handle(author)
-        actor = say("actorCheese") if by_agent else f"<@{author}>"
+        by_agent = all(looks_like_agent_handle(handle) for handle in actors)
+        names: list[str] = []
+        for handle in actors:
+            name = (
+                say("actorCheese")
+                if looks_like_agent_handle(handle)
+                else f"<@{handle}>"
+            )
+            if name not in names:
+                names.append(name)
+        actor = "、".join(names)
         # What the same event says to 芝士, written here because this is the code
         # that moved the document. It locates the change and does NOT carry it:
         # a document pushed into a running turn displaces the work instead of
@@ -218,7 +228,7 @@ class DocumentWriter:
             version=doc.doc_version,
             content=doc.content,
             actor=author,
-            base_version=expected_version,
+            base_version=base_version,
             operation_id=operation_id,
             event_id=notice.id,
         )

@@ -22,6 +22,7 @@ from app.domain.usage.models import ComputeGrant
 from app.domain.usage.repositories import UsageRepository
 from app.domain.user.services import user_by_handle
 from tests.integration.test_living_doc_journal import seed
+from tests.support.living_doc import write_doc
 
 
 async def _spent_earmark(session, project_id) -> None:
@@ -42,9 +43,7 @@ async def pending(factory, *, supply="gateway", empty_budget=False):
             "supply": supply,
             "default_model": settings.agent_model if supply == "gateway" else "sonnet",
         }
-        doc, _ = await TopicService(session).edit_doc(
-            topic_id=room, content="原文", author="alice", expected_version=0
-        )
+        doc, _ = await write_doc(session, room, "原文", "alice")
         bound = await project_binding(session, room)
         user = await user_by_handle(session, "alice")
         row = await DocAiService(session).create(

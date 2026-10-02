@@ -17,6 +17,9 @@ const getDoc = vi.fn()
 const getComments = vi.fn()
 const getDocNodes = vi.fn()
 
+vi.mock('../../composables/useDocCollab', async () => ({
+  useDocCollab: (await import('../../test/fakeDocCollab')).useFakeDocCollab,
+}))
 vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
   return {
@@ -26,6 +29,8 @@ vi.mock('../../api', async () => {
     getDocNodes: (...a: unknown[]) => getDocNodes(...a),
   }
 })
+
+import { arrive, resetRooms, seedRoom } from '../../test/fakeDocCollab'
 
 import PanelDoc from './PanelDoc.vue'
 
@@ -52,13 +57,6 @@ function doc(content: string): Block {
   return { id: 'd1', kind: 'doc', content, doc_version: 3 } as unknown as Block
 }
 
-/** 一次拿得住的请求：先挂着，等测试自己决定什么时候让文档到达。 */
-function pending<T>() {
-  let resolve!: (v: T) => void
-  const promise = new Promise<T>((r) => (resolve = r))
-  return { promise, resolve }
-}
-
 let vuetify: ReturnType<typeof createVuetify>
 
 beforeAll(() => {
@@ -66,7 +64,9 @@ beforeAll(() => {
 })
 
 beforeEach(() => {
+  resetRooms()
   getDoc.mockReset()
+  getDoc.mockResolvedValue(doc('## 一段\n\n正文'))
   getComments.mockResolvedValue({ data: [], total: 0 })
   getDocNodes.mockResolvedValue({ data: [], total: 0 })
 })
@@ -80,26 +80,24 @@ function open() {
 
 describe('文档还在路上', () => {
   it('画的是文档的形状，编辑器让位 —— 空编辑器会说这篇文档是空的', async () => {
-    const gate = pending<Block | null>()
-    getDoc.mockReturnValue(gate.promise)
+    seedRoom(topic.id, '## 一段\n\n正文', { pending: true })
     const { container } = open()
 
     await waitFor(() => expect(container.querySelector('[role="status"][aria-busy="true"]')).not.toBeNull())
     expect(container.querySelector('.doc-skel .skel__bone--h2'), '文档的节奏是小标题带着几段字').not.toBeNull()
     const editor = container.querySelector('.doc-editor') as HTMLElement | null
-    expect(editor && editor.style.display, '这一刻编辑器不能在屏幕上').toBe('none')
+    expect(!editor || editor.style.display === 'none', '这一刻编辑器不能在屏幕上').toBe(true)
 
-    gate.resolve(doc('## 一段\n\n正文'))
+    arrive(topic.id)
     await waitFor(() => expect(container.querySelector('.doc-editor')?.textContent).toContain('正文'))
   })
 
   it('文档到了，骨架走干净，编辑器回来', async () => {
-    const gate = pending<Block | null>()
-    getDoc.mockReturnValue(gate.promise)
+    seedRoom(topic.id, '## 一段\n\n正文', { pending: true })
     const { container } = open()
     await waitFor(() => expect(container.querySelector('[role="status"][aria-busy="true"]')).not.toBeNull())
 
-    gate.resolve(doc('## 一段\n\n正文'))
+    arrive(topic.id)
     await waitFor(() => {
       const editor = container.querySelector('.doc-editor') as HTMLElement | null
       expect(editor?.textContent).toContain('正文')

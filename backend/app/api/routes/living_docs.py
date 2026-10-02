@@ -1,25 +1,42 @@
-"""Living-document HTTP boundary, including replay of committed write receipts."""
+"""Living-document HTTP boundary.
 
+The document itself is edited live in the collaboration service. This module
+signs the ticket a browser opens it with, answers that service when it loads
+and stores a document, and turns the writes that do not come from an editor
+(an HTTP PUT — 芝士's ``cheese_doc_set`` among them — and a restore) into
+changes the service applies to the live document. None of them writes the
+database directly: the service's store is the one place a version is recorded.
+"""
+
+import base64
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Header, Query
+from pydantic import BaseModel, Field
 
 from app.api.auth import ActorResolverDep
-from app.api.deps import get_broker, get_chat_service
+from app.api.deps import get_chat_service
 from app.api.doc_identity import operation_actor
+from app.api.doc_store import announce, store
 from app.api.response import ok
 from app.api.routes.topics import DbSession, _actor_in_place
-from app.core.errors import AuthenticationRequiredError, NotFoundError
+from app.core.errors import (
+    AuthenticationRequiredError,
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+    ValidationError,
+)
 from app.domain.agent.chat import ChatService
-from app.domain.block.documents import persisted_notice
 from app.domain.block.schemas import BlockOut
-from app.domain.living_doc.delivery import dispatch_pending
+from app.domain.identity.handles import looks_like_agent_handle
+from app.domain.living_doc import collab
 from app.domain.living_doc.schemas import RestoreIn
 from app.domain.living_doc.services import DocumentJournal, content_hash
 from app.domain.mentions import canonicalize_refs
-from app.domain.topic import naming
-from app.domain.topic.doc_checks import living_doc_warnings
+from app.domain.project.services import ProjectArchivedError, refuse_writes_if_archived
+from app.domain.room_task.place import Place
 from app.domain.topic.schemas import DocEditIn
 from app.domain.topic.services import TopicService
 
@@ -41,13 +58,70 @@ async def get_topic_doc(
     return ok(snapshot)
 
 
+@router.get("/{topic_id}/doc/ticket")
+async def document_ticket(
+    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """A short-lived ticket that opens this room's live document.
+
+    Whoever may read the document may open it; who may change it is decided
+    here and carried in the ticket, because the service trusts nothing a
+    browser says about itself. Read-only: a caller without a verified
+    credential, an archived room, an archived project.
+    """
+    place = await TopicService(db).place_or_404(topic_id)
+    actor = await _actor_in_place(resolver, place)
+    read_only = not actor.authenticated or await _frozen(db, place)
+    return ok(
+        {
+            "document": collab.document_name(place.room_id),
+            "ticket": collab.sign_ticket(
+                room_id=place.room_id,
+                handle=actor.handle,
+                agent=looks_like_agent_handle(actor.handle),
+                read_only=read_only,
+            ),
+            "read_only": read_only,
+        }
+    )
+
+
+async def _frozen(db, place: Place) -> bool:
+    try:
+        TopicService(db).require_doc_writable(place)
+    except ValidationError:
+        return True
+    try:
+        await refuse_writes_if_archived(db, place.project_id)
+    except ProjectArchivedError:
+        return True
+    return False
+
+
+async def _base(db, place: Place, expected_version: int) -> str | None:
+    """The document a writer based its change on, if it is still current.
+
+    The stored version can only trail the live document, never lead it, so a
+    writer behind the stored version is behind the live one too and is refused
+    here. A writer AT the stored version may still be behind the live document
+    (typing not stored yet); the service decides that one.
+    """
+    doc = await TopicService(db).doc_of_room(place.room_id)
+    current = doc.doc_version if doc is not None else 0
+    if expected_version != current:
+        raise ConflictError(
+            "实况文档已经被改过了，你手上这份是旧的",
+            data={"doc_version": current},
+        )
+    return doc.content if doc is not None else None
+
+
 @router.put("/{topic_id}/doc")
 async def edit_topic_doc(
     topic_id: uuid.UUID,
     body: DocEditIn,
     db: DbSession,
     resolver: ActorResolverDep,
-    chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
     topics = TopicService(db)
     place = await topics.place_or_404(topic_id)
@@ -57,64 +131,47 @@ async def edit_topic_doc(
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id
     )
-    journal = DocumentJournal(db)
+    topics.require_doc_writable(place)
     operation = None
     if body.operation_id is not None:
         await resolver.authorize_topic(
             actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
         )
-        operation = await journal.claim(
-            room_id=place.room_id,
-            actor=await operation_actor(db, actor),
-            action="replace",
-            operation_id=body.operation_id,
-            payload={
+        operation = {
+            "actor": await operation_actor(db, actor),
+            "action": "replace",
+            "operation_id": str(body.operation_id),
+            "payload": {
                 "content": body.content,
                 "expected_version": body.expected_version,
             },
-        )
-        if operation.receipt is not None:
-            return operation.receipt
+        }
+        if receipt := await _replayed(db, place, operation):
+            return receipt
     content = await canonicalize_refs(
         db, place.project_id, body.content, exclude_topic_id=place.room_id
     )
-    doc, notice = await topics.edit_doc(
-        topic_id=topic_id,
-        content=content,
-        author=actor.handle,
-        expected_version=body.expected_version,
-        operation_id=body.operation_id,
-    )
-    return await _finish_write(
-        db, place, topic_id, doc, notice, operation, body.operation_id, chat
-    )
-
-
-async def _finish_write(
-    db, place, topic_id, doc, notice, operation, operation_id, chat
-):
-    content = doc.content
-    snapshot = BlockOut.model_validate(doc).model_dump(mode="json")
-    snapshot["content_hash"] = content_hash(doc.content)
-    snapshot["operation_id"] = str(operation_id) if operation_id else None
-    receipt = ok(snapshot, warnings=living_doc_warnings(content))
-    if operation is not None:
-        await DocumentJournal(db).finish(operation, receipt)
+    base = await _base(db, place, body.expected_version)
+    # Nothing of this request may stay open across the call: the service's
+    # store takes the room's lock in a transaction of its own.
     await db.commit()
-    if notice is not None:
-        await get_broker().publish(
-            str(place.room_id),
-            {
-                "type": "event_block",
-                "block": BlockOut.model_validate(notice).model_dump(mode="json"),
-            },
-        )
-    await dispatch_pending(db, get_broker().publish, place.room_id)
-    if topic_id == place.room_id:
-        naming.nudge(place.room_id, "signal")
-    if notice is not None and (line := persisted_notice(notice)):
-        await chat.notify_running_turn(topic_id, line, blocks=[notice.id])
-    return receipt
+    return await collab.replace(
+        place.room_id,
+        content=content,
+        base=base,
+        actor=actor.handle,
+        operation=operation,
+    )
+
+
+async def _replayed(db, place: Place, operation: dict) -> dict | None:
+    return await DocumentJournal(db).replay(
+        room_id=place.room_id,
+        actor=operation["actor"],
+        action=operation["action"],
+        operation_id=uuid.UUID(operation["operation_id"]),
+        payload=operation["payload"],
+    )
 
 
 @router.get("/{topic_id}/doc/history")
@@ -131,22 +188,6 @@ async def document_history(
     )
     rows = await DocumentJournal(db).history(place.room_id, after=after)
     return ok({"versions": rows, "cursor": rows[-1]["version"] if rows else after})
-
-
-@router.get("/{topic_id}/doc/refreshes")
-async def document_refreshes(
-    topic_id: uuid.UUID,
-    db: DbSession,
-    resolver: ActorResolverDep,
-    after: int = Query(default=0, ge=0),
-) -> dict:
-    place = await TopicService(db).place_or_404(topic_id)
-    actor = await _actor_in_place(resolver, place)
-    await resolver.authorize_topic(
-        actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
-    )
-    rows = await DocumentJournal(db).refreshes(place.room_id, after=after)
-    return ok({"refreshes": rows, "cursor": rows[-1]["cursor"] if rows else after})
 
 
 @router.get("/{topic_id}/doc/operations/{operation_id}")
@@ -181,7 +222,6 @@ async def restore_document(
     body: RestoreIn,
     db: DbSession,
     resolver: ActorResolverDep,
-    chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
     topics = TopicService(db)
     place = await topics.place_or_404(topic_id)
@@ -191,26 +231,96 @@ async def restore_document(
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
     )
-    journal = DocumentJournal(db)
-    operation = await journal.claim(
-        room_id=place.room_id,
-        actor=await operation_actor(db, actor),
-        action="restore",
-        operation_id=body.operation_id,
-        payload={"version": body.version, "expected_version": body.expected_version},
-    )
-    if operation.receipt is not None:
-        return operation.receipt
-    content = await journal.version_content(place.room_id, body.version)
+    topics.require_doc_writable(place)
+    operation = {
+        "actor": await operation_actor(db, actor),
+        "action": "restore",
+        "operation_id": str(body.operation_id),
+        "payload": {"version": body.version, "expected_version": body.expected_version},
+    }
+    if receipt := await _replayed(db, place, operation):
+        return receipt
+    content = await DocumentJournal(db).version_content(place.room_id, body.version)
     if content is None:
         raise NotFoundError("没有这份历史文档版本")
-    doc, notice = await topics.edit_doc(
-        topic_id=topic_id,
+    base = await _base(db, place, body.expected_version)
+    await db.commit()
+    return await collab.replace(
+        place.room_id,
         content=content,
-        author=actor.handle,
-        expected_version=body.expected_version,
-        operation_id=body.operation_id,
+        base=base,
+        actor=actor.handle,
+        operation=operation,
     )
-    return await _finish_write(
-        db, place, topic_id, doc, notice, operation, body.operation_id, chat
+
+
+# ---- The collaboration service's side --------------------------------------
+
+internal = APIRouter(prefix="/internal/collab", tags=["collab"])
+
+
+def _service(authorization: Annotated[str | None, Header()] = None) -> None:
+    try:
+        collab.verify_service(authorization)
+    except collab.CollabRefused as exc:
+        raise ForbiddenError("只接受文档协同服务的请求") from exc
+
+
+ServiceOnly = Annotated[None, Depends(_service)]
+
+
+def _room(name: str) -> uuid.UUID:
+    try:
+        return collab.room_of(name)
+    except ValueError as exc:
+        raise NotFoundError("没有这份文档") from exc
+
+
+@internal.get("/documents/{name}")
+async def load_document(name: str, db: DbSession, _: ServiceOnly) -> dict:
+    """What the service builds a live document from: the stored Yjs state, or
+    — for a document never opened live — its Markdown, which the service
+    converts and stores back before anyone edits it."""
+    room_id = _room(name)
+    topics = TopicService(db)
+    await topics.place_or_404(room_id)
+    doc = await topics.doc_of_room(room_id)
+    state = await DocumentJournal(db).state(room_id)
+    return {
+        "state": base64.b64encode(state).decode() if state is not None else None,
+        "content": doc.content if doc is not None else "",
+        "doc_version": doc.doc_version if doc is not None else 0,
+    }
+
+
+class StoreIn(BaseModel):
+    state: str
+    #: None: store the state alone (a conversion that changed no text).
+    content: str | None = None
+    #: Handles whose changes this store holds, the most changes first.
+    actors: list[str] = Field(default_factory=list)
+    operation: dict | None = None
+
+
+@internal.put("/documents/{name}")
+async def store_document(
+    name: str,
+    body: StoreIn,
+    db: DbSession,
+    _: ServiceOnly,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+) -> dict:
+    room_id = _room(name)
+    stored = await store(
+        db,
+        room_id,
+        state=base64.b64decode(body.state),
+        content=body.content,
+        # A change nobody on this instance made (another instance's typist,
+        # under a shared Redis) is still a version; it is the platform's.
+        actors=body.actors or ["system"],
+        operation=body.operation,
     )
+    await db.commit()
+    await announce(room_id, stored, chat)
+    return stored.answer

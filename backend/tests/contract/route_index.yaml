@@ -76,6 +76,7 @@ auth_entries:
   workspace.access: "Decorator Depends(workspace.require_project_access): verify_scoped_token for project or auth.caller.may_access_project, then actual requested room/task containment + authorize_topic, with archive/task-ended PUT guards. Source: app/api/routes/workspace.py."
   document.member: "topics_comment_threads.member_in_room uses _actor_in_place, doc_identity.operation_actor and authorize_topic(enforce=True); mutations also bind comment to actual room. Source: app/api/routes/topics_comment_threads.py."
   document.human: "topics_doc_ai.human_in_room uses canonical room check, _actor_in_place, doc_identity.human_operation_actor (verified human, not agent identity), and authorize_topic(enforce=True). Source: app/api/routes/topics_doc_ai.py; app/api/doc_identity.py."
+  collab.service: "living_docs._service: the bearer derived from COLLAB_SECRET (living_doc.collab.verify_service); only the collaboration service holds it. Identity in a store comes from the actors it carries, which the service took from backend-signed tickets or from the backend's own replace call. Source: app/api/routes/living_docs.py."
   living.document: "living_docs resolves room actor; state-changing/history/receipt/restore branches enforce topic access and use doc_identity.operation_actor; plain get uses _actor_in_place. Source: app/api/routes/living_docs.py. Endpoint-specific branch is kept in the map below."
   editor.link: "room_files.editor_fetches_file authenticates the signed/expiring document link with documents.editor.read_link; that link is the only credential. Source: app/api/routes/room_files.py; domain/documents/editor.py."
   editor.callback: "room_files.editor_saves_file validates the link via editor.read_link and callback JWT/body via editor.verify_callback before saving. Internal download URL validation is a separate safety check. Source: app/api/routes/room_files.py; domain/documents/editor.py."
@@ -259,7 +260,7 @@ owners:
   delivery: "Room delivery timer requests and same-handle note dispatch; domain/delivery timer/addressing, composed by room route."
   documents: "Office/spreadsheet conversion, revisions and editor callbacks; domain/documents editor/convert/revisions/spreadsheet."
   doc_ai: "Document AI asks and proposals; domain/doc_ai/DocAiService and ProposalAcceptance, separate from room agent execution."
-  living_doc: "Canonical living-document journal, receipts, history and restoration; domain/living_doc/DocumentJournal, with block/document persistence."
+  living_doc: "Canonical living-document journal, receipts, history and restoration; domain/living_doc/DocumentJournal, with block/document persistence. Versions are recorded only by the collaboration service's store (api/doc_store.py); other writers go through living_doc/collab.replace."
   room.files: "Room retained files and shown-source composition; domain/project/room_files.py plus block/shown. The route owns composing file save and shown-block broadcast."
   project: "Project lifecycle, association, ownership and repository settings; domain/project/ProjectService and project forge/protection. Route retains request assembly."
   project.rail: "Project rail assembly in projects.list_project_tasks: project_reader -> TaskService -> latest_cards_by_task -> beats -> asked -> one now -> presentation. Domain owners of facts remain room_task/review/block; v6 says assembly owner is the route."
@@ -642,11 +643,13 @@ routes:
   - {protocol: "http", method: "DELETE", path: "/projects/{project_id}/library", auth: "library.keeper", owner: "library"}
   # app.api.routes.living_docs
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/doc", auth: "actor.topic", owner: "living_doc"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/doc/ticket", auth: "actor.topic", owner: "living_doc"}
   - {protocol: "http", method: "PUT", path: "/topics/{topic_id}/doc", auth: "living.document", owner: "living_doc"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/doc/history", auth: "living.document", owner: "living_doc"}
-  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/doc/refreshes", auth: "living.document", owner: "living_doc"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/doc/operations/{operation_id}", auth: "living.document", owner: "living_doc"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/doc/restore", auth: "living.document", owner: "living_doc"}
+  - {protocol: "http", method: "GET", path: "/internal/collab/documents/{name}", auth: "collab.service", owner: "living_doc"}
+  - {protocol: "http", method: "PUT", path: "/internal/collab/documents/{name}", auth: "collab.service", owner: "living_doc"}
   # app.api.routes.llm_proxy
   - {protocol: "http", method: "POST", path: "/llm/admission", auth: "capability.llm", owner: "agent.llm"}
   - {protocol: "http", method: "GET", path: "/llm/{path:path}", auth: "capability.llm", owner: "agent.llm"}
