@@ -46,49 +46,51 @@ const { mdAndUp } = useDisplay()
   <div class="app-page">
     <!-- 手机上页名写在顶栏里（路由的 title），按钮也由顶栏画，这一条只剩状态；没有
          状态就整条不画。 -->
-    <header v-if="mdAndUp || $slots.meta" class="app-page__head">
-      <h1 v-if="mdAndUp" class="app-page__title t-title">
-        <template v-if="parent">
-          <NavLink :to="parent.to" class="app-page__parent">{{ parent.label }}</NavLink>
-          <span class="app-page__sep" aria-hidden="true">/</span>
-        </template>
-        {{ title }}
-      </h1>
-      <div v-if="$slots.meta" class="app-page__meta"><slot name="meta" /></div>
-      <!-- 页头上的按钮是小号的文字按钮，图标在字前面；标了 accent 的那一颗是这一页
+    <header v-if="mdAndUp || $slots.meta" class="app-page__head" :class="`app-page__head--${width}`">
+      <div class="app-page__head-row">
+        <h1 v-if="mdAndUp" class="app-page__title t-title">
+          <template v-if="parent">
+            <NavLink :to="parent.to" class="app-page__parent">{{ parent.label }}</NavLink>
+            <span class="app-page__sep" aria-hidden="true">/</span>
+          </template>
+          {{ title }}
+        </h1>
+        <div v-if="$slots.meta" class="app-page__meta"><slot name="meta" /></div>
+        <!-- 页头上的按钮是小号的文字按钮，图标在字前面；标了 accent 的那一颗是这一页
            的主操作，琥珀色实心。 -->
-      <div v-if="$slots.controls || (mdAndUp && headerCommands.length)" class="app-page__actions">
-        <slot name="controls" />
-        <template v-for="command in headerCommands" :key="command.id">
-          <v-btn
-            v-if="command.header?.iconOnly"
-            :icon="command.icon"
-            variant="text"
-            size="small"
-            :to="command.to"
-            :loading="command.loading"
-            :disabled="command.disabled"
-            :aria-label="command.title"
-            :title="command.title"
-            @click="command.run?.()"
-          />
-          <v-btn
-            v-else
-            :prepend-icon="command.icon"
-            :color="command.header?.accent ? 'primary' : undefined"
-            :variant="command.header?.accent ? 'flat' : 'text'"
-            size="small"
-            :to="command.to"
-            :loading="command.loading"
-            :disabled="command.disabled"
-            @click="command.run?.()"
-          >
-            {{ command.title }}
-          </v-btn>
-        </template>
+        <div v-if="$slots.controls || (mdAndUp && headerCommands.length)" class="app-page__actions">
+          <slot name="controls" />
+          <template v-for="command in headerCommands" :key="command.id">
+            <v-btn
+              v-if="command.header?.iconOnly"
+              :icon="command.icon"
+              variant="text"
+              size="small"
+              :to="command.to"
+              :loading="command.loading"
+              :disabled="command.disabled"
+              :aria-label="command.title"
+              :title="command.title"
+              @click="command.run?.()"
+            />
+            <v-btn
+              v-else
+              :prepend-icon="command.icon"
+              :color="command.header?.accent ? 'primary' : undefined"
+              :variant="command.header?.accent ? 'flat' : 'text'"
+              size="small"
+              :to="command.to"
+              :loading="command.loading"
+              :disabled="command.disabled"
+              @click="command.run?.()"
+            >
+              {{ command.title }}
+            </v-btn>
+          </template>
+        </div>
       </div>
     </header>
-    <div class="app-page__body">
+    <div class="app-page__body" :class="`app-page__body--${width}`">
       <div class="app-page__column" :class="`app-page__column--${width}`">
         <slot />
       </div>
@@ -111,6 +113,32 @@ const { mdAndUp } = useDisplay()
   height: var(--app-page-header-height);
   padding: 0 16px;
   border-bottom: var(--app-page-header-rule);
+}
+/* 一般情况下这一层不占盒子，页头照旧是一条 flex 行。 */
+.app-page__head-row {
+  display: contents;
+}
+/* 后台那一档的内容列 1440 封顶、居中。页头那一行跟着它一起封顶居中，标题和正文在任何
+   宽度下都从同一条竖线开始。正文滚动时右边有滚动条，页头和正文都留出同样宽的滚动条
+   槽位（`scrollbar-gutter`），两边居中的基准才是同一个宽度。 */
+.app-page__head--admin,
+.app-page__body--admin {
+  scrollbar-gutter: stable;
+}
+.app-page__head--admin {
+  display: block;
+  overflow: hidden;
+  padding: 0;
+}
+.app-page__head--admin .app-page__head-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  box-sizing: border-box;
+  max-width: var(--page-w-admin);
+  height: 100%;
+  margin-inline: auto;
+  padding: 0 16px;
 }
 .app-page__title {
   min-width: 0;
