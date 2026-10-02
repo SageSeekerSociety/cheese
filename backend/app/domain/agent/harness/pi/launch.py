@@ -21,7 +21,7 @@ from app.domain.agent.harness.pi.bundle import build
 # machine fetches it from us, never from the vendor. `pi_dist` carries the
 # argument; what matters here is that the version in this path is a fact about
 # what we handed the machine rather than about what a registry resolved for it.
-VERSION = "0.85.1"
+VERSION = "1.0.0"
 
 
 def extension() -> dict[str, str]:

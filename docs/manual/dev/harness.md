@@ -62,12 +62,12 @@ pi 核心没有子 agent，四条由平台给它的 extension 和 runner 答：`
 
 四格（提问、待办、提醒、自动同步）今天长这样：
 
-| | Claude Code 2.1.282 | Codex 0.154.0 | pi 0.85.1 |
+| | Claude Code 2.1.282 | Codex 0.154.0 | pi 1.0.0 |
 | --- | --- | --- | --- |
-| 提问 | 自己带，两侧都拒（`DISALLOWED_TOOLS` + `settings.json` 的 deny），平台用 `cheese_ask` | 自己带；同步那个关得掉，异步那个这个 build 关不掉（#1880） | 未核 |
+| 提问 | 自己带，两侧都拒（`DISALLOWED_TOOLS` + `settings.json` 的 deny），平台用 `cheese_ask` | 自己带；同步那个关得掉，异步那个这个 build 关不掉（#1880） | 不自带（工具联合八个里没有，内建扩展四个里也没有），平台用 `cheese_ask` |
 | 待办 | 自己带，`TodoWrite`/`Task*` 两侧都拒，平台用 `todo_write` | 自己带，`tools.update_plan.enabled=False`，平台用 `todo_write` | 不自带，清单由平台建 |
 | 提醒 | 自己带，Cron/Schedule 参数拒掉，平台用投递记录 | 未核 | 不自带 |
-| 自动同步 | 不自带（同步是平台在 Stop 上装的 checkpoint） | 未核 | 未核 |
+| 自动同步 | 不自带（同步是平台在 Stop 上装的 checkpoint） | 未核 | 不自带（同步是平台自己的机制，和骨架无关） |
 
 `declarations()` 只认注册表，注册表里多一个而 `_DECLARED` 里没有就红；`written()` 连不在注册表里的骨架也认——摘掉一个骨架不是把它从树里拿走，它的 pin 和声明仍然归守卫管。
 
@@ -87,7 +87,7 @@ Codex 和 pi 的驱动方式一样：会话机上一个 runner 拥有 agent 进�
 | --- | --- | --- | --- |
 | Claude Code | `2.1.282` | `claude_code/device_launch.py` 的 `CLAUDE_PINNED_VERSION` | `backend/scripts/test_harness_contracts.py` |
 | Codex | `0.154.0` | `codex/host.py` 的 `VERSION` | 同上；不在注册表也照样被它管着 |
-| pi | `0.85.1` | `pi/launch.py` 的 `VERSION` | 不走那份脚本：它是按平台分的 tarball（`app/domain/machine/pi_dist.py`），契约由 `backend/tests/fixtures/harness-contract/` 那套夹具核 |
+| pi | `1.0.0` | `pi/launch.py` 的 `VERSION` | 不走那份脚本：它是按平台分的 tarball（`app/domain/machine/pi_dist.py`），契约由 `backend/tests/fixtures/harness-contract/` 那套夹具核 |
 
 pin 的版本号只写一处：那份脚本从每份 `Declaration.pinned_version` 取，不再自己 `ast` 解文件或抄一个字面量。`.github/workflows/mcp-contract.yml` 管另一个方向的契约：执行器借这台机器的 `claude mcp serve` 做文件读写、从它的 Bash 工具取 shell 快照，两样都没有公开契约，所以 `scripts/remote_execution/mcp_contract.py` 就是契约本身（同处的 `headless_contract.py`、`equivalence.py`、`refresh_contract.py` 各管一段）。
 
