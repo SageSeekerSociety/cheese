@@ -16,7 +16,7 @@ import { Color, FontFamily, FontSize, TextStyle } from '@tiptap/extension-text-s
 
 import { AttachmentImage } from './attachmentImage'
 
-import { docExtensions } from '@/lib/docMarkdown'
+import { docExtensions } from '@/lib/docSchema'
 
 // 老编辑器存字号存的是不带单位的数（`"16"`），自己画的时候补 px。原样存回去，只在画的时候补。
 const BARE_NUMBER = /^\d+(\.\d+)?$/
