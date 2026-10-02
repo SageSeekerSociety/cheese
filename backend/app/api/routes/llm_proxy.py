@@ -58,7 +58,7 @@ from app.domain.assistant.keys import stored_key
 from app.domain.policy import gate
 from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task import binding
-from app.domain.usage.repositories import ComputeGrantRepository
+from app.domain.usage.services import UsageService
 
 logger = logging.getLogger("cheesex.llm_proxy")
 
@@ -208,11 +208,14 @@ async def admission(
         project_uuid = uuid.UUID(claims["p"])
     except ValueError as exc:
         raise NotFoundError("Unknown project") from exc
-    summary = await ComputeGrantRepository(db).summary(project_uuid)
-    state = BudgetState(
-        spent=summary["credits_used"],
-        limit=None if summary["unlimited"] else summary["credits_total"],
-    )
+    project = await ProjectRepository(db).get(project_uuid)
+    state = BudgetState(spent=0.0, limit=None)
+    if project is not None:
+        summary = await UsageService(db).project_credits(project_uuid)
+        state = BudgetState(
+            spent=summary["credits_used"],
+            limit=None if summary["unlimited"] else summary["credits_total"],
+        )
     decision = decide(state)
     # The supply decision rides along with the admission answer: the proxy has
     # to ask before every turn anyway, and one round trip that says both "may
@@ -232,7 +235,6 @@ async def admission(
     # model for this project has no second pool to quietly serve the request
     # from — that silent swap is what one control point exists to remove — so
     # the refusal carries the resolver's own words and the turn stops here.
-    project = await ProjectRepository(db).get(project_uuid)
     from app.domain.agent_instance.services import AgentInstanceService
 
     is_subagent = request.headers.get("x-cheese-subagent") == "1"

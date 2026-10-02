@@ -18,7 +18,7 @@ from app.domain.machine.limits import (
     set_machine_limit,
 )
 from app.domain.team.models import Team
-from app.domain.usage.repositories import ComputeGrantRepository
+from app.domain.usage.ledger import Ledger
 
 
 def positive_int(raw: str) -> int:
@@ -48,9 +48,7 @@ async def run(
                 await reset_team_machine_limit(session, team_id)
             grant = None
             if credits is not None and team_id is not None:
-                grant = await ComputeGrantRepository(session).grant_team(
-                    team_id, credits
-                )
+                grant = await Ledger(session).grant(team_id, credits)
             await session.commit()
         async with async_session_factory() as session:
             current = await get_machine_limit(session, team_id)

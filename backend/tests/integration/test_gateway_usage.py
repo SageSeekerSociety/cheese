@@ -500,10 +500,11 @@ async def test_credits_burn_by_real_spend_not_raw_tokens(
     fake.days[gw.utc_today()] = {"claude-sonnet-5": (120, 30, 0.02)}
     svc, factory, pid, tid = await _mk_service(business_db_factory, tmp_path, fake)
 
-    from app.domain.usage.repositories import ComputeGrantRepository
+    from app.domain.usage.ledger import Ledger
+    from app.domain.usage.services import UsageService
 
     async with factory() as session:
-        await ComputeGrantRepository(session).grant(
+        await Ledger(session).grant_earmark(
             project_id=pid, source_task_id=None, credits_total=100.0
         )
         await session.commit()
@@ -515,7 +516,7 @@ async def test_credits_burn_by_real_spend_not_raw_tokens(
     await finish_turn(svc, tid)
 
     async with factory() as session:
-        summary = await ComputeGrantRepository(session).summary(pid)
+        summary = await UsageService(session).project_credits(pid)
     assert summary["credits_used"] == pytest.approx(0.02 / 0.08)  # 0.25, spend-priced
 
 

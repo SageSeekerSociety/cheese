@@ -38,6 +38,7 @@ from app.domain.agent.harness.pi.personal import PersonalSessions
 from app.domain.assistant.models import AssistantMessage
 from app.domain.feature_stats import pricing
 from app.domain.task.models import Task, TaskMembership
+from app.domain.team.models import Team
 from app.domain.usage.models import ComputeGrant, ResourceUsage
 from app.domain.user.models import User
 from app.main import app
@@ -323,7 +324,9 @@ def _ledger(client, handle: str):
             grants = list(
                 (
                     await s.execute(
-                        select(ComputeGrant).where(ComputeGrant.user_id == user.id)
+                        select(ComputeGrant)
+                        .join(Team, Team.id == ComputeGrant.team_id)
+                        .where(Team.personal_owner_user_id == user.id)
                     )
                 ).scalars()
             )

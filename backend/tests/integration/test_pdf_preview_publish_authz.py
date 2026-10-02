@@ -269,13 +269,15 @@ def test_with_no_credits_left_the_model_is_not_asked(
 def _personal_grants(api_client: TestClient, session, user_id: int) -> list[dict]:
     from sqlalchemy import select
 
+    from app.domain.team.models import Team
     from app.domain.usage.models import ComputeGrant
 
     async def read() -> list[dict]:
         rows = (
             await session.execute(
                 select(ComputeGrant)
-                .where(ComputeGrant.user_id == user_id)
+                .join(Team, Team.id == ComputeGrant.team_id)
+                .where(Team.personal_owner_user_id == user_id)
                 .execution_options(populate_existing=True)
             )
         ).scalars()

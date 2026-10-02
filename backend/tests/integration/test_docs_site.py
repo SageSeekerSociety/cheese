@@ -25,6 +25,7 @@ from app.domain.docs_site import access, assistant, retrieval
 from app.domain.docs_site.limits import AskLimits
 from app.domain.docs_site.models import DocsQuestion, ServiceCredential
 from app.domain.feature_stats import pricing
+from app.domain.team.models import Team
 from app.domain.usage.models import ComputeGrant, ResourceUsage
 from tests.conftest import seed_user
 from tests.integration.conftest import session_auth_headers
@@ -430,13 +431,24 @@ def test_a_question_the_docs_do_not_cover_is_refused_without_reading_anything(
 def _ledger(client) -> tuple[list[ComputeGrant], list[ResourceUsage]]:
     async def read():
         async with client.test_factory() as s:
+            # A person's credits are packs on their personal team.
             grants = (
                 await s.execute(
-                    select(ComputeGrant).where(ComputeGrant.user_id.is_not(None))
+                    select(ComputeGrant)
+                    .join(Team, Team.id == ComputeGrant.team_id)
+                    .where(Team.personal_owner_user_id.is_not(None))
                 )
             ).scalars()
             usage = (await s.execute(select(ResourceUsage))).scalars()
             return list(grants), list(usage)
+
+    return asyncio.run(read())
+
+
+def _personal_team_owner(client, team_id: int) -> int | None:
+    async def read():
+        async with client.test_factory() as s:
+            return (await s.get(Team, team_id)).personal_owner_user_id
 
     return asyncio.run(read())
 
@@ -466,7 +478,8 @@ def test_a_question_is_paid_for_by_the_asker_at_the_models_price(
     assert grant.credits_used == pytest.approx(cost / settings.llm_gateway_credit_usd)
     assert grant.credits_total == settings.personal_credits_monthly
     # Outside any project, against the person who asked.
-    assert spent.project_id is None and spent.user_id == grant.user_id
+    assert spent.project_id is None
+    assert _personal_team_owner(client, grant.team_id) == spent.user_id
     assert (spent.input_tokens, spent.output_tokens) == (300, 20)
     assert spent.cost_usd == pytest.approx(cost)
 

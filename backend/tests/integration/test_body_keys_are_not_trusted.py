@@ -63,13 +63,11 @@ def _team_listing(client, team_id: int, viewer: str) -> list[str]:
 
 def _grants(client, project_id: str) -> list[tuple[int | None, float]]:
     """``(source_task_id, credits_total)`` of every grant on this project."""
-    from app.domain.usage.repositories import ComputeGrantRepository
+    from app.domain.usage.ledger import Ledger
 
     async def _read() -> list[tuple[int | None, float]]:
         async with client.test_factory() as session:  # type: ignore[attr-defined]
-            rows = await ComputeGrantRepository(session).list_for_project(
-                uuid.UUID(project_id)
-            )
+            rows = await Ledger(session).earmarks(uuid.UUID(project_id))
             return [(g.source_task_id, g.credits_total) for g in rows]
 
     return asyncio.run(_read())

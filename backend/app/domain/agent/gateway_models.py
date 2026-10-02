@@ -395,7 +395,7 @@ class GatewayModelsService:
         # 此时 key 上任何 max_budget 都是一次显式的覆盖。
         derived = None
         if not summary["unlimited"] and settings.llm_gateway_credit_usd is not None:
-            derived = summary["credits_total"] * settings.llm_gateway_credit_usd
+            derived = summary["ever_granted"] * settings.llm_gateway_credit_usd
         max_budget = key.max_budget if key else None
         override = (
             max_budget if max_budget is not None and max_budget != derived else None

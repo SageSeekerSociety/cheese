@@ -38,8 +38,9 @@ from app.domain.block.models import Block
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import Topic
 from app.domain.usage.credits import tokens_to_credits
+from app.domain.usage.ledger import Ledger, payer_for_project
 from app.domain.usage.models import IngestCheckpoint
-from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
+from app.domain.usage.repositories import UsageRepository
 from app.domain.usage.tokens import input_output_tokens
 
 logger = logging.getLogger("cheese.usage.ingest")
@@ -208,7 +209,9 @@ async def _land_row(session: AsyncSession, row: dict, work_index: WorkIndex) -> 
         turn_id=await work_index.work_at(session, topic_id, row.get("ts")),
     )
     total = int(row.get("total_tokens") or 0) or (input_tokens + output_tokens)
-    await ComputeGrantRepository(session).consume(project_id, tokens_to_credits(total))
+    await Ledger(session).charge(
+        await payer_for_project(session, project_id), tokens_to_credits(total)
+    )
     return True
 
 

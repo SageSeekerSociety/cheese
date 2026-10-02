@@ -16,7 +16,6 @@ that cannot start one is a refusal rather than a broken stream.
 import logging
 import time
 import uuid
-from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Request
@@ -53,7 +52,7 @@ from app.domain.assistant.keys import person_key
 from app.domain.assistant.prompt import task_brief
 from app.domain.feature_stats import pricing
 from app.domain.task.services import TaskService
-from app.domain.usage.personal import PersonalCredits, Rates
+from app.domain.usage.ledger import Ledger, Rates, payer_for_person
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/assistant", tags=["assistant"])
@@ -210,13 +209,10 @@ async def ask(
     key = await person_key(db, auth.user_id, async_session_factory)
     if rates is None or key is None or not people.available():
         return _refuse(503, "芝士暂未开放，稍后再试。", 60)
-    balance = await PersonalCredits(db).balance(auth.user_id)
+    balance = await Ledger(db).balance(await payer_for_person(db, auth.user_id))
     await db.commit()
-    if balance.credits_remaining <= 0:
-        wait = balance.resets_at - datetime.now(UTC)
-        return _refuse(
-            429, balance.exhausted_message(), max(60, int(wait.total_seconds()))
-        )
+    if balance.exhausted:
+        return _refuse(429, balance.exhausted_message(), balance.retry_after_s())
 
     redis = get_redis_client()
     if redis is None or not await asking.hold(redis, conversation_id):

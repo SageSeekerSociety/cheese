@@ -267,8 +267,9 @@ from app.domain.topic.models import TitleSource, Topic, TopicStatus
 from app.domain.topic.repositories import TopicProgressRepository, TopicRepository
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.credits import usage_to_credits
+from app.domain.usage.ledger import Ledger, payer_for_project
 from app.domain.usage.models import ResourceUsage
-from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
+from app.domain.usage.repositories import UsageRepository
 
 PRIVATE_SKILLS = ["private-chat"]
 
@@ -2667,10 +2668,9 @@ class ChatService(SessionRecovery):
                         route=state.route,
                         turn_id=state.work_id,
                     )
-                    await ComputeGrantRepository(session).consume(
-                        state.project_id,
-                        usage_to_credits(u, spend_priced=state.route == "gateway"),
-                    )
+                    payer = await payer_for_project(session, state.project_id)
+                    credits = usage_to_credits(u, spend_priced=state.route == "gateway")
+                    await Ledger(session).charge(payer, credits)
             # What this session was fed, including by a process that is gone.
             # Settled either way: a failed session must also drop the batches
             # an earlier process fed it, or a later clean Stop would read them

@@ -9,7 +9,6 @@ import logging
 import re
 import time
 import uuid
-from datetime import UTC, datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Request, Response
@@ -35,7 +34,7 @@ from app.domain.docs_site import access, assistant, library, retrieval, tools
 from app.domain.docs_site.limits import AskLimits
 from app.domain.feature_stats import pricing
 from app.domain.topic.services import TopicService
-from app.domain.usage.personal import PersonalCredits, Rates
+from app.domain.usage.ledger import Ledger, Rates, payer_for_person
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/docs", tags=["docs"])
@@ -153,14 +152,11 @@ async def ask(
     if rates is None:
         await limits.release(auth.user_id)
         return _refuse(503, "问芝士暂未开放，稍后再试。", 60)
-    balance = await PersonalCredits(db).balance(auth.user_id)
+    balance = await Ledger(db).balance(await payer_for_person(db, auth.user_id))
     await db.commit()
-    if balance.credits_remaining <= 0:
+    if balance.exhausted:
         await limits.release(auth.user_id)
-        wait = balance.resets_at - datetime.now(UTC)
-        return _refuse(
-            429, balance.exhausted_message(), max(60, int(wait.total_seconds()))
-        )
+        return _refuse(429, balance.exhausted_message(), balance.retry_after_s())
 
     if settings.docs_assistant_agentic:
         result = assistant.Outcome()
@@ -277,8 +273,8 @@ async def _settle(
             # Every round the answer took is one charge; a question that never
             # reached the model costs nothing.
             if result.prompt_tokens is not None:
-                await PersonalCredits(session).charge(
-                    user_id,
+                await Ledger(session).charge_priced(
+                    await payer_for_person(session, user_id),
                     model=settings.docs_assistant_model,
                     rates=rates,
                     input_tokens=result.prompt_tokens,

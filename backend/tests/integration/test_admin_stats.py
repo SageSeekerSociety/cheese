@@ -768,26 +768,19 @@ def test_product_prev_total_counts_cards_decided_in_the_previous_window(
 def test_personal_credits_stay_out_of_the_project_credit_board(
     client, as_admin, monkeypatch
 ):
-    """个人额度不属于任何团队或项目：一个人把这个月的额度用超了，看板的「已耗尽」
-    里不该多出一行团队池，项目额度的燃烧速率也不该算上他花的钱。"""
+    """个人额度是每个人名下团队按月发的方案包：一个人把这个月的额度用超了，看板
+    的「已耗尽」里不该多出一行团队池，项目额度的燃烧速率也不该算上他花的钱。"""
     monkeypatch.setattr(settings, "llm_gateway_credit_usd", 0.01)
     seed_user(client, REPORTER)
 
     async def _seed() -> None:
-        from app.domain.usage.models import ComputeGrant
+        from app.domain.usage.ledger import Ledger, payer_for_person
 
         async with client.test_factory() as s:
             user = (
                 await s.execute(select(User).where(User.username == REPORTER))
             ).scalar_one()
-            s.add(
-                ComputeGrant(
-                    user_id=user.id,
-                    month=_today().date().replace(day=1),
-                    credits_total=200.0,
-                    credits_used=250.0,
-                )
-            )
+            await Ledger(s).charge(await payer_for_person(s, user.id), 250.0)
             s.add(
                 ResourceUsage(
                     project_id=None,

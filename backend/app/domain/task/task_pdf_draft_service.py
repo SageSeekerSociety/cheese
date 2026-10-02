@@ -22,7 +22,7 @@ from app.core.storage import (
 )
 from app.domain.gateway_chat import GatewayCallError, GatewayChat, Usage
 from app.domain.service_keys import KeySpec, service_key
-from app.domain.usage.personal import PersonalCredits, Rates
+from app.domain.usage.ledger import Ledger, Rates, payer_for_person
 
 logger = logging.getLogger(__name__)
 
@@ -119,17 +119,18 @@ class TaskPdfDraftService:
         rates = Rates.of(self.model, self._rate_table)
         if rates is None:
             raise SystemBusyError(_NOT_OPEN)
-        credits = PersonalCredits(db)
-        balance = await credits.balance(user_id)
-        if balance.credits_remaining <= 0:
+        ledger = Ledger(db)
+        payer = await payer_for_person(db, user_id)
+        balance = await ledger.balance(payer)
+        if balance.exhausted:
             raise QuotaExceededError(balance.exhausted_message())
         try:
             yield
         finally:
             spent = self.spent
             if spent.total_tokens:
-                await credits.charge(
-                    user_id,
+                await ledger.charge_priced(
+                    payer,
                     model=self.model,
                     rates=rates,
                     input_tokens=spent.prompt_tokens,

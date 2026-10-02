@@ -17,10 +17,19 @@ from app.domain.doc_ai.services import DocAiService
 from app.domain.doc_ai.worker import run_one
 from app.domain.project.models import Project
 from app.domain.topic.services import TopicService
+from app.domain.usage.ledger import Ledger
 from app.domain.usage.models import ComputeGrant
 from app.domain.usage.repositories import UsageRepository
 from app.domain.user.services import user_by_handle
 from tests.integration.test_living_doc_journal import seed
+
+
+async def _spent_earmark(session, project_id) -> None:
+    """A project whose only credits are earmarked and already spent."""
+    pack = await Ledger(session).grant_earmark(
+        project_id=project_id, source_task_id=None, credits_total=1
+    )
+    pack.credits_used = 1
 
 
 async def pending(factory, *, supply="gateway", empty_budget=False):
@@ -51,9 +60,7 @@ async def pending(factory, *, supply="gateway", empty_budget=False):
             binding=bound,
         )
         if empty_budget:
-            session.add(
-                ComputeGrant(project_id=project.id, credits_total=1, credits_used=1)
-            )
+            await _spent_earmark(session, project.id)
         await session.commit()
         return room, row.id, bound
 
@@ -314,11 +321,7 @@ async def test_key_wait_cannot_bypass_changed_admission_or_lease(
         async def project_gateway_key(self, project_id):
             async with factory() as session:
                 if change == "budget":
-                    session.add(
-                        ComputeGrant(
-                            project_id=project_id, credits_total=1, credits_used=1
-                        )
-                    )
+                    await _spent_earmark(session, project_id)
                 elif change == "cancel":
                     await DocAiService(session).cancel(room, request_id)
                 else:
@@ -431,7 +434,9 @@ async def test_crash_before_settle_and_late_spend_reconcile_without_double_charg
     async with factory() as session:
         row = await DocAiService(session).get(room, request_id)
         pid = row.project_id
-        session.add(ComputeGrant(project_id=pid, credits_total=100, credits_used=0))
+        await Ledger(session).grant_earmark(
+            project_id=pid, source_task_id=None, credits_total=100
+        )
         await session.commit()
     await chat.project_gateway_key(pid)
 

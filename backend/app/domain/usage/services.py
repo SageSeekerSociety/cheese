@@ -17,6 +17,7 @@ from datetime import date, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.usage import ledger
 from app.domain.usage import repositories as repo
 
 
@@ -28,56 +29,23 @@ class UsageService:
     async def project_credits(self, project_id: uuid.UUID) -> dict:
         """一个项目在算力账上的额度：总额 / 已用 / 剩余 / 是不是不限额。
 
-        `compute_grants` 是本领域的一张表，而「这个项目还能花多少」只有它答得出 ——
-        网关那把虚拟 key 上的 `max_budget` 只是这个数的换算结果。管理页要同时看「账
-        上是多少」和「刹车上被设成了多少」，所以这扇门得把它转出去；别处直接摸
-        `ComputeGrantRepository` 就是又开一道口径，两个数哪天漂开时没人说得清哪个对。
+        额度包只有 `usage.ledger` 答得出「这个项目还能花多少」—— 网关那把虚拟 key
+        上的 `max_budget` 只是这个数的换算结果。管理页要同时看「账上是多少」和
+        「刹车上被设成了多少」，所以这扇门得把它转出去。
         """
-        return await repo.ComputeGrantRepository(self._session).summary(project_id)
+        payer = await ledger.payer_for_project(self._session, project_id)
+        return (await ledger.Ledger(self._session).balance(payer)).summary()
 
     async def project_credits_batch(self, projects: list) -> dict[uuid.UUID, dict]:
-        """`project_credits` 的批量版：一批项目 → 各自的额度汇总。
+        """`project_credits` 的批量版：一批项目 → 各自的额度汇总，一条查询取回
+        额度包，再按与逐项目同一条规则（`ledger._applies`）归给各项目。"""
+        payers = await ledger.payers_for_projects(self._session, projects)
+        balances = await ledger.Ledger(self._session).balances(payers)
+        return {key: balance.summary() for key, balance in balances.items()}
 
-        编排两笔批量查询（小队归属一条、grant 一条）再在 Python 里按项目归组，
-        与逐项目的 `summary()` **同一口径**：eligible = 项目 earmark ∪ 本队池
-        （team_id 匹配且 project_id 为 NULL）；一个 grant 都没有 = unlimited。
-        排序不进汇总（`summary` 也不排序），消费顺序是 `consume` 的事。
-
-        逐字段相等性由 `tests/unit/test_credits_batch.py` 钉着：管理页的项目
-        额度表换走这条路之后，数字必须和旧路一个一个对得上。
-        """
-        from app.domain.project.services import ProjectService
-
-        grants_repo = repo.ComputeGrantRepository(self._session)
-        teams = await ProjectService(self._session).teams_for_projects(projects)
-        team_ids = sorted({t for t in teams.values() if t is not None})
-        grants = await grants_repo.list_for_scope([p.id for p in projects], team_ids)
-        by_project: dict[uuid.UUID, list] = {p.id: [] for p in projects}
-        for grant in grants:
-            if grant.project_id is not None:
-                if grant.project_id in by_project:
-                    by_project[grant.project_id].append(grant)
-                continue
-            # 全队池：归属小队匹配的项目都 eligible。
-            for project in projects:
-                if (
-                    grant.project_id is None
-                    and grant.team_id is not None
-                    and teams.get(project.id) == grant.team_id
-                ):
-                    by_project[project.id].append(grant)
-        out: dict[uuid.UUID, dict] = {}
-        for project in projects:
-            eligible = by_project[project.id]
-            total = sum(g.credits_total for g in eligible)
-            used = sum(g.credits_used for g in eligible)
-            out[project.id] = {
-                "unlimited": not eligible,
-                "credits_total": total,
-                "credits_used": used,
-                "credits_remaining": total - used,
-            }
-        return out
+    async def team_packs(self, team_id: int) -> list:
+        """Every live pack a team holds, its project earmarks and member packs too."""
+        return await ledger.Ledger(self._session).team_packs(team_id)
 
     async def platform_totals(self, *, since: datetime, until: datetime) -> dict:
         """窗口内的总量：tokens / calls / cost_usd / unpriced_tokens。

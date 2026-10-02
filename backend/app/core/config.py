@@ -743,9 +743,13 @@ class Settings(BaseSettings):
     # usage is folded into credits and deducted from the project's grants
     # (oldest grant first). Default: 1 credit = 10k tokens.
     compute_credit_tokens: int = 10_000
-    # Credits each person gets every calendar month for the AI they ask for
-    # outside any project (问芝士 on the docs site). Unused credits lapse.
+    # Credits a personal team's plan issues every calendar month; they pay for
+    # the AI its owner asks for, in and out of their own projects. Unused
+    # credits lapse.
     personal_credits_monthly: float = 200.0
+    # Whether a payer holding no credit pack at all may run unmetered. A test
+    # setting: a deployment with a plan for everyone turns it off (#2397).
+    credits_unlimited: bool = True
     # Project-level concurrency ceiling: at most this many agent turns run at
     # once per project; turns beyond it queue (visible as a system event).
     # Overridable per project via project.settings["max_concurrent_turns"].

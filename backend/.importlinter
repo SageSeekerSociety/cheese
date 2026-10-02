@@ -413,8 +413,7 @@ ignore_imports =
     app.domain.usage.credits -> app.domain.agent.platform_notices
     app.domain.usage.repositories -> app.domain.platform_stats.windows
     app.domain.usage.repositories -> app.domain.project.models
-    app.domain.usage.repositories -> app.domain.project.services
-    app.domain.usage.services -> app.domain.project.services
+    app.domain.usage.ledger -> app.domain.project.services
     app.domain.usage.subscription_ingest -> app.domain.project.repositories
     app.domain.usage.subscription_ingest -> app.domain.topic.models
     app.domain.user.realname_services -> app.domain.space.services
