@@ -4,10 +4,13 @@ import type { DocThreadActions, DocThreadState } from '../../../lib/docThreadTyp
 import { onBeforeUnmount, ref, watch } from 'vue'
 
 import { relTime } from '../../../lib/relTime'
+import { plainTokens } from '../../../lib/renderMessage'
 
 import { t } from '@/i18n'
 
 const props = defineProps<{
+  /** handle → 名字：回复里的点名读成名字。 */
+  mentionNames?: Record<string, string>
   id: string
   topic: string | null
   actor: string
@@ -105,7 +108,9 @@ onBeforeUnmount(() => {
         </p>
         <article v-for="reply in state.threads[id].replies" :key="reply.sequence" class="doc-thread-reply">
           <header>{{ reply.comment.author }} · {{ relTime(reply.comment.created_at) }}</header>
-          <p dir="auto">{{ reply.comment.content }}</p>
+          <p dir="auto">
+            {{ plainTokens(reply.comment.content, { mentionNames: mentionNames ?? {}, topicTitles: {} }) }}
+          </p>
         </article>
       </template>
       <button v-else type="button" :disabled="state.busy" @click="act('recover')">

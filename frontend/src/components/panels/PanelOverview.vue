@@ -37,6 +37,8 @@ const props = withDefaults(
     cardFocusBlock?: string | null
     /** 项目 AI 队友的名字，传给文档那一格。 */
     agentName?: string
+    /** 项目 AI 队友的 handle，传给文档那一格。 */
+    agentHandle?: string | null
     /** handle → 名字，给钻进去的那张卡换点名和说话人。 */
     memberNames?: Record<string, string>
   }>(),
@@ -47,6 +49,7 @@ const props = withDefaults(
     openCardId: null,
     cardFocusBlock: null,
     agentName: () => t('work.room.defaultAgentName'),
+    agentHandle: null,
     memberNames: () => ({}),
   }
 )
@@ -118,6 +121,7 @@ defineExpose({
         <PanelDoc
           ref="docRef"
           :agent-name="props.agentName"
+          :agent-handle="props.agentHandle"
           class="panel-overview__doc"
           :topic="props.topic"
           :activity-tick="props.activityTick"

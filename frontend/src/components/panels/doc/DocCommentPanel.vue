@@ -19,6 +19,8 @@ const props = defineProps<{
   anchorNodes: Block[]
   openId: string | null
   quoteState?: (id: string) => 'unique' | 'missing' | 'ambiguous'
+  /** handle → 名字：评论里的点名读成名字。 */
+  mentionNames?: Record<string, string>
 }>()
 const emit = defineEmits<{
   (e: 'update:openId', id: string | null): void
@@ -299,6 +301,7 @@ defineExpose({ open, locate, toggle, close, opened, busy })
           :anchor-nodes="anchorNodes"
           :open-id="openId"
           :quote-state="quoteState"
+          :mention-names="mentionNames"
           @update:open-id="emit('update:openId', $event)"
           @busy="busy = $event"
           @locate-node="emit('locate-node', $event)"

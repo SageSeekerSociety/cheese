@@ -38,10 +38,12 @@ const props = withDefaults(
     topicList?: Topic[]
     /** 项目 AI 队友的名字：文档被它改过时，提示里说的是它，不写死「芝士」。 */
     agentName?: string
+    /** 项目 AI 队友的 handle：评论里 @ 它要写成它的点名，它才收得到。 */
+    agentHandle?: string | null
     /** 画在一整页里，见 PanelDocView。 */
     bare?: boolean
   }>(),
-  { topicList: () => [], agentName: () => t('work.room.defaultAgentName'), bare: false }
+  { topicList: () => [], agentName: () => t('work.room.defaultAgentName'), agentHandle: null, bare: false }
 )
 
 // open-topic (A2): a doc live-ref chip was clicked — the parent navigates to the
@@ -57,7 +59,15 @@ const viewRef = ref<InstanceType<typeof PanelDocView> | null>(null)
 
 const doc = usePanelDoc(props)
 
-const threads = useDocThreads(() => props.topic?.id ?? null)
+const docThreads = useDocThreads(() => props.topic?.id ?? null)
+// 回复里 @ 的 AI 队友，和发评论一样写成点名。
+const threads = {
+  state: docThreads.state,
+  actions: {
+    ...docThreads.actions,
+    reply: (id: string, content: string) => docThreads.actions.reply(id, doc.withMentions(content)),
+  },
+}
 
 // Dev-only probe hook: lets Playwright inspect the live document without
 // guessing at DOM classes (observability rule).
@@ -88,6 +98,7 @@ defineExpose({ pulse, highlightTurn, reviewEdits })
     :activity-tick="props.activityTick"
     :topic-list="props.topicList"
     :agent-name="props.agentName"
+    :agent-handle="props.agentHandle"
     :bare="props.bare"
     :session="doc.session.value"
     :editable="doc.editable.value"

@@ -12,7 +12,7 @@ import type { DocEdit, DocRewriteRequest, DocRewriteResult } from '../../lib/doc
 import type { DocReviewRequest } from '../../lib/docReview'
 import type { DocThreadActions, DocThreadState } from '../../lib/docThreadTypes'
 
-import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 import { useDocReview } from '../../composables/useDocReview'
 import { useDocRewrite } from '../../composables/useDocRewrite'
@@ -37,6 +37,8 @@ const props = withDefaults(
     activityTick: number
     /** 项目 AI 队友的名字。 */
     agentName?: string
+    /** 项目 AI 队友的 handle：评论里点它的名写成它的名字。 */
+    agentHandle?: string | null
     /** 项目话题表：正文里的支线徽章、`<#id>` chip 都靠它认名字与状态。 */
     topicList?: Topic[]
     /** 画在一整页里（项目文档的章程）：页头已经说了这是什么，不再画大标题和总览自动区。 */
@@ -83,6 +85,7 @@ const props = withDefaults(
   }>(),
   {
     agentName: () => t('work.room.defaultAgentName'),
+    agentHandle: null,
     topicList: () => [],
     bare: false,
     commentAuthor: '',
@@ -146,6 +149,11 @@ function openComment(payload: { anchorId: string | null; quote: string; ask: boo
   const { anchorId, quote } = payload
   commentsRef.value?.open({ anchorId, quote }, payload.ask ? `@${props.agentName} ` : undefined)
 }
+
+// 评论里的点名（`<@handle>`）读成名字。
+const mentionNames = computed<Record<string, string>>(() =>
+  props.agentHandle ? { [props.agentHandle]: props.agentName } : {}
+)
 
 const rewrite = useDocRewrite({
   editor: () => surfaceRef.value?.editor ?? null,
@@ -292,6 +300,7 @@ defineExpose({
           :comments="comments"
           :anchor-nodes="anchorNodes"
           :quote-state="quoteState"
+          :mention-names="mentionNames"
           @locate-node="highlightNode"
           @posted="refreshComments"
         >

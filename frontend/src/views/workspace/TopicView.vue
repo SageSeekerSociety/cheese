@@ -399,6 +399,7 @@ void openPlace()
           ref="panelRef"
           :submit-question="submitQuestion"
           :agent-name="store.agentName"
+          :agent-handle="store.agentHandle"
           :activity="activity"
           class="col col-doc"
           :style="{ flex: '1 1 0', minWidth: 0 }"

@@ -10,6 +10,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useDocCommentDraft } from '../../../composables/useDocCommentDraft'
 import { isAgentHandle } from '../../../lib/authorship'
 import { relTime } from '../../../lib/relTime'
+import { plainTokens } from '../../../lib/renderMessage'
 import CheeseAvatar from '../../CheeseAvatar.vue'
 
 import DocCommentBody from './DocCommentBody.vue'
@@ -28,7 +29,14 @@ const props = defineProps<{
   anchorNodes: Block[]
   openId?: string | null
   quoteState?: (id: string) => 'unique' | 'missing' | 'ambiguous'
+  /** handle → 名字：评论里的点名读成名字。 */
+  mentionNames?: Record<string, string>
 }>()
+
+/** 评论正文读出来的样子：点名写成名字。 */
+function readable(content: string): string {
+  return plainTokens(content, { mentionNames: props.mentionNames ?? {}, topicTitles: {} })
+}
 
 const emit = defineEmits<{
   /** A quote chip was clicked: scroll to and flash that paragraph. */
@@ -331,7 +339,7 @@ defineExpose({ open, locate })
                 c.anchor_quote
               }}</span>
               <span v-if="activeId() !== c.id" class="doc-comments__text" :data-comment-body="c.id" dir="auto">{{
-                c.content
+                readable(c.content)
               }}</span>
             </span>
             <v-icon v-if="activeId() !== c.id" size="16" class="doc-comments__chevron">mdi-chevron-right</v-icon>
@@ -344,6 +352,7 @@ defineExpose({ open, locate })
               :actor="author ?? ''"
               :state="threadState"
               :actions="threadActions"
+              :mention-names="mentionNames"
             >
               <DocCommentBody
                 :comment="c"
@@ -351,6 +360,7 @@ defineExpose({ open, locate })
                 :quote-status="quoteStatus(c)"
                 :expanded="expanded.has(c.id)"
                 :overflowing="overflowing.has(c.id)"
+                :mention-names="mentionNames"
                 @locate="locateAnchor(c)"
                 @expand="expandBody(c.id)"
               />
@@ -362,6 +372,7 @@ defineExpose({ open, locate })
               :quote-status="quoteStatus(c)"
               :expanded="expanded.has(c.id)"
               :overflowing="overflowing.has(c.id)"
+              :mention-names="mentionNames"
               @locate="locateAnchor(c)"
               @expand="expandBody(c.id)"
             />

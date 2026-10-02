@@ -15,6 +15,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { addComment, getComments, getDocNodes, workspaceFileRawUrl } from '../api'
 import { applyDocEdits, getPendingSuggestions, rewriteDocSelection } from '../api/docEdits'
+import { expandMentions } from '../lib/expandMentions'
 import { myHandle } from '../me'
 
 import { useDocCollab } from './useDocCollab'
@@ -28,6 +29,8 @@ export interface PanelDocProps {
   topicList?: Topic[]
   /** 项目 AI 队友的名字。 */
   agentName?: string
+  /** 项目 AI 队友的 handle。 */
+  agentHandle?: string | null
 }
 
 /** 「文档」这一格的全部取数：状态进、动作出，一个 DOM 都不碰。 */
@@ -118,6 +121,12 @@ export function usePanelDoc(props: PanelDocProps) {
   async function refreshComments() {
     const tid = props.topic?.id
     if (tid) await loadComments(tid).catch(() => {})
+  }
+
+  /** 评论里写的「@名字」换成点名（和对话框发消息一样）：AI 队友只认点名，写成字它收不到。 */
+  function withMentions(content: string): string {
+    const handle = props.agentHandle
+    return handle ? expandMentions(content, [{ handle, label: props.agentName }]) : content
   }
 
   /** 当场要说的失败（目前只有复制代码失败）；null = 把它关掉。 */
@@ -218,7 +227,8 @@ export function usePanelDoc(props: PanelDocProps) {
     refreshComments,
     commentAuthor: AUTHOR,
     sendComment: (topicId: string, content: string, anchor?: string, quote?: string) =>
-      addComment(topicId, content, anchor, quote),
+      addComment(topicId, withMentions(content), anchor, quote),
+    withMentions,
     toggleEditable,
     setError,
     fetchDocNodes,
