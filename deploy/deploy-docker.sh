@@ -601,7 +601,7 @@ case "$APP_IMAGE_SOURCE" in
     # exist means that; any other failure is a failed pull like the two above.
     collab_ref="${COLLAB_IMAGE:-ghcr.io/sageseekersociety/cheese/collab:$IMAGE_TAG}"
     if collab_err="$(docker manifest inspect "$collab_ref" 2>&1 >/dev/null)" \
-      || { [[ "$collab_err" != *"no such manifest"* ]] && [[ "$collab_err" != *"not found"* ]]; }; then
+      || [[ ! "${collab_err,,}" =~ manifest\ unknown|no\ such\ manifest|not\ found ]]; then
       retry_pull "collab pull" dc pull collab
       COLLAB_EXPECTED=true
     else

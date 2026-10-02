@@ -163,7 +163,7 @@ fi
 
 if [ "${1:-}" = manifest ] && [ "${2:-}" = inspect ]; then
   if [ "$scenario" = collab_unreleased ] && [[ "${3:-}" == */collab:* ]]; then
-    echo "no such manifest: ${3:-}" >&2
+    echo "manifest unknown: manifest unknown" >&2
     exit 1
   fi
   exit 0
