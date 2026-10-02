@@ -12,7 +12,7 @@ import contextlib
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import or_, select, true, update
 from sqlalchemy.dialects.postgresql import insert
 
 from app.core.errors import ValidationError
@@ -123,7 +123,9 @@ async def dispatch_pending(sessions, *, chat, runner, limit=100, delivery_ids=No
                         Delivery.agent_instance_id.is_not(None),
                         Delivery.task_id.is_not(None),
                     ),
-                    Delivery.id.in_(delivery_ids) if delivery_ids is not None else True,
+                    Delivery.id.in_(delivery_ids)
+                    if delivery_ids is not None
+                    else true(),
                     Delivery.sent_at.is_(None),
                     Delivery.state.in_(("pending", "claimed", "sending")),
                     or_(Delivery.lease_until.is_(None), Delivery.lease_until <= stamp),

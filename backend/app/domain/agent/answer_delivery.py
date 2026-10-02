@@ -28,7 +28,11 @@ async def run_with_answer_offer(
         async with chat.session_factory() as session:
             delivery = await session.get(Delivery, delivery_id)
             is_answer = delivery is not None and "answer_to" in delivery.payload
-            instance_id = delivery.agent_instance_id if is_answer else None
+            instance_id = (
+                delivery.agent_instance_id
+                if delivery is not None and is_answer
+                else None
+            )
         if is_answer:
             seat = await chat._turn_seat_handle(
                 topic_id, recipient_instance_id=instance_id

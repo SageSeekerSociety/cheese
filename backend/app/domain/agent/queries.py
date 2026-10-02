@@ -120,6 +120,8 @@ async def session_agent_in_room(
     if topic is None:
         return None
     project = await ProjectRepository(session).get(topic.project_id)
+    if project is None:
+        raise NotFoundError("Project not found")
     return await _session_agent(AgentInstanceService(session), topic, project, handle)
 
 

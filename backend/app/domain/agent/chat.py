@@ -4498,7 +4498,9 @@ class ChatService(SessionRecovery):
             held_block_ids=tuple(consumed_ids),
             # Initial prompt consumption remains tied to the clean turn ending;
             # native echo settles the delivery and its summoning read marker.
-            seen_block_ids=(user_block_id,) if summoned else (),
+            seen_block_ids=(user_block_id,)
+            if user_block_id is not None and summoned
+            else (),
             seen_by=acting_agent if summoned else None,
             delivery_id=delivery_id,
             attempt_id=turn_id if delivery_id is not None else None,

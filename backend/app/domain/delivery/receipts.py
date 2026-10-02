@@ -9,7 +9,7 @@ import uuid
 from dataclasses import replace
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, true
 from sqlalchemy.dialects.postgresql import insert
 
 from app.core.errors import ValidationError
@@ -423,7 +423,7 @@ async def held_blocks(
                 NativeInput.recipient_handle == recipient_handle,
                 NativeInput.id != exclude_input_id
                 if exclude_input_id is not None
-                else True,
+                else true(),
             )
         )
     ).all()
@@ -461,7 +461,9 @@ async def complete_work_inputs(
                 NativeInput.harness == harness,
                 NativeInput.native_session_id == native_session_id,
                 NativeInput.execution_work_id == work_id,
-                NativeInput.input_id.in_(input_ids) if input_ids is not None else True,
+                NativeInput.input_id.in_(input_ids)
+                if input_ids is not None
+                else true(),
             )
             .order_by(NativeInput.id)
             .with_for_update()

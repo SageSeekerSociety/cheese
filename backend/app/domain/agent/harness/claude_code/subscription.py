@@ -103,6 +103,7 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
                     continue
                 if not echoes:
                     continue
+                assert self.session_id is not None
                 if self.receipts is None or self.completions is None:
                     raise RuntimeError("Historical settlement consumers are not bound")
                 completion = WorkCompletion(
@@ -196,6 +197,7 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
         )
         if not echoes:
             return None
+        assert self.session_id is not None
         if self.receipts is None or self.completions is None:
             raise RuntimeError("Legacy settlement consumers are not bound")
         for echo in echoes:

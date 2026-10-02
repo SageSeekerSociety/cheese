@@ -206,7 +206,7 @@ async def settle_ask_group(
             "block_ids": [str(row.id) for row in rows],
         },
     )
-    meta = {
+    meta: dict = {
         "answer_group": group_id,
         "answer_to": str(rows[0].id),
         "delivery_event_id": str(event_id),

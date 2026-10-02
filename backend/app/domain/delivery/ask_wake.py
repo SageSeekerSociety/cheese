@@ -51,7 +51,7 @@ async def single_answer_wake(
         await instance_for_seat(session, project_id, seat) if seat is not None else None
     )
     event_id = event_id_for(NotificationType.MENTION, f"{block_id}:{entry['v']}")
-    meta = {"answer_to": str(block_id), "delivery_event_id": str(event_id)}
+    meta: dict = {"answer_to": str(block_id), "delivery_event_id": str(event_id)}
     if instance is not None:
         meta["agent_recipient"] = {
             "instance_id": str(instance.id),

@@ -327,6 +327,7 @@ class Subscription[B: Backlog]:
             try:
                 while page := await self.on_disk(reader.unread):
                     for entry in page:
+                        assert isinstance(entry.record, dict)
                         receipt = self.receipt(entry.record)
                         if receipt is not None:
                             # Settlement is never subject to output-age or poison
