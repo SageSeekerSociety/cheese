@@ -16,8 +16,10 @@ from sqlalchemy import select
 from app.api.deps import get_chat_service
 from app.core.config import settings
 from app.domain.agent.chat import ChatService
+from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.models import AgentTurn
 from app.domain.block.models import Block
+from app.domain.delivery.input_identity import InputIdentity, InputReceipt
 from app.main import app
 from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.conftest import wait_work_idle as _wait_work_idle
@@ -122,12 +124,25 @@ def test_an_input_counts_as_received_only_once_the_session_echoes_it(
     """The build taking an input off its queue is not the build having it: only
     the echo of that exact input (``isReplay``) is the receipt."""
     chat = client.app.dependency_overrides[get_chat_service]()
-    receipts: list[str] = []
+    receipts: list[InputReceipt] = []
     original = chat.confirm_prompt_receipt
 
-    async def observe(topic_id, prompt):
-        receipts.append(prompt)
-        await original(topic_id, prompt)
+    async def observe(receipt: InputReceipt):
+        await original(receipt)
+        if receipt.evidence == "native_echo":
+            session = stub_hooks._session_for(receipt.identity.topic_id)
+            input_id = uuid.UUID(taken[0])
+            assert receipt.identity == InputIdentity(
+                session.project_id,
+                session.topic_id,
+                session.actor,
+                CLAUDE_CODE,
+                session.session_id,
+                input_id,
+                input_id,
+            )
+            assert receipt.execution_work_id == uuid.UUID(session.work)
+            receipts.append(receipt)
 
     chat._compute.bind_receipts(observe)
     taken: list[str] = []
