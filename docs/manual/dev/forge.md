@@ -7,6 +7,8 @@ covers:
   - backend/app/domain/project/forge.py
   - backend/app/domain/repository/
   - backend/app/domain/agent/github_app.py
+  - backend/app/core/forge_quota.py
+  - backend/app/domain/review/events.py
   - backend/app/domain/agent/forge_cli.py
   - backend/app/forge_events_app.py
   - backend/app/domain/review/pr_poll.py
@@ -64,7 +66,8 @@ webhook 打不到部署上（部署常常在客户网络里），所以有一个
 - 请求体上限 5 MiB；签名校验按来源分：Forgejo 看 `x-forgejo-signature`，GitHub 看 `x-hub-signature-256`（前缀必须是 `sha256=`），比对用 `hmac.compare_digest`。
 - GitHub 那条（`/forge/events/github-app`）投给谁由两件事决定：安装 id → 部署的静态授权表（`forge_event_github_installations`），以及各部署**动态订阅**的 `(installation_id, repo)`。动态订阅靠 App 签名的一份 assertion（每分钟重报一次，见 `review/events.py` 的 `register_subscriptions`）。
 - Forgejo 那条按部署分别校验（`/forge/events/{deployment}/{project_id}`，密钥是部署密钥与 project id 派生的 `project_secret`）。
-- 一个部署断线或忙，中继回 503（**不静默丢弃**）：出问题比丢事件好。部署侧 `events.listen` 收到断线就 10 秒后重连，**重连后立刻**跑一次 `open_draft_prs` + `poll_open_prs`，把断开期间丢的事件补回来。
+- 一个部署断线或忙，中继回 503（**不静默丢弃**）：出问题比丢事件好。部署侧 `events.listen` 收到断线就 10 秒后重连，**重连后立刻**排一次全量的 `open_draft_prs` + `poll_open_prs`，把断开期间丢的事件补回来。
+- 部署侧收到的事件不在读 socket 的循环里处理，而是交给旁边一个刷新队列（`events._Refreshes`）：同一个仓库最多排一次，正在刷新时又来的事件只让它刷完后再刷一次。一个忙的仓库一分钟能来十几个事件（推送、检查、评审），每个都刷一遍就是背靠背地扫，安装的额度很快见底；而读循环卡在刷新上，中继的心跳就会超时断线，每次重连又是一次全量。
 - Forgejo 的 webhook 由平台自己维护（`ensure_repository_webhook`）：要 `push`、`pull_request`、`action_run_failure`、`action_run_recover`、`action_run_success` 五个事件，重建时**先建新的再删旧的**（Forgejo 15 的 PATCH 会忽略 Actions 事件字段），留着旧的会让投递断掉。这条维护还会定期对账（`reconcile_repository_webhooks`）。
 
 ## 没有 webhook 时靠轮询 {#poll}
@@ -73,9 +76,12 @@ webhook 打不到部署上（部署常常在客户网络里），所以有一个
 
 - 一跳一条遍历在飞的卡（每张卡一个事务，一张卡的失败不回滚别人）。
 - 网络抖动**不算新闻**：同一张卡连续丢掉 `TRANSIENT_MISSES_BEFORE_ERROR`（3）跳才算错误——下一跳在一分钟后，通常自己就好了。轮询器本身的 bug 不属于这一档，第一次就报。
-- GitHub App 一个安装一小时只有一份 REST 额度，轮询、draft 扫和人递卡、合并都从里面扣。所以轮询和 draft 扫在动手前先问 `GET /rate_limit`（这一问本身不扣额度）：剩下的不到 `KEPT_FOR_PEOPLE`（20%）就这一跳不碰这个项目，留给人的请求，下一跳再看（`background_may_use_forge`）。问不到就照常跑。
+- GitHub App 一个安装一小时只有一份 REST 额度，轮询、draft 扫和人递卡、合并都从里面扣。所以轮询和 draft 扫在动手前先问一句（`background_may_use_forge`）：剩下的不到 `KEPT_FOR_PEOPLE`（20%）就这一跳不碰这个项目，留给人的请求，下一跳再看。
+  - 先看 GitHub 已经说过的话。每个经 `forge_client` 发出、带着平台签的安装令牌的请求，回来时都会把响应头里的额度（`x-ratelimit-*`）记到 `core/forge_quota.py`；被拒成「额度用完」（403/429 带额度头）就记下 GitHub 给的恢复时间。恢复之前，或者上一次报的余量已经不到 20% 而这一小时还没重置，后台一律不发请求，连 `GET /rate_limit` 都不问。
+  - 没有这样的记录才问 `GET /rate_limit`（这一问不扣额度）。这一问本身被拒成额度用完，也算不能用；问不到别的原因（非 200 时会记一条日志），照常跑，跑出来的拒绝会记下来挡住下一个。
+  - draft 扫在一个项目上碰到额度用完（`ForgeRateLimitedError`），这一趟就不再碰这个项目剩下的任务，只记一行日志。
 - 归档话题上的卡**不在名单里**（`open_pr_card_ids` 就把它们排除了）：继续跟等于拿批准人的 GitHub 凭据去动一件没人再跟的工作。
-- 还有一条单独的扫：还没递卡的任务，如果分支已经有提交，就替它开一个 **draft** PR（`sweep_draft_prs` → `_draft_pr_for_one_task`），每跳最多处理 `UNCARDED_TASKS_PER_TICK`（10）个。
+- 还有一条单独的扫：还没递卡的任务，如果分支已经有提交，就替它开一个 **draft** PR（`sweep_draft_prs` → `_draft_pr_for_one_task`）。每跳最多看 `UNCARDED_TASKS_PER_TICK`（10）个的是另一条：已经有 PR、但没递卡的任务，看它是不是在 GitHub 上被合了（`poll_uncarded_task_prs`）。
 - 一条卡在某个时刻是「已经有人递了卡」的——这个问题的答案比行锁稳定：合并是**先合再写库**的，中间那一瞬 `status` 还是 `open`，而分支已经进了主干；照 `status` 判会开出一个永远合不上的 PR。递了卡的活从那一刻起 PR 就归它（`open_pr_for_card`），所以那条判据（有没有卡）永远不会漂。
 
 ## 平台不为读写源码维护本地仓库 {#no-local-repo}

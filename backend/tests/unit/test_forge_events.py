@@ -438,6 +438,8 @@ async def test_listener_reconciles_on_connect_and_retries_disconnect(monkeypatch
     from app.domain.review import events, pr_poll
 
     poll = AsyncMock()
+    refreshed = asyncio.Event()
+    poll.forge_repository_changed.side_effect = lambda *a, **k: refreshed.set()
     monkeypatch.setattr(pr_poll, "open_draft_prs", poll.open_draft_prs)
     monkeypatch.setattr(pr_poll, "poll_open_prs", poll.poll_open_prs)
     monkeypatch.setattr(
@@ -447,13 +449,21 @@ async def test_listener_reconciles_on_connect_and_retries_disconnect(monkeypatch
     attempts = []
 
     class Socket:
+        def __init__(self):
+            self.sent = False
+
         def __aiter__(self):
             return self
 
         async def __anext__(self):
-            if poll.forge_repository_changed.await_count:
-                raise asyncio.CancelledError
-            return json.dumps({"kind": "forgejo", "repo": "owner/project"})
+            if not self.sent:
+                # After the reconcile, which would otherwise already cover it.
+                while not poll.poll_open_prs.await_count:
+                    await asyncio.sleep(0)
+                self.sent = True
+                return json.dumps({"kind": "forgejo", "repo": "owner/project"})
+            await refreshed.wait()
+            raise asyncio.CancelledError
 
     class Connect:
         async def __aenter__(self):
@@ -468,14 +478,18 @@ async def test_listener_reconciles_on_connect_and_retries_disconnect(monkeypatch
         attempts.append((url, kwargs))
         return Connect()
 
+    async def no_subscriptions(*args):
+        await asyncio.Future()
+
     monkeypatch.setattr(events, "connect", connect)
-    monkeypatch.setattr(events.asyncio, "sleep", AsyncMock())
+    monkeypatch.setattr(events, "register_subscriptions", no_subscriptions)
+    monkeypatch.setattr(events, "RECONNECT_DELAY_S", 0)
     monkeypatch.setattr(
         events.settings, "forge_event_relay_url", "wss://relay.invalid/connect"
     )
     monkeypatch.setattr(events.settings, "forge_event_secret", "deployment-secret")
     with pytest.raises(asyncio.CancelledError):
-        await events.listen(chat, None)
+        await asyncio.wait_for(events.listen(chat, None), 2)
     assert len(attempts) == 2
     assert attempts[1][1]["additional_headers"] == {
         "Authorization": "Bearer deployment-secret"
@@ -485,6 +499,72 @@ async def test_listener_reconciles_on_connect_and_retries_disconnect(monkeypatch
     poll.forge_repository_changed.assert_awaited_once_with(
         chat, kind="forgejo", repo="owner/project"
     )
+
+
+@pytest.mark.anyio
+async def test_events_arriving_during_a_refresh_cost_one_more_refresh(monkeypatch):
+    """A busy repository sends several events a minute. Those that arrive while
+    its refresh runs are all answered by the one refresh after it, and the
+    relay connection keeps being read meanwhile."""
+    from app.domain.review import events, pr_poll
+
+    release = asyncio.Event()
+    refreshes: list[str] = []
+
+    async def refresh(chat, kind, repo, project_id=None):
+        refreshes.append(repo)
+        await release.wait()
+
+    reconciled = AsyncMock()
+    monkeypatch.setattr(pr_poll, "open_draft_prs", AsyncMock())
+    monkeypatch.setattr(pr_poll, "poll_open_prs", reconciled)
+    monkeypatch.setattr(pr_poll, "forge_repository_changed", refresh)
+    burst = [{"kind": "github_app", "repo": "Owner/Busy"}] * 6 + [
+        {"kind": "github_app", "repo": "owner/quiet"}
+    ]
+    drained = asyncio.Event()
+
+    class Socket:
+        def __init__(self):
+            self.queue = list(burst)
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            while not reconciled.await_count:
+                await asyncio.sleep(0)
+            if len(self.queue) < len(burst):
+                # The rest arrive while the first refresh is running.
+                while not refreshes:
+                    await asyncio.sleep(0)
+            if self.queue:
+                return json.dumps(self.queue.pop(0))
+            drained.set()
+            await asyncio.Future()
+
+    class Connect:
+        async def __aenter__(self):
+            return Socket()
+
+        async def __aexit__(self, *args):
+            pass
+
+    async def no_subscriptions(*args):
+        await asyncio.Future()
+
+    monkeypatch.setattr(events, "connect", lambda *a, **k: Connect())
+    monkeypatch.setattr(events, "register_subscriptions", no_subscriptions)
+    listener = asyncio.create_task(events.listen(object(), None))
+    await asyncio.wait_for(drained.wait(), 2)
+    release.set()
+    for _ in range(50):
+        await asyncio.sleep(0)
+    listener.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await listener
+
+    assert sorted(refreshes) == ["Owner/Busy", "Owner/Busy", "owner/quiet"]
 
 
 @pytest.mark.anyio
