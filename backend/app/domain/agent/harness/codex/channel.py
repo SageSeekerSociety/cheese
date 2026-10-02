@@ -132,19 +132,17 @@ class CodexChannel:
                 'wire_api = "responses"\nenv_key = "CHEESE_TOKEN"\n'
                 "requires_openai_auth = false\n[analytics]\nenabled = false\n"
             )
-            result = await self.channel._hub.exec(
-                prepared.device_id,
-                ["python3", "-"],
-                stdin=script(
-                    state=state, config=config, codex_config=codex_config, env=env
-                ),
-                timeout=120,
-            )
-            if result.get("exit") != 0 or result.get("truncated"):
-                raise startup_refused(
-                    result.get("stderr") or "Codex startup failed", harness="Codex"
+            launch = {
+                "state": state,
+                "config": config,
+                "codex_config": codex_config,
+                "env": env,
+            }
+            status = await self._run(prepared.device_id, script(**launch, ship=False))
+            if status.get("runner") == "missing":
+                status = await self._run(
+                    prepared.device_id, script(**launch, ship=True)
                 )
-            status = json.loads(result["stdout"])
             return Handle(
                 session,
                 prepared.device_id,
@@ -154,6 +152,18 @@ class CodexChannel:
                 self._mirror(session, str(prepared.env["CHEESE_RESOURCE_ID"]) + agent),
                 frozenset(status.get("capabilities") or ()),
             )
+
+    async def _run(self, device_id: str, program: str) -> dict:
+        """One launch step on the session host: its answer, or the reason it
+        gave for having none, as the room is told it (`startup_refused`)."""
+        result = await self.channel._hub.exec(
+            device_id, ["python3", "-"], stdin=program, timeout=120
+        )
+        if result.get("exit") != 0 or result.get("truncated"):
+            raise startup_refused(
+                result.get("stderr") or "Codex startup failed", harness="Codex"
+            )
+        return json.loads(result["stdout"])
 
     async def call(self, handle: Handle, method: str, params: dict) -> dict:
         return await self.channel._hub.call_executor(

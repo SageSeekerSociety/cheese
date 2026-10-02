@@ -145,11 +145,13 @@ async def test_standalone_owner_survives_client_disconnect(
         )
     )
     state = home / "runner"
+    artifact = tmp_path / "runner.pyz"
+    artifact.write_bytes(build())
     launch = {
         "state": str(state),
         "config": json.loads(config.read_text()),
         "codex_config": codex_config,
-        "archive": base64.b64encode(build()).decode(),
+        "artifact": str(artifact),
         "env": {"CHEESE_TOKEN": "fixture", "NO_PROXY": "127.0.0.1"},
     }
     process = await asyncio.to_thread(configure, launch)

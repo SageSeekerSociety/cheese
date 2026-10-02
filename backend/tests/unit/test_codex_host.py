@@ -1,6 +1,5 @@
 """Central bootstrap detaches once and does not inherit host credentials."""
 
-import base64
 import io
 import json
 import os
@@ -40,11 +39,13 @@ while True:
     connection.close()
 """,
         )
+    artifact = tmp_path / "runner.pyz"
+    artifact.write_bytes(output.getvalue())
     monkeypatch.setenv("OPENAI_API_KEY", "host-secret")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "host-claude-secret")
     payload = {
         "state": str(state),
-        "archive": base64.b64encode(output.getvalue()).decode(),
+        "artifact": str(artifact),
         "config": {
             "binary": str(binary),
             "opening": {"model": "fixture"},
