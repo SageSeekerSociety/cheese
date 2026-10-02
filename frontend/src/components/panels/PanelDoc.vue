@@ -209,6 +209,7 @@ defineExpose({ pulse, highlightTurn })
     <template #ai>
       <DocAiPanel
         docked
+        :opened="ai.opened.value"
         :cards="ai.cards.value"
         :question="ai.question.value"
         :busy="ai.busy.value"
