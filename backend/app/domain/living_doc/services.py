@@ -200,22 +200,19 @@ class DocumentJournal:
             .order_by(DocumentVersion.version)
             .limit(100)
         )
-        return [
-            {
-                "document_id": str(row.document_id),
-                "version": row.version,
-                "content": row.content,
-                "content_hash": row.content_hash,
-                "previous_version": row.previous_version,
-                "base_version": row.base_version,
-                "actor": row.actor,
-                "requested_by": row.requested_by,
-                "operation_id": str(row.operation_id) if row.operation_id else None,
-                "event_id": str(row.event_id) if row.event_id else None,
-                "created_at": row.created_at.isoformat(),
-            }
-            for row in rows
-        ]
+        return [_version_row(row) for row in rows]
+
+    async def recent(
+        self, room_id: uuid.UUID, *, before: int | None = None, limit: int = 30
+    ) -> list[dict]:
+        """The newest versions first, those below ``before`` when it is given."""
+        query = select(DocumentVersion).where(DocumentVersion.room_id == room_id)
+        if before is not None:
+            query = query.where(DocumentVersion.version < before)
+        rows = await self.session.scalars(
+            query.order_by(DocumentVersion.version.desc()).limit(limit)
+        )
+        return [_version_row(row) for row in rows]
 
     async def state(self, room_id: uuid.UUID) -> bytes | None:
         return await self.session.scalar(
@@ -273,3 +270,19 @@ class DocumentJournal:
             select(DocumentState.suggestions).where(DocumentState.room_id == room_id)
         )
         return list(found or [])
+
+
+def _version_row(row: DocumentVersion) -> dict:
+    return {
+        "document_id": str(row.document_id),
+        "version": row.version,
+        "content": row.content,
+        "content_hash": row.content_hash,
+        "previous_version": row.previous_version,
+        "base_version": row.base_version,
+        "actor": row.actor,
+        "requested_by": row.requested_by,
+        "operation_id": str(row.operation_id) if row.operation_id else None,
+        "event_id": str(row.event_id) if row.event_id else None,
+        "created_at": row.created_at.isoformat(),
+    }

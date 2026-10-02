@@ -725,8 +725,6 @@
       "reload": "刷新",
       "loading": "加载中…",
       "connecting": "连接中…",
-      "offline": "未连接",
-      "offlineHint": "改动会在恢复连接后同步",
       "noEditAccess": "你没有这篇文档的编辑权限",
       "backToEdit": "回到编辑",
       "readOnly": "只读",
@@ -741,18 +739,11 @@
       "copyCode": "复制代码",
       "emptyPlaceholder": "AI 队友会在这里维护文档，你也可以直接编辑",
       "format": {
-        "label": "文档格式",
-        "unavailable": "当前选区不支持此格式",
         "bold": "加粗",
         "italic": "斜体",
         "strike": "删除线",
         "code": "行内代码",
-        "h1": "标题 1",
-        "h2": "标题 2",
-        "bullet": "无序列表",
-        "ordered": "有序列表",
-        "task": "任务列表",
-        "quote": "引用"
+        "highlight": "高亮"
       },
       "slash": {
         "text": "正文",
@@ -776,7 +767,26 @@
       "thisTask": "这件任务",
       "subtopic": "子话题",
       "topic": "话题",
-      "selectionToolbar": "选区操作"
+      "selectionToolbar": "选区操作",
+      "copy": "复制",
+      "blockType": "段落格式",
+      "offlineSync": "没连上，改动会在连上后同步",
+      "lastEdit": "{who} {when}编辑",
+      "history": "修改记录",
+      "exportMarkdown": "导出 Markdown",
+      "suggestionCount": "{n} 处建议",
+      "historyFor": "{requester}让{who}改",
+      "historyCurrent": "当前版本",
+      "historyMore": "更早的版本",
+      "historyEmpty": "暂无修改记录",
+      "historyFailed": "修改记录读取失败",
+      "restore": "恢复到这一版",
+      "restoreFailed": "恢复失败",
+      "close": "关闭",
+      "you": "你",
+      "emptyLineHint": "输入 / 插入内容",
+      "undo": "撤销",
+      "redo": "重做"
     },
     "comments": {
       "comment": "评论",
@@ -943,10 +953,8 @@
       "separator": " · "
     },
     "docEdit": {
-      "ask": "问{agent}",
-      "rewrite": "让{agent}改",
-      "boxLabel": "让{agent}改选中的文字",
-      "boxPlaceholder": "写下修改要求",
+      "boxLabel": "让{agent}改，或者问它",
+      "boxPlaceholder": "写下要求或问题",
       "boxKeyHint": "Enter 发送，Shift+Enter 换行",
       "preset": {
         "concise": "更简洁",
@@ -967,7 +975,17 @@
       "unmappable": "无法单独修改这段选区，重新选一下",
       "unavailable": "这篇文档暂时无法修改",
       "prev": "上一处",
-      "next": "下一处"
+      "next": "下一处",
+      "thinking": "{agent} 正在看…",
+      "noAnswerYet": "{agent} 还没有回复，回复会出现在评论里",
+      "openThread": "在评论里查看",
+      "dismiss": "收起",
+      "docBoxLabel": "让{agent}改这篇，或者问它",
+      "docPreset": {
+        "conflicts": "找出前后矛盾的地方",
+        "memory": "按项目记忆补全",
+        "structure": "整理结构"
+      }
     },
     "docSuggest": {
       "title": "{agent}的建议",

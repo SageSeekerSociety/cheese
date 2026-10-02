@@ -92,8 +92,8 @@ async function mountDoc(html: string, fetch?: () => Promise<Block[]>, askAgent =
   const surface = ref<InstanceType<typeof DocSurface> | null>(null)
   const nodes = [{ id: 'server-node-0', content: 'document' }] as Block[]
   let data!: ReturnType<typeof usePanelDoc>
-  const captured: { anchorId: string | null; quote: string; ask: boolean }[] = []
-  const rewrites: { from: number; to: number }[] = []
+  const captured: { anchorId: string | null; quote: string }[] = []
+  const asked: { anchorId: string | null; quote: string; from: number; to: number }[] = []
   const located: string[] = []
   const fetchNodes = vi.fn(fetch ?? (async () => nodes))
   const session = localDocSession()
@@ -117,11 +117,10 @@ async function mountDoc(html: string, fetch?: () => Promise<Block[]>, askAgent =
                 commentMarkIndex: data.commentMarkIndex.value,
                 openCommentId: openId.value,
                 agentName: '芝士',
-                canRewrite: true,
-                canAskAgent: askAgent,
-                onOpenComment: (payload: { anchorId: string | null; quote: string; ask: boolean }) =>
-                  captured.push(payload),
-                onRewrite: (range: { from: number; to: number }) => rewrites.push(range),
+                agentHandle: askAgent ? 'cheese' : null,
+                onOpenComment: (payload: { anchorId: string | null; quote: string }) => captured.push(payload),
+                onAgent: (payload: { anchorId: string | null; quote: string; from: number; to: number }) =>
+                  asked.push(payload),
                 onLocateComment: (id: string) => located.push(id),
               }),
             ]),
@@ -142,7 +141,7 @@ async function mountDoc(html: string, fetch?: () => Promise<Block[]>, askAgent =
     right: selectionLeft + 30,
   }))
   await nextTick()
-  return { ...view, ed, surface, topicId, editable, openId, data, nodes, captured, rewrites, located, fetchNodes }
+  return { ...view, ed, surface, topicId, editable, openId, data, nodes, captured, asked, located, fetchNodes }
 }
 function span(ed: Editor, quote: string, occurrence = 0) {
   const spans: { from: number; to: number }[] = []
@@ -193,7 +192,7 @@ describe('production surface comment selections', () => {
     expect(f.ed.state.selection.from).toBe(selected.from)
     expect(f.ed.state.selection.to).toBe(selected.to)
     await fireEvent.click(button)
-    await waitFor(() => expect(f.captured).toEqual([{ anchorId: 'server-node-0', quote: '😀目标', ask: false }]))
+    await waitFor(() => expect(f.captured).toEqual([{ anchorId: 'server-node-0', quote: '😀目标' }]))
     f.data.comments.value = [{ id: 'c1', reply_to: 'server-node-0', anchor_quote: '😀目标' }] as Block[]
     await nextTick()
     expect(marks(f.ed)).toEqual([{ ...selected, text: '😀目标' }])
@@ -216,7 +215,7 @@ describe('production surface comment selections', () => {
     const second = await select(f.ed, '目标', 1)
     expect(second.from).toBeGreaterThan(span(f.ed, '目标', 0).from)
     await fireEvent.click(commentAction())
-    await waitFor(() => expect(f.captured).toEqual([{ anchorId: 'server-node-0', quote: '目标', ask: false }]))
+    await waitFor(() => expect(f.captured).toEqual([{ anchorId: 'server-node-0', quote: '目标' }]))
     f.data.comments.value = [{ id: 'repeat', reply_to: 'server-node-0', anchor_quote: '目标' }] as Block[]
     await nextTick()
     expect(marks(f.ed)).toEqual([])
@@ -227,7 +226,7 @@ describe('production surface comment selections', () => {
     const f = await mountDoc('<p>前 目标 后</p>', async () => [{ id: 'a' }, { id: 'b' }] as Block[])
     await select(f.ed, '目标')
     await fireEvent.click(commentAction())
-    await waitFor(() => expect(f.captured).toEqual([{ anchorId: null, quote: '目标', ask: false }]))
+    await waitFor(() => expect(f.captured).toEqual([{ anchorId: null, quote: '目标' }]))
     expect(marks(f.ed)).toEqual([])
   })
 
@@ -238,7 +237,7 @@ describe('production surface comment selections', () => {
     await fireEvent.click(commentAction())
     f.ed.commands.setTextSelection(span(f.ed, '第二段'))
     pending.resolve(f.nodes)
-    await waitFor(() => expect(f.captured).toEqual([{ anchorId: 'server-node-0', quote: '第一段', ask: false }]))
+    await waitFor(() => expect(f.captured).toEqual([{ anchorId: 'server-node-0', quote: '第一段' }]))
   })
 
   it.each(['topic', 'document', 'unmount'] as const)('ignores a late node receipt after %s changes', async (change) => {
@@ -302,7 +301,7 @@ describe('production surface comment selections', () => {
     expect(Number.parseFloat(button.style.left) + 100 + 96).toBeLessThanOrEqual(426)
   })
 
-  it('never offers an empty or readonly selection and removes global listeners', async () => {
+  it('never offers an empty selection, offers no formatting on a read-only one, and removes global listeners', async () => {
     const remove = vi.spyOn(document, 'removeEventListener')
     const f = await mountDoc('<p>原文</p>')
     f.ed.commands.setTextSelection(1)
@@ -310,12 +309,36 @@ describe('production surface comment selections', () => {
     expect(document.querySelector('.doc-comment-cta')).toBeNull()
     f.editable.value = false
     await nextTick()
-    f.ed.commands.setTextSelection(span(f.ed, '原文'))
-    await nextTick()
-    expect(document.querySelector('.doc-comment-cta')).toBeNull()
+    await select(f.ed, '原文')
+    expect(commentAction()).toBeTruthy()
+    expect(screen.queryByRole('button', { name: t('work.room.doc.format.bold') })).toBeNull()
+    expect(screen.getByRole('button', { name: t('work.room.doc.copy') })).toBeTruthy()
     f.unmount()
     expect(remove).toHaveBeenCalledWith('scroll', expect.any(Function), true)
     expect(remove).toHaveBeenCalledWith('keydown', expect.any(Function), true)
+  })
+
+  it('formats exactly the selection and stays over it', async () => {
+    const f = await mountDoc('<p>数据量到一千万行时开始评估。</p>')
+    await select(f.ed, '一千万')
+    await fireEvent.click(screen.getByRole('button', { name: t('work.room.doc.format.bold') }))
+    expect(f.ed.getHTML()).toContain('数据量到<strong>一千万</strong>行')
+    await nextTick()
+    expect(document.querySelector('.doc-comment-cta')).not.toBeNull()
+    await fireEvent.click(screen.getByRole('button', { name: t('work.room.doc.format.highlight') }))
+    expect(f.ed.getHTML()).toContain('<mark>一千万</mark>')
+  })
+
+  it('changes the paragraph style only for a selection inside one paragraph', async () => {
+    const f = await mountDoc('<p>第一段文字</p><p>第二段文字</p>')
+    await select(f.ed, '一段')
+    await fireEvent.click(screen.getByRole('button', { name: t('work.room.doc.blockType') }))
+    await fireEvent.click(screen.getByRole('menuitemradio', { name: new RegExp(t('work.room.doc.slash.h2')) }))
+    expect(f.ed.getHTML()).toBe('<h2>第一段文字</h2><p>第二段文字</p>')
+
+    f.ed.commands.setTextSelection({ from: span(f.ed, '一段').from, to: span(f.ed, '第二').to })
+    await nextTick()
+    expect(screen.queryByRole('button', { name: t('work.room.doc.blockType') })).toBeNull()
   })
 
   it('keeps mapped identity across a new top-level block and hides a newly ambiguous quote', async () => {
@@ -349,30 +372,24 @@ describe('production surface comment selections', () => {
 })
 
 describe('asking the AI teammate from a selection', () => {
-  it('opens a comment on the selection that asks it', async () => {
-    const f = await mountDoc('<p>数据量到一千万行时开始评估。</p>')
-    await select(f.ed, '一千万')
-    await fireEvent.click(screen.getByRole('button', { name: t('work.room.docEdit.ask', { agent: '芝士' }) }))
-    await waitFor(() => expect(f.captured).toEqual([{ anchorId: 'server-node-0', quote: '一千万', ask: true }]))
-  })
-
-  it('asks it to rewrite exactly the selected text', async () => {
+  it('hands it the selected text, where it is, and what it is anchored to', async () => {
     const f = await mountDoc('<p>数据量到一千万行时开始评估。</p>')
     const selected = await select(f.ed, '一千万')
-    await fireEvent.click(screen.getByRole('button', { name: t('work.room.docEdit.rewrite', { agent: '芝士' }) }))
-    expect(f.rewrites).toEqual([selected])
+    await fireEvent.click(screen.getByRole('button', { name: '芝士' }))
+    await waitFor(() => expect(f.asked).toEqual([{ anchorId: 'server-node-0', quote: '一千万', ...selected }]))
   })
 
-  it('does not offer a rewrite for a selection across two paragraphs', async () => {
-    const f = await mountDoc('<p>第一段文字</p><p>第二段文字</p>')
-    f.ed.commands.setTextSelection({ from: span(f.ed, '一段').from, to: span(f.ed, '第二').to })
-    await waitFor(() => expect(document.querySelector('.doc-comment-cta')).not.toBeNull())
-    expect(screen.queryByRole('button', { name: t('work.room.docEdit.rewrite', { agent: '芝士' }) })).toBeNull()
+  it('is offered on a read-only document too', async () => {
+    const f = await mountDoc('<p>数据量到一千万行时开始评估。</p>')
+    f.editable.value = false
+    await nextTick()
+    await select(f.ed, '一千万')
+    expect(screen.getByRole('button', { name: '芝士' })).toBeTruthy()
   })
 
-  it('does not offer asking it when the teammate cannot be named', async () => {
+  it('is not offered when the teammate cannot be named', async () => {
     const f = await mountDoc('<p>数据量到一千万行时开始评估。</p>', undefined, false)
     await select(f.ed, '一千万')
-    expect(screen.queryByRole('button', { name: t('work.room.docEdit.ask', { agent: '芝士' }) })).toBeNull()
+    expect(screen.queryByRole('button', { name: '芝士' })).toBeNull()
   })
 })

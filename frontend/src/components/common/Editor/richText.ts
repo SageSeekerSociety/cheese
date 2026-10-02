@@ -65,8 +65,9 @@ const LegacyHighlight = Highlight.extend({
 export function richTextExtensions(): AnyExtension[] {
   return [
     // 实况文档的 `image` 节点按地址引外链图；这几处的图一律是附件（下面的 attachmentImage），
-    // 粘贴进来的外链图原先也不收，这里照旧。
-    ...docExtensions({ standalone: true }).filter((extension) => extension.name !== 'image'),
+    // 粘贴进来的外链图原先也不收，这里照旧。高亮这几处有自己的一份（带颜色，下面的
+    // LegacyHighlight）。
+    ...docExtensions({ standalone: true }).filter((extension) => !['image', 'highlight'].includes(extension.name)),
     TextAlign.configure({ types: ['heading', 'paragraph'] }),
     TextStyle,
     Color,

@@ -16,6 +16,11 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 const getComments = vi.fn()
 const getDocNodes = vi.fn()
 
+// The document's version history: the last edit is read on open; none here.
+vi.mock('../../api/docHistory', () => ({
+  getDocVersions: async () => ({ versions: [], cursor: null }),
+  restoreDocVersion: async () => ({}),
+}))
 vi.mock('../../composables/useDocCollab', async () => ({
   useDocCollab: (await import('../../test/fakeDocCollab')).useFakeDocCollab,
 }))
