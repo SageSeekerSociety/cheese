@@ -2,13 +2,19 @@
 
 `GET /topics` and the board ask, for every room or task of a project at once,
 which stop on an open question, which wait on a failed turn, which on a
-machine. Each looks for a few hundred rows in a table of every block on the
-platform, so each has a partial index on its own predicate — and a partial
-index is only used when the query's WHERE reads exactly like the index's. The
-answers come out the same either way, so the only place a broken match shows is
-the plan. These pin both halves: the answers, and the index behind each.
+machine; every turn starts by finding its room's newest cloud-provisioning
+event. Each looks for a few rows in a table of every block on the platform, so
+each has a partial index on its own predicate — and a partial index is only
+used when the query's WHERE reads exactly like the index's. The answers come
+out the same either way, so the only place a broken match shows is the plan.
+These pin both halves: the answers, and the index behind each.
 
-The indexes are built by a migration that spells their predicates out again;
+The plan checked is the generic one, because that is the plan a statement
+cached by asyncpg runs on after its first few executions; an EXPLAIN with the
+values bound plans like those first few, and can show the index used for a
+filter that binds its key (`Block.meta[...].as_string()`).
+
+The indexes are built by migrations that spell their predicates out again;
 the first test fails when that copy and the code's drift apart.
 """
 
@@ -26,10 +32,12 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.block.waits import MemberWaits
 from app.domain.project.models import Project
 from app.domain.room_task.models import Task
+from app.domain.room_task.repositories import TaskRepository
 from app.domain.topic.models import Topic, TopicKind
 from tests.integration.conftest import a_team
 
 INDEXES = {
+    "ix_blocks_cloud_provisioning",
     "ix_blocks_task_questions",
     "ix_blocks_room_questions",
     "ix_blocks_machine_events",
@@ -85,7 +93,7 @@ async def _seed(session) -> dict[str, object]:
     await session.flush()
     tasks = {
         name: Task(project_id=project.id, room_id=rooms["quiet"].id, title=name)
-        for name in ("asks", "answered", "quiet")
+        for name in ("asks", "answered", "quiet", "silent")
     }
     session.add_all(tasks.values())
     await session.flush()
@@ -145,6 +153,13 @@ async def _seed(session) -> dict[str, object]:
                 meta={"event_type": "device_waiting"},
                 ago=hour,
             ),
+            block(
+                "quiet",
+                kind=BlockKind.event,
+                by="platform",
+                meta={"event_type": "cloud_provisioning"},
+                ago=hour,
+            ),
         ]
     )
     await session.flush()
@@ -169,6 +184,26 @@ async def _seed(session) -> dict[str, object]:
     )
     await session.execute(text("ANALYZE blocks"))
     return {"now": now, "rooms": rooms, "tasks": tasks}
+
+
+def _literal(value: object) -> str:
+    if value is None:
+        return "NULL"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+async def _generic_plan(conn, name: str, sql: str, params) -> str:
+    """The plan PostgreSQL gives `sql` when it plans it without its values."""
+    await conn.exec_driver_sql(f"PREPARE {name} AS {sql}")
+    await conn.exec_driver_sql("SET LOCAL plan_cache_mode = force_generic_plan")
+    args = ", ".join(_literal(value) for value in params)
+    rows = (await conn.exec_driver_sql(f"EXPLAIN EXECUTE {name}({args})")).all()
+    await conn.exec_driver_sql(f"DEALLOCATE {name}")
+    return "\n".join(row[0] for row in rows)
 
 
 @contextmanager
@@ -206,6 +241,7 @@ async def test_questions_and_waits_come_back_and_each_read_uses_its_index(
                 [task.id for task in tasks.values()]
             )
             waits = await MemberWaits(session).for_rooms(room_ids, now=seeded["now"])
+            history = await BlockRepository(session).turn_history(rooms["quiet"].id)
 
         assert asked_rooms == {rooms["asks"].id: "u1"}
         assert asked_tasks == {tasks["asks"].id: "u1"}
@@ -213,6 +249,7 @@ async def test_questions_and_waits_come_back_and_each_read_uses_its_index(
             rooms["failed"].id: ["failed"],
             rooms["machine"].id: ["device_waiting"],
         }
+        assert "cloud_provisioning" in [b.meta.get("event_type") for b in history]
 
         expected = {
             "ix_blocks_room_questions": lambda sql: (
@@ -223,6 +260,7 @@ async def test_questions_and_waits_come_back_and_each_read_uses_its_index(
             ),
             "ix_blocks_machine_events": lambda sql: "'device_waiting'" in sql,
             "ix_blocks_failed_turns": lambda sql: "'severity') = 'error'" in sql,
+            "ix_blocks_cloud_provisioning": lambda sql: "cloud_provisioning" in sql,
         }
         conn = await session.connection()
         for index, picks in expected.items():
@@ -231,9 +269,20 @@ async def test_questions_and_waits_come_back_and_each_read_uses_its_index(
             found = [(sql, params) for sql, params in seen if picks(f"{sql} {params}")]
             assert len(found) == 1, f"expected one query for {index}, got {found}"
             sql, params = found[0]
-            plan = "\n".join(
-                row[0]
-                for row in (await conn.exec_driver_sql("EXPLAIN " + sql, params)).all()
-            )
+            plan = await _generic_plan(conn, f"probe_{index}", sql, params)
             assert index in plan, f"{index} is not used:\n{sql}\n{plan}"
+
+        with statements(session) as seen:
+            beats = await TaskRepository(session).last_block_at_for_tasks(
+                [task.id for task in tasks.values()]
+            )
+        assert set(beats) == {tasks[name].id for name in ("asks", "answered", "quiet")}
+        assert beats[tasks["asks"].id] == seeded["now"] - timedelta(hours=1)
+        # Not a partial index, but the same question of whether the read is
+        # cheap: each task's newest block, read from the end of its run in the
+        # index. A GROUP BY over the tasks' blocks uses this index too, reading
+        # every entry forwards, so the direction is what tells them apart.
+        [(sql, params)] = seen
+        plan = await _generic_plan(conn, "probe_beats", sql, params)
+        assert "Backward using ix_blocks_task_id_created_at" in plan, plan
         await session.rollback()

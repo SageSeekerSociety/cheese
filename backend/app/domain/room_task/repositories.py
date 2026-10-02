@@ -115,22 +115,25 @@ class TaskRepository:
         回答不了「这一轮现在还在动吗」。一轮里每一步都会落 block，这才是持续的
         信号：在这条活自己身上实测，一轮之内 block 间隔中位数 8 秒、p90 34 秒。
 
-        便宜：`ix_blocks_task_id_created_at` 就是为 (task_id, created_at) 建的
-        部分索引，所以这是一次按索引取每组最大值，和侧栏每次都要跑的
-        `last_activity_for_topics` 同一个成本量级。没说过话的活直接不在结果里，
-        由调用方决定它意味着什么 —— 这里不替它编一个时间。
+        每条活单独取一次最大值：PostgreSQL 会把它变成在
+        `ix_blocks_task_id_created_at` 上倒着读一行，所以成本跟着活的条数走，跟
+        这些活说过多少话无关。写成对 block 的一个 GROUP BY 是同一个答案，但没有
+        哪个计划能按组只读最新一行，它就把这些活的每一个 block 都读一遍 —— 在
+        dev 上是一次读全表的并行扫描。没说过话的活直接不在结果里，由调用方决定
+        它意味着什么 —— 这里不替它编一个时间。
 
         放在 task 这边而不是 block 那边：问的是「这条活还活着吗」，主语是活。
         """
         if not task_ids:
             return {}
-        stmt = (
-            select(Block.task_id, func.max(Block.created_at))
-            .where(Block.task_id.in_(task_ids))
-            .group_by(Block.task_id)
+        last = (
+            select(func.max(Block.created_at))
+            .where(Block.task_id == Task.id)
+            .scalar_subquery()
         )
+        stmt = select(Task.id, last).where(Task.id.in_(task_ids))
         rows = (await self._session.execute(stmt)).all()
-        return {task_id: last for task_id, last in rows if task_id is not None}
+        return {task_id: at for task_id, at in rows if at is not None}
 
     async def conversations_for_tasks(
         self, task_ids: list[uuid.UUID]
