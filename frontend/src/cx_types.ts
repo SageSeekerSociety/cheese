@@ -687,8 +687,8 @@ export interface UsageStats {
   total_tokens: number
   cost_usd: number
   turns: number
-  // Tokens that burned real capacity but carry NO USD price (subscription
-  // routing is billed by the month). Non-zero means the cost figure is
+  // Tokens that burned real capacity but carry NO USD price (their model has
+  // no rate in the price table). Non-zero means the cost figure is
   // incomplete — the panel says 未知 rather than printing $0.0000.
   unpriced_tokens: number
 }
@@ -932,7 +932,6 @@ export interface ComputeGrantRow {
 // Shared team grants plus credits restricted to the requesting project.
 export interface ProjectCredits {
   team_id: number | null
-  tokens_per_credit: number
   unlimited: boolean
   credits_total: number
   credits_used: number

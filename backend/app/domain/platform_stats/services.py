@@ -116,7 +116,7 @@ class PlatformStatsService:
             since=since, until=until, limit=TOP_PROJECTS
         )
         # 两个正交的切口：模型回答「贵的是哪个模型」，通路回答「贵的是计费方式还是
-        # 模型」（订阅那一半没有单价，`unpriced_tokens` 的来源就在这条拆分上）。
+        # 模型」（`unpriced_tokens` 来自哪条路，也在这条拆分上看）。
         models = await self._usage.by_model(since=since, until=until, limit=TOP_MODELS)
         routes = await self._usage.by_route(since=since, until=until)
         return {

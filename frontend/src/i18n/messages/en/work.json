@@ -1304,7 +1304,6 @@
     },
     "credits": {
       "title": "Credits",
-      "rate": "1 credit = {n} tokens",
       "none": "No credit information",
       "unlimited": "No credit limit set",
       "remaining": "credits left",

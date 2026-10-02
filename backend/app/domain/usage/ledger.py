@@ -29,7 +29,6 @@ import uuid
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import and_, or_, select, text, update
@@ -38,7 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.domain.block.notice_text import NoticeText, say
-from app.domain.usage.credits import usage_to_credits
+from app.domain.usage.credits import spend_to_credits
 from app.domain.usage.models import ComputeGrant, GrantSource, Plan
 from app.domain.usage.repositories import UsageRepository
 
@@ -75,9 +74,9 @@ class Rates:
         cache_read_tokens: int = 0,
         cache_write_tokens: int = 0,
     ) -> float:
-        """What the gateway bills for a call, the way it bills it:
-        ``input_tokens`` counts every prompt token, cached ones included, and
-        the cached share is billed at its own rate."""
+        """What a call costs at these rates, billed the way the gateway bills
+        it: ``input_tokens`` counts every prompt token, cached ones included,
+        and the cached shares are billed at their own rates."""
         fresh = max(0, input_tokens - cache_read_tokens - cache_write_tokens)
         return (
             fresh * self.input
@@ -499,14 +498,18 @@ class Ledger:
         cost = rates.cost_usd(
             input_tokens, output_tokens, cache_read_tokens, cache_write_tokens
         )
-        return await self.charge_spent(
+        return await self.record(
             payer,
+            credits=spend_to_credits(cost),
             user_id=user_id,
             model=model,
             input_tokens=input_tokens,
+            cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=cache_write_tokens,
             output_tokens=output_tokens,
             cost_usd=cost,
             kind=kind,
+            route="gateway",
         )
 
     async def charge_spent(
@@ -522,12 +525,9 @@ class Ledger:
     ) -> float:
         """Record what the gateway says a call ``user_id`` made outside any
         project spent, and charge it. Returns the credits deducted."""
-        spent = SimpleNamespace(
-            input_tokens=input_tokens, output_tokens=output_tokens, cost_usd=cost_usd
-        )
         return await self.record(
             payer,
-            credits=usage_to_credits(spent, spend_priced=True),
+            credits=spend_to_credits(cost_usd),
             user_id=user_id,
             model=model,
             input_tokens=input_tokens,
@@ -547,6 +547,8 @@ class Ledger:
         output_tokens: int,
         cost_usd: float,
         route: str,
+        cache_read_tokens: int = 0,
+        cache_write_tokens: int = 0,
         kind: str = "chat",
         topic_id: uuid.UUID | None = None,
         turn_id: uuid.UUID | None = None,
@@ -563,6 +565,8 @@ class Ledger:
             topic_id=topic_id,
             model=model,
             input_tokens=input_tokens,
+            cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=cache_write_tokens,
             output_tokens=output_tokens,
             cost_usd=cost_usd,
             kind=kind,

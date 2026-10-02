@@ -2,18 +2,21 @@
 
 The metering proxy appends one JSON line per subscription response; these tests
 drive ``ingest_once`` against a real file and the real DB: rows land once,
-credits burn at the flat token rate over all four buckets, a rotated file
-restarts as a new generation, and unattributable rows are skipped without
-wedging the pass."""
+each priced at its model's rates over all four buckets and charged like a
+gateway call, a rotated file restarts as a new generation, and unattributable
+rows are skipped without wedging the pass."""
 
 import json
 import uuid
 
 import pytest
+from sqlalchemy import select
 
+from app.core.config import settings
+from app.domain.feature_stats import pricing
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
-from app.domain.usage.ledger import Ledger
+from app.domain.usage.ledger import Ledger, Rates, payer_for_person
 from app.domain.usage.models import ResourceUsage
 from app.domain.usage.repositories import UsageRepository
 from app.domain.usage.services import UsageService
@@ -37,7 +40,34 @@ async def _seed(factory, credits: float | None = 100.0):
     return pid, tid
 
 
-def _row(pid, tid, *, inp=100, out=50, cache_read=0, cache_write=0):
+# USD per token: fresh input, output, cache read, cache write.
+OPUS = (5e-6, 25e-6, 5e-7, 6.25e-6)
+HAIKU = (1e-6, 5e-6, 1e-7, 1.25e-6)
+CREDIT_USD = 0.01
+
+
+def _price(monkeypatch, table: dict | None) -> None:
+    """The gateway's price table as the ingest reads it; None = unreachable."""
+
+    async def rates(transport=None):
+        return table
+
+    monkeypatch.setattr(pricing, "model_rates", rates)
+    monkeypatch.setattr(settings, "llm_gateway_credit_usd", CREDIT_USD)
+
+
+async def _rows(factory, pid) -> list[ResourceUsage]:
+    async with factory() as session:
+        return list(
+            await session.scalars(
+                select(ResourceUsage)
+                .where(ResourceUsage.project_id == pid)
+                .order_by(ResourceUsage.total_tokens)
+            )
+        )
+
+
+def _row(pid, tid, *, inp=100, out=50, cache_read=0, cache_write=0, model=None):
     total = inp + out + cache_read + cache_write
     return (
         json.dumps(
@@ -45,7 +75,7 @@ def _row(pid, tid, *, inp=100, out=50, cache_read=0, cache_write=0):
                 "ts": 1786000000.0,
                 "project_id": str(pid),
                 "topic_id": str(tid),
-                "model": "claude-opus-5",
+                "model": model or "claude-opus-5",
                 "input_tokens": inp,
                 "output_tokens": out,
                 "cache_read_input_tokens": cache_read,
@@ -59,28 +89,140 @@ def _row(pid, tid, *, inp=100, out=50, cache_read=0, cache_write=0):
 
 
 @pytest.mark.anyio
-async def test_rows_land_once_with_route_and_credits(
+async def test_a_row_records_all_four_buckets_and_a_cost_once(
     business_db_factory, tmp_path, monkeypatch
 ):
-    from app.core.config import settings
-
-    monkeypatch.setattr(settings, "compute_credit_tokens", 10_000)
+    _price(monkeypatch, {"claude-opus-5": OPUS})
     pid, tid = await _seed(business_db_factory)
     log = tmp_path / "usage.jsonl"
-    log.write_text(_row(pid, tid, inp=100, out=50, cache_read=9850))
+    log.write_text(_row(pid, tid, inp=100, out=50, cache_read=9850, cache_write=40))
 
     first = await ingest_once(business_db_factory, log)
     again = await ingest_once(business_db_factory, log)
 
     assert first == {"landed": 1, "skipped": 0}
     assert again == {"landed": 0, "skipped": 0}  # checkpoint: exactly-once
+    [row] = await _rows(business_db_factory, pid)
+    cost = 100 * OPUS[0] + 50 * OPUS[1] + 9850 * OPUS[2] + 40 * OPUS[3]
+    assert row.route == "subscription"
+    # Input counts every prompt token; the cache shares are kept beside it.
+    assert (row.input_tokens, row.output_tokens) == (9990, 50)
+    assert (row.cache_read_tokens, row.cache_write_tokens) == (9850, 40)
+    assert row.cost_usd == pytest.approx(cost)
+    assert row.credits == pytest.approx(cost / CREDIT_USD)
+    async with business_db_factory() as session:
+        balance = await UsageService(session).project_credits(pid)
+    assert balance["credits_used"] == pytest.approx(cost / CREDIT_USD)
+
+
+@pytest.mark.anyio
+async def test_cache_reads_are_charged_at_the_cache_read_rate(
+    business_db_factory, tmp_path, monkeypatch
+):
+    _price(monkeypatch, {"claude-opus-5": OPUS})
+    pid, tid = await _seed(business_db_factory)
+    log = tmp_path / "usage.jsonl"
+    log.write_text(
+        _row(pid, tid, inp=10_000, out=0)
+        + _row(pid, tid, inp=1, out=0, cache_read=10_000)
+    )
+
+    await ingest_once(business_db_factory, log)
+
+    fresh, cached = await _rows(business_db_factory, pid)
+    assert fresh.credits == pytest.approx(10_000 * OPUS[0] / CREDIT_USD)
+    assert cached.credits == pytest.approx(
+        (1 * OPUS[0] + 10_000 * OPUS[2]) / CREDIT_USD
+    )
+
+
+@pytest.mark.anyio
+async def test_same_tokens_cost_the_same_credits_on_gateway_and_subscription(
+    business_db_factory, tmp_path, monkeypatch
+):
+    _price(monkeypatch, {"claude-opus-5": OPUS})
+    pid, tid = await _seed(business_db_factory)
+    log = tmp_path / "usage.jsonl"
+    log.write_text(_row(pid, tid, inp=300, out=200, cache_read=5000, cache_write=700))
+    await ingest_once(business_db_factory, log)
+
+    async with business_db_factory() as session:
+        uid = await registered(session, "u")
+        await Ledger(session).charge_priced(
+            await payer_for_person(session, uid),
+            user_id=uid,
+            model="claude-opus-5",
+            rates=Rates(*OPUS),
+            input_tokens=300 + 5000 + 700,
+            output_tokens=200,
+            cache_read_tokens=5000,
+            cache_write_tokens=700,
+            kind="assistant",
+        )
+        await session.commit()
+        rows = {
+            r.route: r
+            for r in await session.scalars(
+                select(ResourceUsage).where(ResourceUsage.model == "claude-opus-5")
+            )
+        }
+
+    assert rows["subscription"].credits > 0
+    assert rows["subscription"].credits == pytest.approx(rows["gateway"].credits)
+    assert rows["subscription"].cost_usd == pytest.approx(rows["gateway"].cost_usd)
+
+
+@pytest.mark.anyio
+async def test_a_dated_snapshot_is_priced_as_its_model(
+    business_db_factory, tmp_path, monkeypatch
+):
+    _price(monkeypatch, {"claude-haiku-4-5": HAIKU})
+    pid, tid = await _seed(business_db_factory)
+    log = tmp_path / "usage.jsonl"
+    log.write_text(_row(pid, tid, inp=1000, out=0, model="claude-haiku-4-5-20251001"))
+
+    await ingest_once(business_db_factory, log)
+
+    [row] = await _rows(business_db_factory, pid)
+    assert row.cost_usd == pytest.approx(1000 * HAIKU[0])
+
+
+@pytest.mark.anyio
+async def test_an_unpriced_model_still_records_its_usage(
+    business_db_factory, tmp_path, monkeypatch
+):
+    _price(monkeypatch, {"claude-opus-5": OPUS})
+    pid, tid = await _seed(business_db_factory)
+    log = tmp_path / "usage.jsonl"
+    log.write_text(_row(pid, tid, inp=70, out=30, model="claude-unknown-9"))
+
+    assert await ingest_once(business_db_factory, log) == {"landed": 1, "skipped": 0}
+
+    [row] = await _rows(business_db_factory, pid)
+    assert (row.model, row.total_tokens) == ("claude-unknown-9", 100)
+    assert row.cost_usd == 0.0
     async with business_db_factory() as session:
         agg = await UsageRepository(session).for_topic(tid)
-        balance = await UsageService(session).project_credits(pid)
-    # Cache reads fold into input; credits burn the full 10k tokens = 1 credit.
-    assert (agg["input_tokens"], agg["output_tokens"]) == (9950, 50)
-    assert agg["turns"] == 1
-    assert balance["credits_used"] == pytest.approx(1.0)
+    assert agg["unpriced_tokens"] == 100
+
+
+@pytest.mark.anyio
+async def test_an_unreachable_price_table_defers_the_pass_instead_of_free_usage(
+    business_db_factory, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(settings, "llm_gateway_admin_base", "http://gateway:4000")
+    _price(monkeypatch, None)
+    pid, tid = await _seed(business_db_factory)
+    log = tmp_path / "usage.jsonl"
+    log.write_text(_row(pid, tid))
+
+    assert await ingest_once(business_db_factory, log) == {"landed": 0, "skipped": 0}
+    assert await _rows(business_db_factory, pid) == []
+
+    _price(monkeypatch, {"claude-opus-5": OPUS})
+    assert await ingest_once(business_db_factory, log) == {"landed": 1, "skipped": 0}
+    [row] = await _rows(business_db_factory, pid)
+    assert row.cost_usd > 0
 
 
 @pytest.mark.anyio
@@ -140,8 +282,6 @@ async def test_unattributable_rows_are_skipped_not_wedged_on(
 async def test_invalid_topic_keeps_project_usage_and_advances_once(
     business_db_factory, tmp_path, missing
 ):
-    from sqlalchemy import select
-
     pid, tid = await _seed(business_db_factory)
     if missing:
         invalid_topic = uuid.uuid4()

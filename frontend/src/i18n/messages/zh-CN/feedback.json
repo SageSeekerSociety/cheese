@@ -170,7 +170,7 @@
     "cost": {
       "kpi": "成本",
       "unpricedLabel": "未定价 token",
-      "note": "金额按网关的单价算。「未定价 token」来自按月计费的订阅，那些行没有单价，所以不在金额里。"
+      "note": "金额按网关价目表里各模型的单价算，订阅的调用也按同一模型的单价估算。「未定价 token」是没有单价的部分，不在金额里。"
     },
     "empty": {
       "title": "暂无数据",
@@ -222,7 +222,7 @@
       "byModel": "按模型拆",
       "byModelNote": "条是 token，后两列是钱与「算不出价」的 token —— 只有三列一起看才答得出「贵的是模型还是计费方式」。",
       "byRoute": "按供给通路拆",
-      "byRouteNote": "订阅按月计费，它的 token 没有单价，所以「算不出价」那一列集中在订阅这一行 —— KPI 里那个数的来源就在这里。",
+      "byRouteNote": "「算不出价」那一列是没有单价的 token，按通路拆开能看到它们来自哪条路，KPI 里那个数的来源就在这里。",
       "unknownModel": "（未标注模型）",
       "route": {
         "gateway": "网关",
@@ -416,7 +416,6 @@
       "unlimited": "不限量",
       "burn": "燃烧速率",
       "eta": "预计用尽",
-      "burnDetail": "其中按实价 {priced}、按扁平率 {flat}",
       "note": "「已耗尽 / 快烧完 / 不限量」是三个互斥集合 —— unlimited 是**没有 grant**，不是额度用完了。燃烧速率从 resource_usage 推（compute_grants 没有扣减账本），不是余额差分。预计用尽是线性外推，unlimited 与零燃烧都画破折号。"
     },
     "extras": {

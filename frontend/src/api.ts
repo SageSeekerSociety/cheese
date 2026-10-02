@@ -2542,7 +2542,7 @@ export interface StatsFeedback {
 }
 
 /** 用量那一块。`unpriced_tokens` 与 `cost_usd` **一起读才对**：前者是「这些 token
- *  算不出价钱」（订阅按月计费，行上的 0 是「没有价」不是「免费」），少了它，几百万
+ *  算不出价钱」（模型没有单价，行上的 0 是「没有价」不是「免费」），少了它，几百万
  *  token 上印一个 `$0.0000` 读起来像「这个月没花钱」。 */
 export interface StatsUsage {
   days: number
@@ -2558,7 +2558,7 @@ export interface StatsUsage {
     tokens: number
     calls: number
     cost_usd: number
-    /** 同一行上的「算不出价钱」的那部分。订阅按月计费，0 是「没有价」不是「免费」。 */
+    /** 同一行上的「算不出价钱」的那部分。0 是「没有价」不是「免费」。 */
     unpriced_tokens: number
   }[]
   /** 按供给通路拆：gateway（网关）/ subscription（订阅）/ native（自带凭据）/ ''（旧数据）。 */
@@ -2592,8 +2592,6 @@ export interface StatsUsage {
     burn: {
       credits_in_window: number
       credits_per_day: number
-      priced_credits: number
-      flat_credits: number
       method: string
     }
   }

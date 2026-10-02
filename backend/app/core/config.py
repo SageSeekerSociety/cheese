@@ -330,9 +330,10 @@ class Settings(BaseSettings):
     # Unset (default) =整层关闭: env injection, usage, credits all behave as before.
     llm_gateway_admin_base: str | None = None  # e.g. http://127.0.0.1:4000
     llm_gateway_admin_key: str | None = None  # the LiteLLM master key
-    # USD per compute credit — converts grant credits into a gateway max_budget.
-    # Requires per-token pricing configured on the gateway models to accrue spend;
-    # unset = budgets are not set (L1 metering still works, token-based).
+    # USD per compute credit: every call's cost (gateway or subscription,
+    # priced at the gateway's model table) is charged as cost / this, and grant
+    # credits become a gateway max_budget at the same rate. Unset = usage is
+    # still recorded, nothing is charged and no budget is set.
     llm_gateway_credit_usd: float | None = None
 
     # --- Docs site (app/domain/docs_site) ---
@@ -748,11 +749,6 @@ class Settings(BaseSettings):
             env["ANTHROPIC_DEFAULT_OPUS_MODEL"] = self.agent_opus_model
         return env
 
-    # --- Compute credits (spec §9.1 机构提供算力 → real quotas) ---
-    # Conversion rate: how many tokens one compute credit buys. A turn's token
-    # usage is folded into credits and deducted from the project's grants
-    # (oldest grant first). Default: 1 credit = 10k tokens.
-    compute_credit_tokens: int = 10_000
     # Project-level concurrency ceiling: at most this many agent turns run at
     # once per project; turns beyond it queue (visible as a system event).
     # Overridable per project via project.settings["max_concurrent_turns"].

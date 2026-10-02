@@ -78,7 +78,7 @@ class UsageService:
     async def platform_totals(self, *, since: datetime, until: datetime) -> dict:
         """窗口内的总量：tokens / calls / cost_usd / unpriced_tokens。
 
-        `unpriced_tokens` 必须和 `cost_usd` 一起给：订阅按月计费，行上的
+        `unpriced_tokens` 必须和 `cost_usd` 一起给：没有单价的模型，行上的
         `cost_usd = 0.0` 意思是**没有价**而不是免费，少了它，几百万 token 上印一个
         `$0.0000` 读起来像「这个月没花钱」。
         """

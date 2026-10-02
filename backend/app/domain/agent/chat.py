@@ -264,7 +264,7 @@ from app.domain.topic import doc_nudge, naming
 from app.domain.topic.models import TitleSource, Topic, TopicStatus
 from app.domain.topic.repositories import TopicProgressRepository, TopicRepository
 from app.domain.topic_membership.services import TopicMemberService
-from app.domain.usage.credits import usage_to_credits
+from app.domain.usage.credits import spend_to_credits
 from app.domain.usage.ledger import Ledger, payer_for_project, team_terms
 from app.domain.usage.models import ResourceUsage
 
@@ -2649,11 +2649,10 @@ class ChatService(SessionRecovery):
                 )
             elif state.route != "gateway" or self._gateway is None:
                 payer = await payer_for_project(session, state.project_id)
-                priced = state.route == "gateway"
                 for u in usages:
                     await Ledger(session).record(
                         payer,
-                        credits=usage_to_credits(u, spend_priced=priced),
+                        credits=spend_to_credits(u.cost_usd),
                         topic_id=state.topic_id,
                         model=u.model or state.model or settings.agent_model,
                         input_tokens=u.input_tokens,

@@ -55,7 +55,7 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task import binding
 from app.domain.topic.models import TopicKind
 from app.domain.topic.repositories import TopicRepository
-from app.domain.usage.credits import usage_to_credits
+from app.domain.usage.credits import spend_to_credits
 from app.domain.usage.ledger import Ledger, payer_for_project, team_terms
 
 logger = logging.getLogger(__name__)
@@ -501,7 +501,7 @@ async def _drain_gateway_usage(
                     for usage in usages:
                         await Ledger(session).record(
                             payer,
-                            credits=usage_to_credits(usage, spend_priced=True),
+                            credits=spend_to_credits(usage.cost_usd),
                             topic_id=topic_id,
                             model=usage.model or settings.agent_model,
                             input_tokens=usage.input_tokens,

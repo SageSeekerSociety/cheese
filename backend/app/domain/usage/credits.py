@@ -1,8 +1,8 @@
 """Compute-credit conversion + platform copy (spec §9.1 机构提供算力).
 
-Credits are the institution-facing unit; tokens are what turns actually burn.
-The conversion rate lives in settings (compute_credit_tokens, default 1 credit
-= 10k tokens) so a deployment can re-price without code changes.
+Credits are the institution-facing unit; a call costs what its model's rates
+make of its tokens, in USD, and one credit is ``llm_gateway_credit_usd`` of
+that. Every route uses this one yardstick (#2397).
 
 The exhaustion message is PLATFORM copy posted as a structured system event —
 never words put in 芝士's mouth (CLAUDE.md 硬性禁止 #4).
@@ -39,21 +39,11 @@ CREDITS_EXHAUSTED_META = notice(
 )
 
 
-def tokens_to_credits(total_tokens: int) -> float:
-    """Fold a turn's token usage into compute credits."""
-    rate = max(1, settings.compute_credit_tokens)
-    return total_tokens / rate
-
-
-def usage_to_credits(usage, *, spend_priced: bool) -> float:
-    """Credits a turn actually burns.
-
-    ``spend_priced`` (gateway-routed turn + ``llm_gateway_credit_usd`` set):
-    convert the REAL cost (the gateway's spend, cache discounts included) at the
-    configured price-per-credit — cached input burns proportionally less, and
-    the app-layer credit gate lines up exactly with the gateway's budget brake
-    (both are ``credits × price``). Otherwise: the flat token rate."""
+def spend_to_credits(cost_usd: float) -> float:
+    """The credits a call that cost ``cost_usd`` burns: the same quotient the
+    gateway's budget brake uses (both are ``credits × price``). Nothing can be
+    charged on a deployment that sets no price per credit."""
     price = settings.llm_gateway_credit_usd
-    if spend_priced and price and usage.cost_usd > 0:
-        return usage.cost_usd / price
-    return tokens_to_credits(usage.input_tokens + usage.output_tokens)
+    if not price or cost_usd <= 0:
+        return 0.0
+    return cost_usd / price
