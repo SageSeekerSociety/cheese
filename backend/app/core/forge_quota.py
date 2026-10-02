@@ -47,6 +47,16 @@ def own(token: str, installation_id: int, expires_at: float) -> None:
     _owners[token] = (installation_id, expires_at)
 
 
+def installation_of(request: httpx.Request) -> int | None:
+    """The installation whose quota this request spends, when it carries a
+    token the platform minted."""
+    scheme, _, token = request.headers.get("authorization", "").partition(" ")
+    if scheme.lower() not in ("bearer", "token"):
+        return None
+    owner = _owners.get(token.strip())
+    return None if owner is None else owner[0]
+
+
 def rate_limited(response: httpx.Response) -> bool:
     """Whether GitHub refused because a quota is spent.
 
@@ -106,13 +116,9 @@ def refuse(installation_id: int, wait_s: float | None) -> None:
 
 async def observe(response: httpx.Response) -> None:
     """Note what one GitHub answer says about its installation's quota."""
-    scheme, _, token = response.request.headers.get("authorization", "").partition(" ")
-    if scheme.lower() not in ("bearer", "token"):
+    installation_id = installation_of(response.request)
+    if installation_id is None:
         return
-    owner = _owners.get(token.strip())
-    if owner is None:
-        return
-    installation_id = owner[0]
     if rate_limited(response):
         refuse(installation_id, wait_seconds(response))
         return

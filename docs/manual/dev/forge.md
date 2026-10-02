@@ -8,6 +8,7 @@ covers:
   - backend/app/domain/repository/
   - backend/app/domain/agent/github_app.py
   - backend/app/core/forge_quota.py
+  - backend/app/core/forge_etags.py
   - backend/app/domain/review/events.py
   - backend/app/domain/agent/forge_cli.py
   - backend/app/forge_events_app.py
@@ -79,6 +80,7 @@ webhook 打不到部署上（部署常常在客户网络里），所以有一个
 - GitHub App 一个安装一小时只有一份 REST 额度，轮询、draft 扫和人递卡、合并都从里面扣。所以轮询和 draft 扫在动手前先问一句（`background_may_use_forge`）：剩下的不到 `KEPT_FOR_PEOPLE`（20%）就这一跳不碰这个项目，留给人的请求，下一跳再看。
   - 先看 GitHub 已经说过的话。每个经 `forge_client` 发出、带着平台签的安装令牌的请求，回来时都会把响应头里的额度（`x-ratelimit-*`）记到 `core/forge_quota.py`；被拒成「额度用完」（403/429 带额度头）就记下 GitHub 给的恢复时间。恢复之前，或者上一次报的余量已经不到 20% 而这一小时还没重置，后台一律不发请求，连 `GET /rate_limit` 都不问。
   - 没有这样的记录才问 `GET /rate_limit`（这一问不扣额度）。这一问本身被拒成额度用完，也算不能用；问不到别的原因（非 200 时会记一条日志），照常跑，跑出来的拒绝会记下来挡住下一个。
+  - 读不变的东西不扣额度。`forge_client` 发出的普通 GET（不是流式下载）只要带着平台签的安装令牌，就记下 GitHub 回的 ETag 和回答（`core/forge_etags.py`，按安装 + URL + `Accept` 记，最多 1024 条，单条超过 256 KiB 不记）。下次同样的读带上 `If-None-Match`，GitHub 回 304 就不扣额度，调用方拿到的是记下的那份完整回答。键里不放令牌：令牌每小时重签，而 304 本身就是 GitHub 确认那份回答没变。Forgejo 不走这条。
   - draft 扫在一个项目上碰到额度用完（`ForgeRateLimitedError`），这一趟就不再碰这个项目剩下的任务，只记一行日志。
 - 归档话题上的卡**不在名单里**（`open_pr_card_ids` 就把它们排除了）：继续跟等于拿批准人的 GitHub 凭据去动一件没人再跟的工作。
 - 还有一条单独的扫：还没递卡的任务，如果分支已经有提交，就替它开一个 **draft** PR（`sweep_draft_prs` → `_draft_pr_for_one_task`）。每跳最多看 `UNCARDED_TASKS_PER_TICK`（10）个的是另一条：已经有 PR、但没递卡的任务，看它是不是在 GitHub 上被合了（`poll_uncarded_task_prs`）。
