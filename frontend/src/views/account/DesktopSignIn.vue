@@ -2,39 +2,19 @@
   In the desktop app, where signing in, signing up and resetting a password
   start: all of them happen in the person's browser, where their password
   manager, passkeys and provider accounts are (appSignIn.ts). The sign-in comes
-  back to this window through a `cheese://` link (AppSignInFinish.vue).
+  back to this window through a `cheese://` link (AppSignInFinish.vue). What it
+  shows is DesktopSignInView.vue.
 -->
 <template>
-  <div>
-    <AccountHeading :title="t(`account.appSignIn.${entry}.title`)" :lede="t('account.appSignIn.lede')" />
-
-    <v-alert v-if="errorMessage" type="error" variant="tonal" density="comfortable" class="mb-6">
-      {{ errorMessage }}
-    </v-alert>
-    <v-alert v-else-if="url" type="info" variant="tonal" density="comfortable" class="mb-6">
-      {{ t('account.appSignIn.waiting') }}
-    </v-alert>
-
-    <v-btn block color="primary" size="large" class="account-submit" :loading="busy" @click="open">
-      <v-icon start icon="mdi-open-in-new" size="20" />
-      {{ url ? t('account.appSignIn.openAgain') : t(`account.appSignIn.${entry}.open`) }}
-    </v-btn>
-
-    <v-btn v-if="url" block variant="text" class="mt-2" @click="copy">
-      {{ t('account.appSignIn.copyLink') }}
-    </v-btn>
-
-    <p class="account-fine desktop-sign-in__switch">
-      <template v-if="entry === 'signup'">
-        {{ t('account.appSignIn.haveAccount') }}
-        <a href="#" class="account-link" @click.prevent="switchTo('signin')">{{ t('account.appSignIn.toSignIn') }}</a>
-      </template>
-      <template v-else>
-        {{ t('account.signIn.noAccount') }}
-        <a href="#" class="account-link" @click.prevent="switchTo('signup')">{{ t('account.signIn.createAccount') }}</a>
-      </template>
-    </p>
-  </div>
+  <DesktopSignInView
+    :entry="entry"
+    :opened="!!url"
+    :busy="busy"
+    :error-message="errorMessage"
+    @open="open"
+    @copy="copy"
+    @switch="switchTo"
+  />
 </template>
 
 <script lang="ts" setup>
@@ -45,8 +25,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 
 import { ENTRY_PAGE } from './appSignIn'
+import DesktopSignInView from './DesktopSignInView.vue'
 
-import AccountHeading from '@/components/account/AccountHeading.vue'
 import { t } from '@/i18n'
 import { openInBrowser, signInInBrowser } from '@/lib/desktopApp'
 import { postLoginTarget } from '@/router/loginRedirect'
@@ -94,10 +74,3 @@ function switchTo(next: BrowserSignInEntry) {
   router.replace({ query: { ...route.query, entry: next } })
 }
 </script>
-
-<style scoped>
-.desktop-sign-in__switch {
-  margin-top: 24px;
-  text-align: center;
-}
-</style>
