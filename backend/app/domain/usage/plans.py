@@ -1,10 +1,11 @@
 """Credit plans and the platform administrator's hand on them (#2397).
 
-A plan is a record, not code: an administrator edits what it issues, its time
-windows and the model tiers it allows, puts a team on one, and issues a team
-extra credits. Every one of those writes is recorded in ``credit_admin_audit``
-with who did it and what changed; a change to a plan takes effect from the next
-period, so a pack already issued keeps its size.
+A plan is a record, not code: an administrator edits what it issues or its time
+windows, the model tiers it allows and its rank, puts a team on one, deletes one
+no team is on, and issues a team extra credits. Every one of those writes is
+recorded in ``credit_admin_audit`` with who did it and what changed; a change to
+a plan takes effect from the next period, so a pack already issued keeps its
+size.
 """
 
 import math
@@ -30,7 +31,9 @@ EDITABLE = (
     "credits_per_period",
     "windows",
     "model_tiers",
+    "rank",
 )
+CALENDARS = frozenset({"week", "month"})
 MODEL_TIERS = frozenset({"included", "premium", "frontier"})
 AUDIENCES = frozenset({"personal", "team", "both"})
 
@@ -46,6 +49,7 @@ def plan_out(plan: Plan) -> dict:
         "model_tiers": None if plan.model_tiers is None else list(plan.model_tiers),
         "unlimited": plan.unlimited,
         "admin_only": plan.admin_only,
+        "rank": plan.rank,
     }
 
 
@@ -64,22 +68,58 @@ def pack_out(pack: ComputeGrant) -> dict:
     }
 
 
+def _plan_fields(data: dict) -> dict:
+    """The editable fields of ``data``, each window holding only the keys it
+    uses."""
+    data = {k: v for k, v in data.items() if k in EDITABLE}
+    if data.get("rank", 0) is None:
+        del data["rank"]
+    if data.get("windows") is not None:
+        data["windows"] = [
+            {k: v for k, v in w.items() if v is not None} for w in data["windows"]
+        ]
+    return data
+
+
 def _check_plan_fields(data: dict) -> None:
     credits = data.get("credits_per_period")
     if credits is not None and (not math.isfinite(credits) or credits < 0):
-        raise BadRequestError("每期额度必须是不小于 0 的数")
+        raise BadRequestError("每月额度必须是不小于 0 的数")
+    keys = set()
     for window in data.get("windows") or []:
-        hours, cap = window.get("hours"), window.get("credits")
-        if not isinstance(hours, int | float) or hours <= 0:
+        hours, calendar = window.get("hours"), window.get("calendar")
+        cap = window.get("credits")
+        if (hours is None) == (calendar is None):
+            raise BadRequestError("时间窗口要么按小时，要么按周或按月")
+        if calendar is not None and calendar not in CALENDARS:
+            raise BadRequestError("时间窗口只能按周或按月重置")
+        if hours is not None and (not isinstance(hours, int | float) or hours <= 0):
             raise BadRequestError("时间窗口的长度必须是正数小时")
         if not isinstance(cap, int | float) or cap < 0:
             raise BadRequestError("时间窗口的额度必须是不小于 0 的数")
+        key = calendar or f"{hours:g}h"
+        if key in keys:
+            raise BadRequestError("同样长度的时间窗口只能有一个")
+        keys.add(key)
     audience = data.get("audience")
     if audience is not None and audience not in AUDIENCES:
         raise BadRequestError(f"适用对象只能是 {', '.join(sorted(AUDIENCES))}")
     tiers = data.get("model_tiers")
     if tiers is not None and not set(tiers) <= MODEL_TIERS:
         raise BadRequestError(f"模型档位只能是 {', '.join(sorted(MODEL_TIERS))}")
+
+
+def _check_billing(plan: Plan) -> None:
+    """A plan bills one way: a monthly pack or time windows, never both. Only
+    an unlimited plan has neither."""
+    if plan.unlimited:
+        return
+    monthly = plan.credits_per_period is not None
+    windowed = bool(plan.windows)
+    if monthly and windowed:
+        raise BadRequestError("方案只能二选一：按月发放额度，或按时间窗口限额")
+    if not monthly and not windowed:
+        raise BadRequestError("方案要么按月发放额度，要么至少有一个时间窗口")
 
 
 def _period(held: list[ComputeGrant]) -> dict:
@@ -111,7 +151,7 @@ class PlanService:
         from app.domain.team.models import DEFAULT_PLAN_KEY
         from app.domain.team.services import team_service
 
-        rows = await self._session.execute(select(Plan).order_by(Plan.key))
+        rows = await self._session.execute(select(Plan).order_by(Plan.rank, Plan.key))
         counts = await team_service(self._session).teams_per_plan()
         return [
             {
@@ -132,7 +172,7 @@ class PlanService:
         """A new plan, issuing ``credits_per_period`` every month to the teams an
         administrator puts on it."""
         key = data.get("key") or f"plan-{uuid.uuid4().hex[:8]}"
-        data = {k: v for k, v in data.items() if k in EDITABLE}
+        data = _plan_fields(data)
         _check_plan_fields(data)
         if await self._session.get(Plan, key) is not None:
             raise BadRequestError(f"方案 {key} 已经存在")
@@ -146,7 +186,9 @@ class PlanService:
             model_tiers=data.get("model_tiers", ["included"]),
             unlimited=False,
             admin_only=False,
+            rank=data.get("rank") or 0,
         )
+        _check_billing(plan)
         self._session.add(plan)
         await self._session.flush()
         after = plan_out(plan)
@@ -156,15 +198,34 @@ class PlanService:
     async def update_plan(self, *, handle: str, key: str, data: dict) -> dict:
         """Change what a plan issues and allows, from the next period on."""
         plan = await self._plan(key)
-        data = {k: v for k, v in data.items() if k in EDITABLE}
+        data = _plan_fields(data)
         _check_plan_fields(data)
         before = plan_out(plan)
         for field, value in data.items():
             setattr(plan, field, value)
+        _check_billing(plan)
         await self._session.flush()
         after = plan_out(plan)
         await self._audit(handle, "plan.update", key, before, after)
         return after
+
+    async def delete_plan(self, *, handle: str, key: str) -> None:
+        """Delete a plan no team is on. The plan new teams start on stays."""
+        from app.domain.team.models import DEFAULT_PLAN_KEY
+        from app.domain.team.services import team_service
+
+        plan = await self._plan(key)
+        if key == DEFAULT_PLAN_KEY:
+            raise BadRequestError(f"「{plan.name}」是新团队默认的方案，不能删除")
+        teams = (await team_service(self._session).teams_per_plan()).get(key, 0)
+        if teams:
+            raise BadRequestError(
+                f"还有 {teams} 个团队在用「{plan.name}」，先把它们换到别的方案"
+            )
+        before = plan_out(plan)
+        await self._session.delete(plan)
+        await self._session.flush()
+        await self._audit(handle, "plan.delete", key, before, None)
 
     async def set_team_plan(self, *, handle: str, team_id: int, key: str) -> dict:
         from app.domain.team.services import team_service

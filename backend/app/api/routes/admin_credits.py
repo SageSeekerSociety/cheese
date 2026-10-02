@@ -21,7 +21,10 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 
 
 class PlanWindow(BaseModel):
-    hours: float = Field(gt=0)
+    """按小时（从团队第一次调用起算）或按周、按月（日历重置），二者给一个。"""
+
+    hours: float | None = Field(default=None, gt=0)
+    calendar: Literal["week", "month"] | None = None
     credits: float = Field(ge=0)
 
 
@@ -38,6 +41,7 @@ class PlanCreate(BaseModel):
     credits_per_period: float | None = Field(default=None, ge=0)
     windows: list[PlanWindow] = []
     model_tiers: list[Tier] | None = ["included"]
+    rank: int = 0
 
 
 class PlanUpdate(BaseModel):
@@ -48,6 +52,7 @@ class PlanUpdate(BaseModel):
     credits_per_period: float | None = Field(default=None, ge=0)
     windows: list[PlanWindow] | None = None
     model_tiers: list[Tier] | None = None
+    rank: int | None = None
 
 
 class TeamPlanUpdate(BaseModel):
@@ -88,6 +93,17 @@ async def update_plan(
     plan = await PlanService(db).update_plan(handle=handle, key=key, data=data)
     await db.commit()
     return ok(plan)
+
+
+@router.delete("/plans/{key}")
+async def delete_plan(
+    key: Annotated[str, Path(max_length=32)],
+    db: DbSession,
+    handle: PlatformAdminDep,
+) -> dict:
+    await PlanService(db).delete_plan(handle=handle, key=key)
+    await db.commit()
+    return ok({"key": key})
 
 
 @router.get("/teams")
