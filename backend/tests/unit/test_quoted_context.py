@@ -63,7 +63,7 @@ class QuotedContextTest(unittest.TestCase):
         with self.assertRaises(ValidationError):
             ChatMessageIn.model_validate({**body, "content": "  "})
 
-    def test_a_selection_is_a_quote_like_any_other_and_an_older_client_still_means_the_page(self):
+    def test_a_selection_is_a_quote_and_an_older_client_still_means_the_page(self):
         """`scope` 说 `text` 是整页还是选中的那段。
 
         缺省成整页是有意的：这个字段加进来的时候，已经部署出去的页面还在发不带
@@ -72,9 +72,20 @@ class QuotedContextTest(unittest.TestCase):
         """
         import uuid
 
-        body = {"content": "改这句", "request_id": str(uuid.uuid4()), "quoted_context": QUOTE}
+        body = {
+            "content": "改这句",
+            "request_id": str(uuid.uuid4()),
+            "quoted_context": QUOTE,
+        }
         selection = ChatMessageIn.model_validate(
-            {**body, "quoted_context": {**QUOTE, "scope": "selection", "text": "只选中这一句"}}
+            {
+                **body,
+                "quoted_context": {
+                    **QUOTE,
+                    "scope": "selection",
+                    "text": "只选中这一句",
+                },
+            }
         )
         self.assertEqual(selection.quoted_context.scope, "selection")
         self.assertEqual(selection.quoted_context.text, "只选中这一句")
