@@ -396,7 +396,6 @@ async def answer_options(
     if blk is None:
         raise NotFoundError(say("optionQuestionNotFound"))
     actor = await resolver.resolve(
-        fallback_handle=None,
         topic_id=blk.topic_id,
         project_id=blk.project_id,
     )

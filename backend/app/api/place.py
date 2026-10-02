@@ -38,9 +38,7 @@ async def authorized_place(
     place = await TopicService(db).place_or_404(topic_id)
     if place.project_id != project_id:
         raise ForbiddenError("这个话题不属于 URL 中的项目")
-    actor = await resolver.resolve(
-        fallback_handle=None, topic_id=place.room_id, project_id=project_id
-    )
+    actor = await resolver.resolve(topic_id=place.room_id, project_id=project_id)
     await resolver.authorize_topic(actor, project_id=project_id, topic_id=place.room_id)
     return place, actor
 
@@ -55,7 +53,7 @@ async def project_reader(
     placed = await authorized_place(db, resolver, project_id, topic_raw)
     if placed is not None:
         return placed[1]
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     return actor
 

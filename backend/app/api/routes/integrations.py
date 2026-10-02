@@ -111,7 +111,7 @@ class FeishuEditIn(BaseModel):
 
 
 async def _person(resolver: ActorResolver) -> Actor:
-    actor = await resolver.resolve(fallback_handle=None)
+    actor = await resolver.resolve()
     if actor.via != "token" or actor.user_id is None:
         raise AuthenticationRequiredError(say("integrationSignInOwner"))
     return actor
@@ -122,9 +122,7 @@ async def _in_room(
 ) -> tuple[uuid.UUID, uuid.UUID, str]:
     """(project, room, speaker) for a call made from a room."""
     place = await TopicService(db).place_or_404(topic)
-    actor = await resolver.resolve(
-        fallback_handle=None, project_id=place.project_id, topic_id=topic
-    )
+    actor = await resolver.resolve(project_id=place.project_id, topic_id=topic)
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=topic, enforce=True
     )

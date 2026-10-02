@@ -18,9 +18,10 @@ import uuid
 from unittest.mock import AsyncMock
 
 from app.api.deps import get_work_runner
+from app.core.sandbox_auth import mint_scoped_token
 from app.domain.review.github_pr import OpenedPR
 from tests.delivery import delivery_headers, delivery_task_id
-from tests.integration.conftest import post_project, session_token
+from tests.integration.conftest import post_project, room_agent_seat, session_token
 
 
 class _FakeTokens:
@@ -96,12 +97,8 @@ def _driving(monkeypatch, handle: str | None):
 
 
 def _project(client, owner: str) -> tuple[str, str]:
-    p = post_project(client, json={"name": "P", "owner_handle": owner}).json()["data"]
+    p = post_project(client, json={"name": "P"}, owner=owner).json()["data"]
     return p["id"], p["root_topic_id"]
-
-
-def _agent() -> str:
-    return f"cheese-{uuid.uuid4().hex[:12]}"
 
 
 def _add_project_member(client, project_id: str, handle: str) -> None:
@@ -131,14 +128,18 @@ def _add_project_member(client, project_id: str, handle: str) -> None:
     client.portal.call(lambda: _add())
 
 
-def _split(client, parent_id: str, *, by: str) -> dict:
-    """Dispatch work the way `cheese_task` does from a 分身's sandbox: no human
-    token, the acting handle only in the body."""
+def _split(client, parent_id: str) -> dict:
+    """Dispatch work the way `cheese_task` does from a 分身's sandbox: with the
+    room's own per-turn credential and no human token."""
+    project_id = client.get(f"/topics/{parent_id}").json()["data"]["project_id"]
     r = client.post(
         f"/topics/{parent_id}/split",
-        json=dict(
-            reviewer_handle="alice", **{"title": "分身拆出的子任务", "created_by": by}
-        ),
+        json={"reviewer_handle": "alice", "title": "分身拆出的子任务"},
+        headers={
+            "X-Cheese-Token": mint_scoped_token(
+                project_id=project_id, topic_id=parent_id
+            )
+        },
     )
     assert r.status_code == 200
     return r.json()["data"]
@@ -186,7 +187,7 @@ def test_the_child_belongs_to_whoever_drove_the_turn(client, monkeypatch):
     _driving(monkeypatch, "bob")
     _, root = _project(client, owner="alice")
 
-    assert _split(client, root, by=_agent())["owner_handle"] == "bob"
+    assert _split(client, root)["owner_handle"] == "bob"
     # And nothing is taken from alice by making the work bob's: the ROOM is
     # still hers. That is the point of work having an owner instead of a roster
     # — one answer to "whose is this" that does not disturb another.
@@ -200,7 +201,7 @@ def test_an_autonomous_split_still_inherits_the_parent_owner(client, monkeypatch
     _driving(monkeypatch, None)
     _, root = _project(client, owner="alice")
 
-    assert _split(client, root, by=_agent())["owner_handle"] == "alice"
+    assert _split(client, root)["owner_handle"] == "alice"
 
 
 def test_a_human_who_splits_it_themselves_still_wins(client, monkeypatch):
@@ -238,8 +239,8 @@ def test_the_agent_handle_never_reaches_the_pr_however_the_work_was_split(
     )
     _driving(monkeypatch, "bob")
     pid, root = _project(client, owner="alice")
-    agent = _agent()
-    _split(client, root, by=agent)
+    _split(client, root)
+    agent = room_agent_seat(client, root)
 
     body = _pr_body(client, pid, root)
     assert "Requested-by: Alice <583231+alice@users.noreply.github.com>" in body
@@ -253,7 +254,7 @@ def test_nobody_is_credited_twice_when_the_room_never_changed_hands(
     _github_world(monkeypatch, connected={"alice": ("583231", "alice")})
     _driving(monkeypatch, None)
     pid, root = _project(client, owner="alice")
-    _split(client, root, by=_agent())
+    _split(client, root)
 
     body = _pr_body(client, pid, root)
     assert "Requested-by: Alice <583231+alice@users.noreply.github.com>" in body
@@ -271,7 +272,7 @@ def test_a_card_cannot_open_the_pr_for_the_batch_it_is_one_of(client, monkeypatc
     _github_world(monkeypatch, connected={"alice": ("583231", "alice")})
     _driving(monkeypatch, "bob")
     _, root = _project(client, owner="alice")
-    thread = _split(client, root, by=_agent())["id"]
+    thread = _split(client, root)["id"]
 
     r = client.post(
         f"/topics/{thread}/tasks/{delivery_task_id(client, thread)}/accept-card",

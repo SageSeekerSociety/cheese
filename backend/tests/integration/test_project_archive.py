@@ -22,7 +22,7 @@ AS_OWNER = session_auth_headers(OWNER)
 
 
 def _project(client) -> dict:
-    r = post_project(client, json={"name": "要收起来的项目", "owner_handle": OWNER})
+    r = post_project(client, json={"name": "要收起来的项目"}, owner=OWNER)
     assert r.status_code == 200, r.text
     return r.json()["data"]
 
@@ -30,7 +30,7 @@ def _project(client) -> dict:
 def _room(client, project_id: str, title: str) -> str:
     r = client.post(
         "/topics",
-        json={"project_id": project_id, "title": title, "created_by": OWNER},
+        json={"project_id": project_id, "title": title},
         headers=AS_OWNER,
     )
     assert r.status_code == 200, r.text
@@ -129,7 +129,7 @@ def test_an_archived_project_is_hidden_frozen_and_comes_back_whole(client):
     _refused_as_archived(
         client.post(
             "/topics",
-            json={"project_id": pid, "title": "新房间", "created_by": OWNER},
+            json={"project_id": pid, "title": "新房间"},
             headers=AS_OWNER,
         )
     )

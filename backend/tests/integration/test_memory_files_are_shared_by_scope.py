@@ -35,9 +35,7 @@ type: user
 
 def _project(client) -> str:
     alice = session_auth_headers("alice")
-    project = post_project(
-        client, json={"name": "记忆", "owner_handle": "alice"}, headers=alice
-    )
+    project = post_project(client, json={"name": "记忆"}, headers=alice, owner="alice")
     assert project.status_code == 200, project.text
     project_id = project.json()["data"]["id"]
     join_project_team(client, project_id, "bob")

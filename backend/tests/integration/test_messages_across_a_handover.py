@@ -20,11 +20,16 @@ from app.domain.agent.models import AgentTurn
 from app.domain.block.models import Block
 from app.main import app
 from tests.conftest import StubChannel, settle_turn, stub_compute
-from tests.integration.conftest import chat_ws_url, post_message, post_project
+from tests.integration.conftest import (
+    chat_ws_url,
+    post_message,
+    post_project,
+    session_auth_headers,
+)
 
 
 def _room(client) -> tuple[str, StubChannel, ChatService]:
-    project = post_project(client, {"name": "Handover", "owner_handle": "alice"})
+    project = post_project(client, {"name": "Handover"}, owner="alice")
     room = project.json()["data"]["root_topic_id"]
     channel = StubChannel()
     service = ChatService(
@@ -179,15 +184,15 @@ def test_a_message_queued_behind_other_turns_is_answered_by_the_next_backend(
     """The room was told its turn would start by itself once the ones ahead
     finished. The backend that took over keeps that promise."""
     monkeypatch.setattr(settings, "max_concurrent_turns", 1)
-    project = post_project(client, {"name": "Handover", "owner_handle": "alice"})
+    project = post_project(client, {"name": "Handover"}, owner="alice")
     busy = project.json()["data"]["root_topic_id"]
     waiting = client.post(
         "/topics",
         json={
             "project_id": project.json()["data"]["id"],
             "title": "排队",
-            "created_by": "alice",
         },
+        headers=session_auth_headers("alice"),
     ).json()["data"]["id"]
     channel = _SlowToSetUp()
     channel.slow = uuid.UUID(busy)

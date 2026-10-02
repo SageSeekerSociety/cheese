@@ -364,7 +364,6 @@ def test_task_creates_the_card_and_nothing_else():
     assert plan["path"] == f"/topics/{_ROOM}/split"
     assert plan["body"] == {
         "title": "查一下分页",
-        "created_by": "cheese",
         "brief": "干这个",
     }
     assert host.synced == [] and host.read == []

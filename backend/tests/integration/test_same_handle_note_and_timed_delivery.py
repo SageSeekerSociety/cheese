@@ -20,7 +20,7 @@ from tests.integration.conftest import post_project, session_auth_headers
 
 
 def _project(client, name: str, owner: str = "user-1") -> str:
-    r = post_project(client, json={"name": name, "owner_handle": owner})
+    r = post_project(client, json={"name": name}, owner=owner)
     assert r.status_code == 200, r.text
     return r.json()["data"]["id"]
 
@@ -28,7 +28,8 @@ def _project(client, name: str, owner: str = "user-1") -> str:
 def _room(client, project_id: str, title: str, owner: str = "user-1") -> str:
     r = client.post(
         "/topics",
-        json={"project_id": project_id, "title": title, "created_by": owner},
+        json={"project_id": project_id, "title": title},
+        headers=session_auth_headers(owner),
     )
     assert r.status_code == 200, r.text
     return r.json()["data"]["id"]

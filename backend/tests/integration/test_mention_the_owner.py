@@ -32,12 +32,11 @@ def _notifs(client, project_id: str, handle: str) -> list[dict]:
 
 
 def test_mentioning_the_owner_notifies_them(client):
-    project = post_project(client, json={"name": "P", "owner_handle": "alice"}).json()[
-        "data"
-    ]
+    project = post_project(client, json={"name": "P"}, owner="alice").json()["data"]
     topic = client.post(
         "/topics",
-        json={"project_id": project["id"], "title": "T", "created_by": "alice"},
+        json={"project_id": project["id"], "title": "T"},
+        headers=session_auth_headers("alice"),
     ).json()["data"]
     join_project_team(client, project["id"], "bob")
     client.post(

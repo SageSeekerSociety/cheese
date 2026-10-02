@@ -9,13 +9,12 @@ from tests.conftest import wait_work_idle as _wait_work_idle
 from tests.integration.conftest import post_project, session_auth_headers
 
 
-def _project(client, **kw) -> dict:
-    body = {"name": "P", **kw}
-    return post_project(client, json=body).json()["data"]
+def _project(client, owner: str = "owner", **kw) -> dict:
+    return post_project(client, json={"name": "P", **kw}, owner=owner).json()["data"]
 
 
 def test_project_create_autocreates_root_topic(client):
-    p = _project(client, owner_handle="user-1", ai_mode="autonomous")
+    p = _project(client, owner="user-1", ai_mode="autonomous")
     assert p["ai_mode"] == "autonomous"
     assert p["owner_handle"] == "user-1"
     assert p["root_topic_id"] is not None
@@ -235,7 +234,6 @@ def test_upgrade_doc_node_to_subtopic(client):
         f"/topics/{topic['id']}/doc",
         json={
             "content": "## 拆解\n\n数据清洗\n\n特征工程\n\n模型训练",
-            "author": "user-1",
             "expected_version": 0,
         },
     )
@@ -269,10 +267,11 @@ def test_archived_topic_is_frozen(client):
     # 归档现在只有一条入口 —— 人点的那一下 (#442 decision 1)。这个测试以前借
     # 「采纳即归档」拿到归档状态；采纳不再归档之后，它显式走归档端点，测的东西
     # 反而更贴题了。
-    p = _project(client)
+    p = _project(client, owner="alice")
     topic = client.post(
         "/topics",
-        json={"project_id": p["id"], "title": "交付物", "created_by": "alice"},
+        json={"project_id": p["id"], "title": "交付物"},
+        headers=session_auth_headers("alice"),
     ).json()["data"]
     r = client.post(
         f"/topics/{topic['id']}/archive",
@@ -292,16 +291,18 @@ def test_archived_topic_is_frozen(client):
     # Editing the frozen topic's doc is rejected.
     r = client.put(
         f"/topics/{topic['id']}/doc",
-        json={"content": "改一下", "author": "alice", "expected_version": 0},
+        json={"content": "改一下", "expected_version": 0},
     )
     assert r.status_code == 422
 
 
 def test_upgrade_on_archived_topic_rejected(client):
     # Consistent with split/edit_doc: a frozen topic accepts no new work (§6.3).
-    p = _project(client)
+    p = _project(client, owner="alice")
     topic = client.post(
-        "/topics", json={"project_id": p["id"], "title": "交付", "created_by": "alice"}
+        "/topics",
+        json={"project_id": p["id"], "title": "交付"},
+        headers=session_auth_headers("alice"),
     ).json()["data"]
     block_id = _insert_block(client, p["id"], topic["id"], "某条结论")
     assert (
@@ -322,7 +323,7 @@ def test_upgrade_on_archived_topic_rejected(client):
 def test_upgrade_from_private_chat_lands_under_root(client):
     # 私聊不是话题树父节点 (spec §1): upgrading a private-chat block makes a topic
     # under the project root, not an invisible orphan under the chat.
-    p = _project(client, owner_handle="user-1")
+    p = _project(client, owner="user-1")
     priv = client.get(
         f"/projects/{p['id']}/private-chat", params={"user_handle": "user-1"}
     ).json()["data"]
@@ -357,7 +358,6 @@ def test_split_records_the_brief_on_the_card_and_starts_nobody(client):
         f"/topics/{topic['id']}/doc",
         json={
             "content": "## 目标\n\n给校园二手书平台做推荐",
-            "author": "user-1",
             "expected_version": 0,
         },
     )
@@ -368,7 +368,6 @@ def test_split_records_the_brief_on_the_card_and_starts_nobody(client):
             reviewer_handle="alice",
             **{
                 "title": "清洗数据",
-                "created_by": "cheese",
                 "brief": "把 10 万条借阅日志去重、去空值，产出干净数据集",
             },
         ),

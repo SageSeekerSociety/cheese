@@ -33,7 +33,8 @@ def _setup_with_mentor_condition(client) -> tuple[str, str]:
     seed_claim(client, task_id, handle=OWNER)
     p = post_project(
         client,
-        json={"name": "团队", "owner_handle": OWNER, "external_task_id": task_id},
+        json={"name": "团队", "external_task_id": task_id},
+        owner=OWNER,
     ).json()["data"]
     pid = p["id"]
     # The mentor comes in from outside the team; user-1 is on the team.

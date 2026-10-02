@@ -88,7 +88,7 @@ async def project_topic_unread(
     non-member has no read cursor, so every count equals that topic's message
     total — the shape of the answer is "which rooms exist, and how busy each
     one is", even though the topics themselves answer 403 to the same caller."""
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     recipient = await resolver.resolve_recipient(
         requested=handle, project_id=project_id, allow_anonymous=False
@@ -120,7 +120,7 @@ async def project_private_unread(
     Same project door as ``topic-unread`` too, and for the same reason: the
     recipient question ("whose inbox") is not the resource question ("may you
     see this project"), and this route only used to ask the first."""
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     recipient = await resolver.resolve_recipient(
         requested=handle, project_id=project_id, allow_anonymous=False
@@ -170,9 +170,7 @@ async def upgrade_block(
     if block is None:
         raise NotFoundError("Block not found")
     parent = await TopicService(db).get_or_404(block.topic_id)
-    actor = await resolver.resolve(
-        fallback_handle=None, topic_id=parent.id, project_id=parent.project_id
-    )
+    actor = await resolver.resolve(topic_id=parent.id, project_id=parent.project_id)
     await resolver.authorize_topic(
         actor, project_id=parent.project_id, topic_id=parent.id
     )

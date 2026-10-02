@@ -29,7 +29,7 @@ def room(client, monkeypatch):
     ]
     topic_id = client.post(
         "/topics",
-        json={"project_id": project_id, "title": "Room", "created_by": "user-1"},
+        json={"project_id": project_id, "title": "Room"},
     ).json()["data"]["id"]
     return uuid.UUID(project_id), uuid.UUID(topic_id)
 

@@ -58,7 +58,7 @@ async def _require_project_access(
     may inspect their shared pool; only team owners/admins may change it. Agent
     identities need the same team standing.
     """
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    actor = await resolver.resolve(project_id=project_id)
     if not actor.authenticated:
         raise AuthenticationRequiredError("Login required to manage project machines")
 
@@ -119,7 +119,7 @@ async def cloud_supply(
     may hold; `provider` is MicroCloud's own offering. An unreadable offering
     comes back as `available: false` with the reason, never a guessed range.
     """
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     return ok(await read_supply())
 

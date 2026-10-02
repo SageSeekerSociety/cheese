@@ -30,9 +30,7 @@ async def site_session(
 ) -> dict:
     # Viewing a published site stays open after the project is archived: the
     # site is kept like the rest of its data, and this POST only mints a grant.
-    actor = await resolver.resolve(
-        fallback_handle=None, project_id=project_id, read_only=True
-    )
+    actor = await resolver.resolve(project_id=project_id, read_only=True)
     if not actor.authenticated:
         raise AuthenticationRequiredError("请先登录")
     await require_site_access(db, actor.handle, project_id)

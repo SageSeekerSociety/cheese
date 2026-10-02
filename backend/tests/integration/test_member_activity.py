@@ -51,7 +51,7 @@ def _two_rooms(client) -> tuple[str, str, str]:
     join_project_team(client, project["id"], "bob")
     other = client.post(
         "/topics",
-        json={"project_id": project["id"], "title": "隔壁", "created_by": "alice"},
+        json={"project_id": project["id"], "title": "隔壁"},
         headers=session_auth_headers("alice"),
     )
     assert other.status_code == 200, other.text

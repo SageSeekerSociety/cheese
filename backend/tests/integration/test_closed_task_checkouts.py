@@ -22,7 +22,7 @@ from app.domain.identity.services import IdentityService
 from app.domain.room_task.checkouts import remove_closed_checkouts
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.services import TaskService
-from tests.integration.conftest import post_project
+from tests.integration.conftest import post_project, session_auth_headers
 
 pytestmark = pytest.mark.anyio
 
@@ -103,12 +103,13 @@ def _hub(monkeypatch, machines: dict[str, Machine], online: set[str]):
 async def _room(client, tmp_path, *, retained: bool = False):
     """A room whose session works on machine "a" — and, with ``retained``,
     has earlier worked on machine "b" and left it."""
-    project = post_project(
-        client, json={"name": "Checkouts", "owner_handle": "alice"}
-    ).json()["data"]
+    project = post_project(client, json={"name": "Checkouts"}, owner="alice").json()[
+        "data"
+    ]
     room = client.post(
         "/topics",
-        json={"project_id": project["id"], "title": "Room", "created_by": "alice"},
+        json={"project_id": project["id"], "title": "Room"},
+        headers=session_auth_headers("alice"),
     ).json()["data"]
     project_id, topic_id = uuid.UUID(project["id"]), uuid.UUID(room["id"])
     machines, leases = {}, {}

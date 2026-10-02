@@ -45,9 +45,7 @@ async def edit_block(
     block = await BlockRepository(db).get(block_id)
     if block is None:
         raise NotFoundError("Message not found")
-    actor = await resolver.resolve(
-        fallback_handle=None, topic_id=block.topic_id, project_id=block.project_id
-    )
+    actor = await resolver.resolve(topic_id=block.topic_id, project_id=block.project_id)
     await resolver.authorize_topic(
         actor, project_id=block.project_id, topic_id=block.topic_id, enforce=True
     )
@@ -89,9 +87,7 @@ async def toggle_reaction(
     block = await repo.get(block_id)
     if block is None:
         raise NotFoundError("Block not found")
-    actor = await resolver.resolve(
-        fallback_handle=None, topic_id=block.topic_id, project_id=block.project_id
-    )
+    actor = await resolver.resolve(topic_id=block.topic_id, project_id=block.project_id)
     await resolver.authorize_topic(
         actor, project_id=block.project_id, topic_id=block.topic_id, enforce=True
     )

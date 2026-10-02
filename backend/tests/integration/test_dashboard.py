@@ -29,9 +29,7 @@ def _seed_block(client, project_id, topic_id, author, author_type, kind):
 
 def test_contributions_exclude_platform_blocks(client):
     # spec §10.1: by_author counts real contributors, not platform lifecycle blocks.
-    p = post_project(client, json={"name": "P", "owner_handle": "user-1"}).json()[
-        "data"
-    ]
+    p = post_project(client, json={"name": "P"}, owner="user-1").json()["data"]
     pid, root = p["id"], p["root_topic_id"]
     _seed_block(client, pid, root, "user-1", AuthorType.participant, BlockKind.message)
     _seed_block(client, pid, root, "user-1", AuthorType.platform, BlockKind.event)
@@ -46,9 +44,7 @@ def test_contributions_exclude_platform_blocks(client):
 
 
 def test_member_summary_has_active_and_weekly(client, bearer):
-    p = post_project(client, json={"name": "P", "owner_handle": "user-1"}).json()[
-        "data"
-    ]
+    p = post_project(client, json={"name": "P"}, owner="user-1").json()["data"]
     pid, root = p["id"], p["root_topic_id"]
     _seed_block(client, pid, root, "user-1", AuthorType.participant, BlockKind.message)
 

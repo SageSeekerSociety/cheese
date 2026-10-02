@@ -47,7 +47,7 @@ async def preview_session(
     response: Response,
     selection: PreviewSelection | None = None,
 ) -> dict:
-    actor = await resolver.resolve(fallback_handle=None, topic_id=topic_id)
+    actor = await resolver.resolve(topic_id=topic_id)
     if not actor.authenticated:
         raise AuthenticationRequiredError("请先登录")
     place = await require_preview_access(db, topic_id, actor.handle)

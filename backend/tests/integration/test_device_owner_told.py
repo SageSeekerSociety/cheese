@@ -27,7 +27,7 @@ from app.domain.notification.models import Notification
 from app.domain.project.models import Project
 from app.domain.team.models import TeamMemberRole, TeamUserRelation
 from app.domain.topic.models import Topic
-from tests.integration.conftest import post_project, registered
+from tests.integration.conftest import post_project, registered, session_auth_headers
 
 pytestmark = pytest.mark.anyio
 
@@ -36,12 +36,13 @@ async def _room_on_a_device(client, owner_handle, *, attached_to="team"):
     """Alice's room, whose agent session will work on ``owner_handle``'s device,
     which is registered for the project's team, or with ``attached_to="project"``
     attached to the project alone."""
-    project = post_project(
-        client, json={"name": "Orchard", "owner_handle": "alice"}
-    ).json()["data"]
+    project = post_project(client, json={"name": "Orchard"}, owner="alice").json()[
+        "data"
+    ]
     room = client.post(
         "/topics",
-        json={"project_id": project["id"], "title": "Pricing", "created_by": "alice"},
+        json={"project_id": project["id"], "title": "Pricing"},
+        headers=session_auth_headers("alice"),
     ).json()["data"]
     project_id, topic_id = uuid.UUID(project["id"]), uuid.UUID(room["id"])
     async with client.test_factory() as db:
@@ -231,9 +232,9 @@ async def test_the_team_page_lists_a_device_attached_only_to_a_project(
 
 async def test_a_device_attached_to_another_teams_project_is_not_listed(client):
     room = await _room_on_a_device(client, "bob")
-    elsewhere = post_project(
-        client, json={"name": "Elsewhere", "owner_handle": "bob"}
-    ).json()["data"]
+    elsewhere = post_project(client, json={"name": "Elsewhere"}, owner="bob").json()[
+        "data"
+    ]
     async with client.test_factory() as db:
         devices = sql_device_service(db)
         other = await devices.approve(

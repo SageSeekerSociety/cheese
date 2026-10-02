@@ -76,9 +76,7 @@ async def require_project_access(
         room = await TopicService(db).get_or_404(room_uuid)
         if room.project_id != project_id:
             raise NotFoundError("Topic not found")
-        actor = await resolver.resolve(
-            fallback_handle=None, project_id=project_id, topic_id=room.id
-        )
+        actor = await resolver.resolve(project_id=project_id, topic_id=room.id)
         await resolver.authorize_topic(actor, project_id=project_id, topic_id=room.id)
         if request.method == "PUT" and room.status == TopicStatus.archived:
             raise ValidationError(say("roomArchivedFilesReadOnly"))

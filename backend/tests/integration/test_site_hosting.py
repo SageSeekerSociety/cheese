@@ -25,9 +25,7 @@ def published(client, monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "sites_port", None)
     monkeypatch.setattr(settings, "frontend_url", "http://platform.localhost")
     auth = session_auth_headers("alice")
-    result = post_project(
-        client, json={"name": "Website", "owner_handle": "alice"}, headers=auth
-    )
+    result = post_project(client, json={"name": "Website"}, headers=auth, owner="alice")
     assert result.status_code == 200, result.text
     project = uuid.UUID(result.json()["data"]["id"])
     topic = uuid.uuid4()

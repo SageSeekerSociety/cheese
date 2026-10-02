@@ -48,12 +48,13 @@ FACT = "中期答辩定在 11 月 15 日，要现场演示一个能跑的 demo"
 
 
 def _project_and_room(client) -> tuple[str, str]:
-    project_id = post_project(
-        client, json={"name": "P", "owner_handle": "user-1"}
-    ).json()["data"]["id"]
+    project_id = post_project(client, json={"name": "P"}, owner="user-1").json()[
+        "data"
+    ]["id"]
     topic_id = client.post(
         "/topics",
-        json={"project_id": project_id, "title": "干活的房间", "created_by": "user-1"},
+        json={"project_id": project_id, "title": "干活的房间"},
+        headers=session_auth_headers("user-1"),
     ).json()["data"]["id"]
     return project_id, topic_id
 
@@ -107,7 +108,8 @@ def test_another_room_reads_the_overview_document_on_its_next_turn(client, stub_
     overview = _overview_room(client, project_id)
     client.put(
         f"/topics/{overview}/doc",
-        json={"content": FACT, "author": "user-1", "expected_version": 0},
+        json={"content": FACT, "expected_version": 0},
+        headers=session_auth_headers("user-1"),
     )
 
     _say(client, topic_id)
@@ -246,7 +248,8 @@ def test_the_overview_room_does_not_read_its_own_document_twice(client, stub_hoo
     overview = _overview_room(client, project_id)
     client.put(
         f"/topics/{overview}/doc",
-        json={"content": FACT, "author": "user-1", "expected_version": 0},
+        json={"content": FACT, "expected_version": 0},
+        headers=session_auth_headers("user-1"),
     )
 
     _say(client, overview)
@@ -269,9 +272,9 @@ def test_the_overview_room_reads_the_other_blocks_from_the_data(client, stub_hoo
         json={
             "content": "## 项目是什么\n\n给高中生做算法课。\n\n"
             "## 现在在做什么\n\n- 这一条是手抄的，不算数。\n",
-            "author": "user-1",
             "expected_version": 0,
         },
+        headers=session_auth_headers("user-1"),
     )
 
     _say(client, overview)
@@ -293,9 +296,9 @@ def test_another_room_gets_only_what_the_project_is(client, stub_hooks):
         f"/topics/{overview}/doc",
         json={
             "content": "## 项目是什么\n\n给高中生做算法课。\n",
-            "author": "user-1",
             "expected_version": 0,
         },
+        headers=session_auth_headers("user-1"),
     )
 
     _say(client, topic_id)
@@ -317,7 +320,8 @@ def test_the_panel_gets_the_same_blocks_as_structured_data(client):
     overview = _overview_room(client, project_id)
     ended = client.post(
         "/topics",
-        json={"project_id": project_id, "title": "做完的房间", "created_by": "user-1"},
+        json={"project_id": project_id, "title": "做完的房间"},
+        headers=session_auth_headers("user-1"),
     ).json()["data"]["id"]
     archived = client.post(
         f"/topics/{ended}/archive",

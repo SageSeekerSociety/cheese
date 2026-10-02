@@ -40,7 +40,7 @@ def alice(client) -> dict[str, str]:
 
 
 def _room(client, alice) -> uuid.UUID:
-    r = post_project(client, json={"name": "P", "owner_handle": "alice"}, headers=alice)
+    r = post_project(client, json={"name": "P"}, headers=alice, owner="alice")
     assert r.status_code == 200, r.text
     project_id = r.json()["data"]["id"]
     r = client.post(

@@ -34,12 +34,11 @@ PLAN = [
 
 def _room(client) -> tuple[str, dict]:
     """A room, and the credentials its agent's session writes with."""
-    p = post_project(client, json={"name": "P", "owner_handle": "user-1"}).json()[
-        "data"
-    ]
+    p = post_project(client, json={"name": "P"}, owner="user-1").json()["data"]
     t = client.post(
         "/topics",
-        json={"project_id": p["id"], "title": "话题", "created_by": "user-1"},
+        json={"project_id": p["id"], "title": "话题"},
+        headers=session_auth_headers("user-1"),
     ).json()["data"]
     token = mint_scoped_token(project_id=p["id"], topic_id=t["id"])
     return t["id"], {"X-Cheese-Token": token}
@@ -285,13 +284,12 @@ def test_a_caller_the_room_does_not_admit_writes_nothing(client):
 
 def _shared_room(client) -> str:
     """A room of alice's project that bob is also in."""
-    project = post_project(client, json={"name": "P", "owner_handle": "alice"}).json()[
-        "data"
-    ]
+    project = post_project(client, json={"name": "P"}, owner="alice").json()["data"]
     join_project_team(client, project["id"], "bob")
     return client.post(
         "/topics",
-        json={"project_id": project["id"], "title": "话题", "created_by": "alice"},
+        json={"project_id": project["id"], "title": "话题"},
+        headers=session_auth_headers("alice"),
     ).json()["data"]["id"]
 
 

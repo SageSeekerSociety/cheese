@@ -1496,7 +1496,9 @@ def test_the_card_it_proposed_is_not_an_input_it_has_to_read(client):
 
     assert _propose(client, topic, token).status_code == 200
 
-    summoned = client.post(f"/topics/{topic}/summon", json={"author": REPORTER})
+    summoned = client.post(
+        f"/topics/{topic}/summon", json={}, headers=session_auth_headers(REPORTER)
+    )
     assert summoned.status_code == 200, summoned.text
     assert summoned.json()["data"] == {
         "started": False,

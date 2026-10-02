@@ -22,7 +22,7 @@ _MSG = "chore: land the branch under test\n\nRequested-by: alice"
 
 
 def _mkproject(client) -> uuid.UUID:
-    resp = post_project(client, json={"name": "P", "owner_handle": "alice"}).json()
+    resp = post_project(client, json={"name": "P"}, owner="alice").json()
     return uuid.UUID(resp["data"]["id"])
 
 

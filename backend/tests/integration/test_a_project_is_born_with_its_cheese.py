@@ -21,7 +21,7 @@ OWNER = "owner-born"
 
 
 def _create_project(client, name: str = "P") -> uuid.UUID:
-    body = post_project(client, json={"name": name, "owner_handle": OWNER}).json()
+    body = post_project(client, json={"name": name}, owner=OWNER).json()
     return uuid.UUID(body["data"]["id"])
 
 

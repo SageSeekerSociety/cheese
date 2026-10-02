@@ -17,7 +17,6 @@ class TopicCreate(BaseModel):
     # own word for "untitled".
     title: str | None = Field(default=None, max_length=300)
     parent_id: uuid.UUID | None = None
-    created_by: str | None = None
 
 
 class MemberActivityOut(BaseModel):
@@ -108,7 +107,6 @@ class UpgradeBlockIn(BaseModel):
 
 class SplitIn(BaseModel):
     title: str = Field(min_length=1, max_length=300)
-    created_by: str | None = None
     # 任务简报: what the 分身 is expected to do, in the splitter's own words.
     # Preset as the child's living doc so the kickoff turn starts informed.
     brief: str | None = None
@@ -152,7 +150,6 @@ class ConclusionIn(BaseModel):
 
 class DocEditIn(BaseModel):
     content: str
-    author: str = "anonymous"
     # The `doc_version` this edit is based on — 0 for "there is no doc yet".
     # Required, and deliberately so: this doc is only ever written whole, so a
     # writer with no version is a writer about to erase whatever it did not

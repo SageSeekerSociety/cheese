@@ -10,9 +10,7 @@ from tests.integration.conftest import (
 
 
 def _project(client) -> str:
-    return post_project(client, json={"name": "P", "owner_handle": "user-1"}).json()[
-        "data"
-    ]["id"]
+    return post_project(client, json={"name": "P"}, owner="user-1").json()["data"]["id"]
 
 
 def test_private_chat_get_or_create_and_hidden_from_tree(client):
@@ -91,7 +89,8 @@ def test_member_summary(client, bearer):
     pid = _project(client)
     client.post(
         "/topics",
-        json={"project_id": pid, "title": "我开的话题", "created_by": "user-1"},
+        json={"project_id": pid, "title": "我开的话题"},
+        headers=session_auth_headers("user-1"),
     )
     client.post(
         f"/projects/{pid}/alerts",

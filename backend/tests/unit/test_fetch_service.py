@@ -196,12 +196,10 @@ async def test_a_sandbox_token_is_accepted_when_the_room_is_named(monkeypatch):
     # refusals it is depends on the token's claims, and either one is a 4xx the
     # sandbox cannot get past.
     with pytest.raises((AuthenticationRequiredError, ForbiddenError)):
-        await resolver().resolve(fallback_handle=None)
+        await resolver().resolve()
 
     # What it does now.
-    actor = await resolver().resolve(
-        fallback_handle=None, topic_id=topic, project_id=project
-    )
+    actor = await resolver().resolve(topic_id=topic, project_id=project)
     assert actor.authenticated and actor.handle.startswith("cheese-")
 
 

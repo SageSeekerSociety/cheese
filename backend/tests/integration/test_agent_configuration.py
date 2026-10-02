@@ -90,7 +90,9 @@ def test_a_saved_agent_can_override_model_but_not_harness(client):
 
 
 def test_room_switch_preserves_the_selected_agents_role(client):
-    pid = post_project(client, json={"name": "Rooms"}).json()["data"]["id"]
+    pid = post_project(client, json={"name": "Rooms"}, owner="alice").json()["data"][
+        "id"
+    ]
     agent = client.post(
         f"/projects/{pid}/agents",
         json={"display_name": "Reviewer", "configuration": {"body": "Review"}},
@@ -98,7 +100,8 @@ def test_room_switch_preserves_the_selected_agents_role(client):
     for title in ["First room", "Second room"]:
         room = client.post(
             "/topics",
-            json={"project_id": pid, "title": title, "created_by": "alice"},
+            json={"project_id": pid, "title": title},
+            headers=session_auth_headers("alice"),
         ).json()["data"]
         r = client.post(
             f"/topics/{room['id']}/members",

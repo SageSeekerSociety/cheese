@@ -13,21 +13,21 @@ from datetime import UTC, datetime, timedelta
 
 from app.domain.delivery.timer import deliver_due
 from tests.conftest import seed_user
-from tests.integration.conftest import post_project
+from tests.integration.conftest import post_project, session_auth_headers
 
 BROWSER = {"X-Cheese-Token": ""}
 
 
 def _room(client, owner: str) -> str:
-    project = post_project(client, json={"name": "提醒", "owner_handle": owner})
+    project = post_project(client, json={"name": "提醒"}, owner=owner)
     assert project.status_code == 200, project.text
     room = client.post(
         "/topics",
         json={
             "project_id": project.json()["data"]["id"],
             "title": "周会",
-            "created_by": owner,
         },
+        headers=session_auth_headers(owner),
     )
     assert room.status_code == 200, room.text
     return room.json()["data"]["id"]
