@@ -108,9 +108,9 @@ it('mounts the slides branch and keeps quote normalization capped at 200 charact
   await fireEvent.update(ui.getByPlaceholderText('说明要改什么'), 'fix it')
   await fireEvent.click(ui.getByText('发送'))
   const payload: unknown = ui.emitted().locate?.[0]
-  if (!Array.isArray(payload) || typeof payload[0] !== 'string')
-    throw new Error('Expected locate to emit a string message')
-  const message = payload[0]
+  const first = Array.isArray(payload) ? (payload[0] as { message?: unknown } | undefined) : undefined
+  if (typeof first?.message !== 'string') throw new Error('Expected locate to emit a message')
+  const message = first.message
   expect(message).toContain('q'.repeat(200))
   expect(message).not.toContain('q'.repeat(201))
   await fireEvent.click(ui.getByRole('button', { name: /^下载$/ }))
@@ -235,7 +235,7 @@ function chatPreview(id: string, rosterGate = Promise.resolve(), refused = false
           docSnapshot: { ...props.docSnapshot, identity },
           slideContext: identity,
           submitQuestion: (request: PreviewQuestion) => chat.value?.submitQuestion?.(request) ?? false,
-          onLocate: (message: string) => chat.value?.say(message),
+          onLocate: (payload: { message: string }) => chat.value?.say(payload.message),
         }),
       ]),
   })
