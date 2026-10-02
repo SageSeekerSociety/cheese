@@ -275,13 +275,18 @@ fn main() {
                 // opens as a blank white rectangle; not at all after an update's restart.
                 .visible(false)
                 .on_page_load(|webview, payload| {
-                    if payload.event() == PageLoadEvent::Finished && !resident::start_hidden(webview.app_handle()) {
-                        let _ = webview.show();
+                    if payload.event() == PageLoadEvent::Finished {
+                        // Here and not after `build()`: the window-state plugin
+                        // restores the saved size from a task queued on the main
+                        // thread, which has not run yet when `build()` returns.
+                        fix_restored_size(&webview);
+                        if !resident::start_hidden(webview.app_handle()) {
+                            let _ = webview.show();
+                        }
                     }
                 })
-                .inner_size(1280.0, 820.0)
-                // The web app switches to its phone layout below 960 wide (Vuetify's md).
-                .min_inner_size(960.0, 600.0)
+                .inner_size(WINDOW_SIZE.0, WINDOW_SIZE.1)
+                .min_inner_size(MIN_WINDOW_SIZE.0, MIN_WINDOW_SIZE.1)
                 .on_navigation(move |url| {
                     stays_in_app(url) || {
                         let _ = opener.opener().open_url(url.as_str(), None::<&str>);
@@ -316,9 +321,36 @@ fn main() {
         });
 }
 
+/// The size the window opens at the first time.
+const WINDOW_SIZE: (f64, f64) = (1280.0, 820.0);
+/// The web app switches to its phone layout below 960 wide (Vuetify's md).
+const MIN_WINDOW_SIZE: (f64, f64) = (960.0, 600.0);
+
+/// Whether a restored size, in logical pixels, is one the window may keep.
+fn usable_size(width: f64, height: f64) -> bool {
+    width >= MIN_WINDOW_SIZE.0 && height >= MIN_WINDOW_SIZE.1
+}
+
+/// The window-state plugin saves the size in physical pixels and restores it
+/// with the scale of whichever display the hidden window starts on. A size saved
+/// on a 1x display and restored on a Retina one comes back at half, and a
+/// programmatic resize is not held to `min_inner_size` on macOS, so the window
+/// could shrink to little more than the logo. A size below the minimum goes back
+/// to the first-launch size, centred.
+fn fix_restored_size<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
+    let (Ok(size), Ok(scale)) = (window.inner_size(), window.scale_factor()) else {
+        return;
+    };
+    let size = size.to_logical::<f64>(scale);
+    if !usable_size(size.width, size.height) {
+        let _ = window.set_size(tauri::LogicalSize::new(WINDOW_SIZE.0, WINDOW_SIZE.1));
+        let _ = window.center();
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::stays_in_app;
+    use super::{stays_in_app, usable_size};
     use url::Url;
 
     fn stays(url: &str) -> bool {
@@ -330,6 +362,15 @@ mod tests {
         assert!(stays(&format!("{}/projects/42", super::ORIGIN)));
         assert!(stays("tauri://localhost/index.html"));
         assert!(stays("http://tauri.localhost/index.html"));
+    }
+
+    #[test]
+    fn a_restored_size_below_the_minimum_is_not_kept() {
+        assert!(!usable_size(319.0, 225.5));
+        assert!(!usable_size(1280.0, 500.0));
+        assert!(!usable_size(900.0, 820.0));
+        assert!(usable_size(960.0, 600.0));
+        assert!(usable_size(1135.0, 732.0));
     }
 
     #[test]

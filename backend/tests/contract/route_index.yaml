@@ -28,6 +28,7 @@ auth_entries:
   review.download: "accept.download_card_deliverable resolves the card project and authorize_project before artifact snapshot delivery. It is the project access path rather than _task_actor. Source: app/api/routes/accept.py."
   user.session: "Depends(require_auth_user) rejects guest after numeric-account access-token verification (or X-User-Id only in non-compose development/test); this shared numeric seam does not itself consult sign-in session revocation. Domain service and cited handler retain ownership checks. get_auth_user alone is not used as a synonym. Source: app/auth/checker.py and app/common/auth.py."
   assistant.task: "assistant AuthUser -> require_auth_user, _readable_task -> tasks._ensure_task_readable for task-scoped operations; conversation _owned binds user_id for reads/asks. Source: app/api/routes/assistant.py,74,107."
+  assistant.personal: "assistant.personal_tool requires sandbox_auth.personal_claims from X-Cheese-Token (cxpu_ prefix, own signing domain); the claimed conversation must still belong to the claimed user, and the tool runs as that user. Project/room credentials are not accepted. Source: app/api/routes/assistant.py; app/core/sandbox_auth.py."
   controller.room: "agent_control.controller: resolve in canonical room/project, explicitly require authenticated actor, authorize_topic(enforce=True). Source: app/api/routes/agent_control.py."
   notification.recipient: "ActorResolver.resolve_recipient binds the verified/requested recipient to project scope; mutations call alerts._acting_recipient with allow_anonymous=False. List/count endpoints retain the resolver own empty/recipient behavior. Source: app/api/routes/alerts.py and app/api/auth.py."
   notification.create: "alerts.create_notification: require_verified_caller then authorize_topic(enforce=True) or authorize_project; named recipients pass topic_admits_handle / may_read_project. This handler has its own gate, outside main._CHEESE_WRITE_PATHS. Source: app/api/routes/alerts.py."
@@ -235,6 +236,7 @@ auth_entries:
   observed.task.teams: "require_auth_user 登录后检查 TEAM 类别并查询本人 teams；没有调用共享 task readability，eligibility 未完整检查（源码明确标注）。任务可见性/eligibility 意图待确认。Source: backend/app/api/routes/tasks.py:3107."
 owners:
   admin: "Platform admin membership and allow-list; domain/admin/AdminService, not every /admin route business domain."
+  usage.plans: "Credit plans, which plan each team is on, credits administrators issue, and their audit; domain/usage/plans.py and ledger.py."
   agent.models: "AI model catalogue, gateway project budgets and audit; domain/agent/gateway_admin.py and gateway_models.py."
   agent.execution: "Agent session execution/control/diagnostics; domain/agent runtime and domain/agent_session. HTTP diagnostics are assembled in app/main.py."
   agent.types: "Agent type catalogue; domain/agent_type/library.py."
@@ -372,6 +374,15 @@ routes:
   - {protocol: "http", method: "GET", path: "/admin/users", auth: "platform.admin", owner: "admin"}
   - {protocol: "http", method: "POST", path: "/admin/admins", auth: "platform.admin", owner: "admin"}
   - {protocol: "http", method: "DELETE", path: "/admin/admins/{target}", auth: "platform.admin", owner: "admin"}
+  - {protocol: "http", method: "GET", path: "/admin/plans", auth: "platform.admin", owner: "usage.plans"}
+  - {protocol: "http", method: "POST", path: "/admin/plans", auth: "platform.admin", owner: "usage.plans"}
+  - {protocol: "http", method: "PUT", path: "/admin/plans/{key}", auth: "platform.admin", owner: "usage.plans"}
+  - {protocol: "http", method: "GET", path: "/admin/teams", auth: "platform.admin", owner: "usage.plans"}
+  - {protocol: "http", method: "GET", path: "/admin/teams/{teamId}", auth: "platform.admin", owner: "usage.plans"}
+  - {protocol: "http", method: "GET", path: "/admin/teams/{teamId}/history", auth: "platform.admin", owner: "usage.plans"}
+  - {protocol: "http", method: "PUT", path: "/admin/teams/{teamId}/plan", auth: "platform.admin", owner: "usage.plans"}
+  - {protocol: "http", method: "POST", path: "/admin/teams/{teamId}/grants", auth: "platform.admin", owner: "usage.plans"}
+  - {protocol: "http", method: "GET", path: "/admin/credits/audit", auth: "platform.admin", owner: "usage.plans"}
   # app.api.routes.admin_memory
   - {protocol: "http", method: "POST", path: "/admin/memory/migration/projects/{project_id}/dry-run", auth: "platform.admin", owner: "memory"}
   - {protocol: "http", method: "GET", path: "/admin/memory/migration/projects/{project_id}/plans", auth: "platform.admin", owner: "memory"}
@@ -446,6 +457,7 @@ routes:
   - {protocol: "http", method: "POST", path: "/assistant/tasks/{taskId}/conversations", auth: "assistant.task", owner: "assistant"}
   - {protocol: "http", method: "GET", path: "/assistant/conversations/{conversationId}", auth: "assistant.task", owner: "assistant"}
   - {protocol: "http", method: "POST", path: "/assistant/conversations/{conversationId}/ask", auth: "assistant.task", owner: "assistant"}
+  - {protocol: "http", method: "POST", path: "/assistant/tools/{name}", auth: "assistant.personal", owner: "assistant"}
   # app.api.routes.attachments
   - {protocol: "http", method: "POST", path: "/attachments", auth: "legacy.answers.list_answers", owner: "attachment"}
   - {protocol: "http", method: "GET", path: "/attachments/limits", auth: "legacy.answers.list_answers", owner: "attachment"}

@@ -204,17 +204,25 @@ function base64url(bytes: Uint8Array): string {
     .replace(/=+$/, '')
 }
 
+/** Which page the browser opens on: signing in, signing up, or resetting a password. */
+export type BrowserSignInEntry = 'signin' | 'signup' | 'recover'
+
 /**
- * Signs in with `provider` in the browser. The app keeps a secret and gives
- * the browser only its hash; the sign-in comes back as a code that is good
- * only with that secret (views/account/AppSignInFinish.vue).
+ * Signs in to the app in the person's browser, every way in included: a
+ * password, an email code, a passkey, a provider (RFC 8252). The app keeps a
+ * secret and gives the browser only its hash; the sign-in comes back as a code
+ * that is good only with that secret (views/account/AppSignInFinish.vue).
+ * Returns the address opened, which holds no secret and can be pasted into a
+ * browser by hand.
  */
-export async function signInInBrowser(provider: string, target: string): Promise<void> {
+export async function signInInBrowser(entry: BrowserSignInEntry, target: string): Promise<string> {
   const verifier = base64url(crypto.getRandomValues(new Uint8Array(32)))
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)))
   localStorage.setItem(SIGN_IN_VERIFIER_KEY, JSON.stringify({ verifier, target }))
-  const query = new URLSearchParams({ provider, challenge: base64url(digest) })
-  window.open(`/account/oauth/app?${query}`, '_blank')
+  const query = new URLSearchParams({ entry, challenge: base64url(digest) })
+  const url = new URL(`/account/oauth/app?${query}`, window.location.origin).href
+  window.open(url, '_blank')
+  return url
 }
 
 /** The secret of the sign-in started last, and where it was headed; each is used at most once. */

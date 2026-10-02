@@ -16,7 +16,8 @@ from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository
 from app.domain.team.services import team_service
 from app.domain.topic.models import Topic
-from app.domain.usage.repositories import ComputeGrantRepository
+from app.domain.usage.ledger import Ledger, payer_for_project
+from app.domain.usage.services import UsageService
 from app.domain.user.repositories import UserRepository
 from tests.conftest import seed_user
 from tests.integration.conftest import post_project
@@ -94,43 +95,50 @@ async def test_team_override_survives_default_change_and_can_inherit_again(db_fa
 async def test_shared_tokens_and_earmarked_credits_keep_their_boundaries(db_factory):
     teams, (a, b, c) = await seed_projects(db_factory)
     async with db_factory() as session:
-        grants = ComputeGrantRepository(session)
-        restricted = await grants.grant(project_id=a, source_task_id=7, credits_total=3)
-        shared = await grants.grant_team(teams[0], 10)
-        await grants.consume(a, 5)
+        ledger = Ledger(session)
+        credits = UsageService(session)
+
+        async def charge(project_id, amount):
+            await ledger.charge(await payer_for_project(session, project_id), amount)
+
+        restricted = await ledger.grant_earmark(
+            project_id=a, source_task_id=7, credits_total=3
+        )
+        shared = await ledger.grant(teams[0], 10)
+        await charge(a, 5)
         await session.refresh(restricted)
         await session.refresh(shared)
         assert restricted.credits_used == 3
         assert shared.credits_used == 2
-        assert (await grants.summary(b))["credits_remaining"] == 8
-        assert (await grants.summary(c))["unlimited"] is True
-        await grants.consume(b, 8)
-        assert (await grants.summary(a))["credits_remaining"] == 0
-        assert (await grants.summary(b))["unlimited"] is False
+        assert (await credits.project_credits(b))["credits_remaining"] == 8
+        assert (await credits.project_credits(c))["unlimited"] is True
+        await charge(b, 8)
+        assert (await credits.project_credits(a))["credits_remaining"] == 0
+        assert (await credits.project_credits(b))["unlimited"] is False
         new_project = Project(name="D", team_id=teams[0])
         session.add(new_project)
         await session.flush()
-        assert (await grants.summary(new_project.id))["credits_remaining"] == 0
-        assert (await grants.summary(new_project.id))["unlimited"] is False
+        assert (await credits.project_credits(new_project.id))["credits_remaining"] == 0
+        assert (await credits.project_credits(new_project.id))["unlimited"] is False
 
 
 @pytest.mark.anyio
 async def test_concurrent_project_settlements_do_not_lose_team_spend(db_factory):
     teams, (a, b, _) = await seed_projects(db_factory)
     async with db_factory() as session:
-        grants = ComputeGrantRepository(session)
-        await grants.grant_team(teams[0], 5)
-        await grants.grant_team(teams[0], 10)
+        await Ledger(session).grant(teams[0], 5)
+        await Ledger(session).grant(teams[0], 10)
         await session.commit()
 
     async def spend(project_id):
         async with db_factory() as session:
-            await ComputeGrantRepository(session).consume(project_id, 6)
+            payer = await payer_for_project(session, project_id)
+            await Ledger(session).charge(payer, 6)
             await session.commit()
 
     await asyncio.gather(spend(a), spend(b))
     async with db_factory() as session:
-        summary = await ComputeGrantRepository(session).summary(a)
+        summary = await UsageService(session).project_credits(a)
         assert summary["credits_used"] == 12
         assert summary["credits_remaining"] == 3
         assert [g.credits_used for g in summary["grants"]] == [5, 7]
@@ -207,9 +215,8 @@ def test_team_quota_view_is_private_and_preserves_project_usage(client):
 
     async def fund():
         async with client.test_factory() as session:
-            repo = ComputeGrantRepository(session)
             team_id = await ProjectRepository(session).team_for_project(project_id)
-            await repo.grant_team(team_id, 10)
+            await Ledger(session).grant(team_id, 10)
             await session.commit()
             return team_id
 

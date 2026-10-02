@@ -186,7 +186,20 @@
     "loading": "正在加载资源限制…"
   },
   "room": {
+    "docTools": {
+      "title": "文档工具",
+      "backToDocument": "返回正文",
+      "float": "在浮窗中打开",
+      "dock": "停靠到侧栏"
+    },
     "docAi": {
+      "review": "查看修改",
+      "explanation": "修改说明",
+      "comparison": "原文与建议",
+      "closeReview": "关闭对照",
+      "original": "原文",
+      "suggested": "建议文字",
+      "staleProposal": "文档已有更新，这份建议无法直接采纳",
       "title": "文档 AI",
       "selectionToolbar": "选区操作",
       "failed": "请求失败，输入已保留",
@@ -197,6 +210,11 @@
       "unknown": "请求结果未知。按原操作恢复，避免重复发送。",
       "recover": "恢复原操作",
       "question": "问题或修改要求",
+      "contextQuestion": "原问题",
+      "contextSelection": "已选原文",
+      "contextDocument": "针对整篇文档",
+      "contextUnavailable": "该版本原文暂不可用",
+      "contextInvalid": "原文校验未通过",
       "ask": "问 AI",
       "propose": "生成修改提案",
       "aiProposal": "AI 请求与提案",
@@ -820,12 +838,12 @@
       "locate": "定位到该段",
       "anchorChanged": "原段落已改动",
       "anchorAmbiguous": "这段引用出现多次，无法确定原选区",
-      "closePanel": "关闭评论栏",
       "resize": "调整评论栏宽度",
       "waitForSend": "评论发送中，请等待结果",
       "closeDraft": "关闭输入",
       "discardDraft": "丢弃草稿",
       "resumeDraft": "继续草稿",
+      "all": "全部评论",
       "unavailable": "当前宿主未提供评论发送接口",
       "showMore": "展开全文",
       "showLess": "收起全文"

@@ -74,7 +74,6 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, Field
 
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_broker, get_chat_service, get_work_runner
@@ -99,6 +98,7 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.agent.runtime import AgentWorkRunner
+from app.domain.block.message_input import ChatAttachmentIn, ChatMessageIn  # noqa: F401
 from app.domain.block.notice_text import say
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
@@ -109,20 +109,6 @@ router = APIRouter(prefix="/topics", tags=["topics"])
 #: How many uploaded files one message carries. A larger selection keeps its
 #: first nine, as the composer always has, rather than refusing the message.
 ATTACHMENTS_PER_MESSAGE = 9
-
-
-class ChatAttachmentIn(BaseModel):
-    """A file uploaded beforehand (`POST /topics/{id}/attachments`), by path."""
-
-    path: str = Field(min_length=1)
-    mime: str = ""
-
-
-class ChatMessageIn(BaseModel):
-    content: str = Field(default="", max_length=100000)
-    request_id: uuid.UUID
-    reply_to: uuid.UUID | None = None
-    attachments: list[ChatAttachmentIn] = Field(default_factory=list)
 
 
 @router.post("/{topic_id}/messages", operation_id="chat-publish")
@@ -170,6 +156,9 @@ async def send_chat_message(
         content=content,
         reply_to=str(body.reply_to) if body.reply_to else None,
         attachments=attachments,
+        quoted_context=body.quoted_context.model_dump(mode="json")
+        if body.quoted_context
+        else None,
         provision_actor=actor,
         client_id=str(body.request_id),
     )
@@ -210,6 +199,9 @@ async def _publish_as_agent(
         publish=True,
         author=author,
         publication_id=str(body.request_id),
+        extra_meta={"quoted_context": body.quoted_context.model_dump(mode="json")}
+        if body.quoted_context
+        else None,
     )
     await get_broker().publish(
         str(place.room_id), {"type": "assistant_block", "block": payload}
@@ -239,6 +231,7 @@ async def _summon_the_named(
             block_id=uuid.UUID(payload["id"]),
             author=author,
             content=payload["content"],
+            quoted_context=(payload.get("meta") or {}).get("quoted_context"),
             by_agent=True,
             occurred_at=datetime.now(UTC),
         )

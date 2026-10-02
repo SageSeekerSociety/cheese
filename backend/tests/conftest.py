@@ -15,6 +15,7 @@ A stub agent keeps tests off the live model.
 """
 
 import asyncio
+import functools
 import inspect
 import json
 import logging
@@ -134,6 +135,15 @@ settings.authz_enforce_topic_access = True
 # uses.
 settings.notification_email_drain_interval_s = 0
 settings.task_deadline_sweep_interval_s = 0
+# Request limits stay on, set far above anything a test does. Their rate state
+# lives in Redis, which no test resets, and across a suite the same handles
+# ("alice") and the same test client address are reused far faster than any
+# one browser, so at the shipped numbers a test's outcome would turn on how many
+# requests ran before it. `tests/integration/test_request_limits.py` puts the
+# shipped numbers back.
+settings.request_rate_per_s = 1_000_000.0
+settings.request_rate_burst = 1_000_000_000
+settings.request_concurrency = 1_000_000
 
 
 def _production_test_engine(url: str):
@@ -1294,6 +1304,31 @@ def client(
 # --- PostgreSQL test-DB plumbing (per-worker, see the module docstring) --------
 
 
+async def _reseed_plans(conn) -> None:
+    """Put back the plans the migration seeds: every team names one, so a
+    wiped ``plans`` table would leave no team creatable."""
+    from sqlalchemy import insert
+
+    from app.domain.usage.models import Plan
+
+    await conn.execute(insert(Plan), _plans_migration().seed_rows())
+
+
+@functools.cache
+def _plans_migration():
+    import importlib.util
+
+    path = (
+        Path(__file__).resolve().parent.parent
+        / "alembic/versions/a6d3f1c9e842_credit_plans.py"
+    )
+    spec = importlib.util.spec_from_file_location("_plans_seed", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 async def _truncate_all(engine) -> None:
     """Wipe every table for a clean per-test slate (fast; keeps the schema).
 
@@ -1313,6 +1348,7 @@ async def _truncate_all(engine) -> None:
         async with engine.begin() as conn:
             await conn.exec_driver_sql("SET LOCAL lock_timeout = '20s'")
             await conn.exec_driver_sql(f"TRUNCATE {tables} RESTART IDENTITY CASCADE")
+            await _reseed_plans(conn)
     except DBAPIError as exc:
         if "lock timeout" not in str(exc).lower():
             raise

@@ -16,7 +16,7 @@ from app.domain.task.models import Task, TaskMembership
 from app.domain.topic.models import TopicKind
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.services import TopicMemberService
-from app.domain.usage.repositories import ComputeGrantRepository
+from app.domain.usage.ledger import Ledger
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +59,7 @@ class ProjectService:
         self._session = session
         self._repo = ProjectRepository(session)
         self._topics = TopicRepository(session)
-        self._grants = ComputeGrantRepository(session)
+        self._ledger = Ledger(session)
         self._members = TopicMemberService(session)
 
     async def create(
@@ -367,11 +367,11 @@ class ProjectService:
         if protocol.default_role and instance.type_name is None:
             await agents.set_type(instance, protocol.default_role)
             await self._session.flush()
-        grants = await self._grants.list_for_project(project.id)
+        grants = await self._ledger.earmarks(project.id)
         if protocol.compute_credits > 0 and not any(
             grant.source_task_id == task_id for grant in grants
         ):
-            await self._grants.grant(
+            await self._ledger.grant_earmark(
                 project_id=project.id,
                 source_task_id=task_id,
                 credits_total=protocol.compute_credits,

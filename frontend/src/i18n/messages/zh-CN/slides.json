@@ -20,5 +20,9 @@
   "noPageText": "当前页暂无可提取的文字",
   "textFailed": "无法读取当前页文字",
   "wholePage": "整页 PDF 文字上下文",
-  "pageMessage": "针对 <&{path}> 第 {page} 页（整页 PDF 文字上下文）提出问题。\n文件身份：topic={topicId} source={source} task={task} version={version}\n问题：{note}\n\n整页文字：\n{text}"
+  "quotedPage": "引用第 {page} 页文字",
+  "sourceCommitted": "已提交文件",
+  "sourceLive": "当前工作文件",
+  "removeQuote": "移除引用",
+  "draftQuoteConflict": "输入框中已有另一份引用，请先发送或移除它。"
 }

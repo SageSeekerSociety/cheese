@@ -62,6 +62,92 @@ function setup() {
   return { ai, topic, version, blocked, reload }
 }
 describe('document AI operation recovery', () => {
+  it('reads the original question and document from the persisted request after later edits', async () => {
+    const { ai, version } = setup()
+    version.value = 9
+    ai.question.value = 'a different draft'
+    api.listDocAiRequests.mockResolvedValue({ requests: [{ request_id: 'r' }] })
+    api.getDocAiRequest.mockResolvedValue({
+      request_id: 'r',
+      state: 'succeeded',
+      kind: 'ask',
+      generation: 1,
+      proposal_id: null,
+      answer: 'done',
+      error: null,
+      frozen_context: {
+        question: 'original question',
+        document_id: 'doc',
+        base_version: 4,
+        source: 'text',
+        source_hash: '982d9e3eb996f559e633f4d194def3761d909f5a3b647d1a851fead67c32c9d1',
+        selection: null,
+        offset_unit: 'utf8-bytes',
+      },
+    })
+    await ai.refresh()
+    expect(ai.cards.value[0].context).toEqual({
+      state: 'verified',
+      question: 'original question',
+      original: 'text',
+      scope: 'document',
+      baseVersion: 4,
+    })
+    expect(ai.question.value).toBe('a different draft')
+    expect(api.createDocAiRequest).not.toHaveBeenCalled()
+    expect(api.acceptDocAiProposal).not.toHaveBeenCalled()
+  })
+  it.each(['room', 'actor'] as const)('discards a late frozen-source hash after changing %s', async (change) => {
+    const { ai, topic } = setup()
+    await flushPromises()
+    api.listDocAiRequests.mockResolvedValueOnce({ requests: [{ request_id: 'r' }] }).mockResolvedValue({ requests: [] })
+    api.getDocAiRequest.mockResolvedValue({
+      request_id: 'r',
+      state: 'succeeded',
+      kind: 'ask',
+      generation: 1,
+      proposal_id: null,
+      answer: 'done',
+      error: null,
+      frozen_context: {
+        question: 'old question',
+        document_id: 'doc',
+        base_version: 4,
+        source: 'text',
+        source_hash: '982d9e3eb996f559e633f4d194def3761d909f5a3b647d1a851fead67c32c9d1',
+        selection: null,
+        offset_unit: 'utf8-bytes',
+      },
+    })
+    const digest = crypto.subtle.digest.bind(crypto.subtle)
+    let release!: () => void
+    let hashing = false
+    const gate = new Promise<void>((done) => {
+      release = done
+    })
+    const spy = vi.spyOn(crypto.subtle, 'digest').mockImplementationOnce(async (...args) => {
+      hashing = true
+      await gate
+      return digest(...args)
+    })
+    try {
+      const pending = ai.refresh()
+      await vi.waitFor(() => expect(hashing).toBe(true))
+      if (change === 'room') topic.value = 'other'
+      else {
+        localStorage.setItem('cheese.doc-ai.v1:different:room:draft', 'new actor draft')
+        localStorage.setItem('user', JSON.stringify({ id: 'different', username: 'different' }))
+        await vi.waitFor(() => expect(ai.question.value).toBe('new actor draft'))
+      }
+      release()
+      await pending
+      expect(ai.cards.value).toEqual([])
+      expect(ai.preparedContext.value).toEqual({ state: 'unavailable' })
+    } finally {
+      release()
+      spy.mockRestore()
+    }
+  })
   it('persists operation before sending and replays unknown with exactly the same payload', async () => {
     const { ai } = setup()
     await ai.prepare(null)

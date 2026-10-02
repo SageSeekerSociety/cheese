@@ -5,56 +5,132 @@ visible at each level (话题→项目→机构).
 """
 
 import uuid
-from datetime import date
+from datetime import date, datetime
+from enum import StrEnum
 
-from sqlalchemy import BigInteger, Date, Float, ForeignKey, Index, String, text
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    Boolean,
+    CheckConstraint,
+    Date,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    String,
+    Text,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
 from app.domain.common import Timestamps, UuidPk
 
 
-class ComputeGrant(UuidPk, Timestamps, Base):
-    """Team credits, optionally restricted to a funded project, or one person's
-    credits for a calendar month.
+class GrantSource(StrEnum):
+    """Where a credit pack came from; it decides when the pack lapses and where
+    it falls in the order a charge drains packs in (``usage.ledger``)."""
 
-    A task's resource pack keeps its project restriction. General grants have
-    no project_id and can be consumed by every project in the owning team. A
-    personal grant has ``user_id`` and ``month`` and neither team nor project:
-    it pays for the AI a person asks for outside any project, and lapses when
-    the month ends.
+    # The team's plan, one per period; lapses when the period ends.
+    PLAN_PERIOD = "plan_period"
+    # A 赛题's 资源包 for one project; spendable only there.
+    TASK_EARMARK = "task_earmark"
+    PURCHASE = "purchase"
+    ADMIN_GRANT = "admin_grant"
+
+
+class Plan(Timestamps, Base):
+    """A credit plan, a record an administrator edits rather than code (#2397).
+
+    Every team is on one (``team.plan_key``). A plan issues ``credits_per_period``
+    credits to each of its teams every ``period``, may cap spending inside time
+    windows, and says which model tiers its teams may use. ``unlimited`` plans
+    issue nothing and refuse nothing.
+    """
+
+    __tablename__ = "plans"
+
+    key: Mapped[str] = mapped_column(String(32), primary_key=True)
+    name: Mapped[str] = mapped_column(String(64))
+    # Who may be put on it: "personal" teams, shared "team"s, or "both".
+    audience: Mapped[str] = mapped_column(String(16), default="both")
+    # The plan's pack per period; NULL issues none.
+    credits_per_period: Mapped[float | None] = mapped_column(Float, nullable=True)
+    period: Mapped[str] = mapped_column(String(16), default="month")
+    # ``[{"hours": 5, "credits": 100}, ...]``: at most that many credits within
+    # any window of that many hours.
+    windows: Mapped[list] = mapped_column(JSON, default=list)
+    # The gateway model tiers its teams may use; NULL is every tier.
+    model_tiers: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # Whether its teams may use the platform's subscription (Claude) models.
+    allows_subscription: Mapped[bool] = mapped_column(Boolean, default=False)
+    unlimited: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Only an administrator can put a team on it, and only the console lists it.
+    admin_only: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class CreditAdminAudit(UuidPk, Timestamps, Base):
+    """Every change an administrator makes to plans and credit packs: who, to
+    what, and what it was before and after."""
+
+    __tablename__ = "credit_admin_audit"
+    __table_args__ = (
+        Index("ix_credit_admin_audit_created_at", text("created_at DESC")),
+    )
+
+    actor_handle: Mapped[str] = mapped_column(String(64))
+    action: Mapped[str] = mapped_column(String(32))
+    target: Mapped[str] = mapped_column(String(128))
+    before: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    after: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+class ComputeGrant(UuidPk, Timestamps, Base):
+    """A credit pack: a balance that spending draws down.
+
+    Every pack belongs to a team, never to a person inside one; a person's own
+    credits are packs on their personal team. ``project_id`` narrows a pack to
+    one project of the team (a task's earmark). ``expires_at`` is when it
+    lapses; NULL never does.
     """
 
     __tablename__ = "compute_grants"
-    # One personal grant per person per month, so issuing it is an insert that
-    # a concurrent first request can lose without writing a second one.
     __table_args__ = (
+        # One plan pack per team per period, so issuing it is an insert that a
+        # concurrent first request can lose without writing a second one.
         Index(
-            "uq_compute_grants_user_month",
-            "user_id",
-            "month",
+            "uq_compute_grants_plan_period",
+            "team_id",
+            "period_start",
             unique=True,
-            postgresql_where=text("user_id IS NOT NULL"),
+            postgresql_where=text("source = 'plan_period'"),
+        ),
+        CheckConstraint(
+            "source IN ('plan_period', 'task_earmark', 'purchase', 'admin_grant')",
+            name="ck_compute_grants_source",
         ),
     )
 
-    team_id: Mapped[int | None] = mapped_column(
-        ForeignKey("team.id", ondelete="CASCADE"), nullable=True, index=True
+    team_id: Mapped[int] = mapped_column(
+        ForeignKey("team.id", ondelete="CASCADE"), index=True
     )
-    # NULL is team-wide. Old owner-less projects can retain restricted grants.
     project_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True
     )
+    source: Mapped[str] = mapped_column(String(32))
     # The 赛题 whose 项目集 funded this grant (#370). An int, and deliberately
     # NOT a foreign key: the credits were granted, so the audit trail has to
-    # survive the 赛题 being deleted. It pointed at cheesex `tasks.id` (uuid)
-    # until that hierarchy was retired.
+    # survive the 赛题 being deleted.
     source_task_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    user_id: Mapped[int | None] = mapped_column(
-        ForeignKey("user.id", ondelete="CASCADE"), nullable=True
+    # The first day of the period a plan pack is for, in the platform's timezone.
+    period_start: Mapped[date | None] = mapped_column(Date, nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
-    # The first day of the month the grant is for, in the platform's timezone.
-    month: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # Why an administrator issued it (a contract, a refund); shown only to
+    # administrators.
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     credits_total: Mapped[float] = mapped_column(Float)
     credits_used: Mapped[float] = mapped_column(Float, default=0.0)
 
@@ -69,14 +145,21 @@ class ResourceUsage(UuidPk, Timestamps, Base):
         Index("ix_resource_usage_created_at", "created_at"),
         # A person's spend in a month: the personal usage page reads it.
         Index("ix_resource_usage_user_created_at", "user_id", "created_at"),
+        # A team's spend inside a plan's time window, read without the rows.
+        Index(
+            "ix_resource_usage_team_created_at",
+            "team_id",
+            "created_at",
+            postgresql_include=["credits"],
+        ),
     )
 
     # NULL when the spend happened outside any project (see ``user_id``).
     project_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True
     )
-    # Whose personal credits paid, for spend outside a project. NULL inside a
-    # project, whose spend is the team's and is not split by person (#394).
+    # Who asked, for spend outside a project; their personal team paid. NULL
+    # inside a project, whose spend is not split by person (#394).
     user_id: Mapped[int | None] = mapped_column(
         ForeignKey("user.id", ondelete="CASCADE"), nullable=True
     )
@@ -106,6 +189,12 @@ class ResourceUsage(UuidPk, Timestamps, Base):
     # "subscription" (metering proxy), "native" (profile-pinned credentials).
     # "" on rows that predate the column.
     route: Mapped[str] = mapped_column(String(16), default="")
+    # The team that paid, and the credits charged for this row (#2397). NULL
+    # and 0 on rows written before they were recorded.
+    team_id: Mapped[int | None] = mapped_column(
+        ForeignKey("team.id", ondelete="CASCADE"), nullable=True
+    )
+    credits: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
 
 
 class IngestCheckpoint(Base):

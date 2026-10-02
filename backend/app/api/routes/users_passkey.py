@@ -15,11 +15,10 @@ as seven routes:
 
 and the one shape only they use, `PasskeyPromptDismissal`.
 
-What stays behind, and why. `_challenge_from_credential` reads the challenge
-out of a WebAuthn `clientDataJSON`, and `POST /users/auth/sudo` reads one too
-— re-proving a passkey is a step-up method there — so the helper belongs to
-both and stays in `users.py`, imported here. `_passkey_enrollment` (what a
-finished sign-in hands back when the account is due the offer) also stays:
+Shared contracts. `challenge_from_credential` reads WebAuthn clientDataJSON
+for both these verification routes and sudo, so it lives in users_common
+beside SudoTicketRequest. `_passkey_enrollment` (what a finished sign-in
+hands back when the account is due the offer) stays in users.py:
 every sign-in route calls it. `_spend_sudo_ticket` is the shared helper and
 lives in `users_common.py`, and `issue_session` joined it there: every way
 of signing in ends in it, so the mint sits beside the ticket these modules
@@ -52,12 +51,13 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_user_auth_service
-from app.api.routes.users import (
+from app.api.routes.users import get_passkey_service
+from app.api.routes.users_common import (
     SudoTicketRequest,
-    _challenge_from_credential,
-    get_passkey_service,
+    _spend_sudo_ticket,
+    challenge_from_credential,
+    issue_session,
 )
-from app.api.routes.users_common import _spend_sudo_ticket, issue_session
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.common.auth import SudoPurpose
@@ -147,7 +147,7 @@ async def passkey_register_verify(
     credential = payload.get("response")
     if not isinstance(credential, dict):
         raise BadRequestError("response (WebAuthn credential) is required")
-    challenge = _challenge_from_credential(credential)
+    challenge = challenge_from_credential(credential)
 
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
@@ -249,7 +249,7 @@ async def passkey_authenticate_verify(
     credential = payload.get("response")
     if not isinstance(credential, dict):
         raise BadRequestError("response (WebAuthn credential) is required")
-    challenge = _challenge_from_credential(credential)
+    challenge = challenge_from_credential(credential)
 
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:

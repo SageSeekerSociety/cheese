@@ -1,113 +1,186 @@
-<template>
-  <VuetifyTiptap
-    ref="editor"
-    v-model="content"
-    rounded
-    editor-class="tiptap-editor"
-    :output="output"
-    :min-height="minHeight"
-    :max-height="maxHeight"
-    :hide-toolbar="hideToolbar"
-    :dense="dense"
-    flat
-  >
-    <template #bottom>
-      <slot name="bottom"></slot>
-    </template>
-  </VuetifyTiptap>
-</template>
-
 <script setup lang="ts">
-import type { JSONContent } from 'vuetify-pro-tiptap'
+// 题目详情、知识库、空间公告与模板、团队简介共用的富文本编辑器。扩展和实况文档是同一套
+// （./richText.ts），工具栏也是实况文档那一排，再接上插图和表格。
+//
+// v-model 的形状由 `output` 定：`json` 是 tiptap 的文档 JSON（题目、知识库、模板），
+// `html` 是一段 HTML（公告、团队简介）。两种都只在有人改了内容时才往外发。
+import type { JSONContent } from '@tiptap/core'
 
-import { computed, getCurrentInstance, ref } from 'vue'
-import { VuetifyTiptap } from 'vuetify-pro-tiptap'
+import { computed, inject, onBeforeUnmount, ref, watch } from 'vue'
+import { toast } from 'vuetify-sonner'
+import { useEditor } from '@tiptap/vue-3'
 
-import { installVuetifyProTipTap } from '@/plugins/tiptap'
+import { ATTACHMENT_IMAGE_SOURCE } from './attachmentImageSource'
+import { jsonContent, richTextExtensions } from './richText'
+import RichTextContent from './RichTextContent.vue'
+import RichTextToolbar from './RichTextToolbar.vue'
 
-// The editor plugin is no longer installed at app boot — that put ~1.09 MB of
-// vuetify-pro-tiptap/prosemirror/tiptap on every first load, login page
-// included. Install it here instead: this runs during THIS component's setup,
-// which is before the VuetifyTiptap child below reads the configured extension
-// list, so Bold/Table/Heading/AttachmentImage… are all live on the first mount.
-const currentApp = getCurrentInstance()?.appContext.app
-if (currentApp) installVuetifyProTipTap(currentApp)
+import { t } from '@/i18n'
 
-const props = defineProps<{
-  output?: 'json' | 'html' | 'text'
-  minHeight?: number
-  maxHeight?: number
-  hideToolbar?: boolean
-  dense?: boolean
-}>()
+const props = withDefaults(
+  defineProps<{
+    output?: 'json' | 'html'
+    minHeight?: number
+    maxHeight?: number
+    hideToolbar?: boolean
+    placeholder?: string
+    ariaLabel?: string
+  }>(),
+  { output: 'json', minHeight: undefined, maxHeight: undefined, placeholder: undefined, ariaLabel: undefined }
+)
 
-const editor = ref<InstanceType<typeof VuetifyTiptap> | null>(null)
+const model = defineModel<string | JSONContent>()
 
-const editorInstance = computed(() => editor.value?.editor)
-
-const isEmpty = computed(() => {
-  return editorInstance.value?.isEmpty ?? true
-})
-
-const modelValue = defineModel<string | JSONContent>()
-const contentModel = defineModel<string | JSONContent>('content')
-
-const EMPTY_DOC: JSONContent = {
-  type: 'doc',
-  content: [{ type: 'paragraph' }],
+function incoming(value: unknown): JSONContent | string {
+  if (props.output === 'html') return typeof value === 'string' ? value : ''
+  return jsonContent(value)
 }
 
-const normalizeContent = (value: string | JSONContent | undefined): string | JSONContent => {
-  if (props.output !== 'json') {
-    return value ?? ''
+/** 编辑器里现在的内容，按 v-model 的形状。 */
+function current(): JSONContent | string {
+  const ed = editor.value
+  if (!ed) return ''
+  return props.output === 'html' ? ed.getHTML() : ed.getJSON()
+}
+
+const empty = ref(true)
+
+const editor = useEditor({
+  content: incoming(model.value),
+  extensions: richTextExtensions(),
+  editorProps: {
+    attributes: {
+      role: 'textbox',
+      'aria-multiline': 'true',
+      ...(props.ariaLabel ? { 'aria-label': props.ariaLabel } : {}),
+    },
+  },
+  onCreate: ({ editor: ed }) => {
+    empty.value = ed.isEmpty
+  },
+  onUpdate: ({ editor: ed }) => {
+    empty.value = ed.isEmpty
+    model.value = props.output === 'html' ? ed.getHTML() : ed.getJSON()
+  },
+})
+
+// 外面换了内容（换了一条在编辑的公告、加载完一道题）才装进去；是这边刚发出去的那份，
+// 装回来只会把光标挪走。
+watch(model, (value) => {
+  const ed = editor.value
+  if (!ed) return
+  const next = incoming(value)
+  if (JSON.stringify(next) === JSON.stringify(current())) return
+  ed.commands.setContent(next, { emitUpdate: false })
+  empty.value = ed.isEmpty
+})
+
+onBeforeUnmount(() => editor.value?.destroy())
+
+// ---- 插图：先传成附件，再把附件 id 写进正文。
+const images = inject(ATTACHMENT_IMAGE_SOURCE, null)
+const fileInput = ref<HTMLInputElement | null>(null)
+const uploading = ref(false)
+
+async function insertImage(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file || !images) return
+  uploading.value = true
+  try {
+    const image = await images.upload(file)
+    editor.value?.chain().focus().setImage(image).run()
+  } catch {
+    toast.error(t('editor.image.uploadFailed'))
+  } finally {
+    uploading.value = false
   }
-  if (typeof value === 'string') {
-    if (!value.trim()) {
-      return EMPTY_DOC
-    }
-    try {
-      const parsed = JSON.parse(value) as JSONContent
-      if (parsed?.type === 'doc') {
-        return normalizeContent(parsed)
+}
+
+// 全屏：编辑区铺满窗口，Esc 或再点一次退出。
+const fullscreen = ref(false)
+function onKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape' && fullscreen.value) fullscreen.value = false
+}
+
+const bodyStyle = computed(() =>
+  fullscreen.value
+    ? {}
+    : {
+        minHeight: props.minHeight ? `${props.minHeight}px` : undefined,
+        maxHeight: props.maxHeight ? `${props.maxHeight}px` : undefined,
       }
-    } catch {
-      // Treat legacy plain-text descriptions as editable TipTap content.
-    }
-    return {
-      type: 'doc',
-      content: [
-        {
-          type: 'paragraph',
-          content: [{ type: 'text', text: value }],
-        },
-      ],
-    }
-  }
-  if (!value || value.type !== 'doc' || !Array.isArray(value.content) || value.content.length === 0) {
-    return EMPTY_DOC
-  }
-  return value
-}
+)
 
-const content = computed<string | JSONContent | undefined>({
-  get() {
-    return normalizeContent(contentModel.value ?? modelValue.value)
-  },
-  set(value) {
-    const normalized = normalizeContent(value)
-    modelValue.value = normalized
-    contentModel.value = normalized
-  },
-})
+/** 点到正文下面的空白也算点进编辑器：最短的时候正文只有一行，框却有 200px 高。 */
+function focusBody(event: MouseEvent) {
+  if ((event.target as HTMLElement).closest('.ProseMirror')) return
+  editor.value?.commands.focus('end')
+}
 
 defineExpose({
-  editor: editorInstance,
-  isEmpty,
+  editor,
+  isEmpty: empty,
 })
 </script>
 
-<style lang="scss">
-.vuetify-pro-tiptap-editor {
-  overflow: visible;
+<template>
+  <!-- 全屏时挪到 body 下：页面里的祖先可能自带层叠和裁切，fixed 铺不满窗口。 -->
+  <Teleport to="body" :disabled="!fullscreen">
+    <div class="rt-editor" :class="{ 'is-fullscreen': fullscreen }" @keydown="onKeydown">
+      <RichTextToolbar
+        v-if="!hideToolbar"
+        class="rt-editor__toolbar"
+        :editor="editor"
+        :can-insert-image="images !== null"
+        :uploading="uploading"
+        :fullscreen="fullscreen"
+        @insert-image="fileInput?.click()"
+        @toggle-fullscreen="fullscreen = !fullscreen"
+      />
+      <div class="rt-editor__body" :style="bodyStyle" @click="focusBody">
+        <RichTextContent :editor="editor" :placeholder="placeholder ?? t('editor.placeholder')" />
+      </div>
+      <input ref="fileInput" type="file" accept="image/*" hidden @change="insertImage" />
+    </div>
+  </Teleport>
+</template>
+
+<style scoped>
+.rt-editor {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  transition: border-color var(--dur-quick) var(--ease-standard);
+}
+.rt-editor:focus-within {
+  border-color: var(--muted);
+}
+.rt-editor.is-fullscreen {
+  position: fixed;
+  inset: 0;
+  /* 盖住页面和弹窗（Vuetify 弹窗 2400），工具栏的下拉（2500）仍在它之上。 */
+  z-index: 2450;
+  border: none;
+  border-radius: 0;
+}
+.rt-editor.is-fullscreen .rt-editor__body {
+  padding: 24px max(16px, calc((100% - 760px) / 2));
+}
+.rt-editor__toolbar {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--line);
+}
+.rt-editor__body {
+  flex: 1 1 auto;
+  padding: 12px 16px;
+  overflow-y: auto;
+  cursor: text;
+}
+.rt-editor__body :deep(.ProseMirror) {
+  min-height: 24px;
 }
 </style>

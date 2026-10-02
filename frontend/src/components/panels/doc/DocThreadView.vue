@@ -81,51 +81,61 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="doc-thread" :aria-label="t('work.room.docThread.title')">
-    <p v-if="localError || state.errors[id]" role="alert">{{ localError || state.errors[id] }}</p>
+    <div class="doc-thread__history">
+      <slot />
+      <p v-if="localError || state.errors[id]" role="alert">{{ localError || state.errors[id] }}</p>
+      <template v-if="state.threads[id]">
+        <div class="doc-thread-actions">
+          <span>{{
+            t(state.threads[id].state === 'open' ? 'work.room.docThread.open' : 'work.room.docThread.resolved')
+          }}</span>
+          <button
+            type="button"
+            :disabled="state.busy || !!state.unknown"
+            @click="act(state.threads[id].state === 'open' ? 'resolve' : 'reopen')"
+          >
+            {{ t(state.threads[id].state === 'open' ? 'work.room.docThread.resolve' : 'work.room.docThread.reopen') }}
+          </button>
+          <button type="button" :disabled="state.busy" @click="act('recover')">
+            {{ t('work.room.docThread.refresh') }}
+          </button>
+        </div>
+        <p v-if="state.threads[id].anchor" class="doc-thread-history">
+          {{ t('work.room.docThread.historicalAnchor') }}
+        </p>
+        <article v-for="reply in state.threads[id].replies" :key="reply.sequence" class="doc-thread-reply">
+          <header>{{ reply.comment.author }} · {{ relTime(reply.comment.created_at) }}</header>
+          <p dir="auto">{{ reply.comment.content }}</p>
+        </article>
+      </template>
+      <button v-else type="button" :disabled="state.busy" @click="act('recover')">
+        {{ t('work.room.docThread.load') }}
+      </button>
+    </div>
     <template v-if="state.threads[id]">
-      <div class="doc-thread-actions">
-        <span>{{
-          t(state.threads[id].state === 'open' ? 'work.room.docThread.open' : 'work.room.docThread.resolved')
-        }}</span>
-        <button
-          type="button"
-          :disabled="state.busy || !!state.unknown"
-          @click="act(state.threads[id].state === 'open' ? 'resolve' : 'reopen')"
-        >
-          {{ t(state.threads[id].state === 'open' ? 'work.room.docThread.resolve' : 'work.room.docThread.reopen') }}
-        </button>
-        <button type="button" :disabled="state.busy" @click="act('recover')">
-          {{ t('work.room.docThread.refresh') }}
-        </button>
-      </div>
-      <p v-if="state.threads[id].anchor" class="doc-thread-history">{{ t('work.room.docThread.historicalAnchor') }}</p>
-      <article v-for="reply in state.threads[id].replies" :key="reply.sequence" class="doc-thread-reply">
-        <header>{{ reply.comment.author }} · {{ relTime(reply.comment.created_at) }}</header>
-        <p dir="auto">{{ reply.comment.content }}</p>
-      </article>
       <template v-if="state.threads[id].state === 'open'">
-        <textarea
-          v-model="text"
-          autocomplete="off"
-          rows="2"
-          :aria-label="t('work.room.docThread.reply')"
-          :placeholder="t('work.room.docThread.placeholder')"
-          @keydown="keydown"
-        />
-        <button
-          type="button"
-          :disabled="state.busy || !!state.unknown || !text.trim()"
-          @mousedown.prevent
-          @click="act('reply')"
-        >
-          {{ t('work.room.docThread.send') }}
-        </button>
+        <div class="doc-thread-composer">
+          <textarea
+            v-model="text"
+            autocomplete="off"
+            rows="2"
+            :aria-label="t('work.room.docThread.reply')"
+            :placeholder="t('work.room.docThread.placeholder')"
+            @keydown="keydown"
+          />
+          <button
+            type="button"
+            class="doc-thread-send"
+            :disabled="state.busy || !!state.unknown || !text.trim()"
+            @mousedown.prevent
+            @click="act('reply')"
+          >
+            {{ t('work.room.docThread.send') }}
+          </button>
+        </div>
       </template>
       <p v-else>{{ t('work.room.docThread.reopenToReply') }}</p>
     </template>
-    <button v-else type="button" :disabled="state.busy" @click="act('recover')">
-      {{ t('work.room.docThread.load') }}
-    </button>
     <div v-if="state.unknown === id" role="status">
       <p>{{ t('work.room.docThread.unknown') }}</p>
       <button type="button" :disabled="state.busy" @click="act('recover')">
@@ -137,26 +147,36 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .doc-thread {
-  border-block-start: 1px solid var(--line);
-  padding-block-start: 8px;
-  margin-block-start: 8px;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
   min-width: 0;
+}
+.doc-thread__history {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .doc-thread-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+  border-block-start: 1px solid var(--line);
+  padding-block-start: 8px;
 }
 .doc-thread-history,
 header {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 13px;
+  line-height: var(--lh-13);
 }
 .doc-thread-reply {
-  border-inline-start: 2px solid var(--line);
-  padding-inline-start: 8px;
-  margin-block: 12px;
+  margin-block: 16px;
+  font-size: 14px;
+  line-height: var(--lh-14);
 }
 p {
   white-space: pre-wrap;
@@ -167,19 +187,49 @@ textarea {
   display: block;
   width: 100%;
   box-sizing: border-box;
-  border: 1px solid var(--line);
-  background: var(--surface);
+  border: 0;
+  background: transparent;
   color: var(--ink);
-  padding: 8px;
-  margin-block: 8px;
+  padding: 12px;
+  resize: vertical;
+  min-height: 72px;
+  max-height: 160px;
+  font-size: 14px;
+  line-height: var(--lh-14);
 }
 button {
-  border: 1px solid var(--line);
-  background: var(--surface);
-  color: var(--ink);
+  background: transparent;
+  color: var(--muted);
   border-radius: var(--radius-sm);
-  padding: 4px 8px;
+  padding: 8px;
+  font-size: 13px;
+  line-height: var(--lh-13);
   cursor: pointer;
+}
+button:hover:not(:disabled) {
+  background: var(--fill);
+}
+.doc-thread-actions > span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  margin-inline-end: auto;
+}
+.doc-thread-composer {
+  flex: 0 0 auto;
+  margin-top: 12px;
+  padding-bottom: 8px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-lg);
+}
+.doc-thread-composer:focus-within {
+  border-color: var(--muted);
+}
+.doc-thread-send {
+  display: block;
+  margin-inline: auto 8px;
+  color: var(--accent-ink);
+  background: var(--accent-wash);
 }
 button:disabled {
   color: var(--faint);

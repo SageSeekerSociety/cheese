@@ -16,6 +16,9 @@
           v-model="username"
           name="username"
           autocomplete="username"
+          autocapitalize="none"
+          autocorrect="off"
+          spellcheck="false"
           v-bind="usernameProps"
         />
       </AccountField>
@@ -36,6 +39,9 @@
           v-model="email"
           name="email"
           autocomplete="email"
+          autocapitalize="none"
+          autocorrect="off"
+          spellcheck="false"
           type="email"
           :hint="t('account.rule.emailHint')"
           persistent-hint
@@ -66,7 +72,15 @@
       </AccountField>
 
       <AccountField v-if="requireInviteCode" :label="t('account.invitationCode')" input-id="signup-invite-code">
-        <v-text-field id="signup-invite-code" v-model="inviteCode" autocomplete="off" v-bind="inviteCodeProps" />
+        <v-text-field
+          id="signup-invite-code"
+          v-model="inviteCode"
+          autocomplete="off"
+          autocapitalize="none"
+          autocorrect="off"
+          spellcheck="false"
+          v-bind="inviteCodeProps"
+        />
       </AccountField>
 
       <LegalConsent ref="consentRef" :action-label="t('account.agreeAndSignUp')" class="mb-4" />

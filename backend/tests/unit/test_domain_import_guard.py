@@ -86,7 +86,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # 边，只是发起方从 chat.py 换成了 queries.py，所以按同一笔债入账。
         ("app.domain.agent.queries", "app.domain.block.repositories"),
         ("app.domain.agent.queries", "app.domain.project.repositories"),
-        ("app.domain.agent.queries", "app.domain.usage.repositories"),
         # agent.room_events 是从 agent.chat 里拆出来的那一块（这一轮往房间里落下
         # 的那些行：事件块、步骤的判决、变更汇总）。它摸的 repository 只有 block
         # 一个，正是原先 chat.py 那一组里跟着它走的：block 领域没有 service 层，
@@ -107,7 +106,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # 边，只是发起方从 chat.py 换成了 gateway_usage.py，所以按同一笔债入账。
         ("app.domain.agent.gateway_usage", "app.domain.project.repositories"),
         ("app.domain.agent.gateway_usage", "app.domain.topic.repositories"),
-        ("app.domain.agent.gateway_usage", "app.domain.usage.repositories"),
         # agent.work_policy 是从 agent.chat 里拆出来的那一块（准入前的那组事
         # 实：项目、并发上限、额度、这一轮的会话落不落在中心机上）。它摸的三个
         # repository 正是原先 chat.py 里 `work_policy` 用的那三个：读话题表、读
@@ -115,7 +113,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # work_policy.py，所以按同一笔债入账。
         ("app.domain.agent.work_policy", "app.domain.project.repositories"),
         ("app.domain.agent.work_policy", "app.domain.topic.repositories"),
-        ("app.domain.agent.work_policy", "app.domain.usage.repositories"),
         # --- answers / comments / discussion / groups ---
         ("app.domain.answers.services", "app.domain.user.repositories"),
         ("app.domain.answers.services", "app.domain.questions.repositories"),
@@ -152,7 +149,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # announce / review 那几行同一个理由入账。
         ("app.domain.project.environment_recovery", "app.domain.block.repositories"),
         ("app.domain.project.services", "app.domain.topic.repositories"),
-        ("app.domain.project.services", "app.domain.usage.repositories"),
         ("app.domain.project.services", "app.domain.user.repositories"),
         # --- questions ---
         ("app.domain.questions.services", "app.domain.user.repositories"),
@@ -231,7 +227,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.api.routes.knowledge", "app.domain.team.repositories"),
         ("app.api.routes.knowledge", "app.domain.user.repositories"),
         ("app.api.routes.llm_proxy", "app.domain.project.repositories"),
-        ("app.api.routes.llm_proxy", "app.domain.usage.repositories"),
         ("app.api.routes.machines", "app.domain.project.repositories"),
         ("app.api.routes.machines", "app.domain.team.repositories"),
         ("app.api.routes.materialbundles", "app.domain.materials.repositories"),

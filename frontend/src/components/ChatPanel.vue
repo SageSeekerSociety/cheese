@@ -12,12 +12,14 @@ import type { ProjectMemberRow, Topic } from '../cx_types'
 import { computed } from 'vue'
 
 import { type ChatPanelEmit, useChatPanel } from '../composables/useChatPanel'
+import { createQuestionSubmit } from '../lib/previewQuestion'
 
 import ChatErrorToast from './chat/ChatErrorToast.vue'
 import ChatNewMessagesPill from './chat/ChatNewMessagesPill.vue'
 import ChatPanelHeader from './chat/ChatPanelHeader.vue'
 import ChatTimeline from './chat/ChatTimeline.vue'
 import MemberActivity from './room/MemberActivity.vue'
+import MessageQuote from './room/MessageQuote.vue'
 import RoomComposer from './room/RoomComposer.vue'
 import RoomMessageSheet from './room/RoomMessageSheet.vue'
 
@@ -154,6 +156,8 @@ const {
   sheet,
   sheetBlock,
   draft,
+  draftQuote,
+  clearDraftQuote,
   composerRef,
   starterPrompts,
   showStarters,
@@ -207,7 +211,14 @@ const barEditable = computed(() => !!barBlock.value && canEdit(barBlock.value))
 
 // The page that owns the address drives the composer through this (TopicView
 // keeps its own input bar for the root topic), so it stays exposed.
-defineExpose({ send, connected })
+const submitQuestion = createQuestionSubmit({
+  topic: () => props.topic,
+  agentSeat: () => agentSeat.value,
+  mentionPool: () => mentionPool.value,
+  topicList: () => props.topicList,
+  send,
+})
+defineExpose({ send, connected, submitQuestion })
 </script>
 
 <template>
@@ -338,6 +349,12 @@ defineExpose({ send, connected })
            又不该每来一条消息就被推走、或者反过来把对话挤到只剩几行。 -->
       <slot name="above-composer" />
 
+      <div v-if="showComposer && draftQuote" class="composer-quote">
+        <MessageQuote :quote="draftQuote" />
+        <button type="button" class="composer-quote__remove" @click="clearDraftQuote">
+          {{ t('slides.removeQuote') }}
+        </button>
+      </div>
       <!-- Built-in composer (private chat / standalone use). -->
       <RoomComposer
         v-if="showComposer"
@@ -372,6 +389,15 @@ defineExpose({ send, connected })
 </template>
 
 <style scoped>
+.composer-quote {
+  margin: 0 16px 8px;
+}
+.composer-quote__remove {
+  color: var(--faint);
+  font-size: 12px;
+  line-height: var(--lh-12);
+  padding: 4px 0;
+}
 .chat {
   /* Was `d-flex flex-column fill-height` on the root. Spelled here instead so
      the declarations carry normal specificity: v-show's inline `display: none`

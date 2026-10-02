@@ -1,43 +1,39 @@
 <!--
   In the browser, the start of a sign-in the desktop app asked for
   (lib/desktopApp.ts signInInBrowser): keeps the app's challenge for the page
-  that hands the sign-in back (BackToApp.vue), then signs in with the provider
-  as the sign-in page would.
+  that hands the sign-in back (BackToApp.vue), then opens the sign-in, sign-up
+  or reset page. Someone already signed in here goes straight to handing over.
 -->
 <template>
-  <div>
-    <AccountHeading :title="t('account.oauth.app.leaving', { provider: providerName })" />
-    <v-progress-linear indeterminate color="primary" height="2" />
-  </div>
+  <v-progress-linear indeterminate color="primary" height="2" />
 </template>
 
 <script lang="ts" setup>
-import { computed, onMounted } from 'vue'
+import type { BrowserSignInEntry } from '@/lib/desktopApp'
+
+import { onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import { keepAppChallenge } from './appSignIn'
-import { oauthProviderName } from './oauthProvider'
+import { ENTRY_PAGE, keepAppChallenge } from './appSignIn'
 
-import AccountHeading from '@/components/account/AccountHeading.vue'
-import { t } from '@/i18n'
-import { UserApi } from '@/network/api/users'
-import { stashOAuthRedirect } from '@/router/loginRedirect'
+import { myId } from '@/me'
 
 const route = useRoute()
 const router = useRouter()
 
-const provider = computed(() => (typeof route.query.provider === 'string' ? route.query.provider : ''))
-const providerName = computed(() => oauthProviderName(provider.value))
-
 onMounted(() => {
   const challenge = route.query.challenge
-  if (!provider.value || typeof challenge !== 'string' || !keepAppChallenge(challenge)) {
+  if (typeof challenge !== 'string' || !keepAppChallenge(challenge)) {
     router.replace({ name: 'SignIn' })
     return
   }
-  // Every way a provider sign-in can end — straight in, a new account, a
-  // linked one, a second step — goes on to this page once signed in.
-  stashOAuthRedirect('/account/oauth/to-app')
-  UserApi.redirectToOAuthLogin(provider.value)
+  if (myId()) {
+    router.replace({ name: 'AppSignInHandOff' })
+    return
+  }
+  const entry = route.query.entry
+  const page =
+    typeof entry === 'string' && Object.hasOwn(ENTRY_PAGE, entry) ? ENTRY_PAGE[entry as BrowserSignInEntry] : 'SignIn'
+  router.replace({ name: page })
 })
 </script>

@@ -24,6 +24,7 @@ import ExternalTag from '../common/ExternalTag.vue'
 
 import ChecklistMessage from './ChecklistMessage.vue'
 import MessageEditor from './MessageEditor.vue'
+import MessageQuote from './MessageQuote.vue'
 import RollingNumber from './RollingNumber.vue'
 
 import { t } from '@/i18n'
@@ -273,6 +274,7 @@ async function onAgentTextClick(e: MouseEvent) {
           t('work.room.message.edited')
         }}</span>
       </div>
+      <MessageQuote v-if="block.meta?.quoted_context" :quote="block.meta.quoted_context" />
       <div v-if="outgoing?.failed" class="outbox-fail" role="alert">
         <span class="outbox-fail__text">{{
           outgoing.error ? t('work.room.outbox.failed', { reason: outgoing.error }) : t('work.room.outbox.undelivered')

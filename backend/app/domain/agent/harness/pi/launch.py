@@ -238,11 +238,19 @@ def on_host(
     api_base: str,
     model: str,
     env: dict[str, str],
+    models: str | None = None,
+    host: dict | None = None,
 ) -> HostLaunch:
     """The room's pi as the session host is to start it. ``config`` is what
-    the runner reads (`entry.py`) without its ``contract``."""
+    the runner reads (`entry.py`) without its ``contract``.
+
+    ``models`` is the provider file when this session's model needs one of its
+    own (``provider``'s by default). ``host`` is what ``host.configure`` does
+    beyond starting the runner, for a person's 芝士: how many of the person's
+    sessions may run at once, the memory each may use, and pi's settings.
+    """
     archive = build()
-    models = provider(api_base, model)
+    models = models or provider(api_base, model)
     contract = hashlib.sha256(
         json.dumps(
             [
@@ -261,6 +269,7 @@ def on_host(
             "models": models,
             "install": install(home="$HOME", base=api_base.rstrip("/")),
             "env": env,
+            **(host or {}),
         },
         archive=archive,
     )

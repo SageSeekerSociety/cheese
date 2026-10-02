@@ -209,7 +209,7 @@ describe('模型管理 · 页头与六个 KPI', () => {
   it('标题、一句说明（带当前窗口）、三个档位与刷新', async () => {
     const page = await mountLoaded()
 
-    expect(page.getByRole('heading', { name: '模型管理' })).toBeTruthy()
+    expect(page.getByRole('heading', { name: '模型', level: 1 })).toBeTruthy()
     // 窗口是三段共用的，所以在页头只说一次；说的时候把它连起止日期一起说。
     expect(page.getByText('网关上的模型、单价与每个项目的额度 · 2026-09-16 – 2026-09-23')).toBeTruthy()
 

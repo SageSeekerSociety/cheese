@@ -254,10 +254,10 @@ async def test_admission_answers_from_the_grant_balance(client):
     body = r.json()["data"]
     assert body["allow"] is True and body["reason"] == "unlimited"
 
-    from app.domain.usage.repositories import ComputeGrantRepository
+    from app.domain.usage.ledger import Ledger, payer_for_project
 
     async with client.test_factory() as session:
-        await ComputeGrantRepository(session).grant(
+        await Ledger(session).grant_earmark(
             project_id=uuid.UUID(pid), source_task_id=None, credits_total=5.0
         )
         await session.commit()
@@ -266,7 +266,8 @@ async def test_admission_answers_from_the_grant_balance(client):
     assert r.json()["data"]["allow"] is True
 
     async with client.test_factory() as session:
-        await ComputeGrantRepository(session).consume(uuid.UUID(pid), 5.0)
+        payer = await payer_for_project(session, uuid.UUID(pid))
+        await Ledger(session).charge(payer, 5.0)
         await session.commit()
 
     r = client.post("/llm/admission", headers={"Authorization": f"Bearer {token}"})
@@ -276,13 +277,14 @@ async def test_admission_answers_from_the_grant_balance(client):
 
 
 async def _exhaust(client, pid: str) -> None:
-    from app.domain.usage.repositories import ComputeGrantRepository
+    from app.domain.usage.ledger import Ledger, payer_for_project
 
     async with client.test_factory() as session:
-        await ComputeGrantRepository(session).grant(
+        ledger = Ledger(session)
+        await ledger.grant_earmark(
             project_id=uuid.UUID(pid), source_task_id=None, credits_total=1.0
         )
-        await ComputeGrantRepository(session).consume(uuid.UUID(pid), 1.0)
+        await ledger.charge(await payer_for_project(session, uuid.UUID(pid)), 1.0)
         await session.commit()
 
 

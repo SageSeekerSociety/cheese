@@ -151,3 +151,22 @@ describe('芝士摆出来的东西', () => {
     expect(card?.textContent).not.toContain('weird 文件')
   })
 })
+
+describe('消息里的文件引用', () => {
+  it.each([
+    ['library/design-fit-4096x2304(3).png', ME, null],
+    ['library/报告(2).pdf:7', ME, null],
+    ['src/page(2).ts:12-30', SEAT, 'task-7'],
+  ])('点开 %s 时保留原路径、行号与所属任务', async (path, author, taskId) => {
+    history = [block('message', `见 <&${path}>`, { author, task_id: taskId })]
+    const { container, emitted } = await open()
+
+    const chip = container.querySelector<HTMLElement>('.im-text [data-file]')
+    expect(chip, '合法文件引用应能点开').not.toBeNull()
+    expect(chip!.dataset.file).toBe(path)
+    chip!.click()
+    await settle()
+
+    expect(emitted()['open-file']).toEqual([[path, taskId]])
+  })
+})

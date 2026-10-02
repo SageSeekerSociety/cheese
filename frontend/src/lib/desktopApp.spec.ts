@@ -87,8 +87,11 @@ describe('authorizing from the app', () => {
   it('gives the browser only the hash of the secret the app keeps', async () => {
     desktopApp(app)
     const open = vi.spyOn(window, 'open').mockReturnValue(null)
-    await signInInBrowser('github', '/inbox')
+    const url = await signInInBrowser('signin', '/inbox')
     const opened = new URL(String(open.mock.calls[0][0]), 'https://okcheese.com')
+    expect(opened.href).toBe(url)
+    expect(opened.pathname).toBe('/account/oauth/app')
+    expect(opened.searchParams.get('entry')).toBe('signin')
     const kept = takeSignInVerifier()
     expect(kept?.target).toBe('/inbox')
     expect(opened.href).not.toContain(kept!.verifier)
@@ -103,7 +106,7 @@ describe('authorizing from the app', () => {
   it('uses the secret at most once', async () => {
     desktopApp(app)
     vi.spyOn(window, 'open').mockReturnValue(null)
-    await signInInBrowser('github', '/')
+    await signInInBrowser('signup', '/')
     expect(takeSignInVerifier()).not.toBeNull()
     expect(takeSignInVerifier()).toBeNull()
   })

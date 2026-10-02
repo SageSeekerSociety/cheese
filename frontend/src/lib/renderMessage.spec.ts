@@ -5,7 +5,7 @@ import type { Block } from '../cx_types'
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { coalesceSplitFencedCodeBlocks, renderMarkdown, renderPlain } from './renderMessage'
+import { coalesceSplitFencedCodeBlocks, plainTokens, renderMarkdown, renderPlain } from './renderMessage'
 
 import { setLocale } from '@/i18n'
 
@@ -116,6 +116,54 @@ describe('renderPlain (human messages)', () => {
     const html = renderPlain('<b>bold?</b>', MAPS)
     expect(html).not.toContain('<b>')
     expect(html).toContain('&lt;b&gt;')
+  })
+})
+
+describe.each([
+  ['Markdown', renderMarkdown],
+  ['plain text', renderPlain],
+] as const)('file references in %s', (_label, renderText) => {
+  it.each([
+    ['library/design-fit-4096x2304(3).png', 'design-fit-4096x2304(3).png'],
+    ['library/报告(2).pdf', '报告(2).pdf'],
+    ['src/page(backup).ts:7', 'page(backup).ts:7'],
+    ['src/page(2).ts:12-30', 'page(2).ts:12-30'],
+  ])('keeps the exact file path and optional line suffix for %s', (path, label) => {
+    const host = document.createElement('div')
+    host.innerHTML = renderText(`见 <&${path}>：这一份`, MAPS)
+
+    const chip = host.querySelector<HTMLElement>('[data-file]')
+    expect(chip?.dataset.file).toBe(path)
+    expect(chip?.title).toBe(path)
+    expect(chip?.textContent).toBe(label)
+    expect(host.textContent?.trimEnd()).toBe(`见 ${label}：这一份`)
+  })
+
+  it.each([
+    '<&javascript:alert(1)>',
+    '<&https://example.com/image(3).png>',
+    '<&library/image(3).png?onload=alert(1)>',
+    '<&library/image(3).png" onclick="alert(1)>',
+    '<&library/image(3).png<script>alert(1)</script>>',
+    '<&library/image(3).png<img src=x onerror=alert(1)>>',
+  ])('rejects non-file or markup-bearing reference %s', (text) => {
+    const host = document.createElement('div')
+    host.innerHTML = renderText(text, MAPS)
+
+    expect(host.querySelector('[data-file]')).toBeNull()
+    expect(host.querySelector('script, [onclick], [onerror]')).toBeNull()
+    if (renderText === renderPlain) expect(host.textContent).toBe(text)
+  })
+})
+
+describe('plain file-reference labels', () => {
+  it.each([
+    ['<&library/design-fit-4096x2304(3).png>', 'design-fit-4096x2304(3).png'],
+    ['<&library/报告(2).pdf>', '报告(2).pdf'],
+    ['<&src/page(backup).ts:7>', 'page(backup).ts:7'],
+    ['<&src/page(2).ts:12-30>', 'page(2).ts:12-30'],
+  ])('keeps the filename and optional line suffix for %s', (token, label) => {
+    expect(plainTokens(`见 ${token}：这一份`, MAPS)).toBe(`见 ${label}：这一份`)
   })
 })
 

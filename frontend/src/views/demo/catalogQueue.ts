@@ -32,7 +32,7 @@ export const QUEUE_ENTRIES: CatalogEntry[] = [
   {
     id: 'admin-queue-header',
     title: 'AdminQueueHeader',
-    about: '队列页头：标题、未读徽标、「标记为已读」、刷新，和列表/表格的切换器。',
+    about: '队列页头右边那排工具：未读徽标、「标记为已读」、刷新，和列表/表格的切换器。',
     file: 'src/components/admin/queue/AdminQueueHeader.vue',
     component: AdminQueueHeader,
     needs: UI,
@@ -47,7 +47,7 @@ export const QUEUE_ENTRIES: CatalogEntry[] = [
         name: '没有未读',
         note: '0 的时候徽标和按钮整个不画 —— 「0 未读」是一句噪音。',
         props: queueHeaderProps({ unread: 0 }),
-        expect: '反馈队列',
+        expect: '列表',
       },
       {
         name: '停在总表',

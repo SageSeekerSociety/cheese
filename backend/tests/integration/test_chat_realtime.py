@@ -36,6 +36,101 @@ from app.domain.topic_membership.services import TopicMemberService
 from tests.conftest import StubChannel, finish_turn, stub_compute
 from tests.integration.conftest import registered
 from tests.support.hang import HANG_S
+from tests.support.quoted_context import prompt_quote, slide_quote
+
+
+@pytest.mark.anyio
+async def test_broker_live_quote_uses_saved_data_and_retries_only_once(
+    business_db_factory, tmp_path
+):
+    from app.domain.agent.compute import ComputePool
+    from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
+    from app.domain.agent_instance.services import AgentInstanceService
+    from app.domain.block.models import consumed_turn
+
+    factory = business_db_factory
+    provider = _SlowLiveScreen()
+    svc = ChatService(
+        session_factory=factory,
+        base_system_prompt="你是芝士。",
+        workspace_root=str(tmp_path / "ws"),
+        compute=ComputePool([provider.runtime], provider.name),
+    )
+    async with factory() as session:
+        await registered(session, "alice")
+        project = await ProjectService(session).create(name="P", owner_handle="alice")
+        topic = await TopicService(session).create(
+            project_id=project.id, title="讨论", created_by="alice"
+        )
+        second = await AgentInstanceService(session).create(
+            project_id=project.id,
+            handle="second",
+            type_name=None,
+            display_name="Second",
+        )
+        members = TopicMemberService(session)
+        current = (await members.agent_handles(topic.id))[0]
+        other = agent_instance_handle(second.id)
+        await members.ensure_agent_seat(topic.id, other)
+        topic_id = topic.id
+        await session.commit()
+
+    async def first_turn():
+        return [
+            frame
+            async for frame in svc.converse(
+                topic_id=topic_id, author="alice", content="跑很久的命令", summon=True
+            )
+        ]
+
+    run = asyncio.create_task(first_turn())
+    await asyncio.wait_for(provider.started.wait(), HANG_S)
+    broker = InProcessBroker()
+    runner = AgentWorkRunner(broker)
+    runner.subscribe_messages()
+    quote = slide_quote(f"  @Second <@{other}> <@{current}>\n")
+    client_id = str(uuid.uuid4())
+    try:
+        landed = await broker.receive_message(
+            svc,
+            topic_id,
+            author="alice",
+            content=f"<@{current}> 解释这页",
+            quoted_context=quote,
+            client_id=client_id,
+        )
+        async with asyncio.timeout(HANG_S):
+            while not provider.delivered:
+                await asyncio.sleep(0.01)
+        assert len(provider.delivered) == 1
+        assert prompt_quote(provider.delivered[0]) == quote
+        assert provider.runs == 1
+        async with factory() as session:
+            saved = await BlockRepository(session).get(landed)
+            assert saved.meta["quoted_context"] == quote
+            assert consumed_turn(saved) is None
+        await svc.confirm_prompt_receipt(topic_id, provider.delivered[0])
+        async with factory() as session:
+            saved = await BlockRepository(session).get(landed)
+            assert consumed_turn(saved) is not None
+        again = await broker.receive_message(
+            svc,
+            topic_id,
+            author="alice",
+            content=f"<@{current}> 解释这页",
+            quoted_context={**quote, "version": "version-b", "text": "改过的页面"},
+            client_id=client_id,
+        )
+        assert again == landed
+        assert len(provider.delivered) == 1
+        async with factory() as session:
+            saved = await BlockRepository(session).get(landed)
+            assert saved.meta["quoted_context"] == quote
+    finally:
+        provider.release.set()
+        await asyncio.wait_for(run, HANG_S)
+        await runner.drain(timeout_s=60)
+        await finish_turn(svc, topic_id)
 
 
 def _said(message: dict) -> str:

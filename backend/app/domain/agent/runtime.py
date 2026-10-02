@@ -214,13 +214,11 @@ class InProcessBroker:
         attachments: list[dict] | None = None,
         provision_actor: Actor | None = None,
         client_id: str | None = None,
+        quoted_context: dict | None = None,
     ) -> uuid.UUID:
         """Persist one human message now, then deliver it to whoever it named.
 
-        Receiving a message is free collaboration state; running a model turn is
-        metered work. Keeping those as two operations makes the ordering real:
-        the project queue and credit gate can delay/refuse only the latter.
-
+        Only model turns use queue/credit gates; quotes carry no summon authority.
         **谁被点名是这里算的，不是发送方算好递进来的**（不变量 I13）。以前还有一个
         `summon: bool` 入参，从浏览器的帧上一路传到这里，和服务端解析出来的 @ 做或
         运算 —— 也就是说一条谁也没 @ 的消息，只要客户端把那个布尔置真，照样起一轮。
@@ -247,6 +245,7 @@ class InProcessBroker:
             reply_to=reply_to,
             attachments=attachments,
             client_id=client_id,
+            quoted_context=quoted_context,
         )
         turn_id = user_block_id
         recipient = next(

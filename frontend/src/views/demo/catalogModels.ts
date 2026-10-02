@@ -46,7 +46,7 @@ export const MODELS_ENTRIES: CatalogEntry[] = [
   {
     id: 'admin-models-header',
     title: 'AdminModelsHeader',
-    about: '模型管理页头：标题、一句说明（带当前窗口）、网关健康灯、窗口页签、刷新。',
+    about: '模型管理页头右边那排工具：网关健康灯、窗口页签、刷新。',
     file: 'src/components/admin/models/AdminModelsHeader.vue',
     component: AdminModelsHeader,
     needs: UI,
@@ -67,7 +67,7 @@ export const MODELS_ENTRIES: CatalogEntry[] = [
         name: '还没读到',
         note: '`health: null`（第一次读数还没回来）：灯那一格整个不画 —— 「还没读到」不是一种健康状态。',
         props: modelsHeaderProps({ health: null }),
-        expect: '模型管理',
+        expect: '过去 7 天',
       },
     ],
   },

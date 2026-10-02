@@ -6,7 +6,7 @@ import { useI18n } from 'vue-i18n'
 
 import { getPlatformFeishuApp, savePlatformFeishuApp } from '@/api/feishu'
 import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
-import AdminPageHeader from '@/components/admin/AdminPageHeader.vue'
+import AdminPage from '@/components/admin/AdminPage.vue'
 import { relTime } from '@/lib/relTime'
 
 // 管理后台的「飞书应用」（`/admin/integrations`）：平台**唯一**一处飞书应用凭据。
@@ -106,79 +106,58 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="afi admin-page">
-    <div class="afi__inner admin-page__col page-container--admin">
-      <AdminPageHeader :title="t('integrations.admin.title')" :sub="t('integrations.admin.sub')" />
+  <AdminPage :title="t('navigation.admin.integrations')" :sub="t('integrations.admin.sub')">
+    <div class="afi__body admin-form-card">
+      <!-- 读失败：标题说清是哪一页没读到，服务端原话作说明行，重试就在旁边。
+           **不**接着画「还没配置」和那张表单 —— 见文件开头第 4 条。
+           判据是 `!== null` 而不是真值：原话取不到时 `loadError` 是空串，仍要给出错态。 -->
+      <AdminEmptyState
+        v-if="loadError !== null"
+        tone="error"
+        :title="t('integrations.admin.loadFailed')"
+        :desc="loadError || undefined"
+        :action="t('integrations.admin.retry')"
+        @action="load"
+      />
 
-      <div class="afi__body admin-form-card">
-        <!-- 读失败：标题说清是哪一页没读到，服务端原话作说明行，重试就在旁边。
-             **不**接着画「还没配置」和那张表单 —— 见文件开头第 4 条。
-             判据是 `!== null` 而不是真值：原话取不到时 `loadError` 是空串，仍要给出错态。 -->
-        <AdminEmptyState
-          v-if="loadError !== null"
-          tone="error"
-          :title="t('integrations.admin.loadFailed')"
-          :desc="loadError || undefined"
-          :action="t('integrations.admin.retry')"
-          @action="load"
-        />
+      <template v-else>
+        <!-- 首屏还没读回来时不画状态行：这时候还没有答案。 -->
+        <p v-if="app || !loading" class="afi__status t-body" :data-configured="app?.configured ? 'yes' : 'no'">
+          {{ status }}
+        </p>
+        <p v-if="updated" class="afi__meta t-meta">{{ updated }}</p>
 
-        <template v-else>
-          <!-- 首屏还没读回来时不画状态行：这时候还没有答案。 -->
-          <p v-if="app || !loading" class="afi__status t-body" :data-configured="app?.configured ? 'yes' : 'no'">
-            {{ status }}
-          </p>
-          <p v-if="updated" class="afi__meta t-meta">{{ updated }}</p>
-
-          <div class="afi__form">
-            <v-text-field
-              v-model="form.app_id"
-              autocomplete="off"
-              :label="t('integrations.admin.appId')"
-              :disabled="loading"
-            />
-            <v-text-field
-              v-model="form.app_secret"
-              class="afi__secret"
-              autocomplete="new-password"
-              type="password"
-              :label="t('integrations.admin.appSecret')"
-              :hint="t('integrations.admin.secretHint')"
-              persistent-hint
-            />
-            <v-select
-              v-model="form.domain"
-              autocomplete="off"
-              :items="domains"
-              :label="t('integrations.admin.domain')"
-            />
-            <p v-if="saveError" role="alert" class="afi__error t-body">{{ saveError }}</p>
-            <div class="afi__actions">
-              <span v-if="saved" role="status" class="t-meta c-faint">{{ t('integrations.admin.saved') }}</span>
-              <v-btn color="primary" variant="flat" :loading="saving" :disabled="loading" @click="save">
-                {{ t('integrations.admin.save') }}
-              </v-btn>
-            </div>
+        <div class="afi__form">
+          <v-text-field
+            v-model="form.app_id"
+            autocomplete="off"
+            :label="t('integrations.admin.appId')"
+            :disabled="loading"
+          />
+          <v-text-field
+            v-model="form.app_secret"
+            class="afi__secret"
+            autocomplete="new-password"
+            type="password"
+            :label="t('integrations.admin.appSecret')"
+            :hint="t('integrations.admin.secretHint')"
+            persistent-hint
+          />
+          <v-select v-model="form.domain" autocomplete="off" :items="domains" :label="t('integrations.admin.domain')" />
+          <p v-if="saveError" role="alert" class="afi__error t-body">{{ saveError }}</p>
+          <div class="afi__actions">
+            <span v-if="saved" role="status" class="t-meta c-faint">{{ t('integrations.admin.saved') }}</span>
+            <v-btn color="primary" variant="flat" :loading="saving" :disabled="loading" @click="save">
+              {{ t('integrations.admin.save') }}
+            </v-btn>
           </div>
-        </template>
-      </div>
+        </div>
+      </template>
     </div>
-  </div>
+  </AdminPage>
 </template>
 
 <style scoped>
-/* 骨架三层（画布 + 1440 那一列 + 卡片）由 `.admin-page` / `__col` / `.admin-form-card`
-   给。以前这一页是「根上自己领滚动 + `.afi__body` 640 定宽、左边不内缩」，于是页头那
-   道发丝线比卡片宽出一圈、卡片左沿又和别的页对不上；现在页头和卡片住进同一列。 */
-.afi {
-  display: flex;
-  flex-direction: column;
-}
-
-.afi__inner {
-  flex: 1 0 auto;
-}
-
 /* 卡片的宽度（720 上限）、内边距（20/24）和内缩（16/24）都由 `.admin-form-card` 给，
    和别的表单页同一套。 */
 

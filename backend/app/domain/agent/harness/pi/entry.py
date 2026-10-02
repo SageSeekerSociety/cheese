@@ -14,11 +14,14 @@ import signal
 from pathlib import Path
 
 from app.domain.agent.harness import Opening
+from app.domain.agent.harness.driven.runner import IDLE_EXIT_S
 from app.domain.agent.harness.pi.runner import Runner
 
 
 async def serve(state: Path, config: dict, *, binary: str, cwd: str) -> None:
-    runner = Runner(state)
+    # How long an idle session is kept is the launch's to say: a person's 芝士
+    # lets go sooner than a room (`personal.py`).
+    runner = Runner(state, idle_exit_s=float(config.get("idle_exit_s", IDLE_EXIT_S)))
     stopped = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
@@ -35,6 +38,7 @@ async def serve(state: Path, config: dict, *, binary: str, cwd: str) -> None:
             skills=config.get("skills"),
             extension=config.get("extension"),
             notice=config.get("notice", ""),
+            tools=config.get("tools"),
         )
         assert runner.process is not None
         process = asyncio.create_task(runner.process.wait())

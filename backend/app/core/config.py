@@ -145,6 +145,18 @@ class Settings(BaseSettings):
     # separate number in a separate file: raise one and raise the other.
     attachment_max_bytes: int = 100 * 1024 * 1024
     redis_url: str = "redis://localhost:6379/0"
+    # Per-client request limits (`app/core/request_limits.py`). Measured on the
+    # shared deployment, a normal browser peaks at 14 requests in flight, 14/s
+    # and 111/min — a page fans out one request per project — so these sit
+    # above that and below what one runaway page did to the whole process.
+    request_rate_per_s: float = Field(default=20.0, gt=0)
+    request_rate_burst: int = Field(default=100, ge=1)
+    request_concurrency: int = Field(default=16, ge=1)
+    request_queue_depth: int = Field(default=64, ge=0)
+    request_queue_timeout_s: float = Field(default=15.0, ge=0)
+    # How long a rate check may wait on Redis before the request goes through
+    # unchecked: a hung Redis must not hang every request with it.
+    request_limit_redis_timeout_s: float = Field(default=0.25, gt=0)
     # The process that owns device WebSockets is released independently from the
     # business backend. Empty keeps the in-process hub for local development and
     # tests; deployed business backends point at the stable compose service.
@@ -338,12 +350,8 @@ class Settings(BaseSettings):
 
     # --- A person's 芝士 outside any project (app/domain/assistant, #2285) ---
     # The gateway model it answers with; charged to the asker's personal
-    # credits at this model's rates, so the model must be priced on the gateway.
+    # credits at what the gateway spent, so the model must be priced there.
     assistant_model: str = "deepseek-flash"
-    assistant_max_tokens: int = 1500
-    # When one question's prompt passes this many tokens, the older part of the
-    # conversation is summarised and dropped from what the model is sent.
-    assistant_history_cap_tokens: int = 16_000
     docs_question_retention_days: int = 90
     # How long an admin's pass to /docs/dev/ lasts before it is re-issued.
     docs_dev_session_seconds: int = 3600
@@ -735,9 +743,13 @@ class Settings(BaseSettings):
     # usage is folded into credits and deducted from the project's grants
     # (oldest grant first). Default: 1 credit = 10k tokens.
     compute_credit_tokens: int = 10_000
-    # Credits each person gets every calendar month for the AI they ask for
-    # outside any project (问芝士 on the docs site). Unused credits lapse.
+    # Credits a personal team's plan issues every calendar month; they pay for
+    # the AI its owner asks for, in and out of their own projects. Unused
+    # credits lapse.
     personal_credits_monthly: float = 200.0
+    # Whether a payer holding no credit pack at all may run unmetered. A test
+    # setting: a deployment with a plan for everyone turns it off (#2397).
+    credits_unlimited: bool = True
     # Project-level concurrency ceiling: at most this many agent turns run at
     # once per project; turns beyond it queue (visible as a system event).
     # Overridable per project via project.settings["max_concurrent_turns"].

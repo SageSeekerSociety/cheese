@@ -26,6 +26,7 @@ import re
 import uuid
 
 from app.domain.block.models import BlockKind
+from app.domain.block.quoted_context import quoted_context_prompt
 from app.domain.memory.files_store import MemoryIndex
 from app.domain.memory.instructions import MEMORY_INSTRUCTIONS, memory_block
 from app.domain.task.teaching import TeachingContext
@@ -601,6 +602,14 @@ def reply_quote(parent, *, recipient: str | None) -> str:
     return f"> 回复的是{whose}的这条消息：\n{quoted}"
 
 
+def message_prompt_line(
+    author: str, content: str, quoted_context: dict | None = None
+) -> str:
+    return f"[{author}]: {strip_platform_notice(content)}" + quoted_context_prompt(
+        quoted_context
+    )
+
+
 def prompt_line(
     b,
     *,
@@ -639,7 +648,36 @@ def prompt_line(
             gone=gone,
         )
     else:
-        line = f"[{b.author}]: {strip_platform_notice(b.content)}"
+        line = message_prompt_line(
+            b.author, b.content, (b.meta or {}).get("quoted_context")
+        )
     if replied is None:
         return line
     return f"{line}\n{reply_quote(replied, recipient=recipient)}"
+
+
+def live_input_lines(
+    author, content, attachments, *, stored=None, replied=None, recipient=None
+):
+    """Live input reads the same saved quote and formatting as initial input."""
+    lines = []
+    if content:
+        lines.append(
+            prompt_line(stored, embeds_images=True)
+            if stored is not None
+            else message_prompt_line(author, content)
+        )
+    files = [
+        {"path": str(a["path"]), "media_type": str(a.get("mime") or "")}
+        for a in attachments or []
+        if a.get("path")
+    ]
+    lines.extend(
+        attachment_prompt_line(
+            author, f["path"], embeds_images=True, mime=f["media_type"]
+        )
+        for f in files
+    )
+    if replied is not None:
+        lines.append(reply_quote(replied, recipient=recipient))
+    return lines, [f for f in files if is_inline_image(f["media_type"])]

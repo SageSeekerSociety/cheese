@@ -93,14 +93,21 @@ export const DASH_PULSE: Record<string, PulseRow> = {
 /** 页头那一格的整串 props（换的只是 `current` / `days`）。 */
 export function dashHeaderProps(over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
+    windowed: true,
+    days: 30,
+    stamp: '06:13',
+    ...over,
+  }
+}
+
+/** 分类导轨：七类、每一格的短值与提示句，停在交付。 */
+export function dashKindsProps(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
     kinds: DASH_KINDS,
     tabs: DASH_TABS,
     titles: DASH_TITLES,
     pulse: DASH_PULSE,
     current: 'pipeline',
-    windowed: true,
-    days: 30,
-    stamp: '06:13',
     ...over,
   }
 }

@@ -14,9 +14,10 @@
 // does not: the composer (useChatComposer), the pointer affordances on a row
 // (useChatRowActions), the per-row entrance animations (useTimelineMotion), any
 // markup, and the decisions that belong to the page a panel is rendered from.
-import type { Block, ChatAttachment, ChatMessageBody, ReactionAgg, RoomTask, Topic, WsServerFrame } from '../cx_types'
+import type { Block, ChatAttachment, ReactionAgg, RoomTask, Topic, WsServerFrame } from '../cx_types'
 import type { Outgoing } from '../lib/composerDrafts'
 import type { NoticeAgent } from '../lib/platformNotice'
+import type { QuotedContext } from '../lib/quotedContext'
 import type { ChatPanelOptions } from './chatPanelContract'
 
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
@@ -48,6 +49,7 @@ import { cachedWindow, pendingBlockRefresh, setCachedWindow } from '../lib/block
 import { mergeRefreshedTail, PAGE_SIZE } from '../lib/blockPaging'
 import { dayLabelsFor, outboxEdgeAfter, type RunEdge, runEdgeBetween, unreadAnchorBlock } from '../lib/chatGrouping'
 import { activityLines as memberActivityLines } from '../lib/memberActivity'
+import { outgoingMessageBody, pendingMessageBlock } from '../lib/outgoingMessage'
 import { AGENT_STATUS_EVENTS, collapseNotices, type PlatformNotice } from '../lib/platformNotice'
 import { coalesceSplitFencedCodeBlocks } from '../lib/renderMessage'
 import { siteStatusLabel } from '../lib/siteStatusLabel'
@@ -612,12 +614,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     send: (item, signal) => {
       const room = topic()
       if (!room) return Promise.reject(new DOMException('no room', 'AbortError'))
-      const body: ChatMessageBody = {
-        content: item.content,
-        request_id: item.clientId,
-        reply_to: item.replyTo,
-        attachments: item.atts,
-      }
+      const body = outgoingMessageBody(item)
       return postChatMessage(room.id, body, signal).catch((error: unknown) => {
         // 4xx 是后端说了「不」（没权限、房间已归档、内容不合法）；408/429 和别的失败
         // 都是这一刻的事，发件箱会带同一个 id 再试。
@@ -641,18 +638,23 @@ export function useChatPanel(opts: ChatPanelOptions) {
     },
   })
 
-  function send(content: string, summon: boolean, attachments?: ChatAttachment[]): boolean {
+  function send(
+    content: string,
+    summon: boolean,
+    attachments?: ChatAttachment[],
+    quotedContext?: QuotedContext
+  ): boolean {
     const trimmed = content.trim()
     const atts = attachments?.length ? attachments : undefined
     // An image-only send (no text) is a valid message (图片输入).
     if (!trimmed && !atts) return false
     errorMsg.value = null
-    // 停在历史中间时发出去的这条要看得见：先回到最新。
     paging.backToNewest()
-    sentNow.add(enqueue({ content: trimmed, replyTo: composer.replyTarget.value?.id ?? undefined, atts }))
+    sentNow.add(
+      enqueue({ content: trimmed, replyTo: composer.replyTarget.value?.id ?? undefined, atts, quotedContext })
+    )
     composer.clearReply()
-    // Only a summon starts awaiting a reply — an instant local ack, before
-    // anything has been delivered anywhere yet.
+    // Local acceptance starts the waiting indicator, before delivery.
     if (summon) awaitingReply.value = true
     scrollToBottom()
     return true
@@ -817,13 +819,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     }
     return null
   }
-  /**
-   * 发件箱那一条还没有库里的块，而消息行要的是块。补齐它需要的那几个字段：
-   * `clientId` 当 id 用（重试/删除靠它认人），作者就是自己。
-   */
-  function pendingBlock(item: Outgoing): Block {
-    return { id: item.clientId, author: AUTHOR, content: item.content, kind: 'message' } as Block
-  }
+  const pendingBlock = (item: Outgoing) => pendingMessageBlock(item, AUTHOR)
 
   // 时间那一格说的是送达状态。失败了就不说：失败那一行自己会说清楚是什么失败了。
   function outgoingState(item: Outgoing): string {

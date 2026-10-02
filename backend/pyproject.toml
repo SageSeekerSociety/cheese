@@ -45,7 +45,6 @@ dependencies = [
     "websockets>=16.0",
     "fusepy>=3.0.1",
     "pywebpush>=2.5.0",
-    "pydantic-ai-slim[openai]>=2.52,<3",
 ]
 
 [dependency-groups]

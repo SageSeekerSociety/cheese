@@ -187,6 +187,14 @@ class TeamService:
     ) -> Sequence[Team]:
         return await self._repo.list_teams(query=query, limit=limit, offset=offset)
 
+    async def list_all_teams(
+        self, *, query: str | None, owner_ids: Sequence[int], limit: int, offset: int
+    ) -> tuple[list[Team], int]:
+        """Every live team for the platform console, and how many match."""
+        return await self._repo.list_all(
+            query=query, owner_ids=owner_ids, limit=limit, offset=offset
+        )
+
     async def get_teams_by_ids(self, ids: Sequence[int]) -> dict[int, Team]:
         return await self._repo.get_by_ids(ids)
 

@@ -106,6 +106,37 @@ class TeamRepository:
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
+    async def list_all(
+        self,
+        *,
+        query: str | None,
+        owner_ids: Sequence[int],
+        limit: int,
+        offset: int,
+    ) -> tuple[list[Team], int]:
+        """Every live team, personal and stealth ones too, newest first — the
+        platform console's list. ``query`` matches a name, a handle or an id;
+        ``owner_ids`` adds the personal teams of the people it matched."""
+        stmt = select(Team).where(Team.deleted_at.is_(None))
+        if query and query.strip():
+            q = query.strip()
+            found = [
+                Team.name.ilike(f"%{q}%"),
+                func.lower(Team.handle) == q.lower(),
+            ]
+            if q.isdigit():
+                found.append(Team.id == int(q))
+            if owner_ids:
+                found.append(Team.personal_owner_user_id.in_(list(owner_ids)))
+            stmt = stmt.where(or_(*found))
+        total = await self._session.scalar(
+            select(func.count()).select_from(stmt.subquery())
+        )
+        rows = await self._session.execute(
+            stmt.order_by(Team.id.desc()).limit(limit).offset(offset)
+        )
+        return list(rows.scalars()), int(total or 0)
+
     async def get_by_handle(self, handle: str) -> Team | None:
         stmt: Select[tuple[Team]] = select(Team).where(
             func.lower(Team.handle) == handle.lower(), Team.deleted_at.is_(None)

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.work_context import current_work_id
 from app.domain.block.authorship import is_participant, participant_blocks
+from app.domain.block.indexed_rows import QUESTION_ROWS
 from app.domain.block.models import (
     AGENT_NOTICE_META_KEY,
     CHECKLIST_META_KEY,
@@ -556,13 +557,16 @@ class BlockRepository:
 
         等谁也记在那一块上（`meta.asked`，提问那一刻写下的）。None 是「这道题指不
         到具体的人」。只关心停没停的调用方照样拿它做 `in`。
+
+        两类候选都走 `ix_blocks_task_questions`；非组题每条活只取一行。
         """
         return await self._awaiting_an_answer(Block.task_id, task_ids)
 
     async def rooms_awaiting_an_answer(
         self, topic_ids: list[uuid.UUID]
     ) -> dict[uuid.UUID, str | None]:
-        """同一个判据，问的是房间自己那条线（`task_id IS NULL`）。
+        """同一个判据，问的是房间自己那条线（`task_id IS NULL`），走
+        `ix_blocks_room_questions`。
 
         分成两个方法而不是一个带开关的：房间和活是两种东西，而「房间自己那条线」
         这个条件只对前者成立 —— 合成一个函数就得在里面判断主语是谁。
@@ -593,12 +597,9 @@ class BlockRepository:
             select(place_column, Block.meta, Block.created_at, Block.author, Block.id)
             .where(
                 place_column.in_(place_ids),
-                Block.kind == BlockKind.message,
-                # `meta` 是 json（不是 jsonb），所以用 `->>` 判存在，和
-                # `ix_blocks_cloud_provisioning` 那个部分索引同一个写法。判的是
-                # 「这是一道题」——`options` 这个键在不在，和它装的是字符串还是
-                # {text, explain} 对象无关（`->>` 取到的都不是 NULL）。
-                Block.meta["options"].as_string().isnot(None),
+                # 和 `ix_blocks_task_questions` / `ix_blocks_room_questions` 的
+                # 谓词是同一个对象，规划器才认得出能用那两个部分索引。
+                QUESTION_ROWS,
                 Block.meta["ask_group"].as_string().is_(None),
                 *extra,
             )
@@ -609,8 +610,7 @@ class BlockRepository:
             select(place_column, Block.meta, Block.created_at, Block.author, Block.id)
             .where(
                 place_column.in_(place_ids),
-                Block.kind == BlockKind.message,
-                Block.meta["options"].as_string().isnot(None),
+                QUESTION_ROWS,
                 Block.meta["ask_group"].as_string().isnot(None),
                 *extra,
             )

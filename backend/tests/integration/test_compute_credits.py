@@ -88,11 +88,11 @@ def _add_grant(client, project_id: str, credits: float, source_task_id: int) -> 
     import asyncio as _asyncio
     import uuid as _uuid
 
-    from app.domain.usage.repositories import ComputeGrantRepository
+    from app.domain.usage.ledger import Ledger
 
     async def _seed() -> None:
         async with client.test_factory() as session:  # type: ignore[attr-defined]
-            await ComputeGrantRepository(session).grant(
+            await Ledger(session).grant_earmark(
                 project_id=_uuid.UUID(project_id),
                 source_task_id=source_task_id,
                 credits_total=credits,

@@ -108,6 +108,18 @@ class HostMemory:
         available = await self._read(hub, host)
         return available is None or available >= mb * 1024 * 1024
 
+    async def can_start(self, mb: int) -> bool:
+        """Whether the session host has ``mb`` free for a session that is not
+        running yet (a person's 芝士). Unreadable holds nobody, as above."""
+        host = settings.agent_session_device_id
+        if not host:
+            return True
+        hub = self._hub
+        if hub is None:
+            from app.domain.agent.device_hub import device_hub as hub
+        available = await self._read(hub, host)
+        return available is None or available >= mb * 1024 * 1024
+
     async def _read(self, hub, host: str) -> int | None:
         async with self._lock:
             if time.monotonic() - self._read_at < READING_TTL_S:

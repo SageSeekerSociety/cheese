@@ -47,16 +47,18 @@ public home page, 了解知是, 方案 and the download page — go back into th
 instead of the download, and the docs site at `/docs/` opens in the browser,
 since the window has no way back from it.
 
-Authorizing with another site happens in the person's browser, where their
-accounts are signed in and where Google agrees to show its page at all:
-signing in with a provider, and connecting GitHub, Feishu or an MCP server.
-The browser hands the result back through a `cheese://open?path=<page>` link
+Signing in, signing up and resetting a password happen in the person's
+browser (RFC 8252), where their saved passwords, passkeys and provider accounts
+are and where Google agrees to show its page at all; so does connecting
+GitHub, Feishu or an MCP server. In the app those pages only open the browser
+(`frontend/src/views/account/DesktopSignIn.vue`, `appSignIn.ts`). The browser hands the result back through a `cheese://open?path=<page>` link
 (`src-tauri/src/links.rs`), which brings the window back on that page of the
 server and nowhere else. A connection started in the app says so on its first
 request, and its callback lands the browser on `/account/to-app`, which opens
 the app on the page with the result (`backend/app/api/app_return.py`). A
-sign-in is handed over as a code that is good once and only with a secret the
-app kept and the browser never saw (`POST /users/auth/app-sign-in` and
+sign-in is handed over, once the person confirms the account in the browser,
+as a code that is good once, for five minutes, and only with a secret the app
+kept and the browser never saw (`POST /users/auth/app-sign-in` and
 `.../finish`); the browser stays signed in too.
 
 Beyond that the app adds one thing a browser cannot do: connect the computer it runs

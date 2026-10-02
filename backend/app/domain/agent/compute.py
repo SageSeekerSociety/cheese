@@ -153,6 +153,12 @@ class ComputePool:
             (backend.name, runtime_for(backend).harness): backend
             for backend in backends
         }
+        # The same objects again, typed as what they are to every call below.
+        # Resolved once because `runtime_for` is an `isinstance` against a
+        # runtime-checkable Protocol of some twenty members, and `holds` runs
+        # it per backend per call — once per row of a board, which made it a
+        # quarter of a second of pure CPU on the event loop.
+        self._harnesses = [runtime_for(backend) for backend in self._backends.values()]
         # 部署列的骨架，在装配时解析一次：一个配错名字的部署在这里就起不来，而
         # 不是等到某一轮才发现自己跑的是另一个东西（结论 28）。偏好的第一个得挂在
         # 默认机器上：没说骨架的平台工作落在这一对上。
@@ -190,7 +196,7 @@ class ComputePool:
         where the guarantee bought at wiring time — every backend runs one — is
         spent, so the callers read as statements rather than as questions.
         """
-        return [runtime_for(backend) for backend in self._backends.values()]
+        return self._harnesses
 
     def machines(self) -> set[str]:
         """Which machine pools this deployment offers, whatever runs on them."""

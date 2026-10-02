@@ -1,7 +1,14 @@
 import type { DocSelectionSnapshot } from '../lib/docAiSelection'
-import type { DocAiAccept, DocAiCard, DocAiInput, DocAiSelection, DocAiSource } from '../lib/docAiTypes'
+import type {
+  DocAiAccept,
+  DocAiCard,
+  DocAiDisplayContext,
+  DocAiInput,
+  DocAiSelection,
+  DocAiSource,
+} from '../lib/docAiTypes'
 
-import { onBeforeUnmount, ref, shallowRef, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 
 import { ApiError } from '../api'
 import {
@@ -14,6 +21,7 @@ import {
   listDocAiRequests,
 } from '../api/docAi'
 import { t } from '../i18n'
+import { verifyDocAiFrozenContext, verifyDocAiPreparedContext } from '../lib/docAiFrozenContext'
 import { validateDocSelection } from '../lib/docAiSelection'
 import { myId } from '../me'
 
@@ -36,6 +44,19 @@ export function useDocAi(context: Context) {
   const source = shallowRef<DocAiSource | null>(null)
   const selection = shallowRef<DocAiSelection | null>(null)
   const selectionStatus = ref('')
+  const preparedSnapshot = shallowRef<DocAiDisplayContext>({ state: 'unavailable' })
+  const preparedContext = computed<DocAiDisplayContext>(() => {
+    const canonical = source.value
+    if (
+      !canonical ||
+      context.blocked() ||
+      canonical.source !== context.raw() ||
+      canonical.base_version !== context.version()
+    ) {
+      return { state: 'unavailable' }
+    }
+    return preparedSnapshot.value
+  })
   const unknown = shallowRef<Operation | null>(null)
   let selectionRequest = 0
   let epoch = 0
@@ -76,7 +97,8 @@ export function useDocAi(context: Context) {
           const proposal = request.proposal_id
             ? await getDocAiProposal(topic, request.proposal_id, controller.signal)
             : undefined
-          return { request, proposal }
+          const context = await verifyDocAiFrozenContext(request, proposal)
+          return { request, proposal, context }
         })
       )
       if (!active(generation)) return
@@ -96,6 +118,7 @@ export function useDocAi(context: Context) {
     selection.value = null
     source.value = null
     selectionStatus.value = ''
+    preparedSnapshot.value = { state: 'unavailable' }
     const generation = epoch
     const request = ++selectionRequest
     const current = () => active(generation) && request === selectionRequest
@@ -115,6 +138,16 @@ export function useDocAi(context: Context) {
         selection.value = span
       }
       if (snapshot && !selection.value) selectionStatus.value = t('work.room.docAi.unverified')
+      if (
+        !context.blocked() &&
+        canonical.base_version === version &&
+        canonical.source === raw &&
+        (!snapshot || selection.value)
+      ) {
+        const display = await verifyDocAiPreparedContext(canonical, selection.value)
+        if (!current() || version !== context.version() || raw !== context.raw() || context.blocked()) return
+        preparedSnapshot.value = display
+      }
       await refresh()
     } catch (cause) {
       if (current()) error.value = message(cause)
@@ -227,6 +260,7 @@ export function useDocAi(context: Context) {
     cards.value = []
     source.value = null
     selection.value = null
+    preparedSnapshot.value = { state: 'unavailable' }
     restoring = true
     question.value = ''
     error.value = ''
@@ -275,6 +309,7 @@ export function useDocAi(context: Context) {
     source,
     selection,
     selectionStatus,
+    preparedContext,
     unknown,
     prepare,
     submit,

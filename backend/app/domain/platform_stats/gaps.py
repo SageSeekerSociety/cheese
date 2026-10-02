@@ -21,18 +21,21 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.domain.device.models import DeviceRow, HostedDeviceRow
 from app.domain.machine.models import ProjectMachine, WarmMachine
 from app.domain.platform_stats.windows import utc_day_window
 from app.domain.project.models import Project
+from app.domain.usage import ledger
 from app.domain.usage.credits import usage_to_credits
-from app.domain.usage.models import ComputeGrant, ResourceUsage
+from app.domain.usage.models import ComputeGrant, GrantSource, ResourceUsage
 
 #: 磁盘压力档位的阈值。写在读这一侧：它们是**看板的判据**（「多少算紧张」），不是
 #: 平台行为的开关 —— 不要拿它去触发任何自动清理。
@@ -58,13 +61,21 @@ class GapRepository:
         （画破折号），0 和 Infinity 在这里都是谎言。
         """
         since, until, _ = utc_day_window(days)
+        now = datetime.now(UTC)
         grants = (
             (
                 await self._session.execute(
-                    # Personal grants pay for no project and lapse monthly; they
-                    # have no place among project and team balances.
+                    # A plan pack is every personal team's monthly allowance;
+                    # summed into one pool they would say nothing. Lapsed packs
+                    # can no longer be spent.
                     select(ComputeGrant)
-                    .where(ComputeGrant.user_id.is_(None))
+                    .where(
+                        ComputeGrant.source != GrantSource.PLAN_PERIOD.value,
+                        or_(
+                            ComputeGrant.expires_at.is_(None),
+                            ComputeGrant.expires_at > now,
+                        ),
+                    )
                     .order_by(ComputeGrant.created_at)
                 )
             )
@@ -168,18 +179,15 @@ class GapRepository:
         }
 
     async def _unlimited_project_ids(self) -> list:
-        """没有**任何**适用 grant 的项目 = 不计量（unlimited）。
-
-        判据是 `ComputeGrantRepository.summary()` 里那句「没有 grant 保持不计量的
-        默认」—— 这里数的是「完全没有 grant 行」，不是「额度用完了」。
-        """
-        with_grants = select(ComputeGrant.project_id).where(
-            ComputeGrant.project_id.is_not(None)
-        )
-        rows = await self._session.execute(
-            select(Project.id).where(Project.id.not_in(with_grants))
-        )
-        return [r for (r,) in rows]
+        """不计量（unlimited）的项目：手上一个可用的额度包都没有，而部署开着
+        `credits_unlimited`。判据与准入同一处（`usage.ledger`）——这里数的是「没有
+        额度包」，不是「额度用完了」。"""
+        if not settings.credits_unlimited:
+            return []
+        projects = list((await self._session.execute(select(Project))).scalars())
+        payers = await ledger.payers_for_projects(self._session, projects)
+        balances = await ledger.Ledger(self._session).balances(payers)
+        return [pid for pid, balance in balances.items() if balance.unlimited]
 
     async def _project_names(self, ids: list) -> dict:
         ids = [i for i in ids if i is not None]

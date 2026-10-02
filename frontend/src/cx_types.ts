@@ -131,9 +131,7 @@ export interface BlockMeta extends AskBlockMeta {
   // 那一截本身不在这里，摊开时再取（api.getStepOutput）。
   output_bytes?: number
   platform?: boolean
-  // 现场那一行的动词覆盖：值是「标签更贴切的那个工具名」（Bash 跑的 `cat x.py`
-  // 显示成「读取文件」）。和 `action` 是两回事 —— 那个答的是「这张平台动作卡指
-  // 向哪个资源」，共用一个键就会让卡片指向一个叫 Read 的资源。
+  // 现场工具的显示名；action 则表示平台动作指向的资源。
   as_tool?: string
   action?: string
   event_type?: string
@@ -149,6 +147,7 @@ export interface BlockMeta extends AskBlockMeta {
   // 这条是队友的步骤清单（`todo_write`）：房间照它画清单，正文是给别的读者的同一份话。
   // 更早的清单消息这里只有一个 `true`，照普通消息画。
   checklist?: ChecklistMeta | boolean
+  quoted_context?: import('./lib/quotedContext').QuotedContext
 }
 
 export interface ChecklistMeta {
@@ -389,6 +388,7 @@ export interface ChatMessageBody {
   request_id: string
   reply_to?: string // B3: thread this message under another
   attachments?: ChatAttachment[] // Uploaded first, referenced here.
+  quoted_context?: import('./lib/quotedContext').QuotedContext
 }
 
 // ---- 项目总览 / 收件箱 (eval G2/G3) ----

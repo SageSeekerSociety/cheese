@@ -123,3 +123,36 @@ one namespace holds one shape (no route carries the gateway prefix any more, and
 the schema's advertised base still composes), that the real app answers at the
 URLs the schema advertises, that nginx still strips the segment the schema
 assumes, and that a trailing slash never becomes a redirect.
+
+## Request limits
+
+Every HTTP request except `/health`, `/health/*`, `/healthz` and `/metrics` is
+counted against the principal it verifiably comes from
+(`backend/app/core/request_limits.py`). WebSockets are not counted.
+
+- **Who counts as one principal.** A bearer access token that verifies is its
+  user. A sandbox credential that verifies — in `X-Cheese-Token`, or as the
+  bearer, `x-api-key` or Basic password the LLM proxy and the forge relay
+  receive it in — is its agent within its project (or its room, when it names
+  no agent). The signing secret used directly is one principal of its own.
+  Anything else, including a credential that does not verify, is counted by
+  the client address uvicorn resolved through `FORWARDED_ALLOW_IPS`; when that
+  address cannot be told apart from a proxy's, the request is not limited.
+- **Rate**: 20 requests a second sustained with a burst of 100 (GCRA, kept in
+  Redis). If Redis cannot answer within 250 ms the request goes through.
+- **Concurrency**: 16 requests in flight per principal in this process. The
+  next 64 wait in arrival order for up to 15 s; past that, or past the wait,
+  the request is refused.
+- **The refusal** is a 429 with `Retry-After` in seconds and the fields of
+  draft-ietf-httpapi-ratelimit-headers-11, for example
+  `RateLimit-Policy: "rate";q=100;w=5, "concurrency";q=16;qu="concurrent-requests"`
+  and `RateLimit: "rate";r=0;t=1`. Its body is the usual error envelope
+  (`error.name` is `QuotaExceededError`, `error.retryable` is true) plus
+  `"type": "https://iana.org/assignments/http-problem-types#quota-exceeded"` and
+  `"violated-policies"`. An allowed response carries `RateLimit-Policy` and the
+  rate policy's current `RateLimit`.
+- **What a client should do**: wait `Retry-After`, then retry an idempotent
+  request. The web client retries a GET once when the wait is 10 s or less.
+
+The numbers are settings (`request_rate_per_s`, `request_rate_burst`,
+`request_concurrency`, `request_queue_depth`, `request_queue_timeout_s`).

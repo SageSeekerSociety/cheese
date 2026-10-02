@@ -44,7 +44,8 @@ function tokenChip(kind: string, id: string, maps: RefMaps): string {
 // 的写法，而一个没被认出来的 token 不会安静地失败——它原样躺在正文里，把「点开
 // 那段代码」变成「读一串尖括号」。行号那一段是显式的 `:数字[-数字]`，不是往路径
 // 字符集里塞一个冒号：后者会把 `见 <&a.ts>:` 这种句子里的标点也吞进路径。
-const ESCAPED_TOKEN = /&lt;([@#])([\w-]+)&gt;|&lt;(&amp;|&)([\w./\u4e00-\u9fff-]+(?::\d+(?:-\d+)?)?)&gt;/g
+// 资料库保留上传原名，重名时追加 (n)：括号也是文件路径的一部分。
+const ESCAPED_TOKEN = /&lt;([@#])([\w-]+)&gt;|&lt;(&amp;|&)([\w./\u4e00-\u9fff()-]+(?::\d+(?:-\d+)?)?)&gt;/g
 
 export function highlightTokens(html: string, maps: RefMaps): string {
   return html.replace(ESCAPED_TOKEN, (_m, k, id, _fk, fid) =>
@@ -54,7 +55,7 @@ export function highlightTokens(html: string, maps: RefMaps): string {
 
 // 同样的 token，读成一行纯文本里的字：@名字、#话题名、文件名。引用条和回复标签
 // 只有一行字、没有 chip，漏掉这一步，读者看到的就是 `<@cheese-3fa2>`。
-const RAW_TOKEN = /<([@#])([\w-]+)>|<&([\w./\u4e00-\u9fff-]+(?::\d+(?:-\d+)?)?)>/g
+const RAW_TOKEN = /<([@#])([\w-]+)>|<&([\w./\u4e00-\u9fff()-]+(?::\d+(?:-\d+)?)?)>/g
 
 export function plainTokens(text: string, maps: RefMaps): string {
   return text.replace(RAW_TOKEN, (_m, k, id, fid) => {

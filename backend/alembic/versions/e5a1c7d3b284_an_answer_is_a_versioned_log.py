@@ -51,7 +51,7 @@ Revision ID: e5a1c7d3b284
 Revises: b84d0f9ac721
 Create Date: 2026-09-30
 
-Main advanced to ``b84d0f9ac721`` while this answer-log revision remained
+Main advanced to ``b42af333ed1d`` while this answer-log revision remained
 unreleased. Re-chain this first Ask revision onto that deployed chain's tip;
 the following Ask revisions retain their order and released parents stay intact.
 
@@ -62,7 +62,7 @@ from collections.abc import Sequence
 from alembic import op
 
 revision: str = "e5a1c7d3b284"
-down_revision: str | Sequence[str] | None = "2733a598f271"
+down_revision: str | Sequence[str] | None = "b42af333ed1d"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

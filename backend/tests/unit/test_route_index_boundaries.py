@@ -399,18 +399,15 @@ def test_frozen_does_not_exempt_other_method_or_new_registration():
 
 def test_existing_frozen_debt_keeps_exact_b9_leaves():
     (pair,) = FROZEN
-    # Registration positions, not identities: they move when routes before this
-    # pair change. The ask/answer rebuild dropped two and added four, so both
-    # shifted by two. The pair itself must stay exactly this one.
     assert (pair.earlier_index, pair.later_index, pair.protocol, pair.method) == (
-        625,
-        649,
+        635,
+        659,
         "http",
         "GET",
     )
     records = [
-        replace(record(625, pair.earlier_path), endpoint=pair.earlier_endpoint),
-        replace(record(649, pair.later_path), endpoint=pair.later_endpoint),
+        replace(record(635, pair.earlier_path), endpoint=pair.earlier_endpoint),
+        replace(record(659, pair.later_path), endpoint=pair.later_endpoint),
     ]
     assert checked_findings(records, FROZEN) == []
 

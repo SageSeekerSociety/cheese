@@ -74,6 +74,9 @@ async def latest_cards_by_task(
     一批而不是逐条：侧栏为项目里每一件活都要它，一条一查就是一次请求乘上这个项目
     有史以来派出去的每一件活。最新的赢，因为一条活被退回后可以再递一张，而此刻
     算数的是那最新的一张。
+
+    Callers authorize and own this session and its transaction. This read
+    does not explicitly begin, commit or roll back.
     """
     cards = await AcceptCardRepository(db).latest_by_task(task_ids)
     return {task_id: _rail_card(card) for task_id, card in cards.items()}

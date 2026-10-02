@@ -143,7 +143,7 @@ defineExpose({ focusSearch: () => searchEl.value?.focus() })
   align-items: center;
   gap: 16px;
   min-height: 48px;
-  padding: 8px 24px;
+  padding: 8px 16px;
   background: var(--surface);
   border-bottom: 1px solid var(--line);
 }
@@ -322,7 +322,7 @@ defineExpose({ focusSearch: () => searchEl.value?.focus() })
   white-space: nowrap;
 }
 
-/* 窄屏（≤700，和页头 / 后台壳同一条线）：工具行不再挤在一行上。
+/* 窄屏（≤700）：工具行不再挤在一行上。
    - 栏位那一组整条**横着滑**而不是折行：四颗药丸连标签 300px 出头，390 下差一点点，
      折行会把「安全」单独甩到第二行、看起来像另一组控件；滑动保持它是一组。
    - 搜索框独占一行（260px 的定宽在 390 下会把行撑破）。
@@ -330,7 +330,6 @@ defineExpose({ focusSearch: () => searchEl.value?.focus() })
 @media (max-width: 700px) {
   .qpage__tools {
     gap: 12px;
-    padding: 8px 16px;
   }
 
   .qpage__lanes {

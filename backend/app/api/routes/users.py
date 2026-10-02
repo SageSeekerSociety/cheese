@@ -29,9 +29,11 @@ from app.api.routes.users_common import (
     _SUDO_TICKET_SCOPE,
     REFRESH_COOKIE,
     TRUST_COOKIE,
+    SudoTicketRequest,
     _clear_refresh_cookie,
     _set_refresh_cookie,
     _spend_sudo_ticket,
+    challenge_from_credential,
     issue_session,
 )
 from app.auth.checker import require_auth_user
@@ -165,15 +167,6 @@ class SudoAuthRequest(BaseModel):
     # so minting them a ticket would only put an unusable credential on the
     # wire. See ``SudoPurpose``.
     purpose: SudoPurpose | None = None
-
-
-class SudoTicketRequest(BaseModel):
-    """The body of an operation that redeems a sudo ticket and needs nothing
-    else."""
-
-    model_config = ConfigDict(populate_by_name=True)
-
-    sudo_ticket: str | None = Field(default=None, alias="sudoTicket")
 
 
 class TwoFactorCodeRequest(BaseModel):
@@ -2027,7 +2020,7 @@ async def sudo_auth(
         credential = credentials.get("passkeyResponse")
         if not isinstance(credential, dict):
             raise BadRequestError("passkeyResponse is required")
-        challenge = _challenge_from_credential(credential)
+        challenge = challenge_from_credential(credential)
 
         redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
         try:
@@ -2303,25 +2296,6 @@ async def list_users(
             "page": page,
         },
     }
-
-
-def _challenge_from_credential(credential: dict) -> str:
-    """Recover the challenge echoed inside the WebAuthn clientDataJSON. The
-    reference contract sends only the credential — the server must not trust a
-    separately-supplied challenge anyway."""
-    import base64
-    import json as _json
-
-    try:
-        raw = credential["response"]["clientDataJSON"]
-        padded = raw + "=" * (-len(raw) % 4)
-        client_data = _json.loads(base64.urlsafe_b64decode(padded))
-        challenge = client_data["challenge"]
-        if not isinstance(challenge, str) or not challenge:
-            raise KeyError("challenge")
-        return challenge
-    except (KeyError, TypeError, ValueError) as exc:
-        raise BadRequestError("Malformed WebAuthn credential") from exc
 
 
 @router.get(

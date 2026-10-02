@@ -56,7 +56,7 @@ from app.domain.room_task import binding
 from app.domain.topic.models import TopicKind
 from app.domain.topic.repositories import TopicRepository
 from app.domain.usage.credits import usage_to_credits
-from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
+from app.domain.usage.ledger import Ledger, payer_for_project
 
 logger = logging.getLogger(__name__)
 
@@ -346,7 +346,7 @@ async def _gateway_project_env(
             key = s.get(_GW_KEY)
             if isinstance(key, str) and key:
                 target = await service._gateway_budget_target(session, project_id)
-                if target is None or s.get(_GW_BUDGET) == target:
+                if s.get(_GW_BUDGET) == target:
                     return {"ANTHROPIC_AUTH_TOKEN": key}
 
         # Write path: something must be minted or re-priced. Serialised, and
@@ -365,9 +365,14 @@ async def _gateway_project_env(
                         return None
                     s[_GW_KEY] = key
                 target = await service._gateway_budget_target(session, project_id)
-                if target is not None and s.get(_GW_BUDGET) != target:
+                # No target clears the brake: a budget left on the key from
+                # before would refuse calls the platform now admits.
+                if s.get(_GW_BUDGET) != target:
                     if await gateway.set_key_budget(key, target):
-                        s[_GW_BUDGET] = target
+                        if target is None:
+                            s.pop(_GW_BUDGET, None)
+                        else:
+                            s[_GW_BUDGET] = target
                 if s != (project.settings or {}):
                     project.settings = s
                     await session.commit()
@@ -489,9 +494,11 @@ async def _drain_gateway_usage(
                         )
                         for row in rows
                     ]
+                    payer = await payer_for_project(session, project_id)
                     for usage in usages:
-                        await UsageRepository(session).add(
-                            project_id=project_id,
+                        await Ledger(session).record(
+                            payer,
+                            credits=usage_to_credits(usage, spend_priced=True),
                             topic_id=topic_id,
                             model=usage.model or settings.agent_model,
                             input_tokens=usage.input_tokens,
@@ -499,10 +506,6 @@ async def _drain_gateway_usage(
                             cost_usd=usage.cost_usd,
                             route="gateway",
                             turn_id=turn_id,
-                        )
-                        await ComputeGrantRepository(session).consume(
-                            project_id,
-                            usage_to_credits(usage, spend_priced=True),
                         )
                     s[_GW_CKPT] = next_ckpt
                     project.settings = s

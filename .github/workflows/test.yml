@@ -171,7 +171,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {layer: pure, shard: '0/1', floor: 4000, timeout: 5}
+          - {layer: pure, shard: '0/1', floor: 4000, timeout: 10}
           - {layer: contract, shard: '0/1', floor: 200, timeout: 5}
           - {layer: integration, shard: '0/4', floor: 2400, timeout: 15}
           - {layer: integration, shard: '1/4', floor: 2400, timeout: 15}

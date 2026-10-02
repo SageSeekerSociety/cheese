@@ -68,13 +68,11 @@ from app.domain.agent.harness import (
     runtime_for,
 )
 from app.domain.agent.harness.prompt import (
-    attachment_prompt_line,
     build_system_prompt,
-    is_inline_image,
+    live_input_lines,
     platform_prompt,
     prompt_line,
     publication_prompt,
-    reply_quote,
     strip_platform_notice,
 )
 
@@ -283,8 +281,9 @@ from app.domain.topic.models import TitleSource, Topic, TopicStatus
 from app.domain.topic.repositories import TopicProgressRepository, TopicRepository
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.credits import usage_to_credits
+from app.domain.usage.ledger import Ledger, payer_for_project
 from app.domain.usage.models import ResourceUsage
-from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
+from app.domain.usage.repositories import UsageRepository
 
 PRIVATE_SKILLS = ["private-chat"]
 
@@ -1009,18 +1008,21 @@ class ChatService(SessionRecovery):
             ):
                 yield frame
 
-    async def _reply_parent(self, block_ids: list[uuid.UUID]) -> Block | None:
-        """The message a just-posted send answers, if it is a reply.
-
-        Read back from the stored blocks rather than from the request: the
-        write already dropped a reply target outside this room."""
+    async def _live_inputs(
+        self, block_ids: list[uuid.UUID]
+    ) -> tuple[Block | None, Block | None]:
+        """Read the persisted authored message, quote and validated reply edge."""
+        stored = replied = None
         async with self._sessions() as session:
             blocks = BlockRepository(session)
             for block_id in block_ids:
                 block = await blocks.get(block_id)
-                if block is not None and block.reply_to is not None:
-                    return await blocks.get(block.reply_to)
-        return None
+                if block is not None:
+                    if block.kind == BlockKind.message:
+                        stored = block
+                    if block.reply_to is not None:
+                        replied = await blocks.get(block.reply_to)
+        return stored, replied
 
     async def merge_into_running_turn(
         self,
@@ -1063,25 +1065,15 @@ class ChatService(SessionRecovery):
         if consuming_turn_id is None:
             return None
         state = self._hook_work.get((topic_id, consuming_turn_id))
-        lines = []
-        if content:
-            lines.append(f"[{author}]: {strip_platform_notice(content)}")
-        files = [
-            {"path": str(a["path"]), "media_type": str(a.get("mime") or "")}
-            for a in attachments or []
-            if a.get("path")
-        ]
-        images = [f for f in files if is_inline_image(f["media_type"])]
-        lines.extend(
-            attachment_prompt_line(
-                author, file["path"], embeds_images=True, mime=file["media_type"]
-            )
-            for file in files
+        stored, replied = await self._live_inputs(user_block_ids)
+        lines, images = live_input_lines(
+            author,
+            content,
+            attachments,
+            stored=stored,
+            replied=replied,
+            recipient=state.acting_agent if state else None,
         )
-        if (replied := await self._reply_parent(user_block_ids)) is not None:
-            lines.append(
-                reply_quote(replied, recipient=state.acting_agent if state else None)
-            )
         state = self._hook_work.get((topic_id, consuming_turn_id))
         line = publication_prompt("\n".join(lines))
         registrar = self._input_registrar(
@@ -2699,9 +2691,12 @@ class ChatService(SessionRecovery):
                     turn_id=state.work_id,
                 )
             elif state.route != "gateway" or self._gateway is None:
+                payer = await payer_for_project(session, state.project_id)
+                priced = state.route == "gateway"
                 for u in usages:
-                    await UsageRepository(session).add(
-                        project_id=state.project_id,
+                    await Ledger(session).record(
+                        payer,
+                        credits=usage_to_credits(u, spend_priced=priced),
                         topic_id=state.topic_id,
                         model=u.model or state.model or settings.agent_model,
                         input_tokens=u.input_tokens,
@@ -2709,10 +2704,6 @@ class ChatService(SessionRecovery):
                         cost_usd=u.cost_usd,
                         route=state.route,
                         turn_id=state.work_id,
-                    )
-                    await ComputeGrantRepository(session).consume(
-                        state.project_id,
-                        usage_to_credits(u, spend_priced=state.route == "gateway"),
                     )
             # What this session was fed, including by a process that is gone.
             # Settled either way: a failed session must also drop the batches
@@ -2754,6 +2745,7 @@ class ChatService(SessionRecovery):
         reply_to: str | None,
         attachments: list[dict] | None = None,
         client_id: str | None = None,
+        quoted_context: dict | None = None,
     ) -> tuple[list[dict], uuid.UUID, list[uuid.UUID], bool]:
         """Persist the human message (+ its image attachment blocks) and the
         @mention notifications in one short transaction, outside any turn lock.
@@ -2899,6 +2891,11 @@ class ChatService(SessionRecovery):
                     meta={
                         "agent_recipient": recipient,
                         **({"client_id": client_id} if client_id else {}),
+                        **(
+                            {"quoted_context": quoted_context}
+                            if quoted_context is not None
+                            else {}
+                        ),
                     },
                 )
                 if attribution_id is None:
@@ -2918,6 +2915,7 @@ class ChatService(SessionRecovery):
                         block_id=user_block.id,
                         author=author,
                         content=content,
+                        quoted_context=quoted_context,
                         by_agent=False,
                         occurred_at=datetime.now(UTC),
                         skip=frozenset({addressed} if addressed else ()),

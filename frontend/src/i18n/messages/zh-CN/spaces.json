@@ -14,7 +14,6 @@
   "review": {
     "applicant": "申请人",
     "mine": "我的空间申请",
-    "title": "空间申请",
     "PENDING": "待审核",
     "APPROVED": "已通过",
     "REJECTED": "已驳回",

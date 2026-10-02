@@ -90,7 +90,7 @@ describe('文档还在路上', () => {
     expect(editor && editor.style.display, '这一刻编辑器不能在屏幕上').toBe('none')
 
     gate.resolve(doc('## 一段\n\n正文'))
-    await waitFor(() => expect(container.textContent).toContain('正文'))
+    await waitFor(() => expect(container.querySelector('.doc-editor')?.textContent).toContain('正文'))
   })
 
   it('文档到了，骨架走干净，编辑器回来', async () => {
@@ -100,9 +100,11 @@ describe('文档还在路上', () => {
     await waitFor(() => expect(container.querySelector('[role="status"][aria-busy="true"]')).not.toBeNull())
 
     gate.resolve(doc('## 一段\n\n正文'))
-    await waitFor(() => expect(container.textContent).toContain('正文'))
-    expect(container.querySelector('.doc-skel'), '真文档来了，骨架不能还在').toBeNull()
-    const editor = container.querySelector('.doc-editor') as HTMLElement | null
-    expect(editor && editor.style.display).not.toBe('none')
+    await waitFor(() => {
+      const editor = container.querySelector('.doc-editor') as HTMLElement | null
+      expect(editor?.textContent).toContain('正文')
+      expect(container.querySelector('.doc-skel'), '真文档来了，骨架不能还在').toBeNull()
+      expect(editor?.style.display).not.toBe('none')
+    })
   })
 })

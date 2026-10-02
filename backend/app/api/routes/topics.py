@@ -79,7 +79,8 @@ from app.domain.topic.schemas import (
 )
 from app.domain.topic.services import TopicRelevance, TopicService
 from app.domain.topic_membership.services import TopicMemberService
-from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
+from app.domain.usage.repositories import UsageRepository
+from app.domain.usage.services import UsageService
 from app.domain.webhook import service as webhook_service
 
 router = APIRouter(prefix="/topics", tags=["topics"])
@@ -720,7 +721,7 @@ async def topic_status(
     place = await topics.place_or_404(topic_id)
     await _actor_in_place(resolver, place)
     cards = await AcceptCardRepository(db).list_for_topic(topic_id)
-    credits = await ComputeGrantRepository(db).summary(place.project_id)
+    credits = await UsageService(db).project_credits(place.project_id)
     turn = runner.topic_work(topic_id)
     stall = await topics.stall_signal(
         topic_id,
