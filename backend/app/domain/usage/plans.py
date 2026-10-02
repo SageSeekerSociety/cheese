@@ -108,8 +108,21 @@ class PlanService:
         self._session = session
 
     async def plans(self) -> list[dict]:
+        """Every plan, with how many teams are on it and whether new teams start
+        on it."""
+        from app.domain.team.models import DEFAULT_PLAN_KEY
+        from app.domain.team.services import team_service
+
         rows = await self._session.execute(select(Plan).order_by(Plan.key))
-        return [plan_out(p) for p in rows.scalars()]
+        counts = await team_service(self._session).teams_per_plan()
+        return [
+            {
+                **plan_out(p),
+                "team_count": counts.get(p.key, 0),
+                "is_default": p.key == DEFAULT_PLAN_KEY,
+            }
+            for p in rows.scalars()
+        ]
 
     async def _plan(self, key: str) -> Plan:
         plan = await self._session.get(Plan, key)
@@ -205,11 +218,21 @@ class PlanService:
         await self._audit(handle, "team.grant", str(team_id), None, out)
         return out
 
-    async def teams(self, *, query: str | None, page: int, page_size: int) -> dict:
+    async def teams(
+        self,
+        *,
+        query: str | None,
+        page: int,
+        page_size: int,
+        plan_key: str | None = None,
+        personal: bool | None = None,
+    ) -> dict:
         """The console's list: every team with its plan, this period's plan
-        pack, and the packs it may still spend."""
+        pack, and the packs it may still spend. ``plan_key`` and ``personal``
+        narrow it before it is paged."""
         from app.domain.team.services import team_service
         from app.domain.user.services import (
+            faces_by_handle,
             search_accounts,
             usernames_by_ids,
             users_by_handle,
@@ -220,27 +243,41 @@ class PlanService:
             handles = [h for h, _ in await search_accounts(self._session, query, 50)]
             owners = await users_by_handle(self._session, handles)
             owner_ids = [user.id for user in owners.values()]
-        teams, total = await team_service(self._session).list_all_teams(
+        teams_svc = team_service(self._session)
+        teams, total = await teams_svc.list_all_teams(
             query=query,
             owner_ids=owner_ids,
             limit=page_size,
             offset=(page - 1) * page_size,
+            plan_key=plan_key,
+            personal=personal,
         )
         packs = await Ledger(self._session).live_packs([t.id for t in teams])
         owners_by_id = await usernames_by_ids(
             self._session,
             [t.personal_owner_user_id for t in teams if t.personal_owner_user_id],
         )
+        faces = await faces_by_handle(self._session, owners_by_id.values())
+        members = await teams_svc.member_counts(
+            [t.id for t in teams if not t.personal_owner_user_id]
+        )
         items = []
         for team in teams:
             held = packs.get(team.id, [])
             owner = team.personal_owner_user_id
+            owner_handle = owners_by_id.get(owner) if owner else None
             items.append(
                 {
                     "id": team.id,
                     "name": team.name,
                     "handle": team.handle,
-                    "personal_owner": owners_by_id.get(owner) if owner else None,
+                    "personal_owner": owner_handle,
+                    "personal_owner_nickname": (
+                        faces.get(owner_handle, (None, None))[0]
+                        if owner_handle
+                        else None
+                    ),
+                    "member_count": None if owner else members.get(team.id, 0),
                     "plan_key": team.plan_key,
                     "period": _period(held),
                     "packs": [pack_out(p) for p in held],
@@ -252,20 +289,30 @@ class PlanService:
         """One team as the console opens it: its plan, this period, and every
         pack it may still spend."""
         from app.domain.team.services import team_service
-        from app.domain.user.services import usernames_by_ids
+        from app.domain.user.services import faces_by_handle, usernames_by_ids
 
-        team = await team_service(self._session).get_team(team_id)
+        teams_svc = team_service(self._session)
+        team = await teams_svc.get_team(team_id)
         if team is None:
             raise NotFoundError(f"没有团队 {team_id}")
         plan = await self._plan(team.plan_key)
         held = (await Ledger(self._session).live_packs([team.id])).get(team.id, [])
         owner = team.personal_owner_user_id
         owners = await usernames_by_ids(self._session, [owner] if owner else [])
+        owner_handle = owners.get(owner) if owner else None
+        faces = await faces_by_handle(
+            self._session, [owner_handle] if owner_handle else []
+        )
+        members = await teams_svc.member_counts([] if owner else [team.id])
         return {
             "id": team.id,
             "name": team.name,
             "handle": team.handle,
-            "personal_owner": owners.get(owner) if owner else None,
+            "personal_owner": owner_handle,
+            "personal_owner_nickname": (
+                faces.get(owner_handle, (None, None))[0] if owner_handle else None
+            ),
+            "member_count": None if owner else members.get(team.id, 0),
             "plan": plan_out(plan),
             "period": _period(held),
             "packs": [pack_out(p) for p in held],

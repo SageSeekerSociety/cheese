@@ -42,6 +42,10 @@ class TeamVisibility(str, Enum):
     STEALTH = "stealth"
 
 
+#: The plan every new team starts on.
+DEFAULT_PLAN_KEY = "free"
+
+
 class Team(Base):
     __tablename__ = "team"
     __table_args__ = (
@@ -98,8 +102,8 @@ class Team(Base):
         String(32),
         ForeignKey("plans.key"),
         nullable=False,
-        default="free",
-        server_default="free",
+        default=DEFAULT_PLAN_KEY,
+        server_default=DEFAULT_PLAN_KEY,
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False

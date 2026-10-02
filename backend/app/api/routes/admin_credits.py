@@ -97,10 +97,22 @@ async def list_teams(
     db: DbSession,
     handle: PlatformAdminDep,
     q: str | None = Query(default=None, max_length=100),
+    plan: str | None = Query(default=None, max_length=32),
+    kind: Literal["personal", "team"] | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
 ) -> dict:
-    return ok(await PlanService(db).teams(query=q, page=page, page_size=page_size))
+    """``plan`` keeps the teams on that plan; ``kind`` keeps personal or shared
+    teams. Both narrow the list before it is paged, so ``total`` counts them."""
+    return ok(
+        await PlanService(db).teams(
+            query=q,
+            page=page,
+            page_size=page_size,
+            plan_key=plan,
+            personal=None if kind is None else kind == "personal",
+        )
+    )
 
 
 @router.get("/teams/{teamId}")

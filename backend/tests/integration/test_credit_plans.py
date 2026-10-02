@@ -5,6 +5,7 @@ credits, and every such change is on the record."""
 import asyncio
 from datetime import UTC, datetime, timedelta
 
+import jwt
 import pytest
 
 from app.core.config import settings
@@ -356,3 +357,113 @@ def test_a_teams_earmarked_credits_name_their_task_and_project(client, admin):
     assert pack["source"] == "task_earmark"
     assert pack["project_name"] == name
     assert pack["task_id"] == task_id and pack["task_name"]
+
+
+def _all_pages(client, admin: dict, **params) -> tuple[list[dict], int]:
+    """Walk every page of the console's team list, one team per page."""
+    items: list[dict] = []
+    page = 1
+    while True:
+        r = client.get(
+            "/admin/teams",
+            params={**params, "page": page, "page_size": 1},
+            headers=admin,
+        )
+        assert r.status_code == 200, r.text
+        data = r.json()["data"]
+        items += data["items"]
+        if page * data["page_size"] >= data["total"]:
+            return items, data["total"]
+        page += 1
+
+
+def test_the_team_list_filters_by_plan_and_kind_before_paging(client, admin):
+    owner = _auth(client, "cp-owner")
+    other = _auth(client, "cp-other")
+    post_project(client, json={"name": "P"}, headers=owner)
+    post_project(client, json={"name": "Q"}, headers=other)
+    on_reserve = [_shared_team(client, owner, h) for h in ("cplab", "cpclub")]
+    on_free = _shared_team(client, other, "cpfree")
+    for team in on_reserve:
+        r = client.put(
+            f"/admin/teams/{team}/plan", json={"plan_key": "reserve"}, headers=admin
+        )
+        assert r.status_code == 200, r.text
+
+    reserve, total = _all_pages(client, admin, plan="reserve")
+    assert sorted(t["id"] for t in reserve) == sorted(on_reserve)
+    assert total == len(on_reserve)
+
+    shared, total = _all_pages(client, admin, kind="team")
+    assert {t["id"] for t in shared} >= {*on_reserve, on_free}
+    assert all(t["personal_owner"] is None for t in shared)
+    assert total == len(shared)
+
+    personal, total = _all_pages(client, admin, kind="personal")
+    assert {t["personal_owner"] for t in personal} >= {"cp-owner", "cp-other"}
+    assert all(t["personal_owner"] for t in personal)
+    assert total == len(personal)
+
+    free_shared, _ = _all_pages(client, admin, plan="free", kind="team")
+    assert on_free in {t["id"] for t in free_shared}
+    assert not {t["id"] for t in free_shared} & set(on_reserve)
+
+
+def test_each_plan_counts_its_teams_and_free_is_the_default(client, admin):
+    owner = _auth(client, "cp-owner")
+    lab = _shared_team(client, owner, "cplab")
+    _shared_team(client, owner, "cpclub")
+    plans = client.get("/admin/plans", headers=admin).json()["data"]["plans"]
+    before = {p["key"]: p["team_count"] for p in plans}
+
+    r = client.put(
+        f"/admin/teams/{lab}/plan", json={"plan_key": "reserve"}, headers=admin
+    )
+    assert r.status_code == 200, r.text
+
+    plans = client.get("/admin/plans", headers=admin).json()["data"]["plans"]
+    after = {p["key"]: p for p in plans}
+    assert after["reserve"]["team_count"] == before["reserve"] + 1
+    assert after["free"]["team_count"] == before["free"] - 1
+    assert after["free"]["is_default"] is True
+    assert after["reserve"]["is_default"] is False
+
+
+def test_a_shared_team_shows_its_member_count_and_a_personal_one_its_owners_nickname(
+    client, admin
+):
+    token = seed_user(client, "cp-owner")
+    owner = {"Authorization": f"Bearer {token}"}
+    user_id = int(jwt.decode(token, options={"verify_signature": False})["sub"])
+
+    async def _nickname() -> None:
+        from app.domain.user.models import UserProfile
+
+        now = datetime.now(UTC)
+        async with client.test_factory() as session:
+            session.add(
+                UserProfile(
+                    user_id=user_id,
+                    nickname="林知远",
+                    intro="",
+                    avatar_id=0,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            await session.commit()
+
+    asyncio.run(_nickname())
+    post_project(client, json={"name": "P"}, headers=owner)
+    lab = _shared_team(client, owner, "cplab")
+
+    [listed] = _teams(client, admin, "cplab")
+    assert listed["member_count"] == 1
+    detail = client.get(f"/admin/teams/{lab}", headers=admin).json()["data"]
+    assert detail["member_count"] == 1
+
+    [personal] = [t for t in _teams(client, admin, "cp-owner") if t["personal_owner"]]
+    assert personal["personal_owner"] == "cp-owner"
+    assert personal["personal_owner_nickname"] == "林知远"
+    assert personal["member_count"] is None
+

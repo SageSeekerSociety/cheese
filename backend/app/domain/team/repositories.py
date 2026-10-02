@@ -113,11 +113,21 @@ class TeamRepository:
         owner_ids: Sequence[int],
         limit: int,
         offset: int,
+        plan_key: str | None = None,
+        personal: bool | None = None,
     ) -> tuple[list[Team], int]:
         """Every live team, personal and stealth ones too, newest first — the
         platform console's list. ``query`` matches a name, a handle or an id;
-        ``owner_ids`` adds the personal teams of the people it matched."""
+        ``owner_ids`` adds the personal teams of the people it matched.
+        ``plan_key`` keeps the teams on that plan; ``personal`` keeps only
+        personal teams (True) or only shared ones (False)."""
         stmt = select(Team).where(Team.deleted_at.is_(None))
+        if plan_key is not None:
+            stmt = stmt.where(Team.plan_key == plan_key)
+        if personal is True:
+            stmt = stmt.where(Team.personal_owner_user_id.is_not(None))
+        elif personal is False:
+            stmt = stmt.where(Team.personal_owner_user_id.is_(None))
         if query and query.strip():
             q = query.strip()
             found = [
@@ -136,6 +146,29 @@ class TeamRepository:
             stmt.order_by(Team.id.desc()).limit(limit).offset(offset)
         )
         return list(rows.scalars()), int(total or 0)
+
+    async def count_by_plan(self) -> dict[str, int]:
+        """How many live teams are on each plan."""
+        rows = await self._session.execute(
+            select(Team.plan_key, func.count(Team.id))
+            .where(Team.deleted_at.is_(None))
+            .group_by(Team.plan_key)
+        )
+        return {key: int(n) for key, n in rows.all()}
+
+    async def member_counts(self, team_ids: Sequence[int]) -> dict[int, int]:
+        """team id -> how many members it has; teams with none are absent."""
+        if not team_ids:
+            return {}
+        rows = await self._session.execute(
+            select(TeamUserRelation.team_id, func.count(TeamUserRelation.id))
+            .where(
+                TeamUserRelation.team_id.in_(list(team_ids)),
+                TeamUserRelation.deleted_at.is_(None),
+            )
+            .group_by(TeamUserRelation.team_id)
+        )
+        return {team_id: int(n) for team_id, n in rows.all()}
 
     async def get_by_handle(self, handle: str) -> Team | None:
         stmt: Select[tuple[Team]] = select(Team).where(
