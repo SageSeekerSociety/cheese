@@ -867,17 +867,15 @@ export function setTopicNaming(projectId: string, mode: TopicNamingMode): Promis
 
 // ---- 归档去向: manual archive / unarchive ----
 
-export function archiveTopic(topicId: string, by: string): Promise<Topic> {
+export function archiveTopic(topicId: string): Promise<Topic> {
   return request<Topic>(`/topics/${encodeURIComponent(topicId)}/archive`, {
     method: 'POST',
-    body: JSON.stringify({ by }),
   })
 }
 
-export function unarchiveTopic(topicId: string, by: string): Promise<Topic> {
+export function unarchiveTopic(topicId: string): Promise<Topic> {
   return request<Topic>(`/topics/${encodeURIComponent(topicId)}/unarchive`, {
     method: 'POST',
-    body: JSON.stringify({ by }),
   })
 }
 
@@ -1855,10 +1853,10 @@ export function getProgress(topicId: string, taskId?: string): Promise<TopicProg
 // doc yet"). The doc is only ever written whole, so the write is conditional on
 // it: if 芝士 set the doc in between, the backend answers 409 instead of letting
 // this save erase what it wrote.
-export function putDoc(topicId: string, content: string, author: string, expectedVersion: number): Promise<Block> {
+export function putDoc(topicId: string, content: string, expectedVersion: number): Promise<Block> {
   return request<Block>(`/topics/${encodeURIComponent(topicId)}/doc`, {
     method: 'PUT',
-    body: JSON.stringify({ content, author, expected_version: expectedVersion }),
+    body: JSON.stringify({ content, expected_version: expectedVersion }),
   })
 }
 
@@ -1874,16 +1872,10 @@ export function getComments(topicId: string): Promise<{ data: Block[]; total: nu
   return request(`/topics/${encodeURIComponent(topicId)}/comments`)
 }
 
-export function addComment(
-  topicId: string,
-  content: string,
-  author: string,
-  anchor?: string,
-  quote?: string
-): Promise<Block> {
+export function addComment(topicId: string, content: string, anchor?: string, quote?: string): Promise<Block> {
   return request<Block>(`/topics/${encodeURIComponent(topicId)}/comments`, {
     method: 'POST',
-    body: JSON.stringify({ content, author, anchor, quote }),
+    body: JSON.stringify({ content, anchor, quote }),
   })
 }
 
@@ -2322,10 +2314,10 @@ export function getRoomTask(
 
 /** 在一张卡下面说话。落在这条活的时间线上，房间被叫来转达 —— 做这条活的分身住在
  *  房间的会话里，只有房间的芝士递得到话。 */
-export function sayOnRoomTask(roomId: string, taskId: string, content: string, author: string): Promise<Block> {
+export function sayOnRoomTask(roomId: string, taskId: string, content: string): Promise<Block> {
   return request<Block>(`/topics/${encodeURIComponent(roomId)}/tasks/${encodeURIComponent(taskId)}/messages`, {
     method: 'POST',
-    body: JSON.stringify({ content, author }),
+    body: JSON.stringify({ content }),
   })
 }
 

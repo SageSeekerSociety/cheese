@@ -369,7 +369,7 @@ export function usePanelDoc(props: PanelDocProps, hooks: PanelDocHooks) {
     saving.value = true
     errorMsg.value = null
     try {
-      const saved = await putDoc(topic.id, full, AUTHOR, expectedVersion)
+      const saved = await putDoc(topic.id, full, expectedVersion)
       if (!owns(request)) return
       if (!requests.acceptWrite(request, saved.doc_version ?? 0)) {
         pendingReload = true
@@ -677,7 +677,7 @@ export function usePanelDoc(props: PanelDocProps, hooks: PanelDocHooks) {
     refreshComments,
     commentAuthor: AUTHOR,
     sendComment: (topicId: string, content: string, anchor?: string, quote?: string) =>
-      addComment(topicId, content, AUTHOR, anchor, quote),
+      addComment(topicId, content, anchor, quote),
     save,
     confirmLossySave,
     onBlur,

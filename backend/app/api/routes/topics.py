@@ -1149,7 +1149,6 @@ async def mark_topic_read(
 @router.post("/{topic_id}/archive")
 async def archive_topic(
     topic_id: uuid.UUID,
-    body: dict,
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
@@ -1200,7 +1199,6 @@ async def cleanup_status(
 @router.post("/{topic_id}/unarchive")
 async def unarchive_topic(
     topic_id: uuid.UUID,
-    body: dict,
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:

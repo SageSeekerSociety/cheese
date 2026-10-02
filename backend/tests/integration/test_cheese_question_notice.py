@@ -79,7 +79,7 @@ def _agent_says(client, room: str, text: str) -> None:
 def _answer(client, block_id: str, option: str = "按部门") -> None:
     r = client.post(
         f"/topics/blocks/{block_id}/answer",
-        json={"option": option, "author": "alice"},
+        json={"option": option},
         headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200, r.text

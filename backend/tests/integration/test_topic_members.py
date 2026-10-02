@@ -166,7 +166,7 @@ def test_non_manager_cannot_update_role(client):
 def test_cannot_remove_last_owner(client):
     tid = _topic(client, created_by="alice")
     r = client.delete(
-        f"/topics/{tid}/members/alice?actor=alice",
+        f"/topics/{tid}/members/alice",
         headers=session_auth_headers("alice"),
     )
     assert r.status_code == 422
@@ -190,7 +190,7 @@ def test_remove_member(client):
         headers=session_auth_headers("alice"),
     )
     r = client.delete(
-        f"/topics/{tid}/members/bob?actor=alice", headers=session_auth_headers("alice")
+        f"/topics/{tid}/members/bob", headers=session_auth_headers("alice")
     )
     assert r.status_code == 200
     assert r.json()["data"]["deleted"] is True
@@ -208,7 +208,7 @@ def test_second_owner_lets_first_be_removed(client):
         headers=session_auth_headers("alice"),
     )
     r = client.delete(
-        f"/topics/{tid}/members/alice?actor=bob", headers=session_auth_headers("bob")
+        f"/topics/{tid}/members/alice", headers=session_auth_headers("bob")
     )
     assert r.status_code == 200
 

@@ -95,7 +95,7 @@ describe('charter collaboration', () => {
     await fireEvent.keyDown(prose, { key: 's', metaKey: true })
     await flushPromises()
     expect(mocks.putDoc).toHaveBeenCalledTimes(2)
-    expect(mocks.putDoc.mock.calls[1][3]).toBe(2)
+    expect(mocks.putDoc.mock.calls[1][2]).toBe(2)
   })
   it('refreshes after another member saves and uses the fresh version on the next save', async () => {
     const wrapper = await open()
@@ -106,7 +106,7 @@ describe('charter collaboration', () => {
     mocks.editor!.commands.insertContent('我的补充')
     await fireEvent.keyDown(wrapper.container.querySelector('.ProseMirror')!, { key: 's', metaKey: true })
     await flushPromises()
-    expect(mocks.putDoc.mock.calls[0][3]).toBe(2)
+    expect(mocks.putDoc.mock.calls[0][2]).toBe(2)
   })
 
   it('refreshes on reconnect but preserves edits typed while the fetch is in flight', async () => {

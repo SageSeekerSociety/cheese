@@ -13,6 +13,12 @@ connections from one pool kept open for the life of the application
 other event loop than the one the pool was opened on, a client is built exactly
 as before. A caller that passes its own transport (a test's fake forge) keeps
 it.
+
+Every client also reads the quota GitHub reports on each answer into
+`forge_quota`, so that what one call learned (the installation is out of quota
+until a given time) reaches the next caller before it spends a request, and
+asks its plain reads conditionally (`forge_etags`), so an unchanged answer
+costs no quota.
 """
 
 from __future__ import annotations
@@ -23,6 +29,8 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import httpx
+
+from app.core import forge_etags, forge_quota
 
 #: GitHub closes a connection that has sat idle somewhere between 20 and 60
 #: seconds (measured from the deployment). Letting go of it first means a call
@@ -75,4 +83,19 @@ def forge_client(
             transport = borrowed
     if transport is not None:
         kwargs["transport"] = transport
-    return httpx.AsyncClient(**kwargs)
+    hooks = dict(kwargs.pop("event_hooks", None) or {})
+    hooks["response"] = [*hooks.get("response", []), forge_quota.observe]
+    client = httpx.AsyncClient(event_hooks=hooks, **kwargs)
+    plain = client.send
+
+    async def send(
+        request: httpx.Request, *, stream: bool = False, **options: Any
+    ) -> httpx.Response:
+        # Reads that GitHub can answer with 304 are asked conditionally;
+        # streamed reads and writes go out as they are.
+        if stream or request.method != "GET":
+            return await plain(request, stream=stream, **options)
+        return await forge_etags.send(plain, request, **options)
+
+    client.send = send  # type: ignore[method-assign]
+    return client

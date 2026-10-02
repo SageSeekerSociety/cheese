@@ -391,6 +391,7 @@ defineExpose({
         :can-checklist="!!postChecklist"
         :can-ask="!!postAsk && !alwaysSummon"
         :can-remind="!!topic"
+        :collapse-extras="!mdAndUp"
         @files="emit('files', $event)"
         @checklist="checklistOpen = true"
         @toggle-summon="toggleSummon"

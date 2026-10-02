@@ -462,7 +462,7 @@ describe('工作面板 · Tab 容器', () => {
     await fireEvent.keyDown(box!, { key: 'Enter' })
     await flush()
 
-    expect(addComment).toHaveBeenCalledWith('topic-A', '这段读不通', expect.anything(), undefined, '')
+    expect(addComment).toHaveBeenCalledWith('topic-A', '这段读不通', undefined, '')
     // 发完收起来，评论区回到只读的样子。
     expect(container.querySelector('.comment-draft')).toBeNull()
   })
