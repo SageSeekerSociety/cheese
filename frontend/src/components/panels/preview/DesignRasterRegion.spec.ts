@@ -122,6 +122,40 @@ describe('Design image fit in owning previews (DOM geometry doubles)', () => {
     subject: '4K image',
   } as api.ArtifactVersion
 
+  async function selectImage(ui: ReturnType<typeof render>, image: HTMLImageElement) {
+    image.getBoundingClientRect = () => ({ left: 10, top: 20, width: 512, height: 288 }) as DOMRect
+    await fireEvent.click(ui.getByRole('button', { name: '选择图片区域' }))
+    const overlay = ui.getByRole('group', { name: '选择图片区域' })
+    overlay.setPointerCapture = vi.fn()
+    await fireEvent.pointerDown(overlay, { button: 0, pointerId: 7, clientX: 60, clientY: 70 })
+    await fireEvent.pointerUp(overlay, { pointerId: 7, clientX: 160, clientY: 120 })
+  }
+  it('undefined activeRegion retains standalone selection and disabling selection clears it', async () => {
+    const ui = render(DesignImage, {
+      props: { src: 'blob:standalone', alt: '4k.png', identity: 'v1', activeRegion: undefined },
+    })
+    const { image } = await imageGeometry(ui, 1024)
+    await selectImage(ui, image)
+    expect(ui.container.querySelector('.design-image__selection')).toBeTruthy()
+    expect(ui.emitted().region![0]).toEqual([
+      expect.objectContaining({ region: { x: 400, y: 400, width: 800, height: 400 }, identity: 'v1' }),
+    ])
+    await ui.rerender({ selectionEnabled: false })
+    expect(ui.container.querySelector('.design-image__selection')).toBeNull()
+  })
+  it('controlled null waits for accepted region and clearing it never revives a local selection', async () => {
+    const ui = render(DesignImage, {
+      props: { src: 'blob:controlled', alt: '4k.png', identity: 'v1', activeRegion: null },
+    })
+    const { image } = await imageGeometry(ui, 1024)
+    await selectImage(ui, image)
+    expect(ui.container.querySelector('.design-image__selection')).toBeNull()
+    await ui.rerender({ activeRegion: { x: 400, y: 400, width: 800, height: 400 } })
+    expect(ui.container.querySelector('.design-image__selection')).toBeTruthy()
+    await ui.rerender({ activeRegion: null })
+    expect(ui.container.querySelector('.design-image__selection')).toBeNull()
+  })
+
   it('direct DesignImage fits 4K at a 1024px pane (width control)', async () => {
     const ui = render(DesignImage, { props: { src: 'blob:direct', alt: '4k.png', identity: 'v1' } })
     const { sheet } = await imageGeometry(ui, 1024)
