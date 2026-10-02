@@ -65,7 +65,6 @@ const {
   modelsState,
   projectsState,
   kpis,
-  num,
   projectTotalsText,
   writeError,
   notice,
@@ -129,7 +128,6 @@ const {
              这一段不另写小标题：页头已经叫「模型」。 -->
         <section class="amd__section">
           <div class="amd__sectiontools">
-            <span class="amd__count t-meta-read">{{ num(models?.models.length) }}</span>
             <div class="amd__spacer" />
             <v-btn color="primary" size="small" prepend-icon="mdi-plus" :disabled="gatewayDown" @click="openAdd">
               {{ t('models.page.add') }}
