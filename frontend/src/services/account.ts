@@ -1,7 +1,9 @@
+import type { Locale } from '@/i18n'
 import type { User } from '@/types/users'
 
 import { computed, ref } from 'vue'
 
+import i18n, { isLocale, onLocaleChosen, setLocale } from '@/i18n'
 import { clearComposerDrafts } from '@/lib/composerDrafts'
 import { forgetFeedbackDraft } from '@/lib/feedbackDraft'
 import { clearPageCache } from '@/lib/pageCache'
@@ -95,6 +97,14 @@ export class AccountService {
   // 是 false 而不是「还不知道」——根路径的守卫要是当场读，就会把回访用户当成
   // 生人送进推广页。要靠登录态做路由决定的地方先 await 这一个。
   sessionRestored: Promise<void> = Promise.resolve()
+  // 界面语言存在账号上：推送和桌面端通知是服务端按收件人的语言写的，服务端只能
+  // 从这里知道。登录后以账号上那份为准，浏览器里那份（i18n/index.ts）只是它的
+  // 缓存，也是未登录页面唯一的一份。这一次访问里登录之前选过语言，那是最新的选
+  // 择：登录时写上去，而不是被账号上那份盖掉。
+  private chosenSignedOut = false
+  // 正在保存的那个语言：保存回来之前到达的用户记录（续签、别的标签页）还是旧
+  // 的，不能拿它把刚选的语言换回去。
+  private savingLanguage: Locale | null = null
 
   constructor() {
     // 续签、登录、退出都可能发生在别的标签页，也可能是这个标签页里别的代码发起
@@ -103,6 +113,45 @@ export class AccountService {
       if (event.type === 'token') this.adopt(event.token, event.user)
       else void this.forget()
     })
+    onLocaleChosen((locale) => void this.languageChosen(locale))
+  }
+
+  /** 这个人在界面上选了一种语言（i18n 的 `chooseLocale`，界面已经换过去了）：
+   *  登录着就记到账号上。 */
+  public async languageChosen(locale: Locale) {
+    if (!this.loggedIn) {
+      this.chosenSignedOut = true
+      return
+    }
+    await this.saveLanguage(locale)
+  }
+
+  private async saveLanguage(locale: Locale) {
+    this.savingLanguage = locale
+    try {
+      await UserApi.setLanguage(locale)
+      if (this.user) {
+        this.user = { ...this.user, language: locale }
+        localStorage.setItem('user', JSON.stringify(this.user))
+      }
+    } catch (error) {
+      // 界面已经换过去了；没记上，下次登录或打开页面时会再写一次。
+      console.error('Failed to save the language:', error)
+    } finally {
+      this.savingLanguage = null
+    }
+  }
+
+  /** 拿到服务端给的用户记录后，让界面和账号上的语言一致。 */
+  private followLanguage(user: User) {
+    if (this.savingLanguage) return
+    const current = i18n.global.locale.value as Locale
+    if (this.chosenSignedOut || !isLocale(user.language)) {
+      this.chosenSignedOut = false
+      if (user.language !== current) void this.saveLanguage(current)
+      return
+    }
+    if (user.language !== current) setLocale(user.language)
   }
 
   public get loggedIn() {
@@ -142,6 +191,7 @@ export class AccountService {
       if (data.user) {
         this.user = data.user
         localStorage.setItem('user', JSON.stringify(data.user))
+        this.followLanguage(data.user)
       }
     } catch (error) {
       console.error('Failed to update user info:', error)
@@ -210,6 +260,7 @@ export class AccountService {
       localStorage.setItem('user', JSON.stringify(user))
     }
     this.loggedIn = true
+    if (user) this.followLanguage(user)
   }
 
   public async login(accessToken: string, user?: User) {
@@ -222,6 +273,7 @@ export class AccountService {
       // 如果提供了用户信息，直接使用
       this.user = user
       localStorage.setItem('user', JSON.stringify(user))
+      this.followLanguage(user)
     } else {
       // 如果没有提供用户信息（如 OAuth 登录），获取完整的用户信息
       await this.updateUserInfo()

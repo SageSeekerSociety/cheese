@@ -403,7 +403,7 @@ def _proposal_frames(landed: dict | None) -> list[dict]:
 #
 # 英文原话一个字都不丢,收进「服务原话」的折叠区 —— 它是唯一的一份。
 #
-# 每一条是 (那一行的键, severity, who, 说明的键)，句子在 `notice_messages.json`。
+# 每一条是 (那一行的键, severity, who, 说明的键)，句子在 roomNotice 词表。
 _CLI_NOTICE_COPY: dict[str, tuple[str, str, str, str]] = {
     PROVIDER_UNREACHABLE_CODE: (
         "cliProviderUnreachable",

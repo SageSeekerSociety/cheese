@@ -5,12 +5,19 @@ import en from './messages/en'
 import zhCN from './messages/zh-CN'
 
 export type Locale = 'zh-CN' | 'en'
+// Signed in, the account's language is the choice (`services/account.ts`) and
+// this is its copy in the browser, read before the account is. Signed out, it is
+// the only place a choice is kept.
 const preferenceKey = 'cheese:locale'
+
+export function isLocale(value: unknown): value is Locale {
+  return value === 'en' || value === 'zh-CN'
+}
 
 export function resolveInitialLocale(): Locale {
   try {
     const saved = localStorage.getItem(preferenceKey)
-    if (saved === 'en' || saved === 'zh-CN') return saved
+    if (isLocale(saved)) return saved
   } catch {
     // Browser storage can be unavailable in private or restricted contexts.
   }
@@ -35,6 +42,8 @@ export const { t } = i18n.global
 
 export { LANGUAGE_NAMES, LANGUAGE_SWITCH_LABELS, otherLocale } from './languages'
 
+/** Show `locale` and remember it in this browser. A person picking a language
+ *  goes through `chooseLocale`. */
 export function setLocale(locale: Locale) {
   i18n.global.locale.value = locale
   try {
@@ -42,6 +51,19 @@ export function setLocale(locale: Locale) {
   } catch {
     // Switching still works for the current visit without browser storage.
   }
+}
+
+const chosen = new Set<(locale: Locale) => void>()
+
+/** A person picked `locale`: show it, and tell whoever keeps the choice — the
+ *  account, once signed in (`services/account.ts`). */
+export function chooseLocale(locale: Locale) {
+  setLocale(locale)
+  for (const listener of chosen) listener(locale)
+}
+
+export function onLocaleChosen(listener: (locale: Locale) => void) {
+  chosen.add(listener)
 }
 
 watch(

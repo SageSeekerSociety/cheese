@@ -15,6 +15,7 @@ from sqlalchemy.dialects.postgresql import insert
 from app.domain.delivery.models import ChannelDelivery
 from app.domain.notification.models import NotificationType
 from app.domain.notification.push import PUSHABLE, push_text
+from app.domain.user.repositories import UserRepository
 
 LEASE_SECONDS = 120
 
@@ -36,6 +37,14 @@ class ChannelIntentHandler:
     async def send_batch(self, deliveries):
         stamp = datetime.now(UTC)
         rows = []
+        # A push is written in its recipient's language, so it is rendered here,
+        # per person, and the browser shows it as it arrives (`push.py`).
+        pushed = [
+            d.recipient_id
+            for d in deliveries
+            if self.push_enabled and d.type in PUSHABLE
+        ]
+        recipients = await UserRepository(self.session).get_by_ids(pushed)
         for delivery in deliveries:
             common = {
                 "recipientId": delivery.recipient_id,
@@ -45,7 +54,12 @@ class ChannelIntentHandler:
             }
             channels = [] if delivery.type in MAILBOX_ONLY else [("email", common)]
             if self.push_enabled and delivery.type in PUSHABLE:
-                title, body = push_text(delivery.type, delivery.payload)
+                recipient = recipients.get(delivery.recipient_id)
+                title, body = push_text(
+                    delivery.type,
+                    delivery.payload,
+                    recipient.language if recipient else None,
+                )
                 channels.append(
                     (
                         "push",

@@ -116,6 +116,7 @@ def test_the_push_says_the_same_sentence_the_room_says():
     title, body = push_text(
         NotificationType.ROOM_NOTICE,
         {"content": "验收卡已提交，待 alice 验收", "topicTitle": "预算复核"},
+        "zh-CN",
     )
     assert title == "验收卡已提交，待 alice 验收"
     assert body == "在「预算复核」"
@@ -125,6 +126,7 @@ def test_a_question_pushes_the_question_itself():
     title, body = push_text(
         NotificationType.CHEESE_QUESTION,
         {"question": "预算按哪个口径统计", "topicTitle": "预算复核"},
+        "zh-CN",
     )
     assert title == "预算按哪个口径统计"
     assert body == "在「预算复核」"

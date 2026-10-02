@@ -55,6 +55,10 @@ class User(Base):
     hashed_password: Mapped[str | None] = mapped_column(
         "hashed_password", String, nullable=True
     )
+    # The UI language the person picked (`notice_text.LOCALES`), which is what
+    # their push and desktop notifications are written in. NULL until they pick
+    # one or first sign in from a page that tells us; NULL is said in Chinese.
+    language: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False

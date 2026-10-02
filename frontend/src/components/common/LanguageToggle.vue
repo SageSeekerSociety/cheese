@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
-import i18n, { LANGUAGE_NAMES, LANGUAGE_SWITCH_LABELS, otherLocale, setLocale } from '@/i18n'
+import i18n, { chooseLocale, LANGUAGE_NAMES, LANGUAGE_SWITCH_LABELS, otherLocale } from '@/i18n'
 
 const locale = i18n.global.locale
 
@@ -17,7 +17,7 @@ const target = computed(() => otherLocale(locale.value))
     class="language-toggle"
     :lang="target"
     :aria-label="LANGUAGE_SWITCH_LABELS[target]"
-    @click="setLocale(target)"
+    @click="chooseLocale(target)"
   >
     {{ LANGUAGE_NAMES[target] }}
   </button>

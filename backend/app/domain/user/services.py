@@ -479,6 +479,8 @@ class UserAuthService:
             # Only the owner is told: an account without an address of its own
             # must add one before it can be recovered.
             base["emailMissing"] = is_placeholder_email(user.email)
+            # Their own pick only: the page adopts it wherever they sign in.
+            base["language"] = user.language
 
         base.update(
             {

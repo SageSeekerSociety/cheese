@@ -111,7 +111,8 @@ CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "808
 # context (./backend) — hence the named `cli` context, passed by build.yml. Only
 # the production target needs it; `target: development` never builds this stage,
 # so the dev compose flow is unaffected. To build production by hand:
-#   docker build --build-context cli=./cli -f backend/Dockerfile \
+#   docker build --build-context cli=./cli \
+#     --build-context i18n=./frontend/src/i18n/messages -f backend/Dockerfile \
 #     --target production ./backend
 FROM golang:1.26-bookworm AS connector
 WORKDIR /src
@@ -170,6 +171,13 @@ RUN set -eu; for target in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 win
 COPY --chown=cheese:python app ./app
 COPY --chown=cheese:python alembic ./alembic
 COPY --chown=cheese:python alembic.ini ./
+# The sentences the platform says — room lines, refusals, push — in every UI
+# language. Their one copy is the frontend's catalog, outside this context, so
+# it comes in through the named `i18n` context (build.yml), to the place
+# app/domain/block/notice_text.py reads it from: four levels above that module,
+# which here is /. Without it the backend does not start.
+COPY --from=i18n --chown=cheese:python zh-CN/roomNotice.json zh-CN/apiError.json zh-CN/global.json /frontend/src/i18n/messages/zh-CN/
+COPY --from=i18n --chown=cheese:python en/roomNotice.json en/apiError.json en/global.json /frontend/src/i18n/messages/en/
 # The agent-side assets the BACKEND serves at runtime: the `cheese` platform CLI
 # (fetched by enrolled devices via /sandbox/cli/cheese) and the skills seeded
 # into a topic's ~/.claude. Without these the device path has no CLI.
