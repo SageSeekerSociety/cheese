@@ -188,10 +188,14 @@ watch([() => props.enabled, () => props.identity, () => props.image], reset, { f
 /*
  * 底下的十字黑线压在白线上面：整条线横竖贯到光标框外，落在深色内容和浅色
  * 空白上都看得见。热点在正中间，指哪儿框哪儿。
+ *
+ * SVG 走 base64 而不是原样塞 UTF-8：里面的 `<`、`"`、空格在 url() 里要靠
+ * 引号兜着，一旦经过打包器或别处的转义规则就容易被吃掉，编成 base64 之后
+ * 只剩 [A-Za-z0-9+/=]，到哪都一样。
  */
 .raster-region.is-targeting {
   cursor:
-    url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><g fill="none" stroke="white" stroke-width="3"><path d="M12 0v24M0 12h24"/></g><g fill="none" stroke="black" stroke-width="1"><path d="M12 0v24M0 12h24"/></g></svg>')
+    url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCI+PGcgZmlsbD0ibm9uZSIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIzIj48cGF0aCBkPSJNMTIgMHYyNE0wIDEyaDI0Ii8+PC9nPjxnIGZpbGw9Im5vbmUiIHN0cm9rZT0iYmxhY2siIHN0cm9rZS13aWR0aD0iMSI+PHBhdGggZD0iTTEyIDB2MjRNMCAxMmgyNCIvPjwvZz48L3N2Zz4=')
       12 12,
     crosshair;
 }

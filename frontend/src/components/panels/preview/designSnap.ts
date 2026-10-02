@@ -127,6 +127,64 @@ function components(mask: Uint8Array, width: number, height: number): RasterRegi
 const STRIP = 2
 
 /**
+ * 从 (x, y) 朝 (dx, dy) 走到图边：中间没有梯度、颜色一路不变才算「同一块填充」。
+ *
+ * 只走一列（或一行），不走整片：图里别处有内容不该影响这一处的判定。
+ */
+function sameFillToBorder(
+  data: Uint8ClampedArray,
+  mask: Uint8Array,
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+  dx: number,
+  dy: number
+): boolean {
+  const ink = luma(data, width, x, y)
+  for (let cx = x + dx, cy = y + dy; cx >= 0 && cx < width && cy >= 0 && cy < height; cx += dx, cy += dy) {
+    if (mask[cy * width + cx]) return false
+    if (Math.abs(luma(data, width, cx, cy) - ink) >= GRADIENT) return false
+  }
+  return true
+}
+
+/**
+ * 贴到图边的色带只有**一侧**有梯度——另一侧在图外，没有相邻像素可比。
+ * `pairStrips` 配不到同宽的伙伴，它于是退化成一条 1 像素的线：点深色顶栏只框出那条线。
+ *
+ * 判据是颜色不是位置：从这条边往外走到图边，中间没有别的梯度、颜色一路不变，
+ * 说明它和图边之间是同一块填充，把它补齐到图边。反过来的情形不补——图中间一条
+ * 分隔线往上是一片白、颜色对不上，所以不会被扯到图边去。
+ */
+function extendToBorder(
+  boxes: readonly RasterRegion[],
+  mask: Uint8Array,
+  data: Uint8ClampedArray,
+  width: number,
+  height: number
+): RasterRegion[] {
+  const middle = (from: number, size: number) => Math.floor(from + size / 2)
+  return boxes.map((box) => {
+    if (box.height <= STRIP && box.width * 2 >= width) {
+      const x = middle(box.x, box.width)
+      if (box.y > 0 && sameFillToBorder(data, mask, width, height, x, box.y, 0, -1))
+        return { ...box, y: 0, height: box.y + box.height }
+      if (box.y + box.height < height && sameFillToBorder(data, mask, width, height, x, box.y, 0, 1))
+        return { ...box, height: height - box.y }
+    }
+    if (box.width <= STRIP && box.height * 2 >= height) {
+      const y = middle(box.y, box.height)
+      if (box.x > 0 && sameFillToBorder(data, mask, width, height, box.x, y, -1, 0))
+        return { ...box, x: 0, width: box.x + box.width }
+      if (box.x + box.width < width && sameFillToBorder(data, mask, width, height, box.x, y, 1, 0))
+        return { ...box, width: width - box.x }
+    }
+    return box
+  })
+}
+
+/**
  * 把上下两条同宽的细边两两合成一块。
  *
  * 一条横贯整幅图的色带（顶栏、页脚、分隔行）左右都顶到图边，没有竖边可连，
@@ -226,7 +284,15 @@ export function contentProfile(sample: SampledImage, naturalWidth: number, natur
   const empty: ContentProfile = { columns: [], rows: [], boxes: [] }
   const { data, width, height } = sample
   if (!width || !height || naturalWidth <= 0 || naturalHeight <= 0) return empty
-  const found = pairStrips(components(edgeMask(data, width, height), width, height), STACK_GAP, STACK_EXTENT)
+  // 像素数对不上时不能往下走：越界读出来的是 undefined，差值算成 NaN，
+  // `NaN < GRADIENT` 是 false，整张图会被判成处处有边。
+  if (data.length < width * height * 4) return empty
+  const mask = edgeMask(data, width, height)
+  const found = pairStrips(
+    extendToBorder(components(mask, width, height), mask, data, width, height),
+    STACK_GAP,
+    STACK_EXTENT
+  )
   if (!found.length) return empty
   const words = mergeAcross(found, WORD_GAP)
   const lines = mergeAcross(words, LINE_GAP)
