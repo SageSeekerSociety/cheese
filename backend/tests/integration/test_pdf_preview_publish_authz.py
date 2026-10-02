@@ -35,7 +35,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.api.routes.tasks import get_task_pdf_draft_service
-from app.core.config import settings
 from app.domain.gateway_chat import Completion, Usage
 from app.domain.task.task_pdf_draft_service import TaskPdfDraftService
 from tests.integration.conftest import (
@@ -125,7 +124,6 @@ def fake_llm(api_client: TestClient, monkeypatch: pytest.MonkeyPatch) -> _FakeLL
     rates = {_FakeLLM.model: (1e-3, 2e-3, 1e-4, 1e-3)}
     service = TaskPdfDraftService(chat=llm, rate_table=rates)  # type: ignore[arg-type]
     api_client.app.dependency_overrides[get_task_pdf_draft_service] = lambda: service
-    monkeypatch.setattr(settings, "llm_gateway_credit_usd", 0.01)
     try:
         yield llm
     finally:

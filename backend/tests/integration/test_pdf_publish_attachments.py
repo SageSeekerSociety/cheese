@@ -120,7 +120,6 @@ def llm(
     api_client.app.dependency_overrides[get_task_pdf_draft_service] = lambda: (
         TaskPdfDraftService(chat=client, rate_table=rates)  # type: ignore[arg-type]
     )
-    monkeypatch.setattr(settings, "llm_gateway_credit_usd", 0.01)
     yield client
     api_client.app.dependency_overrides.pop(get_task_pdf_draft_service, None)
 

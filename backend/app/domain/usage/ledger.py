@@ -41,7 +41,6 @@ from sqlalchemy import and_, case, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
 from app.domain.block.notice_text import NoticeText, say
 from app.domain.usage.credits import spend_to_credits
 from app.domain.usage.models import ComputeGrant, GrantSource, Plan, PlanWindowUse
@@ -187,7 +186,7 @@ class Rates:
         """``model``'s rates from the gateway's rate table
         (``feature_stats.pricing.model_rates``); None when a call to it cannot
         be charged."""
-        if not settings.llm_gateway_credit_usd or not table or model not in table:
+        if not table or model not in table:
             return None
         return cls(*table[model])
 

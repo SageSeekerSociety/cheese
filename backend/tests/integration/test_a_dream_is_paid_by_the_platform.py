@@ -12,6 +12,7 @@ from app.domain.agent import gateway as gw
 from app.domain.agent.dream_usage import drain_dream_spend
 from app.domain.memory import dream
 from app.domain.project.repositories import ProjectRepository
+from app.domain.usage.credits import CREDIT_USD
 from app.domain.usage.models import ResourceUsage
 from tests.integration.test_gateway_usage import FakeGateway, _mk_service
 
@@ -64,9 +65,6 @@ async def test_a_dream_runs_on_a_key_the_project_does_not_pay_for(
 async def test_what_a_dream_spends_is_the_platforms_and_no_team_pays(
     business_db_factory, tmp_path, monkeypatch
 ):
-    from app.core.config import settings as app_settings
-
-    monkeypatch.setattr(app_settings, "llm_gateway_credit_usd", 0.04)
     fake = KeyedGateway()
     svc, factory, pid, tid = await _mk_service(business_db_factory, tmp_path, fake)
     room = _token(await svc._model_kwargs(pid, None, tid))
@@ -97,4 +95,4 @@ async def test_what_a_dream_spends_is_the_platforms_and_no_team_pays(
     assert [(r.cost_usd, r.team_id) for r in room_rows] == [
         (pytest.approx(0.04), team_id)
     ]
-    assert sum(r.credits for r in rows) == pytest.approx(0.04 / 0.04)
+    assert sum(r.credits for r in rows) == pytest.approx(0.04 / CREDIT_USD)

@@ -341,11 +341,6 @@ class Settings(BaseSettings):
     # Unset (default) =整层关闭: env injection, usage, credits all behave as before.
     llm_gateway_admin_base: str | None = None  # e.g. http://127.0.0.1:4000
     llm_gateway_admin_key: str | None = None  # the LiteLLM master key
-    # USD per compute credit: every call's cost (gateway or subscription,
-    # priced at the gateway's model table) is charged as cost / this, and grant
-    # credits become a gateway max_budget at the same rate. Unset = usage is
-    # still recorded, nothing is charged and no budget is set.
-    llm_gateway_credit_usd: float | None = None
 
     # --- Docs site (app/domain/docs_site) ---
     # Where 问芝士 reads the docs from: the frontend image serves the built
