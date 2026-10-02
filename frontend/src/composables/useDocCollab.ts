@@ -22,6 +22,8 @@ import { getAvatarUrl } from '@/utils/materials'
 import { collabWsUrl, getDocTicket } from '../api/docCollab'
 import { myAccount } from '../me'
 
+import { t } from '@/i18n'
+
 /** Somebody with the document open, as the service vouches for them. */
 export interface DocPeer {
   clientId: number
@@ -72,6 +74,8 @@ export function useDocCollab(room: () => string | null) {
   const readOnly = ref(false)
   const peers = shallowRef<DocPeer[]>([])
   const error = ref<string | null>(null)
+  /** Only a refused initial conversion permits reading the authorized source. */
+  const refusedContent = ref(false)
   let close: (() => void) | null = null
   let generation = 0
 
@@ -81,6 +85,7 @@ export function useDocCollab(room: () => string | null) {
     session.value = null
     peers.value = []
     synced.value = false
+    refusedContent.value = false
     connection.value = 'connecting'
   }
 
@@ -102,6 +107,7 @@ export function useDocCollab(room: () => string | null) {
     readOnly.value = first.read_only
     const opened = connectToService(() => getDocTicket(id), first)
     const { doc, provider } = opened
+    let refused = false
     const account = myAccount()
     const user = {
       name: account?.nickname || account?.username || '',
@@ -110,12 +116,32 @@ export function useDocCollab(room: () => string | null) {
     }
     provider.setAwarenessField('user', user)
     provider.on('status', ({ status }: { status: string }) => {
+      if (mine !== generation || refused) return
       connection.value = status === 'connected' ? 'connected' : status === 'connecting' ? 'connecting' : 'offline'
     })
     provider.on('synced', ({ state }: { state: boolean }) => {
+      if (mine !== generation || refused) return
       if (state) synced.value = true
     })
-    provider.on('authenticationFailed', () => {
+    provider.on('authenticationFailed', ({ reason }: { reason: string }) => {
+      if (mine !== generation || refused) return
+      const initial = !synced.value
+      let contentRefused = false
+      if (initial) {
+        try {
+          const problem = JSON.parse(reason) as { error?: unknown }
+          contentRefused = problem?.error === 'content'
+        } catch {
+          /* Ordinary permission refusals are not source fallbacks. */
+        }
+        // Stop an unsynced rejected document. Synced offline drafts keep their
+        // local state, rather than being replaced by the stored source.
+        refused = true
+        teardown()
+        readOnly.value = true
+      }
+      refusedContent.value = contentRefused
+      error.value = t(contentRefused ? 'work.room.doc.sourcePreserved' : 'work.room.doc.openRefused')
       connection.value = 'offline'
     })
     const readPeers = () => {
@@ -162,5 +188,5 @@ export function useDocCollab(room: () => string | null) {
     teardown()
   })
 
-  return { session, connection, synced, readOnly, peers, error }
+  return { session, connection, synced, readOnly, peers, error, refusedContent }
 }

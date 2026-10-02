@@ -762,6 +762,8 @@
       "offline": "未连接",
       "offlineHint": "改动会在恢复连接后同步",
       "noEditAccess": "你没有这篇文档的编辑权限",
+      "sourcePreserved": "编辑器暂不支持这份文档的写法，原文已保留",
+      "openRefused": "无法打开这份文档，检查房间访问权限",
       "backToEdit": "回到编辑",
       "readOnly": "只读",
       "options": "文档选项",

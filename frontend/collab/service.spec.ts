@@ -90,6 +90,10 @@ async function setup(seed = '') {
   const backend = new FakeBackend(seed)
   const backendUrl = await backend.listen()
   cleanups.push(() => new Promise<void>((resolve) => backend.server.close(() => resolve())))
+  return { backend, backendUrl, ...(await serve(backendUrl)) }
+}
+
+async function serve(backendUrl: string) {
   const server = createCollabServer({
     port: 0,
     backendUrl,
@@ -99,30 +103,40 @@ async function setup(seed = '') {
     retryMs: 50,
     quiet: true,
   })
+  server.configuration.address = '127.0.0.1'
+  server.configuration.stopOnSignals = false
   await server.listen()
   cleanups.push(() => server.destroy())
-  return { backend, server, url: server.webSocketURL, http: server.httpURL }
+  return { server, url: server.webSocketURL, http: server.httpURL }
 }
 
 function client(url: string, token: string) {
   const doc = new Y.Doc()
   const socket = new HocuspocusProviderWebsocket({ url })
-  let failed = false
+  let failure: string | null = null
+  let scope: string | null = null
   const provider = new HocuspocusProvider({
     websocketProvider: socket,
     name: DOC,
     document: doc,
     token,
-    onAuthenticationFailed: () => {
-      failed = true
+    onAuthenticated: (event) => {
+      scope = event.scope
+    },
+    onAuthenticationFailed: (event) => {
+      failure = event.reason
     },
   })
   provider.attach()
-  cleanups.push(() => {
+  let closed = false
+  const close = () => {
+    if (closed) return
+    closed = true
     provider.destroy()
     socket.destroy()
-  })
-  return { doc, provider, failed: () => failed }
+  }
+  cleanups.push(close)
+  return { doc, provider, close, failed: () => failure !== null, failure: () => failure, scope: () => scope }
 }
 
 async function until(check: () => boolean, ms = 5000) {
@@ -160,6 +174,64 @@ const SEED = [
 ].join('\n')
 
 describe('the live document', () => {
+  it.each([
+    {
+      name: 'an unreferenced footnote definition',
+      content: '第一段。\n\n## 资料\n\n[^1]: 必须保留的脚注正文\n',
+      line: 5,
+    },
+    {
+      name: 'a table cell beyond the header width',
+      content: '第一段。\n\n| 项目 | 分值 |\n| --- | --- |\n| 完成度 | 60 | 必须保留的附注正文 |\n',
+      line: 5,
+    },
+    {
+      name: 'a heading spelling the round trip does not preserve',
+      content: '必须保留的标题\n===\n\n正文\n',
+      line: undefined,
+    },
+  ])('keeps existing Markdown when a readonly first open refuses $name', async ({ content, line }) => {
+    const { backend, backendUrl, server, url } = await setup(content)
+    // These are valid read-only tickets, not an authentication failure fixture.
+    async function refusedReader(serviceUrl: string, handle: string) {
+      const a = client(serviceUrl, ticket(handle, { ro: true }))
+      await until(() => a.failed() || a.provider.synced)
+      expect(a.scope()).toBe('readonly')
+      expect(backend.content).toBe(content)
+      expect(backend.stores).toBe(0)
+      expect(backend.state).toBeNull()
+      expect(a.provider.synced).toBe(false)
+      expect(a.doc.getXmlFragment('default').length).toBe(0)
+      expect(JSON.parse(a.failure()!)).toMatchObject({ error: 'content', ...(line === undefined ? {} : { line }) })
+      a.close()
+    }
+    await refusedReader(url, 'reader')
+    await refusedReader(url, 'reader-again')
+    await server.destroy()
+    const restarted = await serve(backendUrl)
+    await refusedReader(restarted.url, 'reader-after-restart')
+  })
+
+  it('opens supported Markdown readonly and reopens the same stored state on a fresh server', async () => {
+    const { backend, backendUrl, server, url } = await setup(SEED)
+    const first = client(url, ticket('reader', { ro: true }))
+    await until(() => first.provider.synced && backend.state !== null)
+    expect(first.scope()).toBe('readonly')
+    expect(compareRoundTrip(SEED, exportMarkdown(first.doc)).clean).toBe(true)
+    const saved = exportMarkdown(first.doc)
+    const stores = backend.stores
+    first.close()
+    await server.destroy()
+
+    const restarted = await serve(backendUrl)
+    const second = client(restarted.url, ticket('reader-again', { ro: true }))
+    await until(() => second.provider.synced)
+    expect(second.scope()).toBe('readonly')
+    expect(exportMarkdown(second.doc)).toBe(saved)
+    expect(backend.content).toBe(saved)
+    expect(backend.stores).toBe(stores)
+  })
+
   it('converts a Markdown document on first open without losing content, and stores the text it exports', async () => {
     const { backend, url } = await setup(SEED)
     const a = client(url, ticket('xiaowang'))

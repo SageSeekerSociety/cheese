@@ -46,15 +46,22 @@ export function usePanelDoc(props: PanelDocProps, hooks: PanelDocHooks) {
   // ---- 这一篇现在是什么状态 ----
   // 自己切的只读（⋯ 里那一项）。没有编辑权限时它不起作用：那由凭证决定。
   const wantsEditable = ref(true)
-  const editable = computed(() => wantsEditable.value && !collab.readOnly.value)
+  const readOnly = computed(() => collab.readOnly.value || !!collab.error.value)
+  const editable = computed(() => wantsEditable.value && !readOnly.value)
   const loading = computed(() => !!props.topic && !collab.synced.value && !collab.error.value)
   // 当场要说的失败（复制代码失败这一类），和文档打不开的原因，说同一个地方。
   const localError = ref<string | null>(null)
-  const errorMsg = computed(() => localError.value ?? collab.error.value)
+  const sourceError = ref<string | null>(null)
+  const errorMsg = computed(
+    () =>
+      localError.value ?? (collab.refusedContent.value ? sourceError.value ?? collab.error.value : collab.error.value)
+  )
 
   // 已存的那一版：协同服务最近一次存回的原文和版本号。
   const rawDoc = ref('')
   const docVersion = ref(0)
+  const sourceAvailable = ref(false)
+  const fallbackSource = computed(() => (collab.refusedContent.value && sourceAvailable.value ? rawDoc.value : null))
 
   // 屏幕上这一份和已存的那一版是不是一回事。文档 AI 的选区按已存原文定位，两边不一
   // 致（还有字没存回、或者还没连上）的时候它不能提问也不能采纳。
@@ -125,8 +132,21 @@ export function usePanelDoc(props: PanelDocProps, hooks: PanelDocHooks) {
       if (disposed || props.topic?.id !== tid || sequence !== snapshotSequence) return
       rawDoc.value = block?.content ?? ''
       docVersion.value = block?.doc_version ?? 0
-    } catch {
-      // 读不到已存版本只影响文档 AI 的可用性（它会说选区无法核对），不影响编辑。
+      sourceAvailable.value = block !== null
+      sourceError.value = null
+    } catch (cause) {
+      if (disposed || props.topic?.id !== tid || sequence !== snapshotSequence) return
+      sourceAvailable.value = false
+      // Remember an independently refused source read even if it arrives
+      // before the WebSocket's initial-conversion refusal.
+      sourceError.value = cause instanceof Error ? cause.message : String(cause)
+      if (collab.refusedContent.value) {
+        // Source access is authorized independently. A refused read removes
+        // any previously fetched source and its version from this fallback.
+        rawDoc.value = ''
+        docVersion.value = 0
+      }
+      // 协同文档正常打开时，读不到已存版本只影响文档 AI 的选区核对，不影响编辑。
     }
     void loadComments(tid).catch(() => {})
   }
@@ -137,7 +157,7 @@ export function usePanelDoc(props: PanelDocProps, hooks: PanelDocHooks) {
   }
 
   function toggleEditable() {
-    if (collab.readOnly.value) return
+    if (readOnly.value) return
     wantsEditable.value = !wantsEditable.value
   }
 
@@ -164,6 +184,8 @@ export function usePanelDoc(props: PanelDocProps, hooks: PanelDocHooks) {
       snapshotSequence++
       commentSequence++
       localError.value = null
+      sourceError.value = null
+      sourceAvailable.value = false
       rawDoc.value = ''
       docVersion.value = 0
       comments.value = []
@@ -198,12 +220,13 @@ export function usePanelDoc(props: PanelDocProps, hooks: PanelDocHooks) {
     session: collab.session,
     connection: collab.connection,
     peers: collab.peers,
-    readOnly: collab.readOnly,
+    readOnly,
     // 这一篇现在是什么状态
     editable,
     loading,
     errorMsg,
     rawDoc,
+    fallbackSource,
     docVersion,
     matchesStored,
     reloadStored,
