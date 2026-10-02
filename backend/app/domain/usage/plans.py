@@ -1,0 +1,317 @@
+"""Credit plans and the platform administrator's hand on them (#2397).
+
+A plan is a record, not code: an administrator edits what it issues, its time
+windows and the model tiers it allows, puts a team on one, and issues a team
+extra credits. Every one of those writes is recorded in ``credit_admin_audit``
+with who did it and what changed; a change to a plan takes effect from the next
+period, so a pack already issued keeps its size.
+"""
+
+import math
+import uuid
+from datetime import UTC, datetime
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.errors import BadRequestError, NotFoundError
+from app.domain.usage.ledger import Ledger, month_of
+from app.domain.usage.models import (
+    ComputeGrant,
+    CreditAdminAudit,
+    GrantSource,
+    Plan,
+)
+
+#: The fields of a plan an administrator may change.
+EDITABLE = (
+    "name",
+    "audience",
+    "credits_per_period",
+    "windows",
+    "model_tiers",
+    "allows_subscription",
+)
+MODEL_TIERS = frozenset({"included", "premium", "frontier"})
+AUDIENCES = frozenset({"personal", "team", "both"})
+
+
+def plan_out(plan: Plan) -> dict:
+    return {
+        "key": plan.key,
+        "name": plan.name,
+        "audience": plan.audience,
+        "credits_per_period": plan.credits_per_period,
+        "period": plan.period,
+        "windows": list(plan.windows or []),
+        "model_tiers": None if plan.model_tiers is None else list(plan.model_tiers),
+        "allows_subscription": plan.allows_subscription,
+        "unlimited": plan.unlimited,
+        "admin_only": plan.admin_only,
+    }
+
+
+def pack_out(pack: ComputeGrant) -> dict:
+    return {
+        "id": str(pack.id),
+        "source": pack.source,
+        "project_id": str(pack.project_id) if pack.project_id else None,
+        "task_id": pack.source_task_id,
+        "credits_total": pack.credits_total,
+        "credits_used": pack.credits_used,
+        "period_start": pack.period_start.isoformat() if pack.period_start else None,
+        "expires_at": pack.expires_at.isoformat() if pack.expires_at else None,
+        "reason": pack.reason,
+        "created_at": pack.created_at.isoformat(),
+    }
+
+
+def _check_plan_fields(data: dict) -> None:
+    credits = data.get("credits_per_period")
+    if credits is not None and (not math.isfinite(credits) or credits < 0):
+        raise BadRequestError("每期额度必须是不小于 0 的数")
+    for window in data.get("windows") or []:
+        hours, cap = window.get("hours"), window.get("credits")
+        if not isinstance(hours, int | float) or hours <= 0:
+            raise BadRequestError("时间窗口的长度必须是正数小时")
+        if not isinstance(cap, int | float) or cap < 0:
+            raise BadRequestError("时间窗口的额度必须是不小于 0 的数")
+    audience = data.get("audience")
+    if audience is not None and audience not in AUDIENCES:
+        raise BadRequestError(f"适用对象只能是 {', '.join(sorted(AUDIENCES))}")
+    tiers = data.get("model_tiers")
+    if tiers is not None and not set(tiers) <= MODEL_TIERS:
+        raise BadRequestError(f"模型档位只能是 {', '.join(sorted(MODEL_TIERS))}")
+
+
+def _period(held: list[ComputeGrant]) -> dict:
+    """This month's plan pack: ``credits_total`` is None until the month's
+    first call has issued it."""
+    month = month_of(datetime.now(UTC))
+    current = next(
+        (
+            p
+            for p in held
+            if p.source == GrantSource.PLAN_PERIOD and p.period_start == month
+        ),
+        None,
+    )
+    return {
+        "start": month.isoformat(),
+        "credits_total": current.credits_total if current else None,
+        "credits_used": current.credits_used if current else 0.0,
+    }
+
+
+class PlanService:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def plans(self) -> list[dict]:
+        rows = await self._session.execute(select(Plan).order_by(Plan.key))
+        return [plan_out(p) for p in rows.scalars()]
+
+    async def _plan(self, key: str) -> Plan:
+        plan = await self._session.get(Plan, key)
+        if plan is None:
+            raise NotFoundError(f"没有方案 {key}")
+        return plan
+
+    async def create_plan(self, *, handle: str, data: dict) -> dict:
+        """A new plan, issuing ``credits_per_period`` every month to the teams an
+        administrator puts on it."""
+        key = data.get("key") or f"plan-{uuid.uuid4().hex[:8]}"
+        data = {k: v for k, v in data.items() if k in EDITABLE}
+        _check_plan_fields(data)
+        if await self._session.get(Plan, key) is not None:
+            raise BadRequestError(f"方案 {key} 已经存在")
+        plan = Plan(
+            key=key,
+            name=data.get("name") or key,
+            audience=data.get("audience") or "both",
+            credits_per_period=data.get("credits_per_period"),
+            period="month",
+            windows=data.get("windows") or [],
+            model_tiers=data.get("model_tiers", ["included"]),
+            allows_subscription=bool(data.get("allows_subscription")),
+            unlimited=False,
+            admin_only=False,
+        )
+        self._session.add(plan)
+        await self._session.flush()
+        after = plan_out(plan)
+        await self._audit(handle, "plan.create", key, None, after)
+        return after
+
+    async def update_plan(self, *, handle: str, key: str, data: dict) -> dict:
+        """Change what a plan issues and allows, from the next period on."""
+        plan = await self._plan(key)
+        data = {k: v for k, v in data.items() if k in EDITABLE}
+        _check_plan_fields(data)
+        before = plan_out(plan)
+        for field, value in data.items():
+            setattr(plan, field, value)
+        await self._session.flush()
+        after = plan_out(plan)
+        await self._audit(handle, "plan.update", key, before, after)
+        return after
+
+    async def set_team_plan(self, *, handle: str, team_id: int, key: str) -> dict:
+        from app.domain.team.services import team_service
+
+        team = await team_service(self._session).get_team(team_id)
+        if team is None:
+            raise NotFoundError(f"没有团队 {team_id}")
+        plan = await self._plan(key)
+        personal = team.personal_owner_user_id is not None
+        if plan.audience == "personal" and not personal:
+            raise BadRequestError(f"方案「{plan.name}」只给个人")
+        if plan.audience == "team" and personal:
+            raise BadRequestError(f"方案「{plan.name}」只给团队")
+        before = {"plan_key": team.plan_key}
+        team.plan_key = key
+        await self._session.flush()
+        await self._audit(handle, "team.plan", str(team_id), before, {"plan_key": key})
+        return {"team_id": team_id, "plan_key": key}
+
+    async def grant(
+        self,
+        *,
+        handle: str,
+        team_id: int,
+        credits: float,
+        expires_at: datetime | None,
+        reason: str | None = None,
+    ) -> dict:
+        """Issue a team credits by hand, as an administrator does once a
+        purchase has been paid for outside the platform."""
+        from app.domain.team.services import team_service
+
+        if await team_service(self._session).get_team(team_id) is None:
+            raise NotFoundError(f"没有团队 {team_id}")
+        if expires_at is not None and expires_at <= datetime.now(UTC):
+            raise BadRequestError("到期时间必须在将来")
+        try:
+            pack = await Ledger(self._session).grant(
+                team_id,
+                credits,
+                source=GrantSource.ADMIN_GRANT,
+                expires_at=expires_at,
+                reason=reason,
+            )
+        except ValueError as exc:
+            raise BadRequestError("额度必须是正数") from exc
+        out = pack_out(pack)
+        await self._audit(handle, "team.grant", str(team_id), None, out)
+        return out
+
+    async def teams(self, *, query: str | None, page: int, page_size: int) -> dict:
+        """The console's list: every team with its plan, this period's plan
+        pack, and the packs it may still spend."""
+        from app.domain.team.services import team_service
+        from app.domain.user.services import (
+            search_accounts,
+            usernames_by_ids,
+            users_by_handle,
+        )
+
+        owner_ids: list[int] = []
+        if query and query.strip():
+            handles = [h for h, _ in await search_accounts(self._session, query, 50)]
+            owners = await users_by_handle(self._session, handles)
+            owner_ids = [user.id for user in owners.values()]
+        teams, total = await team_service(self._session).list_all_teams(
+            query=query,
+            owner_ids=owner_ids,
+            limit=page_size,
+            offset=(page - 1) * page_size,
+        )
+        packs = await Ledger(self._session).live_packs([t.id for t in teams])
+        owners_by_id = await usernames_by_ids(
+            self._session,
+            [t.personal_owner_user_id for t in teams if t.personal_owner_user_id],
+        )
+        items = []
+        for team in teams:
+            held = packs.get(team.id, [])
+            owner = team.personal_owner_user_id
+            items.append(
+                {
+                    "id": team.id,
+                    "name": team.name,
+                    "handle": team.handle,
+                    "personal_owner": owners_by_id.get(owner) if owner else None,
+                    "plan_key": team.plan_key,
+                    "period": _period(held),
+                    "packs": [pack_out(p) for p in held],
+                }
+            )
+        return {"items": items, "total": total, "page": page, "page_size": page_size}
+
+    async def team(self, team_id: int) -> dict:
+        """One team as the console opens it: its plan, this period, and every
+        pack it may still spend."""
+        from app.domain.team.services import team_service
+        from app.domain.user.services import usernames_by_ids
+
+        team = await team_service(self._session).get_team(team_id)
+        if team is None:
+            raise NotFoundError(f"没有团队 {team_id}")
+        plan = await self._plan(team.plan_key)
+        held = (await Ledger(self._session).live_packs([team.id])).get(team.id, [])
+        owner = team.personal_owner_user_id
+        owners = await usernames_by_ids(self._session, [owner] if owner else [])
+        return {
+            "id": team.id,
+            "name": team.name,
+            "handle": team.handle,
+            "personal_owner": owners.get(owner) if owner else None,
+            "plan": plan_out(plan),
+            "period": _period(held),
+            "packs": [pack_out(p) for p in held],
+        }
+
+    async def team_history(self, team_id: int, *, limit: int) -> list[dict]:
+        """What administrators did to one team, newest first."""
+        return await self.audit(limit=limit, target=str(team_id))
+
+    async def audit(self, *, limit: int, target: str | None = None) -> list[dict]:
+        stmt = select(CreditAdminAudit)
+        if target is not None:
+            stmt = stmt.where(
+                CreditAdminAudit.target == target,
+                CreditAdminAudit.action.like("team.%"),
+            )
+        rows = await self._session.execute(
+            stmt.order_by(CreditAdminAudit.created_at.desc()).limit(limit)
+        )
+        return [
+            {
+                "created_at": row.created_at.isoformat(),
+                "actor_handle": row.actor_handle,
+                "action": row.action,
+                "target": row.target,
+                "before": row.before,
+                "after": row.after,
+            }
+            for row in rows.scalars()
+        ]
+
+    async def _audit(
+        self,
+        handle: str,
+        action: str,
+        target: str,
+        before: dict | None,
+        after: dict | None,
+    ) -> None:
+        self._session.add(
+            CreditAdminAudit(
+                actor_handle=handle[:64],
+                action=action,
+                target=target,
+                before=before,
+                after=after,
+            )
+        )
+        await self._session.flush()
