@@ -16,7 +16,6 @@ import { EditorContent, useEditor } from '@tiptap/vue-3'
 
 import { ApiError, chatWsUrl, getDoc, putDoc } from '../api'
 import { compareRoundTrip, docExtensions, serializeDoc } from '../lib/docMarkdown'
-import { myHandle } from '../me'
 
 import { t } from '@/i18n'
 
@@ -42,8 +41,6 @@ const emit = defineEmits<{
   (e: 'dirty'): void
   (e: 'error', message: string): void
 }>()
-
-const AUTHOR = myHandle()
 
 // 块手柄（＋ / ⠿）跟着鼠标悬停出现、靠拖动排序，手机上用不了：不画，也不留那条
 // 56px 的槽，正文贴着页边排（样式里 --doc-gutter 在手机上是 0）。960 是外壳换成手机
@@ -148,7 +145,7 @@ async function save() {
   saving.value = true
   emit('saving')
   try {
-    const saved = await putDoc(topicId, full, AUTHOR, docVersion.value)
+    const saved = await putDoc(topicId, full, docVersion.value)
     docVersion.value = saved.doc_version ?? docVersion.value + 1
     conflict.value = false
     rawDoc.value = full

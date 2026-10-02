@@ -157,7 +157,6 @@ export function useChatPanel(opts: ChatPanelOptions) {
   // from the composer —— 见 useOptionQuestions。 ----
   const { askBusy, pickOption, askQuestion } = useOptionQuestions({
     topicId: () => topic()?.id,
-    author: AUTHOR,
     push: (block) => {
       pushBlock(block)
       scrollToBottom()

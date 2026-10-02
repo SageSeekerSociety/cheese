@@ -173,16 +173,16 @@ async function guard<T>(fn: () => Promise<T>): Promise<void> {
 async function onAdd() {
   const handle = addHandle.value
   if (!handle) return
-  await guard(() => addTopicMember(props.topicId, handle, 'member', props.me))
+  await guard(() => addTopicMember(props.topicId, handle, 'member'))
   addHandle.value = null
 }
 
 async function onRemove(handle: string) {
-  await guard(() => removeTopicMember(props.topicId, handle, props.me))
+  await guard(() => removeTopicMember(props.topicId, handle))
 }
 
 async function onSetRole(handle: string, role: string) {
-  await guard(() => updateTopicMemberRole(props.topicId, handle, role, props.me))
+  await guard(() => updateTopicMemberRole(props.topicId, handle, role))
 }
 </script>
 

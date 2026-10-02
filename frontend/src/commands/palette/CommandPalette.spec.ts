@@ -401,7 +401,7 @@ describe('命令面板：更多操作', () => {
     await type('原型')
     await press('Tab')
     await choose(t('work.room.menu.archive'))
-    await waitFor(() => expect(archiveTopic).toHaveBeenCalledWith('t2', expect.anything()))
+    await waitFor(() => expect(archiveTopic).toHaveBeenCalledWith('t2'))
     expect(router.currentRoute.value.path).toBe('/projects/p1')
     await waitFor(() => expect(field()).toBeNull())
   })

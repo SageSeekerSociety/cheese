@@ -459,9 +459,8 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   }
 
   async function archive(topicId: string) {
-    const me = myHandle()
     try {
-      const updated = await archiveTopic(topicId, me)
+      const updated = await archiveTopic(topicId)
       const topic = topics.value.find((row) => row.id === topicId)
       if (topic) {
         topicRevision += 1
@@ -474,9 +473,8 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   }
 
   async function unarchive(topicId: string) {
-    const me = myHandle()
     try {
-      const updated = await unarchiveTopic(topicId, me)
+      const updated = await unarchiveTopic(topicId)
       const topic = topics.value.find((row) => row.id === topicId)
       if (topic) {
         topicRevision += 1

@@ -11,9 +11,10 @@ export function askRoom(topicId: string, question: string, options: string[]): P
   })
 }
 
-export function answerOptions(blockId: string, option: string, author: string): Promise<Block> {
+// 谁答的由凭据说，请求体里不写名字。
+export function answerOptions(blockId: string, option: string): Promise<Block> {
   return request<Block>(`/topics/blocks/${encodeURIComponent(blockId)}/answer`, {
     method: 'POST',
-    body: JSON.stringify({ option, author }),
+    body: JSON.stringify({ option }),
   })
 }

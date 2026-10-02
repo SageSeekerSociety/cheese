@@ -215,7 +215,7 @@ describe('手机上话题头的 ⋯', () => {
     await openMore()
     await fireEvent.click(await screen.findByRole('menuitem', { name: '归档' }))
 
-    expect(archiveTopic).toHaveBeenCalledWith('topic-1', expect.anything())
+    expect(archiveTopic).toHaveBeenCalledWith('topic-1')
   })
 
   it('不能归档的人看不到归档', async () => {
@@ -232,7 +232,7 @@ describe('手机上话题头的 ⋯', () => {
     await openMore()
     await fireEvent.click(await screen.findByRole('menuitem', { name: '取消归档' }))
 
-    expect(unarchiveTopic).toHaveBeenCalledWith('topic-1', expect.anything())
+    expect(unarchiveTopic).toHaveBeenCalledWith('topic-1')
     expect(screen.queryByRole('menuitem', { name: '重命名' })).toBeNull()
   })
 })

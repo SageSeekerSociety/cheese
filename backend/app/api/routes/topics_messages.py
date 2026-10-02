@@ -391,23 +391,30 @@ async def answer_options(
     ask block's own options, records it on the block (meta.answered), and posts
     the choice as the answerer's message, addressed to whoever asked — the
     teammate whose turn waits on it, or the person who put the question to the
-    room. The asker does not answer their own question."""
+    room. The asker does not answer their own question.
+
+    The answer is filed under the caller the credential names and nobody else:
+    the body carries no author. So the global sandbox token alone (the trusted
+    dev credential, naming nobody) gets a 401, since there is no one to answer
+    as."""
     option = body.option.strip()
     repo = BlockRepository(db)
     blk = await repo.get(block_id)
     if blk is None:
         raise NotFoundError(say("optionQuestionNotFound"))
     actor = await resolver.resolve(
-        fallback_handle=body.author,
+        fallback_handle=None,
         topic_id=blk.topic_id,
         project_id=blk.project_id,
     )
     await resolver.authorize_topic(
         actor, project_id=blk.project_id, topic_id=blk.topic_id
     )
+    if not actor.authenticated:
+        raise AuthenticationRequiredError("Sign in to answer a question")
     author = actor.handle
-    if author == "anonymous" or not option:
-        raise ValidationError("author 和 option 都要有")
+    if not option:
+        raise ValidationError("选项不能为空")
     if author == blk.author:
         raise ForbiddenError(say("optionOwnQuestion"))
     meta = dict(blk.meta or {})

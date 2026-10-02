@@ -24,11 +24,9 @@ class ReactionToggleIn(BaseModel):
 
 class OptionAnswerIn(BaseModel):
     """POST /topics/blocks/{id}/answer — the option picked, one of the ask's own.
-
-    ``author`` is read only when no credential names the caller."""
+    Who picked it is the credential's, never the body's."""
 
     option: str
-    author: str | None = None
 
 
 class BlockOut(BaseModel):

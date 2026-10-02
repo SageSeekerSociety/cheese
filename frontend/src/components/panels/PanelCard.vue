@@ -341,7 +341,7 @@ async function send() {
   sending.value = true
   sendError.value = null
   try {
-    await sayOnRoomTask(room, id, text, myHandle())
+    await sayOnRoomTask(room, id, text)
     draft.value = ''
     await load(true)
   } catch {

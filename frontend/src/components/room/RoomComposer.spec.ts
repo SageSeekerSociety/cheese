@@ -432,7 +432,7 @@ describe('发出去的消息 @ 了不在话题里的人', () => {
     await fireEvent.click(utils.getByRole('button', { name: '拉进话题' }))
     await flush()
 
-    expect(addTopicMember).toHaveBeenCalledWith('t1', 'carol', 'member', 'alice')
+    expect(addTopicMember).toHaveBeenCalledWith('t1', 'carol', 'member')
     expect(notice(utils.container)).toBeNull()
   })
 
