@@ -106,6 +106,27 @@ def test_converting_a_markdown_document_is_recorded_quietly(client):
     assert len(_doc_events(client, room, owner)) == events
 
 
+def test_converting_a_markdown_document_keeps_its_author(client):
+    room = _topic(client)
+    original = "# 原稿\r\n\r\n* 一\r\n* 二\r\n"
+    client.portal.call(client.collab.type_in, uuid.UUID(room), original, "owner")
+    client.put(
+        f"/internal/collab/documents/room:{room}",
+        json={
+            "state": base64.b64encode(b"converted").decode(),
+            "content": "# 原稿\n\n- 一\n- 二",
+            "actors": ["system"],
+            "converted": True,
+        },
+        headers=_service(),
+    ).raise_for_status()
+    # A respelling is nobody's edit: the document is still the owner's.
+    assert client.get(f"/topics/{room}/doc").json()["data"]["author"] == "owner"
+    nodes = client.get(f"/topics/{room}/docs").json()["data"]["data"]
+    assert nodes
+    assert {node["author"] for node in nodes} == {"owner"}
+
+
 def test_people_typing_record_a_version_under_their_own_names(client):
     room = _topic(client)
     owner = session_auth_headers("owner")
