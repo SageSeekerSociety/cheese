@@ -16,7 +16,6 @@ harness is left out of the rule.
 """
 
 import asyncio
-import base64
 import json
 import os
 import shlex
@@ -423,6 +422,9 @@ async def codex(tmp_path: Path, steps: list):
     workspace.mkdir()
     subprocess.run(["git", "init", "--quiet", str(workspace)], check=True)
     state = tmp_path / "runner"
+    # Where the launch places the archive before it calls ``configure``.
+    artifact = tmp_path / "codex-runner.pyz"
+    artifact.write_bytes(codex_archive())
     started = await asyncio.to_thread(
         start_codex,
         {
@@ -438,7 +440,7 @@ async def codex(tmp_path: Path, steps: list):
                 "cwd": str(workspace),
             },
             "codex_config": model.config(),
-            "archive": base64.b64encode(codex_archive()).decode(),
+            "artifact": str(artifact),
             "env": backend.room_env(),
         },
     )
