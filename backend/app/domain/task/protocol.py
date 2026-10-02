@@ -22,10 +22,15 @@ Prose elsewhere still calls the 题目分组 a 项目集 — the name this level
 when it WAS the course. `app.domain.space.models.SpaceCategory` is the row.
 
 **教学配置 (#8d772257).** 一门课不只是给额度，它还教。`teaching` 键承载这件事 ——
-本周范围、课程级 system prompt、本周要用的课件。它走**和其他键完全相同的三级**
-（题目分组 → 题目 `protocol_override` 整键覆盖 → 项目 `settings` 覆盖），因为给
-教育字段另起一套继承规则，就等于多一份要同步的规则，第一次有人只改其中一处就会
-两边不一致。
+本周范围、课程级 system prompt、本周要用的课件。它走**和其他键完全相同的继承**，
+因为给教育字段另起一套继承规则，就等于多一份要同步的规则，第一次有人只改其中一处
+就会两边不一致。
+
+**空间上的默认 (#944).** `teaching` 还多一层：空间 (`Space.teaching`) 可以
+给整块板设一份默认，每道题再覆盖它。于是链是四级 —— 空间 → 项目集 → 题目
+`protocol_override` → 项目 `settings`，最具体的赢。空间只承载 `teaching` 这一个
+键（它没有资源包和壳），`resolve` 却按"这个层有哪些键就读哪些键"来读，所以这一层
+只为 `teaching` 特判，不为某个字段单开一条路径。
 """
 
 from dataclasses import dataclass, field
@@ -220,6 +225,56 @@ class Protocol:
         )
 
 
+def _level_value(source: Any, key: str) -> Any:
+    """One key's value at one level: a row's attribute, or a dict's item.
+
+    The levels are spelled two ways on purpose — a 空间/项目集/项目 is a row
+    (attributes), a 赛题 override and a project's ``settings`` are free-form
+    dicts. Reading them through one function keeps the precedence in the loop
+    below rather than in four nearly-identical lines. Missing is ``None`` —
+    "this level did not say", never an empty value.
+    """
+    if source is None:
+        return None
+    if isinstance(source, dict):
+        return source.get(key)
+    return getattr(source, key, None)
+
+
+def _resolve_teaching(
+    *,
+    space: Any | None,
+    category: Any | None,
+    task: Any | None,
+    project: Any | None,
+) -> Teaching:
+    """The 教学安排 in force: the most specific level that has one.
+
+    空间 → 项目集 → 题目 → 项目, most specific last. Each level REPLACES the
+    whole key — no deep merge, the same rule the rest of the protocol follows.
+
+    **An empty level did not say anything, so the one below stands.** That is
+    what the two ends of the feature mean by the same sentence: a 空间 sets
+    the default its 项目集 inherit, and a 题目 页面 left blank keeps it. It is
+    also why the column default ``{}`` (every row that predates the key) never
+    wipes an inherited 教学安排 — the whole reason this is a separate reader
+    from the three keys above, whose ``[]``/``{}`` CAN be an explicit value.
+    """
+    chosen = Teaching()
+    for raw in (
+        _level_value(space, "teaching"),
+        _level_value(category, "teaching"),
+        _level_value(getattr(task, "protocol_override", None) or {}, "teaching"),
+        _level_value(_project_override(project), "teaching"),
+    ):
+        if raw is None:
+            continue
+        teaching = Teaching.from_json(raw)
+        if not teaching.is_empty:
+            chosen = teaching
+    return chosen
+
+
 def _project_override(project: Any | None) -> dict[str, Any]:
     """A project's own protocol overrides, read off `Project.settings`.
 
@@ -239,42 +294,55 @@ def _project_override(project: Any | None) -> dict[str, Any]:
 
 
 def resolve(
-    *, category: Any | None, task: Any | None, project: Any | None = None
+    *,
+    space: Any | None = None,
+    category: Any | None = None,
+    task: Any | None = None,
+    project: Any | None = None,
 ) -> Protocol:
-    """The terms in force for one project: three levels, most specific last.
+    """The terms in force for one project: four levels, most specific last.
 
-    题目分组 → 题目 (`protocol_override`) → 项目 (`settings`). Every key takes the
-    same trip, `shell` and `teaching` included: the levels are a property of the
-    protocol, not of any one field in it, so a field added here is overridable
-    at all three the day it is added rather than when someone remembers to wire
-    it up again.
+    空间 → 项目集 → 题目 (`protocol_override`) → 项目 (`settings`). Every key
+    takes the same trip, `shell` and `teaching` included: the levels are a
+    property of the protocol, not of any one field in it, so a field added here
+    is overridable at every level the day it is added rather than when someone
+    remembers to wire it up again.
+
+    The 空间 is the OUTERMOST level — a default set for the whole board. Only
+    `teaching` lives there today (a 空间 carries no resource pack or 壳), and
+    the loop below reads whatever keys it does carry, so the level is wired once
+    rather than specially for one field.
 
     Each level replaces a key WHOLE — no deep merge, for the reason the 分组
     placement was chosen: a half-inherited resource pack is harder to reason
-    about than either source alone.
+    about than either source alone. For `teaching` an EMPTY level counts as
+    "did not say", so the level below stands — see `_resolve_teaching`.
 
-    All three arguments are optional so callers do not have to branch: a 题目
-    with no 分组, or a project with no 题目 at all, resolves to an empty protocol
-    — which is the 项目自治 default (spec §4), not an error.
+    Every argument is optional so callers do not have to branch: a 题目 with no
+    分组, or a project with no 题目 at all, resolves to an empty protocol — which
+    is the 项目自治 default (spec §4), not an error.
     """
-    values: dict[str, Any] = {
-        "resource_pack": getattr(category, "resource_pack", None) or {},
-        "conditions": getattr(category, "conditions", None) or [],
-        "default_role": getattr(category, "default_role", None),
-        "shell": getattr(category, "shell", None),
-        "teaching": getattr(category, "teaching", None) or {},
-    }
+    values: dict[str, Any] = {}
     for source in (
+        space,
+        category,
         getattr(task, "protocol_override", None) or {},
         _project_override(project),
     ):
         for key in _OVERRIDABLE:
-            if key in source and source[key] is not None:
-                values[key] = source[key]
+            if key == "teaching":
+                # Not read here: an empty level means "inherit", which the
+                # presence rule below cannot express. `_resolve_teaching` owns it.
+                continue
+            value = _level_value(source, key)
+            if value is not None:
+                values[key] = value
     return Protocol(
-        resource_pack=dict(values["resource_pack"] or {}),
-        conditions=list(values["conditions"] or []),
-        default_role=values["default_role"] or None,
-        shell=values["shell"] or None,
-        teaching=Teaching.from_json(values["teaching"]),
+        resource_pack=dict(values.get("resource_pack") or {}),
+        conditions=list(values.get("conditions") or []),
+        default_role=values.get("default_role") or None,
+        shell=values.get("shell") or None,
+        teaching=_resolve_teaching(
+            space=space, category=category, task=task, project=project
+        ),
     )

@@ -9,7 +9,7 @@
 // 列表过来）都在这里读。
 import type { PublishCheck } from '@/lib/taskPublishChecks'
 import type { PdfTaskDraftData } from '@/network/api/tasks/types'
-import type { TaskFormSubmitData } from '@/types'
+import type { SpaceTeaching, TaskFormSubmitData } from '@/types'
 
 import { computed, defineAsyncComponent, provide, ref, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -23,9 +23,11 @@ import PdfGenerate from './PdfGenerate.vue'
 import { MAX_DRAFTS, MAX_PDF_BYTES, TASK_SUBMISSION_SCHEMA } from './publishLimits'
 
 import PageHeader from '@/components/common/PageHeader.vue'
+import TeachingFields from '@/components/common/TeachingFields.vue'
 import PanelCard from '@/components/spaces/PanelCard.vue'
 import { publishDoneRoute } from '@/lib/spaceRouteNames'
 import { PUBLISH_CHECKS_SINK } from '@/lib/taskPublishChecks'
+import { isTeachingBlank } from '@/lib/teaching'
 import { TasksApi } from '@/network/api/tasks'
 import errorHandler from '@/services/ErrorHandler'
 import { useSpaceStore } from '@/stores/space'
@@ -157,6 +159,13 @@ function submitFromChecklist() {
 const attachmentIds = ref<number[]>([])
 const attachmentUploading = ref(false)
 
+/** 这道题自己的「给 AI 队友的指导」覆盖（#944）。留空就什么都不发，用空间的默认。 */
+const teachingOverride = ref<SpaceTeaching>({})
+
+/** 交给接口的那一份：六格全空就不带它 —— 让空间（或项目集）的默认生效，而不是写
+ *  一份空的把下面那层盖住。两条发题路共用同一个判据。 */
+const teachingPayload = computed(() => (isTeachingBlank(teachingOverride.value) ? undefined : teachingOverride.value))
+
 /**
  * 提交。两条路走的是两个接口，但**入口只有一个**：表单的那颗提交按钮。
  *
@@ -196,6 +205,7 @@ async function submitTask(taskData: TaskFormSubmitData) {
         accessControlEnabled: taskData.accessControlEnabled || false,
         accessDomainGroupIds: taskData.accessControlEnabled ? taskData.accessDomainGroupIds : undefined,
         attachmentIds: attachmentIds.value.length > 0 ? attachmentIds.value : undefined,
+        teaching: teachingPayload.value,
       })
 
       if (!approved) {
@@ -306,6 +316,7 @@ function buildTaskOptions(taskData: TaskFormSubmitData, id: number) {
     categoryId: taskData.categoryId,
     accessControlEnabled: taskData.accessControlEnabled || false,
     accessDomainGroupIds: taskData.accessControlEnabled ? taskData.accessDomainGroupIds : undefined,
+    teaching: teachingPayload.value,
   }
 }
 
@@ -457,6 +468,16 @@ async function confirmQuickFromPdf(taskData: TaskFormSubmitData, id: number) {
           @update:uploading="attachmentUploading = $event"
         />
 
+        <!-- 这道题自己的「给 AI 队友的指导」（#944）：写了就盖过空间（与项目集）
+             的默认，整份替换；六格全空就是不设，仍旧听空间的。两条发题路都带它。 -->
+        <PanelCard
+          data-testid="publish-teaching"
+          :title="t('spaces.detail.publishTask.teaching.title')"
+          :subtitle="t('spaces.detail.publishTask.teaching.subtitle')"
+        >
+          <TeachingFields v-model="teachingOverride" />
+        </PanelCard>
+
         <!-- 共享的发题表单（见文件头）。空间**装完再挂**：`v-if="ready"` 就是那件事。 -->
         <TaskForm
           v-if="ready"
@@ -521,7 +542,7 @@ async function confirmQuickFromPdf(taskData: TaskFormSubmitData, id: number) {
       </aside>
     </div>
 
-    <PdfGenerate v-else :pdf-template-index="pdfTemplateIndex" />
+    <PdfGenerate v-else :pdf-template-index="pdfTemplateIndex" :teaching="teachingPayload" />
   </div>
 </template>
 
