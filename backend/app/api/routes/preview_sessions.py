@@ -20,9 +20,11 @@ from app.api.preview_host import (
     resource_key,
 )
 from app.api.response import ok
+from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, NotFoundError
 from app.domain.agent.preview_hub import preview_hub
+from app.domain.agent.preview_owner import inspect_owner
 from app.domain.block.queries import latest_preview_for_room
 from app.domain.library import service as library
 from app.domain.project.room_files import clean_artifact_path
@@ -57,7 +59,13 @@ async def preview_session(
             if artifact is None or artifact.id != selection.artifact_id:
                 raise NotFoundError("Preview selection changed")
         if artifact and artifact.mime_type == APP_MIME:
-            instance = await preview_hub.instance(topic_id, artifact.author)
+            if settings.preview_connection_mode == "owner":
+                inspection = await inspect_owner(
+                    topic_id, artifact.author, expected_instance=selection.instance
+                )
+                instance = inspection.instance if inspection.state == "online" else None
+            else:
+                instance = await preview_hub.instance(topic_id, artifact.author)
             if not instance or selection.instance != instance:
                 raise NotFoundError("Preview instance gone or unavailable")
             resource = {

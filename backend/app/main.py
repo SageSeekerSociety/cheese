@@ -302,9 +302,11 @@ async def lifespan(_: FastAPI):
 
     from app.core.forge_http import reuse_forge_connections
     from app.core.storage import reuse_s3_connections
+    from app.domain.agent.preview_owner import reuse_preview_owner_connections
     from app.domain.machine.microcloud import reuse_connections
 
     async with (
+        reuse_preview_owner_connections(),
         reuse_connections(),
         reuse_s3_connections(),
         reuse_forge_connections(),
@@ -364,6 +366,11 @@ def _discover_routers(application: FastAPI) -> list[str]:
     seen: set[int] = set()
     FAILED_ROUTE_MODULES.clear()
     for module_info in pkgutil.iter_modules(routes_pkg.__path__):
+        if (
+            module_info.name == "app_preview"
+            and settings.preview_connection_mode == "owner"
+        ):
+            continue
         name = f"{routes_pkg.__name__}.{module_info.name}"
         try:
             module = importlib.import_module(name)
