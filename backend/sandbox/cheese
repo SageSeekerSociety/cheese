@@ -365,6 +365,16 @@ PLATFORM_TOOLS = ToolTable(
             ["edits"],
         ),
         _tool(
+            "cheese_doc_comment_reply",
+            "在实况文档的一个评论线程里回复，署你的名。有人在文档评论里点了你的名，"
+            "就在那个线程里回答，不要回到聊天里。",
+            {
+                "thread_id": _text("评论线程 id（线程第一条评论的 id）"),
+                "text": _text("回复内容"),
+            },
+            ["thread_id", "text"],
+        ),
+        _tool(
             "cheese_task",
             "开一条活：任务卡、独立分支和负责人；不启动任何执行者，也不碰机器。"
             "返回任务 id、线程标识和验收人。动手前用 Bash 跑 `cheese worktree <id>` "
@@ -872,6 +882,9 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         }
     if tool == "cheese_doc_get":
         return {"method": "GET", "path": f"/topics/{topic}/doc"}
+    if tool == "cheese_doc_comment_reply":
+        thread = urllib.parse.quote(str(args["thread_id"]), safe="")
+        return {"method": "GET", "path": f"/topics/{topic}/comments/{thread}/thread"}
     if tool == "cheese_doc_edit":
         return {
             "method": "POST",
@@ -1374,6 +1387,37 @@ def _doc_edit(args: dict, host) -> str:
     return "\n".join(lines)
 
 
+def _doc_comment_reply(args: dict, host) -> str:
+    """A reply names the thread revision it answers, so read it first; a
+    thread that moved in between is read again once."""
+    read = request_plan("cheese_doc_comment_reply", args, host.environ)
+    for attempt in range(2):
+        thread = host.request(read).get("data") or {}
+        revision = thread.get("revision")
+        if not isinstance(revision, int):
+            raise PlatformToolError(
+                "读不到这个评论线程；thread_id 要用线程第一条评论的 id"
+            )
+        try:
+            host.request(
+                {
+                    "method": "POST",
+                    "path": read["path"].removesuffix("/thread") + "/replies",
+                    "body": {
+                        "operation_id": str(uuid.uuid4()),
+                        "expected_revision": revision,
+                        "content": args["text"],
+                    },
+                }
+            )
+        except Exception as exc:
+            if getattr(exc, "status", None) == 409 and attempt == 0:
+                continue
+            raise
+        return "已在评论线程里回复。"
+    raise PlatformToolError("评论线程一直在变，没回复上；稍后再试")
+
+
 def _doc_set(args: dict, host) -> str:
     topic = host.environ.get("CHEESE_TOPIC", "")
     if not topic:
@@ -1678,6 +1722,7 @@ _STEPS = {
     "cheese_doc_get": _doc_get,
     "cheese_doc_set": _doc_set,
     "cheese_doc_edit": _doc_edit,
+    "cheese_doc_comment_reply": _doc_comment_reply,
     "cheese_accept_request": _accept_request,
     "cheese_tell": _tell,
     "platform_request": _platform_request,
