@@ -182,6 +182,21 @@ def _clear_task_override(client: TestClient, task_id: int) -> None:
     asyncio.run(_run())
 
 
+def _mark_unapproved(client: TestClient, task_id: int) -> None:
+    """把这道题挪回「还没过审」—— ``approved == 2`` 就是 NONE，见
+    ``_ensure_task_readable`` 的第一道闸。"""
+
+    async def _run() -> None:
+        async with client.test_factory() as session:  # type: ignore[attr-defined]
+            task = await session.get(Task, task_id)
+            assert task is not None
+            task.approved = 2
+            task.ended_at = None
+            await session.commit()
+
+    asyncio.run(_run())
+
+
 def test_the_screen_shows_the_composed_guidance_the_turn_will_read(client: TestClient):
     """界面数据里的那一段指导，逐个字段等于 `protocol.resolve()` 的结果。
 
@@ -265,7 +280,7 @@ def test_the_screen_lists_the_members_tier_materials_and_hides_the_admins_tier(
     space_id = _space_id_of(client, task_id)
     _add_material(client, space_id=space_id, name="公开讲义.pdf", visibility="members")
     _add_material(
-        client, space_id=space_id, name="教师参考答案.pdf", visibility="admins"
+        client, space_id=space_id, name="仅管理员档资料.pdf", visibility="admins"
     )
     seed_user(client, PLAIN_MEMBER)
     _join_board(client, space_id=space_id, handle=PLAIN_MEMBER)
@@ -291,6 +306,40 @@ def test_a_viewer_outside_the_board_gets_no_materials_not_an_error(client: TestC
     assert data["materials"] == []
     # 指导那一半照样在：资料拿不到不是「这道题对你不可见」。
     assert data["teaching"]["source"] == "space"
+
+
+def test_an_unapproved_task_is_forbidden_and_hands_over_nothing(client: TestClient):
+    """未过审的题：和 ``GET /tasks/{id}`` 一样 403，而且一个字都不交出去。
+
+    这一条是复核抓出来的真缺陷留下的钉子。这条接口原先只走 ``can_view_task``，
+    而它在题目没开可见范围时对任何登录用户都放行 —— 于是同一道未过审的题，详情
+    是 403、清单却是 200，还把 ``resourcePack``（算力额度就在里面）与板上默认的
+    指导交了出去；调用者若是板成员，members 档的资料名也一并到手。任何登录用户
+    顺序枚举 id 就能拿。
+    """
+    task_id = seed_task_with_protocol(
+        client,
+        space_teaching=SPACE_WEEK,
+        resource_pack={"compute_credits": 999},
+    )
+    space_id = _space_id_of(client, task_id)
+    _add_material(client, space_id=space_id, name="公开讲义.pdf", visibility="members")
+    _mark_unapproved(client, task_id)
+
+    token = seed_user(client, "inheritance-unapproved")
+
+    # 详情那一侧是怎么答的，这里就得怎么答 —— 这条断言就是「同一条判据」。
+    detail = client.get(f"/tasks/{task_id}", headers=_headers(token))
+    assert detail.status_code == 403, detail.text
+
+    resp = client.get(f"/tasks/{task_id}/inheritance", headers=_headers(token))
+    assert resp.status_code == 403, resp.text
+    # 403 的正文里不许漏出这道题会交出什么。
+    body = resp.text
+    assert "999" not in body
+    assert "compute_credits" not in body
+    assert "systemPrompt" not in body
+    assert "公开讲义.pdf" not in body
 
 
 def test_an_unknown_task_is_a_404(client: TestClient):

@@ -21,6 +21,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path
 
+from app.api.routes.tasks import _ensure_task_readable, _require_task
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import NotFoundError
@@ -75,13 +76,21 @@ async def get_task_inheritance(
 ) -> dict:
     """建项目会继承的资源包、合成后的教学指导（含来源层）、会被带上的资料。
 
-    与 ``GET /tasks/{id}`` 同一条可见性判据：看不见这题就 404，不是 403 —— 一块你
-    不在的板子上的题不该被确认存在（``TaskVisibilityService.can_view_task``）。
+    **判据是题目详情那三道闸**（``_ensure_task_readable``）：未过审 403、看不见
+    404、超出本板上限 404 —— 不是更宽的那一条 ``can_view_task``。后者在题目没开
+    可见范围时对任何登录用户都放行，于是「还没过审」和「超出上限」的题会在这里
+    把资源包、合成后的指导连同资料名一起交出去。**这份清单不比题本身更公开**：
+    它给的是这道题会交出去的东西（算力额度就在里面），而「有没有这份清单」本身
+    就是那道题的探针。``/attachments`` 当年正是只走了 ``can_view_task`` 才漏的，
+    别再犯第二次。
 
     资料清单对**非成员**是空的，不是失败：一道没开可见范围的题任何登录用户都看得
     见，但不是每个人都在这块板里，而 ``list_for_space`` 对非成员抛 ``NotFoundError``
     —— 那不是错误，只是「这题带的资料你一份也拿不到」。
     """
+    task = await _require_task(db, task_id)
+    await _ensure_task_readable(db=db, task=task, auth_user=auth_user)
+
     found = await for_task(session=db, task_id=task_id, user_id=auth_user.user_id)
     if found is None:
         raise NotFoundError("Task not found", data={"type": "task", "id": task_id})
