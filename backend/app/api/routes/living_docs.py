@@ -269,8 +269,12 @@ async def rewrite_selection(
     if not body.start < body.end <= len(body.block):
         raise ValidationError("选中的范围不在这段文字里")
     doc = await topics.doc_of_room(place.room_id)
-    if doc is None or doc.content.count(body.block) != 1:
+    if doc is None:
         raise ConflictError(_REWRITE_MOVED)
+    # Whether the block still reads as the person saw it is the live
+    # document's to say (the edit below): the stored text trails what was
+    # typed by a few seconds, and a block someone just changed would be
+    # refused here before it was ever looked at.
     bound = await doc_rewrite.bind(db, place.room_id)
     await doc_rewrite.admit(db, place.project_id, bound)
     document = doc.content

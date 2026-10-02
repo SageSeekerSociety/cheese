@@ -81,9 +81,7 @@ def test_undoing_a_rewrite_puts_the_text_back(client, model):
     assert ALICE_PARAGRAPH in _doc(client, room)["content"]
 
 
-def test_a_passage_changed_since_it_was_selected_is_refused_before_the_model(
-    client, model
-):
+def test_a_passage_changed_since_it_was_selected_is_refused(client, model):
     room, _ = _document(client)
 
     response = _rewrite(
@@ -91,7 +89,7 @@ def test_a_passage_changed_since_it_was_selected_is_refused_before_the_model(
     )
 
     assert response.status_code == 409, response.text
-    assert model == []
+    assert ALICE_PARAGRAPH in _doc(client, room)["content"]
 
 
 def test_the_agent_cannot_ask_itself_to_rewrite(client, model):
