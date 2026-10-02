@@ -38,9 +38,7 @@ from app.domain.task.inheritance import TaskInheritance, for_task
 router = APIRouter(prefix="/tasks", tags=["Tasks"])
 
 
-def _teaching_to_api(
-    teaching, source: str | None, material_ids: list[int]
-) -> dict:
+def _teaching_to_api(teaching, source: str | None, material_ids: list[int]) -> dict:
     """合成后的教学指导摆成接口形状 —— 字段名与 ``TeachingRequest`` 同一套
     camelCase，前端读回来的一份和它写进去的一份因此长得一样。
 
