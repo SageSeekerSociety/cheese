@@ -9,7 +9,7 @@ covers:
   - backend/app/domain/review/archive.py
   - backend/app/domain/review/gate_sweep.py
   - backend/app/domain/review/forge.py
-  - backend/app/domain/review/services.py
+  - backend/app/domain/review/services/service.py
   - backend/app/api/routes/accept.py
   - backend/app/domain/project/protection.py
 ---
