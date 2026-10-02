@@ -6,7 +6,7 @@ import type { ContentProfile } from './designSnap'
 import { computed, nextTick, ref, watch } from 'vue'
 
 import { imagePoint, imageRegion } from './designRegion'
-import { arrowHead, fontSize, isShapeStroke } from './designSketch'
+import { arrowHeadPoints, fontSize, isShapeStroke } from './designSketch'
 import { snapRegion } from './designSnap'
 
 import { t } from '@/i18n'
@@ -112,7 +112,7 @@ const displayed = computed(() => {
     from: toDisplay(stroke.from),
     to: toDisplay(stroke.to),
     width: stroke.width * scale.value,
-    head: arrowHead(stroke.from, stroke.to, stroke.width).map(toDisplay),
+    head: arrowHeadPoints(stroke.from, stroke.to, stroke.width).map(toDisplay),
   }
 })
 

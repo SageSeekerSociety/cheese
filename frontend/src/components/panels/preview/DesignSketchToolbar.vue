@@ -59,79 +59,83 @@ const TOOL_ICON: Record<SketchTool, string> = {
 
 <template>
   <div class="sketch-toolbar" role="group" :aria-label="t('design.sketchTools')">
-    <button
-      ref="selectButton"
-      type="button"
-      class="sketch-toolbar__tool"
-      :class="{ 'is-active': props.tool === 'select' }"
-      :disabled="props.canSelect === false"
-      :aria-pressed="props.tool === 'select'"
-      :aria-label="t('design.tools.select')"
-      :title="t('design.tools.select')"
-      @click="emit('pick', 'select')"
-    >
-      <i :class="`mdi ${TOOL_ICON.select}`" class="sketch-toolbar__icon" aria-hidden="true" />
-    </button>
-    <button
-      v-for="item in DRAW_TOOLS"
-      :key="item"
-      type="button"
-      class="sketch-toolbar__tool"
-      :class="{ 'is-active': props.tool === item }"
-      :aria-pressed="props.tool === item"
-      :aria-label="t(`design.tools.${item}`)"
-      :title="t(`design.tools.${item}`)"
-      @click="emit('pick', item)"
-    >
-      <i :class="`mdi ${TOOL_ICON[item]}`" class="sketch-toolbar__icon" aria-hidden="true" />
-    </button>
-    <span class="sketch-toolbar__gap" />
-    <button
-      v-for="swatch in SKETCH_COLORS"
-      :key="swatch"
-      type="button"
-      class="sketch-toolbar__color"
-      :class="{ 'is-active': props.color === swatch }"
-      :style="{ color: swatch }"
-      :aria-pressed="props.color === swatch"
-      :aria-label="t('design.sketchColor', { color: swatch })"
-      @click="emit('recolor', swatch)"
-    >
-      ●
-    </button>
-    <span class="sketch-toolbar__gap" />
-    <button
-      type="button"
-      class="sketch-toolbar__tool"
-      :disabled="!canUndo"
-      aria-keyshortcuts="Meta+Z Control+Z"
-      :aria-label="t('design.undo')"
-      :title="t('design.undoShortcut')"
-      @click="emit('undo')"
-    >
-      <i class="mdi mdi-undo sketch-toolbar__icon" aria-hidden="true" />
-    </button>
-    <button
-      type="button"
-      class="sketch-toolbar__tool"
-      :disabled="!canRedo"
-      aria-keyshortcuts="Meta+Shift+Z Control+Shift+Z Control+Y"
-      :aria-label="t('design.redo')"
-      :title="t('design.redoShortcut')"
-      @click="emit('redo')"
-    >
-      <i class="mdi mdi-redo sketch-toolbar__icon" aria-hidden="true" />
-    </button>
-    <button
-      type="button"
-      class="sketch-toolbar__tool"
-      :disabled="!hasStrokes"
-      :aria-label="t('design.clear')"
-      :title="t('design.clear')"
-      @click="emit('clear')"
-    >
-      <i class="mdi mdi-delete-sweep-outline sketch-toolbar__icon" aria-hidden="true" />
-    </button>
+    <!-- 工具、颜色、历史挤在这一段里横滚；「说一句要改什么」和「加入对话」钉在
+         右边不跟着滚——它们是这一步的落点，滚出去就等于按不到。 -->
+    <div class="sketch-toolbar__scroll">
+      <button
+        ref="selectButton"
+        type="button"
+        class="sketch-toolbar__tool"
+        :class="{ 'is-active': props.tool === 'select' }"
+        :disabled="props.canSelect === false"
+        :aria-pressed="props.tool === 'select'"
+        :aria-label="t('design.tools.select')"
+        :title="t('design.tools.select')"
+        @click="emit('pick', 'select')"
+      >
+        <i :class="`mdi ${TOOL_ICON.select}`" class="sketch-toolbar__icon" aria-hidden="true" />
+      </button>
+      <button
+        v-for="item in DRAW_TOOLS"
+        :key="item"
+        type="button"
+        class="sketch-toolbar__tool"
+        :class="{ 'is-active': props.tool === item }"
+        :aria-pressed="props.tool === item"
+        :aria-label="t(`design.tools.${item}`)"
+        :title="t(`design.tools.${item}`)"
+        @click="emit('pick', item)"
+      >
+        <i :class="`mdi ${TOOL_ICON[item]}`" class="sketch-toolbar__icon" aria-hidden="true" />
+      </button>
+      <span class="sketch-toolbar__gap" />
+      <button
+        v-for="swatch in SKETCH_COLORS"
+        :key="swatch"
+        type="button"
+        class="sketch-toolbar__color"
+        :class="{ 'is-active': props.color === swatch }"
+        :style="{ color: swatch }"
+        :aria-pressed="props.color === swatch"
+        :aria-label="t('design.sketchColor', { color: swatch })"
+        @click="emit('recolor', swatch)"
+      >
+        ●
+      </button>
+      <span class="sketch-toolbar__gap" />
+      <button
+        type="button"
+        class="sketch-toolbar__tool"
+        :disabled="!canUndo"
+        aria-keyshortcuts="Meta+Z Control+Z"
+        :aria-label="t('design.undo')"
+        :title="t('design.undoShortcut')"
+        @click="emit('undo')"
+      >
+        <i class="mdi mdi-undo sketch-toolbar__icon" aria-hidden="true" />
+      </button>
+      <button
+        type="button"
+        class="sketch-toolbar__tool"
+        :disabled="!canRedo"
+        aria-keyshortcuts="Meta+Shift+Z Control+Shift+Z Control+Y"
+        :aria-label="t('design.redo')"
+        :title="t('design.redoShortcut')"
+        @click="emit('redo')"
+      >
+        <i class="mdi mdi-redo sketch-toolbar__icon" aria-hidden="true" />
+      </button>
+      <button
+        type="button"
+        class="sketch-toolbar__tool"
+        :disabled="!hasStrokes"
+        :aria-label="t('design.clear')"
+        :title="t('design.clear')"
+        @click="emit('clear')"
+      >
+        <i class="mdi mdi-delete-sweep-outline sketch-toolbar__icon" aria-hidden="true" />
+      </button>
+    </div>
     <input
       v-if="hasStrokes"
       v-model="note"
@@ -151,13 +155,21 @@ const TOOL_ICON: Record<SketchTool, string> = {
 <style scoped>
 .sketch-toolbar {
   display: flex;
-  /* 窄面板（240px）里让它换行会占掉三四行，图就没地方了——排成一行，横向滚。 */
+  /* 窄面板（240px）里让它换行会占掉三四行，图就没地方了——排成一行，超出的横滚。 */
   flex-wrap: nowrap;
   align-items: center;
   gap: 4px;
   padding: 4px 8px;
-  overflow-x: auto;
   border-bottom: 1px solid var(--line);
+}
+/* 只有这一段横滚。右边那两样（说明和提交）留在外面，窄面板里也一直看得见。 */
+.sketch-toolbar__scroll {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  overflow-x: auto;
 }
 .sketch-toolbar__gap {
   width: 8px;
@@ -184,7 +196,7 @@ const TOOL_ICON: Record<SketchTool, string> = {
   color: var(--accent);
 }
 .sketch-toolbar button.is-primary {
-  margin-left: auto;
+  flex: 0 0 auto;
   background: var(--accent);
   /* 和发送键同一对：琥珀底上的字 */
   color: rgb(var(--v-theme-on-primary));
@@ -210,7 +222,9 @@ const TOOL_ICON: Record<SketchTool, string> = {
   outline: 2px solid var(--accent);
 }
 .sketch-toolbar__note {
-  flex: 0 0 160px;
+  /* 宽的时候 160px，窄的时候让给提交键——它有下界，不会被压没。 */
+  flex: 0 1 160px;
+  min-width: 88px;
   padding: 4px 8px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
