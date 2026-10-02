@@ -13,11 +13,13 @@ import type { SelectionTarget } from '../lib/docBubble'
 import type { EditTarget } from '../lib/docEditMarks'
 import type { DocEdit, DocRewriteRequest, DocRewriteResult } from '../lib/docEdits'
 
-import { onScopeDispose, ref, shallowRef } from 'vue'
+import { computed, onScopeDispose, ref, shallowRef } from 'vue'
 
 import { editMarks, nearestText, setEditMarks } from '../lib/docEditMarks'
 import { editFailure, plainOf } from '../lib/docEdits'
 import { rewriteTarget } from '../lib/docRewrite'
+
+import { useDocAsk } from './useDocAsk'
 
 import { t } from '@/i18n'
 
@@ -42,19 +44,16 @@ export interface DocAgentOptions {
 const ARRIVAL_MS = 10_000
 /** 新的字亮多久。 */
 const FLASH_MS = 2400
-/** 问了之后隔多久看一次有没有回答，最多看多久。回答再晚也在评论里。 */
-const ANSWER_POLL_MS = 3000
-const ANSWER_WAIT_MS = 5 * 60_000
 
 export function useDocAgent(options: DocAgentOptions) {
-  const phase = ref<AgentPhase>('idle')
+  const editPhase = ref<Exclude<AgentPhase, 'waiting' | 'answered'>>('idle')
+  const asking = useDocAsk(options)
+  /** 改的那几步，问了之后就是问的那几步。 */
+  const phase = computed<AgentPhase>(() => (asking.phase.value === 'idle' ? editPhase.value : asking.phase.value))
   const busy = ref(false)
   const result = shallowRef<DocRewriteResult | null>(null)
   /** 这一段能不能直接改：能时输入框里给常用的说法。 */
   const editable = ref(false)
-  /** 问的那条评论，和它下面的回答（等太久没有回答时是 null）。 */
-  const threadId = ref<string | null>(null)
-  const answer = ref<string | null>(null)
   let selection: SelectionTarget | null = null
   // 每开一次、关一次就换一个号：晚到的回执对不上号就不认。
   let attempt = 0
@@ -82,21 +81,19 @@ export function useDocAgent(options: DocAgentOptions) {
     attempt++
     settle()
     result.value = null
-    threadId.value = null
-    answer.value = null
+    asking.close()
     selection = target
     editable.value = !!options.rewrite() && !!rewriteTarget(editor.state, from, to)
-    phase.value = 'asking'
+    editPhase.value = 'asking'
     mark(editor, { from, to, mode: 'select', label: '' })
   }
 
   function close() {
     attempt++
     settle()
-    phase.value = 'idle'
+    editPhase.value = 'idle'
+    asking.close()
     result.value = null
-    threadId.value = null
-    answer.value = null
     selection = null
     busy.value = false
     const editor = options.editor()
@@ -110,7 +107,7 @@ export function useDocAgent(options: DocAgentOptions) {
     if (!found) return false
     if (id !== attempt) return true
     mark(editor, { ...found, mode: 'flash', label: '' })
-    phase.value = 'done'
+    editPhase.value = 'done'
     flashTimer = setTimeout(() => {
       const now = target(editor)
       if (id === attempt && now?.mode === 'flash') mark(editor, { ...now, mode: 'anchor' })
@@ -128,7 +125,7 @@ export function useDocAgent(options: DocAgentOptions) {
       if (id !== attempt) return
       const now = target(editor)
       if (now) mark(editor, { ...now, mode: 'anchor' })
-      phase.value = 'done'
+      editPhase.value = 'done'
     }, ARRIVAL_MS)
     editor.on('transaction', onChange)
     stopWaiting = () => {
@@ -151,7 +148,7 @@ export function useDocAgent(options: DocAgentOptions) {
       return
     }
     const id = ++attempt
-    phase.value = 'pending'
+    editPhase.value = 'pending'
     mark(editor, { ...range, mode: 'pending', label: t('work.room.docEdit.pending', { agent: options.agentName() }) })
     try {
       const done = await rewrite({ block: request.block, start: request.start, end: request.end, instruction: text })
@@ -165,51 +162,14 @@ export function useDocAgent(options: DocAgentOptions) {
     }
   }
 
-  /** 问它：发成评论，在小卡上等它的回答。 */
+  /** 问它：发成评论，在小卡上等它的回答。正文上那一段一直标着，直到收起。 */
   async function question(text: string) {
-    const ask = options.ask()
     const asked = selection
-    const body = text.trim()
-    if (!ask || !asked || !body || phase.value !== 'asking') return
-    const id = ++attempt
-    phase.value = 'waiting'
-    try {
-      const thread = await ask(asked, body)
-      if (id !== attempt) return
-      threadId.value = thread
-      awaitAnswer(thread, id)
-    } catch (error) {
-      if (id !== attempt) return
-      close()
-      options.onError(error instanceof Error && error.message ? error.message : t('work.room.comments.postFailed'))
-    }
+    if (!asked || !text.trim() || editPhase.value !== 'asking') return
+    if (!(await asking.ask(asked, text))) close()
   }
 
-  function awaitAnswer(thread: string, id: number) {
-    const started = Date.now()
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const poll = async () => {
-      timer = undefined
-      const text = await options.answerOf(thread).catch(() => null)
-      if (id !== attempt) return
-      if (text) {
-        answer.value = text
-        phase.value = 'answered'
-        return
-      }
-      if (Date.now() - started >= ANSWER_WAIT_MS) {
-        phase.value = 'answered'
-        return
-      }
-      timer = setTimeout(() => void poll(), ANSWER_POLL_MS)
-    }
-    timer = setTimeout(() => void poll(), ANSWER_POLL_MS)
-    stopWaiting = () => {
-      if (timer) clearTimeout(timer)
-    }
-  }
-
-  async function swap(edit: DocEdit, next: AgentPhase) {
+  async function swap(edit: DocEdit, next: 'done' | 'undone') {
     const apply = options.applyEdits()
     if (!apply || busy.value) return
     const id = attempt
@@ -217,7 +177,7 @@ export function useDocAgent(options: DocAgentOptions) {
     try {
       await apply([edit])
       if (id !== attempt) return
-      phase.value = next
+      editPhase.value = next
     } catch (error) {
       if (id === attempt) options.onError(editFailure(error))
     } finally {
@@ -248,7 +208,20 @@ export function useDocAgent(options: DocAgentOptions) {
 
   onScopeDispose(close)
 
-  return { phase, busy, editable, threadId, answer, open, edit, question, close, undo, redo, again }
+  return {
+    phase,
+    busy,
+    editable,
+    threadId: asking.threadId,
+    answer: asking.answer,
+    open,
+    edit,
+    question,
+    close,
+    undo,
+    redo,
+    again,
+  }
 }
 
 export type DocAgentController = ReturnType<typeof useDocAgent>

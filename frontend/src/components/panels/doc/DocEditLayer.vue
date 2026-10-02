@@ -189,6 +189,7 @@ onBeforeUnmount(() => {
       <DocAgentBox
         v-else-if="rewrite.phase.value === 'asking'"
         :agent-name="agentName"
+        scope="selection"
         :editable="rewrite.editable.value"
         @edit="rewrite.edit"
         @ask="rewrite.question"

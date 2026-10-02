@@ -725,8 +725,6 @@
       "reload": "Refresh",
       "loading": "Loading…",
       "connecting": "Connecting…",
-      "offline": "Offline",
-      "offlineHint": "Your changes will sync when the connection is back",
       "noEditAccess": "You cannot edit this document",
       "backToEdit": "Back to editing",
       "readOnly": "Read-only",
@@ -741,18 +739,10 @@
       "copyCode": "Copy code",
       "emptyPlaceholder": "The AI teammate keeps this document up to date. You can edit it too",
       "format": {
-        "label": "Document formatting",
-        "unavailable": "This format is unavailable for the selection",
         "bold": "Bold",
         "italic": "Italic",
         "strike": "Strikethrough",
         "code": "Inline code",
-        "h1": "Heading 1",
-        "h2": "Heading 2",
-        "bullet": "Bulleted list",
-        "ordered": "Numbered list",
-        "task": "Task list",
-        "quote": "Quote",
         "highlight": "Highlight"
       },
       "slash": {
@@ -779,7 +769,21 @@
       "topic": "Topic",
       "selectionToolbar": "Selection actions",
       "copy": "Copy",
-      "blockType": "Paragraph style"
+      "blockType": "Paragraph style",
+      "offlineSync": "Offline. Your changes will sync when the connection is back",
+      "lastEdit": "Edited by {who} {when}",
+      "history": "Version history",
+      "exportMarkdown": "Export Markdown",
+      "suggestionCount": "Suggestions: {n}",
+      "historyFor": "{who}, asked by {requester}",
+      "historyCurrent": "Current",
+      "historyMore": "Earlier versions",
+      "historyEmpty": "No versions yet",
+      "historyFailed": "Couldn't load the version history",
+      "restore": "Restore this version",
+      "restoreFailed": "Restore failed",
+      "close": "Close",
+      "you": "you"
     },
     "comments": {
       "comment": "Comment",
@@ -972,7 +976,13 @@
       "thinking": "{agent} is looking…",
       "noAnswerYet": "{agent} hasn't replied yet. The reply will appear in the comments",
       "openThread": "View in comments",
-      "dismiss": "Dismiss"
+      "dismiss": "Dismiss",
+      "docBoxLabel": "Have {agent} edit this document, or ask it",
+      "docPreset": {
+        "conflicts": "Find contradictions",
+        "memory": "Fill in from project memory",
+        "structure": "Tidy the structure"
+      }
     },
     "docSuggest": {
       "title": "{agent}'s suggestion",

@@ -1,21 +1,16 @@
 <script setup lang="ts">
-// 文档横条上的「谁也在这儿、连没连上」：同一篇文档打开着的其他人的头像，和连接断开
-// 时的一句话。断开时改动留在本地，连上后自动合并，所以这句话说的是状态，不是错误。
+// 文档顶栏上的「谁也在这儿」：同一篇文档打开着的其他人的头像。连没连上写在顶栏的
+// 左边（DocTopBar）。
 //
 // 头像形状照 GitHub：人是圆的，AI 队友是方的（CheeseAvatar）。
-import type { DocConnection, DocPeer } from '../../../composables/useDocCollab'
+import type { DocPeer } from '../../../composables/useDocCollab'
 
 import { computed } from 'vue'
 
 import CheeseAvatar from '../../CheeseAvatar.vue'
 import UserAvatar from '../../common/UserAvatar.vue'
 
-import { t } from '@/i18n'
-
-const props = defineProps<{
-  peers: DocPeer[]
-  connection: DocConnection
-}>()
+const props = defineProps<{ peers: DocPeer[] }>()
 
 const MAX_FACES = 4
 
@@ -34,15 +29,7 @@ const more = computed(() => people.value.length - shown.value.length)
 
 <template>
   <div class="doc-presence">
-    <span
-      v-if="connection === 'offline'"
-      class="doc-presence__state doc-presence__state--offline"
-      :title="t('work.room.doc.offlineHint')"
-    >
-      <span class="status-dot status-dot--warn" />{{ t('work.room.doc.offline') }}
-    </span>
-    <span v-else-if="connection === 'connecting'" class="doc-presence__state">{{ t('work.room.doc.connecting') }}</span>
-    <div v-if="connection === 'connected' && shown.length" class="doc-presence__faces">
+    <div v-if="shown.length" class="doc-presence__faces">
       <span v-for="peer in shown" :key="peer.handle" class="doc-presence__face" :title="`${peer.name} @${peer.handle}`">
         <CheeseAvatar v-if="peer.agent" :size="22" :name="peer.name" :handle="peer.handle" />
         <UserAvatar v-else :size="22" :name="peer.name" :avatar="peer.avatar" :alt="peer.name" />
@@ -57,17 +44,6 @@ const more = computed(() => people.value.length - shown.value.length)
   display: inline-flex;
   align-items: center;
   gap: 8px;
-}
-.doc-presence__state {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 13px;
-  line-height: var(--lh-13);
-  color: var(--muted);
-}
-.doc-presence__state--offline {
-  color: var(--warn-ink);
 }
 .doc-presence__faces {
   display: inline-flex;

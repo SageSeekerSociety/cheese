@@ -132,6 +132,28 @@ def test_lost_response_replays_original_receipt_without_second_effect(client):
     )
 
 
+def test_history_lists_the_latest_versions_first_and_pages_back(client):
+    room = _topic(client)
+    client.headers.update(session_auth_headers("owner"))
+    for base, content in enumerate(["一", "二", "三"]):
+        assert (
+            client.put(
+                f"/topics/{room}/doc",
+                json={"content": content, "expected_version": base},
+            ).status_code
+            == 200
+        )
+    latest = client.get(f"/topics/{room}/doc/history?newest=true").json()["data"]
+    assert [row["content"] for row in latest["versions"]] == ["三", "二", "一"]
+    older = client.get(
+        f"/topics/{room}/doc/history?newest=true&before={latest['versions'][0]['version']}"
+    ).json()["data"]
+    assert [row["content"] for row in older["versions"]] == ["二", "一"]
+    assert older["versions"][0]["actor"] == "owner"
+    last = client.get(f"/topics/{room}/doc/history?newest=true&limit=1").json()["data"]
+    assert [row["content"] for row in last["versions"]] == ["三"]
+
+
 def test_restore_adds_new_version_and_replays_without_rewriting_raw(client):
     room = _topic(client)
     client.headers.update(session_auth_headers("owner"))

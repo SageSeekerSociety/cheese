@@ -76,7 +76,6 @@
       "memory": "Memory"
     },
     "loadFailed": "Couldn't load",
-    "history": "History",
     "askInRoom": "Ask for one in the project room",
     "charterHint": "Editing this is giving Cheese instructions",
     "memoryEmpty": "No memories",

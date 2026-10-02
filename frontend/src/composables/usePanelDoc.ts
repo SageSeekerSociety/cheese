@@ -16,8 +16,9 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { addComment, getComments, getDocNodes, workspaceFileRawUrl } from '../api'
 import { applyDocEdits, getPendingSuggestions, rewriteDocSelection } from '../api/docEdits'
+import { getDocVersions, restoreDocVersion } from '../api/docHistory'
 import { getDocThread } from '../api/docThreads'
-import { isAgentBlock } from '../lib/authorship'
+import { isAgentBlock, isAgentHandle } from '../lib/authorship'
 import { expandMentions } from '../lib/expandMentions'
 import { myHandle } from '../me'
 
@@ -62,6 +63,9 @@ export function usePanelDoc(props: PanelDocProps) {
   const suggestionReasons = ref<Record<string, string>>({})
   let reasonSequence = 0
   let reasonsWanted = false
+  // 最近一次编辑（谁、什么时候）：顶栏左边那一句，跟着每一次存回重读。
+  const lastEdit = ref<{ actor: string; at: string } | null>(null)
+  let lastEditSequence = 0
 
   const liveRefFingerprint = computed(() =>
     (props.topicList ?? []).map((t) => `${t.id}\u0000${t.title}\u0000${t.status ?? ''}`).join('\n')
@@ -201,10 +205,42 @@ export function usePanelDoc(props: PanelDocProps) {
       anchorNodes.value = []
       suggestionReasons.value = {}
       reasonsWanted = false
+      lastEdit.value = null
+      lastEditSequence++
       if (id) void loadComments(id).catch(() => {})
+      if (id) void loadLastEdit(id).catch(() => {})
     },
     { immediate: true }
   )
+
+  async function loadLastEdit(tid: string) {
+    const sequence = ++lastEditSequence
+    const page = await getDocVersions(tid, { limit: 1 })
+    if (disposed || props.topic?.id !== tid || sequence !== lastEditSequence) return
+    const top = page.versions[0]
+    lastEdit.value = top ? { actor: top.actor, at: top.created_at } : null
+  }
+
+  /** handle 读成名字：自己是「你」，AI 队友是它的名字，在线的人用他们的名字。 */
+  function nameOf(handle: string): string {
+    if (handle === AUTHOR) return t('work.room.doc.you')
+    if (handle === props.agentHandle || isAgentHandle(handle)) return props.agentName ?? handle
+    return collab.peers.value.find((peer) => peer.handle === handle)?.name ?? handle
+  }
+
+  /** 修改记录的一页，新的在前。 */
+  function loadVersions(before?: number) {
+    const tid = props.topic?.id
+    if (!tid) return Promise.reject(new Error(t('work.room.docEdit.unavailable')))
+    return getDocVersions(tid, { before })
+  }
+
+  /** 恢复到某一版：在最新一版上再记一版。 */
+  function restoreVersion(version: number, expected: number) {
+    const tid = props.topic?.id
+    if (!tid) return Promise.reject(new Error(t('work.room.docEdit.unavailable')))
+    return restoreDocVersion(tid, version, expected)
+  }
 
   // 文档存回了（state/doc）、或者芝士动过：节点都可能换了。
   watch(
@@ -212,6 +248,7 @@ export function usePanelDoc(props: PanelDocProps) {
     () => {
       const id = props.topic?.id
       if (id) void loadComments(id).catch(() => {})
+      if (id) void loadLastEdit(id).catch(() => {})
       if (id && reasonsWanted) void loadSuggestionReasons(id).catch(() => {})
     }
   )
@@ -252,6 +289,10 @@ export function usePanelDoc(props: PanelDocProps) {
       addComment(topicId, withMentions(content), anchor, quote),
     askAgent,
     answerOf,
+    lastEdit: computed(() => (lastEdit.value ? { name: nameOf(lastEdit.value.actor), at: lastEdit.value.at } : null)),
+    nameOf,
+    loadVersions,
+    restoreVersion,
     withMentions,
     toggleEditable,
     setError,

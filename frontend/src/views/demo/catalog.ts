@@ -915,9 +915,9 @@ export const CATALOG: CatalogEntry[] = [
       },
       {
         name: '没连上',
-        note: '断开时改动留在本地，连上后自动合并：横条上说的是状态，不是错误。',
+        note: '断开时改动留在本地，连上后自动合并：顶栏上说的是状态，不是错误。',
         props: docPanelProps({ session: docSession('还没同步的改动也在这里。'), connection: 'offline' }),
-        expect: '未连接',
+        expect: '没连上，改动会在连上后同步',
       },
       {
         name: '没有编辑权限',

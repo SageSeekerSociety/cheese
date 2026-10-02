@@ -1,0 +1,83 @@
+// @vitest-environment jsdom
+// 修改记录：恢复的是看着的那一版，记在最新一版之上；最新那一版和不能改的文档没有恢复；
+// 一个人连着存的几版算一条。
+import type { DocVersion } from '../../../lib/docHistory'
+
+import { createVuetify } from 'vuetify'
+import * as components from 'vuetify/components'
+import * as directives from 'vuetify/directives'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vue'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import DocHistory from './DocHistory.vue'
+
+import { setLocale, t } from '@/i18n'
+
+beforeAll(() => {
+  // 对话框打开时 Vuetify 要读它们来摆位置。
+  vi.stubGlobal('devicePixelRatio', 1)
+  vi.stubGlobal('visualViewport', {
+    width: 1280,
+    height: 800,
+    offsetLeft: 0,
+    offsetTop: 0,
+    scale: 1,
+    addEventListener() {},
+    removeEventListener() {},
+  })
+})
+beforeEach(() => setLocale('zh-CN'))
+afterEach(cleanup)
+
+const at = (minutesAgo: number) => new Date(Date.now() - minutesAgo * 60_000).toISOString()
+const version = (n: number, actor: string, minutesAgo: number, content = `第 ${n} 版`): DocVersion => ({
+  version: n,
+  content,
+  actor,
+  requested_by: null,
+  created_at: at(minutesAgo),
+})
+
+function mount(versions: DocVersion[], { editable = true } = {}) {
+  const restore = vi.fn(async () => ({}))
+  const view = render(DocHistory, {
+    props: {
+      open: true,
+      load: async () => ({ versions, cursor: null }),
+      restore,
+      editable,
+      nameOf: (handle: string) => handle,
+      mentionNames: {},
+    },
+    global: { plugins: [createVuetify({ components, directives })] },
+  })
+  return { ...view, restore }
+}
+
+describe('修改记录', () => {
+  it('恢复的是选中的那一版，记在最新一版之上', async () => {
+    const { restore } = mount([version(3, 'bob', 1), version(2, 'alice', 60), version(1, 'bob', 120)])
+    await fireEvent.click(await screen.findByText('alice'))
+    await fireEvent.click(screen.getByRole('button', { name: t('work.room.doc.restore') }))
+    await waitFor(() => expect(restore).toHaveBeenCalledWith(2, 3))
+  })
+
+  it('最新那一版没有恢复', async () => {
+    mount([version(3, 'bob', 1), version(2, 'alice', 60)])
+    await screen.findByText('第 3 版')
+    expect(screen.queryByRole('button', { name: t('work.room.doc.restore') })).toBeNull()
+  })
+
+  it('不能改这篇文档时没有恢复', async () => {
+    mount([version(3, 'bob', 1), version(2, 'alice', 60)], { editable: false })
+    await fireEvent.click(await screen.findByText('alice'))
+    expect(screen.queryByRole('button', { name: t('work.room.doc.restore') })).toBeNull()
+  })
+
+  it('同一个人连着存的几版算一条，别人插进来就分开', async () => {
+    mount([version(5, 'bob', 1), version(4, 'bob', 2), version(3, 'bob', 3), version(2, 'alice', 4), version(1, 'bob', 5)])
+    await screen.findByText('第 5 版')
+    expect(screen.getAllByText('bob')).toHaveLength(2)
+    expect(screen.getAllByText('alice')).toHaveLength(1)
+  })
+})
