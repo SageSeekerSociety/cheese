@@ -140,21 +140,29 @@ async def test_a_persons_own_credits_order_member_share_plan_then_bought(db_fact
 
 
 @pytest.mark.anyio
-async def test_a_personal_project_spends_its_owners_credits(db_factory):
-    """A project on someone's personal team draws on the same packs as what
-    they ask outside any project — whoever in its room made the call."""
+async def test_a_personal_projects_calls_are_not_charged_to_the_monthly_pack(
+    db_factory,
+):
+    """Until plans land (#2397), a person's monthly pack pays only for what
+    they ask outside a project; their own projects run as before."""
     async with db_factory() as session:
         owner = await registered(session, "owner")
-        await registered(session, "guest")
-        pid = await _project(session, await _personal_team(session, owner))
+        team = await _personal_team(session, owner)
+        pid = await _project(session, team)
         ledger = Ledger(session)
         own = await payer_for_person(session, owner)
         [monthly] = (await ledger.balance(own)).packs
+        await ledger.charge(own, monthly.credits_total)  # the month is spent
 
-        await ledger.charge(await payer_for_project(session, pid), 3)
+        project = await payer_for_project(session, pid)
+        assert not (await ledger.balance(project)).exhausted
+        await ledger.charge(project, 3)
+        assert await _used(session, monthly) == monthly.credits_total
 
-        assert await _used(session, monthly) == 3
-        assert (await ledger.balance(own)).credits_used == 3
+        # A pack the team holds otherwise is still the project's to spend.
+        bought = await ledger.grant(team, 10, source=GrantSource.PURCHASE)
+        await ledger.charge(project, 3)
+        assert await _used(session, bought) == 3
 
 
 @pytest.mark.anyio
@@ -178,12 +186,11 @@ async def test_a_member_pack_is_spent_only_by_its_member_and_on_their_own_work(
         await ledger.charge(await payer_for_person(session, other), 5)
         assert await _used(session, pack) == 0
 
-        # The member's own project and own questions do, once their monthly
-        # plan is spent.
-        await ledger.balance(await payer_for_person(session, me))
+        # The member's own project does, and so do their own questions once
+        # their monthly plan is spent.
+        await ledger.charge(await payer_for_project(session, my_project), 2)
         monthly = settings.personal_credits_monthly
-        await ledger.charge(await payer_for_project(session, my_project), monthly + 2)
-        await ledger.charge(await payer_for_person(session, me), 3)
+        await ledger.charge(await payer_for_person(session, me), monthly + 3)
         assert await _used(session, pack) == 5
 
 

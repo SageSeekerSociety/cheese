@@ -146,7 +146,20 @@ async def payer_for_project(session: AsyncSession, project_id: uuid.UUID) -> Pay
     return (await payers_for_projects(session, [project]))[project.id]
 
 
+def _personal_plan_held_back(pack: ComputeGrant, payer: Payer) -> bool:
+    """Until plans land (#2397, PR B), a personal team's monthly plan pack
+    pays only for what its owner asks outside a project: their projects run as
+    they did before it existed. PR B deletes this rule."""
+    return (
+        payer.personal
+        and payer.project_id is not None
+        and pack.source == GrantSource.PLAN_PERIOD
+    )
+
+
 def _applies(pack: ComputeGrant, payer: Payer) -> bool:
+    if _personal_plan_held_back(pack, payer):
+        return False
     if pack.project_id is not None:
         return pack.project_id == payer.project_id
     if pack.member_user_id is not None:
