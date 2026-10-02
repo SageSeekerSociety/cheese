@@ -456,7 +456,7 @@ def test_http_group_answer_resumes_asking_session_while_other_native_session_is_
                 return str(owner.input_id), str(owner.execution_work_id)
 
         answered_input, answered_work = client.portal.call(ownership)
-        records = runner_a.journal.read()
+        records = client.portal.call(runner_a.journal.read)
         echoes = [
             row["record"]
             for row in records
