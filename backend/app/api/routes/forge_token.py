@@ -29,10 +29,12 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import require_seated_agent
 from app.api.response import ok
 from app.core.db import get_db
 from app.core.errors import (
     AuthenticationRequiredError,
+    ForbiddenError,
     GatewayUnavailableError,
 )
 from app.core.sandbox_auth import scoped_token_claims
@@ -55,6 +57,9 @@ async def forge_tunnel(
 
     claims = scoped_token_claims(token)
     if not claims or claims.get("p") != str(project_id):
+        await websocket.close(code=1008)
+        return
+    if not await _seated(db, token, project_id):
         await websocket.close(code=1008)
         return
     binding = await binding_for_project(project_id, db)
@@ -171,6 +176,8 @@ async def forge_transport(
         claims = scoped_token_claims(credential)
         if not claims or claims.get("p") != str(project_id):
             return denied
+        if not await _seated(db, credential, project_id):
+            return Response(status_code=403)
         repository = binding.repo + ".git/"
         if not path.startswith(repository) or path[len(repository) :] not in (
             "info/refs",
@@ -276,6 +283,18 @@ async def forge_transport(
     )
 
 
+async def _seated(db: AsyncSession, token: str, project_id: uuid.UUID) -> bool:
+    """Whether the agent this credential names still sits in the project.
+
+    The git relay and tunnel answer protocol errors, not JSON, so the refusal
+    ``require_seated_agent`` raises is turned into a yes/no here."""
+    try:
+        await require_seated_agent(db, token, project_id=project_id, topic_id=None)
+    except (AuthenticationRequiredError, ForbiddenError):
+        return False
+    return True
+
+
 def _caller_token(request: Request) -> str:
     """The scoped token, however the caller presents it: the cheese CLI sends
     X-Cheese-Token; a bearer header also works."""
@@ -299,6 +318,7 @@ async def sandbox_forge_token(
     if not claims or not claims.get("p"):
         raise AuthenticationRequiredError("A scoped cheese token is required")
     project_id = uuid.UUID(claims["p"])
+    await require_seated_agent(db, token, project_id=project_id, topic_id=None)
     binding = await binding_for_project(project_id, db)
     minter = await tokens_for_project(project_id, db)
     if binding is None or minter is None:

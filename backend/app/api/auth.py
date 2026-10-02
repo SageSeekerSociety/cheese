@@ -764,3 +764,46 @@ def get_actor_resolver(
 # builds the resolver from the ?token= query param itself (照 reference
 # viewer_authz.py) — see app/api/routes/chat.py.
 ActorResolverDep = Annotated[ActorResolver, Depends(get_actor_resolver)]
+
+
+async def require_seated_agent(
+    session: AsyncSession,
+    token: str,
+    *,
+    project_id: uuid.UUID,
+    topic_id: uuid.UUID | None,
+) -> None:
+    """Refuse a scoped credential whose agent no longer sits where it acts.
+
+    For routes that read the credential themselves instead of resolving an
+    actor. A signature proves which agent a credential was minted for and that
+    it has not expired; it says nothing about whether that agent was since
+    taken out of the room or the project, and a credential outlives the turn
+    that minted it. So the roster is asked here, the same question
+    ``authorize_topic`` asks for every other room route.
+
+    A credential naming neither an agent nor a room is the platform's own
+    project capability (see ``mint_scoped_token``): no participant, no seat to
+    check, so it passes unchanged.
+    """
+    claims = scoped_token_claims(token)
+    if claims is None:
+        raise AuthenticationRequiredError("Agent credential is invalid or expired")
+    if not claims.get("a") and not claims.get("t"):
+        return
+    # The room this request acts in; without one (a project-wide route), the
+    # room the credential was minted in — unless it is a project-scope
+    # credential, which is bounded by the project and judged against that.
+    room = topic_id
+    if room is None and claims.get("s") != "project" and claims.get("t"):
+        room = uuid.UUID(claims["t"])
+    resolver = ActorResolver(session=session, bearer=None, cheese_token=token)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=room, project_id=project_id, read_only=True
+    )
+    if room is not None:
+        await resolver.authorize_topic(
+            actor, project_id=project_id, topic_id=room, enforce=True
+        )
+    elif not await resolver._is_project_member(project_id, actor.handle):
+        raise ForbiddenError(say("projectMemberOnly"))
