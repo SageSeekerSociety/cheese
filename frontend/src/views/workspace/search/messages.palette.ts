@@ -2,7 +2,7 @@
 // 卡片里的，打开那张卡停在这一条上——卡片里的对话不在房间的对话里。
 import type { ContentKind } from './projectSearch'
 
-import { contentSource, whereAndWhen } from './projectSearch'
+import { contentSource, searchRoomTitle, whereAndWhen } from './projectSearch'
 
 import { copyLink, linkOf } from '@/commands/copy'
 import { t } from '@/i18n'
@@ -24,7 +24,7 @@ export const messages: ContentKind = {
         return {
           id: `message:${hit.id}`,
           title: hit.snippet,
-          subtitle: whereAndWhen(hit.room_title, `@${hit.author}`, relTime(hit.created_at)),
+          subtitle: whereAndWhen(searchRoomTitle(hit), `@${hit.author}`, relTime(hit.created_at)),
           icon: 'mdi-message-outline',
           verb: t('navigation.palette.verbLocate'),
           to,

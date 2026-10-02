@@ -198,19 +198,18 @@ export interface ListPayload<T> {
   total: number
 }
 
-/** 待我处理清单里的一件事（后端 `room_task/awaiting.py`）。
- *
- *  `phrase` 就是看板卡面上那一句的码，后端算好的 —— 前端不推状态，理由和
- *  `Presentation` 那一段一样。`reason` 说的是这件事为什么点到我：递给我验收
- *  (`reviewer`)、我提的需求有了结果 (`reporter`)、或者芝士停在一个只有我能回答的
- *  待回答的问题上 (`asked`)。 */
+/** 待我处理清单里的一件事（后端 `room_task/awaiting.py`）。`phrase` 是看板卡面上那一句的码，后端算好的
+ *  —— 前端不推状态，理由和 `Presentation` 那一段一样。`reason` 说的是这件事为什么点到我：递给我验收
+ *  (`reviewer`)、我提的需求有了结果 (`reporter`)、或者芝士停在一个只有我能回答的问题上 (`asked`)。 */
 export interface WaitingItem {
   projectId: string
   projectName: string
   topicId: string
   topicTitle: string
+  topicTitleSource?: string
   taskId: string | null
   taskTitle: string | null
+  taskTitleSource?: string | null
   phrase: BoardPhrase
   reason: 'reviewer' | 'reporter' | 'asked'
   at: string
@@ -252,6 +251,7 @@ export interface RoomTask {
   // 它挂在哪个房间里。永远是房间——活不嵌套。
   room_id: string
   title: string
+  title_source?: 'placeholder' | 'auto' | 'human'
   status: string
   owner_handle?: string | null
   // 谁来验收这条活 —— 派活那一刻定下的（显式指定，否则项目的默认验收人）。递卡
@@ -259,9 +259,8 @@ export interface RoomTask {
   reviewer_handle?: string | null
   created_by?: string | null
   branch_name?: string | null
-  // 派它出去时说的那份要求，和分身交回来的那句话。两样都住在卡上：简报以前存在
-  // 「活自己的实况文档」里，而做活的分身拿的是房间的 token，够不着那个地址，
-  // 于是那份文档从播种那一刻起就再没人改过。
+  // 派它出去时说的那份要求，和分身交回来的那句话，都住在卡上：做活的分身拿的是房间的
+  // token，够不着「活自己的实况文档」，那份文档从播种起就再没人改过。
   brief?: string
   conclusion?: string | null
   base_branch?: string | null
@@ -539,11 +538,7 @@ export interface SpaceDashboard {
 // ---- 成员页 / portfolio (spec §7.2) ----
 
 // A topic the member started, shown on their member page.
-export interface MemberTopic {
-  id: string
-  title: string
-  status: string
-}
+export type MemberTopic = Pick<Topic, 'id' | 'title' | 'title_source' | 'status'>
 
 // GET /api/projects/{id}/members/{handle}/summary
 export interface MemberSummary {
@@ -625,6 +620,7 @@ export interface UserProfile {
 export interface ProfileTopic {
   id: string
   title: string
+  title_source?: string
   status: string
   project_id: string
   project_name: string
@@ -1074,12 +1070,12 @@ export interface ProjectComputeConfigs {
   distribution: ComputeDistribution
 }
 
-// One agent session on a self-hosted device, as the project's bulk switch lists
-// it. `working` = its room is mid-turn; a bulk switch leaves it alone.
+// One agent session on a self-hosted device, as the bulk switch lists it; `working` = mid-turn, left alone.
 export interface DeviceSession {
   id: string
   topic_id: string
   topic_title: string
+  topic_title_source?: string
   agent_handle: string
   agent_name: string
   choice: ComputeChoice
@@ -1188,8 +1184,7 @@ export interface MyDevice {
   // these teams may run on it.
   team_ids: number[]
   screens: DeviceScreen[]
-  // Who works on this machine now, for its owner only (null for anyone else):
-  // each agent session whose work computer it is, in a room that is open.
+  // Who works on this machine now (each session whose work computer it is), for its owner only.
   in_use?: DeviceUser[] | null
   // On a team's device list: the team's projects this machine is attached to
   // directly, rather than through the team.
@@ -1201,6 +1196,7 @@ export interface DeviceUser {
   project_name: string
   topic_id: string
   topic_title: string
+  topic_title_source?: string
   agent_handle: string
   agent_name: string
 }

@@ -29,6 +29,7 @@ import TodoChecklist from './TodoChecklist.vue'
 
 import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
+import { taskTitle } from '@/lib/topicState'
 
 const props = withDefaults(
   defineProps<{
@@ -373,7 +374,7 @@ async function send() {
     <template v-else>
       <div class="panel-card__title">
         <span class="board-dot" :style="dotStyle" aria-hidden="true" />
-        <span class="t-body panel-card__name">{{ card.title }}</span>
+        <span class="t-body panel-card__name">{{ taskTitle(card) }}</span>
       </div>
       <TopicAcceptCard :topic-id="card.room_id" :task-id="card.id" topic-status="active" @review="emit('review')" />
       <div class="panel-card__meta t-meta">

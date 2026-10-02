@@ -93,7 +93,7 @@ async def waiting_items(
 
     tasks = await TaskRepository(db).list_for_projects(project_ids)
     topics = await TopicRepository(db).list_for_projects(project_ids)
-    titles = {t.id: t.title for t in topics}
+    rooms = {t.id: t for t in topics}
     task_ids = [t.id for t in tasks]
     topic_ids = [t.id for t in topics]
 
@@ -136,14 +136,17 @@ async def waiting_items(
         reason = addressed.reason_for(handle)
         if reason is None:
             continue
+        room = rooms.get(task.room_id)
         items.append(
             awaiting.WaitingItem(
                 project_id=task.project_id,
                 project_name=names.get(task.project_id, ""),
                 topic_id=task.room_id,
-                topic_title=titles.get(task.room_id, ""),
+                topic_title=room.title if room else "",
+                topic_title_source=str(room.title_source) if room else "human",
                 task_id=task.id,
                 task_title=task.title,
+                task_title_source=str(task.title_source),
                 phrase=shown.phrase,
                 reason=reason,
                 at=beats.get(task.id) or task.updated_at,
@@ -180,8 +183,10 @@ async def waiting_items(
                 project_name=names.get(topic.project_id, ""),
                 topic_id=topic.id,
                 topic_title=topic.title,
+                topic_title_source=str(topic.title_source),
                 task_id=None,
                 task_title=None,
+                task_title_source=None,
                 phrase=shown.phrase,
                 reason=reason,
                 at=topic.updated_at,

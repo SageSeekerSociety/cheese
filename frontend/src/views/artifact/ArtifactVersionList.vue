@@ -11,6 +11,7 @@ import { computed, ref } from 'vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
+import { topicTitle } from '@/lib/topicState'
 
 const props = defineProps<{
   projectId: string
@@ -60,7 +61,7 @@ function previous(version: ArtifactVersion): ArtifactVersion | undefined {
               <router-link
                 :to="{ name: 'workspace-topic', params: { projectId, topicId: version.room.id } }"
                 class="version__room"
-                >《{{ version.room.title }}》</router-link
+                >{{ t('work.topic.quoted', { title: topicTitle(version.room) }) }}</router-link
               >
             </template>
           </div>

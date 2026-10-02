@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.block.models import Block, BlockKind
-from app.domain.room_task.models import Task
+from app.domain.room_task.models import Task, TaskTitleSource
 
 
 class TaskRepository:
@@ -34,12 +34,14 @@ class TaskRepository:
         reviewer_handle: str | None = None,
         reporter_handle: str | None = None,
         contributor_handles: list[str] | None = None,
+        title_source: TaskTitleSource = TaskTitleSource.human,
     ) -> Task:
         """Create a task; its service assigns the branch before checkout."""
         task = Task(
             project_id=project_id,
             room_id=room_id,
             title=title,
+            title_source=title_source,
             owner_handle=owner_handle,
             reviewer_handle=reviewer_handle,
             reporter_handle=reporter_handle,

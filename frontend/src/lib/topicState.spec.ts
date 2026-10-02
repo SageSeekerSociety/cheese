@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { topicShortId, topicStateBadge, topicTitle } from './topicState'
+import { taskTitle, topicShortId, topicStateBadge, topicTitle } from './topicState'
 
 import { setLocale } from '@/i18n'
 
@@ -46,5 +46,22 @@ describe('话题叫什么', () => {
     expect(topicTitle({ kind: 'topic', title: '分页调研', title_source: 'auto' })).toBe('分页调研')
     // 没带这一位的话题（旧接口、别处拼出来的行）照存着的标题显示。
     expect(topicTitle({ kind: 'topic', title: '分页调研' })).toBe('分页调研')
+  })
+})
+
+// 从一条消息升级出来、还没起名的活：库里存的是房间的占位标题，屏幕按语言叫它。
+describe('活叫什么', () => {
+  it('未命名的活在英文界面叫 New task，中文界面叫「新任务」', () => {
+    const unnamed = { title: '新话题', title_source: 'placeholder' }
+    setLocale('en')
+    expect(taskTitle(unnamed)).toBe('New task')
+    setLocale('zh-CN')
+    expect(taskTitle(unnamed)).toBe('新任务')
+  })
+
+  it('起过名的活、没带这一位的活照存着的标题显示', () => {
+    setLocale('en')
+    expect(taskTitle({ title: '新话题', title_source: 'human' })).toBe('新话题')
+    expect(taskTitle({ title: '拆导入' })).toBe('拆导入')
   })
 })

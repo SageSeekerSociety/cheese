@@ -259,6 +259,7 @@ def _record(b: Block, readable: dict[uuid.UUID, Topic], terms: list[str]) -> dic
     return {
         "room_id": str(room.id),
         "room_title": room.title,
+        "room_title_source": str(room.title_source),
         "id": str(b.id),
         "kind": str(b.kind.value),
         "author": b.author,
@@ -273,8 +274,10 @@ def _task(t: Task, readable: dict[uuid.UUID, Topic], terms: list[str]) -> dict:
     return {
         "room_id": str(room.id),
         "room_title": room.title,
+        "room_title_source": str(room.title_source),
         "id": str(t.id),
         "title": t.title,
+        "title_source": str(t.title_source),
         "status": str(t.status.value),
         "closed_at": t.closed_at.isoformat() if t.closed_at else None,
         "snippet": _snippet(
@@ -293,7 +296,11 @@ async def _everything(
 ) -> dict[str, list[dict]]:
     def where(room_id: uuid.UUID) -> dict:
         room = readable[room_id]
-        return {"room_id": str(room.id), "room_title": room.title}
+        return {
+            "room_id": str(room.id),
+            "room_title": room.title,
+            "room_title_source": str(room.title_source),
+        }
 
     hits: dict[str, list[dict]] = {"rooms": [], "records": [], "tasks": []}
     if readable:

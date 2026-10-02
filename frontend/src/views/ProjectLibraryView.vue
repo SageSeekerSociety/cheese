@@ -29,6 +29,7 @@ import FileBytesPreview from '@/components/common/FileBytesPreview.vue'
 import { useTopBarBack } from '@/components/common/topBarBack'
 import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
+import { topicTitle } from '@/lib/topicState'
 import { usePageTitleStore } from '@/stores/title'
 
 const props = defineProps<{ projectId: string }>()
@@ -425,9 +426,9 @@ function read(file: LibraryFile) {
             {{ fmtBytes(selected.bytes) }}
             <template v-if="selected.room">
               · {{ t('work.library.from') }}
-              <router-link :to="{ name: 'workspace-topic', params: { projectId, topicId: selected.room.id } }"
-                >《{{ selected.room.title }}》</router-link
-              >
+              <router-link :to="{ name: 'workspace-topic', params: { projectId, topicId: selected.room.id } }">{{
+                t('work.topic.quoted', { title: topicTitle(selected.room) })
+              }}</router-link>
             </template>
           </p>
           <p v-if="selected.references || selected.replaced" class="t-meta c-faint library__detail-meta">

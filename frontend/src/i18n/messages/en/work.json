@@ -1093,7 +1093,9 @@
     "notFoundHint": "It may have been deleted, or it isn't part of this project",
     "resize": "Drag to resize, double-click to reset",
     "dmFailed": "Couldn't open the conversation",
-    "untitled": "New topic"
+    "untitled": "New topic",
+    "untitledTask": "New task",
+    "quoted": "“{title}”"
   },
   "access": {
     "signedOutTitle": "Sign in to view this project",

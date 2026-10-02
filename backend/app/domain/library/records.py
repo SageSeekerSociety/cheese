@@ -134,12 +134,12 @@ async def describe(
     session: AsyncSession,
     project_id: uuid.UUID,
     files: list[dict],
-    room_titles: dict[uuid.UUID, str],
+    rooms: dict[uuid.UUID, dict],
 ) -> list[dict]:
     """资料库清单上每一份的来源：谁、什么时候、在哪个房间，被几条消息引用、替换过
     几次。
 
-    `room_titles` 是读者读得了的那些房间：房间名只写这些，引用也只数这些房间里的。
+    `rooms` 是读者读得了的那些房间：房间名只写这些，引用也只数这些房间里的。
     记录表之前就在的文件没有行，来源取第一条带上它的附件消息。"""
     refs = [service.library_ref(f["path"]) for f in files]
     recorded = await current(session, project_id)
@@ -156,14 +156,14 @@ async def describe(
     ):
         first_sent.setdefault(block.content, block)
     counts: dict[str, int] = {}
-    if room_titles:
+    if rooms:
         for content, n in await session.execute(
             select(Block.content, func.count())
             .where(
                 Block.project_id == project_id,
                 Block.kind == BlockKind.attachment,
                 Block.content.in_(refs),
-                Block.topic_id.in_(list(room_titles)),
+                Block.topic_id.in_(list(rooms)),
             )
             .group_by(Block.content)
         ):
@@ -180,9 +180,7 @@ async def describe(
             "added_by": row.added_by if row else (sent.author if sent else None),
             "added_at": added_at.isoformat() if added_at else None,
             "room": (
-                {"id": str(room_id), "title": room_titles[room_id]}
-                if room_id is not None and room_id in room_titles
-                else None
+                rooms[room_id] if room_id is not None and room_id in rooms else None
             ),
             "replaced": replaced.get(f["path"], 0),
             "references": counts.get(ref, 0),
