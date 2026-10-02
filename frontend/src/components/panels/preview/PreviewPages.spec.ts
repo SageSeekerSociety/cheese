@@ -8,7 +8,7 @@
  *
  * 修复前这条会红：canvas 永远不出现。
  */
-import { cleanup, render, waitFor } from '@testing-library/vue'
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import PreviewPages from './PreviewPages.vue'
@@ -141,9 +141,42 @@ describe('分页文档的阅读视图', () => {
     pdf.resolveDoc?.(DOCUMENT)
     await waitFor(() => expect(container.querySelectorAll('canvas')).toHaveLength(2))
 
-    // 一次真实的宽度变化：重排作废已画的页，随后按新宽度重画。
     resize?.()
     await new Promise((r) => setTimeout(r, 260))
     await waitFor(() => expect(container.querySelectorAll('canvas')).toHaveLength(2))
+  })
+
+  it('选中一个字不发引用：门槛和幻灯片那条一样', async () => {
+    const { container, emitted } = mount()
+    await waitFor(() => expect(pdf.calls).toBeGreaterThan(0))
+    pdf.resolveDoc?.(DOCUMENT)
+    await waitFor(() => expect(container.querySelector('[data-page="1"]')).toBeTruthy())
+
+    // 初次重排的防抖是 200 毫秒，重排会把页里画的东西整块换掉；等它落定再挂节点。
+    await new Promise((r) => setTimeout(r, 300))
+    // 真读的时候这一层是 pdf.js 的文字层。假的文字层不产文字，这里自己挂一个文本
+    // 节点上去，好让选区落进 `[data-page]` 里。
+    const host = container.querySelector('[data-page="1"]')!
+    const node = document.createTextNode('第一页正文')
+    host.appendChild(node)
+    const selection = window.getSelection()!
+    const range = document.createRange()
+    const pick = async (end: number) => {
+      range.setStart(node, 0)
+      range.setEnd(node, end)
+      selection.removeAllRanges()
+      selection.addRange(range)
+      // `@mouseup` 挂在组件的根 `.pv` 上，事件从页这一层冒上去。
+      await fireEvent.mouseUp(host)
+    }
+
+    // 一个「第」字过不了「归一化之后至少两个字」，这条路到此为止；再把正例放出来
+    // 证明同一套鼠标动作是通的，免得上面那条只是「什么都没发生」。
+    await pick(1)
+    expect(emitted().quote).toBeUndefined()
+    await pick(3)
+    await waitFor(() => expect(emitted().quote).toHaveLength(1))
+    expect(emitted().quote![0]).toEqual([{ text: '第一页', page: 1 }])
+    selection.removeAllRanges()
   })
 })

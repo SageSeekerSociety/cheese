@@ -47,22 +47,41 @@ export const CHAT_ENTRIES: CatalogEntry[] = [
     file: 'src/components/room/MessageQuote.vue',
     component: MessageQuote,
     needs: ['i18n'],
-    states: (['committed', 'live'] as const).map((source) => ({
-      name: source === 'committed' ? '已提交的页' : '现场的页',
-      note: '资料中的名字与路径照原文显示，正文空白也原样保留。',
-      props: {
-        quote: {
-          kind: 'slide-page',
-          path: 'slides/@评审 <@cheese-other>.pptx ',
-          source,
-          version: 'v7',
-          task_id: null,
-          page: 2,
-          text: '  @评审 <@cheese-other>\n原始页面文字。\n',
+    states: [
+      ...(['committed', 'live'] as const).map((source) => ({
+        name: source === 'committed' ? '已提交的页' : '现场的页',
+        note: '资料中的名字与路径照原文显示，正文空白也原样保留。',
+        props: {
+          quote: {
+            kind: 'slide-page',
+            path: 'slides/@评审 <@cheese-other>.pptx ',
+            source,
+            version: 'v7',
+            task_id: null,
+            page: 2,
+            text: '  @评审 <@cheese-other>\n原始页面文字。\n',
+          },
         },
+        expect: '引用第 2 页文字',
+      })),
+      {
+        name: '页里选中的一段',
+        note: '`scope` 说正文是页里的一段而不是整页，展开那句话跟着换。',
+        props: {
+          quote: {
+            kind: 'slide-page',
+            path: 'deck.pptx',
+            source: 'committed',
+            version: 'v7',
+            task_id: null,
+            page: 2,
+            scope: 'selection',
+            text: '选中的这一句',
+          },
+        },
+        expect: '引用第 2 页里选中一段',
       },
-      expect: '引用第 2 页文字',
-    })),
+    ],
   },
   {
     id: 'chat-panel-header',

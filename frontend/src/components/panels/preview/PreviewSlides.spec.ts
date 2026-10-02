@@ -265,25 +265,33 @@ describe('slide reader contract (PDF.js substituted)', () => {
     selection.removeAllRanges()
   })
 
-  it('drops a selection too short to point at anything, with or without identity', async () => {
+  it('drops a selection too short to point at anything', async () => {
     const ui = await loaded(3)
-    const span = ui.container.querySelector('[data-page="1"] span')!.firstChild!
-    const selection = window.getSelection()!
-    // 一个字、一个空格：两条都过不了「归一化之后至少两个字」这一关。带上身份发出去
-    // 只是把噪声包装得更正式，所以有身份的那条出口也一样拦。
-    for (const [start, end] of [
-      [0, 1],
-      [10, 11],
-    ]) {
+    const select = async (start: number, end: number) => {
+      const span = ui.container.querySelector('[data-page="1"] span')!.firstChild!
       const range = document.createRange()
       range.setStart(span, start)
       range.setEnd(span, end)
+      const selection = window.getSelection()!
       selection.removeAllRanges()
       selection.addRange(range)
       await fireEvent.mouseUp(ui.container.querySelector('[data-page="1"]')!)
     }
-    expect(ui.emitted().quote).toBeUndefined()
+    // 一个字、一个空格，都过不了「归一化之后至少两个字」这一关。带身份和不带身份是
+    // 同一个函数里的两条出口，共用这一行门槛；下面那条正对照证明这条 mouseUp 路是通的，
+    // 免得这两条断言只是「什么都没发生」的空过。
+    await select(0, 1)
+    await select(10, 11)
     expect(ui.emitted().pageContext).toBeUndefined()
+
+    const span = ui.container.querySelector('[data-page="1"] span')!.firstChild!
+    const whole = document.createRange()
+    whole.selectNodeContents(span)
+    const selection = window.getSelection()!
+    selection.removeAllRanges()
+    selection.addRange(whole)
+    await fireEvent.mouseUp(ui.container.querySelector('[data-page="1"]')!)
+    await waitFor(() => expect(ui.emitted().pageContext).toHaveLength(1))
     selection.removeAllRanges()
   })
 
