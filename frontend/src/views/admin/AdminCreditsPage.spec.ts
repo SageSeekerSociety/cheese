@@ -14,6 +14,7 @@ const setCreditTeamPlan = vi.fn()
 const grantTeamCredits = vi.fn()
 const createPlan = vi.fn()
 const updatePlan = vi.fn()
+const deletePlan = vi.fn()
 
 vi.mock('@/api/adminCredits', () => ({
   listPlans: (...a: unknown[]) => listPlans(...a),
@@ -24,6 +25,7 @@ vi.mock('@/api/adminCredits', () => ({
   grantTeamCredits: (...a: unknown[]) => grantTeamCredits(...a),
   createPlan: (...a: unknown[]) => createPlan(...a),
   updatePlan: (...a: unknown[]) => updatePlan(...a),
+  deletePlan: (...a: unknown[]) => deletePlan(...a),
 }))
 
 vi.mock('@/api', async (importOriginal) => {
@@ -51,6 +53,7 @@ const FREE = {
   model_tiers: ['included'],
   unlimited: false,
   admin_only: false,
+  rank: 0,
   team_count: 3,
   is_default: true,
 }
@@ -64,9 +67,12 @@ const RESERVE = {
   model_tiers: null,
   unlimited: true,
   admin_only: true,
+  rank: 100,
   team_count: 0,
   is_default: false,
 }
+
+const TRIAL = { ...FREE, key: 'trial', name: 'Trial', rank: 10, team_count: 0, is_default: false }
 
 const PERIOD_PACK = {
   id: 'p1',
@@ -133,6 +139,8 @@ beforeEach(() => {
   getCreditTeamHistory.mockReset().mockResolvedValue({ items: [] })
   setCreditTeamPlan.mockReset()
   grantTeamCredits.mockReset()
+  updatePlan.mockReset().mockResolvedValue(FREE)
+  deletePlan.mockReset().mockResolvedValue({ key: 'trial' })
 })
 afterEach(cleanup)
 
@@ -142,7 +150,50 @@ async function openTeam(page: ReturnType<typeof mountPage>) {
   await page.findByRole('button', { name: 'credits.panel.grant' })
 }
 
+async function editPlan(page: ReturnType<typeof mountPage>, name: string) {
+  const plans = within(await page.findByRole('table', { name: 'credits.plans.label' }))
+  const row = (await plans.findByText(name)).closest('tr') as HTMLElement
+  await fireEvent.click(within(row).getByRole('button', { name: 'credits.plans.edit' }))
+  return within(document.body)
+}
+
 describe('plans and credits', () => {
+  it('a plan switched to time windows is saved without a monthly amount', async () => {
+    const dialog = await editPlan(mountPage(), 'Free')
+
+    await fireEvent.click(await dialog.findByRole('button', { name: 'credits.planDialog.billingWindows' }))
+    await fireEvent.update(dialog.getByLabelText('credits.planDialog.windowHours'), '5')
+    await fireEvent.update(dialog.getByLabelText('credits.planDialog.windowCredits'), '20')
+    await fireEvent.click(dialog.getByRole('button', { name: 'credits.planDialog.save' }))
+
+    await waitFor(() =>
+      expect(updatePlan).toHaveBeenCalledWith(
+        'free',
+        expect.objectContaining({ credits_per_period: null, windows: [{ hours: 5, credits: 20 }] })
+      )
+    )
+  })
+
+  it('a plan is deleted only once the deletion is confirmed', async () => {
+    listPlans.mockResolvedValue({ plans: [FREE, TRIAL, RESERVE] })
+    const dialog = await editPlan(mountPage(), 'Trial')
+
+    await fireEvent.click(await dialog.findByRole('button', { name: 'credits.planDialog.delete' }))
+    await fireEvent.click(dialog.getByRole('button', { name: 'credits.planDialog.keep' }))
+    expect(deletePlan).not.toHaveBeenCalled()
+
+    await fireEvent.click(dialog.getByRole('button', { name: 'credits.planDialog.delete' }))
+    await fireEvent.click(dialog.getByRole('button', { name: 'credits.planDialog.confirmDelete' }))
+    await waitFor(() => expect(deletePlan).toHaveBeenCalledWith('trial'))
+  })
+
+  it('the plan new teams start on offers no deletion', async () => {
+    const dialog = await editPlan(mountPage(), 'Free')
+
+    await dialog.findByRole('button', { name: 'credits.planDialog.save' })
+    expect(dialog.queryByRole('button', { name: 'credits.planDialog.delete' })).toBeNull()
+  })
+
   it('issues credits with the entered amount, expiry and reason, and the panel shows the new pack', async () => {
     const granted = {
       ...PERIOD_PACK,

@@ -4,8 +4,10 @@
 export type PlanAudience = 'personal' | 'team' | 'both'
 export type ModelTier = 'included' | 'premium' | 'frontier'
 
+/** 时间窗口：按小时（从团队第一次调用起算）或按周、按月（日历重置），二者给一个。 */
 export interface PlanWindow {
-  hours: number
+  hours?: number
+  calendar?: 'week' | 'month'
   credits: number
 }
 
@@ -13,14 +15,17 @@ export interface Plan {
   key: string
   name: string
   audience: PlanAudience
-  /** 每期发放的额度；`null` 与 `unlimited` 一起出现时表示不限。 */
+  /** 每月发放的额度；按时间窗口限额或不限的方案为 `null`。 */
   credits_per_period: number | null
   period: string
+  /** 按时间窗口限额的方案的窗口；按月发放的方案为空。 */
   windows: PlanWindow[]
   /** `null` = 不限档位。 */
   model_tiers: ModelTier[] | null
   unlimited: boolean
   admin_only: boolean
+  /** 排序，小的在前：列表按它排，模型选择提示「需要哪个方案」时取排在最前、又能用的那个。 */
+  rank: number
   /** 有多少个团队在这个方案上。 */
   team_count: number
   /** 新团队默认挂在这个方案上。 */
@@ -98,9 +103,11 @@ export interface CreditAudit {
 export interface PlanInput {
   name: string
   audience: PlanAudience
+  /** 不限的方案两样都不传。 */
   credits_per_period?: number | null
-  windows: PlanWindow[]
+  windows?: PlanWindow[]
   model_tiers: ModelTier[] | null
+  rank: number
 }
 
 export interface GrantInput {
