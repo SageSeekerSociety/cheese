@@ -1076,7 +1076,7 @@ class AcceptService:
         `project_task_links` chain it replaced pointed at a 题目 hierarchy that
         had no way to be created.
         """
-        from app.domain.space.models import SpaceCategory
+        from app.domain.space.models import Space, SpaceCategory
         from app.domain.task.models import Task
         from app.domain.task.protocol import resolve
 
@@ -1092,7 +1092,14 @@ class AcceptService:
             if getattr(task, "category_id", None)
             else None
         )
-        if not resolve(category=category, task=task).mentor_required_for(topic.title):
+        space = (
+            await self._session.get(Space, task.space_id)
+            if getattr(task, "space_id", None)
+            else None
+        )
+        if not resolve(space=space, category=category, task=task).mentor_required_for(
+            topic.title
+        ):
             return
         # The condition asks for someone from outside the team to sign off: an
         # external member of this project.

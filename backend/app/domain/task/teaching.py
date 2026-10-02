@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.knowledge.services import KnowledgeService
 from app.domain.materials.services import MaterialService
 from app.domain.project.models import Project
-from app.domain.space.models import SpaceCategory
+from app.domain.space.models import Space, SpaceCategory
 from app.domain.task.models import Task
 from app.domain.task.protocol import Teaching, resolve
 
@@ -63,17 +63,23 @@ async def for_project(
         return None
     row = (
         await session.execute(
-            select(Task, SpaceCategory)
+            select(Task, SpaceCategory, Space)
             # outerjoin: a 赛题 whose 项目集 was deleted still carries its own
             # `protocol_override`, and that override is a teaching config too.
+            # The 空间 joins on the 赛题's own `space_id`, not through the
+            # 项目集, so a 赛题 still reaches its board's default with the
+            # 项目集 gone.
             .outerjoin(SpaceCategory, SpaceCategory.id == Task.category_id)
+            .outerjoin(Space, Space.id == Task.space_id)
             .where(Task.id == project.external_task_id)
         )
     ).first()
     if row is None:
         return None
-    task, category = row
-    teaching = resolve(category=category, task=task, project=project).teaching
+    task, category, space = row
+    teaching = resolve(
+        space=space, category=category, task=task, project=project
+    ).teaching
     if teaching.is_empty:
         return None
     materials = await MaterialService.for_lookup(session).get_many(

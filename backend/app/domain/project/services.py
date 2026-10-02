@@ -316,7 +316,7 @@ class ProjectService:
         nothing, leaves the project exactly as it was. Creating a project must
         not fail because an institution left its resource pack empty.
         """
-        from app.domain.space.models import SpaceCategory
+        from app.domain.space.models import Space, SpaceCategory
         from app.domain.task.models import Task
         from app.domain.task.protocol import resolve
 
@@ -359,7 +359,12 @@ class ProjectService:
             if getattr(task, "category_id", None)
             else None
         )
-        protocol = resolve(category=category, task=task)
+        space = (
+            await self._session.get(Space, task.space_id)
+            if getattr(task, "space_id", None)
+            else None
+        )
+        protocol = resolve(space=space, category=category, task=task)
         # The 项目集 supplies a default agent type; a project that already picked
         # one keeps it, so accepting the protocol never overwrites a choice.
         agents = AgentInstanceService(self._session)

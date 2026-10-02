@@ -6,9 +6,12 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, Path, Query, UploadFile, status
 from fastapi.responses import Response
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import select
 
+# 给了题目的「给 AI 队友的指导」(#944)：请求体沿用 项目集 PATCH 那个严格模型，
+# 引用校验沿用同一个实现 —— 题目级只是这条链上再往内的一层，不是另一套规矩。
+from app.api.routes.spaces import TeachingRequest
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.auth.space_access import may_publish_in_space, may_teach_task
@@ -24,6 +27,8 @@ from app.db.session import get_db
 from app.domain.attachment.models import Attachment
 from app.domain.attachment.services import AttachmentService
 from app.domain.feature_stats import pricing
+from app.domain.knowledge.services import KnowledgeService
+from app.domain.materials.services import MaterialService
 from app.domain.space.rank_service import SpaceRankService
 from app.domain.space.repositories import (
     SpaceAdminRelationRepository,
@@ -33,6 +38,7 @@ from app.domain.space.repositories import (
     SpaceRepository,
     SpaceUserRankRepository,
 )
+from app.domain.space.services import ensure_teaching_references
 from app.domain.tag.repositories import TagRepository
 from app.domain.task.attachment_service import (
     TaskAttachmentRepository,
@@ -181,6 +187,9 @@ class CreateTaskRequest(BaseModel):
     # 出题时带的材料。文件先经 ``POST /attachments`` 传上来拿到 id，建题时一次挂上
     # —— 见 ``TaskAttachmentService.attach_uploaded`` 里对这条顺序的说明。
     attachment_ids: list[int] = Field(default_factory=list, alias="attachmentIds")
+    # 这道题自己的「给 AI 队友的指导」(#944)，盖过 空间/项目集 那份。省略 =
+    # 不设，于是这道题沿用上层的；给了就整份替换掉上层的（见 resolve 的生效语义）。
+    teaching: TeachingRequest | None = None
 
 
 PDF_DRAFT_CONTENT_FIELDS = {"name", "intro", "description"}
@@ -315,6 +324,10 @@ class PatchTaskRequest(BaseModel):
     )
     ended_at: int | None = Field(default=None, alias="endedAt")
     has_ended_at: bool | None = Field(default=None, alias="hasEndedAt")
+    # 这道题自己的「给 AI 队友的指导」(#944)。Sending it replaces the WHOLE
+    # config — the protocol's whole-key semantics; omitting it leaves it exactly
+    # as it is, so a PATCH that only renames a 题目 does not wipe the 指导.
+    teaching: TeachingRequest | None = None
 
 
 class CreateSubmissionReviewRequest(BaseModel):
@@ -352,6 +365,42 @@ def _submission_schema_to_api(
 def _ms(moment: datetime | None) -> int | None:
     """A moment as epoch milliseconds, the unit the task API speaks; None stays None."""
     return int(moment.timestamp() * 1000) if moment is not None else None
+
+
+def _task_protocol_teaching(task: Task) -> dict:
+    """This 题目's own 「给 AI 队友的指导」(#944), or `{}`.
+
+    Read straight off `protocol_override["teaching"]` — the raw stored dict, the
+    same shape `Space.teaching` and `SpaceCategory.teaching` are reported in.
+    `protocol_override` is free-form and may hold other keys, so only the one
+    this feature owns is reported; anything else stays internal.
+    """
+    override = getattr(task, "protocol_override", None)
+    if not isinstance(override, dict):
+        return {}
+    teaching = override.get("teaching")
+    return teaching if isinstance(teaching, dict) else {}
+
+
+async def _validate_task_teaching(
+    db, *, teaching: dict | None, actor_user_id: int
+) -> None:
+    """Refuse a 题目's 指导 that names a 知识 or 课件 nobody can resolve.
+
+    The very check the 项目集 form and the 空间默认 run (`ensure_teaching_references`)
+    — a 题目 is one more level of the same config, not a second kind of it, so it
+    is held to the same rule. `None` (the field was absent) is not a write at all
+    and is skipped; `{}` IS a write — it clears the override — and names nothing,
+    which passes.
+    """
+    if teaching is None:
+        return
+    await ensure_teaching_references(
+        knowledge_service=KnowledgeService.for_lookup(db),
+        material_service=MaterialService.for_lookup(db),
+        teaching=teaching,
+        actor_user_id=actor_user_id,
+    )
 
 
 def _task_to_api_model(task: Task) -> dict:
@@ -394,6 +443,12 @@ def _task_to_api_model(task: Task) -> dict:
         "rejectReason": task.reject_reason,
         "videoUrl": task.video_url,
         "accessControlEnabled": task.access_control_enabled,
+        # 这道题自己的「给 AI 队友的指导」(#944) — the RAW override, not the
+        # resolved config: the publish form edits what THIS 题目 says, and a
+        # blank field there means "inherit", which only makes sense read against
+        # the raw value rather than against the winner of the chain. `{}` when
+        # the 题目 overrides nothing. Same shape as the other two levels.
+        "teaching": _task_protocol_teaching(task),
         "createdAt": created_at_ms,
         "updatedAt": updated_at_ms,
         "publishedAt": published_at_ms,
@@ -1102,6 +1157,9 @@ async def _create_task_entity(
         access_control_enabled = payload.access_control_enabled
         access_domain_group_ids = payload.access_domain_group_ids
         submission_schema = payload.submission_schema or []
+        teaching = (
+            payload.teaching.model_dump() if payload.teaching is not None else None
+        )
     else:
         # Dict path — used by PDF-based creation flow
         required_fields = [
@@ -1192,6 +1250,21 @@ async def _create_task_entity(
             else []
         )
 
+        # The PDF path carries `teaching` as free-form JSON, so it goes through
+        # the same strict model the typed path uses — that is what keeps a
+        # camelCase dict from the client and a typed body landing in the column
+        # as one spelling.
+        teaching_raw = payload.get("teaching")
+        if teaching_raw is None:
+            teaching = None
+        elif isinstance(teaching_raw, dict):
+            try:
+                teaching = TeachingRequest.model_validate(teaching_raw).model_dump()
+            except ValidationError as exc:
+                raise BadRequestError(f"Invalid teaching: {exc}") from exc
+        else:
+            raise BadRequestError("teaching must be an object")
+
     if team_locking_policy not in {"NO_LOCK", "LOCK_ON_APPROVAL"}:
         raise BadRequestError(f"Invalid teamLockingPolicy: {team_locking_policy}")
 
@@ -1235,6 +1308,9 @@ async def _create_task_entity(
     ):
         raise ForbiddenError("Only a member of this board can publish tasks here")
 
+    # 指导里的引用先查再建：拒了就不该留下半道题（同 项目集 PATCH 的顺序）。
+    await _validate_task_teaching(db, teaching=teaching, actor_user_id=creator_user_id)
+
     # 确认 space 存在并获取有效的 category id（传入或默认）
     effective_category_id = await _validate_and_get_category_id(
         space_repo=space_repo,
@@ -1267,6 +1343,14 @@ async def _create_task_entity(
         access_control_enabled=access_control_enabled,
         video_url=video_url,
     )
+
+    if teaching is not None:
+        # 题目级「给 AI 队友的指导」(#944) 落在协议覆盖的同一个键上 —— 整份替换
+        # 上层那份（`protocol.resolve` 的读法），其它覆盖键（今天没有）原样保留。
+        task.protocol_override = {
+            **(task.protocol_override or {}),
+            "teaching": teaching,
+        }
 
     # Resolve domain group IDs to actual domains and persist TaskAccessDomain records
     if access_control_enabled and access_domain_group_ids:
@@ -2336,6 +2420,15 @@ async def patch_task(
     if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
         raise ForbiddenError("Only task owner or space admin can update this task")
 
+    # 「给 AI 队友的指导」(#944) 的引用先查再改：拒了就不该动这一行的任何一格
+    # （同一个请求里可能还带着改名），所以拦住的位置与 项目集 PATCH 一样靠前。
+    if payload.teaching is not None:
+        await _validate_task_teaching(
+            db,
+            teaching=payload.teaching.model_dump(),
+            actor_user_id=auth_user.user_id,
+        )
+
     # 基本字符串字段
     if payload.name is not None:
         task.name = payload.name
@@ -2526,6 +2619,14 @@ async def patch_task(
                 deleted_at=None,
             )
             db.add(rel)
+
+    # 「给 AI 队友的指导」: 整份替换这道题的那一格；`None` 是「没带」，上面就已经
+    # 跳过了（与 项目集/空间 三级同一套 whole-key 语义）。
+    if payload.teaching is not None:
+        task.protocol_override = {
+            **(task.protocol_override or {}),
+            "teaching": payload.teaching.model_dump(),
+        }
 
     task.updated_at = datetime.now(UTC)
     task = await task_repo.save(task)
