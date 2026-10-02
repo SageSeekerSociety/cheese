@@ -40,6 +40,7 @@ from app.core.obs import (
     configure_logging,
     get_logger,
 )
+from app.core.request_limits import RequestLimits
 from app.core.sandbox_auth import (
     is_global_sandbox_token,
     is_valid_cheese_token,
@@ -451,6 +452,11 @@ app = FastAPI(
 )
 
 app.add_middleware(LogRefusedWebSockets)
+
+# Inside CORS, so a refusal still carries the headers a cross-origin page needs
+# to read it; inside `request_context`, so a 429 is in the access log like any
+# other answer. Pure ASGI: see `app/core/request_limits.py`.
+app.add_middleware(RequestLimits)
 
 app.add_middleware(
     CORSMiddleware,
