@@ -5,7 +5,7 @@ import { TextSelection } from '@tiptap/pm/state'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { captureDocSelection, validateDocSelection } from './docAiSelection'
-import { docExtensions } from './docMarkdown'
+import { docExtensions } from './docSchema'
 
 const editors: Editor[] = []
 afterEach(() => {

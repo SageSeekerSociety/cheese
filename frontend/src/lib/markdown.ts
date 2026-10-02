@@ -30,7 +30,7 @@ export const markdown = new Marked(markedCjkFriendly())
 //
 // 放在解析器上而不是某个渲染函数里:所有 markdown 出口都过这一个实例,所以将来
 // 新加的渲染路径自动就是对的,不用记得再补一次。(文档编辑器自建实例,它那边早
-// 就在 docMarkdown.ts 里加了同样的 target。)
+// 就在 docSchema/extensions.ts 里加了同样的 target。)
 markdown.use({
   renderer: {
     link({ href, title, tokens }) {

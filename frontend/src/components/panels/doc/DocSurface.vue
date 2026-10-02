@@ -31,7 +31,8 @@ import {
   mappedCommentQuoteState,
 } from '../../../lib/docDecorations'
 import { captureDocLink, safeDocHref } from '../../../lib/docLinks'
-import { docExtensions, docReplaceRange, serializeDoc } from '../../../lib/docMarkdown'
+import { docReplaceRange } from '../../../lib/docReplaceRange'
+import { docExtensions, serializeDoc } from '../../../lib/docSchema'
 import { createSlashCommands } from '../../../lib/docSlashMenu'
 import LoadingSkeleton from '../../common/LoadingSkeleton.vue'
 

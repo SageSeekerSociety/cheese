@@ -6,7 +6,7 @@
 // 一个。所以「渲染出来的块」要先按同一套规矩把尾巴削干净，才和服务端那一串长得一样。
 //
 // 为什么住在这个目录而不是 lib/：它读的是编辑器的 DOM，不是内容本身。lib/ 里那些
-// (docMarkdown、docEditState) 是不碰 DOM 的，混进去会让「lib 里能跑单测」这条线糊掉。
+// (docSchema、docEditState) 是不碰 DOM 的，混进去会让「lib 里能跑单测」这条线糊掉。
 import type { Block } from '../../../cx_types'
 
 import { nextTick } from 'vue'

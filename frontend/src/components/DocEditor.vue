@@ -3,7 +3,7 @@
 // (drag handle, StarterKit + tables + task lists + code highlighting), but
 // WITHOUT the workspace chrome (comments, live-refs, tool drawers, git panels).
 //
-// It reuses the ONE shared extension list from docMarkdown.ts — so this editor
+// It reuses the ONE shared extension list in lib/docSchema — so this editor
 // and PanelDoc can never drift apart on schema/round-trip fidelity — and the
 // same getDoc/putDoc API + autosave contract, so 项目文档 edits persist exactly
 // like the workspace doc does.
@@ -15,7 +15,7 @@ import { DragHandle } from '@tiptap/extension-drag-handle-vue-3'
 import { EditorContent, useEditor } from '@tiptap/vue-3'
 
 import { ApiError, chatWsUrl, getDoc, putDoc } from '../api'
-import { compareRoundTrip, docExtensions, serializeDoc } from '../lib/docMarkdown'
+import { compareRoundTrip, docExtensions, serializeDoc } from '../lib/docSchema'
 
 import { t } from '@/i18n'
 

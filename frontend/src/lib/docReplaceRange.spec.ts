@@ -8,7 +8,8 @@ import { Editor } from '@tiptap/core'
 import { TextSelection } from '@tiptap/pm/state'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
-import { docExtensions, docReplaceRange } from './docMarkdown'
+import { docReplaceRange } from './docReplaceRange'
+import { docExtensions } from './docSchema'
 
 let editor: Editor
 
