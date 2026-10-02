@@ -1,158 +1,185 @@
 <script setup lang="ts">
-// 点 AI 队友开出的输入框。选中文字时（`scope: 'selection'`）点一个常用的说法，它直接
-// 改；自己写一句，是问它。不能直接改这一段时（只读、选区改不了）没有常用的说法，只能
-// 问。对整篇（`scope: 'document'`）时常用的说法和自己写的一句一样，都是问它。
-import { onMounted, ref } from 'vue'
+// 点 AI 队友开出的输入框：上面是输入框，一打开就能打字；下面是常用的说法，分「修改」
+// 「提问」两组。打字时下面跟着筛：对得上的那一项被选中，回车就是它；一项都对不上，
+// 回车把这句话交给它。方向键在列表里上下。点一项就做，不再确认。
+import type { AgentPreset, AgentScope, PresetContext } from '../../../lib/docAgent'
 
+import { computed, onMounted, ref, watch } from 'vue'
+
+import { matching, presetsFor } from '../../../lib/docAgent'
 import CheeseAvatar from '../../CheeseAvatar.vue'
-
-import DocEditButton from './DocEditButton.vue'
 
 import { t } from '@/i18n'
 
-const props = defineProps<{ agentName: string; scope: 'selection' | 'document'; editable?: boolean }>()
+const props = defineProps<{ agentName: string; scope: AgentScope; context: PresetContext }>()
 const emit = defineEmits<{
-  (e: 'edit', instruction: string): void
-  (e: 'ask', question: string): void
+  (e: 'run', preset: AgentPreset, label: string): void
+  (e: 'say', text: string): void
   (e: 'cancel'): void
 }>()
 
 const text = ref('')
-const input = ref<HTMLTextAreaElement | null>(null)
-const EDIT_PRESETS = ['concise', 'specific', 'formal', 'list'] as const
-const ASK_PRESETS = ['conflicts', 'memory', 'structure'] as const
-const label = () =>
-  t(props.scope === 'document' ? 'work.room.docEdit.docBoxLabel' : 'work.room.docEdit.boxLabel', {
-    agent: props.agentName,
-  })
+const input = ref<HTMLInputElement | null>(null)
+const name = (p: AgentPreset) => t(p.label)
+const groups = computed(() => matching(presetsFor(props.scope, props.context), text.value, name))
+const flat = computed(() => [...groups.value.edit, ...groups.value.ask])
+const active = ref(0)
+watch(flat, () => (active.value = 0))
+const asksOnly = computed(() => !props.context.editable)
 
 onMounted(() => input.value?.focus({ preventScroll: true }))
 
-function send() {
-  if (text.value.trim()) emit('ask', text.value.trim())
+function choose(preset: AgentPreset) {
+  emit('run', preset, name(preset))
+}
+function submit() {
+  const picked = flat.value[active.value]
+  if (picked) choose(picked)
+  else if (text.value.trim()) emit('say', text.value.trim())
 }
 function onKey(e: KeyboardEvent) {
   if (e.isComposing) return
   if (e.key === 'Escape') {
     e.preventDefault()
     emit('cancel')
-  } else if (e.key === 'Enter' && !e.shiftKey) {
+  } else if (e.key === 'Enter') {
     e.preventDefault()
-    send()
+    submit()
+  } else if (e.key === 'ArrowDown' && flat.value.length) {
+    e.preventDefault()
+    active.value = (active.value + 1) % flat.value.length
+  } else if (e.key === 'ArrowUp' && flat.value.length) {
+    e.preventDefault()
+    active.value = (active.value - 1 + flat.value.length) % flat.value.length
   }
 }
+const index = (p: AgentPreset) => flat.value.indexOf(p)
 </script>
 
 <template>
-  <div class="doc-rewrite-box" role="dialog" :aria-label="label()">
-    <label class="doc-rewrite-box__label" :for="`doc-agent-input-${scope}`">
-      <CheeseAvatar :size="18" :name="props.agentName" />
-      {{ label() }}
-    </label>
-    <textarea
-      :id="`doc-agent-input-${scope}`"
-      ref="input"
-      v-model="text"
-      autocomplete="off"
-      rows="2"
-      class="doc-rewrite-box__input"
-      :placeholder="t('work.room.docEdit.boxPlaceholder')"
-      :title="t('work.room.docEdit.boxKeyHint')"
-      @keydown="onKey"
-    />
-    <div class="doc-rewrite-box__row">
-      <template v-if="scope === 'selection'">
-        <button
-          v-for="preset in props.editable ? EDIT_PRESETS : []"
-          :key="preset"
-          type="button"
-          class="doc-rewrite-box__chip"
-          @click="emit('edit', t(`work.room.docEdit.preset.${preset}`))"
-        >
-          {{ t(`work.room.docEdit.preset.${preset}`) }}
-        </button>
+  <div class="doc-agent-box" role="dialog" :aria-label="agentName">
+    <div class="doc-agent-box__field">
+      <CheeseAvatar :size="18" :name="agentName" />
+      <input
+        ref="input"
+        v-model="text"
+        class="doc-agent-box__input"
+        autocomplete="off"
+        role="combobox"
+        aria-autocomplete="list"
+        :aria-expanded="flat.length > 0"
+        :aria-label="asksOnly ? t('work.room.docAgent.askPlaceholder') : t('work.room.docAgent.placeholder')"
+        :placeholder="asksOnly ? t('work.room.docAgent.askPlaceholder') : t('work.room.docAgent.placeholder')"
+        @keydown="onKey"
+      />
+      <button
+        v-if="text.trim() && !flat.length"
+        type="button"
+        class="doc-agent-box__send"
+        :aria-label="t('work.room.docAgent.send')"
+        @click="emit('say', text.trim())"
+      >
+        <v-icon size="16">mdi-arrow-up</v-icon>
+      </button>
+    </div>
+    <div v-if="flat.length" class="doc-agent-box__list" role="listbox">
+      <template v-for="group in ['edit', 'ask'] as const" :key="group">
+        <template v-if="groups[group].length">
+          <div class="doc-agent-box__group">
+            {{ group === 'edit' ? t('work.room.docAgent.groupEdit') : t('work.room.docAgent.groupAsk') }}
+          </div>
+          <button
+            v-for="preset in groups[group]"
+            :key="preset.id"
+            type="button"
+            role="option"
+            class="doc-agent-box__option"
+            :aria-selected="index(preset) === active"
+            @mouseenter="active = index(preset)"
+            @click="choose(preset)"
+          >
+            <v-icon size="16">{{ preset.icon }}</v-icon>
+            {{ name(preset) }}
+          </button>
+        </template>
       </template>
-      <template v-else>
-        <button
-          v-for="preset in ASK_PRESETS"
-          :key="preset"
-          type="button"
-          class="doc-rewrite-box__chip"
-          @click="emit('ask', t(`work.room.docEdit.docPreset.${preset}`))"
-        >
-          {{ t(`work.room.docEdit.docPreset.${preset}`) }}
-        </button>
-      </template>
-      <span class="doc-rewrite-box__spacer" />
-      <DocEditButton strong :disabled="!text.trim()" @click="send()">
-        {{ t('work.room.docEdit.send') }}
-      </DocEditButton>
     </div>
   </div>
 </template>
 
 <style scoped>
-.doc-rewrite-box {
+.doc-agent-box {
   box-sizing: border-box;
   width: 100%;
-  padding: 12px;
   border: 1px solid var(--line-2);
   border-radius: var(--radius-lg);
   background: var(--raised);
   box-shadow: var(--shadow-2);
 }
-.doc-rewrite-box__label {
+.doc-agent-box__field {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
-  line-height: var(--lh-13);
-  color: var(--muted);
+  padding: 10px 12px;
 }
-.doc-rewrite-box__input {
-  display: block;
-  box-sizing: border-box;
-  width: 100%;
-  margin: 6px 0 10px;
-  padding: 8px 10px;
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-md);
-  background: var(--surface);
+.doc-agent-box__list {
+  padding: 0 6px 6px;
+  border-top: 1px solid var(--line);
+}
+.doc-agent-box__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
   color: var(--text);
   font: inherit;
   font-size: 14px;
   line-height: var(--lh-14);
-  resize: none;
 }
-.doc-rewrite-box__input:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: -1px;
+.doc-agent-box__input::placeholder {
+  color: var(--faint);
 }
-.doc-rewrite-box__row {
-  display: flex;
-  flex-wrap: wrap;
+.doc-agent-box__send {
+  display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
-  gap: 6px;
-}
-.doc-rewrite-box__spacer {
-  flex: 1 1 auto;
-}
-.doc-rewrite-box__chip {
+  justify-content: center;
+  width: 26px;
   height: 26px;
-  padding: 0 10px;
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-pill);
-  background: var(--surface);
+  border-radius: var(--radius-sm);
+  background: var(--ink);
+  color: var(--surface);
+}
+.doc-agent-box__send:focus-visible,
+.doc-agent-box__option:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+.doc-agent-box__group {
+  padding: 8px 12px 4px;
+  color: var(--faint);
+  font-size: 12px;
+  line-height: var(--lh-12);
+}
+.doc-agent-box__option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: var(--radius-md);
   color: var(--text);
-  font-size: 13px;
-  cursor: pointer;
+  font-size: 14px;
+  line-height: var(--lh-14);
+  text-align: left;
   transition: background var(--dur-quick) var(--ease-standard);
 }
-.doc-rewrite-box__chip:hover {
+.doc-agent-box__option[aria-selected='true'] {
   background: var(--fill);
 }
-.doc-rewrite-box__chip:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
+.doc-agent-box__option :deep(.v-icon) {
+  color: var(--muted);
 }
 </style>

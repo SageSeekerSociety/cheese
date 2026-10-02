@@ -15,10 +15,9 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 import { editMarks, setEditMarks } from '../../../lib/docEditMarks'
 
-import DocAgentAnswer from './DocAgentAnswer.vue'
 import DocAgentBox from './DocAgentBox.vue'
+import DocAgentResult from './DocAgentResult.vue'
 import DocReviewCard from './DocReviewCard.vue'
-import DocRewriteBar from './DocRewriteBar.vue'
 import DocSuggestionCard from './DocSuggestionCard.vue'
 
 const props = defineProps<{
@@ -35,6 +34,11 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ (e: 'open-thread', id: string): void }>()
 
+async function toComment() {
+  const thread = await props.rewrite.toComment()
+  if (thread) emit('open-thread', thread)
+}
+
 const root = ref<HTMLElement | null>(null)
 const card = ref<HTMLElement | null>(null)
 const place = ref<{ top: number; left: number; width: number } | null>(null)
@@ -46,15 +50,9 @@ const anchor = computed(() => {
   const editor = props.editor
   if (!editor || editor.isDestroyed) return null
   const phase = props.rewrite.phase.value
-  if (phase !== 'idle' && phase !== 'pending') {
+  if (phase !== 'idle') {
     const target = editMarks(editor.state).target
-    if (target)
-      return {
-        kind: 'rewrite' as const,
-        from: target.from,
-        to: target.to,
-        width: phase === 'asking' || phase === 'waiting' || phase === 'answered' ? 460 : 0,
-      }
+    if (target) return { kind: 'rewrite' as const, from: target.from, to: target.to, width: 420 }
   }
   const change = props.review.current.value
   if (change) return { kind: 'review' as const, from: change.from, to: change.to, width: 540 }
@@ -190,29 +188,27 @@ onBeforeUnmount(() => {
         v-else-if="rewrite.phase.value === 'asking'"
         :agent-name="agentName"
         scope="selection"
-        :editable="rewrite.editable.value"
-        @edit="rewrite.edit"
-        @ask="rewrite.question"
+        :context="rewrite.context.value"
+        @run="rewrite.run"
+        @say="rewrite.say"
         @cancel="rewrite.close"
       />
-      <DocAgentAnswer
-        v-else-if="rewrite.phase.value === 'waiting' || rewrite.phase.value === 'answered'"
-        :agent-name="agentName"
-        :waiting="rewrite.phase.value === 'waiting'"
-        :answer="rewrite.answer.value"
-        :posted="!!rewrite.threadId.value"
-        :mention-names="mentionNames"
-        @open-thread="rewrite.threadId.value && emit('open-thread', rewrite.threadId.value)"
-        @close="rewrite.close"
-      />
-      <DocRewriteBar
+      <DocAgentResult
         v-else
         :agent-name="agentName"
-        :undone="rewrite.phase.value === 'undone'"
+        :phase="rewrite.phase.value"
+        :kind="rewrite.kind.value"
+        :answer="rewrite.answer.value"
+        :changed="rewrite.edits.value.length"
         :busy="rewrite.busy.value"
+        commentable
+        :mention-names="mentionNames"
+        @stop="rewrite.stop"
         @undo="rewrite.undo"
         @redo="rewrite.redo"
-        @again="rewrite.again"
+        @say="rewrite.say"
+        @comment="toComment"
+        @close="rewrite.close"
       />
     </div>
   </div>

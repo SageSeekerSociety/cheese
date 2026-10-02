@@ -3,7 +3,7 @@
 import uuid
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class RestoreIn(BaseModel):
@@ -35,8 +35,8 @@ class PassageEditsIn(BaseModel):
     reason: str | None = Field(default=None, max_length=500)
 
 
-class RewriteIn(BaseModel):
-    """Rewrite a selection (``POST /topics/{id}/doc/rewrite``)."""
+class SelectionIn(BaseModel):
+    """A selection in the living document, as the editor writes it out."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -46,4 +46,30 @@ class RewriteIn(BaseModel):
     #: The selection, as offsets into ``block``.
     start: int = Field(ge=0)
     end: int = Field(ge=0)
-    instruction: str = Field(min_length=1, max_length=2000)
+
+    @model_validator(mode="after")
+    def _inside(self) -> "SelectionIn":
+        if not self.start < self.end <= len(self.block):
+            raise ValueError("the selection is not inside its block")
+        return self
+
+
+class AgentAskIn(BaseModel):
+    """Ask the room's AI teammate from the document
+    (``POST /topics/{id}/doc/agent``): a shortcut by its id, or what the person
+    wrote, about a selection or the whole document."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: The box's conversation, to go on with; none starts one.
+    conversation: uuid.UUID | None = None
+    preset: str | None = Field(default=None, max_length=32)
+    text: str = Field(default="", max_length=4000)
+    selection: SelectionIn | None = None
+
+    @model_validator(mode="after")
+    def _asked(self) -> "AgentAskIn":
+        self.text = self.text.strip()
+        if not self.preset and not self.text:
+            raise ValueError("nothing was asked")
+        return self

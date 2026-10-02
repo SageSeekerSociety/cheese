@@ -3,7 +3,9 @@
 The session presents the credential it was started with, which names the
 project, the room, the agent and the thread; nothing else opens these. A tool
 works only while a question of that thread is being answered, and what it
-changes in the document is recorded as done for the person who asked it.
+changes in the document is recorded as done for the person who asked it, and
+noted under the answer's work id for whoever is waiting on the answer. A
+question that may only be answered changes nothing.
 """
 
 import uuid
@@ -62,6 +64,8 @@ async def doc_agent_tool(name: str, request: Request, db: DbSession) -> dict:
         for e in arguments.get("edits") or []
         if isinstance(e, dict)
     ]
+    if not held.may_edit:
+        return ok({"text": "这次只回答，不改文档；文档没有变。"})
     if not edits:
         return ok({"text": "没有给出要改的地方，文档没有变。"})
     if doc is None:
@@ -85,6 +89,8 @@ async def doc_agent_tool(name: str, request: Request, db: DbSession) -> dict:
                 "先用 read_document 读最新的全文，照读到的原文改好再试。"
             }
         )
+    if redis is not None:
+        await doc_agent.record_edits(redis, held.work, edits)
     version = ((result.get("stored") or {}).get("data") or {}).get("doc_version")
     done = f"已改了 {len(result.get('edits') or edits)} 处"
     return ok({"text": f"{done}（第 {version} 版）。" if version else f"{done}。"})

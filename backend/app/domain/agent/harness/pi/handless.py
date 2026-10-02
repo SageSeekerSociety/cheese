@@ -347,6 +347,13 @@ class HandlessSessions:
                 return
             await asyncio.sleep(0.2)
 
+    async def abort(self, state: str) -> None:
+        """Stop what the session in ``state`` is doing, whichever process asked
+        it; a session that is not running has nothing to stop."""
+        host = settings.agent_session_device_id
+        if host and self.hub.is_online(host):
+            await self._abort(Session(host, state))
+
     async def _abort(self, session: Session) -> None:
         try:
             await self.call(session, "abort", {}, timeout=15)
