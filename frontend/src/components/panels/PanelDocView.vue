@@ -156,6 +156,7 @@ function openAi(snapshot: DocSelectionSnapshot | null) {
 }
 watch([() => props.topic?.id, () => props.commentAuthor], () => {
   openId.value = null
+  emit('close-ai')
 })
 function quoteState(id: string) {
   return surfaceRef.value?.commentQuoteState(id) ?? 'missing'
