@@ -68,7 +68,9 @@ it('rejects a drag when the image source changes before pointerup', async () => 
 // 有内容分界线时，按下到松开几乎没有位移就算「点」：直接用 blockAt 框住那一块，
 // 不用先切工具、也不用拖准。真拖了（位移过阈值）还是自由框选，只是四条边吸到近处
 // 的分界线上。没有分界线（跨域读像素失败等）时两条都退化成原来的自由拖。
-const lines = { columns: [100, 300], rows: [100, 300] }
+// 内容框只有左下那一块（原图像素 100..300 × 100..300，显示 1:2 所以是 100 见方），
+// 另外三条分界线在 (100,300) 上——它们归吸附用，点选按框走。
+const lines = { columns: [100, 300], rows: [100, 300], boxes: [{ x: 100, y: 100, width: 200, height: 200 }] }
 function mapped(region: { x: number; y: number; width: number; height: number }) {
   return [{ region, identity: 'v1', src: '', naturalWidth: 1000, naturalHeight: 500 }]
 }
@@ -177,6 +179,17 @@ it('yields the candidate box to the real one as soon as the press lands', async 
   await fireEvent.pointerMove(overlay, { pointerId: 7, clientX: 160, clientY: 170 })
   expect(hoverBox(ui)).toBeNull()
   expect(ui.container.querySelector('.raster-region__box')).toBeTruthy()
+})
+it('swaps the cursor only while a block is actually under the pointer', async () => {
+  const ui = render(DesignRasterRegion, {
+    props: { image: imageFixture(), enabled: true, identity: 'v1', profile: lines },
+  })
+  const overlay = ui.getByRole('group', { name: '选择图片区域' })
+  await hover(ui, [110, 120])
+  expect(overlay.classList.contains('is-targeting')).toBe(true)
+  // 退回整张图时没有「那一块」可言，光标也回普通的十字。
+  await hover(ui, [210, 220])
+  expect(overlay.classList.contains('is-targeting')).toBe(false)
 })
 it('without a content profile there is nothing to preview', async () => {
   const ui = render(DesignRasterRegion, { props: { image: imageFixture(), enabled: true, identity: 'v1' } })

@@ -29,6 +29,13 @@ const rectangle = computed(() => (draft.value && geometry.value ? displayedRegio
 const hoverRectangle = computed(() =>
   hover.value && hoverGeometry.value ? displayedRegion(hover.value, hoverGeometry.value) : null
 )
+/** 底下真的认出了一块（不是退回整张图）时，光标换成十字——看得见才敢点。 */
+const targeting = computed(() => {
+  const region = hover.value
+  const size = hoverGeometry.value
+  if (!region || !size) return false
+  return region.width < size.naturalWidth || region.height < size.naturalHeight
+})
 /** 图当前在屏幕上的位置与尺寸；每次问都现算，滚动和缩放之后才不会指错地方。 */
 function measure(): ImageGeometry | null {
   const image = props.image
@@ -136,6 +143,7 @@ watch([() => props.enabled, () => props.identity, () => props.image], reset, { f
   <div
     v-if="enabled"
     class="raster-region"
+    :class="{ 'is-targeting': targeting }"
     tabindex="0"
     role="group"
     :aria-label="t('design.region')"
@@ -176,6 +184,16 @@ watch([() => props.enabled, () => props.identity, () => props.image], reset, { f
   inset: 0;
   cursor: crosshair;
   touch-action: none;
+}
+/*
+ * 底下的十字黑线压在白线上面：整条线横竖贯到光标框外，落在深色内容和浅色
+ * 空白上都看得见。热点在正中间，指哪儿框哪儿。
+ */
+.raster-region.is-targeting {
+  cursor:
+    url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><g fill="none" stroke="white" stroke-width="3"><path d="M12 0v24M0 12h24"/></g><g fill="none" stroke="black" stroke-width="1"><path d="M12 0v24M0 12h24"/></g></svg>')
+      12 12,
+    crosshair;
 }
 .raster-region:focus-visible {
   outline: 2px solid var(--accent);
