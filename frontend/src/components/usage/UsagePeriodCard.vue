@@ -6,10 +6,12 @@ import { useI18n } from 'vue-i18n'
 
 import { fmtResetAt, LINE_KEY, pct, remainingTone, USAGE_LINES } from '@/lib/creditUsage'
 
-// 本月这一块：方案、用了多少、还剩多少、什么时候重置。个人页的条按产品线分三色，
-// 团队页是一种颜色。方案有使用上限时，每条上限一行。
+// 方案这一块。按月发放的方案：本月用了多少、还剩多少、什么时候重置，个人页的条按
+// 产品线分三色，团队页是一种颜色。按时间窗口限额的方案没有月额度，每个窗口一行：
+// 用了多少、什么时候清零。
 const props = defineProps<{
-  period: UsagePeriod
+  /** `null`：方案按时间窗口限额，看 `windows`。 */
+  period: UsagePeriod | null
   planName: string
   /** 「十月」这样的月份名。 */
   month: string
@@ -20,8 +22,8 @@ const props = defineProps<{
 
 const { t, locale } = useI18n()
 
-const used = computed(() => props.period.used_ratio)
-const remaining = computed(() => props.period.remaining_ratio)
+const used = computed(() => props.period?.used_ratio ?? null)
+const remaining = computed(() => props.period?.remaining_ratio ?? null)
 const tone = computed(() => remainingTone(remaining.value))
 const usedUp = computed(() => tone.value === 'out')
 
@@ -31,57 +33,74 @@ const segments = computed(() => {
   if (!props.lines) return [{ line: 'collab' as UsageLine, width: u }]
   return USAGE_LINES.map((line) => ({ line, width: u * (props.lines?.[line] ?? 0) }))
 })
+
+function windowUsed(w: UsageWindow): string {
+  const value = pct(w.used_ratio)
+  if (w.calendar === 'week') return t('usage.windows.week', { pct: value })
+  if (w.calendar === 'month') return t('usage.windows.month', { pct: value })
+  return t('usage.windows.used', { hours: w.hours, pct: value })
+}
 </script>
 
 <template>
-  <section class="upc" :aria-label="t('usage.period.label')">
-    <div class="upc__head">
-      <span class="upc__label">
-        {{ t('usage.period.used', { month }) }}
-        <span class="upc__plan">{{ planName }}</span>
-      </span>
-      <span class="upc__figure t-num">
-        {{ period.unlimited || used === null ? t('usage.period.unlimited') : pct(used) }}
-      </span>
-    </div>
-
-    <template v-if="!period.unlimited && used !== null">
-      <div class="upc__meta">
-        <span :class="`upc__left upc__left--${tone}`">
-          {{ usedUp ? t('usage.period.usedUp') : t('usage.period.remaining', { pct: pct(remaining ?? 0) }) }}
+  <section class="upc" :aria-label="period ? t('usage.period.label') : t('usage.windows.title')">
+    <template v-if="period">
+      <div class="upc__head">
+        <span class="upc__label">
+          {{ t('usage.period.used', { month }) }}
+          <span class="upc__plan">{{ planName }}</span>
         </span>
-        <span v-if="period.resets_at">{{
-          t('usage.period.resets', { at: fmtResetAt(period.resets_at, locale) })
-        }}</span>
+        <span class="upc__figure t-num">
+          {{ period.unlimited || used === null ? t('usage.period.unlimited') : pct(used) }}
+        </span>
       </div>
-      <div
-        class="upc__bar"
-        role="img"
-        :aria-label="usedUp ? t('usage.period.usedUp') : t('usage.period.usedAria', { pct: pct(used) })"
-      >
-        <span
-          v-for="segment in segments"
-          :key="segment.line"
-          :class="`upc__seg upc__seg--${segment.line}`"
-          :style="{ width: `${segment.width * 100}%` }"
-        />
+      <template v-if="!period.unlimited && used !== null">
+        <div class="upc__meta">
+          <span :class="`upc__left upc__left--${tone}`">
+            {{ usedUp ? t('usage.period.usedUp') : t('usage.period.remaining', { pct: pct(remaining ?? 0) }) }}
+          </span>
+          <span v-if="period.resets_at">{{
+            t('usage.period.resets', { at: fmtResetAt(period.resets_at, locale) })
+          }}</span>
+        </div>
+        <div
+          class="upc__bar"
+          role="img"
+          :aria-label="usedUp ? t('usage.period.usedUp') : t('usage.period.usedAria', { pct: pct(used) })"
+        >
+          <span
+            v-for="segment in segments"
+            :key="segment.line"
+            :class="`upc__seg upc__seg--${segment.line}`"
+            :style="{ width: `${segment.width * 100}%` }"
+          />
+        </div>
+      </template>
+      <div v-if="lines" class="upc__legend">
+        <span v-for="line in USAGE_LINES" :key="line" class="upc__key">
+          <span :class="`upc__dot upc__seg--${line}`" aria-hidden="true" />
+          {{ t(LINE_KEY[line]) }}
+          <span class="upc__keypct t-num">{{ pct((used ?? 0) * (lines[line] ?? 0)) }}</span>
+        </span>
       </div>
     </template>
-
-    <div v-if="lines" class="upc__legend">
-      <span v-for="line in USAGE_LINES" :key="line" class="upc__key">
-        <span :class="`upc__dot upc__seg--${line}`" aria-hidden="true" />
-        {{ t(LINE_KEY[line]) }}
-        <span class="upc__keypct t-num">{{ pct((used ?? 0) * (lines[line] ?? 0)) }}</span>
-      </span>
-    </div>
-
-    <div v-for="w in windows ?? []" :key="w.hours" class="upc__window">
-      <span>{{ t('usage.windows.used', { hours: w.hours, pct: pct(w.used_ratio) }) }}</span>
-      <span v-if="w.reopens_at" class="upc__left upc__left--out">{{
-        t('usage.windows.reopens', { at: fmtResetAt(w.reopens_at, locale) })
-      }}</span>
-    </div>
+    <template v-else>
+      <div class="upc__head">
+        <span class="upc__label">
+          {{ t('usage.windows.title') }}
+          <span class="upc__plan">{{ planName }}</span>
+        </span>
+      </div>
+      <div v-for="w in windows ?? []" :key="w.calendar ?? w.hours ?? ''" class="upc__window">
+        <div class="upc__meta">
+          <span :class="`upc__left upc__left--${remainingTone(1 - w.used_ratio)}`">{{ windowUsed(w) }}</span>
+          <span v-if="w.resets_at">{{ t('usage.period.resets', { at: fmtResetAt(w.resets_at, locale) }) }}</span>
+        </div>
+        <div class="upc__bar" role="img" :aria-label="windowUsed(w)">
+          <span class="upc__seg upc__seg--collab" :style="{ width: `${w.used_ratio * 100}%` }" />
+        </div>
+      </div>
+    </template>
   </section>
 </template>
 
@@ -126,14 +145,19 @@ const segments = computed(() => {
   line-height: var(--lh-23);
 }
 
-.upc__meta,
-.upc__window {
+.upc__meta {
   display: flex;
   justify-content: space-between;
   gap: 12px;
   color: var(--muted);
   font-size: 13px;
   line-height: var(--lh-13);
+}
+
+.upc__window {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .upc__left--low {
