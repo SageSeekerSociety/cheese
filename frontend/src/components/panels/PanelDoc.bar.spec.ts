@@ -1,15 +1,13 @@
 // 文档那一条横条：平常只有谁也在这儿。只读是偶尔才进的状态——入口在 ⋯ 里，进去之后
 // 这一条上写着只读，点它就回来；没有编辑权限时它只是说明，回不去。
 import type { Component } from 'vue'
-import type { Block, Topic } from '../../cx_types'
+import type { Topic } from '../../cx_types'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-
-const getDoc = vi.fn()
 
 vi.mock('../../composables/useDocCollab', async () => ({
   useDocCollab: (await import('../../test/fakeDocCollab')).useFakeDocCollab,
@@ -18,7 +16,6 @@ vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
   return {
     ...actual,
-    getDoc: (...a: unknown[]) => getDoc(...a),
     getComments: vi.fn(async () => ({ data: [], total: 0 })),
     getDocNodes: vi.fn(async () => ({ data: [], total: 0 })),
   }
@@ -65,8 +62,6 @@ beforeAll(() => {
 beforeEach(() => {
   resetRooms()
   seedRoom(topic.id, '第一段\n')
-  getDoc.mockReset()
-  getDoc.mockResolvedValue({ id: 'd1', kind: 'doc', content: '第一段\n', doc_version: 1 } as unknown as Block)
 })
 
 afterEach(cleanup)

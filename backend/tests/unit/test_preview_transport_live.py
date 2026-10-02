@@ -7,6 +7,8 @@ this transport test.
 
 import gzip
 import http.client
+import json
+import multiprocessing
 import socket
 import threading
 import time
@@ -21,6 +23,148 @@ from app.api.routes import app_preview as route
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import preview_tunnel as wire
 from app.domain.agent.preview_hub import PreviewHub
+
+
+def _preview_role_peer(listener, stop, signing_key):
+    """A separately owned ASGI process, stopped through its own test event."""
+    from app.core.config import settings
+    from app.preview_connection_app import create_app
+
+    settings.jwt_secret = signing_key
+    server = uvicorn.Server(
+        uvicorn.Config(
+            create_app(),
+            log_level="error",
+            timeout_graceful_shutdown=2,
+        )
+    )
+
+    def finish():
+        stop.wait()
+        server.should_exit = True
+
+    threading.Thread(target=finish, daemon=True).start()
+    server.run(sockets=[listener])
+
+
+@pytest.mark.parametrize("tunnel_path", ["/preview/tunnel", "/api/preview/tunnel"])
+def test_independent_preview_role_keeps_helper_when_backend_client_is_replaced(
+    tmp_path, monkeypatch, tunnel_path
+):
+    """Real owner process, scoped helper socket and native HTTP listener.
+
+    This tests role/client separation, not ingress rollout or DB authorization.
+    The legacy helper capability here deliberately makes no Linux identity claim.
+    """
+    import asyncio
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    import httpx
+
+    from app.core.config import settings
+    from app.domain.agent.preview_owner import PreviewOwnerClient
+
+    class App(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Length", "2")
+            self.end_headers()
+            self.wfile.write(b"ok")
+
+        def log_message(self, *args):
+            pass
+
+    native = ThreadingHTTPServer(("127.0.0.1", 0), App)
+    app_thread = threading.Thread(target=native.serve_forever, daemon=True)
+    app_thread.start()
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+    port = listener.getsockname()[1]
+    context = multiprocessing.get_context("spawn")
+    stop = context.Event()
+    owner = context.Process(
+        target=_preview_role_peer,
+        args=(listener, stop, settings.jwt_secret),
+    )
+    owner.start()
+    listener.close()
+    origin = f"http://127.0.0.1:{port}"
+    monkeypatch.setattr(settings, "preview_connection_url", origin)
+    tunnel = None
+    helper = None
+    try:
+
+        def healthy():
+            try:
+                return httpx.get(origin + "/healthz", timeout=0.3).status_code == 200
+            except httpx.HTTPError:
+                return False
+
+        _wait_for(healthy, "independent owner starts")
+        boot = httpx.get(origin + "/healthz").json()["owner_incarnation"]
+        topic, seat = uuid.uuid4(), "role-fixture"
+        token = mint_scoped_token(
+            project_id=str(uuid.uuid4()),
+            topic_id=str(topic),
+            agent_handle=seat,
+        )
+        tunnel, _ = wire.open_ws(
+            f"ws://127.0.0.1:{port}{tunnel_path}?token={token}",
+        )
+        ports = tmp_path / "role.port"
+        ports.write_text(str(native.server_port))
+        session = wire.Session(tunnel, wire.PortSource(str(ports)))
+        helper = threading.Thread(target=session.serve, daemon=True)
+        helper.start()
+
+        async def fresh_backend_client():
+            async with httpx.AsyncClient() as transport:
+                return await PreviewOwnerClient(transport).inspect(
+                    topic, seat, probe=True
+                )
+
+        # Each business-client lifecycle closes completely; the owner does not.
+        first = asyncio.run(fresh_backend_client())
+        second = asyncio.run(fresh_backend_client())
+        assert first.alive and second.alive
+        assert first.state == "instance_identity_unsupported"
+        assert first.owner_incarnation == second.owner_incarnation == boot
+        assert first.transport_epoch == second.transport_epoch
+        assert owner.is_alive() and helper.is_alive()
+        print(
+            json.dumps(
+                {
+                    "boundary": "independent-preview-role-and-replaced-backend-client",
+                    "owner_pid": owner.pid,
+                    "owner_port": port,
+                    "native_app_port": native.server_port,
+                    "tunnel_path": tunnel_path,
+                    "owner_incarnation": boot,
+                    "transport_epoch": first.transport_epoch,
+                    "fresh_probes": 2,
+                    "native_identity": "legacy-unsupported",
+                },
+                sort_keys=True,
+            )
+        )
+    finally:
+        if tunnel is not None:
+            try:
+                tunnel.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            tunnel.close()
+        if helper is not None:
+            helper.join(6)
+            assert not helper.is_alive()
+        stop.set()
+        owner.join(6)
+        native.shutdown()
+        native.server_close()
+        app_thread.join(3)
+        assert not owner.is_alive()
+        assert owner.exitcode == 0
 
 
 def _wait_for(predicate, label):

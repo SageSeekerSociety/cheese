@@ -14,11 +14,27 @@ from fastapi.responses import Response, StreamingResponse
 from starlette.websockets import WebSocket, WebSocketDisconnect, WebSocketState
 
 from app.api import proxy
+from app.core.config import settings
 from app.core.sandbox_auth import scoped_token_claims
 from app.domain.agent import preview_tunnel as wire
-from app.domain.agent.preview_hub import SEND_TIMEOUT_S, PreviewStream, preview_hub
+from app.domain.agent.preview_hub import (
+    SEND_TIMEOUT_S,
+    PreviewAdmissionError,
+    PreviewHub,
+    PreviewStream,
+    preview_hub,
+)
 
 tunnel_router = APIRouter(prefix="/preview", tags=["preview"])
+
+
+def connection_hub(conn: Request | WebSocket) -> PreviewHub:
+    state = getattr(conn.scope.get("app"), "state", None)
+    hub = getattr(state, "preview_hub", None)
+    if hub is None and settings.preview_connection_mode == "owner":
+        raise PreviewAdmissionError("transport_unavailable")
+    return preview_hub if hub is None else hub
+
 
 # Handshake headers that belong to THIS leg and must not be relayed to the next
 # one. The machine performs its own handshake to the app, so a forwarded key or
@@ -132,6 +148,7 @@ async def preview_tunnel(
     also keeps it clear of the trap a long-lived socket falls into when it holds a
     request session open for the life of the connection (#356).
     """
+    hub = connection_hub(websocket)
     claims = scoped_token_claims(token or "") or {}
     seat = claims.get("a")
     issued = claims.get("iat")
@@ -148,6 +165,10 @@ async def preview_tunnel(
             reason="a cheese token naming a topic and a teammate is required",
         )
         return
+    if not hub.accepting:
+        await websocket.accept()
+        await websocket.close(code=1012, reason="preview owner draining")
+        return
     offered = websocket.headers.get(wire.CAPS_HEADER, "").split(",")
     capabilities = wire.CAPABILITIES.intersection(part.strip() for part in offered)
     await websocket.accept(
@@ -160,8 +181,8 @@ async def preview_tunnel(
     # it left behind is still dialling. Hang up on the one being displaced: it
     # would otherwise sit here forever holding a socket nothing will ever speak
     # on again, and the close code tells it not to dial back in.
-    displaced = preview_hub.machine(topic_id, seat)
-    machine = preview_hub.attach(
+    displaced = hub.machine(topic_id, seat)
+    machine = hub.attach(
         topic_id,
         seat,
         transport,
@@ -169,7 +190,10 @@ async def preview_tunnel(
         capabilities=capabilities,
     )
     if machine is None:
-        await transport.hang_up()
+        if hub.accepting:
+            await transport.hang_up()
+        else:
+            await websocket.close(code=1012, reason="preview owner draining")
         return
     if displaced is not None and isinstance(
         displaced.transport, _WebSocketPreviewTransport
@@ -180,7 +204,12 @@ async def preview_tunnel(
         await machine.failed.wait()
         try:
             async with asyncio.timeout(SEND_TIMEOUT_S):
-                await websocket.close(code=1011, reason="preview tunnel write failed")
+                await websocket.close(
+                    code=1011 if hub.accepting else 1012,
+                    reason="preview tunnel write failed"
+                    if hub.accepting
+                    else "preview owner draining",
+                )
         except (TimeoutError, OSError, WebSocketDisconnect, RuntimeError):
             pass
 
@@ -217,7 +246,7 @@ async def preview_tunnel(
                     return_exceptions=True,
                 )
         finally:
-            preview_hub.detach(machine)
+            hub.detach(machine)
             await machine.drain()
 
 
@@ -259,6 +288,7 @@ async def relay_http(
 ) -> Response:
     """Forward an already authorized content-host request without URL rewriting,
     to the app ``seat`` (the teammate who declared it) is serving."""
+    hub = connection_hub(request)
     body = bytearray()
     async for chunk in request.stream():
         if len(body) + len(chunk) > wire.MAX_REQUEST_BYTES:
@@ -271,7 +301,7 @@ async def relay_http(
                 return
 
     waiting = asyncio.create_task(
-        preview_hub.request_stream(
+        hub.request_stream(
             topic_id,
             seat,
             method=request.method,
@@ -279,6 +309,7 @@ async def relay_http(
             headers=_app_headers(request),
             body=bytes(body),
             instance=instance,
+            typed=hub is not preview_hub,
         )
     )
     gone = asyncio.create_task(disconnected())
@@ -291,14 +322,33 @@ async def relay_http(
             )
             if gone in done:
                 return Response(status_code=404, content=b"preview unavailable")
-            upstream = await waiting
+            try:
+                upstream = await waiting
+            except PreviewAdmissionError as exc:
+                return Response(
+                    status_code=409 if exc.state == "instance_gone" else 503,
+                    content=b"preview unavailable",
+                    headers={
+                        "Cache-Control": "no-store",
+                        "X-Cheese-Preview-State": exc.state,
+                        **(
+                            {"Retry-After": "1"} if exc.state != "instance_gone" else {}
+                        ),
+                    },
+                )
         finally:
             gone.cancel()
             if not waiting.done():
                 waiting.cancel()
             await asyncio.gather(waiting, gone, return_exceptions=True)
         if upstream is None:
-            return Response(status_code=404, content=b"preview unavailable")
+            if hub is preview_hub:
+                return Response(status_code=404, content=b"preview unavailable")
+            return Response(
+                status_code=503,
+                content=b"preview unavailable",
+                headers={"Retry-After": "1", "Cache-Control": "no-store"},
+            )
         kept = _response_headers(upstream.headers)
         media_type = next((v for k, v in kept if k.lower() == "content-type"), None)
         response = _PreviewStreamingResponse(upstream)
@@ -328,7 +378,8 @@ async def relay_ws(
     websocket: WebSocket, topic_id: uuid.UUID, seat: str, *, instance: str | None = None
 ) -> None:
     """Pump the authorized preview's HMR socket without holding a DB session."""
-    stream = preview_hub.open_stream(topic_id, seat)
+    hub = connection_hub(websocket)
+    stream = hub.open_stream(topic_id, seat)
     if stream is None:
         await websocket.close(code=1011)
         return
@@ -415,7 +466,9 @@ async def _pump(browser: WebSocket, stream: PreviewStream) -> None:
             except (TimeoutError, RuntimeError):
                 return
             if op == wire.OP_CLOSE:
-                if stream.close_metadata:
+                if stream.maintenance:
+                    code, reason = 1012, "preview owner maintenance"
+                elif stream.close_metadata:
                     code, reason = wire.parse_close(payload)
                 else:
                     code, reason = 1011, "preview upstream disconnected"
@@ -438,5 +491,6 @@ async def _pump(browser: WebSocket, stream: PreviewStream) -> None:
         # releasing its stream so a dormant HMR connection cannot leak tasks.
         for task in (up, down):
             task.cancel()
-        await asyncio.gather(up, down, return_exceptions=True)
+        with anyio.CancelScope(shield=True):
+            await asyncio.gather(up, down, return_exceptions=True)
         await stream.aclose()

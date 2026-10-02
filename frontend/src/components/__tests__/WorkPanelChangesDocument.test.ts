@@ -72,7 +72,6 @@ vi.mock('../../api', async () => {
     documentRevisions: (...a: unknown[]) => documentRevisions(...a),
     decideDocumentRevisions: (...a: unknown[]) => decideDocumentRevisions(...a),
     writeFile: vi.fn().mockResolvedValue({ path: 'x', version: 'v2' }),
-    getDoc: vi.fn().mockResolvedValue({ markdown: '', title: '' }),
     getComments: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getDocNodes: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getTranscript: vi.fn().mockResolvedValue({ data: [], total: 0 }),

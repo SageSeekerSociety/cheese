@@ -482,6 +482,20 @@ describe("有人发来消息的时候", () => {
     process.env.CHEESE_REPLY_OWED = path.join(scratch(), "reply-owed.json");
   }
 
+  // A job has ended once the extension writes its `exit` file. How long after
+  // the command that is depends on the machine, and a loaded one takes longer
+  // than any fixed wait; the bound only turns a hang into a failure. It stays
+  // under the 30 s of the `sleep 30` below, so that one ending by itself is
+  // not mistaken for being stopped.
+  async function ended(dir: string): Promise<boolean> {
+    const deadline = Date.now() + 20_000;
+    while (!fs.existsSync(path.join(dir, "exit"))) {
+      if (Date.now() > deadline) return false;
+      await new Promise((done) => setTimeout(done, 50));
+    }
+    return true;
+  }
+
   it("先回话，别的工具在那之前都被拒", async () => {
     fresh();
     const { pi } = await load();
@@ -514,7 +528,7 @@ describe("有人发来消息的时候", () => {
     const job = /任务 (job-[a-z0-9-]+)/.exec(said)?.[1] as string;
     assert.match((await pi.call("bash_list", {})).content[0].text, /running/);
 
-    await new Promise((done) => setTimeout(done, 3500));
+    assert.ok(await ended(path.join(jobs, job)), "the command never finished");
     assert.match(fs.readFileSync(path.join(jobs, job, "output"), "utf8"), /LATE/);
     assert.match((await pi.call("bash_list", {})).content[0].text, /exited 0/);
     socket.close();
@@ -531,8 +545,7 @@ describe("有人发来消息的时候", () => {
     const job = /任务 (job-[a-z0-9-]+)/.exec((await call).content[0].text)?.[1] as string;
 
     await pi.call("bash_kill", { id: job });
-    await new Promise((done) => setTimeout(done, 2500));
-    assert.ok(fs.existsSync(path.join(jobs, job, "exit")), "the command is still running");
+    assert.ok(await ended(path.join(jobs, job)), "the command is still running");
     socket.close();
   });
 

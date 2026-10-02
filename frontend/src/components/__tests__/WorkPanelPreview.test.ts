@@ -48,7 +48,6 @@ vi.mock('../../api', async () => {
     listRoomOutputs: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     readPreviewFile: (...a: unknown[]) => readFile(...a),
     requestPreviewSession: (...a: unknown[]) => requestPreviewSession(...a),
-    getDoc: vi.fn().mockResolvedValue({ markdown: '', title: '' }),
     getComments: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getDocNodes: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listFiles: vi.fn().mockResolvedValue({ data: [], total: 0 }),

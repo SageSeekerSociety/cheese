@@ -132,6 +132,82 @@ def test_a_stale_write_to_the_living_doc_is_refused_with_the_way_out(client, roo
     assert "另一个人的版本" in cheese.run_platform_tool("cheese_doc_get", {}, first)
 
 
+def test_an_edit_changes_only_its_passage_and_a_suggestion_is_listed_apart(
+    client, room
+):
+    host = BackendHost(
+        client,
+        *room,
+        files={"d.md": "# 目标\n\n本周交初稿。\n\n## 范围\n\n只做前端。\n"},
+    )
+    cheese.run_platform_tool("cheese_doc_get", {}, host)
+    cheese.run_platform_tool("cheese_doc_set", {"path": "d.md"}, host)
+
+    said = cheese.run_platform_tool(
+        "cheese_doc_edit",
+        {"edits": [{"old": "本周交初稿。", "new": "周五交初稿。"}]},
+        host,
+    )
+    assert "改了 1 处" in said
+    cheese.run_platform_tool(
+        "cheese_doc_edit",
+        {
+            "edits": [{"old": "只做前端。", "new": "前端和接口。"}],
+            "suggest": True,
+            "reason": "接口也在范围内",
+        },
+        host,
+    )
+
+    read = cheese.run_platform_tool("cheese_doc_get", {}, host)
+    text, _, pending = read.partition("待处理的修改建议")
+    assert "周五交初稿。" in text and "只做前端。" in text
+    assert "前端和接口。" not in text
+    assert "前端和接口。" in pending and "接口也在范围内" in pending
+
+
+def test_an_edit_whose_passage_is_gone_says_so_and_changes_nothing(client, room):
+    host = BackendHost(client, *room, files={"d.md": "本周交初稿。\n"})
+    cheese.run_platform_tool("cheese_doc_get", {}, host)
+    cheese.run_platform_tool("cheese_doc_set", {"path": "d.md"}, host)
+
+    with pytest.raises(cheese.PlatformToolError) as refused:
+        cheese.run_platform_tool(
+            "cheese_doc_edit", {"edits": [{"old": "下周", "new": "周五"}]}, host
+        )
+
+    assert "一处都没改" in str(refused.value)
+    assert "cheese_doc_get" in str(refused.value)
+    assert cheese.run_platform_tool("cheese_doc_get", {}, host) == "本周交初稿。\n"
+
+
+def test_a_comment_reply_lands_in_its_thread_under_the_agents_name(client, room):
+    from tests.conftest import seed_user
+    from tests.integration.conftest import room_agent_seat
+
+    host = BackendHost(client, *room, files={"d.md": "本周交初稿。\n"})
+    cheese.run_platform_tool("cheese_doc_get", {}, host)
+    cheese.run_platform_tool("cheese_doc_set", {"path": "d.md"}, host)
+    person = {"Authorization": f"Bearer {seed_user(client, 'alice')}"}
+    root = client.post(
+        f"/topics/{room[1]}/comments",
+        json={"content": "截止日期对吗"},
+        headers=person,
+    ).json()["data"]["id"]
+
+    said = cheese.run_platform_tool(
+        "cheese_doc_comment_reply", {"thread_id": root, "text": "对，周五。"}, host
+    )
+
+    assert "回复" in said
+    thread = client.get(
+        f"/topics/{room[1]}/comments/{root}/thread", headers=person
+    ).json()["data"]
+    [reply] = thread["replies"]
+    assert reply["comment"]["content"] == "对，周五。"
+    assert reply["comment"]["author"] == room_agent_seat(client, room[1])
+
+
 def test_a_task_is_opened_without_the_machine(client, room):
     host = BackendHost(client, *room)
 

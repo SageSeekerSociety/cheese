@@ -12,6 +12,133 @@ from app.domain.agent import preview_tunnel as wire
 from app.domain.agent.preview_hub import PreviewHub, preview_hub
 
 
+async def test_planned_drain_during_helper_upgrade_never_supersedes_the_helper():
+    from fastapi import FastAPI
+
+    from app.core.sandbox_auth import mint_scoped_token
+
+    topic, hub = uuid.uuid4(), PreviewHub()
+    application = FastAPI()
+    application.state.preview_hub = hub
+    sent = []
+
+    async def receive():
+        return {"type": "websocket.connect"}
+
+    async def send(message):
+        sent.append(message)
+        if message["type"] == "websocket.accept":
+            await hub.shutdown()
+
+    websocket = WebSocket(
+        {
+            "type": "websocket",
+            "path": "/preview/tunnel",
+            "headers": [],
+            "app": application,
+        },
+        receive,
+        send,
+    )
+    token = mint_scoped_token(
+        project_id=str(uuid.uuid4()), topic_id=str(topic), agent_handle="seat"
+    )
+    await app_preview.preview_tunnel(websocket, token=token)
+    assert sent[-1]["type"] == "websocket.close"
+    assert sent[-1]["code"] == 1012
+
+
+@pytest.mark.parametrize("upstream_status", [404, 409, 500, 503])
+async def test_owner_relay_preserves_application_status(upstream_status):
+    import httpx
+    from fastapi import FastAPI, Request
+
+    topic = uuid.uuid4()
+    hub = PreviewHub()
+    application = FastAPI()
+    application.state.preview_hub = hub
+
+    class Native:
+        machine = None
+
+        async def send_bytes(self, data):
+            op, sid, _ = wire.decode(data)
+            if op == wire.OP_REQ:
+                self.machine.on_frame(
+                    wire.encode(
+                        wire.OP_RESP,
+                        sid,
+                        wire.encode_meta(
+                            {
+                                "status": upstream_status,
+                                "headers": [],
+                            }
+                        ),
+                    )
+                )
+                self.machine.on_frame(wire.encode(wire.OP_END, sid))
+
+    native = Native()
+    native.machine = hub.attach(topic, "seat", native)
+
+    @application.get("/")
+    async def viewer(request: Request):
+        return await app_preview.relay_http(topic, "seat", request)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=application), base_url="http://viewer"
+    ) as browser:
+        response = await browser.get("/")
+    assert response.status_code == upstream_status
+    assert "X-Cheese-Preview-State" not in response.headers
+
+
+@pytest.mark.parametrize("state,status", [("offline", 503), ("gone", 409)])
+async def test_owner_relay_distinguishes_admission_from_application_response(
+    state, status
+):
+    import httpx
+    from fastapi import FastAPI, Request
+
+    topic = uuid.uuid4()
+    hub = PreviewHub()
+    application = FastAPI()
+    application.state.preview_hub = hub
+
+    class ReplacedListener:
+        machine = None
+        calls = 0
+
+        async def send_bytes(self, data):
+            op, sid, _ = wire.decode(data)
+            if op == wire.OP_REQ:
+                self.calls += 1
+                self.machine.on_frame(
+                    wire.encode(wire.OP_ERR, sid, b"preview instance gone")
+                )
+
+    native = ReplacedListener()
+    if state == "gone":
+        native.machine = hub.attach(
+            topic, "seat", native, capabilities=frozenset({"instance-v1"})
+        )
+
+    @application.post("/")
+    async def viewer(request: Request):
+        return await app_preview.relay_http(topic, "seat", request, instance="a" * 64)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=application), base_url="http://viewer"
+    ) as browser:
+        response = await browser.post("/", content=b"intended mutation")
+    assert response.status_code == status
+    assert response.headers["X-Cheese-Preview-State"] == (
+        "instance_gone" if state == "gone" else "transport_unavailable"
+    )
+    assert native.calls == (1 if state == "gone" else 0)
+    assert ("Retry-After" in response.headers) == (state == "offline")
+
+
 def test_hmr_cleanup_ignores_a_peer_gone_during_close(monkeypatch):
     stream = Mock()
     stream.send = AsyncMock()

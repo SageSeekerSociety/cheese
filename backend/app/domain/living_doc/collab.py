@@ -6,9 +6,10 @@ Every room's document is a Yjs document held by the collaboration service
 module signs. The service stores the document back here — the Yjs state and
 the Markdown it exports — and that store is the only path that records a new
 version (see ``store.py``). So a write that does not come from an editor (芝士's
-``cheese_doc_set``, a restore, an accepted AI proposal) cannot go to the
+``cheese_doc_set`` and ``cheese_doc_edit``, a restore) cannot go to the
 database either: the live document would overwrite it at its next store. It
-goes to the service, which applies it to the live document and stores it.
+goes to the service, which applies it to the live document and stores it:
+``replace`` for the whole document, ``edit`` for passages of it.
 
 One shared secret, three keys derived from it for three jobs: tickets the
 browser carries, the bearer the two services show each other, and nothing
@@ -148,3 +149,75 @@ async def replace(
     if response.status_code != 200:
         raise SystemBusyError("文档协同服务没有完成这次写入，稍后重试")
     return body["stored"]
+
+
+#: Why the service refused an edit, in the words its writer acts on. ``{n}`` is
+#: the edit's place in the request, counted from 1.
+_EDIT_REFUSALS = {
+    "empty": "第 {n} 处修改没有给出原文",
+    "not_found": "第 {n} 处修改的原文在文档里找不到",
+    "ambiguous": "第 {n} 处修改的原文在文档里出现了不止一次，多带几个字让它只出现一次",
+    "structure": "第 {n} 处修改增删或改变了整段的结构，不能作为建议提出",
+    "unstable": "第 {n} 处修改所在的段落无法按原文定位，换一段更短的原文再试",
+    "suggested": "第 {n} 处修改碰到了还没处理的修改建议，等它被接受或拒绝后再改",
+}
+
+
+async def edit(
+    room_id: uuid.UUID,
+    *,
+    edits: list[dict],
+    actor: str,
+    requested_by: str | None = None,
+    mode: str = "direct",
+    reason: str | None = None,
+) -> dict:
+    """Change passages of the live document, as ``actor``.
+
+    Each edit replaces ``old`` — text that occurs exactly once in the
+    document's Markdown — with ``new``, in order. ``mode`` "suggest" leaves
+    the text as it is and proposes each change as a suggestion someone has to
+    accept. Nothing is applied unless every edit can be: a refusal says which
+    edit and why (UnprocessableEntityError for one the writer has to restate,
+    ConflictError for one blocked by the document's state), ``data.index``
+    counting from 0. ``requested_by`` is the person the change was made for.
+    Returns ``{"stored": <the store's answer>, "edits": [...]}``, each edit
+    carrying its ``suggestion_id`` in suggest mode.
+    """
+    url = (
+        settings.collab_internal_url.rstrip("/")
+        + f"/internal/documents/{document_name(room_id)}/edit"
+    )
+    try:
+        async with httpx.AsyncClient(
+            timeout=_REPLACE_TIMEOUT_S, transport=transport
+        ) as client:
+            response = await client.post(
+                url,
+                json={
+                    "edits": edits,
+                    "actor": actor,
+                    "requested_by": requested_by,
+                    "mode": mode,
+                    "reason": reason,
+                },
+                headers={"Authorization": f"Bearer {_key('internal')}"},
+            )
+    except httpx.HTTPError as exc:
+        raise SystemBusyError("文档协同服务暂时无法访问，稍后重试") from exc
+    body = response.json() if response.content else {}
+    if response.status_code in (409, 422) and "index" in body:
+        index = int(body["index"])
+        data = {"index": index, "reason": body.get("reason") or body.get("error")}
+        if body.get("error") == "content":
+            message = f"第 {index + 1} 处修改：{body.get('message', '')}"
+            data["line"] = body.get("line")
+        else:
+            template = _EDIT_REFUSALS.get(str(body.get("reason")))
+            message = (template or "第 {n} 处修改无法应用").format(n=index + 1)
+        if response.status_code == 409:
+            raise ConflictError(message, data=data)
+        raise UnprocessableEntityError(message, data=data)
+    if response.status_code != 200:
+        raise SystemBusyError("文档协同服务没有完成这次修改，稍后重试")
+    return body

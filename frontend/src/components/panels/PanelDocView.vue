@@ -8,16 +8,23 @@
 import type { DocConnection, DocPeer, DocSession } from '../../composables/useDocCollab'
 import type { SendDocComment } from '../../composables/useDocCommentDraft'
 import type { Block, Topic } from '../../cx_types'
-import type { DocSelectionSnapshot } from '../../lib/docAiSelection'
+import type { DocEdit, DocRewriteRequest, DocRewriteResult } from '../../lib/docEdits'
+import type { DocReviewRequest } from '../../lib/docReview'
 import type { DocThreadActions, DocThreadState } from '../../lib/docThreadTypes'
 
-import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
+import { useDocReview } from '../../composables/useDocReview'
+import { useDocRewrite } from '../../composables/useDocRewrite'
+import { useDocSuggestions } from '../../composables/useDocSuggestions'
 import { topicTitle } from '../../lib/topicState'
 
 import DocCommentPanel from './doc/DocCommentPanel.vue'
+import DocEditLayer from './doc/DocEditLayer.vue'
 import DocFormatToolbar from './doc/DocFormatToolbar.vue'
 import DocPresence from './doc/DocPresence.vue'
+import DocReviewStrip from './doc/DocReviewStrip.vue'
+import DocSuggestionStrip from './doc/DocSuggestionStrip.vue'
 import DocSurface from './doc/DocSurface.vue'
 import OverviewAuto from './doc/OverviewAuto.vue'
 
@@ -30,6 +37,8 @@ const props = withDefaults(
     activityTick: number
     /** 项目 AI 队友的名字。 */
     agentName?: string
+    /** 项目 AI 队友的 handle：评论里点它的名写成它的名字。 */
+    agentHandle?: string | null
     /** 项目话题表：正文里的支线徽章、`<#id>` chip 都靠它认名字与状态。 */
     topicList?: Topic[]
     /** 画在一整页里（项目文档的章程）：页头已经说了这是什么，不再画大标题和总览自动区。 */
@@ -44,10 +53,11 @@ const props = withDefaults(
     /** 正文还在路上。 */
     loading: boolean
     connection: DocConnection
+    /** 协同服务已换了新版的文档格式，这一页得刷新才能再打开文档。 */
+    outdated?: boolean
     /** 同一篇文档打开着的其他人。 */
     peers: DocPeer[]
     errorMsg: string | null
-    aiOpened?: boolean
     // ---- 评论区 ----
     comments: Block[]
     commentAuthor?: string
@@ -58,6 +68,10 @@ const props = withDefaults(
     // ---- 装饰的原料（原样递给正文那一半） ----
     liveRefIndex: Map<number, string>
     commentMarkIndex: Map<number, { id: string; quote: string }[]>
+    /** 修改建议的理由（建议 id → 理由），卡上写出来。 */
+    suggestionReasons?: Record<string, string>
+    /** 文档里有了新的修改建议时调一下：读它们的理由。 */
+    fetchSuggestionReasons?: () => void
     /** 取一份最新的节点树（评论定锚点、闪某一段都要它）。 */
     fetchDocNodes: () => Promise<Block[]>
     /** 图片 src 的显示期解析。 */
@@ -66,13 +80,23 @@ const props = withDefaults(
     refreshComments: () => Promise<void>
     toggleEditable: () => void
     setError: (message: string | null) => void
+    /** 让 AI 队友改选中的字；没有时浮条上不给「让…改」。 */
+    rewriteSelection?: (request: DocRewriteRequest) => Promise<DocRewriteResult>
+    /** 以自己的名义替换正文里的字（撤销、还原 AI 队友的修改）。 */
+    applyDocEdits?: (edits: DocEdit[]) => Promise<unknown>
   }>(),
   {
     agentName: () => t('work.room.defaultAgentName'),
+    agentHandle: null,
     topicList: () => [],
     bare: false,
+    outdated: false,
     commentAuthor: '',
     sendComment: undefined,
+    rewriteSelection: undefined,
+    suggestionReasons: () => ({}),
+    fetchSuggestionReasons: undefined,
+    applyDocEdits: undefined,
   }
 )
 
@@ -80,8 +104,6 @@ const emit = defineEmits<{
   (e: 'open-topic', topicId: string): void
   (e: 'mention-click', handle: string): void
   (e: 'open-file', path: string): void
-  (e: 'open-ai', snapshot: DocSelectionSnapshot | null): void
-  (e: 'close-ai'): void
 }>()
 
 // 评论区自己是一个组件：列表、折叠、写评论的输入框都在里面。这一层只负责把它开出来 ——
@@ -115,6 +137,10 @@ onBeforeUnmount(() => {
 // 正文区的滚动：代码块工具条贴在 <pre> 上，正文一滚它就指错地方了。往上发一次
 // 「滚了」，由拿着编辑器的正文那一半收起来。
 const scrollTick = ref(0)
+function reload() {
+  window.location.reload()
+}
+
 function onBodyScroll() {
   scrollTick.value++
 }
@@ -126,29 +152,57 @@ function highlightTurn(turnId: string) {
 function highlightNode(nodeId: string) {
   void surfaceRef.value?.highlightNode(nodeId)
 }
-function openComment(payload: { anchorId: string | null; quote: string }) {
-  commentsRef.value?.open(payload)
+function openComment(payload: { anchorId: string | null; quote: string; ask: boolean }) {
+  const { anchorId, quote } = payload
+  commentsRef.value?.open({ anchorId, quote }, payload.ask ? `@${props.agentName} ` : undefined)
+}
+
+// 评论里的点名（`<@handle>`）读成名字。
+const mentionNames = computed<Record<string, string>>(() =>
+  props.agentHandle ? { [props.agentHandle]: props.agentName } : {}
+)
+
+const rewrite = useDocRewrite({
+  editor: () => surfaceRef.value?.editor ?? null,
+  rewrite: () => props.rewriteSelection,
+  applyEdits: () => props.applyDocEdits,
+  agentName: () => props.agentName,
+  onError: (message) => props.setError(message),
+})
+const suggestions = useDocSuggestions(() => surfaceRef.value?.editor ?? null)
+watch(
+  () => suggestions.list.value.map((s) => s.id).join(' '),
+  (ids, before) => {
+    if (ids && ids.split(' ').some((id) => !before?.split(' ').includes(id))) props.fetchSuggestionReasons?.()
+  }
+)
+const review = useDocReview({
+  editor: () => surfaceRef.value?.editor ?? null,
+  applyEdits: () => props.applyDocEdits,
+  onError: (message) => props.setError(message),
+})
+/** 「查看改动」：在正文里一处处标出某个人让 AI 队友改的那几处。 */
+function reviewEdits(request: DocReviewRequest) {
+  rewrite.close()
+  review.open(request)
 }
 function locateComment(commentId: string) {
   commentsRef.value?.locate(commentId)
 }
-function openAi(snapshot: DocSelectionSnapshot | null) {
-  emit('open-ai', snapshot)
-  void commentsRef.value?.showAi(snapshot !== null)
-}
 watch([() => props.topic?.id, () => props.commentAuthor], () => {
   openId.value = null
-  emit('close-ai')
+  rewrite.close()
+  review.close()
 })
 function quoteState(id: string) {
   return surfaceRef.value?.commentQuoteState(id) ?? 'missing'
 }
 
-// 组合式函数要读编辑器里现在这一版（文档 AI 拿它和已存的那一版比），只有这里知道
-// 编辑器在哪。
+// 编辑器里现在这一版正文（开发时的探针读它），只有这里知道编辑器在哪。
 defineExpose({
   pulse,
   highlightTurn,
+  reviewEdits,
   serializeVisual: () => surfaceRef.value?.serializeVisual() ?? null,
 })
 </script>
@@ -162,6 +216,13 @@ defineExpose({
       <div class="text-center">
         <v-icon size="48" class="mb-2 text-disabled">mdi-file-document-outline</v-icon>
         <div>{{ t('work.room.doc.pickTopic') }}</div>
+      </div>
+    </div>
+
+    <div v-else-if="outdated" class="flex-grow-1 d-flex align-center justify-center">
+      <div class="text-center">
+        <div class="t-body mb-3">{{ t('work.room.doc.outdated') }}</div>
+        <v-btn color="primary" variant="flat" size="small" @click="reload">{{ t('work.room.doc.reload') }}</v-btn>
       </div>
     </div>
 
@@ -199,20 +260,9 @@ defineExpose({
               variant="text"
               :aria-label="t('work.room.comments.title')"
               :title="t('work.room.comments.title')"
-              :aria-expanded="(commentsRef?.opened && commentsRef.activeTool === 'comments') ?? false"
+              :aria-expanded="commentsRef?.opened ?? false"
               @click="commentsRef?.toggle()"
             />
-            <!-- 文档 AI 按已存的那一版核对选区，已存的那一版靠房间推来的消息刷新；页面上
-               没有房间，核对永远过不去，所以不给这颗按钮。 -->
-            <v-btn
-              v-if="!bare"
-              size="small"
-              variant="text"
-              :aria-expanded="(commentsRef?.opened && commentsRef.activeTool === 'ai') ?? false"
-              @mousedown.prevent
-              @click="openAi(surfaceRef?.captureSelection() ?? null)"
-              >{{ t('work.room.docAi.title') }}</v-btn
-            >
             <v-menu v-if="!readOnly" location="bottom end">
               <template #activator="{ props: menuProps }">
                 <v-btn
@@ -234,6 +284,24 @@ defineExpose({
             </v-menu>
           </div>
         </div>
+        <DocReviewStrip
+          v-if="review.request.value"
+          :agent-name="agentName"
+          :requester="review.request.value.requester"
+          :count="review.live.value.length"
+          @step="review.step"
+          @close="review.close"
+        />
+        <DocSuggestionStrip
+          :agent-name="agentName"
+          :count="suggestions.list.value.length"
+          :decided="suggestions.decided.value"
+          :editable="editable"
+          @step="suggestions.step"
+          @accept-all="suggestions.decideAll(true)"
+          @reject-all="suggestions.decideAll(false)"
+          @dismiss="suggestions.dismissDone"
+        />
         <!-- Editor surface — a Feishu Docs page: white, padded, centered column. -->
         <DocCommentPanel
           ref="commentsRef"
@@ -246,13 +314,10 @@ defineExpose({
           :comments="comments"
           :anchor-nodes="anchorNodes"
           :quote-state="quoteState"
-          :ai-opened="aiOpened"
+          :mention-names="mentionNames"
           @locate-node="highlightNode"
           @posted="refreshComments"
-          @open-ai="emit('open-ai', null)"
-          @close-ai="emit('close-ai')"
         >
-          <template v-if="$slots.ai" #ai><slot name="ai" /></template>
           <div
             ref="bodyRef"
             class="doc-body overflow-y-auto"
@@ -278,14 +343,26 @@ defineExpose({
                 :image-src="imageSrc"
                 :pulse="pulse"
                 :scroll-tick="scrollTick"
-                :can-ask="!bare"
+                :agent-name="agentName"
+                :can-rewrite="!!rewriteSelection && editable"
+                :can-ask-agent="!!agentHandle"
                 @open-topic="emit('open-topic', $event)"
                 @mention-click="emit('mention-click', $event)"
                 @open-file="emit('open-file', $event)"
                 @open-comment="openComment"
-                @open-ai="openAi"
+                @rewrite="rewrite.open($event.from, $event.to)"
                 @locate-comment="locateComment"
                 @error="setError"
+              />
+
+              <DocEditLayer
+                :editor="surfaceRef?.editor ?? null"
+                :agent-name="agentName"
+                :editable="editable"
+                :rewrite="rewrite"
+                :review="review"
+                :suggestions="suggestions"
+                :suggestion-reasons="suggestionReasons"
               />
 
               <!-- 总览房间的其余两块（#1889 ②③）紧跟正文。评论在独立侧栏。只有根话题
@@ -357,6 +434,7 @@ defineExpose({
 /* The document column: white surface (inherits .doc), text capped for
    readability and centered. No card border/radius — it IS the surface. */
 .doc-page {
+  position: relative;
   width: 100%;
   max-width: 48rem;
   background: transparent;

@@ -308,7 +308,7 @@ defineExpose({ send, connected, submitQuestion })
         @open-file="(path, taskId) => emit('open-file', path, taskId)"
         @open-topic="emit('open-topic', $event)"
         @open-card="emit('open-card', $event)"
-        @open-resource="(resource, turnId) => emit('open-resource', resource, turnId)"
+        @open-resource="(resource, turnId, review) => emit('open-resource', resource, turnId, review)"
         @answer="pickOption"
         @checklist="changeChecklist"
         @download="downloadAttachment"

@@ -12,6 +12,7 @@ import type { Block, TodoItem, Topic } from '../../cx_types'
 import type { AgentFace } from '../../lib/agentFace'
 import type { RunEdge } from '../../lib/chatGrouping'
 import type { Outgoing } from '../../lib/composerDrafts'
+import type { DocReviewRequest } from '../../lib/docReview'
 import type { NoticeAgent, NoticeRow, PlatformNotice } from '../../lib/platformNotice'
 import type { SplitMarker } from '../../lib/splitMarkers'
 
@@ -99,7 +100,7 @@ const emit = defineEmits<{
   (e: 'open-file', path: string, taskId: string | null): void
   (e: 'open-topic', topicId: string): void
   (e: 'open-card', taskId: string): void
-  (e: 'open-resource', resource: string, turnId?: string): void
+  (e: 'open-resource', resource: string, turnId?: string, review?: DocReviewRequest): void
   (e: 'answer', block: Block, option: string): void
   (e: 'checklist', block: Block, items: TodoItem[]): void
   (e: 'download', block: Block): void
@@ -209,8 +210,8 @@ function emitChecklist(block: Block, items: TodoItem[]) {
 function emitOpenFile(path: string, taskId: string | null) {
   emit('open-file', path, taskId)
 }
-function emitOpenResource(resource: string, turnId?: string) {
-  emit('open-resource', resource, turnId)
+function emitOpenResource(resource: string, turnId?: string, review?: DocReviewRequest) {
+  emit('open-resource', resource, turnId, review)
 }
 function emitSaveEdit(block: Block, text: string) {
   emit('save-edit', block, text)

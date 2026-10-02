@@ -16,6 +16,7 @@ import * as Y from 'yjs'
 
 import { docExtensions } from './extensions'
 import { docMarked, finishMarkdown } from './markdown'
+import { pendingSuggestions, withoutSuggestions } from './suggestions'
 
 /** The Y.XmlFragment the editors' Collaboration extension binds to. */
 export const FIELD = 'default'
@@ -34,8 +35,21 @@ export function liveNode(doc: Y.Doc): PMNode {
   return yXmlFragmentToProseMirrorRootNode(doc.getXmlFragment(FIELD), schema)
 }
 
+/** The document's text: what is stored, searched and given to the agent. A
+ *  pending suggestion is not part of it yet (see ./suggestions.ts). */
 export function exportMarkdown(doc: Y.Doc): string {
-  return finishMarkdown(markdown.serialize(liveNode(doc).toJSON()))
+  return nodeMarkdown(withoutSuggestions(liveNode(doc)))
+}
+
+/** A document node's Markdown, exactly as it stands (suggestion marks and all
+ *  are written as their text). */
+export function nodeMarkdown(node: PMNode): string {
+  return finishMarkdown(markdown.serialize(node.toJSON()))
+}
+
+/** The suggestions in the live document still waiting for a decision. */
+export function liveSuggestions(doc: Y.Doc) {
+  return pendingSuggestions(liveNode(doc))
 }
 
 /** Rewrite the document to read `md`, as a diff against what it holds, so the
@@ -58,5 +72,5 @@ export function readsAs(doc: Y.Doc, base: string | null): boolean {
   const live = exportMarkdown(doc)
   if (base === null) return live.trim() === ''
   if (live === base) return true
-  return parseMarkdown(base).eq(liveNode(doc))
+  return parseMarkdown(base).eq(withoutSuggestions(liveNode(doc)))
 }

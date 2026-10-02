@@ -12,6 +12,7 @@ import pytest
 
 from app.domain.agent import preview_tunnel as wire
 from app.domain.agent.preview_hub import PreviewHub, PreviewMachine
+from app.domain.agent.preview_owner import InspectRequest, inspect_hub
 
 SEAT = "cheese-one"
 
@@ -56,6 +57,155 @@ class SilentMachine:
     async def send_bytes(self, data: bytes) -> None:
         if wire.decode(data)[0] == wire.OP_REQ:
             self.asked += 1
+
+
+class InspectMachine:
+    """A native identity response and a guarded application response."""
+
+    def __init__(self, hub, topic, *, instance="a" * 64):
+        self.hub, self.topic, self.instance = hub, topic, instance
+        self.calls = []
+        self.on_probe = None
+        self.machine = hub.attach(
+            topic, SEAT, self, capabilities=frozenset({"instance-v1"})
+        )
+        assert self.machine is not None
+
+    async def send_bytes(self, data):
+        op, stream, payload = wire.decode(data)
+        if op != wire.OP_REQ:
+            return
+        meta, _ = wire.decode_meta(payload)
+        self.calls.append(meta)
+        headers = []
+        if meta.get("inspect_instance"):
+            headers = [["x-cheese-instance", self.instance]]
+        elif self.on_probe:
+            self.on_probe()
+        self.machine.on_frame(
+            wire.encode(
+                wire.OP_RESP,
+                stream,
+                wire.encode_meta(
+                    {
+                        "status": 200,
+                        "headers": headers,
+                    }
+                ),
+            )
+        )
+        self.machine.on_frame(wire.encode(wire.OP_END, stream))
+
+
+async def test_inspection_probes_only_the_captured_native_instance():
+    hub, topic = PreviewHub(), uuid.uuid4()
+    native = InspectMachine(hub, topic)
+    result = await inspect_hub(
+        hub,
+        "boot",
+        InspectRequest(
+            topic_id=topic,
+            seat=SEAT,
+            probe=True,
+        ),
+    )
+    assert result.state == "online"
+    assert result.instance == native.instance
+    assert result.transport_epoch == native.machine.epoch
+    assert native.calls[-1]["instance"] == native.instance
+    assert not native.machine.streams
+
+
+async def test_inspection_cannot_combine_an_old_probe_and_a_new_connection():
+    hub, topic = PreviewHub(), uuid.uuid4()
+    old = InspectMachine(hub, topic)
+    replacement = []
+    old.on_probe = lambda: replacement.append(
+        InspectMachine(hub, topic, instance="b" * 64)
+    )
+    result = await inspect_hub(
+        hub,
+        "boot",
+        InspectRequest(
+            topic_id=topic,
+            seat=SEAT,
+            probe=True,
+        ),
+    )
+    assert replacement
+    assert result.state == "transport_unavailable"
+    assert result.instance is None
+    assert not replacement[0].calls
+    assert not old.machine.streams
+
+
+async def test_fixed_inspection_refuses_a_replacement_without_probing_it():
+    hub, topic = PreviewHub(), uuid.uuid4()
+    native = InspectMachine(hub, topic)
+    result = await inspect_hub(
+        hub,
+        "boot",
+        InspectRequest(
+            topic_id=topic,
+            seat=SEAT,
+            expected_instance="b" * 64,
+            probe=True,
+        ),
+    )
+    assert result.state == "instance_gone"
+    assert len(native.calls) == 1
+
+
+async def test_owner_shutdown_wakes_waiters_and_retires_original_streams():
+    hub, topic = PreviewHub(), uuid.uuid4()
+    waiter = asyncio.create_task(hub.wait_online(topic, "other", 8))
+    native = InspectMachine(hub, topic)
+    stream = hub.open_stream(topic, SEAT)
+    assert stream is not None
+    await asyncio.sleep(0)
+    await hub.shutdown()
+    assert not await asyncio.wait_for(waiter, 0.5)
+    assert (await stream.receive())[0] == wire.OP_CLOSE
+    assert stream.maintenance
+    assert not native.machine.streams
+    assert not native.machine.pending_cancels
+    assert hub.attach(topic, SEAT, native) is None
+    assert hub.open_stream(topic, SEAT) is None
+
+
+async def test_cancelling_owner_inspection_closes_its_original_stream():
+    hub, topic = PreviewHub(), uuid.uuid4()
+    silent = SilentMachine()
+    machine = hub.attach(topic, SEAT, silent, capabilities=frozenset({"instance-v1"}))
+    inspection = asyncio.create_task(
+        inspect_hub(
+            hub,
+            "boot",
+            InspectRequest(
+                topic_id=topic,
+                seat=SEAT,
+            ),
+        )
+    )
+    while not silent.asked:
+        await asyncio.sleep(0)
+    inspection.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await inspection
+    assert machine is not None
+    assert not machine.streams
+
+
+async def test_cancelled_inspection_does_not_strand_another_seat_waiter():
+    hub, topic = PreviewHub(), uuid.uuid4()
+    first = asyncio.create_task(hub.wait_online(topic, SEAT, 8))
+    second = asyncio.create_task(hub.wait_online(topic, SEAT, 8))
+    await asyncio.sleep(0)
+    first.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    Machine().attach(hub, topic)
+    assert await asyncio.wait_for(second, 0.5)
 
 
 async def test_a_request_reaches_the_seats_machine_and_comes_back():
