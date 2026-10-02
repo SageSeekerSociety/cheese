@@ -23,6 +23,11 @@ import i18n, { setLocale } from '@/i18n'
 // 断言读的是中文界面上的那一行字，语言钉在中文上。
 beforeEach(() => setLocale('zh-CN'))
 
+// The document's version history: the last edit is read on open; none here.
+vi.mock('../../api/docHistory', () => ({
+  getDocVersions: async () => ({ versions: [], cursor: null }),
+  restoreDocVersion: async () => ({}),
+}))
 vi.mock('../CodeEditor.vue', () => ({
   default: {
     name: 'CodeEditor',
@@ -32,7 +37,6 @@ vi.mock('../CodeEditor.vue', () => ({
   },
 }))
 
-const getDoc = vi.fn()
 const listFiles = vi.fn()
 const readFile = vi.fn()
 const getTranscript = vi.fn()
@@ -52,7 +56,6 @@ vi.mock('../../api', async () => {
     // 总览里「进度」那一段会读它；这里不关心它，给一份空的。
     getProgress: vi.fn().mockResolvedValue({ items: [], updated_at: null }),
     listRoomTasks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
-    getDoc: (...a: unknown[]) => getDoc(...a),
     listFiles: (...a: unknown[]) => listFiles(...a),
     readFile: (...a: unknown[]) => readFile(...a),
     getTranscript: (...a: unknown[]) => getTranscript(...a),
@@ -144,7 +147,6 @@ beforeAll(() => {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  getDoc.mockResolvedValue({ content: '' })
   listFiles.mockResolvedValue({
     data: [
       { path: 'a.py', bytes: 10 },
@@ -204,7 +206,6 @@ describe('工作面板 · Tab 容器', () => {
   // (PanelDoc 的 open-file → 容器的 openFile → PanelChanges.openFile)，所以这条
   // 用例点的是文档里真实渲染出来的那颗 chip，走完整条线。
   it('文档里的 <&path> chip → 落到改动 tab 的文件半边，并打开那个文件', async () => {
-    getDoc.mockResolvedValue({ content: '详见 <&src/b.ts> 这个文件\n' })
     seedRoom('topic-A', '详见 <&src/b.ts> 这个文件\n')
     readFile.mockResolvedValue({
       path: 'src/b.ts',
@@ -325,7 +326,6 @@ describe('工作面板 · Tab 容器', () => {
   })
 
   it('从别处打开一个文件也算换 tab，一样报出去', async () => {
-    getDoc.mockResolvedValue({ content: '详见 <&a.py> 这个文件\n' })
     seedRoom('topic-A', '详见 <&a.py> 这个文件\n')
     const { container, emitted } = mountPanel()
     await flush()

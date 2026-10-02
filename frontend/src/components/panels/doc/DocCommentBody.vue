@@ -1,14 +1,18 @@
 <script setup lang="ts">
 import type { Block } from '../../../cx_types'
 
+import { plainTokens } from '../../../lib/renderMessage'
+
 import { t } from '@/i18n'
 
-defineProps<{
+const props = defineProps<{
   comment: Block
   anchor: Block | null
   quoteStatus: 'unique' | 'missing' | 'ambiguous'
   expanded: boolean
   overflowing: boolean
+  /** handle → 名字：正文里的点名读成名字。 */
+  mentionNames?: Record<string, string>
 }>()
 const emit = defineEmits<{
   (e: 'locate'): void
@@ -42,7 +46,7 @@ function nodeLabel(content: string): string {
       {{ t(quoteStatus === 'ambiguous' ? 'work.room.comments.anchorAmbiguous' : 'work.room.comments.anchorChanged') }}
     </div>
     <div class="doc-comment-body__text" :class="{ 'is-expanded': expanded }" :data-comment-body="comment.id" dir="auto">
-      {{ comment.content }}
+      {{ plainTokens(comment.content, { mentionNames: props.mentionNames ?? {}, topicTitles: {} }) }}
     </div>
     <button
       v-if="overflowing"

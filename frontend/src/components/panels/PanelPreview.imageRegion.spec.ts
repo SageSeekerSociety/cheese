@@ -9,11 +9,18 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import * as api from '../../api'
 import { setLocale } from '../../i18n'
 
+import DesignImage from './preview/DesignImage.vue'
 import PanelPreview from './PanelPreview.vue'
 
 vi.mock('../../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../api')>()
-  return { ...actual, readPreviewFile: vi.fn(), previewFileBytes: vi.fn(), attachmentImageUrl: vi.fn() }
+  return {
+    ...actual,
+    readPreviewFile: vi.fn(),
+    previewFileBytes: vi.fn(),
+    attachmentImageUrl: vi.fn(),
+    uploadAttachment: vi.fn(),
+  }
 })
 vi.mock('./preview/RevisionList.vue', () => ({ default: { template: '<div />' } }))
 vi.mock('./preview/RoomOutputs.vue', () => ({ default: { template: '<div />' } }))
@@ -104,7 +111,7 @@ it('routes a confirmed natural-pixel region from the actual named image and veri
   expect(ui.emitted().locate).toBeUndefined()
   await fireEvent.update(input, '让这块留白更紧凑')
   await fireEvent.click(ui.getByRole('button', { name: '发送' }))
-  const message = (ui.emitted().locate as [string][] | undefined)?.[0]?.[0] ?? ''
+  const message = (ui.emitted().locate as [{ message: string }][] | undefined)?.[0]?.[0]?.message ?? ''
   expect(message).toContain('design.png')
   expect(message).toContain(`topic=room source=committed task= version=${version}`)
   expect(message).toContain('1000 × 500')
@@ -170,4 +177,121 @@ it('does not send on composition Enter and sends once on an explicit committed E
   expect(ui.emitted().locate).toBeUndefined()
   await fireEvent.keyDown(input, { key: 'Enter', keyCode: 13, isComposing: false })
   expect(ui.emitted().locate).toHaveLength(1)
+})
+
+// ---- 画完的那张图进对话 ----
+// 图和那句话必须一起走：只发一句「这块留白收一下」，芝士手里没有图就不知道「这块」
+// 是哪一块。图走房间附件那条路（origin=clipboard），落到对话里是一条真图片输入。
+//
+// happy-dom 没有真的画布，合成那一步靠一个只会说「成」的画布顶过去：这里要验的是
+// 「画完之后那张图有没有跟着那句话走」，不是像素。
+function stubCanvas() {
+  const noop = vi.fn()
+  const context = {
+    // 读像素直接抛：这台宿主本来就没有像素，内容分界线不存在，框选退化成自由拖。
+    getImageData: () => {
+      throw new Error('this host has no pixels')
+    },
+    save: noop,
+    restore: noop,
+    beginPath: noop,
+    closePath: noop,
+    moveTo: noop,
+    lineTo: noop,
+    stroke: noop,
+    fill: noop,
+    fillRect: noop,
+    strokeRect: noop,
+    ellipse: noop,
+    arc: noop,
+    drawImage: noop,
+    fillText: noop,
+  }
+  // 这两样 happy-dom 根本没有（`getContext` 连属性都不在），所以不是 spyOn 而是补上，
+  // 用 defineProperty 是因为 configurable 才允许下一个用例再盖一次。
+  Object.defineProperty(HTMLCanvasElement.prototype, 'getContext', {
+    configurable: true,
+    writable: true,
+    value: () => context,
+  })
+  Object.defineProperty(HTMLCanvasElement.prototype, 'toBlob', {
+    configurable: true,
+    writable: true,
+    value: (callback: BlobCallback) => {
+      callback(new Blob([new Uint8Array([137, 80, 78, 71])], { type: 'image/png' }))
+    },
+  })
+}
+async function draw(ui: ReturnType<typeof mount>) {
+  await fireEvent.click(ui.getByRole('button', { name: '矩形' }))
+  const layer = ui.getByRole('application', { name: '图片标注画布' })
+  layer.setPointerCapture = vi.fn()
+  await fireEvent.pointerDown(layer, { button: 0, pointerId: 11, clientX: 60, clientY: 70 })
+  await fireEvent.pointerMove(layer, { pointerId: 11, clientX: 160, clientY: 120 })
+  await fireEvent.pointerUp(layer, { pointerId: 11, clientX: 160, clientY: 120 })
+}
+it('sends the marked-up image together with the note as one message', async () => {
+  stubCanvas()
+  const attachment = { id: 7, path: 'uploads/ab/design-annotated.png' }
+  vi.mocked(api.uploadAttachment).mockResolvedValue(attachment as never)
+  const ui = mount()
+  await paint(ui)
+  await draw(ui)
+  await fireEvent.update(ui.getByPlaceholderText('说一句要改什么，回车发送'), '这块留白收紧一点')
+  await fireEvent.click(ui.getByRole('button', { name: '加入对话' }))
+  await waitFor(() => expect(ui.emitted().locate).toBeTruthy())
+  expect(api.uploadAttachment).toHaveBeenCalledTimes(1)
+  const [topic, file, origin] = vi.mocked(api.uploadAttachment).mock.calls[0]
+  expect(topic).toBe('room')
+  expect((file as File).name).toBe('design-annotated.png')
+  // 房间附件而不是资料库：这张合成图是一次性的话，不是这个项目要留的文件。
+  expect(origin).toBe('clipboard')
+  const payload = (ui.emitted().locate as [{ message: string; attachments?: unknown[] }][])[0][0]
+  expect(payload.attachments).toEqual([attachment])
+  expect(payload.message).toContain('标注 1 处')
+  expect(payload.message).toContain('这块留白收紧一点')
+})
+it('says why and sends nothing at all when the marked-up image cannot be uploaded', async () => {
+  stubCanvas()
+  vi.mocked(api.uploadAttachment).mockRejectedValue(new Error('超过 10 MiB'))
+  const ui = mount()
+  await paint(ui)
+  await draw(ui)
+  await fireEvent.update(ui.getByPlaceholderText('说一句要改什么，回车发送'), '这块留白收紧一点')
+  await fireEvent.click(ui.getByRole('button', { name: '加入对话' }))
+  await waitFor(() => expect(ui.getByText('超过 10 MiB')).toBeTruthy())
+  // 图没上去就什么都不发：发出那句没有图的说明，芝士只能猜。
+  expect(ui.emitted().locate).toBeUndefined()
+})
+it('will not send a marked-up image until the note says what to change', async () => {
+  const ui = mount()
+  await paint(ui)
+  await draw(ui)
+  const send = await ui.findByRole('button', { name: '加入对话' })
+  expect(send.hasAttribute('disabled')).toBe(true)
+  await fireEvent.update(ui.getByPlaceholderText('说一句要改什么，回车发送'), '这块留白收紧一点')
+  expect(send.hasAttribute('disabled')).toBe(false)
+})
+// ---- 滚轮 ----
+// 面板里图片嵌在一段要滚的正文中间，滚轮得先把那段滚下去；只有图铺满整个屏幕时
+// 才把滚轮让给缩放，否则图片一占满面板就再也滚不动了。
+it('leaves the wheel to the page in the panel', async () => {
+  const ui = mount()
+  await paint(ui)
+  const pane = ui.container.querySelector('.design-image__pane') as HTMLElement
+  const event = new WheelEvent('wheel', { deltaY: -100, cancelable: true })
+  pane.dispatchEvent(event)
+  expect(event.defaultPrevented).toBe(false)
+  expect(ui.getByLabelText('显示比例').textContent).toContain('50%')
+})
+it('gives the wheel to zoom when the image is the whole screen', async () => {
+  const ui = render(DesignImage, {
+    props: { src: 'blob:design-1', alt: 'design.png', identity: 'room:v', zoomOnWheel: true },
+    global: { plugins: [createVuetify()] },
+  })
+  await paint(ui)
+  const pane = ui.container.querySelector('.design-image__pane') as HTMLElement
+  const event = new WheelEvent('wheel', { deltaY: -100, cancelable: true })
+  pane.dispatchEvent(event)
+  expect(event.defaultPrevented).toBe(true)
 })

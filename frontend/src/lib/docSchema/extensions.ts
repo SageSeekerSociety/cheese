@@ -8,7 +8,7 @@ import type { AnyExtension } from '@tiptap/core'
 import type { ImageOptions } from '@tiptap/extension-image'
 import type { marked } from 'marked'
 
-import { Extension, InputRule, mergeAttributes, Node } from '@tiptap/core'
+import { Extension, InputRule, Mark, mergeAttributes, Node } from '@tiptap/core'
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
 import Image from '@tiptap/extension-image'
 import { ListItem, TaskItem, TaskList } from '@tiptap/extension-list'
@@ -18,6 +18,7 @@ import StarterKit from '@tiptap/starter-kit'
 import { common, createLowlight } from 'lowlight'
 
 import { docMarked } from './markdown'
+import { suggestionMarks } from './suggestions'
 
 // One lowlight instance (common ≈ 37 languages), shared by every editor.
 const lowlight = createLowlight(common)
@@ -132,6 +133,38 @@ const MarkdownLinkInput = Extension.create({
   },
 })
 
+// ---- Highlight: written `<mark>…</mark>`, which every Markdown renderer
+// shows. Not `==…==`: that is no Markdown standard, so the text would read as
+// stray equals signs everywhere else the document is read, and a prose
+// comparison like `a == b … c == d` would come back highlighted.
+const DocHighlight = Mark.create({
+  name: 'highlight',
+  parseHTML() {
+    return [{ tag: 'mark' }]
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ['mark', mergeAttributes(HTMLAttributes), 0]
+  },
+  renderMarkdown: (node, helpers) => `<mark>${helpers.renderChildren(node)}</mark>`,
+  // Read as Markdown, not handed to the HTML parser: what is inside keeps its
+  // formatting (`<mark>**加粗**</mark>`), which the HTML parser would take as
+  // literal asterisks.
+  parseMarkdown: (token, helpers) => helpers.applyMark('highlight', helpers.parseInline(token.tokens || [])),
+  markdownTokenizer: {
+    name: 'highlight',
+    level: 'inline',
+    start: (src) => src.indexOf('<mark>'),
+    tokenize(src, _tokens, helpers) {
+      const match = /^<mark>([\s\S]+?)<\/mark>/.exec(src)
+      if (!match) return undefined
+      return { type: 'highlight', raw: match[0], text: match[1], tokens: helpers.inlineTokens(match[1]) }
+    },
+  },
+  addKeyboardShortcuts() {
+    return { 'Mod-Shift-h': () => this.editor.commands.toggleMark(this.name) }
+  },
+})
+
 export interface DocExtensionsOptions {
   /** The editor holds its own content instead of a shared document (a form
    * field such as a task description): it keeps a local undo history and the
@@ -227,5 +260,9 @@ export function docExtensions(opts: DocExtensionsOptions = {}): AnyExtension[] {
     }),
     DocCodeBlock.configure({ lowlight }),
     MarkdownLinkInput,
+    DocHighlight,
+    // Suggested changes belong to the shared document; a form field is written
+    // by one person and has nobody to suggest to.
+    ...(opts.standalone ? [] : suggestionMarks),
   ]
 }

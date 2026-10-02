@@ -67,7 +67,7 @@ export class FakePi {
     return answer;
   }
 
-  /** One tool call as pi 0.85.1 makes it (`agent-loop.ts`, `agent-session.ts`):
+  /** One tool call as pi 1.0.0 makes it (`agent-loop.ts`, `agent-session.ts`):
    *  `tool_call` first, where a `block` or a throw stops the call and its
    *  reason becomes the error the model reads, and a mutated input is what
    *  runs; then the tool; then `tool_result`, whose patches replace fields of
@@ -114,6 +114,44 @@ export class FakePi {
     assert.ok(tool, `${name} was never registered`);
     return tool.execute("call-1", params, undefined, undefined, ctx);
   }
+}
+
+/** The `before_agent_start` event as pi 1.0.0 raises it
+ *  (`core/extensions/runner.ts`): the prompt is rendered from the mutable
+ *  `systemPromptOptions` the handler is given, and `systemPrompt` is a getter
+ *  that re-renders it.
+ *
+ * The getter throws rather than answering, and that is the point of this
+ * function. Against 0.85.1 the extension rewrote that rendered text, matching
+ * on wording pi owns; 1.0 changed the wording and the rewrite became a no-op
+ * that said nothing. A handler that goes back to reading the rendered prompt
+ * fails here, where it is visible, instead of in a room where it is not.
+ * (`buildSystemPromptOptions` in pi fills in the same defaults; a handler sees
+ * the normalized shape, never holes.) */
+export function beforeAgentStart(cwd: string, options: any = {}) {
+  const systemPromptOptions = {
+    selectedTools: [],
+    toolSnippets: {},
+    toolGuidelines: {},
+    promptGuidelines: [],
+    appendSystemPrompt: "",
+    sections: {},
+    contextFiles: [],
+    skills: [],
+    ...options,
+    cwd,
+  };
+  return {
+    type: "before_agent_start",
+    prompt: "",
+    systemPromptOptions,
+    get systemPrompt(): never {
+      throw new Error(
+        "the extension read the rendered system prompt; pi owns its wording, " +
+          "so work through systemPromptOptions",
+      );
+    },
+  };
 }
 
 const rubbish: string[] = [];

@@ -18,8 +18,10 @@
     "usedAria": "本月已用 {pct}"
   },
   "windows": {
+    "title": "使用上限",
     "used": "{hours} 小时内已用 {pct}",
-    "reopens": "{at} 恢复"
+    "week": "本周已用 {pct}",
+    "month": "本月已用 {pct}"
   },
   "packs": {
     "title": "其他额度",

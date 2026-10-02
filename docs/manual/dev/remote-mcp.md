@@ -52,7 +52,7 @@ covers:
 
 两张表：`project_mcp_connections` 存连接（access / refresh token、client secret、各端点、`authorized_by`），`project_mcp_secrets` 存 `${VAR}` 的值。它们都是**项目的**，不是某个人的：谁连的，这个项目之后的会话就以谁的上游账号行动，`authorized_by` 记下来给所有人看。值用 `Purpose.MCP_OAUTH_TOKEN` / `MCP_SECRET` 密封，绑定到「项目 + 服务 + 列名」，换一行就解不开。
 
-**没有任何路由回一个凭据值。** `settings_view()` 对每个变量只给 `set: true/false` 加 `updated_by`、`updated_at`；`room_view()` 只给名字、主机、谁授权、什么时候。管理路由全过 `member()`：登录、且是项目成员——**任何成员都能连、能断、能填值**，因为这份连接是项目的；房间侧那份只读（`GET /topics/{id}/mcp/servers`）。
+**没有任何路由回一个凭据值。** `settings_view()` 对每个变量只给 `set: true/false` 加 `updated_by`、`updated_at`；`room_view()` 只给名字、主机、谁授权、什么时候。两份都带 `declared_by`，说这个服务从哪来：项目 `.mcp.json` 里的是 `null`，否则是声明它的那几个队友类型（`name` 与 `title`）；设置页和现场的列表据此在每一行标出来源。管理路由全过 `member()`：登录、且是项目成员——**任何成员都能连、能断、能填值**，因为这份连接是项目的；房间侧那份只读（`GET /topics/{id}/mcp/servers`）。
 
 会话那条路是 `POST /topics/{id}/mcp/{name}`（`include_in_schema=False`）：用**房间的凭据**认证（`x-cheese-token`，`t` 必须是这个房间、`p` 必须是它所属的项目），服务凭据由平台在这里附上。失败一律写成工具的回答（`ok({"error": ...})`）而不是 HTTP 错误：对 agent 来说，没连接、名字不对、服务没答复，下一步能做的事都一样。
 
@@ -66,6 +66,8 @@ covers:
 | 带 `command`（stdio） | 房间的机器 | `bootstrap.process_servers()` 只挑没有 `url` 的启动；给模型的名字是 `mcp__<服务>__<工具>` |
 
 Claude Code 那边两类共用一座桥：`prepare()` 写 `mcp.json` 时把机器上的 stdio 服务和项目里已连的远程服务并进同一张 `bridged` 名单，每个都注册成本地的 stdio MCP 服务，服务器名就用服务自己的名字——**除了 `native`，那是文件操作的，撞上直接报错**。桥进程要么就地转发（每个 `tools/call` 走 `RemoteClient.call`），要么被 exec 到另一侧跑；送到哪由 `RemoteClient.call` 判：名字在远程服务名单里就走 `remote_mcp()`，也就是打成平台的那个 POST。Codex 走同一份名单（`harness/codex/channel.py`），`project_tools` 列服务时也是 stdio 与远程一起列。
+
+私聊没有检出，所以没有 checkout 里的 stdio 服务；但私聊里的队友还是同一位队友，执行目标照样带上项目的远程服务和它类型自己的服务（`central_provider.py` 对两种目标同一段代码），类型的 stdio 服务跑在私聊的草稿容器里。
 
 ## 没连接时，房间里说一声 {#notice}
 

@@ -56,6 +56,14 @@ async def _first_turn(room: Room) -> None:
     await _REAL_SLEEP(0.3)
 
 
+async def _stops_vouching(room: Room) -> None:
+    """Until the read the runner holds comes back saying otherwise, the seat is
+    still one whose runner answers. How soon that read comes back is the
+    machine's speed, not the code's, so the test waits for it instead of a
+    fixed 0.3 s a loaded runner can outlast."""
+    await _until(lambda: (room.topic, "cheese") not in room.runtime.answering)
+
+
 async def test_a_second_send_to_a_seat_whose_runner_answers_hands_its_session_back():
     channel = Remembering()
     room = Room(channel)
@@ -76,7 +84,7 @@ async def test_a_seat_whose_agent_process_ended_is_ensured_again():
     try:
         await _first_turn(room)
         channel.alive = False
-        await _REAL_SLEEP(0.3)
+        await _stops_vouching(room)
         channel.alive = True
         await _send(room, "and the signup page")
         assert channel.given == [None, None]
@@ -90,7 +98,7 @@ async def test_a_seat_whose_runner_is_gone_is_ensured_again():
     try:
         await _first_turn(room)
         channel.drop_session(room.topic)
-        await _REAL_SLEEP(0.3)
+        await _stops_vouching(room)
         await _send(room, "and the signup page")
         assert channel.given == [None, None]
     finally:
@@ -108,7 +116,7 @@ async def test_a_seat_whose_runner_is_closing_is_ensured_again():
         runner = channel._session_for(room.topic)
         runner.closing = True
         runner.announce()
-        await _REAL_SLEEP(0.3)
+        await _stops_vouching(room)
         # Its replacement, for the send that follows.
         runner.closing = False
         await _send(room, "and the signup page")

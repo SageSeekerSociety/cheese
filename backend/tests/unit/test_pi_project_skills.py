@@ -1,14 +1,14 @@
 """A project's own skills reach a pi room as they reach pi opened in the project.
 
-pi 0.85.1, run in a project it trusts, loads `.pi/skills` and the plain paths
+pi 1.0.0, run in a project it trusts, loads `.pi/skills` and the plain paths
 in `.pi/settings.json` from its working directory, and `.agents/skills` from
 the working directory up to the git root; it never reads `.claude/skills`, and
 of two skills with one name it keeps the first. A room starts pi with
 `--no-skills`, so what it loads is exactly what the runner names with `--skill`.
 These read that argv the way pi reads it — a directory holding SKILL.md is one
 skill, a file is one skill, the first of a name wins — and compare the result
-with what plain pi offers for the same project (checked against the real 0.85.1
-binary when this was written).
+with what plain pi offers for the same project (checked against the real 1.0.0
+binary, and against 0.85.1 before it).
 """
 
 import json

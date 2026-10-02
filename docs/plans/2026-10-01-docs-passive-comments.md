@@ -1,6 +1,6 @@
 # Passive document comments and draft checkpoint
 
-This checkpoint makes ordinary document comments passive and protects unsent text. It does not implement AI questions, modification proposals, acceptance, comment threads, the desktop sidebar, or cloud Slides/Design editors.
+This checkpoint makes ordinary document comments passive and protects unsent text. It does not implement comment threads, the desktop sidebar, or cloud Slides/Design editors.
 
 ## Source-to-behavior map
 
@@ -13,13 +13,13 @@ Reference: verified Claude Desktop 2.16120.0 deep archive, `readable/frame-shell
 | `kE`, 17846–17878 | Active composer survives filtering; its list order freezes while composing. | Source requirement retained for the next thread/sidebar checkpoint. This flat comment list has no thread filtering or sort operation; no claim of desktop sidebar parity. |
 | `kE`, 17940–17948 | Closing while posting is disabled. | Cancel and Escape cannot delete a sending draft. Composition Enter (`isComposing` or keyCode 229) is not a send action. |
 
-No original JavaScript bundle is executed. The source establishes interaction constraints, not Cheese authorization. Passive comments are a separate product contract: recording a comment must not start an agent turn or change document text.
+No original JavaScript bundle is executed. The source establishes interaction constraints, not Cheese authorization. Passive comments are a separate product contract: recording a comment changes no document text, and only a comment that @-mentions the room's agent starts an agent turn.
 
 ## Server contract
 
-`POST /topics/{id}/comments` inserts a UUID document-view comment and commits it. It has no chat-service or work-runner dependency and does not enqueue an agent turn. Anchors must be `doc_node` rows in the current room, outside task scope, under the canonical current room document root. Roots, messages, foreign/deleted/orphan nodes, and another document root are rejected. A bounded display quote is not write authorization.
+`POST /topics/{id}/comments` inserts a UUID document-view comment and commits it. It starts a turn of the room's agent only when the comment, or a reply in its thread, @-mentions an agent seated in the room (`<@handle>`); that turn is authored by the commenter, and the agent answers in the thread with `cheese_doc_comment_reply`. Anchors must be `doc_node` rows in the current room, outside task scope, under the canonical current room document root. Roots, messages, foreign/deleted/orphan nodes, and another document root are rejected. A bounded display quote is not write authorization.
 
-General room-agent document writing remains untouched. Explicit AI requests and proposal acceptance will require a separate isolated execution boundary and real-user compare-and-swap authorization.
+General room-agent document writing remains untouched.
 
 ## Draft and transport contract
 
@@ -33,4 +33,4 @@ Production component and state tests cover IME Enter, newline Enter, successful 
 
 Backend tests use the owning FastAPI `client` fixture and actual isolated PostgreSQL/Redis. `seed_user` provides a DB-backed human with a numeric user-id bearer token. Runner is replaced by a recording boundary; no upstream model is called. Assertions compare the persisted document/version, node tree and conversation timeline before/after commenting. Invalid historical/orphan anchors are seeded as UUID `Block` records, not the integer community `Comment` model.
 
-Raw local logs live outside the repository under `/var/tmp/docs-comments-*`. Exact results and commit identity are reported with the review checkpoint. Chinese screenshots/PDF remain required before UI acceptance. Fixture screenshots do not prove backend collaboration, multi-session synchronization, proposal recovery or deployment.
+Raw local logs live outside the repository under `/var/tmp/docs-comments-*`. Exact results and commit identity are reported with the review checkpoint. Chinese screenshots/PDF remain required before UI acceptance. Fixture screenshots do not prove backend collaboration, multi-session synchronization or deployment.

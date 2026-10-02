@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import type { AgentControlState, Block, Topic, TopicMemberRow } from '@/cx_types'
+import type { AgentControlState, Block, ChatAttachment, Topic, TopicMemberRow } from '@/cx_types'
+import type { DocReviewRequest } from '@/lib/docReview'
 import type { MemberActivityLine } from '@/lib/memberActivity'
 import type { CardPhase } from '@/lib/topicState'
-import type { SubmitPreviewQuestion } from '../../lib/previewQuestion'
+import type { PreviewLocate, SubmitPreviewQuestion } from '../../lib/previewQuestion'
 
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -149,12 +150,13 @@ const panelRef = ref<{
   highlightTurn: (turnId: string) => void
   openFile?: (path: string, taskId?: string | null) => void
   siteBlock?: (block: Block) => void
+  reviewDoc?: (request: DocReviewRequest) => void
 } | null>(null)
 const chatColumn = ref<{
   connected: boolean
   reloadAccept: (silent?: boolean) => void
   reloadFeedback: () => void
-  say: (content: string) => boolean
+  say: (content: string, attachments?: ChatAttachment[]) => boolean
   submitQuestion: SubmitPreviewQuestion
 } | null>(null)
 
@@ -188,8 +190,8 @@ const composerReady = computed(() => !!chatColumn.value?.connected)
 
 // 预览里指出的一处位置，作为一条普通消息进这个房间的对话。没有新接口，也没有
 // 长期锚点：它只在下一轮被读一次。
-function onLocate(message: string) {
-  chatColumn.value?.say(message)
+function onLocate(payload: PreviewLocate) {
+  chatColumn.value?.say(payload.message, payload.attachments)
 }
 const submitQuestion: SubmitPreviewQuestion = (request) => chatColumn.value?.submitQuestion(request) ?? false
 
@@ -261,7 +263,7 @@ function handleStateChanged(resource: string) {
 }
 
 // An action card's button → open the relevant view (§3.1.1 控件).
-async function handleOpenResource(resource: string, turnId?: string) {
+async function handleOpenResource(resource: string, turnId?: string, review?: DocReviewRequest) {
   if (resource === 'site') {
     // 对话里在动的那个头像：它此刻在干什么，去现场看。
     focusMode.value = false
@@ -279,7 +281,9 @@ async function handleOpenResource(resource: string, turnId?: string) {
     // settle before highlightTurn tags + flashes, or the flash is wiped instantly.
     focusMode.value = false
     await nextTick()
-    if (turnId) panelRef.value?.highlightTurn(turnId)
+    // 「查看改动」：在正文里一处处标出这个人让 AI 队友改的那几处。
+    if (review) panelRef.value?.reviewDoc?.(review)
+    else if (turnId) panelRef.value?.highlightTurn(turnId)
     else panelRef.value?.pulse()
   }
   // topics: the topic panel is already in view next to the chat.
@@ -395,6 +399,7 @@ void openPlace()
           ref="panelRef"
           :submit-question="submitQuestion"
           :agent-name="store.agentName"
+          :agent-handle="store.agentHandle"
           :activity="activity"
           class="col col-doc"
           :style="{ flex: '1 1 0', minWidth: 0 }"

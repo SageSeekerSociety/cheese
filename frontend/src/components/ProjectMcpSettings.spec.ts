@@ -25,6 +25,7 @@ const tracker = {
   host: 'mcp.example.test',
   auth: 'oauth',
   status: 'disconnected',
+  declared_by: null,
   authorized_by: null,
   authorized_at: null,
   variables: [],
@@ -35,6 +36,7 @@ const search = {
   host: 'search.example.test',
   auth: 'headers',
   status: 'missing_values',
+  declared_by: null,
   authorized_by: null,
   authorized_at: null,
   variables: [{ name: 'SEARCH_KEY', set: false, updated_by: null, updated_at: null }],
@@ -100,4 +102,40 @@ it('the result of an authorization is said once and taken off the address', asyn
   const { view, router } = await mount('/projects/p/settings?mcp=tracker&mcp_error=access_denied')
   expect(await view.findByText(/连接 tracker 失败：access_denied/)).toBeTruthy()
   await waitFor(() => expect(router.currentRoute.value.query).toEqual({}))
+})
+
+it('labels each server with where it comes from: the .mcp.json, or the types that declare it', async () => {
+  api.getMcpServers.mockResolvedValue({
+    servers: [
+      tracker,
+      { ...tracker, name: 'ticket', declared_by: [{ name: 'code-review', title: '代码评审' }] },
+      {
+        ...tracker,
+        name: 'docs',
+        declared_by: [
+          { name: 'code-review', title: '代码评审' },
+          { name: 'writer', title: '写作' },
+        ],
+      },
+    ],
+    problem: null,
+  })
+  const { view } = await mount()
+  const source = async (name: string) => {
+    await view.findByText(name)
+    return view.container.querySelector(`[data-server="${name}"] [data-testid="mcp-source"]`)?.textContent
+  }
+  expect(await source('tracker')).toBe('来自项目的 .mcp.json')
+  expect(await source('ticket')).toBe('由 代码评审 类型声明')
+  expect(await source('docs')).toBe('由 代码评审、写作 类型声明')
+  // The line is in the UI's own font; only the file name is code.
+  const line = (name: string) => view.container.querySelector(`[data-server="${name}"] [data-testid="mcp-source"]`)!
+  expect(line('tracker').querySelector('code')?.textContent).toBe('.mcp.json')
+  expect(line('ticket').querySelector('code')).toBeNull()
+  expect(line('ticket').classList.contains('t-meta')).toBe(false)
+
+  setLocale('en')
+  await waitFor(() => expect(view.container.textContent).toContain('Declared by the 代码评审 type'))
+  expect(view.container.textContent).toContain('Declared by the 代码评审, 写作 types')
+  expect(view.container.textContent).toContain("From the project's .mcp.json")
 })

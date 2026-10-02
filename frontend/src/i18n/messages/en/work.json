@@ -189,49 +189,9 @@
   },
   "room": {
     "docTools": {
-      "title": "Document tools",
       "backToDocument": "Back to document",
       "float": "Open in a floating window",
       "dock": "Dock to sidebar"
-    },
-    "docAi": {
-      "review": "Review changes",
-      "explanation": "Explanation",
-      "comparison": "Original and suggested text",
-      "closeReview": "Close comparison",
-      "original": "Original",
-      "suggested": "Suggested text",
-      "staleProposal": "The document has changed. This suggestion can no longer be applied directly",
-      "title": "Document AI",
-      "selectionToolbar": "Selection actions",
-      "failed": "Request failed; input retained",
-      "signIn": "Sign in to use document AI",
-      "unverified": "The selection could not be verified against saved source. Save, resolve conflicts, or select supported text again.",
-      "refresh": "Refresh records",
-      "close": "Close AI panel and retain draft",
-      "unknown": "Outcome unknown. Recover the original operation to avoid duplicate requests.",
-      "recover": "Recover operation",
-      "question": "Question or rewrite instructions",
-      "contextQuestion": "Original question",
-      "contextSelection": "Selected original text",
-      "contextDocument": "Ask about the whole document",
-      "contextUnavailable": "Original text for this version is unavailable",
-      "contextInvalid": "Original text could not be verified",
-      "ask": "Ask AI",
-      "propose": "Propose rewrite",
-      "aiProposal": "AI request and proposal",
-      "replacement": "Proposed source replacement",
-      "baseVersion": "Based on document version {version}",
-      "humanAccept": "Accept and save as me",
-      "accepted": "Accepted by {actor}, saved as version {version}",
-      "cancel": "Cancel request",
-      "state": {
-        "pending": "Pending",
-        "running": "Generating",
-        "succeeded": "Completed",
-        "failed": "Failed",
-        "cancelled": "Cancelled"
-      }
     },
     "docLink": {
       "title": "Link actions",
@@ -433,7 +393,9 @@
       "detail": "Details",
       "docDiff": "Document changes",
       "added": "Added",
-      "removed": "Removed"
+      "removed": "Removed",
+      "docEditCount": "Changes: {n}",
+      "viewSuggestions": "View"
     },
     "message": {
       "copy": "Copy",
@@ -748,10 +710,10 @@
     },
     "doc": {
       "pickTopic": "Select a topic to see its document",
+      "outdated": "This page has been updated. Refresh to keep editing",
+      "reload": "Refresh",
       "loading": "Loading…",
       "connecting": "Connecting…",
-      "offline": "Offline",
-      "offlineHint": "Your changes will sync when the connection is back",
       "noEditAccess": "You cannot edit this document",
       "backToEdit": "Back to editing",
       "readOnly": "Read-only",
@@ -766,18 +728,11 @@
       "copyCode": "Copy code",
       "emptyPlaceholder": "The AI teammate keeps this document up to date. You can edit it too",
       "format": {
-        "label": "Document formatting",
-        "unavailable": "This format is unavailable for the selection",
         "bold": "Bold",
         "italic": "Italic",
         "strike": "Strikethrough",
         "code": "Inline code",
-        "h1": "Heading 1",
-        "h2": "Heading 2",
-        "bullet": "Bulleted list",
-        "ordered": "Numbered list",
-        "task": "Task list",
-        "quote": "Quote"
+        "highlight": "Highlight"
       },
       "slash": {
         "text": "Text",
@@ -800,7 +755,27 @@
       "liveRefTitle": "“{title}” · {status}. Click to open",
       "thisTask": "This task",
       "subtopic": "Subtopic",
-      "topic": "Topic"
+      "topic": "Topic",
+      "selectionToolbar": "Selection actions",
+      "copy": "Copy",
+      "blockType": "Paragraph style",
+      "offlineSync": "Offline. Your changes will sync when the connection is back",
+      "lastEdit": "Edited by {who} {when}",
+      "history": "Version history",
+      "exportMarkdown": "Export Markdown",
+      "suggestionCount": "Suggestions: {n}",
+      "historyFor": "{who}, asked by {requester}",
+      "historyCurrent": "Current",
+      "historyMore": "Earlier versions",
+      "historyEmpty": "No versions yet",
+      "historyFailed": "Couldn't load the version history",
+      "restore": "Restore this version",
+      "restoreFailed": "Restore failed",
+      "close": "Close",
+      "you": "you",
+      "emptyLineHint": "Type, or / to insert",
+      "undo": "Undo",
+      "redo": "Redo"
     },
     "comments": {
       "comment": "Comment",
@@ -964,6 +939,60 @@
       "typingTwo": "{first} and {second} are typing…",
       "typingMany": "Several people are typing…",
       "separator": " · "
+    },
+    "docEdit": {
+      "boxLabel": "Have {agent} edit this, or ask it",
+      "boxPlaceholder": "Describe a change or ask a question",
+      "boxKeyHint": "Enter to send, Shift+Enter for a new line",
+      "preset": {
+        "concise": "More concise",
+        "specific": "More specific",
+        "formal": "More formal",
+        "list": "As a list"
+      },
+      "send": "Send",
+      "pending": "{agent} is editing…",
+      "done": "Edited as you asked",
+      "undo": "Undo",
+      "again": "Edit again",
+      "undone": "Undid {agent}'s edit",
+      "redo": "Restore",
+      "failed": "Edit failed: {reason}",
+      "failedRetry": "Edit failed. Try again later",
+      "stale": "This text has changed. Select it again",
+      "unmappable": "This selection can't be edited on its own. Select it again",
+      "unavailable": "This document can't be edited right now",
+      "prev": "Previous",
+      "next": "Next",
+      "thinking": "{agent} is looking…",
+      "noAnswerYet": "{agent} hasn't replied yet. The reply will appear in the comments",
+      "openThread": "View in comments",
+      "dismiss": "Dismiss",
+      "docBoxLabel": "Have {agent} edit this document, or ask it",
+      "docPreset": {
+        "conflicts": "Find contradictions",
+        "memory": "Fill in from project memory",
+        "structure": "Tidy the structure"
+      }
+    },
+    "docSuggest": {
+      "title": "{agent}'s suggestion",
+      "pending": "{agent}'s suggestions · Left to review: {n}",
+      "rejectAll": "Reject all",
+      "acceptAll": "Accept all",
+      "allDone": "All of {agent}'s suggestions reviewed · Accepted: {accepted} · Rejected: {rejected}",
+      "dismiss": "Close",
+      "position": "{i}/{n}",
+      "reject": "Reject",
+      "accept": "Accept"
+    },
+    "docReview": {
+      "label": "Changes",
+      "title": "Changes {requester} asked {agent} to make: {n}",
+      "allRestored": "All changes {requester} asked {agent} to make are restored",
+      "close": "Hide changes",
+      "position": "Change {i} of {n}",
+      "restore": "Restore this"
     }
   },
   "board": {
@@ -1158,6 +1187,10 @@
       "needsReconnect": "Needs reconnecting",
       "missingValues": "Needs {names}",
       "disconnected": "Not connected"
+    },
+    "source": {
+      "project": "From the project's {file}",
+      "types": "Declared by the {types} type | Declared by the {types} types"
     },
     "action": {
       "connect": "Connect",

@@ -138,20 +138,10 @@ function topicTo(topicId: string | null | undefined) {
   if (!topicId) return { name: 'workspace-project', params: { projectId: props.projectId } }
   return { name: 'workspace-topic', params: { projectId: props.projectId, topicId } }
 }
-// 章程的修改记录在项目房间里；周报是芝士在项目房间里写的，页头带人过去。
+// 周报是芝士在项目房间里写的，页头带人过去。
 useCommands(() => {
   const room = rootTopicId.value
   if (!room) return []
-  if (kind.value === 'charter')
-    return [
-      {
-        id: 'docs.history',
-        title: t('project.docs.history'),
-        icon: 'mdi-history',
-        header: { primary: true },
-        to: topicTo(room),
-      },
-    ]
   if (kind.value === 'weeklies' && weeklies.value.length > 0)
     return [
       {
@@ -174,16 +164,19 @@ useCommands(() => {
     :fill="kind === 'charter'"
   >
     <div :class="kind === 'charter' ? 'docs-head docs-head--page' : 'mb-6'">
-      <v-tabs
-        :model-value="kind"
-        density="compact"
-        color="on-surface"
-        slider-color="primary"
-        class="docs-tabs"
-        @update:model-value="openKind"
-      >
-        <v-tab v-for="k in KINDS" :key="k" :value="k" class="text-none">{{ t(`project.docs.kind.${k}`) }}</v-tab>
-      </v-tabs>
+      <div class="docs-tabs">
+        <v-tabs
+          :model-value="kind"
+          density="compact"
+          color="on-surface"
+          slider-color="primary"
+          @update:model-value="openKind"
+        >
+          <v-tab v-for="k in KINDS" :key="k" :value="k" class="text-none">{{ t(`project.docs.kind.${k}`) }}</v-tab>
+        </v-tabs>
+        <!-- 章程的顶栏（在线的人、建议、评论……）画在这一行的右边，不另起一行。 -->
+        <div v-if="kind === 'charter'" id="charter-doc-bar" class="docs-tabs__bar" />
+      </div>
       <p v-if="kind === 'charter'" class="t-body c-muted mt-2">{{ t('project.docs.charterHint') }}</p>
     </div>
 
@@ -232,10 +225,12 @@ useCommands(() => {
         <PanelDoc
           v-if="rootTopic"
           bare
+          bar-to="#charter-doc-bar"
           class="charter-doc"
           :topic="rootTopic"
           :activity-tick="0"
           :agent-name="workspace?.agentName"
+          :agent-handle="workspace?.agentHandle"
           :topic-list="workspace?.topics ?? []"
           @open-topic="(id: string) => router.push(topicTo(id))"
         />
@@ -295,7 +290,17 @@ useCommands(() => {
 /* 几种文档的切换带。它以前是侧栏里几行常驻的一级导航，占着黄金位养的却是
    二级页面；收成这一条 tab 带之后，侧栏只留一行「项目文档」。 */
 .docs-tabs {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
   border-bottom: 1px solid var(--line);
+}
+.docs-tabs__bar {
+  display: flex;
+  flex: 1 1 auto;
+  justify-content: flex-end;
+  min-width: 0;
 }
 
 /* 章程：编辑器整页宽、占满剩下的高度、自己滚；页签那一行仍摆在阅读宽度的那一栏里，

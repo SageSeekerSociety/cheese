@@ -43,6 +43,11 @@ const previewDocumentPdfSnapshot = vi.fn()
 const documentRevisions = vi.fn()
 const decideDocumentRevisions = vi.fn()
 
+// The document's version history: the last edit is read on open; none here.
+vi.mock('../../api/docHistory', () => ({
+  getDocVersions: async () => ({ versions: [], cursor: null }),
+  restoreDocVersion: async () => ({}),
+}))
 vi.mock('../../composables/useDocCollab', async () => ({
   useDocCollab: (await import('../../test/fakeDocCollab')).useFakeDocCollab,
 }))
@@ -72,7 +77,6 @@ vi.mock('../../api', async () => {
     documentRevisions: (...a: unknown[]) => documentRevisions(...a),
     decideDocumentRevisions: (...a: unknown[]) => decideDocumentRevisions(...a),
     writeFile: vi.fn().mockResolvedValue({ path: 'x', version: 'v2' }),
-    getDoc: vi.fn().mockResolvedValue({ markdown: '', title: '' }),
     getComments: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getDocNodes: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getTranscript: vi.fn().mockResolvedValue({ data: [], total: 0 }),

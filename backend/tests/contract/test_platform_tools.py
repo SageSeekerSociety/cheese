@@ -60,6 +60,16 @@ CALLS = {
         "/topics/fixture/history",
     ),
     "cheese_doc_get": ({}, "GET", "/topics/fixture/doc"),
+    "cheese_doc_comment_reply": (
+        {"thread_id": "c-1", "text": "改好了"},
+        "POST",
+        "/topics/fixture/comments/c-1/replies",
+    ),
+    "cheese_doc_edit": (
+        {"edits": [{"old": "第一段", "new": "第一段，改过"}]},
+        "POST",
+        "/topics/fixture/doc/edits",
+    ),
     "cheese_task": ({"title": "数据清洗"}, "POST", "/topics/fixture/split"),
     "cheese_close_task": (
         {"task": TASK},
@@ -205,7 +215,8 @@ def _serve(executor):
                 self._answer(*executor(payload))
                 return
             platform_calls.append((self.command, self.path.split("?")[0], payload))
-            # 一份每个工具都读得动的回答：有 id、有列表、占到了锁、便条有人接住。
+            # 一份每个工具都读得动的回答：有 id、有列表、占到了锁、便条有人接住、
+            # 评论线程读得到版本。
             data = {
                 "ok": True,
                 "id": "fixture-id",
@@ -213,6 +224,7 @@ def _serve(executor):
                 "acquired": True,
                 "delivered": True,
                 "doc_version": 1,
+                "revision": 1,
                 **payload,
             }
             if self.path == "/topics/fixture/asks":

@@ -7,6 +7,7 @@ so what lands in the room here is what a room actually gets.
 import asyncio
 import json
 import logging
+import threading
 import uuid
 from pathlib import Path
 from typing import cast
@@ -19,6 +20,7 @@ from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.harness import AgentRuntime, Opening, SessionRef
 from app.domain.agent.harness.driven import runtime as driven_runtime
 from app.domain.agent.harness.driven.runner import LONG_POLL
+from app.domain.agent.harness.pi.journal import Journal
 from app.domain.agent.harness.pi.runtime import Handle, PiRuntime
 from app.domain.agent.service import AgentResult, AgentSessionInfo, AgentToolUse
 from app.domain.delivery.input_identity import InputIdentity, InputReceipt
@@ -329,6 +331,69 @@ async def test_a_new_turn_is_read_at_once_in_a_quiet_room(tmp_path, monkeypatch)
             landed = [call.args[3] for call in consumer.await_args_list]
 
     await runtime.close(session)
+
+
+@pytest.mark.anyio
+async def test_a_send_that_lands_as_the_reader_starts_to_wait_is_read_at_once(
+    tmp_path, monkeypatch
+):
+    """The moment between the reader taking its turn and asking the runner to
+    hold the read is still a quiet room: a send landing there is read at once,
+    not after the hold."""
+    monkeypatch.setattr(driven_runtime, "READ_WAIT_S", 3600.0)
+    # Once armed, the reader stops on its way to the held read until the send
+    # is in. Before that the runner answers at once, so the reader keeps
+    # coming back past that point.
+    armed, on_its_way, go_on = threading.Event(), threading.Event(), threading.Event()
+    recall = Journal.recall
+
+    def slow_recall(journal, name):
+        if armed.is_set() and not go_on.is_set():
+            on_its_way.set()
+            go_on.wait(HANG_S)
+        return recall(journal, name)
+
+    monkeypatch.setattr(Journal, "recall", slow_recall)
+    session, runtime, runner = wire(tmp_path)
+
+    async def call(handle, method, params):
+        if method == "entries" and not armed.is_set():
+            params = {**params, "wait": 0}
+        return await runner.call(handle, method, params)
+
+    cast(AsyncMock, runtime.channel.call).side_effect = call
+    consumer = AsyncMock()
+    runtime.bind_events(consumer)
+    runtime.bind_activity(AsyncMock())
+    runtime.bind_receipts(AsyncMock())
+
+    await runtime.recover("device")
+    await runtime.replay(session, known_texts=set())
+    armed.set()
+    with anyio.fail_after(HANG_S):
+        while not on_its_way.is_set():
+            await asyncio.sleep(0.01)
+
+    sending = asyncio.ensure_future(
+        runtime.send(
+            session,
+            "开始",
+            Opening("system"),
+            work_id=uuid.uuid4(),
+            on_mark=lambda _: None,
+        )
+    )
+    await asyncio.sleep(0.1)
+    go_on.set()
+    landed: list = []
+    with anyio.fail_after(HANG_S):
+        assert await sending
+        while not any(isinstance(event, AgentToolUse) for event in landed):
+            await asyncio.sleep(0.01)
+            landed = [call.args[3] for call in consumer.await_args_list]
+
+    with anyio.fail_after(HANG_S):
+        await runtime.close(session)
 
 
 @pytest.mark.anyio

@@ -1,17 +1,10 @@
-"""Prove a raw span belongs to one current node without searching its quote."""
+"""Where each top-level block of a document sits in its raw Markdown."""
 
 import re
-import uuid
 from dataclasses import dataclass
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.core.errors import ConflictError, ValidationError
+from app.core.errors import ValidationError
 from app.domain.block.doc_tree import _HEADING_RE, _is_fence, markdown_to_nodes
-from app.domain.block.models import BlockKind
-from app.domain.block.repositories import BlockRepository
-from app.domain.living_doc.services import DocumentJournal
-from app.domain.living_doc.source_span import source_span
 
 
 @dataclass(frozen=True)
@@ -69,74 +62,3 @@ def raw_blocks(source: str) -> list[RawBlock]:
     ]:
         raise ValidationError("该文档结构不能证明原文坐标，请重新选择")
     return blocks
-
-
-class DocumentSelections:
-    def __init__(self, session: AsyncSession):
-        self.session = session
-        self.blocks = BlockRepository(session)
-
-    async def describe(self, room_id: uuid.UUID) -> dict:
-        await DocumentJournal(self.session).lock(room_id)
-        doc = await self.blocks.doc_root(room_id)
-        if doc is None:
-            raise ConflictError("文档已经不存在")
-        await self.session.refresh(doc)
-        nodes = await self.blocks.list_doc_nodes(room_id)
-        spans = raw_blocks(doc.content)
-        if len(nodes) != len(spans) or any(
-            node.struct_parent != doc.id or node.content != span.normalized
-            for node, span in zip(nodes, spans, strict=True)
-        ):
-            raise ConflictError("文档节点和原文不一致")
-        return {
-            "document_id": str(doc.id),
-            "base_version": doc.doc_version,
-            "source": doc.content,
-            "offset_unit": "utf8-bytes",
-            "nodes": [
-                {"node_id": str(node.id), "start": span.start, "end": span.end}
-                for node, span in zip(nodes, spans, strict=True)
-            ],
-        }
-
-    async def snapshot(
-        self,
-        *,
-        room_id: uuid.UUID,
-        document_id: uuid.UUID,
-        base_version: int,
-        selection: dict | None,
-    ):
-        await DocumentJournal(self.session).lock(room_id)
-        doc = await self.blocks.doc_root(room_id)
-        if doc is None:
-            raise ConflictError("文档已经不存在")
-        await self.session.refresh(doc)
-        if doc.id != document_id or doc.doc_version != base_version:
-            raise ConflictError("文档版本已经变化，请重新选择")
-        if selection is None:
-            return doc
-        nodes = await self.blocks.list_doc_nodes(room_id)
-        spans = raw_blocks(doc.content)
-        if len(nodes) != len(spans):
-            raise ConflictError("文档节点和原文不一致")
-        index = next(
-            (i for i, node in enumerate(nodes) if str(node.id) == selection["node_id"]),
-            None,
-        )
-        if index is None:
-            raise ValidationError("所选节点不属于当前文档")
-        node = nodes[index]
-        span = spans[index]
-        if (
-            node.kind != BlockKind.doc_node
-            or node.struct_parent != doc.id
-            or node.content != span.normalized
-        ):
-            raise ConflictError("所选节点已经变化")
-        start, end = selection["start"], selection["end"]
-        if not span.start <= start < end <= span.end:
-            raise ValidationError("提案只支持可核验的单块原文范围")
-        source_span(doc.content, start, end, selection["exact_hash"])
-        return doc

@@ -20,6 +20,7 @@ import { after, describe, it } from "node:test";
 // hand-written stand-ins for the same interface drift, and the one that
 // drifted goes on passing.
 import {
+  beforeAgentStart,
   CATALOG,
   cleanup,
   load,
@@ -244,40 +245,79 @@ describe("会话在哪、仓库自己说了什么", () => {
   it("模型被告知的工作目录是执行机上的项目，不是 pi 自己跑在哪", async () => {
     const socket = await runner(() => ({ result: { context: "" } }));
     const { pi } = await load({ socket: socket.address, workspace: "/machine/room" });
-    const before = "平台系统提示：你在一个房间里。\nCurrent working directory: /session-host/x";
+    const event = beforeAgentStart("/session-host/x");
 
-    const answer = await pi.emit("before_agent_start", { systemPrompt: before }, {
-      cwd: "/session-host/x",
-    });
+    const answer = await pi.emit("before_agent_start", event);
 
-    assert.match(answer.systemPrompt, /Current working directory: \/machine\/room/);
-    assert.doesNotMatch(answer.systemPrompt, /session-host/);
+    assert.equal(event.systemPromptOptions.cwd, "/machine/room");
+    // pi renders the prompt from these options; a handler that returned a
+    // `systemPrompt` would be replacing pi's own text again, which is how the
+    // wording went out from under us once.
+    assert.equal(answer, undefined, "the prompt is pi's to render, not ours to replace");
     socket.close();
   });
 
-  it("仓库的说明追加在系统提示末尾，前面那一段一个字不动", async () => {
-    // Where it goes is the point, not that it goes. Everything before it is
-    // identical on every turn of the session and is what a provider cache
-    // matches on; put in front, it invalidates the whole prompt each turn.
+  it("仓库的说明是它自己的 section，平台的提示词一个字不动", async () => {
+    // A section of its own is what pi 1.0 can record as a delta: everything
+    // before it is identical on every turn of the session and is what a
+    // provider cache matches on. Rewriting the rendered prompt instead would
+    // invalidate the whole of it each turn, and match on wording pi owns.
     const socket = await runner(() => ({ result: { context: "# 本仓约定\n\n用 pnpm。" } }));
     const { pi, home } = await load({ socket: socket.address });
-    const before = "平台系统提示：你在一个房间里。";
+    const event = beforeAgentStart(home);
 
-    const answer = await pi.emit("before_agent_start", { systemPrompt: before }, { cwd: home });
+    const answer = await pi.emit("before_agent_start", event);
 
-    assert.ok(answer.systemPrompt.startsWith(before), "the platform's prompt moved");
-    assert.ok(answer.systemPrompt.indexOf("用 pnpm。") > before.length);
+    assert.equal(event.systemPromptOptions.sections.repository, "# 本仓约定\n\n用 pnpm。");
+    assert.equal(answer, undefined, "the platform's own prompt is not replaced");
     socket.close();
   });
 
   it("仓库什么都没说、目录也对，就什么都不改", async () => {
     const socket = await runner(() => ({ result: { context: "" } }));
     const { pi, home } = await load({ socket: socket.address });
-    assert.equal(
-      await pi.emit("before_agent_start", { systemPrompt: "x" }, { cwd: home }),
-      undefined,
-    );
+    const event = beforeAgentStart(home);
+
+    await pi.emit("before_agent_start", event);
+
+    assert.equal(event.systemPromptOptions.cwd, home);
+    assert.deepEqual(event.systemPromptOptions.sections, {});
     socket.close();
+  });
+
+  it("没有结构化提示词的 pi：当场说在 stderr 上，不静默地什么都不做", async () => {
+    // What 0.85.1's wording change did to the old rewrite, made visible: a
+    // build that does not carry the options cannot be told where the session
+    // is, and every tool here works on the room's machine.
+    const socket = await runner(() => ({ result: { context: "" } }));
+    const { pi } = await load({ socket: socket.address, workspace: "/machine/room" });
+    const written: string[] = [];
+    const stderr = process.stderr.write;
+    process.stderr.write = ((chunk: any) => {
+      written.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      await pi.emit("before_agent_start", { type: "before_agent_start", prompt: "" });
+    } finally {
+      process.stderr.write = stderr;
+    }
+    assert.match(written.join(""), /no systemPromptOptions/);
+    socket.close();
+  });
+});
+
+describe("没有手的那条路：人自己的芝士，没有机器", () => {
+  it("会话机上的目录不会被说给模型", async () => {
+    const { pi } = await load({ hands: false, workspace: "/machine/room" });
+    const event = beforeAgentStart("/session-host/x");
+
+    await pi.emit("before_agent_start", event);
+
+    // Emptied, not named: what this session has to say about a directory is
+    // that it has none. The rendered prompt is checked against the real binary
+    // in tests/unit/test_personal_sessions.py.
+    assert.equal(event.systemPromptOptions.cwd, "");
   });
 });
 
@@ -482,6 +522,20 @@ describe("有人发来消息的时候", () => {
     process.env.CHEESE_REPLY_OWED = path.join(scratch(), "reply-owed.json");
   }
 
+  // A job has ended once the extension writes its `exit` file. How long after
+  // the command that is depends on the machine, and a loaded one takes longer
+  // than any fixed wait; the bound only turns a hang into a failure. It stays
+  // under the 30 s of the `sleep 30` below, so that one ending by itself is
+  // not mistaken for being stopped.
+  async function ended(dir: string): Promise<boolean> {
+    const deadline = Date.now() + 20_000;
+    while (!fs.existsSync(path.join(dir, "exit"))) {
+      if (Date.now() > deadline) return false;
+      await new Promise((done) => setTimeout(done, 50));
+    }
+    return true;
+  }
+
   it("先回话，别的工具在那之前都被拒", async () => {
     fresh();
     const { pi } = await load();
@@ -514,7 +568,7 @@ describe("有人发来消息的时候", () => {
     const job = /任务 (job-[a-z0-9-]+)/.exec(said)?.[1] as string;
     assert.match((await pi.call("bash_list", {})).content[0].text, /running/);
 
-    await new Promise((done) => setTimeout(done, 3500));
+    assert.ok(await ended(path.join(jobs, job)), "the command never finished");
     assert.match(fs.readFileSync(path.join(jobs, job, "output"), "utf8"), /LATE/);
     assert.match((await pi.call("bash_list", {})).content[0].text, /exited 0/);
     socket.close();
@@ -531,8 +585,7 @@ describe("有人发来消息的时候", () => {
     const job = /任务 (job-[a-z0-9-]+)/.exec((await call).content[0].text)?.[1] as string;
 
     await pi.call("bash_kill", { id: job });
-    await new Promise((done) => setTimeout(done, 2500));
-    assert.ok(fs.existsSync(path.join(jobs, job, "exit")), "the command is still running");
+    assert.ok(await ended(path.join(jobs, job)), "the command is still running");
     socket.close();
   });
 

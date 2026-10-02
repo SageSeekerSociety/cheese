@@ -99,24 +99,6 @@ class UsageRepository:
         await self._session.flush()
         return row
 
-    async def team_window(
-        self, team_id: int, *, since: datetime
-    ) -> tuple[float, datetime | None]:
-        """Credits ``team_id`` was charged since ``since``, and its oldest row
-        in that span — read from the ``(team_id, created_at)`` index alone."""
-        row = (
-            await self._session.execute(
-                select(
-                    func.coalesce(func.sum(ResourceUsage.credits), 0.0),
-                    func.min(ResourceUsage.created_at),
-                ).where(
-                    ResourceUsage.team_id == team_id,
-                    ResourceUsage.created_at >= since,
-                )
-            )
-        ).one()
-        return float(row[0]), row[1]
-
     async def team_spend_by_day(
         self, team_id: int, *, since: datetime, until: datetime, tz: str
     ) -> list[tuple[date, uuid.UUID | None, str, float]]:

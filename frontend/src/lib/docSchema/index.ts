@@ -21,4 +21,16 @@ export { docExtensions } from './extensions'
 export type { RoundTripReport } from './fidelity'
 export { compareRoundTrip, normalizeMarkdown } from './fidelity'
 export { docMarked, finishMarkdown, serializeDoc } from './markdown'
-export { exportMarkdown, FIELD, liveNode, parseMarkdown, readsAs, writeMarkdown } from './yjs'
+export type { PendingSuggestion } from './suggestions'
+export { pendingSuggestions, suggestionAuthor, suggestionId, withoutSuggestions } from './suggestions'
+export { DOC_SCHEMA_MISMATCH, DOC_SCHEMA_PARAM, DOC_SCHEMA_VERSION } from './version'
+export {
+  exportMarkdown,
+  FIELD,
+  liveNode,
+  liveSuggestions,
+  nodeMarkdown,
+  parseMarkdown,
+  readsAs,
+  writeMarkdown,
+} from './yjs'

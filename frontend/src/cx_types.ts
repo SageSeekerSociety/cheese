@@ -643,7 +643,7 @@ export interface FileContent {
   // corrupt it on save) or `too_large` (never sent — it would freeze the tab).
   content: string | null
   // Content id to echo back on save; a mismatch means someone wrote in between.
-  // Null only when the content was not read at all (`too_large`).
+  // Present even for `too_large`; null means the file is gone.
   version: string | null
   bytes: number
   binary: boolean

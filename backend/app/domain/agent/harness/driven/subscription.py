@@ -180,6 +180,10 @@ class Subscription[B: Backlog]:
         self.asking: dict | None = None
         self.heard: dict = {}
         self.parked: asyncio.Future | None = None
+        # A drain that wants to land now and found nothing held yet: the drain
+        # holding the lock may still be on its way to that read, and parking it
+        # then would keep this one waiting for the whole hold.
+        self.hurry = False
         # The mark of what the agent was last seen writing.
         self.live_mark: str | None = None
 
@@ -210,6 +214,7 @@ class Subscription[B: Backlog]:
 
     def unpark(self) -> None:
         """Have a read the runner is holding read at once instead."""
+        self.hurry = True
         if self.parked is not None:
             self.parked.cancel()
 
@@ -218,7 +223,7 @@ class Subscription[B: Backlog]:
         asks the runner to hold it until there is news (``driven.runner``),
         and what else that answer says is kept in ``heard``."""
         asking, self.asking = self.asking, None
-        if asking is None:
+        if asking is None or self.hurry:
             return await self.call(method, params)
         self.parked = asyncio.ensure_future(self.call(method, {**params, **asking}))
         try:
@@ -307,6 +312,8 @@ class Subscription[B: Backlog]:
             self.heard = {}
             if wait > 0:
                 self.asking = {"wait": wait, "live": self.live_mark}
+            else:
+                self.hurry = False
             try:
                 await self.receive()
             finally:

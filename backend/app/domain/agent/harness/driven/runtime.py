@@ -1114,7 +1114,7 @@ class DrivenRuntime[H: Handle]:
         if subscription := self.subscriptions.get(seat):
             # Nothing more is read from a runner that is not there; what it
             # left is read when its session is next started.
-            with contextlib.suppress(DeviceCallError):
+            with contextlib.suppress(DeviceCallError, DeviceOffline):
                 await subscription.drain()
         await self._detach(seat)
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { McpServer, McpServerList } from '../api'
+import type { McpDeclaringType, McpServer, McpServerList } from '../api'
 
 import { onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -113,6 +113,13 @@ function statusLine(server: McpServer) {
   }
 }
 
+// 它从哪来：项目的 .mcp.json（模板里画，文件名是一段 code），或声明它的那几个
+// 队友类型（名字取类型的标题）。
+function declaredBy(types: McpDeclaringType[]) {
+  const titles = types.map((type) => type.title || type.name).join(t('work.mcp.listSeparator'))
+  return t('work.mcp.source.types', { types: titles }, types.length)
+}
+
 const DOT: Record<McpServer['status'], string> = {
   connected: 'status-dot--ok',
   ready: 'status-dot--ok',
@@ -169,6 +176,16 @@ watch(() => props.projectId, load)
               <div class="mcp-row__name">
                 <span class="t-body c-ink mcp-row__title">{{ server.name }}</span>
                 <span class="t-meta">{{ server.host }}</span>
+                <i18n-t
+                  v-if="!server.declared_by"
+                  keypath="work.mcp.source.project"
+                  tag="span"
+                  class="t-meta-read"
+                  data-testid="mcp-source"
+                >
+                  <template #file><code class="mcp-file">.mcp.json</code></template>
+                </i18n-t>
+                <span v-else class="t-meta-read" data-testid="mcp-source">{{ declaredBy(server.declared_by) }}</span>
               </div>
               <div class="mcp-row__state">
                 <span class="status-dot" :class="DOT[server.status]" />
@@ -278,6 +295,10 @@ watch(() => props.projectId, load)
 
 .mcp-row__title {
   font-weight: 500;
+}
+
+.mcp-file {
+  font-family: var(--font-mono);
 }
 
 .mcp-row__state {

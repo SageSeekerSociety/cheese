@@ -428,7 +428,7 @@ function onMenuToggle(open: boolean) {
   background: var(--fill);
   color: var(--text);
 }
-/* 触摸屏没有 hover，:focus-within 又要先聚焦——这两条规则加起来，⋯ 菜单在桌面宽度
+/* 触摸屏没有 hover，键盘焦点又要先 Tab 到它——这两条规则加起来，⋯ 菜单在桌面宽度
    的触屏上（平板横屏、带触摸屏的笔记本）根本摸不到。所以在没有 hover 能力的设备上
    它常驻。整页形态（手机）不画这颗 ⋯，那里长按一行打开同一组操作。 */
 @media (hover: none) {
@@ -441,9 +441,12 @@ function onMenuToggle(open: boolean) {
   }
 }
 /* 菜单展开时那颗 ⋯ 必须留着：它是菜单的 activator，跟 hover 一起消失的话
-   鼠标一离开行、菜单就没了根。 */
+   鼠标一离开行、菜单就没了根。
+   键盘焦点这里用 :has(:focus-visible)，不用 :focus-within：鼠标点一下行也会让它拿到
+   焦点，:focus-within 从那以后一直命中，⋯ 就挂在行尾不走了（同一个先例见 style.css
+   的 .fb-row:has(.fbrow__link:focus-visible)）。 */
 .topic-row:hover .row-actions,
-.topic-row:focus-within .row-actions,
+.topic-row:has(:focus-visible) .row-actions,
 .topic-row.is-menu-open .row-actions {
   opacity: 1;
   pointer-events: auto;
@@ -451,7 +454,7 @@ function onMenuToggle(open: boolean) {
 /* While the actions are out, the count steps aside (they share the tail). 只在有那颗
    ⋯ 的行上：手机上点过一行之后 :hover 会一直粘着，未读数不能因此消失。 */
 .topic-row--hover-actions:hover .unread-badge,
-.topic-row--hover-actions:focus-within .unread-badge,
+.topic-row--hover-actions:has(:focus-visible) .unread-badge,
 .topic-row.is-menu-open .unread-badge {
   opacity: 0;
 }

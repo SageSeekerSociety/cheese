@@ -4,6 +4,7 @@ import base64
 import binascii
 import hashlib
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -164,6 +165,16 @@ class Settings(BaseSettings):
     # Feishu group's custom-bot webhook URL; empty disables alerting entirely,
     # which is what a developer's machine and every test wants.
     feishu_alert_webhook: str = ""
+
+    # Coordinated ingress cutover is a separate release. No implicit fallback.
+    preview_connection_mode: Literal["legacy", "owner"] = "legacy"
+    preview_connection_url: str = ""
+
+    @property
+    def preview_connection_auth_secret(self) -> str:
+        return hashlib.sha256(
+            b"cheesex:preview-owner-rpc:v1:" + self.jwt_secret.encode()
+        ).hexdigest()
 
     device_connection_url: str = ""
     device_connection_secret: str = ""
@@ -965,6 +976,14 @@ class Settings(BaseSettings):
     pdf_import_max_concurrency: int = Field(
         default=3, ge=1, le=10, alias="PDF_IMPORT_MAX_CONCURRENCY"
     )
+    # The draft models whose deployment accepts image content blocks. A PDF page
+    # with no text layer (a scan) is rendered to a PNG and sent to the model only
+    # when `task_draft_model` is named here. These models are text models by
+    # default, and an image sent to one that cannot read it is a wasted, billed
+    # call — so the fallback is opt-in per model, not inferred. Deployment env
+    # name TASK_DRAFT_VISION_MODELS carries a JSON array (pydantic-settings
+    # parsing for a set/list field).
+    task_draft_vision_models: set[str] = {"deepseek-flash"}
 
     email_from_address: str = Field(default="", alias="EMAIL_FROM_ADDRESS")
     email_smtp_host: str = Field(default="", alias="EMAIL_SMTP_HOST")

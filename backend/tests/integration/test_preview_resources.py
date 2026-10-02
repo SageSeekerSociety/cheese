@@ -7,7 +7,9 @@ from app.api.preview_host import cookie_name, preview_origin
 from app.core.config import settings
 from app.domain.agent import preview_tunnel as wire
 from app.domain.agent.preview_hub import preview_hub
+from app.domain.agent.preview_owner import Inspection
 from app.domain.library import service as library
+from app.domain.textfile import MAX_TEXT_BYTES, content_version
 from tests.integration.conftest import session_auth_headers
 from tests.integration.test_app_preview_proxy import (
     FakeMachine,
@@ -16,6 +18,82 @@ from tests.integration.test_app_preview_proxy import (
 )
 from tests.integration.test_app_preview_proxy import preview_config as preview_config
 from tests.integration.test_preview_host import static_preview as static_preview
+
+
+def test_owner_mode_all_three_authorized_reads_share_the_owner(
+    client, preview_config, monkeypatch
+):
+    from app.api.routes import preview_sessions, topics_preview, topics_shown
+
+    _, topic = _project_topic(client)
+    topic_id = uuid.UUID(topic["id"])
+    seat = _room_agent(client, topic_id)
+    calls = []
+
+    async def inspect(topic, author, **options):
+        calls.append((topic, author, options))
+        return Inspection(
+            owner_incarnation="owner",
+            transport_epoch="epoch",
+            state="online",
+            instance="a" * 64,
+            capabilities=["instance-v1"],
+        )
+
+    class NoLocalHub:
+        def __getattr__(self, name):
+            raise AssertionError("owner mode read a business-backend hub")
+
+    monkeypatch.setattr(settings, "preview_connection_mode", "owner")
+    for module in (preview_sessions, topics_preview, topics_shown):
+        monkeypatch.setattr(module, "inspect_owner", inspect)
+        monkeypatch.setattr(module, "preview_hub", NoLocalHub())
+    headers = session_auth_headers("alice")
+    shown = client.post(
+        f"/topics/{topic_id}/shown",
+        json={"path": "app", "as": "app"},
+        headers=headers,
+    )
+    assert shown.status_code == 200, shown.text
+    meta = client.get(f"/topics/{topic_id}/preview", headers=headers).json()["data"]
+    selection = {"artifact_id": meta["artifact_id"], "instance": meta["instance"]}
+    bound = client.post(
+        f"/topics/{topic_id}/preview-session", json=selection, headers=headers
+    )
+    assert bound.status_code == 200, bound.text
+    resource = bound.json()["data"]["resource"]
+    assert resource["instance"] == "a" * 64
+    assert resource["artifact_id"] == meta["artifact_id"]
+    assert resource["seat"] == seat
+    assert resource["path"] == "app"
+    assert [(topic, author) for topic, author, _ in calls] == [(topic_id, seat)] * 3
+    assert calls[0][2] == {"wait_ms": 8000, "probe": True}
+    assert calls[1][2] == {"probe": True}
+    assert calls[2][2] == {"expected_instance": "a" * 64}
+
+    async def unavailable(*args, **kwargs):
+        return Inspection(owner_incarnation="owner", state="transport_unavailable")
+
+    for module in (preview_sessions, topics_preview, topics_shown):
+        monkeypatch.setattr(module, "inspect_owner", unavailable)
+    meta = client.get(f"/topics/{topic_id}/preview", headers=headers).json()["data"]
+    assert not meta["tunnel_up"] and meta["url"] is None
+    assert (
+        client.post(
+            f"/topics/{topic_id}/preview-session", json=selection, headers=headers
+        ).status_code
+        == 404
+    )
+    assert (
+        client.post(
+            f"/topics/{topic_id}/shown",
+            json={"path": "app", "as": "app"},
+            headers=headers,
+        ).status_code
+        == 422
+    )
+    latest = client.get(f"/topics/{topic_id}/preview", headers=headers).json()["data"]
+    assert latest["artifact_id"] == selection["artifact_id"]
 
 
 def test_fixed_file_survives_latest_change_and_rejects_changed_entry(
@@ -84,6 +162,41 @@ def test_fixed_file_survives_latest_change_and_rejects_changed_entry(
         headers=session_auth_headers("alice"),
     )
     assert denied.status_code == 404
+
+
+def test_oversized_file_reports_the_version_its_session_check_uses(
+    client, static_preview
+):
+    """A file past MAX_TEXT_BYTES has no body to hand over, but it still has a
+    version -- and the preview panel opens a session for the version it was
+    shown. Reporting `null` there made every large file unopenable: the panel
+    asked, the route compared `null` against the real hash, and answered
+    "Preview entry changed or unavailable" for a file that had not changed.
+    """
+    project, topic, _html, _assets = static_preview
+    body = b"<html>" + b"x" * MAX_TEXT_BYTES + b"</html>"
+    library.write_room_file(project, topic, "web/huge.html", body)
+
+    read = client.get(
+        f"/topics/{topic}/preview/file",
+        params={"path": "web/huge.html"},
+        headers=session_auth_headers("alice"),
+    )
+    assert read.status_code == 200, read.text
+    data = read.json()["data"]
+    assert data["too_large"] is True and data["content"] is None
+    assert data["version"] == content_version(body)
+    assert data["version"] == library.preview_file_version(
+        project, topic, "web/huge.html"
+    )
+
+    opened = client.post(
+        f"/topics/{topic}/preview-session",
+        json={"path": "web/huge.html", "version": data["version"]},
+        headers=session_auth_headers("alice"),
+    )
+    assert opened.status_code == 200, opened.text
+    assert opened.json()["data"]["resource"]["version"] == data["version"]
 
 
 class InstanceMachine(FakeMachine):

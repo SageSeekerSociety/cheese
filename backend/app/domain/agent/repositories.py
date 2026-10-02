@@ -205,7 +205,9 @@ class AgentTurnRepository:
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
-    async def open_turn_author_for_topic(self, topic_id: uuid.UUID) -> str | None:
+    async def open_turn_author_for_topic(
+        self, topic_id: uuid.UUID, *, agent_handle: str | None = None
+    ) -> str | None:
         """这一轮由谁的消息发起 —— 也就是「这一轮的结果由谁在等」。
 
         芝士在轮次中途提出待确认问题，本轮就停在那里等回答。等的不是房间里任意一个
@@ -214,6 +216,9 @@ class AgentTurnRepository:
         平台发起的轮次（resume、各类提醒）作者是 `system`，那种轮次里的提问指不到
         具体的人 —— 这里照样把 `system` 返回，由调用点决定它意味着什么，和
         `open_turn_id_for_topic` 一样只回答被问到的那件事。
+
+        ``agent_handle``：只看这位队友的那一轮。一个房间可以坐几位队友，各自
+        在跑的轮次由不同的人发起。
         """
         stmt = (
             select(AgentTurn.author)
@@ -225,6 +230,8 @@ class AgentTurnRepository:
             .order_by(AgentTurn.started_at.desc())
             .limit(1)
         )
+        if agent_handle is not None:
+            stmt = stmt.where(AgentTurn.agent_handle == agent_handle)
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
     @staticmethod

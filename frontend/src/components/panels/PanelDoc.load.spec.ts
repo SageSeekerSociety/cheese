@@ -16,16 +16,19 @@ import { exportMarkdown } from '../../lib/docSchema'
 import { remoteEdit, resetRooms, seedRoom, serverDoc } from '../../test/fakeDocCollab'
 
 const mocks = vi.hoisted(() => ({
-  getDoc: vi.fn(),
   getComments: vi.fn(),
   getDocNodes: vi.fn(),
 }))
 
+// The document's version history: the last edit is read on open; none here.
+vi.mock('../../api/docHistory', () => ({
+  getDocVersions: async () => ({ versions: [], cursor: null }),
+  restoreDocVersion: async () => ({}),
+}))
 vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
   return {
     ...actual,
-    getDoc: (...a: unknown[]) => mocks.getDoc(...a),
     getComments: (...a: unknown[]) => mocks.getComments(...a),
     getDocNodes: (...a: unknown[]) => mocks.getDocNodes(...a),
   }
@@ -64,10 +67,8 @@ beforeAll(() => {
 
 beforeEach(() => {
   resetRooms()
-  mocks.getDoc.mockReset()
   mocks.getComments.mockReset()
   mocks.getDocNodes.mockReset()
-  mocks.getDoc.mockResolvedValue(null)
   mocks.getComments.mockResolvedValue({ data: [], total: 0 })
   mocks.getDocNodes.mockResolvedValue({ data: [], total: 0 })
 })
@@ -94,6 +95,18 @@ describe('打开一篇协同文档', () => {
       expect(container.querySelector('.doc-error-toast')?.textContent).toContain('不是这个房间的成员')
     )
     expect(container.querySelector('.doc-prose')).toBeNull()
+  })
+
+  it('协同服务换了文档格式时，不摆编辑器，点刷新重新载入页面', async () => {
+    seedRoom('t1', '第一段', { outdated: true })
+    const reload = vi.fn()
+    vi.stubGlobal('location', { ...window.location, reload })
+    const { container, findByRole } = open(room('t1'))
+
+    ;(await findByRole('button', { name: '刷新' })).click()
+    expect(reload).toHaveBeenCalled()
+    expect(container.querySelector('.doc-prose')).toBeNull()
+    vi.unstubAllGlobals()
   })
 
   it('别人写的字实时出现在编辑器里', async () => {
@@ -126,22 +139,6 @@ describe('打开一篇协同文档', () => {
 
     await waitFor(() => expect(prose(view.container)).toContain('乙房间'))
     expect(prose(view.container)).not.toContain('甲房间')
-  })
-
-  it('存回之后，屏幕上这一份和已存的那一版是同一份；还有字没存回时不是', async () => {
-    const markdown = '# 题目\n\n* 一\n* 二\n\n| 列 | 值 |\n| --- | --- |\n| a | 1 |\n'
-    seedRoom('t1', markdown)
-    // 协同服务存回的是它导出的那一份正文。
-    mocks.getDoc.mockResolvedValue({ id: 'd1', kind: 'doc', content: exportMarkdown(serverDoc('t1')), doc_version: 2 })
-    const { container } = open(room('t1'))
-    await waitFor(() => expect(prose(container)).toContain('题目'))
-    const probe = (window as unknown as { __docPanel: { matchesStored: () => boolean } }).__docPanel
-
-    await waitFor(() => expect(probe.matchesStored(), '文档 AI 会把它当成没存回而拒绝').toBe(true))
-
-    remoteEdit('t1', markdown + '\n还没存回的一句\n')
-    await waitFor(() => expect(prose(container)).toContain('还没存回'))
-    expect(probe.matchesStored()).toBe(false)
   })
 
   it('锚在某一句话上的评论，在正文里画一条下划线', async () => {

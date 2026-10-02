@@ -14,7 +14,7 @@ import type { PluginKey } from '@tiptap/pm/state'
 import type { SuggestionProps } from '@tiptap/suggestion'
 import type { DocSession } from '../../../composables/useDocCollab'
 import type { Block, Topic } from '../../../cx_types'
-import type { DocSelectionSnapshot } from '../../../lib/docAiSelection'
+import type { SelectionTarget } from '../../../lib/docBubble'
 import type { DocLinkTarget } from '../../../lib/docLinks'
 import type { SlashItem } from '../../../lib/docSlashMenu'
 
@@ -23,18 +23,20 @@ import Collaboration from '@tiptap/extension-collaboration'
 import CollaborationCaret from '@tiptap/extension-collaboration-caret'
 import { Editor, EditorContent } from '@tiptap/vue-3'
 
-import { captureDocSelection } from '../../../lib/docAiSelection'
+import { BUBBLE_META } from '../../../lib/docBubble'
 import { renderCaret } from '../../../lib/docCaret'
 import {
   commentMarkKey,
   commentQuoteRanges,
   createCommentMarks,
+  createEmptyLineHint,
   createLiveRefBadges,
   createTitleEcho,
   createTokenChips,
   liveRefKey,
   mappedCommentQuoteState,
 } from '../../../lib/docDecorations'
+import { createEditMarks } from '../../../lib/docEditMarks'
 import { captureDocLink, safeDocHref } from '../../../lib/docLinks'
 import { docExtensions, serializeDoc } from '../../../lib/docSchema'
 import { createSlashCommands } from '../../../lib/docSlashMenu'
@@ -72,8 +74,9 @@ const props = withDefaults(
     pulse: () => void
     /** 页面每收到一次正文区的滚动就加一：滚动时收起代码块工具条。 */
     scrollTick?: number
-    /** 选中浮条上给不给「问 AI」。 */
-    canAsk?: boolean
+    /** 项目 AI 队友的名字和 handle（选中浮条上用）。 */
+    agentName: string
+    agentHandle?: string | null
   }>(),
   {
     topicList: () => [],
@@ -81,21 +84,22 @@ const props = withDefaults(
     commentMarkIndex: () => new Map<number, { id: string; quote: string }[]>(),
     openCommentId: null,
     scrollTick: 0,
-    canAsk: true,
+    agentHandle: null,
     title: '',
   }
 )
 
 // 动作一律往上发：「换了个值」下面自己接住，「做了个动作」交给拿着状态的那一层。
 const emit = defineEmits<{
-  (e: 'open-ai', selection: DocSelectionSnapshot | null): void
   (e: 'open-topic', topicId: string): void
   (e: 'mention-click', handle: string): void
   (e: 'open-file', path: string): void
   /** 点了正文里的评论下划线：滚到文档底部那张卡。 */
   (e: 'locate-comment', commentId: string): void
   /** 选中一段正文点了「评论」：浮层算好了锚点，转给页面去开写评论的框。 */
-  (e: 'open-comment', payload: { anchorId: string | null; quote: string }): void
+  (e: 'open-comment', payload: SelectionTarget): void
+  /** 选中一段正文点了 AI 队友。 */
+  (e: 'agent', payload: SelectionTarget & { from: number; to: number }): void
   /** 当场要说的失败（目前只有复制代码失败）。 */
   (e: 'error', message: string): void
 }>()
@@ -325,6 +329,8 @@ function buildEditor(session: DocSession): Editor {
         },
       }),
       createCommentMarks({ index: () => props.commentMarkIndex, openId: () => props.openCommentId ?? null }),
+      createEditMarks(),
+      createEmptyLineHint(),
       createSlashCommands({
         onStart: showSlashMenu,
         onUpdate: showSlashMenu,
@@ -340,9 +346,9 @@ function buildEditor(session: DocSession): Editor {
       displayTick.value++
       if (transaction.docChanged) commentIndexStale.value = true
     },
-    onUpdate: () => {
-      // 正文在光标底下换了：那个「评论」按钮指着的段落已经不是原来那一段了。
-      overlaysRef.value?.onEdited()
+    onUpdate: ({ transaction }) => {
+      // 正文在光标底下换了：浮条指着的段落已经不是原来那一段了。浮条自己改的格式除外。
+      if (!transaction.getMeta(BUBBLE_META)) overlaysRef.value?.onEdited()
     },
   })
 }
@@ -409,25 +415,22 @@ watch(
   (v) => editor.value?.setEditable(v, false)
 )
 
-/** 编辑器里现在这一版正文（markdown）：文档 AI 拿它和已存的那一版比，看两边是不是一回事。 */
+/** 编辑器里现在这一版正文（markdown）。 */
 function serializeVisual(): string | null {
   return editor.value ? serializeDoc(editor.value) : null
 }
 
-function captureSelection() {
-  return editor.value ? captureDocSelection(editor.value) : null
-}
 defineExpose({
   editor,
   serializeVisual,
   highlightTurn,
   highlightNode,
   commentQuoteState,
-  captureSelection,
 })
 
 // 空文档里的灰字住在 CSS 的 ::before 里；按当前语言取值，带上引号交给 content。
 const emptyPlaceholder = computed(() => JSON.stringify(t('work.room.doc.emptyPlaceholder')))
+const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHint')))
 </script>
 
 <template>
@@ -450,9 +453,11 @@ const emptyPlaceholder = computed(() => JSON.stringify(t('work.room.doc.emptyPla
       :fetch-doc-nodes="fetchDocNodes"
       :slash-menu="slashMenu"
       :scroll-tick="scrollTick"
-      :can-ask="canAsk"
+      :agent-name="agentName"
+      :agent-handle="agentHandle"
+      :can-agent="!!agentHandle"
       @open-comment="emit('open-comment', $event)"
-      @open-ai="emit('open-ai', $event)"
+      @agent="emit('agent', $event)"
       @open-link="openLink"
       @error="emit('error', $event)"
       @pick="runSlashItem"
@@ -482,6 +487,14 @@ const emptyPlaceholder = computed(() => JSON.stringify(t('work.room.doc.emptyPla
   float: left;
   height: 0;
 }
+/* 光标所在的空段落里那一行淡字（lib/docDecorations.ts 的 createEmptyLineHint）。 */
+.doc-editor :deep(.doc-empty-line)::before {
+  content: v-bind(emptyLineHint);
+  color: var(--faint);
+  pointer-events: none;
+  float: left;
+  height: 0;
+}
 /* 与话题标题一模一样的第一行大标题：面板上方已经有了，不画第二遍。 */
 .doc-editor :deep(.doc-title-echo) {
   display: none;
@@ -504,6 +517,77 @@ const emptyPlaceholder = computed(() => JSON.stringify(t('work.room.doc.emptyPla
   border-radius: var(--radius-sm);
   font-size: 12px;
   font-weight: 500;
+  line-height: var(--lh-12);
+  white-space: nowrap;
+  user-select: none;
+}
+/* 修改建议（lib/docSchema/suggestions.ts）：要加的字绿底，要删的字红色删除线。 */
+.doc-editor :deep(ins.doc-suggestion) {
+  border-bottom: 1px solid var(--ok);
+  background: var(--ok-wash);
+  color: var(--ok-ink);
+  text-decoration: none;
+  cursor: pointer;
+}
+.doc-editor :deep(del.doc-suggestion) {
+  color: var(--danger-ink);
+  text-decoration: line-through var(--danger);
+  cursor: pointer;
+}
+.doc-editor :deep(.doc-suggestion-focus) {
+  outline: 2px solid color-mix(in srgb, var(--ok) 45%, transparent);
+  outline-offset: 1px;
+}
+/* 「查看改动」：改后的字淡绿底，原来的字删除线在它前面（lib/docEditMarks.ts）。 */
+.doc-editor :deep(.doc-review-new) {
+  background: var(--ok-wash);
+  cursor: pointer;
+}
+.doc-editor :deep(.doc-review-old) {
+  margin-right: 2px;
+  color: var(--danger-ink);
+  text-decoration: line-through var(--danger);
+  user-select: none;
+}
+.doc-editor :deep(.doc-review-new.is-active),
+.doc-editor :deep(.doc-review-old.is-active) {
+  outline: 2px solid color-mix(in srgb, var(--ok) 45%, transparent);
+  outline-offset: 1px;
+}
+/* 让 AI 队友改的那一段（lib/docEditMarks.ts）：选中、改写中（带一个写着名字的光标）、
+   刚改好时亮一下。 */
+.doc-editor :deep(.doc-edit-target--select),
+.doc-editor :deep(.doc-edit-target--pending) {
+  background: var(--selection-bg);
+}
+.doc-editor :deep(.doc-edit-target--flash) {
+  animation: docEditFlash 2.4s var(--ease-out) forwards;
+}
+@keyframes docEditFlash {
+  0%,
+  60% {
+    background: var(--ok-wash);
+  }
+  100% {
+    background: transparent;
+  }
+}
+.doc-editor :deep(.doc-edit-caret) {
+  position: relative;
+  margin-right: -2px;
+  border-right: 2px solid var(--inverse-surface);
+  pointer-events: none;
+}
+.doc-editor :deep(.doc-edit-caret__label) {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  border-bottom-left-radius: 0;
+  background: var(--inverse-surface);
+  color: var(--inverse-ink);
+  font-size: 12px;
   line-height: var(--lh-12);
   white-space: nowrap;
   user-select: none;
@@ -673,6 +757,11 @@ const emptyPlaceholder = computed(() => JSON.stringify(t('work.room.doc.emptyPla
 }
 .doc-editor :deep(strong) {
   font-weight: 600;
+}
+.doc-editor :deep(mark) {
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--signal-yellow) 32%, transparent);
+  color: inherit;
 }
 /* 任务列表 (GFM `- [ ]`): checkbox row, marker-less. Checked items fade —
    done work goes quiet, not struck through. */

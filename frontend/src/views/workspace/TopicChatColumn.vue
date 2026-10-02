@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import type { AgentControlState, Block, ProjectMemberRow, Topic } from '@/cx_types'
+import type { AgentControlState, Block, ChatAttachment, ProjectMemberRow, Topic } from '@/cx_types'
+import type { DocReviewRequest } from '@/lib/docReview'
 import type { MemberActivityLine } from '@/lib/memberActivity'
 import type { CardPhase } from '@/lib/topicState'
 import type { SubmitPreviewQuestion } from '../../lib/previewQuestion'
@@ -46,9 +47,9 @@ const emit = defineEmits<{
   (e: 'state-changed', payload: unknown): void
   (e: 'mention-click', handle: string): void
   (e: 'open-file', path: string, taskId?: string | null): void
-  // 两个参数都要转：`turnId` 决定文档面板高亮哪一轮改的段落，
-  // 只转第一个的话那个功能会静默降级成「整篇闪一下」。
-  (e: 'open-resource', resource: string, turnId?: string): void
+  // 参数都要转：`turnId` 决定文档面板高亮哪一轮改的段落，`review` 是「查看改动」要标出
+  // 的那几处；只转第一个的话这两样都会静默降级成「整篇闪一下」。
+  (e: 'open-resource', resource: string, turnId?: string, review?: DocReviewRequest): void
   (e: 'upgrade-message', payload: unknown): void
   (e: 'open-topic', topicId: string): void
   (e: 'open-card', taskId: string): void
@@ -60,7 +61,7 @@ const emit = defineEmits<{
 
 const chatRef = ref<{
   connected: boolean
-  send: (content: string, summon: boolean) => boolean
+  send: (content: string, summon: boolean, attachments?: ChatAttachment[]) => boolean
   submitQuestion: SubmitPreviewQuestion
 } | null>(null)
 const acceptRef = ref<{ reload: (silent?: boolean) => Promise<void> } | null>(null)
@@ -73,8 +74,9 @@ defineExpose({
   connected,
   reloadAccept: (silent?: boolean) => acceptRef.value?.reload(silent),
   reloadFeedback: () => feedbackRef.value?.reload(),
-  // 普通定位沿用聊天提交；明确的整页 AI 提问由 submitQuestion 在正文点名。
-  say: (content: string) => chatRef.value?.send(content, true) ?? false,
+  // 普通定位沿用聊天提交；图上画过东西时随行带那张合成图。明确的整页 AI 提问由
+  // submitQuestion 在正文点名。
+  say: (content: string, attachments?: ChatAttachment[]) => chatRef.value?.send(content, true, attachments) ?? false,
   submitQuestion,
 })
 </script>
@@ -99,7 +101,10 @@ defineExpose({
       @state-changed="emit('state-changed', $event)"
       @mention-click="emit('mention-click', $event)"
       @open-file="(path, taskId) => emit('open-file', path, taskId)"
-      @open-resource="(resource: string, turnId?: string) => emit('open-resource', resource, turnId)"
+      @open-resource="
+        (resource: string, turnId?: string, review?: DocReviewRequest) =>
+          emit('open-resource', resource, turnId, review)
+      "
       @upgrade-message="emit('upgrade-message', $event)"
       @open-topic="emit('open-topic', $event)"
       @open-card="emit('open-card', $event)"

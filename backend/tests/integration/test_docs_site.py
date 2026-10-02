@@ -212,7 +212,7 @@ def _events(text: str) -> list[tuple[str, dict]]:
     return out
 
 
-def _rows(client) -> list[DocsQuestion]:
+def _rows(client, more_than: int = 0) -> list[DocsQuestion]:
     async def read():
         async with client.test_factory() as s:
             return list(
@@ -226,7 +226,7 @@ def _rows(client) -> list[DocsQuestion]:
     # The row is written after the stream ends, off the request; give it a moment.
     for _ in range(50):
         rows = asyncio.run(read())
-        if rows:
+        if len(rows) > more_than:
             return rows
         time.sleep(0.05)
     return []
@@ -454,12 +454,15 @@ def _personal_team_owner(client, team_id: int) -> int | None:
 
 
 def _ask(client, asker) -> httpx.Response:
+    before = len(_rows(client, more_than=-1))
     r = client.post(
         "/docs/ask",
         json={"question": "采纳和合并是一回事吗", "page": "accept"},
         headers=asker,
     )
-    _rows(client)  # settled once the question's row is written
+    if r.status_code == 200:
+        # Settled once THIS question's row is written, not an earlier one's.
+        _rows(client, more_than=before)
     return r
 
 

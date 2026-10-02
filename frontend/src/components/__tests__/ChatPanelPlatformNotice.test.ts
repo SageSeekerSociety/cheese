@@ -224,7 +224,7 @@ describe('agent status messages', () => {
     expect(cards).toHaveLength(2)
     expect(cards[1].closest('.agent-status')).toBeNull()
     ;(cards[0].querySelector('button') as HTMLButtonElement).click()
-    expect(emitted()['open-resource']).toEqual([['doc', undefined]])
+    expect(emitted()['open-resource']).toEqual([['doc', undefined, undefined]])
   })
 
   // 同一位队友连着的几件事和它连着说的几句话一样：头像和名字只出现一次。

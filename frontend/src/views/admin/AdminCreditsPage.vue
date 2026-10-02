@@ -45,6 +45,7 @@ function dismissPlanError() {
     @open-plan="credits.openPlan"
     @update:plan-dialog-open="credits.planDialogOpen.value = $event"
     @save-plan="credits.savePlan"
+    @delete-plan="credits.removePlan"
     @update:query="credits.setQuery"
     @update:plan-filter="credits.setPlanFilter"
     @update:kind-filter="credits.setKindFilter"

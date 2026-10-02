@@ -1111,59 +1111,8 @@ export function saveProjectEnvironment(
     body: JSON.stringify(config),
   })
 }
-// 项目的远程 MCP 服务器：来自默认分支的 .mcp.json；连接属于项目，任何成员都能连接或断开。
-// 后端从不返回令牌和密钥的值，这里的类型里也没有它们。
-export type McpServerStatus = 'connected' | 'disconnected' | 'needs_reconnect' | 'missing_values' | 'ready'
-export interface McpVariable {
-  name: string
-  set: boolean
-  updated_by: string | null
-  updated_at: string | null
-}
-export interface McpServer {
-  name: string
-  transport: 'http' | 'sse'
-  host: string
-  auth: 'oauth' | 'headers'
-  status: McpServerStatus
-  authorized_by: string | null
-  authorized_at: string | null
-  variables: McpVariable[]
-}
-export interface McpServerList {
-  servers: McpServer[]
-  /** 读不出清单时的原因：没有 .mcp.json、格式不对、仓库暂时读不到。 */
-  problem: 'missing' | 'invalid' | 'unreadable' | null
-}
-export type RoomMcpServer = Pick<McpServer, 'name' | 'host' | 'auth' | 'status' | 'authorized_by' | 'authorized_at'>
-
-export function getMcpServers(projectId: string): Promise<McpServerList> {
-  return request(`/projects/${encodeURIComponent(projectId)}/mcp/servers`)
-}
-export function connectMcpServer(projectId: string, name: string): Promise<{ authorization_url: string }> {
-  return request(`/projects/${encodeURIComponent(projectId)}/mcp/servers/${encodeURIComponent(name)}/connect`, {
-    method: 'POST',
-  })
-}
-export function disconnectMcpServer(projectId: string, name: string): Promise<null> {
-  return request(`/projects/${encodeURIComponent(projectId)}/mcp/servers/${encodeURIComponent(name)}/connection`, {
-    method: 'DELETE',
-  })
-}
-export function setMcpSecret(projectId: string, name: string, value: string): Promise<null> {
-  return request(`/projects/${encodeURIComponent(projectId)}/mcp/secrets/${encodeURIComponent(name)}`, {
-    method: 'PUT',
-    body: JSON.stringify({ value }),
-  })
-}
-export function clearMcpSecret(projectId: string, name: string): Promise<null> {
-  return request(`/projects/${encodeURIComponent(projectId)}/mcp/secrets/${encodeURIComponent(name)}`, {
-    method: 'DELETE',
-  })
-}
-export function getRoomMcpServers(topicId: string): Promise<{ servers: RoomMcpServer[] }> {
-  return request(`/topics/${encodeURIComponent(topicId)}/mcp/servers`)
-}
+// 项目的远程 MCP 服务器在 `api/mcp.ts`：这个文件在上限之上，只能变短。
+export * from './api/mcp'
 export function getRoomEnvironment(projectId: string, roomId: string): Promise<EnvironmentStatus> {
   return request(`/projects/${encodeURIComponent(projectId)}/environment/rooms/${encodeURIComponent(roomId)}`)
 }
@@ -1798,12 +1747,6 @@ export async function downloadFile(rawUrl: string, filename: string): Promise<vo
   link.click()
   link.remove()
   setTimeout(() => URL.revokeObjectURL(url), 1000)
-}
-
-// Living-doc helpers (spec §2.2 docs-out/docs-in). `content` is markdown.
-// GET returns the doc Block, or null when the topic has no doc yet.
-export function getDoc(topicId: string): Promise<Block | null> {
-  return request<Block | null>(`/topics/${encodeURIComponent(topicId)}/doc`)
 }
 
 // 项目总览的自动区 (#1889): the overview room's ②③, structured so the doc

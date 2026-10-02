@@ -418,6 +418,8 @@ async def test_running_topic_ids_reports_only_in_flight_turns(db_factory):
     # already finished must drop out, one still mid-flight must show up.
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
+    started = asyncio.Event()
+    release = asyncio.Event()
 
     class _SlowTurn(WorkChat):
         session_factory = db_factory
@@ -426,7 +428,8 @@ async def test_running_topic_ids_reports_only_in_flight_turns(db_factory):
             return None
 
         async def converse(self, **_):
-            await asyncio.sleep(0.2)
+            started.set()
+            await release.wait()
             yield {"type": "done"}
 
     finished_topic = await a_topic(db_factory)
@@ -449,11 +452,15 @@ async def test_running_topic_ids_reports_only_in_flight_turns(db_factory):
         content="hi",
         addressed=addressed_to_agent("cheese-seat"),
     )
-    await asyncio.sleep(0.05)  # started, but its 0.2s sleep hasn't resolved yet
+    # Mid-flight for as long as the test looks: it ends when released, not
+    # after a fixed time a loaded machine could spend before the check.
+    await asyncio.wait_for(started.wait(), HANG_S)
 
     ids = runner.running_topic_ids()
     assert running_topic in ids
     assert finished_topic not in ids
+    release.set()
+    await runner.drain()
 
 
 @pytest.mark.anyio

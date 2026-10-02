@@ -9,8 +9,9 @@
 // 一个「看板」退回来。地址里的 `?card=` 说的就是这一层，所以它是一条能发给别人的
 // 链接 —— 而不是「跳到一个新地点」：一件活不是地点。
 import type { Topic } from '../../cx_types'
+import type { DocReviewRequest } from '../../lib/docReview'
 
-import { defineAsyncComponent, ref } from 'vue'
+import { defineAsyncComponent, ref, watch } from 'vue'
 
 import PanelCard from './PanelCard.vue'
 import PanelProgress from './PanelProgress.vue'
@@ -36,6 +37,8 @@ const props = withDefaults(
     cardFocusBlock?: string | null
     /** 项目 AI 队友的名字，传给文档那一格。 */
     agentName?: string
+    /** 项目 AI 队友的 handle，传给文档那一格。 */
+    agentHandle?: string | null
     /** handle → 名字，给钻进去的那张卡换点名和说话人。 */
     memberNames?: Record<string, string>
   }>(),
@@ -46,6 +49,7 @@ const props = withDefaults(
     openCardId: null,
     cardFocusBlock: null,
     agentName: () => t('work.room.defaultAgentName'),
+    agentHandle: null,
     memberNames: () => ({}),
   }
 )
@@ -59,13 +63,32 @@ const emit = defineEmits<{
   (e: 'open-file', path: string): void
 }>()
 
-const docRef = ref<{ pulse: () => void; highlightTurn: (turnId: string) => void } | null>(null)
+const docRef = ref<{
+  pulse: () => void
+  highlightTurn: (turnId: string) => void
+  reviewEdits: (request: DocReviewRequest) => void
+} | null>(null)
+
+// 「查看改动」：文档那一半可能还没摆出来（开着一张卡、或者组件还在加载），先记着，摆出来
+// 就交给它。
+const pendingReview = ref<DocReviewRequest | null>(null)
+function reviewEdits(request: DocReviewRequest) {
+  if (docRef.value) return docRef.value.reviewEdits(request)
+  pendingReview.value = request
+  if (props.openCardId) emit('open-card', null)
+}
+watch(docRef, (doc) => {
+  if (!doc || !pendingReview.value) return
+  doc.reviewEdits(pendingReview.value)
+  pendingReview.value = null
+})
 
 // 文档那一半的外部接口原样透出去 —— WorkPanel 拿着 ref 调它们（<&path> 芯片、
-// 高亮某一轮），合并 tab 不该让这些线断掉。
+// 高亮某一轮、查看改动），合并 tab 不该让这些线断掉。
 defineExpose({
   pulse: () => docRef.value?.pulse(),
   highlightTurn: (turnId: string) => docRef.value?.highlightTurn(turnId),
+  reviewEdits,
 })
 </script>
 
@@ -98,6 +121,7 @@ defineExpose({
         <PanelDoc
           ref="docRef"
           :agent-name="props.agentName"
+          :agent-handle="props.agentHandle"
           class="panel-overview__doc"
           :topic="props.topic"
           :activity-tick="props.activityTick"

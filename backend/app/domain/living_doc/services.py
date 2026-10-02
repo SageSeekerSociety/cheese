@@ -123,6 +123,7 @@ class DocumentJournal:
         base_version: int | None,
         operation_id: uuid.UUID | None = None,
         event_id: uuid.UUID | None = None,
+        requested_by: str | None = None,
     ) -> None:
         self.session.add(
             DocumentVersion(
@@ -134,6 +135,7 @@ class DocumentJournal:
                 previous_version=version - 1 if version > 1 else None,
                 base_version=base_version,
                 actor=actor,
+                requested_by=requested_by,
                 operation_id=operation_id,
                 event_id=event_id,
             )
@@ -198,33 +200,89 @@ class DocumentJournal:
             .order_by(DocumentVersion.version)
             .limit(100)
         )
-        return [
-            {
-                "document_id": str(row.document_id),
-                "version": row.version,
-                "content": row.content,
-                "content_hash": row.content_hash,
-                "previous_version": row.previous_version,
-                "base_version": row.base_version,
-                "actor": row.actor,
-                "operation_id": str(row.operation_id) if row.operation_id else None,
-                "event_id": str(row.event_id) if row.event_id else None,
-                "created_at": row.created_at.isoformat(),
-            }
-            for row in rows
-        ]
+        return [_version_row(row) for row in rows]
+
+    async def recent(
+        self, room_id: uuid.UUID, *, before: int | None = None, limit: int = 30
+    ) -> list[dict]:
+        """The newest versions first, those below ``before`` when it is given."""
+        query = select(DocumentVersion).where(DocumentVersion.room_id == room_id)
+        if before is not None:
+            query = query.where(DocumentVersion.version < before)
+        rows = await self.session.scalars(
+            query.order_by(DocumentVersion.version.desc()).limit(limit)
+        )
+        return [_version_row(row) for row in rows]
 
     async def state(self, room_id: uuid.UUID) -> bytes | None:
         return await self.session.scalar(
             select(DocumentState.state).where(DocumentState.room_id == room_id)
         )
 
-    async def put_state(self, room_id: uuid.UUID, state: bytes) -> None:
+    async def put_state(
+        self,
+        room_id: uuid.UUID,
+        state: bytes,
+        suggestions: list[dict] | None = None,
+        reasons: dict[str, str] | None = None,
+    ) -> None:
+        """Keep the live document's state and the suggestions pending in it.
+
+        ``reasons`` are the reasons given for suggestions this store proposes;
+        a suggestion proposed earlier keeps the reason it was stored with.
+        """
+        kept = {
+            item.get("id"): item.get("reason")
+            for item in await self.suggestions(room_id)
+            if item.get("reason")
+        }
+        pending = [
+            {
+                "id": str(item["id"]),
+                "author": str(item.get("author") or ""),
+                "old": str(item.get("old") or ""),
+                "new": str(item.get("new") or ""),
+                "reason": (reasons or {}).get(item["id"]) or kept.get(item["id"]),
+            }
+            for item in suggestions or []
+        ]
         await self.session.execute(
             insert(DocumentState)
-            .values(room_id=room_id, state=state, updated_at=datetime.now(UTC))
+            .values(
+                room_id=room_id,
+                state=state,
+                suggestions=pending,
+                updated_at=datetime.now(UTC),
+            )
             .on_conflict_do_update(
                 index_elements=[DocumentState.room_id],
-                set_={"state": state, "updated_at": datetime.now(UTC)},
+                set_={
+                    "state": state,
+                    "suggestions": pending,
+                    "updated_at": datetime.now(UTC),
+                },
             )
         )
+
+    async def suggestions(self, room_id: uuid.UUID) -> list[dict]:
+        """The suggestions pending in the live document at its last store."""
+        found = await self.session.scalar(
+            select(DocumentState.suggestions).where(DocumentState.room_id == room_id)
+        )
+        return list(found or [])
+
+
+def _version_row(row: DocumentVersion) -> dict:
+    return {
+        "document_id": str(row.document_id),
+        "version": row.version,
+        "content": row.content,
+        "content_hash": row.content_hash,
+        "previous_version": row.previous_version,
+        "base_version": row.base_version,
+        "actor": row.actor,
+        "requested_by": row.requested_by,
+        "operation_id": str(row.operation_id) if row.operation_id else None,
+        "event_id": str(row.event_id) if row.event_id else None,
+        "created_at": row.created_at.isoformat(),
+    }
