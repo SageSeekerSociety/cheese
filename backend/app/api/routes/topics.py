@@ -1025,7 +1025,11 @@ async def submit_versioned_answer(
     chat: Annotated[ChatService, Depends(get_chat_service)],
     runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
 ) -> dict:
-    """Authorize and atomically persist an answer, timeline wake and delivery.
+    """Answer a single option question with an option, note or rejection.
+
+    Submit client_op_id and expect_version with kind (option / note / reject),
+    plus option or note as appropriate. The answer, timeline wake and delivery
+    are authorized and persisted atomically.
 
     Authorization precedes replay lookup. Block owns answer rules and timeline
     writes; delivery owns addressing and intent. Commit before publication or
