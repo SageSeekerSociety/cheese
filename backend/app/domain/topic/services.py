@@ -1290,30 +1290,13 @@ class TopicService:
             return [], None
         return [dict(item) for item in row.items], row.updated_at
 
-    async def edit_doc(
-        self,
-        *,
-        topic_id: uuid.UUID,
-        content: str,
-        author: str,
-        expected_version: int,
-        author_type: AuthorType = AuthorType.participant,
-        operation_id: uuid.UUID | None = None,
-    ) -> tuple[Block, Block | None]:
-        place = await self.place_or_404(topic_id)
-        if place.room.status == TopicStatus.archived:
-            raise ValidationError(say("topicArchivedDocFrozen"))
-        return await DocumentWriter(self._session, summarize_doc_change).edit_doc(
-            room_id=place.room_id,
-            project_id=place.project_id,
-            content=content,
-            author=author,
-            expected_version=expected_version,
-            author_type=author_type,
-            operation_id=operation_id,
-        )
-
     async def _sync_doc_nodes(self, root: Block, content: str) -> None:
         await DocumentWriter(self._session, summarize_doc_change)._sync_doc_nodes(
             root, content
         )
+
+    def require_doc_writable(self, place: Place) -> None:
+        """归档后工作面冻结 (spec §6.3): an archived room's document takes no
+        more writes."""
+        if place.room.status == TopicStatus.archived:
+            raise ValidationError(say("topicArchivedDocFrozen"))

@@ -365,6 +365,12 @@ export default defineConfig({
       },
       // Unlike /api, the backend serves /connector/* natively — no strip (matches nginx).
       '/connector': { target: process.env.BACKEND_URL ?? 'http://127.0.0.1:8081', changeOrigin: true, ws: true },
+      // The collaboration service (`pnpm run dev:collab`), as nginx serves it.
+      '/collab': {
+        target: process.env.COLLAB_URL ?? 'ws://127.0.0.1:8902',
+        ws: true,
+        rewrite: (path) => path.replace(/^\/collab/, '') || '/',
+      },
       // Safety net for any bare 1.0 call that bypasses the /api-prefixed axios layer:
       // reach the backend directly. A page load under /users (a person's page,
       // settings) is the app's own route, as it is behind nginx, so it gets the SPA.
@@ -481,7 +487,10 @@ export default defineConfig({
     // Its *.test.mjs files match vitest's default include glob, and vitest fails
     // the whole run on them with "No test suite found" — node:test registers its
     // cases through `node:test`, which vitest's collector never sees.
-    exclude: [...configDefaults.exclude, 'scripts/**'],
+    // `collab/` is the collaboration service, a Node process with its own
+    // config (collab/vitest.config.ts): it needs Node and real sockets, not
+    // happy-dom and the fetch trap below.
+    exclude: [...configDefaults.exclude, 'scripts/**', 'collab/**'],
     // 并发度不跟着核数走。默认是「可用并行度 - 1」，在一台 384 核的共享开发机上
     // 那是三百多个 fork，每一个都要自己把 Vuetify 和它的 SCSS 编一遍——彼此抢
     // CPU，还和机器上别人的活抢。实测一轮里 transform 累计 367 秒、collect 累计

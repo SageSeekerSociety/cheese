@@ -66,7 +66,7 @@ export function richTextExtensions(): AnyExtension[] {
   return [
     // 实况文档的 `image` 节点按地址引外链图；这几处的图一律是附件（下面的 attachmentImage），
     // 粘贴进来的外链图原先也不收，这里照旧。
-    ...docExtensions().filter((extension) => extension.name !== 'image'),
+    ...docExtensions({ standalone: true }).filter((extension) => extension.name !== 'image'),
     TextAlign.configure({ types: ['heading', 'paragraph'] }),
     TextStyle,
     Color,

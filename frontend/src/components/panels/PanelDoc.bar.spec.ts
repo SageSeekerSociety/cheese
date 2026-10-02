@@ -1,5 +1,5 @@
-// 文档那一条横条：平常只说保存到哪了。只读和源码是偶尔才进的两种状态——入口在
-// ⋯ 里，进去之后这一条上写着你在哪，点它就回来。
+// 文档那一条横条：平常只有谁也在这儿。只读是偶尔才进的状态——入口在 ⋯ 里，进去之后
+// 这一条上写着只读，点它就回来；没有编辑权限时它只是说明，回不去。
 import type { Component } from 'vue'
 import type { Block, Topic } from '../../cx_types'
 
@@ -11,18 +11,20 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 const getDoc = vi.fn()
 
+vi.mock('../../composables/useDocCollab', async () => ({
+  useDocCollab: (await import('../../test/fakeDocCollab')).useFakeDocCollab,
+}))
 vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
   return {
     ...actual,
     getDoc: (...a: unknown[]) => getDoc(...a),
-    putDoc: vi.fn(async (_id: string, content: string) => ({ content, doc_version: 2 })),
     getComments: vi.fn(async () => ({ data: [], total: 0 })),
     getDocNodes: vi.fn(async () => ({ data: [], total: 0 })),
   }
 })
 
-import { putDoc } from '../../api'
+import { resetRooms, seedRoom } from '../../test/fakeDocCollab'
 
 import PanelDoc from './PanelDoc.vue'
 
@@ -46,7 +48,6 @@ const topic = {
 } as Topic
 
 beforeAll(() => {
-  // 桌面宽度：源码模式只在桌面上提供。
   Object.defineProperty(window, 'innerWidth', { value: 1280, writable: true, configurable: true })
   // happy-dom 没有这两样，而菜单打开时 Vuetify 要读它们来摆位置。
   vi.stubGlobal('devicePixelRatio', 1)
@@ -62,7 +63,8 @@ beforeAll(() => {
 })
 
 beforeEach(() => {
-  vi.mocked(putDoc).mockClear()
+  resetRooms()
+  seedRoom(topic.id, '第一段\n')
   getDoc.mockReset()
   getDoc.mockResolvedValue({ id: 'd1', kind: 'doc', content: '第一段\n', doc_version: 1 } as unknown as Block)
 })
@@ -72,8 +74,7 @@ afterEach(cleanup)
 async function mountDoc() {
   const view = render(Doc, {
     props: { topic, activityTick: 0, topicList: [] },
-    // 源码模式里是一个 Monaco，这里只关心进没进得去、出没出得来。
-    global: { plugins: [createVuetify({ components, directives })], stubs: { CodeEditor: true } },
+    global: { plugins: [createVuetify({ components, directives })] },
   })
   await waitFor(() => expect(view.container.textContent).toContain('第一段'))
   return view
@@ -99,27 +100,11 @@ describe('文档横条', () => {
     expect(container.querySelector('.doc-prose h2')).toBeNull()
   })
 
-  it.each(['ctrlKey', 'metaKey'])('saves dirty content exactly once from the toolbar with %s+S', async (modifier) => {
-    const { container } = await mountDoc()
-    const heading = screen.getByRole('button', { name: /^标题 1$/ })
-    await fireEvent.click(heading)
-    await waitFor(() => expect(bar(container).textContent).toContain('编辑中'))
-    expect(putDoc).not.toHaveBeenCalled()
-    // Dispatch before focus/blur can save: this exercises the toolbar's own handler.
-    const event = new KeyboardEvent('keydown', { key: 's', [modifier]: true, bubbles: true, cancelable: true })
-    heading.dispatchEvent(event)
-    expect(event.defaultPrevented).toBe(true)
-    await waitFor(() => expect(putDoc).toHaveBeenCalledTimes(1))
-    expect(vi.mocked(putDoc).mock.calls[0]?.[1]).toBe('# 第一段\n\n')
-    await waitFor(() => expect(bar(container).textContent).toContain('已保存'))
-  })
-
-  it('平常这一条上没有只读和源码两颗按钮', async () => {
+  it('平常这一条上没有只读按钮', async () => {
     const { container } = await mountDoc()
 
     const labels = Array.from(bar(container).querySelectorAll('button')).map((b) => b.textContent?.trim())
     expect(labels).not.toContain('只读')
-    expect(labels).not.toContain('源码')
   })
 
   it('从 ⋯ 设为只读后，这一条上写着只读，点它回到编辑', async () => {
@@ -134,15 +119,13 @@ describe('文档横条', () => {
     expect(container.querySelector('.doc-body')?.classList.contains('readonly')).toBe(false)
   })
 
-  it('从 ⋯ 进源码模式后，这一条上写着源码，点它退出', async () => {
+  it('没有编辑权限时，正文改不了，只读也切不回编辑', async () => {
+    seedRoom(topic.id, '第一段\n', { readOnly: true })
     const { container } = await mountDoc()
 
-    await fromMenu(container, '源码模式')
-    const source = Array.from(bar(container).querySelectorAll('button')).find((b) => b.textContent?.trim() === '源码')
-    expect(source, '进了源码模式却看不出来').toBeTruthy()
-    expect(container.querySelector('.doc-source')).toBeTruthy()
-
-    await fireEvent.click(source!)
-    await waitFor(() => expect(container.querySelector('.doc-source')).toBeNull())
+    expect(container.querySelector('.doc-prose')?.getAttribute('contenteditable')).toBe('false')
+    const readOnly = Array.from(bar(container).querySelectorAll('button')).find((b) => b.textContent?.trim() === '只读')
+    expect(readOnly?.hasAttribute('disabled'), '没有权限还能点回编辑').toBe(true)
+    expect(bar(container).querySelector('[aria-label="更多"]'), '⋯ 里只有切换只读这一项，没有权限时不给').toBeNull()
   })
 })

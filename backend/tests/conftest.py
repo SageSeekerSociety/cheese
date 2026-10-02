@@ -71,6 +71,7 @@ os.environ.setdefault("ANTHROPIC_AUTH_TOKEN", "test-anthropic-token")
 # engine is built from settings.database_url at import time). -------------------
 from app.core.config import settings  # noqa: E402
 from tests import isolation  # noqa: E402
+from tests.support.collab import install as install_collab  # noqa: E402
 from tests.support.hang import HANG_S  # noqa: E402
 
 _XDIST_WORKER = os.environ.get("PYTEST_XDIST_WORKER", "")  # "gw0"… or "" (serial)
@@ -1206,7 +1207,7 @@ def stub_project_forge(monkeypatch, tmp_path):
 
 @pytest.fixture
 def client(
-    _pg_schema, stub_hooks: StubChannel, tmp_path, stub_project_forge
+    _pg_schema, stub_hooks: StubChannel, tmp_path, stub_project_forge, monkeypatch
 ) -> Iterator[TestClient]:
     # Real PostgreSQL (not sqlite): the merged models use PG-native JSONB,
     # Sequences and ENUM types that sqlite's compiler can't render, and the schema
@@ -1271,6 +1272,9 @@ def client(
             # factory so they share the request loop and its production-sized pool.
             c.test_request_factory = test_factory  # type: ignore[attr-defined]
             c.test_app_engine = engine  # type: ignore[attr-defined]
+            # The living document is written through the collaboration service;
+            # this stands in for it (tests/support/collab.py).
+            c.collab = install_collab(monkeypatch, app)  # type: ignore[attr-defined]
             try:
                 yield c
             finally:
@@ -2015,6 +2019,7 @@ async def python_client(
     _pg_schema,
     stub_hooks: StubChannel,
     tmp_path,
+    monkeypatch,
 ):
     """Async httpx client bound to the app over ASGI — the async counterpart to
     `client`. Inherited contract/route tests written against the main backend use
@@ -2071,6 +2076,9 @@ async def python_client(
             # real authenticated user) on the SAME DB the app reads through get_db.
             c.test_factory = test_factory  # type: ignore[attr-defined]
             c.test_app_engine = engine  # type: ignore[attr-defined]
+            # The living document is written through the collaboration service;
+            # this stands in for it (tests/support/collab.py).
+            c.collab = install_collab(monkeypatch, app)  # type: ignore[attr-defined]
             yield c
     finally:
         app.dependency_overrides.clear()

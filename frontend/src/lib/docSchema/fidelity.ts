@@ -14,7 +14,7 @@ import { mapProse } from './markdown'
 const fidelityMarked = new Marked(markedCjkFriendly())
 
 // ---------------------------------------------------------------------------
-// Round-trip comparison (lossy-load detection)
+// Round-trip comparison: what converting a Markdown document would change
 // ---------------------------------------------------------------------------
 //
 // `normalizeMarkdown` defines the TOLERATED differences between the markdown

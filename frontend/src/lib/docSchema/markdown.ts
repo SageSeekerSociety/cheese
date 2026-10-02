@@ -210,7 +210,13 @@ export function mapProse(md: string, fn: (seg: string) => string): string {
 
 /** Serialize the editor to markdown, restoring our structured tokens. */
 export function serializeDoc(editor: { getMarkdown: () => string }): string {
-  return mapProse(editor.getMarkdown(), (seg) =>
+  return finishMarkdown(editor.getMarkdown())
+}
+
+/** The serializer's raw output, made into the document's text: our structured
+ *  tokens restored and the serializer's noise taken back out. */
+export function finishMarkdown(raw: string): string {
+  return mapProse(raw, (seg) =>
     restoreLiteralTags(
       seg
         .replace(ESCAPED_TOKEN_RE, (_m, inner: string) => `<${inner.replace(/^&amp;/, '&')}>`)

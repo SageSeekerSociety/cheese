@@ -16,7 +16,7 @@ retry_wait="${REGISTRY_RETRY_WAIT_SECONDS:-5}"
 # Every image this workflow publishes, by the name of its registry path. Its
 # build job is `build-<name>`, and its output flag is the name with `_`.
 images=(backend sandbox frontend office-render browser-render gateway
-  metering-proxy private-executor)
+  metering-proxy private-executor collab)
 
 # The tag the image built from <sha> is published under: build.yml tags
 # metering-proxy with the full sha and every other image with the first seven
@@ -104,6 +104,7 @@ browser_render=false
 gateway=false
 metering_proxy=false
 private_executor=false
+collab=false
 
 # Tags and manual runs are explicit release/rebuild requests. A repository with
 # no earlier complete image set also needs a complete bootstrap.
@@ -131,6 +132,7 @@ if [[ "$event_name" != "push" || "$ref_type" == "tag" || -z "$base_sha" ]] \
   gateway=true
   metering_proxy=true
   private_executor=true
+  collab=true
 else
   while IFS= read -r -d '' changed_path; do
     case "$changed_path" in
@@ -181,6 +183,16 @@ else
         ;;
     esac
 
+    # The collaboration service is built from the frontend package: its own
+    # sources, the document schema it shares with the editors, and the
+    # dependencies both are installed from.
+    case "$changed_path" in
+      frontend/collab/* | frontend/src/lib/docSchema/* \
+        | frontend/package.json | frontend/pnpm-lock.yaml)
+        collab=true
+        ;;
+    esac
+
     # The private-chat executor is built from the repository root and copies
     # these files in, so any of them changing is a change to that image.
     case "$changed_path" in
@@ -207,7 +219,7 @@ fi
 echo "planned: backend=$backend sandbox=$sandbox frontend=$frontend" \
   "office_render=$office_render browser_render=$browser_render" \
   "gateway=$gateway metering_proxy=$metering_proxy" \
-  "private_executor=$private_executor" \
+  "private_executor=$private_executor" "collab=$collab" \
   "base=${base_sha:-none}" >&2
 
 {
@@ -219,6 +231,7 @@ echo "planned: backend=$backend sandbox=$sandbox frontend=$frontend" \
   echo "gateway=$gateway"
   echo "metering_proxy=$metering_proxy"
   echo "private_executor=$private_executor"
+  echo "collab=$collab"
   echo "base_sha=$base_sha"
   echo "base_tag=${base_sha:0:7}"
   echo "current_tag=$("$(dirname "$0")/../../deploy/image-tag.sh" "$current_sha")"

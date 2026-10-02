@@ -61,7 +61,7 @@ tasks:
 
   dev:
     desc: Start backend + frontend dev servers (+ infrastructure)
-    deps: [dev:backend, dev:frontend]
+    deps: [dev:backend, dev:frontend, dev:collab]
 
   dev:backend:
     desc: Start backend dev server only
@@ -74,6 +74,11 @@ tasks:
     aliases: [dev:fe]
     cmds:
       - task: fe:dev
+
+  dev:collab:
+    desc: Start the collaboration service only
+    cmds:
+      - task: fe:dev:collab
 
   dev:docker:
     desc: Start all services in Docker (Windows without WSL)

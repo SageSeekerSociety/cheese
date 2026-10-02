@@ -309,6 +309,16 @@ class Settings(BaseSettings):
     office_editor_backend_url: str = "http://backend:8081"
     office_editor_jwt_secret: str | None = None
 
+    # The collaboration service that holds every room's living document live
+    # (collab/ in the frontend package). The browser reaches it through the
+    # frontend's /collab location with a ticket this backend signs; this
+    # backend reaches it at `collab_internal_url` for writes that do not come
+    # from an editor, and it reaches this backend to load and store documents.
+    # `collab_secret` is shared with it and signs both. Without it the living
+    # document cannot be opened or written.
+    collab_internal_url: str = "http://collab:8902"
+    collab_secret: str | None = None
+
     # --- LLM gateway admin (L1/L2 — defined in `app.domain.agent.gateway`) ---
     # When the pool routes through the self-hosted LiteLLM gateway, the backend can
     # use the gateway's ADMIN API to (L1) mint a per-project virtual key — injected

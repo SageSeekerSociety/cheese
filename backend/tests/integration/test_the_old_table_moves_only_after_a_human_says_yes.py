@@ -29,8 +29,8 @@ from app.domain.memory.models import (
     user_scope_id,
 )
 from app.domain.project.services import ProjectService
-from app.domain.topic.services import TopicService
 from tests.integration.conftest import registered
+from tests.support.living_doc import write_doc
 
 pytestmark = pytest.mark.anyio
 
@@ -281,12 +281,7 @@ async def test_the_approved_plan_lands_and_the_old_table_stays_put(
 ):
     async with business_db_factory() as session:
         project = await _project(session)
-        await TopicService(session).edit_doc(
-            topic_id=project.root_topic_id,
-            content=_DOC,
-            author="alice",
-            expected_version=0,
-        )
+        await write_doc(session, project.root_topic_id, _DOC, "alice")
         store = MemoryFileStore(session)
         await store.write(
             project_id=project.id,

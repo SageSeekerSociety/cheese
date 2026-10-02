@@ -13,17 +13,13 @@ from app.domain.doc_ai.schemas import AskResult, CompletionUsage, ProposalResult
 from app.domain.doc_ai.services import DocAiService
 from app.domain.topic.services import TopicService
 from tests.integration.test_living_doc_journal import seed
+from tests.support.living_doc import write_doc
 
 
 async def request(factory, kind="propose"):
     room = await seed(factory)
     async with factory() as session:
-        doc, _ = await TopicService(session).edit_doc(
-            topic_id=room,
-            content="原文😀",
-            author="alice",
-            expected_version=0,
-        )
+        doc, _ = await write_doc(session, room, "原文😀", "alice")
         row = await DocAiService(session).create(
             project_id=doc.project_id,
             room_id=room,

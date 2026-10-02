@@ -13,6 +13,10 @@ frontend_status=""
 forgejo_count=0
 forgejo_state=""
 forgejo_status=""
+collab_count=0
+collab_image=""
+collab_state=""
+collab_status=""
 events_count=0
 events_image=""
 events_state=""
@@ -31,6 +35,12 @@ while IFS=$'\t' read -r service image state status; do
       frontend_image="$image"
       frontend_state="$state"
       frontend_status="$status"
+      ;;
+    collab)
+      collab_count=$((collab_count + 1))
+      collab_image="$image"
+      collab_state="$state"
+      collab_status="$status"
       ;;
     forgejo)
       forgejo_count=$((forgejo_count + 1))
@@ -81,6 +91,11 @@ check_service() {
 
 check_service backend "$backend_count" "$backend_image" "$backend_state" "$backend_status"
 check_service frontend "$frontend_count" "$frontend_image" "$frontend_state" "$frontend_status"
+# The living documents are edited through it; without it no document opens.
+# A release that predates it has none (deploy-docker.sh decides which).
+if [ "${COLLAB_EXPECTED:-true}" = true ] || [ "$collab_count" -gt 0 ]; then
+  check_service collab "$collab_count" "$collab_image" "$collab_state" "$collab_status"
+fi
 if [ "${FORGE_EVENTS_LOCAL:-false}" = true ] || [ "$events_count" -gt 0 ]; then
   check_service forge-events "$events_count" "$events_image" "$events_state" "$events_status"
 fi
@@ -93,4 +108,4 @@ if [ "$failures" -ne 0 ]; then
   exit 1
 fi
 
-echo "APP-TIER OK: backend and frontend are healthy at tag $expected_tag; forgejo is healthy"
+echo "APP-TIER OK: backend and frontend (and collab when released) are healthy at tag $expected_tag; forgejo is healthy"

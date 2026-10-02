@@ -12,6 +12,11 @@ const FRONTEND_PORT = process.env.E2E_FRONTEND_PORT ?? '3000';
 const STUB_GATEWAY_PORT = process.env.E2E_STUB_GATEWAY_PORT ?? '4010';
 const BACKEND_URL = `http://127.0.0.1:${BACKEND_PORT}`;
 const STUB_GATEWAY_URL = `http://127.0.0.1:${STUB_GATEWAY_PORT}`;
+// The collaboration service every living document opens through. It and the
+// backend share COLLAB_SECRET; the browser reaches it through vite's /collab.
+const COLLAB_PORT = process.env.E2E_COLLAB_PORT ?? '8902';
+const COLLAB_URL = `http://127.0.0.1:${COLLAB_PORT}`;
+const COLLAB_SECRET = 'e2e-collab-secret';
 
 export default defineConfig({
   testDir: './tests',
@@ -80,6 +85,8 @@ export default defineConfig({
         // question and nothing else; it is not an inference provider.
         LLM_GATEWAY_ADMIN_BASE: STUB_GATEWAY_URL,
         LLM_GATEWAY_ADMIN_KEY: 'stub-gateway-key',
+        COLLAB_SECRET,
+        COLLAB_INTERNAL_URL: COLLAB_URL,
       },
       url: `${BACKEND_URL}/healthz`,
       reuseExistingServer: !process.env.CI,
@@ -90,6 +97,13 @@ export default defineConfig({
       // invoked as `vite -- --port N` and takes `--` as its POSITIONAL root
       // directory. It then serves a directory that does not exist: no error, no
       // banner, never reachable — which is exactly how it failed in CI.
+      command: `cd ../frontend && pnpm run build:collab && node dist-collab/main.mjs`,
+      env: { PORT: COLLAB_PORT, COLLAB_SECRET, COLLAB_BACKEND_URL: BACKEND_URL },
+      url: `${COLLAB_URL}/healthz`,
+      reuseExistingServer: !process.env.CI,
+      timeout: 60_000,
+    },
+    {
       command: `cd ../frontend && pnpm exec vite --port ${FRONTEND_PORT} --strictPort`,
       url: `http://localhost:${FRONTEND_PORT}`,
       // VITE_API_BASE_URL=/api makes the 知是 1.0 layer prefix its calls with
@@ -97,7 +111,7 @@ export default defineConfig({
       // strip-one-/api rewrite then forwards to the backend as /users/auth/login.
       // Production bakes the same value at build time; without it the 1.0 routes
       // are relative (/users/...), miss the /api proxy entirely, and hit the SPA.
-      env: { BACKEND_URL, VITE_API_BASE_URL: '/api' },
+      env: { BACKEND_URL, COLLAB_URL: COLLAB_URL.replace(/^http/, 'ws'), VITE_API_BASE_URL: '/api' },
       reuseExistingServer: !process.env.CI,
       // Same 180s the backend gets: a cold vite start pre-bundles deps and runs
       // the legacy plugin, on a runner that is also building and deploying.

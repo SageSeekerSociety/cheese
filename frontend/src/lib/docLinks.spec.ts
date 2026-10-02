@@ -1,16 +1,19 @@
 import { Editor } from '@tiptap/core'
+import Collaboration from '@tiptap/extension-collaboration'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { applyDocLink, captureDocLink, captureNewDocLink, safeDocHref } from './docLinks'
+import { localDocSession } from './docLocalSession'
 import { docExtensions } from './docSchema'
 
 const editors: Editor[] = []
 afterEach(() => editors.splice(0).forEach((editor) => editor.destroy()))
 function setup() {
+  // The document is always collaborative, and undo is the collaboration
+  // extension's: a link edit has to be one step of it.
+  const session = localDocSession('[first](https://old.example) and tail')
   const editor = new Editor({
-    extensions: docExtensions(),
-    content: '[first](https://old.example) and tail',
-    contentType: 'markdown',
+    extensions: [...docExtensions(), Collaboration.configure({ document: session.doc })],
   })
   editors.push(editor)
   return editor

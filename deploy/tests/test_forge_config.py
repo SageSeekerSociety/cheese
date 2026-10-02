@@ -248,6 +248,7 @@ class EventHealthTest(unittest.TestCase):
             "backend\trepo/backend:release\trunning\tUp (healthy)\n"
             "frontend\trepo/frontend:release\trunning\tUp (healthy)\n"
             "forgejo\tforgejo:15\trunning\tUp (healthy)\n"
+            "collab\trepo/collab:release\trunning\tUp (healthy)\n"
         )
         for row, expected in (
             ("", 1),

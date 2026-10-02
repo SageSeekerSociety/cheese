@@ -1,0 +1,26 @@
+"""Setting up a living document in a test.
+
+A document version is recorded one way only: a store from the collaboration
+service. Tests that need a document to exist record one the same way.
+"""
+
+import uuid
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.domain.block.documents import DocumentWriter
+from app.domain.topic.doc_change import summarize_doc_change
+from app.domain.topic.services import TopicService
+
+
+async def write_doc(
+    session: AsyncSession, room_id: uuid.UUID, content: str, actor: str = "alice"
+):
+    """Record ``content`` as the room's next document version, by ``actor``."""
+    place = await TopicService(session).place_or_404(room_id)
+    return await DocumentWriter(session, summarize_doc_change).record(
+        room_id=place.room_id,
+        project_id=place.project_id,
+        content=content,
+        actors=[actor],
+    )

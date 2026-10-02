@@ -74,7 +74,8 @@ def test_empty_editor_paragraph_is_saved_without_a_contribution_notice(client):
         assert response.json()["data"]["content"] == content
     blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
     edits = [b for b in blocks if (b.get("meta") or {}).get("action") == "doc"]
-    assert len(edits) == 2
+    # Writes in a row are one line; the empty paragraph never shows in it.
+    assert len(edits) == 1
     assert "+实地计数" in edits[-1]["meta"]["detail"]
     assert "&nbsp;" not in edits[-1]["meta"]["detail"]
 
