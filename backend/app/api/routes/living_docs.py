@@ -30,7 +30,7 @@ from app.core.errors import (
 )
 from app.domain.agent.chat import ChatService
 from app.domain.block.schemas import BlockOut
-from app.domain.identity.handles import looks_like_agent_handle
+from app.domain.identity.services import IdentityService
 from app.domain.living_doc import collab
 from app.domain.living_doc.schemas import RestoreIn
 from app.domain.living_doc.services import DocumentJournal, content_hash
@@ -78,7 +78,7 @@ async def document_ticket(
             "ticket": collab.sign_ticket(
                 room_id=place.room_id,
                 handle=actor.handle,
-                agent=looks_like_agent_handle(actor.handle),
+                agent=await IdentityService(db).is_agent(actor.handle),
                 read_only=read_only,
             ),
             "read_only": read_only,
