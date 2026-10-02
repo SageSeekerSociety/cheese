@@ -58,6 +58,38 @@ _logger = logging.getLogger(__name__)
 # ── Request Models ────────────────────────────────────────────────────────────
 
 
+class TeachingRequest(BaseModel):
+    """给 AI 队友的指导 (#8d772257 项目集级, #944 空间级与题目级) — 最小编辑入口。
+
+    **The strict end of this key.** `Teaching.from_json` on the read path drops a
+    bad field rather than raising, because `resolve()` runs on every turn of
+    every project and a typo in one field of a 项目集 must not take down the
+    twenty 赛题 under it. Here a person is looking at the form and can be told
+    which field is wrong, so every field is checked and the ids are typed.
+
+    Defined above the three request models that carry it (空间 PATCH, 项目集
+    PATCH, 题目 create/patch) so all of them can name the type directly rather
+    than through a forward reference.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    #: system prompt 模板；`{current_week}` / `{allowed_topics}` /
+    #: `{avoid_in_code}` 在里面会被本周的值替换掉。
+    system_prompt: str | None = Field(default=None, alias="systemPrompt")
+    current_week: int | None = Field(default=None, alias="currentWeek", ge=0)
+    allowed_topics: list[str] = Field(default_factory=list, alias="allowedTopics")
+    avoid_in_code: list[str] = Field(default_factory=list, alias="avoidInCode")
+    #: 课件 / 知识材料的引用。正文不在这里 —— 它们各自有自己的库和接口，这里只
+    #: 存指向它们的 id。
+    material_ids: list[Annotated[int, Field(gt=0)]] = Field(
+        default_factory=list, alias="materialIds"
+    )
+    knowledge_ids: list[Annotated[int, Field(gt=0)]] = Field(
+        default_factory=list, alias="knowledgeIds"
+    )
+
+
 class CreateSpaceRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -96,6 +128,11 @@ class PatchSpaceRequest(BaseModel):
     )
     default_category_id: int | None = Field(default=None, alias="defaultCategoryId")
     visible_task_limit: int | None = Field(default=None, alias="visibleTaskLimit")
+    #: 空间级「给 AI 队友的指导」(#944) — the board-wide default every 题目 on
+    #: it starts from. Same shape and same whole-key semantics as the 项目集's
+    #: `teaching`: sending it replaces the WHOLE config, omitting it leaves it
+    #: exactly as it is.
+    teaching: TeachingRequest | None = None
 
     @field_validator("visible_task_limit", mode="before")
     @classmethod
@@ -105,34 +142,6 @@ class PatchSpaceRequest(BaseModel):
         if not isinstance(value, int) or isinstance(value, bool) or value < 0:
             raise ValueError("visibleTaskLimit must be null or a non-negative integer")
         return value
-
-
-class TeachingRequest(BaseModel):
-    """课程级教学配置 (#8d772257) — 项目集级最小编辑入口。
-
-    **The strict end of this key.** `Teaching.from_json` on the read path drops a
-    bad field rather than raising, because `resolve()` runs on every turn of
-    every project and a typo in one field of a 项目集 must not take down the
-    twenty 赛题 under it. Here a person is looking at the form and can be told
-    which field is wrong, so every field is checked and the ids are typed.
-    """
-
-    model_config = ConfigDict(populate_by_name=True)
-
-    #: 课程级 system prompt 模板；`{current_week}` / `{allowed_topics}` /
-    #: `{avoid_in_code}` 在里面会被本周的值替换掉。
-    system_prompt: str | None = Field(default=None, alias="systemPrompt")
-    current_week: int | None = Field(default=None, alias="currentWeek", ge=0)
-    allowed_topics: list[str] = Field(default_factory=list, alias="allowedTopics")
-    avoid_in_code: list[str] = Field(default_factory=list, alias="avoidInCode")
-    #: 课件 / 知识材料的引用。正文不在这里 —— 它们各自有自己的库和接口，这里只
-    #: 存指向它们的 id。
-    material_ids: list[Annotated[int, Field(gt=0)]] = Field(
-        default_factory=list, alias="materialIds"
-    )
-    knowledge_ids: list[Annotated[int, Field(gt=0)]] = Field(
-        default_factory=list, alias="knowledgeIds"
-    )
 
 
 class CreateSpaceCategoryRequest(BaseModel):
@@ -396,6 +405,12 @@ def _space_to_api_model(space: Space) -> dict:
         "visibleTaskLimit": space.visible_task_limit,
         "defaultCategoryId": space.default_category_id,
         "taskTemplates": json.dumps(space.task_templates or []),
+        # 空间级「给 AI 队友的指导」(#944), `{}` when the board set none — the
+        # settings form reads it back, so it has to be here rather than only on
+        # the write path. Same shape as `SpaceCategory.teaching` (see
+        # `_category_to_api_model`): the stored dict, snake_case keys, which is
+        # also the shape `Teaching.from_json` reads.
+        "teaching": getattr(space, "teaching", None) or {},
         "createdAt": created_at_ms,
         "updatedAt": updated_at_ms,
     }
@@ -871,6 +886,13 @@ async def patch_space(
         default_category_id=payload.default_category_id,
         visible_task_limit=payload.visible_task_limit,
         set_visible_task_limit="visible_task_limit" in payload.model_fields_set,
+        # `model_dump()` (field names, not aliases): what lands in the column is
+        # the shape `Teaching.from_json` reads back, so the write path and the
+        # read path cannot drift into two spellings of one config — the same
+        # rule the 项目集 PATCH follows.
+        teaching=(
+            payload.teaching.model_dump() if payload.teaching is not None else None
+        ),
     )
     if classification_topic_ids is not None:
         await service.replace_classification_topics(

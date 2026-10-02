@@ -336,6 +336,28 @@ async def amend(session: AsyncSession, event_id: uuid.UUID, payload: dict) -> No
     await session.flush()
 
 
+async def settle(session: AsyncSession, event_id: uuid.UUID, outcome: dict) -> None:
+    """这件事办完了：它发出去的每一行记下结果、结掉、标成已读。
+
+    通知是一条事件记录，等的那件事办完之后它还躺在收件箱里，照旧说着「等你」——
+    一句已经不成立的话，还要人自己去点「已读」。结果并进 `payload`，渲染的一侧
+    据此说现在的状态；账本上的 `payload` 也跟着改，补发写回来的才是现在这句话。
+    """
+    now = _utcnow()
+    keys = select(Delivery.dedup_key).where(Delivery.event_id == event_id)
+    for row in await session.scalars(
+        select(Notification).where(Notification.delivery_key.in_(keys))
+    ):
+        row.metadata_payload = {**(row.metadata_payload or {}), **outcome}
+        row.read = True
+        row.resolved_at = now
+    for delivery in await session.scalars(
+        select(Delivery).where(Delivery.event_id == event_id)
+    ):
+        delivery.payload = {**(delivery.payload or {}), **outcome}
+    await session.flush()
+
+
 async def resend_unsent_deliveries(sessions: SessionFactory) -> dict[str, int]:
     """定时补发 —— 账本上没有哪一行能自己发出去。
 

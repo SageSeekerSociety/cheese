@@ -44,6 +44,7 @@ import PanelSite from './panels/PanelSite.vue'
 // 是「页签条要的那份数据」了，所以从 `workPanelTabs` 取。
 import { workPanelTabs } from './panels/panelTabList'
 import PanelTabs, { type PanelTab } from './panels/PanelTabs.vue'
+import { confirmAnnotationDiscard } from './panels/preview/annotationDiscard'
 import RoutinePanelHost from './routine/RoutinePanelHost.vue'
 
 import { useCommands } from '@/commands'
@@ -163,11 +164,23 @@ function ensureFileFromUrl(key: string | null) {
 
 // Every move the panel makes goes through here, so the address always says what
 // is on screen — 「你来看一眼这个 diff」的链接成立的前提就是这个。
-function setTab(key: string) {
+//
+// 换页签会离开图片那格，图上没发出去的标注就跟着没了，所以先问一句（确认不了就
+// 留在原地）。切工具不算——那件小事不经过这里。
+//
+// `guard: false` 是给「不是用户主动离开图」的入口用的：`pulse` / `highlightTurn` /
+// `reviewDoc` 是聊天里点「查看改动 / 看这一轮」掀开总览，图那格用 `v-show` 留着、笔画
+// 不会丢——拦住它们只会平白弹一次框，再把这次点击变成一次没落地的空操作。
+//
+// 返回「到底切没切」：调用方要接着在目标那一格上做事（开文件）时，被拦下就得当场
+// 放弃，不能拿着旧的引用假装做过了。
+async function setTab(key: string, opts: { guard?: boolean } = {}): Promise<boolean> {
+  if (key !== active.value && opts.guard !== false && !(await confirmAnnotationDiscard())) return false
   settled.value = true
   active.value = key
   if (key === 'changes') markChangesSeen()
   emit('update:tab', key)
+  return true
 }
 
 // ---- 开在哪个 tab 上 (规则 3) ----
@@ -462,17 +475,22 @@ watch(
 )
 
 // ---- The panel's outward API (TopicView holds a ref) ----
-function pulse() {
-  setTab('overview')
-  void nextTick(() => overviewRef.value?.pulse())
+// 这三样都是「把总览里某样东西掀到眼前」（聊天里点了「查看改动 / 看这一轮」），不是
+// 用户主动离开正在标注的那张图：绕过守卫切过去，切换与随后的那一下都真的发生。
+async function pulse() {
+  await setTab('overview', { guard: false })
+  await nextTick()
+  overviewRef.value?.pulse()
 }
-function highlightTurn(turnId: string) {
-  setTab('overview')
-  void nextTick(() => overviewRef.value?.highlightTurn(turnId))
+async function highlightTurn(turnId: string) {
+  await setTab('overview', { guard: false })
+  await nextTick()
+  overviewRef.value?.highlightTurn(turnId)
 }
-function reviewDoc(request: DocReviewRequest) {
-  setTab('overview')
-  void nextTick(() => overviewRef.value?.reviewEdits(request))
+async function reviewDoc(request: DocReviewRequest) {
+  await setTab('overview', { guard: false })
+  await nextTick()
+  overviewRef.value?.reviewEdits(request)
 }
 // A chip is a path with no store, and a room has three: its own files (what 芝士
 // delivered and what people uploaded — no branch, no history), a task's worktree,
@@ -495,10 +513,13 @@ async function openFile(path: string, taskId?: string | null) {
   // 的东西，这里手上那份记录要等这一轮结束才更新。
   await pollPreviewPointer()
   if (want === previewPath.value) {
-    setTab('preview')
+    await setTab('preview')
     return
   }
-  setTab('changes')
+  // 这一步是用户点了一份文件，该走守卫问一句。问不到「可以走」就当场收手：`setTab`
+  // 停在原地，`changesRef` 要么是空的、要么指向一份没露面的「改动」——再往下走就是
+  // 一次没有落地、也没人知道的假动作。
+  if (!(await setTab('changes'))) return
   await nextTick()
   // `undefined`, not `null`: a message under no card says nothing about which
   // source holds the file, while `null` means 「项目当前代码」 — and a file this
@@ -539,16 +560,21 @@ function pinFile(path: string) {
 }
 
 // 关掉的是正看着的那一格，就落到它旁边那一格；自由区空了就回总览。
-function closeFile(path: string) {
+//
+// 关掉正看着的那一格＝离开一块正在标注的图，所以先问一句，问完再动手拆。后台那几格
+// （没在看）不会拦：它们本就登记不上（见 `annotationDiscard`）。
+async function closeFile(path: string) {
   const at = openFiles.value.findIndex((f) => f.path === path)
   if (at < 0) return
+  const key = fileKey(path)
+  const wasActive = active.value === key
+  if (wasActive && !(await confirmAnnotationDiscard())) return
   const next = openFiles.value.filter((f) => f.path !== path)
   setFiles(next)
-  const key = fileKey(path)
   const nextMounted = new Set(mounted.value)
   nextMounted.delete(key)
   mounted.value = nextMounted
-  if (active.value !== key) return
+  if (!wasActive) return
   const neighbour = next[Math.min(at, next.length - 1)]
   setTab(neighbour ? fileKey(neighbour.path) : 'overview')
 }

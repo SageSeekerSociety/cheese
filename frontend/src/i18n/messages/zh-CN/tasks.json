@@ -634,5 +634,25 @@
       "start": "从哪里入手比较好？",
       "hard": "这道题难在哪里？"
     }
+  },
+  "inheritance": {
+    "title": "将继承什么",
+    "pack": "资源包",
+    "credits": "{n} 点算力",
+    "packNone": "没有算力额度",
+    "guidance": "给 AI 队友的指导",
+    "guidanceNone": "这一题没有指导",
+    "week": "第 {n} 周",
+    "topics": "本周范围",
+    "avoid": "暂不使用",
+    "materials": "会被带上的资料",
+    "materialCount": "{n} 份",
+    "materialsNone": "这块板还没有资料",
+    "from": {
+      "space": "来自空间",
+      "category": "来自项目集",
+      "task": "来自这道题",
+      "project": "来自项目"
+    }
   }
 }

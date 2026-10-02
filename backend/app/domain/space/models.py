@@ -65,6 +65,16 @@ class Space(Base):
         nullable=False,
         default=list,
     )
+    # 空间级教学配置 (#944): the same `teaching` key the 项目集 carries
+    # (`SpaceCategory.teaching`), one level further out. It is the DEFAULT for
+    # every 题目 on the board — a teacher writes "本周范围 / system prompt /
+    # 课件" once for the whole 空间, and any 项目集 or 题目 may replace it
+    # whole. Same shape, same reader: `app.domain.task.protocol.resolve` reads
+    # this level first and lets the ones below override it. Empty for every board
+    # that predates the key.
+    teaching: Mapped[dict] = mapped_column(
+        JSON, nullable=False, default=dict, server_default="{}"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )

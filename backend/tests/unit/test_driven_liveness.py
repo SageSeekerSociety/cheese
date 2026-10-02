@@ -363,3 +363,82 @@ async def test_an_input_is_read_when_its_echo_comes_back_not_when_it_is_taken():
         )
     finally:
         await room.close()
+
+
+async def test_a_message_read_mid_turn_is_not_failed_when_the_session_goes_idle():
+    """A message sent while the session is in the middle of a turn is read at the
+    next tool boundary and answered inside that turn. When that turn ends and
+    the session later goes away (the runner lets an idle session go), nothing
+    has failed: the room is not told a turn ended because the process exited."""
+    room = Room(Scripted(_runs_a_tool))
+    try:
+        await room.send("run the tests")
+        await _until(lambda: room.receipts == ["run the tests"])
+
+        second = uuid.uuid4()
+        await room.runtime.send(
+            room.session,
+            "and the linter too",
+            Opening(system_prompt="", agent_handle="cheese"),
+            work_id=second,
+            on_mark=lambda _: None,
+        )
+        room.channel.returns(room.topic, "Bash", "42 passed")
+        room.channel.acknowledges(room.topic, "and the linter too")
+        room.channel.says(room.topic, "tests pass, linter clean")
+        room.channel.stops(room.topic, "tests pass, linter clean")
+        await _until(lambda: room.results())
+
+        seat = (room.topic, "cheese")
+        room.channel.alive = False
+        await _until(lambda: seat not in room.runtime.answering)
+        await _REAL_SLEEP(0.3)
+
+        assert [result.is_error for result in room.results()] == [False]
+        assert "session process exited" not in str(room.results())
+    finally:
+        await room.close()
+
+
+async def test_a_platform_turn_taken_into_the_running_turn_still_ends():
+    """A platform turn waits on its own ending. Taken into a turn already
+    running, it is not answered on its own, so when the session goes away it
+    is ended then rather than left waiting forever."""
+    room = Room(Scripted(_runs_a_tool))
+    try:
+        await room.send("run the tests")
+        await _until(lambda: room.receipts == ["run the tests"])
+
+        ending: list = []
+
+        async def platform_turn() -> None:
+            async for event in room.runtime.run_turn(
+                project_id=room.session.project_id,
+                topic_id=room.topic,
+                prompt="tidy the notes",
+                system_prompt="",
+                resume_session_id=None,
+                agent_handle="cheese",
+                session_agent="cheese",
+            ):
+                if isinstance(event, AgentResult):
+                    ending.append(event)
+
+        waiting = asyncio.create_task(platform_turn())
+        await _until(
+            lambda: any(
+                message.get("type") == "user"
+                for message in room.channel._session_for(room.topic).written
+                if "tidy the notes" in str(message.get("message"))
+            )
+        )
+        room.channel.returns(room.topic, "Bash", "42 passed")
+        room.channel.acknowledges(room.topic, "tidy the notes")
+        room.channel.stops(room.topic, "done")
+        await _until(lambda: room.results())
+
+        room.channel.alive = False
+        await asyncio.wait_for(waiting, 8)
+        assert len(ending) == 1
+    finally:
+        await room.close()

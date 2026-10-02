@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
-import { arrowHead, arrowHeadPoints } from './designSketch'
+import { arrowHead, arrowHeadPoints, SKETCH_COLORS } from './designSketch'
+
+describe('SKETCH_COLORS', () => {
+  it('是参考物那一套：红、蓝、绿、近黑、白，第一颗是默认选中的红', () => {
+    expect(SKETCH_COLORS).toEqual(['#E03131', '#1971C2', '#2F9E44', '#1F1E1D', '#FFFFFF'])
+    expect(SKETCH_COLORS[0]).toBe('#E03131')
+  })
+})
 
 /**
  * 三点围出的三角形面积。屏幕上的箭头是一块 `<polygon>`：两个点围不出面，

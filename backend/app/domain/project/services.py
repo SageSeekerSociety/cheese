@@ -316,9 +316,8 @@ class ProjectService:
         nothing, leaves the project exactly as it was. Creating a project must
         not fail because an institution left its resource pack empty.
         """
-        from app.domain.space.models import SpaceCategory
         from app.domain.task.models import Task
-        from app.domain.task.protocol import resolve
+        from app.domain.task.teaching import protocol_for_task
 
         task = await self._session.get(Task, task_id)
         if task is None:
@@ -354,12 +353,7 @@ class ProjectService:
         # 「先建工作区、过审时再拿资源」这条正路一点没变。
         if membership is None or membership.approved != 0:
             return
-        category = (
-            await self._session.get(SpaceCategory, task.category_id)
-            if getattr(task, "category_id", None)
-            else None
-        )
-        protocol = resolve(category=category, task=task)
+        protocol = await protocol_for_task(self._session, task)
         # The 项目集 supplies a default agent type; a project that already picked
         # one keeps it, so accepting the protocol never overwrites a choice.
         agents = AgentInstanceService(self._session)

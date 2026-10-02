@@ -8,12 +8,12 @@ export type SketchTool = 'select' | 'pen' | 'line' | 'arrow' | 'rect' | 'ellipse
 export const DRAW_TOOLS: readonly SketchTool[] = ['pen', 'line', 'arrow', 'rect', 'ellipse', 'text', 'redact']
 
 /**
- * 五种颜色：四个显眼的加上一个当涂黑用的近黑。
+ * 和参考物同一套：红、蓝、绿、近黑，外加一个白。第一颗是默认选中的红。
  *
- * 不是参考物那一套——参考物是 #E03131 #1971C2 #2F9E44 #1F1E1D 再加一个白。这里
- * 没跟着换成白色：白在浅色底上看不见，要它看得见得先配一圈描边，那是另一件事。
+ * 参考物（Claude 桌面版那套标注器）就是这五个，白也在里面——白是画在黑底、深色
+ * 照片上的那支笔，参考物没有为它单独配描边，这里也照抄，不给白加边。
  */
-export const SKETCH_COLORS: readonly string[] = ['#e5484d', '#f5a524', '#30a46c', '#0091ff', '#16181d']
+export const SKETCH_COLORS: readonly string[] = ['#E03131', '#1971C2', '#2F9E44', '#1F1E1D', '#FFFFFF']
 
 export type PenStroke = { tool: 'pen'; color: string; width: number; points: Point[] }
 export type LineStroke = { tool: 'line' | 'arrow'; color: string; width: number; from: Point; to: Point }

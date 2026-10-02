@@ -4,12 +4,15 @@ import type { NoteRect, RegionNoteGeometry } from './designRegionNotePosition'
 import type { SketchStroke, SketchTool } from './designSketch'
 import type { ContentProfile } from './designSnap'
 
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, watchEffect } from 'vue'
 
+import { clearAnnotationGuard, setAnnotationGuard } from './annotationDiscard'
 import DesignRasterRegion from './DesignRasterRegion.vue'
-import { composeSketch, sampleImage, SKETCH_COLORS, strokeWidth } from './designSketch'
+import { composeSketch, isShapeStroke, sampleImage, SKETCH_COLORS, strokeWidth } from './designSketch'
 import DesignSketchCanvas from './DesignSketchCanvas.vue'
 import DesignSketchOverlay from './DesignSketchOverlay.vue'
+import { isSelectableStroke } from './designSketchSelection'
+import DesignSketchSelection from './DesignSketchSelection.vue'
 import DesignSketchToolbar from './DesignSketchToolbar.vue'
 import { blockAt, contentProfile } from './designSnap'
 
@@ -78,6 +81,42 @@ const tool = ref<SketchTool>('select')
 const color = ref<string>(SKETCH_COLORS[0])
 const strokes = ref<SketchStroke[]>([])
 const undone = ref<SketchStroke[]>([])
+/** 选中的是哪一条（按索引）；只有块状标注能被选中、改框。 */
+const selectedStroke = ref<number | null>(null)
+/**
+ * 有没有「画了但还没发出去」的笔画。
+ *
+ * 发出去之后笔画还留在屏上（人看着自己刚标的东西），但那些不再算「会丢的东西」——
+ * 所以不是「有笔画就拦」，而是「有笔画、且屏上跟发出去的那份不一样」才拦（见
+ * `annotationDiscard`）。
+ *
+ * 判据是「上一次发出去时的那几笔」，不是一个开关：发过之后撤销再重做，屏上又跟发
+ * 出去时一样了，不该再被当成欠着谁。撤销/重做拿回来的是同一个笔画对象（`undone`
+ * 里存的就是引用），所以逐条按引用比就够，不必深比较。
+ */
+const sentStrokes = ref<SketchStroke[] | null>(null)
+function matchesSent(current: SketchStroke[]): boolean {
+  const sent = sentStrokes.value
+  return sent !== null && current.length === sent.length && current.every((stroke, index) => stroke === sent[index])
+}
+const unsent = computed(() => strokes.value.length > 0 && !matchesSent(strokes.value))
+/** 走之前那一下确认。对话框画在这一层，登记的守卫是它。 */
+const discardPrompt = ref(false)
+let resolveDiscard: ((go: boolean) => void) | null = null
+/**
+ * 还开着的那一次确认。
+ *
+ * 弹框开着的时候可能又来一次导航（双击页签、先点页签再点关闭、快捷键与点击几乎同时
+ * 触发两次 `setTab`/`closeFile`）。没有它的话 `confirmDiscard` 会把上一次的 resolver
+ * 顶掉，第一次那一下永远等不到答复，它该做的切换/关闭就静默丢了。存着这一份，第二次
+ * 直接拿同一个 Promise：一次回答答住两次。
+ */
+let discardPending: Promise<boolean> | null = null
+const discardKeep = ref<HTMLButtonElement | null>(null)
+/** 弹框那张卡：焦点陷阱围着它转，别把字落到后面没被盖住的界面上。 */
+const discardCard = ref<HTMLElement | null>(null)
+/** 弹框冒出来之前焦点在哪：关了以后还回去，免得键盘用的人被打回页首。 */
+const discardOrigin = ref<HTMLElement | null>(null)
 /** 图上画得下箭头，说不清「改成什么」，所以那一句是必填的。 */
 const note = ref('')
 const profile = ref<ContentProfile | null>(null)
@@ -95,6 +134,10 @@ const penWidth = computed(() => strokeWidth(natural.value.width))
 const canUndo = computed(() => strokes.value.length > 0)
 const canRedo = computed(() => undone.value.length > 0)
 const canSend = computed(() => strokes.value.length > 0 && note.value.trim().length > 0 && !textEditing.value)
+/** 有没有能选中、改框的标注：没有就不挂选中层（免得它挡住区域选择）。 */
+const selectable = computed(() => strokes.value.some(isSelectableStroke))
+/** 真会丢掉东西的时候（画了、且还没发），才值得拦一道。 */
+const wouldLoseStrokes = computed(() => strokes.value.length > 0 && unsent.value)
 
 const selectedRegion = computed(() => (props.activeRegion === undefined ? standaloneRegion.value : props.activeRegion))
 const regionIdentity = computed(() => `${props.identity}:${scale.value}:${available.value}`)
@@ -223,11 +266,17 @@ watch(
     fitted.value = true
     strokes.value = []
     undone.value = []
+    selectedStroke.value = null
+    sentStrokes.value = null
     note.value = ''
     profile.value = null
   },
   { flush: 'sync' }
 )
+// 换工具就放下选中的那一条：切到会画的工具时，那块选中层不该再盖在画布上抢指针。
+watch(tool, () => {
+  selectedStroke.value = null
+})
 watch(
   () => props.selectionEnabled,
   () => {
@@ -333,15 +382,28 @@ function undo() {
   if (!last) return
   strokes.value = strokes.value.slice(0, -1)
   undone.value = [last, ...undone.value]
+  selectedStroke.value = null
 }
 function redo() {
   const [next, ...rest] = undone.value
   if (!next) return
   undone.value = rest
   strokes.value = [...strokes.value, next]
+  selectedStroke.value = null
 }
 function clearStrokes() {
   strokes.value = []
+  undone.value = []
+  selectedStroke.value = null
+}
+/** 拖把手改框：只有带 region 的标注改自己的框，文字改的是锚点（它本来就没有框）。 */
+function resizeStroke(payload: { index: number; box: RasterRegion }) {
+  const stroke = strokes.value[payload.index]
+  if (!stroke || !isSelectableStroke(stroke)) return
+  const next: SketchStroke = isShapeStroke(stroke)
+    ? { ...stroke, region: payload.box }
+    : { ...stroke, at: { x: payload.box.x, y: payload.box.y } }
+  strokes.value = strokes.value.map((current, index) => (index === payload.index ? next : current))
   undone.value = []
 }
 /** 点一下内容块：不画东西，直接把那一块框出来并编上号。 */
@@ -377,6 +439,9 @@ async function sendAnnotated() {
       count: strokes.value.length,
       note: note.value.trim(),
     })
+    // 交出去了：屏上还留着，但记下发出去时是哪几笔——再走就不欠谁的了
+    // （撤销再重做回到同一个样子也不算欠）。
+    sentStrokes.value = [...strokes.value]
   } catch (error) {
     sendError.value = error instanceof Error ? error.message : t('design.composeFailed')
   } finally {
@@ -454,6 +519,61 @@ function blur() {
   spaceHeld.value = false
   panEnd()
 }
+/**
+ * 走之前那一句确认（参考物写的是 `Discard your annotations?`）。
+ *
+ * 确认了就丢笔画，同时立刻把登记处撤掉——`WorkPanel` 那边「关文件」是「先确认、
+ * 再换页签」，换页签时还会再问一次；这里同步撤掉，第二次才不会又弹一遍。
+ */
+function confirmDiscard(): Promise<boolean> {
+  // 已经开着就复用那一次：多来几次导航，同一个答复答住，不各自挂一个悬着的 Promise。
+  if (discardPending) return discardPending
+  discardPending = new Promise<boolean>((resolve) => {
+    resolveDiscard = resolve
+  })
+  discardOrigin.value = (pane.value?.ownerDocument.activeElement as HTMLElement | null) ?? null
+  discardPrompt.value = true
+  void nextTick(() => discardKeep.value?.focus({ preventScroll: true }))
+  return discardPending
+}
+const discardGuard = { confirmDiscard }
+function answerDiscard(go: boolean) {
+  discardPrompt.value = false
+  const resolve = resolveDiscard
+  resolveDiscard = null
+  discardPending = null
+  const origin = discardOrigin.value
+  discardOrigin.value = null
+  // 关掉之后把焦点还回原来那个地方（还在的话）。
+  if (origin?.isConnected) origin.focus({ preventScroll: true })
+  if (go) {
+    clearStrokes()
+    clearAnnotationGuard(discardGuard)
+  }
+  resolve?.(go)
+}
+/** 弹框里只有两颗按钮：Tab 到头绕回去，别让焦点漏到后面那份界面上。 */
+function trapDiscardFocus(event: KeyboardEvent) {
+  const card = discardCard.value
+  if (!card) return
+  const focusables = Array.from(card.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'))
+  if (!focusables.length) return
+  const at = focusables.indexOf(event.target as HTMLButtonElement)
+  const next = event.shiftKey ? (at <= 0 ? focusables.length - 1 : at - 1) : at === focusables.length - 1 ? 0 : at + 1
+  event.preventDefault()
+  focusables[next]?.focus()
+}
+// 只有「此刻在看着的、且有没发出去的笔画」的那一块才登记：收起来的页签（v-show 留着
+// 的）也在跑，但它们没在看，不该拦住别人。
+// flush: 'sync' —— 这道登记是被同步读的（路由守卫、关页签、切文件都在同一拍里读它），
+// 落在一拍之后的刷新队列里就等于「刚画完那一瞬间还没登记」。同步跑，登记和写笔画是同一拍。
+watchEffect(
+  () => {
+    if (props.active && wouldLoseStrokes.value) setAnnotationGuard(discardGuard)
+    else clearAnnotationGuard(discardGuard)
+  },
+  { flush: 'sync' }
+)
 watch(
   () => props.activeRegion,
   () => {
@@ -480,6 +600,7 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   observer?.disconnect()
+  clearAnnotationGuard(discardGuard)
   if (frame) cancelAnimationFrame(frame)
   document.removeEventListener('scroll', scheduleMeasure, true)
   window.removeEventListener('resize', scheduleMeasure)
@@ -515,6 +636,7 @@ onBeforeUnmount(() => {
       :can-send="canSend"
       :can-select="selectionEnabled && !!natural.width"
       :busy="exporting"
+      :text-editing="textEditing"
       @pick="tool = $event"
       @recolor="color = $event"
       @undo="undo"
@@ -554,6 +676,18 @@ onBeforeUnmount(() => {
             @select="selected"
             @cancel="cancelSelection"
           />
+          <!-- 选中层盖在区域选择器上面：有块状标注可点时，点它就是选中它，改它的框；
+               没点中框（或没得选）时指针照旧落到下面的区域选择器上。 -->
+          <DesignSketchSelection
+            v-if="selecting && selectable"
+            :strokes="strokes"
+            :selected="selectedStroke"
+            :scale="scale"
+            :natural-width="natural.width"
+            @select="selectedStroke = $event"
+            @deselect="selectedStroke = null"
+            @resize="resizeStroke"
+          />
           <DesignSketchCanvas
             v-if="drawing"
             ref="canvas"
@@ -571,6 +705,24 @@ onBeforeUnmount(() => {
       </div>
       <div class="design-image__overlay">
         <slot name="region-note" :geometry="geometry" :restore-focus="restoreFocus" :focus-origin="focusOrigin" />
+      </div>
+    </div>
+    <!-- 要丢没发出去的标注之前先问一句；参考物的文案是「Discard your annotations?」。 -->
+    <div
+      v-if="discardPrompt"
+      class="design-image__discard"
+      role="alertdialog"
+      aria-modal="true"
+      :aria-label="t('design.discardAnnotations')"
+      @keydown.esc="answerDiscard(false)"
+      @keydown.tab="trapDiscardFocus"
+    >
+      <div ref="discardCard" class="design-image__discard-card">
+        <p class="design-image__discard-question">{{ t('design.discardAnnotations') }}</p>
+        <div class="design-image__discard-actions">
+          <button ref="discardKeep" type="button" @click="answerDiscard(false)">{{ t('design.discardKeep') }}</button>
+          <button type="button" class="is-danger" @click="answerDiscard(true)">{{ t('design.discardConfirm') }}</button>
+        </div>
       </div>
     </div>
   </section>
@@ -661,5 +813,50 @@ onBeforeUnmount(() => {
   box-sizing: border-box;
   border: 2px solid var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+/* 丢弃确认：盖住这一格的一小块，不抢整页。 */
+.design-image__discard {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+}
+.design-image__discard-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 320px;
+  padding: 16px;
+  background: var(--raised);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2);
+}
+.design-image__discard-question {
+  margin: 0;
+  font-size: 14px;
+}
+.design-image__discard-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.design-image__discard-actions button {
+  padding: 4px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  line-height: var(--lh-13);
+}
+.design-image__discard-actions button:hover {
+  background: var(--fill-2);
+}
+.design-image__discard-actions button.is-danger {
+  color: var(--danger-ink);
+}
+.design-image__discard-actions button:focus-visible {
+  outline: 2px solid var(--accent);
 }
 </style>

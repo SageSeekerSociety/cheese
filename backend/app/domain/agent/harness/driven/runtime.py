@@ -867,8 +867,19 @@ class DrivenRuntime[H: Handle]:
             False,
             False,
         )
-        self.work[self._seat_of(session)] = work_id
-        self._wake(self._seat_of(session))
+        seat = self._seat_of(session)
+        # A message sent while the session is in the middle of a turn is read at
+        # that turn's next tool boundary and answered inside it: its records,
+        # its result and its end all carry the running turn's work, and none
+        # ever names this one. Taking the seat over would leave it holding a
+        # turn that never ends, and the next time the session goes away (the
+        # runner lets an idle one go after ``IDLE_EXIT_S``) that turn would be
+        # failed as a crash. A platform turn (``run_turn``) takes the seat all
+        # the same: its caller waits on its own queue for an ending, and the
+        # session going away is the only one it can get.
+        if seat not in self.clocks or work_id in self.queues:
+            self.work[seat] = work_id
+        self._wake(seat)
         # 记忆先落到会话目录里，输入后写进去：agent 这一轮一睁眼读到的应当是平台
         # 现在这一份（别人刚改的也在里面），而不是它上一次看见的那一份。
         await self.reconcile_memory(session.topic_id)
