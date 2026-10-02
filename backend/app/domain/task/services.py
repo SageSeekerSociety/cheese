@@ -17,7 +17,12 @@ from app.core.domain_errors import (
 )
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.domain.space.rank_service import SpaceRankService
-from app.domain.space.repositories import SpaceRepository, SpaceUserRankRepository
+from app.domain.space.repositories import (
+    SpaceCategoryRepository,
+    SpaceDomainGroupRepository,
+    SpaceRepository,
+    SpaceUserRankRepository,
+)
 from app.domain.task.claims import members_claiming_through_another_team
 from app.domain.task.models import (
     Task,
@@ -1357,3 +1362,107 @@ async def ensure_task_readable(
     await ensure_task_visible_for_ordinary_user(
         session=session, task=task, user_id=user_id
     )
+
+
+async def validate_and_get_category_id(
+    *,
+    space_repo: SpaceRepository,
+    category_repo: SpaceCategoryRepository,
+    space_id: int,
+    category_id: int | None,
+) -> int:
+    """Validate category for a space, mirroring Kotlin validateAndGetCategory."""
+
+    async def _get_space_default_category_id() -> int:
+        space = await space_repo.get_by_id(space_id)
+        if space is None:
+            raise NotFoundError("Space not found")
+        if space.default_category_id is None:
+            raise BadRequestError("Space has no default category configured.")
+        return space.default_category_id
+
+    async def _load_and_validate_category(cid: int) -> int:
+        category = await category_repo.get_by_id_and_space(cid, space_id)
+        if category is None:
+            raise NotFoundError("Category not found or does not belong to space.")
+        if getattr(category, "archived_at", None) is not None:
+            raise BadRequestError(
+                f"Cannot assign task to an archived category (id={cid})."
+            )
+        if category.deleted_at is not None:
+            raise BadRequestError(
+                f"Cannot assign task to a deleted category (id={cid})."
+            )
+        return category.id
+
+    # When category_id is explicitly provided, validate it.
+    if category_id is not None:
+        return await _load_and_validate_category(category_id)
+
+    # Otherwise, fall back to space.default_category_id.
+    default_cid = await _get_space_default_category_id()
+    return await _load_and_validate_category(default_cid)
+
+
+async def ensure_domain_groups_belong_to_space(
+    *,
+    session: AsyncSession,
+    space_id: int,
+    group_ids: Sequence[int],
+) -> None:
+    """``accessDomainGroupIds`` 点名的每一个域组都得是**这块板**的。
+
+    这些组解析出来的域会并进可见性判据（``TaskVisibilityService`` 把
+    ``TaskAccessDomain.domain`` 直接并进读权限的 or 列表），所以拿别的板的组 id 发题，
+    等于把那位管理员圈定的名单原样搬到自己这道题上。同一个请求体里的 ``categoryId``
+    早就是这么收的（``validate_and_get_category_id`` 问 ``get_by_id_and_space``，
+    不属于这块板就 404）；这里补上同一条，话也照抄那一句。
+    """
+    known = {
+        group.id
+        for group in await SpaceDomainGroupRepository(session=session).list_groups(
+            space_id
+        )
+    }
+    if any(group_id not in known for group_id in group_ids):
+        raise NotFoundError("Domain group not found or does not belong to space.")
+
+
+async def bind_review_path(
+    *,
+    session: AsyncSession,
+    task_id: int,
+    participant_id: int,
+    submission_id: int,
+) -> tuple[Task, TaskMembership]:
+    """Resolve what a review route addresses, binding every path id to one row.
+
+    评审五条路由都挂在
+    ``/{taskId}/participants/{participantId}/submissions/{submissionId}/review``
+    之下，所以 ``submissionId`` 从来不是一个单独的主键：它只能沿着「谁提交的」
+    （membership）和「提交到哪道题」（task）走到。以前把它当全局自由主键，于是
+    任何一个在别的题上通过 ``may_teach_task`` 的人都能给这道题的任意提交打分、改分、
+    删分 —— 拿到一个 id 就够。这里一次判完三段：membership 必须属于 path 的 task、
+    submission 必须属于 path 的 participant，判据只写这一处（五条路由共用，第六个
+    方法照抄这行就不会漏）。
+
+    任何一段不成立都答 404 而不是 403：错配的 id 说明这条路径没指向任何东西，
+    403 会替调用者确认「这个 submissionId 存在」。
+    """
+    task = await TaskRepository(session=session).get_by_id(task_id)
+    if task is None:
+        raise NotFoundError.for_resource("task", task_id)
+
+    membership = await TaskMembershipRepository(session=session).get_by_id(
+        participant_id
+    )
+    if membership is None or membership.task_id != task_id:
+        raise NotFoundError.for_resource("participant", participant_id)
+
+    submission = await TaskSubmissionRepository(session=session).get_by_id(
+        submission_id
+    )
+    if submission is None or submission.membership_id != participant_id:
+        raise NotFoundError.for_resource("submission", submission_id)
+
+    return task, membership

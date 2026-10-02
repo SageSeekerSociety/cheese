@@ -290,7 +290,7 @@ class TestCreateTaskEntityDomainResolution:
                 new=AsyncMock(return_value=True),
             ),
             patch(
-                "app.api.routes.tasks.SpaceDomainGroupRepository",
+                "app.domain.task.services.SpaceDomainGroupRepository",
                 return_value=SimpleNamespace(list_groups=_list_groups),
             ),
             patch(

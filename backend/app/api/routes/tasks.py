@@ -1,4 +1,3 @@
-from collections.abc import Sequence
 from datetime import UTC, datetime
 from io import BytesIO
 from typing import Annotated
@@ -49,7 +48,6 @@ from app.domain.space.repositories import (
     SpaceAdminRelationRepository,
     SpaceCategoryRepository,
     SpaceDomainGroupDomainRepository,
-    SpaceDomainGroupRepository,
     SpaceRepository,
     SpaceUserRankRepository,
 )
@@ -66,7 +64,6 @@ from app.domain.task.inputs import (
 )
 from app.domain.task.models import (
     Task,
-    TaskMembership,
     TaskTagRelation,
 )
 from app.domain.task.repositories import (
@@ -84,9 +81,12 @@ from app.domain.task.services import (
     TaskService,
     TaskSubmissionReviewService,
     TaskSubmissionService,
+    bind_review_path,
     count_distinct_participants,
+    ensure_domain_groups_belong_to_space,
     ensure_task_readable,
     ensure_task_visible_for_ordinary_user,
+    validate_and_get_category_id,
 )
 from app.domain.task.task_pdf_draft_service import TaskPdfDraftService
 from app.domain.task.visibility_service import (
@@ -312,68 +312,6 @@ class PatchSubmissionReviewRequest(BaseModel):
     comment: str | None = None
 
 
-async def _validate_and_get_category_id(
-    *,
-    space_repo: SpaceRepository,
-    category_repo: SpaceCategoryRepository,
-    space_id: int,
-    category_id: int | None,
-) -> int:
-    """Validate category for a space, mirroring Kotlin validateAndGetCategory."""
-
-    async def _get_space_default_category_id() -> int:
-        space = await space_repo.get_by_id(space_id)
-        if space is None:
-            raise NotFoundError("Space not found")
-        if space.default_category_id is None:
-            raise BadRequestError("Space has no default category configured.")
-        return space.default_category_id
-
-    async def _load_and_validate_category(cid: int) -> int:
-        category = await category_repo.get_by_id_and_space(cid, space_id)
-        if category is None:
-            raise NotFoundError("Category not found or does not belong to space.")
-        if getattr(category, "archived_at", None) is not None:
-            raise BadRequestError(
-                f"Cannot assign task to an archived category (id={cid})."
-            )
-        if category.deleted_at is not None:
-            raise BadRequestError(
-                f"Cannot assign task to a deleted category (id={cid})."
-            )
-        return category.id
-
-    # When category_id is explicitly provided, validate it.
-    if category_id is not None:
-        return await _load_and_validate_category(category_id)
-
-    # Otherwise, fall back to space.default_category_id.
-    default_cid = await _get_space_default_category_id()
-    return await _load_and_validate_category(default_cid)
-
-
-async def _ensure_domain_groups_belong_to_space(
-    *,
-    db,
-    space_id: int,
-    group_ids: Sequence[int],
-) -> None:
-    """``accessDomainGroupIds`` 点名的每一个域组都得是**这块板**的。
-
-    这些组解析出来的域会并进可见性判据（``TaskVisibilityService`` 把
-    ``TaskAccessDomain.domain`` 直接并进读权限的 or 列表），所以拿别的板的组 id 发题，
-    等于把那位管理员圈定的名单原样搬到自己这道题上。同一个请求体里的 ``categoryId``
-    早就是这么收的（``_validate_and_get_category_id`` 问 ``get_by_id_and_space``，
-    不属于这块板就 404）；这里补上同一条，话也照抄那一句。
-    """
-    known = {
-        group.id
-        for group in await SpaceDomainGroupRepository(session=db).list_groups(space_id)
-    }
-    if any(group_id not in known for group_id in group_ids):
-        raise NotFoundError("Domain group not found or does not belong to space.")
-
-
 async def _create_task_entity(
     *,
     payload: dict | CreateTaskRequest,
@@ -545,7 +483,7 @@ async def _create_task_entity(
     await validate_task_teaching(db, teaching=teaching, actor_user_id=creator_user_id)
 
     # 确认 space 存在并获取有效的 category id（传入或默认）
-    effective_category_id = await _validate_and_get_category_id(
+    effective_category_id = await validate_and_get_category_id(
         space_repo=space_repo,
         category_repo=category_repo,
         space_id=space_id,
@@ -582,8 +520,8 @@ async def _create_task_entity(
 
     # Resolve domain group IDs to actual domains and persist TaskAccessDomain records
     if access_control_enabled and access_domain_group_ids:
-        await _ensure_domain_groups_belong_to_space(
-            db=db, space_id=space_id, group_ids=access_domain_group_ids
+        await ensure_domain_groups_belong_to_space(
+            session=db, space_id=space_id, group_ids=access_domain_group_ids
         )
         domain_repo = SpaceDomainGroupDomainRepository(session=db)
         groups_domains = await domain_repo.list_domains_for_groups(
@@ -1762,8 +1700,8 @@ async def patch_task(
         access_domain_repo = TaskAccessDomainRepository(session=db)
 
         if task.access_control_enabled and payload.access_domain_group_ids:
-            await _ensure_domain_groups_belong_to_space(
-                db=db,
+            await ensure_domain_groups_belong_to_space(
+                session=db,
                 space_id=task.space_id,
                 group_ids=payload.access_domain_group_ids,
             )
@@ -1783,7 +1721,7 @@ async def patch_task(
     if payload.category_id is not None:
         space_repo = SpaceRepository(session=db)
         category_repo = SpaceCategoryRepository(session=db)
-        effective_category_id = await _validate_and_get_category_id(
+        effective_category_id = await validate_and_get_category_id(
             space_repo=space_repo,
             category_repo=category_repo,
             space_id=task.space_id,
@@ -2653,42 +2591,6 @@ async def patch_task_submission(
     }
 
 
-async def _bind_review_path(
-    *,
-    db,
-    task_id: int,
-    participant_id: int,
-    submission_id: int,
-) -> tuple[Task, TaskMembership]:
-    """Resolve what a review route addresses, binding every path id to one row.
-
-    评审五条路由都挂在
-    ``/{taskId}/participants/{participantId}/submissions/{submissionId}/review``
-    之下，所以 ``submissionId`` 从来不是一个单独的主键：它只能沿着「谁提交的」
-    （membership）和「提交到哪道题」（task）走到。以前把它当全局自由主键，于是
-    任何一个在别的题上通过 ``may_teach_task`` 的人都能给这道题的任意提交打分、改分、
-    删分 —— 拿到一个 id 就够。这里一次判完三段：membership 必须属于 path 的 task、
-    submission 必须属于 path 的 participant，判据只写这一处（五条路由共用，第六个
-    方法照抄这行就不会漏）。
-
-    任何一段不成立都答 404 而不是 403：错配的 id 说明这条路径没指向任何东西，
-    403 会替调用者确认「这个 submissionId 存在」。
-    """
-    task = await TaskRepository(session=db).get_by_id(task_id)
-    if task is None:
-        raise NotFoundError.for_resource("task", task_id)
-
-    membership = await TaskMembershipRepository(session=db).get_by_id(participant_id)
-    if membership is None or membership.task_id != task_id:
-        raise NotFoundError.for_resource("participant", participant_id)
-
-    submission = await TaskSubmissionRepository(session=db).get_by_id(submission_id)
-    if submission is None or submission.membership_id != participant_id:
-        raise NotFoundError.for_resource("submission", submission_id)
-
-    return task, membership
-
-
 @router.post(
     "/{taskId}/participants/{participantId}/submissions/{submissionId}/review",
     summary="Create Submission Review",
@@ -2704,8 +2606,8 @@ async def post_task_submission_review(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
-    task, _ = await _bind_review_path(
-        db=db,
+    task, _ = await bind_review_path(
+        session=db,
         task_id=task_id,
         participant_id=participant_id,
         submission_id=submission_id,
@@ -2751,8 +2653,8 @@ async def get_task_submission_review(
     submissionId 就能读到它的成绩与评语。判据照抄同一路径上的提交列表
     ``GET .../submissions``：出题者与管理员、提交者本人、以及小队提交时的小队成员。
     """
-    task, membership = await _bind_review_path(
-        db=db,
+    task, membership = await bind_review_path(
+        session=db,
         task_id=task_id,
         participant_id=participant_id,
         submission_id=submission_id,
@@ -2797,8 +2699,8 @@ async def patch_task_submission_review(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
-    task, _ = await _bind_review_path(
-        db=db,
+    task, _ = await bind_review_path(
+        session=db,
         task_id=task_id,
         participant_id=participant_id,
         submission_id=submission_id,
@@ -2834,8 +2736,8 @@ async def put_task_submission_review(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
-    task, _ = await _bind_review_path(
-        db=db,
+    task, _ = await bind_review_path(
+        session=db,
         task_id=task_id,
         participant_id=participant_id,
         submission_id=submission_id,
@@ -2870,8 +2772,8 @@ async def delete_task_submission_review(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
-    task, _ = await _bind_review_path(
-        db=db,
+    task, _ = await bind_review_path(
+        session=db,
         task_id=task_id,
         participant_id=participant_id,
         submission_id=submission_id,
