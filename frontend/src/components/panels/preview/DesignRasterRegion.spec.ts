@@ -64,6 +64,60 @@ it('rejects a drag when the image source changes before pointerup', async () => 
   expect(ui.emitted().select).toBeUndefined()
 })
 
+// ---- 点一下 = 框住指针底下那一块；拖 = 自由框选 ----
+// 有内容分界线时，按下到松开几乎没有位移就算「点」：直接用 blockAt 框住那一块，
+// 不用先切工具、也不用拖准。真拖了（位移过阈值）还是自由框选，只是四条边吸到近处
+// 的分界线上。没有分界线（跨域读像素失败等）时两条都退化成原来的自由拖。
+const lines = { columns: [100, 300], rows: [100, 300] }
+function mapped(region: { x: number; y: number; width: number; height: number }) {
+  return [{ region, identity: 'v1', src: '', naturalWidth: 1000, naturalHeight: 500 }]
+}
+/** 取样图 1000×500 铺在 500×250 上、左上角在 (10,20)：1 显示像素 = 2 原图像素。 */
+async function gesture(ui: ReturnType<typeof render>, from: [number, number], to: [number, number] = from) {
+  const overlay = ui.getByRole('group', { name: '选择图片区域' })
+  overlay.setPointerCapture = vi.fn()
+  await fireEvent.pointerDown(overlay, { button: 0, pointerId: 7, clientX: from[0], clientY: from[1] })
+  await fireEvent.pointerUp(overlay, { pointerId: 7, clientX: to[0], clientY: to[1] })
+}
+it('a tap picks the content block under the pointer without switching tools', async () => {
+  const ui = render(DesignRasterRegion, {
+    props: { image: imageFixture(), enabled: true, identity: 'v1', profile: lines },
+  })
+  await gesture(ui, [110, 120])
+  expect(ui.emitted().select![0]).toEqual(mapped({ x: 100, y: 100, width: 200, height: 200 }))
+})
+it('a sub-threshold wiggle is still a tap, so a shaky finger picks the block', async () => {
+  const ui = render(DesignRasterRegion, {
+    props: { image: imageFixture(), enabled: true, identity: 'v1', profile: lines },
+  })
+  await gesture(ui, [60, 70], [62, 71])
+  expect(ui.emitted().select![0]).toEqual(mapped({ x: 100, y: 100, width: 200, height: 200 }))
+})
+it('a real drag stays a free box and snaps its edges to nearby content lines', async () => {
+  const ui = render(DesignRasterRegion, {
+    props: { image: imageFixture(), enabled: true, identity: 'v1', profile: lines },
+  })
+  await gesture(ui, [65, 73], [158, 168])
+  expect(ui.emitted().select![0]).toEqual(mapped({ x: 100, y: 100, width: 200, height: 200 }))
+})
+it('a tap on blank space frames the whole image', async () => {
+  const ui = render(DesignRasterRegion, {
+    props: { image: imageFixture(), enabled: true, identity: 'v1', profile: lines },
+  })
+  await gesture(ui, [20, 30])
+  expect(ui.emitted().select![0]).toEqual(mapped({ x: 0, y: 0, width: 1000, height: 500 }))
+})
+it('without a content profile a tap selects nothing and leaves free drag untouched', async () => {
+  const ui = render(DesignRasterRegion, { props: { image: imageFixture(), enabled: true, identity: 'v1' } })
+  await gesture(ui, [110, 120])
+  expect(ui.emitted().select).toBeUndefined()
+})
+it('without a content profile a drag still maps to natural pixels', async () => {
+  const ui = render(DesignRasterRegion, { props: { image: imageFixture(), enabled: true, identity: 'v1' } })
+  await gesture(ui, [60, 70], [160, 120])
+  expect(ui.emitted().select![0]).toEqual(mapped({ x: 100, y: 100, width: 200, height: 100 }))
+})
+
 describe('Design image fit in owning previews (DOM geometry doubles)', () => {
   let observed: Map<Element, ResizeObserverCallback>
   let urls: string[]
