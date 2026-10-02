@@ -75,7 +75,9 @@ class TestCountDistinctParticipants:
 
         repo = SimpleNamespace(list_memberships_for_space=AsyncMock(return_value=[]))
 
-        with patch("app.domain.task.services.TaskMembershipRepository", return_value=repo):
+        with patch(
+            "app.domain.task.services.TaskMembershipRepository", return_value=repo
+        ):
             count = await count_distinct_participants(
                 AsyncMock(), space_id=100, task_ids=[]
             )
