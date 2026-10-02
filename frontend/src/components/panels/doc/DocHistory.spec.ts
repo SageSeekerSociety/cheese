@@ -75,7 +75,13 @@ describe('修改记录', () => {
   })
 
   it('同一个人连着存的几版算一条，别人插进来就分开', async () => {
-    mount([version(5, 'bob', 1), version(4, 'bob', 2), version(3, 'bob', 3), version(2, 'alice', 4), version(1, 'bob', 5)])
+    mount([
+      version(5, 'bob', 1),
+      version(4, 'bob', 2),
+      version(3, 'bob', 3),
+      version(2, 'alice', 4),
+      version(1, 'bob', 5),
+    ])
     await screen.findByText('第 5 版')
     expect(screen.getAllByText('bob')).toHaveLength(2)
     expect(screen.getAllByText('alice')).toHaveLength(1)
