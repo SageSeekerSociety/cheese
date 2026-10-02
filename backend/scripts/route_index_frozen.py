@@ -28,8 +28,8 @@ class FrozenPair:
 #: No new exemption: the same documented pair, now machine-validated.
 FROZEN: tuple[FrozenPair, ...] = (
     FrozenPair(
-        earlier_index=637,
-        later_index=661,
+        earlier_index=642,
+        later_index=666,
         protocol="http",
         method="GET",
         earlier_path="/users/{userId}",
