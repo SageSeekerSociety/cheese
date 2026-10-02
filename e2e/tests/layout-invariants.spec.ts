@@ -480,9 +480,9 @@ test('项目里每一页的页头都和侧栏项目名那一条对齐', async ({
 });
 
 // 读的那一栏（`AppPage` 的 `read` 档）在宽屏上封顶居中，页头那一行跟着它：标题和正文
-// 从同一条竖线开始。以前页头贴着内容区左边，正文居中，1440 宽时标题和正文差 72px，
+// 从同一条竖线开始；满宽那一档的标题也和正文缩进一样多。以前页头贴着内容区左边，正文居中，1440 宽时标题和正文差 72px，
 // 1920 宽时差三百多。量的是渲染出来的字，因为这种错 vitest 和类型检查都看不见。
-test('读的那一栏，页头标题和正文同一条左沿', async ({ page }) => {
+test('页头标题和正文同一条左沿', async ({ page }) => {
   await apiLogin(page);
   await page.setViewportSize({ width: 1440, height: 900 });
   await openFirstProject(page);
@@ -502,6 +502,25 @@ test('读的那一栏，页头标题和正文同一条左沿', async ({ page }) 
       ]);
       expect(Math.abs(titleX - bodyX), `${path} @ ${width}`).toBeLessThanOrEqual(1);
     }
+    // 满宽那一档（资料库）：正文铺满，自己从左边缩进；页头标题跟它缩进同样多。量的是
+    // 正文里最靠左的那行字。
+    await page.goto(`${projectPath}/library`);
+    const title = page.locator('.app-page__title');
+    await expect(title).toBeVisible();
+    await expect(page.locator('.app-page__body')).not.toHaveText('');
+    const titleX = await title.evaluate((el) => el.getBoundingClientRect().x);
+    const bodyX = await page.locator('.app-page__body').evaluate((body) => {
+      const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+      let left = Infinity;
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        if (!node.textContent?.trim()) continue;
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        for (const rect of range.getClientRects()) if (rect.width > 0) left = Math.min(left, rect.left);
+      }
+      return left;
+    });
+    expect(Math.abs(titleX - bodyX), `library @ ${width}`).toBeLessThanOrEqual(1);
   }
 });
 

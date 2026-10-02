@@ -122,7 +122,7 @@ const { mdAndUp } = useDisplay()
 /* 读的那一档（--page-w）和后台那一档（--page-w-admin）的内容列封顶、居中。页头那一行
    跟着它一起封顶居中，标题和正文在任何宽度下都从同一条竖线开始。正文滚动时右边有滚动
    条，页头和正文都留出同样宽的滚动条槽位（`scrollbar-gutter`），两边居中的基准才是同
-   一个宽度。满宽那一档的正文铺满，页头照旧从左边开始。 */
+   一个宽度。满宽那一档见下面。 */
 .app-page__head--read,
 .app-page__body--read,
 .app-page__head--admin,
@@ -150,6 +150,11 @@ const { mdAndUp } = useDisplay()
 }
 .app-page__head--admin .app-page__head-row {
   max-width: var(--page-w-admin);
+}
+/* 满宽那一档的正文自己管内边距，铺满内容区的几页（看板、资料库、团队的项目、知识库、
+   工作电脑）都离左边 24。页头标题跟着它们缩进同样的距离。 */
+.app-page__head--full {
+  padding: 0 24px;
 }
 .app-page__title {
   min-width: 0;
