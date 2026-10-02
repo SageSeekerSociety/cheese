@@ -28,6 +28,31 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+/** 量测落在 rAF 里（happy-dom 用 setImmediate 实现）：手势之前先让排着的那一帧跑完。 */
+async function settled() {
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  await new Promise((resolve) => setTimeout(resolve, 0))
+}
+
+/**
+ * 手势之前的体检。
+ *
+ * `down()` 拿不到完整的量测就静默什么都不画——按不出笔画、点不出输入框，测试里只看到
+ * 「等了半天什么都没有」。量测的三样（img 的 complete、它的 rect、pane 的宽度）全都
+ * 是测试按元素打上去的补丁，元素被换掉或那一帧没跑就一起失效，所以这里先摆出来：哪一样
+ * 不对，失败信息里直接是那个对象。
+ */
+async function ready(ui: ReturnType<typeof render>) {
+  await settled()
+  const pane = ui.container.querySelector('.design-image__pane') as HTMLElement | null
+  const live = pane?.querySelector('img') as HTMLImageElement | null
+  expect({
+    complete: live?.complete === true,
+    rect: live?.getBoundingClientRect().width ?? 0,
+    paneWidth: pane?.clientWidth ?? 0,
+  }).toEqual({ complete: true, rect: 500, paneWidth: 532 })
+}
+
 /** scale = (532-32)/1000 = 0.5；图片显示在 (10,20)-(510,270)。 */
 async function painted(ui: ReturnType<typeof render>) {
   await waitFor(() => expect(ui.container.querySelector('.design-image__pane img')).toBeTruthy())
@@ -43,6 +68,7 @@ async function painted(ui: ReturnType<typeof render>) {
   await waitFor(() => expect(observed.has(pane)).toBe(true))
   observed.get(pane)!([], {} as ResizeObserver)
   await fireEvent.load(image)
+  await ready(ui)
 }
 
 const sheet = (ui: ReturnType<typeof render>) => {
@@ -58,6 +84,7 @@ const handleCount = (ui: ReturnType<typeof render>) => ui.container.querySelecto
 
 /** 画一个够大的矩形：client (60,70)→(310,220) 即原图 (100,100)→(600,400)。 */
 async function drawRect(ui: ReturnType<typeof render>) {
+  await ready(ui)
   await fireEvent.click(ui.getByRole('button', { name: '矩形' }))
   const layer = ui.getByRole('application', { name: '图片标注画布' })
   layer.setPointerCapture = vi.fn()
@@ -176,14 +203,14 @@ it('select 工具下双击文字进编辑，提交为空就删掉这条文字', 
   const canvas = ui.getByRole('application', { name: '图片标注画布' })
   canvas.setPointerCapture = vi.fn()
   await fireEvent.pointerDown(canvas, { button: 0, pointerId: 41, clientX: 110, clientY: 120 })
-  const field = ui.getByPlaceholderText('输入文字，回车确认')
+  const field = await waitFor(() => ui.getByPlaceholderText('输入文字，回车确认'))
   await fireEvent.update(field, '标签')
   await fireEvent.keyDown(field, { key: 'Enter' })
   await waitFor(() => expect(ui.container.querySelector('.sketch-overlay text')).toBeTruthy())
 
   // 双击它进编辑：原文字不画，输入框带着原文出现。
   await fireEvent.dblClick(sheet(ui), { clientX: 110, clientY: 120 })
-  const editor = ui.getByPlaceholderText('输入文字，回车确认') as HTMLInputElement
+  const editor = (await waitFor(() => ui.getByPlaceholderText('输入文字，回车确认'))) as HTMLInputElement
   expect(editor.value).toBe('标签')
   expect(ui.container.querySelector('.sketch-overlay text')).toBeNull()
 
@@ -203,7 +230,7 @@ it('text 工具下单击已有文字也进编辑', async () => {
   const canvas = ui.getByRole('application', { name: '图片标注画布' })
   canvas.setPointerCapture = vi.fn()
   await fireEvent.pointerDown(canvas, { button: 0, pointerId: 51, clientX: 110, clientY: 120 })
-  const field = ui.getByPlaceholderText('输入文字，回车确认')
+  const field = await waitFor(() => ui.getByPlaceholderText('输入文字，回车确认'))
   await fireEvent.update(field, '标签')
   await fireEvent.keyDown(field, { key: 'Enter' })
   await waitFor(() => expect(ui.container.querySelector('.sketch-overlay text')).toBeTruthy())
@@ -212,7 +239,7 @@ it('text 工具下单击已有文字也进编辑', async () => {
   await fireEvent.click(ui.getByRole('button', { name: '文字' }))
   const layer = ui.getByRole('application', { name: '图片标注画布' })
   await fireEvent.pointerDown(layer, { button: 0, pointerId: 52, clientX: 110, clientY: 120 })
-  const editor = ui.getByPlaceholderText('输入文字，回车确认') as HTMLInputElement
+  const editor = (await waitFor(() => ui.getByPlaceholderText('输入文字，回车确认'))) as HTMLInputElement
   expect(editor.value).toBe('标签')
 })
 
@@ -324,11 +351,12 @@ it('文字的角只挪不改大小：文字没有缩放这一档', async () => {
 
 /** 文字工具下点一下、输入、回车：屏上多一条文字。 */
 async function placeText(ui: ReturnType<typeof render>, clientX = 110, clientY = 120, text = '标签') {
+  await ready(ui)
   await fireEvent.click(ui.getByRole('button', { name: '文字' }))
   const layer = ui.getByRole('application', { name: '图片标注画布' })
   layer.setPointerCapture = vi.fn()
   await fireEvent.pointerDown(layer, { button: 0, pointerId: 12, clientX, clientY })
-  const field = ui.getByPlaceholderText('输入文字，回车确认')
+  const field = await waitFor(() => ui.getByPlaceholderText('输入文字，回车确认'))
   await fireEvent.update(field, text)
   await fireEvent.keyDown(field, { key: 'Enter' })
   await waitFor(() => expect(ui.container.querySelector('.sketch-overlay text')).toBeTruthy())
@@ -352,14 +380,14 @@ it('编辑文字时按下编辑框不抢：光标放得下，文字不会被顺�
   const y = text().getAttribute('y')
 
   await fireEvent.dblClick(sheet(ui), { clientX: 110, clientY: 120 })
-  const editor = ui.getByPlaceholderText('输入文字，回车确认') as HTMLInputElement
+  const editor = (await waitFor(() => ui.getByPlaceholderText('输入文字，回车确认'))) as HTMLInputElement
   // 在编辑框里按下并拖动。输入框是 sheet 的子元素，sheet 的 capture 监听在祖先上
   // 先跑，输入框自己的 @pointerdown.stop 拦不住它 —— 这里必须让开。
   await fireEvent.pointerDown(editor, { button: 0, pointerId: 91, clientX: 110, clientY: 120 })
   await fireEvent.pointerMove(editor, { pointerId: 91, clientX: 190, clientY: 190 })
   await fireEvent.pointerUp(editor, { pointerId: 91, clientX: 190, clientY: 190 })
   // 编辑没被打断，文字也没被挪走。
-  expect(ui.getByPlaceholderText('输入文字，回车确认')).toBe(editor)
+  expect(await waitFor(() => ui.getByPlaceholderText('输入文字，回车确认'))).toBe(editor)
   await fireEvent.keyDown(editor, { key: 'Enter' })
   await waitFor(() => expect(text()).toBeTruthy())
   expect(text().getAttribute('x')).toBe(x)
@@ -371,7 +399,7 @@ it('编辑文字时点别处：先把编辑落下来，这一下不再顺手开�
   await painted(ui)
   await placeText(ui)
   await fireEvent.dblClick(sheet(ui), { clientX: 110, clientY: 120 })
-  const editor = ui.getByPlaceholderText('输入文字，回车确认') as HTMLInputElement
+  const editor = (await waitFor(() => ui.getByPlaceholderText('输入文字，回车确认'))) as HTMLInputElement
   await fireEvent.update(editor, '标签')
 
   // 编辑期间区域选择器整个不挂出来：这一下只该把编辑落下来，不该开始框区域。
