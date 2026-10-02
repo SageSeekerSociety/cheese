@@ -451,7 +451,7 @@ async def test_exhausted_credits_refuses_turn_but_lands_message():
         {
             "project_id": "proj-3",
             "max_concurrent_turns": 2,
-            "credits_exhausted": True,
+            "credits_exhausted": "本月额度已用完，11月1日重置。",
         }
     )
     runner, broker = _runner()
@@ -480,8 +480,9 @@ async def test_exhausted_credits_refuses_turn_but_lands_message():
     # The agent never ran.
     assert chat.max_running == 0
     # The refusal is the PLATFORM's structured copy, in the topic 现场.
-    assert any("tokens 额度已用完" in e for e in chat.system_events)
-    assert "tokens 额度已用完" in frames[-1]["message"]
+    # It says when the credits come back.
+    assert any("11月1日重置" in e for e in chat.system_events)
+    assert "11月1日重置" in frames[-1]["message"]
     await _until(lambda: runner.active_work_count() == 0)
 
 

@@ -139,8 +139,8 @@ class TestTaskIntegration:
             credits = api_client.get(credits_url, headers=student_headers).json()[
                 "data"
             ]
-            assert credits["credits_total"] == 100
-            assert len(credits["grants"]) == 1
+            earmarks = [g for g in credits["grants"] if g["source"] == "task_earmark"]
+            assert [g["credits_total"] for g in earmarks] == [100]
         # Repeating the application must not create a second workspace.
         response = api_client.post(endpoint, json=payload, headers=student_headers)
         assert response.status_code == 400, response.text

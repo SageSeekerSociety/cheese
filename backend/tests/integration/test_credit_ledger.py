@@ -12,7 +12,6 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.core.config import settings
 from app.domain.project.models import Project
 from app.domain.team.models import Team
 from app.domain.team.services import team_service
@@ -21,15 +20,25 @@ from app.domain.usage.ledger import (
     payer_for_person,
     payer_for_project,
 )
-from app.domain.usage.models import GrantSource
+from app.domain.usage.models import GrantSource, Plan
 from tests.integration.conftest import registered
 
 
-async def _shared_team(session, handle: str) -> int:
+async def _plan(session, key: str, **fields) -> str:
+    """A plan of this suite's own. ``bare`` issues nothing, so a test about
+    the order packs are spent in sees only the packs it issued."""
+    if await session.get(Plan, key) is None:
+        session.add(Plan(key=key, name=key, windows=[], model_tiers=None, **fields))
+        await session.flush()
+    return key
+
+
+async def _shared_team(session, handle: str, plan: str = "bare") -> int:
     now = datetime.now(UTC)
     team = Team(
         name=handle,
         handle=handle,
+        plan_key=await _plan(session, plan) if plan == "bare" else plan,
         intro="",
         description="",
         avatar_id=0,
@@ -104,29 +113,23 @@ async def test_earmark_then_team_plan_then_bought_credits(db_factory):
 
 
 @pytest.mark.anyio
-async def test_a_personal_projects_calls_are_not_charged_to_the_monthly_pack(
+async def test_a_personal_project_and_its_owners_questions_share_one_monthly_pack(
     db_factory,
 ):
-    """Until plans land (#2397), a person's monthly pack pays only for what
-    they ask outside a project; their own projects run as before."""
     async with db_factory() as session:
         owner = await registered(session, "owner")
-        team = await _personal_team(session, owner)
-        pid = await _project(session, team)
+        pid = await _project(session, await _personal_team(session, owner))
         ledger = Ledger(session)
         own = await payer_for_person(session, owner)
-        [monthly] = (await ledger.balance(own)).packs
-        await ledger.charge(own, monthly.credits_total)  # the month is spent
-
         project = await payer_for_project(session, pid)
-        assert not (await ledger.balance(project)).exhausted
-        await ledger.charge(project, 3)
-        assert await _used(session, monthly) == monthly.credits_total
+        month = (await ledger.balance(own)).credits_total
 
-        # A pack the team holds otherwise is still the project's to spend.
-        bought = await ledger.grant(team, 10, source=GrantSource.PURCHASE)
-        await ledger.charge(project, 3)
-        assert await _used(session, bought) == 3
+        await ledger.charge(project, month - 1)
+        assert (await ledger.balance(own)).credits_remaining == 1
+        await ledger.charge(own, 1)
+
+        assert await ledger.admit(project) is not None
+        assert await ledger.admit(own) is not None
 
 
 @pytest.mark.anyio
@@ -162,16 +165,15 @@ async def test_another_members_call_in_a_personal_project_charges_its_owners_tea
         owner = await registered(session, "owner")
         guest = await registered(session, "guest")
         owners = await _personal_team(session, owner)
-        guests = await _personal_team(session, guest)
         pid = await _project(session, owners)
         ledger = Ledger(session)
-        mine = await ledger.grant(owners, 10, source=GrantSource.PURCHASE)
-        theirs = await ledger.grant(guests, 10, source=GrantSource.PURCHASE)
 
         await ledger.charge(await payer_for_project(session, pid), 4)
 
-        assert await _used(session, mine) == 4
-        assert await _used(session, theirs) == 0
+        mine = await ledger.balance(await payer_for_person(session, owner))
+        theirs = await ledger.balance(await payer_for_person(session, guest))
+        assert mine.credits_used == 4
+        assert theirs.credits_used == 0
 
 
 @pytest.mark.anyio
@@ -211,22 +213,6 @@ async def test_a_lapsed_pack_cannot_be_spent_but_late_spend_still_lands(db_facto
 
 
 @pytest.mark.anyio
-async def test_a_payer_with_no_pack_runs_only_when_the_deployment_says_so(
-    db_factory, monkeypatch
-):
-    async with db_factory() as session:
-        team = await _shared_team(session, "lab")
-        payer = await payer_for_project(session, await _project(session, team))
-        ledger = Ledger(session)
-
-        monkeypatch.setattr(settings, "credits_unlimited", True)
-        assert not (await ledger.balance(payer)).exhausted
-
-        monkeypatch.setattr(settings, "credits_unlimited", False)
-        assert (await ledger.balance(payer)).exhausted
-
-
-@pytest.mark.anyio
 async def test_a_month_issues_one_plan_pack_however_many_first_requests(db_factory):
     async with db_factory() as session:
         me = await registered(session, "asker")
@@ -235,15 +221,17 @@ async def test_a_month_issues_one_plan_pack_however_many_first_requests(db_facto
 
     async def ask() -> None:
         async with db_factory() as session:
-            await Ledger(session).balance(await payer_for_person(session, me))
+            await Ledger(session).charge(await payer_for_person(session, me), 1)
             await session.commit()
 
     await asyncio.gather(*(ask() for _ in range(5)))
 
     async with db_factory() as session:
-        balance = await Ledger(session).balance(await payer_for_person(session, me))
+        payer = await payer_for_person(session, me)
+        balance = await Ledger(session).balance(payer)
         assert len(balance.packs) == 1
-        assert balance.credits_total == settings.personal_credits_monthly
+        assert balance.credits_total == payer.terms.credits_per_period
+        assert balance.credits_used == 5
         assert balance.resets_at is not None
 
 

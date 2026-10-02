@@ -109,8 +109,12 @@ def test_credits_an_administrator_issues_are_the_teams_to_spend(client, admin):
     credits = client.get(f"/projects/{project['id']}/credits", headers=owner).json()[
         "data"
     ]
+    free = {
+        p["key"]: p
+        for p in client.get("/admin/plans", headers=admin).json()["data"]["plans"]
+    }["free"]
     assert credits["unlimited"] is False
-    assert credits["credits_remaining"] == 40
+    assert credits["credits_remaining"] == free["credits_per_period"] + 40
     [lab] = _teams(client, admin, "cplab")
     assert [(p["source"], p["credits_total"]) for p in lab["packs"]] == [
         ("admin_grant", 40)
@@ -219,50 +223,6 @@ class _InOneTransaction:
     def create_index(self, *args, **kwargs):
         kwargs.pop("postgresql_concurrently", None)
         return self._op.create_index(*args, **kwargs)
-
-
-@pytest.mark.anyio
-async def test_a_key_left_with_nothing_to_cap_it_loses_its_budget(
-    business_db_factory, tmp_path, monkeypatch
-):
-    """When a project's spending is no longer capped by any pack, a budget
-    left on its gateway key would refuse calls the platform now admits."""
-    from app.domain.agent.chat import ChatService
-    from app.domain.project.services import ProjectService
-    from app.domain.usage.ledger import Ledger
-    from tests.conftest import stub_compute
-    from tests.integration.conftest import registered
-    from tests.integration.test_gateway_usage import FakeGateway
-
-    monkeypatch.setattr(settings, "llm_gateway_credit_usd", 0.01)
-    fake = FakeGateway()
-    svc = ChatService(
-        session_factory=business_db_factory,
-        compute=stub_compute(),
-        base_system_prompt="",
-        workspace_root=str(tmp_path / "ws"),
-        gateway=fake,  # type: ignore[arg-type]
-    )
-    async with business_db_factory() as session:
-        await registered(session, "u")
-        project = await ProjectService(session).create(name="P", owner_handle="u")
-        pack = await Ledger(session).grant(project.team_id, 100)
-        pid, pack_id = project.id, pack.id
-        await session.commit()
-
-    key = await svc.project_gateway_key(pid)
-    assert fake.budgets == [(key, 1.0)]
-
-    async with business_db_factory() as session:
-        from app.domain.usage.models import ComputeGrant
-
-        lapsed = await session.get(ComputeGrant, pack_id)
-        assert lapsed is not None
-        lapsed.expires_at = datetime.now(UTC) - timedelta(seconds=1)
-        await session.commit()
-
-    await svc.project_gateway_key(pid)
-    assert fake.budgets[-1] == (key, None)
 
 
 def test_an_administrator_creates_a_plan_and_puts_a_matching_team_on_it(client, admin):

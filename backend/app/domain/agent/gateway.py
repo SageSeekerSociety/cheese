@@ -58,6 +58,8 @@ class GatewayModel:
     label: str
     selectable: bool
     priced: bool
+    # The model's tier (``cheese_tier``): which plans may use it.
+    tier: str = "included"
 
 
 def price_is_set(*sources: object) -> bool:
@@ -174,6 +176,7 @@ class LlmGateway:
             params = row.get("litellm_params")
             info = info if isinstance(info, dict) else {}
             label = info.get("cheese_label")
+            tier = info.get("cheese_tier")
             out.append(
                 GatewayModel(
                     id=name,
@@ -183,6 +186,7 @@ class LlmGateway:
                         and info.get("blocked") is not True
                     ),
                     priced=price_is_set(params, info),
+                    tier=tier if isinstance(tier, str) and tier else "included",
                 )
             )
         return out

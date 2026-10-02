@@ -121,9 +121,9 @@ class TaskPdfDraftService:
             raise SystemBusyError(_NOT_OPEN)
         ledger = Ledger(db)
         payer = await payer_for_person(db, user_id)
-        balance = await ledger.balance(payer)
-        if balance.exhausted:
-            raise QuotaExceededError(balance.exhausted_message())
+        refused = await ledger.admit(payer)
+        if refused is not None:
+            raise QuotaExceededError(refused.message)
         try:
             yield
         finally:

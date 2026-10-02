@@ -35,7 +35,7 @@ PI_LAUNCH = "backend/app/domain/agent/harness/pi/launch.py"
 ADDON = "deploy/metering-proxy/billing_addon.py"
 COMPOSE = "deploy/metering-proxy/compose.yml"
 CORE = "deploy/metering-proxy/cheese_billing_core.py"
-BUDGET = "backend/app/domain/agent/budget_proxy.py"
+CREDIT_SENTENCES = "backend/app/domain/block/error_messages.json"
 MARKET = "backend/app/domain/agent/market.py"
 CENTRAL = "backend/app/domain/agent/central_provider.py"
 HEALTH = "backend/app/domain/device/health.py"
@@ -167,16 +167,14 @@ def main() -> None:
     fact("sub_model.id", first.group(1), MARKET, first.group(0))
     fact("sub_model.wire", first.group(4), MARKET, first.group(0))
 
-    # ---------- the budget decision, run rather than described ----------
-    # budget_proxy is stdlib-only, so the reasons decide() really returns are
-    # read from it instead of paraphrased on the page — the refusal reason is not
-    # "0 tokens remaining", it is the spent/limit pair the brake printed.
-    budget = load("cheese_budget_proxy", BUDGET)
-    allow = budget.decide(budget.BudgetState(spent=100.0, limit=250.0)).reason
-    refuse = budget.decide(budget.BudgetState(spent=250.0, limit=250.0)).reason
-    checked = "def decide(state: BudgetState) -> Decision:"
-    fact("budget.allow_reason", allow, BUDGET, checked)
-    fact("budget.refusal_reason", refuse, BUDGET, checked)
+    # ---------- the credit decision, read rather than described ----------
+    # Admission answers with the ledger's own refusal sentence, so the page
+    # shows the one a spent month really produces, not a paraphrase of it.
+    allow, allow_src = grab(LLM_PROXY, r'"reason": "([^"]+)" if refused is None')
+    fact("budget.allow_reason", allow, LLM_PROXY, allow_src)
+    sentences = json.loads(text(CREDIT_SENTENCES))
+    refuse = sentences["creditsMonthSpent"].format(month=11, day=1)
+    fact("budget.refusal_reason", refuse, CREDIT_SENTENCES, '"creditsMonthSpent"')
     fail_open, fail_open_src = grab(CORE, r'Verdict\(True, "([^"]+)"\)\n\s*with self\._lock')
     fact("admission.fail_open_reason", fail_open, CORE, fail_open_src)
 

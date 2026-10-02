@@ -67,7 +67,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.agent.chat", "app.domain.project.repositories"),
         ("app.domain.agent.chat", "app.domain.review.repositories"),
         ("app.domain.agent.chat", "app.domain.topic.repositories"),
-        ("app.domain.agent.chat", "app.domain.usage.repositories"),
         ("app.domain.agent.github_app", "app.domain.project.repositories"),
         # agent.mentions 是从 agent.chat 里拆出来的那一块（点名解析、通知与
         # refs）。它摸的两个 repository 正是原先 chat.py 那一对里跟着它走的：

@@ -27,7 +27,7 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from tests.conftest import StubChannel, finish_turn, stub_compute
-from tests.integration.conftest import registered
+from tests.integration.conftest import put_on_plan, registered
 from tests.support.hang import HANG_S
 
 
@@ -618,6 +618,7 @@ async def test_subscription_route_follows_the_capability_not_the_backend_name(
         project = await ProjectRepository(session).get(pid)
         assert project is not None
         project.settings = {**(project.settings or {}), "supply": "subscription"}
+        await put_on_plan(session, project.team_id, "reserve")
         await session.commit()
 
     kwargs, route = await svc._model_kwargs(pid, _on_a_machine())
@@ -655,6 +656,7 @@ async def test_a_leased_machine_takes_the_same_supply_as_an_enrolled_one(
         project = await ProjectRepository(session).get(pid)
         assert project is not None
         project.settings = {**(project.settings or {}), "supply": "subscription"}
+        await put_on_plan(session, project.team_id, "reserve")
         await session.commit()
 
     device_kwargs, device_route = await svc._model_kwargs(pid, _on_a_machine())

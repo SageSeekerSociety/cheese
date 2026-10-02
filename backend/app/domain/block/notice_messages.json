@@ -106,7 +106,7 @@
   "contextCompactFailed": "上下文整理没有完成",
   "contextCompactRunning": "对话太长，正在整理上下文；整理完会接着处理，期间不会回复",
   "contextCompactSessionEnded": "会话在整理完成前结束了",
-  "creditsExhausted": "可用的 tokens 额度已用完，这轮没有执行",
+  "creditsExhausted": "额度已用完，这一轮没有执行",
   "creditsExhaustedDetail": "联系团队管理员或额度发放方补充额度。",
   "deliveryFallback": "消息未能送达进行中的会话，已加入队列",
   "deliveryFallbackDetail": "消息已保存，平台会按队列继续处理，不需要重发。",
@@ -352,5 +352,6 @@
   "workTaskSyncFailed": "任务 {task}：{reason}",
   "workspaceVcsPerms": "本轮未开始，工作区版本库的权限不正确。",
   "workspaceVcsPermsDetail": "版本库目录属于另一个系统用户，平台无法访问。项目文件、已提交的改动和版本历史都没有受到影响。需要管理员在机器上修改一次属主（deploy/fix-workspace-ownership.sh），平台无法自行处理。把这条提示转给管理员，修复后可以重试。",
-  "workspaceVcsPermsTitle": "工作区版本库权限异常"
+  "workspaceVcsPermsTitle": "工作区版本库权限异常",
+  "creditsRefused": "{reason}这一轮没有执行。"
 }

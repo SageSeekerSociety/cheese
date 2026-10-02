@@ -36,7 +36,7 @@ def test_status_snapshot_shape(client):
     # No turn has run for this topic (or the ring buffer rolled) → null.
     assert data["turn"] is None
     plat = data["platform"]
-    assert plat["credits"]["unlimited"] is True
+    assert isinstance(plat["credits"]["unlimited"], bool)
     assert "active_turns" in plat
     assert "queued_turns" in plat
     assert "disk" in plat

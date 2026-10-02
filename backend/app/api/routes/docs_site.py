@@ -27,6 +27,7 @@ from app.core.errors import (
     NotFoundError,
     SystemBusyError,
     ValidationError,
+    message_key,
 )
 from app.core.redis import get_redis_client
 from app.domain.admin.services import AdminService
@@ -118,9 +119,12 @@ class AskRequest(BaseModel):
 
 def _refuse(status: int, message: str, retry_after: int = 0) -> JSONResponse:
     headers = {"Retry-After": str(retry_after)} if retry_after else {}
-    return JSONResponse(
-        {"code": status, "message": message}, status_code=status, headers=headers
-    )
+    body: dict = {"code": status, "message": message}
+    key = message_key(message)
+    if key is not None:
+        # A catalog sentence: the browser renders it in its reader's language.
+        body["error"] = {"message": message, "i18n": key}
+    return JSONResponse(body, status_code=status, headers=headers)
 
 
 @router.post("/ask")
@@ -152,11 +156,11 @@ async def ask(
     if rates is None:
         await limits.release(auth.user_id)
         return _refuse(503, "问芝士暂未开放，稍后再试。", 60)
-    balance = await Ledger(db).balance(await payer_for_person(db, auth.user_id))
+    refused = await Ledger(db).admit(await payer_for_person(db, auth.user_id))
     await db.commit()
-    if balance.exhausted:
+    if refused is not None:
         await limits.release(auth.user_id)
-        return _refuse(429, balance.exhausted_message(), balance.retry_after_s())
+        return _refuse(429, refused.message, refused.retry_after_s())
 
     if settings.docs_assistant_agentic:
         result = assistant.Outcome()

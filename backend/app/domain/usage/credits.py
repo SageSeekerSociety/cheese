@@ -20,6 +20,16 @@ from app.domain.block.notice_text import say
 # Posted into the topic 现场 when a turn is refused for lack of credits. The
 # room draws the severity from `meta`; the line itself just says what happened.
 CREDITS_EXHAUSTED_EVENT = say("creditsExhausted")
+
+
+def credits_event(reason: object) -> str:
+    """The room line for a turn the credits refused: the refusal's own
+    sentence (when it resets) if there is one, else the general one."""
+    if isinstance(reason, str) and reason:
+        return say("creditsRefused", reason=reason)
+    return CREDITS_EXHAUSTED_EVENT
+
+
 CREDITS_EXHAUSTED_META = notice(
     EVENT_TURN_FAILED,
     severity=SEVERITY_ERROR,

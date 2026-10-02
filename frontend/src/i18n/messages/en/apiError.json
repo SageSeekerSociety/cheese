@@ -269,5 +269,9 @@
   "mcpServerNeedsHttps": "The MCP server address must use HTTPS: {host}",
   "repoTakenVisible": "The repository {repo} is already connected to the project “{project}”, and a repository can be connected to only one project. Work in that project, or choose another repository.",
   "repoTakenHidden": "The repository {repo} is already connected to another project you can't see, and a repository can be connected to only one project. Choose another repository, or ask a member of that project to invite you.",
-  "siteBuildRequired": "The accepted version has no static website ready to publish. Prepare a static website that includes all its resources first, and submit it for review."
+  "siteBuildRequired": "The accepted version has no static website ready to publish. Prepare a static website that includes all its resources first, and submit it for review.",
+  "creditsMonthSpent": "This month's credits are used up. They reset on {month}/{day}.",
+  "creditsSpent": "The credits are used up.",
+  "creditsWindowFull": "The usage limit for {hours} hours has been reached. It reopens on {month}/{day} at {time}.",
+  "modelNotInPlan": "The current plan does not include the model \"{label}\"."
 }

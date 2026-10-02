@@ -28,7 +28,7 @@ from app.domain.feature_stats import pricing
 from app.domain.team.models import Team
 from app.domain.usage.models import ComputeGrant, ResourceUsage
 from tests.conftest import seed_user
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import free_plan_credits, session_auth_headers
 
 ADMIN = "docs-admin"
 INDEX = [
@@ -476,7 +476,7 @@ def test_a_question_is_paid_for_by_the_asker_at_the_models_price(
     # for the same tokens.
     cost = 300 * rates[0] + 20 * rates[1]
     assert grant.credits_used == pytest.approx(cost / settings.llm_gateway_credit_usd)
-    assert grant.credits_total == settings.personal_credits_monthly
+    assert grant.credits_total == 125  # Free's month where no price is set
     # Outside any project, against the person who asked.
     assert spent.project_id is None
     assert _personal_team_owner(client, grant.team_id) == spent.user_id
@@ -509,7 +509,7 @@ def test_with_no_credits_left_the_question_is_refused_until_the_month_turns(
     client, asker, gateway, monkeypatch
 ):
     # One question overdraws the month; the next is refused before the model.
-    monkeypatch.setattr(settings, "personal_credits_monthly", 1.0)
+    free_plan_credits(client, 1.0)
     assert _ask(client, asker).status_code == 200
     calls = len(gateway["completions"])
 

@@ -42,6 +42,7 @@ from tests.integration.conftest import (
     CreatedUser,
     UserCreator,
     create_approved_space,
+    set_free_plan_credits,
     unique_int,
 )
 
@@ -252,9 +253,9 @@ def test_with_no_credits_left_the_model_is_not_asked(
     user_client: UserCreator,
     board: dict,
     fake_llm: _FakeLLM,
-    monkeypatch: pytest.MonkeyPatch,
+    db_session,
 ) -> None:
-    monkeypatch.setattr(settings, "personal_credits_monthly", 1.0)
+    api_client.portal.call(set_free_plan_credits, db_session, 1.0)  # type: ignore[union-attr]
     member, member_token = _member_of(user_client, api_client, board)
     # 第一次把这个月的额度用超，第二次在调模型之前就被拦下。
     assert _preview(api_client, board["space_id"], member_token).status_code == 200
