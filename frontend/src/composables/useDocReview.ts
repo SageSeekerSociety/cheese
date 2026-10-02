@@ -10,9 +10,8 @@ import type { DocReviewRequest, LocatedEdit } from '../lib/docReview'
 import { computed, onScopeDispose, ref, shallowRef, watch } from 'vue'
 
 import { editMarks, setEditMarks } from '../lib/docEditMarks'
+import { editFailure } from '../lib/docEdits'
 import { locateEdits } from '../lib/docReview'
-
-import { t } from '@/i18n'
 
 export interface DocReviewOptions {
   editor: () => Editor | null | undefined
@@ -113,8 +112,7 @@ export function useDocReview(options: DocReviewOptions) {
       await apply([{ old: change.edit.new, new: change.edit.old }])
     } catch (error) {
       if (request.value === req) {
-        const reason = error instanceof Error && error.message ? error.message : ''
-        options.onError(reason ? t('work.room.docEdit.failed', { reason }) : t('work.room.docEdit.failedRetry'))
+        options.onError(editFailure(error))
       }
     } finally {
       if (request.value === req) busy.value = false

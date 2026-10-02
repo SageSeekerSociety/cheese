@@ -64,6 +64,10 @@ const props = withDefaults(
     // ---- 装饰的原料（原样递给正文那一半） ----
     liveRefIndex: Map<number, string>
     commentMarkIndex: Map<number, { id: string; quote: string }[]>
+    /** 修改建议的理由（建议 id → 理由），卡上写出来。 */
+    suggestionReasons?: Record<string, string>
+    /** 文档里有了新的修改建议时调一下：读它们的理由。 */
+    fetchSuggestionReasons?: () => void
     /** 取一份最新的节点树（评论定锚点、闪某一段都要它）。 */
     fetchDocNodes: () => Promise<Block[]>
     /** 图片 src 的显示期解析。 */
@@ -84,6 +88,8 @@ const props = withDefaults(
     commentAuthor: '',
     sendComment: undefined,
     rewriteSelection: undefined,
+    suggestionReasons: () => ({}),
+    fetchSuggestionReasons: undefined,
     applyDocEdits: undefined,
   }
 )
@@ -149,6 +155,12 @@ const rewrite = useDocRewrite({
   onError: (message) => props.setError(message),
 })
 const suggestions = useDocSuggestions(() => surfaceRef.value?.editor ?? null)
+watch(
+  () => suggestions.list.value.map((s) => s.id).join(' '),
+  (ids, before) => {
+    if (ids && ids.split(' ').some((id) => !before?.split(' ').includes(id))) props.fetchSuggestionReasons?.()
+  }
+)
 const review = useDocReview({
   editor: () => surfaceRef.value?.editor ?? null,
   applyEdits: () => props.applyDocEdits,
@@ -326,6 +338,7 @@ defineExpose({
                 :rewrite="rewrite"
                 :review="review"
                 :suggestions="suggestions"
+                :suggestion-reasons="suggestionReasons"
               />
 
               <!-- 总览房间的其余两块（#1889 ②③）紧跟正文。评论在独立侧栏。只有根话题

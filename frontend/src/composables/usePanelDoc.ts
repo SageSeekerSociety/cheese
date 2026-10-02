@@ -14,7 +14,7 @@ import type { DocEdit, DocRewriteRequest } from '../lib/docEdits'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { addComment, getComments, getDocNodes, workspaceFileRawUrl } from '../api'
-import { applyDocEdits, rewriteDocSelection } from '../api/docEdits'
+import { applyDocEdits, getPendingSuggestions, rewriteDocSelection } from '../api/docEdits'
 import { myHandle } from '../me'
 
 import { useDocCollab } from './useDocCollab'
@@ -51,6 +51,11 @@ export function usePanelDoc(props: PanelDocProps) {
   // ---- 评论 (B4): 常驻评论区读的就是这两样 ----
   const comments = ref<Block[]>([])
   const anchorNodes = ref<Block[]>([])
+  // 修改建议的理由：建议本身在协同文档里，理由只在存回的那一份旁边（id → 理由）。文档
+  // 里有建议时才去读（画的那一半说一声），之后每次存回跟着重读。
+  const suggestionReasons = ref<Record<string, string>>({})
+  let reasonSequence = 0
+  let reasonsWanted = false
 
   const liveRefFingerprint = computed(() =>
     (props.topicList ?? []).map((t) => `${t.id}\u0000${t.title}\u0000${t.status ?? ''}`).join('\n')
@@ -94,6 +99,20 @@ export function usePanelDoc(props: PanelDocProps) {
     if (disposed || props.topic?.id !== tid || sequence !== commentSequence) return
     comments.value = cs.data
     anchorNodes.value = ns.data
+  }
+
+  async function loadSuggestionReasons(tid: string) {
+    const sequence = ++reasonSequence
+    const pending = await getPendingSuggestions(tid)
+    if (disposed || props.topic?.id !== tid || sequence !== reasonSequence) return
+    suggestionReasons.value = Object.fromEntries(pending.filter((s) => s.reason).map((s) => [s.id, s.reason!]))
+  }
+
+  /** 文档里出现了修改建议：读它们的理由。 */
+  function fetchSuggestionReasons() {
+    const tid = props.topic?.id
+    reasonsWanted = true
+    if (tid) void loadSuggestionReasons(tid).catch(() => {})
   }
 
   async function refreshComments() {
@@ -146,9 +165,12 @@ export function usePanelDoc(props: PanelDocProps) {
     () => props.topic?.id ?? null,
     (id) => {
       commentSequence++
+      reasonSequence++
       localError.value = null
       comments.value = []
       anchorNodes.value = []
+      suggestionReasons.value = {}
+      reasonsWanted = false
       if (id) void loadComments(id).catch(() => {})
     },
     { immediate: true }
@@ -160,6 +182,7 @@ export function usePanelDoc(props: PanelDocProps) {
     () => {
       const id = props.topic?.id
       if (id) void loadComments(id).catch(() => {})
+      if (id && reasonsWanted) void loadSuggestionReasons(id).catch(() => {})
     }
   )
 
@@ -189,6 +212,8 @@ export function usePanelDoc(props: PanelDocProps) {
     anchorNodes,
     liveRefIndex,
     commentMarkIndex,
+    suggestionReasons,
+    fetchSuggestionReasons,
     // 动作
     refreshComments,
     commentAuthor: AUTHOR,

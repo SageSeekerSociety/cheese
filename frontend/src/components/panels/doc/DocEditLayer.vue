@@ -26,6 +26,8 @@ const props = defineProps<{
   rewrite: DocRewriteController
   review: DocReviewController
   suggestions: DocSuggestionsController
+  /** 修改建议的理由（建议 id → 理由）。 */
+  suggestionReasons: Record<string, string>
 }>()
 
 const root = ref<HTMLElement | null>(null)
@@ -165,6 +167,7 @@ onBeforeUnmount(() => {
         :agent-handle="suggestions.active.value.author || null"
         :index="suggestions.index.value"
         :total="suggestions.list.value.length"
+        :reason="suggestionReasons[suggestions.active.value.id] ?? null"
         :editable="editable"
         @accept="suggestions.decide(suggestions.active.value.id, true)"
         @reject="suggestions.decide(suggestions.active.value.id, false)"

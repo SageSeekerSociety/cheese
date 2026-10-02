@@ -12,6 +12,8 @@ defineProps<{
   agentHandle: string | null
   index: number
   total: number
+  /** 它说的理由；没有就不写。 */
+  reason: string | null
   editable: boolean
 }>()
 const emit = defineEmits<{
@@ -28,6 +30,7 @@ const emit = defineEmits<{
       <span class="doc-suggestion-card__count">
         · {{ t('work.room.docSuggest.position', { i: index + 1, n: total }) }}</span
       >
+      <p v-if="reason" class="doc-suggestion-card__reason">{{ reason }}</p>
     </div>
     <template v-if="editable">
       <DocEditButton @click="emit('reject')">{{ t('work.room.docSuggest.reject') }}</DocEditButton>
@@ -66,5 +69,9 @@ const emit = defineEmits<{
 }
 .doc-suggestion-card__count {
   color: var(--faint);
+}
+.doc-suggestion-card__reason {
+  margin: 2px 0 0;
+  color: var(--text);
 }
 </style>

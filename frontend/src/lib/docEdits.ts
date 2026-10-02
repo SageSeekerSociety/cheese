@@ -10,6 +10,8 @@ import type { Node as PMNode } from '@tiptap/pm/model'
 
 import { parseMarkdown } from './docSchema'
 
+import { t } from '@/i18n'
+
 /** One replacement in the document's Markdown: `old` becomes `new`. */
 export interface DocEdit {
   old: string
@@ -31,6 +33,18 @@ export interface DocRewriteResult {
   new: string
   /** What replaced the selected text. */
   replacement: string
+}
+
+/** What to tell the person when an edit or a rewrite did not go through. The
+ *  service explains a refused edit (the text moved, it occurs twice…) in a
+ *  sentence of its own, which is shown as it is. */
+export function editFailure(error: unknown): string {
+  const status = (error as { status?: unknown } | null)?.status
+  const message = error instanceof Error ? error.message : ''
+  if (typeof status === 'number' && status >= 400 && status < 500) {
+    return message || (status === 409 ? t('work.room.docEdit.stale') : t('work.room.docEdit.failedRetry'))
+  }
+  return message ? t('work.room.docEdit.failed', { reason: message }) : t('work.room.docEdit.failedRetry')
 }
 
 export interface FlatText {

@@ -12,7 +12,7 @@ import type { DocEdit, DocRewriteRequest, DocRewriteResult } from '../lib/docEdi
 import { onScopeDispose, ref, shallowRef } from 'vue'
 
 import { editMarks, nearestText, setEditMarks } from '../lib/docEditMarks'
-import { plainOf } from '../lib/docEdits'
+import { editFailure, plainOf } from '../lib/docEdits'
 import { rewriteTarget } from '../lib/docRewrite'
 import { finishMarkdown } from '../lib/docSchema'
 
@@ -36,12 +36,6 @@ const FLASH_MS = 2400
 function serializer(editor: Editor) {
   return (doc: Parameters<typeof rewriteTarget>[0]['doc']) =>
     finishMarkdown(editor.markdown?.serialize(doc.toJSON()) ?? '')
-}
-
-function failure(error: unknown): string {
-  if ((error as { status?: number } | null)?.status === 409) return t('work.room.docEdit.stale')
-  if (error instanceof Error && error.message) return t('work.room.docEdit.failed', { reason: error.message })
-  return t('work.room.docEdit.failedRetry')
 }
 
 export function useDocRewrite(options: DocRewriteOptions) {
@@ -145,7 +139,7 @@ export function useDocRewrite(options: DocRewriteOptions) {
     } catch (error) {
       if (id !== attempt) return
       close()
-      options.onError(failure(error))
+      options.onError(editFailure(error))
     }
   }
 
@@ -159,7 +153,7 @@ export function useDocRewrite(options: DocRewriteOptions) {
       if (id !== attempt) return
       phase.value = next
     } catch (error) {
-      if (id === attempt) options.onError(failure(error))
+      if (id === attempt) options.onError(editFailure(error))
     } finally {
       if (id === attempt) busy.value = false
     }

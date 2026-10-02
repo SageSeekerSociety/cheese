@@ -111,9 +111,9 @@ describe('让 AI 队友改选中的字', () => {
     expect(exportMarkdown(doc)).toBe('据测试，数据量到五百万行时开始评估迁移。')
   })
 
-  it('这段已经被改过：说清楚，正文上不留「修改中」', async () => {
+  it('这段已经被改过：照服务端的话说，正文上不留「修改中」', async () => {
     const { editor } = room('数据量到一千万行时开始评估迁移。')
-    const stale = Object.assign(new Error('conflict'), { status: 409 })
+    const stale = Object.assign(new Error('这段已经被改过，重新选一下'), { status: 409 })
     const { ctl, onError } = controller(
       editor,
       vi.fn(async () => Promise.reject(stale))
@@ -123,7 +123,7 @@ describe('让 AI 队友改选中的字', () => {
     ctl.open(range.from, range.to)
     await ctl.send('改成五百万')
 
-    expect(onError).toHaveBeenCalledWith(t('work.room.docEdit.stale'))
+    expect(onError).toHaveBeenCalledWith('这段已经被改过，重新选一下')
     expect(ctl.phase.value).toBe('idle')
     expect(editMarks(editor.state).target).toBeNull()
   })

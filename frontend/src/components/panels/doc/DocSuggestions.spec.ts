@@ -42,7 +42,7 @@ afterEach(() => {
 const TEXT = '数据量到一千万行时开始评估迁移。\n\n双写一周，对账无误后切过去。'
 
 /** The panel on one copy of the document, and another reader on another copy. */
-function twoReaders() {
+function twoReaders(suggestionReasons: Record<string, string> = {}) {
   const mine = new Y.Doc()
   const theirs = new Y.Doc()
   writeMarkdown(theirs, TEXT)
@@ -52,20 +52,24 @@ function twoReaders() {
   const other = new Editor({ extensions: [...docExtensions(), Collaboration.configure({ document: theirs })] })
   editors.push(other)
   render(PanelDocView, {
-    props: docPanelProps({ topic: { ...DOC_TOPIC }, session: localDocSession('', DOC_TOPIC.id, mine) }),
+    props: docPanelProps({
+      topic: { ...DOC_TOPIC },
+      session: localDocSession('', DOC_TOPIC.id, mine),
+      suggestionReasons,
+    }),
     global: { plugins: [createVuetify({ components, directives })] },
   })
   return { theirs, other }
 }
 
 /** The agent, on the other copy, proposes replacing `from` with `to`. */
-function suggest(editor: Editor, from: string, to: string) {
+function suggest(editor: Editor, from: string, to: string, id = suggestionId('cheese')) {
   let at = -1
   editor.state.doc.descendants((node, pos) => {
     if (at < 0 && node.isText && node.text?.includes(from)) at = pos + node.text.indexOf(from)
   })
   const tr = editor.state.tr.insertText(to, at, at + from.length)
-  editor.view.dispatch(transformToSuggestionTransaction(tr, editor.state, () => suggestionId('cheese')))
+  editor.view.dispatch(transformToSuggestionTransaction(tr, editor.state, () => id))
 }
 
 describe('deciding the AI teammate’s suggestions', () => {
@@ -93,5 +97,14 @@ describe('deciding the AI teammate’s suggestions', () => {
     await waitFor(() => expect(liveSuggestions(theirs)).toEqual([]))
     expect(exportMarkdown(theirs)).toBe(TEXT)
     expect(other.getText()).not.toContain('五百万')
+  })
+
+  it('says why it was suggested', async () => {
+    const { other } = twoReaders({ 'cheese:limit': '测试里五百万行时已经到 120 ms' })
+    suggest(other, '一千万', '五百万', 'cheese:limit')
+
+    await fireEvent.click(await screen.findByRole('button', { name: t('work.room.docEdit.next') }))
+
+    expect(await screen.findByText('测试里五百万行时已经到 120 ms')).toBeTruthy()
   })
 })

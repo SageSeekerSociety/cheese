@@ -104,6 +104,8 @@ defineExpose({ pulse, highlightTurn, reviewEdits })
     :anchor-nodes="doc.anchorNodes.value"
     :live-ref-index="doc.liveRefIndex.value"
     :comment-mark-index="doc.commentMarkIndex.value"
+    :suggestion-reasons="doc.suggestionReasons.value"
+    :fetch-suggestion-reasons="doc.fetchSuggestionReasons"
     :fetch-doc-nodes="doc.fetchDocNodes"
     :image-src="doc.imageSrc"
     :refresh-comments="doc.refreshComments"
