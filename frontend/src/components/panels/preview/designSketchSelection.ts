@@ -1,46 +1,160 @@
 import type { Point, RasterRegion } from './designRegion'
-import type { ShapeStroke, SketchStroke, TextStroke } from './designSketch'
+import type { SketchStroke, TextStroke } from './designSketch'
 
 import { fontSize } from './designSketch'
 
 /**
- * 选中一块已画好的标注之后，那圈虚线框和它的把手。参数照参考物（Claude 桌面版那套
- * 标注器）抄：虚线 5,4、把手半径 3.5、抓取命中半径 48、描边宽度 4。都是屏幕像素——
- * 框是给人抓的，缩放时不该跟着图一起变大变小。
+ * 选中一笔已画好的标注之后的把手与几何。参数照参考物（Claude 桌面版那套标注器）：
+ *
+ * - 选中态是**对象级编辑**：点中一笔就能拖、伸缩、改色、删掉。
+ * - 只有**文字**画一圈虚线框（每边外扩 4），别的形状只画把手圆点，不画框。
+ * - 把手半径 3.5、描边 1；抓取命中半径 48。
+ * - 角把手恒有；宽 ≥ 48 再补左右两个（e/w），高 ≥ 48 再补上下两个（n/s）。
+ * - 没有旋转。
+ *
+ * 坐标：把手位置按**屏幕像素**算（框是给人抓的，缩放时不该跟着图一起变大变小）；
+ * 变换函数一律在原图像素里算（缩放是均匀的，两者等价）。
  */
 export const SELECT_DASH: readonly [number, number] = [5, 4]
 export const HANDLE_RADIUS = 3.5
 export const HANDLE_HIT_RADIUS = 48
-export const SELECT_STROKE_WIDTH = 4
+export const HANDLE_STROKE_WIDTH = 1
+/** 文字选中框的虚线描边；比把手粗一点，看得清。 */
+export const TEXT_BOX_STROKE_WIDTH = 1.5
+/** 文字选中框每边向外扩这么多。 */
+export const TEXT_BOX_PADDING = 4
+/** 宽/高到这个数才补两侧的中点把手。 */
+export const HANDLE_SPLIT = 48
 
-/** 八个把手：四角加四边中点。 */
-export type HandleRole = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w'
+/** 四角与四边中点这八个位置；线/箭头另有两个端点。 */
+export type BoxHandleRole = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w'
+export type LineHandleRole = 'start' | 'end'
+export type HandleRole = BoxHandleRole | LineHandleRole
 
-const ROLES: readonly { role: HandleRole; fx: number; fy: number }[] = [
+const CORNERS: readonly { role: BoxHandleRole; fx: number; fy: number }[] = [
   { role: 'nw', fx: 0, fy: 0 },
-  { role: 'n', fx: 0.5, fy: 0 },
   { role: 'ne', fx: 1, fy: 0 },
-  { role: 'e', fx: 1, fy: 0.5 },
   { role: 'se', fx: 1, fy: 1 },
-  { role: 's', fx: 0.5, fy: 1 },
   { role: 'sw', fx: 0, fy: 1 },
-  { role: 'w', fx: 0, fy: 0.5 },
+]
+const MIDS: readonly { role: BoxHandleRole; axis: 'x' | 'y'; fx: number; fy: number }[] = [
+  { role: 'e', axis: 'x', fx: 1, fy: 0.5 },
+  { role: 'w', axis: 'x', fx: 0, fy: 0.5 },
+  { role: 'n', axis: 'y', fx: 0.5, fy: 0 },
+  { role: 's', axis: 'y', fx: 0.5, fy: 1 },
 ]
 
-/** 八个把手在框上的位置（和框同一套坐标）。 */
-export function handlePoints(region: RasterRegion): { role: HandleRole; x: number; y: number }[] {
-  return ROLES.map(({ role, fx, fy }) => ({
+/**
+ * 一个框的把手点位。四角恒有；`split` 之上才补两侧中点（文字用不到，传 Infinity）。
+ * `split` 按框当前的尺寸量，所以它跟着屏幕上的大小走，不跟原图大小走。
+ */
+export function boxHandles(
+  region: RasterRegion,
+  split = HANDLE_SPLIT
+): { role: BoxHandleRole; x: number; y: number }[] {
+  const points: { role: BoxHandleRole; x: number; y: number }[] = CORNERS.map(({ role, fx, fy }) => ({
     role,
     x: region.x + region.width * fx,
     y: region.y + region.height * fy,
   }))
+  for (const mid of MIDS) {
+    if (mid.axis === 'x' ? region.width >= split : region.height >= split) {
+      points.push({ role: mid.role, x: region.x + region.width * mid.fx, y: region.y + region.height * mid.fy })
+    }
+  }
+  return points
+}
+
+/**
+ * 能被选中、编辑的笔画：除自由笔（pen）之外都算。
+ *
+ * 参照物明确「涂鸦不可编辑」——pen 一把一把的采样点既难命中也不值得拖，画完就定死。
+ */
+export function isSelectableStroke(stroke: SketchStroke): stroke is Exclude<SketchStroke, { tool: 'pen' }> {
+  return stroke.tool !== 'pen'
+}
+
+/** 只有带 `region` 的块状标注能伸缩；文字只能平移。 */
+export function canResize(stroke: Exclude<SketchStroke, { tool: 'pen' }>): boolean {
+  return stroke.tool !== 'text'
+}
+
+/**
+ * 笔画占的盒子（原图像素）。块状取自己的 region，线/箭头取两端点的包围盒，文字照
+ * 字号在锚点处量一个。
+ */
+export function strokeBox(stroke: Exclude<SketchStroke, { tool: 'pen' }>, naturalWidth: number): RasterRegion {
+  if (stroke.tool === 'text') return textBox(stroke, naturalWidth)
+  if (stroke.tool === 'line' || stroke.tool === 'arrow') {
+    const x = Math.min(stroke.from.x, stroke.to.x)
+    const y = Math.min(stroke.from.y, stroke.to.y)
+    return { x, y, width: Math.abs(stroke.to.x - stroke.from.x), height: Math.abs(stroke.to.y - stroke.from.y) }
+  }
+  return stroke.region
+}
+
+/**
+ * 文字占的盒子：宽度用画布实测，量不到（测试环境没有 2D 上下文）就按字数估。
+ * 高度就是字号。
+ */
+export function textBox(stroke: TextStroke, naturalWidth: number): RasterRegion {
+  const size = fontSize(naturalWidth)
+  return { x: stroke.at.x, y: stroke.at.y, width: measureTextWidth(stroke.text, size), height: size }
+}
+
+/** 画布实测一段文字的宽度；没有画布时退回「每字 0.6 个字号」的估算。 */
+let measureContext: CanvasRenderingContext2D | null | undefined
+export function measureTextWidth(text: string, size: number): number {
+  if (measureContext === undefined) {
+    try {
+      const canvas = document.createElement('canvas')
+      const context = typeof canvas.getContext === 'function' ? canvas.getContext('2d') : null
+      measureContext = context && typeof context.measureText === 'function' ? context : null
+    } catch {
+      measureContext = null
+    }
+  }
+  if (measureContext) {
+    try {
+      measureContext.font = `${size}px sans-serif`
+      const width = measureContext.measureText(text).width
+      if (width > 0) return width
+    } catch {
+      // 量不出来就退回估算，命中框只是将就，不是崩掉的理由。
+    }
+  }
+  return text.length * size * 0.6
+}
+
+function scaleRegion(region: RasterRegion, scale: number): RasterRegion {
+  return { x: region.x * scale, y: region.y * scale, width: region.width * scale, height: region.height * scale }
+}
+
+/** 一笔在**屏幕像素**里的把手（文字永远只有四角，形状按 48 规则补中点）。 */
+export function strokeHandles(
+  stroke: Exclude<SketchStroke, { tool: 'pen' }>,
+  scale: number,
+  naturalWidth: number
+): { role: HandleRole; x: number; y: number }[] {
+  if (stroke.tool === 'line' || stroke.tool === 'arrow') {
+    return [
+      { role: 'start', x: stroke.from.x * scale, y: stroke.from.y * scale },
+      { role: 'end', x: stroke.to.x * scale, y: stroke.to.y * scale },
+    ]
+  }
+  const box = scaleRegion(strokeBox(stroke, naturalWidth), scale)
+  return boxHandles(box, stroke.tool === 'text' ? Infinity : HANDLE_SPLIT)
 }
 
 /** 离 `point` 最近、且在抓取半径内的那个把手；没有就是 null。 */
-export function nearestHandle(region: RasterRegion, point: Point, radius = HANDLE_HIT_RADIUS): HandleRole | null {
+export function nearestHandle(
+  handles: readonly { role: HandleRole; x: number; y: number }[],
+  point: Point,
+  radius = HANDLE_HIT_RADIUS
+): HandleRole | null {
   let best: HandleRole | null = null
   let closest = radius
-  for (const handle of handlePoints(region)) {
+  for (const handle of handles) {
     const distance = Math.hypot(handle.x - point.x, handle.y - point.y)
     if (distance <= closest) {
       closest = distance
@@ -50,17 +164,30 @@ export function nearestHandle(region: RasterRegion, point: Point, radius = HANDL
   return best
 }
 
+/** 角把手的对角锚点（缩放时不动的那一角）。 */
+function cornerAnchor(region: RasterRegion, role: BoxHandleRole): Point {
+  const right = region.x + region.width
+  const bottom = region.y + region.height
+  return { x: role.includes('w') ? right : region.x, y: role.includes('n') ? bottom : region.y }
+}
+
+/** 把角上的点拽成正方形：取 |dx|、|dy| 里大的那个，方向各按原符号。 */
+export function squarePoint(anchor: Point, point: Point): Point {
+  const dx = point.x - anchor.x
+  const dy = point.y - anchor.y
+  const size = Math.max(Math.abs(dx), Math.abs(dy))
+  return { x: anchor.x + (dx < 0 ? -size : size), y: anchor.y + (dy < 0 ? -size : size) }
+}
+
 /**
- * 拖某个把手之后的新框。被拖的那两条边跟着指针对走，对边不动；拖过头了就把宽高
- * 收到最小（不翻面，翻面会让「抓住的那个角」在拖的过程中跳到对面）。
+ * 拖某个把手之后的新框。被拖的那两条边跟着指针对走，对边不动；拖过头了就把宽高收到
+ * 最小（`min` 默认为 0，即任其退化，翻面会让「抓住的那个角」在拖动途中忽然换手）。
  */
-export function resizeRegion(region: RasterRegion, role: HandleRole, point: Point, min = 2): RasterRegion {
+export function resizeRegion(region: RasterRegion, role: BoxHandleRole, point: Point, min = 0): RasterRegion {
   let left = region.x
   let top = region.y
   let right = region.x + region.width
   let bottom = region.y + region.height
-  // 拖的那条边不许越过对边：越过了就把这一边顶到最小，而不是让框整个跳到对面去
-  // （跳过去的话，正被抓住的那个角会在拖动途中忽然换手）。
   if (role.includes('w')) left = Math.min(point.x, right - min)
   if (role.includes('e')) right = Math.max(point.x, left + min)
   if (role.includes('n')) top = Math.min(point.y, bottom - min)
@@ -68,31 +195,131 @@ export function resizeRegion(region: RasterRegion, role: HandleRole, point: Poin
   return { x: left, y: top, width: right - left, height: bottom - top }
 }
 
+/**
+ * 拖一个框把手：角把手 + Shift 时先拽成正方形再缩放；边把手不受 Shift 影响。
+ */
+export function resizeBox(
+  region: RasterRegion,
+  role: BoxHandleRole,
+  point: Point,
+  shift = false,
+  min = 0
+): RasterRegion {
+  const target = shift && role.length === 2 ? squarePoint(cornerAnchor(region, role), point) : point
+  return resizeRegion(region, role, target, min)
+}
+
 /** 整个框跟着指针平移的量（文字那种「只有锚点、改不了大小」的标注用它）。 */
 export function moveRegion(region: RasterRegion, from: Point, to: Point): RasterRegion {
   return { ...region, x: region.x + (to.x - from.x), y: region.y + (to.y - from.y) }
 }
 
+/** 与水平方向夹角吸附到 45° 的整数倍；保持长度不变。 */
+export function snapAngle45(anchor: Point, point: Point): Point {
+  const dx = point.x - anchor.x
+  const dy = point.y - anchor.y
+  const length = Math.hypot(dx, dy)
+  if (length === 0) return { ...point }
+  const step = Math.PI / 4
+  const angle = Math.round(Math.atan2(dy, dx) / step) * step
+  return { x: anchor.x + length * Math.cos(angle), y: anchor.y + length * Math.sin(angle) }
+}
+
 /**
- * 能被选中、改框的标注：带 `region` 的块状标注（矩形、椭圆、涂黑），加上文字。
- *
- * 参考物把这四种都当块；我们这边文字只存了一个锚点，没有框，所以给它量一个
- * 临时盒子（见 `strokeBox`），拖的时候只能挪、不能缩放。
+ * 拖一条线/箭头某个端点之后的新两端点。Shift 把角度吸附到 45°。
+ * `point` 与返回值都在原图像素里。
  */
-export function isSelectableStroke(stroke: SketchStroke): stroke is ShapeStroke | TextStroke {
-  return stroke.tool === 'rect' || stroke.tool === 'ellipse' || stroke.tool === 'redact' || stroke.tool === 'text'
+export function resizeLine(
+  stroke: { from: Point; to: Point },
+  role: LineHandleRole,
+  point: Point,
+  shift: boolean
+): { from: Point; to: Point } {
+  const anchor = role === 'start' ? stroke.to : stroke.from
+  const target = shift ? snapAngle45(anchor, point) : point
+  return role === 'start' ? { from: target, to: stroke.to } : { from: stroke.from, to: target }
 }
 
-/** 只有带 `region` 的标注能缩放；文字只能平移。 */
-export function canResize(stroke: ShapeStroke | TextStroke): boolean {
-  return stroke.tool !== 'text'
+/** 一个点相对整个框的中心偏移，用来判「拖完中心有没有跑出画布」。 */
+function centerOfBox(region: RasterRegion): Point {
+  return { x: region.x + region.width / 2, y: region.y + region.height / 2 }
 }
 
-/** 选中框用的盒子（原图像素）。文字没有框，就照字号在锚点处量一个。 */
-export function strokeBox(stroke: ShapeStroke | TextStroke, naturalWidth: number): RasterRegion {
-  if (stroke.tool === 'text') {
-    const size = fontSize(naturalWidth)
-    return { x: stroke.at.x, y: stroke.at.y, width: Math.max(size, stroke.text.length * size * 0.6), height: size }
+/**
+ * 平移一整笔：中心点钳制在画布内。`dx/dy` 是原图像素里的位移。
+ *
+ * 钳制看的是中心，不是边框——大图形允许有一部分探出去，只要中心还在图里。
+ */
+export function moveStroke(
+  stroke: Exclude<SketchStroke, { tool: 'pen' }>,
+  dx: number,
+  dy: number,
+  naturalWidth: number,
+  naturalHeight: number
+): Exclude<SketchStroke, { tool: 'pen' }> {
+  const box = strokeBox(stroke, naturalWidth)
+  const center = centerOfBox(box)
+  const clampedX = Math.max(0, Math.min(naturalWidth, center.x + dx))
+  const clampedY = Math.max(0, Math.min(naturalHeight, center.y + dy))
+  const shiftX = clampedX - center.x
+  const shiftY = clampedY - center.y
+  return shiftStroke(stroke, shiftX, shiftY)
+}
+
+/** 把一整笔平移 (dx,dy) 个原图像素，不做钳制。 */
+export function shiftStroke(
+  stroke: Exclude<SketchStroke, { tool: 'pen' }>,
+  dx: number,
+  dy: number
+): Exclude<SketchStroke, { tool: 'pen' }> {
+  if (stroke.tool === 'line' || stroke.tool === 'arrow') {
+    return {
+      ...stroke,
+      from: { x: stroke.from.x + dx, y: stroke.from.y + dy },
+      to: { x: stroke.to.x + dx, y: stroke.to.y + dy },
+    }
   }
-  return stroke.region
+  if (stroke.tool === 'text') return { ...stroke, at: { x: stroke.at.x + dx, y: stroke.at.y + dy } }
+  return { ...stroke, region: { ...stroke.region, x: stroke.region.x + dx, y: stroke.region.y + dy } }
+}
+
+/**
+ * 一笔「空」了没有——空的图形不进历史，也不留在屏上。
+ *
+ * 除涂黑（redact）外，退化成一点（宽高都为 0）才算空；redact 是实心块，小到对角线
+ * 不足 4 像素就盖不住东西，也当空。
+ */
+export function isEmptyStroke(stroke: SketchStroke): boolean {
+  if (stroke.tool === 'pen') return stroke.points.length < 2
+  if (stroke.tool === 'line' || stroke.tool === 'arrow') {
+    return stroke.from.x === stroke.to.x && stroke.from.y === stroke.to.y
+  }
+  if (stroke.tool === 'text') return stroke.text.trim().length === 0
+  const { width, height } = stroke.region
+  if (stroke.tool === 'redact') return (width === 0 && height === 0) || Math.hypot(width, height) < 4
+  return width === 0 && height === 0
+}
+
+/** 只有文字画虚线框；形状只画把手。 */
+export function drawsFrame(stroke: Exclude<SketchStroke, { tool: 'pen' }> | null): boolean {
+  return !!stroke && stroke.tool === 'text'
+}
+
+/** 拖一个角/边把手之后的新笔画，按角色分派到 `resizeBox`（形状）或端点（线/箭头）。 */
+export function applyResize(
+  stroke: Exclude<SketchStroke, { tool: 'pen' }>,
+  role: HandleRole,
+  point: Point,
+  shift: boolean
+): Exclude<SketchStroke, { tool: 'pen' }> {
+  if (stroke.tool === 'line' || stroke.tool === 'arrow') {
+    const end: LineHandleRole = role === 'start' ? 'start' : 'end'
+    return { ...stroke, ...resizeLine(stroke, end, point, shift) }
+  }
+  if (stroke.tool !== 'text') {
+    const boxRole = (role === 'start' || role === 'end' ? 'se' : role) as BoxHandleRole
+    return { ...stroke, region: resizeBox(stroke.region, boxRole, point, shift) }
+  }
+  // 文字没有可缩的框，把手拖动归到平移（见 `moveStroke`）。
+  return stroke
 }
