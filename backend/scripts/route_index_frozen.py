@@ -40,7 +40,7 @@ FROZEN: tuple[FrozenPair, ...] = (
         why=(
             "Documented known debt (users.py:3367): invite-codes registered "
             "after {userId} and lands on its int parse. Frozen citing "
-            "registration records #637/#661; the fix is a reorder in its own "
+            "registration records #642/#666; the fix is a reorder in its own "
             "slice, not this guard's."
         ),
     ),
