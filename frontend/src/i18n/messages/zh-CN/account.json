@@ -392,7 +392,8 @@
       "devices": "设备与连接",
       "app": "桌面端"
     },
-    "closeHint": "关闭设置（Esc）"
+    "closeHint": "关闭设置（Esc）",
+    "usage": "芝士额度"
   },
   "emailCode": {
     "title": "邮箱验证码登录",

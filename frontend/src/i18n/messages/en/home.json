@@ -21,6 +21,7 @@
     "inviteMembers": "Invite members",
     "expand": "Expand {name}",
     "collapse": "Collapse {name}",
-    "unreadActivity": "new activity"
+    "unreadActivity": "new activity",
+    "teamCredits": "Credits"
   }
 }

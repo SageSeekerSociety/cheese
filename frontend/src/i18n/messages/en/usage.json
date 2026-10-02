@@ -1,0 +1,52 @@
+{
+  "title": "Cheese credits",
+  "loadFailed": "Couldn't load credits",
+  "retry": "Retry",
+  "viewUsage": "View usage",
+  "line": {
+    "collab": "Collaboration",
+    "ask": "Q&A",
+    "write": "Writing"
+  },
+  "period": {
+    "label": "This month",
+    "used": "Used in {month}",
+    "remaining": "{pct} left",
+    "resets": "Resets {at}",
+    "usedUp": "Used up this month",
+    "unlimited": "Unlimited",
+    "usedAria": "{pct} used this month"
+  },
+  "windows": {
+    "used": "{pct} used in {hours} h",
+    "reopens": "Reopens {at}"
+  },
+  "packs": {
+    "title": "Other credits",
+    "grant": "Granted by an admin",
+    "purchase": "Purchase",
+    "task": "Task “{task}”",
+    "taskUnknown": "Task credits",
+    "other": "Other credits",
+    "remaining": "{pct} left",
+    "expires": "Expires {date}",
+    "noExpiry": "No expiry",
+    "project": "Only for project “{project}”"
+  },
+  "daily": {
+    "title": "Daily usage",
+    "aria": "{date}: {pct} of this month's usage"
+  },
+  "projects": {
+    "mine": "My projects",
+    "byProject": "By project",
+    "empty": "No usage yet",
+    "unnamed": "Deleted project"
+  },
+  "teams": {
+    "title": "My teams",
+    "remaining": "{pct} left",
+    "usedUp": "Used up",
+    "unlimited": "Unlimited"
+  }
+}

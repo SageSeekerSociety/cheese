@@ -9,6 +9,8 @@
 import { computed, ref } from 'vue'
 
 import { authToken, BASE, ensureFreshToken, refreshNow, request } from '@/api'
+import { isCreditRefusal } from '@/lib/creditUsage'
+import { refusalText } from '@/lib/noticeText'
 
 export interface AssistantConversation {
   id: string
@@ -33,6 +35,8 @@ export function useAssistant(taskId: () => number) {
   const tool = ref<string | null>(null)
   /** 没答上来、额度用完之类要告诉人的那一句。 */
   const notice = ref<string | null>(null)
+  /** 这次被拒是因为额度不够：面板在提示旁给「查看用量」。 */
+  const creditRefused = ref(false)
   const loaded = ref(false)
 
   const busy = computed(() => streaming.value !== null)
@@ -105,6 +109,7 @@ export function useAssistant(taskId: () => number) {
     const text = question.trim()
     if (!text || busy.value) return
     notice.value = null
+    creditRefused.value = false
     streaming.value = ''
     tool.value = null
     const at = new Date().toISOString()
@@ -118,7 +123,8 @@ export function useAssistant(taskId: () => number) {
       const res = await post(id, text)
       if (!res.ok || !res.body) {
         const body = (await res.json().catch(() => ({}))) as { message?: string }
-        notice.value = body.message || fallback
+        notice.value = refusalText(body, body.message || fallback)
+        creditRefused.value = isCreditRefusal(body)
         return
       }
       asked = true
@@ -169,6 +175,7 @@ export function useAssistant(taskId: () => number) {
     streaming,
     tool,
     notice,
+    creditRefused,
     busy,
     title,
     load,
