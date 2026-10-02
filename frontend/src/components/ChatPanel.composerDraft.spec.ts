@@ -9,7 +9,7 @@ import type { Block, Topic } from '@/cx_types'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { fireEvent, render } from '@testing-library/vue'
+import { fireEvent, render, waitFor } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ChatPanel from './ChatPanel.vue'
@@ -99,6 +99,10 @@ function answered(url: string) {
 
 const settle = () => new Promise((r) => setTimeout(r, 0))
 
+// 落盘等的是打字停顿（800ms 的防抖），再加上那台机器自己的快慢：等的是「已经写下了」
+// 这件事本身，不是一个固定的时长——机器一忙，900ms 就不够了。上限只是把卡死变成失败。
+const STORED = { timeout: 10_000 }
+
 describe('输入框的内容属于它被打出来的那个话题', () => {
   it('切走再回来，草稿还在；切到别的话题，输入框是空的', async () => {
     const { container, rerender } = render(Panel, {
@@ -171,10 +175,9 @@ describe('刷新之后草稿还在', () => {
     await settle()
 
     await fireEvent.update(container.querySelector('textarea') as HTMLTextAreaElement, '打了一半')
-    await new Promise((r) => setTimeout(r, 900))
 
-    expect(loadComposerDraft('live-save')?.draft).toBe('打了一半')
-  })
+    await waitFor(() => expect(loadComposerDraft('live-save')?.draft).toBe('打了一半'), STORED)
+  }, 30_000)
 
   it('没送出去的消息**不**落盘——它会在下次打开时被自动发出去', async () => {
     const { container } = render(Panel, {
@@ -203,15 +206,13 @@ describe('刷新之后草稿还在', () => {
 
     const textarea = container.querySelector('textarea') as HTMLTextAreaElement
     await fireEvent.update(textarea, '先打一句')
-    await new Promise((r) => setTimeout(r, 900))
-    expect(loadComposerDraft('sent-away')?.draft).toBe('先打一句')
+    await waitFor(() => expect(loadComposerDraft('sent-away')?.draft).toBe('先打一句'), STORED)
 
     textarea.focus()
     await fireEvent.keyDown(textarea, { key: 'Enter' })
-    await new Promise((r) => setTimeout(r, 900))
 
-    expect(loadComposerDraft('sent-away')).toBeNull()
-  })
+    await waitFor(() => expect(loadComposerDraft('sent-away')).toBeNull(), STORED)
+  }, 30_000)
 })
 
 describe('发出去的消息立刻显示，没送到能重试', () => {

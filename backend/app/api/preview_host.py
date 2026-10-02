@@ -214,6 +214,18 @@ class PreviewHostMiddleware:
         if not match:
             await self.app(scope, receive, send)
             return
+        # Misrouted owner-mode traffic must not create a second local owner.
+        if settings.preview_connection_mode == "owner" and not hasattr(
+            self.platform.state, "preview_hub"
+        ):
+            if scope["type"] == "websocket":
+                await WebSocket(scope, receive, send).close(code=1013)
+            else:
+                await Response(
+                    status_code=503,
+                    headers={"Retry-After": "1", "Cache-Control": "no-store"},
+                )(scope, receive, send)
+            return
         topic_id = uuid.UUID(hex=match[1])
         origin = preview_origin(topic_id)
         if match[2]:

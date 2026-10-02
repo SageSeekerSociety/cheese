@@ -227,3 +227,86 @@ def test_agent_comment_is_attributed_but_does_not_wake_itself(client, runner):
     comment = r.json()["data"]
     assert comment["author"] == room_agent_seat(client, tid)
     assert runner.submitted == []
+
+
+def _commented_room(client):
+    """A room with a document, a person who may comment on it, and its nodes."""
+    token = seed_user(client, "commenter")
+    project = post_project(client, {"name": "P", "owner_handle": "commenter"}).json()[
+        "data"
+    ]
+    headers = {"Authorization": f"Bearer {token}"}
+    tid = client.post(
+        "/topics", json={"project_id": project["id"], "title": "T"}, headers=headers
+    ).json()["data"]["id"]
+    client.put(
+        f"/topics/{tid}/doc",
+        json={"content": "# 原稿\n\n保留这一段", "expected_version": 0},
+        headers=headers,
+    )
+    nodes = client.get(f"/topics/{tid}/docs").json()["data"]["data"]
+    return tid, headers, {"anchor": nodes[1]["id"], "quote": "这一段"}
+
+
+def test_a_comment_naming_the_agent_hands_it_to_the_agent_as_the_commenter(
+    client, runner
+):
+    """The agent's turn is the commenter's: what it changes in the document is
+    then recorded as done at their request."""
+    tid, headers, anchor = _commented_room(client)
+    seat = room_agent_seat(client, tid)
+    runner.submitted.clear()
+
+    result = client.post(
+        f"/topics/{tid}/comments",
+        json={**anchor, "content": f"<@{seat}> 这段写得更具体些"},
+        headers=headers,
+    )
+
+    assert result.status_code == 200, result.text
+    [turn] = runner.submitted
+    assert turn["author"] == "commenter"
+    assert turn["addressed"].reason_for(seat) is not None
+    assert "这段写得更具体些" in turn["content"]
+    assert result.json()["data"]["id"] in turn["content"]
+
+
+def test_a_comment_naming_only_a_person_starts_nothing(client, runner):
+    tid, headers, anchor = _commented_room(client)
+    runner.submitted.clear()
+
+    result = client.post(
+        f"/topics/{tid}/comments",
+        json={**anchor, "content": "<@commenter> 回头自己再看"},
+        headers=headers,
+    )
+
+    assert result.status_code == 200, result.text
+    assert runner.submitted == []
+
+
+def test_a_reply_naming_the_agent_hands_the_thread_to_it(client, runner):
+    tid, headers, anchor = _commented_room(client)
+    seat = room_agent_seat(client, tid)
+    root = client.post(
+        f"/topics/{tid}/comments",
+        json={**anchor, "content": "这里要不要展开"},
+        headers=headers,
+    ).json()["data"]["id"]
+    runner.submitted.clear()
+    thread = client.get(f"/topics/{tid}/comments/{root}/thread", headers=headers)
+
+    reply = client.post(
+        f"/topics/{tid}/comments/{root}/replies",
+        json={
+            "operation_id": str(uuid.uuid4()),
+            "expected_revision": thread.json()["data"]["revision"],
+            "content": f"<@{seat}> 你来补一下",
+        },
+        headers=headers,
+    )
+
+    assert reply.status_code == 200, reply.text
+    [turn] = runner.submitted
+    assert turn["author"] == "commenter"
+    assert root in turn["content"]

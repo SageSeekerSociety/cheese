@@ -42,6 +42,8 @@
   "cheeseChatReplies": "读取消息回复",
   "cheeseDocSet": "更新文档",
   "cheeseDocGet": "读取文档",
+  "cheeseDocEdit": "修改文档",
+  "cheeseDocCommentReply": "回复文档评论",
   "cheeseTask": "创建任务",
   "cheeseWorktree": "准备工作目录",
   "cheeseSync": "同步任务代码",

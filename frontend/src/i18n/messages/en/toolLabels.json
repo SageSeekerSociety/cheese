@@ -42,6 +42,8 @@
   "cheeseChatReplies": "Read message replies",
   "cheeseDocSet": "Update the doc",
   "cheeseDocGet": "Read the doc",
+  "cheeseDocEdit": "Edit the doc",
+  "cheeseDocCommentReply": "Reply to a doc comment",
   "cheeseTask": "Create a task",
   "cheeseWorktree": "Prepare the working directory",
   "cheeseSync": "Sync task code",

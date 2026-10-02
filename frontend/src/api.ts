@@ -1800,12 +1800,6 @@ export async function downloadFile(rawUrl: string, filename: string): Promise<vo
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
-// Living-doc helpers (spec §2.2 docs-out/docs-in). `content` is markdown.
-// GET returns the doc Block, or null when the topic has no doc yet.
-export function getDoc(topicId: string): Promise<Block | null> {
-  return request<Block | null>(`/topics/${encodeURIComponent(topicId)}/doc`)
-}
-
 // 项目总览的自动区 (#1889): the overview room's ②③, structured so the doc
 // panel can render them below the body and make each line clickable. Only the
 // project's root topic has one — any other room answers 404 — and the caller

@@ -15,6 +15,8 @@ interface Room {
   server: Y.Doc
   readOnly: boolean
   error?: string
+  /** The service speaks another document schema and refuses this page. */
+  outdated?: boolean
   /** Not arrived yet: the panel waits until `arrive(id)`. */
   pending?: boolean
   waiting: (() => void)[]
@@ -25,11 +27,18 @@ const rooms = new Map<string, Room>()
 export function seedRoom(
   id: string,
   markdown: string,
-  opts: { readOnly?: boolean; error?: string; pending?: boolean } = {}
+  opts: { readOnly?: boolean; error?: string; pending?: boolean; outdated?: boolean } = {}
 ) {
   const server = new Y.Doc()
   if (markdown) writeMarkdown(server, markdown)
-  rooms.set(id, { server, readOnly: !!opts.readOnly, error: opts.error, pending: opts.pending, waiting: [] })
+  rooms.set(id, {
+    server,
+    readOnly: !!opts.readOnly,
+    error: opts.error,
+    outdated: opts.outdated,
+    pending: opts.pending,
+    waiting: [],
+  })
 }
 
 /** The document of a pending room arrives. */
@@ -59,6 +68,7 @@ export function useFakeDocCollab(room: () => string | null) {
   const readOnly = ref(false)
   const peers = shallowRef<DocPeer[]>([])
   const error = ref<string | null>(null)
+  const outdated = ref(false)
   let close: (() => void) | null = null
 
   function open(id: string | null) {
@@ -67,12 +77,18 @@ export function useFakeDocCollab(room: () => string | null) {
     session.value = null
     synced.value = false
     error.value = null
+    outdated.value = false
     if (!id) return
     // A room nobody seeded has an empty document, as a new room does.
     if (!rooms.has(id)) seedRoom(id, '')
     const entry = rooms.get(id)!
     if (entry.error) {
       error.value = entry.error
+      connection.value = 'offline'
+      return
+    }
+    if (entry.outdated) {
+      outdated.value = true
       connection.value = 'offline'
       return
     }
@@ -104,5 +120,5 @@ export function useFakeDocCollab(room: () => string | null) {
 
   watch(room, open, { immediate: true })
   onBeforeUnmount(() => close?.())
-  return { session, connection, synced, readOnly, peers, error }
+  return { session, connection, synced, readOnly, peers, error, outdated }
 }

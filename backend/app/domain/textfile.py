@@ -119,21 +119,46 @@ def content_version(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()[:16]
 
 
+def file_version(target: Path) -> str:
+    """`content_version` of a file on disk, hashed in chunks.
+
+    Same id as `content_version(target.read_bytes())` — this exists so a caller
+    that must not hold the file in memory can still name the exact bytes it
+    found. A copy of the bytes costs one streamed pass, never one giant buffer.
+    """
+    with target.open("rb") as source:
+        return hashlib.file_digest(source, "sha256").hexdigest()[:16]
+
+
 def text_payload(target: Path, path: str) -> dict:
     """One file read the way the 文件 panel wants it, or the reason it cannot be.
 
     Three answers, and the caller does not get to tell them apart by guessing:
     the text plus its version; binary (`content` is None, and the version is
     still there so a later write can be rejected); and too large to build a
-    body for at all, which is decided from the stat and never from a read.
+    body for at all, which decides on the stat and never holds the bytes.
+
+    The version is a reading of the file, not a by-product of having its text:
+    every answer carries one, including the too-large one. A caller that gets
+    `version: None` learns the file itself is gone, nothing weaker. The preview
+    panel is why — it opens a sandbox for the version a reader was shown, and a
+    reader told `null` for a large file could only ever be refused.
     """
     if not target.is_file():
         raise ValidationError("file not found")
     size = target.stat().st_size
     meta = {"path": path, "bytes": size, "binary": False, "too_large": False}
     if size > MAX_TEXT_BYTES:
-        # Deliberately not read: the point is to not build the giant body.
-        return {**meta, "content": None, "version": None, "too_large": True}
+        # Deliberately not read into memory: the point is to not build the giant
+        # body. The version still has to be honest, so the bytes are streamed
+        # past the hasher — the same pass `preview_file_version` makes for the
+        # same file. A file that vanished under us reads as "no version", which
+        # is what the caller would have got from the stat a moment earlier.
+        try:
+            version = file_version(target)
+        except OSError:
+            version = None
+        return {**meta, "content": None, "version": version, "too_large": True}
     data = target.read_bytes()
     text = decode_text(data)
     if text is None:

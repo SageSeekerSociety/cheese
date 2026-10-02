@@ -6,18 +6,21 @@
 //     → components/panels/PanelDocView.vue 和它底下的 doc/DocSurface.vue，只凭 props 渲染
 //
 // 正文不在这一层来回搬：编辑器直接绑在协同文档上（useDocCollab），谁打的字都实时合进
-// 同一份，协同服务在停手几秒后把它存回去。这一层还要读一次**已存的**那一版，因为有两
-// 样东西认的是它而不是屏幕上那一份：文档 AI 的选区坐标（那是已存原文的字节位置），和
-// 评论锚着的节点。存回之后房间里会收到一帧 state/doc，父层把它变成 activityTick，这一
-// 层据此重读。
+// 同一份，协同服务在停手几秒后把它存回去。评论锚着的是服务端那一侧的节点，存回之后房
+// 间里会收到一帧 state/doc，父层把它变成 activityTick，这一层据此重读评论和节点。
 import type { Block, Topic } from '../cx_types'
+import type { DocEdit, DocRewriteRequest } from '../lib/docEdits'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
-import { addComment, getComments, getDoc, getDocNodes, workspaceFileRawUrl } from '../api'
+import { addComment, getComments, getDocNodes, workspaceFileRawUrl } from '../api'
+import { applyDocEdits, getPendingSuggestions, rewriteDocSelection } from '../api/docEdits'
+import { expandMentions } from '../lib/expandMentions'
 import { myHandle } from '../me'
 
 import { useDocCollab } from './useDocCollab'
+
+import { t } from '@/i18n'
 
 export interface PanelDocProps {
   topic: Topic | null
@@ -26,47 +29,36 @@ export interface PanelDocProps {
   topicList?: Topic[]
   /** 项目 AI 队友的名字。 */
   agentName?: string
-}
-
-export interface PanelDocHooks {
-  /** 编辑器里现在这一版正文 markdown。没有编辑器时 null。 */
-  serializeVisual: () => string | null
+  /** 项目 AI 队友的 handle。 */
+  agentHandle?: string | null
 }
 
 /** 「文档」这一格的全部取数：状态进、动作出，一个 DOM 都不碰。 */
-export function usePanelDoc(props: PanelDocProps, hooks: PanelDocHooks) {
+export function usePanelDoc(props: PanelDocProps) {
   const AUTHOR = myHandle()
   const projectId = computed<string | null>(() => props.topic?.project_id ?? null)
   const collab = useDocCollab(() => props.topic?.id ?? null)
 
   let disposed = false
-  let snapshotSequence = 0
   let commentSequence = 0
 
   // ---- 这一篇现在是什么状态 ----
   // 自己切的只读（⋯ 里那一项）。没有编辑权限时它不起作用：那由凭证决定。
   const wantsEditable = ref(true)
   const editable = computed(() => wantsEditable.value && !collab.readOnly.value)
-  const loading = computed(() => !!props.topic && !collab.synced.value && !collab.error.value)
+  const loading = computed(() => !!props.topic && !collab.synced.value && !collab.error.value && !collab.outdated.value)
   // 当场要说的失败（复制代码失败这一类），和文档打不开的原因，说同一个地方。
   const localError = ref<string | null>(null)
   const errorMsg = computed(() => localError.value ?? collab.error.value)
 
-  // 已存的那一版：协同服务最近一次存回的原文和版本号。
-  const rawDoc = ref('')
-  const docVersion = ref(0)
-
-  // 屏幕上这一份和已存的那一版是不是一回事。文档 AI 的选区按已存原文定位，两边不一
-  // 致（还有字没存回、或者还没连上）的时候它不能提问也不能采纳。
-  function matchesStored(): boolean {
-    if (!collab.synced.value || collab.connection.value !== 'connected') return false
-    const live = hooks.serializeVisual()
-    return live !== null && live === rawDoc.value
-  }
-
   // ---- 评论 (B4): 常驻评论区读的就是这两样 ----
   const comments = ref<Block[]>([])
   const anchorNodes = ref<Block[]>([])
+  // 修改建议的理由：建议本身在协同文档里，理由只在存回的那一份旁边（id → 理由）。文档
+  // 里有建议时才去读（画的那一半说一声），之后每次存回跟着重读。
+  const suggestionReasons = ref<Record<string, string>>({})
+  let reasonSequence = 0
+  let reasonsWanted = false
 
   const liveRefFingerprint = computed(() =>
     (props.topicList ?? []).map((t) => `${t.id}\u0000${t.title}\u0000${t.status ?? ''}`).join('\n')
@@ -112,23 +104,29 @@ export function usePanelDoc(props: PanelDocProps, hooks: PanelDocHooks) {
     anchorNodes.value = ns.data
   }
 
+  async function loadSuggestionReasons(tid: string) {
+    const sequence = ++reasonSequence
+    const pending = await getPendingSuggestions(tid)
+    if (disposed || props.topic?.id !== tid || sequence !== reasonSequence) return
+    suggestionReasons.value = Object.fromEntries(pending.filter((s) => s.reason).map((s) => [s.id, s.reason!]))
+  }
+
+  /** 文档里出现了修改建议：读它们的理由。 */
+  function fetchSuggestionReasons() {
+    const tid = props.topic?.id
+    reasonsWanted = true
+    if (tid) void loadSuggestionReasons(tid).catch(() => {})
+  }
+
   async function refreshComments() {
     const tid = props.topic?.id
     if (tid) await loadComments(tid).catch(() => {})
   }
 
-  /** 重读已存的那一版（文档 AI 采纳之后也走这里）。 */
-  async function reloadStored(tid: string) {
-    const sequence = ++snapshotSequence
-    try {
-      const block = await getDoc(tid)
-      if (disposed || props.topic?.id !== tid || sequence !== snapshotSequence) return
-      rawDoc.value = block?.content ?? ''
-      docVersion.value = block?.doc_version ?? 0
-    } catch {
-      // 读不到已存版本只影响文档 AI 的可用性（它会说选区无法核对），不影响编辑。
-    }
-    void loadComments(tid).catch(() => {})
+  /** 评论里写的「@名字」换成点名（和对话框发消息一样）：AI 队友只认点名，写成字它收不到。 */
+  function withMentions(content: string): string {
+    const handle = props.agentHandle
+    return handle ? expandMentions(content, [{ handle, label: props.agentName }]) : content
   }
 
   /** 当场要说的失败（目前只有复制代码失败）；null = 把它关掉。 */
@@ -148,6 +146,20 @@ export function usePanelDoc(props: PanelDocProps, hooks: PanelDocHooks) {
     return getDocNodes(tid).then((r) => r.data)
   }
 
+  /** 让 AI 队友改选中的字：它直接改协同文档，回执说改成了什么。 */
+  function rewriteSelection(request: DocRewriteRequest) {
+    const tid = props.topic?.id
+    if (!tid) return Promise.reject(new Error(t('work.room.docEdit.unavailable')))
+    return rewriteDocSelection(tid, request)
+  }
+
+  /** 以自己的名义替换正文里的字：撤销、还原 AI 队友的修改都走这里。 */
+  function applyEdits(edits: DocEdit[]) {
+    const tid = props.topic?.id
+    if (!tid) return Promise.reject(new Error(t('work.room.docEdit.unavailable')))
+    return applyDocEdits(tid, edits)
+  }
+
   // Display-time image src resolution: workspace-relative paths (uploads/x.png)
   // render through the raw-file API; absolute http(s)/data URLs pass through.
   // The node attr keeps the ORIGINAL path, so the Markdown never gets a URL.
@@ -161,24 +173,25 @@ export function usePanelDoc(props: PanelDocProps, hooks: PanelDocHooks) {
   watch(
     () => props.topic?.id ?? null,
     (id) => {
-      snapshotSequence++
       commentSequence++
+      reasonSequence++
       localError.value = null
-      rawDoc.value = ''
-      docVersion.value = 0
       comments.value = []
       anchorNodes.value = []
-      if (id) void reloadStored(id)
+      suggestionReasons.value = {}
+      reasonsWanted = false
+      if (id) void loadComments(id).catch(() => {})
     },
     { immediate: true }
   )
 
-  // 文档存回了（state/doc）、或者芝士动过：已存的那一版和节点都可能换了。
+  // 文档存回了（state/doc）、或者芝士动过：节点都可能换了。
   watch(
     () => props.activityTick,
     () => {
       const id = props.topic?.id
-      if (id) void reloadStored(id)
+      if (id) void loadComments(id).catch(() => {})
+      if (id && reasonsWanted) void loadSuggestionReasons(id).catch(() => {})
     }
   )
 
@@ -197,29 +210,31 @@ export function usePanelDoc(props: PanelDocProps, hooks: PanelDocHooks) {
     // 协同文档
     session: collab.session,
     connection: collab.connection,
+    outdated: collab.outdated,
     peers: collab.peers,
     readOnly: collab.readOnly,
     // 这一篇现在是什么状态
     editable,
     loading,
     errorMsg,
-    rawDoc,
-    docVersion,
-    matchesStored,
-    reloadStored,
     // 评论 / 节点（装饰的原料）
     comments,
     anchorNodes,
     liveRefIndex,
     commentMarkIndex,
+    suggestionReasons,
+    fetchSuggestionReasons,
     // 动作
     refreshComments,
     commentAuthor: AUTHOR,
     sendComment: (topicId: string, content: string, anchor?: string, quote?: string) =>
-      addComment(topicId, content, anchor, quote),
+      addComment(topicId, withMentions(content), anchor, quote),
+    withMentions,
     toggleEditable,
     setError,
     fetchDocNodes,
     imageSrc,
+    rewriteSelection,
+    applyEdits,
   }
 }

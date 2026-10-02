@@ -9,6 +9,12 @@
 //
 // Nothing here saves anything: the service stores the document a few seconds
 // after the typing stops.
+//
+// The editor gets the document only once the service has let this page in. A
+// page built with another document schema is refused (lib/docSchema/version.ts):
+// bound to the document, it would drop what it cannot parse and the drop would
+// reach everyone. Refused that way, the connection is closed and the page says
+// it needs a refresh.
 
 import type { DocTicket } from '../api/docCollab'
 
@@ -20,6 +26,7 @@ import { avatarColor } from '@/utils/avatar'
 import { getAvatarUrl } from '@/utils/materials'
 
 import { collabWsUrl, getDocTicket } from '../api/docCollab'
+import { DOC_SCHEMA_MISMATCH } from '../lib/docSchema/version'
 import { myAccount } from '../me'
 
 /** Somebody with the document open, as the service vouches for them. */
@@ -72,6 +79,8 @@ export function useDocCollab(room: () => string | null) {
   const readOnly = ref(false)
   const peers = shallowRef<DocPeer[]>([])
   const error = ref<string | null>(null)
+  /** The service speaks another document schema: this page has to be reloaded. */
+  const outdated = ref(false)
   let close: (() => void) | null = null
   let generation = 0
 
@@ -88,6 +97,7 @@ export function useDocCollab(room: () => string | null) {
     const mine = ++generation
     teardown()
     error.value = null
+    outdated.value = false
     let first: DocTicket
     try {
       first = await getDocTicket(id)
@@ -115,7 +125,15 @@ export function useDocCollab(room: () => string | null) {
     provider.on('synced', ({ state }: { state: boolean }) => {
       if (state) synced.value = true
     })
-    provider.on('authenticationFailed', () => {
+    provider.on('authenticated', () => {
+      if (mine === generation && !session.value) session.value = { room: id, doc, provider, user }
+    })
+    provider.on('authenticationFailed', ({ reason }: { reason: string }) => {
+      if (mine !== generation) return
+      if (reason === DOC_SCHEMA_MISMATCH) {
+        teardown()
+        outdated.value = true
+      }
       connection.value = 'offline'
     })
     const readPeers = () => {
@@ -142,7 +160,6 @@ export function useDocCollab(room: () => string | null) {
       opened.destroy()
       doc.destroy()
     }
-    session.value = { room: id, doc, provider, user }
   }
 
   watch(
@@ -162,5 +179,5 @@ export function useDocCollab(room: () => string | null) {
     teardown()
   })
 
-  return { session, connection, synced, readOnly, peers, error }
+  return { session, connection, synced, readOnly, peers, error, outdated }
 }

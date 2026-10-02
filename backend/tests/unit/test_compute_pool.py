@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.domain.agent.compute import ComputePool
+from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.harness import SessionRef
 
 
@@ -66,6 +67,38 @@ async def test_activate_parks_only_the_same_seats_previous_harness():
     )
     native.interrupt.assert_awaited_once()
     native.close.assert_awaited_once()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "gone",
+    [
+        DeviceCallError(
+            "dial unix /tmp/cheese-execution-1000-x.sock: connect: no such file "
+            "or directory"
+        ),
+        DeviceOffline("device went offline"),
+    ],
+)
+async def test_a_seat_whose_previous_runner_is_gone_is_taken_anyway(gone):
+    """A runner that let its idle session go cannot be told to stop. The seat
+    still changes hands: the new turn starts, and a later message goes to it."""
+    native = _FakeBackend("device")
+    pi = _FakeBackend("device", "pi")
+    native.holds = lambda topic_id, agent_handle=None: True
+    native.interrupt = AsyncMock(side_effect=gone)
+    native.close = AsyncMock()
+    native.deliver = AsyncMock(return_value=True)
+    pi.deliver = AsyncMock(return_value=True)
+    pool = ComputePool([native, pi], "device")
+    session = SessionRef(uuid.uuid4(), uuid.uuid4(), harness="pi")
+
+    await pool.activate(session, pi)
+
+    native.close.assert_awaited_once()
+    assert await pool.deliver(session.topic_id, "follow up")
+    native.deliver.assert_not_awaited()
+    pi.deliver.assert_awaited_once()
 
 
 class _EmptyBacklog:
