@@ -8,7 +8,11 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from sqlalchemy import select
 
+from app.core.errors import ValidationError
 from app.domain.block.models import Block
+from app.domain.delivery.input_identity import InputEffects, InputIdentity, InputReceipt
+from app.domain.delivery.models import Delivery
+from app.domain.delivery.receipts import register_input
 from app.domain.project.models import Project
 from app.domain.review import pr_poll
 from app.domain.review.models import AcceptApproval, AcceptCard, AcceptStatus
@@ -376,13 +380,54 @@ async def test_dependency_notice_waits_for_parent_and_recovers_only_unsent_claim
     assert "native child=child-worker" in runner.submit.call_args.kwargs["content"]
 
 
+async def _registered_input(
+    db_factory, *, project_id, topic_id, work_id, delivery_id
+) -> InputIdentity:
+    """Register one input against this delivery attempt the way production does.
+
+    ``register_input`` is the real one: it re-reads the delivery under lock and
+    refuses an attempt that does not belong to this receiver, so a receipt can
+    only ever settle an input this delivery really owns.
+    """
+    async with db_factory() as session:
+        delivery = await session.get(Delivery, delivery_id)
+        identity = InputIdentity(
+            project_id,
+            topic_id,
+            delivery.recipient_handle,
+            "claude-code",
+            f"session-{work_id}",
+            work_id,
+            work_id,
+        )
+        await register_input(
+            session,
+            identity,
+            InputEffects(delivery_id=delivery_id, attempt_id=delivery.attempt_id),
+        )
+        await session.commit()
+    return identity
+
+
+def _other_input(registered: InputIdentity) -> InputIdentity:
+    """A well-formed identity nobody registered — not this input, not any input."""
+    return InputIdentity(
+        registered.project_id,
+        registered.topic_id,
+        registered.recipient_handle,
+        registered.harness,
+        registered.native_session_id,
+        uuid.uuid4(),
+        registered.work_id,
+    )
+
+
 @pytest.mark.anyio
 async def test_dependency_delivery_needs_the_matching_native_receipt(
     db_factory, monkeypatch
 ):
     from app.domain.agent.chat import ChatService
     from app.domain.delivery.agent import begin_send
-    from app.domain.delivery.models import Delivery
     from tests.conftest import stub_compute
 
     parent, child = await seed(db_factory, delivered=False)
@@ -409,13 +454,27 @@ async def test_dependency_delivery_needs_the_matching_native_receipt(
         attempt["turn_id"],
         parent_session_id="native-parent",
     )
-    chat._pending_receipts[child.room_id] = [
-        (attempt["content"], [], attempt["turn_id"], datetime.now(UTC))
-    ]
-    await chat.confirm_prompt_receipt(child.room_id, "unrelated")
+    # A dependency notice is an input like any other: it is registered against
+    # this exact delivery attempt before any receipt may settle it. The
+    # in-memory ``_pending_receipts`` stand-in for that registration is gone, so
+    # the registration is made here through the production path.
+    identity = await _registered_input(
+        db_factory,
+        project_id=child.project_id,
+        topic_id=child.room_id,
+        work_id=attempt["turn_id"],
+        delivery_id=attempt["delivery_id"],
+    )
+    # A receipt naming an input nobody registered cannot settle anything — the
+    # production contract rejects it outright rather than matching on text.
+    with pytest.raises(ValidationError):
+        await chat.confirm_prompt_receipt(
+            InputReceipt(_other_input(identity), "accepted")
+        )
     async with db_factory() as session:
         assert (await session.get(Delivery, attempt["delivery_id"])).state == "sending"
-    await chat.confirm_prompt_receipt(child.room_id, attempt["content"])
+    await chat.confirm_prompt_receipt(InputReceipt(identity, "accepted"))
+    await chat.confirm_prompt_receipt(InputReceipt(identity, "native_echo"))
     async with db_factory() as session:
         row = await session.get(Delivery, attempt["delivery_id"])
         assert row.state == "received" and row.sent_at is not None

@@ -530,11 +530,13 @@ async def terminate_work_inputs(
     This writes only ``terminated_at`` / ``termination``. ``completed_at`` stays
     NULL, held blocks stay held and are never consumed: whether an answer was
     taken is still unknown, and an unknown is not permission to send it again.
-    The selection is the same one :func:`complete_work_inputs` makes, so another
-    interval or another seat is never in it.
+    The rows it may touch are one execution work's whole interval on one seat,
+    so another interval or another seat is never in it.
     """
     if not input_ids:
         return set()
+    # Selected without narrowing to ``input_ids`` on purpose: the whole interval
+    # this execution work holds is what has to agree with the journal's list.
     rows = list(
         await session.scalars(
             select(NativeInput)
@@ -545,7 +547,6 @@ async def terminate_work_inputs(
                 NativeInput.harness == harness,
                 NativeInput.native_session_id == native_session_id,
                 NativeInput.execution_work_id == work_id,
-                NativeInput.input_id.in_(input_ids),
             )
             .order_by(NativeInput.id)
             .with_for_update()

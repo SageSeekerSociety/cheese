@@ -9,6 +9,7 @@ import uuid
 import pytest
 from sqlalchemy import select
 
+from app.core.errors import ValidationError
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute_configs import (
     ComputeChoice,
@@ -22,6 +23,8 @@ from app.domain.agent_session.models import AgentSession
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.delivery.input_identity import InputIdentity, InputReceipt
+from app.domain.delivery.models import NativeInput
 from app.domain.identity.handles import (
     CHEESE_HANDLE,
     agent_instance_handle,
@@ -109,7 +112,10 @@ async def test_broker_live_quote_uses_saved_data_and_retries_only_once(
             saved = await BlockRepository(session).get(landed)
             assert saved.meta["quoted_context"] == quote
             assert consumed_turn(saved) is None
-        await svc.confirm_prompt_receipt(topic_id, provider.delivered[0])
+        identity = await _input_holding(factory, topic_id, landed)
+        await svc.confirm_prompt_receipt(
+            InputReceipt(identity, "native_echo", identity.work_id)
+        )
         async with factory() as session:
             saved = await BlockRepository(session).get(landed)
             assert consumed_turn(saved) is not None
@@ -136,6 +142,36 @@ async def test_broker_live_quote_uses_saved_data_and_retries_only_once(
 def _said(message: dict) -> str:
     content = message["message"]["content"]
     return content if isinstance(content, str) else content[0]["text"]
+
+
+async def _input_holding(
+    factory, topic_id: uuid.UUID, block_id: uuid.UUID
+) -> InputIdentity:
+    """The identity of the registered input holding this block.
+
+    Registration is the real production one, so this row is the durable link
+    between the text a session was handed and the identity a receipt names.
+    Matching a receipt by prompt text is gone; matching it by input identity is
+    what the journal does.
+    """
+    async with factory() as session:
+        rows = list(
+            await session.scalars(
+                select(NativeInput).where(NativeInput.topic_id == topic_id)
+            )
+        )
+    for row in rows:
+        if str(block_id) in {str(value) for value in row.held_block_ids}:
+            return InputIdentity(
+                row.project_id,
+                row.topic_id,
+                row.recipient_handle,
+                row.harness,
+                row.native_session_id,
+                row.input_id,
+                row.work_id,
+            )
+    raise AssertionError(f"no registered input holds block {block_id}")
 
 
 class SlowScreen(StubChannel):
@@ -1128,8 +1164,11 @@ async def test_summon_during_active_work_is_injected_without_a_second_done(
     assert len(merged) == 1
     assert consumed_turn(merged[0]) is None
 
-    # The session consumes the injected text → its receipt stamps the block.
-    await svc.confirm_prompt_receipt(topic_id, provider.delivered[0])
+    # The session consumes the injected input → its receipt stamps the block.
+    identity = await _input_holding(factory, topic_id, merged[0].id)
+    await svc.confirm_prompt_receipt(
+        InputReceipt(identity, "native_echo", identity.work_id)
+    )
     async with factory() as session:
         history = await BlockRepository(session).list_for_topic(topic_id)
     merged = [b for b in history if b.content == "等一下，先别跑"]
@@ -1332,8 +1371,33 @@ async def test_midturn_message_stays_pending_until_its_receipt(
 
     delivered_texts: list[str] = []
     owed: list[bool] = []
+    minted: list[InputIdentity] = []
 
-    async def fake_deliver(tid, text, images=None, agent_handle=None, owes_reply=False):
+    async def fake_deliver(
+        tid,
+        text,
+        images=None,
+        *,
+        register_input,
+        expected_work_id=None,
+        agent_handle=None,
+        owes_reply=False,
+    ):
+        # Only the transport is faked here. The registration the real deliver
+        # performs before it reaches the channel is made with the real
+        # registrar, so the receipt below has a genuine input to name rather
+        # than a stand-in queued by prompt text.
+        identity = InputIdentity(
+            project.id,
+            tid,
+            "cheese",
+            "stub-session",
+            f"session-{expected_work_id}",
+            uuid.uuid4(),
+            expected_work_id,
+        )
+        await register_input(identity)
+        minted.append(identity)
         delivered_texts.append(text)
         owed.append(owes_reply)
         return True
@@ -1358,11 +1422,27 @@ async def test_midturn_message_stays_pending_until_its_receipt(
 
     # Write accepted but not yet consumed: must stay pending.
     assert await _consumed() is False
-    # A receipt for some OTHER input must not stamp this message.
-    await svc.confirm_prompt_receipt(topic_id, "别的输入")
+    # A receipt naming some OTHER input must not stamp this message. Nobody
+    # registered that identity, so the journal rejects it outright instead of
+    # falling back to matching by the text it was given.
+    first = minted[0]
+    other = InputIdentity(
+        first.project_id,
+        first.topic_id,
+        first.recipient_handle,
+        first.harness,
+        first.native_session_id,
+        uuid.uuid4(),
+        first.work_id,
+    )
+    with pytest.raises(ValidationError):
+        await svc.confirm_prompt_receipt(
+            InputReceipt(other, "native_echo", other.work_id)
+        )
     assert await _consumed() is False
-    # The matching receipt stamps it.
-    await svc.confirm_prompt_receipt(topic_id, delivered_texts[0])
+    # The receipt naming THIS input stamps it.
+    await svc.confirm_prompt_receipt(InputReceipt(first, "accepted"))
+    await svc.confirm_prompt_receipt(InputReceipt(first, "native_echo", first.work_id))
     assert await _consumed() is True
 
 

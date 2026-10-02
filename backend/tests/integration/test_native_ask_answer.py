@@ -84,7 +84,7 @@ def test_http_answer_continues_original_native_executor(
         async def prepare_topic(self, **kwargs):
             return True, ""
 
-        async def ensure(self, session, opening):
+        async def ensure(self, session, opening, live=None):
             nonlocal native_runner, handle
             if native_runner is None:
                 native_runner = Runner(machine.state)
