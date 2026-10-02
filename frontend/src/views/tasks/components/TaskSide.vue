@@ -75,6 +75,8 @@
           <dd class="t-num">{{ claimedText }}</dd>
         </div>
       </dl>
+
+      <TaskInheritance :inheritance="inheritance" :loading="inheritanceLoading" />
     </section>
   </aside>
 </template>
@@ -90,6 +92,10 @@ import { useI18n } from 'vue-i18n'
 
 import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
 
+import { useTaskInheritance } from '../composables/useTaskInheritance'
+
+import TaskInheritance from './TaskInheritance.vue'
+
 import { listProjectsForTask } from '@/api'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 
@@ -102,6 +108,10 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{ leave: [] }>()
+
+// 「会继承什么」常驻在这里 (#944)：建项目之后，同一份说明还看得到 —— 从这道题
+// 新建项目就在下面这颗按钮上，两份说明放一起，人不必回头找。
+const { inheritance, loading: inheritanceLoading } = useTaskInheritance(() => props.task.id)
 
 const mineActions = computed<MenuAction[]>(() => [
   { key: 'leave', label: t('tasks.side.leave'), icon: 'mdi-exit-to-app', onSelect: () => emit('leave') },

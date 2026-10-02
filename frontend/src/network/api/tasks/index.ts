@@ -15,6 +15,7 @@ import type {
   PostTaskSubmissionReviewRequestData,
   PreviewTaskFromPdfResponseData,
   TaskAttachmentListResponseData,
+  TaskInheritanceData,
   TaskParticipationInfo,
   UploadTaskAttachmentResponseData,
 } from './types'
@@ -223,6 +224,19 @@ export namespace TasksApi {
       url: `/tasks/${taskId}/participations/${teamId === undefined ? 'user' : 'team'}`,
       method: 'POST',
       data: teamId === undefined ? data : { ...data, teamId },
+    })
+
+  /**
+   * 建这道题的项目会继承什么 (#944)：资源包、四层合成后的「给 AI 队友的指导」
+   * （含来源层）、以及会被带上的资料。
+   *
+   * 只在「领取 / 从这道题建项目」那一步用得上，所以不塞进题目详情里 —— 详情每
+   * 一次列表、每一次预览都要付它那一串查询。
+   */
+  export const inheritance = (taskId: number) =>
+    NewApiInstance.request<TaskInheritanceData>({
+      url: `/tasks/${taskId}/inheritance`,
+      method: 'GET',
     })
 
   // 获取可参与任务的队伍列表

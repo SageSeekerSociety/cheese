@@ -628,5 +628,25 @@
       "start": "Where should I start?",
       "hard": "What is hard about this task?"
     }
+  },
+  "inheritance": {
+    "title": "What this project inherits",
+    "pack": "Resource pack",
+    "credits": "{n} compute credits",
+    "packNone": "No compute credits",
+    "guidance": "AI teammate guidance",
+    "guidanceNone": "Nothing set",
+    "week": "Week {n}",
+    "topics": "This week covers",
+    "avoid": "Not yet in use",
+    "materials": "Materials",
+    "materialCount": "{n} files",
+    "materialsNone": "Nothing on this space yet",
+    "from": {
+      "space": "From the space",
+      "category": "From the category",
+      "task": "From this challenge",
+      "project": "From the project"
+    }
   }
 }
