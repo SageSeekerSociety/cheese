@@ -176,3 +176,50 @@ def test_no_figure_is_a_persons_share_of_a_teams_projects(client, plan):
     for body in (json.dumps(team_view), json.dumps(mine)):
         for word in ("credits_", "tokens", "user_id", "cost"):
             assert word not in body, word
+
+
+def test_a_windowed_teams_page_shows_each_window_and_when_it_resets(client):
+    """A plan that issues no pack is not unlimited: its page reads how full
+    each window is, and the member's list of teams reads its fullest one."""
+    from sqlalchemy import update
+
+    from app.domain.usage.models import Plan
+
+    async def windowed() -> None:
+        async with client.test_factory() as session:
+            await session.execute(
+                update(Plan)
+                .where(Plan.key == "free")
+                .values(
+                    credits_per_period=None,
+                    windows=[
+                        {"hours": 5, "credits": 10},
+                        {"calendar": "month", "credits": 100},
+                    ],
+                )
+            )
+            await session.commit()
+
+    asyncio.run(windowed())
+    owner = _auth(seed_user(client, "cu-window"))
+    team = _shared_team(client, owner, "cuwindow")
+    project = post_project(
+        client, json={"name": "Board", "team_id": team}, headers=owner
+    ).json()["data"]
+
+    data = client.get(f"/teams/{team}/credits/usage", headers=owner).json()["data"]
+    assert data["period"] is None
+    hours, month = data["windows"]
+    assert hours["used_ratio"] == 0 and hours["resets_at"] is None
+    assert month["used_ratio"] == 0 and month["resets_at"]
+
+    _spend(client, credits=4, kind="chat", project=project["id"])
+    data = client.get(f"/teams/{team}/credits/usage", headers=owner).json()["data"]
+    hours, month = data["windows"]
+    assert hours["used_ratio"] == pytest.approx(0.4) and hours["resets_at"]
+    assert month["used_ratio"] == pytest.approx(0.04)
+
+    mine = client.get("/users/me/credits/usage", headers=owner).json()["data"]
+    [lab] = [t for t in mine["teams"] if t["id"] == team]
+    assert lab["unlimited"] is False
+    assert lab["remaining_ratio"] == pytest.approx(0.6)

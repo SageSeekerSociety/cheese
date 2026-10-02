@@ -18,6 +18,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Index,
+    Integer,
     String,
     Text,
     text,
@@ -43,10 +44,11 @@ class GrantSource(StrEnum):
 class Plan(Timestamps, Base):
     """A credit plan, a record an administrator edits rather than code (#2397).
 
-    Every team is on one (``team.plan_key``). A plan issues ``credits_per_period``
-    credits to each of its teams every ``period``, may cap spending inside time
-    windows, and says which model tiers its teams may use. ``unlimited`` plans
-    issue nothing and refuse nothing.
+    Every team is on one (``team.plan_key``). A plan bills one of two ways: it
+    issues ``credits_per_period`` credits to each of its teams every month, or
+    it issues nothing and lets them spend up to a cap inside each of its time
+    ``windows``. It also says which model tiers its teams may use.
+    ``unlimited`` plans issue nothing and refuse nothing.
     """
 
     __tablename__ = "plans"
@@ -58,8 +60,10 @@ class Plan(Timestamps, Base):
     # The plan's pack per period; NULL issues none.
     credits_per_period: Mapped[float | None] = mapped_column(Float, nullable=True)
     period: Mapped[str] = mapped_column(String(16), default="month")
-    # ``[{"hours": 5, "credits": 100}, ...]``: at most that many credits within
-    # any window of that many hours.
+    # A plan that issues no pack: at most ``credits`` within each window.
+    # ``{"hours": 5, "credits": 100}`` starts at a team's first call and resets
+    # that many hours later; ``{"calendar": "week" | "month", "credits": 100}``
+    # resets every Monday or every first of the month (``usage.ledger``).
     windows: Mapped[list] = mapped_column(JSON, default=list)
     # The model tiers its teams may use, the subscription (Claude) models
     # included; NULL is every tier.
@@ -67,6 +71,29 @@ class Plan(Timestamps, Base):
     unlimited: Mapped[bool] = mapped_column(Boolean, default=False)
     # Only an administrator can put a team on it, and only the console lists it.
     admin_only: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Where it stands among plans, lowest first: the console lists them in this
+    # order, and a model the team's plan does not allow names the first plan
+    # that does. Plans carry no price yet; this is the administrator's order.
+    rank: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+
+
+class PlanWindowUse(Base):
+    """What a team has spent inside one of its plan's time windows this round.
+
+    One row per team and window (``window`` is ``"5h"``, ``"week"`` or
+    ``"month"``). A round that has run out is restarted by the next charge, so
+    an old row reads as an empty window until then. Only spending the plan
+    covers counts: an earmark or bought credits never fill a window.
+    """
+
+    __tablename__ = "plan_window_use"
+
+    team_id: Mapped[int] = mapped_column(
+        ForeignKey("team.id", ondelete="CASCADE"), primary_key=True
+    )
+    window: Mapped[str] = mapped_column(String(16), primary_key=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    credits_used: Mapped[float] = mapped_column(Float, default=0.0)
 
 
 class CreditAdminAudit(UuidPk, Timestamps, Base):
@@ -144,7 +171,7 @@ class ResourceUsage(UuidPk, Timestamps, Base):
         Index("ix_resource_usage_created_at", "created_at"),
         # A person's spend in a month: the personal usage page reads it.
         Index("ix_resource_usage_user_created_at", "user_id", "created_at"),
-        # A team's spend inside a plan's time window, read without the rows.
+        # A team's spend in a month, by day: the usage pages read it.
         Index(
             "ix_resource_usage_team_created_at",
             "team_id",
