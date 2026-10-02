@@ -201,6 +201,14 @@ class Protocol:
     #: before this key did.
     teaching: Teaching = field(default_factory=Teaching)
 
+    #: WHICH level the `teaching` above came from — ``"space"`` | ``"category"``
+    #: | ``"task"`` | ``"project"``, or None when no level said anything. Filled
+    #: by the very loop that picks the value (`_resolve_teaching`): a second
+    #: reader would be a second precedence rule, and the first edit to one of
+    #: them would make the two disagree. The 从题目建项目 screen needs it to say
+    #: "这条来自项目集" rather than only handing over the composed result.
+    teaching_source: str | None = None
+
     @property
     def compute_credits(self) -> float:
         """Credits to grant, or 0. Bools are rejected on purpose — `True` is an
@@ -247,8 +255,8 @@ def _resolve_teaching(
     category: Any | None,
     task: Any | None,
     project: Any | None,
-) -> Teaching:
-    """The 教学安排 in force: the most specific level that has one.
+) -> tuple[Teaching, str | None]:
+    """The 教学安排 in force, and WHICH level it came from.
 
     空间 → 项目集 → 题目 → 项目, most specific last. Each level REPLACES the
     whole key — no deep merge, the same rule the rest of the protocol follows.
@@ -259,20 +267,31 @@ def _resolve_teaching(
     also why the column default ``{}`` (every row that predates the key) never
     wipes an inherited 教学安排 — the whole reason this is a separate reader
     from the three keys above, whose ``[]``/``{}`` CAN be an explicit value.
+
+    Returns the winning level's name beside the value. The name rides THIS loop
+    rather than a second one: a separate "which level won" reader would be a
+    second copy of the precedence above, and the first edit to one of them
+    would make the screen name a level the turn does not use.
     """
     chosen = Teaching()
-    for raw in (
-        _level_value(space, "teaching"),
-        _level_value(category, "teaching"),
-        _level_value(getattr(task, "protocol_override", None) or {}, "teaching"),
-        _level_value(_project_override(project), "teaching"),
+    source: str | None = None
+    # The levels, outermost first — the same order the four levels are named in
+    # everywhere else. A 赛题 override and a project's settings are dicts; the
+    # other two are rows. `_level_value` reads both shapes.
+    for name, row in (
+        ("space", space),
+        ("category", category),
+        ("task", getattr(task, "protocol_override", None) or {}),
+        ("project", _project_override(project)),
     ):
+        raw = _level_value(row, "teaching")
         if raw is None:
             continue
         teaching = Teaching.from_json(raw)
         if not teaching.is_empty:
             chosen = teaching
-    return chosen
+            source = name
+    return chosen, source
 
 
 def _project_override(project: Any | None) -> dict[str, Any]:
@@ -337,12 +356,14 @@ def resolve(
             value = _level_value(source, key)
             if value is not None:
                 values[key] = value
+    teaching, teaching_source = _resolve_teaching(
+        space=space, category=category, task=task, project=project
+    )
     return Protocol(
         resource_pack=dict(values.get("resource_pack") or {}),
         conditions=list(values.get("conditions") or []),
         default_role=values.get("default_role") or None,
         shell=values.get("shell") or None,
-        teaching=_resolve_teaching(
-            space=space, category=category, task=task, project=project
-        ),
+        teaching=teaching,
+        teaching_source=teaching_source,
     )
