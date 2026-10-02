@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import type { ImageGeometry, Point, RasterRegion } from './designRegion'
-import type { SketchStroke, SketchTool, TextStroke } from './designSketch'
+import type { RedactStyle, SketchStroke, SketchTool, TextStroke } from './designSketch'
 import type { ContentProfile } from './designSnap'
 
 import { computed, nextTick, ref, watch } from 'vue'
 
 import { imagePoint, imageRegion } from './designRegion'
-import { arrowHeadPoints, fontSize, isShapeStroke } from './designSketch'
+import { arrowHeadPoints, fontSize, isShapeStroke, REDACT_INK } from './designSketch'
 import { hitTest } from './designSketchHit'
 import { isEmptyStroke } from './designSketchSelection'
 import { snapRegion } from './designSnap'
@@ -19,6 +19,8 @@ const props = defineProps<{
   tool: SketchTool
   color: string
   width: number
+  /** 涂黑用哪种样式；缺省实心。 */
+  redactStyle?: RedactStyle
   profile?: ContentProfile | null
   /** 屏上已有的笔画：文字工具点中已有文字时，改成编辑它而不是新画一条。 */
   strokes?: readonly SketchStroke[]
@@ -175,6 +177,7 @@ function down(event: PointerEvent) {
       color: props.color,
       width: props.width,
       region: { x: point.x, y: point.y, width: 0, height: 0 },
+      ...(props.tool === 'redact' ? { redactStyle: props.redactStyle ?? 'solid' } : {}),
     }
   event.preventDefault()
 }
@@ -300,8 +303,8 @@ const textStyle = computed(() => {
         :y="displayed.box.y"
         :width="displayed.box.width"
         :height="displayed.box.height"
-        :fill="displayed.kind === 'redact' ? color : 'none'"
-        :stroke="color"
+        :fill="displayed.kind === 'redact' ? REDACT_INK : 'none'"
+        :stroke="displayed.kind === 'redact' ? REDACT_INK : color"
         :stroke-width="displayed.width"
       />
       <ellipse

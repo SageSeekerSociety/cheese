@@ -4,7 +4,7 @@ import type { ShapeStroke, SketchStroke } from './designSketch'
 
 import { computed } from 'vue'
 
-import { arrowHeadPoints, fontSize, numberedStrokes } from './designSketch'
+import { arrowHeadPoints, fontSize, numberedStrokes, REDACT_INK } from './designSketch'
 import {
   drawsFrame,
   HANDLE_RADIUS,
@@ -121,8 +121,8 @@ const dash = SELECT_DASH.join(' ')
         :y="item.box(item.stroke.region).y"
         :width="item.box(item.stroke.region).width"
         :height="item.box(item.stroke.region).height"
-        :fill="item.stroke.tool === 'redact' ? item.stroke.color : 'none'"
-        :stroke="item.stroke.color"
+        :fill="item.stroke.tool === 'redact' ? REDACT_INK : 'none'"
+        :stroke="item.stroke.tool === 'redact' ? REDACT_INK : item.stroke.color"
         :stroke-width="item.stroke.width * scale"
       />
       <ellipse

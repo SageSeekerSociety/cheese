@@ -109,6 +109,10 @@ const {
   dropAnnotations,
   reset: resetStrokes,
   recolor,
+  restyle,
+  redactStyle,
+  redactToolbar,
+  redactToolbarStyle,
   deleteSelected,
   cancelGesture,
   commitTextEdit,
@@ -432,15 +436,16 @@ function imageGeometry() {
   }
 }
 
-/** 点一下内容块：不画东西，直接把那一块框出来并编上号。 */
+/** 点一下内容块：不画东西，直接把那一块涂黑并编上号（不再只是框一圈）。 */
 function pickBlock(point: Point) {
   const bounds = profile.value
   if (!bounds || !natural.value.width) return
   addStroke({
-    tool: 'rect',
+    tool: 'redact',
     color: color.value,
     width: penWidth.value,
     region: blockAt(point, bounds, natural.value.width, natural.value.height),
+    redactStyle: redactStyle.value,
   })
 }
 async function sendAnnotated() {
@@ -685,8 +690,11 @@ onBeforeUnmount(() => {
       :can-select="selectionEnabled && !!natural.width"
       :busy="exporting"
       :text-editing="textEditing"
+      :redact="redactToolbar"
+      :redact-style="redactToolbarStyle"
       @pick="tool = $event"
       @recolor="recolor"
+      @restyle="restyle"
       @undo="undo"
       @redo="redo"
       @clear="clearStrokes"
@@ -763,6 +771,7 @@ onBeforeUnmount(() => {
             :tool="tool"
             :color="color"
             :width="penWidth"
+            :redact-style="redactStyle"
             :profile="profile"
             :strokes="strokes"
             @stroke="addStroke"
