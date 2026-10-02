@@ -1,4 +1,14 @@
-import type { DomainGroup, Space, SpaceAnnouncement, SpaceCategory, SpaceInviteCode, SpaceMember, Topic } from '@/types'
+import type {
+  DomainGroup,
+  Space,
+  SpaceAnnouncement,
+  SpaceCategory,
+  SpaceInviteCode,
+  SpaceMaterial,
+  SpaceMaterialVisibility,
+  SpaceMember,
+  Topic,
+} from '@/types'
 import type {
   AnalyticsApproveType,
   AnalyticsCompletionType,
@@ -34,6 +44,8 @@ import type {
   SpaceSubmissionQueue,
   SpaceTaskAnalytics,
 } from './types'
+
+import { AxiosProgressEvent } from 'axios'
 
 import { NewApiInstance } from '../index'
 
@@ -164,6 +176,64 @@ export namespace SpacesApi {
       url: `/spaces/${spaceId}/invite-codes/${codeId}`,
       method: 'DELETE',
     })
+
+  /**
+   * 这块板上的资料。成员看到「所有成员」那一档，管理员两档都看到；清单里
+   * **没有 `url`** —— 要字节走 `downloadMaterial`。
+   *
+   * `canManage` 由服务端给：能不能传、改档、撤下来是同一批人（板子的管理员），
+   * 界面拿它决定摆不摆那几个入口，不自己猜。
+   */
+  export const listMaterials = (spaceId: number) =>
+    NewApiInstance.request<{ materials: SpaceMaterial[]; canManage: boolean }>({
+      url: `/spaces/${spaceId}/materials`,
+      method: 'GET',
+    })
+
+  export const uploadMaterial = (
+    spaceId: number,
+    file: File,
+    visibility: SpaceMaterialVisibility,
+    onProgress?: (progressEvent: AxiosProgressEvent) => void
+  ) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    // 定档和上传是同一步：先传上去再补档，中间那段时间这份文件是按默认档
+    // 露在外面的。
+    formData.append('visibility', visibility)
+    return NewApiInstance.request<{ material: SpaceMaterial }>({
+      url: `/spaces/${spaceId}/materials`,
+      method: 'POST',
+      data: formData,
+      timeout: 60000,
+      onUploadProgress: onProgress,
+    })
+  }
+
+  export const updateMaterialVisibility = (spaceId: number, materialId: number, visibility: SpaceMaterialVisibility) =>
+    NewApiInstance.request<{ material: SpaceMaterial }>({
+      url: `/spaces/${spaceId}/materials/${materialId}`,
+      method: 'PATCH',
+      data: { visibility },
+    })
+
+  export const deleteMaterial = (spaceId: number, materialId: number) =>
+    NewApiInstance.request({
+      url: `/spaces/${spaceId}/materials/${materialId}`,
+      method: 'DELETE',
+    })
+
+  /**
+   * 素材的字节。`responseType: 'blob'` 时 `Api.request` 交回的就是那个 Blob
+   * 本身 —— 它只把认得出是 axios 响应的那些拆一层 `data`，而 Blob 没有
+   * `status` 那一格 —— 所以这里按实际形状收窄类型。
+   */
+  export const downloadMaterial = (spaceId: number, materialId: number) =>
+    NewApiInstance.request<Blob>({
+      url: `/spaces/${spaceId}/materials/${materialId}/download`,
+      method: 'GET',
+      responseType: 'blob',
+    }) as unknown as Promise<Blob>
 
   export const update = (spaceId: number, data: PatchSpaceRequestData) =>
     NewApiInstance.request<{ space: Space }>({

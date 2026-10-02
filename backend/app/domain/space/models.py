@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 
 from sqlalchemy import (
@@ -6,6 +6,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     DateTime,
+    ForeignKey,
     Index,
     Integer,
     Sequence,
@@ -27,6 +28,7 @@ space_domain_group_seq = Sequence("space_domain_group_seq")
 space_domain_group_domain_seq = Sequence("space_domain_group_domain_seq")
 space_member_seq = Sequence("space_member_seq")
 space_invite_code_seq = Sequence("space_invite_code_seq")
+space_material_seq = Sequence("space_material_seq")
 
 
 class Space(Base):
@@ -143,6 +145,90 @@ class SpaceCategory(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class SpaceMaterialVisibility(str, Enum):
+    """谁能看到这一份空间资料。
+
+    两档，没有第三档：「所有成员」是**这个板子里的人**（``SpaceRepository.is_member``
+    判的那一批）都能看；「仅管理员」只有所有者与管理员看得到，成员看清单时这一行
+    根本不出现。档位是**读**的开关，不是写的开关 —— 两档都由管理员传。
+    """
+
+    MEMBERS = "members"
+    ADMINS = "admins"
+
+
+class SpaceMaterial(Base):
+    """挂在题目板上的一份共用材料 (#944) —— 一个空间、一份文件、一档可见性。
+
+    和 ``task_attachment`` 同构，理由也一样：``material`` 表自己有名字和地址、
+    没有归属，**一份文件在不同的上下文里可以是不同东西**，所以归属写在另一边，
+    这里只管「哪个板子上的哪一份」和「谁看得到」。
+
+    **为什么不复用 ``task_attachment``：** 那是「某道题的附件」，判据是「看得见这道
+    题的人」；这里是「这块板共用的资料」，判据是「这块板的成员 / 管理员」。两者
+    的读者范围不同（材料可以发给没领任何题的人），写在一张表上会让两套判据在
+    同一个 where 里互相污染。
+
+    **为什么挂在 ``material`` 而不是 ``attachment``：** 教学配置里的
+    ``material_ids``（``app.domain.task.protocol.Teaching``）references 的正是
+    ``material``，题目上勾选参考资料是把这里的 ``material_id`` 直接写进去，中间
+    不需要做 id 翻译。
+
+    删除是**软删这一行**，``material`` 行与存储上的字节都留着 —— 同
+    ``TaskAttachmentService.remove`` 的理由：一道题删掉附件不该让另一个引用它的
+    地方变成裂图。
+    """
+
+    __tablename__ = "space_material"
+    # 两个索引与迁移 ``c1f7a09b34d2`` 一一对齐。挪进模型是因为这里是
+    # ``Base.metadata`` 的来源：少写一个，下一次 ``alembic revision --autogenerate``
+    # 就会生一条「删掉这个索引」的假迁移。同 ``SpaceMember`` / ``SpaceAnnouncement``。
+    __table_args__ = (
+        # 同一块板上同一份文件只挂一次。部分索引（``deleted_at IS NULL``）：撤下来
+        # 之后再传回去是允许的，那时它是一条新的生命。
+        Index(
+            "uq_space_material_live",
+            "space_id",
+            "material_id",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        # 「这份文件在不在某块板的仅管理员档里」—— 通用读路由 ``GET /materials/{id}``
+        # 每次都要问一句，按 ``material_id`` 找。
+        Index("ix_space_material_material_id", "material_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, space_material_seq, primary_key=True)
+    space_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("space.id"), nullable=False
+    )
+    # ``material.id`` 是 Integer（autoincrement），外键类型必须一致。
+    # ``ondelete="CASCADE"``：素材行被 ``DELETE /materials/{id}`` 删掉时，这条关联
+    # 跟着走 —— 关联指的是那份文件，文件没了它就无从谈起。没有它这条外键会把一条
+    # 既有接口打坏（那张表是整张 schema 里唯一指向 ``material.id`` 的外键，删除
+    # 会撞 500）。
+    material_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("material.id", ondelete="CASCADE"), nullable=False
+    )
+    visibility: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=SpaceMaterialVisibility.MEMBERS.value
+    )
+    download_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
     )
     deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

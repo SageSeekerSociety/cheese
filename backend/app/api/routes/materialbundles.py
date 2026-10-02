@@ -5,12 +5,14 @@ from fastapi import APIRouter, Body, Depends, Path, Query
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError
+from app.core.storage import get_storage_backend
 from app.db.session import get_db
 from app.domain.materials.repositories import (
     MaterialBundleRepository,
     MaterialRepository,
 )
 from app.domain.materials.services import MaterialBundleService
+from app.domain.space.material_service import SpaceMaterialService
 
 router = APIRouter(prefix="/material-bundles", tags=["MaterialBundles"])
 
@@ -52,8 +54,21 @@ async def get_material_bundle(
     bundle_id: Annotated[int, Path(ge=0)],
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: MaterialBundleService = Depends(get_bundle_service),
+    db=Depends(get_db),
 ) -> dict:
     bundle = await service.get_bundle_detail(bundle_id)
+    # 「仅管理员」那一档的闩，与 ``GET /materials/{id}`` 上那道是同一句判据。这个
+    # 返回体里同样带着素材的 ``url`` —— ``/uploads/...`` 下一条公开可猜的路径，
+    # 而这道门只要求登录。不筛的话，任何登录用户 POST 一个引用该 id 的空壳包再
+    # GET 回来就能拿到它，档位就只剩一个标签（素材 id 是小整数，可枚举）。
+    # 引用在包里、而看的人读不到的素材，直接从清单里不出现。
+    gate = SpaceMaterialService(session=db, storage=get_storage_backend())
+    found = bundle.get("materials") or []
+    readable = await gate.readable_material_ids(
+        material_ids=[material["id"] for material in found],
+        user_id=auth_user.user_id,
+    )
+    bundle["materials"] = [material for material in found if material["id"] in readable]
     return {"code": 200, "message": "OK", "data": {"materialBundle": bundle}}
 
 
