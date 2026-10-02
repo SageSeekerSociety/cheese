@@ -331,6 +331,7 @@ defineExpose({
                 :scroll-tick="scrollTick"
                 :agent-name="agentName"
                 :can-rewrite="!!rewriteSelection && editable"
+                :can-ask-agent="!!agentHandle"
                 @open-topic="emit('open-topic', $event)"
                 @mention-click="emit('mention-click', $event)"
                 @open-file="emit('open-file', $event)"

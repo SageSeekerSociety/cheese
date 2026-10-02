@@ -44,8 +44,10 @@ const props = withDefaults(
     agentName: string
     /** 能不能让 AI 队友改选中的字（有这个动作时才给那一项）。 */
     canRewrite?: boolean
+    /** 认得出 AI 队友（知道它的点名）：评论里问它，它才收得到。 */
+    canAskAgent?: boolean
   }>(),
-  { editor: null, slashMenu: null, scrollTick: 0, canRewrite: false }
+  { editor: null, slashMenu: null, scrollTick: 0, canRewrite: false, canAskAgent: false }
 )
 
 const emit = defineEmits<{
@@ -498,7 +500,7 @@ defineExpose({ onHover, onEdited })
     <button type="button" :aria-label="t('work.room.doc.commentOnSelection')" @click="commentOnSelection()">
       {{ t('work.room.comments.comment') }}
     </button>
-    <button type="button" @click="commentOnSelection(true)">
+    <button v-if="canAskAgent" type="button" @click="commentOnSelection(true)">
       {{ t('work.room.docEdit.ask', { agent: agentName }) }}
     </button>
     <button v-if="rewritable(commentCta)" type="button" @click="rewriteSelection">

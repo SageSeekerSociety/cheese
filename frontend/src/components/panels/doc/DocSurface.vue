@@ -75,6 +75,8 @@ const props = withDefaults(
     agentName: string
     /** 选中浮条上给不给「让…改」。 */
     canRewrite?: boolean
+    /** 选中浮条上给不给「问…」。 */
+    canAskAgent?: boolean
   }>(),
   {
     topicList: () => [],
@@ -83,6 +85,7 @@ const props = withDefaults(
     openCommentId: null,
     scrollTick: 0,
     canRewrite: false,
+    canAskAgent: false,
     title: '',
   }
 )
@@ -451,6 +454,7 @@ const emptyPlaceholder = computed(() => JSON.stringify(t('work.room.doc.emptyPla
       :scroll-tick="scrollTick"
       :agent-name="agentName"
       :can-rewrite="canRewrite"
+      :can-ask-agent="canAskAgent"
       @open-comment="emit('open-comment', $event)"
       @rewrite="emit('rewrite', $event)"
       @open-link="openLink"

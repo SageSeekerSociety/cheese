@@ -85,7 +85,7 @@ function deferred<T>() {
   })
   return { promise, resolve }
 }
-async function mountDoc(html: string, fetch?: () => Promise<Block[]>) {
+async function mountDoc(html: string, fetch?: () => Promise<Block[]>, askAgent = true) {
   const topicId = ref(`surface-comment-${++serial}`)
   const editable = ref(true)
   const openId = ref<string | null>(null)
@@ -118,6 +118,7 @@ async function mountDoc(html: string, fetch?: () => Promise<Block[]>) {
                 openCommentId: openId.value,
                 agentName: '芝士',
                 canRewrite: true,
+                canAskAgent: askAgent,
                 onOpenComment: (payload: { anchorId: string | null; quote: string; ask: boolean }) =>
                   captured.push(payload),
                 onRewrite: (range: { from: number; to: number }) => rewrites.push(range),
@@ -367,5 +368,11 @@ describe('asking the AI teammate from a selection', () => {
     f.ed.commands.setTextSelection({ from: span(f.ed, '一段').from, to: span(f.ed, '第二').to })
     await waitFor(() => expect(document.querySelector('.doc-comment-cta')).not.toBeNull())
     expect(screen.queryByRole('button', { name: t('work.room.docEdit.rewrite', { agent: '芝士' }) })).toBeNull()
+  })
+
+  it('does not offer asking it when the teammate cannot be named', async () => {
+    const f = await mountDoc('<p>数据量到一千万行时开始评估。</p>', undefined, false)
+    await select(f.ed, '一千万')
+    expect(screen.queryByRole('button', { name: t('work.room.docEdit.ask', { agent: '芝士' }) })).toBeNull()
   })
 })
