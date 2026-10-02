@@ -44,6 +44,7 @@ import PanelSite from './panels/PanelSite.vue'
 // 是「页签条要的那份数据」了，所以从 `workPanelTabs` 取。
 import { workPanelTabs } from './panels/panelTabList'
 import PanelTabs, { type PanelTab } from './panels/PanelTabs.vue'
+import { confirmAnnotationDiscard } from './panels/preview/annotationDiscard'
 import RoutinePanelHost from './routine/RoutinePanelHost.vue'
 
 import { useCommands } from '@/commands'
@@ -163,7 +164,11 @@ function ensureFileFromUrl(key: string | null) {
 
 // Every move the panel makes goes through here, so the address always says what
 // is on screen — 「你来看一眼这个 diff」的链接成立的前提就是这个。
-function setTab(key: string) {
+//
+// 换页签会离开图片那格，图上没发出去的标注就跟着没了，所以先问一句（确认不了就
+// 留在原地）。切工具不算——那件小事不经过这里。
+async function setTab(key: string) {
+  if (key !== active.value && !(await confirmAnnotationDiscard())) return
   settled.value = true
   active.value = key
   if (key === 'changes') markChangesSeen()
@@ -539,16 +544,21 @@ function pinFile(path: string) {
 }
 
 // 关掉的是正看着的那一格，就落到它旁边那一格；自由区空了就回总览。
-function closeFile(path: string) {
+//
+// 关掉正看着的那一格＝离开一块正在标注的图，所以先问一句，问完再动手拆。后台那几格
+// （没在看）不会拦：它们本就登记不上（见 `annotationDiscard`）。
+async function closeFile(path: string) {
   const at = openFiles.value.findIndex((f) => f.path === path)
   if (at < 0) return
+  const key = fileKey(path)
+  const wasActive = active.value === key
+  if (wasActive && !(await confirmAnnotationDiscard())) return
   const next = openFiles.value.filter((f) => f.path !== path)
   setFiles(next)
-  const key = fileKey(path)
   const nextMounted = new Set(mounted.value)
   nextMounted.delete(key)
   mounted.value = nextMounted
-  if (active.value !== key) return
+  if (!wasActive) return
   const neighbour = next[Math.min(at, next.length - 1)]
   setTab(neighbour ? fileKey(neighbour.path) : 'overview')
 }
