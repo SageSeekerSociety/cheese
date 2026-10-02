@@ -38,7 +38,6 @@ class PlanCreate(BaseModel):
     credits_per_period: float | None = Field(default=None, ge=0)
     windows: list[PlanWindow] = []
     model_tiers: list[Tier] | None = ["included"]
-    allows_subscription: bool = False
 
 
 class PlanUpdate(BaseModel):
@@ -49,7 +48,6 @@ class PlanUpdate(BaseModel):
     credits_per_period: float | None = Field(default=None, ge=0)
     windows: list[PlanWindow] | None = None
     model_tiers: list[Tier] | None = None
-    allows_subscription: bool | None = None
 
 
 class TeamPlanUpdate(BaseModel):

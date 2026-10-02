@@ -61,10 +61,9 @@ class Plan(Timestamps, Base):
     # ``[{"hours": 5, "credits": 100}, ...]``: at most that many credits within
     # any window of that many hours.
     windows: Mapped[list] = mapped_column(JSON, default=list)
-    # The gateway model tiers its teams may use; NULL is every tier.
+    # The model tiers its teams may use, the subscription (Claude) models
+    # included; NULL is every tier.
     model_tiers: Mapped[list | None] = mapped_column(JSON, nullable=True)
-    # Whether its teams may use the platform's subscription (Claude) models.
-    allows_subscription: Mapped[bool] = mapped_column(Boolean, default=False)
     unlimited: Mapped[bool] = mapped_column(Boolean, default=False)
     # Only an administrator can put a team on it, and only the console lists it.
     admin_only: Mapped[bool] = mapped_column(Boolean, default=False)

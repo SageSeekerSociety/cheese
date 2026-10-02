@@ -30,7 +30,6 @@ EDITABLE = (
     "credits_per_period",
     "windows",
     "model_tiers",
-    "allows_subscription",
 )
 MODEL_TIERS = frozenset({"included", "premium", "frontier"})
 AUDIENCES = frozenset({"personal", "team", "both"})
@@ -45,7 +44,6 @@ def plan_out(plan: Plan) -> dict:
         "period": plan.period,
         "windows": list(plan.windows or []),
         "model_tiers": None if plan.model_tiers is None else list(plan.model_tiers),
-        "allows_subscription": plan.allows_subscription,
         "unlimited": plan.unlimited,
         "admin_only": plan.admin_only,
     }
@@ -146,7 +144,6 @@ class PlanService:
             period="month",
             windows=data.get("windows") or [],
             model_tiers=data.get("model_tiers", ["included"]),
-            allows_subscription=bool(data.get("allows_subscription")),
             unlimited=False,
             admin_only=False,
         )

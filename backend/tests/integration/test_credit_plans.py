@@ -467,3 +467,16 @@ def test_a_shared_team_shows_its_member_count_and_a_personal_one_its_owners_nick
     assert personal["personal_owner_nickname"] == "林知远"
     assert personal["member_count"] is None
 
+
+def test_free_leaves_out_claude_sonnet_by_its_tier_and_reserve_allows_it(client, admin):
+    from app.domain.agent.market import subscription_model_listings
+
+    [sonnet] = [m for m in subscription_model_listings() if m.id == "sonnet"]
+    plans = {
+        p["key"]: p
+        for p in client.get("/admin/plans", headers=admin).json()["data"]["plans"]
+    }
+
+    assert sonnet.tier not in plans["free"]["model_tiers"]
+    # Reserve allows every tier, the subscription models' included.
+    assert plans["reserve"]["model_tiers"] is None
