@@ -314,7 +314,7 @@ def test_a_batch_whose_session_fails_after_a_restart_stays_held_without_replay(
             assert len(holders) == 1
             assert holders[0].completed_at is None
             assert str(original.id) not in holders[0].released_block_ids
-            assert consumed_turn(original.meta) is None
+            assert consumed_turn(original) is None
 
     client.portal.call(original_input_is_still_held)
     _say(client, topic_id, "第二句")
