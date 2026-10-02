@@ -1,0 +1,1149 @@
+# Handwritten navigation notes: format/coverage are checked; semantics require source review.
+# Fixed source: a5f8812d2c3f1cffc8aca9c387002f092a3ce3e9 plus main ac83786b. Profile: route-index-local-uploads-v1.
+# Addresses cover the real regenerated profiled snapshot in scripts/route_index.json.
+# Each address is explicit. Catalog ids only share explanatory text; the app never reads this sidecar.
+# Preserve duplicate leaf registrations in scripts/route_index.json; a shared address note is not a leaf id.
+# Intent still unconfirmed: /debug/turns, /frontend-errors, /market/nodes, question followers,
+# cross-user favorites and learning-task team eligibility. Notes record existing gates, not policy approval.
+version: 1
+auth_entries:
+  platform.admin: "PlatformAdminDep -> admin_common.require_platform_admin: ActorResolver.resolve, authz.policy.refuse_management_action (including agent binding), then AdminService.require_admin. Configured root admins and platform_admins are the allow-list. Source: app/api/routes/admin_common.py."
+  feedback.admin: "FeedbackAdminDep -> admin_feedback.require_feedback_admin: resolve caller, refuse_management_action with IdentityService agent binding, then FeedbackService.require_admin. Source: app/api/routes/admin_feedback.py."
+  actor.project: "ActorResolver.resolve(fallback_handle=None, project_id=...) then authorize_project; app/api/auth.py checks project membership when authz_enforce_topic_access is enabled, with its explicit global sandbox development override. The setting is a real limit, not an unconditional login claim."
+  actor.topic: "ActorResolver.resolve in the actual room/project then authorize_topic, directly or through topics._actor_in_place / room_files._in_room. app/api/auth.py applies the roster policy when authz_enforce_topic_access is enabled; ordinary calls do not force that setting. Explicit fallback handles remain attribution, not credential proof."
+  actor.topic.enforced: "ActorResolver.resolve in the actual room/project then authorize_topic(enforce=True); ignores the topic-access kill switch, retaining the resolver global sandbox development override. Source: app/api/auth.py and the cited handler."
+  actor.topic.verified: "Room-context ActorResolver.resolve + authorize_topic, plus an explicit authenticated-caller check or require_verified_caller in the cited handler/helper. Topic membership retains the authz_enforce_topic_access setting unless enforce=True is specified there."
+  project.reader: "api/place.project_reader: optional authorized_place verifies that the named room belongs to this project then resolves/authorizes that room; otherwise resolves and authorize_project. Room title results are filtered by readable_topic_ids where used. Source: app/api/place.py,48; resolver access setting applies."
+  project.manager: "ActorResolver resolves/authorizes project and MemberService.require_manager decides management access. This is the membership service seam, not an admin router-name convention. Source: app/domain/membership/services.py and cited handler."
+  project.steward: "Depends(require_project_steward), from agent_credential: verified actor and MemberService.manages(project_id, handle); project owner or owner/admin of its team. An agent with the same standing is admitted. Source: app/api/routes/agent_credential.py."
+  project.owner: "projects._project_owner: require_verified_caller, project.owner_handle equality; members who are not owners are refused and outsiders get NotFound. Does not use authorize_project, so the one permitted unarchive write can cross the archive guard. Source: app/api/routes/projects.py."
+  project.create: "projects.create_project resolves the caller (legacy fallback is explicit), checks _require_team_membership and _require_claim before attaching team/task. These association checks are independent of the topic-access kill switch. Source: app/api/routes/projects.py and its two helpers."
+  project.list: "projects.list_projects resolves/rejects failed credentials; handles caller-visible project listing or authorize_team for a team filter and require_verified_caller for the self filter. Source: app/api/routes/projects.py. Different query branches are intentional, not a universal public listing."
+  task.visibility: "ActorResolver.resolve then authorize_task delegates visibility to domain/task/TaskVisibilityService, subject to authz_enforce_topic_access; nonexistent task returns the unchanged empty result. Source: app/api/auth.py and projects.projects_for_task."
+  team.access: "ActorResolver.resolve then authorize_team requires verified team membership when authz_enforce_topic_access is enabled. Source: app/api/auth.py; cited handler."
+  artifact.keeper: "projects_artifacts._artifact_keeper: ProjectService.get_or_404, ActorResolver.require_verified_caller(project_id), authorize_project. Index records those concrete checks; the helper human-only comment is not treated as a separate implemented policy. Source: app/api/routes/projects_artifacts.py."
+  library.keeper: "library._library_keeper: ProjectService.get_or_404, require_verified_caller(project_id), authorize_project. The index names implemented checks rather than granting a new human/agent category. Source: app/api/routes/library.py."
+  review.task: "accept._task_actor: resolve using task room/project, authorize_topic, explicitly require authenticated actor and TaskService.require_in_room. AcceptService decides filing/readiness/reviewer admission for the operation. Source: app/api/routes/accept.py; domain/review/services.py."
+  review.card: "accept._card_actor resolves the card actual room/project and calls authorize_topic; handlers explicitly reject unauthenticated callers. AcceptService owns reviewer/decision/revoke rules, including management operations. Source: app/api/routes/accept.py and domain/review/services.py."
+  review.download: "accept.download_card_deliverable resolves the card project and authorize_project before artifact snapshot delivery. It is the project access path rather than _task_actor. Source: app/api/routes/accept.py."
+  user.session: "Depends(require_auth_user) rejects guest after numeric-account access-token verification (or X-User-Id only in non-compose development/test); this shared numeric seam does not itself consult sign-in session revocation. Domain service and cited handler retain ownership checks. get_auth_user alone is not used as a synonym. Source: app/auth/checker.py and app/common/auth.py."
+  assistant.task: "assistant AuthUser -> require_auth_user, _readable_task -> tasks._ensure_task_readable for task-scoped operations; conversation _owned binds user_id for reads/asks. Source: app/api/routes/assistant.py,74,107."
+  controller.room: "agent_control.controller: resolve in canonical room/project, explicitly require authenticated actor, authorize_topic(enforce=True). Source: app/api/routes/agent_control.py."
+  notification.recipient: "ActorResolver.resolve_recipient binds the verified/requested recipient to project scope; mutations call alerts._acting_recipient with allow_anonymous=False. List/count endpoints retain the resolver own empty/recipient behavior. Source: app/api/routes/alerts.py and app/api/auth.py."
+  notification.create: "alerts.create_notification: require_verified_caller then authorize_topic(enforce=True) or authorize_project; named recipients pass topic_admits_handle / may_read_project. This handler has its own gate, outside main._CHEESE_WRITE_PATHS. Source: app/api/routes/alerts.py."
+  awaiting.self: "awaiting.list_awaiting_me resolves caller; an unauthenticated caller gets an empty page, and authenticated results use the credential handle/user_id. This is an explicit empty-response behavior, not a blanket require-login gate. Source: app/api/routes/awaiting.py."
+  device.flow.start: "public(device enrollment start): connector.device_start issues a pending DeviceService code; binding requires the separate logged-in approval route. No route login dependency. Source: app/api/routes/connector.py."
+  device.flow.code: "DeviceService.poll / code_device_name checks the supplied pending device_code, including expiration. The code is the approval-flow secret; no preexisting user login is required. Source: app/api/routes/connector.py,205; app/domain/device/service.py."
+  device.connect: "connector.device_connect resolves caller, explicitly rejects unauthenticated caller, authorize_project, then assigns the pending code to project. Source: app/api/routes/connector.py."
+  device.user: "connector._require_user uses ActorResolver.resolve and requires authenticated actor.user_id; DeviceService owner operations additionally bind the supplied device id to that user. Source: app/api/routes/connector.py and domain/device/service.py."
+  device.team: "connector._require_user plus TeamRepository.is_team_member or DeviceService team ownership checks on registration/removal. Source: app/api/routes/connector.py and domain/device/service.py."
+  device.agent.ws: "connector.agent_socket authenticates durable device session token via device.owner_reads.device_for_token from X-Cheese-Session or token query; binds the socket to that device. Source: app/api/routes/connector.py."
+  device.viewer.ws: "connector._may_view_screen verifies query access token and actual screen project-member/owner or topic roster membership before the viewer socket. Source: app/api/routes/connector.py."
+  local.device.owner: "local_dirs._require_user requires verified user_id, then _require_owned_device checks Device.owner_user_id. All selected-directory and access-log operations stay bound to caller device ownership. Source: app/api/routes/local_dirs.py."
+  machine.manager: "machines._require_project_access resolves an authenticated actor; reads require current numeric user_id and TeamRepository.is_team_member, while delete/power action delegates MachineService.require_manage_authority (team owner/admin and agent standing). Source: app/api/routes/machines.py; domain/machine/services.py."
+  dashboard.board: "dashboard._require_board_reader: require_verified_caller and membership in at least one project in the space board via may_read_project; global sandbox development override is explicit. Source: app/api/routes/dashboard.py."
+  dashboard.person: "dashboard._signed_in resolves a verified handle; DashboardService filters profile/topics by viewer access. forget_understanding deletes only facts about that same viewer. Source: app/api/routes/dashboard.py,186,198,232."
+  docs.dev.cookie: "docs_site.check_dev_access verifies the dev docs cookie through docs_site.access; internal proof or holder still in AdminService allow-list is required for nginx auth_request. Source: app/api/routes/docs_site.py."
+  docs.agent: "docs_site._agent_scope resolves in named canonical room/project and calls authorize_topic (ordinary access setting applies), then library.reads_dev_docs checks that project dev-doc scope. No separate unconditional require_verified_caller is invented. Source: app/api/routes/docs_site.py."
+  docs.visit: "public(docs visit beacon) with optional get_optional_user_id attribution; random visitor id is accepted, unusable anonymous id is ignored, and visit rate limiting is not authorization. Source: app/api/routes/docs_visit.py."
+  feedback.read: "Feedback routes resolve optional caller, then FeedbackService.list_public / visible_row / may_see filters public, author, originating-room and admin visibility. _is_admin also applies refuse_management_action and agent-binding checks; it is not just an allow-list. Source: app/api/routes/feedback.py,260,336."
+  feedback.write: "Feedback routes explicitly require authenticated actor/handle; FeedbackService owns author/moderator rights. _is_admin adds refuse_management_action with IdentityService agent binding. create refuses agent direct filing in the service. Source: app/api/routes/feedback.py and domain/feedback/services.py."
+  feedback.proposal: "feedback_proposals._actor_in_topic resolves in actual room, authorize_topic, explicitly rejects unauthenticated actor; proposal mutations require the matching proposal block and service decision checks. Source: app/api/routes/feedback_proposals.py."
+  fetch.caller: "fetch.read_url calls require_verified_caller with the supplied project/topic context before URL retrieval. FetchService controls the separate outbound URL safety boundary. Source: app/api/routes/fetch.py; domain/fetch/guard.py."
+  integration.person: "integrations._person requires Actor.via=token and user_id; IntegrationService ownership checks bind personal connections/drafts to that handle. Source: app/api/routes/integrations.py."
+  integration.room: "integrations._in_room / _usable resolve actual room, authorize_topic(enforce=True), and IntegrationService.for_project ties connection to room project. Source: app/api/routes/integrations.py,139."
+  integration.oauth.state: "integrations._finish_feishu verifies the keyed INTEGRATION_STATE digest, loads that integration and exchanges code. No ordinary login dependency on provider callback. Source: app/api/routes/integrations.py."
+  mcp.member: "remote_mcp.member resolves actor, rejects failed credentials/anonymous caller, and checks actual project roster independently of the access kill switch. Source: app/api/routes/remote_mcp.py."
+  mcp.oauth.state: "remote_mcp.callback validates signed flow via service.read_state then service.finish_connect (code, issuer); no ordinary login dependency on provider callback. Source: app/api/routes/remote_mcp.py."
+  mcp.proxy: "remote_mcp.proxy requires scoped_token_claims from X-Cheese-Token and binds server forwarding to claimed project/room in remote_mcp service. Source: app/api/routes/remote_mcp.py."
+  memory.read: "memory.list_memory resolves/authorize_project and forbids user_handle different from actor.handle for about-person notes. Source: app/api/routes/memory.py."
+  memory.delete: "memory.delete_memory: require_verified_caller, resolve project from stored entry scope, authorize_project; person-scope suffix must match caller. Refusal uses NotFound. Source: app/api/routes/memory.py."
+  memory.files.read: "memory_files._readable: resolve/authorize_project; private files require matching handle or MemberService.manages. Source: app/api/routes/memory_files.py."
+  memory.files.write: "memory_files._writable invokes _readable, then private owner must equal caller even for managers; team scope uses the project reader access. _owner_of alone only validates scope and is not authorization. Source: app/api/routes/memory_files.py."
+  membership.service: "MemberService / InvitationService receive the resolved Actor and decide seat/remove/leave/invite standing; route resolution alone is not the gate. Source: app/api/routes/members.py,85,99,123; domain/membership/services.py."
+  invitation.verified: "members invitation inbox/respond/revoke calls require_verified_caller then InvitationService binds recipient or revoker standing. Source: app/api/routes/members.py onward; domain/membership/services.py."
+  routines.room: "routines._viewer / _routine_actor resolve in rule room and authorize_topic(enforce=True), then _sees_room; read lists filter readable rules. Source: app/api/routes/routines.py,182."
+  routines.manage: "routines._routine_actor -> enforced room access, then _require_manage / _person according to operation: ownership or project manager and person-only confirmation/run/pause decisions. Agent draft/update limits remain in those helpers. Source: app/api/routes/routines.py onward."
+  routines.create: "routines.create_routine uses _viewer(enforced room access); owner/speaker and draft-vs-confirmed state are decided by _speaker and _is_person. Source: app/api/routes/routines.py."
+  skill.project: "project_skills._in_project / _load bind skill actual project, use enforced room access when topic is supplied, otherwise authorize_project. Source: app/api/routes/project_skills.py,127."
+  environment.user: "project_environment.User -> require_auth_user; access resolves user handle and checks roster for reads / MemberService.manages for writes, plus archive-write guard. room/apply operations bind the room and idle requirement. Source: app/api/routes/project_environment.py,54,79."
+  environment.overview: "project_environment.overview_access requires scoped claims p=URL project and t=project.root_topic_id; recovery repair additionally requires idle and matching incident. Source: app/api/routes/project_environment.py."
+  export.human: "domain/project/export.create_archive requires token user_id, rejects IdentityService agent binding, checks may_read_project and filters readable_topic_ids. This is the route delegated authorization seam. Source: app/domain/project/export.py."
+  context.rooms: "project_context._readable_rooms uses enforced supplied-room access or authorize_project, then readable_topic_ids filters every search group. Source: app/api/routes/project_context.py."
+  site.access: "ActorResolver resolves verified actor then site.services.require_site_access, for publication/read or minting a short-lived site grant. Source: app/api/routes/project_sites.py and site_sessions.py; app/domain/site/services.py."
+  preview.access: "preview_sessions resolves authenticated actor then api/preview_host.require_preview_access, before minting resource-bound preview grant. Source: app/api/routes/preview_sessions.py; app/api/preview_host.py."
+  workspace.access: "Decorator Depends(workspace.require_project_access): verify_scoped_token for project or auth.caller.may_access_project, then actual requested room/task containment + authorize_topic, with archive/task-ended PUT guards. Source: app/api/routes/workspace.py."
+  document.member: "topics_comment_threads.member_in_room uses _actor_in_place, doc_identity.operation_actor and authorize_topic(enforce=True); mutations also bind comment to actual room. Source: app/api/routes/topics_comment_threads.py."
+  document.human: "topics_doc_ai.human_in_room uses canonical room check, _actor_in_place, doc_identity.human_operation_actor (verified human, not agent identity), and authorize_topic(enforce=True). Source: app/api/routes/topics_doc_ai.py; app/api/doc_identity.py."
+  living.document: "living_docs resolves room actor; state-changing/history/receipt/restore branches enforce topic access and use doc_identity.operation_actor; plain get uses _actor_in_place. Source: app/api/routes/living_docs.py. Endpoint-specific branch is kept in the map below."
+  editor.link: "room_files.editor_fetches_file authenticates the signed/expiring document link with documents.editor.read_link; that link is the only credential. Source: app/api/routes/room_files.py; domain/documents/editor.py."
+  editor.callback: "room_files.editor_saves_file validates the link via editor.read_link and callback JWT/body via editor.verify_callback before saving. Internal download URL validation is a separate safety check. Source: app/api/routes/room_files.py; domain/documents/editor.py."
+  capability.execution: "execution.execute validates scoped cheese claims, then device.owner_reads session_execution / legacy_execution and execution_device_authorized bind project/room/session/device. No ordinary Bearer dependency. Source: app/api/routes/execution.py; domain/device/owner_reads.py."
+  capability.preview.ws: "app_preview.preview_tunnel verifies scoped claims including project, room and teammate; wire.accepts_launch restricts the running launch before registration. Source: app/api/routes/app_preview.py."
+  capability.forge: "forge_token uses scoped_token_claims from caller credential, project binding and claimed scope before transport/token minting; scope=\"project\" capability is specific here. Global sandbox is not silently a project identity. Source: app/api/routes/forge_token.py,140,260."
+  capability.git: "git_http._task_for / task_workspace verify scoped project/room capability and bind the task to that project before workspace or snapshots; open additionally requires token_agent_handle. Source: app/api/routes/git_http.py and cited handler."
+  capability.llm: "llm_proxy validates _caller_token via scoped_token_claims; admission additionally binds agent/model, budget and policy gate. proxy reuses request capability instead of exposing provider credentials. Source: app/api/routes/llm_proxy.py,355."
+  capability.llm.ws: "llm_tunnel.tunnel validates scoped_token_claims from X-Cheese-Session or token query before dialing only the configured meter listener; meter performs its own CONNECT/token/host gate. Source: app/api/routes/llm_tunnel.py."
+  capability.session.lease: "topics_compute.acquire_session_work_lease requires scoped claims then machine.session_work.ensure checks actual topic/session/lease scope. Source: app/api/routes/topics_compute.py; domain/machine/session_work.py."
+  capability.cli: "sandbox.get_cheese_cli requires valid scoped cheese claims before serving the deployed CLI source. Source: app/api/routes/sandbox.py."
+  sandbox.global: "sandbox.trigger_storage_sweep accepts only is_global_sandbox_token; not a project/room identity. Source: app/api/routes/sandbox.py."
+  backend.errors: "backend_log._room accepts scoped_token_claims (claims override body IDs) or explicit global sandbox token; missing/invalid proof is Unauthorized. Source: app/api/routes/backend_log.py,57."
+  webhook.token: "webhooks.receive_webhook verifies the per-room webhook token through webhook_service.verify, then resolves actual room/project; callback provider token is the credential. Source: app/api/routes/webhooks.py."
+  github.manager: "github_install._manager resolves authenticated actor and MemberService.require_manager for repository connect/install authorization. Source: app/api/routes/github_install.py."
+  github.state: "GitHub provider callback verifies signed install/account-link state and scopes the resulting binding; no ordinary login dependency at callback. Source: app/api/routes/github_install.py; github_account_link.py."
+  app.sign_in.code: "app_sign_in.finish_app_sign_in requires same origin, signed code, PKCE verifier challenge and single-use claim before issuing session. Source: app/api/routes/app_sign_in.py."
+  notice.ws: "notifications_live.live verifies dedicated notice token from Authorization then _signed_in confirms active user session, periodically rechecking. Source: app/api/routes/notifications_live.py."
+  topic.members.manage: "topic_members resolves authenticated actor; TopicMemberService decides roster/role management for actual topic. Source: app/api/routes/topic_members.py onward; domain/topic_membership/services.py."
+  topic.archive: "topics archive/unarchive resolves/authorize_topic and TopicMemberService.require_archive_manager; archive also checks cleanup policy in the handler. Source: app/api/routes/topics.py onward."
+  topic.names: "topics.list_topic_names resolves/rejects failed credential and limits names to caller visible project IDs; not a raw global room directory. Source: app/api/routes/topics.py."
+  cheese.room.gate: "main.cheese_token_gate matches this exact POST path in _CHEESE_WRITE_PATHS: valid scoped cheese token, explicit global sandbox override or project-agent credential with actual room authorization, followed by handler room actor check. Source: app/main.py,721."
+  cheese.project.gate: "main.cheese_token_gate matches a project-scoped POST path in _CHEESE_WRITE_PATHS and checks project scope / explicit global sandbox / authorized project-agent credential. Source: app/main.py,721."
+  memory.closed.write: "POST project memory remains in main.cheese_token_gate, but projects.add_memory unconditionally rejects the obsolete write with ValidationError. No memory is persisted; this is a closed operation, not a newly granted permission. Source: app/api/routes/projects.py; app/main.py."
+  public.catalogue: "public(catalogue): the cited read handler returns published static/catalogue choices without credential dependencies. This entry is only used for agent types, public resource limits, installer and public metadata reads verified below."
+  public.health: "public(health/readiness/metrics/version): no route credential dependency or authorization call. Handler exposes health/build/metrics data as currently implemented. Source: app/api/routes/health.py; app/main.py,842."
+  public.legal: "public(legal document text/version): no credential dependency; consent operations use require_auth_user separately. Source: app/api/routes/legal.py onward."
+  public.uploads: "public(local uploaded asset delivery): no credential check; _safe_path requires contained existing storage path, executable suffixes are served as download/inert content. Fixed local profile registers /uploads/{key:path}. Source: app/api/routes/uploads.py,61."
+  public.mcp.metadata: "public(remote MCP OAuth client metadata): publishes only the OAuth client declaration; management and callbacks use separate gates. Source: app/api/routes/remote_mcp.py."
+  observed.debug: "当前路由无认证或授权校验；公开访问意图尚未确认。GET /debug/turns returns agent execution lifecycle summaries. Source: app/main.py."
+  observed.frontend.errors: "当前路由无认证或授权校验；公开访问意图尚未确认。仅校 project/topic 存在；frontend_log.intake 限流/去重不构成授权。Source: app/api/routes/frontend_log.py."
+  observed.compute.nodes: "当前路由无认证或授权校验；公开访问意图尚未确认。GET /market/nodes returns compute availability and deployment active-turn count. Source: app/api/routes/market.py."
+  project.can_manage.read: "ActorResolver.resolve + authorize_project gates the read; MemberService.require_manager is caught to return can_manage true/false, not to reject a nonmanager. Source: projects.get_topic_naming and projects_run_config.get_default_model/get_compute_configs."
+  project.private.chat: "projects.get_private_chat calls require_verified_caller; authenticated actors must pass authorize_project and be one of the named DM participants. Explicit global sandbox development override remains in resolver. Source: app/api/routes/projects.py."
+  chat.ws: "chat.chat reads access credential from token query, constructs ActorResolver with bearer and no cheese token, applies authz.policy.refuse_unauthenticated_chat, then resolves actual task/room and authorize_topic for membership. Topic access setting applies to the membership step, not the initial login refusal. Source: app/api/routes/chat.py; domain/authz/policy.py."
+  team.live.ws: "team_live.team_live reads access credential from token query, constructs ActorResolver with bearer and no cheese token, requires resolve(fallback_handle=None) to be authenticated, then authorize_team(actor, team_id). AuthenticationRequiredError and ForbiddenError map to the room socket auth_expired/forbidden codes and close 1008. Source: app/api/routes/team_live.py; app/api/auth.py."
+  routines.list: "routines.list_routines uses _viewer(enforced room access) for topic-filtered reads or resolve/authorize_project otherwise, then _readable_rules filters each rule. Source: app/api/routes/routines.py."
+  library.save.shown: "topics_shown.save_shown_to_library uses require_verified_caller(project_id) then authorize_project before save_to_library. It does not call the library route helper. Source: app/api/routes/topics_shown.py."
+  public.framework.docs: "public(FastAPI OpenAPI/Swagger/ReDoc): framework routes generated by app construction, with no application route credential dependency; effective methods include actual GET and HEAD. Source: app/main.py."
+  legacy.answers.list_answers: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); source: backend/app/api/routes/answers.py:56, backend/app/auth/checker.py:142"
+  legacy.answers.vote_answer: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); answer id bound to path question before action; source: backend/app/api/routes/answers.py:102, backend/app/auth/checker.py:142"
+  legacy.answers.delete_answer_comment: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); comment bound to addressed answer/question and only discussion author may delete; answer id bound to path question before action; source: backend/app/api/routes/answers.py:224, backend/app/auth/checker.py:142"
+  legacy.answers.update_answer: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); AnswersService compares created_by_id with authenticated user; only answer author may mutate; source: backend/app/api/routes/answers.py:293, backend/app/auth/checker.py:142, backend/app/domain/answers/services.py:262, backend/app/domain/answers/services.py:272"
+  legacy.attachments.get_attachment_detail: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); _ensure_may_read allows uploader; else task-linked file requires publisher/board manager/participant; else loose images are readable by any signed-in account and other loose files require uploader; source: backend/app/api/routes/attachments.py:164, backend/app/auth/checker.py:142, backend/app/api/routes/attachments.py:65, backend/app/domain/task/attachment_service.py:187"
+  legacy.attachments.delete_attachment: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); AttachmentService.delete requires meta.uploaderId == authenticated user; source: backend/app/api/routes/attachments.py:220, backend/app/auth/checker.py:142, backend/app/domain/attachment/services.py:180"
+  legacy.avatars.get_default_avatar: "public(avatar bytes; no account dependency; AvatarService.get_default_raw and inert stored-avatar response); source: backend/app/api/routes/avatars.py:161"
+  legacy.avatars.get_avatar_by_id: "public(avatar bytes by id; no account dependency; AvatarService.get_avatar_raw and inert stored-avatar response); source: backend/app/api/routes/avatars.py:212"
+  legacy.comments.update_comment: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); CommentService compares created_by_id with authenticated user; only comment author may mutate; source: backend/app/api/routes/comments.py:105, backend/app/auth/checker.py:142, backend/app/domain/comments/services.py:117, backend/app/domain/comments/services.py:130"
+  legacy.groups.update_group: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); GroupsService requires group OWNER or ADMIN; source: backend/app/api/routes/groups.py:106, backend/app/auth/checker.py:142, backend/app/domain/groups/services.py:178"
+  legacy.groups.delete_group: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); GroupsService requires group OWNER; source: backend/app/api/routes/groups.py:130, backend/app/auth/checker.py:142, backend/app/domain/groups/services.py:208"
+  legacy.groups.create_group_target: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); group target/question service requires group OWNER or ADMIN; source: backend/app/api/routes/groups.py:232, backend/app/auth/checker.py:142, backend/app/domain/groups/services.py:385, backend/app/domain/groups/services.py:477"
+  legacy.knowledge.create_knowledge: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); KnowledgeService requires membership of knowledge owning team for create/read/update/delete/vote; source: backend/app/api/routes/knowledge.py:47, backend/app/auth/checker.py:142, backend/app/domain/knowledge/services.py:320"
+  legacy.materialbundles.update_material_bundle: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); MaterialBundleService requires bundle creator_id == authenticated user; source: backend/app/api/routes/materialbundles.py:90, backend/app/auth/checker.py:142, backend/app/domain/materials/services.py:273, backend/app/domain/materials/services.py:299"
+  legacy.materials.get_material_detail: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); MaterialService.get_material checks existence; current read has no uploader gate; source: backend/app/api/routes/materials.py:92, backend/app/auth/checker.py:142, backend/app/api/routes/materials.py:97"
+  legacy.materials.delete_material: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); MaterialService requires uploader_id == authenticated user; source: backend/app/api/routes/materials.py:110, backend/app/auth/checker.py:142, backend/app/domain/materials/services.py:120"
+  legacy.questions.get_trending_questions: "public(question discovery trends; no account dependency; QuestionsService.get_trending_questions); source: backend/app/api/routes/questions.py:75"
+  legacy.questions.get_question_stats: "public(aggregate question statistics; no account dependency; QuestionsService.get_stats); source: backend/app/api/routes/questions.py:88"
+  legacy.questions.get_popular_search_terms: "public(aggregate question search terms; no account dependency; QuestionsService.get_popular_search_terms); source: backend/app/api/routes/questions.py:99"
+  legacy.questions.accept_answer: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); QuestionsService/QuestionInvitationService requires question created_by_id == authenticated user; source: backend/app/api/routes/questions.py:248, backend/app/auth/checker.py:142, backend/app/domain/questions/services.py:274, backend/app/domain/questions/services.py:374, backend/app/domain/questions/services.py:544"
+  legacy.questions.unaccept_answer: "authenticated(require_permission rejects guest, then checks Action.ADMIN, Resource.QUESTION, 'question_id'); QuestionsService additionally requires question created_by_id == authenticated user; source: backend/app/api/routes/questions.py:264, backend/app/auth/checker.py:153, backend/app/domain/questions/services.py:297"
+  legacy.questions.delete_question_comment: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); comment bound to addressed answer/question and only discussion author may delete; source: backend/app/api/routes/questions.py:381, backend/app/auth/checker.py:142"
+  legacy.recruitment.list_recruitment_posts: "public(open recruitment listing; get_optional_user_id only personalizes team summaries and tolerates missing/invalid account credentials); source: backend/app/api/routes/recruitment.py:173"
+  legacy.recruitment.edit_recruitment_post: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); RecruitmentService requires post.created_by == authenticated user; source: backend/app/api/routes/recruitment.py:215, backend/app/auth/checker.py:142, backend/app/domain/team/recruitment_services.py:85"
+  legacy.recruitment.delete_recruitment_post: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); RecruitmentService requires team owner or admin; source: backend/app/api/routes/recruitment.py:275, backend/app/auth/checker.py:142, backend/app/domain/team/recruitment_services.py:33, backend/app/domain/team/recruitment_services.py:110"
+  legacy.recruitment.list_team_recruitment_posts: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); TeamService.visible_team allows team member or public shared team, otherwise 404; source: backend/app/api/routes/recruitment.py:335, backend/app/auth/checker.py:142, backend/app/domain/team/services.py:92"
+  legacy.space_announcements.list_announcements: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); router require_reviewed_space hides unapproved spaceId except own direct-detail GET; _ensure_space_visible requires board membership (otherwise 404); source: backend/app/api/routes/space_announcements.py:93, backend/app/auth/checker.py:142, backend/app/api/routes/spaces.py:229, backend/app/api/routes/spaces.py:349"
+  legacy.space_announcements.publish_announcement: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); router require_reviewed_space hides unapproved spaceId except own direct-detail GET; _ensure_space_manager requires board membership then board OWNER/ADMIN; source: backend/app/api/routes/space_announcements.py:128, backend/app/auth/checker.py:142, backend/app/api/routes/spaces.py:229, backend/app/api/routes/space_announcements.py:86"
+  legacy.space_applications.list_my_applications: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); SpaceReviewService filters applications by current user owner relation; source: backend/app/api/routes/space_applications.py:21, backend/app/auth/checker.py:142, backend/app/domain/space/review_service.py:44"
+  legacy.space_applications.resubmit_space: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); SpaceReviewService requires application owner and REJECTED state; source: backend/app/api/routes/space_applications.py:35, backend/app/auth/checker.py:142, backend/app/domain/space/review_service.py:117"
+  legacy.spaces.get_space: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); router require_reviewed_space hides unapproved spaceId except own direct-detail GET; unapproved direct detail is visible only to application owner; approved detail requires board membership; source: backend/app/api/routes/spaces.py:665, backend/app/auth/checker.py:142, backend/app/api/routes/spaces.py:229, backend/app/api/routes/spaces.py:675"
+  legacy.spaces.get_spaces: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); router require_reviewed_space hides unapproved spaceId except own direct-detail GET; SpaceService list/count constrained to current-user membership; source: backend/app/api/routes/spaces.py:709, backend/app/auth/checker.py:142, backend/app/api/routes/spaces.py:229, backend/app/api/routes/spaces.py:722"
+  legacy.spaces.create_space: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); router require_reviewed_space hides unapproved spaceId except own direct-detail GET; source: backend/app/api/routes/spaces.py:784, backend/app/auth/checker.py:142, backend/app/api/routes/spaces.py:229"
+  legacy.spaces.patch_space: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); router require_reviewed_space hides unapproved spaceId except own direct-detail GET; SpaceService._ensure_admin(allow_admin=True) requires board owner or admin; source: backend/app/api/routes/spaces.py:849, backend/app/auth/checker.py:142, backend/app/api/routes/spaces.py:229, backend/app/domain/space/services.py:987"
+  legacy.spaces.delete_space: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); router require_reviewed_space hides unapproved spaceId except own direct-detail GET; SpaceService._ensure_admin(allow_admin=False) requires board owner; source: backend/app/api/routes/spaces.py:890, backend/app/auth/checker.py:142, backend/app/api/routes/spaces.py:229, backend/app/domain/space/services.py:562"
+  legacy.spaces.join_space: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); router require_reviewed_space hides unapproved spaceId except own direct-detail GET; SpaceService validates active/nonexpired invitation code, available uses and APPROVED board before adding current user; source: backend/app/api/routes/spaces.py:903, backend/app/auth/checker.py:142, backend/app/api/routes/spaces.py:229, backend/app/domain/space/services.py:578"
+  legacy.spaces.add_space_member: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); router require_reviewed_space hides unapproved spaceId except own direct-detail GET; _ensure_space_visible requires board membership (otherwise 404); SpaceService._ensure_admin(allow_admin=True) requires board owner or admin; source: backend/app/api/routes/spaces.py:948, backend/app/auth/checker.py:142, backend/app/api/routes/spaces.py:229, backend/app/api/routes/spaces.py:349, backend/app/domain/space/services.py:987"
+  legacy.spaces.leave_space: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); router require_reviewed_space hides unapproved spaceId except own direct-detail GET; SpaceService removes current user membership, preserving/promoting owner/admin continuity; source: backend/app/api/routes/spaces.py:1003, backend/app/auth/checker.py:142, backend/app/api/routes/spaces.py:229, backend/app/domain/space/services.py:662"
+  legacy.spaces.get_space_task_analytics: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); router require_reviewed_space hides unapproved spaceId except own direct-detail GET; _ensure_space_admin requires board membership then board OWNER/ADMIN; source: backend/app/api/routes/spaces.py:1016, backend/app/auth/checker.py:142, backend/app/api/routes/spaces.py:229, backend/app/api/routes/spaces.py:362"
+  legacy.spaces_analytics.get_space_learning_filters: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); router require_reviewed_space hides unapproved spaceId except own direct-detail GET; _ensure_space_visible requires board membership (otherwise 404); ActorResolver resolves handle with fallback_handle=None; SpaceLearningService filters every project through may_read_project; anonymous handle yields no project access; source: backend/app/api/routes/spaces_analytics.py:410, backend/app/auth/checker.py:142, backend/app/api/routes/spaces.py:229, backend/app/api/routes/spaces.py:349, backend/app/domain/space/learning_service.py:128, backend/app/api/routes/spaces_analytics.py:398"
+  legacy.spaces_analytics.get_space_learning_questions: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); router require_reviewed_space hides unapproved spaceId except own direct-detail GET; ActorResolver resolves handle with fallback_handle=None; SpaceLearningService filters every project through may_read_project; anonymous handle yields no project access; source: backend/app/api/routes/spaces_analytics.py:437, backend/app/auth/checker.py:142, backend/app/api/routes/spaces.py:229, backend/app/domain/space/learning_service.py:128, backend/app/api/routes/spaces_analytics.py:398"
+  legacy.spaces_invite_codes.list_space_invite_codes: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); router require_reviewed_space hides unapproved spaceId except own direct-detail GET; SpaceService._ensure_admin(allow_admin=True) requires board OWNER/ADMIN; source: backend/app/api/routes/spaces_invite_codes.py:85, backend/app/auth/checker.py:142, backend/app/api/routes/spaces.py:229, backend/app/domain/space/services.py:748"
+  legacy.tasks.create_task: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); may_publish_in_space requires board membership; new tasks enter pending review; entity creation validates attachment uploader and board/category/domain-group bindings; source: backend/app/api/routes/tasks.py:1319, backend/app/auth/checker.py:142, backend/app/auth/space_access.py:71, backend/app/api/routes/tasks.py:1233"
+  legacy.tasks.list_task_attachments: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); _ensure_task_readable enforces pending-task teacher gate, task visibility and ordinary-user board task limit; source: backend/app/api/routes/tasks.py:1428, backend/app/auth/checker.py:142, backend/app/api/routes/tasks.py:1039"
+  legacy.tasks.upload_task_attachment: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); TaskAttachmentService requires may_teach_task(task creator/board manager); source: backend/app/api/routes/tasks.py:1468, backend/app/auth/checker.py:142, backend/app/domain/task/attachment_service.py:344"
+  legacy.tasks.download_task_attachment: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); _ensure_task_readable enforces pending-task teacher gate, task visibility and ordinary-user board task limit; TaskAttachmentService download additionally requires task creator/board manager OR task participant; source: backend/app/api/routes/tasks.py:1502, backend/app/auth/checker.py:142, backend/app/api/routes/tasks.py:1039, backend/app/domain/task/attachment_service.py:187"
+  legacy.tasks.preview_task_from_pdf: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); may_publish_in_space requires board membership before PDF draft preview; the preview does not publish a task; source: backend/app/api/routes/tasks.py:1556, backend/app/auth/checker.py:142, backend/app/auth/space_access.py:71, backend/app/api/routes/tasks.py:1595"
+  legacy.tasks.create_task_participant: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); adding another participant requires may_teach_task; own/team registration requires task visibility/board limit and membership of supplied team; source: backend/app/api/routes/tasks.py:1801, backend/app/auth/checker.py:142, backend/app/api/routes/tasks.py:1827, backend/app/api/routes/tasks.py:1873"
+  legacy.tasks.join_task_as_user: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); TaskVisibilityService.can_view_task and board visibleTaskLimit apply; team join additionally requires current-user membership in supplied team; source: backend/app/api/routes/tasks.py:1905, backend/app/auth/checker.py:142, backend/app/api/routes/tasks.py:1933, backend/app/api/routes/tasks.py:1985"
+  legacy.tasks.patch_task_participant: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); authenticated task creator OR board owner/admin via may_teach_task; source: backend/app/api/routes/tasks.py:2046, backend/app/auth/checker.py:142, backend/app/auth/space_access.py:54"
+  legacy.tasks.patch_task: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); authenticated task creator OR board owner/admin via may_teach_task; approval/rejection fields additionally require board-admin relation; source: backend/app/api/routes/tasks.py:2312, backend/app/auth/checker.py:142, backend/app/api/routes/tasks.py:2336, backend/app/api/routes/tasks.py:2392"
+  legacy.tasks.get_tasks: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); unapproved query requires board-admin relation; list/count carry current viewer id/email-domain, board limit and limitedView predicates; source: backend/app/api/routes/tasks.py:2560, backend/app/auth/checker.py:142, backend/app/api/routes/tasks.py:2623, backend/app/api/routes/tasks.py:2652"
+  legacy.tasks.delete_task_participant: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); individual participant themselves OR may_teach_task(task creator/board manager); current is_self test is individual-only; source: backend/app/api/routes/tasks.py:2794, backend/app/auth/checker.py:142, backend/app/api/routes/tasks.py:2811, backend/app/api/routes/tasks.py:2848"
+  legacy.tasks.get_task_submissions: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); task creator/board manager via may_teach_task OR individual participant OR current member of participant team; source: backend/app/api/routes/tasks.py:3161, backend/app/auth/checker.py:142, backend/app/api/routes/tasks.py:3189, backend/app/api/routes/tasks.py:3463"
+  legacy.tasks.post_task_submission: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); individual participant themselves OR current member of participant team; create also requires APPROVED participation; source: backend/app/api/routes/tasks.py:3244, backend/app/auth/checker.py:142, backend/app/api/routes/tasks.py:3263, backend/app/api/routes/tasks.py:3332"
+  legacy.tasks.post_task_submission_review: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); _bind_review_path binds task/participant/submission ids before review access; authenticated task creator OR board owner/admin via may_teach_task; source: backend/app/api/routes/tasks.py:3398, backend/app/auth/checker.py:142, backend/app/api/routes/tasks.py:3358, backend/app/auth/space_access.py:54"
+  legacy.tasks.get_task_submission_review: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); _bind_review_path binds task/participant/submission ids before review access; task creator/board manager via may_teach_task OR individual participant OR current member of participant team; source: backend/app/api/routes/tasks.py:3439, backend/app/auth/checker.py:142, backend/app/api/routes/tasks.py:3358, backend/app/api/routes/tasks.py:3189, backend/app/api/routes/tasks.py:3463"
+  legacy.teams.get_teams: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); TeamRepository search enumerates only public shared teams; source: backend/app/api/routes/teams.py:405, backend/app/auth/checker.py:142, backend/app/domain/team/repositories.py:82"
+  legacy.teams.get_my_teams: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); TeamService returns only current-user teams and ensures own personal team; source: backend/app/api/routes/teams.py:453, backend/app/auth/checker.py:142, backend/app/api/routes/teams.py:460"
+  legacy.teams.get_team: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); TeamService.visible_team permits member or public shared team; personal-handle lookup permits its owner; source: backend/app/api/routes/teams.py:509, backend/app/auth/checker.py:142, backend/app/domain/team/services.py:92, backend/app/domain/team/services.py:132"
+  legacy.teams.get_team_join_link: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); TeamService._managed_team requires team owner/admin and refuses personal-team join links; source: backend/app/api/routes/teams.py:559, backend/app/auth/checker.py:142, backend/app/domain/team/services.py:155"
+  legacy.teams.get_team_by_join_link: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); TeamService.team_for_join_token requires current, non-reset invitation token; link possession may reach a stealth team; source: backend/app/api/routes/teams.py:594, backend/app/auth/checker.py:142, backend/app/domain/team/services.py:149"
+  legacy.teams.get_team_resource_quotas: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); existing team and current-user membership required before quota details; source: backend/app/api/routes/teams.py:624, backend/app/auth/checker.py:142, backend/app/api/routes/teams.py:630"
+  legacy.teams.get_team_members: "authenticated(require_permission rejects guest, then checks Action.READ, Resource.TEAM_MEMBERSHIP, 'teamId'); source: backend/app/api/routes/teams.py:679, backend/app/auth/checker.py:153"
+  legacy.teams.patch_team: "authenticated(require_permission rejects guest, then checks Action.UPDATE, Resource.TEAM, 'teamId'); TeamService also requires team owner/admin; source: backend/app/api/routes/teams.py:761, backend/app/auth/checker.py:153, backend/app/domain/team/services.py:299"
+  legacy.teams.delete_team: "authenticated(require_permission rejects guest, then checks Action.DELETE, Resource.TEAM, 'teamId'); TeamService also requires team owner; source: backend/app/api/routes/teams.py:802, backend/app/auth/checker.py:153, backend/app/domain/team/services.py:340"
+  legacy.teams.delete_team_member: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); TeamService permits leaving oneself or owner/admin removing lower-role member; refuses owner removal and admin-to-admin removal; task-lock check applies; source: backend/app/api/routes/teams.py:818, backend/app/auth/checker.py:142, backend/app/domain/team/services.py:350"
+  legacy.teams.patch_team_member_role: "authenticated(require_permission rejects guest, then checks Action.UPDATE, Resource.TEAM_MEMBERSHIP, 'teamId'); TeamService additionally requires team OWNER, refuses direct owner-role edits; source: backend/app/api/routes/teams.py:836, backend/app/auth/checker.py:153, backend/app/domain/team/services.py:384"
+  legacy.teams.add_team_member_entry: "authenticated(require_permission rejects guest, then checks Action.CREATE, Resource.TEAM_MEMBERSHIP, 'teamId'); source: backend/app/api/routes/teams.py:883, backend/app/auth/checker.py:153"
+  legacy.teams.list_team_join_requests: "authenticated(require_permission rejects guest, then checks Action.READ, Resource.TEAM_REQUEST, 'teamId'); TeamMembershipService additionally requires current team owner/admin for team-side application/invitation management; source: backend/app/api/routes/teams.py:928, backend/app/auth/checker.py:153, backend/app/domain/team/membership_services.py:194, backend/app/domain/team/membership_services.py:534"
+  legacy.teams.list_team_invitations: "authenticated(require_permission rejects guest, then checks Action.READ, Resource.TEAM_INVITATION, 'teamId'); TeamMembershipService additionally requires current team owner/admin for team-side application/invitation management; source: backend/app/api/routes/teams.py:1007, backend/app/auth/checker.py:153, backend/app/domain/team/membership_services.py:194, backend/app/domain/team/membership_services.py:534"
+  legacy.teams.create_team_invitation: "authenticated(require_permission rejects guest, then checks Action.CREATE, Resource.TEAM_INVITATION, 'teamId'); TeamMembershipService additionally requires current team owner/admin for team-side application/invitation management; source: backend/app/api/routes/teams.py:1061, backend/app/auth/checker.py:153, backend/app/domain/team/membership_services.py:194, backend/app/domain/team/membership_services.py:534"
+  legacy.teams.cancel_team_invitation: "authenticated(require_permission rejects guest, then checks Action.DELETE, Resource.TEAM_INVITATION, 'teamId'); TeamMembershipService additionally requires current team owner/admin for team-side application/invitation management; source: backend/app/api/routes/teams.py:1095, backend/app/auth/checker.py:153, backend/app/domain/team/membership_services.py:194, backend/app/domain/team/membership_services.py:534"
+  legacy.teams.approve_team_join_request: "authenticated(require_permission rejects guest, then checks Action.UPDATE, Resource.TEAM_REQUEST, 'teamId'); TeamMembershipService additionally requires current team owner/admin for team-side application/invitation management; source: backend/app/api/routes/teams.py:1116, backend/app/auth/checker.py:153, backend/app/domain/team/membership_services.py:194, backend/app/domain/team/membership_services.py:534"
+  legacy.users.get_user_followed_questions: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); current source reads path userId activity/favorites without self-id comparison; visibility intent requires human review; source: backend/app/api/routes/users.py:772, backend/app/auth/checker.py:142, backend/app/api/routes/users.py:783, backend/app/api/routes/users.py:2279, backend/app/api/routes/users.py:2338"
+  legacy.users.send_register_email_code: "public(registration bootstrap; configured registration openness and required invitation credential checked before sending verification email); source: backend/app/api/routes/users.py:1044"
+  legacy.users.get_registration_config: "public(registration options; no account dependency); source: backend/app/api/routes/users.py:1122"
+  legacy.users.register_user: "public(registration bootstrap; configured invite/email-code gates, legal-consent validation and UserAuthService registration); source: backend/app/api/routes/users.py:1139"
+  legacy.users.send_add_email_code: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); _account_without_email requires own account without real email and live same-user sign-in started within ADD_EMAIL_SIGN_IN_WINDOW; add_email additionally verifies email code; source: backend/app/api/routes/users.py:1357, backend/app/auth/checker.py:142, backend/app/api/routes/users.py:1319"
+  legacy.users.patch_user_profile: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); path userId must equal authenticated account; source: backend/app/api/routes/users.py:1536, backend/app/auth/checker.py:142"
+  legacy.users.user_login: "credential(password sign-in via UserAuthService.authenticate; login/client failure budgets; TOTP or trusted-device branch when 2FA enabled); source: backend/app/api/routes/users.py:1614"
+  legacy.users.verify_2fa_login: "credential(valid typed pending-2FA token plus TOTP/backup-code proof; single-use and failure-budget checks before issuing session); source: backend/app/api/routes/users.py:1726"
+  legacy.users.request_sign_in_code: "public(email sign-in bootstrap; MailQuota and EmailVerificationService issue code without a prior account session); source: backend/app/api/routes/users.py:1888"
+  legacy.users.verify_sign_in_code: "credential(email sign-in code verified for real account address; client failure budget; enabled 2FA requires trusted device or pending-2FA continuation); source: backend/app/api/routes/users.py:1930"
+  legacy.users.refresh_access_token: "credential(refresh cookie; _require_same_origin and SessionService.refresh validates live session and rotates refresh credential); source: backend/app/api/routes/users.py:2024"
+  legacy.users.user_logout: "cookie-session(_require_same_origin; SessionService.end ends supplied refresh-cookie session; missing cookie is idempotent success); source: backend/app/api/routes/users.py:2075"
+  legacy.users.sudo_auth: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); fresh credential proof or live-session sudo branch creates a purpose-bound single-use ticket; password/TOTP/passkey/email proof is bound to authenticated account; source: backend/app/api/routes/users.py:2100, backend/app/auth/checker.py:142"
+  legacy.users.get_oauth_providers: "public(enabled OAuth provider metadata; no account dependency); source: backend/app/api/routes/users.py:2509"
+  legacy.users.get_oauth_login_url: "public(OAuth bootstrap; reserves provider-scoped state and sets same-browser callback cookie before redirect); source: backend/app/api/routes/users.py:2855"
+  legacy.users.handle_oauth_callback: "credential(OAuth authorization code plus provider-scoped single-use state matched to callback cookie; provider identity enters sign-in/account-ownership continuation); source: backend/app/api/routes/users.py:2904"
+  legacy.users.get_oauth_state: "credential(signed typed OAuth decision state token decoded by _decode_oauth_state_token; no prior account session); source: backend/app/api/routes/users.py:2992"
+  legacy.users.send_oauth_email_code: "credential(valid OAuth decision state token plus mail-code quota; no prior account session); source: backend/app/api/routes/users.py:3016"
+  legacy.users.verify_oauth_email: "credential(valid OAuth decision state token and email verification code; existing-account conflict redeems state and starts ownership proof); source: backend/app/api/routes/users.py:3028"
+  legacy.users.oauth_verify_conflict: "credential(one-use pending OAuth ownership session plus password proof for that account; password failure budget before binding); source: backend/app/api/routes/users.py:3113"
+  legacy.users.oauth_create_user: "credential(signed single-use OAuth decision state; verified/provider email and configured registration invite/consent checks before account creation); source: backend/app/api/routes/users.py:3157"
+  legacy.users.oauth_bind_user: "credential(signed single-use OAuth state plus existing account password; password failure budget before binding); source: backend/app/api/routes/users.py:3306"
+  legacy.users.list_invite_codes: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); PlatformAdminDep requires configured root/table platform admin and refuses management by agent identity; invitation codes are registration credentials; source: backend/app/api/routes/users.py:3379, backend/app/auth/checker.py:142, backend/app/api/routes/users.py:3355"
+  legacy.users.delete_oauth_connection: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); path userId must equal authenticated account; _spend_sudo_ticket requires same-account, unexpired, single-use SudoPurpose.OAUTH_UNBIND ticket (fail closed when reservation unavailable); source: backend/app/api/routes/users.py:3485, backend/app/auth/checker.py:142, backend/app/api/routes/users_common.py:49"
+  legacy.users_2fa.enable_user_2fa: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); path userId must equal authenticated account; first phase spends TWO_FA_ENABLE sudo ticket and stores offered secret; confirmation validates that offered secret/code without spending another ticket; source: backend/app/api/routes/users_2fa.py:93, backend/app/auth/checker.py:142, backend/app/api/routes/users_2fa.py:101, backend/app/api/routes/users_2fa.py:124"
+  legacy.users_2fa.disable_user_2fa: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); path userId must equal authenticated account; _spend_sudo_ticket requires same-account, unexpired, single-use SudoPurpose.TWO_FA_DISABLE ticket (fail closed when reservation unavailable); source: backend/app/api/routes/users_2fa.py:224, backend/app/auth/checker.py:142, backend/app/api/routes/users_common.py:49"
+  legacy.users_2fa.regenerate_backup_codes: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); path userId must equal authenticated account; _spend_sudo_ticket requires same-account, unexpired, single-use SudoPurpose.TWO_FA_BACKUP_CODES ticket (fail closed when reservation unavailable); source: backend/app/api/routes/users_2fa.py:300, backend/app/auth/checker.py:142, backend/app/api/routes/users_common.py:49"
+  legacy.users_identity.get_user_identity: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); path userId must equal authenticated account; precise=true additionally spends REALNAME_VIEW same-account single-use sudo ticket; default masked read does not; source: backend/app/api/routes/users_identity.py:87, backend/app/auth/checker.py:142, backend/app/api/routes/users_identity.py:113"
+  legacy.users_identity.put_user_identity: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); path userId must equal authenticated account; _spend_sudo_ticket requires same-account, unexpired, single-use SudoPurpose.REALNAME_UPDATE ticket (fail closed when reservation unavailable); source: backend/app/api/routes/users_identity.py:152, backend/app/auth/checker.py:142, backend/app/api/routes/users_common.py:49"
+  legacy.users_identity.delete_user_identity: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); path userId must equal authenticated account; _spend_sudo_ticket requires same-account, unexpired, single-use SudoPurpose.REALNAME_DELETE ticket (fail closed when reservation unavailable); source: backend/app/api/routes/users_identity.py:233, backend/app/auth/checker.py:142, backend/app/api/routes/users_common.py:49"
+  legacy.users_passkey.passkey_register_challenge: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); path userId must equal authenticated account; _spend_sudo_ticket requires same-account, unexpired, single-use SudoPurpose.PASSKEY_ADD ticket (fail closed when reservation unavailable); source: backend/app/api/routes/users_passkey.py:76, backend/app/auth/checker.py:142, backend/app/api/routes/users_common.py:49"
+  legacy.users_passkey.passkey_register_verify: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); path userId must equal authenticated account; stored current-user registration challenge from sudo-gated options is consumed; PasskeyService.verify_registration validates credential; source: backend/app/api/routes/users_passkey.py:132, backend/app/auth/checker.py:142, backend/app/api/routes/users_passkey.py:146"
+  legacy.users_passkey.passkey_authenticate_challenge: "public(passkey sign-in bootstrap; stores a five-minute authentication challenge; supplied userId is an option, not an authenticated identity); source: backend/app/api/routes/users_passkey.py:201"
+  legacy.users_passkey.passkey_authenticate_verify: "credential(stored authentication challenge consumed and PasskeyService.verify_authentication verifies WebAuthn assertion before issuing session); source: backend/app/api/routes/users_passkey.py:236"
+  legacy.users_passkey.delete_passkey: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); path userId must equal authenticated account; _spend_sudo_ticket requires same-account, unexpired, single-use SudoPurpose.PASSKEY_DELETE ticket (fail closed when reservation unavailable); source: backend/app/api/routes/users_passkey.py:319, backend/app/auth/checker.py:142, backend/app/api/routes/users_common.py:49"
+  legacy.users_password.recover_password_request: "public(password-recovery mail bootstrap; MailQuota precedes account lookup and response does not disclose account existence); source: backend/app/api/routes/users_password.py:148"
+  legacy.users_password.recover_password_verify: "credential(PasswordResetService.consume_reset_token verifies one-use recovery token; updates token-bound account and revokes sign-in sessions/trusted browsers); source: backend/app/api/routes/users_password.py:193"
+  legacy.users_password.change_password: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); path userId must equal authenticated account; _spend_sudo_ticket requires same-account, unexpired, single-use SudoPurpose.PASSWORD_CHANGE ticket (fail closed when reservation unavailable); source: backend/app/api/routes/users_password.py:234, backend/app/auth/checker.py:142, backend/app/api/routes/users_common.py:49"
+  legacy.users_sessions.list_sessions: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); SessionService/TrustedDeviceService operate on authenticated user_id only; supplied session id cannot revoke another account session; source: backend/app/api/routes/users_sessions.py:71, backend/app/auth/checker.py:142, backend/app/api/routes/users_sessions.py:76, backend/app/api/routes/users_sessions.py:97"
+  legacy.users_team.cancel_my_join_request: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); TeamMembershipService scopes personal request/invitation operation to authenticated user_id; source: backend/app/api/routes/users_team.py:80, backend/app/auth/checker.py:142, backend/app/domain/team/membership_services.py:172, backend/app/domain/team/membership_services.py:249"
+  legacy.users_team.leave_team: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); TeamService removes authenticated user themselves; owner-removal and task-lock restrictions apply; source: backend/app/api/routes/users_team.py:96, backend/app/auth/checker.py:142, backend/app/domain/team/services.py:350"
+  observed.question.followers: "允许匿名的既有读取入口：没有 account dependency，QuestionsService.list_followers 不收 viewer identity；公开可见性意图待人工确认。Source: backend/app/api/routes/questions.py:461."
+  observed.user.favorite.questions: "require_auth_user 登录后读取目标 userId 收藏列表，没有本人限定；跨用户可见性意图待确认。当前 question favorites 调 list_followed，业务含义也待确认。Source: backend/app/api/routes/users.py:2266."
+  observed.user.favorite.answers: "require_auth_user 登录后读取目标 userId 收藏回答，没有本人限定；跨用户可见性意图待确认。Source: backend/app/api/routes/users.py:2325."
+  observed.task.teams: "require_auth_user 登录后检查 TEAM 类别并查询本人 teams；没有调用共享 task readability，eligibility 未完整检查（源码明确标注）。任务可见性/eligibility 意图待确认。Source: backend/app/api/routes/tasks.py:3107."
+owners:
+  admin: "Platform admin membership and allow-list; domain/admin/AdminService, not every /admin route business domain."
+  agent.models: "AI model catalogue, gateway project budgets and audit; domain/agent/gateway_admin.py and gateway_models.py."
+  agent.execution: "Agent session execution/control/diagnostics; domain/agent runtime and domain/agent_session. HTTP diagnostics are assembled in app/main.py."
+  agent.types: "Agent type catalogue; domain/agent_type/library.py."
+  agent.instances: "Project agent identities/configuration; domain/agent_instance/services.py and configuration.py."
+  agent.credentials: "Off-platform project agent credentials and generation revocation; domain/agent_credential/services.py."
+  agent.llm: "Model admission, budget metering/proxy and subscription tunnel; domain/agent budget_proxy/chat/supply plus core subscription meter. This is the existing transport responsibility."
+  compute.availability: "Compute pool catalogue and node availability; domain/agent/market.py and work-runner active load (market.list_nodes)."
+  machine: "Cloud machines, project supply and execution lease lifecycle; domain/machine/services.py, supply.py and session_work.py."
+  machine.live: "Signal to a team's open pages that its machines changed, naming the projects to read again; domain/machine/live.py (team_channel, note_change, announce_changes), written by domain/machine/repositories.py and runner.py and announced by machines.py after commit."
+  device: "User/team hosted-device enrollment, session links and screen streams; domain/device/service.py, owner_reads.py and domain/agent/device_hub.py."
+  local_fs: "User-selected local-directory grants and access audit; domain/local_fs services/enforcement."
+  review: "Accept cards, reviewer decisions and PR readiness/merge; domain/review/AcceptService. Route owns request composition."
+  review.delivery: "Published accept-card artifact delivery; domain/review card ownership composed with project artifacts/library snapshots in accept route."
+  room_task: "Room tasks and their lifecycle/rail presentation; domain/room_task/TaskService and presentation.py. Not legacy external domain/task."
+  room_task.awaiting: "Cross-room work waiting for caller action; awaiting route composes room_task, review, block and delivery reads; the route is the assembly owner."
+  block: "Room blocks, reactions and document comment threads; domain/block editing/comment_threads/documents. Routes own broadcasting."
+  topic: "Canonical rooms and room hierarchy/read markers/title/archive; domain/topic/TopicService and related naming/retire queries."
+  topic.membership: "Room participant roster and roles; domain/topic_membership/TopicMemberService."
+  topic.chat: "Room messaging/live chat relay; domain/agent/ChatService and topic/member identity, with route owning delivery/broadcast ordering."
+  delivery: "Room delivery timer requests and same-handle note dispatch; domain/delivery timer/addressing, composed by room route."
+  documents: "Office/spreadsheet conversion, revisions and editor callbacks; domain/documents editor/convert/revisions/spreadsheet."
+  doc_ai: "Document AI asks and proposals; domain/doc_ai/DocAiService and ProposalAcceptance, separate from room agent execution."
+  living_doc: "Canonical living-document journal, receipts, history and restoration; domain/living_doc/DocumentJournal, with block/document persistence."
+  room.files: "Room retained files and shown-source composition; domain/project/room_files.py plus block/shown. The route owns composing file save and shown-block broadcast."
+  project: "Project lifecycle, association, ownership and repository settings; domain/project/ProjectService and project forge/protection. Route retains request assembly."
+  project.rail: "Project rail assembly in projects.list_project_tasks: project_reader -> TaskService -> latest_cards_by_task -> beats -> asked -> one now -> presentation. Domain owners of facts remain room_task/review/block; v6 says assembly owner is the route."
+  project.artifacts: "Published project artifact catalogue/version comparisons; domain/project/artifacts.py, composed with library/preview/repository bytes by the route."
+  project.environment: "Project/room execution environment and recovery; domain/project/environment.py and environment_recovery.py, composed with machine/device state."
+  project.export: "Caller-visible offline project export; domain/project/export.create_archive owns archive construction and delegated auth."
+  project.skills: "Project-owned reusable skills/revisions; domain/project_skill/ProjectSkillService."
+  project.context: "Project context search assembly; project_context route composes filtered room/block/library/task queries using domain/search bm25. No new cross-domain service is invented."
+  project.run_config: "Project default model/compute choices and tier policy; project route composes existing agent compute configs, policy and machine/device services."
+  membership: "Project members and invitations; domain/membership/MemberService, InvitationService and roster."
+  library: "Project library files and source descriptions; domain/library records and file service."
+  memory: "Agent/person memory entries and memory files; domain/memory stores/files. Private read/write boundaries stay distinct in notes."
+  notification: "User/project inbox notifications and live notice delivery; domain/notification services/live/push."
+  dashboard: "Viewer-filtered project/space/person dashboard assembly; domain/dashboard/DashboardService."
+  feedback: "Feedback visibility, support/comments and proposals; domain/feedback/FeedbackService, proposals/shipping."
+  feature_stats: "Feature usage catalogue and reports; domain/feature_stats registry/stats."
+  platform_stats: "Platform usage/performance/product/pipeline/integration reports; domain/platform_stats services."
+  ratchet: "Ratchet board ingestion and state; domain/ratchet board/store/ingest."
+  space.review: "Platform review of spaces; domain/space/review_service.py."
+  integration: "Personal and room mail/Feishu connections, drafts and OAuth callback; domain/integration/IntegrationService."
+  remote_mcp: "Declared remote MCP connection, per-project secrets and forwarding; domain/remote_mcp service/oauth/upstream."
+  fetch: "Outbound URL retrieval; domain/fetch service/guard/layers."
+  docs_site: "Manual/dev-doc access, assistant/search and visit attribution; domain/docs_site access/library/visits."
+  repository.transport: "Task workspace Git and snapshots; git_http/workspace routes compose domain/repository forge_files and room_task snapshot/checkout services. Existing route assembly owns transport."
+  forge.transport: "Forge capability transport and token leases; forge_token route composes domain/project/forge, agent GitHub/Forgejo token adapters."
+  github.binding: "GitHub account/install/repository association; domain/oauth with project forge installation records, assembled by GitHub routes."
+  preview: "Room app preview transport and viewer grants; api/preview_host and domain/agent preview_hub/tunnel. Existing host middleware is the content-host boundary."
+  site: "Project static site publication and grants; domain/site/services.py and hosting.py."
+  webhook: "Room webhook token receive/dispatch; domain/webhook service."
+  routine: "Room automation rules and runs; domain/routine/RoutineService and schedule."
+  user.sign_in: "Desktop browser-to-app login handoff and sessions; domain/user session issue seam invoked by app_sign_in route."
+  legal: "Versioned legal text and user consents; domain/legal documents/services."
+  frontend.error.intake: "Browser frontend error intake; domain/frontend_log intake/fingerprint. frontend_log route composes block event persistence and alerting."
+  backend.error.intake: "Backend unhandled-error intake and room attribution; domain/backend_log.record/intake."
+  core.health: "Backend health/readiness/metrics/build visibility; core metrics/config plus app and health-route process probes."
+  core.upload.delivery: "Local uploaded asset delivery; core storage settings and uploads._safe_path/inert response. No fabricated upload business domain."
+  api.documentation: "FastAPI generated schema and Swagger/ReDoc documentation endpoints, assembled by FastAPI application."
+  installer: "Machine CLI/runtime distribution; domain/machine claude/pi/toolchain distribution and current sandbox CLI source."
+  sandbox.maintenance: "Sandbox pool storage sweep/journal maintenance; existing domain/agent compute pool, not new business state."
+  assistant: "Personal task assistant conversations; domain/assistant service; route composes legacy task visibility and personal usage."
+  answers: "Community answers and reactions; domain/answers services, composed with discussion reactions."
+  attachment: "General uploaded attachments and access-controlled delivery; domain/attachment/AttachmentService, composed with task attachment visibility."
+  avatars: "Account avatar asset catalogue and image delivery; domain/avatars/AvatarService."
+  comments: "Community comments/reactions; domain/comments/CommentService."
+  groups: "Learning groups, study targets and question curation; domain/groups/GroupService."
+  knowledge: "Team knowledge library and votes; domain/knowledge/KnowledgeService."
+  materials.bundles: "Curated learning-material bundles; domain/materials/MaterialBundleService, not project artifact catalogues."
+  materials: "Uploaded learning materials; domain/materials/MaterialService, not runtime local asset delivery."
+  questions: "Community questions/discovery/answer invitations; domain/questions services, composed with domain/discussion."
+  team.recruitment: "Team recruitment posts; domain/team/recruitment_services.py."
+  space.announcements: "Learning board announcements; domain/space/announcement_service.py."
+  space.applications: "Learning board creation/review resubmission; domain/space/review_service.py."
+  space: "Learning board lifecycle/membership; domain/space/SpaceService. Existing product term learning board maps to the space domain."
+  space.analytics: "Learning board participation reports/exports; domain/space analytics_service.py and analytics_view_service.py."
+  space.analytics.learning: "Learning board analytics/learning analysis assembly; domain/space analytics_view_service.py and learning_service.py."
+  space.learning: "Learning board conversation analysis; domain/space/learning_service.py, filtered through project/room access."
+  space.invites: "Learning board membership invitation credentials; domain/space/SpaceService."
+  space.publishing: "Learning board member publishing history; domain/space/member_publishing_service.py."
+  space.organization: "Learning board categories/groups/management roles; domain/space/SpaceService and tags_service."
+  tag: "Content classification labels; domain/tag/TagService."
+  task: "External learning-task publication/participation/submission/review; domain/task services. Distinct from domain/room_task."
+  team: "Team discovery/membership/shared resources; domain/team/TeamService and membership services."
+  user: "Account registration/sign-in/profile/security; domain/user services, composed with OAuth/legal/invite by user route."
+  user.activity: "Account profile community question/answer activity; user route composes domain/questions and domain/answers."
+  account.admission: "Registration admission credentials; domain/invite/InviteCodeService, managed through platform-admin approval."
+  user.2fa: "Account second factor and recovery codes; domain/user credential services."
+  user.realname: "Real-name identity and access history; domain/user/realname_services.py."
+  passkey: "Passkey credentials/enrollment/assertion; domain/passkey/PasskeyService, composed with user session issue."
+  user.password: "Account passwords/recovery; domain/user password/reset services and sessions."
+  user.sessions: "Sign-in sessions and trusted browsers; domain/user/sessions.py and trusted_devices.py."
+  team.personal_membership: "Personal team requests/invitations/leaving; domain/team membership_services.py and TeamService, composed by users_team routes."
+routes:
+  # fastapi.applications
+  - {protocol: "http", method: "GET", path: "/openapi.json", auth: "public.framework.docs", owner: "api.documentation"}
+  - {protocol: "http", method: "HEAD", path: "/openapi.json", auth: "public.framework.docs", owner: "api.documentation"}
+  - {protocol: "http", method: "GET", path: "/docs", auth: "public.framework.docs", owner: "api.documentation"}
+  - {protocol: "http", method: "HEAD", path: "/docs", auth: "public.framework.docs", owner: "api.documentation"}
+  - {protocol: "http", method: "GET", path: "/docs/oauth2-redirect", auth: "public.framework.docs", owner: "api.documentation"}
+  - {protocol: "http", method: "HEAD", path: "/docs/oauth2-redirect", auth: "public.framework.docs", owner: "api.documentation"}
+  - {protocol: "http", method: "GET", path: "/redoc", auth: "public.framework.docs", owner: "api.documentation"}
+  - {protocol: "http", method: "HEAD", path: "/redoc", auth: "public.framework.docs", owner: "api.documentation"}
+  # app.api.routes.accept
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/tasks/{task_id}/accept-card", auth: "review.task", owner: "review"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/tasks/{task_id}/push-fix", auth: "review.task", owner: "review"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/tasks/{task_id}/ready", auth: "review.task", owner: "review"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/tasks/{task_id}/accept-card/describe", auth: "review.task", owner: "review"}
+  - {protocol: "http", method: "GET", path: "/accept-cards/{card_id}/deliverable", auth: "review.download", owner: "review.delivery"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/accept-card", auth: "review.task", owner: "review"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/pr-checks", auth: "review.task", owner: "review"}
+  - {protocol: "http", method: "POST", path: "/accept-cards/{card_id}/approve", auth: "review.card", owner: "review"}
+  - {protocol: "http", method: "POST", path: "/accept-cards/{card_id}/accept", auth: "review.card", owner: "review"}
+  - {protocol: "http", method: "POST", path: "/accept-cards/{card_id}/reassign", auth: "review.card", owner: "review"}
+  - {protocol: "http", method: "POST", path: "/accept-cards/{card_id}/reject", auth: "review.card", owner: "review"}
+  - {protocol: "http", method: "POST", path: "/accept-cards/{card_id}/void", auth: "review.card", owner: "review"}
+  - {protocol: "http", method: "POST", path: "/accept-cards/{card_id}/merge-anyway", auth: "review.card", owner: "review"}
+  - {protocol: "http", method: "POST", path: "/accept-cards/{card_id}/auto-merge", auth: "review.card", owner: "review"}
+  - {protocol: "http", method: "POST", path: "/accept-cards/{card_id}/revoke", auth: "review.card", owner: "review"}
+  # app.api.routes.admin_feature_stats
+  - {protocol: "http", method: "GET", path: "/admin/feature-stats", auth: "platform.admin", owner: "feature_stats"}
+  - {protocol: "http", method: "GET", path: "/admin/feature-stats/{feature_id}", auth: "platform.admin", owner: "feature_stats"}
+  # app.api.routes.admin_feedback
+  - {protocol: "http", method: "GET", path: "/admin/feedback", auth: "feedback.admin", owner: "feedback"}
+  - {protocol: "http", method: "GET", path: "/admin/feedback/{feedback_id}", auth: "feedback.admin", owner: "feedback"}
+  - {protocol: "http", method: "PATCH", path: "/admin/feedback/{feedback_id}", auth: "feedback.admin", owner: "feedback"}
+  - {protocol: "http", method: "POST", path: "/admin/feedback/{feedback_id}/status", auth: "feedback.admin", owner: "feedback"}
+  - {protocol: "http", method: "POST", path: "/admin/feedback/{feedback_id}/notes", auth: "feedback.admin", owner: "feedback"}
+  # app.api.routes.admin_integrations
+  - {protocol: "http", method: "GET", path: "/admin/integrations/feishu", auth: "platform.admin", owner: "integration"}
+  - {protocol: "http", method: "PUT", path: "/admin/integrations/feishu", auth: "platform.admin", owner: "integration"}
+  # app.api.routes.admin_members
+  - {protocol: "http", method: "GET", path: "/admin/admins", auth: "platform.admin", owner: "admin"}
+  - {protocol: "http", method: "GET", path: "/admin/users", auth: "platform.admin", owner: "admin"}
+  - {protocol: "http", method: "POST", path: "/admin/admins", auth: "platform.admin", owner: "admin"}
+  - {protocol: "http", method: "DELETE", path: "/admin/admins/{target}", auth: "platform.admin", owner: "admin"}
+  # app.api.routes.admin_memory
+  - {protocol: "http", method: "POST", path: "/admin/memory/migration/projects/{project_id}/dry-run", auth: "platform.admin", owner: "memory"}
+  - {protocol: "http", method: "GET", path: "/admin/memory/migration/projects/{project_id}/plans", auth: "platform.admin", owner: "memory"}
+  - {protocol: "http", method: "GET", path: "/admin/memory/migration/plans/{plan_id}", auth: "platform.admin", owner: "memory"}
+  - {protocol: "http", method: "POST", path: "/admin/memory/migration/plans/{plan_id}/approve", auth: "platform.admin", owner: "memory"}
+  - {protocol: "http", method: "POST", path: "/admin/memory/migration/plans/{plan_id}/apply", auth: "platform.admin", owner: "memory"}
+  - {protocol: "http", method: "GET", path: "/admin/memory/reads", auth: "platform.admin", owner: "memory"}
+  # app.api.routes.admin_models
+  - {protocol: "http", method: "GET", path: "/admin/gateway/models", auth: "platform.admin", owner: "agent.models"}
+  - {protocol: "http", method: "GET", path: "/admin/gateway/models/{name}", auth: "platform.admin", owner: "agent.models"}
+  - {protocol: "http", method: "POST", path: "/admin/gateway/models", auth: "platform.admin", owner: "agent.models"}
+  - {protocol: "http", method: "PATCH", path: "/admin/gateway/models/{name}", auth: "platform.admin", owner: "agent.models"}
+  - {protocol: "http", method: "DELETE", path: "/admin/gateway/models/{name}", auth: "platform.admin", owner: "agent.models"}
+  - {protocol: "http", method: "POST", path: "/admin/gateway/models/{name}/blocked", auth: "platform.admin", owner: "agent.models"}
+  - {protocol: "http", method: "GET", path: "/admin/gateway/projects", auth: "platform.admin", owner: "agent.models"}
+  - {protocol: "http", method: "PUT", path: "/admin/gateway/projects/{project_id}/budget", auth: "platform.admin", owner: "agent.models"}
+  - {protocol: "http", method: "GET", path: "/admin/gateway/audit", auth: "platform.admin", owner: "agent.models"}
+  # app.api.routes.admin_ratchet
+  - {protocol: "http", method: "GET", path: "/admin/ratchet", auth: "platform.admin", owner: "ratchet"}
+  - {protocol: "http", method: "POST", path: "/admin/ratchet/refresh", auth: "platform.admin", owner: "ratchet"}
+  # app.api.routes.admin_spaces
+  - {protocol: "http", method: "GET", path: "/admin/spaces", auth: "platform.admin", owner: "space.review"}
+  - {protocol: "http", method: "POST", path: "/admin/spaces/{space_id}/review", auth: "platform.admin", owner: "space.review"}
+  # app.api.routes.admin_stats
+  - {protocol: "http", method: "GET", path: "/admin/stats/feedback", auth: "platform.admin", owner: "platform_stats"}
+  - {protocol: "http", method: "GET", path: "/admin/stats/usage", auth: "platform.admin", owner: "platform_stats"}
+  - {protocol: "http", method: "GET", path: "/admin/stats/platform", auth: "platform.admin", owner: "platform_stats"}
+  - {protocol: "http", method: "GET", path: "/admin/stats/performance", auth: "platform.admin", owner: "platform_stats"}
+  - {protocol: "http", method: "GET", path: "/admin/stats/pipeline", auth: "platform.admin", owner: "platform_stats"}
+  - {protocol: "http", method: "GET", path: "/admin/stats/product", auth: "platform.admin", owner: "platform_stats"}
+  - {protocol: "http", method: "GET", path: "/admin/stats/integrations", auth: "platform.admin", owner: "platform_stats"}
+  # app.api.routes.agent_control
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/agent/control", auth: "controller.room", owner: "agent.execution"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/agent/control", auth: "controller.room", owner: "agent.execution"}
+  # app.api.routes.agent_credential
+  - {protocol: "http", method: "POST", path: "/projects/{project_id}/agent-credential", auth: "project.steward", owner: "agent.credentials"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/agent-credential", auth: "project.steward", owner: "agent.credentials"}
+  - {protocol: "http", method: "DELETE", path: "/projects/{project_id}/agent-credential", auth: "project.steward", owner: "agent.credentials"}
+  # app.api.routes.agent_types
+  - {protocol: "http", method: "GET", path: "/agent-types", auth: "public.catalogue", owner: "agent.types"}
+  # app.api.routes.alerts
+  - {protocol: "http", method: "POST", path: "/projects/{project_id}/alerts", auth: "notification.create", owner: "notification"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/alerts", auth: "notification.recipient", owner: "notification"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/inbox", auth: "notification.recipient", owner: "notification"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/alerts/unread-count", auth: "notification.recipient", owner: "notification"}
+  - {protocol: "http", method: "POST", path: "/projects/{project_id}/alerts/read-all", auth: "notification.recipient", owner: "notification"}
+  - {protocol: "http", method: "POST", path: "/alerts/{notification_id}/read", auth: "notification.recipient", owner: "notification"}
+  - {protocol: "http", method: "POST", path: "/alerts/{notification_id}/feedback", auth: "notification.recipient", owner: "notification"}
+  - {protocol: "http", method: "POST", path: "/alerts/{notification_id}/resolve", auth: "notification.recipient", owner: "notification"}
+  # app.api.routes.answers
+  - {protocol: "http", method: "GET", path: "/questions/{question_id}/answers", auth: "legacy.answers.list_answers", owner: "answers"}
+  - {protocol: "http", method: "POST", path: "/questions/{question_id}/answers", auth: "legacy.answers.list_answers", owner: "answers"}
+  - {protocol: "http", method: "POST", path: "/questions/{question_id}/answers/{answer_id}/vote", auth: "legacy.answers.vote_answer", owner: "answers"}
+  - {protocol: "http", method: "DELETE", path: "/questions/{question_id}/answers/{answer_id}/vote", auth: "legacy.answers.vote_answer", owner: "answers"}
+  - {protocol: "http", method: "GET", path: "/questions/{question_id}/answers/{answer_id}/vote", auth: "legacy.answers.vote_answer", owner: "answers"}
+  - {protocol: "http", method: "GET", path: "/questions/{question_id}/answers/{answer_id}/comments", auth: "legacy.answers.vote_answer", owner: "answers"}
+  - {protocol: "http", method: "POST", path: "/questions/{question_id}/answers/{answer_id}/comments", auth: "legacy.answers.vote_answer", owner: "answers"}
+  - {protocol: "http", method: "DELETE", path: "/questions/{question_id}/answers/{answer_id}/comments/{comment_id}", auth: "legacy.answers.delete_answer_comment", owner: "answers"}
+  - {protocol: "http", method: "GET", path: "/questions/{question_id}/answers/{answer_id}", auth: "legacy.answers.list_answers", owner: "answers"}
+  - {protocol: "http", method: "PUT", path: "/questions/{question_id}/answers/{answer_id}", auth: "legacy.answers.update_answer", owner: "answers"}
+  - {protocol: "http", method: "DELETE", path: "/questions/{question_id}/answers/{answer_id}", auth: "legacy.answers.update_answer", owner: "answers"}
+  - {protocol: "http", method: "PUT", path: "/questions/{question_id}/answers/{answer_id}/favorite", auth: "legacy.answers.vote_answer", owner: "answers"}
+  - {protocol: "http", method: "DELETE", path: "/questions/{question_id}/answers/{answer_id}/favorite", auth: "legacy.answers.vote_answer", owner: "answers"}
+  - {protocol: "http", method: "POST", path: "/questions/{question_id}/answers/{answer_id}/attitudes", auth: "legacy.answers.vote_answer", owner: "answers"}
+  # app.api.routes.app_preview
+  - {protocol: "ws", method: "WS", path: "/preview/tunnel", auth: "capability.preview.ws", owner: "preview"}
+  # app.api.routes.app_sign_in
+  - {protocol: "http", method: "POST", path: "/users/auth/app-sign-in", auth: "user.session", owner: "user.sign_in"}
+  - {protocol: "http", method: "POST", path: "/users/auth/app-sign-in/finish", auth: "app.sign_in.code", owner: "user.sign_in"}
+  # app.api.routes.assistant
+  - {protocol: "http", method: "GET", path: "/assistant/tasks/{taskId}/conversations", auth: "assistant.task", owner: "assistant"}
+  - {protocol: "http", method: "POST", path: "/assistant/tasks/{taskId}/conversations", auth: "assistant.task", owner: "assistant"}
+  - {protocol: "http", method: "GET", path: "/assistant/conversations/{conversationId}", auth: "assistant.task", owner: "assistant"}
+  - {protocol: "http", method: "POST", path: "/assistant/conversations/{conversationId}/ask", auth: "assistant.task", owner: "assistant"}
+  # app.api.routes.attachments
+  - {protocol: "http", method: "POST", path: "/attachments", auth: "legacy.answers.list_answers", owner: "attachment"}
+  - {protocol: "http", method: "GET", path: "/attachments/limits", auth: "legacy.answers.list_answers", owner: "attachment"}
+  - {protocol: "http", method: "GET", path: "/attachments/{attachmentId}", auth: "legacy.attachments.get_attachment_detail", owner: "attachment"}
+  - {protocol: "http", method: "GET", path: "/attachments/{attachmentId}/download", auth: "legacy.attachments.get_attachment_detail", owner: "attachment"}
+  - {protocol: "http", method: "DELETE", path: "/attachments/{attachmentId}", auth: "legacy.attachments.delete_attachment", owner: "attachment"}
+  # app.api.routes.avatars
+  - {protocol: "http", method: "POST", path: "/avatars", auth: "legacy.answers.list_answers", owner: "avatars"}
+  - {protocol: "http", method: "GET", path: "/avatars/", auth: "legacy.answers.list_answers", owner: "avatars"}
+  - {protocol: "http", method: "GET", path: "/avatars/default", auth: "legacy.avatars.get_default_avatar", owner: "avatars"}
+  - {protocol: "http", method: "GET", path: "/avatars/default/id", auth: "legacy.answers.list_answers", owner: "avatars"}
+  - {protocol: "http", method: "GET", path: "/avatars/predefined/id", auth: "legacy.answers.list_answers", owner: "avatars"}
+  - {protocol: "http", method: "GET", path: "/avatars/{avatar_id}", auth: "legacy.avatars.get_avatar_by_id", owner: "avatars"}
+  # app.api.routes.awaiting
+  - {protocol: "http", method: "GET", path: "/awaiting-me", auth: "awaiting.self", owner: "room_task.awaiting"}
+  # app.api.routes.backend_log
+  - {protocol: "http", method: "POST", path: "/backend-errors", auth: "backend.errors", owner: "backend.error.intake"}
+  # app.api.routes.blocks
+  - {protocol: "http", method: "PATCH", path: "/blocks/{block_id}", auth: "actor.topic.enforced", owner: "block"}
+  - {protocol: "http", method: "POST", path: "/blocks/{block_id}/reactions", auth: "actor.topic.enforced", owner: "block"}
+  # app.api.routes.chat
+  - {protocol: "ws", method: "WS", path: "/topics/{topic_id}/chat", auth: "chat.ws", owner: "topic.chat"}
+  # app.api.routes.comments
+  - {protocol: "http", method: "POST", path: "/comments/{commentId}/attitudes", auth: "legacy.answers.list_answers", owner: "comments"}
+  - {protocol: "http", method: "GET", path: "/comments/{commentId}", auth: "legacy.answers.list_answers", owner: "comments"}
+  - {protocol: "http", method: "PATCH", path: "/comments/{commentId}", auth: "legacy.comments.update_comment", owner: "comments"}
+  - {protocol: "http", method: "DELETE", path: "/comments/{commentId}", auth: "legacy.comments.update_comment", owner: "comments"}
+  - {protocol: "http", method: "GET", path: "/comments/{commentableType}/{commentableId}", auth: "legacy.answers.list_answers", owner: "comments"}
+  - {protocol: "http", method: "POST", path: "/comments/{commentableType}/{commentableId}", auth: "legacy.answers.list_answers", owner: "comments"}
+  # app.api.routes.connector
+  - {protocol: "http", method: "POST", path: "/connector/auth/device/start", auth: "device.flow.start", owner: "device"}
+  - {protocol: "http", method: "POST", path: "/connector/auth/device/poll", auth: "device.flow.code", owner: "device"}
+  - {protocol: "http", method: "GET", path: "/connector/auth/device/proposed-name", auth: "device.flow.code", owner: "device"}
+  - {protocol: "http", method: "POST", path: "/connector/connect", auth: "device.connect", owner: "device"}
+  - {protocol: "ws", method: "WS", path: "/connector/agent", auth: "device.agent.ws", owner: "device"}
+  - {protocol: "ws", method: "WS", path: "/connector/session/{sid}/screen", auth: "device.viewer.ws", owner: "device"}
+  - {protocol: "http", method: "GET", path: "/connector/my/devices", auth: "device.user", owner: "device"}
+  - {protocol: "http", method: "PATCH", path: "/connector/my/devices/{device_id}", auth: "device.user", owner: "device"}
+  - {protocol: "http", method: "DELETE", path: "/connector/my/devices/{device_id}", auth: "device.user", owner: "device"}
+  - {protocol: "http", method: "POST", path: "/connector/my/devices/{device_id}/teams", auth: "device.team", owner: "device"}
+  - {protocol: "http", method: "GET", path: "/connector/teams/{team_id}/devices", auth: "device.team", owner: "device"}
+  - {protocol: "http", method: "DELETE", path: "/connector/my/devices/{device_id}/teams/{team_id}", auth: "device.team", owner: "device"}
+  # app.api.routes.dashboard
+  - {protocol: "http", method: "GET", path: "/spaces/{space_id}/dashboard", auth: "dashboard.board", owner: "dashboard"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/members/{user_handle}/summary", auth: "actor.project", owner: "dashboard"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/usage", auth: "actor.project", owner: "dashboard"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/credits", auth: "machine.manager", owner: "dashboard"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/contributions", auth: "actor.project", owner: "dashboard"}
+  - {protocol: "http", method: "GET", path: "/users/{handle}/profile", auth: "dashboard.person", owner: "dashboard"}
+  - {protocol: "http", method: "GET", path: "/users/{handle}/topics", auth: "dashboard.person", owner: "dashboard"}
+  - {protocol: "http", method: "DELETE", path: "/users/me/understanding/{entry_id}", auth: "dashboard.person", owner: "memory"}
+  # app.api.routes.docs_site
+  - {protocol: "http", method: "POST", path: "/docs/dev-access", auth: "platform.admin", owner: "docs_site"}
+  - {protocol: "http", method: "GET", path: "/docs/dev-access/check", auth: "docs.dev.cookie", owner: "docs_site"}
+  - {protocol: "http", method: "POST", path: "/docs/ask", auth: "user.session", owner: "docs_site"}
+  - {protocol: "http", method: "POST", path: "/docs/agent/search", auth: "docs.agent", owner: "docs_site"}
+  - {protocol: "http", method: "POST", path: "/docs/agent/read", auth: "docs.agent", owner: "docs_site"}
+  # app.api.routes.docs_visit
+  - {protocol: "http", method: "POST", path: "/docs/visit", auth: "docs.visit", owner: "docs_site"}
+  # app.api.routes.execution
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/execution/session-{resource_id}", auth: "capability.execution", owner: "device"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/execution/{resource_id}", auth: "capability.execution", owner: "device"}
+  # app.api.routes.feedback
+  - {protocol: "http", method: "GET", path: "/feedback/meta", auth: "feedback.read", owner: "feedback"}
+  - {protocol: "http", method: "GET", path: "/feedback/counts", auth: "feedback.read", owner: "feedback"}
+  - {protocol: "http", method: "POST", path: "/feedback/read", auth: "feedback.write", owner: "feedback"}
+  - {protocol: "http", method: "GET", path: "/feedback/mine", auth: "feedback.read", owner: "feedback"}
+  - {protocol: "http", method: "GET", path: "/feedback", auth: "feedback.read", owner: "feedback"}
+  - {protocol: "http", method: "POST", path: "/feedback", auth: "feedback.write", owner: "feedback"}
+  - {protocol: "http", method: "GET", path: "/feedback/{feedback_id}", auth: "feedback.read", owner: "feedback"}
+  - {protocol: "http", method: "DELETE", path: "/feedback/{feedback_id}", auth: "feedback.write", owner: "feedback"}
+  - {protocol: "http", method: "GET", path: "/feedback/{feedback_id}/comments", auth: "feedback.read", owner: "feedback"}
+  - {protocol: "http", method: "POST", path: "/feedback/{feedback_id}/comments", auth: "feedback.write", owner: "feedback"}
+  - {protocol: "http", method: "DELETE", path: "/feedback/{feedback_id}/comments/{comment_id}", auth: "feedback.write", owner: "feedback"}
+  - {protocol: "http", method: "POST", path: "/feedback/{feedback_id}/comments/{comment_id}/likes", auth: "feedback.write", owner: "feedback"}
+  - {protocol: "http", method: "DELETE", path: "/feedback/{feedback_id}/comments/{comment_id}/likes", auth: "feedback.write", owner: "feedback"}
+  - {protocol: "http", method: "POST", path: "/feedback/{feedback_id}/supports", auth: "feedback.write", owner: "feedback"}
+  - {protocol: "http", method: "DELETE", path: "/feedback/{feedback_id}/supports", auth: "feedback.write", owner: "feedback"}
+  # app.api.routes.feedback_proposals
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/feedback-proposals", auth: "feedback.proposal", owner: "feedback"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/feedback-proposals", auth: "feedback.proposal", owner: "feedback"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/feedback-proposals/{block_id}/dismiss", auth: "feedback.proposal", owner: "feedback"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/feedback-proposals/{block_id}/accept", auth: "feedback.proposal", owner: "feedback"}
+  # app.api.routes.fetch
+  - {protocol: "http", method: "POST", path: "/fetch", auth: "fetch.caller", owner: "fetch"}
+  # app.api.routes.forge_token
+  - {protocol: "ws", method: "WS", path: "/sandbox/forge-tunnel/{project_id}", auth: "capability.forge", owner: "forge.transport"}
+  - {protocol: "http", method: "DELETE", path: "/sandbox/forge/{project_id}/{path:path}", auth: "capability.forge", owner: "forge.transport"}
+  - {protocol: "http", method: "GET", path: "/sandbox/forge/{project_id}/{path:path}", auth: "capability.forge", owner: "forge.transport"}
+  - {protocol: "http", method: "HEAD", path: "/sandbox/forge/{project_id}/{path:path}", auth: "capability.forge", owner: "forge.transport"}
+  - {protocol: "http", method: "OPTIONS", path: "/sandbox/forge/{project_id}/{path:path}", auth: "capability.forge", owner: "forge.transport"}
+  - {protocol: "http", method: "PATCH", path: "/sandbox/forge/{project_id}/{path:path}", auth: "capability.forge", owner: "forge.transport"}
+  - {protocol: "http", method: "POST", path: "/sandbox/forge/{project_id}/{path:path}", auth: "capability.forge", owner: "forge.transport"}
+  - {protocol: "http", method: "PUT", path: "/sandbox/forge/{project_id}/{path:path}", auth: "capability.forge", owner: "forge.transport"}
+  - {protocol: "http", method: "GET", path: "/sandbox/forge-token", auth: "capability.forge", owner: "forge.transport"}
+  # app.api.routes.frontend_log
+  - {protocol: "http", method: "POST", path: "/frontend-errors", auth: "observed.frontend.errors", owner: "frontend.error.intake"}
+  # app.api.routes.git_http
+  - {protocol: "http", method: "PUT", path: "/projects/{project_id}/git/tasks/{task_id}/snapshots/{snapshot_sha}", auth: "capability.git", owner: "repository.transport"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/git/tasks/{task_id}/snapshots/latest", auth: "capability.git", owner: "repository.transport"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/git/tasks/{task_id}/snapshots/{snapshot_id}", auth: "capability.git", owner: "repository.transport"}
+  - {protocol: "http", method: "POST", path: "/projects/{project_id}/git/tasks/{task_id}", auth: "capability.git", owner: "repository.transport"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/git/tasks/{task_id}", auth: "capability.git", owner: "repository.transport"}
+  # app.api.routes.github_account_link
+  - {protocol: "http", method: "GET", path: "/users/me/github-account/authorize-url", auth: "user.session", owner: "github.binding"}
+  - {protocol: "http", method: "GET", path: "/users/me/github-account/callback", auth: "github.state", owner: "github.binding"}
+  # app.api.routes.github_install
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/github/connection", auth: "actor.project", owner: "github.binding"}
+  - {protocol: "http", method: "POST", path: "/projects/{project_id}/github/connect", auth: "github.manager", owner: "github.binding"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/github/install-url", auth: "github.manager", owner: "github.binding"}
+  - {protocol: "http", method: "GET", path: "/github/app/callback", auth: "github.state", owner: "github.binding"}
+  # app.api.routes.groups
+  - {protocol: "http", method: "GET", path: "/groups", auth: "legacy.answers.list_answers", owner: "groups"}
+  - {protocol: "http", method: "POST", path: "/groups", auth: "legacy.answers.list_answers", owner: "groups"}
+  - {protocol: "http", method: "GET", path: "/groups/{group_id}", auth: "legacy.answers.list_answers", owner: "groups"}
+  - {protocol: "http", method: "PUT", path: "/groups/{group_id}", auth: "legacy.groups.update_group", owner: "groups"}
+  - {protocol: "http", method: "DELETE", path: "/groups/{group_id}", auth: "legacy.groups.delete_group", owner: "groups"}
+  - {protocol: "http", method: "GET", path: "/groups/{group_id}/members", auth: "legacy.answers.list_answers", owner: "groups"}
+  - {protocol: "http", method: "POST", path: "/groups/{group_id}/members", auth: "legacy.answers.list_answers", owner: "groups"}
+  - {protocol: "http", method: "DELETE", path: "/groups/{group_id}/members", auth: "legacy.answers.list_answers", owner: "groups"}
+  - {protocol: "http", method: "GET", path: "/groups/{group_id}/targets", auth: "legacy.answers.list_answers", owner: "groups"}
+  - {protocol: "http", method: "POST", path: "/groups/{group_id}/targets", auth: "legacy.groups.create_group_target", owner: "groups"}
+  - {protocol: "http", method: "GET", path: "/groups/{group_id}/targets/{target_id}", auth: "legacy.answers.list_answers", owner: "groups"}
+  - {protocol: "http", method: "PUT", path: "/groups/{group_id}/targets/{target_id}", auth: "legacy.groups.create_group_target", owner: "groups"}
+  - {protocol: "http", method: "DELETE", path: "/groups/{group_id}/targets/{target_id}", auth: "legacy.groups.create_group_target", owner: "groups"}
+  - {protocol: "http", method: "GET", path: "/groups/{group_id}/questions", auth: "legacy.answers.list_answers", owner: "groups"}
+  - {protocol: "http", method: "POST", path: "/groups/{group_id}/questions", auth: "legacy.groups.create_group_target", owner: "groups"}
+  - {protocol: "http", method: "DELETE", path: "/groups/{group_id}/questions/{question_id}", auth: "legacy.groups.create_group_target", owner: "groups"}
+  # app.api.routes.health
+  - {protocol: "http", method: "GET", path: "/healthz", auth: "public.health", owner: "core.health"}
+  - {protocol: "http", method: "GET", path: "/health/detailed", auth: "public.health", owner: "core.health"}
+  - {protocol: "http", method: "GET", path: "/metrics", auth: "public.health", owner: "core.health"}
+  - {protocol: "http", method: "GET", path: "/readyz", auth: "public.health", owner: "core.health"}
+  # app.api.routes.installer
+  - {protocol: "http", method: "GET", path: "/connector/install.sh", auth: "public.catalogue", owner: "installer"}
+  - {protocol: "http", method: "GET", path: "/connector/install.ps1", auth: "public.catalogue", owner: "installer"}
+  - {protocol: "http", method: "GET", path: "/connector/claude/{version}/{platform}/{name}", auth: "public.catalogue", owner: "installer"}
+  - {protocol: "http", method: "GET", path: "/connector/pi/{version}/{platform}/pi.tar.gz", auth: "public.catalogue", owner: "installer"}
+  - {protocol: "http", method: "GET", path: "/connector/toolchain/{tool}/{platform}/artifact", auth: "public.catalogue", owner: "installer"}
+  - {protocol: "http", method: "GET", path: "/connector/latest/{target}/{name}", auth: "public.catalogue", owner: "installer"}
+  # app.api.routes.integrations
+  - {protocol: "http", method: "GET", path: "/me/integrations", auth: "integration.person", owner: "integration"}
+  - {protocol: "http", method: "POST", path: "/me/integrations/mail", auth: "integration.person", owner: "integration"}
+  - {protocol: "http", method: "GET", path: "/me/integrations/feishu", auth: "integration.person", owner: "integration"}
+  - {protocol: "http", method: "POST", path: "/me/integrations/feishu", auth: "integration.person", owner: "integration"}
+  - {protocol: "http", method: "PATCH", path: "/me/integrations/{integration_id}", auth: "integration.person", owner: "integration"}
+  - {protocol: "http", method: "POST", path: "/me/integrations/{integration_id}/check", auth: "integration.person", owner: "integration"}
+  - {protocol: "http", method: "DELETE", path: "/me/integrations/{integration_id}", auth: "integration.person", owner: "integration"}
+  - {protocol: "http", method: "GET", path: "/me/integrations/{integration_id}/feishu/authorize", auth: "integration.person", owner: "integration"}
+  - {protocol: "http", method: "GET", path: "/integrations/feishu/callback", auth: "integration.oauth.state", owner: "integration"}
+  - {protocol: "http", method: "GET", path: "/me/mail-drafts", auth: "integration.person", owner: "integration"}
+  - {protocol: "http", method: "POST", path: "/me/mail-drafts/{draft_id}/send", auth: "integration.person", owner: "integration"}
+  - {protocol: "http", method: "POST", path: "/me/mail-drafts/{draft_id}/discard", auth: "integration.person", owner: "integration"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/integrations", auth: "integration.room", owner: "integration"}
+  - {protocol: "http", method: "POST", path: "/integrations/{integration_id}/mail/search", auth: "integration.room", owner: "integration"}
+  - {protocol: "http", method: "GET", path: "/integrations/{integration_id}/mail/messages/{uid}", auth: "integration.room", owner: "integration"}
+  - {protocol: "http", method: "GET", path: "/integrations/{integration_id}/mail/messages/{uid}/attachments/{index}", auth: "integration.room", owner: "integration"}
+  - {protocol: "http", method: "POST", path: "/integrations/{integration_id}/mail/drafts", auth: "integration.room", owner: "integration"}
+  - {protocol: "http", method: "POST", path: "/integrations/{integration_id}/feishu/search", auth: "integration.room", owner: "integration"}
+  - {protocol: "http", method: "GET", path: "/integrations/{integration_id}/feishu/docs/{document_id}", auth: "integration.room", owner: "integration"}
+  - {protocol: "http", method: "POST", path: "/integrations/{integration_id}/feishu/docs", auth: "integration.room", owner: "integration"}
+  - {protocol: "http", method: "PATCH", path: "/integrations/{integration_id}/feishu/docs/{document_id}", auth: "integration.room", owner: "integration"}
+  # app.api.routes.knowledge
+  - {protocol: "http", method: "POST", path: "/knowledge", auth: "legacy.knowledge.create_knowledge", owner: "knowledge"}
+  - {protocol: "http", method: "GET", path: "/knowledge", auth: "legacy.knowledge.create_knowledge", owner: "knowledge"}
+  - {protocol: "http", method: "GET", path: "/knowledge/{knowledgeId}", auth: "legacy.knowledge.create_knowledge", owner: "knowledge"}
+  - {protocol: "http", method: "PATCH", path: "/knowledge/{knowledgeId}", auth: "legacy.knowledge.create_knowledge", owner: "knowledge"}
+  - {protocol: "http", method: "DELETE", path: "/knowledge/{knowledgeId}", auth: "legacy.knowledge.create_knowledge", owner: "knowledge"}
+  - {protocol: "http", method: "POST", path: "/knowledge/{knowledgeId}/upvote", auth: "legacy.knowledge.create_knowledge", owner: "knowledge"}
+  - {protocol: "http", method: "DELETE", path: "/knowledge/{knowledgeId}/upvote", auth: "legacy.knowledge.create_knowledge", owner: "knowledge"}
+  # app.api.routes.legal
+  - {protocol: "http", method: "GET", path: "/legal/documents", auth: "public.legal", owner: "legal"}
+  - {protocol: "http", method: "GET", path: "/legal/documents/{document}", auth: "public.legal", owner: "legal"}
+  - {protocol: "http", method: "GET", path: "/legal/documents/{document}/versions/{version}", auth: "public.legal", owner: "legal"}
+  - {protocol: "http", method: "GET", path: "/users/me/consents", auth: "user.session", owner: "legal"}
+  - {protocol: "http", method: "POST", path: "/users/me/consents", auth: "user.session", owner: "legal"}
+  # app.api.routes.library
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/library/raw", auth: "project.reader", owner: "library"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/library", auth: "project.reader", owner: "library"}
+  - {protocol: "http", method: "POST", path: "/projects/{project_id}/library", auth: "library.keeper", owner: "library"}
+  - {protocol: "http", method: "PUT", path: "/projects/{project_id}/library", auth: "library.keeper", owner: "library"}
+  - {protocol: "http", method: "DELETE", path: "/projects/{project_id}/library", auth: "library.keeper", owner: "library"}
+  # app.api.routes.living_docs
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/doc", auth: "actor.topic", owner: "living_doc"}
+  - {protocol: "http", method: "PUT", path: "/topics/{topic_id}/doc", auth: "living.document", owner: "living_doc"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/doc/history", auth: "living.document", owner: "living_doc"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/doc/refreshes", auth: "living.document", owner: "living_doc"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/doc/operations/{operation_id}", auth: "living.document", owner: "living_doc"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/doc/restore", auth: "living.document", owner: "living_doc"}
+  # app.api.routes.llm_proxy
+  - {protocol: "http", method: "POST", path: "/llm/admission", auth: "capability.llm", owner: "agent.llm"}
+  - {protocol: "http", method: "GET", path: "/llm/{path:path}", auth: "capability.llm", owner: "agent.llm"}
+  - {protocol: "http", method: "POST", path: "/llm/{path:path}", auth: "capability.llm", owner: "agent.llm"}
+  # app.api.routes.llm_tunnel
+  - {protocol: "ws", method: "WS", path: "/llm/tunnel", auth: "capability.llm.ws", owner: "agent.llm"}
+  # app.api.routes.local_dirs
+  - {protocol: "http", method: "GET", path: "/connector/my/devices/{device_id}/directories", auth: "local.device.owner", owner: "local_fs"}
+  - {protocol: "http", method: "POST", path: "/connector/my/devices/{device_id}/directories", auth: "local.device.owner", owner: "local_fs"}
+  - {protocol: "http", method: "DELETE", path: "/connector/my/devices/{device_id}/directories/{grant_id}", auth: "local.device.owner", owner: "local_fs"}
+  - {protocol: "http", method: "GET", path: "/connector/my/access-log", auth: "local.device.owner", owner: "local_fs"}
+  # app.api.routes.machines
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/machines", auth: "machine.manager", owner: "machine"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/cloud-supply", auth: "actor.project", owner: "machine"}
+  - {protocol: "http", method: "DELETE", path: "/projects/{project_id}/machines/{machine_row_id}", auth: "machine.manager", owner: "machine"}
+  - {protocol: "http", method: "POST", path: "/projects/{project_id}/machines/{machine_row_id}/{operation}", auth: "machine.manager", owner: "machine"}
+  # app.api.routes.market
+  - {protocol: "http", method: "GET", path: "/market/pools", auth: "public.catalogue", owner: "compute.availability"}
+  - {protocol: "http", method: "GET", path: "/market/nodes", auth: "observed.compute.nodes", owner: "compute.availability"}
+  # app.api.routes.materialbundles
+  - {protocol: "http", method: "GET", path: "/material-bundles", auth: "legacy.answers.list_answers", owner: "materials.bundles"}
+  - {protocol: "http", method: "GET", path: "/material-bundles/{bundle_id}", auth: "legacy.answers.list_answers", owner: "materials.bundles"}
+  - {protocol: "http", method: "POST", path: "/material-bundles", auth: "legacy.answers.list_answers", owner: "materials.bundles"}
+  - {protocol: "http", method: "PATCH", path: "/material-bundles/{bundle_id}", auth: "legacy.materialbundles.update_material_bundle", owner: "materials.bundles"}
+  - {protocol: "http", method: "DELETE", path: "/material-bundles/{bundle_id}", auth: "legacy.materialbundles.update_material_bundle", owner: "materials.bundles"}
+  # app.api.routes.materials
+  - {protocol: "http", method: "POST", path: "/materials", auth: "legacy.answers.list_answers", owner: "materials"}
+  - {protocol: "http", method: "GET", path: "/materials/{material_id}", auth: "legacy.materials.get_material_detail", owner: "materials"}
+  - {protocol: "http", method: "DELETE", path: "/materials/{material_id}", auth: "legacy.materials.delete_material", owner: "materials"}
+  # app.api.routes.members
+  - {protocol: "http", method: "POST", path: "/projects/{project_id}/members", auth: "membership.service", owner: "membership"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/members", auth: "actor.project", owner: "membership"}
+  - {protocol: "http", method: "DELETE", path: "/projects/{project_id}/members/{user_handle}", auth: "membership.service", owner: "membership"}
+  - {protocol: "http", method: "DELETE", path: "/projects/{project_id}/membership", auth: "membership.service", owner: "membership"}
+  - {protocol: "http", method: "POST", path: "/projects/{project_id}/invitations", auth: "membership.service", owner: "membership"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/invitations", auth: "actor.project", owner: "membership"}
+  - {protocol: "http", method: "GET", path: "/me/invitations", auth: "invitation.verified", owner: "membership"}
+  - {protocol: "http", method: "POST", path: "/invitations/{invitation_id}/respond", auth: "invitation.verified", owner: "membership"}
+  - {protocol: "http", method: "DELETE", path: "/invitations/{invitation_id}", auth: "invitation.verified", owner: "membership"}
+  # app.api.routes.memory
+  - {protocol: "http", method: "GET", path: "/memory", auth: "memory.read", owner: "memory"}
+  - {protocol: "http", method: "DELETE", path: "/memory/{entry_id}", auth: "memory.delete", owner: "memory"}
+  # app.api.routes.memory_files
+  - {protocol: "http", method: "GET", path: "/memory/files", auth: "memory.files.read", owner: "memory"}
+  - {protocol: "http", method: "PUT", path: "/memory/files", auth: "memory.files.write", owner: "memory"}
+  - {protocol: "http", method: "POST", path: "/memory/files/delete", auth: "memory.files.write", owner: "memory"}
+  # app.api.routes.notifications_flat
+  - {protocol: "http", method: "GET", path: "/notifications/unread-count", auth: "user.session", owner: "notification"}
+  - {protocol: "http", method: "GET", path: "/notifications", auth: "user.session", owner: "notification"}
+  - {protocol: "http", method: "PATCH", path: "/notifications", auth: "user.session", owner: "notification"}
+  - {protocol: "http", method: "PUT", path: "/notifications/status", auth: "user.session", owner: "notification"}
+  - {protocol: "http", method: "GET", path: "/notifications/{notification_id}", auth: "user.session", owner: "notification"}
+  - {protocol: "http", method: "PATCH", path: "/notifications/{notification_id}", auth: "user.session", owner: "notification"}
+  - {protocol: "http", method: "DELETE", path: "/notifications/{notification_id}", auth: "user.session", owner: "notification"}
+  # app.api.routes.notifications_live
+  - {protocol: "http", method: "POST", path: "/notifications/live-token", auth: "user.session", owner: "notification"}
+  - {protocol: "ws", method: "WS", path: "/notifications/live", auth: "notice.ws", owner: "notification"}
+  # app.api.routes.preview_sessions
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/preview-session", auth: "preview.access", owner: "preview"}
+  # app.api.routes.project_context
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/context/search", auth: "context.rooms", owner: "project.context"}
+  # app.api.routes.project_environment
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/environment", auth: "environment.user", owner: "project.environment"}
+  - {protocol: "http", method: "PUT", path: "/projects/{project_id}/environment", auth: "environment.user", owner: "project.environment"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/environment/rooms/{topic_id}", auth: "environment.user", owner: "project.environment"}
+  - {protocol: "http", method: "POST", path: "/projects/{project_id}/environment/rooms/{topic_id}/apply", auth: "environment.user", owner: "project.environment"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/environment/recovery/rooms/{topic_id}", auth: "environment.overview", owner: "project.environment"}
+  - {protocol: "http", method: "POST", path: "/projects/{project_id}/environment/recovery/rooms/{topic_id}", auth: "environment.overview", owner: "project.environment"}
+  # app.api.routes.project_export
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/export", auth: "export.human", owner: "project.export"}
+  # app.api.routes.project_sites
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/site", auth: "site.access", owner: "site"}
+  - {protocol: "http", method: "POST", path: "/projects/{project_id}/site", auth: "site.access", owner: "site"}
+  # app.api.routes.project_skills
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/skills", auth: "skill.project", owner: "project.skills"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/skills", auth: "skill.project", owner: "project.skills"}
+  - {protocol: "http", method: "GET", path: "/skills/{skill_id}", auth: "skill.project", owner: "project.skills"}
+  - {protocol: "http", method: "PATCH", path: "/skills/{skill_id}", auth: "skill.project", owner: "project.skills"}
+  - {protocol: "http", method: "POST", path: "/skills/{skill_id}/confirm", auth: "skill.project", owner: "project.skills"}
+  - {protocol: "http", method: "POST", path: "/skills/{skill_id}/revisions/{revision}/restore", auth: "skill.project", owner: "project.skills"}
+  - {protocol: "http", method: "DELETE", path: "/skills/{skill_id}", auth: "skill.project", owner: "project.skills"}
+  # app.api.routes.projects
+  - {protocol: "http", method: "GET", path: "/projects/resource-limits", auth: "public.catalogue", owner: "project"}
+  - {protocol: "http", method: "POST", path: "/projects", auth: "project.create", owner: "project"}
+  - {protocol: "http", method: "GET", path: "/projects", auth: "project.list", owner: "project"}
+  - {protocol: "http", method: "GET", path: "/projects/by-task/{task_id}", auth: "task.visibility", owner: "project"}
+  - {protocol: "http", method: "GET", path: "/projects/by-team/{team_id}", auth: "team.access", owner: "project"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}", auth: "actor.project", owner: "project"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/weeklies", auth: "project.reader", owner: "block"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/tasks", auth: "project.reader", owner: "project.rail"}
+  - {protocol: "http", method: "POST", path: "/projects/{project_id}/memory", auth: "memory.closed.write", owner: "memory"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/private-chat", auth: "project.private.chat", owner: "topic"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/forge", auth: "actor.project", owner: "project"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/forge-attribution", auth: "actor.project", owner: "project"}
+  - {protocol: "http", method: "PUT", path: "/projects/{project_id}/forge-attribution", auth: "project.manager", owner: "project"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/topic-naming", auth: "project.can_manage.read", owner: "project"}
+  - {protocol: "http", method: "PUT", path: "/projects/{project_id}/topic-naming", auth: "project.manager", owner: "project"}
+  - {protocol: "http", method: "POST", path: "/projects/{project_id}/archive", auth: "project.owner", owner: "project"}
+  - {protocol: "http", method: "POST", path: "/projects/{project_id}/unarchive", auth: "project.owner", owner: "project"}
+  - {protocol: "http", method: "PUT", path: "/projects/{project_id}/owner", auth: "project.steward", owner: "project"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/branch-protection", auth: "actor.project", owner: "project"}
+  - {protocol: "http", method: "PUT", path: "/projects/{project_id}/branch-protection", auth: "project.steward", owner: "project"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/upstream", auth: "actor.project", owner: "project"}
+  - {protocol: "http", method: "PUT", path: "/projects/{project_id}/upstream", auth: "project.manager", owner: "project"}
+  # app.api.routes.projects_agents
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/agents", auth: "actor.project", owner: "agent.instances"}
+  - {protocol: "http", method: "POST", path: "/projects/{project_id}/agents", auth: "actor.project", owner: "agent.instances"}
+  - {protocol: "http", method: "PUT", path: "/projects/{project_id}/agents/{agent_id}", auth: "actor.project", owner: "agent.instances"}
+  - {protocol: "http", method: "DELETE", path: "/projects/{project_id}/agents/{agent_id}", auth: "actor.project", owner: "agent.instances"}
+  - {protocol: "http", method: "PUT", path: "/projects/{project_id}/default-agent", auth: "actor.project", owner: "agent.instances"}
+  # app.api.routes.projects_artifacts
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/artifacts", auth: "project.reader", owner: "project.artifacts"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/artifacts/{artifact_id}", auth: "project.reader", owner: "project.artifacts"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/artifacts/{artifact_id}/compare", auth: "project.reader", owner: "project.artifacts"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/artifacts/{artifact_id}/versions/{card_id}/file", auth: "project.reader", owner: "project.artifacts"}
+  - {protocol: "http", method: "PATCH", path: "/projects/{project_id}/artifacts/{artifact_id}", auth: "artifact.keeper", owner: "project.artifacts"}
+  - {protocol: "http", method: "POST", path: "/projects/{project_id}/artifacts/{artifact_id}/merge", auth: "artifact.keeper", owner: "project.artifacts"}
+  - {protocol: "http", method: "DELETE", path: "/projects/{project_id}/artifacts/{artifact_id}", auth: "artifact.keeper", owner: "project.artifacts"}
+  # app.api.routes.projects_run_config
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/default-model", auth: "project.can_manage.read", owner: "project.run_config"}
+  - {protocol: "http", method: "PUT", path: "/projects/{project_id}/default-model", auth: "project.manager", owner: "project.run_config"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/compute-configs", auth: "project.can_manage.read", owner: "project.run_config"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/devices/{device_id}/sessions", auth: "project.manager", owner: "project.run_config"}
+  - {protocol: "http", method: "PUT", path: "/projects/{project_id}/compute-configs", auth: "project.manager", owner: "project.run_config"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/tier-policy", auth: "actor.project", owner: "project.run_config"}
+  - {protocol: "http", method: "PUT", path: "/projects/{project_id}/tier-policy", auth: "project.manager", owner: "project.run_config"}
+  # app.api.routes.push
+  - {protocol: "http", method: "GET", path: "/push/key", auth: "public.catalogue", owner: "notification"}
+  - {protocol: "http", method: "PUT", path: "/push/subscriptions", auth: "user.session", owner: "notification"}
+  - {protocol: "http", method: "POST", path: "/push/subscriptions/delete", auth: "user.session", owner: "notification"}
+  # app.api.routes.questions
+  - {protocol: "http", method: "GET", path: "/questions/trending", auth: "legacy.questions.get_trending_questions", owner: "questions"}
+  - {protocol: "http", method: "GET", path: "/questions/stats", auth: "legacy.questions.get_question_stats", owner: "questions"}
+  - {protocol: "http", method: "GET", path: "/questions/search-terms", auth: "legacy.questions.get_popular_search_terms", owner: "questions"}
+  - {protocol: "http", method: "GET", path: "/questions", auth: "legacy.answers.list_answers", owner: "questions"}
+  - {protocol: "http", method: "POST", path: "/questions", auth: "legacy.answers.list_answers", owner: "questions"}
+  - {protocol: "http", method: "GET", path: "/questions/followed", auth: "legacy.answers.list_answers", owner: "questions"}
+  - {protocol: "http", method: "GET", path: "/questions/{question_id}", auth: "legacy.answers.list_answers", owner: "questions"}
+  - {protocol: "http", method: "POST", path: "/questions/{question_id}/followers", auth: "legacy.answers.list_answers", owner: "questions"}
+  - {protocol: "http", method: "DELETE", path: "/questions/{question_id}/followers", auth: "legacy.answers.list_answers", owner: "questions"}
+  - {protocol: "http", method: "PUT", path: "/questions/{question_id}/acceptance", auth: "legacy.questions.accept_answer", owner: "questions"}
+  - {protocol: "http", method: "DELETE", path: "/questions/{question_id}/accept", auth: "legacy.questions.unaccept_answer", owner: "questions"}
+  - {protocol: "http", method: "POST", path: "/questions/{question_id}/vote", auth: "legacy.answers.list_answers", owner: "questions"}
+  - {protocol: "http", method: "DELETE", path: "/questions/{question_id}/vote", auth: "legacy.answers.list_answers", owner: "questions"}
+  - {protocol: "http", method: "GET", path: "/questions/{question_id}/vote", auth: "legacy.answers.list_answers", owner: "questions"}
+  - {protocol: "http", method: "GET", path: "/questions/{question_id}/comments", auth: "legacy.answers.list_answers", owner: "questions"}
+  - {protocol: "http", method: "POST", path: "/questions/{question_id}/comments", auth: "legacy.answers.list_answers", owner: "questions"}
+  - {protocol: "http", method: "DELETE", path: "/questions/{question_id}/comments/{comment_id}", auth: "legacy.questions.delete_question_comment", owner: "questions"}
+  - {protocol: "http", method: "PUT", path: "/questions/{question_id}", auth: "legacy.questions.accept_answer", owner: "questions"}
+  - {protocol: "http", method: "DELETE", path: "/questions/{question_id}", auth: "legacy.questions.accept_answer", owner: "questions"}
+  - {protocol: "http", method: "GET", path: "/questions/{question_id}/followers", auth: "observed.question.followers", owner: "questions"}
+  - {protocol: "http", method: "PUT", path: "/questions/{question_id}/followers", auth: "legacy.answers.list_answers", owner: "questions"}
+  - {protocol: "http", method: "PUT", path: "/questions/{question_id}/bounty", auth: "legacy.questions.accept_answer", owner: "questions"}
+  - {protocol: "http", method: "POST", path: "/questions/{question_id}/attitudes", auth: "legacy.answers.list_answers", owner: "questions"}
+  - {protocol: "http", method: "GET", path: "/questions/{question_id}/invitations", auth: "legacy.answers.list_answers", owner: "questions"}
+  - {protocol: "http", method: "POST", path: "/questions/{question_id}/invitations", auth: "legacy.answers.list_answers", owner: "questions"}
+  - {protocol: "http", method: "GET", path: "/questions/{question_id}/invitations/recommendations", auth: "legacy.answers.list_answers", owner: "questions"}
+  - {protocol: "http", method: "GET", path: "/questions/{question_id}/invitations/{invitation_id}", auth: "legacy.answers.list_answers", owner: "questions"}
+  - {protocol: "http", method: "DELETE", path: "/questions/{question_id}/invitations/{invitation_id}", auth: "legacy.questions.accept_answer", owner: "questions"}
+  # app.api.routes.recruitment
+  - {protocol: "http", method: "GET", path: "/recruitment", auth: "legacy.recruitment.list_recruitment_posts", owner: "team.recruitment"}
+  - {protocol: "http", method: "PATCH", path: "/recruitment/{postId}", auth: "legacy.recruitment.edit_recruitment_post", owner: "team.recruitment"}
+  - {protocol: "http", method: "DELETE", path: "/recruitment/{postId}", auth: "legacy.recruitment.delete_recruitment_post", owner: "team.recruitment"}
+  - {protocol: "http", method: "POST", path: "/teams/{teamId}/recruitment", auth: "legacy.recruitment.delete_recruitment_post", owner: "team.recruitment"}
+  - {protocol: "http", method: "GET", path: "/teams/{teamId}/recruitment", auth: "legacy.recruitment.list_team_recruitment_posts", owner: "team.recruitment"}
+  # app.api.routes.remote_mcp
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/mcp/servers", auth: "mcp.member", owner: "remote_mcp"}
+  - {protocol: "http", method: "POST", path: "/projects/{project_id}/mcp/servers/{name}/connect", auth: "mcp.member", owner: "remote_mcp"}
+  - {protocol: "http", method: "DELETE", path: "/projects/{project_id}/mcp/servers/{name}/connection", auth: "mcp.member", owner: "remote_mcp"}
+  - {protocol: "http", method: "PUT", path: "/projects/{project_id}/mcp/secrets/{name}", auth: "mcp.member", owner: "remote_mcp"}
+  - {protocol: "http", method: "DELETE", path: "/projects/{project_id}/mcp/secrets/{name}", auth: "mcp.member", owner: "remote_mcp"}
+  - {protocol: "http", method: "GET", path: "/mcp/oauth/client.json", auth: "public.mcp.metadata", owner: "remote_mcp"}
+  - {protocol: "http", method: "GET", path: "/mcp/oauth/callback", auth: "mcp.oauth.state", owner: "remote_mcp"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/mcp/{name}", auth: "mcp.proxy", owner: "remote_mcp"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/mcp/servers", auth: "actor.topic.enforced", owner: "remote_mcp"}
+  # app.api.routes.room_files
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/files/raw", auth: "actor.topic", owner: "room.files"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/files/revisions", auth: "actor.topic", owner: "room.files"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/files/revisions/{revision_id}/raw", auth: "actor.topic", owner: "room.files"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/files/revisions/{revision_id}/restore", auth: "actor.topic", owner: "room.files"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/files/copy", auth: "actor.topic", owner: "room.files"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/files/templates", auth: "actor.topic", owner: "room.files"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/files/new", auth: "actor.topic", owner: "room.files"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/files/editor", auth: "actor.topic", owner: "room.files"}
+  - {protocol: "http", method: "GET", path: "/office-editor/files/{link}", auth: "editor.link", owner: "documents"}
+  - {protocol: "http", method: "POST", path: "/office-editor/callback/{link}", auth: "editor.callback", owner: "documents"}
+  # app.api.routes.routines
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/routines", auth: "routines.list", owner: "routine"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/routines", auth: "routines.create", owner: "routine"}
+  - {protocol: "http", method: "GET", path: "/routines/{routine_id}", auth: "routines.room", owner: "routine"}
+  - {protocol: "http", method: "PATCH", path: "/routines/{routine_id}", auth: "routines.manage", owner: "routine"}
+  - {protocol: "http", method: "POST", path: "/routines/{routine_id}/confirm", auth: "routines.manage", owner: "routine"}
+  - {protocol: "http", method: "POST", path: "/routines/{routine_id}/pause", auth: "routines.manage", owner: "routine"}
+  - {protocol: "http", method: "POST", path: "/routines/{routine_id}/resume", auth: "routines.manage", owner: "routine"}
+  - {protocol: "http", method: "POST", path: "/routines/{routine_id}/run-now", auth: "routines.manage", owner: "routine"}
+  - {protocol: "http", method: "DELETE", path: "/routines/{routine_id}", auth: "routines.manage", owner: "routine"}
+  - {protocol: "http", method: "GET", path: "/routines/{routine_id}/runs", auth: "routines.room", owner: "routine"}
+  - {protocol: "http", method: "POST", path: "/routine-runs/{run_id}/report", auth: "routines.room", owner: "routine"}
+  # app.api.routes.sandbox
+  - {protocol: "http", method: "POST", path: "/sandbox/storage-sweep", auth: "sandbox.global", owner: "sandbox.maintenance"}
+  - {protocol: "http", method: "GET", path: "/sandbox/cli/cheese", auth: "capability.cli", owner: "installer"}
+  # app.api.routes.site_sessions
+  - {protocol: "http", method: "POST", path: "/projects/{project_id}/site-session", auth: "site.access", owner: "site"}
+  # app.api.routes.space_announcements
+  - {protocol: "http", method: "GET", path: "/spaces/{spaceId}/announcements", auth: "legacy.space_announcements.list_announcements", owner: "space.announcements"}
+  - {protocol: "http", method: "POST", path: "/spaces/{spaceId}/announcements", auth: "legacy.space_announcements.publish_announcement", owner: "space.announcements"}
+  - {protocol: "http", method: "PATCH", path: "/spaces/{spaceId}/announcements/{announcementId}", auth: "legacy.space_announcements.publish_announcement", owner: "space.announcements"}
+  - {protocol: "http", method: "DELETE", path: "/spaces/{spaceId}/announcements/{announcementId}", auth: "legacy.space_announcements.publish_announcement", owner: "space.announcements"}
+  # app.api.routes.space_applications
+  - {protocol: "http", method: "GET", path: "/space-applications", auth: "legacy.space_applications.list_my_applications", owner: "space.applications"}
+  - {protocol: "http", method: "POST", path: "/space-applications/{space_id}/resubmit", auth: "legacy.space_applications.resubmit_space", owner: "space.applications"}
+  # app.api.routes.spaces
+  - {protocol: "http", method: "GET", path: "/spaces/{spaceId}", auth: "legacy.spaces.get_space", owner: "space"}
+  - {protocol: "http", method: "GET", path: "/spaces", auth: "legacy.spaces.get_spaces", owner: "space"}
+  - {protocol: "http", method: "POST", path: "/spaces", auth: "legacy.spaces.create_space", owner: "space"}
+  - {protocol: "http", method: "PATCH", path: "/spaces/{spaceId}", auth: "legacy.spaces.patch_space", owner: "space"}
+  - {protocol: "http", method: "DELETE", path: "/spaces/{spaceId}", auth: "legacy.spaces.delete_space", owner: "space"}
+  - {protocol: "http", method: "POST", path: "/spaces/join", auth: "legacy.spaces.join_space", owner: "space"}
+  - {protocol: "http", method: "GET", path: "/spaces/{spaceId}/members", auth: "legacy.space_announcements.list_announcements", owner: "space"}
+  - {protocol: "http", method: "POST", path: "/spaces/{spaceId}/members", auth: "legacy.spaces.add_space_member", owner: "space"}
+  - {protocol: "http", method: "DELETE", path: "/spaces/{spaceId}/members/{userId}", auth: "legacy.spaces.add_space_member", owner: "space"}
+  - {protocol: "http", method: "POST", path: "/spaces/{spaceId}/leave", auth: "legacy.spaces.leave_space", owner: "space"}
+  - {protocol: "http", method: "GET", path: "/spaces/{spaceId}/analytics/tasks", auth: "legacy.spaces.get_space_task_analytics", owner: "space.analytics"}
+  - {protocol: "http", method: "GET", path: "/spaces/{spaceId}/publishers/participation", auth: "legacy.spaces.get_space_task_analytics", owner: "space.analytics"}
+  - {protocol: "http", method: "GET", path: "/spaces/{spaceId}/participants/export", auth: "legacy.spaces.get_space_task_analytics", owner: "space.analytics"}
+  # app.api.routes.spaces_analytics
+  - {protocol: "http", method: "GET", path: "/spaces/{spaceId}/analytics/overview", auth: "legacy.spaces.get_space_task_analytics", owner: "space.analytics.learning"}
+  - {protocol: "http", method: "GET", path: "/spaces/{spaceId}/analytics/alerts", auth: "legacy.spaces.get_space_task_analytics", owner: "space.analytics.learning"}
+  - {protocol: "http", method: "GET", path: "/spaces/{spaceId}/analytics/publishers", auth: "legacy.spaces.get_space_task_analytics", owner: "space.analytics.learning"}
+  - {protocol: "http", method: "GET", path: "/spaces/{spaceId}/analytics/participants", auth: "legacy.spaces.get_space_task_analytics", owner: "space.analytics.learning"}
+  - {protocol: "http", method: "GET", path: "/spaces/{spaceId}/analytics/people", auth: "legacy.spaces.get_space_task_analytics", owner: "space.analytics.learning"}
+  - {protocol: "http", method: "GET", path: "/spaces/{spaceId}/analytics/participants/export", auth: "legacy.spaces.get_space_task_analytics", owner: "space.analytics.learning"}
+  - {protocol: "http", method: "GET", path: "/spaces/{spaceId}/submissions", auth: "legacy.spaces.get_space_task_analytics", owner: "space.analytics.learning"}
+  - {protocol: "http", method: "GET", path: "/spaces/{spaceId}/analytics/learning/filters", auth: "legacy.spaces_analytics.get_space_learning_filters", owner: "space.learning"}
+  - {protocol: "http", method: "GET", path: "/spaces/{spaceId}/analytics/learning/questions", auth: "legacy.spaces_analytics.get_space_learning_questions", owner: "space.learning"}
+  - {protocol: "http", method: "GET", path: "/spaces/{spaceId}/analytics/learning/queues", auth: "legacy.spaces_analytics.get_space_learning_questions", owner: "space.learning"}
+  - {protocol: "http", method: "POST", path: "/spaces/{spaceId}/analytics/learning/outline", auth: "legacy.spaces_analytics.get_space_learning_questions", owner: "space.learning"}
+  - {protocol: "http", method: "GET", path: "/spaces/{spaceId}/analytics/tasks/export", auth: "legacy.spaces.get_space_task_analytics", owner: "space.analytics.learning"}
+  - {protocol: "http", method: "GET", path: "/spaces/{spaceId}/analytics/publishers/export", auth: "legacy.spaces.get_space_task_analytics", owner: "space.analytics.learning"}
+  # app.api.routes.spaces_invite_codes
+  - {protocol: "http", method: "GET", path: "/spaces/{spaceId}/invite-codes", auth: "legacy.spaces_invite_codes.list_space_invite_codes", owner: "space.invites"}
+  - {protocol: "http", method: "POST", path: "/spaces/{spaceId}/invite-codes", auth: "legacy.spaces_invite_codes.list_space_invite_codes", owner: "space.invites"}
+  - {protocol: "http", method: "PATCH", path: "/spaces/{spaceId}/invite-codes/{codeId}", auth: "legacy.spaces_invite_codes.list_space_invite_codes", owner: "space.invites"}
+  - {protocol: "http", method: "DELETE", path: "/spaces/{spaceId}/invite-codes/{codeId}", auth: "legacy.spaces_invite_codes.list_space_invite_codes", owner: "space.invites"}
+  # app.api.routes.spaces_member
+  - {protocol: "http", method: "GET", path: "/spaces/{spaceId}/me/publishing/tasks", auth: "legacy.space_announcements.list_announcements", owner: "space.publishing"}
+  # app.api.routes.spaces_organization
+  - {protocol: "http", method: "GET", path: "/spaces/{spaceId}/topics", auth: "legacy.space_announcements.list_announcements", owner: "space.organization"}
+  - {protocol: "http", method: "GET", path: "/spaces/{spaceId}/categories", auth: "legacy.space_announcements.list_announcements", owner: "space.organization"}
+  - {protocol: "http", method: "POST", path: "/spaces/{spaceId}/categories", auth: "legacy.spaces.patch_space", owner: "space.organization"}
+  - {protocol: "http", method: "PATCH", path: "/spaces/{spaceId}/categories/{categoryId}", auth: "legacy.spaces.patch_space", owner: "space.organization"}
+  - {protocol: "http", method: "GET", path: "/spaces/{spaceId}/categories/{categoryId}", auth: "legacy.space_announcements.list_announcements", owner: "space.organization"}
+  - {protocol: "http", method: "DELETE", path: "/spaces/{spaceId}/categories/{categoryId}", auth: "legacy.spaces.patch_space", owner: "space.organization"}
+  - {protocol: "http", method: "POST", path: "/spaces/{spaceId}/categories/{categoryId}/archive", auth: "legacy.spaces.patch_space", owner: "space.organization"}
+  - {protocol: "http", method: "DELETE", path: "/spaces/{spaceId}/categories/{categoryId}/archive", auth: "legacy.spaces.patch_space", owner: "space.organization"}
+  - {protocol: "http", method: "GET", path: "/spaces/{spaceId}/domain-groups", auth: "legacy.space_announcements.list_announcements", owner: "space.organization"}
+  - {protocol: "http", method: "POST", path: "/spaces/{spaceId}/domain-groups", auth: "legacy.spaces.patch_space", owner: "space.organization"}
+  - {protocol: "http", method: "PATCH", path: "/spaces/{spaceId}/domain-groups/{groupId}", auth: "legacy.spaces.patch_space", owner: "space.organization"}
+  - {protocol: "http", method: "DELETE", path: "/spaces/{spaceId}/domain-groups/{groupId}", auth: "legacy.spaces.patch_space", owner: "space.organization"}
+  - {protocol: "http", method: "GET", path: "/spaces/{spaceId}/managers", auth: "legacy.space_announcements.list_announcements", owner: "space.organization"}
+  - {protocol: "http", method: "POST", path: "/spaces/{spaceId}/managers", auth: "legacy.spaces.delete_space", owner: "space.organization"}
+  - {protocol: "http", method: "DELETE", path: "/spaces/{spaceId}/managers/{userId}", auth: "legacy.spaces.delete_space", owner: "space.organization"}
+  - {protocol: "http", method: "PATCH", path: "/spaces/{spaceId}/managers/{userId}", auth: "legacy.spaces.delete_space", owner: "space.organization"}
+  # app.api.routes.tags
+  - {protocol: "http", method: "GET", path: "/tags", auth: "legacy.answers.list_answers", owner: "tag"}
+  - {protocol: "http", method: "GET", path: "/tags/{tag_id}", auth: "legacy.answers.list_answers", owner: "tag"}
+  - {protocol: "http", method: "POST", path: "/tags", auth: "legacy.answers.list_answers", owner: "tag"}
+  # app.api.routes.tasks
+  - {protocol: "http", method: "POST", path: "/tasks", auth: "legacy.tasks.create_task", owner: "task"}
+  - {protocol: "http", method: "GET", path: "/tasks/{taskId}/attachments", auth: "legacy.tasks.list_task_attachments", owner: "task"}
+  - {protocol: "http", method: "POST", path: "/tasks/{taskId}/attachments", auth: "legacy.tasks.upload_task_attachment", owner: "task"}
+  - {protocol: "http", method: "GET", path: "/tasks/{taskId}/attachments/{attachmentId}/download", auth: "legacy.tasks.download_task_attachment", owner: "task"}
+  - {protocol: "http", method: "DELETE", path: "/tasks/{taskId}/attachments/{attachmentId}", auth: "legacy.tasks.upload_task_attachment", owner: "task"}
+  - {protocol: "http", method: "POST", path: "/tasks/publish/from-pdf/preview", auth: "legacy.tasks.preview_task_from_pdf", owner: "task"}
+  - {protocol: "http", method: "POST", path: "/tasks/publish/from-pdf/confirm", auth: "legacy.tasks.create_task", owner: "task"}
+  - {protocol: "http", method: "POST", path: "/tasks/{taskId}/participants", auth: "legacy.tasks.create_task_participant", owner: "task"}
+  - {protocol: "http", method: "POST", path: "/tasks/{taskId}/participations/user", auth: "legacy.tasks.join_task_as_user", owner: "task"}
+  - {protocol: "http", method: "POST", path: "/tasks/{taskId}/participations/team", auth: "legacy.tasks.join_task_as_user", owner: "task"}
+  - {protocol: "http", method: "PATCH", path: "/tasks/{taskId}/participants/{participantId}", auth: "legacy.tasks.patch_task_participant", owner: "task"}
+  - {protocol: "http", method: "GET", path: "/tasks/{taskId}", auth: "legacy.tasks.list_task_attachments", owner: "task"}
+  - {protocol: "http", method: "PATCH", path: "/tasks/{taskId}", auth: "legacy.tasks.patch_task", owner: "task"}
+  - {protocol: "http", method: "GET", path: "/tasks", auth: "legacy.tasks.get_tasks", owner: "task"}
+  - {protocol: "http", method: "DELETE", path: "/tasks/{taskId}", auth: "legacy.tasks.patch_task_participant", owner: "task"}
+  - {protocol: "http", method: "DELETE", path: "/tasks/{taskId}/participants/{participantId}", auth: "legacy.tasks.delete_task_participant", owner: "task"}
+  - {protocol: "http", method: "DELETE", path: "/tasks/{taskId}/participants", auth: "legacy.tasks.delete_task_participant", owner: "task"}
+  - {protocol: "http", method: "PATCH", path: "/tasks/{taskId}/participants", auth: "legacy.tasks.patch_task_participant", owner: "task"}
+  - {protocol: "http", method: "POST", path: "/tasks/{taskId}/resubmit", auth: "legacy.tasks.patch_task_participant", owner: "task"}
+  - {protocol: "http", method: "GET", path: "/tasks/{taskId}/participants", auth: "legacy.tasks.patch_task_participant", owner: "task"}
+  - {protocol: "http", method: "GET", path: "/tasks/{taskId}/participants/{participantId}", auth: "legacy.tasks.patch_task_participant", owner: "task"}
+  - {protocol: "http", method: "GET", path: "/tasks/{taskId}/teams", auth: "observed.task.teams", owner: "task"}
+  - {protocol: "http", method: "GET", path: "/tasks/{taskId}/participants/{participantId}/submissions", auth: "legacy.tasks.get_task_submissions", owner: "task"}
+  - {protocol: "http", method: "POST", path: "/tasks/{taskId}/participants/{participantId}/submissions", auth: "legacy.tasks.post_task_submission", owner: "task"}
+  - {protocol: "http", method: "PATCH", path: "/tasks/{taskId}/participants/{participantId}/submissions/{version}", auth: "legacy.tasks.post_task_submission", owner: "task"}
+  - {protocol: "http", method: "POST", path: "/tasks/{taskId}/participants/{participantId}/submissions/{submissionId}/review", auth: "legacy.tasks.post_task_submission_review", owner: "task"}
+  - {protocol: "http", method: "GET", path: "/tasks/{taskId}/participants/{participantId}/submissions/{submissionId}/review", auth: "legacy.tasks.get_task_submission_review", owner: "task"}
+  - {protocol: "http", method: "PATCH", path: "/tasks/{taskId}/participants/{participantId}/submissions/{submissionId}/review", auth: "legacy.tasks.post_task_submission_review", owner: "task"}
+  - {protocol: "http", method: "PUT", path: "/tasks/{taskId}/participants/{participantId}/submissions/{submissionId}/review", auth: "legacy.tasks.post_task_submission_review", owner: "task"}
+  - {protocol: "http", method: "DELETE", path: "/tasks/{taskId}/participants/{participantId}/submissions/{submissionId}/review", auth: "legacy.tasks.post_task_submission_review", owner: "task"}
+  # app.api.routes.team_live
+  - {protocol: "ws", method: "WS", path: "/teams/{team_id}/live", auth: "team.live.ws", owner: "machine.live"}
+  # app.api.routes.teams
+  - {protocol: "http", method: "GET", path: "/teams", auth: "legacy.teams.get_teams", owner: "team"}
+  - {protocol: "http", method: "GET", path: "/teams/my-teams", auth: "legacy.teams.get_my_teams", owner: "team"}
+  - {protocol: "http", method: "GET", path: "/teams/{teamId}", auth: "legacy.teams.get_team", owner: "team"}
+  - {protocol: "http", method: "GET", path: "/teams/by-handle/{handle}", auth: "legacy.teams.get_team", owner: "team"}
+  - {protocol: "http", method: "POST", path: "/teams/{teamId}/join", auth: "legacy.teams.get_team", owner: "team"}
+  - {protocol: "http", method: "GET", path: "/teams/{teamId}/join-link", auth: "legacy.teams.get_team_join_link", owner: "team"}
+  - {protocol: "http", method: "PATCH", path: "/teams/{teamId}/join-link", auth: "legacy.teams.get_team_join_link", owner: "team"}
+  - {protocol: "http", method: "POST", path: "/teams/{teamId}/join-link/reset", auth: "legacy.teams.get_team_join_link", owner: "team"}
+  - {protocol: "http", method: "GET", path: "/teams/{teamId}/resource-quotas", auth: "legacy.teams.get_team_resource_quotas", owner: "team"}
+  - {protocol: "http", method: "GET", path: "/teams/{teamId}/members", auth: "legacy.teams.get_team_members", owner: "team"}
+  - {protocol: "http", method: "POST", path: "/teams", auth: "legacy.answers.list_answers", owner: "team"}
+  - {protocol: "http", method: "PATCH", path: "/teams/{teamId}", auth: "legacy.teams.patch_team", owner: "team"}
+  - {protocol: "http", method: "DELETE", path: "/teams/{teamId}", auth: "legacy.teams.delete_team", owner: "team"}
+  - {protocol: "http", method: "DELETE", path: "/teams/{teamId}/members/{userId}", auth: "legacy.teams.delete_team_member", owner: "team"}
+  - {protocol: "http", method: "PATCH", path: "/teams/{teamId}/members/{userId}", auth: "legacy.teams.patch_team_member_role", owner: "team"}
+  - {protocol: "http", method: "POST", path: "/teams/{teamId}/members", auth: "legacy.teams.add_team_member_entry", owner: "team"}
+  - {protocol: "http", method: "GET", path: "/teams/{teamId}/join-requests", auth: "legacy.teams.list_team_join_requests", owner: "team"}
+  - {protocol: "http", method: "GET", path: "/teams/{teamId}/requests", auth: "legacy.teams.list_team_join_requests", owner: "team"}
+  - {protocol: "http", method: "GET", path: "/teams/{teamId}/invitations", auth: "legacy.teams.list_team_invitations", owner: "team"}
+  - {protocol: "http", method: "POST", path: "/teams/{teamId}/invitations", auth: "legacy.teams.create_team_invitation", owner: "team"}
+  - {protocol: "http", method: "DELETE", path: "/teams/{teamId}/invitations/{invitationId}", auth: "legacy.teams.cancel_team_invitation", owner: "team"}
+  - {protocol: "http", method: "POST", path: "/teams/{teamId}/join-requests/{requestId}/approve", auth: "legacy.teams.approve_team_join_request", owner: "team"}
+  - {protocol: "http", method: "POST", path: "/teams/{teamId}/requests/{requestId}/approve", auth: "legacy.teams.approve_team_join_request", owner: "team"}
+  - {protocol: "http", method: "POST", path: "/teams/{teamId}/join-requests/{requestId}/reject", auth: "legacy.teams.approve_team_join_request", owner: "team"}
+  - {protocol: "http", method: "POST", path: "/teams/{teamId}/requests/{requestId}/reject", auth: "legacy.teams.approve_team_join_request", owner: "team"}
+  - {protocol: "http", method: "GET", path: "/team-invites/{token}", auth: "legacy.teams.get_team_by_join_link", owner: "team"}
+  - {protocol: "http", method: "POST", path: "/team-invites/{token}/join", auth: "legacy.teams.get_team_by_join_link", owner: "team"}
+  # app.api.routes.topic_members
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/members", auth: "actor.topic", owner: "topic.membership"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/members", auth: "topic.members.manage", owner: "topic.membership"}
+  - {protocol: "http", method: "PUT", path: "/topics/{topic_id}/members/{handle}", auth: "topic.members.manage", owner: "topic.membership"}
+  - {protocol: "http", method: "DELETE", path: "/topics/{topic_id}/members/{handle}", auth: "topic.members.manage", owner: "topic.membership"}
+  # app.api.routes.topics
+  - {protocol: "http", method: "POST", path: "/topics", auth: "actor.project", owner: "topic"}
+  - {protocol: "http", method: "GET", path: "/topics", auth: "project.reader", owner: "topic"}
+  - {protocol: "http", method: "GET", path: "/topics/names", auth: "topic.names", owner: "topic"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}", auth: "actor.topic", owner: "topic"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/blocks", auth: "actor.topic", owner: "topic"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/history", auth: "actor.topic", owner: "topic"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/history/{block_id}", auth: "actor.topic", owner: "topic"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/usage", auth: "actor.topic", owner: "topic"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/status", auth: "actor.topic", owner: "topic"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/children", auth: "actor.topic", owner: "topic"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/progress", auth: "actor.topic", owner: "topic"}
+  - {protocol: "http", method: "PUT", path: "/topics/{topic_id}/progress", auth: "actor.topic.enforced", owner: "topic"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/overview", auth: "actor.topic", owner: "topic"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/summon", auth: "actor.topic", owner: "topic"}
+  - {protocol: "http", method: "POST", path: "/topics/blocks/{block_id}/answer", auth: "actor.topic", owner: "topic"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/webhook-token", auth: "cheese.room.gate", owner: "webhook"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/weekly", auth: "actor.topic", owner: "topic"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/read", auth: "actor.topic", owner: "topic"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/archive", auth: "topic.archive", owner: "topic"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/cleanup", auth: "actor.topic.enforced", owner: "topic"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/unarchive", auth: "topic.archive", owner: "topic"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/split", auth: "actor.topic", owner: "topic"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/tasks/{task_id}/check-result", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/lock", auth: "cheese.room.gate", owner: "room_task"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/unlock", auth: "cheese.room.gate", owner: "room_task"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/clone-from", auth: "actor.topic", owner: "topic"}
+  # app.api.routes.topics_attachments
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/attachments", auth: "actor.topic.verified", owner: "room.files"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/attachments/raw", auth: "actor.topic.verified", owner: "room.files"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/attachments/pdf", auth: "actor.topic", owner: "room.files"}
+  # app.api.routes.topics_comment_threads
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/comments/threads", auth: "document.member", owner: "block"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/comments/{comment_id}/thread", auth: "document.member", owner: "block"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/comments/{comment_id}/replies", auth: "document.member", owner: "block"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/comments/{comment_id}/resolve", auth: "document.member", owner: "block"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/comments/{comment_id}/reopen", auth: "document.member", owner: "block"}
+  # app.api.routes.topics_comments
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/docs", auth: "actor.topic", owner: "block"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/comments", auth: "actor.topic", owner: "block"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/comments", auth: "actor.topic", owner: "block"}
+  # app.api.routes.topics_compute
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/compute-profile", auth: "actor.topic", owner: "machine"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/sessions/{session_id}/work-lease", auth: "capability.session.lease", owner: "machine"}
+  - {protocol: "http", method: "PUT", path: "/topics/{topic_id}/compute-profile", auth: "actor.topic", owner: "machine"}
+  # app.api.routes.topics_deliveries
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/deliveries", auth: "actor.topic.enforced", owner: "delivery"}
+  # app.api.routes.topics_doc_ai
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/doc-ai/source", auth: "document.human", owner: "doc_ai"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/doc-ai/requests", auth: "document.human", owner: "doc_ai"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/doc-ai/requests", auth: "document.human", owner: "doc_ai"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/doc-ai/requests/{request_id}", auth: "document.human", owner: "doc_ai"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/doc-ai/requests/{request_id}/cancel", auth: "document.human", owner: "doc_ai"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/doc-ai/proposals/{proposal_id}", auth: "document.human", owner: "doc_ai"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/doc-ai/proposals/{proposal_id}/accept", auth: "document.human", owner: "doc_ai"}
+  # app.api.routes.topics_documents
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/documents/recalc", auth: "actor.topic", owner: "documents"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/documents/convert", auth: "actor.topic", owner: "documents"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/documents/revisions", auth: "actor.topic", owner: "documents"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/documents/revisions", auth: "actor.topic", owner: "documents"}
+  # app.api.routes.topics_messages
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/messages", auth: "actor.topic.verified", owner: "topic.chat"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/ask", auth: "actor.topic", owner: "topic.chat"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/note", auth: "cheese.room.gate", owner: "delivery"}
+  # app.api.routes.topics_preview
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/preview", auth: "actor.topic", owner: "preview"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/preview/file", auth: "actor.topic", owner: "preview"}
+  # app.api.routes.topics_shown
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/shown", auth: "actor.topic", owner: "room.files"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/shown", auth: "actor.topic", owner: "room.files"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/shown/save", auth: "library.save.shown", owner: "library"}
+  # app.api.routes.topics_side_routes
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/topic-unread", auth: "actor.project", owner: "topic"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/private-unread", auth: "actor.project", owner: "topic"}
+  - {protocol: "http", method: "POST", path: "/blocks/{block_id}/upgrade", auth: "actor.topic", owner: "room_task"}
+  # app.api.routes.topics_tasks
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/tasks", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/tasks/{task_id}", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/tasks/{task_id}/messages", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/tasks/{task_id}/title", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/tasks/{task_id}/close", auth: "actor.topic", owner: "room_task"}
+  # app.api.routes.topics_title
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/title", auth: "actor.topic", owner: "topic"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/title/undo", auth: "actor.topic.verified", owner: "topic"}
+  # app.api.routes.topics_transcript
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/transcript", auth: "actor.topic", owner: "agent.execution"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/transcript/{block_id}/output", auth: "actor.topic", owner: "agent.execution"}
+  # app.api.routes.uploads
+  - {protocol: "http", method: "GET", path: "/uploads/{key:path}", auth: "public.uploads", owner: "core.upload.delivery"}
+  # app.api.routes.users
+  - {protocol: "http", method: "GET", path: "/users/lookup", auth: "legacy.answers.list_answers", owner: "user"}
+  - {protocol: "http", method: "GET", path: "/users/{userId}/follow/questions", auth: "legacy.users.get_user_followed_questions", owner: "user.activity"}
+  - {protocol: "http", method: "GET", path: "/users/{userId}/questions", auth: "legacy.answers.list_answers", owner: "user.activity"}
+  - {protocol: "http", method: "GET", path: "/users/{userId}/answers", auth: "legacy.answers.list_answers", owner: "user.activity"}
+  - {protocol: "http", method: "POST", path: "/users/verify/email", auth: "legacy.users.send_register_email_code", owner: "user"}
+  - {protocol: "http", method: "GET", path: "/users/registration-config", auth: "legacy.users.get_registration_config", owner: "user"}
+  - {protocol: "http", method: "POST", path: "/users", auth: "legacy.users.register_user", owner: "user"}
+  - {protocol: "http", method: "GET", path: "/users/me", auth: "legacy.answers.list_answers", owner: "user"}
+  - {protocol: "http", method: "POST", path: "/users/me/email/code", auth: "legacy.users.send_add_email_code", owner: "user"}
+  - {protocol: "http", method: "POST", path: "/users/me/email", auth: "legacy.users.send_add_email_code", owner: "user"}
+  - {protocol: "http", method: "GET", path: "/users/me/auth-methods", auth: "legacy.answers.list_answers", owner: "user"}
+  - {protocol: "http", method: "POST", path: "/users/me/sudo/email-code", auth: "legacy.answers.list_answers", owner: "user"}
+  - {protocol: "http", method: "GET", path: "/users/{userId}", auth: "legacy.answers.list_answers", owner: "user"}
+  - {protocol: "http", method: "PATCH", path: "/users/{userId}", auth: "legacy.users.patch_user_profile", owner: "user"}
+  - {protocol: "http", method: "PUT", path: "/users/{userId}", auth: "legacy.users.patch_user_profile", owner: "user"}
+  - {protocol: "http", method: "POST", path: "/users/auth/login", auth: "legacy.users.user_login", owner: "user"}
+  - {protocol: "http", method: "POST", path: "/users/auth/verify-2fa", auth: "legacy.users.verify_2fa_login", owner: "user"}
+  - {protocol: "http", method: "POST", path: "/users/auth/email-code", auth: "legacy.users.request_sign_in_code", owner: "user"}
+  - {protocol: "http", method: "POST", path: "/users/auth/email-code/verify", auth: "legacy.users.verify_sign_in_code", owner: "user"}
+  - {protocol: "http", method: "POST", path: "/users/auth/refresh-token", auth: "legacy.users.refresh_access_token", owner: "user"}
+  - {protocol: "http", method: "POST", path: "/users/auth/logout", auth: "legacy.users.user_logout", owner: "user"}
+  - {protocol: "http", method: "POST", path: "/users/auth/sudo", auth: "legacy.users.sudo_auth", owner: "user"}
+  - {protocol: "http", method: "GET", path: "/users/{userId}/favorites/questions", auth: "observed.user.favorite.questions", owner: "user.activity"}
+  - {protocol: "http", method: "GET", path: "/users/{userId}/favorites/answers", auth: "observed.user.favorite.answers", owner: "user.activity"}
+  - {protocol: "http", method: "GET", path: "/users/{userId}/settings", auth: "legacy.users.patch_user_profile", owner: "user"}
+  - {protocol: "http", method: "PATCH", path: "/users/{userId}/settings", auth: "legacy.users.patch_user_profile", owner: "user"}
+  - {protocol: "http", method: "GET", path: "/users", auth: "legacy.answers.list_answers", owner: "user"}
+  - {protocol: "http", method: "GET", path: "/users/auth/oauth/providers", auth: "legacy.users.get_oauth_providers", owner: "user"}
+  - {protocol: "http", method: "GET", path: "/users/auth/oauth/login/{providerId}", auth: "legacy.users.get_oauth_login_url", owner: "user"}
+  - {protocol: "http", method: "GET", path: "/users/auth/oauth/callback/{providerId}", auth: "legacy.users.handle_oauth_callback", owner: "user"}
+  - {protocol: "http", method: "GET", path: "/users/auth/oauth/state", auth: "legacy.users.get_oauth_state", owner: "user"}
+  - {protocol: "http", method: "POST", path: "/users/auth/oauth/email/code", auth: "legacy.users.send_oauth_email_code", owner: "user"}
+  - {protocol: "http", method: "POST", path: "/users/auth/oauth/email/verify", auth: "legacy.users.verify_oauth_email", owner: "user"}
+  - {protocol: "http", method: "POST", path: "/users/auth/oauth/verify", auth: "legacy.users.oauth_verify_conflict", owner: "user"}
+  - {protocol: "http", method: "POST", path: "/users/oauth/create", auth: "legacy.users.oauth_create_user", owner: "user"}
+  - {protocol: "http", method: "POST", path: "/users/oauth/bind", auth: "legacy.users.oauth_bind_user", owner: "user"}
+  - {protocol: "http", method: "GET", path: "/users/invite-codes", auth: "legacy.users.list_invite_codes", owner: "account.admission"}
+  - {protocol: "http", method: "POST", path: "/users/invite-codes", auth: "legacy.users.list_invite_codes", owner: "account.admission"}
+  - {protocol: "http", method: "DELETE", path: "/users/invite-codes/{code_id}", auth: "legacy.users.list_invite_codes", owner: "account.admission"}
+  - {protocol: "http", method: "GET", path: "/users/{userId}/oauth/connections", auth: "legacy.users.patch_user_profile", owner: "user"}
+  - {protocol: "http", method: "DELETE", path: "/users/{userId}/oauth/connections/{connectionId}", auth: "legacy.users.delete_oauth_connection", owner: "user"}
+  # app.api.routes.users_2fa
+  - {protocol: "http", method: "POST", path: "/users/{userId}/2fa/enable", auth: "legacy.users_2fa.enable_user_2fa", owner: "user.2fa"}
+  - {protocol: "http", method: "POST", path: "/users/{userId}/2fa/disable", auth: "legacy.users_2fa.disable_user_2fa", owner: "user.2fa"}
+  - {protocol: "http", method: "GET", path: "/users/{userId}/2fa/status", auth: "legacy.users.patch_user_profile", owner: "user.2fa"}
+  - {protocol: "http", method: "POST", path: "/users/{userId}/2fa/backup-codes", auth: "legacy.users_2fa.regenerate_backup_codes", owner: "user.2fa"}
+  # app.api.routes.users_identity
+  - {protocol: "http", method: "GET", path: "/users/{userId}/identity", auth: "legacy.users_identity.get_user_identity", owner: "user.realname"}
+  - {protocol: "http", method: "PUT", path: "/users/{userId}/identity", auth: "legacy.users_identity.put_user_identity", owner: "user.realname"}
+  - {protocol: "http", method: "PATCH", path: "/users/{userId}/identity", auth: "legacy.users_identity.put_user_identity", owner: "user.realname"}
+  - {protocol: "http", method: "DELETE", path: "/users/{userId}/identity", auth: "legacy.users_identity.delete_user_identity", owner: "user.realname"}
+  - {protocol: "http", method: "GET", path: "/users/{userId}/identity/access-logs", auth: "legacy.users.patch_user_profile", owner: "user.realname"}
+  # app.api.routes.users_passkey
+  - {protocol: "http", method: "POST", path: "/users/{userId}/passkeys/options", auth: "legacy.users_passkey.passkey_register_challenge", owner: "passkey"}
+  - {protocol: "http", method: "POST", path: "/users/{userId}/passkeys", auth: "legacy.users_passkey.passkey_register_verify", owner: "passkey"}
+  - {protocol: "http", method: "POST", path: "/users/{userId}/passkeys/prompt/dismiss", auth: "legacy.users.patch_user_profile", owner: "passkey"}
+  - {protocol: "http", method: "POST", path: "/users/auth/passkey/options", auth: "legacy.users_passkey.passkey_authenticate_challenge", owner: "passkey"}
+  - {protocol: "http", method: "POST", path: "/users/auth/passkey/verify", auth: "legacy.users_passkey.passkey_authenticate_verify", owner: "passkey"}
+  - {protocol: "http", method: "GET", path: "/users/{userId}/passkeys", auth: "legacy.users.patch_user_profile", owner: "passkey"}
+  - {protocol: "http", method: "DELETE", path: "/users/{userId}/passkeys/{credentialId}", auth: "legacy.users_passkey.delete_passkey", owner: "passkey"}
+  # app.api.routes.users_password
+  - {protocol: "http", method: "POST", path: "/users/recover/password/request", auth: "legacy.users_password.recover_password_request", owner: "user.password"}
+  - {protocol: "http", method: "POST", path: "/users/recover/password/verify", auth: "legacy.users_password.recover_password_verify", owner: "user.password"}
+  - {protocol: "http", method: "PATCH", path: "/users/{userId}/password", auth: "legacy.users_password.change_password", owner: "user.password"}
+  # app.api.routes.users_sessions
+  - {protocol: "http", method: "GET", path: "/users/me/sessions", auth: "legacy.users_sessions.list_sessions", owner: "user.sessions"}
+  - {protocol: "http", method: "DELETE", path: "/users/me/sessions/{sessionId}", auth: "legacy.users_sessions.list_sessions", owner: "user.sessions"}
+  - {protocol: "http", method: "DELETE", path: "/users/me/sessions", auth: "legacy.users_sessions.list_sessions", owner: "user.sessions"}
+  # app.api.routes.users_team
+  - {protocol: "http", method: "DELETE", path: "/users/me/team-requests/{requestId}", auth: "legacy.users_team.cancel_my_join_request", owner: "team.personal_membership"}
+  - {protocol: "http", method: "DELETE", path: "/users/me/teams/{teamId}", auth: "legacy.users_team.leave_team", owner: "team.personal_membership"}
+  - {protocol: "http", method: "POST", path: "/users/me/team-invitations/{invitationId}/accept", auth: "legacy.users_team.cancel_my_join_request", owner: "team.personal_membership"}
+  - {protocol: "http", method: "POST", path: "/users/me/team-invitations/{invitationId}/decline", auth: "legacy.users_team.cancel_my_join_request", owner: "team.personal_membership"}
+  - {protocol: "http", method: "GET", path: "/users/me/team-requests", auth: "legacy.users_team.cancel_my_join_request", owner: "team.personal_membership"}
+  - {protocol: "http", method: "GET", path: "/users/me/team-invitations", auth: "legacy.users_team.cancel_my_join_request", owner: "team.personal_membership"}
+  # app.api.routes.webhooks
+  - {protocol: "http", method: "POST", path: "/webhooks/{topic_id}", auth: "webhook.token", owner: "webhook"}
+  # app.api.routes.workspace
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/files", auth: "workspace.access", owner: "repository.transport"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/file", auth: "workspace.access", owner: "repository.transport"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/file/raw", auth: "workspace.access", owner: "repository.transport"}
+  - {protocol: "http", method: "PUT", path: "/projects/{project_id}/file", auth: "workspace.access", owner: "repository.transport"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/git/log", auth: "workspace.access", owner: "repository.transport"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/git/diff", auth: "workspace.access", owner: "repository.transport"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/topics/{topic_id}/work-summary", auth: "workspace.access", owner: "repository.transport"}
+  # app.main
+  - {protocol: "http", method: "GET", path: "/debug/turns", auth: "observed.debug", owner: "agent.execution"}
+  - {protocol: "http", method: "GET", path: "/health", auth: "public.health", owner: "core.health"}
+  - {protocol: "http", method: "GET", path: "/version", auth: "public.health", owner: "core.health"}
