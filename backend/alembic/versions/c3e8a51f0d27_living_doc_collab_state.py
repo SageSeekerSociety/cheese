@@ -6,7 +6,7 @@ receive changes over that connection, so the at-least-once refresh outbox for
 reconnecting editors goes.
 
 Revision ID: c3e8a51f0d27
-Revises: a6d3f1c9e842
+Revises: c7e2a9d41b06
 """
 
 import sqlalchemy as sa
@@ -14,7 +14,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "c3e8a51f0d27"
-down_revision = "a6d3f1c9e842"
+down_revision = "c7e2a9d41b06"
 branch_labels = None
 depends_on = None
 
