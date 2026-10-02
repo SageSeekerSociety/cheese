@@ -131,6 +131,11 @@ class TestSpaceMaterialLibrary:
             ids = [row["id"] for row in listed.json()["data"]["materials"]]
             assert item["id"] in ids
 
+        # 谁能管由服务端说：同一份清单，管理员是 true、成员是 false ——
+        # 界面靠这一格决定摆不摆上传/改档/移除那几个入口。
+        assert board.list(board.owner.token).json()["data"]["canManage"] is True
+        assert board.list(board.member.token).json()["data"]["canManage"] is False
+
     def test_member_cannot_upload(self, board: _Board) -> None:
         response = board.upload(board.member.token)
         assert response.status_code == 403

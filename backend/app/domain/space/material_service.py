@@ -152,8 +152,13 @@ class SpaceMaterialService:
 
     # ---- 看 ----
 
-    async def list_for_space(self, *, space_id: int, user_id: int) -> list[dict]:
-        """看得见这块板就能拿到清单，但「仅管理员」那一档只发给管理员。"""
+    async def list_for_space(self, *, space_id: int, user_id: int) -> dict:
+        """看得见这块板就能拿到清单，但「仅管理员」那一档只发给管理员。
+
+        响应里带上 ``canManage`` —— 传、改档、撤下来是同一批人（板子的管理员），
+        界面要拿它决定摆不摆那几个入口。由服务端说而不是让界面自己去猜：能管的
+        判据就在下面这一行里，抄一份到前端就是第二份会走样的规则。
+        """
         is_admin = await self._require_member(space_id=space_id, user_id=user_id)
         links = await self._links.list_live(space_id=space_id)
         if not is_admin:
@@ -162,7 +167,7 @@ class SpaceMaterialService:
                 for link in links
                 if link.visibility == SpaceMaterialVisibility.MEMBERS.value
             ]
-        return await self._decorate(links)
+        return {"materials": await self._decorate(links), "canManage": is_admin}
 
     async def _decorate(self, links: Sequence[SpaceMaterial]) -> list[dict]:
         found = {

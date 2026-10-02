@@ -3,7 +3,8 @@
 五条路由，一个概念 —— 这块板上有哪些资料、谁能看：
 
 - ``GET /spaces/{spaceId}/materials`` 清单。成员看得到「所有成员」那一档，
-  管理员两档都看得到。
+  管理员两档都看得到；响应里另外带一个 ``canManage``，界面拿它决定摆不摆那一组
+  管理入口。
 - ``POST /spaces/{spaceId}/materials`` 传一份上去（multipart），同时定档。
 - ``PATCH /spaces/{spaceId}/materials/{materialId}`` 改档。
 - ``DELETE /spaces/{spaceId}/materials/{materialId}`` 从板上撤下来（软删关联行）。
@@ -59,8 +60,13 @@ async def list_space_materials(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceMaterialService = Depends(get_space_material_service),
 ) -> dict:
-    items = await service.list_for_space(space_id=space_id, user_id=auth_user.user_id)
-    return {"code": 200, "message": "OK", "data": {"materials": items}}
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": await service.list_for_space(
+            space_id=space_id, user_id=auth_user.user_id
+        ),
+    }
 
 
 @router.post(
