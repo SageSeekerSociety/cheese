@@ -71,13 +71,18 @@ function cancel() {
   reset()
   cancelText()
 }
-/** 组字中的回车是「选词」、Esc 是「取消候选」，都归输入法：别当成提交/放弃。 */
+/** 组字中的回车是「选词」、Esc 是「取消候选」，都归输入法：别当成提交/放弃。
+ *
+ * 两颗键都要 stopsPropagation：焦点在这个框里时它们归这个框。外面那层 `.sketch-layer`
+ * 自己还有一个 Esc（退出这一笔），不挡住的话，组字中按 Esc 会把整段文字拆掉。 */
 function onTextEnter(event: KeyboardEvent) {
+  event.stopPropagation()
   if (event.isComposing || event.keyCode === 229) return
   event.preventDefault()
   commitText()
 }
 function onTextEscape(event: KeyboardEvent) {
+  event.stopPropagation()
   if (event.isComposing || event.keyCode === 229) return
   event.preventDefault()
   cancelText()

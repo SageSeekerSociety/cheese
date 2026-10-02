@@ -127,6 +127,33 @@ it('输入法组字中的那一次回车是选词，不算发送', async () => {
   expect(plain.defaultPrevented).toBe(true)
 })
 
+it('图上的文字框：组字中的 Esc 不会把这段文字拆掉', async () => {
+  const ui = mount()
+  await painted(ui)
+  await fireEvent.click(ui.getByRole('button', { name: '文字' }))
+  const layer = ui.getByRole('application', { name: '图片标注画布' })
+  layer.setPointerCapture = vi.fn()
+  await fireEvent.pointerDown(layer, { button: 0, pointerId: 21, clientX: 120, clientY: 140 })
+  const field = ui.getByPlaceholderText('输入文字，回车确认')
+  await fireEvent.update(field, '蓝色')
+  // 组字中按 Esc 是取消候选：这颗键归输入法，输入框（连同半截文字）得留着。
+  const composing = new KeyboardEvent('keydown', {
+    key: 'Escape',
+    keyCode: 229,
+    isComposing: true,
+    bubbles: true,
+    cancelable: true,
+  })
+  field.dispatchEvent(composing)
+  expect(composing.defaultPrevented).toBe(false)
+  expect(ui.queryByPlaceholderText('输入文字，回车确认')).toBeTruthy()
+  const plain = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+  field.dispatchEvent(plain)
+  // 原生 dispatch 不会替我们等 Vue 刷 DOM，所以这里必须等一等再问有没有——
+  // 「组字中那一颗」的断言正是靠这一步才不是恒真。
+  await waitFor(() => expect(ui.queryByPlaceholderText('输入文字，回车确认')).toBeNull())
+})
+
 it('收起来的那一页不接全局快捷键：⌘Z 改不到它', async () => {
   const ui = render(DesignImage, {
     props: { src: 'blob:sketch', alt: 'design.png', identity: 'v1', active: false },
