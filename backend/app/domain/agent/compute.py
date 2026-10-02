@@ -38,6 +38,7 @@ if TYPE_CHECKING:
         ReceiptConsumer,
         SessionControls,
         SessionRef,
+        TerminationConsumer,
         UnreadProbe,
     )
 
@@ -346,6 +347,16 @@ class ComputePool:
     def bind_completions(self, consumer: "CompletionConsumer") -> None:
         for runtime in self._runtimes():
             runtime.bind_completions(consumer)
+
+    def bind_terminations(self, consumer: "TerminationConsumer") -> None:
+        """Give every runtime that can report one where a confirmed terminal
+        work outcome is committed. Asked the way ``bind_live`` is: a runtime
+        that never ends work this way has nothing to send, and saying so is not
+        part of what makes it a runtime."""
+        for runtime in self._runtimes():
+            bind = getattr(runtime, "bind_terminations", None)
+            if bind is not None:
+                bind(consumer)
 
     def bind_unread_probe(self, probe: "UnreadProbe") -> None:
         """Give every runtime a way to ask whether anything it was handed is

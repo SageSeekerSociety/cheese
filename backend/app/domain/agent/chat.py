@@ -239,10 +239,12 @@ from app.domain.delivery.input_identity import (
     InputReconciliationPending,
     InputRegistrar,
     WorkCompletion,
+    WorkTermination,
 )
 from app.domain.delivery.receipts import (
     complete_work_inputs,
     held_blocks,
+    terminate_work_inputs,
 )
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
@@ -556,6 +558,7 @@ class ChatService(SessionRecovery):
         self._compute.bind_events(self._consume_hook_event, self._set_hook_activity)
         self._compute.bind_receipts(self.confirm_prompt_receipt)
         self._compute.bind_completions(self.confirm_work_completion)
+        self._compute.bind_terminations(self.confirm_work_termination)
         self._compute.bind_unread_probe(self.oldest_unread_at)
         self._compute.bind_reachability(self._note_reachability)
         # 记忆的对账（铺下去 / 收回来）走的是会话那条通道，所以回调挂在这里，
@@ -1336,6 +1339,18 @@ class ChatService(SessionRecovery):
         from app.domain.agent.pending_messages import finish_work
 
         await finish_work(self, completion, complete_work_inputs)
+
+    async def confirm_work_termination(self, termination: WorkTermination) -> None:
+        """Record that a work interval ended without completing.
+
+        Separate from :meth:`confirm_work_completion` on purpose: a terminated
+        work must never reach the completion path, which is what stamps
+        ``completed_at`` and consumes blocks. This one only frees the seat so a
+        new input can be taken.
+        """
+        from app.domain.agent.pending_messages import finish_work_termination
+
+        await finish_work_termination(self, termination, terminate_work_inputs)
 
     def session_controls(self, topic_id: uuid.UUID):
         """The runtime whose live session in this room takes controls, if any."""
@@ -2362,6 +2377,10 @@ class ChatService(SessionRecovery):
                     prompt=prompt,
                     system_prompt=system_prompt,
                     resume_session_id=None,
+                    # 整理这一轮是平台自己起的，手里没有任何 block，所以登记的是
+                    # 空效果——登记这一动作本身不能省：`send` 之后那条回执要认得
+                    # 这个 identity，跳过登记就会打在未知 identity 上炸掉。
+                    register_input=self._input_registrar(InputEffects()),
                     turn_id=run_id,
                     **model_kwargs,
                 ):

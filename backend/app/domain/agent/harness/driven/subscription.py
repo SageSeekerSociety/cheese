@@ -57,7 +57,9 @@ from app.domain.agent.service import (
 from app.domain.delivery.input_identity import (
     CompletionConsumer,
     InputReceipt,
+    TerminationConsumer,
     WorkCompletion,
+    WorkTermination,
 )
 
 #: What a record says about a working session, for the liveness rules
@@ -154,6 +156,7 @@ class Subscription[B: Backlog]:
         *,
         receipts: ReceiptConsumer | None = None,
         completions: CompletionConsumer | None = None,
+        terminations: TerminationConsumer | None = None,
         pulse: Pulse | None = None,
         memory: Callable[[], Awaitable[None]] | None = None,
     ):
@@ -161,6 +164,7 @@ class Subscription[B: Backlog]:
         self.consume, self.activity = consume, activity
         self.receipts, self.pulse = receipts, pulse
         self.completions = completions
+        self.terminations = terminations
         # 一轮结束时问一次记忆（见 `MemoryConsumer`）：agent 该写的记忆按规矩写
         # 在回复之前，所以一轮读完就是它写完的时刻。
         self.memory = memory
@@ -255,10 +259,32 @@ class Subscription[B: Backlog]:
     def completion(self, record: dict) -> WorkCompletion | None:
         return None
 
+    def termination(self, record: dict) -> WorkTermination | None:
+        """The work interval this record says ended without completing.
+
+        Only a harness can answer this: whether a result is an error, or was
+        interrupted, and which inputs that work owned, are its facts. The
+        default knows nothing and frees nothing.
+        """
+        return None
+
     async def reconcile_history(self) -> None:
         """A harness may reconcile retained facts behind its landing cursor."""
 
+    async def settle_termination(self, record: dict) -> WorkTermination | None:
+        termination = self.termination(record)
+        if termination is not None:
+            if self.terminations is None:
+                raise RuntimeError("Termination consumer is not bound")
+            await self.terminations(termination)
+        return termination
+
     async def settle_completion(self, record: dict) -> WorkCompletion | None:
+        # A terminated work is not a completion, and a record settles at most
+        # one of the two. Termination goes first so an error or a Stop can never
+        # fall through to the completion consumer.
+        if await self.settle_termination(record) is not None:
+            return None
         completion = self.completion(record)
         if completion is not None:
             if self.completions is None:

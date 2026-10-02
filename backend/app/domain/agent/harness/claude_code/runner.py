@@ -655,6 +655,33 @@ class Runner(runner.Runner[Journal]):
                 stamp["work_completed"] = True
                 stamp["completion_session_id"] = self.session_id
                 stamp["completion_input_ids"] = inputs
+        if (
+            main
+            and kind == "result"
+            and (self.interrupting or record.get("is_error"))
+            and self.working
+            and self.work is not None
+            and self.session_id is not None
+        ):
+            # An error or a Stop ends this work without ever reaching the
+            # completion stamp, and an input row left unfinished blocks the seat
+            # for good. Say so only when all three hold: the exact work identity,
+            # the interval of inputs it really owned (the same journal key the
+            # completion stamp reads), and no harness background task still
+            # running — a result alone does not mean this session is done, one
+            # of those tasks may yet finish the work. Anything less stays an
+            # unknown outcome, which is what keeps the block in place.
+            inputs = json.loads(
+                self.journal.recall(f"execution_inputs:{self.work}") or "[]"
+            )
+            if inputs and not self.tasks:
+                stamp["work_terminated"] = True
+                stamp["termination"] = (
+                    "interrupted" if self.interrupting else "is_error"
+                )
+                stamp["termination_session_id"] = self.session_id
+                stamp["termination_work_id"] = self.work
+                stamp["termination_input_ids"] = inputs
         owner = json.loads(self.journal.recall("owner") or "{}")
         if work is not None:
             owner["work_id"] = work

@@ -508,6 +508,68 @@ async def complete_work_inputs(
     return consumed
 
 
+async def terminate_work_inputs(
+    session,
+    *,
+    project_id,
+    topic_id,
+    recipient_handle,
+    harness,
+    native_session_id,
+    work_id,
+    input_ids,
+    reason,
+):
+    """Record a confirmed terminal outcome for this exact work interval.
+
+    A native result that is an error, or that a Stop interrupted, is not a
+    completion, so it can never reach :func:`complete_work_inputs`. Without a
+    fact of its own the input rows stay unfinished forever and the seat stops
+    accepting anything.
+
+    This writes only ``terminated_at`` / ``termination``. ``completed_at`` stays
+    NULL, held blocks stay held and are never consumed: whether an answer was
+    taken is still unknown, and an unknown is not permission to send it again.
+    The selection is the same one :func:`complete_work_inputs` makes, so another
+    interval or another seat is never in it.
+    """
+    if not input_ids:
+        return set()
+    rows = list(
+        await session.scalars(
+            select(NativeInput)
+            .where(
+                NativeInput.project_id == project_id,
+                NativeInput.topic_id == topic_id,
+                NativeInput.recipient_handle == recipient_handle,
+                NativeInput.harness == harness,
+                NativeInput.native_session_id == native_session_id,
+                NativeInput.execution_work_id == work_id,
+                NativeInput.input_id.in_(input_ids),
+            )
+            .order_by(NativeInput.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    )
+    # The interval the journal names has to be the interval the rows hold.
+    # Anything less means part of the work is unaccounted for, and a terminal
+    # stamp on half of it would free inputs that may still be live.
+    if not rows or {row.input_id for row in rows} != set(input_ids):
+        raise ValidationError("Native termination has no matching registered work")
+    stamp = datetime.now(UTC)
+    touched = set()
+    for row in rows:
+        # A clean completion already said more than a terminal can. An earlier
+        # terminal keeps its own reason; replaying a journal is not a rewrite.
+        if row.completed_at is not None or row.terminated_at is not None:
+            continue
+        row.terminated_at = stamp
+        row.termination = reason
+        touched.add(row.input_id)
+    return touched
+
+
 async def record_receipt(session, receipt: InputReceipt) -> NativeInput | None:
     """Reject unknown/conflicting identity without selecting by prompt text.
 

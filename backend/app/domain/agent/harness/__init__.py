@@ -53,6 +53,9 @@ from app.domain.delivery.input_identity import (
     InputRegistrar,
     ReceiptConsumer,
 )
+from app.domain.delivery.input_identity import (
+    TerminationConsumer as TerminationConsumer,
+)
 
 if TYPE_CHECKING:
     from app.domain.agent.compute import ComputeProvider
@@ -390,7 +393,7 @@ class AgentRuntime(Protocol):
         the room before it does anything else (`driven/runner.py`).
 
         ``work_id`` and ``on_mark`` do not belong to this contract and are
-        declared anyway, because the only caller passes them and a signature
+        declared anyway, because every caller passes them and a signature
         that pretended otherwise would be a promise no second harness could
         keep. They are the platform's turn bookkeeping — a turn is still what
         the room shows and what gets billed — and they leave when a turn stops
@@ -478,6 +481,7 @@ class AgentRuntime(Protocol):
         prompt: str,
         system_prompt: str,
         resume_session_id: str | None,
+        register_input: InputRegistrar,
         model: str | None = None,
         env: dict[str, str] | None = None,
         memory_scope: str | None = None,

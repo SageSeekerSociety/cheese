@@ -5,7 +5,7 @@ import uuid
 
 from app.core.errors import ValidationError
 from app.domain.block.queries import reaction_summaries_for_blocks
-from app.domain.delivery.agent import fence_send
+from app.domain.delivery.agent import DeliveryTargetChanged, fence_send
 from app.domain.delivery.input_identity import (
     InputEffects,
     InputIdentity,
@@ -24,16 +24,23 @@ def input_registrar(
     parent_session_id: str | None = None,
 ) -> InputRegistrar:
     async def persist(identity: InputIdentity) -> None:
+        rejected: DeliveryTargetChanged | None = None
         async with session_factory() as session:
             if fence_delivery and effects.delivery_id is not None:
-                await fence_send(
-                    session,
-                    effects.delivery_id,
-                    effects.attempt_id,
-                    parent_session_id=parent_session_id,
-                )
-            await register_input(session, identity, effects)
+                try:
+                    await fence_send(
+                        session,
+                        effects.delivery_id,
+                        effects.attempt_id,
+                        parent_session_id=parent_session_id,
+                    )
+                except DeliveryTargetChanged as exc:
+                    rejected = exc
+            if rejected is None:
+                await register_input(session, identity, effects)
             await session.commit()
+        if rejected is not None:
+            raise rejected
         if probe_unread:
             unread_inputs.setdefault(identity.topic_id, {}).setdefault(
                 identity.input_id, time.monotonic()

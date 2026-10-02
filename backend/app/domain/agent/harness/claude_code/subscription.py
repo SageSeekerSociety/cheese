@@ -35,7 +35,9 @@ from app.domain.delivery.input_identity import (
     CompletionConsumer,
     InputIdentity,
     InputReceipt,
+    TerminationConsumer,
     WorkCompletion,
+    WorkTermination,
 )
 
 
@@ -53,6 +55,7 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
         announce: Callable[[], Awaitable[None]],
         receipts: ReceiptConsumer | None = None,
         completions: CompletionConsumer | None = None,
+        terminations: TerminationConsumer | None = None,
         pulse: subscription.Pulse | None = None,
         memory: Callable[[], Awaitable[None]] | None = None,
         input_protocol: int | None = INPUT_PROTOCOL,
@@ -65,6 +68,7 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
             activity,
             receipts=receipts,
             completions=completions,
+            terminations=terminations,
             pulse=pulse,
             memory=memory,
         )
@@ -232,6 +236,42 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
             stamp["completion_session_id"],
             uuid.UUID(stamp["work_id"]),
             tuple(uuid.UUID(value) for value in stamp["completion_input_ids"]),
+        )
+
+    def termination(self, record: dict) -> WorkTermination | None:
+        """The work the runner proved dead: error or Stop, its own interval.
+
+        Everything is taken from the stamp the runner wrote only after it had
+        the exact work identity, the inputs that work really owned and no
+        background task left running. A record without that stamp is not
+        evidence of anything, so it frees nothing.
+        """
+        stamp = record.get("cheese") or {}
+        if not stamp.get("work_terminated"):
+            return None
+        if (
+            record.get("type") != "result"
+            or not (record.get("is_error") or stamp.get("interrupted"))
+            or not stamp.get("termination_input_ids")
+            or stamp.get("termination_session_id") != self.session_id
+            or record.get("session_id") != self.session_id
+            or stamp.get("agent_handle") != self.recipient_handle
+        ):
+            raise ValueError(
+                "Native termination has a different or unfinished identity"
+            )
+        reason = stamp.get("termination")
+        if reason not in ("interrupted", "is_error"):
+            raise ValueError(f"Native termination has an unknown reason: {reason!r}")
+        return WorkTermination(
+            self.session.project_id,
+            self.session.topic_id,
+            self.recipient_handle,
+            self.session.harness,
+            stamp["termination_session_id"],
+            uuid.UUID(stamp["termination_work_id"]),
+            tuple(uuid.UUID(value) for value in stamp["termination_input_ids"]),
+            reason,
         )
 
     def marks(self, record: dict, events: list[AgentEvent]) -> set[str]:

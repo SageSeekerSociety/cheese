@@ -36,6 +36,26 @@ class WorkCompletion:
 
 
 @dataclass(frozen=True)
+class WorkTermination:
+    """A work interval known to have ended without completing.
+
+    Carries the identity and the input interval a :class:`WorkCompletion` does,
+    because that is what proves which inputs this is about. It never asserts
+    those inputs were consumed: an outcome nobody confirmed is not a delivery
+    anyone may repeat.
+    """
+
+    project_id: uuid.UUID
+    topic_id: uuid.UUID
+    recipient_handle: str
+    harness: str
+    native_session_id: str
+    work_id: uuid.UUID
+    input_ids: tuple[uuid.UUID, ...]
+    reason: Literal["interrupted", "is_error"]
+
+
+@dataclass(frozen=True)
 class InputEffects:
     held_block_ids: tuple[uuid.UUID, ...] = ()
     block_ids: tuple[uuid.UUID, ...] = ()
@@ -66,3 +86,4 @@ class InputOutcomeUnconfirmed(Exception):
 InputRegistrar = Callable[[InputIdentity], Awaitable[None]]
 ReceiptConsumer = Callable[[InputReceipt], Awaitable[None]]
 CompletionConsumer = Callable[[WorkCompletion], Awaitable[None]]
+TerminationConsumer = Callable[[WorkTermination], Awaitable[None]]

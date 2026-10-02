@@ -48,6 +48,26 @@ async def finish_work(chat, completion, settle):
     nudge_messages(chat, completion.topic_id)
 
 
+async def finish_work_termination(chat, termination, settle):
+    """A work interval proved dead frees the seat, and nothing else.
+
+    It does not complete the inputs inside it: whether an answer was taken is
+    still unknown, so their holds stay. What it does is stop those rows from
+    standing between the seat and the next input — and the deferred messages
+    have to be rescanned, because that is what was holding them back.
+    """
+    async with chat.session_factory() as session:
+        await settle(
+            session,
+            **{
+                field: getattr(termination, field)
+                for field in termination.__dataclass_fields__
+            },
+        )
+        await session.commit()
+    nudge_messages(chat, termination.topic_id)
+
+
 async def defer_message(session, block_id):
     block = await session.get(Block, block_id, with_for_update=True)
     if block is not None and consumed_turn(block) is None:

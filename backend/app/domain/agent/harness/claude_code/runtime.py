@@ -29,7 +29,11 @@ from app.domain.agent.harness.claude_code.remote_execution.client import (
 )
 from app.domain.agent.harness.claude_code.subscription import Subscription
 from app.domain.agent.harness.driven.runtime import DrivenRuntime
-from app.domain.delivery.input_identity import InputReceipt, WorkCompletion
+from app.domain.delivery.input_identity import (
+    InputReceipt,
+    WorkCompletion,
+    WorkTermination,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +105,11 @@ class ClaudeCodeRuntime(DrivenRuntime[Handle]):
                 raise RuntimeError("Completion consumer is not bound")
             await self.completions(evidence)
 
+        async def termination(evidence: WorkTermination) -> None:
+            if self.terminations is None:
+                raise RuntimeError("Termination consumer is not bound")
+            await self.terminations(evidence)
+
         async def announce() -> None:
             await self.announce(handle.session.topic_id)
 
@@ -115,6 +124,7 @@ class ClaudeCodeRuntime(DrivenRuntime[Handle]):
             announce=announce,
             receipts=receipt,
             completions=completion,
+            terminations=termination,
             input_protocol=handle.input_protocol,
             pulse=self.pulse,
             memory=self._memory_hook(handle.session.topic_id),
@@ -122,10 +132,14 @@ class ClaudeCodeRuntime(DrivenRuntime[Handle]):
 
     async def ensure(self, session, opening, *, work_id=None) -> Handle:
         previous = self.live.get(self._seat_of(session))
-        if previous is not None:
-            # Do not reach the launch/ensure path to upgrade an adopted process.
+        if previous is not None and not accepts_inputs(
+            {"input_protocol": getattr(previous, "input_protocol", None)}
+        ):
+            # Do not reach launch/ensure to upgrade an adopted legacy process.
             # It owns native pipes and may still hold the original executor's WIP.
             await self.check_input_protocol(previous)
+        # Current handles follow DrivenRuntime's liveness and takeover rules;
+        # send still checks the ensured runner before registering any input.
         return await super().ensure(session, opening, work_id=work_id)
 
     async def check_input_protocol(self, handle: Handle) -> None:

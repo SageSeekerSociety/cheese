@@ -32,6 +32,10 @@ LEASE_SECONDS = 120
 RETRY_SECONDS = 30
 
 
+class DeliveryTargetChanged(ValidationError):
+    """The owned attempt has a confirmed invalid target; commit its failure."""
+
+
 def now():
     return datetime.now(UTC)
 
@@ -314,22 +318,35 @@ async def run_attempt(sessions, delivery_id, attempt_id, work, *, chat=None):
 
 async def begin_send(sessions, delivery_id, attempt_id, *, parent_session_id=None):
     """Fence stale queued runners immediately before they contact the receiver."""
+    rejected: DeliveryTargetChanged | None = None
     async with sessions() as session:
-        await fence_send(
-            session, delivery_id, attempt_id, parent_session_id=parent_session_id
-        )
+        try:
+            await fence_send(
+                session, delivery_id, attempt_id, parent_session_id=parent_session_id
+            )
+        except DeliveryTargetChanged as exc:
+            rejected = exc
         await session.commit()
+    if rejected is not None:
+        raise rejected
 
 
 async def fence_send(session, delivery_id, attempt_id, *, parent_session_id=None):
     """Fence in the caller's identity-registration transaction; never commit here."""
     row = await session.scalar(
         select(Delivery)
-        .where(Delivery.id == delivery_id, Delivery.attempt_id == attempt_id)
+        .where(
+            Delivery.id == delivery_id,
+            Delivery.attempt_id == attempt_id,
+            Delivery.state == "claimed",
+            Delivery.lease_until > now(),
+        )
         .with_for_update()
         .execution_options(populate_existing=True)
     )
-    if row is not None and row.task_id is not None:
+    if row is None:
+        raise ValidationError("Delivery attempt no longer owns this input")
+    if row.task_id is not None:
         task = await session.get(Task, row.task_id)
         if (
             task is None
@@ -342,9 +359,21 @@ async def fence_send(session, delivery_id, attempt_id, *, parent_session_id=None
                 and parent_session_id != row.payload["parent_session_id"]
             )
         ):
-            raise ValidationError(
-                "The target worker or native parent changed before delivery"
+            message = "The target worker or native parent changed before delivery"
+            result = await session.execute(
+                update(Delivery)
+                .where(
+                    Delivery.id == delivery_id,
+                    Delivery.attempt_id == attempt_id,
+                    Delivery.state == "claimed",
+                    Delivery.lease_until > now(),
+                )
+                .values(state="failed", last_error=message, lease_until=None)
+                .returning(Delivery.id)
             )
+            if result.scalar_one_or_none() is None:
+                raise ValidationError("Delivery attempt no longer owns this input")
+            raise DeliveryTargetChanged(message)
     result = await session.execute(
         update(Delivery)
         .where(

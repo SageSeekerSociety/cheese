@@ -135,6 +135,14 @@ class NativeInput(UuidPk, Base):
     completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    #: 确认终止的时刻：那一段 work 被 Stop 打断，或者 native 报错结束了。它**不是**
+    #: 完成 —— `completed_at` 照旧为空，持有的 block 也照旧持有，因为答案到底被消费
+    #: 了没有仍然不知道。记它只为让座位不再被一段已经死掉的 work 永久占住。
+    terminated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    #: 终止原因：`interrupted` 或 `is_error`。
+    termination: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
 
 class TimedDelivery(UuidPk, Base):

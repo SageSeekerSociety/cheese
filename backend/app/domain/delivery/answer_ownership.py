@@ -110,11 +110,17 @@ async def reconcile_answer(session, delivery_id, attempt_id):
 
 
 async def seat_has_unfinished_input(session, topic_id, recipient_handle):
-    """Missing native start or outstanding holds cannot authorize a new send."""
+    """Missing native start or outstanding holds cannot authorize a new send.
+
+    A work interval that is confirmed dead is not an outstanding hold. Its rows
+    stay unfinished — nothing says the answer inside them was taken — but they
+    stop standing between the seat and a NEW input, which is a different input
+    with an identity of its own. An interval nobody confirmed still blocks.
+    """
     rows = await session.scalars(
         select(NativeInput).where(
             NativeInput.topic_id == topic_id,
             NativeInput.recipient_handle == recipient_handle,
         )
     )
-    return any(row.completed_at is None for row in rows)
+    return any(row.completed_at is None and row.terminated_at is None for row in rows)
