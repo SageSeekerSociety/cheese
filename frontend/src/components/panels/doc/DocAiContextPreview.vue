@@ -47,7 +47,8 @@ summary:focus-visible {
 pre {
   max-height: 160px;
   overflow: auto;
-  font-size: 12px;
+  font-size: 13px;
+  line-height: var(--lh-13);
   color: var(--ink);
   white-space: pre-wrap;
   overflow-wrap: anywhere;

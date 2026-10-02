@@ -1,6 +1,6 @@
 import type { DocSelectionSnapshot } from '../lib/docAiSelection'
 
-import { createApp } from 'vue'
+import { createApp, ref } from 'vue'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import { useDocAi } from './useDocAi'
@@ -33,7 +33,7 @@ function deferred<T>() {
   })
   return { resolve, promise }
 }
-function setup() {
+function setup(overrides: Partial<Parameters<typeof useDocAi>[0]> = {}) {
   let ai!: ReturnType<typeof useDocAi>
   const app = createApp({
     setup() {
@@ -44,6 +44,7 @@ function setup() {
         version: () => 4,
         blocked: () => false,
         reload: async () => {},
+        ...overrides,
       })
       return () => null
     },
@@ -120,3 +121,25 @@ it('keeps the latest prepared quote when an earlier quote hash finishes last', a
     spy.mockRestore()
   }
 })
+
+it.each(['raw', 'version', 'blocked'] as const)(
+  'retires the prepared quote when reactive %s changes',
+  async (field) => {
+    const raw = ref('text')
+    const version = ref(4)
+    const blocked = ref(false)
+    const ai = setup({ raw: () => raw.value, version: () => version.value, blocked: () => blocked.value })
+    api.source.mockResolvedValue(canonical)
+    await ai.prepare(null)
+    expect(ai.preparedContext.value).toEqual({ state: 'verified', original: 'text', scope: 'document', baseVersion: 4 })
+
+    if (field === 'raw') raw.value = 'a newer document'
+    else if (field === 'version') version.value = 5
+    else blocked.value = true
+
+    expect(ai.preparedContext.value).toEqual({ state: 'unavailable' })
+    ai.question.value = 'ask about the new document'
+    await ai.submit('ask')
+    expect(api.create).not.toHaveBeenCalled()
+  }
+)

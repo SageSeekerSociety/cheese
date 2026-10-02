@@ -8,7 +8,7 @@ import type {
   DocAiSource,
 } from '../lib/docAiTypes'
 
-import { onBeforeUnmount, ref, shallowRef, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 
 import { ApiError } from '../api'
 import {
@@ -44,7 +44,19 @@ export function useDocAi(context: Context) {
   const source = shallowRef<DocAiSource | null>(null)
   const selection = shallowRef<DocAiSelection | null>(null)
   const selectionStatus = ref('')
-  const preparedContext = shallowRef<DocAiDisplayContext>({ state: 'unavailable' })
+  const preparedSnapshot = shallowRef<DocAiDisplayContext>({ state: 'unavailable' })
+  const preparedContext = computed<DocAiDisplayContext>(() => {
+    const canonical = source.value
+    if (
+      !canonical ||
+      context.blocked() ||
+      canonical.source !== context.raw() ||
+      canonical.base_version !== context.version()
+    ) {
+      return { state: 'unavailable' }
+    }
+    return preparedSnapshot.value
+  })
   const unknown = shallowRef<Operation | null>(null)
   let selectionRequest = 0
   let epoch = 0
@@ -106,7 +118,7 @@ export function useDocAi(context: Context) {
     selection.value = null
     source.value = null
     selectionStatus.value = ''
-    preparedContext.value = { state: 'unavailable' }
+    preparedSnapshot.value = { state: 'unavailable' }
     const generation = epoch
     const request = ++selectionRequest
     const current = () => active(generation) && request === selectionRequest
@@ -134,7 +146,7 @@ export function useDocAi(context: Context) {
       ) {
         const display = await verifyDocAiPreparedContext(canonical, selection.value)
         if (!current() || version !== context.version() || raw !== context.raw() || context.blocked()) return
-        preparedContext.value = display
+        preparedSnapshot.value = display
       }
       await refresh()
     } catch (cause) {
@@ -248,7 +260,7 @@ export function useDocAi(context: Context) {
     cards.value = []
     source.value = null
     selection.value = null
-    preparedContext.value = { state: 'unavailable' }
+    preparedSnapshot.value = { state: 'unavailable' }
     restoring = true
     question.value = ''
     error.value = ''

@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import type { DocAiCard } from '../../../lib/docAiTypes'
+import type { DocAiCard, DocAiDisplayContext } from '../../../lib/docAiTypes'
+
+import DocAiContextPreview from './DocAiContextPreview.vue'
 
 import { t } from '@/i18n'
 
@@ -14,6 +16,7 @@ const props = defineProps<{
   unknown: boolean
   version: number
   docked?: boolean
+  preparedContext?: DocAiDisplayContext
 }>()
 const emit = defineEmits<{
   (e: 'update:question', value: string): void
@@ -51,6 +54,7 @@ function keydown(event: KeyboardEvent) {
           <button type="button" :disabled="busy" @click="emit('recover')">{{ t('work.room.docAi.recover') }}</button>
         </div>
       </div>
+      <DocAiContextPreview v-if="preparedContext" :context="preparedContext" />
       <label for="doc-ai-question">{{ t('work.room.docAi.question') }}</label>
       <textarea
         id="doc-ai-question"
@@ -81,6 +85,7 @@ function keydown(event: KeyboardEvent) {
           <span>{{ t('work.room.docAi.aiProposal') }}</span>
           <span role="status">{{ t(`work.room.docAi.state.${card.request.state}`) }}</span>
         </header>
+        <DocAiContextPreview :context="card.context" />
         <p v-if="card.request.answer" dir="auto" class="doc-ai-answer">{{ card.request.answer }}</p>
         <p v-if="card.request.error" role="alert">{{ card.request.error }}</p>
         <template v-if="card.proposal">
