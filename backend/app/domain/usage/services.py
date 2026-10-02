@@ -75,17 +75,6 @@ class UsageService:
             out[key] = summary
         return out
 
-    async def team_credits(self, team_id: int) -> dict:
-        """What a team may spend across its projects: its plan's pack for the
-        month and the credits bought or granted to it, earmarks aside."""
-        terms = await ledger.team_terms(self._session, team_id)
-        payer = ledger.Payer(team_id=team_id, terms=terms)
-        return (await ledger.Ledger(self._session).balance(payer)).summary()
-
-    async def team_packs(self, team_id: int) -> list:
-        """Every live pack a team holds, its project earmarks too."""
-        return await ledger.Ledger(self._session).team_packs(team_id)
-
     async def platform_totals(self, *, since: datetime, until: datetime) -> dict:
         """窗口内的总量：tokens / calls / cost_usd / unpriced_tokens。
 

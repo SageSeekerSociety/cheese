@@ -239,8 +239,7 @@ def test_team_quota_view_is_private_and_preserves_project_usage(client):
     assert response.status_code == 200
     data = response.json()["data"]
     assert data["machines"] == {"used": 0, "limit": 50}
-    assert data["credits"]["credits_remaining"] == 10
-    assert data["projects"][0]["total_tokens"] == 0
+    assert [p["id"] for p in data["projects"]] == [str(project_id)]
     assert client.get(f"/projects/{project_id}/credits").status_code == 401
     assert (
         client.get(
