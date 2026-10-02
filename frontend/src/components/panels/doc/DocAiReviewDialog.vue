@@ -59,9 +59,12 @@ function accept() {
           <v-icon size="20">mdi-close</v-icon>
         </button>
       </header>
-      <v-card-text class="doc-ai-review__body">
+      <v-card-text class="doc-ai-review__body" tabindex="0" role="region" :aria-label="t('work.room.docAi.comparison')">
         <p v-if="card.context?.question" class="doc-ai-review__question" dir="auto">{{ card.context.question }}</p>
-        <p v-if="card.request.answer" class="doc-ai-review__answer" dir="auto">{{ card.request.answer }}</p>
+        <details v-if="card.request.answer" class="doc-ai-review__explanation">
+          <summary>{{ t('work.room.docAi.explanation') }}</summary>
+          <p class="doc-ai-review__answer" dir="auto">{{ card.request.answer }}</p>
+        </details>
         <div class="doc-ai-review__comparison">
           <section :aria-label="t('work.room.docAi.original')">
             <h3>{{ t('work.room.docAi.original') }}</h3>
@@ -157,6 +160,10 @@ h2 {
   min-height: 0;
   overflow-wrap: anywhere;
 }
+.doc-ai-review__body:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
 .doc-ai-review__question {
   color: var(--ink);
   font-weight: 600;
@@ -164,8 +171,23 @@ h2 {
 }
 .doc-ai-review__answer {
   color: var(--muted);
-  margin-bottom: 24px;
+  margin-top: 12px;
   white-space: pre-wrap;
+}
+.doc-ai-review__explanation {
+  margin-bottom: 16px;
+}
+.doc-ai-review__explanation summary {
+  width: fit-content;
+  padding: 8px 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  cursor: pointer;
+}
+.doc-ai-review__explanation summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 .doc-ai-review__comparison {
   display: grid;

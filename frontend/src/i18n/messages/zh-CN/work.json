@@ -194,6 +194,8 @@
     },
     "docAi": {
       "review": "查看修改",
+      "explanation": "修改说明",
+      "comparison": "原文与建议",
       "closeReview": "关闭对照",
       "original": "原文",
       "suggested": "建议文字",

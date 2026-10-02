@@ -194,6 +194,8 @@
     },
     "docAi": {
       "review": "Review changes",
+      "explanation": "Explanation",
+      "comparison": "Original and suggested text",
       "closeReview": "Close comparison",
       "original": "Original",
       "suggested": "Suggested text",

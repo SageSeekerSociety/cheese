@@ -158,6 +158,20 @@ function keydown(event: KeyboardEvent) {
           class="doc-ai-card__content"
         >
           <DocAiContextPreview :context="card.context" hide-question collapsed />
+          <div v-if="card.proposal" class="doc-ai-card__actions">
+            <button type="button" class="doc-ai-review-action" @click="reviewChanges(card, $event)">
+              {{ t('work.room.docAi.review') }}
+            </button>
+            <span v-if="card.proposal.state === 'pending'">{{
+              t('work.room.docAi.baseVersion', { version: card.proposal.base_version })
+            }}</span>
+            <span v-else>{{
+              t('work.room.docAi.accepted', {
+                actor: card.proposal.accepted_by ?? '',
+                version: card.proposal.accepted_version ?? '',
+              })
+            }}</span>
+          </div>
           <p v-if="card.request.answer" dir="auto" class="doc-ai-answer">{{ card.request.answer }}</p>
           <p v-if="card.request.error" role="alert">{{ card.request.error }}</p>
           <template v-if="card.proposal">
@@ -165,20 +179,6 @@ function keydown(event: KeyboardEvent) {
               <summary>{{ t('work.room.docAi.replacement') }}</summary>
               <pre dir="auto">{{ card.proposal.replacement }}</pre>
             </details>
-            <div class="doc-ai-card__actions">
-              <button type="button" class="doc-ai-review-action" @click="reviewChanges(card, $event)">
-                {{ t('work.room.docAi.review') }}
-              </button>
-              <span v-if="card.proposal.state === 'pending'">{{
-                t('work.room.docAi.baseVersion', { version: card.proposal.base_version })
-              }}</span>
-              <span v-else>{{
-                t('work.room.docAi.accepted', {
-                  actor: card.proposal.accepted_by ?? '',
-                  version: card.proposal.accepted_version ?? '',
-                })
-              }}</span>
-            </div>
           </template>
           <button
             v-if="card.request.state === 'pending' || card.request.state === 'running'"
