@@ -1183,7 +1183,7 @@
       "disconnected": "未连接"
     },
     "source": {
-      "project": "来自项目的 .mcp.json",
+      "project": "来自项目的 {file}",
       "types": "由 {types} 类型声明 | 由 {types} 类型声明"
     },
     "action": {
