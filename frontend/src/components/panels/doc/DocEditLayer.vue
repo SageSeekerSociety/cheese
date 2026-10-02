@@ -98,9 +98,13 @@ function measure() {
   } catch {
     // 位置已经不在正文里了：贴着这一段的左边。
   }
-  const width = at.width ? Math.min(at.width, lr.width) : 0
+  // 卡不出正文那一栏：窄屏上贴着栏的两边，不贴着页面的边。
+  const column = editor.view.dom.getBoundingClientRect()
+  const min = Math.max(0, column.left - lr.left)
+  const max = Math.min(lr.width, column.right - lr.left)
+  const width = at.width ? Math.min(at.width, max - min) : 0
   const cardWidth = width || card.value?.offsetWidth || 0
-  left = Math.max(0, Math.min(left, lr.width - cardWidth))
+  left = Math.max(min, Math.min(left, max - cardWidth))
   place.value = { top: br.bottom - lr.top + 6, left, width }
   void nextTick(() => {
     const height = card.value?.offsetHeight ?? 0

@@ -29,33 +29,34 @@ const emit = defineEmits<{
     role="region"
     :aria-label="t('work.room.docSuggest.title', { agent: agentName })"
   >
-    <span class="doc-suggestion-strip__dot" aria-hidden="true" />
-    <span class="doc-suggestion-strip__text">{{
-      t('work.room.docSuggest.pending', { agent: agentName, n: count })
-    }}</span>
-    <button
-      type="button"
-      class="doc-suggestion-strip__nav"
-      :aria-label="t('work.room.docEdit.prev')"
-      :title="t('work.room.docEdit.prev')"
-      @click="emit('step', -1)"
-    >
-      <v-icon size="16">mdi-arrow-up</v-icon>
-    </button>
-    <button
-      type="button"
-      class="doc-suggestion-strip__nav"
-      :aria-label="t('work.room.docEdit.next')"
-      :title="t('work.room.docEdit.next')"
-      @click="emit('step', 1)"
-    >
-      <v-icon size="16">mdi-arrow-down</v-icon>
-    </button>
-    <span class="doc-suggestion-strip__spacer" />
-    <template v-if="editable">
+    <span class="doc-suggestion-strip__lead">
+      <span class="doc-suggestion-strip__dot" aria-hidden="true" />
+      <span class="doc-suggestion-strip__text">{{
+        t('work.room.docSuggest.pending', { agent: agentName, n: count })
+      }}</span>
+      <button
+        type="button"
+        class="doc-suggestion-strip__nav"
+        :aria-label="t('work.room.docEdit.prev')"
+        :title="t('work.room.docEdit.prev')"
+        @click="emit('step', -1)"
+      >
+        <v-icon size="16">mdi-arrow-up</v-icon>
+      </button>
+      <button
+        type="button"
+        class="doc-suggestion-strip__nav"
+        :aria-label="t('work.room.docEdit.next')"
+        :title="t('work.room.docEdit.next')"
+        @click="emit('step', 1)"
+      >
+        <v-icon size="16">mdi-arrow-down</v-icon>
+      </button>
+    </span>
+    <span v-if="editable" class="doc-suggestion-strip__actions">
       <DocEditButton @click="emit('reject-all')">{{ t('work.room.docSuggest.rejectAll') }}</DocEditButton>
       <DocEditButton strong @click="emit('accept-all')">{{ t('work.room.docSuggest.acceptAll') }}</DocEditButton>
-    </template>
+    </span>
   </div>
   <div
     v-else-if="decided.accepted + decided.rejected > 0"
@@ -110,6 +111,16 @@ const emit = defineEmits<{
 }
 .doc-suggestion-strip__spacer {
   flex: 1 1 auto;
+}
+/* 窄屏上按钮整组折到下一行、靠右，不把一组按钮拆开。 */
+.doc-suggestion-strip__lead,
+.doc-suggestion-strip__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.doc-suggestion-strip__actions {
+  margin-left: auto;
 }
 .doc-suggestion-strip__nav {
   display: inline-flex;
