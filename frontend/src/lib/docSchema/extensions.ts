@@ -133,6 +133,11 @@ const MarkdownLinkInput = Extension.create({
 })
 
 export interface DocExtensionsOptions {
+  /** The editor holds its own content instead of a shared document (a form
+   * field such as a task description): it keeps a local undo history and the
+   * empty paragraph after a closing table or list, which only a shared document
+   * has to give up. */
+  standalone?: boolean
   /** Display-time image src resolver (defaults to identity). */
   resolveImageSrc?: (src: string) => string
 }
@@ -188,14 +193,14 @@ export function docExtensions(opts: DocExtensionsOptions = {}): AnyExtension[] {
     StarterKit.configure({
       // Replaced by the lowlight-highlighted code block below.
       codeBlock: false,
-      // The document is always edited collaboratively, and the collaboration
+      // A shared document is edited collaboratively, and the collaboration
       // extension brings its own undo: one that takes back only your own
       // changes, not whatever a teammate typed in between.
-      undoRedo: false,
+      undoRedo: opts.standalone ? undefined : false,
       // An editor that appends an empty paragraph after a closing table or
       // list changes the shared document just by opening it: every reader would
       // record a version, and two readers would append two paragraphs.
-      trailingNode: false,
+      trailingNode: opts.standalone ? undefined : false,
       listItem: false,
       link: {
         // No click-through plugin: in edit mode a plain click just places the
