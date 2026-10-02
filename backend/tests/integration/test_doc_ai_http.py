@@ -14,6 +14,7 @@ from app.domain.doc_ai.services import DocAiService
 from app.domain.living_doc.services import content_hash
 from tests.conftest import seed_user
 from tests.integration.conftest import (
+    join_project_team,
     room_agent_seat,
     session_auth_headers,
     session_token,
@@ -112,20 +113,32 @@ def test_request_details_keep_frozen_context_after_canonical_changes(client):
 def test_frozen_context_is_not_exposed_to_another_actor_in_the_same_room(client):
     room, body = setup(client)
     created = client.post(f"/topics/{room}/doc-ai/requests", json=body)
+    assert created.status_code == 202, created.text
     request_id = created.json()["data"]["request_id"]
-
-    async def belong_to_other_actor():
-        async with client.test_factory() as session:
-            row = await DocAiService(session).get(
-                uuid.UUID(room), uuid.UUID(request_id)
-            )
-            row.actor = "another-human-request-owner"
-            await session.commit()
-
-    asyncio.run(belong_to_other_actor())
-    denied = client.get(f"/topics/{room}/doc-ai/requests/{request_id}")
+    url = f"/topics/{room}/doc-ai/requests/{request_id}"
+    frozen = client.get(url).json()["data"]["frozen_context"]
+    topic = client.get(f"/topics/{room}")
+    assert topic.status_code == 200, topic.text
+    reader = "frozen-context-room-reader"
+    join_project_team(client, topic.json()["data"]["project_id"], reader)
+    joined = client.post(
+        f"/topics/{room}/members", json={"handle": reader, "role": "member"}
+    )
+    assert joined.status_code == 200, joined.text
+    headers = session_auth_headers(reader)
+    assert (
+        client.get(f"/topics/{room}/doc-ai/source", headers=headers).status_code == 200
+    )
+    denied = client.get(url, headers=headers)
     assert denied.status_code == 403
     assert "frozen_context" not in denied.json()
+    assert (
+        client.get(f"/topics/{room}/doc-ai/requests", headers=headers).json()["data"][
+            "requests"
+        ]
+        == []
+    )
+    assert client.get(url).json()["data"]["frozen_context"] == frozen
 
 
 @pytest.mark.parametrize("changed_payload", [False, True])
