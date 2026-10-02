@@ -98,7 +98,7 @@
 </template>
 
 <script setup lang="ts">
-import type { JSONContent } from 'vuetify-pro-tiptap'
+import type { JSONContent } from '@tiptap/core'
 
 import { defineAsyncComponent, ref } from 'vue'
 import { useRouter } from 'vue-router'

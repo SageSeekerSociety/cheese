@@ -122,7 +122,6 @@ const richText = computed({
           <!-- 富文本内容预览 -->
           <v-sheet v-else-if="resource.type === 'TEXT' && content.richText" class="pa-4 text-preview rounded-lg">
             <div class="rich-text-preview">
-              <!-- 这里应该渲染富文本内容，可以用TipTap的只读模式 -->
               <TipTapEditor v-model="richText" hide-toolbar output="json" :min-height="150" />
             </div>
           </v-sheet>
@@ -293,16 +292,6 @@ const richText = computed({
   flex-direction: column;
   align-items: center;
   justify-content: center;
-}
-
-.rich-text-preview :deep(.tiptap-editor) {
-  background-color: transparent;
-  padding: 0;
-
-  .ProseMirror {
-    padding: 0;
-    min-height: auto !important;
-  }
 }
 
 /* 代码块：故意反色的元素，两块颜色是 `src/style.css` 里的 `--code-bg` /

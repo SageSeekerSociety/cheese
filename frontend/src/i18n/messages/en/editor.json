@@ -1,7 +1,18 @@
 {
   "image": {
-    "tooltip": "Insert image",
-    "uploading": "Uploading image"
+    "caption": "Caption",
+    "loadFailed": "Couldn't load image",
+    "uploadFailed": "Couldn't upload image"
+  },
+  "toolbar": {
+    "codeBlock": "Code block",
+    "image": "Insert image",
+    "table": "Insert table",
+    "addRow": "Insert row below",
+    "addColumn": "Insert column right",
+    "deleteRow": "Delete row",
+    "deleteColumn": "Delete column",
+    "deleteTable": "Delete table"
   },
   "renderError": "Couldn't render: {text}",
   "placeholder": "Type here…",
