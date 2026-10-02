@@ -71,6 +71,63 @@ def test_request_creation_replay_payload_conflict_and_cancel_preserve_canonical(
     assert client.get(f"/topics/{room}/doc").json() == before
 
 
+def test_request_details_keep_frozen_context_after_canonical_changes(client):
+    room, body = setup(client)
+    created = client.post(f"/topics/{room}/doc-ai/requests", json=body)
+    request_id = created.json()["data"]["request_id"]
+    url = f"/topics/{room}/doc-ai/requests/{request_id}"
+    frozen = {
+        "question": "解释",
+        "document_id": body["document_id"],
+        "base_version": 1,
+        "source": "😀原文\r\n",
+        "source_hash": content_hash("😀原文\r\n"),
+        "selection": None,
+        "offset_unit": "utf8-bytes",
+    }
+    assert client.get(url).json()["data"]["frozen_context"] == frozen
+    changed = client.put(
+        f"/topics/{room}/doc", json={"content": "后来改过的正文", "expected_version": 1}
+    )
+    assert changed.status_code == 200
+    before = client.get(f"/topics/{room}/doc").json()
+    assert client.get(url).json()["data"]["frozen_context"] == frozen
+    assert client.get(f"/topics/{room}/doc").json() == before
+    assert (
+        len(client.get(f"/topics/{room}/doc-ai/requests").json()["data"]["requests"])
+        == 1
+    )
+    other_room, _ = setup(client)
+    assert (
+        client.get(f"/topics/{other_room}/doc-ai/requests/{request_id}").status_code
+        == 404
+    )
+    seed_user(client, "frozen-context-outsider")
+    client.headers.update(session_auth_headers("frozen-context-outsider"))
+    denied = client.get(url)
+    assert denied.status_code == 403
+    assert "frozen_context" not in denied.json()
+
+
+def test_frozen_context_is_not_exposed_to_another_actor_in_the_same_room(client):
+    room, body = setup(client)
+    created = client.post(f"/topics/{room}/doc-ai/requests", json=body)
+    request_id = created.json()["data"]["request_id"]
+
+    async def belong_to_other_actor():
+        async with client.test_factory() as session:
+            row = await DocAiService(session).get(
+                uuid.UUID(room), uuid.UUID(request_id)
+            )
+            row.actor = "another-human-request-owner"
+            await session.commit()
+
+    asyncio.run(belong_to_other_actor())
+    denied = client.get(f"/topics/{room}/doc-ai/requests/{request_id}")
+    assert denied.status_code == 403
+    assert "frozen_context" not in denied.json()
+
+
 @pytest.mark.parametrize("changed_payload", [False, True])
 def test_concurrent_http_request_claim_has_one_persisted_request(
     client, changed_payload
@@ -175,6 +232,12 @@ def test_real_human_accept_stored_proposal_only_and_replays_after_lost_response(
         "data"
     ]["proposal_id"]
     assert proposal_id
+    detail_url = f"/topics/{room}/doc-ai/requests/{request_id}"
+    frozen = client.get(detail_url).json()["data"]["frozen_context"]
+    assert frozen["selection"] == body["selection"]
+    assert frozen["question"] == body["question"]
+    assert frozen["source"] == "😀原文\r\n"
+    assert frozen["source_hash"] == content_hash("😀原文\r\n")
     url = f"/topics/{room}/doc-ai/proposals/{proposal_id}/accept"
     accept = {"operation_id": str(uuid.uuid4()), "expected_version": 1, "revision": 1}
     assert (
@@ -193,6 +256,7 @@ def test_real_human_accept_stored_proposal_only_and_replays_after_lost_response(
     assert saved.json()["data"]["content"] == "新😀原文\r\n"
     assert client.post(url, json=accept).json() == saved.json()
     assert client.get(f"/topics/{room}/doc").json()["data"]["doc_version"] == 2
+    assert client.get(detail_url).json()["data"]["frozen_context"] == frozen
 
 
 def test_strict_schema_rejects_author_target_and_coerced_versions(client):

@@ -75,3 +75,48 @@ it.each(['source', 'validation'] as const)(
     expect(api.create.mock.calls[0][1].selection).toEqual(spanB)
   }
 )
+
+it('keeps the latest prepared quote when an earlier quote hash finishes last', async () => {
+  const ai = setup()
+  api.source.mockResolvedValue(canonical)
+  api.validate.mockImplementation((snapshot) =>
+    Promise.resolve(
+      snapshot.from === 0
+        ? {
+            node_id: 'a',
+            start: 0,
+            end: 4,
+            exact_hash: '982d9e3eb996f559e633f4d194def3761d909f5a3b647d1a851fead67c32c9d1',
+          }
+        : {
+            node_id: 'b',
+            start: 1,
+            end: 4,
+            exact_hash: 'a7e7e2f59b128bdb0aa60f56f5211efefdf83b92994b8f4a5d2e18126a0a14de',
+          }
+    )
+  )
+  const digest = crypto.subtle.digest.bind(crypto.subtle)
+  const gate = deferred<void>()
+  let hashing = false
+  const spy = vi.spyOn(crypto.subtle, 'digest').mockImplementationOnce(async (...args) => {
+    hashing = true
+    await gate.promise
+    return digest(...args)
+  })
+  try {
+    const old = ai.prepare({ from: 0 } as DocSelectionSnapshot)
+    await vi.waitFor(() => expect(hashing).toBe(true))
+    await ai.prepare({ from: 1 } as DocSelectionSnapshot)
+    expect(ai.preparedContext.value).toEqual({ state: 'verified', original: 'ext', scope: 'selection', baseVersion: 4 })
+    gate.resolve()
+    await old
+    expect(ai.preparedContext.value).toMatchObject({ state: 'verified', original: 'ext' })
+    ai.question.value = 'only B'
+    await ai.submit('propose')
+    expect(api.create.mock.calls[0][1].selection.node_id).toBe('b')
+  } finally {
+    gate.resolve()
+    spy.mockRestore()
+  }
+})

@@ -33,7 +33,20 @@ export interface DocAiRequest extends DocAiReceipt {
   proposal_id: string | null
   answer: string | null
   error: string | null
+  frozen_context?: DocAiFrozenContext
 }
+export interface DocAiFrozenContext {
+  question: string
+  document_id: string
+  base_version: number
+  source: string
+  source_hash: string
+  selection: DocAiSelection | null
+  offset_unit: 'utf8-bytes'
+}
+export type DocAiDisplayContext =
+  | { state: 'unavailable' | 'invalid'; question?: string }
+  | { state: 'verified'; question?: string; original: string; scope: 'selection' | 'document'; baseVersion: number }
 export interface DocAiProposal {
   proposal_id: string
   request_id: string
@@ -66,4 +79,5 @@ export interface DocAiAccepted {
 export interface DocAiCard {
   request: DocAiRequest
   proposal?: DocAiProposal
+  context?: DocAiDisplayContext
 }
