@@ -133,6 +133,12 @@ settings.authz_enforce_topic_access = True
 # uses.
 settings.notification_email_drain_interval_s = 0
 settings.task_deadline_sweep_interval_s = 0
+# Request limits are per principal and their rate state lives in Redis, which
+# no test resets: across a suite the same handles ("alice") and the same test
+# client address are reused far faster than any one browser, so a test's
+# outcome would turn on how many requests ran before it. The limits are tested
+# where they are switched back on (`tests/integration/test_request_limits.py`).
+settings.request_limits_enabled = False
 
 
 def _production_test_engine(url: str):

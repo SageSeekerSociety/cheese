@@ -35,6 +35,7 @@
   "request": {
     "timeout": "请求等待超时，请重试",
     "canceled": "请求已取消",
+    "rateLimited": "请求太频繁，请 {seconds} 秒后再试",
     "failed": "请求失败（HTTP {status}）",
     "versionReadFailed": "未能读取这一版（HTTP {status}）",
     "addFailed": "添加失败（HTTP {status}）",

@@ -30,3 +30,19 @@ export function transportFailureMessage(method: string, status: number): string 
     status,
   })
 }
+
+// The parsed body, or NOT_JSON when there is no JSON to parse. The content-type
+// is checked first so an HTML page is never handed to a JSON parser; a response
+// with no `headers` at all (fetch always sets them, test doubles do not) is
+// given the benefit of the parse.
+const NOT_JSON = Symbol('not JSON')
+
+export async function readJson(res: Response): Promise<unknown> {
+  const type = res.headers?.get('content-type')
+  if (type != null && !type.includes('application/json')) return NOT_JSON
+  try {
+    return await res.json()
+  } catch {
+    return NOT_JSON
+  }
+}

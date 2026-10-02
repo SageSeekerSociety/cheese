@@ -70,9 +70,10 @@ import type { SitePage } from './types/site'
 import { desktopAppHeaders } from './lib/desktopApp'
 import { refusalText } from './lib/noticeText'
 import { createPreviewPdfReader } from './lib/previewPdf'
+import { rateLimitedText, rateLimitRetryMs } from './lib/rateLimit'
 import { refreshSession } from './lib/session'
 import { TOPIC_TITLE_MAX_LENGTH } from './lib/topicTitle'
-import { isTransportFailure, transportFailureMessage } from './lib/transportFailure'
+import { isTransportFailure, readJson, transportFailureMessage } from './lib/transportFailure'
 import { t } from './i18n'
 
 export { TOPIC_TITLE_MAX_LENGTH }
@@ -119,22 +120,6 @@ export function isRetryableGetFailure(method: string, status?: number, error?: u
   if (errorPage) return true
   if (status != null) return RETRYABLE_GET_STATUSES.has(status)
   return !(error instanceof DOMException && error.name === 'AbortError')
-}
-
-// The parsed body, or NOT_JSON when there is no JSON to parse. The content-type
-// is checked first so an HTML page is never handed to a JSON parser; a response
-// with no `headers` at all (fetch always sets them, test doubles do not) is
-// given the benefit of the parse.
-const NOT_JSON = Symbol('not JSON')
-
-async function readJson(res: Response): Promise<unknown> {
-  const type = res.headers?.get('content-type')
-  if (type != null && !type.includes('application/json')) return NOT_JSON
-  try {
-    return await res.json()
-  } catch {
-    return NOT_JSON
-  }
 }
 
 function wait(ms: number): Promise<void> {
@@ -291,6 +276,7 @@ async function performRequest<T>(path: string, init?: RequestInit): Promise<T> {
   // when the refresh actually produced a different token, or a server that 401s
   // for some other reason would make every call fire twice.
   let authRetried = false
+  let rateRetried = false
   for (let attempt = 0; ; attempt += 1) {
     init?.signal?.throwIfAborted()
     let res: Response
@@ -322,6 +308,14 @@ async function performRequest<T>(path: string, init?: RequestInit): Promise<T> {
         continue
       }
     }
+    // A read refused for coming too fast waits as long as it was told, once.
+    const backoff = rateRetried ? null : rateLimitRetryMs(method, res)
+    if (backoff != null) {
+      rateRetried = true
+      await wait(backoff)
+      attempt -= 1
+      continue
+    }
     // Before asking what the app said, ask whether it was the app that spoke.
     // `HTTP 530 for /topics` and a raw `SyntaxError: Unexpected token '<'` were
     // what a hackathon room read while Cloudflare's tunnel flapped for a few
@@ -347,7 +341,8 @@ async function performRequest<T>(path: string, init?: RequestInit): Promise<T> {
       // #450 rule 2 (frontend edition): the backend's errors carry a human
       // sentence (`message`) — a toast that shows only "HTTP 422 for /path"
       // sends the room hunting a mystery the server had already explained.
-      const serverSaid = refusalText(body, details.error?.message || details.message || '')
+      const serverSaid =
+        rateLimitedText(res, body) ?? refusalText(body, details.error?.message || details.message || '')
       throw new ApiError(
         res.status,
         serverSaid || t('global.request.failed', { status: res.status }),

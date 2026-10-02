@@ -15,6 +15,7 @@
   "request": {
     "timeout": "The request timed out. Please try again",
     "canceled": "Request canceled",
+    "rateLimited": "Too many requests right now. Try again in {seconds} s",
     "failed": "Request failed (HTTP {status})",
     "versionReadFailed": "Couldn't read this version (HTTP {status})",
     "addFailed": "Couldn't add it (HTTP {status})",
