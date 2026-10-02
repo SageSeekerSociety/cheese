@@ -17,7 +17,12 @@ vi.mock('../../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../api')>()
   return {
     ...actual,
-    getProjectDefaultModel: vi.fn().mockResolvedValue({ choices: [{ id: 'deepseek-flash', label: 'DeepSeek' }] }),
+    getProjectDefaultModel: vi.fn().mockResolvedValue({
+      choices: [
+        { id: 'deepseek-flash', label: 'DeepSeek', allowed: true, requires_plan: null },
+        { id: 'sonnet', label: 'Claude Sonnet 5', allowed: false, requires_plan: 'Reserve' },
+      ],
+    }),
     createProjectAgent: (...a: unknown[]) => createProjectAgent(...a),
     updateProjectAgent: (...a: unknown[]) => updateProjectAgent(...a),
     updateAgentType: (...a: unknown[]) => updateAgentType(...a),
@@ -184,6 +189,21 @@ describe('新建时的校验', () => {
         })
       )
     )
+  })
+
+  it('does not let a model the plan leaves out be chosen', async () => {
+    mountDialog(null)
+    await fireEvent.update(field('名字'), 'Spark')
+    await fireEvent.input(await screen.findByRole('checkbox', { name: '为这个队友指定模型' }), {
+      target: { checked: true },
+    })
+    await waitFor(() => expect(screen.getAllByRole('combobox')).toHaveLength(2))
+    await fireEvent.mouseDown((await screen.findAllByRole('combobox'))[1]!)
+    const option = await screen.findByRole('option', { name: /Claude Sonnet 5/ })
+    expect(option.textContent).toContain('Reserve')
+    await fireEvent.click(option)
+    await clickSave()
+    expect(createProjectAgent).not.toHaveBeenCalled()
   })
 })
 
