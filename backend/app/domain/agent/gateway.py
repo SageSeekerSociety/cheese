@@ -233,6 +233,21 @@ class LlmGateway:
             logger.warning("gateway mint_person_key failed", exc_info=True)
             return None
 
+    async def revoke_key(self, key: str) -> bool:
+        """Delete a virtual key on the gateway, so nothing can call on it."""
+        try:
+            async with self._client() as client:
+                r = await client.post(
+                    f"{self._base}/key/delete",
+                    headers=self._headers,
+                    json={"keys": [key]},
+                )
+                r.raise_for_status()
+                return True
+        except Exception:  # noqa: BLE001 — the caller says what was left
+            logger.warning("gateway revoke_key failed", exc_info=True)
+            return False
+
     async def set_key_budget(self, key: str, max_budget_usd: float) -> bool:
         """L2: cap the key's lifetime spend; the gateway rejects calls past it."""
         try:

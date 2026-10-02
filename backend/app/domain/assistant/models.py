@@ -70,6 +70,8 @@ class AssistantGatewayKey(Timestamps, Base):
         ForeignKey("user.id", ondelete="CASCADE"), primary_key=True
     )
     key: Mapped[str] = mapped_column(Text, nullable=False)
+    # The one model the key may call (``keys.person_key``).
+    model: Mapped[str] = mapped_column(String(128), nullable=False, default="")
     usage_ckpt: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
 

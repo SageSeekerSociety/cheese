@@ -111,6 +111,7 @@ class Runner(runner.Runner[Journal]):
         # pin, argv, skills and extension, as `start` was given them.
         self.binary = ""
         self.args: list[str] = []
+        self.model = ""
         self.skill_args: list[str] = []
         self.extension_files: dict[str, str] = {}
         # A session with no hands (`_start_without_hands`): where on the
@@ -642,6 +643,7 @@ class Runner(runner.Runner[Journal]):
         env = {**env, "TMPDIR": str(scratch)}
         self.cwd, self.env = cwd, env
         self.binary, self.args = binary, list(args)
+        self.model = opening.model or ""
         self.extension_files = dict(extension or {})
         if target is None:
             return await self._start_without_hands(
@@ -984,6 +986,9 @@ class Runner(runner.Runner[Journal]):
                 # How long since anything went in: which of a person's
                 # sessions is the least recently used (`host.configure`).
                 "idle_s": time.monotonic() - self.active_at,
+                # The model it was started on: a session asked for another one
+                # is started again (`personal.PersonalSessions.ensure`).
+                "model": self.model,
             }
         raise ValueError(f"Unknown pi session operation: {method}")
 

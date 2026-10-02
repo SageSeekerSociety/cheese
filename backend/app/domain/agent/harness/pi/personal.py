@@ -101,6 +101,8 @@ class Session:
     cursor: str | None = None
     #: Whether anyone has asked this session anything yet.
     asked: bool = False
+    #: The model the session was started on.
+    model: str = ""
 
 
 @dataclass(frozen=True)
@@ -213,13 +215,16 @@ class PersonalSessions:
         lock = self._locks.setdefault(conversation, asyncio.Lock())
         async with lock:
             known = self._sessions.get(conversation)
-            if known is not None:
+            if known is not None and known.model == launch.model:
                 return known
             host = settings.agent_session_device_id
             if not host or not self.hub.is_online(host):
                 raise PersonalSessionError("The session host is not connected")
-            session = Session(host, state_dir(launch.user_id, conversation))
-            if await self._ping(session) is None:
+            session = Session(
+                host, state_dir(launch.user_id, conversation), model=launch.model
+            )
+            running = await self._ping(session)
+            if running is None or running.get("model") != launch.model:
                 await self._start(session, launch)
             await self._catch_up(session)
             self._sessions[conversation] = session

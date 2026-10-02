@@ -65,6 +65,9 @@ class Gateway:
         self.requests: list[dict] = []
         self.keys: list[str] = []
         self.spend: list[dict] = []
+        #: Every key minted, with the models it may call; and keys revoked.
+        self.minted: dict[str, list[str]] = {}
+        self.revoked: list[str] = []
         outer = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -92,9 +95,21 @@ class Gateway:
             def do_POST(self) -> None:
                 sent = json.loads(self.rfile.read(int(self.headers["content-length"])))
                 if self.path == "/key/generate":
-                    self._json({"key": f"sk-{sent['user_id']}"})
+                    key = f"sk-{sent['user_id']}-{len(outer.minted) + 1}"
+                    outer.minted[key] = list(sent.get("models") or [])
+                    self._json({"key": key})
+                    return
+                if self.path == "/key/delete":
+                    outer.revoked += sent["keys"]
+                    self._json({"deleted_keys": sent["keys"]})
                     return
                 key = self.headers["authorization"].removeprefix("Bearer ")
+                if key in outer.revoked or sent.get("model") not in outer.minted.get(
+                    key, []
+                ):
+                    # As LiteLLM answers a key that is gone, or not for this model.
+                    self._json({"error": {"message": "key not allowed"}}, 401)
+                    return
                 outer.requests.append(sent)
                 outer.keys.append(key)
                 outer.spend.append(
@@ -376,7 +391,7 @@ def test_a_question_is_answered_from_the_task_kept_and_paid_for(client, gateway)
 
     # Paid for by the asker, at what the gateway spent on their own key.
     user_id, [grant], [spent] = _charged(client, "asker", 1)
-    assert gateway.keys == [f"sk-user:{user_id}"]
+    assert gateway.keys == [f"sk-user:{user_id}-1"]
     assert spent.project_id is None and spent.kind == "assistant"
     assert spent.cost_usd == pytest.approx(CALL_USD)
     assert grant.credits_used == pytest.approx(CALL_USD / CREDIT_USD)
@@ -564,3 +579,27 @@ def test_a_refused_question_leaves_nothing_in_the_list(client, gateway, monkeypa
 
     listed = client.get(f"/assistant/tasks/{task_id}/conversations", headers=me)
     assert listed.json()["data"]["conversations"] == []
+
+
+def test_a_change_of_model_reissues_the_persons_key(client, gateway, monkeypatch):
+    """A person's key may call one model. When the deployment answers with
+    another, the next question still works: on a new key for the new model,
+    with the old one revoked at the gateway and what it spent still charged."""
+    me = _auth(client, "asker")
+    conversation = _start(client, _task(client), me)
+    assert _ask(client, conversation, "从哪里入手？", me).status_code == 200
+    old = gateway.keys[-1]
+
+    monkeypatch.setattr(settings, "assistant_model", "deepseek-next")
+    pricing.forget()
+    r = _ask(client, conversation, "还有呢？", me)
+
+    assert r.status_code == 200, r.text
+    assert ("error", {"message": "芝士暂时答不上来，稍后再试。"}) not in _events(r.text)
+    new = gateway.keys[-1]
+    assert new != old
+    assert gateway.minted[new] == ["deepseek-next"]
+    assert gateway.requests[-1]["model"] == "deepseek-next"
+    assert old in gateway.revoked
+    # Both questions are paid for: the old key's spend before it went.
+    _charged(client, "asker", 2)

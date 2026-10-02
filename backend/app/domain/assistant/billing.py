@@ -23,11 +23,18 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
 from app.domain.agent.gateway import LlmGateway, drain_new_usage
-from app.domain.assistant.keys import gateway
 from app.domain.assistant.models import AssistantGatewayKey
+from app.domain.service_keys import gateway_base, gateway_configured
 from app.domain.usage.personal import PersonalCredits
 
 logger = logging.getLogger(__name__)
+
+
+def gateway() -> LlmGateway | None:
+    if not gateway_configured():
+        return None
+    return LlmGateway(gateway_base(), settings.llm_gateway_admin_key or "")
+
 
 #: When the key's spend is read after a question: at once, then again.
 ATTEMPTS_S = (0.0, 3.0, 20.0)

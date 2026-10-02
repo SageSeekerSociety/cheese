@@ -207,7 +207,7 @@ async def ask(
     place = await _place(db, row, auth)
 
     rates = Rates.of(settings.assistant_model, await pricing.model_rates())
-    key = await person_key(db, auth.user_id)
+    key = await person_key(db, auth.user_id, async_session_factory)
     if rates is None or key is None or not people.available():
         return _refuse(503, "芝士暂未开放，稍后再试。", 60)
     balance = await PersonalCredits(db).balance(auth.user_id)
