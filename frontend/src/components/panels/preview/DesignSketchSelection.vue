@@ -217,7 +217,7 @@ function grabEnd(event: PointerEvent) {
   pointer-events: none;
 }
 .sketch-selection__handle {
-  fill: var(--surface, #fff);
+  fill: var(--surface);
   stroke: var(--accent);
   stroke-width: 1.5;
   pointer-events: none;
