@@ -27,8 +27,8 @@ import {
   popStash,
   pushStash,
 } from '../lib/docEditState'
-import { compareRoundTrip } from '../lib/docMarkdown'
 import { createDocRequestGate } from '../lib/docRequestGate'
+import { compareRoundTrip } from '../lib/docSchema'
 import { myHandle } from '../me'
 
 import { t } from '@/i18n'
@@ -87,7 +87,7 @@ export function usePanelDoc(props: PanelDocProps, hooks: PanelDocHooks) {
   // itself); re-prepended on save so the FILE keeps its heading.
   const titlePrefix = ref<string>('')
   // Lossy load detected: parse→serialize differs from the file beyond the
-  // tolerances documented in docMarkdown.ts. Autosave pauses; manual save asks.
+  // tolerances documented in lib/docSchema/fidelity.ts. Autosave pauses; manual save asks.
   const lossy = ref(false)
   const lossyConfirmOpen = ref(false)
   // 源码模式: edit the raw markdown in Monaco — the lossless escape hatch.

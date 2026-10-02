@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vu
 import { Editor } from '@tiptap/core'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { docExtensions, serializeDoc } from '../../../lib/docMarkdown'
+import { docExtensions, serializeDoc } from '../../../lib/docSchema'
 
 import DocFormatToolbar from './DocFormatToolbar.vue'
 

@@ -2,7 +2,7 @@ import { Editor } from '@tiptap/core'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { applyDocLink, captureDocLink, captureNewDocLink, safeDocHref } from './docLinks'
-import { docExtensions } from './docMarkdown'
+import { docExtensions } from './docSchema'
 
 const editors: Editor[] = []
 afterEach(() => editors.splice(0).forEach((editor) => editor.destroy()))

@@ -2,13 +2,13 @@
 // Living-doc round-trip corpus (军规 1: never silently drop content).
 //
 // Every case asserts: parse(markdown) → serialize ≡ original under the
-// documented normalization rules (see docMarkdown.ts). A failing case here is
+// documented normalization rules (see fidelity.ts). A failing case here is
 // syntax the visual editor would corrupt on save — either fix the editor
 // config or make sure the lossy-load banner covers it.
 import { Editor } from '@tiptap/core'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
-import { compareRoundTrip, docExtensions, normalizeMarkdown, serializeDoc } from './docMarkdown'
+import { compareRoundTrip, docExtensions, normalizeMarkdown, serializeDoc } from '.'
 
 let editor: Editor
 
@@ -182,7 +182,7 @@ describe('round-trip corpus', () => {
   // CommonMark says a closing `**` preceded by punctuation and followed by a
   // letter cannot close. Chinese puts no space after the delimiter, so this is
   // how bold is normally written here — it has to parse, not survive as
-  // literal asterisks. (See docMarkdown.ts's CJK-friendly note.)
+  // literal asterisks. (See markdown.ts's CJK-friendly note.)
   it('bold closing before a CJK letter', () => {
     expectClean('按**执行档案（ExecutionProfile）**解析出模型。\n')
   })

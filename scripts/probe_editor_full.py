@@ -96,7 +96,7 @@ def _req(path: str, method: str = "GET", body: dict | None = None):
 
 
 def normalize(md: str) -> str:
-    """Python twin of docMarkdown.ts normalizeMarkdown (the documented
+    """Python twin of frontend/src/lib/docSchema/fidelity.ts normalizeMarkdown (the documented
     save-time tolerances): visual save writes the canonical serialization, so
     fidelity is asserted modulo these rules, not byte-for-byte."""
     import re

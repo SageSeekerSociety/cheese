@@ -4,7 +4,7 @@ import { Editor } from '@tiptap/core'
 import { afterEach, expect, it, vi } from 'vitest'
 
 import { captureDocLink } from '../../../lib/docLinks'
-import { docExtensions } from '../../../lib/docMarkdown'
+import { docExtensions } from '../../../lib/docSchema'
 
 import DocLinkCallout from './DocLinkCallout.vue'
 
