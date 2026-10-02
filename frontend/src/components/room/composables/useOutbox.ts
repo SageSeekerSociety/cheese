@@ -17,7 +17,7 @@
  * 滚到底、清掉回复目标）是房间壳的事。
  */
 
-import type { Block, ChatAttachment } from '../../../cx_types'
+import type { Block } from '../../../cx_types'
 import type { Outgoing } from '../../../lib/composerDrafts'
 
 import { onScopeDispose, ref } from 'vue'
@@ -118,7 +118,7 @@ export function useOutbox(options: {
   }
 
   /** 排一条，立刻交出去。返回它的 `client_id`（也是这次发送的 `request_id`）。 */
-  function enqueue(message: { content: string; replyTo?: string; atts?: ChatAttachment[] }): string {
+  function enqueue(message: Pick<Outgoing, 'content' | 'replyTo' | 'atts' | 'quotedContext'>): string {
     const clientId = crypto.randomUUID()
     outbox.value.push({ clientId, ...message, state: 'queued' })
     void flush()

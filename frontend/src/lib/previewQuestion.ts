@@ -1,12 +1,15 @@
-import type { Topic } from '../cx_types'
+import type { ChatAttachment, Topic } from '../cx_types'
 import type { MentionMember } from './expandMentions'
+import type { QuotedContext } from './quotedContext'
 
-import { expandComposerMentions, withAgentMention } from './composerMentions'
+import { expandComposerMentions } from './composerMentions'
+import { frozenQuote } from './quotedContext'
 
 export interface PreviewQuestion {
   topicId: string
   content: string
   intent: 'ask-agent'
+  quotedContext: QuotedContext
 }
 
 /** True means accepted into the normal outbox, not delivered or answered. */
@@ -17,7 +20,7 @@ export function createQuestionSubmit(options: {
   agentSeat: () => { handle: string; label: string } | null
   mentionPool: () => (MentionMember & { agent?: boolean })[]
   topicList: () => Topic[]
-  send: (content: string, summon: boolean) => boolean
+  send: (content: string, summon: boolean, attachments?: ChatAttachment[], quotedContext?: QuotedContext) => boolean
 }): SubmitPreviewQuestion {
   return (request) => {
     const seat = options.agentSeat()
@@ -25,7 +28,9 @@ export function createQuestionSubmit(options: {
       return false
     const pool = options.mentionPool()
     const topics = options.topicList().filter((topic) => topic.kind !== 'root')
-    const content = expandComposerMentions(withAgentMention(request.content, seat, pool, topics), seat, pool, topics)
-    return options.send(content, true)
+    const authored = expandComposerMentions(request.content, seat, pool, topics)
+    const token = `<@${seat.handle}>`
+    const content = authored.startsWith(token) ? authored : `${token} ${authored}`
+    return options.send(content, true, undefined, frozenQuote(request.quotedContext))
   }
 }

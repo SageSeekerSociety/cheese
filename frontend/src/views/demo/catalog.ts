@@ -211,6 +211,28 @@ export const CATALOG: CatalogEntry[] = [
         expect: '@芝士',
       },
       {
+        name: '引用幻灯片页',
+        note: '问题正文单独显示，资料可以展开核对原文与版本；资料中的 @ 名字照原文显示。',
+        props: roomMessageProps(WANG_LINES[1], {
+          block: {
+            ...WANG_LINES[1].block,
+            content: '<@cheese> 解释这一页',
+            meta: {
+              quoted_context: {
+                kind: 'slide-page',
+                path: 'slides/@评审 <@cheese-other>.pptx ',
+                source: 'committed',
+                version: 'v7',
+                task_id: null,
+                page: 2,
+                text: '  @评审 <@cheese-other>\n本页保留原始空白和正文。\n',
+              },
+            },
+          },
+        }),
+        expect: '引用第 2 页文字',
+      },
+      {
         name: '芝士的正文',
         note: '队友这一条挂的是它的身份（isAgent），头像按 handle 配色块。',
         props: roomMessageProps(CHEESE_LINES[0]),

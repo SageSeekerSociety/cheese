@@ -17,6 +17,7 @@ import ChatErrorToast from '@/components/chat/ChatErrorToast.vue'
 import ChatNewMessagesPill from '@/components/chat/ChatNewMessagesPill.vue'
 import ChatPanelHeader from '@/components/chat/ChatPanelHeader.vue'
 import ChatTimeline from '@/components/chat/ChatTimeline.vue'
+import MessageQuote from '@/components/room/MessageQuote.vue'
 import { topicStateBadge } from '@/lib/topicState'
 
 const UI: CatalogNeed[] = ['vuetify']
@@ -39,6 +40,30 @@ const HEADER_BASE = {
 // 拆之前这四件都长在 ChatPanel 里。现在每一件都是 props 进、事件出——于是「能单独
 // 渲染」在预览站里是一条每次跑测试都要重新过的机械结论，而不是「它应该能」。
 export const CHAT_ENTRIES: CatalogEntry[] = [
+  {
+    id: 'message-quote',
+    title: 'MessageQuote',
+    about: '问题附带的原始资料：展开核对页码、来源、版本与原文。',
+    file: 'src/components/room/MessageQuote.vue',
+    component: MessageQuote,
+    needs: ['i18n'],
+    states: (['committed', 'live'] as const).map((source) => ({
+      name: source === 'committed' ? '已提交的页' : '现场的页',
+      note: '资料中的名字与路径照原文显示，正文空白也原样保留。',
+      props: {
+        quote: {
+          kind: 'slide-page',
+          path: 'slides/@评审 <@cheese-other>.pptx ',
+          source,
+          version: 'v7',
+          task_id: null,
+          page: 2,
+          text: '  @评审 <@cheese-other>\n原始页面文字。\n',
+        },
+      },
+      expect: '引用第 2 页文字',
+    })),
+  },
   {
     id: 'chat-panel-header',
     title: 'ChatPanelHeader',

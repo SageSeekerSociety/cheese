@@ -299,13 +299,16 @@ function sendLocator() {
     const accepted = props.submitQuestion?.({
       intent: 'ask-agent',
       topicId: payload.context.topicId,
-      content: t('slides.pageMessage', {
-        ...payload.context,
-        task: payload.context.taskId ?? '',
+      content: note,
+      quotedContext: {
+        kind: 'slide-page',
+        path: payload.context.path,
+        source: payload.context.source,
+        version: payload.context.version,
+        task_id: payload.context.taskId ?? null,
         page: payload.page,
         text: payload.text,
-        note,
-      }),
+      },
     })
     if (accepted) clearLocator()
     return

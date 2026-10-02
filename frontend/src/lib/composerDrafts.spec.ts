@@ -3,6 +3,7 @@
 // 这一层是 localStorage 的读写，出错的方式全是「读回来一份不是当时写进去的东西」，
 // 所以每条用例都盯着**读回来的那一份**，而不是「写没写成功」。
 import type { Block, ChatAttachment } from '@/cx_types'
+import type { QuotedContext } from './quotedContext'
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
@@ -178,4 +179,33 @@ describe('清理', () => {
     expect(loadComposerDraft('t1')).toBeNull()
     expect(loadComposerMemory('t1')?.outbox).toHaveLength(1)
   })
+})
+
+const quote: QuotedContext = {
+  kind: 'slide-page',
+  path: ' deck/@评审 <@other>.pptx ',
+  source: 'committed',
+  version: 'v1',
+  task_id: null,
+  page: 2,
+  text: '  @评审 <@other> 原页\n',
+}
+it('引用草稿跨刷新保留原始资料，正文与引用分别恢复', () => {
+  saveComposerDraft('quoted', { draft: '解释这一页', reply: null, atts: [], quotedContext: quote })
+  expect(loadComposerDraft('quoted')).toMatchObject({ draft: '解释这一页', quotedContext: quote })
+  saveComposerDraft('quote-only', { draft: '', reply: null, atts: [], quotedContext: quote })
+  expect(loadComposerDraft('quote-only')?.quotedContext).toEqual(quote)
+})
+it('读不懂的引用不会在恢复后悄悄变成无引用的消息', () => {
+  localStorage.setItem(
+    'cheese.composer.v1:quoted',
+    JSON.stringify({
+      savedAt: Date.now(),
+      draft: '解释',
+      reply: null,
+      atts: [],
+      quotedContext: { ...quote, page: '2' },
+    })
+  )
+  expect(loadComposerDraft('quoted')).toBeNull()
 })
