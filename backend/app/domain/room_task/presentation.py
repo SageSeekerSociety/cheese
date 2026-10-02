@@ -30,7 +30,7 @@
 ## 纯函数
 
 没有 I/O，不碰 session，不读时钟：「现在几点」是参数。`facts_for_task` /
-`facts_for_room` 是仅有的两处读行对象的地方，它们也只读属性、不查库。
+`facts_for_room` 和 `card_model` 读取行对象；它们也只读属性、不查库。
 """
 
 import enum
@@ -45,9 +45,10 @@ from app.domain.review.notes import NoteCode, NoteLevel, note_level
 from app.domain.room_task.binding import catalog_id, resolve
 
 # `Task` 是这一层唯一还拿在手里的 ORM 行 —— **暂留**，不是读模型。方案 v6 的第一期
-# 只给 block / review 开了窄读出口，room_task 这边的活行仍按原样交到路由手上，由
-# `facts_for_task` 就地折成纯值。这一层只读它的属性、不顺着它查库，所以它没有把
-# session 带出去；等 room_task 也有了 `queries.py`，这里换成那份纯值即可。
+# 只给 block / review 开了窄读出口；项目 rail 的 Task 暂交给 task_liveness、
+# facts_for_task 和 TaskOut.model_validate。本模块的 card_model 也读取 Task 的绑定
+# 属性，计算卡面的模型名；facts_for_task 和 card_model 都只读属性、不顺着行查库。
+# 等 room_task 有自己的窄读输出，再替换这份 ORM 边界。
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import Topic, TopicStatus
 
