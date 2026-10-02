@@ -198,6 +198,10 @@ class DrivenRuntime[H: Handle]:
     logger: logging.Logger
     #: The runner method that takes words said to a session mid-turn.
     steer: str
+    #: Whether the runner's acceptance of an input is the session reading it.
+    #: False for a harness whose records say when an input was read; its
+    #: subscription reports the receipt from there (``Subscription.receipt``).
+    receipt_on_accept = True
 
     def __init__(
         self,
@@ -959,9 +963,14 @@ class DrivenRuntime[H: Handle]:
         try:
             await self.channel.call(handle, method, params)
             accepted = True
-            if self.receipts is None:
-                raise RuntimeError("Receipt consumer is not bound")
-            await self.receipts(InputReceipt(identity, "accepted"))
+            # Only a harness whose acceptance *is* the read reports here. A
+            # harness that says when its session read the input (Claude Code)
+            # leaves this to the echo, so a consumer still holding the receipt
+            # must never gate the send that admits it.
+            if self.receipt_on_accept:
+                if self.receipts is None:
+                    raise RuntimeError("Receipt consumer is not bound")
+                await self.receipts(InputReceipt(identity, "accepted"))
         except Exception as exc:
             # Even a transport error can follow admission at the remote end.
             # Keep the committed identity; the caller must not queue a new UUID.
