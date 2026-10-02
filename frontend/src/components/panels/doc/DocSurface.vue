@@ -508,6 +508,23 @@ const emptyPlaceholder = computed(() => JSON.stringify(t('work.room.doc.emptyPla
   white-space: nowrap;
   user-select: none;
 }
+/* 修改建议（lib/docSchema/suggestions.ts）：要加的字绿底，要删的字红色删除线。 */
+.doc-editor :deep(ins.doc-suggestion) {
+  border-bottom: 1px solid var(--ok);
+  background: var(--ok-wash);
+  color: var(--ok-ink);
+  text-decoration: none;
+  cursor: pointer;
+}
+.doc-editor :deep(del.doc-suggestion) {
+  color: var(--danger-ink);
+  text-decoration: line-through var(--danger);
+  cursor: pointer;
+}
+.doc-editor :deep(.doc-suggestion-focus) {
+  outline: 2px solid color-mix(in srgb, var(--ok) 45%, transparent);
+  outline-offset: 1px;
+}
 /* 让 AI 队友改的那一段（lib/docEditMarks.ts）：选中、改写中（带一个写着名字的光标）、
    刚改好时亮一下。 */
 .doc-editor :deep(.doc-edit-target--select),

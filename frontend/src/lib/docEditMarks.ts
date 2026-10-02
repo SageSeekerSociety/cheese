@@ -1,7 +1,7 @@
 // What the document shows around a change the AI teammate is making or made:
 // the selection it was asked to rewrite (and the caret saying it is at work),
-// the new text lit up for a moment, and room under a block for the card that
-// talks about it.
+// the new text lit up for a moment, the suggestion being looked at, and room
+// under a block for the card that talks about it.
 //
 // None of it is part of the document: these are decorations, drawn from state
 // the panel sets through `setEditMarks`.
@@ -28,6 +28,7 @@ import {
 } from '@tiptap/y-tiptap'
 
 import { flatText, occurrences, rangeOf } from './docEdits'
+import { suggestionRanges } from './docSuggestionList'
 
 /** How the target range is drawn: chosen for a rewrite, being rewritten,
  *  just rewritten (lit up), or only held so a card can stay beside it. */
@@ -51,12 +52,17 @@ export interface EditMarksState {
   target: Anchored | null
   /** Space kept under the top-level block at `index`, for a card. */
   gap: { index: number; px: number } | null
+  /** The suggestion being looked at. */
+  suggestion: string | null
 }
 
 export interface EditMarksPatch {
   target?: EditTarget | null
   gap?: { index: number; px: number } | null
+  suggestion?: string | null
 }
+
+const EMPTY: EditMarksState = { target: null, gap: null, suggestion: null }
 
 export const editMarksKey = new PluginKey<EditMarksState>('cheeseDocEditMarks')
 
@@ -66,7 +72,7 @@ export function setEditMarks(tr: Transaction, patch: EditMarksPatch): Transactio
 }
 
 export function editMarks(state: EditorState): EditMarksState {
-  return editMarksKey.getState(state) ?? { target: null, gap: null }
+  return editMarksKey.getState(state) ?? EMPTY
 }
 
 interface YState {
@@ -134,7 +140,7 @@ function caret(label: string): HTMLElement {
 }
 
 function decorations(state: EditorState): DecorationSet {
-  const { target, gap } = editMarks(state)
+  const { target, gap, suggestion } = editMarks(state)
   const doc = state.doc
   const out: Decoration[] = []
   if (target && target.to > target.from && target.mode !== 'anchor') {
@@ -142,6 +148,11 @@ function decorations(state: EditorState): DecorationSet {
   }
   if (target?.mode === 'pending') {
     out.push(Decoration.widget(target.to, () => caret(target.label), { side: 1, key: `caret:${target.label}` }))
+  }
+  if (suggestion) {
+    for (const range of suggestionRanges(doc).filter((r) => r.id === suggestion)) {
+      for (const span of range.spans) out.push(Decoration.inline(span.from, span.to, { class: 'doc-suggestion-focus' }))
+    }
   }
   if (gap && gap.index < doc.childCount) {
     let pos = 0
@@ -160,18 +171,20 @@ export function createEditMarks() {
         new Plugin<EditMarksState>({
           key: editMarksKey,
           state: {
-            init: () => ({ target: null, gap: null }),
+            init: () => EMPTY,
             apply(tr, prev, _old, next) {
               let target = prev.target ? moveTarget(prev.target, tr, next) : null
               let gap = prev.gap
+              let suggestion = prev.suggestion
               const patch = tr.getMeta(editMarksKey) as EditMarksPatch | undefined
               if (patch && 'target' in patch) {
                 const set = patch.target
                 target = set ? { ...set, rel: null, text: next.doc.textBetween(set.from, set.to, '\n') } : null
               }
               if (patch && 'gap' in patch) gap = patch.gap ?? null
-              if (target === prev.target && gap === prev.gap) return prev
-              return { target, gap }
+              if (patch && 'suggestion' in patch) suggestion = patch.suggestion ?? null
+              if (target === prev.target && gap === prev.gap && suggestion === prev.suggestion) return prev
+              return { target, gap, suggestion }
             },
           },
           // After every update the shared document has caught up with this

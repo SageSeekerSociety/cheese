@@ -962,6 +962,19 @@
       "stale": "这段已经被改过，重新选一下",
       "unmappable": "无法单独修改这段选区，重新选一下",
       "unavailable": "这篇文档暂时无法修改"
+    },
+    "docSuggest": {
+      "title": "{agent}的建议",
+      "pending": "{agent}的建议 · 还有 {n} 处待处理",
+      "prev": "上一处",
+      "next": "下一处",
+      "rejectAll": "全部拒绝",
+      "acceptAll": "全部接受",
+      "allDone": "{agent}的建议都处理完了：接受 {accepted} 处，拒绝 {rejected} 处",
+      "dismiss": "关闭",
+      "position": "{i}/{n}",
+      "reject": "拒绝",
+      "accept": "接受"
     }
   },
   "board": {

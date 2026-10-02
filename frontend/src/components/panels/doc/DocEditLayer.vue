@@ -1,11 +1,13 @@
 <script setup lang="ts">
-// 贴在正文里某一段下面的那张卡：「让{agent}改」的输入框和改好之后的条子。
+// 贴在正文里某一段下面的那张卡：「让{agent}改」的输入框和改好之后的条子，或者正看着的
+// 那一处修改建议。同一时刻只有一张，改写优先。
 //
 // 卡不进编辑器（ProseMirror 会撤掉别人加进可编辑区的东西），而是浮在正文上面、量着那
 // 一段的位置摆；那一段下面用装饰留出一块同样高的空白，卡就不压住后面的字。卡和空白
 // 都跟着正文的每一次变化重新量。
 import type { Editor } from '@tiptap/core'
 import type { DocRewriteController } from '../../../composables/useDocRewrite'
+import type { DocSuggestionsController } from '../../../composables/useDocSuggestions'
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
@@ -13,11 +15,14 @@ import { editMarks, setEditMarks } from '../../../lib/docEditMarks'
 
 import DocRewriteBar from './DocRewriteBar.vue'
 import DocRewriteBox from './DocRewriteBox.vue'
+import DocSuggestionCard from './DocSuggestionCard.vue'
 
 const props = defineProps<{
   editor: Editor | null
   agentName: string
+  editable: boolean
   rewrite: DocRewriteController
+  suggestions: DocSuggestionsController
 }>()
 
 const root = ref<HTMLElement | null>(null)
@@ -25,15 +30,20 @@ const card = ref<HTMLElement | null>(null)
 const place = ref<{ top: number; left: number; width: number } | null>(null)
 const tick = ref(0)
 
-/** 卡贴着哪一段：正文里的一段范围。 */
+/** 卡贴着哪一段（正文里的一段范围），是哪一张。 */
 const anchor = computed(() => {
   void tick.value
   const editor = props.editor
   if (!editor || editor.isDestroyed) return null
   const phase = props.rewrite.phase.value
-  if (phase === 'idle' || phase === 'pending') return null
-  const target = editMarks(editor.state).target
-  return target ? { from: target.from, to: target.to, width: phase === 'asking' ? 460 : 0 } : null
+  if (phase !== 'idle' && phase !== 'pending') {
+    const target = editMarks(editor.state).target
+    if (target)
+      return { kind: 'rewrite' as const, from: target.from, to: target.to, width: phase === 'asking' ? 460 : 0 }
+  }
+  const suggestion = props.suggestions.active.value
+  if (suggestion) return { kind: 'suggestion' as const, from: suggestion.from, to: suggestion.to, width: 540 }
+  return null
 })
 
 let frame = 0
@@ -100,6 +110,7 @@ function bind(editor: Editor | null) {
 }
 watch(() => props.editor, bind, { immediate: true })
 watch(() => props.rewrite.phase.value, schedule)
+watch(() => props.suggestions.current.value, schedule)
 const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(schedule) : null
 watch(card, (el, old) => {
   if (old) observer?.unobserve(old)
@@ -107,12 +118,13 @@ watch(card, (el, old) => {
 })
 window.addEventListener('resize', schedule)
 
-// 在卡外面按下鼠标：输入框和条子都收起来（改到一半的那一次不受影响）。
+// 在卡外面按下鼠标：卡收起来（改到一半的那一次不受影响）。
 function onPointerDown(e: MouseEvent) {
-  const phase = props.rewrite.phase.value
-  if (phase !== 'asking' && phase !== 'done' && phase !== 'undone') return
   if (e.target instanceof Node && card.value?.contains(e.target)) return
-  props.rewrite.close()
+  const phase = props.rewrite.phase.value
+  if (phase === 'asking' || phase === 'done' || phase === 'undone') props.rewrite.close()
+  // 建议卡：点到别处就收起，点到另一处建议则换成那一处（正文的点击会接着说是哪一处）。
+  else if (props.suggestions.current.value) props.suggestions.close()
 }
 document.addEventListener('mousedown', onPointerDown, true)
 
@@ -133,8 +145,18 @@ onBeforeUnmount(() => {
       class="doc-edit-layer__card"
       :style="{ top: `${place.top}px`, left: `${place.left}px`, width: place.width ? `${place.width}px` : undefined }"
     >
+      <DocSuggestionCard
+        v-if="anchor.kind === 'suggestion' && suggestions.active.value"
+        :agent-name="agentName"
+        :agent-handle="suggestions.active.value.author || null"
+        :index="suggestions.index.value"
+        :total="suggestions.list.value.length"
+        :editable="editable"
+        @accept="suggestions.decide(suggestions.active.value.id, true)"
+        @reject="suggestions.decide(suggestions.active.value.id, false)"
+      />
       <DocRewriteBox
-        v-if="rewrite.phase.value === 'asking'"
+        v-else-if="rewrite.phase.value === 'asking'"
         :agent-name="agentName"
         @send="rewrite.send"
         @cancel="rewrite.close"

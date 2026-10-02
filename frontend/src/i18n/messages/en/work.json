@@ -962,6 +962,19 @@
       "stale": "This text has changed. Select it again",
       "unmappable": "This selection can't be edited on its own. Select it again",
       "unavailable": "This document can't be edited right now"
+    },
+    "docSuggest": {
+      "title": "{agent}'s suggestion",
+      "pending": "{agent}'s suggestions · {n} left to review",
+      "prev": "Previous",
+      "next": "Next",
+      "rejectAll": "Reject all",
+      "acceptAll": "Accept all",
+      "allDone": "All of {agent}'s suggestions reviewed: {accepted} accepted, {rejected} rejected",
+      "dismiss": "Close",
+      "position": "{i}/{n}",
+      "reject": "Reject",
+      "accept": "Accept"
     }
   },
   "board": {

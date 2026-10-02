@@ -14,12 +14,14 @@ import type { DocThreadActions, DocThreadState } from '../../lib/docThreadTypes'
 import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 import { useDocRewrite } from '../../composables/useDocRewrite'
+import { useDocSuggestions } from '../../composables/useDocSuggestions'
 import { topicTitle } from '../../lib/topicState'
 
 import DocCommentPanel from './doc/DocCommentPanel.vue'
 import DocEditLayer from './doc/DocEditLayer.vue'
 import DocFormatToolbar from './doc/DocFormatToolbar.vue'
 import DocPresence from './doc/DocPresence.vue'
+import DocSuggestionStrip from './doc/DocSuggestionStrip.vue'
 import DocSurface from './doc/DocSurface.vue'
 import OverviewAuto from './doc/OverviewAuto.vue'
 
@@ -143,6 +145,7 @@ const rewrite = useDocRewrite({
   agentName: () => props.agentName,
   onError: (message) => props.setError(message),
 })
+const suggestions = useDocSuggestions(() => surfaceRef.value?.editor ?? null)
 function locateComment(commentId: string) {
   commentsRef.value?.locate(commentId)
 }
@@ -232,6 +235,16 @@ defineExpose({
             </v-menu>
           </div>
         </div>
+        <DocSuggestionStrip
+          :agent-name="agentName"
+          :count="suggestions.list.value.length"
+          :decided="suggestions.decided.value"
+          :editable="editable"
+          @step="suggestions.step"
+          @accept-all="suggestions.decideAll(true)"
+          @reject-all="suggestions.decideAll(false)"
+          @dismiss="suggestions.dismissDone"
+        />
         <!-- Editor surface — a Feishu Docs page: white, padded, centered column. -->
         <DocCommentPanel
           ref="commentsRef"
@@ -283,7 +296,13 @@ defineExpose({
                 @error="setError"
               />
 
-              <DocEditLayer :editor="surfaceRef?.editor ?? null" :agent-name="agentName" :rewrite="rewrite" />
+              <DocEditLayer
+                :editor="surfaceRef?.editor ?? null"
+                :agent-name="agentName"
+                :editable="editable"
+                :rewrite="rewrite"
+                :suggestions="suggestions"
+              />
 
               <!-- 总览房间的其余两块（#1889 ②③）紧跟正文。评论在独立侧栏。只有根话题
                  有——别的房间的文档就是它自己那一份，没有人从那里看项目全局。 -->
