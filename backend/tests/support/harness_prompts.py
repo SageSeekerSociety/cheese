@@ -44,6 +44,7 @@ def event_prompts() -> dict[str, str]:
             kind=BlockKind.message,
             author="fixture_user",
             content="USER_FIXTURE " + PLATFORM_NOTICE,
+            meta=None,
         ),
         embeds_images=True,
     )
