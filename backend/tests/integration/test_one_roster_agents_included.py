@@ -28,7 +28,7 @@ OWNER = "alice"
 
 
 def _project(client) -> dict:
-    made = post_project(client, json={"name": "一张名册", "owner_handle": OWNER})
+    made = post_project(client, json={"name": "一张名册"}, owner=OWNER)
     assert made.status_code == 200, made.text
     return made.json()["data"]
 
@@ -56,7 +56,8 @@ def _retire(client, project_id: str, instance_id: str) -> None:
 def _room(client, project_id: str) -> str:
     made = client.post(
         "/topics",
-        json={"project_id": project_id, "title": "房间", "created_by": OWNER},
+        json={"project_id": project_id, "title": "房间"},
+        headers=session_auth_headers(OWNER),
     )
     assert made.status_code == 200, made.text
     return made.json()["data"]["id"]

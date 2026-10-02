@@ -25,6 +25,7 @@ from tests.integration.conftest import (
     chat_ws_url,
     post_message,
     post_project,
+    session_auth_headers,
     session_token,
 )
 
@@ -34,7 +35,7 @@ def _bearer(handle: str) -> dict:
 
 
 def _room(client, owner: str = "alice") -> str:
-    project = post_project(client, {"name": "P", "owner_handle": owner}).json()["data"]
+    project = post_project(client, {"name": "P"}, owner=owner).json()["data"]
     return project["root_topic_id"]
 
 
@@ -324,10 +325,11 @@ def test_a_turn_survives_the_backend_being_replaced_under_it(client):
     """dev redeploys on every merge. A turn running on the machine at that moment
     is found again by the new process, and what it prints after lands in the
     room and ends the turn there."""
-    project = post_project(client, {"name": "Restart"}).json()["data"]
+    project = post_project(client, {"name": "Restart"}, owner="alice").json()["data"]
     room = client.post(
         "/topics",
-        json={"project_id": project["id"], "title": "换进程", "created_by": "alice"},
+        json={"project_id": project["id"], "title": "换进程"},
+        headers=session_auth_headers("alice"),
     ).json()["data"]["id"]
     topic = uuid.UUID(room)
 
@@ -375,10 +377,11 @@ def test_a_turn_survives_the_backend_being_replaced_under_it(client):
 def _picked_up_by_a_new_backend(client) -> tuple[uuid.UUID, str, StubChannel]:
     """A room whose turn is running when its backend is replaced: the old
     process has let go of the session, and a new one has picked it up."""
-    project = post_project(client, {"name": "Handover"}).json()["data"]
+    project = post_project(client, {"name": "Handover"}, owner="alice").json()["data"]
     room = client.post(
         "/topics",
-        json={"project_id": project["id"], "title": "交接", "created_by": "alice"},
+        json={"project_id": project["id"], "title": "交接"},
+        headers=session_auth_headers("alice"),
     ).json()["data"]["id"]
     topic = uuid.UUID(room)
 
@@ -461,10 +464,11 @@ def test_a_teammates_turn_picked_up_by_the_next_backend_stays_the_teammates(
     from app.domain.identity.handles import agent_instance_handle
     from app.domain.topic_membership.services import TopicMemberService
 
-    project = post_project(client, {"name": "Teammate"}).json()["data"]
+    project = post_project(client, {"name": "Teammate"}, owner="alice").json()["data"]
     room = client.post(
         "/topics",
-        json={"project_id": project["id"], "title": "队友", "created_by": "alice"},
+        json={"project_id": project["id"], "title": "队友"},
+        headers=session_auth_headers("alice"),
     ).json()["data"]["id"]
     topic = uuid.UUID(room)
 

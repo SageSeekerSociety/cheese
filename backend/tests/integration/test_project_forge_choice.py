@@ -19,10 +19,10 @@ from tests.integration.conftest import post_project, session_auth_headers
 def test_creation_honors_repository_choice(client, monkeypatch, choice):
     provision = AsyncMock()
     monkeypatch.setattr(forge, "provision_repository", provision)
-    body = {"name": "Repository choice", "owner_handle": "alice"}
+    body = {"name": "Repository choice"}
     if choice:
         body["forge_kind"] = choice
-    response = post_project(client, json=body)
+    response = post_project(client, json=body, owner="alice")
     assert response.status_code == 200, response.text
     project_id = uuid.UUID(response.json()["data"]["id"])
     expected = choice or "forgejo"
@@ -41,9 +41,9 @@ def test_github_choice_can_connect_without_cross_forge_migration(client):
         client,
         json={
             "name": "Existing GitHub work",
-            "owner_handle": "alice",
             "forge_kind": "github_app",
         },
+        owner="alice",
     )
     assert response.status_code == 200, response.text
     project_id = uuid.UUID(response.json()["data"]["id"])
@@ -97,9 +97,9 @@ def test_forge_status_uses_binding_and_excludes_credentials(client, kind):
         client,
         json={
             "name": "Repository status",
-            "owner_handle": "alice",
             "forge_kind": "github_app",
         },
+        owner="alice",
     )
     project_id = response.json()["data"]["id"]
     route = f"/projects/{project_id}/forge"
@@ -156,9 +156,9 @@ def test_requester_credit_setting_can_override_and_restore_deployment_default(
         client,
         json={
             "name": "Credit policy",
-            "owner_handle": "alice",
             "forge_kind": "github_app",
         },
+        owner="alice",
     )
     project_id = response.json()["data"]["id"]
     route = f"/projects/{project_id}/forge-attribution"
@@ -195,9 +195,9 @@ def test_github_repository_selection_uses_project_settings_without_local_git(cli
         client,
         json={
             "name": "Select repository",
-            "owner_handle": "alice",
             "forge_kind": "github_app",
         },
+        owner="alice",
     )
     assert response.status_code == 200, response.text
     project_id = response.json()["data"]["id"]

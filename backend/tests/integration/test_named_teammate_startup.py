@@ -25,12 +25,11 @@ from tests.integration.conftest import post_project, session_auth_headers
 async def test_invited_teammate_is_the_startup_identity(
     client, monkeypatch, harness, needs_place
 ):
-    project = post_project(
-        client, json={"name": "Trial", "owner_handle": "alice"}
-    ).json()["data"]
+    project = post_project(client, json={"name": "Trial"}, owner="alice").json()["data"]
     room = client.post(
         "/topics",
-        json={"project_id": project["id"], "title": "Trial", "created_by": "alice"},
+        json={"project_id": project["id"], "title": "Trial"},
+        headers=session_auth_headers("alice"),
     ).json()["data"]
     made = client.post(f"/projects/{project['id']}/agents", json={"handle": "reviewer"})
     assert made.status_code == 200, made.text

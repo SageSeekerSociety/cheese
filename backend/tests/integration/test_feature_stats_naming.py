@@ -210,9 +210,7 @@ def _rooms(client, count: int) -> list[uuid.UUID]:
     ``topic_titles.topic_id`` is a foreign key.
     """
     headers = _login(client)
-    created = post_project(
-        client, json={"name": "P", "owner_handle": "alice"}, headers=headers
-    )
+    created = post_project(client, json={"name": "P"}, headers=headers, owner="alice")
     assert created.status_code == 200, created.text
     project_id = created.json()["data"]["id"]
     out = []

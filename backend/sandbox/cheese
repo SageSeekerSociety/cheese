@@ -879,7 +879,6 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
                     {"old": str(e["old"]), "new": str(e.get("new") or "")}
                     for e in args["edits"]
                 ],
-                "author": env.get("CHEESE_AUTHOR", "cheese"),
                 **({"mode": "suggest"} if args.get("suggest") is True else {}),
                 **_given(args, "reason"),
             },
@@ -890,7 +889,6 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "path": f"/topics/{topic}/split",
             "body": {
                 "title": args["title"],
-                "created_by": env.get("CHEESE_AUTHOR", "cheese"),
                 **_given(
                     args,
                     "brief",
@@ -1391,7 +1389,6 @@ def _doc_set(args: dict, host) -> str:
                 "path": f"/topics/{topic}/doc",
                 "body": {
                     "content": content,
-                    "author": host.environ.get("CHEESE_AUTHOR", "cheese"),
                     "expected_version": based_on,
                 },
             }

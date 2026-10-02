@@ -166,9 +166,7 @@ async def _viewer(
     topic_id: uuid.UUID,
 ) -> Actor:
     """The caller, once it is settled that this room's rules are theirs to see."""
-    actor = await resolver.resolve(
-        fallback_handle=None, project_id=project_id, topic_id=topic_id
-    )
+    actor = await resolver.resolve(project_id=project_id, topic_id=topic_id)
     await resolver.authorize_topic(
         actor, project_id=project_id, topic_id=topic_id, enforce=True
     )
@@ -292,7 +290,7 @@ async def list_routines(
         actor = await _viewer(db, resolver, project_id, place.room_id)
         rows = await RoutineService(db).list(project_id, topic_id=place.room_id)
     else:
-        actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+        actor = await resolver.resolve(project_id=project_id)
         await resolver.authorize_project(actor, project_id=project_id)
         rows = await RoutineService(db).list(project_id)
     rows, admin = await _readable_rules(db, resolver, actor, project_id, rows)

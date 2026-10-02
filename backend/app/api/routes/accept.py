@@ -69,9 +69,7 @@ async def _card_actor(
     service = AcceptService(db)
     card = await service._card_or_404(card_id)
     topic = await service._topic_or_404(card.topic_id)
-    actor = await resolver.resolve(
-        fallback_handle=None, project_id=topic.project_id, topic_id=topic.id
-    )
+    actor = await resolver.resolve(project_id=topic.project_id, topic_id=topic.id)
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic.id
     )
@@ -82,9 +80,7 @@ async def _task_actor(
     topic_id: uuid.UUID, task_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> Actor:
     topic = await AcceptService(db)._topic_or_404(topic_id)
-    actor = await resolver.resolve(
-        fallback_handle=None, project_id=topic.project_id, topic_id=topic_id
-    )
+    actor = await resolver.resolve(project_id=topic.project_id, topic_id=topic_id)
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
@@ -227,7 +223,7 @@ async def download_card_deliverable(
     # 按项目成员判，不按房间参与者判：这一份采纳之后就是《报告》第 N 版，而清单
     # 和产物页上那几版本来就是整个项目读得到的东西。验收人还可以被改派给任何一位
     # 成员，按房间判会把「先看一眼再决定要不要接」挡在门外。
-    actor = await resolver.resolve(fallback_handle=None, project_id=topic.project_id)
+    actor = await resolver.resolve(project_id=topic.project_id)
     await resolver.authorize_project(actor, project_id=topic.project_id)
     if card.deliverable_kind is not DeliverableKind.file or not card.deliverable_name:
         # 交出去的是一个地址、或者一次合并：没有可下载的文件，而这不是缺东西。

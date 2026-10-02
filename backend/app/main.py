@@ -697,9 +697,7 @@ async def _credential_opens_gate(
         resolver = ActorResolver(
             session=session, bearer=None, cheese_token=token, screen_token=screen_token
         )
-        actor = await resolver.resolve(
-            fallback_handle=None, project_id=target, topic_id=topic
-        )
+        actor = await resolver.resolve(project_id=target, topic_id=topic)
         if not actor.authenticated:
             return False
         if topic is not None:

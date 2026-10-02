@@ -25,7 +25,7 @@ def site_storage(tmp_path, monkeypatch):
 
 
 def _project(client, *, owner="alice", team_id=None):
-    body = {"name": "Published website", "owner_handle": owner}
+    body = {"name": "Published website"}
     if team_id is not None:
         body["team_id"] = team_id
     response = post_project(client, json=body, headers=session_auth_headers(owner))

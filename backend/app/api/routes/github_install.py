@@ -68,7 +68,7 @@ def _settings_redirect(project_id: uuid.UUID | None, **query: str) -> RedirectRe
 async def _manager(
     project_id: uuid.UUID, resolver: ActorResolverDep, db: AsyncSession
 ) -> Actor:
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    actor = await resolver.resolve(project_id=project_id)
     if not actor.authenticated:
         raise AuthenticationRequiredError(say("githubRepoSignIn"))
     await ProjectService(db).get_or_404(project_id)
@@ -165,7 +165,7 @@ async def get_github_connection(
     resolver: ActorResolverDep,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    actor = await resolver.resolve(project_id=project_id)
     if not actor.authenticated:
         raise AuthenticationRequiredError(say("githubConnectionSignIn"))
     await ProjectService(db).get_or_404(project_id)

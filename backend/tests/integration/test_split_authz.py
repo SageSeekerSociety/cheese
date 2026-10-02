@@ -10,6 +10,7 @@ roster, and the bug users hit was a 分身-initiated split seeding that roster f
 thread answers with `owner_handle` and has no roster at all — 唯一的主 is the
 whole difference — so that is what these assert on now."""
 
+from app.core.sandbox_auth import mint_scoped_token
 from tests.integration.conftest import join_project_team, post_project, session_token
 
 
@@ -22,7 +23,7 @@ def _bearer(token: str) -> dict:
 
 
 def _project_topic(client, owner: str) -> tuple[str, str]:
-    p = post_project(client, json={"name": "P", "owner_handle": owner}).json()["data"]
+    p = post_project(client, json={"name": "P"}, owner=owner).json()["data"]
     return p["id"], p["root_topic_id"]
 
 
@@ -37,9 +38,7 @@ def test_split_outsider_token_denied(client):
     outsider = _login("mallory")
     r = client.post(
         f"/topics/{tid}/split",
-        json=dict(
-            reviewer_handle="alice", **{"title": "偷偷拆一个", "created_by": "mallory"}
-        ),
+        json=dict(reviewer_handle="alice", **{"title": "偷偷拆一个"}),
         headers=_bearer(outsider),
     )
     assert r.status_code == 403
@@ -103,18 +102,15 @@ def test_split_ignores_forged_created_by_in_body(client):
 
 def test_split_by_cheese_agent_defaults_owner_to_parent_owner(client):
     """The bug users actually hit: a 分身-initiated split (no human token, the
-    `cheese` agent as `created_by` — same shape `cheese_task` sends) used to
-    seed the child roster from `owner_handle="cheese"` alone. `seed()` skips
-    "cheese" as owner, so the child ended up belonging to NOBODY — and the
-    accept card it ends in had no one to land on. It must default to the room's
-    real human owner."""
-    _, tid = _project_topic(client, owner="alice")
+    room's own per-turn credential — what `cheese_task` sends) used to seed the
+    child from the agent's handle alone. `seed()` skips an agent as owner, so
+    the child ended up belonging to NOBODY — and the accept card it ends in had
+    no one to land on. It must default to the room's real human owner."""
+    pid, tid = _project_topic(client, owner="alice")
     r = client.post(
         f"/topics/{tid}/split",
-        json=dict(
-            reviewer_handle="alice",
-            **{"title": "分身拆出的子任务", "created_by": "cheese"},
-        ),
+        json=dict(reviewer_handle="alice", **{"title": "分身拆出的子任务"}),
+        headers={"X-Cheese-Token": mint_scoped_token(project_id=pid, topic_id=tid)},
     )
     assert r.status_code == 200
 
@@ -122,8 +118,8 @@ def test_split_by_cheese_agent_defaults_owner_to_parent_owner(client):
 
 
 def test_split_with_no_identified_human_still_gets_parent_owner(client):
-    """Even a bare Phase-0 call with no `created_by` at all (no token, no body
-    field) must not leave the work ownerless."""
+    """Even a call that names nobody — only the dev credential behind it —
+    must not leave the work ownerless."""
     _, tid = _project_topic(client, owner="alice")
     r = client.post(
         f"/topics/{tid}/split",

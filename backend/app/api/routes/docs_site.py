@@ -308,9 +308,7 @@ async def _agent_scope(
     """Authorize the caller for the room it names; whether it may read developer
     pages is a property of that room's project, not of the caller."""
     place = await TopicService(db).place_or_404(body.topic)
-    who = await actor.resolve(
-        fallback_handle=None, topic_id=place.room_id, project_id=place.project_id
-    )
+    who = await actor.resolve(topic_id=place.room_id, project_id=place.project_id)
     await actor.authorize_topic(
         who, project_id=place.project_id, topic_id=place.room_id
     )

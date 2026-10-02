@@ -462,11 +462,11 @@ def test_topic_cloud_provisioning_is_concurrent_safe_and_exclusive(client, monke
     project_id = _project(client, {"Authorization": f"Bearer {token}"})
     first_topic_id = client.post(
         "/topics",
-        json={"project_id": project_id, "title": "First", "created_by": "owner"},
+        json={"project_id": project_id, "title": "First"},
     ).json()["data"]["id"]
     second_topic_id = client.post(
         "/topics",
-        json={"project_id": project_id, "title": "Second", "created_by": "owner"},
+        json={"project_id": project_id, "title": "Second"},
     ).json()["data"]["id"]
     cloud = FakeMicroCloud()
 
@@ -641,7 +641,7 @@ def test_a_room_waiting_on_the_provider_holds_no_team_lock(client, monkeypatch):
     topics = [
         client.post(
             "/topics",
-            json={"project_id": project_id, "title": title, "created_by": "owner"},
+            json={"project_id": project_id, "title": title},
         ).json()["data"]["id"]
         for title in ("First", "Second", "Third")
     ]

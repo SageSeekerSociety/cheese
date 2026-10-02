@@ -29,7 +29,7 @@ def setup_project(client, monkeypatch, *, shared_team: bool = False):
     monkeypatch.setattr(settings, "microcloud_base_url", "https://example.invalid")
     monkeypatch.setattr(settings, "microcloud_tenant_secret", "test-only")
     client.headers["Authorization"] = f"Bearer {seed_user(client, 'config_owner')}"
-    body = {"name": "Compute", "owner_handle": "config_owner"}
+    body = {"name": "Compute"}
     if shared_team:
         # Without it the project sits in the owner's personal team, which
         # nobody else can join.
@@ -52,7 +52,7 @@ def setup_project(client, monkeypatch, *, shared_team: bool = False):
 def new_room(client, pid):
     response = client.post(
         "/topics",
-        json={"project_id": pid, "title": "Room", "created_by": "config_owner"},
+        json={"project_id": pid, "title": "Room"},
     )
     assert response.status_code == 200, response.text
     return response.json()["data"]["id"]

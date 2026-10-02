@@ -92,9 +92,7 @@ async def get_topic_compute_profile(
     一台——一个房间里的会话不再各有各的机器。没开工的会话也答那一项，它开工时拿的
     就是那一台。"""
     topic = await TopicService(db).get_or_404(topic_id)
-    actor = await resolver.resolve(
-        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
-    )
+    actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
@@ -248,9 +246,7 @@ async def set_topic_compute_profile(
     from app.domain.machine import session_work as work_lease
 
     topic = await TopicService(db).get_or_404(topic_id)
-    actor = await resolver.resolve(
-        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
-    )
+    actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )

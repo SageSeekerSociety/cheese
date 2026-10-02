@@ -32,7 +32,7 @@ def _create(
     *,
     caller: str | None = None,
 ) -> dict:
-    body: dict = {"name": name, "owner_handle": owner}
+    body: dict = {"name": name}
     if team_id is not None:
         body["team_id"] = team_id
     resp = post_project(
@@ -116,7 +116,9 @@ def test_explicit_team_id_sticks_and_an_unknown_owner_is_refused(client):
     # An owner who is no registered person and no team named: nowhere to belong.
     # Posted raw — the post_project helper would register the owner first.
     refused = client.post(
-        "/projects", json={"name": "orphan-proj", "owner_handle": "ghost-agent-42"}
+        "/projects",
+        json={"name": "orphan-proj"},
+        headers=session_auth_headers("ghost-agent-42"),
     )
     assert refused.status_code == 422, refused.text
     assert "项目需要归属一个团队" in refused.text

@@ -169,7 +169,7 @@ async def get_feedback_meta(
     颜色留在前端（那是视觉决定），**有哪些取值**从前端搬到这里 —— 因为加一个
     状态是后端改一处的事，而前端的常量表要靠发版才能跟上。
     """
-    who = await resolver.resolve(fallback_handle=None)
+    who = await resolver.resolve()
     meta = FeedbackMeta(
         kinds=list(FeedbackKind),
         statuses=list(FeedbackStatus),
@@ -197,7 +197,7 @@ async def get_feedback_counts(
     列表接口也带 counts，但铃铛要在没打开反馈中心的时候轮询，不该为了一个整数
     拉一整页数据。
     """
-    who = await resolver.resolve(fallback_handle=None)
+    who = await resolver.resolve()
     handle = who.handle if who.authenticated else None
     # No `unassigned` here: it is the admin queue's 「还没人管」, counted over the
     # private and security rows as well, and this endpoint answers anonymous
@@ -226,7 +226,7 @@ async def mark_feedback_read(
     游标而不是每条一个「已读」行：见 `FeedbackReadState`。返回游标值，客户端可以
     拿它做后续请求的下界，省掉一次「现在几点」的猜测。
     """
-    who = await resolver.resolve(fallback_handle=None)
+    who = await resolver.resolve()
     if not who.authenticated or not who.handle:
         raise AuthenticationRequiredError(say("signInRequired"))
     at = await service.mark_read(handle=who.handle)
@@ -246,7 +246,7 @@ async def list_my_feedback(
     访客拿到空列表而不是 401 —— 和 `/awaiting-me` 同一条理由：这个清单的定义是
     「点到我的那些」，没有身份就没有被点到。
     """
-    who = await resolver.resolve(fallback_handle=None)
+    who = await resolver.resolve()
     if not who.authenticated or not who.handle:
         return ok(page([], 0))
     rows, total = await service.list_mine(
@@ -274,7 +274,7 @@ async def list_feedback(
     page_start: int = Query(default=0, ge=0),
     page_size: int = Query(default=20, ge=1, le=100),
 ) -> dict:
-    who = await resolver.resolve(fallback_handle=None)
+    who = await resolver.resolve()
     handle = who.handle if who.authenticated else None
     if tab not in feedback_services.PUBLIC_TABS:
         # Same refusal as the admin list: a tab the server does not know is a
@@ -316,7 +316,7 @@ async def create_feedback(
     `POST /topics/{topic_id}/feedback-proposals/{block_id}/accept`，那条路会把作者
     记成提案的 agent、把提交者记成按按钮的人。
     """
-    who = await resolver.resolve(fallback_handle=None)
+    who = await resolver.resolve()
     if not who.authenticated or not who.handle:
         raise AuthenticationRequiredError(say("signInRequired"))
     row = await service.create(
@@ -340,7 +340,7 @@ async def get_feedback(
     resolver: ActorResolverDep,
 ) -> dict:
     """一条反馈的全部内容。看不见的 id 回 404，不是 403 —— 见 `visible_row`。"""
-    who = await resolver.resolve(fallback_handle=None)
+    who = await resolver.resolve()
     handle = who.handle if who.authenticated else None
     is_admin = await _is_admin(db, service, who)
     row = await service.visible_row(feedback_id, handle=handle, is_admin=is_admin)
@@ -366,7 +366,7 @@ async def delete_feedback(
     的一类动作，而行还在就是那条痕。前端不自己判断能不能删：每一条上都有服务端算好的
     `can_delete`，按钮照它画。
     """
-    who = await resolver.resolve(fallback_handle=None)
+    who = await resolver.resolve()
     if not who.authenticated or not who.handle:
         raise AuthenticationRequiredError(say("signInRequired"))
     await service.delete_feedback(
@@ -408,7 +408,7 @@ async def list_feedback_comments(
     变成 JSON 的唯一一处。分页之后这一批的 id 数由 `limit × (1 + replies_limit)`
     封顶 —— 在那之前它跟着整条线程走，是这条主路径上真正的上限（见 `_IN_BATCH`）。
     """
-    who = await resolver.resolve(fallback_handle=None)
+    who = await resolver.resolve()
     handle = who.handle if who.authenticated else None
     is_admin = await _is_admin(db, service, who)
     row = await service.visible_row(feedback_id, handle=handle, is_admin=is_admin)
@@ -449,7 +449,7 @@ async def create_feedback_comment(
     service: FeedbackServiceDep,
     resolver: ActorResolverDep,
 ) -> dict:
-    who = await resolver.resolve(fallback_handle=None)
+    who = await resolver.resolve()
     if not who.authenticated or not who.handle:
         raise AuthenticationRequiredError(say("signInRequired"))
     is_admin = await _is_admin(db, service, who)
@@ -483,7 +483,7 @@ async def delete_feedback_comment(
     service: FeedbackServiceDep,
     resolver: ActorResolverDep,
 ) -> dict:
-    who = await resolver.resolve(fallback_handle=None)
+    who = await resolver.resolve()
     if not who.authenticated or not who.handle:
         raise AuthenticationRequiredError(say("signInRequired"))
     await service.delete_comment(
@@ -510,7 +510,7 @@ async def like_feedback_comment(
     一个从来没存在过的数字）。区别在**不挡已办完的反馈**：点赞不参与排序，理由写在
     `FeedbackService.like_comment` 上。
     """
-    who = await resolver.resolve(fallback_handle=None)
+    who = await resolver.resolve()
     if not who.authenticated or not who.handle:
         raise AuthenticationRequiredError(say("signInRequired"))
     count, liked = await service.like_comment(
@@ -531,7 +531,7 @@ async def unlike_feedback_comment(
     service: FeedbackServiceDep,
     resolver: ActorResolverDep,
 ) -> dict:
-    who = await resolver.resolve(fallback_handle=None)
+    who = await resolver.resolve()
     if not who.authenticated or not who.handle:
         raise AuthenticationRequiredError(say("signInRequired"))
     count, liked = await service.unlike_comment(
@@ -555,7 +555,7 @@ async def support_feedback(
 
     返回增量的话，两个人同时点会各自渲染出一个从来没存在过的数字。
     """
-    who = await resolver.resolve(fallback_handle=None)
+    who = await resolver.resolve()
     if not who.authenticated or not who.handle:
         raise AuthenticationRequiredError(say("signInRequired"))
     count, supported = await service.support(
@@ -572,7 +572,7 @@ async def unsupport_feedback(
     service: FeedbackServiceDep,
     resolver: ActorResolverDep,
 ) -> dict:
-    who = await resolver.resolve(fallback_handle=None)
+    who = await resolver.resolve()
     if not who.authenticated or not who.handle:
         raise AuthenticationRequiredError(say("signInRequired"))
     count, supported = await service.unsupport(

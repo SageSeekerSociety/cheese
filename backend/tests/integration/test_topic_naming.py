@@ -95,7 +95,7 @@ def alice(client) -> dict[str, str]:
 
 
 def _project(client, alice) -> str:
-    r = post_project(client, json={"name": "P", "owner_handle": "alice"}, headers=alice)
+    r = post_project(client, json={"name": "P"}, headers=alice, owner="alice")
     assert r.status_code == 200, r.text
     return r.json()["data"]["id"]
 

@@ -365,7 +365,7 @@ ignore_imports =
     app.domain.review.pr_publish -> app.domain.review.services
     app.domain.review.room_notices -> app.domain.agent.announce
     app.domain.review.room_notices -> app.domain.agent.platform_notices
-    app.domain.review.services -> app.domain.agent.platform_notices
+    app.domain.review.services._shared -> app.domain.agent.platform_notices
     app.domain.room_task.binding -> app.domain.agent.market
     app.domain.room_task.binding -> app.domain.agent.supply
     app.domain.room_task.checkouts -> app.domain.agent.device_hub

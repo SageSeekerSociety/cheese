@@ -425,7 +425,7 @@ async def get_space_learning_filters(
     门本身照抄本文件其它空间路由的那道 (非成员答 404，不确认板子存在)。
     """
     await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
-    actor = await resolver.resolve(fallback_handle=None)
+    actor = await resolver.resolve()
     data = await service.filters(space_id=space_id, handle=_learning_handle(actor))
     return {"code": 200, "message": "OK", "data": data}
 
@@ -446,7 +446,7 @@ async def get_space_learning_questions(
 ) -> dict:
     """按成员 / 时间 / 知识点筛出来的成员发言，每条都带得回原文的坐标。"""
     _ = auth_user
-    actor = await resolver.resolve(fallback_handle=None)
+    actor = await resolver.resolve()
     data = await service.questions(
         space_id=space_id,
         handle=_learning_handle(actor),
@@ -473,7 +473,7 @@ async def get_space_learning_queues(
 ) -> dict:
     """共性问题两条来源，各自一个队列。"""
     _ = auth_user
-    actor = await resolver.resolve(fallback_handle=None)
+    actor = await resolver.resolve()
     data = await service.queues(
         space_id=space_id,
         handle=_learning_handle(actor),
@@ -501,7 +501,7 @@ async def build_space_learning_outline(
     会撞上长度上限，也会在访问日志里留下别人的引用。
     """
     _ = auth_user
-    actor = await resolver.resolve(fallback_handle=None)
+    actor = await resolver.resolve()
     data = await service.outline(
         space_id=space_id,
         handle=_learning_handle(actor),

@@ -181,9 +181,11 @@ export function useTopicRail(source: TopicRailSource) {
   }
 
   // 一位成员叫什么、是不是 AI 队友：项目名册说了算（队友的座位和它自己的 handle 都认）。
+  // 说不出是谁的那一笔（null）记在项目默认的队友头上，handle 也得是它的：同一行里
+  // 按 handle 去重、头像按 handle 取底色，给个空 handle 就成了另一位、另一种颜色。
   const agentNameMap = computed(() => agentNames([], store.members))
   function memberOf(handle: string | null): { handle: string; name: string; agent: boolean } {
-    if (!handle) return { handle: '', name: agentName.value, agent: true }
+    if (!handle) return { handle: store.agentHandle ?? '', name: agentName.value, agent: true }
     const agent = agentNameMap.value.get(handle)
     if (agent) return { handle, name: agent, agent: true }
     if (isAgentHandle(handle)) return { handle, name: agentName.value, agent: true }

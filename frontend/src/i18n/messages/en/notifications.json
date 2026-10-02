@@ -113,6 +113,7 @@
   },
   "CHEESE_QUESTION": {
     "body": "In \"{topicTitle}\" — paused, waiting for your answer",
+    "answered": "In \"{topicTitle}\" — answered: {answer}",
     "untitled": "Cheese has a question for you"
   },
   "DEVICE_IN_USE": {

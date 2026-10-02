@@ -77,7 +77,7 @@ class GrantDirectoryRequest(BaseModel):
 
 
 async def _require_user(resolver: ActorResolverDep) -> int:
-    actor = await resolver.resolve(fallback_handle=None)
+    actor = await resolver.resolve()
     if not actor.authenticated or actor.user_id is None:
         raise UnauthorizedError("授权本机目录需要登录")
     return actor.user_id

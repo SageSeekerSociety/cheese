@@ -95,7 +95,7 @@ async def _room_actor(
     """
     topic = await AcceptService(db)._topic_or_404(topic_id)
     actor = await resolver.resolve(
-        fallback_handle=None, project_id=topic.project_id, topic_id=topic.id
+        project_id=topic.project_id, topic_id=topic.id
     )
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic.id
@@ -345,7 +345,7 @@ async def _card_actor(
     card = await service._card_or_404(card_id)
     topic = await service._topic_or_404(card.topic_id)
     actor = await resolver.resolve(
-        fallback_handle=None, project_id=topic.project_id, topic_id=topic.id
+        project_id=topic.project_id, topic_id=topic.id
     )
     await resolver.authorize_topic(actor, project_id=topic.project_id, topic_id=topic.id)
     return actor, card, topic

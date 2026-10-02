@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from app.core.sandbox_auth import mint_scoped_token
-from tests.integration.conftest import post_project
+from tests.integration.conftest import post_project, session_auth_headers
 
 _CHEESE = Path(__file__).resolve().parents[2] / "sandbox" / "cheese"
 
@@ -66,10 +66,11 @@ class BackendHost:
 
 @pytest.fixture
 def room(client):
-    project = post_project(client, json={"name": "Tools"}).json()["data"]
+    project = post_project(client, json={"name": "Tools"}, owner="alice").json()["data"]
     topic = client.post(
         "/topics",
-        json={"project_id": project["id"], "title": "Work", "created_by": "alice"},
+        json={"project_id": project["id"], "title": "Work"},
+        headers=session_auth_headers("alice"),
     ).json()["data"]
     return project["id"], topic["id"]
 

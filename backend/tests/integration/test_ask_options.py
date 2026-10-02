@@ -23,7 +23,7 @@ def _topic(client) -> str:
     p = post_project(client, json={"name": "P"}).json()["data"]
     t = client.post(
         "/topics",
-        json={"project_id": p["id"], "title": "T", "created_by": "user-1"},
+        json={"project_id": p["id"], "title": "T"},
     ).json()["data"]
     return t["id"]
 
@@ -61,7 +61,7 @@ def test_the_question_it_asked_is_not_an_input_it_has_to_read(client):
     tid = _topic(client)
     _ask(client, tid)
 
-    summoned = client.post(f"/topics/{tid}/summon", json={"author": "user-1"})
+    summoned = client.post(f"/topics/{tid}/summon", json={})
     assert summoned.status_code == 200, summoned.text
     assert summoned.json()["data"] == {
         "started": False,
@@ -181,10 +181,11 @@ def test_answer_goes_back_to_the_teammate_that_asked(client):
     之前点的是房间的默认席位：芝士Opus 问的题，一点选项就换成默认芝士来接，
     而默认芝士手上没有那道题的来龙去脉。
     """
-    p = post_project(client, json={"name": "P", "owner_handle": "alice"}).json()["data"]
+    p = post_project(client, json={"name": "P"}, owner="alice").json()["data"]
     tid = client.post(
         "/topics",
-        json={"project_id": p["id"], "title": "T", "created_by": "alice"},
+        json={"project_id": p["id"], "title": "T"},
+        headers=session_auth_headers("alice"),
     ).json()["data"]["id"]
     default = room_agent_seat(client, tid)
     made = client.post(f"/projects/{p['id']}/agents", json={"handle": "opus"})
@@ -242,13 +243,12 @@ def test_answer_validates_option_and_single_shot(client):
 
 def _shared_room(client) -> tuple[str, str]:
     """A room of alice's project that bob is also in; returns (room, project)."""
-    project = post_project(client, json={"name": "P", "owner_handle": "alice"}).json()[
-        "data"
-    ]
+    project = post_project(client, json={"name": "P"}, owner="alice").json()["data"]
     join_project_team(client, project["id"], "bob")
     room = client.post(
         "/topics",
-        json={"project_id": project["id"], "title": "周会", "created_by": "alice"},
+        json={"project_id": project["id"], "title": "周会"},
+        headers=session_auth_headers("alice"),
     ).json()["data"]
     return room["id"], project["id"]
 

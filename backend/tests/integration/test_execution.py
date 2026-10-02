@@ -5,14 +5,18 @@ import json
 import time
 
 from app.domain.usage.subscription_ingest import ingest_once
-from tests.integration.conftest import chat_ws_url, post_message, post_project
+from tests.integration.conftest import (
+    chat_ws_url,
+    post_message,
+    post_project,
+)
 
 
 def _topic(client) -> tuple[str, str]:
-    p = post_project(client, json={"name": "P"}).json()["data"]
+    p = post_project(client, json={"name": "P"}, owner="user-1").json()["data"]
     t = client.post(
         "/topics",
-        json={"project_id": p["id"], "title": "话题", "created_by": "user-1"},
+        json={"project_id": p["id"], "title": "话题"},
     ).json()["data"]
     return p["id"], t["id"]
 

@@ -511,7 +511,7 @@ def _an_alert(asgi: _Asgi, handle: str, token: str, kind: str) -> tuple[str, int
     request made is the ``POST /projects/{id}/alerts``."""
     asgi.post(
         "/projects",
-        {"name": f"Inbox {uuid.uuid4().hex[:8]}", "owner_handle": handle},
+        {"name": f"Inbox {uuid.uuid4().hex[:8]}"},
         token=token,
     )
     assert asgi.status == 200, asgi.body

@@ -42,7 +42,7 @@ async def add_member(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    who = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    who = await resolver.resolve(project_id=project_id)
     member = await MemberService(db).seat_agent(
         project_id=project_id, user_handle=body.user_handle, actor=who
     )
@@ -60,7 +60,7 @@ async def list_members(
 
     读名册要凭据，和话题列表同一道 项目成员 门：以前它不认凭据就全量作答，一个不是
     成员的人打开空工作区，照样看得见所有人的脸。"""
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     members, _ = await MemberService(db).list_for_project(project_id)
     # The roster is the answer; a stored row adds only its id and when it was
@@ -88,7 +88,7 @@ async def remove_member(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    who = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    who = await resolver.resolve(project_id=project_id)
     await MemberService(db).remove(
         project_id=project_id, user_handle=user_handle, actor=who
     )
@@ -107,7 +107,7 @@ async def leave_project(
     上面，``me`` 到了那里就是一个 handle，会被当成「把 me 这个人移出项目」。身份照
     旧只从 resolver 来，退的恒是动作人自己 —— 代退没有入口，也不接受任何自称。
     """
-    who = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    who = await resolver.resolve(project_id=project_id)
     await MemberService(db).leave(project_id=project_id, actor=who)
     return ok({"deleted": True})
 
@@ -126,7 +126,7 @@ async def invite_member(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    who = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    who = await resolver.resolve(project_id=project_id)
     invitation = await InvitationService(db).invite(
         project_id=project_id,
         invitee_handle=body.user_handle,
@@ -147,7 +147,7 @@ async def list_project_invitations(
     the roster was guarded - this route was left behind holding the old
     promise.
     """
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     svc = InvitationService(db)
     items = await svc.list_for_project(project_id)

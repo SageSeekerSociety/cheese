@@ -554,7 +554,6 @@ export function dropPushSubscription(endpoint: string): Promise<{ deleted: boole
 
 export function createProject(
   name: string,
-  ownerHandle?: string,
   teamId?: number,
   externalTaskId?: number,
   forgeKind?: 'forgejo' | 'github_app',
@@ -567,7 +566,6 @@ export function createProject(
     body: JSON.stringify({
       id,
       name,
-      owner_handle: ownerHandle,
       team_id: teamId,
       // Set when the project is created FROM a 赛题, so the 赛题 can find it
       // again. Absent for a project made from the rail.

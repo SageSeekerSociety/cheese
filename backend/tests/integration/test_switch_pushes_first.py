@@ -41,7 +41,7 @@ from app.domain.user.models import User
 from app.main import app
 from tests.delivery import delivery_task
 from tests.executor_release import running
-from tests.integration.conftest import post_project
+from tests.integration.conftest import post_project, session_auth_headers
 from tests.unit.test_machine_service import FakeMicroCloud
 
 pytestmark = pytest.mark.anyio
@@ -53,11 +53,12 @@ async def _room(client, *, on_cloud=False):
     """A room whose one agent session works on a ready machine, and a second
     self-hosted device the project may switch it to."""
     project = post_project(
-        client, json={"name": "Switch pushes", "owner_handle": "alice"}
+        client, json={"name": "Switch pushes"}, owner="alice"
     ).json()["data"]
     room = client.post(
         "/topics",
-        json={"project_id": project["id"], "title": "Room", "created_by": "alice"},
+        json={"project_id": project["id"], "title": "Room"},
+        headers=session_auth_headers("alice"),
     ).json()["data"]
     project_id, topic_id = uuid.UUID(project["id"]), uuid.UUID(room["id"])
     async with client.test_factory() as db:

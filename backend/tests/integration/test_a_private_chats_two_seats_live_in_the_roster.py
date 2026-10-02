@@ -180,9 +180,9 @@ def test_reopening_a_dm_whose_roster_grew_finds_the_same_room(client):
 
 def _project_with_a_roster(client, owner: str, member: str) -> str:
     """一个真有名册的项目：所有者，加一位成员。@ 要解析得到人，名册里就得有人。"""
-    project_id = post_project(
-        client, json={"name": "Demo", "owner_handle": owner}
-    ).json()["data"]["id"]
+    project_id = post_project(client, json={"name": "Demo"}, owner=owner).json()[
+        "data"
+    ]["id"]
     join_project_team(client, project_id, member)
     return project_id
 

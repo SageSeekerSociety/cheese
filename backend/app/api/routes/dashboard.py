@@ -99,7 +99,7 @@ async def member_summary(
     and how much each of them wrote this week. So the 项目成员 door is here too,
     and it is the door that decides, not the mailbox — being signed in is not
     being in the project."""
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     viewer = await resolver.resolve_recipient(
         requested=None, project_id=project_id, allow_anonymous=False
@@ -119,7 +119,7 @@ async def project_usage(
 
     What a project spends says how much work it does and how hard; the credits
     route next door has always required membership for the same reason."""
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     return ok(await UsageRepository(db).for_project(project_id))
 
@@ -167,7 +167,7 @@ async def contributions(
     Names each author and how much of the project they wrote — the same
     project content ``/usage`` next door has always guarded, and the same
     judgment (项目成员) now guards it here."""
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     return ok(await DashboardService(db).contributions(project_id))
 
@@ -175,7 +175,7 @@ async def contributions(
 async def _signed_in(resolver: ActorResolver, what: str) -> str:
     """The caller's handle; a personal page shows nothing to a caller nobody
     can identify."""
-    viewer = await resolver.resolve(fallback_handle=None)
+    viewer = await resolver.resolve()
     resolver.reject_failed_credential(viewer)
     if not viewer.authenticated:
         raise AuthenticationRequiredError(f"{what}需要先登录")

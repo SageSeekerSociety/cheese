@@ -32,7 +32,7 @@ from app.domain.machine.services import MachineService
 from app.domain.project.models import Project
 from app.domain.team.models import Team
 from app.domain.topic.models import Topic
-from tests.integration.conftest import post_project
+from tests.integration.conftest import post_project, session_auth_headers
 from tests.unit.test_machine_service import FakeMicroCloud
 
 
@@ -47,9 +47,9 @@ def cloud_rooms(client, monkeypatch):
     monkeypatch.setattr(
         work_lease, "MachineService", lambda db: MachineService(db, cloud)
     )
-    project = post_project(
-        client, json={"name": "Cloud rooms", "owner_handle": "alice"}
-    ).json()["data"]
+    project = post_project(client, json={"name": "Cloud rooms"}, owner="alice").json()[
+        "data"
+    ]
     project_id = uuid.UUID(project["id"])
     rooms = [
         uuid.UUID(
@@ -58,8 +58,8 @@ def cloud_rooms(client, monkeypatch):
                 json={
                     "project_id": project["id"],
                     "title": title,
-                    "created_by": "alice",
                 },
+                headers=session_auth_headers("alice"),
             ).json()["data"]["id"]
         )
         for title in ("Older room", "New room")

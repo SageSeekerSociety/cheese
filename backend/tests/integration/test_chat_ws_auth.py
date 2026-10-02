@@ -33,10 +33,11 @@ from tests.integration.conftest import (
 
 
 def _project_topic(client, owner: str) -> tuple[str, str]:
-    p = post_project(client, json={"name": "P", "owner_handle": owner}).json()["data"]
+    p = post_project(client, json={"name": "P"}, owner=owner).json()["data"]
     t = client.post(
         "/topics",
-        json={"project_id": p["id"], "title": "T", "created_by": owner},
+        json={"project_id": p["id"], "title": "T"},
+        headers=session_auth_headers(owner),
     ).json()["data"]
     return p["id"], t["id"]
 

@@ -36,9 +36,7 @@ async def _user_id(client, handle: str) -> int:
 
 @pytest.fixture
 def project(client) -> str:
-    return post_project(client, json={"name": "P", "owner_handle": "owner"}).json()[
-        "data"
-    ]["id"]
+    return post_project(client, json={"name": "P"}, owner="owner").json()["data"]["id"]
 
 
 def test_the_owner_may_use_cloud(client, project):

@@ -18,7 +18,7 @@ def _as(client, handle: str) -> dict[str, str]:
 
 
 def _project(client, owner: str) -> str:
-    r = post_project(client, json={"name": "P", "owner_handle": owner})
+    r = post_project(client, json={"name": "P"}, owner=owner)
     assert r.status_code == 200, r.text
     return r.json()["data"]["id"]
 
@@ -26,7 +26,7 @@ def _project(client, owner: str) -> str:
 def _room(client, pid: str, by: str) -> str:
     r = client.post(
         "/topics",
-        json={"project_id": pid, "title": "T", "created_by": by},
+        json={"project_id": pid, "title": "T"},
         headers=_as(client, by),
     )
     assert r.status_code == 200, r.text

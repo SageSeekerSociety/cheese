@@ -36,7 +36,7 @@ class PublishSiteBody(BaseModel):
 async def get_project_site(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    actor = await resolver.resolve(project_id=project_id)
     if not actor.authenticated:
         raise AuthenticationRequiredError(say("signInFirst"))
     await require_site_access(db, actor.handle, project_id)
@@ -67,7 +67,7 @@ async def publish_project_site(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    actor = await resolver.resolve(project_id=project_id)
     if not actor.authenticated:
         raise AuthenticationRequiredError(say("signInFirst"))
     await require_site_access(db, actor.handle, project_id)

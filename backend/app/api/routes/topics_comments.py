@@ -151,11 +151,7 @@ async def add_comment(
     quote = (body.get("quote") or "").strip() or None
     if quote and len(quote) > 500:
         quote = quote[:500]
-    actor = await resolver.resolve(
-        fallback_handle=body.get("author"),
-        topic_id=place.room_id,
-        project_id=place.project_id,
-    )
+    actor = await resolver.resolve(topic_id=place.room_id, project_id=place.project_id)
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id
     )

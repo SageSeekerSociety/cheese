@@ -39,14 +39,14 @@ def test_comment_anchors_to_doc_node_and_is_not_in_timeline(client):
     # Build the doc tree, grab a node to anchor to.
     client.put(
         f"/topics/{tid}/doc",
-        json={"content": "# 目标\n\n做推荐系统", "author": "u", "expected_version": 0},
+        json={"content": "# 目标\n\n做推荐系统", "expected_version": 0},
     )
     nodes = client.get(f"/topics/{tid}/docs").json()["data"]["data"]
     anchor = nodes[0]["id"]
 
     r = client.post(
         f"/topics/{tid}/comments",
-        json={"anchor": anchor, "content": "这里要写清楚指标", "author": "user-1"},
+        json={"anchor": anchor, "content": "这里要写清楚指标"},
     )
     assert r.status_code == 200
     assert r.json()["data"]["reply_to"] == anchor
@@ -67,7 +67,6 @@ def test_comment_stores_selected_quote(client):
         f"/topics/{tid}/doc",
         json={
             "content": "# 目标\n\n做一个课程推荐系统",
-            "author": "u",
             "expected_version": 0,
         },
     )
@@ -79,7 +78,6 @@ def test_comment_stores_selected_quote(client):
             "anchor": anchor,
             "quote": "课程推荐系统",
             "content": "这个范围要再收窄",
-            "author": "user-1",
         },
     )
     assert r.status_code == 200
@@ -101,7 +99,7 @@ def test_comment_rejects_foreign_anchor(client):
     other = _topic(client)
     client.put(
         f"/topics/{other}/doc",
-        json={"content": "# X", "author": "u", "expected_version": 0},
+        json={"content": "# X", "expected_version": 0},
     )
     foreign = client.get(f"/topics/{other}/docs").json()["data"]["data"][0]["id"]
     r = client.post(f"/topics/{tid}/comments", json={"anchor": foreign, "content": "x"})
@@ -110,9 +108,7 @@ def test_comment_rejects_foreign_anchor(client):
 
 def test_human_comment_does_not_wake_ai_or_change_document(client, sessions):
     token = seed_user(client, "commenter")
-    project = post_project(client, {"name": "P", "owner_handle": "commenter"}).json()[
-        "data"
-    ]
+    project = post_project(client, {"name": "P"}, owner="commenter").json()["data"]
     headers = {"Authorization": f"Bearer {token}"}
     tid = client.post(
         "/topics", json={"project_id": project["id"], "title": "T"}, headers=headers
@@ -147,7 +143,7 @@ def test_comment_rejects_non_document_node_anchor(client, target):
     tid = _topic(client)
     client.put(
         f"/topics/{tid}/doc",
-        json={"content": "# X", "author": "u", "expected_version": 0},
+        json={"content": "# X", "expected_version": 0},
     )
     if target == "root":
         anchor = client.get(f"/topics/{tid}/doc").json()["data"]["id"]
@@ -190,7 +186,7 @@ def test_comment_rejects_non_document_node_anchor(client, target):
         anchor = client.get(f"/topics/{tid}/docs").json()["data"]["data"][0]["id"]
         updated = client.put(
             f"/topics/{tid}/doc",
-            json={"content": "replacement", "author": "u", "expected_version": 1},
+            json={"content": "replacement", "expected_version": 1},
         )
         assert updated.status_code == 200, updated.text
     else:

@@ -8,12 +8,11 @@ from tests.integration.conftest import (
 
 
 def test_archive_requires_manager_and_records_actual_actor(client):
-    project = post_project(client, json={"name": "P", "owner_handle": "owner"}).json()[
-        "data"
-    ]
+    project = post_project(client, json={"name": "P"}, owner="owner").json()["data"]
     room = client.post(
         "/topics",
-        json={"project_id": project["id"], "title": "R", "created_by": "owner"},
+        json={"project_id": project["id"], "title": "R"},
+        headers=session_auth_headers("owner"),
     ).json()["data"]
     topic = room["id"]
     for handle, role in (("admin", "admin"), ("member", "member")):

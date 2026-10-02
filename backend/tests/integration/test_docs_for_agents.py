@@ -102,9 +102,7 @@ def frontend(monkeypatch: pytest.MonkeyPatch) -> dict:
 def _room(client, *, platform_repo: bool) -> tuple[str, dict[str, str]]:
     handle = f"doc-reader-{uuid.uuid4().hex[:6]}"
     headers = {"Authorization": f"Bearer {seed_user(client, handle)}"}
-    r = post_project(
-        client, json={"name": "P", "owner_handle": handle}, headers=headers
-    )
+    r = post_project(client, json={"name": "P"}, headers=headers, owner=handle)
     assert r.status_code == 200, r.text
     project_id = r.json()["data"]["id"]
     if platform_repo:

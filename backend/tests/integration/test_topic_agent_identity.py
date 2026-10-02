@@ -24,10 +24,11 @@ from tests.integration.conftest import (
 
 
 def _project_topic(client, owner: str = "alice") -> tuple[str, str]:
-    p = post_project(client, json={"name": "P", "owner_handle": owner}).json()["data"]
+    p = post_project(client, json={"name": "P"}, owner=owner).json()["data"]
     t = client.post(
         "/topics",
-        json={"project_id": p["id"], "title": "T", "created_by": owner},
+        json={"project_id": p["id"], "title": "T"},
+        headers=session_auth_headers(owner),
     ).json()["data"]
     return p["id"], t["id"]
 
@@ -141,7 +142,7 @@ def test_a_forged_author_in_the_body_is_still_ignored(client):
     seat = _seat(client, tid)
     r = client.put(
         f"/topics/{tid}/doc",
-        json={"content": "# hi", "author": "alice", "expected_version": 0},
+        json={"content": "# hi", "expected_version": 0},
         headers=_sandbox(pid, tid, seat),
     )
     assert r.json()["data"]["author"] == seat
@@ -186,7 +187,8 @@ def test_one_agents_seat_can_be_dropped_without_touching_the_others(client):
     pid, first = _project_topic(client)
     second = client.post(
         "/topics",
-        json={"project_id": pid, "title": "T2", "created_by": "alice"},
+        json={"project_id": pid, "title": "T2"},
+        headers=session_auth_headers("alice"),
     ).json()["data"]["id"]
     doomed = _agents(client, first)[0]["member_handle"]
 

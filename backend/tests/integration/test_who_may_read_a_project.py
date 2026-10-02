@@ -43,7 +43,7 @@ DOORS = {
 
 def _project(client, owner: str = "alice") -> tuple[str, str]:
     """``(project_id, root_topic_id)``，所有者为 ``owner``。"""
-    r = post_project(client, json={"name": "P", "owner_handle": owner})
+    r = post_project(client, json={"name": "P"}, owner=owner)
     assert r.status_code == 200, r.text
     data = r.json()["data"]
     return data["id"], data["root_topic_id"]
@@ -130,7 +130,8 @@ def _project_from_task(client, task_id: int, *, student: str) -> str:
     seed_claim(client, task_id, handle=student)
     r = post_project(
         client,
-        json={"name": "赛题项目", "owner_handle": student, "external_task_id": task_id},
+        json={"name": "赛题项目", "external_task_id": task_id},
+        owner=student,
     )
     assert r.status_code == 200, r.text
     assert r.json()["data"]["external_task_id"] == task_id

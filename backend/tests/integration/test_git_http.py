@@ -67,9 +67,9 @@ def test_task_author_is_the_agent_opening_work_not_the_dispatcher_or_room_defaul
     from app.domain.topic.models import Topic
     from tests.integration.conftest import session_auth_headers
 
-    project = post_project(
-        client, json={"name": "Task authors", "owner_handle": "alice"}
-    ).json()["data"]
+    project = post_project(client, json={"name": "Task authors"}, owner="alice").json()[
+        "data"
+    ]
     pid, room = project["id"], project["root_topic_id"]
     task = delivery_task(client, room, commit=False)
     assert task.created_by == "alice"

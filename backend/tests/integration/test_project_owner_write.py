@@ -35,11 +35,8 @@ from tests.integration.conftest import (
 )
 
 
-def _project(client, owner: str | None = None) -> dict:
-    body: dict = {"name": "P"}
-    if owner is not None:
-        body["owner_handle"] = owner
-    r = post_project(client, json=body, headers=session_auth_headers("alice"))
+def _project(client, owner: str = "alice") -> dict:
+    r = post_project(client, json={"name": "P"}, headers=session_auth_headers(owner))
     assert r.status_code == 200, r.text
     return r.json()["data"]
 
@@ -84,8 +81,9 @@ def _shared_team_project(client, *, owner: str = "alice", name: str = "P") -> di
     team_id = asyncio.run(_make())
     resp = post_project(
         client,
-        {"name": name, "owner_handle": owner, "team_id": team_id},
+        {"name": name, "team_id": team_id},
         headers=session_auth_headers(owner),
+        owner=owner,
     )
     assert resp.status_code == 200, resp.text
     return resp.json()["data"]
@@ -466,19 +464,9 @@ def test_a_missing_project_is_a_404_not_a_500(client):
 
 def test_creating_a_project_without_a_real_owner_is_refused(client):
     """#315: a project with no owner who is a person had nothing for its
-    authority to stand on. Every project now belongs to a team — a project with
-    no team given goes to its owner's personal team — so with no real owner there
-    is nowhere for it to belong, and it is refused rather than made ownerless.
-    Posted raw: the post_project helper would register an owner first."""
+    authority to stand on. The owner is whoever is signed in, so a request
+    that names nobody has no owner to give the project and is refused rather
+    than made ownerless."""
     r = client.post("/projects", json={"name": "无主项目"})
 
-    assert r.status_code == 422, r.text
-    assert "项目需要归属一个团队" in r.text
-
-
-def test_creating_a_project_with_a_real_owner_stays_quiet(client, caplog):
-    """The warning has to mean something — an ordinary create must not trip it."""
-    with caplog.at_level("WARNING", logger="cheesex.projects"):
-        _project(client, owner="alice")
-
-    assert not [rec for rec in caplog.records if "without a real owner" in rec.message]
+    assert r.status_code == 401, r.text

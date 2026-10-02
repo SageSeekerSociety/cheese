@@ -79,7 +79,7 @@ async def _readable(
     **读得到的范围不等于写得动的范围**：写和删另有一道 ``_writable``，private
     那一侧只认本人。
     """
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     if owner is not None and owner != actor.handle:
         if not await MemberService(db).manages(project_id, actor.handle):

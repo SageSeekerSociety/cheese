@@ -42,9 +42,7 @@ def _project(client, owner: str = "alice") -> str:
     (`authorize_project` 403s an outsider), which is what makes 「无关」 a real
     case rather than an authorization failure wearing its clothes.
     """
-    pid = post_project(client, json={"name": "P", "owner_handle": owner}).json()[
-        "data"
-    ]["id"]
+    pid = post_project(client, json={"name": "P"}, owner=owner).json()["data"]["id"]
     for handle in ("bob", "carol", "dave"):
         join_project_team(client, pid, handle)
     return pid
@@ -53,7 +51,7 @@ def _project(client, owner: str = "alice") -> str:
 def _topic(client, pid: str, title: str, created_by: str = "alice") -> str:
     r = client.post(
         "/topics",
-        json={"project_id": pid, "title": title, "created_by": created_by},
+        json={"project_id": pid, "title": title},
         headers=session_auth_headers(created_by),
     )
     assert r.status_code == 200, r.text

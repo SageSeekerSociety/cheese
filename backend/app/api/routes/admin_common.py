@@ -68,7 +68,7 @@ async def require_platform_admin(
     query: `IdentityService` needs a session, and moving the rule into the policy
     moved the rule, not the read it depends on.
     """
-    who = await resolver.resolve(fallback_handle=None)
+    who = await resolver.resolve()
     refusal = await policy.refuse_management_action(
         who, carries_agent_binding=IdentityService(db).is_agent
     )

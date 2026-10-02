@@ -7,7 +7,12 @@ import uuid
 import pytest
 
 from app.common.auth import verify_access_token
-from tests.integration.conftest import join_project_team, post_project, session_token
+from tests.integration.conftest import (
+    join_project_team,
+    post_project,
+    session_auth_headers,
+    session_token,
+)
 
 
 def _login(client, handle: str) -> str:
@@ -23,10 +28,11 @@ def _bearer(token: str) -> dict:
 
 
 def _project_topic(client, owner: str) -> tuple[str, str]:
-    p = post_project(client, json={"name": "P", "owner_handle": owner}).json()["data"]
+    p = post_project(client, json={"name": "P"}, owner=owner).json()["data"]
     t = client.post(
         "/topics",
-        json={"project_id": p["id"], "title": "T", "created_by": owner},
+        json={"project_id": p["id"], "title": "T"},
+        headers=session_auth_headers(owner),
     ).json()["data"]
     return p["id"], t["id"]
 
@@ -45,7 +51,7 @@ def test_token_actor_wins_over_body_author(client):
     _, tid = _project_topic(client, owner="alice")
     r = client.put(
         f"/topics/{tid}/doc",
-        json={"content": "# hi", "author": "mallory-forged", "expected_version": 0},
+        json={"content": "# hi", "expected_version": 0},
         headers=_bearer(token),
     )
     assert r.status_code == 200
@@ -59,7 +65,8 @@ def test_no_token_falls_back_to_body_author(client):
     _, tid = _project_topic(client, owner="alice")
     r = client.put(
         f"/topics/{tid}/doc",
-        json={"content": "# hi", "author": "alice", "expected_version": 0},
+        json={"content": "# hi", "expected_version": 0},
+        headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200
     assert r.json()["data"]["author"] == "alice"
@@ -72,7 +79,7 @@ def test_token_outsider_denied_on_rostered_topic(client):
     outsider = _login(client, "mallory")
     r = client.put(
         f"/topics/{tid}/doc",
-        json={"content": "# sneaky", "author": "mallory", "expected_version": 0},
+        json={"content": "# sneaky", "expected_version": 0},
         headers=_bearer(outsider),
     )
     assert r.status_code == 403
@@ -84,7 +91,7 @@ def test_token_owner_allowed(client):
     _, tid = _project_topic(client, owner="alice")
     r = client.put(
         f"/topics/{tid}/doc",
-        json={"content": "# ok", "author": "alice", "expected_version": 0},
+        json={"content": "# ok", "expected_version": 0},
         headers=_bearer(token),
     )
     assert r.status_code == 200
@@ -147,7 +154,7 @@ def test_project_member_allowed_even_if_not_in_roster(client):
 
     r = client.put(
         f"/topics/{tid}/doc",
-        json={"content": "# member", "author": "bob", "expected_version": 0},
+        json={"content": "# member", "expected_version": 0},
         headers=_bearer(token),
     )
     assert r.status_code == 200

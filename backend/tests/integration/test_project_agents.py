@@ -27,15 +27,16 @@ from tests.integration.conftest import (
 
 
 def _project(client, name: str = "Agents") -> str:
-    r = post_project(client, json={"name": name})
+    r = post_project(client, json={"name": name}, owner="u")
     assert r.status_code == 200, r.text
     return r.json()["data"]["id"]
 
 
-def _topic(client, project_id: str, title: str = "room", by: str = "u") -> str:
+def _topic(client, project_id: str, title: str = "room") -> str:
     r = client.post(
         "/topics",
-        json={"project_id": project_id, "title": title, "created_by": by},
+        json={"project_id": project_id, "title": title},
+        headers=session_auth_headers("u"),
     )
     assert r.status_code == 200, r.text
     return r.json()["data"]["id"]
@@ -213,9 +214,7 @@ def test_work_split_out_of_a_room_learns_into_the_rooms_pool(client):
 
     r = client.post(
         f"/topics/{room}/split",
-        json=dict(
-            reviewer_handle="alice", **{"title": "拆出来的活", "created_by": "u"}
-        ),
+        json=dict(reviewer_handle="alice", **{"title": "拆出来的活"}),
     )
     assert r.status_code == 200, r.text
     # 一张卡不是地点：拆出来的活在房间那一个会话里做，记忆也从房间记。
@@ -466,9 +465,7 @@ def test_a_credential_without_an_agent_identity_is_rejected(client):
     async def _resolve():
         async with client.test_factory() as session:
             resolver = ActorResolver(session=session, bearer=None, cheese_token=token)
-            return await resolver.resolve(
-                fallback_handle=None, project_id=_uuid.UUID(pid)
-            )
+            return await resolver.resolve(project_id=_uuid.UUID(pid))
 
     with pytest.raises(AuthenticationRequiredError):
         asyncio.run(_resolve())

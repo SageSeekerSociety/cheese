@@ -120,7 +120,6 @@ def _project_under(
         api_client,
         json={
             "name": "学生的项目",
-            "owner_handle": student.username,
             "external_task_id": task_id,
         },
         headers=_auth(student_token),
