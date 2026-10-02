@@ -51,6 +51,7 @@ from app.core.errors import ValidationError
 from app.core.redis import get_redis_client
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.notice_text import say
+from app.domain.gateway_chat import Usage, response_cost
 from app.domain.identity.handles import names_a_person
 from app.domain.project.models import Project
 from app.domain.room_task.models import Task
@@ -63,6 +64,7 @@ from app.domain.topic.models import (
     TopicStatus,
     TopicTitle,
 )
+from app.domain.usage.ledger import Ledger
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +72,8 @@ Reason = Literal["message", "turn", "signal"]
 Stage = Literal["name", "calibrate", "follow"]
 
 SETTINGS_KEY = "topic_naming"
+#: ``resource_usage.kind`` of a naming call.
+USAGE_KIND = "topic_naming"
 MODES = ("auto", "manual")
 
 # The whole prompt stays small: a title needs the gist, not the transcript.
@@ -359,6 +363,10 @@ class Answer:
 
     verdict: Verdict | None
     truncated: bool = False
+    #: What the call spent, as the gateway reported it; None when it never
+    #: answered.
+    usage: Usage | None = None
+    cost_usd: float = 0.0
 
 
 async def _ask(
@@ -394,13 +402,41 @@ async def _ask(
                 },
             )
             r.raise_for_status()
-            choice = r.json()["choices"][0]
+            payload = r.json()
+            usage = Usage.of(payload.get("usage"))
+            cost_usd = response_cost(r)
+            choice = payload["choices"][0]
             content = choice["message"]["content"] or ""
             truncated = choice.get("finish_reason") == "length"
     except Exception:  # noqa: BLE001 — see the module docstring
         logger.warning("topic naming call failed", exc_info=True)
         return Answer(verdict=None)
-    return Answer(verdict=parse_verdict(content), truncated=truncated)
+    return Answer(
+        verdict=parse_verdict(content),
+        truncated=truncated,
+        usage=usage,
+        cost_usd=cost_usd,
+    )
+
+
+async def _record_usage(factory: "SessionFactory", answer: Answer) -> None:
+    """Write what the call spent as the platform's own usage: naming is work
+    the platform does unasked, so no team pays for it (#2233). Its own session,
+    so the room the call is about stays as ``_write`` reads it."""
+    if answer.usage is None or not (answer.usage.total_tokens or answer.cost_usd):
+        return
+    try:
+        async with factory() as session:
+            await Ledger(session).record_platform(
+                kind=USAGE_KIND,
+                model=settings.topic_naming_model,
+                input_tokens=answer.usage.prompt_tokens,
+                output_tokens=answer.usage.completion_tokens,
+                cost_usd=answer.cost_usd,
+            )
+            await session.commit()
+    except Exception:  # noqa: BLE001 — see the module docstring
+        logger.warning("topic naming usage was not recorded", exc_info=True)
 
 
 # ---------- deciding when ----------
@@ -694,6 +730,7 @@ async def run(
                 _unasked(room_id, reason, "no_gateway_key")
                 return None
             answer = await _ask(key, material, transport)
+            await _record_usage(factory, answer)
             if answer.verdict is None:
                 # An answer cut off before it said anything is not the gateway
                 # failing, so the room is not made to wait out the backoff for

@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.domain.usage import ledger
 from app.domain.usage import repositories as repo
+from app.domain.usage.model_access import ModelAccess, model_access
 
 
 def _gateway_budget(balance: ledger.Balance, spent_usd: float) -> float | None:
@@ -50,6 +51,11 @@ class UsageService:
     async def plan_model_tiers(self, team_id: int) -> frozenset[str] | None:
         """The model tiers the team's plan allows; None is every tier."""
         return (await ledger.team_terms(self._session, team_id)).model_tiers
+
+    async def model_access(self, team_id: int) -> ModelAccess:
+        """Which models the team's plan lets it pick, and which plan each of
+        the others needs."""
+        return await model_access(self._session, team_id)
 
     async def admit_project(self, project_id: uuid.UUID):
         """Whether a call in this project may run now: None, or the

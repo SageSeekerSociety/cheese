@@ -87,6 +87,8 @@ from app.domain.membership.services import MemberService
 from app.domain.policy import gate
 from app.domain.project.schemas import ProjectDefaultModelUpdate
 from app.domain.project.services import ProjectService
+from app.domain.usage.model_access import ModelAccess
+from app.domain.usage.services import UsageService
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -94,10 +96,12 @@ router = APIRouter(prefix="/projects", tags=["projects"])
 # --- Project main and native subagent model defaults ---
 
 
-def _default_model_state(project_settings: dict | None) -> dict:
+def _default_model_state(project_settings: dict | None, access: ModelAccess) -> dict:
     from app.domain.agent_instance.configuration import model_choices, project_pool
 
-    choices = model_choices(project_settings)
+    # Each model says whether the team's plan allows it and, when not, which
+    # plan would; the picker shows that plan and does not offer the model.
+    choices = [access.mark(c) for c in model_choices(project_settings)]
     chosen = (project_settings or {}).get("default_model")
     # 落在目录里才是「真的设了」——历史数据可能写过部署兜底算不出来的名字，
     # 那种情况按没设处理，由调用方决定要不要报。这里只读，不修。
@@ -129,7 +133,8 @@ async def get_default_model(
     project = await ProjectRepository(db).get(project_id)
     if project is None:
         raise NotFoundError("Project not found")
-    state = _default_model_state(project.settings)
+    access = await UsageService(db).model_access(project.team_id)
+    state = _default_model_state(project.settings, access)
     try:
         await MemberService(db).require_manager(project_id, actor)
         state["can_manage"] = True
@@ -153,7 +158,8 @@ async def save_default_model(
     values = dict(project.settings or {})
     from app.domain.agent_instance.configuration import model_choices
 
-    valid = {c["id"] for c in model_choices(values)}
+    access = await UsageService(db).model_access(project.team_id)
+    valid = {c["id"]: c for c in model_choices(values)}
     for field, key in (
         ("model", "default_model"),
         ("subagent_model", "default_subagent_model"),
@@ -165,11 +171,13 @@ async def save_default_model(
             values.pop(key, None)
         elif chosen not in valid:
             raise ValidationError(say("modelUnavailableNamed", model=repr(chosen)))
+        elif not access.allows(valid[chosen]["tier"]):
+            raise ValidationError(say("modelNotInPlan", label=valid[chosen]["label"]))
         else:
             values[key] = chosen
     project.settings = values
     await db.flush()
-    state = _default_model_state(project.settings)
+    state = _default_model_state(project.settings, access)
     state["can_manage"] = True
     return ok(state)
 

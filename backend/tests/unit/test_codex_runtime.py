@@ -1,5 +1,6 @@
 """Room delivery survives a reader replacement without sending another turn."""
 
+import asyncio
 import json
 import uuid
 from contextlib import asynccontextmanager
@@ -15,6 +16,7 @@ from app.domain.agent.harness.channel import Placement, ScreenSetupError
 from app.domain.agent.harness.codex.channel import CodexChannel
 from app.domain.agent.harness.codex.journal import Journal
 from app.domain.agent.harness.codex.runtime import CodexRuntime, Handle
+from app.domain.agent.harness.driven.runner import LONG_POLL
 from app.domain.agent.harness.launch import ExecutorLaunch
 from app.domain.agent.service import AgentMessage, AgentResult
 from app.domain.agent_session.models import SessionPlace
@@ -88,6 +90,7 @@ async def test_recovery_continues_when_a_discovered_runner_disappears(
             "thread",
             "a",
             tmp_path / state[1:],
+            frozenset({LONG_POLL}),
         )
         for state in ("/dead", "/alive")
     ]
@@ -96,6 +99,9 @@ async def test_recovery_continues_when_a_discovered_runner_disappears(
         assert method in {"ping", "events"}, "recovery must not send a prompt"
         if handle == handles[0]:
             raise failure("center")
+        if method == "events" and params.get("wait"):
+            # Held, as a runner holds a read with nothing to answer it with.
+            await asyncio.sleep(params["wait"])
         return {"turn_id": None} if method == "ping" else {"events": []}
 
     channel = AsyncMock(
@@ -112,7 +118,15 @@ async def test_recovery_continues_when_a_discovered_runner_disappears(
 async def test_room_send_steer_and_reconnect_keep_one_work_owner(tmp_path):
     session = SessionRef(uuid.uuid4(), uuid.uuid4(), "agent", harness="codex")
     work = uuid.uuid4()
-    handle = Handle(session, "center", "/state", "thread", "agent", tmp_path / "mirror")
+    handle = Handle(
+        session,
+        "center",
+        "/state",
+        "thread",
+        "agent",
+        tmp_path / "mirror",
+        frozenset({LONG_POLL}),
+    )
     journal = Journal(tmp_path / "remote")
     inputs = []
     active = False
@@ -120,6 +134,13 @@ async def test_room_send_steer_and_reconnect_keep_one_work_owner(tmp_path):
     async def call(handle, method, params):
         nonlocal active
         if method == "events":
+            # Held, as a runner holds a read, until there is something past it.
+            deadline = asyncio.get_running_loop().time() + params.get("wait", 0)
+            while (
+                not journal.read(params["after"])
+                and asyncio.get_running_loop().time() < deadline
+            ):
+                await asyncio.sleep(0.01)
             return {"events": journal.read(params["after"])}
         if method == "ping":
             return {"turn_id": "turn" if active else None}

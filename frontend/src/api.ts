@@ -65,6 +65,7 @@ import type {
   WaitingItem,
   WorkspaceFile,
 } from './cx_types'
+import type { AgentFieldChoice } from './lib/modelChoices'
 import type { SitePage } from './types/site'
 
 import { desktopAppHeaders } from './lib/desktopApp'
@@ -1023,15 +1024,6 @@ export function setTopicComputeChoice(
 // transports. What they must NOT do is paper over a missing endpoint: the agent
 // backend lands separately, so a 404 here has to reach the caller as a 404 (see
 // `isEndpointMissing`) rather than as an empty list that reads like "no agents".
-
-// 一个模型在选单上的样子。后端是唯一事实源（model_choices），这里不留第二份
-// 清单。
-export interface AgentFieldChoice {
-  id: string
-  label: string
-  description: string
-  default: boolean
-}
 
 // Project main and native subagent model defaults.
 export interface ProjectDefaultModel {

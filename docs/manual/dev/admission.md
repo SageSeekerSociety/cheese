@@ -46,7 +46,7 @@ covers:
 - 项目来自 scoped token 的已验证 claims（`claims["p"]`），不是请求头——头是可以自称的。没有 token 或没有 `p` 就是 401。
 - `UsageService.admit_project()`（`usage/ledger.py` 的 `Ledger.admit`）答能不能跑：放行时 `reason` 是 `admitted`，拒绝时是账本的那句话（「本月额度已用完，11月1日重置。」或时间窗口满了几点恢复），见[计费流程](/dev/billing#plans)。
 - 同一份额度，网关那把 `max_budget` 也按它折成美元——**一个预算，两个执行点**。
-- 拒绝时顺手告诉房间：`note_credits_refusal(place)` 给正在跑的那个回合发一条额度耗尽事件（#715）。它用自己的数据库会话。
+- 拒绝时顺手告诉房间：`agent/credits_notice.py` 的 `note_credits_refusal` 给正在跑的那个回合（主线或它开的分身）发一条事件，说的是账本那句拒绝理由，和回合开始前被拒时房间里那句一样（#715）。它用自己的数据库会话。
 
 ## 供给这一半 {#supply}
 

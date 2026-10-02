@@ -49,11 +49,61 @@ QUARANTINED_PREFIX = "Quarantined"
 _claim_locks: dict[uuid.UUID, asyncio.Lock] = {}
 
 
-async def sweep_warm_pool(sessions: SessionFactory) -> None:
+# A provider that is down fails the same way on every sweep, one every few
+# seconds, and each of those lines was an alert. The pool says when it starts
+# failing and when it recovers, and in between once per this.
+FAILING_REMINDER_S = 3600.0
+
+
+class PoolHealth:
+    """Whether this process's sweeps of the pool are failing, and since when."""
+
+    def __init__(self) -> None:
+        self.since: float | None = None
+        self.said = 0.0
+
+    def failed(self, reason: str, exc: BaseException | None = None) -> None:
+        now = time.monotonic()
+        if self.since is None:
+            self.since = self.said = now
+            logger.error("warm pool failing: %s", reason, exc_info=exc)
+        elif now - self.said >= FAILING_REMINDER_S:
+            self.said = now
+            logger.error(
+                "warm pool still failing after %ds: %s",
+                now - self.since,
+                reason,
+                exc_info=exc,
+            )
+
+    def swept(self) -> None:
+        if self.since is not None:
+            logger.info("warm pool recovered after %ds", time.monotonic() - self.since)
+            self.since = None
+
+
+_health = PoolHealth()
+
+
+async def sweep_warm_pool(
+    sessions: SessionFactory, client: MicroCloudClient | None = None
+) -> None:
     async with sessions() as session:
-        service = WarmPoolService(session)
-        if service.client.configured:
-            await service.sweep()
+        service = WarmPoolService(session, client)
+        if not service.client.configured:
+            return
+        try:
+            swept = await service.sweep()
+        except Exception as exc:  # noqa: BLE001 — said on change, not every sweep
+            _health.failed(f"{type(exc).__name__}: {exc}", exc)
+            return
+        if swept is None:
+            # Another process holds the pool: this sweep learned nothing.
+            return
+        if swept:
+            _health.failed(swept)
+        else:
+            _health.swept()
 
 
 class WarmPoolService:
@@ -281,8 +331,12 @@ class WarmPoolService:
         )
         return True
 
-    async def sweep(self) -> None:
-        """A dedicated connection holds the worker lock across checkpoint commits."""
+    async def sweep(self) -> str | None:
+        """A dedicated connection holds the worker lock across checkpoint commits.
+
+        None when another process holds the pool; otherwise what keeps the
+        pool from being replenished, or "" when nothing does.
+        """
         engine = self.session.bind
         assert isinstance(engine, AsyncEngine)
         async with engine.connect() as connection:
@@ -290,15 +344,15 @@ class WarmPoolService:
                 text("SELECT pg_try_advisory_lock(:key)"), {"key": POOL_LOCK}
             )
             if not locked:
-                return
+                return None
             try:
-                await self._sweep_locked()
+                return await self._sweep_locked()
             finally:
                 await connection.execute(
                     text("SELECT pg_advisory_unlock(:key)"), {"key": POOL_LOCK}
                 )
 
-    async def _sweep_locked(self) -> None:
+    async def _sweep_locked(self) -> str:
         abandoned = (
             await self.session.scalars(
                 select(WarmMachine)
@@ -399,16 +453,15 @@ class WarmPoolService:
             )
         ).all()
         if len(active) >= settings.microcloud_warm_pool_size:
-            return
+            return ""
         unresolved = await self._settle_vanished_cleanups()
         if unresolved >= UNRESOLVED_CLEANUP_LIMIT:
-            logger.error(
-                "warm pool not replenished: %d machines failed cleanup and may "
-                "still be billed; resolve them at the provider first",
-                unresolved,
+            return (
+                f"not replenished: {unresolved} machines failed cleanup and may "
+                "still be billed; resolve them at the provider first"
             )
-            return
         await self._new()
+        return ""
 
     async def _new(self) -> None:
         origin = settings.connector_public_base.rstrip("/")

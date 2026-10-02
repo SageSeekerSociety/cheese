@@ -579,6 +579,30 @@ class Ledger:
         )
         return await self.charge(payer, credits)
 
+    async def record_platform(
+        self,
+        *,
+        kind: str,
+        model: str,
+        input_tokens: int,
+        output_tokens: int,
+        cost_usd: float,
+    ) -> None:
+        """Write the usage row of a call the platform made on its own (naming a
+        room, sorting old memories). The platform pays: the row names no team,
+        project or person and costs no credits, so no balance, time window or
+        usage page counts it (#2233)."""
+        await UsageRepository(self._session).add(
+            project_id=None,
+            topic_id=None,
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_usd=cost_usd,
+            kind=kind,
+            route="gateway",
+        )
+
     # ---- issuing -----------------------------------------------------------
 
     async def _plan_pack(self, team_id: int, credits: float) -> None:

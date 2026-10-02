@@ -163,6 +163,45 @@ async def test_the_report_comes_before_any_write(business_db_factory):
         assert [item["content"] for item in plan.sources] == ["发版前先跑一遍 make e2e"]
 
 
+async def test_what_the_migration_asks_is_the_platforms_spend(business_db_factory):
+    """搬迁是平台自己做的事（#2233）：花销记在平台头上，项目所在的团队一分不扣。"""
+    from app.domain.usage.ledger import Ledger, payer_for_project
+    from app.domain.usage.models import ResourceUsage
+
+    class _Billed(_Model):
+        async def complete(self, **kwargs) -> Completion:
+            answer = await super().complete(**kwargs)
+            return Completion(answer.content, Usage(500, 40), 0.01)
+
+    async with business_db_factory() as session:
+        project = await _project(session)
+        entry = await _old(session, project, "发版前先跑一遍 make e2e")
+        model = _Billed(
+            [
+                _decision(
+                    f"entry:{entry.id}",
+                    "team",
+                    path="run-e2e-before-release",
+                    type="project",
+                    description="发版前跑 make e2e",
+                    body="发版前先跑一遍 make e2e。",
+                )
+            ]
+        )
+        await MemoryMigrationService(session, chat=model).dry_run(
+            project.id, by="alice"
+        )
+        await session.commit()
+
+        rows = list(await session.scalars(select(ResourceUsage)))
+        assert [
+            (r.kind, r.input_tokens, r.output_tokens, r.cost_usd, r.team_id)
+            for r in rows
+        ] == [("memory_migration", 500, 40, 0.01, None)]
+        payer = await payer_for_project(session, project.id)
+        assert (await Ledger(session).balance(payer)).credits_used == 0
+
+
 async def test_a_project_with_nothing_left_to_move_has_no_report(business_db_factory):
     async with business_db_factory() as session:
         project = await _project(session)

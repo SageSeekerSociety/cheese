@@ -58,12 +58,10 @@ const projects = computed(() =>
 </template>
 
 <style scoped>
+/* 列宽和内边距由外框 AppPage 的 `read` 档给，标题和正文同一条左沿。 */
 .tcv {
   display: flex;
   flex-direction: column;
   gap: 32px;
-  max-width: var(--page-w);
-  margin-inline: auto;
-  padding: 24px 16px 48px;
 }
 </style>
