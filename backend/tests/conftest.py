@@ -929,6 +929,18 @@ def _no_background_doc_nudge(monkeypatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _forge_quota_per_test(monkeypatch) -> None:
+    """What GitHub said about an installation's quota is process-wide memory
+    (`core/forge_quota.py`). A refusal one test provoked must not close the
+    installation for whichever test runs next."""
+    from app.core import forge_quota
+
+    monkeypatch.setattr(forge_quota, "_owners", {})
+    monkeypatch.setattr(forge_quota, "_readings", {})
+    monkeypatch.setattr(forge_quota, "_refused_until", {})
+
+
+@pytest.fixture(autouse=True)
 def _redis_client_per_loop() -> Iterator[None]:
     """No test may inherit the redis client another test built.
 

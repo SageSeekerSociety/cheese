@@ -29,13 +29,9 @@ INSTALLATION = 152342238
 
 @pytest.fixture
 def clock(monkeypatch):
-    """The quota memory's clock, starting now and moved by hand; the memory
-    itself starts empty."""
+    """The quota memory's clock, starting now and moved by hand."""
     now = [time.time()]
     monkeypatch.setattr(forge_quota, "time", SimpleNamespace(time=lambda: now[0]))
-    monkeypatch.setattr(forge_quota, "_owners", {})
-    monkeypatch.setattr(forge_quota, "_readings", {})
-    monkeypatch.setattr(forge_quota, "_refused_until", {})
     return now
 
 
