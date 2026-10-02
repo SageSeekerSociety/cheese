@@ -11,7 +11,7 @@
 // 这里把它们画成按钮。手机上这一行不画，同一批命令由顶栏画（MobileAppBar）。
 //
 // 宽度也归这里：`read` 是读和填表的那一栏（--page-w），`full` 给多列的工作面（看
-// 板）。页面不再各自写一个数字。
+// 板），`admin` 是管理后台的工作台（--page-w-admin）。页面不再各自写一个数字。
 import type { NavTarget } from '@/lib/navTarget'
 
 import { useDisplay } from 'vuetify'
@@ -22,7 +22,7 @@ import NavLink from '@/components/common/NavLink.vue'
 withDefaults(
   defineProps<{
     title: string
-    width?: 'read' | 'full'
+    width?: 'read' | 'full' | 'admin'
     // 这一页是另一页里的一项（成员名册里的一个人）：页头写成「成员 / 名字」，前
     // 一段点回去。
     parent?: { label: string; to: NavTarget }
@@ -165,6 +165,19 @@ const { mdAndUp } = useDisplay()
 }
 .app-page__column--read {
   max-width: calc(var(--page-w) + 32px);
+}
+/* 后台那一档也自己管内边距（表格、卡片各有各的内缩）。断点都是容器查询，所以这一列
+   是查询容器；`container-type` 做了行内尺寸包含，宽度推不出来，必须写 `width: 100%`。
+   列至少和正文一样高：队列那张表要撑到底。 */
+.app-page__column--admin {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: var(--page-w-admin);
+  min-height: 100%;
+  padding: 0;
+  container-type: inline-size;
 }
 /* 满宽的那种自己管内边距：看板那几列各自滚动，得把高度一路钉到底。 */
 .app-page__column--full {

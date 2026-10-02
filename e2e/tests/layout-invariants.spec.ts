@@ -317,17 +317,18 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
     await expect(page.getByRole('heading', { name: '反馈队列' })).toBeVisible();
     await expect(page.locator('.qlist')).toBeVisible();
 
-    // 1440 封顶居中：1920 去掉 64 全局 rail 与 200 侧栏后可用 1656，这一档两侧
-    // 各留 108。量的参照物是 `.admin-shell__main`（它自己无 padding），不是按
-    // 264 这个常数反推——侧栏宽度将来再改，这条用例量的东西不变。
-    const box = await page.locator('.qpage__inner').boundingBox();
-    const main = await page.locator('.admin-shell__main').boundingBox();
+    // 1440 封顶居中。量的参照物是页面正文那一格（`.app-page__body`），不是按侧栏宽度
+    // 反推——侧栏能拖宽拖窄，这条用例量的东西不变：列宽 1440，两侧留白相等。
+    const box = await page.locator('.app-page__column--admin').boundingBox();
+    const main = await page.locator('.app-page__body').evaluate((el) => {
+      const rect = el.getBoundingClientRect();
+      return { x: rect.x, width: el.clientWidth };
+    });
     expect(box!.width).toBeGreaterThanOrEqual(1438);
     expect(box!.width).toBeLessThanOrEqual(1442);
-    const left = box!.x - main!.x;
-    const right = main!.x + main!.width - (box!.x + box!.width);
-    expect(Math.abs(left - 108)).toBeLessThanOrEqual(2);
-    expect(Math.abs(right - 108)).toBeLessThanOrEqual(2);
+    const left = box!.x - main.x;
+    const right = main.x + main.width - (box!.x + box!.width);
+    expect(Math.abs(left - right)).toBeLessThanOrEqual(2);
 
     // 宽档的意义是整行在 1440 里放得下，不是把横滚挪到更宽的屏上。
     const noHScroll = await page.locator('.qlist').evaluate((el) => el.scrollWidth <= el.clientWidth + 1);
@@ -386,7 +387,8 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
     ]) {
       await page.setViewportSize(size);
       await page.goto('/admin/dashboard');
-      await expect(page.getByRole('heading', { name: '看板' })).toBeVisible();
+      // 手机上页名在顶栏里，不是页内的标题；分类导轨两档都在。
+      await expect(page.locator('.ad__kinds')).toBeVisible();
 
       for (const tab of ['反馈', '用量', '平台']) {
         // `exact: true`：顶栏那颗「帮助与反馈」（另一个 PR）的可访问名字里也含「反馈」，
@@ -418,8 +420,10 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
       expect(await textOverlaps(page.locator('body')), `1920px · ${tab}`).toEqual([]);
     }
 
-    // 内容列吃满 admin 档的 1440（侧栏展开时 1920 视口的可用宽是 1608，1440 居中）。
-    const innerWidth = await page.locator('.ad__inner').evaluate((el) => el.getBoundingClientRect().width);
+    // 内容列吃满 admin 档的 1440（1920 视口去掉全局 rail 与侧栏后仍宽于 1440，居中）。
+    const innerWidth = await page
+      .locator('.app-page__column--admin')
+      .evaluate((el) => el.getBoundingClientRect().width);
     expect(Math.round(innerWidth)).toBe(1440);
     // KPI 网格在 ≥1320 容器宽升到 auto-fit：轨道数不少于 4（此刻停在「平台」类，
     // 5 张卡）。

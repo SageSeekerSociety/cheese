@@ -39,7 +39,6 @@ const GATEWAY_DOWN_DETAIL = 'connect ECONNREFUSED 10.0.0.4:4000'
 /** 页头那一组 props。`health` 是 composable 算好的形状，这里直接给。 */
 export function modelsHeaderProps(over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    sub: '网关上的模型、单价与每个项目的额度 · 2026-09-23 – 2026-09-30',
     health: { ok: true, text: 'ready · 3 小时前', title: '网关在运行，管理密钥已配。' },
     days: 7,
     windows: [7, 14, 30],

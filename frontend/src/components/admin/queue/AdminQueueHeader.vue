@@ -3,10 +3,8 @@ import type { QueueView } from '@/composables/useAdminQueue'
 
 import { useI18n } from 'vue-i18n'
 
-import AdminPageHeader from '@/components/admin/AdminPageHeader.vue'
-
-// 队列页的页头：标题、一句说明，和右上角那排工具 —— 未读徽标、「标记为已读」、刷新、
-// 视图切换（F-05）。
+// 队列页页头右边那排工具 —— 未读徽标、「标记为已读」、刷新、视图切换（F-05）。标题和
+// 说明由页面交给 `AdminPage`。
 //
 // 这一件不认识接口、不认识路由、不认识 store：吃 props、往上发事件。**未读数是一个 prop
 // 而不是它自己去问 store** —— 「有没有未读」是页面（更准确地说，是 store 那份 counts）
@@ -38,51 +36,45 @@ const VIEWS: QueueView[] = ['list', 'table']
 </script>
 
 <template>
-  <!-- `aph--flush`：下面那条工具行和页头同住一条白色带（后台三层骨架的头一层），
-       一条白带只有一道最下面的线，所以页头自己那道不画。 -->
-  <AdminPageHeader class="aph--flush" :title="t('feedback.queue.label')" :sub="t('feedback.queue.sub')">
-    <template #tools>
-      <!-- 未读数。F-13 修的就是它：这个数以前没有人清零，也没有一处模板读它。 -->
-      <span v-if="unread > 0" class="qpage__badge t-num" aria-live="polite">
-        {{ t('feedback.queue.unread', { n: unread }) }}
-      </span>
-      <v-btn
-        v-if="unread > 0"
-        variant="text"
-        size="small"
-        :title="t('notifications.common.markAsRead')"
-        @click="emit('mark-read')"
-      >
-        {{ t('notifications.common.markAsRead') }}
-      </v-btn>
+  <!-- 未读数。F-13 修的就是它：这个数以前没有人清零，也没有一处模板读它。 -->
+  <span v-if="unread > 0" class="qpage__badge t-num" aria-live="polite">
+    {{ t('feedback.queue.unread', { n: unread }) }}
+  </span>
+  <v-btn
+    v-if="unread > 0"
+    variant="text"
+    size="small"
+    :title="t('notifications.common.markAsRead')"
+    @click="emit('mark-read')"
+  >
+    {{ t('notifications.common.markAsRead') }}
+  </v-btn>
 
-      <button
-        type="button"
-        class="qpage__icon-btn"
-        :aria-label="t('feedback.queue.refresh')"
-        :title="t('feedback.queue.refresh')"
-        @click="emit('refresh')"
-      >
-        <v-icon icon="mdi-refresh" size="16" aria-hidden="true" />
-      </button>
+  <button
+    type="button"
+    class="qpage__icon-btn"
+    :aria-label="t('feedback.queue.refresh')"
+    :title="t('feedback.queue.refresh')"
+    @click="emit('refresh')"
+  >
+    <v-icon icon="mdi-refresh" size="16" aria-hidden="true" />
+  </button>
 
-      <!-- 视图切换（F-05）：24px 高，落在页头右上角。**切换不重新取数** —— 两个视图
+  <!-- 视图切换（F-05）：24px 高，落在页头右上角。**切换不重新取数** —— 两个视图
            读的是同一份 `adminItems`（§13 C-10）。 -->
-      <div class="qpage__seg" role="group" :aria-label="t('feedback.queue.label')">
-        <button
-          v-for="option in VIEWS"
-          :key="option"
-          type="button"
-          class="qpage__seg-btn"
-          :class="{ 'qpage__seg-btn--on': view === option }"
-          :aria-pressed="view === option"
-          @click="emit('update:view', option)"
-        >
-          {{ option === 'list' ? t('feedback.queue.view.list') : t('feedback.queue.view.table') }}
-        </button>
-      </div>
-    </template>
-  </AdminPageHeader>
+  <div class="qpage__seg" role="group" :aria-label="t('feedback.queue.label')">
+    <button
+      v-for="option in VIEWS"
+      :key="option"
+      type="button"
+      class="qpage__seg-btn"
+      :class="{ 'qpage__seg-btn--on': view === option }"
+      :aria-pressed="view === option"
+      @click="emit('update:view', option)"
+    >
+      {{ option === 'list' ? t('feedback.queue.view.list') : t('feedback.queue.view.table') }}
+    </button>
+  </div>
 </template>
 
 <style scoped>

@@ -8,7 +8,7 @@ import { getAvatarUrl } from '@/utils/materials'
 
 import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminFlash from '@/components/admin/AdminFlash.vue'
-import AdminPageHeader from '@/components/admin/AdminPageHeader.vue'
+import AdminPage from '@/components/admin/AdminPage.vue'
 import AdminTabs from '@/components/admin/AdminTabs.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
@@ -23,7 +23,7 @@ import { SpacesApi } from '@/network/api/spaces'
 //
 // 这一版换的是**壳**（做法不变）：
 //
-//   1. 页头与状态筛选改用后台共用的 `AdminPageHeader` + `AdminTabs`（原来是一个
+//   1. 页头与状态筛选改用后台共用的 `AdminPage` + `AdminTabs`（原来是一个
 //      `v-select` 撑满整行 —— 三个选项的筛选器占 1070px，是「控件在替内容占地方」）。
 //   2. 从 `v-card` 一卡一条改成**紧凑列表**：一页十几条时，卡与卡之间的空隙比正文还高。
 //   3. `intro` 与 `description` 一起画时常常是同一句话（建版时同一次填的），所以
@@ -136,28 +136,28 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="asp admin-page">
-    <div class="asp__inner admin-page__col page-container--admin">
-      <AdminPageHeader :title="t('spaces.review.title')" :sub="t('spaces.review.adminHelp')">
-        <template #tools>
-          <v-btn
-            icon="mdi-refresh"
-            variant="text"
-            size="small"
-            :aria-label="t('spaces.review.refresh')"
-            :loading="loading"
-            :disabled="saving"
-            @click="load"
-          />
-        </template>
-        <!-- 状态筛选是这一页唯一的筛选器，摆在页头：三个值就是三次「我要看哪一堆」。 -->
+  <div class="asp">
+    <AdminPage :title="t('spaces.review.title')" :sub="t('spaces.review.adminHelp')">
+      <template #tools>
+        <v-btn
+          icon="mdi-refresh"
+          variant="text"
+          size="small"
+          :aria-label="t('spaces.review.refresh')"
+          :loading="loading"
+          :disabled="saving"
+          @click="load"
+        />
+      </template>
+      <template #extra>
+        <!-- 状态筛选是这一页唯一的筛选器，摆在页头下面：三个值就是三次「我要看哪一堆」。 -->
         <AdminTabs
           :label="t('spaces.review.status')"
           :model-value="status"
           :options="statusOptions"
           @update:model-value="changeStatus($event)"
         />
-      </AdminPageHeader>
+      </template>
 
       <div class="asp__body admin-page__body">
         <!-- 通过 / 驳回失败：一条 token 画的横条。驳回框开着时这一句在框里说
@@ -246,7 +246,7 @@ onMounted(load)
           </v-btn>
         </div>
       </div>
-    </div>
+    </AdminPage>
 
     <!-- 驳回：要一句理由 —— 申请的人看不到这句话之外的任何解释。 -->
     <v-dialog
@@ -289,6 +289,11 @@ onMounted(load)
 </template>
 
 <style scoped>
+/* 根上还挂着对话框，页面本身（`AdminPage`）要拿到整格高度。 */
+.asp {
+  height: 100%;
+}
+
 /* 列表是一张卡：外描边 + 圆角，行与行之间是发丝线。`overflow: hidden` 让首末两行
    自己不去画圆角（这里没有 sticky 表头，不存在 `AdminGrid` 那条坑）。 */
 .asp__panel {

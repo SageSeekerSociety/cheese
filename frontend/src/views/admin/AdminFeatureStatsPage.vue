@@ -6,7 +6,7 @@ import { useI18n } from 'vue-i18n'
 import { RouterLink } from 'vue-router'
 
 import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
-import AdminPageHeader from '@/components/admin/AdminPageHeader.vue'
+import AdminPage from '@/components/admin/AdminPage.vue'
 import { getFeatureCatalogue } from '@/views/admin/features/featureApi'
 import { findFeatureView } from '@/views/admin/features/registry'
 
@@ -64,56 +64,44 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="afs admin-page">
-    <div class="afs__inner admin-page__col page-container--admin">
-      <AdminPageHeader :title="t('featureStats.page.title')" :sub="t('featureStats.page.subtitle')" />
+  <AdminPage :title="t('featureStats.page.title')" :sub="t('featureStats.page.subtitle')">
+    <div class="afs__body admin-page__body">
+      <p class="afs__floor t-meta-read">{{ t('featureStats.page.noNumbers') }}</p>
 
-      <div class="afs__body admin-page__body">
-        <p class="afs__floor t-meta-read">{{ t('featureStats.page.noNumbers') }}</p>
-
-        <div v-if="loading" class="afs__list">
-          <span v-for="n in 3" :key="n" class="afs__bone" />
-        </div>
-
-        <AdminEmptyState
-          v-else-if="loadError !== null"
-          :title="t('featureStats.page.loadFailed')"
-          :desc="loadError || undefined"
-          :action="t('featureStats.page.retry')"
-          tone="error"
-          @action="load"
-        />
-
-        <AdminEmptyState v-else-if="rows.length === 0" :title="t('featureStats.page.empty')" />
-
-        <ul v-else class="afs__list">
-          <li v-for="row in rows" :key="row.id" class="afs__item">
-            <RouterLink v-if="row.to" :to="row.to" class="afs__link">
-              <span class="afs__name">{{ row.title }}</span>
-              <span class="afs__desc">{{ row.summary }}</span>
-              <span class="afs__go" aria-hidden="true">→</span>
-            </RouterLink>
-            <div v-else class="afs__link afs__link--dim">
-              <span class="afs__name">{{ row.title }}</span>
-              <span class="afs__desc">{{ row.summary }}</span>
-              <span class="afs__soon t-meta-read">{{ t('featureStats.page.notBuilt') }}</span>
-            </div>
-          </li>
-        </ul>
+      <div v-if="loading" class="afs__list">
+        <span v-for="n in 3" :key="n" class="afs__bone" />
       </div>
+
+      <AdminEmptyState
+        v-else-if="loadError !== null"
+        :title="t('featureStats.page.loadFailed')"
+        :desc="loadError || undefined"
+        :action="t('featureStats.page.retry')"
+        tone="error"
+        @action="load"
+      />
+
+      <AdminEmptyState v-else-if="rows.length === 0" :title="t('featureStats.page.empty')" />
+
+      <ul v-else class="afs__list">
+        <li v-for="row in rows" :key="row.id" class="afs__item">
+          <RouterLink v-if="row.to" :to="row.to" class="afs__link">
+            <span class="afs__name">{{ row.title }}</span>
+            <span class="afs__desc">{{ row.summary }}</span>
+            <span class="afs__go" aria-hidden="true">→</span>
+          </RouterLink>
+          <div v-else class="afs__link afs__link--dim">
+            <span class="afs__name">{{ row.title }}</span>
+            <span class="afs__desc">{{ row.summary }}</span>
+            <span class="afs__soon t-meta-read">{{ t('featureStats.page.notBuilt') }}</span>
+          </div>
+        </li>
+      </ul>
     </div>
-  </div>
+  </AdminPage>
 </template>
 
 <style scoped>
-/* 骨架三层（画布 + 1440 那一列 + 正文）由 `.admin-page` / `__col` / `__body` 给。
-   以前这一页是「根上 `padding: 0 24px` + 页头负 margin 抵掉」，于是页头那道发丝线比
-   列宽多出 24px，和卡片的两端对不上；现在页头住进 1440 那一列，三者同一条竖线。 */
-.afs {
-  display: flex;
-  flex-direction: column;
-}
-
 /* 「这一页只列功能」那句话是**口径**，不是装饰：放在列表上面一行，读完标题就读到它。
    常驻不收起（它防的误读是「这里怎么没数字」，而这个问题每个人第一次都会问）。 */
 .afs__floor {

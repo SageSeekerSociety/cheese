@@ -10,7 +10,7 @@ import { addPlatformAdmin, listPlatformAdmins, removePlatformAdmin, searchAdminC
 import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminFlash from '@/components/admin/AdminFlash.vue'
 import AdminGrid from '@/components/admin/AdminGrid.vue'
-import AdminPageHeader from '@/components/admin/AdminPageHeader.vue'
+import AdminPage from '@/components/admin/AdminPage.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
@@ -43,7 +43,7 @@ import { relTime } from '@/lib/relTime'
 //   4. **刷新有 busy 态**：手上已有名单时再取数只把旧名单压暗（AdminGrid 既有能力，
 //      这页以前没用），不闪骨架。
 //
-// 这一版换的是**壳**，不是做法：页头改用 `AdminPageHeader`（五个后台页各写一份页头，
+// 这一版换的是**壳**，不是做法：页头改用后台共用的那一份（五个后台页各写一份页头，
 // 字号和内边距各不相同，切分区时页头会跳）、错误与提示改用 token 画的一条横条（`v-alert`
 // 的默认样和这一页的表格不是一套）、头像从 `components/feedback/FeedbackAuthorAvatar`
 // 换成 `components/common/UserAvatar`（后台不该依赖反馈那个目录；这里只用到「有 id 就
@@ -278,25 +278,23 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="am admin-page">
-    <div class="am__inner admin-page__col page-container--admin">
-      <AdminPageHeader :title="t('members.header.title')" :sub="t('members.header.subtitle')">
-        <template #tools>
-          <span class="t-meta-read t-num am__count">{{ countLine }}</span>
-          <v-btn
-            icon="mdi-refresh"
-            variant="text"
-            size="small"
-            :aria-label="t('members.toolbar.refresh')"
-            :loading="loading"
-            @click="load"
-          />
-          <!-- 全页唯一一块琥珀：这一页确实有一个主操作，而它就是这个。 -->
-          <v-btn color="primary" size="small" prepend-icon="mdi-account-plus-outline" @click="openDialog">
-            {{ t('members.toolbar.add') }}
-          </v-btn>
-        </template>
-      </AdminPageHeader>
+  <div class="am">
+    <AdminPage :title="t('members.header.title')" :sub="t('members.header.subtitle')">
+      <template #tools>
+        <span class="t-meta-read t-num am__count">{{ countLine }}</span>
+        <v-btn
+          icon="mdi-refresh"
+          variant="text"
+          size="small"
+          :aria-label="t('members.toolbar.refresh')"
+          :loading="loading"
+          @click="load"
+        />
+        <!-- 全页唯一一块琥珀：这一页确实有一个主操作，而它就是这个。 -->
+        <v-btn color="primary" size="small" prepend-icon="mdi-account-plus-outline" @click="openDialog">
+          {{ t('members.toolbar.add') }}
+        </v-btn>
+      </template>
 
       <div class="am__body admin-page__body">
         <!-- 读不到名单时**不在这里说话**：那一条画在表格自己的位置上（列头下面、
@@ -525,7 +523,7 @@ onMounted(load)
           </AdminGrid>
         </div>
       </div>
-    </div>
+    </AdminPage>
 
     <!-- 加人的框照「成员页面邀请」那一套：按钮 → 对话框 → 可搜的多选 + 添加。
          区别只有一个，是数据来源：那边的人选是一次拉回来的项目成员，这里上千个账号，
@@ -617,6 +615,11 @@ onMounted(load)
 </template>
 
 <style scoped>
+/* 根上还挂着对话框，页面本身（`AdminPage`）要拿到整格高度。 */
+.am {
+  height: 100%;
+}
+
 /* 人数：页头工具槽里的一格元信息。`min-height` 是给「名单还没回来」那一帧留位，
    否则数字到货时工具槽会长一行、页头跟着跳一下。 */
 .am__count {
@@ -745,8 +748,8 @@ onMounted(load)
   text-align: right;
 }
 
-/* 窄屏：内容内边距收到 16px —— 页头那一层自己也是这么收的（`AdminPageHeader` 的
-   700px 断点），两处一起收页头下那条线才不会歪。 */
+/* 窄屏：内容内边距收到 16px —— 页头下那句说明也是这么收的（`AdminPage` 的 700px
+   断点），两处一起收左沿才对得齐。 */
 @media (max-width: 700px) {
   .am__body {
     padding: 12px 16px 16px;

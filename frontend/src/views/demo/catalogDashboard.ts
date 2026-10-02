@@ -24,11 +24,13 @@ import {
   DASH_PRODUCT,
   DASH_USAGE,
   dashHeaderProps,
+  dashKindsProps,
 } from './catalogDashboardFixtures'
 
 import AdminDashboardFeedback from '@/components/admin/dashboard/AdminDashboardFeedback.vue'
 import AdminDashboardHeader from '@/components/admin/dashboard/AdminDashboardHeader.vue'
 import AdminDashboardIntegrations from '@/components/admin/dashboard/AdminDashboardIntegrations.vue'
+import AdminDashboardKinds from '@/components/admin/dashboard/AdminDashboardKinds.vue'
 import AdminDashboardPerformance from '@/components/admin/dashboard/AdminDashboardPerformance.vue'
 import AdminDashboardPipeline from '@/components/admin/dashboard/AdminDashboardPipeline.vue'
 import AdminDashboardPlatform from '@/components/admin/dashboard/AdminDashboardPlatform.vue'
@@ -45,21 +47,43 @@ export const DASHBOARD_ENTRIES: CatalogEntry[] = [
   {
     id: 'admin-dashboard-header',
     title: 'AdminDashboardHeader',
-    about: '看板页头：标题、窗口 7/30/90，和那条一眼看全七类的分类导轨。',
+    about: '看板页头右边：窗口 7/30/90 和更新时间。',
     file: 'src/components/admin/dashboard/AdminDashboardHeader.vue',
     component: AdminDashboardHeader,
     needs: ['vuetify', 'i18n'],
     states: [
       {
-        name: '停在交付',
-        note: '导轨上每一格是「这一类最该被看见的那个数」；窗口切换器只在有「过去 N 天」这个说法的分类上出现。',
+        name: '有窗口的那一类',
+        note: '窗口切换器只在有「过去 N 天」这个说法的分类上出现。',
         props: dashHeaderProps(),
-        expect: '交付',
+        expect: '30 天',
       },
       {
         name: '没有窗口的那一类',
         note: '集成和性能读的是存量与进程内存，没有「过去 N 天」——切到它们时 7/30/90 那一行整个收起来，不摆一个假窗口。',
-        props: dashHeaderProps({ current: 'integrations', windowed: false }),
+        props: dashHeaderProps({ windowed: false }),
+        expect: '06:13',
+      },
+    ],
+  },
+  {
+    id: 'admin-dashboard-kinds',
+    title: 'AdminDashboardKinds',
+    about: '看板的分类导轨：一眼看全七类，每一格带这一类最该被看见的那个数。',
+    file: 'src/components/admin/dashboard/AdminDashboardKinds.vue',
+    component: AdminDashboardKinds,
+    needs: ['vuetify', 'i18n'],
+    states: [
+      {
+        name: '停在交付',
+        note: '导轨上每一格是「这一类最该被看见的那个数」；点一格只往上报，切哪一类是页面的事。',
+        props: dashKindsProps(),
+        expect: '交付',
+      },
+      {
+        name: '停在集成',
+        note: '选中那一格是墨色加下划线，不用琥珀。',
+        props: dashKindsProps({ current: 'integrations' }),
         expect: '集成',
       },
     ],
