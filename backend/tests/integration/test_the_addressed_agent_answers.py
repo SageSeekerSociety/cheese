@@ -13,7 +13,7 @@ from tests.integration.conftest import post_project, session_auth_headers
 
 
 def _project(client, name: str = "Two teammates") -> str:
-    r = post_project(client, json={"name": name})
+    r = post_project(client, json={"name": name}, owner="alice")
     assert r.status_code == 200, r.text
     return r.json()["data"]["id"]
 
@@ -42,7 +42,8 @@ def test_addressing_the_second_teammate_addresses_the_second_teammate(client):
     second = _agent(client, project, "reviewer", "审稿人")
     topic = client.post(
         "/topics",
-        json={"project_id": project, "title": "Room", "created_by": "alice"},
+        json={"project_id": project, "title": "Room"},
+        headers=session_auth_headers("alice"),
     ).json()["data"]["id"]
 
     for made in (first, second):
@@ -84,7 +85,8 @@ def test_an_at_for_a_teammate_not_in_the_room_is_plain_words(client):
     elsewhere = _agent(client, project, "reviewer", "审稿人")
     topic = client.post(
         "/topics",
-        json={"project_id": project, "title": "Room", "created_by": "alice"},
+        json={"project_id": project, "title": "Room"},
+        headers=session_auth_headers("alice"),
     ).json()["data"]["id"]
     _seat(client, topic, agent_instance_handle(seated["id"]))
 

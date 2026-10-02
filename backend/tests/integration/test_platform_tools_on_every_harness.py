@@ -40,7 +40,11 @@ from app.domain.agent.harness.claude_code.remote_execution import (
 from app.domain.agent.harness.codex.tools import RemoteTools
 from app.domain.agent.harness.pi.machine import Machine
 from app.domain.agent.harness.pi.runner import Runner as PiRunner
-from tests.integration.conftest import chat_ws_url, post_message, post_project
+from tests.integration.conftest import (
+    chat_ws_url,
+    post_message,
+    post_project,
+)
 from tests.support.room_machine import NO_MACHINE
 
 CLI = Path(__file__).resolve().parents[2] / "sandbox" / "cheese"
@@ -121,10 +125,12 @@ def _relay(client) -> ThreadingHTTPServer:
 
 @pytest.fixture
 def room(client):
-    project = post_project(client, json={"name": "Harnesses"}).json()["data"]
+    project = post_project(client, json={"name": "Harnesses"}, owner="alice").json()[
+        "data"
+    ]
     topic = client.post(
         "/topics",
-        json={"project_id": project["id"], "title": "Work", "created_by": "alice"},
+        json={"project_id": project["id"], "title": "Work"},
     ).json()["data"]
     return project["id"], topic["id"]
 

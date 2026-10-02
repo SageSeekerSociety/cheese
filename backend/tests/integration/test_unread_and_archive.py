@@ -9,11 +9,12 @@ from tests.integration.conftest import post_project, session_auth_headers
 
 
 def _create_project_and_topic(client, title: str = "话题A") -> tuple[str, str]:
-    pr = post_project(client, json={"name": "Demo", "owner_handle": "user-1"})
+    pr = post_project(client, json={"name": "Demo"}, owner="user-1")
     project_id = pr.json()["data"]["id"]
     tr = client.post(
         "/topics",
-        json={"project_id": project_id, "title": title, "created_by": "user-1"},
+        json={"project_id": project_id, "title": title},
+        headers=session_auth_headers("user-1"),
     )
     topic_id = tr.json()["data"]["id"]
     return project_id, topic_id
@@ -197,7 +198,7 @@ def test_manual_archive_and_unarchive(client):
 
 
 def test_root_topic_cannot_be_archived(client):
-    pr = post_project(client, json={"name": "RootGuard", "owner_handle": "user-1"})
+    pr = post_project(client, json={"name": "RootGuard"}, owner="user-1")
     root_topic_id = pr.json()["data"].get("root_topic_id")
     if root_topic_id is None:
         return  # project without a root topic — nothing to guard
@@ -216,20 +217,22 @@ def test_archive_cascades_to_the_work_in_the_room(client):
     Room and thread end in different words on purpose: a room is `archived`
     (a person put it away) and a thread is `closed` (its work stopped).
     """
-    pr = post_project(client, json={"name": "P", "owner_handle": "u"})
+    pr = post_project(client, json={"name": "P"}, owner="u")
     pid = pr.json()["data"]["id"]
     t = client.post(
-        "/topics", json={"project_id": pid, "title": "父", "created_by": "u"}
+        "/topics",
+        json={"project_id": pid, "title": "父"},
+        headers=session_auth_headers("u"),
     )
     parent = t.json()["data"]["id"]
     c1 = client.post(
         f"/topics/{parent}/split",
-        json=dict(reviewer_handle="alice", **{"title": "子1", "created_by": "u"}),
+        json=dict(reviewer_handle="alice", **{"title": "子1"}),
     ).json()["data"]["id"]
     wait_work_idle()
     c2 = client.post(
         f"/topics/{parent}/split",
-        json=dict(reviewer_handle="alice", **{"title": "子2", "created_by": "u"}),
+        json=dict(reviewer_handle="alice", **{"title": "子2"}),
     ).json()["data"]["id"]
     wait_work_idle()
 

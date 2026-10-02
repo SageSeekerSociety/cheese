@@ -36,11 +36,12 @@ async def test_every_session_in_a_room_acquires_the_rooms_device(
     client, monkeypatch, old_online, background_state
 ):
     project = post_project(
-        client, json={"name": "Session hands", "owner_handle": "alice"}
+        client, json={"name": "Session hands"}, owner="alice"
     ).json()["data"]
     room = client.post(
         "/topics",
-        json={"project_id": project["id"], "title": "Room", "created_by": "alice"},
+        json={"project_id": project["id"], "title": "Room"},
+        headers=session_auth_headers("alice"),
     ).json()["data"]
     project_id, topic_id = uuid.UUID(project["id"]), uuid.UUID(room["id"])
     async with client.test_factory() as db:
@@ -505,11 +506,12 @@ async def test_lazy_executor_lifecycle_keeps_the_same_allocation(
     client, monkeypatch, scenario, tmp_path
 ):
     project = post_project(
-        client, json={"name": "Session hands", "owner_handle": "alice"}
+        client, json={"name": "Session hands"}, owner="alice"
     ).json()["data"]
     room = client.post(
         "/topics",
-        json={"project_id": project["id"], "title": "Room", "created_by": "alice"},
+        json={"project_id": project["id"], "title": "Room"},
+        headers=session_auth_headers("alice"),
     ).json()["data"]
     project_id, topic_id = uuid.UUID(project["id"]), uuid.UUID(room["id"])
     async with client.test_factory() as db:
@@ -750,15 +752,15 @@ async def test_the_rooms_agent_may_choose_cloud(client, monkeypatch):
     from app.domain.team.models import Team
 
     project = post_project(
-        client, json={"name": "Cloud authority", "owner_handle": "alice"}
+        client, json={"name": "Cloud authority"}, owner="alice"
     ).json()["data"]
     room = client.post(
         "/topics",
         json={
             "project_id": project["id"],
             "title": "Cloud room",
-            "created_by": "alice",
         },
+        headers=session_auth_headers("alice"),
     ).json()["data"]
     project_id, topic_id = uuid.UUID(project["id"]), uuid.UUID(room["id"])
     async with client.test_factory() as db:
@@ -919,12 +921,13 @@ async def test_each_dialer_gets_its_configured_base_not_the_request_host(
     monkeypatch.setattr(
         settings, "connector_public_base", "https://cheese.example.test/api"
     )
-    project = post_project(
-        client, json={"name": "Dialers", "owner_handle": "alice"}
-    ).json()["data"]
+    project = post_project(client, json={"name": "Dialers"}, owner="alice").json()[
+        "data"
+    ]
     room = client.post(
         "/topics",
-        json={"project_id": project["id"], "title": "Room", "created_by": "alice"},
+        json={"project_id": project["id"], "title": "Room"},
+        headers=session_auth_headers("alice"),
     ).json()["data"]
     project_id, topic_id = uuid.UUID(project["id"]), uuid.UUID(room["id"])
     async with client.test_factory() as db:
@@ -1027,11 +1030,12 @@ async def test_calls_on_held_hands_are_answered_while_they_are_rechecked(
     from app.domain.agent.harness.claude_code.remote_execution import runtime
 
     project = post_project(
-        client, json={"name": "Session hands", "owner_handle": "alice"}
+        client, json={"name": "Session hands"}, owner="alice"
     ).json()["data"]
     room = client.post(
         "/topics",
-        json={"project_id": project["id"], "title": "Room", "created_by": "alice"},
+        json={"project_id": project["id"], "title": "Room"},
+        headers=session_auth_headers("alice"),
     ).json()["data"]
     project_id, topic_id = uuid.UUID(project["id"]), uuid.UUID(room["id"])
     async with client.test_factory() as db:

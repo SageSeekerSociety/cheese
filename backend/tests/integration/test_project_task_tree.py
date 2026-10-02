@@ -12,19 +12,18 @@
 """
 
 from tests.delivery import delivery_headers, delivery_task_id
-from tests.integration.conftest import post_project
+from tests.integration.conftest import post_project, session_auth_headers
 
 
 def _project(client) -> str:
-    return post_project(client, json={"name": "P", "owner_handle": "alice"}).json()[
-        "data"
-    ]["id"]
+    return post_project(client, json={"name": "P"}, owner="alice").json()["data"]["id"]
 
 
 def _room(client, project_id: str, title: str) -> str:
     return client.post(
         "/topics",
-        json={"project_id": project_id, "title": title, "created_by": "alice"},
+        json={"project_id": project_id, "title": title},
+        headers=session_auth_headers("alice"),
     ).json()["data"]["id"]
 
 

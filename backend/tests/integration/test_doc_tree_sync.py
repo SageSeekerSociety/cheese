@@ -1,10 +1,10 @@
 """B1 Phase 1: editing the living doc keeps a structured node tree in sync."""
 
-from tests.integration.conftest import post_project
+from tests.integration.conftest import post_project, session_auth_headers
 
 
 def _project_and_topic(client) -> str:
-    pid = post_project(client, json={"name": "P"}).json()["data"]["id"]
+    pid = post_project(client, json={"name": "P"}, owner="alice").json()["data"]["id"]
     tid = client.post("/topics", json={"project_id": pid, "title": "T"}).json()["data"][
         "id"
     ]
@@ -21,7 +21,8 @@ def test_document_edits_keep_each_sections_author_and_change_record(client):
     pid = client.get(f"/topics/{tid}").json()["data"]["project_id"]
     response = client.put(
         f"/topics/{tid}/doc",
-        json={"content": DOC_V1, "author": "alice", "expected_version": 0},
+        json={"content": DOC_V1, "expected_version": 0},
+        headers=session_auth_headers("alice"),
     )
     assert response.status_code == 200, response.text
     revised = DOC_V1.replace("搭建原型。", "先做三个路口的实地观察。")
@@ -55,7 +56,7 @@ def test_doc_edit_builds_node_tree(client):
     tid = _project_and_topic(client)
     r = client.put(
         f"/topics/{tid}/doc",
-        json={"content": DOC_V1, "author": "u", "expected_version": 0},
+        json={"content": DOC_V1, "expected_version": 0},
     )
     assert r.status_code == 200
 
@@ -81,13 +82,13 @@ def test_resetting_same_doc_keeps_node_ids_stable(client):
     tid = _project_and_topic(client)
     client.put(
         f"/topics/{tid}/doc",
-        json={"content": DOC_V1, "author": "u", "expected_version": 0},
+        json={"content": DOC_V1, "expected_version": 0},
     )
     ids1 = [n["id"] for n in _nodes(client, tid)]
     # Re-set identical markdown — should be a no-op for the tree.
     client.put(
         f"/topics/{tid}/doc",
-        json={"content": DOC_V1, "author": "u", "expected_version": 1},
+        json={"content": DOC_V1, "expected_version": 1},
     )
     ids2 = [n["id"] for n in _nodes(client, tid)]
     assert ids1 == ids2
@@ -97,14 +98,15 @@ def test_editing_one_block_preserves_other_node_ids(client):
     tid = _project_and_topic(client)
     client.put(
         f"/topics/{tid}/doc",
-        json={"content": DOC_V1, "author": "u", "expected_version": 0},
+        json={"content": DOC_V1, "expected_version": 0},
     )
     before = {n["content"]: n["id"] for n in _nodes(client, tid)}
 
     # Change only the paragraph; headings and list are untouched.
     v2 = DOC_V1.replace("搭建原型。", "搭建一个推荐原型。")
     client.put(
-        f"/topics/{tid}/doc", json={"content": v2, "author": "u", "expected_version": 1}
+        f"/topics/{tid}/doc",
+        json={"content": v2, "expected_version": 1},
     )
     after = {n["content"]: n["id"] for n in _nodes(client, tid)}
 
@@ -118,7 +120,7 @@ def test_doc_nodes_excluded_from_conversation_timeline(client):
     tid = _project_and_topic(client)
     client.put(
         f"/topics/{tid}/doc",
-        json={"content": DOC_V1, "author": "u", "expected_version": 0},
+        json={"content": DOC_V1, "expected_version": 0},
     )
     blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
     assert not any(b["kind"] == "doc_node" for b in blocks)

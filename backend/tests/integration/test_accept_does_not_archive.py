@@ -24,7 +24,7 @@ from tests.integration.test_accept_pr import app_world as app_world
 
 
 def _project(client) -> str:
-    r = post_project(client, json={"name": "P", "owner_handle": "alice"})
+    r = post_project(client, json={"name": "P"}, owner="alice")
     assert r.status_code == 200
     pid = r.json()["data"]["id"]
     # 2026-09-27: 递卡那道门现在先问「这个人在不在房间里」
@@ -38,7 +38,8 @@ def _project(client) -> str:
 def _topic(client, project_id: str) -> str:
     r = client.post(
         "/topics",
-        json={"project_id": project_id, "title": "做一个东西", "created_by": "alice"},
+        json={"project_id": project_id, "title": "做一个东西"},
+        headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200
     return r.json()["data"]["id"]

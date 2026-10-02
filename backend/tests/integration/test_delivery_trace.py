@@ -35,13 +35,14 @@ def _task_line(pid: str, room: str, task: str, subagent: str, title: str) -> str
 
 
 def _project(client) -> str:
-    return post_project(client, json={"name": "P"}).json()["data"]["id"]
+    return post_project(client, json={"name": "P"}, owner="alice").json()["data"]["id"]
 
 
 def _room(client, project_id: str) -> str:
     r = client.post(
         "/topics",
-        json={"project_id": project_id, "title": "做一个东西", "created_by": "alice"},
+        json={"project_id": project_id, "title": "做一个东西"},
+        headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200
     return r.json()["data"]["id"]

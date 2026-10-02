@@ -7,7 +7,7 @@ parameters. An error said in words the catalog does not have carries no key.
 """
 
 from app.core.config import settings
-from tests.integration.conftest import new_project
+from tests.integration.conftest import new_project, session_auth_headers
 
 OWNER = "owner-1"
 
@@ -65,7 +65,9 @@ def test_a_refusal_with_parameters_carries_them(client, bearer, tmp_path, monkey
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
     project_id = new_project(client, name="Demo", owner=OWNER)["id"]
     room = client.post(
-        "/topics", json={"project_id": project_id, "title": "周报", "created_by": OWNER}
+        "/topics",
+        json={"project_id": project_id, "title": "周报"},
+        headers=session_auth_headers(OWNER),
     ).json()["data"]["id"]
     method = {
         "name": "weekly-report",

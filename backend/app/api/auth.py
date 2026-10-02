@@ -128,15 +128,15 @@ class ActorResolver:
     async def resolve(
         self,
         *,
-        fallback_handle: str | None,
         topic_id: uuid.UUID | None = None,
         project_id: uuid.UUID | None = None,
         read_only: bool = False,
     ) -> Actor:
         """Resolve the verified identity, rejecting invalid agent credentials.
 
-        A missing credential may produce an anonymous actor; it grants no room
-        or project access. Legacy authorship fallback does not authenticate.
+        A missing credential produces the anonymous actor; it grants no room
+        or project access. Nothing in the request body or query names the
+        caller.
 
         On a write that names a project or a room, an archived project is
         refused with ``ProjectArchivedError``: every project-scoped write route
@@ -147,7 +147,7 @@ class ActorResolver:
 
         # A scoped token that is genuinely valid but minted for ANOTHER topic /
         # project is a scope violation, not "no credential". It used to fall
-        # through to the Phase-0 handle fallback and resolve to ``anonymous`` —
+        # through and resolve to ``anonymous`` —
         # which policy.py treats as UNauthenticated and therefore lets through,
         # so presenting the wrong token beat presenting none and the write landed
         # with its author erased. Observed live: a parent topic posting a comment
@@ -230,10 +230,9 @@ class ActorResolver:
             verify_token=_token_verifier,
             cheese_valid=cheese_valid,
             cheese_handle=agent_handle or UNRESOLVED_AGENT_HANDLE,
-            fallback_handle=fallback_handle,
         )
         if actor is None:
-            actor = Actor(handle="anonymous", user_id=None, via="handle")
+            actor = Actor(handle="anonymous", user_id=None, via="anonymous")
         if (
             self._cheese_token
             and not is_global_sandbox_token(self._cheese_token)
@@ -277,8 +276,6 @@ class ActorResolver:
                     user_id=screen.agent_user_id,
                     via="cheese",
                 )
-        if actor.via == "handle" and actor.handle != "anonymous":
-            _log.info("actor_handle_fallback", handle=actor.handle)
         return actor
 
     async def _refuse_archived_write(
@@ -330,10 +327,9 @@ class ActorResolver:
         - a presented credential that does not verify (malformed or expired
           token) → 401 — downgrading a failed credential to ``anonymous`` is
           the bug class that let stripped headers read anyone's mail;
-        - no credential at all + a named handle → 401: the Phase-0 handle
-          fallback exists for authorship convenience and must never grant a
-          mailbox, or naming ``?target_handle=bob`` would read (and clear)
-          bob's mail for free;
+        - no credential at all + a named handle → 401: naming
+          ``?target_handle=bob`` must never read (and clear) bob's mail for
+          free;
         - no credential, nobody named → the ``anonymous`` handle when the
           endpoint allows it (reads), else 401 (writes). That handle is on
           nobody's roster, so it addresses an empty mailbox: a notification is
@@ -344,9 +340,7 @@ class ActorResolver:
         wanted = (requested or "").strip() or None
         # A mailbox is its owner's, not the project's: clearing what came from
         # an archived project is still yours to do.
-        actor = await self.resolve(
-            fallback_handle=None, project_id=project_id, read_only=True
-        )
+        actor = await self.resolve(project_id=project_id, read_only=True)
         if actor.authenticated:
             if wanted is not None and wanted != actor.handle:
                 raise ForbiddenError("不能查看或操作别人的通知")
@@ -399,9 +393,7 @@ class ActorResolver:
         (dev / trusted-single-host override): it opens the surface but never
         becomes an identity — same rule as ``resolve()``.
         """
-        actor = await self.resolve(
-            fallback_handle=None, project_id=project_id, topic_id=topic_id
-        )
+        actor = await self.resolve(project_id=project_id, topic_id=topic_id)
         if actor.authenticated:
             return actor
         if self._bearer:
@@ -472,8 +464,8 @@ class ActorResolver:
         """403 when a valid project agent credential names a DIFFERENT project.
 
         Same reasoning as ``_reject_out_of_scope_token``: silently failing to
-        authenticate would drop the caller into the Phase-0 handle fallback,
-        which policy.py reads as unauthenticated and lets through — so a
+        authenticate would drop the caller to ``anonymous``, which policy.py
+        reads as unauthenticated and lets through — so a
         credential for another project would beat presenting none at all. It
         fires only on a well-formed, correctly-signed, unexpired credential; a
         revoked or malformed one is simply not a credential (and a revoked one
@@ -798,9 +790,7 @@ async def require_seated_agent(
     if room is None and claims.get("t"):
         room = uuid.UUID(claims["t"])
     resolver = ActorResolver(session=session, bearer=None, cheese_token=token)
-    actor = await resolver.resolve(
-        fallback_handle=None, topic_id=room, project_id=project_id, read_only=True
-    )
+    actor = await resolver.resolve(topic_id=room, project_id=project_id, read_only=True)
     if room is not None:
         await resolver.authorize_topic(
             actor, project_id=project_id, topic_id=room, enforce=True

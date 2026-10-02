@@ -131,7 +131,7 @@ async def list_project_agents(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     """The project's saved agents, including its default for new rooms."""
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     project = await ProjectService(db).get_or_404(project_id)
     service = AgentInstanceService(db)
@@ -157,7 +157,7 @@ async def create_project_agent(
     resolver: ActorResolverDep,
 ) -> dict:
     """Add an agent to this project. It starts with an empty memory pool."""
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     await ProjectService(db).get_or_404(project_id)
     service = AgentInstanceService(db)
@@ -190,7 +190,7 @@ async def update_project_agent(
     pool, so changing it would hand the agent an empty one and orphan
     everything it had learned in this project.
     """
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     project = await ProjectService(db).get_or_404(project_id)
     service = AgentInstanceService(db)
@@ -225,7 +225,7 @@ async def deactivate_project_agent(
     that is the shape a DELETE returns everywhere here, not because a row went
     away.
     """
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     project = await ProjectService(db).get_or_404(project_id)
     service = AgentInstanceService(db)
@@ -242,7 +242,7 @@ async def set_project_default_agent(
     resolver: ActorResolverDep,
 ) -> dict:
     """Select the existing agent that new rooms start with."""
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     project = await ProjectService(db).get_or_404(project_id)
     service = AgentInstanceService(db)

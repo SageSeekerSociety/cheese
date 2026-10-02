@@ -36,11 +36,11 @@ PNG_1PX = bytes.fromhex(
 
 def _room(client, owner: str = "user-1") -> tuple[str, str, dict]:
     """一个房间，外加这个房间里芝士的凭据。"""
-    project = post_project(client, json={"name": "P", "owner_handle": owner}).json()[
-        "data"
-    ]
+    project = post_project(client, json={"name": "P"}, owner=owner).json()["data"]
     topic = client.post(
-        "/topics", json={"project_id": project["id"], "title": "T", "created_by": owner}
+        "/topics",
+        json={"project_id": project["id"], "title": "T"},
+        headers=session_auth_headers(owner),
     ).json()["data"]
     token = mint_scoped_token(project_id=project["id"], topic_id=topic["id"])
     return project["id"], topic["id"], {"X-Cheese-Token": token}
@@ -103,7 +103,9 @@ def test_what_an_agent_says_in_the_room_is_read_once(client, stub_hooks):
     # 不在任何一轮里说的：这一句和人说的一句一样，在待读窗口里等下一轮。
     _cheese_says(client, topic_id, headers, "接口我已经改完了")
 
-    r = client.post(f"/topics/{topic_id}/summon", json={"author": "user-1"})
+    r = client.post(
+        f"/topics/{topic_id}/summon", json={}, headers=session_auth_headers("user-1")
+    )
     assert r.json()["data"]["started"] is True, "队友说的话同样是没人读过的输入"
     first = _wait_for_prompt(stub_hooks, "接口我已经改完了")
     assert first.count("接口我已经改完了") == 1
@@ -166,7 +168,9 @@ def test_a_text_and_an_image_sent_together_both_reach_the_next_turn(client, stub
         "一次发送写下两块，芝士那句排在它们后面"
     )
 
-    r = client.post(f"/topics/{topic_id}/summon", json={"author": "user-1"})
+    r = client.post(
+        f"/topics/{topic_id}/summon", json={}, headers=session_auth_headers("user-1")
+    )
     assert r.json()["data"]["started"] is True
     prompt = _wait_for_prompt(stub_hooks, "看看这张截图")
     assert prompt.count("看看这张截图") == 1

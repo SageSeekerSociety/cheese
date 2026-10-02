@@ -133,28 +133,34 @@ async def registered(session, handle: str) -> int:
     return user.id
 
 
-def post_project(client, json: dict | None = None, *, headers=None, **kwargs):
-    """``POST /projects`` with an owner who is a real person.
+def post_project(
+    client,
+    json: dict | None = None,
+    *,
+    owner: str | None = None,
+    headers=None,
+    **kwargs,
+):
+    """``POST /projects`` signed in as its owner, who is a real person.
 
-    Every project belongs to a team, and a project with no team named goes to
-    its owner's personal team — so the owner must be a registered user. The
-    owner is the one the route would pick: the body's ``owner_handle``, else the
-    caller the token names, else ``owner``. That person is registered with
-    :func:`tests.conftest.seed_user` first; nobody else is. Returns the response.
+    The route takes the owner from the credential and nowhere else, so the
+    owner is whoever the request is signed in as: the person ``headers`` (or the
+    client's own headers) name, else ``owner`` (default ``"owner"``), signed in
+    here. Every project belongs to a team, and a project with no team named goes
+    to its owner's personal team — so the owner is registered with
+    :func:`tests.conftest.seed_user` first. Returns the response.
     """
-    body = dict(json or {})
     caller = _caller_handle(headers) or _caller_handle(
         dict(getattr(client, "headers", {}))
     )
-    owner = body.get("owner_handle") or caller or "owner"
-    body["owner_handle"] = owner
-    if body.get("team_id") is None:
+    if caller is not None and owner is not None and owner != caller:
+        raise ValueError(f"signed in as {caller!r}, so {owner!r} cannot be the owner")
+    owner = caller or owner or "owner"
+    if (json or {}).get("team_id") is None:
         _register(client, owner)
-    if body.get("external_task_id") is not None and caller is None:
-        # A project built from a task needs a signed-in creator who claimed it;
-        # the owner is that person unless the test says who is calling.
+    if caller is None:
         headers = {**(headers or {}), **session_auth_headers(owner)}
-    return client.post("/projects", json=body, headers=headers, **kwargs)
+    return client.post("/projects", json=json or {}, headers=headers, **kwargs)
 
 
 def _register(client, handle: str) -> None:
@@ -197,7 +203,7 @@ def _register(client, handle: str) -> None:
 
 def new_project(client, name: str = "P", owner: str = "owner", **extra) -> dict:
     """A project owned by ``owner`` (registered first), as the API returns it."""
-    resp = post_project(client, {"name": name, "owner_handle": owner, **extra})
+    resp = post_project(client, {"name": name, **extra}, owner=owner)
     assert resp.status_code == 200, resp.text
     return resp.json()["data"]
 

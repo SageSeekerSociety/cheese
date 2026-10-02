@@ -261,7 +261,8 @@ def _empty_room(client) -> tuple[str, str]:
     create_alerts_table(client)
     pid = post_project(client, json={"name": "没人在"}).json()["data"]["id"]
     tid = client.post(
-        "/topics", json={"project_id": pid, "title": "空房间", "created_by": "alice"}
+        "/topics",
+        json={"project_id": pid, "title": "空房间"},
     ).json()["data"]["id"]
 
     async def _run() -> None:

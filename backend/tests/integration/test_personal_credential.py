@@ -181,7 +181,7 @@ def test_a_room_and_a_person_do_not_open_each_others_doors(client, wired):
     project = post_project(client, json={"name": "P"}).json()["data"]["id"]
     topic = client.post(
         "/topics",
-        json={"project_id": project, "title": "Work", "created_by": "alice"},
+        json={"project_id": project, "title": "Work"},
         headers={"X-Cheese-Token": SANDBOX_TOKEN},
     ).json()["data"]["id"]
     wired.set(busy_key(conversation), "1", ex=60)

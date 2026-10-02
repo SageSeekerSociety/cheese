@@ -27,7 +27,7 @@ from app.domain.notification.models import Notification
 from app.domain.project.models import Project
 from app.domain.team.models import TeamMemberRole, TeamUserRelation
 from app.domain.topic.models import Topic
-from tests.integration.conftest import post_project, registered
+from tests.integration.conftest import post_project, registered, session_auth_headers
 
 pytestmark = pytest.mark.anyio
 
@@ -43,12 +43,13 @@ async def _teammates_on_bobs_device(client):
     """Alice's project with two teammates besides its default agent. In one
     room each of them has a session, plus one under a handle that is no
     teammate's; all four will work on Bob's device, attached to the project."""
-    project = post_project(
-        client, json={"name": "Orchard", "owner_handle": "alice"}
-    ).json()["data"]
+    project = post_project(client, json={"name": "Orchard"}, owner="alice").json()[
+        "data"
+    ]
     room = client.post(
         "/topics",
-        json={"project_id": project["id"], "title": "Pricing", "created_by": "alice"},
+        json={"project_id": project["id"], "title": "Pricing"},
+        headers=session_auth_headers("alice"),
     ).json()["data"]
     project_id, topic_id = uuid.UUID(project["id"]), uuid.UUID(room["id"])
     async with client.test_factory() as db:

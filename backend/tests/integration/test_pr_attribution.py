@@ -3,12 +3,14 @@
 import uuid
 from datetime import UTC, datetime
 
+from app.core.sandbox_auth import mint_scoped_token
 from app.domain.review.github_pr import OpenedPR
 from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import (
     join_project_team,
     post_project,
     room_agent_seat,
+    session_auth_headers,
 )
 
 
@@ -190,18 +192,22 @@ def _github_world(monkeypatch, *, connected: dict[str, str]) -> None:
 
 
 def _project(client, owner: str) -> tuple[str, str]:
-    p = post_project(client, json={"name": "P", "owner_handle": owner}).json()["data"]
+    p = post_project(client, json={"name": "P"}, owner=owner).json()["data"]
     return p["id"], p["root_topic_id"]
 
 
-def _split(client, parent_id: str, *, by: str) -> str:
-    """Split as `by` would: no human token, the handle only in the body — the
-    exact shape `cheese_task` sends from a 分身's sandbox."""
+def _split(client, parent_id: str) -> str:
+    """Dispatch work the way `cheese_task` does from a 分身's sandbox: with the
+    room's own per-turn credential and no human token."""
+    project_id = client.get(f"/topics/{parent_id}").json()["data"]["project_id"]
     r = client.post(
         f"/topics/{parent_id}/split",
-        json=dict(
-            reviewer_handle="alice", **{"title": "分身拆出的子任务", "created_by": by}
-        ),
+        json={"reviewer_handle": "alice", "title": "分身拆出的子任务"},
+        headers={
+            "X-Cheese-Token": mint_scoped_token(
+                project_id=project_id, topic_id=parent_id
+            )
+        },
     )
     assert r.status_code == 200
     return r.json()["data"]["id"]
@@ -239,8 +245,8 @@ def test_requester_oauth_does_not_change_the_pr_author(client, monkeypatch):
     _github_world(monkeypatch, connected={"alice": "gho_alice"})
 
     pid, root = _project(client, owner="alice")
-    agent = f"cheese-{uuid.uuid4().hex[:12]}"
-    _split(client, root, by=agent)
+    _split(client, root)
+    agent = room_agent_seat(client, root)
     _publish(client, pid, root, _card(client, root))
 
     [opened] = _FakeClient.opened
@@ -256,8 +262,8 @@ def test_the_agent_handle_never_reaches_the_pr_even_when_nobody_connected_github
     _github_world(monkeypatch, connected={})
 
     pid, root = _project(client, owner="alice")
-    agent = f"cheese-{uuid.uuid4().hex[:12]}"
-    _split(client, root, by=agent)
+    _split(client, root)
+    agent = room_agent_seat(client, root)
     _publish(client, pid, root, _card(client, root))
 
     [opened] = _FakeClient.opened
@@ -278,8 +284,8 @@ def test_a_room_with_no_human_owner_still_opens_its_pr(client, monkeypatch):
     # —— 要检验的是「房间没有人类主人时 PR 照样开」，不是名册。她进的是项目名册，
     # `requester_handle` 看的是话题名册与任务归属，所以这里仍然没有人类可认领。
     join_project_team(client, pid, "alice")
-    agent = f"cheese-{uuid.uuid4().hex[:12]}"
-    _split(client, root, by=agent)
+    _split(client, root)
+    agent = room_agent_seat(client, root)
     _publish(client, pid, root, _card(client, root))
 
     [opened] = _FakeClient.opened
@@ -294,7 +300,7 @@ def test_a_card_cannot_open_a_pr_of_its_own(client, monkeypatch):
     _github_world(monkeypatch, connected={"alice": "gho_alice"})
 
     _, root = _project(client, owner="alice")
-    tid = _split(client, root, by=f"cheese-{uuid.uuid4().hex[:12]}")
+    tid = _split(client, root)
 
     r = client.post(
         f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
@@ -317,7 +323,8 @@ def test_a_topic_a_human_opened_directly_is_untouched(client, monkeypatch):
     pid, _ = _project(client, owner="alice")
     r = client.post(
         "/topics",
-        json={"project_id": pid, "title": "做一个东西", "created_by": "alice"},
+        json={"project_id": pid, "title": "做一个东西"},
+        headers=session_auth_headers("alice"),
     )
     tid = r.json()["data"]["id"]
     _publish(client, pid, tid, _card(client, tid))

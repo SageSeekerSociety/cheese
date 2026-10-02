@@ -46,9 +46,7 @@ from tests.integration.test_project_reads_need_membership import off_the_street
 
 
 def _project(client, owner: str = "alice") -> dict:
-    return post_project(client, json={"name": "P", "owner_handle": owner}).json()[
-        "data"
-    ]
+    return post_project(client, json={"name": "P"}, owner=owner).json()["data"]
 
 
 def _insert_block(client, project_id: str, topic_id: str) -> str:
@@ -87,7 +85,8 @@ def _board(client, owner: str = "alice") -> tuple[int, dict]:
     seed_claim(client, task_id, handle=owner)
     project = post_project(
         client,
-        json={"name": "队伍A", "external_task_id": task_id, "owner_handle": owner},
+        json={"name": "队伍A", "external_task_id": task_id},
+        owner=owner,
     ).json()["data"]
     return space_id, project
 

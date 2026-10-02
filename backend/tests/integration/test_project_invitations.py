@@ -14,13 +14,18 @@
 import asyncio
 import uuid
 
-from tests.integration.conftest import join_project_team, post_project, room_agent_seat
+from tests.integration.conftest import (
+    join_project_team,
+    post_project,
+    room_agent_seat,
+    session_auth_headers,
+)
 
 OWNER = "owner-1"
 
 
 def _project(client, name: str = "Demo") -> str:
-    r = post_project(client, json={"name": name, "owner_handle": OWNER})
+    r = post_project(client, json={"name": name}, owner=OWNER)
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
@@ -294,7 +299,8 @@ def test_a_topic_derived_agent_handle_is_not_invited(client, bearer):
     project_id = _project(client)
     topic_id = client.post(
         "/topics",
-        json={"project_id": project_id, "title": "T", "created_by": OWNER},
+        json={"project_id": project_id, "title": "T"},
+        headers=session_auth_headers(OWNER),
     ).json()["data"]["id"]
     handle = room_agent_seat(client, topic_id)
 
@@ -335,13 +341,12 @@ def test_a_teammate_who_joined_after_the_project_is_not_invited(client, bearer):
     邀请一次，而接受之后落下的那一行会在**退队之后继续生效**——小队这条授权本来是
     按读时推导、不留副本的。
     """
-    team_id = _make_team(client, "teamlead")
-    # 点名一个团队的人必须是那个团队的人，所以建它的是这个团队的人（项目的所有者仍是
-    # 请求体里那位：``owner_handle`` 由调用方指定是这个接口的设计）。
+    team_id = _make_team(client, OWNER)
+    # 点名一个团队的人必须是那个团队的人，所以建它的是这个团队的人，项目也归他。
     r = post_project(
         client,
-        json={"name": "P", "owner_handle": OWNER, "team_id": team_id},
-        headers=bearer("teamlead"),
+        json={"name": "P", "team_id": team_id},
+        headers=bearer(OWNER),
     )
     assert r.status_code == 200, r.text
     project_id = r.json()["data"]["id"]

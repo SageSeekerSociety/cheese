@@ -61,7 +61,7 @@ async def require_feedback_admin(
     `require_platform_admin`'s shape with feedback's own roster: the agent and
     scoped-credential refusal first, then the list.
     """
-    who = await resolver.resolve(fallback_handle=None)
+    who = await resolver.resolve()
     refusal = await policy.refuse_management_action(
         who, carries_agent_binding=IdentityService(db).is_agent
     )

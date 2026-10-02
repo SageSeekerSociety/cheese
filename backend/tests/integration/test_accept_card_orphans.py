@@ -65,9 +65,7 @@ def _archive(client, topic_id: str, by: str = "bob") -> dict:
 
 
 def _make_project(client) -> str:
-    pid = post_project(client, json={"name": "P", "owner_handle": "bob"}).json()[
-        "data"
-    ]["id"]
+    pid = post_project(client, json={"name": "P"}, owner="bob").json()["data"]["id"]
     # The card decisions in this file are made by alice (the routed reviewer).
     # Since 2026-09-26 every decision route requires room membership
     # (`_card_actor`), so she is a participant of the project here.

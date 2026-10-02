@@ -112,7 +112,7 @@ def preview_config(monkeypatch, tmp_path):
 def _project_topic(client, handle: str = "alice"):
     auth = session_auth_headers(handle)
     response = post_project(
-        client, json={"name": "Preview", "owner_handle": handle}, headers=auth
+        client, json={"name": "Preview"}, headers=auth, owner=handle
     )
     assert response.status_code == 200, response.text
     project = response.json()["data"]

@@ -21,15 +21,14 @@ from tests.integration.conftest import (
 
 
 def _project(client) -> dict:
-    return post_project(client, json={"name": "P", "owner_handle": "alice"}).json()[
-        "data"
-    ]
+    return post_project(client, json={"name": "P"}, owner="alice").json()["data"]
 
 
 def _room(client, project_id: str) -> str:
     return client.post(
         "/topics",
-        json={"project_id": project_id, "title": "房间", "created_by": "alice"},
+        json={"project_id": project_id, "title": "房间"},
+        headers=session_auth_headers("alice"),
     ).json()["data"]["id"]
 
 
@@ -64,7 +63,8 @@ def _say_on_card(client, room_id: str, task_id: str, who: str, text: str) -> Non
     """
     r = client.post(
         f"/topics/{room_id}/tasks/{task_id}/messages",
-        json={"content": text, "author": who},
+        json={"content": text},
+        headers=session_auth_headers(who),
     )
     assert r.status_code == 200, r.text
 

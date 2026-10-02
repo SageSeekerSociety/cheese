@@ -61,18 +61,7 @@ async def test_token_from_another_topic_is_refused(monkeypatch):
     resolver = _resolver(monkeypatch, cheese_token=token)
 
     with pytest.raises(ForbiddenError):
-        await resolver.resolve(fallback_handle=None, topic_id=TOPIC, project_id=PROJECT)
-
-
-async def test_wrong_topic_token_cannot_hide_behind_a_body_author(monkeypatch):
-    """A supplied author must not launder an out-of-scope token into a write."""
-    token = mint_scoped_token(project_id=str(PROJECT), topic_id=str(OTHER_TOPIC))
-    resolver = _resolver(monkeypatch, cheese_token=token)
-
-    with pytest.raises(ForbiddenError):
-        await resolver.resolve(
-            fallback_handle="wangchangxin", topic_id=TOPIC, project_id=PROJECT
-        )
+        await resolver.resolve(topic_id=TOPIC, project_id=PROJECT)
 
 
 async def test_token_from_another_project_is_refused(monkeypatch):
@@ -80,7 +69,7 @@ async def test_token_from_another_project_is_refused(monkeypatch):
     resolver = _resolver(monkeypatch, cheese_token=token)
 
     with pytest.raises(ForbiddenError):
-        await resolver.resolve(fallback_handle=None, topic_id=TOPIC, project_id=PROJECT)
+        await resolver.resolve(topic_id=TOPIC, project_id=PROJECT)
 
 
 async def test_in_scope_token_still_acts_as_this_topics_agent(monkeypatch):
@@ -88,9 +77,7 @@ async def test_in_scope_token_still_acts_as_this_topics_agent(monkeypatch):
     token = mint_scoped_token(project_id=str(PROJECT), topic_id=str(TOPIC))
     resolver = _resolver(monkeypatch, cheese_token=token)
 
-    actor = await resolver.resolve(
-        fallback_handle=None, topic_id=TOPIC, project_id=PROJECT
-    )
+    actor = await resolver.resolve(topic_id=TOPIC, project_id=PROJECT)
 
     assert actor.via == "cheese"
     assert actor.handle != "anonymous"
@@ -107,7 +94,7 @@ async def test_an_expired_sandbox_token_is_still_refused(monkeypatch):
     resolver = _resolver(monkeypatch, cheese_token=token)
 
     with pytest.raises(AuthenticationRequiredError):
-        await resolver.resolve(fallback_handle=None, topic_id=TOPIC, project_id=PROJECT)
+        await resolver.resolve(topic_id=TOPIC, project_id=PROJECT)
 
 
 async def test_capability_without_identity_cannot_act_in_a_topic(monkeypatch):
@@ -116,29 +103,25 @@ async def test_capability_without_identity_cannot_act_in_a_topic(monkeypatch):
     resolver = _resolver(monkeypatch, cheese_token=token)
 
     with pytest.raises(AuthenticationRequiredError):
-        await resolver.resolve(fallback_handle=None, topic_id=TOPIC, project_id=PROJECT)
+        await resolver.resolve(topic_id=TOPIC, project_id=PROJECT)
 
 
 async def test_global_dev_token_keeps_its_existing_behaviour(monkeypatch):
     """The global SANDBOX_TOKEN is not a scoped token; it must not start 403-ing."""
     resolver = _resolver(monkeypatch, cheese_token=SANDBOX_TOKEN)
 
-    actor = await resolver.resolve(
-        fallback_handle=None, topic_id=TOPIC, project_id=PROJECT
-    )
+    actor = await resolver.resolve(topic_id=TOPIC, project_id=PROJECT)
 
     assert actor.handle == "anonymous"
 
 
-async def test_no_token_is_untouched(monkeypatch):
+async def test_no_token_resolves_to_nobody(monkeypatch):
     resolver = _resolver(monkeypatch, cheese_token="")
 
-    actor = await resolver.resolve(
-        fallback_handle="wangchangxin", topic_id=TOPIC, project_id=PROJECT
-    )
+    actor = await resolver.resolve(topic_id=TOPIC, project_id=PROJECT)
 
-    assert actor.handle == "wangchangxin"
-    assert actor.via == "handle"
+    assert actor.handle == "anonymous"
+    assert actor.authenticated is False
 
 
 async def test_live_session_credential_at_a_route_naming_no_project(monkeypatch):
@@ -159,11 +142,9 @@ async def test_live_session_credential_at_a_route_naming_no_project(monkeypatch)
     resolver = _resolver(monkeypatch, cheese_token=token)
 
     with pytest.raises(ForbiddenError):
-        await resolver.resolve(fallback_handle=None)
+        await resolver.resolve()
 
-    actor = await _resolver(monkeypatch, cheese_token=token).resolve(
-        fallback_handle=None, project_id=PROJECT
-    )
+    actor = await _resolver(monkeypatch, cheese_token=token).resolve(project_id=PROJECT)
     assert actor.handle == "cedar"
 
 
@@ -179,4 +160,4 @@ async def test_expired_credential_at_a_route_naming_no_project(monkeypatch):
     resolver = _resolver(monkeypatch, cheese_token=token)
 
     with pytest.raises(AuthenticationRequiredError):
-        await resolver.resolve(fallback_handle=None)
+        await resolver.resolve()

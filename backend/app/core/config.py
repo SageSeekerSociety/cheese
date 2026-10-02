@@ -956,10 +956,9 @@ class Settings(BaseSettings):
     s3_public_url: str | None = None
 
     # --- Human auth (P1 agent-as-user / 真鉴权) ---
-    # Enforce topic access for TOKEN-authenticated actors (成员/角色/项目 checks).
-    # The Phase-0 handle fallback stays permissive regardless, so existing
-    # (no-token) callers are unaffected. Ops kill-switch: set false to disable the
-    # membership check entirely if a token rollout surfaces an unexpected block.
+    # Enforce topic access (成员/角色/项目 checks). Ops kill-switch: set false to
+    # disable the membership check entirely if a token rollout surfaces an
+    # unexpected block. It never lets a request body name its author.
     authz_enforce_topic_access: bool = True
 
     # --- 主仓产品配置并入 (fusion merge, restored): main's live product domains

@@ -33,9 +33,6 @@ class PassageEditsIn(BaseModel):
     mode: Literal["direct", "suggest"] | None = None
     #: Why, in a sentence: shown next to a suggestion.
     reason: str | None = Field(default=None, max_length=500)
-    #: Legacy authorship fallback, like ``DocEditIn.author``; identity comes
-    #: from the credential.
-    author: str = "anonymous"
 
 
 class RewriteIn(BaseModel):

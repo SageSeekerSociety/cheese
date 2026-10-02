@@ -17,7 +17,11 @@ import uuid
 
 from app.core.sandbox_auth import mint_project_agent_credential, mint_scoped_token
 from tests.conftest import seed_user
-from tests.integration.conftest import join_project_team, post_project
+from tests.integration.conftest import (
+    join_project_team,
+    post_project,
+    session_auth_headers,
+)
 
 # --- helpers ------------------------------------------------------------------
 
@@ -29,7 +33,7 @@ def _steward(client, handle: str) -> dict[str, str]:
 
 
 def _project(client, owner: str) -> str:
-    r = post_project(client, json={"name": "P", "owner_handle": owner})
+    r = post_project(client, json={"name": "P"}, owner=owner)
     assert r.status_code == 200, r.text
     return r.json()["data"]["id"]
 
@@ -37,7 +41,8 @@ def _project(client, owner: str) -> str:
 def _topic(client, project_id: str, *, title: str, by: str) -> str:
     r = client.post(
         "/topics",
-        json={"project_id": project_id, "title": title, "created_by": by},
+        json={"project_id": project_id, "title": title},
+        headers=session_auth_headers(by),
     )
     assert r.status_code == 200, r.text
     return r.json()["data"]["id"]

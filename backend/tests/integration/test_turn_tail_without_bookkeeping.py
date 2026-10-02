@@ -19,7 +19,7 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.harness.claude_code.events import Assembler
 from app.domain.agent.service import AgentResult
 from app.domain.block.repositories import BlockRepository
-from tests.integration.conftest import post_project
+from tests.integration.conftest import post_project, session_auth_headers
 
 TEAMMATE = "cheese-0pu5teammate"
 CLOSING = "改好了，验收卡已递给你。"
@@ -65,11 +65,12 @@ async def test_a_turns_tail_read_without_its_bookkeeping_lands_as_it_happened(
     client, tmp_path
 ):
     project = post_project(
-        client, json={"name": "Handover tail", "owner_handle": "alice"}
+        client, json={"name": "Handover tail"}, owner="alice"
     ).json()["data"]
     topic = client.post(
         "/topics",
-        json={"project_id": project["id"], "title": "Room", "created_by": "alice"},
+        json={"project_id": project["id"], "title": "Room"},
+        headers=session_auth_headers("alice"),
     ).json()["data"]
     project_id, topic_id = uuid.UUID(project["id"]), uuid.UUID(topic["id"])
     work = uuid.uuid4()
@@ -117,11 +118,12 @@ async def test_a_turns_tail_read_without_its_bookkeeping_lands_as_it_happened(
 async def test_a_result_that_says_something_new_still_lands(client, tmp_path):
     """Only a result repeating the turn's last words is dropped."""
     project = post_project(
-        client, json={"name": "Handover result", "owner_handle": "alice"}
+        client, json={"name": "Handover result"}, owner="alice"
     ).json()["data"]
     topic = client.post(
         "/topics",
-        json={"project_id": project["id"], "title": "Room", "created_by": "alice"},
+        json={"project_id": project["id"], "title": "Room"},
+        headers=session_auth_headers("alice"),
     ).json()["data"]
     project_id, topic_id = uuid.UUID(project["id"]), uuid.UUID(topic["id"])
     work = uuid.uuid4()

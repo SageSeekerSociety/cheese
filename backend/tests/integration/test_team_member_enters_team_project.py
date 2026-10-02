@@ -86,7 +86,7 @@ def _team(client, *, owner: str, members: tuple[str, ...]) -> int:
 
 def _team_project(client, *, owner: str, team_id: int | None) -> tuple[str, str]:
     """``(project_id, root_topic_id)`` of a project ``owner`` creates."""
-    body: dict[str, object] = {"name": "P", "owner_handle": owner}
+    body: dict[str, object] = {"name": "P"}
     if team_id is not None:
         body["team_id"] = team_id
     r = post_project(client, json=body, headers=_bearer(seed_user(client, owner)))
