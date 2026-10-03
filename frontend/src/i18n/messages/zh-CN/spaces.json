@@ -559,6 +559,8 @@
     },
     "uploadedOn": "{date} 上传",
     "downloads": "{n} 次下载",
+    "usedBy": "被 {n} 处引用",
+    "unused": "未被引用",
     "toast": {
       "loadFailed": "资料读不出来",
       "uploaded": "已上传",

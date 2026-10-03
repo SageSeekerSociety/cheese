@@ -157,6 +157,18 @@ function onVisibility(item: SpaceMaterial, picked: SpaceMaterialVisibility) {
             <span v-if="item.size !== null">{{ formatFileSize(item.size) }}</span>
             <span>{{ t('spaces.materials.uploadedOn', { date: uploadedOn(item.createdAt) }) }}</span>
             <span>{{ t('spaces.materials.downloads', { n: item.downloadCount }) }}</span>
+            <!-- 主判据是 `canManage`：成员那一侧不该出现「未被引用」这种话，那会
+                 读成「他也能删」。`!== undefined` 是保险，不是判据 —— 服务端一定
+                 给能管的人补这个键（`spaces_materials.py` 那行 `counts.get(id, 0)`），
+                 所以它今天永远为真；留着是防后端哪天不补了，那时宁可这一格不出现，
+                 也不要拿 `undefined > 0` 落成一句「未被引用」——那是一句假话。 -->
+            <span v-if="canManage && item.usedByCount !== undefined">
+              {{
+                item.usedByCount > 0
+                  ? t('spaces.materials.usedBy', { n: item.usedByCount })
+                  : t('spaces.materials.unused')
+              }}
+            </span>
           </div>
 
           <template #append>

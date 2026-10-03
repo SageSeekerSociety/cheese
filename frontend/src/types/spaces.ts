@@ -177,6 +177,15 @@ export type SpaceMaterial = {
   uploaderId: number | null
   createdAt: number
   downloadCount: number
+  /**
+   * 这块板里**还有几处教学配置列着它**。只有能管资料库的人拿得到这一格 ——
+   * 成员那一侧连键都没有，不是 0。
+   *
+   * 数的是「列着」，不是「生效」：指导是四层整份替换，里层非空就盖住外层，一份
+   * 只被空间默认列着、其实全被里层盖住的课件照样算一处。所以界面上不能写成
+   * 「会影响 N 道题」，那是个我们算不出来的数。
+   */
+  usedByCount?: number
 }
 
 /** 谁能看见这一份。两档，没有第三档。 */
