@@ -26,6 +26,7 @@ import {
   setProjectDefaultAgent,
 } from '@/api'
 import AgentEditorDialog from '@/components/agents/AgentEditorDialog.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import { t } from '@/i18n'
 import { teammateName } from '@/lib/agentNames'
@@ -170,26 +171,24 @@ async function confirmDeactivate() {
       <v-icon size="14" class="c-faint">mdi-robot-outline</v-icon>
       <span class="page-section-title">{{ t('work.projectSettings.agents.title') }}</span>
       <v-spacer />
-      <v-btn
-        variant="text"
+      <BaseButton
         icon="mdi-refresh"
-        size="small"
+        size="sm"
         class="mr-1"
         :aria-label="t('work.projectSettings.agents.refresh')"
         :loading="loading || refreshing"
         @click="refresh"
       />
-      <v-btn
+      <BaseButton
         v-if="!backendMissing"
-        color="primary"
-        variant="flat"
-        size="small"
+        kind="primary"
+        size="sm"
         prepend-icon="mdi-plus"
         :disabled="loading"
         @click="openCreate"
       >
         {{ t('work.projectSettings.agents.create') }}
-      </v-btn>
+      </BaseButton>
     </div>
     <div class="page-section-body">
       <p class="t-body c-muted mb-6" style="max-width: 640px">
@@ -211,9 +210,9 @@ async function confirmDeactivate() {
       <div v-else-if="!backendMissing && agents.length === 0" class="empty-state text-center py-10">
         <v-icon size="34" class="mb-3 c-muted">mdi-robot-outline</v-icon>
         <div class="t-body c-muted mb-4">{{ t('work.projectSettings.agents.empty') }}</div>
-        <v-btn color="primary" variant="flat" prepend-icon="mdi-plus" @click="openCreate">
+        <BaseButton kind="primary" prepend-icon="mdi-plus" @click="openCreate">
           {{ t('work.projectSettings.agents.create') }}
-        </v-btn>
+        </BaseButton>
       </div>
 
       <v-card v-for="a in agents" :key="a.id" class="mb-3 pa-4" variant="outlined">
@@ -241,19 +240,18 @@ async function confirmDeactivate() {
             </div>
           </div>
           <div class="agent-head__actions">
-            <v-btn
+            <BaseButton
               v-if="!a.is_default && a.is_active !== false"
-              variant="text"
-              size="small"
+              size="sm"
               :loading="settingDefault === a.id"
               @click="makeDefault(a)"
             >
               {{ t('work.projectSettings.agents.setDefault') }}
-            </v-btn>
-            <v-btn variant="text" size="small" @click="openEdit(a)">{{ t('work.projectSettings.agents.edit') }}</v-btn>
-            <v-btn v-if="a.is_active !== false" variant="text" size="small" color="error" @click="deactivateTarget = a">
+            </BaseButton>
+            <BaseButton size="sm" @click="openEdit(a)">{{ t('work.projectSettings.agents.edit') }}</BaseButton>
+            <BaseButton v-if="a.is_active !== false" size="sm" @click="deactivateTarget = a">
               {{ t('work.projectSettings.agents.deactivate') }}
-            </v-btn>
+            </BaseButton>
           </div>
         </div>
 
@@ -298,12 +296,12 @@ async function confirmDeactivate() {
         </div>
         <div class="t-caption c-muted mb-5">{{ t('work.projectSettings.agents.deactivateHint') }}</div>
         <div class="d-flex justify-end">
-          <v-btn variant="text" class="mr-2" @click="deactivateTarget = null">{{
+          <BaseButton class="mr-2" @click="deactivateTarget = null">{{
             t('work.projectSettings.agents.cancel')
-          }}</v-btn>
-          <v-btn color="error" variant="flat" :loading="deactivating" @click="confirmDeactivate">{{
+          }}</BaseButton>
+          <BaseButton kind="danger" solid :loading="deactivating" @click="confirmDeactivate">{{
             t('work.projectSettings.agents.deactivate')
-          }}</v-btn>
+          }}</BaseButton>
         </div>
       </v-card>
     </v-dialog>

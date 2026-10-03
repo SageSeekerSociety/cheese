@@ -41,6 +41,7 @@ import {
   revokeInvitation,
 } from '@/api'
 import { useCommands } from '@/commands'
+import BaseButton from '@/components/base/BaseButton.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
@@ -398,10 +399,8 @@ useCommands(() => [
             </div>
             <v-spacer />
             <span v-if="m.user_handle !== me" class="dm-slot">
-              <v-btn
-                variant="text"
-                color="on-surface-variant"
-                size="small"
+              <BaseButton
+                size="sm"
                 icon="mdi-message-outline"
                 :aria-label="t('work.members.dm')"
                 :title="t('work.members.dm')"
@@ -414,11 +413,9 @@ useCommands(() => [
             <!-- 桌面是下拉菜单，手机是底部面板（AdaptiveMenu）。 -->
             <AdaptiveMenu v-if="removable(m)" :actions="memberActions(m)" :title="memberName(m) || m.user_handle">
               <template #activator="{ props: menuProps }">
-                <v-btn
+                <BaseButton
                   v-bind="menuProps"
-                  variant="text"
-                  color="on-surface-variant"
-                  size="small"
+                  size="sm"
                   icon="mdi-dots-horizontal"
                   class="tap-target"
                   :aria-label="t('work.members.manage')"
@@ -446,16 +443,9 @@ useCommands(() => [
               </i18n-t>
             </div>
             <v-spacer />
-            <v-btn
-              v-if="canManage"
-              variant="text"
-              color="on-surface-variant"
-              size="small"
-              :loading="revoking === inv.id"
-              @click="takeBack(inv)"
-            >
+            <BaseButton v-if="canManage" size="sm" :loading="revoking === inv.id" @click="takeBack(inv)">
               {{ t('work.members.revoke') }}
-            </v-btn>
+            </BaseButton>
           </div>
         </v-card>
       </div>
@@ -479,10 +469,8 @@ useCommands(() => [
             </div>
             <v-spacer />
             <span class="dm-slot">
-              <v-btn
-                variant="text"
-                color="on-surface-variant"
-                size="small"
+              <BaseButton
+                size="sm"
                 icon="mdi-message-outline"
                 :aria-label="t('work.members.dm')"
                 :title="t('work.members.dm')"
@@ -492,16 +480,14 @@ useCommands(() => [
                 {{ countLabel(unreadWith(agentDmKey(a.handle))) }}
               </span>
             </span>
-            <v-btn
-              variant="text"
-              color="on-surface-variant"
-              size="small"
+            <BaseButton
+              size="sm"
               @click="
                 router.push({ name: 'project-settings', params: { projectId: props.projectId, section: 'agents' } })
               "
             >
               {{ t('work.members.agentSettings') }}
-            </v-btn>
+            </BaseButton>
           </div>
         </v-card>
       </div>
@@ -568,10 +554,8 @@ useCommands(() => [
         <v-card-text class="t-body c-muted">{{ t('work.members.removeBody') }}</v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn variant="text" color="on-surface-variant" @click="removeTarget = null">{{
-            t('work.members.cancel')
-          }}</v-btn>
-          <v-btn color="error" variant="flat" @click="confirmRemove">{{ t('work.members.confirmRemove') }}</v-btn>
+          <BaseButton @click="removeTarget = null">{{ t('work.members.cancel') }}</BaseButton>
+          <BaseButton kind="danger" solid @click="confirmRemove">{{ t('work.members.confirmRemove') }}</BaseButton>
         </v-card-actions>
       </v-card>
     </v-dialog>

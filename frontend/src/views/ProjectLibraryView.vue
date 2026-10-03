@@ -23,6 +23,7 @@ import { deleteLibraryFile, downloadFile, libraryFileRawUrl, listProjectLibrary 
 import { libraryFileBytes, replaceLibraryFile, uploadLibraryFile } from '../lib/libraryApi'
 
 import { useCommands } from '@/commands'
+import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import FileBytesPreview from '@/components/common/FileBytesPreview.vue'
@@ -401,12 +402,10 @@ function read(file: LibraryFile) {
             </button>
             <AdaptiveMenu :actions="fileActions(file)" :title="file.path">
               <template #activator="{ props: menuProps }">
-                <v-btn
+                <BaseButton
                   v-bind="menuProps"
                   icon="mdi-dots-horizontal"
-                  size="small"
-                  variant="text"
-                  color="on-surface-variant"
+                  size="sm"
                   class="tap-target"
                   :loading="busy === file.path"
                   :aria-label="t('work.library.actionsOf', { name: file.path })"
@@ -444,36 +443,28 @@ function read(file: LibraryFile) {
             }}</template>
           </p>
           <div v-if="mdAndUp" class="library__detail-actions">
-            <v-btn size="small" variant="text" prepend-icon="mdi-download-outline" @click="download(selected)">
+            <BaseButton kind="primary" size="sm" prepend-icon="mdi-download-outline" @click="download(selected)">
               {{ t('work.library.download') }}
-            </v-btn>
-            <v-btn
-              size="small"
-              variant="text"
+            </BaseButton>
+            <BaseButton
+              kind="secondary"
+              size="sm"
               prepend-icon="mdi-file-replace-outline"
               :loading="busy === selected.path"
               @click="pickReplacement(selected)"
             >
               {{ t('work.library.replace') }}
-            </v-btn>
-            <v-btn
-              size="small"
-              variant="text"
-              prepend-icon="mdi-close"
-              :aria-label="t('work.library.close')"
-              @click="close"
-            >
+            </BaseButton>
+            <BaseButton size="sm" prepend-icon="mdi-close" :aria-label="t('work.library.close')" @click="close">
               {{ t('work.library.close') }}
-            </v-btn>
+            </BaseButton>
           </div>
         </header>
         <div class="library__preview">
           <FileBytesPreview :filename="selected.path" :source="`${selected.path}#${revision}`" :read="read(selected)" />
         </div>
         <div v-if="!mdAndUp" class="library__bar">
-          <v-btn color="primary" variant="flat" block @click="download(selected)">{{
-            t('work.library.download')
-          }}</v-btn>
+          <BaseButton kind="primary" block @click="download(selected)">{{ t('work.library.download') }}</BaseButton>
         </div>
       </section>
     </div>
@@ -487,10 +478,8 @@ function read(file: LibraryFile) {
         <v-card-text class="t-body">{{ t('work.library.replaceBody', { file: replacing.file.name }) }}</v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn variant="text" color="on-surface-variant" @click="replacing = null">{{
-            t('work.library.cancel')
-          }}</v-btn>
-          <v-btn variant="text" color="primary" @click="replace">{{ t('work.library.replaceConfirm') }}</v-btn>
+          <BaseButton @click="replacing = null">{{ t('work.library.cancel') }}</BaseButton>
+          <BaseButton kind="primary" @click="replace">{{ t('work.library.replaceConfirm') }}</BaseButton>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -505,10 +494,8 @@ function read(file: LibraryFile) {
         <v-card-text class="t-body">{{ t('work.library.deleteBody') }}</v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn variant="text" color="on-surface-variant" @click="confirming = null">{{
-            t('work.library.cancel')
-          }}</v-btn>
-          <v-btn variant="text" color="error" @click="remove(confirming)">{{ t('work.library.delete') }}</v-btn>
+          <BaseButton @click="confirming = null">{{ t('work.library.cancel') }}</BaseButton>
+          <BaseButton kind="danger" solid @click="remove(confirming)">{{ t('work.library.delete') }}</BaseButton>
         </v-card-actions>
       </v-card>
     </v-dialog>

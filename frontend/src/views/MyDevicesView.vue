@@ -21,6 +21,7 @@ import {
 } from '../lib/desktop'
 
 import { useCommands } from '@/commands'
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import accountService from '@/services/account'
 
@@ -228,18 +229,17 @@ useCommands(() =>
         <p class="settings-page__lede">{{ t('account.devices.lede') }}</p>
       </div>
       <div v-if="isLoggedIn" class="devices__actions">
-        <v-btn
+        <BaseButton
           icon="mdi-refresh"
-          variant="text"
-          size="small"
+          size="sm"
           :loading="loading"
           :aria-label="t('account.devices.refresh')"
           :title="t('account.devices.refresh')"
           @click="load"
         />
-        <v-btn color="primary" variant="flat" prepend-icon="mdi-plus" @click="addDeviceOpen = true">
+        <BaseButton kind="primary" prepend-icon="mdi-plus" @click="addDeviceOpen = true">
           {{ t('account.devices.add') }}
-        </v-btn>
+        </BaseButton>
       </div>
     </header>
 
@@ -263,9 +263,9 @@ useCommands(() =>
           <span>{{ t('account.devices.empty') }}</span>
           <!-- 在桌面 app 里，最直接的是把这台电脑接进来。 -->
           <template v-if="desktop">
-            <v-btn variant="outlined" :loading="thisComputer.connecting" @click="connectThisMachine">
+            <BaseButton kind="secondary" :loading="thisComputer.connecting" @click="connectThisMachine">
               {{ t('account.devices.connectThis') }}
-            </v-btn>
+            </BaseButton>
             <span v-if="thisComputer.connecting">{{ thisComputer.step }}</span>
             <span v-if="thisComputer.error" class="c-danger">{{ thisComputer.error }}</span>
           </template>
@@ -288,10 +288,9 @@ useCommands(() =>
             />
             <template v-else>
               <span class="device__name">{{ d.name }}</span>
-              <v-btn
+              <BaseButton
                 v-if="mdAndUp"
-                variant="text"
-                size="x-small"
+                size="sm"
                 icon="mdi-pencil-outline"
                 :aria-label="t('account.devices.rename')"
                 :title="t('account.devices.rename')"
@@ -301,16 +300,15 @@ useCommands(() =>
             <span class="device__state" :class="{ 'device__state--on': d.online }">
               {{ d.online ? t('account.devices.online') : t('account.devices.offline') }}
             </span>
-            <v-btn v-if="mdAndUp" variant="text" size="small" @click="askUnbind(d)">
+            <BaseButton v-if="mdAndUp" kind="ghost" size="sm" @click="askUnbind(d)">
               {{ t('account.devices.unbind') }}
-            </v-btn>
+            </BaseButton>
             <AdaptiveMenu v-else :actions="deviceActions(d)" :title="d.name">
               <template #activator="{ props: menuProps }">
-                <v-btn
+                <BaseButton
                   v-bind="menuProps"
                   icon="mdi-dots-horizontal"
-                  size="small"
-                  variant="text"
+                  size="sm"
                   class="tap-target"
                   :aria-label="t('account.devices.more')"
                 />
@@ -355,14 +353,14 @@ useCommands(() =>
           <span class="srow__k">{{ c.os }}</span>
           <div class="install-cmd">
             <code class="install-cmd__code">{{ c.command }}</code>
-            <v-btn
-              variant="text"
-              size="small"
+            <BaseButton
+              kind="ghost"
+              size="sm"
               :prepend-icon="copied === c.command ? 'mdi-check' : 'mdi-content-copy'"
               @click="copyInstall(c.command)"
             >
               {{ copied === c.command ? t('account.devices.copied') : t('account.devices.copy') }}
-            </v-btn>
+            </BaseButton>
           </div>
         </div>
       </section>
@@ -374,10 +372,9 @@ useCommands(() =>
         <div class="d-flex align-center mb-1">
           <span class="t-title">{{ t('account.devices.add') }}</span>
           <v-spacer />
-          <v-btn
-            variant="text"
+          <BaseButton
             icon="mdi-close"
-            size="small"
+            size="sm"
             :aria-label="t('account.devices.close')"
             @click="addDeviceOpen = false"
           />
@@ -387,9 +384,9 @@ useCommands(() =>
         <template v-if="desktop">
           <div class="t-title mt-3 mb-1">{{ t('account.devices.thisComputer') }}</div>
           <div class="t-caption c-muted mb-3">{{ t('account.devices.thisComputerHint') }}</div>
-          <v-btn color="primary" variant="flat" :loading="thisComputer.connecting" @click="connectThisMachine">
+          <BaseButton kind="primary" :loading="thisComputer.connecting" @click="connectThisMachine">
             {{ t('account.devices.connectThis') }}
-          </v-btn>
+          </BaseButton>
           <div v-if="thisComputer.connecting" class="t-caption c-muted mt-2">{{ thisComputer.step }}</div>
           <div v-if="thisComputer.error" class="t-caption c-danger mt-2">{{ thisComputer.error }}</div>
         </template>
@@ -397,16 +394,15 @@ useCommands(() =>
           <div class="t-title mt-3 mb-1">{{ t('account.devices.desktopTitle') }}</div>
           <div class="t-caption c-muted mb-3">{{ t('account.devices.desktopHint') }}</div>
           <div class="d-flex flex-wrap ga-2">
-            <v-btn
+            <BaseButton
               v-for="(d, i) in downloads"
               :key="d.href"
-              :color="i === 0 ? 'primary' : undefined"
-              :variant="i === 0 ? 'flat' : 'outlined'"
+              :kind="i === 0 ? 'primary' : 'secondary'"
               prepend-icon="mdi-download"
               :href="d.href"
             >
               {{ t(d.labelKey) }}
-            </v-btn>
+            </BaseButton>
           </div>
           <div class="t-caption c-muted mt-2">{{ t('account.devices.gatekeeper') }}</div>
         </template>
@@ -418,14 +414,14 @@ useCommands(() =>
           <div class="t-caption c-muted mb-1">{{ c.os }}</div>
           <div class="install-cmd">
             <code class="install-cmd__code">{{ c.command }}</code>
-            <v-btn
-              variant="text"
-              size="small"
+            <BaseButton
+              kind="ghost"
+              size="sm"
               :prepend-icon="copied === c.command ? 'mdi-check' : 'mdi-content-copy'"
               @click="copyInstall(c.command)"
             >
               {{ copied === c.command ? t('account.devices.copied') : t('account.devices.copy') }}
-            </v-btn>
+            </BaseButton>
           </div>
         </div>
 
@@ -436,7 +432,7 @@ useCommands(() =>
         </ol>
 
         <div class="d-flex justify-end mt-4">
-          <v-btn variant="flat" color="primary" @click="addDeviceOpen = false">{{ t('account.devices.done') }}</v-btn>
+          <BaseButton kind="primary" @click="addDeviceOpen = false">{{ t('account.devices.done') }}</BaseButton>
         </div>
       </v-card>
     </v-dialog>
@@ -446,7 +442,7 @@ useCommands(() =>
         <div class="d-flex align-center mb-2">
           <span class="t-title">{{ t('account.devices.liveTitle', { handle: liveScreen.agent_handle }) }}</span>
           <v-spacer />
-          <v-btn variant="text" icon="mdi-close" :aria-label="t('account.devices.close')" @click="liveScreen = null" />
+          <BaseButton icon="mdi-close" :aria-label="t('account.devices.close')" @click="liveScreen = null" />
         </div>
         <div style="height: 60vh">
           <DeviceLiveViewer :sid="liveScreen.sid" />
@@ -460,10 +456,12 @@ useCommands(() =>
         <div class="t-title mb-3">{{ t('account.devices.unbindTitle', { name: unbindTarget.name }) }}</div>
         <div class="t-caption c-muted mb-5">{{ t('account.devices.unbindHint') }}</div>
         <div class="d-flex justify-end">
-          <v-btn variant="text" class="mr-2" @click="unbindTarget = null">{{ t('account.devices.cancel') }}</v-btn>
-          <v-btn color="error" variant="flat" :loading="unbinding" @click="confirmUnbind">
+          <BaseButton kind="ghost" class="mr-2" @click="unbindTarget = null">{{
+            t('account.devices.cancel')
+          }}</BaseButton>
+          <BaseButton kind="danger" solid :loading="unbinding" @click="confirmUnbind">
             {{ t('account.devices.unbind') }}
-          </v-btn>
+          </BaseButton>
         </div>
       </v-card>
     </v-dialog>

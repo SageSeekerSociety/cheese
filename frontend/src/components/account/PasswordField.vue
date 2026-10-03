@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
 // A password field that can show what was typed, and says so while Caps Lock is
@@ -56,18 +57,13 @@ function onKeydown(e: KeyboardEvent) {
         <v-icon icon="mdi-apple-keyboard-caps" size="14" />
         {{ t('account.field.capsLockShort') }}
       </span>
-      <v-btn
-        icon
-        variant="text"
-        color="medium-emphasis"
-        size="small"
-        density="comfortable"
+      <BaseButton
+        :icon="visible ? 'mdi-eye-off-outline' : 'mdi-eye-outline'"
+        size="sm"
         :aria-label="visible ? t('account.field.hidePassword') : t('account.field.showPassword')"
         :aria-pressed="visible"
         @click="visible = !visible"
-      >
-        <v-icon :icon="visible ? 'mdi-eye-off-outline' : 'mdi-eye-outline'" size="20" />
-      </v-btn>
+      />
     </template>
   </v-text-field>
 </template>

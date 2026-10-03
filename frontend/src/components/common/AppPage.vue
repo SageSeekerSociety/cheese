@@ -18,6 +18,7 @@ import type { NavTarget } from '@/lib/navTarget'
 import { useDisplay } from 'vuetify'
 
 import { headerCommands } from '@/commands'
+import BaseButton from '@/components/base/BaseButton.vue'
 import NavLink from '@/components/common/NavLink.vue'
 
 withDefaults(
@@ -64,11 +65,11 @@ const { mdAndUp } = useDisplay()
         <div v-if="$slots.controls || (mdAndUp && headerCommands.length)" class="app-page__actions">
           <slot name="controls" />
           <template v-for="command in headerCommands" :key="command.id">
-            <v-btn
+            <BaseButton
               v-if="command.header?.iconOnly"
+              kind="ghost"
               :icon="command.icon"
-              variant="text"
-              size="small"
+              size="sm"
               :to="command.to"
               :loading="command.loading"
               :disabled="command.disabled"
@@ -76,19 +77,18 @@ const { mdAndUp } = useDisplay()
               :title="command.title"
               @click="command.run?.()"
             />
-            <v-btn
+            <BaseButton
               v-else
+              :kind="command.header?.accent ? 'primary' : 'ghost'"
               :prepend-icon="command.icon"
-              :color="command.header?.accent ? 'primary' : undefined"
-              :variant="command.header?.accent ? 'flat' : 'text'"
-              size="small"
+              size="sm"
               :to="command.to"
               :loading="command.loading"
               :disabled="command.disabled"
               @click="command.run?.()"
             >
               {{ command.title }}
-            </v-btn>
+            </BaseButton>
           </template>
         </div>
       </div>
