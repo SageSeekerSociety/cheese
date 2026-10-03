@@ -403,7 +403,6 @@ onMounted(load)
       :model-value="!!confirming"
       :title="t('account.connections.sendTitle', { subject: confirming?.subject ?? '' })"
       :confirm-label="t('account.connections.sendShort')"
-      danger
       @update:model-value="confirming = null"
       @confirm="confirming && send(confirming)"
     >

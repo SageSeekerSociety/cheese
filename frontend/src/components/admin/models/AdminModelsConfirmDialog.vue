@@ -18,6 +18,8 @@ const props = defineProps<{
   confirmLabel: string
   /** 正在写：**框不许关**（`persistent`），两个按钮都灰 —— 关掉框不会让请求停下来。 */
   busy: boolean
+  /** 不可逆或会摘掉东西的操作（删除、停用）：确认键实心红。启用不是。 */
+  danger?: boolean
 }>()
 
 const emit = defineEmits<{ 'update:modelValue': [open: boolean]; confirm: [] }>()
@@ -26,14 +28,14 @@ const { t } = useI18n()
 </script>
 
 <template>
-  <!-- Confirm deletion / block: title, the consequence, cancel and a solid red confirm. -->
+  <!-- Confirm delete / block / unblock: title, the consequence, cancel and the action (red when destructive). -->
   <ConfirmDialog
     :model-value="props.modelValue"
     :title="props.title"
     :confirm-label="props.confirmLabel"
     :cancel-label="t('models.dialog.cancel')"
     :loading="props.busy"
-    danger
+    :danger="props.danger"
     @update:model-value="emit('update:modelValue', $event)"
     @confirm="emit('confirm')"
   >
