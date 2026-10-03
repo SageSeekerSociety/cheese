@@ -686,6 +686,17 @@ function receiptLabel(r: AskReceipt | null | undefined) {
   max-height: min(60vh, 560px);
   overflow-y: auto;
   overscroll-behavior: contain;
+  /* 上面那条 `max-height` 管得住「太高」，管不住「被压扁」。输入框那一格是个
+     flex 列：上面那条时间线比面板长得多时，两件一起按比例压缩，面板会缩成一条
+     几十像素高的缝——题面和选项都滚在那条缝里，看着还是坏的。它不是可以牺牲的
+     那一件，这一格是它的：`flex: 0 0 auto` 让它守住自己的高度，压缩全落到时间线
+     上；真超过上面那条上限时，出面的才是面板自己的滚动条。 */
+  flex: 0 0 auto;
+  /* 基础样式那条 `width: 100%` 是给消息流里的卡片定的。接管时再加这里的左右各
+     16px 外边距，面板会比输入框宽 32px、右边缘探出这一栏。输入框是用内边距让开
+     的（RoomComposer 的 `.composer` 只有 padding），所以这一格也只剩外边距一种
+     让法，宽度才和它对齐。 */
+  width: auto;
 }
 
 .ask-group--composer :deep(.ask-form) {
