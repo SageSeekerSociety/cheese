@@ -2,6 +2,7 @@ import type { PreviewSession } from '../api'
 
 import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
 
+import { frameKeys, runFrameKey } from '../commands/shortcuts'
 import { t } from '../i18n'
 import { postPreviewSession } from '../lib/previewSession'
 
@@ -81,6 +82,9 @@ export function usePreviewFrames(frameName: string) {
           type: 'hello',
           sessionId: runtimeSession,
           resourceId: frame.resourceId ?? null,
+          // 焦点在帧里时宿主的键盘监听收不到按键，所以键表随握手一起过去：
+          // 帧只回 id，跑哪条命令由这边决定。表是活的，每送一次都重取。
+          keys: frameKeys(),
         },
         new URL(frame.url).origin
       )
@@ -101,7 +105,10 @@ export function usePreviewFrames(frameName: string) {
       return
     }
     if (data.sessionId !== runtimeSession) return
-    if (data.type === 'ready') {
+    if (data.type === 'key' && typeof data.id === 'string') {
+      // 帧只回 id。认不认这条 id 由 `runFrameKey` 拿刚发下去那张表来判。
+      runFrameKey(data.id)
+    } else if (data.type === 'ready') {
       frame.runtime = 'ready'
       frame.runtimeError = ''
     } else if (data.type === 'error' && typeof data.message === 'string') {
