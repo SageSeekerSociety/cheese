@@ -99,6 +99,37 @@ holds the pool its running image was built with, and a backend rollout beside it
 can ask the server for more connections than it has — the 2026-09-16 failure.
 dev's server was raised to 200, so the order does not matter there.
 
+Preview control traffic has its own boundary too, on the `preview-connection`
+service. It owns the machine preview tunnels — both the `/preview/tunnel` and
+`/api/preview/tunnel` spellings the helper dials — and the preview content hosts
+(`preview-<uuid>.[-<resource>]<SITES_DOMAIN>`). A normal app release starts it if
+it is absent and otherwise leaves its running container and image alone, exactly
+like `device-connection`. One ordering rule is load-bearing: the owner is
+started, and checked healthy, **before** api-front is pointed at it and before
+any backend is replaced in owner mode. A machine helper only retries an upgrade
+on 502/503/504; a 404 (which is what a half-switched route answers) makes it
+exit for good, so the route must never land ahead of the owner that serves it.
+If the owner cannot become healthy the deploy fails before it touches a route or
+a backend.
+
+Updating the owner itself drops every live preview tunnel, and unlike the device
+owner it has no drain endpoint — the helper redials on its own, so there is
+nothing to wait for. It is therefore a separate manual operation: dispatch
+**Release preview connection owner**, which runs
+`deploy/release-preview-connection.sh`, pulls and force-recreates only
+`preview-connection`, and waits for its health check. It demands
+`PREVIEW_CONNECTION_INTERRUPT=1` as the operator's explicit acknowledgement that
+live tunnels will drop and redial, rather than pretending it can wait for idle.
+
+The whole cutover is behind a repo-level kill switch so reverting needs no box
+access: `deploy/preview-connection.env` sets `PREVIEW_CONNECTION_MODE` to `owner`
+or `legacy`. Under `legacy` the next deploy skips the owner entirely, points the
+tunnel map back at app-router, and re-renders the content-host split back onto
+the business backend — so flipping the file to `legacy` (or reverting this
+change, whose routing is then synced back from the repo) undoes the cutover on
+the next ordinary deploy. The mode is resolved before any compose call, so a box
+that cannot reach an owner never renders one.
+
 Cloud-machine SSH forwards share this stable connection boundary. Normal app
 deployments leave `cheese-cloud-control` running. To update it, dispatch
 **Release cloud control** with the full SHA of a commit already merged into
@@ -109,10 +140,26 @@ reconnection after active calls have finished.
 
 **Application switches leave the persistent ingress running.** On boxes with
 `ACTIVE_BACKEND_DIR`, `cheese-api-front` keeps its device, screen, execution,
-model-tunnel and forge-event routes. Business requests pass to the separate
-`cheese-app-router` nginx on loopback **:18085** (backend) and **:18086**
-(frontend). Only app-router reads the changing `backend.conf` and
-`frontend.conf` upstream files and reloads during an ordinary application release.
+model-tunnel, preview-tunnel and forge-event routes. Business requests pass to
+the separate `cheese-app-router` nginx on loopback **:18085** (backend) and
+**:18086** (frontend). Only app-router reads the changing `backend.conf` and
+`frontend.conf` upstream files and reloads during an ordinary application
+release.
+
+The preview routes are the exception that moves only on a cutover. The tunnel's
+target is a `map $host` in `active/preview-routing.conf`, written by
+`deploy/llm-tunnel/configure-preview.sh` for the effective mode; the location
+itself lives in `nginx.conf`, so reverting that file drops the route back to the
+business backend. Preview content hosts cannot be split with a `server_name`: the
+box-generated `active/sites.conf` already owns them with `server_name DOMAIN
+*.DOMAIN`, and no other server can beat a `*.DOMAIN` wildcard (a middle wildcard
+is invalid and a regex loses). So the split lives *inside* that wildcard server:
+`configure-sites.sh` writes a `map $host $content_upstream` whose default is the
+active backend and whose regex sends `preview-<uuid>` hosts to the owner, and the
+deploy re-renders `sites.conf` from the repo for the effective mode. A box with
+no content domain, or one the operator disabled, is left alone. The owner's
+internal RPC path (`/_internal/preview/`) is reachable only inside the compose
+network, never through nginx.
 
 The deploy starts a healthy successor, switches app-router to it, drains old
 workers, recreates the compose service, switches back and drains again before

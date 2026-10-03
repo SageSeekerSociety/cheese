@@ -1,9 +1,13 @@
 # Preview owner role and RPC1
 
-This is the first implementation slice of the independent preview owner.
-`PREVIEW_CONNECTION_MODE` defaults to `legacy`: public routing, cookies, resource
-identity and helper wire formats keep their existing behavior. No ingress,
-compose, image tag, signing-secret or deployment configuration is changed here.
+This is the independent preview owner. `PREVIEW_CONNECTION_MODE` defaults to
+`owner` in `deploy/preview-connection.env` (the repo-level kill switch: set it to
+`legacy` to route every preview back onto the business backend on the next
+deploy). Public routing, cookies, resource identity and helper wire formats keep
+their existing behavior in both modes. This change adds the deployment slice: a
+`preview-connection` compose service, the api-front routes for both tunnel
+spellings and the preview content hosts, a separately released owner with no
+drain, and the kill switch.
 
 The independent entry is `app.preview_connection_app:create_app` with Uvicorn
 `--factory --workers 1`. It has its own hub, incarnation and lifespan, mounts
@@ -56,16 +60,30 @@ waiters and terminates original streams; planned close uses ordinary retryable
 loss/1012 and never helper-superseded 4001. Existing equal-iat redial, older-live
 winner refusal and identity-checked detach remain in force.
 
-## Separate rollout work and evidence limits
+## Ingress cutover and what remains
 
-This PR does not enable ingress or claim production continuity. A subsequent
-coordinated cutover must pin the entire exact preview-host namespace and both
-tunnel spellings to one independently pinned owner image, leave ordinary app
-deployments and ingress reloads away from it, and switch all backend clients
-together. Independent owner release/drain, storage/DB compatibility and rollback
-remain deployment work. More than one owner replica or Uvicorn worker is not
-supported. Durable highest-issued-credential fencing across owner restart is
-outside this slice: the preserved newest-credential fence is live-process only.
+The cutover is now implemented. `deploy/deploy-docker.sh`'s
+`ensure_preview_connection_owner` starts the owner (when `owner` mode and it is
+absent) and waits for `/healthz` **before** api-front installs the tunnel route
+or the content-host split and **before** any backend is replaced in owner mode;
+a failure there aborts the deploy with no route or backend touched. api-front
+routes `^/(api/)?preview/tunnel$` to the owner and splits preview content hosts
+inside the box-generated `*.DOMAIN` wildcard server (`active/sites.conf`), since
+no separate `server_name` can beat that wildcard. The owner's internal RPC
+namespace stays reachable only inside the compose network. The
+`preview-connection` owner is a normal app deploy's untouched peer (started only
+if absent) and is released only through `deploy/release-preview-connection.sh` /
+**Release preview connection owner**, which recreate it with no drain and so
+drop every live tunnel (helpers redial). `PREVIEW_CONNECTION_MODE=legacy` in
+`deploy/preview-connection.env` routes all of it back onto the business backend
+on the next deploy, so a revert needs no box access.
+
+What still is not claimed here: real production/WAN acceptance, more than one
+owner replica or Uvicorn worker (unsupported), durable highest-issued-credential
+fencing across an owner restart (the preserved newest-credential fence is
+live-process only), and browser/heap continuity beyond the ingress tests.
+Storage/DB compatibility is exercised by the shared env file and mounts, not by
+a staged production migration.
 
 The real socket regression starts an independent ASGI owner process, an actual
 scoped helper socket/Session and a native HTTP app, then replaces the backend
