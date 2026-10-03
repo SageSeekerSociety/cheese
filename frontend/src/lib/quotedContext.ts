@@ -35,6 +35,17 @@ export type SlidePageQuote = Readonly<
      */
     scope?: 'page' | 'selection'
     text: string
+    /**
+     * 选中那一段两侧的文字，帮受话人分辨同一句话的哪一处出现：一句 `重试 3 次`
+     * 在一页上往往不止一处，前后文才是能分辨说的是哪一句的东西（形状见
+     * `markdownQuote.ts`，和 `text-range` 用的是同一条）。
+     *
+     * 可选是为了读得懂已经在库里的消息 —— 那些消息写在那之前，一律当整页。整页的
+     * 引用不带这两样（它本来就是整页）。写出去的时候选中一段一定带上
+     * （`usePreviewQuote.ts` 的 `send`）。
+     */
+    prefix?: string
+    suffix?: string
   }
 >
 
@@ -113,7 +124,10 @@ export function isQuotedContext(value: unknown): value is QuotedContext {
     return (
       isPage(q.page) &&
       (q.scope === undefined || q.scope === 'page' || q.scope === 'selection') &&
-      typeof q.text === 'string'
+      typeof q.text === 'string' &&
+      // 前后文可选（库里的老消息没有），但带上了就得是字符串而不是别的东西。
+      (q.prefix === undefined || typeof q.prefix === 'string') &&
+      (q.suffix === undefined || typeof q.suffix === 'string')
     )
   }
   if (q.kind === 'page-pin') return isPage(q.page) && isRatio(q.x) && isRatio(q.y)
