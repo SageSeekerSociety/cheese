@@ -23,7 +23,7 @@ from app.domain.identity.handles import (
 )
 from app.domain.identity.services import IdentityService
 from app.domain.project.repositories import ProjectRepository
-from app.domain.topic.models import Topic, TopicMembership, TopicRole
+from app.domain.topic.models import TitleSource, Topic, TopicMembership, TopicRole
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.repositories import TopicMembershipRepository
 
@@ -618,7 +618,14 @@ class TopicMemberService:
         topics = await self._topics.list_for_project(project_id)
         if not topics:
             return []
-        titles = {t.id: t.title for t in topics}
+        # 没起名的房间名字是占位的「新话题」，那是中文界面的叫法，不是房间名：按
+        # 句子交出去，每块屏幕用它读者的语言说这个词。
+        titles = {
+            t.id: say("untitledTopic")
+            if t.title_source == TitleSource.placeholder
+            else t.title
+            for t in topics
+        }
         seats = await self._repo.topic_ids_for_member(list(titles), member_handle)
         if not seats:
             return []
