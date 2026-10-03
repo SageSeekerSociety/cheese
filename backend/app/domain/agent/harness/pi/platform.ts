@@ -45,6 +45,9 @@ type Manifest = {
   // False for a session with nothing to work on but a conversation (a
   // person's 芝士): no machine behind it, and only the tools listed.
   hands?: boolean;
+  // A session without hands that reads the room's machine (a document's 芝士):
+  // pi's read, ls, find and grep on the room's checkout, and nothing else of it.
+  reading?: boolean;
   workspace: string;
   jobs: string;
   tools: ToolSpec[];
@@ -1172,9 +1175,27 @@ function withoutHands(pi: any, spec: Manifest) {
     // Emptied rather than dropped: which sections exist is pi's to decide
     // (`buildSystemPromptSections` writes `cwd` for every session), and what
     // this session has to say about its directory is that it has none.
-    options.cwd = "";
+    // One that reads the room's machine is in the room's checkout.
+    options.cwd = spec.reading ? spec.workspace : "";
   });
   registerPlatformTools(pi, spec);
+  if (spec.reading) registerReadingTools(pi, spec);
+}
+
+// The tools of pi's that only read, on the room's machine, with the project's
+// own checks around them as around the room agent's (a `permissions.deny` on a
+// file keeps it from this session too).
+function registerReadingTools(pi: any, spec: Manifest) {
+  const operations = files(spec);
+  for (const tool of [
+    createReadTool(spec.workspace, { operations: operations.read }),
+    createLsTool(spec.workspace, { operations: operations.ls }),
+    createFindTool(spec.workspace, { operations: operations.find }),
+    grepOnTheMachine(spec),
+  ]) {
+    pi.registerTool(inWorkspace(spec, tool));
+  }
+  applyProjectHooks(pi, spec);
 }
 
 export default function (pi: any) {

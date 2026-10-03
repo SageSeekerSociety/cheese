@@ -164,7 +164,7 @@ async def search_project_context(
     terms = bm25.words(q)
     await bm25.serial_scans(db)
     hits = (
-        await _everything(db, project_id, q, terms, readable, limit)
+        await search_everything(db, project_id, q, terms, readable, limit)
         if groups is None
         else await _page(db, project_id, q, terms, readable, groups, limit, offset)
     )
@@ -286,7 +286,7 @@ def _task(t: Task, readable: dict[uuid.UUID, Topic], terms: list[str]) -> dict:
     }
 
 
-async def _everything(
+async def search_everything(
     db: AsyncSession,
     project_id: uuid.UUID,
     q: str,

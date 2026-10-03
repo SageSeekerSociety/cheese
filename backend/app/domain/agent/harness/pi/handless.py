@@ -1,5 +1,7 @@
-"""A pi session on the session host with no hands: no machine, no project
-workspace, only the tools it is given, which the platform runs.
+"""A pi session on the session host with no hands of its own: no machine taken
+for it, no project workspace, only the tools it is given, which the platform
+runs. A document's 芝士 may read the room's machine besides (`document.py`),
+and never change anything there.
 
 It is the same harness a room runs — the pinned pi, its runner, the launch that
 leaves the runner going (`launch.py`, `host.configure`), the read that waits at

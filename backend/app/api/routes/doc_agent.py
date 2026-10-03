@@ -1,4 +1,6 @@
-"""The tools of a document thread's session (``app.api.doc_agent``).
+"""The tools of a document thread's session (``app.api.doc_agent``): the
+document's own two, and what it may look up in the project
+(``app.api.doc_agent_tools``).
 
 The session presents the credential it was started with, which names the
 project, the room, the agent and the thread; nothing else opens these. A tool
@@ -12,7 +14,7 @@ import uuid
 
 from fastapi import APIRouter, Request
 
-from app.api import doc_agent
+from app.api import doc_agent, doc_agent_tools
 from app.api.response import ok
 from app.api.routes.topics import DbSession
 from app.core.errors import (
@@ -48,6 +50,16 @@ async def doc_agent_tool(name: str, request: Request, db: DbSession) -> dict:
         arguments = {}
     arguments = arguments if isinstance(arguments, dict) else {}
 
+    if name in doc_agent_tools.NAMES:
+        text = await doc_agent_tools.run(
+            db,
+            name,
+            arguments,
+            project_id=uuid.UUID(claims["p"]),
+            room_id=room_id,
+            asker=held.asker,
+        )
+        return ok({"text": text})
     topics = TopicService(db)
     doc = await topics.doc_of_room(room_id)
     if name == "read_document":

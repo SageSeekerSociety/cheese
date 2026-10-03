@@ -114,8 +114,12 @@ class Machine:
         shipped: Path | None = None,
         mirror: Path | None = None,
         scratch: Path | None = None,
+        reading: bool = False,
     ):
         self.client = RemoteClient(dict(target))
+        # Only reads it: no command is run on it for the session
+        # (`machine/reading.py`).
+        self.reading = reading
         self.workspace = str(target.get("workspace") or "")
         self.placeholder = self.workspace == DEFERRED_WORKSPACE
         self.taken = not self.placeholder
@@ -409,7 +413,11 @@ class Machine:
         .register_project_hooks`), and not on every prompt."""
         generation = self.client.config.get("generation")
         if self.settings is None or generation != self.settings_generation:
-            self.settings = self._on_machine_text(SETTINGS)
+            self.settings = (
+                self._read_settings()
+                if self.reading
+                else self._on_machine_text(SETTINGS)
+            )
             self.settings_generation = generation
         for source in self.settings or []:
             if not isinstance(source, dict):
@@ -437,6 +445,23 @@ class Machine:
                 ):
                     return True
         return False
+
+    def _read_settings(self) -> list:
+        """What ``SETTINGS`` prints, read with file operations instead of a
+        command."""
+        found: list = []
+        for name in (".claude/settings.json", ".claude/settings.local.json"):
+            path = posixpath.join(self.workspace, name)
+            if not self.files("stat", path).get("exists"):
+                continue
+            text = base64.b64decode(self.files("read", path)["data"]).decode(
+                "utf-8", "replace"
+            )
+            try:
+                found.append(json.loads(text))
+            except ValueError:
+                found.append(text)
+        return found
 
     def hooks(
         self,

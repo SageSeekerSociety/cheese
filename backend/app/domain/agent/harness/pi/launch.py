@@ -231,6 +231,15 @@ print(json.dumps(configure(payload)))
 """
 
 
+def _uncredentialed(target: dict | None) -> dict | None:
+    """The target as a launch contract compares it: a credential carried in it
+    (a document's 芝士 reading the room's machine) is minted afresh for every
+    question, and a new one alone is no reason to start pi again."""
+    if target is None or "execution_token" not in target:
+        return target
+    return {k: v for k, v in target.items() if k != "execution_token"}
+
+
 def on_host(
     *,
     state: str,
@@ -256,7 +265,11 @@ def on_host(
             [
                 hashlib.sha256(archive).hexdigest(),
                 models,
-                {**config, "opening": None},
+                {
+                    **config,
+                    "opening": None,
+                    "execution_target": _uncredentialed(config["execution_target"]),
+                },
             ],
             sort_keys=True,
         ).encode()
