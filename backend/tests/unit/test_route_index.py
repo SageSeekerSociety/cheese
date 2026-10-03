@@ -94,9 +94,9 @@ def test_a_frozen_tuple_suppresses_exactly_itself():
     )
     assert key == (
         "/users/{userId}",
-        "app.api.routes.users.get_user",
+        "app.api.routes.users.account.get_user",
         "/users/invite-codes",
-        "app.api.routes.users.list_invite_codes",
+        "app.api.routes.users.invite_codes.list_invite_codes",
     ), "the frozen tuple cites the concrete registration records"
     wrong = (pair.earlier_path, pair.earlier_endpoint, pair.later_path, "other")
     assert wrong not in {
@@ -111,7 +111,7 @@ def test_records_keep_their_methods_for_the_http_intersection():
         protocol="http",
         path="/users/{userId}",
         methods=frozenset({"GET"}),
-        endpoint="app.api.routes.users.get_user",
+        endpoint="app.api.routes.users.account.get_user",
         name="get_user",
     )
     assert not record.all_literal
