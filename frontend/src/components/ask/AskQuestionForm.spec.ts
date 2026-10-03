@@ -124,4 +124,18 @@ describe('real question form', () => {
     await fireEvent.submit(screen.getByRole('button', { name: '重试原提交' }).closest('form')!)
     expect(view.emitted().action).toEqual([[{ type: 'submit' }]])
   })
+
+  it('counts a click on the already-picked option as a confirmation', async () => {
+    // 默认首项已经被选中，而原生 radio 在「已经 checked」上不会再发 change——
+    // 于是点第一个选项什么都不会发生（线上报的就是这个：点选项不跳下一题）。
+    // 点已经选中的那一行也要算一次确认，面板才会按那 180ms 前进。
+    const b = block()
+    const s = state()
+    s.draft = { kind: 'option', option: 'A', note: '', later: false }
+    const view = render(AskQuestionForm, {
+      props: { block: b, viewer: 'alice', names: {}, state: s, grouped: true },
+    })
+    await fireEvent.click(screen.getByText('A'))
+    expect(view.emitted('picked')).toHaveLength(1)
+  })
 })

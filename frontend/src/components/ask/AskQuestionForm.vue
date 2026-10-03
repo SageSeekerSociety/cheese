@@ -86,6 +86,12 @@ function selectOption(text: string, pick = true) {
   // 点选一个选项就是一次确认：面板据此延迟一小会儿再往前推进。
   if (pick) emit('picked')
 }
+// 已经选中的那一行再点一下也要算一次确认：原生 radio 在「已经 checked」上不会再发
+// change，于是点回第一个选项时什么都不会发生（默认首项又正好是它）。Codex 那边每一行
+// 都是普通按钮，点哪一下都算数——这里补上同一条行为。
+function onOptionClick(text: string) {
+  if (isPicked(text)) emit('picked')
+}
 function isPicked(text: string): boolean {
   return props.state?.draft.kind === 'option' && props.state.draft.option === text
 }
@@ -174,6 +180,7 @@ function submit() {
           :key="option.text"
           class="ask-form-option"
           :class="{ 'ask-form-option-picked': isPicked(option.text) }"
+          @click="onOptionClick(option.text)"
         >
           <input
             type="radio"
