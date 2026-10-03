@@ -10,7 +10,7 @@ import pyotp
 import pytest
 from fastapi.testclient import TestClient
 
-from app.api.routes.users import _issue_oauth_state_token
+from app.api.routes.users.oauth import _issue_oauth_state_token
 from app.core.config import settings
 from tests.integration.conftest import CreatedUser, UserCreator
 from tests.support.consent import OAUTH_CONSENT_FORM
@@ -94,7 +94,7 @@ def _enable_2fa(client: TestClient, user: CreatedUser) -> str:
 
 
 def _seed_pending(portal, session_id: str, data: dict) -> None:
-    from app.api.routes.users import _store_oauth_pending
+    from app.api.routes.users.oauth import _store_oauth_pending
 
     portal.call(_store_oauth_pending, session_id, data)
 

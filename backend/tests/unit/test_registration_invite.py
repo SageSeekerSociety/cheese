@@ -1,6 +1,6 @@
 import pytest
 
-from app.api.routes.users import _normalize_registration_invite_code
+from app.api.routes.users._common import _normalize_registration_invite_code
 from app.core.errors import UnprocessableEntityError
 
 

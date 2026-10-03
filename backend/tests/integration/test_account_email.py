@@ -14,7 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select, update
 
-from app.api.routes.users import _issue_oauth_state_token
+from app.api.routes.users.oauth import _issue_oauth_state_token
 from app.core.config import settings
 from app.core.email import EmailSender, FallbackEmailSender
 from app.domain.user.models import User, UserSession

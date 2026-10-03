@@ -3,7 +3,7 @@ title: 登录与令牌
 kind: 参考
 summary: 浏览器里存了什么、每次请求带什么，以及芝士和机器用什么令牌。
 covers:
-  - backend/app/api/routes/users.py
+  - backend/app/api/routes/users/
   - backend/app/core/sandbox_auth.py
   - backend/app/api/preview_host.py
 ---
@@ -22,7 +22,7 @@ covers:
 | 刷新令牌 | HttpOnly cookie `cheese_refresh` | 30 天（`refresh_token_expires_seconds`） | 只发给登录路由 `/api/users/auth` |
 | 受信设备 | HttpOnly cookie `cheese_trusted_device` | 由授予时决定 | 只发给登录路由，用来跳过两步验证 |
 
-刷新令牌每次刷新都轮换。cookie 带 `Secure`（开发和测试环境除外）和 `SameSite=Lax`，并且带 `Max-Age`：否则浏览器关掉会话就删掉它，而 `localStorage` 里的访问令牌还在，下一次刷新就会把用户登出（`backend/app/api/routes/users.py`）。
+刷新令牌每次刷新都轮换。cookie 带 `Secure`（开发和测试环境除外）和 `SameSite=Lax`，并且带 `Max-Age`：否则浏览器关掉会话就删掉它，而 `localStorage` 里的访问令牌还在，下一次刷新就会把用户登出（`backend/app/api/routes/users/auth.py`）。
 
 ## 芝士和机器 {#agents}
 
