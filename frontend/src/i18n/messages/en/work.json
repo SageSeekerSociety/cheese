@@ -552,6 +552,10 @@
     "preview": {
       "fullscreenFailed": "Couldn't go full screen. Open it in a new tab",
       "page": "Page {page}",
+      "pin": "Point at a spot",
+      "pinHint": "Click a spot on the page to send it along with a screenshot of that spot",
+      "pinNeedsVersion": "This page's version isn't confirmed yet, so you can't point at a spot",
+      "pinWhere": "{left}% from the left, {top}% from the top",
       "emptyCell": "(empty)",
       "locateMessage": "In {path} at {address} (“{quote}”): {note}",
       "publishSite": "Publish site",

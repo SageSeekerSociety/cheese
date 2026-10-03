@@ -15,7 +15,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Header, Query
 from pydantic import BaseModel, Field
 
-from app.api import doc_rewrite
+from app.api import doc_agent, doc_rewrite
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service
 from app.api.doc_edits import decide
@@ -271,8 +271,8 @@ async def rewrite_selection(
     # document's to say (the edit below): the stored text trails what was
     # typed by a few seconds, and a block someone just changed would be
     # refused here before it was ever looked at.
-    bound = await doc_rewrite.bind(db, place.room_id)
-    await doc_rewrite.admit(db, place.project_id, bound)
+    bound = await doc_agent.bind(db, place.room_id)
+    await doc_agent.admit(db, place.project_id, bound)
     document = doc.content
     # Nothing of this request stays open across the model call or the edit.
     await db.commit()
