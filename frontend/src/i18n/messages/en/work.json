@@ -770,6 +770,8 @@
         "columns": "Columns",
         "details": "Collapsible section",
         "math": "Formula",
+        "chart": "Chart",
+        "diagram": "Diagram",
         "status": "Status tag"
       },
       "status": {
@@ -848,7 +850,47 @@
           "no": "No, failed",
           "warn": "At risk, pending"
         },
-        "statusOff": "Remove"
+        "statusOff": "Remove",
+        "chartKind": "Chart type",
+        "chartKinds": {
+          "bar": "Bar",
+          "horizontal": "Horizontal bar",
+          "line": "Line",
+          "area": "Area",
+          "stacked": "Stacked bar",
+          "pie": "Pie",
+          "scatter": "Scatter"
+        },
+        "chartHints": {
+          "bar": "Compare sizes",
+          "horizontal": "Compare sizes with long names or many items",
+          "line": "Show a trend",
+          "area": "Show a trend and its total",
+          "stacked": "Compare totals and their parts",
+          "pie": "Show shares",
+          "scatter": "Relate two numbers"
+        },
+        "chartData": "Data",
+        "chartCategory": "Category",
+        "chartValue": "Value",
+        "chartSlice": "{name}: {value} ({percent}%)",
+        "diagramSource": "Source",
+        "askAgent": "Ask {name} to change it",
+        "emptyDiagram": "No content",
+        "diagramError": "The diagram cannot be shown: {reason}",
+        "openDiagram": "View full screen",
+        "closeDiagram": "Close",
+        "rowActions": "Row actions",
+        "columnActionsTable": "Column actions",
+        "addRowEnd": "Add a row at the end",
+        "addColumnEnd": "Add a column at the end",
+        "rowAbove": "Insert a row above",
+        "rowBelow": "Insert a row below",
+        "rowDelete": "Delete this row",
+        "columnLeft": "Insert a column to the left",
+        "columnRight": "Insert a column to the right",
+        "columnDelete": "Delete this column",
+        "diagramTooLong": "The diagram is too large to draw; showing its source"
       }
     },
     "comments": {

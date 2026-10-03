@@ -26,7 +26,7 @@ import { EditorContent } from '@tiptap/vue-3'
 
 import { BUBBLE_META } from '../../../lib/docBubble'
 import { renderCaret } from '../../../lib/docCaret'
-import { placeOf } from '../../../lib/docCommentSpots'
+import { placeOf, spotAt } from '../../../lib/docCommentSpots'
 import {
   commentHighlightKey,
   createCommentHighlights,
@@ -339,7 +339,9 @@ const editor = shallowRef<DocEditor | undefined>()
 function buildEditor(session: DocSession): DocEditor {
   return new DocEditor({
     extensions: [
-      ...editorBlocks(docExtensions({ resolveImageSrc: (src) => props.imageSrc(src) })),
+      ...editorBlocks(docExtensions({ resolveImageSrc: (src) => props.imageSrc(src) }), () =>
+        props.agentHandle ? { name: props.agentName, run: (ed, from, to) => emit('agent', spotAt(ed, from, to)) } : null
+      ),
       Collaboration.configure({ document: session.doc }),
       CollaborationCaret.configure({ provider: session.provider, user: session.user, render: renderCaret }),
       // 几种装饰都只读递进来的输入（哪一段有装饰、装饰上写什么），扩展本身不认识

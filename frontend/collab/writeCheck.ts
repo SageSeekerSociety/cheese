@@ -38,8 +38,8 @@ const VISIBLE = /[\p{L}\p{N}]/gu
 // What only spells structure, line by line: quote markers, list and task
 // markers. The digits of an ordered list are its numbering, not its text.
 const LINE_SYNTAX = /^(?:\s*>)*\s*(?:\[![A-Za-z]+\]|(?:[-*+]|\d{1,9}[.)])\s+(?:\[[ xX]\]\s+)?)?/
-// A container's opening and closing lines, and a fold's tags.
-const BLOCK_SYNTAX = /^\s*:{3,}[a-z]*\s*$|<\/?(?:details|summary)(?:\s+open)?>/g
+// A container's opening and closing lines (with a chart's type), and a fold's tags.
+const BLOCK_SYNTAX = /^\s*:{3,}[a-z]*(?:[ \t]+[a-z]+)*\s*$|<\/?(?:details|summary)(?:\s+open)?>/g
 // An entity is one character on screen, whatever letters spell it.
 const ENTITY = /&(?:#\d+|#x[0-9a-f]+|[a-z][a-z0-9]*);/gi
 // Attributes whose value a reader can see or follow.

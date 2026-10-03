@@ -109,6 +109,7 @@ export function useDocAgent(options: DocAgentOptions) {
         editable: options.editable() && !!rewriteTarget(e.state, range.from, range.to),
         list: !!top && /list/i.test(top.type.name),
         chinese: isChinese(text),
+        code: $from.parent.type.name === 'codeBlock',
       }
       paint({ target: { from: range.from, to: range.to, mode: 'select', label: '' }, review: null })
     } else {

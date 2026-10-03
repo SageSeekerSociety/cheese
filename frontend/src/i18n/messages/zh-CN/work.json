@@ -770,6 +770,8 @@
         "columns": "分栏",
         "details": "折叠",
         "math": "公式",
+        "chart": "图表",
+        "diagram": "流程图",
         "status": "状态标签"
       },
       "status": {
@@ -848,7 +850,47 @@
           "no": "否、不通过",
           "warn": "有风险、待定"
         },
-        "statusOff": "去掉"
+        "statusOff": "去掉",
+        "chartKind": "图表类型",
+        "chartKinds": {
+          "bar": "柱状图",
+          "horizontal": "横向柱状图",
+          "line": "折线图",
+          "area": "面积图",
+          "stacked": "堆叠柱状图",
+          "pie": "饼图",
+          "scatter": "散点图"
+        },
+        "chartHints": {
+          "bar": "比大小",
+          "horizontal": "名称长、项目多时比大小",
+          "line": "看趋势",
+          "area": "看趋势和总量",
+          "stacked": "比总量和组成",
+          "pie": "看占比",
+          "scatter": "看两个数的关系"
+        },
+        "chartData": "数据",
+        "chartCategory": "类别",
+        "chartValue": "数值",
+        "chartSlice": "{name}：{value}（{percent}%）",
+        "diagramSource": "源码",
+        "askAgent": "让{name}改",
+        "emptyDiagram": "暂无内容",
+        "diagramError": "图无法显示：{reason}",
+        "openDiagram": "全屏查看",
+        "closeDiagram": "关闭",
+        "rowActions": "这一行的操作",
+        "columnActionsTable": "这一列的操作",
+        "addRowEnd": "在末尾加一行",
+        "addColumnEnd": "在末尾加一列",
+        "rowAbove": "在上方插入一行",
+        "rowBelow": "在下方插入一行",
+        "rowDelete": "删除这一行",
+        "columnLeft": "在左边插入一列",
+        "columnRight": "在右边插入一列",
+        "columnDelete": "删除这一列",
+        "diagramTooLong": "图太大，只显示源码"
       }
     },
     "comments": {
