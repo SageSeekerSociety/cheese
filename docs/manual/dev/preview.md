@@ -144,10 +144,12 @@ steps:
 | `.md`                                     | 就地渲染（`lib/markdown`，不传 `breaks`） | 不能指                   |
 | `.pptx` `.ppt` `.odp`                     | `preview/PreviewSlides.vue`               | 一页里的文字、整页       |
 | `view === 'pages'`：pdf、docx/doc/odt/rtf | `preview/PreviewPages.vue`                | 一页里的文字、页上的一点 |
-| `view === 'sheet'`：xlsx/xls/csv          | `preview/PreviewSheet.vue`                | 一个单元格               |
+| `view === 'sheet'`：xlsx/xlsm/xls/ods/csv/tsv | `preview/PreviewSheet.vue`                | 一个单元格               |
 | 图片（`IMAGE_SUFFIXES`）                  | `preview/DesignImage.vue`                 | 一块矩形、画笔、打码     |
 
 选哪个查看器看的是**读者事后能指着什么**。分页文档留着文字，读者指一句话；表格留着单元格地址，`B7` 是芝士能直接打开的地址，把它分页恰好毁掉这一点；markdown 既没有页也没有格子，就按它本来的样子渲染，不转换成别的。幻灯片那种「一页」标准里没有对应的锚点型，见下。
+
+表格这一格按**后缀**选读法（`DOCUMENT_TYPES[后缀].sheet`，四个入口都从这一处取）：`csv`/`tsv` 当分隔文本读、可以切「看原文」；`ods` 是另一种压缩包、老版 `.xls` 是 OLE2 容器，两者都明说读不了，而不是画成一张空表；其余当 OOXML 工作簿读。画出来的是有限的一段：500 行 × 64 列，超出的部分在底下说清「只显示了前 N 行 M 列」。单个格子太长时画成截短的，但发出去的是整格内容 —— 地址对的是那一格，不是它显示成什么样。文本超过 1 MiB 时先切字节再说「表尾可能缺」，切点退到字符边界上，否则半个汉字会让一份好的 UTF-8 被判成 GBK、整片乱码。
 
 指出去的是**一条普通房间消息**：没有就地编辑，也没有能长期保留的批注 —— 读者要改的那句话正是芝士下一轮要改掉的那句话，锚点必然失效。五种形状：
 
