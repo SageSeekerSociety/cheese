@@ -16,9 +16,9 @@ import uuid
 import pytest
 from redis.asyncio import Redis
 
-from app.api import doc_agent
 from app.core.config import settings
 from app.domain.agent import admission
+from app.domain.agent.document import question as doc_question
 
 
 @pytest.fixture
@@ -32,11 +32,11 @@ async def redis(monkeypatch):
 @pytest.mark.anyio
 async def test_a_fifth_thread_waits_until_one_of_four_finishes(redis):
     project = uuid.uuid4()
-    threads = [uuid.uuid4() for _ in range(doc_agent.ANSWERING_PER_PROJECT)]
-    slots = [await doc_agent.take_turn(redis, project, thread) for thread in threads]
+    threads = [uuid.uuid4() for _ in range(doc_question.ANSWERING_PER_PROJECT)]
+    slots = [await doc_question.take_turn(redis, project, thread) for thread in threads]
     fifth = uuid.uuid4()
 
-    waiting = asyncio.create_task(doc_agent.take_turn(redis, project, fifth))
+    waiting = asyncio.create_task(doc_question.take_turn(redis, project, fifth))
     await asyncio.sleep(0.3)
     assert not waiting.done()
 
@@ -48,11 +48,11 @@ async def test_a_fifth_thread_waits_until_one_of_four_finishes(redis):
 @pytest.mark.anyio
 async def test_another_projects_thread_does_not_wait(redis):
     project = uuid.uuid4()
-    for _ in range(doc_agent.ANSWERING_PER_PROJECT):
-        await doc_agent.take_turn(redis, project, uuid.uuid4())
+    for _ in range(doc_question.ANSWERING_PER_PROJECT):
+        await doc_question.take_turn(redis, project, uuid.uuid4())
 
     elsewhere = await asyncio.wait_for(
-        doc_agent.take_turn(redis, uuid.uuid4(), uuid.uuid4()), 1
+        doc_question.take_turn(redis, uuid.uuid4(), uuid.uuid4()), 1
     )
 
     assert elsewhere is not None
@@ -61,10 +61,10 @@ async def test_another_projects_thread_does_not_wait(redis):
 @pytest.mark.anyio
 async def test_a_threads_next_question_waits_for_the_one_being_answered(redis):
     project, thread = uuid.uuid4(), uuid.uuid4()
-    slot = await doc_agent.take_turn(redis, project, thread)
+    slot = await doc_question.take_turn(redis, project, thread)
     assert slot is not None
 
-    second = asyncio.create_task(doc_agent.take_turn(redis, project, thread))
+    second = asyncio.create_task(doc_question.take_turn(redis, project, thread))
     await asyncio.sleep(0.3)
     assert not second.done()
 
@@ -76,11 +76,11 @@ async def test_a_threads_next_question_waits_for_the_one_being_answered(redis):
 async def test_a_question_that_waits_too_long_is_given_up_and_holds_nothing(
     redis, monkeypatch
 ):
-    monkeypatch.setattr(doc_agent, "WAIT_S", 0.3)
+    monkeypatch.setattr(doc_question, "WAIT_S", 0.3)
     project = uuid.uuid4()
-    for _ in range(doc_agent.ANSWERING_PER_PROJECT):
-        await doc_agent.take_turn(redis, project, uuid.uuid4())
+    for _ in range(doc_question.ANSWERING_PER_PROJECT):
+        await doc_question.take_turn(redis, project, uuid.uuid4())
     late = uuid.uuid4()
 
-    assert await doc_agent.take_turn(redis, project, late) is None
-    assert not await doc_agent.asked(redis, late)
+    assert await doc_question.take_turn(redis, project, late) is None
+    assert not await doc_question.asked(redis, late)

@@ -45,9 +45,9 @@ from app.domain.agent.harness.pi.handless import (
     SessionError,
 )
 from app.domain.agent.harness.pi.personal import Launch
-from app.domain.assistant import billing
+from app.domain.agent.personal import billing
+from app.domain.agent.personal.prompt import earlier, system_prompt
 from app.domain.assistant.models import AssistantConversation, AssistantMessage
-from app.domain.assistant.prompt import earlier, system_prompt
 from app.domain.user.services import usernames_by_ids
 
 logger = logging.getLogger(__name__)

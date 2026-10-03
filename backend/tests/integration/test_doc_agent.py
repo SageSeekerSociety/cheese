@@ -24,8 +24,8 @@ from collections.abc import Awaitable, Callable
 import httpx
 import pytest
 
-from app.api import doc_agent
 from app.api.deps import get_handless_sessions
+from app.domain.agent.document import question as doc_question
 from app.domain.agent.harness.pi import catalog
 from app.domain.agent.harness.pi.handless import Answered
 from app.domain.memory.files import MemoryFileScope
@@ -212,8 +212,8 @@ def test_what_the_session_changes_is_recorded_as_asked_by_the_commenter(
 
 def test_the_tools_stop_working_once_the_answer_is_over(client, sessions, monkeypatch):
     room, seat = _document(client)
-    monkeypatch.setattr(doc_agent, "ANSWER_S", 0.0)
-    monkeypatch.setattr(doc_agent, "CREDENTIAL_MARGIN_S", 1)
+    monkeypatch.setattr(doc_question, "ANSWER_S", 0.0)
+    monkeypatch.setattr(doc_question, "CREDENTIAL_MARGIN_S", 1)
     held: dict[str, str] = {}
 
     async def keep(credential, question):

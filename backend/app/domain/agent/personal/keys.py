@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.config import settings
 from app.domain.agent.gateway import LlmGateway
 from app.domain.agent.gateway_spend import charge_new_spend
-from app.domain.assistant.billing import PersonalGatewayKey, gateway, person_charge
+from app.domain.agent.personal.billing import PersonalGatewayKey, gateway, person_charge
 from app.domain.assistant.models import AssistantGatewayKey
 
 logger = logging.getLogger(__name__)

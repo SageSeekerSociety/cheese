@@ -2,7 +2,7 @@
 nothing, for the whole document), and asks it to change it or asks about it.
 
 The question goes to a session of its own, like a comment thread's
-(``doc_agent``), keyed by the conversation the box holds: the person's
+(``thread``), keyed by the conversation the box holds: the person's
 follow-ups in the same box (「再短一点」) go to the same session, and a new box
 starts a new one. The answer is streamed back to the box, not posted anywhere;
 what the session changed in the document comes back with it, so the box can
@@ -27,10 +27,10 @@ from dataclasses import dataclass
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.api import doc_agent
 from app.core.errors import ForbiddenError, ValidationError
 from app.core.sentences import error_frame, exception_text, say
 from app.domain.agent.chat import ChatService
+from app.domain.agent.document import question
 from app.domain.agent.harness.pi import document
 from app.domain.agent.harness.pi.handless import (
     Answered,
@@ -204,8 +204,8 @@ async def stop(
     conversation: uuid.UUID,
 ) -> None:
     """Stop what the box is waiting on: its turn, or the answer being written."""
-    await redis.set(_stop_key(conversation), "1", ex=int(doc_agent.WAIT_S))
-    if await doc_agent.asked(redis, conversation):
+    await redis.set(_stop_key(conversation), "1", ex=int(question.WAIT_S))
+    if await question.asked(redis, conversation):
         await sessions.abort(document.state_dir(project_id, conversation))
 
 
@@ -213,7 +213,7 @@ async def stop(
 
 
 def _question(
-    around: doc_agent.Surroundings,
+    around: question.Surroundings,
     *,
     preset: Preset | None,
     text: str,
@@ -264,7 +264,7 @@ async def ask(
     chosen = PRESETS.get(preset or "")
     allowed = may_edit and (chosen is None or chosen.kind == "edit")
     async with factory() as db:
-        bound = await doc_agent.bind(db, room_id)
+        bound = await question.bind(db, room_id)
     await _keep(redis, conversation, Box(asker, room_id))
     await redis.delete(_stop_key(conversation))
     work = uuid.uuid4()
@@ -275,7 +275,7 @@ async def ask(
     async def stopped() -> bool:
         return bool(await redis.exists(_stop_key(conversation)))
 
-    slot = await doc_agent.take_turn(
+    slot = await question.take_turn(
         redis,
         project_id,
         conversation,
@@ -293,11 +293,11 @@ async def ask(
     answer, refused, spent = "", None, False
     try:
         async with factory() as db:
-            await doc_agent.admit(db, project_id, bound)
-            around = await doc_agent.surroundings(
+            await question.admit(db, project_id, bound)
+            around = await question.surroundings(
                 db, project_id=project_id, room_id=room_id, seat=bound.agent_handle
             )
-            acting = await doc_agent.credential(
+            acting = await question.credential(
                 db,
                 project_id=project_id,
                 room_id=room_id,
@@ -306,10 +306,10 @@ async def ask(
                 work=work,
                 may_edit=allowed,
             )
-        question = _question(
+        prompt = _question(
             around, preset=chosen, text=text, selection=selection, may_edit=allowed
         )
-        launch = doc_agent.launch_for(
+        launch = question.launch_for(
             project_id=project_id,
             room_id=room_id,
             key=conversation,
@@ -319,7 +319,7 @@ async def ask(
         )
         spent = True
         async for event in sessions.ask(
-            launch, work, question, credential=acting, ceiling_s=doc_agent.ANSWER_S
+            launch, work, prompt, credential=acting, ceiling_s=question.ANSWER_S
         ):
             if isinstance(event, Said):
                 await emit("delta", {"text": event.text})

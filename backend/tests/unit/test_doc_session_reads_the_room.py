@@ -16,8 +16,8 @@ import uuid
 
 import pytest
 
-from app.api import doc_agent
 from app.core.sandbox_auth import mint_scoped_token
+from app.domain.agent.document import question as doc_question
 from app.domain.agent.harness.pi.document import Launch
 from app.domain.agent.harness.pi.handless import Answered
 from tests.support.room_machine import room_machine
@@ -33,7 +33,7 @@ def _launch(machine: dict) -> Launch:
         room_id=uuid.uuid4(),
         thread_id=thread,
         system_prompt=PROMPT,
-        tools=doc_agent.TOOLS,
+        tools=doc_question.TOOLS,
         token=mint_scoped_token(
             project_id=str(project),
             topic_id=str(uuid.uuid4()),

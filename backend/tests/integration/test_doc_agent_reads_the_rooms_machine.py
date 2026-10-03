@@ -15,11 +15,11 @@ import pytest
 from sqlalchemy import select
 
 from app.domain.agent import execution
+from app.domain.agent.document import machine as reading
+from app.domain.agent.document.machine import machine_to_read
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.supply import Supply, Visibility
 from app.domain.device.wiring import sql_device_service
-from app.domain.machine import reading
-from app.domain.machine.reading import machine_to_read
 from app.domain.topic.models import Topic
 from app.domain.user.models import User
 from tests.integration.conftest import post_project, session_auth_headers

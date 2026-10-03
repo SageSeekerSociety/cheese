@@ -3,8 +3,7 @@ title: 文档里的芝士
 kind: 流程
 summary: 在实况文档的评论里 @ 芝士，或者选中文字找它以后，谁来回答、在哪里跑、带什么上下文、改动记在谁名下、怎么扣钱。
 covers:
-  - backend/app/api/doc_agent.py
-  - backend/app/api/doc_agent_box.py
+  - backend/app/domain/agent/document/
   - backend/app/api/routes/topics_doc_agent.py
   - frontend/src/composables/useDocAgent.ts
   - frontend/src/components/panels/doc/DocAgentBox.vue
@@ -13,7 +12,6 @@ covers:
   - backend/app/core/sandbox_auth.py
   - backend/app/api/auth.py
   - backend/app/domain/living_doc/work_edits.py
-  - backend/app/domain/machine/reading.py
 ---
 
 # 文档里的芝士 {#doc-agent}
@@ -35,7 +33,7 @@ covers:
 | 选中不能改的文字（归档的房间） | 无 | 解释、检查、翻译 |
 | 顶栏，对整篇 | 无 | 总结要点、检查全文、提出结构建议 |
 
-- **说法按编号发**（`polish`、`check`……），每个说法要它做什么写在后端（`doc_agent_box.PRESETS`），按钮上的字只是名字。自己写的一句原样发，改还是答由队友判断。
+- **说法按编号发**（`polish`、`check`……），每个说法要它做什么写在后端（`document/box.py` 的 `PRESETS`），按钮上的字只是名字。自己写的一句原样发，改还是答由队友判断。
 - 一次提问是 `POST /topics/{id}/doc/agent`，以 server-sent events 返回：`conversation`（会话 id，第一条）、`queued`（排队）、`working`、`delta`（回答的字）、`tool`，最后 `done`（回答、改了的几处、是否被停下）或 `error`。回答在后台任务里跑，读的人离开也照样答完。
 - **一个输入框一个会话**：接着说（「再短一点」）带上同一个会话 id，进同一个会话；关掉输入框再开就是新的会话。会话 id 记在 Valkey 里，写着是谁、在哪个房间，只有这个人在这个房间能接着问、停下它、把回答转成评论。
 - **改不改由服务端定**：「提问」那组的说法、归档的房间里，这一问不许改文档，会话调改文档的工具也会被拒。
@@ -45,7 +43,7 @@ covers:
 
 ## 什么评论会被回答 {#trigger}
 
-人发的评论或评论串里的回复，正文 @ 了这个房间里坐着的 AI 队友（`<@handle>`），才会被回答；其他评论什么也不触发。队友自己写的评论不会叫醒自己。评论先存下、提交，然后在后台回答（`doc_agent.hand_to_agent`）。
+人发的评论或评论串里的回复，正文 @ 了这个房间里坐着的 AI 队友（`<@handle>`），才会被回答；其他评论什么也不触发。队友自己写的评论不会叫醒自己。评论先存下、提交，然后在后台回答（`document/thread.py` 的 `hand_to_agent`）。
 
 ## 会话 {#session}
 
@@ -105,7 +103,7 @@ covers:
 
 ## 房间的工作电脑 {#machine}
 
-房间里的队友正在用一台工作电脑时，文档里的会话借这台电脑读房间的代码和 git 记录（`machine/reading.py`）：读的是队友正在用的工作目录，包括还没提交的改动。
+房间里的队友正在用一台工作电脑时，文档里的会话借这台电脑读房间的代码和 git 记录（`agent/document/machine.py`）：读的是队友正在用的工作目录，包括还没提交的改动。
 
 - **只借，不开。** 每次提问时看房间里的会话手上有没有一台已就绪、此刻在线的电脑（优先这个队友自己的会话；一个房间的会话都在同一台上）。没有的话，比如还没选过电脑、云主机已经释放、设备离线，这一问就不读代码，不会为它去租电脑或开机。规则里会告诉会话这次读不到代码，让它如实说。
 - **只读。** 借出去的是那条会话的租约和一张只读的执行凭据（`bind_resource_token` 的 `reading`，凭据里带 `ro`）。执行路由见到它，只放行探活、文件的读、打开（不写）、查看、列目录、查找、搜索、读 git，以及项目自己的工具钩子；写文件、建目录、跑命令、调项目的 MCP 一律 403。执行路由由设备连接的属主进程服务，而发布时属主会刻意留在旧镜像上，所以在属主换成认得 `ro` 的版本之前，挡住写和命令的只有下面这一层。会话里 pi 也只开 `read`、`ls`、`find`、`grep` 和 `git`，不读仓库说明和技能、不起 MCP、没有后台任务，这些都要在电脑上跑命令。

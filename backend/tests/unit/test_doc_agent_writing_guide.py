@@ -5,11 +5,11 @@ prompt rather than a skill it may skip; a block it writes in the wrong shape is
 refused, and the refusal only helps if the right shape is already there.
 """
 
-from app.api import doc_agent
+from app.domain.agent.document import question as doc_question
 
 
 def test_every_document_session_is_given_the_block_syntax():
     for where in ("thread", "box"):
-        prompt = doc_agent.system_prompt("芝士", None, None, where=where)
+        prompt = doc_question.system_prompt("芝士", None, None, where=where)
         for spelling in (":::timeline", ":::stats", "> [!IMPORTANT]", "{✓ "):
             assert spelling in prompt, (where, spelling)

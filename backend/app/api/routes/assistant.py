@@ -43,9 +43,9 @@ from app.domain.agent.harness.pi.handless import (
     SessionError,
 )
 from app.domain.agent.harness.pi.personal import Launch
-from app.domain.assistant import service as assistant
-from app.domain.assistant.keys import person_key
-from app.domain.assistant.prompt import task_brief
+from app.domain.agent.personal import service as assistant
+from app.domain.agent.personal.keys import person_key
+from app.domain.agent.personal.prompt import task_brief
 from app.domain.feature_stats import pricing
 from app.domain.task.services import TaskService, ensure_task_readable
 from app.domain.usage.ledger import Ledger, Rates, payer_for_person

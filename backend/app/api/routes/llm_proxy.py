@@ -52,10 +52,10 @@ from app.core.sandbox_auth import (
 from app.core.sentences import listing, say
 from app.domain.agent.chat import ChatService
 from app.domain.agent.credits_notice import note_credits_refusal
+from app.domain.agent.personal.keys import stored_key
+from app.domain.agent.personal.service import answering
 from app.domain.agent.supply import GATEWAY
 from app.domain.agent_instance import configuration
-from app.domain.assistant.keys import stored_key
-from app.domain.assistant.service import answering
 from app.domain.policy import gate
 from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task import binding
