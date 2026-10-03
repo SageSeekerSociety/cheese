@@ -90,9 +90,14 @@ async def test_a_thread_has_the_documents_tools_and_the_rooms_credential(
     assert events[-1] == Answered("读过了。")
     assert Looking("read_document") in events
     first = fake.requests[0]
+    # The document's own tools and the project lookups; no machine is lent
+    # here, so none of pi's own.
     assert sorted(t["function"]["name"] for t in first["tools"]) == [
         "edit_document",
+        "read_attachment",
         "read_document",
+        "read_memory",
+        "search_project",
     ]
     system = first["messages"][0]["content"]
     system = system if isinstance(system, str) else system[0]["text"]

@@ -357,9 +357,13 @@ function openTask(task: RoomTask) {
               </li>
               <li v-for="row in inColumn(col.key)" :key="row.id">
                 <button type="button" class="board-card" @click="openTask(row)">
-                  <span class="board-card__title t-body">{{ taskTitle(row) }}</span>
+                  <span class="board-card__title t-body" :data-user-content="row.title || undefined">{{
+                    taskTitle(row)
+                  }}</span>
                   <span class="board-card__owner t-meta">
-                    <span class="board-card__room">{{ roomTitle(row.room_id) }}</span>
+                    <span class="board-card__room" :data-user-content="roomTitle(row.room_id)">{{
+                      roomTitle(row.room_id)
+                    }}</span>
                     <span class="board-card__sep">·</span>
                     <span v-if="row.owner_handle" class="board-card__who">
                       <CheeseAvatar

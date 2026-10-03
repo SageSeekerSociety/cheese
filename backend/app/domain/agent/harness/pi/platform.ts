@@ -45,6 +45,9 @@ type Manifest = {
   // False for a session with nothing to work on but a conversation (a
   // person's 芝士): no machine behind it, and only the tools listed.
   hands?: boolean;
+  // A session without hands that reads the room's machine (a document's 芝士):
+  // pi's read, ls, find and grep on the room's checkout, and nothing else of it.
+  reading?: boolean;
   workspace: string;
   jobs: string;
   tools: ToolSpec[];
@@ -1172,9 +1175,63 @@ function withoutHands(pi: any, spec: Manifest) {
     // Emptied rather than dropped: which sections exist is pi's to decide
     // (`buildSystemPromptSections` writes `cwd` for every session), and what
     // this session has to say about its directory is that it has none.
-    options.cwd = "";
+    // One that reads the room's machine is in the room's checkout.
+    options.cwd = spec.reading ? spec.workspace : "";
   });
   registerPlatformTools(pi, spec);
+  if (spec.reading) registerReadingTools(pi, spec);
+}
+
+// The tools of pi's that only read, on the room's machine, with the project's
+// own checks around them as around the room agent's (a `permissions.deny` on a
+// file keeps it from this session too).
+function registerReadingTools(pi: any, spec: Manifest) {
+  const operations = files(spec);
+  for (const tool of [
+    createReadTool(spec.workspace, { operations: operations.read }),
+    createLsTool(spec.workspace, { operations: operations.ls }),
+    createFindTool(spec.workspace, { operations: operations.find }),
+    grepOnTheMachine(spec),
+    gitOnTheMachine(spec),
+  ]) {
+    pi.registerTool(inWorkspace(spec, tool));
+  }
+  applyProjectHooks(pi, spec);
+}
+
+// The checkout's history: git's reading commands, run by the machine's
+// executor without taking git's locks (`machine_git.py`). The session names one
+// and fills in revisions and a path; it never writes a command line.
+function gitOnTheMachine(spec: Manifest) {
+  return {
+    name: "git",
+    label: "git",
+    description:
+      "读房间工作目录的 git 记录（只读，不会改动仓库）。command 选一种：" +
+      "status（工作区状态）；log（提交记录，可给 revision、path、limit）；" +
+      "diff（工作目录相对 base 的改动，包括还没提交的；base 默认 HEAD，" +
+      "since_branched 为 true 时从 base 分出来的地方算起，看这个分支相对主干改了什么）；" +
+      "show（某次提交，revision 默认 HEAD）；blame（某个文件每行最后是哪次提交改的，要给 path）。" +
+      "stat 为 true 时只列改了哪些文件和行数。",
+    parameters: {
+      type: "object",
+      properties: {
+        command: { type: "string", enum: ["status", "log", "diff", "show", "blame"] },
+        revision: { type: "string", description: "分支名、标签或提交号" },
+        base: { type: "string", description: "diff 的比较对象，如 main、origin/main" },
+        since_branched: { type: "boolean" },
+        path: { type: "string", description: "只看这个文件或目录" },
+        limit: { type: "number", description: "log 最多列几条，默认 20" },
+        stat: { type: "boolean" },
+      },
+      required: ["command"],
+    },
+    async execute(_id: string, params: any) {
+      const answer = await ask(spec.socket, "git", params ?? {});
+      const body = answer.output?.trim() || "（没有输出）";
+      return text(answer.truncated ? `${body}\n\n（输出太长，后面的截掉了；用 path 或 stat 缩小范围）` : body);
+    },
+  };
 }
 
 export default function (pi: any) {

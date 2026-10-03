@@ -115,7 +115,7 @@ function roomMachines(overrides: Partial<TopicComputeProfile> = {}): TopicComput
     devices: [{ device_id: 'lab', name: '实验室工作站', online: true }],
     sessions: [],
     profiles: [],
-    visibility: { options: [], effective: null, machine_access: false, notice: '能操作这台机器上的服务和其他房间' },
+    visibility: { options: [], effective: null, machine_access: false },
     ...overrides,
   }
 }
@@ -265,7 +265,6 @@ describe('名册上这个话题的工作电脑', () => {
           options: [],
           effective: 'host',
           machine_access: true,
-          notice: '能操作这台机器上的服务和其他房间',
         },
       })
     )
@@ -282,7 +281,6 @@ describe('名册上这个话题的工作电脑', () => {
           options: [],
           effective: 'host',
           machine_access: true,
-          notice: '能操作这台机器上的服务和其他房间',
         },
       })
     )
@@ -292,6 +290,6 @@ describe('名册上这个话题的工作电脑', () => {
     })
     await settle()
     const notices = emitted()['machine-access'] as [string | null][]
-    expect(notices.at(-1)).toEqual(['能操作这台机器上的服务和其他房间'])
+    expect(notices.at(-1)).toEqual(['让它看到整台机器（能操作这台机器上的服务和其他房间）'])
   })
 })

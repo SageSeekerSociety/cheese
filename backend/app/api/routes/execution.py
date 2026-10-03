@@ -40,6 +40,23 @@ logger = logging.getLogger(__name__)
 _NOT_ACCEPTED = "Request ID already belongs to different input"
 
 
+#: What a reading credential may ask of the machine (``bind_resource_token``
+#: ``reading``): whether it is there, its files read, listed and searched, the
+#: checkout's history (``machine_git``, git's reading commands only), and the
+#: project's own checks around such a read, which can refuse it.
+_READ_OPERATIONS = frozenset({"open", "read", "stat", "list", "glob", "grep"})
+
+
+def _reads(method: str, params: dict) -> bool:
+    if method == "ping":
+        return True
+    if method != "control":
+        return False
+    if params.get("subtype") == "files":
+        return params.get("operation") in _READ_OPERATIONS and not params.get("write")
+    return params.get("subtype") in ("git", "tool_hooks")
+
+
 class ExecutionRequest(BaseModel):
     method: str
     params: dict = {}
@@ -120,6 +137,8 @@ async def execute(
         "control",
     }:
         raise ForbiddenError("This executor operation is not available to the session")
+    if claims.get("ro") and not _reads(payload.method, payload.params):
+        raise ForbiddenError("This credential only reads the machine's files")
     target = lease
     if not (
         await machine_owner_reads.active_cloud_device_for_project(

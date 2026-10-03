@@ -67,7 +67,6 @@ function profile(machineAccess: boolean): TopicComputeProfile {
       options: [],
       effective: 'host',
       machine_access: machineAccess,
-      notice: '它能读写这台机器上的所有文件',
     },
   } as TopicComputeProfile
 }
@@ -121,7 +120,7 @@ describe('话题头', () => {
     mountHeader()
 
     await waitFor(() => expect(bar().textContent).toContain('能访问整台机器'))
-    expect(bar().querySelector('[title="它能读写这台机器上的所有文件"]')).toBeTruthy()
+    expect(bar().querySelector('[title="让它看到整台机器（能操作这台机器上的服务和其他房间）"]')).toBeTruthy()
   })
 
   it('看不到能访问整台机器时这一行不提它', async () => {

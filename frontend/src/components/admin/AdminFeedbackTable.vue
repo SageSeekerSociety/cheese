@@ -239,6 +239,7 @@ const priLabel = (item: FeedbackCard) => (item.priority ? priorityMeta(item.prio
                   type="button"
                   class="fbrow__link"
                   :tabindex="item.id === cursorId ? 0 : -1"
+                  data-user-content
                   @click="emit('activate', item.id)"
                 >
                   {{ item.title }}

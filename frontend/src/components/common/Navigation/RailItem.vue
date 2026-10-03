@@ -11,6 +11,7 @@
     :border="false"
     class="app-rail-item"
     :aria-label="badgeLabel"
+    :data-user-content="projectId ? item.title : undefined"
     :aria-current="current"
     :class="{
       'app-rail-item-cheese': item.icon === 'cheese',
@@ -116,8 +117,8 @@ const dot = computed(() => item.value.type === 'item' && !badge.value && !!item.
 // 角标和小点都是画给眼睛的（aria-hidden），读屏从名字里听到件数或「有新动态」。
 const badgeLabel = computed(() => {
   if (item.value.type !== 'item') return undefined
-  if (badge.value) return `${item.value.title}（${badge.value}）`
-  if (dot.value) return `${item.value.title}（${t('home.nav.unreadActivity')}）`
+  if (badge.value) return t('global.labelWithAside', { label: item.value.title, aside: badge.value })
+  if (dot.value) return t('global.labelWithAside', { label: item.value.title, aside: t('home.nav.unreadActivity') })
   return item.value.title
 })
 

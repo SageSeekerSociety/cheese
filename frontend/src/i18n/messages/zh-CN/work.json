@@ -56,6 +56,7 @@
     "more": "其他配置与设备",
     "projectDefault": "项目默认",
     "wholeMachine": "能访问整台机器",
+    "wholeMachineNotice": "让它看到整台机器（能操作这台机器上的服务和其他房间）",
     "online": "在线",
     "offline": "离线",
     "removed": "已移出团队",
@@ -819,6 +820,10 @@
       "resend": "重新发送",
       "reading": "{agent}正在读文档…",
       "editing": "{agent}正在修改文档…",
+      "readingCode": "{agent}正在看代码…",
+      "searching": "{agent}正在搜索项目…",
+      "readingMemory": "{agent}正在读项目记忆…",
+      "readingAttachment": "{agent}正在读附件…",
       "quoteChanged": "原文已改动"
     },
     "chat": {

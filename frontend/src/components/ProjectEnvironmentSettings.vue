@@ -217,7 +217,12 @@ onBeforeUnmount(() => {
             :label="t('work.projectSettings.environment.roomSelect')"
             variant="outlined"
             density="compact"
-          />
+          >
+            <!-- 房间名是人起的，不跟着界面语言变。 -->
+            <template #selection="{ item }">
+              <span data-user-content>{{ item.title }}</span>
+            </template>
+          </v-select>
           <p v-if="status" class="t-body mb-2">
             {{ stateLabel(status.state)
             }}<span v-if="status.stage">

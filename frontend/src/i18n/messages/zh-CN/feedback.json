@@ -17,7 +17,7 @@
       "resolved": "解决：{v}",
       "deployed": "上线：{v}",
       "days": "近 {n} 天",
-      "clear": "清除这个日期筛选"
+      "clear": "清除这个日期筛选：{chip}"
     },
     "lane": {
       "label": "栏位",

@@ -63,7 +63,6 @@ from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.market import (
     COMPUTE_DEVICE,
-    MACHINE_VISIBILITY_NOTICE,
     VISIBILITY_HOST,
     compute_default_name,
     compute_listings,
@@ -164,10 +163,9 @@ async def get_topic_compute_profile(
                 # "host" | "isolated" | null (no agent here on an enrolled machine).
                 "effective": effective_visibility,
                 # The one boolean the room's badge keys on: this turn can see and
-                # operate the whole machine.
+                # operate the whole machine. Its wording is the reader's language
+                # (frontend `work.roomMachine.wholeMachineNotice`), not this payload's.
                 "machine_access": effective_visibility == VISIBILITY_HOST,
-                # The honest #282 line, for the badge text / tooltip.
-                "notice": MACHINE_VISIBILITY_NOTICE,
             },
         }
     )

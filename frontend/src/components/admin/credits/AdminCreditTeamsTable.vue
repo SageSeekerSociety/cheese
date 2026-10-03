@@ -124,7 +124,7 @@ function balanceText(row: CreditTeamRow): string {
       <td data-card="primary">
         <!-- 名字是打开这个团队的入口：键盘和读屏走它，整行点击是给指针的便利。 -->
         <button type="button" class="act__team" @click.stop="emit('open', row)">
-          <span class="act__name">{{ teamTitle(row) }}</span>
+          <span class="act__name" data-user-content>{{ teamTitle(row) }}</span>
           <span class="act__meta t-meta-read">{{ teamMeta(row) }}</span>
         </button>
       </td>

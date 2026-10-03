@@ -298,7 +298,7 @@ async def ask(
         async with factory() as db:
             await doc_agent.admit(db, project_id, bound)
             around = await doc_agent.surroundings(
-                db, project_id=project_id, room_id=room_id
+                db, project_id=project_id, room_id=room_id, seat=bound.agent_handle
             )
         question = _question(
             around, preset=chosen, text=text, selection=selection, may_edit=allowed

@@ -1,12 +1,16 @@
 """A document comment thread's 芝士 on the session host: one pi session per
-thread, with no hands.
+thread.
 
 Someone names the room's agent in a comment on the room's living document, and
 the thread's own session answers: it reads what it is handed, changes the
 document with the tools it is given, and its answer becomes the agent's reply in
-the thread. It needs no machine — a question about a document is answered from
-the document — so the room's machine is not taken and the room's conversation
-is not interrupted.
+the thread. The room's conversation is not interrupted for it.
+
+When the room's machine is there, the session reads the room's work on it
+(``machine``, `machine/reading.py`): pi's own read, ls, find and grep, with
+their hands on the room's checkout, and nothing that writes or runs a command.
+It never takes a machine of its own; a room with none in hand gets an answer
+from the document and the platform alone.
 
 One thread is one pi session, under the thread's id, in a state directory under
 its project's (`state_dir`), so a project's sessions are siblings: starting one
@@ -51,6 +55,8 @@ class Launch:
     #: The room's credential for the agent, naming this thread.
     token: str
     model: str
+    #: The room's machine to read, when the room holds one that is there.
+    machine: dict | None = None
 
     @property
     def key(self) -> uuid.UUID:
@@ -92,7 +98,7 @@ def configuration(launch: Launch) -> dict:
             "model": launch.model,
         },
         "args": arguments(launch.model),
-        "execution_target": None,
+        "execution_target": launch.machine,
         "skills": {},
         "extension": extension(),
         "notice": "",

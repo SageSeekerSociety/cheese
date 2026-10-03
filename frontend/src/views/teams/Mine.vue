@@ -44,6 +44,7 @@
                 :key="team.id"
                 :title="team.name"
                 :subtitle="team.intro"
+                data-user-content
                 :prepend-avatar="getAvatarUrl(team.avatarId)"
                 :to="{ name: 'TeamsDetailDefault', params: { handle: team.handle } }"
                 rounded="md"

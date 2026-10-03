@@ -34,6 +34,7 @@
   "piLs": "List directory",
   "piFind": "Find files",
   "piGrep": "Search content",
+  "piGit": "Read git history",
   "chatSend": "Post a message",
   "chatEdit": "Edit a message",
   "cheeseChatList": "Read the chat log",
