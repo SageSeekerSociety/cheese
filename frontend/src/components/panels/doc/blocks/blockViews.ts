@@ -15,19 +15,32 @@
 //     in ignoreMutation; otherwise ProseMirror reads the change as an edit and
 //     rebuilds the block.
 import type { AnyExtension, Editor, NodeViewRendererProps } from '@tiptap/core'
-import type { Node as PMNode } from '@tiptap/pm/model'
 import type { NodeView } from '@tiptap/pm/view'
 import type { CalloutKind } from '../../../../lib/docSchema/blocks'
 import type { AgentHook } from './mermaidView'
 
 import { TextSelection } from '@tiptap/pm/state'
-import katex from 'katex'
 
 import { CALLOUT_KINDS, emptyItem } from '../../../../lib/docSchema/blocks'
 
 import { chartView } from './chartView'
 import { codeBlockView } from './mermaidView'
 import { closePopover, controlButton, menuAt, popoverAt } from './popover'
+import {
+  calloutLabel,
+  calloutShape,
+  columnShape,
+  detailsShape,
+  fitTimeline,
+  footnoteNote,
+  footnoteText,
+  mathShape,
+  renderMath,
+  statItemShape,
+  statsShape,
+  timelineItemShape,
+  timelineShape,
+} from './shapes'
 import { posOf } from './viewKit'
 
 import { t } from '@/i18n'
@@ -84,14 +97,8 @@ function moveItem(editor: Editor, pos: number, step: -1 | 1): void {
 // ---- Callout: the kind is a label at the top; picking it opens the five kinds.
 
 const calloutView: ViewFactory = ({ node, editor, getPos }) => {
-  const dom = document.createElement('div')
-  dom.dataset.block = 'callout'
-  dom.dataset.kind = node.attrs.kind as string
   const kind = controlButton('doc-callout__kind', t('work.room.doc.blocks.calloutKind'))
-  const content = document.createElement('div')
-  dom.append(kind, content)
-  const label = (k: string) => t(`work.room.doc.blocks.kinds.${k}`)
-  kind.textContent = label(node.attrs.kind as string)
+  const { dom, content } = calloutShape(node.attrs.kind as string, kind)
   kind.addEventListener('click', () => {
     const pos = posOf(getPos)
     if (pos === null || !editor.isEditable) return
@@ -99,7 +106,7 @@ const calloutView: ViewFactory = ({ node, editor, getPos }) => {
     menuAt(
       kind,
       CALLOUT_KINDS.map((k) => ({
-        label: label(k),
+        label: calloutLabel(k),
         hint: t(`work.room.doc.blocks.kindHints.${k}`),
         pressed: k === current,
         run: () => editor.view.dispatch(editor.state.tr.setNodeAttribute(pos, 'kind', k)),
@@ -112,7 +119,7 @@ const calloutView: ViewFactory = ({ node, editor, getPos }) => {
     update(next) {
       if (next.type !== node.type) return false
       dom.dataset.kind = next.attrs.kind as string
-      kind.textContent = label(next.attrs.kind as string)
+      kind.textContent = calloutLabel(next.attrs.kind as string)
       return true
     },
     ignoreMutation: own(dom, kind),
@@ -122,18 +129,8 @@ const calloutView: ViewFactory = ({ node, editor, getPos }) => {
 // ---- Timeline: the time column is as wide as the longest time.
 
 const timelineView: ViewFactory = ({ node }) => {
-  const dom = document.createElement('div')
-  dom.dataset.block = 'timeline'
-  // Each time is laid out on one line; the width of its text is how wide the
-  // column has to be. An empty time still needs room for its hint.
-  const fit = () => {
-    const range = document.createRange()
-    const widths = Array.from(dom.querySelectorAll<HTMLElement>('[data-field="when"]')).map((el) => {
-      range.selectNodeContents(el)
-      return el.textContent ? range.getBoundingClientRect().width : 32
-    })
-    if (widths.length) dom.style.setProperty('--doc-tl-w', `${Math.ceil(Math.max(...widths)) + 2}px`)
-  }
+  const dom = timelineShape()
+  const fit = () => fitTimeline(dom)
   requestAnimationFrame(fit)
   // Web fonts change how wide the times are.
   void document.fonts?.ready.then(fit)
@@ -150,11 +147,8 @@ const timelineView: ViewFactory = ({ node }) => {
 }
 
 const timelineItemView: ViewFactory = ({ editor, getPos }) => {
-  const dom = document.createElement('div')
-  dom.dataset.item = 'timeline'
   const dot = controlButton('doc-tl__dot', t('work.room.doc.blocks.itemActions'))
-  const content = document.createElement('div')
-  dom.append(dot, content)
+  const { dom, content } = timelineItemShape(dot)
   dot.addEventListener('click', () => {
     const pos = posOf(getPos)
     if (pos === null || !editor.isEditable) return
@@ -191,12 +185,9 @@ function trackEditing(editor: Editor, getPos: NodeViewRendererProps['getPos'], d
 }
 
 const statsView: ViewFactory = ({ editor, getPos }) => {
-  const dom = document.createElement('div')
-  dom.dataset.block = 'stats'
-  const cards = document.createElement('div')
-  cards.className = 'doc-stats__cards'
+  const { dom, cards } = statsShape()
   const add = controlButton('doc-stats__add', t('work.room.doc.blocks.addStat'), '＋')
-  dom.append(cards, add)
+  dom.append(add)
   add.addEventListener('click', () => {
     const pos = posOf(getPos)
     const node = pos === null ? null : editor.state.doc.nodeAt(pos)
@@ -208,11 +199,9 @@ const statsView: ViewFactory = ({ editor, getPos }) => {
 }
 
 const statItemView: ViewFactory = ({ editor, getPos }) => {
-  const dom = document.createElement('div')
-  dom.dataset.item = 'stat'
-  const content = document.createElement('div')
+  const { dom, content } = statItemShape()
   const remove = controlButton('doc-stat__remove', t('work.room.doc.blocks.removeStat'), '×')
-  dom.append(content, remove)
+  dom.append(remove)
   remove.addEventListener('click', () => {
     const pos = posOf(getPos)
     if (pos !== null) removeItem(editor, pos)
@@ -223,11 +212,9 @@ const statItemView: ViewFactory = ({ editor, getPos }) => {
 // ---- Columns: a menu on each column adds one beside it or removes it.
 
 const columnView: ViewFactory = ({ editor, getPos }) => {
-  const dom = document.createElement('div')
-  dom.dataset.item = 'column'
+  const { dom, content } = columnShape()
   const handle = controlButton('doc-column__menu', t('work.room.doc.blocks.columnActions'), '⋯')
-  const content = document.createElement('div')
-  dom.append(handle, content)
+  dom.prepend(handle)
   handle.addEventListener('click', () => {
     const pos = posOf(getPos)
     if (pos === null || !editor.isEditable) return
@@ -275,38 +262,12 @@ const columnView: ViewFactory = ({ editor, getPos }) => {
 // ---- Fold: open while editing, closed while reading; the arrow toggles it here only.
 
 const detailsView: ViewFactory = ({ editor }) => {
-  const dom = document.createElement('div')
-  dom.dataset.block = 'details'
   const toggle = controlButton('doc-details__toggle', t('work.room.doc.blocks.toggleDetails'))
-  const content = document.createElement('div')
-  dom.append(toggle, content)
-  const set = (open: boolean) => {
-    dom.classList.toggle('doc-details--open', open)
-    toggle.setAttribute('aria-expanded', String(open))
-  }
-  set(editor.isEditable)
-  toggle.addEventListener('click', () => set(!dom.classList.contains('doc-details--open')))
+  const { dom, content } = detailsShape(toggle, editor.isEditable)
   return { dom, contentDOM: content, ignoreMutation: own(dom, toggle) }
 }
 
 // ---- Formulas: rendered with KaTeX; clicking one while editing opens its source.
-
-function renderMath(el: HTMLElement, latex: string, displayMode: boolean): void {
-  if (!latex.trim()) {
-    el.textContent = t('work.room.doc.blocks.emptyFormula')
-    el.classList.add('doc-math--empty')
-    return
-  }
-  el.classList.remove('doc-math--empty')
-  try {
-    katex.render(latex, el, { displayMode, throwOnError: true })
-    el.classList.remove('doc-math--error')
-  } catch {
-    el.textContent = latex
-    el.classList.add('doc-math--error')
-    el.title = t('work.room.doc.blocks.formulaError')
-  }
-}
 
 function editMath(editor: Editor, getPos: NodeViewRendererProps['getPos'], anchor: HTMLElement, displayMode: boolean) {
   const pos = posOf(getPos)
@@ -346,10 +307,8 @@ function editMath(editor: Editor, getPos: NodeViewRendererProps['getPos'], ancho
 
 function mathView(displayMode: boolean): ViewFactory {
   return ({ node, editor, getPos }) => {
-    const dom = document.createElement(displayMode ? 'div' : 'span')
-    dom.dataset.math = displayMode ? 'block' : 'inline'
     let latex = node.attrs.latex as string
-    renderMath(dom, latex, displayMode)
+    const dom = mathShape(latex, displayMode)
     dom.addEventListener('click', () => editMath(editor, getPos, dom, displayMode))
     // A formula just inserted from the menu has no source yet: ask for it.
     if (!latex && editor.isEditable) requestAnimationFrame(() => editMath(editor, getPos, dom, displayMode))
@@ -371,16 +330,6 @@ function mathView(displayMode: boolean): ViewFactory {
 
 // ---- Footnotes: the reference shows its note where it is read.
 
-function footnoteText(doc: PMNode, label: string): { text: string; pos: number } | null {
-  let found: { text: string; pos: number } | null = null
-  doc.forEach((child, offset) => {
-    if (!found && child.type.name === 'footnoteDef' && child.attrs.label === label) {
-      found = { text: child.textContent, pos: offset }
-    }
-  })
-  return found
-}
-
 const footnoteRefView: ViewFactory = ({ node, editor }) => {
   const dom = document.createElement('sup')
   dom.dataset.footnoteRef = node.attrs.label as string
@@ -389,11 +338,7 @@ const footnoteRefView: ViewFactory = ({ node, editor }) => {
   dom.addEventListener('click', () => {
     const label = dom.dataset.footnoteRef ?? ''
     const note = footnoteText(editor.state.doc, label)
-    const el = document.createElement('div')
-    el.classList.add('doc-pop--note')
-    const text = document.createElement('p')
-    text.textContent = note?.text || t('work.room.doc.blocks.footnoteMissing')
-    el.append(text)
+    const el = footnoteNote(note)
     if (note && editor.isEditable) {
       const go = document.createElement('button')
       go.type = 'button'

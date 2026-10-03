@@ -143,46 +143,6 @@ const emptyPlaceholder = computed(() => JSON.stringify(props.placeholder ?? ''))
   background: none;
   white-space: pre;
 }
-.rt-content :deep(.hljs-comment),
-.rt-content :deep(.hljs-quote) {
-  color: var(--code-comment);
-  font-style: italic;
-}
-.rt-content :deep(.hljs-keyword),
-.rt-content :deep(.hljs-selector-tag),
-.rt-content :deep(.hljs-literal),
-.rt-content :deep(.hljs-doctag),
-.rt-content :deep(.hljs-meta) {
-  color: var(--code-keyword);
-}
-.rt-content :deep(.hljs-string),
-.rt-content :deep(.hljs-regexp),
-.rt-content :deep(.hljs-addition) {
-  color: var(--code-string);
-}
-.rt-content :deep(.hljs-number),
-.rt-content :deep(.hljs-symbol),
-.rt-content :deep(.hljs-bullet) {
-  color: var(--code-number);
-}
-.rt-content :deep(.hljs-title),
-.rt-content :deep(.hljs-section),
-.rt-content :deep(.hljs-name),
-.rt-content :deep(.hljs-function) {
-  color: var(--code-function);
-}
-.rt-content :deep(.hljs-type),
-.rt-content :deep(.hljs-class),
-.rt-content :deep(.hljs-built_in),
-.rt-content :deep(.hljs-attr),
-.rt-content :deep(.hljs-attribute),
-.rt-content :deep(.hljs-variable),
-.rt-content :deep(.hljs-template-variable) {
-  color: var(--code-type);
-}
-.rt-content :deep(.hljs-deletion) {
-  color: var(--code-deletion);
-}
 .rt-content :deep(hr) {
   margin: 16px 0;
   border: none;

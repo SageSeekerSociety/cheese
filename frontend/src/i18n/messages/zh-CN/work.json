@@ -782,7 +782,6 @@
       "liveRefTitle": "「{title}」· {status} — 点击打开",
       "thisTask": "这件任务",
       "subtopic": "子话题",
-      "topic": "话题",
       "selectionToolbar": "选区操作",
       "copy": "复制",
       "blockType": "段落格式",
@@ -890,7 +889,12 @@
         "columnLeft": "在左边插入一列",
         "columnRight": "在右边插入一列",
         "columnDelete": "删除这一列",
-        "diagramTooLong": "图太大，只显示源码"
+        "diagramTooLong": "图太大，只显示源码",
+        "plain": {
+          "chart": "图表",
+          "diagram": "流程图",
+          "image": "图片"
+        }
       }
     },
     "comments": {

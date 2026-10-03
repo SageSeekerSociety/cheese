@@ -9,7 +9,6 @@ import { getTranscript, SITE_PAGE_SIZE } from '../../api'
 import { useStickToBottom } from '../../composables/useStickToBottom'
 import { isAgentBlock, isAgentHandle } from '../../lib/authorship'
 import { scrollTopAfterPrepend, shouldLoadOlder } from '../../lib/blockPaging'
-import { renderMarkdown } from '../../lib/renderMessage'
 import {
   countLines,
   eventArg,
@@ -25,6 +24,7 @@ import {
 import { isPlatformEvent } from '../../lib/toolLabels'
 import CheeseAvatar from '../CheeseAvatar.vue'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
+import MarkdownView from '../common/MarkdownView.vue'
 import MemberActivity from '../room/MemberActivity.vue'
 import SessionInspector from '../SessionInspector.vue'
 
@@ -381,15 +381,11 @@ function isSay(b: Block): boolean {
   return b.kind !== 'event' || isNarration(b.meta)
 }
 
-// 芝士说的话按 markdown 渲染，和对话栏走同一条路（lib/renderMessage）。
+// 芝士说的话按 markdown 渲染，和对话栏走同一条路（common/MarkdownView）。
 // 这一栏原来是把原文摆出来（mono + pre-wrap，Claude Code 会话那种），但一段汇报
 // 落到人眼里就是一堆星号和反引号，粗体、列表、代码块全丢了信息。引用 token 也照
 // 对话栏展开成 chip —— 光看 `<@handle>` `<&path>` 是认不出人的。
 const sayRefs = computed(() => ({ mentionNames: props.memberNames, topicTitles: {} }))
-
-function renderSay(text: string): string {
-  return renderMarkdown(text, sayRefs.value)
-}
 
 // chip 是 v-html 塞进来的，点击只能从容器上委派（同对话栏）。文件 chip 带上这条
 // 消息自己的 task_id：现场读的是别的任务的记录时，路径要在那个任务的目录里找。
@@ -536,13 +532,15 @@ function isLive(index: number): boolean {
                   <span class="t-meta">{{ fmtTime(b.created_at) }}</span>
                 </div>
                 <!-- 渲染成正文，不摆原文：现场读的也是人说的话，粗体、列表、代码块
-                   和对话栏一个样子（走同一个 renderMarkdown）。 -->
-                <div
+                   和对话栏一个样子（走同一个 MarkdownView）。 -->
+                <MarkdownView
                   class="site-msg__body md-content"
                   :class="{ 'site-msg__body--clamped': isLongSiteEntry(b.content) && !expandedSite.has(b.id) }"
                   :style="{ '--site-clamp-lines': SITE_CLAMP_LINES }"
+                  :source="b.content"
+                  as="chat"
+                  :names="sayRefs"
                   @click="onSayClick($event, b)"
-                  v-html="renderSay(b.content)"
                 />
                 <!-- 过长时不直接摊开：一条几千字的输出会把它前后的所有东西挤出
                    屏幕，而 现场 的价值恰恰是「一眼看完发生了什么」。折叠到 12

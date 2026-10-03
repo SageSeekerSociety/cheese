@@ -4,12 +4,14 @@
  *
  * 单独一份，和 `catalogRoom.ts` 同一个理由：`catalog.ts` 已经顶到一千行的上限。
  * 正文就是写作指南教给芝士的那套写法，打开这一页看到的，就是芝士照指南写出来的
- * 文档在编辑器里的样子。
+ * 文档在编辑器里的样子；`MarkdownView` 那一条是同一份字在消息、文件、旧版本里的
+ * 样子，两条应当长得一样。
  */
 import type { CatalogEntry } from './catalog'
 
 import { docPanelProps, docSession } from './catalogFixtures'
 
+import MarkdownView from '@/components/common/MarkdownView.vue'
 import PanelDocView from '@/components/panels/PanelDocView.vue'
 
 const SAMPLE = `九月起搜索框改为常驻，下面是两周后的复盘。
@@ -93,6 +95,26 @@ $$
 
 [^1]: 改版前日均 1,049 次：2,140 ÷ 1,049 − 1 ≈ 104%。`
 
+// 一条芝士的消息：和文档同样的写法，在对话里同样地画出来。
+const CHAT_SAMPLE = [
+  '<@zhangsan> 改版后一周的登录耗时 {✓ 已上线} {! 安卓待验证}',
+  '',
+  ':::chart line',
+  '| 天  | 改版前（秒） | 改版后（秒） |',
+  '| --- | ------ | ------ |',
+  '| 周一 | 4.2    | 2.1    |',
+  '| 周二 | 4.0    | 2.0    |',
+  '| 周三 | 4.4    | 1.9    |',
+  ':::',
+  '',
+  '> [!WARNING]',
+  '> 安卓 9 以下周三前要回归一遍。',
+  '',
+  '```bash',
+  'make e2e ANDROID=9',
+  '```',
+].join('\n')
+
 export const DOC_BLOCK_ENTRIES: CatalogEntry[] = [
   {
     id: 'doc-blocks',
@@ -118,6 +140,34 @@ export const DOC_BLOCK_ENTRIES: CatalogEntry[] = [
         note: '控件都收起；图表的数据收在「数据」里；流程图点开全屏；脚注点开在原处看，文末不再列一遍；窄屏上文字表格变成卡片，数字表格横着滑、首列不动。',
         props: docPanelProps({ session: docSession(SAMPLE), editable: false, readOnly: true }),
         expect: '上线过程',
+      },
+    ],
+  },
+  {
+    id: 'markdown-view',
+    title: 'MarkdownView',
+    about:
+      '编辑器之外读一段 Markdown：消息、文件、周报、文档的旧版本。和文档用同一套块，应当和「PanelDocView · 块」的只读一格长得一样。',
+    file: 'src/components/common/MarkdownView.vue',
+    component: MarkdownView,
+    needs: ['i18n'],
+    states: [
+      {
+        name: '文档的读法',
+        note: '文件、周报、旧版本：单个换行不断行。图表和流程图滚到眼前才画。',
+        props: { source: SAMPLE },
+        expect: '上线过程',
+      },
+      {
+        name: '聊天的读法',
+        note: '芝士的消息：单个换行就是换行；代码块右上角有「复制」；点名显示名字。',
+        props: {
+          source: CHAT_SAMPLE,
+          as: 'chat',
+          names: { mentionNames: { zhangsan: '张三' }, topicTitles: {} },
+          copyCode: true,
+        },
+        expect: '安卓 9 以下周三前要回归一遍',
       },
     ],
   },

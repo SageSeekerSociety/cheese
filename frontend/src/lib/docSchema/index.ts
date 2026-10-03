@@ -18,10 +18,10 @@
 
 export { carryCommentAnchors, COMMENT_ANCHOR, commentAnchors } from './commentAnchors'
 export type { DocExtensionsOptions, DocImageOptions } from './extensions'
-export { docExtensions } from './extensions'
+export { docExtensions, lowlight } from './extensions'
 export type { RoundTripReport } from './fidelity'
 export { compareRoundTrip, normalizeMarkdown } from './fidelity'
-export { docMarked, finishMarkdown, serializeDoc } from './markdown'
+export { buildDocMarked, docMarked, finishMarkdown, serializeDoc } from './markdown'
 export type { PendingSuggestion } from './suggestions'
 export { pendingSuggestions, suggestionAuthor, suggestionId, withoutSuggestions } from './suggestions'
 export { DOC_SCHEMA_MISMATCH, DOC_SCHEMA_PARAM, DOC_SCHEMA_VERSION } from './version'

@@ -18,7 +18,6 @@ import markedCjkFriendly from 'marked-cjk-friendly'
 // extension (CommonMark issue #650) counts CJK characters as punctuation for
 // flanking, which supplies exactly the missing escape hatch and leaves
 // non-CJK text alone.
-export const docMarked = new Marked(markedCjkFriendly())
 
 // ---- Two things the markdown parser gets wrong for this editor --------------
 //
@@ -142,7 +141,13 @@ const DocAutolinkCjk: TokenizerExtension = {
   },
 }
 
-docMarked.use({ extensions: [DocLiteralTag, DocLiteralTagBlock, DocAutolinkCjk] })
+/** A parser with the document's rules. The chat reads with its own (a single
+ *  newline breaks the line there); building it here keeps the rules one list. */
+export function buildDocMarked(): Marked {
+  return new Marked(markedCjkFriendly()).use({ extensions: [DocLiteralTag, DocLiteralTagBlock, DocAutolinkCjk] })
+}
+
+export const docMarked = buildDocMarked()
 
 // Note on our structured tokens: the serializer HTML-escapes `<`/`&` in text,
 // which would corrupt `<@handle>` / `<#topicId>` / `<&path>` on save. That's
