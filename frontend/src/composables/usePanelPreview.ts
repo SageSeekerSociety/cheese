@@ -59,18 +59,24 @@ export interface PanelPreviewOptions {
   onLoaded?: (artifactId: string | null) => void
 }
 
-/** 图上画完的那张合成图：展示组件把它做出来，取数这一层把它送进房间。 */
-export interface AnnotateDraft {
+/** 一张要进房间的图。上传真正要的只有这两样。 */
+export interface ImageUpload {
   blob: Blob
   filename: string
+}
+
+/** 图上画完的那张合成图：展示组件把它做出来，取数这一层把它送进房间。 */
+export interface AnnotateDraft extends ImageUpload {
   naturalWidth: number
   naturalHeight: number
   count: number
   note: string
 }
 
-/** 传一张标注图、换回一条能挂到消息上的附件。组件按 prop 拿它，自己不碰 fetch。 */
-export type UploadAnnotation = (topicId: string, draft: AnnotateDraft) => Promise<ChatAttachment>
+/** 传一张图、换回一条能挂到消息上的附件。组件按 prop 拿它，自己不碰 fetch。
+ *  收的只是「一张图」，因为要传的不止合成图一种：指出页面上的一点时，配图是那一页
+ *  当时的样子，没有画过任何东西。 */
+export type UploadAnnotation = (topicId: string, image: ImageUpload) => Promise<ChatAttachment>
 
 /** 「预览」这一格的全部取数：状态进、动作出，一个组件都不碰。 */
 export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewOptions) {
@@ -474,8 +480,8 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
    * 一半按 prop 调；origin 用 clipboard —— 它是那句话的配图，不是一份要进资料库供
    * 人浏览的文档。
    */
-  async function uploadAnnotation(topicId: string, draft: AnnotateDraft): Promise<ChatAttachment> {
-    const file = new File([draft.blob], draft.filename, { type: 'image/png' })
+  async function uploadAnnotation(topicId: string, image: ImageUpload): Promise<ChatAttachment> {
+    const file = new File([image.blob], image.filename, { type: 'image/png' })
     return uploadAttachment(topicId, file, 'clipboard')
   }
 

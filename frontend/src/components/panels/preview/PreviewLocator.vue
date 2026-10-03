@@ -3,7 +3,12 @@ import { nextTick, ref, watch } from 'vue'
 
 import { t } from '@/i18n'
 
-const props = defineProps<{ target: { label: string; quote: string } | null; note: string }>()
+const props = defineProps<{
+  target: { label: string; quote: string } | null
+  note: string
+  /** 上一次发送还没回来。发送要等一会儿，这期间再点一次会发出两条消息。 */
+  busy?: boolean
+}>()
 const emit = defineEmits<{ 'update:note': [note: string]; send: []; cancel: [] }>()
 const input = ref<HTMLInputElement | null>(null)
 watch(
@@ -14,6 +19,7 @@ watch(
   { immediate: true }
 )
 function send(event: KeyboardEvent | MouseEvent) {
+  if (props.busy) return
   if ('isComposing' in event && (event.isComposing || event.keyCode === 229)) return
   event.preventDefault()
   emit('send')
@@ -38,7 +44,7 @@ function send(event: KeyboardEvent | MouseEvent) {
         @keydown.enter="send"
         @keydown.esc.prevent="emit('cancel')"
       />
-      <v-btn size="small" color="primary" variant="flat" :disabled="!note.trim()" @click="send">
+      <v-btn size="small" color="primary" variant="flat" :disabled="!note.trim() || busy" @click="send">
         {{ t('work.room.preview.send') }}
       </v-btn>
       <v-btn

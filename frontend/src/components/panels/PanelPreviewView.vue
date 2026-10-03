@@ -23,7 +23,6 @@ import { computed, defineAsyncComponent, ref, watch } from 'vue'
 import { useFullscreen } from '@vueuse/core'
 
 import { t } from '../../i18n'
-import { sameDocumentIdentity } from '../../lib/documentBytes'
 import { markdown, sanitizeRendered } from '../../lib/markdown'
 import { roomFileDestination } from '../../lib/previewSession'
 
@@ -36,6 +35,7 @@ import PreviewSlides from './preview/PreviewSlides.vue'
 import RevisionList from './preview/RevisionList.vue'
 import RoomOutputs from './preview/RoomOutputs.vue'
 import { usePreviewImageRegion } from './preview/usePreviewImageRegion'
+import { usePreviewPagePin } from './preview/usePreviewPagePin'
 
 // The editor and its history only load once someone opens them: most previews
 // never do, and every panel that shows a preview would otherwise carry them.
@@ -197,6 +197,7 @@ function onEditorOpened(path: string) {
 }
 
 const revisionsRef = ref<InstanceType<typeof RevisionList> | null>(null)
+const pagesRef = ref<InstanceType<typeof PreviewPages> | null>(null)
 
 // ---- 指出位置 ----
 // 读者指着文档里的一处说「这里不对」，交给芝士的是一句话：文件、位置、原文。
@@ -206,10 +207,16 @@ const locator = ref<{ label: string; quote: string; address: string } | null>(nu
 const pageContext = ref<SlidePageContext | null>(null)
 const locatorNote = ref('')
 const imageRegion = usePreviewImageRegion(props, clearLocator)
+const pageLocator = usePreviewPagePin(props, {
+  snapshot: async (page) => (await pagesRef.value?.snapshot(page)) ?? null,
+  open: openLocator,
+  clear: clearLocator,
+})
 
 function openLocator(label: string, quote: string, address: string) {
   imageRegion.clear()
   pageContext.value = null
+  pageLocator.pin.value = null
   locator.value = { label, quote, address }
   locatorNote.value = ''
 }
@@ -218,6 +225,8 @@ function clearLocator() {
   imageRegion.clear()
   locator.value = null
   pageContext.value = null
+  pageLocator.pin.value = null
+  pagesRef.value?.clearMark()
   locatorNote.value = ''
 }
 function onImageRegion(selection: RasterSelection) {
@@ -226,35 +235,8 @@ function onImageRegion(selection: RasterSelection) {
   openLocator(t('design.region'), t('design.selectedRegion', selection.region), '')
   imageRegion.target.value = captured
 }
-function canUsePageContext(context: SlideSource): boolean {
-  const expected = props.slideContext
-  const current = props.docIdentity
-  const displayed = props.docSnapshot
-  if (
-    !expected ||
-    !current ||
-    !displayed ||
-    props.docBytes !== displayed.bytes ||
-    props.docLoading ||
-    props.docError ||
-    props.docRendererMissing ||
-    props.topicId !== current.topicId ||
-    props.previewFile?.path !== current.path ||
-    props.previewFile?.version !== current.version ||
-    (props.previewFile?.source ?? 'live') !== current.source
-  )
-    return false
-  const identity = { ...context, taskId: context.taskId ?? null }
-  return (
-    sameDocumentIdentity(identity, current) &&
-    sameDocumentIdentity(current, displayed.identity) &&
-    sameDocumentIdentity({ ...expected, taskId: expected.taskId ?? null }, current) &&
-    displayed.sourceVersion === current.version
-  )
-}
-
 function onPageContext(payload: SlidePageContext) {
-  if (!canUsePageContext(payload.context)) return
+  if (!pageLocator.canUse(payload.context)) return
   const page = t('work.room.preview.page', { page: payload.page })
   openLocator(page, payload.scope === 'page' ? t('slides.wholePage') : payload.text.slice(0, 200), page)
   pageContext.value = { ...payload, context: { ...payload.context } }
@@ -296,6 +278,10 @@ function sendLocator() {
   const target = locator.value
   const note = locatorNote.value.trim()
   if (!target || !note) return
+  if (pageLocator.pin.value) {
+    void pageLocator.send(note)
+    return
+  }
   if (imageRegion.target.value) {
     const message = imageRegion.message(note)
     if (!message) return
@@ -305,7 +291,7 @@ function sendLocator() {
   }
   if (pageContext.value) {
     const payload = pageContext.value
-    if (!canUsePageContext(payload.context)) return
+    if (!pageLocator.canUse(payload.context)) return
     const accepted = props.submitQuestion?.({
       intent: 'ask-agent',
       topicId: payload.context.topicId,
@@ -668,7 +654,15 @@ async function onAnnotate(payload: AnnotateDraft) {
           @quote="onQuote"
           @page-context="onPageContext"
         />
-        <PreviewPages v-else-if="documentType.view === 'pages'" :data="docBytes" @quote="onQuote" />
+        <PreviewPages
+          v-else-if="documentType.view === 'pages'"
+          ref="pagesRef"
+          :data="docBytes"
+          :context="slideContext"
+          @quote="onQuote"
+          @pin="pageLocator.onPin"
+          @dropped="clearLocator"
+        />
         <PreviewSheet v-else :data="docBytes" :kind="documentSuffix === 'csv' ? 'csv' : 'workbook'" @cell="onCell" />
 
         <!-- 修订清单。页面上已经能看见改动了（LibreOffice 会把修订画出来），这里是
@@ -745,6 +739,7 @@ async function onAnnotate(payload: AnnotateDraft) {
     <PreviewLocator
       v-model:note="locatorNote"
       :target="imageRegion.target.value ? null : locator"
+      :busy="pageLocator.sending.value"
       @send="sendLocator"
       @cancel="clearLocator"
     />
