@@ -29,8 +29,11 @@ export const DOCUMENT_TYPES: Record<string, FileKind> = {
   ppt: named('slides', { icon: 'mdi-file-powerpoint-outline', view: 'pages' }),
   odp: named('slides', { icon: 'mdi-file-powerpoint-outline', view: 'pages' }),
   xlsx: named('sheet', { icon: 'mdi-file-excel-outline', view: 'sheet' }),
+  xlsm: named('sheet', { icon: 'mdi-file-excel-outline', view: 'sheet' }),
   xls: named('sheet', { icon: 'mdi-file-excel-outline', view: 'sheet' }),
+  ods: named('sheet', { icon: 'mdi-file-excel-outline', view: 'sheet' }),
   csv: named('csv', { icon: 'mdi-file-delimited-outline', view: 'sheet' }),
+  tsv: { label: 'TSV', icon: 'mdi-file-delimited-outline', view: 'sheet' },
   md: { label: 'Markdown', icon: 'mdi-language-markdown-outline', view: 'markdown' },
   markdown: { label: 'Markdown', icon: 'mdi-language-markdown-outline', view: 'markdown' },
 }
@@ -95,7 +98,19 @@ export function webMimeOf(suffix: string): string {
  *  它们的文本 diff 正是审阅最需要的那一面，换成渲染反而更差。 */
 export function needsDocumentView(path: string): boolean {
   const suffix = suffixOf(path)
-  return NEEDS_CONVERSION.has(suffix) || suffix === 'pdf' || suffix === 'xlsx' || suffix === 'xls'
+  return NEEDS_CONVERSION.has(suffix) || ['pdf', 'xlsx', 'xlsm', 'xls', 'ods'].includes(suffix)
+}
+
+/** 表格阅读器要按哪种读法打开这一份。收后缀（`suffixOf` 的结果），不是路径。
+ *
+ *  字节本身看不出区别（都是一串字节），所以这件事只能按后缀说：`csv`/`tsv` 是
+ *  分隔文本，`ods` 是另一种压缩包（我们读不了，得明说），其余当 OOXML 工作簿读。
+ */
+export function sheetKindOf(suffix: string): 'workbook' | 'csv' | 'tsv' | 'ods' {
+  if (suffix === 'csv') return 'csv'
+  if (suffix === 'tsv') return 'tsv'
+  if (suffix === 'ods') return 'ods'
+  return 'workbook'
 }
 
 /** 这个文件有没有「第一页」可以画出来。PDF 直接就有，Office 文档转一次就有。 */

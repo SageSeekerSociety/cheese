@@ -14,9 +14,9 @@ const props = withDefaults(
   defineProps<{
     /** 表格文件的原始字节。 */
     data: ArrayBuffer | null
-    /** 这份字节是什么。CSV 是一串文本，工作簿是一个 zip，读法没有一处相同，而
-     *  字节本身看不出区别 —— 后缀只有调用方知道。 */
-    kind?: 'workbook' | 'csv'
+    /** 这份字节是什么。CSV/TSV 是一串文本，工作簿是一个 zip，读法没有一处相同，
+     *  而字节本身看不出区别 —— 后缀只有调用方知道（`lib/fileKind.sheetKindOf`）。 */
+    kind?: 'workbook' | 'csv' | 'tsv' | 'ods'
   }>(),
   { kind: 'workbook' }
 )
@@ -26,13 +26,40 @@ const emit = defineEmits<{
   (e: 'cell', payload: { address: string; value: string; sheet: string }): void
 }>()
 
-type Sheet = { name: string; rows: string[][]; width: number }
+type Sheet = {
+  name: string
+  /** 画出来的这些行（最多 `MAX_ROWS` 行、每行最多 `MAX_COLS` 格）。 */
+  rows: string[][]
+  /** 画出来的列数。 */
+  width: number
+  /** 整张表本来有多少行 / 多少列 —— 只画了一部分时要靠它说清。 */
+  totalRows: number
+  totalCols: number
+}
 
 const sheets = ref<Sheet[]>([])
 const activeIndex = ref(0)
 const loading = ref(false)
 const failure = ref('')
 const selected = ref<string>('')
+
+/** 画出来的上限。一张几十万行的 CSV 整份铺进 DOM 会把面板拖死，而人要找的那几格
+ *  总在开头。超出的部分不是丢了，是没画出来 —— 所以下面那条提示必须说清「只显示了
+ *  前 N 行 M 列」，并且文件条上照旧有「下载原文件」这条路。 */
+const MAX_ROWS = 500
+const MAX_COLS = 64
+const MAX_CELL = 300
+/** 解析之前先切字节的上限：一份 200 MB 的 CSV 光解码成字符串就先占掉几百 MB。 */
+const MAX_BYTES = 1 << 20
+
+/** 有单元格因为太长被截短了。 */
+const shortened = ref(false)
+/** 字节在解析之前就被切了，表尾可能缺。 */
+const endClipped = ref(false)
+
+/** 看原文还是看表格。分隔符猜错、编码认错时，原文是唯一的自救路径。 */
+const showSource = ref(false)
+const sourceText = ref('')
 
 let generation = 0
 
@@ -52,8 +79,7 @@ function columnName(index: number): string {
 /** CSV 的编码取决于谁写的。芝士 写 UTF-8；而人从 Excel 导出的 CSV 在中文 Windows
  *  上是 GBK，按 UTF-8 解出来是一整片乱码，而且不抛错 —— 所以先严格按 UTF-8 解，
  *  它失败了才说明这不是 UTF-8，退到 GBK。 */
-function decodeText(data: ArrayBuffer): string {
-  const bytes = new Uint8Array(data)
+function decodeText(bytes: Uint8Array): string {
   let text: string
   try {
     text = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
@@ -139,17 +165,36 @@ function display(value: unknown): string {
   return String(value)
 }
 
-/** CSV 只有一张表，而且它没有名字 —— 没有名字就不该编一个：地址栏里写 `B7`，
+/** 老版 `.xls`（Excel 97-2003）是 OLE2 复合文档，头八个字节固定是这几个；OOXML 是
+ *  zip（`PK`）。exceljs 只读 OOXML，拿 OLE2 进去只会抛一句「找不到中央目录」——
+ *  按魔数先认出来，才能把话说成人话。 */
+const OLE2_MAGIC = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]
+
+function isOle2(bytes: Uint8Array): boolean {
+  return bytes.length >= OLE2_MAGIC.length && OLE2_MAGIC.every((b, i) => bytes[i] === b)
+}
+
+/** CSV / TSV 只有一张表，而且它没有名字 —— 没有名字就不该编一个：地址栏里写 `B7`，
  *  和一个真有工作表名的 `Sheet1!B7` 是两种不同的坐标，编出来的名字会让读者以为
  *  这份文件里还有别的表。 */
-function openCsv(data: ArrayBuffer) {
-  const text = decodeText(data)
-  const rows = parseCsv(text, sniffSeparator(text))
+function openText(data: ArrayBuffer, kind: 'csv' | 'tsv') {
+  const bytes = new Uint8Array(data)
+  // 先切字节再解码：整份读进来再切开，切之前那几百 MB 已经占住了。
+  endClipped.value = bytes.length > MAX_BYTES
+  const text = decodeText(bytes.subarray(0, MAX_BYTES))
+  sourceText.value = text
+  // TSV 的分隔符是格式的一部分，不用猜；CSV 才要数第一行里哪个符号多。
+  const rows = parseCsv(text, kind === 'tsv' ? '\t' : sniffSeparator(text))
   if (!rows.length) {
     failure.value = t('work.room.preview.fileEmpty')
     return
   }
-  sheets.value = [{ name: '', rows, width: Math.max(...rows.map((r) => r.length)) }]
+  // 不用 Math.max(...)：一份只由换行组成的 1 MB 文件有几十万行，摊开成实参会把栈压爆。
+  let totalCols = 0
+  for (const r of rows) if (r.length > totalCols) totalCols = r.length
+  const kept = rows.slice(0, MAX_ROWS).map((r) => r.slice(0, MAX_COLS))
+  shortened.value = kept.some((r) => r.some((c) => c.length > MAX_CELL))
+  sheets.value = [{ name: '', rows: kept, width: Math.min(totalCols, MAX_COLS), totalRows: rows.length, totalCols }]
   activeIndex.value = 0
 }
 
@@ -159,9 +204,25 @@ async function open(data: ArrayBuffer) {
   failure.value = ''
   sheets.value = []
   selected.value = ''
+  sourceText.value = ''
+  endClipped.value = false
+  shortened.value = false
+  // 换一份文件就回到表格：上一个是 csv、这个不是，留在原文视图会看见一片空白，
+  // 而且那条切换按钮在这种文件上根本不出现，读者没有路回去。
+  showSource.value = false
   try {
-    if (props.kind === 'csv') {
-      openCsv(data)
+    if (props.kind === 'ods') {
+      // OpenDocument 表格和 OOXML 不是一个格式，exceljs 读不了它。与其让它抛一句
+      // 读不懂的错，不如说清这条路走不通、以及可以怎么拿到内容。
+      failure.value = t('work.room.preview.sheetFormatUnsupported')
+      return
+    }
+    if (props.kind === 'csv' || props.kind === 'tsv') {
+      openText(data, props.kind)
+      return
+    }
+    if (isOle2(new Uint8Array(data))) {
+      failure.value = t('work.room.preview.sheetLegacyUnsupported')
       return
     }
     const ExcelJS = await import('exceljs')
@@ -173,15 +234,25 @@ async function open(data: ArrayBuffer) {
       const rows: string[][] = []
       let width = 0
       worksheet.eachRow({ includeEmpty: true }, (row, rowNumber) => {
+        if (rowNumber > MAX_ROWS) return
         const cells: string[] = []
         row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
-          cells[colNumber - 1] = display(cell.value)
+          if (colNumber > MAX_COLS) return
+          const text = display(cell.value)
+          if (text.length > MAX_CELL) shortened.value = true
+          cells[colNumber - 1] = text
         })
         width = Math.max(width, cells.length)
         rows[rowNumber - 1] = cells
       })
       for (let i = 0; i < rows.length; i += 1) if (!rows[i]) rows[i] = []
-      read.push({ name: worksheet.name, rows, width })
+      read.push({
+        name: worksheet.name,
+        rows,
+        width,
+        totalRows: worksheet.rowCount,
+        totalCols: worksheet.columnCount,
+      })
     })
     if (mine !== generation) return
     sheets.value = read
@@ -194,6 +265,28 @@ async function open(data: ArrayBuffer) {
     if (mine === generation) loading.value = false
   }
 }
+
+/** 画出来的是截短版，发出去的仍是整格内容 —— 地址对的是这一格，不是它显示成什么样。 */
+function cellText(value: string): string {
+  return value.length > MAX_CELL ? `${value.slice(0, MAX_CELL)}…` : value
+}
+
+/** 底部那条提示。只写要人知道的那几件，一件都没有就不占地方。 */
+const notice = computed(() => {
+  const sheet = active.value
+  if (!sheet) return ''
+  const parts: string[] = []
+  if (sheet.totalRows > sheet.rows.length || sheet.totalCols > sheet.width) {
+    parts.push(t('work.room.preview.sheetClipped', { rows: sheet.rows.length, cols: sheet.width }))
+  }
+  if (shortened.value) parts.push(t('work.room.preview.sheetCellsShortened'))
+  if (endClipped.value) parts.push(t('work.room.preview.sheetEndMissing'))
+  return parts.join(' ')
+})
+
+/** 分隔文本才有「原文」可看。工作簿的字节是压缩包，ods 我们根本读不开，两者都
+ *  没有一条能读的原文可切。 */
+const canShowSource = computed(() => props.kind === 'csv' || props.kind === 'tsv')
 
 function choose(rowIndex: number, colIndex: number) {
   const sheet = active.value
@@ -232,7 +325,15 @@ watch(
     </div>
 
     <template v-else-if="active">
-      <div class="ps__grid">
+      <div v-if="canShowSource" class="ps__bar">
+        <button type="button" class="ps__toggle" @click="showSource = !showSource">
+          <v-icon size="16">{{ showSource ? 'mdi-table' : 'mdi-code-tags' }}</v-icon>
+          {{ showSource ? t('work.room.preview.showTable') : t('work.room.preview.showSource') }}
+        </button>
+      </div>
+
+      <pre v-if="showSource" class="ps__source">{{ sourceText }}</pre>
+      <div v-else class="ps__grid">
         <table class="ps__table">
           <thead>
             <tr>
@@ -250,11 +351,16 @@ watch(
                 :class="{ 'ps__cell--on': selected === `${columnName(c - 1)}${r + 1}` }"
                 @click="choose(r, c - 1)"
               >
-                {{ row[c - 1] ?? '' }}
+                {{ cellText(row[c - 1] ?? '') }}
               </td>
             </tr>
           </tbody>
         </table>
+      </div>
+
+      <div v-if="!showSource && notice" class="ps__note">{{ notice }}</div>
+      <div v-else-if="showSource && endClipped" class="ps__note">
+        {{ t('work.room.preview.sheetEndMissing') }}
       </div>
 
       <div v-if="sheets.length > 1" class="ps__tabs">
@@ -288,6 +394,52 @@ watch(
 }
 .ps__state--text {
   text-align: center;
+}
+
+.ps__bar {
+  flex: none;
+  display: flex;
+  justify-content: flex-end;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.ps__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--muted);
+}
+.ps__toggle:hover {
+  background: var(--fill);
+  color: var(--ink);
+}
+
+/* 原文就是原文：等宽、不折行、原样保留空白和换行 —— 读者切过来就是为了看清分隔符和
+   编码到底长什么样，这里再排版一次反而把要找的东西抹掉了。 */
+.ps__source {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text);
+  white-space: pre;
+  tab-size: 8;
+}
+
+.ps__note {
+  flex: none;
+  padding: 6px 12px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--muted);
 }
 
 .ps__grid {
