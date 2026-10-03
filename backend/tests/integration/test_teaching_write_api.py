@@ -314,3 +314,44 @@ def test_the_task_override_beats_the_space_default_on_the_real_read_path(
     assert context is not None
     assert context.teaching.current_week == 3
     assert context.teaching.system_prompt == "题目的"
+
+
+def test_a_later_edit_reaches_an_existing_project_on_its_next_read(
+    api_client: TestClient,
+    user_client: UserCreator,
+    db_session,
+    _portal,
+):
+    """改一次配置，**已经建好的**那个项目下一次读就是新值。
+
+    这是生效语义的第 2 条（`harness.prompt` 顶上那段）：已有项目的新会话读到此刻
+    的配置。钉的是「`for_project` 每次现取，不往项目那一行记一份」—— 谁要是哪天
+    改成建项目时存个快照，这条会红。同一个 `project_id` 全程不动。
+
+    第 3 条（运行中的会话保持启动时那一份）这里碰不到：那是 Claude Code 启动时读
+    一次 `--append-system-prompt-file` 的事实，没有第二条路可绕（`prompt_text` 不
+    携带教学上下文）。
+    """
+    board = _new_board(user_client, api_client)
+    api_client.patch(
+        f"/spaces/{board['space_id']}",
+        json={"teaching": SPACE_WEEK},
+        headers=_auth(board["token"]),
+    )
+    task = _publish_task(api_client, board, name="改天换周次的题")
+    project_id = _project_under(api_client, user_client, board, task_id=task["id"])
+
+    before = _for_project(_portal, db_session, project_id)
+    assert before is not None
+    assert before.teaching.current_week == 1
+
+    changed = api_client.patch(
+        f"/spaces/{board['space_id']}",
+        json={"teaching": {**SPACE_WEEK, "currentWeek": 4}},
+        headers=_auth(board["token"]),
+    )
+    assert changed.status_code == 200, changed.text
+
+    after = _for_project(_portal, db_session, project_id)
+    assert after is not None
+    assert after.teaching.current_week == 4
