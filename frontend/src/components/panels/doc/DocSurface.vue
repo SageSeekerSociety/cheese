@@ -15,9 +15,9 @@ import type { SuggestionProps } from '@tiptap/suggestion'
 import type { DocSession } from '../../../composables/useDocCollab'
 import type { Block, Topic } from '../../../cx_types'
 import type { CommentSpot } from '../../../lib/docCommentSpots'
-import type { ThreadPlace } from '../../../lib/docThreadTypes'
 import type { DocLinkTarget } from '../../../lib/docLinks'
 import type { SlashItem } from '../../../lib/docSlashMenu'
+import type { ThreadPlace } from '../../../lib/docThreadTypes'
 
 import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import Collaboration from '@tiptap/extension-collaboration'
@@ -26,6 +26,7 @@ import { Editor, EditorContent } from '@tiptap/vue-3'
 
 import { BUBBLE_META } from '../../../lib/docBubble'
 import { renderCaret } from '../../../lib/docCaret'
+import { placeOf } from '../../../lib/docCommentSpots'
 import {
   commentHighlightKey,
   createCommentHighlights,
@@ -35,7 +36,6 @@ import {
   createTokenChips,
   liveRefKey,
 } from '../../../lib/docDecorations'
-import { placeOf } from '../../../lib/docCommentSpots'
 import { createEditMarks } from '../../../lib/docEditMarks'
 import { captureDocLink, safeDocHref } from '../../../lib/docLinks'
 import { commentAnchors, docExtensions, serializeDoc } from '../../../lib/docSchema'
