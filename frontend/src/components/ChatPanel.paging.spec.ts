@@ -129,6 +129,21 @@ function fakeMetrics(el: HTMLElement, initial: Metrics): Metrics {
   return m
 }
 
+/**
+ * Content height follows the rows actually on the page: each row added after this
+ * call makes the pane `perRow` taller, the moment it is rendered and not before —
+ * which is when the browser would report it.
+ */
+function growWithRows(pane: HTMLElement, m: Metrics, perRow: number) {
+  const rows = () => pane.querySelectorAll('[data-mid]').length
+  const start = rows()
+  const base = m.scrollHeight
+  Object.defineProperty(pane, 'scrollHeight', {
+    configurable: true,
+    get: () => base + (rows() - start) * perRow,
+  })
+}
+
 async function flush(times = 6) {
   for (let i = 0; i < times; i += 1) await new Promise((resolve) => setTimeout(resolve, 0))
 }
@@ -169,14 +184,17 @@ beforeEach(() => {
 })
 
 /** Mount with a pane taller than the content (the ordinary case: 2000 in 500). */
-async function mount(metrics: Metrics = { scrollHeight: 2000, clientHeight: 500, scrollTop: 2000 }) {
+async function mount(
+  metrics: Metrics = { scrollHeight: 2000, clientHeight: 500, scrollTop: 2000 },
+  mixins: object[] = []
+) {
   // One room per case: the block window cache and the saved scroll position are
   // kept per topic id at module scope (they survive leaving a topic), so a
   // shared id would hand the next case the previous one's history.
   const topic: Topic = { ...TOPIC, id: `t-paging-${++rooms}` }
   const view = render(ChatPanel, {
     props: { topic, topicList: [topic] },
-    global: { plugins: [vuetify, i18n] },
+    global: { plugins: [vuetify, i18n], mixins },
   })
   const pane = view.container.querySelector<HTMLElement>('[data-testid="chat-scroll"]')
   expect(pane, 'the chat pane must be there for a scroll to be dispatched at it').toBeTruthy()
@@ -224,12 +242,58 @@ describe('往回翻历史', () => {
 
     // The older page lands ABOVE the viewport: the content grew by 1000, so
     // scrollTop has to move down by that much for the reader to stay put.
-    m.scrollHeight = 3000
+    growWithRows(pane, m, 500)
     gate.resolve(OLDER(['o1', 'o2']))
     await flush()
 
     expect(shown(container)).toEqual(['o1', 'o2', 'n1', 'n2', 'n3'])
     expect(m.scrollTop).toBe(1000)
+  })
+
+  it('一页在飞的时候还在往上滑：落下来时留在滑到的地方，不被拽回请求发出时的位置', async () => {
+    const { container, pane, m } = await mount()
+
+    const gate = deferred<BlockPage>()
+    listBlocks.mockImplementationOnce(async () => gate.promise)
+    // A flick: the loader fires near the top, and the pane keeps gliding up
+    // while the page is on its way.
+    m.scrollTop = 120
+    pane.dispatchEvent(new Event('scroll'))
+    await flush()
+    expect(beforeCalls()).toEqual(['n1'])
+    m.scrollTop = 30
+
+    growWithRows(pane, m, 500)
+    gate.resolve(OLDER(['o1', 'o2']))
+    await flush()
+
+    expect(shown(container)).toEqual(['o1', 'o2', 'n1', 'n2', 'n3'])
+    expect(m.scrollTop, 'where the reader had glided to, pushed down by the 1000 that went in above').toBe(1030)
+  })
+
+  it('拼进来的一页不让已经在屏上的消息重画', async () => {
+    // A page lands above hundreds of rows in a long topic. Each row already on
+    // screen that renders again costs main-thread time, and that cost grows with
+    // the history read so far — the stall felt while scrolling up.
+    const redrawn: string[] = []
+    const { container, pane, m } = await mount(undefined, [
+      {
+        beforeUpdate(this: { $props: { block?: Block } }) {
+          const id = this.$props.block?.id
+          if (id) redrawn.push(id)
+        },
+      },
+    ])
+
+    listBlocks.mockImplementationOnce(async () => OLDER(['o1', 'o2']))
+    growWithRows(pane, m, 500)
+    scrollToTop(pane, m)
+    await flush()
+
+    expect(shown(container)).toEqual(['o1', 'o2', 'n1', 'n2', 'n3'])
+    // n1 now continues o2's run and draws without its header: that one redraw is
+    // the page's own doing.
+    expect(redrawn.filter((id) => id === 'n2' || id === 'n3')).toEqual([])
   })
 
   it('一页在飞的时候再滚一次不会把同一个游标问第二遍', async () => {
@@ -244,7 +308,7 @@ describe('往回翻历史', () => {
 
     expect(beforeCalls()).toEqual(['n1'])
 
-    m.scrollHeight = 3000
+    growWithRows(pane, m, 500)
     gate.resolve(OLDER(['o1', 'o2']))
     await flush()
     expect(beforeCalls()).toEqual(['n1'])
