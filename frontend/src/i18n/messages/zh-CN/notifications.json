@@ -6,7 +6,6 @@
     "noNotifications": "暂无通知",
     "markAllAsRead": "标记全部已读",
     "loadMore": "加载更多",
-    "deletedEntity": "已删除的用户",
     "unknownTeam": "未知团队",
     "unknownDiscussion": "未知讨论",
     "teamAdmin": "团队管理员",
@@ -83,13 +82,11 @@
   },
   "TEAM_REQUEST_APPROVED": {
     "title": "你的加入请求已获批准",
-    "body": "{approver} 已批准你加入团队 \"{team}\" 的请求",
-    "status": "已批准"
+    "body": "{approver} 已批准你加入团队 \"{team}\" 的请求"
   },
   "TEAM_REQUEST_REJECTED": {
     "title": "你的加入请求被拒绝",
-    "body": "{rejector} 拒绝了你加入团队 \"{team}\" 的请求",
-    "status": "已拒绝"
+    "body": "{rejector} 拒绝了你加入团队 \"{team}\" 的请求"
   },
   "TEAM_INVITATION_ACCEPTED": {
     "title": "{accepter} 接受了你的邀请",
@@ -108,8 +105,7 @@
   "TEAM_REQUEST_CANCELED": {
     "title": "{canceler} 取消了加入请求",
     "title_anonymous": "加入请求已取消",
-    "body": "已取消加入团队 \"{team}\" 的请求",
-    "status": "已取消"
+    "body": "已取消加入团队 \"{team}\" 的请求"
   },
   "ROOM_NOTICE": {
     "body": "在「{topicTitle}」",

@@ -36,14 +36,7 @@
   },
   "detail": {
     "announcements": "公告",
-    "showMore": "查看更多",
-    "showLess": "收起",
-    "collapseSidebar": "收起侧边栏",
-    "expandSidebar": "展开侧边栏",
-    "contests": "题目",
     "allContests": "全部题目",
-    "deleteAnnouncement": "删除公告",
-    "publishedAt": "发布于 {time}",
     "updateSuccess": "更新成功",
     "updateFailed": "更新失败",
     "deleteSpace": "删除空间",
@@ -81,7 +74,6 @@
       "noDescription": "暂无题目描述"
     },
     "manageTemplates": {
-      "back": "返回",
       "createTemplate": "创建模板",
       "noTemplates": "暂无题目模板",
       "deleteConfirm": "确定要删除这个模板吗？",
@@ -114,10 +106,6 @@
       "name": "分类名称",
       "description": "分类描述",
       "displayOrder": "显示顺序",
-      "createdAt": "创建时间",
-      "archivedStatus": "归档状态",
-      "archived": "已归档",
-      "active": "活跃",
       "isDefault": "（默认）",
       "cancel": "取消",
       "confirm": "确认",
@@ -155,27 +143,11 @@
       "loadFailed": "获取分类失败"
     },
     "publishTask": {
-      "title": "发布题目",
-      "back": "返回",
-      "taskName": "任务名称",
-      "participantType": "参与者类型",
-      "individual": "个人参与",
-      "team": "团队参与",
-      "taskLevel": "任务等级",
-      "beginner": "初级",
-      "intermediate": "中级",
-      "advanced": "高级",
-      "deadline": "截止时间",
-      "allowMultipleSubmissions": "允许多次提交",
-      "allowEditSubmissions": "允许编辑提交",
-      "taskDescription": "任务描述",
-      "submit": "提交",
       "createSuccess": "创建任务成功",
       "createSuccessAndWaitingAudit": "创建任务成功，等待审核",
       "createFailed": "创建任务失败",
       "spaceIdNotFound": "未找到空间 ID",
       "initializationFailed": "初始化失败",
-      "loadTemplateFailed": "加载模板失败",
       "attachmentsUploading": "附件还在上传，请稍候再发布",
       "pendingQueue": "待审核",
       "mode": {
@@ -246,10 +218,8 @@
       },
       "publishTask": "发布题目",
       "noTasks": "暂无题目",
-      "getSpaceDetailsFailed": "获取空间详情失败:",
       "topic": "话题",
       "category": "所属分类",
-      "noCategory": "无分类",
       "allTopics": "全部话题",
       "scope": {
         "all": "全部",
@@ -407,12 +377,6 @@
     "addDomain": "添加域名",
     "domainPlaceholder": "例如: example.com",
     "confirmDelete": "确定要删除域名组 {name} 吗？",
-    "createSuccess": "创建域名组成功",
-    "createFailed": "创建域名组失败",
-    "updateSuccess": "更新域名组成功",
-    "updateFailed": "更新域名组失败",
-    "deleteSuccess": "删除域名组成功",
-    "deleteFailed": "删除域名组失败",
     "nameRequired": "域名组名称不能为空",
     "invalidDomain": "请输入有效的域名格式"
   },
@@ -462,7 +426,6 @@
     }
   },
   "index": {
-    "searchPlaceholder": "搜索空间",
     "sortOptions": {
       "newest": "最新",
       "hot": "最热"

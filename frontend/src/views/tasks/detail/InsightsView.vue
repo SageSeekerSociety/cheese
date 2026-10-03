@@ -14,6 +14,8 @@ import TrendChart from '@/components/spaces/TrendChart.vue'
 
 const { t } = useI18n()
 
+const peopleCount = (n: number) => t('tasks.insights.people', n)
+
 type ClaimStatus = 'IN_PROGRESS' | 'SUBMITTED' | 'PASSED' | 'REJECTED'
 
 const props = defineProps<{
@@ -165,7 +167,7 @@ const claimTrend = computed(() => {
       </PanelCard>
 
       <PanelCard :title="t('tasks.insights.teamsTitle')">
-        <BarList :rows="teamRows" :unit="t('tasks.insights.peopleUnit')" :empty="t('tasks.insights.teamsEmpty')" />
+        <BarList :rows="teamRows" :format="peopleCount" :empty="t('tasks.insights.teamsEmpty')" />
       </PanelCard>
     </div>
 

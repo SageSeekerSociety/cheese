@@ -1,8 +1,6 @@
 {
   "ask": {
     "buttons": {
-      "addTopic": "添加话题（至少一个） | 添加话题（1/{max}） | 添加话题（{count}/{max}）",
-      "addTopicInfinite": "添加话题",
       "createTopic": "创建 {name} 话题"
     },
     "titleLabel": "问题标题",
@@ -56,9 +54,6 @@
     "acceptedAnswerTitle": "来自 {user} 的回答已被采纳",
     "searchUsers": "搜索用户",
     "close": "关闭"
-  },
-  "answerList": {
-    "title": "全部回答"
   },
   "invitationList": {
     "buttons": {

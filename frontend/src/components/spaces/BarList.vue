@@ -7,8 +7,9 @@ import { useI18n } from 'vue-i18n'
 
 const props = defineProps<{
   rows: { label: string; value: number; hint?: string }[]
-  /** 值后面跟的单位，如「人」。 */
-  unit?: string
+  /** 把数值写成带单位的一句，如 `(n) => t('tasks.insights.people', n)`；不给就只显示数。
+   *  单位要随数变（英文的 1 person / 2 people），所以传函数，不传一个拼在后面的字。 */
+  format?: (value: number) => string
   /** 空态文案。 */
   empty?: string
 }>()
@@ -26,7 +27,7 @@ const max = computed(() => Math.max(1, ...props.rows.map((r) => r.value)))
       <span class="bars__track">
         <i :style="{ width: `${Math.max(3, (row.value / max) * 100)}%` }" />
       </span>
-      <span class="bars__value">{{ row.value }}{{ unit ?? '' }}</span>
+      <span class="bars__value">{{ format ? format(row.value) : row.value }}</span>
     </div>
     <p v-if="rows.some((r) => r.hint)" class="bars__foot">
       <span v-for="r in rows.filter((x) => x.hint)" :key="r.label">{{
