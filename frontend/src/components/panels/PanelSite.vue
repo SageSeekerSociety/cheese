@@ -6,6 +6,7 @@ import type { MemberActivityLine } from '../../lib/memberActivity'
 import { computed, nextTick, ref, watch } from 'vue'
 
 import { getTranscript, SITE_PAGE_SIZE } from '../../api'
+import { useStickToBottom } from '../../composables/useStickToBottom'
 import { isAgentBlock, isAgentHandle } from '../../lib/authorship'
 import { scrollTopAfterPrepend, shouldLoadOlder } from '../../lib/blockPaging'
 import { renderMarkdown } from '../../lib/renderMessage'
@@ -138,6 +139,7 @@ function onSiteScroll() {
 // with a scrollHeight of 1818 and a viewport of 500 — the reader landed 1300px
 // above the thing they came to see.
 const scrollRef = ref<HTMLElement | null>(null)
+useStickToBottom(scrollRef, 48)
 // Entries the reader has expanded. Keyed by block id, and deliberately NOT
 // reset when the transcript refreshes: a silent refresh re-collapsing what
 // someone just opened is the same bug as scrolling them away from it.
