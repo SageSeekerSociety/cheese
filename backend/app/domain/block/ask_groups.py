@@ -20,7 +20,7 @@ from app.domain.block.notice_text import say
 
 def required_text(value, field):
     if not isinstance(value, str) or not value.strip():
-        raise ValidationError(f"{field} 必须是非空字符串")
+        raise ValidationError(say("askFieldRequired", field=field))
     return value.strip()
 
 
@@ -34,29 +34,29 @@ class Question:
     @classmethod
     def parse(cls, value):
         if not isinstance(value, dict):
-            raise ValidationError("每题必须是对象")
+            raise ValidationError(say("askQuestionObject"))
         content = required_text(value.get("question"), "question")
         raw = value.get("options")
         if not isinstance(raw, list) or not 2 <= len(raw) <= 3:
-            raise ValidationError("每题需要 2-3 个对象选项")
+            raise ValidationError(say("askOptionsTwoToThree"))
         options = []
         for item in raw:
             if not isinstance(item, dict):
-                raise ValidationError("每个选项都是 {text, explain?} 对象")
+                raise ValidationError(say("askOptionObject"))
             option = {"text": required_text(item.get("text"), "text")}
             if "explain" in item:
                 if not isinstance(item["explain"], str):
-                    raise ValidationError("explain 必须是字符串")
+                    raise ValidationError(say("askFieldString", field="explain"))
                 if item["explain"].strip():
                     option["explain"] = item["explain"].strip()
             options.append(option)
         if len({item["text"] for item in options}) != len(options):
-            raise ValidationError("选项 text 不得重复")
+            raise ValidationError(say("optionsDistinct"))
         flags = []
         for field in ("allow_other", "reject_option"):
             flag = value.get(field, True)
             if not isinstance(flag, bool):
-                raise ValidationError(f"{field} 必须是布尔值")
+                raise ValidationError(say("askFieldBoolean", field=field))
             flags.append(flag)
         return cls(content, options, *flags)
 
@@ -64,7 +64,7 @@ class Question:
 def parse_questions(body):
     raw = body.get("questions")
     if not isinstance(raw, list) or not 1 <= len(raw) <= 8:
-        raise ValidationError("questions 必须含 1-8 题")
+        raise ValidationError(say("askQuestionsCount"))
     return [Question.parse(item) for item in raw]
 
 
@@ -85,7 +85,7 @@ class AskGroups:
             query = query.with_for_update().execution_options(populate_existing=True)
         rows = list(await self.session.scalars(query))
         if not rows:
-            raise NotFoundError("问题组不存在")
+            raise NotFoundError(say("askGroupNotFound"))
         group = rows[0].meta.get("ask_group") or {}
         members = group.get("members") or []
         if (
@@ -94,7 +94,7 @@ class AskGroups:
             or set(members) != {str(row.id) for row in rows}
             or group.get("total") != len(members)
         ):
-            raise ConflictError("问题组成员不完整，请重新获取")
+            raise ConflictError(say("askGroupIncomplete"))
         indexed = {str(row.id): row for row in rows}
         ordered = [indexed[key] for key in members]
         for index, row in enumerate(ordered):
@@ -106,10 +106,10 @@ class AskGroups:
                 "asked_by": asked_by,
             }
             if row.meta.get("ask_group") != expected:
-                raise ConflictError("问题组归属或顺序不一致")
+                raise ConflictError(say("askGroupMembershipMismatch"))
             for field in ("group_settle", "group_settle_log", "ask_origin"):
                 if row.meta.get(field) != rows[0].meta.get(field):
-                    raise ConflictError("问题组提交历史或原执行者不一致")
+                    raise ConflictError(say("askGroupHistoryMismatch"))
         return ordered
 
     async def create(
@@ -126,7 +126,7 @@ class AskGroups:
             await self.session.scalars(self.query(topic_id, asked_by, group_id))
         )
         if existing:
-            raise ConflictError("这个 ask_group 已创建，不能追加或重建")
+            raise ConflictError(say("askGroupAlreadyCreated"))
         ids = [uuid.uuid4() for _ in questions]
         members = [str(key) for key in ids]
         rows = []
@@ -166,7 +166,7 @@ class AskGroups:
         operation = required_text(body.get("client_op_id"), "client_op_id")
         version = body.get("expect_version")
         if type(version) is not int or version < 0:
-            raise ValidationError("expect_version 必须是非负整数")
+            raise ValidationError(say("askGroupVersionInvalid"))
         parsed = {}
         all_ids = []
         canonical = {
@@ -178,18 +178,18 @@ class AskGroups:
         for field in ("answered", "later", "unanswered"):
             items = body.get(field)
             if not isinstance(items, list):
-                raise ValidationError(f"{field} 必须是数组")
+                raise ValidationError(say("askFieldArray", field=field))
             parsed[field] = {}
             entries = []
             for item in items:
                 if not isinstance(item, dict):
-                    raise ValidationError(f"{field} 每项必须是对象")
+                    raise ValidationError(say("askFieldObjects", field=field))
                 try:
                     key = str(
                         uuid.UUID(required_text(item.get("block_id"), "block_id"))
                     )
                 except ValueError as exc:
-                    raise ValidationError("block_id 必须是 UUID") from exc
+                    raise ValidationError(say("askBlockIdInvalid")) from exc
                 all_ids.append(key)
                 if field == "answered":
                     answer = Answer.parse(item)
@@ -201,7 +201,7 @@ class AskGroups:
                     entries.append({"block_id": key, "client_op_id": op})
             canonical[field] = sorted(entries, key=lambda entry: entry["block_id"])
         if len(all_ids) != len(set(all_ids)):
-            raise ValidationError("三列表不得有重复或交集")
+            raise ValidationError(say("askGroupListsOverlap"))
         payload_hash = hashlib.sha256(
             json.dumps(
                 canonical, sort_keys=True, ensure_ascii=False, separators=(",", ":")
@@ -209,7 +209,7 @@ class AskGroups:
         ).hexdigest()
         rows = await self.read(topic_id, asked_by, group_id, lock=True)
         if set(all_ids) != {str(row.id) for row in rows}:
-            raise ValidationError("三列表必须恰好覆盖全部组成员")
+            raise ValidationError(say("askGroupListsIncomplete"))
         first = rows[0].meta or {}
         history = first.get("group_settle_log") or []
         for stored in history:

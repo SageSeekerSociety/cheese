@@ -8,6 +8,7 @@ from sqlalchemy import select
 from app.core.errors import ValidationError
 from app.domain.block.answers import Answer
 from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.notice_text import say
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 
@@ -33,7 +34,7 @@ async def submit_answer(
     """
     answer = Answer.parse(body)
     if author == "anonymous":
-        raise ValidationError("要登录才能作答")
+        raise ValidationError(say("answerSignIn"))
     block = await session.scalar(
         select(Block)
         .where(Block.id == block_id)
@@ -42,7 +43,7 @@ async def submit_answer(
     )
     meta = dict(block.meta or {})
     if meta.get("ask_group"):
-        raise ValidationError("问题组必须整组提交，不能逐题发送")
+        raise ValidationError(say("askGroupAtomicOnly"))
     entry, replay = answer.apply(meta, author)
     if not replay:
         block.meta = meta

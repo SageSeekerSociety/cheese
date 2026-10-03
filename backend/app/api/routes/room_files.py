@@ -227,7 +227,7 @@ async def new_from_template(
     place, actor = await _in_room(db, resolver, topic_id)
     template = catalogue.find(str(body.get("template") or ""))
     if template is None:
-        raise ValidationError("没有这个模板")
+        raise ValidationError(say("templateNotFound"))
     target = _room_path(str(body.get("path") or ""))
     if not target.lower().endswith(f".{template.suffix}"):
         raise ValidationError(

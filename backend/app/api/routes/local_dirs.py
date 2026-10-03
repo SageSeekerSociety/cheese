@@ -43,6 +43,7 @@ from app.core.errors import (
     ValidationError,
 )
 from app.domain.agent.device_hub import device_hub
+from app.domain.block.notice_text import say
 from app.domain.device.wiring import sql_device_service
 from app.domain.local_fs.enforcement import PushOutcome, push_grants
 from app.domain.local_fs.paths import Platform
@@ -79,7 +80,7 @@ class GrantDirectoryRequest(BaseModel):
 async def _require_user(resolver: ActorResolverDep) -> int:
     actor = await resolver.resolve()
     if not actor.authenticated or actor.user_id is None:
-        raise UnauthorizedError("授权本机目录需要登录")
+        raise UnauthorizedError(say("localDirSignIn"))
     return actor.user_id
 
 
@@ -91,7 +92,7 @@ async def _require_owned_device(db: AsyncSession, user_id: int, device_id: str) 
     """
     device = await sql_device_service(db).get_hosted_device(device_id)
     if device is None or device.owner_user_id != user_id:
-        raise NotFoundError("设备不存在或不属于你")
+        raise NotFoundError(say("deviceNotYours"))
 
 
 def _grant_view(grant: DirectoryGrant) -> dict[str, Any]:
@@ -201,7 +202,7 @@ async def revoke_directory(
     service = sql_local_directory_service(db)
     grant = await service.revoke(grant_id, owner_user_id=user_id)
     if grant is None or grant.device_id != device_id:
-        raise NotFoundError("这条授权不存在")
+        raise NotFoundError(say("localDirGrantNotFound"))
     await db.commit()
     # Pushed immediately, and that is the point of a revocation: the device holds
     # its own copy and would otherwise keep honoring a grant its owner has just

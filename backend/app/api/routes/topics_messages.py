@@ -147,7 +147,7 @@ async def send_chat_message(
         for a in body.attachments[:ATTACHMENTS_PER_MESSAGE]
     ]
     if not content and not attachments:
-        raise ValidationError("请输入消息或添加附件")
+        raise ValidationError(say("messageOrAttachment"))
     # The turn a person's message starts is named after the block it anchors.
     anchor_id = await get_broker().receive_message(
         chat,
@@ -295,7 +295,7 @@ async def leave_a_note(
     try:
         to_thread = uuid.UUID(thread)
     except ValueError:
-        raise ValidationError("thread 要是一条线程的 id") from None
+        raise ValidationError(say("threadIdInvalid")) from None
     delivered = await send_note(
         db,
         chat,

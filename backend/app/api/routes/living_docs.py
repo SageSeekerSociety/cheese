@@ -30,6 +30,7 @@ from app.core.errors import (
     ValidationError,
 )
 from app.domain.agent.chat import ChatService
+from app.domain.block.notice_text import say
 from app.domain.block.schemas import BlockOut
 from app.domain.identity.services import IdentityService
 from app.domain.living_doc import collab
@@ -128,7 +129,7 @@ async def _base(db, place: Place, expected_version: int) -> str | None:
         return read
     # A version that was never recorded: nothing to compare.
     raise ConflictError(
-        "实况文档已经被改过了，你手上这份是旧的",
+        say("livingDocStale"),
         data={"doc_version": current},
     )
 
@@ -199,14 +200,14 @@ async def edit_doc_passages(
     place = await topics.place_or_404(topic_id)
     actor = await resolver.resolve(topic_id=place.room_id, project_id=place.project_id)
     if not actor.authenticated:
-        raise AuthenticationRequiredError("修改文档需要已认证的写入者")
+        raise AuthenticationRequiredError(say("docEditNeedsWriter"))
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
     )
     topics.require_doc_writable(place)
     doc = await topics.doc_of_room(place.room_id)
     if doc is None:
-        raise NotFoundError("本话题还没有实况文档")
+        raise NotFoundError(say("topicHasNoLivingDoc"))
     edits = [edit.model_dump() for edit in body.edits]
     decision = await decide(
         db,
@@ -285,7 +286,7 @@ async def document_receipt(
     place = await TopicService(db).place_or_404(topic_id)
     actor = await _actor_in_place(resolver, place)
     if not actor.authenticated:
-        raise AuthenticationRequiredError("操作回执需要已认证的写入者")
+        raise AuthenticationRequiredError(say("docReceiptNeedsWriter"))
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
     )
@@ -296,7 +297,7 @@ async def document_receipt(
         operation_id=operation_id,
     )
     if receipt is None:
-        raise NotFoundError("没有这份文档操作回执")
+        raise NotFoundError(say("docReceiptNotFound"))
     return receipt
 
 
@@ -311,7 +312,7 @@ async def restore_document(
     place = await topics.place_or_404(topic_id)
     actor = await _actor_in_place(resolver, place)
     if not actor.authenticated:
-        raise AuthenticationRequiredError("恢复文档需要已认证的写入者")
+        raise AuthenticationRequiredError(say("docRestoreNeedsWriter"))
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
     )
@@ -326,7 +327,7 @@ async def restore_document(
         return receipt
     content = await DocumentJournal(db).version_content(place.room_id, body.version)
     if content is None:
-        raise NotFoundError("没有这份历史文档版本")
+        raise NotFoundError(say("docVersionNotFound"))
     base = await _base(db, place, body.expected_version)
     await db.commit()
     return await collab.replace(
@@ -347,7 +348,7 @@ def _service(authorization: Annotated[str | None, Header()] = None) -> None:
     try:
         collab.verify_service(authorization)
     except collab.CollabRefused as exc:
-        raise ForbiddenError("只接受文档协同服务的请求") from exc
+        raise ForbiddenError(say("docCollabOnly")) from exc
 
 
 ServiceOnly = Annotated[None, Depends(_service)]
@@ -357,7 +358,7 @@ def _room(name: str) -> uuid.UUID:
     try:
         return collab.room_of(name)
     except ValueError as exc:
-        raise NotFoundError("没有这份文档") from exc
+        raise NotFoundError(say("docNotFound")) from exc
 
 
 @internal.get("/documents/{name}")

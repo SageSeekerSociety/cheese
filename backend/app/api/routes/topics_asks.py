@@ -77,7 +77,7 @@ async def group_data(db, rows, *, operation=None):
 async def authorize_group(resolver, place):
     actor = await resolver.resolve(project_id=place.project_id, topic_id=place.room_id)
     if not actor.authenticated:
-        raise ForbiddenError("要登录才能读取或提交问题组")
+        raise ForbiddenError(say("askSignIn"))
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
     )
@@ -97,17 +97,17 @@ async def create_ask_group(
     if actor.via != "cheese" or not await TopicMemberService(db).holds_an_agent_seat(
         place.room, actor.handle
     ):
-        raise ForbiddenError("只有真实 agent 会话可以创建问题")
+        raise ForbiddenError(say("askNativeSessionOnly"))
     questions = parse_questions(body)
     origin = await ask_origin(chat, place.project_id, place.room_id, actor.handle)
     if origin is None:
-        raise ForbiddenError("无法确认原生提问会话和执行区间")
+        raise ForbiddenError(say("askOriginUnknown"))
     group_id = body.get("ask_group")
     if group_id is None:
         group_id = str(uuid.uuid4())
     group_id = required_text(group_id, "ask_group")
     if len(group_id) > 128:
-        raise ValidationError("ask_group 最多 128 字")
+        raise ValidationError(say("askGroupIdTooLong"))
     asked = origin.get("asked")
     rows = await AskGroups(db).create(
         project_id=place.project_id,
@@ -188,7 +188,7 @@ async def settle_ask_group(
     try:
         topic_id = uuid.UUID(required_text(body.get("topic_id"), "topic_id"))
     except ValueError as exc:
-        raise ValidationError("topic_id 必须是 UUID") from exc
+        raise ValidationError(say("askTopicIdInvalid")) from exc
     asked_by = required_text(body.get("asked_by"), "asked_by")
     place = await TopicService(db).place_or_404(topic_id)
     actor = await authorize_group(resolver, place)

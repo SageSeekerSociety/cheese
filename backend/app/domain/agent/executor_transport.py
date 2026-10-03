@@ -657,6 +657,7 @@ class RemoteClient:
             if not result.get("preparing") or time.monotonic() >= deadline:
                 break
         if result.get("preparing"):
+            # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
             raise RuntimeError(f"{result['unavailable']}（等到操作时限仍未就绪）")
         if result.get("unavailable"):
             raise RuntimeError(result["unavailable"])

@@ -25,6 +25,7 @@ from app.domain.agent.device_hub import (
     DeviceNotReady,
     DeviceUnreachable,
 )
+from app.domain.block.notice_text import say
 from app.domain.device import owner_reads
 from app.domain.machine import owner_reads as machine_owner_reads
 from app.domain.topic.models import Topic
@@ -239,7 +240,7 @@ async def execute(
         # 一次工具报错交给模型，这一轮照样跑下去 —— 就没有重派，也没有谁需要读它。
         # 它不会顶掉别的轮次的重发：``unsettled()`` 只回答「这几轮里有什么悬着」，见
         # 那里的 ``since``。
-        raise GatewayTimeoutError("机器没有在时限内回应这次执行调用") from exc
+        raise GatewayTimeoutError(say("executionTimedOut")) from exc
     else:
         await _settle(db, dispatch, dispatch_log.Outcome.done)
         return answer

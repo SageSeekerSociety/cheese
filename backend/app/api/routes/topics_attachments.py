@@ -120,7 +120,7 @@ async def upload_attachment(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
     if (file is None) == (library_path is None):
-        raise ValidationError("要么上传一个文件，要么选资料库里的一份")
+        raise ValidationError(say("attachmentOneSource"))
     if library_path is not None:
         name = clean_artifact_path(library_path)
         # 读一次：既确认它真的在，也把大小告诉输入栏。一个字节都不写。
@@ -182,7 +182,7 @@ async def attachment_raw(
     suffix = "." + clean.rsplit(".", 1)[-1].lower() if "." in clean else ""
     mime = _EXT_IMAGE_MIME.get(suffix)
     if mime is None and not download:
-        raise ValidationError("只能读取图片附件")
+        raise ValidationError(say("attachmentImageOnly"))
     if task is not None:
         await TaskService(db).require_source_in_room(topic_id, task)
     data = await source_bytes(db, topic.project_id, topic_id, clean, task, source)

@@ -55,6 +55,7 @@ from app.domain.agent.supply import GATEWAY
 from app.domain.agent_instance import configuration
 from app.domain.assistant.asking import answering
 from app.domain.assistant.keys import stored_key
+from app.domain.block.notice_text import listing, say
 from app.domain.policy import gate
 from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task import binding
@@ -168,15 +169,14 @@ async def _bind_requested_subagent_model(
     ):
         if isinstance(configured, str) and configured and configured in choices:
             allowed.add(configured)
-    offer = "、".join(sorted(allowed)) or "（这个项目当前没有可指定的模型）"
+    offer = listing(sorted(allowed)) if allowed else say("noModelToOffer")
     if requested_id is None:
         raise ValidationError(
-            f"分身指定的模型 {requested!r} 当前项目的模型目录里没有；可指定：{offer}"
+            say("subagentModelNotInCatalog", model=repr(requested), offer=offer)
         )
     if requested_id not in allowed:
         raise ValidationError(
-            f"分身指定的模型 {requested!r} 不在当前项目可用的模型范围内；"
-            f"可指定：{offer}"
+            say("subagentModelNotAllowed", model=repr(requested), offer=offer)
         )
     return binding.resolve(None, choices, agent_model=requested_id)
 

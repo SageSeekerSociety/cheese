@@ -23,6 +23,7 @@ from app.auth.core import Action, AuthUserInfo, Resource
 from app.core.errors import NotFoundError
 from app.db.session import get_db
 from app.domain.agent_instance.configuration import model_choices
+from app.domain.block.notice_text import say
 from app.domain.project.services import ProjectService
 from app.domain.task.services import TaskService
 from app.domain.team.services import team_service
@@ -100,6 +101,6 @@ async def team_credit_usage(
     _ = auth_user
     team = await team_service(db).get_team(team_id)
     if team is None:
-        raise NotFoundError(f"没有团队 {team_id}")
+        raise NotFoundError(say("teamNotFound", team=team_id))
     report = await UsageReport(db).team(team.id, team.plan_key)
     return ok(await _named(db, report))

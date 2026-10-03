@@ -31,7 +31,7 @@ from app.core.errors import (
 )
 from app.core.redis import get_redis_client
 from app.domain.admin.services import AdminService
-from app.domain.block.notice_text import exception_text
+from app.domain.block.notice_text import exception_text, say
 from app.domain.docs_site import access, assistant, library, retrieval, tools
 from app.domain.docs_site.limits import AskLimits
 from app.domain.feature_stats import pricing
@@ -150,13 +150,13 @@ async def ask(
     index = await retrieval.source.get()
     if index is None:
         await limits.release(auth.user_id)
-        return _refuse(503, "问芝士暂时读不到文档，稍后再试。", 30)
+        return _refuse(503, say("askCheeseDocsUnreadable"), 30)
 
     # The question is the asker's, so its cost comes out of their credits.
     rates = Rates.of(settings.docs_assistant_model, await pricing.model_rates())
     if rates is None:
         await limits.release(auth.user_id)
-        return _refuse(503, "问芝士暂未开放，稍后再试。", 60)
+        return _refuse(503, say("askCheeseNotOpen"), 60)
     refused = await Ledger(db).admit(await payer_for_person(db, auth.user_id))
     await db.commit()
     if refused is not None:
@@ -169,10 +169,10 @@ async def ask(
         key = await assistant.gateway_key(db)
         if key is None:
             await limits.release(auth.user_id)
-            return _refuse(503, "问芝士暂未开放，稍后再试。", 60)
+            return _refuse(503, say("askCheeseNotOpen"), 60)
         if not limits.try_slot():
             await limits.release(auth.user_id)
-            return _refuse(503, "现在问的人有点多，稍后再试。", 10)
+            return _refuse(503, say("askCheeseBusy"), 10)
 
         async def agent_events():
             try:
@@ -203,10 +203,10 @@ async def ask(
     key = await assistant.gateway_key(db) if hits else None
     if hits and key is None:
         await limits.release(auth.user_id)
-        return _refuse(503, "问芝士暂未开放，稍后再试。", 60)
+        return _refuse(503, say("askCheeseNotOpen"), 60)
     if hits and not limits.try_slot():
         await limits.release(auth.user_id)
-        return _refuse(503, "现在问的人有点多，稍后再试。", 10)
+        return _refuse(503, say("askCheeseBusy"), 10)
 
     async def events():
         try:
@@ -322,11 +322,11 @@ async def agent_search_docs(
 ) -> dict:
     """cheese_docs_search: the best sections of the manual for a query."""
     if not body.query or not body.query.strip():
-        raise ValidationError("query 不能为空")
+        raise ValidationError(say("queryRequired"))
     dev = await _agent_scope(body, db, actor)
     found = await library.search(body.query, dev=dev)
     if found is None:
-        raise SystemBusyError("文档索引暂时读不到，稍后再试")
+        raise SystemBusyError(say("docsIndexUnavailable"))
     return ok(
         {
             "dev": dev,
@@ -351,14 +351,14 @@ async def agent_read_docs(
 ) -> dict:
     """cheese_docs_read: one page's Markdown, as readers fetch it."""
     if not body.page or not body.page.strip():
-        raise ValidationError("page 不能为空")
+        raise ValidationError(say("pageRequired"))
     dev = await _agent_scope(body, db, actor)
     try:
         text = await library.read_page(body.page, dev=dev)
     except library.DevDocsForbidden as exc:
-        raise ForbiddenError("开发文档只对知是自己的项目开放") from exc
+        raise ForbiddenError(say("devDocsOwnProjectsOnly")) from exc
     except ValueError as exc:
         raise ValidationError(exception_text(exc)) from exc
     if text is None:
-        raise NotFoundError(f"没有这一页：{body.page}")
+        raise NotFoundError(say("docsPageNotFound", page=body.page))
     return ok({"page": library.page_slug(body.page), "markdown": text})

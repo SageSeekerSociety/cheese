@@ -19,6 +19,7 @@ from typing import Literal
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ValidationError
+from app.domain.block.notice_text import say
 from app.domain.library import service as library
 
 
@@ -41,7 +42,7 @@ async def source_bytes(
     """
     if task is not None or source == "committed":
         if library.library_name(path) is not None:
-            raise ValidationError("资料库里的文件不属于某个任务分支")
+            raise ValidationError(say("libraryFileNoTaskBranch"))
         from app.domain.repository.forge_files import ProjectFiles
 
         data, _ = await ProjectFiles(db, project_id, task).raw(path, source)

@@ -319,8 +319,10 @@ class Subagent:
     async def send(self, message: str) -> None:
         async with self.lock:
             if self.status == "stopped":
+                # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
                 raise ValueError(f"{self.id} 已经停了，不再接指令；{AGAIN}")
             if self.status != "running":
+                # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
                 raise ValueError(f"{self.id} 已经收工，结论已交回；{AGAIN}")
             assert self.client is not None
             if not self.working:
@@ -356,6 +358,7 @@ class Subagents:
         found = self.started.get(agent_id)
         if found is None:
             known = "、".join(self.started) or "（这个会话还没有起过分身）"
+            # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
             raise ValueError(f"没有叫 {agent_id} 的分身；这个会话起过的：{known}")
         return found
 
