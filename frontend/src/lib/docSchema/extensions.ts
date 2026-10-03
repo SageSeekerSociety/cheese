@@ -23,7 +23,7 @@ import { docMarked } from './markdown'
 import { suggestionMarks } from './suggestions'
 
 // One lowlight instance (common ≈ 37 languages), shared by every editor.
-const lowlight = createLowlight(common)
+export const lowlight = createLowlight(common)
 
 // ---- Image: display resolves workspace-relative paths to the raw-file API,
 // but the node ATTR keeps the original path — markdown serialization reads the
