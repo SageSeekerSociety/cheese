@@ -143,27 +143,25 @@ Delete this question? All of its answers will be deleted too.`
 
 1. **「芝士」作为悬赏单位。** `questions.detail.bountyTip` 里「可获得 {bounty} 芝士」的「芝士」是**积分单位**，
    不是平台名。直接译成 `{bounty} Cheese` 会读成「获得 50 个 Cheese」，语义不通。
-   需要一个单位名（`credits`? `Cheese credits`? 保留 `Cheese` 但加量词?）。**在定下来之前，涉及悬赏的键不要翻译。**
+   英文目前不写单位，说 `the {bounty} bounty`，和旁边徽标上的 `Bounty {bounty}` 一致。
+   要不要给它一个英文单位名（`credits`? `Cheese credits`?）待 owner 定。
 2. **「话题」在空间内的层级。** `spaces.detail.manageTopics` 显示空间里也有「话题」，它是给题目贴的分类标签，
    和项目里的话题同名不同物。英文都定为 topic 没有歧义风险，但键的组织方式可能需要调整。
 
 3. **中文把「赛题」和「任务」当成同一个东西在叫——已经查清，按 challenge 统一。**
 
-   同一个实体，在 catalog 里有两套中文，而且**同一组键内部就自相矛盾**：
+   同一个实体，在 catalog 里有两套中文：
 
    | 位置 | 中文 | 键名 |
    |---|---|---|
-   | `spaces.detail.publishTask.title` | 发布**赛题** | `publishTask` |
-   | `spaces.detail.publishTask.taskName` | **任务**名称 | `publishTask` |
-   | `spaces.detail.publishTask.taskLevel` | **任务**等级 | `publishTask` |
+   | `spaces.detail.publishTask.createSuccess` | 创建**任务**成功 | `publishTask` |
    | `spaces.detail.tasks.publishTask` | 发布**赛题** | `tasks` |
    | `spaces.detail.tasks.noTasks` | 暂无**赛题** | `tasks` |
    | `tasks.form.taskName` | **赛题**名称 | `tasks` |
    | `tasks.form.taskLevel` | **赛题**难度 | `tasks` |
    | `tasks.publish.title` | 发布**赛题** | `tasks` |
 
-   两边是同一个实体的证据：字段名一一对应（`taskName` / `taskLevel` / `taskDescription`），
-   而且 `PublishTask.vue` 与 `Tasks.vue` 用的是同一个 `TasksApi`（`@/network/api/tasks`）。
+   两边是同一个实体的证据：`PublishTask.vue` 与 `Tasks.vue` 用的是同一个 `TasksApi`（`@/network/api/tasks`）。
    外部佐证是既有英文：`tasks.form.accessControl.enableAccessRestrictionHint`（开启后，只有指定域名邮箱的
    用户才能查看和参与此**赛题**）与注册页的 `account.rule.emailHint`
    （Some **challenges** are open only to…）说的是同一道门槛。
@@ -171,11 +169,10 @@ Delete this question? All of its answers will be deleted too.`
    **所以英译一律 challenge，`spaces.detail.publishTask.*` 也一样。** 这条不再是存疑项。
    剩下的是要改**中文**的地方，不是翻译能解决的：
    - `tasks` 这个命名空间名不副实（装的是赛题，与 `website` 同一种病）；
-   - `spaces.detail.publishTask.*` 的中文该跟 `title` 一样叫「赛题」，现在叫「任务」。
+   - `spaces.detail.publishTask.*` 的中文该叫「赛题」，现在叫「任务」（如 `createSuccess`）。
 
 
 4. **团队 / 队伍 / 小队是三个词。** `notifications.TEAM_INVITATION`（邀请你加入**团队**）说的是平台的一等实体
    （`views/teams/`、角色、邀请）；`tasks.form.teamLockingPolicy`（**队伍**成员锁定策略）说的是赛题里报名的那组人；
    `tasks.form.team` 的选项文字又是「**小队**」。代码里三者都写作 team，中文里却是三个词。
    **我的建议是把中文统一成「团队」、英文统一成 team**，但这是改产品文案，需要 owner 确认。
-   在此之前，涉及参赛队伍的键不要翻译。

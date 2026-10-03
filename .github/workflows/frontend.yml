@@ -173,15 +173,12 @@ jobs:
       # Bilingual UI: no Chinese typed straight into a template or a string
       # literal. catalog.spec.ts cannot see this — it compares the catalog with
       # itself, so a string that never reached the catalog is invisible to it
-      # and the English UI stays Chinese while every check passes. Ratcheted
-      # (i18n-cjk-baseline.json, a per-file ceiling) because the tree starts
-      # with that debt and several PRs pay it down in parallel: a file below its
-      # ceiling passes, a file above it fails. Spec: docs/i18n.md §5.
+      # and the English UI stays Chinese while every check passes. Zero
+      # tolerance: the only Chinese allowed is data, marked on its own line with
+      # `// i18n-data: <reason>` (`<!-- … -->` in a template). Spec: docs/i18n.md §5.
       #
-      # Pure node, no dependency, about a second: it reads src/ and compares
-      # counts. Read-only; the writer is `pnpm run lint:i18n:update`, which
-      # never raises a count.
-      - name: Hardcoded Chinese (i18n ratchet)
+      # Pure node, no dependency, about a second. Read-only.
+      - name: Hardcoded Chinese (i18n)
         run: pnpm run lint:i18n
 
       # Via the package script, not a bare `node --test scripts/`: passing a

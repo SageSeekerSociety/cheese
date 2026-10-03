@@ -186,17 +186,17 @@ wrong on turn one:
 - **Key names are `namespace.component.role`** (`account.signIn.submit`), never an
   English sentence and never a sentence fragment. A sentence-shaped key means
   rewording the Chinese forces renaming the key, which throws the translation away.
-- **Never create an empty English namespace to satisfy a check.** That turns
-  "missing" into "present but blank", which is exactly the silent state the gates
-  exist to prevent. Either write the translation, or leave the keys in
-  `frontend/src/i18n/untranslated.json`.
-- **Never edit `untranslated.json` / `unused.json` just to get green.**
-  `catalog.spec.ts` fails on entries that no longer describe reality (already
-  translated, already referenced, or dangling), so the lists can only shrink
-  honestly.
+- **Every zh-CN key ships with a non-empty English value, and every key has a
+  call site.** There is no exception list: write the translation in the same PR,
+  and delete a key from both locales in the PR that removes its last caller.
+- **Chinese that is data, not copy, is the only Chinese allowed in `src/` strings and templates**, and
+  the line says so: `// i18n-data: <reason>` in `.ts` / `<script>`,
+  `<!-- i18n-data: <reason> -->` in a `<template>`. Data means compared, parsed or
+  stored — a collation anchor, a marker a regex strips back out — never text a
+  user reads. The reason is for the reviewer; an annotation without one fails.
 - The i18n gate is two commands, seconds each, runs anywhere: `pnpm exec vitest run --dir src/i18n`
   (the catalog against itself) and `pnpm run lint:i18n` (Chinese typed into `src/` outside the
-  catalog, a per-file ceiling in `i18n-cjk-baseline.json` that only goes down).
+  catalog, zero allowed except annotated data lines).
 
 ## The two ratchets
 
