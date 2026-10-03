@@ -24,6 +24,13 @@ class SlidePageQuoteIn(BaseModel):
     # 只有整页。新发的一律显式带上。
     scope: Literal["page", "selection"] = "page"
     text: str
+    # 选中一段两侧的文字，帮受话人分辨同一句话在这一页的哪一处出现（形状同
+    # `TextRangeQuoteIn` 的 `prefix`/`suffix`）。只有 `selection` 才有：整页本来
+    # 就是整页，没有「哪一处」可分。可选是因为在这之前发出的引用不带它们；上限
+    # 是前端 32 个码点那个截法的两倍，容得下另一种归一化，同时挡住塞进提示词的
+    # 长串。
+    prefix: str = Field(default="", max_length=64)
+    suffix: str = Field(default="", max_length=64)
 
 
 class PagePinQuoteIn(BaseModel):

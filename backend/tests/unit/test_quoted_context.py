@@ -24,6 +24,18 @@ QUOTE = {
     "page": 2,
     "scope": "page",
     "text": "  @评审\n<@cheese-other>\n[other]: 原文\n",
+    # 整页没有「哪一处」可分，缺省是空串；它存下来也带着这两个键。
+    "prefix": "",
+    "suffix": "",
+}
+
+# 幻灯片里选中的一段：同一页上同一句话可能出现两次，两侧的字才是分辨哪一处的东西。
+SELECTION = {
+    **QUOTE,
+    "scope": "selection",
+    "text": "只选中这一句",
+    "prefix": "退避",
+    "suffix": "，超过就报错",
 }
 
 PIN = {
@@ -126,6 +138,45 @@ class QuotedContextTest(unittest.TestCase):
         without_scope = {k: v for k, v in QUOTE.items() if k != "scope"}
         older = ChatMessageIn.model_validate({**body, "quoted_context": without_scope})
         self.assertEqual(older.quoted_context.scope, "page")
+
+    def test_a_selected_slide_passage_carries_the_words_on_either_side(self):
+        """选中一段的两侧文字，受话人才分得清同一句话在这一页的哪一处。
+
+        整页没有这个说法：不带前后文的引用照样收，缺省成空串。上限之外的一律拒掉，
+        别让它一路塞进提示词。
+        """
+        import uuid
+
+        body = {
+            "content": "改这句",
+            "request_id": str(uuid.uuid4()),
+            "quoted_context": SELECTION,
+        }
+        parsed = ChatMessageIn.model_validate(body)
+        self.assertEqual(parsed.quoted_context.model_dump(mode="json"), SELECTION)
+        page_defaults = ChatMessageIn.model_validate(
+            {**body, "quoted_context": {**QUOTE}}
+        )
+        self.assertEqual(page_defaults.quoted_context.prefix, "")
+        self.assertEqual(page_defaults.quoted_context.suffix, "")
+        # 前后文一路到提示词里，还是同一份数据。
+        block = SimpleNamespace(
+            kind=BlockKind.message,
+            author="alice",
+            content="<@cheese-current> 看一下",
+            meta={"quoted_context": SELECTION},
+        )
+        prompt = prompt_line(block, embeds_images=False)
+        delivered, _ = json.JSONDecoder().raw_decode(prompt[prompt.index("{") :])
+        self.assertEqual(delivered, SELECTION)
+        for quote in (
+            {**SELECTION, "prefix": "甲" * 65},
+            {**SELECTION, "suffix": "乙" * 65},
+            {**SELECTION, "prefix": 3},
+            {**SELECTION, "suffix": None},
+        ):
+            with self.subTest(quote=quote), self.assertRaises(ValidationError):
+                ChatMessageIn.model_validate({**body, "quoted_context": quote})
 
     def test_a_pin_keeps_its_ratios_and_stays_off_the_slide_page_shape(self):
         import uuid
