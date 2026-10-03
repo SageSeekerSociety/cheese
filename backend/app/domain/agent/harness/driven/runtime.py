@@ -34,16 +34,11 @@ from app.core.sentences import say
 from app.domain.agent import attachments
 from app.domain.agent.device_hub import DeviceCallError, DeviceNotReady, DeviceOffline
 from app.domain.agent.harness import (
-    ActivityConsumer,
     Backlog,
-    CompletionConsumer,
-    EventConsumer,
     MemoryConsumer,
     Opening,
-    ReachabilityConsumer,
-    ReceiptConsumer,
+    RoomReader,
     SessionRef,
-    TerminationConsumer,
     UnreadProbe,
 )
 from app.domain.agent.harness.channel import ScreenSetupError
@@ -62,12 +57,23 @@ from app.domain.agent.platform_failures import (
     TURN_TIMEOUT_CODE,
     TURN_TIMEOUT_MESSAGE,
 )
+from app.domain.agent.reads import (
+    Completed,
+    Reachable,
+    Read,
+    Received,
+    Terminated,
+    Working,
+    Writing,
+)
 from app.domain.agent.service import AgentEvent, AgentResult, AgentSessionInfo
 from app.domain.delivery.input_identity import (
     InputIdentity,
     InputOutcomeUnconfirmed,
     InputReceipt,
     InputRegistrar,
+    WorkCompletion,
+    WorkTermination,
 )
 
 # Every read of a room's journal is a call to its device. A runner holds a read
@@ -95,12 +101,6 @@ TALKING_S = 300.0
 class RunnerUnsupported(ScreenSetupError):
     """The runner a seat was greeted by cannot hold a read (``LONG_POLL``), and
     every read of a seat is one the runner holds until there is news."""
-
-
-#: What the agent of a seat is in the middle of writing, handed on as it changes:
-#: (room, the work it is for if the runner knows, the agent writing, the blocks
-#: — ``driven.runner``; [] once it wrote nothing more or the record landed).
-LiveConsumer = Callable[[uuid.UUID, uuid.UUID | None, str, list[dict]], Awaitable[None]]
 
 
 @dataclass
@@ -257,18 +257,13 @@ class DrivenRuntime[H: Handle]:
         self.taken: dict[uuid.UUID, list[tuple[Seat, uuid.UUID]]] = {}
         self.queues: dict[uuid.UUID, asyncio.Queue[AgentEvent]] = {}
         self.woken: dict[Seat, asyncio.Event] = {}
-        self.consumer: EventConsumer | None = None
-        self.activity: ActivityConsumer | None = None
-        self.receipts: ReceiptConsumer | None = None
-        self.completions: CompletionConsumer | None = None
-        self.terminations: TerminationConsumer | None = None
-        self.reachability: ReachabilityConsumer | None = None
+        #: Where the room hears what its sessions say and do.
+        self.reader: RoomReader | None = None
         # 带下划线，因为它不能和下面那个 `memory()`（这一侧往会话里问一次对账）
         # 同名：`self.memory = None` 会把那个方法盖掉，而 `AgentRuntime` 是
         # `runtime_checkable` 的 Protocol，`isinstance` 拿不到方法就答否——
         # 于是每一个 runtime 都「跑不了 harness」。别的消费者没这个问题。
         self._memory: MemoryConsumer | None = None
-        self.live_consumer: LiveConsumer | None = None
 
     # --- what the harness supplies -------------------------------------------
 
@@ -315,32 +310,52 @@ class DrivenRuntime[H: Handle]:
     async def prepare_topic(self, **kwargs) -> tuple[bool, str]:
         return await self.channel.prepare_topic(**kwargs)
 
-    def bind_events(self, consumer: EventConsumer) -> None:
-        self.consumer = consumer
-
-    def bind_activity(self, consumer: ActivityConsumer) -> None:
-        self.activity = consumer
-
-    def bind_receipts(self, consumer: ReceiptConsumer) -> None:
-        self.receipts = consumer
-
-    def bind_completions(self, consumer: CompletionConsumer) -> None:
-        self.completions = consumer
-
-    def bind_terminations(self, consumer: TerminationConsumer) -> None:
-        self.terminations = consumer
+    def bind_reader(self, reader: RoomReader) -> None:
+        self.reader = reader
 
     def bind_unread_probe(self, probe: UnreadProbe) -> None:
         self.unread = probe
 
-    def bind_reachability(self, consumer: ReachabilityConsumer) -> None:
-        self.reachability = consumer
-
     def bind_memory(self, consumer: MemoryConsumer) -> None:
         self._memory = consumer
 
-    def bind_live(self, consumer: "LiveConsumer") -> None:
-        self.live_consumer = consumer
+    async def _hear(
+        self, session: SessionRef, read: Read, *, required: bool = False
+    ) -> None:
+        """Hand the room one thing its session said or did. What the room has
+        to hear for its books to be right (``required``) is an error to drop;
+        the rest is only what it shows."""
+        if self.reader is not None:
+            await self.reader(session, read)
+        elif required:
+            raise RuntimeError(f"{self.label} room reader is not bound")
+
+    def _room(
+        self, project: uuid.UUID, topic: uuid.UUID, agent: str = ""
+    ) -> SessionRef:
+        return SessionRef(project, topic, agent, harness=self.harness)
+
+    async def _hear_receipt(self, receipt: InputReceipt) -> None:
+        identity = receipt.identity
+        await self._hear(
+            self._room(identity.project_id, identity.topic_id),
+            Read(None, str(identity.work_id), Received(receipt)),
+            required=True,
+        )
+
+    async def _hear_completion(self, completion: WorkCompletion) -> None:
+        await self._hear(
+            self._room(completion.project_id, completion.topic_id),
+            Read(None, str(completion.work_id), Completed(completion)),
+            required=True,
+        )
+
+    async def _hear_termination(self, termination: WorkTermination) -> None:
+        await self._hear(
+            self._room(termination.project_id, termination.topic_id),
+            Read(None, str(termination.work_id), Terminated(termination)),
+            required=True,
+        )
 
     def _memory_hook(self, topic: uuid.UUID) -> Callable[[], Awaitable[None]]:
         """`reconcile_memory` 绑到这一间房，给订阅那一侧的一轮结束用（它不带参数）。
@@ -498,10 +513,19 @@ class DrivenRuntime[H: Handle]:
             return
         if queue := self.queues.get(work):
             await queue.put(event)
-        elif self.consumer:
-            await self.consumer(project, topic, work, event, eid, seen, unsolicited)
         else:
-            raise RuntimeError(f"{self.label} room persistence is not bound")
+            await self._hear(
+                self._room(project, topic),
+                Read(
+                    None,
+                    str(work),
+                    event,
+                    eid=eid,
+                    text_seen=seen,
+                    unsolicited=unsolicited,
+                ),
+                required=True,
+            )
         if isinstance(event, AgentResult) and event.thread_label is None:
             await self._end_taken(project, topic, work, event)
 
@@ -554,8 +578,11 @@ class DrivenRuntime[H: Handle]:
         elif self.work.get(seat) == work:
             self.work.pop(seat, None)
             self.clocks.pop(seat, None)
-        if self.activity and work not in self.queues:
-            await self.activity(project, seat[0], work, active, agent_handle=seat[1])
+        if work not in self.queues:
+            await self._hear(
+                self._room(project, seat[0], seat[1]),
+                Read(None, str(work), Working(active)),
+            )
 
     def bind_owns_sessions(self, provider) -> None:
         """Who answers ``owns_sessions`` at attach time (FB-56)."""
@@ -635,14 +662,16 @@ class DrivenRuntime[H: Handle]:
     async def _show(self, seat: Seat, live: dict) -> None:
         """Hand on what the seat's agent is in the middle of writing."""
         handle = self.live.get(seat)
-        if self.live_consumer is None or handle is None:
+        if handle is None:
             return
-        work = live.get("work_id")
-        await self.live_consumer(
-            seat[0],
-            uuid.UUID(work) if work else self.work.get(seat),
-            handle.agent_handle,
-            list(live.get("blocks") or []),
+        work = live.get("work_id") or self.work.get(seat)
+        await self._hear(
+            handle.session,
+            Read(
+                None,
+                str(work) if work else None,
+                Writing(tuple(live.get("blocks") or ()), author=handle.agent_handle),
+            ),
         )
 
     async def _wait(self, seat: Seat, delay: float) -> None:
@@ -770,18 +799,16 @@ class DrivenRuntime[H: Handle]:
         if work is None or handle is None or self.told_waiting.get(seat) == work:
             return
         self.told_waiting[seat] = work
-        if self.reachability:
-            await self.reachability(
-                handle.session.project_id, seat[0], work, False, reason
-            )
+        await self._hear(
+            handle.session, Read(None, str(work), Reachable(False, reason))
+        )
 
     async def _say_resumed(self, seat: Seat) -> None:
         work = self.told_waiting.pop(seat, None)
         handle = self.live.get(seat)
         if work is None or handle is None or self.work.get(seat) != work:
             return
-        if self.reachability:
-            await self.reachability(handle.session.project_id, seat[0], work, True, "")
+        await self._hear(handle.session, Read(None, str(work), Reachable(True)))
 
     async def _gone(self, seat: Seat) -> bool:
         """Has the runner of an open turn been out of reach for too long?
@@ -1027,9 +1054,7 @@ class DrivenRuntime[H: Handle]:
             # leaves this to the echo, so a consumer still holding the receipt
             # must never gate the send that admits it.
             if self.receipt_on_accept:
-                if self.receipts is None:
-                    raise RuntimeError("Receipt consumer is not bound")
-                await self.receipts(InputReceipt(identity, "accepted"))
+                await self._hear_receipt(InputReceipt(identity, "accepted"))
         except Exception as exc:
             # Even a transport error can follow admission at the remote end.
             # Keep the committed identity; the caller must not queue a new UUID.

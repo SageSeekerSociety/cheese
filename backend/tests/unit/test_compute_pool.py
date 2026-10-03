@@ -9,7 +9,7 @@ import pytest
 from app.domain.agent.compute import ComputePool
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.harness import SessionRef
-from app.domain.delivery.input_identity import CompletionConsumer, InputRegistrar
+from app.domain.delivery.input_identity import InputRegistrar
 
 
 @pytest.mark.anyio
@@ -182,23 +182,11 @@ class _FakeBackend:
     def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
         return None
 
-    def bind_events(self, consumer) -> None:
-        return None
-
-    def bind_activity(self, consumer) -> None:
-        return None
-
-    def bind_receipts(self, consumer) -> None:
-        return None
-
-    def bind_completions(self, consumer: CompletionConsumer) -> None:
+    def bind_reader(self, reader) -> None:
         return None
 
     def bind_unread_probe(self, probe) -> None:
         self.unread_probe = probe
-
-    def bind_reachability(self, consumer) -> None:
-        return None
 
     def bind_memory(self, consumer) -> None:
         return None
@@ -387,7 +375,7 @@ def test_the_pool_runs_only_the_harnesses_the_registry_lists():
     """答不出四条的骨架不在注册表里，也就不在池子里（结论 43）。
 
     「不在注册表里」如果只是功能矩阵上少一列，它在运行时就还是活的：挂进池子的
-    backend 会被 `recover_sessions` 恢复、被 `bind_events` 交上房间侧的持久化、在
+    backend 会被 `recover_sessions` 恢复、被 `bind_reader` 交上房间的耳朵、在
     没有 owner 的时候被 `deliver` 按 `holds()` 找到。所以这条收缩要在装配那一步
     可判。
     """

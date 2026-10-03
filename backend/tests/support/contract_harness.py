@@ -37,7 +37,7 @@ from typing import Any
 
 from app.domain.agent.harness import HarnessEvent, Opening, SessionRef
 from app.domain.agent.service import AgentEvent, AgentMessage
-from app.domain.delivery.input_identity import CompletionConsumer, InputRegistrar
+from app.domain.delivery.input_identity import InputRegistrar
 from tests.support.fake_subagent import FakeSubagent
 
 FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "harness-contract"
@@ -270,27 +270,14 @@ class ContractHarness:
         raise NotImplementedError("the contract harness runs no model")
         yield  # pragma: no cover - makes this an async generator
 
-    # The protocol asks a runtime to accept these consumers; it does not ask it
-    # to keep them. Nothing here ever produces an event, an activity ping, a
-    # receipt, a completion, an unread count or an unreachable machine. Holding
-    # the consumer would be state with no reader — the kind of thing this set
-    # exists to delete.
-    def bind_events(self, consumer: Any) -> None:
-        return None
-
-    def bind_activity(self, consumer: Any) -> None:
-        return None
-
-    def bind_receipts(self, consumer: Any) -> None:
-        return None
-
-    def bind_completions(self, consumer: CompletionConsumer) -> None:
+    # The protocol asks a runtime to accept the room's reader and hooks; it does
+    # not ask it to keep them. Nothing here ever produces anything for the room
+    # to hear, asks for an unread count or reconciles memory. Holding them would
+    # be state with no reader — the kind of thing this set exists to delete.
+    def bind_reader(self, reader: Any) -> None:
         return None
 
     def bind_unread_probe(self, probe: Any) -> None:
-        return None
-
-    def bind_reachability(self, consumer: Any) -> None:
         return None
 
     def bind_memory(self, consumer: Any) -> None:

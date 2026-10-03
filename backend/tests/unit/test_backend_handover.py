@@ -37,6 +37,7 @@ from app.domain.agent.runtime import (
 )
 from app.domain.agent.service import AgentResult
 from tests.conftest import stub_compute
+from tests.support.room_reader import room_reader
 from tests.turn_log import a_topic, open_turn_ids
 from tests.unit.test_driven_liveness import Room, Scripted
 
@@ -252,7 +253,7 @@ async def test_session_output_lands_once_through_the_backend_that_took_over():
     async def consume(_project, _topic, work, event, _eid, _seen, _unsolicited):
         landed_by_incoming.append((work, event))
 
-    incoming.bind_events(consume)
+    incoming.bind_reader(room_reader(events=consume))
     try:
         await room.send("fix the login page")
         await _until(lambda: room.receipts == ["fix the login page"])

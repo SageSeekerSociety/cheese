@@ -50,7 +50,7 @@ pi 核心没有子 agent，四条由平台给它的 extension 和 runner 答：`
 
 ## 平台只认这几个动词 {#contract}
 
-`AgentRuntime`（Protocol）是平台对一个骨架的全部要求：`ensure`、`send`、`backlog`、`deliver`、`interrupt`、`close`，加上 `holds`、`memory()`、`keeps_memory`、`bind_reachability`、`bind_memory` 这几个事实与回路。四条硬性要求不在这里当第七个动词：平台不起子 agent，它们是骨架的事实，各写一句「怎么做到的」落在 `HARNESSES[harness].subagents` 上。
+`AgentRuntime`（Protocol）是平台对一个骨架的全部要求：`ensure`、`send`、`backlog`、`deliver`、`interrupt`、`close`，加上 `holds`、`memory()`、`keeps_memory` 这几个事实，以及三条回路：`bind_reader` 把会话说的、做的一条条交给房间（说了什么、开始和停下干活、读到了哪条输入、活怎么结束、机器够不够得着、正在写什么，都是 `agent/reads.py` 的 `Read`，由 `room_reads.py` 分给房间各自的账），`bind_memory` 在输入之前和一轮之后对记忆，`bind_unread_probe` 问房间还有没有输入没被读。四条硬性要求不在这里当第七个动词：平台不起子 agent，它们是骨架的事实，各写一句「怎么做到的」落在 `HARNESSES[harness].subagents` 上。
 
 旁边几个小协议：`Backlog`（`unread` / `assemble` / `unfinished` / `landed` / `forget`）、`SessionControls`、`Opening`（一轮开场给会话的那些东西，含「这一轮要不要一双手」的 `needs_place`）、`SessionRef`（`(topic, agent_handle, harness)`，`agent_sessions` 的键）。
 
