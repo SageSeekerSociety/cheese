@@ -31,7 +31,13 @@ ARG GIT_SHA=
 ENV VITE_WEB_BUILD=$GIT_SHA
 # The fusion bundle outgrew Node's default ~2 GB heap — `vite build` OOM-killed
 # the CI runner (exit 134, "Reached heap limit"). Raise the old-space cap.
-ENV NODE_OPTIONS=--max-old-space-size=4096
+#
+# 4096 也不够了：2026-10-03 起前端镜像构建连续失败（Deploy 里
+# build-did-not-produce-images → 线上一直不更新），日志是同一个
+# "Ineffective mark-compacts near heap limit"。触发点是当天合进来的文档块
+# （echarts / mermaid 两个重依赖）。这是 V8 的堆上限，不是容器被 OOM-kill，
+# 所以提高它有效；6144 在同样 8 GB 的机器上实测能过。
+ENV NODE_OPTIONS=--max-old-space-size=6144
 RUN pnpm build
 
 FROM nginx:1.25.4 as prod
