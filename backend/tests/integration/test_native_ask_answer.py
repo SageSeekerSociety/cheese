@@ -986,7 +986,41 @@ def test_http_answer_continues_original_native_executor(
                         select(AgentTurn).where(AgentTurn.topic_id == topic)
                     )
                 )
-                assert len(turns) == (1 if mode == "busy" else 2)
+                assert len(turns) == (1 if mode == "busy" else 2), {
+                    "turns": [
+                        {
+                            "id": str(turn.id),
+                            "continuation": str(turn.continuation_id),
+                            "author": turn.author,
+                            "content": turn.content,
+                            "started": str(turn.started_at),
+                            "delivered": str(turn.delivered_at),
+                            "stopped": str(turn.stopped_at),
+                            "session": turn.session_id,
+                        }
+                        for turn in turns
+                    ],
+                    "inputs": [
+                        {
+                            "id": str(row.input_id),
+                            "work": str(row.execution_work_id),
+                            "delivery": str(row.delivery_id),
+                            "held": row.held_block_ids,
+                            "completed": str(row.completed_at),
+                        }
+                        for row in rows
+                    ],
+                    "deliveries": [
+                        {
+                            "id": str(delivery.id),
+                            "attempt": str(delivery.attempt_id),
+                            "state": delivery.state,
+                            "event": str(delivery.event_id),
+                        }
+                        for delivery in deliveries
+                    ],
+                    "operations": operations,
+                }
                 original = next(
                     (turn for turn in turns if turn.id == original_work), None
                 )
