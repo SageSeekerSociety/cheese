@@ -1,9 +1,9 @@
-// 键盘可达性：侧栏里每一个能被 Tab 停住的东西，都必须是看得见的。
+// 键盘可达性：侧栏里每一个 Tab 停得住的地方，用户都得看得见东西。
 //
 // Vuetify 的 VList 根元素固定带 tabindex="0"（role="listbox"），所以一个「没有行」的
-// 分组列表 = 一个零高度、看不见、但 Tab 停得上的焦点点：全局焦点环套上去，就是横贯
-// 侧栏的一条细线（用户 2026-10-03 的截图）。这里钉住：滚动区里凡是渲染出来的列表，
-// 都至少有一行——收起来的组什么都不画，而不是画一个空壳。
+// 分组列表就是一个零高度、看不见、Tab 却停得上的焦点点：焦点环套在零高度的盒子上，
+// 看起来是横贯侧栏的一条细线（用户 2026-10-03 的截图）。这里不钉 DOM 形状，只钉用户
+// 按 Tab 时的那条序列：滚动区里停得住的每一处，要么本身是个控件，要么有内容。
 import type { Component } from 'vue'
 import type { Topic } from '@/cx_types'
 
@@ -92,27 +92,35 @@ beforeAll(() => {
   }
 })
 
-/** 滚动区里渲染出来的列表：Vuetify 的列表自己就是一个 Tab 停靠点。 */
-function railLists(container: Element): HTMLElement[] {
-  return Array.from(container.querySelectorAll('.rail-scroll .v-list')) as HTMLElement[]
+/** 滚动区里 Tab 停得住的地方：tabindex >= 0。Vuetify 给列表项标的 -2/-1 是列表内部的
+ *  焦点管理，Tab 走不到，不算。 */
+function tabStops(container: Element): HTMLElement[] {
+  return Array.from(container.querySelectorAll('.rail-scroll [tabindex]')).filter(
+    (el) => Number(el.getAttribute('tabindex')) >= 0
+  ) as HTMLElement[]
 }
 
-/** 里面一行都没有的列表 —— 一个个都是看不见的 Tab 停靠点。 */
-function emptyListClasses(container: Element): string[] {
-  return railLists(container)
-    .filter((list) => list.querySelectorAll('.v-list-item').length === 0)
-    .map((list) => list.className)
+/** 停在这儿，用户看得见东西吗：控件本身，或者一个装着内容的盒子。 */
+function showsSomethingToUser(el: HTMLElement): boolean {
+  return el.matches('button, a[href], input, select, textarea') || (el.textContent ?? '').trim() !== ''
 }
 
-describe('侧栏的 Tab 停靠点都看得见', () => {
+/** Tab 停上去却什么都看不见的那些（按类名报出来，红的时候知道是哪个）。 */
+function stopsShowingNothing(container: Element): string[] {
+  return tabStops(container)
+    .filter((el) => !showsSomethingToUser(el))
+    .map((el) => el.className)
+}
+
+describe('侧栏里 Tab 停得住的地方都看得见', () => {
   beforeEach(() => localStorage.clear())
 
-  it('没有别人的话题时，不留一个空的列表壳子', () => {
+  it('没有别人的话题时，空出来的那一组不留停靠点', () => {
     const { container } = mount({
       topics: [topic('root', null), topic('mine', 'root', { i_participate: true })],
       selectedTopicId: 'mine',
     })
-    expect(emptyListClasses(container)).toEqual([])
+    expect(stopsShowingNothing(container)).toEqual([])
   })
 
   it('「其他话题」收着的时候，一样不留', () => {
@@ -124,6 +132,6 @@ describe('侧栏的 Tab 停靠点都看得见', () => {
       ],
       selectedTopicId: 'mine',
     })
-    expect(emptyListClasses(container)).toEqual([])
+    expect(stopsShowingNothing(container)).toEqual([])
   })
 })
