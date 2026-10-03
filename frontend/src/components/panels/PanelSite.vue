@@ -837,12 +837,16 @@ function isLive(index: number): boolean {
   white-space: normal;
 }
 /* 折起来的动词是个 `overflow: hidden` 的盒子，它的基线算在底边而不是第一行，
-   圆点和时间会跟着掉到三行的底下去。这里把它们钉回第一行：(18.6 - 5) / 2 ≈ 7，
-   18.6 = 12px 的字 × 1.55 的行高。 */
+   圆点和时间会跟着掉到三行的底下去。这里把它们钉回第一行顶上：时间是同字号的
+   一行字，顶对顶就和动词第一行对齐；圆点不跟基线走了，基类那 -3px 的上移也要
+   撤掉，改按行高居中：(18.6 - 5) / 2 ≈ 7，18.6 = 12px 的字 × 1.55 的行高。 */
 .site-act--solo .site-act__dot,
 .site-act--solo .site-act__time {
   align-self: flex-start;
+}
+.site-act--solo .site-act__dot {
   margin-top: 7px;
+  transform: none;
 }
 /* 同一行里那个空的参数位不再和动词分宽度。 */
 .site-act--solo .site-act__argtext {

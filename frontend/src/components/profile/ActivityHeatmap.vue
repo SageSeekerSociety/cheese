@@ -32,13 +32,18 @@ const locale = computed(() => i18n.global.locale.value)
 
 const months = computed(() => {
   const marks = monthStarts(weeks.value)
-  return marks.map((mark, i) => ({
-    ...mark,
-    span: (marks[i + 1]?.column ?? weeks.value.length) - mark.column,
-    label: new Intl.DateTimeFormat(locale.value, { month: 'short', timeZone: 'UTC' }).format(
-      Date.UTC(2000, mark.month - 1, 1)
-    ),
-  }))
+  return marks.map((mark, i) => {
+    const span = (marks[i + 1]?.column ?? weeks.value.length) - mark.column
+    return {
+      ...mark,
+      span,
+      // 最后一个月只占一两栏时装不下月份名，见样式里的 `--tail`。
+      tail: i === marks.length - 1 && span <= 2,
+      label: new Intl.DateTimeFormat(locale.value, { month: 'short', timeZone: 'UTC' }).format(
+        Date.UTC(2000, mark.month - 1, 1)
+      ),
+    }
+  })
 })
 
 function dayLabel(date: string): string {
@@ -101,6 +106,7 @@ async function move(event: KeyboardEvent, column: number, row: number) {
         v-for="m in months"
         :key="m.column"
         class="heatmap__month"
+        :class="{ 'heatmap__month--tail': m.tail }"
         :style="{ gridColumn: `${m.column + 1} / span ${m.span}` }"
         >{{ m.label }}</span
       >
@@ -183,11 +189,12 @@ async function move(event: KeyboardEvent, column: number, row: number) {
   overflow: hidden;
   white-space: nowrap;
 }
-/* 最后一个月刚开始时，它的标记落在最后一栏，格子只有一列宽（约 12px），
+/* 最后一个月刚开始时，它的标记落在最后一两栏，格子只有一两列宽（约 12~26px），
    「10月」被裁成「10」。这一格按内容撑开、靠着右边缘放，字因此长在它左边那
-   一点空白上 —— 那里本来就没有别的月份在写（`text-align` 在这里没用：溢出的
-   一行不会被对齐挪动，只有盒子自己换宽度才动得了）。 */
-.heatmap__month:last-child {
+   一点空白上，那里本来就没有别的月份在写（`text-align` 在这里没用：溢出的
+   一行不会被对齐挪动，只有盒子自己换宽度才动得了）。月中以后最后一个月已经占
+   好几栏，装得下，仍按其他月份那样从起始栏左对齐，所以只在 `tail` 时生效。 */
+.heatmap__month--tail {
   width: max-content;
   justify-self: end;
 }
