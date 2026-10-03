@@ -97,6 +97,17 @@ MAX_QUEUED_FRAMES = 256
 SEND_TIMEOUT_S = 5.0
 MAX_STREAMS = 64
 
+# How many page requests a helper works on at once (its `_MAX_HTTP_STREAMS`).
+# It answers the next one with "preview streams busy", and a page in a dev
+# server's development mode asks for hundreds of modules at once: forwarding
+# them all made every request past the sixteenth a 404 and the page a white
+# frame. Requests wait here for a free slot instead of being refused there.
+HTTP_STREAMS = 16
+# A slot freed on this side can still be counted on the helper until it reads
+# the close; a request that hits that window is told "busy" and tries again.
+BUSY = b"preview streams busy"
+BUSY_RETRY_S = 0.05
+
 
 class PreviewStream:
     """One browser request (or one browser WebSocket) and its whole life."""
@@ -109,6 +120,8 @@ class PreviewStream:
         self._closed = False
         self._terminal = False
         self._close_task: asyncio.Task[None] | None = None
+        # Holds one of the machine's page-request slots until it is forgotten.
+        self.slot = False
 
     @property
     def close_metadata(self) -> bool:
@@ -238,6 +251,9 @@ class PreviewMachine:
     maintenance: bool = False
     stopped: bool = False
     failed: asyncio.Event = field(default_factory=asyncio.Event)
+    http_slots: asyncio.Semaphore = field(
+        default_factory=lambda: asyncio.Semaphore(HTTP_STREAMS)
+    )
 
     async def send(self, op: int, stream_id: int, payload: bytes = b"") -> None:
         if self.stopped:
@@ -284,8 +300,24 @@ class PreviewMachine:
         self.streams[stream.id] = stream
         return stream
 
+    async def open_http(self, timeout: float | None) -> PreviewStream | None:
+        """A stream for one page request, once the helper has room for it."""
+        try:
+            await asyncio.wait_for(self.http_slots.acquire(), timeout)
+        except TimeoutError:
+            return None
+        stream = self.open()
+        if stream is None:
+            self.http_slots.release()
+            return None
+        stream.slot = True
+        return stream
+
     def forget(self, stream_id: int) -> None:
-        self.streams.pop(stream_id, None)
+        stream = self.streams.pop(stream_id, None)
+        if stream is not None and stream.slot:
+            stream.slot = False
+            self.http_slots.release()
 
     def on_frame(self, data: bytes) -> None:
         """Route one frame this machine sent to the stream waiting for it.
@@ -456,68 +488,88 @@ class PreviewHub:
         typed: bool = False,
     ) -> PreviewHttpResponse | None:
         """Return at RESP; the caller owns the body and cancellation."""
-        # A captured inspection must never jump to a replacement connection.
-        if machine is not None:
-            if not self.accepting or self.machine(topic_id, seat) is not machine:
-                return None
-            stream = machine.open()
-        else:
-            stream = self.open_stream(topic_id, seat)
-        if stream is None:
-            if typed:
-                raise PreviewAdmissionError("transport_unavailable")
-            return None
-        transferred = False
-        try:
-            if (
-                instance or inspect_instance
-            ) and "instance-v1" not in stream._machine.capabilities:
-                if typed:
-                    raise PreviewAdmissionError("instance_identity_unsupported")
-                return None
-            await stream.send(
-                wire.OP_REQ,
-                wire.encode_meta(
-                    {
-                        "method": method,
-                        "path": path,
-                        "headers": [list(h) for h in headers],
-                        **({"instance": instance} if instance else {}),
-                        **({"inspect_instance": True} if inspect_instance else {}),
-                    },
-                    body,
-                ),
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while True:
+            # A captured inspection must never jump to a replacement connection.
+            if machine is not None:
+                if not self.accepting or self.machine(topic_id, seat) is not machine:
+                    return None
+                target: PreviewMachine | None = machine
+            else:
+                target = (
+                    self._machines.get((topic_id, seat)) if self.accepting else None
+                )
+            stream = (
+                await target.open_http(max(0.0, deadline - loop.time()))
+                if target is not None
+                else None
             )
-            op, payload = await stream.receive(timeout)
-            if op != wire.OP_RESP:
+            if stream is None:
                 if typed:
-                    raise PreviewAdmissionError(
-                        "instance_gone"
-                        if op == wire.OP_ERR and payload == b"preview instance gone"
-                        else "app_unavailable"
-                        if not stream._machine.stopped
-                        else "transport_unavailable"
+                    raise PreviewAdmissionError("transport_unavailable")
+                return None
+            transferred = False
+            busy = False
+            try:
+                if (
+                    instance or inspect_instance
+                ) and "instance-v1" not in stream._machine.capabilities:
+                    if typed:
+                        raise PreviewAdmissionError("instance_identity_unsupported")
+                    return None
+                await stream.send(
+                    wire.OP_REQ,
+                    wire.encode_meta(
+                        {
+                            "method": method,
+                            "path": path,
+                            "headers": [list(h) for h in headers],
+                            **({"instance": instance} if instance else {}),
+                            **({"inspect_instance": True} if inspect_instance else {}),
+                        },
+                        body,
+                    ),
+                )
+                op, payload = await stream.receive(max(0.0, deadline - loop.time()))
+                if op == wire.OP_ERR and payload == BUSY and loop.time() < deadline:
+                    busy = True
+                    continue
+                if op != wire.OP_RESP:
+                    if typed:
+                        raise PreviewAdmissionError(
+                            "instance_gone"
+                            if op == wire.OP_ERR and payload == b"preview instance gone"
+                            else "app_unavailable"
+                            if not stream._machine.stopped
+                            else "transport_unavailable"
+                        )
+                    logger.info(
+                        "preview request on %s failed: %s", topic_id, payload[:200]
                     )
-                logger.info("preview request on %s failed: %s", topic_id, payload[:200])
+                    return None
+                meta, first = wire.decode_meta(payload)
+                response = PreviewHttpResponse(
+                    status=int(meta.get("status", 502)),
+                    headers=[(str(k), str(v)) for k, v in meta.get("headers") or []],
+                    stream=stream,
+                    first=first,
+                    timeout=timeout,
+                )
+                transferred = True
+                return response
+            except (TimeoutError, ValueError, OSError, RuntimeError) as exc:
+                logger.info("preview request on %s did not complete: %s", topic_id, exc)
+                if typed:
+                    raise PreviewAdmissionError("transport_unavailable") from exc
                 return None
-            meta, first = wire.decode_meta(payload)
-            response = PreviewHttpResponse(
-                status=int(meta.get("status", 502)),
-                headers=[(str(k), str(v)) for k, v in meta.get("headers") or []],
-                stream=stream,
-                first=first,
-                timeout=timeout,
-            )
-            transferred = True
-            return response
-        except (TimeoutError, ValueError, OSError, RuntimeError) as exc:
-            logger.info("preview request on %s did not complete: %s", topic_id, exc)
-            if typed:
-                raise PreviewAdmissionError("transport_unavailable") from exc
-            return None
-        finally:
-            if not transferred:
-                await stream.aclose()
+            finally:
+                if not transferred:
+                    # The helper never took a refused stream, so there is
+                    # nothing on its side to close.
+                    await stream.aclose(cancel=not busy)
+                if busy:
+                    await asyncio.sleep(BUSY_RETRY_S)
 
     async def request(
         self,
