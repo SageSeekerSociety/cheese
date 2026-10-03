@@ -23,7 +23,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path
 
-from app.api.routes.tasks import _require_task
+from app.api.routes.tasks._common import _require_task
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import NotFoundError

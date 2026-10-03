@@ -9,7 +9,7 @@ covers:
   - backend/app/domain/delivery/addressing.py
   - backend/app/domain/task/attachment_service.py
   - backend/app/domain/task/visibility_service.py
-  - backend/app/api/routes/tasks.py
+  - backend/app/api/routes/tasks/
   - backend/sandbox/cheese
 ---
 

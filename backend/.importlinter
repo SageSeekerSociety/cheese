@@ -209,9 +209,10 @@ ignore_imports =
     app.api.routes.spaces -> app.domain.space.models
     app.api.routes.spaces -> app.domain.task.models
     app.api.routes.spaces -> app.domain.teaching.models
-    app.api.routes.tasks -> app.domain.attachment.models
-    app.api.routes.tasks -> app.domain.task.models
-    app.api.routes.tasks -> app.domain.team.models
+    app.api.routes.tasks._common -> app.domain.task.models
+    app.api.routes.tasks.lifecycle -> app.domain.task.models
+    app.api.routes.tasks.participation -> app.domain.team.models
+    app.api.routes.tasks.publish_pdf -> app.domain.task.models
     app.api.routes.teams -> app.domain.team.models
     app.api.routes.topics -> app.domain.block.models
     app.api.routes.topics -> app.domain.review.models
