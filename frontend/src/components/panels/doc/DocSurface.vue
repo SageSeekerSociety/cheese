@@ -24,6 +24,8 @@ import Collaboration from '@tiptap/extension-collaboration'
 import CollaborationCaret from '@tiptap/extension-collaboration-caret'
 import { EditorContent } from '@tiptap/vue-3'
 
+import { scrollBehavior } from '@/utils/motion'
+
 import { BUBBLE_META } from '../../../lib/docBubble'
 import { renderCaret } from '../../../lib/docCaret'
 import { placeOf, spotAt } from '../../../lib/docCommentSpots'
@@ -120,7 +122,7 @@ async function flashBlocks(els: HTMLElement[]) {
     props.pulse()
     return
   }
-  els[0].scrollIntoView({ behavior: 'smooth', block: 'center' })
+  els[0].scrollIntoView({ behavior: scrollBehavior(), block: 'center' })
   // Read positions after the smooth-scroll settles enough to be visible;
   // getBoundingClientRect is read once, so the flash is anchored to where the
   // block is now (fine for a ~1.5s cue).
@@ -156,7 +158,7 @@ function revealThread(threadId: string): boolean {
   const { node } = ed.view.domAtPos(at)
   const el = node instanceof Element ? node : node.parentElement
   if (range) {
-    el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    el?.scrollIntoView({ behavior: scrollBehavior(), block: 'center' })
     return true
   }
   const block = el?.closest('.ProseMirror > *') as HTMLElement | null

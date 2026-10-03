@@ -83,6 +83,11 @@ const hasError = computed<boolean>({
 
 <template>
   <div class="project-shell fill-height">
+    <!-- Screen-reader heading for the frame. Text from the same store the top
+         bar reads (the `project-frame` dynamic title), so the two can never
+         drift. Hidden: on desktop the project name lives in the sidebar's top
+         row, on mobile in the top bar; neither is a heading. -->
+    <h1 v-if="store.projectName" class="visually-hidden">{{ store.projectName }}</h1>
     <!-- 进不来的时候，整块内容区换成说明，而不是让人对着一个空壳猜。侧栏和顶栏
          留着，因为「离开这里」的路都在那上面。 -->
     <ProjectAccessNotice v-if="store.accessDenied" :reason="store.accessDenied" />

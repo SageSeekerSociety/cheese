@@ -16,6 +16,7 @@ import type { BoardColumn, ProjectMemberRow, RoomTask, Topic } from '@/cx_types'
 
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useDisplay } from 'vuetify'
 
 import { avatarColor, avatarInitial } from '@/utils/avatar'
 import { getAvatarUrl } from '@/utils/materials'
@@ -40,6 +41,7 @@ const props = defineProps<{ projectId: string }>()
 
 const route = useRoute()
 const router = useRouter()
+const { mdAndUp } = useDisplay()
 const store = useWorkspaceStore()
 
 const rows = ref<RoomTask[]>([])
@@ -309,6 +311,12 @@ function openTask(task: RoomTask) {
         {{ t('work.board.mineOnly') }}
       </button>
     </template>
+    <!-- Screen-reader heading for the board. On desktop AppPage already draws
+         this title as a visible h1; on mobile the name is only in the top bar,
+         so this carries it as the page heading. Kept OUT of `.board`: that
+         container is asserted to hold no headings (e2e/tests/room-work.spec.ts),
+         and a heading there would also be a second title on the page. -->
+    <h1 v-if="!mdAndUp" class="visually-hidden">{{ t('navigation.project.board') }}</h1>
     <div class="board">
       <!-- 等你决定：芝士 问了你一句话，在等你回答。 -->
       <NeedsYou :project-id="projectId" />
