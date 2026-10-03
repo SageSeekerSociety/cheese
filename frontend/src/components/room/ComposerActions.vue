@@ -239,6 +239,7 @@ const summonText = computed(() => ({
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  min-width: 0;
   height: 28px;
   padding: 0 10px;
   border: 1px solid transparent;
@@ -247,9 +248,17 @@ const summonText = computed(() => ({
   line-height: 1;
   color: var(--muted);
   cursor: pointer;
+  white-space: nowrap;
   transition:
     color var(--dur-quick) var(--ease-standard),
     background-color var(--dur-quick) var(--ease-standard);
+}
+/* 名字比这一行剩下的位置长时收成一串点，不折行——折行会让 28px 高的按钮从中间
+   把字裁掉。 */
+.summon-btn-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .summon-btn:hover:not(:disabled) {
   background: var(--fill);
@@ -271,12 +280,13 @@ const summonText = computed(() => ({
   background: var(--line-2);
   color: var(--ink);
 }
-/* 窄屏上名字收掉，留「交给」两个字：只剩一个 @ 图标的话，它读起来是「插入一个
-   @」，不是「这条交给它处理」。两个字加图标放得进这一行，不会换行。 */
+/* 很窄的屏（不到 360）上名字收掉，留「交给」两个字：只剩一个 @ 图标的话，它读起
+   来是「插入一个 @」，不是「这条交给它处理」。390 那一档放得下全名，就写全名——
+   收成「交给」时它看起来像被截断了。 */
 .summon-btn-short {
   display: none;
 }
-@media (max-width: 480px) {
+@media (max-width: 359.98px) {
   .summon-btn-label {
     display: none;
   }

@@ -66,6 +66,15 @@ const heading = computed(() =>
   deck.value[0]?.kind === 'change_alert' ? t('work.needsYou.changeAlert') : t('work.needsYou.waiting')
 )
 
+/** 卡里那一行 kind 标签还要不要写。
+ *
+ *  这一叠的标题说的是最上面那条是什么，而一条变更提醒的标题就是「变更提醒」——卡里
+ *  再写一遍是同一句话说两次。决策请求不同：标题写的是「等你回答」，标签「决策请求」
+ *  是它才有的信息，留着。 */
+function showKind(row: InboxItem): boolean {
+  return label(NOTIF_KIND, row.kind) !== heading.value
+}
+
 /** 这一条要「点进去看」的地方 —— 它的房间。
  *
  *  通知只是实时提醒，ground truth 在文档和对话框里（spec §8.5），所以一条通知
@@ -191,7 +200,11 @@ watch(
                  答案。 -->
             <template v-if="depth === 0">
               <div class="asked-card__head">
-                <span class="asked-card__kind t-meta c-faint">{{ label(NOTIF_KIND, row.kind) }}</span>
+                <!-- The heading above already names a change alert, so the card does not
+                     repeat it; a decision request is headed 「等你回答」 and keeps its tag. -->
+                <span v-if="showKind(row)" class="asked-card__kind t-meta c-faint">{{
+                  label(NOTIF_KIND, row.kind)
+                }}</span>
                 <span class="asked-card__title t-body">{{ row.title }}</span>
               </div>
               <!-- 两行，短的也占两行：一叠卡的高度必须是常数，否则答完一条、下一条
