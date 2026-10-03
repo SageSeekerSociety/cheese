@@ -191,6 +191,12 @@ async function owedReply($) {
 // a caller that asked for isolation is usually about to run several at once
 // over the same files. Only a text result is annotated; anything else passes
 // through as it came.
+//
+// Note what this does not reach: the pinned build launches a subagent in the
+// background and answers the caller itself, so the caller sees its own
+// "launched successfully" line and never this one. The annotation is what a
+// caller sees where the proxy's result *is* the tool result. The spawn is not
+// refused either way, which is the part that matters to the caller.
 function ignoringIsolation(result) {
   if (!result || !Array.isArray(result.result)) return result;
   return {

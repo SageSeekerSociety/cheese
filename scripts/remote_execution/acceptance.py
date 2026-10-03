@@ -275,10 +275,13 @@ def case(folder, options):
                 "input": {"method": "GET", "path": "/platform-fixture"},
             },
             # A subagent that asks for isolation runs anyway, with its tools on
-            # this host like every other one; the parameter is dropped and the
-            # result says so (`ignoringIsolation` in the remote proxy). Its
-            # request is the one request in this session that is not a turn of
-            # the script — `is_child` in model_fixture.py answers it apart.
+            # this host like every other one: the remote proxy drops the
+            # parameter instead of refusing the spawn. What the session sees
+            # here is the build's own async launch ack — an annotation the proxy
+            # puts on *its* result does not survive that path, so the assertion
+            # below reads the ack and not the annotation. The child's request is
+            # the one request in this session that is not a turn of the script —
+            # `is_child` in model_fixture.py answers it apart.
             {
                 "name": "Agent",
                 "input": {
@@ -423,9 +426,6 @@ def case(folder, options):
         before_turn(session, home)
         ended = session.turn("Run the prescribed remote execution checks.", 120)
         assert len(server.state["requests"]) == len(actions) + 1, ended
-        # The spawn above reached this gateway as a child of its own: asking
-        # for isolation no longer stops it, and the script above still ran once.
-        assert len(server.state.get("child_requests", [])) >= 1, ended
         # The journal is what the room reads: every scripted call has its
         # tool_result there, on the session's own thread.
         ran = session.tool_results()
@@ -446,11 +446,18 @@ def case(folder, options):
             )
         results = tool_results(server.state["requests"][-1])
         if options.mode == "normal":
+            # The spawn that asked for isolation is no longer refused: the
+            # proxy drops the parameter and the subagent runs like any other.
+            # `cheese_task` is still what a caller should use when the work is
+            # itself a deliverable to track and review, but nothing blocks the
+            # spawn on it any more.
             isolated = results[-2]
-            assert isolated.get("is_error"), isolated
-            assert "cheese_task" in json.dumps(isolated), isolated
-            # `.claude/` itself is the project's mirrored assets; an isolated
-            # spawn would have added its worktree beneath it.
+            assert not isolated.get("is_error"), isolated
+            # The spawn reached this gateway as a child of its own — the other
+            # assertion no longer stopping it, and the script still ran once.
+            assert len(server.state.get("child_requests", [])) >= 1, ended
+            # `.claude/` itself is the project's mirrored assets; an isolation
+            # that had taken effect would have added its worktree beneath it.
             assert not (center / ".claude/worktrees").exists()
             assert not [r for r in results[:-2] + results[-1:] if r.get("is_error")], (
                 results
