@@ -50,6 +50,8 @@ export const TOOL_LABELS: Record<string, string> = {
   ls: 'toolLabels.piLs',
   find: 'toolLabels.piFind',
   grep: 'toolLabels.piGrep',
+  // 文档里的芝士读房间仓库的 git 记录（remote_execution/machine_git.py）。
+  git: 'toolLabels.piGit',
   // 平台工具表（backend/sandbox/cheese 的 PLATFORM_TOOLS）里的每一样，以及
   // pi 房间里由机器上的 CLI 命令变成的工具（`cheese_<命令>`）。一条都不能少：
   // 少一条，现场那一行显示的就是 `cheese_accept_request`，而这是房间里最该看懂

@@ -34,6 +34,7 @@
   "piLs": "列出目录",
   "piFind": "查找文件",
   "piGrep": "搜索内容",
+  "piGit": "查看 git 记录",
   "chatSend": "发布消息",
   "chatEdit": "修改消息",
   "cheeseChatList": "读取聊天记录",
