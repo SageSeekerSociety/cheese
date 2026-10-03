@@ -264,7 +264,7 @@ describe('声明了父级时，← 走层级而不是来路', () => {
       '/projects/project-a',
     ],
     ['从小队页进项目设置', '/teams/12/members', '/projects/project-a/settings', '/projects/project-a'],
-  ])('%s：← 去 %s 声明的父级 %s', async (_, from, to, parent) => {
+  ])('%s：从 %s 跳到 %s 之后，← 去声明的父级 %s', async (_, from, to, parent) => {
     const router = webRouter()
     await router.push(from)
     await router.push(to)
