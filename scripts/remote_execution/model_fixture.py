@@ -138,9 +138,18 @@ class Handler(BaseHTTPRequestHandler):
         # routes by content (`Directives`) answers a child itself.
         if isinstance(state["actions"], list) and is_child(body):
             state.setdefault("child_requests", []).append(body)
+            count = len(state["child_requests"])
+            # Its own file for the body and for the build's routing headers:
+            # a child that is answered apart from the script is still a
+            # request whose headers are worth reading (`subagent_headers.py`).
+            dump(state["dir"] / f"child-request-{count}.json", body)
             dump(
-                state["dir"] / f"child-request-{len(state['child_requests'])}.json",
-                body,
+                state["dir"] / f"child-headers-{count}.json",
+                {
+                    key: value
+                    for key, value in self.headers.items()
+                    if key.lower().startswith("x-claude-code-")
+                },
             )
             return self.reply(
                 {
