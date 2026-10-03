@@ -46,9 +46,10 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <v-list density="compact" nav class="py-0 pt-1">
+  <v-list density="compact" nav class="py-0 pt-1" tabindex="-1">
     <v-list-item
       v-if="rootTopic"
+      tabindex="0"
       :active="rootTopic.id === selectedTopicId"
       rounded="lg"
       class="nav-row pinned-row"
@@ -82,6 +83,7 @@ const emit = defineEmits<{
     <v-list-item
       v-for="p in page ? [] : pages"
       :key="p.key"
+      tabindex="0"
       :active="routeName === p.key"
       rounded="lg"
       class="nav-row pinned-row"
@@ -110,6 +112,7 @@ const emit = defineEmits<{
          项目的一页，排在一起，不压在话题列表底下（话题一多就被挤出视野）。 -->
     <v-list-item
       v-if="!page"
+      tabindex="0"
       :active="docsActive"
       rounded="lg"
       class="nav-row pinned-row docs-row"

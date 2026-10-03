@@ -462,7 +462,7 @@ const onDocs = computed(() => !!props.activeDocs)
           <template v-else>
             <!-- 一组都不相关的时候（刚进项目、还没参与任何话题），上组是空的。
                  说清楚「空的是这一组，不是这个项目」，否则下面那个折叠组会像个谜。 -->
-            <v-list v-if="mineTree.length === 0 && othersCount > 0" density="compact" nav class="py-0">
+            <v-list v-if="mineTree.length === 0 && othersCount > 0" density="compact" nav class="py-0" tabindex="-1">
               <v-list-item class="c-faint t-body">{{ t('work.sidebar.noneMine') }}</v-list-item>
             </v-list>
 
@@ -484,7 +484,7 @@ const onDocs = computed(() => !!props.activeDocs)
                 @toggle="toggleOthers"
               />
 
-              <v-list v-if="section.rows.length" density="compact" nav class="py-0">
+              <v-list v-if="section.rows.length" density="compact" nav class="py-0" tabindex="-1">
                 <!-- 顺序按最近动静排，一条新消息会把一个房间顶到上面。换位置时让行滑过
                      去（FLIP），而不是整列瞬间重排——人找的那一行刚才在哪、现在去了
                      哪，要看得见。按项目换 key：切项目是换了一整份列表，不是这份列表
@@ -514,7 +514,7 @@ const onDocs = computed(() => !!props.activeDocs)
               </v-list>
             </template>
 
-            <v-list v-if="activeTree.length === 0" density="compact" nav class="py-0">
+            <v-list v-if="activeTree.length === 0" density="compact" nav class="py-0" tabindex="-1">
               <v-list-item class="c-faint t-body">{{ t('work.sidebar.empty') }}</v-list-item>
             </v-list>
           </template>

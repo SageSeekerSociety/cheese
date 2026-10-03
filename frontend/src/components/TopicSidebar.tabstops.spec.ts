@@ -92,12 +92,13 @@ beforeAll(() => {
   }
 })
 
-/** 滚动区里 Tab 停得住的地方：tabindex >= 0。Vuetify 给列表项标的 -2/-1 是列表内部的
- *  焦点管理，Tab 走不到，不算。 */
+/** 滚动区里 Tab 停得住的地方：显式写了 tabindex >= 0 的，加没被标 -1 的原生控件。
+ *  Vuetify 给列表项标的 -2/-1 是列表内部的焦点管理，Tab 走不到，不算。 */
 function tabStops(container: Element): HTMLElement[] {
-  return Array.from(container.querySelectorAll('.rail-scroll [tabindex]')).filter(
-    (el) => Number(el.getAttribute('tabindex')) >= 0
-  ) as HTMLElement[]
+  return Array.from(container.querySelectorAll('.rail-scroll *')).filter((el) => {
+    const attr = el.getAttribute('tabindex')
+    return attr === null ? el.matches('button, a[href], input, select, textarea') : Number(attr) >= 0
+  }) as HTMLElement[]
 }
 
 /** 停在这儿，用户看得见东西吗：控件本身，或者一个装着内容的盒子。 */
@@ -133,5 +134,47 @@ describe('侧栏里 Tab 停得住的地方都看得见', () => {
       selectedTopicId: 'mine',
     })
     expect(stopsShowingNothing(container)).toEqual([])
+  })
+})
+
+describe('Tab 逐行走得进话题行', () => {
+  beforeEach(() => localStorage.clear())
+
+  it('每一行都是一个停靠点，不是只有第一行', () => {
+    const { container } = mount({
+      topics: [
+        topic('root', null),
+        topic('mine', 'root', { i_participate: true }),
+        topic('second', 'root', { i_participate: true }),
+        topic('third', 'root', { i_participate: true }),
+      ],
+      selectedTopicId: 'mine',
+    })
+    const rows = Array.from(container.querySelectorAll('.rail-scroll .topic-row')) as HTMLElement[]
+    expect(rows.length).toBeGreaterThan(1)
+    const stops = tabStops(container)
+    expect(rows.filter((row) => !stops.includes(row))).toEqual([])
+  })
+})
+
+describe('行尾那颗 ⋯ 只在选中行上进 Tab 序列', () => {
+  beforeEach(() => localStorage.clear())
+
+  it('选中的行连 ⋯ 一起停，没选中的行只停行本身', () => {
+    const { container } = mount({
+      topics: [
+        topic('root', null),
+        topic('mine', 'root', { i_participate: true }),
+        topic('second', 'root', { i_participate: true }),
+        topic('third', 'root', { i_participate: true }),
+      ],
+      selectedTopicId: 'mine',
+    })
+    const actionsOf = (id: string) =>
+      container.querySelector(`.topic-row[data-room-id="${id}"] .row-actions__btn`) as HTMLElement
+    const stops = tabStops(container)
+    expect(stops).toContain(actionsOf('mine'))
+    expect(stops).not.toContain(actionsOf('second'))
+    expect(stops).not.toContain(actionsOf('third'))
   })
 })
