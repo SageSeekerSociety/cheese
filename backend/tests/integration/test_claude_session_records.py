@@ -298,6 +298,80 @@ def test_a_message_read_inside_the_running_turn_ends_with_it(
     assert "chat progress reminder topic=" not in caplog.text
 
 
+def test_a_message_without_live_handoff_waits_for_completion_then_recovers(
+    client, stub_hooks, monkeypatch
+):
+    """Losing the live handoff must not bypass unfinished durable work or lose
+    the next message: committed completion resumes it without another summon."""
+    chat = client.app.dependency_overrides[get_chat_service]()
+    prompts: list[str] = []
+
+    def turn(topic, prompt, reply, agent=None):
+        prompts.append(prompt)
+        stub_hooks.starts(topic)
+        stub_hooks.acknowledges(topic, prompt)
+        if len(prompts) == 1:
+            stub_hooks.uses(topic, "Bash", command="make test")
+        else:
+            stub_hooks.says(topic, "lint 也过了")
+            stub_hooks.stops(topic, "lint 也过了")
+
+    stub_hooks.emit_turn = turn
+    room = _room(client)
+    topic = uuid.UUID(room)
+
+    async def no_live_handoff(*args, **kwargs):
+        return None
+
+    with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
+        post_message(client, room, "alice", {"content": "@芝士 跑一下测试"})
+        _until(
+            ws,
+            lambda f: f["type"] == "event_block" and "make test" in str(f["block"]),
+        )
+        before = len(_written(stub_hooks, room))
+        with monkeypatch.context() as hidden:
+            hidden.setattr(chat, "merge_into_running_turn", no_live_handoff)
+            second = post_message(
+                client, room, "alice", {"content": "@芝士 顺便跑一下 lint"}
+            )
+
+            def deferred():
+                blocks = _blocks(client, id=uuid.UUID(second["id"]))
+                return blocks and (blocks[0].meta or {}).get("deferred_native_input")
+
+            assert _wait_for(client, room, deferred)
+            assert len(prompts) == 1
+            assert len(_written(stub_hooks, room)) == before
+
+        stub_hooks.returns(topic, "Bash", "42 passed")
+        stub_hooks.stops(topic, "测试过了")
+        assert _wait_for(client, room, lambda: len(prompts) == 2)
+
+    client.portal.call(settle_turn, chat, topic)
+    assert "顺便跑一下 lint" in prompts[1]
+
+    async def completed_separately():
+        async with client.test_factory() as session:
+            inputs = list(
+                await session.scalars(
+                    select(NativeInput).where(NativeInput.topic_id == topic)
+                )
+            )
+            assert len(inputs) == 2
+            assert len({row.execution_work_id for row in inputs}) == 2
+            assert all(row.echoed_at and row.completed_at for row in inputs)
+            turns = list(
+                await session.scalars(
+                    select(AgentTurn).where(AgentTurn.topic_id == topic)
+                )
+            )
+            assert len(turns) == 2
+            assert all(row.stopped_at for row in turns)
+
+    client.portal.call(completed_separately)
+
+
 def test_a_sub_threads_work_lands_on_its_card(client, stub_hooks):
     """Everything a worker does is on the card it was started for: the steps it
     prints on stdout, and those of an agent it starts in turn, which only that
