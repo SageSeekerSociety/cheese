@@ -39,13 +39,21 @@
       >
         <template #activator="{ props }">
           <v-avatar
-            v-tooltip="{ text: userMenu.nickname.value, disabled: userMenu.menuOpen.value }"
             class="cursor-pointer mb-4"
             size="32"
             rounded="circle"
             :style="userMenu.avatar.value ? undefined : { backgroundColor: userMenu.avatarColor.value }"
             v-bind="props"
+            @pointerenter="rememberAvatar"
           >
+            <!-- 组件写法而不是 v-tooltip 指令：指令没有开关，浮层开出去就收不回来。 -->
+            <v-tooltip
+              v-model="avatarTipOpen"
+              activator="parent"
+              location="end"
+              :text="userMenu.nickname.value"
+              :disabled="userMenu.menuOpen.value"
+            />
             <v-img v-if="userMenu.avatar.value" :src="userMenu.avatar.value">
               <!-- avatar service (localhost:8081) may be down in the merged demo:
                  fall back to a colored initial instead of a broken white tile -->
@@ -83,6 +91,7 @@
 
 <script setup lang="ts">
 import { computed, ref, toRefs } from 'vue'
+import { useEventListener } from '@vueuse/core'
 
 import { useUserMenu } from '@/composables/useUserMenu'
 
@@ -177,6 +186,27 @@ function finishDrag(movedId: string, targetId: string, edge: DropEdge) {
 
 // 使用用户菜单 composable
 const userMenu = useUserMenu()
+
+// v-tooltip 内部写死了 persistent，点别处、按 Esc 都关不掉它，能关它的只剩指针离开头像
+// 这一条路。指令写法没有 v-model，这条路断了也没法补，所以换成组件写法自己管开关：浮层
+// 开着的时候盯住指针，指针到头像之外一动就收起。方块按钮（RailItem.vue）上是同一个毛病、
+// 同一套办法（#2455）。
+//
+// 头像的根元素是从事件里记的，不是模板 ref：`v-bind="props"` 里带着 v-menu 自己的 ref
+// （菜单靠它定位），会把模板上的 ref 顶掉。
+let avatarEl: Element | null = null
+function rememberAvatar(e: PointerEvent) {
+  avatarEl = e.currentTarget as Element
+}
+const avatarTipOpen = ref(false)
+useEventListener(
+  () => (avatarTipOpen.value ? document : null),
+  'pointermove',
+  (e: PointerEvent) => {
+    if (!avatarEl?.contains(e.target as Node)) avatarTipOpen.value = false
+  },
+  { passive: true }
+)
 </script>
 
 <style lang="scss">
