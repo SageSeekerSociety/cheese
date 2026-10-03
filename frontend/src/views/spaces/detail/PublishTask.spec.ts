@@ -114,6 +114,8 @@ function makeRouter() {
       { path: '/spaces/:spaceId/tasks', name: 'SpacesDetailTasksList', component: stub },
       { path: '/spaces/:spaceId/manage/audit', name: 'SpacesDetailAuditTasks', component: stub },
       { path: '/spaces/:spaceId/tasks/:taskId', name: 'TasksDetail', component: stub },
+      // 指导那一节里的「上传到资料库」照这个地址跳；不登记它，vue-router 每次都抱怨一句。
+      { path: '/spaces/:spaceId/manage/settings/materials', component: stub },
     ],
   })
 }
@@ -202,6 +204,18 @@ async function fillRequired(view: ReturnType<typeof render>, name = '用 gdb 定
   await check(view.getByRole('radio', { name: '个人' }))
   await check(view.getByRole('radio', { name: '初级' }))
   await pickCategory(view)
+}
+
+/** 展开「给 AI 队友的指导」那一节。它默认收起，里面的格子要点开才在。 */
+async function openTeaching(view: ReturnType<typeof render>) {
+  await fireEvent.click(view.getByTestId('publish-teaching-toggle'))
+  await nextTick()
+}
+
+/** 摊开「参考资料」那一格里的资料库清单。它默认收起，勾选框点开才在。 */
+async function openMaterials(view: ReturnType<typeof render>) {
+  await fireEvent.click(view.getByTestId('teaching-materials-toggle'))
+  await nextTick()
 }
 
 /** 这条板子的分类/域名组/空间那一份（`activeCategories` 按 `displayOrder` 排、
@@ -504,6 +518,17 @@ describe('发题页：手写一道', () => {
 // `taskOptions`。
 
 describe('发题页：给 AI 队友的指导', () => {
+  it('默认收起：那一栏在，里面的格子不在，点一下才出来', async () => {
+    await boardAs(MEMBER)
+    const view = await mount()
+
+    expect(view.getByTestId('publish-teaching')).toBeTruthy()
+    expect(view.queryByTestId('teaching-system-prompt')).toBeNull()
+
+    await openTeaching(view)
+    expect(view.getByTestId('teaching-system-prompt')).toBeTruthy()
+  })
+
   it('这一栏在页面上；六格全空就不带它 —— 让空间的默认生效', async () => {
     await boardAs(MEMBER)
     const view = await mount()
@@ -553,6 +578,8 @@ describe('发题页：给 AI 队友的指导', () => {
     await boardAs(MEMBER)
     const view = await mount()
     await fillRequired(view)
+    await openTeaching(view)
+    await openMaterials(view)
 
     expect(await view.findByLabelText('第03讲-红黑树.pdf')).toBeTruthy()
     expect(view.queryByLabelText('参考答案-红黑树.pdf')).toBeNull()
@@ -571,6 +598,7 @@ describe('发题页：给 AI 队友的指导', () => {
     await boardAs(MEMBER)
     const view = await mount()
     await fillRequired(view)
+    await openTeaching(view)
 
     await fireEvent.update(view.getByLabelText('对 AI 的要求'), '第 {current_week} 周：讲完链表了。')
     await fireEvent.update(view.getByLabelText('当前周次'), '3')
@@ -593,6 +621,7 @@ describe('发题页：给 AI 队友的指导', () => {
     await boardAs(MEMBER)
     const view = await mount()
     await fillRequired(view)
+    await openTeaching(view)
 
     await fireEvent.click(view.getByText('高级选项'))
     const topics = await view.findByLabelText('目前的内容范围')
@@ -615,6 +644,7 @@ describe('发题页：给 AI 队友的指导', () => {
 
     // 写在切换之前：PDF 那一态里没有这张卡（它属于「手写一道」那一半），但这一页的
     // 状态活着，切过去照样带得走。
+    await openTeaching(view)
     await fireEvent.update(view.getByLabelText('当前周次'), '5')
     await switchToPdf(view)
     await pick(view.getByLabelText('上传题目 PDF') as HTMLInputElement, pdfFile())

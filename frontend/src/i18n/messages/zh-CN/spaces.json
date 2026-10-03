@@ -213,7 +213,9 @@
       },
       "teaching": {
         "title": "给 AI 队友的指导",
-        "subtitle": "这道题自己的。留空就用这块板的默认；写上一份会整份盖过它。"
+        "subtitle": "这道题自己的。留空就用这块板的默认；写上一份会整份盖过它。",
+        "expand": "展开",
+        "collapse": "收起"
       }
     },
     "selectTemplate": {
@@ -533,7 +535,6 @@
     "back": "返回空间设置"
   },
   "guidance": {
-    "title": "给 AI 队友的指导",
     "intro": "这块板的默认。从这里的题建出的项目，AI 队友开新对话时会读它；单道题可以另设一份盖过它。",
     "save": "保存",
     "saveSuccess": "已保存",
@@ -555,7 +556,14 @@
       "listHint": "用逗号分隔",
       "materials": "参考资料",
       "materialsHint": "从这块板的资料库勾选。留空 = 不带课件；「仅管理员」档不在清单里。",
+      "materialsLibrary": "空间资料库",
+      "materialsNone": "点击从资料库选择",
+      "materialsExpand": "展开资料库清单",
+      "materialsCollapse": "收起资料库清单",
+      "materialsRemove": "去掉 {name}",
+      "materialsUpload": "上传到资料库",
       "materialsLoading": "正在读资料库…",
+      "materialsError": "资料库读不出来，先别改这一项。",
       "materialsEmpty": "资料库里还没有文件，先去「资料库」传一份。",
       "materialsDangling": "编号 {ids} 已经不在资料库里（删掉了，或者改成了「仅管理员」）。保存前请把它们去掉。",
       "materialsDanglingDrop": "去掉 {id}"
@@ -563,6 +571,7 @@
   },
   "materials": {
     "upload": "上传资料",
+    "intro": "空间成员都能看。标了「仅管理员」的，成员看不到，成员项目里的 AI 队友也读不到。",
     "uploadTitle": "上传一份资料",
     "pickFile": "选一个文件",
     "visibility": "谁能看",

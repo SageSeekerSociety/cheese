@@ -1,9 +1,14 @@
-// 「参考资料」选择器（#944）：从资料库里勾，不再手填编号。这里量三条规矩：
-//   1. 候选只有「所有成员」那一档 —— 「仅管理员」的课件学生读不到，也不该出现在老师的名单里；
-//   2. 勾一下只动这一项，已有编号的顺序照旧（新勾的接在末尾）；
-//   3. 已经不在清单里的编号**不静默丢掉** —— 单列出来，等人自己去掉。
-import type { SpaceMaterial } from '@/types'
+// 「参考资料」选择器（#944）：从资料库里勾，不再手填编号。这里量五条规矩：
+//   1. 勾中的课件摆在外面的 chip 上，点 chip 上的 ✕ 去掉；清单默认收起，点那一栏才摊开；
+//   2. 候选只有「所有成员」那一档 —— 「仅管理员」的课件学生读不到，也不该出现在老师的名单里；
+//   3. 勾一下只动这一项，已有编号的顺序照旧（新勾的接在末尾）；
+//   4. 引用到的编号**选不到**了（删掉，或者事后被改成「仅管理员」）就不静默丢掉 ——
+//      单列出来，等人自己去掉；
+//   5. 清单**读不出来**时不判失效：一次网络失败不该让人删掉有效的引用。
+import type { SpaceMaterial, SpaceMaterialsState } from '@/types'
 
+import { defineComponent } from 'vue'
+import { createMemoryHistory, createRouter } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
@@ -15,12 +20,14 @@ vi.mock('vue-i18n', async () => {
   return {
     ...actual,
     useI18n: () => ({
-      t: (key: string, named?: Record<string, unknown>) => (named ? `${key}:${JSON.stringify(named)}` : key),
+      t: (key: string, named?: Record<string, unknown>) => (named ? `${key} ${JSON.stringify(named)}` : key),
     }),
   }
 })
 
 import TeachingMaterialPicker from './TeachingMaterialPicker.vue'
+
+const Stub = defineComponent({ render: () => null })
 
 function material(id: number, name: string, visibility: 'members' | 'admins'): SpaceMaterial {
   return {
@@ -42,19 +49,37 @@ const MATERIALS = [
   material(163, '测试用例与脚手架.zip', 'members'),
 ]
 
+const LIBRARY_PATH = '/spaces/651/manage/settings/materials'
+
 let picked: number[] = []
 
-function mount(modelValue: number[], materials: SpaceMaterial[] = MATERIALS) {
+function mount(
+  modelValue: number[],
+  materials: SpaceMaterial[] = MATERIALS,
+  state: SpaceMaterialsState = 'ready',
+  libraryTo?: string
+) {
   picked = modelValue
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [{ path: '/:pathMatch(.*)*', component: Stub }],
+  })
   const view = render(TeachingMaterialPicker, {
     props: {
       modelValue,
       materials,
+      state,
+      libraryTo,
       'onUpdate:modelValue': (next: number[]) => (picked = next),
     },
-    global: { plugins: [createVuetify({ components, directives })] },
+    global: { plugins: [createVuetify({ components, directives }), router] },
   })
   return view
+}
+
+/** 摊开资料库清单。它默认收起，勾选框点开才在。 */
+async function expand(view: ReturnType<typeof mount>) {
+  await fireEvent.click(view.getByTestId('teaching-materials-toggle'))
 }
 
 // Vuetify 的勾选框绑的是 input 的 `input` 事件（`e.target.checked`），不是 click：
@@ -69,16 +94,56 @@ afterEach(() => {
 })
 
 describe('TeachingMaterialPicker', () => {
-  it('只列「所有成员」那一档', () => {
+  it('清单默认收起：点那一栏才摊开', async () => {
     const view = mount([])
+
+    expect(view.getByTestId('teaching-materials-toggle')).toBeTruthy()
+    expect(view.queryByTestId('teaching-materials')).toBeNull()
+
+    await expand(view)
+    expect(view.getByTestId('teaching-materials')).toBeTruthy()
+  })
+
+  it('只列「所有成员」那一档', async () => {
+    const view = mount([])
+    await expand(view)
 
     expect(view.getByLabelText('第03讲-红黑树.pdf')).toBeTruthy()
     expect(view.getByLabelText('测试用例与脚手架.zip')).toBeTruthy()
     expect(view.queryByLabelText('参考答案-红黑树.pdf')).toBeNull()
   })
 
+  it('勾中的课件摆在外面：收起时也看得见带了哪几份', async () => {
+    const view = mount([161])
+
+    expect(view.getByTestId('teaching-material-chip').textContent).toContain('第03讲-红黑树.pdf')
+  })
+
+  it('点 chip 上的 ✕ 去掉那一项，不用先摊开清单', async () => {
+    const view = mount([161, 163])
+
+    await fireEvent.click(view.getByTestId('teaching-material-chip-remove-161'))
+    expect(picked).toEqual([163])
+  })
+
+  it('chip 上的 ✕ 不把清单开合状态改掉', async () => {
+    const view = mount([161])
+
+    await fireEvent.click(view.getByTestId('teaching-material-chip-remove-161'))
+    expect(view.queryByTestId('teaching-materials')).toBeNull()
+  })
+
+  it('chip 按勾的顺序摆，不按清单顺序', () => {
+    const view = mount([163, 161])
+
+    const names = view.getAllByTestId('teaching-material-chip').map((chip) => chip.textContent)
+    expect(names[0]).toContain('测试用例与脚手架.zip')
+    expect(names[1]).toContain('第03讲-红黑树.pdf')
+  })
+
   it('勾一项只加这一项，已有编号的顺序不动', async () => {
     const view = mount([163])
+    await expand(view)
 
     await toggleRow(view, '第03讲-红黑树.pdf', true)
     expect(picked).toEqual([163, 161])
@@ -86,25 +151,59 @@ describe('TeachingMaterialPicker', () => {
 
   it('取消勾选只去掉那一项', async () => {
     const view = mount([161, 163])
+    await expand(view)
 
     await toggleRow(view, '第03讲-红黑树.pdf', false)
     expect(picked).toEqual([163])
   })
 
-  it('清单里没有的编号不静默丢掉：单列出来，可以手动去掉', async () => {
+  it('引用到的编号已经不在清单里：单列出来，可以手动去掉', async () => {
     const view = mount([999, 161])
 
     const dangling = view.getByTestId('teaching-materials-dangling')
     expect(dangling.textContent).toContain('999')
 
-    await fireEvent.click(view.getByText('spaces.teaching.fields.materialsDanglingDrop:{"id":999}'))
+    await fireEvent.click(view.getByText('spaces.teaching.fields.materialsDanglingDrop {"id":999}'))
     expect(picked).toEqual([161])
   })
 
-  it('资料库空着时说的是「还没有文件」，不是一片空白', () => {
+  it('引用到的课件被改成了「仅管理员」：也算失效，列出来让人去掉', async () => {
+    // 162 还在清单里，但已经变成成员读不到的那一档 —— 它不在候选里，也不能算「还在」。
+    const view = mount([162])
+
+    const dangling = view.getByTestId('teaching-materials-dangling')
+    expect(dangling.textContent).toContain('162')
+
+    await fireEvent.click(view.getByText('spaces.teaching.fields.materialsDanglingDrop {"id":162}'))
+    expect(picked).toEqual([])
+  })
+
+  it('清单读不出来时什么都不判：不列候选，也不说谁失效了', () => {
+    const view = mount([161, 999], [], 'error')
+
+    expect(view.getByTestId('teaching-materials-error')).toBeTruthy()
+    expect(view.queryByTestId('teaching-materials-toggle')).toBeNull()
+    expect(view.queryByTestId('teaching-materials-dangling')).toBeNull()
+  })
+
+  it('资料库空着时说的是「还没有文件」，不是一片空白', async () => {
     const view = mount([], [])
+    await expand(view)
 
     expect(view.getByTestId('teaching-materials-empty')).toBeTruthy()
     expect(view.queryByTestId('teaching-materials')).toBeNull()
+  })
+
+  it('给出去资料库那一页的地址，清单底下才有「上传到资料库」', async () => {
+    const bare = mount([])
+    await expand(bare)
+    expect(bare.queryByTestId('teaching-materials-upload')).toBeNull()
+
+    cleanup()
+
+    const linked = mount([], MATERIALS, 'ready', LIBRARY_PATH)
+    await expand(linked)
+    const upload = linked.getByTestId('teaching-materials-upload')
+    expect(upload.getAttribute('href')).toBe('/spaces/651/manage/settings/materials')
   })
 })

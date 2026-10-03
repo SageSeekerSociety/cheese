@@ -10,7 +10,7 @@
 // 「对 AI 的要求」留空就是一条要求都不加，所以这里不预填：框里的灰字是那份默认要求
 // 的全文，旁边那颗按钮点一下才填进去（填进去之后照常改）。
 import type { TeachingDraft } from '@/lib/teaching'
-import type { SpaceMaterial, SpaceTeaching } from '@/types'
+import type { SpaceMaterial, SpaceMaterialsState, SpaceTeaching } from '@/types'
 
 import { computed, reactive, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -23,7 +23,9 @@ const props = defineProps<{
   modelValue?: SpaceTeaching | null
   /** 这块板资料库的清单。取数在容器那边（`GET /spaces/{id}/materials`），这里只摆。 */
   materials?: SpaceMaterial[]
-  materialsLoading?: boolean
+  materialsState?: SpaceMaterialsState
+  /** 这块板「资料库」页的地址。给出去，选择器里才有那条「上传到资料库」。 */
+  libraryTo?: string
 }>()
 const emit = defineEmits<{ 'update:modelValue': [SpaceTeaching] }>()
 
@@ -115,7 +117,8 @@ function useDefaultTemplate() {
     <TeachingMaterialPicker
       v-model="materialIds"
       :materials="props.materials ?? []"
-      :loading="props.materialsLoading"
+      :state="props.materialsState ?? 'ready'"
+      :library-to="props.libraryTo"
     />
 
     <v-expansion-panels variant="accordion" flat class="teaching-fields__more">

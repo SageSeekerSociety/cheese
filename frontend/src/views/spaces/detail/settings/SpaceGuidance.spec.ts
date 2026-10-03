@@ -56,6 +56,11 @@ function mountPage(teaching?: Record<string, unknown>) {
   return { ...utils, store }
 }
 
+/** 摊开「参考资料」那一格里的资料库清单。它默认收起，勾选框点开才在。 */
+async function openMaterials(view: ReturnType<typeof mountPage>) {
+  await fireEvent.click(view.getByTestId('teaching-materials-toggle'))
+}
+
 /** 保存那颗按钮。`v-expansion-panel` 的开关也是一颗 button，所以按文案精确挑。 */
 function saveButton() {
   const button = Array.from(document.querySelectorAll('button')).find(
@@ -135,7 +140,9 @@ describe('空间设置：给 AI 队友的指导', () => {
   it('参考资料勾的是这块板资料库里的文件，「仅管理员」那一档不列出来', async () => {
     const view = mountPage()
 
-    await waitFor(() => expect(view.getByLabelText('第03讲-红黑树.pdf')).toBeTruthy())
+    await waitFor(() => expect(view.getByTestId('teaching-materials-toggle')).toBeTruthy())
+    await openMaterials(view)
+    expect(view.getByLabelText('第03讲-红黑树.pdf')).toBeTruthy()
     expect(view.queryByLabelText('参考答案-红黑树.pdf')).toBeNull()
 
     // Vuetify 的勾选框绑的是 input 的 `input` 事件（`e.target.checked`），点它没用。

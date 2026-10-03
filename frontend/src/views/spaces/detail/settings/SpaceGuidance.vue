@@ -2,7 +2,8 @@
   <SpaceGuidanceView
     :teaching="space?.teaching"
     :materials="materials"
-    :materials-loading="materialsLoading"
+    :materials-state="materialsState"
+    :library-to="libraryTo"
     :saving="saving"
     @save="save"
   />
@@ -18,18 +19,19 @@
 //
 // 参考资料那一格的候选走 `GET /spaces/{id}/materials`（资料库那一页同一份清单），
 // 含「仅管理员」档 —— 哪一档能进选择器由 `TeachingMaterialPicker` 一处判。
-import type { SpaceMaterial, SpaceTeaching } from '@/types'
+import type { SpaceTeaching } from '@/types'
 
-import { ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { toast } from 'vuetify-sonner'
 import { storeToRefs } from 'pinia'
 
 import { useSpaceData } from '@/composables/useSpaceData'
+import { useSpaceMaterials } from '@/composables/useSpaceMaterials'
 
 import SpaceGuidanceView from './SpaceGuidanceView.vue'
 
-import { SpacesApi } from '@/network/api/spaces'
+import { spaceLibraryPath } from '@/lib/spaceRouteNames'
 import { useSpaceStore } from '@/stores/space'
 
 const { t } = useI18n()
@@ -39,34 +41,12 @@ const { currentSpace: space } = storeToRefs(spaceStore)
 
 const saving = ref(false)
 
-/** 这块板资料库里现在有哪些文件。取不到就是空清单 —— 选择器那边会说「还没有文件」，
- *  不拦着人保存这份指导（指导本身跟课件是两件事）。 */
-const materials = ref<SpaceMaterial[]>([])
-const materialsLoading = ref(false)
+/** 参考资料那一格的候选。读不出来不拦着人保存这份指导（指导本身跟课件是两件事），
+ *  选择器那边会说清是读不出来，而不是把已经引用的编号判成失效。 */
+const { materials, state: materialsState } = useSpaceMaterials(computed(() => space.value?.id))
 
-async function refreshMaterials(spaceId?: number) {
-  if (!spaceId) {
-    materials.value = []
-    return
-  }
-  materialsLoading.value = true
-  try {
-    const res = await SpacesApi.listMaterials(spaceId)
-    // 期间换了块板/切走了页面就不要再落下来 —— 落下来的会是别人的清单。
-    if (space.value?.id !== spaceId) return
-    materials.value = res.data.materials ?? []
-  } catch {
-    materials.value = []
-  } finally {
-    materialsLoading.value = false
-  }
-}
-
-watch(
-  () => space.value?.id,
-  (id) => void refreshMaterials(id),
-  { immediate: true }
-)
+/** 选择器里那条「上传到资料库」跳这儿。这块板还没读出来时不给，也就没有那一条。 */
+const libraryTo = computed(() => (space.value ? spaceLibraryPath(space.value.id) : undefined))
 
 async function save(teaching: SpaceTeaching) {
   const id = space.value?.id

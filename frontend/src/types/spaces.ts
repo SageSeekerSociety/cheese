@@ -181,3 +181,11 @@ export type SpaceMaterial = {
 
 /** 谁能看见这一份。两档，没有第三档。 */
 export type SpaceMaterialVisibility = 'members' | 'admins'
+
+/**
+ * 资料库清单现在到哪一步了。
+ *
+ * `error` 与「这一份都没有」是两件事：读不出来的时候不能把指导里已经引用的编号当成
+ * 失效的 —— 那等于让人凭一次网络失败删掉有效的引用。
+ */
+export type SpaceMaterialsState = 'loading' | 'ready' | 'error'

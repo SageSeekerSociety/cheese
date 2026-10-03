@@ -98,10 +98,12 @@ function onVisibility(item: SpaceMaterial, picked: SpaceMaterialVisibility) {
 
 <template>
   <SettingsToolbar>
-    <v-btn v-if="canManage" variant="text" prepend-icon="mdi-upload" @click="openUpload">
+    <v-btn v-if="canManage" variant="text" prepend-icon="mdi-plus" @click="openUpload">
       {{ t('spaces.materials.upload') }}
     </v-btn>
   </SettingsToolbar>
+
+  <p class="settings-page__lede materials__lede">{{ t('spaces.materials.intro') }}</p>
 
   <div class="materials">
     <div v-if="uploadOpen" class="settings-card form">
@@ -212,6 +214,10 @@ function onVisibility(item: SpaceMaterial, picked: SpaceMaterialVisibility) {
 <style scoped src="@/styles/settings-card.css"></style>
 
 <style scoped>
+.materials__lede {
+  margin: 0 0 12px;
+}
+
 .materials {
   display: flex;
   flex-direction: column;

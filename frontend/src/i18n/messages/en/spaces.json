@@ -185,7 +185,9 @@
       },
       "teaching": {
         "title": "Guidance for the AI teammate",
-        "subtitle": "Just for this challenge. Leave it blank to use the board's default; filling it in replaces that default whole."
+        "subtitle": "Just for this challenge. Leave it blank to use the board's default; filling it in replaces that default whole.",
+        "expand": "Expand",
+        "collapse": "Collapse"
       }
     },
     "selectTemplate": {
@@ -496,7 +498,6 @@
     "back": "Back to space settings"
   },
   "guidance": {
-    "title": "Guidance for the AI teammate",
     "intro": "This board's default. Projects built from its challenges read it when the AI teammate starts a new conversation; a single challenge can set its own to override it.",
     "save": "Save",
     "saveSuccess": "Saved",
@@ -518,7 +519,14 @@
       "listHint": "Comma-separated",
       "materials": "Reference materials",
       "materialsHint": "Tick files from this board's library. Leave empty to bring no courseware; the “admins only” tier is not listed.",
+      "materialsLibrary": "Space library",
+      "materialsNone": "Click to pick from the library",
+      "materialsExpand": "Expand the library list",
+      "materialsCollapse": "Collapse the library list",
+      "materialsRemove": "Remove {name}",
+      "materialsUpload": "Upload to the library",
       "materialsLoading": "Reading the library…",
+      "materialsError": "Could not read the library. Leave this alone for now.",
       "materialsEmpty": "The library is still empty. Upload a file on the “Library” page first.",
       "materialsDangling": "IDs {ids} are no longer in the library (deleted, or moved to “admins only”). Remove them before saving.",
       "materialsDanglingDrop": "Remove {id}"
@@ -526,6 +534,7 @@
   },
   "materials": {
     "upload": "Upload",
+    "intro": "Everyone in this space can see these. Anything marked “admins only” is hidden from members and from their AI teammates.",
     "uploadTitle": "Upload a file",
     "pickFile": "Choose a file",
     "visibility": "Who can see it",
