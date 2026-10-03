@@ -15,6 +15,7 @@ from app.domain.agent.runtime import (
     InProcessBroker,
     addressed_to_agent,
 )
+from app.domain.block.notice_text import from_descriptor
 from app.domain.identity.actor import Actor
 from tests.support.hang import HANG_S
 from tests.support.work_chat import WorkChat
@@ -597,12 +598,15 @@ async def test_platform_failure_is_coded_and_never_auto_resumes(
 
     assert event["type"] == "event_block"
     assert event["block"]["meta"]["code"] == expected_code
+    keyed = error.pop("i18n")
     assert error == {
         "type": "error",
         "code": expected_code,
         "message": event["block"]["content"],
         "persisted": True,
     }
+    # The frame names its sentence, and the key renders to the same words.
+    assert str(from_descriptor(keyed)) == event["block"]["content"]
     assert svc.meta == event["block"]["meta"]
     # A named platform incident waits for recovery; it never re-runs the turn.
     await asyncio.sleep(0.05)

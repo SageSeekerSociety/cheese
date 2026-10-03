@@ -321,7 +321,7 @@ export type WsServerFrame =
   | { type: 'assistant_block'; block: Block }
   // persisted=true → the failure already landed in the timeline as an event
   // block; the client must not double-show it as a floating banner.
-  | { type: 'error'; message: string; persisted?: boolean; code?: string }
+  | { type: 'error'; message: string; persisted?: boolean; code?: string; i18n?: { key: string; params?: object } }
   | { type: 'done' }
   // `agent`：这一轮在哪个座位上跑（块署名的那个 handle）。一间房几个队友并行
   // 在干时，「谁在干活」靠它区分；老后端没有这个字段，界面退回默认名字。

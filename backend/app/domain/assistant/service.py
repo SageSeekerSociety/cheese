@@ -46,13 +46,14 @@ from app.domain.assistant import billing, tools
 from app.domain.assistant.asking import BUSY_SECONDS
 from app.domain.assistant.models import AssistantConversation, AssistantMessage
 from app.domain.assistant.prompt import earlier, system_prompt
+from app.domain.block.notice_text import error_frame, say
 
 logger = logging.getLogger(__name__)
 
 TITLE_CHARS = 40
 
 #: Said when the model could not be reached or failed mid-answer.
-FAILED = "芝士暂时答不上来，稍后再试。"
+FAILED = say("assistantFailed")
 #: The platform path the session's tools are called under.
 TOOLS_PATH = "/assistant/tools"
 #: How long before the conversation's hold lapses an answer is given up on, so
@@ -241,7 +242,7 @@ async def ask(
             except Exception:  # noqa: BLE001
                 logger.warning("saving an assistant answer failed", exc_info=True)
             if failure:
-                queue.put_nowait(sse("error", {"message": FAILED}))
+                queue.put_nowait(sse("error", error_frame(FAILED)))
             if on_done is not None:
                 await on_done()
             spawn(

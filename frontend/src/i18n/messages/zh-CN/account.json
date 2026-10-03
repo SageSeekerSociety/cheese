@@ -502,6 +502,13 @@
     "lede": "接入自己的邮箱或飞书，并选择允许哪些项目的 AI 队友使用。AI 队友以你的账号读邮件、写草稿、读写飞书文档，邮件须经你确认后才会发出",
     "refresh": "刷新",
     "feishuAuthorized": "飞书授权成功",
+    "feishuOutcome": {
+      "invalidLink": "授权链接无效",
+      "denied": "没有授权",
+      "deleted": "连接已删除",
+      "failed": "飞书授权没有完成",
+      "withDetail": "{sentence}：{detail}"
+    },
     "pendingTitle": "待发送的邮件",
     "pendingEmpty": "暂无待发送的邮件",
     "to": "收件人",

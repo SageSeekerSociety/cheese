@@ -276,6 +276,8 @@ class FeishuStub:
         self.docs = {"doc-ok": ["第一段", "第二段"]}
         self.calls = []
         self.no_drive_scope = False
+        #: Answer an authorization-code exchange the way Feishu refuses a bad code.
+        self.refuse_code = False
         #: Every OAuth token exchange this stub was asked for, in order.
         self.tokens: list[dict] = []
         #: The bearer token each document call carried, in order. The first one
@@ -297,6 +299,8 @@ class FeishuStub:
         if path == "/open-apis/authen/v2/oauth/token":
             body = json.loads(request.content)
             self.tokens.append(body)
+            if self.refuse_code and body.get("grant_type") == "authorization_code":
+                return httpx.Response(400, json={"code": 20003, "msg": "invalid code"})
             # A different token each time, so "the refreshed one came back and was
             # used" is visible in the document calls rather than identical strings.
             fresh = "u1" if body.get("grant_type") == "authorization_code" else "u2"
@@ -553,6 +557,40 @@ def test_authorizing_before_an_administrator_configures_says_so(client, feishu_s
     assert r.status_code == 422, r.text
     assert "管理员还没配置飞书应用" in r.text
     assert client.get("/me/integrations", headers=person).json()["data"]["data"] == []
+
+
+def _feishu_landing(client, **params) -> dict[str, list[str]]:
+    back = client.get(
+        "/integrations/feishu/callback", params=params, follow_redirects=False
+    )
+    assert back.status_code == 302, back.text
+    return parse_qs(urlparse(back.headers["location"]).query)
+
+
+def test_the_callback_lands_with_an_outcome_code(client, feishu_stub, monkeypatch):
+    """「我的连接」says how authorizing went in its reader's language: the
+    address carries a code, and what Feishu itself said in Feishu's words."""
+    monkeypatch.setattr(settings, "platform_admin_handles", [ADMIN])
+    person, _project, _room = _setup(client)
+    _configure_platform_app(client)
+    row = client.post("/me/integrations/feishu", headers=person).json()["data"]
+    url = client.get(
+        f"/me/integrations/{row['id']}/feishu/authorize", headers=person
+    ).json()["data"]["url"]
+    state = parse_qs(urlparse(url).query)["state"][0]
+
+    assert _feishu_landing(client, code="c", state="forged.state.x") == {
+        "feishu": ["invalid_link"]
+    }
+    assert _feishu_landing(client, state=state, error="access_denied") == {
+        "feishu": ["denied"],
+        "feishu_detail": ["access_denied"],
+    }
+    feishu_stub.refuse_code = True
+    assert _feishu_landing(client, code="c", state=state) == {
+        "feishu": ["exchange_failed"],
+        "feishu_detail": ["20003 invalid code"],
+    }
 
 
 def test_the_callback_keeps_the_members_own_tokens(client, feishu_stub, monkeypatch):

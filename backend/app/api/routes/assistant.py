@@ -50,6 +50,7 @@ from app.domain.assistant import service as assistant
 from app.domain.assistant import tools as personal_tools
 from app.domain.assistant.keys import person_key
 from app.domain.assistant.prompt import task_brief
+from app.domain.block.notice_text import say
 from app.domain.feature_stats import pricing
 from app.domain.task.services import TaskService, ensure_task_readable
 from app.domain.usage.ledger import Ledger, Rates, payer_for_person
@@ -211,7 +212,7 @@ async def ask(
     rates = Rates.of(settings.assistant_model, await pricing.model_rates())
     key = await person_key(db, auth.user_id, async_session_factory)
     if rates is None or key is None or not people.available():
-        return _refuse(503, "芝士暂未开放，稍后再试。", 60)
+        return _refuse(503, say("assistantNotOpen"), 60)
     refused = await Ledger(db).admit(await payer_for_person(db, auth.user_id))
     await db.commit()
     if refused is not None:
@@ -219,7 +220,7 @@ async def ask(
 
     redis = get_redis_client()
     if redis is None or not await asking.hold(redis, conversation_id):
-        return _refuse(429, "上一个问题还在回答，等它答完再问。", 5)
+        return _refuse(429, say("assistantStillAnswering"), 5)
     held_at = time.monotonic()
 
     async def release() -> None:
@@ -233,7 +234,7 @@ async def ask(
         await people.ensure(started)
     except HostFull:
         await release()
-        return _refuse(503, "芝士这会儿太忙，稍后再试。", 10)
+        return _refuse(503, say("assistantBusy"), 10)
     except SessionError as exc:
         logger.warning("a person's session did not start: %s", exc)
         await release()

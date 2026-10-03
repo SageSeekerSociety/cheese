@@ -1,4 +1,5 @@
 import contextlib
+import json
 from typing import Any
 
 from fastapi import Request
@@ -39,6 +40,16 @@ def message_key(message: object) -> dict | None:
 def _with_key(error: dict, message: object) -> dict:
     key = message_key(message)
     return error if key is None else {**error, "i18n": key}
+
+
+def _event_error(message: object) -> str:
+    """An ``event: error`` frame for a client that asked for a stream.
+
+    ``data`` is JSON, like every other frame on the streams we serve: the
+    sentence as ``message`` and, when it was said with ``say()``, its key as
+    ``i18n`` — the same ``{key, params}`` an error body carries."""
+    data = _with_key({"message": str(message)}, message)
+    return f"event: error\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
 class BaseError(Exception):
@@ -215,7 +226,7 @@ async def base_error_handler(
 ) -> JSONResponse | PlainTextResponse:
     accept = request.headers.get("accept") or ""
     if "text/event-stream" in accept:
-        body = f"event: error\ndata: {exc.args[0]}\n\n"
+        body = _event_error(exc.args[0])
         return PlainTextResponse(
             content=body, status_code=exc.status_code, media_type="text/event-stream"
         )
@@ -240,7 +251,7 @@ async def http_exception_handler(
     # did not mention it.
     headers = getattr(exc, "headers", None)
     if "text/event-stream" in accept:
-        body = f"event: error\ndata: {detail}\n\n"
+        body = _event_error(detail)
         return PlainTextResponse(
             content=body,
             status_code=exc.status_code,
@@ -275,7 +286,7 @@ async def validation_exception_handler(
     accept = request.headers.get("accept") or ""
     message = _validator_sentence(exc) or "Invalid request parameters"
     if "text/event-stream" in accept:
-        body = f"event: error\ndata: {message}\n\n"
+        body = _event_error(message)
         return PlainTextResponse(
             content=body,
             status_code=HTTP_400_BAD_REQUEST,

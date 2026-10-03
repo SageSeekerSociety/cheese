@@ -5,6 +5,7 @@ the project's, and the same standing applies to everyone. No route here returns
 a token or a secret value.
 """
 
+import json
 import uuid
 from typing import Annotated, Any
 from urllib.parse import urlencode
@@ -28,9 +29,10 @@ from app.core.errors import (
     ForbiddenError,
     NotFoundError,
     ValidationError,
+    message_key,
 )
 from app.core.sandbox_auth import scoped_token_claims
-from app.domain.block.notice_text import say
+from app.domain.block.notice_text import exception_text, say
 from app.domain.membership.roster import roster
 from app.domain.project.models import Project
 from app.domain.remote_mcp import oauth, service, upstream
@@ -117,6 +119,23 @@ async def client_metadata() -> dict:
     return oauth.client_metadata()
 
 
+def _failure(exc: AppError | BaseError) -> dict[str, str]:
+    """Why connecting failed, as the query the settings page reads.
+
+    The page words it from its catalog in its reader's language, so the URL
+    carries the sentence's key (``mcp_error``) and its parameters as JSON
+    (``mcp_error_params``), never the Chinese sentence. A refusal said in plain
+    words has no key and goes out as ``failed``, which the page words as a
+    failure without a reason."""
+    said = message_key(exception_text(exc))
+    if said is None:
+        return {"mcp_error": "failed"}
+    query = {"mcp_error": said["key"]}
+    if said["params"]:
+        query["mcp_error_params"] = json.dumps(said["params"], ensure_ascii=False)
+    return query
+
+
 @router.get("/mcp/oauth/callback")
 async def callback(
     db: Db,
@@ -129,17 +148,17 @@ async def callback(
     try:
         flow = service.read_state(state)
     except ValidationError as exc:
-        return RedirectResponse(f"{base}/?{urlencode({'mcp_error': str(exc)})}", 302)
+        return RedirectResponse(f"{base}/?{urlencode(_failure(exc))}", 302)
     back = f"{base}/projects/{flow['project']}/settings"
     query = {"mcp": flow["server"]}
     try:
         if error or not code:
             raise ValidationError(
-                say("mcpAuthIncomplete", error=error or "没有收到授权码")
+                say("mcpAuthIncomplete", error=error or say("mcpNoAuthCode"))
             )
         await service.finish_connect(db, flow, code=code, issuer=iss)
     except (AppError, BaseError) as exc:
-        query["mcp_error"] = str(exc)
+        query |= _failure(exc)
     else:
         query["mcp_result"] = "connected"
     landing = RedirectResponse(f"{back}?{urlencode(query)}#mcp", 302)

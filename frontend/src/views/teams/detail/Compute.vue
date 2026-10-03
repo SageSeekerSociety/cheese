@@ -26,6 +26,7 @@ import UserRef from '@/components/common/UserRefLink.vue'
 import { useRoomSocket } from '@/components/room/composables/useRoomSocket'
 import { t } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
+import { renderNoticeMessage } from '@/lib/noticeText'
 import { topicTitle } from '@/lib/topicState'
 
 type CloudMachine = ProjectMachine & { projectName: string }
@@ -173,7 +174,7 @@ const live = useRoomSocket({
     if (frame.type === 'error' && live.isConnectRefusal(frame.code)) {
       live.connectRefused.value = true
       stopResync()
-      error.value = frame.message
+      error.value = renderNoticeMessage(frame.i18n, frame.message)
     } else if (frame.type === 'state' && frame.resource === 'machines') {
       void refreshCloud(new Set(frame.project_ids ?? []))
     }

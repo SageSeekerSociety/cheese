@@ -11,11 +11,13 @@ import { clearMcpSecret, connectMcpServer, disconnectMcpServer, getMcpServers, s
 import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
 import { goAuthorize } from '@/lib/desktopApp'
+import { renderNoticeMessage } from '@/lib/noticeText'
 import { relTime } from '@/lib/relTime'
 
 // 项目的远程 MCP 服务器（#1909）。清单来自仓库默认分支的 .mcp.json，连接属于项目：
 // 任何成员都能连接或断开，谁授权的写在每一行上。连接走授权服务器的网页，回来时
-// 落在这一页，结果在地址栏的 mcp_result / mcp_error 里。
+// 落在这一页，结果在地址栏的 mcp_result / mcp_error 里。mcp_error 是 apiError 里
+// 那句话的 key（参数在 mcp_error_params，JSON），这里按读者的语言说出来。
 const props = defineProps<{ projectId: string }>()
 
 const route = useRoute()
@@ -129,12 +131,28 @@ const DOT: Record<McpServer['status'], string> = {
 }
 
 // 从授权服务器回来：把结果说一次，再从地址栏拿掉，刷新不会再说一遍。
+function callbackParams(raw: unknown): Record<string, unknown> {
+  try {
+    const parsed: unknown = typeof raw === 'string' ? JSON.parse(raw) : null
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {}
+  } catch {
+    return {}
+  }
+}
+
+function failureText(name: string, failure: unknown, params: unknown): string {
+  // 不认识的 code（或者没有 key 的那种拒绝，服务端发 failed）只说连接失败，不把 code 念出来。
+  const reason = renderNoticeMessage({ key: String(failure), params: callbackParams(params) }, '')
+  return reason ? t('work.mcp.connectFailedWith', { name, reason }) : t('work.mcp.connectFailedNamed', { name })
+}
+
 function takeCallbackResult() {
-  const { mcp, mcp_result: result, mcp_error: failure, ...rest } = route.query
+  const { mcp, mcp_result: result, mcp_error: failure, mcp_error_params: failureParams, ...rest } = route.query
   if (!result && !failure) return
+  const name = String(mcp ?? '')
   notice.value = failure
-    ? { type: 'error', text: t('work.mcp.connectFailedWith', { name: String(mcp ?? ''), reason: String(failure) }) }
-    : { type: 'success', text: t('work.mcp.connectedNotice', { name: String(mcp ?? '') }) }
+    ? { type: 'error', text: failureText(name, failure, failureParams) }
+    : { type: 'success', text: t('work.mcp.connectedNotice', { name }) }
   void router.replace({ query: rest, hash: route.hash })
 }
 

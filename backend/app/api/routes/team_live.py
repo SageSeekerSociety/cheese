@@ -24,6 +24,7 @@ from app.api.deps import get_broker, get_chat_service
 from app.core.errors import AuthenticationRequiredError, ForbiddenError
 from app.domain.agent.chat import ChatService
 from app.domain.agent.runtime import InProcessBroker
+from app.domain.block.notice_text import error_frame, say
 from app.domain.machine.live import team_channel
 
 router = APIRouter(tags=["teams"])
@@ -59,9 +60,9 @@ async def team_live(
             actor = await resolver.resolve()
             if not actor.authenticated:
                 refusal = (
-                    ("auth_expired", "登录状态已失效，请重新登录")
+                    ("auth_expired", say("signInAgain"))
                     if token
-                    else ("auth_required", "请先登录")
+                    else ("auth_required", say("signInFirst"))
                 )
             else:
                 try:
@@ -73,7 +74,7 @@ async def team_live(
         await websocket.accept()
         if refusal is not None:
             code, message = refusal
-            await send({"type": "error", "code": code, "message": message})
+            await send(error_frame(message, type="error", code=code))
             await websocket.close(code=1008)
             return
 

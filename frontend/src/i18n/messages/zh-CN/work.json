@@ -1198,6 +1198,7 @@
     "loadFailed": "读取 MCP 服务器失败",
     "connectFailed": "连接失败",
     "connectFailedWith": "连接 {name} 失败：{reason}",
+    "connectFailedNamed": "连接 {name} 失败",
     "connectedNotice": "{name} 已连接",
     "disconnectFailed": "断开失败",
     "saveFailed": "保存失败",

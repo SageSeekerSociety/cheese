@@ -73,6 +73,9 @@ def test_garbage_token_is_refused(client):
         frame = ws.receive_json()
     assert frame["type"] == "error"
     assert frame["code"] == "auth_expired"
+    # The screen says it in its reader's language, from the sentence's key.
+    assert frame["i18n"] == {"key": "chatSignInAgain", "params": {}}
+    assert frame["message"] == "登录状态已失效，请重新登录后再发言"
     assert _blocks(client, tid) == []
 
 
@@ -83,6 +86,7 @@ def test_tokenless_caller_cannot_post_as_anyone(client):
         frame = ws.receive_json()
         assert frame["type"] == "error"
         assert frame["code"] == "auth_required"
+        assert frame["i18n"] == {"key": "chatSignInFirst", "params": {}}
 
     sent = client.post(
         f"/topics/{tid}/messages",

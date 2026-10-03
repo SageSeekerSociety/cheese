@@ -19,7 +19,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
@@ -28,13 +28,6 @@ from app.domain.agent import death_evidence, turn_inputs
 from app.domain.agent.announce import announce
 from app.domain.agent.compute import ComputePool, ComputeProvider
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
-
-# 兼容门面：这一轮的模型与它的用量账（准入前解析模型/环境/网关 key，轮次结束后把
-# 网关的用量落库）搬去了 `gateway_usage.py`（那里有它们各自的文档）。这里重新导出，
-# `app.domain.agent.chat` 仍是既有调用点与测试的导入路径；`ChatService` 上留一行
-# 同名委托，调用点一格没动。三个设置键的名字（`_GW_KEY` 等）只被这一段读，跟着
-# 搬走，不再是 `ChatService` 的属性。
-from app.domain.agent.dream_usage import drain_dream_spend, record_dream_usage
 
 # 兼容门面：现场事件行的渲染搬去了 `event_lines.py`（那里有直接的单测）。
 # 这里重新导出，`app.domain.agent.chat` 仍是既有调用点与测试的导入路径；下面
@@ -54,6 +47,12 @@ from app.domain.agent.event_lines import (
     _tool_event_meta,  # noqa: F401 — 测试仍从 chat.py 导它
 )
 from app.domain.agent.gateway import LlmGateway
+
+# 兼容门面：这一轮的模型与它的用量账（准入前解析模型/环境/网关 key，轮次结束后把
+# 网关的用量落库）搬去了 `gateway_usage.py`（那里有它们各自的文档）。这里重新导出，
+# `app.domain.agent.chat` 仍是既有调用点与测试的导入路径；`ChatService` 上留一行
+# 同名委托，调用点一格没动。三个设置键的名字（`_GW_KEY` 等）只被这一段读，跟着
+# 搬走，不再是 `ChatService` 的属性。
 from app.domain.agent.gateway_usage import (
     _drain_gateway_usage,
     _gateway_project_env,
@@ -96,6 +95,15 @@ from app.domain.agent.hook_stream import (
     _with_log,  # noqa: F401
 )
 
+# 兼容门面：记忆的对账与整理（连同它们按房间记的四份状态）搬去了
+# `memory_ledger.py`（那里有整簇的文档）。`ChatService` 上留
+# `sweep_memory_dreams` / `run_memory_dream` 两行委托，调用点一格没动；
+# `_output_tokens_since` 搬走后本文件不用，只是给外部（测试）留的导入路径。
+from app.domain.agent.memory_ledger import (
+    MemoryLedger,
+    _output_tokens_since,  # noqa: F401 — 测试仍从 chat.py 导它
+)
+
 # 兼容门面：点名解析、通知与 refs 搬去了 `mentions.py`（那里有直接的单测）。
 # 这里重新导出，`app.domain.agent.chat` 仍是既有调用点与测试的导入路径；下面带
 # noqa 的那几个本文件不用，只是给外部（测试）留的导入路径。
@@ -124,7 +132,6 @@ from app.domain.agent.platform_failures import (
 )
 from app.domain.agent.platform_notices import (
     EVENT_MCP_NOT_CONNECTED,
-    EVENT_MEMORY_CHANGED,
     EVENT_PROMPT_REPLAYED,
     EVENT_TURN_FAILED,
     SEVERITY_ERROR,
@@ -171,13 +178,10 @@ from app.domain.agent.queries import (
     _agent_handle,
     _bail_notice,
     _block_payload,
-    _dream_refusal_phrase,
     _gateway_budget_target,
-    _memory_room,
     _pass_policy_gate,
     _Proposed,
     _resolved_agent,
-    _say_memory_change,
     _session_agent,
     require_pinned_seat,
 )
@@ -256,19 +260,10 @@ from app.domain.identity.handles import (
     recipient_seat,
 )
 from app.domain.membership.roster import roster_rows
-from app.domain.memory import dream
-from app.domain.memory.dream_prompt import dream_prompt
-from app.domain.memory.files import MemoryFileScope
-from app.domain.memory.files_store import MemoryIndex, memory_index, private_owners
-from app.domain.memory.models import MemoryDreamRunStatus, MemoryScope
-from app.domain.memory.session import (
-    MemoryChange,
-    apply_tree,
-    read_tree,
-)
+from app.domain.memory.files_store import MemoryIndex, memory_index
+from app.domain.memory.models import MemoryScope
 from app.domain.policy import gate
 from app.domain.project import artifacts as project_artifacts
-from app.domain.project.forge import binding_for_project
 from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review.models import AcceptStatus
@@ -282,7 +277,6 @@ from app.domain.topic.repositories import TopicProgressRepository, TopicReposito
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.credits import spend_to_credits
 from app.domain.usage.ledger import Ledger, payer_for_project, team_terms
-from app.domain.usage.models import ResourceUsage
 
 PRIVATE_SKILLS = ["private-chat"]
 
@@ -379,10 +373,6 @@ class _TurnBail:
 #: one backend drives at once, so in practice nothing is ever evicted; it is a
 #: ceiling on a dict nothing else prunes, not a policy.
 _SESSION_ROUTES_KEPT = 512
-
-#: How many rooms' memory scopes to remember (same ceiling, same reason: it is a
-#: ceiling on a dict nothing else prunes).
-MEMORY_TURNS_KEPT = 512
 
 
 # Persistent, clickable action cards (§3.1.1 控件): each cheese action 芝士 takes
@@ -561,23 +551,6 @@ class ChatService(SessionRecovery):
         self._compute.bind_terminations(self.confirm_work_termination)
         self._compute.bind_unread_probe(self.oldest_unread_at)
         self._compute.bind_reachability(self._note_reachability)
-        # 记忆的对账（铺下去 / 收回来）走的是会话那条通道，所以回调挂在这里，
-        # 由 harness 在两个时刻问它：输入之前、这一轮结束之后。
-        self._compute.bind_memory(self._sync_memory)
-        # 每一间房这一轮的记忆账：署谁的名、算谁的 private（组装那一轮时记下，
-        # 见 `_remember_memory_turn`）。两个对账时刻手上只有一个 topic id，所以
-        # 这份点名只能从别的时刻留下来。没记过的房间按「只有 team」对。
-        self._memory_turns: dict[uuid.UUID, tuple[str, tuple[str, ...]]] = {}
-        # 正在跑整理的那几间房（一场整理一次，跑完就撤）。它只改一件事：这一轮
-        # 结束时的对账多问一句「这次是不是要删掉一大半」——见 `_sync_memory`。
-        # 会话自己有一条同样的兜底（`tree._too_many_to_delete`），但那条只会把
-        # 删除放回去，不会说出「这一次不算数」；整理要的是后者。
-        self._dream_turns: set[uuid.UUID] = set()
-        # 上面那几间房里，对账时挡下来的删除（topic → 那句话）。跑整理的那个函数
-        # 读走它，写进 `memory_dream_runs`，然后清掉。
-        self._dream_refusals: dict[uuid.UUID, str] = {}
-        # 同一间房的对账一次只跑一场（`_sync_memory`）。
-        self._memory_syncs: dict[uuid.UUID, asyncio.Lock] = {}
         # Liveness only, keyed by durable input UUID. Settlement never depends
         # on this process cache; cold-start inputs are not mid-turn unread probes.
         self._unread_inputs: dict[uuid.UUID, dict[uuid.UUID, float]] = {}
@@ -590,6 +563,20 @@ class ChatService(SessionRecovery):
         # project.settings (single-process reality, like the topic locks).
         self._gateway = gateway
         self._gateway_lock = asyncio.Lock()
+        # 记忆的对账（铺下去 / 收回来）走的是会话那条通道，所以回调挂在这里，
+        # 由 harness 在两个时刻问它：输入之前、这一轮结束之后。这一簇连同它按
+        # 房间记的四份状态都在 `memory_ledger.py` 里；它会用到的四件协作者显式
+        # 传进去（`gateway`/`gateway_lock` 要先建好），留在 `ChatService` 上的
+        # 只有 `_lock_for` 和 `_model_kwargs` 两件同事还在用的东西。
+        self._memory = MemoryLedger(
+            sessions=session_factory,
+            compute=compute,
+            gateway=gateway,
+            gateway_lock=self._gateway_lock,
+            base_prompt=base_system_prompt,
+            host=self,
+        )
+        self._compute.bind_memory(self._memory.sync)
         # Keep the publication contract present before native skills are invoked.
         self._skills = NATIVE_CHAT_GUIDANCE
         # Prompt construction is serialized per (topic, agent) seat: two agents
@@ -1453,7 +1440,6 @@ class ChatService(SessionRecovery):
     ) -> tuple[str, ...]:
         """The remote MCP servers this session cannot use yet, its type's too,
         each said once in the room: 「<name> 需要在项目设置里连接」."""
-        from sqlalchemy import select
 
         from app.domain.agent.runtime import get_broker
         from app.domain.remote_mcp import service as remote_mcp
@@ -2071,413 +2057,18 @@ class ChatService(SessionRecovery):
         except Exception:  # noqa: BLE001 — bookkeeping must not stop a turn
             logger.exception("could not record the context of turn %s", turn_id)
 
-    def _remember_memory_turn(
-        self, topic_id: uuid.UUID, *, acting: str, speakers: tuple[str, ...]
-    ) -> None:
-        """记下这一轮的记忆账：署谁的名、算谁的 private。
-
-        组装一轮的时候才知道这两件事（`_assemble_turn`），而对账的两个时刻（输入
-        之前、这一轮结束之后）手上只有一个 topic id。记的是刚才 `memory_index`
-        读过的那几个人，所以「注入里看得见的」和「铺到会话目录里的」是同一批。
-        """
-        self._memory_turns.pop(topic_id, None)
-        self._memory_turns[topic_id] = (acting, speakers)
-        while len(self._memory_turns) > MEMORY_TURNS_KEPT:
-            del self._memory_turns[next(iter(self._memory_turns))]
-
-    def _memory_scopes(
-        self, topic_id: uuid.UUID
-    ) -> list[tuple[MemoryFileScope, str | None]]:
-        """这一次对账要点名的那几棵树：team 一份，本轮发言人一人一份 private。
-
-        点过名的作用域才是这一次对账的范围（`memory.session` 的开头那一段）：
-        没点到的 private 既不铺也不收，别人的偏好不会被这一间房的一次对账碰掉。
-        """
-        _, speakers = self._memory_turns.get(topic_id, ("", ()))
-        return [
-            (MemoryFileScope.team, None),
-            *((MemoryFileScope.private, handle) for handle in speakers),
-        ]
-
-    async def _sync_memory(self, topic_id: uuid.UUID) -> None:
-        """对一遍这一间房的记忆账；同一间房的两场对账排队，不交错。
-
-        一轮结束时，钩子要对一次账，整理那一轮收尾时自己也要当场对一次。两场交错时，
-        后一场读到的是前一场提交之前的数据库：它把平台的旧版铺回会话，整理拿它算出
-        的「改了哪些」也是空的，而那些改动其实已经落库了。
-        """
-        async with self._memory_syncs.setdefault(topic_id, asyncio.Lock()):
-            await self._sync_memory_once(topic_id)
-
-    async def _sync_memory_once(self, topic_id: uuid.UUID) -> None:
-        """对一遍这一间房的记忆账：平台这一份铺下去，会话改过的收回来。
-
-        两个时刻问它：输入之前（让 agent 一睁眼读到的就是平台现在这一份，别人刚
-        改的也在里面）和这一轮结束之后（它是在这一轮里写的，写的时候这一轮还没
-        结束）。两个时刻做的是同一件事，因为对账是幂等的 —— 「上一次对过什么」在
-        会话那边的基线里，不在这里的记忆里。
-
-        一次对账是跨机的一次往返，所以中间不持有事务：先把数据库这一份读出来、
-        放开，再问会话，最后在一个短事务里写回、把改动说进房间。
-        """
-        scopes = self._memory_scopes(topic_id)
-        updated_by = self._memory_turns.get(topic_id, ("system", ()))[0] or "system"
-        async with self._sessions() as session:
-            topic = await TopicRepository(session).get(topic_id)
-            if topic is None:
-                return
-            project_id = topic.project_id
-            stored = await read_tree(session, project_id, scopes)
-        answer = await self._compute.memory(topic_id, {"scopes": stored.scopes})
-        if answer is None:
-            # 这间房现在没有能对账的会话：没有活着的会话，或者这个 harness 的会话
-            # 不落记忆文件。两种都只是「这里没有这件事」，不是失败。
-            return
-        if topic_id in self._dream_turns and (
-            refusal := self._dream_refusal_phrase(stored.contents, answer)
-        ):
-            # 整理那一轮：这次要删掉的某一个作用域超过一半、且超过 3 条，整轮作废，
-            # 平台上一条都不少。会话自己那条兜底（`tree._too_many_to_delete`）已经
-            # 把删除放回去了（`held`），所以这里多半只是把它说出来；两处都判，
-            # 是因为会话那一侧判不了「树是新的、基线还没有」的情况。写在
-            # `apply_tree` 之前，是因为它一旦返回，那些删除已经落库了。
-            # 说进总览的那一句在整轮收尾时说（`run_memory_dream`），这里只记下来。
-            logger.warning("memory dream refused a bulk delete: %s", refusal)
-            self._dream_refusals[topic_id] = refusal
-            return
-        async with self._sessions() as session:
-            change = await apply_tree(
-                session,
-                project_id,
-                stored,
-                answer,
-                scopes=scopes,
-                updated_by=updated_by,
-            )
-            if change.is_empty() and not change.refused and not change.rejected:
-                # 一次对账大部分时候答的是这个。什么都没变就什么都不说：这条事
-                # 件是给人扫一眼的，而每一轮都发一条「没变」等于把它淹没。
-                return
-            await self._say_memory_change(session, project_id, change, scopes)
-            await session.commit()
-
-    @staticmethod
-    def _dream_refusal_phrase(before: dict[str, str], answer: dict) -> str:
-        return _dream_refusal_phrase(before, answer)
-
-    async def _say_memory_change(
-        self,
-        session: AsyncSession,
-        project_id: uuid.UUID,
-        change: MemoryChange,
-        scopes: list[tuple[MemoryFileScope, str | None]],
-    ) -> None:
-        return await _say_memory_change(session, project_id, change, scopes)
-
-    async def _memory_room(
-        self,
-        session: AsyncSession,
-        project_id: uuid.UUID,
-        scope: MemoryFileScope,
-        owner: str | None,
-    ) -> uuid.UUID | None:
-        return await _memory_room(session, project_id, scope, owner)
-
-    # --- dream：平台自己过一遍这个项目的记忆 --------------------------------
-
     async def sweep_memory_dreams(self) -> dict:
         """巡检一圈：哪些项目该整理记忆了，逐个跑（`periodic_jobs` 里的一个）。
 
-        判据是「这个项目最近花了多少」和「距上次整理多久」（`memory.dream` 模块
-        开头那一段），所以先挨个项目问一句「该不该」，再动手。不该整理的项目在
-        `run_memory_dream` 的第一段就返回了，代价是一次花销求和。
-
-        **串行**：一次整理是一轮真会话，可能跑几分钟，而同时起两个只会互相抢机
-        器。这一条钟慢一拍不要紧——下一次巡检还会来，而整理晚一小时没有代价。
+        这一簇连同它按房间记的那四份状态搬去了 `memory_ledger.py`——判据、串行
+        和「派到哪个会话上」的文档都在那里。这里留一行委托：`core/background.py`
+        的周期任务和测试都按这个入口叫它。
         """
-        done: list[str] = []
-        failed: list[str] = []
-        async with self._sessions() as session:
-            # An archived project runs nothing, a dream (a real turn) included.
-            project_ids = [
-                p.id
-                for p in await ProjectRepository(session).list_all()
-                if p.archived_at is None
-            ]
-        for project_id in project_ids:
-            try:
-                answer = await self.run_memory_dream(project_id=project_id)
-            except Exception:
-                # 一个项目的整理失败不该停掉别的项目：这条 job 是它们唯一的入口。
-                logger.exception("memory dream failed project=%s", project_id)
-                failed.append(str(project_id))
-                continue
-            status = str(answer.get("status") or "")
-            if status in ("completed", "refused"):
-                done.append(f"{project_id}:{status}")
-        return {"dreams": len(done), "failed": len(failed)}
+        return await self._memory.sweep()
 
     async def run_memory_dream(self, *, project_id: uuid.UUID) -> dict:
-        """跑一次记忆整理（dream）；不该跑就什么都不做。
-
-        判据、锁、拒绝执行的判据和那两行账都在 `app.domain.memory.dream` 里。这里
-        做的是它做不了的那一半：读这个项目的花销和房间记录、把这一轮派到项目默认
-        芝士的会话上、把结果收回来。
-
-        **派法**是 `platform_work` + `run_turn`（结论 28）：整理是平台自己起的活，
-        跑在这个项目默认芝士的会话上，用它自己的模型。
-        """
-        now = datetime.now(UTC)
-        async with self._sessions() as session:
-            project = await ProjectRepository(session).get(project_id)
-            if project is None:
-                raise NotFoundError("Project not found")
-            if project.root_topic_id is None:
-                raise NotFoundError("Project has no root topic")
-            root_topic_id = project.root_topic_id
-            config = dream.dream_settings(project.settings)
-            state = await dream.state_of(session, project_id)
-            since = dream.since_of(state)
-            tokens = await _output_tokens_since(session, project_id, since)
-            decision = dream.due_decision(
-                config,
-                tokens=tokens,
-                last_dream_at=None if state is None else state.last_dream_at,
-                now=now,
-            )
-            if not decision.due:
-                return {
-                    "status": "not_due",
-                    "reason": decision.reason,
-                    "tokens": tokens,
-                }
-            if await dream.claim(session, project_id, now=now) is None:
-                return {"status": "locked"}
-            run = await dream.open_run(
-                session, project_id, tokens_at_start=tokens, now=now
-            )
-            run_id = run.id
-            compute_id = resolve_compute_id(project.settings)
-            agent_handle = await self._agent_handle(session, root_topic_id)
-            await session.commit()
-        logger.info(
-            "memory dream starting project=%s tokens=%s run=%s",
-            project_id,
-            tokens,
-            run_id,
-        )
-
-        # 铺给它的那一份：team 加**这个项目全部**的 private。不是「本轮在场的几
-        # 个人」——整理是唯一一个把整棵树放在一起看的时刻，漏掉一个没说过话的人，
-        # 等于他的记忆没有人整理（`private_owners` 的开头那一段）。
-        async with self._sessions() as session:
-            owners = await private_owners(session, project_id)
-            scopes: list[tuple[MemoryFileScope, str | None]] = [
-                (MemoryFileScope.team, None),
-                *[(MemoryFileScope.private, owner) for owner in owners],
-            ]
-            stored = await read_tree(session, project_id, scopes)
-            rooms = await _dream_rooms(session, project_id, since=since)
-            index = await memory_index(session, project_id, speaker_handles=[])
-            binding = await binding_for_project(project_id, session)
-            code_project = binding is not None
-            await session.commit()
-        prompt = dream_prompt(
-            dream.briefing(stored.scopes, rooms, code_project=code_project)
-        )
-
-        # 这一轮点名的作用域也在这里定下来：`send` 会在输入之前按它铺一遍（记忆
-        # 那时才落到会话的磁盘上），一轮结束时又按它收回来。
-        self._remember_memory_turn(
-            root_topic_id, acting=agent_handle, speakers=tuple(owners)
-        )
-        self._dream_turns.add(root_topic_id)
-        provider = self._compute.platform_work(compute_id)
-        runtime = runtime_for(provider)
-        system_prompt = build_system_prompt(
-            self._base_prompt,
-            "",  # 场景技能不带：整理这件事的规矩在 prompt 里，不在某个场景里。
-            None,
-            index,
-            # 记忆那一段照常注入：整理就是在这个会话里写记忆文件，而「一条记忆写
-            # 成什么样」只有那一段说得全（文件名、frontmatter、索引行）。
-            keeps_memory=runtime.keeps_memory,
-        )
-        final_text = ""
-        usage: AgentUsage | None = None
-        failed = False
-        try:
-            async with self._lock_for(root_topic_id):
-                model_kwargs = (
-                    await self._model_kwargs(
-                        project_id, provider, root_topic_id, platform=True
-                    )
-                )[0]
-                async for event in runtime.run_turn(
-                    project_id=project_id,
-                    topic_id=root_topic_id,
-                    prompt=prompt,
-                    system_prompt=system_prompt,
-                    resume_session_id=None,
-                    # 整理这一轮是平台自己起的，手里没有任何 block，所以登记的是
-                    # 空效果——登记这一动作本身不能省：`send` 之后那条回执要认得
-                    # 这个 identity，跳过登记就会打在未知 identity 上炸掉。
-                    register_input=self._input_registrar(InputEffects()),
-                    turn_id=run_id,
-                    **model_kwargs,
-                ):
-                    if isinstance(event, AgentUsage):
-                        usage = event
-                    elif isinstance(event, AgentResult):
-                        final_text = event.text
-                        failed = event.is_error
-                        if event.usage is not None:
-                            usage = event.usage
-                # 收回来。自己再对一次账，不等那一侧的回调：这一轮的结果就在眼前，
-                # 而「整理到底成了没有」要一个当场的答案（对账幂等，回调先跑过也
-                # 只会是一次空账）。
-                await self._sync_memory(root_topic_id)
-        finally:
-            # 撤掉整理这一轮的标记：它只在这一轮里有效，留着会把下一轮普通对话也
-            # 按「删多了就整轮作废」处理。
-            self._dream_turns.discard(root_topic_id)
-        refusal = self._dream_refusals.pop(root_topic_id, None)
-
-        async with self._sessions() as session:
-            after = await read_tree(session, project_id, scopes)
-            # 「改了哪些文件」由前后两份树比出来，不用另一条回执：`stored` 是铺下
-            # 去之前的，`after` 是收回来之后的，中间那些就是这一轮的成果。
-            changed = sorted(
-                path
-                for path in set(stored.contents) | set(after.contents)
-                if stored.contents.get(path) != after.contents.get(path)
-            )
-            state = await dream.state_of(session, project_id)
-            if state is not None:
-                if failed:
-                    await dream.release(session, state)
-                else:
-                    await dream.finish(session, state, now=datetime.now(UTC))
-            status = (
-                MemoryDreamRunStatus.failed
-                if failed
-                else (
-                    MemoryDreamRunStatus.refused
-                    if refusal
-                    else MemoryDreamRunStatus.completed
-                )
-            )
-            if refusal:
-                summary = f"拒绝执行：{refusal}"
-            elif failed:
-                summary = "这一轮没跑成"
-            else:
-                summary = dream.clip(final_text, 1000)
-            run = await dream.run_of(session, run_id)
-            if run is not None:
-                await dream.close_run(
-                    session,
-                    run,
-                    status=status,
-                    summary=summary,
-                    files=[] if refusal else changed,
-                    now=datetime.now(UTC),
-                )
-            await record_dream_usage(
-                session,
-                project_id=project_id,
-                root_topic_id=root_topic_id,
-                usage=usage,
-                turn_id=run_id,
-            )
-            await session.commit()
-        logger.info(
-            "memory dream %s project=%s changed=%s",
-            status.value,
-            project_id,
-            len(changed),
-        )
-        await drain_dream_spend(
-            self._sessions,
-            self._gateway,
-            self._gateway_lock,
-            project_id,
-            root_topic_id,
-            run_id,
-        )
-        team_changed = [path for path in changed if path.startswith("team/")]
-        if status is MemoryDreamRunStatus.completed and team_changed:
-            await self._say_memory_dream(project_id, team_changed)
-        if refusal:
-            await self._say_memory_dream_refused(project_id, run_id)
-        return {
-            "status": status.value,
-            "tokens": tokens,
-            "files": changed,
-            "summary": final_text,
-        }
-
-    async def _say_memory_dream(
-        self, project_id: uuid.UUID, changed: list[str]
-    ) -> None:
-        """整理跑完了：在项目总览里说一句 team 改了哪几条。
-
-        谁的名都不点：一条记忆是 agent 写下的一份观察，没有人在等它（`who`
-        是 platform，投递那一层因此发不出收件人）。改动的 diff 由对账那条路自己说
-        （`_say_memory_change`，team 的进总览、某个人的 private 只进他的私聊），这
-        一条说的是**这一次整理本身**动了 team 的哪些文件。
-
-        总览是全项目都看得见的房间，所以只说 team：某个人 private 里的文件名也是
-        他的内容。整理的人自己写的那段交代不进来——它是看着所有人的 private 写的，
-        留在 `memory_dream_runs.summary` 里。
-        """
-        async with self._sessions() as session:
-            project = await ProjectRepository(session).get(project_id)
-            if project is None or project.root_topic_id is None:
-                return
-            await announce(
-                session,
-                place_id=project.root_topic_id,
-                content=say("memoryDreamChanged", count=len(changed)),
-                meta=notice(
-                    EVENT_MEMORY_CHANGED,
-                    severity=SEVERITY_INFO,
-                    who=WHO_PLATFORM,
-                    detail="\n".join(f"- `{path}`" for path in changed),
-                    detail_label=say("labelWhichChanged"),
-                ),
-            )
-            await session.commit()
-
-    async def _say_memory_dream_refused(
-        self, project_id: uuid.UUID, run_id: uuid.UUID
-    ) -> None:
-        """整理要删掉一大半，整轮作废：说进总览。
-
-        这条必须说话，因为它说的是一次**什么都没发生**：记忆一条都没少，而人会
-        以为整理跑过了。说给谁听也是这次的一部分——没人被点名（`who=platform`），
-        要动手的是人：去看那棵树到底怎么了。
-
-        拦下的是哪个作用域、哪几条不在这里说：那可能是某个人 private 里的文件，而
-        总览全项目都看得见。它们记在 `memory_dream_runs` 这一条的 summary 里。
-        """
-        async with self._sessions() as session:
-            project = await ProjectRepository(session).get(project_id)
-            if project is None or project.root_topic_id is None:
-                return
-            await announce(
-                session,
-                place_id=project.root_topic_id,
-                content=say("memoryDreamRefused"),
-                meta=notice(
-                    EVENT_MEMORY_CHANGED,
-                    severity=SEVERITY_WARN,
-                    who=WHO_PLATFORM,
-                    detail=say("memoryDreamRefusedDetail", run_id=str(run_id)),
-                    detail_label=say("labelWhyStopped"),
-                ),
-            )
-            await session.commit()
+        """跑一次记忆整理（dream）；不该跑就什么都不做（`memory_ledger.py`）。"""
+        return await self._memory.run_dream(project_id=project_id)
 
     async def _consume_hook_event(
         self,
@@ -3732,13 +3323,13 @@ class ChatService(SessionRecovery):
             #
             # 只算**人**（`names_a_person`）：private 是「人 × 项目」的那一份，
             # 队友手里的句柄不是一个作用域。本轮说话的这几位同时也是这一轮对账
-            # 要点名的那几个（`_remember_memory_turn`），周期任务那一轮的主人也
+            # 要点名的那几个（`MemoryLedger.remember_turn`），周期任务那一轮的主人也
             # 在里面：他没有署名的消息，只能从那一笔投递上认（`turn_speakers`）。
             speakers = await turn_speakers(session, delivery_id, pending, private_owner)
             memory = await memory_index(
                 session, topic.project_id, speaker_handles=list(speakers)
             )
-            self._remember_memory_turn(topic.id, acting=acting_agent, speakers=speakers)
+            self._memory.remember_turn(topic.id, acting=acting_agent, speakers=speakers)
             phases_ms["memory"] = (time.monotonic() - started) * 1000
             projects_repo = ProjectRepository(session)
             project = await projects_repo.get(topic.project_id)
@@ -4638,72 +4229,3 @@ async def text_as_sent(
     agent = await AgentInstanceService(session).for_topic(topic, project)
     mentions = await person_mentions(session, topic, content, agent, dm=_is_dm(topic))
     return SentText(topic, mentions.content, mentions.roster, False)
-
-
-async def _output_tokens_since(
-    session: AsyncSession, project_id: uuid.UUID, since: datetime
-) -> int:
-    """`since` 之后这个项目花了多少输出 token，不含整理自己那些。
-
-    量的东西是「这个项目最近写了多少」（见 `memory.dream` 的开头）：记忆是会话的
-    副产品，写得越多越可能已经乱到值得梳一遍。`kind` 按前缀剔掉整理那一轮自己
-    花的——网关的用量是延迟落库的，一条晚到的整理用量只有 kind 认得出来。
-    """
-    total = await session.scalar(
-        select(func.coalesce(func.sum(ResourceUsage.output_tokens), 0)).where(
-            ResourceUsage.project_id == project_id,
-            ResourceUsage.created_at > since,
-            ResourceUsage.kind.notlike(f"{dream.DREAM_KIND}%"),
-        )
-    )
-    return int(total or 0)
-
-
-async def _dream_rooms(
-    session: AsyncSession, project_id: uuid.UUID, *, since: datetime
-) -> list[str]:
-    """上次整理之后有新内容的房间：标题、实况文档、这段时间的发言。
-
-    按最后动静排序取前几间。一间房上一整个窗口一个字都没说过，进来只是噪音——
-    整理要的是「这段时间发生了什么」，不是「这个项目有哪些房间」。
-    """
-    newest = func.max(Block.created_at).label("newest")
-    rows = (
-        await session.execute(
-            select(Block.topic_id, newest)
-            .where(Block.project_id == project_id, Block.created_at > since)
-            .group_by(Block.topic_id)
-            .order_by(newest.desc())
-            .limit(dream.ROOMS_LIMIT)
-        )
-    ).all()
-    blocks = BlockRepository(session)
-    out: list[str] = []
-    for topic_id, _newest in rows:
-        topic = await TopicRepository(session).get(topic_id)
-        if topic is None:
-            continue
-        lines = [f"### <#{topic_id}> {topic.title}"]
-        doc = await blocks.doc_root(topic_id)
-        if doc is not None and doc.content.strip():
-            lines.append("实况文档：\n" + dream.clip(doc.content, dream.ROOM_DOC_MAX))
-        spoken = list(
-            await session.scalars(
-                select(Block)
-                .where(
-                    Block.topic_id == topic_id,
-                    Block.kind == BlockKind.message,
-                    Block.created_at > since,
-                )
-                .order_by(Block.created_at.desc())
-                .limit(dream.ROOM_LOG_LINES)
-            )
-        )
-        if spoken:
-            body = "\n".join(
-                f"- {block.author}：{dream.clip(block.content, dream.ROOM_LINE_MAX)}"
-                for block in reversed(spoken)
-            )
-            lines.append("这段时间的发言：\n" + dream.clip(body, dream.ROOM_LOG_MAX))
-        out.append("\n\n".join(lines))
-    return out

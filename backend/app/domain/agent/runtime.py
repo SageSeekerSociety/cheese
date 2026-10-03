@@ -57,7 +57,7 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.agent.repositories import AgentTurnRepository, TurnRecord
-from app.domain.block.notice_text import listing, say
+from app.domain.block.notice_text import error_frame, listing, say
 from app.domain.delivery.addressing import NOBODY, Addressed, Event, Hand, address
 from app.domain.delivery.input_identity import InputReconciliationPending
 from app.domain.identity.actor import Actor
@@ -994,10 +994,7 @@ class AgentWorkRunner:
             )
             await self._broker.publish(
                 str(topic_id),
-                {
-                    "type": "error",
-                    "message": "Agent message delivery failed",
-                },
+                error_frame(say("agentDeliveryFailed"), type="error"),
             )
 
     def turn_pending(self, turn_id: uuid.UUID) -> bool:
@@ -1961,11 +1958,7 @@ class AgentWorkRunner:
         )
         await self._broker.publish(
             channel,
-            {
-                "type": "error",
-                "message": event,
-                "persisted": posted,
-            },
+            error_frame(event, type="error", persisted=posted),
         )
         self._recent.append(
             {
@@ -2578,11 +2571,7 @@ class AgentWorkRunner:
             # on an already-cancelled task.
             await self._broker.publish(
                 channel,
-                {
-                    "type": "error",
-                    "message": "本轮已被强制停止",
-                    "persisted": False,
-                },
+                error_frame(say("turnForceStopped"), type="error", persisted=False),
             )
             # Ends the stream, for the reason spelled out on the timeout path.
             # `turn_finished` does not cover this: `_run` publishes it only when
@@ -2671,7 +2660,7 @@ class AgentWorkRunner:
                 )
             block = None
             try:
-                # `fuse_meta` (订阅凭据已过期) 优先：它带 code，下面的 error_frame
+                # `fuse_meta` (订阅凭据已过期) 优先：它带 code，下面的 error 帧
                 # 认这个字段。其余两条走 `timeout_meta`。
                 block = await chat_service.post_system_event(
                     topic_id, text, turn_id, meta=fuse_meta or timeout_meta
@@ -2682,14 +2671,10 @@ class AgentWorkRunner:
                 await self._broker.publish(
                     channel, {"type": "event_block", "block": block}
                 )
-            error_frame: dict = {
-                "type": "error",
-                "message": text,
-                "persisted": block is not None,
-            }
+            frame = error_frame(text, type="error", persisted=block is not None)
             if fuse_meta is not None:
-                error_frame["code"] = SUBSCRIPTION_CREDENTIAL_EXPIRED.code
-            await self._broker.publish(channel, error_frame)
+                frame["code"] = SUBSCRIPTION_CREDENTIAL_EXPIRED.code
+            await self._broker.publish(channel, frame)
             # End the stream. `chat` publishes `done` on the paths it owns, and
             # this one cut its generator off mid-flight, so without this nothing
             # does: a subscriber waiting for the turn to end instead waits out
@@ -2709,9 +2694,7 @@ class AgentWorkRunner:
             rec["status"] = "error"
             rec["detail"] = exc.message
             rec["duration_s"] = round(time.monotonic() - t0, 1)
-            await self._broker.publish(
-                channel, {"type": "error", "message": exc.message}
-            )
+            await self._broker.publish(channel, error_frame(exc.message, type="error"))
             # Ends the stream, for the reason spelled out on the timeout path.
             await self._broker.publish(channel, {"type": "done"})
         except Exception as exc:  # noqa: BLE001 — surface runtime failures (spec H4)
@@ -2751,14 +2734,10 @@ class AgentWorkRunner:
                 await self._broker.publish(
                     channel, {"type": "event_block", "block": block}
                 )
-            error_frame = {
-                "type": "error",
-                "message": text,
-                "persisted": block is not None,
-            }
+            frame = error_frame(text, type="error", persisted=block is not None)
             if platform_failure is not None:
-                error_frame["code"] = platform_failure.code
-            await self._broker.publish(channel, error_frame)
+                frame["code"] = platform_failure.code
+            await self._broker.publish(channel, frame)
             # Ends the stream, for the reason spelled out on the timeout path.
             await self._broker.publish(channel, {"type": "done"})
             # An unnamed failure is a bug signal, not a transience signal, so the

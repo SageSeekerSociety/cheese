@@ -25,6 +25,7 @@ import AdaptiveDialog from '../components/common/AdaptiveDialog.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
 import { goAuthorize } from '@/lib/desktopApp'
+import { renderNoticeMessage } from '@/lib/noticeText'
 
 const route = useRoute()
 const integrations = ref<Integration[]>([])
@@ -40,7 +41,27 @@ const feishuKnown = ref(false)
 const feishuMissing = computed(() => feishuKnown.value && !feishu.value.configured)
 const loading = ref(false)
 const error = ref('')
-const notice = ref(typeof route.query.feishu === 'string' ? route.query.feishu : '')
+/** 从飞书授权回来时地址栏里的结果（`?feishu=`）：一个结果码，或者平台那句拒绝的
+ *  apiError key；`feishu_detail` 是飞书自己的原话。按读者的语言说出来，不认识的
+ *  码只说授权失败。 */
+function feishuOutcome(): string {
+  const code = typeof route.query.feishu === 'string' ? route.query.feishu : ''
+  if (!code) return ''
+  if (code === 'ok') return t('account.connections.feishuAuthorized')
+  const known = FEISHU_OUTCOMES[code]
+  const sentence = known
+    ? t(`account.connections.feishuOutcome.${known}`)
+    : renderNoticeMessage({ key: code }, t('account.connections.feishuOutcome.failed'))
+  const detail = typeof route.query.feishu_detail === 'string' ? route.query.feishu_detail : ''
+  return detail ? t('account.connections.feishuOutcome.withDetail', { sentence, detail }) : sentence
+}
+const FEISHU_OUTCOMES: Record<string, string> = {
+  invalid_link: 'invalidLink',
+  denied: 'denied',
+  deleted: 'deleted',
+  exchange_failed: 'failed',
+}
+const notice = ref(feishuOutcome())
 const busy = ref('')
 const confirming = ref<MailDraft | null>(null)
 const removing = ref<Integration | null>(null)
@@ -268,7 +289,7 @@ onMounted(load)
     </header>
 
     <p v-if="notice" role="status" class="conn__notice">
-      {{ notice === 'ok' ? t('account.connections.feishuAuthorized') : notice }}
+      {{ notice }}
     </p>
     <p v-if="error" role="alert" class="conn__notice c-danger">{{ error }}</p>
 

@@ -70,6 +70,8 @@ class Gateway:
         #: Every key minted, with the models it may call; and keys revoked.
         self.minted: dict[str, list[str]] = {}
         self.revoked: list[str] = []
+        #: Every model call fails, as a gateway that is down answers.
+        self.failing = False
         outer = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -123,6 +125,9 @@ class Gateway:
                         "spend": CALL_USD,
                     }
                 )
+                if outer.failing:
+                    self._json({"error": {"message": "upstream fell over"}}, 500)
+                    return
                 step = outer.script.pop(0) if outer.script else ("text", "好的。")
                 self._stream(step)
 
@@ -591,6 +596,25 @@ def test_a_refused_question_leaves_nothing_in_the_list(client, gateway):
     assert listed.json()["data"]["conversations"] == []
 
 
+def test_an_answer_that_fails_says_so_with_its_sentence_key(client, gateway):
+    """The panel says the failure in its reader's language, from the key the
+    stream's ``error`` event carries beside the Chinese sentence."""
+    me = _auth(client, "asker")
+    conversation = _start(client, _task(client), me)
+    gateway.failing = True
+
+    r = _ask(client, conversation, "从哪里入手？", me)
+
+    assert r.status_code == 200, r.text
+    assert (
+        "error",
+        {
+            "message": "芝士暂时答不上来，稍后再试。",
+            "i18n": {"key": "assistantFailed", "params": {}},
+        },
+    ) in _events(r.text)
+
+
 def test_a_change_of_model_reissues_the_persons_key(client, gateway, monkeypatch):
     """A person's key may call one model. When the deployment answers with
     another, the next question still works: on a new key for the new model,
@@ -605,7 +629,7 @@ def test_a_change_of_model_reissues_the_persons_key(client, gateway, monkeypatch
     r = _ask(client, conversation, "还有呢？", me)
 
     assert r.status_code == 200, r.text
-    assert ("error", {"message": "芝士暂时答不上来，稍后再试。"}) not in _events(r.text)
+    assert "error" not in [name for name, _ in _events(r.text)]
     new = gateway.keys[-1]
     assert new != old
     assert gateway.minted[new] == ["deepseek-next"]
