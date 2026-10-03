@@ -1765,9 +1765,7 @@ def test_a_subagents_own_haiku_request_is_not_a_specification(monkeypatch, tmp_p
     assert json.loads(flow.request.content)["model"] == "claude-sonnet-5"
 
 
-def test_a_haiku_name_on_the_child_header_is_not_a_specification(
-    monkeypatch, tmp_path
-):
+def test_a_haiku_name_on_the_child_header_is_not_a_specification(monkeypatch, tmp_path):
     """同一个「不算指定」判据也要落在头部那条快路上。
 
     Claude Code 的 WebFetch 由一个 haiku 类内部子请求代跑，harness 的
