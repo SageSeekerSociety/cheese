@@ -12,7 +12,7 @@ import pytest
 from fastapi.responses import RedirectResponse
 from starlette.requests import Request
 
-from app.api.routes.users import (
+from app.api.routes.users.oauth import (
     _decode_oauth_state_token,
     handle_oauth_callback,
 )
@@ -116,7 +116,9 @@ class TestOAuthCallback:
         async def _fake_store(session_id, data):
             stored[session_id] = data
 
-        monkeypatch.setattr("app.api.routes.users._store_oauth_pending", _fake_store)
+        monkeypatch.setattr(
+            "app.api.routes.users.oauth._store_oauth_pending", _fake_store
+        )
 
         resp = await handle_oauth_callback(
             "ruc",
@@ -156,7 +158,9 @@ class TestOAuthCallback:
         async def _fake_store(session_id, data):
             stored[session_id] = data
 
-        monkeypatch.setattr("app.api.routes.users._store_oauth_pending", _fake_store)
+        monkeypatch.setattr(
+            "app.api.routes.users.oauth._store_oauth_pending", _fake_store
+        )
 
         resp = await handle_oauth_callback(
             "ruc",

@@ -15,7 +15,7 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 from sqlalchemy import func, select
 
-from app.api.routes.users import _issue_oauth_state_token
+from app.api.routes.users.oauth import _issue_oauth_state_token
 from app.core.errors import ConflictError
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.identity.services import IdentityService

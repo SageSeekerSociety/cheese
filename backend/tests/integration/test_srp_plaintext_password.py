@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.routes.users import _issue_oauth_state_token, _store_oauth_pending
+from app.api.routes.users.oauth import _issue_oauth_state_token, _store_oauth_pending
 from app.common.auth import create_access_token
 from app.core.config import settings
 from app.domain.user.login_security import (

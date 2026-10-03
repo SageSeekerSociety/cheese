@@ -13,6 +13,7 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
+from app.api.deps import get_user_auth_service
 from app.api.routes import users
 from app.core.errors import register_exception_handlers
 from app.domain.user import login_security
@@ -61,7 +62,7 @@ async def client(accounts):
     app = FastAPI()
     register_exception_handlers(app)
     app.include_router(users.router)
-    app.dependency_overrides[users.get_user_auth_service] = lambda: accounts
+    app.dependency_overrides[get_user_auth_service] = lambda: accounts
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as c:
