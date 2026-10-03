@@ -167,6 +167,14 @@ class _Board:
         assert published.status_code == 200, published.text
         return published.json()["data"]["task"]["id"]
 
+    def drop_task(self, token: str, task_id: int):
+        return self.client.delete(f"/tasks/{task_id}", headers=_auth(token))
+
+    def drop_category(self, token: str, category_id: int):
+        return self.client.delete(
+            f"/spaces/{self.space_id}/categories/{category_id}", headers=_auth(token)
+        )
+
     def counts(self, token: str) -> dict:
         """清单里每一行的 `usedByCount`；成员那一侧没有这个键，于是值是 None。"""
         listed = self.list(token)
@@ -474,3 +482,29 @@ class TestMaterialUsageCount:
         counts = board.counts(board.owner.token)
         assert material_id not in counts  # 删掉的那一行整行都不在了
         assert counts[keeper] == 1  # 悬空那位没把它的数顶掉
+
+    def test_soft_deleted_rows_stop_counting(self, board: _Board) -> None:
+        """撤下来的项目集、删掉的赛题，它们那一格 JSON 还在库里，但不该再算。
+
+        老师在界面上看不见它们、也改不了，列着它们的 id 只会把这一格撑大。
+        """
+        in_task = board.upload(board.owner.token).json()["data"]["material"]["id"]
+        in_category = board.upload(board.owner.token).json()["data"]["material"]["id"]
+        kept = board.upload(board.owner.token).json()["data"]["material"]["id"]
+
+        task_id = board.teach_task(board.owner.token, [in_task, kept])
+        category_id = board.teach_category(board.owner.token, [in_category, kept])
+        assert board.teach_space(board.owner.token, [kept]).status_code == 200
+        assert board.counts(board.owner.token) == {
+            in_task: 1,
+            in_category: 1,
+            kept: 3,
+        }
+
+        assert board.drop_task(board.owner.token, task_id).status_code == 204
+        assert board.drop_category(board.owner.token, category_id).status_code == 204
+
+        counts = board.counts(board.owner.token)
+        assert counts[in_task] == 0  # 题删了，它那一处跟着不算
+        assert counts[in_category] == 0  # 项目集撤了，同上
+        assert counts[kept] == 1  # 只剩空间默认那一处

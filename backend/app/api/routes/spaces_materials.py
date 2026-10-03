@@ -66,8 +66,9 @@ async def list_space_materials(
 ) -> dict:
     data = await service.list_for_space(space_id=space_id, user_id=auth_user.user_id)
     if data["canManage"]:
-        # 删除影响面只发给能删的人：它是管理动作的判断依据（「撤了这份会影响几
-        # 处指导」），成员那一侧既看不见管理入口，也不该看见有多少处配置指着它。
+        # 「还有几处配置列着它」只发给能删的人：这是删除之前的判断依据（撤了就
+        # 留下几处指着空处），成员那一侧既看不见管理入口，也不该看见别人的配置
+        # 里有没有它。
         counts = await count_material_references(db, space_id=space_id)
         for item in data["materials"]:
             item["usedByCount"] = counts.get(item["id"], 0)

@@ -137,25 +137,37 @@ async def for_project(
 async def count_material_references(
     session: AsyncSession, *, space_id: int
 ) -> dict[int, int]:
-    """这块板上有几处教学配置引用了每一份课件：``{material_id: 处数}``。
+    """这块板上还有几处配置列着每一份课件：``{material_id: 处数}``。
 
-    「资料库」那一页要显示删除影响面（「被 3 处引用」/「未被引用」），问的就是
-    这一句 —— 删一份课件之前，老师该看到有几处配置指着它。
+    「资料库」那一页用它显示「被 N 处引用」/「未被引用」，好让老师删一份课件之前
+    知道自己会留下几处指着空处的配置。
+
+    **数的是「列着」，不是「生效」。** ``resolve`` 只看最里面那个非空层（题目覆盖
+    压过项目集、项目集压过空间默认），这里三层各自照数 —— 一份课件可能被空间默认
+    列着而板上每道题都被项目集盖住，那时它一处也不生效，但删了它，空间默认那个配置
+    里就留下一个悬空 id。这正是老师要看见的事，所以两种口径都对，只是这一格答的是
+    前者；数字的含义写在界面的那一句文案上，不要把它读成「会影响 N 道题」。
 
     数三层：空间自己的默认、板下每个项目集、板下每道题。**项目那一层不数**：
     ``Project.settings["teaching"]`` 今天全仓库没有一个写入口（``resolve`` 读得到
     它，但没人往里写），数它只会永远得 0，还要多扫一遍项目表。判据是「有没有人
     能写出这个引用」，不是「``resolve`` 会不会读它」—— 哪天有了写入口，这里补
-    一条。
+    一条。集成测试里那条直接写 ``settings`` 的捷径（``test_teaching_chain.py``）
+    是造场景用的，不是写入口。
+
+    **软删掉的行不算**：撤下来的项目集、删掉的赛题，它们那一格 JSON 还留在库里，
+    但老师在界面上看不到、也改不了。列着它们的那些 id 不该把这一格撑大 —— 数的是
+    「你还能去收拾的配置」。（软删的赛题对已经建好的项目还生效，那是读侧
+    ``for_project`` 的事：它不滤 ``deleted_at``。两条口径不同，各有各的用处。）
 
     **在内存里数，不写 SQL**：配置存在 JSON 列里，「这个数组里有 42」在
     PostgreSQL 上要 ``@>``（只有 JSONB 有）而 SQLite 退化成字符串 LIKE，同一条
     语句跨库不等价（sqlalchemy#12736）。捞出来的只是每处配置那一格 JSON，量级是
     「这块板有多少个分类和题目」，不随课件数增长。
 
-    **已经撤下来的引用照数**：一处配置指着已经被删掉（或改成「仅管理员」）的
-    课件，那仍然是「删这份文件会动到它」，而且正是界面要提醒老师的那件事。读取时
-    那条引用本来就不算数（见 ``for_project``），两处不矛盾。
+    **已经撤下来的课件照数**：一处配置指着已经被删掉（或改成「仅管理员」）的课件
+    时，那个 id 仍然列在那儿等老师收拾。读取时它不算数（见 ``for_project``），两处
+    不矛盾。
     """
     counts: dict[int, int] = {}
 
@@ -168,13 +180,20 @@ async def count_material_references(
         tally(getattr(space, "teaching", None))
     for (raw,) in (
         await session.execute(
-            select(SpaceCategory.teaching).where(SpaceCategory.space_id == space_id)
+            select(SpaceCategory.teaching).where(
+                SpaceCategory.space_id == space_id,
+                SpaceCategory.deleted_at.is_(None),
+            )
         )
     ).all():
         tally(raw)
     for (raw,) in (
         await session.execute(
-            select(Task.protocol_override).where(Task.space_id == space_id)
+            select(Task.protocol_override).where(
+                Task.space_id == space_id,
+                Task.deleted_at.is_(None),
+                Task.protocol_override.is_not(None),
+            )
         )
     ).all():
         # 题目那一层是 `protocol_override` 这个 JSON 里的一个键，与 `resolve`
