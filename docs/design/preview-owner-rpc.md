@@ -76,7 +76,11 @@ if absent) and is released only through `deploy/release-preview-connection.sh` /
 **Release preview connection owner**, which recreate it with no drain and so
 drop every live tunnel (helpers redial). `PREVIEW_CONNECTION_MODE=legacy` in
 `deploy/preview-connection.env` routes all of it back onto the business backend
-on the next deploy, so a revert needs no box access.
+on the next deploy and then stops the owner, so a revert needs no box access —
+the kill switch is the revert. Reverting the commit is not: `active/sites.conf`
+is box-generated and keeps the `$content_upstream` split, and a running owner the
+switch never retired keeps serving the tunnels its `preview-routing.conf` still
+names. See `docs/infrastructure.md` for the exact order the legacy pass runs in.
 
 What still is not claimed here: real production/WAN acceptance, more than one
 owner replica or Uvicorn worker (unsupported), durable highest-issued-credential

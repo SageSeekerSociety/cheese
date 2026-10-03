@@ -78,10 +78,17 @@ services:
       # both tunnel spellings, and never fails closed on them.
       - PREVIEW_CONNECTION_MODE=owner
       - DEPLOYED_VIA_COMPOSE=1
-      # A light database user; the backend pair takes the server's budget
-      # (see db_pool_size in app/core/config.py).
-      - DB_POOL_SIZE=5
-      - DB_MAX_OVERFLOW=5
+      # 5, not the device owner's 10: the two owners stand for the whole life of
+      # the box, so a release charges the server for BOTH at once on top of two
+      # backends (2x36) and the ops reserve (10) — 72+10+5+10 == 97, exactly the
+      # default server's budget. The preview owner is also the lighter of the
+      # two: one uvicorn worker serving short file reads and HMR proxies, where
+      # the device owner holds a long-lived session per machine link. Bumping
+      # this without re-checking that arithmetic spends a connection the box
+      # does not have — backend/tests/unit/test_db_pool_fits_the_server.py is
+      # the check, and it counts every owner.
+      - DB_POOL_SIZE=3
+      - DB_MAX_OVERFLOW=2
       # Content hosts read the selected artifact's files from the workspace
       # (library/service.py) and the room files beside them — the same host paths
       # the backend mounts. Uploads and a writable HOME are carried too so the

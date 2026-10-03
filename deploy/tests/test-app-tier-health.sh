@@ -1074,6 +1074,95 @@ test_kill_switch_routes_previews_back() {
   echo "PASS: the legacy kill switch routes tunnels and content hosts back off the owner"
 }
 
+# A healthy /healthz only says the process is up. The owner reads static previews
+# and room files straight off settings.workspace_root, which is a HOST path on a
+# subscription box (siblings resolve their own mounts against the host daemon) —
+# so preview-connection must carry the same host-path mirror backend does. If it
+# does not, the owner answers every health probe and fails every preview with a
+# path that is not mounted. Pin the deploy's own check of that, and that it runs
+# before anything is re-routed or replaced.
+test_deploy_fails_when_preview_owner_cannot_see_its_files() {
+  local run_dir docker_log
+  run_dir="$(new_rollout_run_dir)"
+  docker_log="$run_dir/docker.log"
+  # A box not yet cut over: the routing and the content hosts must survive a
+  # failed owner check untouched.
+  bash "$ROOT/deploy/llm-tunnel/configure-preview.sh" legacy "$run_dir/active" >/dev/null
+  bash "$ROOT/deploy/llm-tunnel/configure-sites.sh" example.net "$run_dir/active" >/dev/null
+  if rollout_run "$run_dir" env \
+      APP_TIER_DOCKER_FAIL_MATCH='exec -T preview-connection python' \
+      >"$run_dir/deploy.log" 2>&1; then
+    rm -rf "$run_dir"
+    fail "deploy succeeded although the owner could not see the files it serves"
+  fi
+  grep -F 'up -d --no-deps preview-connection' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "the preview owner was never started"; }
+  grep -F ':18087/healthz' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "the preview owner was never health-checked"; }
+  grep -F 'exec -T preview-connection python' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "the deploy never checked the owner's own file paths"; }
+  grep -F 'see the files it serves' "$run_dir/deploy.log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "the failed owner check did not say why the deploy stopped"; }
+  ! grep -q 'exec cheese-api-front nginx -s reload' "$docker_log" \
+    || { rm -rf "$run_dir"; fail "api-front routes switched despite the owner's missing files"; }
+  ! grep -q 'run -d --no-deps --name cheese-backend-next' "$docker_log" \
+    || { rm -rf "$run_dir"; fail "a backend rolled out despite the owner's missing files"; }
+  ! grep -q 'up -d --no-deps backend' "$docker_log" \
+    || { rm -rf "$run_dir"; fail "the compose backend was recreated despite the owner's missing files"; }
+  grep -Fqx '  default "127.0.0.1:18085";' "$run_dir/active/preview-routing.conf" \
+    || { rm -rf "$run_dir"; fail "the preview routing was rewritten despite the failed owner check"; }
+  ! grep -q 'content_upstream' "$run_dir/active/sites.conf" \
+    || { rm -rf "$run_dir"; fail "the content-host split was written despite the failed owner check"; }
+  rm -rf "$run_dir"
+  echo "PASS: an owner that cannot see its files fails the deploy before any route or backend change"
+}
+
+# The other half of the kill switch. Flipping to legacy re-points the routes, but
+# a still-running owner holds its helpers' connections: leaving it up means new
+# tunnel requests land on a backend whose hub is empty while the old helpers stay
+# on the owner. The deploy must therefore move the routes back — only AFTER the
+# backends have rolled back to legacy, so a redial never hits a backend with no
+# tunnel route — and then stop the owner.
+test_kill_switch_stops_the_running_owner() {
+  local run_dir docker_log backend_up reload stop_line reload_count
+  run_dir="$(new_rollout_run_dir)"
+  docker_log="$run_dir/docker.log"
+  # A box fully cut over, with the owner still RUNNING when the switch flips.
+  # Both files are written exactly as the previous (owner-mode) deploy would have
+  # left them, INCLUDING the front door's 18086 upstream, so this pass sees no
+  # change and does not reload api-front until it moves the routes back.
+  bash "$ROOT/deploy/llm-tunnel/configure-sites.sh" example.net "$run_dir/active" 18087
+  bash "$ROOT/deploy/llm-tunnel/configure-frontend.sh" "$run_dir/active" 18086 18080 18087
+  rollout_run "$run_dir" env PREVIEW_CONNECTION_MODE=legacy APP_TIER_SCENARIO=stable_owner \
+    ACTIVE_FRONTEND_DIR="$run_dir/active" >"$run_dir/deploy.log" 2>&1 \
+    || { cat "$run_dir/deploy.log"; fail "legacy flip with a running owner failed"; }
+  grep -F 'previews stay on the running owner' "$run_dir/deploy.log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "legacy flip did not acknowledge the still-running owner"; }
+  grep -F 'returning previews to the business backend' "$run_dir/deploy.log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "legacy flip never returned previews to the business backend"; }
+  backend_up="$(log_line "$docker_log" 'up -d --no-deps backend')"
+  reload="$(last_log_line "$docker_log" 'exec cheese-api-front nginx -s reload')"
+  reload_count="$(grep -c 'exec cheese-api-front nginx -s reload' "$docker_log" || true)"
+  stop_line="$(log_line "$docker_log" 'stop preview-connection')"
+  [ -n "$backend_up" ] || { rm -rf "$run_dir"; fail "the backend never rolled back to legacy"; }
+  [ -n "$reload" ] || { rm -rf "$run_dir"; fail "the routes were never moved off the owner"; }
+  [ "$reload_count" = 1 ] \
+    || { rm -rf "$run_dir"; fail "the transitional pass reloaded api-front $reload_count times, not once at the end"; }
+  [ -n "$stop_line" ] || { rm -rf "$run_dir"; fail "the running preview owner was never stopped"; }
+  [ "$backend_up" -lt "$reload" ] \
+    || { rm -rf "$run_dir"; fail "the routes moved off the owner before the backend served legacy"; }
+  [ "$reload" -lt "$stop_line" ] \
+    || { rm -rf "$run_dir"; fail "the owner was stopped before the routes moved off it"; }
+  grep -Fqx '  default "127.0.0.1:18085";' "$run_dir/active/preview-routing.conf" \
+    || { rm -rf "$run_dir"; fail "legacy flip left the tunnel on the owner"; }
+  grep -Fq 'proxy_pass http://backend_active;' "$run_dir/active/sites.conf" \
+    || { rm -rf "$run_dir"; fail "legacy flip left preview content hosts on the owner"; }
+  ! grep -q 'content_upstream' "$run_dir/active/sites.conf" \
+    || { rm -rf "$run_dir"; fail "legacy flip left the owner split in sites.conf"; }
+  rm -rf "$run_dir"
+  echo "PASS: the legacy kill switch stops a running owner only after its routes are back on the backend"
+}
+
 test_release_preview_connection_requires_interrupt() {
   local run_dir docker_log
   mkdir -p "$ROOT/.tmp"
@@ -1445,6 +1534,8 @@ case "$CASE" in
   preview-owner-stable) test_deploy_keeps_preview_owner_running ;;
   preview-owner-sites) test_deploy_splits_preview_content_hosts_to_the_owner ;;
   preview-kill-switch) test_kill_switch_routes_previews_back ;;
+  preview-owner-files) test_deploy_fails_when_preview_owner_cannot_see_its_files ;;
+  preview-kill-switch-owner) test_kill_switch_stops_the_running_owner ;;
   preview-owner-release) test_release_preview_connection_requires_interrupt ;;
   all)
     test_missing_forge_fails_health_check
@@ -1489,6 +1580,8 @@ case "$CASE" in
     test_deploy_keeps_preview_owner_running
     test_deploy_splits_preview_content_hosts_to_the_owner
     test_kill_switch_routes_previews_back
+    test_deploy_fails_when_preview_owner_cannot_see_its_files
+    test_kill_switch_stops_the_running_owner
     test_release_preview_connection_requires_interrupt
     ;;
   *) fail "unknown case: $CASE" ;;

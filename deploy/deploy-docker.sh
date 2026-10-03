@@ -126,6 +126,17 @@ ensure_device_connection_owner() {
   fail "device connection owner is not healthy; the running backend was not touched"
 }
 
+preview_connection_container() {
+  dc ps -q preview-connection 2>/dev/null | head -n 1 || true
+}
+
+preview_connection_running() {
+  local container
+  container="$(preview_connection_container)"
+  [ -n "$container" ] \
+    && [ "$(docker inspect --format '{{.State.Running}}' "$container" 2>/dev/null || true)" = true ]
+}
+
 # The preview owner carries the machine preview tunnels and the preview content
 # hosts. It is released on its own (deploy/release-preview-connection.sh) exactly
 # like device-connection, so an ordinary app release leaves it alone. It is
@@ -135,11 +146,20 @@ ensure_device_connection_owner() {
 # backends are replaced into owner mode.
 ensure_preview_connection_owner() {
   if [ "$PREVIEW_CONNECTION_MODE" != owner ]; then
-    log "previews stay on the business backend (PREVIEW_CONNECTION_MODE=legacy)"
+    # A legacy flip does not retire a running owner here: the routes still point
+    # at it, and the backends have not rolled back yet. Only once they have —
+    # in retire_preview_connection_owner, after the rollout — is it safe to stop
+    # it. Say which of the two situations this is, because "previews stay on the
+    # business backend" would be a lie while an owner is still serving them.
+    if preview_connection_running; then
+      log "previews stay on the running owner until the business backends are legacy"
+    else
+      log "previews stay on the business backend (PREVIEW_CONNECTION_MODE=legacy)"
+    fi
     return 0
   fi
   local container started=false waited=0
-  container="$(dc ps -q preview-connection 2>/dev/null | head -n 1 || true)"
+  container="$(preview_connection_container)"
   if [ -n "$container" ] && [ "$(docker inspect --format '{{.State.Running}}' "$container" 2>/dev/null || true)" = true ]; then
     log "leaving preview connection owner $container running across this app release"
   else
@@ -151,12 +171,47 @@ ensure_preview_connection_owner() {
   while [ "$waited" -lt "$OWNER_HEALTH_SECONDS" ]; do
     if curl -fsS -m 3 "http://127.0.0.1:${PREVIEW_CONNECTION_PORT}/healthz" >/dev/null 2>&1; then
       [ "$started" = false ] || log "preview connection owner is healthy"
+      check_preview_connection_owner_sees_its_files
       return
     fi
     sleep 2
     waited=$((waited + 2))
   done
   fail "preview connection owner is not healthy; no route or backend was changed"
+}
+
+# A healthy owner is not enough: WORKSPACE_ROOT is a HOST path (a sandbox sibling
+# resolves its own `-v <src>` against the host daemon), so a subscription box
+# mounts the workspace tree at that same absolute path inside the backend too —
+# see deploy/compose/docker-compose.subscription.yml. Miss that mount on
+# preview-connection and the owner still reports /healthz while every static
+# preview and room-file read fails with a path that does not exist. Check the
+# owner's OWN resolved paths, with the same Settings the app reads, so a box-local
+# env that points them somewhere unmounted fails here and not on the first
+# preview. This runs after /healthz and BEFORE any route or backend change, so a
+# failure leaves the running previews untouched.
+check_preview_connection_owner_sees_its_files() {
+  if ! dc exec -T preview-connection python -c '
+import os
+from app.core.config import Settings
+
+settings = Settings()
+missing = []
+for name, path in (
+    ("workspace_root", settings.workspace_root),
+    ("storage_local_path", settings.storage_local_path),
+):
+    if not os.path.isdir(path):
+        missing.append(f"{name}={path}")
+if missing:
+    raise SystemExit("unmounted: " + ", ".join(missing))
+'; then
+    # The common cause is an owner that predates this check (started by an older
+    # compose without the host-path mirror): its mounts cannot be changed in
+    # place, so release it and deploy again. Say so, because "cannot see the
+    # files" on its own reads like a box-local env mistake.
+    fail "preview connection owner cannot see the files it serves (see the error above); no route or backend was changed — if the owner predates this release, dispatch 'Release preview connection owner' and deploy again"
+  fi
 }
 
 ensure_forgejo() {
@@ -298,16 +353,27 @@ ensure_application_router() {
   rm -f "$routing_backup"
   [ ! -f "$ACTIVE_BACKEND_DIR/preview-routing.conf" ] \
     || cp "$ACTIVE_BACKEND_DIR/preview-routing.conf" "$routing_backup"
-  # The preview tunnel target for the effective mode. owner points it at the
-  # owner's loopback port; legacy writes the backend, so the route in nginx.conf
-  # sends the tunnel back through app-router exactly as before the cutover.
-  if [ "$PREVIEW_CONNECTION_MODE" = owner ]; then
+  # The preview tunnel target for this deploy. owner points the routes at the
+  # owner's loopback port. legacy normally writes the backend — but only once no
+  # owner is serving: while an owner is still RUNNING its helpers are connected
+  # to it, and re-pointing the routes first would send their redials to a backend
+  # that has not rolled back to legacy yet (no tunnel route there, a 404, which
+  # ends the helper's retry loop for good). So a legacy flip that still has a
+  # running owner keeps the owner target through this pass, the backends roll
+  # back, and retire_preview_connection_owner re-points them afterwards.
+  if [ "$PREVIEW_CONNECTION_MODE" = owner ] \
+    || { [ "${PREVIEW_ROUTE_FORCE_BACKEND:-0}" != 1 ] && preview_connection_running; }; then
     owner_port="$PREVIEW_CONNECTION_PORT"
   else
     owner_port=""
   fi
-  bash "$HERE/llm-tunnel/configure-preview.sh" "$PREVIEW_CONNECTION_MODE" "$ACTIVE_BACKEND_DIR" "$owner_port" \
-    || fail "could not write the preview routing file"
+  # configure-preview.sh takes the mode, not the port, for what nginx.conf's
+  # tunnel location points at; the content-host scripts below take the port.
+  if [ -n "$owner_port" ]; then
+    bash "$HERE/llm-tunnel/configure-preview.sh" owner "$ACTIVE_BACKEND_DIR" "$owner_port"
+  else
+    bash "$HERE/llm-tunnel/configure-preview.sh" legacy "$ACTIVE_BACKEND_DIR"
+  fi || fail "could not write the preview routing file"
   if [ ! -s "$routing_backup" ] \
     || ! cmp -s "$routing_backup" "$ACTIVE_BACKEND_DIR/preview-routing.conf"; then
     changed=true
@@ -364,6 +430,28 @@ ensure_application_router() {
   fi
   rm -f "$backup" ${frontend_backup:+"$frontend_backup"} ${sites_backup:+"$sites_backup"} "$routing_backup"
   log "api-front routes application traffic through app-router; later business switches leave persistent connections untouched"
+}
+
+# The legacy half of the kill switch. While the routes still pointed at a running
+# owner, helpers stayed connected to it, so flipping the file to legacy without
+# this would leave those helpers on the owner and route NEW tunnel requests to a
+# backend whose hub is empty — previews broken, and only until the helper redials.
+# Called AFTER the backends have rolled back to legacy, so the order is: backends
+# serve legacy -> routes re-point at the backend -> owner stops -> helpers redial
+# and land on the backend. In owner mode it does nothing.
+retire_preview_connection_owner() {
+  [ "$PREVIEW_CONNECTION_MODE" = legacy ] || return 0
+  preview_connection_running || return 0
+  log "PREVIEW_CONNECTION_MODE=legacy: returning previews to the business backend"
+  PREVIEW_ROUTE_FORCE_BACKEND=1 ensure_application_router
+  if dc stop preview-connection >/dev/null; then
+    # Remove it too: a stopped owner still holds the service name and its image,
+    # and the next owner-mode deploy recreates it from scratch either way.
+    dc rm -f preview-connection >/dev/null 2>&1 || true
+    log "preview connection owner stopped; its helpers redial the business backend"
+  else
+    fail "previews are routed to the business backend but the preview connection owner would not stop"
+  fi
 }
 log() { echo "[deploy-docker $(date '+%H:%M:%S')] $*"; }
 fail() { echo "[deploy-docker $(date '+%H:%M:%S')] ERROR: $*" >&2; exit 1; }
@@ -1054,6 +1142,11 @@ else
   log "bringing up backend + frontend…"
   dc up -d backend frontend || fail "compose up failed"
 fi
+# The legacy half of the preview kill switch. The backends above are serving
+# legacy now, so it is safe to move the routes off a still-running owner and stop
+# it — see retire_preview_connection_owner. It is a no-op in owner mode and when
+# no owner is running.
+retire_preview_connection_owner
 # After the backend it loads documents from and stores them to. Replacing it
 # closes open documents for a moment; every change is stored before it stops
 # (stop_grace_period) and the editors reconnect on their own.
