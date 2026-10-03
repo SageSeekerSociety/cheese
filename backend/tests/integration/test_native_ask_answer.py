@@ -740,6 +740,21 @@ def test_http_answer_continues_original_native_executor(
                         )
                     )
                     assert ordinary and consumed_turn(ordinary) is None
+                if mode == "ordinary-start":
+                    # This mode snapshots the deferral: the parked message must
+                    # still have produced no input at the final check. The seat
+                    # frees when the held work closes, and a fire-and-forget
+                    # recovery scan then re-admits the parked block, racing that
+                    # snapshot with a turn the test never drives to an echo. The
+                    # resume itself is covered by ordinary-resume's explicit
+                    # scan in finish_deferred_message, so park the auto-resume
+                    # here to keep the deferral snapshot deterministic.
+                    import app.domain.agent.pending_messages as _pending
+
+                    async def _parked_resume(*_args, **_kwargs):
+                        return 0
+
+                    monkeypatch.setattr(_pending, "resume_messages", _parked_resume)
                 native_runner._write = write
                 await write(delayed_writes[0])
                 async with asyncio.timeout(30):
