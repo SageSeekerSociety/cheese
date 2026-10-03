@@ -38,7 +38,7 @@ def test_native_original_executor_survives_full_service_recovery_and_busy_input(
 
     machine = Machine(headless_contract, tmp_path)
     project = post_project(
-        client, {"name": "Native executor recovery", "owner_handle": "alice"}
+        client, {"name": "Native executor recovery"}, owner="alice"
     ).json()["data"]
     project_id, topic = uuid.UUID(project["id"]), uuid.UUID(project["root_topic_id"])
     runner = None

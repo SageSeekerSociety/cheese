@@ -23,7 +23,7 @@ from tests.integration.test_native_batch_ownership import _blocks
 
 def test_recovered_original_executor_takes_busy_input_and_releases_both_batches(client):
     project = post_project(
-        client, {"name": "Ask executor recovery", "owner_handle": "alice"}
+        client, {"name": "Ask executor recovery"}, owner="alice"
     ).json()["data"]
     project_id = uuid.UUID(project["id"])
     topic = uuid.UUID(project["root_topic_id"])

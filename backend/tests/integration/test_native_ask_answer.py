@@ -124,7 +124,7 @@ def test_http_answer_continues_original_native_executor(
     gate = tmp_path / "continue-ask"
     try:
         project = post_project(
-            client, {"name": "Native Ask answer", "owner_handle": "alice"}
+            client, {"name": "Native Ask answer"}, owner="alice"
         ).json()["data"]
         project_id = uuid.UUID(project["id"])
         topic = uuid.UUID(project["root_topic_id"])
@@ -700,7 +700,10 @@ def test_http_answer_continues_original_native_executor(
                             NativeInput.completed_at.is_(None),
                         )
                     )
-                    assert waiting.accepted_at and waiting.echoed_at is None
+                    # A held input is registered and not yet echoed; Claude Code
+                    # defers acceptance to the echo, so accepted_at is still None
+                    # here — the same held state test_chat_realtime asserts.
+                    assert waiting.accepted_at is None and waiting.echoed_at is None
                     held_work = waiting.work_id
 
                 def post_ordinary():
@@ -788,7 +791,9 @@ def test_http_answer_continues_original_native_executor(
                     waiting = next(
                         row for row in registered if row.completed_at is None
                     )
-                    assert waiting.accepted_at and not waiting.echoed_at
+                    # Held before the deferred write: registered, not yet echoed,
+                    # and (Claude Code defers acceptance to the echo) not accepted.
+                    assert waiting.accepted_at is None and waiting.echoed_at is None
                     held_work = waiting.work_id
                 correction = await asyncio.to_thread(
                     submit_group, "稍后", "http-correct-start", 1

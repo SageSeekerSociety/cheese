@@ -42,7 +42,7 @@ def test_new_full_service_process_reuses_original_native_executor(
 
     machine = Machine(headless_contract, tmp_path)
     project = post_project(
-        client, {"name": "Native process recovery", "owner_handle": "alice"}
+        client, {"name": "Native process recovery"}, owner="alice"
     ).json()["data"]
     project_id, topic = uuid.UUID(project["id"]), uuid.UUID(project["root_topic_id"])
     busy = mode.endswith("busy")

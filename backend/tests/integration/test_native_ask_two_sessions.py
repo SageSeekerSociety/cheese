@@ -119,7 +119,7 @@ def test_http_group_answer_resumes_asking_session_while_other_native_session_is_
 
     try:
         project = post_project(
-            client, {"name": "Native Ask competing sessions", "owner_handle": "alice"}
+            client, {"name": "Native Ask competing sessions"}, owner="alice"
         ).json()["data"]
         project_id = uuid.UUID(project["id"])
         topic = uuid.UUID(project["root_topic_id"])
