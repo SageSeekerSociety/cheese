@@ -610,6 +610,179 @@ async def test_other_teammate_message_runs_beside_the_live_turn(
     assert screen.runs == 2
 
 
+class RacingSeat(ChatService):
+    """Counts the turns inside `_converse_impl`, and parks the first one just
+    before it takes its seat lock.
+
+    `converse` asks "is a turn running?" and only then goes for the lock; the
+    two are separated by `_turn_seat_handle`'s read of the roster. That gap is
+    microseconds wide in production and unobservable from a test, so this
+    subclass widens it: the first request stops inside the gap until
+    `let_the_first_go`, which is exactly the interleaving the seat lock exists
+    for — two requests that both saw the seat free.
+    """
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.seat_handle_calls = 0
+        self.first_is_in_the_gap = asyncio.Event()
+        self.first_left_the_gap = asyncio.Event()
+        self.let_the_first_go = asyncio.Event()
+        self.in_flight = 0
+        self.max_in_flight = 0
+        self.turns = 0
+
+    async def _turn_seat_handle(self, topic_id, **kwargs) -> str:
+        self.seat_handle_calls += 1
+        nth = self.seat_handle_calls
+        if nth == 1:
+            self.first_is_in_the_gap.set()
+            await self.let_the_first_go.wait()
+        handle = await super()._turn_seat_handle(topic_id, **kwargs)
+        if nth == 1:
+            # 缝走完了 —— 下一条语句就是去拿锁。锁拦得住的话，这次交出控制
+            # 权之前 `turns` 不会变；拦不住的话它已经是 2 了。
+            self.first_left_the_gap.set()
+        return handle
+
+    async def _converse_impl(self, **kwargs):
+        self.turns += 1
+        self.in_flight += 1
+        self.max_in_flight = max(self.max_in_flight, self.in_flight)
+        try:
+            async for frame in super()._converse_impl(**kwargs):
+                yield frame
+        finally:
+            self.in_flight -= 1
+
+
+class SeatLockRemoved(RacingSeat):
+    """The same service with the lock taken away — a fresh lock per call is no
+    lock at all. It exists to show the test below is not vacuous."""
+
+    def _seat_lock_for(self, topic_id, agent_handle):
+        return asyncio.Lock()
+
+
+async def _a_topic(factory) -> uuid.UUID:
+    async with factory() as session:
+        await registered(session, "u")
+        project = await ProjectService(session).create(name="P", owner_handle="u")
+        topic = await TopicService(session).create(
+            project_id=project.id, title="T", created_by="u"
+        )
+        topic_id = topic.id
+        await session.commit()
+    return topic_id
+
+
+async def _converse_to_the_end(svc, topic_id: uuid.UUID, content: str) -> None:
+    """Drive one summoning request to the end of its frame stream."""
+    async for _ in svc.converse(
+        topic_id=topic_id, author="u", content=content, summon=True
+    ):
+        pass
+
+
+async def _two_requests_that_both_saw_the_seat_free(
+    svc: RacingSeat, topic_id: uuid.UUID
+) -> tuple[asyncio.Task, asyncio.Task]:
+    """两条 summon 都走进「席位空着」那条路，然后把第一条放出来。
+
+    回来时第二条那一轮正在跑（`in_flight == 1`），第一条刚被放行 —— 调用方
+    在此断言，然后放行会话。
+    """
+    first = asyncio.create_task(_converse_to_the_end(svc, topic_id, "First task"))
+    async with asyncio.timeout(HANG_S):
+        while not svc.first_is_in_the_gap.is_set():
+            if first.done():
+                first.result()  # 它先炸了：把真正的错抛出来，别只报超时
+            await asyncio.sleep(0.01)
+    second = asyncio.create_task(_converse_to_the_end(svc, topic_id, "Second task"))
+    # 等「第二条进了 `_converse_impl`」，不等时间：只有真进去了才说明它过了
+    # 同一个「有人正在跑吗」、答了「没有」，否则它会 merge 进在跑的那一轮、
+    # 根本不竞速。进得去也说明它已经拿到那把（此刻空闲的）锁。
+    async with asyncio.timeout(HANG_S):
+        while svc.in_flight < 1:
+            if second.done():
+                second.result()
+            await asyncio.sleep(0.01)
+    svc.let_the_first_go.set()
+    return first, second
+
+
+@pytest.mark.anyio
+async def test_two_requests_that_both_saw_the_seat_free_never_overlap(
+    business_db_factory, tmp_path
+):
+    """两条 converse 抢同一个席位：后一条等在锁上，两轮不重叠。
+
+    两条消息各自拿到一轮是对的（它们都该被答）。错的是两轮**同时**在跑：
+    一条回复流里插进另一条的产出。这条路径上挡住它的是那把按
+    (topic, seat) 记的锁。
+
+    **这条测试不覆盖另外两条同席并发的路**（都还在，见 `chat.py`）：
+
+    - `_begin_self_started_turn` 自起的轮次不占席位锁；此时来一条 summon，
+      live 投递一旦失败就会落到那把（空闲的）锁上、再开一轮；
+    - `_turn_seat_handle`（拿锁**前**）与 `_assemble_turn`（拿锁**后**）
+      对「收件人已停用」「默认 agent 中途被换」两种输入解析出的 handle
+      不同 —— 两条请求于是各键一把锁，锁形同虚设。
+
+    同一间房里另一个席位的轮次照常并行，由
+    `test_other_teammate_message_runs_beside_the_live_turn` 盖。
+    """
+    factory = business_db_factory
+    screen = SlowScreen()
+    svc = RacingSeat(
+        session_factory=factory,
+        compute=stub_compute(screen),
+        base_system_prompt="You are Cheese.",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    topic_id = await _a_topic(factory)
+    first, second = await _two_requests_that_both_saw_the_seat_free(svc, topic_id)
+
+    # 第一条已经走到锁上：它在这里让出控制权，说明锁把它挡住了。没挡住的话
+    # `turns` 在它让出之前就已经是 2，这个断言会当场红。
+    await asyncio.wait_for(svc.first_left_the_gap.wait(), HANG_S)
+    assert svc.turns == 1, "第二条那一轮还在跑，第一条这一轮就不该开"
+    assert svc.in_flight == 1
+
+    screen.release.set()
+    await asyncio.wait_for(asyncio.gather(first, second), HANG_S)
+    await finish_turn(svc, topic_id)
+    assert svc.turns == 2, "两条消息都该拿到自己的一轮"
+    assert svc.max_in_flight == 1, "同一席位的两轮不许同时在跑"
+
+
+@pytest.mark.anyio
+async def test_the_guard_bites_when_the_seat_lock_is_taken_away(
+    business_db_factory, tmp_path
+):
+    """把锁拿走，上面那条断言就该红 —— 证明它不是空转。"""
+    factory = business_db_factory
+    screen = SlowScreen()
+    svc = SeatLockRemoved(
+        session_factory=factory,
+        compute=stub_compute(screen),
+        base_system_prompt="You are Cheese.",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    topic_id = await _a_topic(factory)
+    first, second = await _two_requests_that_both_saw_the_seat_free(svc, topic_id)
+
+    # 没有锁：第一条不必等第二条，两条都进来。
+    async with asyncio.timeout(HANG_S):
+        while svc.in_flight < 2:
+            await asyncio.sleep(0.01)
+    assert svc.max_in_flight == 2, "两轮同时在跑 —— 这正是上面那条守着的"
+
+    screen.release.set()
+    await asyncio.wait_for(asyncio.gather(first, second), HANG_S)
+    await finish_turn(svc, topic_id)
+
+
 class StillWorking(StubChannel):
     """Every seat takes its prompt and starts a long command, then says nothing."""
 
