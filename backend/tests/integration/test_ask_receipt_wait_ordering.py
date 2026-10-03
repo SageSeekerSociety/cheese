@@ -94,11 +94,23 @@ class _NativeBoundary:
         return kwargs["turn_id"]
 
     async def drain(self):
+        # Wait only on tasks that are still running. ``asyncio.gather`` over
+        # finished tasks alone completes without suspending, so waiting on the
+        # whole set would spin on the loop without ever yielding: the queued
+        # ``discard`` callbacks would not run, the set would never empty, and
+        # the ``timeout`` could not be delivered either.
         async with asyncio.timeout(5):
-            while self._tasks:
-                await asyncio.gather(*tuple(self._tasks))
-            for task in self._tasks.finished:
-                task.result()
+            while True:
+                pending = [task for task in tuple(self._tasks) if not task.done()]
+                if not pending:
+                    break
+                await asyncio.gather(*pending)
+            # Every owned task that finished, whether or not its queued
+            # ``finished``/``discard`` callbacks have run yet: a failure must
+            # still surface here rather than pass unnoticed.
+            for task in (*self._tasks, *self._tasks.finished):
+                if task.done():
+                    task.result()
 
 
 async def _sentinels(factory, project, topic, seat, other_seat):
