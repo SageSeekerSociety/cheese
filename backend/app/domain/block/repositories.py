@@ -648,6 +648,40 @@ class BlockRepository:
             waiting[place_id] = asked
         return waiting
 
+    async def questions_a_reply_answers(self, reply: Block) -> list[Block]:
+        """`reply` 这句话答掉的那几道题：同一条线上问他、还没人点过选项、而且问出口
+        之后他还没说过话的题。
+
+        判据和 `_awaiting_an_answer` 里「直接打字回了一句」是同一条：题问出来之后，
+        被问的那个人在这里说的第一句话就是回应。只认第一句 —— 他答完又接着说的话，
+        不再算是这道题的答案。
+        """
+        place = self._in_place(reply.topic_id, reply.task_id)
+        spoke_before = (
+            select(func.max(Block.created_at))
+            .where(
+                *place,
+                Block.kind == BlockKind.message,
+                participant_blocks(),
+                Block.author == reply.author,
+                Block.id != reply.id,
+            )
+            .scalar_subquery()
+        )
+        stmt = (
+            select(Block)
+            .where(
+                *place,
+                QUESTION_ROWS,
+                Block.meta["asked"].as_string() == reply.author,
+                Block.meta["answered"].as_string().is_(None),
+                Block.id != reply.id,
+                or_(spoke_before.is_(None), Block.created_at > spoke_before),
+            )
+            .order_by(Block.created_at)
+        )
+        return list((await self._session.scalars(stmt)).all())
+
     async def last_summoner(self, room_id: uuid.UUID) -> str | None:
         """房间自己那条线上，最近一个点了 AI 名的人。
 

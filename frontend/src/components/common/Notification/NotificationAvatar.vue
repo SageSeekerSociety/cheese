@@ -19,7 +19,7 @@ import type { EntityInfo } from '@/network/api/notifications/types'
 
 import { computed } from 'vue'
 
-import { getNotificationColor, getNotificationIcon } from '@/services/notification/registry'
+import { getNotificationMark } from '@/services/notification/registry'
 
 const props = defineProps<{
   notification: Notification
@@ -36,11 +36,10 @@ const iconSize = computed(() => {
   return isNaN(avatarSize) ? 18 : Math.max(Math.floor(avatarSize / 2), 16)
 })
 
-// 获取通知图标
-const icon = computed(() => getNotificationIcon(props.notification.type))
-
-// 获取通知颜色
-const color = computed(() => props.color || getNotificationColor(props.notification.type))
+// 图标和颜色跟着这一条现在的状态走，不只看类型：答过的提问不再画成待处理
+const mark = computed(() => getNotificationMark(props.notification))
+const icon = computed(() => mark.value.icon)
+const color = computed(() => props.color || mark.value.color)
 
 // 获取主要实体（优先级：发送者 > 其他人类实体）
 const primaryEntityWithAvatar = computed<EntityInfo | null>(() => {

@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.config import settings
 from app.core.errors import NotFoundError, ValidationError
 from app.domain.agent import death_evidence, turn_inputs
-from app.domain.agent.announce import announce
+from app.domain.agent.announce import announce, settle_questions_answered_by
 from app.domain.agent.compute import ComputePool, ComputeProvider
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 
@@ -2246,8 +2246,8 @@ class ChatService(SessionRecovery):
         client_id: str | None = None,
         quoted_context: dict | None = None,
     ) -> tuple[list[dict], uuid.UUID, list[uuid.UUID], bool]:
-        """Persist the human message (+ its image attachment blocks) and the
-        @mention notifications in one short transaction, outside any turn lock.
+        """Persist a person's message (+ attachment blocks), its @mention notices
+        and the questions it answers in one short transaction, outside any turn lock.
         Returns (payloads, anchor_block_id, all_block_ids, duplicate) — the
         anchor is what 芝士's reply threads under; all ids are consumed together
         after a mid-session delivery receipt. ``duplicate`` means the browser
@@ -2400,8 +2400,8 @@ class ChatService(SessionRecovery):
                 if attribution_id is None:
                     attribution_id = user_block.id
                     user_block.turn_id = attribution_id
-                # Resolve <@handle> mentions in the human message → strong notify.
                 await announce_mentions(session, topic, user_block, author, roster)
+                await settle_questions_answered_by(session, user_block)
                 if len(agent_handles) > 1:
                     # `agent_recipient` 是单数：它起的是第一位点到的那一轮。同一条
                     # 消息点到的其余几位各记一条投递，和 agent 点名走同一本账。
