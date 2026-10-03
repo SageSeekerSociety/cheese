@@ -8,8 +8,6 @@
 // link's address passes the editor's own check.
 //
 // How the text is read (and the chat's one difference) is lib/docRead.ts.
-import 'katex/dist/katex.min.css'
-
 import type { Node as PMNode } from '@tiptap/pm/model'
 import type { ReadAs } from '../../../../lib/docRead'
 import type { RefNames } from '../../../../lib/refChip'
@@ -192,17 +190,20 @@ function serializer(doc: PMNode, later: Later, opts: ReadOptions): DOMSerializer
       const data = document.createElement('div')
       data.className = 'doc-chart__data'
       bar.append(kind, chartToggle(dom, data))
-      dom.append(bar)
+      // The chart's room is held from the start, so the page does not jump
+      // when it is drawn.
+      const room = document.createElement('div')
+      room.className = 'doc-chart__canvas'
+      dom.append(bar, room, data)
       later(dom, () => {
         const { canvas, destroy } = chartCanvas(() => ({
           kind: node.attrs.kind,
           horizontal: Boolean(node.attrs.horizontal),
           rows: tableRows(node),
         }))
-        bar.after(canvas)
+        room.replaceWith(canvas)
         return destroy
       })
-      dom.append(data)
       return { dom, contentDOM: data }
     },
     codeBlock(node) {
