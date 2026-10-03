@@ -328,7 +328,13 @@ def _write_bound_model_buffered(flow: http.HTTPFlow, model: str) -> None:
     flow.request.content = out
 
 
-def _refuse(flow: http.HTTPFlow, status: int, kind: str, message: str) -> None:
+def _refuse(
+    flow: http.HTTPFlow,
+    status: int,
+    kind: str,
+    message: str,
+    headers: dict[str, str] | None = None,
+) -> None:
     """Answer this request here, and take back the streaming decision.
 
     Setting a response and streaming the request body are mutually exclusive in
@@ -361,8 +367,38 @@ def _refuse(flow: http.HTTPFlow, status: int, kind: str, message: str) -> None:
         json.dumps(
             {"type": "error", "error": {"type": kind, "message": message}}
         ).encode(),
-        {"Content-Type": "application/json"},
+        {"Content-Type": "application/json", **(headers or {})},
     )
+
+
+def _refuse_spent_budget(
+    flow: http.HTTPFlow, message: str, reopens_at: int | None
+) -> None:
+    """Refuse a turn whose project has spent its budget, in the shape Claude
+    Code's gateway contract gives a reached spend cap: 429 ``billing_error``
+    with ``x-should-retry: false`` and the ``anthropic-ratelimit-unified-*``
+    rejection headers.
+
+    A bare 429 is what it used to be, and Claude Code reads that as throttling:
+    it retries the turn up to ten times and, for a session signed in the way
+    ours are, prints "Server is temporarily limiting requests (not your usage
+    limit)" — the opposite of what happened. With the disabled-reason header it
+    prints ``message`` as it stands and does not retry. ``representative-claim``
+    and ``overage-status`` stay off on purpose: with them the client composes
+    its own limit line and drops ours.
+    """
+    headers = {
+        "x-should-retry": "false",
+        "anthropic-ratelimit-unified-status": "rejected",
+        "anthropic-ratelimit-unified-overage-utilization": "1",
+        "anthropic-ratelimit-unified-overage-surpassed-threshold": "1",
+        "anthropic-ratelimit-unified-overage-disabled-reason": "org_spend_cap_reached",
+    }
+    if reopens_at is not None:
+        headers["retry-after"] = str(max(0, reopens_at - int(time.time())))
+        headers["anthropic-ratelimit-unified-reset"] = str(reopens_at)
+        headers["anthropic-ratelimit-unified-overage-reset"] = str(reopens_at)
+    _refuse(flow, 429, "billing_error", message, headers)
 
 
 def http_connect(flow: http.HTTPFlow) -> None:
@@ -698,7 +734,9 @@ def _refuse_verdict(flow: http.HTTPFlow, verdict) -> None:
     if verdict.reason_kind == BINDING:
         _refuse(flow, 400, "invalid_request_error", verdict.reason)
         return
-    _refuse(flow, 429, "rate_limit_error", f"cheese project budget: {verdict.reason}")
+    _refuse_spent_budget(
+        flow, f"cheese project budget: {verdict.reason}", verdict.reopens_at
+    )
 
 
 async def requestheaders(flow: http.HTTPFlow) -> None:
@@ -1085,6 +1123,11 @@ def responseheaders(flow: http.HTTPFlow) -> None:
         # sent — so nothing is held for the length of a turn.
         return
     if flow.metadata.get("cheese_pool") == GATEWAY:
+        if resp.status_code == 429:
+            # Left buffered: response() replaces the gateway's spent-budget
+            # refusal with one Claude Code reads as a reached cap. A short
+            # error body, so nothing is held for the length of a turn.
+            return
         if "/v1/messages" in flow.request.path and "event-stream" in resp.headers.get(
             "content-type", ""
         ):
@@ -1294,6 +1337,29 @@ def _answer_a_missed_binding(flow: http.HTTPFlow) -> bool:
     return True
 
 
+def _answer_a_spent_gateway_budget(flow: http.HTTPFlow) -> bool:
+    """Re-render LiteLLM's ``max_budget`` refusal as the project's spent budget.
+
+    The ledger only learns a turn's spend when the turn ends, so near the end
+    of a budget it is the gateway's brake that stops a turn, not admission.
+    LiteLLM answers with an OpenAI-shaped 429 ``budget_exceeded`` naming the
+    key's hash, which Claude Code takes for throttling and retries; the
+    project's refusal has to read the same whichever brake caught it.
+    """
+    resp = flow.response
+    if resp is None or resp.status_code != 429:
+        return False
+    try:
+        body = json.loads(resp.content or b"")
+    except ValueError:
+        return False
+    error = body.get("error") if isinstance(body, dict) else None
+    if not isinstance(error, dict) or error.get("type") != "budget_exceeded":
+        return False
+    _refuse_spent_budget(flow, "cheese project budget: 额度已用完。", None)
+    return True
+
+
 def error(flow: http.HTTPFlow) -> None:
     if flow.metadata.get("cheese_pool") == GATEWAY:
         _log_gateway_timing(flow)
@@ -1324,6 +1390,8 @@ def response(flow: http.HTTPFlow) -> None:
         return
     if flow.metadata.get("cheese_pool") == GATEWAY:
         _log_gateway_timing(flow)
+        if _answer_a_spent_gateway_budget(flow):
+            return
         _report_gateway_failure(flow)
         return
     # SSE turns are metered incrementally in the responseheaders streaming tee;

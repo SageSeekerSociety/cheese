@@ -683,6 +683,66 @@ def test_an_exhausted_budget_says_budget(monkeypatch, tmp_path):
     assert flow.response is not None and flow.response.status_code == 429
     assert b"budget" in flow.response.content
     assert flow.request.headers["authorization"] == f"Bearer {SESSION_CREDENTIAL}"
+    _assert_read_as_a_reached_cap(flow.response)
+
+
+def _assert_read_as_a_reached_cap(response) -> None:
+    """What Claude Code needs to print the message as it stands and stop,
+    instead of retrying ten times under "Server is temporarily limiting
+    requests (not your usage limit)"."""
+    assert response.status_code == 429
+    assert json.loads(response.content)["error"]["type"] == "billing_error"
+    assert response.headers["x-should-retry"] == "false"
+    assert response.headers["anthropic-ratelimit-unified-status"] == "rejected"
+    assert (
+        response.headers["anthropic-ratelimit-unified-overage-disabled-reason"]
+        == "org_spend_cap_reached"
+    )
+    # With these the client writes its own limit line and drops ours.
+    assert "anthropic-ratelimit-unified-representative-claim" not in response.headers
+    assert "anthropic-ratelimit-unified-overage-status" not in response.headers
+
+
+def test_a_budget_that_reopens_says_when(monkeypatch, tmp_path):
+    """A full window or a monthly allowance comes back on its own; the refusal
+    carries when, so the client waits for that instead of guessing."""
+    secret = "s3cr3t"
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret=secret)
+    reopens_at = int(time.time()) + 7200
+    _with_admission(
+        mod,
+        monkeypatch,
+        allow=False,
+        reason="本月额度已用完，11月1日重置。",
+        reopens_at=reopens_at,
+    )
+    mod.http_connect(
+        _connect_flow_on("c1", _basic(_scoped_token(secret, project="p9")))
+    )
+    flow = _session_flow(conn="c1")
+
+    asyncio.run(mod.requestheaders(flow))
+
+    _assert_read_as_a_reached_cap(flow.response)
+    assert "11月1日重置" in json.loads(flow.response.content)["error"]["message"]
+    assert flow.response.headers["anthropic-ratelimit-unified-reset"] == str(reopens_at)
+    assert 7100 <= int(flow.response.headers["retry-after"]) <= 7200
+
+
+def test_spent_credits_that_never_reopen_name_no_reset(monkeypatch, tmp_path):
+    secret = "s3cr3t"
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret=secret)
+    _with_admission(mod, monkeypatch, allow=False, reason="额度已用完。")
+    mod.http_connect(
+        _connect_flow_on("c1", _basic(_scoped_token(secret, project="p9")))
+    )
+    flow = _session_flow(conn="c1")
+
+    asyncio.run(mod.requestheaders(flow))
+
+    _assert_read_as_a_reached_cap(flow.response)
+    assert "retry-after" not in flow.response.headers
+    assert "anthropic-ratelimit-unified-reset" not in flow.response.headers
 
 
 # --- where the session's credential goes -------------------------------------
@@ -1337,6 +1397,64 @@ def test_gateway_responses_do_not_charge_the_subscription(monkeypatch, tmp_path)
         mod.response(flow)
     assert mod.METER.used() == 0
     assert not mod.USAGE_LOG.exists()
+
+
+def _gateway_answer(mod, status: int, body: dict):
+    mod.GATEWAY_BASE = "http://gateway:4000"
+    mod.ADMISSION_URL = "http://backend/llm/admission"
+    mod.ALLOW_HEADER_ATTR = True
+    mod.ADMISSION.check = lambda *args: _verdict(pool="gateway", key="project-key")
+    flow = _make_flow()
+    flow.request.headers["x-cheese-attr"] = "project/topic"
+    asyncio.run(mod.requestheaders(flow))
+    assert flow.request.host == "gateway"
+    flow.response = _make_response(status_code=status, content_type="application/json")
+    flow.response.content = json.dumps(body).encode()
+    mod.responseheaders(flow)
+    mod.response(flow)
+    return flow.response
+
+
+def test_the_gateways_budget_brake_reads_as_the_projects_spent_budget(
+    monkeypatch, tmp_path
+):
+    """The ledger learns a turn's spend only when the turn ends, so the turn
+    that runs a budget out is stopped by LiteLLM's max_budget, not by
+    admission. That refusal has to read the same as admission's — and must not
+    pass on LiteLLM's message, which names the key."""
+    mod = _load_addon(monkeypatch, tmp_path)
+
+    response = _gateway_answer(
+        mod,
+        429,
+        {
+            "error": {
+                "message": "Budget has been exceeded! Key=0123abcd Current cost: "
+                "9.97, Max budget: 5.0108",
+                "type": "budget_exceeded",
+                "param": None,
+                "code": "429",
+            }
+        },
+    )
+
+    _assert_read_as_a_reached_cap(response)
+    message = json.loads(response.content)["error"]["message"]
+    assert "额度已用完" in message
+    assert "0123abcd" not in message
+
+
+def test_a_gateway_rate_limit_is_passed_on_as_it_came(monkeypatch, tmp_path):
+    """Only the spent budget is the project's to explain; an upstream that is
+    throttling really is throttling, and the client should back off."""
+    mod = _load_addon(monkeypatch, tmp_path)
+    body = {"error": {"message": "upstream busy", "type": "rate_limit_error"}}
+
+    response = _gateway_answer(mod, 429, body)
+
+    assert response.status_code == 429
+    assert json.loads(response.content) == body
+    assert "x-should-retry" not in response.headers
 
 
 def test_gateway_timing_preserves_request_boundary_and_omits_credentials(

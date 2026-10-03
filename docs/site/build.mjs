@@ -418,7 +418,7 @@ const ARCH_SAMPLES = {
   'ports.reverse': '443',
   'ports.connect': '8444',
   'budget.status': '429',
-  'budget.type': 'rate_limit_error',
+  'budget.type': 'billing_error',
   'budget.prefix': 'cheese project budget: ',
   'budget.allow_reason': 'admitted',
   'budget.refusal_reason': '本月额度已用完，11月1日重置。',
