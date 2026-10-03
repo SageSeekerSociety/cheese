@@ -56,6 +56,7 @@ def declarations() -> dict[str, Declaration]:
     """
     missing = sorted(set(HARNESSES) - set(_DECLARED))
     if missing:
+        # i18n-exempt: developer declaration check, never shown to a user
         raise MatrixIncomplete(f"这些骨架没有行为声明：{missing}")
     every = written()
     return {name: every[name] for name in HARNESSES}
@@ -74,10 +75,12 @@ def matrix() -> dict[str, dict[BuiltIn, str | Difference | Missing]]:
             cell = declared.how_disabled.get(concept)
             if isinstance(cell, Missing):
                 if concept not in declared.built_ins:
+                    # i18n-exempt: developer declaration check, never shown to a user
                     raise MatrixIncomplete(
                         f"{name} 说它不自带「{concept}」，这一格却记了一个暂缺。"
                     )
                 if declared.pinned_version != cell.until_pin:
+                    # i18n-exempt: developer declaration check, never shown to a user
                     raise MatrixIncomplete(
                         f"{name} 的「{concept}」暂缺（#{cell.issue}）记到 "
                         f"{cell.until_pin} 为止，pin 已经是 "
@@ -88,17 +91,20 @@ def matrix() -> dict[str, dict[BuiltIn, str | Difference | Missing]]:
                 continue
             if isinstance(cell, Difference):
                 if cell is Difference.NOT_BUILT_IN and concept in declared.built_ins:
+                    # i18n-exempt: developer declaration check, never shown to a user
                     raise MatrixIncomplete(
                         f"{name} 说它自带「{concept}」，这一格却填了「不自带」。"
                     )
                 row[concept] = cell
                 continue
             if not isinstance(cell, str) or not cell.strip():
+                # i18n-exempt: developer declaration check, never shown to a user
                 raise MatrixIncomplete(
                     f"{name} 的「{concept}」这一格是空的。"
                     "要么写清平台怎么关掉它，要么填一条 Difference 里的码。"
                 )
             if concept not in declared.built_ins:
+                # i18n-exempt: developer declaration check, never shown to a user
                 raise MatrixIncomplete(
                     f"{name} 说它不自带「{concept}」，却又写了一个关闭动作。"
                 )

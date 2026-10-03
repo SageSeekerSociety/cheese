@@ -63,19 +63,24 @@ def landing(
     match about:
         case EventAbout.task:
             if room_id is None or task_id is None:
+                # i18n-exempt: developer declaration check, never shown to a user
                 raise ValueError("卡的事要有房间和卡：room_id 与 task_id 都不能空")
             return Landing(project_id=project_id, topic_id=room_id, task_id=task_id)
         case EventAbout.room:
             if room_id is None:
+                # i18n-exempt: developer declaration check, never shown to a user
                 raise ValueError("房间的事要有房间：room_id 不能空")
             if task_id is not None:
+                # i18n-exempt: developer declaration check, never shown to a user
                 raise ValueError("房间的事不落在卡上：带了 task_id 就该说 task")
             return Landing(project_id=project_id, topic_id=room_id, task_id=None)
         case EventAbout.project:
             if room_id is None:
+                # i18n-exempt: developer declaration check, never shown to a user
                 raise ValueError(
                     "项目的事落项目总览：room_id 要给 `Project.root_topic_id` 那个房间"
                 )
             if task_id is not None:
+                # i18n-exempt: developer declaration check, never shown to a user
                 raise ValueError("项目的事不落在卡上：带了 task_id 就该说 task")
             return Landing(project_id=project_id, topic_id=room_id, task_id=None)
