@@ -47,8 +47,6 @@
     "progress": "已答 {answered} / {total} 题",
     "answered": "已答",
     "later": "稍后",
-    "resume": "现在回答",
-    "defer": "稍后回答",
     "summary": "待提交 {submitted} 题 · 稍后 {later} 题 · 未答 {unanswered} 题",
     "settled": "当前已答 {submitted} 题 · 稍后 {later} 题 · 未答 {unanswered} 题",
     "incomplete": "还有 {count} 题未答，是否仍提交？",
@@ -61,7 +59,6 @@
     "deliveryFailed": "答案已保存，投递失败；不会自动重发接续",
     "uncertain": "答案已保存，接续结果不确定；不会盲目重发",
     "awaitingReceipt": "答案已保存，正在等待原执行者回执",
-    "open": "打开整组回答",
     "invalid": "请补全已填写的答案，或将该题标为稍后",
     "conflict": "组版本已变化，原提交仍未确认。可刷新或重试原提交，暂不能新建提交",
     "operationConfirmed": "原提交已确认（组第 {version} 版），下方为该次回执",
@@ -71,8 +68,8 @@
     "previous": "上一题",
     "next": "下一题",
     "continue": "下一步",
-    "collapse": "收起提问",
-    "expand": "展开提问",
-    "position": "{index} of {total}"
+    "position": "{index} of {total}",
+    "skip": "跳过",
+    "returnHint": "有 {count} 个问题待回答"
   }
 }

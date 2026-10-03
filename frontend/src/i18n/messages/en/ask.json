@@ -47,8 +47,6 @@
     "progress": "Answered {answered} / {total}",
     "answered": "Answered",
     "later": "Later",
-    "resume": "Answer now",
-    "defer": "Answer later",
     "summary": "To submit {submitted} · Later {later} · Unanswered {unanswered}",
     "settled": "Current answers: {submitted} · Later {later} · Unanswered {unanswered}",
     "incomplete": "{count} questions remain unanswered. Submit anyway?",
@@ -61,7 +59,6 @@
     "deliveryFailed": "Answers saved, but delivery failed. Continuation will not be resent automatically",
     "uncertain": "Answers saved; continuation is uncertain and will not be blindly resent",
     "awaitingReceipt": "Answers saved; waiting for the original agent receipt",
-    "open": "Open group answers",
     "invalid": "Complete each started answer or mark it for later",
     "conflict": "The group version changed. The original submission is unconfirmed. Refresh or retry it; a new submission is blocked",
     "operationConfirmed": "Original submission confirmed (group version {version}); its receipt follows",
@@ -71,8 +68,8 @@
     "previous": "Previous question",
     "next": "Next question",
     "continue": "Next",
-    "collapse": "Dismiss question",
-    "expand": "Expand question",
-    "position": "{index} of {total}"
+    "position": "{index} of {total}",
+    "skip": "Skip",
+    "returnHint": "{count} questions waiting for your answer"
   }
 }

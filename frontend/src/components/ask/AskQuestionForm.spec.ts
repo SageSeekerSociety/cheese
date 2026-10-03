@@ -34,30 +34,38 @@ const state = (): AskFormState => ({
 })
 
 describe('real question form', () => {
-  it('accepts a custom grouped response directly without first choosing a separate radio', async () => {
+  it('keeps grouped free text behind the "write your own" option until it is chosen', async () => {
     const b = block()
     b.meta!.allow_other = true
+    const s = state()
     const view = render(AskQuestionForm, {
-      props: { block: b, viewer: 'alice', names: {}, state: state(), grouped: true },
+      props: { block: b, viewer: 'alice', names: {}, state: s, grouped: true },
     })
-    await fireEvent.update(screen.getByRole('textbox', { name: '你的回答' }), '我的方案')
+    // 还没选「自己填写」之前，输入框不该出现：它属于那个选项，不先占着位置。
+    expect(screen.queryByRole('textbox')).toBeNull()
+    await fireEvent.change(screen.getByRole('radio', { name: /自己填写/ }))
     expect(view.emitted().action).toEqual([
-      [{ type: 'draft', draft: { ...emptyAskDraft(), kind: 'note', note: '我的方案' } }],
+      [{ type: 'draft', draft: { ...emptyAskDraft(), kind: 'note', option: '' } }],
     ])
-    await fireEvent.submit(screen.getByRole('textbox').closest('form')!)
-    expect(view.emitted().action).toHaveLength(1)
+    await view.rerender({ state: { ...s, draft: { ...emptyAskDraft(), kind: 'note' } } })
+    await fireEvent.update(screen.getByRole('textbox', { name: '你的回答' }), '我的方案')
+    expect(view.emitted().action?.at(-1)).toEqual([
+      { type: 'draft', draft: { ...emptyAskDraft(), kind: 'note', option: '', note: '我的方案' } },
+    ])
   })
 
   it('allows numbered selection outside text input, while typing digits keeps the response intact', async () => {
     const b = block()
     b.meta!.allow_other = true
+    const s = state()
     const view = render(AskQuestionForm, {
-      props: { block: b, viewer: 'alice', names: {}, state: state(), grouped: true },
+      props: { block: b, viewer: 'alice', names: {}, state: s, grouped: true },
     })
     await fireEvent.keyDown(screen.getByRole('group'), { key: '2' })
     expect(view.emitted().action?.at(-1)).toEqual([
       { type: 'draft', draft: { ...emptyAskDraft(), kind: 'option', option: 'B' } },
     ])
+    await view.rerender({ state: { ...s, draft: { ...emptyAskDraft(), kind: 'note' } } })
     const count = view.emitted().action!.length
     await fireEvent.keyDown(screen.getByRole('textbox'), { key: '1' })
     await fireEvent.keyDown(screen.getByRole('group'), { key: '1', isComposing: true })

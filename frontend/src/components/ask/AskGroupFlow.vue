@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import type { AskReceipt } from '../../lib/askGroup'
 import type { AskGroupAction, AskGroupState } from '../../lib/askGroupState'
+import type { AskAction } from '../../lib/askPresentation'
 
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 import { t } from '../../i18n'
-import { canAnswer, validAskDraft } from '../../lib/askState'
+import { canAnswer, emptyAskDraft, validAskDraft } from '../../lib/askState'
 
 import AskQuestionForm from './AskQuestionForm.vue'
 
@@ -15,59 +16,86 @@ const props = defineProps<{
   names: Record<string, string>
   focusBlock?: string | null
   autoFocus?: boolean
+  // 接管输入框那一格时画成 composer 的样子（同一块控件），而不是对话里的卡片。
+  composer?: boolean
 }>()
-const emit = defineEmits<{ (e: 'action', action: AskGroupAction): void }>()
+const emit = defineEmits<{
+  (e: 'action', action: AskGroupAction): void
+  (e: 'dismiss'): void
+}>()
 const cursor = ref(0)
 const navigationOpen = ref(false)
-const minimized = ref(false)
 const card = ref<HTMLElement | null>(null)
-const minimizeButton = ref<HTMLButtonElement | null>(null)
 const questionForm = ref<InstanceType<typeof AskQuestionForm> | null>(null)
+// 点选选项之后停一小会儿再推进：这段时间里整行保持高亮、标记翻成实心，重复点选
+// 一律作废（见 onPicked / onFormAction）。这就是 Codex 那 180ms 的用意——让人看清
+// 自己刚点的是哪个。
+const committing = ref(false)
+let commitTimer: ReturnType<typeof setTimeout> | undefined
+onBeforeUnmount(() => clearTimeout(commitTimer))
+const autofocus = computed(() => props.autoFocus || props.composer)
+
 watch(
   () => props.state.scope,
   () => {
     cursor.value = 0
-    minimized.value = false
     navigationOpen.value = false
+    committing.value = false
   }
 )
 watch(
   () => [props.focusBlock, props.state.scope] as const,
   () => {
     const index = props.state.scope.members.indexOf(props.focusBlock ?? '')
-    if (index >= 0) {
-      cursor.value = index
-      minimized.value = false
-    }
+    if (index >= 0) cursor.value = index
   },
   { immediate: true }
 )
 const blocks = computed(() => props.state.data?.blocks ?? [])
 const block = computed(() => blocks.value[cursor.value])
-function focusCurrent() {
-  if (minimized.value || !block.value) return
-  if (!block.value.meta?.options?.length && block.value.meta?.allow_other && questionForm.value?.focusReply()) return
-  card.value?.focus({ preventScroll: true })
+
+// 单选默认落在第一个选项上：一进来就能直接 Enter 或点第一项，不用先手动选。
+function defaultSelect() {
+  const current = block.value
+  if (!current || !current.meta?.options?.length || !canAnswer(current, props.viewer)) return
+  const form = props.state.forms[current.id]
+  if (
+    !form ||
+    form.draft.kind ||
+    form.draft.note ||
+    form.draft.later ||
+    current.meta.answer_log?.length ||
+    // 已经进入「确认提交」或「提交中」时不再自动落选，别去覆盖这一刻的状态。
+    props.state.confirm ||
+    props.state.pending
+  )
+    return
+  const draft = { ...(form.draft ?? emptyAskDraft()), kind: 'option' as const, option: current.meta.options[0]!.text }
+  emit('action', { type: 'question', blockId: current.id, action: { type: 'draft', draft } })
 }
 watch(
-  [() => props.autoFocus, () => props.focusBlock, () => block.value?.id, () => minimized.value],
+  () => block.value?.id,
   () => {
-    if (props.autoFocus && !minimized.value) void nextTick(focusCurrent)
+    committing.value = false
+    clearTimeout(commitTimer)
+    defaultSelect()
   },
   { immediate: true }
 )
-function minimize() {
-  minimized.value = true
-  navigationOpen.value = false
-  void nextTick(() => minimizeButton.value?.focus({ preventScroll: true }))
+
+function focusCurrent() {
+  const current = block.value
+  if (!current) return
+  if (!current.meta?.options?.length && current.meta?.allow_other && questionForm.value?.focusReply()) return
+  card.value?.focus({ preventScroll: true })
 }
-function toggleMinimized() {
-  if (!minimized.value) minimize()
-  else {
-    minimized.value = false
-    void nextTick(focusCurrent)
-  }
-}
+watch(
+  [() => autofocus.value, () => props.focusBlock, () => block.value?.id],
+  () => {
+    if (autofocus.value) void nextTick(focusCurrent)
+  },
+  { immediate: true }
+)
 const answered = computed(() => blocks.value.filter((b) => b.meta?.answer_log?.length).length)
 const draftCount = computed(
   () =>
@@ -88,17 +116,68 @@ const allowed = computed(() => blocks.value.some((b) => canAnswer(b, props.viewe
 function move(index: number) {
   cursor.value = Math.max(0, Math.min(blocks.value.length - 1, index))
   navigationOpen.value = false
+  committing.value = false
+  clearTimeout(commitTimer)
   void nextTick(focusCurrent)
+}
+// 非末题前进、末题提交。提交时整组一起发（见 useAskGroups 的 snapshot）。
+function advance() {
+  if (cursor.value < blocks.value.length - 1) move(cursor.value + 1)
+  else emit('action', { type: 'submit' })
+}
+function onPicked() {
+  if (committing.value || !currentReady.value) return
+  committing.value = true
+  clearTimeout(commitTimer)
+  commitTimer = setTimeout(() => {
+    committing.value = false
+    advance()
+  }, 180)
+}
+// 面板里所有动作都会经过这里：180ms 窗口内一律丢弃，所以再点别的选项不会改掉高亮。
+function onFormAction(action: AskAction) {
+  const current = block.value
+  if (!current || committing.value) return
+  emit('action', { type: 'question', blockId: current.id, action })
+}
+// 跳过：已经写了自由文本就当作提交继续；否则把这一题标为稍后再前进。末题不再前进，
+// 留给下方的「提交」按钮决定。
+function onSkip() {
+  const current = block.value
+  if (!current || committing.value) return
+  if (current.meta?.allow_other && props.state.forms[current.id]?.draft.note.trim()) {
+    advance()
+    return
+  }
+  if (!props.state.forms[current.id]?.draft.later) emit('action', { type: 'later', blockId: current.id })
+  if (cursor.value < blocks.value.length - 1) move(cursor.value + 1)
 }
 function keydown(event: KeyboardEvent) {
   if (event.defaultPrevented || event.isComposing || event.ctrlKey || event.altKey || event.metaKey) return
   if (event.key === 'Escape') {
+    // Esc 只是把面板收起来，问题不会消失：收起后「有 N 个问题待回答」那一条能叫回来。
     event.preventDefault()
-    minimize()
+    emit('dismiss')
     return
   }
   if (questionForm.value?.handleShortcut(event)) return
-  if ((event.target as HTMLElement).closest('input, textarea, [contenteditable="true"]')) return
+  const target = event.target as HTMLElement
+  const typing = !!target.closest('textarea, input:not([type="radio"]), [contenteditable="true"]')
+  if (
+    event.key === 'Enter' &&
+    !event.shiftKey &&
+    !target.closest('input:not([type="radio"]), [contenteditable="true"]')
+  ) {
+    event.preventDefault()
+    if (!committing.value && currentReady.value) advance()
+    return
+  }
+  if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+    event.preventDefault()
+    questionForm.value?.moveOption(event.key === 'ArrowDown' ? 1 : -1)
+    return
+  }
+  if (typing) return
   if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
     event.preventDefault()
     move(cursor.value + (event.key === 'ArrowLeft' ? -1 : 1))
@@ -124,7 +203,14 @@ function receiptLabel(r: AskReceipt | null | undefined) {
 </script>
 
 <template>
-  <section ref="card" class="ask-group" :aria-label="t('ask.group.title')" tabindex="0" @keydown="keydown">
+  <section
+    ref="card"
+    class="ask-group"
+    :class="{ 'ask-group--composer': composer }"
+    :aria-label="t('ask.group.title')"
+    tabindex="0"
+    @keydown="keydown"
+  >
     <header class="ask-group-header">
       <span class="ask-group-title"
         ><svg
@@ -151,7 +237,7 @@ function receiptLabel(r: AskReceipt | null | undefined) {
         {{ t('ask.group.heading') }}</span
       >
       <div class="ask-group-navigation">
-        <template v-if="!minimized && state.data && blocks.length > 1">
+        <template v-if="state.data && blocks.length > 1">
           <button
             type="button"
             class="ask-group-icon"
@@ -192,179 +278,161 @@ function receiptLabel(r: AskReceipt | null | undefined) {
             </svg>
           </button>
         </template>
-        <button
-          ref="minimizeButton"
-          type="button"
-          class="ask-group-icon"
-          :class="{ 'ask-group-collapse': !minimized }"
-          :aria-label="minimized ? t('ask.group.expand') : t('ask.group.collapse')"
-          @click="toggleMinimized"
-        >
-          <svg :viewBox="minimized ? '0 0 20 20' : '0 0 16 16'" aria-hidden="true">
-            <path v-if="minimized" d="m6 8 4 4 4-4" />
-            <path
-              v-else
-              d="M10.962 4.29539C11.1669 4.09057 11.4992 4.09076 11.7042 4.29539C11.9092 4.50039 11.9091 4.83255 11.7042 5.03758L8.74229 7.99949L11.7052 10.9624C11.9097 11.1673 11.9097 11.4996 11.7052 11.7046C11.5003 11.9095 11.168 11.9093 10.963 11.7046L8.0001 8.74168L5.03721 11.7046C4.83216 11.9093 4.49994 11.9095 4.29502 11.7046C4.09047 11.4996 4.09045 11.1673 4.29502 10.9624L7.25791 7.99949L4.296 5.03758C4.09101 4.83255 4.09099 4.5004 4.296 4.29539C4.50105 4.09079 4.8333 4.09054 5.03819 4.29539L8.0001 7.2573L10.962 4.29539Z"
-              fill="currentColor"
-            />
-          </svg>
-        </button>
       </div>
     </header>
-    <p v-if="minimized && state.error" role="alert" class="ask-group-error">{{ state.error }}</p>
-    <div v-show="!minimized">
-      <p v-if="state.busy" class="ask-group-notice" role="status">{{ t('ask.form.submitting') }}</p>
-      <p v-if="state.error" role="alert" class="ask-group-error">{{ state.error }}</p>
-      <div v-if="!state.data && !state.busy" class="ask-group-status">
-        <button type="button" @click="emit('action', { type: 'refresh' })">{{ t('ask.form.refresh') }}</button>
-      </div>
-      <template v-if="state.data">
-        <nav v-if="navigationOpen" class="ask-group-tabs" :aria-label="t('ask.group.questions')">
-          <button
-            v-for="(item, index) in blocks"
-            :key="item.id"
-            type="button"
-            :aria-current="cursor === index ? 'step' : undefined"
-            @click="move(index)"
-          >
-            {{ t('ask.group.question', { index: index + 1 }) }}
-            <span v-if="item.meta?.answer_log?.length">{{ t('ask.group.answered') }}</span>
-            <span v-else-if="state.forms[item.id]?.draft.later">{{ t('ask.group.later') }}</span>
-          </button>
-        </nav>
-        <template v-if="block">
-          <h3 class="ask-group-question">{{ block.content }}</h3>
-          <AskQuestionForm
-            ref="questionForm"
-            class="ask-group-form"
-            :block="block"
-            :viewer="viewer"
-            :names="names"
-            :state="state.forms[block.id]"
-            grouped
-            @action="emit('action', { type: 'question', blockId: block!.id, action: $event })"
-          >
-            <template #actions>
-              <div v-if="allowed && !state.confirm" class="ask-group-footer">
-                <button
-                  v-if="block && canAnswer(block, viewer)"
-                  type="button"
-                  class="ask-group-outline"
-                  :disabled="state.busy || !!state.pending"
-                  @click="emit('action', { type: 'later', blockId: block!.id })"
-                >
-                  {{ state.forms[block.id]?.draft.later ? t('ask.group.resume') : t('ask.group.defer') }}
-                </button>
-                <button
-                  v-if="cursor < blocks.length - 1 && !state.pending"
-                  type="button"
-                  class="ask-group-primary"
-                  :disabled="state.busy || !currentReady"
-                  @click="move(cursor + 1)"
-                >
-                  {{ t('ask.group.continue') }}
-                </button>
-                <button
-                  v-else
-                  type="button"
-                  class="ask-group-primary"
-                  :disabled="
-                    state.busy ||
-                    !state.fresh ||
-                    state.storageBlocked ||
-                    !!state.rejectedOperation ||
-                    state.questionChanged ||
-                    (state.conflict && !state.pending)
-                  "
-                  @click="emit('action', { type: 'submit' })"
-                >
-                  {{ state.pending ? t('ask.form.retry') : t('ask.group.submit') }}
-                </button>
-              </div>
-            </template>
-          </AskQuestionForm>
+    <p v-if="state.error && !state.data" role="alert" class="ask-group-error">{{ state.error }}</p>
+    <p v-if="state.busy" class="ask-group-notice" role="status">{{ t('ask.form.submitting') }}</p>
+    <p v-if="state.error" role="alert" class="ask-group-error">{{ state.error }}</p>
+    <div v-if="!state.data && !state.busy" class="ask-group-status">
+      <button type="button" @click="emit('action', { type: 'refresh' })">{{ t('ask.form.refresh') }}</button>
+    </div>
+    <template v-if="state.data">
+      <nav v-if="navigationOpen" class="ask-group-tabs" :aria-label="t('ask.group.questions')">
+        <button
+          v-for="(item, index) in blocks"
+          :key="item.id"
+          type="button"
+          :aria-current="cursor === index ? 'step' : undefined"
+          @click="move(index)"
+        >
+          {{ t('ask.group.question', { index: index + 1 }) }}
+          <span v-if="item.meta?.answer_log?.length">{{ t('ask.group.answered') }}</span>
+          <span v-else-if="state.forms[item.id]?.draft.later">{{ t('ask.group.later') }}</span>
+        </button>
+      </nav>
+      <template v-if="block">
+        <h3 class="ask-group-question">{{ block.content }}</h3>
+        <AskQuestionForm
+          ref="questionForm"
+          class="ask-group-form"
+          :block="block"
+          :viewer="viewer"
+          :names="names"
+          :state="state.forms[block.id]"
+          grouped
+          @action="onFormAction"
+          @picked="onPicked"
+        >
+          <template #actions>
+            <div v-if="allowed && !state.confirm" class="ask-group-footer">
+              <button
+                v-if="canAnswer(block, viewer)"
+                type="button"
+                class="ask-group-outline"
+                :disabled="state.busy || !!state.pending"
+                @click="onSkip"
+              >
+                {{ t('ask.group.skip') }}
+              </button>
+              <button
+                v-if="cursor < blocks.length - 1"
+                type="button"
+                class="ask-group-primary"
+                :disabled="state.busy || !currentReady"
+                @click="advance()"
+              >
+                {{ t('ask.group.continue') }}
+              </button>
+              <button
+                v-else
+                type="button"
+                class="ask-group-primary"
+                :disabled="
+                  state.busy ||
+                  !state.fresh ||
+                  state.storageBlocked ||
+                  !!state.rejectedOperation ||
+                  state.questionChanged ||
+                  (state.conflict && !state.pending)
+                "
+                @click="emit('action', { type: 'submit' })"
+              >
+                {{ state.pending ? t('ask.form.retry') : t('ask.group.submit') }}
+              </button>
+            </div>
+          </template>
+        </AskQuestionForm>
+      </template>
+      <details
+        v-if="
+          navigationOpen ||
+          answered > 0 ||
+          state.data.settlement ||
+          state.pending ||
+          state.error ||
+          state.confirm ||
+          state.questionChanged ||
+          state.conflict ||
+          state.rejectedOperation ||
+          state.confirmedOperation
+        "
+        class="ask-group-status"
+        :open="
+          !!state.data.settlement ||
+          !!state.pending ||
+          !!state.error ||
+          !!state.confirm ||
+          !!state.questionChanged ||
+          !!state.conflict ||
+          !!state.rejectedOperation ||
+          !!state.confirmedOperation
+        "
+      >
+        <summary>{{ t('ask.group.progress', { answered, total: state.scope.total }) }}</summary>
+        <button type="button" :disabled="state.busy" @click="emit('action', { type: 'refresh' })">
+          {{ t('ask.form.refresh') }}
+        </button>
+        <p class="ask-group-summary">
+          {{ t('ask.group.summary', { submitted: draftCount, later: laterCount, unanswered: unansweredCount }) }}
+        </p>
+        <template v-if="state.data.settlement">
+          <p>
+            {{
+              t('ask.group.settled', {
+                submitted: state.data.settlement.answered.length,
+                later: state.data.settlement.later.length,
+                unanswered: state.data.settlement.unanswered.length,
+              })
+            }}
+          </p>
+          <p role="status">{{ receiptText }}</p>
+          <p v-if="receipt?.last_error" class="ask-group-error">{{ receipt.last_error }}</p>
         </template>
-        <details
+        <template
           v-if="
-            navigationOpen ||
-            answered > 0 ||
-            state.data.settlement ||
-            state.pending ||
-            state.error ||
-            state.confirm ||
-            state.questionChanged ||
-            state.conflict ||
-            state.rejectedOperation ||
-            state.confirmedOperation
-          "
-          class="ask-group-status"
-          :open="
-            !!state.data.settlement ||
-            !!state.pending ||
-            !!state.error ||
-            !!state.confirm ||
-            !!state.questionChanged ||
-            !!state.conflict ||
-            !!state.rejectedOperation ||
-            !!state.confirmedOperation
+            state.confirmedOperation?.settlement &&
+            state.confirmedOperation.settlement.client_op_id !== state.data.settlement?.client_op_id
           "
         >
-          <summary>{{ t('ask.group.progress', { answered, total: state.scope.total }) }}</summary>
-          <button type="button" :disabled="state.busy" @click="emit('action', { type: 'refresh' })">
-            {{ t('ask.form.refresh') }}
-          </button>
-          <p class="ask-group-summary">
-            {{ t('ask.group.summary', { submitted: draftCount, later: laterCount, unanswered: unansweredCount }) }}
+          <p role="status">
+            {{ t('ask.group.operationConfirmed', { version: state.confirmedOperation.settlement.v }) }}
           </p>
-          <template v-if="state.data.settlement">
-            <p>
-              {{
-                t('ask.group.settled', {
-                  submitted: state.data.settlement.answered.length,
-                  later: state.data.settlement.later.length,
-                  unanswered: state.data.settlement.unanswered.length,
-                })
-              }}
-            </p>
-            <p role="status">{{ receiptText }}</p>
-            <p v-if="receipt?.last_error" class="ask-group-error">{{ receipt.last_error }}</p>
-          </template>
-          <template
-            v-if="
-              state.confirmedOperation?.settlement &&
-              state.confirmedOperation.settlement.client_op_id !== state.data.settlement?.client_op_id
-            "
+          <p>{{ receiptLabel(state.confirmedOperation.receipt) }}</p>
+        </template>
+        <p v-if="state.questionChanged" role="alert">{{ t('ask.flow.questionChanged') }}</p>
+        <template v-if="state.rejectedOperation">
+          <p role="status">{{ t('ask.group.rejected') }}</p>
+          <button
+            type="button"
+            :disabled="state.busy || !state.fresh"
+            @click="emit('action', { type: 'resolve-conflict' })"
           >
-            <p role="status">
-              {{ t('ask.group.operationConfirmed', { version: state.confirmedOperation.settlement.v }) }}
-            </p>
-            <p>{{ receiptLabel(state.confirmedOperation.receipt) }}</p>
-          </template>
-          <p v-if="state.questionChanged" role="alert">{{ t('ask.flow.questionChanged') }}</p>
-          <template v-if="state.rejectedOperation">
-            <p role="status">{{ t('ask.group.rejected') }}</p>
-            <button
-              type="button"
-              :disabled="state.busy || !state.fresh"
-              @click="emit('action', { type: 'resolve-conflict' })"
-            >
-              {{ t('ask.form.revise') }}
-            </button>
-          </template>
-          <p v-else-if="state.conflict" role="alert">{{ t('ask.group.conflict') }}</p>
-          <p v-if="state.pending && !state.rejectedOperation && !state.questionChanged" role="status">
-            {{ t('ask.flow.unconfirmed') }}
-          </p>
-          <div v-if="state.confirm" class="ask-group-confirm">
-            <p>{{ t('ask.group.incomplete', { count: unansweredCount }) }}</p>
-            <button type="button" @click="emit('action', { type: 'back' })">{{ t('ask.group.back') }}</button>
-            <button type="button" class="ask-group-primary" @click="emit('action', { type: 'confirm' })">
-              {{ t('ask.group.submitAnyway') }}
-            </button>
-          </div>
-        </details>
-      </template>
-    </div>
+            {{ t('ask.form.revise') }}
+          </button>
+        </template>
+        <p v-else-if="state.conflict" role="alert">{{ t('ask.group.conflict') }}</p>
+        <p v-if="state.pending && !state.rejectedOperation && !state.questionChanged" role="status">
+          {{ t('ask.flow.unconfirmed') }}
+        </p>
+        <div v-if="state.confirm" class="ask-group-confirm">
+          <p>{{ t('ask.group.incomplete', { count: unansweredCount }) }}</p>
+          <button type="button" @click="emit('action', { type: 'back' })">{{ t('ask.group.back') }}</button>
+          <button type="button" class="ask-group-primary" @click="emit('action', { type: 'confirm' })">
+            {{ t('ask.group.submitAnyway') }}
+          </button>
+        </div>
+      </details>
+    </template>
   </section>
 </template>
 
@@ -457,17 +525,6 @@ function receiptLabel(r: AskReceipt | null | undefined) {
 .ask-group-icon svg {
   width: 14px;
   height: 14px;
-}
-
-.ask-group .ask-group-collapse {
-  width: 26px;
-  min-height: 26px;
-}
-
-.ask-group-collapse svg {
-  width: 16px;
-  height: 16px;
-  stroke: none;
 }
 
 .ask-group-chevron-left {
@@ -611,5 +668,23 @@ function receiptLabel(r: AskReceipt | null | undefined) {
 
 .ask-group button:not(.ask-group-primary):hover:not(:disabled) {
   background: var(--fill);
+}
+
+/* 接管输入框那一格时，用 composer 的样子：同一块控件、同样的描边圆角与底部
+   安全区。放在最后，盖过上面卡片那圈更大的圆角和 superellipse。 */
+.ask-group--composer {
+  max-width: none;
+  padding-bottom: env(safe-area-inset-bottom);
+  margin: 0 16px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+}
+
+@media (max-width: 959.98px) {
+  .ask-group--composer {
+    width: 100%;
+    max-width: var(--page-w);
+    margin-inline: auto;
+  }
 }
 </style>
