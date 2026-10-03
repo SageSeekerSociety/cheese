@@ -1375,3 +1375,7 @@ html {
   text-autospace: ideograph-alpha ideograph-numeric;
   font-synthesis: style;
 }
+/* 等宽字体靠字符网格对齐（代码、时间戳、ID），插进去的 1/4 字宽会打乱列。 */
+:is(pre, code, kbd, samp, .t-meta, .t-meta-read) {
+  text-autospace: normal;
+}
