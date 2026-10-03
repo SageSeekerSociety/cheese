@@ -227,6 +227,41 @@ it('turns a selected sentence into a message naming the page it came from', asyn
   )
 })
 
+it('turns a selected markdown sentence into a message naming its section', async () => {
+  getPreview.mockResolvedValue(artifact('output/说明.md', 'text/markdown'))
+  readPreviewFile.mockResolvedValue({
+    path: 'output/说明.md',
+    content: '# 配置\n\n失败以后重试 3 次。\n',
+    version: 'v1',
+    bytes: 24,
+    binary: false,
+    too_large: false,
+  })
+  const { emitted } = mount()
+
+  // markdown 没有页也没有单元格，位置只能说是哪一节：标题来自这段之前最近的那个标题。
+  const md = await screen.findByTestId('markdown')
+  const node = md.querySelector('p')!.firstChild!
+  const range = document.createRange()
+  range.setStart(node, 4)
+  range.setEnd(node, 10)
+  const selection = window.getSelection()!
+  selection.removeAllRanges()
+  selection.addRange(range)
+  await fireEvent.mouseUp(md)
+
+  await fireEvent.update(screen.getByPlaceholderText('说明要改什么'), '这里也要写清楚')
+  await fireEvent.click(screen.getByText('发送'))
+
+  await waitFor(() => expect(emitted().locate).toBeTruthy())
+  const [message] = emitted().locate as { message: string }[][]
+  const [sentence, context] = message[0].message.split('\n')
+  expect(sentence).toBe('在 output/说明.md 的 标题「配置」（「重试 3 次」）：这里也要写清楚')
+  // 同一句话在一份文档里往往不止一处，两侧各 32 字是受话人分辨它的东西。
+  expect(context).toMatch(/^上文「.*失败以后」下文「。」$/)
+  selection.removeAllRanges()
+})
+
 it('says nothing until the reader has written what is wrong', async () => {
   const { emitted } = mount()
 
