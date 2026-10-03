@@ -16,12 +16,12 @@ afterEach(() => {
   undos.splice(0).forEach((undo) => undo())
 })
 
-async function setup() {
+async function setup(options: Parameters<typeof usePreviewFrames>[1] = {}) {
   let host!: ReturnType<typeof usePreviewFrames>
   const wrapper = render(
     defineComponent({
       setup() {
-        host = usePreviewFrames('runtime-test')
+        host = usePreviewFrames('runtime-test', options)
         return () =>
           h(
             'div',
@@ -169,4 +169,23 @@ it('disconnect and same-instance recovery preserve browsing context; replacement
   host.observeConnection('replacement', true)
   expect(host.displayed.value?.connection).toBe('gone')
   expect(host.incoming.value).toBeNull()
+})
+
+it('an escape from the current frame and session is handed back to the host', async () => {
+  const escaped = vi.fn()
+  const { host, frame, hello } = await setup({ onEscape: escaped })
+  const dispatch = (
+    data: unknown,
+    source: MessageEventSource | null = frame.contentWindow,
+    origin = 'https://preview-fixed.example'
+  ) => window.dispatchEvent(new MessageEvent('message', { origin, source, data }))
+  // 别的窗口、别的来源、别的会话发来的 escape 都不算。
+  dispatch({ ...hello, type: 'escape' }, window)
+  dispatch({ ...hello, type: 'escape' }, frame.contentWindow, 'https://wrong.example')
+  dispatch({ ...hello, type: 'escape', sessionId: 'old' })
+  expect(escaped).not.toHaveBeenCalled()
+  dispatch({ ...hello, type: 'escape' })
+  expect(escaped).toHaveBeenCalledTimes(1)
+  // 交回控制权不是就绪信号：注入的页面从没报过 ready，它就绪状态仍是未确认。
+  expect(host.displayed.value?.runtime).toBe('unconfirmed')
 })

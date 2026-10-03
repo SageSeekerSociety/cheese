@@ -15,7 +15,7 @@
 // 加画法在展示组件里加，这一只基本不再长。
 import type { PreviewLocate, SubmitPreviewQuestion } from '../../lib/previewQuestion'
 
-import { useId } from 'vue'
+import { ref, useId } from 'vue'
 
 import { usePanelPreview } from '../../composables/usePanelPreview'
 
@@ -46,6 +46,10 @@ const emit = defineEmits<{
 // 授权表的落点：取数那一层拿着这个名字把表单投出去，展示组件把它写在 iframe 上。
 // 两边必须是同一个名字——名字没对上，浏览器会开一个新标签页。
 const frameName = `cheese-preview-${useId()}`
+
+// 帧里的 ESC 要在展示组件里处理（标注条和全屏都是它那一格的状态），所以这里留一个
+// 引用：取数那一层收到 escape 就调它的 handleEscape。
+const previewView = ref<InstanceType<typeof PanelPreviewView> | null>(null)
 
 const {
   frames,
@@ -86,6 +90,7 @@ const {
   frameName,
   // 元数据回来一次就报一次：房间拿它标「预览有新内容」。
   onLoaded: (artifactId) => emit('loaded', artifactId),
+  onEscape: () => previewView.value?.handleEscape(),
 })
 
 // ⋯ 里的刷新和首屏那次加载走同一条路，只是不转圈：按了刷新就是要重取，不再比对
@@ -99,6 +104,7 @@ function refresh() {
   <!-- 一次 props 面摊开，而不是 v-bind 一整包：这二十来样东西就是这一格的接口，
        谁传谁看得见；将来哪一样不传了，typecheck 也会点名。 -->
   <PanelPreviewView
+    ref="previewView"
     :topic-id="props.topicId"
     :submit-question="props.submitQuestion"
     :upload-annotation="uploadAnnotation"

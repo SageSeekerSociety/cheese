@@ -56,8 +56,16 @@ export function navigationBudget(requested?: number): number {
     : navigationTier(requested)
 }
 
+export interface PreviewFrameOptions {
+  /**
+   * 帧里的 ESC 交回宿主时叫一次。怎么处理由画的那一半决定（关标注条、退全屏、把
+   * 焦点收回面板），这一层只管把这件事报上来。
+   */
+  onEscape?: () => void
+}
+
 /** Incoming navigation never destroys the last observed loaded browsing context. */
-export function usePreviewFrames(frameName: string) {
+export function usePreviewFrames(frameName: string, options: PreviewFrameOptions = {}) {
   const displayed = ref<PreviewFrame | null>(null)
   const incoming = ref<PreviewFrame | null>(null)
   const navigation = ref<PreviewNavigation>('idle')
@@ -108,6 +116,9 @@ export function usePreviewFrames(frameName: string) {
     if (data.type === 'key' && typeof data.id === 'string') {
       // 帧只回 id。认不认这条 id 由 `runFrameKey` 拿刚发下去那张表来判。
       runFrameKey(data.id)
+    } else if (data.type === 'escape') {
+      // 帧里按了 ESC：把控制权要回宿主。不改变就绪状态——注入的页面从不报 ready。
+      options.onEscape?.()
     } else if (data.type === 'ready') {
       frame.runtime = 'ready'
       frame.runtimeError = ''

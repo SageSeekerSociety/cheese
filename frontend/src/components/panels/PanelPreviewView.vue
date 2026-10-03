@@ -23,6 +23,7 @@ import type { SlidePageContext, SlideSource } from './preview/slidesContext'
 import { computed, defineAsyncComponent, ref, watch } from 'vue'
 import { useFullscreen } from '@vueuse/core'
 
+import { usePreviewEscape } from '../../composables/usePreviewEscape'
 import { t } from '../../i18n'
 import { roomFileDestination } from '../../lib/previewSession'
 
@@ -218,6 +219,9 @@ function clearLocator() {
   pagesRef.value?.clearMark()
   locatorNote.value = ''
 }
+// 帧里的 ESC 交给宿主：先收标注条，再退全屏，最后把焦点收回面板（判据在 usePreviewEscape）。
+const handleEscape = usePreviewEscape(panelElement, previewFull, fullscreen, clearLocator, () => !!locator.value)
+defineExpose({ handleEscape })
 function onImageRegion(selection: RasterSelection) {
   const captured = imageRegion.capture(selection)
   if (!captured) return
@@ -351,7 +355,7 @@ async function onAnnotate(payload: AnnotateDraft) {
 </script>
 
 <template>
-  <div ref="panelElement" class="panel-preview">
+  <div ref="panelElement" class="panel-preview" tabindex="-1">
     <!-- 这一条管的都是「当前预览」：发布、新标签页打开、全屏、重读。指定了文件的那一
          格没有这些——文档和表格自己有一条带名字和下载的条，网页那一条在它自己的预览
          条上（见下面）。 -->
