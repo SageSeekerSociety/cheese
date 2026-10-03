@@ -8,11 +8,10 @@ import type { AskGroupAction, AskGroupState } from '../../lib/askGroupState'
 
 import { computed, reactive, ref } from 'vue'
 
-import { t } from '../../i18n'
-import { emptyAskDraft } from '../../lib/askState'
-
 import AskGroupFlow from '../../components/ask/AskGroupFlow.vue'
 import RoomComposer from '../../components/room/RoomComposer.vue'
+import { t } from '../../i18n'
+import { emptyAskDraft } from '../../lib/askState'
 
 const props = defineProps<{
   questions?: number
@@ -95,11 +94,9 @@ const state = reactive<AskGroupState>({
 const draft = ref('')
 const hidden = ref(!!props.dismissed)
 const settled = ref(false)
-const needsAnswer = computed(
-  () => !settled.value && !!state.data?.blocks.some((b) => !b.meta?.answer_log?.length)
-)
+const needsAnswer = computed(() => !settled.value && !!state.data?.blocks.some((b) => !b.meta?.answer_log?.length))
 const takeover = computed(() => (!hidden.value && needsAnswer.value ? state : null))
-const waiting = computed(() => (hidden.value ? (state.data?.blocks.length ?? 0) : 0))
+const waiting = computed(() => (hidden.value ? state.data?.blocks.length ?? 0 : 0))
 const hint = computed(() => t('ask.group.returnHint', { count: waiting.value }))
 
 function onAction(action: AskGroupAction) {
@@ -149,7 +146,9 @@ function reset() {
         />
 
         <div v-else class="takeover-demo__composer">
-          <span>{{ settled ? '题答完了，输入框自己回来了（没点过任何「关闭」）。' : '没有题要答，这里就是平常的输入框。' }}</span>
+          <span>{{
+            settled ? '题答完了，输入框自己回来了（没点过任何「关闭」）。' : '没有题要答，这里就是平常的输入框。'
+          }}</span>
           <span class="takeover-demo__caret" aria-hidden="true">|</span>
         </div>
       </div>

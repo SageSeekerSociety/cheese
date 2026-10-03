@@ -19,14 +19,13 @@
 import type { MentionItem } from '@/composables/useRoomMentionPicker'
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
+import AskTakeoverDemo from './AskTakeoverDemo.vue'
 import { AGENT_NAME } from './catalogFixtures'
 
 import ComposerActions from '@/components/room/ComposerActions.vue'
 import ComposerChipRow from '@/components/room/ComposerChipRow.vue'
 import MentionMenu from '@/components/room/MentionMenu.vue'
 import OutsideMentionNotice from '@/components/room/OutsideMentionNotice.vue'
-
-import AskTakeoverDemo from './AskTakeoverDemo.vue'
 
 /** 这几件都要 vuetify（`v-icon` / `v-spacer` / `v-btn`），还都有不写死在模板里的字：
  *  「外部」、「取消回复」、`t('work.room.composer.summon')`。 */
