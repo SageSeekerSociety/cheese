@@ -814,6 +814,11 @@ new_rollout_run_dir() {
   mkdir -p "$dir/active"
   printf 'upstream backend_active { server 127.0.0.1:18081; }\n' > "$dir/active/backend.conf"
   cp "$ROOT/deploy/llm-tunnel/nginx.conf" "$dir/nginx.conf"
+  # Seed the preview routing file the way deploy-docker.sh will (owner mode), so
+  # a rollout here sees it already current and does NOT reload api-front for it.
+  # That is what keeps these tests about the backend/ingress switches; the
+  # one-time reload a first cutover performs is exercised by its own test.
+  bash "$ROOT/deploy/llm-tunnel/configure-preview.sh" owner "$dir/active" 18087 >/dev/null
   : > "$dir/docker.log"
   printf '%s' "$dir"
 }
@@ -947,6 +952,156 @@ test_rollout_leaves_the_running_backend_alone_when_next_never_comes_up() {
     || fail "the failed next backend was not cleaned up"
   rm -rf "$run_dir"
   echo "PASS: an unhealthy next backend leaves the running one untouched"
+}
+
+# The preview owner (machine preview tunnels + preview content hosts) is a
+# separately released service, like device-connection, and the cutover has one
+# rule that matters more than any other: the owner must be up and healthy BEFORE
+# api-front points at it and BEFORE any backend restarts rendered in owner mode.
+# A helper that dials the tunnel in the window between those steps would find a
+# route that is gone (nginx 404 -> the helper exits for good, preview_tunnel.py
+# only retries 502/503/504).
+test_deploy_starts_preview_owner_before_routes_and_backends() {
+  local run_dir docker_log owner_up health reload next_up blue_up
+  run_dir="$(new_rollout_run_dir)"
+  docker_log="$run_dir/docker.log"
+  # Seed the pre-cutover routing so this deploy performs the real cutover: the
+  # routing file changes, api-front installs the owner route and reloads.
+  bash "$ROOT/deploy/llm-tunnel/configure-preview.sh" legacy "$run_dir/active" >/dev/null
+  rollout_run "$run_dir" env >"$run_dir/deploy.log" 2>&1 || { cat "$run_dir/deploy.log"; fail "owner-mode rollout failed"; }
+  owner_up="$(log_line "$docker_log" 'up -d --no-deps preview-connection')"
+  health="$(log_line "$docker_log" ':18087/healthz')"
+  reload="$(last_log_line "$docker_log" 'exec cheese-api-front nginx -s reload')"
+  next_up="$(log_line "$docker_log" 'run -d --no-deps --name cheese-backend-next')"
+  blue_up="$(log_line "$docker_log" 'up -d --no-deps backend')"
+  [ -n "$owner_up" ] || fail "owner-mode deploy never started the preview connection owner"
+  grep -F 'preview-owner-up-env PREVIEW_CONNECTION_IMAGE=' "$docker_log" >/dev/null \
+    || fail "the preview owner was started without the release backend image"
+  [ -n "$health" ] || fail "the preview owner was never health-checked"
+  [ -n "$reload" ] || fail "the owner cutover did not install the api-front route"
+  [ "$owner_up" -lt "$health" ] || fail "the preview owner was probed before it was started"
+  [ "$health" -lt "$reload" ] || fail "api-front switched to the owner before it was healthy"
+  [ "$reload" -lt "$next_up" ] || fail "a backend rolled out before the owner route was live"
+  [ "$health" -lt "$next_up" ] && [ "$health" -lt "$blue_up" ] \
+    || fail "a backend restarted in owner mode before the owner was healthy"
+  grep -Fqx '  default "127.0.0.1:18087";' "$run_dir/active/preview-routing.conf" \
+    || fail "owner mode did not point the tunnel at the owner"
+  rm -rf "$run_dir"
+  echo "PASS: the preview owner is healthy before any route or backend changes"
+}
+
+test_deploy_fails_before_routing_when_preview_owner_unhealthy() {
+  local run_dir docker_log
+  run_dir="$(new_rollout_run_dir)"
+  docker_log="$run_dir/docker.log"
+  # The pre-cutover routing must survive a failed owner startup untouched.
+  bash "$ROOT/deploy/llm-tunnel/configure-preview.sh" legacy "$run_dir/active" >/dev/null
+  if rollout_run "$run_dir" env APP_TIER_CURL_FAIL_MATCH=:18087/ DEPLOY_OWNER_HEALTH_SECONDS=2 \
+      >"$run_dir/deploy.log" 2>&1; then
+    rm -rf "$run_dir"
+    fail "deploy succeeded although the preview owner never answered /healthz"
+  fi
+  grep -F 'up -d --no-deps preview-connection' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "the preview owner was never started"; }
+  ! grep -q 'exec cheese-api-front nginx -s reload' "$docker_log" \
+    || { rm -rf "$run_dir"; fail "api-front routes switched despite the unhealthy owner"; }
+  ! grep -q 'run -d --no-deps --name cheese-backend-next' "$docker_log" \
+    || { rm -rf "$run_dir"; fail "a backend rolled out despite the unhealthy owner"; }
+  ! grep -q 'up -d --no-deps backend' "$docker_log" \
+    || { rm -rf "$run_dir"; fail "the compose backend was recreated despite the unhealthy owner"; }
+  grep -Fqx '  default "127.0.0.1:18085";' "$run_dir/active/preview-routing.conf" \
+    || { rm -rf "$run_dir"; fail "the preview routing was rewritten despite the failed owner"; }
+  rm -rf "$run_dir"
+  echo "PASS: an unhealthy preview owner fails the deploy before any route or backend change"
+}
+
+test_deploy_keeps_preview_owner_running() {
+  local run_dir docker_log
+  run_dir="$(new_rollout_run_dir)"
+  docker_log="$run_dir/docker.log"
+  rollout_run "$run_dir" env APP_TIER_SCENARIO=stable_owner >"$run_dir/deploy.log" 2>&1 \
+    || { cat "$run_dir/deploy.log"; fail "business deploy failed with a running preview owner"; }
+  ! grep -q 'up -d --no-deps preview-connection' "$docker_log" \
+    || { rm -rf "$run_dir"; fail "business deploy recreated the running preview owner"; }
+  grep -F 'leaving preview connection owner' "$run_dir/deploy.log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "business deploy did not leave the preview owner alone"; }
+  grep -q 'up -d --no-deps backend' "$docker_log" \
+    || { rm -rf "$run_dir"; fail "business deploy did not roll the app tier"; }
+  rm -rf "$run_dir"
+  echo "PASS: an ordinary business deploy leaves a running preview owner alone"
+}
+
+test_deploy_splits_preview_content_hosts_to_the_owner() {
+  local run_dir
+  run_dir="$(new_rollout_run_dir)"
+  # A box already serving content, in the pre-cutover (no split) form.
+  bash "$ROOT/deploy/llm-tunnel/configure-sites.sh" example.net "$run_dir/active"
+  rollout_run "$run_dir" env >"$run_dir/deploy.log" 2>&1 || { cat "$run_dir/deploy.log"; fail "owner-mode rollout with a content domain failed"; }
+  grep -Fq 'map $host $content_upstream {' "$run_dir/active/sites.conf" \
+    || fail "owner mode did not write the content-host split into sites.conf"
+  grep -Fq '"~^preview-[0-9a-f]{32}(-[0-9a-f]{22})?\." "127.0.0.1:18087";' "$run_dir/active/sites.conf" \
+    || fail "the content-host split did not send preview hosts to the owner"
+  grep -Fq 'default "127.0.0.1:18085";' "$run_dir/active/sites.conf" \
+    || fail "the content-host split did not keep project hosts on the backend"
+  grep -Fq 'proxy_pass http://$content_upstream;' "$run_dir/active/sites.conf" \
+    || fail "the wildcard server still proxied content through the backend"
+  grep -Fq 'server_name example.net *.example.net;' "$run_dir/active/sites.conf" \
+    || fail "the content domain was changed while re-rendering sites.conf"
+  rm -rf "$run_dir"
+  echo "PASS: owner mode splits preview content hosts off the business backend"
+}
+
+test_kill_switch_routes_previews_back() {
+  local run_dir docker_log
+  run_dir="$(new_rollout_run_dir)"
+  docker_log="$run_dir/docker.log"
+  # A box fully cut over: owner tunnel, split content hosts, owner front door.
+  bash "$ROOT/deploy/llm-tunnel/configure-sites.sh" example.net "$run_dir/active" 18087
+  bash "$ROOT/deploy/llm-tunnel/configure-frontend.sh" "$run_dir/active" 8080 18080 18087
+  rollout_run "$run_dir" env PREVIEW_CONNECTION_MODE=legacy ACTIVE_FRONTEND_DIR="$run_dir/active" \
+    >"$run_dir/deploy.log" 2>&1 || { cat "$run_dir/deploy.log"; fail "legacy kill-switch rollout failed"; }
+  ! grep -q 'up -d --no-deps preview-connection' "$docker_log" \
+    || { rm -rf "$run_dir"; fail "legacy mode still started the preview owner"; }
+  grep -Fqx '  default "127.0.0.1:18085";' "$run_dir/active/preview-routing.conf" \
+    || { rm -rf "$run_dir"; fail "legacy mode did not route the tunnel back through app-router"; }
+  grep -Fq 'proxy_pass http://backend_active;' "$run_dir/active/sites.conf" \
+    || { rm -rf "$run_dir"; fail "legacy mode did not put preview content hosts back on the backend"; }
+  ! grep -q 'content_upstream' "$run_dir/active/sites.conf" \
+    || { rm -rf "$run_dir"; fail "legacy mode left the owner split in sites.conf"; }
+  ! grep -q 'preview/tunnel' "$run_dir/active/sites-frontend.conf" \
+    || { rm -rf "$run_dir"; fail "legacy mode left the preview tunnel on the owner front door"; }
+  rm -rf "$run_dir"
+  echo "PASS: the legacy kill switch routes tunnels and content hosts back off the owner"
+}
+
+test_release_preview_connection_requires_interrupt() {
+  local run_dir docker_log
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/preview-owner-release.XXXXXX")"
+  docker_log="$run_dir/docker.log"
+  : > "$docker_log"
+  # No drain endpoint: without the explicit acknowledgement the release refuses.
+  if PATH="$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" HOME="$run_dir" \
+      "$ROOT/deploy/release-preview-connection.sh" testsha \
+        "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null 2>&1; then
+    rm -rf "$run_dir"
+    fail "preview owner release ran without an interrupt acknowledgement"
+  fi
+  ! grep -q 'force-recreate preview-connection' "$docker_log" \
+    || { rm -rf "$run_dir"; fail "unacknowledged release recreated the owner"; }
+  PATH="$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" PREVIEW_CONNECTION_INTERRUPT=1 \
+    DEPLOY_APP_IMAGE_SOURCE=registry HOME="$run_dir" \
+    "$ROOT/deploy/release-preview-connection.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null \
+    || { rm -rf "$run_dir"; fail "acknowledged preview owner release failed"; }
+  grep -F 'pull preview-connection' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "preview owner release did not pull the owner image"; }
+  grep -F 'up -d --no-deps --force-recreate preview-connection' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "preview owner release did not recreate the owner"; }
+  grep -F ':18087/healthz' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "preview owner release did not wait for the owner health"; }
+  rm -rf "$run_dir"
+  echo "PASS: preview owner release demands an explicit interrupt acknowledgement"
 }
 
 # Handing the bind mounts to another uid is the one step of a deploy that
@@ -1285,6 +1440,12 @@ case "$CASE" in
   frontend-rollout) test_frontend_rollout_keeps_serving ;;
   frontend-rollout-unhealthy) test_frontend_rollout_rejects_unhealthy_next ;;
   rollout-unhealthy-next) test_rollout_leaves_the_running_backend_alone_when_next_never_comes_up ;;
+  preview-owner-ordering) test_deploy_starts_preview_owner_before_routes_and_backends ;;
+  preview-owner-unhealthy) test_deploy_fails_before_routing_when_preview_owner_unhealthy ;;
+  preview-owner-stable) test_deploy_keeps_preview_owner_running ;;
+  preview-owner-sites) test_deploy_splits_preview_content_hosts_to_the_owner ;;
+  preview-kill-switch) test_kill_switch_routes_previews_back ;;
+  preview-owner-release) test_release_preview_connection_requires_interrupt ;;
   all)
     test_missing_forge_fails_health_check
     test_forge_migration_release
@@ -1323,6 +1484,12 @@ case "$CASE" in
     test_frontend_rollout_keeps_serving
     test_frontend_rollout_rejects_unhealthy_next
     test_rollout_leaves_the_running_backend_alone_when_next_never_comes_up
+    test_deploy_starts_preview_owner_before_routes_and_backends
+    test_deploy_fails_before_routing_when_preview_owner_unhealthy
+    test_deploy_keeps_preview_owner_running
+    test_deploy_splits_preview_content_hosts_to_the_owner
+    test_kill_switch_routes_previews_back
+    test_release_preview_connection_requires_interrupt
     ;;
   *) fail "unknown case: $CASE" ;;
 esac

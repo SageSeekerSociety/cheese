@@ -60,9 +60,9 @@ def free_port():
         return sock.getsockname()[1]
 
 
-def connect(port, path):
+def connect(port, path, host="app.example.test"):
     sock = socket.create_connection(("127.0.0.1", port), timeout=3)
-    sock.sendall((f"GET {path} HTTP/1.1\r\nHost: app.example.test\r\n"
+    sock.sendall((f"GET {path} HTTP/1.1\r\nHost: {host}\r\n"
                   "Upgrade: websocket\r\nConnection: Upgrade\r\n"
                   "Sec-WebSocket-Version: 13\r\n"
                   "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n").encode())
@@ -99,13 +99,19 @@ def main():
         active = root / "active"
         active.mkdir()
         (root / "logs").mkdir()
-        for name in ("old", "new", "owner"):
+        for name in ("old", "new", "owner", "preview"):
             server = ThreadingHTTPServer(("127.0.0.1", 0), Endpoint)
             server.name = name
             threading.Thread(target=server.serve_forever, daemon=True).start()
             servers.append(server)
-        old, new, owner = servers
+        old, new, owner, preview = servers
         api, public, app_api, app_frontend = [free_port() for _ in range(4)]
+        # The preview content host: preview-<32hex>.<domain>, and the same with a
+        # -<22hex> resource suffix. Project hosts keep the plain form.
+        preview_host = "preview-0123456789abcdef0123456789abcdef.example.net"
+        preview_resource_host = (
+            "preview-0123456789abcdef0123456789abcdef-0123456789abcdef012345.example.net"
+        )
         replacements = {
             "/etc/nginx/active": str(active), "listen 8081;": f"listen 127.0.0.1:{api};",
             "127.0.0.1:18085": f"127.0.0.1:{app_api}",
@@ -122,13 +128,27 @@ def main():
                 )
 
         configure(old)
+        # The front door carries the preview tunnel to the owner too (its 4th
+        # argument is the owner's port), and machine tunnel traffic must survive
+        # the rolling frontend/backend switches below.
         subprocess.run(["bash", str(ROOT / "deploy/llm-tunnel/configure-frontend.sh"),
-                        str(active), "18086", str(public)], check=True)
+                        str(active), "18086", str(public), str(preview.server_port)], check=True)
         frontend = active / "sites-frontend.conf"
         content = frontend.read_text()
         for source, target in replacements.items():
             content = content.replace(source, target)
         frontend.write_text(content)
+        # api-front itself routes the preview tunnel through the map written by
+        # configure-preview.sh, and splits preview content hosts inside the
+        # content-domain wildcard server.
+        subprocess.run(["bash", str(ROOT / "deploy/llm-tunnel/configure-preview.sh"),
+                        "owner", str(active), str(preview.server_port)], check=True)
+        subprocess.run(["bash", str(ROOT / "deploy/llm-tunnel/configure-sites.sh"),
+                        "example.net", str(active), str(preview.server_port)], check=True)
+        sites = active / "sites.conf"
+        sites.write_text(sites.read_text()
+                         .replace("listen 8081;", f"listen 127.0.0.1:{api};")
+                         .replace("127.0.0.1:18085", f"127.0.0.1:{app_api}"))
         try:
             for name in ("app-router", "nginx"):
                 content = (ROOT / f"deploy/llm-tunnel/{name}.conf").read_text()
@@ -146,13 +166,18 @@ def main():
                 subprocess.run(command, check=True)
                 commands.append(command)
             for port, paths in (
-                (api, ["/connector/agent", "/api/connector/agent", "/connector/session/s/screen", "/api/connector/session/s/screen", "/llm/tunnel"]),
+                (api, ["/connector/agent", "/api/connector/agent", "/connector/session/s/screen", "/api/connector/session/s/screen", "/llm/tunnel", "/preview/tunnel", "/api/preview/tunnel"]),
                 # A connector connected with <site>/connector dials the
                 # unprefixed channel; the desktop app does exactly that.
-                (public, ["/connector/agent", "/api/connector/agent", "/connector/session/s/screen", "/api/connector/session/s/screen", "/api/llm/tunnel", "/api/forge/events/ws"]),
+                (public, ["/connector/agent", "/api/connector/agent", "/connector/session/s/screen", "/api/connector/session/s/screen", "/api/llm/tunnel", "/api/forge/events/ws", "/preview/tunnel", "/api/preview/tunnel"]),
             ):
                 for path in paths:
                     sockets.append(connect(port, path))
+            # A preview content host dials api-front directly (the Cloudflare
+            # tunnel lands on :8081); its content WebSocket must ride the owner
+            # too, both with and without the resource suffix.
+            sockets.append(connect(api, "/", host=preview_host))
+            sockets.append(connect(api, "/assets/app.js", host=preview_resource_host))
             for sock in sockets:
                 echo(sock)
             for target in (new, old):
@@ -178,6 +203,25 @@ def main():
                 for port in (api, public):
                     with urllib.request.urlopen(f"http://127.0.0.1:{port}/healthz", timeout=3) as response:
                         assert json.load(response)["name"] == target.name
+                # The preview owner is never the business target, so its routes
+                # hold across the switch: the tunnel (both spellings, on api-front
+                # and on the front door) and every preview content host, while a
+                # project host still lands on whatever business target is serving.
+                for port, path, host, expected in (
+                    (api, "/preview/tunnel", "app.example.test", "preview"),
+                    (api, "/api/preview/tunnel", "app.example.test", "preview"),
+                    (public, "/preview/tunnel", "app.example.test", "preview"),
+                    (public, "/api/preview/tunnel", "app.example.test", "preview"),
+                    (api, "/", preview_host, "preview"),
+                    (api, "/assets/app.js", preview_resource_host, "preview"),
+                    (api, "/", "example.net", target.name),
+                ):
+                    request = urllib.request.Request(
+                        f"http://127.0.0.1:{port}{path}", headers={"Host": host}
+                    )
+                    with urllib.request.urlopen(request, timeout=3) as response:
+                        actual = json.load(response)["name"]
+                    assert actual == expected, f"{host}{path} -> {actual}, want {expected}"
                 print(f"PASS: business traffic switched to {target.name}; {len(sockets)} existing WebSockets survived 32s", flush=True)
         finally:
             for sock in sockets:
