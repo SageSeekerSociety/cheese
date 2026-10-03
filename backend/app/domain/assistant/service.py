@@ -28,6 +28,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from redis.asyncio import Redis
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -35,6 +36,7 @@ from app.core.background import spawn
 from app.core.config import settings
 from app.core.sandbox_auth import mint_personal_credential
 from app.core.sentences import error_frame, say
+from app.domain.agent.admission import Hold, Slot, enter
 from app.domain.agent.harness.pi.handless import (
     Answered,
     HandlessSessions,
@@ -44,7 +46,6 @@ from app.domain.agent.harness.pi.handless import (
 )
 from app.domain.agent.harness.pi.personal import Launch
 from app.domain.assistant import billing, tools
-from app.domain.assistant.asking import BUSY_SECONDS
 from app.domain.assistant.models import AssistantConversation, AssistantMessage
 from app.domain.assistant.prompt import earlier, system_prompt
 
@@ -56,9 +57,27 @@ TITLE_CHARS = 40
 FAILED = say("assistantFailed")
 #: The platform path the session's tools are called under.
 TOOLS_PATH = "/assistant/tools"
-#: How long before the conversation's hold lapses an answer is given up on, so
-#: the session never reaches for the model outside the question's window.
-MARGIN_S = 10.0
+#: How long one question may take, from when it took its conversation.
+ANSWER_S = 170.0
+
+
+def busy_key(conversation_id: uuid.UUID | str) -> str:
+    return f"assistant:busy:{conversation_id}"
+
+
+async def take_conversation(redis: Redis, conversation_id: uuid.UUID) -> Slot | None:
+    """Take the conversation for one question; None while another holds it.
+    The hold is also what lets the conversation's 芝士 reach the model at all
+    (``api/routes/llm_proxy.py``): a model call is charged to the person, and
+    only a question they asked may be charged to them."""
+    return await enter(
+        redis, str(uuid.uuid4()), hold=Hold(busy_key(conversation_id)), wait_s=0
+    )
+
+
+async def answering(redis: Redis, conversation_id: uuid.UUID | str) -> bool:
+    """Is a question of this conversation being answered right now?"""
+    return bool(await redis.exists(busy_key(conversation_id)))
 
 
 @dataclass(frozen=True)
@@ -211,7 +230,7 @@ async def ask(
                 uuid.uuid4(),
                 question,
                 earlier=earlier(before),
-                ceiling_s=BUSY_SECONDS - MARGIN_S - (time.monotonic() - held_at),
+                ceiling_s=ANSWER_S - (time.monotonic() - held_at),
             ):
                 if isinstance(event, Said):
                     queue.put_nowait(sse("delta", {"text": event.text}))

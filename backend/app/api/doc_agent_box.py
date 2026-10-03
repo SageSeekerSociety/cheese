@@ -274,7 +274,7 @@ async def ask(
     async def stopped() -> bool:
         return bool(await redis.exists(_stop_key(conversation)))
 
-    slot = await doc_agent._take_turn(
+    slot = await doc_agent.take_turn(
         redis,
         project_id,
         conversation,
@@ -338,7 +338,7 @@ async def ask(
         )
         refused = say("docAgentBoxFailed", agent=bound.agent_name)
     finally:
-        await doc_agent._give_back(redis, project_id, conversation, slot)
+        await slot.release()
         edits = await doc_agent.edits_of(redis, work)
     was_stopped = await stopped()
     if refused is None or edits or was_stopped:

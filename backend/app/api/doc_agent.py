@@ -32,11 +32,9 @@ What the answer spent is drained into the project's usage once it is done,
 answered or not: it was spent either way.
 """
 
-import asyncio
 import json
 import logging
 import re
-import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -50,6 +48,7 @@ from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.redis import get_redis_client
 from app.core.sandbox_auth import mint_scoped_token
 from app.core.sentences import say
+from app.domain.agent.admission import Hold, Pool, Slot, enter, holding
 from app.domain.agent.chat import ChatService
 from app.domain.agent.harness.pi import document
 from app.domain.agent.harness.pi.handless import (
@@ -88,8 +87,6 @@ ANSWERING_PER_PROJECT = 4
 WAIT_S = 600.0
 #: How long one answer may take.
 ANSWER_S = 300.0
-#: How often a waiting question looks again.
-POLL_S = 2.0
 #: How long the credential a session starts with lasts. A session lives while
 #: its thread is asked things, and exits a minute after; a day covers it.
 TOKEN_TTL_S = 24 * 3600
@@ -112,8 +109,8 @@ def _edits_key(work: uuid.UUID | str) -> str:
     return f"doc-agent:edits:{work}"
 
 
-def _slot_key(project_id: uuid.UUID, slot: int) -> str:
-    return f"doc-agent:answering:{project_id}:{slot}"
+def _pool(project_id: uuid.UUID) -> Pool:
+    return Pool(f"doc-answers:{project_id}", ANSWERING_PER_PROJECT)
 
 
 @dataclass(frozen=True)
@@ -145,7 +142,7 @@ async def asking(redis: Redis, key: uuid.UUID | str) -> Asking | None:
     )
 
 
-async def _take_turn(
+async def take_turn(
     redis: Redis,
     project_id: uuid.UUID,
     key: uuid.UUID,
@@ -153,15 +150,11 @@ async def _take_turn(
     *,
     on_wait: Callable[[], Awaitable[None]] | None = None,
     stopped: Callable[[], Awaitable[bool]] | None = None,
-) -> int | None:
+) -> Slot | None:
     """Hold the conversation and one of the project's answering slots, waiting
-    for them up to ``WAIT_S``. The slot held, or None when the turn never came
-    (or ``stopped`` says the asker no longer wants it). ``on_wait`` is told
-    once, the first time the question has to wait.
-
-    Both holds lapse on their own after ``ANSWER_S`` past the wait, so a
-    worker that dies mid-answer cannot keep a conversation or a slot for good."""
-    expires = int(WAIT_S + ANSWER_S)
+    for them up to ``WAIT_S``. The slot, or None when the turn never came (or
+    ``stopped`` says the asker no longer wants it). ``on_wait`` is told once,
+    the first time the question has to wait."""
     value = json.dumps(
         {
             "asker": held.asker,
@@ -171,37 +164,20 @@ async def _take_turn(
             "work": held.work,
         }
     )
-    deadline = time.monotonic() + WAIT_S
-    have_hold = False
-    told = False
-    while True:
-        if not have_hold:
-            have_hold = bool(
-                await redis.set(_hold_key(key), value, nx=True, ex=expires)
-            )
-        if have_hold:
-            for slot in range(ANSWERING_PER_PROJECT):
-                if await redis.set(
-                    _slot_key(project_id, slot), str(key), nx=True, ex=expires
-                ):
-                    return slot
-        given_up = time.monotonic() >= deadline or (
-            stopped is not None and await stopped()
-        )
-        if given_up:
-            if have_hold:
-                await redis.delete(_hold_key(key))
-            return None
-        if on_wait is not None and not told:
-            told = True
+
+    async def queued(_ahead: int) -> None:
+        if on_wait is not None:
             await on_wait()
-        await asyncio.sleep(POLL_S)
 
-
-async def _give_back(
-    redis: Redis, project_id: uuid.UUID, key: uuid.UUID, slot: int
-) -> None:
-    await redis.delete(_slot_key(project_id, slot), _hold_key(key))
+    return await enter(
+        redis,
+        str(key),
+        pool=_pool(project_id),
+        hold=Hold(_hold_key(key), value),
+        wait_s=WAIT_S,
+        on_queued=queued,
+        give_up=stopped,
+    )
 
 
 async def answering(project_id: uuid.UUID, keys: list[uuid.UUID]) -> dict[str, str]:
@@ -212,10 +188,7 @@ async def answering(project_id: uuid.UUID, keys: list[uuid.UUID]) -> dict[str, s
     if redis is None or not keys:
         return {}
     holds = await redis.mget([_hold_key(key) for key in keys])
-    slots = await redis.mget(
-        [_slot_key(project_id, slot) for slot in range(ANSWERING_PER_PROJECT)]
-    )
-    taken = {v.decode() if isinstance(v, bytes) else v for v in slots if v}
+    taken = await holding(redis, _pool(project_id), [str(key) for key in keys])
     return {
         str(key): "working" if str(key) in taken else "queued"
         for key, hold in zip(keys, holds, strict=True)
@@ -597,7 +570,7 @@ async def answer(
         await _reply(factory, room_id, project_id, thread_id, bound, FAILED)
         return
     work = uuid.uuid4()
-    slot = await _take_turn(
+    slot = await take_turn(
         redis,
         project_id,
         thread_id,
@@ -648,7 +621,7 @@ async def answer(
         logger.warning("doc agent answer failed thread=%s", thread_id, exc_info=True)
         reply = FAILED
     finally:
-        await _give_back(redis, project_id, thread_id, slot)
+        await slot.release()
         await edits_of(redis, work)
     await _reply(factory, room_id, project_id, thread_id, bound, reply)
     if spent:

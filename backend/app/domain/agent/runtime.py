@@ -26,12 +26,17 @@ from sqlalchemy import select
 from app.core.background import hold
 from app.core.errors import AppError
 from app.core.obs import bind_context, clear_context
+from app.core.redis import get_redis_client
 from app.core.sentences import error_frame, listing, say
 from app.domain.agent import death_evidence, dispatch_log, turn_inputs
 from app.domain.agent.activity import RoomActivity
 from app.domain.agent.admission import (
     HOST_BUSY_META,
     QUEUED_META,
+    Pool,
+    Slot,
+    enter,
+    queued,
     queued_text,
     wait_for_host,
 )
@@ -158,6 +163,11 @@ async def _close_turns(session_factory, turn_ids) -> None:
 # What the room is told while a message waits for its turn. Neither is the
 # turn's outcome, so neither means the turn happened.
 _WAITING = frozenset({EVENT_TURN_QUEUED, EVENT_DELIVERY_FALLBACK})
+
+
+def _project_pool(project_id: uuid.UUID | str, limit: int) -> Pool:
+    """A project's turns: at most ``max_concurrent_turns`` run at once."""
+    return Pool(f"project-turns:{project_id}", limit)
 
 
 def _utcnow() -> datetime:
@@ -492,12 +502,6 @@ class AgentWorkRunner:
         self._tasks: set[asyncio.Task] = set()
         # 可 debug: lifecycle summaries of the last ~100 turns (/debug/turns).
         self._recent: deque[dict] = deque(maxlen=100)
-        # Project-level concurrency gate (spec §9.1): at most N turns run at
-        # once per project; excess turns queue on the semaphore (FIFO). The
-        # queue is asyncio-only — a restart drops it, and the process that takes
-        # the work over starts what it dropped (`resume_lost_messages`).
-        self._project_sems: dict[str, asyncio.Semaphore] = {}
-        self._project_waiting: dict[str, int] = {}
         # Turn ids THIS process is actually executing right now → the task
         # running them. The durable registry on disk cannot answer that question
         # — it records every turn that ever started and was not cleaned up,
@@ -797,9 +801,9 @@ class AgentWorkRunner:
             }
         return None
 
-    def project_queue_depth(self, project_id: uuid.UUID | str) -> int:
-        """Turns currently waiting on this project's concurrency semaphore."""
-        return self._project_waiting.get(str(project_id), 0)
+    async def project_queue_depth(self, project_id: uuid.UUID | str) -> int:
+        """Turns currently waiting for one of this project's slots."""
+        return await queued(get_redis_client(), _project_pool(project_id, 0))
 
     def submit(
         self,
@@ -1858,14 +1862,14 @@ class AgentWorkRunner:
 
     async def _admit(
         self, chat_service, topic_id: uuid.UUID, turn_id: uuid.UUID
-    ) -> tuple[str, asyncio.Semaphore | None]:
+    ) -> tuple[str, Slot | None]:
         """Admission control (spec §9.1 算力额度真实化), before any execution:
 
         - credits exhausted → ("reject", None): the caller refuses the turn.
         - its session starts on a session host with no memory for it → wait.
-        - project concurrency full → queue on the project semaphore (FIFO),
-          after posting a visible "排队中" system event. Returns ("ok", sem)
-          with the ACQUIRED semaphore (caller must release).
+        - project concurrency full → wait for one of the project's slots, first
+          come first served, after posting a visible "排队中" system event.
+          Returns ("ok", slot) with the slot held (caller must release).
         - topic unknown / policy lookup failed → ("ok", None): admit ungated;
           the turn itself surfaces the real error.
         """
@@ -1886,31 +1890,25 @@ class AgentWorkRunner:
                 chat_service, topic_id, turn_id, text, meta=HOST_BUSY_META
             ),
         )
-        key = policy["project_id"]
-        sem = self._project_sems.get(key)
-        if sem is None:
-            sem = asyncio.Semaphore(policy["max_concurrent_turns"])
-            self._project_sems[key] = sem
-        if sem.locked():
-            ahead = self._project_waiting.get(key, 0)
+
+        async def tell_queued(ahead: int) -> None:
             await self._post_event(
-                chat_service,
-                topic_id,
-                turn_id,
-                queued_text(ahead),
-                meta=QUEUED_META,
+                chat_service, topic_id, turn_id, queued_text(ahead), meta=QUEUED_META
             )
-            logger.info("turn %s queued (project=%s ahead=%s)", turn_id, key, ahead)
-        self._project_waiting[key] = self._project_waiting.get(key, 0) + 1
-        try:
-            await sem.acquire()
-        finally:
-            left = self._project_waiting.get(key, 1) - 1
-            if left > 0:
-                self._project_waiting[key] = left
-            else:
-                self._project_waiting.pop(key, None)
-        return "ok", sem
+            logger.info(
+                "turn %s queued (project=%s ahead=%s)",
+                turn_id,
+                policy["project_id"],
+                ahead,
+            )
+
+        slot = await enter(
+            get_redis_client(),
+            str(turn_id),
+            pool=_project_pool(policy["project_id"], policy["max_concurrent_turns"]),
+            on_queued=tell_queued,
+        )
+        return "ok", slot
 
     async def _refuse_exhausted(
         self,
@@ -2196,7 +2194,7 @@ class AgentWorkRunner:
             self._last_frame_at.pop(str(turn_id), None)
             self._live_topics.pop(str(turn_id), None)
             if gate is not None:
-                gate.release()
+                await gate.release()
             from app.domain.agent.pending_messages import nudge_messages
 
             nudge_messages(chat_service, topic_id)
