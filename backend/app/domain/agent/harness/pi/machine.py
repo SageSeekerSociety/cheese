@@ -114,8 +114,12 @@ class Machine:
         shipped: Path | None = None,
         mirror: Path | None = None,
         scratch: Path | None = None,
+        reading: bool = False,
     ):
         self.client = RemoteClient(dict(target))
+        # Only reads it: no command is run on it for the session
+        # (`machine/reading.py`).
+        self.reading = reading
         self.workspace = str(target.get("workspace") or "")
         self.placeholder = self.workspace == DEFERRED_WORKSPACE
         self.taken = not self.placeholder
@@ -134,6 +138,8 @@ class Machine:
         # The lease whose executor was found to take file operations (`files`),
         # as a one-item tuple: a machine with no generation is still checked.
         self.files_checked: tuple | None = None
+        # The same, for the checkout's history (`git`).
+        self.git_checked: tuple | None = None
         # What `access` brought back for the tool call that asked, by path.
         self.opened: dict[str, dict] = {}
 
@@ -334,6 +340,21 @@ class Machine:
             answer["paths"] = [posixpath.join(path, found) for found in answer["paths"]]
         return answer
 
+    def git(self, request: dict) -> dict:
+        """One of git's reading commands in the checkout, answered by the
+        machine's executor (`remote_execution/machine_git.py`). Raises
+        `OSError` with what it said when it could not."""
+        lease = (self.client.config.get("generation"),)
+        if self.git_checked != lease:
+            capabilities = self.client.call("ping").get("capabilities") or []
+            if "machine_git" not in capabilities:
+                raise OSError(OLD_EXECUTOR)
+            self.git_checked = lease
+        answer = self.client.control({**request, "subtype": "git"})
+        if "error" in answer:
+            raise OSError(answer["error"])
+        return answer
+
     # pi's read asks whether it may read a file, what kind of file it is, and
     # then reads it; its edit asks whether it may write it, reads it and writes
     # it, one path each time. So `access` brings back what the calls after it
@@ -409,7 +430,11 @@ class Machine:
         .register_project_hooks`), and not on every prompt."""
         generation = self.client.config.get("generation")
         if self.settings is None or generation != self.settings_generation:
-            self.settings = self._on_machine_text(SETTINGS)
+            self.settings = (
+                self._read_settings()
+                if self.reading
+                else self._on_machine_text(SETTINGS)
+            )
             self.settings_generation = generation
         for source in self.settings or []:
             if not isinstance(source, dict):
@@ -437,6 +462,23 @@ class Machine:
                 ):
                     return True
         return False
+
+    def _read_settings(self) -> list:
+        """What ``SETTINGS`` prints, read with file operations instead of a
+        command."""
+        found: list = []
+        for name in (".claude/settings.json", ".claude/settings.local.json"):
+            path = posixpath.join(self.workspace, name)
+            if not self.files("stat", path).get("exists"):
+                continue
+            text = base64.b64decode(self.files("read", path)["data"]).decode(
+                "utf-8", "replace"
+            )
+            try:
+                found.append(json.loads(text))
+            except ValueError:
+                found.append(text)
+        return found
 
     def hooks(
         self,

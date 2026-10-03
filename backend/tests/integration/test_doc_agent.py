@@ -24,8 +24,14 @@ import pytest
 from app.api.deps import get_handless_sessions
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.harness.pi.handless import Answered
+from app.domain.memory.files import MemoryFileScope
+from app.domain.memory.files_store import MemoryFileStore
 from app.main import app
-from tests.integration.conftest import room_agent_headers, session_auth_headers
+from tests.integration.conftest import (
+    post_message,
+    room_agent_headers,
+    session_auth_headers,
+)
 from tests.integration.test_doc_edits import ALICE_PARAGRAPH, _doc, _document
 
 
@@ -237,3 +243,62 @@ def test_a_session_that_fails_still_answers_the_thread(client, sessions):
 
     [answer] = _answers(client, room, root, seat)
     assert answer
+
+
+def test_a_search_reaches_only_the_rooms_the_asker_may_read(client, sessions):
+    room, seat = _document(client)
+    project = client.get(f"/topics/{room}").json()["data"]["project_id"]
+    alone = client.get(
+        f"/projects/{project}/private-chat",
+        params={"user_handle": "alice"},
+        headers=session_auth_headers("alice"),
+    )
+    assert alone.status_code == 200, alone.text
+    post_message(client, alone.json()["data"]["id"], "alice", {"content": "里程碑七号"})
+    post_message(client, room, "alice", {"content": "里程碑三号"})
+    found: dict[str, str] = {}
+
+    async def search(launch, question):
+        response = await _tool(launch.token, "search_project", {"query": "里程碑"})
+        assert response.status_code == 200, response.text
+        found["text"] = response.json()["data"]["text"]
+        return "找到了。", None
+
+    sessions.script = search
+    root = _comment(client, room, f"<@{seat}> 里程碑定了几号？", by="bob")
+
+    assert _answers(client, room, root, seat) == ["找到了。"]
+    assert "三号" in found["text"]
+    assert "七号" not in found["text"]
+
+
+def test_the_team_memory_is_read_in_full(client, sessions):
+    room, seat = _document(client)
+    project = uuid.UUID(client.get(f"/topics/{room}").json()["data"]["project_id"])
+
+    async def remember():
+        async with client.test_factory() as db:
+            await MemoryFileStore(db).write(
+                project_id=project,
+                scope=MemoryFileScope.team,
+                owner_handle=None,
+                path="deploy.md",
+                content="部署走 CI，周五不发版。",
+                updated_by="alice",
+                expected_version=None,
+            )
+            await db.commit()
+
+    client.portal.call(remember)
+    read: dict[str, str] = {}
+
+    async def recall(launch, question):
+        response = await _tool(launch.token, "read_memory", {"name": "deploy.md"})
+        read["text"] = response.json()["data"]["text"]
+        return "记得。", None
+
+    sessions.script = recall
+    root = _comment(client, room, f"<@{seat}> 什么时候能发版？", by="bob")
+
+    assert _answers(client, room, root, seat) == ["记得。"]
+    assert read["text"] == "部署走 CI，周五不发版。"

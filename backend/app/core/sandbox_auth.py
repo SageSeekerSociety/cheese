@@ -113,8 +113,12 @@ def bind_resource_token(
     *,
     session_id: str | None = None,
     lease_generation: str | None = None,
+    reading: bool = False,
 ) -> str:
-    """Bind an existing scoped launch credential to its allocated execution."""
+    """Bind an existing scoped launch credential to its allocated execution.
+
+    ``reading`` makes it a credential that only reads the machine's files
+    (``routes/execution.py``): a document's 芝士 looking at the room's work."""
     claims = scoped_token_claims(token)
     if claims is None:
         raise ValueError("A valid scoped launch credential is required")
@@ -125,6 +129,8 @@ def bind_resource_token(
         claims["session"] = session_id
     if lease_generation is not None:
         claims["lease"] = lease_generation
+    if reading:
+        claims["ro"] = True
     raw = json.dumps(claims, separators=(",", ":")).encode()
     body = base64.urlsafe_b64encode(raw).decode().rstrip("=")
     if "session" in claims:

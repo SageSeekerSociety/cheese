@@ -63,19 +63,14 @@ PROTOCOL_VERSION = 1
 # these (`launch.file_sources`), and whatever starts a copy of this runtime
 # installs them the same way (`tests/support/executor_release.py`), so a file
 # the runtime comes to need reaches the machine and every fixture, or neither.
+_OWN = ("runtime", "portable", "mcp_process", "machine_files", "machine_git")
 RELEASE_FILES = {
-    "remote-execution/runtime.py": (
-        "app/domain/agent/harness/claude_code/remote_execution/runtime.py"
-    ),
-    "remote-execution/portable.py": (
-        "app/domain/agent/harness/claude_code/remote_execution/portable.py"
-    ),
-    "remote-execution/mcp_process.py": (
-        "app/domain/agent/harness/claude_code/remote_execution/mcp_process.py"
-    ),
-    "remote-execution/machine_files.py": (
-        "app/domain/agent/harness/claude_code/remote_execution/machine_files.py"
-    ),
+    **{
+        f"remote-execution/{name}.py": (
+            f"app/domain/agent/harness/claude_code/remote_execution/{name}.py"
+        )
+        for name in _OWN
+    },
     "remote-execution/project_hooks.py": "app/domain/agent/project_hooks.py",
     "remote-execution/cli_worker.py": "app/domain/agent/cli_worker.py",
     "cheese": "sandbox/cheese",
@@ -121,7 +116,7 @@ def write_json(path, value):
 @functools.cache
 def beside(name):
     """A module shipped beside this file (`RELEASE_FILES`): Windows primitives
-    (`portable`), the stdio MCP client, the files pi's tools take."""
+    (`portable`), the stdio MCP client, the files and git pi's tools take."""
     return runpy.run_path(str(Path(__file__).with_name(name + ".py")))
 
 
@@ -1122,8 +1117,8 @@ class Executor:
             )
         if kind == "shell":
             return self.shell(params)
-        if kind == "files":
-            return beside("machine_files")["answer"](params, str(self.root))
+        if kind in ("files", "git"):
+            return beside(f"machine_{kind}")["answer"](params, str(self.root))
         if kind == "background":
             # The named Bash call returns now, its command running on. Named by
             # the call rather than by what is waiting: a call that is only
@@ -1891,7 +1886,12 @@ class Executor:
                 "protocol_version": PROTOCOL_VERSION,
                 "release": self.config.get("release"),
                 "upgrading": self.upgrading,
-                "capabilities": ["prepare", "idle_upgrade", "machine_files"]
+                "capabilities": [
+                    "prepare",
+                    "idle_upgrade",
+                    "machine_files",
+                    "machine_git",
+                ]
                 + (
                     ["cli_worker"]
                     if self.cli_worker is not None and self.cli_worker.poll() is None

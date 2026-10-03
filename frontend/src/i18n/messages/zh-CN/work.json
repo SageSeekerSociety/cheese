@@ -830,6 +830,10 @@
       "resend": "重新发送",
       "reading": "{agent}正在读文档…",
       "editing": "{agent}正在修改文档…",
+      "readingCode": "{agent}正在看代码…",
+      "searching": "{agent}正在搜索项目…",
+      "readingMemory": "{agent}正在读项目记忆…",
+      "readingAttachment": "{agent}正在读附件…",
       "quoteChanged": "原文已改动"
     },
     "chat": {

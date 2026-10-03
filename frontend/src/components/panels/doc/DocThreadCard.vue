@@ -62,13 +62,26 @@ function rendered(author: string, content: string): { html: boolean; text: strin
     : { html: false, text: plainTokens(content, maps) }
 }
 
+// 芝士正在用的工具，说成它在做的事；没列出的就说在回答
+const TOOL_STEPS: Record<string, string> = {
+  read_document: 'reading',
+  edit_document: 'editing',
+  read: 'readingCode',
+  ls: 'readingCode',
+  find: 'readingCode',
+  grep: 'readingCode',
+  git: 'readingCode',
+  search_project: 'searching',
+  read_memory: 'readingMemory',
+  read_attachment: 'readingAttachment',
+}
+
 const step = computed(() => {
   const a = props.activity
   if (!a) return null
   if (a.state === 'queued') return t('work.room.docAgent.queued', { agent: props.agentName })
-  if (a.tool === 'read_document') return t('work.room.comments.reading', { agent: props.agentName })
-  if (a.tool === 'edit_document') return t('work.room.comments.editing', { agent: props.agentName })
-  return t('work.room.docAgent.answering', { agent: props.agentName })
+  const doing = a.tool ? TOOL_STEPS[a.tool] : undefined
+  return t(doing ? `work.room.comments.${doing}` : 'work.room.docAgent.answering', { agent: props.agentName })
 })
 
 // ---- 回复框：在看这张时才有，随字长高；回车发出去，Shift+回车换行 ----

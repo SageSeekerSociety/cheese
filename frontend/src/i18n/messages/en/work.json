@@ -830,6 +830,10 @@
       "resend": "Send again",
       "reading": "{agent} is reading the document…",
       "editing": "{agent} is editing the document…",
+      "readingCode": "{agent} is reading the code…",
+      "searching": "{agent} is searching the project…",
+      "readingMemory": "{agent} is reading the project memory…",
+      "readingAttachment": "{agent} is reading an attachment…",
       "quoteChanged": "The quoted text has changed"
     },
     "chat": {
