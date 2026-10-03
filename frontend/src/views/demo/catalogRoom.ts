@@ -26,6 +26,8 @@ import ComposerChipRow from '@/components/room/ComposerChipRow.vue'
 import MentionMenu from '@/components/room/MentionMenu.vue'
 import OutsideMentionNotice from '@/components/room/OutsideMentionNotice.vue'
 
+import AskTakeoverDemo from './AskTakeoverDemo.vue'
+
 /** 这几件都要 vuetify（`v-icon` / `v-spacer` / `v-btn`），还都有不写死在模板里的字：
  *  「外部」、「取消回复」、`t('work.room.composer.summon')`。 */
 const UI_T: CatalogNeed[] = ['vuetify', 'i18n']
@@ -260,6 +262,32 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
         name: '私聊：没有「交给芝士」这一颗',
         note: '那儿每条都是说给它听的，所以这一格只剩发送——`alwaysSummon` 一开，按钮整颗不画。算力那一枚是话题从 `chips` 具名插槽交进来的，预览站的格子只喂默认插槽、喂不进去，少的那一枚在这一格看不见。',
         props: { ...ACTIONS_BASE, alwaysSummon: true, canSend: true },
+      },
+    ],
+  },
+
+  {
+    id: 'ask-takeover',
+    title: 'AskTakeoverDemo',
+    about: '提问接管输入框：有题要答时输入框那一格画的是提问面板，答完它自己回来；Esc 收起后靠一条提示收回。',
+    file: 'src/views/demo/AskTakeoverDemo.vue',
+    component: AskTakeoverDemo,
+    needs: UI_T,
+    states: [
+      {
+        name: '一组两题，正在接管',
+        note: '这一格里的「输入框」其实是提问面板：单选默认选中第一项，点选后停 180ms 再推进（这段时间整行高亮、标记翻实心），方向键换选项、Enter 提交、Skip 跳过这一题。',
+        props: { questions: 2 },
+      },
+      {
+        name: '只剩一题',
+        note: '一题时不画 i of N 的前后按钮。',
+        props: { questions: 1 },
+      },
+      {
+        name: '收起之后',
+        note: 'Esc 只收起当前这一组，输入框上方出现「有 N 个问题待回答」，点它把面板叫回来——问题不会被永久藏掉。',
+        props: { questions: 2, dismissed: true },
       },
     ],
   },
