@@ -18,9 +18,11 @@ const { mdAndUp } = useDisplay()
 const workspace = useWorkspaceStore()
 
 /**
- * ← 回到人是从哪一页来的，和浏览器的后退一样。`state.back` 是 vue-router 在每次
- * 应用内跳转时记下的上一个地址；贴链接直接打开的第一页上它是 null，这时
- * `history.back()` 会把人踢出整个应用，所以才退到下面那套层级兜底。
+ * 身后有应用内来路吗？`state.back` 是 vue-router 在每次应用内跳转时记下的上一个
+ * 地址；贴链接直接打开的第一页上它是 null，这时 `history.back()` 会把人踢出整个
+ * 应用。
+ *
+ * 这只是**兜底**：上面那套层级声明得出父级时，← 交回层级（见 `target`）。
  * 读 route 只为让它随每次跳转重算：history 的 state 不是响应式的。
  */
 const cameFrom = computed(() => {
@@ -105,23 +107,13 @@ const override = computed(() => (mdAndUp.value ? null : topBarBack.value))
   >
     <v-icon size="20">mdi-arrow-left</v-icon>
   </v-btn>
-  <!-- `:active="false"` 不是样式偏好，是修一个 bug：这颗按钮指向的是**父**地址，
+  <!-- 层级在历史之前：顶栏这一颗回答的是「这一层上面是谁」，浏览器那一颗才回答
+       「我刚才在哪」。声明了父级就按声明走，没声明才回退到来路（见下一条分支）。
+       `:active="false"` 不是样式偏好，是修一个 bug：这颗按钮指向的是**父**地址，
        而 vue-router 的非精确匹配认为「站在子路由上时父链接是激活的」，于是
        Vuetify 一直给它盖一层 12% 的实底遮罩——一颗永远处于按下态的返回键，在
        顶栏左上角就是一个突兀的灰方块。返回是「离开这一层」，不是「你在这儿」，
        它本来就不该有激活态。 -->
-  <v-btn
-    v-else-if="cameFrom"
-    icon
-    color="on-surface-variant"
-    variant="text"
-    :size="mdAndUp ? 28 : 44"
-    :aria-label="t('shell.back.previous')"
-    :title="t('shell.back.previous')"
-    @click="router.back()"
-  >
-    <v-icon size="20">mdi-arrow-left</v-icon>
-  </v-btn>
   <v-btn
     v-else-if="to"
     :to="to"
@@ -132,6 +124,20 @@ const override = computed(() => (mdAndUp.value ? null : topBarBack.value))
     :size="mdAndUp ? 28 : 44"
     :aria-label="label"
     :title="label"
+  >
+    <v-icon size="20">mdi-arrow-left</v-icon>
+  </v-btn>
+  <!-- 这一页没声明上一层（首页、反馈中心、各设置页签……），但身后确实有应用内来路，
+       按浏览器的语义退一格，好过什么都不画。 -->
+  <v-btn
+    v-else-if="cameFrom"
+    icon
+    color="on-surface-variant"
+    variant="text"
+    :size="mdAndUp ? 28 : 44"
+    :aria-label="t('shell.back.previous')"
+    :title="t('shell.back.previous')"
+    @click="router.back()"
   >
     <v-icon size="20">mdi-arrow-left</v-icon>
   </v-btn>
