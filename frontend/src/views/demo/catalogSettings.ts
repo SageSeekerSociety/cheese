@@ -16,11 +16,15 @@
  * `scene-baseline.json` 的 debt 里 —— 「场景」指的是路由页和 `components/panels/**`，
  * `components/settings/**` 这几件不是场景，也不该往那张表里加。
  *
+ * 末尾另收一件 `ComputeChoiceForm`（选工作电脑的表单，设置页的算力那一组用它），
+ * 从 `catalog.ts` 搬来：那份文件到了一千行的上限。
+ *
  * 这里的 `CatalogEntry` 是 type-only 引用：`catalog.ts` 反过来要 `SETTINGS_ENTRIES` 这个
  * 值，运行时不构成循环。
  */
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
+import { CLOUD_SUPPLY, CLOUD_SUPPLY_UNKNOWN, COMPUTE_DEVICES } from './catalogFixtures'
 import {
   accountConn,
   accountProps,
@@ -31,6 +35,7 @@ import {
   forgeConn,
 } from './catalogSettingsFixtures'
 
+import ComputeChoiceForm from '@/components/ComputeChoiceForm.vue'
 import AttributionSettings from '@/components/settings/AttributionSettings.vue'
 import BranchProtectionSection from '@/components/settings/BranchProtectionSection.vue'
 import ForgeRepoStatus from '@/components/settings/ForgeRepoStatus.vue'
@@ -247,6 +252,34 @@ export const SETTINGS_ENTRIES: CatalogEntry[] = [
         note: '第一态：一行转圈加一句「加载连接状态中…」。',
         props: accountProps({ state: 'loading' }),
         expect: '加载连接状态中',
+      },
+    ],
+  },
+  {
+    id: 'compute-choice-form',
+    title: 'ComputeChoiceForm',
+    about: '选一台工作电脑：云端或自有设备；云端可自定义规格，先看云端此刻能开的范围。',
+    file: 'src/components/ComputeChoiceForm.vue',
+    component: ComputeChoiceForm,
+    needs: UI,
+    states: [
+      {
+        name: '查到了范围',
+        note: '勾「自定义」后显示可选范围（云端供应与平台允许值的交集）；填超的那一格标红，按钮变灰。数字是示例。',
+        props: { devices: COMPUTE_DEVICES, cloudAvailable: true, supply: CLOUD_SUPPLY },
+        expect: '自定义 CPU、内存和磁盘',
+      },
+      {
+        name: '查不到范围',
+        note: '云端没应答时照实说查不到、说原因，不显示任何范围数字，仍可保存，开机时由云端校验。',
+        props: { devices: COMPUTE_DEVICES, cloudAvailable: true, supply: CLOUD_SUPPLY_UNKNOWN },
+        expect: '自定义 CPU、内存和磁盘',
+      },
+      {
+        name: '正在查',
+        note: '范围还在路上时按钮不可点，不拿旧数或默认数先顶上。',
+        props: { devices: COMPUTE_DEVICES, cloudAvailable: true, supply: null, supplyLoading: true },
+        expect: '自定义 CPU、内存和磁盘',
       },
     ],
   },
