@@ -46,8 +46,51 @@ class PagePinQuoteIn(BaseModel):
     y: float = Field(ge=0, le=1)
 
 
+class SheetCellQuoteIn(BaseModel):
+    """One cell of a spreadsheet, addressed the way the file itself addresses it.
+
+    `address` is the A1 form the reader's file already carries, so the recipient
+    returns to that cell without a conversion in between. CSV has no sheet name,
+    which is why `sheet` may be empty rather than absent.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["sheet-cell"]
+    path: str = Field(min_length=1)
+    source: Literal["live", "committed"]
+    version: str = Field(min_length=1)
+    task_id: uuid.UUID | None = None
+    sheet: str
+    address: str = Field(min_length=1)
+    value: str
+
+
+class TextRangeQuoteIn(BaseModel):
+    """A passage picked out of rendered document text.
+
+    Text has no page number to point at: editing one sentence reflows the file,
+    so a line number stops holding. The location is the heading it sits under
+    (None at the top of the file) plus the context on either side, which is what
+    tells one occurrence of a sentence from another.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["text-range"]
+    path: str = Field(min_length=1)
+    source: Literal["live", "committed"]
+    version: str = Field(min_length=1)
+    task_id: uuid.UUID | None = None
+    text: str
+    heading: str | None = None
+    prefix: str
+    suffix: str
+
+
 QuotedContextIn = Annotated[
-    SlidePageQuoteIn | PagePinQuoteIn, Field(discriminator="kind")
+    SlidePageQuoteIn | PagePinQuoteIn | SheetCellQuoteIn | TextRangeQuoteIn,
+    Field(discriminator="kind"),
 ]
 
 
