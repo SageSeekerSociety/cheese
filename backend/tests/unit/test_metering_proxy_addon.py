@@ -1765,6 +1765,48 @@ def test_a_subagents_own_haiku_request_is_not_a_specification(monkeypatch, tmp_p
     assert json.loads(flow.request.content)["model"] == "claude-sonnet-5"
 
 
+def test_a_haiku_name_on_the_child_header_is_not_a_specification(monkeypatch, tmp_path):
+    """同一个「不算指定」判据也要落在头部那条快路上。
+
+    Claude Code 的 WebFetch 由一个 haiku 类内部子请求代跑，harness 的
+    webfetch_transport.cjs 把这具请求体顶层的 model 抄进 x-cheese-child-model
+    头。头部这条路照单全收的话，准入会拿一个目录里没有的名字去校验，整个工具
+    调用 400 —— 实测 26 次，报错就是「分身指定的模型
+    'claude-haiku-4-5-20251001' 当前项目的模型目录里没有」。判据与请求体那条
+    路一致：按未指定问，绑定盖成分身默认。
+    """
+    mod = _load_addon(monkeypatch, tmp_path, allow_header_attr="1")
+    mod.ADMISSION_URL = "http://fixture/admission"
+    calls = []
+
+    def admit(
+        project, topic, bearer, *, subagent=False, requested_model="", child_model=""
+    ):
+        calls.append((subagent, requested_model, child_model))
+        return _verdict(model="claude-sonnet-5")
+
+    mod.ADMISSION = SimpleNamespace(check=admit)
+    flow = _make_flow()
+    flow.request.headers.update(
+        {
+            "x-cheese-attr": "p/t",
+            "x-claude-code-request-class": "subagent",
+            "x-cheese-child-model": "claude-haiku-4-5-20251001",
+            "content-length": "56",
+        }
+    )
+    asyncio.run(mod.requestheaders(flow))
+    assert "x-cheese-child-model" not in flow.request.headers
+    # 头部时刻不做准入：清掉之后这一路和请求体那条一样，要等体到齐。
+    assert calls == []
+    assert flow.request.stream is False
+    flow.request.content = b'{"model":"claude-haiku-4-5-20251001","messages":[]}'
+    asyncio.run(mod.request(flow))
+    assert calls == [(True, "", "")]
+    assert flow.response is None
+    assert json.loads(flow.request.content)["model"] == "claude-sonnet-5"
+
+
 def test_a_subagent_naming_its_parents_model_reaches_admission_with_it(
     monkeypatch, tmp_path
 ):
