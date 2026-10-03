@@ -6,6 +6,8 @@ import type { SlidePageContext } from './slidesContext'
 
 import { ref } from 'vue'
 
+import { isQuotedContext } from '@/lib/quotedContext'
+
 interface QuoteProps {
   submitQuestion?: SubmitPreviewQuestion
   docIdentity?: DocumentIdentity | null
@@ -39,7 +41,7 @@ export function usePreviewQuote(props: QuoteProps, canUse: (context: SlidePageCo
     pick.value = { kind: 'text-range', text, heading: heading || null, prefix, suffix }
   }
 
-  /** 发出去了答 true，被拒了答 false，没有可发的结构化引用答 null。 */
+  /** 发出去了答 true；幻灯片那一页已不可信答 false；该退回拼一句话时答 null。 */
   function send(note: string): boolean | null {
     if (page.value) {
       const payload = page.value
@@ -64,12 +66,12 @@ export function usePreviewQuote(props: QuoteProps, canUse: (context: SlidePageCo
     const identity = props.docIdentity
     if (!pick.value || !identity?.version || !props.submitQuestion) return null
     const { path, source, version, taskId, topicId } = identity
-    return !!props.submitQuestion({
-      intent: 'ask-agent',
-      topicId,
-      content: note,
-      quotedContext: { ...pick.value, path, source, version, task_id: taskId ?? null },
-    })
+    const quotedContext = { ...pick.value, path, source, version, task_id: taskId ?? null }
+    // 先自己核一遍形状，别让后端回一个 422。
+    if (!isQuotedContext(quotedContext)) return null
+    // 提问出口不收（房间里没有芝士的席位）时，这一格原来是作为一句话发进房间的，
+    // 那条路照旧走：答 null 而不是 false，免得人写的那句话无声无息地没了。
+    return props.submitQuestion({ intent: 'ask-agent', topicId, content: note, quotedContext }) ? true : null
   }
 
   return { page, pick, clear, cell, range, send }

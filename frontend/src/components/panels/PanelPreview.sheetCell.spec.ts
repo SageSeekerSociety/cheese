@@ -157,3 +157,16 @@ it('拿不到文件身份时退回拼一句话那条老路', async () => {
   expect(payload[0].message).toContain('B7')
   expect(payload[0].message).toContain('这个数字按季度摊')
 })
+
+it('提问出口不收（房间里没有芝士）时，这句话照旧作为一句话发进房间', async () => {
+  const submit = vi.fn().mockReturnValue(false)
+  const ui = mount(submit as unknown as SubmitPreviewQuestion)
+  await fireEvent.click(ui.getByText('cell'))
+  await fireEvent.update(ui.getByPlaceholderText('说明要改什么'), '这个数字按季度摊')
+  await fireEvent.click(ui.getByText('发送'))
+
+  expect(submit).toHaveBeenCalledTimes(1)
+  const [payload] = ui.emitted().locate as { message: string }[][]
+  expect(payload[0].message).toContain('B7')
+  expect(payload[0].message).toContain('这个数字按季度摊')
+})
