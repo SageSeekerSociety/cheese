@@ -5,7 +5,7 @@ import uuid
 
 import pytest
 
-from app.api.deps import get_handless_sessions
+from app.api.deps import get_session_host
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.topic.models import Topic, TopicStatus
 from app.main import app
@@ -21,9 +21,9 @@ def sessions():
     from tests.integration.test_doc_agent import FakeSessions
 
     fake = FakeSessions()
-    app.dependency_overrides[get_handless_sessions] = lambda: fake
+    app.dependency_overrides[get_session_host] = lambda: fake
     yield fake
-    app.dependency_overrides.pop(get_handless_sessions, None)
+    app.dependency_overrides.pop(get_session_host, None)
 
 
 def _topic(client) -> str:

@@ -30,15 +30,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.errors import ForbiddenError, ValidationError
 from app.core.sentences import error_frame, exception_text, say
 from app.domain.agent.chat import ChatService
-from app.domain.agent.document import question
-from app.domain.agent.harness.pi import document
-from app.domain.agent.harness.pi.handless import (
-    Answered,
-    HandlessSessions,
-    HostFull,
-    Looking,
-    Said,
-)
+from app.domain.agent.document import question, session
+from app.domain.agent.session_host.answer import Answer, Tool, Words
+from app.domain.agent.session_host.answer import ask as ask_session
+from app.domain.agent.session_host.contract import HostFull, Prompt
+from app.domain.agent.session_host.host import SessionHost
 from app.domain.living_doc import work_edits
 
 logger = logging.getLogger(__name__)
@@ -198,7 +194,7 @@ async def owned(
 
 async def stop(
     redis: Redis,
-    sessions: HandlessSessions,
+    sessions: SessionHost,
     *,
     project_id: uuid.UUID,
     conversation: uuid.UUID,
@@ -206,7 +202,7 @@ async def stop(
     """Stop what the box is waiting on: its turn, or the answer being written."""
     await redis.set(_stop_key(conversation), "1", ex=int(question.WAIT_S))
     if await question.asked(redis, conversation):
-        await sessions.abort(document.state_dir(project_id, conversation))
+        await sessions.stop(session.ref(project_id, conversation))
 
 
 # --- one question --------------------------------------------------------------
@@ -243,7 +239,7 @@ def _question(
 
 async def ask(
     chat: ChatService,
-    sessions: HandlessSessions,
+    sessions: SessionHost,
     redis: Redis,
     emit: Callable[[str, dict], Awaitable[None]],
     *,
@@ -309,7 +305,7 @@ async def ask(
         prompt = _question(
             around, preset=chosen, text=text, selection=selection, may_edit=allowed
         )
-        launch = question.launch_for(
+        started = session.session_for(
             project_id=project_id,
             room_id=room_id,
             key=conversation,
@@ -318,14 +314,18 @@ async def ask(
             where="box",
         )
         spent = True
-        async for event in sessions.ask(
-            launch, work, prompt, credential=acting, ceiling_s=question.ANSWER_S
+        async for event in ask_session(
+            sessions,
+            *started,
+            Prompt(work, prompt, acting=acting),
+            work_id=work,
+            ceiling_s=question.ANSWER_S,
         ):
-            if isinstance(event, Said):
+            if isinstance(event, Words):
                 await emit("delta", {"text": event.text})
-            elif isinstance(event, Looking):
-                await emit("tool", {"name": event.tool})
-            elif isinstance(event, Answered):
+            elif isinstance(event, Tool):
+                await emit("tool", {"name": event.name})
+            elif isinstance(event, Answer):
                 answer = event.text.strip()
                 if event.error:
                     logger.warning(

@@ -20,6 +20,7 @@ Rules held here:
 """
 
 import asyncio
+import dataclasses
 import json
 import threading
 import time
@@ -29,15 +30,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
 
 from app.core.config import settings
-from app.core.sandbox_auth import mint_delegated_credential, mint_personal_credential
-from app.domain.agent.harness.pi import personal
-from app.domain.agent.harness.pi.handless import (
-    Answered,
-    HandlessSessions,
-    Looking,
-    Said,
-)
-from app.domain.agent.harness.pi.personal import Launch
+from app.core.sandbox_auth import mint_delegated_credential
+from app.domain.agent.personal import session as personal
+from app.domain.agent.session_host.answer import Answer, Tool, Words, ask
+from app.domain.agent.session_host.contract import Prompt
+from app.domain.agent.session_host.host import SessionHost
 from tests.support.session_host import DEVICE, Host, install_pi, stop_all
 
 PROMPT = "你是芝士。只用给你的工具。"
@@ -187,7 +184,7 @@ def host(tmp_path, monkeypatch):
     install_pi(home)
     monkeypatch.setattr(settings, "agent_session_device_id", DEVICE)
     hub = Host(home)
-    sessions = HandlessSessions(hub)
+    sessions = SessionHost(hub)
     yield hub, sessions
     stop_all(home)
 
@@ -207,16 +204,26 @@ def platform(monkeypatch):
         fake.close()
 
 
-def _launch(user: int, conversation: uuid.UUID | None = None) -> Launch:
-    conversation = conversation or uuid.uuid4()
-    return Launch(
-        user_id=user,
-        conversation_id=conversation,
-        system_prompt=PROMPT,
-        tools=TOOLS,
-        token=mint_personal_credential(user_id=user, conversation_id=str(conversation)),
-        model="fixture-model",
-    )
+class Started:
+    """A conversation's session as a person's 芝士 starts it, given ``PROMPT``
+    and ``TOOLS``."""
+
+    def __init__(self, user: int, conversation: uuid.UUID | None = None):
+        self.user = user
+        ref, spec, self.access = personal.session(
+            user, conversation or uuid.uuid4(), ""
+        )
+        self.ref = ref
+        self.spec = dataclasses.replace(
+            spec, system_prompt=PROMPT, tools=TOOLS, model="fixture-model"
+        )
+
+    def __iter__(self):
+        return iter((self.ref, self.spec, self.access))
+
+
+def _launch(user: int, conversation: uuid.UUID | None = None) -> Started:
+    return Started(user, conversation)
 
 
 def question_credential(user: int) -> str:
@@ -225,18 +232,24 @@ def question_credential(user: int) -> str:
     )
 
 
-async def _ask(sessions, launch, text, *, credential: str = "", **options) -> list:
-    return [
-        event
-        async for event in sessions.ask(
-            launch,
-            uuid.uuid4(),
+def _asking(sessions, launch, text, *, credential: str = "", earlier: str = ""):
+    work = uuid.uuid4()
+    return ask(
+        sessions,
+        *launch,
+        Prompt(
+            work,
             text,
-            credential=credential or question_credential(getattr(launch, "user_id", 1)),
-            ceiling_s=120,
-            **options,
-        )
-    ]
+            acting=credential or question_credential(launch.user),
+            preface=earlier,
+        ),
+        work_id=work,
+        ceiling_s=120,
+    )
+
+
+async def _ask(sessions, launch, text, **options) -> list:
+    return [event async for event in _asking(sessions, launch, text, **options)]
 
 
 async def _until(check, timeout: float = 60.0) -> None:
@@ -259,20 +272,18 @@ async def test_a_session_has_its_tools_and_nothing_else_and_does_not_think(
     acting = question_credential(7)
 
     events = []
-    async for event in sessions.ask(
-        launch, uuid.uuid4(), "我领了哪些题？", credential=acting, ceiling_s=120
-    ):
+    async for event in _asking(sessions, launch, "我领了哪些题？", credential=acting):
         events.append(event)
-        if isinstance(event, Said):
+        if isinstance(event, Words):
             first_words_seen.set()
 
-    said = "".join(e.text for e in events if isinstance(e, Said))
+    said = "".join(e.text for e in events if isinstance(e, Words))
     assert said == "你领了一道题：图像分类基线复现。"
-    assert Looking("cheese_my_tasks") in events
-    assert events[-1] == Answered("你领了一道题：图像分类基线复现。")
+    assert Tool("cheese_my_tasks") in events
+    assert events[-1] == Answer("你领了一道题：图像分类基线复现。")
     # More than one piece: the first words were handed on while the model was
     # still writing the rest.
-    assert len([e for e in events if isinstance(e, Said)]) > 1
+    assert len([e for e in events if isinstance(e, Words)]) > 1
 
     first = fake.requests[0]
     assert sorted(t["function"]["name"] for t in first["tools"]) == [
@@ -291,7 +302,7 @@ async def test_a_session_has_its_tools_and_nothing_else_and_does_not_think(
     )
     # The model is reached with the person's credential; the tool, with the
     # one minted for this question, at the platform's own route.
-    assert set(fake.model_auth) == {f"Bearer {launch.token}"}
+    assert set(fake.model_auth) == {f"Bearer {launch.access.credential}"}
     assert fake.tool_calls == [("GET /tasks/joined", acting)]
     # The tool's answer went back to the model.
     assert "一道题" in json.dumps(fake.requests[1], ensure_ascii=False)
@@ -308,7 +319,7 @@ async def test_an_idle_session_exits_and_comes_back_with_its_conversation(
     monkeypatch.setattr(personal, "IDLE_EXIT_S", 1.0)
     fake = platform([{"text": "记住了。"}, {"text": "PINEAPPLE。"}])
     launch = _launch(7)
-    state = personal.state_dir(7, launch.conversation_id)
+    state = launch.ref.state
 
     await _ask(sessions, launch, "The password is PINEAPPLE.")
     await _until(lambda: not hub.alive(state))
@@ -316,7 +327,7 @@ async def test_an_idle_session_exits_and_comes_back_with_its_conversation(
 
     events = await _ask(sessions, launch, "What was the password?")
 
-    assert events[-1] == Answered("PINEAPPLE。")
+    assert events[-1] == Answer("PINEAPPLE。")
     asked = json.dumps(fake.requests[-1]["messages"], ensure_ascii=False)
     assert "The password is PINEAPPLE." in asked
     # It was started again, on the conversation it had.
@@ -336,7 +347,7 @@ async def test_a_third_session_lets_the_least_recently_used_one_go(host, platfor
     await _ask(sessions, third, "三")
 
     def running(launch):
-        return hub.alive(personal.state_dir(launch.user_id, launch.conversation_id))
+        return hub.alive(launch.ref.state)
 
     assert not running(first)
     assert running(second) and running(third)
@@ -369,14 +380,8 @@ async def _first_word(sessions, launch, text) -> float:
     """Seconds from asking to the first piece of the answer."""
     started = time.monotonic()
     first = None
-    async for event in sessions.ask(
-        launch,
-        uuid.uuid4(),
-        text,
-        credential=question_credential(launch.user_id),
-        ceiling_s=120,
-    ):
-        if isinstance(event, Said) and first is None:
+    async for event in _asking(sessions, launch, text):
+        if isinstance(event, Words) and first is None:
             first = time.monotonic() - started
     assert first is not None
     return first
@@ -396,7 +401,7 @@ async def test_an_answer_starts_as_soon_as_the_model_does(host, platform, monkey
 
     new = await _first_word(sessions, launch, "一")
     warm = [await _first_word(sessions, launch, "再一") for _ in range(3)]
-    await _until(lambda: not hub.alive(personal.state_dir(7, launch.conversation_id)))
+    await _until(lambda: not hub.alive(launch.ref.state))
     resumed = await _first_word(sessions, launch, "回来")
 
     print(

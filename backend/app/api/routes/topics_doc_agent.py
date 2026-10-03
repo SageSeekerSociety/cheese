@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 
 from app.api.auth import ActorResolverDep
-from app.api.deps import get_chat_service, get_handless_sessions
+from app.api.deps import get_chat_service, get_session_host
 from app.api.doc_identity import human_operation_actor
 from app.api.response import ok
 from app.api.routes.living_docs import _frozen
@@ -28,7 +28,7 @@ from app.core.redis import get_redis_client
 from app.core.sentences import error_frame, say
 from app.domain.agent.chat import ChatService
 from app.domain.agent.document import box, question, thread
-from app.domain.agent.harness.pi.handless import HandlessSessions
+from app.domain.agent.session_host.host import SessionHost
 from app.domain.block.comment_threads import CommentThreads
 from app.domain.living_doc.schemas import AgentAskIn
 from app.domain.topic.services import TopicService
@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/topics", tags=["doc-agent"])
 
 Chat = Annotated[ChatService, Depends(get_chat_service)]
-Sessions = Annotated[HandlessSessions, Depends(get_handless_sessions)]
+Sessions = Annotated[SessionHost, Depends(get_session_host)]
 
 
 def _sse(event: str, data: dict) -> bytes:

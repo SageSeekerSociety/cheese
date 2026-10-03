@@ -12,37 +12,17 @@ Rules held here:
 
 import json
 import subprocess
-import uuid
 
 import pytest
 
-from app.core.sandbox_auth import mint_scoped_token
-from app.domain.agent.document import question as doc_question
-from app.domain.agent.harness.pi.document import Launch
-from app.domain.agent.harness.pi.handless import Answered
+from app.domain.agent.session_host.answer import Answer
 from tests.support.room_machine import room_machine
-from tests.unit.test_personal_sessions import _ask, host, platform  # noqa: F401
-
-PROMPT = "你是芝士。"
-
-
-def _launch(machine: dict) -> Launch:
-    project, thread = uuid.uuid4(), uuid.uuid4()
-    return Launch(
-        project_id=project,
-        room_id=uuid.uuid4(),
-        thread_id=thread,
-        system_prompt=PROMPT,
-        tools=doc_question.TOOLS,
-        token=mint_scoped_token(
-            project_id=str(project),
-            topic_id=str(uuid.uuid4()),
-            agent_handle="cheese",
-            resource_id=str(thread),
-        ),
-        model="fixture-model",
-        machine=machine,
-    )
+from tests.unit.test_document_sessions import (  # noqa: F401
+    _ask,
+    _session,
+    host,
+    platform,
+)
 
 
 @pytest.mark.anyio
@@ -59,9 +39,9 @@ async def test_it_reads_the_rooms_checkout_and_cannot_change_it(
         [{"tool": "read", "arguments": {"path": "NOTES.md"}}, {"text": "读到了。"}],
     )
     with room_machine(tmp_path, checkout=checkout) as machine:
-        events = await _ask(sessions, _launch(machine), "第三节写到哪了？")
+        events = await _ask(sessions, _session(machine=machine), "第三节写到哪了？")
 
-    assert events[-1] == Answered("读到了。")
+    assert events[-1] == Answer("读到了。")
     names = {tool["function"]["name"] for tool in fake.requests[0]["tools"]}
     assert {"read", "ls", "find", "grep"} <= names
     assert not names & {"write", "edit", "bash"}
@@ -85,7 +65,7 @@ async def test_a_file_the_project_denies_stays_unread(
         [{"tool": "read", "arguments": {"path": "secret.env"}}, {"text": "读不了。"}],
     )
     with room_machine(tmp_path, checkout=checkout) as machine:
-        await _ask(sessions, _launch(machine), "密钥是多少？")
+        await _ask(sessions, _session(machine=machine), "密钥是多少？")
 
     assert len(fake.requests) == 2
     assert "hunter2" not in json.dumps(fake.requests[1], ensure_ascii=False)
@@ -127,6 +107,6 @@ async def test_it_sees_what_the_rooms_branch_changed(
         ],
     )
     with room_machine(tmp_path, checkout=checkout) as machine:
-        await _ask(sessions, _launch(machine), "这个分支改了什么？")
+        await _ask(sessions, _session(machine=machine), "这个分支改了什么？")
 
     assert "+第二节还没提交" in json.dumps(fake.requests[1], ensure_ascii=False)

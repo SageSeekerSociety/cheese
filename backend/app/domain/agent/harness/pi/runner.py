@@ -1070,7 +1070,7 @@ class Runner(runner.Runner[Journal]):
                 # sessions is the least recently used (`host.configure`).
                 "idle_s": time.monotonic() - self.active_at,
                 # The model it was started on: a session asked for another one
-                # is started again (`handless.HandlessSessions.ensure`).
+                # is started again (`session_host.SessionHost.start`).
                 "model": self.model,
             }
         raise ValueError(f"Unknown pi session operation: {method}")

@@ -28,11 +28,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ValidationError
 from app.core.redis import get_redis_client
-from app.core.sandbox_auth import mint_delegated_credential, mint_scoped_token
+from app.core.sandbox_auth import mint_delegated_credential
 from app.core.sentences import say
 from app.domain.agent.admission import Hold, Pool, Slot, enter, holding
 from app.domain.agent.document.machine import machine_to_read
-from app.domain.agent.harness.pi import document
 from app.domain.agent.skills import load_skills
 from app.domain.agent.supply import GATEWAY
 from app.domain.agent_instance.services import AgentInstanceService
@@ -56,8 +55,8 @@ ANSWER_S = 300.0
 #: How much longer than that a question's credential lasts, so a tool call
 #: begun just before the ceiling is not refused mid-way.
 CREDENTIAL_MARGIN_S = 60
-#: How long the credential a session starts with lasts. A session lives while
-#: its thread is asked things, and exits a minute after; a day covers it.
+#: How long the credentials a session starts with last. A session lives while
+#: its conversation is asked things, and exits a minute after; a day covers it.
 TOKEN_TTL_S = 24 * 3600
 #: How many of the room's latest messages come with a question.
 RECENT_MESSAGES = 20
@@ -380,51 +379,3 @@ async def surroundings(
     return Surroundings(
         doc.content if doc is not None else "", messages, charter, memory, machine
     )
-
-
-def launch_for(
-    *,
-    project_id: uuid.UUID,
-    room_id: uuid.UUID,
-    key: uuid.UUID,
-    bound: Bound,
-    around: Surroundings,
-    where: str,
-) -> document.Launch:
-    """The session of conversation ``key``, on the agent's model and the
-    room's credential for that conversation."""
-    return document.Launch(
-        project_id=project_id,
-        room_id=room_id,
-        thread_id=key,
-        system_prompt=system_prompt(
-            bound.agent_name,
-            around.charter,
-            around.memory,
-            where=where,
-            workspace=(around.machine or {}).get("workspace"),
-        ),
-        tools=TOOLS,
-        token=mint_scoped_token(
-            project_id=str(project_id),
-            topic_id=str(room_id),
-            agent_handle=bound.agent_handle,
-            resource_id=str(key),
-            ttl_s=TOKEN_TTL_S,
-        ),
-        model=bound.wire_model,
-        machine=around.machine,
-    )
-
-
-# --- the session's tools -------------------------------------------------------
-
-#: What a document's 芝士 may do (`sandbox/cheese`): read and edit the
-#: document, and look things up in the project as the person asking.
-TOOLS = (
-    "cheese_doc_get",
-    "cheese_doc_edit",
-    "cheese_project_search",
-    "cheese_memory_read",
-    "cheese_attachment_read",
-)
