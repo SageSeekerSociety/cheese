@@ -835,6 +835,11 @@ function projectAvatar(name: string): string {
 /* 跳到正文：外壳的第一个可聚焦元素。平时藏在屏幕上沿之外，键盘聚焦时才滑下来，
    露出琥珀色焦点环（全局 :focus-visible 那条）。只动 transform，不碰其他属性 ——
    设计规范 §9；减弱动效由 style.css 末尾的全局规则统一压掉。 */
+/* 跳转目标只是落点，不是控件：程序化 focus 之后不给整个内容区画一圈焦点环。 */
+#main-content:focus {
+  outline: none;
+}
+
 .skip-link {
   position: fixed;
   top: 10px;
