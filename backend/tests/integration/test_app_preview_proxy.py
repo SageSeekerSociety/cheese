@@ -327,11 +327,17 @@ def test_cross_origin_subresources_without_origin_do_not_reach_app(
     assert machine.asked == ["GET /asset.js"]
 
 
-def test_offline_app_returns_404(client, app_preview):
+def test_offline_app_answers_transiently_not_gone(client, app_preview):
+    """An app behind a detached tunnel is briefly unreachable, not gone. A bare
+    404 here renders a navigation as a white frame and tells every client the
+    preview does not exist; a 503 with Retry-After says to come back."""
     _, topic_id, machine = app_preview
     _open_preview(client, topic_id)
     machine.detach()
-    assert client.get(preview_origin(topic_id) + "/").status_code == 404
+    response = client.get(preview_origin(topic_id) + "/")
+    assert response.status_code == 503
+    assert response.headers["Retry-After"] == "2"
+    assert response.headers["X-Cheese-Preview-State"] == "app_unavailable"
 
 
 def test_hmr_preserves_query_subprotocol_and_both_frame_types(client, app_preview):
@@ -420,9 +426,9 @@ def test_a_tunnel_whose_peer_dropped_is_an_absent_preview_not_a_fault(
 ):
     """The helper's socket dies under a write — the machine went to sleep, the
     laptop closed — and the hub only hears of it from the write that fails. A
-    page asking for an asset through it is asking for a preview that is not
-    there, which is what an offline app already answers (404), not a fault of
-    this server."""
+    page asking for an asset through it is asking for a preview that is briefly
+    unreachable: a transient 503, so an asset client backs off instead of
+    reading the preview as gone. It is not a fault of this server."""
     import asyncio
 
     from starlette.websockets import WebSocket
@@ -454,7 +460,7 @@ def test_a_tunnel_whose_peer_dropped_is_an_absent_preview_not_a_fault(
         response = client.get(preview_origin(topic_id) + "/src/main.ts")
     finally:
         preview_hub.detach(attached)
-    assert response.status_code == 404, response.text
+    assert response.status_code == 503, response.text
 
 
 # --- one tunnel per teammate ----------------------------------------------------

@@ -536,6 +536,13 @@ class PreviewHub:
                     busy = True
                     continue
                 if op != wire.OP_RESP:
+                    gone = op == wire.OP_ERR and payload == b"preview instance gone"
+                    if gone and instance:
+                        # Only a request bound to an instance can be told it is
+                        # gone, and that never heals: the page that asked has to be
+                        # reopened on the current one, so say so in every mode
+                        # rather than as a retryable failure.
+                        raise PreviewAdmissionError("instance_gone")
                     if typed:
                         raise PreviewAdmissionError(
                             "instance_gone"
