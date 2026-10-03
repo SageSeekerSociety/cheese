@@ -28,7 +28,7 @@ import json
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-from app.domain.block.notice_text import listing, say
+from app.core.sentences import listing, say
 from app.domain.memory.files import (
     INDEX_LINE_MAX,
     INDEX_NAME,

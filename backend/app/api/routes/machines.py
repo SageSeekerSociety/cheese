@@ -17,7 +17,7 @@ from app.core.errors import (
     NotFoundError,
     ValidationError,
 )
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 from app.domain.identity.actor import Actor
 from app.domain.machine.limits import get_machine_limit
 from app.domain.machine.live import announce_changes

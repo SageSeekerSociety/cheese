@@ -37,8 +37,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.errors import NotFoundError, PreconditionFailedError
+from app.core.sentences import say
 from app.domain.block.models import Block
-from app.domain.block.notice_text import say
 from app.domain.feedback.models import FeedbackProposalDismissal
 from app.domain.feedback.schemas import FeedbackProposalIn
 

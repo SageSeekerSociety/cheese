@@ -21,6 +21,7 @@ from app.api.response import ok, page
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
+from app.core.sentences import say
 from app.domain.agent.activity import WORKING
 from app.domain.agent.chat import ChatService, project_refs_text
 from app.domain.agent.runtime import (
@@ -37,7 +38,6 @@ from app.domain.block.models import (
     BlockKind,
     checklist_text,
 )
-from app.domain.block.notice_text import say
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.block.waits import REPLY_LOOKBACK, MemberWait, MemberWaits, StuckCard

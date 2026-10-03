@@ -32,6 +32,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.sentences import say
 from app.domain.agent.announce import announce
 from app.domain.agent.platform_notices import (
     EVENT_POLICY_PROPOSAL,
@@ -40,7 +41,6 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.block.models import Block
-from app.domain.block.notice_text import say
 from app.domain.delivery.addressing import Event
 from app.domain.policy.gate import Call, Proposal
 from app.domain.room_task.place import PlaceResolver

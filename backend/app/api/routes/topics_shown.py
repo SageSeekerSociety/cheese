@@ -59,9 +59,9 @@ from app.api.response import ok, page
 from app.api.routes.topics import BlockRepository, DbSession, _actor_in_place
 from app.core.config import settings
 from app.core.errors import ValidationError
+from app.core.sentences import listing, say
 from app.domain.agent.preview_hub import preview_hub
 from app.domain.agent.preview_owner import inspect_owner
-from app.domain.block.notice_text import listing, say
 from app.domain.block.shown import add_shown_block
 from app.domain.project import room_files
 from app.domain.project.room_files import (

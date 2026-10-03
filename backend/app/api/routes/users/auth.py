@@ -42,8 +42,8 @@ from app.core.errors import (
     SudoRequiredError,
     UnprocessableEntityError,
 )
+from app.core.sentences import say
 from app.db.session import get_db
-from app.domain.block.notice_text import say
 from app.domain.passkey.prompt import PasskeyPromptService
 from app.domain.passkey.services import PasskeyService
 from app.domain.user.services import (

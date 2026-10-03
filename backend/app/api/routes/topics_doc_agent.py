@@ -26,10 +26,10 @@ from app.api.routes.topics import DbSession, _actor_in_place
 from app.core.background import spawn
 from app.core.errors import ForbiddenError, SystemBusyError, ValidationError
 from app.core.redis import get_redis_client
+from app.core.sentences import error_frame, say
 from app.domain.agent.chat import ChatService
 from app.domain.agent.harness.pi.handless import HandlessSessions
 from app.domain.block.comment_threads import CommentThreads
-from app.domain.block.notice_text import error_frame, say
 from app.domain.living_doc.schemas import AgentAskIn
 from app.domain.topic.services import TopicService
 

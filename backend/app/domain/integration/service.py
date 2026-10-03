@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.crypto import Purpose, decrypt, encrypt
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 from app.domain.integration import mail
 from app.domain.integration.feishu import FeishuClient, FeishuSettings
 from app.domain.integration.mail import IntegrationError, MailSettings

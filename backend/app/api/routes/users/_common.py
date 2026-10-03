@@ -28,7 +28,7 @@ from app.core.errors import (
     InternalServerError,
     UnprocessableEntityError,
 )
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 from app.domain.legal.documents import check_current
 from app.domain.legal.services import CONSENT_METHODS
 from app.domain.user.models import (

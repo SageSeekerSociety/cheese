@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.api import doc_agent
 from app.core.errors import ForbiddenError, ValidationError
+from app.core.sentences import error_frame, exception_text, say
 from app.domain.agent.chat import ChatService
 from app.domain.agent.harness.pi import document
 from app.domain.agent.harness.pi.handless import (
@@ -38,7 +39,6 @@ from app.domain.agent.harness.pi.handless import (
     Looking,
     Said,
 )
-from app.domain.block.notice_text import error_frame, exception_text, say
 
 logger = logging.getLogger(__name__)
 

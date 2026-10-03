@@ -30,9 +30,9 @@ from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.response import ok, page
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, BadRequestError
+from app.core.sentences import say
 from app.domain.admin.services import AdminService
 from app.domain.authz import policy
-from app.domain.block.notice_text import say
 from app.domain.feedback import services as feedback_services
 from app.domain.feedback.models import (
     Feedback,

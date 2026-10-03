@@ -22,7 +22,7 @@ from email.utils import formatdate, getaddresses, make_msgid, parsedate_to_datet
 from html.parser import HTMLParser
 
 from app.core.errors import BaseError, ValidationError
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 
 TIMEOUT = 30
 DRAFT_FOLDERS = ("Drafts", "草稿箱", "[Gmail]/Drafts", "INBOX.Drafts", "Draft")

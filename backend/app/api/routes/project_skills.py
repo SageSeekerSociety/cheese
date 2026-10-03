@@ -16,6 +16,7 @@ from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.response import ok, page
 from app.core.db import get_db
 from app.core.errors import ForbiddenError, NotFoundError
+from app.core.sentences import say, with_keys
 from app.domain.agent.platform_notices import (
     EVENT_SKILL_PROPOSED,
     SEVERITY_INFO,
@@ -24,7 +25,6 @@ from app.domain.agent.platform_notices import (
 )
 from app.domain.block.authorship import AuthorType
 from app.domain.block.models import Block, BlockKind
-from app.domain.block.notice_text import say, with_keys
 from app.domain.identity.actor import Actor
 from app.domain.project_skill.models import ProjectSkill, ProjectSkillRevision
 from app.domain.project_skill.service import ProjectSkillService

@@ -16,7 +16,7 @@ to the writer instead of the parser.
 
 import re
 
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 
 #: The Conventional Commits v1.0.0 types, plus `revert`. Kept deliberately
 #: closed: an open type list is how `misc:` and `update:` creep in.

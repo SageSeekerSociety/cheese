@@ -24,7 +24,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 from app.domain.device.health import (
     DEFAULT_FAILURE_THRESHOLD,
     DEFAULT_QUARANTINE,

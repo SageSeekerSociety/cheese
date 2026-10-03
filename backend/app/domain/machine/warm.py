@@ -12,8 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from app.core.config import settings
 from app.core.db import SessionFactory
 from app.core.errors import ValidationError
+from app.core.sentences import say
 from app.domain.agent.device_hub import device_hub
-from app.domain.block.notice_text import say
 from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply, Visibility
 from app.domain.device.wiring import sql_device_service

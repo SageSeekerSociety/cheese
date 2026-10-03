@@ -27,7 +27,7 @@ from fastapi import APIRouter, Query
 from app.api.response import ok
 from app.api.routes.admin_common import DbSession, PlatformAdminDep
 from app.core.errors import NotFoundError
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 from app.domain.feature_stats import registry
 
 router = APIRouter(prefix="/admin/feature-stats", tags=["admin"])

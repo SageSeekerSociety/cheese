@@ -48,7 +48,7 @@ from dataclasses import dataclass
 from typing import Final
 
 from app.core.errors import ValidationError
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 
 #: 项目设置里的两个键。允许的档位缺席 = 不限档；处置缺席 = 拒绝。
 ALLOWED_TIERS_KEY: Final = "allowed_tiers"

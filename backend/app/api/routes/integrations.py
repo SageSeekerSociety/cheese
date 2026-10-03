@@ -27,6 +27,7 @@ from app.core.errors import (
     ValidationError,
     message_key,
 )
+from app.core.sentences import exception_text, listing, say, with_keys
 from app.domain.agent.platform_notices import (
     EVENT_MAIL_DRAFTED,
     EVENT_MAIL_RESULT,
@@ -38,7 +39,6 @@ from app.domain.agent.platform_notices import (
 )
 from app.domain.block.authorship import AuthorType
 from app.domain.block.models import Block, BlockKind
-from app.domain.block.notice_text import exception_text, listing, say, with_keys
 from app.domain.identity.actor import Actor
 from app.domain.integration.feishu import FeishuClient
 from app.domain.integration.mail import IntegrationError

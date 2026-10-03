@@ -71,11 +71,11 @@ from app.api.routes.topics import (
     _actor_in_place,
 )
 from app.core.errors import NotFoundError, ValidationError
+from app.core.sentences import say
 from app.domain.agent.chat import ChatService, project_refs_text
 from app.domain.agent.harness.prompt import thread_relay_prompt
 from app.domain.agent.liveness import task_liveness
 from app.domain.agent.runtime import AgentWorkRunner
-from app.domain.block.notice_text import say
 from app.domain.block.schemas import BlockOut
 from app.domain.mentions import canonicalize_refs
 from app.domain.room_task import binding, presentation

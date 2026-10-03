@@ -46,7 +46,7 @@ from app.core.errors import (
     NotFoundError,
     PreconditionFailedError,
 )
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 from app.domain.feedback import claims
 from app.domain.feedback import repositories as repo
 from app.domain.feedback.models import (

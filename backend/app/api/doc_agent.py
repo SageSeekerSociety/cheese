@@ -49,6 +49,7 @@ from app.core.background import spawn
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.redis import get_redis_client
 from app.core.sandbox_auth import mint_scoped_token
+from app.core.sentences import say
 from app.domain.agent.chat import ChatService
 from app.domain.agent.harness.pi import document
 from app.domain.agent.harness.pi.handless import (
@@ -63,7 +64,6 @@ from app.domain.agent.supply import GATEWAY
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.comment_threads import CommentThreads
 from app.domain.block.models import BlockKind
-from app.domain.block.notice_text import say
 from app.domain.block.repositories import BlockRepository
 from app.domain.delivery.mention import mentioned_handles
 from app.domain.identity.actor import Actor

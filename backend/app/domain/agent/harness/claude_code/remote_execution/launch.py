@@ -7,6 +7,7 @@ import json
 import time
 from pathlib import Path
 
+from app.core.sentences import say
 from app.domain.agent import (
     environment_runner,
     forge_cli,
@@ -23,7 +24,6 @@ from app.domain.agent.harness.claude_code.remote_execution import (
     session_transfer,
 )
 from app.domain.agent.machine_launcher import CHEESE_PREVIEW_UP, toolchain_fetcher
-from app.domain.block.notice_text import say
 from app.domain.project_skill.service import project_skill_names, session_skill_files
 
 # What the session's Stop checkpoint runs on the executor (`runtime.control`):

@@ -50,6 +50,7 @@ from app.api.deps import get_chat_service
 from app.api.response import ok
 from app.api.routes.topics import BlockRepository, DbSession
 from app.core.errors import NotFoundError
+from app.core.sentences import say
 from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService
 from app.domain.agent.platform_notices import (
@@ -58,7 +59,6 @@ from app.domain.agent.platform_notices import (
     WHO_HUMAN,
     notice,
 )
-from app.domain.block.notice_text import say
 from app.domain.delivery.addressing import Event as Addressee
 from app.domain.room_task.schemas import TaskOut
 from app.domain.topic.schemas import TopicOut, UpgradeBlockIn

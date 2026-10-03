@@ -13,7 +13,7 @@ from app.api.response import ok
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, NotFoundError, ValidationError
 from app.core.sandbox_auth import token_agent_handle, verify_scoped_token
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 
 router = APIRouter(prefix="/projects", tags=["git"])
 

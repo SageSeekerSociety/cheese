@@ -23,12 +23,12 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
+from app.core.sentences import say
 from app.domain.agent.announce import announce
 from app.domain.agent.platform_notices import memory_changed_notice
 from app.domain.agent_instance.services import AgentInstanceService, ResolvedAgent
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, BlockKind
-from app.domain.block.notice_text import say
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.identity.handles import agent_instance_handle

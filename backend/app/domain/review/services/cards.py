@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from app.core.errors import NotFoundError, ValidationError
-from app.domain.block.notice_text import exception_text, listing, say
+from app.core.sentences import exception_text, listing, say
 from app.domain.library import service as library
 from app.domain.project import artifacts
 from app.domain.review import (

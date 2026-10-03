@@ -55,9 +55,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import async_session_factory
 from app.core.obs import scrub_secrets
+from app.core.sentences import say
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, BlockKind
-from app.domain.block.notice_text import say
 from app.domain.block.repositories import BlockRepository
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.repositories import TopicRepository

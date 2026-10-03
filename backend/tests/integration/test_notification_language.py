@@ -15,7 +15,7 @@ import uuid
 import pytest
 
 from app.common.auth import create_access_token
-from app.domain.block.notice_text import notice_message, say, with_keys
+from app.core.sentences import notice_message, say, with_keys
 from app.domain.notification import push_delivery
 from app.domain.notification.handlers import NotificationDelivery
 from app.domain.notification.models import NotificationType

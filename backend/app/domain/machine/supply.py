@@ -16,8 +16,8 @@ from typing import Any
 
 from app.core.config import settings
 from app.core.errors import ValidationError
+from app.core.sentences import say
 from app.domain.agent.compute_configs import PLATFORM_BOUNDS, ComputeChoice
-from app.domain.block.notice_text import say
 from app.domain.machine.microcloud import MicroCloudClient, MicroCloudError
 
 # choice field -> (offering min key, offering max key, how a person reads it)

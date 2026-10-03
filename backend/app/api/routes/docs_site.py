@@ -30,8 +30,8 @@ from app.core.errors import (
     message_key,
 )
 from app.core.redis import get_redis_client
+from app.core.sentences import exception_text, say
 from app.domain.admin.services import AdminService
-from app.domain.block.notice_text import exception_text, say
 from app.domain.docs_site import access, assistant, library, retrieval, tools
 from app.domain.docs_site.limits import AskLimits
 from app.domain.feature_stats import pricing

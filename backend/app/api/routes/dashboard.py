@@ -20,7 +20,7 @@ from app.core.errors import (
     ValidationError,
 )
 from app.core.obs import get_logger
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 from app.domain.dashboard.services import DashboardService
 from app.domain.memory.store import forget_fact_about
 from app.domain.project.repositories import ProjectRepository

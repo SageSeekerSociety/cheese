@@ -11,8 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.errors import BadRequestError, ConflictError, ForbiddenError
+from app.core.sentences import say
 from app.domain.admin import repositories as repo
-from app.domain.block.notice_text import say
 from app.domain.identity.services import IdentityService
 from app.domain.user.services import (
     chosen_avatars_by_handle,

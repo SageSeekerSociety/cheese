@@ -31,6 +31,7 @@ from typing import Protocol
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from app.core.sentences import NoticeText, error_frame, say
 from app.domain.agent import attachments, turn_inputs
 from app.domain.agent.announce import announce
 from app.domain.agent.event_lines import _is_platform_tool, _short_tool_name
@@ -79,7 +80,6 @@ from app.domain.agent.service import (
 )
 from app.domain.agent.step_output import without_output
 from app.domain.agent.turn_inputs import bind, mark_session_for_turn, transition
-from app.domain.block.notice_text import NoticeText, error_frame, say
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.memory.models import MemoryScope

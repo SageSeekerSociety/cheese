@@ -23,8 +23,8 @@ from app.core.errors import (
     ConflictError,
     UnprocessableEntityError,
 )
+from app.core.sentences import say
 from app.db.session import get_db
-from app.domain.block.notice_text import say
 from app.domain.identity.handles import is_reserved_username
 from app.domain.legal.services import ConsentService
 from app.domain.user.passwords import require_new_password

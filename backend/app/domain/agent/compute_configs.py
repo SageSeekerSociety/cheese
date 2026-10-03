@@ -7,13 +7,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.errors import ValidationError
+from app.core.sentences import say
 from app.domain.agent.market import (
     COMPUTE_DEVICE,
     COMPUTE_TIERS,
     cloud_provisionable,
     compute_default_name,
 )
-from app.domain.block.notice_text import say
 from app.domain.device.wiring import sql_device_service
 from app.domain.policy import gate
 from app.domain.user.models import User as UserRow

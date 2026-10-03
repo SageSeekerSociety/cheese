@@ -39,6 +39,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.redis import get_redis_client
+from app.core.sentences import say
 from app.domain.agent.platform_notices import (
     EVENT_DOC_MISSING,
     SEVERITY_INFO,
@@ -46,7 +47,6 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.block.models import Block, BlockKind
-from app.domain.block.notice_text import say
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
 from app.domain.topic_membership.services import TopicMemberService
 

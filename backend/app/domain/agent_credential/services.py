@@ -23,7 +23,7 @@ from app.core.sandbox_auth import (
     mint_project_agent_credential,
     project_agent_claims,
 )
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository

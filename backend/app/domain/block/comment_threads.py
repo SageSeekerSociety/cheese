@@ -13,9 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from app.core.errors import ConflictError, NotFoundError
+from app.core.sentences import say
 from app.domain.block.comment_models import DocCommentReply, DocCommentThread
 from app.domain.block.models import AuthorType, Block, BlockKind
-from app.domain.block.notice_text import say
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.living_doc.services import DocumentJournal

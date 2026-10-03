@@ -29,8 +29,8 @@ from app.core.errors import (
     NotFoundError,
     ValidationError,
 )
+from app.core.sentences import say
 from app.domain.agent.chat import ChatService
-from app.domain.block.notice_text import say
 from app.domain.block.schemas import BlockOut
 from app.domain.identity.services import IdentityService
 from app.domain.living_doc import collab

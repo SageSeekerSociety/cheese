@@ -11,7 +11,7 @@ from app.api.auth import ActorResolverDep
 from app.api.response import ok
 from app.core.db import get_db
 from app.core.errors import AppError, AuthenticationRequiredError, BaseError
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 from app.domain.site.hosting import content_origin
 from app.domain.site.services import (
     BUILD_REQUIRED,

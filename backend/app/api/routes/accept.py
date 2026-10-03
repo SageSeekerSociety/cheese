@@ -14,6 +14,7 @@ from app.api.deps import get_chat_service, get_work_runner
 from app.api.response import ok, page
 from app.core.db import get_db, release_read_session
 from app.core.errors import AuthenticationRequiredError, NotFoundError
+from app.core.sentences import say
 from app.domain.agent.chat import ChatService
 from app.domain.agent.platform_notices import (
     EVENT_CARD_REJECTED,
@@ -22,7 +23,6 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.agent.runtime import AgentWorkRunner, announce_stale
-from app.domain.block.notice_text import say
 from app.domain.identity.actor import Actor
 from app.domain.library import service as library
 from app.domain.project.forge import proposal_client

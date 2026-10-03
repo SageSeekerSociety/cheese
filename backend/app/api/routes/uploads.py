@@ -35,7 +35,7 @@ from fastapi.responses import FileResponse
 
 from app.core.config import settings
 from app.core.errors import NotFoundError
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 
 router = APIRouter(tags=["uploads"])
 

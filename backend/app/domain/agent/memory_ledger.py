@@ -28,6 +28,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.errors import NotFoundError
+from app.core.sentences import say
 from app.domain.agent.announce import announce
 from app.domain.agent.compute import ComputePool, ComputeProvider
 from app.domain.agent.dream_usage import drain_dream_spend, record_dream_usage
@@ -49,7 +50,6 @@ from app.domain.agent.queries import (
 from app.domain.agent.service import AgentResult, AgentUsage
 from app.domain.agent.work_policy import resolve_compute_id
 from app.domain.block.models import Block, BlockKind
-from app.domain.block.notice_text import say
 from app.domain.block.repositories import BlockRepository
 from app.domain.delivery.input_identity import InputEffects, InputRegistrar
 from app.domain.memory import dream

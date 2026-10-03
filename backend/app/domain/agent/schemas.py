@@ -18,7 +18,7 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 
 # 模型名允许的字符集。它同时是网关路由里的 key 和页面上唯一的标识，放空格或斜杠进来
 # 只会让它在 URL 与日志里被编成一团，没有好处。长度跟着契约的 1..64。

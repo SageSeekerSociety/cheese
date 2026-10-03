@@ -5,7 +5,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 
 
 class SlidePageQuoteIn(BaseModel):

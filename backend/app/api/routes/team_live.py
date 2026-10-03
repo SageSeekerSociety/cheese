@@ -22,9 +22,9 @@ from starlette.websockets import WebSocketState
 from app.api.auth import ActorResolver
 from app.api.deps import get_broker, get_chat_service
 from app.core.errors import AuthenticationRequiredError, ForbiddenError
+from app.core.sentences import error_frame, say
 from app.domain.agent.chat import ChatService
 from app.domain.agent.runtime import InProcessBroker
-from app.domain.block.notice_text import error_frame, say
 from app.domain.machine.live import team_channel
 
 router = APIRouter(tags=["teams"])

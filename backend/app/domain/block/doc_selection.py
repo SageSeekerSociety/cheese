@@ -4,8 +4,8 @@ import re
 from dataclasses import dataclass
 
 from app.core.errors import ValidationError
+from app.core.sentences import say
 from app.domain.block.doc_tree import _HEADING_RE, _is_fence, markdown_to_nodes
-from app.domain.block.notice_text import say
 
 
 @dataclass(frozen=True)

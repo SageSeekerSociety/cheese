@@ -23,7 +23,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import InternalServerError
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 from app.domain.user.models import UserTrustedDevice
 
 TRUST_DAYS = 30

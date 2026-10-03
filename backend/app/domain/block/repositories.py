@@ -10,6 +10,7 @@ from sqlalchemy import Text, and_, cast, func, or_, select, tuple_, update
 from sqlalchemy.dialects.postgresql import JSONB, array
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.sentences import with_keys
 from app.core.work_context import current_work_id
 from app.domain.block.authorship import is_participant, participant_blocks
 from app.domain.block.indexed_rows import CLOUD_PROVISIONING_ROWS, QUESTION_ROWS
@@ -26,7 +27,6 @@ from app.domain.block.models import (
     BlockReaction,
     prompt_attempts,
 )
-from app.domain.block.notice_text import with_keys
 from app.domain.identity.handles import agent_handle_column, looks_like_agent_handle
 
 
@@ -107,7 +107,7 @@ class BlockRepository:
         ):
             meta = {CONSUMED_TURN_META_KEY: None, **(meta or {})}
         # A platform sentence carries its key; the reader's screen renders it
-        # in the reader's language (`notice_text.py`).
+        # in the reader's language (`app/core/sentences.py`).
         meta = with_keys(meta, content=content)
         block = Block(
             project_id=project_id,

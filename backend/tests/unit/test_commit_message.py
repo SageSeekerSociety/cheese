@@ -8,7 +8,7 @@ here would only pin the linter's blind spots in place.
 
 import pytest
 
-from app.domain.block.notice_text import in_language
+from app.core.sentences import in_language
 from app.domain.review.commit_message import (
     MAX_SUBJECT,
     InvalidSubject,

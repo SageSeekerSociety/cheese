@@ -7,8 +7,8 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
+from app.core.sentences import say
 from app.domain.block.models import Block
-from app.domain.block.notice_text import say
 from app.domain.room_task.checkouts import after_close
 from app.domain.room_task.models import (
     HEAVY_LOCK_TTL,

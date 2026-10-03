@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ValidationError
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 
 if TYPE_CHECKING:
     from app.domain.review.models import AcceptCard

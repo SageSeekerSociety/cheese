@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from app.core.config import settings
 from app.core.db import async_session_factory
 from app.core.sandbox_auth import bind_resource_token, token_agent_handle
+from app.core.sentences import say
 from app.domain.agent import execution, private_chat
 from app.domain.agent.admission import SESSION_MEMORY_ENV, session_memory_max
 from app.domain.agent.device_provider import (
@@ -22,7 +23,6 @@ from app.domain.agent.harness.channel import Placement, ScreenSetupError
 from app.domain.agent.harness.launch import LaunchPlan
 from app.domain.agent_instance.services import agent_stdio_servers
 from app.domain.agent_session.services import AgentSessionService
-from app.domain.block.notice_text import say
 from app.domain.remote_mcp import service as remote_mcp
 from app.domain.topic.services import TopicService
 from app.domain.user.services import user_by_handle

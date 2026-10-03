@@ -10,7 +10,7 @@ error and raise it again, which must keep its key.
 import httpx
 
 from app.core.config import settings
-from app.domain.block.notice_text import render
+from app.core.sentences import render
 from app.domain.living_doc import collab
 from tests.conftest import seed_user
 from tests.integration.conftest import post_project, session_auth_headers

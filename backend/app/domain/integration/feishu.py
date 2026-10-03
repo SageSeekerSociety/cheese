@@ -17,7 +17,7 @@ from urllib.parse import urlencode
 
 import httpx
 
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 from app.domain.integration.mail import IntegrationError
 
 DOMAINS = {"feishu": "https://open.feishu.cn", "lark": "https://open.larksuite.com"}

@@ -19,13 +19,13 @@ from app.core.errors import (
     NotFoundError,
 )
 from app.core.sandbox_auth import scoped_token_claims
+from app.core.sentences import say
 from app.domain.agent import dispatch_log, execution
 from app.domain.agent.device_hub import (
     DeviceCallError,
     DeviceNotReady,
     DeviceUnreachable,
 )
-from app.domain.block.notice_text import say
 from app.domain.device import owner_reads
 from app.domain.machine import owner_reads as machine_owner_reads
 from app.domain.topic.models import Topic

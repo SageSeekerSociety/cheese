@@ -26,8 +26,8 @@ from app.core.errors import (
     NotFoundError,
     ValidationError,
 )
+from app.core.sentences import say
 from app.domain.agent.compute_configs import ComputeChoice, room_choice
-from app.domain.block.notice_text import say
 from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply, Visibility
 from app.domain.device.wiring import sql_device_service

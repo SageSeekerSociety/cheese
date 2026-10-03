@@ -14,9 +14,9 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
+from app.core.sentences import say
 from app.domain.agent.runtime import get_broker
 from app.domain.block.models import AuthorType, BlockKind
-from app.domain.block.notice_text import say
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.identity.handles import looks_like_agent_handle

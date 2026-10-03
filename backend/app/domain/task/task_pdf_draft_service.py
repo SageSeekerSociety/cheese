@@ -15,12 +15,12 @@ import pymupdf4llm
 
 from app.core.config import settings
 from app.core.errors import BadRequestError, QuotaExceededError, SystemBusyError
+from app.core.sentences import exception_text, say
 from app.core.storage import (
     compute_file_hash,
     generate_storage_key,
     get_storage_backend,
 )
-from app.domain.block.notice_text import exception_text, say
 from app.domain.gateway_chat import GatewayCallError, GatewayChat, Usage
 from app.domain.service_keys import KeySpec, service_key
 from app.domain.usage.ledger import Ledger, RateRow, Rates, payer_for_person

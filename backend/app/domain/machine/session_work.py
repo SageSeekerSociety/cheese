@@ -15,6 +15,7 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError
 from app.core.sandbox_auth import bind_resource_token
+from app.core.sentences import say
 from app.domain.agent import execution
 from app.domain.agent.compute_configs import (
     ComputeChoice,
@@ -33,7 +34,6 @@ from app.domain.agent.harness.claude_code import executor_launch as launch
 from app.domain.agent.market import COMPUTE_DEVICE, COMPUTE_TIERS
 from app.domain.agent_session.models import AgentSession
 from app.domain.agent_session.services import AgentSessionService
-from app.domain.block.notice_text import say
 from app.domain.device.supply import (
     Supply,
     Visibility,

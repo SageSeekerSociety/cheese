@@ -5,7 +5,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator
 
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 
 
 def parse_uuid(value):

@@ -33,11 +33,11 @@ from app.core.sandbox_auth import (
     token_agent_handle,
     verify_scoped_token,
 )
+from app.core.sentences import say
 from app.domain.agent.device_attribution import resolve_screen_actor
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent_credential.services import ProjectAgentCredentialService
 from app.domain.authz.policy import authorize_topic_access
-from app.domain.block.notice_text import say
 from app.domain.identity.actor import Actor, TokenIdentity, resolve_actor
 from app.domain.identity.handles import UNRESOLVED_AGENT_HANDLE
 from app.domain.project.repositories import ProjectRepository

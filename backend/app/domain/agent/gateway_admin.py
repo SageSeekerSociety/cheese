@@ -18,8 +18,8 @@ from urllib.parse import quote
 
 import httpx
 
+from app.core.sentences import say
 from app.domain.agent.gateway import price_is_set
-from app.domain.block.notice_text import say
 
 logger = logging.getLogger(__name__)
 

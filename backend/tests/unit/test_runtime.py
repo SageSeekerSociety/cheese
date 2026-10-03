@@ -9,13 +9,13 @@ import uuid
 import pytest
 from sqlalchemy import select
 
+from app.core.sentences import from_descriptor
 from app.domain.agent.models import AgentTurn
 from app.domain.agent.runtime import (
     AgentWorkRunner,
     InProcessBroker,
     addressed_to_agent,
 )
-from app.domain.block.notice_text import from_descriptor
 from app.domain.identity.actor import Actor
 from tests.support.hang import HANG_S
 from tests.support.work_chat import WorkChat

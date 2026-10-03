@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, NoReturn
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.errors import ForbiddenError, ValidationError
-from app.domain.block.notice_text import listing, say
+from app.core.sentences import listing, say
 from app.domain.review import (
     archive,
     merge_state,

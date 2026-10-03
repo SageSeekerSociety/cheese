@@ -16,7 +16,7 @@ from dataclasses import dataclass
 
 import httpx
 
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 from app.domain.service_keys import gateway_base
 
 logger = logging.getLogger(__name__)

@@ -953,5 +953,9 @@
   "askFieldBoolean": "{field} must be a boolean",
   "askFieldArray": "{field} must be an array",
   "askFieldObjects": "Each entry in {field} must be an object",
-  "answerOptionNotAllowed": "kind={kind} must not include option"
+  "answerOptionNotAllowed": "kind={kind} must not include option",
+  "serverInternalError": "Something went wrong on the server",
+  "clientDisconnected": "The client disconnected",
+  "deviceOffline": "Device {device} is offline",
+  "deviceLinkInterrupted": "The connection to device {device} dropped mid-operation, so whether it went through is unknown"
 }

@@ -13,12 +13,12 @@ from app.api.response import ok, page
 from app.api.routes.living_docs import _frozen
 from app.api.routes.topics import DbSession, _actor_in_place
 from app.core.errors import ValidationError
+from app.core.sentences import say
 from app.domain.agent.chat import ChatService
 from app.domain.agent.harness.pi.handless import HandlessSessions
 from app.domain.agent.runtime import announce_stale
 from app.domain.block.comment_schemas import ReplyIn, ThreadMutation
 from app.domain.block.comment_threads import CommentThreads
-from app.domain.block.notice_text import say
 from app.domain.living_doc.services import DocumentJournal
 from app.domain.topic.services import TopicService
 

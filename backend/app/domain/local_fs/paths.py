@@ -45,7 +45,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 
 __all__ = [
     "MAX_PATH_LENGTH",

@@ -34,6 +34,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.sentences import say
 from app.domain.agent.platform_notices import (
     EVENT_ACCEPT_STOPPED,
     SEVERITY_WARN,
@@ -42,7 +43,6 @@ from app.domain.agent.platform_notices import (
 )
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, BlockKind
-from app.domain.block.notice_text import say
 from app.domain.block.repositories import BlockRepository
 from app.domain.review import notes
 from app.domain.review.models import AcceptCard, AcceptStatus

@@ -21,12 +21,12 @@ import tempfile
 from collections.abc import Awaitable, Callable
 
 from app.core.config import settings
+from app.core.sentences import say
 from app.domain.agent import connector_build
 from app.domain.agent.harness.claude_code import (
     CLAUDE_MIN_VERSION,
     CLAUDE_PINNED_VERSION,
 )
-from app.domain.block.notice_text import say
 from app.domain.machine import claude_dist
 
 logger = logging.getLogger("cheese.machine.enrollment")

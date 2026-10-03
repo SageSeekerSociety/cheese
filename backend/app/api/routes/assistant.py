@@ -39,6 +39,7 @@ from app.core.errors import (
 )
 from app.core.redis import get_redis_client
 from app.core.sandbox_auth import personal_claims
+from app.core.sentences import say
 from app.domain.agent.harness.pi.handless import (
     HandlessSessions,
     HostFull,
@@ -50,7 +51,6 @@ from app.domain.assistant import service as assistant
 from app.domain.assistant import tools as personal_tools
 from app.domain.assistant.keys import person_key
 from app.domain.assistant.prompt import task_brief
-from app.domain.block.notice_text import say
 from app.domain.feature_stats import pricing
 from app.domain.task.services import TaskService, ensure_task_readable
 from app.domain.usage.ledger import Ledger, Rates, payer_for_person

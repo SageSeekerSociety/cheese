@@ -26,6 +26,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from app.core.sentences import NoticeText, say
 from app.domain.agent.platform_failures import PlatformFailure
 from app.domain.agent.platform_notices import (
     EVENT_HOST_FAILURE,
@@ -33,7 +34,6 @@ from app.domain.agent.platform_notices import (
     WHO_HUMAN,
     notice,
 )
-from app.domain.block.notice_text import NoticeText, say
 from app.domain.device.service import DeviceService, device_service_for_session
 from app.domain.device.supply import Supply
 

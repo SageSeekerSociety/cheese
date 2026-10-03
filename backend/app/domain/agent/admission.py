@@ -17,13 +17,13 @@ import uuid
 from collections.abc import Awaitable, Callable
 
 from app.core.config import settings
+from app.core.sentences import say
 from app.domain.agent.platform_notices import (
     EVENT_TURN_QUEUED,
     SEVERITY_INFO,
     WHO_PLATFORM,
     notice,
 )
-from app.domain.block.notice_text import say
 
 logger = logging.getLogger(__name__)
 

@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
 from app.core.errors import NotFoundError, ValidationError
+from app.core.sentences import exception_text, say
 from app.domain.agent import death_evidence, turn_inputs
 from app.domain.agent.announce import announce, settle_questions_answered_by
 from app.domain.agent.compute import ComputePool, ComputeProvider
@@ -233,7 +234,6 @@ from app.domain.block.models import (
     BlockKind,
     prompted_turn,
 )
-from app.domain.block.notice_text import exception_text, say
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.delivery.ask_wake import expected_ask_session
