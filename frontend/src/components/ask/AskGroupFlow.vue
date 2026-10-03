@@ -692,11 +692,7 @@ function receiptLabel(r: AskReceipt | null | undefined) {
   max-width: none;
 }
 
-@media (max-width: 959.98px) {
-  .ask-group--composer {
-    width: 100%;
-    max-width: var(--page-w);
-    margin-inline: auto;
-  }
-}
+/* 这一档原本把接管那一格又限到 `--page-w`（窄屏时收窄）。它和「面板要跟输入框
+   同宽」直接冲突：窗口一窄，输入框还是满列宽，面板却缩到 720 一类，看起来就是
+   「没有拉伸」。接管那一格的宽度由输入栏给，不在这里再定一次。 */
 </style>
