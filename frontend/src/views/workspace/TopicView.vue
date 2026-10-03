@@ -355,6 +355,11 @@ void openPlace()
     </div>
 
     <template v-else>
+      <!-- Screen-reader heading for the room. Text from `topicTitle`, the same
+           source as the `workspace-topic` dynamic title the top bar reads. The
+           room name is drawn as a span in TopicHeader (not a heading), so this
+           is the page's only h1. Hidden: the name is already on screen. -->
+      <h1 class="visually-hidden">{{ topicTitle(selectedTopic) }}</h1>
       <!-- 一条话题头部，横跨对话和工作面板 -->
       <TopicHeader
         :topic="selectedTopic"

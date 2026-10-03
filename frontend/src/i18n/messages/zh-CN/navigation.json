@@ -56,7 +56,8 @@
   },
   "shell": {
     "close": "关闭",
-    "more": "更多操作"
+    "more": "更多操作",
+    "skipToContent": "跳到正文"
   },
   "copy": {
     "done": "已复制",

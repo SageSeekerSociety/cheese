@@ -1,5 +1,7 @@
 import { nextTick } from 'vue'
 
+import { scrollBehavior } from '@/utils/motion'
+
 /**
  * 从别处点进来要看的那一条：滚到眼前，亮一下。
  *
@@ -10,7 +12,7 @@ export async function focusRow(selector: string): Promise<boolean> {
   await nextTick()
   const el = document.querySelector<HTMLElement>(selector)
   if (!el) return false
-  el.scrollIntoView?.({ block: 'center', behavior: 'smooth' })
+  el.scrollIntoView?.({ block: 'center', behavior: scrollBehavior() })
   el.classList.add('row--focus')
   window.setTimeout(() => el.classList.remove('row--focus'), 2400)
   return true

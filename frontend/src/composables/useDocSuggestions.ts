@@ -8,6 +8,8 @@ import type { SuggestionRange } from '../lib/docSuggestionList'
 
 import { computed, onScopeDispose, ref, watch } from 'vue'
 
+import { scrollBehavior } from '@/utils/motion'
+
 import { editMarks, setEditMarks } from '../lib/docEditMarks'
 import { decideAllSuggestions, decideSuggestion, suggestionRanges } from '../lib/docSuggestionList'
 
@@ -38,7 +40,7 @@ export function useDocSuggestions(editorOf: () => Editor | null | undefined) {
     try {
       const { node } = editor.view.domAtPos(range.from)
       const el = node instanceof HTMLElement ? node : node.parentElement
-      el?.scrollIntoView?.({ block: 'center', behavior: 'smooth' })
+      el?.scrollIntoView?.({ block: 'center', behavior: scrollBehavior() })
     } catch {
       // 位置刚被别人改掉：不滚。
     }
