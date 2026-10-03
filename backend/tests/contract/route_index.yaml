@@ -76,6 +76,7 @@ auth_entries:
   preview.access: "preview_sessions resolves authenticated actor then api/preview_host.require_preview_access, before minting resource-bound preview grant. Source: app/api/routes/preview_sessions.py; app/api/preview_host.py."
   workspace.access: "Decorator Depends(workspace.require_project_access): verify_scoped_token for project or auth.caller.may_access_project, then actual requested room/task containment + authorize_topic, with archive/task-ended PUT guards. Source: app/api/routes/workspace.py."
   document.member: "topics_comment_threads.member_in_room uses _actor_in_place, doc_identity.operation_actor and authorize_topic(enforce=True); mutations also bind comment to actual room. Source: app/api/routes/topics_comment_threads.py."
+  doc_agent.thread: "doc_agent.doc_agent_tool requires scoped_token_claims from X-Cheese-Token naming project, room, agent and thread (claims p, t, a, r); it opens only while app.api.doc_agent holds a question of that thread for that agent in that room, and edits are applied as that agent for the person who asked. A room credential without a thread is not accepted. Source: app/api/routes/doc_agent.py; app/api/doc_agent.py."
   document.human: "living_docs.rewrite_selection uses _actor_in_place, doc_identity.human_operation_actor (verified human, not agent identity), and authorize_topic(enforce=True). Source: app/api/routes/living_docs.py; app/api/doc_identity.py."
   collab.service: "living_docs._service: the bearer derived from COLLAB_SECRET (living_doc.collab.verify_service); only the collaboration service holds it. Identity in a store comes from the actors it carries, which the service took from backend-signed tickets or from the backend's own replace call. Source: app/api/routes/living_docs.py."
   living.document: "living_docs resolves room actor; state-changing/history/receipt/restore branches enforce topic access and use doc_identity.operation_actor; plain get uses _actor_in_place. Source: app/api/routes/living_docs.py. Endpoint-specific branch is kept in the map below."
@@ -288,6 +289,7 @@ owners:
   integration: "Personal and room mail/Feishu connections, drafts and OAuth callback; domain/integration/IntegrationService."
   remote_mcp: "Declared remote MCP connection, per-project secrets and forwarding; domain/remote_mcp service/oauth/upstream."
   fetch: "Outbound URL retrieval; domain/fetch service/guard/layers."
+  doc_agent: "A document comment thread's session answering a comment that names the room's agent; api/doc_agent orchestration over domain/agent/harness/pi/document and living_doc/collab."
   docs_site: "Manual/dev-doc access, assistant/search and visit attribution; domain/docs_site access/library/visits."
   repository.transport: "Task workspace Git and snapshots; git_http/workspace routes compose domain/repository forge_files and room_task snapshot/checkout services. Existing route assembly owns transport."
   forge.transport: "Forge capability transport and token leases; forge_token route composes domain/project/forge, agent GitHub/Forgejo token adapters."
@@ -519,6 +521,8 @@ routes:
   - {protocol: "http", method: "GET", path: "/users/{handle}/profile", auth: "dashboard.person", owner: "dashboard"}
   - {protocol: "http", method: "GET", path: "/users/{handle}/topics", auth: "dashboard.person", owner: "dashboard"}
   - {protocol: "http", method: "DELETE", path: "/users/me/understanding/{entry_id}", auth: "dashboard.person", owner: "memory"}
+  # app.api.routes.doc_agent
+  - {protocol: "http", method: "POST", path: "/doc-agent/tools/{name}", auth: "doc_agent.thread", owner: "doc_agent"}
   # app.api.routes.docs_site
   - {protocol: "http", method: "POST", path: "/docs/dev-access", auth: "platform.admin", owner: "docs_site"}
   - {protocol: "http", method: "GET", path: "/docs/dev-access/check", auth: "docs.dev.cookie", owner: "docs_site"}

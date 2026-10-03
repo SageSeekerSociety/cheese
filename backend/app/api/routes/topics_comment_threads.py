@@ -6,13 +6,13 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 
 from app.api.auth import ActorResolverDep
-from app.api.deps import get_chat_service, get_work_runner
-from app.api.doc_comment_mentions import hand_to_agent, mentioned_seat
+from app.api.deps import get_chat_service, get_handless_sessions
+from app.api.doc_agent import hand_to_agent, mentioned_seat
 from app.api.doc_identity import operation_actor
 from app.api.response import ok, page
 from app.api.routes.topics import DbSession, _actor_in_place
 from app.domain.agent.chat import ChatService
-from app.domain.agent.runtime import AgentWorkRunner
+from app.domain.agent.harness.pi.handless import HandlessSessions
 from app.domain.block.comment_schemas import ReplyIn, ThreadMutation
 from app.domain.block.comment_threads import CommentThreads
 from app.domain.living_doc.services import DocumentJournal
@@ -105,25 +105,22 @@ async def reply(
     db: DbSession,
     resolver: ActorResolverDep,
     chat: Annotated[ChatService, Depends(get_chat_service)],
-    runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
+    sessions: Annotated[HandlessSessions, Depends(get_handless_sessions)],
 ) -> dict:
     """A reply that @-mentions the room's agent hands the thread to it
-    (``app.api.doc_comment_mentions``)."""
+    (``app.api.doc_agent``)."""
 
     async def hand_off(db, place, actor):
         seat = await mentioned_seat(db, place, actor, body.content)
         if seat is None:
             return None
-        root = await CommentThreads(db).root(place.room_id, comment_id)
         return lambda: hand_to_agent(
             chat,
-            runner,
+            sessions,
             place=place,
             actor=actor,
             seat=seat,
             thread_id=comment_id,
-            content=body.content,
-            quote=root.anchor_quote,
         )
 
     return await mutate(db, resolver, topic_id, comment_id, body, "reply", hand_off)
