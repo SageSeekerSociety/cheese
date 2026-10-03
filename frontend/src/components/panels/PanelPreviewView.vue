@@ -505,9 +505,6 @@ async function onAnnotate(payload: AnnotateDraft) {
         t('work.room.preview.refresh')
       }}</v-btn>
       <!-- Authorization still POSTs only to named sandboxed content-domain frames. -->
-      <!-- A link the page opens in a new tab is the person leaving the preview: without
-           allow-popups the click does nothing at all, and the site it opens is not ours to
-           sandbox, so the new tab escapes these flags. -->
       <div class="preview-frames">
         <template v-if="frames">
           <iframe
