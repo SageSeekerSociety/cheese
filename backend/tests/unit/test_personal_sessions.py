@@ -38,6 +38,7 @@ from app.domain.agent.harness.pi.handless import (
     Said,
 )
 from app.domain.agent.harness.pi.personal import Launch
+from tests.support.hang import HANG_S
 from tests.support.session_host import DEVICE, Host, install_pi, stop_all
 
 PROMPT = "你是芝士。只用给你的工具。"
@@ -69,9 +70,12 @@ class Platform:
         *,
         first_token_s: float = 0.0,
         tools_path: str = "/assistant/tools",
+        holding: threading.Event | None = None,
     ):
         self.steps = steps
         self.first_token_s = first_token_s
+        # Given: an answer stops after its first piece until this is set.
+        self.holding = holding
         self.requests: list[dict] = []
         self.model_auth: list[str] = []
         self.tool_calls: list[tuple[str, str, dict]] = []
@@ -105,9 +109,13 @@ class Platform:
                 self.send_header("Connection", "close")
                 self.end_headers()
                 time.sleep(outer.first_token_s)
+                held = outer.holding is None
                 for chunk in _chunks(index, step):
                     self.wfile.write(f"data: {json.dumps(chunk)}\n\n".encode())
                     self.wfile.flush()
+                    if not held and chunk["choices"][0]["delta"].get("content"):
+                        held = True
+                        outer.holding.wait(HANG_S)
                     time.sleep(0.02)
                 self.wfile.write(b"data: [DONE]\n\n")
                 self.wfile.flush()
@@ -224,19 +232,28 @@ async def test_a_session_has_its_tools_and_nothing_else_and_does_not_think(
     host, platform
 ):
     hub, sessions = host
+    holding = threading.Event()
     fake = platform(
-        [{"tool": "my_tasks"}, {"text": "你领了一道题：图像分类基线复现。"}]
+        [{"tool": "my_tasks"}, {"text": "你领了一道题：图像分类基线复现。"}],
+        holding=holding,
     )
     launch = _launch(7)
 
-    events = await _ask(sessions, launch, "我领了哪些题？")
+    events = []
+    async for event in sessions.ask(
+        launch, uuid.uuid4(), "我领了哪些题？", ceiling_s=120
+    ):
+        events.append(event)
+        if isinstance(event, Said):
+            holding.set()
 
-    said = "".join(e.text for e in events if isinstance(e, Said))
-    assert said == "你领了一道题：图像分类基线复现。"
+    said = [e.text for e in events if isinstance(e, Said)]
+    assert "".join(said) == "你领了一道题：图像分类基线复现。"
     assert Looking("my_tasks") in events
     assert events[-1] == Answered("你领了一道题：图像分类基线复现。")
-    # More than one piece: the answer is handed on as it is written.
-    assert len([e for e in events if isinstance(e, Said)]) > 1
+    # The answer is handed on as it is written: its first piece reached the
+    # reader while the model held the rest back.
+    assert said[0] == "你领了", said
 
     first = fake.requests[0]
     assert sorted(t["function"]["name"] for t in first["tools"]) == [
