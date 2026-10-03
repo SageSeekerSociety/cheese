@@ -32,10 +32,12 @@ const TITLE_BAR: &str = if cfg!(target_os = "macos") { "overlay" } else { "nativ
 
 // What a page the server sends may call. The opener plugin's init script turns a
 // click on an `<a target="_blank">` into `plugin:opener|open_url`, so a link in
-// the page needs `opener:allow-open-url` to open at all; without it the click is
-// refused and nothing happens. `allow-default-urls` is the scope that keeps it
-// to http, https, mailto and tel. `opener:default` would open the same links and
-// also reveal files in a folder, which nothing here does.
+// the page needs `opener:allow-open-url` to reach that command at all; without it
+// the click is refused and nothing happens. The command then refuses every URL
+// whose scheme is not in `allow-default-urls` — that list is what actually lets
+// the link out, and it stops at http, https, mailto and tel. `opener:default`
+// would open the same links and also reveal a file in its folder, which nothing
+// here does.
 const SERVER_PERMISSIONS: &[&str] = &[
     "core:default",
     "core:window:allow-start-dragging",
