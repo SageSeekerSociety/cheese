@@ -87,10 +87,15 @@ export function useChatPaging(deps: ChatPagingDeps) {
       // in flight, and the position from back then would pull the reader back.
       const before = { scrollTop: el.scrollTop, scrollHeight: el.scrollHeight }
       timeline.prepend(payload.data, payload.has_more)
-      if (!hasNewer.value) setCachedWindow(tid, timeline.newest())
       await nextTick()
       const sc = scrollRef.value
       if (sc) sc.scrollTop = scrollTopAfterPrepend(before, sc.scrollHeight)
+      // Trim AFTER the compensation, never before: the rows this drops are below
+      // the viewport, so removing them moves nothing on screen — but they shrink
+      // scrollHeight, and compensating with a scrollHeight that already excludes
+      // them pulls the reader up by their height on every page. See capWindow.
+      timeline.capNewest()
+      if (!hasNewer.value) setCachedWindow(tid, timeline.newest())
     } catch (e) {
       failed = true
       errorMsg.value = e instanceof Error ? e.message : t('work.room.loadFailed')

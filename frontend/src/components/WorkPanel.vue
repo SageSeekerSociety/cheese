@@ -36,6 +36,7 @@ import { getPreview, getTopicWorkSummary, listRoomTasks, readPreviewFile } from 
 import { useTopicMemory } from '../composables/useTopicMemory'
 import { previewCanShowInRoom } from '../lib/fileKind'
 
+import ErrorBoundary from './common/ErrorBoundary.vue'
 import PanelChanges from './panels/PanelChanges.vue'
 import PanelOverview from './panels/PanelOverview.vue'
 import PanelPreview from './panels/PanelPreview.vue'
@@ -618,100 +619,105 @@ defineExpose({ pulse, highlightTurn, reviewDoc, openFile, siteBlock })
         @pin-file="pinFile"
       />
 
-      <div class="tabbody" :class="{ 'tabbody--phone': withChat }">
-        <!-- 对话这一格由 TopicView 填（它拿着 ChatPanel 的那一堆接线）。一直挂着
-             而不是切走就卸载：卸掉会断掉连接、丢掉滚动位置。 -->
-        <div v-if="withChat" v-show="active === 'chat'" class="tabpane-chat" :class="enterClass('chat')">
-          <slot name="chat" />
-        </div>
-        <PanelOverview
-          v-show="active === 'overview'"
-          ref="overviewRef"
-          :class="enterClass('overview')"
-          :agent-name="agentName"
-          :agent-handle="agentHandle"
-          :topic="topic"
-          :activity-tick="activityTick"
-          :topic-list="topicList"
-          :active="active === 'overview'"
-          :refresh-tick="refreshTick"
-          :open-card-id="openCardId"
-          :card-focus-block="cardFocusBlock"
-          :member-names="memberNames"
-          @open-topic="emit('open-topic', $event)"
-          @open-card="emit('open-card', $event)"
-          @review="emit('review')"
-          @mention-click="emit('mention-click', $event)"
-          @open-file="openFile"
-        />
-        <PanelSite
-          v-if="mounted.has('site')"
-          v-show="active === 'site'"
-          ref="siteRef"
-          :class="enterClass('site')"
-          :agent-name="agentName"
-          :topic="topic"
-          :active="active === 'site'"
-          :running-turns="siteTurns"
-          :refresh-tick="refreshTick"
-          :member-names="memberNames"
-          :working="working"
-          :activity="activity"
-          :agent-control="agentControl"
-          @open-file="openFile"
-          @open-topic="emit('open-topic', $event)"
-          @mention-click="emit('mention-click', $event)"
-        />
-        <PanelChanges
-          v-if="mounted.has('changes')"
-          v-show="active === 'changes'"
-          ref="changesRef"
-          :class="enterClass('changes')"
-          :topic-id="topicId"
-          :task-id="openCardId"
-          :read-only="topic?.status === 'archived'"
-          :project-id="projectId"
-          :active="active === 'changes'"
-          :refresh-tick="refreshTick"
-        />
-        <PanelPreview
-          v-if="mounted.has('preview')"
-          v-show="active === 'preview'"
-          :submit-question="submitQuestion"
-          :class="enterClass('preview')"
-          :topic-id="topicId"
-          :project-id="projectId"
-          :active="active === 'preview'"
-          :refresh-tick="refreshTick"
-          @loaded="markPreviewSeen"
-          @locate="emit('locate', $event)"
-          @open-file="openFileTab"
-        />
-        <!-- 这个房间的规则：到点或发生某件事时它自己开工。取数在新的一轮结束时跟一次
-             （`refreshTick`）—— 芝士可能刚在房间里起草了一条。 -->
-        <RoutinePanelHost
-          v-if="mounted.has('routines')"
-          v-show="active === 'routines'"
-          :class="enterClass('routines')"
-          :topic-id="topicId"
-          :project-id="projectId"
-          :refresh-tick="refreshTick"
-        />
-        <template v-for="f in openFiles" :key="fileKey(f.path)">
+      <!-- Panel content (not the tab strip) gets its own boundary: a tab that
+           throws shows the fallback here while the strip stays usable.
+           resetKey = topic id, so switching topics recovers on its own. -->
+      <ErrorBoundary variant="compact" :reset-key="topic.id">
+        <div class="tabbody" :class="{ 'tabbody--phone': withChat }">
+          <!-- 对话这一格由 TopicView 填（它拿着 ChatPanel 的那一堆接线）。一直挂着
+               而不是切走就卸载：卸掉会断掉连接、丢掉滚动位置。 -->
+          <div v-if="withChat" v-show="active === 'chat'" class="tabpane-chat" :class="enterClass('chat')">
+            <slot name="chat" />
+          </div>
+          <PanelOverview
+            v-show="active === 'overview'"
+            ref="overviewRef"
+            :class="enterClass('overview')"
+            :agent-name="agentName"
+            :agent-handle="agentHandle"
+            :topic="topic"
+            :activity-tick="activityTick"
+            :topic-list="topicList"
+            :active="active === 'overview'"
+            :refresh-tick="refreshTick"
+            :open-card-id="openCardId"
+            :card-focus-block="cardFocusBlock"
+            :member-names="memberNames"
+            @open-topic="emit('open-topic', $event)"
+            @open-card="emit('open-card', $event)"
+            @review="emit('review')"
+            @mention-click="emit('mention-click', $event)"
+            @open-file="openFile"
+          />
+          <PanelSite
+            v-if="mounted.has('site')"
+            v-show="active === 'site'"
+            ref="siteRef"
+            :class="enterClass('site')"
+            :agent-name="agentName"
+            :topic="topic"
+            :active="active === 'site'"
+            :running-turns="siteTurns"
+            :refresh-tick="refreshTick"
+            :member-names="memberNames"
+            :working="working"
+            :activity="activity"
+            :agent-control="agentControl"
+            @open-file="openFile"
+            @open-topic="emit('open-topic', $event)"
+            @mention-click="emit('mention-click', $event)"
+          />
+          <PanelChanges
+            v-if="mounted.has('changes')"
+            v-show="active === 'changes'"
+            ref="changesRef"
+            :class="enterClass('changes')"
+            :topic-id="topicId"
+            :task-id="openCardId"
+            :read-only="topic?.status === 'archived'"
+            :project-id="projectId"
+            :active="active === 'changes'"
+            :refresh-tick="refreshTick"
+          />
           <PanelPreview
-            v-if="mounted.has(fileKey(f.path))"
-            v-show="active === fileKey(f.path)"
+            v-if="mounted.has('preview')"
+            v-show="active === 'preview'"
             :submit-question="submitQuestion"
-            :class="enterClass(fileKey(f.path))"
+            :class="enterClass('preview')"
             :topic-id="topicId"
             :project-id="projectId"
-            :path="f.path"
-            :active="active === fileKey(f.path)"
+            :active="active === 'preview'"
             :refresh-tick="refreshTick"
+            @loaded="markPreviewSeen"
             @locate="emit('locate', $event)"
+            @open-file="openFileTab"
           />
-        </template>
-      </div>
+          <!-- 这个房间的规则：到点或发生某件事时它自己开工。取数在新的一轮结束时跟一次
+             （`refreshTick`）—— 芝士可能刚在房间里起草了一条。 -->
+          <RoutinePanelHost
+            v-if="mounted.has('routines')"
+            v-show="active === 'routines'"
+            :class="enterClass('routines')"
+            :topic-id="topicId"
+            :project-id="projectId"
+            :refresh-tick="refreshTick"
+          />
+          <template v-for="f in openFiles" :key="fileKey(f.path)">
+            <PanelPreview
+              v-if="mounted.has(fileKey(f.path))"
+              v-show="active === fileKey(f.path)"
+              :submit-question="submitQuestion"
+              :class="enterClass(fileKey(f.path))"
+              :topic-id="topicId"
+              :project-id="projectId"
+              :path="f.path"
+              :active="active === fileKey(f.path)"
+              :refresh-tick="refreshTick"
+              @locate="emit('locate', $event)"
+            />
+          </template>
+        </div>
+      </ErrorBoundary>
     </template>
   </div>
 </template>
