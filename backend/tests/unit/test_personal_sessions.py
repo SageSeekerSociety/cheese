@@ -59,6 +59,11 @@ TOOLS = [
 ]
 
 
+#: The longest the fake holds the rest of an answer back for a reader that
+#: never sees its first words; past it the answer goes on, and arrives whole.
+HELD_S = 10.0
+
+
 class Platform:
     """The backend as the session reaches it: the model behind ``/llm/v1``,
     the person's tools behind ``/assistant/tools``."""
@@ -69,9 +74,11 @@ class Platform:
         *,
         first_token_s: float = 0.0,
         tools_path: str = "/assistant/tools",
+        rest_held_until: threading.Event | None = None,
     ):
         self.steps = steps
         self.first_token_s = first_token_s
+        self.rest_held_until = rest_held_until
         self.requests: list[dict] = []
         self.model_auth: list[str] = []
         self.tool_calls: list[tuple[str, str, dict]] = []
@@ -105,9 +112,16 @@ class Platform:
                 self.send_header("Connection", "close")
                 self.end_headers()
                 time.sleep(outer.first_token_s)
+                held = outer.rest_held_until
                 for chunk in _chunks(index, step):
                     self.wfile.write(f"data: {json.dumps(chunk)}\n\n".encode())
                     self.wfile.flush()
+                    if held is not None and chunk["choices"][0]["delta"].get("content"):
+                        # The rest of the answer waits for the reader to see
+                        # its first words: a whole answer written faster than
+                        # one read is handed on in one piece, rightly.
+                        held.wait(HELD_S)
+                        held = None
                     time.sleep(0.02)
                 self.wfile.write(b"data: [DONE]\n\n")
                 self.wfile.flush()
@@ -224,18 +238,27 @@ async def test_a_session_has_its_tools_and_nothing_else_and_does_not_think(
     host, platform
 ):
     hub, sessions = host
+    first_words_seen = threading.Event()
     fake = platform(
-        [{"tool": "my_tasks"}, {"text": "你领了一道题：图像分类基线复现。"}]
+        [{"tool": "my_tasks"}, {"text": "你领了一道题：图像分类基线复现。"}],
+        rest_held_until=first_words_seen,
     )
     launch = _launch(7)
 
-    events = await _ask(sessions, launch, "我领了哪些题？")
+    events = []
+    async for event in sessions.ask(
+        launch, uuid.uuid4(), "我领了哪些题？", ceiling_s=120
+    ):
+        events.append(event)
+        if isinstance(event, Said):
+            first_words_seen.set()
 
     said = "".join(e.text for e in events if isinstance(e, Said))
     assert said == "你领了一道题：图像分类基线复现。"
     assert Looking("my_tasks") in events
     assert events[-1] == Answered("你领了一道题：图像分类基线复现。")
-    # More than one piece: the answer is handed on as it is written.
+    # More than one piece: the first words were handed on while the model was
+    # still writing the rest.
     assert len([e for e in events if isinstance(e, Said)]) > 1
 
     first = fake.requests[0]
