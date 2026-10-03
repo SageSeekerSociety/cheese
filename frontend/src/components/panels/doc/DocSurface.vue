@@ -22,7 +22,7 @@ import type { ThreadPlace } from '../../../lib/docThreadTypes'
 import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import Collaboration from '@tiptap/extension-collaboration'
 import CollaborationCaret from '@tiptap/extension-collaboration-caret'
-import { Editor, EditorContent } from '@tiptap/vue-3'
+import { EditorContent } from '@tiptap/vue-3'
 
 import { BUBBLE_META } from '../../../lib/docBubble'
 import { renderCaret } from '../../../lib/docCaret'
@@ -42,7 +42,9 @@ import { commentAnchors, docExtensions, serializeDoc } from '../../../lib/docSch
 import { createSlashCommands } from '../../../lib/docSlashMenu'
 import LoadingSkeleton from '../../common/LoadingSkeleton.vue'
 
+import { editorBlocks, newStatusAt } from './blocks'
 import { alignedDocBlocks } from './docBlocks'
+import { DocEditor } from './docEditor'
 import DocLinkCallout from './DocLinkCallout.vue'
 import DocOverlays from './DocOverlays.vue'
 
@@ -332,12 +334,12 @@ const displayTick = ref(0)
 
 // 编辑器绑在这一份协同文档上：文档换了（换房间、重连拿到的是另一份）就整个重建，
 // 因为 Collaboration 扩展只在建编辑器时认一次文档。
-const editor = shallowRef<Editor | undefined>()
+const editor = shallowRef<DocEditor | undefined>()
 
-function buildEditor(session: DocSession): Editor {
-  return new Editor({
+function buildEditor(session: DocSession): DocEditor {
+  return new DocEditor({
     extensions: [
-      ...docExtensions({ resolveImageSrc: (src) => props.imageSrc(src) }),
+      ...editorBlocks(docExtensions({ resolveImageSrc: (src) => props.imageSrc(src) })),
       Collaboration.configure({ document: session.doc }),
       CollaborationCaret.configure({ provider: session.provider, user: session.user, render: renderCaret }),
       // 几种装饰都只读递进来的输入（哪一段有装饰、装饰上写什么），扩展本身不认识
@@ -359,6 +361,7 @@ function buildEditor(session: DocSession): Editor {
         onUpdate: showSlashMenu,
         onExit: onSlashExit,
         onKeyDown: onSlashKeyDown,
+        onAction: (_action, ed) => newStatusAt(ed),
       }),
     ],
     editable: props.editable,

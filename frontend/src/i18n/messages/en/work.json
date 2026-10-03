@@ -763,7 +763,14 @@
         "code": "Code block",
         "quote": "Quote",
         "table": "Table",
-        "hr": "Divider"
+        "hr": "Divider",
+        "callout": "Callout",
+        "timeline": "Timeline",
+        "stats": "Stat cards",
+        "columns": "Columns",
+        "details": "Collapsible section",
+        "math": "Formula",
+        "status": "Status tag"
       },
       "status": {
         "inProgress": "In progress",
@@ -793,7 +800,56 @@
       "you": "you",
       "emptyLineHint": "Type, or / to insert",
       "undo": "Undo",
-      "redo": "Redo"
+      "redo": "Redo",
+      "blocks": {
+        "calloutKind": "Callout type",
+        "kinds": {
+          "NOTE": "Note",
+          "TIP": "Tip",
+          "IMPORTANT": "Important",
+          "WARNING": "Warning",
+          "CAUTION": "Caution"
+        },
+        "kindHints": {
+          "NOTE": "Extra context",
+          "TIP": "Advice",
+          "IMPORTANT": "Conclusions, decisions",
+          "WARNING": "Risks",
+          "CAUTION": "Actions that can break things"
+        },
+        "fields": {
+          "when": "Time",
+          "title": "Title",
+          "body": "Details",
+          "name": "Name",
+          "value": "Value",
+          "delta": "Change",
+          "summary": "Title"
+        },
+        "itemActions": "Item actions",
+        "moveUp": "Move up",
+        "moveDown": "Move down",
+        "addAfter": "Add an item after",
+        "removeItem": "Delete this item",
+        "addStat": "Add a stat card",
+        "removeStat": "Delete this stat card",
+        "columnActions": "Column actions",
+        "addColumn": "Add a column to the right",
+        "removeColumn": "Delete this column",
+        "toggleDetails": "Expand or collapse",
+        "emptyFormula": "Empty formula",
+        "formulaError": "This formula can’t be displayed",
+        "formulaSource": "Formula",
+        "footnoteMissing": "This footnote can’t be found",
+        "editFootnote": "Edit footnote",
+        "statusWords": "Status text",
+        "statusKinds": {
+          "ok": "Yes, passed",
+          "no": "No, failed",
+          "warn": "At risk, pending"
+        },
+        "statusOff": "Remove"
+      }
     },
     "comments": {
       "comment": "Comment",

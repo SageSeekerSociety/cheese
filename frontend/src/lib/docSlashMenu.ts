@@ -9,13 +9,15 @@
 // 建在 @tiptap/suggestion 上：那个 "/" 是**我们自己的结构化触发符**，插件按位置
 // 匹配，从不解析自然语言（军规 4）。它不新增任何 node 或 mark，所以共享的
 // round-trip schema 一个字没动。
-import type { ChainedCommands } from '@tiptap/core'
-import type { Node as PMNode } from '@tiptap/pm/model'
+import type { ChainedCommands, Editor } from '@tiptap/core'
+import type { Node as PMNode, Schema } from '@tiptap/pm/model'
 import type { SuggestionProps } from '@tiptap/suggestion'
 
 import { Extension } from '@tiptap/core'
-import { PluginKey } from '@tiptap/pm/state'
+import { PluginKey, TextSelection } from '@tiptap/pm/state'
 import { Suggestion } from '@tiptap/suggestion'
+
+import { emptyItem, FIELD_NODES } from './docSchema/blocks'
 
 import { t } from '@/i18n'
 
@@ -28,6 +30,29 @@ export interface SlashItem {
   keywords: string[]
   /** Applied AFTER the "/query" token is deleted; must keep block text. */
   run: (chain: ChainedCommands) => ChainedCommands
+  /** Goes inside a one-line field (a timeline item, a stat card) too. */
+  inline?: boolean
+  /** Inserts something new rather than turning the block into another kind. */
+  insert?: boolean
+  /** Needs more than the chain: the host opens what it asks for. */
+  action?: 'status'
+}
+
+/** Put a new block where the caret is: in place of the empty paragraph the
+ *  "/" was typed in, or after the paragraph that has text. The caret goes
+ *  `inner` positions into the new block. */
+function insertBlock(make: (schema: Schema) => PMNode, inner: number) {
+  return (c: ChainedCommands) =>
+    c.command(({ tr, state, dispatch }) => {
+      const { $from } = tr.selection
+      const node = make(state.schema)
+      const empty = $from.parent.type.name === 'paragraph' && $from.parent.content.size === 0
+      const at = empty ? $from.before() : $from.after()
+      if (empty) tr.replaceWith(at, $from.after(), node)
+      else tr.insert(at, node)
+      if (dispatch) tr.setSelection(TextSelection.near(tr.doc.resolve(Math.min(at + inner, tr.doc.content.size))))
+      return true
+    })
 }
 
 // clearNodes() first: it lifts list items / quotes and normalizes the current
@@ -143,13 +168,105 @@ export const SLASH_ITEMS: SlashItem[] = [
     icon: 'mdi-minus',
     hint: '---',
     keywords: ['hr', 'divider', 'line', 'fgx', 'fengexian'],
+    insert: true,
     run: (c) => c.setHorizontalRule(),
+  },
+  {
+    key: 'callout',
+    get label() {
+      return t('work.room.doc.slash.callout')
+    },
+    icon: 'mdi-alert-box-outline',
+    hint: '[!]',
+    keywords: ['callout', 'note', 'alert', 'tsk', 'tishikuang'],
+    run: (c) => c.clearNodes().wrapIn('callout', { kind: 'IMPORTANT' }),
+  },
+  {
+    key: 'timeline',
+    get label() {
+      return t('work.room.doc.slash.timeline')
+    },
+    icon: 'mdi-timeline-outline',
+    hint: ':::',
+    keywords: ['timeline', 'steps', 'sjx', 'shijianxian'],
+    insert: true,
+    run: insertBlock((schema) => schema.nodes.timeline.create(null, emptyItem(schema, 'timelineItem')), 3),
+  },
+  {
+    key: 'stats',
+    get label() {
+      return t('work.room.doc.slash.stats')
+    },
+    icon: 'mdi-card-text-outline',
+    hint: ':::',
+    keywords: ['stats', 'metrics', 'kpi', 'zbk', 'zhibiaoka'],
+    insert: true,
+    run: insertBlock(
+      (schema) => schema.nodes.stats.create(null, [emptyItem(schema, 'statItem'), emptyItem(schema, 'statItem')]),
+      3
+    ),
+  },
+  {
+    key: 'columns',
+    get label() {
+      return t('work.room.doc.slash.columns')
+    },
+    icon: 'mdi-view-column-outline',
+    hint: '::::',
+    keywords: ['columns', 'side', 'fl', 'fenlan'],
+    insert: true,
+    run: insertBlock((schema) => {
+      const column = () => schema.nodes.column.create(null, schema.nodes.paragraph.create())
+      return schema.nodes.columns.create(null, [column(), column()])
+    }, 3),
+  },
+  {
+    key: 'details',
+    get label() {
+      return t('work.room.doc.slash.details')
+    },
+    icon: 'mdi-chevron-right-box-outline',
+    hint: 'details',
+    keywords: ['details', 'fold', 'collapse', 'zd', 'zhedie'],
+    insert: true,
+    run: insertBlock(
+      (schema) =>
+        schema.nodes.details.create(null, [
+          schema.nodes.detailsSummary.create(),
+          schema.nodes.detailsContent.create(null, schema.nodes.paragraph.create()),
+        ]),
+      2
+    ),
+  },
+  {
+    key: 'math',
+    get label() {
+      return t('work.room.doc.slash.math')
+    },
+    icon: 'mdi-sigma',
+    hint: '$$',
+    keywords: ['math', 'formula', 'latex', 'equation', 'gs', 'gongshi'],
+    insert: true,
+    run: insertBlock((schema) => schema.nodes.mathBlock.create({ latex: '' }), 1),
+  },
+  {
+    key: 'status',
+    get label() {
+      return t('work.room.doc.slash.status')
+    },
+    icon: 'mdi-check-circle-outline',
+    hint: '{✓}',
+    keywords: ['status', 'tag', 'chip', 'ztbq', 'zhuangtai', 'biaoqian'],
+    inline: true,
+    insert: true,
+    action: 'status',
+    run: (c) => c,
   },
 ]
 
 /** 把已有的一块换成别的块（浮条上的「正文 ▾」、行首的手柄）：同一张表，去掉插入新
  *  东西的那几项（表格、分隔线）。 */
-export const BLOCK_ITEMS: SlashItem[] = SLASH_ITEMS.filter((item) => item.key !== 'table' && item.key !== 'hr')
+export const BLOCK_ITEMS: SlashItem[] = SLASH_ITEMS.filter((item) => !item.insert && item.key !== 'table')
 
 /** 这一块在表里是哪一项；对不上的（比如表格）算正文。 */
 export function blockKeyOf(node: PMNode | null | undefined): string {
@@ -166,15 +283,19 @@ export function blockKeyOf(node: PMNode | null | undefined): string {
       return 'code'
     case 'blockquote':
       return 'quote'
+    case 'callout':
+      return 'callout'
     default:
       return 'text'
   }
 }
 
-export function filterSlashItems(query: string): SlashItem[] {
+/** The items for this query; in a one-line field only the inline ones. */
+export function filterSlashItems(query: string, inField = false): SlashItem[] {
   const q = query.toLowerCase().trim()
-  if (!q) return SLASH_ITEMS
-  return SLASH_ITEMS.filter((it) => it.label.includes(q) || it.keywords.some((k) => k.includes(q)))
+  const items = inField ? SLASH_ITEMS.filter((it) => it.inline) : SLASH_ITEMS
+  if (!q) return items
+  return items.filter((it) => it.label.includes(q) || it.keywords.some((k) => k.includes(q)))
 }
 
 export interface SlashMenuHandlers {
@@ -182,6 +303,8 @@ export interface SlashMenuHandlers {
   onUpdate: (props: SuggestionProps<SlashItem, SlashItem>) => void
   onExit: (props: SuggestionProps<SlashItem, SlashItem>) => void
   onKeyDown: (props: { event: KeyboardEvent }) => boolean
+  /** An item that needs more than a chain (a new status tag asks for its words). */
+  onAction?: (action: NonNullable<SlashItem['action']>, editor: Editor) => void
 }
 
 export const slashPluginKey = new PluginKey('cheeseSlashMenu')
@@ -197,11 +320,17 @@ export function createSlashCommands(handlers: SlashMenuHandlers) {
           editor: this.editor,
           pluginKey: slashPluginKey,
           char: '/',
-          // 空段落或行首: the trigger only arms at the head of a text block —
-          // mid-sentence "/" (dates, paths) never opens the menu.
-          startOfLine: true,
-          allowedPrefixes: null,
-          items: ({ query }) => filterSlashItems(query),
+          // At the head of a text block, or after a space: "/" inside a word
+          // (dates, paths) never opens the menu. After a space only the
+          // inline items are offered, since turning the whole paragraph into
+          // a heading from the middle of a sentence is never what was meant.
+          startOfLine: false,
+          allowedPrefixes: [' '],
+          items: ({ query, editor }) => {
+            const { $from } = editor.state.selection
+            const atHead = $from.parentOffset === query.length + 1
+            return filterSlashItems(query, !atHead || FIELD_NODES.has($from.parent.type.name))
+          },
           allow: ({ state, range }) => {
             // Never inside code blocks ("/" is code) or table cells (block-type
             // conversions there would produce markdown a GFM table can't hold).
@@ -217,6 +346,7 @@ export function createSlashCommands(handlers: SlashMenuHandlers) {
           command: ({ editor: ed, range, props: item }) => {
             // One chain = one undo step: drop the "/query" token, then convert.
             item.run(ed.chain().focus().deleteRange(range)).run()
+            if (item.action) handlers.onAction?.(item.action, ed)
           },
           render: () => handlers,
         }),

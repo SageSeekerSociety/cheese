@@ -14,6 +14,7 @@
 // plain, readable markup.
 
 import type { JSONContent, MarkdownToken } from '@tiptap/core'
+import type { Node as PMNode, Schema } from '@tiptap/pm/model'
 
 import { Mark, mergeAttributes, Node } from '@tiptap/core'
 
@@ -635,6 +636,28 @@ export const FootnoteDef = Node.create({
   renderMarkdown: (node, helpers) =>
     `[^${node.attrs?.label ?? ''}]: ${helpers.renderChildren(node.content ?? []).trim()}`,
 })
+
+/** The short one-line fields: only inline things (words, a status tag) go in them. */
+export const FIELD_NODES = new Set([
+  'timelineWhen',
+  'timelineTitle',
+  'timelineBody',
+  'statName',
+  'statValue',
+  'statDelta',
+  'detailsSummary',
+  'footnoteDef',
+])
+
+/** An empty item of a timeline or a set of stat cards. */
+export function emptyItem(schema: Schema, type: 'timelineItem' | 'statItem'): PMNode {
+  const fields =
+    type === 'timelineItem' ? ['timelineWhen', 'timelineTitle', 'timelineBody'] : ['statName', 'statValue', 'statDelta']
+  return schema.nodes[type].create(
+    null,
+    fields.map((name) => schema.nodes[name].create())
+  )
+}
 
 /** Every node and mark this module adds to the document. */
 export const docBlocks = [
