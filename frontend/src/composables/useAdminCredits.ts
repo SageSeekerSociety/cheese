@@ -15,7 +15,6 @@ import type {
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import { getGatewayModels } from '@/api'
 import {
   createPlan,
   deletePlan,
@@ -23,6 +22,7 @@ import {
   getCreditTeamHistory,
   grantTeamCredits,
   listCreditTeams,
+  listPlanModels,
   listPlans,
   setCreditTeamPlan,
   updatePlan,
@@ -62,12 +62,10 @@ export function useAdminCredits() {
 
   async function loadTierModels() {
     try {
-      const listing = await getGatewayModels(1)
+      const listing = await listPlanModels()
       const byTier: Partial<Record<ModelTier, string[]>> = { included: [], premium: [], frontier: [] }
       for (const model of listing.models) {
-        // 列表里每条模型都带档位（`tier`），缺省是 included。
-        const tier = (model as { tier?: ModelTier }).tier ?? 'included'
-        byTier[tier]?.push(model.label || model.name)
+        byTier[model.tier]?.push(model.label || model.id)
       }
       tierModels.value = byTier
     } catch {
