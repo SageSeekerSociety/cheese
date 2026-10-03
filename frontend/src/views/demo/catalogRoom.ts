@@ -276,7 +276,7 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '一组两题，正在接管',
-        note: '这一格里的「输入框」其实是提问面板：单选默认选中第一项，点选后停 180ms 再推进（这段时间整行高亮、标记翻实心），方向键换选项、Enter 提交、Skip 跳过这一题。',
+        note: '按真实聊天栏的尺寸摆：上面是对话区、下面是输入那一格。这一格里的「输入框」其实是提问面板。',
         props: { questions: 2 },
       },
       {
@@ -286,7 +286,7 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '收起之后',
-        note: 'Esc 只收起当前这一组，输入框上方出现「有 N 个问题待回答」，点它把面板叫回来——问题不会被永久藏掉。',
+        note: 'Esc 只收起当前这一组，输入框上方出现「有 N 个问题待回答」，点它把面板叫回来。',
         props: { questions: 2, dismissed: true },
       },
     ],

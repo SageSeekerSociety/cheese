@@ -24,10 +24,14 @@ import DemoView from '@/views/demo/DemoView.vue'
 // 这一条入口上现在有两页，地址说了算：组件预览站（/demo/catalog…）和动态演示
 // （/demo/<名字>）。两页都是「地址当 props 传进去」，只是预览站不看查询串。
 const catalog = /^\/demo\/catalog(\/|$)/.test(location.pathname)
+// 预览里根路径就是这一页：话题预览把根路径直接喂给演示页，地址栏留的是 `/`。
+// 那时按 `/` 去选页会落到 DemoView 上、它不认识这个地址，结果一片空白——所以
+// 把 `/` 也算作预览站，并指到默认那条（提问接管输入框）。只在演示入口里有效。
+const root = location.pathname === '/' || location.pathname === '/index.html'
 
-createApp(catalog ? (DemoCatalog as Component) : DemoView, {
-  path: location.pathname,
-  ...(catalog ? {} : { search: location.search }),
+createApp(catalog || root ? (DemoCatalog as Component) : DemoView, {
+  path: root ? '/demo/catalog/ask-takeover' : location.pathname,
+  ...(catalog || root ? {} : { search: location.search }),
 })
   .use(vuetify)
   .use(i18n)
