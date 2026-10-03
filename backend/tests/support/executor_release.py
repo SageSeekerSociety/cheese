@@ -40,6 +40,10 @@ def install(platform_dir: Path) -> Path:
             for name, source in runtime.RELEASE_FILES.items()
         }
     }
-    release, contents = bootstrap.stage_release(platform_dir, payload)
+    # A machine keeps its releases beside its rooms (`bootstrap.release_store`);
+    # a fixture's own directory is as good a place to keep its one.
+    release, contents = bootstrap.stage_release(
+        platform_dir / "executor-releases", platform_dir, payload
+    )
     bootstrap.activate_release(platform_dir, release, contents)
     return platform_dir / "remote-execution/runtime.py"

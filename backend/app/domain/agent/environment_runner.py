@@ -50,6 +50,40 @@ def now():
     return datetime.now(timezone.utc).isoformat()  # noqa: UP017
 
 
+def pid_namespace():
+    """This process's pid namespace, on Linux; None elsewhere."""
+    if sys.platform != "linux":
+        return None
+    return os.readlink("/proc/self/ns/pid")
+
+
+def visible_pid(data):
+    """The pid a status names, numbered as this process's namespace numbers it,
+    or None when nothing alive answers to it.
+
+    A sandboxed room's runner (`bootstrap.sandbox_argv`) has a pid namespace
+    of its own and records the pid it has there. Outside, that number is some
+    other process's, so the process is found by its namespace and the pid it
+    has in it."""
+    pid, namespace = data["pid"], data.get("pid_namespace")
+    if namespace is None or namespace == pid_namespace():
+        return pid
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            if os.readlink(entry / "ns/pid") != namespace:
+                continue
+            for line in (entry / "status").read_text().splitlines():
+                if line.startswith("NSpid:"):
+                    if int(line.split()[-1]) == pid:
+                        return int(entry.name)
+                    break
+        except OSError:
+            continue
+    return None
+
+
 def process_identity(pid, *, reference=None):
     # Keep recognizing status files written by older helpers, including during
     # reset. New Linux records avoid spawning ps on every readiness poll.
@@ -136,8 +170,12 @@ def read_status(directory: Path) -> dict:
         return {"state": "pending"}
     data = json.loads(path.read_text())
     if data["state"] in ("preparing", "ready"):
+        pid = visible_pid(data)
+        if pid is not None and pid != data["pid"]:
+            data = {**data, "pid": pid, "pid_namespace": pid_namespace()}
         if (
-            process_identity(data["pid"], reference=data["process_identity"])
+            pid is None
+            or process_identity(pid, reference=data["process_identity"])
             != data["process_identity"]
         ):
             if data["state"] == "ready":
@@ -190,6 +228,7 @@ def run(config, directory, command, *, adopt=None, task_work=None):
         "revision": config["revision"],
         "attempt": attempt,
         "pid": os.getpid(),
+        "pid_namespace": pid_namespace(),
         "process_identity": process_identity(os.getpid()),
         "started_at": now(),
         "finished_at": None,
@@ -426,10 +465,15 @@ if __name__ == "__main__":
         if executor.exists():
             if json.loads(executor.read_text())["resource"] != Path.home().name:
                 raise SystemExit("executor belongs to another room resource")
+            # The runtime of the release this runner came from, which is the
+            # one a sandboxed room cannot write (`device_provider.
+            # environment_status` picks it), not the room's own copy.
             subprocess.run(
                 [
                     sys.executable,
-                    str(installed / "remote-execution/runtime.py"),
+                    str(
+                        Path(__file__).resolve().parent / "remote-execution/runtime.py"
+                    ),
                     "stop",
                     "--state",
                     str(installed / "executor"),

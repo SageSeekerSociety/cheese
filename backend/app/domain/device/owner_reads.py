@@ -71,7 +71,7 @@ async def execution_device_authorized(
     )
     return (
         supply is not None
-        and has_runnable_transport(binding_visibility(supply))
+        and has_runnable_transport(binding_visibility(supply), supply)
         and device_id
         in await SqlDeviceRepository(session).device_ids_by_project(project_id)
     )

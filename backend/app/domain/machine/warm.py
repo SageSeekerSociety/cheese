@@ -15,7 +15,7 @@ from app.core.errors import ValidationError
 from app.core.sentences import say
 from app.domain.agent.device_hub import device_hub
 from app.domain.device.models import DeviceRow
-from app.domain.device.supply import Supply, Visibility
+from app.domain.device.supply import Supply, binding_visibility
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
 from app.domain.machine import enrollment
@@ -540,7 +540,7 @@ class WarmPoolService:
                     code,
                     owner_user_id=owner.id,
                     supply=Supply.cloud,
-                    visibility=Visibility.host,
+                    visibility=binding_visibility(Supply.cloud),
                     name=row.create_request["hostname"],
                 )
                 row.device_id = device.device_id

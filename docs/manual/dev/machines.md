@@ -76,6 +76,8 @@ blocks: tool/probe, tool/quarantine, tool/unknown
 
 平台在别人机器上装的一切：执行器、CLI、环境脚本、启动脚本、会话目录、共享包缓存，都在机器主人 `$HOME` 下的同一个目录里（`place.footprint_root()`），卸载就是删这一个目录。
 
+云机器上，每条会话的执行器跑在自己的 bubblewrap 沙箱里：只写得到自己的会话目录和本项目的包缓存，看不到别的会话、别的项目的缓存和机器主人自己的文件（连接器的凭据就在那里），也用不了 sudo 和 Docker。网络和机器共用。
+
 ## 模型流量 {#llm}
 
 远端机器没有 root，没法改域名解析，只能靠 `HTTPS_PROXY`。它把 CONNECT 流量通过模型隧道带回主机上的计量代理，机器上只有自己的短期令牌，见[模型调用流程](/dev/llm#others)。

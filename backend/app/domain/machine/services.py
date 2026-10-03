@@ -29,7 +29,7 @@ from app.core.errors import (
 from app.core.sentences import say
 from app.domain.agent.compute_configs import ComputeChoice, room_choice
 from app.domain.device.models import DeviceRow
-from app.domain.device.supply import Supply, Visibility
+from app.domain.device.supply import Supply, binding_visibility
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
@@ -944,13 +944,10 @@ class MachineService:
             # from what the machine looks like — the identical VM enrolled by a
             # human through the connector is `self_hosted` and untouchable.
             supply=Supply.cloud,
-            # #358: a fresh, disposable, one-per-topic VM IS its own empty box —
-            # "see the whole machine" adds no capability there, so the visibility
-            # axis collapses and `host` is both correct and safe (there are no
-            # other rooms or pre-existing services to reach). The gate that refuses
-            # `isolated` (no transport yet) must never fire for cloud compute, so
-            # this is `host`, not the connector's isolated default.
-            visibility=Visibility.host,
+            # Each session on a Cloud machine runs in a sandbox of its own
+            # (#2320), the answer every binding on it gets too
+            # (`device.supply.binding_visibility`).
+            visibility=binding_visibility(Supply.cloud),
             name=machine.hostname,
         )
         project = await self._projects.get(machine.project_id)

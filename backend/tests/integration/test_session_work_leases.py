@@ -582,11 +582,13 @@ async def test_lazy_executor_lifecycle_keeps_the_same_allocation(
     from app.domain.agent.harness.claude_code.remote_execution import runtime
 
     launch_env = {}
+    launch_options = {}
     original_script = executor_launch.script
 
-    def capture_script(project, resource, env):
+    def capture_script(project, resource, env, **options):
         launch_env.update(env)
-        return original_script(project, resource, env)
+        launch_options.update(options)
+        return original_script(project, resource, env, **options)
 
     monkeypatch.setattr(executor_launch, "script", capture_script)
     info = {
@@ -672,6 +674,8 @@ async def test_lazy_executor_lifecycle_keeps_the_same_allocation(
             assert time.monotonic() < deadline, "the preview helper never started"
             time.sleep(0.01)
         assert args[args.index("--url") + 1] == launch_env["CHEESE_PREVIEW_URL"]
+    # A self-hosted machine's sessions see it whole: no sandbox yet (#2320).
+    assert launch_options == {"sandbox": False}
     assert launch_env["CHEESE_AUTHOR"] == actor_handle
     assert launch_env["GIT_AUTHOR_NAME"] == actor_handle
     assert launch_env["GIT_AUTHOR_EMAIL"] == f"{actor_handle}@agent.cheese.local"
@@ -988,9 +992,9 @@ async def test_each_dialer_gets_its_configured_base_not_the_request_host(
     launch_env = {}
     original_script = executor_launch.script
 
-    def capture_script(project, resource, env):
+    def capture_script(project, resource, env, **options):
         launch_env.update(env)
-        return original_script(project, resource, env)
+        return original_script(project, resource, env, **options)
 
     monkeypatch.setattr(executor_launch, "script", capture_script)
     info = {"state": "/w/state", "workspace": "/w/work", "mcp_servers": []}

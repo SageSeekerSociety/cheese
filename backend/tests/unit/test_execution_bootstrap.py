@@ -21,7 +21,7 @@ def test_prepared_executor_can_start_offline_forge_transport(tmp_path, monkeypat
 
     project, resource = uuid.uuid4(), uuid.uuid4()
     env = {"CHEESE_API": "http://127.0.0.1:1", "CHEESE_TOKEN": "test"}
-    payload = payload_for(project, resource, env)
+    payload = payload_for(project, resource, env, sandbox=False)
     monkeypatch.setattr(bootstrap, "binary", lambda *_: sys.executable)
     with bootstrap.prepared(payload, tmp_path) as (home, _config, _state, _env):
         monkeypatch.setenv("HOME", str(home))
@@ -78,7 +78,7 @@ def test_executor_prepares_room_without_model_credentials(tmp_path):
     def launch():
         return subprocess.run(
             [sys.executable, "-"],
-            input=script(project, resource, env),
+            input=script(project, resource, env, sandbox=False),
             env={**os.environ, "HOME": str(owner)},
             capture_output=True,
             text=True,
@@ -217,6 +217,7 @@ def _executor_payload():
         uuid.uuid4(),
         uuid.uuid4(),
         {"CHEESE_API": "http://127.0.0.1:1", "CHEESE_TOKEN": "test"},
+        sandbox=False,
     )
 
 

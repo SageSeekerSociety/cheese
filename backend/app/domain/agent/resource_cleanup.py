@@ -36,6 +36,14 @@ SESSION_TMP = "/var/tmp"
 # launcher built, so a rename that reaches only one of them cannot happen.
 CHECKOUT_DIR = "room"
 
+# Which rooms run in a sandbox, and the release each was started from — a copy
+# of `place.SANDBOXES_DIR`, held to it by test_footprint_root.py. A sandboxed
+# room can write all of its own home, so for one this teardown takes nothing
+# from there that decides what it runs: not the programs in the room's
+# installation, and not git's config, hooks and attributes in its checkouts,
+# which name programs git runs.
+SANDBOXES = "sandboxes"
+
 # Where an archived room's session transcripts wait under FOOTPRINT_ROOT until
 # the cleanup that retained them deletes them (topic/retire.py sets how long).
 TRANSCRIPTS_ROOT = "transcripts"
@@ -172,8 +180,66 @@ def run_command(
     )
 
 
+def sandbox_marker(home: Path) -> Path:
+    return Path.home() / FOOTPRINT_ROOT / SANDBOXES / home.parent.name / home.name
+
+
+def sandbox_release(home: Path) -> Path | None:
+    """The release this room's sandbox was started from, or None for a room
+    that does not run in one."""
+    marker = sandbox_marker(home)
+    if not marker.exists():
+        return None
+    return Path(marker.read_text())
+
+
+def platform_program(home: Path, relative: str) -> Path:
+    """One of the platform's programs for this room, to run here, outside any
+    sandbox: out of the release a sandboxed room was started from, which the
+    room cannot write, and otherwise out of the room's own installation."""
+    release = sandbox_release(home)
+    return (release if release else platform_dir(home)) / relative
+
+
+def git(args: list[str], cwd: Path, home: Path | None) -> subprocess.CompletedProcess:
+    """Git in a checkout of the room whose home is `home` (None: of no room).
+    A sandboxed room wrote that checkout's config, hooks and attributes, and
+    git runs the programs they name (`core.fsmonitor`, a filter's `clean`), so
+    for such a room git runs in a sandbox too: the room's directories and none
+    of the owner's."""
+    argv = ["git", *args]
+    if home is not None and sandbox_release(home) is not None:
+        rooms = []
+        for path in resource_paths(Path.home(), home.parent.name, home.name):
+            if path.exists():
+                rooms += ["--bind", str(path), str(path)]
+        argv = [
+            "bwrap",
+            "--unshare-all",
+            "--ro-bind",
+            "/",
+            "/",
+            "--dev",
+            "/dev",
+            "--proc",
+            "/proc",
+            "--tmpfs",
+            str(Path.home()),
+            *rooms,
+            "--chdir",
+            str(cwd),
+            "--",
+            *argv,
+        ]
+    return run_command(argv, cwd=cwd)
+
+
 def check_published(
-    work: Path, *, canonical: bool = False, own_branch: bool = False
+    work: Path,
+    *,
+    home: Path | None = None,
+    canonical: bool = False,
+    own_branch: bool = False,
 ) -> None:
     """Refuse if `work` holds anything its remote does not.
 
@@ -188,21 +254,24 @@ def check_published(
         if any(work.iterdir()):
             raise RuntimeError("nonempty checkout has no Git publication record")
         return
-    dirty = run_command(
-        ["git", "status", "--porcelain", "--untracked-files=all"], cwd=work
-    )
+    dirty = git(["status", "--porcelain", "--untracked-files=all"], work, home)
     if dirty.returncode or dirty.stdout.strip():
         raise RuntimeError("checkout has unpublished working-tree changes")
     if not canonical:
-        check_published_commits(work, include_head=True, branches=not own_branch)
+        check_published_commits(
+            work, home=home, include_head=True, branches=not own_branch
+        )
 
 
 def check_published_commits(
-    repo: Path, *, include_head: bool = False, branches: bool = True
+    repo: Path,
+    *,
+    home: Path | None = None,
+    include_head: bool = False,
+    branches: bool = True,
 ) -> None:
-    unpublished = run_command(
+    unpublished = git(
         [
-            "git",
             "rev-list",
             *(["--branches"] if branches else []),
             *(["HEAD"] if include_head else []),
@@ -210,7 +279,8 @@ def check_published_commits(
             "--remotes=origin",
             "--glob=refs/cheese/published/*",
         ],
-        cwd=repo,
+        repo,
+        home,
     )
     if unpublished.returncode or unpublished.stdout.strip():
         raise RuntimeError("checkout has unpublished commits")
@@ -305,8 +375,8 @@ def end_holders(paths: list[Path]) -> None:
 
 def check_resource_publication(home: Path, work: Path) -> None:
     """Check both legacy checkouts and task worktrees before deleting a home."""
-    check_published(work)
-    check_published(home / CHECKOUT_DIR)
+    check_published(work, home=home)
+    check_published(home / CHECKOUT_DIR, home=home)
     tasks = home / ".cheese/tasks"
     if tasks.is_symlink():
         raise RuntimeError("task storage is a symlink")
@@ -314,11 +384,11 @@ def check_resource_publication(home: Path, work: Path) -> None:
         for task in tasks.iterdir():
             if task.is_symlink() or not task.is_dir():
                 raise RuntimeError("unrecognized entry in task storage")
-            check_published(task)
+            check_published(task, home=home)
     # A removed checkout can leave the only copy of a branch in the bare cache.
     repositories = home / ".cheese/repositories"
     for repo in repositories.glob("*.git"):
-        check_published_commits(repo)
+        check_published_commits(repo, home=home)
 
 
 def remove_task_checkouts(home: Path, tasks: list[str]) -> dict:
@@ -343,7 +413,7 @@ def remove_task_checkouts(home: Path, tasks: list[str]) -> dict:
         if not path.exists():
             continue
         try:
-            check_published(path, own_branch=True)
+            check_published(path, home=home, own_branch=True)
         except RuntimeError as exc:
             kept[task] = str(exc)
             continue
@@ -366,7 +436,7 @@ def remove_task_checkouts(home: Path, tasks: list[str]) -> dict:
     if free:
         # The repositories still list the removed checkouts until pruned.
         for repo in (home / FOOTPRINT_ROOT / "repositories").glob("*.git"):
-            run_command(["git", "worktree", "prune"], cwd=repo)
+            git(["worktree", "prune"], repo, home)
     return {"removed": [path.name for path in free], "kept": kept}
 
 
@@ -657,7 +727,7 @@ def stop_executor(home: Path, resource: str) -> None:
     if marker.exists():
         if json.loads(marker.read_text())["resource"] != str(uuid.UUID(resource)):
             raise RuntimeError("execution marker names another resource generation")
-        runtime = installed / "remote-execution/runtime.py"
+        runtime = platform_program(home, "remote-execution/runtime.py")
         state = installed / "executor"
         helper = runpy.run_path(str(runtime))
         if Path(helper["socket_path"](state)).exists():
@@ -749,7 +819,7 @@ def main() -> None:
             check_resource_publication(home, work)
         if executor is not None and executor["kind"] == "private":
             helper = runpy.run_path(
-                str(platform_dir(home) / "remote-execution/private.py")
+                str(platform_program(home, "remote-execution/private.py"))
             )
             helper["release"](executor)
         if room != "-" and home.exists():
@@ -759,6 +829,9 @@ def main() -> None:
         for path in (work, home, resource_tmp(resource)):
             if path.exists():
                 remove_tree(path)
+        # Last: until the room's directories are gone, they are a sandboxed
+        # room's to have written.
+        sandbox_marker(home).unlink(missing_ok=True)
         print(json.dumps({"removed": True}))
     elif action == "tasks":
         # `tasks` are closed tasks of this room; `cleanup` and `room` are unused.
