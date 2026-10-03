@@ -12,7 +12,7 @@
 // does not copy the mark: a pasted passage would otherwise point a second place
 // at the same thread. Dragging a block to move it keeps the mark, since the
 // words only moved.
-import type { Node as PMNode, MarkType } from '@tiptap/pm/model'
+import type { MarkType, Node as PMNode } from '@tiptap/pm/model'
 
 import { Mark, mergeAttributes } from '@tiptap/core'
 import { Fragment, Slice } from '@tiptap/pm/model'

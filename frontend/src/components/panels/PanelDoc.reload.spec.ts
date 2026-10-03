@@ -19,10 +19,13 @@ import * as directives from 'vuetify/directives'
 import { render, waitFor } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const getComments = vi.fn()
 const getDocNodes = vi.fn()
 
 // The document's version history: the last edit is read on open; none here.
+vi.mock('../../api/docThreads', () => ({
+  listDocThreads: async () => ({ data: [], total: 0 }),
+  writeDocThread: async () => ({}),
+}))
 vi.mock('../../api/docHistory', () => ({
   getDocVersions: async () => ({ versions: [], cursor: null }),
   restoreDocVersion: async () => ({}),
@@ -34,7 +37,6 @@ vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
   return {
     ...actual,
-    getComments: (...a: unknown[]) => getComments(...a),
     getDocNodes: (...a: unknown[]) => getDocNodes(...a),
   }
 })
@@ -74,9 +76,7 @@ beforeAll(() => {
 
 beforeEach(() => {
   resetRooms()
-  getComments.mockReset()
   getDocNodes.mockReset()
-  getComments.mockResolvedValue({ data: [], total: 0 })
   getDocNodes.mockResolvedValue({ data: [], total: 0 })
 })
 

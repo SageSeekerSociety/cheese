@@ -13,8 +13,7 @@
 import type { Editor as CoreEditor } from '@tiptap/core'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import type { Selection } from '@tiptap/pm/state'
-import type { Block } from '../../../cx_types'
-import type { SelectionTarget } from '../../../lib/docBubble'
+import type { CommentSpot } from '../../../lib/docCommentSpots'
 import type { DocLinkTarget } from '../../../lib/docLinks'
 import type { SlashItem } from '../../../lib/docSlashMenu'
 
@@ -24,6 +23,7 @@ import { TextSelection } from '@tiptap/pm/state'
 import { CellSelection } from '@tiptap/pm/tables'
 
 import { BUBBLE_META } from '../../../lib/docBubble'
+import { spotAt } from '../../../lib/docCommentSpots'
 import { captureNewDocLink } from '../../../lib/docLinks'
 import { BLOCK_ITEMS, blockKeyOf } from '../../../lib/docSlashMenu'
 
@@ -39,8 +39,6 @@ const props = withDefaults(
     /** 能不能改。只读时浮条上没有格式，语言选择器、块手柄都不出场。 */
     editable: boolean
     topicId: string | null
-    /** 取一份最新的节点树（评论的锚点要知道自己锚在第几段）。 */
-    fetchDocNodes: () => Promise<Block[]>
     /** 上面那把 slash 菜单现在开在哪、停在第几行；null = 关着。 */
     slashMenu?: { items: SlashItem[]; index: number; top: number; left: number } | null
     /** 父层每收到一次正文区的滚动就加一：滚动时收起代码块工具条。 */
@@ -50,15 +48,17 @@ const props = withDefaults(
     agentHandle?: string | null
     /** 浮条上给不给 AI 队友（认得出它，问它它才收得到）。 */
     canAgent?: boolean
+    /** 能写评论（归档话题的文档不能）。 */
+    canComment?: boolean
   }>(),
-  { editor: null, slashMenu: null, scrollTick: 0, agentHandle: null, canAgent: false }
+  { editor: null, slashMenu: null, scrollTick: 0, agentHandle: null, canAgent: false, canComment: true }
 )
 
 const emit = defineEmits<{
   /** 选中一段正文点了「评论」：锚点和引文都算好了，去开写评论的框。 */
-  (e: 'open-comment', payload: SelectionTarget): void
+  (e: 'open-comment', payload: CommentSpot): void
   /** 选中一段正文点了 AI 队友：选区、锚点和引文。 */
-  (e: 'agent', payload: SelectionTarget & { from: number; to: number }): void
+  (e: 'agent', payload: CommentSpot): void
   /** 当场要说的失败（目前只有复制代码失败）。 */
   (e: 'error', message: string): void
   /** slash 菜单里挑了一项（键盘回车走的是上面那条路，这里只有鼠标）。 */
@@ -78,7 +78,6 @@ interface CommentCta {
   top: number
   left: number
   quote: string
-  nodeIndex: number
   editor: CoreEditor
   doc: PMNode
   selection: Selection
@@ -97,7 +96,6 @@ const toolbar = ref<HTMLElement | null>(null)
 let dismissed: { editor: CoreEditor; doc: PMNode; selection: Selection } | null = null
 let frame = 0
 let disposed = false
-let requestId = 0
 let bound: CoreEditor | null = null
 let observer: ResizeObserver | null = null
 function wrapOf(ed: CoreEditor) {
@@ -164,7 +162,6 @@ function updateCommentCta(ed: CoreEditor) {
     return
   }
   let quote: string
-  let nodeIndex: number
   if (sel instanceof CellSelection) {
     const parts: string[] = []
     sel.forEachCell((cell) => {
@@ -172,14 +169,12 @@ function updateCommentCta(ed: CoreEditor) {
       if (text) parts.push(text)
     })
     quote = parts.join(' ')
-    nodeIndex = sel.$anchorCell.index(0)
   } else {
     if (!(sel instanceof TextSelection)) {
       commentCta.value = null
       return
     }
     quote = ed.state.doc.textBetween(sel.from, sel.to, ' ').trim()
-    nodeIndex = sel.$from.index(0)
   }
   if (!quote) {
     commentCta.value = null
@@ -190,7 +185,6 @@ function updateCommentCta(ed: CoreEditor) {
     top: 0,
     left: 0,
     quote,
-    nodeIndex,
     editor: ed,
     doc: ed.state.doc,
     selection: sel,
@@ -231,7 +225,6 @@ function escapeSelection(e: KeyboardEvent) {
 }
 function bindEditor(ed?: CoreEditor | null) {
   if (bound === ed) return
-  requestId++
   bound?.off('selectionUpdate', onSelectionUpdate)
   bound?.off('transaction', onTransaction)
   observer?.disconnect()
@@ -257,7 +250,6 @@ watch(() => props.editor, bindEditor, { immediate: true, flush: 'post' })
 watch(
   () => [props.editable, props.topicId],
   () => {
-    requestId++
     commentCta.value = null
     dismissed = null
   },
@@ -268,7 +260,6 @@ window.addEventListener('resize', schedulePosition)
 document.addEventListener('keydown', escapeSelection, true)
 onBeforeUnmount(() => {
   disposed = true
-  requestId++
   bound?.off('selectionUpdate', onSelectionUpdate)
   bound?.off('transaction', onTransaction)
   observer?.disconnect()
@@ -277,43 +268,22 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', schedulePosition)
   document.removeEventListener('keydown', escapeSelection, true)
 })
-/** 浮条收起，算出选中的那一段锚在哪个节点上；中途换了文档、正文变了就是 null。 */
-async function takeSelection(): Promise<(SelectionTarget & { from: number; to: number }) | null> {
+/** 浮条收起，交出选中的那几个字（记成跟着正文走的位置）；中途换了文档、正文变了就是 null。 */
+function takeSelection(): CommentSpot | null {
   const cta = commentCta.value
   if (!cta) return null
-  const id = ++requestId
   dismissed = { editor: cta.editor, doc: cta.doc, selection: cta.selection }
   commentCta.value = null
-  let nodes: Block[]
-  try {
-    nodes = await props.fetchDocNodes()
-  } catch (e) {
-    if (!disposed && id === requestId)
-      emit('error', e instanceof Error ? e.message : t('work.room.comments.postFailed'))
-    return null
-  }
-  if (
-    disposed ||
-    id !== requestId ||
-    props.editor !== cta.editor ||
-    props.topicId !== cta.topicId ||
-    cta.editor.isDestroyed ||
-    cta.editor.state.doc !== cta.doc
-  )
-    return null
-  const blocks = Array.from(wrapOf(cta.editor)?.querySelectorAll<HTMLElement>('.ProseMirror > *') ?? [])
-  while (blocks.length && blocks[blocks.length - 1].tagName === 'P' && !blocks[blocks.length - 1].textContent?.trim())
-    blocks.pop()
-  const anchorId = cta.nodeIndex >= nodes.length || nodes.length !== blocks.length ? null : nodes[cta.nodeIndex].id
-  return { anchorId, quote: cta.quote, from: cta.selection.from, to: cta.selection.to }
+  if (props.editor !== cta.editor || cta.editor.isDestroyed || cta.editor.state.doc !== cta.doc) return null
+  return spotAt(cta.editor, cta.selection.from, cta.selection.to)
 }
-async function commentOnSelection() {
-  const target = await takeSelection()
-  if (target) emit('open-comment', { anchorId: target.anchorId, quote: target.quote })
+function commentOnSelection() {
+  const spot = takeSelection()
+  if (spot) emit('open-comment', spot)
 }
-async function agentOnSelection() {
-  const target = await takeSelection()
-  if (target) emit('agent', target)
+function agentOnSelection() {
+  const spot = takeSelection()
+  if (spot) emit('agent', spot)
 }
 async function copySelection() {
   const cta = commentCta.value
@@ -540,7 +510,6 @@ onBeforeUnmount(() => (blockMenu.value = null))
 /** 正文在光标底下换了（人工编辑，或者装进来的一版）：这个按钮指着的段落已经不是
  *  原来那一段了，收回去。装配服务端那一版时上面不会喊这一声。 */
 function onEdited() {
-  requestId++
   if (props.editor)
     dismissed = { editor: props.editor, doc: props.editor.state.doc, selection: props.editor.state.selection }
   commentCta.value = null
@@ -576,6 +545,7 @@ defineExpose({ onHover, onEdited })
         :editable="editable && commentCta.editor.isEditable"
         :restyle="restyle(commentCta)"
         :can-agent="canAgent"
+        :can-comment="canComment"
         @agent="agentOnSelection"
         @comment="commentOnSelection"
         @link="newLink"
@@ -592,6 +562,7 @@ defineExpose({ onHover, onEdited })
       :agent-handle="agentHandle"
       :editable="editor.isEditable"
       :can-agent="canAgent"
+      :can-comment="canComment"
       :has-selection="!!commentCta"
       @agent="agentOnSelection"
       @comment="commentOnSelection"

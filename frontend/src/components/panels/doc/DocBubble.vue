@@ -27,13 +27,15 @@ const props = withDefaults(
     editable: boolean
     /** 选中的是正文里的字（一段或几段）：给「正文 ▾」。不给时照编辑器里现在的选区算（键盘上方那一条）。 */
     restyle?: boolean
+    /** 浮条上给不给「评论」：归档话题的文档不再收评论。 */
+    canComment?: boolean
     /** 浮条上给不给 AI 队友。 */
     canAgent: boolean
     variant?: 'float' | 'bar'
     /** 选中了字（键盘上方那一条在没选中时也在）。 */
     hasSelection?: boolean
   }>(),
-  { agentHandle: null, restyle: undefined, variant: 'float', hasSelection: true }
+  { agentHandle: null, canComment: true, restyle: undefined, variant: 'float', hasSelection: true }
 )
 const emit = defineEmits<{
   (e: 'agent'): void
@@ -137,8 +139,9 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', closeBlocks, tru
       <CheeseAvatar :size="16" :name="agentName" :handle="agentHandle" />
       {{ agentName }}
     </button>
-    <span v-if="canAgent" class="doc-bubble__sep" aria-hidden="true" />
+    <span v-if="canAgent && canComment" class="doc-bubble__sep" aria-hidden="true" />
     <button
+      v-if="canComment"
       type="button"
       :aria-label="t('work.room.doc.commentOnSelection')"
       :disabled="!hasSelection"
