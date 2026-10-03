@@ -132,3 +132,52 @@ async def for_project(
             for k in knowledge
         ],
     )
+
+
+async def count_material_references(
+    session: AsyncSession, *, space_id: int
+) -> dict[int, int]:
+    """这块板上有几处教学配置引用了每一份课件：``{material_id: 处数}``。
+
+    「资料库」那一页要显示删除影响面（「被 3 处引用」/「未被引用」），问的就是
+    这一句 —— 删一份课件之前，老师该看到有几处配置指着它。
+
+    数三层：空间自己的默认、板下每个项目集、板下每道题。**项目那一层不数**：
+    ``Project.settings["teaching"]`` 今天全仓库没有一个写入口（``resolve`` 读得到
+    它，但没人往里写），数它只会永远得 0，还要多扫一遍项目表。判据是「有没有人
+    能写出这个引用」，不是「``resolve`` 会不会读它」—— 哪天有了写入口，这里补
+    一条。
+
+    **在内存里数，不写 SQL**：配置存在 JSON 列里，「这个数组里有 42」在
+    PostgreSQL 上要 ``@>``（只有 JSONB 有）而 SQLite 退化成字符串 LIKE，同一条
+    语句跨库不等价（sqlalchemy#12736）。捞出来的只是每处配置那一格 JSON，量级是
+    「这块板有多少个分类和题目」，不随课件数增长。
+
+    **已经撤下来的引用照数**：一处配置指着已经被删掉（或改成「仅管理员」）的
+    课件，那仍然是「删这份文件会动到它」，而且正是界面要提醒老师的那件事。读取时
+    那条引用本来就不算数（见 ``for_project``），两处不矛盾。
+    """
+    counts: dict[int, int] = {}
+
+    def tally(raw: object) -> None:
+        for material_id in Teaching.from_json(raw).material_ids:
+            counts[material_id] = counts.get(material_id, 0) + 1
+
+    space = await session.get(Space, space_id)
+    if space is not None:
+        tally(getattr(space, "teaching", None))
+    for (raw,) in (
+        await session.execute(
+            select(SpaceCategory.teaching).where(SpaceCategory.space_id == space_id)
+        )
+    ).all():
+        tally(raw)
+    for (raw,) in (
+        await session.execute(
+            select(Task.protocol_override).where(Task.space_id == space_id)
+        )
+    ).all():
+        # 题目那一层是 `protocol_override` 这个 JSON 里的一个键，与 `resolve`
+        # 读的是同一处（`_level_value` 的字典那一半）。
+        tally((raw or {}).get("teaching") if isinstance(raw, dict) else None)
+    return counts

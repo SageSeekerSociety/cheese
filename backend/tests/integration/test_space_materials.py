@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import io
+from datetime import UTC, datetime
 
 import pytest
 from fastapi.testclient import TestClient
@@ -113,6 +114,67 @@ class _Board:
             f"/spaces/{self.space_id}/materials/{material_id}",
             headers=_auth(token),
         )
+
+    # ── 引用面：三处教学配置各写一遍 ─────────────────────────────────────
+
+    def teach_space(self, token: str, material_ids: list[int]):
+        return self.client.patch(
+            f"/spaces/{self.space_id}",
+            json={"teaching": {"materialIds": material_ids}},
+            headers=_auth(token),
+        )
+
+    def teach_category(self, token: str, material_ids: list[int]) -> int:
+        """新建一个项目集并让它引用这几份。返回项目集 id。"""
+        created = self.client.post(
+            f"/spaces/{self.space_id}/categories",
+            json={"name": f"集 {unique_int(1000, 9999)}"},
+            headers=_auth(token),
+        )
+        assert created.status_code == 201, created.text
+        category_id = created.json()["data"]["category"]["id"]
+        patched = self.client.patch(
+            f"/spaces/{self.space_id}/categories/{category_id}",
+            json={"teaching": {"materialIds": material_ids}},
+            headers=_auth(token),
+        )
+        assert patched.status_code == 200, patched.text
+        return category_id
+
+    def teach_task(self, token: str, material_ids: list[int]) -> int:
+        """在默认项目集下发一道题，并让它引用这几份。返回题目 id。"""
+        space = self.client.get(
+            f"/spaces/{self.space_id}", headers=_auth(token)
+        ).json()["data"]["space"]
+        published = self.client.post(
+            "/tasks",
+            json={
+                "name": f"题 {unique_int(1000, 9999)}",
+                "intro": "题",
+                "description": '{"type":"doc","content":[]}',
+                "space": self.space_id,
+                "categoryId": space.get("defaultCategoryId"),
+                "submitterType": "USER",
+                "resubmittable": True,
+                "editable": True,
+                "defaultDeadline": 30,
+                "deadline": int(datetime.now(UTC).timestamp() * 1000)
+                + 7 * 86400 * 1000,
+                "teaching": {"materialIds": material_ids},
+            },
+            headers=_auth(token),
+        )
+        assert published.status_code == 200, published.text
+        return published.json()["data"]["task"]["id"]
+
+    def counts(self, token: str) -> dict:
+        """清单里每一行的 `usedByCount`；成员那一侧没有这个键，于是值是 None。"""
+        listed = self.list(token)
+        assert listed.status_code == 200, listed.text
+        return {
+            row["id"]: row.get("usedByCount")
+            for row in listed.json()["data"]["materials"]
+        }
 
 
 @pytest.fixture
@@ -357,3 +419,58 @@ class TestDeletingAMaterialOnABoard:
         assert listed.status_code == 200, listed.text
         ids = [row["id"] for row in listed.json()["data"]["materials"]]
         assert material_id not in ids
+
+
+class TestMaterialUsageCount:
+    """清单里那一格「被几处引用」：只有能删的人看得到。
+
+    数的是这块板上**写下来的**引用：空间默认、项目集、题目各算一处，一处里的
+    同一份只算一次。项目那一层没有写入者（仓库里没有任何地方往
+    `Project.settings["teaching"]` 写），所以它不在数里 —— 判据钉的就是这个范围。
+    """
+
+    def test_counts_come_from_the_three_written_layers(self, board: _Board) -> None:
+        three = board.upload(board.owner.token).json()["data"]["material"]["id"]
+        once = board.upload(board.owner.token).json()["data"]["material"]["id"]
+        never = board.upload(board.owner.token).json()["data"]["material"]["id"]
+
+        assert board.teach_space(board.owner.token, [three]).status_code == 200
+        board.teach_category(board.owner.token, [three])
+        board.teach_task(board.owner.token, [once, three])
+
+        counts = board.counts(board.owner.token)
+        assert counts[three] == 3
+        assert counts[once] == 1
+        assert counts[never] == 0
+
+    def test_members_do_not_receive_the_column(self, board: _Board) -> None:
+        """这一格是给「删之前先看看影响面」用的，成员删不了，也就不该拿到。
+
+        判据是**键不在**，不是值为 0：值为 0 的那一行看着像「没人用，尽管删」。
+        """
+        material_id = board.upload(board.owner.token).json()["data"]["material"]["id"]
+        board.teach_space(board.owner.token, [material_id])
+
+        assert board.counts(board.member.token)[material_id] is None
+
+    def test_a_dangling_reference_does_not_disturb_the_rest(
+        self, board: _Board
+    ) -> None:
+        """删课件不重写任何一层配置，所以空间那层会留一个悬空 id。
+
+        那个 id 不该把这一格算错，也不该让接口报错 —— 与读侧「悬空引用跳过」
+        同一口径：删掉的课件既不出现，也不影响别家。
+        """
+        material_id = board.upload(board.owner.token).json()["data"]["material"]["id"]
+        keeper = board.upload(board.owner.token).json()["data"]["material"]["id"]
+        written = board.teach_space(board.owner.token, [material_id, keeper])
+        assert written.status_code == 200, written.text
+
+        gone = board.client.delete(
+            f"/materials/{material_id}", headers=_auth(board.owner.token)
+        )
+        assert gone.status_code == 204, gone.text
+
+        counts = board.counts(board.owner.token)
+        assert material_id not in counts  # 删掉的那一行整行都不在了
+        assert counts[keeper] == 1  # 悬空那位没把它的数顶掉
