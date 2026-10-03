@@ -757,5 +757,6 @@
   "deliverableBoth": "deliver 和 deliver_url 只能给一个：这次交出去的要么是一份文件，要么是一个地址。",
   "pdfDraftNotOpen": "从 PDF 生成草稿暂未开放，稍后再试。",
   "switchOldComputerUnreachableBecause": "原来那台工作电脑连不上，无法推送改动，没有更换：{error}",
-  "askGroupVersionStale": "问题组版本不对，请重新获取"
+  "askGroupVersionStale": "问题组版本不对，请重新获取",
+  "askGroupOpIdReused": "同一个组 client_op_id 换了内容"
 }

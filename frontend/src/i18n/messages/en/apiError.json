@@ -757,5 +757,6 @@
   "deliverableBoth": "Give only one of deliver and deliver_url: what this delivery hands over is either a file or an address.",
   "pdfDraftNotOpen": "Drafting from a PDF isn't available yet. Try again later.",
   "switchOldComputerUnreachableBecause": "Can't reach the previous work computer, so its changes couldn't be pushed and nothing was switched: {error}",
-  "askGroupVersionStale": "The question group changed; fetch the current version and answer again."
+  "askGroupVersionStale": "The question group changed; fetch the current version and answer again.",
+  "askGroupOpIdReused": "The same client op id was sent with different content."
 }

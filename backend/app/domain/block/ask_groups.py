@@ -215,7 +215,7 @@ class AskGroups:
         for stored in history:
             if stored["by"] == author and stored["client_op_id"] == operation:
                 if stored["payload_hash"] != payload_hash:
-                    raise ConflictError("同一个组 client_op_id 换了内容")
+                    raise ConflictError(say("askGroupOpIdReused"))
                 return rows, stored, True
         current = first.get("group_settle")
         if (current["v"] if current else 0) != version:
