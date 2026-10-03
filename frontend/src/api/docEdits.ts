@@ -1,6 +1,6 @@
-// The AI teammate editing a room's document: changes asked for on a selection,
-// and the edits a person makes to undo or restore one of its changes.
-import type { DocEdit, DocRewriteRequest, DocRewriteResult } from '../lib/docEdits'
+// Changing passages of a room's document as a person: undoing or restoring a
+// change the AI teammate made, and the suggestions waiting to be decided.
+import type { DocEdit } from '../lib/docEdits'
 
 import { request } from '../api'
 
@@ -31,9 +31,4 @@ export function applyDocEdits(topic: string, edits: DocEdit[]): Promise<DocEdits
 export async function getPendingSuggestions(topic: string): Promise<PendingSuggestionInfo[]> {
   const doc = await request<{ pending_suggestions?: PendingSuggestionInfo[] } | null>(root(topic))
   return doc?.pending_suggestions ?? []
-}
-
-/** Ask the room's AI teammate to rewrite the selected text; it edits the document itself. */
-export function rewriteDocSelection(topic: string, body: DocRewriteRequest): Promise<DocRewriteResult> {
-  return request(`${root(topic)}/rewrite`, json(body))
 }

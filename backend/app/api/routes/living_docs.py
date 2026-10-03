@@ -15,11 +15,10 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Header, Query
 from pydantic import BaseModel, Field
 
-from app.api import doc_agent, doc_rewrite
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service
 from app.api.doc_edits import decide
-from app.api.doc_identity import human_operation_actor, operation_actor
+from app.api.doc_identity import operation_actor
 from app.api.doc_store import announce, store
 from app.api.response import ok
 from app.api.routes.topics import DbSession, _actor_in_place
@@ -28,14 +27,13 @@ from app.core.errors import (
     ConflictError,
     ForbiddenError,
     NotFoundError,
-    UnprocessableEntityError,
     ValidationError,
 )
 from app.domain.agent.chat import ChatService
 from app.domain.block.schemas import BlockOut
 from app.domain.identity.services import IdentityService
 from app.domain.living_doc import collab
-from app.domain.living_doc.schemas import PassageEditsIn, RestoreIn, RewriteIn
+from app.domain.living_doc.schemas import PassageEditsIn, RestoreIn
 from app.domain.living_doc.services import DocumentJournal, content_hash
 from app.domain.mentions import canonicalize_refs
 from app.domain.project.services import ProjectArchivedError, refuse_writes_if_archived
@@ -238,72 +236,6 @@ async def edit_doc_passages(
         },
         warnings=stored.get("warnings"),
     )
-
-
-@router.post("/{topic_id}/doc/rewrite")
-async def rewrite_selection(
-    topic_id: uuid.UUID,
-    body: RewriteIn,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """「让芝士改」: the room's agent rewrites what a person selected, as they
-    instructed, and the change is made at once, recorded as theirs to answer
-    for. The block holding the selection must still read as the person saw
-    it: otherwise 409, and they select again.
-
-    Undoing it is an ordinary passage edit by the person, ``new`` back to
-    ``old`` (``POST /doc/edits``)."""
-    topics = TopicService(db)
-    place = await topics.place_or_404(topic_id)
-    actor = await _actor_in_place(resolver, place)
-    await human_operation_actor(db, actor)
-    await resolver.authorize_topic(
-        actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
-    )
-    topics.require_doc_writable(place)
-    if not body.start < body.end <= len(body.block):
-        raise ValidationError("选中的范围不在这段文字里")
-    doc = await topics.doc_of_room(place.room_id)
-    if doc is None:
-        raise ConflictError(_REWRITE_MOVED)
-    # Whether the block still reads as the person saw it is the live
-    # document's to say (the edit below): the stored text trails what was
-    # typed by a few seconds, and a block someone just changed would be
-    # refused here before it was ever looked at.
-    bound = await doc_agent.bind(db, place.room_id)
-    await doc_agent.admit(db, place.project_id, bound)
-    document = doc.content
-    # Nothing of this request stays open across the model call or the edit.
-    await db.commit()
-    replacement = await doc_rewrite.rewrite(
-        project_id=place.project_id,
-        room_id=place.room_id,
-        bound=bound,
-        document=document,
-        block=body.block,
-        start=body.start,
-        end=body.end,
-        instruction=body.instruction,
-    )
-    new = body.block[: body.start] + replacement + body.block[body.end :]
-    try:
-        await collab.edit(
-            place.room_id,
-            edits=[{"old": body.block, "new": new}],
-            actor=bound.agent_handle,
-            requested_by=actor.handle,
-            mode="direct",
-        )
-    except UnprocessableEntityError as exc:
-        # Typed over while the model was answering.
-        if (exc.data or {}).get("reason") in ("not_found", "ambiguous"):
-            raise ConflictError(_REWRITE_MOVED) from exc
-        raise
-    return ok({"old": body.block, "new": new, "replacement": replacement})
-
-
-_REWRITE_MOVED = "这段已经被改过，重新选一下"
 
 
 async def _replayed(db, place: Place, operation: dict) -> dict | None:

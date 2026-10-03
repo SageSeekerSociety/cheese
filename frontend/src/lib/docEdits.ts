@@ -18,23 +18,6 @@ export interface DocEdit {
   new: string
 }
 
-export interface DocRewriteRequest {
-  /** The Markdown of the top-level block holding the selection. */
-  block: string
-  /** The selected range, as offsets into `block`. */
-  start: number
-  end: number
-  instruction: string
-}
-
-export interface DocRewriteResult {
-  /** The block before and after the change: undoing it is the edit `{ old: new, new: old }`. */
-  old: string
-  new: string
-  /** What replaced the selected text. */
-  replacement: string
-}
-
 /** What to tell the person when an edit or a rewrite did not go through. The
  *  service explains a refused edit (the text moved, it occurs twice…) in a
  *  sentence of its own, which is shown as it is. */

@@ -4,7 +4,7 @@
 // AI 队友，和「⋯」。
 //
 // 格式不在这里：选中文字时浮条上有，块的样式在「/」和左边的 ＋ 里。
-import type { DocAskController } from '../../../composables/useDocAsk'
+import type { DocAgentController } from '../../../composables/useDocAgent'
 import type { DocConnection, DocPeer } from '../../../composables/useDocCollab'
 
 import { ref, watch } from 'vue'
@@ -12,8 +12,8 @@ import { ref, watch } from 'vue'
 import { relTime } from '../../../lib/relTime'
 import CheeseAvatar from '../../CheeseAvatar.vue'
 
-import DocAgentAnswer from './DocAgentAnswer.vue'
 import DocAgentBox from './DocAgentBox.vue'
+import DocAgentResult from './DocAgentResult.vue'
 import DocPresence from './DocPresence.vue'
 
 import { t } from '@/i18n'
@@ -34,8 +34,8 @@ const props = defineProps<{
   commentsOpen: boolean
   agentName: string
   agentHandle?: string | null
-  /** 对整篇问 AI 队友；认不出它时是 undefined，不给这个按钮。 */
-  ask?: DocAskController
+  /** 对整篇找 AI 队友；认不出它时是 undefined，不给这个按钮。 */
+  agent?: DocAgentController
   mentionNames: Record<string, string>
 }>()
 const emit = defineEmits<{
@@ -47,18 +47,16 @@ const emit = defineEmits<{
   (e: 'open-thread', id: string): void
 }>()
 
-// 对整篇问：菜单里先是输入框，问了以后是回答的小卡。菜单关上就收起这一次。
+// 对整篇：菜单里先是输入框，交出去以后是那张卡。菜单关上就收起这一次（正在做的不收）。
 const agentOpen = ref(false)
 watch(agentOpen, (open) => {
-  if (!open) props.ask?.close()
+  if (open) props.agent?.open()
+  else if (!props.agent?.editing.value) props.agent?.close()
 })
-function askDocument(question: string) {
-  void props.ask?.ask({ anchorId: null, quote: '' }, question)
-}
-function openThread() {
-  const id = props.ask?.threadId.value
+async function toComment() {
+  const thread = await props.agent?.toComment()
   agentOpen.value = false
-  if (id) emit('open-thread', id)
+  if (thread) emit('open-thread', thread)
 }
 </script>
 
@@ -115,7 +113,7 @@ function openThread() {
         <v-icon size="17">mdi-comment-text-outline</v-icon>
         <span v-if="commentCount > 0">{{ commentCount }}</span>
       </button>
-      <v-menu v-if="ask" v-model="agentOpen" location="bottom end" :close-on-content-click="false" offset="6">
+      <v-menu v-if="agent" v-model="agentOpen" location="bottom end" :close-on-content-click="false" offset="6">
         <template #activator="{ props: menuProps }">
           <button v-bind="menuProps" type="button" class="doc-top-bar__btn doc-top-bar__btn--agent">
             <CheeseAvatar :size="16" :name="agentName" :handle="agentHandle" />{{ agentName }}
@@ -123,20 +121,29 @@ function openThread() {
         </template>
         <div class="doc-top-bar__agent">
           <DocAgentBox
-            v-if="ask.phase.value === 'idle'"
+            v-if="agent.phase.value === 'asking'"
             :agent-name="agentName"
             scope="document"
-            @ask="askDocument"
+            :context="agent.context.value"
+            @run="agent.run"
+            @say="agent.say"
             @cancel="agentOpen = false"
           />
-          <DocAgentAnswer
-            v-else
+          <DocAgentResult
+            v-else-if="agent.phase.value !== 'idle'"
             :agent-name="agentName"
-            :waiting="ask.phase.value === 'waiting'"
-            :answer="ask.answer.value"
-            :posted="!!ask.threadId.value"
+            :phase="agent.phase.value"
+            :kind="agent.kind.value"
+            :answer="agent.answer.value"
+            :changed="agent.edits.value.length"
+            :busy="agent.busy.value"
+            commentable
             :mention-names="mentionNames"
-            @open-thread="openThread"
+            @stop="agent.stop"
+            @undo="agent.undo"
+            @redo="agent.redo"
+            @say="agent.say"
+            @comment="toComment"
             @close="agentOpen = false"
           />
         </div>

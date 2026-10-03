@@ -8,7 +8,8 @@
 // 答完、存下、扣费，下次打开还在。
 import { computed, ref } from 'vue'
 
-import { authToken, BASE, ensureFreshToken, refreshNow, request } from '@/api'
+import { request } from '@/api'
+import { postEventStream, StreamRefused } from '@/api/eventStream'
 import { isCreditRefusal } from '@/lib/creditUsage'
 import { refusalText } from '@/lib/noticeText'
 
@@ -87,24 +88,6 @@ export function useAssistant(taskId: () => number) {
     return data.id
   }
 
-  async function post(id: string, question: string): Promise<Response> {
-    await ensureFreshToken()
-    const send = () =>
-      fetch(`${BASE}/assistant/conversations/${id}/ask`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'text/event-stream',
-          ...(authToken() ? { Authorization: `Bearer ${authToken()}` } : {}),
-        },
-        body: JSON.stringify({ question }),
-      })
-    const res = await send()
-    if (res.status !== 401) return res
-    await refreshNow()
-    return send()
-  }
-
   async function ask(question: string, fallback: string) {
     const text = question.trim()
     if (!text || busy.value) return
@@ -120,40 +103,27 @@ export function useAssistant(taskId: () => number) {
     let failed = false
     try {
       const id = await ensureConversation()
-      const res = await post(id, text)
-      if (!res.ok || !res.body) {
-        const body = (await res.json().catch(() => ({}))) as { message?: string }
-        notice.value = refusalText(body, body.message || fallback)
-        creditRefused.value = isCreditRefusal(body)
-        return
-      }
-      asked = true
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      for (;;) {
-        const { value, done } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        let cut: number
-        while ((cut = buffer.indexOf('\n\n')) >= 0) {
-          const raw = buffer.slice(0, cut)
-          buffer = buffer.slice(cut + 2)
-          const event = /^event: (.+)$/m.exec(raw)?.[1]
-          const data = /^data: (.*)$/m.exec(raw)?.[1]
-          if (!event || data === undefined) continue
-          const payload = JSON.parse(data) as { text?: string; name?: string; message?: string }
-          if (event === 'delta' && payload.text) {
+      try {
+        const onEvent = (event: string, payload: Record<string, unknown>) => {
+          if (event === 'delta' && typeof payload.text === 'string' && payload.text) {
             answer += payload.text
             streaming.value = answer
             tool.value = null
           } else if (event === 'tool') {
-            tool.value = payload.name ?? null
+            tool.value = typeof payload.name === 'string' ? payload.name : null
           } else if (event === 'error') {
             failed = true
-            notice.value = payload.message || fallback
+            notice.value = typeof payload.message === 'string' && payload.message ? payload.message : fallback
           }
         }
+        await postEventStream(`/assistant/conversations/${id}/ask`, { question: text }, onEvent, {
+          onOpen: () => (asked = true),
+        })
+      } catch (error) {
+        if (!(error instanceof StreamRefused)) throw error
+        notice.value = refusalText(error.body, error.body.message || fallback)
+        creditRefused.value = isCreditRefusal(error.body)
+        return
       }
     } catch {
       failed = true

@@ -8,8 +8,9 @@
 import type { DocConnection, DocPeer, DocSession } from '../../composables/useDocCollab'
 import type { SendDocComment } from '../../composables/useDocCommentDraft'
 import type { Block, Topic } from '../../cx_types'
+import type { DocAgentListener, DocAgentRequest } from '../../lib/docAgent'
 import type { SelectionTarget } from '../../lib/docBubble'
-import type { DocEdit, DocRewriteRequest, DocRewriteResult } from '../../lib/docEdits'
+import type { DocEdit } from '../../lib/docEdits'
 import type { DocVersionPage } from '../../lib/docHistory'
 import type { DocReviewRequest } from '../../lib/docReview'
 import type { DocThreadActions, DocThreadState } from '../../lib/docThreadTypes'
@@ -17,7 +18,6 @@ import type { DocThreadActions, DocThreadState } from '../../lib/docThreadTypes'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 import { useDocAgent } from '../../composables/useDocAgent'
-import { useDocAsk } from '../../composables/useDocAsk'
 import { useDocReview } from '../../composables/useDocReview'
 import { useDocSuggestions } from '../../composables/useDocSuggestions'
 import { exportMarkdown } from '../../lib/docSchema'
@@ -86,12 +86,12 @@ const props = withDefaults(
     refreshComments: () => Promise<void>
     toggleEditable: () => void
     setError: (message: string | null) => void
-    /** 让 AI 队友改选中的字；没有时输入框里不给常用的说法。 */
-    rewriteSelection?: (request: DocRewriteRequest) => Promise<DocRewriteResult>
-    /** 问 AI 队友：一句话连同选中的字发成点了它名的评论，回执是那条评论的 id。 */
-    askAgent?: (target: SelectionTarget, question: string) => Promise<string>
-    /** 那条评论下 AI 队友的回答；还没有时是 null。 */
-    answerOf?: (threadId: string) => Promise<string | null>
+    /** 在文档里找 AI 队友：问一次，答的过程交给 `listener`；没有时不给这个入口。 */
+    askAgent?: (request: DocAgentRequest, listener: DocAgentListener) => Promise<void>
+    /** 停下这一问。 */
+    stopAgent?: (conversation: string) => Promise<unknown>
+    /** 把这一问的回答放进一条新评论；回执是那条评论的 id。 */
+    answerToComment?: (conversation: string, target: SelectionTarget, question: string) => Promise<string>
     /** 以自己的名义替换正文里的字（撤销、还原 AI 队友的修改）。 */
     applyDocEdits?: (edits: DocEdit[]) => Promise<unknown>
     // ---- 修改记录 ----
@@ -111,9 +111,9 @@ const props = withDefaults(
     outdated: false,
     commentAuthor: '',
     sendComment: undefined,
-    rewriteSelection: undefined,
     askAgent: undefined,
-    answerOf: undefined,
+    stopAgent: undefined,
+    answerToComment: undefined,
     suggestionReasons: () => ({}),
     fetchSuggestionReasons: undefined,
     applyDocEdits: undefined,
@@ -185,21 +185,19 @@ const mentionNames = computed<Record<string, string>>(() =>
   props.agentHandle ? { [props.agentHandle]: props.agentName } : {}
 )
 
-const rewrite = useDocAgent({
+const agentOptions = {
   editor: () => surfaceRef.value?.editor ?? null,
-  rewrite: () => (props.editable ? props.rewriteSelection : undefined),
   ask: () => props.askAgent,
-  answerOf: (threadId) => props.answerOf?.(threadId) ?? Promise.resolve(null),
+  stop: () => props.stopAgent,
+  editable: () => props.editable,
   applyEdits: () => props.applyDocEdits,
+  toComment: () => props.answerToComment,
   agentName: () => props.agentName,
-  onError: (message) => props.setError(message),
-})
-// 对整篇问 AI 队友（顶栏上那一个）。
-const docAsk = useDocAsk({
-  ask: () => props.askAgent,
-  answerOf: (threadId) => props.answerOf?.(threadId) ?? Promise.resolve(null),
-  onError: (message) => props.setError(message),
-})
+  onError: (message: string) => props.setError(message),
+}
+// 选中一段找 AI 队友（浮条上那一个），和对整篇找它（顶栏上那一个）。
+const rewrite = useDocAgent({ ...agentOptions, scope: 'selection' })
+const docAgent = useDocAgent({ ...agentOptions, scope: 'document' })
 const canAskDocument = computed(() => !!props.agentHandle && !!props.askAgent)
 const suggestions = useDocSuggestions(() => surfaceRef.value?.editor ?? null)
 // 建议那一条：点顶栏上的「N 处建议」打开，从第一处看起。
@@ -247,7 +245,7 @@ watch([() => props.topic?.id, () => props.commentAuthor], () => {
   openId.value = null
   rewrite.close()
   review.close()
-  docAsk.close()
+  docAgent.close()
   suggestionsOpen.value = false
   historyOpen.value = false
 })
@@ -302,7 +300,7 @@ defineExpose({
             :comments-open="commentsRef?.opened ?? false"
             :agent-name="agentName"
             :agent-handle="agentHandle"
-            :ask="canAskDocument ? docAsk : undefined"
+            :agent="canAskDocument ? docAgent : undefined"
             :mention-names="mentionNames"
             @toggle-suggestions="toggleSuggestions"
             @toggle-comments="commentsRef?.toggle()"
@@ -378,7 +376,7 @@ defineExpose({
                 @mention-click="emit('mention-click', $event)"
                 @open-file="emit('open-file', $event)"
                 @open-comment="openComment"
-                @agent="rewrite.open($event.from, $event.to, $event)"
+                @agent="rewrite.open({ from: $event.from, to: $event.to, target: $event })"
                 @locate-comment="locateComment"
                 @error="setError"
               />
