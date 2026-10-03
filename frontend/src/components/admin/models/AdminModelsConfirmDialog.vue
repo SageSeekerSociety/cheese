@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 
+import BaseButton from '@/components/base/BaseButton.vue'
+
 // 删除 / 停用（启用）共用的确认框。两处的形态完全一样 —— 说清后果、一个取消、一个主
 // 操作 —— 只有文案不同，所以是一件东西开两次，不是两件东西。
 //
@@ -35,10 +37,12 @@ const { t } = useI18n()
       <v-card-text class="px-4">{{ props.body }}</v-card-text>
       <v-card-actions class="pa-4 pt-0">
         <v-spacer />
-        <v-btn variant="text" :disabled="props.busy" @click="emit('update:modelValue', false)">
+        <BaseButton kind="ghost" :disabled="props.busy" @click="emit('update:modelValue', false)">
           {{ t('models.dialog.cancel') }}
-        </v-btn>
-        <v-btn color="primary" :loading="props.busy" @click="emit('confirm')">{{ props.confirmLabel }}</v-btn>
+        </BaseButton>
+        <BaseButton kind="danger" solid :loading="props.busy" @click="emit('confirm')">{{
+          props.confirmLabel
+        }}</BaseButton>
       </v-card-actions>
     </v-card>
   </v-dialog>

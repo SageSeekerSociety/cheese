@@ -9,6 +9,7 @@ import dayjs from 'dayjs'
 
 import { formatFileSize } from '@/utils/materials'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import SettingsToolbar from '@/components/spaces/SettingsToolbar.vue'
 
 defineProps<{
@@ -98,9 +99,9 @@ function onVisibility(item: SpaceMaterial, picked: SpaceMaterialVisibility) {
 
 <template>
   <SettingsToolbar>
-    <v-btn v-if="canManage" variant="text" prepend-icon="mdi-plus" @click="openUpload">
+    <BaseButton v-if="canManage" kind="primary" prepend-icon="mdi-plus" @click="openUpload">
       {{ t('spaces.materials.upload') }}
-    </v-btn>
+    </BaseButton>
   </SettingsToolbar>
 
   <p class="settings-page__lede materials__lede">{{ t('spaces.materials.intro') }}</p>
@@ -131,12 +132,12 @@ function onVisibility(item: SpaceMaterial, picked: SpaceMaterialVisibility) {
       </div>
       <p class="form__hint">{{ t(`spaces.materials.hint.${visibility}`) }}</p>
       <div class="form__actions">
-        <v-btn variant="text" :disabled="busy" @click="closeUpload">
+        <BaseButton kind="ghost" :disabled="busy" @click="closeUpload">
           {{ t('spaces.materials.cancel') }}
-        </v-btn>
-        <v-btn color="primary" variant="flat" :loading="busy" :disabled="!file" @click="submit">
+        </BaseButton>
+        <BaseButton kind="primary" :loading="busy" :disabled="!file" @click="submit">
           {{ t('spaces.materials.upload') }}
-        </v-btn>
+        </BaseButton>
       </div>
     </div>
 
@@ -173,23 +174,23 @@ function onVisibility(item: SpaceMaterial, picked: SpaceMaterialVisibility) {
 
           <template #append>
             <div class="mat__actions">
-              <v-btn size="small" variant="text" :disabled="busy" @click="emit('download', item)">
+              <BaseButton kind="secondary" size="sm" :disabled="busy" @click="emit('download', item)">
                 {{ t('spaces.materials.download') }}
-              </v-btn>
+              </BaseButton>
 
               <template v-if="canManage">
                 <!-- 可见范围就地改：只有两档，改完这一行就是新档位，不再多一步确认。 -->
                 <v-menu location="bottom end">
                   <template #activator="{ props: menuProps }">
-                    <v-btn
+                    <BaseButton
                       v-bind="menuProps"
-                      size="small"
-                      variant="text"
+                      kind="ghost"
+                      size="sm"
                       append-icon="mdi-chevron-down"
                       :disabled="busy"
                     >
                       {{ t(`spaces.materials.visibilityValue.${item.visibility}`) }}
-                    </v-btn>
+                    </BaseButton>
                   </template>
                   <v-list density="compact">
                     <v-list-item
@@ -203,15 +204,15 @@ function onVisibility(item: SpaceMaterial, picked: SpaceMaterialVisibility) {
                   </v-list>
                 </v-menu>
 
-                <v-btn
-                  size="small"
-                  :variant="confirmingId === item.id ? 'flat' : 'text'"
-                  :color="confirmingId === item.id ? 'error' : undefined"
+                <BaseButton
+                  size="sm"
+                  :kind="confirmingId === item.id ? 'danger' : 'ghost'"
+                  :solid="confirmingId === item.id"
                   :disabled="busy"
                   @click="onRemove(item)"
                 >
                   {{ confirmingId === item.id ? t('spaces.materials.confirmRemove') : t('spaces.materials.remove') }}
-                </v-btn>
+                </BaseButton>
               </template>
             </div>
           </template>

@@ -14,6 +14,8 @@ import { useRoute } from 'vue-router'
 import { authToken, connectDevice, deviceProposedName } from '../api'
 import { t } from '../i18n'
 
+import BaseButton from '@/components/base/BaseButton.vue'
+
 const route = useRoute()
 const code = computed(() => String(route.query.code ?? ''))
 // Approving binds the machine to a real account, so a token is required. If the
@@ -81,7 +83,7 @@ async function approve() {
       <v-alert v-else-if="!loggedIn" type="info" density="comfortable" class="mb-4">
         {{ t('project.connect.signInFirst') }}
         <template #append>
-          <v-btn size="small" color="primary" variant="tonal" :to="loginLink">{{ t('project.connect.signIn') }}</v-btn>
+          <BaseButton kind="primary" size="sm" :to="loginLink">{{ t('project.connect.signIn') }}</BaseButton>
         </template>
       </v-alert>
 
@@ -106,9 +108,9 @@ async function approve() {
           {{ error }}
         </v-alert>
 
-        <v-btn color="primary" :loading="loading" :disabled="!code" block @click="approve">{{
-          t('project.connect.approve')
-        }}</v-btn>
+        <BaseButton kind="primary" :loading="loading" :disabled="!code" block @click="approve">
+          {{ t('project.connect.approve') }}
+        </BaseButton>
       </v-card>
 
       <v-card v-else class="pa-5 text-center">
@@ -126,7 +128,9 @@ async function approve() {
             <template #command><code>cheesehost link connect</code></template>
           </i18n-t>
         </div>
-        <v-btn variant="tonal" :to="{ name: 'UserSettingsDevices' }">{{ t('project.connect.viewDevices') }}</v-btn>
+        <BaseButton kind="secondary" :to="{ name: 'UserSettingsDevices' }">{{
+          t('project.connect.viewDevices')
+        }}</BaseButton>
       </v-card>
     </v-container>
   </div>

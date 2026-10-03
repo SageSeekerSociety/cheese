@@ -6,6 +6,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useAdminSections } from '@/composables/useAdminSections'
 
 import AdminShortcutSheet from '@/components/admin/AdminShortcutSheet.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 import { useFeedbackStore } from '@/stores/feedback'
 
 // 管理后台的内容区（`/admin/*` 的默认视图）。分区在侧栏（`AdminSidebar`），这一层管的是
@@ -130,9 +131,7 @@ onBeforeUnmount(() => {
         <div class="t-body mb-1">{{ t('admin.layout.deniedTitle') }}</div>
         <div class="t-body mb-3">{{ t('admin.layout.deniedBody') }}</div>
         <!-- 这一屏只有这一个动作，所以它是 `primary`。 -->
-        <v-btn variant="text" color="primary" size="small" to="/feedback">{{
-          t('admin.layout.toFeedbackCenter')
-        }}</v-btn>
+        <BaseButton kind="primary" size="sm" to="/feedback">{{ t('admin.layout.toFeedbackCenter') }}</BaseButton>
       </div>
     </div>
 

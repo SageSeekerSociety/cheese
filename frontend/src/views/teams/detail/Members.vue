@@ -5,15 +5,15 @@
       <v-spacer></v-spacer>
       <v-dialog v-model="isInviteDialogActive" max-width="500">
         <template #activator="{ props: activatorProps }">
-          <v-btn
+          <BaseButton
             v-if="canBringPeopleIn"
             v-bind="activatorProps"
-            color="primary"
+            kind="primary"
             prepend-icon="mdi-account-plus"
-            size="small"
+            size="sm"
           >
             {{ t('teams.members.invite') }}
-          </v-btn>
+          </BaseButton>
         </template>
 
         <template #default="{ isActive }">
@@ -52,10 +52,8 @@
 
               <v-card-actions>
                 <v-spacer></v-spacer>
-                <v-btn type="button" variant="text" @click="isActive.value = false">{{
-                  t('teams.members.cancel')
-                }}</v-btn>
-                <v-btn type="submit" color="primary" variant="tonal">{{ t('teams.members.inviteSubmit') }}</v-btn>
+                <BaseButton type="button" @click="isActive.value = false">{{ t('teams.members.cancel') }}</BaseButton>
+                <BaseButton type="submit" kind="primary">{{ t('teams.members.inviteSubmit') }}</BaseButton>
               </v-card-actions>
             </v-card>
           </v-form>
@@ -113,40 +111,38 @@
                 <div class="d-flex align-center">
                   <v-tooltip v-if="isSelfOwner && member.role === 'MEMBER'" location="bottom">
                     <template #activator="{ props: activatorProps }">
-                      <v-btn
+                      <BaseButton
                         v-bind="activatorProps"
                         icon="mdi-account-arrow-up"
-                        variant="text"
-                        color="primary"
-                        size="small"
+                        size="sm"
+                        :aria-label="t('teams.members.promote')"
                         @click="promoteToAdmin(member.user.id)"
-                      ></v-btn>
+                      />
                     </template>
                     <span>{{ t('teams.members.promote') }}</span>
                   </v-tooltip>
                   <v-tooltip v-if="isSelfOwner && member.role === 'ADMIN'" location="bottom">
                     <template #activator="{ props: activatorProps }">
-                      <v-btn
+                      <BaseButton
                         v-bind="activatorProps"
                         icon="mdi-account-arrow-down"
-                        variant="text"
-                        color="primary"
-                        size="small"
+                        size="sm"
+                        :aria-label="t('teams.members.demote')"
                         @click="demoteToMember(member.user.id)"
-                      ></v-btn>
+                      />
                     </template>
                     <span>{{ t('teams.members.demote') }}</span>
                   </v-tooltip>
                   <v-tooltip v-if="isSelfAdmin && member.role !== 'OWNER'" location="bottom">
                     <template #activator="{ props: activatorProps }">
-                      <v-btn
+                      <BaseButton
                         v-bind="activatorProps"
+                        kind="danger"
                         icon="mdi-delete"
-                        variant="text"
-                        color="error"
-                        size="small"
+                        size="sm"
+                        :aria-label="t('teams.members.remove')"
                         @click="removeMember(member.user.id)"
-                      ></v-btn>
+                      />
                     </template>
                     <span>{{ t('teams.members.remove') }}</span>
                   </v-tooltip>
@@ -204,10 +200,9 @@
 
               <template #append>
                 <div v-if="request.status === 'PENDING'" class="d-flex">
-                  <v-btn
-                    variant="text"
-                    color="success"
-                    size="small"
+                  <BaseButton
+                    kind="primary"
+                    size="sm"
                     prepend-icon="mdi-check"
                     class="mr-2"
                     :loading="answering === request.id"
@@ -215,17 +210,15 @@
                     @click="approveRequest(request.id)"
                   >
                     {{ t('teams.members.approve') }}
-                  </v-btn>
-                  <v-btn
-                    variant="text"
-                    color="error"
-                    size="small"
+                  </BaseButton>
+                  <BaseButton
+                    size="sm"
                     prepend-icon="mdi-close"
                     :disabled="answering !== undefined"
                     @click="rejectRequest(request.id)"
                   >
                     {{ t('teams.members.reject') }}
-                  </v-btn>
+                  </BaseButton>
                 </div>
                 <div
                   v-else-if="request.status === 'APPROVED' || request.status === 'REJECTED'"
@@ -292,14 +285,14 @@
               </v-list-item-subtitle>
 
               <template #append>
-                <v-btn
+                <BaseButton
                   v-if="invitation.status === 'PENDING'"
-                  variant="text"
-                  color="error"
-                  size="small"
+                  kind="danger"
+                  size="sm"
                   icon="mdi-delete"
+                  :aria-label="t('global.cancel')"
                   @click="cancelInvitation(invitation.id)"
-                ></v-btn>
+                />
               </template>
             </v-list-item>
           </v-list>
@@ -320,6 +313,7 @@ import { getAvatarUrl } from '@/utils/materials'
 
 import TeamJoinLinkCard from './TeamJoinLinkCard.vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import i18n, { t } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'

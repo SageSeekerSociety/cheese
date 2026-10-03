@@ -129,17 +129,17 @@
 
             <LegalConsent ref="consentRef" :action-label="t('account.agreeAndSignUp')" class="mb-4" />
 
-            <v-btn
+            <BaseButton
               type="submit"
               block
-              color="primary"
-              size="large"
+              kind="primary"
+              size="lg"
               class="account-submit"
               :loading="creating"
               :disabled="!registrationConfigReady"
             >
               {{ t('account.signUp.submit') }}
-            </v-btn>
+            </BaseButton>
           </v-form>
 
           <v-form v-else key="bind" ref="bindFormRef" @submit.prevent="handleBindAccount">
@@ -166,9 +166,9 @@
               />
             </AccountField>
 
-            <v-btn type="submit" block color="primary" size="large" class="account-submit" :loading="binding">
+            <BaseButton type="submit" block kind="primary" size="lg" class="account-submit" :loading="binding">
               {{ t('account.oauth.complete.bindSubmit') }}
-            </v-btn>
+            </BaseButton>
           </v-form>
         </transition>
       </div>
@@ -176,9 +176,9 @@
 
     <template v-else>
       <AccountHeading :title="t('account.oauth.complete.unavailable')" :lede="error" />
-      <v-btn block color="primary" size="large" :to="{ name: 'SignIn' }" class="account-submit">
+      <BaseButton block kind="primary" size="lg" :to="{ name: 'SignIn' }" class="account-submit">
         {{ t('account.backToSignIn') }}
-      </v-btn>
+      </BaseButton>
     </template>
   </div>
 </template>
@@ -201,6 +201,7 @@ import AccountField from '@/components/account/AccountField.vue'
 import AccountHeading from '@/components/account/AccountHeading.vue'
 import LegalConsent from '@/components/account/LegalConsent.vue'
 import PasswordField from '@/components/account/PasswordField.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'

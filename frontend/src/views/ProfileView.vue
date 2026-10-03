@@ -33,6 +33,7 @@ import { ensureDefaultAvatarId, isChosenAvatar } from '@/composables/useChosenAv
 import { usePageTitle } from '@/composables/usePageTitle'
 
 import { deleteUnderstanding, getMemberSummary, getUserProfile, getUserTopics } from '@/api'
+import BaseButton from '@/components/base/BaseButton.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import ExternalTag from '@/components/common/ExternalTag.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
@@ -247,7 +248,7 @@ const roleInProject = computed(() => inProject.value?.source ?? null)
 
       <div v-else-if="error" class="profile__state">
         <p class="t-body">{{ t('users.profile.loadFailed') }}</p>
-        <v-btn variant="outlined" color="on-surface" @click="refresh">{{ t('users.profile.retry') }}</v-btn>
+        <BaseButton kind="secondary" @click="refresh">{{ t('users.profile.retry') }}</BaseButton>
       </div>
 
       <div v-else-if="missing" class="profile__state">
@@ -269,16 +270,9 @@ const roleInProject = computed(() => inProject.value?.source ?? null)
             </div>
           </div>
           <p v-if="profile.bio" class="t-body-readable profile__bio" data-user-content>{{ profile.bio }}</p>
-          <v-btn
-            v-if="isSelf"
-            :to="{ name: 'UserSettingsProfile' }"
-            variant="outlined"
-            color="on-surface"
-            block
-            class="profile__edit"
-          >
+          <BaseButton v-if="isSelf" :to="{ name: 'UserSettingsProfile' }" kind="secondary" block class="profile__edit">
             {{ t('users.profile.edit') }}
-          </v-btn>
+          </BaseButton>
           <div class="profile__facts">
             <div class="profile__fact">
               <v-icon size="16" icon="mdi-calendar-blank-outline" aria-hidden="true" />
@@ -433,11 +427,10 @@ const roleInProject = computed(() => inProject.value?.source ?? null)
                       />
                     </span>
                   </span>
-                  <v-btn
+                  <BaseButton
                     icon="mdi-close"
-                    variant="text"
-                    color="on-surface-variant"
-                    size="small"
+                    kind="danger"
+                    size="sm"
                     :aria-label="t('users.profile.notes.delete')"
                     :title="t('users.profile.notes.delete')"
                     @click="forget(note)"

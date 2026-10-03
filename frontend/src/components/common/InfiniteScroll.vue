@@ -26,7 +26,7 @@
       </slot>
       <slot v-if="manualMode && hasMore && !loading" name="manual-load">
         <div class="manual-load-button">
-          <v-btn size="small" variant="tonal" @click="manualLoadMore">{{ t('shell.list.loadMore') }}</v-btn>
+          <BaseButton kind="secondary" size="sm" @click="manualLoadMore">{{ t('shell.list.loadMore') }}</BaseButton>
         </div>
       </slot>
       <slot v-if="!hasMore && !isEmpty" name="no-more">
@@ -42,6 +42,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
 interface Props {

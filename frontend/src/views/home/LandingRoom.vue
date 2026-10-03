@@ -4,6 +4,7 @@ import type { SplitMarker } from '@/lib/splitMarkers'
 
 import { computed } from 'vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import DispatchedMarker from '@/components/DispatchedMarker.vue'
 import RoomMessage from '@/components/room/RoomMessage.vue'
 import TimelineMark from '@/components/TimelineMark.vue'
@@ -155,8 +156,8 @@ function runStart(index: number) {
           <Transition name="room-pane">
             <div v-if="step >= 3" class="room-review">
               <span class="room-review-text">{{ t('publicSite.room.reviewState') }}</span>
-              <v-btn size="small" variant="outlined" tabindex="-1">{{ t('publicSite.room.sendBack') }}</v-btn>
-              <v-btn size="small" variant="flat" color="primary" tabindex="-1">{{ t('publicSite.room.adopt') }}</v-btn>
+              <BaseButton kind="secondary" size="sm" tabindex="-1">{{ t('publicSite.room.sendBack') }}</BaseButton>
+              <BaseButton kind="primary" size="sm" tabindex="-1">{{ t('publicSite.room.adopt') }}</BaseButton>
             </div>
           </Transition>
         </aside>

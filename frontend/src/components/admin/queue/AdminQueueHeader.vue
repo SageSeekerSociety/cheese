@@ -3,6 +3,8 @@ import type { QueueView } from '@/composables/useAdminQueue'
 
 import { useI18n } from 'vue-i18n'
 
+import BaseButton from '@/components/base/BaseButton.vue'
+
 // 队列页页头右边那排工具 —— 未读徽标、「标记为已读」、刷新、视图切换（F-05）。标题和
 // 说明由页面交给 `AdminPage`。
 //
@@ -40,15 +42,15 @@ const VIEWS: QueueView[] = ['list', 'table']
   <span v-if="unread > 0" class="qpage__badge t-num" aria-live="polite">
     {{ t('feedback.queue.unread', { n: unread }) }}
   </span>
-  <v-btn
+  <BaseButton
     v-if="unread > 0"
-    variant="text"
-    size="small"
+    kind="ghost"
+    size="sm"
     :title="t('notifications.common.markAsRead')"
     @click="emit('mark-read')"
   >
     {{ t('notifications.common.markAsRead') }}
-  </v-btn>
+  </BaseButton>
 
   <button
     type="button"

@@ -33,6 +33,7 @@ import DocSurface from './doc/DocSurface.vue'
 import DocTopBar from './doc/DocTopBar.vue'
 import OverviewAuto from './doc/OverviewAuto.vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
 const props = withDefaults(
@@ -292,7 +293,7 @@ defineExpose({
     <div v-else-if="outdated" class="flex-grow-1 d-flex align-center justify-center">
       <div class="text-center">
         <div class="t-body mb-3">{{ t('work.room.doc.outdated') }}</div>
-        <v-btn color="primary" variant="flat" size="small" @click="reload">{{ t('work.room.doc.reload') }}</v-btn>
+        <BaseButton kind="secondary" size="sm" @click="reload">{{ t('work.room.doc.reload') }}</BaseButton>
       </div>
     </div>
 

@@ -20,25 +20,22 @@
           <UserAvatar class="avatar-field__img" :avatar="shownAvatar" :name="avatarSeed" size="64" />
           <div class="avatar-field__side">
             <div class="avatar-field__actions">
-              <v-btn
-                variant="outlined"
-                color="on-surface"
+              <BaseButton
+                kind="secondary"
                 :loading="changingAvatar"
                 :disabled="removingAvatar"
                 @click="avatarInput?.click()"
               >
                 {{ t('account.profile.changeAvatar') }}
-              </v-btn>
-              <v-btn
+              </BaseButton>
+              <BaseButton
                 v-if="canRemoveAvatar"
-                variant="text"
-                color="on-surface"
                 :loading="removingAvatar"
                 :disabled="changingAvatar"
                 @click="removeAvatar"
               >
                 {{ t('account.profile.removeAvatar') }}
-              </v-btn>
+              </BaseButton>
             </div>
             <span class="field-note">{{ t('account.profile.avatarHint') }}</span>
           </div>
@@ -96,12 +93,12 @@
           <div class="foot-reveal__clip">
             <div class="profile__foot">
               <span class="profile__foot-note">{{ t('account.profile.unsaved') }}</span>
-              <v-btn variant="text" color="on-surface" :disabled="saving" @click="revert">
+              <BaseButton :disabled="saving" @click="revert">
                 {{ t('account.profile.revert') }}
-              </v-btn>
-              <v-btn type="submit" color="primary" variant="flat" :disabled="!valid" :loading="saving">
+              </BaseButton>
+              <BaseButton type="submit" kind="primary" :disabled="!valid" :loading="saving">
                 {{ t('account.profile.save') }}
-              </v-btn>
+              </BaseButton>
             </div>
           </div>
         </div>
@@ -120,6 +117,7 @@ import { getAvatarUrl } from '@/utils/materials'
 
 import { ensureDefaultAvatarId, globalDefaultAvatarId, isChosenAvatar } from '@/composables/useChosenAvatar'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import { t } from '@/i18n'
 import { AvatarsApi } from '@/network/api/avatars'

@@ -1,8 +1,8 @@
 <template>
   <SettingsToolbar>
-    <v-btn variant="text" prepend-icon="mdi-plus" @click="openCreateDialog">
+    <BaseButton kind="primary" prepend-icon="mdi-plus" @click="openCreateDialog">
       {{ t('spaces.domainGroups.createGroup') }}
-    </v-btn>
+    </BaseButton>
   </SettingsToolbar>
   <div class="settings-card">
     <div v-if="loading" class="pa-4 text-center">
@@ -20,20 +20,20 @@
           <v-icon size="18" class="c-faint">mdi-web</v-icon>
         </template>
         <template #append>
-          <v-btn
+          <BaseButton
+            kind="ghost"
             icon="mdi-pencil-outline"
-            variant="text"
-            size="small"
+            size="sm"
             :aria-label="t('spaces.domainGroups.editGroup')"
             @click="openEditDialog(group)"
-          ></v-btn>
-          <v-btn
+          />
+          <BaseButton
+            kind="ghost"
             icon="mdi-delete-outline"
-            variant="text"
-            size="small"
+            size="sm"
             :aria-label="t('spaces.domainGroups.deleteGroup')"
             @click="deleteGroup(group)"
-          ></v-btn>
+          />
         </template>
       </v-list-item>
     </v-list>
@@ -77,29 +77,32 @@
                 ></v-text-field>
               </v-col>
               <v-col cols="2">
-                <v-btn
+                <BaseButton
+                  kind="ghost"
                   icon="mdi-close"
-                  variant="text"
-                  size="small"
+                  size="sm"
+                  :aria-label="t('spaces.materials.remove')"
                   :disabled="domainList.length <= 1"
                   @click="removeDomain(index)"
-                ></v-btn>
+                />
               </v-col>
             </v-row>
             <p v-if="domainAllProps['error-messages']?.length" class="text-error text-caption mt-1">
               {{ domainAllProps['error-messages'][0] }}
             </p>
-            <v-btn variant="text" color="primary" prepend-icon="mdi-plus" size="small" @click="addDomain">
+            <BaseButton kind="secondary" prepend-icon="mdi-plus" size="sm" @click="addDomain">
               {{ t('spaces.domainGroups.addDomain') }}
-            </v-btn>
+            </BaseButton>
           </v-form>
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
-          <v-btn variant="text" @click="dialogOpen = false">{{ t('spaces.detail.manageCategories.cancel') }}</v-btn>
-          <v-btn color="primary" :loading="isSubmitting" @click="submitForm">
+          <BaseButton kind="ghost" @click="dialogOpen = false">{{
+            t('spaces.detail.manageCategories.cancel')
+          }}</BaseButton>
+          <BaseButton kind="primary" :loading="isSubmitting" @click="submitForm">
             {{ t('spaces.detail.manageCategories.confirm') }}
-          </v-btn>
+          </BaseButton>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -121,6 +124,7 @@ import { vuetifyConfig } from '@/utils/form'
 
 import { useSpaceData } from '@/composables/useSpaceData'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import SettingsToolbar from '@/components/spaces/SettingsToolbar.vue'
 import { SpacesApi } from '@/network/api/spaces'
 import { useDialog } from '@/plugins/dialog'

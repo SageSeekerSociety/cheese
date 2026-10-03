@@ -4,6 +4,7 @@
 // 它只吃 props、只往上发事件：谁不在、能不能拉、拉的时候在不在忙，全在
 // `composables/useOutsideMentionPrompt.ts` 里算好。按钮只给能管名册的人（owner /
 // admin）；别人只看到那句话——按钮按下去后端也会拒，不如不给。
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
 defineProps<{
@@ -27,9 +28,16 @@ const emit = defineEmits<{
     <v-icon size="15" class="outside-notice__icon">mdi-account-alert-outline</v-icon>
     <span class="outside-notice__text">{{ t('work.room.mention.outsideNotice', { names }) }}</span>
     <span v-if="error" class="outside-notice__error">{{ error }}</span>
-    <v-btn v-if="canAdd" class="outside-notice__add" variant="tonal" size="small" :loading="busy" @click="emit('add')">
+    <BaseButton
+      v-if="canAdd"
+      kind="secondary"
+      size="sm"
+      class="outside-notice__add"
+      :loading="busy"
+      @click="emit('add')"
+    >
       {{ t('work.room.mention.addToTopic') }}
-    </v-btn>
+    </BaseButton>
     <button
       type="button"
       class="outside-notice__dismiss tap-target"

@@ -21,6 +21,7 @@ import { useI18n } from 'vue-i18n'
 
 import TeachingMaterialPicker from './TeachingMaterialPicker.vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { buildTeaching, draftFromConfig, emptyTeachingDraft, splitIds } from '@/lib/teaching'
 
 const props = defineProps<{
@@ -95,15 +96,15 @@ function useDefaultTemplate() {
         :placeholder="t('spaces.teaching.defaultTemplate')"
         persistent-hint
       />
-      <v-btn
-        size="small"
-        variant="text"
+      <BaseButton
+        kind="ghost"
+        size="sm"
         class="teaching-fields__default"
         data-testid="teaching-use-default-template"
         @click="useDefaultTemplate"
       >
         {{ t('spaces.teaching.useDefaultTemplate') }}
-      </v-btn>
+      </BaseButton>
     </div>
     <TeachingMaterialPicker
       v-model="materialIds"

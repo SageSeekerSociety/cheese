@@ -22,20 +22,22 @@
       >
         <template #buttons="{ isSubmitting }">
           <div class="d-flex gap-4">
-            <v-btn variant="text" :disabled="isSubmitting || isResubmitting" @click="navigateToDetail">{{
+            <BaseButton kind="ghost" :disabled="isSubmitting || isResubmitting" @click="navigateToDetail">{{
               t('global.cancel')
-            }}</v-btn>
-            <v-btn color="primary" :loading="isSubmitting" type="submit">{{ t('tasks.edit.saveChanges') }}</v-btn>
-            <v-btn
+            }}</BaseButton>
+            <BaseButton kind="primary" :loading="isSubmitting" type="submit">{{
+              t('tasks.edit.saveChanges')
+            }}</BaseButton>
+            <BaseButton
               v-if="showResubmitButton"
-              color="success"
+              kind="secondary"
               :loading="isResubmitting"
               :disabled="isSubmitting"
               type="button"
               @click="submitWithReapproval"
             >
               {{ t('tasks.edit.saveAndResubmit') }}
-            </v-btn>
+            </BaseButton>
           </div>
         </template>
       </TaskForm>
@@ -57,6 +59,7 @@ import { useSpaceData } from '@/composables/useSpaceData'
 import { LoadingErrorContainer } from './components'
 import { useTaskData, useTaskManagement } from './composables'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import TaskForm from '@/components/tasks/TaskForm.vue'
 import { closeOverlay } from '@/lib/backOut'
 import { TasksApi } from '@/network/api/tasks'

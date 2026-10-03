@@ -39,6 +39,8 @@ import { useI18n } from 'vue-i18n'
 
 import { apiBaseAllowed } from '@/utils/apiBase'
 
+import BaseButton from '@/components/base/BaseButton.vue'
+
 // 新增 / 编辑一个**运行时**模型的表单（契约 §3.3）。
 //
 // 这一层只做三件事：收字、按服务端的同一套规则先自我校验、把结果 emit 出去。真正
@@ -351,10 +353,10 @@ function submit() {
 
       <v-card-actions class="pa-4 pt-0">
         <v-spacer />
-        <v-btn variant="text" :disabled="saving" @click="close">{{ t('models.dialog.cancel') }}</v-btn>
-        <v-btn color="primary" :loading="saving" :disabled="!valid || saving" @click="submit">
+        <BaseButton kind="ghost" :disabled="saving" @click="close">{{ t('models.dialog.cancel') }}</BaseButton>
+        <BaseButton kind="primary" :loading="saving" :disabled="!valid || saving" @click="submit">
           {{ mode === 'add' ? t('models.dialog.create') : t('models.dialog.save') }}
-        </v-btn>
+        </BaseButton>
       </v-card-actions>
     </v-card>
   </v-dialog>

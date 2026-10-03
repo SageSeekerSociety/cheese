@@ -11,8 +11,11 @@
               <span>{{ t('questions.detail.viewCount', { count: questionData.view_count }) }}</span>
             </v-card-subtitle>
             <template #append>
-              <v-btn color="primary" :variant="questionData.is_follow ? 'tonal' : 'flat'" @click="toggleFollowQuestion">
-                <v-icon size="24" class="me-2">mdi-plus</v-icon>
+              <BaseButton
+                :kind="questionData.is_follow ? 'ghost' : 'secondary'"
+                prepend-icon="mdi-plus"
+                @click="toggleFollowQuestion"
+              >
                 <template v-if="questionData.is_follow">
                   {{ t('questions.detail.buttons.unfollow') }}
                 </template>
@@ -27,7 +30,7 @@
                     )
                   }}
                 </template>
-              </v-btn>
+              </BaseButton>
             </template>
           </v-card-item>
           <v-card-text>
@@ -80,10 +83,9 @@
               scrollable
             >
               <template #activator="{ props: activatorProps }">
-                <v-btn variant="outlined" v-bind="activatorProps">
-                  <v-icon size="18" class="me-2">mdi-account-multiple-plus</v-icon>
+                <BaseButton kind="secondary" prepend-icon="mdi-account-multiple-plus" v-bind="activatorProps">
                   {{ t('questions.detail.buttons.invite') }}
-                </v-btn>
+                </BaseButton>
               </template>
 
               <template #default="{ isActive }">
@@ -109,16 +111,18 @@
                   <v-card-actions>
                     <v-spacer></v-spacer>
 
-                    <v-btn :text="t('questions.detail.close')" variant="text" @click="isActive.value = false"></v-btn>
+                    <BaseButton kind="ghost" @click="isActive.value = false">{{
+                      t('questions.detail.close')
+                    }}</BaseButton>
                   </v-card-actions>
                 </v-card>
               </template>
             </v-dialog>
             <v-dialog v-else-if="!questionData.accepted_answer" v-model="bountyDialog" width="540px">
               <template #activator="{ props: activatorProps }">
-                <v-btn prepend-icon="mdi-currency-usd" variant="outlined" v-bind="activatorProps">
+                <BaseButton kind="secondary" prepend-icon="mdi-currency-usd" v-bind="activatorProps">
                   {{ t('questions.detail.buttons.bounty') }}
-                </v-btn>
+                </BaseButton>
               </template>
 
               <template #default="{ isActive }">
@@ -150,24 +154,22 @@
                   <v-card-actions>
                     <v-spacer></v-spacer>
 
-                    <v-btn :text="t('global.cancel')" variant="text" @click="isActive.value = false"></v-btn>
-                    <v-btn variant="flat" color="primary" :loading="bountyLoading" @click="addBounty">{{
+                    <BaseButton kind="ghost" @click="isActive.value = false">{{ t('global.cancel') }}</BaseButton>
+                    <BaseButton kind="primary" :loading="bountyLoading" @click="addBounty">{{
                       t('questions.detail.buttons.addBounty')
-                    }}</v-btn>
+                    }}</BaseButton>
                   </v-card-actions>
                 </v-card>
               </template>
             </v-dialog>
 
-            <v-btn variant="plain">
-              <v-icon size="18" class="me-2">mdi-comment-outline</v-icon>
+            <BaseButton kind="ghost" prepend-icon="mdi-comment-outline">
               {{ t('questions.detail.buttons.comment') }}
               <span v-if="questionData.comment_count">{{ questionData.comment_count }}</span>
-            </v-btn>
-            <v-btn variant="plain">
-              <v-icon size="18" class="me-2">mdi-star-outline</v-icon>
+            </BaseButton>
+            <BaseButton kind="ghost" prepend-icon="mdi-star-outline">
               {{ t('questions.detail.buttons.favorite') }}
-            </v-btn>
+            </BaseButton>
           </v-card-actions>
         </v-card>
 
@@ -188,9 +190,8 @@
             </i18n-t>
           </template>
           <template #append>
-            <v-btn
-              color="text"
-              variant="tonal"
+            <BaseButton
+              kind="secondary"
               :to="{
                 name: 'QuestionAnswer',
                 params: {
@@ -200,7 +201,7 @@
               }"
             >
               {{ t('questions.detail.buttons.viewAcceptedAnswer') }}
-            </v-btn>
+            </BaseButton>
           </template>
         </v-alert>
       </v-col>
@@ -232,9 +233,7 @@
               />
             </v-card-text>
             <v-card-actions>
-              <v-btn color="primary" variant="flat" @click="submit">{{
-                t('questions.detail.buttons.postAnswer')
-              }}</v-btn>
+              <BaseButton kind="primary" @click="submit">{{ t('questions.detail.buttons.postAnswer') }}</BaseButton>
             </v-card-actions>
           </template>
         </v-card>
@@ -260,6 +259,7 @@ import { parse } from '@/utils/parser'
 
 import { usePageTitle } from '@/composables/usePageTitle'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import ContentVoter from '@/components/common/ContentVoter.vue'
 import RichEditor from '@/components/common/Editor/Editor.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'

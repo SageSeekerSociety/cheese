@@ -12,6 +12,8 @@ import type { Knowledge } from '@/types'
 
 import { getAvatarUrl } from '@/utils/materials'
 
+import BaseButton from '@/components/base/BaseButton.vue'
+import { t } from '@/i18n'
 import { formatDay, resourceTypeIcon, resourceTypeName } from '@/lib/knowledgeFormat'
 
 defineOptions({ name: 'KnowledgeGrid' })
@@ -93,13 +95,14 @@ const emit = defineEmits<{
             <span class="text-caption ml-2">{{ resource.creator.nickname }}</span>
             <v-spacer></v-spacer>
             <!-- 删除键在网格里没有：卡上那一颗是「打开」。只有列表视图给了删除。 -->
-            <v-btn
-              variant="text"
-              size="small"
+            <BaseButton
+              kind="ghost"
+              size="sm"
               density="comfortable"
               icon="mdi-open-in-new"
+              :aria-label="t('navigation.palette.newTab')"
               @click.stop="emit('openLink', resource)"
-            ></v-btn>
+            />
           </v-card-actions>
         </v-card>
       </v-hover>

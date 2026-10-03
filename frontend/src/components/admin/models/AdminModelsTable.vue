@@ -8,6 +8,7 @@ import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminGrid from '@/components/admin/AdminGrid.vue'
 import AdminModelPriceCell from '@/components/admin/AdminModelPriceCell.vue'
 import AdminSparkline from '@/components/admin/AdminSparkline.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 import { MODEL_TIERS, TIER_KEY } from '@/lib/adminCredits'
 import { blockedReasonText, displayName, failRate, originKey, statusQuiet } from '@/lib/adminModels'
 import { fmtCost, fmtNum, fmtSI } from '@/lib/usageFormat'
@@ -175,24 +176,21 @@ function rateTitle(row: ModelRow): string {
             {{ t('models.table.howToEdit') }}
           </button>
           <template v-else>
-            <v-btn
+            <BaseButton
               icon="mdi-pencil-outline"
-              variant="text"
-              size="small"
+              size="sm"
               :aria-label="t('models.table.action.edit')"
               @click="emit('edit', row)"
             />
-            <v-btn
+            <BaseButton
               :icon="row.blocked ? 'mdi-play-circle-outline' : 'mdi-cancel'"
-              variant="text"
-              size="small"
+              size="sm"
               :aria-label="row.blocked ? t('models.table.action.unblock') : t('models.table.action.block')"
               @click="emit('block', row)"
             />
-            <v-btn
+            <BaseButton
               icon="mdi-trash-can-outline"
-              variant="text"
-              size="small"
+              size="sm"
               :aria-label="t('models.table.action.delete')"
               @click="emit('delete', row)"
             />

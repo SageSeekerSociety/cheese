@@ -26,6 +26,7 @@ import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { getInbox, markRead, resolveAlert, sendFeedback } from '@/api'
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { label, NOTIF_KIND } from '@/labels'
 import { myHandle } from '@/me'
@@ -197,44 +198,40 @@ watch(
                    问得短一点，板就跟着抬一下。 -->
               <p class="asked-card__body t-meta c-muted">{{ row.body }}</p>
               <div class="asked-card__acts">
-                <v-btn
+                <BaseButton
                   v-for="option in optionsOf(row)"
                   :key="option"
-                  size="small"
-                  variant="outlined"
-                  color="primary"
+                  kind="secondary"
+                  size="sm"
                   :loading="busy === row.id"
                   @click="decide(row, option)"
                 >
                   {{ option }}
-                </v-btn>
-                <v-btn v-if="canOpen(row)" size="small" variant="outlined" color="primary" @click="open(row)">
+                </BaseButton>
+                <BaseButton v-if="canOpen(row)" kind="secondary" size="sm" @click="open(row)">
                   {{ t('work.needsYou.open') }}
-                </v-btn>
-                <v-btn
+                </BaseButton>
+                <BaseButton
                   v-if="!optionsOf(row).length"
-                  size="small"
-                  variant="text"
-                  color="on-surface-variant"
+                  kind="ghost"
+                  size="sm"
                   :loading="busy === row.id"
                   @click="dismiss(row)"
                 >
                   {{ t('work.needsYou.dismiss') }}
-                </v-btn>
+                </BaseButton>
                 <v-spacer />
-                <v-btn
+                <BaseButton
                   icon="mdi-thumb-up-outline"
-                  size="x-small"
-                  variant="text"
-                  :color="row.feedback === 'up' ? 'primary' : 'on-surface-variant'"
+                  size="sm"
+                  :kind="row.feedback === 'up' ? 'primary' : 'ghost'"
                   :aria-label="t('work.needsYou.helpful')"
                   @click="rate(row, 'up')"
                 />
-                <v-btn
+                <BaseButton
                   icon="mdi-thumb-down-outline"
-                  size="x-small"
-                  variant="text"
-                  :color="row.feedback === 'down' ? 'primary' : 'on-surface-variant'"
+                  size="sm"
+                  :kind="row.feedback === 'down' ? 'primary' : 'ghost'"
                   :aria-label="t('work.needsYou.notHelpful')"
                   @click="rate(row, 'down')"
                 />

@@ -15,10 +15,9 @@
         <div v-if="userReasons[0]?.code === 'MISSING_REAL_NAME'" class="mt-2 text-medium-emphasis">
           <div class="d-flex align-center ga-2">
             <span>{{ t('tasks.eligibilityAlert.needRealName') }}</span>
-            <v-btn variant="tonal" size="small" :to="{ name: 'UserSettingsRealName' }">
+            <BaseButton kind="secondary" size="sm" :to="{ name: 'UserSettingsRealName' }" append-icon="mdi-arrow-right">
               {{ t('tasks.eligibilityAlert.goFillIn') }}
-              <v-icon end>mdi-arrow-right</v-icon>
-            </v-btn>
+            </BaseButton>
           </div>
         </div>
       </div>
@@ -36,10 +35,9 @@
         <div v-if="teams.length === 0" class="font-weight-medium">
           {{ t('tasks.eligibilityAlert.needTeam') }}
           <div class="mt-2">
-            <v-btn variant="tonal" size="small" :to="{ name: 'HomeTeamsMine' }">
+            <BaseButton kind="secondary" size="sm" :to="{ name: 'HomeTeamsMine' }" append-icon="mdi-arrow-right">
               {{ t('tasks.eligibilityAlert.manageMyTeams') }}
-              <v-icon end>mdi-arrow-right</v-icon>
-            </v-btn>
+            </BaseButton>
           </div>
         </div>
 
@@ -88,15 +86,15 @@
                     </v-list>
                   </div>
                 </div>
-                <v-btn
-                  variant="tonal"
-                  size="small"
+                <BaseButton
+                  kind="secondary"
+                  size="sm"
                   class="mt-2"
                   :to="{ name: 'TeamsDetailMembers', params: { handle: entry.team.handle } }"
+                  append-icon="mdi-arrow-right"
                 >
                   {{ t('tasks.eligibilityAlert.manageThisTeam') }}
-                  <v-icon end>mdi-arrow-right</v-icon>
-                </v-btn>
+                </BaseButton>
               </v-expansion-panel-text>
             </v-expansion-panel>
           </v-expansion-panels>
@@ -121,6 +119,7 @@ import { useI18n } from 'vue-i18n'
 
 import { getAvatarUrl } from '@/utils/materials'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { eligibilityReasonKey } from '@/views/tasks/eligibilityReason'
 
 const props = defineProps<{ task: Task }>()

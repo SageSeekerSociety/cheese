@@ -10,9 +10,9 @@
       <v-alert type="error" variant="tonal" density="comfortable" class="mb-6">
         {{ t('account.oauth.app.expired') }}
       </v-alert>
-      <v-btn block color="primary" size="large" to="/account/signin" class="account-submit">
+      <BaseButton block kind="primary" size="lg" to="/account/signin" class="account-submit">
         {{ t('account.backToSignIn') }}
-      </v-btn>
+      </BaseButton>
     </template>
 
     <template v-else>
@@ -27,6 +27,7 @@ import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import AccountHeading from '@/components/account/AccountHeading.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { takeSignInVerifier } from '@/lib/desktopApp'
 import { UserApi } from '@/network/api/users'

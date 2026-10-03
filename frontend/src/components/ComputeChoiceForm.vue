@@ -6,6 +6,8 @@ import { computed, ref, watch } from 'vue'
 
 import { t } from '../i18n'
 
+import BaseButton from '@/components/base/BaseButton.vue'
+
 const props = defineProps<{
   devices: TopicComputeDevice[]
   cloudAvailable: boolean
@@ -163,8 +165,8 @@ function submit() {
     <p v-else-if="target" class="text-body-2 text-medium-emphasis my-3">
       {{ t('work.computeChoice.deviceHint') }}
     </p>
-    <v-btn class="mt-3" color="primary" variant="tonal" :disabled="!valid || busy" :loading="busy" @click="submit">{{
+    <BaseButton kind="primary" class="mt-3" :disabled="!valid || busy" :loading="busy" @click="submit">{{
       t('work.computeChoice.submit')
-    }}</v-btn>
+    }}</BaseButton>
   </div>
 </template>

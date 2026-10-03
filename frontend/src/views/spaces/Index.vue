@@ -13,7 +13,7 @@
       <h2 class="text-h6 mb-3">{{ t('spaces.review.mine') }}</h2>
       <v-alert v-if="applicationsError" type="error" variant="tonal" class="mb-3">
         {{ t('spaces.review.loadFailed') }}
-        <v-btn variant="text" @click="loadApplications">{{ t('spaces.review.retry') }}</v-btn>
+        <BaseButton kind="secondary" @click="loadApplications">{{ t('spaces.review.retry') }}</BaseButton>
       </v-alert>
       <p v-if="!applications.length && !applicationsError" class="text-body-2 text-medium-emphasis">
         {{ t('spaces.review.emptyMine') }}
@@ -25,23 +25,23 @@
           <span class="text-body-2 text-medium-emphasis">{{ t(`spaces.review.${item.reviewStatus}`) }}</span>
         </div>
         <p class="text-body-2 application-copy" data-user-content>{{ item.reviewReason || item.intro }}</p>
-        <v-btn v-if="item.reviewStatus === 'REJECTED'" class="mt-2" variant="text" @click="openResubmit(item)">{{
+        <BaseButton v-if="item.reviewStatus === 'REJECTED'" kind="ghost" class="mt-2" @click="openResubmit(item)">{{
           t('spaces.review.resubmit')
-        }}</v-btn>
+        }}</BaseButton>
         <!-- 这一格和下面的空间卡片走**同一个**落点函数（`spaceEntryRoute`），谁也别
              自己拼地址 —— 从前这里写死 `/spaces/{id}`，那条地址 redirect 到老树，
              于是「进去」有两套意思，改一处就会漏掉另一处。 -->
-        <v-btn v-if="item.reviewStatus === 'APPROVED'" class="mt-2" variant="text" :to="spaceEntryRoute(item)">{{
+        <BaseButton v-if="item.reviewStatus === 'APPROVED'" kind="ghost" class="mt-2" :to="spaceEntryRoute(item)">{{
           t('spaces.review.enter')
-        }}</v-btn>
+        }}</BaseButton>
       </div>
       <div v-if="applicationOffset || applications.length === 50" class="d-flex justify-end">
-        <v-btn variant="text" :disabled="!applicationOffset" @click="changeApplicationsPage(-50)">{{
+        <BaseButton kind="ghost" :disabled="!applicationOffset" @click="changeApplicationsPage(-50)">{{
           t('spaces.review.previous')
-        }}</v-btn>
-        <v-btn variant="text" :disabled="applications.length < 50" @click="changeApplicationsPage(50)">{{
+        }}</BaseButton>
+        <BaseButton kind="ghost" :disabled="applications.length < 50" @click="changeApplicationsPage(50)">{{
           t('spaces.review.next')
-        }}</v-btn>
+        }}</BaseButton>
       </div>
     </v-sheet>
     <!-- 这一页通篇是**别人**的空间，没有一个字说他自己的东西从哪儿开。这一格
@@ -51,9 +51,9 @@
       <p class="text-body-2 text-medium-emphasis mb-3">
         {{ t('spaces.index.firstRun.body') }}
       </p>
-      <v-btn color="primary" variant="flat" prepend-icon="mdi-plus" @click="startProject">{{
+      <BaseButton kind="primary" prepend-icon="mdi-plus" @click="startProject">{{
         t('spaces.index.firstRun.newProject')
-      }}</v-btn>
+      }}</BaseButton>
       <p class="text-caption text-medium-emphasis mt-3 mb-0">{{ t('spaces.index.firstRun.browse') }}</p>
     </v-sheet>
     <v-row no-gutters>
@@ -63,13 +63,12 @@
             <div class="d-flex align-center">
               <span class="text-h6">{{ t('spaces.index.explore') }}</span>
             </div>
-            <v-btn
+            <BaseButton
               v-if="AccountService.loggedIn"
-              color="primary"
-              variant="flat"
+              kind="primary"
               prepend-icon="mdi-plus"
               @click="openCreateSpace"
-              >{{ t('spaces.create.open') }}</v-btn
+              >{{ t('spaces.create.open') }}</BaseButton
             >
             <!-- <v-btn-toggle v-model="selectedSort" class="sort-toggle" rounded="lg" color="primary" density="comfortable">
               <v-btn
@@ -187,18 +186,12 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn variant="text" :disabled="creating" @click="createDialog = false">{{
+          <BaseButton kind="ghost" :disabled="creating" @click="createDialog = false">{{
             t('spaces.create.cancel')
-          }}</v-btn>
-          <v-btn
-            type="submit"
-            color="primary"
-            variant="flat"
-            :loading="creating"
-            :disabled="!spaceName.trim() || creating"
-          >
+          }}</BaseButton>
+          <BaseButton kind="primary" type="submit" :loading="creating" :disabled="!spaceName.trim() || creating">
             {{ t('spaces.create.submit') }}
-          </v-btn>
+          </BaseButton>
         </v-card-actions>
       </v-form>
     </v-card>
@@ -211,21 +204,21 @@
         <p class="text-body-2 mb-3">{{ t('spaces.inviteCodes.createdBody') }}</p>
         <div class="d-flex align-center ga-2">
           <span class="invite-code-text">{{ createdInviteCode }}</span>
-          <v-btn
+          <BaseButton
+            kind="ghost"
             :icon="codeCopied ? 'mdi-check' : 'mdi-content-copy'"
-            size="small"
-            variant="text"
+            size="sm"
             :title="t('spaces.inviteCodes.copy')"
             @click="copyCreatedCode"
-          ></v-btn>
+          />
         </div>
       </v-card-text>
       <v-card-actions>
         <v-spacer />
         <!-- 建完不停在名录页：收起这张卡就进这个空间。 -->
-        <v-btn color="primary" variant="flat" @click="enterCreatedSpace">
+        <BaseButton kind="primary" @click="enterCreatedSpace">
           {{ t('spaces.inviteCodes.openSpace') }}
-        </v-btn>
+        </BaseButton>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -247,6 +240,7 @@ import { usePaging } from '@/utils/paging'
 import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
 
 import { listProjects } from '@/api'
+import BaseButton from '@/components/base/BaseButton.vue'
 import AvatarUploader from '@/components/common/AvatarUploader.vue'
 import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
 import PageHeader from '@/components/common/PageHeader.vue'

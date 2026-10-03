@@ -4,6 +4,7 @@ import type { ResourceLimits } from '@/api'
 import { onMounted, ref } from 'vue'
 
 import { getResourceLimits } from '@/api'
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
 // own：项目要建在自己名下（只有自己的那个团队），名额和「工作电脑」页就不说成团队的。
@@ -39,7 +40,7 @@ onMounted(load)
     </template>
     <template v-else-if="failed">
       {{ t('work.resourceLimits.failed') }}
-      <v-btn size="small" variant="text" @click="load">{{ t('work.resourceLimits.retry') }}</v-btn>
+      <BaseButton kind="secondary" size="sm" @click="load">{{ t('work.resourceLimits.retry') }}</BaseButton>
     </template>
     <template v-else>{{ t('work.resourceLimits.loading') }}</template>
   </div>

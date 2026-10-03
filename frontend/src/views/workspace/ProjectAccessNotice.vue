@@ -9,6 +9,7 @@
 // 项目归档了的话，所有者可以把它取消归档，别人只能离开。
 import { computed, onMounted, ref } from 'vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -66,22 +67,12 @@ const said = computed(() => {
     <p class="t-body c-muted mb-6">{{ said.body }}</p>
     <div class="access-notice__actions">
       <!-- 所有者面前主操作是把它取消归档；离开退成次要的那一颗。 -->
-      <v-btn
-        v-if="reason === 'archived' && isOwner"
-        color="primary"
-        variant="flat"
-        :loading="restoring"
-        @click="restore"
-      >
+      <BaseButton v-if="reason === 'archived' && isOwner" kind="primary" :loading="restoring" @click="restore">
         {{ t('work.room.menu.unarchive') }}
-      </v-btn>
-      <v-btn
-        :color="reason === 'archived' && isOwner ? undefined : 'primary'"
-        :variant="reason === 'archived' && isOwner ? 'text' : 'flat'"
-        :to="said.action.to"
-      >
+      </BaseButton>
+      <BaseButton :kind="reason === 'archived' && isOwner ? 'ghost' : 'primary'" :to="said.action.to">
         {{ said.action.label }}
-      </v-btn>
+      </BaseButton>
     </div>
     <p v-if="store.error && reason === 'archived'" class="t-body c-danger mt-4">{{ store.error }}</p>
   </div>

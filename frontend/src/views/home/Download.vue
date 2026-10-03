@@ -8,6 +8,7 @@ import { renderSVG } from 'uqr'
 import LandingShell from './LandingShell.vue'
 
 import appIcon from '@/assets/app-icon.png'
+import BaseButton from '@/components/base/BaseButton.vue'
 import i18n, { t } from '@/i18n'
 import { downloadForThisComputer, DOWNLOADS } from '@/lib/desktop'
 import { fetchDesktopRelease } from '@/lib/desktopChangelog'
@@ -86,9 +87,9 @@ onMounted(async () => {
 
         <!-- 手机：添加到主屏幕。安卓上 Chrome 给得出安装按钮；iPhone 只能从 Safari 的分享菜单加。 -->
         <div v-if="phone" class="dl-phone">
-          <v-btn v-if="isInstalled" color="primary" size="x-large" block href="/">{{
+          <BaseButton v-if="isInstalled" kind="primary" size="lg" block href="/">{{
             t('publicSite.downloadPage.openCheese')
-          }}</v-btn>
+          }}</BaseButton>
           <template v-else-if="ios">
             <ol class="dl-steps">
               <li>
@@ -100,9 +101,9 @@ onMounted(async () => {
             <p class="dl-note">{{ t('publicSite.downloadPage.iosInApp') }}</p>
           </template>
           <template v-else>
-            <v-btn v-if="canPromptInstall" color="primary" size="x-large" block @click="install">{{
+            <BaseButton v-if="canPromptInstall" kind="primary" size="lg" block @click="install">{{
               t('publicSite.downloadPage.addToHomeScreen')
-            }}</v-btn>
+            }}</BaseButton>
             <p v-else class="dl-note dl-note--strong">{{ t('publicSite.downloadPage.androidMenu') }}</p>
             <p class="dl-note">{{ t('publicSite.downloadPage.chromeOnly') }}</p>
           </template>
@@ -207,9 +208,9 @@ onMounted(async () => {
           <span class="dl-desktop__title">{{ t('publicSite.downloadPage.desktopTitle') }}</span>
           <span class="dl-desktop__hint">{{ t('publicSite.downloadPage.desktopHint') }}</span>
         </div>
-        <v-btn variant="outlined" @click="copyLink">{{
+        <BaseButton kind="secondary" @click="copyLink">{{
           copied ? t('publicSite.downloadPage.copied') : t('publicSite.downloadPage.copyLink')
-        }}</v-btn>
+        }}</BaseButton>
       </section>
     </div>
   </LandingShell>

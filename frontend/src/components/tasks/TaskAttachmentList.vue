@@ -8,16 +8,16 @@
       }}</span>
       <!-- 看得见清单不等于拿得到文件。这一行由服务端的 canDownload 决定，
            前端不拿自己的角色去猜 —— 判据只有一份。 -->
-      <v-btn
+      <BaseButton
         v-if="canDownload"
-        variant="text"
-        size="small"
+        kind="ghost"
+        size="sm"
         prepend-icon="mdi-download"
         :loading="downloadingId === file.id"
         @click="emit('download', file)"
       >
         {{ t('tasks.attachments.download') }}
-      </v-btn>
+      </BaseButton>
       <span v-else class="ta__locked">{{ t('tasks.attachments.locked') }}</span>
     </li>
   </ul>
@@ -29,6 +29,8 @@ import type { TaskAttachmentData } from '@/network/api/tasks/types'
 import { useI18n } from 'vue-i18n'
 
 import { formatFileSize } from '@/utils/materials'
+
+import BaseButton from '@/components/base/BaseButton.vue'
 
 /** 一道题的材料清单。清单和能不能下载都由外面给，这里只画和报「要下载哪一个」。 */
 defineProps<{

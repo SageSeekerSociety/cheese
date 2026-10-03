@@ -19,9 +19,9 @@
       </div>
     </div>
 
-    <v-btn class="quote-item__source" size="small" variant="text" @click="openSource">{{
+    <BaseButton class="quote-item__source" kind="ghost" size="sm" @click="openSource">{{
       t('spaces.analytics.learning.quote.source')
-    }}</v-btn>
+    }}</BaseButton>
   </div>
 </template>
 
@@ -33,6 +33,8 @@ import { useI18n } from 'vue-i18n'
 import { useNavigation } from '@/composables/useNavigation'
 
 import { buildSourceLink, formatLearningTime } from '../helpers'
+
+import BaseButton from '@/components/base/BaseButton.vue'
 
 const props = withDefaults(
   defineProps<{

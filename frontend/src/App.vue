@@ -169,9 +169,9 @@
         </div>
         <v-alert v-if="teamLoadError" type="error" density="compact" variant="tonal" class="mt-3">
           {{ teamLoadError }}
-          <v-btn variant="text" size="small" :loading="loadingTeams" @click="loadProjectTeams">{{
+          <BaseButton kind="secondary" size="sm" :loading="loadingTeams" @click="loadProjectTeams">{{
             t('work.newProject.retry')
-          }}</v-btn>
+          }}</BaseButton>
         </v-alert>
       </div>
       <div v-if="newProjectStep === 2">
@@ -186,10 +186,9 @@
           @keyup.enter="confirmNewProject"
         >
           <template #append-inner>
-            <v-btn
-              variant="text"
+            <BaseButton
               icon="mdi-dice-multiple-outline"
-              size="small"
+              size="sm"
               :aria-label="t('work.teammate.random')"
               :title="t('work.teammate.random')"
               :disabled="creatingProject"
@@ -203,16 +202,16 @@
         {{ newProjectError }}
       </v-alert>
       <template v-if="newProjectStep === 2" #actions>
-        <v-btn variant="text" :disabled="creatingProject" @click="newProjectStep = 1">{{
+        <BaseButton kind="ghost" :disabled="creatingProject" @click="newProjectStep = 1">{{
           t('work.teammate.back')
-        }}</v-btn>
+        }}</BaseButton>
       </template>
     </AdaptiveDialog>
 
     <v-snackbar v-model="showProjectListWarning" :timeout="8000">
       {{ projectListWarning }}
       <template #actions>
-        <v-btn variant="text" @click="loadCxProjects">{{ t('work.newProject.retry') }}</v-btn>
+        <BaseButton kind="secondary" @click="loadCxProjects">{{ t('work.newProject.retry') }}</BaseButton>
       </template>
     </v-snackbar>
 
@@ -266,6 +265,7 @@ import { defineCommands } from '@/commands'
 import { copyLink, linkOf } from '@/commands/copy'
 import CommandPalette from '@/commands/palette/CommandPalette.vue'
 import { installShortcuts } from '@/commands/shortcuts'
+import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AppBar from '@/components/common/Navigation/AppBar.vue'
 import MobileAppBar from '@/components/common/Navigation/MobileAppBar.vue'

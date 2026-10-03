@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import BaseButton from '@/components/base/BaseButton.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
 
@@ -23,19 +24,12 @@ const emit = defineEmits<{ claim: []; release: [] }>()
     <div class="fb-claim__row">
       <span v-if="holder" class="t-meta-read fb-claim__who"><UserRef :handle="holder" /></span>
       <span v-else class="t-meta-read fb-claim__who">{{ t('feedback.detail.claim.nobody') }}</span>
-      <v-btn v-if="canClaim" size="small" variant="outlined" color="secondary" :loading="busy" @click="emit('claim')">
+      <BaseButton v-if="canClaim" kind="secondary" size="sm" :loading="busy" @click="emit('claim')">
         {{ t('feedback.detail.claim.claim') }}
-      </v-btn>
-      <v-btn
-        v-else-if="canRelease"
-        size="small"
-        variant="text"
-        color="secondary"
-        :loading="busy"
-        @click="emit('release')"
-      >
+      </BaseButton>
+      <BaseButton v-else-if="canRelease" kind="ghost" size="sm" :loading="busy" @click="emit('release')">
         {{ t('feedback.detail.claim.release') }}
-      </v-btn>
+      </BaseButton>
     </div>
   </div>
 </template>

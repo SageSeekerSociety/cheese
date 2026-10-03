@@ -30,6 +30,8 @@ import LoadingSkeleton from './common/LoadingSkeleton.vue'
 import CheeseAvatar from './CheeseAvatar.vue'
 import TopicComputePicker from './TopicComputePicker.vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
+
 const props = defineProps<{
   topicId: string
   projectId: string
@@ -355,16 +357,9 @@ async function onSetRole(handle: string, role: string) {
             </v-list-item>
           </template>
         </v-select>
-        <v-btn
-          size="small"
-          variant="flat"
-          color="primary"
-          :disabled="!addHandle || busy"
-          :loading="busy"
-          @click="onAdd"
-        >
+        <BaseButton kind="secondary" size="sm" :disabled="!addHandle || busy" :loading="busy" @click="onAdd">
           {{ t('work.room.roster.add') }}
-        </v-btn>
+        </BaseButton>
       </div>
       <div v-else class="roster__hint">{{ t('work.room.roster.readOnly') }}</div>
     </div>

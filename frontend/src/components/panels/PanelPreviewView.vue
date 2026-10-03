@@ -39,6 +39,8 @@ import { usePreviewImageRegion } from './preview/usePreviewImageRegion'
 import { usePreviewPagePin } from './preview/usePreviewPagePin'
 import { usePreviewQuote } from './preview/usePreviewQuote'
 
+import BaseButton from '@/components/base/BaseButton.vue'
+
 // The editor and its history only load once someone opens them: most previews
 // never do, and every panel that shows a preview would otherwise carry them.
 const RoomFileEditor = defineAsyncComponent(() => import('./preview/RoomFileEditor.vue'))
@@ -358,42 +360,33 @@ async function onAnnotate(payload: AnnotateDraft) {
     <div v-if="!path" class="preview-head">
       <!-- 发布是项目级的事，落点是项目首页上那块「网站」——在房间里看着一份页面
            想把它发出去，这是唯一要跳出去的一下。 -->
-      <v-btn
-        v-if="projectId"
-        :to="{ name: 'workspace-running', params: { projectId } }"
-        size="small"
-        variant="text"
-        color="medium-emphasis"
-      >
+      <BaseButton v-if="projectId" kind="ghost" size="sm" :to="{ name: 'workspace-running', params: { projectId } }">
         {{ t('work.room.preview.publishSite') }}
-      </v-btn>
+      </BaseButton>
       <v-spacer />
       <template v-if="previewUrl || previewFile">
-        <v-btn
+        <BaseButton
+          kind="ghost"
           icon="mdi-open-in-new"
-          size="small"
-          variant="text"
-          color="medium-emphasis"
+          size="sm"
           :title="t(displayedFrame?.live ? 'work.room.preview.openLatestPreview' : 'work.room.preview.openInNewTab')"
           @click="openPreviewInNewTab()"
         />
         <!-- 图片也要全屏：它正是那种「放大才画得准」的东西，而滚轮缩放只在全屏里
              开着（见 DesignImage 的 zoomOnWheel）。 -->
-        <v-btn
+        <BaseButton
           v-if="fullscreenSupported && (previewUrl || isImageArtifact)"
+          kind="ghost"
           :icon="previewFull ? 'mdi-fullscreen-exit' : 'mdi-arrow-expand-all'"
-          size="small"
-          variant="text"
-          color="medium-emphasis"
+          size="sm"
           :title="previewFull ? t('work.room.preview.exitFullscreen') : t('work.room.preview.fullscreen')"
           @click="fullscreen"
         />
       </template>
-      <v-btn
+      <BaseButton
+        kind="ghost"
         icon="mdi-refresh"
-        size="small"
-        variant="text"
-        color="medium-emphasis"
+        size="sm"
         :title="t('work.room.preview.refresh')"
         :loading="refreshing"
         @click="emit('refresh')"
@@ -428,19 +421,17 @@ async function onAnnotate(payload: AnnotateDraft) {
              页打开）都不给它——这一份自己的两条留在这里，和文档条上那两条一样。 -->
         <template v-if="path">
           <v-spacer />
-          <v-btn
+          <BaseButton
+            kind="ghost"
             icon="mdi-open-in-new"
-            size="small"
-            variant="text"
-            color="medium-emphasis"
+            size="sm"
             :title="t(displayedFrame?.live ? 'work.room.preview.openLatestPreview' : 'work.room.preview.openInNewTab')"
             @click="openPreviewInNewTab(path)"
           />
-          <v-btn
+          <BaseButton
+            kind="ghost"
             icon="mdi-download"
-            size="small"
-            variant="text"
-            color="medium-emphasis"
+            size="sm"
             :title="t('work.room.preview.download')"
             @click="emit('download')"
           />
@@ -487,11 +478,13 @@ async function onAnnotate(payload: AnnotateDraft) {
           {{ t(previewTunnelUp ? 'tasks.preview.appUnavailable' : 'tasks.preview.connectionUnavailable') }}
         </div>
         <span v-if="displayedFrame">{{ t('work.room.preview.retainedPage') }}</span>
-        <v-btn size="small" variant="text" @click="emit('refresh')">{{ t('work.room.preview.retryTarget') }}</v-btn>
+        <BaseButton kind="secondary" size="sm" @click="emit('refresh')">{{
+          t('work.room.preview.retryTarget')
+        }}</BaseButton>
       </div>
-      <v-btn v-if="path" size="small" variant="text" :title="t('work.room.preview.refresh')" @click="emit('refresh')">{{
+      <BaseButton v-if="path" kind="ghost" size="sm" :title="t('work.room.preview.refresh')" @click="emit('refresh')">{{
         t('work.room.preview.refresh')
-      }}</v-btn>
+      }}</BaseButton>
       <!-- Authorization still POSTs only to named sandboxed content-domain frames. -->
       <div class="preview-frames">
         <template v-if="frames">
@@ -526,7 +519,9 @@ async function onAnnotate(payload: AnnotateDraft) {
       <div v-if="previewAppNote && !previewUrl" class="text-caption mt-1">
         {{ t(previewTunnelUp ? 'tasks.preview.appUnavailable' : 'tasks.preview.connectionUnavailable') }}
       </div>
-      <v-btn size="small" variant="text" @click="emit('refresh')">{{ t('work.room.preview.retryTarget') }}</v-btn>
+      <BaseButton kind="secondary" size="sm" @click="emit('refresh')">{{
+        t('work.room.preview.retryTarget')
+      }}</BaseButton>
     </div>
     <div v-else-if="previewReadError" class="text-center text-medium-emphasis py-8">
       <v-icon size="32" class="text-warning mb-2">mdi-file-alert-outline</v-icon>
@@ -562,37 +557,29 @@ async function onAnnotate(payload: AnnotateDraft) {
         <span class="doc__name">{{ documentName }}</span>
         <span class="doc__type t-meta">{{ documentType.label }}</span>
         <v-spacer />
-        <v-btn
+        <BaseButton
           v-if="canEdit && previewFile"
-          size="small"
-          variant="text"
-          color="primary"
+          kind="secondary"
+          size="sm"
           prepend-icon="mdi-pencil-outline"
           data-testid="edit-file"
           @click="editing = previewFile.path"
         >
           {{ t('work.room.preview.edit') }}
-        </v-btn>
-        <v-btn
+        </BaseButton>
+        <BaseButton
           v-if="previewFile && !previewFile.path.startsWith('library/')"
-          size="small"
-          variant="text"
-          color="medium-emphasis"
+          kind="ghost"
+          size="sm"
           prepend-icon="mdi-history"
           data-testid="file-history"
           @click="showHistory = !showHistory"
         >
           {{ t('work.room.preview.history') }}
-        </v-btn>
-        <v-btn
-          size="small"
-          variant="text"
-          color="medium-emphasis"
-          prepend-icon="mdi-download"
-          @click="emit('download')"
-        >
+        </BaseButton>
+        <BaseButton kind="ghost" size="sm" prepend-icon="mdi-download" @click="emit('download')">
           {{ t('work.room.preview.download') }}
-        </v-btn>
+        </BaseButton>
       </div>
       <RoomFileHistory
         v-if="showHistory && topicId && previewFile"
@@ -714,15 +701,15 @@ async function onAnnotate(payload: AnnotateDraft) {
       <div class="text-caption mt-1">{{ t('work.room.preview.notTextDetail', { path: previewFile.path }) }}</div>
       <!-- 指定了文件的那一格也走这条路：内容域按路径服务房间里的任意一份，所以那
            一句话在这一格同样成立——它带着文件自己的地址过去。 -->
-      <v-btn
+      <BaseButton
+        kind="secondary"
+        size="sm"
         class="mt-3"
-        size="small"
-        variant="tonal"
         prepend-icon="mdi-open-in-new"
         @click="openPreviewInNewTab(previewFile.path)"
       >
         {{ t('work.room.preview.openInNewWindow') }}
-      </v-btn>
+      </BaseButton>
     </div>
     <div v-else class="text-center text-medium-emphasis py-8">
       <v-icon size="32" class="text-disabled mb-2">mdi-eye-off-outline</v-icon>

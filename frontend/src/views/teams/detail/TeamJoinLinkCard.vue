@@ -6,6 +6,7 @@ import type { Team, TeamVisibility } from '@/types'
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { TeamsApi } from '@/network/api/teams'
 import { BusinessError } from '@/network/types/error'
@@ -132,9 +133,9 @@ async function copy() {
         variant="outlined"
         class="link-field"
       />
-      <v-btn variant="flat" color="primary" :disabled="busy || !handleChanged || !handle.trim()" @click="saveHandle">
+      <BaseButton kind="primary" :disabled="busy || !handleChanged || !handle.trim()" @click="saveHandle">
         {{ t('work.teamLink.save') }}
-      </v-btn>
+      </BaseButton>
     </div>
 
     <p class="t-body mt-4 mb-1">{{ t('work.teamLink.title') }}</p>
@@ -153,10 +154,10 @@ async function copy() {
           variant="outlined"
           class="link-field"
         />
-        <v-btn color="primary" variant="flat" :disabled="busy" @click="copy">
+        <BaseButton kind="primary" :disabled="busy" @click="copy">
           {{ copied ? t('work.teamLink.copied') : t('work.teamLink.copy') }}
-        </v-btn>
-        <v-btn variant="text" :disabled="busy" @click="reset">{{ t('work.teamLink.reset') }}</v-btn>
+        </BaseButton>
+        <BaseButton :disabled="busy" @click="reset">{{ t('work.teamLink.reset') }}</BaseButton>
       </div>
       <p class="t-meta c-muted mt-2">{{ t('work.teamLink.resetHint') }}</p>
 

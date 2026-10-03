@@ -29,6 +29,7 @@ import MessageEditor from './MessageEditor.vue'
 import MessageQuote from './MessageQuote.vue'
 import RollingNumber from './RollingNumber.vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
 const props = defineProps<{
@@ -231,17 +232,17 @@ async function onAgentTextClick(e: MouseEvent) {
          (click opens the original in a new tab). 字节在 AttachmentImage
          里取——raw 端点只认 Authorization 头，裸挂 URL 是匿名请求。 -->
       <AttachmentImage v-if="isImageBlock(block)" :topic-id="topicId" :path="block.content" />
-      <v-btn
+      <BaseButton
         v-else-if="block.kind === 'attachment'"
-        variant="text"
+        kind="ghost"
         prepend-icon="mdi-file-document-outline"
         append-icon="mdi-download-outline"
-        class="text-none im-file-link"
+        class="im-file-link"
         :title="t('work.room.message.downloadFile', { name: artifactName(block) })"
         @click="emit('download', block)"
       >
         <span class="text-truncate">{{ artifactName(block) }}</span>
-      </v-btn>
+      </BaseButton>
       <!-- 芝士摆出来给人看的一份东西（`cheese show`）。后端一直在往时间线
          写这样一块（kind=artifact，content 是路径），而这里一直没有认它的
          分支，于是它掉进最下面那个兜底里，渲染成一行光秃秃的文件名——

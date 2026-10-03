@@ -12,6 +12,7 @@ import type { MergeBadge } from '@/lib/mergeState'
 import AcceptNoteLine from './AcceptNoteLine.vue'
 import AcceptPrChecks from './AcceptPrChecks.vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
 import { columnDotStyle } from '@/lib/board'
@@ -102,16 +103,9 @@ const forceMergeReason = defineModel<string>('forceMergeReason', { required: tru
         <!-- 改验收人 (spec §4.4): 任何成员都可以改推荐/加人 -->
         <v-menu>
           <template #activator="{ props: menuProps }">
-            <v-btn
-              v-bind="menuProps"
-              size="small"
-              variant="text"
-              density="comfortable"
-              class="text-medium-emphasis"
-              :disabled="busy"
-            >
+            <BaseButton v-bind="menuProps" kind="ghost" size="sm" :disabled="busy">
               {{ t('work.room.accept.reassign') }}
-            </v-btn>
+            </BaseButton>
           </template>
           <v-list density="compact">
             <v-list-subheader>{{ t('work.room.accept.reassignTitle') }}</v-list-subheader>
@@ -157,17 +151,15 @@ const forceMergeReason = defineModel<string>('forceMergeReason', { required: tru
           <template v-if="card.deliverable?.kind === 'file' && card.deliverable.filename">
             <span class="text-medium-emphasis">·</span>
             <code class="text-caption">{{ card.deliverable.filename }}</code>
-            <v-btn
-              size="small"
-              variant="text"
-              density="comfortable"
-              class="text-medium-emphasis"
+            <BaseButton
+              kind="secondary"
+              size="sm"
               prepend-icon="mdi-tray-arrow-down"
               :loading="deliverableBusy"
               @click="emit('download')"
             >
               {{ t('work.room.accept.download') }}
-            </v-btn>
+            </BaseButton>
           </template>
           <template v-else-if="card.deliverable?.kind === 'link' && card.deliverable.url">
             <span class="text-medium-emphasis">·</span>
@@ -220,39 +212,31 @@ const forceMergeReason = defineModel<string>('forceMergeReason', { required: tru
             >{{ i ? t('work.room.roster.listSeparator') : '' }}<UserRef :handle="h"
           /></template>
         </span>
-        <v-btn
+        <BaseButton
           v-if="!card.approvals.includes(myHandle)"
-          size="small"
-          variant="outlined"
-          class="btn-secondary"
+          kind="secondary"
+          size="sm"
           :disabled="busy"
           prepend-icon="mdi-thumb-up-outline"
           @click="emit('approve')"
         >
           {{ t('work.room.accept.approve') }}
-        </v-btn>
+        </BaseButton>
         <span v-else class="d-inline-flex align-center ga-1 text-caption text-medium-emphasis">
           <v-icon size="14">mdi-check</v-icon>{{ t('work.room.accept.youApproved') }}
         </span>
       </div>
       <div class="d-flex align-center flex-wrap ga-2">
         <!-- 决策在聊天，审查在面板。贴底的时候这一颗在横条上，这里不再放一颗。 -->
-        <v-btn
-          v-if="!docked"
-          variant="outlined"
-          class="btn-secondary"
-          prepend-icon="mdi-file-search-outline"
-          @click="emit('review')"
-        >
+        <BaseButton v-if="!docked" kind="secondary" prepend-icon="mdi-file-search-outline" @click="emit('review')">
           {{ t('work.room.accept.review') }}
-        </v-btn>
+        </BaseButton>
         <!-- 采纳 = 当场合并 (#718)：GitHub lane 亮在后端会合的那两档（clean /
           unstable），为什么灰写在 title 里；平台 lane 的采纳纯是人的判断，
           从不按状态灰。 -->
         <span :title="blockedTitle ?? undefined">
-          <v-btn
-            color="success"
-            variant="flat"
+          <BaseButton
+            kind="primary"
             :loading="busy"
             :disabled="busy || !!blockedTitle"
             prepend-icon="mdi-check"
@@ -265,20 +249,19 @@ const forceMergeReason = defineModel<string>('forceMergeReason', { required: tru
                   ? t('work.room.accept.retryAccept')
                   : t('work.room.accept.acceptAction')
             }}
-          </v-btn>
+          </BaseButton>
         </span>
-        <v-btn variant="text" :disabled="busy" prepend-icon="mdi-undo" @click="showRejectInput = !showRejectInput">
+        <BaseButton kind="ghost" :disabled="busy" prepend-icon="mdi-undo" @click="showRejectInput = !showRejectInput">
           {{ t('work.room.accept.sendBack') }}
-        </v-btn>
-        <v-btn
-          variant="text"
-          class="text-medium-emphasis"
+        </BaseButton>
+        <BaseButton
+          kind="ghost"
           :disabled="busy"
           prepend-icon="mdi-close-circle-outline"
           @click="showVoidInput = !showVoidInput"
         >
           {{ t('work.room.accept.void') }}
-        </v-btn>
+        </BaseButton>
       </div>
       <!-- 绿了自动合 (#718)：项目允许、规则还没满足时才有；布防人由后端认定。 -->
       <div v-if="autoMergeVisible" class="d-flex align-center flex-wrap ga-2 mt-2">
@@ -303,16 +286,15 @@ const forceMergeReason = defineModel<string>('forceMergeReason', { required: tru
         没有人做过这个决定。所以它默认收起、要填理由，点下去在卡上留名。
       -->
       <div v-if="card.pr_number && blockedTitle && !reasons.some((r) => r.kind === 'dependency')" class="mt-2">
-        <v-btn
+        <BaseButton
           v-if="!showForceMergeInput"
-          size="small"
-          variant="text"
-          class="text-medium-emphasis"
+          kind="ghost"
+          size="sm"
           prepend-icon="mdi-alert-decagram-outline"
           @click="showForceMergeInput = true"
         >
           {{ t('work.room.accept.forceMerge') }}
-        </v-btn>
+        </BaseButton>
         <template v-else>
           <div class="text-caption text-medium-emphasis mb-1">
             {{ t('work.room.accept.forceMergeWarning') }}
@@ -329,19 +311,12 @@ const forceMergeReason = defineModel<string>('forceMergeReason', { required: tru
             class="mb-2"
           />
           <div class="d-flex ga-2">
-            <v-btn
-              size="small"
-              color="warning"
-              variant="flat"
-              :loading="busy"
-              :disabled="busy"
-              @click="emit('force-merge')"
-            >
+            <BaseButton kind="danger" solid size="sm" :loading="busy" :disabled="busy" @click="emit('force-merge')">
               {{ t('work.room.accept.confirmForceMerge') }}
-            </v-btn>
-            <v-btn size="small" variant="text" :disabled="busy" @click="showForceMergeInput = false">
+            </BaseButton>
+            <BaseButton kind="ghost" size="sm" :disabled="busy" @click="showForceMergeInput = false">
               {{ t('work.room.accept.cancel') }}
-            </v-btn>
+            </BaseButton>
           </div>
         </template>
       </div>
@@ -355,9 +330,9 @@ const forceMergeReason = defineModel<string>('forceMergeReason', { required: tru
           :placeholder="t('work.room.accept.sendBackReason')"
           class="flex-grow-1"
         />
-        <v-btn variant="outlined" class="btn-secondary" :loading="busy" @click="emit('reject')">
+        <BaseButton kind="secondary" :loading="busy" @click="emit('reject')">
           {{ t('work.room.accept.confirmSendBack') }}
-        </v-btn>
+        </BaseButton>
       </div>
       <div v-if="showVoidInput" class="mt-3">
         <div class="text-caption text-medium-emphasis mb-1">
@@ -373,9 +348,9 @@ const forceMergeReason = defineModel<string>('forceMergeReason', { required: tru
             :placeholder="t('work.room.accept.voidReason')"
             class="flex-grow-1"
           />
-          <v-btn variant="outlined" class="btn-secondary" :loading="busy" @click="emit('void')">
+          <BaseButton kind="danger" solid :loading="busy" @click="emit('void')">
             {{ t('work.room.accept.confirmVoid') }}
-          </v-btn>
+          </BaseButton>
         </div>
       </div>
     </div>

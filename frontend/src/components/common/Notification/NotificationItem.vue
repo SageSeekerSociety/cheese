@@ -22,41 +22,24 @@
 
         <div class="d-flex justify-end align-center mt-2">
           <template v-if="renderedActions && renderedActions.length > 0">
-            <v-btn
+            <BaseButton
               v-for="(action, index) in renderedActions"
               :key="index"
-              variant="text"
-              density="comfortable"
-              size="small"
-              :color="action.color || 'primary'"
+              :kind="action.color === 'error' ? 'danger' : 'ghost'"
+              size="sm"
               class="px-2 ms-2"
               @click.stop="action.handler"
             >
               {{ action.text }}
-            </v-btn>
+            </BaseButton>
           </template>
           <template v-else>
-            <v-btn
-              v-if="!notification.read"
-              variant="text"
-              density="comfortable"
-              size="small"
-              :color="notificationColor"
-              class="px-2"
-              @click.stop="markAsRead"
-            >
+            <BaseButton v-if="!notification.read" kind="ghost" size="sm" class="px-2" @click.stop="markAsRead">
               {{ t('notifications.common.markAsRead') }}
-            </v-btn>
-            <v-btn
-              variant="text"
-              density="comfortable"
-              size="small"
-              color="error"
-              class="px-2 ms-2"
-              @click.stop="deleteNotification"
-            >
+            </BaseButton>
+            <BaseButton kind="danger" size="sm" class="px-2 ms-2" @click.stop="deleteNotification">
               {{ t('notifications.common.delete') }}
-            </v-btn>
+            </BaseButton>
           </template>
         </div>
       </div>
@@ -85,41 +68,24 @@
 
         <div class="d-flex justify-end align-center mt-2">
           <template v-if="renderedActions && renderedActions.length > 0">
-            <v-btn
+            <BaseButton
               v-for="(action, index) in renderedActions"
               :key="index"
-              variant="text"
-              density="comfortable"
-              size="small"
-              :color="action.color || 'primary'"
+              :kind="action.color === 'error' ? 'danger' : 'ghost'"
+              size="sm"
               class="px-2 ms-2"
               @click.stop="action.handler"
             >
               {{ action.text }}
-            </v-btn>
+            </BaseButton>
           </template>
           <template v-else>
-            <v-btn
-              v-if="!notification.read"
-              variant="text"
-              density="comfortable"
-              size="small"
-              :color="notificationColor"
-              class="px-2"
-              @click.stop="markAsRead"
-            >
+            <BaseButton v-if="!notification.read" kind="ghost" size="sm" class="px-2" @click.stop="markAsRead">
               {{ t('notifications.common.markAsRead') }}
-            </v-btn>
-            <v-btn
-              variant="text"
-              density="comfortable"
-              size="small"
-              color="error"
-              class="px-2 ms-2"
-              @click.stop="deleteNotification"
-            >
+            </BaseButton>
+            <BaseButton kind="danger" size="sm" class="px-2 ms-2" @click.stop="deleteNotification">
               {{ t('notifications.common.delete') }}
-            </v-btn>
+            </BaseButton>
           </template>
         </div>
       </div>
@@ -141,7 +107,8 @@ import { useFormattedTime } from '@/utils/dateTime'
 
 import NotificationAvatar from './NotificationAvatar.vue'
 
-import { getNotificationColor, getNotificationRenderer } from '@/services/notification/registry'
+import BaseButton from '@/components/base/BaseButton.vue'
+import { getNotificationRenderer } from '@/services/notification/registry'
 
 const props = defineProps<{
   notification: Notification
@@ -153,8 +120,6 @@ const { t } = useI18n()
 const { formatTime } = useFormattedTime()
 
 const formattedTime = computed(() => formatTime(props.notification.createdAt))
-
-const notificationColor = computed(() => getNotificationColor(props.notification.type))
 
 const contentComponent = computed<Component>(() => {
   return getNotificationRenderer(props.notification.type)

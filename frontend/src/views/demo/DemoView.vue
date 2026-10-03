@@ -14,6 +14,8 @@ import DemoRoom from './DemoRoom.vue'
 import { frameAt, stepDuration } from './demoScene'
 import { SCENES } from './scenes'
 
+import BaseButton from '@/components/base/BaseButton.vue'
+
 // 地址是 /demo/<名字>；只写 /demo（或者话题预览打开的根路径）就放第一个。
 // 入口（demo-main.ts）把地址当 props 传进来，而不是这里自己读 location：测试里
 // 换得了 props，换不了 happy-dom 的 location。
@@ -140,22 +142,16 @@ onBeforeUnmount(() => {
           </button>
         </nav>
         <div class="demo-ctl">
-          <v-btn icon="mdi-chevron-left" size="small" variant="text" aria-label="上一步" @click="go(step - 1, false)" />
-          <v-btn
-            size="small"
-            variant="tonal"
+          <BaseButton icon="mdi-chevron-left" size="sm" aria-label="上一步" @click="go(step - 1, false)" />
+          <BaseButton
+            kind="primary"
+            size="sm"
             :prepend-icon="playing ? 'mdi-pause' : 'mdi-play'"
             @click="playing ? pause() : play()"
           >
             {{ playing ? '暂停' : '播放' }}
-          </v-btn>
-          <v-btn
-            icon="mdi-chevron-right"
-            size="small"
-            variant="text"
-            aria-label="下一步"
-            @click="go(step + 1, false)"
-          />
+          </BaseButton>
+          <BaseButton icon="mdi-chevron-right" size="sm" aria-label="下一步" @click="go(step + 1, false)" />
         </div>
       </header>
       <ol v-if="!embedded" class="demo-steps">

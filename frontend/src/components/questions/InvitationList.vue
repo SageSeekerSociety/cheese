@@ -5,14 +5,18 @@
         <user-avatar :avatar="getAvatarUrl(user.avatarId)" />
       </template>
       <template #append>
-        <v-btn :variant="isInvited[index] ? 'text' : 'outlined'" :disabled="isInvited[index]" @click="invite(index)">
+        <BaseButton
+          :kind="isInvited[index] ? 'ghost' : 'secondary'"
+          :disabled="isInvited[index]"
+          @click="invite(index)"
+        >
           <v-icon class="me-2">mdi-account-multiple-plus</v-icon>
           {{
             isInvited[index]
               ? t('questions.invitationList.buttons.invited')
               : t('questions.invitationList.buttons.invite')
           }}
-        </v-btn>
+        </BaseButton>
       </template>
     </v-list-item>
   </v-list>
@@ -30,6 +34,7 @@ import { getAvatarUrl } from '@/utils/materials'
 
 import UserAvatar from '../common/UserAvatar.vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { QuestionApi } from '@/network/api/questions'
 import AccountService from '@/services/account'
 

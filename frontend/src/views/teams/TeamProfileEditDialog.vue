@@ -10,6 +10,7 @@ import { toast } from 'vuetify-sonner'
 
 import { getAvatarUrl } from '@/utils/materials'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import AvatarUploader from '@/components/common/AvatarUploader.vue'
 import { t } from '@/i18n'
 import { AvatarsApi } from '@/network/api/avatars'
@@ -92,9 +93,7 @@ const save = async () => {
       <v-toolbar color="transparent" flat>
         <v-toolbar-title class="text-h6">{{ t('work.teamProfile.editTitle') }}</v-toolbar-title>
         <v-spacer></v-spacer>
-        <v-btn icon variant="text" :aria-label="t('work.teamProfile.cancel')" @click="open = false">
-          <v-icon>mdi-close</v-icon>
-        </v-btn>
+        <BaseButton icon="mdi-close" :aria-label="t('work.teamProfile.cancel')" @click="open = false" />
       </v-toolbar>
 
       <v-divider></v-divider>
@@ -143,12 +142,12 @@ const save = async () => {
 
       <v-card-actions class="pa-4">
         <v-spacer></v-spacer>
-        <v-btn variant="text" class="mr-2" :disabled="saving" @click="open = false">
+        <BaseButton class="mr-2" :disabled="saving" @click="open = false">
           {{ t('work.teamProfile.cancel') }}
-        </v-btn>
-        <v-btn color="primary" variant="elevated" rounded="md" :loading="saving" @click="save">
+        </BaseButton>
+        <BaseButton kind="primary" :loading="saving" @click="save">
           {{ t('work.teamProfile.save') }}
-        </v-btn>
+        </BaseButton>
       </v-card-actions>
     </v-card>
   </v-dialog>

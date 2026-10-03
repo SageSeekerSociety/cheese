@@ -14,6 +14,7 @@ import { choiceKey, choiceName, compactChoices } from '../lib/computeConfig'
 import { relTime } from '../lib/relTime'
 import { topicTitle } from '../lib/topicState'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 
 const props = defineProps<{
@@ -211,9 +212,9 @@ watch(open, (value) => {
                   </p>
                   <template v-if="outcomes[session.id]?.state === 'unreachable'">
                     <p class="bs-error">{{ t('work.sessionMachine.abandonWarning') }}</p>
-                    <v-btn size="small" variant="text" :disabled="running" @click="abandon(session)">{{
+                    <BaseButton kind="danger" size="sm" :disabled="running" @click="abandon(session)">{{
                       t('work.sessionMachine.abandon')
-                    }}</v-btn>
+                    }}</BaseButton>
                   </template>
                 </div>
               </li>
@@ -233,16 +234,11 @@ watch(open, (value) => {
         </template>
       </v-card-text>
       <v-card-actions>
-        <v-btn variant="text" :disabled="running" @click="open = false">{{ t('global.cancel') }}</v-btn>
+        <BaseButton kind="ghost" :disabled="running" @click="open = false">{{ t('global.cancel') }}</BaseButton>
         <v-spacer />
-        <v-btn
-          color="primary"
-          variant="tonal"
-          :disabled="running || !picked || !selected.length"
-          :loading="running"
-          @click="run"
-          >{{ t('work.sessionMachine.confirm') }}</v-btn
-        >
+        <BaseButton kind="primary" :disabled="running || !picked || !selected.length" :loading="running" @click="run">{{
+          t('work.sessionMachine.confirm')
+        }}</BaseButton>
       </v-card-actions>
     </v-card>
   </v-dialog>

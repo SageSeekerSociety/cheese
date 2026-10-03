@@ -17,8 +17,8 @@
           <LegalLinks />
         </v-card-text>
         <v-card-actions class="justify-end pa-4">
-          <v-btn variant="text" @click="settle(false)">{{ t('account.cancel') }}</v-btn>
-          <v-btn color="primary" variant="flat" @click="settle(true)">{{ actionLabel }}</v-btn>
+          <BaseButton kind="ghost" @click="settle(false)">{{ t('account.cancel') }}</BaseButton>
+          <BaseButton kind="primary" @click="settle(true)">{{ actionLabel }}</BaseButton>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -40,6 +40,7 @@ import { onMounted, ref } from 'vue'
 
 import LegalLinks from './LegalLinks.vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { LegalApi } from '@/network/api/legal'
 

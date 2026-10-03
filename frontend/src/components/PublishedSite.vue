@@ -18,6 +18,7 @@ import type { ProjectSiteInfo } from '@/cx_types'
 import { computed, ref, watch } from 'vue'
 
 import { ApiError, getProjectSite, publishProjectSite } from '@/api'
+import BaseButton from '@/components/base/BaseButton.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
@@ -134,18 +135,17 @@ watch(
         {{ info.site.url }}
       </a>
       <span v-else class="site-row__url t-body c-muted">{{ t('work.publishedSite.none') }}</span>
-      <v-btn
+      <BaseButton
         v-if="info.can_publish"
+        kind="primary"
+        size="sm"
         class="site-row__act"
-        size="x-small"
-        variant="text"
-        color="primary"
         :disabled="!canPublish"
         :loading="publishing"
         @click="asking = true"
       >
         {{ info.site ? t('work.publishedSite.update') : t('work.publishedSite.publish') }}
-      </v-btn>
+      </BaseButton>
     </div>
     <p v-if="info.site" class="site-row__when t-meta c-faint">
       <code :title="info.site.source_revision">{{ info.site.source_revision.slice(0, 8) }}</code>
@@ -189,10 +189,10 @@ watch(
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn variant="text" color="on-surface-variant" @click="asking = false">{{ t('global.cancel') }}</v-btn>
-          <v-btn variant="text" color="primary" :disabled="!canPublish" :loading="publishing" @click="publish">
+          <BaseButton kind="ghost" @click="asking = false">{{ t('global.cancel') }}</BaseButton>
+          <BaseButton kind="primary" :disabled="!canPublish" :loading="publishing" @click="publish">
             {{ t('work.publishedSite.publish') }}
-          </v-btn>
+          </BaseButton>
         </v-card-actions>
       </v-card>
     </v-dialog>

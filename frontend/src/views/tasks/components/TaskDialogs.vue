@@ -161,10 +161,8 @@
       </v-card-text>
       <v-card-actions class="pa-4 pt-0">
         <v-spacer></v-spacer>
-        <v-btn variant="text" @click="handleCloseVerify">{{ t('global.cancel') }}</v-btn>
-        <v-btn variant="flat" color="primary" @click="submitVerifyForm">{{
-          t('tasks.verifyDialog.confirmJoin')
-        }}</v-btn>
+        <BaseButton kind="ghost" @click="handleCloseVerify">{{ t('global.cancel') }}</BaseButton>
+        <BaseButton kind="primary" @click="submitVerifyForm">{{ t('tasks.verifyDialog.confirmJoin') }}</BaseButton>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -192,14 +190,12 @@
 
       <v-card-actions class="pa-4 pt-2">
         <v-spacer></v-spacer>
-        <v-btn v-if="!fromSubmit" color="secondary" variant="text" @click="handleCancelPrivacy">{{
+        <BaseButton v-if="!fromSubmit" kind="ghost" @click="handleCancelPrivacy">{{
           t('tasks.verifyDialog.understood')
-        }}</v-btn>
+        }}</BaseButton>
         <template v-else>
-          <v-btn variant="text" @click="handleCancelPrivacy">{{ t('tasks.verifyDialog.notNow') }}</v-btn>
-          <v-btn color="primary" variant="flat" @click="confirmPrivacy">{{
-            t('tasks.verifyDialog.agreeAndJoin')
-          }}</v-btn>
+          <BaseButton kind="ghost" @click="handleCancelPrivacy">{{ t('tasks.verifyDialog.notNow') }}</BaseButton>
+          <BaseButton kind="primary" @click="confirmPrivacy">{{ t('tasks.verifyDialog.agreeAndJoin') }}</BaseButton>
         </template>
       </v-card-actions>
     </v-card>
@@ -238,6 +234,8 @@ import { useTaskInheritance } from '../composables/useTaskInheritance'
 import { useEvents } from '../events'
 
 import TaskInheritance from './TaskInheritance.vue'
+
+import BaseButton from '@/components/base/BaseButton.vue'
 
 const { t } = useI18n()
 

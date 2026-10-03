@@ -70,10 +70,10 @@
       <v-divider></v-divider>
       <v-card-actions class="pa-4">
         <v-spacer></v-spacer>
-        <v-btn variant="text" @click="$emit('close')">{{ t('global.cancel') }}</v-btn>
-        <v-btn color="error" variant="flat" :disabled="!selectedTeamId" @click="$emit('confirm')">{{
+        <BaseButton kind="ghost" @click="$emit('close')">{{ t('global.cancel') }}</BaseButton>
+        <BaseButton kind="danger" solid :disabled="!selectedTeamId" @click="$emit('confirm')">{{
           t('tasks.leaveTeam.title')
-        }}</v-btn>
+        }}</BaseButton>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -86,6 +86,8 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { getAvatarUrl } from '@/utils/materials'
+
+import BaseButton from '@/components/base/BaseButton.vue'
 
 const { t } = useI18n()
 

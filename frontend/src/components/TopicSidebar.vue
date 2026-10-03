@@ -37,6 +37,7 @@ import TransferProjectDialog from './TransferProjectDialog.vue'
 
 import { menuActionOf } from '@/commands'
 import { openPalette } from '@/commands/palette/state'
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
 const props = defineProps<{
@@ -443,11 +444,9 @@ const onDocs = computed(() => !!props.activeDocs)
 
           <div class="t-eyebrow side-subhead side-subhead--row">
             <span>{{ t('work.sidebar.topics') }}</span>
-            <v-btn
+            <BaseButton
               icon="mdi-plus"
-              size="x-small"
-              variant="text"
-              color="on-surface-variant"
+              size="sm"
               :title="creatingTopic ? t('work.sidebar.creatingTopic') : t('work.sidebar.newTopic')"
               :aria-label="creatingTopic ? t('work.sidebar.creatingTopic') : t('work.sidebar.newTopic')"
               :loading="creatingTopic"

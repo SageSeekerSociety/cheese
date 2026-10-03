@@ -43,14 +43,14 @@
       </v-list-item-subtitle>
 
       <template #append>
-        <v-btn
+        <BaseButton
           v-if="request.status === 'PENDING'"
-          variant="text"
-          color="error"
-          size="small"
+          kind="danger"
+          size="sm"
           icon="mdi-close"
+          :aria-label="t('global.cancel')"
           @click="cancelRequest(request.id)"
-        ></v-btn>
+        />
       </template>
     </v-list-item>
 
@@ -101,23 +101,19 @@
 
       <template #append>
         <div v-if="invitation.status === 'PENDING'" class="d-flex">
-          <v-btn
-            variant="text"
-            color="success"
-            size="small"
+          <BaseButton
+            size="sm"
             icon="mdi-check"
             :title="t('teams.pending.accept')"
             class="mr-1"
             @click="acceptInvitation(invitation.id)"
-          ></v-btn>
-          <v-btn
-            variant="text"
-            color="error"
-            size="small"
+          />
+          <BaseButton
+            size="sm"
             icon="mdi-close"
             :title="t('teams.pending.decline')"
             @click="declineInvitation(invitation.id)"
-          ></v-btn>
+          />
         </div>
       </template>
     </v-list-item>
@@ -166,25 +162,21 @@
 
       <template #append>
         <div class="d-flex">
-          <v-btn
-            variant="text"
-            color="success"
-            size="small"
+          <BaseButton
+            size="sm"
             icon="mdi-check"
             :title="t('teams.pending.accept')"
             class="mr-1"
             :disabled="answering === invitation.id"
             @click="answerProjectInvitation(invitation, true)"
-          ></v-btn>
-          <v-btn
-            variant="text"
-            color="error"
-            size="small"
+          />
+          <BaseButton
+            size="sm"
             icon="mdi-close"
             :title="t('teams.pending.decline')"
             :disabled="answering === invitation.id"
             @click="answerProjectInvitation(invitation, false)"
-          ></v-btn>
+          />
         </div>
       </template>
     </v-list-item>
@@ -201,6 +193,7 @@ import { toast } from 'vuetify-sonner'
 import { getAvatarUrl } from '@/utils/materials'
 
 import { listMyInvitations, respondToInvitation } from '@/api'
+import BaseButton from '@/components/base/BaseButton.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import i18n, { t } from '@/i18n'
 import { TeamsApi } from '@/network/api/teams'
