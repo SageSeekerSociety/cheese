@@ -937,7 +937,7 @@
   "answerVersionStale": "版本不对，请重取这一题后再作答",
   "askQuestionObject": "每题必须是对象",
   "askOptionsTwoToThree": "每题需要 2-3 个对象选项",
-  "askOptionObject": "每个选项都是 {text, explain?} 对象",
+  "askOptionObject": "每个选项必须是对象，包含 text 和可选的 explain 字段",
   "askQuestionsCount": "questions 必须含 1-8 题",
   "askGroupNotFound": "问题组不存在",
   "askGroupIncomplete": "问题组成员不完整，请重新获取",

@@ -4,6 +4,7 @@ import { effectScope, nextTick, ref } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ApiError } from '../api'
+import { setLocale } from '../i18n'
 import { groupKey, makeGroupSubmission } from '../lib/askGroup'
 import { groupAcknowledged, groupPendingKey, loadGroupPending } from '../lib/askGroupState'
 import { emptyAskDraft, loadAskDraft, saveAskDraft } from '../lib/askState'
@@ -135,6 +136,7 @@ beforeEach(() => {
 afterEach(() => {
   scopes.splice(0).forEach((s) => s.stop())
   vi.restoreAllMocks()
+  setLocale('zh-CN')
 })
 
 describe('atomic Ask group controller', () => {
@@ -244,7 +246,8 @@ describe('atomic Ask group controller', () => {
     expect(h.state().error).toBeNull()
   })
 
-  it('releases only an explicit version rejection after refresh and user action', async () => {
+  it.each(['zh-CN', 'en'] as const)('releases only an explicit version rejection in %s', async (locale) => {
+    setLocale(locale)
     const h = setup()
     await flush()
     h.choose()
@@ -264,7 +267,7 @@ describe('atomic Ask group controller', () => {
     expect(h.state().pending).not.toBeNull()
     // Another 409 of the same status, said with another sentence: the operation
     // is still not proved absent, so it stays pending.
-    mocks.settle.mockRejectedValue(new ApiError(409, '同一个组 client_op_id 换了内容'))
+    mocks.settle.mockRejectedValue(new ApiError(409, renderNoticeMessage({ key: 'askGroupOpIdReused' }, '')))
     h.askGroupAction(h.data.group, { type: 'submit' })
     await flush()
     expect(h.state().rejectedOperation).toBeUndefined()
