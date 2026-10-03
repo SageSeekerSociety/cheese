@@ -131,12 +131,12 @@ def main() -> None:
     # ---------- the two refusal shapes, and the one that is not a refusal ----------
     # 429 for a spent budget, 400 for a binding the catalogue cannot serve. The
     # kind is what the client acts on, so both are read, not just the number.
-    budget_status, budget_src = grab(ADDON, r'_refuse\(flow, (\d+), "rate_limit_error", f"([^"]+)"', 1)
-    budget_type, _ = grab(ADDON, r'_refuse\(flow, \d+, "([^"]+)", f"cheese project budget')
-    budget_prefix, _ = grab(ADDON, r'_refuse\(flow, \d+, "rate_limit_error", f"([^"]+)\{verdict\.reason\}')
+    budget_status, budget_src = grab(ADDON, r'_refuse\(flow, (\d+), "billing_error", message, headers\)')
+    budget_type, _ = grab(ADDON, r'_refuse\(flow, \d+, "([^"]+)", message, headers\)')
+    budget_prefix, prefix_src = grab(ADDON, r'_refuse_spent_budget\(\s*flow, f"([^"]+)\{verdict\.reason\}"')
     fact("budget.status", int(budget_status), ADDON, budget_src)
     fact("budget.type", budget_type, ADDON, budget_src)
-    fact("budget.prefix", budget_prefix, ADDON, budget_src)
+    fact("budget.prefix", budget_prefix, ADDON, prefix_src)
     binding_status, binding_src = grab(ADDON, r'_refuse\(flow, (\d+), "invalid_request_error", verdict\.reason\)', 1)
     binding_type, _ = grab(ADDON, r'_refuse\(flow, \d+, "([^"]+)", verdict\.reason\)')
     fact("binding.status", int(binding_status), ADDON, binding_src)
