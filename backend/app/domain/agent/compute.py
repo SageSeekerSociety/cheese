@@ -31,16 +31,11 @@ from app.domain.agent.harness import (
 if TYPE_CHECKING:
     from app.domain.agent.device_provider import DeviceChannel
     from app.domain.agent.harness import (
-        ActivityConsumer,
-        CompletionConsumer,
-        EventConsumer,
         InputRegistrar,
         MemoryConsumer,
-        ReachabilityConsumer,
-        ReceiptConsumer,
+        RoomReader,
         SessionControls,
         SessionRef,
-        TerminationConsumer,
         UnreadProbe,
     )
 
@@ -328,52 +323,17 @@ class ComputePool:
             )
         return found
 
-    def bind_events(
-        self,
-        consumer: "EventConsumer",
-        activity: "ActivityConsumer | None" = None,
-    ) -> None:
-        """Give every runtime the room-side persistence and activity owners,
-        and the room's ear for what an agent is in the middle of writing."""
-        from app.domain.agent.live_frames import publish_live
-
+    def bind_reader(self, reader: "RoomReader") -> None:
+        """Give every runtime the room's ear: what its sessions say and do,
+        one item at a time (``RoomReader``)."""
         for runtime in self._runtimes():
-            runtime.bind_events(consumer)
-            if activity is not None:
-                runtime.bind_activity(activity)
-            if (bind_live := getattr(runtime, "bind_live", None)) is not None:
-                bind_live(publish_live)
-
-    def bind_receipts(self, consumer: "ReceiptConsumer") -> None:
-        """Give every runtime the owner of prompt receipts — the consumed-stamp
-        side of #539 decision A."""
-        for runtime in self._runtimes():
-            runtime.bind_receipts(consumer)
-
-    def bind_completions(self, consumer: "CompletionConsumer") -> None:
-        for runtime in self._runtimes():
-            runtime.bind_completions(consumer)
-
-    def bind_terminations(self, consumer: "TerminationConsumer") -> None:
-        """Give every runtime that can report one where a confirmed terminal
-        work outcome is committed. Asked the way ``bind_live`` is: a runtime
-        that never ends work this way has nothing to send, and saying so is not
-        part of what makes it a runtime."""
-        for runtime in self._runtimes():
-            bind = getattr(runtime, "bind_terminations", None)
-            if bind is not None:
-                bind(consumer)
+            runtime.bind_reader(reader)
 
     def bind_unread_probe(self, probe: "UnreadProbe") -> None:
         """Give every runtime a way to ask whether anything it was handed is
         still unread — the other half of the same bookkeeping."""
         for runtime in self._runtimes():
             runtime.bind_unread_probe(probe)
-
-    def bind_reachability(self, consumer: "ReachabilityConsumer") -> None:
-        """Give every runtime the owner of 「这一轮在等它的设备」."""
-        for runtime in self._runtimes():
-            runtime.bind_reachability(consumer)
 
     def bind_memory(self, consumer: "MemoryConsumer") -> None:
         """Give every runtime the owner of 「记忆该对账了」.
@@ -602,7 +562,7 @@ def build_compute_pool(cloud_channel: "DeviceChannel | None" = None) -> ComputeP
     # 挂谁，由注册表说（结论 43）。一个骨架答不出四条硬性要求就不在 `HARNESSES`
     # 里，而「不在注册表里」如果只是矩阵上少一列，它照样是个活调用点：
     # `recover_sessions` 进程重启后会把它的旧会话恢复回来并写进 `_owners`，
-    # `bind_events` 照样把房间侧的持久化交给它，`deliver` 在没有 owner 的时候照样
+    # `bind_reader` 照样把房间的耳朵交给它，`deliver` 在没有 owner 的时候照样
     # 按 `holds()` 找到它。所以判据落在装配这一步：注册表是唯一的那一处，什么时候
     # 答得出四条、什么时候写回 `HARNESSES`，这里不用跟着改。
     if forwards(CODEX):

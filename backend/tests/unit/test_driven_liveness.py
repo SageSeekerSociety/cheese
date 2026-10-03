@@ -26,6 +26,7 @@ from app.domain.delivery.input_identity import (
     WorkTermination,
 )
 from tests.conftest import StubChannel
+from tests.support.room_reader import room_reader
 
 _REAL_SLEEP = asyncio.sleep
 
@@ -140,10 +141,14 @@ class Room:
         def oldest_unread(_topic):
             return min(self.unread.values(), default=None)
 
-        self.runtime.bind_events(consume)
-        self.runtime.bind_receipts(receipt)
-        self.runtime.bind_completions(completion)
-        self.runtime.bind_terminations(termination)
+        self.runtime.bind_reader(
+            room_reader(
+                events=consume,
+                receipts=receipt,
+                completions=completion,
+                terminations=termination,
+            )
+        )
         self.runtime.bind_unread_probe(oldest_unread)
 
     def results(self) -> list[AgentResult]:

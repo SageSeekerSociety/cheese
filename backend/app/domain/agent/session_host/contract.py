@@ -3,8 +3,8 @@
 A session is named by ``SessionRef``: which harness, and where on the session
 host it keeps its conversation. It is started by ``SessionSpec`` (what the
 process is) and ``Access`` (what it acts with and on); a ``Prompt`` is one thing
-said to it. Reading it from a cursor yields ``Read`` items, each carrying the
-cursor to read on from.
+said to it. Reading it from a cursor yields ``Read`` items (`agent/reads.py`),
+each carrying the cursor to read on from.
 
 Nothing here knows a room, a document or a person: those are the assemblies'
 (``agent.document``, ``agent.personal``).
@@ -13,11 +13,6 @@ Nothing here knows a room, a document or a person: those are the assemblies'
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-
-from app.domain.agent.service import AgentEvent
-
-#: A position in a session's journal, as the runner names its entries.
-Cursor = str
 
 
 class SessionError(RuntimeError):
@@ -124,31 +119,6 @@ class Prompt:
     #: Said ahead of ``text`` to a session nobody has spoken to yet: what was
     #: said before the session existed.
     preface: str = ""
-
-
-@dataclass(frozen=True)
-class Writing:
-    """What the session is in the middle of writing, as it stands now."""
-
-    blocks: tuple[dict, ...]
-
-
-@dataclass(frozen=True)
-class Ended:
-    """The session is gone: its runner exited, or stayed out of reach for
-    longer than ``SessionSpec.gone_after_s``."""
-
-    reason: str
-
-
-@dataclass(frozen=True)
-class Read:
-    """One thing read from a session, and the cursor to read on from."""
-
-    cursor: Cursor | None
-    #: The work it belongs to, when the session says.
-    work_id: str | None
-    event: AgentEvent | Writing | Ended
 
 
 @dataclass(frozen=True)

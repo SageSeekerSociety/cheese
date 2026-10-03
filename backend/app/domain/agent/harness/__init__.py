@@ -48,24 +48,15 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from app.domain.agent.service import AgentEvent
-from app.domain.delivery.input_identity import (
-    CompletionConsumer,
-    InputRegistrar,
-    ReceiptConsumer,
-)
-from app.domain.delivery.input_identity import (
-    TerminationConsumer as TerminationConsumer,
-)
+from app.domain.delivery.input_identity import InputRegistrar
 
 if TYPE_CHECKING:
     from app.domain.agent.compute import ComputeProvider
+    from app.domain.agent.reads import Read
 
 
-# What the platform hands a runtime so the room can hear it. The vocabulary is
-# ``AgentEvent`` — a message, a tool call, a result — which every harness has to
-# speak anyway; nothing about these three says how the events were sensed. They
-# lived in the Claude Code adapter under names starting with "Hook", which is
-# how they were sensed and not what they are.
+# How a runtime's subscription hands what it read to the runtime, which keeps
+# its own books on it before the room hears it (``DrivenRuntime._consume``).
 #
 # (project, topic, work id, event, event id, final text already seen, unsolicited)
 EventConsumer = Callable[
@@ -82,20 +73,13 @@ EventConsumer = Callable[
 ]
 
 
-# (project, topic, work id, active) — a session started or stopped working.
-# ``agent_handle`` names the seat that started or stopped: several seats work
-# side by side in one room, and the consumer's 「谁在干活」 frame is a guess
-# without it. Keyword-only so existing doubles keep ``active`` at args[-1].
-class ActivityConsumer(Protocol):
-    def __call__(
-        self,
-        project_id: uuid.UUID,
-        topic_id: uuid.UUID,
-        work_id: uuid.UUID,
-        active: bool,
-        *,
-        agent_handle: str | None = None,
-    ) -> Awaitable[None]: ...
+# Where the room hears its sessions: one item at a time, each for the session
+# that produced it, in the order the runtime read them. What the session said
+# and did, when it started and stopped working, which inputs it took in, how
+# its work ended, whether the machine under it is reachable, and what it is in
+# the middle of writing all arrive here (``reads.Read``); the
+# room decides what each one means for it.
+RoomReader = Callable[["SessionRef", "Read"], Awaitable[None]]
 
 
 # (topic) — lay this room's memory tree down in its session, and take back what
@@ -107,18 +91,10 @@ class ActivityConsumer(Protocol):
 # owns the room (`chat.ChatService`).
 MemoryConsumer = Callable[[uuid.UUID], Awaitable[None]]
 
-# (project, topic, work id, reachable, reason) — the machine an open turn runs on
-# went out of reach (False, with what the runtime saw) or came back (True). Not
-# an event of the session's: the session is on the far side of the gap, and
-# only the runtime reading it can say that it is there.
-ReachabilityConsumer = Callable[
-    [uuid.UUID, uuid.UUID, uuid.UUID, bool, str], Awaitable[None]
-]
-
 # (topic) → the loop-clock reading at which the OLDEST message we injected and
 # have not seen consumed was written, or None when nothing is waiting.
 #
-# The receipt above answers "did this one land"; this answers "is anything still
+# A receipt (``Received``) answers "did this one land"; this answers "is anything still
 # unanswered, and since when". A session that has stopped reading its input can
 # go on producing output indefinitely, so nothing else in the liveness picture
 # notices it: the hooks keep arriving and the screen stays alive. What it cannot
@@ -511,28 +487,12 @@ class AgentRuntime(Protocol):
         """
         ...
 
-    def bind_events(self, consumer: EventConsumer) -> None:
-        """Where the room's persistence and broadcast live."""
-        ...
-
-    def bind_activity(self, consumer: ActivityConsumer) -> None:
-        """Where 「这个会话在干活 / 停了」 goes."""
-        ...
-
-    def bind_receipts(self, consumer: ReceiptConsumer) -> None:
-        """Where 「会话真的读到了那条消息」 goes."""
-        ...
-
-    def bind_completions(self, consumer: CompletionConsumer) -> None:
-        """Where exact durable native work completion is committed."""
+    def bind_reader(self, reader: RoomReader) -> None:
+        """Where the room hears everything its sessions say and do."""
         ...
 
     def bind_unread_probe(self, probe: UnreadProbe) -> None:
         """Where 「还有没有消息在等着被读」 is asked."""
-        ...
-
-    def bind_reachability(self, consumer: ReachabilityConsumer) -> None:
-        """Where 「这一轮在等它的设备」 goes."""
         ...
 
     def bind_memory(self, consumer: MemoryConsumer) -> None:

@@ -22,6 +22,7 @@ from app.domain.agent.service import AgentMessage, AgentResult
 from app.domain.agent_session.models import SessionPlace
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.delivery.input_identity import InputIdentity, InputReceipt
+from tests.support.room_reader import room_reader
 
 
 @pytest.mark.anyio
@@ -170,8 +171,7 @@ async def test_room_send_steer_and_reconnect_keep_one_work_owner(tmp_path):
     consumer = AsyncMock()
     receipts = AsyncMock()
     register_input = AsyncMock()
-    runtime.bind_events(consumer)
-    runtime.bind_receipts(receipts)
+    runtime.bind_reader(room_reader(events=consumer, receipts=receipts))
     marks = []
     replacement = None
     try:
@@ -250,7 +250,7 @@ async def test_room_send_steer_and_reconnect_keep_one_work_owner(tmp_path):
                 }
             )
         replacement = CodexRuntime(channel)
-        replacement.bind_events(consumer)
+        replacement.bind_reader(room_reader(events=consumer))
         assert await replacement.recover() == [session]
         assert not replacement.tasks
         await replacement.replay(session, known_texts=set())
