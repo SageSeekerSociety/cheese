@@ -350,4 +350,4 @@ async def ask(
     else:
         await emit("error", error_frame(refused))
     if spent:
-        await chat._drain_gateway_usage(project_id, room_id, work)
+        await chat.charge_turn_spend(project_id, room_id, work)

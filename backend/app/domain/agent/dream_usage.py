@@ -19,7 +19,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
 from app.domain.agent.gateway import LlmGateway
-from app.domain.agent.gateway_usage import _drain_gateway_usage
+from app.domain.agent.gateway_spend import Charge, settle
+from app.domain.agent.gateway_usage import TURN_RETRY_AFTER, ProjectGatewayKey
 from app.domain.agent.service import AgentUsage
 from app.domain.memory import dream
 from app.domain.usage.ledger import Ledger
@@ -34,14 +35,19 @@ async def drain_dream_spend(
     turn_id: uuid.UUID,
 ) -> None:
     """Land what the project's platform key spent as the platform's."""
-    await _drain_gateway_usage(
+    await settle(
         sessions,
         gateway,
-        gateway_lock,
-        project_id,
-        topic_id,
-        turn_id,
-        platform_kind=dream.DREAM_KIND,
+        ProjectGatewayKey(project_id, platform=True),
+        Charge(
+            model=settings.agent_model,
+            kind=dream.DREAM_KIND,
+            project_id=project_id,
+            topic_id=topic_id,
+            turn_id=turn_id,
+        ),
+        retry_after=TURN_RETRY_AFTER,
+        lock=gateway_lock,
     )
 
 

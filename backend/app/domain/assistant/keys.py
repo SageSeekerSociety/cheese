@@ -19,7 +19,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
 from app.domain.agent.gateway import LlmGateway
-from app.domain.assistant.billing import charge_new_spend, gateway
+from app.domain.agent.gateway_spend import charge_new_spend
+from app.domain.assistant.billing import PersonalGatewayKey, gateway, person_charge
 from app.domain.assistant.models import AssistantGatewayKey
 
 logger = logging.getLogger(__name__)
@@ -49,7 +50,9 @@ async def person_key(
     if row is not None:
         # The spend still on the key being replaced is charged before the key
         # and its checkpoint are, or it would never be.
-        await charge_new_spend(sessions, user_id, admin)
+        await charge_new_spend(
+            sessions, admin, PersonalGatewayKey(user_id), person_charge(user_id)
+        )
     await session.execute(
         text("SELECT pg_advisory_xact_lock(hashtext(:k))"),
         {"k": f"assistant-gateway-key:{user_id}"},

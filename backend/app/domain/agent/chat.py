@@ -55,11 +55,11 @@ from app.domain.agent.gateway import LlmGateway
 # 同名委托，调用点一格没动。三个设置键的名字（`_GW_KEY` 等）只被这一段读，跟着
 # 搬走，不再是 `ChatService` 的属性。
 from app.domain.agent.gateway_usage import (
-    _drain_gateway_usage,
     _gateway_project_env,
     _model_kwargs,
     _model_policy_call,
     _schedule_deferred_drain,
+    charge_turn_spend,
     project_gateway_key,
 )
 from app.domain.agent.harness import (
@@ -2164,7 +2164,7 @@ class ChatService(SessionRecovery):
         # `settings.agent_model` is exactly how mimo disappeared from `by_model`.
         usages: list[AgentUsage] = []
         if self._gateway is not None and state.route == "gateway":
-            drained = await self._drain_gateway_usage(
+            drained = await self.charge_turn_spend(
                 state.project_id, state.topic_id, state.work_id
             )
             if drained:
@@ -3129,12 +3129,12 @@ class ChatService(SessionRecovery):
             turn_id,
         )
 
-    async def _drain_gateway_usage(
+    async def charge_turn_spend(
         self, project_id: uuid.UUID, topic_id: uuid.UUID, turn_id: uuid.UUID
     ) -> list[AgentUsage] | None:
-        """L1: real usage for gateway-routed turns, one entry per model
-        (gateway_usage.py)."""
-        return await _drain_gateway_usage(
+        """What this turn spent on the project's key, charged, one entry per
+        model (gateway_usage.py)."""
+        return await charge_turn_spend(
             self._sessions,
             self._gateway,
             self._gateway_lock,
