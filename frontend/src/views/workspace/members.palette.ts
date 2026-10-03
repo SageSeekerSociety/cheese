@@ -3,6 +3,7 @@ import type { PaletteSource } from '@/commands/palette/sources'
 
 import { copyText } from '@/commands/copy'
 import { t } from '@/i18n'
+import { memberName } from '@/lib/agentNames'
 import { agentDmKey } from '@/lib/dm'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -17,7 +18,7 @@ const source: PaletteSource = {
     if (!ctx.projectId || store.projectId !== ctx.projectId) return []
     return store.members.map((member) => ({
       id: `member:${member.user_handle}`,
-      title: member.name || member.user_handle,
+      title: memberName(member) || member.user_handle,
       subtitle: `@${member.user_handle}`,
       icon: member.agent ? 'mdi-robot-outline' : 'mdi-account-outline',
       keywords: [member.user_handle],

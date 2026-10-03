@@ -230,9 +230,7 @@ async def device_sessions(db, project_id, device_id: str) -> list[tuple]:
                     "topic_title": topic.title,
                     "topic_title_source": str(topic.title_source),
                     "agent_handle": row.agent_handle,
-                    "agent_name": await _agent_name(
-                        db, project, topic, row.agent_handle
-                    ),
+                    **await _agent_name(db, project, topic, row.agent_handle),
                     "choice": (row.execution_request or {}).get("choice"),
                     "last_active": row.updated_at.isoformat(),
                     "working": topic.id in busy,
@@ -304,15 +302,23 @@ async def _session_teammate(db, project, handle: str):
         return None
 
 
-async def _agent_name(db, project, topic, handle: str) -> str:
+async def _agent_name(db, project, topic, handle: str) -> dict:
     """The name a room shows for the agent whose session is keyed ``handle``:
-    its saved teammate's, else the one the room falls back to."""
+    its saved teammate's, else the one the room falls back to. Beside it,
+    whether that is still the name it was born with, which a screen shows in
+    its reader's language."""
     from app.domain.agent_instance.services import AgentInstanceService
 
     teammate = await _session_teammate(db, project, handle)
-    if teammate is None:
-        return (await TopicService(db).resolve_agent(topic)).display_name
-    return AgentInstanceService.resolved(teammate).display_name
+    agent = (
+        await TopicService(db).resolve_agent(topic)
+        if teammate is None
+        else AgentInstanceService.resolved(teammate)
+    )
+    return {
+        "agent_name": agent.display_name,
+        "agent_name_source": agent.name_source.value,
+    }
 
 
 async def _session_author(db, project, handle: str) -> str:
@@ -353,9 +359,7 @@ async def device_users(db, device_ids: list[str]) -> dict[str, list[dict]]:
                 "topic_title": topic.title,
                 "topic_title_source": str(topic.title_source),
                 "agent_handle": session.agent_handle,
-                "agent_name": await _agent_name(
-                    db, project, topic, session.agent_handle
-                ),
+                **await _agent_name(db, project, topic, session.agent_handle),
             }
         )
     return out
@@ -384,7 +388,8 @@ async def tell_device_owner(db, *, topic, row, device, lease) -> None:
         return
     project = await ProjectService(db).get_or_404(topic.project_id)
     team = await db.get(Team, project.team_id)
-    agent = await _agent_name(db, project, topic, row.agent_handle)
+    named = await _agent_name(db, project, topic, row.agent_handle)
+    agent = named["agent_name"]
     visibility = await _visibility_of(sql_device_service(db), device.device_id)
     access = visibility is Visibility.host
     await deliver(
@@ -404,6 +409,7 @@ async def tell_device_owner(db, *, topic, row, device, lease) -> None:
                 "topicTitleSource": str(topic.title_source),
                 "agentHandle": row.agent_handle,
                 "agentName": agent,
+                "agentNameSource": named["agent_name_source"],
                 "deviceId": device.device_id,
                 "deviceName": device.name,
                 "machineAccess": access,

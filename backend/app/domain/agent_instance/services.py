@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.agent_instance.configuration import AgentConfiguration
-from app.domain.agent_instance.models import AgentInstance
+from app.domain.agent_instance.models import AgentInstance, NameSource
 from app.domain.agent_instance.repositories import AgentInstanceRepository
 from app.domain.agent_type.library import AgentTypeDef, preset_types
 from app.domain.identity.handles import (
@@ -43,6 +43,9 @@ class ResolvedAgent:
     handle: str
     type_name: str | None
     display_name: str
+    # ``default`` while it still carries 「芝士」, the name it was born with;
+    # screens show that in their reader's language (``models.NameSource``).
+    name_source: NameSource = NameSource.human
     configuration: dict = field(default_factory=dict)
 
 
@@ -260,11 +263,13 @@ class AgentInstanceService:
         await self._require_known_type(type_name)
         config = configuration or initial_configuration(type_name)
         await self._validate_model(project_id, config)
+        name = display_name.strip()
         instance = await self._repo.create(
             project_id=project_id,
             handle=handle,
             type_name=type_name or None,
-            display_name=display_name.strip() or CHEESE_NAME,
+            display_name=name or CHEESE_NAME,
+            name_source=NameSource.human if name else NameSource.default,
             configuration=config.model_dump(),
         )
         await self.ensure_identity(instance)
@@ -333,6 +338,7 @@ class AgentInstanceService:
         if len(name) > 64:
             raise ValidationError(say("agentNameTooLong"))
         instance.display_name = name
+        instance.name_source = NameSource.human
         return instance
 
     async def deactivate(self, project: Project, instance: AgentInstance) -> None:
@@ -397,6 +403,7 @@ class AgentInstanceService:
             handle=CHEESE_HANDLE,
             type_name=None,
             display_name=CHEESE_NAME,
+            name_source=NameSource.default,
             configuration=initial_configuration().model_dump(),
         )
         if display_name is not None:
@@ -428,5 +435,10 @@ class AgentInstanceService:
             handle=instance.handle,
             type_name=instance.type_name,
             display_name=instance.display_name or CHEESE_NAME,
+            name_source=(
+                NameSource(instance.name_source)
+                if instance.display_name
+                else NameSource.default
+            ),
             configuration=instance.configuration,
         )

@@ -22,6 +22,7 @@ import {
 } from '@/api'
 import { ApiError, isProjectArchivedError } from '@/api'
 import { t } from '@/i18n'
+import { memberName } from '@/lib/agentNames'
 import { cachedWindow, refreshBlockCache } from '@/lib/blockCache'
 import { externalHandles } from '@/lib/externalMembers'
 import { myHandle } from '@/me'
@@ -72,7 +73,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   // 名册还没到时才退回「芝士」。房间里有自己的 AI 席位时，对话里读的是房间名册
   // （`useRoomRoster`），这里给的是项目默认那一位，供拿不到房间名册的地方用。
   const agentName = computed(
-    () => members.value.find((m) => m.agent && m.project_default)?.name || t('shell.agentDefaultName')
+    () => memberName(members.value.find((m) => m.agent && m.project_default)) || t('shell.agentDefaultName')
   )
   // 同一位的 handle：句子里提到它时画成可点的 @chip（UserRef），点了去它的成员页。
   const agentHandle = computed(() => members.value.find((m) => m.agent && m.project_default)?.user_handle ?? null)

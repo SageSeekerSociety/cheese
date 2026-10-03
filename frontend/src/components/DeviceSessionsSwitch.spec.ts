@@ -1,6 +1,7 @@
 // 「现在的分布」里一台自有设备上的 agent：选一些，换到另一台工作电脑。换的是它所在
 // 的整个房间（一个话题一个容器），走名册那条更换；正在干活的跳过并说明原因，连不上的只由人逐个决定不推送直接更换。
-import type { ComputeChoice, DeviceSession } from '../cx_types'
+import type { ComputeChoice } from '../cx_types'
+import type { DeviceSession } from '../types/deviceSessions'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'

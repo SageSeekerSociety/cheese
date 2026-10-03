@@ -26,6 +26,7 @@ import UserRef from '@/components/common/UserRefLink.vue'
 import { useRoomSocket } from '@/components/room/composables/useRoomSocket'
 import { t } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
+import { teammateName } from '@/lib/agentNames'
 import { renderNoticeMessage } from '@/lib/noticeText'
 import { topicTitle } from '@/lib/topicState'
 
@@ -528,7 +529,11 @@ onBeforeUnmount(stopResync)
                       }}</span></template
                     >
                     <template #agent>
-                      <UserRef :handle="use.agent_handle" :name="use.agent_name" :project-id="use.project_id" />
+                      <UserRef
+                        :handle="use.agent_handle"
+                        :name="teammateName(use.agent_name, use.agent_name_source)"
+                        :project-id="use.project_id"
+                      />
                     </template>
                   </i18n-t>
                 </div>

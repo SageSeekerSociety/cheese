@@ -367,13 +367,14 @@ class DashboardService:
             .all()
         )
         agents = {
-            (project_id, agent_handle): display_name
-            for project_id, agent_handle, display_name in (
+            (project_id, agent_handle): (display_name, name_source)
+            for project_id, agent_handle, display_name, name_source in (
                 await self._s.execute(
                     select(
                         AgentInstance.project_id,
                         AgentInstance.handle,
                         AgentInstance.display_name,
+                        AgentInstance.name_source,
                     ).where(AgentInstance.project_id.in_(readable))
                 )
             ).tuples()
@@ -381,7 +382,9 @@ class DashboardService:
         out = []
         for row in rows:
             key = keys[row.id]
-            agent_name = agents.get((key[0], key[1])) if key else None
+            agent_name, name_source = (
+                agents.get((key[0], key[1]), (None, None)) if key else (None, None)
+            )
             out.append(
                 {
                     "id": str(row.id),
@@ -391,6 +394,8 @@ class DashboardService:
                     "project_name": names.get(key[0]) if key else None,
                     "agent_handle": key[1] if key else None,
                     "agent_name": agent_name or None,
+                    # ``default``: a screen names it in its reader's language.
+                    "agent_name_source": str(name_source) if agent_name else None,
                 }
             )
         return out

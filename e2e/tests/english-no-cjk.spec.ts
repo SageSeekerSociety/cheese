@@ -22,6 +22,11 @@
  * attribute on it before the check, so `Expand {team}` is still checked for the
  * `Expand`. The only other exemption is text that declares its own language
  * (`lang`), which is how a language switch names 中文. Nothing else is excused.
+ *
+ * An AI teammate's name is marked like a person's, but 芝士 never counts as
+ * one: it is the name the platform gives a teammate nobody has renamed, stored
+ * in Chinese for the agents that read it, and a screen shows it in its reader's
+ * language (`teammateName` in frontend/src/lib/agentNames.ts).
  */
 import { expect, test, type Page } from "@playwright/test";
 import { acceptPendingConsents, api, apiLogin, DEMO_PASSWORD } from "./helpers";
@@ -44,16 +49,26 @@ type Screen = {
 const CJK_SOURCE =
   "[\\u3000-\\u303f\\u3400-\\u4dbf\\u4e00-\\u9fff\\uf900-\\ufaff\\uff01-\\uff60]";
 
+// The stored name of a teammate nobody renamed: the platform's word, not a person's.
+const DEFAULT_TEAMMATE = "芝士";
+
 /** Every Chinese string on the page that no `data-user-content` region accounts for. */
 async function chineseOnScreen(page: Page): Promise<string[]> {
-  return page.evaluate((source) => {
+  return page.evaluate(([source, platformName]) => {
     const cjk = new RegExp(source);
+    // Marked or not, the default teammate name is checked like interface copy.
+    const platformWords = (text: string) =>
+      text.trim().replace(/^@/, "") === platformName;
     const ATTRIBUTES = ["title", "aria-label", "placeholder"];
     const REGION = '[data-user-content=""]';
     // A language names itself in every UI language (frontend/src/i18n/languages.ts);
     // the switch says 中文 to someone reading English on purpose.
     const OWN_LANGUAGE = '[lang]:not([lang|="en"])';
-    const excused = (el: Element) => !!el.closest(`${REGION}, ${OWN_LANGUAGE}`);
+    const excused = (el: Element) => {
+      if (el.closest(OWN_LANGUAGE)) return true;
+      const region = el.closest(REGION);
+      return !!region && !platformWords(region.textContent ?? "");
+    };
     const shown = (el: Element) =>
       el.checkVisibility({ checkVisibilityCSS: true });
 
@@ -64,14 +79,14 @@ async function chineseOnScreen(page: Page): Promise<string[]> {
     for (const el of document.querySelectorAll("[data-user-content]")) {
       const named = el.getAttribute("data-user-content")!.trim();
       if (named) {
-        userStrings.add(named);
+        if (!platformWords(named)) userStrings.add(named);
         continue;
       }
       const text = (el.textContent ?? "").trim();
-      if (text) userStrings.add(text);
+      if (text && !platformWords(text)) userStrings.add(text);
       for (const name of ATTRIBUTES) {
         const value = el.getAttribute(name)?.trim();
-        if (value) userStrings.add(value);
+        if (value && !platformWords(value)) userStrings.add(value);
       }
     }
     const written = [...userStrings]
@@ -127,7 +142,7 @@ async function chineseOnScreen(page: Page): Promise<string[]> {
       }
     }
     return [...new Set(found)];
-  }, CJK_SOURCE);
+  }, [CJK_SOURCE, DEFAULT_TEAMMATE] as const);
 }
 
 /** Visit each screen and check it; every screen is reported, not just the first. */

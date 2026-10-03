@@ -19,6 +19,7 @@ import {
   updateTopicMemberRole,
 } from '../api'
 import { t } from '../i18n'
+import { memberName } from '../lib/agentNames'
 import { choiceKey, choiceName } from '../lib/computeConfig'
 import { externalHandles } from '../lib/externalMembers'
 import { avatarColor, avatarInitial } from '../utils/avatar'
@@ -127,7 +128,7 @@ const addable = computed(() => {
   return props.projectMembers
     .filter((m) => !inRoom.has(m.user_handle) && m.active !== false)
     .map((m) => ({
-      title: m.name || m.user_handle,
+      title: memberName(m) || m.user_handle,
       value: m.user_handle,
       agent: !!m.agent,
       external: externals.value.has(m.user_handle),
@@ -202,7 +203,7 @@ async function onSetRole(handle: string, role: string) {
               v-if="m.agent"
               class="members-mini__ai"
               :size="22"
-              :name="m.name || m.member_handle"
+              :name="memberName(m) || m.member_handle"
               :handle="m.member_handle"
               :style="{ zIndex: MAX_FACES - i }"
             />
@@ -210,12 +211,12 @@ async function onSetRole(handle: string, role: string) {
               v-else-if="faceSrc(m)"
               class="members-mini__face members-mini__face--photo"
               :src="faceSrc(m)!"
-              :alt="m.name || m.member_handle"
+              :alt="memberName(m) || m.member_handle"
               :style="{ zIndex: MAX_FACES - i }"
               @error="onFaceError(m.member_handle)"
             />
             <span v-else class="members-mini__face" :style="{ zIndex: MAX_FACES - i, backgroundColor: faceColor(m) }">{{
-              initial(m.name || m.member_handle)
+              initial(memberName(m) || m.member_handle)
             }}</span>
           </template>
           <span v-if="overflow" class="members-mini__face members-mini__face--more" :style="{ zIndex: 0 }"
@@ -236,19 +237,19 @@ async function onSetRole(handle: string, role: string) {
       <LoadingSkeleton v-if="loading" variant="roster" />
       <ul v-else class="roster__list">
         <li v-for="m in members" :key="m.id" class="roster__item">
-          <CheeseAvatar v-if="m.agent" :size="26" :name="m.name || m.member_handle" :handle="m.member_handle" />
+          <CheeseAvatar v-if="m.agent" :size="26" :name="memberName(m) || m.member_handle" :handle="m.member_handle" />
           <img
             v-else-if="faceSrc(m)"
             class="roster__avatar roster__avatar--photo"
             :src="faceSrc(m)!"
-            :alt="m.name || m.member_handle"
+            :alt="memberName(m) || m.member_handle"
             @error="onFaceError(m.member_handle)"
           />
           <span v-else class="roster__avatar" :style="{ backgroundColor: faceColor(m) }">{{
-            initial(m.name || m.member_handle)
+            initial(memberName(m) || m.member_handle)
           }}</span>
           <span class="roster__who">
-            <span class="roster__name">{{ m.name || m.member_handle }}</span>
+            <span class="roster__name">{{ memberName(m) || m.member_handle }}</span>
             <span class="roster__handle">@{{ m.member_handle }}</span>
           </span>
           <span v-if="m.agent" class="roster__badge">{{ t('work.room.roster.agentBadge') }}</span>

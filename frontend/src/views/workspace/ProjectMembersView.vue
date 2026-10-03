@@ -51,6 +51,7 @@ import UserRef from '@/components/common/UserRefLink.vue'
 import LeaveProjectDialog from '@/components/LeaveProjectDialog.vue'
 import TransferProjectDialog from '@/components/TransferProjectDialog.vue'
 import { t } from '@/i18n'
+import { memberName, teammateName } from '@/lib/agentNames'
 import { agentDmKey } from '@/lib/dm'
 import { isExternalMember } from '@/lib/externalMembers'
 import { myHandle } from '@/me'
@@ -142,14 +143,16 @@ const error = ref<string | null>(null)
 function matches(m: ProjectMemberRow): boolean {
   const q = query.value.trim().toLowerCase()
   if (!q) return true
-  return (m.name || '').toLowerCase().includes(q) || m.user_handle.toLowerCase().includes(q)
+  return memberName(m).toLowerCase().includes(q) || m.user_handle.toLowerCase().includes(q)
 }
 
 const people = computed(() => store.members.filter((m) => !m.agent && matches(m)))
 const agents = computed(() =>
   teammates.value.filter((a) => {
     const q = query.value.trim().toLowerCase()
-    return !q || a.display_name.toLowerCase().includes(q) || a.handle.toLowerCase().includes(q)
+    return (
+      !q || teammateName(a.display_name, a.name_source).toLowerCase().includes(q) || a.handle.toLowerCase().includes(q)
+    )
   })
 )
 
@@ -377,10 +380,10 @@ useCommands(() => [
         <p v-if="s.key === 'team'" class="t-meta-read mb-2">{{ t('work.members.teamHint') }}</p>
         <v-card v-for="m in s.rows" :key="m.user_handle" class="mb-2 member-row" variant="outlined">
           <div class="d-flex align-center pa-3" @click="openProfile(m)">
-            <UserAvatar :name="m.name || m.user_handle" :avatar="faceUrl(m)" :size="36" class="mr-3" />
+            <UserAvatar :name="memberName(m) || m.user_handle" :avatar="faceUrl(m)" :size="36" class="mr-3" />
             <div class="min-w-0">
               <div class="d-flex align-center ga-2">
-                <span class="t-title text-truncate">{{ m.name || m.user_handle }}</span>
+                <span class="t-title text-truncate">{{ memberName(m) || m.user_handle }}</span>
                 <ExternalTag v-if="s.key === 'external'" />
                 <span v-if="m.user_handle === me" class="chip-neutral">{{ t('work.members.me') }}</span>
               </div>
@@ -409,7 +412,7 @@ useCommands(() => [
               </span>
             </span>
             <!-- 桌面是下拉菜单，手机是底部面板（AdaptiveMenu）。 -->
-            <AdaptiveMenu v-if="removable(m)" :actions="memberActions(m)" :title="m.name || m.user_handle">
+            <AdaptiveMenu v-if="removable(m)" :actions="memberActions(m)" :title="memberName(m) || m.user_handle">
               <template #activator="{ props: menuProps }">
                 <v-btn
                   v-bind="menuProps"
@@ -461,10 +464,15 @@ useCommands(() => [
         <div class="t-eyebrow mb-2">{{ t('work.members.sectionAgents') }} · {{ agents.length }}</div>
         <v-card v-for="a in agents" :key="a.handle" class="mb-2 agent-row" variant="outlined">
           <div class="d-flex align-center pa-3">
-            <CheeseAvatar :name="a.display_name || a.handle" :handle="a.seat_handle" :size="36" class="mr-3" />
+            <CheeseAvatar
+              :name="teammateName(a.display_name, a.name_source) || a.handle"
+              :handle="a.seat_handle"
+              :size="36"
+              class="mr-3"
+            />
             <div class="min-w-0">
               <div class="t-title text-truncate">
-                {{ a.display_name || a.handle }}
+                {{ teammateName(a.display_name, a.name_source) || a.handle }}
                 <span v-if="a.is_default" class="chip-neutral">{{ t('work.members.agentDefault') }}</span>
               </div>
               <div class="t-meta c-muted">@{{ a.handle }}</div>
@@ -555,7 +563,7 @@ useCommands(() => [
     <v-dialog :model-value="removeTarget !== null" max-width="420" @update:model-value="removeTarget = null">
       <v-card>
         <v-card-title class="t-dialog-title pt-4">{{
-          t('work.members.removeTitle', { name: removeTarget?.name || removeTarget?.user_handle || '' })
+          t('work.members.removeTitle', { name: memberName(removeTarget) || removeTarget?.user_handle || '' })
         }}</v-card-title>
         <v-card-text class="t-body c-muted">{{ t('work.members.removeBody') }}</v-card-text>
         <v-card-actions>

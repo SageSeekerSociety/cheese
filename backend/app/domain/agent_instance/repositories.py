@@ -5,7 +5,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.agent_instance.models import AgentInstance
+from app.domain.agent_instance.models import AgentInstance, NameSource
 
 
 class AgentInstanceRepository:
@@ -19,6 +19,7 @@ class AgentInstanceRepository:
         handle: str,
         type_name: str | None,
         display_name: str,
+        name_source: NameSource,
         configuration: dict,
     ) -> AgentInstance:
         instance = AgentInstance(
@@ -26,6 +27,7 @@ class AgentInstanceRepository:
             handle=handle,
             type_name=type_name,
             display_name=display_name,
+            name_source=name_source,
             configuration=configuration,
         )
         self._session.add(instance)

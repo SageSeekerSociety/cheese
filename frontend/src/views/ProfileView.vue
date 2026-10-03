@@ -41,6 +41,7 @@ import ActivityHeatmap from '@/components/profile/ActivityHeatmap.vue'
 import i18n, { t } from '@/i18n'
 import { label, NOTIF_KIND, TOPIC_STATUS } from '@/labels'
 import { activityWeeks, formatUtcDay, HALF_YEAR_WEEKS } from '@/lib/activityYear'
+import { teammateName } from '@/lib/agentNames'
 import { relTime } from '@/lib/relTime'
 import { topicTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
@@ -427,7 +428,7 @@ const roleInProject = computed(() => inProject.value?.source ?? null)
                       <UserRef
                         v-if="note.agent_handle || note.agent_name"
                         :handle="note.agent_handle"
-                        :name="note.agent_name"
+                        :name="teammateName(note.agent_name, note.agent_name_source)"
                         :project-id="note.project_id"
                       />
                     </span>

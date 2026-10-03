@@ -970,7 +970,7 @@ export function getTopicComputeProfile(topicId: string): Promise<TopicComputePro
 export function listDeviceSessions(
   projectId: string,
   deviceId: string
-): Promise<{ sessions: import('./cx_types').DeviceSession[]; hidden: number }> {
+): Promise<{ sessions: import('./types/deviceSessions').DeviceSession[]; hidden: number }> {
   return request(`/projects/${encodeURIComponent(projectId)}/devices/${encodeURIComponent(deviceId)}/sessions`)
 }
 

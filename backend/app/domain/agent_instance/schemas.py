@@ -36,6 +36,9 @@ class AgentInstanceOut(BaseModel):
     seat_handle: str
     type_name: str | None
     display_name: str
+    # ``default``: the name it was born with, which a screen shows in its
+    # reader's language.
+    name_source: str = "human"
     configuration: AgentConfiguration
     # Whether this is the project's default — what a new topic gets.
     is_default: bool = False

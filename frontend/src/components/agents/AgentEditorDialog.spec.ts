@@ -239,12 +239,23 @@ describe('修改时', () => {
     await clickSave()
     await waitFor(() =>
       expect(updateProjectAgent).toHaveBeenCalledWith(PROJECT, 'a2', {
-        display_name: existing.display_name,
         configuration: { ...CONFIG, body: 'Check security' },
       })
     )
     expect(updateAgentType).not.toHaveBeenCalled()
     expect(existing.configuration.body).toBe('Review code')
+  })
+
+  it('leaves a teammate nobody named unnamed when only its role changes', async () => {
+    mountDialog({ ...existing, display_name: '芝士', name_source: 'default' })
+    expect((field('名字') as HTMLInputElement).value).toBe('芝士')
+    await fireEvent.update(field('角色设定'), 'Check security')
+    await clickSave()
+    await waitFor(() =>
+      expect(updateProjectAgent).toHaveBeenCalledWith(PROJECT, 'a2', {
+        configuration: { ...CONFIG, body: 'Check security' },
+      })
+    )
   })
 
   it('edits agents created from a built-in preset without editing the preset', async () => {
