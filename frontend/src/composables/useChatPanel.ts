@@ -15,8 +15,6 @@
 // (useChatRowActions), the per-row entrance animations (useTimelineMotion), any
 // markup, and the decisions that belong to the page a panel is rendered from.
 import type { Block, ChatAttachment, ReactionAgg, RoomTask, Topic, WsServerFrame } from '../cx_types'
-import type { AskGroupScope } from '../lib/askGroup'
-import type { AskGroupState } from '../lib/askGroupState'
 import type { Outgoing } from '../lib/composerDrafts'
 import type { NoticeAgent } from '../lib/platformNotice'
 import type { QuotedContext } from '../lib/quotedContext'
@@ -46,8 +44,6 @@ import { useRoomSocket } from '../components/room/composables/useRoomSocket'
 import { useRoomTurns } from '../components/room/composables/useRoomTurns'
 import { useTimeline } from '../components/room/composables/useTimeline'
 import { useTypingPreview } from '../components/room/composables/useTypingPreview'
-import { groupKey } from '../lib/askGroup'
-import { canAnswer } from '../lib/askState'
 import { isAgentBlock, isAgentHandle, isPersonBlock } from '../lib/authorship'
 import { cachedWindow, pendingBlockRefresh, setCachedWindow } from '../lib/blockCache'
 import { mergeRefreshedTail, PAGE_SIZE } from '../lib/blockPaging'
@@ -65,6 +61,7 @@ import { myHandle } from '../me'
 
 import { useAskAnswers } from './useAskAnswers'
 import { useAskGroups } from './useAskGroups'
+import { useAskTakeover } from './useAskTakeover'
 import { useChatComposer } from './useChatComposer'
 import { useChatPaging } from './useChatPaging'
 import { useOwnChecklist } from './useOwnChecklist'
@@ -166,43 +163,9 @@ export function useChatPanel(opts: ChatPanelOptions) {
     viewer: () => askViewer.value,
     replace: replaceShown,
   })
-
-  // 提问接管输入框：只要有一组题在等我回答，输入框那一格就画提问面板，不画 composer。
-  // 两者互斥（同一个 DOM 位置二选一），所以不需要点击就能接管。
-  //
-  // 关掉（Esc）只作用于这一组，记在 askDismissed 里；「有 N 个问题待回答」那一条
-  // 可以一次性收回全部。这保证 Esc 不会让问题永远消失——它只是把面板先收起来。
-  const askDismissed = reactive(new Set<string>())
-  function askNeedsAnswer(state: AskGroupState): boolean {
-    if (!state.data || state.data.settlement) return false
-    return state.data.blocks.some((b) => canAnswer(b, askViewer.value) && !b.meta?.answer_log?.length)
-  }
-  // 多组同时待答时整体接管：取最新出现的那一组（useAskGroups 按插入序排列），
-  // 其余仍留在 askReturn 里，收起后能连同一起回来。
-  const askTakeover = computed<AskGroupState | null>(() => {
-    const all = Object.values(askGroups)
-    for (let i = all.length - 1; i >= 0; i--) {
-      const state = all[i]!
-      if (!askDismissed.has(groupKey(state.scope)) && askNeedsAnswer(state)) return state
-    }
-    return null
-  })
-  // 收起之后还剩多少道要回答的题（只数被收起的组，正在接管的那组不算）。
-  const askReturn = computed(() => {
-    let count = 0
-    for (const state of Object.values(askGroups)) {
-      if (!askDismissed.has(groupKey(state.scope))) continue
-      for (const b of state.data?.blocks ?? [])
-        if (canAnswer(b, askViewer.value) && !b.meta?.answer_log?.length) count++
-    }
-    return count
-  })
-  function dismissAsk(scope: AskGroupScope): void {
-    askDismissed.add(groupKey(scope))
-  }
-  function restoreAsk(): void {
-    askDismissed.clear()
-  }
+  // 提问接管输入框：面板与 composer 互斥地驻留在同一格（见 useAskTakeover）。
+  const takeover = useAskTakeover({ groups: askGroups, viewer: () => askViewer.value })
+  const { askTakeover, askReturn, dismissAsk, restoreAsk } = takeover
   /** 把这一条换进时间线（在的话）。 */
   function replaceShown(block: Block) {
     if (!timeline.find(block.id)) return
