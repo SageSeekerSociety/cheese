@@ -348,6 +348,28 @@ class AgentTurnRepository:
         )
         return {turn_id: _aware(started) for turn_id, started in rows}
 
+    async def open_on(
+        self, topic_id: uuid.UUID, *, task_id: uuid.UUID | None
+    ) -> list[tuple[str, float, str | None]]:
+        """The delivered turns still open on one line — the room's own
+        (``task_id`` None) or one thread's: ``(turn id, started at as epoch
+        seconds, agent seat)``. A turn not yet delivered has not reached its
+        session, so nobody is working on it yet."""
+        rows = await self._session.execute(
+            select(AgentTurn.id, AgentTurn.started_at, AgentTurn.agent_handle).where(
+                AgentTurn.topic_id == topic_id,
+                AgentTurn.task_id.is_(None)
+                if task_id is None
+                else AgentTurn.task_id == task_id,
+                AgentTurn.stopped_at.is_(None),
+                AgentTurn.delivered_at.is_not(None),
+            )
+        )
+        return [
+            (str(turn_id), _aware(started).timestamp(), agent)
+            for turn_id, started, agent in rows
+        ]
+
     async def open_turns(self) -> list[TurnRecord]:
         """Every interval still open, oldest first."""
         rows = (
