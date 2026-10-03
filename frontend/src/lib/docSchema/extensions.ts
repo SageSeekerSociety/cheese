@@ -94,6 +94,15 @@ const DocCodeBlock = CodeBlockLowlight.extend({
       },
     }
   },
+  // Every code block marked finds is one. tiptap's own reader takes only a
+  // fence that starts the line, so one indented by one to three spaces (still a
+  // fence to CommonMark, and common under a list item) was dropped, code and all.
+  parseMarkdown: (token, helpers) =>
+    helpers.createNode(
+      'codeBlock',
+      { language: token.lang || null },
+      token.text ? [helpers.createTextNode(token.text)] : []
+    ),
   renderHTML({ node, HTMLAttributes }) {
     return [
       'pre',
