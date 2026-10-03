@@ -6,7 +6,7 @@ import type { AgentPhase } from '../../../composables/useDocAgent'
 
 import { ref } from 'vue'
 
-import { plainTokens } from '../../../lib/renderMessage'
+import { renderMarkdown } from '../../../lib/renderMessage'
 import CheeseAvatar from '../../CheeseAvatar.vue'
 
 import DocEditButton from './DocEditButton.vue'
@@ -42,7 +42,8 @@ function onKey(e: KeyboardEvent) {
   if (more.value.trim()) emit('say', more.value.trim())
   more.value = ''
 }
-const words = (text: string) => plainTokens(text, { mentionNames: props.mentionNames, topicTitles: {} })
+/** 回答按 Markdown 读：列表、加粗、代码照样排出来，点名读成名字。 */
+const rendered = (text: string) => renderMarkdown(text, { mentionNames: props.mentionNames, topicTitles: {} })
 </script>
 
 <template>
@@ -63,7 +64,12 @@ const words = (text: string) => plainTokens(text, { mentionNames: props.mentionN
           {{ phase === 'queued' ? t('work.room.docAgent.cancel') : t('work.room.docAgent.stop') }}
         </DocEditButton>
       </div>
-      <div v-if="kind === 'ask' && answer" class="doc-agent-result__answer" dir="auto">{{ words(answer) }}</div>
+      <div
+        v-if="kind === 'ask' && answer"
+        class="doc-agent-result__answer doc-agent-result__answer--streaming md-content"
+        dir="auto"
+        v-html="rendered(answer)"
+      />
     </template>
 
     <template v-else-if="phase === 'done' || phase === 'undone'">
@@ -91,14 +97,9 @@ const words = (text: string) => plainTokens(text, { mentionNames: props.mentionN
     <template v-else-if="phase === 'answered'">
       <div class="doc-agent-result__row doc-agent-result__row--top">
         <CheeseAvatar :size="20" :name="agentName" />
-        <div class="doc-agent-result__answer" dir="auto">
-          {{
-            answer
-              ? words(answer)
-              : kind === 'edit'
-                ? t('work.room.docAgent.noChange')
-                : t('work.room.docAgent.noIssue')
-          }}
+        <div v-if="answer" class="doc-agent-result__answer md-content" dir="auto" v-html="rendered(answer)" />
+        <div v-else class="doc-agent-result__answer" dir="auto">
+          {{ kind === 'edit' ? t('work.room.docAgent.noChange') : t('work.room.docAgent.noIssue') }}
         </div>
       </div>
       <div class="doc-agent-result__actions">
@@ -154,6 +155,34 @@ const words = (text: string) => plainTokens(text, { mentionNames: props.mentionN
 }
 .doc-agent-result__text--muted {
   color: var(--muted);
+  animation: docAgentBreathe 1.4s ease-in-out infinite;
+}
+@keyframes docAgentBreathe {
+  50% {
+    opacity: 0.5;
+  }
+}
+/* 回答还在一个字一个字地来：末尾跟着一个闪的光标。 */
+.doc-agent-result__answer--streaming > :last-child::after {
+  content: '';
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: var(--muted);
+  animation: docAgentCaret 1s steps(1) infinite;
+}
+@keyframes docAgentCaret {
+  50% {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .doc-agent-result__text--muted,
+  .doc-agent-result__answer--streaming > :last-child::after {
+    animation: none;
+  }
 }
 .doc-agent-result__answer {
   flex: 1 1 auto;
@@ -164,8 +193,10 @@ const words = (text: string) => plainTokens(text, { mentionNames: props.mentionN
   color: var(--text);
   font-size: 14px;
   line-height: var(--lh-14);
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+.doc-agent-result__answer:not(.md-content) {
+  white-space: pre-wrap;
 }
 .doc-agent-result__row--top .doc-agent-result__answer {
   padding: 0;

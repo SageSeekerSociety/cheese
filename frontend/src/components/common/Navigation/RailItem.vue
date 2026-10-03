@@ -366,7 +366,7 @@ function warmDestination() {
   background: var(--warn);
   box-shadow: 0 0 0 2px var(--canvas);
   color: var(--inverse-surface);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   line-height: 18px;
   text-align: center;

@@ -210,6 +210,8 @@
                     size="small"
                     prepend-icon="mdi-check"
                     class="mr-2"
+                    :loading="answering === request.id"
+                    :disabled="answering !== undefined"
                     @click="approveRequest(request.id)"
                   >
                     {{ t('teams.members.approve') }}
@@ -219,6 +221,7 @@
                     color="error"
                     size="small"
                     prepend-icon="mdi-close"
+                    :disabled="answering !== undefined"
                     @click="rejectRequest(request.id)"
                   >
                     {{ t('teams.members.reject') }}
@@ -409,6 +412,8 @@ const inviteRoleInput = ref('MEMBER')
 const inviteMessageInput = ref('')
 
 const joinRequests = ref<TeamMembershipApplication[]>([])
+// 正在批准或拒绝的那条申请：回话之前两个按钮都按不动，连点只发一次。
+const answering = ref<number>()
 const loadingRequests = ref(false)
 
 const teamInvitations = ref<TeamMembershipApplication[]>([])
@@ -456,6 +461,8 @@ const pendingRequests = computed(() => {
   return joinRequests.value.filter((request) => request.status === 'PENDING')
 })
 
+// 下面几个操作成功时有的回 204，响应体是空串：失败只认 withErrorHandling 给的 undefined，
+// 拿真假判断会把成功当失败——不提示、不刷新，那一行还挂着，再点一次就是「找不到」。
 const confirmInvite = async () => {
   if (!teamData.value || !inviteUidInput.value) {
     return
@@ -469,7 +476,7 @@ const confirmInvite = async () => {
     })
   })
 
-  if (result) {
+  if (result !== undefined) {
     toast.success(t('teams.members.inviteSent'))
     inviteUidInput.value = undefined
     inviteRoleInput.value = 'MEMBER'
@@ -491,7 +498,7 @@ const promoteToAdmin = async (userId: number) => {
     { defaultMessage: t('teams.members.promoteFailed') }
   )
 
-  if (result) {
+  if (result !== undefined) {
     toast.success(t('teams.members.promoteDone'))
     await fetchTeamMembers(teamData.value!.id)
   }
@@ -509,7 +516,7 @@ const demoteToMember = async (userId: number) => {
     { defaultMessage: t('teams.members.demoteFailed') }
   )
 
-  if (result) {
+  if (result !== undefined) {
     toast.success(t('teams.members.demoteDone'))
     await fetchTeamMembers(teamData.value!.id)
   }
@@ -527,15 +534,16 @@ const removeMember = async (userId: number) => {
     { defaultMessage: t('teams.members.removeFailed') }
   )
 
-  if (result) {
+  if (result !== undefined) {
     toast.success(t('teams.members.removeDone'))
     await fetchTeamMembers(teamData.value!.id)
   }
 }
 
 const approveRequest = async (requestId: number) => {
-  if (!teamData.value) return
+  if (!teamData.value || answering.value !== undefined) return
 
+  answering.value = requestId
   const result = await errorHandler.withErrorHandling(
     async () => {
       return await TeamsApi.approveJoinRequest(teamData.value!.id, requestId)
@@ -543,16 +551,18 @@ const approveRequest = async (requestId: number) => {
     { defaultMessage: t('teams.members.approveFailed') }
   )
 
-  if (result) {
+  if (result !== undefined) {
     toast.success(t('teams.members.approveDone'))
     // 刷新数据
     await Promise.all([fetchJoinRequests(teamData.value!.id), fetchTeamMembers(teamData.value!.id)])
   }
+  answering.value = undefined
 }
 
 const rejectRequest = async (requestId: number) => {
-  if (!teamData.value) return
+  if (!teamData.value || answering.value !== undefined) return
 
+  answering.value = requestId
   const result = await errorHandler.withErrorHandling(
     async () => {
       return await TeamsApi.rejectJoinRequest(teamData.value!.id, requestId)
@@ -560,11 +570,12 @@ const rejectRequest = async (requestId: number) => {
     { defaultMessage: t('teams.members.rejectFailed') }
   )
 
-  if (result) {
+  if (result !== undefined) {
     toast.success(t('teams.members.rejectDone'))
     // 刷新数据
     await fetchJoinRequests(teamData.value!.id)
   }
+  answering.value = undefined
 }
 
 const cancelInvitation = async (invitationId: number) => {
@@ -577,7 +588,7 @@ const cancelInvitation = async (invitationId: number) => {
     { defaultMessage: t('teams.members.cancelFailed') }
   )
 
-  if (result) {
+  if (result !== undefined) {
     toast.success(t('teams.members.cancelDone'))
     // 刷新数据
     await fetchTeamInvitations(teamData.value!.id)

@@ -48,8 +48,23 @@
       "tag": "续跑话题上存着的同一个会话",
       "events": [
         { "at": 200, "do": "seat", "who": "cheese", "session": "Claude Code · 续跑 s-8f2", "state": "阶段：任务执行" },
-        { "at": 1000, "do": "act", "who": "cheese", "turn": "t1", "tool": "cheese_worktree", "arg": "c9d0 · 首页按钮改色", "platform": true },
-        { "at": 1600, "do": "act", "who": "cheese", "turn": "t1", "tool": "Read", "arg": "frontend/src/views/home/Landing.vue" }
+        {
+          "at": 1000,
+          "do": "act",
+          "who": "cheese",
+          "turn": "t1",
+          "tool": "cheese_worktree",
+          "arg": "c9d0 · 首页按钮改色",
+          "platform": true
+        },
+        {
+          "at": 1600,
+          "do": "act",
+          "who": "cheese",
+          "turn": "t1",
+          "tool": "Read",
+          "arg": "frontend/src/views/home/Landing.vue"
+        }
       ]
     },
     {
@@ -57,9 +72,31 @@
       "focus": "site",
       "tag": "工具调用进现场，要说话必须 chat_send",
       "events": [
-        { "at": 200, "do": "act", "who": "cheese", "turn": "t1", "tool": "Edit", "arg": "frontend/src/views/home/landing.css" },
-        { "at": 900, "do": "act", "who": "cheese", "turn": "t1", "tool": "Bash", "arg": "pnpm exec vitest run src/views/home" },
-        { "at": 1700, "do": "act", "who": "cheese", "turn": "t1", "tool": "chat_send", "arg": "主按钮已改成琥珀色……", "platform": true },
+        {
+          "at": 200,
+          "do": "act",
+          "who": "cheese",
+          "turn": "t1",
+          "tool": "Edit",
+          "arg": "frontend/src/views/home/landing.css"
+        },
+        {
+          "at": 900,
+          "do": "act",
+          "who": "cheese",
+          "turn": "t1",
+          "tool": "Bash",
+          "arg": "pnpm exec vitest run src/views/home"
+        },
+        {
+          "at": 1700,
+          "do": "act",
+          "who": "cheese",
+          "turn": "t1",
+          "tool": "chat_send",
+          "arg": "主按钮已改成琥珀色……",
+          "platform": true
+        },
         { "at": 1900, "do": "say", "who": "cheese", "text": "主按钮已改成琥珀色、字号 16 → 18，手机宽度下也不换行。" }
       ]
     },
@@ -68,10 +105,40 @@
       "focus": "site",
       "tag": "机器的错记在设备上，发版时轮次交给新进程",
       "events": [
-        { "at": 200, "do": "act", "who": "cheese", "turn": "t1", "tool": "Bash", "arg": "git push origin task/c9d0", "failed": true, "error": "执行器连接中断，结果未知" },
-        { "at": 1000, "do": "note", "who": "cheese", "turn": "t1", "text": "推送结果未知：平台记着这次调用，重派前先查远端有没有这个提交。" },
-        { "at": 1800, "do": "act", "who": "cheese", "turn": "t1", "tool": "Bash", "arg": "git ls-remote origin task/c9d0" },
-        { "at": 2400, "do": "act", "who": "cheese", "turn": "t1", "tool": "cheese_accept_request", "arg": "feat(home): amber primary button", "platform": true },
+        {
+          "at": 200,
+          "do": "act",
+          "who": "cheese",
+          "turn": "t1",
+          "tool": "Bash",
+          "arg": "git push origin task/c9d0",
+          "failed": true,
+          "error": "执行器连接中断，结果未知"
+        },
+        {
+          "at": 1000,
+          "do": "note",
+          "who": "cheese",
+          "turn": "t1",
+          "text": "推送结果未知：平台记着这次调用，重派前先查远端有没有这个提交。"
+        },
+        {
+          "at": 1800,
+          "do": "act",
+          "who": "cheese",
+          "turn": "t1",
+          "tool": "Bash",
+          "arg": "git ls-remote origin task/c9d0"
+        },
+        {
+          "at": 2400,
+          "do": "act",
+          "who": "cheese",
+          "turn": "t1",
+          "tool": "cheese_accept_request",
+          "arg": "feat(home): amber primary button",
+          "platform": true
+        },
         { "at": 2900, "do": "end", "turn": "t1" },
         { "at": 2900, "do": "seat", "who": "cheese", "state": "空闲" }
       ]
@@ -80,9 +147,7 @@
       "label": "话题命名",
       "focus": "title",
       "tag": "后台小模型起名，不占这一轮",
-      "events": [
-        { "at": 600, "do": "title", "text": "首页主按钮改色" }
-      ]
+      "events": [{ "at": 600, "do": "title", "text": "首页主按钮改色" }]
     }
   ]
 }

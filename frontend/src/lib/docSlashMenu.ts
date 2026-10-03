@@ -10,6 +10,7 @@
 // 匹配，从不解析自然语言（军规 4）。它不新增任何 node 或 mark，所以共享的
 // round-trip schema 一个字没动。
 import type { ChainedCommands } from '@tiptap/core'
+import type { Node as PMNode } from '@tiptap/pm/model'
 import type { SuggestionProps } from '@tiptap/suggestion'
 
 import { Extension } from '@tiptap/core'
@@ -145,6 +146,30 @@ export const SLASH_ITEMS: SlashItem[] = [
     run: (c) => c.setHorizontalRule(),
   },
 ]
+
+/** 把已有的一块换成别的块（浮条上的「正文 ▾」、行首的手柄）：同一张表，去掉插入新
+ *  东西的那几项（表格、分隔线）。 */
+export const BLOCK_ITEMS: SlashItem[] = SLASH_ITEMS.filter((item) => item.key !== 'table' && item.key !== 'hr')
+
+/** 这一块在表里是哪一项；对不上的（比如表格）算正文。 */
+export function blockKeyOf(node: PMNode | null | undefined): string {
+  switch (node?.type.name) {
+    case 'heading':
+      return `h${node.attrs.level as number}`
+    case 'bulletList':
+      return 'bullet'
+    case 'orderedList':
+      return 'ordered'
+    case 'taskList':
+      return 'task'
+    case 'codeBlock':
+      return 'code'
+    case 'blockquote':
+      return 'quote'
+    default:
+      return 'text'
+  }
+}
 
 export function filterSlashItems(query: string): SlashItem[] {
   const q = query.toLowerCase().trim()

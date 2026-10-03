@@ -9,17 +9,18 @@ import type { DocConnection, DocPeer, DocSession } from '../../composables/useDo
 import type { SendDocComment } from '../../composables/useDocCommentDraft'
 import type { Block, Topic } from '../../cx_types'
 import type { DocAgentListener, DocAgentRequest } from '../../lib/docAgent'
-import type { SelectionTarget } from '../../lib/docBubble'
+import type { CommentSpot } from '../../lib/docCommentSpots'
 import type { DocEdit } from '../../lib/docEdits'
 import type { DocVersionPage } from '../../lib/docHistory'
 import type { DocReviewRequest } from '../../lib/docReview'
-import type { DocThreadActions, DocThreadState } from '../../lib/docThreadTypes'
+import type { DocThreadActions, DocThreadState, ThreadPlace } from '../../lib/docThreadTypes'
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 import { useDocAgent } from '../../composables/useDocAgent'
 import { useDocReview } from '../../composables/useDocReview'
 import { useDocSuggestions } from '../../composables/useDocSuggestions'
+import { anchorComment } from '../../lib/docCommentSpots'
 import { exportMarkdown } from '../../lib/docSchema'
 import { topicTitle } from '../../lib/topicState'
 
@@ -65,25 +66,24 @@ const props = withDefaults(
     peers: DocPeer[]
     errorMsg: string | null
     // ---- 评论区 ----
-    comments: Block[]
     commentAuthor?: string
-    threadState?: DocThreadState
-    threadActions?: DocThreadActions
-    sendComment?: SendDocComment
-    anchorNodes: Block[]
+    threadState: DocThreadState
+    threadActions: DocThreadActions
+    /** 发一条评论（评的是 `quote` 那几个字）；回执里有它的 id，标记由这一层放到字上。 */
+    sendComment?: (topicId: string, content: string, quote: string) => Promise<{ id: string }>
+    /** 重读评论串。 */
+    refreshThreads?: () => Promise<void>
     // ---- 装饰的原料（原样递给正文那一半） ----
     liveRefIndex: Map<number, string>
-    commentMarkIndex: Map<number, { id: string; quote: string }[]>
     /** 修改建议的理由（建议 id → 理由），卡上写出来。 */
     suggestionReasons?: Record<string, string>
     /** 文档里有了新的修改建议时调一下：读它们的理由。 */
     fetchSuggestionReasons?: () => void
-    /** 取一份最新的节点树（评论定锚点、闪某一段都要它）。 */
+    /** 取一份最新的节点树（闪某一段要它）。 */
     fetchDocNodes: () => Promise<Block[]>
     /** 图片 src 的显示期解析。 */
     imageSrc: (src: string) => string
     // ---- 动作 ----
-    refreshComments: () => Promise<void>
     toggleEditable: () => void
     setError: (message: string | null) => void
     /** 在文档里找 AI 队友：问一次，答的过程交给 `listener`；没有时不给这个入口。 */
@@ -91,7 +91,7 @@ const props = withDefaults(
     /** 停下这一问。 */
     stopAgent?: (conversation: string) => Promise<unknown>
     /** 把这一问的回答放进一条新评论；回执是那条评论的 id。 */
-    answerToComment?: (conversation: string, target: SelectionTarget, question: string) => Promise<string>
+    answerToComment?: (conversation: string, quote: string, question: string) => Promise<string>
     /** 以自己的名义替换正文里的字（撤销、还原 AI 队友的修改）。 */
     applyDocEdits?: (edits: DocEdit[]) => Promise<unknown>
     // ---- 修改记录 ----
@@ -111,6 +111,7 @@ const props = withDefaults(
     outdated: false,
     commentAuthor: '',
     sendComment: undefined,
+    refreshThreads: undefined,
     askAgent: undefined,
     stopAgent: undefined,
     answerToComment: undefined,
@@ -173,11 +174,28 @@ const surfaceRef = ref<InstanceType<typeof DocSurface> | null>(null)
 function highlightTurn(turnId: string) {
   void surfaceRef.value?.highlightTurn(turnId)
 }
-function highlightNode(nodeId: string) {
-  void surfaceRef.value?.highlightNode(nodeId)
+function openComment(spot: CommentSpot) {
+  commentsRef.value?.open(spot)
 }
-function openComment(target: SelectionTarget) {
-  commentsRef.value?.open(target)
+/** 发出一条评论，再把它的标记放到评的那几个字上。 */
+const postComment: SendDocComment = async (topicId, content, spot) => {
+  if (!props.sendComment) throw new Error(t('work.room.comments.unavailable'))
+  const posted = await props.sendComment(topicId, content, spot.quote)
+  const ed = surfaceRef.value?.editor
+  if (ed && spot.quote) anchorComment(ed, spot, posted.id)
+  openId.value = posted.id
+  await props.refreshThreads?.()
+}
+// 评论：没解决的那些在正文里标出来，正在看的那一串标得重些。
+const openThreads = computed(
+  () =>
+    new Set(props.threadState.threads.filter((thread) => thread.state === 'open').map((thread) => thread.comment.id))
+)
+function placeOfThread(id: string): ThreadPlace {
+  return surfaceRef.value?.threadPlace(id) ?? null
+}
+function revealThread(id: string) {
+  surfaceRef.value?.revealThread(id)
 }
 
 // 评论里的点名（`<@handle>`）读成名字。
@@ -249,9 +267,6 @@ watch([() => props.topic?.id, () => props.commentAuthor], () => {
   suggestionsOpen.value = false
   historyOpen.value = false
 })
-function quoteState(id: string) {
-  return surfaceRef.value?.commentQuoteState(id) ?? 'missing'
-}
 
 // 编辑器里现在这一版正文（开发时的探针读它），只有这里知道编辑器在哪。
 defineExpose({
@@ -296,7 +311,7 @@ defineExpose({
             :last-edit="lastEdit"
             :suggestion-count="suggestions.list.value.length"
             :suggestions-open="suggestionsOpen"
-            :comment-count="comments.length"
+            :comment-count="openThreads.size"
             :comments-open="commentsRef?.opened ?? false"
             :agent-name="agentName"
             :agent-handle="agentHandle"
@@ -335,15 +350,15 @@ defineExpose({
           v-model:open-id="openId"
           :topic-id="topic?.id ?? null"
           :author="commentAuthor"
-          :send-comment="sendComment"
+          :send-comment="postComment"
           :thread-state="threadState"
           :thread-actions="threadActions"
-          :comments="comments"
-          :anchor-nodes="anchorNodes"
-          :quote-state="quoteState"
+          :place-of="placeOfThread"
+          :agent-name="agentName"
           :mention-names="mentionNames"
-          @locate-node="highlightNode"
-          @posted="refreshComments"
+          :name-of="nameOf"
+          :writable="!readOnly"
+          @locate="revealThread"
         >
           <div
             ref="bodyRef"
@@ -364,8 +379,9 @@ defineExpose({
                 :topic-id="topic?.id ?? null"
                 :topic-list="topicList"
                 :live-ref-index="liveRefIndex"
-                :comment-mark-index="commentMarkIndex"
-                :open-comment-id="openId"
+                :can-comment="!readOnly"
+                :open-threads="openThreads"
+                :active-thread="openId"
                 :fetch-doc-nodes="fetchDocNodes"
                 :image-src="imageSrc"
                 :pulse="pulse"
@@ -376,7 +392,7 @@ defineExpose({
                 @mention-click="emit('mention-click', $event)"
                 @open-file="emit('open-file', $event)"
                 @open-comment="openComment"
-                @agent="rewrite.open({ from: $event.from, to: $event.to, target: $event })"
+                @agent="rewrite.open($event)"
                 @locate-comment="locateComment"
                 @error="setError"
               />
@@ -481,6 +497,12 @@ defineExpose({
 @container (min-width: 48rem) {
   .doc-page {
     padding: 24px 44px 72px;
+  }
+}
+/* 能悬停的设备上，行首的手柄（DocOverlays .doc-handle，42px）待在左边距里，不被裁掉。 */
+@media (hover: hover) {
+  .doc-page {
+    padding-left: 48px;
   }
 }
 /* The topic title, above the document. */

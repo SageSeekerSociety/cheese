@@ -166,6 +166,7 @@ def _utcnow() -> datetime:
 
 # Channel = the topic id (str). Frames are the same dicts converse yields.
 Frame = dict
+_LIVE_ONLY = ("reaction", "agent_control", "live", "activity", "comment_activity")
 
 
 class InProcessBroker:
@@ -315,13 +316,12 @@ class InProcessBroker:
 
     async def publish(self, channel: str, frame: Frame) -> None:
         kind = frame.get("type")
-        # Standalone facts, not turn progress: fanned out live, never buffered.
-        # A reconnect reads each back whole — reactions from GET /blocks, session
-        # state from GET /topics/{id}/agent/control, member activity from the
-        # snapshot on connect — and buffering would replay states that have since
-        # moved on (`live`, each frame all of what an agent is writing, would
-        # replay a draft), and make an idle channel look in_flight forever.
-        if kind in ("reaction", "agent_control", "live", "activity"):
+        # Standalone facts, not turn progress: fanned out live, never buffered. A
+        # reconnect reads each back whole (reactions from GET /blocks, session state
+        # from GET /topics/{id}/agent/control, member activity from the snapshot on
+        # connect, a comment thread's progress from its thread list); buffering would
+        # replay states that have moved on and make an idle channel look in_flight.
+        if kind in _LIVE_ONLY:
             self._fan_out(channel, frame)
             return
         # A person's message landing ends their typing in this room.

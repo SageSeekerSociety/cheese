@@ -19,6 +19,10 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n, { setLocale } from '../../i18n'
 
 // The document's version history: the last edit is read on open; none here.
+vi.mock('../../api/docThreads', () => ({
+  listDocThreads: async () => ({ data: [], total: 0 }),
+  writeDocThread: async () => ({}),
+}))
 vi.mock('../../api/docHistory', () => ({
   getDocVersions: async () => ({ versions: [], cursor: null }),
   restoreDocVersion: async () => ({}),
@@ -53,7 +57,6 @@ vi.mock('../../api', async () => {
     listRoomOutputs: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     readPreviewFile: (...a: unknown[]) => readFile(...a),
     requestPreviewSession: (...a: unknown[]) => requestPreviewSession(...a),
-    getComments: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getDocNodes: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listFiles: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getGitLog: vi.fn().mockResolvedValue({ data: [], total: 0 }),

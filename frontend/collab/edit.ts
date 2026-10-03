@@ -30,10 +30,13 @@ import type { Mapping } from '@tiptap/pm/transform'
 
 import { revertSuggestions, transformToSuggestionTransaction } from '@handlewithcare/prosemirror-suggest-changes'
 import { EditorState, type Transaction } from '@tiptap/pm/state'
+import { Transform } from '@tiptap/pm/transform'
 import { updateYFragment } from '@tiptap/y-tiptap'
 import * as Y from 'yjs'
 
 import {
+  carryCommentAnchors,
+  COMMENT_ANCHOR,
   FIELD,
   nodeMarkdown,
   parseMarkdown,
@@ -70,6 +73,10 @@ function readable(doc: PMNode): { doc: PMNode; back: Mapping | null } {
   revertSuggestions(EditorState.create({ doc }), (tr) => {
     if (tr.steps.length) out = { doc: tr.doc, back: tr.mapping.invert() }
   })
+  // Nor are comment marks part of the text: R is compared with Markdown,
+  // which has none. Taking a mark off moves nothing, so `back` still holds.
+  const comment = out.doc.type.schema.marks[COMMENT_ANCHOR]
+  if (comment) out = { ...out, doc: new Transform(out.doc).removeMark(0, out.doc.content.size, comment).doc }
   return out
 }
 
@@ -249,7 +256,8 @@ export function applyEdits(live: PMNode, edits: Edit[], mode: EditMode, actor: s
       applied.push({ old: edit.old, new: edit.new })
     }
   }
-  return { ok: true, doc: working, edits: applied }
+  // The replayed blocks come from Markdown, without comment marks: give them back.
+  return { ok: true, doc: carryCommentAnchors(live, working), edits: applied }
 }
 
 /** Make the Yjs document hold `node`, as a diff against what it holds (the

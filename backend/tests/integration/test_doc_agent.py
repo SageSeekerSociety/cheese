@@ -117,6 +117,32 @@ def test_a_comment_naming_the_agent_is_answered_in_its_thread(client, sessions):
     assert ALICE_PARAGRAPH in question
 
 
+def test_the_thread_list_says_while_the_agent_is_answering(client, sessions):
+    room, seat = _document(client)
+    seen: list = []
+
+    async def look(launch, question):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://platform"
+        ) as page:
+            listed = await page.get(
+                f"/topics/{room}/comments/threads",
+                headers=session_auth_headers("alice"),
+            )
+        seen.extend(t["answering"] for t in listed.json()["data"]["data"])
+        return "好的。", None
+
+    sessions.script = look
+    root = _comment(client, room, f"<@{seat}> 这里的范围指什么？")
+
+    assert _answers(client, room, root, seat) == ["好的。"]
+    assert seen == ["working"]
+    listed = client.get(
+        f"/topics/{room}/comments/threads", headers=session_auth_headers("alice")
+    ).json()["data"]["data"]
+    assert [t["answering"] for t in listed] == [None]
+
+
 def test_a_comment_naming_nobody_or_a_person_asks_nothing(client, sessions):
     room, seat = _document(client)
 

@@ -20,6 +20,11 @@ that agent. It is answered in the background, after the comment is committed:
    changed in the document it changed while answering, with its tools
    (``routes/doc_agent.py``).
 
+The room hears how far a thread's question has got as it goes
+(``comment_activity`` frames: waiting for a session, answering, which tool it
+used), and the thread list says it again for a page that opens meanwhile
+(``answering``).
+
 What the answer spent is drained into the project's usage once it is done,
 answered or not: it was spent either way.
 """
@@ -46,8 +51,10 @@ from app.domain.agent.harness.pi.handless import (
     Answered,
     HandlessSessions,
     HostFull,
+    Looking,
     SessionError,
 )
+from app.domain.agent.runtime import announce_stale, get_broker
 from app.domain.agent.supply import GATEWAY
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.comment_threads import CommentThreads
@@ -189,6 +196,35 @@ async def _give_back(
     redis: Redis, project_id: uuid.UUID, key: uuid.UUID, slot: int
 ) -> None:
     await redis.delete(_slot_key(project_id, slot), _hold_key(key))
+
+
+async def answering(project_id: uuid.UUID, keys: list[uuid.UUID]) -> dict[str, str]:
+    """Which of these threads' questions are in hand now: ``queued`` while
+    waiting for one of the project's answering slots, ``working`` while
+    holding one."""
+    redis = get_redis_client()
+    if redis is None or not keys:
+        return {}
+    holds = await redis.mget([_hold_key(key) for key in keys])
+    slots = await redis.mget(
+        [_slot_key(project_id, slot) for slot in range(ANSWERING_PER_PROJECT)]
+    )
+    taken = {v.decode() if isinstance(v, bytes) else v for v in slots if v}
+    return {
+        str(key): "working" if str(key) in taken else "queued"
+        for key, hold in zip(keys, holds, strict=True)
+        if hold
+    }
+
+
+async def _tell(
+    room_id: uuid.UUID, thread_id: uuid.UUID, state: str, tool: str | None = None
+) -> None:
+    """How far the thread's question has got, for the room's open pages."""
+    frame = {"type": "comment_activity", "thread": str(thread_id), "state": state}
+    if tool:
+        frame["tool"] = tool
+    await get_broker().publish(str(room_id), frame)
 
 
 async def record_edits(redis: Redis, work: str, edits: list[dict]) -> None:
@@ -527,10 +563,12 @@ async def answer(
         project_id,
         thread_id,
         Asking(asker, bound.agent_handle, room_id, work=str(work)),
+        on_wait=lambda: _tell(room_id, thread_id, "queued"),
     )
     if slot is None:
         await _reply(factory, room_id, project_id, thread_id, bound, BUSY)
         return
+    await _tell(room_id, thread_id, "working")
     spent = False
     try:
         async with factory() as db:
@@ -550,7 +588,9 @@ async def answer(
         text, failure = "", None
         spent = True
         async for event in sessions.ask(launch, work, question, ceiling_s=ANSWER_S):
-            if isinstance(event, Answered):
+            if isinstance(event, Looking):
+                await _tell(room_id, thread_id, "working", event.tool)
+            elif isinstance(event, Answered):
                 text, failure = event.text, event.error
         if failure:
             logger.warning("doc agent answer failed thread=%s: %s", thread_id, failure)
@@ -601,6 +641,7 @@ async def _reply(
                     content=text,
                 )
                 await db.commit()
+                await announce_stale(room_id, "comments")
                 return
             except NotFoundError:
                 logger.info("doc agent reply dropped thread=%s: gone", thread_id)

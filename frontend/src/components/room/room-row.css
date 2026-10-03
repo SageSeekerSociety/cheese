@@ -165,9 +165,9 @@
    只在第一条上出名字（.im-row--cont）。 */
 .im-text {
   max-width: 100%;
-  font-size: 14px;
-  /* 连着读的正文用松一档的行距（设计系统 §3.2）：人说的话和芝士的回复都是它。 */
-  line-height: var(--lh-14-loose);
+  /* 消息流是连续阅读，用阅读档 15 / 24（设计系统 §3.2）：人说的话和芝士的回复都是它。 */
+  font-size: 15px;
+  line-height: var(--lh-15-reading);
   color: var(--text);
   word-break: break-word;
 }

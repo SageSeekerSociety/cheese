@@ -20,8 +20,8 @@ function fixture() {
   )!
   return { ...draft, topic, author, send, posted, scope }
 }
-const first = { anchorId: 'paragraph-a', quote: '第一段原文' }
-const second = { anchorId: 'paragraph-b', quote: '第二段原文' }
+const first = { quote: '第一段原文', from: 1, to: 6, rel: null }
+const second = { quote: '第二段原文', from: 9, to: 14, rel: null }
 
 describe('selection-specific comment drafts', () => {
   it('retains each unsent selection and isolates authors', () => {
@@ -100,7 +100,10 @@ describe('selection-specific comment drafts', () => {
     const saved = JSON.parse(
       sessionStorage.getItem(`cheese:doc-comments:${JSON.stringify(['reader', d.topic.value])}`)!
     )
-    expect(Object.values(saved.drafts)).toEqual([{ target: first, text: '重新挂载后继续写' }])
+    // The shared-document positions do not outlive the page; the words and where they were do.
+    expect(Object.values(saved.drafts)).toEqual([
+      { target: { quote: first.quote, from: first.from, to: first.to }, text: '重新挂载后继续写' },
+    ])
     scope.stop()
   })
 })
@@ -170,7 +173,7 @@ describe('asking the AI teammate about a selection', () => {
     expect(d.text.value).toBe('@芝士 ')
     d.text.value += '这个数字是怎么来的'
     await d.submit()
-    expect(d.send).toHaveBeenCalledWith(d.topic.value, '@芝士 这个数字是怎么来的', first.anchorId, first.quote)
+    expect(d.send).toHaveBeenCalledWith(d.topic.value, '@芝士 这个数字是怎么来的', first)
     d.scope.stop()
   })
 

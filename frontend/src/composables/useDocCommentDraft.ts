@@ -1,10 +1,16 @@
-import { computed, effectScope, onScopeDispose, reactive, watch } from 'vue'
+// 写到一半的评论：每处选中的字一份草稿，换了话题、关了评论栏都还在，会话里存一份。
+// 选中的字记成跟着正文走的位置（lib/docCommentSpots）；那份位置活不过页面刷新，刷新
+// 后回来的草稿按字找回原处。
+import type { CommentSpot } from '../lib/docCommentSpots'
 
-export type SendDocComment = (topicId: string, content: string, anchor?: string, quote?: string) => Promise<unknown>
+import { computed, effectScope, markRaw, onScopeDispose, reactive, watch } from 'vue'
 
 import { t } from '@/i18n'
 
-type Target = { anchorId: string | null; quote: string }
+/** 发出一条评论；评的是 `spot` 那几个字（整篇时 quote 是空的）。 */
+export type SendDocComment = (topicId: string, content: string, spot: CommentSpot) => Promise<unknown>
+
+type Target = CommentSpot
 type Draft = { target: Target; text: string; revision: number; sending: boolean; error: string | null }
 type TopicDrafts = { active: string | null; hidden: boolean; drafts: Record<string, Draft> }
 
@@ -21,9 +27,16 @@ function topicDrafts(topicId: string, author: string): TopicDrafts {
     if (saved && typeof saved.drafts === 'object' && saved.drafts !== null) {
       for (const [id, value] of Object.entries(saved.drafts)) {
         const item = value as Partial<Draft>
-        if (typeof item.text !== 'string' || typeof item.target?.quote !== 'string') continue
-        if (item.target.anchorId !== null && typeof item.target.anchorId !== 'string') continue
-        initial.drafts[id] = { target: item.target, text: item.text, revision: 0, sending: false, error: null }
+        const target = item.target
+        if (typeof item.text !== 'string' || typeof target?.quote !== 'string') continue
+        if (typeof target.from !== 'number' || typeof target.to !== 'number') continue
+        initial.drafts[id] = {
+          target: { quote: target.quote, from: target.from, to: target.to, rel: null },
+          text: item.text,
+          revision: 0,
+          sending: false,
+          error: null,
+        }
       }
       if (typeof saved.active === 'string' && initial.drafts[saved.active]) initial.active = saved.active
       initial.hidden = saved.hidden === true
@@ -39,7 +52,10 @@ function topicDrafts(topicId: string, author: string): TopicDrafts {
       () => {
         try {
           const drafts = Object.fromEntries(
-            Object.entries(initial.drafts).map(([id, d]) => [id, { target: d.target, text: d.text }])
+            Object.entries(initial.drafts).map(([id, d]) => [
+              id,
+              { target: { quote: d.target.quote, from: d.target.from, to: d.target.to }, text: d.text },
+            ])
           )
           sessionStorage.setItem(key, JSON.stringify({ active: initial.active, hidden: initial.hidden, drafts }))
         } catch {
@@ -85,8 +101,10 @@ export function useDocCommentDraft(
   function open(target: Target, prefill?: string) {
     const s = state.value
     if (!s) return
-    const key = JSON.stringify([target.anchorId, target.quote])
-    s.drafts[key] ??= { target: { ...target }, text: '', revision: 0, sending: false, error: null }
+    const key = JSON.stringify([target.from, target.quote])
+    // The shared-document positions stay plain objects: Yjs reads them, Vue need not watch them.
+    const spot = { ...target, rel: target.rel ? markRaw(target.rel) : null }
+    s.drafts[key] ??= { target: spot, text: '', revision: 0, sending: false, error: null }
     if (prefill && !s.drafts[key].text.trim()) s.drafts[key].text = prefill
     s.active = key
     s.hidden = false
@@ -115,7 +133,7 @@ export function useDocCommentDraft(
     entry.sending = true
     entry.error = null
     try {
-      await send(tid, body, entry.target.anchorId ?? undefined, entry.target.quote)
+      await send(tid, body, entry.target)
       // A receipt may arrive after switching topic/selection or typing a new draft.
       if (entry.revision === revision) {
         delete s.drafts[key]

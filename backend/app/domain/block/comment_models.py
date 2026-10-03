@@ -3,7 +3,6 @@
 import uuid
 
 from sqlalchemy import (
-    JSON,
     CheckConstraint,
     ForeignKey,
     Integer,
@@ -31,8 +30,6 @@ class DocCommentThread(Base):
         String(16), default="open", server_default="open"
     )
     reply_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
-    # Historical evidence, deliberately NOT a foreign key to a replaceable node.
-    anchor: Mapped[dict] = mapped_column(JSON)
 
 
 class DocCommentReply(Base):

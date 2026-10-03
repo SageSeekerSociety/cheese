@@ -1,29 +1,42 @@
 # Room document comment threads
 
 The original comments are `BlockKind.comment` rows. These routes do not use the
-community-comment domain or its authorization. Existing GET/POST
-`/topics/{room}/comments` remain available; GET lists original comments only.
-The room id is a real topic, not a task workspace id.
+community-comment domain or its authorization. `POST /topics/{room}/comments`
+starts a thread: `{content, quote?}`, where `quote` is the selected words kept
+for display. Which words a thread is about is not stored here: the commenter's
+editor puts a `commentAnchor` mark carrying the thread id on them in the shared
+document (`frontend/src/lib/docSchema/commentAnchors.ts`), so the words carry
+their thread through every later edit. The room id is a real topic, not a task
+workspace id. An archived room's document is frozen: starting, replying to,
+resolving and reopening threads there is refused with 422.
 
 ## HTTP contract
 
 Responses use the existing `{code, message, data}` envelope. Successful writes
 return HTTP 200 and the full thread snapshot. Strict-input validation returns
-400; invalid existing anchor input retains the existing 422 behavior.
+400.
 
 | Method | Path after `/topics/{room}/comments` | Request | Response data |
 | --- | --- | --- | --- |
-| GET | `/threads` | none | `{data: ThreadSummary[], total}` |
+| GET | `/threads` | none | `{data: ListedThread[], total}` |
 | GET | `/{comment_id}/thread` | none | Thread |
 | POST | `/{comment_id}/replies` | `{operation_id, expected_revision, content}` | Thread |
 | POST | `/{comment_id}/resolve` | `{operation_id, expected_revision}` | Thread |
 | POST | `/{comment_id}/reopen` | `{operation_id, expected_revision}` | Thread |
 
-Thread is `{comment: BlockOut, revision, state, anchor, replies}`. State is
-`open` or `resolved`; initial revision is 1. Replies are
-`{sequence, comment: BlockOut}[]`, ordered by persisted sequence, starting at 1.
-ThreadSummary replaces replies with `reply_count`. Original comments are ordered
-by `(created_at, id)`. These lists currently return all rows, with no cursor.
+Thread is `{comment: BlockOut, revision, state, replies}`. State is `open` or
+`resolved`; initial revision is 1. Replies are `{sequence, comment: BlockOut}[]`,
+ordered by persisted sequence, starting at 1. ListedThread adds `answering`:
+`queued` while the room's agent waits for a free session to answer the thread,
+`working` while it answers, otherwise null. Original comments are ordered by
+`(created_at, id)`. These lists currently return all rows, with no cursor.
+
+Every committed change to a room's threads (a new thread, a reply, including
+the agent's, a resolution or reopening) sends the room a `{type: "state",
+resource: "comments"}` frame, and open pages read the list again. While the
+agent answers a thread the room also hears `{type: "comment_activity", thread,
+state, tool?}`; those frames are fanned out live and never replayed, since the
+list says the same to a page that opens later.
 
 Every successful mutation increments revision once. Reply content is nonblank,
 at most 16,000 characters and preserved verbatim. Resolved threads must be
@@ -34,8 +47,8 @@ state returns 409 instead of claiming a change.
 
 New thread reads and writes require a verified live account and the existing
 room-member policy, enforced even when the development authz switch is off.
-Authenticated room agents may participate; human-only AI-proposal acceptance is
-unrelated. Body authors, parents, references and anchor overrides are rejected.
+Authenticated room agents may participate. Body authors, parents, references
+and anchor fields are rejected.
 The server records the resolved author and keys operation ownership by stable
 numeric user id. Foreign-room, task-scoped, non-comment and reply-as-root ids
 return 404 after caller authorization.
@@ -53,53 +66,13 @@ same request to recover its receipt, then GET thread to read current state. An o
 receipt is not proof of the current revision. Do not retry a 409 as success or
 silently create a new operation with another revision.
 
-## Historical anchor
-
-Anchor contains `{node_id, quote, node_content, document_id, base_version,
-start, end, offset_unit: 'utf8-bytes'}`. New root comments capture the whole
-anchored node's exact raw byte range on their saved canonical version, under the
-same lock as document writes. This is NOT a quote's exact subrange. Quote remains
-display evidence; no quote search or relocation occurs. Repeated text, CRLF and
-emoji do not change the coordinate unit. Comments do not authorize document edits.
-
-Migration preserves old node id, surviving node content, root id and quote. Old
-version/range remains null because creation history cannot be reconstructed.
-Already-deleted nodes cannot be recovered. Later canonical edits may null the
-original block's node foreign key but cannot change the saved historical anchor.
-Resolve/reopen retain original content, replies, references and anchor.
-
 ## Implementation and boundaries
 
 `block/comment_threads.py` owns the bounded service, with `comment_models.py` and
-`comment_schemas.py`; `topics_comment_threads.py` is the thin HTTP boundary.
-`topics_comments.py` only captures root anchors and filters root reads. The
-normal migration adds thread/reply metadata and backfills surviving old comments;
-existing Block data and deployed migrations are unchanged. No room-agent turn,
-document history entry or canonical refresh is emitted by thread mutations.
-
-The service uses the existing room journal lock and completed immutable receipt
-transaction; replies remain comment blocks linked to their original root.
-Thread anchor updates are rejected by a database trigger. Parent room deletion
-still cascades; direct low-level block deletion and migration downgrade are not
-user-facing thread actions. There is no thread WebSocket event, pagination,
-notification or comment-edit/delete endpoint in this stage. Existing root POST
-is still the original non-idempotent API. UI owners implement their own wiring;
-this backend change does not modify UI, AI request/proposal/accept, preview,
-network, Slides or admin.
-
-## Verification at PR #2350
-
-The finite real PostgreSQL/HTTP suite has 121 passing cases: new thread and
-populated forward-migration tests plus existing comment/tree/identity/agent
-callers and import guard. The migrated test verifies node deletion preserves
-anchor evidence, rejects anchor updates, and leaves block content after metadata
-downgrade. Competing independent HTTP requests verify operation replay, revision
-conflict, reply/resolve races and revoked-member denial. Removing revision and
-forced-member guards in an isolated tree fails two owning HTTP assertions;
-intact guards pass. These tests use real test databases, not production data.
-
-Required CI 36866228458 on ba73ecb4 failed before tests in three harness-install
-jobs: Pi 0.85.1 upstream returned HTTP 504 in two jobs and ReadTimeout in one.
-Those suites did not produce test reports. This result is retained separately
-from the local pass; no gate, harness installer or deployed service was changed.
-Subsequent exact-head CI and independent review must pass before normal queue.
+`comment_schemas.py`; `topics_comment_threads.py` is the thin HTTP boundary and
+`topics_comments.py` starts threads. No room-agent turn, document history entry
+or canonical refresh is emitted by thread mutations; the service uses the
+existing room journal lock and completed immutable receipt transaction, and
+replies remain comment blocks linked to their original root. Parent room
+deletion still cascades. There is no pagination, notification or
+comment-edit/delete endpoint. The root POST is not idempotent.

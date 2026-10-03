@@ -337,10 +337,10 @@ export type WsServerFrame =
   // 一位成员开始 / 停下打字或干活；连上时有人在忙，先来一帧此刻的全部。
   | ({ type: 'activity'; active: boolean } & MemberActivity)
   | { type: 'activity_snapshot'; members: MemberActivity[] }
-  // An existing block's data changed in place (e.g. an option question got
-  // answered) — replace it in the timeline.
+  // An existing block's data changed in place (an option question got answered): replace it in the timeline.
   | { type: 'block_updated'; block: Block }
   | { type: 'pong' } // answer to the client's liveness ping; carries nothing
+  | { type: 'comment_activity'; thread: string; state: 'queued' | 'working'; tool?: string } // agent on a doc thread
   // The room's session state moved: a task started or finished (the harness's
   // own, or a command the executor runs), or the session reported its model.
   // The same shape `GET /topics/{id}/agent/control` answers.

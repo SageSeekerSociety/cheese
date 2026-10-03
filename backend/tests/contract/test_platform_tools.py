@@ -118,6 +118,16 @@ CALLS = {
         "POST",
         "/topics/fixture/feedback-proposals",
     ),
+    "cheese_feedback_claim": (
+        {"feedback": "FB-12"},
+        "POST",
+        "/feedback/FB-12/claim",
+    ),
+    "cheese_feedback_release": (
+        {"feedback": "FB-12"},
+        "DELETE",
+        "/feedback/FB-12/claim",
+    ),
     "cheese_machine": (
         {"profile": "cloud"},
         "PUT",
@@ -241,6 +251,7 @@ def _serve(executor):
         do_POST = _serve
         do_PUT = _serve
         do_PATCH = _serve
+        do_DELETE = _serve
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()

@@ -19,40 +19,27 @@
   "files": [
     {
       "path": "team/MEMORY.md",
-      "lines": [
-        "- 集成测试连真库，不 mock",
-        "- 周报按项目分节，结尾列待办"
-      ]
+      "lines": ["- 集成测试连真库，不 mock", "- 周报按项目分节，结尾列待办"]
     },
     {
       "path": "team/integration-tests-real-db.md",
-      "lines": [
-        "type: feedback"
-      ]
+      "lines": ["type: feedback"]
     },
     {
       "path": "team/weekly-report-shape.md",
-      "lines": [
-        "type: project"
-      ]
+      "lines": ["type: project"]
     },
     {
       "path": "private/wang/MEMORY.md",
-      "lines": [
-        "- 讲前端时拿后端的东西打比方"
-      ]
+      "lines": ["- 讲前端时拿后端的东西打比方"]
     },
     {
       "path": "private/wang/frontend-by-backend-analogy.md",
-      "lines": [
-        "type: user"
-      ]
+      "lines": ["type: user"]
     },
     {
       "path": "private/li/MEMORY.md",
-      "lines": [
-        "- 李甘要中英双语的摘要"
-      ]
+      "lines": ["- 李甘要中英双语的摘要"]
     }
   ],
   "steps": [
@@ -70,10 +57,7 @@
         {
           "at": 1000,
           "do": "inject",
-          "paths": [
-            "team/MEMORY.md",
-            "private/wang/MEMORY.md"
-          ]
+          "paths": ["team/MEMORY.md", "private/wang/MEMORY.md"]
         },
         {
           "at": 1100,
@@ -172,11 +156,7 @@
           "at": 300,
           "do": "file",
           "path": "private/wang/no-trailing-summary.md",
-          "lines": [
-            "type: feedback",
-            "回答末尾不总结做了什么",
-            "Why: 他自己会看文件"
-          ]
+          "lines": ["type: feedback", "回答末尾不总结做了什么", "Why: 他自己会看文件"]
         },
         {
           "at": 1000,
@@ -239,10 +219,7 @@
           "at": 1600,
           "do": "file",
           "path": "team/weekly-report-shape.conflict.md",
-          "lines": [
-            "会话这一版没收：李甘刚改过这一条",
-            "重读平台那一版再写"
-          ]
+          "lines": ["会话这一版没收：李甘刚改过这一条", "重读平台那一版再写"]
         }
       ]
     },
@@ -283,10 +260,7 @@
         {
           "at": 1300,
           "do": "inject",
-          "paths": [
-            "team/MEMORY.md",
-            "private/li/MEMORY.md"
-          ]
+          "paths": ["team/MEMORY.md", "private/li/MEMORY.md"]
         },
         {
           "at": 1400,

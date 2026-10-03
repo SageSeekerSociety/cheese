@@ -215,6 +215,45 @@ def test_a_left_vm_the_leaving_session_failed_to_delete_is_deleted_later(
     client.portal.call(run)
 
 
+def test_a_left_vm_whose_accepted_delete_failed_is_deleted_again(warm_case):
+    client, topics, actor, cloud = warm_case
+    choice = ComputeChoice(name="Cloud", profile="cloud")
+
+    async def run():
+        first, _ = await _sessions_for_cloud(client, topics[0])
+        async with client.test_request_factory() as db:
+            service = MachineService(db, cloud)
+
+            async def leave():
+                machine = await service.ensure_session_machine(
+                    first, actor=actor, choice=choice
+                )
+                await service.supersede_session_machine(first, actor=actor)
+                await db.commit()
+                await service.release_left_machine(machine.id)
+                await db.refresh(machine)
+                return machine
+
+            failed = await leave()
+            in_flight = await leave()
+            assert failed.released_at is not None
+            assert cloud.deleted == [failed.machine_id, in_flight.machine_id]
+            # The provider took both deletes; this one then failed there.
+            failed.status = MachineStatus.error
+            await db.commit()
+
+            await service.release_left_machines()
+            assert cloud.deleted == [
+                failed.machine_id,
+                in_flight.machine_id,
+                failed.machine_id,
+            ]
+            await db.refresh(failed)
+            assert failed.status == MachineStatus.deleting
+
+    client.portal.call(run)
+
+
 @pytest.mark.anyio
 async def test_cloud_ownership_migration_preserves_legacy_allocation(db_factory):
     import importlib.util

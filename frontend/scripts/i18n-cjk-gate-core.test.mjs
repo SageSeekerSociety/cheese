@@ -1,23 +1,23 @@
-// Unit tests for the hardcoded-Chinese ratchet's pure logic, run by
+// Unit tests for the hardcoded-Chinese gate's pure logic, run by
 // `node --test` from `pnpm run test:ratchet` in CI.
 //
 // These are written against the failure modes that would make the gate either
 // useless or hated: it must not count Chinese in comments (the tree is full of
-// Chinese prose, and freezing it would drown the signal), it must not miss a
-// string because of an apostrophe inside a regex, and it must never report a
-// clean tree when it simply did not look.
+// Chinese prose), it must not miss a string because of an apostrophe inside a
+// regex, and its one exemption — an `i18n-data:` annotation on the line — must
+// not be usable without saying why.
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import {
+  annotationOn,
+  checkSource,
   CJK,
-  compare,
   formatReport,
   scanSource,
   scanTree,
   shouldScan,
-  tightenedBaseline,
-} from './i18n-cjk-ratchet-core.mjs'
+} from './i18n-cjk-gate-core.mjs'
 
 test("the character class matches the catalog gate's", () => {
   assert.ok(CJK.test('中文'))
@@ -210,44 +210,128 @@ const label = '确定'
   assert.deepEqual(scanSource('src/a.ts', ts), [2])
 })
 
-test('scanTree: empty files are not carried in the baseline', () => {
-  const tree = scanTree([
+test('checkSource: unannotated Chinese in a script or a template fails as copy', () => {
+  const vue = `<template>
+  <div>确定</div>
+</template>
+<script setup lang="ts">
+const a = '取消'
+</script>
+`
+  assert.deepEqual(
+    checkSource('src/a.vue', vue).problems.map(({ line, problem }) => ({ line, problem })),
+    [
+      { line: 2, problem: 'copy' },
+      { line: 5, problem: 'copy' },
+    ]
+  )
+})
+
+test('checkSource: an annotated line with a reason passes, in .ts and in both .vue blocks', () => {
+  const ts = `const BOUNDS = [
+  ['a', '阿'], // i18n-data: collation anchor, compared and never shown
+  ['b', '八'], /* i18n-data: collation anchor */
+]
+`
+  assert.deepEqual(checkSource('src/a.ts', ts), { problems: [], annotated: [2, 3] })
+
+  const vue = `<template>
+  <span>【PDF】</span><code>第 N 页</code> <!-- i18n-data: the stored marker format, shown as an example -->
+</template>
+<script setup lang="ts">
+const ORIGIN = '【第 N 页】' // i18n-data: written into task text and parsed back by model.ts
+</script>
+`
+  assert.deepEqual(checkSource('src/a.vue', vue), { problems: [], annotated: [2, 5] })
+})
+
+test('checkSource: an annotation without a reason fails', () => {
+  const ts = `const a = '甲' // i18n-data:
+const b = '乙' // i18n-data:   —
+const c = '丙' /* i18n-data: */
+`
+  assert.deepEqual(
+    checkSource('src/a.ts', ts).problems.map(({ line, problem }) => ({ line, problem })),
+    [
+      { line: 1, problem: 'no-reason' },
+      { line: 2, problem: 'no-reason' },
+      { line: 3, problem: 'no-reason' },
+    ]
+  )
+})
+
+test('checkSource: a template line takes only an HTML comment — `//` there is text the user sees', () => {
+  const vue = `<template>
+  <div>确定 // i18n-data: not a comment here</div>
+</template>
+`
+  assert.deepEqual(
+    checkSource('src/a.vue', vue).problems.map(({ problem }) => problem),
+    ['copy']
+  )
+})
+
+test('checkSource: an annotation on a line with no counted Chinese is stale', () => {
+  const ts = `const a = t('global.ok') // i18n-data: the string was translated, the note stayed
+// 注释里的中文 // i18n-data: a comment is not counted, so nothing is excused
+const b = '确定' // i18n-data: still data
+`
+  assert.deepEqual(
+    checkSource('src/a.ts', ts).problems.map(({ line, problem }) => ({ line, problem })),
+    [
+      { line: 1, problem: 'stale' },
+      { line: 2, problem: 'stale' },
+    ]
+  )
+})
+
+test('checkSource: Chinese in comments is ignored, annotation or not', () => {
+  const vue = `<template>
+  <!-- 这是注释，不是文案 -->
+  <div>OK</div>
+</template>
+<script setup lang="ts">
+// 中文注释
+/* 块注释 */
+console.error('加载失败')
+</script>
+`
+  assert.deepEqual(checkSource('src/a.vue', vue), { problems: [], annotated: [] })
+})
+
+test('annotationOn: the marker must open the comment, so prose mentioning it is not one', () => {
+  assert.equal(annotationOn("const a = '甲' // see the i18n-data: rule", ['code']), null)
+  assert.deepEqual(annotationOn("const a = '甲' //i18n-data: why", ['code']), { reason: 'why' })
+  assert.equal(annotationOn('<b>甲</b> <!-- i18n-data: why -->', ['code']), null)
+  assert.deepEqual(annotationOn('<b>甲</b> <!-- i18n-data: why -->', ['markup']), { reason: 'why' })
+})
+
+test('scanTree: out-of-scope files are not read, clean files are not listed', () => {
+  const result = scanTree([
     { path: 'src/a.vue', text: '<template><div>确定</div></template>' },
     { path: 'src/b.vue', text: '<template><div>OK</div></template>' },
+    { path: 'src/c.ts', text: "const a = '阿' // i18n-data: anchor\n" },
     { path: 'src/i18n/messages/zh-CN/global.json', text: '{ "a": "中文" }' },
   ])
-  assert.deepEqual(tree, { 'src/a.vue': 1 })
-})
-
-test('compare: a new file with Chinese is a regression against base 0', () => {
-  const result = compare({ 'src/a.vue': 3 }, { 'src/a.vue': 3, 'src/b.vue': 1 })
   assert.equal(result.ok, false)
-  assert.deepEqual(result.regressions, [{ file: 'src/b.vue', base: 0, now: 1 }])
+  assert.deepEqual(Object.keys(result.problems), ['src/a.vue'])
+  assert.equal(result.annotated, 1)
 })
 
-test('compare: paying a file down is an improvement, not a failure', () => {
-  const result = compare({ 'src/a.vue': 3, 'src/b.vue': 5 }, { 'src/a.vue': 1, 'src/b.vue': 5 })
-  assert.equal(result.ok, true)
-  assert.deepEqual(result.improvements, [{ file: 'src/a.vue', base: 3, now: 1 }])
-  assert.equal(result.currentTotal, 6)
-  assert.equal(result.baselineTotal, 8)
-})
+test('formatReport: a clean run says so, a failure shows each line and what to do', () => {
+  const clean = formatReport(scanTree([{ path: 'src/c.ts', text: "const a = '阿' // i18n-data: anchor\n" }]))
+  assert.match(clean, /No hardcoded Chinese in src\/\. 1 line\(s\) carry an i18n-data annotation\./)
 
-test('tightenedBaseline: it can only ever go down', () => {
-  const next = tightenedBaseline({ 'src/a.vue': 2, 'src/gone.vue': 4 }, { 'src/a.vue': 5, 'src/new.vue': 1 })
-  assert.deepEqual(next, { 'src/a.vue': 2, 'src/new.vue': 1 })
-})
-
-test('formatReport: a clean run states the total, a regression shows the lines', () => {
-  const clean = formatReport(compare({ 'src/a.vue': 2 }, { 'src/a.vue': 2 }))
-  assert.match(clean, /total: 2 line\(s\) of hardcoded Chinese, baseline allows 2/)
-  assert.doesNotMatch(clean, /ratchet blocks/)
-
-  const samples = new Map([['src/b.vue', [{ line: 3, text: '<span>实名信息</span>' }]]])
-  const bad = formatReport(compare({ 'src/a.vue': 2 }, { 'src/a.vue': 2, 'src/b.vue': 1 }), samples)
-  assert.match(bad, /New hardcoded Chinese/)
-  assert.match(bad, /src\/b\.vue: 0 -> 1/)
-  assert.match(bad, /3: <span>实名信息<\/span>/)
-  assert.match(bad, /t\('namespace\.component\.role'\)/, 'the report says what to do')
-  assert.match(bad, /never raises a count/)
+  const bad = formatReport(
+    scanTree([
+      { path: 'src/b.vue', text: '<template>\n  <span>实名信息</span>\n</template>\n' },
+      { path: 'src/c.ts', text: "const a = '阿' // i18n-data:\n" },
+    ])
+  )
+  assert.match(bad, /src\/b\.vue\n {2}2: \[Chinese outside the catalog\] <span>实名信息<\/span>/)
+  assert.match(bad, /src\/c\.ts\n {2}1: \[i18n-data annotation without a reason\]/)
+  assert.match(bad, /t\('namespace\.component\.role'\)/, 'says how to move copy into the catalog')
+  assert.match(bad, /annotation on the SAME line that says why/, 'says how to mark data')
+  assert.match(bad, /write the reason after the colon/)
+  assert.match(bad, /2 problem\(s\)\./)
 })

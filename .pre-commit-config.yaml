@@ -112,7 +112,7 @@ repos:
         files: ^frontend/
 
       - id: i18n-cjk
-        name: hardcoded Chinese (i18n ratchet)
+        name: hardcoded Chinese (i18n)
         entry: bash -c 'cd frontend && pnpm run lint:i18n'
         language: system
         pass_filenames: false

@@ -60,9 +60,17 @@ const done = computed(() => items.value.filter((i) => i.status === 'completed').
         {{ t('work.room.progress.tally', { done, total: items.length }) }}
       </span>
     </button>
-    <div v-if="open" class="panel-progress__list">
-      <TodoChecklist :items="items" />
-    </div>
+    <!-- 和上面看板那一块同一个折法、同一个时长：高度真的变了，一跳的话看不出是这一块
+         展开了还是下面的文档自己往下窜了一截。 -->
+    <Transition name="progress-fold">
+      <div v-if="open" class="progress-fold">
+        <div class="progress-fold__clip">
+          <div class="panel-progress__list">
+            <TodoChecklist :items="items" />
+          </div>
+        </div>
+      </div>
+    </Transition>
   </section>
 </template>
 
@@ -95,6 +103,26 @@ const done = computed(() => items.value.filter((i) => i.status === 'completed').
   font-size: 13px;
   line-height: var(--lh-13);
   font-variant-numeric: tabular-nums;
+}
+.progress-fold {
+  display: grid;
+  grid-template-rows: 1fr;
+}
+.progress-fold-enter-active,
+.progress-fold-leave-active {
+  transition:
+    grid-template-rows 0.2s ease,
+    opacity 0.2s ease;
+}
+.progress-fold-enter-from,
+.progress-fold-leave-to {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+/* 0fr 那一格里它得能缩到 0：内边距放在里面那一层，放在这一层就缩不下去，折叠只剩淡出。 */
+.progress-fold__clip {
+  min-height: 0;
+  overflow: hidden;
 }
 .panel-progress__list {
   padding: 0 12px 10px 34px;

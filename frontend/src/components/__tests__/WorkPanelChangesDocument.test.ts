@@ -20,6 +20,10 @@ import i18n, { setLocale } from '@/i18n'
 // 断言读的是中文界面上的那一行字，语言钉在中文上。
 beforeEach(() => setLocale('zh-CN'))
 
+vi.mock('../../api/docThreads', () => ({
+  listDocThreads: async () => ({ data: [], total: 0 }),
+  writeDocThread: async () => ({}),
+}))
 vi.mock('../CodeEditor.vue', () => ({
   default: {
     name: 'CodeEditor',
@@ -77,7 +81,6 @@ vi.mock('../../api', async () => {
     documentRevisions: (...a: unknown[]) => documentRevisions(...a),
     decideDocumentRevisions: (...a: unknown[]) => decideDocumentRevisions(...a),
     writeFile: vi.fn().mockResolvedValue({ path: 'x', version: 'v2' }),
-    getComments: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getDocNodes: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getTranscript: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getAgentControl: vi.fn().mockResolvedValue({ id: null, connected: false, tasks: {} }),

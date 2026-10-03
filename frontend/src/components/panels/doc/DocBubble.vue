@@ -13,7 +13,7 @@ import type { ChainedCommands, Editor } from '@tiptap/core'
 import { computed, onBeforeUnmount, ref, toRaw, watch } from 'vue'
 
 import { BUBBLE_META } from '../../../lib/docBubble'
-import { SLASH_ITEMS } from '../../../lib/docSlashMenu'
+import { BLOCK_ITEMS, blockKeyOf } from '../../../lib/docSlashMenu'
 import CheeseAvatar from '../../CheeseAvatar.vue'
 
 import { t } from '@/i18n'
@@ -25,15 +25,17 @@ const props = withDefaults(
     agentHandle?: string | null
     /** 能改：给格式和链接；不能改：给「复制」。 */
     editable: boolean
-    /** 选区在一段之内：给「正文 ▾」。不给时照编辑器里现在的选区算（键盘上方那一条）。 */
-    singleBlock?: boolean
+    /** 选中的是正文里的字（一段或几段）：给「正文 ▾」。不给时照编辑器里现在的选区算（键盘上方那一条）。 */
+    restyle?: boolean
+    /** 浮条上给不给「评论」：归档话题的文档不再收评论。 */
+    canComment?: boolean
     /** 浮条上给不给 AI 队友。 */
     canAgent: boolean
     variant?: 'float' | 'bar'
     /** 选中了字（键盘上方那一条在没选中时也在）。 */
     hasSelection?: boolean
   }>(),
-  { agentHandle: null, singleBlock: undefined, variant: 'float', hasSelection: true }
+  { agentHandle: null, canComment: true, restyle: undefined, variant: 'float', hasSelection: true }
 )
 const emit = defineEmits<{
   (e: 'agent'): void
@@ -90,40 +92,19 @@ function format(run: (chain: ChainedCommands) => ChainedCommands) {
   run(editor.chain().focus(undefined, { scrollIntoView: false }).setMeta(BUBBLE_META, true)).run()
 }
 
-// ---- 「正文 ▾」：把选区所在的这一块换成别的块。和 slash 菜单是同一张表，去掉插入新
-// 东西的那几项（表格、分隔线）。
+// ---- 「正文 ▾」：把选中的这一块（或者这几块）换成别的块。和 slash 菜单是同一张表，
+// 去掉插入新东西的那几项（表格、分隔线）。
 const blockMenu = computed(() => {
-  if (props.singleBlock !== undefined) return props.singleBlock
+  if (props.restyle !== undefined) return props.restyle
   void revision.value
-  const { $from, $to } = toRaw(props.editor).state.selection
-  return $from.depth > 0 && $from.sameParent($to)
+  return toRaw(props.editor).state.selection.$from.depth > 0
 })
-const BLOCKS = SLASH_ITEMS.filter((item) => item.key !== 'table' && item.key !== 'hr')
 const blockOpen = ref(false)
 const currentBlock = computed(() => {
   void revision.value
-  const editor = toRaw(props.editor)
-  const found = [...BLOCKS].reverse().find((item) => {
-    switch (item.key) {
-      case 'h1':
-      case 'h2':
-      case 'h3':
-        return editor.isActive('heading', { level: Number(item.key.slice(1)) })
-      case 'bullet':
-        return editor.isActive('bulletList')
-      case 'ordered':
-        return editor.isActive('orderedList')
-      case 'task':
-        return editor.isActive('taskList')
-      case 'code':
-        return editor.isActive('codeBlock')
-      case 'quote':
-        return editor.isActive('blockquote')
-      default:
-        return false
-    }
-  })
-  return found ?? BLOCKS[0]
+  const { $from } = toRaw(props.editor).state.selection
+  const key = blockKeyOf($from.depth > 0 ? $from.node(1) : null)
+  return BLOCK_ITEMS.find((item) => item.key === key) ?? BLOCK_ITEMS[0]
 })
 function pickBlock(run: (chain: ChainedCommands) => ChainedCommands) {
   blockOpen.value = false
@@ -158,8 +139,9 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', closeBlocks, tru
       <CheeseAvatar :size="16" :name="agentName" :handle="agentHandle" />
       {{ agentName }}
     </button>
-    <span v-if="canAgent" class="doc-bubble__sep" aria-hidden="true" />
+    <span v-if="canAgent && canComment" class="doc-bubble__sep" aria-hidden="true" />
     <button
+      v-if="canComment"
       type="button"
       :aria-label="t('work.room.doc.commentOnSelection')"
       :disabled="!hasSelection"
@@ -182,7 +164,7 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', closeBlocks, tru
         </button>
         <div v-if="blockOpen" class="doc-bubble__menu" role="menu">
           <button
-            v-for="item in BLOCKS"
+            v-for="item in BLOCK_ITEMS"
             :key="item.key"
             type="button"
             role="menuitemradio"
@@ -245,16 +227,17 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', closeBlocks, tru
 </template>
 
 <style scoped>
-/* 一块深色的条，压在正文上（两套主题都用反色 token）。 */
+/* 浮在正文上的一条，和别的浮层一个样子：浮层底色、描边、投影。 */
 .doc-bubble {
   display: inline-flex;
   align-items: center;
   gap: 1px;
   padding: 3px;
+  border: 1px solid var(--line-2);
   border-radius: var(--radius-md);
   font-size: 13px;
-  color: var(--inverse-ink);
-  background: var(--inverse-surface);
+  color: var(--text);
+  background: var(--raised);
   box-shadow: var(--shadow-2);
   white-space: nowrap;
 }
@@ -274,7 +257,10 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', closeBlocks, tru
 .doc-bubble button:hover:not(:disabled),
 .doc-bubble button[aria-pressed='true'],
 .doc-bubble button[aria-expanded='true'] {
-  background: var(--inverse-fill);
+  background: var(--fill);
+}
+.doc-bubble button[aria-pressed='true'] {
+  color: var(--ink);
 }
 .doc-bubble button:disabled {
   opacity: 0.4;
@@ -291,13 +277,6 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', closeBlocks, tru
 }
 .doc-bubble__agent {
   font-weight: 600;
-}
-/* 深色的浮条上，AI 队友的头像反过来画：浅色的脸、深色的眼睛。 */
-.doc-bubble--float .doc-bubble__agent :deep(.cheese-avatar__tile) {
-  fill: var(--inverse-ink);
-}
-.doc-bubble--float .doc-bubble__agent :deep(.cheese-avatar__eye) {
-  fill: var(--inverse-surface);
 }
 /* 手机上键盘上方的那一条：浅色，按钮按手指的大小，放不下时横着滑。 */
 .doc-bubble--bar {
@@ -319,14 +298,8 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', closeBlocks, tru
 .doc-bubble--bar .doc-bubble__icon {
   width: 44px;
 }
-.doc-bubble--bar button:hover:not(:disabled),
-.doc-bubble--bar button[aria-pressed='true'],
-.doc-bubble--bar button[aria-expanded='true'] {
-  background: var(--fill);
-}
 .doc-bubble--bar .doc-bubble__sep {
   flex: 0 0 auto;
-  background: var(--line-2);
 }
 /* 键盘上方那一条在屏幕最下面：块样式的菜单往上开。 */
 .doc-bubble--bar .doc-bubble__menu {
@@ -339,7 +312,7 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', closeBlocks, tru
   width: 1px;
   height: 16px;
   margin: 0 3px;
-  background: var(--inverse-fill);
+  background: var(--line-2);
 }
 .doc-bubble__blocks {
   position: relative;
@@ -354,8 +327,8 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', closeBlocks, tru
   min-width: 168px;
   padding: 4px;
   border: 1px solid var(--line-2);
-  border-radius: 8px;
-  background: var(--surface);
+  border-radius: var(--radius-lg);
+  background: var(--raised);
   box-shadow: var(--shadow-2);
 }
 .doc-bubble .doc-bubble__item {

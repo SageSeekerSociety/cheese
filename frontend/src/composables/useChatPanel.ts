@@ -10,7 +10,7 @@
 // What lives here: the roster and the turns, the timeline window and its paging
 // (listBlocks is called in exactly four places, all of them in useChatPaging),
 // the socket frames and what each one means for the window, the scroll position
-// policy, the unread/received/older animation sets, and the error banner. What
+// policy, the unread/received animation sets, and the error banner. What
 // does not: the composer (useChatComposer), the pointer affordances on a row
 // (useChatRowActions), the per-row entrance animations (useTimelineMotion), any
 // markup, and the decisions that belong to the page a panel is rendered from.
@@ -48,6 +48,7 @@ import { isAgentBlock, isAgentHandle, isPersonBlock } from '../lib/authorship'
 import { cachedWindow, pendingBlockRefresh, setCachedWindow } from '../lib/blockCache'
 import { mergeRefreshedTail, PAGE_SIZE } from '../lib/blockPaging'
 import { dayLabelsFor, outboxEdgeAfter, type RunEdge, runEdgeBetween, unreadAnchorBlock } from '../lib/chatGrouping'
+import { announceComments } from '../lib/docCommentSignals'
 import { activityLines as memberActivityLines } from '../lib/memberActivity'
 import { renderNoticeMessage } from '../lib/noticeText'
 import { outgoingMessageBody, pendingMessageBlock } from '../lib/outgoingMessage'
@@ -317,10 +318,6 @@ export function useChatPanel(opts: ChatPanelOptions) {
   // 后换成落库的那一条）必须是瞬间的，否则同一句话会在屏幕上出现两遍。
   const editing = new Set<string>()
 
-  // 往上翻时拼到顶部的那一页：只淡入，不位移——这一刻滚动位置正被补偿到原处，再
-  // 往上浮 4px，读的人会看见整页抖一下。
-  const older = reactive(new Set<string>())
-
   function pushBlock(b: Block) {
     historyChanges?.set(b.id, b)
     const landing = timeline.append(b)
@@ -405,6 +402,9 @@ export function useChatPanel(opts: ChatPanelOptions) {
       case 'activity':
         activity.apply(frame)
         break
+      case 'comment_activity': // on the thread's card in this room's document panel
+        announceComments(topic()?.id ?? '', { ...frame, kind: 'activity' })
+        break
       case 'activity_snapshot':
         activity.snapshot(frame.members)
         break
@@ -455,7 +455,6 @@ export function useChatPanel(opts: ChatPanelOptions) {
     rowActions.resetBar()
     unreadAnchorId.value = null
     arrived.clear()
-    older.clear()
     sentNow.clear()
     delivered.clear()
     editing.clear()
@@ -675,7 +674,6 @@ export function useChatPanel(opts: ChatPanelOptions) {
     scrollRef,
     atBottom,
     loadingHistory,
-    older,
     unseen,
     errorMsg,
     rememberScroll,
@@ -688,7 +686,6 @@ export function useChatPanel(opts: ChatPanelOptions) {
     atBottom,
     hasNewer,
     unseen,
-    older,
     editing,
     scrollRef,
     backToNewest: () => paging.backToNewest(),
@@ -966,7 +963,6 @@ export function useChatPanel(opts: ChatPanelOptions) {
     outboxLeave,
     jumpToUnseen,
     unseen,
-    older,
     // sheet
     sheet,
     sheetBlock,

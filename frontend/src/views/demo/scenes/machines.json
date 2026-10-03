@@ -54,7 +54,14 @@
         { "at": 1400, "do": "term", "text": "打开屏幕 · 启动 runner（Claude Code）" },
         { "at": 1500, "do": "device", "id": "mbp", "status": "busy", "text": "屏幕 1 个 · 在跑一轮" },
         { "at": 1600, "do": "turn", "who": "cheese", "turn": "t1" },
-        { "at": 2100, "do": "act", "who": "cheese", "turn": "t1", "tool": "Bash", "arg": "xcrun simctl boot 'iPhone 16'" }
+        {
+          "at": 2100,
+          "do": "act",
+          "who": "cheese",
+          "turn": "t1",
+          "tool": "Bash",
+          "arg": "xcrun simctl boot 'iPhone 16'"
+        }
       ]
     },
     {
@@ -75,9 +82,22 @@
       "events": [
         { "at": 200, "do": "device", "id": "mbp", "status": "lost", "text": "合上盖子了" },
         { "at": 400, "do": "term", "text": "长连接断开" },
-        { "at": 700, "do": "act", "who": "cheese", "turn": "t1", "tool": "Bash", "arg": "xcrun simctl io booted screenshot login.png", "failed": true, "error": "执行器连接中断" },
+        {
+          "at": 700,
+          "do": "act",
+          "who": "cheese",
+          "turn": "t1",
+          "tool": "Bash",
+          "arg": "xcrun simctl io booted screenshot login.png",
+          "failed": true,
+          "error": "执行器连接中断"
+        },
         { "at": 900, "do": "end", "turn": "t1" },
-        { "at": 1500, "do": "mark", "text": "平台提示：王长鑫的 MacBook 连不上，这一轮停在这里。话题没有换机器，要换请在成员名册里改" },
+        {
+          "at": 1500,
+          "do": "mark",
+          "text": "平台提示：王长鑫的 MacBook 连不上，这一轮停在这里。话题没有换机器，要换请在成员名册里改"
+        },
         { "at": 2600, "do": "say", "who": "wang", "text": "<@cheese> 我开盖了，接着来" },
         { "at": 3200, "do": "term", "text": "探测：15 秒没有应答" },
         { "at": 3300, "do": "device", "id": "mbp", "status": "cooling", "text": "连续两次同类失败，隔离一段时间" },

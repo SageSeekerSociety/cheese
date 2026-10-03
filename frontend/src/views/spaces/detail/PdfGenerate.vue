@@ -219,12 +219,10 @@ async function parsePdf() {
 
 /** 出处标记。题目模型里没有「来源」这一列，也不给它加 —— 标记写进**简介**：
  *  简介会跟着这道题一路走，审核队列那一行显示的就是它。 */
-// 这个标记是写进题目数据里的固定格式（`views/spaces/model.ts` 的 `ORIGIN_PREFIX` 按它剥离），
-// 不随界面语言变，所以不进词条目录。
-const ORIGIN_EXAMPLE = '【PDF · 第 N 页】'
+const ORIGIN_EXAMPLE = '【PDF · 第 N 页】' // i18n-data: 写进题目简介的固定标记，界面上原样展示它长什么样
 
 function originTag(page: number): string {
-  return `【PDF · 第 ${page} 页】`
+  return `【PDF · 第 ${page} 页】` // i18n-data: 写进题目简介的固定标记，model.ts 的 ORIGIN_PREFIX 按它剥离
 }
 
 function toDraftPayload(draft: PdfDraft): PdfTaskDraftData {

@@ -32,6 +32,10 @@ beforeEach(() => setLocale('zh-CN'))
 // Monaco does not load under happy-dom (and is not what is under test): stand in
 // a textarea that speaks the same v-model / @save contract.
 // The document's version history: the last edit is read on open; none here.
+vi.mock('../../api/docThreads', () => ({
+  listDocThreads: async () => ({ data: [], total: 0 }),
+  writeDocThread: async () => ({}),
+}))
 vi.mock('../../api/docHistory', () => ({
   getDocVersions: async () => ({ versions: [], cursor: null }),
   restoreDocVersion: async () => ({}),
@@ -77,7 +81,6 @@ vi.mock('../../api', async () => {
     readFile: (...a: unknown[]) => readFile(...a),
     writeFile: (...a: unknown[]) => writeFile(...a),
     // Everything else the panel calls on mount — quiet, empty answers.
-    getComments: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getDocNodes: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getTranscript: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getAgentControl: vi.fn().mockResolvedValue({ id: null, connected: false, tasks: {} }),

@@ -11,6 +11,7 @@ import type { Block, RoomTask, TodoItem } from '../../cx_types'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 import { ApiError, editMessage, getProgress, getRoomTask, sayOnRoomTask } from '../../api'
+import { useStickToBottom } from '../../composables/useStickToBottom'
 import { isAgentBlock, isAgentHandle } from '../../lib/authorship'
 import { columnDotStyle, phraseLabel } from '../../lib/board'
 import { noticeText } from '../../lib/noticeText'
@@ -73,6 +74,7 @@ const sending = ref(false)
 // 只在任务没加载出来时才画，写进它的话永远不会出现在屏幕上。
 const sendError = ref<string | null>(null)
 const timelineRef = ref<HTMLElement | null>(null)
+useStickToBottom(timelineRef, 80)
 
 async function load(silent = false) {
   const room = props.roomId

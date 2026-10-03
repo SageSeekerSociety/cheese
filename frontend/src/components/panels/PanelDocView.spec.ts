@@ -40,13 +40,13 @@ async function openThread() {
     created_at: '2026-10-02T00:00:00Z',
   } as Block
   const state = reactive<DocThreadState>({
-    threads: { [comment.id]: { comment, revision: 1, state: 'open', anchor: null, replies: [] } },
+    threads: [{ comment, revision: 1, state: 'open', replies: [] }],
+    activity: {},
     errors: {},
     busy: false,
     unknown: null,
   })
   const actions: DocThreadActions = {
-    load: vi.fn(async () => {}),
     reply: vi.fn(async () => {}),
     resolve: vi.fn(async () => {}),
     reopen: vi.fn(async () => {}),
@@ -57,7 +57,6 @@ async function openThread() {
       ...docPanelProps(),
       topic,
       commentAuthor: 'reader',
-      comments: [comment],
       threadState: state,
       threadActions: actions,
     },

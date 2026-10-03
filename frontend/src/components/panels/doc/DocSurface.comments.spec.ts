@@ -1,15 +1,16 @@
 // @vitest-environment jsdom
 import type { Editor } from '@tiptap/core'
 import type { Block } from '../../../cx_types'
+import type { CommentSpot } from '../../../lib/docCommentSpots'
 
 import { defineComponent, h, nextTick, ref } from 'vue'
 import { createVuetify } from 'vuetify'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { usePanelDoc } from '../../../composables/usePanelDoc'
-import { commentMarkKey } from '../../../lib/docDecorations'
+import { anchorComment, placeOf } from '../../../lib/docCommentSpots'
 import { localDocSession } from '../../../lib/docLocalSession'
+import { commentAnchors } from '../../../lib/docSchema'
 
 import DocSurface from './DocSurface.vue'
 
@@ -78,30 +79,20 @@ afterEach(() => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
-function deferred<T>() {
-  let resolve!: (value: T) => void
-  const promise = new Promise<T>((done) => {
-    resolve = done
-  })
-  return { promise, resolve }
-}
-async function mountDoc(html: string, fetch?: () => Promise<Block[]>, askAgent = true) {
+async function mountDoc(html: string, askAgent = true) {
   const topicId = ref(`surface-comment-${++serial}`)
   const editable = ref(true)
-  const openId = ref<string | null>(null)
+  const canComment = ref(true)
+  const openThreads = ref<ReadonlySet<string>>(new Set())
+  const activeThread = ref<string | null>(null)
   const surface = ref<InstanceType<typeof DocSurface> | null>(null)
-  const nodes = [{ id: 'server-node-0', content: 'document' }] as Block[]
-  let data!: ReturnType<typeof usePanelDoc>
-  const captured: { anchorId: string | null; quote: string }[] = []
-  const asked: { anchorId: string | null; quote: string; from: number; to: number }[] = []
+  const captured: CommentSpot[] = []
+  const asked: CommentSpot[] = []
   const located: string[] = []
-  const fetchNodes = vi.fn(fetch ?? (async () => nodes))
   const session = localDocSession()
   const view = render(
     defineComponent({
       setup() {
-        data = usePanelDoc({ topic: null, activityTick: 0, topicList: [] })
-        data.anchorNodes.value = nodes
         return () =>
           h('div', { class: 'doc-reading' }, [
             h('div', { class: 'doc-body' }, [
@@ -109,18 +100,18 @@ async function mountDoc(html: string, fetch?: () => Promise<Block[]>, askAgent =
                 ref: surface,
                 topicId: topicId.value,
                 editable: editable.value,
+                canComment: canComment.value,
                 loading: false,
                 session,
                 imageSrc: (src: string) => src,
                 pulse: () => {},
-                fetchDocNodes: fetchNodes,
-                commentMarkIndex: data.commentMarkIndex.value,
-                openCommentId: openId.value,
+                fetchDocNodes: async () => [] as Block[],
+                openThreads: openThreads.value,
+                activeThread: activeThread.value,
                 agentName: '芝士',
                 agentHandle: askAgent ? 'cheese' : null,
-                onOpenComment: (payload: { anchorId: string | null; quote: string }) => captured.push(payload),
-                onAgent: (payload: { anchorId: string | null; quote: string; from: number; to: number }) =>
-                  asked.push(payload),
+                onOpenComment: (payload: CommentSpot) => captured.push(payload),
+                onAgent: (payload: CommentSpot) => asked.push(payload),
                 onLocateComment: (id: string) => located.push(id),
               }),
             ]),
@@ -141,7 +132,19 @@ async function mountDoc(html: string, fetch?: () => Promise<Block[]>, askAgent =
     right: selectionLeft + 30,
   }))
   await nextTick()
-  return { ...view, ed, surface, topicId, editable, openId, data, nodes, captured, asked, located, fetchNodes }
+  return {
+    ...view,
+    ed,
+    surface,
+    topicId,
+    editable,
+    canComment,
+    openThreads,
+    activeThread,
+    captured,
+    asked,
+    located,
+  }
 }
 function span(ed: Editor, quote: string, occurrence = 0) {
   const spans: { from: number; to: number }[] = []
@@ -167,22 +170,29 @@ async function select(ed: Editor, quote: string, occurrence = 0) {
 function commentAction() {
   return screen.getByRole('button', { name: t('work.room.doc.commentOnSelection') })
 }
-function marks(ed: Editor) {
-  return commentMarkKey
-    .getState(ed.state)
-    .find()
-    .map((d: { from: number; to: number }) => ({
-      from: d.from,
-      to: d.to,
-      text: ed.state.doc.textBetween(d.from, d.to, ' '),
-    }))
+/** What is highlighted in the text, by thread. */
+function highlighted(): Record<string, string> {
+  const out: Record<string, string> = {}
+  document.querySelectorAll<HTMLElement>('[data-comment]').forEach((el) => {
+    out[el.dataset.comment!] = (out[el.dataset.comment!] ?? '') + el.textContent
+  })
+  return out
+}
+async function commentOn(f: Awaited<ReturnType<typeof mountDoc>>, quote: string, thread: string, occurrence = 0) {
+  await select(f.ed, quote, occurrence)
+  await fireEvent.click(commentAction())
+  const spot = f.captured[f.captured.length - 1]
+  expect(anchorComment(f.ed, spot, thread)).toBe(true)
+  f.openThreads.value = new Set([...f.openThreads.value, thread])
+  await nextTick()
+  return spot
 }
 
 describe('production surface comment selections', () => {
   it.each([
     '<ul><li><p>父</p><ul><li><p>😀目标</p></li></ul></li></ul>',
     '<p>前 <strong>粗体</strong> <a href="https://example.test">😀目标</a> 尾</p>',
-  ])('restores the actual descendant PM span: %s', async (html) => {
+  ])('marks exactly the selected words, and points back to the thread: %s', async (html) => {
     const f = await mountDoc(html)
     const selected = await select(f.ed, '😀目标')
     const button = commentAction()
@@ -192,67 +202,68 @@ describe('production surface comment selections', () => {
     expect(f.ed.state.selection.from).toBe(selected.from)
     expect(f.ed.state.selection.to).toBe(selected.to)
     await fireEvent.click(button)
-    await waitFor(() => expect(f.captured).toEqual([{ anchorId: 'server-node-0', quote: '😀目标' }]))
-    f.data.comments.value = [{ id: 'c1', reply_to: 'server-node-0', anchor_quote: '😀目标' }] as Block[]
+    expect(f.captured).toEqual([expect.objectContaining({ quote: '😀目标', ...selected })])
+    expect(anchorComment(f.ed, f.captured[0], 'c1')).toBe(true)
+    f.openThreads.value = new Set(['c1'])
     await nextTick()
-    expect(marks(f.ed)).toEqual([{ ...selected, text: '😀目标' }])
-    expect(f.surface.value!.commentQuoteState('c1')).toBe('unique')
-    f.openId.value = 'c1'
+    expect(highlighted()).toEqual({ c1: '😀目标' })
+    f.activeThread.value = 'c1'
     await nextTick()
     expect(document.querySelector('[data-comment="c1"]')?.classList.contains('is-active')).toBe(true)
     await fireEvent.click(document.querySelector('[data-comment="c1"]')!)
     expect(f.located).toEqual(['c1'])
-    // Changing only active card must not re-zip stale server indices after an edit.
-    f.ed.view.dispatch(f.ed.state.tr.insertText('新增 ', selected.from))
-    const mapped = marks(f.ed)
-    f.openId.value = null
-    await nextTick()
-    expect(marks(f.ed)).toEqual(mapped)
   })
 
-  it('discloses repeated quote ambiguity instead of underlining the first occurrence', async () => {
+  it('marks the occurrence that was selected when the same words appear twice', async () => {
     const f = await mountDoc('<p>前 目标 中 目标 尾</p>')
-    const second = await select(f.ed, '目标', 1)
-    expect(second.from).toBeGreaterThan(span(f.ed, '目标', 0).from)
-    await fireEvent.click(commentAction())
-    await waitFor(() => expect(f.captured).toEqual([{ anchorId: 'server-node-0', quote: '目标' }]))
-    f.data.comments.value = [{ id: 'repeat', reply_to: 'server-node-0', anchor_quote: '目标' }] as Block[]
+    const second = span(f.ed, '目标', 1)
+    await commentOn(f, '目标', 'second', 1)
+    expect(highlighted()).toEqual({ second: '目标' })
+    expect(commentAnchors(f.ed.state.doc).get('second')).toEqual([second])
+  })
+
+  it('keeps the words marked when a paragraph is inserted above and text typed before them', async () => {
+    const f = await mountDoc('<p>数据量到五百万行就评估。</p>')
+    await commentOn(f, '五百万行', 't1')
+    const paragraph = f.ed.schema.nodes.paragraph.create(null, f.ed.schema.text('插入段'))
+    f.ed.view.dispatch(f.ed.state.tr.insert(0, paragraph))
+    f.ed.view.dispatch(f.ed.state.tr.insertText('先用 PostgreSQL，', span(f.ed, '数据量').from))
     await nextTick()
-    expect(marks(f.ed)).toEqual([])
-    expect(f.surface.value!.commentQuoteState('repeat')).toBe('ambiguous')
+    expect(highlighted()).toEqual({ t1: '五百万行' })
+    expect(f.surface.value!.threadPlace('t1')).toBe('marked')
   })
 
-  it('keeps the page-comment fallback when server nodes do not align', async () => {
-    const f = await mountDoc('<p>前 目标 后</p>', async () => [{ id: 'a' }, { id: 'b' }] as Block[])
-    await select(f.ed, '目标')
-    await fireEvent.click(commentAction())
-    await waitFor(() => expect(f.captured).toEqual([{ anchorId: null, quote: '目标' }]))
-    expect(marks(f.ed)).toEqual([])
+  it('stops highlighting a resolved thread, and keeps where deleted words were', async () => {
+    const f = await mountDoc('<p>第一段。</p><p>数据量到五百万行就评估。</p>')
+    await commentOn(f, '五百万行', 't1')
+    f.openThreads.value = new Set()
+    await nextTick()
+    expect(highlighted()).toEqual({})
+    expect(f.surface.value!.threadPlace('t1')).toBe('marked')
+    const words = span(f.ed, '五百万行')
+    f.ed.view.dispatch(f.ed.state.tr.delete(words.from, words.to))
+    await nextTick()
+    expect(f.surface.value!.threadPlace('t1')).toBe('placed')
+    // Where it was is still in the second paragraph.
+    expect(f.ed.state.doc.resolve(placeOf(f.ed, 't1')!).parent.textContent).toBe('数据量到就评估。')
   })
 
-  it('uses the pre-click quote even if selection changes during the API wait', async () => {
-    const pending = deferred<Block[]>()
-    const f = await mountDoc('<p>第一段 第二段</p>', () => pending.promise)
-    await select(f.ed, '第一段')
-    await fireEvent.click(commentAction())
-    f.ed.commands.setTextSelection(span(f.ed, '第二段'))
-    pending.resolve(f.nodes)
-    await waitFor(() => expect(f.captured).toEqual([{ anchorId: 'server-node-0', quote: '第一段' }]))
+  it('does not move onto words typed over its own', async () => {
+    const f = await mountDoc('<p>数据量到五百万行就评估。</p>')
+    await commentOn(f, '五百万行', 't1')
+    const words = span(f.ed, '五百万行')
+    f.ed.view.dispatch(f.ed.state.tr.insertText('一千万条', words.from, words.to))
+    await nextTick()
+    expect(highlighted()).toEqual({})
+    expect(f.surface.value!.threadPlace('t1')).toBe('placed')
   })
 
-  it.each(['topic', 'document', 'unmount'] as const)('ignores a late node receipt after %s changes', async (change) => {
-    const pending = deferred<Block[]>()
-    const f = await mountDoc('<p>原文</p>', () => pending.promise)
+  it('offers no comment on a document that takes none', async () => {
+    const f = await mountDoc('<p>原文</p>')
+    f.canComment.value = false
+    await nextTick()
     await select(f.ed, '原文')
-    await fireEvent.click(commentAction())
-    if (change === 'topic') f.topicId.value += '-next'
-    else if (change === 'document') f.ed.view.dispatch(f.ed.state.tr.insertText('变更', 1))
-    else f.unmount()
-    await nextTick()
-    pending.resolve(f.nodes)
-    await Promise.resolve()
-    await nextTick()
-    expect(f.captured).toEqual([])
+    expect(screen.queryByRole('button', { name: t('work.room.doc.commentOnSelection') })).toBeNull()
   })
 
   it('Escape dismisses an unchanged selection until a different selection is made', async () => {
@@ -329,54 +340,27 @@ describe('production surface comment selections', () => {
     expect(f.ed.getHTML()).toContain('<mark>一千万</mark>')
   })
 
-  it('changes the paragraph style only for a selection inside one paragraph', async () => {
-    const f = await mountDoc('<p>第一段文字</p><p>第二段文字</p>')
+  it('changes the paragraph style of every paragraph the selection touches, and no other', async () => {
+    const f = await mountDoc('<p>第一段文字</p><p>第二段文字</p><p>第三段文字</p>')
     await select(f.ed, '一段')
     await fireEvent.click(screen.getByRole('button', { name: t('work.room.doc.blockType') }))
     await fireEvent.click(screen.getByRole('menuitemradio', { name: new RegExp(t('work.room.doc.slash.h2')) }))
-    expect(f.ed.getHTML()).toBe('<h2>第一段文字</h2><p>第二段文字</p>')
+    expect(f.ed.getHTML()).toBe('<h2>第一段文字</h2><p>第二段文字</p><p>第三段文字</p>')
 
     f.ed.commands.setTextSelection({ from: span(f.ed, '一段').from, to: span(f.ed, '第二').to })
     await nextTick()
-    expect(screen.queryByRole('button', { name: t('work.room.doc.blockType') })).toBeNull()
-  })
-
-  it('keeps mapped identity across a new top-level block and hides a newly ambiguous quote', async () => {
-    const f = await mountDoc('<p>原文</p>')
-    f.data.comments.value = [{ id: 'mapped', reply_to: 'server-node-0', anchor_quote: '原文' }] as Block[]
-    await nextTick()
-    expect(f.surface.value!.commentQuoteState('mapped')).toBe('unique')
-    const paragraph = f.ed.schema.nodes.paragraph.create(null, f.ed.schema.text('插入段'))
-    f.ed.view.dispatch(f.ed.state.tr.insert(0, paragraph))
-    f.openId.value = 'mapped'
-    await nextTick()
-    expect(f.surface.value!.commentQuoteState('mapped')).toBe('unique')
-    expect(document.querySelector('[data-comment="mapped"]')?.textContent).toBe('原文')
-    const original = span(f.ed, '原文')
-    f.ed.view.dispatch(f.ed.state.tr.insertText(' 原文', original.to))
-    await nextTick()
-    expect(f.surface.value!.commentQuoteState('mapped')).toBe('ambiguous')
-    expect(document.querySelector('[data-comment="mapped"]')).toBeNull()
-  })
-
-  it('does not move a changed mapped quote onto another matching occurrence', async () => {
-    const f = await mountDoc('<p>原文</p>')
-    f.data.comments.value = [{ id: 'changed', reply_to: 'server-node-0', anchor_quote: '原文' }] as Block[]
-    await nextTick()
-    const original = span(f.ed, '原文')
-    f.ed.view.dispatch(f.ed.state.tr.insertText('原文 新', original.from, original.to))
-    await nextTick()
-    expect(f.surface.value!.commentQuoteState('changed')).toBe('missing')
-    expect(document.querySelector('[data-comment="changed"]')).toBeNull()
+    await fireEvent.click(screen.getByRole('button', { name: t('work.room.doc.blockType') }))
+    await fireEvent.click(screen.getByRole('menuitemradio', { name: new RegExp(t('work.room.doc.slash.h3')) }))
+    expect(f.ed.getHTML()).toBe('<h3>第一段文字</h3><h3>第二段文字</h3><p>第三段文字</p>')
   })
 })
 
 describe('asking the AI teammate from a selection', () => {
-  it('hands it the selected text, where it is, and what it is anchored to', async () => {
+  it('hands it the selected text and where it is', async () => {
     const f = await mountDoc('<p>数据量到一千万行时开始评估。</p>')
     const selected = await select(f.ed, '一千万')
     await fireEvent.click(screen.getByRole('button', { name: '芝士' }))
-    await waitFor(() => expect(f.asked).toEqual([{ anchorId: 'server-node-0', quote: '一千万', ...selected }]))
+    expect(f.asked).toEqual([expect.objectContaining({ quote: '一千万', ...selected })])
   })
 
   it('is offered on a read-only document too', async () => {
@@ -388,7 +372,7 @@ describe('asking the AI teammate from a selection', () => {
   })
 
   it('is not offered when the teammate cannot be named', async () => {
-    const f = await mountDoc('<p>数据量到一千万行时开始评估。</p>', undefined, false)
+    const f = await mountDoc('<p>数据量到一千万行时开始评估。</p>', false)
     await select(f.ed, '一千万')
     expect(screen.queryByRole('button', { name: '芝士' })).toBeNull()
   })

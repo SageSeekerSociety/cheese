@@ -168,6 +168,29 @@ FEEDBACK_DESCRIPTION = (
     "卡本身就是那句话。"
 )
 
+FEEDBACK_CLAIM_DESCRIPTION = (
+    "领取反馈中心里的一条反馈：记到你名下，状态变成「处理中」，之后别人再领会失败。"
+    "领取是为了不让两个人修同一个问题。\n"
+    "\n"
+    "**动手修一条反馈之前先领。领不到就不要修**：已经有人领着（返回里说是谁）、"
+    "或者你所在的项目不是在做这个平台本身——把原因告诉用户，别换个办法接着修。\n"
+    "\n"
+    "领到后返回这条反馈的全文。修它的提交在提交信息里单独写一行 "
+    "`Fixes-feedback: FB-12`，合并和上线时平台会自动记「已修复」「已上线」。"
+    "不修了用 `cheese_feedback_release` 放掉。"
+)
+
+_FEEDBACK_REF = _text("反馈编号，如 FB-12（详情页上印的那个），或者它的 id")
+
+#: How the platform names each status to a person; the agent repeats it to one.
+_FEEDBACK_STATUS = {
+    "received": "已收录",
+    "in_progress": "处理中",
+    "resolved": "已修复",
+    "deployed": "已上线",
+    "declined": "不修复",
+}
+
 
 # The only profiles `PUT /topics/{topic}/compute-profile` accepts. This script is
 # shipped to machines on its own and cannot import the backend, so the set is a
@@ -590,6 +613,19 @@ PLATFORM_TOOLS = ToolTable(
                 "tags": _text("逗号分隔"),
             },
             ["title", "kind", "visibility", "user_said"],
+        ),
+        _tool(
+            "cheese_feedback_claim",
+            FEEDBACK_CLAIM_DESCRIPTION,
+            {"feedback": _FEEDBACK_REF},
+            ["feedback"],
+        ),
+        _tool(
+            "cheese_feedback_release",
+            "放掉你领取的一条反馈，让别人能领。决定不修、或者修不了的时候调它；"
+            "状态不退回。",
+            {"feedback": _FEEDBACK_REF},
+            ["feedback"],
         ),
         _tool(
             "cheese_machine",
@@ -1089,6 +1125,15 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "method": "POST",
             "path": f"/topics/{topic}/feedback-proposals",
             "body": body,
+        }
+    if tool in ("cheese_feedback_claim", "cheese_feedback_release"):
+        # 反馈不属于房间（`/feedback` 下面），但领的人是你：你的凭据只在这个房间里
+        # 认得出你，所以带上房间，后端在房间里认人，再拿房间的项目判你是不是在做
+        # 这个平台本身。
+        ref = urllib.parse.quote(str(args["feedback"]).strip(), safe="")
+        return {
+            "method": "POST" if tool == "cheese_feedback_claim" else "DELETE",
+            "path": f"/feedback/{ref}/claim?topic={topic}",
         }
     if tool == "cheese_machine":
         body = {"profile": args["profile"], **_given(args, "device_id")}
@@ -1724,6 +1769,67 @@ def _describe_operation(method: str, path: str, operation: dict, spec: dict) -> 
     return "\n".join(lines)
 
 
+def _feedback_refusal(exc: Exception) -> str | None:
+    """The backend's own sentence for a refused claim or release, if it sent one."""
+    try:
+        return json.loads(exc.body)["error"]["message"]  # type: ignore[attr-defined]
+    except (AttributeError, ValueError, KeyError, TypeError):
+        return None
+
+
+def _feedback_claim(args: dict, host) -> str:
+    try:
+        data = host.request(request_plan("cheese_feedback_claim", args, host.environ))
+    except Exception as exc:
+        status = getattr(exc, "status", None)
+        why = _feedback_refusal(exc)
+        if status == 404:
+            raise PlatformToolError(
+                f"没有 {args['feedback']} 这条反馈，或者它是私密的、你看不见。"
+                "核对编号；看不见的不要修。"
+            ) from exc
+        if status in (403, 409) and why:
+            raise PlatformToolError(
+                f"没领到，**不要修这一条**：{why.rstrip('。')}。把这个原因告诉用户。"
+            ) from exc
+        raise
+    item = data.get("data") or {}
+    shown = item.get("display_id") or args["feedback"]
+    status = _FEEDBACK_STATUS.get(item.get("status"), item.get("status"))
+    lines = [f"{shown}「{item.get('title')}」记在你名下了，现在是「{status}」。"]
+    for label, key in (
+        ("问题", "problem"),
+        ("为什么要紧", "why"),
+        ("发生了什么", "what_happened"),
+        ("怎么复现", "repro"),
+        ("期望", "expectation"),
+        ("证据", "evidence"),
+        ("环境", "environment"),
+    ):
+        if item.get(key):
+            lines.append(f"{label}：{item[key]}")
+    lines.append(
+        f"修它的提交在提交信息里单独写一行 `Fixes-feedback: {shown}`；"
+        "不修了用 cheese_feedback_release 放掉。"
+    )
+    return "\n".join(lines)
+
+
+def _feedback_release(args: dict, host) -> str:
+    try:
+        data = host.request(
+            request_plan("cheese_feedback_release", args, host.environ)
+        )
+    except Exception as exc:
+        status = getattr(exc, "status", None)
+        why = _feedback_refusal(exc)
+        if status in (403, 404) and why:
+            raise PlatformToolError(f"没放掉：{why.rstrip('。')}。") from exc
+        raise
+    item = data.get("data") or {}
+    return f"{item.get('display_id') or args['feedback']} 现在没人领着，别人可以领了。"
+
+
 _STEPS = {
     "cheese_chat_get": _chat_get,
     "cheese_chat_list": _chat_page("cheese_chat_list"),
@@ -1735,6 +1841,8 @@ _STEPS = {
     "cheese_accept_request": _accept_request,
     "cheese_tell": _tell,
     "platform_request": _platform_request,
+    "cheese_feedback_claim": _feedback_claim,
+    "cheese_feedback_release": _feedback_release,
 }
 
 

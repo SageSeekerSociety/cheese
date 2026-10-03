@@ -26,7 +26,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import ActorResolverDep
+from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.response import ok, page
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, BadRequestError
@@ -53,6 +53,7 @@ from app.domain.feedback.schemas import (
 )
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
+from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="/feedback", tags=["feedback"])
 
@@ -580,3 +581,77 @@ async def unsupport_feedback(
     )
     await db.commit()
     return ok(SupportOut(count=count, supported=supported).model_dump(mode="json"))
+
+
+# --- 领取 -------------------------------------------------------------------
+
+
+async def _claimer(
+    db: DbSession, resolver: ActorResolver, topic: uuid.UUID | None
+) -> tuple[Actor, uuid.UUID | None]:
+    """Who is claiming, and the project of the room they claim from, if any.
+
+    A person in the feedback center names no room. An agent must: its credential
+    is bound to one room, and `resolve()` without that room refuses it (see the
+    other routes here). With `topic`, the caller is resolved **in** that room and
+    authorized for it — `enforce=True`, because the room's project is evidence in
+    `may_claim`, so a room the caller is not in must not count.
+    """
+    project_id = None
+    if topic is None:
+        who = await resolver.resolve()
+    else:
+        place = await TopicService(db).place_or_404(topic)
+        who = await resolver.resolve(
+            topic_id=place.room_id, project_id=place.project_id
+        )
+        await resolver.authorize_topic(
+            who, project_id=place.project_id, topic_id=place.room_id, enforce=True
+        )
+        project_id = place.project_id
+    if not who.authenticated or not who.handle:
+        raise AuthenticationRequiredError(say("signInRequired"))
+    return who, project_id
+
+
+@router.post("/{feedback_ref}/claim")
+async def claim_feedback(
+    feedback_ref: str,
+    db: DbSession,
+    service: FeedbackServiceDep,
+    resolver: ActorResolverDep,
+    topic: Annotated[uuid.UUID | None, Query()] = None,
+) -> dict:
+    """领取一条反馈：记到调用者名下，从此刻算「处理中」。
+
+    `feedback_ref` 是 `FB-12` 或 uuid。领的人取自凭证，请求体里没有名字。已经被
+    别人领了回 **409**，带着持有人（`error.data.holder`）：领取存在的意义就是让第二
+    个人知道别修了。看不见的是 404，看得见但不是在做知是本身的人是 403。回整条详情：
+    agent 领到的那一刻就要读它在修什么。
+    """
+    who, room_project = await _claimer(db, resolver, topic)
+    is_admin = await _is_admin(db, service, who)
+    row = await service.claim(
+        feedback_ref,
+        handle=who.handle,
+        is_admin=is_admin,
+        room_project_id=room_project,
+    )
+    await db.commit()
+    return ok(await _detail(service, row, handle=who.handle, is_admin=is_admin))
+
+
+@router.delete("/{feedback_ref}/claim")
+async def release_feedback(
+    feedback_ref: str,
+    db: DbSession,
+    service: FeedbackServiceDep,
+    resolver: ActorResolverDep,
+    topic: Annotated[uuid.UUID | None, Query()] = None,
+) -> dict:
+    """放弃领取：持有人自己或反馈管理员。没人领着时是空操作；状态不退回。"""
+    who, _ = await _claimer(db, resolver, topic)
+    is_admin = await _is_admin(db, service, who)
+    row = await service.release(feedback_ref, handle=who.handle, is_admin=is_admin)
+    await db.commit()
+    return ok(await _detail(service, row, handle=who.handle, is_admin=is_admin))

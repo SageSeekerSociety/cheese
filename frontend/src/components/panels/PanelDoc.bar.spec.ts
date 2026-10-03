@@ -10,6 +10,10 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vu
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // The document's version history: the last edit is read on open; none here.
+vi.mock('../../api/docThreads', () => ({
+  listDocThreads: async () => ({ data: [], total: 0 }),
+  writeDocThread: async () => ({}),
+}))
 vi.mock('../../api/docHistory', () => ({
   getDocVersions: async () => ({ versions: [], cursor: null }),
   restoreDocVersion: async () => ({}),
@@ -21,7 +25,6 @@ vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
   return {
     ...actual,
-    getComments: vi.fn(async () => ({ data: [], total: 0 })),
     getDocNodes: vi.fn(async () => ({ data: [], total: 0 })),
   }
 })

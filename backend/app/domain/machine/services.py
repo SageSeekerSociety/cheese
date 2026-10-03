@@ -667,6 +667,16 @@ class MachineService:
             await self._session.refresh(machine)
             if machine.released_at is not None:
                 released += 1
+        # MicroCloud accepts a delete and runs it later; one that then fails
+        # leaves the VM in `error`, already released, so nothing above sees it.
+        for machine in await self._repo.list_left_undeleted():
+            await self._session.commit()
+            try:
+                await self.destroy(machine)
+            except MicroCloudError:
+                logger.warning("deleting left machine %s failed", machine.hostname)
+                continue
+            await self._session.commit()
         return released
 
     async def list_active_for_topic(self, topic_id: uuid.UUID) -> list[ProjectMachine]:

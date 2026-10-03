@@ -1,4 +1,4 @@
-"""Real HTTP/PG threads: recovery, conflict, ownership and historical anchors."""
+"""Real HTTP/PG threads: recovery, conflict and ownership."""
 
 import asyncio
 import threading
@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.block.comment_models import DocCommentReply, DocCommentThread
+from app.domain.block.comment_models import DocCommentReply
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.living_doc.models import DocumentOperation
 from tests.conftest import seed_user
@@ -31,10 +31,8 @@ def setup(client):
         f"/topics/{room}/doc", json={"content": raw, "expected_version": 0}
     )
     assert saved.status_code == 200, saved.text
-    node = client.get(f"/topics/{room}/docs").json()["data"]["data"][2]
     root = client.post(
-        f"/topics/{room}/comments",
-        json={"anchor": node["id"], "quote": "同句", "content": "原评论"},
+        f"/topics/{room}/comments", json={"quote": "同句", "content": "原评论"}
     )
     assert root.status_code == 200, root.text
     return room, root.json()["data"], raw
@@ -50,7 +48,7 @@ def mutation(revision, **payload):
     return {"operation_id": str(uuid.uuid4()), "expected_revision": revision, **payload}
 
 
-def test_reply_resolve_reopen_replay_preserve_doc_refs_and_anchor(client):
+def test_reply_resolve_reopen_replay_and_leave_the_document_alone(client):
     room, root, raw = setup(client)
     prefix = f"/topics/{room}/comments/{root['id']}"
     before_doc = client.get(f"/topics/{room}/doc").json()
@@ -61,18 +59,6 @@ def test_reply_resolve_reopen_replay_preserve_doc_refs_and_anchor(client):
         and thread["state"] == "open"
         and thread["replies"] == []
     )
-    anchor = thread["anchor"]
-    start = len("# 标题\r\n\r\n😀同句\r\n\r\n".encode())
-    assert anchor == {
-        "node_id": root["reply_to"],
-        "quote": "同句",
-        "node_content": "😀同句",
-        "document_id": before_doc["data"]["id"],
-        "base_version": 1,
-        "start": start,
-        "end": start + len("😀同句".encode()),
-        "offset_unit": "utf8-bytes",
-    }
     body = mutation(1, content="第一回复😀\r\n原样")
     reply = client.post(prefix + "/replies", json=body)
     assert reply.status_code == 200, reply.text
@@ -95,7 +81,8 @@ def test_reply_resolve_reopen_replay_preserve_doc_refs_and_anchor(client):
         ).status_code
         == 409
     )
-    assert client.get(f"/topics/{room}/comments").json()["data"]["data"] == [root]
+    listed = client.get(f"/topics/{room}/comments/threads").json()["data"]["data"]
+    assert [t["comment"]["id"] for t in listed] == [root["id"]]
     assert (
         client.get(f"/topics/{room}/comments/{block['id']}/thread").status_code == 404
     )
@@ -126,14 +113,15 @@ def test_reply_resolve_reopen_replay_preserve_doc_refs_and_anchor(client):
     )
     assert changed.status_code == 200
     reread = read(client, room, root)
-    assert reread["anchor"] == anchor and reread["comment"]["anchor_quote"] == "同句"
-    assert (
-        reread["comment"]["reply_to"] is None
-    )  # replaced node FK is gone, evidence remains
+    assert reread["comment"]["anchor_quote"] == "同句"
     assert len(reread["replies"]) == 2
     listed = client.get(f"/topics/{room}/comments/threads").json()["data"]
-    assert listed["total"] == 1 and listed["data"][0]["reply_count"] == 2
-    assert listed["data"][0]["anchor"] == anchor
+    assert listed["total"] == 1
+    assert [r["comment"]["content"] for r in listed["data"][0]["replies"]] == [
+        "第一回复😀\r\n原样",
+        "第二回复",
+    ]
+    assert listed["data"][0]["answering"] is None
     assert raw.startswith("# 标题")
 
 
@@ -211,7 +199,7 @@ def test_spoofed_author_extra_fields_and_unverified_actor_cannot_reply(client):
     path = f"/topics/{room}/comments/{root['id']}/replies"
     for extra in [
         {"author": "someone"},
-        {"anchor": root["reply_to"]},
+        {"anchor": "elsewhere"},
         {"refs": ["fake"]},
     ]:
         response = client.post(path, json=mutation(1, content="x", **extra))
@@ -252,50 +240,6 @@ def test_real_member_authorization_and_agent_participation_even_permissive_dev(
     client.headers.pop("X-Cheese-Token")
     client.headers.update(owner_headers)
     assert read(client, room, root)["revision"] == 2
-
-
-def test_legacy_comment_lazily_recovers_without_inventing_version_or_span(client):
-    room, _, _ = setup(client)
-    project = client.get(f"/topics/{room}").json()["data"]["project_id"]
-    node = client.get(f"/topics/{room}/docs").json()["data"]["data"][1]
-
-    async def seed():
-        async with client.test_factory() as session:
-            old = Block(
-                project_id=uuid.UUID(project),
-                topic_id=uuid.UUID(room),
-                kind=BlockKind.comment,
-                author="old",
-                author_type=AuthorType.participant,
-                content="legacy",
-                reply_to=uuid.UUID(node["id"]),
-                anchor_quote="同句",
-                refs=["old-reference"],
-            )
-            session.add(old)
-            await session.flush()
-            result = str(old.id)
-            await session.commit()
-            return result
-
-    old = {"id": asyncio.run(seed())}
-    thread = read(client, room, old)
-    assert thread["anchor"]["node_content"] == "😀同句"
-    assert thread["anchor"]["base_version"] is None
-    assert thread["anchor"]["start"] is None and thread["anchor"]["end"] is None
-    assert thread["comment"]["refs"] == ["old-reference"]
-    response = client.post(
-        f"/topics/{room}/comments/{old['id']}/resolve", json=mutation(1)
-    )
-    assert response.status_code == 200
-    assert response.json()["data"]["comment"]["refs"] == ["old-reference"]
-
-    async def persisted():
-        async with client.test_factory() as session:
-            row = await session.get(DocCommentThread, uuid.UUID(old["id"]))
-            assert row is not None and row.state == "resolved" and row.revision == 2
-
-    asyncio.run(persisted())
 
 
 @pytest.mark.parametrize("pair", [("reply", "resolve"), ("resolve", "resolve")])
@@ -405,7 +349,6 @@ def test_task_scoped_comment_cannot_be_read_or_mutated_as_room_thread(client):
                 author="thread-owner",
                 author_type=AuthorType.participant,
                 content="task comment",
-                reply_to=uuid.UUID(root["reply_to"]),
             )
             session.add(comment)
             await session.flush()
@@ -425,5 +368,6 @@ def test_task_scoped_comment_cannot_be_read_or_mutated_as_room_thread(client):
             json=mutation(1, **({"content": "x"} if action == "replies" else {})),
         )
         assert response.status_code == 404, response.text
-    assert client.get(f"/topics/{room}/comments").json()["data"]["data"] == [root]
+    listed = client.get(f"/topics/{room}/comments/threads").json()["data"]["data"]
+    assert [t["comment"]["id"] for t in listed] == [root["id"]]
     assert read(client, room, root)["revision"] == 1

@@ -1,21 +1,21 @@
-// 文档那一格的取数：协同文档本身，和围着它的那几样 —— 已存的那一版、评论、节点。
+// 文档那一格的取数：协同文档本身，和围着它的那几样 —— 已存的那一版、节点。评论串在
+// useDocThreads。
 //
 // 和「改动」(#2130)、「预览」(#2158) 分家是同一个形状：
-//   - 取数（打开协同文档、读已存的那一版、评论、节点）→ 这一层
+//   - 取数（打开协同文档、读已存的那一版、节点）→ 这一层
 //   - 画（编辑器和它的装饰、浮层、横条上写哪句话）
 //     → components/panels/PanelDocView.vue 和它底下的 doc/DocSurface.vue，只凭 props 渲染
 //
 // 正文不在这一层来回搬：编辑器直接绑在协同文档上（useDocCollab），谁打的字都实时合进
-// 同一份，协同服务在停手几秒后把它存回去。评论锚着的是服务端那一侧的节点，存回之后房
-// 间里会收到一帧 state/doc，父层把它变成 activityTick，这一层据此重读评论和节点。
+// 同一份，协同服务在停手几秒后把它存回去。存回之后房间里会收到一帧 state/doc，父层把它
+// 变成 activityTick，这一层据此重读节点（支线徽章挂在节点上）。
 import type { Block, Topic } from '../cx_types'
 import type { DocAgentListener, DocAgentRequest } from '../lib/docAgent'
-import type { SelectionTarget } from '../lib/docBubble'
 import type { DocEdit } from '../lib/docEdits'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
-import { addComment, getComments, getDocNodes, workspaceFileRawUrl } from '../api'
+import { addComment, getDocNodes, workspaceFileRawUrl } from '../api'
 import { askDocAgent, replyWithAnswer, stopDocAgent } from '../api/docAgent'
 import { applyDocEdits, getPendingSuggestions } from '../api/docEdits'
 import { getDocVersions, restoreDocVersion } from '../api/docHistory'
@@ -48,7 +48,7 @@ export function usePanelDoc(props: PanelDocProps) {
   const collab = useDocCollab(() => props.topic?.id ?? null)
 
   let disposed = false
-  let commentSequence = 0
+  let nodeSequence = 0
 
   // ---- 这一篇现在是什么状态 ----
   // 自己切的只读（⋯ 里那一项）。没有编辑权限时它不起作用：那由凭证决定。
@@ -59,8 +59,7 @@ export function usePanelDoc(props: PanelDocProps) {
   const localError = ref<string | null>(null)
   const errorMsg = computed(() => localError.value ?? collab.error.value)
 
-  // ---- 评论 (B4): 常驻评论区读的就是这两样 ----
-  const comments = ref<Block[]>([])
+  // ---- 节点：服务端那一侧的文档段落，支线徽章挂在上面 ----
   const anchorNodes = ref<Block[]>([])
   // 修改建议的理由：建议本身在协同文档里，理由只在存回的那一份旁边（id → 理由）。文档
   // 里有建议时才去读（画的那一半说一声），之后每次存回跟着重读。
@@ -88,30 +87,11 @@ export function usePanelDoc(props: PanelDocProps) {
     })
     return next
   })
-  // The comment underlines: node id → top-level index, then group the anchored
-  // comments (with usable quotes) under their block's index.
-  const commentMarkIndex = computed(() => {
-    const idToIndex = new Map(anchorNodes.value.map((n, i) => [n.id, i]))
-    const next = new Map<number, { id: string; quote: string }[]>()
-    for (const c of comments.value) {
-      const anchorId = c.reply_to
-      const quote = (c.anchor_quote || '').trim()
-      if (!anchorId || !quote) continue
-      const idx = idToIndex.get(anchorId)
-      if (idx === undefined) continue
-      const list = next.get(idx) ?? []
-      list.push({ id: c.id, quote })
-      next.set(idx, list)
-    }
-    return next
-  })
-
   // ---- 读 ----
-  async function loadComments(tid: string) {
-    const sequence = ++commentSequence
-    const [cs, ns] = await Promise.all([getComments(tid), getDocNodes(tid)])
-    if (disposed || props.topic?.id !== tid || sequence !== commentSequence) return
-    comments.value = cs.data
+  async function loadNodes(tid: string) {
+    const sequence = ++nodeSequence
+    const ns = await getDocNodes(tid)
+    if (disposed || props.topic?.id !== tid || sequence !== nodeSequence) return
     anchorNodes.value = ns.data
   }
 
@@ -127,11 +107,6 @@ export function usePanelDoc(props: PanelDocProps) {
     const tid = props.topic?.id
     reasonsWanted = true
     if (tid) void loadSuggestionReasons(tid).catch(() => {})
-  }
-
-  async function refreshComments() {
-    const tid = props.topic?.id
-    if (tid) await loadComments(tid).catch(() => {})
   }
 
   /** 评论里写的「@名字」换成点名（和对话框发消息一样）：AI 队友只认点名，写成字它收不到。 */
@@ -174,13 +149,13 @@ export function usePanelDoc(props: PanelDocProps) {
     return tid ? stopDocAgent(tid, conversation) : Promise.resolve()
   }
 
-  /** 把这一问的回答放进一条新评论：评论写着问了什么，回答是 AI 队友在下面的回复。 */
-  async function answerToComment(conversation: string, target: SelectionTarget, question: string): Promise<string> {
+  /** 把这一问的回答放进一条新评论：评论写着问了什么，回答是 AI 队友在下面的回复。回执是
+   *  这条评论的 id，标记由拿着编辑器的那一层放上去。 */
+  async function answerToComment(conversation: string, quote: string, question: string): Promise<string> {
     const tid = props.topic?.id
     if (!tid) throw new Error(t('work.room.comments.unavailable'))
-    const posted = await addComment(tid, question, target.anchorId ?? undefined, target.quote || undefined)
+    const posted = await addComment(tid, question, quote)
     await replyWithAnswer(tid, conversation, posted.id)
-    void refreshComments()
     return posted.id
   }
 
@@ -204,16 +179,15 @@ export function usePanelDoc(props: PanelDocProps) {
   watch(
     () => props.topic?.id ?? null,
     (id) => {
-      commentSequence++
+      nodeSequence++
       reasonSequence++
       localError.value = null
-      comments.value = []
       anchorNodes.value = []
       suggestionReasons.value = {}
       reasonsWanted = false
       lastEdit.value = null
       lastEditSequence++
-      if (id) void loadComments(id).catch(() => {})
+      if (id) void loadNodes(id).catch(() => {})
       if (id) void loadLastEdit(id).catch(() => {})
     },
     { immediate: true }
@@ -253,7 +227,7 @@ export function usePanelDoc(props: PanelDocProps) {
     () => props.activityTick,
     () => {
       const id = props.topic?.id
-      if (id) void loadComments(id).catch(() => {})
+      if (id) void loadNodes(id).catch(() => {})
       if (id) void loadLastEdit(id).catch(() => {})
       if (id && reasonsWanted) void loadSuggestionReasons(id).catch(() => {})
     }
@@ -263,7 +237,7 @@ export function usePanelDoc(props: PanelDocProps) {
   // 盯的是徽章真正用到的字段，而不是数组本身。
   watch(liveRefFingerprint, () => {
     const tid = props.topic?.id
-    if (tid) void loadComments(tid).catch(() => {})
+    if (tid) void loadNodes(tid).catch(() => {})
   })
 
   onBeforeUnmount(() => {
@@ -281,18 +255,13 @@ export function usePanelDoc(props: PanelDocProps) {
     editable,
     loading,
     errorMsg,
-    // 评论 / 节点（装饰的原料）
-    comments,
-    anchorNodes,
+    // 节点（徽章的原料）
     liveRefIndex,
-    commentMarkIndex,
     suggestionReasons,
     fetchSuggestionReasons,
     // 动作
-    refreshComments,
     commentAuthor: AUTHOR,
-    sendComment: (topicId: string, content: string, anchor?: string, quote?: string) =>
-      addComment(topicId, withMentions(content), anchor, quote),
+    sendComment: (topicId: string, content: string, quote: string) => addComment(topicId, withMentions(content), quote),
     askAgent,
     stopAgent,
     answerToComment,

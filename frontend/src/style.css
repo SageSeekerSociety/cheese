@@ -504,10 +504,7 @@
   color: var(--text);
 }
 
-/* Meta (timestamps, #ids, counts, branch): 12.5 / mono / --faint / tnum.
-   12.5px is the documented legacy value — 12px is the spec (§3.2) and the fold
-   is a later batch — so it borrows the 12px row of the ladder. When the size
-   folds, this line stays as it is. */
+/* Meta (timestamps, #ids, counts, branch): 12 / mono / --faint / tnum. */
 /* 附件块左边那个方格：图片缩略图、PDF 首页、类型图标和上传中的转圈都落在它
    里面。四种状态必须是同一个尺寸，否则上传结束的那一刻整条会跳；而它跨四个
    组件，所以定义在这里，不在其中任何一个里面。 */
@@ -526,7 +523,7 @@
 }
 .t-meta {
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: 12px;
   line-height: var(--lh-12);
   color: var(--faint);
   font-variant-numeric: tabular-nums;
@@ -567,16 +564,16 @@
   color: var(--text);
 }
 
-/* Meta, readable: 12.5 / 18 / 400 / --muted.
+/* Meta, readable: 12 / 18 / 400 / --muted.
    与 .t-meta 同档、同尺寸，只换了颜色。判据是**文字那条线**（AA 4.5:1），不是图形
-   那条（3:1）：这一档装的是 12.5px 的时间戳、计数、轴标签。`--faint` 在浅色主题下
+   那条（3:1）：这一档装的是 12px 的时间戳、计数、轴标签。`--faint` 在浅色主题下
    四种底色上连 3:1 都到不了（`--surface` 2.64 / `--canvas` 2.48 / `--fill` 2.42 /
    `--line-2` 2.05）—— 所以它不是「差一点」，而写这条规则的人要是照图形那条线算，
-   会得出「把 --faint 抬到 3.1 这个类就能删」的结论，那个结论对 12.5px 的字是错的。
+   会得出「把 --faint 抬到 3.1 这个类就能删」的结论，那个结论对 12px 的字是错的。
    深色那一侧不成立同样的量级（4.25 / 4.60 / 3.92 / 2.70），吃紧的一直是浅色。
    .t-meta 是既有类，它的 `--faint` 留给存量页面，不在这里改。 */
 .t-meta-read {
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 400;
   line-height: var(--lh-12);
   color: var(--muted);

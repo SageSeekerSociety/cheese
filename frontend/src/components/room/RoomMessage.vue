@@ -561,8 +561,8 @@ async function onAgentTextClick(e: MouseEvent) {
    就是一段松一段紧。字号折到 14px 是为了让下面那几个 em 的子元素（h1/h2/h3、
    code）有一个干净的基数。 */
 .md-content {
-  font-size: 14px;
-  line-height: var(--lh-14-loose);
+  font-size: 15px;
+  line-height: var(--lh-15-reading);
 }
 .md-content :deep(p) {
   margin: 0 0 8px;

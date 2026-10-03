@@ -48,6 +48,7 @@
     "postAnswerExist": "You've already answered this question — tap to view",
     "inviteTitle": "Invite others to answer and get an answer faster",
     "bounty": "Bounty {bounty}",
+    "bountyTip": "Answer before {before}: the accepted answer earns the {bounty} bounty. If no answer is accepted, the {bounty} bounty is split among the answers in proportion to their upvotes.",
     "addBountyTitle": "Add bounty",
     "addBountySuccess": "Bounty added — awaiting answers",
     "acceptedAnswerTitle": "{user}'s answer was accepted",

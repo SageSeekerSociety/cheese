@@ -26,10 +26,10 @@ const emit = defineEmits<{ (e: 'restore'): void }>()
   box-sizing: border-box;
   width: 100%;
   padding: 10px 12px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-2);
   border-radius: var(--radius-lg);
   background: var(--raised);
-  box-shadow: var(--shadow-1);
+  box-shadow: var(--shadow-2);
 }
 .doc-review-card__text {
   flex: 1 1 auto;

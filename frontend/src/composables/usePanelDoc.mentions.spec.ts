@@ -6,7 +6,7 @@ import { effectScope } from 'vue'
 import { render, screen } from '@testing-library/vue'
 import { describe, expect, it, vi } from 'vitest'
 
-import DocCommentBody from '../components/panels/doc/DocCommentBody.vue'
+import DocThreadCard from '../components/panels/doc/DocThreadCard.vue'
 
 import { usePanelDoc } from './usePanelDoc'
 
@@ -14,7 +14,6 @@ const addComment = vi.fn(async () => ({}))
 vi.mock('../api', async () => ({
   ...(await vi.importActual<typeof import('../api')>('../api')),
   addComment: (...a: unknown[]) => addComment(...(a as [])),
-  getComments: async () => ({ data: [] }),
   getDocNodes: async () => ({ data: [] }),
 }))
 vi.mock('./useDocCollab', async () => ({
@@ -27,21 +26,30 @@ describe('asking the AI teammate in a document comment', () => {
     const doc = scope.run(() =>
       usePanelDoc({ topic: null, activityTick: 0, topicList: [], agentName: '芝士', agentHandle: 'cheese-a1' })
     )!
-    await doc.sendComment('t1', '@芝士 这个数字是怎么来的', 'n1', '200 ms')
-    expect(addComment).toHaveBeenCalledWith('t1', '<@cheese-a1> 这个数字是怎么来的', 'n1', '200 ms')
+    await doc.sendComment('t1', '@芝士 这个数字是怎么来的', '200 ms')
+    expect(addComment).toHaveBeenCalledWith('t1', '<@cheese-a1> 这个数字是怎么来的', '200 ms')
     expect(doc.withMentions('@芝士 按测试结果改一下')).toBe('<@cheese-a1> 按测试结果改一下')
     scope.stop()
   })
 
   it('reads the token in a comment as the teammate’s name', () => {
-    render(DocCommentBody, {
+    render(DocThreadCard, {
       props: {
-        comment: { id: 'c1', content: '<@cheese-a1> 来自课程要求第 3 页' },
-        anchor: null,
-        quoteStatus: 'unique',
-        expanded: false,
-        overflowing: false,
+        thread: {
+          comment: { id: 'c1', author: 'alice', content: '<@cheese-a1> 来自课程要求第 3 页', anchor_quote: '200 ms' },
+          revision: 1,
+          state: 'open',
+          replies: [],
+        },
+        active: false,
+        place: 'marked',
+        busy: false,
+        unknown: false,
+        agentName: '芝士',
         mentionNames: { 'cheese-a1': '芝士' },
+        nameOf: (handle: string) => handle,
+        writable: true,
+        draftKey: 'mentions-draft',
       } as never,
     })
     expect(screen.getByText('@芝士 来自课程要求第 3 页')).toBeTruthy()

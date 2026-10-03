@@ -54,6 +54,26 @@ describe('进度', () => {
     await findByText('修复可访问性问题')
   })
 
+  it('每次点开都展开着进来，不只是第一次', async () => {
+    getProgress.mockResolvedValue({
+      items: [{ id: '1', subject: '梳理数据模型', status: 'in_progress' }],
+      updated_at: '2026-09-24T00:00:00Z',
+    })
+    // 测试库默认把 Transition 换成直接出现的桩，这里要的恰恰是它。
+    const { container } = render(Panel, {
+      props: { topic: ROOM },
+      global: { plugins: [createVuetify({ components, directives })], stubs: { transition: false } },
+    })
+    await waitFor(() => expect(container.querySelector('.panel-progress__head')).not.toBeNull())
+    const head = container.querySelector('.panel-progress__head') as HTMLElement
+    for (let round = 0; round < 2; round++) {
+      await fireEvent.click(head)
+      const fold = container.querySelector('.progress-fold') as HTMLElement
+      expect(fold.className, `open #${round + 1}`).toMatch(/enter-active/)
+      await fireEvent.click(head)
+    }
+  })
+
   it('一项都没有的房间里整段不出现', async () => {
     getProgress.mockResolvedValue({ items: [], updated_at: null })
     const { container } = mount()

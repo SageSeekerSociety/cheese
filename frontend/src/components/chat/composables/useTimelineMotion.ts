@@ -1,10 +1,11 @@
 // What each row does the moment it appears: new arrivals fade in, a message you
-// just sent rises out of the composer, a page pulled back in only fades, and a
-// jump target flashes. The sets are read by the template (class bindings) and
+// just sent rises out of the composer, and a jump target flashes. A page pulled
+// back in does nothing: it lands above the viewport while the reader may still
+// be scrolling into it, and rows that start transparent show as a blank pane. The sets are read by the template (class bindings) and
 // cleared by the row's own `animationend` — see ChatTimeline.
 //
-// Lifted verbatim out of ChatPanel. The three sets the panel itself fills
-// (`unseen`, `older`, `editing`) are passed in so both sides hold the same one.
+// Lifted verbatim out of ChatPanel. The two sets the panel itself fills
+// (`unseen`, `editing`) are passed in so both sides hold the same one.
 import type { Ref } from 'vue'
 
 import { nextTick, reactive, ref, watch } from 'vue'
@@ -14,8 +15,6 @@ export interface TimelineMotionDeps {
   hasNewer: Ref<boolean>
   /** Blocks that arrived while the reader was scrolled up (the pill counts them). */
   unseen: Ref<string[]>
-  /** Blocks prepended by a history page: fade in only, never move. */
-  older: Set<string>
   /** Outbox rows leaving because their text went back to the composer. */
   editing: Set<string>
   scrollRef: Ref<HTMLElement | null>
@@ -23,7 +22,7 @@ export interface TimelineMotionDeps {
 }
 
 export function useTimelineMotion(deps: TimelineMotionDeps) {
-  const { atBottom, hasNewer, unseen, older, editing, scrollRef, backToNewest } = deps
+  const { atBottom, hasNewer, unseen, editing, scrollRef, backToNewest } = deps
 
   // 此刻才进来的那几条消息（不是打开房间时读出来的历史）。它们进来时淡入一下：新
   // 消息落在底部，这一下说的是「刚来的是这条」；读历史时演，一屏同时浮上来几十条，
@@ -54,7 +53,6 @@ export function useTimelineMotion(deps: TimelineMotionDeps) {
   // keyframes 名字加了后缀，所以比前缀。
   function settleArrival(e: AnimationEvent, id: string) {
     if (e.animationName.startsWith('tl-arrive')) arrived.delete(id)
-    if (e.animationName.startsWith('tl-older')) older.delete(id)
     if (e.animationName.startsWith('tl-delivered')) delivered.delete(id)
   }
   function settleSent(e: AnimationEvent, clientId: string) {

@@ -53,8 +53,6 @@ interface Anchored extends EditTarget {
 
 export interface EditMarksState {
   target: Anchored | null
-  /** Space kept under the top-level block at `index`, for a card. */
-  gap: { index: number; px: number } | null
   /** The suggestion being looked at. */
   suggestion: string | null
   /** The changes under review, and which one is looked at. */
@@ -68,12 +66,11 @@ export interface ReviewMarks {
 
 export interface EditMarksPatch {
   target?: EditTarget | null
-  gap?: { index: number; px: number } | null
   suggestion?: string | null
   review?: ReviewMarks | null
 }
 
-const EMPTY: EditMarksState = { target: null, gap: null, suggestion: null, review: null }
+const EMPTY: EditMarksState = { target: null, suggestion: null, review: null }
 
 export const editMarksKey = new PluginKey<EditMarksState>('cheeseDocEditMarks')
 
@@ -169,7 +166,7 @@ function decorations(state: EditorState): DecorationSet {
 }
 
 function draw(doc: PMNode, marks: EditMarksState): DecorationSet {
-  const { target, gap, suggestion, review } = marks
+  const { target, suggestion, review } = marks
   const out: Decoration[] = []
   if (target && target.to > target.from && target.mode !== 'anchor') {
     out.push(Decoration.inline(target.from, target.to, { class: `doc-edit-target doc-edit-target--${target.mode}` }))
@@ -205,11 +202,6 @@ function draw(doc: PMNode, marks: EditMarksState): DecorationSet {
       }
     }
   }
-  if (gap && gap.index < doc.childCount) {
-    let pos = 0
-    for (let i = 0; i < gap.index; i++) pos += doc.child(i).nodeSize
-    out.push(Decoration.node(pos, pos + doc.child(gap.index).nodeSize, { style: `margin-bottom: ${gap.px}px` }))
-  }
   return DecorationSet.create(doc, out)
 }
 
@@ -225,7 +217,6 @@ export function createEditMarks() {
             init: () => EMPTY,
             apply(tr, prev, _old, next) {
               let target = prev.target ? moveTarget(prev.target, tr, next) : null
-              let gap = prev.gap
               let suggestion = prev.suggestion
               let review = prev.review
               const patch = tr.getMeta(editMarksKey) as EditMarksPatch | undefined
@@ -233,12 +224,11 @@ export function createEditMarks() {
                 const set = patch.target
                 target = set ? { ...set, rel: null, text: next.doc.textBetween(set.from, set.to, '\n') } : null
               }
-              if (patch && 'gap' in patch) gap = patch.gap ?? null
               if (patch && 'suggestion' in patch) suggestion = patch.suggestion ?? null
               if (patch && 'review' in patch) review = patch.review ?? null
-              const same = target === prev.target && gap === prev.gap && suggestion === prev.suggestion
+              const same = target === prev.target && suggestion === prev.suggestion
               if (same && review === prev.review) return prev
-              return { target, gap, suggestion, review }
+              return { target, suggestion, review }
             },
           },
           // After every update the shared document has caught up with this

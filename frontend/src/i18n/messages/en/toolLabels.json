@@ -79,6 +79,8 @@
   "cheeseConvert": "Convert the document format",
   "cheeseRecalc": "Recalculate spreadsheet formulas",
   "cheeseFeedbackPropose": "Submit a feedback proposal",
+  "cheeseFeedbackClaim": "Claim a feedback report",
+  "cheeseFeedbackRelease": "Release a claimed feedback report",
   "cheeseMachine": "Request a device",
   "cheeseNote": "Leave a note",
   "cheeseRoutineDraft": "Draft a routine",

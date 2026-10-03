@@ -33,6 +33,7 @@ import type {
 } from '@/cx_types'
 import type { Outgoing } from '@/lib/composerDrafts'
 import type { FileDiff } from '@/lib/diff'
+import type { DocThreadActions, DocThreadState } from '@/lib/docThreadTypes'
 import type { RailMemberMark } from '@/lib/memberActivity'
 import type { VisibleRow } from '@/lib/topicTree'
 import type { SpaceLearningExcerpt } from '@/network/api/spaces/types'
@@ -843,13 +844,16 @@ const DOC_BASE = {
   connection: 'connected' as DocConnection,
   peers: [] as DocPeer[],
   errorMsg: null,
-  comments: [],
-  anchorNodes: [],
+  threadState: { threads: [], activity: {}, errors: {}, busy: false, unknown: null } as DocThreadState,
+  threadActions: {
+    reply: noopAsync,
+    resolve: noopAsync,
+    reopen: noopAsync,
+    recover: async () => undefined,
+  } as DocThreadActions,
   liveRefIndex: new Map<number, string>(),
-  commentMarkIndex: new Map<number, { id: string; quote: string }[]>(),
   fetchDocNodes: async () => [],
   imageSrc: (src: string) => src,
-  refreshComments: noopAsync,
   toggleEditable: noop,
   setError: noop,
 }

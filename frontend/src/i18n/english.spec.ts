@@ -1,7 +1,7 @@
 /**
  * With the interface set to English, the shell reads as English.
  *
- * `catalog.spec.ts` proves the catalog is complete and `lint:i18n` proves no new
+ * `catalog.spec.ts` proves the catalog is complete and `lint:i18n` proves no
  * Chinese is typed into `src/`. Neither renders anything, so neither sees a
  * string that is built at import time and never follows the locale, or a
  * `titleKey` that points at a key with no English. This renders the pieces a

@@ -28,8 +28,6 @@ export interface ChatPagingDeps {
   atBottom: Ref<boolean>
   /** The opening history load is in flight: a jump would race with it. */
   loadingHistory: Ref<boolean>
-  /** Ids prepended by a history page (fade-in class, see useTimelineMotion). */
-  older: Set<string>
   unseen: Ref<string[]>
   errorMsg: Ref<string | null>
   rememberScroll: (topicId: string | undefined) => void
@@ -45,7 +43,6 @@ export function useChatPaging(deps: ChatPagingDeps) {
     scrollRef,
     atBottom,
     loadingHistory,
-    older,
     unseen,
     errorMsg,
     rememberScroll,
@@ -78,18 +75,19 @@ export function useChatPaging(deps: ChatPagingDeps) {
     const oldest = messages.value[0]
     if (!oldest) return
     loadingOlder.value = true
-    // Measure BEFORE the rows go in: prepending grows the content above the
-    // viewport, so scrollTop has to be pushed down by exactly that much or the
-    // timeline jumps out from under the reader (and re-triggers this loader).
-    const before = { scrollTop: el.scrollTop, scrollHeight: el.scrollHeight }
     let failed = false
     try {
       const payload = await listBlocks(tid, { limit: PAGE_SIZE, before: oldest.id })
       // The user may have switched topics while this was in flight.
       if (topic()?.id !== tid) return
+      // Measure right before the rows go in: prepending grows the content above
+      // the viewport, so scrollTop has to be pushed down by exactly that much or
+      // the timeline jumps out from under the reader (and re-triggers this
+      // loader). Not when the request left: a flick keeps scrolling while it is
+      // in flight, and the position from back then would pull the reader back.
+      const before = { scrollTop: el.scrollTop, scrollHeight: el.scrollHeight }
       timeline.prepend(payload.data, payload.has_more)
       if (!hasNewer.value) setCachedWindow(tid, timeline.newest())
-      for (const b of payload.data) older.add(b.id)
       await nextTick()
       const sc = scrollRef.value
       if (sc) sc.scrollTop = scrollTopAfterPrepend(before, sc.scrollHeight)

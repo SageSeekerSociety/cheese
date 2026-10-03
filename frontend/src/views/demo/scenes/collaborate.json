@@ -13,10 +13,28 @@
       "focus": "chat",
       "tag": "成果给谁用、已有材料、完成标准，一次说全",
       "events": [
-        { "at": 300, "do": "say", "who": "wang", "text": "<@cheese> 给新同学写一页报名说明：材料是上传的《招新安排.docx》，不超过一页，结尾列出报名截止时间" },
+        {
+          "at": 300,
+          "do": "say",
+          "who": "wang",
+          "text": "<@cheese> 给新同学写一页报名说明：材料是上传的《招新安排.docx》，不超过一页，结尾列出报名截止时间"
+        },
         { "at": 1000, "do": "turn", "who": "cheese", "turn": "t1" },
-        { "at": 1500, "do": "say", "who": "cheese", "text": "明白：读《招新安排.docx》，写一页报名说明，结尾列截止时间。" },
-        { "at": 2100, "do": "act", "who": "cheese", "turn": "t1", "tool": "cheese_library_get", "arg": "招新安排.docx", "platform": true }
+        {
+          "at": 1500,
+          "do": "say",
+          "who": "cheese",
+          "text": "明白：读《招新安排.docx》，写一页报名说明，结尾列截止时间。"
+        },
+        {
+          "at": 2100,
+          "do": "act",
+          "who": "cheese",
+          "turn": "t1",
+          "tool": "cheese_library_get",
+          "arg": "招新安排.docx",
+          "platform": true
+        }
       ]
     },
     {
@@ -35,8 +53,23 @@
       "focus": "chat",
       "tag": "按钮卡上点一下就是回答，它接着做",
       "events": [
-        { "at": 300, "do": "act", "who": "cheese", "turn": "t1", "tool": "cheese_ask", "arg": "截止时间写哪一个？", "platform": true },
-        { "at": 600, "do": "say", "who": "cheese", "id": "ask1", "text": "材料里有两个截止时间，写哪一个？", "options": ["10 月 8 日（初选）", "10 月 15 日（补录）", "两个都写"] },
+        {
+          "at": 300,
+          "do": "act",
+          "who": "cheese",
+          "turn": "t1",
+          "tool": "cheese_ask",
+          "arg": "截止时间写哪一个？",
+          "platform": true
+        },
+        {
+          "at": 600,
+          "do": "say",
+          "who": "cheese",
+          "id": "ask1",
+          "text": "材料里有两个截止时间，写哪一个？",
+          "options": ["10 月 8 日（初选）", "10 月 15 日（补录）", "两个都写"]
+        },
         { "at": 2400, "do": "answer", "id": "ask1", "option": "两个都写", "by": "wang" },
         { "at": 3000, "do": "note", "who": "cheese", "turn": "t1", "text": "王长鑫选了「两个都写」。" }
       ]
@@ -67,8 +100,31 @@
       },
       "events": [
         { "at": 300, "do": "act", "who": "cheese", "turn": "t1", "tool": "Edit", "arg": "报名说明.md" },
-        { "at": 1000, "do": "say", "who": "cheese", "text": "报名说明写好了：标题「新生报名须知」，一页，结尾列了初选和补录两个截止时间。" },
-        { "at": 1300, "do": "notice", "who": "cheese", "turn": "t1", "text": "这一轮改了 1 个文件（+9 -0）", "meta": { "platform": true, "changeset": { "commit": "7c1e0a2", "commits": ["7c1e0a2"], "files_total": 1, "added": 9, "removed": 0, "files": [{ "path": "报名说明.md", "added": 9, "removed": 0 }], "files_omitted": 0 } } },
+        {
+          "at": 1000,
+          "do": "say",
+          "who": "cheese",
+          "text": "报名说明写好了：标题「新生报名须知」，一页，结尾列了初选和补录两个截止时间。"
+        },
+        {
+          "at": 1300,
+          "do": "notice",
+          "who": "cheese",
+          "turn": "t1",
+          "text": "这一轮改了 1 个文件（+9 -0）",
+          "meta": {
+            "platform": true,
+            "changeset": {
+              "commit": "7c1e0a2",
+              "commits": ["7c1e0a2"],
+              "files_total": 1,
+              "added": 9,
+              "removed": 0,
+              "files": [{ "path": "报名说明.md", "added": 9, "removed": 0 }],
+              "files_omitted": 0
+            }
+          }
+        },
         { "at": 1400, "do": "end", "turn": "t1" }
       ]
     }

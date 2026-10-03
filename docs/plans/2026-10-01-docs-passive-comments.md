@@ -17,7 +17,7 @@ No original JavaScript bundle is executed. The source establishes interaction co
 
 ## Server contract
 
-`POST /topics/{id}/comments` inserts a UUID document-view comment and commits it. Only a comment, or a reply in its thread, that @-mentions an agent seated in the room (`<@handle>`) is answered: by the thread's own session on the session host, not by a turn of the room, and the answer is the agent's reply in the thread (`app/api/doc_agent.py`). Anchors must be `doc_node` rows in the current room, outside task scope, under the canonical current room document root. Roots, messages, foreign/deleted/orphan nodes, and another document root are rejected. A bounded display quote is not write authorization.
+`POST /topics/{id}/comments` inserts a UUID document-view comment and commits it. Only a comment, or a reply in its thread, that @-mentions an agent seated in the room (`<@handle>`) is answered: by the thread's own session on the session host, not by a turn of the room, and the answer is the agent's reply in the thread (`app/api/doc_agent.py`). A comment names no document node: the commenter's editor marks the selected words in the shared document with the thread id, and the comment keeps a bounded display quote, which is not write authorization.
 
 General room-agent document writing remains untouched.
 

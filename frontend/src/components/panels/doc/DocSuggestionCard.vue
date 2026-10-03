@@ -48,10 +48,10 @@ const emit = defineEmits<{
   box-sizing: border-box;
   width: 100%;
   padding: 10px 12px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-2);
   border-radius: var(--radius-lg);
   background: var(--raised);
-  box-shadow: var(--shadow-1);
+  box-shadow: var(--shadow-2);
 }
 .doc-suggestion-card__avatar {
   flex: 0 0 auto;

@@ -152,7 +152,6 @@ const {
   outboxLeave,
   jumpToUnseen,
   unseen,
-  older,
   sheet,
   sheetBlock,
   draft,
@@ -255,7 +254,6 @@ defineExpose({ send, connected, submitQuestion })
         :split-markers="splitMarkers"
         :run-edges="runEdges"
         :arrived="arrived"
-        :older="older"
         :delivered="delivered"
         :sent-now="sentNow"
         :flash-id="flashId"

@@ -1,27 +1,23 @@
-// Pure logic for the hardcoded-Chinese ratchet. No I/O, no process — so it can
-// be tested directly (see i18n-cjk-ratchet-core.test.mjs, run by `node --test`
-// in CI). The scanner is the one PR #1167 proposed, with the multi-`<script>`
-// fix from PR #1223.
+// Pure logic for the hardcoded-Chinese gate. No I/O, no process — so it can be
+// tested directly (see i18n-cjk-gate-core.test.mjs, run by `node --test` in CI).
 //
 // WHY THIS EXISTS, AND WHY IT IS NOT catalog.spec.ts:
-// `catalog.spec.ts` checks the catalog against itself — every `zh-CN` key has an
-// `en` one or sits in `untranslated.json`, every key has a call site, no English
-// value contains Chinese. All of that is scoped to keys that were *already
-// extracted*. A Chinese string typed straight into a template is invisible to
-// every one of those checks, so the suite can be fully green while the English
-// UI is still Chinese.
+// `catalog.spec.ts` checks the catalog against itself — every `zh-CN` key has
+// English, every key has a call site, no English value contains Chinese. All of
+// that is scoped to keys that were *already extracted*. A Chinese string typed
+// straight into a template is invisible to every one of those checks, so the
+// suite can be fully green while the English UI is still Chinese.
 //
-// WHY A RATCHET AND NOT A PLAIN GATE: the tree holds well over a thousand such
-// lines, several people are paying them down in parallel, and a rule that goes
-// red everywhere on day one gets switched off rather than fixed (the same
-// reasoning as tsc-baseline.json and stylelint-baseline.json). The baseline is a
-// per-file CEILING: a file may drop below it — someone else's PR translated it —
-// and still pass; only a count above it fails.
-
-// `compare` and `tightenedBaseline` are the tsc ratchet's, so the four ratchets
-// under scripts/ share one definition of "regressed" and one of "an --update can
-// never loosen a count".
-export { compare, tightenedBaseline } from './tsc-ratchet-core.mjs'
+// THE RULE: no line in scope may carry Chinese the user can read, with one way
+// out — Chinese that is data rather than copy (compared, parsed or stored, never
+// shown as interface text) stays, and says so on the same line:
+//
+//   ['a', '阿'], // i18n-data: collation anchor, compared and never shown
+//   <span>中</span> <!-- i18n-data: … -->
+//
+// The exception lives on the line it excuses, so it is read in the diff that
+// adds it and deleted with the line. A list kept in another file would outlive
+// the lines it names and let a new string slip in under an old entry.
 
 /**
  * The same character class `catalog.spec.ts` uses for "this English value still
@@ -39,7 +35,7 @@ export { compare, tightenedBaseline } from './tsc-ratchet-core.mjs'
  */
 export const CJK = /[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]/
 
-/** Paths the ratchet never looks at. */
+/** Paths the gate never looks at. */
 export function shouldScan(relPath) {
   const p = String(relPath).replaceAll('\\', '/')
   if (!/\.(vue|ts|js)$/.test(p)) return false
@@ -83,9 +79,8 @@ export function stringSpans(code) {
   let i = 0
   // Last significant token outside comments and strings, used only to decide
   // whether a `/` opens a regex or is division. Both are wrong sometimes; the
-  // cost of being wrong is a desynced scanner on that one file, and the
-  // per-file baseline turns that into a visible regression rather than a
-  // silently missing count.
+  // cost of being wrong is a desynced scanner on that one file, which reports
+  // comment Chinese as copy (loud) or reads a string as code (a miss).
   let prevChar = ''
   let prevWord = ''
   let word = ''
@@ -323,19 +318,28 @@ function lineIndexer(text) {
 /**
  * Lines of `text` that carry Chinese the user can end up reading.
  *
- * Unit of count is a **line**, not an occurrence: it is stable under rewording,
- * trivial to explain in a review, and the number a person can act on ("this
- * file has 47 of them"). Counting runs instead would double-count
- * 「剩余 ${n} 天」 and make the baseline drift whenever someone edits prose.
+ * The unit is a **line**, not an occurrence: it is what an annotation sits on,
+ * and what a person reads in the report. 「剩余 ${n} 天」 is one finding, not two.
  * @param {string} relPath
  * @param {string} text
  * @returns {number[]} sorted, de-duplicated, 1-based line numbers
  */
 export function scanSource(relPath, text) {
+  return [...chineseLines(relPath, text).keys()].sort((a, b) => a - b)
+}
+
+/**
+ * The same lines as `scanSource`, each with the comment syntax that can annotate
+ * it: `'markup'` for a `.vue` template line (only `<!-- -->` is a comment there —
+ * `//` is text the user would see), `'code'` for a script or `.ts` line.
+ * @returns {Map<number, 'markup' | 'code'>}
+ */
+function chineseLines(relPath, text) {
   const src = String(text)
   const path = String(relPath).replaceAll('\\', '/')
   const lineOf = lineIndexer(src)
-  const found = new Set()
+  /** @type {Map<number, 'markup' | 'code'>} */
+  const found = new Map()
   // A string literal may span lines (template literals do, and so do strings
   // with a trailing backslash), so a span contributes every line *inside it*
   // that actually carries Chinese — not just the line it starts on, and not the
@@ -347,7 +351,7 @@ export function scanSource(relPath, text) {
     if (isDevLog(code, span.open ?? span.start)) return
     const body = code.slice(span.start, span.end)
     body.split('\n').forEach((line, index) => {
-      if (CJK.test(line)) found.add(lineOf(base + span.start) + index)
+      if (CJK.test(line)) found.set(lineOf(base + span.start) + index, 'code')
     })
   }
 
@@ -358,7 +362,7 @@ export function scanSource(relPath, text) {
       // `placeholder="请输入您的学号"`). Tag and attribute *names* cannot hold
       // Han characters, so there is nothing to exclude.
       const stripped = template.body.replace(/<!--[\s\S]*?-->/g, (m) => m.replace(/[^\n]/g, ' '))
-      for (const line of cjkLines(stripped)) found.add(lineOf(template.start) + line - 1)
+      for (const line of cjkLines(stripped)) found.set(lineOf(template.start) + line - 1, 'markup')
     }
     for (const script of topLevelBlocks(src, 'script')) {
       for (const span of stringSpans(script.body)) addSpan(script.body, span, script.start)
@@ -370,7 +374,64 @@ export function scanSource(relPath, text) {
     for (const span of stringSpans(src)) addSpan(src, span, 0)
   }
 
-  return [...found].sort((a, b) => a - b)
+  return found
+}
+
+/** An exempting comment: the marker right after the comment opener, then the reason. */
+const ANNOTATIONS = {
+  code: [/\/\/\s*i18n-data:(.*)$/, /\/\*\s*i18n-data:(.*?)(?:\*\/|$)/],
+  markup: [/<!--\s*i18n-data:(.*?)(?:-->|$)/],
+}
+
+/**
+ * The `i18n-data:` annotation on one line, read with the comment syntaxes in
+ * `kinds`. `null` when there is none; otherwise its reason, trimmed — which may
+ * be empty, and that is a failure of its own.
+ * @param {string} line
+ * @param {Array<'markup' | 'code'>} kinds
+ * @returns {{ reason: string } | null}
+ */
+export function annotationOn(line, kinds) {
+  for (const kind of kinds) {
+    for (const pattern of ANNOTATIONS[kind]) {
+      const m = pattern.exec(line)
+      if (m) return { reason: m[1].trim() }
+    }
+  }
+  return null
+}
+
+/** A reason says something: at least one letter or digit, not just `—` or `<>`. */
+const hasReason = (reason) => /[\p{L}\p{N}]/u.test(reason)
+
+/**
+ * Everything wrong with one file, line by line:
+ *   `copy`       — Chinese with no annotation: it belongs in the catalog
+ *   `no-reason`  — an annotation that does not say why
+ *   `stale`      — an annotation on a line with no Chinese to excuse (the string
+ *                  it covered moved or was translated); left in place it would
+ *                  read as an exemption for whatever lands on that line next
+ * plus the lines that are correctly annotated, so the run can say how many.
+ * @param {string} relPath
+ * @param {string} text
+ * @returns {{ problems: Array<{line: number, problem: 'copy' | 'no-reason' | 'stale', text: string}>, annotated: number[] }}
+ */
+export function checkSource(relPath, text) {
+  const found = chineseLines(relPath, text)
+  const lines = String(text).split('\n')
+  const problems = []
+  const annotated = []
+  lines.forEach((raw, index) => {
+    const line = index + 1
+    const kind = found.get(line)
+    const note = annotationOn(raw, kind ? [kind] : ['code', 'markup'])
+    const shown = raw.trim().slice(0, 110)
+    if (note && !hasReason(note.reason)) problems.push({ line, problem: 'no-reason', text: shown })
+    else if (note && !kind) problems.push({ line, problem: 'stale', text: shown })
+    else if (kind && !note) problems.push({ line, problem: 'copy', text: shown })
+    else if (note) annotated.push(line)
+  })
+  return { problems, annotated }
 }
 
 /**
@@ -444,60 +505,74 @@ function topLevelBlocks(src, tag) {
 }
 
 /**
- * Per-file line counts, dropping files with nothing left to pay down so the
- * baseline only ever lists real debt.
+ * The whole tree's result: problems per file (files with none are left out) and
+ * how many lines carry a valid annotation.
  * @param {Array<{path: string, text: string}>} files
- * @returns {Record<string, number>}
  */
 export function scanTree(files) {
-  /** @type {Record<string, number>} */
-  const counts = {}
+  /** @type {Record<string, ReturnType<typeof checkSource>['problems']>} */
+  const problems = {}
+  let annotated = 0
   for (const { path, text } of files) {
     const rel = String(path).replaceAll('\\', '/')
     if (!shouldScan(rel)) continue
-    const count = scanSource(rel, text).length
-    if (count > 0) counts[rel] = count
+    const result = checkSource(rel, text)
+    if (result.problems.length) problems[rel] = result.problems
+    annotated += result.annotated.length
   }
-  return Object.fromEntries(Object.entries(counts).sort(([a], [b]) => a.localeCompare(b)))
+  const sorted = Object.fromEntries(Object.entries(problems).sort(([a], [b]) => a.localeCompare(b)))
+  return { ok: Object.keys(sorted).length === 0, problems: sorted, annotated }
+}
+
+const LABELS = {
+  copy: 'Chinese outside the catalog',
+  'no-reason': 'i18n-data annotation without a reason',
+  stale: 'i18n-data annotation on a line with no Chinese',
 }
 
 /**
- * @param {ReturnType<typeof compare>} result
- * @param {Map<string, Array<{line: number, text: string}>>} samples counted
- *   lines per file, for the regression report. We cannot tell which of a file's
- *   lines are the new ones without a diff, so all of them are shown for a
- *   regressed file — capped, because the point is to show the shape of the
- *   problem, not to reprint the file.
+ * What the gate prints. A failure lists every offending line and, for each kind
+ * of problem present, exactly what to do about it.
+ * @param {ReturnType<typeof scanTree>} result
  */
-export function formatReport(result, samples = new Map()) {
+export function formatReport(result) {
   const lines = []
-  if (result.regressions.length) {
-    lines.push('New hardcoded Chinese (this is what the ratchet blocks):')
-    for (const { file, base, now } of result.regressions) {
-      lines.push(`  ${file}: ${base} -> ${now}`)
-      const counted = samples.get(file) ?? []
-      for (const s of counted.slice(0, 8)) lines.push(`      ${s.line}: ${s.text}`)
-      if (counted.length > 8) lines.push(`      … ${counted.length - 8} more in this file`)
+  if (result.ok) {
+    lines.push(`No hardcoded Chinese in src/. ${result.annotated} line(s) carry an i18n-data annotation.`)
+    return lines.join('\n')
+  }
+  const kinds = new Set()
+  let total = 0
+  for (const [file, problems] of Object.entries(result.problems)) {
+    lines.push(file)
+    for (const { line, problem, text } of problems) {
+      lines.push(`  ${line}: [${LABELS[problem]}] ${text}`)
+      kinds.add(problem)
+      total++
     }
-    lines.push('')
-    lines.push('Every Chinese string a user can see goes through the catalog:')
+  }
+  lines.push('')
+  if (kinds.has('copy')) {
+    lines.push('Chinese a user can read goes through the catalog:')
     lines.push('  1. add the key to src/i18n/messages/zh-CN/<namespace>.json and en/<namespace>.json')
     lines.push("  2. call it: t('namespace.component.role') in script, {{ t('…') }} or :label=\"t('…')\" in a template")
-    lines.push('Key naming and namespaces: docs/i18n.md. English for platform terms: docs/i18n-glossary.md.')
-    lines.push('Comments, console/logger arguments and *.spec.ts files are not counted.')
-    lines.push('A string that is not copy at all (a regex over Chinese input, sample data) may stay:')
-    lines.push('raise that file in i18n-cjk-baseline.json by hand in the same PR and say why in')
-    lines.push('its description. `lint:i18n:update` never raises a count, so that edit is always visible.')
+    lines.push('  Key naming: docs/i18n.md §3. English for platform terms: docs/i18n-glossary.md.')
+    lines.push('Chinese that is data, not copy (compared, parsed or stored; never shown as interface text),')
+    lines.push('stays where it is with an annotation on the SAME line that says why:')
+    lines.push(
+      "  .ts / <script>   const ORIGIN = '【第 N 页】' // i18n-data: marker stored in task text and parsed back"
+    )
+    lines.push('  <template>       <span>例</span> <!-- i18n-data: <why this is data> -->')
+    lines.push('  Reviewers judge the reason. A line inside a multi-line template literal cannot carry one:')
+    lines.push('  split the string so the Chinese sits on a line that can.')
   }
-  if (result.improvements.length) {
-    lines.push(result.regressions.length ? '' : 'Hardcoded Chinese went down — optionally tighten the baseline:')
-    if (result.regressions.length) lines.push('Also improved:')
-    for (const { file, base, now } of result.improvements) {
-      lines.push(`  ${file}: ${base} -> ${now}`)
-    }
-    lines.push('')
-    lines.push('Run: pnpm run lint:i18n:update  (then commit i18n-cjk-baseline.json)')
+  if (kinds.has('no-reason')) {
+    lines.push('An i18n-data annotation must say why the Chinese is data: write the reason after the colon.')
   }
-  lines.push(`total: ${result.currentTotal} line(s) of hardcoded Chinese, baseline allows ${result.baselineTotal}`)
+  if (kinds.has('stale')) {
+    lines.push('An i18n-data annotation on a line with no counted Chinese excuses nothing: delete it.')
+  }
+  lines.push('Comments, console/logger arguments and *.spec.ts / __tests__ files are not scanned (docs/i18n.md §5).')
+  lines.push(`${total} problem(s).`)
   return lines.join('\n')
 }

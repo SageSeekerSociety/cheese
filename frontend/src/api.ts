@@ -1772,14 +1772,11 @@ export function getDocNodes(topicId: string): Promise<{ data: Block[]; total: nu
 }
 
 // 段落评论 (eval B4): inline comments, each anchored to a doc node via reply_to.
-export function getComments(topicId: string): Promise<{ data: Block[]; total: number }> {
-  return request(`/topics/${encodeURIComponent(topicId)}/comments`)
-}
-
-export function addComment(topicId: string, content: string, anchor?: string, quote?: string): Promise<Block> {
+/** Start a comment thread on the words `quote` (or on the whole document without them). */
+export function addComment(topicId: string, content: string, quote?: string): Promise<Block> {
   return request<Block>(`/topics/${encodeURIComponent(topicId)}/comments`, {
     method: 'POST',
-    body: JSON.stringify({ content, anchor, quote }),
+    body: JSON.stringify({ content, quote: quote || undefined }),
   })
 }
 

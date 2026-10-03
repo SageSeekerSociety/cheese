@@ -445,8 +445,9 @@ defineExpose({
   background: var(--fill);
 }
 .composer-input :deep(textarea) {
-  font-size: 14px;
-  line-height: var(--lh-14);
+  /* 和消息流同一档（§3.2）：打出来的字和发出去以后的字一样大。 */
+  font-size: 15px;
+  line-height: var(--lh-15-reading);
   /* 多一行长高一行、发出去收回一行。auto-grow 的高度落在 min-height 上（Vuetify
      经 --v-input-control-height 算出来），让它过渡过去，不跳。透明度那一条是
      Vuetify 自己的，写在一起才不被盖掉。 */

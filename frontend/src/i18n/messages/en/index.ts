@@ -34,10 +34,8 @@ import usage from './usage.json'
 import users from './users.json'
 import work from './work.json'
 
-// Namespaces absent here have no English translation yet. They are listed, key by
-// key, in `frontend/src/i18n/untranslated.json` and asserted by
-// `frontend/src/i18n/catalog.spec.ts` — do not add an empty namespace to silence
-// that check; write the translation and delete the keys from that list instead.
+// Every zh-CN key has an English value here; `frontend/src/i18n/catalog.spec.ts`
+// fails on any that is missing or empty.
 export default {
   ask,
   credits,

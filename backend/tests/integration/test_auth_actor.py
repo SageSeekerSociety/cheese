@@ -165,7 +165,7 @@ def test_project_member_allowed_even_if_not_in_roster(client):
     [
         "/topics/{tid}/doc",
         "/topics/{tid}/docs",
-        "/topics/{tid}/comments",
+        "/topics/{tid}/comments/threads",
         "/topics/{tid}/transcript",
         "/topics/{tid}/status",
         "/topics/{tid}/progress",
@@ -207,7 +207,7 @@ def test_member_still_reads_everything(client):
     pid, tid = _project_topic(client, owner="alice")
     for path in (
         f"/topics/{tid}/doc",
-        f"/topics/{tid}/comments",
+        f"/topics/{tid}/comments/threads",
         f"/topics?project_id={pid}",
     ):
         r = client.get(path, headers=_bearer(token))

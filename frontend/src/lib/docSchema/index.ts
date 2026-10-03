@@ -16,6 +16,7 @@
 // conversion changed — the collaboration service logs it; the original stays in
 // the version history.
 
+export { carryCommentAnchors, COMMENT_ANCHOR, commentAnchors } from './commentAnchors'
 export type { DocExtensionsOptions, DocImageOptions } from './extensions'
 export { docExtensions } from './extensions'
 export type { RoundTripReport } from './fidelity'
