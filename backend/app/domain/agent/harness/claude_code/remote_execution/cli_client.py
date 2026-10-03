@@ -41,6 +41,7 @@ def main():
         with connection.makefile("rb") as stream:
             line = stream.readline()
         if not line:
+            # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
             raise SystemExit(
                 "[cheese] 常驻进程已断开；请先查询原请求结果，再决定是否重试。"
             )

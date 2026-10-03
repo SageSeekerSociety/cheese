@@ -40,6 +40,7 @@ from app.core.errors import (
 from app.core.sandbox_auth import scoped_token_claims
 from app.domain.agent.forgejo_tokens import ForgejoTokenError
 from app.domain.agent.github_app import GitHubAppError
+from app.domain.block.notice_text import say
 
 router = APIRouter(prefix="/sandbox", tags=["sandbox"])
 
@@ -187,11 +188,11 @@ async def forge_transport(
             return Response(status_code=403)
         minter = await tokens_for_project(project_id, db)
         if minter is None:
-            raise GatewayUnavailableError("项目的代码托管凭据尚未配置")
+            raise GatewayUnavailableError(say("forgeCredentialMissing"))
         try:
             access_token, _ = await minter.installation_token()
         except (GitHubAppError, httpx.HTTPError) as error:
-            raise GatewayUnavailableError("代码托管服务暂时无法签发项目凭据") from error
+            raise GatewayUnavailableError(say("forgeCredentialUnavailable")) from error
         authorization = (
             "Basic "
             + base64.b64encode(f"x-access-token:{access_token}".encode()).decode()
@@ -251,7 +252,9 @@ async def forge_transport(
     except BaseException as error:
         await client.aclose()
         if isinstance(error, httpx.HTTPError):
-            raise GatewayUnavailableError("代码托管服务暂时无法连接") from error
+            raise GatewayUnavailableError(
+                say("forgeTokenServiceUnreachable")
+            ) from error
         raise
 
     async def body():
@@ -322,12 +325,12 @@ async def sandbox_forge_token(
     binding = await binding_for_project(project_id, db)
     minter = await tokens_for_project(project_id, db)
     if binding is None or minter is None:
-        raise GatewayUnavailableError("项目的代码托管凭据尚未配置")
+        raise GatewayUnavailableError(say("forgeCredentialMissing"))
     try:
         access_token, expires_at = await minter.installation_token()
         granted = await minter.granted_permissions()
     except (GitHubAppError, ForgejoTokenError, httpx.HTTPError) as error:
-        raise GatewayUnavailableError("代码托管服务暂时无法签发项目凭据") from error
+        raise GatewayUnavailableError(say("forgeCredentialUnavailable")) from error
     response.headers["Cache-Control"] = "no-store"
     return ok(
         {

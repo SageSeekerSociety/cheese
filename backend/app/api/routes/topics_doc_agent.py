@@ -29,6 +29,7 @@ from app.core.redis import get_redis_client
 from app.domain.agent.chat import ChatService
 from app.domain.agent.harness.pi.handless import HandlessSessions
 from app.domain.block.comment_threads import CommentThreads
+from app.domain.block.notice_text import error_frame, say
 from app.domain.living_doc.schemas import AgentAskIn
 from app.domain.topic.services import TopicService
 
@@ -52,7 +53,7 @@ async def _asker(db, resolver, topic_id: uuid.UUID):
     )
     redis = get_redis_client()
     if redis is None:
-        raise SystemBusyError("暂时无法提问，稍后重试")
+        raise SystemBusyError(say("docAgentAskUnavailable"))
     return place, actor, redis
 
 
@@ -71,11 +72,11 @@ async def ask_agent(
     place, actor, redis = await _asker(db, resolver, topic_id)
     preset = doc_agent_box.PRESETS.get(body.preset or "") if body.preset else None
     if body.preset and preset is None:
-        raise ValidationError("没有这个选项")
+        raise ValidationError(say("docAgentPresetNotFound"))
     if preset is not None and (preset.scope == "selection") != (
         body.selection is not None
     ):
-        raise ValidationError("这个选项要选中文字才能用")
+        raise ValidationError(say("docAgentPresetNeedsSelection"))
     if body.conversation is not None:
         await doc_agent_box.owned(
             redis, body.conversation, asker=actor.handle, room_id=place.room_id
@@ -115,7 +116,7 @@ async def ask_agent(
             )
         except Exception:  # noqa: BLE001 — the box is told; the log keeps why
             logger.warning("doc agent box failed", exc_info=True)
-            await emit("error", {"message": "暂时无法回答，稍后重试"})
+            await emit("error", error_frame(say("docAgentCantAnswer")))
         finally:
             queue.put_nowait(None)
 
@@ -172,7 +173,7 @@ async def reply_in_thread(
     if root.author != actor.handle:
         raise ForbiddenError("Only the thread you started takes this answer")
     if not box.answer:
-        raise ValidationError("这次没有可放进评论的回答")
+        raise ValidationError(say("docAgentNoAnswerToComment"))
     bound = await doc_agent.bind(db, place.room_id)
     await db.commit()
     await doc_agent._reply(

@@ -28,6 +28,7 @@ from app.auth.project_access import may_read_project
 from app.core.db import get_db
 from app.core.errors import NotFoundError, ValidationError
 from app.domain.agent.runtime import announce_stale
+from app.domain.block.notice_text import say
 from app.domain.notification.models import Notification
 from app.domain.notification.schemas import (
     PROJECT_NOTIFICATION_KINDS,
@@ -82,7 +83,7 @@ async def create_notification(
     只有一个答案。
     """
     if body.kind not in PROJECT_NOTIFICATION_KINDS:
-        raise ValidationError("这一类通知不从项目收件箱写入")
+        raise ValidationError(say("alertKindNotFromInbox"))
     actor = await resolver.require_verified_caller(
         project_id=project_id, topic_id=body.topic_id
     )
@@ -116,7 +117,7 @@ async def create_notification(
             if topic_id is not None
             else await may_read_project(db, project_id=project_id, handle=target)
         ):
-            raise ValidationError("收件人不在这个项目或房间里")
+            raise ValidationError(say("alertRecipientOutside"))
     rows = await ProjectNotificationService(db).create(
         project_id=project_id,
         level=body.level,
@@ -271,7 +272,7 @@ async def _carry_out(
     if invitation_id is None:
         return False
     if chosen not in INVITATION_OPTIONS or row.project_id is None:
-        raise ValidationError("所选项不在候选项中")
+        raise ValidationError(say("alertChoiceNotOffered"))
     actor = await resolver.require_verified_caller()
     await InvitationService(db).respond(
         invitation_id=uuid.UUID(invitation_id),

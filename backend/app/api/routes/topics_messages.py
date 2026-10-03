@@ -159,7 +159,7 @@ async def send_chat_message(
         for a in body.attachments[:ATTACHMENTS_PER_MESSAGE]
     ]
     if not content and not attachments:
-        raise ValidationError("请输入消息或添加附件")
+        raise ValidationError(say("messageOrAttachment"))
     # The turn a person's message starts is named after the block it anchors.
     anchor_id = await get_broker().receive_message(
         chat,
@@ -302,11 +302,11 @@ async def ask_options(
     if not question:
         raise ValidationError("question is required")
     if not 2 <= len(options) <= 4:
-        raise ValidationError("需要 2-4 个选项")
+        raise ValidationError(say("optionsTwoToFour"))
     if len(set(options)) != len(options):
         # An answer is matched to its option by text, so two equal options are
         # one button that cannot be told apart from the other.
-        raise ValidationError("选项不能重复")
+        raise ValidationError(say("optionsDistinct"))
     # 署名是 agent 席位的那一支，这道题是芝士自己问出口的：它在等**人**按下那个按钮，
     # 不是在等自己把它读一遍。轮次号在这条路上填不出——`cheese_ask` 只在 CHEESE_TURN
     # 非空时才带 X-Cheese-Turn，而没有一处产品代码写那个环境变量，于是 `add` 的兜底
@@ -407,13 +407,13 @@ async def answer_options(
         raise AuthenticationRequiredError("Sign in to answer a question")
     author = actor.handle
     if not option:
-        raise ValidationError("选项不能为空")
+        raise ValidationError(say("optionEmpty"))
     if author == blk.author:
         raise ForbiddenError(say("optionOwnQuestion"))
     meta = dict(blk.meta or {})
     options = meta.get("options") or []
     if option not in options:
-        raise ValidationError("不在选项里")
+        raise ValidationError(say("optionNotOffered"))
     if meta.get("answered"):
         raise ValidationError(
             say("optionTaken", by=meta.get("answered_by"), option=meta.get("answered"))
@@ -493,7 +493,7 @@ async def leave_a_note(
     try:
         to_thread = uuid.UUID(thread)
     except ValueError:
-        raise ValidationError("thread 要是一条线程的 id") from None
+        raise ValidationError(say("threadIdInvalid")) from None
     delivered = await send_note(
         db,
         chat,

@@ -282,7 +282,7 @@ async def list_feedback(
         # client that has fallen behind, and answering with `all` renders a
         # plausible page under the wrong heading. A user cannot type a tab name,
         # so nobody reaches this by hand.
-        raise BadRequestError(f"未知的视图：{tab}")
+        raise BadRequestError(say("feedbackUnknownTab", tab=tab))
     rows, total = await service.list_public(
         tab=tab,
         q=q,
@@ -433,7 +433,7 @@ async def list_feedback_comments(
             next_cursor = page.next_cursor
     except ValueError as exc:
         # 游标解不出来（不是我们发的那种字符串）。400：坏的是调用方递进来的东西。
-        raise BadRequestError("游标看不懂，从头取一次") from exc
+        raise BadRequestError(say("feedbackCursorUnreadable")) from exc
     return ok(
         {
             "items": [c.model_dump(mode="json") for c in comments],

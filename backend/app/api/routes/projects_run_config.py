@@ -333,11 +333,13 @@ async def set_tier_policy(
         elif isinstance(tiers, list) and all(isinstance(t, str) for t in tiers):
             values[gate.ALLOWED_TIERS_KEY] = sorted({t.strip() for t in tiers if t})
         else:
-            raise ValidationError("allowed_tiers 必须是字符串数组或 null")
+            raise ValidationError(say("allowedTiersInvalid"))
     if gate.OVER_TIER_KEY in body:
         disposition = body.get(gate.OVER_TIER_KEY)
         if disposition not in gate.DISPOSITIONS:
-            raise ValidationError(f"over_tier 只能是 {sorted(gate.DISPOSITIONS)} 之一")
+            raise ValidationError(
+                say("overTierInvalid", values=str(sorted(gate.DISPOSITIONS)))
+            )
         values[gate.OVER_TIER_KEY] = disposition
     project.settings = values
     await db.flush()

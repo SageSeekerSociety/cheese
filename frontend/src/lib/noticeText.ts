@@ -105,3 +105,12 @@ export function noticeText(block: Block, field: NoticeField = 'content'): string
   const keys = meta?.i18n as Record<string, unknown> | undefined
   return renderNoticeMessage(keys?.[field], fallback)
 }
+
+/** One text field of an API response, in the reader's language. A field the
+ *  backend said with `say()` has its key beside it, as `i18n.<field>`. */
+export function responseText(owner: object, field: string): string {
+  const record = owner as Record<string, unknown>
+  const fallback = typeof record[field] === 'string' ? (record[field] as string) : ''
+  const keys = record.i18n as Record<string, unknown> | undefined
+  return renderNoticeMessage(keys?.[field], fallback)
+}

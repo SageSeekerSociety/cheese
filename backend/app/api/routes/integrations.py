@@ -168,7 +168,7 @@ async def connect_mail(body: MailIn, db: DbSession, resolver: ActorResolverDep) 
     actor = await _person(resolver)
     assert actor.user_id is not None
     if body.security not in ("ssl", "starttls", "plain"):
-        raise ValidationError("security 只能是 ssl、starttls 或 plain")
+        raise ValidationError(say("mailSecurityInvalid"))
     address = body.address or body.username
     row = await IntegrationService(db).connect(
         owner_user_id=actor.user_id,
@@ -466,7 +466,7 @@ async def project_integrations(
 ) -> dict:
     project, _room, _speaker = await _in_room(db, resolver, topic)
     if project != project_id:
-        raise ForbiddenError("这个房间不属于这个项目")
+        raise ForbiddenError(say("roomNotInProject"))
     rows = await IntegrationService(db).granted(project_id)
     items = [
         {
@@ -689,9 +689,7 @@ async def feishu_edit(
 ) -> dict:
     row, *_ = await _usable(db, resolver, integration_id, topic)
     if not body.append and not (body.block_id and body.text is not None):
-        raise ValidationError(
-            "要么给 append（追加的内容），要么给 block_id 和 text（改哪一段、改成什么）"
-        )
+        raise ValidationError(say("feishuDocEditShape"))
 
     async def edit(client: FeishuClient) -> dict:
         if body.append:

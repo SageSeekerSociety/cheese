@@ -150,6 +150,7 @@ def _known(name: str, source: str) -> str:
     架，而「跑的是哪个」正是结论 28 要求只有一个答法的那件事。
     """
     if name not in (CLAUDE_CODE, CODEX, PI):
+        # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
         raise ValueError(f"{source} 指定的骨架 {name!r} 没有适配层")
     return name
 
@@ -172,6 +173,7 @@ def deployment_harnesses() -> tuple[str, ...]:
         return _UNCONFIGURED
     for name in configured:
         if _known(name, "agent_harnesses") not in HARNESSES:
+            # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
             raise ValueError(
                 f"agent_harnesses 列的骨架 {name!r} 这套部署没有；"
                 f"有的是 {sorted(HARNESSES)}"
@@ -743,6 +745,7 @@ class Harness:
         for requirement in SubagentRequirement:
             answer = self.subagents.get(requirement)
             if type(answer) is not str or not answer.strip():
+                # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
                 raise ValueError(
                     f"{self.name} 没有答「{requirement}」。这是硬性要求（结论 43）："
                     "答得出的骨架才上注册表，答不出的留着代码不注册。"
@@ -750,6 +753,7 @@ class Harness:
                 )
         for capability, answer in self.capabilities.items():
             if type(answer) is not str or not answer.strip():
+                # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
                 raise ValueError(
                     f"{self.name} 声明了「{capability}」却没说怎么做到的。"
                     "做不到就不写这一项。"

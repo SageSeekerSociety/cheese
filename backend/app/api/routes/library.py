@@ -71,7 +71,7 @@ def _library_path(raw: str) -> str:
     """资料库里那一份的名字——它就是地址，所以这里只挡不是名字的东西。"""
     name = (raw or "").strip()
     if not name or name.startswith("/") or ".." in name.split("/"):
-        raise ValidationError("path 必须是资料库里的相对路径")
+        raise ValidationError(say("libraryPathRelative"))
     return name
 
 

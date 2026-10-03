@@ -20,6 +20,7 @@ from app.core.errors import (
     ValidationError,
 )
 from app.core.obs import get_logger
+from app.domain.block.notice_text import say
 from app.domain.dashboard.services import DashboardService
 from app.domain.memory.store import forget_fact_about
 from app.domain.project.repositories import ProjectRepository
@@ -66,7 +67,7 @@ async def _require_board_reader(
         if await may_read_project(db, project_id=project_id, handle=actor.handle):
             return
     _log.info("space_board_denied", handle=actor.handle, space=space_id)
-    raise ForbiddenError("你不是这个看板里任何项目的成员，无权查看")
+    raise ForbiddenError(say("dashboardNoProject"))
 
 
 @router.get("/spaces/{space_id}/dashboard")
@@ -178,7 +179,7 @@ async def _signed_in(resolver: ActorResolver, what: str) -> str:
     viewer = await resolver.resolve()
     resolver.reject_failed_credential(viewer)
     if not viewer.authenticated:
-        raise AuthenticationRequiredError(f"{what}需要先登录")
+        raise AuthenticationRequiredError(say("signInToDo", what=what))
     return viewer.handle
 
 
@@ -190,7 +191,7 @@ async def user_profile(handle: str, db: DbSession, resolver: ActorResolverDep) -
     and the page is cut to what that viewer may see. A person's projects are
     project content, and what the agents remember about them is theirs alone,
     so there is nothing on it for a caller nobody can identify."""
-    viewer = await _signed_in(resolver, "查看个人主页")
+    viewer = await _signed_in(resolver, say("dashboardViewProfile"))
     return ok(await DashboardService(db).user_profile(handle, viewer=viewer))
 
 
@@ -208,9 +209,9 @@ async def user_topics(
     ``from``/``to`` are UTC dates, both included — the days of the profile's
     heatmap — and the counts are the ones inside them. Cut to the topics the
     viewer may open, the same way as the profile."""
-    viewer = await _signed_in(resolver, "查看个人主页")
+    viewer = await _signed_in(resolver, say("dashboardViewProfile"))
     if since is not None and to is not None and since > to:
-        raise ValidationError("from 不能晚于 to")
+        raise ValidationError(say("fromAfterTo"))
     return ok(
         {
             "topics": await DashboardService(db).participated_topics(
@@ -236,7 +237,7 @@ async def forget_understanding(
 
     Only a note about the caller is theirs to delete. Any other id — someone
     else's, an agent's own, one that does not exist — is the same 404."""
-    viewer = await _signed_in(resolver, "删除记忆")
+    viewer = await _signed_in(resolver, say("dashboardDeleteMemory"))
     if not await forget_fact_about(db, entry_id=entry_id, person_handle=viewer):
-        raise NotFoundError("记忆条目不存在")
+        raise NotFoundError(say("memoryEntryNotFound"))
     return ok({"deleted": str(entry_id)})

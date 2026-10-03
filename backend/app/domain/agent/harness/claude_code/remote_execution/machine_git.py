@@ -64,6 +64,7 @@ def _revision(value: object, name: str) -> str | None:
         return None
     text = str(value)
     if text.startswith("-") or not REVISION.fullmatch(text):
+        # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
         raise Refused(f"{name} 不是一个分支名或提交号：{text}")
     return text
 
@@ -106,9 +107,11 @@ def argv(request: dict) -> list[str]:
         return ["show", "--no-ext-diff", "--no-textconv", *stat, revision, *path]
     if command == "blame":
         if not path:
+            # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
             raise Refused("blame 要给一个文件路径")
         revision = _revision(request.get("revision"), "revision")
         return ["blame", "--date=short", *([revision] if revision else []), *path]
+    # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
     raise Refused(f"不支持的 git 命令：{command}")
 
 

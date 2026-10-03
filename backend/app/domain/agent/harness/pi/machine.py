@@ -250,6 +250,7 @@ class Machine:
             request["stdin"] = base64.b64encode(stdin).decode()
         answer = self.client.control(request, preparing=preparing)
         if not answer.get("started"):
+            # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
             raise RuntimeError("这条命令在开始之前就被停下了")
 
     def read(self, command_id: str, offset: int, *, wait: float = READ_WAIT_S) -> dict:
@@ -299,6 +300,7 @@ class Machine:
             if "exit" in read:
                 return int(read["exit"]), output
             if read.get("lost"):
+                # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
                 raise RuntimeError("执行机上的这条命令丢了：执行服务在它结束前重启过")
 
     def _check(self, script: str, *, stdin: bytes | None = None) -> bytes:

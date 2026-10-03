@@ -168,6 +168,7 @@ class Jobs:
         directory = self._dir(job)
         if (directory / "exit").exists():
             status = json.loads((directory / "exit").read_text())["status"]
+            # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
             raise RuntimeError(f"{job} 已结束，退出码 {status}")
         fifo = _fifo(self._meta(job)["remote"])
         code, said = await asyncio.to_thread(

@@ -63,6 +63,7 @@ from app.domain.agent.supply import GATEWAY
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.comment_threads import CommentThreads
 from app.domain.block.models import BlockKind
+from app.domain.block.notice_text import say
 from app.domain.block.repositories import BlockRepository
 from app.domain.delivery.mention import mentioned_handles
 from app.domain.identity.actor import Actor
@@ -314,7 +315,7 @@ async def admit(session: AsyncSession, project_id: uuid.UUID, bound: Bound) -> N
     if refused is not None:
         raise ValidationError(refused.message)
     if bound.supply != GATEWAY:
-        raise ValidationError("所选订阅模型暂不支持在文档里使用")
+        raise ValidationError(say("subscriptionModelNotInDocs"))
 
 
 # --- who is asked --------------------------------------------------------------

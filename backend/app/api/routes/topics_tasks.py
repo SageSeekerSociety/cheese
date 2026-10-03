@@ -296,7 +296,7 @@ async def say_on_task(
         raise NotFoundError(say("taskNotInRoom"))
     content = body.content.strip()
     if not content:
-        raise ValidationError("消息内容不能为空")
+        raise ValidationError(say("messageEmpty"))
     actor = await resolver.resolve(topic_id=place.room_id, project_id=place.project_id)
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id
@@ -305,8 +305,7 @@ async def say_on_task(
     relay_to_parent = not await members.holds_an_agent_seat(place.room, actor.handle)
     if not relay_to_parent and len(content) > AGENT_NOTE_CHARS:
         raise ValidationError(
-            f"留话内容太长（{len(content)} 字符，上限 {AGENT_NOTE_CHARS}）。"
-            "长的东西写进实况文档，那边读得到。"
+            say("noteTooLong", length=len(content), limit=AGENT_NOTE_CHARS)
         )
     content = await project_refs_text(db, place.project_id, place.room_id, content)
     block = await BlockRepository(db).add(
@@ -376,10 +375,10 @@ async def set_task_title(
     await _actor_in_place(resolver, place)
     task = await TaskService(db).get(task_id)
     if task is None or task.room_id != place.room_id:
-        raise NotFoundError("这个房间里没有这个任务")
+        raise NotFoundError(say("taskNotInRoom"))
     title = (body.get("title") or "").strip()
     if not title:
-        raise ValidationError("title 不能为空")
+        raise ValidationError(say("titleRequired"))
     TaskService.rename(task, title[:80])
     out = TaskOut.model_validate(task).model_dump(mode="json")
     await db.commit()
@@ -418,7 +417,7 @@ async def conclude_task(
     tasks = TaskService(db)
     task = await tasks.get(task_id)
     if task is None or task.room_id != place.room_id:
-        raise NotFoundError("这个房间里没有这个任务")
+        raise NotFoundError(say("taskNotInRoom"))
     # Friendly "@名字/@话题名" → structured tokens, same as every other write
     # path that lands text a person will read.
     text = (body.conclusion or "").strip()

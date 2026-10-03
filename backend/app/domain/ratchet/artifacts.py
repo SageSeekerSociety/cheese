@@ -129,6 +129,7 @@ class GitHubArtifacts:
                     },
                 )
             if resp.status_code != 200:
+                # i18n-exempt: internal ratchet report, not shown in the product
                 raise RatchetGitHubError(
                     f"GitHub 拒绝列出棘轮工件（HTTP {resp.status_code}）："
                     f"{resp.text[:300]}"
@@ -192,6 +193,7 @@ class GitHubArtifacts:
                     # target below.
                     location = resp.headers.get("location")
                     if not location:
+                        # i18n-exempt: internal ratchet report, not shown in the product
                         raise RatchetGitHubError("GitHub 的工件下载重定向没有 Location")
                 else:
                     return await _read_capped(resp, artifact_id)
@@ -208,6 +210,7 @@ async def _read_capped(resp: httpx.Response, artifact_id: int) -> bytes:
     holding everything.
     """
     if resp.status_code != 200:
+        # i18n-exempt: internal ratchet report, not shown in the product
         raise RatchetGitHubError(
             f"GitHub 拒绝下载棘轮工件 {artifact_id}（HTTP {resp.status_code}）"
         )
@@ -216,6 +219,7 @@ async def _read_capped(resp: httpx.Response, artifact_id: int) -> bytes:
     async for chunk in resp.aiter_bytes():
         total += len(chunk)
         if total > _MAX_ARTIFACT_BYTES:
+            # i18n-exempt: internal ratchet report, not shown in the product
             raise RatchetGitHubError(
                 f"棘轮工件 {artifact_id} 超过 {_MAX_ARTIFACT_BYTES} 字节，不下载"
             )

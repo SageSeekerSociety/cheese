@@ -74,7 +74,7 @@ async def add_comment(
     await DocumentJournal(db).lock(place.room_id)
     content = (body.get("content") or "").strip()
     if not content:
-        raise ValidationError("评论内容不能为空")
+        raise ValidationError(say("commentEmpty"))
     repo = BlockRepository(db)
     # Kept for display next to the comment; bounded so a runaway selection
     # can't bloat the row.

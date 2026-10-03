@@ -318,4 +318,4 @@ def _artifact_ref(raw: object) -> uuid.UUID:
     try:
         return uuid.UUID(str(raw or ""))
     except ValueError as exc:
-        raise ValidationError("into 必须是清单上另一项的 id") from exc
+        raise ValidationError(say("mergeIntoOtherItem")) from exc

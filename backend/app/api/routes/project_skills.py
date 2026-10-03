@@ -97,7 +97,7 @@ def _is_person(actor: Actor) -> bool:
 
 def _person(actor: Actor, what: str) -> None:
     if not _is_person(actor):
-        raise ForbiddenError(f"{what}要由人来做，AI 队友只能起草和修改")
+        raise ForbiddenError(say("personOnlyAction", what=what))
 
 
 async def _in_project(
@@ -243,7 +243,7 @@ async def confirm_skill(
     skill_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     row, actor = await _load(db, resolver, skill_id, None)
-    _person(actor, "确认保存")
+    _person(actor, say("skillConfirmSave"))
     service = ProjectSkillService(db)
     row = await service.confirm(row, by=actor.handle)
     await db.commit()
@@ -256,7 +256,7 @@ async def restore_skill(
     skill_id: uuid.UUID, revision: int, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     row, actor = await _load(db, resolver, skill_id, None)
-    _person(actor, "恢复旧版")
+    _person(actor, say("skillRestoreOld"))
     service = ProjectSkillService(db)
     row = await service.restore(row, revision, by=actor.handle)
     await db.commit()
@@ -269,7 +269,7 @@ async def delete_skill(
     skill_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     row, actor = await _load(db, resolver, skill_id, None)
-    _person(actor, "删除")
+    _person(actor, say("skillDelete"))
     project_id = row.project_id
     service = ProjectSkillService(db)
     await service.delete(row)

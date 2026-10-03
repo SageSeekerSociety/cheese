@@ -449,12 +449,7 @@ async def add_memory(
     参数一个都不看：这条路的授权、作用域、layer 现在都没有意义——它不是
     「写错了」而是「不该往这里写」，答一个「你没权限」只会把人引去要权限。
     """
-    raise ValidationError(
-        "记忆改为直接写 `~/.cheese/memory/` 下的文件：一条记忆一个 markdown "
-        "文件（带 name/description/type 的 frontmatter），再在 `MEMORY.md` 里加一行"
-        "指针。见系统提示里的「记忆」一节。`cheese_remember` 已停用——它写的是旧的"
-        "条目池，那一份已经不再注入任何地方，写进去的事实以后读不到。"
-    )
+    raise ValidationError(say("rememberRetired"))
 
 
 @router.get("/{project_id}/private-chat")
@@ -478,7 +473,7 @@ async def get_private_chat(
         await resolver.authorize_project(actor, project_id=project_id)
         participants = {user_handle, peer_handle} - {None}
         if actor.handle not in participants:
-            raise ForbiddenError("只能打开自己参与的私聊")
+            raise ForbiddenError(say("directMessageOwnOnly"))
     topic = await TopicService(db).get_or_create_private(
         project_id=project_id,
         user_handle=user_handle,
@@ -586,7 +581,7 @@ async def set_topic_naming(
     await MemberService(db).require_manager(project_id, actor)
     mode = body.get("mode")
     if mode not in naming.MODES:
-        raise ValidationError(f"mode 只能是 {list(naming.MODES)} 之一")
+        raise ValidationError(say("modeInvalid", modes=str(list(naming.MODES))))
     project = await ProjectService(db).get_or_404(project_id)
     project.settings = {**(project.settings or {}), naming.SETTINGS_KEY: mode}
     await db.flush()
@@ -709,7 +704,7 @@ async def set_project_owner(
     """
     handle = str(body.get("owner_handle") or "").strip()
     if not handle:
-        raise ValidationError("owner_handle 不能为空")
+        raise ValidationError(say("ownerHandleRequired"))
     project = await ProjectRepository(db).get(project_id)
     if project is None:
         raise NotFoundError("Project not found")
@@ -717,7 +712,7 @@ async def set_project_owner(
     if handle != project.owner_handle:
         user = await user_by_handle(db, handle)
         if user is None:
-            raise ValidationError(f"没有 {handle} 这个账号")
+            raise ValidationError(say("accountNotFound", handle=handle))
         if not await team_service(db).is_team_member(project.team_id, user.id):
             # Not on the project's team. Only a personal project of the
             # transferor's can leave it — see the docstring.
@@ -893,9 +888,9 @@ async def set_branch_protection(
         try:
             required = int(body.get("approvals_required") or 0)
         except (TypeError, ValueError):
-            raise ValidationError("approvals_required 必须是整数") from None
+            raise ValidationError(say("approvalsMustBeInteger")) from None
         if required < 1:
-            raise ValidationError("approvals_required 至少为 1")
+            raise ValidationError(say("approvalsAtLeastOne"))
         new_settings["approvals_required"] = required
     project.settings = new_settings
     await db.flush()
