@@ -24,7 +24,6 @@ import { useFullscreen } from '@vueuse/core'
 
 import { t } from '../../i18n'
 import { sameDocumentIdentity } from '../../lib/documentBytes'
-import { sheetKindOf } from '../../lib/fileKind'
 import { markdown, sanitizeRendered } from '../../lib/markdown'
 import { roomFileDestination } from '../../lib/previewSession'
 
@@ -670,7 +669,7 @@ async function onAnnotate(payload: AnnotateDraft) {
           @page-context="onPageContext"
         />
         <PreviewPages v-else-if="documentType.view === 'pages'" :data="docBytes" @quote="onQuote" />
-        <PreviewSheet v-else :data="docBytes" :kind="sheetKindOf(documentSuffix)" @cell="onCell" />
+        <PreviewSheet v-else :data="docBytes" :kind="documentType.sheet ?? 'workbook'" @cell="onCell" />
 
         <!-- 修订清单。页面上已经能看见改动了（LibreOffice 会把修订画出来），这里是
              用来逐条处理的。改动那一格用的是同一个组件。 -->

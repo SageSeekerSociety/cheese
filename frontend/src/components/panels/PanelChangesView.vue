@@ -23,7 +23,6 @@ import { useDisplay } from 'vuetify'
 
 import { phraseLabel } from '../../lib/board'
 import { buildFileRows, fmtBytes } from '../../lib/changesTree'
-import { sheetKindOf } from '../../lib/fileKind'
 import CodeEditor from '../CodeEditor.vue'
 import MobileActionSheet from '../common/MobileActionSheet.vue'
 
@@ -84,9 +83,6 @@ const props = defineProps<{
   openIsImage: boolean
   openIsDocument: boolean
   openDocumentType: FileKind | null
-  /** 打开的那份文件的后缀。表格的几种读法（csv/tsv/ods/工作簿）只能按后缀分，
-   *  `FileKind` 到 `view` 这一层就分不动了。 */
-  openSuffix?: string
   /** 修订只长在 .docx 上，别的时候这里给的是 null。 */
   revisionPath: string | null
   openRawUrl: string
@@ -525,7 +521,7 @@ function revisionReadOnly(): boolean {
               </div>
               <div v-else class="doc-view__body">
                 <PreviewPages v-if="props.openDocumentType?.view === 'pages'" :data="props.docBytes" />
-                <PreviewSheet v-else :data="props.docBytes" :kind="sheetKindOf(props.openSuffix ?? '')" />
+                <PreviewSheet v-else :data="props.docBytes" :kind="props.openDocumentType?.sheet ?? 'workbook'" />
                 <RevisionList
                   :topic-id="props.topicId"
                   :path="props.revisionPath"

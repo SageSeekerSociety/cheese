@@ -8,6 +8,9 @@ export interface FileKind {
   icon: string
   /** 预览面板把它交给哪个阅读器。 */
   view: 'pages' | 'sheet' | 'markdown'
+  /** 表格按哪种读法打开。字节本身看不出区别，所以这是这一行类型自己的事，只对
+   *  `view: 'sheet'` 的那些有意义；不是表格就没有这一项。 */
+  sheet?: 'workbook' | 'csv' | 'tsv' | 'ods'
 }
 
 /** 类型名按当前语言取：`label` 是 getter，每次读都查一次目录，切换语言后跟着变。 */
@@ -28,12 +31,12 @@ export const DOCUMENT_TYPES: Record<string, FileKind> = {
   pptx: named('slides', { icon: 'mdi-file-powerpoint-outline', view: 'pages' }),
   ppt: named('slides', { icon: 'mdi-file-powerpoint-outline', view: 'pages' }),
   odp: named('slides', { icon: 'mdi-file-powerpoint-outline', view: 'pages' }),
-  xlsx: named('sheet', { icon: 'mdi-file-excel-outline', view: 'sheet' }),
-  xlsm: named('sheet', { icon: 'mdi-file-excel-outline', view: 'sheet' }),
-  xls: named('sheet', { icon: 'mdi-file-excel-outline', view: 'sheet' }),
-  ods: named('sheet', { icon: 'mdi-file-excel-outline', view: 'sheet' }),
-  csv: named('csv', { icon: 'mdi-file-delimited-outline', view: 'sheet' }),
-  tsv: { label: 'TSV', icon: 'mdi-file-delimited-outline', view: 'sheet' },
+  xlsx: named('sheet', { icon: 'mdi-file-excel-outline', view: 'sheet', sheet: 'workbook' }),
+  xlsm: named('sheet', { icon: 'mdi-file-excel-outline', view: 'sheet', sheet: 'workbook' }),
+  xls: named('sheet', { icon: 'mdi-file-excel-outline', view: 'sheet', sheet: 'workbook' }),
+  ods: named('sheet', { icon: 'mdi-file-excel-outline', view: 'sheet', sheet: 'ods' }),
+  csv: named('csv', { icon: 'mdi-file-delimited-outline', view: 'sheet', sheet: 'csv' }),
+  tsv: { label: 'TSV', icon: 'mdi-file-delimited-outline', view: 'sheet', sheet: 'tsv' },
   md: { label: 'Markdown', icon: 'mdi-language-markdown-outline', view: 'markdown' },
   markdown: { label: 'Markdown', icon: 'mdi-language-markdown-outline', view: 'markdown' },
 }
@@ -103,14 +106,11 @@ export function needsDocumentView(path: string): boolean {
 
 /** 表格阅读器要按哪种读法打开这一份。收后缀（`suffixOf` 的结果），不是路径。
  *
- *  字节本身看不出区别（都是一串字节），所以这件事只能按后缀说：`csv`/`tsv` 是
- *  分隔文本，`ods` 是另一种压缩包（我们读不了，得明说），其余当 OOXML 工作簿读。
- */
+ *  答案就在上面那张表里（`FileKind.sheet`），这里只是把「认得出的后缀 → 读法」
+ *  这一步包成一个函数：调用方手上常常只有一个后缀，没有那一行类型。认不出的后缀
+ *  按 OOXML 工作簿读，和原来一样。 */
 export function sheetKindOf(suffix: string): 'workbook' | 'csv' | 'tsv' | 'ods' {
-  if (suffix === 'csv') return 'csv'
-  if (suffix === 'tsv') return 'tsv'
-  if (suffix === 'ods') return 'ods'
-  return 'workbook'
+  return DOCUMENT_TYPES[suffix]?.sheet ?? 'workbook'
 }
 
 /** 这个文件有没有「第一页」可以画出来。PDF 直接就有，Office 文档转一次就有。 */
