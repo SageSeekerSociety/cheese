@@ -739,6 +739,7 @@ async function onAnnotate(payload: AnnotateDraft) {
     <PreviewLocator
       v-model:note="locatorNote"
       :target="imageRegion.target.value ? null : locator"
+      :busy="pageLocator.sending.value"
       @send="sendLocator"
       @cancel="clearLocator"
     />

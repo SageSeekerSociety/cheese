@@ -39,6 +39,9 @@ interface PagePinDeps {
 export function usePreviewPagePin(props: PagePinProps, deps: PagePinDeps) {
   const pin = ref<PagePin | null>(null)
 
+  /** 这一次 pin 是不是正在发。发送期间发送按钮要按住（见 `send`）。 */
+  const sending = ref(false)
+
   /** 这份页面上下文此刻还能不能用：身份、字节、渲染三样都对得上才算。 */
   function canUse(context: SlideSource): boolean {
     const expected = props.slideContext
@@ -89,6 +92,11 @@ export function usePreviewPagePin(props: PagePinProps, deps: PagePinDeps) {
    *  上传要等一会儿，等回来再核一次房间和版本：等的时候人可能换了房间、文件可能被
    *  芝士改了，那时宁可不发，也不能配着一张说的不是它的图发出去。 */
   async function send(note: string) {
+    // 这是唯一一条 await 之后才 clear 的出口：截图和上传要等一会儿，这期间输入框
+    // 和发送按钮都还在，人能再点一次。`submit` 每次都给一个新的 request_id，后端不
+    // 按它去重，于是同一个位置发出两条消息、多传一张图。同步的那几条出口发完立刻
+    // 就把定位条撤掉了，点不到第二次，只有这条要自己拦。
+    if (sending.value) return
     const target = pin.value
     const topicId = props.topicId
     const submit = props.submitQuestion
@@ -106,27 +114,32 @@ export function usePreviewPagePin(props: PagePinProps, deps: PagePinDeps) {
     // 发之前照同一把尺子量一遍自己：不合规的消息后端会 422 丢掉，而那一下图已经
     // 传上去了，白传。量在传图之前。
     if (!isQuotedContext(quotedContext)) return
-    let attachments: ChatAttachment[] | undefined
-    const upload = props.uploadAnnotation
-    const shot = await deps.snapshot(target.page)
-    if (upload && shot) {
-      try {
-        attachments = [await upload(topicId, { blob: shot.blob, filename: `page-${target.page}.png` })]
-      } catch {
-        // 图没传上去就不带图：位置那句话自己站得住。
-        attachments = undefined
+    sending.value = true
+    try {
+      let attachments: ChatAttachment[] | undefined
+      const upload = props.uploadAnnotation
+      const shot = await deps.snapshot(target.page)
+      if (upload && shot) {
+        try {
+          attachments = [await upload(topicId, { blob: shot.blob, filename: `page-${target.page}.png` })]
+        } catch {
+          // 图没传上去就不带图：位置那句话自己站得住。
+          attachments = undefined
+        }
       }
+      if (props.topicId !== topicId || !canUse(target.context)) return
+      const accepted = submit({
+        intent: 'ask-agent',
+        topicId,
+        content: note,
+        attachments,
+        quotedContext,
+      })
+      if (accepted) deps.clear()
+    } finally {
+      sending.value = false
     }
-    if (props.topicId !== topicId || !canUse(target.context)) return
-    const accepted = submit({
-      intent: 'ask-agent',
-      topicId,
-      content: note,
-      attachments,
-      quotedContext,
-    })
-    if (accepted) deps.clear()
   }
 
-  return { pin, canUse, onPin, send }
+  return { pin, canUse, onPin, send, sending }
 }
