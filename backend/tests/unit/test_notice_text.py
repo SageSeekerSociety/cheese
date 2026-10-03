@@ -144,6 +144,7 @@ def test_only_the_retired_comment_decision_and_milestone_notices_are_historical(
     assert HISTORICAL_NOTICE_KEYS == {
         "docCommented",
         "docCommentedHandedTo",
+        "docCommentMentioned",
         "actionDecision",
         "actionMilestone",
     }

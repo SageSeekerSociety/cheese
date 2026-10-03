@@ -14,7 +14,7 @@ from app.domain.agent.cloud_provider import CloudChannel, CloudLease
 from app.domain.agent.compute import ComputePool, build_compute_pool
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.gateway import LlmGateway
-from app.domain.agent.harness.pi.personal import PersonalSessions
+from app.domain.agent.harness.pi.handless import HandlessSessions
 from app.domain.agent.profiles import ProfileRegistry, build_registry
 from app.domain.agent.runtime import (
     AgentWorkRunner,
@@ -44,7 +44,7 @@ from app.domain.user.services import UserAuthService
 __all__ = [
     "get_db",
     "get_chat_service",
-    "get_personal_sessions",
+    "get_handless_sessions",
     "get_profile_registry",
     "get_broker",
     "get_work_runner",
@@ -132,11 +132,11 @@ def get_llm_gateway() -> LlmGateway | None:
 
 
 @lru_cache
-def get_personal_sessions() -> PersonalSessions:
-    """Every person's 芝士 session this process talks to. One per process, like
-    the chat service: it remembers which sessions are running and where each
-    one's answer was read to."""
-    return PersonalSessions(device_hub)
+def get_handless_sessions() -> HandlessSessions:
+    """Every session with no hands this process talks to — a person's 芝士, a
+    document thread's. One per process, like the chat service: it remembers
+    which sessions are running and where each one's answer was read to."""
+    return HandlessSessions(device_hub)
 
 
 @lru_cache
