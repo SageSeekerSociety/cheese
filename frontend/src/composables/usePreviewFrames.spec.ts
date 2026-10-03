@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 
 import { t } from '../i18n'
 
-import { APP_NAVIGATION_BUDGET_MS, navigationBudget, usePreviewFrames } from './usePreviewFrames'
+import { APP_NAVIGATION_BUDGET_MS, navigationBudget, navigationTier, usePreviewFrames } from './usePreviewFrames'
 
 vi.mock('../lib/previewSession', () => ({ postPreviewSession: vi.fn() }))
 
@@ -75,9 +75,12 @@ function fixture() {
 
 it('falls back to the file budget and clamps to the ten-minute ceiling', () => {
   for (const value of [undefined, 0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+    expect(navigationTier(value)).toBe(30_000)
     expect(navigationBudget(value)).toBe(30_000)
   }
+  expect(navigationTier(APP_NAVIGATION_BUDGET_MS)).toBe(130_000)
   expect(navigationBudget(APP_NAVIGATION_BUDGET_MS)).toBe(132_000)
+  expect(navigationTier(1e9)).toBe(600_000)
   expect(navigationBudget(1e9)).toBe(602_000)
 })
 
@@ -91,7 +94,8 @@ it('gives an app the longer budget, not the file one', async () => {
   expect(test.host.navigation.value).toBe('navigating')
   test.at(132_000)
   expect(test.host.navigation.value).toBe('failed')
-  expect(test.host.error.value).toBe(t('work.room.preview.navigationTimeout', { seconds: 132 }))
+  // 文案说的是档位，不是计时器里那个多了 2 秒的数。
+  expect(test.host.error.value).toBe(t('work.room.preview.navigationTimeout', { seconds: 130 }))
 })
 
 it('excludes frozen hidden time and cleans up the visible navigation budget', async () => {

@@ -37,14 +37,22 @@ export const APP_NAVIGATION_BUDGET_MS = 130_000
 const MAX_NAVIGATION_BUDGET_MS = 600_000
 const NAVIGATION_BUDGET_SLACK_MS = 2_000
 
-/** 一次导航等多久，单位毫秒。
+/** 这一份资源是哪个档，单位毫秒：调用方给的正数被夹进 10 分钟硬顶；没给、或者给的
+ *  是 0、负数、`NaN`、`Infinity`，退回文件档——这些值不是「立刻失败」，是「没填」。
  *
- *  照 CC 的消费式：给的正数被夹进 10 分钟硬顶再加 2 秒余量；没给、或者给的是 0、
- *  负数、`NaN`、`Infinity`，退回默认档——这些值不是「立刻失败」，是「没填」。 */
+ *  文案说的是这个数：那 2 秒余量是我们的，不是这一份资源的。 */
+export function navigationTier(requested?: number): number {
+  return typeof requested === 'number' && Number.isFinite(requested) && requested > 0
+    ? Math.min(requested, MAX_NAVIGATION_BUDGET_MS)
+    : FILE_NAVIGATION_BUDGET_MS
+}
+
+/** 一次导航真正等多久，单位毫秒——档位，再加上最后那 2 秒余量（照 CC 的消费式）。
+ *  多出来的这 2 秒是给「就快好了」那一程和 500 毫秒的轮询粒度留的，不进文案。 */
 export function navigationBudget(requested?: number): number {
   return typeof requested === 'number' && Number.isFinite(requested) && requested > 0
-    ? Math.min(requested, MAX_NAVIGATION_BUDGET_MS) + NAVIGATION_BUDGET_SLACK_MS
-    : FILE_NAVIGATION_BUDGET_MS
+    ? navigationTier(requested) + NAVIGATION_BUDGET_SLACK_MS
+    : navigationTier(requested)
 }
 
 /** Incoming navigation never destroys the last observed loaded browsing context. */
@@ -177,9 +185,10 @@ export function usePreviewFrames(frameName: string) {
     document.addEventListener('visibilitychange', visibilityChanged)
     // 预算按这一份资源定：一份静态网页 30 秒够了，一个可能正在冷启动的应用不是。
     const budget = navigationBudget(page.budgetMs)
+    const tierSeconds = Math.round(navigationTier(page.budgetMs) / 1000)
     timer = setInterval(() => {
       accountTime()
-      if (elapsed >= budget) fail(t('work.room.preview.navigationTimeout', { seconds: Math.round(budget / 1000) }))
+      if (elapsed >= budget) fail(t('work.room.preview.navigationTimeout', { seconds: tierSeconds }))
     }, 500)
     try {
       postPreviewSession(session, { target: incoming.value.name, ...(path ? { path } : {}) })
