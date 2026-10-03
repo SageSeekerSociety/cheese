@@ -70,6 +70,10 @@ Seat = tuple[uuid.UUID, str]
 
 Pulse = Callable[[Seat, frozenset[str]], None]
 
+#: An input (by the id it was written with) the session read inside the turn
+#: already running, and that turn's work.
+Took = Callable[[Seat, str, uuid.UUID], None]
+
 #: 一轮开/关的回报，按座位而不是按房间：同一间房里另一个 agent 的一轮开开关关，
 #: 不碰这个座位的「在跑的活」和它的钟。
 SeatActivity = Callable[[uuid.UUID, Seat, uuid.UUID, bool], Awaitable[None]]
@@ -150,10 +154,12 @@ class Subscription[B: Backlog]:
         receipts: ReceiptConsumer | None = None,
         pulse: Pulse | None = None,
         memory: Callable[[], Awaitable[None]] | None = None,
+        took: Took | None = None,
     ):
         self.session, self.path, self.call = session, path, call
         self.consume, self.activity = consume, activity
         self.receipts, self.pulse = receipts, pulse
+        self.took = took
         # 一轮结束时问一次记忆（见 `MemoryConsumer`）：agent 该写的记忆按规矩写
         # 在回复之前，所以一轮读完就是它写完的时刻。
         self.memory = memory
@@ -247,6 +253,12 @@ class Subscription[B: Backlog]:
         """The text of an input this record says the session read, if it is
         such a record. A harness that takes an input the moment it is written
         has nothing to report here: ``DrivenRuntime`` reports those on send."""
+        return None
+
+    def taken(self, record: dict) -> str | None:
+        """The id of an input this record says the session read inside the
+        turn already running, rather than in a turn of its own. Only a harness
+        that reports reading inputs (``receipt``) can say."""
         return None
 
     def marks(self, record: dict, events: list[AgentEvent]) -> set[str]:
@@ -363,6 +375,9 @@ class Subscription[B: Backlog]:
             text = self.receipt(record)
             if text is not None and self.receipts is not None:
                 await self.receipts(self.session.topic_id, text)
+            taken = self.taken(record)
+            if taken is not None and self.took is not None:
+                self.took(self.seat, taken, work_id)
             for event in events:
                 # Which seat's session produced this event. Events that
                 # declare the field keep what the record said (the
