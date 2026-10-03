@@ -9,7 +9,7 @@
 // 列表过来）都在这里读。
 import type { PublishCheck } from '@/lib/taskPublishChecks'
 import type { PdfTaskDraftData } from '@/network/api/tasks/types'
-import type { SpaceTeaching, TaskFormSubmitData } from '@/types'
+import type { SpaceMaterial, SpaceTeaching, TaskFormSubmitData } from '@/types'
 
 import { computed, defineAsyncComponent, provide, ref, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -28,6 +28,7 @@ import PanelCard from '@/components/spaces/PanelCard.vue'
 import { publishDoneRoute } from '@/lib/spaceRouteNames'
 import { PUBLISH_CHECKS_SINK } from '@/lib/taskPublishChecks'
 import { isTeachingBlank } from '@/lib/teaching'
+import { SpacesApi } from '@/network/api/spaces'
 import { TasksApi } from '@/network/api/tasks'
 import errorHandler from '@/services/ErrorHandler'
 import { useSpaceStore } from '@/stores/space'
@@ -63,6 +64,7 @@ async function loadSpace(id: number) {
   await spaceData.fetchSpace(id)
   // 空间换了（或者用户直接输地址进来）：下面这几样都挂在 `currentSpaceId` 上，顺序有意义。
   if (currentSpaceId.value !== id) return
+  void loadTeachingMaterials(id)
   const ok = await errorHandler.withErrorHandling(
     async () => {
       await spaceData.fetchCategories()
@@ -80,6 +82,22 @@ async function loadSpace(id: number) {
 }
 
 watch(spaceId, (id) => void loadSpace(id), { immediate: true })
+
+/** 参考资料那一格的候选。**不并进 `loadSpace` 的成败里**：取不到就摆一个空清单，
+ *  发题这条路照常走得通（这一节默认还是收起的）。 */
+async function loadTeachingMaterials(id: number) {
+  if (!Number.isFinite(id) || id <= 0) return
+  teachingMaterialsLoading.value = true
+  try {
+    const res = await SpacesApi.listMaterials(id)
+    if (spaceId.value !== id) return
+    teachingMaterials.value = res.data.materials ?? []
+  } catch {
+    teachingMaterials.value = []
+  } finally {
+    teachingMaterialsLoading.value = false
+  }
+}
 
 /** 活跃（未归档）的分类，按 `displayOrder` 排 —— 与老页同一口径：下拉里只有能选的。 */
 const activeCategories = computed(() =>
@@ -161,6 +179,11 @@ const attachmentUploading = ref(false)
 
 /** 这道题自己的「给 AI 队友的指导」覆盖（#944）。留空就什么都不发，用空间的默认。 */
 const teachingOverride = ref<SpaceTeaching>({})
+
+/** 参考资料那一格的候选：这块板资料库里现在有什么。整份清单递下去，「仅管理员」
+ *  那一档由 `TeachingMaterialPicker` 一处滤掉。 */
+const teachingMaterials = ref<SpaceMaterial[]>([])
+const teachingMaterialsLoading = ref(false)
 
 /** 交给接口的那一份：六格全空就不带它 —— 让空间（或项目集）的默认生效，而不是写
  *  一份空的把下面那层盖住。两条发题路共用同一个判据。 */
@@ -475,7 +498,11 @@ async function confirmQuickFromPdf(taskData: TaskFormSubmitData, id: number) {
           :title="t('spaces.detail.publishTask.teaching.title')"
           :subtitle="t('spaces.detail.publishTask.teaching.subtitle')"
         >
-          <TeachingFields v-model="teachingOverride" />
+          <TeachingFields
+            v-model="teachingOverride"
+            :materials="teachingMaterials"
+            :materials-loading="teachingMaterialsLoading"
+          />
         </PanelCard>
 
         <!-- 共享的发题表单（见文件头）。空间**装完再挂**：`v-if="ready"` 就是那件事。 -->

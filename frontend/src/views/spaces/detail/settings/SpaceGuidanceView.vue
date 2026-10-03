@@ -4,7 +4,7 @@
 //
 // 这一栏是四级继承的最外层（空间 → 项目集 → 题目 → 项目，整份替换、不深合）：
 // 这里留空的那几格就是「没说」，下面哪一层说了就听哪一层。
-import type { SpaceTeaching } from '@/types'
+import type { SpaceMaterial, SpaceTeaching } from '@/types'
 
 import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -15,6 +15,9 @@ import SettingsToolbar from '@/components/spaces/SettingsToolbar.vue'
 const props = defineProps<{
   /** 这块板今天存着的那份默认；`undefined`（没设过）与 `{}` 一样地填成空格子。 */
   teaching?: SpaceTeaching
+  /** 参考资料那一格的候选。取数在容器那边。 */
+  materials?: SpaceMaterial[]
+  materialsLoading?: boolean
   saving: boolean
 }>()
 
@@ -48,7 +51,7 @@ function submit() {
     <div class="settings-card__title">{{ t('spaces.guidance.title') }}</div>
     <p class="settings-card__desc">{{ t('spaces.guidance.intro') }}</p>
     <div class="guidance__body">
-      <TeachingFields v-model="draft" />
+      <TeachingFields v-model="draft" :materials="props.materials ?? []" :materials-loading="props.materialsLoading" />
     </div>
     <div class="settings-foot">
       <v-btn color="primary" variant="flat" :loading="saving" @click="submit">

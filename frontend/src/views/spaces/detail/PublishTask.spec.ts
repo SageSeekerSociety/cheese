@@ -41,6 +41,7 @@ const listTasks = vi.fn()
 const spaceDetail = vi.fn()
 const listCategories = vi.fn()
 const listDomainGroups = vi.fn()
+const listMaterials = vi.fn()
 
 const uploadAttachment = vi.fn()
 const attachmentLimits = vi.fn()
@@ -59,6 +60,8 @@ vi.mock('@/network/api/spaces', () => ({
     detail: (...a: unknown[]) => spaceDetail(...a),
     listCategories: (...a: unknown[]) => listCategories(...a),
     listDomainGroups: (...a: unknown[]) => listDomainGroups(...a),
+    // 参考资料那一格的候选。给空清单时那一格说的是「资料库里还没有文件」。
+    listMaterials: (...a: unknown[]) => listMaterials(...a),
   },
 }))
 
@@ -308,6 +311,7 @@ beforeEach(() => {
   spaceDetail.mockImplementation(async () => spaceBody())
   listCategories.mockImplementation(async () => categoriesBody())
   listDomainGroups.mockImplementation(async () => ({ data: { groups: [] } }))
+  listMaterials.mockImplementation(async () => ({ data: { materials: [], canManage: false } }))
   listTasks.mockImplementation(async () => ({ data: { tasks: [], distinctParticipants: 0 } }))
   previewFromPdf.mockImplementation(async () => ({ data: previewBody() }))
   confirmFromPdf.mockImplementation(async () => ({
@@ -516,12 +520,59 @@ describe('发题页：给 AI 队友的指导', () => {
     expect((createTask.mock.calls[0][0] as { teaching?: unknown }).teaching).toBeUndefined()
   })
 
-  it('写了角色设定与周次：整份 POST 出去，空格子落成空数组', async () => {
+  it('参考资料列的是这块板资料库里的文件：勾一份，「仅管理员」那一档不列出来', async () => {
+    listMaterials.mockImplementation(async () => ({
+      data: {
+        materials: [
+          {
+            id: 161,
+            name: '第03讲-红黑树.pdf',
+            visibility: 'members',
+            type: 'file',
+            size: null,
+            mime: null,
+            uploaderId: null,
+            createdAt: 0,
+            downloadCount: 0,
+          },
+          {
+            id: 162,
+            name: '参考答案-红黑树.pdf',
+            visibility: 'admins',
+            type: 'file',
+            size: null,
+            mime: null,
+            uploaderId: null,
+            createdAt: 0,
+            downloadCount: 0,
+          },
+        ],
+        canManage: false,
+      },
+    }))
     await boardAs(MEMBER)
     const view = await mount()
     await fillRequired(view)
 
-    await fireEvent.update(view.getByLabelText('角色设定'), '第 {current_week} 周：讲完链表了。')
+    expect(await view.findByLabelText('第03讲-红黑树.pdf')).toBeTruthy()
+    expect(view.queryByLabelText('参考答案-红黑树.pdf')).toBeNull()
+
+    // Vuetify 的勾选框绑的是 input 的 `input` 事件（`e.target.checked`），点它没用。
+    await fireEvent.input(view.getByLabelText('第03讲-红黑树.pdf'), { target: { checked: true } })
+
+    await waitFor(() => expect(textOf(view.container, 'publish-ok')).toBe('看起来没问题。'))
+    await submitForm(view)
+    await waitFor(() => expect(createTask).toHaveBeenCalledTimes(1))
+
+    expect((createTask.mock.calls[0][0] as { teaching: { materialIds: number[] } }).teaching.materialIds).toEqual([161])
+  })
+
+  it('写了对 AI 的要求与周次：整份 POST 出去，空格子落成空数组', async () => {
+    await boardAs(MEMBER)
+    const view = await mount()
+    await fillRequired(view)
+
+    await fireEvent.update(view.getByLabelText('对 AI 的要求'), '第 {current_week} 周：讲完链表了。')
     await fireEvent.update(view.getByLabelText('当前周次'), '3')
 
     await waitFor(() => expect(textOf(view.container, 'publish-ok')).toBe('看起来没问题。'))

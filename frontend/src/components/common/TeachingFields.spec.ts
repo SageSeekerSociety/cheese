@@ -1,7 +1,8 @@
-// 「给 AI 队友的指导」那六格的控件（#944）。两处页面共用它，所以这里量的是它出什么：
-//   1. 默认只摆头两格（角色设定、当前周次），其余四格折在「高级选项」里；
+// 「给 AI 队友的指导」那几格的控件（#944）。两处页面共用它，所以这里量的是它出什么：
+//   1. 默认只摆三格（对 AI 的要求、当前周次、参考资料），其余三格折在「高级选项」里；
 //   2. 每改一格都把**整份**报回去 —— 不是一格一格补，接口那一头也是整份替换；
-//   3. 人敲的字不要在回程里被改写（那个还没成形的空格）。
+//   3. 人敲的字不要在回程里被改写（那个还没成形的空格）；
+//   4. 那份默认要求只在点了按钮之后才进框，留空就是一条都不加。
 import type { SpaceTeaching } from '@/types'
 
 import { defineComponent, h } from 'vue'
@@ -46,16 +47,17 @@ afterEach(() => {
 })
 
 describe('TeachingFields', () => {
-  it('默认只摆头两格；高级选项里的四格展开才出现', async () => {
+  it('默认只摆三格；高级选项里的三格展开才出现', async () => {
     const view = mount()
 
     expect(view.getByLabelText('spaces.teaching.fields.systemPrompt')).toBeTruthy()
     expect(view.getByLabelText('spaces.teaching.fields.currentWeek')).toBeTruthy()
+    expect(view.getByTestId('teaching-materials-empty')).toBeTruthy()
     expect(view.queryByLabelText('spaces.teaching.fields.allowedTopics')).toBeNull()
 
     await fireEvent.click(view.getByText('spaces.teaching.fields.advanced'))
     await waitFor(() => expect(view.getByLabelText('spaces.teaching.fields.allowedTopics')).toBeTruthy())
-    expect(view.getByLabelText('spaces.teaching.fields.materialIds')).toBeTruthy()
+    expect(view.getByLabelText('spaces.teaching.fields.knowledgeIds')).toBeTruthy()
   })
 
   it('改一格报的是整份：填上的那格在内，其余空格落成 null / []', async () => {
@@ -94,5 +96,15 @@ describe('TeachingFields', () => {
 
     await fireEvent.update(input, '03')
     expect(input.value).toBe('03')
+  })
+
+  it('那份默认要求不预填：框里空着，点了按钮才进去', async () => {
+    const view = mount()
+    const prompt = view.getByLabelText('spaces.teaching.fields.systemPrompt') as HTMLTextAreaElement
+
+    expect(prompt.value).toBe('')
+
+    await fireEvent.click(view.getByTestId('teaching-use-default-template'))
+    await waitFor(() => expect(prompt.value).toBe('spaces.teaching.defaultTemplate'))
   })
 })
