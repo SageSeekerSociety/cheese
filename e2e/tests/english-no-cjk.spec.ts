@@ -194,14 +194,16 @@ async function pushToTaskBranch(page: Page, projectId: string, branch: string) {
 }
 
 /** A project alice is not in, for the page a non-member is refused. Another
- *  demo account makes it; its token never reaches the browser. */
+ *  demo account makes it; its token never reaches the browser. frank, because
+ *  this accepts his pending consents and auth.spec.ts needs bobby, carol and
+ *  david to still have theirs. */
 async function othersProject(page: Page): Promise<string> {
   const signedIn = await page.request.post("/api/users/auth/login", {
-    data: { username: "bobby", password: DEMO_PASSWORD },
+    data: { username: "frank", password: DEMO_PASSWORD },
   });
   if (!signedIn.ok())
     throw new Error(
-      `bobby login → ${signedIn.status()} ${await signedIn.text()}`,
+      `frank login → ${signedIn.status()} ${await signedIn.text()}`,
     );
   const token = (await signedIn.json()).data.accessToken as string;
   await acceptPendingConsents(page, token);
