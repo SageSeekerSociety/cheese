@@ -2,12 +2,42 @@
 # The existing optional sites include can also hold the application front door.
 # Prepare only; validate and reload nginx before changing tunnel ingress.
 set -euo pipefail
-ACTIVE_DIR="${1:?usage: configure-frontend.sh ACTIVE_DIRECTORY UPSTREAM_PORT [LISTEN_PORT]}"
+ACTIVE_DIR="${1:?usage: configure-frontend.sh ACTIVE_DIRECTORY UPSTREAM_PORT [LISTEN_PORT] [PREVIEW_OWNER_PORT]}"
 UPSTREAM_PORT="${2:?upstream port required}"
 LISTEN_PORT="${3:-18080}"
+# Non-empty routes the machine preview tunnel to the independently released
+# preview-connection owner, on both the plain and TLS listeners below; empty
+# keeps it on the rolling frontend (whose /api reaches the business backend),
+# as before the cutover.
+PREVIEW_OWNER_PORT="${4:-}"
 for port in "$UPSTREAM_PORT" "$LISTEN_PORT"; do
   [[ "$port" =~ ^[0-9]+$ ]] && ((port > 0 && port < 65536)) || { echo "Invalid port: $port" >&2; exit 1; }
 done
+if [ -n "$PREVIEW_OWNER_PORT" ]; then
+  [[ "$PREVIEW_OWNER_PORT" =~ ^[0-9]+$ ]] && ((PREVIEW_OWNER_PORT > 0 && PREVIEW_OWNER_PORT < 65536)) \
+    || { echo "Invalid preview owner port: $PREVIEW_OWNER_PORT" >&2; exit 1; }
+fi
+PREVIEW_TUNNEL_LOCATION=""
+if [ -n "$PREVIEW_OWNER_PORT" ]; then
+  PREVIEW_TUNNEL_LOCATION="$(cat <<LOCATION
+  # The machine preview tunnel, both spellings the helper dials. It rides the
+  # independently released preview-connection owner so a rolling frontend or
+  # business backend never drops it. The owner serves /preview/tunnel and
+  # /api/preview/tunnel alike, so the path passes through unchanged.
+  location ~ ^/(api/)?preview/tunnel\$ {
+    proxy_pass http://127.0.0.1:$PREVIEW_OWNER_PORT;
+    proxy_http_version 1.1;
+    proxy_set_header Host \$http_host;
+    proxy_set_header Upgrade \$http_upgrade;
+    proxy_set_header Connection \$connection_upgrade;
+    proxy_read_timeout 24h;
+    proxy_send_timeout 24h;
+    proxy_buffering off;
+  }
+
+LOCATION
+)"
+fi
 CONFIG_TMP="$(mktemp "$ACTIVE_DIR/.frontend.XXXXXX")"
 trap 'rm -f "$CONFIG_TMP"' EXIT
 cat > "$CONFIG_TMP" <<EOF
@@ -44,7 +74,7 @@ server {
   # application rollout: a rollout there ends every connection it carries.
   # A connector dials <base>/agent, and its base is whatever it was connected
   # with: the installer's <origin>/api/connector, or <site>/connector, which
-  # the desktop app and the documented `link connect` use. Both spellings of
+  # the desktop app and the documented "link connect" use. Both spellings of
   # the device and screen channels go to the connection owner.
   location ~ ^/(api/)?connector/agent\$ {
     rewrite ^/api/(.*)\$ /\$1 break;
@@ -90,6 +120,7 @@ server {
     proxy_buffering off;
   }
 
+${PREVIEW_TUNNEL_LOCATION}
   location / {
     proxy_pass http://frontend_active;
     proxy_http_version 1.1;
