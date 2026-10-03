@@ -3,8 +3,10 @@ import type { Block } from '@/cx_types'
 import { describe, expect, it } from 'vitest'
 
 import {
+  capWindow,
   joinNewest,
   LOAD_OLDER_THRESHOLD,
+  MAX_WINDOW,
   mergeRefreshedTail,
   prependOlder,
   scrollTopAfterPrepend,
@@ -72,6 +74,26 @@ describe('prependOlder', () => {
   it('records that the top of the history has been reached', () => {
     const next = prependOlder({ blocks: blocks('m2'), hasMore: true }, blocks('m1'), false)
     expect(next.hasMore).toBe(false)
+  })
+})
+
+describe('capWindow', () => {
+  it('fits under the cap: nothing to do', () => {
+    expect(capWindow(blocks('m1', 'm2'))).toBeNull()
+    expect(capWindow(Array.from({ length: MAX_WINDOW }, (_, i) => b(`m${i}`)))).toBeNull()
+  })
+
+  it('over the cap: keeps the oldest, hands back the newest', () => {
+    const all = Array.from({ length: MAX_WINDOW + 3 }, (_, i) => b(`m${i}`))
+
+    const capped = capWindow(all)!
+
+    expect(capped.keep).toHaveLength(MAX_WINDOW)
+    expect(capped.keep[0].id).toBe('m0')
+    expect(capped.keep.at(-1)?.id).toBe(`m${MAX_WINDOW - 1}`)
+    // The overflow is the NEWEST end: the reader is paging up, so what must not
+    // move is what sits above them, not what sits below the viewport.
+    expect(capped.dropped.map((x) => x.id)).toEqual([`m${MAX_WINDOW}`, `m${MAX_WINDOW + 1}`, `m${MAX_WINDOW + 2}`])
   })
 })
 

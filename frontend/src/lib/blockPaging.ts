@@ -21,6 +21,13 @@ export const PAGE_SIZE = 50
 // of slack, so the rows are usually there before the user reaches them.
 export const LOAD_OLDER_THRESHOLD = 400
 
+// How many blocks one topic's window may hold. Paging back has no natural end —
+// the reader can keep going up through a topic that is years long — so without
+// a ceiling the window climbs back to the 2226 rows / 2.1 MB that wedged the
+// browser, just more slowly. 600 is a dozen pages: far more scrollback than is
+// on screen at once, far less than the whole timeline.
+export const MAX_WINDOW = 600
+
 // A slice of a topic's timeline, oldest-first, plus whether older blocks exist
 // above it. `hasMore` is about OLDER blocks only; whether a middle stretch has
 // newer blocks below it is the timeline's `hasNewer`, not part of a window.
@@ -123,6 +130,28 @@ export function prependOlder(current: BlockWindow, older: Block[], hasMore: bool
     blocks: [...older.filter((b) => !known.has(b.id)), ...current.blocks],
     hasMore,
   }
+}
+
+/**
+ * Split a window that has grown past the cap: the oldest `max` blocks stay, the
+ * newest overflow comes back so the caller can hold it aside. `null` when the
+ * window already fits.
+ *
+ * The overflow is taken from the NEWEST end on purpose. Paging older means the
+ * reader is scrolling UP, so the rows that must not move are the ones above the
+ * viewport they are reading; dropping them would delete what they just pulled
+ * in. The rows dropped here sit BELOW the viewport, where removing them moves
+ * nothing on screen.
+ *
+ * It is a separate step from `prependOlder` (and never folded into it) because
+ * the scroll compensation around a prepend measures the change in `scrollHeight`
+ * — see `scrollTopAfterPrepend`. A trim in the same DOM update would subtract
+ * the height it removed and pull the reader up by that much on every page. Do
+ * the prepend, compensate, then trim.
+ */
+export function capWindow(blocks: Block[], max = MAX_WINDOW): { keep: Block[]; dropped: Block[] } | null {
+  if (blocks.length <= max) return null
+  return { keep: blocks.slice(0, max), dropped: blocks.slice(max) }
 }
 
 /**

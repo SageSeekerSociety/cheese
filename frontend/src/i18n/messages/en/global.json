@@ -1,6 +1,10 @@
 {
   "back": "Back",
   "labelWithAside": "{label} ({aside})",
+  "errorBoundary": {
+    "message": "This part couldn't be displayed",
+    "retry": "Retry"
+  },
   "cheese": "Cheese",
   "copyright": "© {year} Cheese",
   "transportReadFailure": "Service temporarily unavailable. Please try again later. (HTTP {status})",
