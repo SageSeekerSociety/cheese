@@ -12,6 +12,7 @@ import httpx
 
 from app.domain.agent.device_hub import (
     EXEC_REPLY_SLACK_S,
+    RECONNECT_GRACE_S,
     DeviceCallError,
     DeviceOffline,
     HubScreen,
@@ -55,8 +56,10 @@ OWNER_CONNECT_RETRY_MAX_DELAY_S = 5
 # cross the network, so this side waits longer than the hub by a margin of its
 # own. Waiting the same amount, the caller gave up first: on dev from
 # 2026-09-23 to 09-30, 12 agents' requests for their machine became 500s that
-# way while the owner's 504 was on its way.
-OWNER_CALL_TIMEOUT_SLACK_S = EXEC_REPLY_SLACK_S + 5
+# way while the owner's 504 was on its way. Before any of that, a call to a
+# machine whose link just dropped waits up to `RECONNECT_GRACE_S` for it to
+# come back, and that wait is the owner's too.
+OWNER_CALL_TIMEOUT_SLACK_S = RECONNECT_GRACE_S + EXEC_REPLY_SLACK_S + 5
 OWNER_CALL_DEFAULT_TIMEOUT_S = 30
 # Reaching the owner is a connect on the box's own network; a SYN that goes
 # unanswered this long is a host that is not there, not a slow one.
