@@ -613,5 +613,21 @@ useCommands(() =>
   .srow:has(.install-cmd) {
     grid-template-columns: minmax(0, 1fr);
   }
+
+  /* 命令整条占一行、断行折开，复制按钮落到下一行并靠右。
+     390px 上原来是一行两件：命令被按钮挤掉一半，剩下那半截横着滚——滚动条
+     看不见、也没有任何提示，读到的是一个从中间断掉的 URL。 */
+  .install-cmd {
+    flex-wrap: wrap;
+    row-gap: 2px;
+    justify-content: flex-end;
+  }
+
+  .install-cmd__code {
+    flex: 1 1 100%;
+    overflow-x: visible;
+    white-space: normal;
+    word-break: break-all;
+  }
 }
 </style>

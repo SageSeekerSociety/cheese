@@ -183,6 +183,14 @@ async function move(event: KeyboardEvent, column: number, row: number) {
   overflow: hidden;
   white-space: nowrap;
 }
+/* 最后一个月刚开始时，它的标记落在最后一栏，格子只有一列宽（约 12px），
+   「10月」被裁成「10」。这一格按内容撑开、靠着右边缘放，字因此长在它左边那
+   一点空白上 —— 那里本来就没有别的月份在写（`text-align` 在这里没用：溢出的
+   一行不会被对齐挪动，只有盒子自己换宽度才动得了）。 */
+.heatmap__month:last-child {
+  width: max-content;
+  justify-self: end;
+}
 .heatmap__weeks {
   display: grid;
   gap: 2px;

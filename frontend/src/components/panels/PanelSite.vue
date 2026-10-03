@@ -368,6 +368,11 @@ function eventDetail(b: Block): string {
 function eventError(b: Block): string {
   return b.meta?.error ?? ''
 }
+// 没有参数的那种行（平台提示、后端报错），整句就压在动词上。它会折到三行
+// （见样式里的 `.site-act--solo`），全文挂到 title 上，鼠标停一下看全。
+function soloVerb(b: Block): string {
+  return eventArg(b) ? '' : eventVerb(b)
+}
 // 圆点分级: solid = platform action, faint = plain work (structured fields
 // only — never guessed from the content text).
 function eventPlatform(b: Block): boolean {
@@ -485,10 +490,14 @@ function isLive(index: number): boolean {
             <div
               v-if="!isSay(b)"
               class="site-act"
-              :class="{ 'site-act--platform': eventPlatform(b), 'site-act--failed': eventFailed(b) }"
+              :class="{
+                'site-act--platform': eventPlatform(b),
+                'site-act--failed': eventFailed(b),
+                'site-act--solo': !eventArg(b),
+              }"
             >
               <i class="site-act__dot" :class="{ 'site-act__dot--platform': eventPlatform(b) }" />
-              <span class="site-act__verb">{{ eventVerb(b) }}</span>
+              <span class="site-act__verb" :title="soloVerb(b) || undefined">{{ eventVerb(b) }}</span>
               <button
                 v-if="eventArg(b)"
                 type="button"
@@ -514,6 +523,7 @@ function isLive(index: number): boolean {
                 class="site-act__error"
                 :class="{ 'site-act__error--full': expandedSite.has(b.id) }"
                 data-testid="site-act-error"
+                :title="eventError(b)"
                 @click="toggleSiteEntry(b.id)"
               >
                 {{ eventError(b) }}
@@ -625,6 +635,10 @@ function isLive(index: number): boolean {
   flex: 1 1 auto;
   min-height: 0;
   min-width: 0;
+  /* 纵向滚，横向不滚。只写 `overflow-y: auto` 的话，`overflow-x` 会被算成
+     `auto`：一行没折开的旧记录就够把这一栏撑出一条横向滚动条，而它藏在面板
+     底下，读的人既看不见也不知道要往右拉。横向溢出由各行自己收掉。 */
+  overflow-x: hidden;
   overflow-y: auto;
   background: var(--surface);
 }
@@ -742,13 +756,22 @@ function isLive(index: number): boolean {
   background: var(--danger);
 }
 /* 错误摘要缩进到参数那一列，和上面那一行对齐。这个缩进是圆点 + 间隙 + 动词列
-   + 间隙 —— 写成 calc 而不是量出来的一个数，改了上面这一行不用回来改它。 */
+   + 间隙 —— 写成 calc 而不是量出来的一个数，改了上面这一行不用回来改它。
+   一条启动失败的原文可能很长：折到三行，整段能说多少说多少，鼠标停一下看全文，
+   点开这一行摊开那一份。截成一行的话，读的人只拿到开头那半句，而这一行恰恰是
+   出问题时唯一有人真去读的字。 */
 .site-act__error {
+  display: -webkit-box;
   flex: 0 0 100%;
   min-width: 0;
   margin: 2px 0 0;
   padding: 0 0 0 calc(5px + 8px + 4em + 8px);
   border: 0;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+  overflow-wrap: anywhere;
   background: none;
   font: inherit;
   text-align: left;
@@ -757,9 +780,6 @@ function isLive(index: number): boolean {
   /* 13px 而不是 12：这一行是挂了的那一步上唯一有人真去读的字。 */
   font-size: 13px;
   line-height: 1.5;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .site-act__error:focus-visible {
   outline: 1px solid var(--accent);
@@ -767,6 +787,9 @@ function isLive(index: number): boolean {
   border-radius: var(--radius-sm);
 }
 .site-act__error--full {
+  display: block;
+  -webkit-line-clamp: none;
+  line-clamp: none;
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -796,6 +819,34 @@ function isLive(index: number): boolean {
 .site-act--platform .site-act__verb {
   color: var(--ink);
   font-weight: 600;
+}
+/* 这一步只有动词、没有参数：平台提示和后端报错都是这样 —— 内容本来就是一句话，
+   落库时没有「动词\n参数」那道换行（见 lib/siteLog.ts 的 eventArg）。定宽不折行
+   的动词列装不下整句，而按内容宽量出来的尺寸比这一行还长，于是它先整段掉到圆点
+   下面另起一行（圆点孤零零占一行），再横着冲出面板。这时动词就是这一行的正文：
+   从 0 起算占满剩下的宽度，折到三行，整句挂在 title 上。 */
+.site-act--solo .site-act__verb {
+  display: -webkit-box;
+  flex: 1 1 0;
+  min-width: 0;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+/* 折起来的动词是个 `overflow: hidden` 的盒子，它的基线算在底边而不是第一行，
+   圆点和时间会跟着掉到三行的底下去。这里把它们钉回第一行：(18.6 - 5) / 2 ≈ 7，
+   18.6 = 12px 的字 × 1.55 的行高。 */
+.site-act--solo .site-act__dot,
+.site-act--solo .site-act__time {
+  align-self: flex-start;
+  margin-top: 7px;
+}
+/* 同一行里那个空的参数位不再和动词分宽度。 */
+.site-act--solo .site-act__argtext {
+  display: none;
 }
 /* 截断而不是折行：一条几百字符的命令折下来能占掉半屏，而这一列的用处是扫。
    点开这一行换成参数原文，整条摊开，不再截第二次。

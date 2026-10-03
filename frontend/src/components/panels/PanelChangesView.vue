@@ -204,7 +204,7 @@ function revisionReadOnly(): boolean {
               :title="t('work.room.changes.switchSource')"
               :aria-label="t('work.room.changes.switchSourceTo', { source: props.sourceTitle })"
             >
-              <span class="source-pick__name">{{ props.sourceTitle }}</span>
+              <span class="source-pick__name" :title="props.sourceTitle">{{ props.sourceTitle }}</span>
               <v-icon size="16">mdi-chevron-down</v-icon>
             </button>
           </template>

@@ -149,7 +149,8 @@ const addedRows = computed<AddedRowView[]>(() =>
 /** 六条列。**只有「添加信息」那一列是 `null`**（自适应）—— `table-layout: fixed`
  *  下没有宽度的列会平分剩余空间，多给一列就散架。第一列要装下头像 + 昵称 + handle
  *  （+ 可能的 agent 徽章），300px 够（超长的由 ellipsis 收，`title` 里拿全文）。
- *  定宽合计 770px，AdminGrid 的 1080 min-width 下自适应列拿 ~310px。 */
+ *  定宽合计 770px，表格下限收到 1000（见样式里那条 `--agrid-min`）时自适应列
+ *  还拿得到 230px。 */
 const COLS: (string | null)[] = ['300px', '140px', '100px', '110px', null, '120px']
 const BONE_WIDTHS = ['58%', '44%', '52%', '40%', '64%', '42%']
 
@@ -635,6 +636,13 @@ onMounted(load)
   display: flex;
   flex: 0 1 auto;
   min-height: 0;
+}
+
+/* 1440 下这一页的容器只有约 1051px，而 `AdminGrid` 默认的 1080 表格下限比它宽
+   29px —— 最后一列「操作」被裁掉一截，「不可移出」显示成「不可移」。成员表六列
+   的定宽合计只有 770，1000 就排得下，剩下的 230 给自适应的「添加信息」那一列。 */
+.am :deep(.agrid__table) {
+  --agrid-min: 1000px;
 }
 
 .am__group {
