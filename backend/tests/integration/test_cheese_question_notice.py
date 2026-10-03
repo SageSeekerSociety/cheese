@@ -245,3 +245,100 @@ def test_answering_the_question_settles_its_notification(client):
         "/notifications/unread-count", headers={"Authorization": f"Bearer {alice}"}
     )
     assert unread.json()["data"]["count"] == 0
+
+
+def _say(client, room: str, text: str, handle: str = "alice") -> None:
+    """人在房间输入框里打了一句话发出去 —— 没点选项。"""
+    r = client.post(
+        f"/topics/{room}/messages",
+        json={"content": text, "request_id": str(uuid.uuid4())},
+        headers=session_auth_headers(handle),
+    )
+    assert r.status_code == 200, r.text
+
+
+def _awaiting(client, handle: str) -> list[dict]:
+    r = client.get("/awaiting-me", headers=session_auth_headers(handle))
+    assert r.status_code == 200, r.text
+    return r.json()["data"]["data"]
+
+
+def test_typing_a_reply_settles_its_notification(client):
+    """没点选项、直接打字回了一句，也是回答：通知结掉，待处理里那一项也不在了。
+
+    实况：被问的人在房间里打字答了，首页「动态」里那条还是未读，还写着「已暂停，
+    待你回答」。
+    """
+    alice = seed_user(client, "alice")
+    _pid, room = _room(client)
+    _open_turn(client, room)
+    _ask(client, room)
+    assert _awaiting(client, "alice") != []
+
+    _say(client, room, "按项目，外包单列")
+
+    (row,) = _questions(client, alice)
+    assert row["read"] is True
+    assert row["contextMetadata"]["answered"] == "按项目，外包单列"
+    unread = client.get(
+        "/notifications/unread-count", headers={"Authorization": f"Bearer {alice}"}
+    )
+    assert unread.json()["data"]["count"] == 0
+    assert _awaiting(client, "alice") == []
+
+
+def test_the_mention_that_addresses_the_teammate_is_not_part_of_the_answer(client):
+    """回话时点了队友的名，通知里的回答只写他说的话，不写那个 @。"""
+    alice = seed_user(client, "alice")
+    _pid, room = _room(client)
+    _open_turn(client, room)
+    _ask(client, room)
+
+    _say(client, room, f"<@{room_agent_seat(client, room)}> 按部门")
+
+    (row,) = _questions(client, alice)
+    assert row["contextMetadata"]["answered"] == "按部门"
+
+
+def test_a_long_typed_answer_is_shortened_in_the_notification(client):
+    alice = seed_user(client, "alice")
+    _pid, room = _room(client)
+    _open_turn(client, room)
+    _ask(client, room)
+    reply = "按项目统计，" + "外包和临时人员的费用都单独列一栏，" * 10
+
+    _say(client, room, reply)
+
+    (row,) = _questions(client, alice)
+    answered = row["contextMetadata"]["answered"]
+    assert answered.startswith("按项目统计，外包和临时人员")
+    assert len(answered) < len(reply)
+
+
+def test_only_the_next_message_is_the_answer(client):
+    """答完又接着说了几句：通知里记的还是回答那一句，不被后面的话改写。"""
+    alice = seed_user(client, "alice")
+    _pid, room = _room(client)
+    _open_turn(client, room)
+    _ask(client, room)
+
+    _say(client, room, "按项目")
+    _say(client, room, "顺便把上个月的也重算一下")
+
+    (row,) = _questions(client, alice)
+    assert row["contextMetadata"]["answered"] == "按项目"
+
+
+def test_someone_else_typing_does_not_answer_for_the_person_asked(client):
+    """题问的是发起这一轮的 bob；房间里 alice 说话不是他的回答。"""
+    seed_user(client, "alice")
+    bob = seed_user(client, "bob")
+    _pid, room = _room(client)
+    _open_turn(client, room, "bob")
+    _ask(client, room)
+
+    _say(client, room, "我觉得按部门")
+
+    (row,) = _questions(client, bob)
+    assert row["read"] is False
+    assert "answered" not in row["contextMetadata"]

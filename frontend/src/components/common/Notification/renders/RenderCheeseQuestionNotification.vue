@@ -31,7 +31,7 @@ const title = computed(
   () => getStringMetadata(props.notification, 'question') || t('notifications.CHEESE_QUESTION.untitled')
 )
 
-// 答过之后服务端把选的那一项并进 `answered`（`ledger.settle`）。通知是一条事件记录，
+// 答过之后服务端把回答并进 `answered`（`ledger.settle`）：点的那一项，或者打字回的那句话。通知是一条事件记录，
 // 会在收件箱里留到人删掉为止，所以它说的得是现在的状态：已经答过的题不能还说「待你回答」。
 const answered = computed(() => getStringMetadata(props.notification, 'answered'))
 
