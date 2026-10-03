@@ -13,7 +13,7 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import { VLayout } from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { render, waitFor } from '@testing-library/vue'
+import { fireEvent, render, waitFor } from '@testing-library/vue'
 import { createPinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -37,22 +37,46 @@ vi.mock('virtua/vue', async () => {
   const make = (which: 'VList' | 'Virtualizer') =>
     define({
       name: which,
-      props: ['data', 'itemSize', 'bufferSize', 'shift', 'keepMounted', 'itemProps', 'scrollRef'],
+      props: ['data', 'itemSize', 'bufferSize', 'shift', 'keepMounted', 'itemProps', 'scrollRef', 'item'],
       setup(props, { attrs, slots, expose }) {
         virtua.seen.push({ which, props: props as unknown as Record<string, unknown> })
         expose({ scrollToIndex: virtua.scrollToIndex })
-        const itemProps = props.itemProps as ((item: unknown, index: number) => Record<string, unknown>) | undefined
+        // 签名照抄真实的那份：`itemProps` 收的是一个 `{ item, index }` 对象，
+        // 每一行的外壳标签由 `item` 说（不给就是 div）。
+        const itemProps = props.itemProps as
+          | ((payload: { item: unknown; index: number }) => Record<string, unknown>)
+          | undefined
+        const itemTag = (props.item as string | undefined) || 'div'
         return () =>
           hyperscript(
             'div',
             { 'data-virtua': which, ...attrs },
             ((props.data as unknown[]) ?? []).map((item, index) =>
-              hyperscript('div', { ...(itemProps?.(item, index) ?? {}) }, slots.default?.({ item, index }))
+              hyperscript(itemTag, { ...(itemProps?.({ item, index }) ?? {}) }, slots.default?.({ item, index }))
             )
           )
       },
     })
   return { VList: make('VList'), Virtualizer: make('Virtualizer') }
+})
+
+// 行尾那股 ⋯ 菜单（桌面形态）是 Vuetify 的 v-menu：一展开就要摸 `window.visualViewport`
+// （happy-dom 没有），当场炸，还会把整个文件的后续用例带崩。这里换一只只会「点一下就把
+// 菜单打开」的替身——这一份要验的是「菜单开着的那一行不能被摘掉」，菜单自己长什么样不
+// 归它管。
+vi.mock('./common/AdaptiveMenu.vue', async () => {
+  const { defineComponent: define, h: hyperscript } = await import('vue')
+  return {
+    default: define({
+      name: 'AdaptiveMenuStub',
+      props: { modelValue: Boolean },
+      emits: ['update:modelValue'],
+      setup(_props, { slots, emit }) {
+        return () =>
+          hyperscript('div', {}, slots.activator?.({ props: { onClick: () => emit('update:modelValue', true) } }))
+      },
+    }),
+  }
 })
 
 beforeEach(() => {
@@ -81,6 +105,13 @@ function topic(id: string, parentId: string | null, flags: Partial<Topic> = {}):
 /** 一行都不少地建 N 个我参与的话题：它们全在上组（`mine`），就是会被虚拟化的那一组。 */
 function longRail(n: number): Topic[] {
   return [topic('root', null), ...Array.from({ length: n }, (_, i) => topic(`t${i}`, 'root', { i_participate: true }))]
+}
+
+/** 归档那一组（列表最底下）的 N 行：做完的活，只会越堆越多。 */
+function archived(n: number): Topic[] {
+  return Array.from({ length: n }, (_, i) =>
+    topic(`a${i}`, 'root', { status: 'archived', archived_at: '2026-08-01T00:00:00Z' })
+  )
 }
 
 const router = createRouter({
@@ -165,5 +196,45 @@ describe('选中的话题在窗口外', () => {
     const { rerender } = mount()
     await rerender({ inner: inner({ selectedTopicId: 't119' }) })
     await waitFor(() => expect(virtua.seen[0].props.keepMounted).toEqual([119]), WAIT)
+  })
+})
+
+describe('锚点落在行上的那几种状态', () => {
+  it('⋯ 菜单开着的那一行也留在 DOM 里 —— 那颗 ⋯ 就是菜单的 activator', async () => {
+    // 菜单展开期间那颗 ⋯ 必须留在屏幕上：它是 activator，跟着窗口一起消失菜单就塌了。
+    const { container } = mount()
+    await waitFor(() => expect(virtua.seen).toHaveLength(1), WAIT)
+    const btn = container.querySelector('[data-room-id="t5"] .row-actions__btn') as HTMLElement | null
+    expect(btn).not.toBeNull()
+    await fireEvent.click(btn as HTMLElement)
+    await waitFor(() => expect(virtua.seen[0].props.keepMounted as readonly number[]).toContain(5), WAIT)
+  })
+})
+
+describe('已归档那一组', () => {
+  it('过门槛也交给虚拟列表 —— 归档是越堆越多的，滚的还是话题列表那一层', async () => {
+    const { container } = mount({ topics: [...longRail(3), ...archived(120)] })
+    await fireEvent.click(container.querySelector('.archived-toggle') as HTMLElement)
+    await waitFor(() => expect(virtua.seen).toHaveLength(1), WAIT)
+    expect(virtua.seen[0].props.data).toHaveLength(120)
+    // 窗口按话题列表那一层的滚动容器算，不是自己另起一个。
+    expect(virtua.seen[0].props.scrollRef).not.toBeNull()
+  })
+
+  it('选中的归档行也留在 DOM 里（光标可能正停在它上面）', async () => {
+    const { container } = mount({ topics: [...longRail(3), ...archived(120)], selectedTopicId: 'a5' })
+    await fireEvent.click(container.querySelector('.archived-toggle') as HTMLElement)
+    await waitFor(() => expect(virtua.seen).toHaveLength(1), WAIT)
+    const rows = virtua.seen[0].props.data as Topic[]
+    const index = rows.findIndex((t) => t.id === 'a5')
+    expect(index).toBeGreaterThanOrEqual(0)
+    expect(virtua.seen[0].props.keepMounted).toEqual([index])
+  })
+
+  it('行数不到门槛就整列画，和以前一样', async () => {
+    const { container } = mount({ topics: [...longRail(3), ...archived(3)] })
+    await fireEvent.click(container.querySelector('.archived-toggle') as HTMLElement)
+    expect(virtua.seen).toHaveLength(0)
+    expect(container.querySelectorAll('[data-row-actions^="a"]')).toHaveLength(3)
   })
 })

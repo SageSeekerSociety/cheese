@@ -7,7 +7,9 @@
 // 父级 v-if），是为了那一个开关不随「最后一条也被取消归档」而复位。
 import type { Topic } from '@/cx_types'
 
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
+
+import VirtualList from '../common/VirtualList.vue'
 
 import TopicRailBadge from './TopicRailBadge.vue'
 import TopicRailGroupToggle from './TopicRailGroupToggle.vue'
@@ -16,9 +18,12 @@ import { t } from '@/i18n'
 import { topicTitle } from '@/lib/topicState'
 import { kindLabel } from '@/lib/topicTree'
 
-defineProps<{
+const props = defineProps<{
   rows: Topic[]
   selectedTopicId: string | null
+  /** 话题列表那一层的滚动容器（`.rail-scroll`）。归档组就长在它底下，行太多时按它的
+   *  窗口算要挂几行；不给就整列画（和以前一样）。 */
+  scrollParent?: HTMLElement | null
   /** 整页形态（手机）：行更高、取消归档那颗按钮要撑到手指点得中。 */
   page: boolean
   /** 组头收起来时那颗点要不要画（归档话题里有新消息）。 */
@@ -35,6 +40,17 @@ const emit = defineEmits<{
 }>()
 
 const open = ref(false)
+
+// 归档是会越堆越多的（做过一轮又一轮的活都落在这儿），所以这一组也照话题组那套走：
+// 行的身份、以及选中的那一行要留在 DOM 里（光标可能正停在它上面）。参数按 `unknown`
+// 收：这根函数是被 `item-key` 接过去的，那边只保证「给你一样东西」，具体是什么自己认。
+const rowKey = (topic: unknown): string => (topic as Topic).id
+const keepMounted = computed<readonly number[] | undefined>(() => {
+  const id = props.selectedTopicId
+  if (!id) return undefined
+  const index = props.rows.findIndex((topic) => topic.id === id)
+  return index >= 0 ? [index] : undefined
+})
 </script>
 
 <template>
@@ -49,43 +65,57 @@ const open = ref(false)
       @toggle="open = !open"
     />
     <v-list v-if="open" density="compact" nav class="py-0" tabindex="-1">
-      <v-list-item
-        v-for="topic in rows"
-        :key="topic.id"
-        tabindex="0"
-        :active="topic.id === selectedTopicId"
-        rounded="lg"
-        :data-row-actions="topic.id"
-        class="topic-row topic-row--archived"
-        :class="{ 'is-active': topic.id === selectedTopicId }"
-        @click="emit('select-topic', topic.id)"
-        @mouseenter="emit('hover-topic', topic.id)"
-        @mouseleave="emit('leave-topic')"
+      <!-- Archived rows are ordered newest first and only pile up over time, so past
+           VIRTUAL_LIST_THRESHOLD (lib/virtualList.ts) the group keeps only the rows in view
+           mounted; the scroll parent is the topic rail itself (`.rail-scroll`), since the
+           group lives in that flow. Below the threshold this is the plain list it always
+           was — the same rows, in the same order. -->
+      <VirtualList
+        :items="rows"
+        :item-key="rowKey"
+        :scroll-parent="scrollParent"
+        :estimated-size="36"
+        :buffer-size="320"
+        :keep-mounted="keepMounted"
       >
-        <template #prepend>
-          <v-icon size="16" class="me-1 c-faint" icon="mdi-archive-outline" />
+        <template #item="{ item }">
+          <v-list-item
+            tabindex="0"
+            :active="item.id === selectedTopicId"
+            rounded="lg"
+            :data-row-actions="item.id"
+            class="topic-row topic-row--archived"
+            :class="{ 'is-active': item.id === selectedTopicId }"
+            @click="emit('select-topic', item.id)"
+            @mouseenter="emit('hover-topic', item.id)"
+            @mouseleave="emit('leave-topic')"
+          >
+            <template #prepend>
+              <v-icon size="16" class="me-1 c-faint" icon="mdi-archive-outline" />
+            </template>
+            <v-list-item-title class="d-flex align-center ga-2 topic-title">
+              <span class="text-truncate" :data-user-content="item.title || undefined">{{ topicTitle(item) }}</span>
+              <span class="kind-text">{{ kindLabel(item) }}</span>
+            </v-list-item-title>
+            <template #append>
+              <TopicRailBadge v-if="unreadOf(item.id) > 0" class="me-1" :count="unreadOf(item.id)" />
+              <!-- eslint-disable-next-line vue/no-restricted-syntax -- nav bar button whose look this component styles exactly (design-system §3.6 exception) -->
+              <v-btn
+                v-if="item.can_archive"
+                icon="mdi-archive-arrow-up-outline"
+                size="small"
+                variant="text"
+                color="on-surface-variant"
+                density="comfortable"
+                :title="t('work.room.menu.unarchive')"
+                class="split-btn"
+                :class="{ 'tap-target': page }"
+                @click.stop="emit('unarchive-topic', item.id)"
+              />
+            </template>
+          </v-list-item>
         </template>
-        <v-list-item-title class="d-flex align-center ga-2 topic-title">
-          <span class="text-truncate" :data-user-content="topic.title || undefined">{{ topicTitle(topic) }}</span>
-          <span class="kind-text">{{ kindLabel(topic) }}</span>
-        </v-list-item-title>
-        <template #append>
-          <TopicRailBadge v-if="unreadOf(topic.id) > 0" class="me-1" :count="unreadOf(topic.id)" />
-          <!-- eslint-disable-next-line vue/no-restricted-syntax -- nav bar button whose look this component styles exactly (design-system §3.6 exception) -->
-          <v-btn
-            v-if="topic.can_archive"
-            icon="mdi-archive-arrow-up-outline"
-            size="small"
-            variant="text"
-            color="on-surface-variant"
-            density="comfortable"
-            :title="t('work.room.menu.unarchive')"
-            class="split-btn"
-            :class="{ 'tap-target': page }"
-            @click.stop="emit('unarchive-topic', topic.id)"
-          />
-        </template>
-      </v-list-item>
+      </VirtualList>
     </v-list>
   </template>
 </template>

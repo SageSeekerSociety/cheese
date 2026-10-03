@@ -89,8 +89,9 @@ const emit = defineEmits<{
 //
 // 一张表也要递进去：一组话题行如果太长了会交给虚拟列表（lib/virtualList.ts 那个门槛），
 // 那些行就不在 DOM 里了——「选中了就把它带进视口」那一条只能按序号让那一组自己滚。这张
-// 表是那一半的落点：组 key → 那一组露出来的手。置顶行、组头、已归档各是一个独立的
-// `<v-list>`，不在这张表里（它们永远整列渲染）。
+// 表是那一半的落点：组 key → 那一组露出来的手。置顶行、组头各是一个独立的 `<v-list>`，
+// 不在这张表里（它们永远整列渲染）；已归档那一组在 TopicRailArchivedGroup 里自己虚拟化
+// （它拿滚动容器自己算窗口，选中行也由它自己留），所以也不在这张表里。
 const railLists = new Map<string, VirtualListHandle>()
 function setRailList(key: string, handle: unknown) {
   if (handle) railLists.set(key, handle as VirtualListHandle)
@@ -104,7 +105,6 @@ const {
   mineTree,
   othersCount,
   railSections,
-  selectedLocation,
   toggleCollapse,
   toggleOthers,
   unreadOf,
@@ -364,11 +364,19 @@ function topicRowKey(row: unknown): string {
   return (row as { topic: Topic }).topic.id
 }
 
-// 选中的那一行即使滚出窗口也得留在 DOM 里：光标可能正停在它上面，人也正要看它。没选中
-// （或者选中的不在这一组）就一个都不用留。
-function keepFor(section: { key: string }): readonly number[] | undefined {
-  const at = selectedLocation.value
-  return at && at.key === section.key ? [at.index] : undefined
+// 有几行即使滚出窗口也得留在 DOM 里——它们各自的锚点就在那一行本身：
+//   - 选中的那一行：光标可能正停在它上面，人也正要看它；
+//   - ⋯ 菜单正开着的那一行：那颗 ⋯ 是菜单的 activator，跟着窗口一起消失菜单会塌；
+//   - 正在原地改名的那一行：输入框和光标都在行里。
+// 一行的锚点不在窗口上，就是「这一行被摘掉、锚点也跟着没」的那一类。一个都不占就返回
+// undefined（等于告诉 virtua「不用特别留谁」）。
+function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | undefined {
+  const keep: number[] = []
+  section.rows.forEach((row, index) => {
+    const id = row.topic.id
+    if (id === props.selectedTopicId || id === actionsMenuFor.value || id === renamingTopicId.value) keep.push(index)
+  })
+  return keep.length ? keep : undefined
 }
 </script>
 
@@ -567,6 +575,7 @@ function keepFor(section: { key: string }): readonly number[] | undefined {
           <TopicRailArchivedGroup
             :rows="archivedRows"
             :selected-topic-id="selectedTopicId"
+            :scroll-parent="railScroll"
             :page="page === true"
             :unread="archivedUnread > 0"
             :unread-of="unreadOf"

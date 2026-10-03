@@ -9,6 +9,10 @@
 // 一个 item 槽只画**一个**根元素：虚拟化时 virtua 给每一行套一层定位用的盒子，那一层
 // 也带着行的 key；槽里出来两个根，就没法给它们同一个身份了。
 //
+// 容器不归它管（话题列表的行要塞进既有的 `<v-list>` 里），但行外面那一层可以要：看板
+// 那一列是 `ul > li`，`:item-as="li"`（配 `item-role="listitem"`）让两种形态套出来的
+// 都是同一个 `li`——虚拟化前后是同一套结构，不是「虚拟化了就少了语义」。
+//
 // 虚拟化要知道**谁在滚**，所以滚动容器是挨着门槛的第二个条件：外面有（话题列表的
 // `.rail-scroll`——它上面还有置顶行和组头，不是这一列自己的；看板底下那一列自己有
 // max-height 和 overflow）就虚拟化，没有就照旧整列画。不替外面猜一个（自己起一个滚动
@@ -67,6 +71,13 @@ export default defineComponent({
     transition: { type: String, default: '' },
     /** 过渡那一层换 key 的时刻：换项目 = 换了一整份列表，不是这份列表在重排，不演。 */
     transitionKey: { type: [String, Number] as PropType<string | number>, default: undefined },
+    /** 每一行的外壳标签（虚拟化时就是 virtua 的 `item`）。不给就直接画槽里的根——
+     *  话题列表的行要塞进既有的 `<v-list>`，不该再套一层。 */
+    itemAs: { type: String, default: '' },
+    /** 外壳的 role。看板那一列是 `ul > li`，虚拟化时 virtua 会在中间多套一层定位用的
+     *  generic div，列表语义就靠这个显式的 `listitem` 撑着（Safari 在 `list-style: none`
+     *  时本来也会把列表语义抹掉）。 */
+    itemRole: { type: String, default: '' },
   },
   setup(props, { slots, expose }) {
     const list = ref<VirtualListHandle | null>(null)
@@ -92,7 +103,14 @@ export default defineComponent({
         const rendered = slots.item?.({ item, index }) ?? []
         // 槽里只认第一个真元素：注释/空白（v-if 落空、模板里的换行）不是行。
         const node = rendered.find((child) => isVNode(child) && child.type !== Comment && child.type !== Text)
-        if (node) rows.push(cloneVNode(node, { key: props.itemKey(item, index) }))
+        if (!node) return
+        const key = props.itemKey(item, index)
+        // 要外壳就套一层（`li` 这类）；key 落在外壳上，换位时 Vue 认得出是同一行。
+        rows.push(
+          props.itemAs
+            ? h(props.itemAs, { key, ...(props.itemRole ? { role: props.itemRole } : {}) }, [node])
+            : cloneVNode(node, { key })
+        )
       })
       return rows
     }
@@ -118,8 +136,14 @@ export default defineComponent({
           bufferSize: props.bufferSize,
           shift: props.shift,
           keepMounted: props.keepMounted,
+          item: props.itemAs || undefined,
           // 每一行的盒子上记着序号：键盘走到窗口外的行上时（见 onFocusIn）按它滚过去。
-          itemProps: (_item: unknown, index: number) => ({ 'data-vlist-index': String(index) }),
+          // virtua 是按 `{ item, index }` 一个对象调过来的（见 ItemProps），不是一个一个传。
+          itemProps: ({ index }: { item: unknown; index: number }) => {
+            const attrs: Record<string, string> = { 'data-vlist-index': String(index) }
+            if (props.itemRole) attrs.role = props.itemRole
+            return attrs
+          },
           onFocusin: onFocusIn,
         },
         render

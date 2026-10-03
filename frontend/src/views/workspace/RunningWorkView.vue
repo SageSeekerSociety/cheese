@@ -461,15 +461,19 @@ function taskRowKey(row: unknown): string {
                itself in as the scroll parent: done piles up over a long project while the
                board only gets a strip at the bottom. Past VIRTUAL_LIST_THRESHOLD
                (lib/virtualList.ts) VirtualList keeps only the rows in view mounted; below
-               it this is the plain list it always was. -->
-          <div v-if="showDone" ref="doneScroll" class="board__done-list">
-            <div v-if="!doneRows.length" class="board-col__empty t-body">{{ t('work.board.noneMine') }}</div>
+               it this is the plain list it always was. The `ul`/`li` stay: VirtualList only
+               wraps each row (item-as), it never owns the container, so the list keeps its
+               semantics in both paths. -->
+          <ul v-if="showDone" ref="doneScroll" class="board__done-list" role="list">
+            <li v-if="!doneRows.length" class="board-col__empty t-body">{{ t('work.board.noneMine') }}</li>
             <VirtualList
               :items="doneRows"
               :item-key="taskRowKey"
               :scroll-parent="doneScroll"
               :estimated-size="34"
               :buffer-size="240"
+              item-as="li"
+              item-role="listitem"
             >
               <template #item="{ item }">
                 <button type="button" class="done-row" @click="openTask(item)">
@@ -480,7 +484,7 @@ function taskRowKey(row: unknown): string {
                 </button>
               </template>
             </VirtualList>
-          </div>
+          </ul>
         </div>
       </template>
     </div>

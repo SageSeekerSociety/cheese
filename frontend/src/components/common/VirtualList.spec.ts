@@ -25,19 +25,23 @@ vi.mock('virtua/vue', async () => {
   const make = (which: 'VList' | 'Virtualizer') =>
     define({
       name: which,
-      props: ['data', 'itemSize', 'bufferSize', 'shift', 'keepMounted', 'itemProps', 'scrollRef'],
+      props: ['data', 'itemSize', 'bufferSize', 'shift', 'keepMounted', 'itemProps', 'scrollRef', 'item', 'as'],
       setup(props, { attrs, slots, expose }) {
         virtua.seen.push({ which, props: props as unknown as Record<string, unknown> })
         expose({ scrollToIndex: virtua.scrollToIndex })
         // 替身把每一行的盒子画出来，并把 `itemProps`（记着序号的那个属性）挂上去——
         // 真实 virtua 也这么干，所以「焦点回到窗口外那一行」那条路在这里走得通。
-        const itemProps = props.itemProps as ((item: string, index: number) => Record<string, unknown>) | undefined
+        // 签名照抄真实的那份：一个 `{ item, index }` 对象，不是一个一个传。
+        const itemProps = props.itemProps as
+          | ((payload: { item: string; index: number }) => Record<string, unknown>)
+          | undefined
+        const itemTag = (props.item as string | undefined) || 'div'
         return () =>
           hyperscript(
             'div',
             { 'data-virtua': which, ...attrs },
             ((props.data as string[]) ?? []).map((item, index) =>
-              hyperscript('div', { ...(itemProps?.(item, index) ?? {}) }, slots.default?.({ item, index }))
+              hyperscript(itemTag, { ...(itemProps?.({ item, index }) ?? {}) }, slots.default?.({ item, index }))
             )
           )
       },
@@ -135,8 +139,40 @@ describe('递给 virtua 的那几个数', () => {
   })
 
   it('每一行的盒子上记着它排第几', () => {
+    // 序号得是**真的**序号：virtua 是按一个 `{ item, index }` 对象把这一行交回来的，
+    // 照参数顺序去接会拿到 `undefined`，每一行都记成 "undefined"（数量还是 150，所以
+    // 光数个数看不出来）。两头都点一下名。
     const { container } = draw({ itemKey, scrollParent: SCROLL_PARENT }, itemsOf(150))
     expect(container.querySelectorAll('[data-vlist-index]')).toHaveLength(150)
+    expect(container.querySelector('[data-vlist-index="0"]')).not.toBeNull()
+    expect(container.querySelector('[data-vlist-index="149"]')).not.toBeNull()
+  })
+})
+
+describe('行外面那层壳', () => {
+  it('门槛以内：给了 item-as 就照它套一层，role 也落上去', () => {
+    // 看板那一列是 `ul > li`：整列渲染时这一层就是真的 `li`，和没接虚拟列表时一样。
+    const { container } = draw({ itemKey, itemAs: 'li', itemRole: 'listitem' }, ['a', 'b', 'c'])
+    const rows = Array.from(container.querySelectorAll('li'))
+    expect(rows).toHaveLength(3)
+    expect(rows.map((el) => el.textContent)).toEqual(['a', 'b', 'c'])
+    expect(rows.every((el) => el.getAttribute('role') === 'listitem')).toBe(true)
+  })
+
+  it('门槛以上：外壳标签和 role 照递给 virtua（虚拟化时那一层由它来套）', () => {
+    const { container } = draw(
+      { itemKey, itemAs: 'li', itemRole: 'listitem', scrollParent: SCROLL_PARENT },
+      itemsOf(150)
+    )
+    expect(virtua.seen[0].props.item).toBe('li')
+    expect(container.querySelectorAll('li[data-vlist-index]')).toHaveLength(150)
+    expect(container.querySelector('li[data-vlist-index="149"]')?.getAttribute('role')).toBe('listitem')
+  })
+
+  it('没给 item-as：照旧只画槽里的根，不额外套壳（话题列表的行要塞进 <v-list>）', () => {
+    const { container } = draw({ itemKey }, ['a', 'b'])
+    expect(container.querySelectorAll('li')).toHaveLength(0)
+    expect(container.querySelectorAll('.row')).toHaveLength(2)
   })
 })
 
