@@ -583,7 +583,7 @@
       "frameTitle": "Topic preview",
       "authorizing": "Authorizing the preview…",
       "navigating": "Loading the new page…",
-      "navigationTimeout": "The new page took too long to load. Try again.",
+      "navigationTimeout": "The new page didn't load within {seconds} seconds. Try again.",
       "navigationFailed": "The new page couldn't load. Try again.",
       "retainedPage": "New content hasn't loaded. Still showing the previously opened page.",
       "retryTarget": "Retry new content",
