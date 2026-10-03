@@ -69,8 +69,22 @@ def main():
         )
     server.shutdown()
     server.server_close()
+    # `headers-*` is one file per turn of the script; a child request is
+    # answered apart from the script (`is_child` in model_fixture.py) and
+    # lands in its own `child-headers-*` series.
+    def order(path):
+        # By request index, so parent turns and child requests interleave the
+        # way they were asked; a child answered apart shares its index with a
+        # parent turn, and comes after it.
+        index = int(path.stem.rsplit("-", 1)[1])
+        return (index, path.name.startswith("child-"))
+
     headers = [
-        json.loads(path.read_text()) for path in sorted(folder.glob("headers-*.json"))
+        json.loads(path.read_text())
+        for path in sorted(
+            set(folder.glob("headers-*.json")) | set(folder.glob("child-headers-*.json")),
+            key=order,
+        )
     ]
     classes = [
         {key.lower(): value for key, value in item.items()}.get(

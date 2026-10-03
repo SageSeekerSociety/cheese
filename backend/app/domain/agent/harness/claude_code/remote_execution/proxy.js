@@ -185,6 +185,32 @@ async function owedReply($) {
   }
 }
 
+// A subagent whose spawn asked for `isolation` ran anyway, with its tools on
+// the executor like every other one: one working directory, shared with this
+// session and with its siblings. Said out loud rather than dropped silently —
+// a caller that asked for isolation is usually about to run several at once
+// over the same files. Only a text result is annotated; anything else passes
+// through as it came.
+//
+// Note what this does not reach: the pinned build launches a subagent in the
+// background and answers the caller itself, so the caller sees its own
+// "launched successfully" line and never this one. The annotation is what a
+// caller sees where the proxy's result *is* the tool result. The spawn is not
+// refused either way, which is the part that matters to the caller.
+function ignoringIsolation(result) {
+  if (!result || !Array.isArray(result.result)) return result;
+  return {
+    ...result,
+    result: [
+      {
+        type: "text",
+        text: "isolation was ignored: this subagent shares the working directory with the session and with its siblings.",
+      },
+      ...result.result,
+    ],
+  };
+}
+
 export function register(on) {
   on("tool.call", async ($, e, next) => {
     // agentId identifies the caller; native MCP tools reject it as an argument.
@@ -211,8 +237,18 @@ export function register(on) {
     // the executor, and "remote" is unavailable to this build, which then falls
     // back to "worktree". Either way the spawn dies on EROFS, and the subagent
     // never exists. A subagent without it already runs its tools remotely.
+    //
+    // The parameter is dropped, not refused. Refusing it did not stop callers:
+    // the field comes from the build's own Agent schema, so a session that hit
+    // the refusal could only drop a field it had just been handed, and one
+    // spent a whole turn re-issuing the same spawn — 140 calls, one success in
+    // the turn. Dropping the field is what the refusal used to ask for, and it
+    // leaves the spawn the caller wanted. The result says what was dropped: a
+    // caller that asked for isolation is usually about to run several
+    // subagents at once.
     if (tool === "Agent" && args.isolation) {
-      return { deny: `Agent isolation "${args.isolation}" is unavailable here because the project lives on the work machine; omit isolation, since the subagent's file and shell tools already run there. Only when the work is itself a deliverable to track and review, create it with \`cheese_task\`, prepare its directory with \`cheese worktree <id>\`, and give the subagent that directory.` };
+      const { isolation, ...spawn } = e;
+      return ignoringIsolation(await next(spawn));
     }
     if (platformTools.has(tool)) {
       try {
