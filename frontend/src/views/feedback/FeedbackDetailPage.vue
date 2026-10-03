@@ -18,7 +18,7 @@ import FeedbackPageShell from '@/components/feedback/FeedbackPageShell.vue'
 import FeedbackStatusChip from '@/components/feedback/FeedbackStatusChip.vue'
 import FeedbackStatusTimeline from '@/components/feedback/FeedbackStatusTimeline.vue'
 import { t } from '@/i18n'
-import { stepBack } from '@/lib/backOut'
+import { closeOverlay } from '@/lib/backOut'
 import { isClosed } from '@/lib/feedbackMeta'
 import { relTime } from '@/lib/relTime'
 import { useFeedbackStore } from '@/stores/feedback'
@@ -98,10 +98,13 @@ const missingState = computed(() =>
 
 onMounted(() => void reload())
 
-/** 「返回」回反馈中心：身后有应用内来路（从中心点进来的）就退一格，贴链接冷开就换到
- *  中心 —— 深链打开时 `router.back()` 是把整个应用退出去，而人以为自己按的是「回去」。 */
+/** 「返回」回反馈中心：按钮上写的就是这个地名（`feedback.detail.back` /
+ *  `feedback.detail.missingBack`），所以去向是定的，不是「往回走一格」—— 从话题里点
+ *  开一条反馈（`AgentFeedbackCard`），它又打不开时，`router.back()` 会把人送回那个
+ *  话题，而按钮上写的是回中心。身后正是中心就退一格（不在身后再压一条一模一样的），
+ *  否则 replace 过去。 */
 function backToCenter() {
-  stepBack(router, '/feedback')
+  closeOverlay(router, '/feedback')
 }
 // 从「相关反馈」跳到另一条时组件不会重建（同一个路由，只换参数），所以要自己跟。
 watch(id, () => void reload())
@@ -202,8 +205,9 @@ async function doDelete() {
     confirmingDelete.value = false
     return
   }
-  // 删完回反馈中心。用 `replace`：这一条已经不存在了，回退键不该回到一个 404。
-  void router.replace('/feedback')
+  // 删完回反馈中心：这一条已经不存在了，回退键不该回到一个 404。和上面那颗「返回」
+  // 同一件事，走同一条路。
+  backToCenter()
 }
 
 /** 领取 / 放弃。两个按钮画不画由服务端的 `can_claim` / `can_release` 定（见

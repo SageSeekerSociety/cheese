@@ -39,7 +39,7 @@ export interface RouteSnapshot {
 /** 组件能对宿主的路由做的三件事。宿主没装路由时整个是 `null`。 */
 export interface Navigation {
   /** 去某处。宿主没有路由就什么都不做。`replace` 为真时换掉当前这一格，不在身后
-   *  留一条几乎一样的地址 —— 设置里换栏、底栏换页签都是这一种（见 lib/backOut 文件头）。 */
+   *  留一条几乎一样的地址 —— 设置里换栏、从某一栏回目录都是这一种（见 lib/backOut）。 */
   navigate(to: RouteLocationRaw, options?: { replace?: boolean }): void
   /** 某处的地址，用来画 `<a href>`（中键新开、右键复制链接、状态栏预览都靠它）。
    *  宿主没有路由，或者这个去处这条路不认识 → `null`，那时画出来的是不可点的东西。 */

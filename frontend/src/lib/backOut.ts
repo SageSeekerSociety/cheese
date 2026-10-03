@@ -2,13 +2,14 @@
 //
 // 两件事长得像，判据不一样：
 //
-//  - `closeOverlay`：关掉盖在页面上的一层（设置、资料库里正看着的那一份文件）。它
-//    盖住的是**哪一页是确定的**。来路正是那一页就退一格，真把它弹掉；否则把落脚处
-//    `replace` 上去。不能用 `push`：那会在身后留下一条和当前地址几乎一样的记录，下一次
-//    ← 又落回刚关掉的那一层（关掉设置再按 ←，设置又开了）。
+//  - `closeOverlay`：离开一层，而**去哪是定的**——关掉盖在页面上的那一层（设置、
+//    资料库里正看着的那一份），或者离开一个按钮上写着地名的地方（反馈详情回中心）。
+//    身后正是要去的那一页就退一格，真把它弹掉；否则把落脚处 `replace` 上去。不能用
+//    `push`：那会在身后留下一条和当前地址几乎一样的记录，下一次 ← 又落回刚离开的那
+//    一层（关掉设置再按 ←，设置又开了）。
 //
-//  - `stepBack`：不关心来路是谁，只知道「往回走」是对的（反馈详情、提交页）。身后有
-//    应用内来路就退一格；没有（贴链接冷开）就 `replace` 到落脚处。不能直接
+//  - `stepBack`：不关心来路是谁，只知道「往回走」是对的（反馈提交页：取消就是别填了）。
+//    身后有应用内来路就退一格；没有（贴链接冷开）就 `replace` 到落脚处。不能直接
 //    `router.back()`：深链打开时那是把整个应用退出去，而人以为自己按的是「回去」。
 import type { RouteLocationRaw, Router } from 'vue-router'
 
@@ -29,7 +30,8 @@ function resolvedPath(router: Router, to: RouteLocationRaw): string | null {
   }
 }
 
-/** 关掉盖在页面上的一层：身后正是被它盖住的那一页就退一格，否则把落脚处换上去。 */
+/** 离开一层、去一个**定好的**地方：身后正是那一页就退一格，否则把落脚处换上去。
+ *  去向定不定是它与 `stepBack` 的唯一区别 —— 按钮上写着地名的地方用这个。 */
 export function closeOverlay(router: Router, behind: RouteLocationRaw): void {
   const path = resolvedPath(router, behind)
   if (path !== null && historyBack(router) === path) {

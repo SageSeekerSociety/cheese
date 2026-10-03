@@ -25,7 +25,7 @@ import { useNavigation } from '@/composables/useNavigation'
 const props = defineProps<{
   /** 去处。宿主没有路由、或者这条路不认识它，就画成不可点的。 */
   to: NavTarget
-  /** 换掉当前这一格而不是压上一条（设置里换栏、底栏换页签）。见 lib/backOut 文件头。 */
+  /** 换掉当前这一格而不是压上一条 —— 同一层里换个看法（设置里换栏、从某一栏回目录）。 */
   replace?: boolean
 }>()
 

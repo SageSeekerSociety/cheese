@@ -43,6 +43,23 @@ describe('NavLink：装了路由就是一条真链接', () => {
     await waitFor(() => expect(router.currentRoute.value.fullPath).toBe('/projects/p1/members/alice'))
   })
 
+  it('`replace` 的链接换掉当前这一格，不在身后压上一条', async () => {
+    const router = makeRouter()
+    await router.push('/')
+    const push = vi.spyOn(router, 'push')
+    const replace = vi.spyOn(router, 'replace')
+    const { getByText } = render(Link, {
+      props: { to: TO, replace: true },
+      slots: { default: '爱丽丝' },
+      global: { plugins: [router] },
+    })
+    await fireEvent.click(getByText('爱丽丝'))
+    await waitFor(() => expect(router.currentRoute.value.fullPath).toBe('/projects/p1/members/alice'))
+    // 设置里换栏、从某一栏回目录走的就是这一条：换了这一格，身后不留痕。
+    expect(replace).toHaveBeenCalled()
+    expect(push).not.toHaveBeenCalled()
+  })
+
   it('带组合键的点击交给浏览器（不拦、不自己跳）', async () => {
     const router = makeRouter()
     await router.push('/')
