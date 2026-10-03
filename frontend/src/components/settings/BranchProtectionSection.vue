@@ -4,6 +4,7 @@ import type { BranchProtection, BranchProtectionPatch } from '@/cx_types'
 
 import { computed } from 'vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
 // 分支保护 (#718) 的那一块模板：平台侧的合并规则，照 GitHub 分支保护那一页的顺序
@@ -77,7 +78,9 @@ const bpBusy = computed(() => props.saving !== null)
         <v-icon size="18" color="error">mdi-alert-circle-outline</v-icon>
         <span class="t-body text-error">{{ loadError ?? t('work.projectSettings.merge.loadFailed') }}</span>
         <v-spacer />
-        <v-btn size="small" variant="text" @click="emit('retry')">{{ t('work.projectSettings.merge.retry') }}</v-btn>
+        <BaseButton kind="secondary" size="sm" @click="emit('retry')">
+          {{ t('work.projectSettings.merge.retry') }}
+        </BaseButton>
       </div>
 
       <template v-else-if="bp">
@@ -110,16 +113,13 @@ const bpBusy = computed(() => props.saving !== null)
             }}</span>
             <span v-else class="bp-check-paths c-faint">{{ t('work.projectSettings.merge.allFiles') }}</span>
             <v-spacer />
-            <v-btn
-              icon
-              size="x-small"
-              variant="text"
+            <BaseButton
+              icon="mdi-close"
+              size="sm"
               :title="t('work.projectSettings.merge.removeCheck')"
               :disabled="ghEnforced || bpBusy"
               @click="emit('remove-check', i)"
-            >
-              <v-icon size="16">mdi-close</v-icon>
-            </v-btn>
+            />
           </div>
           <div class="d-flex align-center" style="gap: 8px">
             <v-text-field
@@ -146,16 +146,15 @@ const bpBusy = computed(() => props.saving !== null)
               @update:model-value="emit('update:checkPaths', $event)"
               @keydown.enter="emit('add-check')"
             />
-            <v-btn
-              size="small"
-              color="primary"
-              variant="tonal"
+            <BaseButton
+              kind="secondary"
+              size="sm"
               :disabled="ghEnforced || !checkName.trim()"
               :loading="saving === 'required_checks'"
               @click="emit('add-check')"
             >
               {{ t('work.projectSettings.merge.add') }}
-            </v-btn>
+            </BaseButton>
           </div>
         </div>
 

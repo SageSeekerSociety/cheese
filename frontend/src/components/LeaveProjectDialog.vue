@@ -5,6 +5,7 @@ import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { leaveProject } from '@/api'
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -64,10 +65,10 @@ async function confirmLeave() {
       </v-card-text>
       <v-card-actions>
         <v-spacer />
-        <v-btn variant="text" @click="open = false">{{ t('global.cancel') }}</v-btn>
-        <v-btn color="error" variant="flat" :loading="leaving" @click="confirmLeave">{{
+        <BaseButton kind="ghost" @click="open = false">{{ t('global.cancel') }}</BaseButton>
+        <BaseButton kind="danger" solid :loading="leaving" @click="confirmLeave">{{
           t('project.leave.confirm')
-        }}</v-btn>
+        }}</BaseButton>
       </v-card-actions>
     </v-card>
   </v-dialog>

@@ -8,6 +8,7 @@ import { holdRevealGate } from '@/composables/useRevealGate'
 
 import { clearMcpSecret, connectMcpServer, disconnectMcpServer, getMcpServers, setMcpSecret } from '../api'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
 import { goAuthorize } from '@/lib/desktopApp'
@@ -219,24 +220,24 @@ watch(() => props.projectId, load)
                 <span v-else class="t-body c-text">{{ statusLine(server) }}</span>
               </div>
               <div v-if="server.auth === 'oauth'" class="mcp-row__action">
-                <v-btn
+                <BaseButton
                   v-if="server.status === 'connected'"
-                  size="small"
-                  variant="text"
+                  kind="ghost"
+                  size="sm"
                   :loading="busy === server.name"
                   @click="disconnect(server)"
                 >
                   {{ t('work.mcp.action.disconnect') }}
-                </v-btn>
-                <v-btn
+                </BaseButton>
+                <BaseButton
                   v-else-if="server.status !== 'missing_values'"
-                  size="small"
-                  variant="tonal"
+                  kind="primary"
+                  size="sm"
                   :loading="busy === server.name"
                   @click="connect(server)"
                 >
                   {{ t(server.status === 'needs_reconnect' ? 'work.mcp.action.reconnect' : 'work.mcp.action.connect') }}
-                </v-btn>
+                </BaseButton>
               </div>
             </div>
             <div v-for="variable in server.variables" :key="variable.name" class="mcp-var">
@@ -253,18 +254,18 @@ watch(() => props.projectId, load)
                 :placeholder="variable.set ? t('work.mcp.valueSet') : ''"
                 @keydown.enter="save(variable.name)"
               />
-              <v-btn
-                size="small"
-                variant="tonal"
+              <BaseButton
+                kind="secondary"
+                size="sm"
                 :disabled="!values[variable.name]?.trim()"
                 :loading="busy === variable.name"
                 @click="save(variable.name)"
               >
                 {{ t('work.mcp.action.save') }}
-              </v-btn>
-              <v-btn v-if="variable.set" size="small" variant="text" @click="clear(variable.name)">
+              </BaseButton>
+              <BaseButton v-if="variable.set" kind="danger" size="sm" @click="clear(variable.name)">
                 {{ t('work.mcp.action.clear') }}
-              </v-btn>
+              </BaseButton>
               <span v-if="variable.set && variable.updated_by" class="t-meta">
                 <i18n-t keypath="work.mcp.valueSetBy" tag="span">
                   <template #name><UserRef :handle="variable.updated_by" /></template>

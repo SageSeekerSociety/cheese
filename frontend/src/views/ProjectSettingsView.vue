@@ -7,6 +7,7 @@ import { useBranchProtection } from '@/composables/useBranchProtection'
 import { useProjectSettings } from '@/composables/useProjectSettings'
 import { provideRevealGate } from '@/composables/useRevealGate'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import SettingsOverlay from '@/components/common/SettingsOverlay.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import ProjectComputeSettings from '@/components/ProjectComputeSettings.vue'
@@ -192,15 +193,15 @@ function close() {
       <header class="settings-head">
         <h1 class="t-page-title">{{ sectionLabel }}</h1>
         <!-- 队友可以从市场里挑：这一颗原来在整页的页头上，拆开后跟着队友那一栏。 -->
-        <v-btn
+        <BaseButton
           v-if="section === 'agents'"
-          variant="text"
-          size="small"
+          kind="secondary"
+          size="sm"
           prepend-icon="mdi-storefront-outline"
           :to="{ name: 'market' }"
         >
           {{ t('work.projectSettings.market') }}
-        </v-btn>
+        </BaseButton>
       </header>
 
       <div v-if="loading" class="d-flex justify-center py-10">

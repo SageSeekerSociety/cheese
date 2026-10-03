@@ -2,6 +2,7 @@
 import type { CallbackNotice } from '@/composables/useProjectSettings'
 import type { ForgeConnection } from '@/cx_types'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
 // 连接 GitHub 仓库 (#192)：cheesex-app 装到具体仓库上，之后这个项目的 git 操作走这个
@@ -53,16 +54,16 @@ const emit = defineEmits<{
           {{ t('work.projectSettings.githubRepo.connected', { repo: forge.repo }) }}
         </span>
         <v-spacer />
-        <v-btn size="small" variant="tonal" :loading="connecting" @click="emit('connect')">
+        <BaseButton kind="secondary" size="sm" :loading="connecting" @click="emit('connect')">
           {{ t('work.projectSettings.githubRepo.reconnect') }}
-        </v-btn>
+        </BaseButton>
       </div>
       <div v-else class="d-flex align-center flex-wrap" style="gap: 8px">
         <span class="t-body c-muted">{{ t('work.projectSettings.githubRepo.none') }}</span>
         <v-spacer />
-        <v-btn size="small" color="primary" variant="flat" :loading="connecting" @click="emit('connect')">
+        <BaseButton kind="primary" size="sm" :loading="connecting" @click="emit('connect')">
           {{ t('work.projectSettings.githubRepo.connect') }}
-        </v-btn>
+        </BaseButton>
       </div>
       <p class="t-body c-faint mt-2 settings-hint">
         {{ t('work.projectSettings.githubRepo.hint') }}

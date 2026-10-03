@@ -21,6 +21,7 @@ import {
 } from '../api'
 
 import { useCommands } from '@/commands'
+import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import AppPage from '@/components/common/AppPage.vue'
@@ -337,12 +338,10 @@ useCommands(() => [
                 <v-chip size="small" color="warning" variant="tonal">{{ t('work.skills.pending') }}</v-chip>
                 <AdaptiveMenu v-if="!mdAndUp" :actions="draftActions(s)" :title="s.title">
                   <template #activator="{ props: menuProps }">
-                    <v-btn
+                    <BaseButton
                       v-bind="menuProps"
                       icon="mdi-dots-horizontal"
-                      size="small"
-                      variant="text"
-                      color="on-surface-variant"
+                      size="sm"
                       class="tap-target"
                       :aria-label="t('work.skills.more')"
                     />
@@ -364,37 +363,22 @@ useCommands(() => [
                 </template>
               </dl>
               <div class="skill-row__actions">
-                <v-btn
-                  size="small"
-                  color="primary"
-                  variant="flat"
-                  :loading="busy === `${s.id}:confirm`"
-                  @click="confirm(s)"
-                >
+                <BaseButton kind="primary" size="sm" :loading="busy === `${s.id}:confirm`" @click="confirm(s)">
                   {{ t('work.skills.confirm') }}
-                </v-btn>
-                <v-btn v-if="mdAndUp" size="small" variant="text" @click="startEdit(s)">{{
-                  t('work.skills.edit')
-                }}</v-btn>
-                <v-btn
+                </BaseButton>
+                <BaseButton v-if="mdAndUp" size="sm" @click="startEdit(s)">{{ t('work.skills.edit') }}</BaseButton>
+                <BaseButton
                   v-if="mdAndUp && s.shipped_revision"
-                  size="small"
-                  variant="text"
-                  color="on-surface-variant"
+                  kind="danger"
+                  size="sm"
                   :loading="busy === `${s.id}:discard`"
                   @click="discard(s)"
                 >
                   {{ t('work.skills.discard') }}
-                </v-btn>
-                <v-btn
-                  v-if="mdAndUp && !s.shipped_revision"
-                  size="small"
-                  variant="text"
-                  color="on-surface-variant"
-                  @click="confirmingDelete = s"
-                >
+                </BaseButton>
+                <BaseButton v-if="mdAndUp && !s.shipped_revision" size="sm" @click="confirmingDelete = s">
                   {{ t('work.skills.drop') }}
-                </v-btn>
+                </BaseButton>
               </div>
             </li>
           </ul>
@@ -417,12 +401,10 @@ useCommands(() => [
               </div>
               <AdaptiveMenu v-if="!mdAndUp" :actions="activeActions(s)" :title="s.title">
                 <template #activator="{ props: menuProps }">
-                  <v-btn
+                  <BaseButton
                     v-bind="menuProps"
                     icon="mdi-dots-horizontal"
-                    size="small"
-                    variant="text"
-                    color="on-surface-variant"
+                    size="sm"
                     class="tap-target"
                     :aria-label="t('work.skills.more')"
                   />
@@ -430,11 +412,9 @@ useCommands(() => [
               </AdaptiveMenu>
             </div>
             <div v-if="mdAndUp" class="skill-row__actions">
-              <v-btn size="small" variant="text" @click="startEdit(s)">{{ t('work.skills.edit') }}</v-btn>
-              <v-btn size="small" variant="text" @click="openHistory(s)">{{ t('work.skills.history') }}</v-btn>
-              <v-btn size="small" variant="text" color="on-surface-variant" @click="confirmingDelete = s">{{
-                t('work.skills.delete')
-              }}</v-btn>
+              <BaseButton size="sm" @click="startEdit(s)">{{ t('work.skills.edit') }}</BaseButton>
+              <BaseButton size="sm" @click="openHistory(s)">{{ t('work.skills.history') }}</BaseButton>
+              <BaseButton size="sm" @click="confirmingDelete = s">{{ t('work.skills.delete') }}</BaseButton>
             </div>
           </li>
         </ul>
@@ -517,13 +497,11 @@ useCommands(() => [
             auto-grow
             class="skill-file__body"
           />
-          <v-btn size="small" variant="text" color="on-surface-variant" @click="form.files.splice(i, 1)">{{
-            t('work.skills.form.removeFile')
-          }}</v-btn>
+          <BaseButton size="sm" @click="form.files.splice(i, 1)">{{ t('work.skills.form.removeFile') }}</BaseButton>
         </div>
-        <v-btn size="small" variant="text" @click="form.files.push({ path: '', content: '' })">{{
-          t('work.skills.form.addFile')
-        }}</v-btn>
+        <BaseButton kind="secondary" size="sm" @click="form.files.push({ path: '', content: '' })">
+          {{ t('work.skills.form.addFile') }}
+        </BaseButton>
         <p v-if="formError" role="alert" class="t-body c-danger mt-2">{{ formError }}</p>
       </template>
     </AdaptiveDialog>
@@ -555,18 +533,17 @@ useCommands(() => [
                 </v-chip>
               </div>
               <div class="skill-row__actions">
-                <v-btn size="small" variant="text" @click="viewing = viewing === r ? null : r">
+                <BaseButton size="sm" @click="viewing = viewing === r ? null : r">
                   {{ viewing === r ? t('work.skills.collapse') : t('work.skills.view') }}
-                </v-btn>
-                <v-btn
+                </BaseButton>
+                <BaseButton
                   v-if="r.revision !== history.skill.shipped_revision"
-                  size="small"
-                  variant="text"
+                  size="sm"
                   :loading="busy === `${history.skill.id}:restore:${r.revision}`"
                   @click="restore(r.revision)"
                 >
                   {{ t('work.skills.restore') }}
-                </v-btn>
+                </BaseButton>
               </div>
               <dl v-if="viewing === r" class="skill-row__spec t-meta">
                 <dt>{{ t('work.skills.fields.description') }}</dt>
@@ -583,7 +560,7 @@ useCommands(() => [
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn variant="text" @click="history = null">{{ t('work.skills.close') }}</v-btn>
+          <BaseButton @click="history = null">{{ t('work.skills.close') }}</BaseButton>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -596,10 +573,8 @@ useCommands(() => [
         <v-card-text class="t-body">{{ t('work.skills.deleteHint') }}</v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn variant="text" color="on-surface-variant" @click="confirmingDelete = null">{{
-            t('work.skills.cancel')
-          }}</v-btn>
-          <v-btn variant="text" color="error" @click="remove(confirmingDelete)">{{ t('work.skills.delete') }}</v-btn>
+          <BaseButton @click="confirmingDelete = null">{{ t('work.skills.cancel') }}</BaseButton>
+          <BaseButton kind="danger" solid @click="remove(confirmingDelete)">{{ t('work.skills.delete') }}</BaseButton>
         </v-card-actions>
       </v-card>
     </v-dialog>

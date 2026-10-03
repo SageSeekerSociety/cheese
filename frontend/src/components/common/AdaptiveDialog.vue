@@ -17,6 +17,7 @@
 // 之间，手机上排在正文最后。
 import { useDisplay } from 'vuetify'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
 const open = defineModel<boolean>({ default: false })
@@ -87,20 +88,20 @@ function primary() {
       <v-card-text class="adaptive-dialog__desktop-body"><slot /></v-card-text>
       <v-card-actions class="px-4 pb-3">
         <v-spacer />
-        <v-btn variant="text" :disabled="props.closeDisabled" @click="close">{{
+        <BaseButton kind="ghost" :disabled="props.closeDisabled" @click="close">{{
           props.cancelLabel ?? t('global.cancel')
-        }}</v-btn>
+        }}</BaseButton>
         <slot name="actions" />
-        <v-btn
+        <BaseButton
           v-if="props.primaryLabel"
-          :color="props.primaryDanger ? 'error' : 'primary'"
-          variant="flat"
+          :kind="props.primaryDanger ? 'danger' : 'primary'"
+          :solid="props.primaryDanger"
           :loading="props.primaryLoading"
           :disabled="props.primaryDisabled"
           @click="primary"
         >
           {{ props.primaryLabel }}
-        </v-btn>
+        </BaseButton>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -143,6 +144,8 @@ function primary() {
           >
             <v-icon size="22">{{ props.primaryIcon }}</v-icon>
           </v-btn>
+          <!-- 手机整页的页头动作和左边的 ✕ 是一套顶栏写法（44px、文字色），
+               不是 BaseButton 的四种角色之一，先保持 v-btn。 -->
           <v-btn
             v-else
             variant="text"

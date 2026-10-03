@@ -2,6 +2,7 @@
 import type { CallbackNotice, GithubAccountLoadState } from '@/composables/useProjectSettings'
 import type { OAuthConnectionInfo } from '@/cx_types'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { isGithubAccountTokenExpired } from '@/lib/githubAccount'
 import { relTime } from '@/lib/relTime'
@@ -69,9 +70,9 @@ const emit = defineEmits<{
           loadError ?? t('work.projectSettings.githubAccount.loadFailed')
         }}</span>
         <v-spacer />
-        <v-btn size="small" variant="text" @click="emit('retry')">{{
+        <BaseButton kind="secondary" size="sm" @click="emit('retry')">{{
           t('work.projectSettings.githubAccount.retry')
-        }}</v-btn>
+        }}</BaseButton>
       </div>
 
       <!-- 已连接 -->
@@ -85,12 +86,12 @@ const emit = defineEmits<{
             </span>
           </span>
           <v-spacer />
-          <v-btn size="small" variant="tonal" :loading="connecting" @click="emit('connect')">
+          <BaseButton kind="secondary" size="sm" :loading="connecting" @click="emit('connect')">
             {{ t('work.projectSettings.githubAccount.reconnect') }}
-          </v-btn>
-          <v-btn size="small" variant="text" color="error" :loading="disconnecting" @click="emit('disconnect')">
+          </BaseButton>
+          <BaseButton size="sm" :loading="disconnecting" @click="emit('disconnect')">
             {{ t('work.projectSettings.githubAccount.disconnect') }}
-          </v-btn>
+          </BaseButton>
         </div>
         <v-alert
           v-if="isGithubAccountTokenExpired(conn)"
@@ -107,9 +108,9 @@ const emit = defineEmits<{
       <div v-else class="d-flex align-center flex-wrap" style="gap: 8px">
         <span class="t-body c-muted">{{ t('work.projectSettings.githubAccount.none') }}</span>
         <v-spacer />
-        <v-btn size="small" color="primary" variant="tonal" :loading="connecting" @click="emit('connect')">
+        <BaseButton kind="primary" size="sm" :loading="connecting" @click="emit('connect')">
           {{ t('work.projectSettings.githubAccount.connect') }}
-        </v-btn>
+        </BaseButton>
       </div>
 
       <p class="t-body c-faint mt-2 settings-hint">

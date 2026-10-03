@@ -5,6 +5,7 @@
 //
 // 只有还没接上仓库的 GitHub 项目看得到这一块 —— 那个条件（项目的仓库形态）是页面的
 // 判断，所以由页面决定挂不挂它。
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
 defineOptions({ name: 'UpstreamRepoSettings' })
@@ -40,9 +41,9 @@ const emit = defineEmits<{
           @update:model-value="emit('update:url', $event)"
           @keydown.enter="emit('save')"
         />
-        <v-btn size="small" color="primary" variant="tonal" :loading="saving" @click="emit('save')">
+        <BaseButton kind="primary" size="sm" :loading="saving" @click="emit('save')">
           {{ t('work.projectSettings.upstream.save') }}
-        </v-btn>
+        </BaseButton>
       </div>
       <p class="t-body c-faint mt-2 settings-hint">
         {{ t('work.projectSettings.upstream.hint') }}

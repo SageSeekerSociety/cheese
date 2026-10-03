@@ -9,6 +9,8 @@ import { getProjectDefaultModel, setProjectDefaultModel } from '../api'
 import { t } from '../i18n'
 import { modelChoiceProps, withSaved } from '../lib/modelChoices'
 
+import BaseButton from '@/components/base/BaseButton.vue'
+
 // 项目默认模型：#1365 之后主线（房间聊天）读 binding.resolve(None, …)，它拿
 // catalog 里 default=True 的那条；catalog 由 model_choices 算，项目 settings 里
 // 显式写过 default_model 就把那条标 True。这一节就是那个写入口——之前只能手改
@@ -119,25 +121,18 @@ watch(() => props.projectId, load)
           persistent-hint
         />
         <div class="d-flex align-center" style="gap: 12px">
-          <v-btn
-            v-if="state.can_manage"
-            color="primary"
-            variant="flat"
-            density="comfortable"
-            :disabled="busy || !dirty"
-            @click="save"
-          >
+          <BaseButton v-if="state.can_manage" kind="primary" size="sm" :disabled="busy || !dirty" @click="save">
             {{ t('work.projectSettings.defaultModelBlock.save') }}
-          </v-btn>
-          <v-btn
+          </BaseButton>
+          <BaseButton
             v-if="state.can_manage && state.model !== null"
-            variant="text"
-            density="comfortable"
+            kind="secondary"
+            size="sm"
             :disabled="busy"
             @click="resetToDeploymentDefault"
           >
             {{ t('work.projectSettings.defaultModelBlock.reset') }}
-          </v-btn>
+          </BaseButton>
         </div>
       </div>
       <p v-if="!state.can_manage" class="text-body-2 text-medium-emphasis mt-3">
