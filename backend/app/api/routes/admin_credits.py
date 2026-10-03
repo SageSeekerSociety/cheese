@@ -13,6 +13,7 @@ from pydantic import AwareDatetime, BaseModel, Field
 
 from app.api.response import ok
 from app.api.routes.admin_common import DbSession, PlatformAdminDep
+from app.domain.agent_instance.configuration import model_choices
 from app.domain.project.services import ProjectService
 from app.domain.task.services import TaskService
 from app.domain.usage.plans import PlanService
@@ -70,6 +71,20 @@ class GrantCreate(BaseModel):
 @router.get("/plans")
 async def list_plans(db: DbSession, handle: PlatformAdminDep) -> dict:
     return ok({"plans": await PlanService(db).plans()})
+
+
+@router.get("/plans/models")
+async def plan_models(handle: PlatformAdminDep) -> dict:
+    """The plan editor uses the same catalogue as the deployment's model picker,
+    including subscription models, not the gateway's management inventory."""
+    return ok(
+        {
+            "models": [
+                {key: choice[key] for key in ("id", "label", "tier")}
+                for choice in model_choices(None)
+            ]
+        }
+    )
 
 
 @router.post("/plans", status_code=201)
