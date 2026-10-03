@@ -260,6 +260,11 @@ function onFocusOut(event: FocusEvent) {
   position: absolute;
   top: 4px;
   right: 16px;
+  /* 滚动锚定会选中它：这一条跟着指针在行间改 translateY，改多少这一栏就跟着滚多少，
+     鼠标扫过消息时页面瞬移（量到 scrollTop 784 → 322 = 同一帧里 translateY 1200 →
+     738）。它是绝对定位的装饰，不参与内容排版，排除出锚点选取没有代价；内容自己的
+     锚定照旧，「往上翻拼进一页」那一下的补偿还靠它。 */
+  overflow-anchor: none;
   z-index: 4;
   display: flex;
   gap: 2px;
