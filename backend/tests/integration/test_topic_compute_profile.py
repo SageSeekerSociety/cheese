@@ -394,7 +394,7 @@ def test_selecting_cloud_without_machine_create_authority_is_refused(
     provision.assert_not_awaited()
 
 
-def test_visibility_block_is_present_and_carries_the_notice(client):
+def test_visibility_block_is_present(client):
     """#282 §四 / #358: the compute-profile response a room reads carries the
     visibility 档 so the room can SHOW whether a turn sees the whole machine.
 
@@ -420,7 +420,6 @@ def test_visibility_block_is_present_and_carries_the_notice(client):
 
     assert vis["effective"] is None
     assert vis["machine_access"] is False
-    assert "整台机器" in vis["notice"]  # badge / tooltip copy is present
 
 
 def _project_default(client, pid: str, choice: ComputeChoice) -> None:

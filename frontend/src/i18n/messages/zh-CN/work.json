@@ -56,6 +56,7 @@
     "more": "其他配置与设备",
     "projectDefault": "项目默认",
     "wholeMachine": "能访问整台机器",
+    "wholeMachineNotice": "让它看到整台机器（能操作这台机器上的服务和其他房间）",
     "online": "在线",
     "offline": "离线",
     "removed": "已移出团队",

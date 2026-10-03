@@ -56,6 +56,7 @@
     "more": "Other configurations and devices",
     "projectDefault": "Project default",
     "wholeMachine": "Can access the whole machine",
+    "wholeMachineNotice": "Lets it see the whole machine: it can operate this machine's services and other topics",
     "online": "Online",
     "offline": "Offline",
     "removed": "Removed from the team",

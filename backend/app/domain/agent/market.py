@@ -210,9 +210,9 @@ def compute_default_name(
 VISIBILITY_ISOLATED = "isolated"
 VISIBILITY_HOST = "host"
 
-# The exact honest UI line #282 §四 drafted — the "看得见的安全提示" a Hosted
-# Machine room renders as its badge text / tooltip. Kept here as the single source
-# so backend gate copy and the frontend badge cannot drift.
+# The exact honest line #282 §四 drafted — the "看得见的安全提示" — as the `host`
+# 档's description. The room badge's tooltip says the same in the reader's language
+# (frontend `work.roomMachine.wholeMachineNotice`); change both together.
 MACHINE_VISIBILITY_NOTICE = "让它看到整台机器（能操作这台机器上的服务和其他房间）"
 
 

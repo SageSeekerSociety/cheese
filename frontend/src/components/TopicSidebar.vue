@@ -308,7 +308,9 @@ function setActionsMenu(topicId: string, open: boolean) {
 // 每一行各挂一个的话，折叠、分组、归档那几段模板都得各接一遍。
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform)
 const searchTitle = computed(() =>
-  props.page ? t('navigation.palette.open') : `${t('navigation.palette.open')}（${isMac ? '⌘K' : 'Ctrl K'}）`
+  props.page
+    ? t('navigation.palette.open')
+    : t('global.labelWithAside', { label: t('navigation.palette.open'), aside: isMac ? '⌘K' : 'Ctrl K' })
 )
 
 const railScroll = ref<HTMLElement | null>(null)

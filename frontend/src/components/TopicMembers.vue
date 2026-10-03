@@ -87,7 +87,7 @@ watch(open, (value) => {
   if (value) void loadMachines()
 })
 watch(
-  () => (machines.value?.visibility.machine_access ? machines.value.visibility.notice || '' : null),
+  () => (machines.value?.visibility.machine_access ? t('work.roomMachine.wholeMachineNotice') : null),
   (notice) => emit('machine-access', notice),
   { immediate: true }
 )
@@ -299,7 +299,11 @@ async function onSetRole(handle: string, role: string) {
           t('work.roomMachine.here', { name: choiceName(machines.choice) })
         }}</span>
         <span v-if="roomChoiceIsProjectDefault" class="roster__tag">{{ t('work.roomMachine.projectDefault') }}</span>
-        <span v-if="machines.visibility.machine_access" class="roster__notice" :title="machines.visibility.notice">
+        <span
+          v-if="machines.visibility.machine_access"
+          class="roster__notice"
+          :title="t('work.roomMachine.wholeMachineNotice')"
+        >
           <span class="status-dot status-dot--warn" />{{ t('work.roomMachine.wholeMachine') }}
         </span>
         <TopicComputePicker :topic-id="topicId" :project-id="projectId" :profile="machines" @changed="loadMachines" />
