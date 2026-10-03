@@ -17,6 +17,7 @@ import { Markdown } from '@tiptap/markdown'
 import StarterKit from '@tiptap/starter-kit'
 import { common, createLowlight } from 'lowlight'
 
+import { CommentAnchor } from './commentAnchors'
 import { docMarked } from './markdown'
 import { suggestionMarks } from './suggestions'
 
@@ -264,5 +265,7 @@ export function docExtensions(opts: DocExtensionsOptions = {}): AnyExtension[] {
     // Suggested changes belong to the shared document; a form field is written
     // by one person and has nobody to suggest to.
     ...(opts.standalone ? [] : suggestionMarks),
+    // A form field has no comments.
+    ...(opts.standalone ? [] : [CommentAnchor]),
   ]
 }
