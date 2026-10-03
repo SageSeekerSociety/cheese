@@ -187,7 +187,7 @@ class Runner(Generic[J]):  # noqa: UP046
         self.ender: asyncio.Task | None = None
         # Set, and replaced, whenever there is news for a waiting read.
         self.news = asyncio.Event()
-        self.journal.on_grow = self.announce
+        self.journal.on_grow = self._grew
         self.closing = False
         # What the agent is writing right now, and the work it is for; the
         # mark changes with every change of it, and from one runner to the next.
@@ -297,6 +297,15 @@ class Runner(Generic[J]):  # noqa: UP046
     #: What ``ping`` tells the backend this runner can do; a harness that
     #: reports what its agent is writing adds ``LIVE``.
     capabilities: tuple[str, ...] = (LONG_POLL,)
+
+    def _grew(self) -> None:
+        """Records were written: the session is active now, not whenever
+        ``_idle`` next looks, which can be ``IDLE_CHECK_S`` later. Which of a
+        person's sessions was used least recently is read from this (a pi
+        runner's ``idle_s``), and a session that looked used seconds after it
+        went quiet would be kept in place of one used since."""
+        self.active_at = time.monotonic()
+        self.announce()
 
     def announce(self) -> None:
         """Wake every read waiting for news."""
@@ -408,19 +417,20 @@ class Runner(Generic[J]):  # noqa: UP046
             self.process.terminate()
 
     async def _idle(self) -> None:
-        seen = self.journal.last()
         while True:
             await asyncio.sleep(min(IDLE_CHECK_S, self.idle_exit_s))
             now = time.monotonic()
-            last = self.journal.last()
-            if last != seen or self.inputs or self.busy():
-                seen, self.active_at = last, now
+            # A record counts when it is written (``_grew``); work still going
+            # on counts until now.
+            if self.inputs or self.busy():
+                self.active_at = now
                 continue
             if now - self.active_at < self.idle_exit_s:
                 continue
             # A backend that has not asked for an idle window is gone; what it
             # left unread is read from this journal when the session is next
             # started.
+            last = self.journal.last()
             if last > self.read_through and now - self.read_at < self.idle_exit_s:
                 continue
             await self.release()
