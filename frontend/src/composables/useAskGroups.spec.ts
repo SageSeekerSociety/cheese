@@ -7,6 +7,7 @@ import { ApiError } from '../api'
 import { groupKey, makeGroupSubmission } from '../lib/askGroup'
 import { groupAcknowledged, groupPendingKey, loadGroupPending } from '../lib/askGroupState'
 import { emptyAskDraft, loadAskDraft, saveAskDraft } from '../lib/askState'
+import { renderNoticeMessage } from '../lib/noticeText'
 
 import { useAskGroups } from './useAskGroups'
 
@@ -17,16 +18,20 @@ vi.mock('../api', () => ({
   ApiError: class extends Error {
     constructor(
       readonly status: number,
-      message: string,
-      readonly code?: string,
-      readonly requestId?: string,
-      readonly retryable?: boolean,
-      readonly i18n?: unknown
+      message: string
     ) {
       super(message)
     }
   },
 }))
+
+/** The sentence a stale-version refusal arrives as: `api.ts` renders the
+ *  catalog key into the reader's language before it throws. */
+function staleGroupVersion(): string {
+  const sentence = renderNoticeMessage({ key: 'askGroupVersionStale' }, '')
+  expect(sentence).toBeTruthy()
+  return sentence
+}
 
 function fixture(): AskGroupData {
   const group = { topic_id: 'room', asked_by: 'agent', id: 'group', members: ['q1', 'q2'], total: 2 }
@@ -259,21 +264,13 @@ describe('atomic Ask group controller', () => {
     expect(h.state().pending).not.toBeNull()
     // Another 409 of the same status, said with another sentence: the operation
     // is still not proved absent, so it stays pending.
-    mocks.settle.mockRejectedValue(
-      new ApiError(409, '同一个组 client_op_id 换了内容', undefined, undefined, undefined, {
-        key: 'askGroupOpIdReused',
-      })
-    )
+    mocks.settle.mockRejectedValue(new ApiError(409, '同一个组 client_op_id 换了内容'))
     h.askGroupAction(h.data.group, { type: 'submit' })
     await flush()
     expect(h.state().rejectedOperation).toBeUndefined()
     h.askGroupAction(h.data.group, { type: 'refresh' })
     await flush()
-    mocks.settle.mockRejectedValue(
-      new ApiError(409, '问题组版本不对，请重新获取', undefined, undefined, undefined, {
-        key: 'askGroupVersionStale',
-      })
-    )
+    mocks.settle.mockRejectedValue(new ApiError(409, staleGroupVersion()))
     h.askGroupAction(h.data.group, { type: 'submit' })
     await flush()
     expect(mocks.settle.mock.calls.at(-1)![1]).toEqual(original)
