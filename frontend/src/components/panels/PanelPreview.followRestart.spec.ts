@@ -12,7 +12,7 @@ import type { PreviewInfo } from '../../cx_types'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { cleanup, render } from '@testing-library/vue'
+import { cleanup, fireEvent, render } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { setLocale } from '@/i18n'
@@ -214,6 +214,70 @@ describe('应用重启/断线后面板自己跟上去', () => {
     // 新帧装好，那一句解释让位。
     await loadFrame(submissions[2]!.target)
     expect(queryByText('应用已重启，已自动重新载入')).toBeNull()
+  })
+
+  it('跟不过一分钟就交给手动刷新：点刷新还能重来一次', async () => {
+    const { container, findByText, getByText, queryByText } = mount()
+    await flush()
+    await loadFrame(submissions[0]!.target)
+    expect(requestPreviewSession).toHaveBeenCalledTimes(1)
+
+    // 实例换了，可每一次跟过去都失败：新那一帧报错，屏幕上一直是旧帧。
+    getPreview.mockResolvedValue(appArtifact(instanceB))
+    await tick(POLL_MS)
+    expect(requestPreviewSession).toHaveBeenCalledTimes(2)
+    const failPending = async () => {
+      const last = submissions[submissions.length - 1]
+      if (last && document.querySelector(`iframe[name="${last.target}"]`)) await failFrame(last.target)
+    }
+    await failPending()
+    // 一直失败到窗口过期（60 秒之后那几轮退避）。
+    for (let i = 0; i < 8; i += 1) {
+      await vi.advanceTimersByTimeAsync(POLL_MS)
+      await flush()
+      await failPending()
+    }
+
+    // 认输了：给出「刷新以打开当前实例」，而且不再自相矛盾地说一句「应用不可用」。
+    expect(await findByText('原实例已被替换，新的还没就绪。刷新以打开当前实例')).toBeTruthy()
+    expect(container.textContent).not.toContain('预览连接正常，但应用没有响应')
+    const before = requestPreviewSession.mock.calls.length
+
+    // 点「重试新内容」：手动刷新要能重来一次，不被那句「认输」堵死。
+    await fireEvent.click(getByText('重试新内容'))
+    await flush()
+    expect(requestPreviewSession.mock.calls.length).toBe(before + 1)
+    expect(requestPreviewSession).toHaveBeenLastCalledWith('topic-a', {
+      artifact_id: 'artifact-a',
+      instance: instanceB,
+    })
+
+    // 这一帧装好了，提示让位。
+    await loadFrame(submissions[submissions.length - 1]!.target)
+    expect(queryByText('原实例已被替换，新的还没就绪。刷新以打开当前实例')).toBeNull()
+  })
+
+  it('屏幕上那一帧还好好的：跟到新实例失败，也不该在它断线回来时被连坐重载', async () => {
+    const { container } = mount()
+    await flush()
+    await loadFrame(submissions[0]!.target)
+    const firstFrame = container.querySelector('iframe')
+
+    // 跟到 B 的这一程失败——但屏幕上一直是健康的 A，A 自己没坏。
+    getPreview.mockResolvedValue(appArtifact(instanceB))
+    await tick(POLL_MS)
+    expect(requestPreviewSession).toHaveBeenCalledTimes(2)
+    await failFrame(submissions[1]!.target)
+
+    // A 断线又回来：A 自己的导航没失败，不该重载它。退避是活的（这一程已经快问过
+    // 一格），所以两次落到 2 秒、4 秒那两格上。
+    getPreview.mockResolvedValue(appArtifact(instanceA, false))
+    await tick(FAST_MS)
+    getPreview.mockResolvedValue(appArtifact(instanceA))
+    await tick(2 * FAST_MS)
+    expect(requestPreviewSession).toHaveBeenCalledTimes(2)
+    expect(submissions).toHaveLength(2)
+    expect(container.querySelector('iframe')).toBe(firstFrame)
   })
 
   it('不在线时按 2 秒轮询，回到在线后退回 20 秒', async () => {

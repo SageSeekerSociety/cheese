@@ -20,6 +20,8 @@ export interface PreviewFrame {
   instance?: string
   runtime?: 'unconfirmed' | 'ready' | 'failed'
   connection?: 'online' | 'disconnected' | 'gone'
+  /** 这一帧自己那次导航没装成（发送失败、超时、文档报错）。屏幕上留下的还是上一帧。 */
+  navigationFailed?: boolean
   runtimeError?: string
   /** 这一份资源允许等多久，见 `navigationBudget()`。不填＝默认那档。 */
   budgetMs?: number
@@ -178,6 +180,11 @@ export function usePreviewFrames(frameName: string, options: PreviewFrameOptions
 
   function fail(message: string) {
     stopTimer()
+    // 这一程要放上屏幕的正是屏幕上这一帧本身（同一个 identity），它却没装成——那就是
+    // 「屏幕上这一帧的导航失败了一次」。留下记号：同实例断线再回来时据此替它重来一遍。
+    // 换到别的实例去的那次失败（identity 不同）不算，健康的旧帧不该被连坐。
+    const shown = displayed.value
+    if (shown && attemptIdentity && shown.identity === attemptIdentity) shown.navigationFailed = true
     incoming.value = null
     navigation.value = 'failed'
     failedIdentity.value = attemptIdentity
@@ -259,6 +266,8 @@ export function usePreviewFrames(frameName: string, options: PreviewFrameOptions
     // A document reload keeps its frame but must establish a fresh runtime session.
     frame.runtime = 'unconfirmed'
     frame.runtimeError = ''
+    // 装成了：这一帧上一次的失败（如果有）到此为止。
+    frame.navigationFailed = false
     runtimeWindow = event.target.contentWindow
     runtimeSession = crypto.randomUUID()
     sendRuntimeHello(frame)

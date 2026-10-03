@@ -272,25 +272,31 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
         const pending =
           host.incoming.value?.identity === identity &&
           (host.navigation.value === 'authorizing' || host.navigation.value === 'navigating')
-        if (replaced) {
-          if (followSince === null) followSince = Date.now()
-        } else {
-          followSince = null
-        }
-        const expired = replaced && followSince !== null && Date.now() - followSince >= FOLLOW_WINDOW_MS
+        // 手动刷新（opts.reload）是用户明确的动作：无论跟了多久都重来一次，并且把窗口
+        // 重新计时。不这样做的话，那句「认输」会把刷新按钮也一起堵死——冷启动起过一分钟
+        // 是常事，堵死了就再没有别的出路。
+        if (!replaced || opts.reload) followSince = null
+        else if (followSince === null) followSince = Date.now()
+        const expired = replaced && !opts.reload && followSince !== null && Date.now() - followSince >= FOLLOW_WINDOW_MS
         if (expired && !pending) {
-          // 跟了一分钟还没跟上：应用一直没起来，或授权一直被拒。别再无声白等，
-          // 回到手动刷新那条路（这句报错下面自带一个「重试」按钮）。
-          previewUrl.value = null
-          host.authorize(identity)
-          host.fail(t('work.room.preview.instanceGoneManual'))
+          // 跟了一分钟还没跟上：应用一直没起来，或授权一直被拒。别再无声白等，把「刷新」
+          // 那条路还给用户（这句报错下面自带一个「重试」按钮）。第一次报过之后就别每轮
+          // 重设，免得把那句提示反复刷掉；也不动 previewUrl，免得同一条报错里又冒出
+          // 一句「应用不可用」，和「刷新以打开当前实例」自相矛盾。
+          if (host.error.value !== t('work.room.preview.instanceGoneManual')) {
+            host.authorize(identity)
+            host.fail(t('work.room.preview.instanceGoneManual'))
+          }
           return
         }
         // 跟上去，并说一句让人看见（`replaced`、且看的是同一件产物时，下面两处「还是
         // 同一件」的近路都要让开；换了产物那本来就是一次正常的换页，不该说成「应用重启」）。
+        // 同实例断线又回来时，只有屏幕上这一帧自己都没装成、才替它重来：看的是它自己的
+        // 导航结果，不是宿主那一层的 navigation——一次「跟到新实例去」的失败不该算到
+        // 还健康的旧帧头上。
         follow =
           (replaced && !pending) ||
-          (change === 'instance-recovered' && sameArtifact && host.navigation.value === 'failed')
+          (change === 'instance-recovered' && sameArtifact && displayed?.navigationFailed === true)
         if (replaced && !pending) autoReloaded.value = true
         if (!opts.reload && !follow && displayed?.live && displayed.instance && sameArtifact) {
           return
