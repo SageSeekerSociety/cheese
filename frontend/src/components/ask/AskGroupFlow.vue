@@ -678,6 +678,18 @@ function receiptLabel(r: AskReceipt | null | undefined) {
   margin: 0 16px 8px;
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
+  /* 接管输入框那一格：面板比输入框高得多，两件事都要成立，否则读起来就是
+     「挤在一个小框里」。① 太高时自己滚，而不是把底部的按钮裁掉（基础样式那条
+     `overflow: hidden` 正是裁掉它的原因）；② 题面那一段（`.ask-form`）原本有
+     640px 上限——那是给消息流里的窄卡片定的，接管时那一格就是输入框的宽度，
+     要跟着走。 */
+  max-height: min(60vh, 560px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.ask-group--composer :deep(.ask-form) {
+  max-width: none;
 }
 
 @media (max-width: 959.98px) {
