@@ -130,12 +130,13 @@ class Handler(BaseHTTPRequestHandler):
                 }
             )
         state = self.server.state
-        # A child request is not a turn of the scripted session. Serving it an
-        # action would shift every later action onto the wrong request, and
-        # counting it would break the caller's "the script ran exactly once"
-        # assertion, so it is recorded on its own list and answered with a
-        # fixed line the child has nothing to do with.
-        if is_child(body):
+        # A script given as a list is positional: one action per request, and
+        # no way to tell a child request from a turn of the session. Serving a
+        # child an action would shift every later action onto the wrong
+        # request, and counting it would break the caller's "the script ran
+        # exactly once" assertion, so it is answered apart. A script that
+        # routes by content (`Directives`) answers a child itself.
+        if isinstance(state["actions"], list) and is_child(body):
             state.setdefault("child_requests", []).append(body)
             dump(
                 state["dir"] / f"child-request-{len(state['child_requests'])}.json",
