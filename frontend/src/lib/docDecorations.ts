@@ -12,6 +12,7 @@
 import type { Extension } from '@tiptap/core'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import type { Transaction } from '@tiptap/pm/state'
+import type { RefNames } from './refChip'
 
 import { Extension as TiptapExtension } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
@@ -19,6 +20,7 @@ import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { ySyncPluginKey } from '@tiptap/y-tiptap'
 
 import { commentAnchors } from './docSchema'
+import { refChip, refTokens } from './refChip'
 
 import { t } from '@/i18n'
 
@@ -206,71 +208,39 @@ export function createCommentHighlights(opts: {
 // ---- 结构化 token 装饰 (spec §9.1): decorate our OWN tokens — <@handle> /
 // <#topicId> / <&path> — as clickable chips in the doc, read-only and edit
 // alike. Deterministic token parsing, never NL guessing.
-// 文件引用可以带行号（`<&src/a.ts:12-30>`）——同 renderMessage.ts 的 ESCAPED_TOKEN，
-// 两处必须认同一套语法，否则同一个 token 在对话里是 chip、在文档里是一串尖括号。 ----
-const TOKEN_RE = /<@([\w-]+)>|<#([0-9a-fA-F-]{8,})>|<&([\w./\u4e00-\u9fff-]+(?::\d+(?:-\d+)?)?)>/g
+// ---- 引用 token（<@handle> / <#话题> / <&文件>）画成 chip：和对话里同一个样子、
+// 同一套语法（lib/refChip.ts），否则同一个 token 在对话里是 chip、在文档里是一串
+// 尖括号。The raw token stays in the document (markdown is the source of truth);
+// the chip is display-only. ----
 
-// Build the pretty chip element a token renders as. The raw token stays in the
-// document (markdown is the source of truth); the chip is display-only.
-function tokenWidget(kind: '@' | '#' | '&', id: string, titleOf: (tid: string) => string | undefined): HTMLElement {
-  const el = document.createElement('span')
-  if (kind === '@') {
-    el.className = 'mention'
-    el.dataset.handle = id
-    el.textContent = `@${id}`
-  } else if (kind === '#') {
-    el.className = 'mention topic-ref'
-    el.dataset.topic = id
-    el.textContent = `#${titleOf(id) ?? t('work.room.doc.topic')}`
-  } else {
-    el.className = 'mention file-ref'
-    el.dataset.file = id
-    el.title = id
-    // mdi 图标而不是 📄，理由同 doc-liveref：emoji 是彩色位图，不跟随字号和
-    // 前景色。mdi-file-document-outline 是本仓库既有的「文件」图标。
-    const icon = document.createElement('i')
-    icon.className = 'mdi mdi-file-document-outline file-ref__icon'
-    icon.setAttribute('aria-hidden', 'true')
-    el.append(icon, document.createTextNode(id.split('/').pop() || id))
-  }
-  return el
-}
-
-function tokenDecorations(doc: PMNode, titleOf: (tid: string) => string | undefined): DecorationSet {
+function tokenDecorations(doc: PMNode, names: () => RefNames): DecorationSet {
   const decos: Decoration[] = []
   doc.descendants((node, pos) => {
     if (!node.isText) return
-    const text = node.text ?? ''
-    TOKEN_RE.lastIndex = 0
-    let m: RegExpExecArray | null
-    while ((m = TOKEN_RE.exec(text))) {
-      const from = pos + m.index
-      const to = from + m[0].length
-      const kind = m[1] ? '@' : m[2] ? '#' : '&'
-      const id = (m[1] ?? m[2] ?? m[3]) as string
+    for (const ref of refTokens(node.text ?? '')) {
+      const from = pos + ref.index
       // hide the raw token (inline display:none) + widget(show the chip):
       // the doc keeps `<&path>` verbatim, the reader sees 「(文件图标) name」.
       // (prosemirror-view has no Decoration.replace — widget/inline/node only.)
       decos.push(
-        Decoration.widget(from, () => tokenWidget(kind, id, titleOf), {
-          side: 1,
-        }),
-        Decoration.inline(from, to, { style: 'display: none' })
+        Decoration.widget(from, () => refChip(ref.kind, ref.id, names()), { side: 1 }),
+        Decoration.inline(from, from + ref.length, { style: 'display: none' })
       )
     }
   })
   return DecorationSet.create(doc, decos)
 }
 
-export function createTokenChips(opts: { titleOf: (tid: string) => string | undefined }): Extension {
+/** `names` says whom and which topic each token names; it is read when a chip is drawn. */
+export function createTokenChips(opts: { names: () => RefNames }): Extension {
   return TiptapExtension.create({
     name: 'cheeseTokenChips',
     addProseMirrorPlugins() {
       return [
         new Plugin({
           state: {
-            init: (_cfg, state) => tokenDecorations(state.doc, opts.titleOf),
-            apply: (tr, old) => (tr.docChanged ? tokenDecorations(tr.doc, opts.titleOf) : old),
+            init: (_cfg, state) => tokenDecorations(state.doc, opts.names),
+            apply: (tr, old) => (tr.docChanged ? tokenDecorations(tr.doc, opts.names) : old),
           },
           props: {
             decorations(state) {

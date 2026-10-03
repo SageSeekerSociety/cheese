@@ -7,6 +7,7 @@
 //
 // 屏幕上每一个状态词都是后端 `presentation` 算好的，这一段一个都不推。
 import type { Block, RoomTask, TodoItem } from '../../cx_types'
+import type { RefNames } from '../../lib/refChip'
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
@@ -17,10 +18,11 @@ import { columnDotStyle, phraseLabel } from '../../lib/board'
 import { noticeText } from '../../lib/noticeText'
 import { type PlatformNotice, platformNotice } from '../../lib/platformNotice'
 import { relTime } from '../../lib/relTime'
-import { editableText, type RefMaps, renderMarkdown as renderWithRefs, renderPlain } from '../../lib/renderMessage'
+import { editableText, renderPlain } from '../../lib/renderMessage'
 import { eventArg, eventFailed, eventVerb, isNarration } from '../../lib/siteLog'
 import { myHandle } from '../../me'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
+import MarkdownView from '../common/MarkdownView.vue'
 import { useRoomSocket } from '../room/composables/useRoomSocket'
 import MessageEditor from '../room/MessageEditor.vue'
 import RoomNotice from '../room/RoomNotice.vue'
@@ -270,10 +272,7 @@ function toggleSteps(key: string) {
 
 // 简报和结论是人（或芝士）写给人读的 markdown，和对话栏走同一条路：点名换成名字
 // 的 chip，而不是把 `<@caisongyang>` 原样摊在标题里。
-const refs = computed<RefMaps>(() => ({ mentionNames: props.memberNames, topicTitles: {} }))
-function renderMarkdown(text: string): string {
-  return renderWithRefs(text, refs.value)
-}
+const refs = computed<RefNames>(() => ({ mentionNames: props.memberNames, topicTitles: {} }))
 
 // 谁说的：名册上的名字；查不到的 AI 座位叫它的角色名，别露 `cheese-c82aeb40555a`。
 function whoSaid(b: Block): string {
@@ -401,11 +400,11 @@ async function send() {
            它说做完了什么 → 过程」。 -->
       <div v-if="card.brief" class="panel-card__block">
         <div class="panel-card__block-head t-meta">{{ t('work.room.card.brief') }}</div>
-        <div class="panel-card__block-body card-markdown t-body" v-html="renderMarkdown(card.brief)" />
+        <MarkdownView class="panel-card__block-body card-markdown t-body" :source="card.brief" :names="refs" />
       </div>
       <div v-if="card.conclusion" class="panel-card__block" data-testid="card-conclusion">
         <div class="panel-card__block-head t-meta">{{ t('work.room.card.conclusion') }}</div>
-        <div class="panel-card__block-body card-markdown t-body" v-html="renderMarkdown(card.conclusion)" />
+        <MarkdownView class="panel-card__block-body card-markdown t-body" :source="card.conclusion" :names="refs" />
       </div>
       <!-- 分身的步骤清单，排在过程上面：先看它打算怎么做、做到了哪一步，再往下翻
            它具体做过什么。一项都没有就整段不画。 -->
@@ -446,10 +445,12 @@ async function send() {
               @save="saveEdit(e.block, $event)"
               @cancel="editingId = null"
             />
-            <div
+            <MarkdownView
               v-else-if="isAgentBlock(e.block)"
               class="card-msg__text card-markdown t-body"
-              v-html="renderMarkdown(e.block.content)"
+              :source="e.block.content"
+              as="chat"
+              :names="refs"
             />
             <span
               v-else

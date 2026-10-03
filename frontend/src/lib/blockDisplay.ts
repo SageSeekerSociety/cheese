@@ -7,14 +7,13 @@
  * 在消息行里。各留一份就会有一天只改了其中一处。
  */
 
-import type { Token } from 'marked'
 import type { Block } from '@/cx_types'
-import type { RefMaps } from './renderMessage'
+import type { RefNames } from './refChip'
 
 import { isAgentBlock } from './authorship'
+import { plainText } from './docRead'
 import { fileLabel } from './fileKind'
-import { markdown } from './markdown'
-import { plainTokens } from './renderMessage'
+import { plainRefs } from './refChip'
 
 import { t } from '@/i18n'
 
@@ -23,35 +22,18 @@ export function isImageBlock(block: Block): boolean {
   return block.kind === 'attachment' && (block.mime_type || '').startsWith('image/')
 }
 
-/** markdown 渲染出来之后读得到的那些字：`**`、反引号、链接地址都不算。 */
-function readableText(tokens: Token[]): string {
-  return tokens
-    .map((token) => {
-      if ('tokens' in token && token.tokens?.length) return readableText(token.tokens)
-      if (token.type === 'list') return readableText(token.items)
-      if (token.type === 'table')
-        return [token.header, ...token.rows]
-          .flat()
-          .map((cell: { tokens: Token[] }) => readableText(cell.tokens))
-          .join(' ')
-      if ('text' in token && typeof token.text === 'string') return token.text
-      return ' '
-    })
-    .join(' ')
-}
-
 /**
  * 引用一句话时显示的摘要。附件没有正文可引，就说它是什么。
  *
  * 芝士的话是 markdown，引用条里是一行纯文本：不先读成字，引到的就是
- * `**A / B / C**` 和一对反引号。人说的话原样显示，所以也原样引用。@ 人、提话题、
+ * `**A / B / C**`、一对反引号和 `:::chart`。按文档的读法读成字（lib/docRead.ts）。人说的话原样显示，所以也原样引用。@ 人、提话题、
  * 指文件的 token 两边都一样读成名字，和正文里 chip 上写的字一致。
  */
-export function replySnippet(block: Block, maps: RefMaps): string {
+export function replySnippet(block: Block, maps: RefNames): string {
   if (block.kind === 'attachment')
     return isImageBlock(block) ? t('work.room.attachments.imageSnippet') : t('work.room.attachments.fileSnippet')
-  const source = isAgentBlock(block) ? readableText(markdown.lexer(block.content)) : block.content
-  const text = plainTokens(source, maps).replace(/\s+/g, ' ').trim()
+  const source = isAgentBlock(block) ? plainText(block.content, 'chat') : block.content
+  const text = plainRefs(source, maps).replace(/\s+/g, ' ').trim()
   return text.length > 24 ? text.slice(0, 24) + '…' : text
 }
 
