@@ -87,7 +87,6 @@
       "addTopics": "Add topics",
       "noTopics": "No topics yet",
       "add": "Add",
-      "cancel": "Cancel",
       "addSuccess": "Topic added",
       "addFailed": "Couldn't add topic",
       "delete": "Remove topic"
@@ -594,7 +593,6 @@
       "pinned": "Pin",
       "expiry": "Expires on (optional)",
       "notifyHint": "{count} members of this space will be notified. Later edits notify no one.",
-      "cancel": "Cancel",
       "publish": "Post",
       "save": "Save"
     },

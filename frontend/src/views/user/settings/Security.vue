@@ -121,7 +121,7 @@
           <v-icon :icon="sessionIcon(session.userAgent)" size="18" />
           {{ deviceLabel(session.userAgent) }}
         </span>
-        <span class="srow__v srow__v--parts">
+        <span class="srow__v srow__v--parts" :title="sessionDetails(session).join(' · ')">
           <!-- The separator belongs to the part after it, so a wrapped row
                never leaves a dot alone at the end of a line; one that lands
                at the start of a line is clipped (see .srow__v--parts). -->
@@ -149,7 +149,7 @@
     </section>
 
     <!-- Changing the password -->
-    <v-dialog v-model="showChangePassword" max-width="440" @after-leave="resetPasswordForm">
+    <v-dialog v-model="showChangePassword" :max-width="DIALOG_WIDTH.sm" @after-leave="resetPasswordForm">
       <v-card :title="t('account.security.changePasswordTitle')">
         <v-form ref="passwordForm" @submit.prevent="handleChangePassword">
           <v-card-text class="pt-2">
@@ -283,6 +283,7 @@ import { SudoCancelledError, withSudo } from '@/utils/sudo'
 import { deleteOAuthConnection, listOAuthConnections } from '@/api'
 import PasswordField from '@/components/account/PasswordField.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
+import { DIALOG_WIDTH } from '@/components/base/dialogSize'
 import i18n, { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
@@ -709,13 +710,27 @@ onMounted(async () => {
 /* A row of parts joined by dots. Every part reserves the width of one
    separator after it, and every part but the first pulls its own separator
    back into that space. A part that wraps to the start of a line pulls its
-   separator past the left edge instead, where the clip hides it. */
+   separator past the left edge instead, where the clip hides it.
+
+   On the wide layout the row is one line: a device's details that wrap to a
+   second line push the row taller than the sign-out button beside it and the
+   button looks misaligned. So at sm (600px) and up the parts are laid out inline in a
+   single clipped line — anything past the edge is hidden and the full text is
+   on `title`. Below md the row has its own full-width line and wraps freely. */
 .srow__v--parts {
   --sep: 20px;
 
   column-gap: 0;
   row-gap: 2px;
   overflow: hidden;
+}
+
+@media (min-width: 600px) {
+  .srow__v--parts {
+    display: block;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
 }
 
 .srow__part {

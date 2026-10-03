@@ -15,9 +15,11 @@
 //
 // 多出来的次要操作（分步表单的「上一步」）放进 #actions：桌面上排在取消和主操作
 // 之间，手机上排在正文最后。
+import { computed } from 'vue'
 import { useDisplay } from 'vuetify'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import { DIALOG_WIDTH, type DialogSize } from '@/components/base/dialogSize'
 import { t } from '@/i18n'
 
 const open = defineModel<boolean>({ default: false })
@@ -35,7 +37,10 @@ const props = withDefaults(
     primaryDanger?: boolean
     /** 桌面上关闭按钮的字，默认「取消」。 */
     cancelLabel?: string
-    /** 桌面宽度。 */
+    /** 桌面宽度，三档（docs/design-system.md §3.7）：sm 420（一两个字段）、md 560（默认，
+     *  一般表单）、lg 720（并排两列、带预览的表单）。 */
+    size?: DialogSize
+    /** 旧写法，只留给三档都放不下的少数弹窗；新代码用 size。 */
     maxWidth?: number | string
     /** 点遮罩、按 Esc 不关（表单填到一半时）。 */
     persistent?: boolean
@@ -49,7 +54,8 @@ const props = withDefaults(
     primaryDisabled: false,
     primaryDanger: false,
     cancelLabel: undefined,
-    maxWidth: 480,
+    size: 'md',
+    maxWidth: undefined,
     persistent: false,
     closeDisabled: false,
   }
@@ -63,6 +69,7 @@ defineSlots<{
 }>()
 
 const { mdAndUp } = useDisplay()
+const width = computed(() => props.maxWidth ?? DIALOG_WIDTH[props.size])
 
 function close() {
   if (props.closeDisabled) return
@@ -79,7 +86,7 @@ function primary() {
   <v-dialog
     v-if="mdAndUp"
     v-model="open"
-    :max-width="props.maxWidth"
+    :max-width="width"
     :persistent="props.persistent || props.closeDisabled"
     scrollable
   >

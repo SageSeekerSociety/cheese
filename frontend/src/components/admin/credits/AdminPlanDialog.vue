@@ -5,6 +5,7 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import { AUDIENCE_KEY, MODEL_TIERS, planTiers, TIER_KEY } from '@/lib/adminCredits'
 
 // 新建或编辑一个方案：名称、适用对象、排序、计费方式（按月发放，或按时间窗口限额，
@@ -181,195 +182,183 @@ function submit() {
 </script>
 
 <template>
-  <v-dialog :model-value="modelValue" max-width="560" :persistent="saving" @update:model-value="!$event && close()">
-    <v-card rounded="lg">
-      <v-card-title class="t-dialog-title px-4 pt-4 pb-2">
-        {{ editing ? t('credits.planDialog.editTitle') : t('credits.planDialog.createTitle') }}
-      </v-card-title>
+  <AdaptiveDialog
+    :model-value="modelValue"
+    :title="editing ? t('credits.planDialog.editTitle') : t('credits.planDialog.createTitle')"
+    :primary-label="editing ? t('credits.planDialog.save') : t('credits.planDialog.create')"
+    :primary-loading="saving"
+    :primary-disabled="invalid || saving"
+    :close-disabled="saving"
+    @update:model-value="!$event && close()"
+    @primary="submit"
+  >
+    <div class="apd__row">
+      <v-text-field
+        v-model="name"
+        autocomplete="off"
+        variant="outlined"
+        density="comfortable"
+        :label="t('credits.planDialog.name')"
+        hide-details
+      />
+      <v-select
+        v-model="audience"
+        autocomplete="off"
+        :items="audienceOptions"
+        item-title="title"
+        item-value="value"
+        variant="outlined"
+        density="comfortable"
+        :label="t('credits.planDialog.audience')"
+        hide-details
+      />
+    </div>
 
-      <v-card-text class="px-4">
-        <div class="apd__row">
-          <v-text-field
-            v-model="name"
-            autocomplete="off"
-            variant="outlined"
-            density="comfortable"
-            :label="t('credits.planDialog.name')"
-            hide-details
-          />
-          <v-select
-            v-model="audience"
-            autocomplete="off"
-            :items="audienceOptions"
-            item-title="title"
-            item-value="value"
-            variant="outlined"
-            density="comfortable"
-            :label="t('credits.planDialog.audience')"
-            hide-details
-          />
+    <v-text-field
+      v-model="rank"
+      autocomplete="off"
+      type="number"
+      step="1"
+      variant="outlined"
+      density="comfortable"
+      :label="t('credits.planDialog.rank')"
+      :hint="t('credits.planDialog.rankHint')"
+      persistent-hint
+      class="apd__rank"
+    />
+
+    <div class="apd__group">
+      <span class="apd__legend">{{ t('credits.planDialog.billing') }}</span>
+      <div class="apd__box">
+        <div v-if="unlimited" class="apd__line">
+          <span class="apd__static">{{ t('credits.unlimited') }}</span>
         </div>
-
-        <v-text-field
-          v-model="rank"
-          autocomplete="off"
-          type="number"
-          step="1"
-          variant="outlined"
-          density="comfortable"
-          :label="t('credits.planDialog.rank')"
-          :hint="t('credits.planDialog.rankHint')"
-          persistent-hint
-          class="apd__rank"
-        />
-
-        <div class="apd__group">
-          <span class="apd__legend">{{ t('credits.planDialog.billing') }}</span>
-          <div class="apd__box">
-            <div v-if="unlimited" class="apd__line">
-              <span class="apd__static">{{ t('credits.unlimited') }}</span>
-            </div>
-            <template v-else>
-              <div class="apd__line">
-                <v-btn-toggle
-                  :model-value="billing"
-                  mandatory
-                  density="compact"
-                  variant="outlined"
-                  divided
-                  @update:model-value="setBilling"
-                >
-                  <!-- eslint-disable-next-line vue/no-restricted-syntax -- a segment of v-btn-toggle, not one of the BaseButton roles -->
-                  <v-btn value="monthly" size="small">{{ t('credits.planDialog.billingMonthly') }}</v-btn>
-                  <!-- eslint-disable-next-line vue/no-restricted-syntax -- a segment of v-btn-toggle, not one of the BaseButton roles -->
-                  <v-btn value="windows" size="small">{{ t('credits.planDialog.billingWindows') }}</v-btn>
-                </v-btn-toggle>
-              </div>
-              <div v-if="billing === 'monthly'" class="apd__line">
-                <span class="apd__lineLabel">{{ t('credits.planDialog.perPeriod') }}</span>
-                <v-text-field
-                  v-model="credits"
-                  autocomplete="off"
-                  type="number"
-                  min="0"
-                  variant="outlined"
-                  density="compact"
-                  :aria-label="t('credits.planDialog.perPeriod')"
-                  :suffix="t('credits.planDialog.unit')"
-                  hide-details
-                  class="apd__num"
-                />
-              </div>
-              <template v-else>
-                <div v-for="(w, i) in windows" :key="i" class="apd__line apd__line--window">
-                  <v-select
-                    v-model="w.span"
-                    autocomplete="off"
-                    :items="spanOptions"
-                    item-title="title"
-                    item-value="value"
-                    variant="outlined"
-                    density="compact"
-                    :aria-label="t('credits.planDialog.windowSpan')"
-                    hide-details
-                    class="apd__span"
-                  />
-                  <v-text-field
-                    v-if="w.span === 'hours'"
-                    v-model="w.hours"
-                    autocomplete="off"
-                    type="number"
-                    min="0"
-                    variant="outlined"
-                    density="compact"
-                    :aria-label="t('credits.planDialog.windowHours')"
-                    :suffix="t('credits.planDialog.hoursUnit')"
-                    hide-details
-                    class="apd__num"
-                  />
-                  <v-text-field
-                    v-model="w.credits"
-                    autocomplete="off"
-                    type="number"
-                    min="0"
-                    variant="outlined"
-                    density="compact"
-                    :label="t('credits.planDialog.windowCredits')"
-                    :suffix="t('credits.planDialog.unit')"
-                    hide-details
-                    class="apd__num"
-                  />
-                  <BaseButton
-                    icon="mdi-close"
-                    size="sm"
-                    :disabled="windows.length === 1"
-                    :aria-label="t('credits.planDialog.removeWindow')"
-                    @click="removeWindow(i)"
-                  />
-                </div>
-                <div class="apd__line">
-                  <BaseButton kind="ghost" size="sm" prepend-icon="mdi-plus" @click="addWindow">
-                    {{ t('credits.planDialog.addWindow') }}
-                  </BaseButton>
-                  <span v-if="duplicateWindow" class="apd__warn t-meta-read">
-                    {{ t('credits.planDialog.duplicateWindow') }}
-                  </span>
-                </div>
-              </template>
-            </template>
+        <template v-else>
+          <div class="apd__line">
+            <v-btn-toggle
+              :model-value="billing"
+              mandatory
+              density="compact"
+              variant="outlined"
+              divided
+              @update:model-value="setBilling"
+            >
+              <!-- eslint-disable-next-line vue/no-restricted-syntax -- a segment of v-btn-toggle, not one of the BaseButton roles -->
+              <v-btn value="monthly" size="small">{{ t('credits.planDialog.billingMonthly') }}</v-btn>
+              <!-- eslint-disable-next-line vue/no-restricted-syntax -- a segment of v-btn-toggle, not one of the BaseButton roles -->
+              <v-btn value="windows" size="small">{{ t('credits.planDialog.billingWindows') }}</v-btn>
+            </v-btn-toggle>
           </div>
-          <span v-if="!unlimited && billing === 'windows'" class="apd__note t-meta-read">
-            {{ t('credits.planDialog.windowsHint') }}
-          </span>
-        </div>
-
-        <fieldset class="apd__group apd__tiers">
-          <legend class="apd__legend">{{ t('credits.planDialog.tiers') }}</legend>
-          <v-checkbox
-            v-for="tier in MODEL_TIERS"
-            :key="tier"
-            v-model="tiers"
-            :value="tier"
-            density="compact"
-            hide-details
-          >
-            <template #label>
-              <span class="apd__tier">{{ t(TIER_KEY[tier]) }}</span>
-              <span v-if="tierHint(tier)" class="apd__hint t-meta-read">{{ tierHint(tier) }}</span>
-            </template>
-          </v-checkbox>
-        </fieldset>
-
-        <p v-if="editing" class="apd__note apd__nextPeriod t-meta-read">{{ t('credits.planDialog.nextPeriod') }}</p>
-
-        <v-alert v-if="error" type="error" density="compact" variant="tonal" class="mt-3" role="alert">
-          {{ error }}
-        </v-alert>
-      </v-card-text>
-
-      <v-card-actions class="pa-4 pt-0">
-        <template v-if="editing">
-          <span v-if="undeletable" class="apd__note t-meta-read">{{ undeletable }}</span>
-          <template v-else-if="confirmingDelete">
-            <BaseButton kind="danger" solid :loading="saving" :disabled="saving" @click="emit('delete')">
-              {{ t('credits.planDialog.confirmDelete') }}
-            </BaseButton>
-            <BaseButton kind="ghost" :disabled="saving" @click="confirmingDelete = false">
-              {{ t('credits.planDialog.keep') }}
-            </BaseButton>
+          <div v-if="billing === 'monthly'" class="apd__line">
+            <span class="apd__lineLabel">{{ t('credits.planDialog.perPeriod') }}</span>
+            <v-text-field
+              v-model="credits"
+              autocomplete="off"
+              type="number"
+              min="0"
+              variant="outlined"
+              density="compact"
+              :aria-label="t('credits.planDialog.perPeriod')"
+              :suffix="t('credits.planDialog.unit')"
+              hide-details
+              class="apd__num"
+            />
+          </div>
+          <template v-else>
+            <div v-for="(w, i) in windows" :key="i" class="apd__line apd__line--window">
+              <v-select
+                v-model="w.span"
+                autocomplete="off"
+                :items="spanOptions"
+                item-title="title"
+                item-value="value"
+                variant="outlined"
+                density="compact"
+                :aria-label="t('credits.planDialog.windowSpan')"
+                hide-details
+                class="apd__span"
+              />
+              <v-text-field
+                v-if="w.span === 'hours'"
+                v-model="w.hours"
+                autocomplete="off"
+                type="number"
+                min="0"
+                variant="outlined"
+                density="compact"
+                :aria-label="t('credits.planDialog.windowHours')"
+                :suffix="t('credits.planDialog.hoursUnit')"
+                hide-details
+                class="apd__num"
+              />
+              <v-text-field
+                v-model="w.credits"
+                autocomplete="off"
+                type="number"
+                min="0"
+                variant="outlined"
+                density="compact"
+                :label="t('credits.planDialog.windowCredits')"
+                :suffix="t('credits.planDialog.unit')"
+                hide-details
+                class="apd__num"
+              />
+              <BaseButton
+                icon="mdi-close"
+                size="sm"
+                :disabled="windows.length === 1"
+                :aria-label="t('credits.planDialog.removeWindow')"
+                @click="removeWindow(i)"
+              />
+            </div>
+            <div class="apd__line">
+              <BaseButton kind="ghost" size="sm" prepend-icon="mdi-plus" @click="addWindow">
+                {{ t('credits.planDialog.addWindow') }}
+              </BaseButton>
+              <span v-if="duplicateWindow" class="apd__warn t-meta-read">
+                {{ t('credits.planDialog.duplicateWindow') }}
+              </span>
+            </div>
           </template>
-          <BaseButton v-else kind="ghost" :disabled="saving" @click="confirmingDelete = true">
-            {{ t('credits.planDialog.delete') }}
+        </template>
+      </div>
+      <span v-if="!unlimited && billing === 'windows'" class="apd__note t-meta-read">
+        {{ t('credits.planDialog.windowsHint') }}
+      </span>
+    </div>
+
+    <fieldset class="apd__group apd__tiers">
+      <legend class="apd__legend">{{ t('credits.planDialog.tiers') }}</legend>
+      <v-checkbox v-for="tier in MODEL_TIERS" :key="tier" v-model="tiers" :value="tier" density="compact" hide-details>
+        <template #label>
+          <span class="apd__tier">{{ t(TIER_KEY[tier]) }}</span>
+          <span v-if="tierHint(tier)" class="apd__hint t-meta-read">{{ tierHint(tier) }}</span>
+        </template>
+      </v-checkbox>
+    </fieldset>
+
+    <p v-if="editing" class="apd__note apd__nextPeriod t-meta-read">{{ t('credits.planDialog.nextPeriod') }}</p>
+
+    <v-alert v-if="error" type="error" density="compact" variant="tonal" class="mt-3" role="alert">
+      {{ error }}
+    </v-alert>
+    <template #actions>
+      <template v-if="editing">
+        <span v-if="undeletable" class="apd__note t-meta-read">{{ undeletable }}</span>
+        <template v-else-if="confirmingDelete">
+          <BaseButton kind="danger" solid :loading="saving" :disabled="saving" @click="emit('delete')">
+            {{ t('credits.planDialog.confirmDelete') }}
+          </BaseButton>
+          <BaseButton kind="ghost" :disabled="saving" @click="confirmingDelete = false">
+            {{ t('credits.planDialog.keep') }}
           </BaseButton>
         </template>
-        <v-spacer />
-        <BaseButton kind="ghost" :disabled="saving" @click="close">{{ t('credits.planDialog.cancel') }}</BaseButton>
-        <BaseButton kind="primary" :loading="saving" :disabled="invalid || saving" @click="submit">
-          {{ editing ? t('credits.planDialog.save') : t('credits.planDialog.create') }}
+        <BaseButton v-else kind="ghost" :disabled="saving" @click="confirmingDelete = true">
+          {{ t('credits.planDialog.delete') }}
         </BaseButton>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+      </template>
+    </template>
+  </AdaptiveDialog>
 </template>
 
 <style scoped>

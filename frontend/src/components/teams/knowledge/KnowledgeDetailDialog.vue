@@ -13,6 +13,7 @@ import type { AudioMeta, FileMeta, ImageMeta, VideoMeta } from '@/types/material
 import { getAvatarUrl } from '@/utils/materials'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import { DIALOG_WIDTH } from '@/components/base/dialogSize'
 import TipTapViewer from '@/components/common/Editor/TipTapViewer.vue'
 import { t } from '@/i18n'
 import {
@@ -42,7 +43,11 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <v-dialog :model-value="modelValue" max-width="700" @update:model-value="emit('update:modelValue', $event)">
+  <v-dialog
+    :model-value="modelValue"
+    :max-width="DIALOG_WIDTH.lg"
+    @update:model-value="emit('update:modelValue', $event)"
+  >
     <v-card v-if="resource" class="resource-detail-card">
       <v-card-title class="d-flex justify-space-between align-center pa-4">
         <div>{{ resource.name }}</div>

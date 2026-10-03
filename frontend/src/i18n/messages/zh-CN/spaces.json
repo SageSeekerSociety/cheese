@@ -87,7 +87,6 @@
       "addTopics": "添加话题",
       "noTopics": "暂无话题",
       "add": "添加",
-      "cancel": "取消",
       "addSuccess": "添加话题成功",
       "addFailed": "添加话题失败",
       "delete": "移除话题"
@@ -594,7 +593,6 @@
       "pinned": "置顶",
       "expiry": "到期日（选填）",
       "notifyHint": "发布后通知空间内 {count} 位成员，后续修改不再通知",
-      "cancel": "取消",
       "publish": "发布",
       "save": "保存"
     },

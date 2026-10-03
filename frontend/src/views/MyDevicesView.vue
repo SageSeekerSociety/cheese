@@ -9,6 +9,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 
 import { listMyDevices, listMyTeams, renameMyDevice, unbindMyDevice } from '../api'
+import AdaptiveDialog from '../components/common/AdaptiveDialog.vue'
 import AdaptiveMenu from '../components/common/AdaptiveMenu.vue'
 import DeviceLiveViewer from '../components/DeviceLiveViewer.vue'
 import {
@@ -22,6 +23,7 @@ import {
 
 import { useCommands } from '@/commands'
 import BaseButton from '@/components/base/BaseButton.vue'
+import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import { t } from '@/i18n'
 import accountService from '@/services/account'
 
@@ -166,6 +168,18 @@ async function saveRename(d: MyDevice) {
 // confirm(), which shows an ugly "localhost:5200 says…" chrome and can't be styled).
 const unbindTarget = ref<MyDevice | null>(null)
 const unbinding = ref(false)
+
+// The confirm box is open exactly while a device is picked to unlink; closing it
+// (cancel) clears the target. Title only resolves while a device is picked.
+const unbindOpen = computed({
+  get: () => unbindTarget.value !== null,
+  set: (open) => {
+    if (!open) unbindTarget.value = null
+  },
+})
+const unbindTitle = computed(() =>
+  unbindTarget.value ? t('account.devices.unbindTitle', { name: unbindTarget.value.name }) : ''
+)
 
 // 手机上一台设备的操作（改名、解绑）收进行尾的 ⋯（底部面板）：名字旁那颗小铅笔和
 // 行尾的「解绑」都比手指小，挨着「在线」两个字也容易按错。
@@ -366,76 +380,65 @@ useCommands(() =>
       </section>
     </template>
 
-    <!-- 添加设备：这台电脑或另一台机器怎么接进来。 -->
-    <v-dialog v-model="addDeviceOpen" max-width="560">
-      <v-card class="pa-5">
-        <div class="d-flex align-center mb-1">
-          <span class="t-title">{{ t('account.devices.add') }}</span>
-          <v-spacer />
+    <!-- Add a device: how this computer or another machine connects. -->
+    <AdaptiveDialog
+      v-model="addDeviceOpen"
+      :title="t('account.devices.add')"
+      :primary-label="t('account.devices.done')"
+      @primary="addDeviceOpen = false"
+    >
+      <!-- In the desktop app this computer connects in place; in a browser, Mac and Windows
+           install the desktop app and every other machine (servers, Linux) runs the command. -->
+      <template v-if="desktop">
+        <div class="t-title mt-3 mb-1">{{ t('account.devices.thisComputer') }}</div>
+        <div class="t-caption c-muted mb-3">{{ t('account.devices.thisComputerHint') }}</div>
+        <BaseButton kind="primary" :loading="thisComputer.connecting" @click="connectThisMachine">
+          {{ t('account.devices.connectThis') }}
+        </BaseButton>
+        <div v-if="thisComputer.connecting" class="t-caption c-muted mt-2">{{ thisComputer.step }}</div>
+        <div v-if="thisComputer.error" class="t-caption c-danger mt-2">{{ thisComputer.error }}</div>
+      </template>
+      <template v-else>
+        <div class="t-title mt-3 mb-1">{{ t('account.devices.desktopTitle') }}</div>
+        <div class="t-caption c-muted mb-3">{{ t('account.devices.desktopHint') }}</div>
+        <div class="d-flex flex-wrap ga-2">
           <BaseButton
-            icon="mdi-close"
-            size="sm"
-            :aria-label="t('account.devices.close')"
-            @click="addDeviceOpen = false"
-          />
-        </div>
-        <!-- 在桌面 app 里这台电脑原地接入；在浏览器里，Mac 和 Windows 装桌面端，别的机器
-             （服务器、Linux）走命令。 -->
-        <template v-if="desktop">
-          <div class="t-title mt-3 mb-1">{{ t('account.devices.thisComputer') }}</div>
-          <div class="t-caption c-muted mb-3">{{ t('account.devices.thisComputerHint') }}</div>
-          <BaseButton kind="primary" :loading="thisComputer.connecting" @click="connectThisMachine">
-            {{ t('account.devices.connectThis') }}
+            v-for="(d, i) in downloads"
+            :key="d.href"
+            :kind="i === 0 ? 'primary' : 'secondary'"
+            prepend-icon="mdi-download"
+            :href="d.href"
+          >
+            {{ t(d.labelKey) }}
           </BaseButton>
-          <div v-if="thisComputer.connecting" class="t-caption c-muted mt-2">{{ thisComputer.step }}</div>
-          <div v-if="thisComputer.error" class="t-caption c-danger mt-2">{{ thisComputer.error }}</div>
-        </template>
-        <template v-else>
-          <div class="t-title mt-3 mb-1">{{ t('account.devices.desktopTitle') }}</div>
-          <div class="t-caption c-muted mb-3">{{ t('account.devices.desktopHint') }}</div>
-          <div class="d-flex flex-wrap ga-2">
-            <BaseButton
-              v-for="(d, i) in downloads"
-              :key="d.href"
-              :kind="i === 0 ? 'primary' : 'secondary'"
-              prepend-icon="mdi-download"
-              :href="d.href"
-            >
-              {{ t(d.labelKey) }}
-            </BaseButton>
-          </div>
-          <div class="t-caption c-muted mt-2">{{ t('account.devices.gatekeeper') }}</div>
-        </template>
-
-        <div class="t-title mt-6 mb-1">
-          {{ desktop ? t('account.devices.otherMachines') : t('account.devices.serverTitle') }}
         </div>
-        <div v-for="c in installCommands" :key="c.command" class="mb-3">
-          <div class="t-caption c-muted mb-1">{{ c.os }}</div>
-          <div class="install-cmd">
-            <code class="install-cmd__code">{{ c.command }}</code>
-            <BaseButton
-              kind="ghost"
-              size="sm"
-              :prepend-icon="copied === c.command ? 'mdi-check' : 'mdi-content-copy'"
-              @click="copyInstall(c.command)"
-            >
-              {{ copied === c.command ? t('account.devices.copied') : t('account.devices.copy') }}
-            </BaseButton>
-          </div>
-        </div>
+        <div class="t-caption c-muted mt-2">{{ t('account.devices.gatekeeper') }}</div>
+      </template>
 
-        <ol class="steps">
-          <li>{{ t('account.devices.step1') }}</li>
-          <li>{{ t('account.devices.step2') }}</li>
-          <li>{{ t('account.devices.step3') }}</li>
-        </ol>
-
-        <div class="d-flex justify-end mt-4">
-          <BaseButton kind="primary" @click="addDeviceOpen = false">{{ t('account.devices.done') }}</BaseButton>
+      <div class="t-title mt-6 mb-1">
+        {{ desktop ? t('account.devices.otherMachines') : t('account.devices.serverTitle') }}
+      </div>
+      <div v-for="c in installCommands" :key="c.command" class="mb-3">
+        <div class="t-caption c-muted mb-1">{{ c.os }}</div>
+        <div class="install-cmd">
+          <code class="install-cmd__code">{{ c.command }}</code>
+          <BaseButton
+            kind="ghost"
+            size="sm"
+            :prepend-icon="copied === c.command ? 'mdi-check' : 'mdi-content-copy'"
+            @click="copyInstall(c.command)"
+          >
+            {{ copied === c.command ? t('account.devices.copied') : t('account.devices.copy') }}
+          </BaseButton>
         </div>
-      </v-card>
-    </v-dialog>
+      </div>
+
+      <ol class="steps">
+        <li>{{ t('account.devices.step1') }}</li>
+        <li>{{ t('account.devices.step2') }}</li>
+        <li>{{ t('account.devices.step3') }}</li>
+      </ol>
+    </AdaptiveDialog>
 
     <v-dialog :model-value="liveScreen !== null" max-width="900" @update:model-value="liveScreen = null">
       <v-card v-if="liveScreen" class="pa-3">
@@ -450,21 +453,17 @@ useCommands(() =>
       </v-card>
     </v-dialog>
 
-    <!-- 解绑前问一句：应用里的对话框，不是浏览器自带的 confirm()。 -->
-    <v-dialog :model-value="unbindTarget !== null" max-width="440" @update:model-value="unbindTarget = null">
-      <v-card v-if="unbindTarget" class="pa-5">
-        <div class="t-title mb-3">{{ t('account.devices.unbindTitle', { name: unbindTarget.name }) }}</div>
-        <div class="t-caption c-muted mb-5">{{ t('account.devices.unbindHint') }}</div>
-        <div class="d-flex justify-end">
-          <BaseButton kind="ghost" class="mr-2" @click="unbindTarget = null">{{
-            t('account.devices.cancel')
-          }}</BaseButton>
-          <BaseButton kind="danger" solid :loading="unbinding" @click="confirmUnbind">
-            {{ t('account.devices.unbind') }}
-          </BaseButton>
-        </div>
-      </v-card>
-    </v-dialog>
+    <!-- Ask before unlinking: an in-app dialog, not the browser's native confirm(). -->
+    <ConfirmDialog
+      v-model="unbindOpen"
+      :title="unbindTitle"
+      :confirm-label="t('account.devices.unbind')"
+      danger
+      :loading="unbinding"
+      @confirm="confirmUnbind"
+    >
+      {{ t('account.devices.unbindHint') }}
+    </ConfirmDialog>
   </div>
 </template>
 

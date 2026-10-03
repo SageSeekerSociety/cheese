@@ -24,6 +24,10 @@ if [ -n "${APP_TIER_DOCKER_LOG:-}" ]; then
     printf 'owner-up-env DEVICE_CONNECTION_IMAGE=%s\n' \
       "${DEVICE_CONNECTION_IMAGE:-}" >> "$APP_TIER_DOCKER_LOG"
   fi
+  if [ "${1:-}" = compose ] && [[ "$*" == *" up -d --no-deps preview-connection"* ]]; then
+    printf 'preview-owner-up-env PREVIEW_CONNECTION_IMAGE=%s\n' \
+      "${PREVIEW_CONNECTION_IMAGE:-}" >> "$APP_TIER_DOCKER_LOG"
+  fi
 fi
 if [ -n "${APP_TIER_DOCKER_FAIL_MATCH:-}" ] && [[ "$*" == *"$APP_TIER_DOCKER_FAIL_MATCH"* ]]; then
   exit 1
@@ -139,6 +143,10 @@ if [ "${1:-}" = "compose" ]; then
       if [ "${2:-}" = -q ] && [ "$scenario" = stable_owner ] && \
         [ "${3:-}" = device-connection ]; then
         printf 'device-connection-container\n'
+      fi
+      if [ "${2:-}" = -q ] && [ "$scenario" = stable_owner ] && \
+        [ "${3:-}" = preview-connection ]; then
+        printf 'preview-connection-container\n'
       fi
       if [ "${2:-}" = -q ] && [ "$scenario" = rollback ]; then
         case "${3:-}" in

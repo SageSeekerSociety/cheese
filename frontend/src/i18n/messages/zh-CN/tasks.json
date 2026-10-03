@@ -331,7 +331,6 @@
     },
     "deadlineTitle": "设置截止时间",
     "deadlineFor": "{name} 的提交截止时间",
-    "cancel": "取消",
     "save": "保存",
     "rejectTitle": "拒绝领取申请",
     "rejectLead": "拒绝 {name} 领取这道题",

@@ -118,7 +118,7 @@
                 </v-card>
               </template>
             </v-dialog>
-            <v-dialog v-else-if="!questionData.accepted_answer" v-model="bountyDialog" width="540px">
+            <v-dialog v-else-if="!questionData.accepted_answer" v-model="bountyDialog" :max-width="DIALOG_WIDTH.md">
               <template #activator="{ props: activatorProps }">
                 <BaseButton kind="secondary" prepend-icon="mdi-currency-usd" v-bind="activatorProps">
                   {{ t('questions.detail.buttons.bounty') }}
@@ -260,6 +260,7 @@ import { parse } from '@/utils/parser'
 import { usePageTitle } from '@/composables/usePageTitle'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import { DIALOG_WIDTH } from '@/components/base/dialogSize'
 import ContentVoter from '@/components/common/ContentVoter.vue'
 import RichEditor from '@/components/common/Editor/Editor.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'

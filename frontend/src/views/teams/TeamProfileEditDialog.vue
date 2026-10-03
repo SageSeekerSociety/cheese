@@ -10,7 +10,7 @@ import { toast } from 'vuetify-sonner'
 
 import { getAvatarUrl } from '@/utils/materials'
 
-import BaseButton from '@/components/base/BaseButton.vue'
+import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AvatarUploader from '@/components/common/AvatarUploader.vue'
 import { t } from '@/i18n'
 import { AvatarsApi } from '@/network/api/avatars'
@@ -88,67 +88,50 @@ const save = async () => {
 </script>
 
 <template>
-  <v-dialog v-model="open" width="600">
-    <v-card rounded="lg" class="elevation-0 border">
-      <v-toolbar color="transparent" flat>
-        <v-toolbar-title class="text-h6">{{ t('work.teamProfile.editTitle') }}</v-toolbar-title>
-        <v-spacer></v-spacer>
-        <BaseButton icon="mdi-close" :aria-label="t('work.teamProfile.cancel')" @click="open = false" />
-      </v-toolbar>
+  <AdaptiveDialog
+    v-model="open"
+    :title="t('work.teamProfile.editTitle')"
+    :primary-label="t('work.teamProfile.save')"
+    :primary-loading="saving"
+    :close-disabled="saving"
+    @primary="save"
+  >
+    <v-alert v-if="error" type="error" class="mb-4">{{ error }}</v-alert>
+    <v-container fluid>
+      <v-row>
+        <v-col cols="12" md="4" class="text-center">
+          <avatar-uploader v-model="avatarFile" :src="getAvatarUrl(team.avatarId)" />
+          <p class="text-body-2 text-medium-emphasis mb-2">{{ t('work.teamProfile.avatarLabel') }}</p>
+        </v-col>
+        <v-col cols="12" md="8">
+          <v-text-field
+            v-model="name"
+            autocomplete="off"
+            :label="t('work.teamProfile.nameLabel')"
+            variant="outlined"
+            color="primary"
+            :error-messages="nameError"
+            class="mb-4"
+            rounded="md"
+            @update:model-value="nameError = ''"
+          ></v-text-field>
 
-      <v-divider></v-divider>
-
-      <v-card-text class="py-5">
-        <v-alert v-if="error" type="error" class="mb-4">{{ error }}</v-alert>
-        <v-container fluid>
-          <v-row>
-            <v-col cols="12" md="4" class="text-center">
-              <avatar-uploader v-model="avatarFile" :src="getAvatarUrl(team.avatarId)" />
-              <p class="text-body-2 text-medium-emphasis mb-2">{{ t('work.teamProfile.avatarLabel') }}</p>
-            </v-col>
-            <v-col cols="12" md="8">
-              <v-text-field
-                v-model="name"
-                autocomplete="off"
-                :label="t('work.teamProfile.nameLabel')"
-                variant="outlined"
-                color="primary"
-                :error-messages="nameError"
-                class="mb-4"
-                rounded="md"
-                @update:model-value="nameError = ''"
-              ></v-text-field>
-
-              <v-textarea
-                v-model="intro"
-                autocomplete="off"
-                :label="t('work.teamProfile.introLabel')"
-                :hint="t('work.teamProfile.introHint')"
-                counter="250"
-                maxlength="250"
-                rows="3"
-                auto-grow
-                persistent-hint
-                variant="outlined"
-                color="primary"
-                rounded="md"
-              ></v-textarea>
-            </v-col>
-          </v-row>
-        </v-container>
-      </v-card-text>
-
-      <v-divider></v-divider>
-
-      <v-card-actions class="pa-4">
-        <v-spacer></v-spacer>
-        <BaseButton class="mr-2" :disabled="saving" @click="open = false">
-          {{ t('work.teamProfile.cancel') }}
-        </BaseButton>
-        <BaseButton kind="primary" :loading="saving" @click="save">
-          {{ t('work.teamProfile.save') }}
-        </BaseButton>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+          <v-textarea
+            v-model="intro"
+            autocomplete="off"
+            :label="t('work.teamProfile.introLabel')"
+            :hint="t('work.teamProfile.introHint')"
+            counter="250"
+            maxlength="250"
+            rows="3"
+            auto-grow
+            persistent-hint
+            variant="outlined"
+            color="primary"
+            rounded="md"
+          ></v-textarea>
+        </v-col>
+      </v-row>
+    </v-container>
+  </AdaptiveDialog>
 </template>

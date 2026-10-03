@@ -4,7 +4,7 @@ import type { GrantInput } from '@/lib/adminCredits'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import BaseButton from '@/components/base/BaseButton.vue'
+import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import { endOfDayIso } from '@/lib/adminCredits'
 
 // 给一个团队发额度：数量、到期时间（不过期或某一天）、原因（只有管理员看得到）。
@@ -66,70 +66,64 @@ function submit() {
 </script>
 
 <template>
-  <v-dialog :model-value="modelValue" max-width="520" :persistent="saving" @update:model-value="!$event && close()">
-    <v-card rounded="lg">
-      <v-card-title class="t-dialog-title px-4 pt-4 pb-2">
-        {{ t('credits.grantDialog.title', { team: teamName }) }}
-      </v-card-title>
+  <AdaptiveDialog
+    :model-value="modelValue"
+    :title="t('credits.grantDialog.title', { team: teamName })"
+    :primary-label="t('credits.grantDialog.submit')"
+    :cancel-label="t('credits.grantDialog.cancel')"
+    :primary-loading="saving"
+    :primary-disabled="invalid || saving"
+    :close-disabled="saving"
+    @update:model-value="close"
+    @primary="submit"
+  >
+    <v-text-field
+      v-model="amount"
+      autocomplete="off"
+      type="number"
+      min="0"
+      variant="outlined"
+      density="comfortable"
+      :label="t('credits.grantDialog.amount')"
+      hide-details
+      class="agd__amount"
+    />
 
-      <v-card-text class="px-4">
-        <v-text-field
-          v-model="amount"
-          autocomplete="off"
-          type="number"
-          min="0"
-          variant="outlined"
-          density="comfortable"
-          :label="t('credits.grantDialog.amount')"
-          hide-details
-          class="agd__amount"
-        />
+    <fieldset class="agd__group">
+      <legend class="agd__legend">{{ t('credits.grantDialog.expiry') }}</legend>
+      <v-radio-group v-model="expiry" hide-details density="compact">
+        <v-radio value="never" :label="t('credits.grantDialog.never')" />
+        <v-radio value="date" :label="t('credits.grantDialog.onDate')" />
+      </v-radio-group>
+      <v-text-field
+        v-if="expiry === 'date'"
+        v-model="date"
+        type="date"
+        variant="outlined"
+        density="comfortable"
+        :label="t('credits.grantDialog.date')"
+        hide-details
+        class="agd__date"
+      />
+    </fieldset>
 
-        <fieldset class="agd__group">
-          <legend class="agd__legend">{{ t('credits.grantDialog.expiry') }}</legend>
-          <v-radio-group v-model="expiry" hide-details density="compact">
-            <v-radio value="never" :label="t('credits.grantDialog.never')" />
-            <v-radio value="date" :label="t('credits.grantDialog.onDate')" />
-          </v-radio-group>
-          <v-text-field
-            v-if="expiry === 'date'"
-            v-model="date"
-            type="date"
-            variant="outlined"
-            density="comfortable"
-            :label="t('credits.grantDialog.date')"
-            hide-details
-            class="agd__date"
-          />
-        </fieldset>
+    <v-textarea
+      v-model="reason"
+      autocomplete="off"
+      variant="outlined"
+      density="comfortable"
+      rows="2"
+      auto-grow
+      :label="t('credits.grantDialog.reason')"
+      :hint="t('credits.grantDialog.reasonHint')"
+      persistent-hint
+      class="agd__reason"
+    />
 
-        <v-textarea
-          v-model="reason"
-          autocomplete="off"
-          variant="outlined"
-          density="comfortable"
-          rows="2"
-          auto-grow
-          :label="t('credits.grantDialog.reason')"
-          :hint="t('credits.grantDialog.reasonHint')"
-          persistent-hint
-          class="agd__reason"
-        />
-
-        <v-alert v-if="error" type="error" density="compact" variant="tonal" class="mt-3" role="alert">
-          {{ error }}
-        </v-alert>
-      </v-card-text>
-
-      <v-card-actions class="pa-4 pt-0">
-        <v-spacer />
-        <BaseButton kind="ghost" :disabled="saving" @click="close">{{ t('credits.grantDialog.cancel') }}</BaseButton>
-        <BaseButton kind="primary" :loading="saving" :disabled="invalid || saving" @click="submit">
-          {{ t('credits.grantDialog.submit') }}
-        </BaseButton>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+    <v-alert v-if="error" type="error" density="compact" variant="tonal" class="mt-3" role="alert">
+      {{ error }}
+    </v-alert>
+  </AdaptiveDialog>
 </template>
 
 <style scoped>

@@ -19,6 +19,7 @@ import { computed, ref, watch } from 'vue'
 
 import { ApiError, getProjectSite, publishProjectSite } from '@/api'
 import BaseButton from '@/components/base/BaseButton.vue'
+import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
@@ -153,49 +154,43 @@ watch(
     </p>
     <p v-if="publishError" role="alert" class="site__error t-meta">{{ publishError }}</p>
 
-    <!-- 发布。按下去之前要看清的是两件事：发的是哪一版，发的是哪个入口。 -->
-    <v-dialog :model-value="asking" max-width="440" @update:model-value="asking = false">
-      <v-card>
-        <v-card-title class="t-dialog-title">{{
-          info.site ? t('work.publishedSite.update') : t('work.publishedSite.publishSite')
-        }}</v-card-title>
-        <v-card-text>
-          <p v-if="info.unavailable_reason" role="status" class="t-body c-muted">{{ info.unavailable_reason }}</p>
-          <p v-else-if="!info.candidates.length" class="t-body c-muted">{{ t('work.publishedSite.noCandidates') }}</p>
-          <template v-else>
-            <p class="t-body mb-4">
-              {{ t('work.publishedSite.publishRevision') }}
-              <code v-if="info.source_revision" :title="info.source_revision">
-                {{ info.source_revision.slice(0, 8) }}
-              </code>
-            </p>
-            <v-select
-              v-if="candidates.length > 1"
-              v-model="directory"
-              autocomplete="off"
-              :items="candidates"
-              :disabled="publishing"
-              :label="t('work.publishedSite.entry')"
-              variant="outlined"
-              density="compact"
-              hide-details
-            />
-            <p v-else-if="selected" class="t-body">
-              {{ t('work.publishedSite.entryIs') }}<code>{{ selected.entry_file }}</code>
-            </p>
-            <p v-if="isCurrent" class="t-meta c-faint mt-4">{{ t('work.publishedSite.isCurrent') }}</p>
-            <p v-else class="t-meta c-faint mt-4">{{ t('work.publishedSite.stays') }}</p>
-          </template>
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <BaseButton kind="ghost" @click="asking = false">{{ t('global.cancel') }}</BaseButton>
-          <BaseButton kind="primary" :disabled="!canPublish" :loading="publishing" @click="publish">
-            {{ t('work.publishedSite.publish') }}
-          </BaseButton>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <!-- Publishing. Before pressing, two things must be clear: which revision and which entry. -->
+    <AdaptiveDialog
+      v-model="asking"
+      :title="info.site ? t('work.publishedSite.update') : t('work.publishedSite.publishSite')"
+      :primary-label="t('work.publishedSite.publish')"
+      :primary-loading="publishing"
+      :primary-disabled="!canPublish"
+      size="sm"
+      @primary="publish"
+    >
+      <p v-if="info.unavailable_reason" role="status" class="t-body c-muted">{{ info.unavailable_reason }}</p>
+      <p v-else-if="!info.candidates.length" class="t-body c-muted">{{ t('work.publishedSite.noCandidates') }}</p>
+      <template v-else>
+        <p class="t-body mb-4">
+          {{ t('work.publishedSite.publishRevision') }}
+          <code v-if="info.source_revision" :title="info.source_revision">
+            {{ info.source_revision.slice(0, 8) }}
+          </code>
+        </p>
+        <v-select
+          v-if="candidates.length > 1"
+          v-model="directory"
+          autocomplete="off"
+          :items="candidates"
+          :disabled="publishing"
+          :label="t('work.publishedSite.entry')"
+          variant="outlined"
+          density="compact"
+          hide-details
+        />
+        <p v-else-if="selected" class="t-body">
+          {{ t('work.publishedSite.entryIs') }}<code>{{ selected.entry_file }}</code>
+        </p>
+        <p v-if="isCurrent" class="t-meta c-faint mt-4">{{ t('work.publishedSite.isCurrent') }}</p>
+        <p v-else class="t-meta c-faint mt-4">{{ t('work.publishedSite.stays') }}</p>
+      </template>
+    </AdaptiveDialog>
   </div>
 </template>
 

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
+import { DIALOG_WIDTH } from '@/components/base/dialogSize'
 import { t } from '@/i18n'
 import { statusMeta } from '@/lib/feedbackMeta'
 
@@ -103,7 +104,7 @@ const groups = computed<ShortcutGroup[]>(() => [
        只有 0.2s 出头。 -->
   <v-dialog
     :model-value="props.modelValue"
-    max-width="480"
+    :max-width="DIALOG_WIDTH.md"
     transition="sheet-fade"
     @update:model-value="emit('update:modelValue', $event)"
   >

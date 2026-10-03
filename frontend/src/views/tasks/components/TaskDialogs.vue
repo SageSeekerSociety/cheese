@@ -1,171 +1,157 @@
 <template>
-  <!-- 实名验证对话框 -->
-  <v-dialog
+  <!-- Real-name verification dialog -->
+  <AdaptiveDialog
     :model-value="verifyInfoDialogOpen"
+    :title="taskData?.requireRealName ? t('tasks.verifyDialog.titleRealName') : t('tasks.verifyDialog.title')"
+    :primary-label="t('tasks.verifyDialog.confirmJoin')"
     persistent
-    max-width="600"
-    class="verify-info-dialog"
-    scrollable
     @update:model-value="handleCloseVerify"
+    @primary="submitVerifyForm"
   >
-    <v-card rounded="lg" elevation="4">
-      <v-card-title class="text-h5 pa-4 pb-2">
-        <div class="d-flex align-center">
-          <v-icon color="primary" class="mr-2" size="26">mdi-account-check</v-icon>
-          {{ taskData?.requireRealName ? t('tasks.verifyDialog.titleRealName') : t('tasks.verifyDialog.title') }}
-        </div>
-      </v-card-title>
-      <v-card-text class="pa-4 pt-2">
-        <div class="text-body-1 mb-4">
-          <template v-if="taskData?.requireRealName">
-            {{ t('tasks.verifyDialog.introRealName') }}
-          </template>
-          <template v-else>{{ t('tasks.verifyDialog.intro') }}</template>
-        </div>
+    <div class="text-body-1 mb-4">
+      <template v-if="taskData?.requireRealName">
+        {{ t('tasks.verifyDialog.introRealName') }}
+      </template>
+      <template v-else>{{ t('tasks.verifyDialog.intro') }}</template>
+    </div>
 
-        <!-- 信息获取提示卡片 - 仅在需要实名时显示 -->
+    <!-- Info card - shown only when real name is required -->
+    <v-card
+      v-if="taskData?.requireRealName"
+      class="mb-4 info-alert-card"
+      variant="flat"
+      rounded="lg"
+      color="surface-light"
+    >
+      <v-card-text class="pa-3">
+        <div class="d-flex align-start">
+          <v-avatar size="36" color="info" class="mr-3 info-avatar">
+            <!-- 状态色底上的反白图标一律用 surface：这些底色深色下会提亮，白色会糊住 -->
+            <v-icon icon="mdi-account-details" color="surface" size="20"></v-icon>
+          </v-avatar>
+          <div>
+            <div class="text-subtitle-2 font-weight-medium mb-1">
+              {{ t('tasks.verifyDialog.realNameConfirmTitle') }}
+            </div>
+            <p class="text-body-2 mb-0">
+              {{ t('tasks.verifyDialog.realNameConfirmBody') }}
+            </p>
+          </div>
+        </div>
+      </v-card-text>
+    </v-card>
+
+    <v-tooltip v-if="taskData?.teamLockingPolicy === 'LOCK_ON_APPROVAL'" location="top">
+      <template #activator="{ props }">
         <v-card
-          v-if="taskData?.requireRealName"
-          class="mb-4 info-alert-card"
+          class="mb-4 info-alert-card cursor-pointer"
           variant="flat"
           rounded="lg"
           color="surface-light"
+          v-bind="props"
         >
           <v-card-text class="pa-3">
-            <div class="d-flex align-start">
-              <v-avatar size="36" color="info" class="mr-3 info-avatar">
-                <!-- 状态色底上的反白图标一律用 surface：这些底色深色下会提亮，白色会糊住 -->
-                <v-icon icon="mdi-account-details" color="surface" size="20"></v-icon>
+            <div class="d-flex align-center">
+              <v-avatar size="36" color="warning" class="mr-3 warning-avatar">
+                <v-icon icon="mdi-lock-check" color="surface" size="18"></v-icon>
               </v-avatar>
-              <div>
-                <div class="text-subtitle-2 font-weight-medium mb-1">
-                  {{ t('tasks.verifyDialog.realNameConfirmTitle') }}
-                </div>
-                <p class="text-body-2 mb-0">
-                  {{ t('tasks.verifyDialog.realNameConfirmBody') }}
-                </p>
+              <div class="flex-grow-1">
+                <i18n-t scope="global" keypath="tasks.verifyDialog.lockNotice" tag="span" class="text-body-2">
+                  <template #policy>
+                    <strong>{{ t('tasks.form.teamLockingPolicyLockOnApproval') }}</strong>
+                  </template>
+                </i18n-t>
               </div>
+              <v-icon size="small" color="info">mdi-information-outline</v-icon>
             </div>
           </v-card-text>
         </v-card>
-
-        <v-tooltip v-if="taskData?.teamLockingPolicy === 'LOCK_ON_APPROVAL'" location="top">
-          <template #activator="{ props }">
-            <v-card
-              class="mb-4 info-alert-card cursor-pointer"
-              variant="flat"
-              rounded="lg"
-              color="surface-light"
-              v-bind="props"
-            >
-              <v-card-text class="pa-3">
-                <div class="d-flex align-center">
-                  <v-avatar size="36" color="warning" class="mr-3 warning-avatar">
-                    <v-icon icon="mdi-lock-check" color="surface" size="18"></v-icon>
-                  </v-avatar>
-                  <div class="flex-grow-1">
-                    <i18n-t scope="global" keypath="tasks.verifyDialog.lockNotice" tag="span" class="text-body-2">
-                      <template #policy>
-                        <strong>{{ t('tasks.form.teamLockingPolicyLockOnApproval') }}</strong>
-                      </template>
-                    </i18n-t>
-                  </div>
-                  <v-icon size="small" color="info">mdi-information-outline</v-icon>
-                </div>
-              </v-card-text>
-            </v-card>
-          </template>
-          <div class="pa-2">
-            <div class="text-subtitle-2 font-weight-medium mb-1">{{ t('tasks.verifyDialog.lockTitle') }}</div>
-            <p class="text-body-2 mb-0">
-              •
-              <i18n-t scope="global" keypath="tasks.verifyDialog.lockLine1" tag="span">
-                <template #locked>
-                  <strong>{{ t('tasks.verifyDialog.locked') }}</strong>
-                </template>
-              </i18n-t>
-              <br />
-              • {{ t('tasks.verifyDialog.lockLine2') }}<br />
-              • {{ t('tasks.verifyDialog.lockLine3') }}
-            </p>
-          </div>
-        </v-tooltip>
-
-        <v-tooltip v-else-if="taskData?.submitterType === 'TEAM'" location="top">
-          <template #activator="{ props }">
-            <v-card
-              class="mb-4 info-alert-card cursor-pointer"
-              variant="flat"
-              rounded="lg"
-              color="surface-light"
-              v-bind="props"
-            >
-              <v-card-text class="pa-3">
-                <div class="d-flex align-center">
-                  <v-avatar size="36" color="info" class="mr-3 info-avatar">
-                    <v-icon icon="mdi-account-group" color="surface" size="18"></v-icon>
-                  </v-avatar>
-                  <span class="text-body-2">{{ t('tasks.verifyDialog.rosterRecorded') }}</span>
-                  <v-icon size="small" color="info" class="ms-auto">mdi-information-outline</v-icon>
-                </div>
-              </v-card-text>
-            </v-card>
-          </template>
-          <div class="pa-2">
-            <div class="text-subtitle-2 font-weight-medium mb-1">{{ t('tasks.verifyDialog.rosterTitle') }}</div>
-            <p class="text-body-2 mb-0">
-              • {{ t('tasks.verifyDialog.rosterLine1') }}<br />
-              • {{ t('tasks.verifyDialog.rosterLine2') }}
-            </p>
-          </div>
-        </v-tooltip>
-
-        <VerifyInfoFormComponent
-          ref="verifyInfoFormRef"
-          data-role="verify-info-form"
-          :require-real-name="taskData?.requireRealName ?? false"
-          @submit="handleSubmitVerify"
-        />
-        <div class="privacy-consent">
-          <v-checkbox
-            v-if="taskData?.requireRealName"
-            v-model="privacyAgreedProxy"
-            color="primary"
-            hide-details
-            class="privacy-checkbox"
-            density="compact"
-          >
-            <template #label>
-              <div class="d-flex align-center">
-                <i18n-t scope="global" keypath="tasks.verifyDialog.consent" tag="span">
-                  <template #statement>
-                    <span class="text-primary font-weight-medium privacy-link" @click.stop.prevent="directShowPrivacy">
-                      {{ t('tasks.verifyDialog.privacyStatement') }}
-                    </span>
-                  </template>
-                </i18n-t>
-                <v-tooltip location="end" max-width="300">
-                  <template #activator="{ props }">
-                    <v-icon size="small" color="primary" class="ms-1" v-bind="props"> mdi-information-outline </v-icon>
-                  </template>
-                  <span>{{ t('tasks.verifyDialog.privacyTip') }}</span>
-                </v-tooltip>
-              </div>
+      </template>
+      <div class="pa-2">
+        <div class="text-subtitle-2 font-weight-medium mb-1">{{ t('tasks.verifyDialog.lockTitle') }}</div>
+        <p class="text-body-2 mb-0">
+          •
+          <i18n-t scope="global" keypath="tasks.verifyDialog.lockLine1" tag="span">
+            <template #locked>
+              <strong>{{ t('tasks.verifyDialog.locked') }}</strong>
             </template>
-          </v-checkbox>
-        </div>
+          </i18n-t>
+          <br />
+          • {{ t('tasks.verifyDialog.lockLine2') }}<br />
+          • {{ t('tasks.verifyDialog.lockLine3') }}
+        </p>
+      </div>
+    </v-tooltip>
 
-        <!-- 确认领取之前，把「会继承什么」摆出来 (#944)：资源包、合成后的指导
-             （连来自哪一层）、以及会被带上的资料。这就是决定之前该看的那一页。 -->
-        <TaskInheritance :inheritance="inheritance" :loading="inheritanceLoading" />
-      </v-card-text>
-      <v-card-actions class="pa-4 pt-0">
-        <v-spacer></v-spacer>
-        <BaseButton kind="ghost" @click="handleCloseVerify">{{ t('global.cancel') }}</BaseButton>
-        <BaseButton kind="primary" @click="submitVerifyForm">{{ t('tasks.verifyDialog.confirmJoin') }}</BaseButton>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+    <v-tooltip v-else-if="taskData?.submitterType === 'TEAM'" location="top">
+      <template #activator="{ props }">
+        <v-card
+          class="mb-4 info-alert-card cursor-pointer"
+          variant="flat"
+          rounded="lg"
+          color="surface-light"
+          v-bind="props"
+        >
+          <v-card-text class="pa-3">
+            <div class="d-flex align-center">
+              <v-avatar size="36" color="info" class="mr-3 info-avatar">
+                <v-icon icon="mdi-account-group" color="surface" size="18"></v-icon>
+              </v-avatar>
+              <span class="text-body-2">{{ t('tasks.verifyDialog.rosterRecorded') }}</span>
+              <v-icon size="small" color="info" class="ms-auto">mdi-information-outline</v-icon>
+            </div>
+          </v-card-text>
+        </v-card>
+      </template>
+      <div class="pa-2">
+        <div class="text-subtitle-2 font-weight-medium mb-1">{{ t('tasks.verifyDialog.rosterTitle') }}</div>
+        <p class="text-body-2 mb-0">
+          • {{ t('tasks.verifyDialog.rosterLine1') }}<br />
+          • {{ t('tasks.verifyDialog.rosterLine2') }}
+        </p>
+      </div>
+    </v-tooltip>
+
+    <VerifyInfoFormComponent
+      ref="verifyInfoFormRef"
+      data-role="verify-info-form"
+      :require-real-name="taskData?.requireRealName ?? false"
+      @submit="handleSubmitVerify"
+    />
+    <div class="privacy-consent">
+      <v-checkbox
+        v-if="taskData?.requireRealName"
+        v-model="privacyAgreedProxy"
+        color="primary"
+        hide-details
+        class="privacy-checkbox"
+        density="compact"
+      >
+        <template #label>
+          <div class="d-flex align-center">
+            <i18n-t scope="global" keypath="tasks.verifyDialog.consent" tag="span">
+              <template #statement>
+                <span class="text-primary font-weight-medium privacy-link" @click.stop.prevent="directShowPrivacy">
+                  {{ t('tasks.verifyDialog.privacyStatement') }}
+                </span>
+              </template>
+            </i18n-t>
+            <v-tooltip location="end" max-width="300">
+              <template #activator="{ props }">
+                <v-icon size="small" color="primary" class="ms-1" v-bind="props"> mdi-information-outline </v-icon>
+              </template>
+              <span>{{ t('tasks.verifyDialog.privacyTip') }}</span>
+            </v-tooltip>
+          </div>
+        </template>
+      </v-checkbox>
+    </div>
+
+    <!-- Before confirming, lay out what will be inherited (#944): the resource
+         pack, the composed guidance (and which layer it came from), and the
+         materials that will be carried. This is the page to see before deciding. -->
+    <TaskInheritance :inheritance="inheritance" :loading="inheritanceLoading" />
+  </AdaptiveDialog>
 
   <!-- 隐私声明对话框 -->
   <v-dialog
@@ -236,6 +222,7 @@ import { useEvents } from '../events'
 import TaskInheritance from './TaskInheritance.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 
 const { t } = useI18n()
 
@@ -425,10 +412,6 @@ const directShowPrivacy = () => {
 
 .privacy-checkbox :deep(.v-label) {
   opacity: 1;
-}
-
-.verify-info-dialog :deep(.v-card) {
-  overflow: hidden;
 }
 
 .cursor-pointer {

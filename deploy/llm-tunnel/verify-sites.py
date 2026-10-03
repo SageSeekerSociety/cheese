@@ -9,6 +9,7 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -44,12 +45,12 @@ def main():
         active = root / "active"
         active.mkdir()
         servers = []
-        for name in ("backend", "terminator"):
+        for name in ("backend", "terminator", "owner"):
             server = ThreadingHTTPServer(("127.0.0.1", 0), Upstream)
             server.upstream_name = name
             threading.Thread(target=server.serve_forever, daemon=True).start()
             servers.append(server)
-        backend, terminator = servers
+        backend, terminator, owner = servers
         (active / "backend.conf").write_text(
             f"upstream backend_active {{ server 127.0.0.1:{backend.server_port}; }}\n"
         )
@@ -71,15 +72,97 @@ def main():
         config.write_text(f"pid {root}/nginx.pid;\nerror_log stderr;\n" + source)
         (root / "logs").mkdir()
         site_host = "0123456789abcdef0123456789abcdef.example.net"
+        # A preview content host is preview-<32hex>.<domain>, optionally with a
+        # -<22hex> resource suffix; the split in sites.conf matches both.
+        preview_host = "preview-0123456789abcdef0123456789abcdef.example.net"
+        preview_resource_host = (
+            "preview-0123456789abcdef0123456789abcdef-0123456789abcdef012345.example.net"
+        )
+
+        def write_preview_routing(mode):
+            # nginx.conf includes this file unconditionally, so even the modes
+            # that do not exercise the preview route need it to exist. `owner`
+            # points the tunnel map at the owner's loopback port, `legacy` at the
+            # active backend through app-router — exactly what the deploy writes.
+            if mode == "owner":
+                subprocess.run(
+                    ["bash", str(HERE / "configure-preview.sh"), "owner", str(active), str(owner.server_port)],
+                    check=True,
+                )
+            else:
+                subprocess.run(
+                    ["bash", str(HERE / "configure-preview.sh"), "legacy", str(active),
+                     "18087", str(backend.server_port)],
+                    check=True,
+                )
+
+        def write_sites(mode):
+            if mode == "absent":
+                (active / "sites.conf").unlink(missing_ok=True)
+                return
+            if mode == "example.net":
+                subprocess.run(["bash", str(HERE / "configure-sites.sh"), "example.net", str(active)], check=True)
+            elif mode == "example.net+owner":
+                subprocess.run(
+                    ["bash", str(HERE / "configure-sites.sh"), "example.net", str(active), str(owner.server_port)],
+                    check=True,
+                )
+            elif mode == "--disable":
+                subprocess.run(["bash", str(HERE / "configure-sites.sh"), "--disable", str(active)], check=True)
+            else:
+                raise AssertionError(mode)
+            generated = active / "sites.conf"
+            # The split's default target is the literal app-router port; move it
+            # (and the listener) onto this run's loopback upstreams.
+            generated.write_text(generated.read_text()
+                                 .replace("listen 8081;", f"listen 127.0.0.1:{port};")
+                                 .replace("127.0.0.1:18085", f"127.0.0.1:{backend.server_port}"))
+
+        # Each scenario is (label, sites mode, preview-routing mode, cases).
+        # `absent` must run before a sites.conf exists; the later scenarios
+        # overwrite it, and `--disable` writes an empty file that behaves like
+        # absent again.
+        scenarios = [
+            ("absent", "absent", "legacy", [
+                ("app.example.com", "/llm/tunnel", "terminator"),
+                ("app.example.com", "/healthz", "backend"),
+                ("app.example.com", "/preview/tunnel", "backend"),
+                ("app.example.com", "/api/preview/tunnel", "backend"),
+                (site_host, "/llm/tunnel", "terminator"),
+                (site_host, "/assets/app.js?version=1", "backend"),
+                (preview_host, "/", "backend"),
+            ]),
+            ("example.net", "example.net", "legacy", [
+                ("app.example.com", "/llm/tunnel", "terminator"),
+                ("app.example.com", "/healthz", "backend"),
+                (site_host, "/llm/tunnel", "backend"),
+                (site_host, "/assets/app.js?version=1", "backend"),
+                (preview_host, "/", "backend"),
+            ]),
+            ("--disable", "--disable", "legacy", [
+                ("app.example.com", "/llm/tunnel", "terminator"),
+                ("app.example.com", "/healthz", "backend"),
+                (site_host, "/llm/tunnel", "terminator"),
+                (site_host, "/assets/app.js?version=1", "backend"),
+                (preview_host, "/", "backend"),
+            ]),
+            # The cutover: the preview tunnel, both spellings, and every preview
+            # content host reach the owner; project hosts stay on the backend.
+            ("preview-owner", "example.net+owner", "owner", [
+                ("app.example.com", "/preview/tunnel", "owner"),
+                ("app.example.com", "/api/preview/tunnel", "owner"),
+                ("app.example.com", "/llm/tunnel", "terminator"),
+                (site_host, "/", "backend"),
+                (preview_host, "/", "owner"),
+                (preview_resource_host, "/assets/app.js", "owner"),
+                ("preview-0123456789abcdef0123456789abcdef.example.com", "/", "backend"),
+            ]),
+        ]
 
         try:
-            for mode in ("absent", "example.net", "--disable"):
-                if mode != "absent":
-                    subprocess.run(["bash", str(HERE / "configure-sites.sh"), mode, str(active)], check=True)
-                    generated = active / "sites.conf"
-                    generated.write_text(generated.read_text().replace(
-                        "listen 8081;", f"listen 127.0.0.1:{port};"
-                    ))
+            for label, sites_mode, preview_mode, cases in scenarios:
+                write_preview_routing(preview_mode)
+                write_sites(sites_mode)
                 command = [nginx, "-e", "stderr", "-p", str(root) + "/", "-c", str(config)]
                 subprocess.run([*command, "-t"], check=True)
                 process = subprocess.Popen([*command, "-g", "daemon off;"])
@@ -93,12 +176,6 @@ def main():
                             if process.poll() is not None or time.monotonic() >= deadline:
                                 raise RuntimeError("Test nginx did not start")
                             time.sleep(0.05)
-                    cases = [
-                        ("app.example.com", "/llm/tunnel", "terminator"),
-                        ("app.example.com", "/healthz", "backend"),
-                        (site_host, "/llm/tunnel", "backend" if mode == "example.net" else "terminator"),
-                        (site_host, "/assets/app.js?version=1", "backend"),
-                    ]
                     for host, path, expected in cases:
                         request = urllib.request.Request(
                             f"http://127.0.0.1:{port}{path}", headers={"Host": host}
@@ -106,7 +183,21 @@ def main():
                         with urllib.request.urlopen(request, timeout=3) as response:
                             actual = json.load(response)
                         assert actual == {"upstream": expected, "path": path, "host": host}, actual
-                        print(f"PASS {mode}: {host}{path} -> {expected}", flush=True)
+                        print(f"PASS {label}: {host}{path} -> {expected}", flush=True)
+                    # The owner's private RPC never crosses nginx, not on the
+                    # business server and not through a preview content host.
+                    if label == "preview-owner":
+                        for host in ("app.example.com", preview_host):
+                            request = urllib.request.Request(
+                                f"http://127.0.0.1:{port}/_internal/preview/v1/inspect",
+                                headers={"Host": host},
+                            )
+                            try:
+                                urllib.request.urlopen(request, timeout=3)
+                                raise AssertionError(f"private RPC reachable via {host}")
+                            except urllib.error.HTTPError as exc:
+                                assert exc.code == 404, (host, exc.code)
+                            print(f"PASS {label}: {host}/_internal/preview/v1/inspect -> 404", flush=True)
                 finally:
                     process.terminate()
                     process.wait(timeout=5)
