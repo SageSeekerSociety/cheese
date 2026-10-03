@@ -614,6 +614,12 @@
       "placeholder": "Add what you ran into, or why this change matters to you",
       "submit": "Post comment"
     },
+    "claim": {
+      "title": "Owner",
+      "nobody": "Nobody has claimed it yet",
+      "claim": "Claim",
+      "release": "Release"
+    },
     "aside": {
       "progress": "Progress",
       "supports": "Supporters",
