@@ -56,7 +56,8 @@
   },
   "shell": {
     "close": "Close",
-    "more": "More actions"
+    "more": "More actions",
+    "skipToContent": "Skip to content"
   },
   "copy": {
     "done": "Copied",

@@ -14,6 +14,8 @@ import type { NavTarget } from '@/lib/navTarget'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useDisplay } from 'vuetify'
 
+import { useFocusReturn } from '@/composables/useFocusReturn'
+
 import NavLink from '@/components/common/NavLink.vue'
 
 export interface SettingsItem {
@@ -86,6 +88,10 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown)
   appRoot?.removeAttribute('inert')
 })
+
+// 关掉（这一层卸载）时把焦点还回打开设置的那一处。放在最后注册：它的 onBeforeUnmount
+// 要在上面摘掉 inert 之后才跑，焦点才落得回被盖住的那一层里。
+useFocusReturn(ref(true))
 </script>
 
 <template>
