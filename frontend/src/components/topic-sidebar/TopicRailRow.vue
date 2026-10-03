@@ -213,6 +213,7 @@ function onMenuToggle(open: boolean) {
           @update:model-value="onMenuToggle"
         >
           <template #activator="{ props: menuProps }">
+            <!-- eslint-disable-next-line vue/no-restricted-syntax -- 导航栏按钮，外观由本组件的样式精确控制（§3.6 例外） -->
             <v-btn
               v-bind="menuProps"
               :tabindex="selected ? 0 : -1"

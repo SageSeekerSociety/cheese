@@ -116,6 +116,7 @@ function primary() {
   >
     <div class="adaptive-dialog__page" role="document">
       <header class="adaptive-dialog__head">
+        <!-- eslint-disable-next-line vue/no-restricted-syntax -- 手机整页弹窗的页头动作（§3.6 例外） -->
         <v-btn
           icon
           variant="text"
@@ -130,6 +131,7 @@ function primary() {
         </v-btn>
         <h2 class="adaptive-dialog__title t-title">{{ props.title }}</h2>
         <template v-if="props.primaryLabel">
+          <!-- eslint-disable-next-line vue/no-restricted-syntax -- 手机整页弹窗的页头动作（§3.6 例外） -->
           <v-btn
             v-if="props.primaryIcon"
             icon
@@ -146,6 +148,7 @@ function primary() {
           </v-btn>
           <!-- 手机整页的页头动作和左边的 ✕ 是一套顶栏写法（44px、文字色），
                不是 BaseButton 的四种角色之一，先保持 v-btn。 -->
+          <!-- eslint-disable-next-line vue/no-restricted-syntax -- 手机整页弹窗的页头动作（§3.6 例外） -->
           <v-btn
             v-else
             variant="text"

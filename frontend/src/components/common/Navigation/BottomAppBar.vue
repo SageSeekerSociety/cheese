@@ -4,6 +4,7 @@
   <v-bottom-navigation class="bottom-tabs" :elevation="0" bg-color="background" grow order="-2">
     <!-- 收到的就是手机那份清单（destinations.ts 的 tabItems），这里不再过滤：
          底栏装什么是清单的事，不是渲染的事。 -->
+    <!-- eslint-disable-next-line vue/no-restricted-syntax -- 导航栏按钮，外观由本组件的样式精确控制（§3.6 例外） -->
     <v-btn
       v-for="item in items"
       :key="item.key"

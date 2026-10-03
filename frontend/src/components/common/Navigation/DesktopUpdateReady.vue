@@ -6,6 +6,7 @@
   it never shows.
 -->
 <template>
+  <!-- eslint-disable-next-line vue/no-restricted-syntax -- 导航栏按钮，外观由本组件的样式精确控制（§3.6 例外） -->
   <v-btn
     v-if="status?.state === 'ready'"
     class="update-ready"

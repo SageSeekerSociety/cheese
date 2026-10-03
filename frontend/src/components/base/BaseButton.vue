@@ -70,6 +70,7 @@ if (import.meta.env.DEV && props.icon && !attrs['aria-label'] && !attrs.title) {
 </script>
 
 <template>
+  <!-- eslint-disable-next-line vue/no-restricted-syntax -- 这里就是 v-btn 唯一该出现的地方 -->
   <v-btn
     v-bind="attrs"
     :variant="look.variant"

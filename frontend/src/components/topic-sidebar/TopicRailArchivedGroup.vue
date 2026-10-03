@@ -71,6 +71,7 @@ const open = ref(false)
         </v-list-item-title>
         <template #append>
           <TopicRailBadge v-if="unreadOf(topic.id) > 0" class="me-1" :count="unreadOf(topic.id)" />
+          <!-- eslint-disable-next-line vue/no-restricted-syntax -- 导航栏按钮，外观由本组件的样式精确控制（§3.6 例外） -->
           <v-btn
             v-if="topic.can_archive"
             icon="mdi-archive-arrow-up-outline"

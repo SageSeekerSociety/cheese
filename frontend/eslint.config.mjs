@@ -84,6 +84,12 @@ export default [
         {
           selector: 'VAttribute[directive=false][key.name="autocomplete"][value.value=/^(on|)$/]',
           message: 'Choose a specific autocomplete purpose or off; on leaves the field meaning ambiguous.',
+        },        {
+          // docs/design-system.md §3.6. Deliberate exceptions carry an
+          // eslint-disable-next-line with the reason next to them.
+          selector: 'VElement[rawName="v-btn"]',
+          message:
+            'Use BaseButton (src/components/base/BaseButton.vue, docs/design-system.md §3.6): pick a kind and a size instead of variant/color.',
         },
       ],
     },

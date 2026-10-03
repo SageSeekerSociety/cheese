@@ -114,7 +114,9 @@ function pickTag(value: unknown) {
       rounded="lg"
       @update:model-value="emit('update:viewMode', $event)"
     >
+      <!-- eslint-disable-next-line vue/no-restricted-syntax -- 分段切换里的一格，属于 v-btn-toggle，不是 BaseButton 的四种角色 -->
       <v-btn value="grid" icon="mdi-view-grid"></v-btn>
+      <!-- eslint-disable-next-line vue/no-restricted-syntax -- 分段切换里的一格，属于 v-btn-toggle，不是 BaseButton 的四种角色 -->
       <v-btn value="list" icon="mdi-view-list"></v-btn>
     </v-btn-toggle>
   </div>

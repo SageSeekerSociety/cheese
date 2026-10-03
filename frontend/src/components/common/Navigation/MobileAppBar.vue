@@ -70,6 +70,7 @@
         transition="scale-transition"
       >
         <template #activator="{ props }">
+          <!-- eslint-disable-next-line vue/no-restricted-syntax -- 导航栏按钮，外观由本组件的样式精确控制（§3.6 例外） -->
           <v-btn icon v-bind="props" variant="text">
             <!-- 没挑过头像的人画彩色首字母，不画 mdi-account：那个图标对每个人
                  都一样，等于告诉你「这是某个人」而不是「这是你」。和左栏

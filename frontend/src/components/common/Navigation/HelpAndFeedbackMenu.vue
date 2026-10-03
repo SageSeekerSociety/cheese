@@ -90,6 +90,7 @@ watch(loggedIn, refresh, { immediate: true })
 <template>
   <v-menu location="bottom end" :offset="8" transition="scale-transition">
     <template #activator="{ props: activator }">
+      <!-- eslint-disable-next-line vue/no-restricted-syntax -- 导航栏按钮，外观由本组件的样式精确控制（§3.6 例外） -->
       <v-btn
         v-bind="activator"
         class="help-entry"

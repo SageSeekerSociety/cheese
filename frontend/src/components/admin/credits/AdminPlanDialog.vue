@@ -239,7 +239,9 @@ function submit() {
                   divided
                   @update:model-value="setBilling"
                 >
+                  <!-- eslint-disable-next-line vue/no-restricted-syntax -- 分段切换里的一格，属于 v-btn-toggle，不是 BaseButton 的四种角色 -->
                   <v-btn value="monthly" size="small">{{ t('credits.planDialog.billingMonthly') }}</v-btn>
+                  <!-- eslint-disable-next-line vue/no-restricted-syntax -- 分段切换里的一格，属于 v-btn-toggle，不是 BaseButton 的四种角色 -->
                   <v-btn value="windows" size="small">{{ t('credits.planDialog.billingWindows') }}</v-btn>
                 </v-btn-toggle>
               </div>
