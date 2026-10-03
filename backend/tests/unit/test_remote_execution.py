@@ -109,7 +109,7 @@ def test_unavailable_search_tools_do_not_search_the_session_host():
     """)
 
 
-def test_isolated_subagents_are_refused_with_the_way_that_works():
+def test_isolated_subagents_run_without_the_isolation_they_asked_for():
     _run_proxy("""
         import assert from 'node:assert/strict';
         const url = 'data:text/javascript;base64,' + process.argv[1];
@@ -118,12 +118,19 @@ def test_isolated_subagents_are_refused_with_the_way_that_works():
         register((event, handler) => {handlers[event] = handler});
         const $ = {env: {get: async () => undefined}};
         for (const isolation of ['worktree', 'remote']) {
+          let handed_back = null;
           const result = await handlers['tool.call']($, {
             tool: 'Agent', tool_use_id: 'spawn', description: 'look',
             prompt: 'list files', isolation,
-          }, () => {throw new Error('spawned on the session host')});
-          assert.match(result.deny, /omit isolation/);
-          assert.match(result.deny, /cheese_task/);
+          }, (event) => {
+            handed_back = event;
+            return {result: [{type: 'text', text: 'listed'}]};
+          });
+          assert.equal(handed_back.tool, 'Agent');
+          assert.equal('isolation' in handed_back, false);
+          assert.equal(handed_back.prompt, 'list files');
+          assert.match(result.result[0].text, /isolation was ignored/);
+          assert.deepEqual(result.result[1], {type: 'text', text: 'listed'});
         }
         const spawned = await handlers['tool.call']($, {
           tool: 'Agent', tool_use_id: 'spawn', description: 'look',
