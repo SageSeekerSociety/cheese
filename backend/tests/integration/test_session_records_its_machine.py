@@ -90,6 +90,7 @@ def channel(client, monkeypatch, executors=("executor",)):
     online = {"center", "center-two", *client.session_test_devices.values()}
     hub: Any = SimpleNamespace(
         is_online=lambda device: device in online,
+        reconnecting=lambda device: False,
         # No session is running on the session host: `_ensure_screen` is
         # stubbed, so every turn starts one.
         all_online_screens=lambda: [],

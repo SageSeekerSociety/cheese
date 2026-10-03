@@ -13,6 +13,16 @@ from app.domain.agent.device_hub import DeviceHub, DeviceOffline
 from tests.support import wire
 
 
+@pytest.fixture(autouse=True)
+def _machines_here_do_not_come_back(monkeypatch):
+    """Every machine in this file that loses its link is gone for good, so a
+    call to it is answered at once. Waiting for one that is on its way back is
+    `test_device_reconnect_grace.py`."""
+    from app.domain.agent import device_hub
+
+    monkeypatch.setattr(device_hub, "RECONNECT_GRACE_S", 0.0)
+
+
 class FakeDeviceTransport:
     def __init__(self) -> None:
         self.sent: list[dict] = []
