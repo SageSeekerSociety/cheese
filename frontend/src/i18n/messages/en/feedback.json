@@ -529,10 +529,23 @@
     "resolved": "Resolved",
     "deployed": "Deployed",
     "unknown": "Unknown",
-    "declined": "Won't fix"
+    "declined": "Won't fix",
+    "pending": {
+      "received": "Receive",
+      "in_progress": "Process",
+      "resolved": "Resolve",
+      "deployed": "Deploy"
+    },
+    "passed": {
+      "received": "Received",
+      "in_progress": "Processed",
+      "resolved": "Resolved",
+      "deployed": "Deployed"
+    }
   },
   "timeline": {
-    "notStarted": "Not started"
+    "notStarted": "Not started",
+    "noRecord": "No record"
   },
   "kind": {
     "bug": "Bug",

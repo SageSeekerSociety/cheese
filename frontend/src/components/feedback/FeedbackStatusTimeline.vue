@@ -3,7 +3,7 @@ import type { FeedbackStatus, FeedbackTimelineEntry } from '@/cx_types'
 
 import { computed } from 'vue'
 
-import { statusLabel } from './feedbackLabels'
+import { passedStatusLabel, pendingStatusLabel, statusLabel } from './feedbackLabels'
 
 import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
@@ -23,6 +23,19 @@ import { relTime } from '@/lib/relTime'
 //
 // 走过的步骤用实心点 + 状态色，当前这一步额外用实心底；还没到的用空心。**形状和
 // 颜色一起变**：只靠颜色的话，灰度截图和色觉障碍的读者看到的是四个一样的点。
+//
+// 说明栏上「没有记录」分两种，说的都是**记录**，不是这件事做没做。当前这一步**之后**
+// 的，是真的还没轮到，写「未开始」。当前这一步**之前**的，是这一步已经过去了、却
+// 没有单独留下时间：`STATUS_LADDER` 允许直达，直达不补写中间那几行 —— 管理端按键
+// 今天仍能一步跳到后面，更新之前的数据多半就是这么留下的。所以那里两个词都不能用
+// ——「未开始」在说它还没到，可它已经过去了；「跳过」在说有人绕开了流程，可它多半
+// 只是没被单独按一下。能说的只有记录本身：无记录。
+//
+// 档位的名字分三副面孔：还没轮到的不能顶着「已修复」—— 中文的「已」和英文的过去分词
+// （Resolved）都在说「已经」，而这一步还没发生，所以用 `pendingStatusLabel`
+// （修复 / Resolve）；正在这一步的用 `statusLabel`（已修复 / Resolved）；已经走过去
+// 的用 `passedStatusLabel`，它只在「处理中」这一档和上一副不同 —— 有人正在弄的那一
+// 档，走过去了就该是「已处理」。
 const props = defineProps<{
   timeline: FeedbackTimelineEntry[]
   status: FeedbackStatus
@@ -69,14 +82,18 @@ const steps = computed<Step[]>(() => {
     // 同一状态可能被推进过两次（回退再推进），取**最早**那一次：时间线记的是
     // 「什么时候到过这里」，不是「最后一次是什么时候改回来的」。
     const entry = props.timeline.find((e) => e.status === status)
+    const done = index < currentIndex
+    const current = index === currentIndex
     return {
       status,
-      label: statusLabel(status),
+      // 三副面孔：还没轮到的、正在这一步的、已经走过去的。「处理中」走过去之后要
+      // 变成「已处理」—— 它说的是「有人正在弄」，可这一步已经过去了。
+      label: current ? statusLabel(status) : done ? passedStatusLabel(status) : pendingStatusLabel(status),
       at: entry?.at ?? null,
       by: entry?.by_handle ?? null,
       note: noteParts(entry?.note),
-      done: index < currentIndex,
-      current: index === currentIndex,
+      done,
+      current,
     }
   })
 })
@@ -99,7 +116,9 @@ const steps = computed<Step[]>(() => {
         <div v-if="step.at" class="t-meta-read t-num">
           {{ relTime(step.at) }}<template v-if="step.by"> · <UserRef :handle="step.by" /></template>
         </div>
-        <div v-else class="t-meta-read t-num">{{ t('feedback.timeline.notStarted') }}</div>
+        <div v-else class="t-meta-read t-num">
+          {{ t(step.done ? 'feedback.timeline.noRecord' : 'feedback.timeline.notStarted') }}
+        </div>
         <div v-if="step.note.length" class="t-meta-read fb-step__note">
           <template v-for="(part, i) in step.note" :key="i">
             <a v-if="part.href" :href="part.href" target="_blank" rel="noopener noreferrer">{{ part.text }}</a>

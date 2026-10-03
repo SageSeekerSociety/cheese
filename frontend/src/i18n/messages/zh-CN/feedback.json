@@ -529,10 +529,23 @@
     "resolved": "已修复",
     "deployed": "已上线",
     "unknown": "未知",
-    "declined": "不修复"
+    "declined": "不修复",
+    "pending": {
+      "received": "收录",
+      "in_progress": "处理",
+      "resolved": "修复",
+      "deployed": "上线"
+    },
+    "passed": {
+      "received": "已收录",
+      "in_progress": "已处理",
+      "resolved": "已修复",
+      "deployed": "已上线"
+    }
   },
   "timeline": {
-    "notStarted": "未开始"
+    "notStarted": "未开始",
+    "noRecord": "无记录"
   },
   "kind": {
     "bug": "Bug",
