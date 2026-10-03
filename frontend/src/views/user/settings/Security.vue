@@ -713,7 +713,7 @@ onMounted(async () => {
 
    On the wide layout the row is one line: a device's details that wrap to a
    second line push the row taller than the sign-out button beside it and the
-   button looks misaligned. So at md and up the parts are laid out inline in a
+   button looks misaligned. So at sm (600px) and up the parts are laid out inline in a
    single clipped line — anything past the edge is hidden and the full text is
    on `title`. Below md the row has its own full-width line and wraps freely. */
 .srow__v--parts {
