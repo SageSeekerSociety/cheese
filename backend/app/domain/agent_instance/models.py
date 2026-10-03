@@ -7,13 +7,27 @@ A project always has at least this one row: it is created with its 芝士 and a
 seat for it in the project's own room (结论 4).
 """
 
+import enum
 import uuid
 
-from sqlalchemy import JSON, Boolean, ForeignKey, String, UniqueConstraint
+from sqlalchemy import JSON, Boolean, Enum, ForeignKey, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
 from app.domain.common import Timestamps, UuidPk
+
+
+class NameSource(enum.StrEnum):
+    """Whether an agent still carries the name the platform gave it.
+
+    ``default`` is the name a project's first agent is born with, stored as
+    「芝士」 because agents and prompts read it; each screen shows it in its
+    reader's language until somebody names the agent. ``human`` is a name a
+    person chose, shown as written.
+    """
+
+    default = "default"
+    human = "human"
 
 
 class AgentInstance(UuidPk, Timestamps, Base):
@@ -35,6 +49,11 @@ class AgentInstance(UuidPk, Timestamps, Base):
     # Creation provenance only; runtime reads this agent's saved configuration.
     configuration: Mapped[dict] = mapped_column(JSON, nullable=False)
     display_name: Mapped[str] = mapped_column(String(64), default="")
+    name_source: Mapped[NameSource] = mapped_column(
+        Enum(NameSource, native_enum=False, length=16),
+        default=NameSource.human,
+        server_default=NameSource.human.value,
+    )
     # Retiring an agent cannot delete this row: the memory pool is keyed by
     # ``handle`` and the rooms already working with it point at its id, so
     # dropping the row would strand both. It stays, and stops being offered.

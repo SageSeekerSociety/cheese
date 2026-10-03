@@ -16,7 +16,7 @@ import { tryOnScopeDispose } from '@vueuse/core'
 
 import { listTopicMembers } from '../../../api'
 import { t } from '../../../i18n'
-import { agentNames } from '../../../lib/agentNames'
+import { agentNames, memberName } from '../../../lib/agentNames'
 import { isAgentBlock } from '../../../lib/authorship'
 import { isExternalMember } from '../../../lib/externalMembers'
 import { onTopicRosterChange } from '../../../lib/topicRosterChanges'
@@ -82,10 +82,16 @@ export function useRoomRoster(options: {
 
   // 名册那一行有三种形状：话题名册是 member_handle，项目名册是 user_handle，而 @
   // 补全名单已经把它们归一到 handle 了。这里只关心「它叫什么、它的 handle 是哪个」。
-  type RosterRow = { name?: string; handle?: string; member_handle?: string; user_handle?: string }
+  type RosterRow = {
+    name?: string
+    name_source?: string
+    handle?: string
+    member_handle?: string
+    user_handle?: string
+  }
   function seatOf(row: RosterRow | null | undefined): { handle: string; label: string } | null {
     const handle = row?.member_handle || row?.user_handle || row?.handle
-    return handle ? { handle, label: row?.name || handle } : null
+    return handle ? { handle, label: memberName(row) || handle } : null
   }
 
   // 这个房间名册上坐着的 AI 队友。
@@ -123,7 +129,7 @@ export function useRoomRoster(options: {
     // handle。人在项目名册上照样 @ 得到，缺的只是这一个房间自己的那几行。
     const room = (rosterLoaded.value ? roomMembers.value : []).map((m) => ({
       handle: m.member_handle,
-      label: m.name || m.member_handle,
+      label: memberName(m) || m.member_handle,
       agent: !!m.agent,
       external: isExternal(m.member_handle),
       role: m.role,

@@ -26,6 +26,7 @@ import AppPage from '@/components/common/AppPage.vue'
 import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
 import NeedsYou from '@/components/NeedsYou.vue'
 import { t } from '@/i18n'
+import { memberName } from '@/lib/agentNames'
 import { isAgentHandle } from '@/lib/authorship'
 import { BOARD_COLUMNS, columnDotStyle, columnLabel, compareTasks, liveBoardTasks, phraseLabel } from '@/lib/board'
 import { readProjectTasks } from '@/lib/projectTasks'
@@ -130,7 +131,7 @@ const memberByHandle = computed(() => new Map((store.members as ProjectMemberRow
  *  `ChatPanel.vue` 的 `displayName`）—— 退回空白等于把「这条活有主」也一起抹掉。 */
 function ownerName(handle?: string | null): string {
   if (!handle) return ''
-  return memberByHandle.value.get(handle)?.name || handle
+  return memberName(memberByHandle.value.get(handle)) || handle
 }
 
 // 真头像加载失败过的 handle —— 退回彩色首字母，不留破图。

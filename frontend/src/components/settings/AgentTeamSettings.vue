@@ -28,6 +28,7 @@ import {
 import AgentEditorDialog from '@/components/agents/AgentEditorDialog.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import { t } from '@/i18n'
+import { teammateName } from '@/lib/agentNames'
 import { memoryCountsByHandle, typeLabel } from '@/lib/projectAgents'
 import { relTime } from '@/lib/relTime'
 
@@ -219,14 +220,16 @@ async function confirmDeactivate() {
         <div class="agent-head">
           <div class="agent-head__id">
             <CheeseAvatar
-              :name="a.display_name || a.handle"
+              :name="teammateName(a.display_name, a.name_source) || a.handle"
               :handle="a.seat_handle"
               :size="36"
               class="mr-3 flex-shrink-0"
             />
             <div class="min-w-0">
               <div class="d-flex align-center flex-wrap ga-2">
-                <span class="t-title agent-head__name">{{ a.display_name || a.handle }}</span>
+                <span class="t-title agent-head__name">{{
+                  teammateName(a.display_name, a.name_source) || a.handle
+                }}</span>
                 <v-chip v-if="a.is_default" size="x-small" color="primary" variant="tonal">{{
                   t('work.projectSettings.agents.default')
                 }}</v-chip>
@@ -288,7 +291,8 @@ async function confirmDeactivate() {
           <v-icon color="error" class="mr-2">mdi-account-off-outline</v-icon>
           <span class="t-title">{{
             t('work.projectSettings.agents.deactivateTitle', {
-              name: deactivateTarget.display_name || deactivateTarget.handle,
+              name:
+                teammateName(deactivateTarget.display_name, deactivateTarget.name_source) || deactivateTarget.handle,
             })
           }}</span>
         </div>

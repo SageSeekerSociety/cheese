@@ -20,7 +20,7 @@ import PushPermissionPrompt from '@/components/PushPermissionPrompt.vue'
 import TopicHeader from '@/components/TopicHeader.vue'
 import WorkPanel from '@/components/WorkPanel.vue'
 import { t } from '@/i18n'
-import { agentNames } from '@/lib/agentNames'
+import { agentNames, memberName } from '@/lib/agentNames'
 import { announceComments } from '@/lib/docCommentSignals'
 import { onTopicRosterChange } from '@/lib/topicRosterChanges'
 import { topicTitle } from '@/lib/topicState'
@@ -316,7 +316,7 @@ const unreadOnOpen = store.unreadMap[props.topicId] ?? 0
 // （`agentNames`）：已经不在这间房里的队友，项目名册上还叫得出。
 const roomMembers = ref<TopicMemberRow[]>([])
 const memberNames = computed<Record<string, string>>(() => ({
-  ...Object.fromEntries(roomMembers.value.map((m) => [m.member_handle, m.name || m.member_handle])),
+  ...Object.fromEntries(roomMembers.value.map((m) => [m.member_handle, memberName(m) || m.member_handle])),
   ...Object.fromEntries(agentNames(roomMembers.value, store.members)),
 }))
 async function loadMemberNames() {

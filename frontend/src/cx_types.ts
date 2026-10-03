@@ -418,6 +418,7 @@ export interface ProjectMemberRow {
   // source 为 team 时，带他进来的那个团队的 handle（团队页 `/teams/<handle>`）。
   team_handle?: string
   name?: string
+  name_source?: 'default' | 'human'
   // 这个人**自己选的**头像素材 id（getAvatarUrl 拼成 /avatars/{id}）。两种情况
   // 为 null：名册行背后没有 fusion 用户档案，或者他从来没设过头像（档案还指着
   // 全局默认头像，后端已替我们判掉）。两种都用彩色首字母兜底 —— 别去取
@@ -463,6 +464,7 @@ export interface TopicMemberRow {
   // 芝士那一行上，这是**这个房间现在交给的那个队友**的名字（换队友就跟着变），
   // 不是座位账号的昵称 —— 座位昵称是建号时写死的常量，永远是「芝士」。
   name?: string
+  name_source?: 'default' | 'human'
   // 这个人**自己挑的**头像素材 id，同 ProjectMemberRow.avatar_id：没挑过就是
   // null，画彩色首字母。别拿它去取 /avatars/default。
   avatar_id?: number | null
@@ -583,6 +585,7 @@ export interface ProfileUnderstanding {
   project_name: string | null
   agent_handle: string | null
   agent_name: string | null
+  agent_name_source?: string | null
 }
 
 // GET /api/users/{handle}/profile — cut to what the viewer may see.
@@ -1056,19 +1059,6 @@ export interface ProjectComputeConfigs {
   distribution: ComputeDistribution
 }
 
-// One agent session on a self-hosted device, as the bulk switch lists it; `working` = mid-turn, left alone.
-export interface DeviceSession {
-  id: string
-  topic_id: string
-  topic_title: string
-  topic_title_source?: string
-  agent_handle: string
-  agent_name: string
-  choice: ComputeChoice
-  last_active: string
-  working: boolean
-}
-
 export interface ComputeDistribution {
   cloud: number
   devices: { device_id: string | null; name: string | null; agents: number; machine_access: boolean }[]
@@ -1185,6 +1175,7 @@ export interface DeviceUser {
   topic_title_source?: string
   agent_handle: string
   agent_name: string
+  agent_name_source?: string
 }
 
 // A team the signed-in user belongs to (GET /teams/my-teams) — trimmed to what
@@ -1241,6 +1232,7 @@ export interface ProjectAgent {
   seat_handle: string
   type_name: string | null
   display_name: string
+  name_source?: 'default' | 'human'
   // What a new topic in this project gets.
   is_default: boolean
   // False = 已停用. Still listed and still working in the topics that already
