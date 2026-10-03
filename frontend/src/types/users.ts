@@ -10,6 +10,9 @@ export type User = {
   // Only on the signed-in person's own record: the account has no address of
   // its own yet and must add one.
   emailMissing?: boolean
+  // Only on the signed-in person's own record: the UI language they picked,
+  // null until they have; what their push notifications are written in.
+  language?: string | null
 }
 
 // 实名认证状态

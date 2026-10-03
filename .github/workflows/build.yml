@@ -310,8 +310,11 @@ jobs:
           # The connector sources live at the repo root, outside the backend
           # context; without this the image ships no cheesehost binaries and
           # one-line device enrollment 404s.
+          # The sentence catalogs are the frontend's; the backend renders push
+          # and desktop notices from the same files (backend/Dockerfile).
           build-contexts: |
             cli=./cli
+            i18n=./frontend/src/i18n/messages
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,version=2,scope=backend

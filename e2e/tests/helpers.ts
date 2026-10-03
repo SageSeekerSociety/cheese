@@ -43,6 +43,31 @@ export async function acceptPendingConsents(page: Page, token: string): Promise<
     throw new Error("同意之后仍然有欠着的协议");
 }
 
+// The UI language is kept on the account, and a page signing in as it shows that
+// language. Every scenario signs in as the same demo account, so each one states
+// the language it reads instead of inheriting what the previous one left.
+export async function setDemoLanguage(
+  page: Page,
+  language: "zh-CN" | "en",
+  token?: string,
+): Promise<void> {
+  let accessToken = token;
+  if (!accessToken) {
+    const signedIn = await page.request.post("/api/users/auth/login", {
+      data: { username: DEMO_USERNAME, password: DEMO_PASSWORD },
+    });
+    if (!signedIn.ok())
+      throw new Error(`API login → ${signedIn.status()} ${await signedIn.text()}`);
+    accessToken = (await signedIn.json()).data.accessToken as string;
+  }
+  const saved = await page.request.put("/api/users/me/language", {
+    headers: { Authorization: `Bearer ${accessToken}` },
+    data: { language },
+  });
+  if (!saved.ok())
+    throw new Error(`PUT language → ${saved.status()} ${await saved.text()}`);
+}
+
 // Set up non-auth browser scenarios through the real login and consent APIs.
 // Each Playwright test has a fresh context; the UI login path is covered in
 // auth.spec.ts instead of paying for that form navigation in every scenario.
@@ -61,6 +86,8 @@ export async function apiLogin(page: Page) {
     throw new Error("Demo login did not return a complete session");
 
   await acceptPendingConsents(page, loginData.accessToken);
+  // The suite reads Chinese (playwright.config.ts `locale`).
+  await setDemoLanguage(page, "zh-CN", loginData.accessToken);
 
   // This static asset gives the page the application's origin without booting
   // the SPA. Write storage once so later navigation cannot resurrect a session.

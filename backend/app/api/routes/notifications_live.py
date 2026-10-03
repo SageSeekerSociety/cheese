@@ -15,8 +15,11 @@ notifications (`desktop/src-tauri/src/notices.rs`):
   ``BEAT_SECONDS`` lets the app tell a dead connection from a quiet one, and is
   when a signed-out session closes the connection.
 
-Frames sent: ``{"kind": "notices", "latest": <id> | null, "items": [...]}``,
-``{"kind": "waiting", "count": n}``, ``{"kind": "beat"}``.
+Frames sent: ``{"kind": "notices", "latest": <id> | null, "items": [...],
+"away": <text>}``, ``{"kind": "waiting", "count": n}``, ``{"kind": "beat"}``.
+Every text in them is in the person's language; ``away`` (present when there
+are items) is the one line the app shows for a backlog too long to show one by
+one.
 """
 
 from __future__ import annotations
