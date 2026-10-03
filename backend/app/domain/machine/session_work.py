@@ -21,7 +21,7 @@ from app.domain.agent.compute_configs import (
     choice_label,
     room_choice,
 )
-from app.domain.agent.device_hub import DeviceCallError, device_hub
+from app.domain.agent.device_hub import DeviceCallError, DeviceOffline, device_hub
 from app.domain.agent.device_provider import (
     _preview_ws_url,
     device_api_base,
@@ -1166,13 +1166,22 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
                 target["environment_status"] = status
         if target["status"] == "ready":
             await execution.call(target, "ping", {}, hub=hub)
-    except Exception:
+    except Exception as exc:
         # Setup is resumable at the same physical allocation; it is not a
         # dispatched model operation and must not create a replacement lease.
         row = await sessions.by_id(session_id, lock=True)
         if row and (row.work_lease or {}).get("claim") == claim:
             row.work_lease = {**holding, "claim_until": now.isoformat()}
-            await db.commit()
+        await db.commit()
+        if isinstance(exc, DeviceOffline):
+            # The machine went away while its executor was being set up: the
+            # same answer as when it is away before setup starts (above).
+            if choice.profile == "cloud":
+                return _Preparing(
+                    "云端工作电脑正在准备；对话和平台工具仍可用。",
+                    partial(_cloud_progress, db, hub, machine.id),
+                )
+            return {"unavailable": "工作电脑未连接；对话和平台工具仍可用。"}
         raise
     current = await TopicService(db).lock_for_execution(topic_id)
     row = await sessions.by_id(session_id, lock=True)

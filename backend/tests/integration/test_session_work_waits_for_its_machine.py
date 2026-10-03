@@ -213,6 +213,39 @@ def test_a_new_rooms_first_command_waits_for_its_own_machine(cloud_rooms, monkey
     assert installed_on == ["older-rooms-machine", "new-rooms-machine"]
 
 
+def test_a_machine_that_drops_while_it_is_set_up_is_still_being_prepared(
+    cloud_rooms, monkeypatch
+):
+    """The incident behind it: a room's freshly claimed machine lost its link
+    as its executor was being installed, and the agent was answered with a raw
+    409 and the word offline, seven seconds before the machine was back. That
+    is the machine still being prepared, and the command runs once it is."""
+    from app.domain.agent.device_hub import DeviceOffline
+
+    case = cloud_rooms
+    monkeypatch.setattr(work_lease, "PREPARING_WAIT_S", 30.0)
+    assert _lease(case, case.new, timeout=0.001).json()["data"]["preparing"]
+    _machine_is_up(case, case.new[1], "new-rooms-machine")
+
+    install = case.hub.exec.side_effect
+
+    async def drops_once(device, argv, **kwargs):
+        if case.hub.exec.await_count == 1:
+            case.online.discard(device)
+            raise DeviceOffline(device)
+        return await install(device, argv, **kwargs)
+
+    case.hub.exec.side_effect = drops_once
+    with ThreadPoolExecutor(max_workers=1) as requests:
+        pending = requests.submit(_lease, case, case.new)
+        time.sleep(1.5)
+        assert not pending.done(), "The command waits for the machine to return"
+        case.online.add("new-rooms-machine")
+        answer = pending.result(timeout=20)
+    assert answer.status_code == 200, answer.text
+    assert answer.json()["data"]["target"]["device_id"] == "new-rooms-machine"
+
+
 def test_a_session_that_will_not_wait_is_still_answered(cloud_rooms):
     """A session relaunched onto its machine takes it without waiting: it asks
     with the smallest timeout the route accepts. That caps the wait, not the
