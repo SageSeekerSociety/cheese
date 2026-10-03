@@ -1002,9 +1002,9 @@ export const CATALOG: CatalogEntry[] = [
     needs: UI,
     states: [
       { name: '主操作', note: '一块区域里让事情往下走的那一颗，琥珀实心。同一组并排按钮里只有一颗。', props: { kind: 'primary' }, slot: '提交', expect: '提交' },
-      { name: '次要', note: '和主操作并排的其余操作。描边用 --line-2，字用 --text，不抢主操作。', props: { kind: 'secondary' }, slot: '取消', expect: '取消' },
-      { name: '轻量', note: '工具条、列表行、卡片角落里的操作。无底无框，字用 --muted，悬停变深。', props: { kind: 'ghost' }, slot: '查看全部', expect: '查看全部' },
-      { name: '危险', note: '删除、移除这类不可逆操作。字用 --danger-ink，不用 --danger 写字。', props: { kind: 'danger' }, slot: '移除成员', expect: '移除成员' },
+      { name: '次要', note: '独立出现、要被看见、但不是主操作：设置行里的「修改」「添加」。描边用 --line-2，字用 --text。', props: { kind: 'secondary' }, slot: '修改', expect: '修改' },
+      { name: '轻量', note: '「取消」「返回」、工具条、列表行、卡片角落里的操作。无底无框，字用 --muted，悬停变深。', props: { kind: 'ghost' }, slot: '取消', expect: '取消' },
+      { name: '危险', note: '直接生效、不再确认的破坏性操作。字用 --danger-ink。会先弹确认的入口用轻量。', props: { kind: 'danger' }, slot: '清空记录', expect: '清空记录' },
       { name: '危险（确认）', note: '只用在确认弹窗里那一颗「删除」：实心红。', props: { kind: 'danger', solid: true }, slot: '删除', expect: '删除' },
       { name: '小号', note: '28px：列表行、工具条、卡片内。字号 13。', props: { kind: 'secondary', size: 'sm' }, slot: '重试', expect: '重试' },
       { name: '大号', note: '44px：门口页面的单个大按钮、手机上整行宽的提交。', props: { kind: 'primary', size: 'lg' }, slot: '登录', expect: '登录' },
