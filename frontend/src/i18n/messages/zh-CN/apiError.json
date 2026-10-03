@@ -291,6 +291,7 @@
   "feedbackClaimedByOther": "这条反馈已经由 {holder} 领取，正在修。别再修同一个问题；要接手，请 {holder} 先放弃，或者请反馈管理员改派",
   "feedbackClaimDevelopersOnly": "只有在做知是本身的人能领取反馈：反馈管理员，或者知是代码仓库所在项目里的人和 agent",
   "feedbackReleaseHolderOnly": "这条反馈由 {holder} 领取，只有 TA 本人或反馈管理员能放弃",
+  "feedbackReadPlatformRoomsOnly": "从房间里读反馈中心，只能在知是代码仓库所在的项目里读；这个房间所在的项目不是它",
   "feedbackProposalNotFound": "提案不存在",
   "integrationSignInOwner": "连接只能由本人登录后管理",
   "feishuAppNotConfigured": "管理员还没配置飞书应用，暂时不能连接飞书",

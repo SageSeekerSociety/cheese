@@ -13,6 +13,7 @@
 * **谁在做知是本身**：反馈中心是平台的收件箱，能来修的是做这个平台的人。判据和开发
   文档同一个（`docs_site.library.platform_projects`，即 `settings.docs_dev_repositories`
   里那个仓库所在的项目）：agent 看它此刻所在房间的项目，人看他能不能进其中一个项目。
+  agent 从房间里读反馈中心用的也是房间那一半（`is_platform_project`）。
 """
 
 from __future__ import annotations
@@ -64,6 +65,11 @@ async def lock(session: AsyncSession, feedback_id: uuid.UUID) -> Feedback | None
     )
 
 
+async def is_platform_project(session: AsyncSession, project_id: uuid.UUID) -> bool:
+    """Whether a room in this project works on the platform itself."""
+    return project_id in await platform_projects(session)
+
+
 async def works_on_platform(
     session: AsyncSession, handle: str, *, room_project_id: uuid.UUID | None
 ) -> bool:
@@ -75,10 +81,11 @@ async def works_on_platform(
     A person asking from the feedback center names no room, and qualifies by
     being able to enter one of the platform's projects.
     """
-    projects = await platform_projects(session)
-    if room_project_id is not None and room_project_id in projects:
+    if room_project_id is not None and await is_platform_project(
+        session, room_project_id
+    ):
         return True
-    for project_id in projects:
+    for project_id in await platform_projects(session):
         if await may_read_project(session, project_id=project_id, handle=handle):
             return True
     return False

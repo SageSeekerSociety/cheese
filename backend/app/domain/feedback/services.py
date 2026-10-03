@@ -254,6 +254,18 @@ class FeedbackService:
             self._session, handle, room_project_id=room_project_id
         )
 
+    async def require_platform_room(self, room_project_id: uuid.UUID) -> None:
+        """403 unless a room in this project may read the feedback center.
+
+        An agent reads the center from its room (its credential is bound to one),
+        and only from a room of a project working on the platform itself — the
+        same projects that may claim (`claims.works_on_platform`). Elsewhere it
+        could read the reports but not claim one, so it would only be reading
+        work it may not do; it is told why instead.
+        """
+        if not await claims.is_platform_project(self._session, room_project_id):
+            raise ForbiddenError(say("feedbackReadPlatformRoomsOnly"))
+
     # --- 读 -----------------------------------------------------------------
 
     async def list_public(
@@ -583,7 +595,12 @@ class FeedbackService:
         return await self.detail_of(row, handle=handle, is_admin=is_admin)
 
     async def detail_of(
-        self, row: Feedback, *, handle: str | None, is_admin: bool
+        self,
+        row: Feedback,
+        *,
+        handle: str | None,
+        is_admin: bool,
+        room_project_id: uuid.UUID | None = None,
     ) -> FeedbackDetail:
         """The assembled detail view — schema, not a bag of parts.
 
@@ -597,6 +614,10 @@ class FeedbackService:
         ``notes`` are admin-only: the field is always present so the frontend has
         one shape, and it is the service that empties it. The empty list is the
         absence, not a redaction the client is trusted to honour.
+
+        ``room_project_id`` is the room an agent reads from, which is how it
+        qualifies to claim (`may_claim`); without it ``can_claim`` would tell an
+        agent on the platform that it cannot.
         """
         page = await self._repo.page_comments(row.id)
         activity = await self._repo.latest_activity_of([row.id])
@@ -604,7 +625,9 @@ class FeedbackService:
         can_delete = self.may_delete_feedback(row, handle=handle, is_admin=is_admin)
         # 领取和放弃也一样：和 `claim` / `release` 同一处判据。
         holder = row.assignee_handle
-        can_claim = holder is None and await self.may_claim(handle, is_admin=is_admin)
+        can_claim = holder is None and await self.may_claim(
+            handle, is_admin=is_admin, room_project_id=room_project_id
+        )
         can_release = holder is not None and (is_admin or holder == handle)
         # Notes are admin-only, so resolving faces for them is not extra work a
         # non-admin pays for: the list is empty and contributes no handles.

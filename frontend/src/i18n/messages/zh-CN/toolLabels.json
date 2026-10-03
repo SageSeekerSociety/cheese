@@ -80,6 +80,8 @@
   "cheeseConvert": "转换文档格式",
   "cheeseRecalc": "重算表格公式",
   "cheeseFeedbackPropose": "提交反馈提案",
+  "cheeseFeedbackList": "查看反馈列表",
+  "cheeseFeedbackGet": "读一条反馈",
   "cheeseFeedbackClaim": "领取反馈",
   "cheeseFeedbackRelease": "放弃领取的反馈",
   "cheeseMachine": "申请设备",

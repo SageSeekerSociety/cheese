@@ -106,9 +106,25 @@ covers:
 
 领取存在只为一件事：**别让两个人修同一个问题**。所以第二个人的领取必须失败，回 409（`feedbackClaimedByOther`），原话里点名持有人，`error.data.holder` 也带着他——他下一步是去找那个人，不是换个说法再领一次。判「有没有人领着」之前先 `SELECT … FOR UPDATE` 锁住这一行（`claims.lock`）：两个同时到的领取，后到的那个在锁上等先到的提交，再读到它写下的名字。不锁的话两个都读到「没人」，后写的悄悄盖掉先到的，两个人都以为是自己在修。持有人自己再领一次是空操作。
 
-谁能领（`FeedbackService.may_claim`）：看得见这条（看不见的照旧 404），并且是反馈管理员，或者在做这个平台本身——判据和开发文档同一个，`settings.docs_dev_repositories` 里那个仓库所在的项目（`docs_site.library.platform_projects`）。人看他能不能进其中一个项目；agent 的凭据只认一个房间，所以它带上 `?topic=<房间>`，路由在那个房间里认出它（`authorize_topic`，`enforce=True`），再看房间的项目。不带房间的话，房间凭据在 `/feedback/*` 上会被拒（「This credential is restricted to one room」）——这也是 agent 没法拿 `platform_request` 读反馈中心的原因。agent 用的是 `cheese_feedback_claim` / `cheese_feedback_release` 两样工具（`backend/sandbox/cheese`），领到时它们把这条反馈的全文交给 agent，领不到时把原因原样转给它，并告诉它不要修。
+谁能领（`FeedbackService.may_claim`）：看得见这条（看不见的照旧 404），并且是反馈管理员，或者在做这个平台本身——判据和开发文档同一个，`settings.docs_dev_repositories` 里那个仓库所在的项目（`docs_site.library.platform_projects`）。人看他能不能进其中一个项目；agent 带上 `?topic=<房间>`（见[下一节](#agent-reads)），看房间的项目。agent 用的是 `cheese_feedback_claim` / `cheese_feedback_release` 两样工具（`backend/sandbox/cheese`），领不到时把原因原样转给它，并告诉它不要修。
 
 领取走 `advance` 记「处理中」，所以已经修好、上线、不修复的，领了也不动它的状态。放弃只清掉持有人，不退回状态，也不写时间线：「处理中」记的是有人动过它，放弃之后这件事也还是发生过。详情上的 `can_claim` / `can_release` 由服务端用同一处判据算好，详情页右栏「处理人」那一格照它画「领取」「放弃」两个按钮。
+
+## agent 读反馈中心 {#agent-reads}
+
+agent 的凭据只认一个房间：不说房间的 `/feedback/*` 请求会被拒（「This credential is restricted to one room」）。所以它要读的几条路由都收 `?topic=<房间>`，和领取一样在那个房间里认人（`_in_room`：`authorize_topic`，`enforce=True`，不在那个房间里就 403）：
+
+| 入口 | 作用 | agent 的工具 |
+| --- | --- | --- |
+| `GET /feedback` | 公开列表，栏位和 `q` / `status` / `kind` / `author` / `since` 筛选和页面同一份 | `cheese_feedback_list` |
+| `GET /feedback/{ref}` | 一条的详情：正文、时间线、第一页评论、`can_claim`。`ref` 是 `FB-12` 或 uuid | `cheese_feedback_get` |
+| `GET /feedback/{id}/comments` | 往下翻评论 | `cheese_feedback_get` 在评论多于一页时接着取 |
+
+带了房间，就只认做平台本身的项目里的房间（`FeedbackService.require_platform_room`，和领取同一个判据 `claims.is_platform_project`）；别的房间回 403（`feedbackReadPlatformRoomsOnly`）。反馈中心装的是平台本身的活，在别的项目里的 agent 一条也领不了，读到的只会是它不该动手的东西，所以直接告诉它为什么读不到。
+
+读到哪些，用的还是 `may_see`，handle 是 agent 自己的。agent 永远拿不到管理员那一臂（`_is_admin` 对带 agent 绑定的 handle 降级），所以它看见的就是项目里一个**不是反馈管理员的成员**看见的：公开的；它自己提过的（提案卡路径上作者是它）；提出时它在那个房间的名册里、今天还读得到那个房间的私密反馈。别人提的私密反馈、管理员标成安全问题的，它和那个成员一样是 404。列表只有公开的那一臂，私密的那几条只能拿编号读。
+
+写操作除了领取和放弃都不收房间：agent 不在反馈中心里评论、支持或删除。
 
 ## 修复合并、上线时自动改成「已修复」「已上线」 {#shipped}
 

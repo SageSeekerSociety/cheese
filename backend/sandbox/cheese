@@ -175,9 +175,25 @@ FEEDBACK_CLAIM_DESCRIPTION = (
     "**动手修一条反馈之前先领。领不到就不要修**：已经有人领着（返回里说是谁）、"
     "或者你所在的项目不是在做这个平台本身——把原因告诉用户，别换个办法接着修。\n"
     "\n"
-    "领到后返回这条反馈的全文。修它的提交在提交信息里单独写一行 "
+    "修它的提交在提交信息里单独写一行 "
     "`Fixes-feedback: FB-12`，合并和上线时平台会自动记「已修复」「已上线」。"
     "不修了用 `cheese_feedback_release` 放掉。"
+)
+
+FEEDBACK_LIST_DESCRIPTION = (
+    "列反馈中心里的公开反馈，新提的在前，每页 20 条：编号、状态、类型、标题、"
+    "支持数、评论数、谁领着。和反馈中心的列表是同一份，筛选也一样："
+    "`query` 搜标题和正文，`tab` 选栏（all 全部、hot 热门、active 进行中、"
+    "resolved 办完了），`status` / `kind` / `author` / `since` 叠在栏上再收窄。"
+    "私密反馈不在列表里；你提过的、或者你当时在房间里看着人提的那几条，"
+    "拿编号用 `cheese_feedback_get` 读得到。只有做这个平台本身的项目里的房间读得到"
+    "反馈中心，别的房间会被拒。"
+)
+
+FEEDBACK_GET_DESCRIPTION = (
+    "读反馈中心里一条反馈的全部：正文、复现、证据、状态和它的时间线、谁领着、"
+    "评论和回复。修一条反馈之前先读它，再 `cheese_feedback_claim` 领下来。"
+    "看不见的（私密且不是你提的，或者编号不存在）会说没有这一条，那就不要修。"
 )
 
 _FEEDBACK_REF = _text("反馈编号，如 FB-12（详情页上印的那个），或者它的 id")
@@ -613,6 +629,37 @@ PLATFORM_TOOLS = ToolTable(
                 "tags": _text("逗号分隔"),
             },
             ["title", "kind", "visibility", "user_said"],
+        ),
+        _tool(
+            "cheese_feedback_list",
+            FEEDBACK_LIST_DESCRIPTION,
+            {
+                "query": _text("搜索的文字，匹配标题和正文"),
+                "tab": {
+                    "type": "string",
+                    "enum": ["all", "hot", "active", "resolved"],
+                    "description": "哪一栏，默认 all",
+                },
+                "status": {
+                    "type": "string",
+                    "enum": list(_FEEDBACK_STATUS),
+                    "description": "只看这一个状态",
+                },
+                "kind": {
+                    "type": "string",
+                    "enum": ["bug", "suggestion", "other"],
+                    "description": "只看这一类",
+                },
+                "author": _text("只看这个人（handle）提的"),
+                "since": _text("只看这个时刻之后提的，ISO-8601"),
+                "offset": {"type": "integer", "description": "跳过前几条，翻页用"},
+            },
+        ),
+        _tool(
+            "cheese_feedback_get",
+            FEEDBACK_GET_DESCRIPTION,
+            {"feedback": _FEEDBACK_REF},
+            ["feedback"],
         ),
         _tool(
             "cheese_feedback_claim",
@@ -1179,10 +1226,28 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "path": f"/topics/{topic}/feedback-proposals",
             "body": body,
         }
+    # 反馈不属于房间（`/feedback` 下面），但读的、领的人是你：你的凭据只在这个房间
+    # 里认得出你，所以带上房间，后端在房间里认人，再拿房间的项目判你是不是在做这个
+    # 平台本身。
+    if tool == "cheese_feedback_list":
+        params = {
+            "topic": topic,
+            **_given(
+                args,
+                "query:q",
+                "tab",
+                "status",
+                "kind",
+                "author",
+                "since",
+                "offset:page_start",
+            ),
+        }
+        return {"method": "GET", "path": "/feedback?" + urllib.parse.urlencode(params)}
+    if tool == "cheese_feedback_get":
+        ref = urllib.parse.quote(str(args["feedback"]).strip(), safe="")
+        return {"method": "GET", "path": f"/feedback/{ref}?topic={topic}"}
     if tool in ("cheese_feedback_claim", "cheese_feedback_release"):
-        # 反馈不属于房间（`/feedback` 下面），但领的人是你：你的凭据只在这个房间里
-        # 认得出你，所以带上房间，后端在房间里认人，再拿房间的项目判你是不是在做
-        # 这个平台本身。
         ref = urllib.parse.quote(str(args["feedback"]).strip(), safe="")
         return {
             "method": "POST" if tool == "cheese_feedback_claim" else "DELETE",
@@ -1834,6 +1899,136 @@ def _feedback_refusal(exc: Exception) -> str | None:
         return None
 
 
+def _feedback_read(tool: str, args: dict, host) -> dict:
+    """One read of the feedback center, its refusals said to the agent."""
+    try:
+        return host.request(request_plan(tool, args, host.environ))
+    except Exception as exc:
+        status = getattr(exc, "status", None)
+        why = _feedback_refusal(exc)
+        if status == 404 and tool == "cheese_feedback_get":
+            raise PlatformToolError(
+                f"没有 {args['feedback']} 这条反馈，或者它是私密的、你看不见。"
+                "核对编号；看不见的不要修。"
+            ) from exc
+        if status in (400, 403) and why:
+            raise PlatformToolError(f"没读到：{why.rstrip('。')}。") from exc
+        raise
+
+
+def _feedback_card_line(item: dict) -> str:
+    status = _FEEDBACK_STATUS.get(item.get("status"), item.get("status"))
+    line = (
+        f"{item.get('display_id')} [{status}] {item.get('title')}"
+        f" — {item.get('kind')}，支持 {item.get('supports', 0)}，"
+        f"评论 {item.get('comments', 0)}"
+    )
+    if item.get("assignee_handle"):
+        line += f"，{item['assignee_handle']} 领着"
+    return line
+
+
+_FEEDBACK_FILTERS = ("query", "tab", "status", "kind", "author", "since")
+
+
+def _feedback_list(args: dict, host) -> str:
+    data = _feedback_read("cheese_feedback_list", args, host).get("data") or {}
+    items = data.get("data") or []
+    if not items:
+        return "没有符合条件的公开反馈。"
+    offset = args.get("offset") or 0
+    total = data.get("total", len(items))
+    lines = [f"共 {total} 条，这是第 {offset + 1}–{offset + len(items)} 条："]
+    lines += [_feedback_card_line(item) for item in items]
+    if offset + len(items) < total:
+        lines.append(
+            "下一页："
+            + _chat_call(
+                "cheese_feedback_list",
+                **{k: args[k] for k in _FEEDBACK_FILTERS if args.get(k)},
+                offset=offset + len(items),
+            )
+        )
+    lines.append("读某一条用 cheese_feedback_get(feedback=编号)。")
+    return "\n".join(lines)
+
+
+#: 日志可以很长（两万字），一次读回来会挤掉别的；前面这么多字通常够判断。
+_FEEDBACK_LOG_BUDGET = 4000
+
+
+def _feedback_get(args: dict, host) -> str:
+    item = _feedback_read("cheese_feedback_get", args, host).get("data") or {}
+    shown = item.get("display_id") or args["feedback"]
+    status = _FEEDBACK_STATUS.get(item.get("status"), item.get("status"))
+    lines = [
+        f"{shown}「{item.get('title')}」",
+        f"状态：{status}；类型：{item.get('kind')}；"
+        f"{'私密' if item.get('visibility') == 'private' else '公开'}；"
+        f"支持 {item.get('supports', 0)}",
+        f"提的人：{item.get('author_handle')}"
+        + (
+            f"（{item['submitted_by_handle']} 发出）"
+            if item.get("submitted_by_handle")
+            else ""
+        ),
+        f"领取：{item.get('assignee_handle') or '没人领着'}",
+    ]
+    for label, key in (
+        ("摘要", "summary"),
+        ("问题", "problem"),
+        ("为什么要紧", "why"),
+        ("发生了什么", "what_happened"),
+        ("怎么复现", "repro"),
+        ("期望", "expectation"),
+        ("证据", "evidence"),
+        ("环境", "environment"),
+    ):
+        if item.get(key):
+            lines.append(f"{label}：{item[key]}")
+    logs = item.get("logs") or ""
+    if logs:
+        lines.append(f"日志：{logs[:_FEEDBACK_LOG_BUDGET]}")
+        if len(logs) > _FEEDBACK_LOG_BUDGET:
+            lines.append(
+                f"（日志共 {len(logs)} 字，只给了前 {_FEEDBACK_LOG_BUDGET} 字）"
+            )
+    timeline = item.get("timeline") or []
+    if timeline:
+        lines.append("时间线：")
+        for step in timeline:
+            name = _FEEDBACK_STATUS.get(step.get("status"), step.get("status"))
+            by = f" {step['by_handle']}" if step.get("by_handle") else ""
+            note = f"（{step['note']}）" if step.get("note") else ""
+            lines.append(f"  {step.get('at')} {name}{by}{note}")
+    thread = list(item.get("thread") or [])
+    cursor = item.get("thread_next_cursor")
+    topic = host.environ.get("CHEESE_TOPIC", "")
+    while cursor:
+        query = urllib.parse.urlencode({"topic": topic, "after": cursor})
+        path = f"/feedback/{item['id']}/comments?{query}"
+        more = host.request({"method": "GET", "path": path}).get("data") or {}
+        thread += more.get("items") or []
+        cursor = more.get("next_cursor")
+    if thread:
+        lines.append(f"评论（{item.get('comments', len(thread))} 条）：")
+        for comment in thread:
+            indent = "    ↳ " if comment.get("parent_id") else "  "
+            lines.append(
+                f"{indent}{comment.get('author_handle')}：{comment.get('body')}"
+            )
+            hidden = comment.get("reply_count", 0) - sum(
+                1 for c in thread if c.get("parent_id") == comment.get("id")
+            )
+            if not comment.get("parent_id") and hidden > 0:
+                lines.append(f"    （还有 {hidden} 条回复没展开，到反馈中心看）")
+    if item.get("assignee_handle"):
+        lines.append(f"这一条 {item['assignee_handle']} 领着；不是你的就不要修。")
+    elif item.get("can_claim"):
+        lines.append(f'要修它，先 cheese_feedback_claim(feedback="{shown}") 领下来。')
+    return "\n".join(lines)
+
+
 def _feedback_claim(args: dict, host) -> str:
     try:
         data = host.request(request_plan("cheese_feedback_claim", args, host.environ))
@@ -1853,23 +2048,11 @@ def _feedback_claim(args: dict, host) -> str:
     item = data.get("data") or {}
     shown = item.get("display_id") or args["feedback"]
     status = _FEEDBACK_STATUS.get(item.get("status"), item.get("status"))
-    lines = [f"{shown}「{item.get('title')}」记在你名下了，现在是「{status}」。"]
-    for label, key in (
-        ("问题", "problem"),
-        ("为什么要紧", "why"),
-        ("发生了什么", "what_happened"),
-        ("怎么复现", "repro"),
-        ("期望", "expectation"),
-        ("证据", "evidence"),
-        ("环境", "environment"),
-    ):
-        if item.get(key):
-            lines.append(f"{label}：{item[key]}")
-    lines.append(
+    return (
+        f"{shown}「{item.get('title')}」记在你名下了，现在是「{status}」。"
         f"修它的提交在提交信息里单独写一行 `Fixes-feedback: {shown}`；"
         "不修了用 cheese_feedback_release 放掉。"
     )
-    return "\n".join(lines)
 
 
 def _feedback_release(args: dict, host) -> str:
@@ -1898,6 +2081,8 @@ _STEPS = {
     "cheese_accept_request": _accept_request,
     "cheese_tell": _tell,
     "platform_request": _platform_request,
+    "cheese_feedback_list": _feedback_list,
+    "cheese_feedback_get": _feedback_get,
     "cheese_feedback_claim": _feedback_claim,
     "cheese_feedback_release": _feedback_release,
 }

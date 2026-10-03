@@ -264,12 +264,13 @@ GitHub 项目直接使用原生 `gh`，Forgejo 项目直接使用原生 `fj`。�
 | `cheese_routine_pause(routine)` | 暂停一条规则：停的是执行，不是这条规则本身。你没有恢复的权限，请人来点 |
 | `cheese_routine_report(run, status, summary?, outputs?)` | 被一条规则唤起的那一轮**必须**交回结果（成功失败都要交），`status` 取 `succeeded`/`failed`，失败要写清原因。没交回结果的一轮会被记为失败。返回这一轮现在记着的状态、结果和产出 |
 | `cheese_feedback_propose(title, kind, visibility, user_said, why?, what_happened?, expectation?, repro?, evidence?, summary?, problem?, tags?, session_id?, environment?)` | 撞到平台本身的毛病时报一条——**你不是在抱怨,是在交证据**:一件事贴一两行,只写观察到的和期望的,错误原文短就照抄,根因没验证过就别写。落下的是一张**提案卡**,不是反馈:人在聊天里按「提交反馈」才算发布,所以提案之后不用等他,也别在正文里宣布你提了这件事——卡本身就是那句话。**agent 不能直接发布反馈**,这条是唯一的通道。`user_said` 必填:引用用户原话,用户没说过就照抄那句规定好的「用户没有就这个问题说过话,以上是芝士自己观察到的」。同一个话题一天最多两张;提过的、被「不用」过的会被拒(412),那不是故障也不是让你换个说法再提——别重试 |
-| `cheese_feedback_claim(feedback)` / `cheese_feedback_release(feedback)` | 领取、放掉反馈中心里的一条反馈（`feedback` 写 `FB-12` 或 id）。领到就记在你名下、状态变成「处理中」，别人再领会失败——这是为了不让两个人修同一个问题。**修一条反馈之前先领；领不到就不要修**，把返回的原因（谁已经领着，或者你所在的项目不是在做这个平台本身）告诉用户。领到时返回这条反馈的全文。不修了、修不了就放掉 |
+| `cheese_feedback_list(query?, tab?, status?, kind?, author?, since?, offset?)` / `cheese_feedback_get(feedback)` | 读反馈中心：列表和反馈中心页面上是同一份公开列表、同样的筛选，每页 20 条；`get` 读一条的全部（正文、时间线、谁领着、评论和回复）。`feedback` 写 `FB-12` 或 id。你看得见的和项目里一个不是反馈管理员的成员一样：公开的、你提过的、你当时在房间里看着人提的私密那几条。只有做这个平台本身的项目里的房间读得到，别的房间会被拒 |
+| `cheese_feedback_claim(feedback)` / `cheese_feedback_release(feedback)` | 领取、放掉反馈中心里的一条反馈。领到就记在你名下、状态变成「处理中」，别人再领会失败——这是为了不让两个人修同一个问题。**修一条反馈：先 `cheese_feedback_get` 读，再领，领到了才修；领不到就停下不修**，把返回的原因（谁已经领着，或者你所在的项目不是在做这个平台本身）告诉用户。不修了、修不了就放掉 |
 | `platform_request(find?, method?, path?, body?)` | **两张表里都没有的平台接口的入口**：给消息加表情、拉人进房间和改角色、回答问到你的选项问题、读自己的收件箱……房间成员在网页上能做的，多半在这里。接口或参数不确定时先只传 `find`（几个英文关键词，如 `reaction`、`members`、`inbox`），返回匹配接口的方法、路径、说明、参数和请求体字段，什么都不传列出接口分组；再传 `method`、`path`（相对 API 根，查询参数写进 path，如 `?topic=…`）和 `body` 调用，返回后端的 JSON 原文。只收发 JSON：取文件用 `cheese pull` / `cheese library get`，上传类接口调不了。用的是你的房间凭据，后端按你在房间里的角色和项目成员身份照常检查，跟同一个位置上的人一样：普通成员改不了名册，owner / admin 才能。被拒时读返回的原因，不要换路径绕。两张表里有的动作用表里那一样，它们校验多、返回的话也是写给你读的 |
 
 > 递卡前按**这个仓库自己的约定**（README/CONTRIBUTING/CI 配置写的那套 lint 和测试）先把检查跑绿——决定权在 PR 上的真 CI，红着递卡就是多一个来回。
 >
-> 这次提交修的是反馈中心里的一条反馈（编号形如 `FB-12`）时，动手之前先 `cheese_feedback_claim` 领下它；提交时在提交信息里单独顶格写一行 `Fixes-feedback: FB-12`（多条用逗号隔开；缩进的行不生效）。写在提交信息里，不写在 PR 描述里；`FB-` 前缀不能省，`#12` 在 GitHub 上指第 12 号 issue。带这一行的提交随部署上线后，那条反馈会自动改成「已上线」，并在时间线上附上 PR 链接。
+> 这次提交修的是反馈中心里的一条反馈（编号形如 `FB-12`）时，动手之前先 `cheese_feedback_get` 读它、`cheese_feedback_claim` 领下它，领不到就不修；提交时在提交信息里单独顶格写一行 `Fixes-feedback: FB-12`（多条用逗号隔开；缩进的行不生效）。写在提交信息里，不写在 PR 描述里；`FB-` 前缀不能省，`#12` 在 GitHub 上指第 12 号 issue。带这一行的提交随部署上线后，那条反馈会自动改成「已上线」，并在时间线上附上 PR 链接。
 
 ### `cheese` 的子命令
 
