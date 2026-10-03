@@ -28,6 +28,7 @@ import { getAvatarUrl } from '@/utils/materials'
 
 import IndexView from './IndexView.vue'
 
+import { closeOverlay } from '@/lib/backOut'
 import { pageBeforeSettings } from '@/lib/settingsReturn'
 import { useSpaceStore } from '@/stores/space'
 
@@ -95,6 +96,6 @@ watch(
 )
 
 function close() {
-  router.push(pageBeforeSettings({ name: 'SpacesDetailTasksList', params: { spaceId: spaceId.value } }))
+  closeOverlay(router, pageBeforeSettings({ name: 'SpacesDetailTasksList', params: { spaceId: spaceId.value } }))
 }
 </script>

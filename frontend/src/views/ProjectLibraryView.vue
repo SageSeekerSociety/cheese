@@ -28,6 +28,7 @@ import AppPage from '@/components/common/AppPage.vue'
 import FileBytesPreview from '@/components/common/FileBytesPreview.vue'
 import { useTopBarBack } from '@/components/common/topBarBack'
 import { t } from '@/i18n'
+import { closeOverlay } from '@/lib/backOut'
 import { relTime } from '@/lib/relTime'
 import { topicTitle } from '@/lib/topicState'
 import { usePageTitleStore } from '@/stores/title'
@@ -139,7 +140,9 @@ function open(file: LibraryFile) {
 function close() {
   const rest = { ...route.query }
   delete rest.file
-  void router.replace({ query: rest })
+  // 手机上开一份文件是 push 进一页，所以这里退一格能真的把它弹掉；桌面上开一份是
+  // replace（只换右边那一栏），退一格会退到资料库外面去 —— closeOverlay 认来路。
+  closeOverlay(router, { query: rest })
 }
 
 useTopBarBack(() =>

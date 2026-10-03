@@ -46,7 +46,8 @@ async function confirmLeave() {
   // 失败会走到 catch 里，挂出「退出失败」，而人其实已经退掉了 —— 他再点一次只会
   // 拿到 409。
   await Promise.allSettled([store.refreshMembers(), store.refreshProjects()])
-  void router.push({ name: 'HomeSpaces' })
+  // replace：退出成功后再按回退键，人不该又落回这个项目 —— 名册里已经没有他了。
+  void router.replace({ name: 'HomeSpaces' })
   leaving.value = false
 }
 </script>
