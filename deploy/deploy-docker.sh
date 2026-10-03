@@ -46,6 +46,10 @@ COMPOSE="${2:-$HERE/compose/docker-compose.base.yml}"
 PROJECT="${PROJECT:-cheese}"
 HEALTH_ATTEMPTS="${DEPLOY_HEALTH_ATTEMPTS:-15}"
 HEALTH_INTERVAL_SECONDS="${DEPLOY_HEALTH_INTERVAL_SECONDS:-3}"
+# How long a separately released owner is given to answer /healthz after the
+# deploy starts it. Only shortened in the deploy-scripts tests, which drive the
+# "owner never becomes healthy" path without waiting the real minute.
+OWNER_HEALTH_SECONDS="${DEPLOY_OWNER_HEALTH_SECONDS:-60}"
 APP_IMAGE_SOURCE="${DEPLOY_APP_IMAGE_SOURCE:-registry}"
 # Three attempts, 5s then 15s apart. A pull dies here for transient reasons far
 # more often than for real ones — a ghcr blip, or containerd failing to commit a
@@ -111,7 +115,7 @@ ensure_device_connection_owner() {
       || fail "device connection owner did not start; the running backend was not touched"
     started=true
   fi
-  while [ "$waited" -lt 60 ]; do
+  while [ "$waited" -lt "$OWNER_HEALTH_SECONDS" ]; do
     if curl -fsS -m 3 "http://127.0.0.1:${DEVICE_CONNECTION_PORT:-18083}/healthz" >/dev/null 2>&1; then
       [ "$started" = false ] || log "device connection owner is healthy"
       return
@@ -120,6 +124,94 @@ ensure_device_connection_owner() {
     waited=$((waited + 2))
   done
   fail "device connection owner is not healthy; the running backend was not touched"
+}
+
+preview_connection_container() {
+  dc ps -q preview-connection 2>/dev/null | head -n 1 || true
+}
+
+preview_connection_running() {
+  local container
+  container="$(preview_connection_container)"
+  [ -n "$container" ] \
+    && [ "$(docker inspect --format '{{.State.Running}}' "$container" 2>/dev/null || true)" = true ]
+}
+
+# The preview owner carries the machine preview tunnels and the preview content
+# hosts. It is released on its own (deploy/release-preview-connection.sh) exactly
+# like device-connection, so an ordinary app release leaves it alone. It is
+# started here, before any route switches and before any backend is rendered in
+# owner mode, so a helper never finds a backend that dropped the tunnel route:
+# the owner is up and healthy first, then api-front points at it, then the
+# backends are replaced into owner mode.
+ensure_preview_connection_owner() {
+  if [ "$PREVIEW_CONNECTION_MODE" != owner ]; then
+    # A legacy flip does not retire a running owner here: the routes still point
+    # at it, and the backends have not rolled back yet. Only once they have —
+    # in retire_preview_connection_owner, after the rollout — is it safe to stop
+    # it. Say which of the two situations this is, because "previews stay on the
+    # business backend" would be a lie while an owner is still serving them.
+    if preview_connection_running; then
+      log "previews stay on the running owner until the business backends are legacy"
+    else
+      log "previews stay on the business backend (PREVIEW_CONNECTION_MODE=legacy)"
+    fi
+    return 0
+  fi
+  local container started=false waited=0
+  container="$(preview_connection_container)"
+  if [ -n "$container" ] && [ "$(docker inspect --format '{{.State.Running}}' "$container" 2>/dev/null || true)" = true ]; then
+    log "leaving preview connection owner $container running across this app release"
+  else
+    log "starting the independently released preview connection owner"
+    dc up -d --no-deps preview-connection \
+      || fail "preview connection owner did not start; no route or backend was changed"
+    started=true
+  fi
+  while [ "$waited" -lt "$OWNER_HEALTH_SECONDS" ]; do
+    if curl -fsS -m 3 "http://127.0.0.1:${PREVIEW_CONNECTION_PORT}/healthz" >/dev/null 2>&1; then
+      [ "$started" = false ] || log "preview connection owner is healthy"
+      check_preview_connection_owner_sees_its_files
+      return
+    fi
+    sleep 2
+    waited=$((waited + 2))
+  done
+  fail "preview connection owner is not healthy; no route or backend was changed"
+}
+
+# A healthy owner is not enough: WORKSPACE_ROOT is a HOST path (a sandbox sibling
+# resolves its own `-v <src>` against the host daemon), so a subscription box
+# mounts the workspace tree at that same absolute path inside the backend too —
+# see deploy/compose/docker-compose.subscription.yml. Miss that mount on
+# preview-connection and the owner still reports /healthz while every static
+# preview and room-file read fails with a path that does not exist. Check the
+# owner's OWN resolved paths, with the same Settings the app reads, so a box-local
+# env that points them somewhere unmounted fails here and not on the first
+# preview. This runs after /healthz and BEFORE any route or backend change, so a
+# failure leaves the running previews untouched.
+check_preview_connection_owner_sees_its_files() {
+  if ! dc exec -T preview-connection python -c '
+import os
+from app.core.config import Settings
+
+settings = Settings()
+missing = []
+for name, path in (
+    ("workspace_root", settings.workspace_root),
+    ("storage_local_path", settings.storage_local_path),
+):
+    if not os.path.isdir(path):
+        missing.append(f"{name}={path}")
+if missing:
+    raise SystemExit("unmounted: " + ", ".join(missing))
+'; then
+    # The common cause is an owner that predates this check (started by an older
+    # compose without the host-path mirror): its mounts cannot be changed in
+    # place, so release it and deploy again. Say so, because "cannot see the
+    # files" on its own reads like a box-local env mistake.
+    fail "preview connection owner cannot see the files it serves (see the error above); no route or backend was changed — if the owner predates this release, dispatch 'Release preview connection owner' and deploy again"
+  fi
 }
 
 ensure_forgejo() {
@@ -224,6 +316,7 @@ ensure_journal_retention() {
 ensure_application_router() {
   [ -n "$ACTIVE_BACKEND_DIR" ] || return 0
   local config backup frontend_backup changed=false router_changed=false port
+  local owner_port routing_backup sites_backup site_domain
   config="${API_FRONT_CONF:-$(dirname "$ACTIVE_BACKEND_DIR")/nginx.conf}"
   [ -f "$config" ] || fail "api-front config not found: $config"
   # Seed from the actual serving frontend, including a successor left serving
@@ -252,41 +345,138 @@ ensure_application_router() {
       || fail "application router cannot reach the serving frontend"
   fi
 
+  # Everything api-front reads that this deploy may rewrite is backed up first,
+  # so a rejected config restores all of it together.
   backup="${config}.pre-device-connection"
   cp "$config" "$backup"
+  routing_backup="$ACTIVE_BACKEND_DIR/preview-routing.conf.pre-app-router"
+  rm -f "$routing_backup"
+  [ ! -f "$ACTIVE_BACKEND_DIR/preview-routing.conf" ] \
+    || cp "$ACTIVE_BACKEND_DIR/preview-routing.conf" "$routing_backup"
+  # The preview tunnel target for this deploy. owner points the routes at the
+  # owner's loopback port. legacy normally writes the backend — but only once no
+  # owner is serving: while an owner is still RUNNING its helpers are connected
+  # to it, and re-pointing the routes first would send their redials to a backend
+  # that has not rolled back to legacy yet (no tunnel route there, a 404, which
+  # ends the helper's retry loop for good). So a legacy flip that still has a
+  # running owner keeps the owner target through this pass, the backends roll
+  # back, and retire_preview_connection_owner re-points them afterwards.
+  if [ "$PREVIEW_CONNECTION_MODE" = owner ] \
+    || { [ "${PREVIEW_ROUTE_FORCE_BACKEND:-0}" != 1 ] && preview_connection_running; }; then
+    owner_port="$PREVIEW_CONNECTION_PORT"
+  else
+    owner_port=""
+  fi
+  # configure-preview.sh takes the mode, not the port, for what nginx.conf's
+  # tunnel location points at; the content-host scripts below take the port.
+  if [ -n "$owner_port" ]; then
+    bash "$HERE/llm-tunnel/configure-preview.sh" owner "$ACTIVE_BACKEND_DIR" "$owner_port"
+  else
+    bash "$HERE/llm-tunnel/configure-preview.sh" legacy "$ACTIVE_BACKEND_DIR"
+  fi || fail "could not write the preview routing file"
+  if [ ! -s "$routing_backup" ] \
+    || ! cmp -s "$routing_backup" "$ACTIVE_BACKEND_DIR/preview-routing.conf"; then
+    changed=true
+  fi
   if ! cmp -s "$HERE/llm-tunnel/nginx.conf" "$config"; then
     cp "$HERE/llm-tunnel/nginx.conf" "$config"
     changed=true
+  fi
+  # Preview content hosts are matched by the content domain's wildcard server,
+  # and no server_name can beat it (a middle wildcard is invalid; a regex loses).
+  # So the split lives inside active/sites.conf, and this re-renders that file
+  # from the repo script for the effective mode. The domain is read from the
+  # file already serving it, never guessed; a box with no content domain, or one
+  # an operator disabled, is left alone.
+  sites_backup=""
+  if [ -s "$ACTIVE_BACKEND_DIR/sites.conf" ]; then
+    site_domain="$(sed -n 's/^[[:space:]]*server_name[[:space:]]\+\([^[:space:];*][^[:space:];]*\).*/\1/p' \
+      "$ACTIVE_BACKEND_DIR/sites.conf" | head -n 1)"
+    if [ -n "$site_domain" ]; then
+      sites_backup="$ACTIVE_BACKEND_DIR/sites.conf.pre-app-router"
+      cp "$ACTIVE_BACKEND_DIR/sites.conf" "$sites_backup"
+      bash "$HERE/llm-tunnel/configure-sites.sh" "$site_domain" "$ACTIVE_BACKEND_DIR" "$owner_port" \
+        || fail "could not write the content-host routing"
+      cmp -s "$sites_backup" "$ACTIVE_BACKEND_DIR/sites.conf" || changed=true
+    fi
   fi
   frontend_backup=""
   if [ -n "$ACTIVE_FRONTEND_DIR" ]; then
     frontend_backup="$ACTIVE_FRONTEND_DIR/sites-frontend.conf.pre-app-router"
     cp "$ACTIVE_FRONTEND_DIR/sites-frontend.conf" "$frontend_backup"
-    bash "$HERE/llm-tunnel/configure-frontend.sh" "$ACTIVE_FRONTEND_DIR" 18086 "$FRONTEND_PROXY_PORT"
+    bash "$HERE/llm-tunnel/configure-frontend.sh" "$ACTIVE_FRONTEND_DIR" 18086 "$FRONTEND_PROXY_PORT" "$owner_port"
     cmp -s "$frontend_backup" "$ACTIVE_FRONTEND_DIR/sites-frontend.conf" || changed=true
   fi
   if [ "$changed" = false ]; then
-    rm -f "$backup" ${frontend_backup:+"$frontend_backup"}
+    rm -f "$backup" ${frontend_backup:+"$frontend_backup"} ${sites_backup:+"$sites_backup"} "$routing_backup"
     return 0
   fi
   if ! docker exec "$API_FRONT_CONTAINER" nginx -t; then
     cp "$backup" "$config"
     [ -z "$frontend_backup" ] || cp "$frontend_backup" "$ACTIVE_FRONTEND_DIR/sites-frontend.conf"
+    [ -z "$sites_backup" ] || cp "$sites_backup" "$ACTIVE_BACKEND_DIR/sites.conf"
+    [ -s "$routing_backup" ] && cp "$routing_backup" "$ACTIVE_BACKEND_DIR/preview-routing.conf"
     rm -f "$backup"
-    fail "api-front rejected the device connection route; restored its config"
+    fail "api-front rejected the preview/owner route; restored its config"
   fi
   if ! docker exec "$API_FRONT_CONTAINER" nginx -s reload; then
     cp "$backup" "$config"
     [ -z "$frontend_backup" ] || cp "$frontend_backup" "$ACTIVE_FRONTEND_DIR/sites-frontend.conf"
+    [ -z "$sites_backup" ] || cp "$sites_backup" "$ACTIVE_BACKEND_DIR/sites.conf"
+    [ -s "$routing_backup" ] && cp "$routing_backup" "$ACTIVE_BACKEND_DIR/preview-routing.conf"
     docker exec "$API_FRONT_CONTAINER" nginx -s reload >/dev/null 2>&1 || true
     rm -f "$backup"
-    fail "api-front could not reload the device connection route; restored its config"
+    fail "api-front could not reload the preview/owner route; restored its config"
   fi
-  rm -f "$backup" ${frontend_backup:+"$frontend_backup"}
+  rm -f "$backup" ${frontend_backup:+"$frontend_backup"} ${sites_backup:+"$sites_backup"} "$routing_backup"
   log "api-front routes application traffic through app-router; later business switches leave persistent connections untouched"
+}
+
+# The legacy half of the kill switch. While the routes still pointed at a running
+# owner, helpers stayed connected to it, so flipping the file to legacy without
+# this would leave those helpers on the owner and route NEW tunnel requests to a
+# backend whose hub is empty — previews broken, and only until the helper redials.
+# Called AFTER the backends have rolled back to legacy, so the order is: backends
+# serve legacy -> routes re-point at the backend -> owner stops -> helpers redial
+# and land on the backend. In owner mode it does nothing.
+retire_preview_connection_owner() {
+  [ "$PREVIEW_CONNECTION_MODE" = legacy ] || return 0
+  preview_connection_running || return 0
+  log "PREVIEW_CONNECTION_MODE=legacy: returning previews to the business backend"
+  PREVIEW_ROUTE_FORCE_BACKEND=1 ensure_application_router
+  if dc stop preview-connection >/dev/null; then
+    # Remove it too: a stopped owner still holds the service name and its image,
+    # and the next owner-mode deploy recreates it from scratch either way.
+    dc rm -f preview-connection >/dev/null 2>&1 || true
+    log "preview connection owner stopped; its helpers redial the business backend"
+  else
+    fail "previews are routed to the business backend but the preview connection owner would not stop"
+  fi
 }
 log() { echo "[deploy-docker $(date '+%H:%M:%S')] $*"; }
 fail() { echo "[deploy-docker $(date '+%H:%M:%S')] ERROR: $*" >&2; exit 1; }
+
+# ---- Preview owner cutover (repo-level kill switch) ----
+# owner moves the machine preview tunnels and the preview content hosts off the
+# business backend onto the independently released preview-connection service;
+# legacy keeps them in the backend a release replaces. The default lives in
+# deploy/preview-connection.env (the kill switch: edit it to legacy and the next
+# deploy routes everything back); an explicit PREVIEW_CONNECTION_MODE from the
+# environment or ~/ops/deploy.env overrides it. Resolved here, before any
+# compose call, so a box that cannot reach an owner never renders one.
+if [ -z "${PREVIEW_CONNECTION_MODE:-}" ]; then
+  # shellcheck source=/dev/null
+  . "$HERE/preview-connection.env"
+fi
+if [ "${PREVIEW_CONNECTION_MODE:-legacy}" != owner ] && [ "${PREVIEW_CONNECTION_MODE:-legacy}" != legacy ]; then
+  fail "PREVIEW_CONNECTION_MODE must be owner or legacy, not '${PREVIEW_CONNECTION_MODE}'"
+fi
+if [ "$PREVIEW_CONNECTION_MODE" = owner ] && [ -z "${ACTIVE_BACKEND_DIR:-}" ]; then
+  log "WARNING: PREVIEW_CONNECTION_MODE=owner needs the standing api-front (ACTIVE_BACKEND_DIR); keeping previews legacy"
+  PREVIEW_CONNECTION_MODE=legacy
+fi
+PREVIEW_CONNECTION_PORT="${PREVIEW_CONNECTION_PORT:-18087}"
+export PREVIEW_CONNECTION_MODE PREVIEW_CONNECTION_PORT
 
 if [ "${CHEESE_CENTRAL_SESSION_HOST:-}" = "1" ] && {
   ! command -v fusermount >/dev/null || ! ldconfig -p | grep 'libfuse.so.2 ' >/dev/null
@@ -926,8 +1116,12 @@ rollout_frontend() {
 # verified. Once running, ensure_device_connection_owner deliberately leaves it
 # untouched until the separate owner release operation.
 export DEVICE_CONNECTION_IMAGE="${DEVICE_CONNECTION_IMAGE:-${BACKEND_IMAGE:-ghcr.io/sageseekersociety/cheese/backend:$SHA}}"
+export PREVIEW_CONNECTION_IMAGE="${PREVIEW_CONNECTION_IMAGE:-${BACKEND_IMAGE:-ghcr.io/sageseekersociety/cheese/backend:$SHA}}"
 ensure_journal_retention
 ensure_device_connection_owner
+# Before ensure_application_router: the routes must point at a healthy owner
+# before they are installed, and before any backend restarts into owner mode.
+ensure_preview_connection_owner
 ensure_application_router
 check_session_base_survives_release
 
@@ -948,6 +1142,11 @@ else
   log "bringing up backend + frontend…"
   dc up -d backend frontend || fail "compose up failed"
 fi
+# The legacy half of the preview kill switch. The backends above are serving
+# legacy now, so it is safe to move the routes off a still-running owner and stop
+# it — see retire_preview_connection_owner. It is a no-op in owner mode and when
+# no owner is running.
+retire_preview_connection_owner
 # After the backend it loads documents from and stores them to. Replacing it
 # closes open documents for a moment; every change is stored before it stops
 # (stop_grace_period) and the editors reconnect on their own.

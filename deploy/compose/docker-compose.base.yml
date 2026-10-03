@@ -62,6 +62,73 @@ services:
       options:
         tag: "{{.Name}}"
 
+  # Owns the machine preview tunnels and the preview content hosts
+  # (preview-<uuid>.<SITES_DOMAIN>). deploy-docker.sh starts this once and, like
+  # device-connection, leaves it alone during app-tier releases, so an ordinary
+  # backend image swap cannot close a preview tunnel or drop a Vite HMR socket on
+  # a preview host. It is the only process running app.preview_connection_app;
+  # the business backend talks to it over the compose network
+  # (PREVIEW_CONNECTION_URL).
+  preview-connection:
+    image: ${PREVIEW_CONNECTION_IMAGE:-${BACKEND_IMAGE:-ghcr.io/sageseekersociety/cheese/backend:${IMAGE_TAG:-main}}}
+    env_file:
+      - ${BACKEND_ENV_FILE:-/home/nictheboy/cheese-backend-py/backend/.env}
+    environment:
+      # This process IS the owner: it mounts the whole preview-host policy and
+      # both tunnel spellings, and never fails closed on them.
+      - PREVIEW_CONNECTION_MODE=owner
+      - DEPLOYED_VIA_COMPOSE=1
+      # 5, not the device owner's 10: the two owners stand for the whole life of
+      # the box, so a release charges the server for BOTH at once on top of two
+      # backends (2x36) and the ops reserve (10) — 72+10+5+10 == 97, exactly the
+      # default server's budget. The preview owner is also the lighter of the
+      # two: one uvicorn worker serving short file reads and HMR proxies, where
+      # the device owner holds a long-lived session per machine link. Bumping
+      # this without re-checking that arithmetic spends a connection the box
+      # does not have — backend/tests/unit/test_db_pool_fits_the_server.py is
+      # the check, and it counts every owner.
+      - DB_POOL_SIZE=3
+      - DB_MAX_OVERFLOW=2
+      # Content hosts read the selected artifact's files from the workspace
+      # (library/service.py) and the room files beside them — the same host paths
+      # the backend mounts. Uploads and a writable HOME are carried too so the
+      # owner's environment matches the backend's.
+      - STORAGE_LOCAL_PATH=/data/uploads
+      - HOME=/data/apphome
+    # Same reason as device-connection: the env file names host.docker.internal,
+    # and without this entry the name falls through to the box's clash resolver
+    # and every call dies on connect.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command:
+      - uvicorn
+      - --factory
+      - app.preview_connection_app:create_app
+      - --workers
+      - "1"
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8084"
+    ports:
+      - "127.0.0.1:${PREVIEW_CONNECTION_PORT:-18087}:8084"
+    volumes:
+      - ${UPLOADS_HOST_PATH:-/home/nictheboy/shared/uploads}:/data/uploads
+      - ${WORKSPACES_HOST_PATH:-/home/nictheboy/cheese-workspaces}:/app/.workspaces
+      - ${APPHOME_HOST_PATH:-/home/nictheboy/cheese-app-home}:/data/apphome
+    init: true
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8084/healthz"]
+      interval: 15s
+      timeout: 8s
+      start_period: 20s
+      retries: 5
+    restart: unless-stopped
+    logging:
+      driver: journald
+      options:
+        tag: "{{.Name}}"
+
   backend:
     # A backend on its way out hands its running turns to the next one
     # (backend/app/core/ownership.py): uvicorn's own shutdown (at most 10s,
@@ -89,6 +156,14 @@ services:
       # the same weakness, so this must stay a constant with no ${...} in it.
       - DEPLOYED_VIA_COMPOSE=1
       - DEVICE_CONNECTION_URL=http://device-connection:8082
+      # The preview-connection owner below owns the machine preview tunnels and
+      # the preview content hosts. PREVIEW_CONNECTION_MODE=owner makes this
+      # backend hand the tunnels to it and stop mounting the preview host policy
+      # itself; legacy keeps everything in this process. The value comes from the
+      # repo default in deploy/preview-connection.env so a revert of the cutover
+      # is one line (see that file and deploy-docker.sh).
+      - PREVIEW_CONNECTION_MODE=${PREVIEW_CONNECTION_MODE:-owner}
+      - PREVIEW_CONNECTION_URL=${PREVIEW_CONNECTION_URL:-http://preview-connection:8084}
       # The office-render service below. Unset, a Word or PowerPoint deliverable
       # falls back to a download and the panel says why — so this belongs here
       # rather than in a deployment note nobody reads.
