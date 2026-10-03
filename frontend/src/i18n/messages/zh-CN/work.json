@@ -541,6 +541,10 @@
     "preview": {
       "fullscreenFailed": "无法进入全屏，请在新标签页打开",
       "page": "第 {page} 页",
+      "pin": "指位置",
+      "pinHint": "点页面上的一点，连同这一点的截图一起发出去",
+      "pinNeedsVersion": "这一页的版本还没确认，暂时不能指位置",
+      "pinWhere": "从左 {left}%、从上 {top}%",
       "emptyCell": "（空）",
       "locateMessage": "在 {path} 的 {address}（「{quote}」）：{note}",
       "publishSite": "发布网站",

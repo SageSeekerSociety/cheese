@@ -21,6 +21,8 @@
   "textFailed": "无法读取当前页文字",
   "wholePage": "整页 PDF 文字上下文",
   "quotedPage": "引用第 {page} 页文字",
+  "quotedSelection": "引用第 {page} 页里选中一段",
+  "pinnedPage": "指了第 {page} 页的一处",
   "sourceCommitted": "已提交文件",
   "sourceLive": "当前工作文件",
   "removeQuote": "移除引用",

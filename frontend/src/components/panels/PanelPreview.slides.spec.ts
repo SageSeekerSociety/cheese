@@ -34,11 +34,32 @@ vi.mock('./preview/PreviewSlides.vue', () => ({
             },
             'page'
           ),
+          h(
+            'button',
+            {
+              onClick: () =>
+                emit('pageContext', {
+                  text: 'Selected run on the slide',
+                  page: 2,
+                  scope: 'selection',
+                  context: props.context,
+                }),
+            },
+            'selection'
+          ),
         ])
     },
   },
 }))
-vi.mock('./preview/PreviewPages.vue', () => ({ default: { template: '<div data-testid="pages" />' } }))
+// 真组件把 clearMark 交出来（抹掉指过的那一点）；替身也得有，不然面板清位置时炸。
+vi.mock('./preview/PreviewPages.vue', () => ({
+  default: {
+    template: '<div data-testid="pages" />',
+    setup(_props: unknown, { expose }: { expose: (api: { clearMark: () => void }) => void }) {
+      expose({ clearMark: () => {} })
+    },
+  },
+}))
 vi.mock('./preview/RevisionList.vue', () => ({ default: { template: '<div />' } }))
 vi.mock('./preview/RoomOutputs.vue', () => ({ default: { template: '<div />' } }))
 const docBytes = new ArrayBuffer(8)
@@ -132,8 +153,42 @@ it('sends whole-page PDF context with complete text and the verified file identi
     task_id: 'task',
     version: 'v7',
     page: 2,
+    scope: 'page',
     text,
   })
+})
+it('sends a selected run on the slide as a quoted context, marked as a selection', async () => {
+  const submit = vi.fn().mockReturnValue(true)
+  const ui = mount(submit)
+  await fireEvent.click(ui.getByText('selection'))
+  await fireEvent.update(ui.getByPlaceholderText('说明要改什么'), 'this line is wrong')
+  await fireEvent.click(ui.getByText('发送'))
+  const request = submit.mock.calls[0]?.[0]
+  expect(request.content).toBe('this line is wrong')
+  expect(request.quotedContext).toEqual({
+    kind: 'slide-page',
+    path: 'deck.pptx',
+    source: 'committed',
+    task_id: 'task',
+    version: 'v7',
+    page: 2,
+    scope: 'selection',
+    text: 'Selected run on the slide',
+  })
+})
+it('drops a selected run whose version moved on before send, like the whole-page path', async () => {
+  const submit = vi.fn().mockReturnValue(true)
+  const ui = mount(submit)
+  await fireEvent.click(ui.getByText('selection'))
+  await fireEvent.update(ui.getByPlaceholderText('说明要改什么'), 'this line is wrong')
+  await ui.rerender({ ...props, previewFile: { ...props.previewFile, version: 'v8' } })
+  await fireEvent.click(ui.getByText('发送'))
+  expect(submit).not.toHaveBeenCalled()
+  // 被挡下的是「这一下」，不是这段说明：引用和说明都原样留在面板里，读者把版本对
+  // 回来就能再发一次。换成 `emitted().locate` 是测不出东西的——这一支只发
+  // `pageContext`，回退那句拼话根本不在这条路上。
+  expect(ui.getByText('Selected run on the slide')).toBeTruthy()
+  expect((ui.getByPlaceholderText('说明要改什么') as HTMLInputElement).value).toBe('this line is wrong')
 })
 it('retires the locator when bytes or source identity change and routes PDF to the existing reader', async () => {
   const ui = mount()
@@ -267,6 +322,7 @@ it('whole-page ask posts the current canonical AI mention through the normal mes
     task_id: 'task',
     version: 'v7',
     page: 2,
+    scope: 'page',
     text,
   })
   expect(ui.posted[0].body.request_id).toMatch(/^[0-9a-f-]{36}$/)

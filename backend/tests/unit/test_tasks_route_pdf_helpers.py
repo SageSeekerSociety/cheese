@@ -4,7 +4,7 @@ from app.core.errors import BadRequestError
 
 
 def test_apply_pdf_task_options_keeps_draft_content_and_applies_form_options() -> None:
-    from app.api.routes.tasks import _apply_pdf_task_options
+    from app.domain.task.inputs import apply_pdf_task_options
 
     draft = {
         "name": "PDF 赛题",
@@ -30,7 +30,7 @@ def test_apply_pdf_task_options_keeps_draft_content_and_applies_form_options() -
         "maxTeamSize": 5,
     }
 
-    result = _apply_pdf_task_options(draft=draft, task_options=task_options)
+    result = apply_pdf_task_options(draft=draft, task_options=task_options)
 
     assert result["name"] == "PDF 赛题"
     assert result["intro"] == "PDF 简介"
@@ -42,9 +42,9 @@ def test_apply_pdf_task_options_keeps_draft_content_and_applies_form_options() -
 
 
 def test_apply_pdf_task_options_falls_back_to_draft_space_and_category() -> None:
-    from app.api.routes.tasks import _apply_pdf_task_options
+    from app.domain.task.inputs import apply_pdf_task_options
 
-    result = _apply_pdf_task_options(
+    result = apply_pdf_task_options(
         draft={
             "name": "PDF 赛题",
             "intro": "PDF 简介",
@@ -66,10 +66,10 @@ def test_apply_pdf_task_options_falls_back_to_draft_space_and_category() -> None
 
 
 def test_apply_pdf_task_options_requires_content_fields() -> None:
-    from app.api.routes.tasks import _apply_pdf_task_options
+    from app.domain.task.inputs import apply_pdf_task_options
 
     with pytest.raises(BadRequestError, match="Draft missing required content fields"):
-        _apply_pdf_task_options(
+        apply_pdf_task_options(
             draft={"name": "PDF 赛题", "intro": "", "description": "PDF 详情"},
             task_options={"space": 7},
         )

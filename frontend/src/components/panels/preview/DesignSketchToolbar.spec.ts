@@ -1,6 +1,6 @@
 // 工具栏的两件事：按宽度三档自适配（窄了先收文字标签、再收颜色轮），以及禁用时
 // 说清为什么按不动（title / aria-label）。都照参考物（Claude 桌面版那套标注器）。
-import { cleanup, render, waitFor } from '@testing-library/vue'
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import { SKETCH_COLORS } from './designSketch'
@@ -138,4 +138,27 @@ it('默认选中的颜色是红（第一颗）', async () => {
   const { ui } = mount()
   const active = ui.container.querySelector('.sketch-toolbar__color.is-active') as HTMLElement
   expect(active.getAttribute('aria-label')).toBe('标注颜色 #E03131')
+})
+
+const styles = (ui: ReturnType<typeof render>) => ui.container.querySelectorAll('.sketch-toolbar__style')
+const activeStyle = (ui: ReturnType<typeof render>) =>
+  ui.container.querySelector('.sketch-toolbar__style.is-active') as HTMLElement | null
+
+it('涂黑时：颜色轮换成样式行（三颗），颜色轮一颗不留', async () => {
+  const { ui } = mount({ tool: 'redact', redact: true, redactStyle: 'mosaic' })
+  expect(colors(ui)).toBe(0)
+  expect(styles(ui)).toHaveLength(3)
+  expect(activeStyle(ui)?.getAttribute('aria-label')).toBe('马赛克')
+})
+
+it('没在涂黑时：样式行不出现，颜色轮照旧', async () => {
+  const { ui } = mount()
+  expect(colors(ui)).toBe(5)
+  expect(styles(ui)).toHaveLength(0)
+})
+
+it('点样式发 restyle，带上那颗的样式名', async () => {
+  const { ui } = mount({ tool: 'redact', redact: true, redactStyle: 'solid' })
+  await fireEvent.click(styles(ui)[2])
+  expect(ui.emitted('restyle')?.[0]).toEqual(['noise'])
 })

@@ -5,7 +5,7 @@ import uuid
 
 import pytest
 
-from app.api.deps import get_work_runner
+from app.api.deps import get_handless_sessions
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.main import app
@@ -16,23 +16,14 @@ from tests.integration.conftest import (
 )
 
 
-class _RecordingRunner:
-    def __init__(self) -> None:
-        self.submitted: list[dict] = []
-
-    def submit(self, chat_service, topic_id, **kw):
-        self.submitted.append({"topic_id": topic_id, **kw})
-
-    def running_topic_ids(self):
-        return set()
-
-
 @pytest.fixture
-def runner():
-    fake = _RecordingRunner()
-    app.dependency_overrides[get_work_runner] = lambda: fake
+def sessions():
+    from tests.integration.test_doc_agent import FakeSessions
+
+    fake = FakeSessions()
+    app.dependency_overrides[get_handless_sessions] = lambda: fake
     yield fake
-    app.dependency_overrides.pop(get_work_runner, None)
+    app.dependency_overrides.pop(get_handless_sessions, None)
 
 
 def _topic(client) -> str:
@@ -115,7 +106,7 @@ def test_comment_rejects_foreign_anchor(client):
     assert r.status_code == 422
 
 
-def test_human_comment_does_not_wake_ai_or_change_document(client, runner):
+def test_human_comment_does_not_wake_ai_or_change_document(client, sessions):
     token = seed_user(client, "commenter")
     project = post_project(client, {"name": "P"}, owner="commenter").json()["data"]
     headers = {"Authorization": f"Bearer {token}"}
@@ -131,7 +122,6 @@ def test_human_comment_does_not_wake_ai_or_change_document(client, runner):
     before = client.get(f"/topics/{tid}/doc").json()["data"]
     nodes = client.get(f"/topics/{tid}/docs").json()["data"]["data"]
     timeline = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
-    runner.submitted.clear()
     result = client.post(
         f"/topics/{tid}/comments",
         json={"anchor": nodes[1]["id"], "quote": "这一段", "content": "请改写这一段"},
@@ -139,7 +129,7 @@ def test_human_comment_does_not_wake_ai_or_change_document(client, runner):
     )
     assert result.status_code == 200, result.text
     assert result.json()["data"]["author"] == "commenter"
-    assert runner.submitted == []
+    assert sessions.asked == []
     assert client.get(f"/topics/{tid}/doc").json()["data"] == before
     assert client.get(f"/topics/{tid}/docs").json()["data"]["data"] == nodes
     assert client.get(f"/topics/{tid}/blocks").json()["data"]["data"] == timeline
@@ -208,7 +198,7 @@ def test_comment_rejects_non_document_node_anchor(client, target):
     assert client.get(f"/topics/{tid}/comments").json()["data"]["data"] == []
 
 
-def test_agent_comment_is_attributed_but_does_not_wake_itself(client, runner):
+def test_agent_comment_is_attributed_but_does_not_wake_itself(client, sessions):
     tid = _topic(client)
     topic = client.get(f"/topics/{tid}").json()["data"]
     token = mint_scoped_token(project_id=topic["project_id"], topic_id=tid)
@@ -222,85 +212,4 @@ def test_agent_comment_is_attributed_but_does_not_wake_itself(client, runner):
     assert r.status_code == 200
     comment = r.json()["data"]
     assert comment["author"] == room_agent_seat(client, tid)
-    assert runner.submitted == []
-
-
-def _commented_room(client):
-    """A room with a document, a person who may comment on it, and its nodes."""
-    token = seed_user(client, "commenter")
-    project = post_project(client, {"name": "P"}, owner="commenter").json()["data"]
-    headers = {"Authorization": f"Bearer {token}"}
-    tid = client.post(
-        "/topics", json={"project_id": project["id"], "title": "T"}, headers=headers
-    ).json()["data"]["id"]
-    client.put(
-        f"/topics/{tid}/doc",
-        json={"content": "# 原稿\n\n保留这一段", "expected_version": 0},
-        headers=headers,
-    )
-    nodes = client.get(f"/topics/{tid}/docs").json()["data"]["data"]
-    return tid, headers, {"anchor": nodes[1]["id"], "quote": "这一段"}
-
-
-def test_a_comment_naming_the_agent_hands_it_to_the_agent_as_the_commenter(
-    client, runner
-):
-    """The agent's turn is the commenter's: what it changes in the document is
-    then recorded as done at their request."""
-    tid, headers, anchor = _commented_room(client)
-    seat = room_agent_seat(client, tid)
-    runner.submitted.clear()
-
-    result = client.post(
-        f"/topics/{tid}/comments",
-        json={**anchor, "content": f"<@{seat}> 这段写得更具体些"},
-        headers=headers,
-    )
-
-    assert result.status_code == 200, result.text
-    [turn] = runner.submitted
-    assert turn["author"] == "commenter"
-    assert turn["addressed"].reason_for(seat) is not None
-    assert "这段写得更具体些" in turn["content"]
-    assert result.json()["data"]["id"] in turn["content"]
-
-
-def test_a_comment_naming_only_a_person_starts_nothing(client, runner):
-    tid, headers, anchor = _commented_room(client)
-    runner.submitted.clear()
-
-    result = client.post(
-        f"/topics/{tid}/comments",
-        json={**anchor, "content": "<@commenter> 回头自己再看"},
-        headers=headers,
-    )
-
-    assert result.status_code == 200, result.text
-    assert runner.submitted == []
-
-
-def test_a_reply_naming_the_agent_hands_the_thread_to_it(client, runner):
-    tid, headers, anchor = _commented_room(client)
-    seat = room_agent_seat(client, tid)
-    root = client.post(
-        f"/topics/{tid}/comments",
-        json={**anchor, "content": "这里要不要展开"},
-        headers=headers,
-    ).json()["data"]["id"]
-    runner.submitted.clear()
-    thread = client.get(f"/topics/{tid}/comments/{root}/thread", headers=headers)
-
-    reply = client.post(
-        f"/topics/{tid}/comments/{root}/replies",
-        json={
-            "operation_id": str(uuid.uuid4()),
-            "expected_revision": thread.json()["data"]["revision"],
-            "content": f"<@{seat}> 你来补一下",
-        },
-        headers=headers,
-    )
-
-    assert reply.status_code == 200, reply.text
-    [turn] = runner.submitted
-    assert turn["author"] == "commenter"
-    assert root in turn["content"]
+    assert sessions.asked == []

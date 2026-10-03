@@ -13,11 +13,11 @@ Reference: verified Claude Desktop 2.16120.0 deep archive, `readable/frame-shell
 | `kE`, 17846–17878 | Active composer survives filtering; its list order freezes while composing. | Source requirement retained for the next thread/sidebar checkpoint. This flat comment list has no thread filtering or sort operation; no claim of desktop sidebar parity. |
 | `kE`, 17940–17948 | Closing while posting is disabled. | Cancel and Escape cannot delete a sending draft. Composition Enter (`isComposing` or keyCode 229) is not a send action. |
 
-No original JavaScript bundle is executed. The source establishes interaction constraints, not Cheese authorization. Passive comments are a separate product contract: recording a comment changes no document text, and only a comment that @-mentions the room's agent starts an agent turn.
+No original JavaScript bundle is executed. The source establishes interaction constraints, not Cheese authorization. Passive comments are a separate product contract: recording a comment changes no document text, and only a comment that @-mentions the room's agent is answered.
 
 ## Server contract
 
-`POST /topics/{id}/comments` inserts a UUID document-view comment and commits it. It starts a turn of the room's agent only when the comment, or a reply in its thread, @-mentions an agent seated in the room (`<@handle>`); that turn is authored by the commenter, and the agent answers in the thread with `cheese_doc_comment_reply`. Anchors must be `doc_node` rows in the current room, outside task scope, under the canonical current room document root. Roots, messages, foreign/deleted/orphan nodes, and another document root are rejected. A bounded display quote is not write authorization.
+`POST /topics/{id}/comments` inserts a UUID document-view comment and commits it. Only a comment, or a reply in its thread, that @-mentions an agent seated in the room (`<@handle>`) is answered: by the thread's own session on the session host, not by a turn of the room, and the answer is the agent's reply in the thread (`app/api/doc_agent.py`). Anchors must be `doc_node` rows in the current room, outside task scope, under the canonical current room document root. Roots, messages, foreign/deleted/orphan nodes, and another document root are rejected. A bounded display quote is not write authorization.
 
 General room-agent document writing remains untouched.
 

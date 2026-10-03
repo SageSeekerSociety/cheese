@@ -34,7 +34,7 @@ import fitz
 import pytest
 from fastapi.testclient import TestClient
 
-from app.api.routes.tasks import get_task_pdf_draft_service
+from app.api.routes.tasks._common import get_task_pdf_draft_service
 from app.core.config import settings
 from app.domain.gateway_chat import Completion, Usage
 from app.domain.task.task_pdf_draft_service import TaskPdfDraftService

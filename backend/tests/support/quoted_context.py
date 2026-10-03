@@ -11,6 +11,7 @@ def slide_quote(text: str) -> dict:
         "version": "version-a",
         "task_id": None,
         "page": 2,
+        "scope": "page",
         "text": text,
     }
 

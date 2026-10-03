@@ -30,11 +30,11 @@ import pytest
 from redis.asyncio import from_url
 from sqlalchemy import select, text, update
 
-from app.api.deps import get_personal_sessions
+from app.api.deps import get_handless_sessions
 from app.api.routes import assistant as route
 from app.api.routes import llm_proxy
 from app.core.config import settings
-from app.domain.agent.harness.pi.personal import PersonalSessions
+from app.domain.agent.harness.pi.handless import HandlessSessions
 from app.domain.assistant.models import AssistantMessage
 from app.domain.feature_stats import pricing
 from app.domain.task.models import Task, TaskMembership
@@ -256,13 +256,13 @@ def gateway(client, monkeypatch: pytest.MonkeyPatch, tmp_path):
     home = tmp_path / "host"
     install_pi(home)
     host = Host(home)
-    people = PersonalSessions(host)
-    app.dependency_overrides[get_personal_sessions] = lambda: people
+    people = HandlessSessions(host)
+    app.dependency_overrides[get_handless_sessions] = lambda: people
     gw.host = host  # type: ignore[attr-defined]
     try:
         yield gw
     finally:
-        app.dependency_overrides.pop(get_personal_sessions, None)
+        app.dependency_overrides.pop(get_handless_sessions, None)
         stop_all(home)
         relay.close()
         gw.close()

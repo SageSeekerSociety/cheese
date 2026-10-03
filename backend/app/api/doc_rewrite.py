@@ -2,9 +2,8 @@
 tool-less model call through the project's gateway key, charged to the project
 like any other call of its agent.
 
-The model is the room's agent's — the same binding its turns use, never a
-substitute — and the call is admitted the way its turns are: the project's
-model policy, then its credits. What the model says is only the replacement
+The model is the room's agent's and the call is admitted the way its turns are
+(``doc_agent.bind``, ``doc_agent.admit``). What the model says is only the replacement
 text; the server builds the edit and applies it as the agent, for the person
 who asked (``POST /topics/{id}/doc/rewrite``).
 """
@@ -12,84 +11,16 @@ who asked (``POST /topics/{id}/doc/rewrite``).
 import json
 import math
 import uuid
-from dataclasses import dataclass
 
 import httpx
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_chat_service
+from app.api.doc_agent import Bound
 from app.core.config import settings
 from app.core.errors import SystemBusyError, ValidationError
-from app.domain.agent.supply import GATEWAY
-from app.domain.agent_instance.services import AgentInstanceService
-from app.domain.policy import gate
-from app.domain.project.services import ProjectService
-from app.domain.room_task import binding
-from app.domain.topic.services import TopicService
-from app.domain.topic_membership.services import TopicMemberService
-from app.domain.usage.services import UsageService
 
 #: How long the person waits for the model before being told to try again.
 TIMEOUT_S = 60
-
-
-@dataclass(frozen=True)
-class Bound:
-    """The room's agent and the model its turns run on."""
-
-    agent_handle: str
-    model: str
-    wire_model: str
-    supply: str
-
-
-async def bind(session: AsyncSession, room_id: uuid.UUID) -> Bound:
-    topic = await TopicService(session).get_or_404(room_id)
-    project = await ProjectService(session).get_or_404(topic.project_id)
-    agent = await AgentInstanceService(session).for_topic(topic, project)
-    bound = binding.resolve(
-        None,
-        binding.catalog(project.settings),
-        agent_model=agent.configuration.get("model"),
-        default_model=(project.settings or {}).get("default_model"),
-    )
-    # Whose name the change goes under: the seat on the room's roster, which
-    # is what the agent writes as there (a room-derived seat runs the
-    # project's default teammate).
-    seat = await TopicMemberService(session).addressable_agent_handle(room_id)
-    return Bound(
-        agent_handle=seat or agent.handle,
-        model=bound.model,
-        wire_model=bound.wire_model,
-        supply=bound.supply,
-    )
-
-
-async def admit(session: AsyncSession, project_id: uuid.UUID, bound: Bound) -> None:
-    """Refuse the call the way the agent's own turn would be refused."""
-    project = await ProjectService(session).get_or_404(project_id)
-    choice = binding.catalog(project.settings)[bound.model]
-    result = gate.check(
-        gate.Call(
-            resource=gate.Resource.model,
-            subject=bound.model,
-            label=choice["label"],
-            tier=choice["tier"],
-            approver=project.owner_handle or "",
-        ),
-        gate.policy_of(
-            project.settings,
-            await UsageService(session).plan_model_tiers(project.team_id),
-        ),
-        actor=bound.agent_handle,
-    )
-    if isinstance(result, gate.Proposal):
-        raise ValidationError(result.content)
-    refused = await UsageService(session).admit_project(project_id)
-    if refused is not None:
-        raise ValidationError(refused.message)
-    if bound.supply != GATEWAY:
-        raise ValidationError("所选订阅模型暂不支持改写选中文字")
 
 
 _INSTRUCTION = (

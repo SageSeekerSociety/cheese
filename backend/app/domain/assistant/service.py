@@ -34,14 +34,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.background import spawn
 from app.core.config import settings
 from app.core.sandbox_auth import mint_personal_credential
-from app.domain.agent.harness.pi.personal import (
+from app.domain.agent.harness.pi.handless import (
     Answered,
-    Launch,
+    HandlessSessions,
     Looking,
-    PersonalSessionError,
-    PersonalSessions,
     Said,
+    SessionError,
 )
+from app.domain.agent.harness.pi.personal import Launch
 from app.domain.assistant import billing, tools
 from app.domain.assistant.asking import BUSY_SECONDS
 from app.domain.assistant.models import AssistantConversation, AssistantMessage
@@ -180,7 +180,7 @@ def launch(user_id: int, conversation_id: uuid.UUID, place: str) -> Launch:
 async def ask(
     *,
     sessions: async_sessionmaker[AsyncSession],
-    people: PersonalSessions,
+    people: HandlessSessions,
     started: Launch,
     question: str,
     held_at: float,
@@ -224,7 +224,7 @@ async def ask(
                             conversation_id,
                             failure,
                         )
-        except PersonalSessionError as exc:
+        except SessionError as exc:
             logger.warning("assistant session failed: %s", exc)
             failure = str(exc)
         except Exception:  # noqa: BLE001 — the reader is told; the log keeps why

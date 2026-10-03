@@ -121,3 +121,15 @@ class TaskVisibilityService:
         )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none() is not None
+
+
+async def resolve_user_email_domain(session: AsyncSession, user_id: int) -> str | None:
+    """这个读者的邮箱域名（小写），没有就 ``None`` —— 可见性判据要的那一格。"""
+    user = await UserRepository(session=session).get_by_id(user_id)
+    if user is None:
+        return None
+    if user.email_domain:
+        return user.email_domain.lower()
+    if user.email and "@" in user.email:
+        return user.email.split("@", 1)[1].lower()
+    return None

@@ -2,9 +2,17 @@
 import type { Point, RasterRegion } from './designRegion'
 import type { ShapeStroke, SketchStroke } from './designSketch'
 
-import { computed } from 'vue'
+import { computed, useId } from 'vue'
 
-import { arrowHeadPoints, fontSize, numberedStrokes } from './designSketch'
+import {
+  arrowHeadPoints,
+  fontSize,
+  numberedStrokes,
+  REDACT_INK,
+  REDACT_TILE,
+  redactAnchor,
+  redactTileDataUrl,
+} from './designSketch'
 import {
   drawsFrame,
   HANDLE_RADIUS,
@@ -46,6 +54,46 @@ const placed = computed<Placed[]>(() => {
   }))
 })
 const numbered = computed(() => numberedStrokes(props.strokes))
+
+/** 这个实例的 pattern id 前缀：同一页挂两块覆盖层时，id 不能撞。
+ *  计数变量写在 `<script setup>` 里每建一个实例就归零，起不到区分作用——用 useId。 */
+const uid = `redact-${useId()}`
+
+/**
+ * 涂黑图案的贴图。一条非实心的涂黑一个 pattern——相位按它自己的左上角取，所以
+ * 相邻的两块涂黑不会拼成一片连续的纹理（导出那边也是这么做的）。
+ *
+ * 和导出用同一块 tile（`redactTileDataUrl` 里缓存的），屏幕上是那块纹的样子，
+ * 不是三种样式都画成纯黑。没有画布的宿主给不出 tile，就退回纯黑。
+ */
+const redactMasks = computed(() => {
+  const scale = props.scale
+  const tile = REDACT_TILE * scale
+  if (!(tile > 0)) return []
+  const masks: { id: string; url: string; size: number; x: number; y: number; at: number }[] = []
+  placed.value.forEach((item, position) => {
+    const stroke = item.stroke
+    if (stroke.tool !== 'redact') return
+    const url = redactTileDataUrl(stroke.redactStyle ?? 'solid')
+    if (!url) return
+    const anchor = redactAnchor(stroke.region.x, stroke.region.y)
+    masks.push({
+      id: `${uid}-${position}`,
+      url,
+      size: tile,
+      x: anchor.x * scale,
+      y: anchor.y * scale,
+      at: position,
+    })
+  })
+  return masks
+})
+
+/** 这一条涂黑该用哪块贴图；没有就纯黑。 */
+function redactFill(position: number) {
+  const mask = redactMasks.value.find((entry) => entry.at === position)
+  return mask ? `url(#${mask.id})` : REDACT_INK
+}
 function badge(entry: { index: number; stroke: ShapeStroke }) {
   const x = entry.stroke.region.x * props.scale
   const y = entry.stroke.region.y * props.scale
@@ -84,6 +132,20 @@ const dash = SELECT_DASH.join(' ')
 
 <template>
   <svg class="sketch-overlay" aria-hidden="true">
+    <defs>
+      <pattern
+        v-for="mask in redactMasks"
+        :id="mask.id"
+        :key="mask.id"
+        patternUnits="userSpaceOnUse"
+        :x="mask.x"
+        :y="mask.y"
+        :width="mask.size"
+        :height="mask.size"
+      >
+        <image :href="mask.url" :width="mask.size" :height="mask.size" />
+      </pattern>
+    </defs>
     <template v-for="(item, position) in placed" :key="position">
       <g v-if="editing === position" />
       <polyline
@@ -121,8 +183,8 @@ const dash = SELECT_DASH.join(' ')
         :y="item.box(item.stroke.region).y"
         :width="item.box(item.stroke.region).width"
         :height="item.box(item.stroke.region).height"
-        :fill="item.stroke.tool === 'redact' ? item.stroke.color : 'none'"
-        :stroke="item.stroke.color"
+        :fill="item.stroke.tool === 'redact' ? redactFill(position) : 'none'"
+        :stroke="item.stroke.tool === 'redact' ? REDACT_INK : item.stroke.color"
         :stroke-width="item.stroke.width * scale"
       />
       <ellipse

@@ -25,6 +25,12 @@
     "redact": "Redact"
   },
   "sketchColor": "Annotation color {color}",
+  "redactStyles": "Redact style",
+  "redactStyle": {
+    "solid": "Solid",
+    "mosaic": "Mosaic",
+    "noise": "Noise"
+  },
   "undo": "Undo",
   "undoShortcut": "Undo (⌘Z / Ctrl+Z)",
   "redo": "Redo",

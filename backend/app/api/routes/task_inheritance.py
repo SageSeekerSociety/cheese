@@ -23,7 +23,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path
 
-from app.api.routes.tasks import _ensure_task_readable, _require_task
+from app.api.routes.tasks._common import _require_task
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import NotFoundError
@@ -34,6 +34,7 @@ from app.domain.space.material_service import (
     member_readable_material_ids,
 )
 from app.domain.task.inheritance import TaskInheritance, for_task
+from app.domain.task.services import ensure_task_readable
 
 router = APIRouter(prefix="/tasks", tags=["Tasks"])
 
@@ -84,7 +85,7 @@ async def get_task_inheritance(
 ) -> dict:
     """建项目会继承的资源包、合成后的教学指导（含来源层）、会被带上的资料。
 
-    **判据是题目详情那三道闸**（``_ensure_task_readable``）：未过审 403、看不见
+    **判据是题目详情那三道闸**（``ensure_task_readable``）：未过审 403、看不见
     404、超出本板上限 404 —— 不是更宽的那一条 ``can_view_task``。后者在题目没开
     可见范围时对任何登录用户都放行，于是「还没过审」和「超出上限」的题会在这里
     把资源包、合成后的指导连同资料名一起交出去。**这份清单不比题本身更公开**：
@@ -97,7 +98,7 @@ async def get_task_inheritance(
     —— 那不是错误，只是「这题带的资料你一份也拿不到」。
     """
     task = await _require_task(db, task_id)
-    await _ensure_task_readable(db=db, task=task, auth_user=auth_user)
+    await ensure_task_readable(session=db, task=task, user_id=auth_user.user_id)
 
     found = await for_task(session=db, task_id=task_id, user_id=auth_user.user_id)
     if found is None:

@@ -113,7 +113,7 @@ def llm(
     api_client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> Iterator[_EchoingLLMClient]:
     """这一份用例走的那张草稿服务：真解析，假推理，个人额度照真的扣。"""
-    from app.api.routes.tasks import get_task_pdf_draft_service
+    from app.api.routes.tasks._common import get_task_pdf_draft_service
 
     client = _EchoingLLMClient()
     rates = {_EchoingLLMClient.model: (1e-6, 2e-6, 1e-7, 1e-6)}

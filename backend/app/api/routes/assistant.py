@@ -22,10 +22,9 @@ from fastapi import APIRouter, Depends, Path, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
-from app.api.deps import get_personal_sessions
+from app.api.deps import get_handless_sessions
 from app.api.response import ok
 from app.api.routes.admin_common import DbSession
-from app.api.routes.tasks import _ensure_task_readable
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.background import spawn
@@ -40,26 +39,26 @@ from app.core.errors import (
 )
 from app.core.redis import get_redis_client
 from app.core.sandbox_auth import personal_claims
-from app.domain.agent.harness.pi.personal import (
+from app.domain.agent.harness.pi.handless import (
+    HandlessSessions,
     HostFull,
-    Launch,
-    PersonalSessionError,
-    PersonalSessions,
+    SessionError,
 )
+from app.domain.agent.harness.pi.personal import Launch
 from app.domain.assistant import asking
 from app.domain.assistant import service as assistant
 from app.domain.assistant import tools as personal_tools
 from app.domain.assistant.keys import person_key
 from app.domain.assistant.prompt import task_brief
 from app.domain.feature_stats import pricing
-from app.domain.task.services import TaskService
+from app.domain.task.services import TaskService, ensure_task_readable
 from app.domain.usage.ledger import Ledger, Rates, payer_for_person
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/assistant", tags=["assistant"])
 
 AuthUser = Annotated[AuthUserInfo, Depends(require_auth_user)]
-People = Annotated[PersonalSessions, Depends(get_personal_sessions)]
+People = Annotated[HandlessSessions, Depends(get_handless_sessions)]
 
 
 def _task_place(task_id: int) -> assistant.Place:
@@ -70,7 +69,7 @@ async def _readable_task(db, task_id: int, auth: AuthUserInfo):
     task = await TaskService.of(db).get_task(task_id)
     if task is None:
         raise NotFoundError.for_resource("task", task_id)
-    await _ensure_task_readable(db=db, task=task, auth_user=auth)
+    await ensure_task_readable(session=db, task=task, user_id=auth.user_id)
     return task
 
 
@@ -159,7 +158,7 @@ async def read_conversation(
     )
 
 
-async def _prestart(people: PersonalSessions, started: Launch) -> None:
+async def _prestart(people: HandlessSessions, started: Launch) -> None:
     try:
         await people.ensure(started)
     except Exception:  # noqa: BLE001 — the question starts it, or says why not
@@ -235,7 +234,7 @@ async def ask(
     except HostFull:
         await release()
         return _refuse(503, "芝士这会儿太忙，稍后再试。", 10)
-    except PersonalSessionError as exc:
+    except SessionError as exc:
         logger.warning("a person's session did not start: %s", exc)
         await release()
         return _refuse(503, assistant.FAILED, 10)
