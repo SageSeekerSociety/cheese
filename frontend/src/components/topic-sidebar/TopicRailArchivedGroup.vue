@@ -44,6 +44,10 @@ const open = ref(false)
 // 归档是会越堆越多的（做过一轮又一轮的活都落在这儿），所以这一组也照话题组那套走：
 // 行的身份、以及选中的那一行要留在 DOM 里（光标可能正停在它上面）。参数按 `unknown`
 // 收：这根函数是被 `item-key` 接过去的，那边只保证「给你一样东西」，具体是什么自己认。
+//
+// 行上有 `data-room-id`（和 `TopicRailRow` 一样）：程序化选中某一话题时（useTopicRail
+// 的那条 watch）按 id 找行、`scrollIntoView` 的就是它。归档组不走「按序号滚」那条路，
+// 靠的是这里——选中的那一行一直在 DOM 里（见 keepMounted），找得到就滚得到。
 const rowKey = (topic: unknown): string => (topic as Topic).id
 const keepMounted = computed<readonly number[] | undefined>(() => {
   const id = props.selectedTopicId
@@ -83,6 +87,7 @@ const keepMounted = computed<readonly number[] | undefined>(() => {
             tabindex="0"
             :active="item.id === selectedTopicId"
             rounded="lg"
+            :data-room-id="item.id"
             :data-row-actions="item.id"
             class="topic-row topic-row--archived"
             :class="{ 'is-active': item.id === selectedTopicId }"

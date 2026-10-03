@@ -37,7 +37,7 @@ vi.mock('virtua/vue', async () => {
   const make = (which: 'VList' | 'Virtualizer') =>
     define({
       name: which,
-      props: ['data', 'itemSize', 'bufferSize', 'shift', 'keepMounted', 'itemProps', 'scrollRef', 'item'],
+      props: ['data', 'itemSize', 'bufferSize', 'keepMounted', 'itemProps', 'scrollRef', 'item'],
       setup(props, { attrs, slots, expose }) {
         virtua.seen.push({ which, props: props as unknown as Record<string, unknown> })
         expose({ scrollToIndex: virtua.scrollToIndex })
@@ -229,6 +229,16 @@ describe('已归档那一组', () => {
     const index = rows.findIndex((t) => t.id === 'a5')
     expect(index).toBeGreaterThanOrEqual(0)
     expect(virtua.seen[0].props.keepMounted).toEqual([index])
+  })
+
+  it('归档行也带 data-room-id —— 程序化选中时靠它把那行找出来滚进视口', async () => {
+    // 这一组不走「按序号滚」那条路（它不在 railSections 里），选中靠的是 useTopicRail
+    // 兜底那句 `querySelector('[data-room-id=...]').scrollIntoView()`。行上没这个属性
+    // 就永远够不着；选中的那一行常驻 DOM（上一条）是它能被找到的另一半。
+    const { container } = mount({ topics: [...longRail(3), ...archived(120)], selectedTopicId: 'a5' })
+    await fireEvent.click(container.querySelector('.archived-toggle') as HTMLElement)
+    await waitFor(() => expect(virtua.seen).toHaveLength(1), WAIT)
+    expect(document.querySelector('[data-room-id="a5"]')).not.toBeNull()
   })
 
   it('行数不到门槛就整列画，和以前一样', async () => {

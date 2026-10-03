@@ -25,7 +25,7 @@ vi.mock('virtua/vue', async () => {
   const make = (which: 'VList' | 'Virtualizer') =>
     define({
       name: which,
-      props: ['data', 'itemSize', 'bufferSize', 'shift', 'keepMounted', 'itemProps', 'scrollRef', 'item', 'as'],
+      props: ['data', 'itemSize', 'bufferSize', 'keepMounted', 'itemProps', 'scrollRef', 'item', 'as'],
       setup(props, { attrs, slots, expose }) {
         virtua.seen.push({ which, props: props as unknown as Record<string, unknown> })
         expose({ scrollToIndex: virtua.scrollToIndex })
@@ -118,14 +118,13 @@ describe('门槛', () => {
 })
 
 describe('递给 virtua 的那几个数', () => {
-  it('估计行高、缓冲、换位、常驻行和滚动容器都照传', () => {
+  it('估计行高、缓冲、常驻行和滚动容器都照传', () => {
     draw(
       {
         itemKey,
         scrollParent: SCROLL_PARENT,
         estimatedSize: 44,
         bufferSize: 320,
-        shift: true,
         keepMounted: [7],
       },
       itemsOf(150)
@@ -133,7 +132,6 @@ describe('递给 virtua 的那几个数', () => {
     const p = virtua.seen[0].props
     expect(p.itemSize).toBe(44)
     expect(p.bufferSize).toBe(320)
-    expect(p.shift).toBe(true)
     expect(p.keepMounted).toEqual([7])
     expect(p.scrollRef).toBe(SCROLL_PARENT)
   })
@@ -191,6 +189,59 @@ describe('键盘走到窗口外的行上', () => {
     const { container } = draw({ itemKey, scrollParent: SCROLL_PARENT }, itemsOf(150))
     fireEvent.focusIn(container.querySelector('[data-virtua]')!)
     expect(virtua.scrollToIndex).not.toHaveBeenCalled()
+  })
+})
+
+describe('光标停在哪一行，哪一行就留着', () => {
+  function rowOf(container: Element, index: number): HTMLElement {
+    const row = container.querySelector(`[data-vlist-index="${index}"]`)
+    expect(row).not.toBeNull()
+    return row as HTMLElement
+  }
+
+  it('聚焦的那一行并进常驻行 —— 滚出窗口也不会被摘掉（焦点掉回 body 就是这么来的）', async () => {
+    const { container } = draw({ itemKey, scrollParent: SCROLL_PARENT, keepMounted: [7] }, itemsOf(150))
+    expect(virtua.seen[0].props.keepMounted).toEqual([7])
+    // 焦点一动就重画一次，所以这几条都得等那一轮 flush（fireEvent 自己 await 的是它）。
+    await fireEvent.focusIn(rowOf(container, 120))
+    expect(virtua.seen[0].props.keepMounted).toEqual([7, 120])
+  })
+
+  it('焦点出了这份列表就放掉 —— 不然那一行会被一直钉在 DOM 里', async () => {
+    const { container } = draw({ itemKey, scrollParent: SCROLL_PARENT, keepMounted: [7] }, itemsOf(150))
+    await fireEvent.focusIn(rowOf(container, 120))
+    expect(virtua.seen[0].props.keepMounted).toEqual([7, 120])
+    // relatedTarget 落在列表外（这里是最外那层）：这一行不再有人看着它。
+    await fireEvent.focusOut(rowOf(container, 120), { relatedTarget: document.body })
+    expect(virtua.seen[0].props.keepMounted).toEqual([7])
+  })
+
+  it('焦点只是挪到列表里的另一行：换一行留着，不是两行都留', async () => {
+    const { container } = draw({ itemKey, scrollParent: SCROLL_PARENT }, itemsOf(150))
+    await fireEvent.focusIn(rowOf(container, 120))
+    const other = rowOf(container, 30)
+    await fireEvent.focusOut(rowOf(container, 120), { relatedTarget: other })
+    await fireEvent.focusIn(other)
+    expect(virtua.seen[0].props.keepMounted).toEqual([30])
+  })
+
+  it('留着的是那一行本身，不是那个序号 —— 列表重排后跟着它走', async () => {
+    // 按序号记的话，重排之后这个序号指着的是别人，光标那一行照样会被摘掉。
+    const { container, rerender } = draw({ itemKey, scrollParent: SCROLL_PARENT }, itemsOf(150))
+    await fireEvent.focusIn(rowOf(container, 120))
+    expect(virtua.seen[0].props.keepMounted).toEqual([120])
+    const reordered = ['t120', ...itemsOf(150).filter((t) => t !== 't120')]
+    await rerender({ items: reordered })
+    expect(virtua.seen[0].props.keepMounted).toEqual([0])
+  })
+})
+
+describe('虚拟化那一层容器', () => {
+  it('定位盒子是 presentation —— 它夹在 ul 和 li（或 v-list 和行）中间，不该有语义', () => {
+    // virtua 把自己那层盒子的属性透传到根元素上（真浏览器里实测过），所以这儿断言
+    // 它拿到了 presentation：`ul > div > li` 的列表语义靠这个接回来。
+    const { container } = draw({ itemKey, scrollParent: SCROLL_PARENT }, itemsOf(150))
+    expect(container.querySelector('[data-virtua]')?.getAttribute('role')).toBe('presentation')
   })
 })
 

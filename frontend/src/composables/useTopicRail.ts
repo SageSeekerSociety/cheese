@@ -258,6 +258,9 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
       // 选中的那一行在不在一份虚拟化的列表里？在的话它多半**不在 DOM 里**（没被窗口
       // 挂上），`scrollIntoView` 够不着它——只能按序号让那一组自己滚过去。整列都在
       // DOM 里时照旧走 querySelector：它只滚「最近的那一段」，不把整列跳一下。
+      //
+      // 归档组走的是下面那条兜底：它不在 railSections 里（那一组自己管收展），但它的行
+      // 同样带 `data-room-id`、选中的那一行同样常驻 DOM，所以按 id 找得到、滚得动。
       const at = selectedLocation.value
       if (at && scrollTarget && isVirtualSection(at.key)) {
         scrollTarget.scrollToIndex(at.key, at.index)
@@ -338,6 +341,8 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
   // 选中的话题落在哪一组、那一组里排第几行。上面那条 watch 要按**序号**滚虚拟化的
   // 那一组（那种时候行不在 DOM 里，光有 id 够不着），所以除了「在不在这一组」还得知道
   // 它排第几。收起来的子树里的行不在 rows 里，也就落不到这儿（那种行本来也不在屏幕上）。
+  // 归档组不在 railSections 里（它的收展是那个组件自己的状态），所以它也落不到这儿——
+  // 它走 watch 里那条 `querySelector` 兜底，靠的是归档行的 `data-room-id`。
   const selectedLocation = computed<{ key: string; index: number } | null>(() => {
     const id = source.selectedTopicId
     if (!id) return null

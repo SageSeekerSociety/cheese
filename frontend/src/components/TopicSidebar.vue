@@ -527,7 +527,17 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                      VIRTUAL_LIST_THRESHOLD (lib/virtualList.ts) the column goes to
                      VirtualList — those rows could never fit on screen together anyway, so
                      the saving is nodes, not behaviour. Keyed by project: switching projects
-                     swaps the whole list, it is not this list reordering, so nothing plays. -->
+                     swaps the whole list, it is not this list reordering, so nothing plays.
+
+                     No `shift`: virtua's `shift` only acts when the row COUNT changes, and it
+                     then anchors the view to the tail (= assumes the change was at the head).
+                     Measured in headless chromium (150 rows, viewing r100-r108): moving a
+                     middle row to the head changes nothing (same count), a new row at the head
+                     holds the view with shift and slides it by one row without — but dropping
+                     5 rows BELOW the view (archiving, collapsing a subtree, the hidden-stalled
+                     filter — all of which happen away from the head here) yanks the view up 5
+                     rows with shift and leaves it alone without. The rail's count changes are
+                     mostly not at the head, so the anchor is left at the start. -->
                 <VirtualList
                   :ref="(handle: unknown) => setRailList(section.key, handle)"
                   :items="section.rows"
@@ -535,7 +545,6 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                   :scroll-parent="railScroll"
                   :estimated-size="36"
                   :buffer-size="320"
-                  :shift="true"
                   :keep-mounted="keepFor(section)"
                   transition="rail-row"
                   :transition-key="selectedProjectId ?? undefined"

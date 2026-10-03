@@ -11,7 +11,18 @@
 //
 // 容器不归它管（话题列表的行要塞进既有的 `<v-list>` 里），但行外面那一层可以要：看板
 // 那一列是 `ul > li`，`:item-as="li"`（配 `item-role="listitem"`）让两种形态套出来的
-// 都是同一个 `li`——虚拟化前后是同一套结构，不是「虚拟化了就少了语义」。
+// 都是同一个 `li`——虚拟化前后是同一套结构，不是「虚拟化了就少了语义」。virtua 自己
+// 那层定位盒子是 `role="presentation"`（见虚拟化那一段）：它不是内容，夹在 `ul` 和
+// `li` 中间会把列表语义切断，得从无障碍树上消失。
+//
+// 光标停在某一行上时，那一行要一直在 DOM 里：它一滚出窗口就被摘掉的话，焦点会掉回
+// body，接着打字就不知道打到哪儿去了。所以 focusin 时记下那一行、并进交给 virtua 的
+// keepMounted，focusout 出了这份列表就放掉（见 `keptIndices`）。记的是行的 key 不是
+// 序号——列表按最近动静重排时序号会换人。
+//
+// 顺着 Tab 走**走不到还没挂出来的行**（虚拟化只挂窗口附近那些）：要把整列收成一个
+// Tab 停靠点、再用上下键在里面走（roving tabindex）才做得到，这份实现有意不做——
+// 行内的按钮（行尾那颗 ⋯）本来就在同一个 Tab 顺序里，够用。
 //
 // 虚拟化要知道**谁在滚**，所以滚动容器是挨着门槛的第二个条件：外面有（话题列表的
 // `.rail-scroll`——它上面还有置顶行和组头，不是这一列自己的；看板底下那一列自己有
@@ -62,8 +73,6 @@ export default defineComponent({
     bufferSize: { type: Number, default: 300 },
     /** 外面的滚动容器。给了才虚拟化——没给就不知道该按谁的窗口算，照旧整列画。 */
     scrollParent: { type: Object as PropType<HTMLElement | null>, default: null },
-    /** 行会换位置（按最近动静重排）时打开：virtua 用它少算几步位移。 */
-    shift: { type: Boolean, default: false },
     /** 无论滚到哪儿都留在 DOM 里的行（序号）。选中的那一行必须留着，否则它一滚出窗口
      *  就从树上摘了，光标也跟着没。 */
     keepMounted: { type: Array as PropType<readonly number[]>, default: undefined },
@@ -81,19 +90,45 @@ export default defineComponent({
   },
   setup(props, { slots, expose }) {
     const list = ref<VirtualListHandle | null>(null)
+    // 光标所在的那一行（按 itemKey 记）。见文件头「光标停在某一行上」那段。
+    const focusedKey = ref<string | number | null>(null)
     // 两个条件都要：行数过门槛，且知道谁在滚（见文件头）。
     const virtualized = computed(() => props.items.length > props.threshold && props.scrollParent != null)
+
+    /** 递给 virtua 的常驻行：外面点名要留的（选中的、开着菜单的……）加上光标所在的那一行。 */
+    const keptIndices = computed<readonly number[] | undefined>(() => {
+      const key = focusedKey.value
+      if (key == null) return props.keepMounted
+      const kept = props.keepMounted ?? []
+      const index = props.items.findIndex((item, at) => props.itemKey(item, at) === key)
+      // 那一行已经不在这一列里了（被筛掉、归档了），或者本来就要留着：外面那份照传。
+      if (index < 0 || kept.includes(index)) return props.keepMounted
+      return [...kept, index]
+    })
 
     function scrollToIndex(index: number, options?: VirtualListScrollOptions) {
       list.value?.scrollToIndex(index, { align: 'nearest', ...options })
     }
 
-    // 键盘走到窗口外的行上（Tab 过去、长按菜单把焦点还回那一行）：把那一行带进视口。
+    // 键盘走到窗口外的行上（Tab 过去、长按菜单把焦点还回那一行）：把那一行带进视口，
+    // 并记住是它——光标留在上面期间它不能被摘掉。
     // 只有虚拟化时那一行的盒子才带 `data-vlist-index`，整列渲染时两件事都不必做。
     function onFocusIn(event: FocusEvent) {
       const host = (event.target as HTMLElement | null)?.closest?.('[data-vlist-index]')
       const index = host?.getAttribute('data-vlist-index')
-      if (index != null) scrollToIndex(Number(index))
+      if (index == null) return
+      const at = Number(index)
+      const item = props.items[at]
+      if (item !== undefined) focusedKey.value = props.itemKey(item, at)
+      scrollToIndex(at)
+    }
+
+    // 焦点挪到列表里的另一行（Tab、点另一行、进那一行的按钮）就留着；出了这份列表
+    // （掉到 body、去别的控件）就放掉——不然那一行会被一直钉在 DOM 里。
+    function onFocusOut(event: FocusEvent) {
+      const next = event.relatedTarget as HTMLElement | null
+      if (next?.closest?.('[data-vlist-index]')) return
+      focusedKey.value = null
     }
 
     /** 整列渲染：和没接虚拟列表时画的一模一样——同一层 TransitionGroup、同一批 key。 */
@@ -134,9 +169,13 @@ export default defineComponent({
           data: props.items,
           itemSize: props.estimatedSize,
           bufferSize: props.bufferSize,
-          shift: props.shift,
-          keepMounted: props.keepMounted,
+          keepMounted: keptIndices.value,
           item: props.itemAs || undefined,
+          // virtua 套出来的那一层是**定位用的盒子**，不是内容：看板那一列虚拟化以后是
+          // `ul > div > li`，中间这层 generic div 会把 ul 的列表语义切断。让它在无障碍
+          // 树上消失，`ul` 和 `li` 就还是父子（话题列表那边同理，v-list 的列表/导航语义
+          // 也靠这个撑着）。它不可聚焦，presentation 用了不会被忽略。
+          role: 'presentation',
           // 每一行的盒子上记着序号：键盘走到窗口外的行上时（见 onFocusIn）按它滚过去。
           // virtua 是按 `{ item, index }` 一个对象调过来的（见 ItemProps），不是一个一个传。
           itemProps: ({ index }: { item: unknown; index: number }) => {
@@ -145,6 +184,7 @@ export default defineComponent({
             return attrs
           },
           onFocusin: onFocusIn,
+          onFocusout: onFocusOut,
         },
         render
       )
