@@ -6,6 +6,8 @@ import type { AgentPreset, AgentScope, PresetContext } from '../../../lib/docAge
 
 import { computed, onMounted, ref, watch } from 'vue'
 
+import { useFocusReturn } from '@/composables/useFocusReturn'
+
 import { matching, presetsFor } from '../../../lib/docAgent'
 import CheeseAvatar from '../../CheeseAvatar.vue'
 
@@ -28,6 +30,9 @@ watch(flat, () => (active.value = 0))
 const asksOnly = computed(() => !props.context.editable)
 
 onMounted(() => input.value?.focus({ preventScroll: true }))
+
+// 取消（这一层卸载）时把焦点还回点开它的那一处。
+useFocusReturn(ref(true))
 
 function choose(preset: AgentPreset) {
   emit('run', preset, name(preset))

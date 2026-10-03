@@ -10,6 +10,8 @@ import type { Ref } from 'vue'
 
 import { nextTick, reactive, ref, watch } from 'vue'
 
+import { scrollBehavior } from '@/utils/motion'
+
 export interface TimelineMotionDeps {
   atBottom: Ref<boolean>
   hasNewer: Ref<boolean>
@@ -43,7 +45,7 @@ export function useTimelineMotion(deps: TimelineMotionDeps) {
   function jumpToUnseen() {
     const first = unseen.value[0]
     if (hasNewer.value) backToNewest()
-    else scrollRef.value?.scrollTo({ top: scrollRef.value.scrollHeight, behavior: 'smooth' })
+    else scrollRef.value?.scrollTo({ top: scrollRef.value.scrollHeight, behavior: scrollBehavior() })
     unseen.value = []
     if (first) flash(first)
   }

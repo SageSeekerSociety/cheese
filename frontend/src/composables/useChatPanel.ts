@@ -22,6 +22,8 @@ import type { ChatPanelOptions } from './chatPanelContract'
 
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 
+import { scrollBehavior } from '@/utils/motion'
+
 import {
   ApiError,
   attachmentRawUrl,
@@ -585,7 +587,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
       errorMsg.value = e instanceof Error ? e.message : t('work.room.chat.downloadFailed')
     }
   }
-  function scrollToMessage(id: string, behavior: 'smooth' | 'auto' = 'smooth') {
+  function scrollToMessage(id: string, behavior: ScrollBehavior = scrollBehavior()) {
     const el = scrollRef.value?.querySelector(`[data-mid="${id}"]`)
     if (!el) return
     el.scrollIntoView({ behavior, block: 'center' })

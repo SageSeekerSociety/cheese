@@ -17,6 +17,8 @@ import type { DocThreadActions, DocThreadState, ThreadPlace } from '../../lib/do
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
+import { scrollBehavior } from '@/utils/motion'
+
 import { useDocAgent } from '../../composables/useDocAgent'
 import { useDocReview } from '../../composables/useDocReview'
 import { useDocSuggestions } from '../../composables/useDocSuggestions'
@@ -147,7 +149,7 @@ let pulseTimer: ReturnType<typeof setTimeout> | undefined
 const pulsing = ref(false)
 
 async function pulse() {
-  bodyRef.value?.scrollTo({ top: 0, behavior: 'smooth' })
+  bodyRef.value?.scrollTo({ top: 0, behavior: scrollBehavior() })
   if (pulseTimer) clearTimeout(pulseTimer)
   pulsing.value = false
   await nextTick()

@@ -12,6 +12,8 @@ import type { ChainedCommands, Editor } from '@tiptap/core'
 
 import { computed, onBeforeUnmount, ref, toRaw, watch } from 'vue'
 
+import { useFocusReturn } from '@/composables/useFocusReturn'
+
 import { BUBBLE_META } from '../../../lib/docBubble'
 import { STATUS_KINDS } from '../../../lib/docSchema/blocks'
 import { BLOCK_ITEMS, blockKeyOf } from '../../../lib/docSlashMenu'
@@ -138,6 +140,9 @@ watch(blockOpen, (open) => {
   else document.removeEventListener('mousedown', closeBlocks, true)
 })
 onBeforeUnmount(() => document.removeEventListener('mousedown', closeBlocks, true))
+
+// 菜单关上时把焦点还回先前拿着焦点的地方（多半是正文编辑器）。
+useFocusReturn(blockOpen)
 </script>
 
 <template>

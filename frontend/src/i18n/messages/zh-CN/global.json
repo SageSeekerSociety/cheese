@@ -1,6 +1,10 @@
 {
   "back": "返回",
   "labelWithAside": "{label}（{aside}）",
+  "errorBoundary": {
+    "message": "无法显示这块内容",
+    "retry": "重试"
+  },
   "cancel": "取消",
   "cheese": "知是",
   "copyright": "© {year} 知是",

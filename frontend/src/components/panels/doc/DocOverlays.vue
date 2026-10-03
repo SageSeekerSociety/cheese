@@ -17,10 +17,12 @@ import type { CommentSpot } from '../../../lib/docCommentSpots'
 import type { DocLinkTarget } from '../../../lib/docLinks'
 import type { SlashItem } from '../../../lib/docSlashMenu'
 
-import { onBeforeUnmount, ref, shallowRef, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import { DragHandle } from '@tiptap/extension-drag-handle-vue-3'
 import { TextSelection } from '@tiptap/pm/state'
 import { CellSelection } from '@tiptap/pm/tables'
+
+import { useFocusReturn } from '@/composables/useFocusReturn'
 
 import { BUBBLE_META } from '../../../lib/docBubble'
 import { spotAt } from '../../../lib/docCommentSpots'
@@ -531,6 +533,9 @@ watch(blockMenu, (open, was) => {
   }
 })
 onBeforeUnmount(() => (blockMenu.value = null))
+
+// 块手柄菜单关上时把焦点还回手柄。
+useFocusReturn(computed(() => !!blockMenu.value))
 
 /** 正文在光标底下换了（人工编辑，或者装进来的一版）：这个按钮指着的段落已经不是
  *  原来那一段了，收回去。装配服务端那一版时上面不会喊这一声。 */

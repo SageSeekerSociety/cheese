@@ -9,6 +9,8 @@ import type { DocReviewRequest, LocatedEdit } from '../lib/docReview'
 
 import { computed, onScopeDispose, ref, shallowRef, watch } from 'vue'
 
+import { scrollBehavior } from '@/utils/motion'
+
 import { editMarks, setEditMarks } from '../lib/docEditMarks'
 import { editFailure } from '../lib/docEdits'
 import { locateEdits } from '../lib/docReview'
@@ -53,7 +55,7 @@ export function useDocReview(options: DocReviewOptions) {
     try {
       const { node } = editor.view.domAtPos(change.from)
       const el = node instanceof HTMLElement ? node : node.parentElement
-      el?.scrollIntoView?.({ block: 'center', behavior: 'smooth' })
+      el?.scrollIntoView?.({ block: 'center', behavior: scrollBehavior() })
     } catch {
       // 位置刚被别人改掉：不滚。
     }
