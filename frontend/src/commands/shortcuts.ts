@@ -35,6 +35,25 @@ function matches(chord: Chord, event: KeyboardEvent): boolean {
   )
 }
 
+/** 一条能给帧的键：帧只报 id，键名与修饰键留在宿主这张表里。 */
+export interface FrameKey extends Chord {
+  id: string
+}
+
+/** 键表上限。表要随消息走一遍，多了就成了把整个命令面发出去。 */
+export const FRAME_KEY_LIMIT = 16
+
+/** 此刻能进帧的键：按命令的登记顺序取前 N 条，禁用的不给。 */
+export function frameKeys(limit = FRAME_KEY_LIMIT): FrameKey[] {
+  const keys: FrameKey[] = []
+  for (const command of activeCommands.value) {
+    if (keys.length >= limit) break
+    const chord = command.shortcut ? parse(command.shortcut) : null
+    if (chord && !command.disabled) keys.push({ id: command.id, ...chord })
+  }
+  return keys
+}
+
 /** 做一条命令：先跑 run，再去 to。 */
 export function runCommand(command: Command, router: Router) {
   if (command.disabled || command.loading) return
@@ -42,8 +61,26 @@ export function runCommand(command: Command, router: Router) {
   if (command.to) void router.push(command.to)
 }
 
+// 装在 window 上的那一个监听握着的 router。帧里按下的键走同一个入口，
+// 所以这里留一份：帧回了 id 之后跑的命令，和人在键盘上按出来的必须是同一条。
+let shortcutsRouter: Router | null = null
+
+/**
+ * 帧里按下的键。只认刚发下去那张表里的 id——帧自己报不出别的命令来。
+ * 返回有没有真的跑掉一条。
+ */
+export function runFrameKey(id: string): boolean {
+  if (!shortcutsRouter) return false
+  if (!frameKeys().some((key) => key.id === id)) return false
+  const command = activeCommands.value.find((candidate) => candidate.id === id)
+  if (!command || command.disabled || command.loading) return false
+  runCommand(command, shortcutsRouter)
+  return true
+}
+
 /** 挂在 window 上的那一个监听；返回撤掉它的函数。 */
 export function installShortcuts(router: Router): () => void {
+  shortcutsRouter = router
   const onKeydown = (event: KeyboardEvent) => {
     if (event.defaultPrevented || event.repeat) return
     const command = activeCommands.value.find((candidate) => {
@@ -55,5 +92,8 @@ export function installShortcuts(router: Router): () => void {
     runCommand(command, router)
   }
   window.addEventListener('keydown', onKeydown)
-  return () => window.removeEventListener('keydown', onKeydown)
+  return () => {
+    window.removeEventListener('keydown', onKeydown)
+    if (shortcutsRouter === router) shortcutsRouter = null
+  }
 }

@@ -1,13 +1,20 @@
 import { defineComponent, h, nextTick } from 'vue'
+import { createMemoryHistory, createRouter } from 'vue-router'
 import { render } from '@testing-library/vue'
 import { afterEach, expect, it, vi } from 'vitest'
 
+import { defineCommands } from '../../commands'
+import { installShortcuts } from '../../commands/shortcuts'
 import { usePreviewFrames } from '../usePreviewFrames'
 
 vi.mock('../../lib/previewSession', () => ({ postPreviewSession: vi.fn() }))
 
 const wrappers: ReturnType<typeof render>[] = []
-afterEach(() => wrappers.splice(0).forEach((wrapper) => wrapper.unmount()))
+const undos: (() => void)[] = []
+afterEach(() => {
+  wrappers.splice(0).forEach((wrapper) => wrapper.unmount())
+  undos.splice(0).forEach((undo) => undo())
+})
 
 async function setup() {
   let host!: ReturnType<typeof usePreviewFrames>
@@ -128,6 +135,26 @@ it('a bridge loaded after navigation can request the current handshake without r
   expect(host.displayed.value?.runtime).toBe('ready')
   expect(host.displayed.value).toBe(shown)
   expect(document.querySelector(`iframe[name="${shown!.name}"]`)).toBe(frame)
+})
+
+it('keys travel with the handshake and only an id from that table runs a command', async () => {
+  const run = vi.fn()
+  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/:p(.*)*', component: {} }] })
+  undos.push(installShortcuts(router))
+  undos.push(defineCommands(() => [{ id: 'rail.1', title: '首页', shortcut: 'mod+1', run }]))
+  const { frame, hello } = await setup()
+  expect(hello.keys).toEqual([{ id: 'rail.1', mod: true, shift: false, alt: false, code: 'Digit1' }])
+  const dispatch = (data: unknown) =>
+    window.dispatchEvent(
+      new MessageEvent('message', { origin: 'https://preview-fixed.example', source: frame.contentWindow, data })
+    )
+  // 别的 id、上个会话的 id、被换掉的会话，都不算。
+  dispatch({ ...hello, type: 'key', id: 'library.upload' })
+  dispatch({ ...hello, type: 'key', id: 'rail.1', sessionId: 'old' })
+  dispatch({ ...hello, type: 'key', id: 'rail.1', version: 2 })
+  expect(run).not.toHaveBeenCalled()
+  dispatch({ ...hello, type: 'key', id: 'rail.1' })
+  expect(run).toHaveBeenCalledTimes(1)
 })
 
 it('disconnect and same-instance recovery preserve browsing context; replacement stays gone', async () => {
