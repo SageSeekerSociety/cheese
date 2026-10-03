@@ -43,6 +43,8 @@ const props = defineProps<{
   face?: FaceState | null
   /** 头像在动时，悬停看到的那一句。 */
   faceLabel?: string | null
+  /** 头像在动时，读屏读到的那一句：只有状态，不带在走的秒数。 */
+  faceStatus?: string | null
   time: string
   /** 这个房间当前那位 AI 队友的名字，`fold` 档在「…处理中」里用。 */
   agentName: string
@@ -158,6 +160,7 @@ const ACTION_META: Record<string, { btn: string }> = {
     :cont="cont"
     :face="face ?? null"
     :face-label="faceLabel ?? null"
+    :face-status="faceStatus ?? null"
     :time="time"
     :class="{ 'notice-bump': bumped }"
     @animationend="bumped = false"

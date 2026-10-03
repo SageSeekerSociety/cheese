@@ -25,10 +25,15 @@ const props = defineProps<{
   face?: FaceState | null
   /** 头像在动时，悬停看到的那一句（现场顶上那一行）。有它，头像点下去去现场。 */
   faceLabel?: string | null
+  /** 头像在动时，读屏读到的那一句：只有状态，不带在走的秒数，免得每秒再念一遍。 */
+  faceStatus?: string | null
 }>()
 
 const liveLabel = computed(() =>
   props.faceLabel ? t('work.agentAvatar.live', { name: props.name, status: props.faceLabel }) : null
+)
+const liveName = computed(() =>
+  props.faceStatus ? t('work.agentAvatar.live', { name: props.name, status: props.faceStatus }) : undefined
 )
 </script>
 
@@ -44,7 +49,7 @@ const liveLabel = computed(() =>
       type="button"
       class="notice-row__avatar notice-row__live im-person"
       data-site=""
-      :aria-label="liveLabel"
+      :aria-label="liveName"
     >
       <!-- 这一句带着每秒在走的秒数：不用原生 title（一换字就收起再弹，悬停时每秒
            闪一下），用原地换字的气泡。 -->
