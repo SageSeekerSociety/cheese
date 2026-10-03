@@ -3,7 +3,8 @@ title: 个人芝士
 kind: 流程
 summary: 项目之外的芝士：一个人在某个地方和芝士的对话怎么存、在哪里跑、怎么扣钱。
 covers:
-  - backend/app/domain/assistant/
+  - backend/app/domain/agent/personal/
+  - backend/app/domain/assistant/models.py
   - backend/app/api/routes/assistant.py
   - backend/app/domain/agent/harness/pi/personal.py
   - frontend/src/components/assistant/AssistantPanel.vue

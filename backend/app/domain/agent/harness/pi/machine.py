@@ -118,7 +118,7 @@ class Machine:
     ):
         self.client = RemoteClient(dict(target))
         # Only reads it: no command is run on it for the session
-        # (`machine/reading.py`).
+        # (`agent/document/machine.py`).
         self.reading = reading
         self.workspace = str(target.get("workspace") or "")
         self.placeholder = self.workspace == DEFERRED_WORKSPACE

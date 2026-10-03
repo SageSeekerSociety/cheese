@@ -7,7 +7,7 @@ document with the tools it is given, and its answer becomes the agent's reply in
 the thread. The room's conversation is not interrupted for it.
 
 When the room's machine is there, the session reads the room's work on it
-(``machine``, `machine/reading.py`): pi's own read, ls, find and grep, with
+(``machine``, `agent/document/machine.py`): pi's own read, ls, find and grep, with
 their hands on the room's checkout, and nothing that writes or runs a command.
 It never takes a machine of its own; a room with none in hand gets an answer
 from the document and the platform alone.

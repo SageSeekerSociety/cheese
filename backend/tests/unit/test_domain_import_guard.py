@@ -122,6 +122,11 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.agent.memory_ledger", "app.domain.block.repositories"),
         ("app.domain.agent.memory_ledger", "app.domain.project.repositories"),
         ("app.domain.agent.memory_ledger", "app.domain.topic.repositories"),
+        # agent.document.question 是文档里的芝士从 api/ 挪进来的那一块（每个问题
+        # 带上的上下文）。它读房间最近的消息，读的是 block：block 领域没有
+        # service 层，`platform_stats.pipeline` 那条注释讲的是同一件事。这条边在
+        # api/doc_agent.py 时就有，挪进领域层才进了这本账。
+        ("app.domain.agent.document.question", "app.domain.block.repositories"),
         # --- answers / comments / discussion / groups ---
         ("app.domain.answers.services", "app.domain.user.repositories"),
         ("app.domain.answers.services", "app.domain.questions.repositories"),

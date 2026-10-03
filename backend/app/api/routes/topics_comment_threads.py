@@ -7,7 +7,6 @@ from fastapi import APIRouter, Depends
 
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service, get_handless_sessions
-from app.api.doc_agent import answering, hand_to_agent, mentioned_seat
 from app.api.doc_identity import operation_actor
 from app.api.response import ok, page
 from app.api.routes.living_docs import _frozen
@@ -15,6 +14,8 @@ from app.api.routes.topics import DbSession, _actor_in_place
 from app.core.errors import ValidationError
 from app.core.sentences import say
 from app.domain.agent.chat import ChatService
+from app.domain.agent.document.question import answering
+from app.domain.agent.document.thread import hand_to_agent, mentioned_seat
 from app.domain.agent.harness.pi.handless import HandlessSessions
 from app.domain.agent.runtime import announce_stale
 from app.domain.block.comment_schemas import ReplyIn, ThreadMutation
@@ -120,7 +121,7 @@ async def reply(
     sessions: Annotated[HandlessSessions, Depends(get_handless_sessions)],
 ) -> dict:
     """A reply that @-mentions the room's agent hands the thread to it
-    (``app.api.doc_agent``)."""
+    (``app.domain.agent.document.thread``)."""
 
     async def hand_off(db, place, actor):
         seat = await mentioned_seat(db, place, actor, body.content)

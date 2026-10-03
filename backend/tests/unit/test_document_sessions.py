@@ -17,9 +17,9 @@ import uuid
 
 import pytest
 
-from app.api import doc_agent
 from app.core.config import settings
 from app.core.sandbox_auth import mint_delegated_credential, mint_scoped_token
+from app.domain.agent.document import question as doc_question
 from app.domain.agent.harness.pi import document
 from app.domain.agent.harness.pi.handless import Answered, HandlessSessions, Looking
 from tests.support.session_host import DEVICE, Host, install_pi, stop_all
@@ -60,8 +60,8 @@ def _launch(thread: uuid.UUID | None = None) -> document.Launch:
         project_id=PROJECT,
         room_id=ROOM,
         thread_id=thread,
-        system_prompt=doc_agent.system_prompt("芝士", "本项目做存储选型。", None),
-        tools=doc_agent.TOOLS,
+        system_prompt=doc_question.system_prompt("芝士", "本项目做存储选型。", None),
+        tools=doc_question.TOOLS,
         token=mint_scoped_token(
             project_id=str(PROJECT),
             topic_id=str(ROOM),

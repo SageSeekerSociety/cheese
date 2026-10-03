@@ -371,7 +371,7 @@ class Settings(BaseSettings):
     # Answers in flight across one backend process.
     docs_assistant_concurrency: int = 8
 
-    # --- A person's 芝士 outside any project (app/domain/assistant, #2285) ---
+    # --- A person's 芝士 outside any project (app/domain/agent/personal, #2285) ---
     # The gateway model it answers with; charged to the asker's personal
     # credits at what the gateway spent, so the model must be priced there.
     assistant_model: str = "deepseek-flash"
