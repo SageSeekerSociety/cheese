@@ -310,7 +310,6 @@ const getTeamDisabledText = (teamEligibility: TeamTaskEligibility): string => {
   transition: background-color var(--dur-quick) var(--ease-standard);
 }
 
-
 .team-members-container {
   padding-top: 4px;
   border-top: 1px dashed rgba(var(--v-border-color), 0.3);
