@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
 from app.domain.agent.chat import ChatService
+from app.domain.block.notice_text import say
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 
@@ -40,7 +41,7 @@ async def send_note(
     那边空着的时候没有人要被打断，如实回一个 False。
     """
     if not content.strip():
-        raise ValidationError("便条不能是空的")
+        raise ValidationError(say("deliveryNoteEmpty"))
     try:
         target = await TopicService(session).place_or_404(to_thread)
     except NotFoundError:

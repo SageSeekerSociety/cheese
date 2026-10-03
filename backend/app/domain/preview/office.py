@@ -130,7 +130,9 @@ async def render_to_pdf(
     """The PDF for `raw`, converting through the render service if need be."""
     suffix = suffix_of(path)
     if suffix not in RENDERABLE_SUFFIXES:
-        raise OfficeRenderFailed(f"这个格式不能转换为预览：{suffix or path}")
+        raise OfficeRenderFailed(
+            say("previewFormatUnsupportedNamed", format=suffix or path)
+        )
     if not endpoint:
         raise OfficeRenderUnavailable(say("previewDisabled"))
 
@@ -164,9 +166,9 @@ async def render_to_pdf(
         except Exception:  # noqa: BLE001 — a non-JSON body is just no detail
             detail = ""
         if response.status_code >= 500:
-            raise OfficeRenderUnavailable(detail or "文档预览服务出错")
+            raise OfficeRenderUnavailable(detail or say("previewServiceError"))
         raise OfficeRenderFailed(
-            detail or f"无法转换这个文件（HTTP {response.status_code}）"
+            detail or say("convertFailedStatus", status=response.status_code)
         )
 
     pdf = response.content

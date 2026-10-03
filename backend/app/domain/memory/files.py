@@ -22,6 +22,8 @@ import re
 from dataclasses import dataclass
 from enum import StrEnum
 
+from app.domain.block.notice_text import say
+
 #: 索引文件名。和 CC 一样，两个作用域各有一份同名的索引。
 INDEX_NAME = "MEMORY.md"
 
@@ -97,10 +99,7 @@ def valid_name(name: str) -> bool:
 
 def check_name(name: str) -> str:
     if not valid_name(name):
-        raise MemoryFileError(
-            "name 必须是 kebab-case（小写字母、数字、连字符，如 "
-            "integration-tests-hit-a-real-db）"
-        )
+        raise MemoryFileError(say("memoryNameKebab"))
     return name
 
 
@@ -137,28 +136,25 @@ def parse_memory_file(text: str) -> MemoryFile:
     """
     match = _FRONTMATTER_RE.match(text)
     if match is None:
-        raise MemoryFileError("记忆文件必须以 frontmatter（首尾各一行 `---`）开头")
+        raise MemoryFileError(say("memoryNeedsFrontmatter"))
     fields: dict[str, str] = {}
     for line in match.group(1).splitlines():
         if not line.strip():
             continue
         key, separator, value = line.partition(":")
         if not separator:
-            raise MemoryFileError(f"frontmatter 里的这一行不是 `key: value`：{line}")
+            raise MemoryFileError(say("memoryFrontmatterLine", line=line))
         fields[key.strip().lower()] = value.strip()
     for required in ("name", "description", "type"):
         if not fields.get(required):
-            raise MemoryFileError(f"frontmatter 缺少 {required}")
+            raise MemoryFileError(say("memoryFrontmatterMissing", field=required))
     try:
         kind = MemoryType(fields["type"])
     except ValueError as exc:
-        raise MemoryFileError(
-            "type 只能是 user / feedback / project / reference，"
-            f"拿到的是 {fields['type']}"
-        ) from exc
+        raise MemoryFileError(say("memoryTypeInvalid", type=fields["type"])) from exc
     body = text[match.end() :].strip()
     if not body:
-        raise MemoryFileError("记忆文件没有正文——一条记忆一件事，正文才是那件事")
+        raise MemoryFileError(say("memoryNeedsBody"))
     return MemoryFile(
         name=check_name(fields["name"]),
         description=fields["description"],
@@ -240,9 +236,11 @@ def limit_breach(name: str, content: str, previous: str | None) -> str | None:
         if not long_lines:
             return None
         shown = "\n".join(f"  {line}" for line in long_lines[:5])
-        return (
-            f"索引有 {len(long_lines)} 行超过 {INDEX_LINE_MAX} 字符：\n{shown}\n"
-            "一行写一句能照着做的主张，细节放进它指的那个文件。"
+        return say(
+            "memoryIndexLinesTooLong",
+            count=len(long_lines),
+            max=INDEX_LINE_MAX,
+            lines=shown,
         )
     try:
         body = parse_memory_file(content).body
@@ -250,10 +248,7 @@ def limit_breach(name: str, content: str, previous: str | None) -> str | None:
         body = content.strip()
     if len(body) <= BODY_MAX:
         return None
-    return (
-        f"正文 {len(body)} 字，上限 {BODY_MAX} 字。只写结论和它为什么成立，"
-        "不写排查经过；说的是几件事就拆成几条。"
-    )
+    return say("memoryBodyTooLong", length=len(body), max=BODY_MAX)
 
 
 def rejected_path(path: str) -> str:
@@ -284,21 +279,18 @@ def check_path(path: str) -> str:
     是另一个字段，不在这里。
     """
     if not path or path.startswith("/") or "\\" in path or "\x00" in path:
-        raise MemoryFileError(f"记忆文件的路径不能是 {path!r}")
+        raise MemoryFileError(say("memoryPathInvalid", path=repr(path)))
     if len(path) > PATH_MAX:
-        raise MemoryFileError(
-            f"记忆文件的路径太长（最多 {PATH_MAX} 个字符，这条 {len(path)} 个）："
-            "文件名短一点，长的那部分写进正文"
-        )
+        raise MemoryFileError(say("memoryPathTooLong", max=PATH_MAX, length=len(path)))
     parts = path.split("/")
     if any(part in ("", ".", "..") for part in parts):
-        raise MemoryFileError(f"记忆文件的路径不能越出本目录：{path!r}")
+        raise MemoryFileError(say("memoryPathEscapes", path=repr(path)))
     if len(parts) != 1:
-        raise MemoryFileError(f"一条记忆就一个文件，不放在子目录里：{path!r}")
+        raise MemoryFileError(say("memoryNoSubdirectory", path=repr(path)))
     if not path.endswith(".md"):
-        raise MemoryFileError(f"记忆文件必须是 .md：{path!r}")
+        raise MemoryFileError(say("memoryMustBeMarkdown", path=repr(path)))
     if path != INDEX_NAME and not valid_name(path[: -len(".md")]):
-        raise MemoryFileError(f"记忆文件名必须是 kebab-case：{path!r}")
+        raise MemoryFileError(say("memoryFileNameKebab", path=repr(path)))
     return path
 
 
@@ -315,7 +307,7 @@ def scoped_prefix(scope: MemoryFileScope, owner_handle: str | None) -> str:
     if scope is MemoryFileScope.team:
         return TEAM_PREFIX
     if not owner_handle:
-        raise MemoryFileError("private 记忆必须带 owner_handle")
+        raise MemoryFileError(say("memoryPrivateNeedsOwner"))
     return f"{PRIVATE_PREFIX}/{owner_handle}"
 
 
@@ -331,10 +323,8 @@ def check_scoped_path(path: str) -> tuple[str, str]:
     elif len(parts) >= 2 and parts[0] == PRIVATE_PREFIX:
         prefix, rest = f"{PRIVATE_PREFIX}/{parts[1]}", parts[2:]
     else:
-        raise MemoryFileError(
-            f"记忆文件的路径必须以 team/ 或 private/<handle>/ 开头：{path!r}"
-        )
+        raise MemoryFileError(say("memoryPathScope", path=repr(path)))
     if len(rest) != 1:
-        raise MemoryFileError(f"一条记忆就一个文件，路径不对：{path!r}")
+        raise MemoryFileError(say("memoryPathWrong", path=repr(path)))
     check_path(rest[0])
     return prefix, rest[0]

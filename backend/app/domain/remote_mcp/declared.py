@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from app.core import background
 from app.core.errors import GatewayUnavailableError
+from app.domain.block.notice_text import say
 from app.domain.textfile import MAX_TEXT_BYTES, decode_text
 
 logger = logging.getLogger(__name__)
@@ -241,6 +242,6 @@ async def _fetch(db: AsyncSession, project_id: uuid.UUID) -> Declared:
     if (found.get("size") or 0) > MAX_TEXT_BYTES:
         return Declared(problem="invalid")
     if found.get("encoding") != "base64":
-        raise GatewayUnavailableError("代码托管服务没有返回文件内容")
+        raise GatewayUnavailableError(say("forgeNoFileContent"))
     text = decode_text(base64.b64decode(found.get("content") or ""))
     return parse(text) if text is not None else Declared(problem="invalid")

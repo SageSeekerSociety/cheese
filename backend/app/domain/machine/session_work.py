@@ -1044,7 +1044,7 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
     verdict = gate.check(call, gate.policy_of(project.settings), claims.get("a", ""))
     authorized = request.get("authorized_by")
     if isinstance(verdict, gate.Proposal):
-        raise ForbiddenError("所选机器超出项目允许的档位，请选择已授权的资源")
+        raise ForbiddenError(say("machineTierNotAllowed"))
     if choice.profile == "cloud":
         allocation_actor = (
             Actor(**authorized)

@@ -15,6 +15,7 @@ from urllib.parse import urlsplit
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ValidationError
+from app.domain.block.notice_text import say
 
 if TYPE_CHECKING:
     from app.domain.review.models import AcceptCard
@@ -194,13 +195,13 @@ async def resolve(
     except Exception as exc:  # noqa: BLE001 — cannot pick a lane blind
         raise ValidationError(BINDING_UNKNOWN_MESSAGE) from exc
     if binding is None:
-        raise ValidationError("项目没有代码仓库，采纳尚不可用")
+        raise ValidationError(say("reviewNoRepositoryForAccept"))
     if proposal_url and urlsplit(proposal_url).netloc != urlsplit(binding.url).netloc:
-        raise ValidationError("评审所属的托管服务与项目仓库不一致")
+        raise ValidationError(say("reviewForgeMismatch"))
     try:
         provider = FORGES[ForgeKind(binding.kind)]
     except (ValueError, KeyError) as exc:
-        raise ValidationError("项目的代码托管类型无法识别") from exc
+        raise ValidationError(say("forgeKindUnknown")) from exc
     try:
         writable = await tokens_for_project(project_id, session) is not None
     except Exception as exc:  # noqa: BLE001 — cannot declare unreadable capabilities

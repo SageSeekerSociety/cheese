@@ -24,6 +24,7 @@ import uuid
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 
+from app.domain.block.notice_text import say
 from app.domain.local_fs.paths import (
     PathRefused,
     Platform,
@@ -147,7 +148,7 @@ class LocalDirectoryService:
         if scope is GrantScope.PROJECT and project_id is None:
             raise GrantRefused(
                 "project_required",
-                "限定到某个项目的授权必须指明项目",
+                say("grantProjectRequired"),
             )
         if scope is GrantScope.USER and project_id is not None:
             # A user-scope grant that named a project would be a project grant
@@ -155,7 +156,7 @@ class LocalDirectoryService:
             # the wider one is what the decision reads as 对这个人所有事都生效.
             raise GrantRefused(
                 "project_forbidden",
-                "限到所有事的授权不能绑定单个项目",
+                say("grantProjectForbidden"),
             )
 
         try:
@@ -169,7 +170,7 @@ class LocalDirectoryService:
             # no other caller can reach the store without passing it.
             raise GrantRefused(
                 "root_not_grantable",
-                "只能授权具体目录，不能授权整个盘或整台电脑",
+                say("grantRootNotAllowed"),
             )
 
         existing = await self._repo.list_grants_for_device(device_id)

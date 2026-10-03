@@ -17,6 +17,7 @@ from app.core.errors import (
     NotFoundError,
     ValidationError,
 )
+from app.domain.block.notice_text import say
 from app.domain.identity.actor import Actor
 from app.domain.machine.limits import get_machine_limit
 from app.domain.machine.live import announce_changes
@@ -133,7 +134,9 @@ async def delete_machine(
 ) -> dict:
     """Destroy the machine. Asynchronous — it reports `deleting` until MicroCloud
     has torn it down, at which point the machine sweep drops it."""
-    await _require_project_access(project_id, db, resolver, action="删除")
+    await _require_project_access(
+        project_id, db, resolver, action=say("machineActionDelete")
+    )
 
     service = _service(db)
     machine = await service.get_or_404(machine_row_id)
@@ -164,7 +167,12 @@ async def change_machine_power(
     resolver: ActorResolverDep,
 ) -> dict:
     await _require_project_access(
-        project_id, db, resolver, action="休眠" if operation == "suspend" else "恢复"
+        project_id,
+        db,
+        resolver,
+        action=say("machineActionSuspend")
+        if operation == "suspend"
+        else say("machineActionResume"),
     )
     service = _service(db)
     machine = await service.get_or_404(machine_row_id)

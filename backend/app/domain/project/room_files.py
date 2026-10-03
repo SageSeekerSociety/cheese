@@ -71,7 +71,7 @@ async def save_to_library(
     """
     leaf = PurePosixPath(path).name
     if not leaf:
-        raise ValidationError("这不是房间里的一份文件")
+        raise ValidationError(say("notARoomFile"))
     data = await asyncio.to_thread(library.read_room_file, project_id, room_id, path)
     name = await library_records.add(
         session,

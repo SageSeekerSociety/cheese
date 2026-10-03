@@ -24,6 +24,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
+from app.domain.block.notice_text import say
 from app.domain.device.health import (
     DEFAULT_FAILURE_THRESHOLD,
     DEFAULT_QUARANTINE,
@@ -202,8 +203,7 @@ class DeviceService:
             raise NotFoundError("device not found")
         if device.supply is not Supply.cloud:
             raise ForbiddenError(
-                f"device {device_id} 的供给形式是 {device.supply}，"
-                "平台不销毁不是自己开的机器（#282 供给形式不变量）"
+                say("deviceNotPlatformSupplied", device=device_id, supply=device.supply)
             )
         if device.owner_user_id != actor_user_id:
             raise ForbiddenError("Only the device owner may manage this device")

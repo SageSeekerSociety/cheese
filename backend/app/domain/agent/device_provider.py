@@ -63,6 +63,7 @@ from app.domain.agent.platform_failures import (
     DEVICE_OFFLINE_MESSAGE,
     HOST_UNREACHABLE_CODE,
 )
+from app.domain.block.notice_text import NoticeText, say
 from app.domain.device.models import DeviceRow
 from app.domain.device.service import DeviceService
 from app.domain.device.supply import (
@@ -94,7 +95,7 @@ class EnvironmentPreparationError(ScreenSetupError):
     def __init__(self, status: dict):
         self.environment_status = status
         super().__init__(
-            "环境准备失败，这条消息还没有开始处理。",
+            say("environmentPreparationFailed"),
             failure_code="environment_preparation_failed",
         )
 
@@ -153,7 +154,7 @@ async def resolve_pinned_device(
     if chosen is not None:
         device_id = chosen.device_id
         if not await service.serves_project(device_id, project_id):
-            raise ScreenSetupError("设备已移出团队或项目，请联系设备所有者")
+            raise ScreenSetupError(say("screenDeviceRemoved"))
         if await service.get_hosted_device(device_id) is None:
             raise ScreenSetupError(DEVICE_NOT_HOSTED_MESSAGE)
         if not is_online(device_id):
@@ -303,21 +304,15 @@ def _read_proxy_ca() -> str:
     user — the exact failure #325 G2 removes."""
     path = settings.subscription_ca_backend_path.strip()
     if not path:
-        raise ScreenSetupError(
-            "未设置 SUBSCRIPTION_CA_BACKEND_PATH——device 屏幕需要后端能读到"
-            "计费代理的 CA（部署侧把代理的 mitmproxy-ca-cert.pem 只读挂载进"
-            "后端并指向它）"
-        )
+        raise ScreenSetupError(say("screenBillingCaPathUnset"))
     try:
         ca = Path(path).read_text(encoding="utf-8")
     except OSError as exc:
         raise ScreenSetupError(
-            f"读取计费代理 CA 失败（SUBSCRIPTION_CA_BACKEND_PATH={path}）：{exc}"
+            say("screenBillingCaUnreadable", path=path, error=str(exc))
         ) from exc
     if not ca.strip():
-        raise ScreenSetupError(
-            f"计费代理 CA 为空（SUBSCRIPTION_CA_BACKEND_PATH={path}）"
-        )
+        raise ScreenSetupError(say("screenBillingCaEmpty", path=path))
     return ca
 
 
@@ -473,7 +468,7 @@ async def environment_status(
         timeout=10,
     )
     if result.get("exit") != 0:
-        raise ScreenSetupError("无法读取机器上的环境准备状态")
+        raise ScreenSetupError(say("screenSetupStateUnreadable"))
     return json.loads(result.get("stdout") or '{"state":"pending"}')
 
 
@@ -501,7 +496,7 @@ class DeviceChannel(Channel):
     builds_model_env = True
     # 要手的一轮要不到手时说的那一句。供给不同，这一句不同，而「要不要手、要不到
     # 就停」那条分支三种供给是同一条——所以变的是这一句，不是那条分支。
-    no_machine_message = "绑定的设备不在线，本轮无法运行"
+    no_machine_message = say("boundDeviceOffline")
 
     def __init__(
         self,
@@ -823,7 +818,7 @@ class DeviceChannel(Channel):
             raise ScreenSetupError(
                 self._link_failure(
                     device_id,
-                    step="写启动脚本",
+                    step=say("deviceStepWriteLauncher"),
                     waited_s=time.monotonic() - started,
                     offline=isinstance(exc, DeviceOffline),
                 )
@@ -837,7 +832,7 @@ class DeviceChannel(Channel):
         )
         if result.get("exit") != 0:
             raise ScreenSetupError(
-                f"无法把启动脚本写到设备上：{result.get('stderr') or result}"
+                say("launcherNotWritten", detail=str(result.get("stderr") or result))
             )
         if release_state is not None:
             release_state["version"] = result.get("stdout", "").strip()
@@ -910,14 +905,14 @@ class DeviceChannel(Channel):
             raise ScreenSetupError(
                 self._link_failure(
                     device_id,
-                    step="刷新会话文件",
+                    step=say("deviceStepRefreshSession"),
                     waited_s=_LAUNCHER_SHIP_TIMEOUT_S,
                     offline=isinstance(exc, DeviceOffline),
                 )
             ) from exc
         if result.get("exit") != 0:
             raise ScreenSetupError(
-                f"无法刷新设备上的会话文件：{result.get('stderr') or result}"
+                say("sessionFilesNotSent", detail=str(result.get("stderr") or result))
             )
         if release_state is not None:
             release_state["version"] = result.get("stdout", "").strip()
@@ -1095,24 +1090,25 @@ class DeviceChannel(Channel):
 
     def _link_failure(
         self, device_id: str, *, step: str, waited_s: float, offline: bool
-    ) -> str:
+    ) -> NoticeText:
         """One line naming the step, the machine, and what the link looked like at
         that moment — what turns a bare timeout into something a person can act
         on. Reads only what the hub already holds (no database on a failing path)."""
         name = self._hub.device_name(device_id)
-        who = f"机器「{name}」" if name != device_id else f"机器 {device_id}"
+        who = say("deviceUnnamed", device=device_id)
         if name != device_id:
-            who = f"{who}（{device_id}）"
+            who = say("deviceNamed", name=name, device=device_id)
         if offline:
-            link = "连接器不在线"
+            link = say("deviceLinkOffline")
         else:
             age = self._hub.last_seen_age(device_id)
             link = (
-                "连接器在线，但从没收到过它的任何一帧"
+                say("deviceLinkSilent")
                 if age is None
-                else f"连接器在线，最近一帧是 {age:.0f} 秒前"
+                else say("deviceLinkLastFrame", seconds=format(age, ".0f"))
             )
-        return f"{step}时{who}{waited_s:.0f} 秒没有应答；{link}"
+        seconds = format(waited_s, ".0f")
+        return say("deviceNoAnswer", step=step, who=who, seconds=seconds, link=link)
 
     async def _ensure_screen(
         self,
@@ -1551,7 +1547,7 @@ class DeviceChannel(Channel):
         host = place.machine if place else settings.agent_session_device_id
         if not host:
             logger.error("session_host_unconfigured topic=%s", session.topic_id)
-            raise ScreenSetupError("这条会话的机器尚未配置或未连接")
+            raise ScreenSetupError(say("screenSessionMachineNotReady"))
         return host
 
     async def _wait_for_session_host(self, host: str, session: SessionRef) -> None:
@@ -1572,7 +1568,7 @@ class DeviceChannel(Channel):
                 logger.warning(
                     "session_host_offline topic=%s host=%s", session.topic_id, host
                 )
-                raise ScreenSetupError("这条会话的机器尚未配置或未连接")
+                raise ScreenSetupError(say("screenSessionMachineNotReady"))
             await asyncio.sleep(min(_SESSION_RECONNECT_POLL_S, remaining))
 
     async def _session_agent(self, db, session: SessionRef):
@@ -1687,7 +1683,7 @@ class DeviceChannel(Channel):
                 if actor and actor != agent_handle:
                     user = await user_by_handle(room_session, actor)
                     if user is None:
-                        raise ScreenSetupError("本轮 agent 身份不存在，无法启动执行机")
+                        raise ScreenSetupError(say("screenAgentIdentityMissing"))
                     agent_user_id, agent_handle = user.id, user.username
             env = {**(env or {}), "CHEESE_RESOURCE_ID": str(resource_id)}
             # 这一轮没租手，所以它跑在这条会话自己的草稿区里：一个有界的一次
@@ -1746,16 +1742,14 @@ class DeviceChannel(Channel):
                                 "attempt"
                             ) != before.get("attempt"):
                                 raise ScreenSetupError(
-                                    "环境已准备完成，但会话启动后退出，可以在房间终端查看原因"
+                                    say("screenSessionExitedAfterSetup")
                                 )
                             if (
                                 status["state"] == "pending"
                                 or status.get("attempt") == before.get("attempt")
                                 and before.get("state") != "preparing"
                             ) and time.monotonic() >= start_deadline:
-                                raise ScreenSetupError(
-                                    "环境执行器未启动，请查看房间终端"
-                                )
+                                raise ScreenSetupError(say("screenExecutorNotStarted"))
                             if status["state"] == "failed" and (
                                 before.get("state") == "preparing"
                                 or status.get("attempt") != before.get("attempt")
@@ -1782,7 +1776,7 @@ class DeviceChannel(Channel):
             # colon. Fall back to the exception type so the message always says
             # *something* about what went wrong.
             raise ScreenSetupError(
-                f"device 后端启动失败：{str(exc) or exc.__class__.__name__}"
+                say("deviceBackendFailed", detail=str(exc) or exc.__class__.__name__)
             ) from exc
 
     def _credential_is_stale(self, screen: HubScreen) -> bool:

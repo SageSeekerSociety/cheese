@@ -111,10 +111,10 @@ class FeedbackService:
 
     async def require_admin(self, handle: str | None) -> str:
         if not handle:
-            raise ForbiddenError("需要登录")
+            raise ForbiddenError(say("signInRequired"))
         if not await self.is_admin(handle):
             # 403, not 404: /admin/feedback is documented as existing.
-            raise ForbiddenError("需要反馈管理员")
+            raise ForbiddenError(say("feedbackAdminRequired"))
         return handle
 
     async def may_see(
@@ -281,9 +281,9 @@ class FeedbackService:
         # 两者不冲突：栏目先说「哪些还在桌上」，筛选再从那批里挑一级。所以这里不与
         # `_tab_where` 合并，只保证两边都成立。
         if status is not None and status not in {s.value for s in FeedbackStatus}:
-            raise BadRequestError(f"未知的状态：{status}")
+            raise BadRequestError(say("feedbackUnknownStatus", status=status))
         if kind is not None and kind not in {k.value for k in FeedbackKind}:
-            raise BadRequestError(f"未知的类型：{kind}")
+            raise BadRequestError(say("feedbackUnknownKind", kind=kind))
         return await self._repo.list_public(
             tab=tab,
             q=q,
@@ -693,10 +693,7 @@ class FeedbackService:
         send is accountable for what they send.
         """
         if await IdentityService(self._session).is_agent(actor_handle):
-            raise ForbiddenError(
-                "agent 不能直接发布反馈：用 `cheese_feedback_propose` 提案，"
-                "由人确认后再发送"
-            )
+            raise ForbiddenError(say("feedbackAgentCannotPublish"))
         if proposal is not None:
             return await self._create_from_proposal(
                 body,

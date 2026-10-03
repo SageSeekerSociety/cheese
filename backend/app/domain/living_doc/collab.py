@@ -26,6 +26,7 @@ import jwt
 
 from app.core.config import settings
 from app.core.errors import ConflictError, SystemBusyError, UnprocessableEntityError
+from app.domain.block.notice_text import say
 
 #: How long a ticket opens a connection for. The connection outlives it; a
 #: reconnect asks for a new one.
@@ -51,7 +52,7 @@ def enabled() -> bool:
 
 def _key(purpose: str) -> str:
     if not settings.collab_secret:
-        raise SystemBusyError("这个部署没有启用文档协同编辑")
+        raise SystemBusyError(say("collabDisabled"))
     return hashlib.sha256(
         f"{settings.collab_secret}:cheese-collab-{purpose}".encode()
     ).hexdigest()
@@ -135,31 +136,31 @@ async def replace(
                 headers={"Authorization": f"Bearer {_key('internal')}"},
             )
     except httpx.HTTPError as exc:
-        raise SystemBusyError("文档协同服务暂时无法访问，稍后重试") from exc
+        raise SystemBusyError(say("collabUnreachable")) from exc
     body = response.json() if response.content else {}
     if response.status_code == 422 and body.get("error") == "content":
         raise UnprocessableEntityError(body["message"], data={"line": body.get("line")})
     if response.status_code == 409:
         if body.get("error") == "operation":
-            raise ConflictError(body.get("message") or "文档操作冲突")
+            raise ConflictError(body.get("message") or say("docOperationConflict"))
         raise ConflictError(
-            "实况文档已经被改过了，你手上这份是旧的",
+            say("liveDocStale"),
             data={"doc_version": body.get("doc_version", 0)},
         )
     if response.status_code != 200:
-        raise SystemBusyError("文档协同服务没有完成这次写入，稍后重试")
+        raise SystemBusyError(say("collabWriteIncomplete"))
     return body["stored"]
 
 
-#: Why the service refused an edit, in the words its writer acts on. ``{n}`` is
-#: the edit's place in the request, counted from 1.
+#: Why the service refused an edit: the sentence its writer acts on, said with
+#: ``n``, the edit's place in the request counted from 1.
 _EDIT_REFUSALS = {
-    "empty": "第 {n} 处修改没有给出原文",
-    "not_found": "第 {n} 处修改的原文在文档里找不到",
-    "ambiguous": "第 {n} 处修改的原文在文档里出现了不止一次，多带几个字让它只出现一次",
-    "structure": "第 {n} 处修改增删或改变了整段的结构，不能作为建议提出",
-    "unstable": "第 {n} 处修改所在的段落无法按原文定位，换一段更短的原文再试",
-    "suggested": "第 {n} 处修改碰到了还没处理的修改建议，等它被接受或拒绝后再改",
+    "empty": "docEditNoOriginal",
+    "not_found": "docEditOriginalNotFound",
+    "ambiguous": "docEditOriginalAmbiguous",
+    "structure": "docEditChangesStructure",
+    "unstable": "docEditParagraphUnstable",
+    "suggested": "docEditHitsSuggestion",
 }
 
 
@@ -204,20 +205,22 @@ async def edit(
                 headers={"Authorization": f"Bearer {_key('internal')}"},
             )
     except httpx.HTTPError as exc:
-        raise SystemBusyError("文档协同服务暂时无法访问，稍后重试") from exc
+        raise SystemBusyError(say("collabUnreachable")) from exc
     body = response.json() if response.content else {}
     if response.status_code in (409, 422) and "index" in body:
         index = int(body["index"])
         data = {"index": index, "reason": body.get("reason") or body.get("error")}
         if body.get("error") == "content":
-            message = f"第 {index + 1} 处修改：{body.get('message', '')}"
+            message = say(
+                "docEditContentRefused", n=index + 1, reason=body.get("message", "")
+            )
             data["line"] = body.get("line")
         else:
-            template = _EDIT_REFUSALS.get(str(body.get("reason")))
-            message = (template or "第 {n} 处修改无法应用").format(n=index + 1)
+            key = _EDIT_REFUSALS.get(str(body.get("reason")), "docEditCannotApply")
+            message = say(key, n=index + 1)
         if response.status_code == 409:
             raise ConflictError(message, data=data)
         raise UnprocessableEntityError(message, data=data)
     if response.status_code != 200:
-        raise SystemBusyError("文档协同服务没有完成这次修改，稍后重试")
+        raise SystemBusyError(say("collabEditIncomplete"))
     return body

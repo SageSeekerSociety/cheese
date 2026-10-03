@@ -26,6 +26,8 @@ from io import BytesIO
 
 import httpx
 
+from app.domain.block.notice_text import listing, say
+
 #: Only `.xlsx`. Recomputing something with no formulas in it is a request
 #: that cannot be meant, and `.xlsm` is left out for the opposite reason: the
 #: recalculated workbook comes back through the plain xlsx filter, so a macro
@@ -137,10 +139,14 @@ async def recalculate(
     suffix = suffix_of(path)
     if suffix not in RECALCULABLE_SUFFIXES:
         raise SpreadsheetRecalcFailed(
-            f"只能重算 {'、'.join(RECALCULABLE_SUFFIXES)}：{path}"
+            say(
+                "recalcFormatUnsupported",
+                formats=listing(RECALCULABLE_SUFFIXES),
+                path=path,
+            )
         )
     if not endpoint:
-        raise SpreadsheetRecalcUnavailable("这个部署没有启用表格重算")
+        raise SpreadsheetRecalcUnavailable(say("recalcDisabled"))
 
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
@@ -151,7 +157,7 @@ async def recalculate(
                 headers={"Content-Type": "application/octet-stream"},
             )
     except Exception as exc:  # noqa: BLE001 — every transport failure reads alike
-        raise SpreadsheetRecalcUnavailable("表格重算服务暂时无法访问") from exc
+        raise SpreadsheetRecalcUnavailable(say("recalcUnreachable")) from exc
 
     if response.status_code != 200:
         detail = ""
@@ -164,16 +170,16 @@ async def recalculate(
             # deployment whose two images came from different tags. Reporting it
             # as a problem with the workbook would send the caller looking at a
             # file that is fine.
-            raise SpreadsheetRecalcUnavailable(detail or "表格重算服务出错")
+            raise SpreadsheetRecalcUnavailable(detail or say("recalcServiceError"))
         raise SpreadsheetRecalcFailed(
-            detail or f"无法重算这个文件（HTTP {response.status_code}）"
+            detail or say("recalcFailedStatus", status=response.status_code)
         )
 
     book = response.content
     if not book.startswith(b"PK"):
-        raise SpreadsheetRecalcFailed("重算结果不是一个 .xlsx")
+        raise SpreadsheetRecalcFailed(say("recalcNotXlsx"))
     try:
         bad = cells_that_did_not_compute(book)
     except zipfile.BadZipFile as exc:
-        raise SpreadsheetRecalcFailed("重算结果打不开") from exc
+        raise SpreadsheetRecalcFailed(say("recalcUnreadable")) from exc
     return book, bad

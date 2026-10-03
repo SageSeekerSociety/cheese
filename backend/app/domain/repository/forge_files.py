@@ -17,6 +17,7 @@ from app.core.errors import (
 from app.domain.agent import execution
 from app.domain.agent.device_hub import DeviceNotReady, DeviceOffline
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.block.notice_text import say
 from app.domain.project.forge import (
     binding_for_project,
     branch_head,
@@ -55,7 +56,7 @@ def clean_path(path: str) -> str:
         or any(part in ("..", ".git") for part in path.split("/"))
         or "\\" in path
     ):
-        raise ValidationError("文件路径必须在任务工作目录内")
+        raise ValidationError(say("taskFilePathOutside"))
     return path
 
 
@@ -88,7 +89,7 @@ class ProjectFiles:
     async def task(self):
         task = await self.session.get(Task, self.task_id) if self.task_id else None
         if self.task_id and (task is None or task.project_id != self.project_id):
-            raise NotFoundError("这个项目没有此任务")
+            raise NotFoundError(say("projectTaskNotFound"))
         return task
 
     async def source(self, requested: str):
@@ -102,7 +103,7 @@ class ProjectFiles:
     async def live(self, operation: str, **params):
         task = await self.task()
         if task is None:
-            raise ValidationError("请选择任务")
+            raise ValidationError(say("taskRequired"))
         room = await self.session.get(Topic, task.room_id)
         # Executors are pinned per room; sessions record their leases separately.
         target = next(
@@ -118,7 +119,7 @@ class ProjectFiles:
             None,
         )
         if not target or target.get("kind") != "device":
-            raise GatewayUnavailableError("任务机器尚未连接；可以查看已提交版本")
+            raise GatewayUnavailableError(say("taskMachineNotConnected"))
         await self._release()
         try:
             # Interactive file requests must not inherit the agent's 11-minute
@@ -130,13 +131,11 @@ class ProjectFiles:
                     {"task_id": str(task.id), "operation": operation, **params},
                 )
         except (TimeoutError, DeviceOffline, DeviceNotReady) as exc:
-            raise GatewayUnavailableError(
-                "任务机器暂时无法响应，请重新读取文件后再操作；也可以查看已提交版本"
-            ) from exc
+            raise GatewayUnavailableError(say("taskMachineNotResponding")) from exc
         if result.get("error") == "not_found":
-            raise NotFoundError("机器上还没有这个任务文件")
+            raise NotFoundError(say("taskFileNotOnMachine"))
         if result.get("error") == "conflict":
-            raise ConflictError("文件已有更新，请重新读取后再保存")
+            raise ConflictError(say("taskFileChangedReload"))
         return result
 
     async def revision(self):
@@ -149,10 +148,10 @@ class ProjectFiles:
             else await default_branch(self.project_id, self.session)
         )
         if not branch:
-            raise NotFoundError("任务没有独立的文件版本")
+            raise NotFoundError(say("taskNoOwnFileVersion"))
         head = await self._head(self.project_id, self.session, branch)
         if not head:
-            raise NotFoundError("这个任务还没有提交文件")
+            raise NotFoundError(say("taskNothingCommitted"))
         return head
 
     async def files(self, source: str):
@@ -291,7 +290,7 @@ class ProjectFiles:
             f"/compare/{quote(base, safe='')}...{quote(head, safe='')}",
         )
         if comparison is None:
-            raise NotFoundError("任务的对比版本不存在")
+            raise NotFoundError(say("taskBaseVersionMissing"))
         if len(comparison.get("files") or []) >= 300:
             binding = await binding_for_project(self.project_id, self.session)
             if binding is not None and binding.kind == "github_app":
@@ -351,12 +350,12 @@ class ProjectFiles:
         if comparison is None:
             return []
         if comparison.get("files") is None:
-            raise GatewayUnavailableError("代码托管服务未返回改动文件列表")
+            raise GatewayUnavailableError(say("forgeNoChangedFiles"))
         return [entry["filename"] for entry in comparison["files"]]
 
     async def diff(self, source: str, ref: str | None = None):
         if ref and ref.startswith("-"):
-            raise ValidationError("提交版本无效")
+            raise ValidationError(say("commitInvalid"))
         task = await self.task()
         if await self.source(source) == "live":
             assert task is not None  # Only open tasks have a live source.
@@ -366,16 +365,14 @@ class ProjectFiles:
             return (await self.live("diff", base_branch=base))["diff"]
         binding = await binding_for_project(self.project_id, self.session)
         if binding is None:
-            raise NotFoundError("项目没有代码仓库")
+            raise NotFoundError(say("forgeNoRepository"))
         if task:
             if not task.pr_number:
                 if not task.branch_name or not await self._head(
                     self.project_id, self.session, task.branch_name
                 ):
                     return ""
-                raise GatewayUnavailableError(
-                    "已提交版本的评审记录尚未创建，请稍后刷新"
-                )
+                raise GatewayUnavailableError(say("committedReviewNotReady"))
             path = f"/pulls/{task.pr_number}" + (
                 ".diff" if binding.kind == "forgejo" else ""
             )
@@ -384,7 +381,7 @@ class ProjectFiles:
             if ref and ref != head:
                 tokens = await tokens_for_project(self.project_id, self.session)
                 if tokens is None:
-                    raise GatewayUnavailableError("项目的代码托管凭据尚未配置")
+                    raise GatewayUnavailableError(say("forgeCredentialsMissing"))
                 await self._release()
                 token, _ = await tokens.installation_token()
                 owner, repo = binding.repo.split("/", 1)
@@ -394,17 +391,17 @@ class ProjectFiles:
                     owner=owner, repo=repo, base=ref, head=head, token=token
                 )
                 if relation not in ("ahead", "identical"):
-                    raise NotFoundError("此提交不在项目已交付的历史中")
+                    raise NotFoundError(say("commitNotDelivered"))
             return await self.commit_diff(ref or head)
         data = await self._data(self.project_id, self.session, path, diff=True)
         if data is None:
-            raise NotFoundError("此版本的差异不存在")
+            raise NotFoundError(say("revisionDiffNotFound"))
         return data
 
     async def commit_diff(self, revision: str):
         binding = await binding_for_project(self.project_id, self.session)
         if binding is None:
-            raise NotFoundError("项目没有代码仓库")
+            raise NotFoundError(say("forgeNoRepository"))
         revision = quote(revision, safe="")
         path = (
             f"/git/commits/{revision}.diff"
@@ -413,7 +410,7 @@ class ProjectFiles:
         )
         data = await self._data(self.project_id, self.session, path, diff=True)
         if data is None:
-            raise NotFoundError("此版本的差异不存在")
+            raise NotFoundError(say("revisionDiffNotFound"))
         return data
 
     async def _tree(self, sha):
@@ -425,13 +422,13 @@ class ProjectFiles:
                 f"/git/trees/{quote(sha, safe='')}?per_page=500&page={page_number}",
             )
             if data is None:
-                raise NotFoundError("已提交的目录不存在")
+                raise NotFoundError(say("committedDirNotFound"))
             # Forgejo serializes an empty tree as null.
             entries.extend(data["tree"] or [])
             if not data.get("truncated"):
                 return entries
             if "page" not in data or not data["tree"]:
-                raise GatewayUnavailableError("代码托管服务未返回完整目录")
+                raise GatewayUnavailableError(say("forgeIncompleteDirectory"))
             page_number += 1
 
     async def _entry(self, path, revision):
@@ -442,22 +439,22 @@ class ProjectFiles:
                 (item for item in await self._tree(sha) if item["path"] == part), None
             )
             if entry is None:
-                raise NotFoundError("已提交版本中没有这个文件")
+                raise NotFoundError(say("committedFileNotFound"))
             if index == len(parts) - 1:
                 if entry["type"] != "blob" or entry.get("mode") == "120000":
-                    raise NotFoundError("这个路径不是可读取的文件")
+                    raise NotFoundError(say("pathNotReadableFile"))
                 return entry
             if entry["type"] != "tree":
-                raise NotFoundError("文件所在目录不存在")
+                raise NotFoundError(say("fileDirectoryNotFound"))
             sha = entry["sha"]
-        raise NotFoundError("已提交版本中没有这个文件")
+        raise NotFoundError(say("committedFileNotFound"))
 
     async def _blob(self, entry):
         data = await self._data(
             self.project_id, self.session, f"/git/blobs/{entry['sha']}"
         )
         if not data or data.get("encoding") != "base64":
-            raise GatewayUnavailableError("代码托管服务没有返回文件内容")
+            raise GatewayUnavailableError(say("forgeNoFileContent"))
         return base64.b64decode(data["content"])
 
     async def raw(self, path: str, source: str):
@@ -477,7 +474,7 @@ class ProjectFiles:
                 )
                 chunk = base64.b64decode(part["data"])
                 if not chunk:
-                    raise ConflictError("文件在读取期间变化，请重试")
+                    raise ConflictError(say("fileChangedWhileReading"))
                 chunks.append(chunk)
                 offset += len(chunk)
             return b"".join(chunks), source
@@ -512,9 +509,9 @@ class ProjectFiles:
     async def write(self, path: str, content: str, version: str | None):
         task = await self.task()
         if task is None or task.status != TaskStatus.open:
-            raise ValidationError("任务已经结束，文件只读")
+            raise ValidationError(say("taskFinishedFilesReadOnly"))
         if not version:
-            raise ConflictError("请先读取文件，再保存修改")
+            raise ConflictError(say("taskFileReadBeforeSave"))
         return await self.live(
             "write", path=clean_path(path), content=content, version=version
         )
@@ -522,7 +519,7 @@ class ProjectFiles:
     async def write_bytes(self, path: str, data: bytes, version: str):
         task = await self.task()
         if task is None or task.status != TaskStatus.open:
-            raise ValidationError("任务已经结束，文件只读")
+            raise ValidationError(say("taskFinishedFilesReadOnly"))
         return await self.live(
             "write_bytes",
             path=clean_path(path),

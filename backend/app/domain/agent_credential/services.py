@@ -23,6 +23,7 @@ from app.core.sandbox_auth import (
     mint_project_agent_credential,
     project_agent_claims,
 )
+from app.domain.block.notice_text import say
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository
@@ -92,7 +93,7 @@ class ProjectAgentCredentialService:
         )
         if days < 1 or days > AGENT_CREDENTIAL_MAX_TTL_DAYS:
             raise ValidationError(
-                f"有效期必须在 1 到 {AGENT_CREDENTIAL_MAX_TTL_DAYS} 天之间"
+                say("agentCredentialTtlRange", max=AGENT_CREDENTIAL_MAX_TTL_DAYS)
             )
         project = await self._get_or_404(project_id)
         epoch = credential_epoch_of(project)
@@ -104,7 +105,7 @@ class ProjectAgentCredentialService:
         # is told must come from the credential itself, not from a second
         # computation that could drift from it.
         if claims is None:  # pragma: no cover - defensive
-            raise ValidationError("凭证签发失败")
+            raise ValidationError(say("agentCredentialIssueFailed"))
         return IssuedCredential(
             token=token,
             project_id=project_id,

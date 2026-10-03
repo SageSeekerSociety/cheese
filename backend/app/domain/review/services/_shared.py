@@ -402,7 +402,7 @@ def _one_deliverable(deliver: str | None, deliver_url: str | None) -> None:
     if path and url:
         raise ValidationError(_DELIVERABLE_BOTH)
     if url and not url.startswith(("http://", "https://")):
-        raise ValidationError("deliver_url 要是一个能打开的网址（http:// 或 https://）")
+        raise ValidationError(say("deliverUrlInvalid"))
 
 
 async def _read_deliverable(
@@ -417,8 +417,11 @@ async def _read_deliverable(
     data, _ = await ProjectFiles(session, project_id, task_id).raw(path, "live")
     if len(data) > pkg._DELIVERABLE_MAX_BYTES:
         raise ValidationError(
-            f"{path} 有 {len(data) // 1024 // 1024}MB，超过单份交付物的 "
-            f"{pkg._DELIVERABLE_MAX_BYTES // 1024 // 1024}MB 上限。"
-            "交出去的是一个地址时用 deliver_url 记地址。"
+            say(
+                "deliverableTooLarge",
+                path=path,
+                size=len(data) // 1024 // 1024,
+                max=pkg._DELIVERABLE_MAX_BYTES // 1024 // 1024,
+            )
         )
     return PurePosixPath(path).name, data

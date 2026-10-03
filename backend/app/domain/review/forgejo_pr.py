@@ -8,6 +8,7 @@ import httpx
 
 from app.core.config import settings
 from app.core.forge_http import forge_client
+from app.domain.block.notice_text import exception_text, say
 from app.domain.review.github_pr import (
     GitHubPRError,
     GitHubPrError,
@@ -38,13 +39,17 @@ class ForgejoClient:
                     json=json,
                 )
         except httpx.HTTPError as exc:
-            raise GitHubPrError(f"Forgejo 暂时无法连接：{type(exc).__name__}") from exc
+            raise GitHubPrError(
+                say("forgejoUnreachable", error=type(exc).__name__)
+            ) from exc
 
     @staticmethod
     def _data(response) -> Any:
         if response.is_error:
             # A provider response can repeat credentials; never echo it to a room.
-            raise GitHubPrError(f"Forgejo 请求失败（HTTP {response.status_code}）")
+            raise GitHubPrError(
+                say("forgejoRequestFailed", status=response.status_code)
+            )
         return response.json() if response.content else None
 
     async def pages(self, path, *, token, params=None):
@@ -59,7 +64,7 @@ class ForgejoClient:
             )
             rows = self._data(response)
             if not isinstance(rows, list):
-                raise GitHubPrError("Forgejo 返回了无法读取的列表")
+                raise GitHubPrError(say("forgejoListUnreadable"))
             result.extend(rows)
             if not rows or ("next" not in response.links and len(rows) < 50):
                 return result
@@ -120,7 +125,7 @@ class ForgejoClient:
         sha=None,
     ):
         if not sha:
-            raise GitHubPrError("采纳需要已查看版本的提交编号")
+            raise GitHubPrError(say("acceptNeedsViewedCommit"))
         response = await self.request(
             "POST",
             f"{self._repo(owner, repo)}/pulls/{number}/merge",
@@ -160,7 +165,7 @@ class ForgejoClient:
             owner=owner, repo=repo, number=number, token=token
         )
         if not live.merged or not live.merge_commit_sha:
-            raise GitHubPrError("Forgejo 尚未确认合并结果，请刷新后重试")
+            raise GitHubPrError(say("forgejoMergeUnconfirmed"))
         return MergeResult(sha=live.merge_commit_sha)
 
     async def list_check_runs(self, *, owner, repo, ref, token):
@@ -320,7 +325,7 @@ class ForgejoPRClient:
             )
             return self.client._data(response)
         except GitHubPrError as exc:
-            raise GitHubPRError(str(exc)) from exc
+            raise GitHubPRError(exception_text(exc)) from exc
 
     @staticmethod
     def _proposal(data):

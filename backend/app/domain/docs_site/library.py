@@ -20,6 +20,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.domain.block.notice_text import say
 from app.domain.docs_site import access, retrieval
 from app.domain.project.models import ProjectForge, ProjectGitInstallation
 
@@ -121,7 +122,7 @@ async def read_page(
     ``ValueError`` for something that is not a page name."""
     slug = page_slug(page)
     if slug is None:
-        raise ValueError(f"不是文档页：{page}（写页名，如 accept 或 dev/turn）")
+        raise ValueError(say("docsNotAPage", page=page))
     if slug.startswith("dev/") and not dev:
         raise DevDocsForbidden(slug)
     base = _docs_base()

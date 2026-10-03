@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 from app.core.errors import ForbiddenError, ValidationError
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, BlockKind
-from app.domain.block.notice_text import say
+from app.domain.block.notice_text import exception_text, say
 from app.domain.membership.services import MemberService
 from app.domain.repository import identity
 from app.domain.review import (
@@ -65,7 +65,7 @@ async def approve(
         raise ValidationError(say("reviewEndedNoApprove"))
     topic = await self._topic_or_404(card.topic_id)
     project = await self._projects.get(topic.project_id)
-    self._forbid_ai(project, approver_handle, "批准")
+    self._forbid_ai(project, approver_handle, say("reviewActionApprove"))
     await self._repo.add_approval(card_id, approver_handle)
     return card
 
@@ -76,10 +76,10 @@ async def mark_ready(
     """Mark this task's PR ready; acceptance remains a separate human action."""
     task = await TaskService(self._session).require_in_room(room_id, task_id)
     if task.status != TaskStatus.open or not task.branch_name:
-        raise ValidationError("这条任务已结束或没有工作分支")
+        raise ValidationError(say("taskEndedOrNoBranch"))
     topic = await self._topic_or_404(room_id)
     if topic.status == TopicStatus.archived:
-        raise ValidationError("话题已归档，不能提交验收")
+        raise ValidationError(say("topicArchivedCannotReview"))
     if task.pr_number is None:
         return {"ready": False, "reason": "任务还没有 PR，请先提交并同步代码"}
     client = await self._app_pr_client(topic)
@@ -99,7 +99,7 @@ async def mark_ready(
     if view.get("draft"):
         node_id = str(view.get("node_id") or "")
         if not node_id:
-            raise ValidationError("GitHub 未返回 PR 的 node_id")
+            raise ValidationError(say("githubNoPrNodeId"))
         await client.mark_ready_for_review(node_id)
     return {
         "ready": True,
@@ -145,7 +145,7 @@ async def redescribe(
         [place_id], statuses=(AcceptStatus.pending,)
     )
     if not cards:
-        raise ValidationError("这个话题手上没有待处理的验收卡，没有描述可以改")
+        raise ValidationError(say("reviewNoPendingCard"))
     card = cards[0]
     topic = await self._topic_or_404(card.topic_id)
     before_subject, before_body = card.change_subject, card.change_body or ""
@@ -155,7 +155,7 @@ async def redescribe(
         try:
             card.change_subject = commit_message.check_subject(subject)
         except commit_message.InvalidSubject as exc:
-            raise ValidationError(str(exc)) from exc
+            raise ValidationError(exception_text(exc)) from exc
     if change_body is not None:
         card.change_body = change_body.strip() or None
     if (card.change_subject, card.change_body or "") == (
@@ -214,21 +214,23 @@ async def push_fix(
 
         task = await TaskService(self._session).get(place_id)
         if task is None or task.pr_number is None:
-            raise ValidationError("任务尚无 PR，请先同步提交后再移除依赖")
+            raise ValidationError(say("taskNoPrForDependency"))
         topic = await self._topic_or_404(task.room_id)
         for card in cards:
             await self._pr_repo_of(card, topic)
         publisher = await self._app_pr_client(topic)
         if publisher is None:
-            raise ValidationError("项目的代码仓库暂时不可用，无法移除依赖")
+            raise ValidationError(say("repositoryUnavailableForDependency"))
         base = await default_branch(task.project_id, self._session)
         try:
             await publisher.update_pr(task.pr_number, base=base)
             status = await publisher.pr_status(task.pr_number)
         except (github_pr.GitHubPrError, github_pr.GitHubPRError) as exc:
-            raise ValidationError(f"暂时无法更新 PR 的目标分支：{exc}") from exc
+            raise ValidationError(
+                say("prBaseUpdateFailed", reason=exception_text(exc))
+            ) from exc
         if status.base_ref != base:
-            raise ValidationError("仓库尚未确认新的目标分支，请稍后重试")
+            raise ValidationError(say("repositoryBaseUnconfirmed"))
         pushed = await self._sync_task_dependency_target(
             task, status, drop_dependency=True
         )
@@ -390,7 +392,7 @@ async def merge_despite_checks(
 
     topic = await self._topic_or_404(card.topic_id)
     project = await self._projects.get(topic.project_id)
-    self._forbid_ai(project, decided_by, "人工放行")
+    self._forbid_ai(project, decided_by, say("reviewActionLetThrough"))
 
     protection = branch_protection_of(project)
     if protection.override_handles is not None:
@@ -560,7 +562,7 @@ async def void(
 
     topic = await self._topic_or_404(card.topic_id)
     project = await self._projects.get(topic.project_id)
-    self._forbid_ai(project, decided_by, "作废")
+    self._forbid_ai(project, decided_by, say("reviewActionVoid"))
 
     if decided_by != card.reviewer_handle and not await MemberService(
         self._session

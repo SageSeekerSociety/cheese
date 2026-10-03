@@ -13,6 +13,7 @@ from app.core.config import settings
 from app.core.db import SessionFactory
 from app.core.errors import ValidationError
 from app.domain.agent.device_hub import device_hub
+from app.domain.block.notice_text import say
 from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply, Visibility
 from app.domain.device.wiring import sql_device_service
@@ -300,11 +301,11 @@ class WarmPoolService:
             return False
         device = await self.session.get(DeviceRow, warm.device_id)
         if device is None or device.supply != Supply.cloud:
-            raise ValidationError("预热机器连接已失效，请稍后重试")
+            raise ValidationError(say("warmMachineLinkExpired"))
         device.owner_user_id = owner_user_id
         project = await ProjectService(self.session).get(machine.project_id)
         if project is None:
-            raise ValidationError("项目不存在")
+            raise ValidationError(say("projectNotFound"))
         await self.session.flush()
         if project.team_id is not None:
             await self.devices.assign_to_team(
