@@ -318,7 +318,7 @@ const roleInProject = computed(() => inProject.value?.source ?? null)
                   {{ t('users.profile.inProject.waitingEmpty') }}
                 </p>
                 <div v-for="w in inProject.waiting_on_you" :key="w.id" class="profile__waiting">
-                  <span class="t-body profile__ink">{{ w.title }}</span>
+                  <span class="t-body profile__ink" data-user-content>{{ w.title }}</span>
                   <span class="t-meta-read">{{ label(NOTIF_KIND, w.kind) }}</span>
                 </div>
               </div>
@@ -337,7 +337,9 @@ const roleInProject = computed(() => inProject.value?.source ?? null)
                   :to="{ name: 'workspace-topic', params: { projectId, topicId: topic.id } }"
                 >
                   <span class="status-dot" :class="topicDot(topic.status)" />
-                  <span class="t-body profile__ink">{{ topicTitle(topic) }}</span>
+                  <span class="t-body profile__ink" :data-user-content="topic.title || undefined">{{
+                    topicTitle(topic)
+                  }}</span>
                 </router-link>
               </div>
             </div>
@@ -471,7 +473,11 @@ const roleInProject = computed(() => inProject.value?.source ?? null)
                     :aria-label="label(TOPIC_STATUS, topic.status)"
                   />
                   <span class="profile__row-text">
-                    <span class="t-body profile__ink profile__topic-title">{{ topicTitle(topic) }}</span>
+                    <span
+                      class="t-body profile__ink profile__topic-title"
+                      :data-user-content="topic.title || undefined"
+                      >{{ topicTitle(topic) }}</span
+                    >
                     <span v-if="compact" class="t-meta-read">
                       {{ topic.project_name }} · {{ t('users.profile.topics.count', { count: topic.contributions }) }} ·
                       {{ relTime(topic.last_participated_at) }}

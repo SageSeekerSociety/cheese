@@ -65,7 +65,7 @@ const open = ref(false)
           <v-icon size="16" class="me-1 c-faint" icon="mdi-archive-outline" />
         </template>
         <v-list-item-title class="d-flex align-center ga-2 topic-title">
-          <span class="text-truncate">{{ topicTitle(topic) }}</span>
+          <span class="text-truncate" :data-user-content="topic.title || undefined">{{ topicTitle(topic) }}</span>
           <span class="kind-text">{{ kindLabel(topic) }}</span>
         </v-list-item-title>
         <template #append>

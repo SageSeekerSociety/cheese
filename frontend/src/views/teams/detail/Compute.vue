@@ -519,10 +519,14 @@ onBeforeUnmount(stopResync)
                   class="mt-2 device-user"
                 >
                   <i18n-t keypath="work.deviceInUse.line" tag="span">
-                    <template #project>{{ use.project_name }}</template>
-                    <template #room>{{
-                      topicTitle({ title: use.topic_title, title_source: use.topic_title_source })
-                    }}</template>
+                    <template #project
+                      ><span data-user-content>{{ use.project_name }}</span></template
+                    >
+                    <template #room
+                      ><span :data-user-content="use.topic_title || undefined">{{
+                        topicTitle({ title: use.topic_title, title_source: use.topic_title_source })
+                      }}</span></template
+                    >
                     <template #agent>
                       <UserRef :handle="use.agent_handle" :name="use.agent_name" :project-id="use.project_id" />
                     </template>

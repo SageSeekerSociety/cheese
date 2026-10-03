@@ -95,7 +95,7 @@ const updatedAt = computed(() => relTime(props.item.last_activity_at ?? props.it
       <!-- 整行可点，但只占一个 Tab 停靠点：链接是一条真的 `<button>`，它的 `::after`
            铺满整行，于是点在行里任何位置都等于点它，而 Tab 只在这里停一次。
            行上挂 `@click` 的老写法鼠标能用、键盘整段跳过去，那才是规范禁止的。 -->
-      <button type="button" class="fbrow__link" :tabindex="active ? 0 : -1" @click="emit('activate')">
+      <button type="button" class="fbrow__link" :tabindex="active ? 0 : -1" data-user-content @click="emit('activate')">
         {{ item.title }}
       </button>
 

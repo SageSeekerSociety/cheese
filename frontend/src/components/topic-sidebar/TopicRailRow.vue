@@ -174,6 +174,7 @@ function onMenuToggle(open: boolean) {
         <span
           class="text-truncate"
           :class="{ 'title-unread': row.unreadTotal > 0 }"
+          :data-user-content="row.topic.title || undefined"
           :title="row.topic.title_source === 'auto' ? t('work.sidebar.autoTitle') : undefined"
           >{{ topicTitle(row.topic) }}</span
         >
