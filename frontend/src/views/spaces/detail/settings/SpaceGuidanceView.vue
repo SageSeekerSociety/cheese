@@ -9,6 +9,7 @@ import type { SpaceMaterial, SpaceMaterialsState, SpaceTeaching } from '@/types'
 import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import TeachingFields from '@/components/common/TeachingFields.vue'
 
 const props = defineProps<{
@@ -62,9 +63,9 @@ function submit() {
     </div>
 
     <div class="settings-foot">
-      <v-btn color="primary" variant="flat" :loading="saving" @click="submit">
+      <BaseButton kind="primary" :loading="saving" @click="submit">
         {{ t('spaces.guidance.save') }}
-      </v-btn>
+      </BaseButton>
     </div>
   </form>
 </template>

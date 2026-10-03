@@ -28,14 +28,16 @@
           <p class="about__line about__line--strong">
             {{ t('navigation.desktopApp.ready', { version: status.version }) }}
           </p>
-          <v-btn color="primary" :loading="restarting" @click="restart">{{ t('navigation.desktopApp.restart') }}</v-btn>
+          <BaseButton kind="primary" :loading="restarting" @click="restart">{{
+            t('navigation.desktopApp.restart')
+          }}</BaseButton>
           <p class="about__line">{{ t('navigation.desktopApp.readyHint') }}</p>
         </template>
         <template v-else>
           <p v-if="line" class="about__line">{{ line }}</p>
-          <v-btn variant="outlined" :loading="busy" :disabled="busy" @click="check">{{
+          <BaseButton kind="secondary" :loading="busy" :disabled="busy" @click="check">{{
             t('navigation.desktopApp.check')
-          }}</v-btn>
+          }}</BaseButton>
         </template>
       </div>
 
@@ -55,6 +57,7 @@ import { computed } from 'vue'
 import { useDesktopApp } from '@/composables/useDesktopApp'
 
 import appIcon from '@/assets/app-icon.png'
+import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import { t } from '@/i18n'
 import { desktopAppVersion, desktopCan, openInBrowser } from '@/lib/desktopApp'

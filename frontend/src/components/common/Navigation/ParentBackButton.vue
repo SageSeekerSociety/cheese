@@ -7,6 +7,7 @@ import { useDisplay } from 'vuetify'
 
 import { topBarBack } from '../topBarBack'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { projectFrameOf } from '@/lib/projectFrame'
 import { myHandle } from '@/me'
@@ -95,18 +96,15 @@ const override = computed(() => (mdAndUp.value ? null : topBarBack.value))
 </script>
 
 <template>
-  <v-btn
+  <BaseButton
     v-if="override"
-    icon
-    color="on-surface-variant"
-    variant="text"
-    :size="44"
+    icon="mdi-arrow-left"
+    kind="ghost"
+    size="lg"
     :aria-label="override.label"
     :title="override.label"
     @click="override.onBack()"
-  >
-    <v-icon size="20">mdi-arrow-left</v-icon>
-  </v-btn>
+  />
   <!-- 层级在历史之前：顶栏这一颗回答的是「这一层上面是谁」，浏览器那一颗才回答
        「我刚才在哪」。声明了父级就按声明走，没声明才回退到来路（见下一条分支）。
        `:active="false"` 不是样式偏好，是修一个 bug：这颗按钮指向的是**父**地址，
@@ -114,31 +112,25 @@ const override = computed(() => (mdAndUp.value ? null : topBarBack.value))
        Vuetify 一直给它盖一层 12% 的实底遮罩——一颗永远处于按下态的返回键，在
        顶栏左上角就是一个突兀的灰方块。返回是「离开这一层」，不是「你在这儿」，
        它本来就不该有激活态。 -->
-  <v-btn
+  <BaseButton
     v-else-if="to"
     :to="to"
     :active="false"
-    icon
-    color="on-surface-variant"
-    variant="text"
-    :size="mdAndUp ? 28 : 44"
+    icon="mdi-arrow-left"
+    kind="ghost"
+    :size="mdAndUp ? 'sm' : 'lg'"
     :aria-label="label"
     :title="label"
-  >
-    <v-icon size="20">mdi-arrow-left</v-icon>
-  </v-btn>
+  />
   <!-- 这一页没声明上一层（首页、反馈中心、各设置页签……），但身后确实有应用内来路，
        按浏览器的语义退一格，好过什么都不画。 -->
-  <v-btn
+  <BaseButton
     v-else-if="cameFrom"
-    icon
-    color="on-surface-variant"
-    variant="text"
-    :size="mdAndUp ? 28 : 44"
+    icon="mdi-arrow-left"
+    kind="ghost"
+    :size="mdAndUp ? 'sm' : 'lg'"
     :aria-label="t('shell.back.previous')"
     :title="t('shell.back.previous')"
     @click="router.back()"
-  >
-    <v-icon size="20">mdi-arrow-left</v-icon>
-  </v-btn>
+  />
 </template>

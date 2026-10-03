@@ -26,30 +26,26 @@
 
       <!-- 这一页页头上的命令（页面用 useCommands 登记的）：标了 primary 的一颗图标，
            其余进 ⋯。手机上页面不再为几颗按钮单占一行。 -->
-      <v-btn
+      <BaseButton
         v-if="primaryAction"
-        icon
-        variant="text"
+        :icon="primaryAction.icon"
+        kind="ghost"
         :to="primaryAction.to"
         :loading="primaryAction.loading"
         :disabled="primaryAction.disabled"
         :aria-label="primaryAction.label"
         :title="primaryAction.label"
         @click="primaryAction.onSelect?.()"
-      >
-        <v-icon size="22">{{ primaryAction.icon }}</v-icon>
-      </v-btn>
+      />
       <AdaptiveMenu v-if="moreActions.length" :actions="moreActions">
         <template #activator="{ props: activator }">
-          <v-btn
+          <BaseButton
             v-bind="activator"
-            icon
-            variant="text"
+            icon="mdi-dots-horizontal"
+            kind="ghost"
             :aria-label="t('navigation.shell.more')"
             :title="t('navigation.shell.more')"
-          >
-            <v-icon size="22">mdi-dots-horizontal</v-icon>
-          </v-btn>
+          />
         </template>
       </AdaptiveMenu>
 
@@ -99,9 +95,9 @@
       </v-menu>
 
       <!-- 未登录时的登录按钮 -->
-      <v-btn v-else-if="!backTo" to="/account/signin" variant="text" prepend-icon="mdi-account">{{
+      <BaseButton v-else-if="!backTo" kind="ghost" to="/account/signin" prepend-icon="mdi-account">{{
         t('account.signIn.submit')
-      }}</v-btn>
+      }}</BaseButton>
     </template>
   </v-app-bar>
 </template>
@@ -121,6 +117,7 @@ import ParentBackButton from './ParentBackButton.vue'
 import UserMenuCard from './UserMenuCard.vue'
 
 import { headerCommands, menuActionOf } from '@/commands'
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { useNavigationStore } from '@/stores/navigation'
 import { usePageTitleStore } from '@/stores/title'

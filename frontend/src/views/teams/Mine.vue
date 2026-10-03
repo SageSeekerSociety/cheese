@@ -23,9 +23,9 @@
               </v-avatar>
               <p class="text-subtitle-1 font-weight-medium text-center mb-1">{{ t('teams.mine.loadFailed') }}</p>
               <p class="text-body-2 text-center text-medium-emphasis mb-3">{{ t('teams.mine.loadFailedHint') }}</p>
-              <v-btn variant="tonal" color="primary" size="small" prepend-icon="mdi-refresh" @click="fetchMyTeams">
+              <BaseButton kind="secondary" size="sm" prepend-icon="mdi-refresh" @click="fetchMyTeams">
                 {{ t('teams.mine.reload') }}
-              </v-btn>
+              </BaseButton>
             </div>
 
             <!-- 空状态 -->
@@ -69,6 +69,7 @@ import { onMounted, ref } from 'vue'
 
 import { getAvatarUrl } from '@/utils/materials'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { TeamsApi } from '@/network/api/teams'
 

@@ -33,6 +33,8 @@ import AdaptiveMenu from './common/AdaptiveMenu.vue'
 import NavLink from './common/NavLink.vue'
 import PublishedSite from './PublishedSite.vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
+
 const props = defineProps<{ projectId: string }>()
 const emit = defineEmits<{ count: [number] }>()
 
@@ -191,12 +193,10 @@ watch(
         </div>
         <AdaptiveMenu :actions="rowActions(row)" :title="row.name">
           <template #activator="{ props: menu }">
-            <v-btn
+            <BaseButton
               v-bind="menu"
               icon="mdi-dots-horizontal"
-              size="x-small"
-              variant="text"
-              color="on-surface-variant"
+              size="sm"
               :loading="busy === row.id"
               :aria-label="t('project.artifacts.actionsOf', { name: row.name })"
             />
@@ -230,10 +230,8 @@ watch(
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn variant="text" color="on-surface-variant" @click="renaming = null">{{ t('global.cancel') }}</v-btn>
-          <v-btn variant="text" color="primary" :disabled="!newName.trim()" @click="rename">{{
-            t('global.save')
-          }}</v-btn>
+          <BaseButton kind="ghost" @click="renaming = null">{{ t('global.cancel') }}</BaseButton>
+          <BaseButton kind="primary" :disabled="!newName.trim()" @click="rename">{{ t('global.save') }}</BaseButton>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -258,10 +256,10 @@ watch(
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn variant="text" color="on-surface-variant" @click="merging = null">{{ t('global.cancel') }}</v-btn>
-          <v-btn variant="text" color="primary" :disabled="!mergeInto" @click="merge">{{
+          <BaseButton kind="ghost" @click="merging = null">{{ t('global.cancel') }}</BaseButton>
+          <BaseButton kind="primary" :disabled="!mergeInto" @click="merge">{{
             t('project.artifacts.merge')
-          }}</v-btn>
+          }}</BaseButton>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -274,8 +272,8 @@ watch(
         <v-card-text class="t-body">{{ t('project.artifacts.deleteBody') }}</v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn variant="text" color="on-surface-variant" @click="removing = null">{{ t('global.cancel') }}</v-btn>
-          <v-btn variant="text" color="error" @click="remove">{{ t('project.artifacts.delete') }}</v-btn>
+          <BaseButton kind="ghost" @click="removing = null">{{ t('global.cancel') }}</BaseButton>
+          <BaseButton kind="danger" solid @click="remove">{{ t('project.artifacts.delete') }}</BaseButton>
         </v-card-actions>
       </v-card>
     </v-dialog>

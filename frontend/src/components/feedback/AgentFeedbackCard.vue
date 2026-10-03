@@ -8,6 +8,7 @@ import FeedbackAuthorAvatar from './FeedbackAuthorAvatar.vue'
 import { kindLabel } from './feedbackLabels'
 import SubmitFeedbackDialog from './SubmitFeedbackDialog.vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
 import { useFeedbackStore } from '@/stores/feedback'
@@ -145,14 +146,9 @@ function onSubmitted(id: string) {
           <span class="t-title">{{ t('feedback.proposal.submitted') }}</span>
         </div>
         <div class="t-body mb-3">{{ t('feedback.proposal.progress') }}</div>
-        <v-btn
-          variant="outlined"
-          color="secondary"
-          size="small"
-          @click="router.push(`/feedback/${submitted[proposal.block_id]}`)"
-        >
+        <BaseButton kind="secondary" size="sm" @click="router.push(`/feedback/${submitted[proposal.block_id]}`)">
           {{ t('feedback.proposal.view') }}
-        </v-btn>
+        </BaseButton>
       </div>
     </div>
 
@@ -232,22 +228,21 @@ function onSubmitted(id: string) {
         </div>
 
         <div class="d-flex align-center flex-wrap ga-2">
-          <v-btn
-            variant="text"
-            color="secondary"
-            size="small"
+          <BaseButton
+            kind="ghost"
+            size="sm"
             :prepend-icon="expanded.has(proposal.block_id) ? 'mdi-chevron-up' : 'mdi-chevron-down'"
             @click="toggleExpanded(proposal.block_id)"
           >
             {{ expanded.has(proposal.block_id) ? t('feedback.proposal.collapse') : t('feedback.proposal.expand') }}
-          </v-btn>
-          <v-btn variant="text" color="secondary" size="small" @click="dismiss(proposal)">
+          </BaseButton>
+          <BaseButton kind="ghost" size="sm" @click="dismiss(proposal)">
             {{ t('feedback.proposal.dismiss') }}
-          </v-btn>
+          </BaseButton>
           <v-spacer />
-          <v-btn color="primary" size="small" @click="openForm(proposal)">
+          <BaseButton kind="primary" size="sm" @click="openForm(proposal)">
             {{ t('feedback.proposal.submit') }}
-          </v-btn>
+          </BaseButton>
         </div>
       </div>
     </div>

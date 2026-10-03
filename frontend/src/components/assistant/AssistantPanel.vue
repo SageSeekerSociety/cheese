@@ -28,19 +28,17 @@
         </v-list>
       </v-menu>
       <span class="ap__grow" />
-      <v-btn
+      <BaseButton
         icon="mdi-pencil-outline"
-        size="small"
-        variant="text"
+        size="sm"
         :disabled="busy"
         :title="t('tasks.assistant.newConversation')"
         :aria-label="t('tasks.assistant.newConversation')"
         @click="!busy && emit('new')"
       />
-      <v-btn
+      <BaseButton
         icon="mdi-close"
-        size="small"
-        variant="text"
+        size="sm"
         :title="t('tasks.assistant.close')"
         :aria-label="t('tasks.assistant.close')"
         @click="emit('close')"
@@ -104,12 +102,11 @@
           @input="grow"
         />
         <div class="ap__acts">
-          <v-btn
+          <BaseButton
             class="ap__send"
             icon="mdi-send"
-            size="small"
-            :color="ready ? 'primary' : undefined"
-            variant="flat"
+            size="sm"
+            :kind="ready ? 'primary' : 'ghost'"
             :disabled="!ready"
             :title="t('tasks.assistant.send')"
             :aria-label="t('tasks.assistant.send')"
@@ -129,6 +126,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import dayjs from 'dayjs'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { MarkdownRenderer } from '@/components/chat/services/markdownRenderer'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import NavLink from '@/components/common/NavLink.vue'

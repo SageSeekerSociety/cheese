@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from 'vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
 const props = defineProps<{
@@ -44,17 +45,10 @@ function send(event: KeyboardEvent | MouseEvent) {
         @keydown.enter="send"
         @keydown.esc.prevent="emit('cancel')"
       />
-      <v-btn size="small" color="primary" variant="flat" :disabled="!note.trim() || busy" @click="send">
+      <BaseButton kind="primary" size="sm" :disabled="!note.trim() || busy" @click="send">
         {{ t('work.room.preview.send') }}
-      </v-btn>
-      <v-btn
-        icon="mdi-close"
-        size="small"
-        variant="text"
-        color="medium-emphasis"
-        :title="t('work.room.preview.cancel')"
-        @click="emit('cancel')"
-      />
+      </BaseButton>
+      <BaseButton icon="mdi-close" size="sm" :title="t('work.room.preview.cancel')" @click="emit('cancel')" />
     </div>
   </Transition>
 </template>

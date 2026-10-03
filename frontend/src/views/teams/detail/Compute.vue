@@ -22,6 +22,7 @@ import {
   registerDeviceForTeam,
   unregisterDeviceFromTeam,
 } from '@/api'
+import BaseButton from '@/components/base/BaseButton.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { useRoomSocket } from '@/components/room/composables/useRoomSocket'
 import { t } from '@/i18n'
@@ -401,25 +402,22 @@ onBeforeUnmount(stopResync)
                 {{ machine.enroll_error }}
               </v-alert>
               <div v-if="canManage" class="mt-3 d-flex justify-end">
-                <v-btn
+                <BaseButton
                   v-if="machine.status === 'running' || machine.status === 'suspended'"
-                  size="small"
-                  variant="text"
+                  size="sm"
                   :disabled="busy !== null"
                   @click="changePower(machine, machine.status === 'running' ? 'suspend' : 'resume')"
                 >
                   {{ machine.status === 'running' ? t('teams.compute.suspend') : t('teams.compute.resume') }}
-                </v-btn>
-                <v-btn
-                  size="small"
-                  variant="text"
-                  color="error"
+                </BaseButton>
+                <BaseButton
+                  size="sm"
                   :loading="busy === machine.id"
                   :disabled="['suspending', 'resuming'].includes(machine.status)"
                   @click="destroyCloud(machine)"
                 >
                   {{ t('teams.compute.release') }}
-                </v-btn>
+                </BaseButton>
               </div>
             </v-card>
           </v-col>
@@ -434,9 +432,9 @@ onBeforeUnmount(stopResync)
           </div>
           <v-menu location="bottom end">
             <template #activator="{ props: menuProps }">
-              <v-btn v-bind="menuProps" variant="outlined" prepend-icon="mdi-plus">{{
+              <BaseButton v-bind="menuProps" kind="secondary" prepend-icon="mdi-plus">{{
                 t('teams.compute.addDevice')
-              }}</v-btn>
+              }}</BaseButton>
             </template>
             <v-list density="compact" min-width="280">
               <v-list-item
@@ -541,15 +539,9 @@ onBeforeUnmount(stopResync)
                   v-if="myDeviceIds.has(device.device_id) && device.team_ids.includes(teamId)"
                   class="mt-2 d-flex justify-end"
                 >
-                  <v-btn
-                    size="small"
-                    variant="text"
-                    color="error"
-                    :loading="busy === device.device_id"
-                    @click="removeMachine(device)"
-                  >
+                  <BaseButton size="sm" :loading="busy === device.device_id" @click="removeMachine(device)">
                     {{ t(`teams.compute.${scope}.remove`) }}
-                  </v-btn>
+                  </BaseButton>
                 </div>
               </v-card>
             </v-col>

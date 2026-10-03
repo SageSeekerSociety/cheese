@@ -16,6 +16,7 @@ import type { PagePin, SlideSource } from './slidesContext'
 
 import { nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
 type PdfLib = typeof import('pdfjs-dist/legacy/build/pdf.mjs')
@@ -363,10 +364,9 @@ onBeforeUnmount(() => {
 <template>
   <div ref="container" class="pv" :class="{ 'pv--pointing': pointing }" @mouseup="onSelect" @click="onPoint">
     <div class="pv__tools">
-      <v-btn
-        size="small"
-        :variant="pointing ? 'flat' : 'tonal'"
-        :color="pointing ? 'primary' : undefined"
+      <BaseButton
+        size="sm"
+        :kind="pointing ? 'primary' : 'ghost'"
         :prepend-icon="pointing ? 'mdi-crosshairs-gps' : 'mdi-crosshairs'"
         :aria-pressed="pointing"
         :disabled="!context"
@@ -374,7 +374,7 @@ onBeforeUnmount(() => {
         @click.stop="togglePointing"
       >
         {{ t('work.room.preview.pin') }}
-      </v-btn>
+      </BaseButton>
     </div>
     <div v-if="loading" class="pv__state">
       <v-progress-circular indeterminate color="primary" size="24" />

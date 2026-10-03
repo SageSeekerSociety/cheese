@@ -5,6 +5,7 @@
 // header above both columns (see TopicHeader.vue).
 import type { Topic } from '../../cx_types'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { topicTitle } from '@/lib/topicState'
 
@@ -45,17 +46,16 @@ const emit = defineEmits<{
   <!-- Plain chat header — normal chat (飞书私聊 / 本体): title + 已连接 -->
   <div v-else-if="!hideHeader" class="pr-header px-4 py-3">
     <div class="d-flex align-center ga-2">
-      <v-btn
+      <BaseButton
         v-if="backLabel"
-        variant="text"
-        size="small"
+        kind="ghost"
+        size="sm"
         density="comfortable"
         prepend-icon="mdi-arrow-left"
-        color="medium-emphasis"
         @click="emit('back')"
       >
         {{ backLabel }}
-      </v-btn>
+      </BaseButton>
       <span class="t-title">{{ titleOverride || topicTitle(topic) }}</span>
       <v-spacer />
       <span

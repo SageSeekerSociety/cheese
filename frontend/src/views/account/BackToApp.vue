@@ -20,9 +20,9 @@
 
     <template v-else-if="link">
       <AccountHeading :title="t('account.oauth.app.backTitle')" :lede="t('account.oauth.app.backLede')" />
-      <v-btn block color="primary" size="large" class="account-submit" :href="link">
+      <BaseButton block kind="primary" size="lg" class="account-submit" :href="link">
         {{ t('account.oauth.app.open') }}
-      </v-btn>
+      </BaseButton>
     </template>
 
     <template v-else-if="asking">
@@ -30,16 +30,16 @@
         :title="t('account.oauth.app.confirmTitle')"
         :lede="t('account.oauth.app.confirmLede', account)"
       />
-      <v-btn block color="primary" size="large" class="account-submit" :loading="handing" @click="handOver">
+      <BaseButton block kind="primary" size="lg" class="account-submit" :loading="handing" @click="handOver">
         {{ t('account.oauth.app.confirm') }}
-      </v-btn>
+      </BaseButton>
       <div class="back-to-app__other">
-        <v-btn variant="text" :disabled="handing" @click="switchAccount">
+        <BaseButton kind="ghost" :disabled="handing" @click="switchAccount">
           {{ t('account.oauth.app.switchAccount') }}
-        </v-btn>
-        <v-btn variant="text" :disabled="handing" @click="cancel">
+        </BaseButton>
+        <BaseButton kind="ghost" :disabled="handing" @click="cancel">
           {{ t('account.oauth.app.cancel') }}
-        </v-btn>
+        </BaseButton>
       </div>
     </template>
 
@@ -54,6 +54,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { forgetAppChallenge, pendingAppChallenge } from './appSignIn'
 
 import AccountHeading from '@/components/account/AccountHeading.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { appLink } from '@/lib/desktopApp'
 import { myId } from '@/me'

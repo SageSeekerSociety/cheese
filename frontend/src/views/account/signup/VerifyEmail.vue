@@ -33,17 +33,17 @@
 
       <LegalConsent v-if="needsConsent" ref="consentRef" :action-label="t('account.agreeAndSignUp')" class="mb-4" />
 
-      <v-btn
+      <BaseButton
         block
-        color="primary"
-        size="large"
+        kind="primary"
+        size="lg"
         type="submit"
         class="account-submit"
         :loading="submitting"
         :disabled="otp?.length !== 6 || waiting"
       >
         {{ t('account.verifyEmail.submit') }}
-      </v-btn>
+      </BaseButton>
 
       <div class="account-foot account-foot--split">
         <span>
@@ -79,6 +79,7 @@ import AccountField from '@/components/account/AccountField.vue'
 import AccountHeading from '@/components/account/AccountHeading.vue'
 import LegalConsent from '@/components/account/LegalConsent.vue'
 import PasswordField from '@/components/account/PasswordField.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 import AccountService from '@/services/account'

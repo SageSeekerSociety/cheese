@@ -1,8 +1,7 @@
 <template>
-  <v-btn :loading="loading" variant="outlined" color="on-surface" @click="download">
-    <v-icon start>mdi-download</v-icon>
+  <BaseButton kind="secondary" prepend-icon="mdi-download" :loading="loading" @click="download">
     {{ label }}
-  </v-btn>
+  </BaseButton>
 </template>
 
 <script setup lang="ts">
@@ -14,6 +13,7 @@ import { toast } from 'vuetify-sonner'
 
 import { buildAnalyticsExportUrl } from '../utils'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import accountService from '@/services/account'
 
 const props = defineProps<{

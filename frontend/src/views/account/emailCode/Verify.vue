@@ -20,17 +20,17 @@
         @finish="submit"
       />
 
-      <v-btn
+      <BaseButton
         block
-        color="primary"
-        size="large"
+        kind="primary"
+        size="lg"
         type="submit"
         class="account-submit"
         :loading="submitting"
         :disabled="code.length !== 6 || waiting"
       >
         {{ t('account.signIn.submit') }}
-      </v-btn>
+      </BaseButton>
 
       <div class="account-foot account-foot--split">
         <span>
@@ -62,6 +62,7 @@ import { firstStepAccepted, landingAfterSignIn, upgradeAfterEmailCodeSignIn } fr
 import { forgetPendingCode, pendingCode, rememberCodeSent } from './pendingCode'
 
 import AccountHeading from '@/components/account/AccountHeading.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'

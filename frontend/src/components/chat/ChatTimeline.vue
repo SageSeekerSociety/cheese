@@ -30,6 +30,7 @@ import RoomMessage from '../room/RoomMessage.vue'
 import RoomNotice from '../room/RoomNotice.vue'
 import TimelineMark from '../TimelineMark.vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
 
@@ -267,14 +268,13 @@ function emitOutboxLeave(el: Element, done: () => void) {
           <template #agent><UserRef :handle="agentSeat?.handle" :name="agentName" /></template>
         </i18n-t>
         <div class="d-flex flex-wrap ga-2">
-          <v-btn
+          <BaseButton
             v-for="prompt in starterPrompts"
             :key="prompt.label"
-            variant="outlined"
-            color="on-surface"
-            size="small"
+            kind="secondary"
+            size="sm"
             @click="emit('starter', prompt.text)"
-            >{{ prompt.label }}</v-btn
+            >{{ prompt.label }}</BaseButton
           >
         </div>
       </section>

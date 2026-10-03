@@ -9,20 +9,19 @@
     <!-- Declining is a button the same size as accepting, not a small link:
          the person is choosing, not being steered. -->
     <div class="account-actions">
-      <v-btn block color="primary" size="large" :loading="adding" :disabled="!!declining" @click="add">
+      <BaseButton block kind="primary" size="lg" :loading="adding" :disabled="!!declining" @click="add">
         {{ t('account.passkeyOffer.add') }}
-      </v-btn>
-      <v-btn
+      </BaseButton>
+      <BaseButton
         block
-        variant="outlined"
-        color="on-surface"
-        size="large"
+        kind="secondary"
+        size="lg"
         :loading="declining === 'later'"
         :disabled="adding || declining === 'forever'"
         @click="decline(false)"
       >
         {{ t('account.passkeyOffer.later') }}
-      </v-btn>
+      </BaseButton>
     </div>
 
     <div v-if="offer.canStopAsking" class="account-foot">
@@ -49,6 +48,7 @@ import { currentPasskeyOffer, endPasskeyOffer, Enrollment } from './passkeyEnrol
 import { passkeyWrongHostMessage } from './passkeyHost'
 
 import AccountHeading from '@/components/account/AccountHeading.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
 

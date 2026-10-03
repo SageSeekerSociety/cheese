@@ -31,11 +31,11 @@
                 @keyup.enter="fetchSearchResults(searchQuery)"
               >
                 <template #append>
-                  <v-btn
+                  <BaseButton
                     v-if="searchQuery"
-                    variant="text"
                     icon="mdi-close"
-                    size="small"
+                    size="sm"
+                    :aria-label="t('work.mcp.action.clear')"
                     @click="
                       () => {
                         searchQuery = ''
@@ -43,7 +43,7 @@
                         hasSearched = false
                       }
                     "
-                  ></v-btn>
+                  />
                 </template>
               </v-text-field>
             </v-form>
@@ -124,6 +124,7 @@ import { toast } from 'vuetify-sonner'
 
 import { getAvatarUrl } from '@/utils/materials'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { TeamsApi } from '@/network/api/teams'
 

@@ -11,6 +11,7 @@ import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminFlash from '@/components/admin/AdminFlash.vue'
 import AdminGrid from '@/components/admin/AdminGrid.vue'
 import AdminPage from '@/components/admin/AdminPage.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
@@ -282,18 +283,17 @@ onMounted(load)
     <AdminPage :title="t('navigation.admin.members')" :sub="t('members.header.subtitle')">
       <template #tools>
         <span class="t-meta-read t-num am__count">{{ countLine }}</span>
-        <v-btn
+        <BaseButton
           icon="mdi-refresh"
-          variant="text"
-          size="small"
+          size="sm"
           :aria-label="t('members.toolbar.refresh')"
           :loading="loading"
           @click="load"
         />
         <!-- 全页唯一一块琥珀：这一页确实有一个主操作，而它就是这个。 -->
-        <v-btn color="primary" size="small" prepend-icon="mdi-account-plus-outline" @click="openDialog">
+        <BaseButton kind="primary" size="sm" prepend-icon="mdi-account-plus-outline" @click="openDialog">
           {{ t('members.toolbar.add') }}
-        </v-btn>
+        </BaseButton>
       </template>
 
       <div class="am__body admin-page__body">
@@ -507,14 +507,9 @@ onMounted(load)
                  名字覆盖掉，读屏念的就不再是「移出」这两个字了。）
                  颜色**留中性**（不写 `color`）：每行一颗红按钮会把这张表变吵，而这一页
                  的琥珀是「添加管理员」；破坏性那一颗的红留给确认框里那一颗。 -->
-                <v-btn
-                  variant="outlined"
-                  size="small"
-                  :loading="removing === row.handle"
-                  @click="askRemove($event, row.handle)"
-                >
+                <BaseButton size="sm" :loading="removing === row.handle" @click="askRemove($event, row.handle)">
                   {{ t('members.row.remove') }}
-                </v-btn>
+                </BaseButton>
               </td>
             </tr>
             <tr v-if="!added.length" class="am__row" data-card="flat">
@@ -577,10 +572,10 @@ onMounted(load)
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
           <v-spacer />
-          <v-btn variant="text" @click="dialogOpen = false">{{ t('members.addDialog.cancel') }}</v-btn>
-          <v-btn color="primary" :loading="adding" :disabled="!selected.length" @click="addSelected">
+          <BaseButton @click="dialogOpen = false">{{ t('members.addDialog.cancel') }}</BaseButton>
+          <BaseButton kind="primary" :loading="adding" :disabled="!selected.length" @click="addSelected">
             {{ t('members.addDialog.submit') }}
-          </v-btn>
+          </BaseButton>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -602,12 +597,14 @@ onMounted(load)
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
           <v-spacer />
-          <v-btn variant="text" @click="confirmHandle = null">{{ t('members.confirm.cancel') }}</v-btn>
-          <!-- `color="error"`（→ `--danger`）：琥珀按设计系统只给一屏唯一的主操作，
+          <BaseButton @click="confirmHandle = null">{{ t('members.confirm.cancel') }}</BaseButton>
+          <!-- `kind="danger" solid`（原 `color="error"` 默认实心）：琥珀按设计系统只给一屏唯一的主操作，
                而这一页的主操作是「添加管理员」（工具条里那颗）。移出是不可逆的破坏性
                动作，红是它该有的颜色；本仓先例：MyDevicesView、ProjectLibraryView、
                teams/detail/Members 的删除按钮。 -->
-          <v-btn color="error" :loading="!!removing" @click="remove">{{ t('members.confirm.submit') }}</v-btn>
+          <BaseButton kind="danger" solid :loading="!!removing" @click="remove">{{
+            t('members.confirm.submit')
+          }}</BaseButton>
         </v-card-actions>
       </v-card>
     </v-dialog>

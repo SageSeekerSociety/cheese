@@ -4,6 +4,7 @@ import type { GrantInput } from '@/lib/adminCredits'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { endOfDayIso } from '@/lib/adminCredits'
 
 // 给一个团队发额度：数量、到期时间（不过期或某一天）、原因（只有管理员看得到）。
@@ -122,10 +123,10 @@ function submit() {
 
       <v-card-actions class="pa-4 pt-0">
         <v-spacer />
-        <v-btn variant="text" :disabled="saving" @click="close">{{ t('credits.grantDialog.cancel') }}</v-btn>
-        <v-btn color="primary" variant="flat" :loading="saving" :disabled="invalid || saving" @click="submit">
+        <BaseButton kind="ghost" :disabled="saving" @click="close">{{ t('credits.grantDialog.cancel') }}</BaseButton>
+        <BaseButton kind="primary" :loading="saving" :disabled="invalid || saving" @click="submit">
           {{ t('credits.grantDialog.submit') }}
-        </v-btn>
+        </BaseButton>
       </v-card-actions>
     </v-card>
   </v-dialog>

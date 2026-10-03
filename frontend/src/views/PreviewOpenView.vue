@@ -6,6 +6,8 @@ import { ApiError, authToken, requestPreviewSession } from '../api'
 import { t } from '../i18n'
 import { postPreviewSession } from '../lib/previewSession'
 
+import BaseButton from '@/components/base/BaseButton.vue'
+
 const route = useRoute()
 const loading = ref(false)
 const error = ref('')
@@ -51,13 +53,11 @@ onBeforeUnmount(() => {
     <h1 v-if="$vuetify.display.mdAndUp" class="t-page-title mb-4">{{ t('project.open.preview.title') }}</h1>
     <template v-if="needsLogin">
       <p class="t-body mb-4">{{ t('project.open.preview.membersOnly') }}</p>
-      <v-btn color="primary" :to="loginLink">{{ t('project.open.signIn') }}</v-btn>
+      <BaseButton kind="primary" :to="loginLink">{{ t('project.open.signIn') }}</BaseButton>
     </template>
     <template v-else-if="error">
       <v-alert type="error" class="mb-4">{{ error }}</v-alert>
-      <v-btn color="primary" variant="tonal" :loading="loading" @click="openPreview">{{
-        t('project.open.retry')
-      }}</v-btn>
+      <BaseButton kind="secondary" :loading="loading" @click="openPreview">{{ t('project.open.retry') }}</BaseButton>
     </template>
     <v-progress-circular v-else indeterminate :aria-label="t('project.open.preview.opening')" />
   </v-container>

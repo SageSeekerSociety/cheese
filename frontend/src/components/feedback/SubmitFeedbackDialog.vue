@@ -5,6 +5,7 @@ import { useDisplay } from 'vuetify'
 
 import SubmitFeedbackForm from './SubmitFeedbackForm.vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { useFeedbackStore } from '@/stores/feedback'
 
 // 提交反馈的**对话框壳**。只有会话里那张 agent 提案卡用它，理由见组件里那份表单的
@@ -51,9 +52,7 @@ function onSubmitted(id: string) {
           {{ fromProposal ? t('feedback.submit.titleFromAgent') : t('feedback.submit.title') }}
         </span>
         <v-spacer />
-        <v-btn icon size="small" variant="text" :aria-label="t('feedback.submit.cancel')" @click="close">
-          <v-icon size="18">mdi-close</v-icon>
-        </v-btn>
+        <BaseButton icon="mdi-close" size="sm" :aria-label="t('feedback.submit.cancel')" @click="close" />
       </div>
 
       <v-card-text class="sfd-body">

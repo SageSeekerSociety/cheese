@@ -85,18 +85,12 @@
       <div class="an-card lr__actions">
         <span class="lr__count">{{ t('spaces.analytics.learning.selected', { n: selected.length }) }}</span>
         <div class="lr__buttons">
-          <v-btn v-if="selected.length" variant="text" @click="clearSelection">
+          <BaseButton v-if="selected.length" kind="ghost" @click="clearSelection">
             {{ t('spaces.analytics.learning.clear') }}
-          </v-btn>
-          <v-btn
-            color="primary"
-            variant="flat"
-            :loading="outlineLoading"
-            :disabled="!selected.length"
-            @click="buildOutline"
-          >
+          </BaseButton>
+          <BaseButton kind="primary" :loading="outlineLoading" :disabled="!selected.length" @click="buildOutline">
             {{ t('spaces.analytics.learning.buildOutline') }}
-          </v-btn>
+          </BaseButton>
         </div>
       </div>
 
@@ -128,6 +122,7 @@ import { useSpaceAnalyticsFilters } from './composables/useSpaceAnalyticsFilters
 import { dedupeBlockIds, formatCount } from './helpers'
 import { buildAnalyticsApiParams, buildLearningQueueParams } from './utils'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { SpacesApi } from '@/network/api/spaces'
 
 const { t } = useI18n()

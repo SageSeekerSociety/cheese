@@ -2,9 +2,9 @@
   <v-sheet flat rounded="lg">
     <v-toolbar :title="t('spaces.detail.selectTemplate.title')" color="transparent" density="compact">
       <template #prepend>
-        <v-btn variant="text" prepend-icon="mdi-chevron-left" @click="goBack">{{
+        <BaseButton kind="ghost" prepend-icon="mdi-chevron-left" @click="goBack">{{
           t('spaces.detail.selectTemplate.back')
-        }}</v-btn>
+        }}</BaseButton>
       </template>
     </v-toolbar>
 
@@ -36,6 +36,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { stepBack } from '@/lib/backOut'
 import { useSpaceStore } from '@/stores/space'
 

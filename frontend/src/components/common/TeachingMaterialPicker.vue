@@ -19,6 +19,8 @@ import type { SpaceMaterial, SpaceMaterialsState } from '@/types'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
+import BaseButton from '@/components/base/BaseButton.vue'
+
 const props = defineProps<{
   /** 现在勾着的编号。顺序照旧，新勾的接在后面 —— 勾一下不该把已有的顺序洗一遍。 */
   modelValue: number[]
@@ -158,15 +160,15 @@ function toggle(id: number, on: boolean) {
 
         <template v-if="libraryTo">
           <v-divider class="material-picker__sep" />
-          <v-btn
-            variant="text"
-            size="small"
+          <BaseButton
+            kind="ghost"
+            size="sm"
             class="material-picker__upload"
             data-testid="teaching-materials-upload"
             :to="libraryTo"
           >
             {{ t('spaces.teaching.fields.materialsUpload') }}
-          </v-btn>
+          </BaseButton>
         </template>
       </div>
 
@@ -174,9 +176,9 @@ function toggle(id: number, on: boolean) {
         <p class="material-picker__hint">
           {{ t('spaces.teaching.fields.materialsDangling', { ids: dangling.join(', ') }) }}
         </p>
-        <v-btn v-for="id in dangling" :key="id" size="small" variant="text" @click="toggle(id, false)">
+        <BaseButton v-for="id in dangling" :key="id" kind="ghost" size="sm" @click="toggle(id, false)">
           {{ t('spaces.teaching.fields.materialsDanglingDrop', { id }) }}
-        </v-btn>
+        </BaseButton>
       </div>
     </template>
   </div>

@@ -145,7 +145,7 @@
       <v-divider></v-divider>
       <v-card-actions class="pa-4">
         <v-spacer></v-spacer>
-        <v-btn variant="text" @click="$emit('close')">{{ t('global.cancel') }}</v-btn>
+        <BaseButton kind="ghost" @click="$emit('close')">{{ t('global.cancel') }}</BaseButton>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -159,6 +159,7 @@ import { useI18n } from 'vue-i18n'
 
 import { getAvatarUrl } from '@/utils/materials'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { eligibilityReasonKey } from '@/views/tasks/eligibilityReason'
 
 const props = defineProps<{

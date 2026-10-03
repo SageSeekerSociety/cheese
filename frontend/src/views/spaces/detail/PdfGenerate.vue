@@ -10,6 +10,7 @@ import { useRoute } from 'vue-router'
 
 import { MAX_DRAFTS, MAX_PDF_BYTES, TASK_SUBMISSION_SCHEMA } from './publishLimits'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import PanelCard from '@/components/spaces/PanelCard.vue'
 import { publishDoneRoute, TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
 import { TasksApi } from '@/network/api/tasks'
@@ -324,14 +325,14 @@ async function confirmPdf() {
         </li>
       </ul>
       <div class="pdf__actions">
-        <v-btn variant="text" @click="resetPdf">{{ t('spaces.detail.pdfGenerate.receipt.again') }}</v-btn>
+        <BaseButton kind="ghost" @click="resetPdf">{{ t('spaces.detail.pdfGenerate.receipt.again') }}</BaseButton>
         <v-spacer />
-        <v-btn variant="tonal" :to="publishDoneRoute(spaceId)">{{
+        <BaseButton kind="secondary" :to="publishDoneRoute(spaceId)">{{
           t('spaces.detail.pdfGenerate.receipt.viewMine')
-        }}</v-btn>
-        <v-btn color="primary" variant="flat" :to="{ name: 'SpacesDetailAuditTasks', params: { spaceId } }">
+        }}</BaseButton>
+        <BaseButton kind="primary" :to="{ name: 'SpacesDetailAuditTasks', params: { spaceId } }">
           {{ t('spaces.detail.pdfGenerate.receipt.toQueue') }}
-        </v-btn>
+        </BaseButton>
       </div>
     </PanelCard>
 
@@ -393,15 +394,9 @@ async function confirmPdf() {
         </div>
 
         <div class="pdf__actions">
-          <v-btn
-            color="primary"
-            variant="flat"
-            :loading="parsing"
-            :disabled="!selectedPdf || confirming"
-            @click="parsePdf"
-          >
+          <BaseButton kind="primary" :loading="parsing" :disabled="!selectedPdf || confirming" @click="parsePdf">
             {{ t('spaces.detail.pdfGenerate.parse') }}
-          </v-btn>
+          </BaseButton>
           <i18n-t scope="global" keypath="spaces.detail.pdfGenerate.parseNote" tag="span" class="pdf__actions-note">
             <template #param><code>?templateId=</code></template>
             <template #max>{{ MAX_DRAFTS }}</template>
@@ -540,18 +535,12 @@ async function confirmPdf() {
             >
           </i18n-t>
           <v-spacer />
-          <v-btn variant="text" :disabled="confirming" @click="resetPdf">{{
+          <BaseButton kind="ghost" :disabled="confirming" @click="resetPdf">{{
             t('spaces.detail.pdfGenerate.cancel')
-          }}</v-btn>
-          <v-btn
-            color="primary"
-            variant="flat"
-            :loading="confirming"
-            :disabled="!pickedDrafts.length"
-            @click="confirmPdf"
-          >
+          }}</BaseButton>
+          <BaseButton kind="primary" :loading="confirming" :disabled="!pickedDrafts.length" @click="confirmPdf">
             {{ t('spaces.detail.pdfGenerate.confirm', { n: pickedDrafts.length }) }}
-          </v-btn>
+          </BaseButton>
         </div>
       </PanelCard>
     </template>

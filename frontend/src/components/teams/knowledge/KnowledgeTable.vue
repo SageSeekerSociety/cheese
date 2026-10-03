@@ -8,6 +8,7 @@ import type { Knowledge } from '@/types'
 
 import { getAvatarUrl } from '@/utils/materials'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { canEditKnowledge, formatDay, resourceTypeIcon, resourceTypeName } from '@/lib/knowledgeFormat'
 
@@ -79,29 +80,31 @@ const emit = defineEmits<{
         </td>
         <td>
           <div class="d-flex">
-            <v-btn
-              variant="text"
-              size="small"
+            <BaseButton
+              kind="ghost"
+              size="sm"
               density="comfortable"
               icon="mdi-eye"
+              :aria-label="t('teams.knowledge.openResource')"
               @click.stop="emit('open', resource)"
-            ></v-btn>
-            <v-btn
-              variant="text"
-              size="small"
+            />
+            <BaseButton
+              kind="ghost"
+              size="sm"
               density="comfortable"
               icon="mdi-open-in-new"
+              :aria-label="t('navigation.palette.newTab')"
               @click.stop="emit('openLink', resource)"
-            ></v-btn>
-            <v-btn
+            />
+            <BaseButton
               v-if="canEditKnowledge(resource, ownerId)"
-              variant="text"
-              size="small"
+              kind="ghost"
+              size="sm"
               density="comfortable"
               icon="mdi-delete"
-              color="error"
+              :aria-label="t('teams.knowledge.deleteResource')"
               @click.stop="emit('delete', resource)"
-            ></v-btn>
+            />
           </div>
         </td>
       </tr>

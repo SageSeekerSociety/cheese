@@ -15,6 +15,7 @@ import type { MenuAction } from '@/components/common/menuAction'
 
 import { computed, ref } from 'vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import { t } from '@/i18n'
 
@@ -114,62 +115,57 @@ const summonText = computed(() => ({
     <input ref="imageInput" type="file" accept="image/*" multiple class="visually-hidden" @change="onFilePicked" />
     <!-- 附件上传走的是 HTTP，和聊天那条 socket 是两回事：socket 断着的
            时候图片照样传得上去，所以这里不跟着 `connected` 一起禁用。 -->
-    <v-btn
+    <BaseButton
+      kind="ghost"
       class="composer-icon"
       icon="mdi-paperclip"
-      variant="text"
-      size="small"
-      color="medium-emphasis"
+      size="sm"
       :title="t('work.room.composer.attachFiles')"
       @click="pickFiles"
     />
     <!-- 手机上多一颗「照片」：那儿没有截图可贴、也没有东西可拖，从文件
              选择器里翻相册要绕好几步。 -->
-    <v-btn
+    <BaseButton
       v-if="showImagePicker"
+      kind="ghost"
       class="composer-icon"
       icon="mdi-image-outline"
-      variant="text"
-      size="small"
-      color="medium-emphasis"
+      size="sm"
       :title="t('work.room.composer.sendPhotos')"
       @click="pickImages"
     />
     <AdaptiveMenu v-if="extrasCollapsed" :actions="extras" location="top start">
       <template #activator="{ props: menu }">
-        <v-btn
+        <BaseButton
           v-bind="menu"
+          kind="ghost"
           class="composer-icon"
           icon="mdi-dots-horizontal"
-          variant="text"
-          size="small"
-          color="medium-emphasis"
+          size="sm"
           :title="t('work.room.composer.more')"
           :aria-label="t('work.room.composer.more')"
         />
       </template>
     </AdaptiveMenu>
     <!-- 发一张自己的清单：也是「这条消息本身」，所以和附件站在左边。 -->
-    <v-btn
+    <BaseButton
       v-if="canChecklist && !extrasCollapsed"
+      kind="ghost"
       class="composer-icon"
       icon="mdi-format-list-checks"
-      variant="text"
-      size="small"
-      color="medium-emphasis"
+      size="sm"
       :title="t('work.room.checklist.compose')"
       :aria-label="t('work.room.checklist.compose')"
       @click="emit('checklist')"
     />
     <!-- 「提醒我」：到点给自己发一条通知。它说的是这个房间里的一件事，不是这条
          消息本身，但和附件一样是安静的图标，不跟右边「怎么发出去」那几样并列。 -->
-    <v-btn
+    <BaseButton
       v-if="canRemind && !extrasCollapsed"
+      kind="ghost"
       class="composer-icon"
       icon="mdi-bell-outline"
-      variant="text"
-      size="small"
-      color="medium-emphasis"
+      size="sm"
       :title="t('work.room.reminder.open')"
       :aria-label="t('work.room.reminder.open')"
       @click="emit('remind')"
@@ -199,12 +195,11 @@ const summonText = computed(() => ({
     </button>
     <!-- 断线时照样能发：消息进发件箱、立刻显示，连上就自己走 (§14.1)。
            按 `connected` 禁用会把「打字」和「后端此刻在不在」绑在一起。 -->
-    <v-btn
+    <BaseButton
       class="composer-send"
-      color="primary"
-      variant="flat"
+      kind="primary"
       icon="mdi-send"
-      size="small"
+      size="sm"
       :title="t('work.room.composer.send')"
       :disabled="uploading || !canSend"
       @click="emit('send')"

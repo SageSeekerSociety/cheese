@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 
 import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminGrid from '@/components/admin/AdminGrid.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 import { fmtCost, fmtNum } from '@/lib/usageFormat'
 
 // 额度那一段：给项目的网关 key 设「刹车值」。和模型分开，因为它们回答的是两个不同的
@@ -114,9 +115,9 @@ const { t } = useI18n()
           </span>
         </td>
         <td class="amd__cell amd__cell--actions" :data-label="t('models.table.column.actions')">
-          <v-btn variant="outlined" size="small" :disabled="!row.has_key" @click="emit('set-budget', row)">
+          <BaseButton kind="secondary" size="sm" :disabled="!row.has_key" @click="emit('set-budget', row)">
             {{ t('models.budget.action.set') }}
-          </v-btn>
+          </BaseButton>
         </td>
       </tr>
     </AdminGrid>

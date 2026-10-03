@@ -3,6 +3,7 @@ import type { FeedbackComment } from '@/cx_types'
 
 import { computed, nextTick, ref, watch } from 'vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import FeedbackAuthorAvatar from '@/components/feedback/FeedbackAuthorAvatar.vue'
 import { t } from '@/i18n'
@@ -208,19 +209,12 @@ function confirmRemove() {
       <!-- 楼内回复用中性色，不用琥珀：这一页唯一的主操作是底部的「发表评论」，
            琥珀一次只能出现在一个地方（docs/design-system.md §1.6）。 -->
       <div class="fb-ci__form-actions">
-        <v-btn variant="text" color="secondary" size="x-small" @click="emit('toggle-reply', comment.id)">
+        <BaseButton kind="ghost" size="sm" @click="emit('toggle-reply', comment.id)">
           {{ t('feedback.comment.cancel') }}
-        </v-btn>
-        <v-btn
-          variant="tonal"
-          color="secondary"
-          size="x-small"
-          :disabled="!draft.trim()"
-          :loading="sending"
-          @click="send"
-        >
+        </BaseButton>
+        <BaseButton kind="secondary" size="sm" :disabled="!draft.trim()" :loading="sending" @click="send">
           {{ t('feedback.comment.reply') }}
-        </v-btn>
+        </BaseButton>
       </div>
     </div>
   </div>

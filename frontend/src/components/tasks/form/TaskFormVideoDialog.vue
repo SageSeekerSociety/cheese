@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 
+import BaseButton from '@/components/base/BaseButton.vue'
+
 const { t } = useI18n()
 
 // 「视频链接提示」那一段：填了一个解析不了的地址时弹出来问一句 —— 现在只有 B 站能
@@ -28,10 +30,8 @@ const emit = defineEmits<{
       </v-card-text>
       <v-card-actions class="pa-4 pt-0">
         <v-spacer></v-spacer>
-        <v-btn variant="text" @click="emit('cancel')">{{ t('global.cancel') }}</v-btn>
-        <v-btn color="primary" variant="flat" @click="emit('confirm')">{{
-          t('tasks.form.video.dialogContinue')
-        }}</v-btn>
+        <BaseButton kind="ghost" @click="emit('cancel')">{{ t('global.cancel') }}</BaseButton>
+        <BaseButton kind="primary" @click="emit('confirm')">{{ t('tasks.form.video.dialogContinue') }}</BaseButton>
       </v-card-actions>
     </v-card>
   </v-dialog>
