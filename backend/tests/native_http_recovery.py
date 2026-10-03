@@ -91,12 +91,15 @@ async def answer_after_recovery(descriptor, chat, channel, factory):
     async def received(expected, *, accepted_only=False):
         # HTTP commits intent before the background runner performs the RPC.
         # Establish its durable receipt before measuring retry/correction effects.
+        # Under this ClaudeCode harness an input's acceptance *is* its native
+        # echo: receipts.py stamps accepted_at only for DrivenRuntime's
+        # "accepted" evidence, which ClaudeCode never produces. So "accepted"
+        # means echoed_at, and the echo must be drained to be observed.
         async with asyncio.timeout(90):
             while True:
                 await retry_due()
-                if not accepted_only:
-                    for subscription in channel.runtime.subscriptions.values():
-                        await subscription.drain()
+                for subscription in channel.runtime.subscriptions.values():
+                    await subscription.drain()
                 async with factory() as session:
                     deliveries = list(
                         await session.scalars(
@@ -115,7 +118,7 @@ async def answer_after_recovery(descriptor, chat, channel, factory):
                             any(
                                 r.delivery_id == d.id
                                 and r.attempt_id == d.attempt_id
-                                and r.accepted_at
+                                and r.echoed_at
                                 for r in rows
                             )
                             if accepted_only
@@ -124,7 +127,7 @@ async def answer_after_recovery(descriptor, chat, channel, factory):
                         )
                         and len(rows) == expected + 1
                         and all(
-                            r.accepted_at
+                            r.echoed_at
                             if accepted_only
                             else r.echoed_at and r.settled_at
                             for r in rows
@@ -185,38 +188,55 @@ async def answer_after_recovery(descriptor, chat, channel, factory):
                 (2, "更正", "alice"),
             ]
             if descriptor["mode"] == "http-busy":
-                await received(2, accepted_only=True)
-                async with factory() as session:
-                    delivery = await session.scalar(
-                        select(Delivery).where(
-                            Delivery.topic_id == topic,
-                            Delivery.payload["v"].as_integer() == 2,
-                        )
-                    )
-                    assert delivery is not None
-                    inputs = list(
-                        await session.scalars(
-                            select(NativeInput).where(
-                                NativeInput.delivery_id == delivery.id,
-                                NativeInput.attempt_id == delivery.attempt_id,
+                # Publish the correction target and release the busy turn's
+                # gate *before* waiting for the correction to be echoed. The
+                # model continuation that drives the original executor reads
+                # this target to know which echo completes the correction, so
+                # waiting for the echo first deadlocks against it (the
+                # correction is never echoed while the target is absent).
+                # Wait only for the correction input to be *registered* (its
+                # identity fields), then publish and let received(...) below
+                # verify the echo the continuation now produces.
+                target = None
+                async with asyncio.timeout(30):
+                    while target is None:
+                        async with factory() as session:
+                            delivery = await session.scalar(
+                                select(Delivery).where(
+                                    Delivery.topic_id == topic,
+                                    Delivery.payload["v"].as_integer() == 2,
+                                )
                             )
-                        )
-                    )
-                    assert len(inputs) == 1 and inputs[0].accepted_at
-                    target = inputs[0]
-                    Path(descriptor["correction_target"]).write_text(
-                        json.dumps(
-                            {
-                                "delivery_id": str(delivery.id),
-                                "attempt_id": str(target.attempt_id),
-                                "input_id": str(target.input_id),
-                                "work_id": str(target.work_id),
-                                "native_session_id": target.native_session_id,
-                                "recipient_handle": target.recipient_handle,
-                            }
-                        )
-                    )
+                            inputs = (
+                                []
+                                if delivery is None
+                                else list(
+                                    await session.scalars(
+                                        select(NativeInput).where(
+                                            NativeInput.delivery_id == delivery.id,
+                                            NativeInput.attempt_id == delivery.attempt_id,
+                                        )
+                                    )
+                                )
+                            )
+                            if len(inputs) == 1:
+                                target = inputs[0]
+                                Path(descriptor["correction_target"]).write_text(
+                                    json.dumps(
+                                        {
+                                            "delivery_id": str(delivery.id),
+                                            "attempt_id": str(target.attempt_id),
+                                            "input_id": str(target.input_id),
+                                            "work_id": str(target.work_id),
+                                            "native_session_id": target.native_session_id,
+                                            "recipient_handle": target.recipient_handle,
+                                        }
+                                    )
+                                )
+                        if target is None:
+                            await asyncio.sleep(0.05)
                 Path(descriptor["gate"]).touch()
+                await received(2, accepted_only=True)
             await received(2)
             await settled(3)
 
