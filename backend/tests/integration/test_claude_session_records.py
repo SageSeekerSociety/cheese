@@ -20,6 +20,7 @@ from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.models import AgentTurn
 from app.domain.block.models import Block
 from app.domain.delivery.input_identity import InputIdentity, InputReceipt
+from app.domain.delivery.models import NativeInput
 from app.main import app
 from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.conftest import wait_work_idle as _wait_work_idle
@@ -246,20 +247,36 @@ def test_a_message_read_inside_the_running_turn_ends_with_it(
             lambda f: f["type"] == "event_block" and "make test" in str(f["block"]),
         )
 
-        # The room no longer counted the first turn as live when the next
-        # message came in, so it went to the session as a turn of its own.
-        async def no_live_turn(*_args, **_kwargs):
-            return None
-
-        monkeypatch.setattr(chat, "merge_into_running_turn", no_live_turn)
+        # Use the running session's actual injection path. Hiding that path
+        # exercises durable deferral, not a message read inside this work.
+        before = len(_written(stub_hooks, room))
         post_message(client, room, "alice", {"content": "@芝士 顺便跑一下 lint"})
-        assert _wait_for(client, room, lambda: len(prompts) == 2)
+        assert _wait_for(client, room, lambda: len(_written(stub_hooks, room)) > before)
+        injected = _written(stub_hooks, room)[-1]["message"]["content"]
+        assert "顺便跑一下 lint" in injected
+        # The stub calls emit_turn for each stdin write, including steer.
+        assert len(prompts) == 2
 
         stub_hooks.returns(topic, "Bash", "42 passed")
-        stub_hooks.acknowledges(topic, prompts[1])
+        stub_hooks.acknowledges(topic, injected)
         stub_hooks.says(topic, "测试和 lint 都过了")
         stub_hooks.stops(topic, "测试和 lint 都过了")
         assert _until_done(ws)[-1]["type"] == "done"
+
+    client.portal.call(settle_turn, chat, topic)
+
+    async def assert_same_work():
+        async with client.test_factory() as session:
+            inputs = list(
+                await session.scalars(
+                    select(NativeInput).where(NativeInput.topic_id == topic)
+                )
+            )
+            assert len(inputs) == 2
+            assert len({row.execution_work_id for row in inputs}) == 1
+            assert all(row.echoed_at and row.completed_at for row in inputs)
+
+    client.portal.call(assert_same_work)
 
     async def open_turns() -> list[AgentTurn]:
         async with client.test_factory() as session:
