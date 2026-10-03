@@ -98,6 +98,8 @@ it.each(['app', 'file'] as const)('opens %s with only a grant in a form targetin
   expect(frame.hasAttribute('srcdoc')).toBe(false)
   expect(frame.hasAttribute('src')).toBe(false)
   expect(frame.getAttribute('sandbox')).toContain('allow-same-origin')
+  // 页面里点开新标签页的外链要真的开得出去。
+  expect(frame.getAttribute('sandbox')).toContain('allow-popups')
   expect(document.querySelector('form')).toBeNull()
 })
 
@@ -128,7 +130,9 @@ it.each(['site/index.html', '图.svg'])('draws the room file %s in the sandboxed
   expect(new URLSearchParams(submissions[0].body).get('path')).toBe(
     '/_cheese/room/' + path.split('/').map(encodeURIComponent).join('/')
   )
-  expect(frame.getAttribute('sandbox')).toBe('allow-scripts allow-forms allow-same-origin')
+  expect(frame.getAttribute('sandbox')).toBe(
+    'allow-scripts allow-forms allow-same-origin allow-popups allow-popups-to-escape-sandbox'
+  )
   // 源码交给 iframe，不是渲染进面板 DOM 里。
   expect(container.textContent).not.toContain('源码不该被画出来')
 })

@@ -168,8 +168,12 @@ def _private(response: Response) -> Response:
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
     response.headers["Permissions-Policy"] = DEVICE_FEATURES_OFF
+    # A link the page opens in a new tab is the person leaving the preview: the
+    # document's own sandbox has to allow it as well as the iframe's (each can only
+    # take flags away), and the site it opens is not ours to sandbox. Same as sites.
     response.headers["Content-Security-Policy"] = (
-        "sandbox allow-scripts allow-same-origin allow-forms allow-downloads; "
+        "sandbox allow-scripts allow-same-origin allow-forms allow-downloads "
+        "allow-popups allow-popups-to-escape-sandbox; "
         "worker-src 'none'; object-src 'none'; "
         f"frame-ancestors 'self' {platform.scheme}://{platform.netloc}"
     )
