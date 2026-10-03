@@ -64,6 +64,8 @@ def test_preview_session_opens_selected_artifact_and_assets(client, static_previ
     assert "worker-src 'none'" in response.headers["content-security-policy"]
     assert response.headers["cache-control"] == "no-store"
     assert response.headers["cross-origin-resource-policy"] == "same-origin"
+    for device in ("camera", "microphone", "geolocation", "display-capture"):
+        assert f"{device}=()" in response.headers["permissions-policy"]
     for path, content in assets.items():
         response = client.get(origin + "/" + path + "?v=one&v=two")
         assert response.status_code == 200, (path, response.text)
