@@ -296,15 +296,17 @@ def test_fixed_app_host_keeps_instance_after_latest_and_helper_changes(
         )
         assert client.get(origin + "/").status_code == 200
         machine.detach()
-        assert client.get(origin + "/").status_code == 404
+        # No tunnel for a moment (a deploy, a helper redialling): transient.
+        assert client.get(origin + "/").status_code == 503
         machine.machine = preview_hub.attach(
             topic_id, seat, machine, capabilities=frozenset({"instance-v1"})
         )
         assert client.get(origin + "/").status_code == 200
+        # Another listener on the port: this bound page never comes back.
         machine.instance = "2" * 64
-        assert client.get(origin + "/").status_code == 404
+        assert client.get(origin + "/").status_code == 409
         machine.detach()
         machine.attach(topic_id, seat)
-        assert client.get(origin + "/").status_code == 404
+        assert client.get(origin + "/").status_code == 503
     finally:
         machine.detach()
