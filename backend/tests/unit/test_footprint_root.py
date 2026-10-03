@@ -32,6 +32,7 @@ from app.domain.agent.harness.claude_code.remote_execution import (
 )
 from app.domain.agent.place import (
     CHECKOUT_DIR,
+    SANDBOXES_DIR,
     STAGED_DIR,
     footprint_root,
     session_platform_dirs,
@@ -55,6 +56,15 @@ def test_the_shipped_programs_carry_the_root_that_place_chose():
     assert (bootstrap.PLATFORM_DIR, bootstrap.PREVIOUS_PLATFORM_DIR) == (
         session_platform_dirs()
     )
+
+
+def test_the_teardown_reads_the_sandboxes_the_bootstrap_records():
+    """Which rooms run in a sandbox is written by the bootstrap and read by the
+    teardown, each with its own copy of where. Drift is silent and unsafe: the
+    teardown would take a sandboxed room for one that is not, and run what that
+    room wrote into its own home outside the sandbox."""
+    assert bootstrap.SANDBOXES == SANDBOXES_DIR
+    assert resource_cleanup.SANDBOXES == SANDBOXES_DIR
 
 
 def test_the_shipped_programs_carry_the_checkout_name_that_place_chose():

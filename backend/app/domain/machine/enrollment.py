@@ -157,16 +157,23 @@ esac
 #     every agent start, whose exit code it propagates (`agent/device_provider`).
 #     The connector is Go and comes up fine without python3, so the machine
 #     reports healthy and every room on it dies at environment preparation.
+#   bwrap   — every session's executor on a Cloud machine runs in a
+#     bubblewrap sandbox (`remote_execution/bootstrap.sandbox_argv`), and a
+#     session that cannot have one does not start.
 # None of them is guaranteed by the image: MicroCloud's LXC template lists git
 # but not tmux, and the VM template installs neither (it adds only curl + Docker
 # on top of a stock Debian cloud image). Depending on which offering a machine
 # came from is exactly the kind of assumption that fails quietly.
 echo CHEESE_STARTUP:tools
-for tool in tmux git python3; do
+for tool in tmux git python3 bwrap; do
   command -v "$tool" >/dev/null 2>&1 && continue
-  sudo -n apt-get install -y -q "$tool" >/dev/null 2>&1 \
+  case "$tool" in
+    bwrap) package=bubblewrap ;;
+    *) package="$tool" ;;
+  esac
+  sudo -n apt-get install -y -q "$package" >/dev/null 2>&1 \
     || {{ sudo -n apt-get update -q >/dev/null 2>&1 \
-          && sudo -n apt-get install -y -q "$tool" >/dev/null 2>&1; }} \
+          && sudo -n apt-get install -y -q "$package" >/dev/null 2>&1; }} \
     || {{ echo "$tool is missing and could not be installed" >&2; exit 1; }}
 done
 mkdir -p "$HOME/.local/bin" "$HOME/.config/cheese"

@@ -213,6 +213,46 @@ def test_every_agent_in_a_cloud_room_works_on_the_rooms_one_machine(cloud_room):
     assert zed["resource_id"] != ada["resource_id"]
 
 
+def test_each_session_on_a_cloud_machine_has_its_executor_sandboxed(cloud_room):
+    """A Cloud machine's sessions are `isolated`: each one's executor is
+    installed to run in a sandbox of its own (#2320)."""
+    import ast
+
+    case = cloud_room
+    first, _ = case.seats
+    assert _lease(case, first).json()["data"].get("preparing")
+    [machine] = _rooms_machines(case)
+
+    async def enrol():
+        async with case.client.test_factory() as db:
+            devices = sql_device_service(db)
+            device = await devices.approve(
+                await devices.start("rooms-cloud"),
+                owner_user_id=case.owner_id,
+                supply=Supply.cloud,
+                visibility=Visibility.isolated,
+            )
+            await devices.assign_to_project(
+                device.device_id, case.project_id, actor_user_id=case.owner_id
+            )
+            await db.commit()
+            return device.device_id
+
+    device_id = case.client.portal.call(enrol)
+    _machine_is_up(case, machine, device_id)
+    answer = _lease(case, first)
+    assert answer.json()["data"]["target"]["device_id"] == device_id, answer.text
+
+    [installed] = [
+        call.kwargs["stdin"]
+        for call in work_lease.device_hub.exec.await_args_list
+        if call.args[0] == device_id
+    ]
+    configure = ast.parse(installed).body[-1].value
+    payload = json.loads(ast.literal_eval(configure.args[0].args[0]))
+    assert payload["sandbox"] is True
+
+
 def test_a_second_agent_waits_for_the_machine_the_room_is_renting(cloud_room):
     case = cloud_room
     first, second = case.seats

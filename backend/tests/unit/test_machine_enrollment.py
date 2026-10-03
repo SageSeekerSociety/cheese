@@ -181,19 +181,16 @@ async def test_the_credential_is_committed_before_the_machine_is_told_to_dial(
 
 
 async def test_a_machine_the_platform_opened_is_enrolled_as_cloud_supply(monkeypatch):
-    """入口决定待遇 on both axes (#282 决定 2 / #358): this door is the platform asking
-    MicroCloud for a machine, so what it enrols is disposable (`cloud`) AND — a fresh
-    one-per-topic VM being its own empty box — whole-machine (`host`). Both are
-    CONSTANTS at the call site, never derived from the machine; the connector door
-    writes `self_hosted`/`isolated` for the very same hardware."""
+    """入口决定待遇 (#282 决定 2): this door is the platform asking MicroCloud for a
+    machine, so what it enrols is disposable (`cloud`), never derived from the
+    machine; the connector door writes `self_hosted` for the very same hardware.
+    Its sessions each run in a sandbox of their own (#2320), so it is `isolated`."""
     service, _ = build_service(monkeypatch)
 
     await service.enroll(make_machine())
 
     assert service._devices.approved_supply == [Supply.cloud]
-    # Cloud collapses the visibility axis (#358) — a disposable box is safely host,
-    # and it must be, so the isolated-no-transport gate never fires for cloud compute.
-    assert service._devices.approved_visibility == [Visibility.host]
+    assert service._devices.approved_visibility == [Visibility.isolated]
 
 
 async def test_team_machine_enrolls_into_the_team_pool(monkeypatch):
@@ -509,7 +506,7 @@ def _tool_check_block() -> str:
     return script[start : script.index("\ndone", start) + len("\ndone")]
 
 
-@pytest.mark.parametrize("missing", ["tmux", "git", "python3"])
+@pytest.mark.parametrize("missing", ["tmux", "git", "python3", "bwrap"])
 def test_a_machine_missing_one_of_these_refuses_to_enrol(missing):
     """Each of these fails SILENTLY when discovered later, which is the whole
     reason the check is here rather than in whatever breaks first.
@@ -518,7 +515,8 @@ def test_a_machine_missing_one_of_these_refuses_to_enrol(missing):
     the agent's turn runs in an empty dir and its work is never seen. Without
     python3 the connector (Go) comes up fine and every room on the machine dies
     at environment preparation instead, because the platform's own programs on a
-    machine — `cheese` and the environment helper — are python3.
+    machine — `cheese` and the environment helper — are python3. Without
+    bwrap no session on the machine can have the sandbox it runs in.
 
     None is guaranteed by the image: MicroCloud's LXC template lists git but not
     tmux, and the VM template installs neither.
@@ -537,7 +535,7 @@ sudo() {{ return 1; }}
 
 
 def test_the_check_installs_nothing_on_a_machine_that_already_has_them(tmp_path):
-    """An image that carries all three must not pay for an apt transaction — and
+    """An image that carries all of them must not pay for an apt transaction — and
     must not need passwordless sudo at all to enrol."""
     import subprocess
 
@@ -551,6 +549,23 @@ sudo() {{ printf '%s\\n' "$*" >> {calls}; }}
 
     assert done.returncode == 0, done.stderr
     assert not calls.exists(), "nothing should have been installed"
+
+
+def test_a_machine_without_bwrap_is_given_the_package_that_has_it(tmp_path):
+    """Every session on a Cloud machine runs in a bubblewrap sandbox, and the
+    command is not the package's name."""
+    import subprocess
+
+    calls = tmp_path / "sudo-calls"
+    harness = f"""
+command() {{ [ "$2" = bwrap ] && return 1; return 0; }}
+sudo() {{ printf '%s\\n' "$*" >> {calls}; }}
+{_tool_check_block()}
+"""
+    done = subprocess.run(["bash", "-c", harness], capture_output=True, text=True)
+
+    assert done.returncode == 0, done.stderr
+    assert calls.read_text().split("\n")[0] == "-n apt-get install -y -q bubblewrap"
 
 
 def test_bootstrap_is_valid_shell():

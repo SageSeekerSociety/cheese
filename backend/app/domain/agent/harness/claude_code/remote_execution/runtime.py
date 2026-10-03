@@ -28,6 +28,7 @@ import shutil
 import signal
 import socket
 import socketserver
+import stat
 import subprocess
 import sys
 import threading
@@ -63,7 +64,14 @@ PROTOCOL_VERSION = 1
 # these (`launch.file_sources`), and whatever starts a copy of this runtime
 # installs them the same way (`tests/support/executor_release.py`), so a file
 # the runtime comes to need reaches the machine and every fixture, or neither.
-_OWN = ("runtime", "portable", "mcp_process", "machine_files", "machine_git")
+_OWN = (
+    "runtime",
+    "portable",
+    "mcp_process",
+    "machine_files",
+    "machine_git",
+    "repo_search",
+)
 RELEASE_FILES = {
     **{
         f"remote-execution/{name}.py": (
@@ -144,12 +152,24 @@ def resolve_program(argv):
 
 
 def socket_path(state):
-    """Where a client finds this state's service: its socket, or on Windows the
-    file naming its port and token. It exists only while the service may."""
+    """Where a client finds this state's service: the address it dials, or on
+    Windows the file naming its port and token. It exists only while the
+    service may.
+
+    On POSIX the address is a link to the socket in `socket_directory`. The
+    connector derives this same name (`cli/internal/host/executor_unix.go`)."""
     if sys.platform == "win32":
         return str(Path(state) / "executor.endpoint")
+    return socket_directory(state) + ".sock"
+
+
+def socket_directory(state):
+    """The directory this state's service binds its sockets in. A sandboxed
+    executor (`bootstrap.sandbox_argv`) is shown this one directory of the
+    machine's /tmp and nothing else there, so its sockets cannot sit beside
+    every other room's."""
     digest = hashlib.sha256(str(Path(state).resolve()).encode()).hexdigest()[:24]
-    return f"/tmp/cheese-execution-{os.getuid()}-{digest}.sock"
+    return f"/tmp/cheese-execution-{os.getuid()}-{digest}"
 
 
 def connect(state):
@@ -384,7 +404,7 @@ class Executor:
         # The worker forks and passes descriptors; Windows has neither, and
         # there `cheese` runs the CLI in its own process instead.
         if worker.is_file() and cli.is_file() and sys.platform != "win32":
-            address = socket_path(self.state) + ".cli"
+            address = str(Path(socket_directory(self.state)) / "cli.sock")
             Path(address).unlink(missing_ok=True)
             with (self.state / "cli-worker.log").open("a") as log:
                 self.cli_worker = subprocess.Popen(
@@ -479,7 +499,9 @@ class Executor:
                 self.cli_worker.kill()
                 self.cli_worker.wait()
                 raise RuntimeError("CLI worker startup failed; inspect cli-worker.log")
-            self.env["CHEESE_CLI_SOCKET"] = socket_path(self.state) + ".cli"
+            self.env["CHEESE_CLI_SOCKET"] = str(
+                Path(socket_directory(self.state)) / "cli.sock"
+            )
             self.cli_worker_ready = True
 
     def invoke(self, params):
@@ -1366,74 +1388,12 @@ class Executor:
         raise ValueError("Unknown task filesystem operation")
 
     def repo_search(self, params):
-        """Find lines in this room's checkout carrying ALL the given keywords.
-
-        What it is for: 记忆只记 repo 里查不到的东西（结论 61），and the only
-        place that can answer "is it in the repo" is the machine holding the
-        checkout — the platform has no copy of it. Tracked files and untracked
-        ones both count: a fact written in a file that is not committed yet is
-        still written down somewhere a person will read.
-
-        ``--and`` between the keywords, not one ``-e`` each: OR is how this
-        fails in exactly the repo it matters in. 「前端构建用 pnpm，不要用 npm」
-        carries the keyword ``npm``, which in a real frontend repo is in the
-        lockfile, every `package.json`, CI and half of `docs/` — the caller's
-        window fills up in path order and the one line that actually states the
-        fact never arrives. Which keywords to AND is the platform's call; this
-        answers the question it was handed.
-
-        ``searched`` is the first field, not a convenience: 「repo 里确实没写」
-        and 「这次没查成」 are opposite answers. A caller that cannot tell them
-        apart keeps accepting writes on a machine where this never runs, with
-        nothing anywhere saying so. A private chat rents no place and has no
-        checkout (结论 19), so it says that rather than searching whatever the
-        process happens to be standing in.
-        """
+        # A private chat rents no place and has no checkout (结论 19), and its
+        # image carries no `repo_search.py`: it says so rather than searching
+        # whatever the process happens to be standing in.
         if self.config.get("private"):
             return {"searched": False, "reason": "no-checkout", "hits": []}
-        terms = [
-            term
-            for term in params.get("terms", [])
-            if isinstance(term, str) and term.strip()
-        ][:12]  # a bound on argv, not the choice of keywords
-        if not terms:
-            return {"searched": False, "reason": "no-terms", "hits": []}
-        argv = [
-            "git",
-            "-C",
-            str(self.root),
-            "grep",
-            "--no-color",
-            "-n",  # line numbers: the refusal names a place, not just a file
-            "-I",  # never a binary
-            "-F",  # the keywords are literals, not patterns
-            "-i",
-            "--untracked",
-        ]
-        for index, term in enumerate(terms):
-            argv += (["--and"] if index else []) + ["-e", term]
-        try:
-            result = subprocess.run(argv, capture_output=True, timeout=20)
-        except (OSError, subprocess.SubprocessError) as exc:
-            return {"searched": False, "reason": f"did not run: {exc}", "hits": []}
-        # 1 = 一行都没匹配上，那是一个答案。其余都是没查成：这个仓库不是仓库、
-        # 这台机器上没有 git、这个 git 不认某个选项。说出来——「从此一条都拦不住
-        # 而日志里一个字都没有」是这套东西最坏的坏法，因为它看起来跟一切正常一样。
-        if result.returncode not in (0, 1):
-            stderr = result.stderr.decode("utf-8", "replace").strip()[:200]
-            return {
-                "searched": False,
-                "reason": f"exit {result.returncode}: {stderr}",
-                "hits": [],
-            }
-        hits = []
-        for line in result.stdout.decode("utf-8", "replace").splitlines()[:200]:
-            path, _, rest = line.partition(":")
-            number, _, text = rest.partition(":")
-            if not number.isdigit():
-                continue
-            hits.append({"path": path, "line": int(number), "text": text[:400]})
-        return {"searched": True, "hits": hits}
+        return beside("repo_search")["search"](params, self.root)
 
     def context_fs(self, params):
         """Expose project context, with writes limited to project workflows."""
@@ -1941,9 +1901,11 @@ def serve(state):
                 return
             try:
                 value = json.loads(self.rfile.readline())
-                if sys.platform == "win32" and value["method"] == "shutdown":
-                    # What SIGTERM is on POSIX: Windows can only kill a process
-                    # outright, and this one has children to stop first.
+                if value["method"] == "shutdown":
+                    # How an executor is stopped everywhere. A signal would
+                    # name it by a pid, and the pid a sandboxed executor
+                    # reports is its own namespace's, which names some other
+                    # process outside it; Windows has no SIGTERM at all.
                     stop(None, None)
                     response = {"result": {}}
                 else:
@@ -1968,7 +1930,16 @@ def serve(state):
         class Server(socketserver.ThreadingUnixStreamServer):
             daemon_threads = False
 
-        address = socket_path(state)
+        directory = Path(socket_directory(state))
+        directory.mkdir(mode=0o700, exist_ok=True)
+        # A fixed name in a shared /tmp: one somebody else made, or a link to
+        # somewhere else, would put this socket where they can replace it.
+        made = directory.lstat()
+        if not stat.S_ISDIR(made.st_mode) or made.st_uid != os.getuid():
+            raise RuntimeError(f"{directory} is not this user's own directory")
+        directory.chmod(0o700)
+        address = str(directory / "executor.sock")
+        Path(address).unlink(missing_ok=True)
 
     path = Path(socket_path(state))
     path.unlink(missing_ok=True)
@@ -1978,7 +1949,8 @@ def serve(state):
             # the file finds a service behind it.
             write_json(path, {"port": server.server_address[1], "token": token})
         else:
-            path.chmod(0o600)
+            Path(address).chmod(0o600)
+            path.symlink_to(address)
 
         def stop(_signum, _frame):
             threading.Thread(target=server.shutdown, daemon=True).start()
@@ -1990,6 +1962,8 @@ def serve(state):
         finally:
             executor.close()
             path.unlink(missing_ok=True)
+            if sys.platform != "win32":
+                Path(address).unlink(missing_ok=True)
     # server_close joins request handlers before their receipt database closes.
     executor.db.close()
 
@@ -2054,6 +2028,28 @@ def bridge(state, server, *, call=None):
         thread.join()
 
 
+def terminate_unrequested(state):
+    """Stop an executor that refused `shutdown`: one started before stopping
+    was a request. Those only ever ran unsandboxed, so the pid one reports is a
+    pid this side can signal — but only once that pid is seen running this
+    state's service, because whatever answers on a room's socket is not proof
+    of who is behind it."""
+    try:
+        pid = request(state, "ping")["pid"]
+    except (OSError, RuntimeError):
+        return
+    running = subprocess.run(
+        ["ps", "-ww", "-p", str(pid), "-o", "args="],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout.rstrip()
+    if any(
+        running.endswith(f"serve --state {path}") for path in (state, state.resolve())
+    ):
+        os.kill(pid, signal.SIGTERM)
+
+
 def main():
     import argparse
 
@@ -2072,16 +2068,12 @@ def main():
         print(json.dumps(request(state, value["method"], value.get("params"))))
     elif args.mode == "stop":
         try:
-            info = request(state, "ping")
+            request(state, "shutdown")
         except (FileNotFoundError, ConnectionRefusedError):
             if not state.exists():
                 return
-            info = None
-        if info is not None:
-            if sys.platform == "win32":
-                request(state, "shutdown")
-            else:
-                os.kill(info["pid"], signal.SIGTERM)
+        except RuntimeError:
+            terminate_unrequested(state)
         with (state / "service.lock").open("a") as lock_file:
             for _ in range(100):
                 try:
