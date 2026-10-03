@@ -3,17 +3,20 @@ the thread's own session, not by a turn of the room.
 
 - The agent's answer is its reply in the thread, under the agent's name.
 - One thread is one session: a later question in the thread goes to the same one.
-- What the session changes in the document is recorded as done for the person
-  who asked.
-- The session's tools open only for its own thread, and only while a question
-  of it is being answered.
+- What the session changes in the document is recorded as done by the agent
+  for the person who asked.
+- Its tools act with the credential minted for the question: they read what the
+  asker may read, and stop working once the answer is over.
 - A session that fails still leaves the thread an answer from the agent.
 
-The session itself is faked at its boundary (``HandlessSessions.ask``); it
-reaches the platform's tools the way a real one does, with the credential it
-was started with. The collaboration service is tests/support/collab.py.
+The session itself is faked at its boundary (``HandlessSessions.ask``); its
+tools reach the platform the way a real session's do, as the request each table
+tool plans (`sandbox/cheese`), with the question's credential. The
+collaboration service is tests/support/collab.py.
 """
 
+import base64
+import json
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -21,17 +24,14 @@ from collections.abc import Awaitable, Callable
 import httpx
 import pytest
 
+from app.api import doc_agent
 from app.api.deps import get_handless_sessions
-from app.core.sandbox_auth import mint_scoped_token
+from app.domain.agent.harness.pi import catalog
 from app.domain.agent.harness.pi.handless import Answered
 from app.domain.memory.files import MemoryFileScope
 from app.domain.memory.files_store import MemoryFileStore
 from app.main import app
-from tests.integration.conftest import (
-    post_message,
-    room_agent_headers,
-    session_auth_headers,
-)
+from tests.integration.conftest import post_message, session_auth_headers
 from tests.integration.test_doc_edits import ALICE_PARAGRAPH, _doc, _document
 
 
@@ -42,11 +42,11 @@ class FakeSessions:
         self.asked: list[tuple] = []
         self.script: Callable[..., Awaitable[tuple[str, str | None]]] | None = None
 
-    async def ask(self, launch, work_id, text, *, earlier="", ceiling_s):
+    async def ask(self, launch, work_id, text, *, credential, earlier="", ceiling_s):
         self.asked.append((launch, text))
         answer, error = "好的。", None
         if self.script is not None:
-            answer, error = await self.script(launch, text)
+            answer, error = await self.script(credential, text)
         yield Answered(answer, error)
 
 
@@ -58,13 +58,24 @@ def sessions():
     app.dependency_overrides.pop(get_handless_sessions, None)
 
 
-async def _tool(token: str, name: str, body: dict) -> httpx.Response:
-    """A tool call as the session makes it."""
+async def _tool(credential: str, name: str, args: dict) -> httpx.Response:
+    """A tool call as the session makes it: the request the table plans for it,
+    in the room the session answers in, with the question's credential."""
+    # Where the session answers, read off the credential without judging it:
+    # the platform is what judges it.
+    body = credential.removeprefix("cxdg_").split(".", 1)[0]
+    claims = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
+    plan = catalog._module().request_plan(
+        name, args, {"CHEESE_PROJECT": claims["p"], "CHEESE_TOPIC": claims["t"]}
+    )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://platform"
     ) as platform:
-        return await platform.post(
-            f"/doc-agent/tools/{name}", json=body, headers={"X-Cheese-Token": token}
+        return await platform.request(
+            plan["method"],
+            plan["path"],
+            json=plan.get("body"),
+            headers={"X-Cheese-Token": credential},
         )
 
 
@@ -127,7 +138,7 @@ def test_the_thread_list_says_while_the_agent_is_answering(client, sessions):
     room, seat = _document(client)
     seen: list = []
 
-    async def look(launch, question):
+    async def look(credential, question):
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://platform"
         ) as page:
@@ -179,10 +190,10 @@ def test_what_the_session_changes_is_recorded_as_asked_by_the_commenter(
 ):
     room, seat = _document(client)
 
-    async def edit(launch, question):
+    async def edit(credential, question):
         response = await _tool(
-            launch.token,
-            "edit_document",
+            credential,
+            "cheese_doc_edit",
             {"edits": [{"old": "讲范围", "new": "讲边界"}]},
         )
         assert response.status_code == 200, response.text
@@ -199,43 +210,35 @@ def test_what_the_session_changes_is_recorded_as_asked_by_the_commenter(
     assert latest["actor"] == seat and latest["requested_by"] == "bob"
 
 
-def test_the_tools_open_only_for_the_thread_being_answered(client, sessions):
+def test_the_tools_stop_working_once_the_answer_is_over(client, sessions, monkeypatch):
     room, seat = _document(client)
-    project = client.get(f"/topics/{room}").json()["data"]["project_id"]
-    room_token = room_agent_headers(client, room)["X-Cheese-Token"]
-    calls: dict[str, int] = {}
+    monkeypatch.setattr(doc_agent, "ANSWER_S", 0.0)
+    monkeypatch.setattr(doc_agent, "CREDENTIAL_MARGIN_S", 1)
+    held: dict[str, str] = {}
 
-    async def probe(launch, question):
-        other = mint_scoped_token(
-            project_id=project,
-            topic_id=room,
-            agent_handle=seat,
-            resource_id=str(uuid.uuid4()),
-        )
-        calls["own"] = (await _tool(launch.token, "read_document", {})).status_code
-        calls["other"] = (await _tool(other, "read_document", {})).status_code
-        calls["room"] = (await _tool(room_token, "read_document", {})).status_code
+    async def keep(credential, question):
+        held["credential"] = credential
         return "看过了。", None
 
-    sessions.script = probe
+    sessions.script = keep
     root = _comment(client, room, f"<@{seat}> 看一下")
     assert _answers(client, room, root, seat) == ["看过了。"]
-    launch = sessions.asked[0][0]
+    time.sleep(1.5)
 
-    assert calls["own"] == 200
-    assert calls["other"] in (401, 403)
-    assert calls["room"] in (401, 403)
     edit = client.portal.call(
-        _tool, launch.token, "edit_document", {"edits": [{"old": "范围", "new": "x"}]}
+        _tool,
+        held["credential"],
+        "cheese_doc_edit",
+        {"edits": [{"old": "范围", "new": "x"}]},
     )
-    assert edit.status_code in (401, 403)
+    assert edit.status_code == 401
     assert ALICE_PARAGRAPH in _doc(client, room)["content"]
 
 
 def test_a_session_that_fails_still_answers_the_thread(client, sessions):
     room, seat = _document(client)
 
-    async def fail(launch, question):
+    async def fail(credential, question):
         return "", "the model call failed"
 
     sessions.script = fail
@@ -258,10 +261,10 @@ def test_a_search_reaches_only_the_rooms_the_asker_may_read(client, sessions):
     post_message(client, room, "alice", {"content": "里程碑三号"})
     found: dict[str, str] = {}
 
-    async def search(launch, question):
-        response = await _tool(launch.token, "search_project", {"query": "里程碑"})
+    async def search(credential, question):
+        response = await _tool(credential, "cheese_project_search", {"query": "里程碑"})
         assert response.status_code == 200, response.text
-        found["text"] = response.json()["data"]["text"]
+        found["text"] = response.text
         return "找到了。", None
 
     sessions.script = search
@@ -292,9 +295,14 @@ def test_the_team_memory_is_read_in_full(client, sessions):
     client.portal.call(remember)
     read: dict[str, str] = {}
 
-    async def recall(launch, question):
-        response = await _tool(launch.token, "read_memory", {"name": "deploy.md"})
-        read["text"] = response.json()["data"]["text"]
+    async def recall(credential, question):
+        response = await _tool(credential, "cheese_memory_read", {"name": "deploy.md"})
+        assert response.status_code == 200, response.text
+        read["text"] = next(
+            row["content"]
+            for row in response.json()["data"]["data"]
+            if row["path"] == "deploy.md"
+        )
         return "记得。", None
 
     sessions.script = recall

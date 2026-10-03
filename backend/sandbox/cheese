@@ -757,10 +757,52 @@ PLATFORM_TOOLS = ToolTable(
     )
 )
 
+#: 替人答题的芝士（文档里的、个人的）才有的几样：它们以提问人的身份查东西，
+#: 凭的是这一问签出来的代行凭证（`sandbox_auth.DelegatedClaims`）。房间里的芝士
+#: 是自己在干活，没有「提问人」可代，所以不在 `PLATFORM_TOOLS` 里给它。
+DELEGATED_TOOLS = ToolTable(
+    (
+        _tool(
+            "cheese_project_search",
+            "按关键词搜这个项目：频道名、消息、文档段落、评论、周报、任务卡、资料库文件名、"
+            "产物。只搜提问人能看的频道。返回每条命中在哪个频道、谁写的和一段摘录。"
+            "每个词都要命中，没找到就换个说法或少几个词再搜。",
+            {"query": _text("关键词")},
+            ["query"],
+        ),
+        _tool(
+            "cheese_memory_read",
+            "读项目共享记忆里的一条正文："
+            "给出索引里那一条链接的文件名（如 deploy.md）。",
+            {"name": _text("记忆的文件名")},
+            ["name"],
+        ),
+        _tool(
+            "cheese_attachment_read",
+            "读消息里附带的文件或资料库里的文件（消息里写着的地址，资料库的以 library/ "
+            "开头）。只读得了文本；二进制的文件只返回大小。",
+            {"path": _text("文件的地址")},
+            ["path"],
+        ),
+        _tool(
+            "cheese_my_tasks",
+            "列出提问人参加的题目：标题、简介、截止时间、是否已结束。",
+        ),
+    )
+)
+
 #: 要本话题 / 本项目才答得出的那些。缺了就在发出去之前说清楚，不让后端去猜。
-_NEEDS_TOPIC = frozenset(PLATFORM_TOOLS.names()) - {"cheese_fetch", "platform_request"}
+#: 文档检索不在其中：个人芝士没有话题，只读谁都能读的那些页。
+_NEEDS_TOPIC = frozenset(PLATFORM_TOOLS.names()) - {
+    "cheese_fetch",
+    "platform_request",
+    "cheese_docs_search",
+    "cheese_docs_read",
+} | {"cheese_attachment_read"}
 _NEEDS_PROJECT = frozenset(
     {
+        "cheese_project_search",
+        "cheese_memory_read",
         "cheese_notify",
         "cheese_library_ls",
         "cheese_routine_list",
@@ -1058,14 +1100,25 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         return {
             "method": "POST",
             "path": "/docs/agent/search",
-            "body": {"query": args["query"], "topic": topic},
+            "body": {"query": args["query"], **({"topic": topic} if topic else {})},
         }
     if tool == "cheese_docs_read":
         return {
             "method": "POST",
             "path": "/docs/agent/read",
-            "body": {"page": args["page"], "topic": topic},
+            "body": {"page": args["page"], **({"topic": topic} if topic else {})},
         }
+    if tool == "cheese_project_search":
+        query = urllib.parse.urlencode({"q": args["query"], "limit": 8})
+        return {"method": "GET", "path": f"/projects/{project}/context/search?{query}"}
+    if tool == "cheese_memory_read":
+        query = urllib.parse.urlencode({"project_id": project, "scope": "team"})
+        return {"method": "GET", "path": f"/memory/files?{query}"}
+    if tool == "cheese_attachment_read":
+        query = urllib.parse.urlencode({"path": args["path"].strip()})
+        return {"method": "GET", "path": f"/topics/{topic}/preview/file?{query}"}
+    if tool == "cheese_my_tasks":
+        return {"method": "GET", "path": "/tasks/joined"}
     if tool == "cheese_fetch":
         # 带上话题：不带的话每一次调用都会被判成 "Agent credential is invalid or
         # expired"——沙箱 token 是带作用域的。
@@ -1243,7 +1296,8 @@ class PlatformHTTPError(RuntimeError):
 
 
 def run_platform_tool(tool: str, args: dict, host) -> str:
-    """Run one tool from `PLATFORM_TOOLS` and say, in text, what came of it.
+    """Run one tool from `PLATFORM_TOOLS` or `DELEGATED_TOOLS` and say, in
+    text, what came of it.
 
     `host` is where the session runs, and supplies the four things a tool can
     need: `environ` (the room's CHEESE_* values), `request(plan)` (one backend
@@ -1252,10 +1306,13 @@ def run_platform_tool(tool: str, args: dict, host) -> str:
     plus a `doc_versions` dict that outlives a single call. The text is what the
     agent acts on — ids, the next call to make — so it is written for that
     reader, not dumped JSON."""
-    if tool not in PLATFORM_TOOLS:
+    table = next(
+        (t for t in (PLATFORM_TOOLS, DELEGATED_TOOLS) if tool in t), None
+    )
+    if table is None:
         raise ValueError(f"Unknown platform tool: {tool}")
     # 拒在发出任何请求、碰任何机器之前：一张已经递出去的卡收不回来。
-    schema = next(t for t in PLATFORM_TOOLS.schemas() if t["name"] == tool)
+    schema = next(t for t in table.schemas() if t["name"] == tool)
     missing = [
         name
         for name in schema["inputSchema"].get("required", ())
@@ -1900,6 +1957,41 @@ def _say_docs_read(args, data, env) -> str:
     return (data or {}).get("markdown") or ""
 
 
+#: 一个附件交回去的最多字数。
+_ATTACHMENT_CHARS = 30_000
+
+
+def _say_project_search(args, data, env) -> str:
+    hits = (data or {}).get("hits") or {}
+    if not any(hits.values()):
+        return "没有找到。换个说法或少几个词再搜。"
+    return json.dumps(hits, ensure_ascii=False)
+
+
+def _say_memory_read(args, data, env) -> str:
+    rows = (data or {}).get("data") if isinstance(data, dict) else data
+    name = args["name"].strip().removeprefix("team/")
+    for row in rows or []:
+        if row.get("path") == name and name != "index.md":
+            return row.get("content") or ""
+    return "没有这一条记忆。"
+
+
+def _say_attachment_read(args, data, env) -> str:
+    content = (data or {}).get("content")
+    if content is None:
+        return f"这个文件不是文本，读不了（{(data or {}).get('bytes')} 字节）。"
+    if len(content) > _ATTACHMENT_CHARS:
+        return content[:_ATTACHMENT_CHARS] + f"\n\n（只给了前 {_ATTACHMENT_CHARS} 字）"
+    return content
+
+
+def _say_my_tasks(args, data, env) -> str:
+    if not data:
+        return "提问人没有参加任何题目。"
+    return json.dumps(data, ensure_ascii=False)
+
+
 def _say_fetch(args, data, env) -> str:
     data = data or {}
     if not data.get("ok"):
@@ -2067,6 +2159,10 @@ _SAY = {
     "cheese_fetch": _say_fetch,
     "cheese_docs_search": _say_docs_search,
     "cheese_docs_read": _say_docs_read,
+    "cheese_project_search": _say_project_search,
+    "cheese_memory_read": _say_memory_read,
+    "cheese_attachment_read": _say_attachment_read,
+    "cheese_my_tasks": _say_my_tasks,
     "cheese_members": _say_members,
     "cheese_status": lambda a, d, e: _format_status(d or {}),
     "cheese_library_ls": _say_library,

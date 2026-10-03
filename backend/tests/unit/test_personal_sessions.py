@@ -9,8 +9,8 @@ Rules held here:
 
 * the session has the tools it is given and nothing of pi's own (no files, no
   commands), and thinks not at all;
-* the model and the tools are reached with the person's credential, and nothing
-  of a machine or a container is touched;
+* the model is reached with the person's credential and the tools with the one
+  minted for the question, and nothing of a machine or a container is touched;
 * an answer arrives as it is written, and ends with what was said;
 * an idle session exits, and the next question finds its conversation again;
 * a person keeps at most two sessions running, the least recently used one
@@ -29,7 +29,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
 
 from app.core.config import settings
-from app.core.sandbox_auth import mint_personal_credential
+from app.core.sandbox_auth import mint_delegated_credential, mint_personal_credential
 from app.domain.agent.harness.pi import personal
 from app.domain.agent.harness.pi.handless import (
     Answered,
@@ -41,22 +41,7 @@ from app.domain.agent.harness.pi.personal import Launch
 from tests.support.session_host import DEVICE, Host, install_pi, stop_all
 
 PROMPT = "你是芝士。只用给你的工具。"
-TOOLS = [
-    {
-        "name": "my_tasks",
-        "description": "我参与的题。",
-        "inputSchema": {"type": "object", "properties": {}},
-    },
-    {
-        "name": "search_docs",
-        "description": "检索文档。",
-        "inputSchema": {
-            "type": "object",
-            "properties": {"query": {"type": "string"}},
-            "required": ["query"],
-        },
-    },
-]
+TOOLS = ("cheese_my_tasks", "cheese_docs_search")
 
 
 #: The longest the fake holds the rest of an answer back for a reader that
@@ -64,16 +49,23 @@ TOOLS = [
 HELD_S = 10.0
 
 
+#: What the platform's routes answer a tool's request with, by path prefix.
+ANSWERS = {
+    "/tasks/joined": [{"id": 7, "title": "一道题", "intro": "", "deadline": None}],
+    "/topics/": {"content": "文档正文", "doc_version": 3},
+}
+
+
 class Platform:
     """The backend as the session reaches it: the model behind ``/llm/v1``,
-    the person's tools behind ``/assistant/tools``."""
+    and every other request a tool makes of the platform's own routes, which
+    it records with the credential each one carried."""
 
     def __init__(
         self,
         steps: list,
         *,
         first_token_s: float = 0.0,
-        tools_path: str = "/assistant/tools",
         rest_held_until: threading.Event | None = None,
     ):
         self.steps = steps
@@ -81,7 +73,8 @@ class Platform:
         self.rest_held_until = rest_held_until
         self.requests: list[dict] = []
         self.model_auth: list[str] = []
-        self.tool_calls: list[tuple[str, str, dict]] = []
+        #: (method and path, credential) of each request a tool made.
+        self.tool_calls: list[tuple[str, str]] = []
         outer = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -90,16 +83,25 @@ class Platform:
             def log_message(self, *_):
                 pass
 
+            def do_GET(self):
+                self._platform()
+
+            def _platform(self):
+                outer.tool_calls.append(
+                    (
+                        f"{self.command} {self.path.split('?')[0]}",
+                        self.headers.get("X-Cheese-Token", ""),
+                    )
+                )
+                data = next(
+                    (v for k, v in ANSWERS.items() if self.path.startswith(k)), {}
+                )
+                self._json({"code": 200, "data": data})
+
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-                if self.path.startswith(f"{tools_path}/"):
-                    name = self.path.rsplit("/", 1)[1]
-                    outer.tool_calls.append(
-                        (name, self.headers.get("X-Cheese-Token", ""), body)
-                    )
-                    self._json(
-                        {"code": 200, "data": {"text": f"{name} 的结果：一道题"}}
-                    )
+                if not self.path.startswith("/llm"):
+                    self._platform()
                     return
                 outer.model_auth.append(self.headers.get("Authorization", ""))
                 index = len(outer.requests)
@@ -211,18 +213,28 @@ def _launch(user: int, conversation: uuid.UUID | None = None) -> Launch:
         user_id=user,
         conversation_id=conversation,
         system_prompt=PROMPT,
-        tools_path="/assistant/tools",
         tools=TOOLS,
         token=mint_personal_credential(user_id=user, conversation_id=str(conversation)),
         model="fixture-model",
     )
 
 
-async def _ask(sessions, launch, text, **options) -> list:
+def question_credential(user: int) -> str:
+    return mint_delegated_credential(
+        user_id=user, handle=f"user{user}", work=str(uuid.uuid4()), ttl_s=300
+    )
+
+
+async def _ask(sessions, launch, text, *, credential: str = "", **options) -> list:
     return [
         event
         async for event in sessions.ask(
-            launch, uuid.uuid4(), text, ceiling_s=120, **options
+            launch,
+            uuid.uuid4(),
+            text,
+            credential=credential or question_credential(getattr(launch, "user_id", 1)),
+            ceiling_s=120,
+            **options,
         )
     ]
 
@@ -240,14 +252,15 @@ async def test_a_session_has_its_tools_and_nothing_else_and_does_not_think(
     hub, sessions = host
     first_words_seen = threading.Event()
     fake = platform(
-        [{"tool": "my_tasks"}, {"text": "你领了一道题：图像分类基线复现。"}],
+        [{"tool": "cheese_my_tasks"}, {"text": "你领了一道题：图像分类基线复现。"}],
         rest_held_until=first_words_seen,
     )
     launch = _launch(7)
+    acting = question_credential(7)
 
     events = []
     async for event in sessions.ask(
-        launch, uuid.uuid4(), "我领了哪些题？", ceiling_s=120
+        launch, uuid.uuid4(), "我领了哪些题？", credential=acting, ceiling_s=120
     ):
         events.append(event)
         if isinstance(event, Said):
@@ -255,7 +268,7 @@ async def test_a_session_has_its_tools_and_nothing_else_and_does_not_think(
 
     said = "".join(e.text for e in events if isinstance(e, Said))
     assert said == "你领了一道题：图像分类基线复现。"
-    assert Looking("my_tasks") in events
+    assert Looking("cheese_my_tasks") in events
     assert events[-1] == Answered("你领了一道题：图像分类基线复现。")
     # More than one piece: the first words were handed on while the model was
     # still writing the rest.
@@ -263,8 +276,8 @@ async def test_a_session_has_its_tools_and_nothing_else_and_does_not_think(
 
     first = fake.requests[0]
     assert sorted(t["function"]["name"] for t in first["tools"]) == [
-        "my_tasks",
-        "search_docs",
+        "cheese_docs_search",
+        "cheese_my_tasks",
     ]
     assert first["thinking"] == {"type": "disabled"}
     assert "reasoning_effort" not in first
@@ -276,13 +289,12 @@ async def test_a_session_has_its_tools_and_nothing_else_and_does_not_think(
         "Current working directory" not in system
         and "read" not in system.split(PROMPT)[1]
     )
-    # Everything reaches the platform as the person, with their credential.
+    # The model is reached with the person's credential; the tool, with the
+    # one minted for this question, at the platform's own route.
     assert set(fake.model_auth) == {f"Bearer {launch.token}"}
-    assert [(name, token) for name, token, _ in fake.tool_calls] == [
-        ("my_tasks", launch.token)
-    ]
+    assert fake.tool_calls == [("GET /tasks/joined", acting)]
     # The tool's answer went back to the model.
-    assert "my_tasks 的结果" in json.dumps(fake.requests[1], ensure_ascii=False)
+    assert "一道题" in json.dumps(fake.requests[1], ensure_ascii=False)
     # Nothing but the launch ran on the host: no machine, no container.
     ran = [argv for argv in hub.execs if argv != ["cat", "/proc/meminfo"]]
     assert ran and all(argv == ["python3", "-"] for argv in ran)
@@ -357,7 +369,13 @@ async def _first_word(sessions, launch, text) -> float:
     """Seconds from asking to the first piece of the answer."""
     started = time.monotonic()
     first = None
-    async for event in sessions.ask(launch, uuid.uuid4(), text, ceiling_s=120):
+    async for event in sessions.ask(
+        launch,
+        uuid.uuid4(),
+        text,
+        credential=question_credential(launch.user_id),
+        ceiling_s=120,
+    ):
         if isinstance(event, Said) and first is None:
             first = time.monotonic() - started
     assert first is not None

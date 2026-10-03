@@ -47,11 +47,12 @@ class Launch:
     """What a thread's session is started with."""
 
     project_id: uuid.UUID
+    #: The room whose document it answers in: where its tools act.
+    room_id: uuid.UUID
     thread_id: uuid.UUID
     system_prompt: str
-    #: The platform path its tools are called under, and what they are.
-    tools_path: str
-    tools: list[dict]
+    #: The table tools it has (`sandbox/cheese`), by name.
+    tools: tuple[str, ...]
     #: The room's credential for the agent, naming this thread.
     token: str
     model: str
@@ -76,7 +77,12 @@ class Launch:
             config=configuration(self),
             api_base=api,
             model=self.model,
-            env={"CHEESE_API": api, "CHEESE_TOKEN": self.token},
+            env={
+                "CHEESE_API": api,
+                "CHEESE_TOKEN": self.token,
+                "CHEESE_PROJECT": str(self.project_id),
+                "CHEESE_TOPIC": str(self.room_id),
+            },
             host={
                 "group_limit": SESSIONS_PER_PROJECT,
                 "memory_max": f"{MEMORY_MB}M",
@@ -103,5 +109,5 @@ def configuration(launch: Launch) -> dict:
         "extension": extension(),
         "notice": "",
         "idle_exit_s": IDLE_EXIT_S,
-        "tools": {"path": launch.tools_path, "specs": launch.tools},
+        "tools": {"names": list(launch.tools)},
     }

@@ -30,9 +30,9 @@ def _launch(machine: dict) -> Launch:
     project, thread = uuid.uuid4(), uuid.uuid4()
     return Launch(
         project_id=project,
+        room_id=uuid.uuid4(),
         thread_id=thread,
         system_prompt=PROMPT,
-        tools_path="/doc-agent/tools",
         tools=doc_agent.TOOLS,
         token=mint_scoped_token(
             project_id=str(project),
@@ -57,7 +57,6 @@ async def test_it_reads_the_rooms_checkout_and_cannot_change_it(
     (checkout / "NOTES.md").write_text("改到一半的第三节", encoding="utf-8")
     fake = platform(
         [{"tool": "read", "arguments": {"path": "NOTES.md"}}, {"text": "读到了。"}],
-        tools_path="/doc-agent/tools",
     )
     with room_machine(tmp_path, checkout=checkout) as machine:
         events = await _ask(sessions, _launch(machine), "第三节写到哪了？")
@@ -84,7 +83,6 @@ async def test_a_file_the_project_denies_stays_unread(
     (checkout / "secret.env").write_text("TOKEN=hunter2")
     fake = platform(
         [{"tool": "read", "arguments": {"path": "secret.env"}}, {"text": "读不了。"}],
-        tools_path="/doc-agent/tools",
     )
     with room_machine(tmp_path, checkout=checkout) as machine:
         await _ask(sessions, _launch(machine), "密钥是多少？")
@@ -127,7 +125,6 @@ async def test_it_sees_what_the_rooms_branch_changed(
             },
             {"text": "加了第二节。"},
         ],
-        tools_path="/doc-agent/tools",
     )
     with room_machine(tmp_path, checkout=checkout) as machine:
         await _ask(sessions, _launch(machine), "这个分支改了什么？")

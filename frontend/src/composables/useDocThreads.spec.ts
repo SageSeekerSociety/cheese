@@ -73,8 +73,8 @@ describe('threads follow the room', () => {
   it('reads the threads again when the room says they changed, and shows how far the agent has got', async () => {
     const { state, refresh } = setup()
     await refresh()
-    announceComments('room', { kind: 'activity', thread: 'c', state: 'working', tool: 'read_document' })
-    expect(state.activity.c).toEqual({ state: 'working', tool: 'read_document' })
+    announceComments('room', { kind: 'activity', thread: 'c', state: 'working', tool: 'cheese_doc_get' })
+    expect(state.activity.c).toEqual({ state: 'working', tool: 'cheese_doc_get' })
 
     api.listDocThreads.mockResolvedValue({
       data: [thread({ revision: 2, replies: [{ sequence: 1, comment: { id: 'r', content: '答' } }] })],

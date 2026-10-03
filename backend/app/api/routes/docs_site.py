@@ -23,6 +23,7 @@ from app.auth.core import AuthUserInfo
 from app.core.config import settings
 from app.core.db import async_session_factory
 from app.core.errors import (
+    AuthenticationRequiredError,
     ForbiddenError,
     NotFoundError,
     SystemBusyError,
@@ -298,7 +299,9 @@ async def _settle(
 
 
 class AgentDocsIn(BaseModel):
-    topic: uuid.UUID
+    #: The room asking; none for a person's own 芝士, which reads only the
+    #: pages every reader may.
+    topic: uuid.UUID | None = None
     query: str | None = Field(default=None, max_length=300)
     page: str | None = Field(default=None, max_length=200)
 
@@ -307,7 +310,13 @@ async def _agent_scope(
     body: AgentDocsIn, db: DbSession, actor: ActorResolverDep
 ) -> bool:
     """Authorize the caller for the room it names; whether it may read developer
-    pages is a property of that room's project, not of the caller."""
+    pages is a property of that room's project, not of the caller. A caller
+    naming no room reads only what every reader may."""
+    if body.topic is None:
+        who = await actor.resolve()
+        if not who.authenticated:
+            raise AuthenticationRequiredError("Login required")
+        return False
     place = await TopicService(db).place_or_404(body.topic)
     who = await actor.resolve(topic_id=place.room_id, project_id=place.project_id)
     await actor.authorize_topic(

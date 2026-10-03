@@ -119,10 +119,11 @@ class Runner(runner.Runner[Journal]):
         self.model = ""
         self.skill_args: list[str] = []
         self.extension_files: dict[str, str] = {}
-        # A session with no hands (`_start_without_hands`): where on the
-        # platform its tools are run (`path`), and what they are (`specs`).
+        # A session with no hands (`_start_without_hands`): the table tools it
+        # has (`names`), and the credential the question being answered was
+        # given, which each of them calls the platform with.
         self.tools: dict = {}
-        self.platform: RemoteClient | None = None
+        self.platform_token = ""
         self.children = Subagents(self)
         # The blocks of the assistant message pi is writing, by its content
         # index (``write``), and how many messages ended and how many of them
@@ -501,7 +502,9 @@ class Runner(runner.Runner[Journal]):
         tools' path and the session's own credential.
         """
         if self.machine is None or self.tools:
-            return await asyncio.to_thread(self._platform_tool, tool, arguments)
+            return await asyncio.to_thread(
+                self._platform_tool, tool, arguments, call_id
+            )
         if catalog.is_platform_tool(tool):
             host = PlatformHost(
                 self.machine.client, self._invoke, call_id, self.doc_versions
@@ -523,24 +526,27 @@ class Runner(runner.Runner[Journal]):
             "stderr": "",
         }
 
-    def _platform_tool(self, tool: str, arguments: dict) -> dict:
-        names = {spec["name"] for spec in self.tools.get("specs") or []}
-        if tool not in names:
+    def _platform_tool(self, tool: str, arguments: dict, call_id: str) -> dict:
+        if tool not in (self.tools.get("names") or []):
             return {"status": 1, "stdout": "", "stderr": f"{tool}: no such tool"}
-        if self.platform is None:
-            self.platform = RemoteClient({})
+        if not self.platform_token:
+            # Never the credential the session started with: that one is the
+            # room's, and a tool acts for whoever asked.
+            return {
+                "status": 1,
+                "stdout": "",
+                "stderr": "No question is being answered",
+            }
+        host = PlatformHost(
+            RemoteClient({"platform_token": self.platform_token}),
+            None,
+            call_id,
+            self.doc_versions,
+        )
         try:
-            answer = self.platform.platform_request(
-                {
-                    "method": "POST",
-                    "path": f"{self.tools['path'].rstrip('/')}/{tool}",
-                    "body": arguments,
-                }
-            )
-            body = json.loads(answer["value"]["stdout"] or "{}")
+            text = catalog.run_platform_tool(tool, arguments, host)
         except Exception as error:  # noqa: BLE001 — the agent reads the reason
             return {"status": 1, "stdout": "", "stderr": str(error)}
-        text = str((body.get("data") or {}).get("text") or "")
         return {"status": 0, "stdout": text, "stderr": ""}
 
     async def tool_hooks(self, params: dict) -> dict:
@@ -812,7 +818,7 @@ class Runner(runner.Runner[Journal]):
         background jobs and subagents are read or run by commands, and this
         session runs none."""
         self.tools = tools
-        specs = list(tools.get("specs") or [])
+        specs = catalog.schemas_of(list(tools.get("names") or []))
         session_id = self._session_id(opening)
         prompt = self.state / "system-prompt.md"
         prompt.write_text(opening.system_prompt, encoding="utf-8")
@@ -962,6 +968,8 @@ class Runner(runner.Runner[Journal]):
             news = await self.news_for(after, params)
             return {"entries": [row["record"] for row in self.records(after)], **news}
         if method == "send":
+            if "platform_token" in params:
+                self.platform_token = str(params.get("platform_token") or "")
             return await self.send(
                 params["input_id"],
                 params["text"],

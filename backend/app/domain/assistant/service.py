@@ -34,7 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.background import spawn
 from app.core.config import settings
-from app.core.sandbox_auth import mint_personal_credential
+from app.core.sandbox_auth import mint_delegated_credential, mint_personal_credential
 from app.core.sentences import error_frame, say
 from app.domain.agent.admission import Hold, Slot, enter
 from app.domain.agent.harness.pi.handless import (
@@ -45,9 +45,10 @@ from app.domain.agent.harness.pi.handless import (
     SessionError,
 )
 from app.domain.agent.harness.pi.personal import Launch
-from app.domain.assistant import billing, tools
+from app.domain.assistant import billing
 from app.domain.assistant.models import AssistantConversation, AssistantMessage
 from app.domain.assistant.prompt import earlier, system_prompt
+from app.domain.user.repositories import UserRepository
 
 logger = logging.getLogger(__name__)
 
@@ -55,10 +56,12 @@ TITLE_CHARS = 40
 
 #: Said when the model could not be reached or failed mid-answer.
 FAILED = say("assistantFailed")
-#: The platform path the session's tools are called under.
-TOOLS_PATH = "/assistant/tools"
+#: What a person's 芝士 may look up (`sandbox/cheese`), as that person.
+TOOLS = ("cheese_my_tasks", "cheese_docs_search", "cheese_docs_read")
 #: How long one question may take, from when it took its conversation.
 ANSWER_S = 170.0
+#: How much longer than that a question's credential lasts.
+CREDENTIAL_MARGIN_S = 60
 
 
 def busy_key(conversation_id: uuid.UUID | str) -> str:
@@ -188,8 +191,7 @@ def launch(user_id: int, conversation_id: uuid.UUID, place: str) -> Launch:
         user_id=user_id,
         conversation_id=conversation_id,
         system_prompt=system_prompt(place),
-        tools_path=TOOLS_PATH,
-        tools=tools.SPECS,
+        tools=TOOLS,
         token=mint_personal_credential(
             user_id=user_id, conversation_id=str(conversation_id)
         ),
@@ -213,12 +215,22 @@ async def ask(
     they may see its place and have credits left, and has started the session
     (``started``) and taken the conversation's hold at ``held_at``."""
     user_id, conversation_id = started.user_id, started.conversation_id
+    work = uuid.uuid4()
     async with sessions() as session:
         store = AssistantConversations(session)
         conversation = await store.owned(user_id, conversation_id)
         before = await store.messages(conversation_id)
         await store.append(conversation, "user", question)
+        person = await UserRepository(session).get_by_id(user_id)
         await session.commit()
+    # What its tools read with while answering: this person's own view, for no
+    # longer than the answer may take, and nothing it could change.
+    acting = mint_delegated_credential(
+        user_id=user_id,
+        handle=person.username if person is not None else str(user_id),
+        work=str(work),
+        ttl_s=int(ANSWER_S) + CREDENTIAL_MARGIN_S,
+    )
 
     queue: asyncio.Queue[bytes | None] = asyncio.Queue()
 
@@ -227,8 +239,9 @@ async def ask(
         try:
             async for event in people.ask(
                 started,
-                uuid.uuid4(),
+                work,
                 question,
+                credential=acting,
                 earlier=earlier(before),
                 ceiling_s=ANSWER_S - (time.monotonic() - held_at),
             ):
