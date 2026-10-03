@@ -197,7 +197,7 @@ const joinOpen = ref(false)
           <template #append>
             <AdaptiveMenu v-if="!team.personal && isAdmin(team)" :actions="teamActions(team)" :title="team.name">
               <template #activator="{ props }">
-                <!-- eslint-disable-next-line vue/no-restricted-syntax -- 导航栏按钮，外观由本组件的样式精确控制（§3.6 例外） -->
+                <!-- eslint-disable-next-line vue/no-restricted-syntax -- nav bar button whose look this component styles exactly (design-system §3.6 exception) -->
                 <v-btn
                   v-bind="props"
                   icon="mdi-dots-horizontal"

@@ -102,6 +102,7 @@
       <template #append>
         <div v-if="invitation.status === 'PENDING'" class="d-flex">
           <BaseButton
+            kind="primary"
             size="sm"
             icon="mdi-check"
             :title="t('teams.pending.accept')"
@@ -109,6 +110,7 @@
             @click="acceptInvitation(invitation.id)"
           />
           <BaseButton
+            kind="danger"
             size="sm"
             icon="mdi-close"
             :title="t('teams.pending.decline')"
@@ -163,6 +165,7 @@
       <template #append>
         <div class="d-flex">
           <BaseButton
+            kind="primary"
             size="sm"
             icon="mdi-check"
             :title="t('teams.pending.accept')"
@@ -171,6 +174,7 @@
             @click="answerProjectInvitation(invitation, true)"
           />
           <BaseButton
+            kind="danger"
             size="sm"
             icon="mdi-close"
             :title="t('teams.pending.decline')"

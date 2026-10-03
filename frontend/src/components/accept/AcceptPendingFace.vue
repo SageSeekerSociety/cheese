@@ -103,7 +103,7 @@ const forceMergeReason = defineModel<string>('forceMergeReason', { required: tru
         <!-- 改验收人 (spec §4.4): 任何成员都可以改推荐/加人 -->
         <v-menu>
           <template #activator="{ props: menuProps }">
-            <BaseButton v-bind="menuProps" kind="ghost" size="sm" :disabled="busy">
+            <BaseButton v-bind="menuProps" kind="ghost" size="sm" density="comfortable" :disabled="busy">
               {{ t('work.room.accept.reassign') }}
             </BaseButton>
           </template>
@@ -154,6 +154,7 @@ const forceMergeReason = defineModel<string>('forceMergeReason', { required: tru
             <BaseButton
               kind="secondary"
               size="sm"
+              density="comfortable"
               prepend-icon="mdi-tray-arrow-down"
               :loading="deliverableBusy"
               @click="emit('download')"

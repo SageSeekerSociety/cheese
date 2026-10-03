@@ -296,7 +296,7 @@ async function share() {
             </template>
             <template v-else>
               <span class="fb-del__ask t-meta-read">{{ deleteAsk }}</span>
-              <BaseButton kind="danger" size="sm" :loading="deletingDelete" @click="doDelete">
+              <BaseButton kind="danger" solid size="sm" :loading="deletingDelete" @click="doDelete">
                 {{ t('feedback.detail.delete.confirm') }}
               </BaseButton>
               <BaseButton size="sm" @click="confirmingDelete = false">

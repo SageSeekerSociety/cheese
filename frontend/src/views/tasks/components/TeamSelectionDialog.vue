@@ -135,8 +135,7 @@
                 </div>
 
                 <div v-if="teamEligibility.eligibility.eligible" class="select-btn-container ml-3 d-flex align-center">
-                  <!-- eslint-disable-next-line vue/no-restricted-syntax -- 整行可点里的装饰箭头，本身不接点击 -->
-                  <v-btn icon="mdi-chevron-right" variant="text" color="primary" size="small"></v-btn>
+                  <v-icon icon="mdi-chevron-right" size="20" class="c-muted" aria-hidden="true" />
                 </div>
               </div>
             </v-card>

@@ -362,11 +362,11 @@ async function confirmQuickFromPdf(taskData: TaskFormSubmitData, id: number) {
   <PageHeader show-on-mobile>
     <template #actions>
       <v-btn-toggle v-model="mode" density="compact" variant="outlined" divided mandatory class="pub__mode">
-        <!-- eslint-disable-next-line vue/no-restricted-syntax -- 分段切换里的一格，属于 v-btn-toggle，不是 BaseButton 的四种角色 -->
+        <!-- eslint-disable-next-line vue/no-restricted-syntax -- a segment of v-btn-toggle, not one of the BaseButton roles -->
         <v-btn value="write" size="small" prepend-icon="mdi-pencil-outline">{{
           t('spaces.detail.publishTask.mode.write')
         }}</v-btn>
-        <!-- eslint-disable-next-line vue/no-restricted-syntax -- 分段切换里的一格，属于 v-btn-toggle，不是 BaseButton 的四种角色 -->
+        <!-- eslint-disable-next-line vue/no-restricted-syntax -- a segment of v-btn-toggle, not one of the BaseButton roles -->
         <v-btn value="pdf" size="small" prepend-icon="mdi-file-pdf-box">{{
           t('spaces.detail.publishTask.mode.pdf')
         }}</v-btn>

@@ -212,6 +212,7 @@
                     {{ t('teams.members.approve') }}
                   </BaseButton>
                   <BaseButton
+                    kind="danger"
                     size="sm"
                     prepend-icon="mdi-close"
                     :disabled="answering !== undefined"

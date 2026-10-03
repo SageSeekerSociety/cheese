@@ -112,7 +112,7 @@ onMounted(async () => {
         <!-- 电脑：这台电脑的版本一颗按钮，其他版本和手机在右边的下拉里。 -->
         <template v-else>
           <div class="dl-split">
-            <!-- eslint-disable-next-line vue/no-restricted-syntax -- 导航栏按钮，外观由本组件的样式精确控制（§3.6 例外） -->
+            <!-- eslint-disable-next-line vue/no-restricted-syntax -- nav bar button whose look this component styles exactly (design-system §3.6 exception) -->
             <v-btn
               color="primary"
               size="x-large"
@@ -125,7 +125,7 @@ onMounted(async () => {
             >
             <v-menu v-model="menuOpen" location="bottom end" :offset="8">
               <template #activator="{ props: menu }">
-                <!-- eslint-disable-next-line vue/no-restricted-syntax -- 导航栏按钮，外观由本组件的样式精确控制（§3.6 例外） -->
+                <!-- eslint-disable-next-line vue/no-restricted-syntax -- nav bar button whose look this component styles exactly (design-system §3.6 exception) -->
                 <v-btn
                   v-bind="menu"
                   color="primary"

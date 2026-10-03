@@ -27,6 +27,7 @@
               :key="index"
               :kind="action.color === 'error' ? 'danger' : 'ghost'"
               size="sm"
+              density="comfortable"
               class="px-2 ms-2"
               @click.stop="action.handler"
             >
@@ -34,10 +35,23 @@
             </BaseButton>
           </template>
           <template v-else>
-            <BaseButton v-if="!notification.read" kind="ghost" size="sm" class="px-2" @click.stop="markAsRead">
+            <BaseButton
+              v-if="!notification.read"
+              kind="ghost"
+              size="sm"
+              density="comfortable"
+              class="px-2"
+              @click.stop="markAsRead"
+            >
               {{ t('notifications.common.markAsRead') }}
             </BaseButton>
-            <BaseButton kind="danger" size="sm" class="px-2 ms-2" @click.stop="deleteNotification">
+            <BaseButton
+              kind="danger"
+              size="sm"
+              density="comfortable"
+              class="px-2 ms-2"
+              @click.stop="deleteNotification"
+            >
               {{ t('notifications.common.delete') }}
             </BaseButton>
           </template>
@@ -73,6 +87,7 @@
               :key="index"
               :kind="action.color === 'error' ? 'danger' : 'ghost'"
               size="sm"
+              density="comfortable"
               class="px-2 ms-2"
               @click.stop="action.handler"
             >
@@ -80,10 +95,23 @@
             </BaseButton>
           </template>
           <template v-else>
-            <BaseButton v-if="!notification.read" kind="ghost" size="sm" class="px-2" @click.stop="markAsRead">
+            <BaseButton
+              v-if="!notification.read"
+              kind="ghost"
+              size="sm"
+              density="comfortable"
+              class="px-2"
+              @click.stop="markAsRead"
+            >
               {{ t('notifications.common.markAsRead') }}
             </BaseButton>
-            <BaseButton kind="danger" size="sm" class="px-2 ms-2" @click.stop="deleteNotification">
+            <BaseButton
+              kind="danger"
+              size="sm"
+              density="comfortable"
+              class="px-2 ms-2"
+              @click.stop="deleteNotification"
+            >
               {{ t('notifications.common.delete') }}
             </BaseButton>
           </template>

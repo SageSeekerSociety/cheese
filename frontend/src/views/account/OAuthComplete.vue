@@ -31,9 +31,9 @@
           color="on-surface"
           class="oauth-choice"
         >
-          <!-- eslint-disable-next-line vue/no-restricted-syntax -- 分段切换里的一格，属于 v-btn-toggle，不是 BaseButton 的四种角色 -->
+          <!-- eslint-disable-next-line vue/no-restricted-syntax -- a segment of v-btn-toggle, not one of the BaseButton roles -->
           <v-btn value="create">{{ t('account.oauth.complete.create') }}</v-btn>
-          <!-- eslint-disable-next-line vue/no-restricted-syntax -- 分段切换里的一格，属于 v-btn-toggle，不是 BaseButton 的四种角色 -->
+          <!-- eslint-disable-next-line vue/no-restricted-syntax -- a segment of v-btn-toggle, not one of the BaseButton roles -->
           <v-btn value="bind">{{ t('account.oauth.complete.bind') }}</v-btn>
         </v-btn-toggle>
 
