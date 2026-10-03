@@ -10,7 +10,6 @@ import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import TeachingFields from '@/components/common/TeachingFields.vue'
-import SettingsToolbar from '@/components/spaces/SettingsToolbar.vue'
 
 const props = defineProps<{
   /** 这块板今天存着的那份默认；`undefined`（没设过）与 `{}` 一样地填成空格子。 */
@@ -47,14 +46,9 @@ function submit() {
 </script>
 
 <template>
-  <!-- 这一栏和「资料库」那一栏同形：页头上是这一页的操作（这里就是保存），底下先一句
-       说明，再摆卡片。页名在页头上，卡片里不再写一遍。 -->
-  <SettingsToolbar>
-    <v-btn color="primary" variant="flat" :loading="saving" @click="submit">
-      {{ t('spaces.guidance.save') }}
-    </v-btn>
-  </SettingsToolbar>
-
+  <!-- 这一栏是**表单页**，不是清单页：所以它和「基本信息」同形 —— 页头一句说明，
+       卡片里摆控件，「保存」在卡片最底下那一条。清单页（资料库、分类与话题、邀请码）
+       才把动作摆在标题下面那条工具行里，那是「新建 / 上传」的位置，不是「保存」的。 -->
   <p class="settings-page__lede guidance__lede">{{ t('spaces.guidance.intro') }}</p>
 
   <form class="settings-card" novalidate @submit.prevent="submit">
@@ -65,6 +59,12 @@ function submit() {
         :materials-state="props.materialsState"
         :library-to="props.libraryTo"
       />
+    </div>
+
+    <div class="settings-foot">
+      <v-btn color="primary" variant="flat" :loading="saving" @click="submit">
+        {{ t('spaces.guidance.save') }}
+      </v-btn>
     </div>
   </form>
 </template>

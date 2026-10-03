@@ -1,5 +1,5 @@
 // 「给 AI 队友的指导」那几格的控件（#944）。两处页面共用它，所以这里量的是它出什么：
-//   1. 默认只摆三格（对 AI 的要求、当前周次、参考资料），其余三格折在「高级选项」里；
+//   1. 默认只摆两格（对 AI 的要求、参考资料），其余四格折在「高级选项」里；
 //   2. 每改一格都把**整份**报回去 —— 不是一格一格补，接口那一头也是整份替换；
 //   3. 人敲的字不要在回程里被改写（那个还没成形的空格）；
 //   4. 那份默认要求只在点了按钮之后才进框，留空就是一条都不加。
@@ -65,16 +65,19 @@ afterEach(() => {
 })
 
 describe('TeachingFields', () => {
-  it('默认只摆三格；高级选项里的三格展开才出现', async () => {
+  it('默认只摆两格；高级选项里的四格展开才出现', async () => {
     const view = mount()
 
     expect(view.getByLabelText('spaces.teaching.fields.systemPrompt')).toBeTruthy()
-    expect(view.getByLabelText('spaces.teaching.fields.currentWeek')).toBeTruthy()
     expect(view.getByTestId('teaching-materials-toggle')).toBeTruthy()
+    expect(view.queryByLabelText('spaces.teaching.fields.currentWeek')).toBeNull()
     expect(view.queryByLabelText('spaces.teaching.fields.allowedTopics')).toBeNull()
 
     await fireEvent.click(view.getByText('spaces.teaching.fields.advanced'))
     await waitFor(() => expect(view.getByLabelText('spaces.teaching.fields.allowedTopics')).toBeTruthy())
+    // 周次也折在这里：它是**空间默认**，而这块板底下各项目集在第几周并不一样，
+    // 摆在外面等于请人填一个多半管不对的数。要用它的老师知道自己在写 `{current_week}`。
+    expect(view.getByLabelText('spaces.teaching.fields.currentWeek')).toBeTruthy()
     expect(view.getByLabelText('spaces.teaching.fields.knowledgeIds')).toBeTruthy()
   })
 
@@ -126,6 +129,8 @@ describe('TeachingFields', () => {
       })
     )
 
+    await fireEvent.click(view.getByText('spaces.teaching.fields.advanced'))
+    await waitFor(() => expect(view.getByLabelText('spaces.teaching.fields.currentWeek')).toBeTruthy())
     await fireEvent.update(view.getByLabelText('spaces.teaching.fields.currentWeek'), '3')
     await waitFor(() => expect(captured?.currentWeek).toBe(3))
     // 前一格还在 —— 报的是整份，不是这一次改的那一格。
@@ -143,6 +148,8 @@ describe('TeachingFields', () => {
 
   it('人敲的字不在回程里被改写：还没成形的空格留着', async () => {
     const view = mount()
+    await fireEvent.click(view.getByText('spaces.teaching.fields.advanced'))
+    await waitFor(() => expect(view.getByLabelText('spaces.teaching.fields.currentWeek')).toBeTruthy())
     const input = view.getByLabelText('spaces.teaching.fields.currentWeek') as HTMLInputElement
 
     await fireEvent.update(input, '03')

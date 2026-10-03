@@ -61,6 +61,12 @@ async function openMaterials(view: ReturnType<typeof mountPage>) {
   await fireEvent.click(view.getByTestId('teaching-materials-toggle'))
 }
 
+/** 摊开「高级选项」——周次和另外三格清单都折在里面，默认不在页面上。 */
+async function expandAdvanced(view: ReturnType<typeof mountPage>) {
+  await fireEvent.click(view.getByText('spaces.teaching.fields.advanced'))
+  await waitFor(() => expect(view.getByLabelText('spaces.teaching.fields.currentWeek')).toBeTruthy())
+}
+
 /** 保存那颗按钮。`v-expansion-panel` 的开关也是一颗 button，所以按文案精确挑。 */
 function saveButton() {
   const button = Array.from(document.querySelectorAll('button')).find(
@@ -76,18 +82,35 @@ afterEach(() => {
 })
 
 describe('空间设置：给 AI 队友的指导', () => {
-  it('这块板存着的那一份填进表单', () => {
-    const { getByLabelText } = mountPage({ systemPrompt: '这块板的默认', currentWeek: 3 })
+  it('这块板存着的那一份填进表单', async () => {
+    const view = mountPage({ systemPrompt: '这块板的默认', currentWeek: 3 })
 
-    expect((getByLabelText('spaces.teaching.fields.systemPrompt') as HTMLTextAreaElement).value).toBe('这块板的默认')
-    expect((getByLabelText('spaces.teaching.fields.currentWeek') as HTMLInputElement).value).toBe('3')
+    expect((view.getByLabelText('spaces.teaching.fields.systemPrompt') as HTMLTextAreaElement).value).toBe(
+      '这块板的默认'
+    )
+
+    await expandAdvanced(view)
+    expect((view.getByLabelText('spaces.teaching.fields.currentWeek') as HTMLInputElement).value).toBe('3')
+  })
+
+  it('保存摆在卡片最后那一条，不在标题下面那条工具行里 —— 和「基本信息」同形', () => {
+    mountPage()
+
+    const card = document.querySelector('.settings-card')
+    expect(card).toBeTruthy()
+    expect(card!.querySelector('.settings-foot')).toBeTruthy()
+    // 按钮得在卡片**里面**：摆在卡片外面（标题下那条工具行）是清单页的样子。
+    expect(saveButton().closest('.settings-card')).toBe(card)
+    expect(document.querySelector('.settings-toolbar')).toBeNull()
   })
 
   it('点保存把整份发出去 —— 填上的那几格连着空格子一起', async () => {
     updateSpace.mockResolvedValue({ data: { space: { id: SPACE_ID } } })
-    const { getByLabelText } = mountPage()
+    const view = mountPage()
+    const { getByLabelText } = view
 
     await fireEvent.update(getByLabelText('spaces.teaching.fields.systemPrompt'), '第 {current_week} 周')
+    await expandAdvanced(view)
     await fireEvent.update(getByLabelText('spaces.teaching.fields.currentWeek'), '3')
     await fireEvent.click(saveButton())
 

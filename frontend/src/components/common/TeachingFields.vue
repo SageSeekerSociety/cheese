@@ -2,10 +2,14 @@
 // 「给 AI 队友的指导」那几格（#944）。空间设置的默认与发题页的覆盖共用这一份 ——
 // 同一批字段、同一套「整份替换」的语义，两处各写一遍迟早走样。
 //
-// 默认只摆三格：「对 AI 的要求」是这份指导唯一真要紧的东西（写不写它决定这份指导有
-// 没有用），周次是它最常用的那一个占位，参考资料是老师最常要给的那一样；其余三格是
-// 细调，折进「高级选项」。判据是「这一步不做会怎样」—— 不填话题范围、不填知识条目，
-// 指导照样成立。
+// 默认只摆两格：「对 AI 的要求」是这份指导唯一真要紧的东西（写不写它决定这份指导有
+// 没有用），「参考资料」是老师最常要给的那一样。其余四格折进「高级选项」，判据是
+// 「不用它的人会不会被它绊到」。
+//
+// **「当前周次」折进去了**：它答的是「现在第几周」，而这份是**空间默认** —— 一块板底下的
+// 项目集各在第几周并不一样，在这里填一个数，等于给每个项目都盖上一个多半不对的周次，
+// 而且没人会每周回来改。真要用它的是「自己在上面那段要求里写了 `{current_week}`」的
+// 老师，他已经知道自己在干什么，折进去不妨碍他。
 //
 // 「对 AI 的要求」留空就是一条要求都不加，所以这里不预填：框里的灰字是那份默认要求
 // 的全文，旁边那颗按钮点一下才填进去（填进去之后照常改）。
@@ -101,19 +105,6 @@ function useDefaultTemplate() {
         {{ t('spaces.teaching.useDefaultTemplate') }}
       </v-btn>
     </div>
-    <v-text-field
-      v-model="draft.currentWeek"
-      type="number"
-      min="0"
-      autocomplete="off"
-      variant="outlined"
-      density="compact"
-      data-testid="teaching-current-week"
-      :label="t('spaces.teaching.fields.currentWeek')"
-      :hint="t('spaces.teaching.fields.currentWeekHint')"
-      persistent-hint
-    />
-
     <TeachingMaterialPicker
       v-model="materialIds"
       :materials="props.materials ?? []"
@@ -124,6 +115,19 @@ function useDefaultTemplate() {
     <v-expansion-panels variant="accordion" flat class="teaching-fields__more">
       <v-expansion-panel :title="t('spaces.teaching.fields.advanced')" :elevation="0">
         <v-expansion-panel-text>
+          <v-text-field
+            v-model="draft.currentWeek"
+            type="number"
+            min="0"
+            autocomplete="off"
+            variant="outlined"
+            density="compact"
+            data-testid="teaching-current-week"
+            :label="t('spaces.teaching.fields.currentWeek')"
+            :hint="t('spaces.teaching.fields.currentWeekHint')"
+            persistent-hint
+            class="mb-4"
+          />
           <v-text-field
             v-model="draft.allowedTopics"
             autocomplete="off"
