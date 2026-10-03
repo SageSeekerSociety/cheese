@@ -48,10 +48,11 @@ const open = ref(false)
       archived
       @toggle="open = !open"
     />
-    <v-list v-if="open" density="compact" nav class="py-0">
+    <v-list v-if="open" density="compact" nav class="py-0" tabindex="-1">
       <v-list-item
         v-for="topic in rows"
         :key="topic.id"
+        tabindex="0"
         :active="topic.id === selectedTopicId"
         rounded="lg"
         :data-row-actions="topic.id"

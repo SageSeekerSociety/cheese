@@ -103,7 +103,10 @@ function onMenuToggle(open: boolean) {
 </script>
 
 <template>
+  <!-- 行自己是一个 Tab 停靠点：Vuetify 给列表里的可点行标 tabindex="-2"，
+       Tab 就走不到行上、只落在行尾那颗 ⋯ 上（2026-10-03 lz123y 报的）。 -->
   <v-list-item
+    tabindex="0"
     :data-room-id="row.topic.id"
     :data-row-actions="row.topic.id"
     :active="selected"
@@ -212,6 +215,7 @@ function onMenuToggle(open: boolean) {
           <template #activator="{ props: menuProps }">
             <v-btn
               v-bind="menuProps"
+              :tabindex="selected ? 0 : -1"
               icon="mdi-dots-horizontal"
               size="small"
               variant="text"
