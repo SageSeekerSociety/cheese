@@ -41,7 +41,7 @@ docker network inspect cheese-meter-gateway >/dev/null 2>&1 \
   || docker network inspect cheese-meter-gateway >/dev/null
 echo "Releasing gateway image=$GATEWAY_IMAGE revision=$revision; active streams may be interrupted."
 # --remove-orphans: a service dropped from the compose file (openai-egress) must not keep running.
-if "${compose[@]}" up -d --no-deps --remove-orphans --wait --wait-timeout 150 litellm; then
+if "${compose[@]}" up -d --no-deps --remove-orphans --wait --wait-timeout 150 litellm-redis litellm; then
   echo "Gateway healthy: $GATEWAY_IMAGE"
 else
   echo 'Gateway failed health verification; restoring the previous image and configuration.' >&2

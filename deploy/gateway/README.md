@@ -19,6 +19,13 @@ and the settings were reserved — the gateway itself was never deployed, so
 - **A brake** — `max_budget` on that key, so the gateway refuses calls once a
   project's grant is spent, rather than discovering it on the invoice.
 
+The brake compares `max_budget` with a per-key spend counter, which lives in the
+stack's own Redis (`litellm-redis`, wired in as `coordination_redis`). Without
+one, LiteLLM keeps the counter in process memory, where seeding a cold counter
+can race a repair and double it, refusing a key at half its budget until the
+counter expires. The Redis holds nothing that cannot be rebuilt: a missing
+counter is reseeded from the gateway database, so it runs without persistence.
+
 ## Running it
 
 A stack of its own, on purpose: `deploy-docker.sh` takes one compose file and
