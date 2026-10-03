@@ -94,10 +94,17 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
   const previewNamedPath = ref('')
   const previewError = ref<string | null>(null)
   const previewReadError = ref<string | null>(null)
+  // 刚跟着重启后的应用自动重载过：那一闪需要一句解释，否则看着像面板自己坏了。
+  const autoReloaded = ref(false)
   const downloadError = ref('')
   // 路上那一次属于哪一代：话题换了、或者又按了一次刷新，先前那一次的结果就不再算数
   // （它带的是上一份内容，落下来就是「刚切换的这一格显示着上一格的东西」）。
   let generation = 0
+  // 换实例后跟上去最多试多久（毫秒）：应用冷启动、授权一时被拒都在这段时间里重试，
+  // 过了就认输，把「刷新」那条路还给用户——不能一直无声地跟。
+  const FOLLOW_WINDOW_MS = 60_000
+  // 第一次看到「屏幕上这一帧的实例被换掉」的时刻；不在替换状态时为 null。
+  let followSince: number | null = null
 
   // ---- 这一份是什么 ----
   // 「三种查看器怎么分派」「什么时候该把字节交给 iframe」的判据都在这一小撮里，画的
@@ -246,16 +253,52 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
           (host.displayed.value?.identity === identity && host.navigation.value !== 'failed'))
       previewAppNote.value = art.kind === 'app' ? art.path : ''
       previewTunnelUp.value = !!art.tunnel_up
+      // 屏幕上这一帧被换掉了实例、或者断线后又回来了：不能只把状态画出来——旧那一帧
+      // 的请求可能已经被拒了。换实例就跟上去：`observeConnection` 在替换期间每一轮都
+      // 报，所以一次跟丢（授权 404、应用还在冷启动）还能在后面的轮询里再试，试到
+      // FOLLOW_WINDOW_MS 为止；已经有一帧在往新实例上装时不踩它。
+      //
+      // 同一实例断线又回来通常不用动——应用没死，页面自己会接上（HMR 重连后客户端自己
+      // 重载），替它重载反而抹掉表单和 SPA 状态（#2349 避开的正是这个）。只有这一帧的
+      // 导航真的失败过（从没装上、或加载超时），回来时才替它重来一次。
+      const change = art.kind === 'app' ? host.observeConnection(art.instance, !!art.url && !!art.tunnel_up) : null
+      let follow = false
       if (art.kind === 'app') {
-        host.observeConnection(art.instance, !!art.url && !!art.tunnel_up)
         const displayed = host.displayed.value
-        if (
-          !opts.reload &&
-          displayed?.live &&
-          displayed.instance &&
-          displayed.identity &&
-          JSON.parse(displayed.identity)[2] === (art.artifact_id ?? art.path)
-        ) {
+        const sameArtifact =
+          !!displayed?.identity && JSON.parse(displayed.identity)[2] === (art.artifact_id ?? art.path)
+        const replaced = change === 'instance-changed' && sameArtifact
+        // 已经有一帧在往新实例上装（授权或导航中）：这一程还没成也没败，别踩掉它。
+        const pending =
+          host.incoming.value?.identity === identity &&
+          (host.navigation.value === 'authorizing' || host.navigation.value === 'navigating')
+        // 手动刷新（opts.reload）是用户明确的动作：无论跟了多久都重来一次，并且把窗口
+        // 重新计时。不这样做的话，那句「认输」会把刷新按钮也一起堵死——冷启动起过一分钟
+        // 是常事，堵死了就再没有别的出路。
+        if (!replaced || opts.reload) followSince = null
+        else if (followSince === null) followSince = Date.now()
+        const expired = replaced && !opts.reload && followSince !== null && Date.now() - followSince >= FOLLOW_WINDOW_MS
+        if (expired && !pending) {
+          // 跟了一分钟还没跟上：应用一直没起来，或授权一直被拒。别再无声白等，把「刷新」
+          // 那条路还给用户（这句报错下面自带一个「重试」按钮）。第一次报过之后就别每轮
+          // 重设，免得把那句提示反复刷掉；也不动 previewUrl，免得同一条报错里又冒出
+          // 一句「应用不可用」，和「刷新以打开当前实例」自相矛盾。
+          if (host.error.value !== t('work.room.preview.instanceGoneManual')) {
+            host.authorize(identity)
+            host.fail(t('work.room.preview.instanceGoneManual'))
+          }
+          return
+        }
+        // 跟上去，并说一句让人看见（`replaced`、且看的是同一件产物时，下面两处「还是
+        // 同一件」的近路都要让开；换了产物那本来就是一次正常的换页，不该说成「应用重启」）。
+        // 同实例断线又回来时，只有屏幕上这一帧自己都没装成、才替它重来：看的是它自己的
+        // 导航结果，不是宿主那一层的 navigation——一次「跟到新实例去」的失败不该算到
+        // 还健康的旧帧头上。
+        follow =
+          (replaced && !pending) ||
+          (change === 'instance-recovered' && sameArtifact && displayed?.navigationFailed === true)
+        if (replaced && !pending) autoReloaded.value = true
+        if (!opts.reload && !follow && displayed?.live && displayed.instance && sameArtifact) {
           return
         }
         previewFile.value = null
@@ -300,7 +343,7 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
           return
         }
       }
-      if (!opts.reload && (unchanged || (opts.silent && host.failedIdentity.value === identity))) return
+      if (!opts.reload && !follow && (unchanged || (opts.silent && host.failedIdentity.value === identity))) return
       if (!art.url) {
         previewUrl.value = null
         previewError.value = t('work.room.preview.urlUnavailable')
@@ -355,6 +398,8 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
         host.pause()
         loading.value = false
         refreshing.value = false
+        autoReloaded.value = false
+        followSince = null
         if (!host.displayed.value) {
           previewUrl.value = null
         }
@@ -373,6 +418,8 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
       previewReadError.value = null
       previewNamed.value = false
       previewAppNote.value = ''
+      autoReloaded.value = false
+      followSince = null
       loading.value = false
       refreshing.value = false
       if (props.active) void load()
@@ -384,12 +431,43 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
       if (props.active) void load({ silent: true })
     }
   )
+  // 那一句「已自动重新载入」只在跟上去的那一帧装成之前成立：装好了（页面上已经是
+  // 重启后的应用）或没装成（面板另有报错），它就该走了。
+  watch(host.navigation, (state) => {
+    if (state === 'loaded' || state === 'failed') autoReloaded.value = false
+  })
 
-  // Poll metadata only; an unchanged artifact never receives a new form POST.
-  let refreshTimer: ReturnType<typeof setInterval> | null = null
+  // 只问元数据：产物没变就不会重新提交一次授权。间隔是活的——屏幕上这一帧不在线时
+  // （实例被换掉、或隧道断了）按 2 秒问，指数退到正常的 20 秒：应用重启后通常几秒就
+  // 绪，等满 20 秒等于让人对着白屏多等一个轮询。一回到在线就重新从 2 秒起算，下一次
+  // 断线同样值得快问。页面在后台时退回正常档——那会儿的快速轮询是白花的。
+  const NORMAL_POLL_MS = 20_000
+  const FAST_POLL_MS = 2_000
+  let refreshTimer: ReturnType<typeof setTimeout> | null = null
+  let pollEpoch = 0
+  let fastPolls = 0
   function stopAutoRefresh() {
-    if (refreshTimer) clearInterval(refreshTimer)
+    pollEpoch += 1
+    if (refreshTimer) clearTimeout(refreshTimer)
     refreshTimer = null
+    fastPolls = 0
+  }
+  function nextPollDelayMs() {
+    const frame = host.displayed.value
+    if (document.hidden || !frame?.live || frame.connection === 'online') {
+      fastPolls = 0
+      return NORMAL_POLL_MS
+    }
+    // 2、4、8、16、20 秒——累起来约一分钟退回正常档。
+    return Math.min(FAST_POLL_MS * 2 ** fastPolls++, NORMAL_POLL_MS)
+  }
+  function schedulePoll() {
+    const epoch = pollEpoch
+    refreshTimer = setTimeout(async () => {
+      if (epoch !== pollEpoch) return
+      if (!document.hidden) await load({ silent: true })
+      if (epoch === pollEpoch) schedulePoll()
+    }, nextPollDelayMs())
   }
   watch(
     () => props.active,
@@ -398,9 +476,7 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
       // 指定了文件的那一格不轮询：它不跟着当前预览走，文件变了靠每一轮收工那一下重读。
       // 页面在后台的那一格也不问：后台标签的轮询是白花的，回到前台自然会重取。
       if (!active || props.path) return
-      refreshTimer = setInterval(() => {
-        if (!document.hidden) void load({ silent: true })
-      }, 20_000)
+      schedulePoll()
     },
     { immediate: true }
   )
@@ -506,6 +582,7 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     previewAppNote,
     previewTunnelUp,
     previewNamedPath,
+    autoReloaded,
     previewError,
     previewReadError,
     documentSuffix,

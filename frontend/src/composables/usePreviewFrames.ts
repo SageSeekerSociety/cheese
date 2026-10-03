@@ -20,6 +20,8 @@ export interface PreviewFrame {
   instance?: string
   runtime?: 'unconfirmed' | 'ready' | 'failed'
   connection?: 'online' | 'disconnected' | 'gone'
+  /** 这一帧自己那次导航没装成（发送失败、超时、文档报错）。屏幕上留下的还是上一帧。 */
+  navigationFailed?: boolean
   runtimeError?: string
   /** 这一份资源允许等多久，见 `navigationBudget()`。不填＝默认那档。 */
   budgetMs?: number
@@ -27,12 +29,24 @@ export interface PreviewFrame {
 
 export type PreviewNavigation = 'idle' | 'authorizing' | 'navigating' | 'loaded' | 'failed'
 
+/** 连接状态的一次转折，报给取数那一层：实例被换掉（要跟到新实例），或同一实例断线
+ *  后又回来（这段断线里的请求都失败了，要重载一次）。状态没变就是 null。 */
+export type ConnectionChange = 'instance-changed' | 'instance-recovered' | null
+
 /** 一整页的默认预算。 */
 const FILE_NAVIGATION_BUDGET_MS = 30_000
 
 /** 应用要过隧道，还可能赶上机器冷启动（座位那次实测 2 分 17 秒），默认那 30 秒会把它
  *  误报成「加载超时」。130 秒是 CC 自己的默认档（`13e4`）。 */
 export const APP_NAVIGATION_BUDGET_MS = 130_000
+
+/** 监听实例指纹：sha256(boot_id:port:socket inode) 的十六进制串（后端也按这个形状校验）。
+ *  探针没回来时后端会给出 `url` 但不给 `instance`——「没有证据」不是「换了一个实例」，
+ *  认错会把授权签成一张没绑资源的空头支票，所以只有两个合法指纹不同才算换实例。 */
+const INSTANCE_FINGERPRINT = /^[0-9a-f]{64}$/
+function isInstanceFingerprint(value: string | null | undefined): value is string {
+  return typeof value === 'string' && INSTANCE_FINGERPRINT.test(value)
+}
 
 /** 硬顶和余量同样照 CC：正数先被夹进 10 分钟，再留 2 秒给最后那一程。 */
 const MAX_NAVIGATION_BUDGET_MS = 600_000
@@ -129,11 +143,21 @@ export function usePreviewFrames(frameName: string, options: PreviewFrameOptions
   }
   window.addEventListener('message', runtimeMessage)
 
-  function observeConnection(instance: string | null | undefined, online: boolean) {
+  function observeConnection(instance: string | null | undefined, online: boolean): ConnectionChange {
     const frame = displayed.value
-    if (!frame?.live) return
-    frame.connection = !online ? 'disconnected' : frame.instance && instance !== frame.instance ? 'gone' : 'online'
-    // Recovery updates status only: never POST/remount a loaded browsing context.
+    if (!frame?.live) return null
+    const previous = frame.connection
+    // 「换了实例」要求两边都是合法指纹且不同：缺 instance（探针没答）时只是没证据，
+    // 状态仍是 online，不是 gone。见上面 INSTANCE_FINGERPRINT 的理由。
+    const replaced =
+      online && isInstanceFingerprint(instance) && isInstanceFingerprint(frame.instance) && instance !== frame.instance
+    frame.connection = !online ? 'disconnected' : replaced ? 'gone' : 'online'
+    // 状态更新不动这一帧：旧页面一直显示到新一帧装上为止（双缓冲）。gone 每一轮都报，
+    // 因为一次跟丢（授权 404、应用还在冷启动）之后还要再试——取数那一层按次数/时间
+    // 收口。#2349 说的是授权该拒谁，没变；变的是面板自己注意到了「该换一帧了」。
+    if (replaced) return 'instance-changed'
+    if (frame.connection === 'online' && previous === 'disconnected') return 'instance-recovered'
+    return null
   }
 
   function stopTimer() {
@@ -156,6 +180,11 @@ export function usePreviewFrames(frameName: string, options: PreviewFrameOptions
 
   function fail(message: string) {
     stopTimer()
+    // 这一程要放上屏幕的正是屏幕上这一帧本身（同一个 identity），它却没装成——那就是
+    // 「屏幕上这一帧的导航失败了一次」。留下记号：同实例断线再回来时据此替它重来一遍。
+    // 换到别的实例去的那次失败（identity 不同）不算，健康的旧帧不该被连坐。
+    const shown = displayed.value
+    if (shown && attemptIdentity && shown.identity === attemptIdentity) shown.navigationFailed = true
     incoming.value = null
     navigation.value = 'failed'
     failedIdentity.value = attemptIdentity
@@ -237,6 +266,8 @@ export function usePreviewFrames(frameName: string, options: PreviewFrameOptions
     // A document reload keeps its frame but must establish a fresh runtime session.
     frame.runtime = 'unconfirmed'
     frame.runtimeError = ''
+    // 装成了：这一帧上一次的失败（如果有）到此为止。
+    frame.navigationFailed = false
     runtimeWindow = event.target.contentWindow
     runtimeSession = crypto.randomUUID()
     sendRuntimeHello(frame)

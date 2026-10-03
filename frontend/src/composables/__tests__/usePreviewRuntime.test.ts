@@ -7,6 +7,9 @@ import { defineCommands } from '../../commands'
 import { installShortcuts } from '../../commands/shortcuts'
 import { usePreviewFrames } from '../usePreviewFrames'
 
+// 一个真的监听实例指纹：64 位十六进制。
+const LISTENER = 'a'.repeat(64)
+
 vi.mock('../../lib/previewSession', () => ({ postPreviewSession: vi.fn() }))
 
 const wrappers: ReturnType<typeof render>[] = []
@@ -36,7 +39,7 @@ async function setup(options: Parameters<typeof usePreviewFrames>[1] = {}) {
       url: 'https://preview-fixed.example/_cheese/session',
       grant: 'grant',
       resource_id: 'resource',
-      resource: { kind: 'app', path: 'http://localhost:5173', instance: 'listener' },
+      resource: { kind: 'app', path: 'http://localhost:5173', instance: LISTENER },
     },
     {
       url: 'https://preview-fixed.example/',
@@ -157,16 +160,19 @@ it('keys travel with the handshake and only an id from that table runs a command
   expect(run).toHaveBeenCalledTimes(1)
 })
 
-it('disconnect and same-instance recovery preserve browsing context; replacement stays gone', async () => {
+it('disconnect and same-instance recovery preserve browsing context; only a real replacement is gone', async () => {
   const { host, frame } = await setup()
   const displayed = host.displayed.value
   host.observeConnection(null, false)
   expect(host.displayed.value?.connection).toBe('disconnected')
-  host.observeConnection('listener', true)
+  host.observeConnection(LISTENER, true)
   expect(host.displayed.value?.connection).toBe('online')
   expect(host.displayed.value).toBe(displayed)
   expect(document.querySelector(`iframe[name="${displayed!.name}"]`)).toBe(frame)
-  host.observeConnection('replacement', true)
+  // 指纹缺失不算换了进程（只有两个不同的 64 位指纹才算）。
+  host.observeConnection(null, true)
+  expect(host.displayed.value?.connection).toBe('online')
+  host.observeConnection('b'.repeat(64), true)
   expect(host.displayed.value?.connection).toBe('gone')
   expect(host.incoming.value).toBeNull()
 })

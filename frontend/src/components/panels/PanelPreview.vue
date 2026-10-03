@@ -67,6 +67,7 @@ const {
   previewAppNote,
   previewTunnelUp,
   previewNamedPath,
+  autoReloaded,
   previewError,
   previewReadError,
   documentSuffix,
@@ -125,6 +126,7 @@ function refresh() {
     :preview-app-note="previewAppNote"
     :preview-tunnel-up="previewTunnelUp"
     :preview-named-path="previewNamedPath"
+    :auto-reloaded="autoReloaded"
     :preview-error="previewError"
     :preview-read-error="previewReadError"
     :document-suffix="documentSuffix"
