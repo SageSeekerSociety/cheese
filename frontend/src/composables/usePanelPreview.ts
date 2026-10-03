@@ -57,6 +57,8 @@ export interface PanelPreviewOptions {
    * 和以前一样，没换过的那一份也叫——判据在 WorkPanel 那一边。
    */
   onLoaded?: (artifactId: string | null) => void
+  /** 帧里按了 ESC：怎么处理是画的那一半的事，这一层只往上递。 */
+  onEscape?: () => void
 }
 
 /** 一张要进房间的图。上传真正要的只有这两样。 */
@@ -80,7 +82,7 @@ export type UploadAnnotation = (topicId: string, image: ImageUpload) => Promise<
 
 /** 「预览」这一格的全部取数：状态进、动作出，一个组件都不碰。 */
 export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewOptions) {
-  const host = usePreviewFrames(options.frameName)
+  const host = usePreviewFrames(options.frameName, { onEscape: options.onEscape })
   const loading = ref(false)
   const refreshing = ref(false)
   const previewFile = ref<FileContent | null>(null)
