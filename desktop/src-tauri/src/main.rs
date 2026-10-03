@@ -30,6 +30,31 @@ const ORIGIN: &str = match option_env!("CHEESE_ORIGIN") {
 // macOS draws the window buttons over the page; elsewhere the system title bar stays.
 const TITLE_BAR: &str = if cfg!(target_os = "macos") { "overlay" } else { "native" };
 
+// What a page the server sends may call. The opener plugin's init script turns a
+// click on an `<a target="_blank">` into `plugin:opener|open_url`, so a link in
+// the page needs `opener:allow-open-url` to open at all; without it the click is
+// refused and nothing happens. `allow-default-urls` is the scope that keeps it
+// to http, https, mailto and tel. `opener:default` would open the same links and
+// also reveal files in a folder, which nothing here does.
+const SERVER_PERMISSIONS: &[&str] = &[
+    "core:default",
+    "core:window:allow-start-dragging",
+    "opener:allow-open-url",
+    "opener:allow-default-urls",
+    "allow-connect-this-machine",
+    "allow-cancel-connect",
+    "allow-this-device",
+    "allow-set-theme",
+    "allow-set-badge",
+    "allow-listen-for-notices",
+    "allow-stop-notices",
+    "allow-opens-at-login",
+    "allow-set-opens-at-login",
+    "allow-update-status",
+    "allow-check-for-updates",
+    "allow-restart-to-update",
+];
+
 fn from_server(url: &Url) -> bool {
     url.origin().ascii_serialization() == ORIGIN
 }
@@ -208,25 +233,13 @@ fn main() {
             // A page from the server may call the commands above; by default
             // a remote page reaches no IPC at all. The app's own page has the same.
             // Dragging is how the window moves where no title bar is drawn.
-            app.add_capability(
-                CapabilityBuilder::new("server")
-                    .remote(format!("{ORIGIN}/*"))
-                    .window("main")
-                    .permission("core:default")
-                    .permission("core:window:allow-start-dragging")
-                    .permission("allow-connect-this-machine")
-                    .permission("allow-cancel-connect")
-                    .permission("allow-this-device")
-                    .permission("allow-set-theme")
-                    .permission("allow-set-badge")
-                    .permission("allow-listen-for-notices")
-                    .permission("allow-stop-notices")
-                    .permission("allow-opens-at-login")
-                    .permission("allow-set-opens-at-login")
-                    .permission("allow-update-status")
-                    .permission("allow-check-for-updates")
-                    .permission("allow-restart-to-update"),
-            )?;
+            let mut capability = CapabilityBuilder::new("server")
+                .remote(format!("{ORIGIN}/*"))
+                .window("main");
+            for permission in SERVER_PERMISSIONS {
+                capability = capability.permission(*permission);
+            }
+            app.add_capability(capability)?;
             if updates::restarted_by_update(app) || std::env::args().any(|a| a == resident::AT_LOGIN) {
                 app.state::<resident::StartHidden>().0.store(true, Ordering::Relaxed);
             }
@@ -350,7 +363,7 @@ fn fix_restored_size<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{stays_in_app, usable_size};
+    use super::{stays_in_app, usable_size, SERVER_PERMISSIONS};
     use url::Url;
 
     fn stays(url: &str) -> bool {
@@ -378,6 +391,18 @@ mod tests {
         assert!(!stays("https://github.com/login/oauth/authorize"));
         assert!(!stays("https://docs.okcheese.com/"));
         assert!(!stays("https://okcheese.com.evil.example/"));
+    }
+
+    #[test]
+    fn the_page_may_click_a_link_out_to_the_browser() {
+        // The opener plugin's injected click handler calls open_url, so these
+        // two are what makes the link open rather than do nothing.
+        for wanted in ["opener:allow-open-url", "opener:allow-default-urls"] {
+            assert!(SERVER_PERMISSIONS.contains(&wanted), "{wanted} is not granted");
+        }
+        // The default set also reveals a file in its folder; the page has no
+        // such command, so the narrower pair is the whole grant.
+        assert!(!SERVER_PERMISSIONS.contains(&"opener:default"));
     }
 
     #[test]
