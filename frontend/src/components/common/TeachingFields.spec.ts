@@ -3,9 +3,9 @@
 //   2. 每改一格都把**整份**报回去 —— 不是一格一格补，接口那一头也是整份替换；
 //   3. 人敲的字不要在回程里被改写（那个还没成形的空格）；
 //   4. 那份默认要求只在点了按钮之后才进框，留空就是一条都不加。
-import type { SpaceTeaching } from '@/types'
+import type { SpaceMaterial, SpaceMaterialsState, SpaceTeaching } from '@/types'
 
-import { defineComponent, h } from 'vue'
+import { defineComponent, h, type PropType } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
@@ -24,10 +24,25 @@ import TeachingFields from './TeachingFields.vue'
 let captured: SpaceTeaching | null = null
 
 const Host = defineComponent({
-  data: () => ({ value: {} as SpaceTeaching }),
+  props: {
+    materials: { type: Array as PropType<SpaceMaterial[]>, default: () => [] },
+    materialsState: {
+      type: String as PropType<SpaceMaterialsState>,
+      default: 'ready',
+    },
+    modelValue: {
+      type: Object as PropType<SpaceTeaching | null>,
+      default: undefined,
+    },
+  },
+  data() {
+    return { value: (this.modelValue ?? {}) as SpaceTeaching }
+  },
   render() {
     return h(TeachingFields, {
       modelValue: this.value,
+      materials: this.materials,
+      materialsState: this.materialsState,
       'onUpdate:modelValue': (next: SpaceTeaching) => {
         captured = next
         this.value = next
@@ -36,9 +51,12 @@ const Host = defineComponent({
   },
 })
 
-function mount() {
+function mount(props: Record<string, unknown> = {}) {
   captured = null
-  return render(Host, { global: { plugins: [createVuetify({ components, directives })] } })
+  return render(Host, {
+    props,
+    global: { plugins: [createVuetify({ components, directives })] },
+  })
 }
 
 afterEach(() => {
@@ -52,12 +70,49 @@ describe('TeachingFields', () => {
 
     expect(view.getByLabelText('spaces.teaching.fields.systemPrompt')).toBeTruthy()
     expect(view.getByLabelText('spaces.teaching.fields.currentWeek')).toBeTruthy()
-    expect(view.getByTestId('teaching-materials-empty')).toBeTruthy()
+    expect(view.getByTestId('teaching-materials-toggle')).toBeTruthy()
     expect(view.queryByLabelText('spaces.teaching.fields.allowedTopics')).toBeNull()
 
     await fireEvent.click(view.getByText('spaces.teaching.fields.advanced'))
     await waitFor(() => expect(view.getByLabelText('spaces.teaching.fields.allowedTopics')).toBeTruthy())
     expect(view.getByLabelText('spaces.teaching.fields.knowledgeIds')).toBeTruthy()
+  })
+
+  it('参考资料那一栏收起：清单和「库里还没有」都不占地方，点开才出', async () => {
+    const view = mount()
+
+    expect(view.getByText('spaces.teaching.fields.materialsNone')).toBeTruthy()
+    expect(view.queryByTestId('teaching-materials')).toBeNull()
+    expect(view.queryByTestId('teaching-materials-empty')).toBeNull()
+
+    await fireEvent.click(view.getByTestId('teaching-materials-toggle'))
+    await waitFor(() => expect(view.getByTestId('teaching-materials-empty')).toBeTruthy())
+  })
+
+  it('候选里只有「所有成员」那一档：仅管理员的课件不出现', async () => {
+    const view = mount({
+      materials: [
+        { id: 11, name: '讲义', visibility: 'members' },
+        { id: 12, name: '答案', visibility: 'admins' },
+      ],
+    })
+
+    await fireEvent.click(view.getByTestId('teaching-materials-toggle'))
+    await waitFor(() => expect(view.getByTestId('teaching-materials')).toBeTruthy())
+
+    expect(view.getByText('讲义')).toBeTruthy()
+    expect(view.queryByText('答案')).toBeNull()
+  })
+
+  it('读不出清单时不判失效：编号留着，也没摆出候选', async () => {
+    const view = mount({
+      modelValue: { materialIds: [11] },
+      materials: [],
+      materialsState: 'error',
+    })
+
+    expect(view.queryByTestId('teaching-materials-dangling')).toBeNull()
+    expect(view.getByTestId('teaching-materials-error')).toBeTruthy()
   })
 
   it('改一格报的是整份：填上的那格在内，其余空格落成 null / []', async () => {
