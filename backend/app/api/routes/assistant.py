@@ -46,7 +46,6 @@ from app.domain.agent.harness.pi.handless import (
     SessionError,
 )
 from app.domain.agent.harness.pi.personal import Launch
-from app.domain.assistant import asking
 from app.domain.assistant import service as assistant
 from app.domain.assistant import tools as personal_tools
 from app.domain.assistant.keys import person_key
@@ -219,15 +218,15 @@ async def ask(
         return _refuse(429, refused.message, refused.retry_after_s())
 
     redis = get_redis_client()
-    if redis is None or not await asking.hold(redis, conversation_id):
+    slot = (
+        None
+        if redis is None
+        else await assistant.take_conversation(redis, conversation_id)
+    )
+    if slot is None:
         return _refuse(429, say("assistantStillAnswering"), 5)
     held_at = time.monotonic()
-
-    async def release() -> None:
-        try:
-            await asking.release(redis, conversation_id)
-        except Exception:  # noqa: BLE001 — the lock expires by itself
-            pass
+    release = slot.release
 
     started = assistant.launch(auth.user_id, conversation_id, place)
     try:

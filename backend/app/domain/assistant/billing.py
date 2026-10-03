@@ -2,8 +2,9 @@
 
 Every model call of a person's 芝士 is made on that person's key
 (``keys.py``), and only while a question they asked is being answered
-(``asking.py``), so what the gateway records under the key is exactly what they
-asked for, priced the way the gateway prices it: cache reads at the cache rate.
+(``service.take_conversation``), so what the gateway records under the key
+is exactly what they asked for, priced the way the gateway prices it: cache
+reads at the cache rate.
 After each question the key's new spend is read and charged the way a
 project's is (``agent.gateway_spend``), to the person's credits
 (``kind = "assistant"``), once: the checkpoint the read moves past is the one

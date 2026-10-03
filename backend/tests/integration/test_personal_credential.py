@@ -29,8 +29,8 @@ from app.core.sandbox_auth import (
     mint_project_agent_credential,
     mint_scoped_token,
 )
-from app.domain.assistant.asking import busy_key
 from app.domain.assistant.models import AssistantGatewayKey
+from app.domain.assistant.service import busy_key
 from app.domain.task.models import TaskMembership
 from tests.conftest import seed_user
 from tests.integration.conftest import post_project

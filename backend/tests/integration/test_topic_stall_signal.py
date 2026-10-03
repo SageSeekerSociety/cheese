@@ -199,7 +199,7 @@ class _RunnerWithLiveTurn:
     def active_work_count(self) -> int:
         return 1
 
-    def project_queue_depth(self, project_id: uuid.UUID | str) -> int:
+    async def project_queue_depth(self, project_id: uuid.UUID | str) -> int:
         return 0
 
 

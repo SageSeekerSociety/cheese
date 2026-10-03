@@ -731,7 +731,7 @@ async def topic_status(
             "cards": [_card_snapshot(c) for c in cards],
             "platform": {
                 "active_turns": runner.active_work_count(),
-                "queued_turns": runner.project_queue_depth(place.project_id),
+                "queued_turns": await runner.project_queue_depth(place.project_id),
                 "disk": _disk_snapshot(settings.workspace_root),
                 "credits": {
                     "unlimited": credits["unlimited"],
