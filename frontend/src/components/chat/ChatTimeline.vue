@@ -212,8 +212,17 @@ function emitOpenFile(path: string, taskId: string | null) {
 function emitOpenResource(resource: string, turnId?: string, review?: DocReviewRequest) {
   emit('open-resource', resource, turnId, review)
 }
-function emitSaveEdit(block: Block, text: string) {
-  emit('save-edit', block, text)
+// 只有正在改的那一行会存。
+function emitSaveEdit(text: string) {
+  const row = props.rows.find((r) => r.block.id === props.editingId)
+  if (row) emit('save-edit', row.block, text)
+}
+// 行认的是自己身上的 data-row-id，不认模板里的 m：每一行的监听函数在每次重画时都是
+// 同一个。捕获了 m 的箭头函数每次都是新的，Vue 就当这一行的 props 变了——往上拼一页
+// 旧消息，已经在屏上的几百行会跟着全部重画一遍。
+function settleRow(e: AnimationEvent) {
+  const id = (e.currentTarget as HTMLElement | null)?.dataset.rowId
+  if (id) emit('settle-arrival', e, id)
 }
 function emitOutboxLeave(el: Element, done: () => void) {
   emit('outbox-leave', el, done)
@@ -312,7 +321,8 @@ function emitOutboxLeave(el: Element, done: () => void) {
           :can-retry="i === retryIndex"
           :retrying="retryBusy"
           :project-id="topic?.project_id ?? null"
-          @animationend="emit('settle-arrival', $event, m.id)"
+          :data-row-id="m.id"
+          @animationend="settleRow"
           @open-resource="emitOpenResource"
           @undo-title="emit('undo-title', $event)"
           @open-card="emit('open-card', $event)"
@@ -349,7 +359,8 @@ function emitOutboxLeave(el: Element, done: () => void) {
           :editing="editingId === m.id"
           :edit-text="editingId === m.id ? editableText(m.content, refs) : undefined"
           :saving="editSaving"
-          @animationend="emit('settle-arrival', $event, m.id)"
+          :data-row-id="m.id"
+          @animationend="settleRow"
           @open-file="emitOpenFile"
           @open-topic="emit('open-topic', $event)"
           @open-card="emit('open-card', $event)"
@@ -359,7 +370,7 @@ function emitOutboxLeave(el: Element, done: () => void) {
           @download="emit('download', $event)"
           @jump="emit('jump', $event)"
           @avatar-error="emit('avatar-error', $event)"
-          @save-edit="emitSaveEdit(m, $event)"
+          @save-edit="emitSaveEdit"
           @cancel-edit="emit('cancel-edit')"
         />
       </template>
