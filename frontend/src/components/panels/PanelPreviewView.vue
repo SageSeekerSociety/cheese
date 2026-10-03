@@ -37,6 +37,7 @@ import RevisionList from './preview/RevisionList.vue'
 import RoomOutputs from './preview/RoomOutputs.vue'
 import { usePreviewImageRegion } from './preview/usePreviewImageRegion'
 import { usePreviewPagePin } from './preview/usePreviewPagePin'
+import { usePreviewQuote } from './preview/usePreviewQuote'
 
 // The editor and its history only load once someone opens them: most previews
 // never do, and every panel that shows a preview would otherwise carry them.
@@ -192,11 +193,6 @@ const pagesRef = ref<InstanceType<typeof PreviewPages> | null>(null)
 // 不做能长期保留的批注——读者要改的那句话，正是芝士下一轮要改掉的那句话，锚点必然
 // 失效。这条评论只在下一轮被读一次，之后它属于对话记录。
 const locator = ref<{ label: string; quote: string; address: string; context?: QuoteContext } | null>(null)
-const pageContext = ref<SlidePageContext | null>(null)
-/** 表格里的一格、渲染正文里的一段：指的时候留下来，发的时候连同文件身份拼成结构化引用。
- *  拿不到文件身份时（`docIdentity` 缺版本）这两样退回拼一句话那条老路。 */
-const cellContext = ref<{ address: string; value: string; sheet: string } | null>(null)
-const textRangeContext = ref<MarkdownQuote | null>(null)
 const locatorNote = ref('')
 const imageRegion = usePreviewImageRegion(props, clearLocator)
 const pageLocator = usePreviewPagePin(props, {
@@ -204,12 +200,11 @@ const pageLocator = usePreviewPagePin(props, {
   open: openLocator,
   clear: clearLocator,
 })
+const quoted = usePreviewQuote(props, (context) => pageLocator.canUse(context))
 
 function openLocator(label: string, quote: string, address: string, context?: QuoteContext) {
   imageRegion.clear()
-  pageContext.value = null
-  cellContext.value = null
-  textRangeContext.value = null
+  quoted.clear()
   pageLocator.pin.value = null
   locator.value = { label, quote, address, context }
   locatorNote.value = ''
@@ -218,9 +213,7 @@ function openLocator(label: string, quote: string, address: string, context?: Qu
 function clearLocator() {
   imageRegion.clear()
   locator.value = null
-  pageContext.value = null
-  cellContext.value = null
-  textRangeContext.value = null
+  quoted.clear()
   pageLocator.pin.value = null
   pagesRef.value?.clearMark()
   locatorNote.value = ''
@@ -235,7 +228,7 @@ function onPageContext(payload: SlidePageContext) {
   if (!pageLocator.canUse(payload.context)) return
   const page = t('work.room.preview.page', { page: payload.page })
   openLocator(page, payload.scope === 'page' ? t('slides.wholePage') : payload.text.slice(0, 200), page)
-  pageContext.value = { ...payload, context: { ...payload.context } }
+  quoted.page.value = { ...payload, context: { ...payload.context } }
 }
 watch(
   [
@@ -271,7 +264,7 @@ function onCell(payload: { address: string; value: string; sheet: string }) {
   // CSV 没有工作表名，`!B7` 会让读者以为前面漏了个名字。
   const where = payload.sheet ? `${payload.sheet}!${payload.address}` : payload.address
   openLocator(where, payload.value || t('work.room.preview.emptyCell'), where)
-  cellContext.value = { ...payload }
+  quoted.cell(payload)
 }
 
 function onMarkdownQuote(payload: MarkdownQuote) {
@@ -280,7 +273,7 @@ function onMarkdownQuote(payload: MarkdownQuote) {
     ? t('work.room.preview.mdHeading', { heading: payload.heading })
     : t('work.room.preview.mdTop')
   openLocator(where, payload.text.slice(0, 200), where, { prefix: payload.prefix, suffix: payload.suffix })
-  textRangeContext.value = { ...payload }
+  quoted.range(payload)
 }
 
 function contextLine({ prefix, suffix }: QuoteContext): string {
@@ -305,76 +298,11 @@ function sendLocator() {
     clearLocator()
     return
   }
-  if (pageContext.value) {
-    const payload = pageContext.value
-    if (!pageLocator.canUse(payload.context)) return
-    const accepted = props.submitQuestion?.({
-      intent: 'ask-agent',
-      topicId: payload.context.topicId,
-      content: note,
-      quotedContext: {
-        kind: 'slide-page',
-        path: payload.context.path,
-        source: payload.context.source,
-        version: payload.context.version,
-        task_id: payload.context.taskId ?? null,
-        page: payload.page,
-        scope: payload.scope,
-        text: payload.text,
-      },
-    })
-    if (accepted) clearLocator()
+  // 结构化引用发得出去就走它；没有可发的（null）才退回下面拼一句话那条老路。
+  const sent = quoted.send(note)
+  if (sent !== null) {
+    if (sent) clearLocator()
     return
-  }
-  // 表格里的一格：地址是文件自己给的，连同文件身份拼成结构化引用。拿不到文件身份
-  // （或这份部署没有提问那条出口）时不硬造——退回下面拼一句话那条老路。
-  if (cellContext.value) {
-    const identity = props.docIdentity
-    const submit = props.submitQuestion
-    if (identity?.version && submit) {
-      const accepted = submit({
-        intent: 'ask-agent',
-        topicId: identity.topicId,
-        content: note,
-        quotedContext: {
-          kind: 'sheet-cell',
-          path: identity.path,
-          source: identity.source,
-          version: identity.version,
-          task_id: identity.taskId ?? null,
-          sheet: cellContext.value.sheet,
-          address: cellContext.value.address,
-          value: cellContext.value.value,
-        },
-      })
-      if (accepted) clearLocator()
-      return
-    }
-  }
-  // 渲染正文里的一段：位置是哪一节，标题和前后文帮受话人分辨说的是哪一处。
-  if (textRangeContext.value) {
-    const identity = props.docIdentity
-    const submit = props.submitQuestion
-    if (identity?.version && submit) {
-      const accepted = submit({
-        intent: 'ask-agent',
-        topicId: identity.topicId,
-        content: note,
-        quotedContext: {
-          kind: 'text-range',
-          path: identity.path,
-          source: identity.source,
-          version: identity.version,
-          task_id: identity.taskId ?? null,
-          text: textRangeContext.value.text,
-          heading: textRangeContext.value.heading || null,
-          prefix: textRangeContext.value.prefix,
-          suffix: textRangeContext.value.suffix,
-        },
-      })
-      if (accepted) clearLocator()
-      return
-    }
   }
   const message = t('work.room.preview.locateMessage', {
     path: props.previewFile?.path ?? '',
