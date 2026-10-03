@@ -51,7 +51,15 @@ vi.mock('./preview/PreviewSlides.vue', () => ({
     },
   },
 }))
-vi.mock('./preview/PreviewPages.vue', () => ({ default: { template: '<div data-testid="pages" />' } }))
+// 真组件把 clearMark 交出来（抹掉指过的那一点）；替身也得有，不然面板清位置时炸。
+vi.mock('./preview/PreviewPages.vue', () => ({
+  default: {
+    template: '<div data-testid="pages" />',
+    setup(_props: unknown, { expose }: { expose: (api: { clearMark: () => void }) => void }) {
+      expose({ clearMark: () => {} })
+    },
+  },
+}))
 vi.mock('./preview/RevisionList.vue', () => ({ default: { template: '<div />' } }))
 vi.mock('./preview/RoomOutputs.vue', () => ({ default: { template: '<div />' } }))
 const docBytes = new ArrayBuffer(8)

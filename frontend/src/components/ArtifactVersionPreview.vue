@@ -5,7 +5,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { artifactVersionBytes } from '../api'
 import { t } from '../i18n'
-import { DOCUMENT_TYPES, IMAGE_SUFFIXES, imageMimeOf, NEEDS_CONVERSION, suffixOf } from '../lib/fileKind'
+import { DOCUMENT_TYPES, IMAGE_SUFFIXES, imageMimeOf, NEEDS_CONVERSION, sheetKindOf, suffixOf } from '../lib/fileKind'
 
 import DesignImage from './panels/preview/DesignImage.vue'
 import PreviewPages from './panels/preview/PreviewPages.vue'
@@ -103,7 +103,7 @@ onBeforeUnmount(() => {
     <div v-else-if="data" class="version-preview__body">
       <PreviewSlides v-if="['pptx', 'ppt', 'odp'].includes(suffix)" :data="data" :title="version.filename || ''" />
       <PreviewPages v-else-if="view === 'pages'" :data="data" />
-      <PreviewSheet v-else-if="view === 'sheet'" :data="data" :kind="suffix === 'csv' ? 'csv' : 'workbook'" />
+      <PreviewSheet v-else-if="view === 'sheet'" :data="data" :kind="sheetKindOf(suffix)" />
       <DesignImage
         v-else-if="imageUrl"
         :src="imageUrl"

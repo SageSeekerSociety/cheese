@@ -10,6 +10,9 @@ export interface PreviewQuestion {
   content: string
   intent: 'ask-agent'
   quotedContext: QuotedContext
+  /** 指出去的那一处自己不带图时就没有；页面上的一点带一张那一页的图，理由和图上
+   *  画了东西的合成图一样：那句话离开图就指不明白。 */
+  attachments?: ChatAttachment[]
 }
 
 /** True means accepted into the normal outbox, not delivered or answered. */
@@ -41,6 +44,6 @@ export function createQuestionSubmit(options: {
     const authored = expandComposerMentions(request.content, seat, pool, topics)
     const token = `<@${seat.handle}>`
     const content = authored.startsWith(token) ? authored : `${token} ${authored}`
-    return options.send(content, true, undefined, frozenQuote(request.quotedContext))
+    return options.send(content, true, request.attachments, frozenQuote(request.quotedContext))
   }
 }

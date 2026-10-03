@@ -43,6 +43,10 @@ vi.mock('./preview/PreviewPages.vue', () => ({
     name: 'PreviewPages',
     props: ['data'],
     emits: ['quote'],
+    // 真组件把 clearMark 交出来（抹掉指过的那一点）；替身也得有，不然面板清位置时炸。
+    setup(_props: unknown, { expose }: { expose: (api: { clearMark: () => void }) => void }) {
+      expose({ clearMark: () => {} })
+    },
     template: '<div data-testid="pages" :data-bytes="data ? data.byteLength : 0" />',
   },
 }))

@@ -60,11 +60,6 @@ CALLS = {
         "/topics/fixture/history",
     ),
     "cheese_doc_get": ({}, "GET", "/topics/fixture/doc"),
-    "cheese_doc_comment_reply": (
-        {"thread_id": "c-1", "text": "改好了"},
-        "POST",
-        "/topics/fixture/comments/c-1/replies",
-    ),
     "cheese_doc_edit": (
         {"edits": [{"old": "第一段", "new": "第一段，改过"}]},
         "POST",

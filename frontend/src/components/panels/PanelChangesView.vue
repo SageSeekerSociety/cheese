@@ -521,7 +521,7 @@ function revisionReadOnly(): boolean {
               </div>
               <div v-else class="doc-view__body">
                 <PreviewPages v-if="props.openDocumentType?.view === 'pages'" :data="props.docBytes" />
-                <PreviewSheet v-else :data="props.docBytes" kind="workbook" />
+                <PreviewSheet v-else :data="props.docBytes" :kind="props.openDocumentType?.sheet ?? 'workbook'" />
                 <RevisionList
                   :topic-id="props.topicId"
                   :path="props.revisionPath"

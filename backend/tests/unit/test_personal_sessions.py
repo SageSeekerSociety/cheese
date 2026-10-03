@@ -31,13 +31,13 @@ import pytest
 from app.core.config import settings
 from app.core.sandbox_auth import mint_personal_credential
 from app.domain.agent.harness.pi import personal
-from app.domain.agent.harness.pi.personal import (
+from app.domain.agent.harness.pi.handless import (
     Answered,
-    Launch,
+    HandlessSessions,
     Looking,
-    PersonalSessions,
     Said,
 )
+from app.domain.agent.harness.pi.personal import Launch
 from tests.support.session_host import DEVICE, Host, install_pi, stop_all
 
 PROMPT = "你是芝士。只用给你的工具。"
@@ -63,7 +63,13 @@ class Platform:
     """The backend as the session reaches it: the model behind ``/llm/v1``,
     the person's tools behind ``/assistant/tools``."""
 
-    def __init__(self, steps: list, *, first_token_s: float = 0.0):
+    def __init__(
+        self,
+        steps: list,
+        *,
+        first_token_s: float = 0.0,
+        tools_path: str = "/assistant/tools",
+    ):
         self.steps = steps
         self.first_token_s = first_token_s
         self.requests: list[dict] = []
@@ -79,7 +85,7 @@ class Platform:
 
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-                if self.path.startswith("/assistant/tools/"):
+                if self.path.startswith(f"{tools_path}/"):
                     name = self.path.rsplit("/", 1)[1]
                     outer.tool_calls.append(
                         (name, self.headers.get("X-Cheese-Token", ""), body)
@@ -165,7 +171,7 @@ def host(tmp_path, monkeypatch):
     install_pi(home)
     monkeypatch.setattr(settings, "agent_session_device_id", DEVICE)
     hub = Host(home)
-    sessions = PersonalSessions(hub)
+    sessions = HandlessSessions(hub)
     yield hub, sessions
     stop_all(home)
 
