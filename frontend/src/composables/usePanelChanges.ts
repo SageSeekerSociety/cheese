@@ -338,6 +338,9 @@ export function usePanelChanges(props: PanelChangesProps) {
   // 来：那才是「这一版比上一版改了什么」在一份 Word 文档里的真实形态。
   const openIsDocument = computed(() => !!openPath.value && needsDocumentView(openPath.value))
   const openDocumentType = computed(() => (openPath.value ? DOCUMENT_TYPES[suffixOf(openPath.value)] ?? null : null))
+  /** 打开的那份文件是什么后缀。表格那几支（csv/tsv/ods/工作簿）的读法互不相同，而后缀
+   *  是唯一分得清它们的东西——`FileKind` 只到 `view` 这一层，分不出来。 */
+  const openSuffix = computed(() => (openPath.value ? suffixOf(openPath.value) : ''))
   /** 修订只长在 .docx 上：其余文档（一张 PDF、一页幻灯片）没有「修订」这回事。 */
   const revisionPath = computed(() => (openPath.value && suffixOf(openPath.value) === 'docx' ? openPath.value : null))
   // 处理完一处修订，文件就变了，而字节是按版本缓存的——这里打一下让它重取。
@@ -796,6 +799,7 @@ export function usePanelChanges(props: PanelChangesProps) {
     openIsImage,
     openIsDocument,
     openDocumentType,
+    openSuffix,
     revisionPath,
     openRawUrl,
     expandedDirs,

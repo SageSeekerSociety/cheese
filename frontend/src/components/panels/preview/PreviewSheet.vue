@@ -35,6 +35,9 @@ type Sheet = {
   /** 整张表本来有多少行 / 多少列 —— 只画了一部分时要靠它说清。 */
   totalRows: number
   totalCols: number
+  /** 这一张表里有格子被截短了。按表记，不按文件记：多表工作簿里切到没有长格的那张
+   *  表，不该还挂着「较长的单元格被截短了」。 */
+  shortened: boolean
 }
 
 const sheets = ref<Sheet[]>([])
@@ -52,8 +55,6 @@ const MAX_CELL = 300
 /** 解析之前先切字节的上限：一份 200 MB 的 CSV 光解码成字符串就先占掉几百 MB。 */
 const MAX_BYTES = 1 << 20
 
-/** 有单元格因为太长被截短了。 */
-const shortened = ref(false)
 /** 字节在解析之前就被切了，表尾可能缺。 */
 const endClipped = ref(false)
 
@@ -174,6 +175,16 @@ function isOle2(bytes: Uint8Array): boolean {
   return bytes.length >= OLE2_MAGIC.length && OLE2_MAGIC.every((b, i) => bytes[i] === b)
 }
 
+/** 切到 `limit` 处可能正好把一个多字节字符切成两半。残字节会让严格 UTF-8 解码抛错，
+ *  于是一份合法的 UTF-8 文件被判成 GBK、整份乱码 —— 先把切点退到字符边界上（UTF-8
+ *  的续字节长这样 `10xxxxxx`），切出来的前缀才是这份文件的一个真前缀。 */
+function sliceAtCharBoundary(bytes: Uint8Array, limit: number): Uint8Array {
+  if (bytes.length <= limit) return bytes
+  let end = limit
+  while (end > 0 && (bytes[end] & 0xc0) === 0x80) end -= 1
+  return bytes.subarray(0, end)
+}
+
 /** CSV / TSV 只有一张表，而且它没有名字 —— 没有名字就不该编一个：地址栏里写 `B7`，
  *  和一个真有工作表名的 `Sheet1!B7` 是两种不同的坐标，编出来的名字会让读者以为
  *  这份文件里还有别的表。 */
@@ -181,7 +192,7 @@ function openText(data: ArrayBuffer, kind: 'csv' | 'tsv') {
   const bytes = new Uint8Array(data)
   // 先切字节再解码：整份读进来再切开，切之前那几百 MB 已经占住了。
   endClipped.value = bytes.length > MAX_BYTES
-  const text = decodeText(bytes.subarray(0, MAX_BYTES))
+  const text = decodeText(sliceAtCharBoundary(bytes, MAX_BYTES))
   sourceText.value = text
   // TSV 的分隔符是格式的一部分，不用猜；CSV 才要数第一行里哪个符号多。
   const rows = parseCsv(text, kind === 'tsv' ? '\t' : sniffSeparator(text))
@@ -193,8 +204,16 @@ function openText(data: ArrayBuffer, kind: 'csv' | 'tsv') {
   let totalCols = 0
   for (const r of rows) if (r.length > totalCols) totalCols = r.length
   const kept = rows.slice(0, MAX_ROWS).map((r) => r.slice(0, MAX_COLS))
-  shortened.value = kept.some((r) => r.some((c) => c.length > MAX_CELL))
-  sheets.value = [{ name: '', rows: kept, width: Math.min(totalCols, MAX_COLS), totalRows: rows.length, totalCols }]
+  sheets.value = [
+    {
+      name: '',
+      rows: kept,
+      width: Math.min(totalCols, MAX_COLS),
+      totalRows: rows.length,
+      totalCols,
+      shortened: kept.some((r) => r.some((c) => c.length > MAX_CELL)),
+    },
+  ]
   activeIndex.value = 0
 }
 
@@ -206,7 +225,6 @@ async function open(data: ArrayBuffer) {
   selected.value = ''
   sourceText.value = ''
   endClipped.value = false
-  shortened.value = false
   // 换一份文件就回到表格：上一个是 csv、这个不是，留在原文视图会看见一片空白，
   // 而且那条切换按钮在这种文件上根本不出现，读者没有路回去。
   showSource.value = false
@@ -233,13 +251,16 @@ async function open(data: ArrayBuffer) {
     book.eachSheet((worksheet) => {
       const rows: string[][] = []
       let width = 0
+      // 一张表里有没有超长的格子，是这张表自己的事：一本表里既有小台账又有长备注，
+      // 用同一个标记说「被截短了」，切到没有长格子的那页也会顶着这句提示。
+      let shortened = false
       worksheet.eachRow({ includeEmpty: true }, (row, rowNumber) => {
         if (rowNumber > MAX_ROWS) return
         const cells: string[] = []
         row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
           if (colNumber > MAX_COLS) return
           const text = display(cell.value)
-          if (text.length > MAX_CELL) shortened.value = true
+          if (text.length > MAX_CELL) shortened = true
           cells[colNumber - 1] = text
         })
         width = Math.max(width, cells.length)
@@ -252,6 +273,7 @@ async function open(data: ArrayBuffer) {
         width,
         totalRows: worksheet.rowCount,
         totalCols: worksheet.columnCount,
+        shortened,
       })
     })
     if (mine !== generation) return
@@ -279,7 +301,7 @@ const notice = computed(() => {
   if (sheet.totalRows > sheet.rows.length || sheet.totalCols > sheet.width) {
     parts.push(t('work.room.preview.sheetClipped', { rows: sheet.rows.length, cols: sheet.width }))
   }
-  if (shortened.value) parts.push(t('work.room.preview.sheetCellsShortened'))
+  if (sheet.shortened) parts.push(t('work.room.preview.sheetCellsShortened'))
   if (endClipped.value) parts.push(t('work.room.preview.sheetEndMissing'))
   return parts.join(' ')
 })

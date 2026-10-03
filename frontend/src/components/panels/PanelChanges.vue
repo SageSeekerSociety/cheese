@@ -81,6 +81,7 @@ const {
   openIsImage,
   openIsDocument,
   openDocumentType,
+  openSuffix,
   revisionPath,
   openRawUrl,
   expandedDirs,
@@ -185,6 +186,7 @@ defineExpose({ openFile })
     :open-is-image="openIsImage"
     :open-is-document="openIsDocument"
     :open-document-type="openDocumentType"
+    :open-suffix="openSuffix"
     :revision-path="revisionPath"
     :open-raw-url="openRawUrl"
     :expanded-dirs="expandedDirs"

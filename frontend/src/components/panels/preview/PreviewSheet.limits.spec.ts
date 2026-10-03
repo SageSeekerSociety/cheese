@@ -86,6 +86,21 @@ it('超出读取上限的大文件说清表尾可能缺', async () => {
   await waitFor(() => expect(note(container)).toContain('表尾可能缺'))
 })
 
+it('超过 1 MiB 的 UTF-8 中文表格，切字节不会把最后一个字劈成两半', async () => {
+  // 1<<20 不是 3 的倍数，所以按字节上限切下来，最后一个「三」只剩两个字节。留着这
+  // 半个字，严格 UTF-8 解码就会抛错 —— 于是一份好好的 UTF-8 文件被当成 GBK，整片
+  // 变乱码。切点退到字符边界上，切出来的才是这份文件的一个真前缀。
+  const bytes = utf8('三'.repeat(349526))
+  expect(bytes.length).toBeGreaterThan(1 << 20)
+  expect((1 << 20) % 3).not.toBe(0)
+
+  const { container } = mount(bytes)
+
+  await waitFor(() => expect(grid(container).length).toBe(1))
+  // 解错了这里是一串别的汉字，不会正好是「三」。
+  expect(grid(container)[0][0]).toBe(`${'三'.repeat(300)}…`)
+})
+
 it('切到原文看得到分隔符和换行本身', async () => {
   const { container } = mount(utf8('姓名,分数\n张三,90\n'))
 
