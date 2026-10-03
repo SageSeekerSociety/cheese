@@ -15,6 +15,7 @@ from sqlalchemy import select, text
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.domain.block.answers import Answer
 from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.notice_text import say
 
 
 def required_text(value, field):
@@ -218,7 +219,9 @@ class AskGroups:
                 return rows, stored, True
         current = first.get("group_settle")
         if (current["v"] if current else 0) != version:
-            raise ConflictError("问题组版本不对，请重新获取")
+            # The browser tells this refusal from the other 409s by its key
+            # (`useAskGroups`); the sentence itself is the catalog's.
+            raise ConflictError(say("askGroupVersionStale"))
         staged = []
         effective = []
         for row in rows:

@@ -129,14 +129,16 @@ function wait(ms: number): Promise<void> {
 
 // A failed request still carries its HTTP status. Callers that must tell one
 // failure from another — a save rejected as a conflict (409) vs. anything else —
-// would otherwise be left substring-matching the message.
+// would otherwise be left substring-matching the message; the catalog key of a
+// sentence the backend said with `say()` (`error.i18n`) names the exact refusal.
 export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
     readonly code?: string,
     readonly requestId?: string,
-    readonly retryable?: boolean
+    readonly retryable?: boolean,
+    readonly i18n?: unknown
   ) {
     super(message)
     this.name = 'ApiError'
@@ -330,7 +332,10 @@ async function performRequest<T>(path: string, init?: RequestInit): Promise<T> {
       throw new ApiError(res.status, transportFailureMessage(method, res.status))
     }
     if (!res.ok) {
-      const details = body as { message?: string; error?: { name?: string; message?: string; retryable?: boolean } }
+      const details = body as {
+        message?: string
+        error?: { name?: string; message?: string; retryable?: boolean; i18n?: unknown }
+      }
       if (
         details.error?.retryable !== false &&
         attempt < GET_RETRY_DELAYS_MS.length &&
@@ -349,7 +354,8 @@ async function performRequest<T>(path: string, init?: RequestInit): Promise<T> {
         serverSaid || t('global.request.failed', { status: res.status }),
         details.error?.name,
         res.headers?.get('X-Request-ID') ?? undefined,
-        details.error?.retryable
+        details.error?.retryable,
+        details.error?.i18n
       )
     }
     const envelope = body as ApiEnvelope<T>

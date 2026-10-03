@@ -20,8 +20,16 @@ import {
   saveAskDraft,
   validAskDraft,
 } from '../lib/askState'
+import { renderNoticeMessage } from '../lib/noticeText'
 import { myId } from '../me'
 import { readAskGroup, settleAskGroup } from '../services/askGroups'
+
+/** The catalog key of a refusal the backend said with `say()` (`error.i18n`),
+ *  which names the exact sentence a status alone cannot. */
+function refusalKey(i18n: unknown): string | undefined {
+  const key = (i18n as { key?: unknown } | undefined)?.key
+  return typeof key === 'string' ? key : undefined
+}
 
 export function useAskGroups(options: {
   blocks: () => Block[]
@@ -413,12 +421,13 @@ export function useAskGroups(options: {
       adopt(state, data, true, revisions)
     } catch (error) {
       if (!owns()) return
-      state.error = error instanceof Error ? error.message : t('ask.flow.unconfirmed')
+      if (error instanceof ApiError) state.error = renderNoticeMessage(error.i18n, error.message)
+      else state.error = error instanceof Error ? error.message : t('ask.flow.unconfirmed')
       if (error instanceof ApiError && error.status === 409) {
         state.fresh = false
         // The server checks historical operation IDs before this exact rejection.
         // Other 409s (including reused IDs) do not prove that the op is absent.
-        if (error.message === '问题组版本不对，请重新获取' && state.pending === pending)
+        if (refusalKey(error.i18n) === 'askGroupVersionStale' && state.pending === pending)
           state.rejectedOperation = pending.payload.client_op_id
       }
     } finally {

@@ -324,5 +324,6 @@
   "creditsWindowFull": "The usage limit for {hours} hours has been reached. It reopens on {month}/{day} at {time}.",
   "creditsWeekFull": "This week's usage limit has been reached. It resets on {month}/{day} at {time}.",
   "creditsMonthFull": "This month's usage limit has been reached. It resets on {month}/{day}.",
-  "modelNotInPlan": "The current plan does not include the model \"{label}\"."
+  "modelNotInPlan": "The current plan does not include the model \"{label}\".",
+  "askGroupVersionStale": "The question group changed; fetch the current version and answer again."
 }

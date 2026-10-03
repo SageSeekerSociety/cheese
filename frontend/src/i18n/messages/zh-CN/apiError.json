@@ -324,5 +324,6 @@
   "creditsWindowFull": "{hours} 小时内的用量已达上限，{month}月{day}日 {time} 恢复。",
   "creditsWeekFull": "本周的用量已达上限，{month}月{day}日 {time} 恢复。",
   "creditsMonthFull": "本月的用量已达上限，{month}月{day}日恢复。",
-  "modelNotInPlan": "当前方案不能使用模型「{label}」。"
+  "modelNotInPlan": "当前方案不能使用模型「{label}」。",
+  "askGroupVersionStale": "问题组版本不对，请重新获取"
 }
