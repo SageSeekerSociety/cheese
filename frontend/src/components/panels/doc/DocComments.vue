@@ -312,10 +312,13 @@ defineExpose({ open, locate })
   line-height: var(--lh-13);
   text-align: center;
 }
-.doc-comments button:focus-visible,
-.doc-comments textarea:focus-visible {
+/* 输入框自己没有框：外面那张卡就是它的框。 */
+.doc-comments button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+.doc-comments__draft:focus-within {
+  border-color: var(--muted);
 }
 .doc-comments-card-enter-active {
   transition:

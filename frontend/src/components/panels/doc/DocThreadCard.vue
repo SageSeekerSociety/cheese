@@ -271,7 +271,6 @@ function onCard(e: MouseEvent) {
 .doc-thread-card__quote.is-gone {
   border-left-color: var(--line-2);
   color: var(--faint);
-  text-decoration: line-through;
   cursor: default;
 }
 .doc-thread-card__message + .doc-thread-card__message,
@@ -421,8 +420,7 @@ function onCard(e: MouseEvent) {
   color: var(--faint);
   cursor: default;
 }
-.doc-thread-card button:focus-visible,
-.doc-thread-card textarea:focus-visible {
+.doc-thread-card button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
