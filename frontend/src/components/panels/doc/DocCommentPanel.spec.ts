@@ -66,8 +66,18 @@ async function mountPanel(sendComment = vi.fn(async (): Promise<void> => undefin
               topicId: topicId.value,
               author: 'reader',
               openId: null,
-              comments: [],
-              anchorNodes: [],
+              threadState: { threads: [], activity: {}, errors: {}, busy: false, unknown: null },
+              threadActions: {
+                reply: async () => {},
+                resolve: async () => {},
+                reopen: async () => {},
+                recover: async () => undefined,
+              },
+              placeOf: () => 'marked' as const,
+              agentName: '芝士',
+              mentionNames: {},
+              nameOf: (handle: string) => handle,
+              writable: true,
               sendComment,
             },
             { default: () => h('div', { class: 'doc-body' }, '正文') }
@@ -109,7 +119,7 @@ function current(el: HTMLElement) {
 describe('actual comment panel', () => {
   it('floats a selected comment and pins the same draft without sending or remounting it', async () => {
     const f = await mountPanel()
-    await f.panel.value!.open({ anchorId: 'paragraph', quote: '选中原文' })
+    await f.panel.value!.open({ quote: '选中原文', from: 1, to: 5, rel: null })
     await nextTick()
     const input = screen.getByRole('textbox') as HTMLTextAreaElement
     await fireEvent.update(input, '正在填写的评论')
@@ -216,7 +226,7 @@ describe('actual comment panel', () => {
     expect(remove).toHaveBeenCalledWith('resize', expect.any(Function))
   })
 
-  it('hides without discarding and refuses panel/composer close or discard while sending', async () => {
+  it('hides without discarding and refuses to close the panel or discard the draft while sending', async () => {
     let finish!: () => void
     const send = vi.fn(
       () =>
@@ -225,7 +235,7 @@ describe('actual comment panel', () => {
         })
     )
     const f = await mountPanel(send)
-    await f.panel.value!.open({ anchorId: 'a', quote: '原文' })
+    await f.panel.value!.open({ quote: '原文', from: 1, to: 3, rel: null })
     await nextTick()
     let input = screen.getByRole('textbox') as HTMLTextAreaElement
     await fireEvent.update(input, '草稿')
@@ -235,14 +245,13 @@ describe('actual comment panel', () => {
     expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('草稿')
     await fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Escape' })
     expect(screen.queryByRole('textbox')).toBeNull()
-    await fireEvent.click(screen.getByRole('button', { name: '继续草稿' }))
+    await fireEvent.click(screen.getByRole('button', { name: '继续写评论' }))
     input = screen.getByRole('textbox') as HTMLTextAreaElement
     expect(input.value).toBe('草稿')
     await fireEvent.keyDown(input, { key: 'Enter' })
     await waitFor(() => expect(send).toHaveBeenCalledTimes(1))
     expect(f.panel.value!.close()).toBe(false)
-    expect((screen.getByRole('button', { name: '关闭输入' }) as HTMLButtonElement).disabled).toBe(true)
-    expect((screen.getByRole('button', { name: '丢弃草稿' }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByRole('button', { name: '取消' }) as HTMLButtonElement).disabled).toBe(true)
     await fireEvent.keyDown(input, { key: 'Escape' })
     expect(screen.getByRole('textbox')).toBe(input)
     await fireEvent.update(input, '发送期间的新稿')

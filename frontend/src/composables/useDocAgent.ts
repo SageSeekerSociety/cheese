@@ -17,12 +17,13 @@ import type {
   DocAgentRequest,
   PresetContext,
 } from '../lib/docAgent'
-import type { SelectionTarget } from '../lib/docBubble'
+import type { CommentSpot } from '../lib/docCommentSpots'
 import type { DocEdit } from '../lib/docEdits'
 
 import { computed, onScopeDispose, ref, shallowRef } from 'vue'
 
 import { isChinese } from '../lib/docAgent'
+import { anchorComment } from '../lib/docCommentSpots'
 import { editMarks, nearestText, setEditMarks } from '../lib/docEditMarks'
 import { editFailure, plainOf } from '../lib/docEdits'
 import { rewriteTarget } from '../lib/docRewrite'
@@ -42,8 +43,8 @@ export interface DocAgentOptions {
   /** 这篇文档能不能改。 */
   editable: () => boolean
   applyEdits: () => ((edits: DocEdit[]) => Promise<unknown>) | undefined
-  /** 把这次的回答放进一条新的评论（选中的那段上，写着问了什么）；回执是那条评论的 id。 */
-  toComment: () => ((conversation: string, target: SelectionTarget, question: string) => Promise<string>) | undefined
+  /** 把这次的回答放进一条新的评论（评的是选中的那几个字，写着问了什么）；回执是那条评论的 id。 */
+  toComment: () => ((conversation: string, quote: string, question: string) => Promise<string>) | undefined
   agentName: () => string
   onError: (message: string) => void
 }
@@ -62,7 +63,7 @@ export function useDocAgent(options: DocAgentOptions) {
   const context = ref<PresetContext>({ editable: false, list: false, chinese: true })
   let conversation: string | null = null
   let question = ''
-  let selection: SelectionTarget | null = null
+  let selection: CommentSpot | null = null
   // 每开一次、关一次就换一个号：晚到的回执对不上号就不认。
   let attempt = 0
   let abort: AbortController | null = null
@@ -94,13 +95,13 @@ export function useDocAgent(options: DocAgentOptions) {
   }
 
   /** 选中的那一段开出输入框；对整篇时不带范围。 */
-  function open(range?: { from: number; to: number; target: SelectionTarget }) {
+  function open(range?: CommentSpot) {
     if (!options.ask()) return
     close()
     const e = editor()
     if (options.scope === 'selection') {
       if (!e || !range) return
-      selection = range.target
+      selection = range
       const text = e.state.doc.textBetween(range.from, range.to, '\n')
       const $from = e.state.doc.resolve(range.from)
       const top = $from.depth >= 1 ? $from.node(1) : null
@@ -281,9 +282,11 @@ export function useDocAgent(options: DocAgentOptions) {
   async function toComment(): Promise<string | null> {
     const post = options.toComment()
     if (!post || !conversation || phase.value !== 'answered') return null
-    const at = selection ?? { anchorId: null, quote: '' }
+    const at = selection
     try {
-      const thread = await post(conversation, at, question)
+      const thread = await post(conversation, at?.quote ?? '', question)
+      const e = editor()
+      if (e && at) anchorComment(e, at, thread)
       close()
       return thread
     } catch (error) {

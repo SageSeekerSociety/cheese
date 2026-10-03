@@ -24,6 +24,10 @@ import i18n, { setLocale } from '@/i18n'
 beforeEach(() => setLocale('zh-CN'))
 
 // The document's version history: the last edit is read on open; none here.
+vi.mock('../../api/docThreads', () => ({
+  listDocThreads: async () => ({ data: [], total: 0 }),
+  writeDocThread: async () => ({}),
+}))
 vi.mock('../../api/docHistory', () => ({
   getDocVersions: async () => ({ versions: [], cursor: null }),
   restoreDocVersion: async () => ({}),
@@ -44,7 +48,6 @@ const getGitDiff = vi.fn()
 const getPreview = vi.fn()
 const getTopicWorkSummary = vi.fn()
 const addComment = vi.fn()
-const getComments = vi.fn()
 
 vi.mock('../../composables/useDocCollab', async () => ({
   useDocCollab: (await import('../../test/fakeDocCollab')).useFakeDocCollab,
@@ -63,7 +66,6 @@ vi.mock('../../api', async () => {
     getPreview: (...a: unknown[]) => getPreview(...a),
     getTopicWorkSummary: (...a: unknown[]) => getTopicWorkSummary(...a),
     addComment: (...a: unknown[]) => addComment(...a),
-    getComments: (...a: unknown[]) => getComments(...a),
     writeFile: vi.fn().mockResolvedValue({ path: 'a.py', version: 'v2' }),
     getDocNodes: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getAgentControl: vi.fn().mockResolvedValue({ id: null, connected: false, tasks: {} }),
@@ -167,7 +169,6 @@ beforeEach(() => {
   getPreview.mockResolvedValue(null)
   // A topic 芝士 has worked in: the default for the suites about tab CONTENT.
   getTopicWorkSummary.mockResolvedValue({ changed_files: ['a.py'], has_run: true })
-  getComments.mockResolvedValue({ data: [], total: 0 })
   addComment.mockResolvedValue({ id: 'c1' })
 })
 
@@ -454,22 +455,22 @@ describe('工作面板 · Tab 容器', () => {
     const { container } = mountPanel()
     await flush()
 
-    expect(container.querySelector('.comment-draft')).toBeNull()
+    expect(container.querySelector('.doc-comments__draft')).toBeNull()
     const write = buttons(container).find((b) => b.getAttribute('title') === '写评论')
     expect(write, '评论区没有「写评论」入口').toBeTruthy()
 
     await fireEvent.click(write!)
     await flush()
 
-    const box = container.querySelector<HTMLTextAreaElement>('.comment-draft textarea')
+    const box = container.querySelector<HTMLTextAreaElement>('.doc-comments__draft textarea')
     expect(box, '评论区里没有输入框').toBeTruthy()
     await fireEvent.update(box!, '这段读不通')
     await fireEvent.keyDown(box!, { key: 'Enter' })
     await flush()
 
-    expect(addComment).toHaveBeenCalledWith('topic-A', '这段读不通', undefined, '')
+    expect(addComment).toHaveBeenCalledWith('topic-A', '这段读不通', '')
     // 发完收起来，评论区回到只读的样子。
-    expect(container.querySelector('.comment-draft')).toBeNull()
+    expect(container.querySelector('.doc-comments__draft')).toBeNull()
   })
 
   it('Esc 关掉评论输入框，不发任何东西', async () => {
@@ -478,10 +479,10 @@ describe('工作面板 · Tab 容器', () => {
     await fireEvent.click(buttons(container).find((b) => b.getAttribute('title') === '写评论')!)
     await flush()
 
-    await fireEvent.keyDown(container.querySelector('.comment-draft textarea')!, { key: 'Escape' })
+    await fireEvent.keyDown(container.querySelector('.doc-comments__draft textarea')!, { key: 'Escape' })
     await flush()
 
-    expect(container.querySelector('.comment-draft')).toBeNull()
+    expect(container.querySelector('.doc-comments__draft')).toBeNull()
     expect(addComment).not.toHaveBeenCalled()
   })
 })

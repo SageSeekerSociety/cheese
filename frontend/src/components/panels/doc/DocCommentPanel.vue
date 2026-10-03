@@ -1,7 +1,8 @@
 <script setup lang="ts">
+// 评论栏这一列：够宽时贴在正文右边，窄时盖在正文上面；宽度能拖。里面是 DocComments。
 import type { SendDocComment } from '../../../composables/useDocCommentDraft'
-import type { Block } from '../../../cx_types'
-import type { DocThreadActions, DocThreadState } from '../../../lib/docThreadTypes'
+import type { CommentSpot } from '../../../lib/docCommentSpots'
+import type { DocThreadActions, DocThreadState, ThreadPlace } from '../../../lib/docThreadTypes'
 
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
@@ -11,22 +12,28 @@ import { t } from '@/i18n'
 
 const props = defineProps<{
   topicId: string | null
-  author?: string
-  threadState?: DocThreadState
-  threadActions?: DocThreadActions
+  author: string
+  threadState: DocThreadState
+  threadActions: DocThreadActions
   sendComment?: SendDocComment
-  comments: Block[]
-  anchorNodes: Block[]
   openId: string | null
-  quoteState?: (id: string) => 'unique' | 'missing' | 'ambiguous'
-  /** handle → 名字：评论里的点名读成名字。 */
-  mentionNames?: Record<string, string>
+  /** 这一串评的那几个字在正文里的哪。 */
+  placeOf: (id: string) => ThreadPlace
+  agentName: string
+  mentionNames: Record<string, string>
+  nameOf: (handle: string) => string
+  writable: boolean
 }>()
 const emit = defineEmits<{
   (e: 'update:openId', id: string | null): void
-  (e: 'locate-node', id: string): void
-  (e: 'posted'): void
+  (e: 'locate', id: string): void
 }>()
+
+const filter = ref<'open' | 'resolved'>('open')
+const counts = computed(() => ({
+  open: props.threadState.threads.filter((thread) => thread.state === 'open').length,
+  resolved: props.threadState.threads.filter((thread) => thread.state === 'resolved').length,
+}))
 
 const WIDTH_KEY = 'cheese:docs:comments-width'
 const root = ref<HTMLElement | null>(null)
@@ -110,10 +117,17 @@ async function showComments(inFloatingWindow?: boolean) {
   if (inFloatingWindow !== undefined) floating.value = inFloatingWindow
   return show()
 }
-async function open(target: { anchorId: string | null; quote: string }, prefill?: string) {
-  if (await showComments(!!target.anchorId || !!target.quote)) commentsRef.value?.open(target, prefill)
+async function open(spot: CommentSpot, prefill?: string) {
+  filter.value = 'open'
+  if (await showComments(!!spot.quote)) commentsRef.value?.open(spot, prefill)
+}
+/** 对整篇写评论。 */
+function writeOnDocument() {
+  void open({ quote: '', from: 0, to: 0, rel: null })
 }
 async function locate(id: string) {
+  const thread = props.threadState.threads.find((item) => item.comment.id === id)
+  if (thread) filter.value = thread.state
   if (await showComments(true)) commentsRef.value?.locate(id)
 }
 function switchSurface() {
@@ -263,10 +277,31 @@ defineExpose({ open, locate, toggle, close, opened, busy })
         @keydown="resizeKey"
       />
       <header class="doc-comment-panel__head">
-        <span
-          >{{ t('work.room.comments.title') }} <span class="t-meta">{{ comments.length }}</span></span
-        >
+        <div class="doc-comment-panel__tabs" role="tablist" :aria-label="t('work.room.comments.filter')">
+          <button
+            v-for="kind in ['open', 'resolved'] as const"
+            :key="kind"
+            type="button"
+            role="tab"
+            class="doc-comment-panel__tab"
+            :aria-selected="filter === kind"
+            @click="filter = kind"
+          >
+            {{ t(`work.room.comments.${kind}`) }}
+            <span class="doc-comment-panel__count">{{ counts[kind] }}</span>
+          </button>
+        </div>
         <div class="doc-comment-panel__window-actions">
+          <button
+            v-if="writable"
+            type="button"
+            class="doc-comment-panel__close"
+            :aria-label="t('work.room.comments.write')"
+            :title="t('work.room.comments.write')"
+            @click="writeOnDocument"
+          >
+            <v-icon size="18">mdi-plus</v-icon>
+          </button>
           <button
             v-if="canDock"
             type="button"
@@ -297,17 +332,17 @@ defineExpose({ open, locate, toggle, close, opened, busy })
           :send-comment="sendComment"
           :thread-state="threadState"
           :thread-actions="threadActions"
-          :comments="comments"
-          :anchor-nodes="anchorNodes"
           :open-id="openId"
-          :quote-state="quoteState"
+          :place-of="placeOf"
+          :agent-name="agentName"
           :mention-names="mentionNames"
+          :name-of="nameOf"
+          :writable="writable"
+          :filter="filter"
           @update:open-id="emit('update:openId', $event)"
           @busy="busy = $event"
-          @locate-node="emit('locate-node', $event)"
-          @posted="emit('posted')"
+          @locate="emit('locate', $event)"
         />
-        <p v-if="busy" role="status" class="doc-comment-panel__status">{{ t('work.room.comments.waitForSend') }}</p>
       </div>
     </aside>
   </div>
@@ -333,7 +368,8 @@ defineExpose({ open, locate, toggle, close, opened, busy })
   max-width: 100%;
   padding: 0;
   border-inline-start: 1px solid var(--line);
-  background: var(--surface);
+  /* 卡片是白的一张张，底下这一列沉一档，和原型一样。 */
+  background: var(--canvas);
   outline: none;
 }
 .doc-comment-panel--drawer {
@@ -372,12 +408,11 @@ defineExpose({ open, locate, toggle, close, opened, busy })
   outline-offset: 2px;
 }
 .doc-tool-content {
-  display: flex;
-  flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
   min-width: 0;
-  overflow: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .doc-comment-panel__window-actions {
   display: flex;
@@ -415,9 +450,40 @@ defineExpose({ open, locate, toggle, close, opened, busy })
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
-.doc-comment-panel__status {
-  margin: 6px 0 0;
+.doc-comment-panel__tabs {
+  display: flex;
+  gap: 2px;
+}
+.doc-comment-panel__tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
   color: var(--muted);
-  font-size: 12px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--dur-quick) var(--ease-standard);
+}
+.doc-comment-panel__tab:hover {
+  background: var(--fill);
+}
+.doc-comment-panel__tab[aria-selected='true'] {
+  background: var(--fill);
+  color: var(--ink);
+  font-weight: 600;
+}
+.doc-comment-panel__count {
+  color: var(--faint);
+  font-weight: 400;
+}
+.doc-comment-panel__tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 </style>

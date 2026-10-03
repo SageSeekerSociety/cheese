@@ -23,7 +23,12 @@
       "focus": "chat",
       "tag": "说清要交什么，@ 芝士",
       "events": [
-        { "at": 400, "do": "say", "who": "wang", "text": "<@cheese> 这是我的题目要求：用课程发的那份 sales.csv，说清这三个月的变化和原因。先帮我讲清楚要交什么，再列出要做的几步。" }
+        {
+          "at": 400,
+          "do": "say",
+          "who": "wang",
+          "text": "<@cheese> 这是我的题目要求：用课程发的那份 sales.csv，说清这三个月的变化和原因。先帮我讲清楚要交什么，再列出要做的几步。"
+        }
       ]
     },
     {
@@ -33,8 +38,21 @@
       "events": [
         { "at": 200, "do": "turn", "who": "cheese", "turn": "t1" },
         { "at": 200, "do": "seat", "who": "cheese", "state": "在跑一轮" },
-        { "at": 800, "do": "note", "who": "cheese", "turn": "t1", "text": "题目读过：要一份分析报告，含数据、图表和结论。有一处先确认。" },
-        { "at": 1400, "do": "say", "who": "cheese", "id": "ask1", "text": "数据用哪一份？", "options": ["课程发的那份 sales.csv", "项目里的演示数据"] },
+        {
+          "at": 800,
+          "do": "note",
+          "who": "cheese",
+          "turn": "t1",
+          "text": "题目读过：要一份分析报告，含数据、图表和结论。有一处先确认。"
+        },
+        {
+          "at": 1400,
+          "do": "say",
+          "who": "cheese",
+          "id": "ask1",
+          "text": "数据用哪一份？",
+          "options": ["课程发的那份 sales.csv", "项目里的演示数据"]
+        },
         { "at": 2200, "do": "answer", "id": "ask1", "option": "课程发的那份 sales.csv", "by": "王长鑫" },
         { "at": 2700, "do": "note", "who": "cheese", "turn": "t1", "text": "好，就用课程发的那份。" }
       ]
@@ -44,10 +62,33 @@
       "focus": "site",
       "tag": "步骤清单写在对话里，做一步勾一步",
       "events": [
-        { "at": 300, "do": "checklist", "who": "cheese", "id": "todo1", "items": [{ "subject": "读题目和 sales.csv", "status": "completed" }, { "subject": "整理三个月的数据", "status": "in_progress" }, { "subject": "写报告正文和图表", "status": "pending" }, { "subject": "把文件交给你审阅", "status": "pending" }] },
+        {
+          "at": 300,
+          "do": "checklist",
+          "who": "cheese",
+          "id": "todo1",
+          "items": [
+            { "subject": "读题目和 sales.csv", "status": "completed" },
+            { "subject": "整理三个月的数据", "status": "in_progress" },
+            { "subject": "写报告正文和图表", "status": "pending" },
+            { "subject": "把文件交给你审阅", "status": "pending" }
+          ]
+        },
         { "at": 1000, "do": "act", "who": "cheese", "turn": "t1", "tool": "Read", "arg": "sales.csv" },
         { "at": 1600, "do": "act", "who": "cheese", "turn": "t1", "tool": "Write", "arg": "销售分析报告.md" },
-        { "at": 2300, "do": "checklist", "who": "cheese", "id": "todo1", "result": "报告写好了，接下来递给你审阅。", "items": [{ "subject": "读题目和 sales.csv", "status": "completed" }, { "subject": "整理三个月的数据", "status": "completed" }, { "subject": "写报告正文和图表", "status": "completed" }, { "subject": "把文件交给你审阅", "status": "completed" }] }
+        {
+          "at": 2300,
+          "do": "checklist",
+          "who": "cheese",
+          "id": "todo1",
+          "result": "报告写好了，接下来递给你审阅。",
+          "items": [
+            { "subject": "读题目和 sales.csv", "status": "completed" },
+            { "subject": "整理三个月的数据", "status": "completed" },
+            { "subject": "写报告正文和图表", "status": "completed" },
+            { "subject": "把文件交给你审阅", "status": "completed" }
+          ]
+        }
       ]
     },
     {
@@ -78,9 +119,40 @@
         ]
       },
       "events": [
-        { "at": 300, "do": "act", "who": "cheese", "turn": "t1", "tool": "cheese_accept_request", "arg": "feat(report): sales analysis", "platform": true },
-        { "at": 600, "do": "checks", "checks": { "mergeable": true, "state": "open", "checks": [{ "name": "required-ci / lint", "status": "completed", "conclusion": "success" }] } },
-        { "at": 900, "do": "card", "card": { "status": "pending", "change_subject": "feat(report): three-month sales analysis", "merge_state": { "state": "clean", "who": "human", "reasons": [{ "kind": "ready", "checks": [], "detail": "" }], "head_sha": null, "checked_at": null, "since": null } } },
+        {
+          "at": 300,
+          "do": "act",
+          "who": "cheese",
+          "turn": "t1",
+          "tool": "cheese_accept_request",
+          "arg": "feat(report): sales analysis",
+          "platform": true
+        },
+        {
+          "at": 600,
+          "do": "checks",
+          "checks": {
+            "mergeable": true,
+            "state": "open",
+            "checks": [{ "name": "required-ci / lint", "status": "completed", "conclusion": "success" }]
+          }
+        },
+        {
+          "at": 900,
+          "do": "card",
+          "card": {
+            "status": "pending",
+            "change_subject": "feat(report): three-month sales analysis",
+            "merge_state": {
+              "state": "clean",
+              "who": "human",
+              "reasons": [{ "kind": "ready", "checks": [], "detail": "" }],
+              "head_sha": null,
+              "checked_at": null,
+              "since": null
+            }
+          }
+        },
         { "at": 1500, "do": "say", "who": "cheese", "text": "报告在这张卡上，你点「审阅」看一遍，没问题就「采纳」。" },
         { "at": 2100, "do": "end", "turn": "t1" },
         { "at": 2100, "do": "seat", "who": "cheese", "state": "空闲" }

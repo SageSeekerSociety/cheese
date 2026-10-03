@@ -49,9 +49,7 @@
               "reasons": [
                 {
                   "kind": "ci_running",
-                  "checks": [
-                    "CI required"
-                  ],
+                  "checks": ["CI required"],
                   "detail": "检查进行中"
                 }
               ],
@@ -334,9 +332,7 @@
               "filename": null,
               "url": null
             },
-            "approvals": [
-              "李甘"
-            ],
+            "approvals": ["李甘"],
             "approvals_required": 2
           }
         },

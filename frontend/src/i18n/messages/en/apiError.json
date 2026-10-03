@@ -24,7 +24,7 @@
   "titleRequired": "Title can't be empty",
   "taskNotInRoom": "This task isn't in this room",
   "messageNotInTask": "This message isn't in this task",
-  "commentAnchorNotInDoc": "The comment anchor isn't part of this topic's document",
+  "commentDocFrozen": "This topic is archived and takes no more comments",
   "cursorEventNotFound": "That event doesn't exist",
   "stepNotFound": "This step doesn't exist",
   "roomArchivedUnarchiveFirst": "This room is archived. Unarchive it before continuing work",

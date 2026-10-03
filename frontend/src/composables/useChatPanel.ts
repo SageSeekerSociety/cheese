@@ -48,6 +48,7 @@ import { isAgentBlock, isAgentHandle, isPersonBlock } from '../lib/authorship'
 import { cachedWindow, pendingBlockRefresh, setCachedWindow } from '../lib/blockCache'
 import { mergeRefreshedTail, PAGE_SIZE } from '../lib/blockPaging'
 import { dayLabelsFor, outboxEdgeAfter, type RunEdge, runEdgeBetween, unreadAnchorBlock } from '../lib/chatGrouping'
+import { announceComments } from '../lib/docCommentSignals'
 import { activityLines as memberActivityLines } from '../lib/memberActivity'
 import { renderNoticeMessage } from '../lib/noticeText'
 import { outgoingMessageBody, pendingMessageBlock } from '../lib/outgoingMessage'
@@ -404,6 +405,9 @@ export function useChatPanel(opts: ChatPanelOptions) {
         break
       case 'activity':
         activity.apply(frame)
+        break
+      case 'comment_activity': // on the thread's card in this room's document panel
+        announceComments(topic()?.id ?? '', { ...frame, kind: 'activity' })
         break
       case 'activity_snapshot':
         activity.snapshot(frame.members)
