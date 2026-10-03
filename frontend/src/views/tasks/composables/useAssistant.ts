@@ -32,7 +32,7 @@ export function useAssistant(taskId: () => number) {
   const messages = ref<AssistantMessage[]>([])
   /** 正在流进来的那一段回答；没有在答时是 null。 */
   const streaming = ref<string | null>(null)
-  /** 芝士此刻在用的工具名（`search_docs` 之类），面板把它说成人话。 */
+  /** 芝士此刻在用的工具名（`cheese_docs_search` 之类），面板把它说成人话。 */
   const tool = ref<string | null>(null)
   /** 没答上来、额度用完之类要告诉人的那一句。 */
   const notice = ref<string | null>(null)

@@ -39,6 +39,7 @@ from app.domain.agent.harness.pi.handless import (
     Looking,
     Said,
 )
+from app.domain.living_doc import work_edits
 
 logger = logging.getLogger(__name__)
 
@@ -204,7 +205,7 @@ async def stop(
 ) -> None:
     """Stop what the box is waiting on: its turn, or the answer being written."""
     await redis.set(_stop_key(conversation), "1", ex=int(doc_agent.WAIT_S))
-    if await doc_agent.asking(redis, conversation) is not None:
+    if await doc_agent.asked(redis, conversation):
         await sessions.abort(document.state_dir(project_id, conversation))
 
 
@@ -231,7 +232,7 @@ def _question(
         rule = "这次只回答，不要改文档。"
     elif selection is not None:
         rule = (
-            "要改就只改 <选中> 标出的文字；edit_document 的 old 从文档原文照抄，"
+            "要改就只改 <选中> 标出的文字；cheese_doc_edit 的 old 从文档原文照抄，"
             "不含 <选中> 标记。"
         )
     else:
@@ -278,9 +279,6 @@ async def ask(
         redis,
         project_id,
         conversation,
-        doc_agent.Asking(
-            asker, bound.agent_handle, room_id, may_edit=allowed, work=str(work)
-        ),
         on_wait=queued,
         stopped=stopped,
     )
@@ -299,6 +297,15 @@ async def ask(
             around = await doc_agent.surroundings(
                 db, project_id=project_id, room_id=room_id, seat=bound.agent_handle
             )
+            acting = await doc_agent.credential(
+                db,
+                project_id=project_id,
+                room_id=room_id,
+                agent=bound.agent_handle,
+                asker=asker,
+                work=work,
+                may_edit=allowed,
+            )
         question = _question(
             around, preset=chosen, text=text, selection=selection, may_edit=allowed
         )
@@ -312,7 +319,7 @@ async def ask(
         )
         spent = True
         async for event in sessions.ask(
-            launch, work, question, ceiling_s=doc_agent.ANSWER_S
+            launch, work, question, credential=acting, ceiling_s=doc_agent.ANSWER_S
         ):
             if isinstance(event, Said):
                 await emit("delta", {"text": event.text})
@@ -339,7 +346,7 @@ async def ask(
         refused = say("docAgentBoxFailed", agent=bound.agent_name)
     finally:
         await slot.release()
-        edits = await doc_agent.edits_of(redis, work)
+        edits = await work_edits.take(redis, str(work))
     was_stopped = await stopped()
     if refused is None or edits or was_stopped:
         # What was changed was changed, answer or not: the box shows it and can

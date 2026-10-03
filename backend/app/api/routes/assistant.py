@@ -18,7 +18,7 @@ import time
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Path, Request
+from fastapi import APIRouter, Depends, Path
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
@@ -31,14 +31,11 @@ from app.core.background import spawn
 from app.core.config import settings
 from app.core.db import async_session_factory
 from app.core.errors import (
-    AuthenticationRequiredError,
     BaseError,
-    ForbiddenError,
     NotFoundError,
     message_key,
 )
 from app.core.redis import get_redis_client
-from app.core.sandbox_auth import personal_claims
 from app.core.sentences import say
 from app.domain.agent.harness.pi.handless import (
     HandlessSessions,
@@ -47,7 +44,6 @@ from app.domain.agent.harness.pi.handless import (
 )
 from app.domain.agent.harness.pi.personal import Launch
 from app.domain.assistant import service as assistant
-from app.domain.assistant import tools as personal_tools
 from app.domain.assistant.keys import person_key
 from app.domain.assistant.prompt import task_brief
 from app.domain.feature_stats import pricing
@@ -251,38 +247,3 @@ async def ask(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
     )
-
-
-@router.post("/tools/{name}", include_in_schema=False)
-async def personal_tool(name: str, request: Request, db: DbSession) -> dict:
-    """One tool call of a person's 芝士, run as that person.
-
-    The session presents its personal credential, and nothing else opens this:
-    not a person's login, not a room's or a project's credential, not the
-    platform's own secret. The conversation it names must still be the person's.
-    """
-    claims = personal_claims(request.headers.get("x-cheese-token") or "")
-    if claims is None:
-        raise AuthenticationRequiredError("A personal credential is required")
-    try:
-        conversation_id = uuid.UUID(claims.conversation_id)
-        await assistant.AssistantConversations(db).owned(
-            claims.user_id, conversation_id
-        )
-    except (ValueError, assistant.ConversationNotFound) as exc:
-        raise ForbiddenError("This credential's conversation is gone") from exc
-    if name not in personal_tools.NAMES:
-        raise NotFoundError.for_resource("tool", name)
-    try:
-        arguments = await request.json()
-    except ValueError:
-        # What the model wrote is not ours to crash on; the tool reads it as
-        # no arguments and says so in its answer.
-        arguments = {}
-    text = await personal_tools.run(
-        name,
-        arguments if isinstance(arguments, dict) else {},
-        user_id=claims.user_id,
-        sessions=async_session_factory,
-    )
-    return ok({"text": text})

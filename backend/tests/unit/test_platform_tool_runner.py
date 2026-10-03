@@ -726,3 +726,68 @@ def test_a_docs_read_returns_the_page_itself():
         == "# 验收"
     )
     assert host.requests[0]["body"] == {"page": "accept", "topic": _ROOM}
+
+
+# --- what a 芝士 answering someone looks up ---------------------------------
+
+
+def test_a_memory_is_read_by_its_name_and_the_index_is_not_one():
+    files = {
+        "data": [
+            {"path": "index.md", "content": "- [deploy](deploy.md)"},
+            {"path": "deploy.md", "content": "部署走 CI。"},
+        ],
+        "total": 2,
+    }
+    host = Host({("GET", "/memory/files"): files})
+
+    assert run("cheese_memory_read", {"name": "deploy.md"}, host) == "部署走 CI。"
+    assert run("cheese_memory_read", {"name": "team/deploy.md"}, host) == "部署走 CI。"
+    assert run("cheese_memory_read", {"name": "index.md"}, host) == "没有这一条记忆。"
+    assert run("cheese_memory_read", {"name": "gone.md"}, host) == "没有这一条记忆。"
+
+
+def test_an_attachment_is_read_as_text_up_to_a_limit():
+    preview = ("GET", f"/topics/{_ROOM}/preview/file")
+    long = "字" * (cheese._ATTACHMENT_CHARS + 5)
+
+    text = run(
+        "cheese_attachment_read", {"path": "a.md"}, Host({preview: {"content": "正文"}})
+    )
+    cut = run(
+        "cheese_attachment_read", {"path": "a.md"}, Host({preview: {"content": long}})
+    )
+    binary = run(
+        "cheese_attachment_read",
+        {"path": "a.png"},
+        Host({preview: {"content": None, "bytes": 2048}}),
+    )
+
+    assert text == "正文"
+    assert cut.startswith("字" * cheese._ATTACHMENT_CHARS)
+    assert len(cut) < len(long) + 40 and "只给了前" in cut
+    assert "2048" in binary and "读不了" in binary
+
+
+def test_a_project_search_says_when_nothing_was_found():
+    search = ("GET", "/projects/project-1/context/search")
+    empty = {"hits": {"records": [], "tasks": []}}
+    found = {"hits": {"records": [{"room": "设计", "excerpt": "里程碑三号"}]}}
+
+    assert "没有找到" in run(
+        "cheese_project_search", {"query": "里程碑"}, Host({search: empty})
+    )
+    assert "里程碑三号" in run(
+        "cheese_project_search", {"query": "里程碑"}, Host({search: found})
+    )
+
+
+def test_a_docs_search_from_no_room_names_no_room():
+    host = Host(
+        {("POST", "/docs/agent/search"): {"hits": []}}, environ={"CHEESE_TOPIC": ""}
+    )
+
+    run("cheese_docs_search", {"query": "验收"}, host)
+
+    [plan] = host.requests
+    assert "topic" not in plan["body"]

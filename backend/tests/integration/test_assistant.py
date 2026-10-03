@@ -560,12 +560,12 @@ def test_my_tasks_reports_only_what_the_asker_takes_part_in(client, gateway):
 
     asyncio.run(join())
     conversation = _start(client, here, me)
-    gateway.script = [("tool", "my_tasks", {}), ("text", "你领了一道题。")]
+    gateway.script = [("tool", "cheese_my_tasks", {}), ("text", "你领了一道题。")]
 
     r = _ask(client, conversation, "我领了哪些题？", me)
 
     assert r.status_code == 200
-    assert ("tool", {"name": "my_tasks"}) in _events(r.text)
+    assert ("tool", {"name": "cheese_my_tasks"}) in _events(r.text)
     tool_result = json.dumps(gateway.requests[-1]["messages"][-1], ensure_ascii=False)
     assert "我领的那道" in tool_result
     assert "别人的那道" not in tool_result
