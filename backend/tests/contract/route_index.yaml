@@ -1044,7 +1044,6 @@ routes:
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/comments/{comment_id}/reopen", auth: "document.member", owner: "block"}
   # app.api.routes.topics_comments
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/docs", auth: "actor.topic", owner: "block"}
-  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/comments", auth: "actor.topic", owner: "block"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/comments", auth: "actor.topic", owner: "block"}
   # app.api.routes.topics_compute
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/compute-profile", auth: "actor.topic", owner: "machine"}
