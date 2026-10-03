@@ -21,10 +21,10 @@
       <div v-for="item in applications" :key="item.id" class="py-3">
         <div class="d-flex flex-wrap align-center ga-2 mb-1">
           <v-avatar v-if="item.avatarId" size="32" :image="getAvatarUrl(item.avatarId)" />
-          <h3 class="text-body-1 font-weight-medium application-copy">{{ item.name }}</h3>
+          <h3 class="text-body-1 font-weight-medium application-copy" data-user-content>{{ item.name }}</h3>
           <span class="text-body-2 text-medium-emphasis">{{ t(`spaces.review.${item.reviewStatus}`) }}</span>
         </div>
-        <p class="text-body-2 application-copy">{{ item.reviewReason || item.intro }}</p>
+        <p class="text-body-2 application-copy" data-user-content>{{ item.reviewReason || item.intro }}</p>
         <v-btn v-if="item.reviewStatus === 'REJECTED'" class="mt-2" variant="text" @click="openResubmit(item)">{{
           t('spaces.review.resubmit')
         }}</v-btn>
@@ -122,17 +122,22 @@
                                The #error slot fills the v-img, so the char must be a
                                flex-centered fill or it sits top-left, not centered. -->
                           <template #error>
-                            <span class="space-avatar-char text-h5 text-surface font-weight-medium">{{
+                            <span class="space-avatar-char text-h5 text-surface font-weight-medium" data-user-content>{{
                               (space.name || '·').trim().charAt(0)
                             }}</span>
                           </template>
                         </v-img>
-                        <span v-else class="space-avatar-char text-h5 text-surface font-weight-medium">{{
-                          (space.name || '·').trim().charAt(0)
-                        }}</span>
+                        <span
+                          v-else
+                          class="space-avatar-char text-h5 text-surface font-weight-medium"
+                          data-user-content
+                          >{{ (space.name || '·').trim().charAt(0) }}</span
+                        >
                       </v-avatar>
-                      <v-card-title class="text-h6 mb-2">{{ space.name }}</v-card-title>
-                      <v-card-subtitle class="text-body-2 text-medium-emphasis">{{ space.intro }}</v-card-subtitle>
+                      <v-card-title class="text-h6 mb-2" data-user-content>{{ space.name }}</v-card-title>
+                      <v-card-subtitle class="text-body-2 text-medium-emphasis" data-user-content>{{
+                        space.intro
+                      }}</v-card-subtitle>
                     </v-card-item>
                   </v-card>
                 </v-col>

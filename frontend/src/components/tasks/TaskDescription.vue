@@ -1,8 +1,8 @@
 <template>
   <!-- 题目详情的正文：TipTap JSON 或 Markdown，两种都认。题目页和审核队列用同一份，
        审核的人看到的就是领题的人将来看到的。 -->
-  <TipTapViewer v-if="tipTap" class="td" :value="tipTap" />
-  <div v-else-if="markdown" class="markdown-body td t-reading" v-html="markdown" />
+  <TipTapViewer v-if="tipTap" class="td" :value="tipTap" data-user-content />
+  <div v-else-if="markdown" class="markdown-body td t-reading" data-user-content v-html="markdown" />
   <p v-else class="td__empty">{{ empty }}</p>
 </template>
 

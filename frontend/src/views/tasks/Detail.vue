@@ -283,7 +283,7 @@ onMounted(() => {
     <nav class="td__crumb">
       <router-link :to="listTo" class="td__crumb-parent">{{ t('spaces.detail.allContests') }}</router-link>
       <v-icon size="16" class="td__crumb-sep">mdi-chevron-right</v-icon>
-      <span class="td__crumb-here">{{ taskData?.name ?? '' }}</span>
+      <span class="td__crumb-here" data-user-content>{{ taskData?.name ?? '' }}</span>
     </nav>
     <template #actions>
       <template v-if="canManage">
@@ -299,18 +299,20 @@ onMounted(() => {
     <header class="td__head">
       <div class="td__lead">
         <div class="td__titleline">
-          <h1 class="td__title t-page-title">{{ taskData.name }}</h1>
+          <h1 class="td__title t-page-title" data-user-content>{{ taskData.name }}</h1>
           <span v-if="taskState" class="td__state" :class="`td__state--${taskState.tone}`">
             {{ taskState.label }}
           </span>
         </div>
         <p class="td__by t-meta-read">
           <span>{{ t('tasks.page.publishedBy', { name: publisherName, date: publishedOn }) }}</span>
-          <span v-if="taskData.category">{{ taskData.category.name }}</span>
+          <span v-if="taskData.category" data-user-content>{{ taskData.category.name }}</span>
           <span v-if="intro.origin" class="td__origin">{{ intro.origin }}</span>
-          <span v-for="topic in taskData.topics ?? []" :key="topic.id" class="td__topic">#{{ topic.name }}</span>
+          <span v-for="topic in taskData.topics ?? []" :key="topic.id" class="td__topic" data-user-content
+            >#{{ topic.name }}</span
+          >
         </p>
-        <p v-if="intro.summary" class="td__summary">{{ intro.summary }}</p>
+        <p v-if="intro.summary" class="td__summary" data-user-content>{{ intro.summary }}</p>
       </div>
 
       <div class="td__act">

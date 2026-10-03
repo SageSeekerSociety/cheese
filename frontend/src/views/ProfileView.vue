@@ -267,7 +267,7 @@ const roleInProject = computed(() => inProject.value?.source ?? null)
               </div>
             </div>
           </div>
-          <p v-if="profile.bio" class="t-body-readable profile__bio">{{ profile.bio }}</p>
+          <p v-if="profile.bio" class="t-body-readable profile__bio" data-user-content>{{ profile.bio }}</p>
           <v-btn
             v-if="isSelf"
             :to="{ name: 'UserSettingsProfile' }"
@@ -286,7 +286,7 @@ const roleInProject = computed(() => inProject.value?.source ?? null)
             <div v-if="profile.teams.length" class="profile__fact">
               <v-icon size="16" icon="mdi-account-multiple-outline" aria-hidden="true" />
               <!-- 一个团队一行：名字在行中间折开，读起来就分不清是一个团队还是两个。 -->
-              <ul class="profile__teams">
+              <ul class="profile__teams" data-user-content>
                 <li v-for="team in profile.teams" :key="team.id">
                   <router-link v-if="team.handle" :to="{ name: 'TeamsDetail', params: { handle: team.handle } }">{{
                     team.name
@@ -381,10 +381,10 @@ const roleInProject = computed(() => inProject.value?.source ?? null)
                 class="profile__row profile__row--project"
                 :to="{ name: 'workspace-project', params: { projectId: p.project_id } }"
               >
-                <span class="profile__tile" aria-hidden="true">{{ p.name.slice(0, 1) }}</span>
+                <span class="profile__tile" aria-hidden="true" data-user-content>{{ p.name.slice(0, 1) }}</span>
                 <span class="profile__row-text">
                   <span class="profile__row-title">
-                    <span class="profile__project-name">{{ p.name }}</span>
+                    <span class="profile__project-name" data-user-content>{{ p.name }}</span>
                     <ExternalTag v-if="p.source === 'external'" />
                     <span v-else class="chip-neutral">{{ roleLabel(p.source) }}</span>
                   </span>

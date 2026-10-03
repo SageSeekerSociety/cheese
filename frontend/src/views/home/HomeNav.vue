@@ -179,7 +179,12 @@ const joinOpen = ref(false)
             <v-icon size="16" class="home-nav__caret">{{
               isOpen(team) ? 'mdi-chevron-down' : 'mdi-chevron-right'
             }}</v-icon>
-            <v-avatar size="22" class="home-nav__mark" :class="{ 'home-nav__mark--person': team.personal }">
+            <v-avatar
+              size="22"
+              class="home-nav__mark"
+              :class="{ 'home-nav__mark--person': team.personal }"
+              data-user-content
+            >
               <!-- avatarId 为空时不发请求：getAvatarUrl(null) 回的是 /avatars/default，
                  后端在默认头像缺文件时按设计回 404，会把控制台刷出一条错误。 -->
               <v-img v-if="team.avatarId" :src="getAvatarUrl(team.avatarId)">
@@ -188,7 +193,7 @@ const joinOpen = ref(false)
               <template v-else>{{ team.name.slice(0, 1) }}</template>
             </v-avatar>
           </template>
-          <v-list-item-title class="home-nav__name">{{ team.name }}</v-list-item-title>
+          <v-list-item-title class="home-nav__name" data-user-content>{{ team.name }}</v-list-item-title>
           <template #append>
             <AdaptiveMenu v-if="!team.personal && isAdmin(team)" :actions="teamActions(team)" :title="team.name">
               <template #activator="{ props }">
@@ -229,9 +234,11 @@ const joinOpen = ref(false)
     <v-list-subheader>{{ t('navigation.spaces') }}</v-list-subheader>
     <v-list-item v-for="space in spaces" :key="space.id" rounded="lg" :to="spaceEntryRoute(space)">
       <template #prepend>
-        <span class="home-nav__mark home-nav__mark--letter" aria-hidden="true">{{ space.name.slice(0, 1) }}</span>
+        <span class="home-nav__mark home-nav__mark--letter" aria-hidden="true" data-user-content>{{
+          space.name.slice(0, 1)
+        }}</span>
       </template>
-      <v-list-item-title class="home-nav__name">{{ space.name }}</v-list-item-title>
+      <v-list-item-title class="home-nav__name" data-user-content>{{ space.name }}</v-list-item-title>
       <template #append>
         <v-icon size="16" class="home-nav__meta">mdi-chevron-right</v-icon>
       </template>

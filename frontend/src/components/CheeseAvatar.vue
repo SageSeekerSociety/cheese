@@ -46,6 +46,7 @@ const tone = computed(() => agentTone(props.handle || shownName.value))
     viewBox="0 0 100 100"
     role="img"
     :aria-label="shownName"
+    :data-user-content="name || undefined"
     :data-tone="tone"
     :data-state="state ?? undefined"
   >
