@@ -20,6 +20,7 @@ import { ASK_ENTRIES } from './catalogAsk'
 import { CHAT_ENTRIES } from './catalogChat'
 import { CREDITS_ENTRIES } from './catalogCredits'
 import { DASHBOARD_ENTRIES } from './catalogDashboard'
+import { DOC_BLOCK_ENTRIES } from './catalogDoc'
 import {
   ACCEPT_CARD,
   ACCEPT_DONE,
@@ -698,8 +699,7 @@ export const CATALOG: CatalogEntry[] = [
   // 验收卡那一组（从 1215 行的 TopicAcceptCard 拆出来的八件，数据在
   // `catalogFixtures.ts`）在自己的文件里：`catalogAccept.ts`。
   ...ACCEPT_ENTRIES,
-  // 输入区那一组（从 1039 行的 RoomComposer 拆出来的三件）在自己的文件里：
-  // `catalogRoom.ts`（数据就在那份里，它们要的都是几行字）。
+  // 输入区那一组（从 1039 行的 RoomComposer 拆出来的三件，数据就在那份里）在 `catalogRoom.ts`。
   ...ROOM_ENTRIES,
   // 知识库那六件（从 1508 行的 Knowledge.vue 拆出来的四块模板 + 两个对话框）在自己的
   // 文件里：`catalogKnowledge.ts`（数据在 `catalogKnowledgeFixtures.ts`）。
@@ -961,8 +961,9 @@ export const CATALOG: CatalogEntry[] = [
       },
     ],
   },
-  // 提案那两件（`AskCard`、`AskFlow`）在自己的文件里：`catalogAsk.ts`。
+  // 提案那两件（`AskCard`、`AskFlow`）和文档里的块各在自己的文件里：`catalogAsk.ts`、`catalogDoc.ts`。
   ...ASK_ENTRIES,
+  ...DOC_BLOCK_ENTRIES,
   {
     id: 'compute-choice-form',
     title: 'ComputeChoiceForm',

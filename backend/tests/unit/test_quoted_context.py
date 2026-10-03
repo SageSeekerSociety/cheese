@@ -37,6 +37,29 @@ PIN = {
     "y": 0.17,
 }
 
+CELL = {
+    "kind": "sheet-cell",
+    "path": "room/预算.xlsx",
+    "source": "committed",
+    "version": "version-c",
+    "task_id": None,
+    "sheet": "预算",
+    "address": "B7",
+    "value": "1200",
+}
+
+RANGE = {
+    "kind": "text-range",
+    "path": "room/说明.md",
+    "source": "live",
+    "version": "version-d",
+    "task_id": None,
+    "text": "失败以后重试 3 次",
+    "heading": "配置",
+    "prefix": "退避",
+    "suffix": "，超过就报错",
+}
+
 
 class QuotedContextTest(unittest.TestCase):
     def test_typed_input_preserves_quote_and_rejects_an_oversized_combination(self):
@@ -129,6 +152,73 @@ class QuotedContextTest(unittest.TestCase):
         ):
             with self.subTest(quote=quote), self.assertRaises(ValidationError):
                 ChatMessageIn.model_validate({**body, "quoted_context": quote})
+
+    def test_a_cell_keeps_its_address_and_content_and_rejects_a_pageless_shape(self):
+        import uuid
+
+        body = {
+            "content": "这一格不对",
+            "request_id": str(uuid.uuid4()),
+            "quoted_context": CELL,
+        }
+        parsed = ChatMessageIn.model_validate(body)
+        self.assertEqual(parsed.quoted_context.model_dump(mode="json"), CELL)
+        # CSV has no sheet name: an empty one is the shape, not a missing field.
+        csv = ChatMessageIn.model_validate(
+            {**body, "quoted_context": {**CELL, "sheet": ""}}
+        )
+        self.assertEqual(csv.quoted_context.sheet, "")
+        for quote in (
+            {**CELL, "address": ""},
+            {k: v for k, v in CELL.items() if k != "address"},
+            {**CELL, "sheet": 3},
+            {**CELL, "value": None},
+            # A cell has no page; extra="forbid" refuses a smuggled slide-page field.
+            {**CELL, "page": 2},
+            {**CELL, "kind": "grid"},
+        ):
+            with self.subTest(quote=quote), self.assertRaises(ValidationError):
+                ChatMessageIn.model_validate({**body, "quoted_context": quote})
+
+    def test_a_text_range_keeps_its_passage_and_its_optional_heading(self):
+        import uuid
+
+        body = {
+            "content": "改这句",
+            "request_id": str(uuid.uuid4()),
+            "quoted_context": RANGE,
+        }
+        parsed = ChatMessageIn.model_validate(body)
+        self.assertEqual(parsed.quoted_context.model_dump(mode="json"), RANGE)
+        # A passage before the first heading has no section name.
+        top = ChatMessageIn.model_validate(
+            {**body, "quoted_context": {**RANGE, "heading": None}}
+        )
+        self.assertIsNone(top.quoted_context.heading)
+        for quote in (
+            {k: v for k, v in RANGE.items() if k != "text"},
+            {k: v for k, v in RANGE.items() if k != "prefix"},
+            {k: v for k, v in RANGE.items() if k != "suffix"},
+            {**RANGE, "heading": 5},
+            {**RANGE, "page": 1},
+            {**RANGE, "kind": "document"},
+        ):
+            with self.subTest(quote=quote), self.assertRaises(ValidationError):
+                ChatMessageIn.model_validate({**body, "quoted_context": quote})
+
+    def test_new_quote_kinds_reach_the_model_as_the_same_data(self):
+        for quote in (CELL, RANGE):
+            with self.subTest(kind=quote["kind"]):
+                block = SimpleNamespace(
+                    kind=BlockKind.message,
+                    author="alice",
+                    content="<@cheese-current> 看一下",
+                    meta={"quoted_context": quote},
+                )
+                prompt = prompt_line(block, embeds_images=False)
+                self.assertIn("{", prompt, "the model must receive the quoted source")
+                parsed, _ = json.JSONDecoder().raw_decode(prompt[prompt.index("{") :])
+                self.assertEqual(parsed, quote)
 
     def test_a_pin_reaches_the_model_as_the_same_data(self):
         block = SimpleNamespace(

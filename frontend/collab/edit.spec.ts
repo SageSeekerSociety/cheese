@@ -6,7 +6,7 @@ import type { Node as PMNode } from '@tiptap/pm/model'
 import { Transform } from '@tiptap/pm/transform'
 import { describe, expect, it } from 'vitest'
 
-import { COMMENT_ANCHOR, commentAnchors, parseMarkdown } from '../src/lib/docSchema'
+import { COMMENT_ANCHOR, commentAnchors, nodeMarkdown, parseMarkdown, withoutSuggestions } from '../src/lib/docSchema'
 
 import { applyEdits } from './edit'
 
@@ -36,5 +36,27 @@ describe('a comment through the agent’s edit', () => {
     const result = applyEdits(live, [{ old: '五百万行', new: '一千万条' }], 'direct', 'cheese')
     if (!result.ok) throw new Error(JSON.stringify(result))
     expect(marked(result.doc, 't1')).toEqual([])
+  })
+})
+
+describe('the agent’s suggestion inside a block', () => {
+  it.each([
+    ['a status tag', '结果 {✓ 通过}。\n', '{✓ 通过}', '{✗ 不通过}'],
+    ['a timeline item', ':::timeline\n- 周一 | 开始\n  说明。\n:::\n', '说明。', '新的说明。'],
+    ['a stat card', ':::stats\n- 甲 | 1 | +2%\n:::\n', '| 1 |', '| 3 |'],
+    ['a footnote', '正文[^1]。\n\n[^1]: 旧\n', '[^1]: 旧', '[^1]: 新'],
+  ])('leaves %s as it was until someone accepts it', (_name, markdown, old, replacement) => {
+    const result = applyEdits(parseMarkdown(markdown), [{ old, new: replacement }], 'suggest', 'cheese')
+    if (!result.ok) throw new Error(JSON.stringify(result))
+    expect(nodeMarkdown(withoutSuggestions(result.doc))).toBe(markdown.trimEnd())
+  })
+
+  it('cannot propose a different kind of callout, only make the change', () => {
+    const live = parseMarkdown('> [!NOTE]\n> 补充。\n')
+    const suggested = applyEdits(live, [{ old: '[!NOTE]', new: '[!WARNING]' }], 'suggest', 'cheese')
+    expect(suggested.ok).toBe(false)
+    const direct = applyEdits(live, [{ old: '[!NOTE]', new: '[!WARNING]' }], 'direct', 'cheese')
+    if (!direct.ok) throw new Error(JSON.stringify(direct))
+    expect(nodeMarkdown(direct.doc)).toBe('> [!WARNING]\n> 补充。')
   })
 })

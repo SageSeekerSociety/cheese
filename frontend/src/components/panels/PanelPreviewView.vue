@@ -37,6 +37,7 @@ import RevisionList from './preview/RevisionList.vue'
 import RoomOutputs from './preview/RoomOutputs.vue'
 import { usePreviewImageRegion } from './preview/usePreviewImageRegion'
 import { usePreviewPagePin } from './preview/usePreviewPagePin'
+import { usePreviewQuote } from './preview/usePreviewQuote'
 
 // The editor and its history only load once someone opens them: most previews
 // never do, and every panel that shows a preview would otherwise carry them.
@@ -192,7 +193,6 @@ const pagesRef = ref<InstanceType<typeof PreviewPages> | null>(null)
 // 不做能长期保留的批注——读者要改的那句话，正是芝士下一轮要改掉的那句话，锚点必然
 // 失效。这条评论只在下一轮被读一次，之后它属于对话记录。
 const locator = ref<{ label: string; quote: string; address: string; context?: QuoteContext } | null>(null)
-const pageContext = ref<SlidePageContext | null>(null)
 const locatorNote = ref('')
 const imageRegion = usePreviewImageRegion(props, clearLocator)
 const pageLocator = usePreviewPagePin(props, {
@@ -200,10 +200,11 @@ const pageLocator = usePreviewPagePin(props, {
   open: openLocator,
   clear: clearLocator,
 })
+const quoted = usePreviewQuote(props, (context) => pageLocator.canUse(context))
 
 function openLocator(label: string, quote: string, address: string, context?: QuoteContext) {
   imageRegion.clear()
-  pageContext.value = null
+  quoted.clear()
   pageLocator.pin.value = null
   locator.value = { label, quote, address, context }
   locatorNote.value = ''
@@ -212,7 +213,7 @@ function openLocator(label: string, quote: string, address: string, context?: Qu
 function clearLocator() {
   imageRegion.clear()
   locator.value = null
-  pageContext.value = null
+  quoted.clear()
   pageLocator.pin.value = null
   pagesRef.value?.clearMark()
   locatorNote.value = ''
@@ -227,7 +228,7 @@ function onPageContext(payload: SlidePageContext) {
   if (!pageLocator.canUse(payload.context)) return
   const page = t('work.room.preview.page', { page: payload.page })
   openLocator(page, payload.scope === 'page' ? t('slides.wholePage') : payload.text.slice(0, 200), page)
-  pageContext.value = { ...payload, context: { ...payload.context } }
+  quoted.page.value = { ...payload, context: { ...payload.context } }
 }
 watch(
   [
@@ -263,6 +264,7 @@ function onCell(payload: { address: string; value: string; sheet: string }) {
   // CSV 没有工作表名，`!B7` 会让读者以为前面漏了个名字。
   const where = payload.sheet ? `${payload.sheet}!${payload.address}` : payload.address
   openLocator(where, payload.value || t('work.room.preview.emptyCell'), where)
+  quoted.cell(payload)
 }
 
 function onMarkdownQuote(payload: MarkdownQuote) {
@@ -271,6 +273,7 @@ function onMarkdownQuote(payload: MarkdownQuote) {
     ? t('work.room.preview.mdHeading', { heading: payload.heading })
     : t('work.room.preview.mdTop')
   openLocator(where, payload.text.slice(0, 200), where, { prefix: payload.prefix, suffix: payload.suffix })
+  quoted.range(payload)
 }
 
 function contextLine({ prefix, suffix }: QuoteContext): string {
@@ -295,25 +298,10 @@ function sendLocator() {
     clearLocator()
     return
   }
-  if (pageContext.value) {
-    const payload = pageContext.value
-    if (!pageLocator.canUse(payload.context)) return
-    const accepted = props.submitQuestion?.({
-      intent: 'ask-agent',
-      topicId: payload.context.topicId,
-      content: note,
-      quotedContext: {
-        kind: 'slide-page',
-        path: payload.context.path,
-        source: payload.context.source,
-        version: payload.context.version,
-        task_id: payload.context.taskId ?? null,
-        page: payload.page,
-        scope: payload.scope,
-        text: payload.text,
-      },
-    })
-    if (accepted) clearLocator()
+  // 结构化引用发得出去就走它；没有可发的（null）才退回下面拼一句话那条老路。
+  const sent = quoted.send(note)
+  if (sent !== null) {
+    if (sent) clearLocator()
     return
   }
   const message = t('work.room.preview.locateMessage', {
@@ -741,6 +729,9 @@ async function onAnnotate(payload: AnnotateDraft) {
       <div>{{ t('work.room.preview.empty') }}</div>
     </div>
 
+    <!-- 这个房间里摆出来过的东西，以及把其中一份留进资料库的那个动作 (#1085 结
+         论四)。上面那块预览只看得到最后一样，而那个动作只有人能按。 -->
+    <RoomOutputs v-if="!path" :topic-id="topicId" @open="emit('open-file', $event)" />
     <PreviewLocator
       v-model:note="locatorNote"
       :target="imageRegion.target.value ? null : locator"
@@ -748,9 +739,6 @@ async function onAnnotate(payload: AnnotateDraft) {
       @send="sendLocator"
       @cancel="clearLocator"
     />
-    <!-- 这个房间里摆出来过的东西，以及把其中一份留进资料库的那个动作 (#1085 结
-         论四)。上面那块预览只看得到最后一样，而那个动作只有人能按。 -->
-    <RoomOutputs v-if="!path" :topic-id="topicId" @open="emit('open-file', $event)" />
 
     <v-dialog :model-value="!!editing" fullscreen @update:model-value="(open: boolean) => !open && closeEditor()">
       <RoomFileEditor

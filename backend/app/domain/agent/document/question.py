@@ -33,6 +33,7 @@ from app.core.sentences import say
 from app.domain.agent.admission import Hold, Pool, Slot, enter, holding
 from app.domain.agent.document.machine import machine_to_read
 from app.domain.agent.harness.pi import document
+from app.domain.agent.skills import load_skills
 from app.domain.agent.supply import GATEWAY
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.models import BlockKind
@@ -278,7 +279,10 @@ def system_prompt(
     place, answer = _WHERE[where]
     machine = _MACHINE.format(workspace=workspace) if workspace else _NO_MACHINE
     parts = [
-        _RULES.format(agent=agent_name, place=place, answer=answer, machine=machine)
+        _RULES.format(agent=agent_name, place=place, answer=answer, machine=machine),
+        # Every session here writes into a document, so the writing guide is
+        # always in the prompt rather than a skill the agent may not load.
+        load_skills(["doc-writing"]),
     ]
     if charter:
         parts.append(f"## 项目章程\n<章程>\n{charter}\n</章程>")
