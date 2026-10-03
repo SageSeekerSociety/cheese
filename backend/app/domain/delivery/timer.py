@@ -50,9 +50,9 @@ async def deliver_at(
     project_id: uuid.UUID,
 ) -> TimedDelivery:
     if when.tzinfo is None:
-        raise ValidationError("投递时刻要带时区")
+        raise ValidationError(say("deliveryTimeNeedsZone"))
     if not event.strip():
-        raise ValidationError("要递的东西不能是空的")
+        raise ValidationError(say("deliveryContentEmpty"))
     agent_id = receiver_id = None
     if how_it_arrives(recipient) is Arrival.turn:
         agent = await instance_for_seat(session, project_id, recipient)

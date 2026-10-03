@@ -15,6 +15,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError
+from app.domain.block.notice_text import say
 from app.domain.living_doc.models import (
     DocumentLock,
     DocumentOperation,
@@ -68,9 +69,9 @@ class DocumentJournal:
         )
         if row is not None:
             if row.fingerprint != fingerprint:
-                raise ConflictError("同一 operation_id 已用于不同的文档请求")
+                raise ConflictError(say("docOperationIdReused"))
             if row.receipt is None:
-                raise ConflictError("文档操作没有完整回执，不能重新应用")
+                raise ConflictError(say("docOperationNoReceipt"))
             return row
         row = DocumentOperation(
             room_id=room_id,
@@ -109,7 +110,7 @@ class DocumentJournal:
         if row is None:
             return None
         if row.fingerprint != payload_fingerprint(payload):
-            raise ConflictError("同一 operation_id 已用于不同的文档请求")
+            raise ConflictError(say("docOperationIdReused"))
         return row.receipt
 
     async def append(

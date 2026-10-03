@@ -477,7 +477,11 @@ def _error_message(response: httpx.Response) -> str:
         body = response.json()
     except ValueError:
         text = (response.text or "").strip()
-        return text[:300] if text else f"网关返回 HTTP {response.status_code}"
+        return (
+            text[:300]
+            if text
+            else say("gatewayAdminHttpStatus", status=response.status_code)
+        )
     if isinstance(body, dict):
         error = body.get("error")
         if isinstance(error, dict) and isinstance(error.get("message"), str):
@@ -491,7 +495,11 @@ def _error_message(response: httpx.Response) -> str:
             return str(detail)
         if error is not None:
             return str(error)
-    return str(body)[:300] if body else f"网关返回 HTTP {response.status_code}"
+    return (
+        str(body)[:300]
+        if body
+        else say("gatewayAdminHttpStatus", status=response.status_code)
+    )
 
 
 def _num(value: object) -> float:

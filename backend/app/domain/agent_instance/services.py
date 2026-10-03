@@ -252,9 +252,7 @@ class AgentInstanceService:
     ) -> AgentInstance:
         handle = handle.strip()
         if not _HANDLE_RE.match(handle):
-            raise ValidationError(
-                "agent handle 只能包含小写字母、数字和 .-_，且以字母或数字开头"
-            )
+            raise ValidationError(say("agentHandleFormat"))
         if handle == UNRESOLVED_AGENT_HANDLE:
             raise ValidationError(say("agentHandleReserved", handle=repr(handle)))
         if await self._repo.get_by_handle(project_id=project_id, handle=handle):
@@ -331,9 +329,9 @@ class AgentInstanceService:
         that keys the memory pool, so a rename must not move what it knows."""
         name = display_name.strip()
         if not name:
-            raise ValidationError("名字不能为空")
+            raise ValidationError(say("agentNameRequired"))
         if len(name) > 64:
-            raise ValidationError("名字最多 64 个字")
+            raise ValidationError(say("agentNameTooLong"))
         instance.display_name = name
         return instance
 
@@ -421,7 +419,7 @@ class AgentInstanceService:
 
     async def _require_known_type(self, type_name: str | None) -> None:
         if type_name and type_name not in preset_types():
-            raise ValidationError(f"agent 类型 {type_name!r} 不存在")
+            raise ValidationError(say("agentTypeNotFound", type=repr(type_name)))
 
     @staticmethod
     def resolved(instance: AgentInstance) -> ResolvedAgent:

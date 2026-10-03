@@ -18,6 +18,8 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.domain.block.notice_text import say
+
 # 模型名允许的字符集。它同时是网关路由里的 key 和页面上唯一的标识，放空格或斜杠进来
 # 只会让它在 URL 与日志里被编成一团，没有好处。长度跟着契约的 1..64。
 _NAME_PATTERN = r"^[A-Za-z0-9._-]+$"
@@ -105,10 +107,7 @@ class _ModelBodyBase(BaseModel):
         if not value:
             return None
         if not api_base_allowed(value):
-            raise ValueError(
-                "api_base 必须是 https:// 开头的地址（计量代理的 ChatGPT 入口 "
-                "http://metering-proxy:8445/chatgpt/<账号> 除外）"
-            )
+            raise ValueError(say("apiBaseMustBeHttps"))
         return value
 
 

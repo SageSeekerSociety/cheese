@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import NotFoundError, ValidationError
 from app.domain.agent.runtime import get_broker
 from app.domain.block.models import AuthorType, BlockKind
+from app.domain.block.notice_text import say
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.identity.handles import looks_like_agent_handle
@@ -266,10 +267,7 @@ class ProjectNotificationService:
             # 成一人一行之后「展开成零行」就是把整条通知扔了，而路由照样回 200、
             # `cheese_notify` 把返回值整个丢掉 —— 发的人和收的人都不会知道。一条
             # 到不了任何人的通知不是成功。
-            raise ValidationError(
-                "这条通知没有收件人：这个房间的名册上只有 agent（或者这个项目还"
-                "没有成员和主人）。点名一个人再发。"
-            )
+            raise ValidationError(say("notificationNoRecipients"))
         rows: list[Notification] = []
         for handle in recipients:
             user = await user_by_handle(self._session, handle)
@@ -385,14 +383,14 @@ class ProjectNotificationService:
         读得到。"""
         row = await self.get_or_404(notification_id)
         if row.type != NotificationType.DECISION_REQUEST:
-            raise ValidationError("只有决策请求可以拍板")
+            raise ValidationError(say("notificationOnlyDecisions"))
         # 幂等：一件事只拍一次板，重复拍不会往房间里再丢一条【决策】。
         if row.resolved_at is not None:
             return row
         payload = dict(row.metadata_payload or {})
         options = payload.get("options") or []
         if options and chosen not in options:
-            raise ValidationError("所选项不在候选项中")
+            raise ValidationError(say("notificationOptionNotOffered"))
         row.resolved_at = datetime.now(UTC)
         row.read = True
         payload["resolved_choice"] = chosen

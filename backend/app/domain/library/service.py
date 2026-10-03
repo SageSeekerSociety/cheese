@@ -57,7 +57,7 @@ def write_room_file(
     if path.split("/")[0] == LIBRARY_PREFIX:
         # `library/…` 是资料库那一份的地址（见 `read_attachment`）。房间里再写一个
         # 同名的东西，读的人就会拿到房间那份、以为看的是资料库里的原件。
-        raise ValidationError(f"{LIBRARY_PREFIX}/ 留给资料库，房间文件不能写在这里")
+        raise ValidationError(say("libraryPrefixReserved", prefix=LIBRARY_PREFIX))
     target = _safe_path(room_files_root(project_id, room_id), path)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(data)
@@ -103,7 +103,7 @@ def write_revision_blob(project_id: uuid.UUID, room_id: uuid.UUID, data: bytes) 
 
 def read_revision_blob(project_id: uuid.UUID, room_id: uuid.UUID, digest: str) -> bytes:
     if len(digest) != 64 or not all(c in "0123456789abcdef" for c in digest):
-        raise ValidationError("不是一个修订")
+        raise ValidationError(say("libraryNotARevision"))
     target = _revision_root(project_id, room_id) / digest
     if not target.is_file():
         raise NotFoundError(say("revisionContentGone"))
@@ -286,7 +286,7 @@ def artifact_snapshot_path(
     """
     leaf = Path(name).name
     if not leaf or leaf in {".", ".."}:
-        raise ValidationError(f"这不是一个文件名：{name}")
+        raise ValidationError(say("libraryNotAFileName", name=name))
     root = Path(settings.workspace_root) / ".artifacts" / str(project_id)
     return (root / str(card_id) / leaf).resolve()
 

@@ -103,7 +103,7 @@ def _require_room(parent: Topic) -> None:
     end and nothing that ends in it.
     """
     if parent.kind != TopicKind.root:
-        raise ValidationError("房间之下是「一件活」，不是另一个房间——用拆活")
+        raise ValidationError(say("roomUnderRoomUseSplit"))
 
 
 logger = logging.getLogger("cheesex.topic")
@@ -1019,12 +1019,12 @@ class TopicService:
         ownership ladder below for why it outranks the room's owner."""
         place = await PlaceResolver(self._session).resolve(place_id)
         if place is None:
-            raise NotFoundError("话题不存在")
+            raise NotFoundError(say("topicNotFound"))
         room = place.room
         # 归档后工作面冻结 (spec §6.3): no new work in a frozen room —
         # follow-up work starts a new topic from the conclusion (升级), not here.
         if room.status == TopicStatus.archived:
-            raise ValidationError("话题已归档（工作面冻结），请从结论升级成新话题")
+            raise ValidationError(say("topicArchivedFrozen"))
         # The roster is read for the ownership ladder below and for nothing else.
         # A thread does NOT get one: 唯一的主 is the whole difference between a
         # piece of work and the room it happens in, and copying the room's roster
@@ -1070,7 +1070,7 @@ class TopicService:
             branch_protection_of(project).default_reviewer or None
         )
         if reviewer_handle is None:
-            raise ValidationError("需要指定由谁审阅，或在项目设置中设置默认审阅的人")
+            raise ValidationError(say("reviewerRequired"))
         task = await TaskService(self._session).open_thread(
             project_id=room.project_id,
             room_id=room.id,
@@ -1102,11 +1102,11 @@ class TopicService:
         target = await self.get_or_404(target_topic_id)
         source = await self.get_or_404(source_topic_id)
         if source.id == target.id:
-            raise ValidationError("不能把话题克隆到它自己")
+            raise ValidationError(say("topicCloneIntoSelf"))
         if source.project_id != target.project_id:
             # Session dirs + workdir slugs are keyed per project; a cross-project
             # clone would point the transcript at a different repo. Keep in-project.
-            raise ValidationError("只能在同一项目内克隆会话")
+            raise ValidationError(say("topicCloneSameProject"))
         # The agent working in the source is the one whose conversation this
         # forks, and the agent working in the target is the one that inherits it.
         # Both are resolved rather than assumed: a room may host several, and
@@ -1124,7 +1124,7 @@ class TopicService:
             source.id, source_agent.handle, harness=harness
         )
         if not source_sid:
-            raise ValidationError("源话题还没跑过（没有可克隆的会话）")
+            raise ValidationError(say("topicCloneNeverRan"))
         new_sid = clone.mint_session_id()
         try:
             clone.clone_transcript_files(
@@ -1137,7 +1137,7 @@ class TopicService:
                 target_cwd=ws.sandbox_topic_workdir(target.id),
             )
         except FileNotFoundError as exc:
-            raise ValidationError("源话题的会话记录缺失或为空，无法克隆") from exc
+            raise ValidationError(say("topicCloneRecordMissing")) from exc
         # Point the target at the forked session so its next turn --resume's it.
         await sessions.remember(
             topic_id=target.id,

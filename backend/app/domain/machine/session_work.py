@@ -433,8 +433,8 @@ class WorkComputerUnreachable(ConflictError):
 # How long a switch waits for the machine it leaves to push. The executor gives
 # a command 120s and then reports it as still running (``runtime.bash``).
 PUSH_WAIT_S = 150.0
-PUSH_UNREACHABLE = "原来那台工作电脑连不上，无法推送改动，没有更换"
-WORKING = "正在运行任务，稍后再换"
+PUSH_UNREACHABLE = say("switchOldComputerUnreachable")
+WORKING = say("switchWhileWorking")
 
 
 async def _room_is_working(db, topic_id) -> bool:
@@ -494,7 +494,9 @@ async def push_before_switch(
         )
     # DeviceOffline and DeviceCallError are RuntimeErrors, as is a failed start.
     except (RuntimeError, TimeoutError) as exc:
-        raise WorkComputerUnreachable(f"{PUSH_UNREACHABLE}：{exc}") from exc
+        raise WorkComputerUnreachable(
+            say("switchOldComputerUnreachableBecause", error=str(exc))
+        ) from exc
     if "error" in result:
         raise ConflictError(say("switchPushFailed", error=result["error"]))
     output = result["value"]
@@ -1052,7 +1054,7 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
     verdict = gate.check(call, gate.policy_of(project.settings), claims.get("a", ""))
     authorized = request.get("authorized_by")
     if isinstance(verdict, gate.Proposal):
-        raise ForbiddenError("所选机器超出项目允许的档位，请选择已授权的资源")
+        raise ForbiddenError(say("machineTierNotAllowed"))
     if choice.profile == "cloud":
         allocation_actor = (
             Actor(**authorized)

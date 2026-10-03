@@ -813,10 +813,10 @@ async def undo(
     block = await session.get(Block, event_id)
     meta = (block.meta or {}) if block is not None else {}
     if block is None or block.topic_id != room.id or meta.get("action") != "title":
-        raise ValidationError("这条记录不是这个话题的自动改名")
+        raise ValidationError(say("renameRecordNotThisTopic"))
     if room.title_source != TitleSource.auto or room.title != meta.get("to"):
         raise ValidationError(say("titleUndoStale"))
     previous = meta.get("from")
     if not isinstance(previous, str) or not previous:
-        raise ValidationError("这条记录没有原标题")
+        raise ValidationError(say("renameRecordNoTitle"))
     await rename_by_person(session, room, previous, by=by, reason="undo")

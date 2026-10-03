@@ -8,6 +8,7 @@ here would only pin the linter's blind spots in place.
 
 import pytest
 
+from app.domain.block.notice_text import in_language
 from app.domain.review.commit_message import (
     MAX_SUBJECT,
     InvalidSubject,
@@ -77,3 +78,13 @@ def test_merge_subject_keeps_the_whole_line_inside_the_limit():
     line = merge_subject("feat: " + "x" * MAX_SUBJECT, 213)
     assert len(line) <= MAX_SUBJECT
     assert line.endswith("… (#213)")
+
+
+def test_a_refused_title_says_why_in_the_readers_language():
+    """The refusal is the catalog sentence: the CLI and agents read the Chinese,
+    an English screen renders the same key in English."""
+    with pytest.raises(InvalidSubject) as caught:
+        check_subject("fix(accept): keep the branch.")
+    said = caught.value.args[0]
+    assert said == "提交标题结尾不加句号"
+    assert in_language(said, "en") == "The commit title doesn't end with a period"

@@ -45,6 +45,7 @@ from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.domain.block.notice_text import say
 from app.domain.docs_site import tools, visits
 from app.domain.docs_site.models import DocsQuestion
 from app.domain.docs_site.retrieval import Hit
@@ -280,7 +281,7 @@ def _completions_url() -> str:
 
 
 # What the reader is told when the gateway would not answer.
-_GATEWAY_REFUSED = "芝士暂时答不上来，稍后再试。"
+_GATEWAY_REFUSED = say("docsAssistantUnavailable")
 
 
 def _add_usage(result: Outcome, usage: object) -> None:

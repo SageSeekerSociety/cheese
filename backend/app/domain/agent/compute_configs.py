@@ -63,11 +63,11 @@ class ComputeChoice(BaseModel):
         named_device = self.profile == "device" and self.device_id
         self.name = ((self.name or "").strip() or None) if named_device else None
         if self.profile == "cloud" and self.device_id:
-            raise ValueError("云配置不能指定自有设备")
+            raise ValueError(say("computeCloudCannotNameDevice"))
         if self.profile == "device" and any(
             v is not None for v in (self.cores, self.memory_mb, self.disk_gb)
         ):
-            raise ValueError("自有设备使用机器现有规格")
+            raise ValueError(say("computeDeviceUsesOwnSpec"))
         return self
 
 
