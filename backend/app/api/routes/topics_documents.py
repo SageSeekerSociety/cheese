@@ -226,7 +226,7 @@ async def decide_document_revisions(
     reject = _row_numbers(body.get("reject"), "reject")
     expected = str(body.get("version") or "")
     if not expected:
-        raise ValidationError("缺少 version：要处理的是哪一版清单")
+        raise ValidationError(say("checklistVersionMissing"))
     source = body.get("task")
     task = uuid.UUID(str(source)) if source else None
     if task is not None:
@@ -276,11 +276,11 @@ def _row_numbers(raw, field: str) -> list[int]:
     if raw is None:
         return []
     if not isinstance(raw, list):
-        raise ValidationError(f"{field} 要是一个序号数组")
+        raise ValidationError(say("rowNumbersNotArray", field=field))
     out: list[int] = []
     for item in raw:
         if not isinstance(item, int) or isinstance(item, bool) or item < 1:
-            raise ValidationError(f"{field} 里的序号要是从 1 起的整数")
+            raise ValidationError(say("rowNumbersInvalid", field=field))
         out.append(item)
     return out
 
@@ -299,11 +299,11 @@ def _document_bytes(
         try:
             raw = base64.b64decode(encoded, validate=True)
         except (ValueError, binascii.Error) as exc:
-            raise ValidationError("content_b64 不是合法的 base64") from exc
+            raise ValidationError(say("contentB64Invalid")) from exc
     else:
         raw = library.read_room_file(project_id, topic_id, path)
     if len(raw) > MAX_ARTIFACT_BYTES:
         raise ValidationError(
-            f"文件超过 {MAX_ARTIFACT_BYTES // (1024 * 1024)}MB，处理不了"
+            say("fileOverLimit", mb=MAX_ARTIFACT_BYTES // (1024 * 1024))
         )
     return raw

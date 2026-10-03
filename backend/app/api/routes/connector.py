@@ -53,6 +53,7 @@ from app.domain.agent.device_hub import (
     ViewerTransport,
     device_hub,
 )
+from app.domain.block.notice_text import say
 from app.domain.device import owner_reads
 from app.domain.device.repository import Device
 from app.domain.device.service import DeviceService
@@ -586,9 +587,9 @@ async def register_device_for_team(
     user_id = await _require_user(resolver)
     device = await service.get_hosted_device(device_id)
     if device is None or device.owner_user_id != user_id:
-        raise NotFoundError("设备不存在或不属于你")
+        raise NotFoundError(say("deviceNotYours"))
     if not await TeamRepository(db).is_team_member(body.team_id, user_id):
-        raise ForbiddenError("你不是该团队成员，不能把设备注册给它")
+        raise ForbiddenError(say("deviceTeamMemberOnly"))
     await service.assign_to_team(device_id, body.team_id, actor_user_id=user_id)
     device = await service.get_hosted_device(device_id)
     return _device_view(device)  # type: ignore[arg-type]
@@ -607,7 +608,7 @@ async def team_devices(
     may view."""
     user_id = await _require_user(resolver)
     if not await TeamRepository(db).is_team_member(team_id, user_id):
-        raise ForbiddenError("你不是该团队成员")
+        raise ForbiddenError(say("notTeamMember"))
     from app.domain.machine.session_work import device_users
     from app.domain.project.services import ProjectService
 
@@ -652,5 +653,5 @@ async def unregister_device_from_team(
     await service.unassign_from_team(device_id, team_id, actor_user_id=user_id)
     device = await service.get_hosted_device(device_id)
     if device is None:
-        raise NotFoundError("设备不存在")
+        raise NotFoundError(say("deviceNotFound"))
     return _device_view(device)

@@ -343,7 +343,7 @@ class ActorResolver:
         actor = await self.resolve(project_id=project_id, read_only=True)
         if actor.authenticated:
             if wanted is not None and wanted != actor.handle:
-                raise ForbiddenError("不能查看或操作别人的通知")
+                raise ForbiddenError(say("notificationsNotYours"))
             return actor.handle
         if self._bearer:
             raise AuthenticationRequiredError(say("sessionExpired"))
@@ -400,7 +400,7 @@ class ActorResolver:
             raise AuthenticationRequiredError(say("sessionExpired"))
         if is_global_sandbox_token(self._cheese_token):
             return actor
-        raise AuthenticationRequiredError("需要登录或有效的沙箱 token")
+        raise AuthenticationRequiredError(say("sandboxTokenRequired"))
 
     def speaks_for_this_rooms_turn(self, topic_id: uuid.UUID) -> bool:
         """这张凭据就是**这个房间这一轮**的那张令牌吗。
@@ -443,7 +443,7 @@ class ActorResolver:
             return
         if project_id is not None and claims.get("p") != str(project_id):
             _log.info("token_scope_violation", kind="project", got=claims.get("p"))
-            raise ForbiddenError("这个 token 属于别的项目，不能在这里操作")
+            raise ForbiddenError(say("tokenOtherProject"))
         claimed_topic = claims.get("t")
         if (
             claimed_topic is not None
@@ -458,7 +458,7 @@ class ActorResolver:
             and claims.get("s") != "project"
         ):
             _log.info("token_scope_violation", kind="topic", got=claimed_topic)
-            raise ForbiddenError("这个 token 属于别的话题，不能在这里操作")
+            raise ForbiddenError(say("tokenOtherTopic"))
 
     def _reject_out_of_scope_credential(self, target: uuid.UUID | None) -> None:
         """403 when a valid project agent credential names a DIFFERENT project.
@@ -476,7 +476,7 @@ class ActorResolver:
             return
         if claims.project_id != str(target):
             _log.info("credential_scope_violation", got=claims.project_id)
-            raise ForbiddenError("这个凭证属于别的项目，不能在这里操作")
+            raise ForbiddenError(say("credentialOtherProject"))
 
     async def _recover_numeric_handle(self, actor: Actor) -> Actor:
         """Repair a token actor whose handle degraded into the int User PK.

@@ -26,6 +26,7 @@ from app.domain.agent.market import (
 )
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent.runtime import AgentWorkRunner
+from app.domain.block.notice_text import notice_keys, say
 
 router = APIRouter(prefix="/market", tags=["market"])
 
@@ -65,8 +66,8 @@ async def list_nodes(runner: Runner) -> dict:
     default_name = compute_default_name(settings)
     # What makes each pool live, in its own terms — the mono line under the card.
     detail = {
-        COMPUTE_DEVICE: ("有已连接的设备", "暂无已连接的设备"),
-        COMPUTE_CLOUD: ("可以为房间开一台云端机器", "这个部署还没有接入云端"),
+        COMPUTE_DEVICE: (say("nodeDeviceOnline"), say("nodeDeviceOffline")),
+        COMPUTE_CLOUD: (say("nodeCloudOnline"), say("nodeCloudOffline")),
     }
     nodes = [
         {
@@ -77,6 +78,7 @@ async def list_nodes(runner: Runner) -> dict:
             "current": pool.id == default_name,
             "detail": detail[pool.id][0 if pool.available else 1],
             "description": pool.description,
+            **notice_keys(detail=detail[pool.id][0 if pool.available else 1]),
         }
         for pool in compute_listings(settings)
     ]

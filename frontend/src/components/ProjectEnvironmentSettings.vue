@@ -8,6 +8,7 @@ import { holdRevealGate } from '@/composables/useRevealGate'
 import { applyRoomEnvironment, getProjectEnvironment, getRoomEnvironment, saveProjectEnvironment } from '../api'
 
 import i18n, { t } from '@/i18n'
+import { responseText } from '@/lib/noticeText'
 
 const props = defineProps<{ projectId: string }>()
 const info = ref<ProjectEnvironmentInfo | null>(null)
@@ -288,7 +289,7 @@ onBeforeUnmount(() => {
             >
           </div>
           <p class="t-body c-faint mb-2">{{ t('work.projectSettings.environment.roomNote') }}</p>
-          <pre v-if="status?.log" class="environment-log">{{ status.log }}</pre>
+          <pre v-if="status?.log" class="environment-log">{{ responseText(status, 'log') }}</pre>
         </template>
       </template>
     </div>

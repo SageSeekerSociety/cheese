@@ -38,14 +38,12 @@ from app.domain.agent.harness.pi.handless import (
     Looking,
     Said,
 )
+from app.domain.block.notice_text import error_frame, exception_text, say
 
 logger = logging.getLogger(__name__)
 
 #: How long a box's conversation can be gone on with after its last question.
 BOX_TTL_S = 2 * 3600
-
-FAILED = "{agent}暂时无法回答，稍后重试"
-BUSY = "{agent}正忙，稍后重试"
 
 
 @dataclass(frozen=True)
@@ -290,7 +288,8 @@ async def ask(
         if await stopped():
             await emit("done", {"answer": "", "edits": [], "stopped": True})
         else:
-            await emit("error", {"message": BUSY.replace("{agent}", bound.agent_name)})
+            busy = say("docAgentBoxBusy", agent=bound.agent_name)
+            await emit("error", error_frame(busy))
         return
     await emit("working", {})
     answer, refused, spent = "", None, False
@@ -327,17 +326,17 @@ async def ask(
                         conversation,
                         event.error,
                     )
-                    refused = FAILED
+                    refused = say("docAgentBoxFailed", agent=bound.agent_name)
     except ValidationError as exc:
         # Refused before anything was asked: the refusal is what the box says.
-        refused = str(exc)
+        refused = exception_text(exc)
     except HostFull:
-        refused = BUSY
+        refused = say("docAgentBoxBusy", agent=bound.agent_name)
     except Exception:  # noqa: BLE001 — the box is told; the log keeps why
         logger.warning(
             "doc agent box failed conversation=%s", conversation, exc_info=True
         )
-        refused = FAILED
+        refused = say("docAgentBoxFailed", agent=bound.agent_name)
     finally:
         await doc_agent._give_back(redis, project_id, conversation, slot)
         edits = await doc_agent.edits_of(redis, work)
@@ -349,6 +348,6 @@ async def ask(
         await emit("done", {"answer": answer, "edits": edits, "stopped": was_stopped})
         await _keep(redis, conversation, Box(asker, room_id, answer))
     else:
-        await emit("error", {"message": refused.replace("{agent}", bound.agent_name)})
+        await emit("error", error_frame(refused))
     if spent:
         await chat._drain_gateway_usage(project_id, room_id, work)

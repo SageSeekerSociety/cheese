@@ -7,6 +7,8 @@
 // about, or on the whole document.
 import type { DocEdit } from './docEdits'
 
+import { renderNoticeMessage } from './noticeText'
+
 export type AgentScope = 'selection' | 'document'
 
 export type AgentPresetId =
@@ -144,5 +146,5 @@ export function dispatch(listener: DocAgentListener, event: string, data: Record
       edits: Array.isArray(data.edits) ? (data.edits as DocEdit[]) : [],
       stopped: data.stopped === true,
     })
-  else if (event === 'error') listener.error(text('message'))
+  else if (event === 'error') listener.error(renderNoticeMessage(data.i18n, text('message')))
 }

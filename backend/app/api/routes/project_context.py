@@ -25,6 +25,7 @@ from app.api.response import ok
 from app.core.db import get_db
 from app.core.errors import NotFoundError, ValidationError
 from app.domain.block.models import Block, BlockKind
+from app.domain.block.notice_text import say
 from app.domain.identity.actor import Actor
 from app.domain.library import service as library
 from app.domain.project.models import ProjectArtifact
@@ -133,7 +134,7 @@ async def _readable_rooms(
 def _query(q: str) -> str:
     q = q.strip()
     if not q:
-        raise ValidationError("要搜的关键词不能是空的")
+        raise ValidationError(say("searchQueryEmpty"))
     return q
 
 
@@ -142,7 +143,9 @@ def _only(only: list[str] | None) -> set[str] | None:
         return None
     unknown = set(only) - ONLY_VALUES
     if unknown:
-        raise ValidationError(f"不能按这些类别搜：{', '.join(sorted(unknown))}")
+        raise ValidationError(
+            say("searchCategoriesUnknown", categories=", ".join(sorted(unknown)))
+        )
     return set(only)
 
 

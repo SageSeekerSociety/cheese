@@ -452,9 +452,9 @@ async def list_topic_blocks(
       conversation opened at one message (a search hit, a quoted reply)
     """
     if sum(c is not None for c in (before, after, around)) > 1:
-        raise ValidationError("before、after、around 一次只能用一个")
+        raise ValidationError(say("cursorOneAnchor"))
     if limit is None and (after is not None or around is not None):
-        raise ValidationError("after 和 around 要和 limit 一起用")
+        raise ValidationError(say("cursorNeedsLimit"))
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
     repo = BlockRepository(db)
@@ -1034,7 +1034,7 @@ def _parse_moment(raw: object) -> datetime | None:
     try:
         moment = datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
     except ValueError:
-        raise ValidationError("since/until 要是一个 ISO-8601 时刻") from None
+        raise ValidationError(say("sinceUntilIso")) from None
     # 不带时区的按 UTC 读：否则它和 now() 相减时 naive/aware 直接抛，而调用方
     # 只写了个「2026-09-06」也得能用。
     return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
@@ -1045,7 +1045,7 @@ def _weekly_window(body: dict) -> tuple[datetime, datetime]:
     until = _parse_moment(body.get("until")) or datetime.now(UTC)
     since = _parse_moment(body.get("since")) or until - timedelta(days=7)
     if since > until:
-        raise ValidationError("since 不能晚于 until")
+        raise ValidationError(say("sinceAfterUntil"))
     return since, until
 
 
@@ -1068,7 +1068,7 @@ async def record_weekly(
     actor = await _actor_in_place(resolver, place)
     report = (body.get("body") or "").strip()
     if not report:
-        raise ValidationError("body 不能为空")
+        raise ValidationError(say("bodyRequired"))
     since, until = _weekly_window(body)
     report = await canonicalize_refs(
         db, place.project_id, report, exclude_topic_id=place.room_id
@@ -1142,7 +1142,7 @@ async def archive_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
     if not actor.authenticated:
-        raise ForbiddenError("归档需要登录")
+        raise ForbiddenError(say("archiveSignIn"))
     await TopicMemberService(db).require_archive_manager(topic_id, actor.handle)
     topic = await TopicService(db).archive(topic_id, by=actor.handle)
     return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
@@ -1188,7 +1188,7 @@ async def unarchive_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
     if not actor.authenticated:
-        raise ForbiddenError("取消归档需要登录")
+        raise ForbiddenError(say("unarchiveSignIn"))
     await TopicMemberService(db).require_archive_manager(topic_id, actor.handle)
     topic = await TopicService(db).unarchive(topic_id, by=actor.handle)
     return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
@@ -1365,11 +1365,11 @@ async def clone_topic_from(
     backend returns a clear 422 (degrade to dispatching fresh work)."""
     source_raw = (body.get("source_topic_id") or "").strip()
     if not source_raw:
-        raise ValidationError("source_topic_id 必填")
+        raise ValidationError(say("sourceTopicRequired"))
     try:
         source_id = uuid.UUID(source_raw)
     except ValueError as exc:
-        raise ValidationError("source_topic_id 不是合法的话题 id") from exc
+        raise ValidationError(say("sourceTopicInvalid")) from exc
     service = TopicService(db)
     target = await service.get_or_404(topic_id)
     source = await service.get_or_404(source_id)

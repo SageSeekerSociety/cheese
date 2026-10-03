@@ -215,7 +215,7 @@ async def acquire_session_work_lease(
                 )
             )
     except TimeoutError as exc:
-        raise GatewayTimeoutError("工作电脑仍在准备，对话和平台工具仍可用") from exc
+        raise GatewayTimeoutError(say("workComputerPreparing")) from exc
 
 
 @router.put("/{topic_id}/compute-profile")
@@ -273,15 +273,15 @@ async def set_topic_compute_profile(
             }
         )
     except SchemaError as exc:
-        raise ValidationError("工作电脑配置无效：检查名称、设备和规格") from exc
+        raise ValidationError(say("workComputerConfigInvalid")) from exc
     name = choice.profile
     body = {**body, "device_id": choice.device_id}
     raw_device_id = body.get("device_id")
     if raw_device_id is not None and not isinstance(raw_device_id, str):
-        raise ValidationError("device_id 必须是字符串")
+        raise ValidationError(say("deviceIdMustBeString"))
     device_id = (raw_device_id or "").strip() or None
     if name != COMPUTE_DEVICE and device_id is not None:
-        raise ValidationError("只有自有设备可以指定 device_id")
+        raise ValidationError(say("deviceIdOwnDeviceOnly"))
 
     device_online = await project_device_online(db, topic.project_id)
     allowed = {v.id for v in compute_selectable(settings, device_online=device_online)}
