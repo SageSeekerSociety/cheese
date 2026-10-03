@@ -13,6 +13,10 @@ harness 正是用第二种在敲门。`/awaiting-me` 是同一个先例。
 的那个房间当时的成员、且今天还读得到那个房间）在 `services.FeedbackService.may_see`，
 不在这一层 —— 路由拿不到判断权，就不会漏。
 
+agent 的凭据只认一个房间，不带房间的 `/feedback/*` 请求会被拒（「This credential is
+restricted to one room」）。所以读列表、读详情、读评论和领取都收 `?topic=<房间>`：在那个
+房间里认人（`_in_room`），读的那几条再要求房间属于做平台本身的项目（`_reader`）。
+
 Every route here that writes commits before it answers. ``get_db`` commits in
 its teardown, which FastAPI runs after the response has been sent, so the read a
 page makes right after a support or a comment can still find the old row — and
@@ -109,9 +113,57 @@ async def _detail(
     *,
     handle: str | None,
     is_admin: bool,
+    room_project_id: uuid.UUID | None = None,
 ) -> dict:
-    view = await service.detail_of(row, handle=handle, is_admin=is_admin)
+    view = await service.detail_of(
+        row, handle=handle, is_admin=is_admin, room_project_id=room_project_id
+    )
     return view.model_dump(mode="json")
+
+
+async def _in_room(
+    db: DbSession, resolver: ActorResolver, topic: uuid.UUID | None
+) -> tuple[Actor, uuid.UUID | None]:
+    """Who is calling, and the project of the room they call from, if any.
+
+    A person in the feedback center names no room. An agent must: its credential
+    is bound to one room, and `resolve()` without that room refuses it. With
+    `topic`, the caller is resolved **in** that room and authorized for it —
+    `enforce=True`, because the room's project is then evidence (whether the
+    caller may read here, whether it may claim), so a room the caller is not in
+    must not count.
+    """
+    if topic is None:
+        return await resolver.resolve(), None
+    place = await TopicService(db).place_or_404(topic)
+    who = await resolver.resolve(topic_id=place.room_id, project_id=place.project_id)
+    await resolver.authorize_topic(
+        who, project_id=place.project_id, topic_id=place.room_id, enforce=True
+    )
+    return who, place.project_id
+
+
+async def _reader(
+    db: DbSession,
+    service: feedback_services.FeedbackService,
+    resolver: ActorResolver,
+    topic: uuid.UUID | None,
+) -> tuple[Actor, uuid.UUID | None]:
+    """The caller of a read route; from a room, only from a platform room.
+
+    Reading the feedback center from a room is reading it as that room's work,
+    and what the center holds is work on the platform itself, so the room must
+    be in a project that may claim (`FeedbackService.require_platform_room`).
+    What the caller then sees is `may_see` for its own handle. An agent never
+    gets the admin arm (`_is_admin` demotes any agent binding), so it sees what
+    a project member who is not a feedback admin sees: the public reports, the
+    ones it filed, and the private ones filed in a room it was in and can still
+    read.
+    """
+    who, room_project = await _in_room(db, resolver, topic)
+    if room_project is not None:
+        await service.require_platform_room(room_project)
+    return who, room_project
 
 
 async def _is_admin(
@@ -259,6 +311,7 @@ async def list_my_feedback(
 
 @router.get("")
 async def list_feedback(
+    db: DbSession,
     service: FeedbackServiceDep,
     resolver: ActorResolverDep,
     tab: str = Query(default="all"),
@@ -274,8 +327,9 @@ async def list_feedback(
     since: datetime | None = Query(default=None),
     page_start: int = Query(default=0, ge=0),
     page_size: int = Query(default=20, ge=1, le=100),
+    topic: uuid.UUID | None = Query(default=None),
 ) -> dict:
-    who = await resolver.resolve()
+    who, _ = await _reader(db, service, resolver, topic)
     handle = who.handle if who.authenticated else None
     if tab not in feedback_services.PUBLIC_TABS:
         # Same refusal as the admin list: a tab the server does not know is a
@@ -333,19 +387,29 @@ async def create_feedback(
     )
 
 
-@router.get("/{feedback_id}")
+@router.get("/{feedback_ref}")
 async def get_feedback(
-    feedback_id: uuid.UUID,
+    feedback_ref: str,
     db: DbSession,
     service: FeedbackServiceDep,
     resolver: ActorResolverDep,
+    topic: Annotated[uuid.UUID | None, Query()] = None,
 ) -> dict:
-    """一条反馈的全部内容。看不见的 id 回 404，不是 403 —— 见 `visible_row`。"""
-    who = await resolver.resolve()
+    """一条反馈的全部内容。`feedback_ref` 是 `FB-12` 或 uuid：人和 agent 手上拿的
+    都是编号。看不见的回 404，不是 403 —— 见 `visible_row`。"""
+    who, room_project = await _reader(db, service, resolver, topic)
     handle = who.handle if who.authenticated else None
     is_admin = await _is_admin(db, service, who)
-    row = await service.visible_row(feedback_id, handle=handle, is_admin=is_admin)
-    return ok(await _detail(service, row, handle=handle, is_admin=is_admin))
+    row = await service.visible_ref(feedback_ref, handle=handle, is_admin=is_admin)
+    return ok(
+        await _detail(
+            service,
+            row,
+            handle=handle,
+            is_admin=is_admin,
+            room_project_id=room_project,
+        )
+    )
 
 
 @router.delete("/{feedback_id}")
@@ -391,6 +455,7 @@ async def list_feedback_comments(
     # 是架构守卫挡的一件事（路由不属于任何领域，所以它串的每一层都是跨域的），而
     # 「一页多大」正是路由和 repository 都要知道的那个数——所以它自己一个模块。
     limit: Annotated[int, Query(ge=1, le=100)] = THREAD_PAGE,
+    topic: Annotated[uuid.UUID | None, Query()] = None,
 ) -> dict:
     """一页评论。
 
@@ -409,7 +474,7 @@ async def list_feedback_comments(
     变成 JSON 的唯一一处。分页之后这一批的 id 数由 `limit × (1 + replies_limit)`
     封顶 —— 在那之前它跟着整条线程走，是这条主路径上真正的上限（见 `_IN_BATCH`）。
     """
-    who = await resolver.resolve()
+    who, _ = await _reader(db, service, resolver, topic)
     handle = who.handle if who.authenticated else None
     is_admin = await _is_admin(db, service, who)
     row = await service.visible_row(feedback_id, handle=handle, is_admin=is_admin)
@@ -591,24 +656,9 @@ async def _claimer(
 ) -> tuple[Actor, uuid.UUID | None]:
     """Who is claiming, and the project of the room they claim from, if any.
 
-    A person in the feedback center names no room. An agent must: its credential
-    is bound to one room, and `resolve()` without that room refuses it (see the
-    other routes here). With `topic`, the caller is resolved **in** that room and
-    authorized for it — `enforce=True`, because the room's project is evidence in
-    `may_claim`, so a room the caller is not in must not count.
+    The room's project is evidence in `may_claim` (see `_in_room`).
     """
-    project_id = None
-    if topic is None:
-        who = await resolver.resolve()
-    else:
-        place = await TopicService(db).place_or_404(topic)
-        who = await resolver.resolve(
-            topic_id=place.room_id, project_id=place.project_id
-        )
-        await resolver.authorize_topic(
-            who, project_id=place.project_id, topic_id=place.room_id, enforce=True
-        )
-        project_id = place.project_id
+    who, project_id = await _in_room(db, resolver, topic)
     if not who.authenticated or not who.handle:
         raise AuthenticationRequiredError(say("signInRequired"))
     return who, project_id
@@ -626,8 +676,8 @@ async def claim_feedback(
 
     `feedback_ref` 是 `FB-12` 或 uuid。领的人取自凭证，请求体里没有名字。已经被
     别人领了回 **409**，带着持有人（`error.data.holder`）：领取存在的意义就是让第二
-    个人知道别修了。看不见的是 404，看得见但不是在做知是本身的人是 403。回整条详情：
-    agent 领到的那一刻就要读它在修什么。
+    个人知道别修了。看不见的是 404，看得见但不是在做知是本身的人是 403。回整条详情，
+    和 `GET /feedback/{ref}` 同一个形状。
     """
     who, room_project = await _claimer(db, resolver, topic)
     is_admin = await _is_admin(db, service, who)
@@ -638,7 +688,15 @@ async def claim_feedback(
         room_project_id=room_project,
     )
     await db.commit()
-    return ok(await _detail(service, row, handle=who.handle, is_admin=is_admin))
+    return ok(
+        await _detail(
+            service,
+            row,
+            handle=who.handle,
+            is_admin=is_admin,
+            room_project_id=room_project,
+        )
+    )
 
 
 @router.delete("/{feedback_ref}/claim")

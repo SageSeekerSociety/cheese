@@ -118,6 +118,8 @@ CALLS = {
         "POST",
         "/topics/fixture/feedback-proposals",
     ),
+    "cheese_feedback_list": ({"query": "保存"}, "GET", "/feedback"),
+    "cheese_feedback_get": ({"feedback": "FB-12"}, "GET", "/feedback/FB-12"),
     "cheese_feedback_claim": (
         {"feedback": "FB-12"},
         "POST",

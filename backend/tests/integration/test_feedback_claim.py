@@ -327,14 +327,14 @@ class AgentHost:
 def test_an_agent_on_the_platform_claims_with_its_tool_and_a_person_is_then_refused(
     client, platform
 ):
-    row = _report(client, problem="点保存没有任何反应")
+    row = _report(client)
     topic = _topic(client, platform, DEV)
     agent = AgentHost(client, platform, topic)
 
     said = agent.run("cheese_feedback_claim", feedback=row["display_id"])
 
     assert row["display_id"] in said
-    assert "点保存没有任何反应" in said
+    assert "记在你名下" in said
     seat = room_agent_seat(client, topic)
     seen = _view(client, REPORTER, row["id"])
     assert seen["assignee_handle"] == seat

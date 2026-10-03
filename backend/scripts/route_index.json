@@ -160,7 +160,7 @@
 {"index": 158, "protocol": "http", "path": "/feedback/mine", "methods": ["GET"], "endpoint": "app.api.routes.feedback.list_my_feedback", "name": "list_my_feedback"}
 {"index": 159, "protocol": "http", "path": "/feedback", "methods": ["GET"], "endpoint": "app.api.routes.feedback.list_feedback", "name": "list_feedback"}
 {"index": 160, "protocol": "http", "path": "/feedback", "methods": ["POST"], "endpoint": "app.api.routes.feedback.create_feedback", "name": "create_feedback"}
-{"index": 161, "protocol": "http", "path": "/feedback/{feedback_id}", "methods": ["GET"], "endpoint": "app.api.routes.feedback.get_feedback", "name": "get_feedback"}
+{"index": 161, "protocol": "http", "path": "/feedback/{feedback_ref}", "methods": ["GET"], "endpoint": "app.api.routes.feedback.get_feedback", "name": "get_feedback"}
 {"index": 162, "protocol": "http", "path": "/feedback/{feedback_id}", "methods": ["DELETE"], "endpoint": "app.api.routes.feedback.delete_feedback", "name": "delete_feedback"}
 {"index": 163, "protocol": "http", "path": "/feedback/{feedback_id}/comments", "methods": ["GET"], "endpoint": "app.api.routes.feedback.list_feedback_comments", "name": "list_feedback_comments"}
 {"index": 164, "protocol": "http", "path": "/feedback/{feedback_id}/comments", "methods": ["POST"], "endpoint": "app.api.routes.feedback.create_feedback_comment", "name": "create_feedback_comment"}
