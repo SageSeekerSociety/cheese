@@ -1,10 +1,13 @@
-"""Move the feedback a release fixes to `deployed`. Run by the dev deploy.
+"""Move the feedback a release fixes to 已修复 and 已上线. Run by the dev deploy.
 
-    gh api repos/OWNER/REPO/compare/OLD...NEW \\
-        --jq '[.commits[] | {sha, message: .commit.message}]' \\
-      | python -m scripts.ship_feedback --repository-url https://github.com/OWNER/REPO
+    python -m scripts.ship_feedback --repository-url https://github.com/OWNER/REPO \\
+      < commits.json
 
-The convention and the reasoning are in `app/domain/feedback/shipping.py`.
+`commits.json` is GitHub's compare endpoint's commit list with the times each
+commit's PR merged and was opened (the latter absent without a PR) —
+`[{"sha": ..., "message": ..., "merged_at": ..., "pr_created_at": ...}]`.
+`.github/workflows/deploy-dev.yml` builds it. The convention and the reasoning
+are in `app/domain/feedback/shipping.py`.
 Prints one line per report named. Safe to run twice: a report already
 `deployed` is left alone.
 """

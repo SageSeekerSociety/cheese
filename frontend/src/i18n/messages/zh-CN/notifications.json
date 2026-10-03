@@ -117,6 +117,7 @@
   },
   "CHEESE_QUESTION": {
     "body": "在「{topicTitle}」，已暂停，待你回答",
+    "answered": "在「{topicTitle}」，已回答：{answer}",
     "untitled": "有一个问题待你回答"
   },
   "DEVICE_IN_USE": {

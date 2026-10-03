@@ -54,7 +54,7 @@ def _connect_workspace(client, project, room):
 def private_workspace(client):
     alice = session_auth_headers("alice")
     project = post_project(
-        client, json={"name": "Room authorization", "owner_handle": "alice"}
+        client, json={"name": "Room authorization"}, owner="alice"
     ).json()["data"]
     pid = project["id"]
     join_project_team(client, pid, "bob")
@@ -130,9 +130,7 @@ def test_room_from_another_project_is_rejected_before_workspace_lookup(
     client, private_workspace
 ):
     project, tid = private_workspace
-    other = post_project(
-        client, json={"name": "Other", "owner_handle": "alice"}
-    ).json()["data"]
+    other = post_project(client, json={"name": "Other"}, owner="alice").json()["data"]
     response = request_workspace(
         client, other["id"], tid, "files", session_auth_headers("alice")
     )
@@ -182,9 +180,9 @@ def test_topic_token_cannot_read_a_different_rooms_work(client, private_workspac
 
 
 def test_matching_room_agent_can_read_its_own_work(client):
-    project = post_project(
-        client, json={"name": "Agent access", "owner_handle": "alice"}
-    ).json()["data"]
+    project = post_project(client, json={"name": "Agent access"}, owner="alice").json()[
+        "data"
+    ]
     pid, tid = project["id"], project["root_topic_id"]
     machine_commits(
         uuid.UUID(pid),

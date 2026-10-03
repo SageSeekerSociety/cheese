@@ -24,9 +24,30 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.knowledge.services import KnowledgeService
 from app.domain.materials.services import MaterialService
 from app.domain.project.models import Project
-from app.domain.space.models import SpaceCategory
+from app.domain.space.material_service import member_readable_material_ids
+from app.domain.space.models import Space, SpaceCategory
 from app.domain.task.models import Task
-from app.domain.task.protocol import Teaching, resolve
+from app.domain.task.protocol import Protocol, Teaching, resolve
+
+
+async def protocol_for_task(session: AsyncSession, task: Task) -> Protocol:
+    """这道题在三/四级链上读到的那份协议：把 项目集 / 空间 两级补齐后再 ``resolve``。
+
+    ``resolve`` 要的是三行（空间、项目集、题目），而调用方常常手上只有一个 ``Task``
+    —— 上游两级去哪取、空 id 就不去查，只在这里写一遍，免得每个读者各写一份、慢慢
+    长歪（题目级指导 #944 让每个域都得读协议，这处迟早会多起来）。
+    """
+    category = (
+        await session.get(SpaceCategory, task.category_id)
+        if getattr(task, "category_id", None)
+        else None
+    )
+    space = (
+        await session.get(Space, task.space_id)
+        if getattr(task, "space_id", None)
+        else None
+    )
+    return resolve(space=space, category=category, task=task)
 
 
 @dataclass(frozen=True)
@@ -37,7 +58,9 @@ class TeachingContext:
     #: category, which is a course-shaped config with nothing to name.
     course: str | None
     teaching: Teaching
-    #: The 课件 that still exist: `{id, name, url, type}`.
+    #: The 课件 an ordinary member may read and that still exist:
+    #: `{id, name, url, type}`. A 课件 locked to「仅管理员」on every board that
+    #: lists it is dropped before it gets here — see `for_project`.
     materials: list[dict] = field(default_factory=list)
     #: The 知识 entries that are still readable: `{id, name, description}`.
     #:
@@ -63,21 +86,36 @@ async def for_project(
         return None
     row = (
         await session.execute(
-            select(Task, SpaceCategory)
+            select(Task, SpaceCategory, Space)
             # outerjoin: a 赛题 whose 项目集 was deleted still carries its own
             # `protocol_override`, and that override is a teaching config too.
+            # The 空间 joins on the 赛题's own `space_id`, not through the
+            # 项目集, so a 赛题 still reaches its board's default with the
+            # 项目集 gone.
             .outerjoin(SpaceCategory, SpaceCategory.id == Task.category_id)
+            .outerjoin(Space, Space.id == Task.space_id)
             .where(Task.id == project.external_task_id)
         )
     ).first()
     if row is None:
         return None
-    task, category = row
-    teaching = resolve(category=category, task=task, project=project).teaching
+    task, category, space = row
+    teaching = resolve(
+        space=space, category=category, task=task, project=project
+    ).teaching
     if teaching.is_empty:
         return None
+    # A 课件 locked to「仅管理员」on every board that lists it must not reach a
+    # student's agent: the `url` this context carries is public. The check is on
+    # the read side because a teacher may flip a 课件's tier *after* a config
+    # already named it (`PATCH /spaces/{id}/materials/{mid}`), and nothing goes
+    # back to revisit the config. Filter BEFORE the fetch, so a locked 课件 never
+    # enters `TeachingContext.materials` at all.
+    readable = await member_readable_material_ids(
+        session, material_ids=teaching.material_ids
+    )
     materials = await MaterialService.for_lookup(session).get_many(
-        teaching.material_ids
+        [mid for mid in teaching.material_ids if mid in readable]
     )
     knowledge = await KnowledgeService.for_lookup(session).get_many(
         teaching.knowledge_ids

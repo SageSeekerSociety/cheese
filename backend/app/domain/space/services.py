@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
+from app.domain.space.material_service import member_readable_material_ids
 from app.domain.space.models import (
     Space,
     SpaceAdminRelation,
@@ -76,6 +77,78 @@ def _error_data_id(exc: NotFoundError) -> object | None:
     return data.get("id") if isinstance(data, dict) else None
 
 
+async def ensure_teaching_references(
+    *,
+    knowledge_service: "KnowledgeService | None",
+    material_service: "MaterialService | None",
+    session: "AsyncSession | None",
+    teaching: dict,
+    actor_user_id: int | None,
+) -> None:
+    """Every id a 给 AI 队友的指导 names must exist — and, for 知识, be readable.
+
+    The read side (`Teaching.from_json`, `KnowledgeService.get_many`) drops what
+    it cannot resolve, because a typo there would take down every 赛题 under the
+    board. Here a person is looking at the form and can be told which field is
+    wrong, so a bad reference is refused with the field's name instead of being
+    dropped.
+
+    Module-level rather than a method because the SAME check guards all three
+    places a 指导 is written — the 项目集 form, the 空间默认 (#944), and a
+    single 题目 — and the three must agree on what counts as a valid reference.
+    Task-level writes reach it through the api layer (which may import either
+    domain) rather than through one domain importing the other, so this stays
+    the one implementation without adding a domain edge.
+
+    `KnowledgeService.ensure_readable` is the very criterion
+    `GET /knowledge/{id}` uses — a teacher may point at 知识 they could already
+    open, nobody else's. A 课件 has no owning team to check, but it does have a
+    visibility tier: a plain `Material` is open to any signed-in reader, while
+    one placed in a board's「仅管理员」tier is not
+    (`SpaceMaterialService.may_read_outside_space`). So a `material_ids` entry
+    must both exist and be one an ordinary member could read; naming an
+    admins-only 课件 is refused by the field's name, rather than accepted here
+    and silently dropped by `for_project` later.
+    """
+    knowledge_ids = teaching.get("knowledge_ids") or []
+    if knowledge_ids and knowledge_service is not None:
+        if actor_user_id is None:
+            raise ForbiddenError("Authentication required")
+        try:
+            await knowledge_service.ensure_readable(
+                knowledge_ids=knowledge_ids, user_id=actor_user_id
+            )
+        except NotFoundError as exc:
+            raise BadRequestError(
+                "teaching.knowledgeIds names a knowledge that does not exist",
+                data={"field": "knowledgeIds", "id": _error_data_id(exc)},
+            ) from exc
+
+    material_ids = teaching.get("material_ids") or []
+    if material_ids and material_service is not None:
+        try:
+            await material_service.ensure_exist(material_ids=material_ids)
+        except NotFoundError as exc:
+            raise BadRequestError(
+                "teaching.materialIds names a material that does not exist",
+                data={"field": "materialIds", "id": _error_data_id(exc)},
+            ) from exc
+        if session is not None:
+            # The read side keeps a config safe when a 课件's tier is flipped
+            # afterwards, but this is a form somebody is looking at: say which
+            # field is wrong instead of quietly leaving a 课件 out this week.
+            readable = await member_readable_material_ids(
+                session, material_ids=material_ids
+            )
+            locked = [mid for mid in material_ids if mid not in readable]
+            if locked:
+                raise BadRequestError(
+                    "teaching.materialIds names a 课件 that is only visible to a "
+                    "board's managers",
+                    data={"field": "materialIds", "id": locked[0]},
+                )
+
+
 @dataclass(frozen=True)
 class SpaceLabel:
     """How a board is named where something happened on it."""
@@ -114,6 +187,7 @@ class SpaceService:
         invite_code_repo: SpaceInviteCodeRepository | None = None,
         knowledge_service: "KnowledgeService | None" = None,
         material_service: "MaterialService | None" = None,
+        session: "AsyncSession | None" = None,
     ) -> None:
         self._repo = repo
         self._category_repo = category_repo
@@ -127,6 +201,7 @@ class SpaceService:
         self._invite_code_repo = invite_code_repo
         self._knowledge_service = knowledge_service
         self._material_service = material_service
+        self._session = session
 
     # ------------------------------------------------------------------
     # Classification topics
@@ -276,9 +351,17 @@ class SpaceService:
         default_category_id: int | None = None,
         visible_task_limit: int | None = None,
         set_visible_task_limit: bool = False,
+        teaching: dict | None = None,
     ) -> Space:
         space = await self._get_space_or_error(space_id)
         await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
+
+        if teaching is not None:
+            # Refused here, before a single field of the row is touched: a
+            # rejected PATCH must leave the stored 指导 exactly as it was.
+            await self._ensure_teaching_references(
+                teaching=teaching, actor_user_id=actor_user_id
+            )
 
         if name is not None:
             if not isinstance(name, str) or not name.strip():
@@ -309,6 +392,12 @@ class SpaceService:
                     data={"spaceId": space_id, "categoryId": default_category_id},
                 )
             space.default_category_id = default_category_id
+        if teaching is not None:
+            # Whole-key replacement, the same rule the 项目集 and 题目 levels
+            # follow (#944): what the manager saved is what is in force. Absent
+            # (``None``) means "did not touch it", so a rename through this
+            # endpoint does not silently wipe the board-wide 指导.
+            space.teaching = teaching
         space.updated_at = datetime.now(UTC)
         return await self._repo.save(space)
 
@@ -390,43 +479,15 @@ class SpaceService:
     async def _ensure_teaching_references(
         self, *, teaching: dict, actor_user_id: int | None
     ) -> None:
-        """Every id a 教学安排 names must exist — and, for 知识, be readable.
-
-        The read side (`Teaching.from_json`, `KnowledgeService.get_many`) drops
-        what it cannot resolve, because a typo there would take down every 赛题
-        under the 项目集. Here a person is looking at the form and can be told
-        which field is wrong, so a bad reference is refused with the field's
-        name instead of being dropped.
-
-        `KnowledgeService.ensure_readable` is the very criterion
-        `GET /knowledge/{id}` uses — a teacher may point at 知识 they could
-        already open, nobody else's. A 课件 has no owning team to check (any
-        signed-in reader may fetch any material), so only existence is required
-        of `material_ids`.
-        """
-        knowledge_ids = teaching.get("knowledge_ids") or []
-        if knowledge_ids and self._knowledge_service is not None:
-            if actor_user_id is None:
-                raise ForbiddenError("Authentication required")
-            try:
-                await self._knowledge_service.ensure_readable(
-                    knowledge_ids=knowledge_ids, user_id=actor_user_id
-                )
-            except NotFoundError as exc:
-                raise BadRequestError(
-                    "teaching.knowledgeIds names a knowledge that does not exist",
-                    data={"field": "knowledgeIds", "id": _error_data_id(exc)},
-                ) from exc
-
-        material_ids = teaching.get("material_ids") or []
-        if material_ids and self._material_service is not None:
-            try:
-                await self._material_service.ensure_exist(material_ids=material_ids)
-            except NotFoundError as exc:
-                raise BadRequestError(
-                    "teaching.materialIds names a material that does not exist",
-                    data={"field": "materialIds", "id": _error_data_id(exc)},
-                ) from exc
+        """The service's wiring of `ensure_teaching_references` — see it for the
+        rule; this only hands in the lookups and the session the route builds."""
+        await ensure_teaching_references(
+            knowledge_service=self._knowledge_service,
+            material_service=self._material_service,
+            session=self._session,
+            teaching=teaching,
+            actor_user_id=actor_user_id,
+        )
 
     async def delete_category(
         self,

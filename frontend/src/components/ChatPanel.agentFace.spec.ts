@@ -3,7 +3,7 @@ import type { Block, Topic, WsServerFrame } from '@/cx_types'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { render } from '@testing-library/vue'
+import { fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const listBlocks = vi.fn()
@@ -139,7 +139,8 @@ describe('对话里在动的头像', () => {
     await flush()
 
     const [live] = view.queryAllByRole('button', { name: LIVE })
-    expect(live?.getAttribute('title')).toContain('重试中（第 2 次）')
+    await fireEvent.mouseEnter(live)
+    await waitFor(() => expect(screen.getByText(/重试中（第 2 次）/)).toBeTruthy())
   })
 
   it('两位队友同时在干：各自最新的那个头像都在动', async () => {

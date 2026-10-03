@@ -43,8 +43,7 @@ MISSING_PROJECT = "00000000-0000-0000-0000-000000000000"
 
 
 def _project(client, name: str = "P", owner: str = OWNER) -> str:
-    body = {"name": name, "owner_handle": owner}
-    return post_project(client, json=body).json()["data"]["id"]
+    return post_project(client, json={"name": name}, owner=owner).json()["data"]["id"]
 
 
 def _add(client, pid: str, handle: str, *, by: str = OWNER) -> None:
@@ -59,8 +58,11 @@ def _leave(client, pid: str, handle: str, **kw):
 
 
 def _topic(client, pid: str, created_by: str, title: str = "房间") -> str:
-    body = {"project_id": pid, "title": title, "created_by": created_by}
-    return client.post("/topics", json=body).json()["data"]["id"]
+    body = {"project_id": pid, "title": title}
+    response = client.post(
+        "/topics", json=body, headers=session_auth_headers(created_by)
+    )
+    return response.json()["data"]["id"]
 
 
 def _seat(client, tid: str, handle: str, *, by: str, role: str = "member") -> None:
@@ -120,6 +122,7 @@ def test_a_member_leaves_and_their_topic_seats_go_with_them(client, bearer):
     就成了一件没做完的事。"""
     pid = _project(client)
     _add(client, pid, "alice")
+    _add(client, pid, "bob")
     tid = _topic(client, pid, "bob")
     _seat(client, tid, "alice", by="bob")
     assert "alice" in _topic_handles(client, tid)
@@ -143,6 +146,7 @@ def test_removing_a_member_revokes_their_seats_too(client, bearer):
     来。这条用例钉的是那个顺带修掉的缺口。"""
     pid = _project(client)
     _add(client, pid, "alice")
+    _add(client, pid, "bob")
     tid = _topic(client, pid, "bob")
     _seat(client, tid, "alice", by="bob")
     roster_before = set(_project_handles(client, pid))

@@ -158,9 +158,14 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.review.archive", "app.domain.block.repositories"),
         ("app.domain.review.gate_sweep", "app.domain.block.repositories"),
         ("app.domain.review.gate_sweep", "app.domain.topic.repositories"),
-        ("app.domain.review.services", "app.domain.block.repositories"),
-        ("app.domain.review.services", "app.domain.project.repositories"),
-        ("app.domain.review.services", "app.domain.topic.repositories"),
+        # review.services 拆成了包。`_shared.py` 是包内唯一直接摸这三个
+        # repository 的地方（`AcceptService.__init__` 建会话、`_refresh_stale_card`
+        # 刷新时另开一条读、`void` 写一块），子模块从它这里取名字。拆分前这三条边
+        # 在 `review.services` 名下，拆包后发起方换成 `review.services._shared`——
+        # 被摸的 module 一个没变，同一笔债挪了发起方。
+        ("app.domain.review.services._shared", "app.domain.block.repositories"),
+        ("app.domain.review.services._shared", "app.domain.project.repositories"),
+        ("app.domain.review.services._shared", "app.domain.topic.repositories"),
         # --- space ---
         ("app.domain.space.analytics_service", "app.domain.task.repositories"),
         ("app.domain.space.analytics_service", "app.domain.user.repositories"),

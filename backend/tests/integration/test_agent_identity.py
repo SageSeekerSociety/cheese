@@ -66,12 +66,13 @@ def _seed_agent(handle: str) -> None:
 
 
 def _project_and_topic(client, created_by: str = "alice") -> tuple[str, str]:
-    project_id = post_project(
-        client, json={"name": "P", "owner_handle": created_by}
-    ).json()["data"]["id"]
+    project_id = post_project(client, json={"name": "P"}, owner=created_by).json()[
+        "data"
+    ]["id"]
     topic_id = client.post(
         "/topics",
-        json={"project_id": project_id, "title": "T", "created_by": created_by},
+        json={"project_id": project_id, "title": "T"},
+        headers=session_auth_headers(created_by),
     ).json()["data"]["id"]
     return project_id, topic_id
 
@@ -221,12 +222,15 @@ def test_a_memory_without_a_seat_is_the_projects_own_cheese(client):
     就是谁点名读得到，不存在一个谁都能写、谁都能读的中间地带。座位在哪间房不作
     数：池是按 agent 分的，点名读的也是 agent。
     """
-    project_id = post_project(client, json={"name": "P"}).json()["data"]["id"]
+    project_id = post_project(client, json={"name": "P"}, owner="alice").json()["data"][
+        "id"
+    ]
 
     def _topic(title: str) -> str:
         return client.post(
             "/topics",
-            json={"project_id": project_id, "title": title, "created_by": "alice"},
+            json={"project_id": project_id, "title": title},
+            headers=session_auth_headers("alice"),
         ).json()["data"]["id"]
 
     # 另一位队友坐进一间房，好让它是一位真的队友；项目默认那位由项目自己坐。
@@ -330,7 +334,9 @@ def test_listing_a_project_shows_what_its_agents_remembered(client):
     """每一条 agent 记忆都落在某个 agent 的池子里（写那一侧撤掉前如此，撤掉后池
     子里的行仍是这个形状）。列表要是漏了它们，界面上的记忆面板就会在池子还在长
     的时候显示一个空项目——凭空审计不到。"""
-    project_id = post_project(client, json={"name": "P"}).json()["data"]["id"]
+    project_id = post_project(client, json={"name": "P"}, owner="alice").json()["data"][
+        "id"
+    ]
 
     _remember(client, project_id, "部署脚本在 deploy/deploy.sh")
 
@@ -346,12 +352,15 @@ def test_listing_a_project_shows_what_its_agents_remembered(client):
 def test_listing_covers_every_agent_pool_in_the_project(client):
     """Two 芝士 keep separate pools; the project view must still see both, and
     `agent_handle` narrows to one."""
-    project_id = post_project(client, json={"name": "P"}).json()["data"]["id"]
+    project_id = post_project(client, json={"name": "P"}, owner="alice").json()["data"][
+        "id"
+    ]
 
     def _topic(title: str) -> str:
         return client.post(
             "/topics",
-            json={"project_id": project_id, "title": title, "created_by": "alice"},
+            json={"project_id": project_id, "title": title},
+            headers=session_auth_headers("alice"),
         ).json()["data"]["id"]
 
     ops_room = _topic("B")
@@ -378,7 +387,7 @@ def test_one_projects_agent_pool_never_leaks_into_another(client):
     """The prefix scan is keyed on this project — a sibling project's identical
     agent handle must not come along."""
     ids = [
-        post_project(client, json={"name": n}).json()["data"]["id"]
+        post_project(client, json={"name": n}, owner="alice").json()["data"]["id"]
         for n in ("P1", "P2")
     ]
     for pid, fact in zip(ids, ("P1 的事", "P2 的事"), strict=True):
@@ -392,9 +401,9 @@ def test_listing_answers_what_was_remembered_about_me(client):
     """问「关于我记了什么」的人在请求里写了 `user_handle`，那是另一个问题。
 
     它和「这个项目的芝士都记了什么」一起答：两条各自成立，谁也不挡谁。"""
-    project_id = post_project(
-        client, json={"name": "P", "owner_handle": "alice"}
-    ).json()["data"]["id"]
+    project_id = post_project(client, json={"name": "P"}, owner="alice").json()["data"][
+        "id"
+    ]
     _remember(client, project_id, "芝士自己记的")
     _remember_about(client, project_id, "alice", "他要结论在最前面")
 

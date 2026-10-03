@@ -118,12 +118,13 @@ def test_an_agent_publication_keeps_quoted_mentions_inert(client, stub_hooks):
 
 
 def _room_with_two_agents(client):
-    project = post_project(
-        client, json={"name": "Mentions", "owner_handle": "alice"}
-    ).json()["data"]
+    project = post_project(client, json={"name": "Mentions"}, owner="alice").json()[
+        "data"
+    ]
     room = client.post(
         "/topics",
-        json={"project_id": project["id"], "title": "Work", "created_by": "alice"},
+        json={"project_id": project["id"], "title": "Work"},
+        headers=session_auth_headers("alice"),
     ).json()["data"]
     reviewer = client.post(
         f"/projects/{project['id']}/agents",

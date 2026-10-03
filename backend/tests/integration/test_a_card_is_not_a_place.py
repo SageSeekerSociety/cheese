@@ -18,13 +18,14 @@ from tests.integration.conftest import a_team, post_project, session_auth_header
 
 
 def _project(client) -> str:
-    return post_project(client, json={"name": "P"}).json()["data"]["id"]
+    return post_project(client, json={"name": "P"}, owner="alice").json()["data"]["id"]
 
 
 def _room(client, project_id: str, title: str = "运维") -> str:
     r = client.post(
         "/topics",
-        json={"project_id": project_id, "title": title, "created_by": "alice"},
+        json={"project_id": project_id, "title": title},
+        headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200, r.text
     return r.json()["data"]["id"]

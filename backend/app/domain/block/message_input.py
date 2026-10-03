@@ -15,6 +15,10 @@ class QuotedContextIn(BaseModel):
     version: str = Field(min_length=1)
     task_id: uuid.UUID | None = None
     page: int = Field(gt=0, strict=True)
+    # 读者指的是整页还是这一页里的一段；决定了 `text` 是整页文字还是选中的那段。
+    # 默认成整页是为了读得懂这之前发出来的消息 —— 那时候还没有这个字段，而能有的
+    # 只有整页。新发的一律显式带上。
+    scope: Literal["page", "selection"] = "page"
     text: str
 
 

@@ -9,7 +9,11 @@ from datetime import UTC, datetime
 import pytest
 
 from tests.conftest import StubChannel
-from tests.integration.conftest import chat_ws_url, post_message, post_project
+from tests.integration.conftest import (
+    chat_ws_url,
+    post_message,
+    post_project,
+)
 
 
 class ToolScreen(StubChannel):
@@ -52,10 +56,10 @@ def _chat(client, topic_id: str) -> None:
 
 
 def test_event_blocks_persist_structured_meta(client):
-    p = post_project(client, json={"name": "P"}).json()["data"]
+    p = post_project(client, json={"name": "P"}, owner="user-1").json()["data"]
     t = client.post(
         "/topics",
-        json={"project_id": p["id"], "title": "话题", "created_by": "user-1"},
+        json={"project_id": p["id"], "title": "话题"},
     ).json()["data"]
     _chat(client, t["id"])
 
@@ -104,10 +108,10 @@ def test_event_blocks_persist_structured_meta(client):
 def test_transcript_pages_back_instead_of_serving_everything(client):
     """现场 is the biggest thing a topic can hand back — one event per tool call,
     forever. So it comes in windows, newest first, and the caller walks back."""
-    p = post_project(client, json={"name": "P"}).json()["data"]
+    p = post_project(client, json={"name": "P"}, owner="user-1").json()["data"]
     t = client.post(
         "/topics",
-        json={"project_id": p["id"], "title": "话题", "created_by": "user-1"},
+        json={"project_id": p["id"], "title": "话题"},
     ).json()["data"]
     for _ in range(3):
         _chat(client, t["id"])
@@ -134,14 +138,14 @@ def test_transcript_pages_back_instead_of_serving_everything(client):
 
 def test_transcript_rejects_a_cursor_from_another_topic(client):
     """未知游标不能悄悄退化成「最新 N 条」—— 调用方分不出那和真的一页有什么区别。"""
-    p = post_project(client, json={"name": "P"}).json()["data"]
+    p = post_project(client, json={"name": "P"}, owner="user-1").json()["data"]
     a = client.post(
         "/topics",
-        json={"project_id": p["id"], "title": "A", "created_by": "user-1"},
+        json={"project_id": p["id"], "title": "A"},
     ).json()["data"]
     b = client.post(
         "/topics",
-        json={"project_id": p["id"], "title": "B", "created_by": "user-1"},
+        json={"project_id": p["id"], "title": "B"},
     ).json()["data"]
     _chat(client, a["id"])
     other = client.get(f"/topics/{a['id']}/transcript").json()["data"]["data"][0]["id"]
@@ -155,10 +159,10 @@ def test_transcript_rejects_a_cursor_from_another_topic(client):
 def test_transcript_says_when_each_turn_started(client):
     """A turn's first step comes after its preparation and the model's first
     answer, so 现场 cannot count a turn from its steps alone."""
-    p = post_project(client, json={"name": "P"}).json()["data"]
+    p = post_project(client, json={"name": "P"}, owner="user-1").json()["data"]
     t = client.post(
         "/topics",
-        json={"project_id": p["id"], "title": "话题", "created_by": "user-1"},
+        json={"project_id": p["id"], "title": "话题"},
     ).json()["data"]
     asked = datetime.now(UTC)
     _chat(client, t["id"])

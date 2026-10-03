@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import type { SketchTool } from './designSketch'
+import type { RedactStyle, SketchTool } from './designSketch'
+import type { ToolbarTier } from './designToolbar'
 
-import { ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
-import { DRAW_TOOLS, SKETCH_COLORS } from './designSketch'
+import { DRAW_TOOLS, REDACT_STYLES, SKETCH_COLORS } from './designSketch'
+import { toolbarTier } from './designToolbar'
+import RedactStyleSwatch from './RedactStyleSwatch.vue'
 
 import { t } from '@/i18n'
 
@@ -17,6 +20,12 @@ const props = defineProps<{
   /** 图片版本没验证过时框选没有意义，那颗按钮要跟着禁用。 */
   canSelect?: boolean
   busy?: boolean
+  /** 图上正有一个文字框在编辑：这时发送是禁用的，原因要说得出。 */
+  textEditing?: boolean
+  /** 用涂黑工具、或选中的是一块涂黑：颜色轮换成涂黑样式行。 */
+  redact?: boolean
+  /** 当前涂黑样式；样式行里高亮哪一颗。 */
+  redactStyle?: RedactStyle
 }>()
 /** 图上的字说不清「改成什么」，所以那一句和「加入对话」摆在一起。 */
 const note = defineModel<string>('note', { default: '' })
@@ -26,6 +35,8 @@ defineExpose({ selectButton })
 const emit = defineEmits<{
   pick: [tool: SketchTool]
   recolor: [color: string]
+  /** 改涂黑样式（选中的涂黑，或下一块涂黑）。 */
+  restyle: [style: RedactStyle]
   undo: []
   redo: []
   clear: []
@@ -38,12 +49,53 @@ function onNoteEnter(event: KeyboardEvent) {
   event.preventDefault()
   emit('send')
 }
+
 /**
- * 工具栏只画图标，名字一律走 `aria-label` 和 `title`。
+ * 三档自适配：盯自己的宽度，切 full / compact / minimal，再窄就整条收起。
  *
- * 一排十六颗按钮里，中文标签比图标宽一倍多，窄面板（240px）里横滚的距离随之翻倍；
- * 而这几件事各网站都用同一套图形。名字没被丢掉，只是移到了悬停提示和读屏里——
- * 「加入对话」除外，它是提交动作不是工具，留着文字更清楚（参考物也写着 Add to chat）。
+ * 窄面板（240px）里，中文标签比图标宽一倍多、横滚距离随之翻倍，所以窄的时候先把
+ * 文字标签收掉；再窄就把颜色轮也收掉，只剩图标——这几件事各网站都用同一套图形，
+ * 名字没丢，退到 `aria-label` 和 `title` 里。整条收起时（`concealed`）加 `inert`，
+ * 收起来的按钮既点不到也 Tab 不到。
+ */
+const root = ref<HTMLElement | null>(null)
+const tier = ref<ToolbarTier>('full')
+let observer: ResizeObserver | null = null
+onMounted(() => {
+  const element = root.value
+  if (!element || typeof ResizeObserver === 'undefined') return
+  observer = new ResizeObserver((entries) => {
+    const width = entries[0]?.contentRect?.width
+    if (typeof width === 'number' && width > 0) tier.value = toolbarTier(width)
+  })
+  observer.observe(element)
+})
+onBeforeUnmount(() => observer?.disconnect())
+const showLabels = computed(() => tier.value === 'full')
+const showColors = computed(() => tier.value === 'full' || tier.value === 'compact')
+
+/**
+ * 禁用时 `title`/`aria-label` 要说清为什么按不动，而不是只灰着不响。
+ * 「能不能按」正是这几颗按钮要回答的问题，光有一档浅灰等于没说。
+ */
+const selectTitle = computed(() =>
+  props.canSelect === false ? t('design.regionUnavailable') : t('design.tools.select')
+)
+const undoTitle = computed(() => (props.canUndo ? t('design.undoShortcut') : t('design.reasonNoUndo')))
+const redoTitle = computed(() => (props.canRedo ? t('design.redoShortcut') : t('design.reasonNoRedo')))
+const clearTitle = computed(() => (props.hasStrokes ? t('design.clear') : t('design.reasonNoStrokes')))
+const sendDisabled = computed(() => !props.canSend || !!props.busy)
+const sendTitle = computed(() => {
+  if (!sendDisabled.value) return t('design.addToChat')
+  if (props.busy) return t('design.reasonBuilding')
+  if (!props.hasStrokes) return t('design.reasonNoStrokes')
+  if (props.textEditing) return t('design.reasonTextEditing')
+  return t('design.reasonNoNote')
+})
+
+/**
+ * 工具栏在窄档只画图标，名字一律走 `aria-label` 和 `title`；宽档（full）把工具名
+ * 也摆出来，一行放得下就让人少猜图形。「加入对话」是提交动作不是工具，一直写着字。
  */
 const TOOL_ICON: Record<SketchTool, string> = {
   select: 'mdi-cursor-default-outline',
@@ -58,7 +110,16 @@ const TOOL_ICON: Record<SketchTool, string> = {
 </script>
 
 <template>
-  <div class="sketch-toolbar" role="group" :aria-label="t('design.sketchTools')">
+  <div
+    ref="root"
+    class="sketch-toolbar"
+    :class="{ 'sketch-toolbar--concealed': tier === 'concealed' }"
+    role="group"
+    :data-tier="tier"
+    :data-concealed="tier === 'concealed' ? '' : undefined"
+    :inert="tier === 'concealed' || undefined"
+    :aria-label="t('design.sketchTools')"
+  >
     <!-- 工具、颜色、历史挤在这一段里横滚；「说一句要改什么」和「加入对话」钉在
          右边不跟着滚——它们是这一步的落点，滚出去就等于按不到。 -->
     <div class="sketch-toolbar__scroll">
@@ -70,10 +131,11 @@ const TOOL_ICON: Record<SketchTool, string> = {
         :disabled="props.canSelect === false"
         :aria-pressed="props.tool === 'select'"
         :aria-label="t('design.tools.select')"
-        :title="t('design.tools.select')"
+        :title="selectTitle"
         @click="emit('pick', 'select')"
       >
         <i :class="`mdi ${TOOL_ICON.select}`" class="sketch-toolbar__icon" aria-hidden="true" />
+        <span v-if="showLabels" class="sketch-toolbar__label">{{ t('design.tools.select') }}</span>
       </button>
       <button
         v-for="item in DRAW_TOOLS"
@@ -87,29 +149,53 @@ const TOOL_ICON: Record<SketchTool, string> = {
         @click="emit('pick', item)"
       >
         <i :class="`mdi ${TOOL_ICON[item]}`" class="sketch-toolbar__icon" aria-hidden="true" />
+        <span v-if="showLabels" class="sketch-toolbar__label">{{ t(`design.tools.${item}`) }}</span>
       </button>
       <span class="sketch-toolbar__gap" />
-      <button
-        v-for="swatch in SKETCH_COLORS"
-        :key="swatch"
-        type="button"
-        class="sketch-toolbar__color"
-        :class="{ 'is-active': props.color === swatch }"
-        :style="{ color: swatch }"
-        :aria-pressed="props.color === swatch"
-        :aria-label="t('design.sketchColor', { color: swatch })"
-        @click="emit('recolor', swatch)"
-      >
-        ●
-      </button>
+      <!-- 窄到一定档就把颜色轮收掉：它一排五颗最占地方，工具和历史更要紧。 -->
+      <template v-if="showColors">
+        <!-- 涂黑不看颜色：用涂黑工具、或选中的是一块涂黑时，颜色轮换成样式行。 -->
+        <template v-if="props.redact">
+          <span class="sketch-toolbar__styles" role="group" :aria-label="t('design.redactStyles')">
+            <button
+              v-for="style in REDACT_STYLES"
+              :key="style"
+              type="button"
+              class="sketch-toolbar__style"
+              :class="{ 'is-active': props.redactStyle === style }"
+              :aria-pressed="props.redactStyle === style"
+              :aria-label="t(`design.redactStyle.${style}`)"
+              :title="t(`design.redactStyle.${style}`)"
+              @click="emit('restyle', style)"
+            >
+              <RedactStyleSwatch :style="style" />
+            </button>
+          </span>
+        </template>
+        <template v-else>
+          <button
+            v-for="swatch in SKETCH_COLORS"
+            :key="swatch"
+            type="button"
+            class="sketch-toolbar__color"
+            :class="{ 'is-active': props.color === swatch }"
+            :style="{ color: swatch }"
+            :aria-pressed="props.color === swatch"
+            :aria-label="t('design.sketchColor', { color: swatch })"
+            @click="emit('recolor', swatch)"
+          >
+            ●
+          </button>
+        </template>
+      </template>
       <span class="sketch-toolbar__gap" />
       <button
         type="button"
         class="sketch-toolbar__tool"
         :disabled="!canUndo"
         aria-keyshortcuts="Meta+Z Control+Z"
-        :aria-label="t('design.undo')"
-        :title="t('design.undoShortcut')"
+        :aria-label="canUndo ? t('design.undo') : t('design.reasonNoUndo')"
+        :title="undoTitle"
         @click="emit('undo')"
       >
         <i class="mdi mdi-undo sketch-toolbar__icon" aria-hidden="true" />
@@ -119,8 +205,8 @@ const TOOL_ICON: Record<SketchTool, string> = {
         class="sketch-toolbar__tool"
         :disabled="!canRedo"
         aria-keyshortcuts="Meta+Shift+Z Control+Shift+Z Control+Y"
-        :aria-label="t('design.redo')"
-        :title="t('design.redoShortcut')"
+        :aria-label="canRedo ? t('design.redo') : t('design.reasonNoRedo')"
+        :title="redoTitle"
         @click="emit('redo')"
       >
         <i class="mdi mdi-redo sketch-toolbar__icon" aria-hidden="true" />
@@ -129,8 +215,8 @@ const TOOL_ICON: Record<SketchTool, string> = {
         type="button"
         class="sketch-toolbar__tool"
         :disabled="!hasStrokes"
-        :aria-label="t('design.clear')"
-        :title="t('design.clear')"
+        :aria-label="clearTitle"
+        :title="clearTitle"
         @click="emit('clear')"
       >
         <i class="mdi mdi-delete-sweep-outline sketch-toolbar__icon" aria-hidden="true" />
@@ -146,7 +232,14 @@ const TOOL_ICON: Record<SketchTool, string> = {
       :aria-label="t('design.notePlaceholder')"
       @keydown.enter="onNoteEnter"
     />
-    <button type="button" class="is-primary" :disabled="!canSend || busy" @click="emit('send')">
+    <button
+      type="button"
+      class="is-primary"
+      :disabled="sendDisabled"
+      :aria-label="t('design.addToChat')"
+      :title="sendTitle"
+      @click="emit('send')"
+    >
       {{ t('design.addToChat') }}
     </button>
   </div>
@@ -173,6 +266,15 @@ const TOOL_ICON: Record<SketchTool, string> = {
 }
 .sketch-toolbar__gap {
   width: 8px;
+}
+/* 宽档（full）才摆工具名；窄档收进 aria-label / title，横滚距离不至于翻倍。 */
+.sketch-toolbar__label {
+  font-size: 13px;
+}
+/* 整条收起（concealed）：inert 之外再淡出，收起的过程看得见它是收起了而不是坏了。 */
+.sketch-toolbar--concealed {
+  opacity: 0;
+  transition: opacity var(--dur-base) var(--ease-standard);
 }
 .sketch-toolbar button {
   padding: 4px 8px;
@@ -219,6 +321,20 @@ const TOOL_ICON: Record<SketchTool, string> = {
   line-height: 1;
 }
 .sketch-toolbar__color.is-active {
+  outline: 2px solid var(--accent);
+}
+/* 涂黑样式那一组：`display: contents` 让三颗按钮仍按外层横滚那一行的间距排，
+   这一层只是给读屏一个组名。 */
+.sketch-toolbar__styles {
+  display: contents;
+}
+/* 涂黑样式那三颗：里面是各样式自己的小图，外面一圈高亮表示选中。 */
+.sketch-toolbar__style {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+}
+.sketch-toolbar__style.is-active {
   outline: 2px solid var(--accent);
 }
 .sketch-toolbar__note {

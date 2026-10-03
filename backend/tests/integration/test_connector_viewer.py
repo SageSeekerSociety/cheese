@@ -77,9 +77,7 @@ def _unregister(screen: HubScreen) -> None:
 
 
 def test_project_member_may_watch_screen(client):
-    project = post_project(client, json={"name": "P", "owner_handle": "alice"}).json()[
-        "data"
-    ]
+    project = post_project(client, json={"name": "P"}, owner="alice").json()["data"]
     alice = _login(client, "alice")
     screen = _register_screen(
         project_id=uuid.UUID(project["id"]), topic_id=None, handle="agent-x"
@@ -99,9 +97,7 @@ def test_project_member_may_watch_screen(client):
 
 
 def test_outsider_cannot_watch_screen(client):
-    project = post_project(client, json={"name": "P", "owner_handle": "alice"}).json()[
-        "data"
-    ]
+    project = post_project(client, json={"name": "P"}, owner="alice").json()["data"]
     bob = _login(client, "bob")  # logged in, but not in alice's project/topic
     screen = _register_screen(
         project_id=uuid.UUID(project["id"]), topic_id=None, handle="agent-x"
@@ -130,9 +126,7 @@ def test_unknown_screen_is_refused(client):
 def test_cheese_call_inside_screen_is_attributed_to_the_agent(client):
     """A cheese write carrying ``X-Cheese-Screen`` acts as the screen's agent-user
     (device agent-as-user), not the generic 芝士 nor the body's author."""
-    project = post_project(client, json={"name": "P", "owner_handle": "alice"}).json()[
-        "data"
-    ]
+    project = post_project(client, json={"name": "P"}, owner="alice").json()["data"]
     topic = client.post(
         "/topics", json={"project_id": project["id"], "title": "T"}
     ).json()["data"]
@@ -153,7 +147,7 @@ def test_cheese_call_inside_screen_is_attributed_to_the_agent(client):
     try:
         r = client.put(
             f"/topics/{topic['id']}/doc",
-            json={"content": "# hi", "author": "someone-forged", "expected_version": 0},
+            json={"content": "# hi", "expected_version": 0},
             headers={"X-Cheese-Screen": screen.token},
         )
         assert r.status_code == 200, r.text
@@ -163,26 +157,26 @@ def test_cheese_call_inside_screen_is_attributed_to_the_agent(client):
 
 
 def test_cheese_call_without_screen_header_is_not_the_agent(client):
-    project = post_project(client, json={"name": "P", "owner_handle": "alice"}).json()[
-        "data"
-    ]
+    project = post_project(client, json={"name": "P"}, owner="alice").json()["data"]
     topic = client.post(
         "/topics", json={"project_id": project["id"], "title": "T"}
     ).json()["data"]
-    # No X-Cheese-Screen → the screen attribution never fires (author is the fallback).
+    # No X-Cheese-Screen → the screen attribution never fires: the write is the
+    # signed-in person's.
     r = client.put(
         f"/topics/{topic['id']}/doc",
-        json={"content": "# hi", "author": "human-alice", "expected_version": 0},
+        json={"content": "# hi", "expected_version": 0},
+        headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200, r.text
-    assert r.json()["data"]["author"] == "human-alice"
+    assert r.json()["data"]["author"] == "alice"
 
 
 def test_write_gate_and_route_use_the_same_screen_participant(client):
     from app.core.sandbox_auth import mint_scoped_token
 
     project = post_project(
-        client, json={"name": "Screen identity", "owner_handle": "alice"}
+        client, json={"name": "Screen identity"}, owner="alice"
     ).json()["data"]
     tid = project["root_topic_id"]
     owner = session_auth_headers("alice")
@@ -250,9 +244,7 @@ def _enroll_device(client, owner_token: str, project_id: str | None = None) -> d
 
 
 def test_my_devices_list_rename_and_unbind(client):
-    project = post_project(client, json={"name": "P", "owner_handle": "alice"}).json()[
-        "data"
-    ]
+    project = post_project(client, json={"name": "P"}, owner="alice").json()["data"]
     alice = _login_real(client, "alice")
     enrolled = _enroll_device(client, alice, project_id=project["id"])
     device_id = enrolled["device_id"]
@@ -327,9 +319,7 @@ def test_a_member_can_type_into_the_screen(client, monkeypatch):
 
     monkeypatch.setattr(device_hub, "viewer_input", _capture)
 
-    project = post_project(client, json={"name": "P", "owner_handle": "alice"}).json()[
-        "data"
-    ]
+    project = post_project(client, json={"name": "P"}, owner="alice").json()["data"]
     alice = _login(client, "alice")
     screen = _register_screen(
         project_id=uuid.UUID(project["id"]), topic_id=None, handle="agent-x"
@@ -363,9 +353,7 @@ def test_keystrokes_before_attaching_are_dropped(client, monkeypatch):
 
     monkeypatch.setattr(device_hub, "viewer_input", _capture)
 
-    project = post_project(client, json={"name": "P2", "owner_handle": "alice"}).json()[
-        "data"
-    ]
+    project = post_project(client, json={"name": "P2"}, owner="alice").json()["data"]
     alice = _login(client, "alice")
     screen = _register_screen(
         project_id=uuid.UUID(project["id"]), topic_id=None, handle="agent-y"

@@ -78,13 +78,12 @@ def mailbox(monkeypatch):
 
 def _setup(client):
     person = {"Authorization": f"Bearer {seed_user(client, OWNER)}"}
-    r = post_project(
-        client, json={"name": f"连接-{uuid.uuid4().hex[:6]}", "owner_handle": OWNER}
-    )
+    r = post_project(client, json={"name": f"连接-{uuid.uuid4().hex[:6]}"}, owner=OWNER)
     project = r.json()["data"]["id"]
     room = client.post(
         "/topics",
-        json={"project_id": project, "title": "对外沟通", "created_by": OWNER},
+        json={"project_id": project, "title": "对外沟通"},
+        headers=session_auth_headers(OWNER),
     ).json()["data"]["id"]
     return person, project, room
 

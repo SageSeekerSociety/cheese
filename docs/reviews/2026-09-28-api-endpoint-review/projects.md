@@ -14,7 +14,7 @@
 | 3 | GET | `/projects/{project_id}/site` | 可优化 | 候选人 `index.html` 逐个串行取 blob，每个 blob 重解绑凭据并发起新 HTTP 客户端。 |
 | 4 | POST | `/projects/{project_id}/site` | 可优化 | 正确地在响应前提交（值得保持），但 `_snapshot` 仍逐个串行取 blob。 |
 | 5 | GET | `/projects/resource-limits` | 暂无 | 只答部署级默认值（未传 `team_id`，不走团队覆写），不需要调用方身份。 |
-| 6 | POST | `/projects` | 可优化 | `team_id` 有成员校验，`owner_handle` 没有：可以点名把项目种进别人的个人团队。 |
+| 6 | POST | `/projects` | 暂无 | 所有者就是已登录的调用者；请求体没有所有者字段，`team_id` 有成员校验。 |
 | 7 | GET | `/projects` | 暂无 | 三方载荷（shell/team handle）已批量化；无调用方时明说 401 而不是空列表。 |
 | 8 | GET | `/projects/by-task/{task_id}` | 暂无 | 门在 `authorize_task`，载荷复用批量化 helper。 |
 | 9 | GET | `/projects/by-team/{team_id}` | 暂无 | 与 `?team_id=` 用同一道 `authorize_team`，无 N+1。 |
@@ -57,50 +57,9 @@
 | 46 | GET | `/projects/{project_id}/upstream` | 暂无 | 纯读 settings。 |
 | 47 | PUT | `/projects/{project_id}/upstream` | 可优化 | 无类型 body；只 flush 不 commit。 |
 
-合计：可优化 32、暂无 15、待确认 0。
+合计：可优化 31、暂无 16、待确认 0。
 
 ## 二、详细分析（只写有发现的，按收益从高到低）
-
-### A. `POST /projects` — `owner_handle` 没有校验，可以把项目种进别人的个人团队（#6）
-
-现状：`backend/app/api/routes/projects.py:191`（`create_project`）。
-
-`team_id` 是请求体给的，路由专门过了一道 `await _require_team_membership(db, who, body.team_id)`（`projects.py:201`，实现在 `projects.py:152`），注释把理由写得很清楚：团队是请求体给的，所以同一个判断得显式做一遍。`owner_handle` 也是请求体给的（`projects.py:207`）：
-
-```python
-owner_handle = body.owner_handle or (
-    who.handle if who.authenticated and who.handle else None
-)
-```
-
-它被原样交给 `ProjectService.create`（`domain/project/services.py:70`）：
-
-```python
-if team_id is None and owner_handle:
-    team_id = await self._resolve_personal_team_id(owner_handle)
-```
-
-而 `_resolve_personal_team_id`（`services.py:130`）是 `UserRepository.get_by_handle(owner_handle)` → `ensure_personal_team(user.id)`。也就是说：不带 `team_id`、带一个别人的 handle，项目就落进那个人的个人团队，并且在 `ProjectRepository.list_visible_to` 里按 owner 列出（`auth/project_access.py:73`：`project.owner_handle == handle` 即有权读）。攻击者自己也能读，因为创建响应会告诉他 id（`_project_payload` 由 `authorize_project`，而创建者这时已经是项目成员——`ProjectService.create` 的 `seed_root` 会把他放进名册）。
-
-问题（是事实，不是推测）：这条路只校验团队，不校验所有者；被点名的所有者事前没有被问过，也无法拒绝。`_require_team_membership` 的注释讨论了「不要按名字猜参与者的种类」，但没有讨论「不要替别人签字」。仓库自己已经承认这个字段是外部输入（`app/api/routes/projects.py:207` 的注释），`frontend/src/App.vue:534` 送的是 `myHandle()`，即调用者自己的 handle——正常前端路径完全不受影响。
-
-优化：把「谁可以被写成所有者」收成一处判断，与 `team_id` 同一处、同一时机。在 `projects.py` 的 `create_project` 里，把 207 行那一段换成：
-
-```python
-    # 和 team_id 同一条理由：owner_handle 也是请求体给的。允许的只有两种：
-    # 认不出人（由 resolve() 的 fallback 兜住），或者就是调用者自己。别人要接手
-    # 一个项目，走 PUT /{id}/owner —— 那条路由会去问接手人是不是团队的人。
-    requested = (body.owner_handle or "").strip()
-    if requested and requested != who.handle:
-        raise ForbiddenError("不能替别人创建项目；转让请走 PUT /projects/{id}/owner")
-    owner_handle = requested or (
-        who.handle if who.authenticated and who.handle else None
-    )
-```
-
-契约：`POST /projects` 的请求体与响应体不变；只有「`owner_handle` 不等于调用者」的调用从 200 变成 403。前端只送自己的 handle（`frontend/src/App.vue:534` 的 `myHandle()`），不需要改动。`team_id` + 别人的 `owner_handle` 这种组合今天也是落在一个不属于其所有者的团队里，同样被这条挡下。
-
-测试：`backend/tests/integration/test_project_team.py`、`test_project_visibility.py`、`test_project_owner_write.py` 已有同类断言（如 `test_project_owner_write.py` 里 `PUT /owner` 的越权用例）。新增一条放在 `test_project_team.py`：`test_a_project_cannot_be_created_on_someone_elses_behalf` —— 用 A 的凭据、B 的 handle 创建，断言 403，且 B 的 `GET /projects` 里没有多出来一行。
 
 ### B. `GET /projects/{id}/context/search` — 逐房间鉴权的 N+1（#1）
 
@@ -655,7 +614,7 @@ async def _tier_policy_state(db: DbSession, project: Project) -> dict:
 
 @router.get("/{project_id}/tier-policy")
 async def get_tier_policy(project_id, db, resolver) -> dict:
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     project = await ProjectService(db).get_or_404(project_id)
     return ok(await _tier_policy_state(db, project))

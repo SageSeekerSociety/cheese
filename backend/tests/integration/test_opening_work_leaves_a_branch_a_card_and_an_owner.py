@@ -16,7 +16,7 @@ from sqlalchemy import func, select
 
 from app.domain.agent.harness import harness_for
 from app.domain.agent_session.models import AgentSession
-from tests.integration.conftest import post_project
+from tests.integration.conftest import post_project, session_auth_headers
 
 _LEASE = {
     "kind": "device",
@@ -32,11 +32,12 @@ def _room_with_a_session_on_a_machine(client) -> tuple[str, str]:
     先让它有一条，后面「不多行、不多份」才说得出话 —— 从零行开始的话，写侧坏成
     什么样这条测试都是绿的。
     """
-    project = post_project(client, json={"name": "P", "owner_handle": "alice"})
+    project = post_project(client, json={"name": "P"}, owner="alice")
     project_id = project.json()["data"]["id"]
     room_id = client.post(
         "/topics",
-        json={"project_id": project_id, "title": "房间", "created_by": "alice"},
+        json={"project_id": project_id, "title": "房间"},
+        headers=session_auth_headers("alice"),
     ).json()["data"]["id"]
 
     async def _seed() -> None:
@@ -83,7 +84,8 @@ def _sessions_and_leases(client) -> tuple[int, list[dict]]:
 def _open_work(client, room_id: str, title: str) -> dict:
     response = client.post(
         f"/topics/{room_id}/split",
-        json={"title": title, "reviewer_handle": "alice", "created_by": "alice"},
+        json={"title": title, "reviewer_handle": "alice"},
+        headers=session_auth_headers("alice"),
     )
     assert response.status_code == 200, response.text
     return response.json()["data"]

@@ -89,9 +89,7 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 async def _actor_in_place(resolver: ActorResolver, place: Place) -> Actor:
     """Who is calling here, and whether they may be — identity, then the
     room's roster."""
-    actor = await resolver.resolve(
-        fallback_handle=None, topic_id=place.room_id, project_id=place.project_id
-    )
+    actor = await resolver.resolve(topic_id=place.room_id, project_id=place.project_id)
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id
     )
@@ -102,20 +100,15 @@ async def _actor_in_place(resolver: ActorResolver, place: Place) -> Actor:
 async def create_topic(
     body: TopicCreate, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    actor = await resolver.resolve(fallback_handle=None, project_id=body.project_id)
+    actor = await resolver.resolve(project_id=body.project_id)
     await resolver.authorize_project(actor, project_id=body.project_id)
-    # The creator becomes the topic's roster owner (fusion-design §3). Resolve
-    # them at the trust boundary (P1): the token's actor wins over any body
-    # value, so the roster owner is who's really logged in — and body.created_by
-    # stays a Phase-0 fallback for token-less callers.
-    actor = await resolver.resolve(
-        fallback_handle=body.created_by, project_id=body.project_id
-    )
+    # The creator becomes the topic's roster owner (fusion-design §3), and the
+    # creator is whoever the credential names — nobody when there is none.
     topic = await TopicService(db).create(
         project_id=body.project_id,
         title=body.title,
         parent_id=body.parent_id,
-        created_by=actor.handle if actor.handle != "anonymous" else body.created_by,
+        created_by=actor.handle if actor.authenticated else None,
     )
     service = TopicService(db)
     relevance = await service.relevance_for_topics([topic], _viewer(actor))
@@ -343,7 +336,7 @@ async def list_topic_names(db: DbSession, resolver: ActorResolverDep) -> dict:
     are those ``GET /topics`` lists, so this never names a room the caller could
     not already find in a sidebar.
     """
-    who = await resolver.resolve(fallback_handle=None)
+    who = await resolver.resolve()
     if not who.authenticated:
         # Same answer as ``GET /projects``: a failed credential is told so, and
         # nobody at all is owed nothing.
@@ -755,9 +748,7 @@ async def list_topic_children(
     resolver: ActorResolverDep,
 ) -> dict:
     topic = await TopicService(db).get_or_404(topic_id)
-    actor = await resolver.resolve(
-        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
-    )
+    actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
@@ -843,9 +834,7 @@ async def write_topic_progress(
     nothing posted in the room — the worker's plan, so it takes the same seat.
     """
     place = await TopicService(db).place_or_404(topic_id)
-    actor = await resolver.resolve(
-        fallback_handle=None, topic_id=place.room_id, project_id=place.project_id
-    )
+    actor = await resolver.resolve(topic_id=place.room_id, project_id=place.project_id)
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
     )
@@ -970,11 +959,7 @@ async def summon_agent(
     都不是错误，只是这一下不需要花钱。
     """
     place = await TopicService(db).place_or_404(topic_id)
-    actor = await resolver.resolve(
-        fallback_handle=body.get("author"),
-        topic_id=place.room_id,
-        project_id=place.project_id,
-    )
+    actor = await resolver.resolve(topic_id=place.room_id, project_id=place.project_id)
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id
     )
@@ -1028,9 +1013,7 @@ async def mint_webhook_token(
     token minted before. So minting takes the same door as writing to the room
     — project membership — rather than being handed to whoever knows the id."""
     place = await TopicService(db).place_or_404(topic_id)
-    actor = await resolver.resolve(
-        fallback_handle=None, project_id=place.project_id, topic_id=place.room_id
-    )
+    actor = await resolver.resolve(project_id=place.project_id, topic_id=place.room_id)
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id
     )
@@ -1132,9 +1115,7 @@ async def mark_topic_read(
     credential — ``handle`` in the body is only an assertion checked against
     it (it used to BE the identity, letting anyone move anyone's cursor)."""
     topic = await TopicService(db).get_or_404(topic_id)
-    actor = await resolver.resolve(
-        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
-    )
+    actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
@@ -1155,9 +1136,7 @@ async def archive_topic(
 ) -> dict:
     """手动归档 (归档去向): explicit archive, independent of 采纳."""
     topic = await TopicService(db).get_or_404(topic_id)
-    actor = await resolver.resolve(
-        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
-    )
+    actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
@@ -1175,9 +1154,7 @@ async def cleanup_status(
     from app.domain.topic.models import RoomCleanup
 
     topic = await TopicService(db).get_or_404(topic_id)
-    actor = await resolver.resolve(
-        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
-    )
+    actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id, enforce=True
     )
@@ -1205,9 +1182,7 @@ async def unarchive_topic(
 ) -> dict:
     """取消归档: bring an archived topic back to active."""
     topic = await TopicService(db).get_or_404(topic_id)
-    actor = await resolver.resolve(
-        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
-    )
+    actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
@@ -1239,14 +1214,10 @@ async def split_topic(
     the id it would carry does not exist until the worker does."""
     service = TopicService(db)
     parent_place = await service.place_or_404(topic_id)
-    # actor 在信任边界注入 (同 edit_topic_doc): prefer the verified token, fall
-    # back to body.created_by, and require the caller actually have access to
-    # the ROOM — a body-trusted `created_by` let anyone dispatch work in anyone
-    # else's room and name an arbitrary owner.
+    # actor 在信任边界注入 (同 edit_topic_doc): the credential names the creator,
+    # and the caller must actually have access to the ROOM.
     actor = await resolver.resolve(
-        fallback_handle=body.created_by,
-        topic_id=parent_place.room_id,
-        project_id=parent_place.project_id,
+        topic_id=parent_place.room_id, project_id=parent_place.project_id
     )
     await resolver.authorize_topic(
         actor, project_id=parent_place.project_id, topic_id=parent_place.room_id
@@ -1269,7 +1240,7 @@ async def split_topic(
     task = await service.dispatch_task(
         place_id=topic_id,
         title=body.title,
-        created_by=actor.handle if actor.handle != "anonymous" else body.created_by,
+        created_by=actor.handle if actor.authenticated else None,
         brief=body.brief,
         base_task_id=body.base_task_id,
         # 显式指定优先，没指定就用项目默认验收人 (#718 设置表)。The resolution is
@@ -1401,11 +1372,7 @@ async def clone_topic_from(
     service = TopicService(db)
     target = await service.get_or_404(topic_id)
     source = await service.get_or_404(source_id)
-    actor = await resolver.resolve(
-        fallback_handle=body.get("by"),
-        topic_id=topic_id,
-        project_id=target.project_id,
-    )
+    actor = await resolver.resolve(topic_id=topic_id, project_id=target.project_id)
     # Must be allowed on BOTH ends: reading the source's session is as sensitive
     # as writing into the target.
     await resolver.authorize_topic(

@@ -27,16 +27,16 @@ class Runner:
 
 
 def _project(client) -> str:
-    r = post_project(
-        client, json={"name": f"周期-{uuid.uuid4().hex[:6]}", "owner_handle": OWNER}
-    )
+    r = post_project(client, json={"name": f"周期-{uuid.uuid4().hex[:6]}"}, owner=OWNER)
     assert r.status_code == 200, r.text
     return r.json()["data"]["id"]
 
 
 def _room(client, project_id: str, title: str = "周报") -> str:
     r = client.post(
-        "/topics", json={"project_id": project_id, "title": title, "created_by": OWNER}
+        "/topics",
+        json={"project_id": project_id, "title": title},
+        headers=session_auth_headers(OWNER),
     )
     assert r.status_code == 200, r.text
     return r.json()["data"]["id"]

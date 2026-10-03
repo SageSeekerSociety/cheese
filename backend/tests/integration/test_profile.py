@@ -22,6 +22,7 @@ from tests.integration.conftest import (
     add_external_member,
     post_project,
     registered,
+    session_auth_headers,
 )
 
 
@@ -44,7 +45,9 @@ def _remember(client, project_id: str, about: str, content: str) -> None:
 
 def _topic(client, project_id: str, title: str) -> str:
     resp = client.post(
-        "/topics", json={"project_id": project_id, "title": title, "created_by": "u1"}
+        "/topics",
+        json={"project_id": project_id, "title": title},
+        headers=session_auth_headers("u1"),
     )
     assert resp.status_code == 200, resp.text
     return resp.json()["data"]["id"]
@@ -153,15 +156,12 @@ def _seed_u1_with_two_projects(client) -> tuple[str, str]:
 
     asyncio.run(_seed_user())
 
-    p1 = post_project(client, json={"name": "P1", "owner_handle": "u1"}).json()["data"][
-        "id"
-    ]
-    p2 = post_project(client, json={"name": "P2", "owner_handle": "u1"}).json()["data"][
-        "id"
-    ]
+    p1 = post_project(client, json={"name": "P1"}, owner="u1").json()["data"]["id"]
+    p2 = post_project(client, json={"name": "P2"}, owner="u1").json()["data"]["id"]
     client.post(
         "/topics",
-        json={"project_id": p1, "title": "我的话题", "created_by": "u1"},
+        json={"project_id": p1, "title": "我的话题"},
+        headers=session_auth_headers("u1"),
     )
 
     # 芝士 对 u1 的理解。这一页问的是「大家对我的认识」，而池已经是每个项目那位芝士
@@ -215,7 +215,7 @@ def test_user_profile_shows_another_viewer_only_projects_they_share(client, bear
 
 def test_user_profile_shows_a_stranger_no_projects(client, bearer):
     _seed_u1_with_two_projects(client)
-    post_project(client, json={"name": "Elsewhere", "owner_handle": "u3"})
+    post_project(client, json={"name": "Elsewhere"}, owner="u3")
 
     resp = client.get("/users/u1/profile", headers=bearer("u3"))
     assert resp.status_code == 200, resp.text

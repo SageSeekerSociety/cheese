@@ -63,8 +63,13 @@ class MaterialService:
     async def get_many(self, material_ids: list[int]) -> list[Material]:
         """Whatever of these ids exists, in the order asked for.
 
-        No visibility check: the caller is a 课程 naming the 课件 its teacher
-        arranged, and a teacher can only point at material they could see.
+        No visibility check here: this only turns ids into rows. A caller that
+        hands the result to someone who is not a board manager must filter first
+        — a 课件 sitting only in a board's「仅管理员」tier is not readable by an
+        ordinary member, and the `url` on the row is a public path. The teaching
+        read path does exactly that: `app.domain.task.teaching.for_project`
+        filters through `app.domain.space.material_service.
+        member_readable_material_ids` before calling this.
         """
         return await self._repo.list_by_ids(material_ids)
 
@@ -72,11 +77,15 @@ class MaterialService:
         """Raise unless every one of these ids names a material that exists.
 
         No membership check, because there is none to make: `Material` carries
-        only an uploader, no owning team, and `GET /materials/{id}` is open to
-        any signed-in reader — so a 项目集 pointing at someone else's 课件 leaks
-        nothing that reader could not already open. A misspelled id is still
-        refused rather than dropped, because the write side is a form that can
-        be told which field is wrong.
+        only an uploader, no owning team — so a 项目集 pointing at someone
+        else's 课件 leaks nothing that reader could not already open. Existence
+        is no longer the whole story, though: `GET /materials/{id}` refuses a
+        课件 that sits only in a board's「仅管理员」tier
+        (`app.domain.space.material_service.may_read_outside_space`), and the
+        write side refuses naming one too (`ensure_teaching_references`). This
+        method stays the existence half; a misspelled id is still refused rather
+        than dropped, because the write side is a form that can be told which
+        field is wrong.
         """
         found = {m.id for m in await self._repo.list_by_ids(material_ids)}
         missing = [mid for mid in material_ids if mid not in found]
@@ -91,6 +100,19 @@ class MaterialService:
         if material is None:
             raise NotFoundError("Material not found", data={"id": material_id})
         return _material_to_dto(material)
+
+    async def material_row(self, material_id: int) -> Material:
+        """这条素材的行本身，给**别的领域**用（#944：题目板上那份共用资料库）。
+
+        与 ``get_material`` 的差别只是形状：那边回一个给 HTTP 用的 DTO，这边回
+        ORM 行，因为调用方要的不是展示字段 —— 它要 ``meta`` 里的 ``storageKey``
+        才能把字节取出来。跨领域的调用方经 service 拿、不摸本模块的 repository，
+        这是 ``tests/unit/test_domain_import_guard.py`` 要求的正路。
+        """
+        material = await self._repo.get_by_id(material_id)
+        if material is None:
+            raise NotFoundError("Material not found", data={"id": material_id})
+        return material
 
     async def create_material(
         self,

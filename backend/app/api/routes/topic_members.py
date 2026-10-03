@@ -34,9 +34,7 @@ async def list_topic_members(
     from app.domain.user.repositories import UserProfileRepository, UserRepository
 
     topic = await TopicService(db).get_or_404(topic_id)
-    actor = await resolver.resolve(
-        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
-    )
+    actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
@@ -97,7 +95,7 @@ async def add_topic_member(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    who = await resolver.resolve(fallback_handle=None, topic_id=topic_id)
+    who = await resolver.resolve(topic_id=topic_id)
     if not who.authenticated:
         raise AuthenticationRequiredError("A verified member identity is required")
     member = await TopicMemberService(db).add(
@@ -115,7 +113,7 @@ async def update_topic_member_role(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    who = await resolver.resolve(fallback_handle=None, topic_id=topic_id)
+    who = await resolver.resolve(topic_id=topic_id)
     if not who.authenticated:
         raise AuthenticationRequiredError("A verified member identity is required")
     member = await TopicMemberService(db).update_role(
@@ -132,7 +130,7 @@ async def remove_topic_member(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    who = await resolver.resolve(fallback_handle=None, topic_id=topic_id)
+    who = await resolver.resolve(topic_id=topic_id)
     if not who.authenticated:
         raise AuthenticationRequiredError("A verified member identity is required")
     await TopicMemberService(db).remove(

@@ -152,10 +152,10 @@ def test_a_board_admin_reads_the_conversations_of_its_students_projects(
         api_client,
         json={
             "name": "成员的项目",
-            "owner_handle": student.username,
             "external_task_id": task_id,
         },
         headers=_auth(student_token),
+        owner=student.username,
     )
     assert project.status_code == 200, project.text
     pid = project.json()["data"]["id"]
@@ -193,10 +193,10 @@ def test_a_plain_member_of_the_board_is_not_a_teacher(
         api_client,
         json={
             "name": "成员的项目",
-            "owner_handle": student.username,
             "external_task_id": task_id,
         },
         headers=_auth(student_token),
+        owner=student.username,
     )
     pid = project.json()["data"]["id"]
 
@@ -229,10 +229,10 @@ def test_removing_a_board_admin_shuts_the_door_immediately(
         api_client,
         json={
             "name": "成员的项目",
-            "owner_handle": student.username,
             "external_task_id": task_id,
         },
         headers=_auth(student_token),
+        owner=student.username,
     )
     pid = project.json()["data"]["id"]
 

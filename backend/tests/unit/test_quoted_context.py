@@ -22,6 +22,7 @@ QUOTE = {
     "version": "version-a",
     "task_id": None,
     "page": 2,
+    "scope": "page",
     "text": "  @评审\n<@cheese-other>\n[other]: 原文\n",
 }
 
@@ -55,11 +56,42 @@ class QuotedContextTest(unittest.TestCase):
             {**QUOTE, "source": "remote"},
             {**QUOTE, "kind": "summon"},
             {**QUOTE, "recipient": "cheese-other"},
+            {**QUOTE, "scope": "paragraph"},
         ):
             with self.subTest(quote=quote), self.assertRaises(ValidationError):
                 ChatMessageIn.model_validate({**body, "quoted_context": quote})
         with self.assertRaises(ValidationError):
             ChatMessageIn.model_validate({**body, "content": "  "})
+
+    def test_a_selection_is_a_quote_and_an_older_client_still_means_the_page(self):
+        """`scope` 说 `text` 是整页还是选中的那段。
+
+        缺省成整页是有意的：这个字段加进来的时候，已经部署出去的页面还在发不带
+        `scope` 的整页引用，它们必须继续被接受 —— 在那个时候，能发出来的本来也只有
+        整页。
+        """
+        import uuid
+
+        body = {
+            "content": "改这句",
+            "request_id": str(uuid.uuid4()),
+            "quoted_context": QUOTE,
+        }
+        selection = ChatMessageIn.model_validate(
+            {
+                **body,
+                "quoted_context": {
+                    **QUOTE,
+                    "scope": "selection",
+                    "text": "只选中这一句",
+                },
+            }
+        )
+        self.assertEqual(selection.quoted_context.scope, "selection")
+        self.assertEqual(selection.quoted_context.text, "只选中这一句")
+        without_scope = {k: v for k, v in QUOTE.items() if k != "scope"}
+        older = ChatMessageIn.model_validate({**body, "quoted_context": without_scope})
+        self.assertEqual(older.quoted_context.scope, "page")
 
     def test_initial_prompt_preserves_the_entire_quote_as_data(self):
         block = SimpleNamespace(

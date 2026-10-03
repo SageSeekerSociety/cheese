@@ -11,12 +11,13 @@ from tests.integration.conftest import (
 def _project_topic(client, created_by: str = "alice") -> tuple[str, str]:
     """A room in a project whose team has bob and carol on it — rooms seat only
     people who are in the project."""
-    p = post_project(client, json={"name": "P"}).json()["data"]
+    p = post_project(client, json={"name": "P"}, owner="alice").json()["data"]
     for handle in ("bob", "carol"):
         join_project_team(client, p["id"], handle)
     t = client.post(
         "/topics",
-        json={"project_id": p["id"], "title": "T", "created_by": created_by},
+        json={"project_id": p["id"], "title": "T"},
+        headers=session_auth_headers(created_by),
     ).json()["data"]
     return p["id"], t["id"]
 

@@ -8,7 +8,7 @@
 | 阶段 | 交付 | 校验 |
 |---|---|---|
 | P0 | 表情 bug 修复；话题群聊化（成员名册 owner/admin/member、@all/@here 结构化 token） | 前端 53、后端集成 |
-| P1 | agent-as-user（芝士=真 user、is_agent 派生自 agent_bindings、不入库）；登录发 JWT；resolve_actor（token>scoped>handle fallback）；组合式授权（token 必要非充分、群是共享单位） | 后端 407→460 |
+| P1 | agent-as-user（芝士=真 user、is_agent 派生自 agent_bindings、不入库）；登录发 JWT；resolve_actor（token>scoped）；组合式授权（token 必要非充分、群是共享单位） | 后端 407→460 |
 | P2 | 现场真终端（ttyd 镜像 + WS 反代，tmux 后端下嵌真 Claude Code TUI，sdk 回退 worklog） | 端到端截图 |
 | P3 | self-hosted 设备连接器：**他们 frozen cli 零改动拨入我们后端、跑真 turn、hooks 感知回流 + screen 中继**（Phase A 真机实证）；device 域/hub/link.Msg/attribution/DeviceProvider 全我们代码 | 439，Phase A logs |
 | P4 | clone agent（transcript-fork，bind-mount 宿主文件直读）；resume 接通；cheese CLI raw-api 逃生口（带 token 不绕鉴权） | 460 |

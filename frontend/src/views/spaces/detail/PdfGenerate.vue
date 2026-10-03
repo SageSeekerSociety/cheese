@@ -2,6 +2,7 @@
 // 发题页「从 PDF 生成」那条路：上传一份 PDF，逐条读出草稿，改完、勾好再一起发出去。
 // 确认之后**不跳走**，就地给回执。
 import type { PdfPublishAttachmentsData, PdfTaskDraftData } from '@/network/api/tasks/types'
+import type { SpaceTeaching } from '@/types'
 
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -17,6 +18,12 @@ import { useSpaceStore } from '@/stores/space'
 const props = defineProps<{
   /** 用哪份题目模板读 PDF；-1 是空白模板。 */
   pdfTemplateIndex: number
+  /**
+   * 发题页这道题自己的「给 AI 队友的指导」覆盖（#944）。与手写那道共用同一份
+   * 页面状态：写了就在这一批每一道上整份落下去，六格全空（`undefined`）就不带这项，
+   * 让空间（与项目集）的默认生效。
+   */
+  teaching?: SpaceTeaching
 }>()
 
 const route = useRoute()
@@ -267,6 +274,10 @@ async function confirmPdf() {
         // 上面那两颗勾勾中的文件：**每一道**都挂同一份（后端
         // `attach_uploaded_to_tasks`）。没勾就整项不出现，这条路的形状与从前一致。
         ...(ids.length ? { attachmentIds: ids } : {}),
+        // 发题页那道题的「给 AI 队友的指导」覆盖（#944）：写了就整份落到这一批
+        // 每一道上；六格全空就不带这项，让空间（与项目集）的默认生效 —— 与手写那道
+        // 同一个判据（`teachingPayload`）。
+        ...(props.teaching ? { teaching: props.teaching } : {}),
       },
     })
 

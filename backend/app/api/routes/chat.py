@@ -108,7 +108,7 @@ async def chat(
             resolver = ActorResolver(
                 session=auth_session, bearer=token or None, cheese_token=""
             )
-            conn_actor = await resolver.resolve(fallback_handle=None, topic_id=topic_id)
+            conn_actor = await resolver.resolve(topic_id=topic_id)
             refusal = refuse_unauthenticated_chat(
                 conn_actor, token_presented=bool(token)
             )

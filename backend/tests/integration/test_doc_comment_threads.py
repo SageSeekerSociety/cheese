@@ -20,9 +20,9 @@ from tests.integration.conftest import post_project, room_agent_seat
 def setup(client):
     token = seed_user(client, "thread-owner")
     client.headers.update({"Authorization": f"Bearer {token}"})
-    project = post_project(
-        client, {"name": "Threads", "owner_handle": "thread-owner"}
-    ).json()["data"]
+    project = post_project(client, {"name": "Threads"}, owner="thread-owner").json()[
+        "data"
+    ]
     room = client.post(
         "/topics", json={"project_id": project["id"], "title": "Doc"}
     ).json()["data"]["id"]

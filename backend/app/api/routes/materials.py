@@ -1,14 +1,28 @@
+"""素材：上传一份文件，再按 id 读回去。
+
+**读这一侧多了一道闩**（#944）。这道门（``GET /materials/{material_id}``）从前只
+要求登录，返回体里带着 ``url`` —— 而 ``url`` 是 ``/uploads/...`` 下一条公开可猜的
+路径（见 ``routes/uploads.py`` 顶部）。把某份素材放进题目板的「仅管理员」档之后，
+那道门仍然会把它的公开路径发出去，档位就只剩一个标签。所以这里问一句
+``SpaceMaterialService.may_read_outside_space``：只有真的挂在某块板的仅管理员档里
+的素材才被挡住，别的素材一个字不变。
+
+缺口仍在，没有被这道闩修好：素材表只有上传者、没有归属，所以「所有成员」档与任何
+散件今天依然是「登录就读得到」。那张表和 ``attachment`` 记的是同一个缺口。
+"""
+
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, Path, UploadFile
 
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
-from app.core.errors import BadRequestError, UnprocessableEntityError
+from app.core.errors import BadRequestError, ForbiddenError, UnprocessableEntityError
 from app.core.storage import generate_storage_key, get_storage_backend
 from app.db.session import get_db
 from app.domain.materials.repositories import MaterialRepository
 from app.domain.materials.services import MaterialService
+from app.domain.space.material_service import SpaceMaterialService
 
 router = APIRouter(prefix="/materials", tags=["Materials"])
 
@@ -93,7 +107,18 @@ async def get_material_detail(
     material_id: Annotated[int, Path(ge=0)],
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: MaterialService = Depends(get_material_service),
+    db=Depends(get_db),
 ) -> dict:
+    # 「仅管理员」那一档的闩。这道门只要求登录，返回体里又带着素材的 ``url`` ——
+    # 一条公开可猜的 ``/uploads/...`` 路径（见 ``routes/uploads.py`` 顶部）。素材
+    # 一旦进了某块板的仅管理员档，把 url 发出去就等于把文件发出去，档位也就只剩下
+    # 一个标签。判据在 ``app.domain.space.material_service.may_read_outside_space``：
+    # 只对真的进了那一档的素材说不，其余素材一个字不变。
+    gate = SpaceMaterialService(session=db, storage=get_storage_backend())
+    if not await gate.may_read_outside_space(
+        material_id=material_id, user_id=auth_user.user_id
+    ):
+        raise ForbiddenError("This material is only visible to the board's managers")
     material = await service.get_material(material_id)
     return {
         "code": 200,

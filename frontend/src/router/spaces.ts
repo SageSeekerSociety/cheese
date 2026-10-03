@@ -196,6 +196,16 @@ export default {
           component: () => import('@/views/spaces/detail/ManageDomainGroups.vue'),
         },
         {
+          path: 'guidance',
+          name: 'SpacesDetailSettingsGuidance',
+          component: () => import('@/views/spaces/detail/settings/SpaceGuidance.vue'),
+        },
+        {
+          path: 'materials',
+          name: 'SpacesDetailSettingsMaterials',
+          component: () => import('@/views/spaces/detail/settings/SpaceMaterials.vue'),
+        },
+        {
           // 模板的新建和编辑是「题目模板」下一级的整页表单，画在同一层里。
           path: 'templates/create',
           name: 'SpacesDetailCreateTemplate',

@@ -225,6 +225,10 @@
         "ok": "看起来没问题。",
         "waiting": "表单装好之后，这里会逐条列出它现在拦着你的规则。",
         "submit": "提交审核"
+      },
+      "teaching": {
+        "title": "给 AI 队友的指导",
+        "subtitle": "这道题自己的。留空就用这块板的默认；写上一份会整份盖过它。"
       }
     },
     "selectTemplate": {
@@ -516,7 +520,9 @@
       "categories": "分类与话题",
       "templates": "题目模板",
       "inviteCodes": "邀请码",
-      "domainGroups": "邮箱域名组"
+      "domainGroups": "邮箱域名组",
+      "guidance": "给 AI 队友的指导",
+      "materials": "资料库"
     },
     "sections": {
       "categories": "分类",
@@ -540,6 +546,65 @@
     "close": "关闭空间设置",
     "closeHint": "关闭空间设置（Esc）",
     "back": "返回空间设置"
+  },
+  "guidance": {
+    "title": "给 AI 队友的指导",
+    "intro": "这块板的默认。从这里的题建出的项目，AI 队友开新对话时会读它；单道题可以另设一份盖过它。",
+    "save": "保存",
+    "saveSuccess": "已保存",
+    "saveFailed": "保存失败"
+  },
+  "teaching": {
+    "fields": {
+      "systemPrompt": "角色设定",
+      "systemPromptHint": "可以写 {'{current_week}'}、{'{allowed_topics}'}、{'{avoid_in_code}'}，发送时替换成下面填写的内容",
+      "currentWeek": "当前周次",
+      "currentWeekHint": "留空表示不设",
+      "advanced": "高级选项",
+      "allowedTopics": "目前的内容范围",
+      "avoidInCode": "暂时不该用到的写法",
+      "avoidInCodeHint": "用逗号分隔，例如「递归」「指针」",
+      "materialIds": "材料编号",
+      "knowledgeIds": "知识条目编号",
+      "listHint": "用逗号分隔"
+    }
+  },
+  "materials": {
+    "upload": "上传资料",
+    "uploadTitle": "上传一份资料",
+    "pickFile": "选一个文件",
+    "visibility": "谁能看",
+    "visibilityValue": {
+      "members": "所有成员",
+      "admins": "仅管理员"
+    },
+    "hint": {
+      "members": "这块板上的人都看得见、都能下载。",
+      "admins": "只有这块板的管理员看得见、能下载。"
+    },
+    "cancel": "取消",
+    "download": "下载",
+    "remove": "移除",
+    "confirmRemove": "确认移除",
+    "empty": "暂无资料",
+    "type": {
+      "image": "图片",
+      "video": "视频",
+      "audio": "音频",
+      "file": "文件"
+    },
+    "uploadedOn": "{date} 上传",
+    "downloads": "{n} 次下载",
+    "toast": {
+      "loadFailed": "资料读不出来",
+      "uploaded": "已上传",
+      "uploadFailed": "上传失败",
+      "visibilityUpdated": "已改",
+      "visibilityFailed": "改可见范围失败",
+      "removed": "已移除，学生那边的清单里没有了",
+      "removeFailed": "移除失败",
+      "downloadFailed": "下载失败"
+    }
   },
   "announcements": {
     "publish": "发布公告",

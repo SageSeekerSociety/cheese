@@ -17,7 +17,8 @@ pytestmark = pytest.mark.usefixtures("github_binding_user")
 def _project(client):
     return post_project(
         client,
-        json={"name": "Binding", "owner_handle": "alice", "forge_kind": "github_app"},
+        json={"name": "Binding", "forge_kind": "github_app"},
+        owner="alice",
     ).json()["data"]["id"]
 
 
@@ -201,11 +202,11 @@ def test_manager_role_is_rechecked_after_install_link_created(client, monkeypatc
         client,
         json={
             "name": "Binding",
-            "owner_handle": "alice",
             "forge_kind": "github_app",
             "team_id": team_id,
         },
         headers=session_auth_headers("alice"),
+        owner="alice",
     ).json()["data"]["id"]
     join_project_team(client, pid, "alice")
     join_project_team(client, pid, "bob")
@@ -266,7 +267,7 @@ def test_github_management_follows_participant_role_and_own_account(
     from tests.integration.conftest import room_agent_seat
 
     project = post_project(
-        client, json={"name": "Participant access", "owner_handle": "alice"}
+        client, json={"name": "Participant access"}, owner="alice"
     ).json()["data"]
     pid = project["id"]
     origin = project["root_topic_id"]

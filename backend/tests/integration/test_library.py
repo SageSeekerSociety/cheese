@@ -20,7 +20,7 @@ def _project(client) -> str:
 def _topic(client, project_id: str, title: str) -> str:
     r = client.post(
         "/topics",
-        json={"project_id": project_id, "title": title, "created_by": "user-1"},
+        json={"project_id": project_id, "title": title},
     )
     return r.json()["data"]["id"]
 

@@ -48,9 +48,7 @@ def test_the_owner_is_on_the_roster_without_a_member_row(client):
     两件事得同时成立：界面和 @ 都读名册，所以他必须在上面；而成员表里多这一行会
     让别处「把所有者加进名册」的调用撞上唯一约束。
     """
-    pid = post_project(client, json={"name": "P", "owner_handle": OWNER}).json()[
-        "data"
-    ]["id"]
+    pid = post_project(client, json={"name": "P"}, owner=OWNER).json()["data"]["id"]
 
     assert _roster(client, pid) == {OWNER: "owner"}
 
@@ -109,9 +107,7 @@ def test_the_owner_is_shown_by_nickname_and_chosen_avatar(client):
 
     avatar_id = client.portal.call(seed)
 
-    pid = post_project(client, json={"name": "P", "owner_handle": "boss"}).json()[
-        "data"
-    ]["id"]
+    pid = post_project(client, json={"name": "P"}, owner="boss").json()["data"]["id"]
 
     row = _rows(client, pid)["boss"]
     assert row["name"] == "老板"
@@ -124,9 +120,7 @@ def test_an_owner_who_also_has_a_member_row_appears_once(client):
     重复一行会让界面上出现两个同名的人，也会让 @ 的通知发两遍。现在接口不会再写
     出这种行，所以直接写库造出来。
     """
-    pid = post_project(client, json={"name": "P", "owner_handle": OWNER}).json()[
-        "data"
-    ]["id"]
+    pid = post_project(client, json={"name": "P"}, owner=OWNER).json()["data"]["id"]
 
     async def legacy_row() -> None:
         async with client.test_request_factory() as session:

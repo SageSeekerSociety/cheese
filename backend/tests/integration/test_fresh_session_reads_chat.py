@@ -11,17 +11,22 @@ import re
 import uuid
 
 from app.domain.agent_session.services import AgentSessionService
-from tests.integration.conftest import chat_ws_url, post_message, post_project
+from tests.integration.conftest import (
+    chat_ws_url,
+    post_message,
+    post_project,
+    session_auth_headers,
+)
 
 _LINE = re.compile(r"这个房间里已经有 (\d+) 条聊天消息")
 
 
 def _room(client) -> str:
-    p = post_project(client, json={"name": "P", "owner_handle": "user-1"}).json()[
-        "data"
-    ]
+    p = post_project(client, json={"name": "P"}, owner="user-1").json()["data"]
     return client.post(
-        "/topics", json={"project_id": p["id"], "title": "话题", "created_by": "user-1"}
+        "/topics",
+        json={"project_id": p["id"], "title": "话题"},
+        headers=session_auth_headers("user-1"),
     ).json()["data"]["id"]
 
 

@@ -8,12 +8,24 @@ export type SketchTool = 'select' | 'pen' | 'line' | 'arrow' | 'rect' | 'ellipse
 export const DRAW_TOOLS: readonly SketchTool[] = ['pen', 'line', 'arrow', 'rect', 'ellipse', 'text', 'redact']
 
 /**
- * 五种颜色：四个显眼的加上一个当涂黑用的近黑。
- *
- * 不是参考物那一套——参考物是 #E03131 #1971C2 #2F9E44 #1F1E1D 再加一个白。这里
- * 没跟着换成白色：白在浅色底上看不见，要它看得见得先配一圈描边，那是另一件事。
+ * 涂黑（redact）的三种样式。参考物是**一个工具 + 一个样式字段**，不是三个工具：
+ * 形状仍是 `{ tool: 'redact', region, redactStyle }`，缺省即实心。
  */
-export const SKETCH_COLORS: readonly string[] = ['#e5484d', '#f5a524', '#30a46c', '#0091ff', '#16181d']
+export type RedactStyle = 'solid' | 'mosaic' | 'noise'
+
+/** 样式行里的顺序：实心、马赛克、噪点。 */
+export const REDACT_STYLES: readonly RedactStyle[] = ['solid', 'mosaic', 'noise']
+
+/** 涂黑底下那层纯黑。涂黑不看颜色，只铺这个。 */
+export const REDACT_INK = '#000000'
+
+/**
+ * 和参考物同一套：红、蓝、绿、近黑，外加一个白。第一颗是默认选中的红。
+ *
+ * 参考物（Claude 桌面版那套标注器）就是这五个，白也在里面——白是画在黑底、深色
+ * 照片上的那支笔，参考物没有为它单独配描边，这里也照抄，不给白加边。
+ */
+export const SKETCH_COLORS: readonly string[] = ['#E03131', '#1971C2', '#2F9E44', '#1F1E1D', '#FFFFFF']
 
 export type PenStroke = { tool: 'pen'; color: string; width: number; points: Point[] }
 export type LineStroke = { tool: 'line' | 'arrow'; color: string; width: number; from: Point; to: Point }
@@ -24,6 +36,11 @@ export type ShapeStroke = {
   region: RasterRegion
   /** 文字标注：画在框左上角的字。 */
   text?: string
+  /**
+   * 只对涂黑有意义：涂抹的样式，缺省即实心。涂黑虽然也带 `color`，但画的时候一律
+   * 只认这个字段——颜色对涂黑是不可选的。
+   */
+  redactStyle?: RedactStyle
 }
 export type TextStroke = { tool: 'text'; color: string; width: number; at: Point; text: string }
 export type SketchStroke = PenStroke | LineStroke | ShapeStroke | TextStroke
@@ -126,7 +143,123 @@ export function sampleImage(image: HTMLImageElement, max = 512): SampledImage | 
   }
 }
 
-function paintStroke(context: CanvasRenderingContext2D, stroke: SketchStroke, scale: number, naturalWidth: number) {
+/** 图案 tile 的边长（像素）。参考物恒定 96，与区域大小无关。 */
+export const REDACT_TILE = 96
+
+/** 每种样式的方块边长；是常量，不随区域大小缩放。solid 不铺图案。 */
+export const REDACT_BLOCK_STEP: Record<RedactStyle, number> = { solid: 0, mosaic: 12, noise: 2 }
+
+/** 每种样式一方块取一个随机灰值的范围（闭区间）。 */
+const REDACT_GREY: Record<'mosaic' | 'noise', readonly [number, number]> = {
+  mosaic: [56, 200],
+  noise: [16, 240],
+}
+
+/**
+ * 一块 tile 里每个方块的灰值，按行铺开。抽出来是为了可测：tile 边长、方块步长、
+ * 灰值范围都是参考物量出来的常量。
+ */
+export function redactBlocks(style: 'mosaic' | 'noise', random: () => number = Math.random): number[] {
+  const step = REDACT_BLOCK_STEP[style]
+  const [low, high] = REDACT_GREY[style]
+  const per = Math.round(REDACT_TILE / step)
+  const blocks: number[] = []
+  for (let index = 0; index < per * per; index += 1) {
+    blocks.push(low + Math.floor(random() * (high - low + 1)))
+  }
+  return blocks
+}
+
+/** 每种样式一块 tile，画一次留着复用（参考物也缓存）。 */
+const tiles = new Map<RedactStyle, HTMLCanvasElement | null>()
+
+/** 取（或造）某种样式的 96×96 图案 tile；solid 没有 tile。没有画布的宿主给 null。 */
+export function redactTile(style: RedactStyle): HTMLCanvasElement | null {
+  if (style === 'solid') return null
+  if (tiles.has(style)) return tiles.get(style) ?? null
+  let tile: HTMLCanvasElement | null = null
+  try {
+    const canvas = document.createElement('canvas')
+    canvas.width = REDACT_TILE
+    canvas.height = REDACT_TILE
+    const context = typeof canvas.getContext === 'function' ? canvas.getContext('2d') : null
+    if (context) {
+      const step = REDACT_BLOCK_STEP[style]
+      const blocks = redactBlocks(style)
+      const per = Math.round(REDACT_TILE / step)
+      for (let index = 0; index < blocks.length; index += 1) {
+        const grey = blocks[index]
+        context.fillStyle = `rgb(${grey}, ${grey}, ${grey})`
+        context.fillRect((index % per) * step, Math.floor(index / per) * step, step, step)
+      }
+      tile = canvas
+    }
+  } catch {
+    // 没有画布的宿主（jsdom、被禁用的画布）：没有图案，退回纯黑，不崩。
+    tile = null
+  }
+  tiles.set(style, tile)
+  return tile
+}
+
+/** tile 的 data URL，按样式缓存；SVG 里当贴图用（屏幕上也要看得见这三种样式）。 */
+const tileUrls = new Map<RedactStyle, string | null>()
+
+/**
+ * 某种样式的 tile 转成 data URL，给屏幕上的 SVG 当 `<image>` 用。
+ *
+ * 和导出走同一块 tile（`redactTile` 缓存着），所以屏幕上看到的纹理和导出的那一块是
+ * 同一份，不是各画各的。没有画布的宿主（jsdom、画布被禁）给 null，调用方退回纯黑。
+ */
+export function redactTileDataUrl(style: RedactStyle): string | null {
+  if (style === 'solid') return null
+  if (tileUrls.has(style)) return tileUrls.get(style) ?? null
+  let url: string | null = null
+  try {
+    const tile = redactTile(style)
+    if (tile && typeof tile.toDataURL === 'function') url = tile.toDataURL()
+  } catch {
+    url = null
+  }
+  tileUrls.set(style, url)
+  return url
+}
+
+/** CanvasPattern 按上下文缓存（参考物：tile 进 Map，pattern 进 WeakMap）。 */
+const patterns = new WeakMap<CanvasRenderingContext2D, Map<RedactStyle, CanvasPattern>>()
+
+function redactPattern(context: CanvasRenderingContext2D, style: RedactStyle): CanvasPattern | null {
+  if (style === 'solid') return null
+  let byStyle = patterns.get(context)
+  if (!byStyle) {
+    byStyle = new Map()
+    patterns.set(context, byStyle)
+  }
+  const cached = byStyle.get(style)
+  if (cached) return cached
+  const tile = redactTile(style)
+  if (!tile || typeof context.createPattern !== 'function') return null
+  const pattern = context.createPattern(tile, 'repeat')
+  if (pattern) byStyle.set(style, pattern)
+  return pattern
+}
+
+/**
+ * 图案相位：把区域左上角对 tile 取模，画图案时把上下文先平移这么多。
+ *
+ * 同一个区域重画（抖动、缩放后重绘）时相位不变，纹理不会一格一格地滑。
+ */
+export function redactAnchor(x: number, y: number, tile = REDACT_TILE): Point {
+  const mod = (value: number) => ((Math.round(value) % tile) + tile) % tile
+  return { x: mod(x), y: mod(y) }
+}
+
+export function paintStroke(
+  context: CanvasRenderingContext2D,
+  stroke: SketchStroke,
+  scale: number,
+  naturalWidth: number
+) {
   const width = Math.max(1, stroke.width * scale)
   const line = (region: RasterRegion) => ({
     x: region.x * scale,
@@ -172,9 +305,21 @@ function paintStroke(context: CanvasRenderingContext2D, stroke: SketchStroke, sc
       context.fill()
     }
   } else if (stroke.tool === 'redact') {
-    // 涂黑是实心的：它要盖住东西，不是勾出东西。
+    // 涂黑先铺满纯黑：它要盖住东西，不是勾出东西。
     const box = line(stroke.region)
+    context.fillStyle = REDACT_INK
     context.fillRect(box.x, box.y, box.width, box.height)
+    const pattern = redactPattern(context, stroke.redactStyle ?? 'solid')
+    if (pattern) {
+      // 方块边缘要硬：关掉平滑；相位按左上角对 tile 取模，同一区域重画不滑。
+      const anchor = redactAnchor(box.x, box.y)
+      context.save()
+      context.imageSmoothingEnabled = false
+      context.translate(anchor.x, anchor.y)
+      context.fillStyle = pattern
+      context.fillRect(box.x - anchor.x, box.y - anchor.y, box.width, box.height)
+      context.restore()
+    }
   } else if (stroke.tool === 'rect') {
     const box = line(stroke.region)
     context.strokeRect(box.x, box.y, box.width, box.height)

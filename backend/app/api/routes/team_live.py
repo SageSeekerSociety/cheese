@@ -56,7 +56,7 @@ async def team_live(
             resolver = ActorResolver(
                 session=auth_session, bearer=token or None, cheese_token=""
             )
-            actor = await resolver.resolve(fallback_handle=None)
+            actor = await resolver.resolve()
             if not actor.authenticated:
                 refusal = (
                     ("auth_expired", "登录状态已失效，请重新登录")

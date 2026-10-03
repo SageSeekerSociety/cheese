@@ -1,7 +1,7 @@
 """A credit is a hundredth of a US dollar; rescale every stored amount
 
 Revision ID: ddf13581d122
-Revises: b0caecc81d00
+Revises: f3a9c81d4e26
 Create Date: 2026-10-03
 
 A credit was whatever ``LLM_GATEWAY_CREDIT_USD`` said, 0.04 on dev. It is now
@@ -20,7 +20,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "ddf13581d122"
-down_revision: str | Sequence[str] | None = "b0caecc81d00"
+down_revision: str | Sequence[str] | None = "f3a9c81d4e26"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

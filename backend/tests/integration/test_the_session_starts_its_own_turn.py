@@ -25,14 +25,16 @@ from tests.integration.conftest import (
     post_message,
     post_project,
     room_agent_seat,
+    session_auth_headers,
 )
 
 
 def _room(client) -> tuple[str, str]:
-    project = post_project(client, json={"name": "P"}).json()["data"]
+    project = post_project(client, json={"name": "P"}, owner="u").json()["data"]
     topic = client.post(
         "/topics",
-        json={"project_id": project["id"], "title": "房间", "created_by": "u"},
+        json={"project_id": project["id"], "title": "房间"},
+        headers=session_auth_headers("u"),
     ).json()["data"]
     return project["id"], topic["id"]
 
@@ -172,16 +174,18 @@ def test_a_teammates_own_turn_stays_the_teammates(client, stub_hooks):
     from app.domain.agent.platform_notices import EVENT_DELIVERY_FALLBACK
     from app.domain.block.models import Block
     from app.domain.identity.handles import agent_instance_handle
-    from tests.integration.conftest import session_auth_headers
 
-    project = post_project(client, json={"name": "P"}).json()["data"]["id"]
+    project = post_project(client, json={"name": "P"}, owner="alice").json()["data"][
+        "id"
+    ]
     reviewer = client.post(
         f"/projects/{project}/agents",
         json={"handle": "reviewer", "display_name": "审稿人"},
     ).json()["data"]
     room_id = client.post(
         "/topics",
-        json={"project_id": project, "title": "房间", "created_by": "alice"},
+        json={"project_id": project, "title": "房间"},
+        headers=session_auth_headers("alice"),
     ).json()["data"]["id"]
     seat = agent_instance_handle(reviewer["id"])
     seated = client.post(
@@ -233,16 +237,18 @@ def test_a_room_nobody_addressed_answers_as_the_teammate_it_seats(client):
     from app.domain.identity.handles import agent_instance_handle
     from app.domain.project.models import Project
     from app.domain.topic.models import Topic
-    from tests.integration.conftest import session_auth_headers
 
-    project_id = post_project(client, json={"name": "P"}).json()["data"]["id"]
+    project_id = post_project(client, json={"name": "P"}, owner="alice").json()["data"][
+        "id"
+    ]
     reviewer = client.post(
         f"/projects/{project_id}/agents",
         json={"handle": "reviewer", "display_name": "审稿人"},
     ).json()["data"]
     room_id = client.post(
         "/topics",
-        json={"project_id": project_id, "title": "房间", "created_by": "alice"},
+        json={"project_id": project_id, "title": "房间"},
+        headers=session_auth_headers("alice"),
     ).json()["data"]["id"]
 
     async def answers() -> str:

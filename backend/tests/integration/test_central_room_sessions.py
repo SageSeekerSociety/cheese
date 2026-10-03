@@ -116,12 +116,13 @@ async def test_execution_survives_an_unrelated_room_column_rename(
 
 @pytest.fixture
 async def room(client):
-    project = post_project(
-        client, json={"name": "Central", "owner_handle": "alice"}
-    ).json()["data"]
+    project = post_project(client, json={"name": "Central"}, owner="alice").json()[
+        "data"
+    ]
     topic = client.post(
         "/topics",
-        json={"project_id": project["id"], "title": "Work", "created_by": "alice"},
+        json={"project_id": project["id"], "title": "Work"},
+        headers=session_auth_headers("alice"),
     ).json()["data"]
     made = client.post(f"/projects/{project['id']}/agents", json={"handle": AGENT})
     assert made.status_code == 200, made.text

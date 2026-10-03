@@ -35,10 +35,7 @@ from tests.integration.conftest import (
 
 
 def _project(client, owner: str | None) -> dict:
-    body: dict = {"name": "P"}
-    if owner is not None:
-        body["owner_handle"] = owner
-    return post_project(client, json=body).json()["data"]
+    return post_project(client, json={"name": "P"}, owner=owner).json()["data"]
 
 
 def _roster(client, topic_id: str) -> dict[str, str]:
@@ -150,24 +147,16 @@ def test_topic_created_by_human_is_owned_by_that_human(client):
 
 
 def test_topic_created_by_cheese_falls_back_to_project_owner(client):
-    """The bug users hit: 芝士 creating a room left it with no owner at all."""
+    """The bug users hit: 芝士 creating a room left it with no owner at all.
+    The call here names no person either, which is what that came down to."""
     p = _project(client, owner="alice")
-    topic = _create_topic(client, p["id"], json={"created_by": "cheese"})
+    topic = _create_topic(client, p["id"])
 
     roster = _roster(client, topic["id"])
     assert roster.get("alice") == "owner"
     # The room seats the project's default agent as a member — not the shared
     # platform ``cheese`` account, which no longer sits in rooms.
     assert _agent_roles(client, topic["id"]) == ["member"]
-
-
-def test_topic_created_anonymously_still_gets_an_owner(client):
-    """A token-less Phase-0 call (no `created_by` at all) — the shape the web UI
-    degrades to when its session token is missing or expired."""
-    p = _project(client, owner="alice")
-    topic = _create_topic(client, p["id"])
-
-    assert _roster(client, topic["id"]).get("alice") == "owner"
 
 
 def test_an_ownerless_project_falls_back_to_its_teams_owner(client):
@@ -188,7 +177,7 @@ def test_an_ownerless_project_falls_back_to_its_teams_owner(client):
     p = _project(client, owner="dana")
     _make_project_ownerless(client, p["id"])
 
-    topic = _create_topic(client, p["id"], json={"created_by": "cheese"})
+    topic = _create_topic(client, p["id"])
 
     # dana owns the personal team the project was created in.
     assert _roster(client, topic["id"]).get("dana") == "owner"
@@ -202,7 +191,7 @@ def test_a_room_with_nobody_to_inherit_from_is_still_created(client):
     p = _project(client, owner=None)
     _make_project_ownerless(client, p["id"])
     _strip_team_owner(client, p["id"])
-    topic = _create_topic(client, p["id"], json={"created_by": "cheese"})
+    topic = _create_topic(client, p["id"])
 
     roster = _roster(client, topic["id"])
     assert "owner" not in roster.values()
@@ -217,14 +206,14 @@ def test_work_dispatched_in_an_agent_created_room_is_not_ownerless(client):
     whole difference between a piece of work and the room it happens in.
     """
     p = _project(client, owner="alice")
-    room = _create_topic(client, p["id"], json={"created_by": "cheese"})
+    room = _create_topic(client, p["id"])
 
     child = client.post(
         f"/topics/{room['id']}/split",
-        json=dict(
-            reviewer_handle="alice",
-            **{"title": "分身拆出的子任务", "created_by": "cheese"},
-        ),
+        json=dict(reviewer_handle="alice", **{"title": "分身拆出的子任务"}),
+        headers={
+            "X-Cheese-Token": mint_scoped_token(project_id=p["id"], topic_id=room["id"])
+        },
     ).json()["data"]
 
     assert child["owner_handle"] == "alice"
@@ -297,7 +286,7 @@ def test_owner_can_manage_roster_of_an_agent_created_topic(client):
     actually add members to a room 芝士 opened. Before, this was a 403 with no
     way out — no owner existed to grant anyone anything."""
     p = _project(client, owner="alice")
-    topic = _create_topic(client, p["id"], json={"created_by": "cheese"})
+    topic = _create_topic(client, p["id"])
     join_project_team(client, p["id"], "bob")
 
     r = client.post(

@@ -38,7 +38,7 @@ async def test_numeric_handle_is_resolved_to_the_real_username(monkeypatch):
         monkeypatch, token=token, user=SimpleNamespace(username="wangchangxin")
     )
 
-    actor = await resolver.resolve(fallback_handle=None)
+    actor = await resolver.resolve()
 
     assert actor.handle == "wangchangxin"
     assert actor.user_id == 470
@@ -51,7 +51,7 @@ async def test_unresolvable_user_keeps_the_numeric_handle(monkeypatch):
     token = create_access_token(999999, handle="999999")
     resolver, _ = _resolver(monkeypatch, token=token, user=None)
 
-    actor = await resolver.resolve(fallback_handle=None)
+    actor = await resolver.resolve()
 
     assert actor.handle == "999999"
 
@@ -63,20 +63,7 @@ async def test_a_normal_handle_is_left_alone(monkeypatch):
         monkeypatch, token=token, user=SimpleNamespace(username="someone-else")
     )
 
-    actor = await resolver.resolve(fallback_handle=None)
+    actor = await resolver.resolve()
 
     assert actor.handle == "wangchangxin"
-    repo.get_by_id.assert_not_awaited()
-
-
-async def test_handle_fallback_actor_is_untouched(monkeypatch):
-    """The Phase-0 fallback (no token) is not a token actor — never repaired."""
-    resolver, repo = _resolver(
-        monkeypatch, token=None, user=SimpleNamespace(username="wangchangxin")
-    )
-
-    actor = await resolver.resolve(fallback_handle="470")
-
-    assert actor.handle == "470"
-    assert actor.via == "handle"
     repo.get_by_id.assert_not_awaited()

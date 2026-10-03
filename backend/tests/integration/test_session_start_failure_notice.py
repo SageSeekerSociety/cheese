@@ -11,7 +11,11 @@ import pytest
 
 from app.domain.agent.harness.channel import startup_refused
 from tests.conftest import StubChannel
-from tests.integration.conftest import chat_ws_url, post_message, post_project
+from tests.integration.conftest import (
+    chat_ws_url,
+    post_message,
+    post_project,
+)
 
 # What dev's session host recorded for a session relaunched onto a machine the
 # work lease answered 504 for (2026-09-25), paths shortened.
@@ -38,10 +42,10 @@ def stub_hooks() -> DiesOnItsWayUp:
 
 
 def _turn(client) -> tuple[str, list[dict]]:
-    project = post_project(client, json={"name": "P"}).json()["data"]
+    project = post_project(client, json={"name": "P"}, owner="user-1").json()["data"]
     room = client.post(
         "/topics",
-        json={"project_id": project["id"], "title": "话题", "created_by": "user-1"},
+        json={"project_id": project["id"], "title": "话题"},
     ).json()["data"]["id"]
     frames = []
     with client.websocket_connect(chat_ws_url(room, "user-1")) as ws:

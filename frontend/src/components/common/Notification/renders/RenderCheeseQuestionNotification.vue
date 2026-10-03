@@ -31,9 +31,16 @@ const title = computed(
   () => getStringMetadata(props.notification, 'question') || t('notifications.CHEESE_QUESTION.untitled')
 )
 
-const body = computed(() =>
-  topicTitle.value ? t('notifications.CHEESE_QUESTION.body', { topicTitle: topicTitle.value }) : ''
-)
+// 答过之后服务端把选的那一项并进 `answered`（`ledger.settle`）。通知是一条事件记录，
+// 会在收件箱里留到人删掉为止，所以它说的得是现在的状态：已经答过的题不能还说「待你回答」。
+const answered = computed(() => getStringMetadata(props.notification, 'answered'))
+
+const body = computed(() => {
+  if (!topicTitle.value) return ''
+  return answered.value
+    ? t('notifications.CHEESE_QUESTION.answered', { topicTitle: topicTitle.value, answer: answered.value })
+    : t('notifications.CHEESE_QUESTION.body', { topicTitle: topicTitle.value })
+})
 
 const routerLink = computed(() => {
   if (!projectId.value || !topicId.value) return undefined
