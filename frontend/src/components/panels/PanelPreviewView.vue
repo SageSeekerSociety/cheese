@@ -75,6 +75,8 @@ const props = withDefaults(
     previewAppNote: string
     previewTunnelUp: boolean
     previewNamedPath: string
+    /** 刚跟着重启后的应用自动重载过：一句话解释那一闪，免得像是面板自己坏了。 */
+    autoReloaded?: boolean
     previewError: string | null
     previewReadError: string | null
     /** 这一份是哪种文件：下面三样查看器和「是不是图片」都由它分派。 */
@@ -97,6 +99,7 @@ const props = withDefaults(
     uploadAnnotation: undefined,
     active: true,
     path: null,
+    autoReloaded: false,
     frames: undefined,
     displayedFrame: null,
     navigation: 'idle',
@@ -405,6 +408,7 @@ async function onAnnotate(payload: AnnotateDraft) {
     </div>
 
     <v-alert v-if="fullscreenError" type="warning" density="compact">{{ fullscreenError }}</v-alert>
+    <v-alert v-if="autoReloaded" type="info" density="compact">{{ t('work.room.preview.autoReloaded') }}</v-alert>
 
     <div v-if="loading && !frames?.length" class="d-flex justify-center py-8">
       <v-progress-circular indeterminate color="primary" size="28" />

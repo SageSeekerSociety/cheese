@@ -27,6 +27,10 @@ export interface PreviewFrame {
 
 export type PreviewNavigation = 'idle' | 'authorizing' | 'navigating' | 'loaded' | 'failed'
 
+/** 连接状态的一次转折，报给取数那一层：实例被换掉（要跟到新实例），或同一实例断线
+ *  后又回来（这段断线里的请求都失败了，要重载一次）。状态没变就是 null。 */
+export type ConnectionChange = 'instance-changed' | 'instance-recovered' | null
+
 /** 一整页的默认预算。 */
 const FILE_NAVIGATION_BUDGET_MS = 30_000
 
@@ -129,11 +133,17 @@ export function usePreviewFrames(frameName: string, options: PreviewFrameOptions
   }
   window.addEventListener('message', runtimeMessage)
 
-  function observeConnection(instance: string | null | undefined, online: boolean) {
+  function observeConnection(instance: string | null | undefined, online: boolean): ConnectionChange {
     const frame = displayed.value
-    if (!frame?.live) return
+    if (!frame?.live) return null
+    const previous = frame.connection
     frame.connection = !online ? 'disconnected' : frame.instance && instance !== frame.instance ? 'gone' : 'online'
-    // Recovery updates status only: never POST/remount a loaded browsing context.
+    // 状态更新不动这一帧：旧页面一直显示到新一帧装上为止（双缓冲）。只有那两个转折
+    // 值得报上去——取数那一层据此重新授权一次。#2349 说的是授权该拒谁，没变；变的是
+    // 面板自己注意到了「该换一帧了」，而不是干等一次手动刷新。
+    if (frame.connection === 'gone' && previous !== 'gone') return 'instance-changed'
+    if (frame.connection !== 'online' || previous !== 'disconnected') return null
+    return 'instance-recovered'
   }
 
   function stopTimer() {

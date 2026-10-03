@@ -94,6 +94,8 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
   const previewNamedPath = ref('')
   const previewError = ref<string | null>(null)
   const previewReadError = ref<string | null>(null)
+  // 刚跟着重启后的应用自动重载过：那一闪需要一句解释，否则看着像面板自己坏了。
+  const autoReloaded = ref(false)
   const downloadError = ref('')
   // 路上那一次属于哪一代：话题换了、或者又按了一次刷新，先前那一次的结果就不再算数
   // （它带的是上一份内容，落下来就是「刚切换的这一格显示着上一格的东西」）。
@@ -246,16 +248,19 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
           (host.displayed.value?.identity === identity && host.navigation.value !== 'failed'))
       previewAppNote.value = art.kind === 'app' ? art.path : ''
       previewTunnelUp.value = !!art.tunnel_up
+      // 屏幕上这一帧被换掉了实例、或者断线后又回来了：不能只把状态画出来——旧那一帧
+      // 的请求已经被拒了，不重新授权它就一直白屏到人手动刷新。跟上去，并说一句让人
+      // 看见（`change` 非空、且看的是同一件产物时，下面两处「还是同一件」的近路都要
+      // 让开；换了产物那本来就是一次正常的换页，不该说成「应用重启」）。
+      const change = art.kind === 'app' ? host.observeConnection(art.instance, !!art.url && !!art.tunnel_up) : null
+      let follow = false
       if (art.kind === 'app') {
-        host.observeConnection(art.instance, !!art.url && !!art.tunnel_up)
         const displayed = host.displayed.value
-        if (
-          !opts.reload &&
-          displayed?.live &&
-          displayed.instance &&
-          displayed.identity &&
-          JSON.parse(displayed.identity)[2] === (art.artifact_id ?? art.path)
-        ) {
+        const sameArtifact =
+          !!displayed?.identity && JSON.parse(displayed.identity)[2] === (art.artifact_id ?? art.path)
+        follow = change !== null && sameArtifact
+        if (change === 'instance-changed' && sameArtifact) autoReloaded.value = true
+        if (!opts.reload && !follow && displayed?.live && displayed.instance && sameArtifact) {
           return
         }
         previewFile.value = null
@@ -300,7 +305,7 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
           return
         }
       }
-      if (!opts.reload && (unchanged || (opts.silent && host.failedIdentity.value === identity))) return
+      if (!opts.reload && !follow && (unchanged || (opts.silent && host.failedIdentity.value === identity))) return
       if (!art.url) {
         previewUrl.value = null
         previewError.value = t('work.room.preview.urlUnavailable')
@@ -355,6 +360,7 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
         host.pause()
         loading.value = false
         refreshing.value = false
+        autoReloaded.value = false
         if (!host.displayed.value) {
           previewUrl.value = null
         }
@@ -373,6 +379,7 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
       previewReadError.value = null
       previewNamed.value = false
       previewAppNote.value = ''
+      autoReloaded.value = false
       loading.value = false
       refreshing.value = false
       if (props.active) void load()
@@ -384,12 +391,43 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
       if (props.active) void load({ silent: true })
     }
   )
+  // 那一句「已自动重新载入」只在跟上去的那一帧装成之前成立：装好了（页面上已经是
+  // 重启后的应用）或没装成（面板另有报错），它就该走了。
+  watch(host.navigation, (state) => {
+    if (state === 'loaded' || state === 'failed') autoReloaded.value = false
+  })
 
-  // Poll metadata only; an unchanged artifact never receives a new form POST.
-  let refreshTimer: ReturnType<typeof setInterval> | null = null
+  // 只问元数据：产物没变就不会重新提交一次授权。间隔是活的——屏幕上这一帧不在线时
+  // （实例被换掉、或隧道断了）按 2 秒问，指数退到正常的 20 秒：应用重启后通常几秒就
+  // 绪，等满 20 秒等于让人对着白屏多等一个轮询。一回到在线就重新从 2 秒起算，下一次
+  // 断线同样值得快问。页面在后台时退回正常档——那会儿的快速轮询是白花的。
+  const NORMAL_POLL_MS = 20_000
+  const FAST_POLL_MS = 2_000
+  let refreshTimer: ReturnType<typeof setTimeout> | null = null
+  let pollEpoch = 0
+  let fastPolls = 0
   function stopAutoRefresh() {
-    if (refreshTimer) clearInterval(refreshTimer)
+    pollEpoch += 1
+    if (refreshTimer) clearTimeout(refreshTimer)
     refreshTimer = null
+    fastPolls = 0
+  }
+  function nextPollDelayMs() {
+    const frame = host.displayed.value
+    if (document.hidden || !frame?.live || frame.connection === 'online') {
+      fastPolls = 0
+      return NORMAL_POLL_MS
+    }
+    // 2、4、8、16、20 秒——累起来约一分钟退回正常档。
+    return Math.min(FAST_POLL_MS * 2 ** fastPolls++, NORMAL_POLL_MS)
+  }
+  function schedulePoll() {
+    const epoch = pollEpoch
+    refreshTimer = setTimeout(async () => {
+      if (epoch !== pollEpoch) return
+      if (!document.hidden) await load({ silent: true })
+      if (epoch === pollEpoch) schedulePoll()
+    }, nextPollDelayMs())
   }
   watch(
     () => props.active,
@@ -398,9 +436,7 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
       // 指定了文件的那一格不轮询：它不跟着当前预览走，文件变了靠每一轮收工那一下重读。
       // 页面在后台的那一格也不问：后台标签的轮询是白花的，回到前台自然会重取。
       if (!active || props.path) return
-      refreshTimer = setInterval(() => {
-        if (!document.hidden) void load({ silent: true })
-      }, 20_000)
+      schedulePoll()
     },
     { immediate: true }
   )
@@ -506,6 +542,7 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     previewAppNote,
     previewTunnelUp,
     previewNamedPath,
+    autoReloaded,
     previewError,
     previewReadError,
     documentSuffix,
