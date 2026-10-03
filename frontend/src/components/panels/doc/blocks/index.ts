@@ -1,7 +1,6 @@
 // The editor's half of the document blocks: views on the schema's nodes, the
 // keys and hints for typing in them, a table's row and column handles, and a
 // reader's table on a phone.
-import 'katex/dist/katex.min.css'
 import '@/styles/docBlocks.css'
 
 import type { AnyExtension } from '@tiptap/core'

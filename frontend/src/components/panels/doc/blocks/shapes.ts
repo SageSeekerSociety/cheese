@@ -9,8 +9,6 @@
 // handlers on top; the reader adds only what a reader uses.
 import type { Node as PMNode } from '@tiptap/pm/model'
 
-import katex from 'katex'
-
 import { t } from '@/i18n'
 
 /** The class a reading surface carries: the editor while it cannot be edited,
@@ -127,6 +125,15 @@ export function detailsShape(
 
 // ---- Formulas
 
+type Katex = typeof import('katex').default
+let katexLoading: Promise<Katex> | null = null
+
+/** KaTeX is loaded the first time a formula is on the page. */
+function loadKatex(): Promise<Katex> {
+  katexLoading ??= import('katex').then((m) => m.default)
+  return katexLoading
+}
+
 export function renderMath(el: HTMLElement, latex: string, displayMode: boolean): void {
   if (!latex.trim()) {
     el.textContent = t('work.room.doc.blocks.emptyFormula')
@@ -134,14 +141,20 @@ export function renderMath(el: HTMLElement, latex: string, displayMode: boolean)
     return
   }
   el.classList.remove('doc-math--empty')
-  try {
-    katex.render(latex, el, { displayMode, throwOnError: true })
-    el.classList.remove('doc-math--error')
-  } catch {
-    el.textContent = latex
-    el.classList.add('doc-math--error')
-    el.title = t('work.room.doc.blocks.formulaError')
-  }
+  // The source shows until KaTeX is there; a later call wins over an earlier one.
+  el.textContent = latex
+  el.dataset.latex = latex
+  void loadKatex().then((katex) => {
+    if (el.dataset.latex !== latex) return
+    try {
+      katex.render(latex, el, { displayMode, throwOnError: true })
+      el.classList.remove('doc-math--error')
+    } catch {
+      el.textContent = latex
+      el.classList.add('doc-math--error')
+      el.title = t('work.room.doc.blocks.formulaError')
+    }
+  })
 }
 
 export function mathShape(latex: string, displayMode: boolean): HTMLElement {
