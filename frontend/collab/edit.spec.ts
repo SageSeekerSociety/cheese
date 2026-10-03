@@ -45,6 +45,7 @@ describe('the agent’s suggestion inside a block', () => {
     ['a timeline item', ':::timeline\n- 周一 | 开始\n  说明。\n:::\n', '说明。', '新的说明。'],
     ['a stat card', ':::stats\n- 甲 | 1 | +2%\n:::\n', '| 1 |', '| 3 |'],
     ['a footnote', '正文[^1]。\n\n[^1]: 旧\n', '[^1]: 旧', '[^1]: 新'],
+    ['a chart', ':::chart bar\n| 周   | 次数  |\n| --- | --- |\n| 一   | 10  |\n:::\n', '| 10  |', '| 12  |'],
   ])('leaves %s as it was until someone accepts it', (_name, markdown, old, replacement) => {
     const result = applyEdits(parseMarkdown(markdown), [{ old, new: replacement }], 'suggest', 'cheese')
     if (!result.ok) throw new Error(JSON.stringify(result))
@@ -58,5 +59,13 @@ describe('the agent’s suggestion inside a block', () => {
     const direct = applyEdits(live, [{ old: '[!NOTE]', new: '[!WARNING]' }], 'direct', 'cheese')
     if (!direct.ok) throw new Error(JSON.stringify(direct))
     expect(nodeMarkdown(direct.doc)).toBe('> [!WARNING]\n> 补充。')
+  })
+
+  it('cannot propose a different kind of chart, only make the change', () => {
+    const live = parseMarkdown(':::chart bar\n| 周   | 次数  |\n| --- | --- |\n| 一   | 10  |\n:::\n')
+    expect(applyEdits(live, [{ old: ':::chart bar', new: ':::chart line' }], 'suggest', 'cheese').ok).toBe(false)
+    const direct = applyEdits(live, [{ old: ':::chart bar', new: ':::chart line' }], 'direct', 'cheese')
+    if (!direct.ok) throw new Error(JSON.stringify(direct))
+    expect(nodeMarkdown(direct.doc)).toContain(':::chart line')
   })
 })
