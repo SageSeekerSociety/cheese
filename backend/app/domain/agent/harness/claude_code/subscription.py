@@ -15,7 +15,6 @@ from pathlib import Path
 from app.domain.agent.harness import (
     EventConsumer,
     HarnessEvent,
-    ReceiptConsumer,
     SessionRef,
 )
 from app.domain.agent.harness.claude_code.backlog import (
@@ -35,6 +34,7 @@ from app.domain.delivery.input_identity import (
     CompletionConsumer,
     InputIdentity,
     InputReceipt,
+    ReceiptConsumer,
     TerminationConsumer,
     WorkCompletion,
     WorkTermination,

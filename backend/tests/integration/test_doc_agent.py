@@ -27,8 +27,9 @@ import pytest
 from app.api.deps import get_session_host
 from app.domain.agent.document import question as doc_question
 from app.domain.agent.harness.pi import catalog
+from app.domain.agent.reads import Read
 from app.domain.agent.service import AgentMessage, AgentResult
-from app.domain.agent.session_host.contract import Read, SessionRef
+from app.domain.agent.session_host.contract import SessionRef
 from app.domain.memory.files import MemoryFileScope
 from app.domain.memory.files_store import MemoryFileStore
 from app.main import app

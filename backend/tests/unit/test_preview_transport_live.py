@@ -419,3 +419,56 @@ def test_representation_headers_ranges_and_raw_query_reach_viewer(
         listener.close()
         app.join(6)
         assert not app.is_alive()
+
+
+def test_a_page_asking_for_more_than_the_helper_takes_at_once_gets_every_answer(
+    tmp_path, monkeypatch
+):
+    """A dev server's page asks for hundreds of modules at once; none may 404.
+
+    The helper works on sixteen page requests at a time and calls the next one
+    busy. Before, the relay passed that on as a 404 and the page lost modules.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    class App(BaseHTTPRequestHandler):
+        def do_GET(self):
+            # Slow enough that the requests overlap well past the helper's limit.
+            time.sleep(0.2)
+            body = self.path.encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    native = ThreadingHTTPServer(("127.0.0.1", 0), App)
+    app_thread = threading.Thread(target=native.serve_forever, daemon=True)
+    app_thread.start()
+    port_file = tmp_path / "preview.port"
+    port_file.write_text(str(native.server_address[1]))
+
+    def fetch(port, index):
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=20)
+        try:
+            connection.request("GET", f"/module-{index}.js")
+            response = connection.getresponse()
+            return response.status, response.read()
+        finally:
+            connection.close()
+
+    try:
+        with _relay(port_file, monkeypatch) as (port, _):
+            with ThreadPoolExecutor(max_workers=60) as pool:
+                answers = list(pool.map(lambda i: fetch(port, i), range(60)))
+    finally:
+        native.shutdown()
+        native.server_close()
+        app_thread.join(3)
+    assert [status for status, _ in answers] == [200] * 60
+    assert [body for _, body in answers] == [
+        f"/module-{index}.js".encode() for index in range(60)
+    ]

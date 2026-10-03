@@ -25,6 +25,7 @@ from app.domain.delivery.input_identity import (
 )
 from app.domain.delivery.models import Delivery, NativeInput
 from app.main import app
+from tests.support.room_reader import room_reader
 
 _COMMIT_PHASE = ContextVar("input_send_fault_phase", default=None)
 
@@ -131,7 +132,7 @@ def test_commit_fault_does_not_turn_an_admitted_input_into_a_new_send(
             finally:
                 _COMMIT_PHASE.reset(token)
 
-        runtime.bind_receipts(receipt)
+        runtime.bind_reader(room_reader(receipts=receipt))
         injected = []
 
         def fail_commit(session):
@@ -233,7 +234,7 @@ def test_live_chat_retains_uncertain_input_instead_of_authorizing_queue(
         runtime = Runtime(channel)
         runtime.live[(ref.topic_id, ref.agent_handle)] = handle
         runtime.work[(ref.topic_id, ref.agent_handle)] = work
-        runtime.bind_receipts(chat.confirm_prompt_receipt)
+        runtime.bind_reader(room_reader(receipts=chat.confirm_prompt_receipt))
         monkeypatch.setattr(chat._compute, "_runtimes", lambda: [runtime])
         chat._active_turn_ids[ref.topic_id] = {work}
         injected = []

@@ -427,7 +427,7 @@ PLATFORM_TOOLS = ToolTable(
                 "subject": _text("英文 Conventional Commits 标题，≤72 字符，无句号"),
                 "reviewer": _text("验收人 handle；省略沿用任务上的人选"),
                 "reason": _text("验收证据和要对方检查的内容"),
-                "body": _text("改动原因和验证说明"),
+                "body": _text("改动原因和验证说明，用中文"),
                 "artifact": _text("产物清单上那一项的 id，照抄系统提示里的清单"),
                 "new_artifact": _text("清单上还没有的东西的真名"),
                 "about": _text("这样东西是什么、给谁的；第 1 版和第 20 版都得成立"),
@@ -442,7 +442,7 @@ PLATFORM_TOOLS = ToolTable(
             {
                 "task": _TASK,
                 "subject": _text("英文 Conventional Commits 标题，≤72 字符"),
-                "body": _text("改动原因和验证说明"),
+                "body": _text("改动原因和验证说明，用中文"),
             },
             ["task"],
         ),

@@ -625,3 +625,227 @@ div[data-footnote]::before {
     background: var(--surface);
   }
 }
+
+/* ---- Chart -------------------------------------------------------------- */
+
+[data-block='chart'] {
+  margin: 16px 0;
+}
+
+.doc-chart__bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+}
+
+.doc-chart__kind,
+.doc-chart__toggle,
+.doc-mermaid__bar button {
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+  background: none;
+  cursor: pointer;
+}
+
+.doc-chart__kind {
+  margin-left: -6px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.doc-chart__kind::after {
+  margin-left: 4px;
+  color: var(--faint);
+  content: '▾';
+}
+
+.doc-chart__toggle {
+  margin-left: auto;
+}
+
+.doc-chart__toggle::before {
+  display: inline-block;
+  margin-right: 4px;
+  transition: transform var(--dur-quick) var(--ease-standard);
+  content: '▸';
+}
+
+:is(.doc-chart__kind, .doc-chart__toggle, .doc-mermaid__bar button):hover,
+.doc-chart__kind[aria-expanded='true'] {
+  color: var(--ink);
+  background: var(--fill);
+}
+
+.doc-chart__canvas {
+  width: 100%;
+  height: 240px;
+  margin-top: 4px;
+}
+
+/* The table shows while editing unless folded, and stays folded while
+   reading unless opened. */
+.ProseMirror[contenteditable='false'] [data-block='chart']:not(.doc-chart--open) .doc-chart__data,
+.ProseMirror[contenteditable='true'] [data-block='chart'].doc-chart--closed .doc-chart__data {
+  display: none;
+}
+
+.ProseMirror[contenteditable='true'] [data-block='chart']:not(.doc-chart--closed) .doc-chart__toggle::before,
+[data-block='chart'].doc-chart--open .doc-chart__toggle::before {
+  transform: rotate(90deg);
+}
+
+.ProseMirror[contenteditable='false'] .doc-chart__kind {
+  pointer-events: none;
+}
+
+.ProseMirror[contenteditable='false'] .doc-chart__kind::after {
+  content: none;
+}
+
+.doc-chart__data {
+  margin-top: 4px;
+}
+
+.doc-chart__data table {
+  margin: 0;
+}
+
+/* ---- Mermaid diagram ---------------------------------------------------- */
+
+[data-block='mermaid'] {
+  margin: 16px 0;
+}
+
+.doc-mermaid__bar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  min-height: 24px;
+}
+
+.ProseMirror[contenteditable='false'] .doc-mermaid__bar {
+  display: none;
+}
+
+.doc-mermaid__figure {
+  overflow-x: auto;
+  text-align: center;
+  cursor: zoom-in;
+}
+
+.doc-mermaid__figure--scroll {
+  text-align: left;
+}
+
+.doc-mermaid--empty .doc-mermaid__figure {
+  padding: 16px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  color: var(--faint);
+  cursor: default;
+}
+
+.doc-mermaid__error {
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--danger-ink);
+}
+
+.doc-mermaid__error:empty {
+  display: none;
+}
+
+/* The source shows while the caret is in it, and while the diagram cannot be
+   drawn or has nothing to draw. */
+[data-block='mermaid']:not(.doc-mermaid--source, .doc-mermaid--error, .doc-mermaid--empty) > pre,
+.ProseMirror[contenteditable='false'] [data-block='mermaid'] > pre {
+  display: none;
+}
+
+[data-block='mermaid'] > pre {
+  margin-top: 8px;
+}
+
+.doc-mermaid-full {
+  position: fixed;
+  z-index: 2400;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  background: var(--surface);
+}
+
+.doc-mermaid-full__close {
+  align-self: flex-end;
+  margin: 8px 16px;
+  padding: 4px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  font: inherit;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.doc-mermaid-full__body {
+  flex: 1;
+  overflow: auto;
+  padding: 16px;
+  text-align: center;
+}
+
+.doc-mermaid-full__body svg {
+  max-width: none;
+  height: auto;
+}
+
+/* ---- Table handles ------------------------------------------------------ */
+
+.doc-th,
+.doc-th-add {
+  position: absolute;
+  z-index: 20;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  color: var(--faint);
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.doc-th {
+  width: 20px;
+  height: 20px;
+  border-color: var(--line);
+}
+
+.doc-th-add--row {
+  height: 16px;
+}
+
+.doc-th-add--col {
+  width: 16px;
+}
+
+:is(.doc-th, .doc-th-add):hover,
+.doc-th[aria-expanded='true'] {
+  border-color: var(--line);
+  color: var(--ink);
+  background: var(--fill);
+}
+
+@media (hover: none) {
+  .doc-th-add {
+    border-color: var(--line);
+  }
+}

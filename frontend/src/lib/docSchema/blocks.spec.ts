@@ -45,12 +45,28 @@ describe('the spelling the writing guide teaches comes back unchanged', () => {
     ['inline formula', '面积是 $\\pi r^2$。'],
     ['block formula', '$$\nE = mc^2\n$$'],
     ['footnote', '花费占 59.8%[^2]。\n\n[^2]: (410 + 352) ÷ 1,274 ≈ 59.8%'],
+    [
+      'chart',
+      ':::chart line\n| 周     | 改版前(次) | 改版后(次) |\n| ----- | ------ | ------ |\n| 第 1 周 | 1,020  | 1,980  |\n:::',
+    ],
+    ['horizontal chart', ':::chart bar horizontal\n| 渠道  | 用户  |\n| --- | --- |\n| 搜索  | 410 |\n:::'],
   ])('%s', (_name, md) => {
     expect(roundTrip(md)).toBe(md)
   })
 })
 
 describe('reading what people actually write', () => {
+  it('reads a chart around a table written without padding as the same chart', () => {
+    expect(types(':::chart pie\n| 渠道 | 用户 |\n|---|---|\n| 搜索 | 410 |\n:::').slice(0, 2)).toEqual([
+      'chart',
+      'table',
+    ])
+  })
+
+  it('leaves a chart of an unknown type as text, so nothing in it is lost', () => {
+    expect(types(':::chart radar\n| a | b |\n|---|---|\n| x | 1 |\n:::')).not.toContain('chart')
+  })
+
   it('reads a stat card written without the leading dash', () => {
     expect(roundTrip(':::stats\n活跃项目 | 128 | +12%\n:::')).toBe(':::stats\n- 活跃项目 | 128 | +12%\n:::')
   })

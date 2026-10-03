@@ -25,6 +25,7 @@ from app.domain.agent.harness.pi.runtime import Handle, PiRuntime
 from app.domain.agent.service import AgentResult, AgentSessionInfo, AgentToolUse
 from app.domain.delivery.input_identity import InputIdentity, InputReceipt
 from tests.support.hang import HANG_S
+from tests.support.room_reader import room_reader
 
 ENTRIES = json.loads((Path(__file__).parent / "fixtures/pi-entries.json").read_text())[
     "entries"
@@ -108,9 +109,9 @@ async def test_a_turn_lands_under_one_owner_and_ends_once(tmp_path):
     session, runtime, runner = wire(tmp_path)
     consumer, receipts, activity = AsyncMock(), AsyncMock(), AsyncMock()
     register_input = AsyncMock()
-    runtime.bind_events(consumer)
-    runtime.bind_receipts(receipts)
-    runtime.bind_activity(activity)
+    runtime.bind_reader(
+        room_reader(events=consumer, receipts=receipts, activity=activity)
+    )
     work = uuid.uuid4()
 
     assert await runtime.send(
@@ -164,8 +165,7 @@ async def test_a_session_that_outlived_the_backend_is_read_not_restarted(tmp_pat
     runner.working, runner.work_id = True, work
 
     consumer = AsyncMock()
-    runtime.bind_events(consumer)
-    runtime.bind_activity(AsyncMock())
+    runtime.bind_reader(room_reader(events=consumer, activity=AsyncMock()))
     recovered = await runtime.recover("device")
     assert recovered == [session]
     assert runtime.holds(session.topic_id)
@@ -220,9 +220,9 @@ async def test_recovery_continues_when_a_discovered_runner_disappears(
 @pytest.mark.anyio
 async def test_a_person_talking_mid_turn_steers_rather_than_starting_a_turn(tmp_path):
     session, runtime, runner = wire(tmp_path)
-    runtime.bind_events(AsyncMock())
-    runtime.bind_activity(AsyncMock())
-    runtime.bind_receipts(AsyncMock())
+    runtime.bind_reader(
+        room_reader(events=AsyncMock(), activity=AsyncMock(), receipts=AsyncMock())
+    )
     register_input = AsyncMock()
     work = uuid.uuid4()
 
@@ -252,9 +252,9 @@ async def test_a_person_talking_mid_turn_steers_rather_than_starting_a_turn(tmp_
 @pytest.mark.anyio
 async def test_interrupt_takes_the_work_without_taking_the_session(tmp_path):
     session, runtime, runner = wire(tmp_path)
-    runtime.bind_events(AsyncMock())
-    runtime.bind_activity(AsyncMock())
-    runtime.bind_receipts(AsyncMock())
+    runtime.bind_reader(
+        room_reader(events=AsyncMock(), activity=AsyncMock(), receipts=AsyncMock())
+    )
     await runtime.send(
         session,
         "开始",
@@ -278,9 +278,9 @@ async def test_a_quiet_room_reads_slower(tmp_path):
     calls a second per room for nothing, so a quiet log has to cost less.
     """
     session, runtime, runner = wire(tmp_path)
-    runtime.bind_events(AsyncMock())
-    runtime.bind_activity(AsyncMock())
-    runtime.bind_receipts(AsyncMock())
+    runtime.bind_reader(
+        room_reader(events=AsyncMock(), activity=AsyncMock(), receipts=AsyncMock())
+    )
 
     await runtime.recover("device")
     await runtime.replay(session, known_texts=set())
@@ -305,9 +305,9 @@ async def test_a_new_turn_is_read_at_once_in_a_quiet_room(tmp_path, monkeypatch)
     monkeypatch.setattr(driven_runtime, "READ_WAIT_S", 3600.0)
     session, runtime, runner = wire(tmp_path)
     consumer = AsyncMock()
-    runtime.bind_events(consumer)
-    runtime.bind_activity(AsyncMock())
-    runtime.bind_receipts(AsyncMock())
+    runtime.bind_reader(
+        room_reader(events=consumer, activity=AsyncMock(), receipts=AsyncMock())
+    )
 
     await runtime.recover("device")
     await runtime.replay(session, known_texts=set())
@@ -363,9 +363,9 @@ async def test_a_send_that_lands_as_the_reader_starts_to_wait_is_read_at_once(
 
     cast(AsyncMock, runtime.channel.call).side_effect = call
     consumer = AsyncMock()
-    runtime.bind_events(consumer)
-    runtime.bind_activity(AsyncMock())
-    runtime.bind_receipts(AsyncMock())
+    runtime.bind_reader(
+        room_reader(events=consumer, activity=AsyncMock(), receipts=AsyncMock())
+    )
 
     await runtime.recover("device")
     await runtime.replay(session, known_texts=set())
@@ -409,9 +409,9 @@ async def test_a_device_that_went_offline_is_not_reported_as_a_read_failure(
     device.
     """
     session, runtime, runner = wire(tmp_path)
-    runtime.bind_events(AsyncMock())
-    runtime.bind_receipts(AsyncMock())
-    runtime.bind_activity(AsyncMock())
+    runtime.bind_reader(
+        room_reader(events=AsyncMock(), receipts=AsyncMock(), activity=AsyncMock())
+    )
 
     assert await runtime.send(
         session,

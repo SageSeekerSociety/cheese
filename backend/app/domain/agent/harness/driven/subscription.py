@@ -43,7 +43,6 @@ from app.domain.agent.harness import (
     Backlog,
     EventConsumer,
     HarnessEvent,
-    ReceiptConsumer,
     SessionRef,
 )
 from app.domain.agent.service import (
@@ -57,6 +56,7 @@ from app.domain.agent.service import (
 from app.domain.delivery.input_identity import (
     CompletionConsumer,
     InputReceipt,
+    ReceiptConsumer,
     TerminationConsumer,
     WorkCompletion,
     WorkTermination,

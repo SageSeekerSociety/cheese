@@ -17,6 +17,7 @@ import pytest
 from app.domain.agent.harness.driven import runtime as driven_runtime
 from app.domain.agent.harness.driven.runtime import RunnerUnsupported
 from app.domain.agent.service import AgentMessage, AgentToolUse
+from tests.support.room_reader import room_reader
 from tests.unit.test_driven_liveness import Room, Scripted, _until
 
 _REAL_SLEEP = asyncio.sleep
@@ -133,7 +134,7 @@ async def test_what_the_agent_is_writing_reaches_the_room_as_it_grows_and_goes_w
         assert topic == room.topic
         shown.append((work, agent, blocks, _said(room)))
 
-    room.runtime.bind_live(live)
+    room.runtime.bind_reader(room_reader(live=live, rest=room.runtime.reader))
     try:
         await room.send("fix the login page")
         await _until(lambda: _said(room) == ["on it"])
@@ -196,7 +197,7 @@ async def test_a_subagents_writing_and_reasoning_are_not_shown():
     async def live(topic, work, agent, blocks):
         shown.append(blocks)
 
-    room.runtime.bind_live(live)
+    room.runtime.bind_reader(room_reader(live=live, rest=room.runtime.reader))
     try:
         await room.send("fix the login page")
         await _until(lambda: _said(room) == ["on it"])

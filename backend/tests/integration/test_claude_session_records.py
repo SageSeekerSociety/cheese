@@ -15,6 +15,7 @@ from sqlalchemy import select
 
 from app.api.deps import get_chat_service
 from app.core.config import settings
+from app.domain.agent import room_reads
 from app.domain.agent.chat import ChatService
 from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.models import AgentTurn
@@ -31,6 +32,7 @@ from tests.integration.conftest import (
     session_auth_headers,
     session_token,
 )
+from tests.support.room_reader import room_reader
 
 
 def _bearer(handle: str) -> dict:
@@ -146,7 +148,9 @@ def test_an_input_counts_as_received_only_once_the_session_echoes_it(
             assert receipt.execution_work_id == uuid.UUID(session.work)
             receipts.append(receipt)
 
-    chat._compute.bind_receipts(observe)
+    chat._compute.bind_reader(
+        room_reader(receipts=observe, rest=room_reads.reader(chat))
+    )
     taken: list[str] = []
 
     def turn(topic, prompt, reply, agent=None):

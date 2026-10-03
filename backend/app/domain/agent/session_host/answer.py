@@ -15,14 +15,13 @@ import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
+from app.domain.agent.reads import Ended, Writing
 from app.domain.agent.service import AgentMessage, AgentResult, AgentToolUse
 from app.domain.agent.session_host.contract import (
     Access,
-    Ended,
     Prompt,
     SessionRef,
     SessionSpec,
-    Writing,
 )
 from app.domain.agent.session_host.host import SessionHost
 

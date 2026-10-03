@@ -26,6 +26,7 @@ from app.domain.agent.harness.driven.runner import LONG_POLL
 from app.domain.agent.harness.pi.runtime import Handle as PiHandle
 from app.domain.agent.harness.pi.runtime import PiRuntime
 from tests.conftest import StubChannel
+from tests.support.room_reader import room_reader
 
 NOTICE = "【平台】You have published nothing to this room for 10 minutes."
 
@@ -149,9 +150,9 @@ async def _working(runtime, session) -> None:
 @pytest.mark.parametrize("wire", [_claude_code, _codex, _pi], ids=lambda w: w.__name__)
 async def test_a_notice_reaches_the_turn_it_was_meant_for(tmp_path, wire):
     session, runtime, heard, _ = await wire(tmp_path)
-    runtime.bind_events(AsyncMock())
-    runtime.bind_activity(AsyncMock())
-    runtime.bind_receipts(AsyncMock())
+    runtime.bind_reader(
+        room_reader(events=AsyncMock(), activity=AsyncMock(), receipts=AsyncMock())
+    )
     runtime.bind_unread_probe(lambda _topic: None)
     register_input = AsyncMock()
     work = uuid.uuid4()

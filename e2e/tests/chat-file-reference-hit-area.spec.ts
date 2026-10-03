@@ -307,7 +307,6 @@ for (const scene of [
     expect(hit.row).toBe("before");
     expect(hit.previous).toEqual(boxes.previous);
     expect(hit.current).toEqual(boxes.current);
-    expect(hit.bar.top).toBeGreaterThanOrEqual(hit.previousRow.top);
     expect(hit.bar.bottom).toBeLessThanOrEqual(hit.content.top);
     expect(hit.overflow).toBe(false);
     expect(hit.theme).toBe(scene.theme);
@@ -374,7 +373,7 @@ window.fetch = async (url, init) => {`,
   onUpgradeMessage: id => { document.querySelector('#opened').dataset.upgraded = id; },`,
   );
 
-test("180px desktop pane preserves author clicks and keeps actions within the header", async ({
+test("180px desktop pane preserves author clicks and keeps actions above the message", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1280, height: 820 });
@@ -424,9 +423,8 @@ test("180px desktop pane preserves author clicks and keeps actions within the he
   expect(geometry.body.width).toBe(110);
   expect(geometry.author.width).toBeGreaterThan(0);
   expect(geometry.authorOwned).toBe(true);
-  expect(geometry.bar.left).toBeGreaterThanOrEqual(geometry.header.left);
   expect(geometry.bar.right).toBeLessThanOrEqual(geometry.header.right);
-  expect(geometry.bar.bottom).toBeLessThanOrEqual(geometry.body.top);
+  expect(geometry.bar.bottom).toBeLessThanOrEqual(geometry.header.top);
   expect(await row.locator(".im-text").boundingBox()).toEqual(before);
   await page.mouse.click(geometry.point.x, geometry.point.y);
   await expect(page.locator("#opened")).toHaveAttribute(
@@ -475,6 +473,14 @@ test("compact desktop menu keeps all actions on its captured message after hover
           requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
         ),
     );
+    // The bar floats above its row; against the top of the scroll area it is
+    // cut off, as in Discord. Give the row room above it first.
+    await page.locator(`[data-mid="${id}"]`).evaluate((el) => {
+      const scroll = el.closest<HTMLElement>(".messages")!;
+      const room =
+        el.getBoundingClientRect().top - scroll.getBoundingClientRect().top;
+      scroll.scrollTop -= 40 - room;
+    });
     await page.locator(`[data-mid="${id}"] .im-text`).hover();
     const more = page.locator(".hover-bar__more");
     await expect(more).toBeVisible();
@@ -484,10 +490,10 @@ test("compact desktop menu keeps all actions on its captured message after hover
           const bar = document
             .querySelector(".hover-bar")!
             .getBoundingClientRect();
-          const header = document
-            .querySelector(`[data-mid="${targetId}"] .im-meta`)!
+          const message = document
+            .querySelector(`[data-mid="${targetId}"] .im-main`)!
             .getBoundingClientRect();
-          return bar.top - header.top;
+          return bar.bottom - message.top;
         }, id),
       )
       .toBe(0);
@@ -511,9 +517,9 @@ test("compact desktop menu keeps all actions on its captured message after hover
   });
   // Move the physical pointer to another row while the menu is open. The menu
   // must keep its original target even though the single timeline bar moves.
-  const next = await page.locator('[data-mid="self"] .im-text').boundingBox();
+  const next = await page.locator('[data-mid="file"] .im-text').boundingBox();
   if (!next) throw new Error("next row has no visible box");
-  await page.mouse.move(next.x + next.width - 4, next.y + next.height / 2);
+  await page.mouse.move(next.x + 4, next.y + next.height / 2);
   const hoverTarget = await page.evaluate(
     ({ x, y }) => ({
       row: document.elementFromPoint(x, y)?.closest<HTMLElement>("[data-mid]")
@@ -522,13 +528,13 @@ test("compact desktop menu keeps all actions on its captured message after hover
         .querySelector(".hover-bar--shown")!
         .getBoundingClientRect().top,
       rowTop: document
-        .querySelector('[data-mid="self"]')!
+        .querySelector('[data-mid="file"]')!
         .getBoundingClientRect().top,
     }),
-    { x: next.x + next.width - 4, y: next.y + next.height / 2 },
+    { x: next.x + 4, y: next.y + next.height / 2 },
   );
-  expect(hoverTarget.row).toBe("self");
-  expect(hoverTarget.barTop).toBe(hoverTarget.rowTop + 4);
+  expect(hoverTarget.row).toBe("file");
+  expect(hoverTarget.barTop).toBe(hoverTarget.rowTop - 24);
   await test.info().attach("compact-menu-hover-retarget", {
     body: JSON.stringify(hoverTarget, null, 2),
     contentType: "application/json",
@@ -702,8 +708,8 @@ test("focused message actions survive both directions of desktop pane resize", a
         .querySelector(".hover-bar")!
         .getBoundingClientRect()
         .toJSON(),
-      header: document
-        .querySelector('[data-mid="self"] .im-meta')!
+      message: document
+        .querySelector('[data-mid="self"] .im-main')!
         .getBoundingClientRect()
         .toJSON(),
     }));
@@ -714,7 +720,7 @@ test("focused message actions survive both directions of desktop pane resize", a
   await expect
     .poll(async () => {
       const geometry = await anchor();
-      return geometry.bar.top - geometry.header.top;
+      return geometry.bar.bottom - geometry.message.top;
     })
     .toBe(0);
   await expect(more).toBeFocused();
@@ -737,7 +743,7 @@ test("focused message actions survive both directions of desktop pane resize", a
   await expect
     .poll(async () => {
       const geometry = await anchor();
-      return geometry.bar.top - geometry.header.top;
+      return geometry.bar.bottom - geometry.message.top;
     })
     .toBe(0);
   await expect(more).toBeVisible();

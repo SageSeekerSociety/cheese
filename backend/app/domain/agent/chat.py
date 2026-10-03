@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.config import settings
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import exception_text, say
-from app.domain.agent import death_evidence, turn_inputs
+from app.domain.agent import death_evidence, room_reads, turn_inputs
 from app.domain.agent.announce import announce, settle_questions_answered_by
 from app.domain.agent.compute import ComputePool, ComputeProvider
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
@@ -545,12 +545,8 @@ class ChatService(SessionRecovery):
         # Seats a reachable machine said are gone (recover_sessions),
         # until a session answers on them again (FB-56 legacy③).
         self._dead_sessions: set[tuple] = set()
-        self._compute.bind_events(self._consume_hook_event, self._set_hook_activity)
-        self._compute.bind_receipts(self.confirm_prompt_receipt)
-        self._compute.bind_completions(self.confirm_work_completion)
-        self._compute.bind_terminations(self.confirm_work_termination)
+        self._compute.bind_reader(room_reads.reader(self))
         self._compute.bind_unread_probe(self.oldest_unread_at)
-        self._compute.bind_reachability(self._note_reachability)
         # Liveness only, keyed by durable input UUID. Settlement never depends
         # on this process cache; cold-start inputs are not mid-turn unread probes.
         self._unread_inputs: dict[uuid.UUID, dict[uuid.UUID, float]] = {}
