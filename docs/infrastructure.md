@@ -84,19 +84,20 @@ The owner's database pool is set in the compose file (`DB_POOL_SIZE=5`,
 `app/core/config.py`; together they are sized so the two backends of a rollout
 plus the owner fit a 100-connection server.
 
-Which side of that arithmetic a deploy actually moves depends on where the
-change is. A change to the compose file's `device-connection` block is picked
-up by the next ordinary deploy, because compose recreates a service whose
-definition changed (observed on dev, 2026-09-19: the owner came up on the new
-pool without anyone releasing it). A change that lives only in the image —
-`app/core/config.py`, or anything else the backend carries — does not reach the
-owner until it is released, because the deploy leaves its container alone. So
+Neither side moves on its own: nothing a deploy changes reaches a running owner.
+`ensure_device_connection_owner` in `deploy/deploy-docker.sh` looks only at
+whether the container is running, and if it is, the deploy logs that it is
+leaving it alone and returns without ever calling `docker compose up` on it. So
+a change to the compose file's `device-connection` block (its pool, or an
+`extra_hosts` entry) reaches the owner exactly as a change that lives only in
+the image — `app/core/config.py`, or anything else the backend carries — does:
+when the owner is started, which on an ordinary deploy happens only if the
+deploy finds it absent, or otherwise through a release. So
 on a box whose server still has the default 100 (prod, etrip), **a release that
-raises the backend pool without also changing the owner's compose block goes
-out owner-first**: until the owner is released it holds the pool its running
-image was built with, and a backend rollout beside it can ask the server for
-more connections than it has — the 2026-09-16 failure. dev's server was raised
-to 200, so the order does not matter there.
+raises the backend pool goes out owner-first**: until the owner is released it
+holds the pool its running image was built with, and a backend rollout beside it
+can ask the server for more connections than it has — the 2026-09-16 failure.
+dev's server was raised to 200, so the order does not matter there.
 
 Cloud-machine SSH forwards share this stable connection boundary. Normal app
 deployments leave `cheese-cloud-control` running. To update it, dispatch
