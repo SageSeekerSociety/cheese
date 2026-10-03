@@ -41,7 +41,7 @@ export interface SlashItem {
 /** Put a new block where the caret is: in place of the empty paragraph the
  *  "/" was typed in, or after the paragraph that has text. The caret goes
  *  `inner` positions into the new block. */
-function insertBlock(make: (schema: Schema) => PMNode, inner: number) {
+function insertBlock(make: (schema: Schema) => PMNode, inner: number | ((node: PMNode) => number)) {
   return (c: ChainedCommands) =>
     c.command(({ tr, state, dispatch }) => {
       const { $from } = tr.selection
@@ -50,7 +50,8 @@ function insertBlock(make: (schema: Schema) => PMNode, inner: number) {
       const at = empty ? $from.before() : $from.after()
       if (empty) tr.replaceWith(at, $from.after(), node)
       else tr.insert(at, node)
-      if (dispatch) tr.setSelection(TextSelection.near(tr.doc.resolve(Math.min(at + inner, tr.doc.content.size))))
+      const into = typeof inner === 'number' ? inner : inner(node)
+      if (dispatch) tr.setSelection(TextSelection.near(tr.doc.resolve(Math.min(at + into, tr.doc.content.size))))
       return true
     })
 }
@@ -248,6 +249,46 @@ export const SLASH_ITEMS: SlashItem[] = [
     keywords: ['math', 'formula', 'latex', 'equation', 'gs', 'gongshi'],
     insert: true,
     run: insertBlock((schema) => schema.nodes.mathBlock.create({ latex: '' }), 1),
+  },
+  {
+    key: 'chart',
+    get label() {
+      return t('work.room.doc.slash.chart')
+    },
+    icon: 'mdi-chart-bar',
+    hint: 'chart',
+    keywords: ['chart', 'graph', 'bar', 'line', 'pie', 'tb', 'tubiao'],
+    insert: true,
+    // The caret goes into the first cell under the header.
+    run: insertBlock(
+      (schema) => {
+        const cell = (type: 'tableHeader' | 'tableCell', text = '') =>
+          schema.nodes[type].create(null, schema.nodes.paragraph.create(null, text ? schema.text(text) : null))
+        const row = (cells: PMNode[]) => schema.nodes.tableRow.create(null, cells)
+        return schema.nodes.chart.create({ kind: 'bar' }, [
+          schema.nodes.table.create(null, [
+            row([
+              cell('tableHeader', t('work.room.doc.blocks.chartCategory')),
+              cell('tableHeader', t('work.room.doc.blocks.chartValue')),
+            ]),
+            row([cell('tableCell'), cell('tableCell')]),
+            row([cell('tableCell'), cell('tableCell')]),
+          ]),
+        ])
+      },
+      (chart) => 2 + (chart.firstChild?.firstChild?.nodeSize ?? 0) + 3
+    ),
+  },
+  {
+    key: 'diagram',
+    get label() {
+      return t('work.room.doc.slash.diagram')
+    },
+    icon: 'mdi-sitemap-outline',
+    hint: 'mermaid',
+    keywords: ['mermaid', 'diagram', 'flowchart', 'flow', 'sequence', 'lct', 'liuchengtu'],
+    insert: true,
+    run: insertBlock((schema) => schema.nodes.codeBlock.create({ language: 'mermaid' }), 1),
   },
   {
     key: 'status',

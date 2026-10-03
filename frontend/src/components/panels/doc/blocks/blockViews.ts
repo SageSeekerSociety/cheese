@@ -18,13 +18,17 @@ import type { AnyExtension, Editor, NodeViewRendererProps } from '@tiptap/core'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import type { NodeView } from '@tiptap/pm/view'
 import type { CalloutKind } from '../../../../lib/docSchema/blocks'
+import type { AgentHook } from './mermaidView'
 
 import { TextSelection } from '@tiptap/pm/state'
 import katex from 'katex'
 
 import { CALLOUT_KINDS, emptyItem } from '../../../../lib/docSchema/blocks'
 
+import { chartView } from './chartView'
+import { codeBlockView } from './mermaidView'
 import { closePopover, controlButton, menuAt, popoverAt } from './popover'
+import { posOf } from './viewKit'
 
 import { t } from '@/i18n'
 
@@ -34,11 +38,6 @@ const own =
   (dom: HTMLElement, ...controls: HTMLElement[]) =>
   (m: { type: string; target: Node }) =>
     (m.type === 'attributes' && m.target === dom) || controls.some((c) => c.contains(m.target))
-
-function posOf(getPos: NodeViewRendererProps['getPos']): number | null {
-  const pos = typeof getPos === 'function' ? getPos() : undefined
-  return typeof pos === 'number' ? pos : null
-}
 
 /** Remove the item at `pos`; the last item of a block takes the block with it. */
 function removeItem(editor: Editor, pos: number): void {
@@ -432,12 +431,14 @@ const VIEWS: Record<string, ViewFactory> = {
   mathInline: mathView(false),
   mathBlock: mathView(true),
   footnoteRef: footnoteRefView,
+  chart: chartView,
 }
 
 /** The document's extensions with the editor's views on its blocks. */
-export function withBlockViews(extensions: AnyExtension[]): AnyExtension[] {
+export function withBlockViews(extensions: AnyExtension[], agent: AgentHook): AnyExtension[] {
+  const views: Record<string, ViewFactory> = { ...VIEWS, codeBlock: codeBlockView(agent) }
   return extensions.map((extension) => {
-    const view = VIEWS[extension.name]
+    const view = views[extension.name]
     if (!view || extension.type !== 'node') return extension
     return (extension as unknown as { extend: (config: object) => AnyExtension }).extend({
       addNodeView: () => view,

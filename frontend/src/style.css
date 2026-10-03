@@ -183,6 +183,17 @@
   --usage-ask: #2a9d8f;
   --usage-write: #3d5a80;
 
+  /* ---- Chart series ----
+     The series of a document's chart block, in order. Six hues far enough
+     apart to tell bars and lines from each other, none of them the amber of
+     the primary action. */
+  --chart-1: #3d6bb3;
+  --chart-2: #2a9d8f;
+  --chart-3: #d9822b;
+  --chart-4: #8a63c2;
+  --chart-5: #c9506f;
+  --chart-6: #6b7b8c;
+
   /* ---- Radius ladder ----
      Theme-independent (a corner does not change shape in the dark), so these
      live only here and are NOT repeated in the dark block below.
@@ -398,6 +409,13 @@
   --usage-collab: #f59a3c;
   --usage-ask: #4fb8aa;
   --usage-write: #7d9cc4;
+
+  --chart-1: #7aa2e3;
+  --chart-2: #4fb8aa;
+  --chart-3: #eba25a;
+  --chart-4: #ad8fe2;
+  --chart-5: #e57f99;
+  --chart-6: #9eacba;
 }
 
 /* Paint the root element itself, so the gap between "HTML parsed" and "Vue has
