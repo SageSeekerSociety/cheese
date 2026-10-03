@@ -9,6 +9,10 @@ interface DialogOptions<T = any> {
   title: string
   content: string | (() => VNode)
   showCancel?: boolean
+  /** 确认键的字（动词）。不给就是「确定」。 */
+  confirmLabel?: string
+  /** 不可撤销的操作：确认键实心红。 */
+  danger?: boolean
   onConfirm?: (value?: any) => T
   onCancel?: () => void
 }
@@ -73,11 +77,16 @@ export function useDialog() {
       onConfirm: () => {},
     })
 
-  const confirm = (message: string, options?: { title?: string }): DialogInstance<boolean> =>
+  const confirm = (
+    message: string,
+    options?: { title?: string; confirmLabel?: string; danger?: boolean }
+  ): DialogInstance<boolean> =>
     showDialog({
       title: options?.title || t('global.confirm'),
       content: message,
       showCancel: true,
+      confirmLabel: options?.confirmLabel,
+      danger: options?.danger,
       onConfirm: () => true,
       onCancel: () => false,
     })
