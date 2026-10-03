@@ -383,7 +383,7 @@ useCommands(() => [
                 <BaseButton v-if="mdAndUp" size="sm" @click="startEdit(s)">{{ t('work.skills.edit') }}</BaseButton>
                 <BaseButton
                   v-if="mdAndUp && s.shipped_revision"
-                  kind="danger"
+                  kind="ghost"
                   size="sm"
                   :loading="busy === `${s.id}:discard`"
                   @click="discard(s)"

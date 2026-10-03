@@ -155,7 +155,6 @@ const fetchSearchResults = async (query: string) => {
 
 <style scoped>
 .main-card {
-  transition: all 0.3s ease;
   overflow: hidden;
 }
 
@@ -164,7 +163,7 @@ const fetchSearchResults = async (query: string) => {
 }
 
 .search-field {
-  transition: all 0.3s ease;
+  transition: opacity 0.3s ease;
 }
 
 .search-field:deep(.v-field__outline) {
@@ -176,7 +175,9 @@ const fetchSearchResults = async (query: string) => {
 }
 
 .team-list-item {
-  transition: all 0.2s ease;
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease;
   margin-bottom: 8px;
   border: 1px solid transparent;
 }

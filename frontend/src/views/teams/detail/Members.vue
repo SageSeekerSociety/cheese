@@ -137,7 +137,7 @@
                     <template #activator="{ props: activatorProps }">
                       <BaseButton
                         v-bind="activatorProps"
-                        kind="danger"
+                        kind="ghost"
                         icon="mdi-delete"
                         size="sm"
                         :aria-label="t('teams.members.remove')"
@@ -288,7 +288,7 @@
               <template #append>
                 <BaseButton
                   v-if="invitation.status === 'PENDING'"
-                  kind="danger"
+                  kind="ghost"
                   size="sm"
                   icon="mdi-delete"
                   :aria-label="t('global.cancel')"

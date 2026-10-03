@@ -212,7 +212,7 @@ watch(open, (value) => {
                   </p>
                   <template v-if="outcomes[session.id]?.state === 'unreachable'">
                     <p class="bs-error">{{ t('work.sessionMachine.abandonWarning') }}</p>
-                    <BaseButton kind="danger" size="sm" :disabled="running" @click="abandon(session)">{{
+                    <BaseButton kind="ghost" size="sm" :disabled="running" @click="abandon(session)">{{
                       t('work.sessionMachine.abandon')
                     }}</BaseButton>
                   </template>

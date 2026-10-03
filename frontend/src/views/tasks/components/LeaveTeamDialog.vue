@@ -114,7 +114,10 @@ const selectedTeamIdProxy = computed({
 
 .team-card {
   position: relative;
-  transition: all 0.2s ease;
+  transition:
+    border-color 0.2s ease,
+    background-color 0.2s ease,
+    transform 0.2s ease;
   border: 1px solid rgba(var(--v-border-color), 0.15);
   background-color: rgb(var(--v-theme-surface));
   cursor: pointer;

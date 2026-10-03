@@ -247,7 +247,11 @@ const getTeamDisabledText = (teamEligibility: TeamTaskEligibility): string => {
 
 .team-card {
   position: relative;
-  transition: all 0.2s ease;
+  transition:
+    border-color 0.2s ease,
+    background-color 0.2s ease,
+    transform 0.2s ease,
+    box-shadow 0.2s ease;
   border: 1px solid rgba(var(--v-border-color), 0.15);
   background-color: rgb(var(--v-theme-surface));
   cursor: pointer;
@@ -309,7 +313,7 @@ const getTeamDisabledText = (teamEligibility: TeamTaskEligibility): string => {
 }
 
 .member-chip {
-  transition: all 0.15s ease;
+  transition: transform 0.15s ease;
 }
 
 .member-chip:hover {
@@ -340,7 +344,6 @@ const getTeamDisabledText = (teamEligibility: TeamTaskEligibility): string => {
 
 .info-alert-card {
   border: 1px solid rgba(var(--v-border-color), 0.12);
-  transition: all 0.2s ease;
 }
 
 .cursor-pointer {

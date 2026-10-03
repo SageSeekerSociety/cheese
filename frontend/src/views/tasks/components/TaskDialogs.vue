@@ -388,7 +388,6 @@ const directShowPrivacy = () => {
 <style scoped>
 .info-alert-card {
   border: 1px solid rgba(var(--v-border-color), 0.12);
-  transition: all 0.2s ease;
 }
 
 .info-avatar {
@@ -403,7 +402,9 @@ const directShowPrivacy = () => {
 
 .privacy-link {
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition:
+    border-bottom-color 0.2s ease,
+    opacity 0.2s ease;
   border-bottom: 1px dashed rgba(var(--v-theme-primary), 0.5);
 }
 

@@ -210,7 +210,7 @@ useCommands(() => {
             </div>
             <BaseButton
               icon="mdi-delete-outline"
-              kind="danger"
+              kind="ghost"
               size="sm"
               class="memory-card__del"
               :title="t('project.docs.memoryDelete')"
