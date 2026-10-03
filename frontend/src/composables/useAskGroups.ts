@@ -22,7 +22,7 @@ import {
 } from '../lib/askState'
 import { renderNoticeMessage } from '../lib/noticeText'
 import { myId } from '../me'
-import { readAskGroup, settleAskGroup } from '../services/askGroups'
+import { listAwaitingAskGroups, readAskGroup, settleAskGroup } from '../services/askGroups'
 
 export function useAskGroups(options: {
   blocks: () => Block[]
@@ -61,6 +61,51 @@ export function useAskGroups(options: {
   const current = (owner: string, generation: number) =>
     owner === myId() && owner === options.account() && generation === epoch && !stopped
 
+  // 登记一组：建状态、读回它的题。两个入口共用 —— 从时间线里冒出来的成员块，
+  // 以及进房间时 `openRoom` 一次问来的「我还欠哪些组」。anchor 只是个锚点，不必
+  // 真的在时间线里，所以没加载到的组也登记得起来。
+  function ensure(scope: AskGroupScope, anchor: string): void {
+    const key = groupKey(scope)
+    if (groups[key]) return
+    const state: AskGroupState = {
+      scope,
+      anchor,
+      data: null,
+      forms: {},
+      pending: null,
+      busy: false,
+      fresh: false,
+      error: null,
+      storageBlocked: false,
+      confirm: false,
+      conflict: false,
+      unavailable: false,
+    }
+    try {
+      state.pending = loadGroupPending(localStorage, options.account(), scope)
+    } catch {
+      state.storageBlocked = true
+      state.error = t('ask.flow.storageError')
+    }
+    groups[key] = state
+    void refresh(scope)
+  }
+
+  // 进房间时问一次：这一间里我还欠哪些组的回答。时间线默认只加载最近一屏，
+  // 早先发的组可能根本不在那一屏里 —— 上面那个块驱动的登记也就轮不到它。这个
+  // 读接口按登记字段（id/asked_by/members/锚点）把组交回来，于是面板第一帧就接管。
+  async function openRoom(topicId: string): Promise<void> {
+    if (stopped || !topicId || !options.account()) return
+    let scopes: Awaited<ReturnType<typeof listAwaitingAskGroups>>
+    try {
+      scopes = await listAwaitingAskGroups(topicId)
+    } catch {
+      return // 读失败不是错误：块驱动的登记照旧，翻到那条仍能接管
+    }
+    if (stopped) return
+    for (const scope of scopes) if (scope.topic_id === topicId) ensure(scope, scope.anchor)
+  }
+
   watch(
     options.account,
     () => {
@@ -83,28 +128,7 @@ export function useAskGroups(options: {
         if (!scope || !options.account()) continue
         const key = groupKey(scope)
         if (!groups[key]) {
-          const state: AskGroupState = {
-            scope,
-            anchor: block.id,
-            data: null,
-            forms: {},
-            pending: null,
-            busy: false,
-            fresh: false,
-            error: null,
-            storageBlocked: false,
-            confirm: false,
-            conflict: false,
-            unavailable: false,
-          }
-          try {
-            state.pending = loadGroupPending(localStorage, options.account(), scope)
-          } catch {
-            state.storageBlocked = true
-            state.error = t('ask.flow.storageError')
-          }
-          groups[key] = state
-          void refresh(scope)
+          ensure(scope, block.id)
         } else if (!options.blocks().some((b) => b.id === groups[key]!.anchor)) {
           groups[key]!.anchor = block.id
         }
@@ -499,5 +523,5 @@ export function useAskGroups(options: {
     }
   }
 
-  return { askGroups: groups, askGroupAction: action }
+  return { askGroups: groups, askGroupAction: action, openRoom }
 }

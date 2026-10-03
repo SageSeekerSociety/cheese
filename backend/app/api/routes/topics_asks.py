@@ -150,6 +150,30 @@ async def read_ask_group(
     return ok(await group_data(db, rows))
 
 
+@router.get("/{topic_id}/asks/awaiting")
+async def list_awaiting_ask_groups(
+    topic_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+):
+    """The open question groups this room still owes the caller an answer.
+
+    The composer takeover registers a group from its member block, so it only
+    fired once that block scrolled into the loaded timeline window; a room the
+    caller opens long after the questions were asked showed the composer until
+    they paged back. This is the one call that lets the panel take over from the
+    first frame: it lists the caller's open groups by registration fields alone,
+    without the member blocks. Query lives in the repository
+    (`groups_awaiting_an_answer`), like the other awaiting reads.
+    """
+    place = await TopicService(db).place_or_404(topic_id)
+    actor = await authorize_group(resolver, place)
+    groups = await BlockRepository(db).groups_awaiting_an_answer(
+        place.room_id, actor.handle
+    )
+    return ok({"groups": groups})
+
+
 def settlement_line(rows, settlement, asked_by):
     lines = [
         f"<@{asked_by}> 问题组已提交：{len(settlement['answered'])}/{len(rows)} 已答"

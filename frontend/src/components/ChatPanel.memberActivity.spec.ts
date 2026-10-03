@@ -25,6 +25,13 @@ vi.mock('@/api', async () => {
   }
 })
 
+// 进房间时那次「我还欠哪些组」的读：这一条不关心组题，答「没有」即可，免得它落到
+// setup-network 的「每个请求都要 mock」守卫上。
+vi.mock('@/services/askGroups', async () => ({
+  ...(await vi.importActual<typeof import('@/services/askGroups')>('@/services/askGroups')),
+  listAwaitingAskGroups: vi.fn().mockResolvedValue([]),
+}))
+
 import ChatPanel from './ChatPanel.vue'
 
 import i18n, { setLocale } from '@/i18n'

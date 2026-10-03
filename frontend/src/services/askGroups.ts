@@ -21,3 +21,35 @@ export async function settleAskGroup(scope: AskGroupScope, payload: AskGroupSubm
   assertGroupData(data, scope)
   return data
 }
+
+/** A view of one open group: the registration fields plus a member block id to
+ *  anchor on, so the panel can take over without the member blocks loaded. */
+export interface AwaitingAskGroup extends AskGroupScope {
+  anchor: string
+}
+
+function isAwaitingGroup(value: unknown): value is AwaitingAskGroup {
+  if (!value || typeof value !== 'object') return false
+  const group = value as Record<string, unknown>
+  return (
+    typeof group.topic_id === 'string' &&
+    typeof group.asked_by === 'string' &&
+    typeof group.id === 'string' &&
+    Array.isArray(group.members) &&
+    group.members.every((id) => typeof id === 'string') &&
+    typeof group.total === 'number' &&
+    typeof group.anchor === 'string'
+  )
+}
+
+/** The open groups this room owes the caller an answer, asked once on entry.
+ *
+ *  The timeline loads a recent window, so a group asked long ago is not among
+ *  the blocks `useAskGroups` registers from; this is the read that lets the
+ *  composer takeover appear from the first frame regardless. Anything the
+ *  reader cannot recognise is dropped rather than trusted. */
+export async function listAwaitingAskGroups(topicId: string): Promise<AwaitingAskGroup[]> {
+  const data = await request<{ groups?: unknown }>(`/topics/${encodeURIComponent(topicId)}/asks/awaiting`)
+  const groups = data?.groups
+  return Array.isArray(groups) ? groups.filter(isAwaitingGroup) : []
+}
