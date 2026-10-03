@@ -9,16 +9,26 @@ no default — dropped without an answer, so the server learns of it only when i
 own timeout fires, in a place that has nothing to do with the version.
 
 So the identity is the bytes. A connector reports the sha256 of its own
-executable; we compare it with the sha256 of what we serve for its platform.
-Installing an update is a rename of exactly those bytes onto the executable, so
-a machine on our build hashes to our number and anything else is a machine to
+executable; we compare it with the sha256 of what the origin publishes for its
+platform (`published_digest`) — the file its self-update downloads. Installing
+an update is a rename of exactly those bytes onto the executable, so a machine
+on the published build hashes to that number and anything else is a machine to
 update. A connector too old to report anything is, by construction, older than
 the build that started reporting.
 """
 
+import asyncio
 import hashlib
+import logging
 import re
+import time
 from pathlib import Path
+
+import httpx
+
+from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 # The `<os>-<arch>` names the server publishes artifacts under. Go-style
 # (amd64/arm64), never uname-style (x86_64/aarch64) — the connector's own
@@ -89,3 +99,50 @@ def has_any_build() -> bool:
     a machine to fetch it would only cost it a failed download per reconnect.
     """
     return any(binary_path(target) is not None for target in TARGETS)
+
+
+# How long the origin's answer stands before it is asked again. Every machine
+# says hello on every reconnect, and a release changes the answer a few times
+# a day at most.
+PUBLISHED_TTL_S = 60.0
+# The origin is asked over this transport; None is the network. Tests hand in
+# the app itself.
+origin_transport: httpx.AsyncBaseTransport | None = None
+_published: dict[str, tuple[float, str]] = {}
+
+
+async def published_digest(target: str) -> str | None:
+    """Hex sha256 of the connector the origin publishes for ``target``; None
+    when it publishes none or cannot be asked.
+
+    The connection owner is released on its own schedule, so the files in its
+    own image can be days behind the ones the origin hands out, and a machine
+    updating itself takes the origin's. Compared with the owner's copy, a
+    machine on the published build read as stale and was told to update on
+    every reconnect, while one still on the owner's older build read as current
+    and never was."""
+    if target not in TARGETS:
+        return None
+    if not settings.connector_origin_url:
+        return await asyncio.to_thread(served_digest, target)
+    now = time.monotonic()
+    cached = _published.get(target)
+    if cached is not None and cached[0] > now:
+        return cached[1]
+    base = settings.connector_origin_url.rstrip("/")
+    url = f"{base}/connector/latest/{target}/{binary_name(target)}"
+    try:
+        # An address inside the deployment: never through an outbound proxy
+        # the environment may name.
+        async with httpx.AsyncClient(
+            transport=origin_transport, timeout=10, trust_env=False
+        ) as client:
+            response = await client.head(url)
+    except httpx.HTTPError as exc:
+        logger.warning("cannot ask %s which connector is published: %s", url, exc)
+        return None
+    digest = response.headers.get("X-Checksum-SHA256")
+    if response.status_code != 200 or not digest:
+        return None
+    _published[target] = (now + PUBLISHED_TTL_S, digest)
+    return digest

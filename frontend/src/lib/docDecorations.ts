@@ -18,6 +18,8 @@ import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { ySyncPluginKey } from '@tiptap/y-tiptap'
 
+import { commentAnchors } from './docSchema'
+
 import { t } from '@/i18n'
 
 export interface LiveRefFacts {
@@ -155,137 +157,44 @@ export function createLiveRefBadges(opts: {
   })
 }
 
-// ---- 评论下划线 (Feishu): each anchored comment's quote gets a clickable
-// dashed underline in the doc. Deterministic: the stored quote is OUR
-// structured field; we locate it by exact substring inside its anchored
-// block (positional node↔block alignment, same as live-refs). No match →
-// no mark (the paragraph changed; the bottom card already says so). ----
+// ---- Comment highlights: the words an open thread is about, found by the
+// thread's mark in the document (docSchema/commentAnchors). A resolved thread
+// keeps its mark and loses its highlight; the thread being read is drawn
+// stronger. ----
 
-export const commentMarkKey = new PluginKey('cheeseCommentMarks')
+export const commentHighlightKey = new PluginKey('cheeseCommentHighlights')
 
-export function mappedCommentQuoteState(doc: PMNode, mark: Decoration): 'unique' | 'missing' | 'ambiguous' {
-  const $from = doc.resolve(mark.from)
-  if (!$from.depth || typeof mark.spec.quote !== 'string') return 'missing'
-  const result = commentQuoteRanges($from.node(1), $from.before(1), mark.spec.quote)
-  if (result.status !== 'unique') return result.status
-  // A new unique occurrence elsewhere is not the original mapped selection.
-  return result.ranges.length === 1 && result.ranges[0].from === mark.from && result.ranges[0].to === mark.to
-    ? 'unique'
-    : 'missing'
-}
-
-export function commentQuoteRanges(
-  node: PMNode,
-  offset: number,
-  quote: string
-): {
-  status: 'unique' | 'missing' | 'ambiguous'
-  ranges: { from: number; to: number }[]
-} {
-  if (!quote) return { status: 'missing', ranges: [] }
-  const runs: { text: string; positions: number[] }[] = []
-  function textblock(block: PMNode, contentStart: number) {
-    let text = ''
-    const positions: number[] = []
-    block.descendants((child, pos) => {
-      if (child.isText) {
-        text += child.text ?? ''
-        for (let i = 0; i < (child.text?.length ?? 0); i++) positions.push(contentStart + pos + i)
-      } else if (child.isLeaf) {
-        text += '\u0000'
-        positions.push(-1)
-      }
-    })
-    runs.push({ text, positions })
-  }
-  if (node.isTextblock) textblock(node, offset + 1)
-  else
-    node.descendants((child, pos) => {
-      if (!child.isTextblock) return
-      textblock(child, offset + pos + 2)
-      return false
-    })
-  const matches: { from: number; to: number }[][] = []
-  for (const run of runs) {
-    for (let at = run.text.indexOf(quote); at >= 0; at = run.text.indexOf(quote, at + 1)) {
-      const positions = run.positions.slice(at, at + quote.length)
-      if (positions.some((pos) => pos < 0)) continue
-      const ranges: { from: number; to: number }[] = []
-      for (const pos of positions) {
-        const last = ranges[ranges.length - 1]
-        if (last?.to === pos) last.to++
-        else ranges.push({ from: pos, to: pos + 1 })
-      }
-      matches.push(ranges)
-    }
-  }
-  return matches.length === 1
-    ? { status: 'unique', ranges: matches[0] }
-    : { status: matches.length ? 'ambiguous' : 'missing', ranges: [] }
-}
-
-function commentMarkDecorations(doc: PMNode, index: Map<number, { id: string; quote: string }[]>): DecorationSet {
+function commentHighlights(doc: PMNode, open: ReadonlySet<string>, active: string | null): DecorationSet {
   const decos: Decoration[] = []
-  doc.forEach((node, offset, index_) => {
-    const anchored = index.get(index_)
-    if (!anchored?.length) return
-    for (const c of anchored) {
-      for (const range of commentQuoteRanges(node, offset, c.quote).ranges) {
-        decos.push(
-          Decoration.inline(
-            range.from,
-            range.to,
-            {
-              class: 'comment-anchor',
-              'data-comment': c.id,
-            },
-            { commentId: c.id, quote: c.quote }
-          )
-        )
-      }
-    }
-  })
+  for (const [id, ranges] of commentAnchors(doc)) {
+    if (!open.has(id)) continue
+    const attrs = { class: id === active ? 'doc-comment-mark is-active' : 'doc-comment-mark', 'data-comment': id }
+    for (const range of ranges) decos.push(Decoration.inline(range.from, range.to, attrs))
+  }
   return DecorationSet.create(doc, decos)
 }
 
-export function createCommentMarks(opts: {
-  index: () => Map<number, { id: string; quote: string }[]>
-  openId?: () => string | null
+/** Highlight the open threads' words; poke with `commentHighlightKey` when the threads change. */
+export function createCommentHighlights(opts: {
+  open: () => ReadonlySet<string>
+  active: () => string | null
 }): Extension {
   return TiptapExtension.create({
-    name: 'cheeseCommentMarks',
+    name: 'cheeseCommentHighlights',
     addProseMirrorPlugins() {
       return [
         new Plugin({
-          key: commentMarkKey,
+          key: commentHighlightKey,
           state: {
-            init: (_cfg, state) => commentMarkDecorations(state.doc, opts.index()),
-            apply: (tr, old) => {
-              if (tr.getMeta(commentMarkKey) === 'active-only') return tr.docChanged ? old.map(tr.mapping, tr.doc) : old
-              if (tr.getMeta(commentMarkKey) || fromDocument(tr)) return commentMarkDecorations(tr.doc, opts.index())
-              return tr.docChanged ? old.map(tr.mapping, tr.doc) : old
-            },
+            init: (_cfg, state) => commentHighlights(state.doc, opts.open(), opts.active()),
+            apply: (tr, old) =>
+              tr.docChanged || tr.getMeta(commentHighlightKey)
+                ? commentHighlights(tr.doc, opts.open(), opts.active())
+                : old,
           },
           props: {
             decorations(state) {
-              const marks = this.getState(state) as DecorationSet
-              return DecorationSet.create(
-                state.doc,
-                marks
-                  .find()
-                  .filter((mark) => mappedCommentQuoteState(state.doc, mark) === 'unique')
-                  .map((mark) =>
-                    Decoration.inline(
-                      mark.from,
-                      mark.to,
-                      {
-                        class: mark.spec.commentId === opts.openId?.() ? 'comment-anchor is-active' : 'comment-anchor',
-                        'data-comment': mark.spec.commentId,
-                      },
-                      mark.spec
-                    )
-                  )
-              )
+              return this.getState(state) as DecorationSet
             },
           },
         }),

@@ -6,8 +6,8 @@
 // 里都得先立一个假后端，而任何一行样式调整都要在一个两千行的文件里找。
 //
 // 现在两边分家，和 #2130 的「改动」、#2158 的「预览」是同一个形状：
-//   - 取数（打开协同文档、已存的那一版、评论与节点）
-//     → `composables/usePanelDoc.ts`
+//   - 取数（打开协同文档、已存的那一版、节点）→ `composables/usePanelDoc.ts`；
+//     评论串（读、回复、解决，跟着房间的信号刷新）→ `composables/useDocThreads.ts`
 //   - 画（横条上写哪句话、一栏正文、评论区）
 //     → `components/panels/PanelDocView.vue`，只凭 props 渲染
 //   - 编辑器本身（tiptap 实例、几种装饰、别人的光标、段落闪一下）
@@ -117,19 +117,16 @@ defineExpose({ pulse, highlightTurn, reviewEdits })
     :outdated="doc.outdated.value"
     :peers="doc.peers.value"
     :error-msg="doc.errorMsg.value"
-    :comments="doc.comments.value"
     :comment-author="doc.commentAuthor"
     :send-comment="doc.sendComment"
+    :refresh-threads="docThreads.refresh"
     :thread-state="threads.state"
     :thread-actions="threads.actions"
-    :anchor-nodes="doc.anchorNodes.value"
     :live-ref-index="doc.liveRefIndex.value"
-    :comment-mark-index="doc.commentMarkIndex.value"
     :suggestion-reasons="doc.suggestionReasons.value"
     :fetch-suggestion-reasons="doc.fetchSuggestionReasons"
     :fetch-doc-nodes="doc.fetchDocNodes"
     :image-src="doc.imageSrc"
-    :refresh-comments="doc.refreshComments"
     :toggle-editable="doc.toggleEditable"
     :set-error="doc.setError"
     :ask-agent="doc.askAgent"

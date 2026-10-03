@@ -16,7 +16,19 @@
       "tag": "会话没启动：这台机器没接上",
       "events": [
         { "at": 200, "do": "say", "who": "wang", "text": "<@cheese> 登录页的按钮换成主色" },
-        { "at": 900, "do": "notice", "text": "本轮未完成：这条会话的机器尚未配置或未连接", "meta": { "event_type": "turn_failed", "severity": "error", "who": "human", "detail": "稍后可以重试。\n\n服务原话：\n这条会话的机器尚未配置或未连接", "detail_label": "详细说明", "retryable": true } }
+        {
+          "at": 900,
+          "do": "notice",
+          "text": "本轮未完成：这条会话的机器尚未配置或未连接",
+          "meta": {
+            "event_type": "turn_failed",
+            "severity": "error",
+            "who": "human",
+            "detail": "稍后可以重试。\n\n服务原话：\n这条会话的机器尚未配置或未连接",
+            "detail_label": "详细说明",
+            "retryable": true
+          }
+        }
       ]
     },
     {
@@ -25,7 +37,19 @@
       "tag": "这一轮没跑完，原话在展开区里",
       "events": [
         { "at": 200, "do": "say", "who": "wang", "text": "<@cheese> 顺便把页脚也改了" },
-        { "at": 900, "do": "notice", "text": "本轮意外中断，平台不会自动重试", "meta": { "event_type": "turn_failed", "severity": "error", "who": "human", "detail": "已完成的改动都在。这类失败通常是平台缺陷，重试可能再次触发，所以平台不会自动重试。需要有人查看日志定位问题，修复后可以重试，会从中断处继续。", "detail_label": "详细说明", "retryable": true } }
+        {
+          "at": 900,
+          "do": "notice",
+          "text": "本轮意外中断，平台不会自动重试",
+          "meta": {
+            "event_type": "turn_failed",
+            "severity": "error",
+            "who": "human",
+            "detail": "已完成的改动都在。这类失败通常是平台缺陷，重试可能再次触发，所以平台不会自动重试。需要有人查看日志定位问题，修复后可以重试，会从中断处继续。",
+            "detail_label": "详细说明",
+            "retryable": true
+          }
+        }
       ]
     },
     {
@@ -34,7 +58,20 @@
       "tag": "消息没进会话，工作区没受影响",
       "events": [
         { "at": 200, "do": "say", "who": "li", "text": "<@cheese> 把登录页的文案也对一遍" },
-        { "at": 900, "do": "notice", "text": "本轮未开始，消息没有送进会话，会话也没有任何响应。", "meta": { "event_type": "platform_error", "code": "prompt_undelivered", "severity": "error", "title": "消息未送达", "retryable": true, "detail": "这不是 AI 服务的问题，请求没有到达模型。消息发往工作电脑上的 claude 会话，但会话没有接收：常见原因是会话停在一个等待回答的界面上，或者它所在的终端已经关闭。工作区里的文件和已完成的改动都没有受到影响。重试会重新打开会话；如果连续几次都这样，把这条提示转给管理员。", "detail_label": "详细说明" } }
+        {
+          "at": 900,
+          "do": "notice",
+          "text": "本轮未开始，消息没有送进会话，会话也没有任何响应。",
+          "meta": {
+            "event_type": "platform_error",
+            "code": "prompt_undelivered",
+            "severity": "error",
+            "title": "消息未送达",
+            "retryable": true,
+            "detail": "这不是 AI 服务的问题，请求没有到达模型。消息发往工作电脑上的 claude 会话，但会话没有接收：常见原因是会话停在一个等待回答的界面上，或者它所在的终端已经关闭。工作区里的文件和已完成的改动都没有受到影响。重试会重新打开会话；如果连续几次都这样，把这条提示转给管理员。",
+            "detail_label": "详细说明"
+          }
+        }
       ]
     },
     {
@@ -43,7 +80,18 @@
       "tag": "项目同时在跑的轮次满了，等前面的结束",
       "events": [
         { "at": 200, "do": "say", "who": "wang", "text": "<@cheese> 再跑一遍移动端截图" },
-        { "at": 900, "do": "notice", "text": "项目同时运行的轮次已满，本轮正在排队，前面还有 2 个", "meta": { "event_type": "turn_queued", "severity": "info", "who": "platform", "detail": "前面的轮次结束就自动开跑，不用重发。", "detail_label": "接下来会发生什么" } }
+        {
+          "at": 900,
+          "do": "notice",
+          "text": "项目同时运行的轮次已满，本轮正在排队，前面还有 2 个",
+          "meta": {
+            "event_type": "turn_queued",
+            "severity": "info",
+            "who": "platform",
+            "detail": "前面的轮次结束就自动开跑，不用重发。",
+            "detail_label": "接下来会发生什么"
+          }
+        }
       ]
     },
     {
@@ -52,7 +100,18 @@
       "tag": "准入拒绝，要人来补额度",
       "events": [
         { "at": 200, "do": "say", "who": "wang", "text": "<@cheese> 把这版也交上去" },
-        { "at": 900, "do": "notice", "text": "可用的 tokens 额度已用完，这轮没有执行", "meta": { "event_type": "turn_failed", "severity": "error", "who": "human", "detail": "联系团队管理员或额度发放方补充额度。", "detail_label": "下一步" } }
+        {
+          "at": 900,
+          "do": "notice",
+          "text": "可用的 tokens 额度已用完，这轮没有执行",
+          "meta": {
+            "event_type": "turn_failed",
+            "severity": "error",
+            "who": "human",
+            "detail": "联系团队管理员或额度发放方补充额度。",
+            "detail_label": "下一步"
+          }
+        }
       ]
     },
     {
@@ -69,8 +128,31 @@
       "focus": "card",
       "tag": "检查没过，现在采纳不会合并",
       "events": [
-        { "at": 200, "do": "checks", "checks": { "mergeable": false, "state": "open", "checks": [{ "name": "required-ci / lint", "status": "completed", "conclusion": "failure" }] } },
-        { "at": 400, "do": "card", "card": { "status": "pending", "change_subject": "feat(signin): new sign-in page", "merge_state": { "state": "blocked", "who": "agent", "reasons": [{ "kind": "checks_failed", "checks": ["required-ci / lint"], "detail": "平台检查未通过" }], "head_sha": null, "checked_at": null, "since": null } } }
+        {
+          "at": 200,
+          "do": "checks",
+          "checks": {
+            "mergeable": false,
+            "state": "open",
+            "checks": [{ "name": "required-ci / lint", "status": "completed", "conclusion": "failure" }]
+          }
+        },
+        {
+          "at": 400,
+          "do": "card",
+          "card": {
+            "status": "pending",
+            "change_subject": "feat(signin): new sign-in page",
+            "merge_state": {
+              "state": "blocked",
+              "who": "agent",
+              "reasons": [{ "kind": "checks_failed", "checks": ["required-ci / lint"], "detail": "平台检查未通过" }],
+              "head_sha": null,
+              "checked_at": null,
+              "since": null
+            }
+          }
+        }
       ]
     }
   ]

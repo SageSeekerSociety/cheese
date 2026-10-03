@@ -315,7 +315,7 @@ function width(i: number): string {
 }
 .skel__bone--meta {
   height: 10px;
-  margin: 4px 0 5px; /* .t-meta：12.5px × 1.5 ≈ 19px 行盒 */
+  margin: 4px 0 5px; /* .t-meta：--lh-12 的 18px 行盒 */
 }
 .skel__bone--name {
   width: 84px;

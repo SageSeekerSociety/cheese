@@ -13,8 +13,7 @@
 import type { Editor as CoreEditor } from '@tiptap/core'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import type { Selection } from '@tiptap/pm/state'
-import type { Block } from '../../../cx_types'
-import type { SelectionTarget } from '../../../lib/docBubble'
+import type { CommentSpot } from '../../../lib/docCommentSpots'
 import type { DocLinkTarget } from '../../../lib/docLinks'
 import type { SlashItem } from '../../../lib/docSlashMenu'
 
@@ -24,7 +23,9 @@ import { TextSelection } from '@tiptap/pm/state'
 import { CellSelection } from '@tiptap/pm/tables'
 
 import { BUBBLE_META } from '../../../lib/docBubble'
+import { spotAt } from '../../../lib/docCommentSpots'
 import { captureNewDocLink } from '../../../lib/docLinks'
+import { BLOCK_ITEMS, blockKeyOf } from '../../../lib/docSlashMenu'
 
 import DocBubble from './DocBubble.vue'
 import DocKeyboardBar from './DocKeyboardBar.vue'
@@ -38,8 +39,6 @@ const props = withDefaults(
     /** 能不能改。只读时浮条上没有格式，语言选择器、块手柄都不出场。 */
     editable: boolean
     topicId: string | null
-    /** 取一份最新的节点树（评论的锚点要知道自己锚在第几段）。 */
-    fetchDocNodes: () => Promise<Block[]>
     /** 上面那把 slash 菜单现在开在哪、停在第几行；null = 关着。 */
     slashMenu?: { items: SlashItem[]; index: number; top: number; left: number } | null
     /** 父层每收到一次正文区的滚动就加一：滚动时收起代码块工具条。 */
@@ -49,15 +48,17 @@ const props = withDefaults(
     agentHandle?: string | null
     /** 浮条上给不给 AI 队友（认得出它，问它它才收得到）。 */
     canAgent?: boolean
+    /** 能写评论（归档话题的文档不能）。 */
+    canComment?: boolean
   }>(),
-  { editor: null, slashMenu: null, scrollTick: 0, agentHandle: null, canAgent: false }
+  { editor: null, slashMenu: null, scrollTick: 0, agentHandle: null, canAgent: false, canComment: true }
 )
 
 const emit = defineEmits<{
   /** 选中一段正文点了「评论」：锚点和引文都算好了，去开写评论的框。 */
-  (e: 'open-comment', payload: SelectionTarget): void
+  (e: 'open-comment', payload: CommentSpot): void
   /** 选中一段正文点了 AI 队友：选区、锚点和引文。 */
-  (e: 'agent', payload: SelectionTarget & { from: number; to: number }): void
+  (e: 'agent', payload: CommentSpot): void
   /** 当场要说的失败（目前只有复制代码失败）。 */
   (e: 'error', message: string): void
   /** slash 菜单里挑了一项（键盘回车走的是上面那条路，这里只有鼠标）。 */
@@ -77,7 +78,6 @@ interface CommentCta {
   top: number
   left: number
   quote: string
-  nodeIndex: number
   editor: CoreEditor
   doc: PMNode
   selection: Selection
@@ -96,7 +96,6 @@ const toolbar = ref<HTMLElement | null>(null)
 let dismissed: { editor: CoreEditor; doc: PMNode; selection: Selection } | null = null
 let frame = 0
 let disposed = false
-let requestId = 0
 let bound: CoreEditor | null = null
 let observer: ResizeObserver | null = null
 function wrapOf(ed: CoreEditor) {
@@ -163,7 +162,6 @@ function updateCommentCta(ed: CoreEditor) {
     return
   }
   let quote: string
-  let nodeIndex: number
   if (sel instanceof CellSelection) {
     const parts: string[] = []
     sel.forEachCell((cell) => {
@@ -171,14 +169,12 @@ function updateCommentCta(ed: CoreEditor) {
       if (text) parts.push(text)
     })
     quote = parts.join(' ')
-    nodeIndex = sel.$anchorCell.index(0)
   } else {
     if (!(sel instanceof TextSelection)) {
       commentCta.value = null
       return
     }
     quote = ed.state.doc.textBetween(sel.from, sel.to, ' ').trim()
-    nodeIndex = sel.$from.index(0)
   }
   if (!quote) {
     commentCta.value = null
@@ -189,7 +185,6 @@ function updateCommentCta(ed: CoreEditor) {
     top: 0,
     left: 0,
     quote,
-    nodeIndex,
     editor: ed,
     doc: ed.state.doc,
     selection: sel,
@@ -230,7 +225,6 @@ function escapeSelection(e: KeyboardEvent) {
 }
 function bindEditor(ed?: CoreEditor | null) {
   if (bound === ed) return
-  requestId++
   bound?.off('selectionUpdate', onSelectionUpdate)
   bound?.off('transaction', onTransaction)
   observer?.disconnect()
@@ -256,7 +250,6 @@ watch(() => props.editor, bindEditor, { immediate: true, flush: 'post' })
 watch(
   () => [props.editable, props.topicId],
   () => {
-    requestId++
     commentCta.value = null
     dismissed = null
   },
@@ -267,7 +260,6 @@ window.addEventListener('resize', schedulePosition)
 document.addEventListener('keydown', escapeSelection, true)
 onBeforeUnmount(() => {
   disposed = true
-  requestId++
   bound?.off('selectionUpdate', onSelectionUpdate)
   bound?.off('transaction', onTransaction)
   observer?.disconnect()
@@ -276,43 +268,22 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', schedulePosition)
   document.removeEventListener('keydown', escapeSelection, true)
 })
-/** 浮条收起，算出选中的那一段锚在哪个节点上；中途换了文档、正文变了就是 null。 */
-async function takeSelection(): Promise<(SelectionTarget & { from: number; to: number }) | null> {
+/** 浮条收起，交出选中的那几个字（记成跟着正文走的位置）；中途换了文档、正文变了就是 null。 */
+function takeSelection(): CommentSpot | null {
   const cta = commentCta.value
   if (!cta) return null
-  const id = ++requestId
   dismissed = { editor: cta.editor, doc: cta.doc, selection: cta.selection }
   commentCta.value = null
-  let nodes: Block[]
-  try {
-    nodes = await props.fetchDocNodes()
-  } catch (e) {
-    if (!disposed && id === requestId)
-      emit('error', e instanceof Error ? e.message : t('work.room.comments.postFailed'))
-    return null
-  }
-  if (
-    disposed ||
-    id !== requestId ||
-    props.editor !== cta.editor ||
-    props.topicId !== cta.topicId ||
-    cta.editor.isDestroyed ||
-    cta.editor.state.doc !== cta.doc
-  )
-    return null
-  const blocks = Array.from(wrapOf(cta.editor)?.querySelectorAll<HTMLElement>('.ProseMirror > *') ?? [])
-  while (blocks.length && blocks[blocks.length - 1].tagName === 'P' && !blocks[blocks.length - 1].textContent?.trim())
-    blocks.pop()
-  const anchorId = cta.nodeIndex >= nodes.length || nodes.length !== blocks.length ? null : nodes[cta.nodeIndex].id
-  return { anchorId, quote: cta.quote, from: cta.selection.from, to: cta.selection.to }
+  if (props.editor !== cta.editor || cta.editor.isDestroyed || cta.editor.state.doc !== cta.doc) return null
+  return spotAt(cta.editor, cta.selection.from, cta.selection.to)
 }
-async function commentOnSelection() {
-  const target = await takeSelection()
-  if (target) emit('open-comment', { anchorId: target.anchorId, quote: target.quote })
+function commentOnSelection() {
+  const spot = takeSelection()
+  if (spot) emit('open-comment', spot)
 }
-async function agentOnSelection() {
-  const target = await takeSelection()
-  if (target) emit('agent', target)
+function agentOnSelection() {
+  const spot = takeSelection()
+  if (spot) emit('agent', spot)
 }
 async function copySelection() {
   const cta = commentCta.value
@@ -492,10 +463,53 @@ function addBlockBelow() {
     .run()
 }
 
+// ---- 行首手柄点一下：这一块换成别的块（和浮条上的「正文 ▾」同一张表），不用先选字。
+// 拖它照旧是挪这一块。菜单量着手柄的位置摆在屏幕上，手柄因为鼠标移开而收起时它还在。
+const blockMenu = ref<{ pos: number; current: string; top: number; left: number } | null>(null)
+function openBlockMenu(e: MouseEvent) {
+  const ed = props.editor
+  if (!ed || hoverPos.value == null) return
+  const node = ed.state.doc.nodeAt(hoverPos.value)
+  if (!node) return
+  const at = (e.currentTarget as HTMLElement).getBoundingClientRect()
+  blockMenu.value = { pos: hoverPos.value, current: blockKeyOf(node), top: at.bottom + 4, left: at.left }
+}
+function pickBlock(item: SlashItem) {
+  const ed = props.editor
+  const menu = blockMenu.value
+  blockMenu.value = null
+  const node = ed && menu ? ed.state.doc.nodeAt(menu.pos) : null
+  if (!ed || !menu || !node) return
+  item
+    .run(
+      ed
+        .chain()
+        .focus()
+        .setTextSelection({ from: menu.pos + 1, to: menu.pos + node.nodeSize - 1 })
+    )
+    .run()
+}
+function closeBlockMenu(e: Event) {
+  if (e instanceof KeyboardEvent && e.key !== 'Escape') return
+  if (e.target instanceof Element && e.target.closest('.doc-block-menu')) return
+  blockMenu.value = null
+}
+watch(blockMenu, (open, was) => {
+  if (open && !was) {
+    document.addEventListener('mousedown', closeBlockMenu, true)
+    document.addEventListener('keydown', closeBlockMenu, true)
+    document.addEventListener('scroll', closeBlockMenu, true)
+  } else if (!open && was) {
+    document.removeEventListener('mousedown', closeBlockMenu, true)
+    document.removeEventListener('keydown', closeBlockMenu, true)
+    document.removeEventListener('scroll', closeBlockMenu, true)
+  }
+})
+onBeforeUnmount(() => (blockMenu.value = null))
+
 /** 正文在光标底下换了（人工编辑，或者装进来的一版）：这个按钮指着的段落已经不是
  *  原来那一段了，收回去。装配服务端那一版时上面不会喊这一声。 */
 function onEdited() {
-  requestId++
   if (props.editor)
     dismissed = { editor: props.editor, doc: props.editor.state.doc, selection: props.editor.state.selection }
   commentCta.value = null
@@ -507,35 +521,38 @@ function newLink() {
   const target = captureNewDocLink(cta.editor, cta.selection)
   if (target) emit('open-link', target)
 }
-/** 选区在一段之内（块样式按段换）。 */
-function singleBlock(cta: CommentCta): boolean {
+/** 选中的是正文里的字（一段或跨几段）：块样式能换。 */
+function restyle(cta: CommentCta): boolean {
   const sel = cta.selection
-  return sel instanceof TextSelection && sel.$from.depth > 0 && sel.$from.sameParent(sel.$to)
+  return sel instanceof TextSelection && sel.$from.depth > 0
 }
 defineExpose({ onHover, onEdited })
 </script>
 
 <template>
   <!-- 选中文字后的浮条：贴着选区，跟着正文滚。 -->
-  <div
-    v-if="commentCta && !(touch && editable)"
-    ref="toolbar"
-    class="doc-comment-cta"
-    :style="{ top: `${commentCta.top}px`, left: `${commentCta.left}px` }"
-  >
-    <DocBubble
-      :editor="commentCta.editor"
-      :agent-name="agentName"
-      :agent-handle="agentHandle"
-      :editable="editable && commentCta.editor.isEditable"
-      :single-block="singleBlock(commentCta)"
-      :can-agent="canAgent"
-      @agent="agentOnSelection"
-      @comment="commentOnSelection"
-      @link="newLink"
-      @copy="copySelection"
-    />
-  </div>
+  <Transition name="doc-comment-cta">
+    <div
+      v-if="commentCta && !(touch && editable)"
+      ref="toolbar"
+      class="doc-comment-cta"
+      :style="{ top: `${commentCta.top}px`, left: `${commentCta.left}px` }"
+    >
+      <DocBubble
+        :editor="commentCta.editor"
+        :agent-name="agentName"
+        :agent-handle="agentHandle"
+        :editable="editable && commentCta.editor.isEditable"
+        :restyle="restyle(commentCta)"
+        :can-agent="canAgent"
+        :can-comment="canComment"
+        @agent="agentOnSelection"
+        @comment="commentOnSelection"
+        @link="newLink"
+        @copy="copySelection"
+      />
+    </div>
+  </Transition>
   <!-- 手机上能改时：键盘上方的那一条代替浮条，没选中字时也在。 -->
   <DocKeyboardBar v-if="touch && editable && editor" :editor="editor">
     <DocBubble
@@ -545,6 +562,7 @@ defineExpose({ onHover, onEdited })
       :agent-handle="agentHandle"
       :editable="editor.isEditable"
       :can-agent="canAgent"
+      :can-comment="canComment"
       :has-selection="!!commentCta"
       @agent="agentOnSelection"
       @comment="commentOnSelection"
@@ -613,35 +631,140 @@ defineExpose({ onHover, onEdited })
     >
       <v-icon size="15">mdi-plus</v-icon>
     </button>
-    <span class="doc-handle__btn doc-handle__grip" :title="t('work.room.doc.dragToReorder')">
+    <span
+      class="doc-handle__btn doc-handle__grip"
+      role="button"
+      aria-haspopup="menu"
+      :aria-expanded="!!blockMenu"
+      :aria-label="t('work.room.doc.blockHandle')"
+      :title="t('work.room.doc.blockHandle')"
+      @click="openBlockMenu"
+    >
       <v-icon size="15">mdi-drag-vertical</v-icon>
     </span>
   </DragHandle>
+  <Teleport to="body">
+    <div
+      v-if="blockMenu"
+      class="doc-block-menu"
+      role="menu"
+      :aria-label="t('work.room.doc.blockType')"
+      :style="{ top: `${blockMenu.top}px`, left: `${blockMenu.left}px` }"
+    >
+      <button
+        v-for="item in BLOCK_ITEMS"
+        :key="item.key"
+        type="button"
+        role="menuitemradio"
+        :aria-checked="item.key === blockMenu.current"
+        class="doc-block-menu__item"
+        @click="pickBlock(item)"
+      >
+        <v-icon size="16">{{ item.icon }}</v-icon>
+        {{ item.label }}
+      </button>
+    </div>
+  </Teleport>
 </template>
 
 <style scoped>
+.doc-comment-cta-enter-active {
+  transition:
+    opacity 120ms ease-out,
+    transform 140ms cubic-bezier(0.2, 0, 0, 1);
+}
+.doc-comment-cta-leave-active {
+  transition: opacity 80ms ease-in;
+}
+.doc-comment-cta-enter-from {
+  opacity: 0;
+  transform: translateY(4px);
+}
+.doc-comment-cta-leave-to {
+  opacity: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .doc-comment-cta-enter-active,
+  .doc-comment-cta-leave-active {
+    transition: none;
+  }
+}
 /* 浮条的外框：只管摆在哪儿，样子在 DocBubble 里。 */
 .doc-comment-cta {
   position: absolute;
   z-index: 6;
 }
 
+/* 手指没有悬停：手柄出不来也点不准，手机上换格式用键盘上方那一条。 */
+@media (hover: none) {
+  .doc-handle {
+    display: none;
+  }
+}
+/* 点手柄开出的那张：和浮条上的「正文 ▾」一个样子。 */
+.doc-block-menu {
+  position: fixed;
+  z-index: 2400;
+  display: flex;
+  flex-direction: column;
+  min-width: 168px;
+  padding: 4px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-lg);
+  background: var(--raised);
+  box-shadow: var(--shadow-2);
+  animation: docBlockMenuIn 120ms ease-out;
+}
+@keyframes docBlockMenuIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+.doc-block-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 32px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.doc-block-menu__item:hover,
+.doc-block-menu__item[aria-checked='true'] {
+  background: var(--fill);
+}
+.doc-block-menu__item .v-icon {
+  color: var(--muted);
+}
+@media (prefers-reduced-motion: reduce) {
+  .doc-block-menu {
+    animation: none;
+  }
+}
 /* Feishu-style left gutter block handles — REAL controls, not decoration.
    The DragHandle floats next to the hovered block (positioned by the extension).
    ＋ inserts a block below (click); ⠿ drags to reorder. */
 .doc-handle {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 0;
   /* The DragHandle plugin pins this element's RIGHT edge to the text's left
      edge — without the padding the ⠿ glyph literally touches the first
-     character. The padding is the breathing room (Feishu keeps ~14px). */
-  padding-right: 14px;
+     character. The whole handle (42px) has to fit in the page's left
+     padding (PanelDocView .doc-page), or the scroller clips it. */
+  padding-right: 6px;
   /* Nudge down so the 22px buttons center on the ~29px first text line. */
   transform: translateY(3.4px);
 }
 .doc-handle__btn {
-  width: 20px;
+  width: 18px;
   height: 22px;
   display: flex;
   align-items: center;

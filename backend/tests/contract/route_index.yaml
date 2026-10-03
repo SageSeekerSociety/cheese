@@ -613,6 +613,7 @@ routes:
   - {protocol: "http", method: "GET", path: "/connector/pi/{version}/{platform}/pi.tar.gz", auth: "public.catalogue", owner: "installer"}
   - {protocol: "http", method: "GET", path: "/connector/toolchain/{tool}/{platform}/artifact", auth: "public.catalogue", owner: "installer"}
   - {protocol: "http", method: "GET", path: "/connector/latest/{target}/{name}", auth: "public.catalogue", owner: "installer"}
+  - {protocol: "http", method: "HEAD", path: "/connector/latest/{target}/{name}", auth: "public.catalogue", owner: "installer"}
   # app.api.routes.integrations
   - {protocol: "http", method: "GET", path: "/me/integrations", auth: "integration.person", owner: "integration"}
   - {protocol: "http", method: "POST", path: "/me/integrations/mail", auth: "integration.person", owner: "integration"}
@@ -1045,7 +1046,6 @@ routes:
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/comments/{comment_id}/reopen", auth: "document.member", owner: "block"}
   # app.api.routes.topics_comments
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/docs", auth: "actor.topic", owner: "block"}
-  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/comments", auth: "actor.topic", owner: "block"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/comments", auth: "actor.topic", owner: "block"}
   # app.api.routes.topics_compute
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/compute-profile", auth: "actor.topic", owner: "machine"}

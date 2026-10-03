@@ -5,13 +5,14 @@ import { ref } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { cleanup, render, screen, waitFor } from '@testing-library/vue'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 const replace = vi.fn()
+const route = { params: { handle: 'crew' }, query: {} as Record<string, string> }
 vi.mock('vue-router', async () => ({
   ...(await vi.importActual<typeof import('vue-router')>('vue-router')),
-  useRoute: () => ({ params: { handle: 'crew' }, query: {} }),
+  useRoute: () => route,
   useRouter: () => ({ replace }),
 }))
 vi.mock('@/network/api/teams', () => ({
@@ -19,6 +20,7 @@ vi.mock('@/network/api/teams', () => ({
     getMembers: vi.fn(async () => ({ data: { members: [] } })),
     listTeamJoinRequests: vi.fn(async () => ({ data: { applications: [] } })),
     listTeamInvitations: vi.fn(async () => ({ data: { invitations: [] } })),
+    approveJoinRequest: vi.fn(),
   },
 }))
 
@@ -26,6 +28,7 @@ import Members from './Members.vue'
 
 import { setLocale } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
+import { TeamsApi } from '@/network/api/teams'
 
 beforeAll(() => {
   vi.stubGlobal('devicePixelRatio', 1)
@@ -38,7 +41,10 @@ beforeAll(() => {
     }
   )
 })
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  route.query = {}
+})
 
 function mount(overrides: Partial<Team>) {
   setLocale('zh-CN')
@@ -93,5 +99,45 @@ describe('under your own name', () => {
       expect(replace).toHaveBeenCalledWith({ name: 'TeamsDetailDefault', params: { handle: 'linxia' } })
     )
     expect(screen.queryByRole('button', { name: /邀请成员/ })).toBeNull()
+  })
+})
+
+describe('answering a join request', () => {
+  it('an approval the server answers with no body counts, and a second click sends nothing', async () => {
+    const request = {
+      id: 31,
+      status: 'PENDING',
+      createdAt: Date.now(),
+      user: { id: 9, username: 'qinmo', nickname: 'qinmo' },
+    }
+    let approved = false
+    vi.mocked(TeamsApi.listTeamJoinRequests).mockImplementation(
+      async () =>
+        ({
+          data: { applications: [{ ...request, status: approved ? 'APPROVED' : 'PENDING' }] },
+        }) as never
+    )
+    let answer!: () => void
+    vi.mocked(TeamsApi.approveJoinRequest).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          answer = () => {
+            approved = true
+            // 204：响应体是空串
+            resolve('' as never)
+          }
+        })
+    )
+    route.query = { tab: 'requests' }
+    mount({ role: 'OWNER' })
+
+    const approve = await screen.findByRole('button', { name: /批准/ })
+    await fireEvent.click(approve)
+    await fireEvent.click(approve)
+    answer()
+
+    await waitFor(() => expect(screen.queryByRole('button', { name: /批准/ })).toBeNull())
+    expect(TeamsApi.approveJoinRequest).toHaveBeenCalledTimes(1)
+    expect(TeamsApi.approveJoinRequest).toHaveBeenCalledWith(7, 31)
   })
 })

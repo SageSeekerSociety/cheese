@@ -24,7 +24,7 @@
   "titleRequired": "title 不能为空",
   "taskNotInRoom": "这个房间里没有这个任务",
   "messageNotInTask": "这条消息不在这个任务里",
-  "commentAnchorNotInDoc": "锚点不是本话题的文档块",
+  "commentDocFrozen": "话题已归档，不能再评论",
   "cursorEventNotFound": "游标事件不存在",
   "stepNotFound": "步骤不存在",
   "roomArchivedUnarchiveFirst": "房间已归档，请先取消归档再继续工作",

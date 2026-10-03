@@ -14,9 +14,10 @@ import type { PluginKey } from '@tiptap/pm/state'
 import type { SuggestionProps } from '@tiptap/suggestion'
 import type { DocSession } from '../../../composables/useDocCollab'
 import type { Block, Topic } from '../../../cx_types'
-import type { SelectionTarget } from '../../../lib/docBubble'
+import type { CommentSpot } from '../../../lib/docCommentSpots'
 import type { DocLinkTarget } from '../../../lib/docLinks'
 import type { SlashItem } from '../../../lib/docSlashMenu'
+import type { ThreadPlace } from '../../../lib/docThreadTypes'
 
 import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import Collaboration from '@tiptap/extension-collaboration'
@@ -25,20 +26,19 @@ import { Editor, EditorContent } from '@tiptap/vue-3'
 
 import { BUBBLE_META } from '../../../lib/docBubble'
 import { renderCaret } from '../../../lib/docCaret'
+import { placeOf } from '../../../lib/docCommentSpots'
 import {
-  commentMarkKey,
-  commentQuoteRanges,
-  createCommentMarks,
+  commentHighlightKey,
+  createCommentHighlights,
   createEmptyLineHint,
   createLiveRefBadges,
   createTitleEcho,
   createTokenChips,
   liveRefKey,
-  mappedCommentQuoteState,
 } from '../../../lib/docDecorations'
 import { createEditMarks } from '../../../lib/docEditMarks'
 import { captureDocLink, safeDocHref } from '../../../lib/docLinks'
-import { docExtensions, serializeDoc } from '../../../lib/docSchema'
+import { commentAnchors, docExtensions, serializeDoc } from '../../../lib/docSchema'
 import { createSlashCommands } from '../../../lib/docSlashMenu'
 import LoadingSkeleton from '../../common/LoadingSkeleton.vue'
 
@@ -63,10 +63,13 @@ const props = withDefaults(
     topicList?: Topic[]
     /** 段落 index → 支线 id（装饰的原料，取数那一半算好的）。 */
     liveRefIndex?: Map<number, string>
-    /** 段落 index → 压在上面的评论（同上）。 */
-    commentMarkIndex?: Map<number, { id: string; quote: string }[]>
-    openCommentId?: string | null
-    /** 取一份最新的节点树：闪某一段、给评论定锚点都要它。 */
+    /** 能写评论（归档话题的文档不能）。 */
+    canComment?: boolean
+    /** 没解决的评论串：它们评的那几个字标出来。 */
+    openThreads?: ReadonlySet<string>
+    /** 正在看的那一串：标得重一些。 */
+    activeThread?: string | null
+    /** 取一份最新的节点树：闪某一段要它。 */
     fetchDocNodes: () => Promise<Block[]>
     /** 图片 src 的显示期解析：工作区相对路径走原始文件接口。 */
     imageSrc: (src: string) => string
@@ -81,8 +84,9 @@ const props = withDefaults(
   {
     topicList: () => [],
     liveRefIndex: () => new Map<number, string>(),
-    commentMarkIndex: () => new Map<number, { id: string; quote: string }[]>(),
-    openCommentId: null,
+    canComment: true,
+    openThreads: () => new Set<string>(),
+    activeThread: null,
     scrollTick: 0,
     agentHandle: null,
     title: '',
@@ -94,12 +98,12 @@ const emit = defineEmits<{
   (e: 'open-topic', topicId: string): void
   (e: 'mention-click', handle: string): void
   (e: 'open-file', path: string): void
-  /** 点了正文里的评论下划线：滚到文档底部那张卡。 */
-  (e: 'locate-comment', commentId: string): void
-  /** 选中一段正文点了「评论」：浮层算好了锚点，转给页面去开写评论的框。 */
-  (e: 'open-comment', payload: SelectionTarget): void
+  /** 点了正文里标着的评论：评论栏翻到那一串。 */
+  (e: 'locate-comment', threadId: string): void
+  /** 选中一段正文点了「评论」：转给页面去开写评论的框。 */
+  (e: 'open-comment', payload: CommentSpot): void
   /** 选中一段正文点了 AI 队友。 */
-  (e: 'agent', payload: SelectionTarget & { from: number; to: number }): void
+  (e: 'agent', payload: CommentSpot): void
   /** 当场要说的失败（目前只有复制代码失败）。 */
   (e: 'error', message: string): void
 }>()
@@ -140,10 +144,30 @@ async function highlightTurn(turnId: string) {
   await flashBlocks(aligned.filter((a) => a.node.turn_id === turnId).map((a) => a.el))
 }
 
-// B4: highlight the single paragraph a comment is anchored to (by doc-node id).
-async function highlightNode(nodeId: string) {
-  const aligned = await alignedDocBlocks(() => props.fetchDocNodes())
-  await flashBlocks(aligned.filter((a) => a.node.id === nodeId).map((a) => a.el))
+/** 正文滚到这一串评的那几个字；字已经不在了，就滚到原来那个位置，把那一段闪一下。 */
+function revealThread(threadId: string): boolean {
+  const ed = editor.value
+  if (!ed) return false
+  const range = commentAnchors(ed.state.doc).get(threadId)?.[0]
+  const at = range?.from ?? placeOf(ed, threadId)
+  if (at === null || at === undefined) return false
+  const { node } = ed.view.domAtPos(at)
+  const el = node instanceof Element ? node : node.parentElement
+  if (range) {
+    el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    return true
+  }
+  const block = el?.closest('.ProseMirror > *') as HTMLElement | null
+  if (block) void flashBlocks([block])
+  return !!block
+}
+
+function threadPlace(threadId: string): ThreadPlace {
+  void displayTick.value
+  const ed = editor.value
+  if (!ed) return null
+  if (commentAnchors(ed.state.doc).has(threadId)) return 'marked'
+  return placeOf(ed, threadId) === null ? null : 'placed'
 }
 
 const linkTarget = shallowRef<DocLinkTarget | null>(null)
@@ -173,8 +197,8 @@ function onDocClick(e: MouseEvent) {
     emit('open-topic', lr.dataset.topic)
     return
   }
-  // Comment underline → scroll to its card at the doc bottom.
-  const ca = target?.closest('.comment-anchor') as HTMLElement | null
+  // A commented passage → its thread in the comment panel.
+  const ca = target?.closest('.doc-comment-mark') as HTMLElement | null
   if (ca?.dataset.comment) {
     emit('locate-comment', ca.dataset.comment)
     return
@@ -305,7 +329,6 @@ function onHover(e: MouseEvent) {
 }
 
 const displayTick = ref(0)
-const commentIndexStale = ref(false)
 
 // 编辑器绑在这一份协同文档上：文档换了（换房间、重连拿到的是另一份）就整个重建，
 // 因为 Collaboration 扩展只在建编辑器时认一次文档。
@@ -328,7 +351,7 @@ function buildEditor(session: DocSession): Editor {
           return { title: sub?.title ?? null, status: sub?.status ?? '' }
         },
       }),
-      createCommentMarks({ index: () => props.commentMarkIndex, openId: () => props.openCommentId ?? null }),
+      createCommentHighlights({ open: () => props.openThreads, active: () => props.activeThread ?? null }),
       createEditMarks(),
       createEmptyLineHint(),
       createSlashCommands({
@@ -342,9 +365,8 @@ function buildEditor(session: DocSession): Editor {
     editorProps: {
       attributes: { class: 'doc-prose' },
     },
-    onTransaction: ({ transaction }) => {
+    onTransaction: () => {
       displayTick.value++
-      if (transaction.docChanged) commentIndexStale.value = true
     },
     onUpdate: ({ transaction }) => {
       // 正文在光标底下换了：浮条指着的段落已经不是原来那一段了。浮条自己改的格式除外。
@@ -371,41 +393,12 @@ watch(
   () => poke(liveRefKey)
 )
 watch(
-  () => props.commentMarkIndex,
-  () => poke(commentMarkKey)
+  () => [props.openThreads, props.activeThread],
+  () => poke(commentHighlightKey)
 )
 function poke(key: PluginKey) {
-  if (key === commentMarkKey) commentIndexStale.value = false
   const view = editor.value?.view
   if (view) view.dispatch(view.state.tr.setMeta(key, true))
-}
-
-watch(
-  () => props.openCommentId,
-  () => {
-    const view = editor.value?.view
-    if (view) view.dispatch(view.state.tr.setMeta(commentMarkKey, 'active-only'))
-  }
-)
-function commentQuoteState(id: string): 'unique' | 'missing' | 'ambiguous' {
-  void displayTick.value
-  const ed = editor.value
-  if (!ed) return 'missing'
-  const marks =
-    commentMarkKey
-      .getState(ed.state)
-      ?.find()
-      .filter((mark: { spec: { commentId?: string } }) => mark.spec.commentId === id) ?? []
-  if (marks.length) {
-    return mappedCommentQuoteState(ed.state.doc, marks[0])
-  }
-  if (commentIndexStale.value) return 'missing'
-  let status: 'unique' | 'missing' | 'ambiguous' = 'missing'
-  ed.state.doc.forEach((node, offset, index) => {
-    const comment = props.commentMarkIndex.get(index)?.find((item) => item.id === id)
-    if (comment) status = commentQuoteRanges(node, offset, comment.quote).status
-  })
-  return status
 }
 
 // 能不能改：tiptap 收不收键盘。emitUpdate=false：tiptap v3 的 setEditable 默认会发一次
@@ -424,8 +417,8 @@ defineExpose({
   editor,
   serializeVisual,
   highlightTurn,
-  highlightNode,
-  commentQuoteState,
+  revealThread,
+  threadPlace,
 })
 
 // 空文档里的灰字住在 CSS 的 ::before 里；按当前语言取值，带上引号交给 content。
@@ -450,12 +443,12 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
       :editor="editor"
       :editable="editable"
       :topic-id="topicId"
-      :fetch-doc-nodes="fetchDocNodes"
       :slash-menu="slashMenu"
       :scroll-tick="scrollTick"
       :agent-name="agentName"
       :agent-handle="agentHandle"
       :can-agent="!!agentHandle"
+      :can-comment="canComment"
       @open-comment="emit('open-comment', $event)"
       @agent="emit('agent', $event)"
       @open-link="openLink"
@@ -542,12 +535,20 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
 .doc-editor :deep(.doc-review-new) {
   background: var(--ok-wash);
   cursor: pointer;
+  animation: docReviewIn 320ms var(--ease-out);
 }
 .doc-editor :deep(.doc-review-old) {
   margin-right: 2px;
   color: var(--danger-ink);
   text-decoration: line-through var(--danger);
   user-select: none;
+  animation: docReviewIn 320ms var(--ease-out);
+}
+@keyframes docReviewIn {
+  from {
+    background: transparent;
+    opacity: 0.4;
+  }
 }
 .doc-editor :deep(.doc-review-new.is-active),
 .doc-editor :deep(.doc-review-old.is-active) {
@@ -559,6 +560,22 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
 .doc-editor :deep(.doc-edit-target--select),
 .doc-editor :deep(.doc-edit-target--pending) {
   background: var(--selection-bg);
+}
+/* 在改：选中的那段一明一暗，看得出它正在被处理。 */
+.doc-editor :deep(.doc-edit-target--pending) {
+  animation: docEditPending 1.4s ease-in-out infinite;
+}
+@keyframes docEditPending {
+  50% {
+    background: color-mix(in srgb, var(--selection-bg) 45%, transparent);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .doc-editor :deep(.doc-review-new),
+  .doc-editor :deep(.doc-review-old),
+  .doc-editor :deep(.doc-edit-target--pending) {
+    animation: none;
+  }
 }
 .doc-editor :deep(.doc-edit-target--flash) {
   animation: docEditFlash 2.4s var(--ease-out) forwards;
@@ -691,21 +708,17 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
   font-weight: 600;
 }
 
-/* Feishu-style comment anchor: a quiet dashed underline; hover fills. */
-.doc-editor :deep(.comment-anchor) {
-  text-decoration-line: underline;
-  text-decoration-style: dotted;
-  text-decoration-color: color-mix(in srgb, var(--muted) 40%, transparent);
-  text-decoration-thickness: 2px;
-  text-underline-offset: 4px;
+/* 有人评论的那几个字：浅琥珀底、下面一道琥珀线；正在看的那一串更重一些。 */
+.doc-editor :deep(.doc-comment-mark) {
+  background: color-mix(in srgb, var(--accent-wash) 70%, transparent);
+  border-bottom: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
   cursor: pointer;
+  transition: background var(--dur-quick) var(--ease-standard);
 }
-.doc-editor :deep(.comment-anchor.is-active) {
-  background: var(--fill);
-  text-decoration-color: var(--accent-ink);
-}
-.doc-editor :deep(.comment-anchor:hover) {
-  background: var(--fill);
+.doc-editor :deep(.doc-comment-mark:hover),
+.doc-editor :deep(.doc-comment-mark.is-active) {
+  background: var(--accent-wash);
+  border-bottom-color: var(--accent);
 }
 /* Source-backed document hierarchy, shared by editing and read-only modes. */
 .doc-editor :deep(h1),

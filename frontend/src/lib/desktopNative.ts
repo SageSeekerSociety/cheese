@@ -34,6 +34,9 @@ const SELECTABLE = [
   '.msg-select',
   '.chat-response',
   '.reasoning-text',
+  // Step checklists: a teammate's in the chat, a room's and a card's progress.
+  '.checklist',
+  '.todo-checklist',
   // File previews: a PDF's text layer and a sheet's cells.
   '.pv-text',
   '.ps__cell',

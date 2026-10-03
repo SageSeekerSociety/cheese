@@ -34,6 +34,7 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.agent.mentions import _MENTION_RE
 from app.domain.agent.platform_notices import (
     SEVERITY_INFO,
     WHO_CHEESE,
@@ -50,7 +51,7 @@ from app.domain.delivery.addressing import (
     Hand,
     address,
 )
-from app.domain.delivery.ledger import DeliveryEvent, deliver
+from app.domain.delivery.ledger import DeliveryEvent, deliver, settle
 from app.domain.notification.models import NotificationType
 from app.domain.room_task.place import Place, PlaceResolver
 
@@ -189,6 +190,30 @@ async def notify_question(
         ),
         address(Event(asked=asked), Hand.participant),
     )
+
+
+#: 通知里引一句打字的回答，最多这么长 —— 那是一行说明，不是聊天记录。
+ANSWER_EXCERPT_CHARS = 40
+
+
+async def settle_questions_answered_by(session: AsyncSession, reply: Block) -> None:
+    """被问的人没点选项、直接打字回了一句 —— 那几道题的通知跟着结掉。
+
+    点选项的那条路自己会 `settle`（`answer_options`）；打字这条路以前没人去碰
+    通知，于是房间和待处理都已经不再等他，通知却还写着「待你回答」。哪几道题算被
+    这句话答了，由 `questions_a_reply_answers` 定，和看板读的是同一条判据。
+
+    通知里写的是他说的话本身：点他队友名字的 `<@handle>` 不是回答的一部分，太长
+    的截到 `ANSWER_EXCERPT_CHARS`。
+    """
+    questions = await BlockRepository(session).questions_a_reply_answers(reply)
+    if not questions:
+        return
+    said = " ".join(_MENTION_RE.sub("", reply.content or "").split())
+    if len(said) > ANSWER_EXCERPT_CHARS:
+        said = said[:ANSWER_EXCERPT_CHARS] + "…"
+    for question in questions:
+        await settle(session, question.id, {"answered": said})
 
 
 async def _notify(

@@ -15,7 +15,12 @@
       "events": [
         { "at": 300, "do": "say", "who": "wang", "text": "先记一下：这个项目以后放课程资料" },
         { "at": 1000, "do": "mark", "text": "没有交给芝士：这条只留在话题里" },
-        { "at": 2200, "do": "say", "who": "wang", "text": "<@cheese> 请在项目里创建一份欢迎说明，写一句介绍这个项目的话，完成后交给我验收" }
+        {
+          "at": 2200,
+          "do": "say",
+          "who": "wang",
+          "text": "<@cheese> 请在项目里创建一份欢迎说明，写一句介绍这个项目的话，完成后交给我验收"
+        }
       ]
     },
     {
@@ -24,12 +29,23 @@
       "tag": "先说它怎么理解，再开工；步骤清单跟着进度打勾",
       "events": [
         { "at": 300, "do": "turn", "who": "cheese", "turn": "t1" },
-        { "at": 900, "do": "say", "who": "cheese", "text": "好的：我在仓库根目录建一份 README.md，一句话介绍「课程资料」这个项目，写完递验收卡给你。" },
-        { "at": 1700, "do": "checklist", "who": "cheese", "id": "todo1", "items": [
-          { "subject": "读一下项目现有文件", "status": "in_progress" },
-          { "subject": "写 README.md", "status": "pending" },
-          { "subject": "递验收卡", "status": "pending" }
-        ] }
+        {
+          "at": 900,
+          "do": "say",
+          "who": "cheese",
+          "text": "好的：我在仓库根目录建一份 README.md，一句话介绍「课程资料」这个项目，写完递验收卡给你。"
+        },
+        {
+          "at": 1700,
+          "do": "checklist",
+          "who": "cheese",
+          "id": "todo1",
+          "items": [
+            { "subject": "读一下项目现有文件", "status": "in_progress" },
+            { "subject": "写 README.md", "status": "pending" },
+            { "subject": "递验收卡", "status": "pending" }
+          ]
+        }
       ]
     },
     {
@@ -37,15 +53,36 @@
       "focus": "site",
       "tag": "右侧「现场」一行一行记下它在做什么",
       "events": [
-        { "at": 200, "do": "act", "who": "cheese", "turn": "t1", "tool": "cheese_worktree", "arg": "a3f2 · 欢迎说明", "platform": true },
+        {
+          "at": 200,
+          "do": "act",
+          "who": "cheese",
+          "turn": "t1",
+          "tool": "cheese_worktree",
+          "arg": "a3f2 · 欢迎说明",
+          "platform": true
+        },
         { "at": 800, "do": "act", "who": "cheese", "turn": "t1", "tool": "Bash", "arg": "ls" },
-        { "at": 1300, "do": "checklist", "who": "cheese", "id": "todo1", "items": [
-          { "subject": "读一下项目现有文件", "status": "completed" },
-          { "subject": "写 README.md", "status": "in_progress" },
-          { "subject": "递验收卡", "status": "pending" }
-        ] },
+        {
+          "at": 1300,
+          "do": "checklist",
+          "who": "cheese",
+          "id": "todo1",
+          "items": [
+            { "subject": "读一下项目现有文件", "status": "completed" },
+            { "subject": "写 README.md", "status": "in_progress" },
+            { "subject": "递验收卡", "status": "pending" }
+          ]
+        },
         { "at": 1900, "do": "act", "who": "cheese", "turn": "t1", "tool": "Write", "arg": "README.md" },
-        { "at": 2600, "do": "act", "who": "cheese", "turn": "t1", "tool": "Bash", "arg": "git commit -m \"docs: add a welcome note\" && git push" }
+        {
+          "at": 2600,
+          "do": "act",
+          "who": "cheese",
+          "turn": "t1",
+          "tool": "Bash",
+          "arg": "git commit -m \"docs: add a welcome note\" && git push"
+        }
       ]
     },
     {
@@ -70,13 +107,46 @@
         ]
       },
       "events": [
-        { "at": 200, "do": "act", "who": "cheese", "turn": "t1", "tool": "cheese_accept_request", "arg": "docs: add a welcome note", "platform": true },
-        { "at": 700, "do": "checklist", "who": "cheese", "id": "todo1", "items": [
-          { "subject": "读一下项目现有文件", "status": "completed" },
-          { "subject": "写 README.md", "status": "completed" },
-          { "subject": "递验收卡", "status": "completed" }
-        ], "result": "README.md 写好了，验收卡已递给王长鑫" },
-        { "at": 1100, "do": "notice", "who": "cheese", "turn": "t1", "text": "这一轮改了 1 个文件（+6 -0）", "meta": { "platform": true, "changeset": { "commit": "a3f2c10", "commits": ["a3f2c10"], "files_total": 1, "added": 6, "removed": 0, "files": [{ "path": "README.md", "added": 6, "removed": 0 }], "files_omitted": 0 } } },
+        {
+          "at": 200,
+          "do": "act",
+          "who": "cheese",
+          "turn": "t1",
+          "tool": "cheese_accept_request",
+          "arg": "docs: add a welcome note",
+          "platform": true
+        },
+        {
+          "at": 700,
+          "do": "checklist",
+          "who": "cheese",
+          "id": "todo1",
+          "items": [
+            { "subject": "读一下项目现有文件", "status": "completed" },
+            { "subject": "写 README.md", "status": "completed" },
+            { "subject": "递验收卡", "status": "completed" }
+          ],
+          "result": "README.md 写好了，验收卡已递给王长鑫"
+        },
+        {
+          "at": 1100,
+          "do": "notice",
+          "who": "cheese",
+          "turn": "t1",
+          "text": "这一轮改了 1 个文件（+6 -0）",
+          "meta": {
+            "platform": true,
+            "changeset": {
+              "commit": "a3f2c10",
+              "commits": ["a3f2c10"],
+              "files_total": 1,
+              "added": 6,
+              "removed": 0,
+              "files": [{ "path": "README.md", "added": 6, "removed": 0 }],
+              "files_omitted": 0
+            }
+          }
+        },
         { "at": 1200, "do": "end", "turn": "t1" }
       ]
     },
@@ -86,8 +156,41 @@
       "tag": "卡上写着待谁审阅、推荐理由和合并后的提交标题",
       "panel": "changes",
       "events": [
-        { "at": 200, "do": "notice", "text": "《项目仓库》已提交，待 王长鑫 审阅", "meta": { "event_type": "card_filed", "severity": "info", "who": "human", "detail": "docs: add a welcome note\n\n在仓库根目录加 README.md，一句话介绍这个项目。", "detail_label": "改动" } },
-        { "at": 500, "do": "card", "open": true, "card": { "reviewer_handle": "王长鑫", "routing_reason": "你提的需求，由你验收", "change_subject": "docs: add a welcome note", "change_body": "在仓库根目录加 README.md，一句话介绍这个项目。", "pr_number": 1, "pr_url": "#", "forge": { "kind": "forgejo", "reports_checks": true, "hosts_proposals": true, "can_write_remote": true, "pushes_to_external_remote": false, "identity": "platform", "declaration": "" }, "deliverable": { "kind": "merge", "filename": null, "url": null } } },
+        {
+          "at": 200,
+          "do": "notice",
+          "text": "《项目仓库》已提交，待 王长鑫 审阅",
+          "meta": {
+            "event_type": "card_filed",
+            "severity": "info",
+            "who": "human",
+            "detail": "docs: add a welcome note\n\n在仓库根目录加 README.md，一句话介绍这个项目。",
+            "detail_label": "改动"
+          }
+        },
+        {
+          "at": 500,
+          "do": "card",
+          "open": true,
+          "card": {
+            "reviewer_handle": "王长鑫",
+            "routing_reason": "你提的需求，由你验收",
+            "change_subject": "docs: add a welcome note",
+            "change_body": "在仓库根目录加 README.md，一句话介绍这个项目。",
+            "pr_number": 1,
+            "pr_url": "#",
+            "forge": {
+              "kind": "forgejo",
+              "reports_checks": true,
+              "hosts_proposals": true,
+              "can_write_remote": true,
+              "pushes_to_external_remote": false,
+              "identity": "platform",
+              "declaration": ""
+            },
+            "deliverable": { "kind": "merge", "filename": null, "url": null }
+          }
+        },
         { "at": 600, "do": "checks", "checks": { "pr_number": 1, "state": "open", "mergeable": true, "checks": [] } }
       ]
     },
@@ -97,7 +200,12 @@
       "tag": "采纳之后改动才算进了项目",
       "events": [
         { "at": 900, "do": "card", "card": null },
-        { "at": 1000, "do": "notice", "text": "王长鑫 采纳了这次改动，PR #1 已合并", "meta": { "event_type": "accept_done", "severity": "info", "who": "human" } },
+        {
+          "at": 1000,
+          "do": "notice",
+          "text": "王长鑫 采纳了这次改动，PR #1 已合并",
+          "meta": { "event_type": "accept_done", "severity": "info", "who": "human" }
+        },
         { "at": 1800, "do": "say", "who": "wang", "text": "好了，谢谢" }
       ]
     }

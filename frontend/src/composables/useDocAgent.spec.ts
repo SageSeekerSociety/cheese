@@ -10,9 +10,10 @@ import Collaboration from '@tiptap/extension-collaboration'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as Y from 'yjs'
 
+import { spotAt } from '../lib/docCommentSpots'
 import { createEditMarks, editMarks } from '../lib/docEditMarks'
 import { flatText, occurrences, rangeOf } from '../lib/docEdits'
-import { docExtensions, exportMarkdown, writeMarkdown } from '../lib/docSchema'
+import { commentAnchors, docExtensions, exportMarkdown, writeMarkdown } from '../lib/docSchema'
 
 import { useDocAgent } from './useDocAgent'
 
@@ -42,7 +43,7 @@ function find(editor: Editor, text: string) {
 /** 选中一段：开输入框要的那几样。 */
 function select(editor: Editor, text: string) {
   const range = find(editor, text)
-  return { ...range, target: { anchorId: 'node-1', quote: text } }
+  return spotAt(editor, range.from, range.to)
 }
 
 /** The service: answers with `answer` after making `edits` in the shared document. */
@@ -147,7 +148,7 @@ describe('在文档里找 AI 队友', () => {
     expect(ask.mock.calls[1][0].selection).toBeUndefined()
   })
 
-  it('只是问：正文不动，回答给出来，能转成评论', async () => {
+  it('只是问：正文不动，回答给出来，能转成评论，评论标在选中的字上', async () => {
     const { doc, editor } = room('数据量到一千万行时开始评估迁移。')
     const before = exportMarkdown(doc)
     const { ctl, toComment } = controller(editor, service(doc, { answer: '一千万和章程里写的一致。' }))
@@ -159,7 +160,9 @@ describe('在文档里找 AI 队友', () => {
     expect(ctl.answer.value).toBe('一千万和章程里写的一致。')
     expect(exportMarkdown(doc)).toBe(before)
     expect(await ctl.toComment()).toBe('thread-1')
-    expect(toComment).toHaveBeenCalledWith('conversation-1', { anchorId: 'node-1', quote: '一千万' }, '检查')
+    expect(toComment).toHaveBeenCalledWith('conversation-1', '一千万', '检查')
+    const [marked] = commentAnchors(editor.state.doc).get('thread-1') ?? []
+    expect(marked && editor.state.doc.textBetween(marked.from, marked.to)).toBe('一千万')
   })
 
   it('排队时能取消，取消的是这一问', async () => {

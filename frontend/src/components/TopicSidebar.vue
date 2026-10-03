@@ -646,7 +646,7 @@ const onDocs = computed(() => !!props.activeDocs)
      both themes — so the initial on it stays a literal #fff. */
   background: var(--fill);
   color: #fff;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
   line-height: 1;
 }

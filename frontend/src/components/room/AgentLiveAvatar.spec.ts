@@ -57,11 +57,12 @@ function messageProps(faceLabel: string) {
     askBusy: false,
     face: 'thinking',
     faceLabel,
+    faceStatus: '思考中',
   }
 }
 
 function noticeProps(faceLabel: string) {
-  return { name: '芝士', handle: 'cheese-a1', time: '10:00', face: 'thinking', faceLabel }
+  return { name: '芝士', handle: 'cheese-a1', time: '10:00', face: 'thinking', faceLabel, faceStatus: '思考中' }
 }
 
 const cases = [
@@ -77,6 +78,7 @@ describe.each(cases)('%s：悬停看到的那一句随秒数走，不闪', (_nam
     })
     const avatar = out.container.querySelector('button[data-site]') as HTMLButtonElement
     const nativeBefore = avatar.getAttribute('title')
+    const nameBefore = avatar.getAttribute('aria-label')
 
     await fireEvent.mouseEnter(avatar)
     await waitFor(() => expect(screen.getByText('芝士：思考中 · 已用 12 秒，点击查看现场')).toBeTruthy())
@@ -86,6 +88,8 @@ describe.each(cases)('%s：悬停看到的那一句随秒数走，不闪', (_nam
     expect(screen.queryByText('芝士：思考中 · 已用 12 秒，点击查看现场')).toBeNull()
     // 原生气泡的字一换，浏览器就把它收起再弹：每秒一闪。它不能跟着秒数变。
     expect(avatar.getAttribute('title')).toBe(nativeBefore)
+    // 读屏读到的名字也不跟着秒数变：一变就可能每秒再念一遍。
+    expect(avatar.getAttribute('aria-label')).toBe(nameBefore)
     out.unmount()
   })
 })

@@ -29,7 +29,7 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.identity.actor import Actor
 from app.domain.library import service as library
 from app.domain.room_task.place import Place
-from app.domain.site.hosting import content_origin
+from app.domain.site.hosting import DEVICE_FEATURES_OFF, content_origin
 from app.domain.topic.services import TopicService
 
 AUTH_PATH = "/_cheese/session"
@@ -167,6 +167,7 @@ def _private(response: Response) -> Response:
     response.headers["Referrer-Policy"] = "no-referrer"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
+    response.headers["Permissions-Policy"] = DEVICE_FEATURES_OFF
     response.headers["Content-Security-Policy"] = (
         "sandbox allow-scripts allow-same-origin allow-forms allow-downloads; "
         "worker-src 'none'; object-src 'none'; "

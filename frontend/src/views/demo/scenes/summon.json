@@ -30,7 +30,14 @@
         { "at": 700, "do": "say", "who": "wang", "text": "<@cheese> 把首页主按钮改成琥珀色，字号也大一档" },
         { "at": 1300, "do": "turn", "who": "cheese", "turn": "t1" },
         { "at": 1300, "do": "seat", "who": "cheese", "state": "在跑一轮" },
-        { "at": 1900, "do": "act", "who": "cheese", "turn": "t1", "tool": "Read", "arg": "frontend/src/views/home/Landing.vue" },
+        {
+          "at": 1900,
+          "do": "act",
+          "who": "cheese",
+          "turn": "t1",
+          "tool": "Read",
+          "arg": "frontend/src/views/home/Landing.vue"
+        },
         { "at": 2500, "do": "say", "who": "cheese", "text": "收到，我先看一下首页那一段。" },
         { "at": 3000, "do": "mark", "text": "点「交给〈名字〉」按钮、按 ⌘/Ctrl+Enter，写进正文的也是同一个 @" }
       ]
@@ -42,7 +49,14 @@
       "events": [
         { "at": 300, "do": "say", "who": "wang", "text": "手机上也看一下" },
         { "at": 900, "do": "note", "who": "cheese", "turn": "t1", "text": "收到补充：手机上也要看。" },
-        { "at": 1500, "do": "act", "who": "cheese", "turn": "t1", "tool": "Edit", "arg": "frontend/src/views/home/landing.css" },
+        {
+          "at": 1500,
+          "do": "act",
+          "who": "cheese",
+          "turn": "t1",
+          "tool": "Edit",
+          "arg": "frontend/src/views/home/landing.css"
+        },
         { "at": 2100, "do": "say", "who": "cheese", "text": "主按钮改成琥珀色了，手机宽度下也不换行。" },
         { "at": 2700, "do": "end", "turn": "t1" },
         { "at": 2700, "do": "seat", "who": "cheese", "state": "空闲" }
@@ -58,7 +72,13 @@
         { "at": 900, "do": "seat", "who": "cheese-k", "state": "在跑一轮" },
         { "at": 1400, "do": "act", "who": "cheese-k", "turn": "t2", "tool": "Read", "arg": "README.md" },
         { "at": 2000, "do": "say", "who": "wang", "text": "标题也顺手改一下吧" },
-        { "at": 2500, "do": "note", "who": "cheese-k", "turn": "t2", "text": "这条没点名；我这轮是被点名唤起的，认领它。" },
+        {
+          "at": 2500,
+          "do": "note",
+          "who": "cheese-k",
+          "turn": "t2",
+          "text": "这条没点名；我这轮是被点名唤起的，认领它。"
+        },
         { "at": 3100, "do": "act", "who": "cheese-k", "turn": "t2", "tool": "Edit", "arg": "README.md" },
         { "at": 3600, "do": "say", "who": "cheese-k", "text": "截图和标题都换好了。" },
         { "at": 4100, "do": "end", "turn": "t2" },

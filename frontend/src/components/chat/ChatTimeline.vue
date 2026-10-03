@@ -5,7 +5,7 @@
 //
 // Everything it draws arrives as a prop and everything a person does leaves as
 // an event: this component knows what a row LOOKS like, never what the room is
-// doing. The three animation sets (`arrived` / `older` / `delivered`) are read
+// doing. The two animation sets (`arrived` / `delivered`) are read
 // here as class bindings and cleared by the row's own animationend.
 import type { Ref } from 'vue'
 import type { Block, TodoItem, Topic } from '../../cx_types'
@@ -40,7 +40,6 @@ const props = defineProps<{
   splitMarkers: { before: Map<string, SplitMarker[]>; tail: SplitMarker[] }
   runEdges: RunEdge[]
   arrived: Set<string>
-  older: Set<string>
   delivered: Set<string>
   sentNow: Set<string>
   flashId: string | null
@@ -195,6 +194,11 @@ function faceLabel(face: AgentFace | undefined): string | null {
   return `${label} · ${t('work.room.site.status.elapsed', { span })}`
 }
 
+// 读屏读到的那一句只有状态，不带秒数：头像的名字每秒一换，读屏就可能每秒再念一遍。
+function faceStatus(face: AgentFace | undefined): string | null {
+  return face?.status ? siteStatusLabel(face.status) : null
+}
+
 // Child rows emit the same events the panel listens for; the extra hop is what
 // keeps this component free of the room's own bookkeeping. Thin wrappers so the
 // template stays a table of rows instead of a wall of arrows.
@@ -213,8 +217,17 @@ function emitOpenFile(path: string, taskId: string | null) {
 function emitOpenResource(resource: string, turnId?: string, review?: DocReviewRequest) {
   emit('open-resource', resource, turnId, review)
 }
-function emitSaveEdit(block: Block, text: string) {
-  emit('save-edit', block, text)
+// 只有正在改的那一行会存。
+function emitSaveEdit(text: string) {
+  const row = props.rows.find((r) => r.block.id === props.editingId)
+  if (row) emit('save-edit', row.block, text)
+}
+// 行认的是自己身上的 data-row-id，不认模板里的 m：每一行的监听函数在每次重画时都是
+// 同一个。捕获了 m 的箭头函数每次都是新的，Vue 就当这一行的 props 变了——往上拼一页
+// 旧消息，已经在屏上的几百行会跟着全部重画一遍。
+function settleRow(e: AnimationEvent) {
+  const id = (e.currentTarget as HTMLElement | null)?.dataset.rowId
+  if (id) emit('settle-arrival', e, id)
 }
 function emitOutboxLeave(el: Element, done: () => void) {
   emit('outbox-leave', el, done)
@@ -299,7 +312,7 @@ function emitOutboxLeave(el: Element, done: () => void) {
         />
         <RoomNotice
           v-if="notice"
-          :class="{ 'tl-arrive': arrived.has(m.id), 'tl-older': older.has(m.id) }"
+          :class="{ 'tl-arrive': arrived.has(m.id) }"
           :block="m"
           :notice="notice"
           :run="run"
@@ -307,13 +320,15 @@ function emitOutboxLeave(el: Element, done: () => void) {
           :cont="noticeCont[i]"
           :face="faceRows.get(m.id)?.state ?? null"
           :face-label="faceLabel(faceRows.get(m.id))"
+          :face-status="faceStatus(faceRows.get(m.id))"
           :time="fmtTime(notice.mode === 'agent-status' ? notice.updatedAt : m.created_at)"
           :agent-name="agentName"
           :refs="refs"
           :can-retry="i === retryIndex"
           :retrying="retryBusy"
           :project-id="topic?.project_id ?? null"
-          @animationend="emit('settle-arrival', $event, m.id)"
+          :data-row-id="m.id"
+          @animationend="settleRow"
           @open-resource="emitOpenResource"
           @undo-title="emit('undo-title', $event)"
           @open-card="emit('open-card', $event)"
@@ -324,7 +339,6 @@ function emitOutboxLeave(el: Element, done: () => void) {
           v-else-if="!notice"
           :class="{
             'tl-arrive': arrived.has(m.id),
-            'tl-older': older.has(m.id),
             'tl-flash': flashId === m.id,
             'tl-delivered': delivered.has(m.id),
             'im-row--time': timeShownId === m.id,
@@ -348,10 +362,12 @@ function emitOutboxLeave(el: Element, done: () => void) {
           :live="liveChecklists.has(m.id)"
           :face="faceRows.get(m.id)?.state ?? null"
           :face-label="faceLabel(faceRows.get(m.id))"
+          :face-status="faceStatus(faceRows.get(m.id))"
           :editing="editingId === m.id"
           :edit-text="editingId === m.id ? editableText(m.content, refs) : undefined"
           :saving="editSaving"
-          @animationend="emit('settle-arrival', $event, m.id)"
+          :data-row-id="m.id"
+          @animationend="settleRow"
           @open-file="emitOpenFile"
           @open-topic="emit('open-topic', $event)"
           @open-card="emit('open-card', $event)"
@@ -361,7 +377,7 @@ function emitOutboxLeave(el: Element, done: () => void) {
           @download="emit('download', $event)"
           @jump="emit('jump', $event)"
           @avatar-error="emit('avatar-error', $event)"
-          @save-edit="emitSaveEdit(m, $event)"
+          @save-edit="emitSaveEdit"
           @cancel-edit="emit('cancel-edit')"
         />
       </template>
@@ -503,15 +519,6 @@ function emitOutboxLeave(el: Element, done: () => void) {
 @keyframes tl-delivered {
   from {
     opacity: 0.62;
-  }
-}
-/* 翻上去时拼进来的更早的一页：只淡入（见 `older`）。 */
-.tl-older {
-  animation: tl-older var(--dur-base) var(--ease-out);
-}
-@keyframes tl-older {
-  from {
-    opacity: 0;
   }
 }
 /* 跳到的那一条：底色从琥珀的浅底褪回去。它和新消息线、未读是同一族——「你要找的
