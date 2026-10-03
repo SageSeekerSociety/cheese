@@ -46,6 +46,10 @@ const fidelityMarked = new Marked(markedCjkFriendly())
 //      which is what leaves 4-space indented code blocks strict.
 //  14. Blank lines between adjacent list-item markers are presentation-only;
 //      indentation and paragraph breaks remain strict.
+//  15. A fold's `<summary>` may sit on the line after `<details>`, and
+//      `<details open>` folds the same text: both are the one-line head the
+//      serializer writes. A footnote definition, a fold's head and its
+//      `</details>` are blocks of their own, so rule 12 spaces them too.
 //
 // Everything else — dropped constructs, reordered content, lost alignment,
 // lost language tags, escaped-away tokens — fails the comparison.
@@ -97,9 +101,12 @@ function normalizeTableRow(line: string): string {
 
 // A line that opens a block of its own: heading, quote, list item, fence,
 // table row, thematic break. Everything else continues the block above it.
-const BLOCK_START_RE = /^ {0,3}(#{1,6}(\s|$)|<!--|>|([-*+]|\d{1,9}[.)])(\s|$)|(```|~~~)|\||((\*|-|_)\s*){3,}$)/
+const BLOCK_START_RE =
+  /^ {0,3}(#{1,6}(\s|$)|<!--|>|([-*+]|\d{1,9}[.)])(\s|$)|(```|~~~)|\||((\*|-|_)\s*){3,}$|:{3,}|\$\$|\[\^[^\]\s]+\]:|<\/?details)/
 // A heading is a block all by itself, so whatever follows it starts a new one.
-const HEADING_RE = /^ {0,3}#{1,6}(\s|$)/
+// So is a footnote definition, and the head of a fold.
+const HEADING_RE = /^ {0,3}(#{1,6}(\s|$)|\[\^[^\]\s]+\]:|<details><summary>)/
+const DETAILS_HEAD_RE = /^( {0,3})<details(?:\s+open)?>[ \t]*\n?[ \t]*<summary>/gim
 
 // The per-line rules that apply to prose wherever it appears. Table cells and
 // blockquote bodies are prose too — running only part of this on them is how
@@ -109,7 +116,7 @@ function prose(line: string): string {
 }
 
 export function normalizeMarkdown(md: string): string {
-  const lines = md.replace(/\r\n?/g, '\n').split('\n')
+  const lines = md.replace(/\r\n?/g, '\n').replace(DETAILS_HEAD_RE, '$1<details><summary>').split('\n')
   // Each entry keeps whether the line is fence content, so the blank-line
   // collapse below never touches the inside of a code block.
   const out: { text: string; literal: boolean }[] = []
@@ -155,6 +162,7 @@ export function normalizeMarkdown(md: string): string {
       const boundary =
         HEADING_RE.test(prev.text) ||
         /-->$/.test(prev.text) ||
+        /^ {0,3}\[\^[^\]\s]+\]:/.test(l.text) ||
         (!BLOCK_START_RE.test(prev.text) && BLOCK_START_RE.test(l.text))
       if (boundary && l.text !== '') spaced.push({ text: '', literal: false })
     }

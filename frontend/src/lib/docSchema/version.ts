@@ -9,7 +9,7 @@
 // The service then refuses connections from builds that speak another one, and
 // those pages ask to be refreshed.
 
-export const DOC_SCHEMA_VERSION = 4
+export const DOC_SCHEMA_VERSION = 5
 
 /** The query parameter on the WebSocket URL that carries the client's version. */
 export const DOC_SCHEMA_PARAM = 'schema'

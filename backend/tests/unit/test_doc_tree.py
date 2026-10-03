@@ -98,3 +98,51 @@ def test_empty_markdown_is_no_nodes():
 def test_nodes_to_markdown_separates_with_blank_line():
     out = nodes_to_markdown([DocNode(PARAGRAPH, "a"), DocNode(PARAGRAPH, "b")])
     assert out == "a\n\nb"
+
+
+def test_a_block_that_encloses_others_is_one_node():
+    # The editor shows a timeline, a set of columns or a fold as one block, and
+    # comments anchor by counting the editor's blocks against these nodes.
+    md = "\n".join(
+        [
+            "开头。",
+            "",
+            "::::columns",
+            ":::column",
+            "第一栏。",
+            "",
+            "第一栏第二段。",
+            ":::",
+            ":::column",
+            ":::stats",
+            "- 甲 | 1",
+            ":::",
+            ":::",
+            "::::",
+            "",
+            "<details><summary>原始数据</summary>",
+            "",
+            "- 一",
+            "",
+            "</details>",
+            "",
+            "$$",
+            "a",
+            "",
+            "b",
+            "$$",
+            "",
+            "结尾。",
+        ]
+    )
+    contents = [n.content for n in markdown_to_nodes(md)]
+    assert len(contents) == 5
+    assert contents[1].startswith("::::columns") and contents[1].endswith("::::")
+    assert contents[2].startswith("<details>") and contents[2].endswith("</details>")
+    assert contents[3].startswith("$$") and contents[3].endswith("$$")
+    assert contents[4] == "结尾。"
+
+
+def test_colons_inside_code_do_not_open_a_block():
+    md = "```\n:::timeline\n```\n\n正文。"
+    assert _types(md) == [CODE, PARAGRAPH]
