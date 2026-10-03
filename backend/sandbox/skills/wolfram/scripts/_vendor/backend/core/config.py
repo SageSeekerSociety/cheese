@@ -1,11 +1,15 @@
-from pydantic_settings import BaseSettings, SettingsConfigDict
+class Settings:
+    """Fixed values, read from nowhere.
 
-
-class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    The skill runs with somebody else's project as its working directory, on a
+    machine whose environment belongs to its owner. Reading a `.env` or the
+    environment here would let a variable that merely shares a name -- an
+    `MCP_URL` kept for another tool -- point the skill at a different server or
+    switch the safety gate off.
+    """
 
     # ---- 符号缓存 ----
-    #: 缓存文件目录（system_names.json 落在这里；调用方会把 ASSET_DIR 指到状态目录）
+    #: 缓存文件目录（system_names.json 落在这里；wolfram_mcp.py 启动时指到状态目录）
     ASSET_DIR: str = "assets"
 
     # ---- Wolfram 官方 MCP（唯一执行通道）----
