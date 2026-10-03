@@ -1,5 +1,5 @@
-import { test, expect, type Locator, type Page } from '@playwright/test';
-import { api, apiLogin, openFirstProject } from './helpers';
+import { test, expect, type Locator, type Page } from "@playwright/test";
+import { api, apiLogin, openFirstProject } from "./helpers";
 
 // 表单字段的几何不变量。
 //
@@ -20,7 +20,6 @@ import { api, apiLogin, openFirstProject } from './helpers';
 // 这一份只断言「屏幕上有没有压上/被裁」，不认任何具体的间距数值：改密度、换变体、
 // 把 hide-details 设成别的都不该让它变红，只有真叠上了才该。
 
-
 /** 屏幕上**两个东西有没有画在同一个坐标上**。
  *
  *  这一条是补的，起因也是真事：看板「用量」那一类里，柱子底下 9 个项目名横排在
@@ -36,14 +35,20 @@ import { api, apiLogin, openFirstProject } from './helpers';
 async function textOverlaps(scope: Locator): Promise<string[]> {
   return scope.evaluate((root: Element) => {
     const ownsText = (el: Element) =>
-      [...el.childNodes].some((n) => n.nodeType === Node.TEXT_NODE && (n.textContent || '').trim().length > 0);
-    const boxes = [...root.querySelectorAll('*')]
+      [...el.childNodes].some(
+        (n) =>
+          n.nodeType === Node.TEXT_NODE &&
+          (n.textContent || "").trim().length > 0,
+      );
+    const boxes = [...root.querySelectorAll("*")]
       .filter((el) => el instanceof SVGTextElement || ownsText(el))
       // **只量真的画出来的东西**。`getBoundingClientRect` 对「不渲染但仍有布局盒」的
       // 元素照样给坐标：收起状态的 `<details>`（那张「查看数据表」）就是这一类 ——
       // 它里面的 `<th>`/`<td>` 每一个都有 200×26 的盒子，量出来会跟页面正文报一大堆
       // 「重叠」，而屏幕上根本没有它们。`checkVisibility()` 是浏览器自己对这个问题的答案。
-      .filter((el) => el.checkVisibility?.({ checkVisibilityCSS: true }) ?? true)
+      .filter(
+        (el) => el.checkVisibility?.({ checkVisibilityCSS: true }) ?? true,
+      )
       .map((el) => ({ el, r: el.getBoundingClientRect() }))
       .filter((b) => b.r.width > 0 && b.r.height > 0)
       // 还有一类盒子是**被裁掉了但坐标还在**：滚动容器里的内容滚出可视区时，它的
@@ -60,12 +65,14 @@ async function textOverlaps(scope: Locator): Promise<string[]> {
         const a = boxes[i];
         const b = boxes[j];
         if (a.el.contains(b.el) || b.el.contains(a.el)) continue;
-        const ox = Math.min(a.r.right, b.r.right) - Math.max(a.r.left, b.r.left);
-        const oy = Math.min(a.r.bottom, b.r.bottom) - Math.max(a.r.top, b.r.top);
+        const ox =
+          Math.min(a.r.right, b.r.right) - Math.max(a.r.left, b.r.left);
+        const oy =
+          Math.min(a.r.bottom, b.r.bottom) - Math.max(a.r.top, b.r.top);
         if (ox > 2 && oy > 2) {
           hits.push(
-            `「${(a.el.textContent || '').trim().slice(0, 20)}」与「${(b.el.textContent || '').trim().slice(0, 20)}」` +
-              `重叠 ${Math.round(ox)}×${Math.round(oy)}px`
+            `「${(a.el.textContent || "").trim().slice(0, 20)}」与「${(b.el.textContent || "").trim().slice(0, 20)}」` +
+              `重叠 ${Math.round(ox)}×${Math.round(oy)}px`,
           );
         }
       }
@@ -79,10 +86,16 @@ async function textOverlaps(scope: Locator): Promise<string[]> {
       for (let p = el.parentElement; p; p = p.parentElement) {
         const s = getComputedStyle(p);
         const clips =
-          /auto|scroll|hidden|clip/.test(s.overflowY) || /auto|scroll|hidden|clip/.test(s.overflowX);
+          /auto|scroll|hidden|clip/.test(s.overflowY) ||
+          /auto|scroll|hidden|clip/.test(s.overflowX);
         if (!clips) continue;
         const r = p.getBoundingClientRect();
-        if (box.bottom > r.bottom + 1 || box.top < r.top - 1 || box.right > r.right + 1 || box.left < r.left - 1) {
+        if (
+          box.bottom > r.bottom + 1 ||
+          box.top < r.top - 1 ||
+          box.right > r.right + 1 ||
+          box.left < r.left - 1
+        ) {
           return true;
         }
       }
@@ -90,10 +103,20 @@ async function textOverlaps(scope: Locator): Promise<string[]> {
     }
 
     function elHasTextyAncestor(scopeEl: Element, el: Element): boolean {
-      for (let p = el.parentElement; p && p !== scopeEl.parentElement; p = p.parentElement) {
+      for (
+        let p = el.parentElement;
+        p && p !== scopeEl.parentElement;
+        p = p.parentElement
+      ) {
         if (p === scopeEl) break;
         if (p instanceof SVGTextElement) return true;
-        if ([...p.childNodes].some((n) => n.nodeType === Node.TEXT_NODE && (n.textContent || '').trim())) return true;
+        if (
+          [...p.childNodes].some(
+            (n) =>
+              n.nodeType === Node.TEXT_NODE && (n.textContent || "").trim(),
+          )
+        )
+          return true;
       }
       return false;
     }
@@ -119,106 +142,184 @@ type Defect = { kind: string; what: string };
  *  时这个函数会当场炸（空范围永远返回「没有缺陷」），而那不是缺陷、是**画法变了**。
  *  把画法变成参数，判据一个字不用改。 */
 type FieldDrawing = { field: string; label: string };
-const VUETIFY_FIELDS: FieldDrawing = { field: '.v-field', label: '.v-field__outline .v-field-label' };
-const TOKEN_FIELDS: FieldDrawing = { field: '.sb-field', label: '.sb-label' };
+const VUETIFY_FIELDS: FieldDrawing = {
+  field: ".v-field",
+  label: ".v-field__outline .v-field-label",
+};
+const TOKEN_FIELDS: FieldDrawing = { field: ".sb-field", label: ".sb-label" };
 
-async function fieldDefects(scope: Locator, drawing: FieldDrawing = VUETIFY_FIELDS): Promise<Defect[]> {
-  return scope.evaluate((root: Element, { field, label: labelSelector }: FieldDrawing) => {
-    const out: { kind: string; what: string }[] = [];
-    const drawn = (el: Element) => {
-      const r = el.getBoundingClientRect();
-      return r.width > 0 && r.height > 0;
-    };
+async function fieldDefects(
+  scope: Locator,
+  drawing: FieldDrawing = VUETIFY_FIELDS,
+): Promise<Defect[]> {
+  return scope.evaluate(
+    (root: Element, { field, label: labelSelector }: FieldDrawing) => {
+      const out: { kind: string; what: string }[] = [];
+      const drawn = (el: Element) => {
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+      };
 
-    const boxes = [...root.querySelectorAll(field)].filter(drawn);
-    // 量不到字段就是范围选错了。空范围永远返回「没有缺陷」，是一条只会绿的断言，
-    // 所以这里炸掉而不是放过：`.v-overlay__content` 的第一个是 tooltip 的浮层而
-    // 不是对话框，这一条就是这么发现的。
-    if (!boxes.length) throw new Error('这个范围里一个字段都没有，这条断言等于没做');
+      const boxes = [...root.querySelectorAll(field)].filter(drawn);
+      // 量不到字段就是范围选错了。空范围永远返回「没有缺陷」，是一条只会绿的断言，
+      // 所以这里炸掉而不是放过：`.v-overlay__content` 的第一个是 tooltip 的浮层而
+      // 不是对话框，这一条就是这么发现的。
+      if (!boxes.length)
+        throw new Error("这个范围里一个字段都没有，这条断言等于没做");
 
-    const nameOf = (el: Element) =>
-      (el.querySelector('.v-field-label, .sb-label')?.textContent || '').trim() || '(无标签字段)';
-    const scrollerOf = (el: Element) => {
-      for (let p = el.parentElement; p; p = p.parentElement) {
-        const overflow = getComputedStyle(p).overflowY;
-        if (overflow === 'auto' || overflow === 'scroll' || overflow === 'hidden') return p;
+      const nameOf = (el: Element) =>
+        (
+          el.querySelector(".v-field-label, .sb-label")?.textContent || ""
+        ).trim() || "(无标签字段)";
+      const scrollerOf = (el: Element) => {
+        for (let p = el.parentElement; p; p = p.parentElement) {
+          const overflow = getComputedStyle(p).overflowY;
+          if (
+            overflow === "auto" ||
+            overflow === "scroll" ||
+            overflow === "hidden"
+          )
+            return p;
+        }
+        return null;
+      };
+
+      // outlined 变体真正画出来的那个 label 住在描边的缺口里；字段内部还有一个同名
+      // 副本，是 visibility:hidden 的占位，量它只会得到错的坐标。（令牌画的那一套里
+      // 标签本来就是元素的文字，没有这种副本，这个过滤对它无害。）
+      const labels = [...root.querySelectorAll(labelSelector)].filter(
+        (el) => getComputedStyle(el).visibility !== "hidden" && drawn(el),
+      );
+
+      for (const label of labels) {
+        const own = label.closest(field);
+        const text = (label.textContent || "").trim();
+        const lr = label.getBoundingClientRect();
+
+        for (const box of boxes) {
+          if (box === own) continue;
+          const br = box.getBoundingClientRect();
+          // 1px 容差：边框相接不算压上，真叠进去才算。
+          const hit =
+            lr.left < br.right &&
+            lr.right > br.left &&
+            lr.top < br.bottom - 1 &&
+            lr.bottom > br.top + 1;
+          if (hit)
+            out.push({
+              kind: "overlap",
+              what: `「${text}」压在「${nameOf(box)}」上`,
+            });
+        }
+
+        const scroller = scrollerOf(label);
+        const fr = own?.getBoundingClientRect();
+        if (scroller && fr) {
+          const sr = scroller.getBoundingClientRect();
+          // 只看「字段本身完整露着、label 却被切掉」。字段滚到视野外是正常的滚动，
+          // 不是缺陷。
+          const fieldFullyInView =
+            fr.top >= sr.top - 0.5 && fr.bottom <= sr.bottom + 0.5;
+          if (
+            fieldFullyInView &&
+            (lr.top < sr.top - 0.5 || lr.bottom > sr.bottom + 0.5)
+          )
+            out.push({
+              kind: "clipped",
+              what: `「${text}」被它所在的滚动容器裁掉`,
+            });
+        }
       }
-      return null;
-    };
-
-    // outlined 变体真正画出来的那个 label 住在描边的缺口里；字段内部还有一个同名
-    // 副本，是 visibility:hidden 的占位，量它只会得到错的坐标。（令牌画的那一套里
-    // 标签本来就是元素的文字，没有这种副本，这个过滤对它无害。）
-    const labels = [...root.querySelectorAll(labelSelector)].filter(
-      (el) => getComputedStyle(el).visibility !== 'hidden' && drawn(el)
-    );
-
-    for (const label of labels) {
-      const own = label.closest(field);
-      const text = (label.textContent || '').trim();
-      const lr = label.getBoundingClientRect();
-
-      for (const box of boxes) {
-        if (box === own) continue;
-        const br = box.getBoundingClientRect();
-        // 1px 容差：边框相接不算压上，真叠进去才算。
-        const hit = lr.left < br.right && lr.right > br.left && lr.top < br.bottom - 1 && lr.bottom > br.top + 1;
-        if (hit) out.push({ kind: 'overlap', what: `「${text}」压在「${nameOf(box)}」上` });
-      }
-
-      const scroller = scrollerOf(label);
-      const fr = own?.getBoundingClientRect();
-      if (scroller && fr) {
-        const sr = scroller.getBoundingClientRect();
-        // 只看「字段本身完整露着、label 却被切掉」。字段滚到视野外是正常的滚动，
-        // 不是缺陷。
-        const fieldFullyInView = fr.top >= sr.top - 0.5 && fr.bottom <= sr.bottom + 0.5;
-        if (fieldFullyInView && (lr.top < sr.top - 0.5 || lr.bottom > sr.bottom + 0.5))
-          out.push({ kind: 'clipped', what: `「${text}」被它所在的滚动容器裁掉` });
-      }
-    }
-    return out;
-  }, drawing);
+      return out;
+    },
+    drawing,
+  );
 }
 
-test.describe('表单字段不会互相压住，也不会被裁掉', () => {
-  test('artifact comparison keeps diff lines vertical on desktop and mobile', async ({ page }) => {
+test.describe("表单字段不会互相压住，也不会被裁掉", () => {
+  test("artifact comparison keeps diff lines vertical on desktop and mobile", async ({
+    page,
+  }) => {
     await apiLogin(page);
-    await page.locator('.app-rail-item--tile').first().click();
+    await page.locator(".app-rail-item--tile").first().click();
     await page.waitForURL(/\/projects\/[^/]+/);
     const projectId = page.url().match(/\/projects\/([^/?#]+)/)![1];
-    const artifactId = '00000000-0000-0000-0000-000000000123';
-    const versions = [1, 2].map(number => ({
-      number, card_id: `version-${number}`, subject: `Report ${number}`,
-      delivered_at: '2026-09-20T12:00:00Z', decided_by: 'alice',
-      kind: 'file', filename: 'report.txt', url: null, bytes: 6, room: null,
+    const artifactId = "00000000-0000-0000-0000-000000000123";
+    const versions = [1, 2].map((number) => ({
+      number,
+      card_id: `version-${number}`,
+      subject: `Report ${number}`,
+      delivered_at: "2026-09-20T12:00:00Z",
+      decided_by: "alice",
+      kind: "file",
+      filename: "report.txt",
+      url: null,
+      bytes: 6,
+      room: null,
     }));
-    await page.route(`**/api/projects/${projectId}/artifacts/${artifactId}`, route => route.fulfill({
-      json: { code: 200, data: { id: artifactId, name: 'Version comparison fixture', version: 2, delivered_at: versions[1].delivered_at, versions } },
-    }));
-    await page.route(`**/api/projects/${projectId}/artifacts/${artifactId}/compare?*`, route => route.fulfill({
-      json: { code: 200, data: { kind: 'file', identical: false, note: null, files: [{ path: 'report.txt', diff: '--- report.txt\n+++ report.txt\n@@ -1 +1 @@\n-before\n+after', note: null }] } },
-    }));
-    await page.goto(`/projects/${projectId}/artifacts/${artifactId}?before=version-1&after=version-2`);
-    await expect(page.getByText('+after', { exact: true })).toBeVisible();
+    await page.route(
+      `**/api/projects/${projectId}/artifacts/${artifactId}`,
+      (route) =>
+        route.fulfill({
+          json: {
+            code: 200,
+            data: {
+              id: artifactId,
+              name: "Version comparison fixture",
+              version: 2,
+              delivered_at: versions[1].delivered_at,
+              versions,
+            },
+          },
+        }),
+    );
+    await page.route(
+      `**/api/projects/${projectId}/artifacts/${artifactId}/compare?*`,
+      (route) =>
+        route.fulfill({
+          json: {
+            code: 200,
+            data: {
+              kind: "file",
+              identical: false,
+              note: null,
+              files: [
+                {
+                  path: "report.txt",
+                  diff: "--- report.txt\n+++ report.txt\n@@ -1 +1 @@\n-before\n+after",
+                  note: null,
+                },
+              ],
+            },
+          },
+        }),
+    );
+    await page.goto(
+      `/projects/${projectId}/artifacts/${artifactId}?before=version-1&after=version-2`,
+    );
+    await expect(page.getByText("+after", { exact: true })).toBeVisible();
     for (const width of [1440, 390]) {
       await page.setViewportSize({ width, height: 1000 });
-      await expect(page.getByLabel('比较对象', { exact: true })).toBeVisible();
-      const lines = await page.locator('.changes__diff span').evaluateAll(nodes => nodes.map(node => {
-        const r = node.getBoundingClientRect();
-        return { top: r.top, bottom: r.bottom, left: r.left };
-      }));
+      await expect(page.getByLabel("比较对象", { exact: true })).toBeVisible();
+      const lines = await page
+        .locator(".changes__diff span")
+        .evaluateAll((nodes) =>
+          nodes.map((node) => {
+            const r = node.getBoundingClientRect();
+            return { top: r.top, bottom: r.bottom, left: r.left };
+          }),
+        );
       expect(lines.length).toBe(5);
       for (let i = 1; i < lines.length; i++) {
         expect(lines[i].top).toBeGreaterThanOrEqual(lines[i - 1].bottom);
         expect(lines[i].left).toBe(lines[0].left);
       }
-      const bar = await page.locator('.compare__bar').boundingBox();
+      const bar = await page.locator(".compare__bar").boundingBox();
       expect(bar!.x + bar!.width).toBeLessThanOrEqual(width);
     }
   });
 
-  test('账号页：登录、注册、找回密码，桌面与手机', async ({ page }) => {
+  test("账号页：登录、注册、找回密码，桌面与手机", async ({ page }) => {
     // 注册页的字段带常驻提示（邮箱、密码规则），手机上提示会折行，是这几页里最容易
     // 让下一个字段的浮动标签压上来的地方。
     for (const size of [
@@ -227,45 +328,47 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
     ]) {
       await page.setViewportSize(size);
       for (const [path, label] of [
-        ['/account/signin', '用户名'],
-        ['/account/signup', '用户名'],
-        ['/account/recover/password', '注册邮箱'],
+        ["/account/signin", "用户名"],
+        ["/account/signup", "用户名"],
+        ["/account/recover/password", "注册邮箱"],
       ]) {
         await page.goto(path);
         await page.getByLabel(label, { exact: true }).waitFor();
-        expect(await fieldDefects(page.locator('body'))).toEqual([]);
-        expect(await textOverlaps(page.locator('body'))).toEqual([]);
+        expect(await fieldDefects(page.locator("body"))).toEqual([]);
+        expect(await textOverlaps(page.locator("body"))).toEqual([]);
       }
     }
   });
 
-  test('「修改 AI 队友」对话框', async ({ page }) => {
+  test("「修改 AI 队友」对话框", async ({ page }) => {
     await apiLogin(page);
-    await page.locator('.app-rail-item--tile').first().click();
+    await page.locator(".app-rail-item--tile").first().click();
     await page.waitForURL(/\/projects\/[^/]+/);
     const projectId = page.url().match(/\/projects\/([^/?#]+)/)![1];
 
     await page.goto(`/projects/${projectId}/agents`);
-    const edit = page.getByRole('button', { name: '编辑' }).first();
+    const edit = page.getByRole("button", { name: "编辑" }).first();
     await edit.waitFor();
     await edit.click();
 
-    const dialog = page.locator('.v-overlay__content').filter({ hasText: '修改 AI 队友' });
+    const dialog = page
+      .locator(".v-overlay__content")
+      .filter({ hasText: "修改 AI 队友" });
     await dialog.waitFor();
     // 这张表单不再取任何异步选项（模型与运行方式都不是队友的属性了），会动的
     // 只剩「角色设定」那个 autoGrow 的文本域——内容灌进去之后高度才定下来。
     // 等到名字和角色设定都是这个队友自己的值，这一屏就不会再动了。
-    await expect(dialog.getByLabel('名字', { exact: true })).toHaveValue(/.+/);
-    await expect(dialog.getByLabel('角色设定（可留空）')).toBeVisible();
+    await expect(dialog.getByLabel("名字", { exact: true })).toHaveValue(/.+/);
+    await expect(dialog.getByLabel("角色设定（可留空）")).toBeVisible();
     expect(await fieldDefects(dialog)).toEqual([]);
   });
 
-  test('反馈中心 · 提交反馈页', async ({ page }) => {
+  test("反馈中心 · 提交反馈页", async ({ page }) => {
     await apiLogin(page);
-    await page.goto('/feedback');
+    await page.goto("/feedback");
 
     // 提交是一条**真路由**（`/feedback/new`），不是浮层：页头那颗渲染成链接。
-    await page.getByRole('link', { name: '提交反馈' }).first().click();
+    await page.getByRole("link", { name: "提交反馈" }).first().click();
     await expect(page).toHaveURL(/\/feedback\/new$/);
 
     // 范围取表单本身（`.sb-form`），不取 `body`：这一页的页头和底下那条说明都不是
@@ -275,29 +378,33 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
     // 画法是 `TOKEN_FIELDS`：这一页是平台自己用令牌画的（`SubmitFeedbackForm.vue`
     // 的文件头写了为什么不用 Vuetify 的输入框），`.sb-form` 里一个 `.v-field` 都没
     // 有。量到的仍然是老一套：标签不压到别的字段上、也不被滚动容器裁掉。
-    const form = page.locator('.sb-form');
+    const form = page.locator(".sb-form");
     await form.waitFor();
     await expect(form.getByLabel(/^标题/)).toBeVisible();
     expect(await fieldDefects(form, TOKEN_FIELDS)).toEqual([]);
   });
 
-  test('管理后台 · 反馈队列里打开一条', async ({ page }) => {
+  test("管理后台 · 反馈队列里打开一条", async ({ page }) => {
     await apiLogin(page);
 
     // 这条反馈是**这条用例自己造的**：详情面板上的字段只在某一条被打开之后才
     // 存在，而 e2e 的库是干净的、用例之间的顺序也不是契约（别指望别的用例留下
     // 的数据）。标题带一个时间戳是为了搜得到——队列里不止这一条。
     const stamp = `${Date.now()}`;
-    await api(page, 'post', '/feedback', {
-      kind: 'bug',
+    await api(page, "post", "/feedback", {
+      kind: "bug",
       title: `【e2e】字段几何 ${stamp}`,
-      problem: 'layout-invariants 自己造的，只为了把详情面板的字段画出来。',
-      visibility: 'public',
+      problem: "layout-invariants 自己造的，只为了把详情面板的字段画出来。",
+      visibility: "public",
     });
 
-    await page.goto('/admin/queue');
-    await page.locator('.qpage__search-input').fill(stamp);
-    await page.locator('.fbrow__link').filter({ hasText: stamp }).first().click();
+    await page.goto("/admin/queue");
+    await page.locator(".qpage__search-input").fill(stamp);
+    await page
+      .locator(".fbrow__link")
+      .filter({ hasText: stamp })
+      .first()
+      .click();
 
     // 视口默认 1280 宽，详情是按**页面内**那一套画的（`.qdet`），不是抽屉。
     //
@@ -305,22 +412,24 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
     // accessible name 是「指派给 指派给」（label 拼上 placeholder），旁边那颗
     // 清除图标的 aria-label 是「清除 指派给」——两个都被 `getByLabel('指派给')`
     // 子串命中，locator 当场变成 2 个元素。
-    const detail = page.locator('.qdet');
-    await expect(detail.getByRole('textbox', { name: /指派给/ })).toBeVisible();
+    const detail = page.locator(".qdet");
+    await expect(detail.getByRole("textbox", { name: /指派给/ })).toBeVisible();
     expect(await fieldDefects(detail)).toEqual([]);
   });
 
-  test('管理后台 · 队列页宽档（1920 视口）', async ({ page }) => {
+  test("管理后台 · 队列页宽档（1920 视口）", async ({ page }) => {
     await apiLogin(page);
     await page.setViewportSize({ width: 1920, height: 1080 });
-    await page.goto('/admin/queue');
-    await expect(page.getByRole('heading', { name: '反馈', exact: true })).toBeVisible();
-    await expect(page.locator('.qlist')).toBeVisible();
+    await page.goto("/admin/queue");
+    await expect(
+      page.getByRole("heading", { name: "反馈", exact: true }),
+    ).toBeVisible();
+    await expect(page.locator(".qlist")).toBeVisible();
 
     // 1440 封顶居中。量的参照物是页面正文那一格（`.app-page__body`），不是按侧栏宽度
     // 反推——侧栏能拖宽拖窄，这条用例量的东西不变：列宽 1440，两侧留白相等。
-    const box = await page.locator('.app-page__column--admin').boundingBox();
-    const main = await page.locator('.app-page__body').evaluate((el) => {
+    const box = await page.locator(".app-page__column--admin").boundingBox();
+    const main = await page.locator(".app-page__body").evaluate((el) => {
       const rect = el.getBoundingClientRect();
       return { x: rect.x, width: el.clientWidth };
     });
@@ -331,27 +440,31 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
     expect(Math.abs(left - right)).toBeLessThanOrEqual(2);
 
     // 宽档的意义是整行在 1440 里放得下，不是把横滚挪到更宽的屏上。
-    const noHScroll = await page.locator('.qlist').evaluate((el) => el.scrollWidth <= el.clientWidth + 1);
+    const noHScroll = await page
+      .locator(".qlist")
+      .evaluate((el) => el.scrollWidth <= el.clientWidth + 1);
     expect(noHScroll).toBeTruthy();
   });
 
-  test('管理后台 · 「添加管理员」那张表单', async ({ page }) => {
+  test("管理后台 · 「添加管理员」那张表单", async ({ page }) => {
     await apiLogin(page);
-    await page.goto('/admin/members');
+    await page.goto("/admin/members");
 
     // 这一页唯一的一组字段在对话框里：名单本身是张表，一个 `.v-field` 都没有，
     // 所以这里不能拿 `body` 当范围——`fieldDefects` 会当场炸「这个范围里一个
     // 字段都没有」，而那正是它该做的（空范围永远返回「没有缺陷」）。
-    await page.getByRole('button', { name: '添加管理员' }).first().click();
-    const dialog = page.locator('.v-overlay__content').filter({ hasText: '搜索账号' });
+    await page.getByRole("button", { name: "添加管理员" }).first().click();
+    const dialog = page
+      .locator(".v-overlay__content")
+      .filter({ hasText: "搜索账号" });
     await dialog.waitFor();
-    await expect(dialog.getByLabel('搜索账号')).toBeVisible();
+    await expect(dialog.getByLabel("搜索账号")).toBeVisible();
     expect(await fieldDefects(dialog)).toEqual([]);
   });
 
-  test('管理后台 · 模型页的「新增模型」对话框', async ({ page }) => {
+  test("管理后台 · 模型页的「新增模型」对话框", async ({ page }) => {
     await apiLogin(page);
-    await page.goto('/admin/models');
+    await page.goto("/admin/models");
 
     // 模型表本身是张表（一个 `.v-field` 都没有），字段只在对话框里。所以范围取对话
     // 框，不取 `body` —— 空范围会让 `fieldDefects` 当场炸「这个范围里一个字段都没
@@ -363,16 +476,18 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
     // playwright.config.ts 给后端接了桩网关，走的是「网关答话」这条路；拿一个没接
     // 网关的后端跑就必挂（曾经把这档误判成开发服务器冷启动，就是因为这里写着「不
     // 需要网关真的有数据」—— 那句是错的）。
-    await page.getByRole('button', { name: '新增模型' }).first().click();
+    await page.getByRole("button", { name: "新增模型" }).first().click();
     // 按标题筛，不能取 `.v-overlay__content` 的第一个：那一个是导航条的 tooltip 浮
     // 层，不是对话框（「添加管理员」那一档就是在这里踩到的）。
-    const dialog = page.locator('.v-overlay__content').filter({ hasText: '新增模型' });
+    const dialog = page
+      .locator(".v-overlay__content")
+      .filter({ hasText: "新增模型" });
     await dialog.waitFor();
-    await expect(dialog.getByLabel('模型名')).toBeVisible();
+    await expect(dialog.getByLabel("模型名")).toBeVisible();
     expect(await fieldDefects(dialog)).toEqual([]);
   });
 
-  test('看板：三个分类里，没有两处文字画在同一个坐标上', async ({ page }) => {
+  test("看板：三个分类里，没有两处文字画在同一个坐标上", async ({ page }) => {
     await apiLogin(page);
 
     // 三个分类都过一遍。宽窄两档都要：窄屏是 KPI 卡那一行最容易压的时候（卡片曾经
@@ -386,57 +501,75 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
       { width: 390, height: 844 },
     ]) {
       await page.setViewportSize(size);
-      await page.goto('/admin/dashboard');
+      await page.goto("/admin/dashboard");
       // 手机上页名在顶栏里，不是页内的标题；分类导轨两档都在。
-      await expect(page.locator('.ad__kinds')).toBeVisible();
+      await expect(page.locator(".ad__kinds")).toBeVisible();
 
-      for (const tab of ['反馈', '用量', '平台']) {
+      for (const tab of ["反馈", "用量", "平台"]) {
         // `exact: true`：顶栏那颗「帮助与反馈」（另一个 PR）的可访问名字里也含「反馈」，
         // 而 Playwright 的 `name` 默认按**子串**匹配 —— 不加这一条，'反馈' 那一轮会同时
         // 命中它和这一页的分类页签，报 strict mode 违规。
-        await page.getByRole('button', { name: tab, exact: true }).click();
+        await page.getByRole("button", { name: tab, exact: true }).click();
         // 等这一类的数据到货（骨架上也有文字，量骨架没有意义）。
-        await expect(page.locator('.ad__kpis .akpi__num').first()).toBeVisible();
-        await expect(page.locator('.akpi__skel')).toHaveCount(0);
-        expect(await textOverlaps(page.locator('body')), `${size.width}px · ${tab}`).toEqual([]);
+        await expect(
+          page.locator(".ad__kpis .akpi__num").first(),
+        ).toBeVisible();
+        await expect(page.locator(".akpi__skel")).toHaveCount(0);
+        expect(
+          await textOverlaps(page.locator("body")),
+          `${size.width}px · ${tab}`,
+        ).toEqual([]);
       }
     }
   });
 
-  test('看板：1920 宽档下内容列吃到 1440，KPI 网格不少于 4 轨', async ({ page }) => {
+  test("看板：1920 宽档下内容列吃到 1440，KPI 网格不少于 4 轨", async ({
+    page,
+  }) => {
     await apiLogin(page);
 
     // 宽度变档的回执：1920 视口下内容列曾经停在 1100（约 1/3 是死空白）。admin 档
     // 是 1440，网格跟着容器查询升档 —— 这两条断言量的就是「宽出来的部分有人用」。
     await page.setViewportSize({ width: 1920, height: 900 });
-    await page.goto('/admin/dashboard');
-    await expect(page.getByRole('heading', { name: '看板' })).toBeVisible();
+    await page.goto("/admin/dashboard");
+    await expect(page.getByRole("heading", { name: "看板" })).toBeVisible();
 
     // 三个分类的文字在宽档下也不压（宽档更容易出「网格升档后列数变了」的排版事故）。
-    for (const tab of ['反馈', '用量', '平台']) {
-      await page.getByRole('button', { name: tab, exact: true }).click();
-      await expect(page.locator('.ad__kpis .akpi__num').first()).toBeVisible();
-      await expect(page.locator('.akpi__skel')).toHaveCount(0);
-      expect(await textOverlaps(page.locator('body')), `1920px · ${tab}`).toEqual([]);
+    for (const tab of ["反馈", "用量", "平台"]) {
+      await page.getByRole("button", { name: tab, exact: true }).click();
+      await expect(page.locator(".ad__kpis .akpi__num").first()).toBeVisible();
+      await expect(page.locator(".akpi__skel")).toHaveCount(0);
+      expect(
+        await textOverlaps(page.locator("body")),
+        `1920px · ${tab}`,
+      ).toEqual([]);
     }
 
     // 内容列吃满 admin 档的 1440（1920 视口去掉全局 rail 与侧栏后仍宽于 1440，居中）。
     const innerWidth = await page
-      .locator('.app-page__column--admin')
+      .locator(".app-page__column--admin")
       .evaluate((el) => el.getBoundingClientRect().width);
     expect(Math.round(innerWidth)).toBe(1440);
     // KPI 网格在 ≥1320 容器宽升到 auto-fit：轨道数不少于 4（此刻停在「平台」类，
     // 5 张卡）。
     const tracks = await page
-      .locator('.ad__kpis')
-      .evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(' ').filter(Boolean).length);
+      .locator(".ad__kpis")
+      .evaluate(
+        (el) =>
+          getComputedStyle(el).gridTemplateColumns.split(" ").filter(Boolean)
+            .length,
+      );
     expect(tracks).toBeGreaterThanOrEqual(4);
   });
 
-  test('个人主页：全站和项目里两个入口，宽窄三档，没有两处文字画在同一个坐标上', async ({ page }) => {
+  test("个人主页：全站和项目里两个入口，宽窄三档，没有两处文字画在同一个坐标上", async ({
+    page,
+  }) => {
     await apiLogin(page);
     await openFirstProject(page);
-    const projectPath = new URL(page.url()).pathname.match(/^\/projects\/[^/]+/)?.[0];
+    const projectPath = new URL(page.url()).pathname.match(
+      /^\/projects\/[^/]+/,
+    )?.[0];
     expect(projectPath).toBeTruthy();
 
     // 话题那一行在桌面上横排四样东西（标题、项目、条数、时间），窄一点的桌面宽度
@@ -447,10 +580,13 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
       { width: 390, height: 844 },
     ]) {
       await page.setViewportSize(size);
-      for (const path of ['/users/alice', `${projectPath}/members/alice`]) {
+      for (const path of ["/users/alice", `${projectPath}/members/alice`]) {
         await page.goto(path);
         await expect(page.locator('[data-section="activity"]')).toBeVisible();
-        expect(await textOverlaps(page.locator('.profile')), `${size.width}px · ${path}`).toEqual([]);
+        expect(
+          await textOverlaps(page.locator(".profile")),
+          `${size.width}px · ${path}`,
+        ).toEqual([]);
       }
     }
   });
@@ -460,18 +596,29 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
 // 线接成一条。这几页以前各画各的大标题，那条线到了这几页就断在半空——从房间切到
 // 成员页，页头一会儿有一会儿没有。量的是渲染出来的盒子，因为这种错 vitest 和类型检
 // 查都看不见。项目设置不在这里：它是盖在整个窗口上的一层，没有这条页头。
-test('项目里每一页的页头都和侧栏项目名那一条对齐', async ({ page }) => {
+test("项目里每一页的页头都和侧栏项目名那一条对齐", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await apiLogin(page);
   await openFirstProject(page);
-  const projectPath = new URL(page.url()).pathname.match(/^\/projects\/[^/]+/)?.[0];
+  const projectPath = new URL(page.url()).pathname.match(
+    /^\/projects\/[^/]+/,
+  )?.[0];
   expect(projectPath).toBeTruthy();
 
-  for (const sub of ['running', 'members', 'members/alice', 'docs/charter', 'library']) {
+  for (const sub of [
+    "running",
+    "members",
+    "members/alice",
+    "docs/charter",
+    "library",
+  ]) {
     await page.goto(`${projectPath}/${sub}`);
-    const head = page.locator('.app-page__head');
+    const head = page.locator(".app-page__head");
     await expect(head).toBeVisible();
-    const [side, main] = await Promise.all([page.locator('.rail-header').boundingBox(), head.boundingBox()]);
+    const [side, main] = await Promise.all([
+      page.locator(".rail-header").boundingBox(),
+      head.boundingBox(),
+    ]);
     expect(side, sub).not.toBeNull();
     expect(main, sub).not.toBeNull();
     expect(main!.y, `${sub} · top`).toBeCloseTo(side!.y, 0);
@@ -483,7 +630,7 @@ test('项目里每一页的页头都和侧栏项目名那一条对齐', async ({
 // 挂在 body 下另一层里。两层 z-index 一样时，DOM 里靠后的画在上面；而 Vuetify 那一层
 // 在页面加载时就被提示气泡建好了，排在设置层前面，于是菜单打开了却画在设置层底下，
 // 看上去是一个空下拉。单元测试没有布局，只有在真浏览器里点一下才看得见。
-test('设置层里打开的下拉菜单画在设置层上面', async ({ page }) => {
+test("设置层里打开的下拉菜单画在设置层上面", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await apiLogin(page);
   await openFirstProject(page);
@@ -494,60 +641,72 @@ test('设置层里打开的下拉菜单画在设置层上面', async ({ page }) 
 
   await page.goto(`${projectPath}/settings/agents`);
   const field = page
-    .locator('.v-select')
-    .filter({ hasText: '项目主模型' })
+    .locator(".v-select")
+    .filter({ hasText: "项目主模型" })
     .first();
   await field.click();
   // A click checks that the option is the topmost thing under the pointer; under the
   // settings layer it is not, and the click is refused rather than landing on it.
   await page
-    .getByRole('option', { name: 'DeepSeek V4.1 Flash' })
+    .getByRole("option", { name: "DeepSeek V4.1 Flash" })
     .click({ timeout: 5_000 });
-  await expect(field).toContainText('DeepSeek V4.1 Flash');
+  await expect(field).toContainText("DeepSeek V4.1 Flash");
 });
 
 // 读的那一栏（`AppPage` 的 `read` 档）在宽屏上封顶居中，页头那一行跟着它：标题和正文
 // 从同一条竖线开始；满宽那一档的标题也和正文缩进一样多。以前页头贴着内容区左边，正文居中，1440 宽时标题和正文差 72px，
 // 1920 宽时差三百多。量的是渲染出来的字，因为这种错 vitest 和类型检查都看不见。
-test('页头标题和正文同一条左沿', async ({ page }) => {
+test("页头标题和正文同一条左沿", async ({ page }) => {
   await apiLogin(page);
   await page.setViewportSize({ width: 1440, height: 900 });
   await openFirstProject(page);
-  const projectPath = new URL(page.url()).pathname.match(/^\/projects\/[^/]+/)?.[0];
+  const projectPath = new URL(page.url()).pathname.match(
+    /^\/projects\/[^/]+/,
+  )?.[0];
   expect(projectPath).toBeTruthy();
 
   for (const width of [1440, 1920]) {
     await page.setViewportSize({ width, height: 900 });
-    for (const path of ['/inbox', `${projectPath}/members`]) {
+    for (const path of ["/inbox", `${projectPath}/members`]) {
       await page.goto(path);
-      const title = page.locator('.app-page__title');
+      const title = page.locator(".app-page__title");
       await expect(title).toBeVisible();
-      const column = page.locator('.app-page__column--read');
+      const column = page.locator(".app-page__column--read");
       const [titleX, bodyX] = await Promise.all([
         title.evaluate((el) => el.getBoundingClientRect().x),
-        column.evaluate((el) => el.getBoundingClientRect().x + parseFloat(getComputedStyle(el).paddingLeft)),
+        column.evaluate(
+          (el) =>
+            el.getBoundingClientRect().x +
+            parseFloat(getComputedStyle(el).paddingLeft),
+        ),
       ]);
-      expect(Math.abs(titleX - bodyX), `${path} @ ${width}`).toBeLessThanOrEqual(1);
+      expect(
+        Math.abs(titleX - bodyX),
+        `${path} @ ${width}`,
+      ).toBeLessThanOrEqual(1);
     }
     // 满宽那一档（资料库）：正文铺满，自己从左边缩进；页头标题跟它缩进同样多。量的是
     // 正文里最靠左的那行字。
     await page.goto(`${projectPath}/library`);
-    const title = page.locator('.app-page__title');
+    const title = page.locator(".app-page__title");
     await expect(title).toBeVisible();
-    await expect(page.locator('.app-page__body')).not.toHaveText('');
+    await expect(page.locator(".app-page__body")).not.toHaveText("");
     const titleX = await title.evaluate((el) => el.getBoundingClientRect().x);
-    const bodyX = await page.locator('.app-page__body').evaluate((body) => {
+    const bodyX = await page.locator(".app-page__body").evaluate((body) => {
       const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
       let left = Infinity;
       for (let node = walker.nextNode(); node; node = walker.nextNode()) {
         if (!node.textContent?.trim()) continue;
         const range = document.createRange();
         range.selectNodeContents(node);
-        for (const rect of range.getClientRects()) if (rect.width > 0) left = Math.min(left, rect.left);
+        for (const rect of range.getClientRects())
+          if (rect.width > 0) left = Math.min(left, rect.left);
       }
       return left;
     });
-    expect(Math.abs(titleX - bodyX), `library @ ${width}`).toBeLessThanOrEqual(1);
+    expect(Math.abs(titleX - bodyX), `library @ ${width}`).toBeLessThanOrEqual(
+      1,
+    );
   }
 });
 
@@ -573,7 +732,10 @@ async function unreachableBelowFold(page: Page): Promise<string[]> {
     const scroller = (el: Element): boolean => {
       for (let p = el.parentElement; p; p = p.parentElement) {
         const s = getComputedStyle(p);
-        if ((s.overflowY === 'auto' || s.overflowY === 'scroll') && p.scrollHeight > p.clientHeight + 1) {
+        if (
+          (s.overflowY === "auto" || s.overflowY === "scroll") &&
+          p.scrollHeight > p.clientHeight + 1
+        ) {
           return true;
         }
       }
@@ -581,18 +743,24 @@ async function unreachableBelowFold(page: Page): Promise<string[]> {
     };
     const out: string[] = [];
     const reported: Element[] = [];
-    for (const el of document.body.querySelectorAll('*')) {
+    for (const el of document.body.querySelectorAll("*")) {
       const r = el.getBoundingClientRect();
       if (r.width === 0 || r.height === 0) continue;
-      if (!(el.checkVisibility?.({ checkVisibilityCSS: true }) ?? true)) continue;
-      const text = (el.textContent || '').trim();
+      if (!(el.checkVisibility?.({ checkVisibilityCSS: true }) ?? true))
+        continue;
+      const text = (el.textContent || "").trim();
       if (!text) continue;
       if (r.top < vh - 2) continue;
       if (scroller(el)) continue;
       if (reported.some((r0) => r0.contains(el))) continue;
       reported.push(el);
-      const cls = typeof el.className === 'string' ? (el.className.split(/\s+/)[0] ?? '') : '';
-      out.push(`${el.tagName.toLowerCase()}${cls ? '.' + cls : ''}「${text.slice(0, 24)}」`);
+      const cls =
+        typeof el.className === "string"
+          ? el.className.split(/\s+/)[0] ?? ""
+          : "";
+      out.push(
+        `${el.tagName.toLowerCase()}${cls ? "." + cls : ""}「${text.slice(0, 24)}」`,
+      );
       if (out.length > 8) break;
     }
     return out;
@@ -618,7 +786,7 @@ const WARM_STEP_MS = 10_000;
 // `Error: Test timeout of 60000ms exceeded`），看不出在等第几次导航、等的是哪一步。
 // 2026-09-26 它就是因此成了 main 上的常客：当天至少 8 次跑里先失败、靠 `retries: 2`
 // 才绿，CI 每次白等一两分钟。
-const TAB_PATHS = ['', 'members', 'knowledge', 'compute'];
+const TAB_PATHS = ["", "members", "knowledge", "compute"];
 const VIEWPORT_SIZES = [
   // 视图高度压到 360 是故意的：这一套种子数据只有 5 个小队成员，靠内容自然长到溢出
   // 不可靠；把窗口压矮能让「内容比窗口高」这件事在任何数据下都成立，而宽度保持在
@@ -630,8 +798,8 @@ const VIEWPORT_SIZES = [
 const WARMUP_MS = TAB_PATHS.length * 2 * ROUTE_READY_MS; // 每个 tab 冷一次：出现 + 画出字
 const SWEEP_MS = VIEWPORT_SIZES.length * TAB_PATHS.length * 2 * WARM_STEP_MS; // 每个窗口 × 每个 tab 两道等待
 
-test.describe('首屏以下的内容不会被裁掉而没人能滚', () => {
-  test('小队详情：四个 tab 在窄窗口下都够得着底部', async ({ page }) => {
+test.describe("首屏以下的内容不会被裁掉而没人能滚", () => {
+  test("小队详情：四个 tab 在窄窗口下都够得着底部", async ({ page }) => {
     // 这条用例真正需要的范围是「冷 4 次 + 热 12 次」两段之和，比 config 里给的 60s 大
     // 一个数量级。它只在「又慢又没错」时才用得满：真出问题会在第一道等待上炸出来
     // （最多 ROUTE_READY_MS），不会一路拖到底。
@@ -643,25 +811,33 @@ test.describe('首屏以下的内容不会被裁掉而没人能滚', () => {
     // （`.app-page__body` 真的出现、里面真的画出了字），一字没有放水 —— 只是预算按冷的
     // 给。这样下面量到的才是布局本身，不是 Vite 的编译速度。
     for (const path of TAB_PATHS) {
-      await page.goto(`/teams/team-1${path ? '/' + path : ''}`);
-      await expect(page.locator('.app-page__body')).toBeVisible({ timeout: ROUTE_READY_MS });
+      await page.goto(`/teams/team-1${path ? "/" + path : ""}`);
+      await expect(page.locator(".app-page__body")).toBeVisible({
+        timeout: ROUTE_READY_MS,
+      });
       await expect
-        .poll(async () => page.locator('.app-page__body').evaluate((el) => (el.textContent || '').trim().length), {
-          message: `/teams/team-1${path ? '/' + path : ''}：工作区一直是空的，这一条等于没做`,
-          timeout: ROUTE_READY_MS,
-        })
+        .poll(
+          async () =>
+            page
+              .locator(".app-page__body")
+              .evaluate((el) => (el.textContent || "").trim().length),
+          {
+            message: `/teams/team-1${path ? "/" + path : ""}：工作区一直是空的，这一条等于没做`,
+            timeout: ROUTE_READY_MS,
+          },
+        )
         .toBeGreaterThan(0);
     }
 
     for (const size of VIEWPORT_SIZES) {
       await page.setViewportSize(size);
       for (const path of TAB_PATHS) {
-        await page.goto(`/teams/team-1${path ? '/' + path : ''}`);
+        await page.goto(`/teams/team-1${path ? "/" + path : ""}`);
 
         // 量不到这一层就是范围选错了（比如 alice 不是成员，看到的是对外主页），
         // 空范围永远返回「没有缺陷」，是一条只会绿的断言，所以这里炸掉而不是放过。
         await expect(
-          page.locator('.app-page__body'),
+          page.locator(".app-page__body"),
           `${size.width}×${size.height} · /teams/team-1/${path}：没落在小队工作区里，这条断言等于没做`,
         ).toBeVisible({ timeout: WARM_STEP_MS });
 
@@ -670,13 +846,22 @@ test.describe('首屏以下的内容不会被裁掉而没人能滚', () => {
         // 等这一层里真的画出了字（页头在它外面，所以量到的就是当前 tab 自己的内容），
         // 四个 tab 在种子数据下都有内容，等不到就是页面根本没起来，该炸。
         await expect
-          .poll(async () => page.locator('.app-page__body').evaluate((el) => (el.textContent || '').trim().length), {
-            message: `${size.width}×${size.height} · /teams/team-1/${path}：工作区一直是空的，这一条等于没做`,
-            timeout: WARM_STEP_MS,
-          })
+          .poll(
+            async () =>
+              page
+                .locator(".app-page__body")
+                .evaluate((el) => (el.textContent || "").trim().length),
+            {
+              message: `${size.width}×${size.height} · /teams/team-1/${path}：工作区一直是空的，这一条等于没做`,
+              timeout: WARM_STEP_MS,
+            },
+          )
           .toBeGreaterThan(0);
 
-        expect(await unreachableBelowFold(page), `${size.width}×${size.height} · /teams/team-1/${path}`).toEqual([]);
+        expect(
+          await unreachableBelowFold(page),
+          `${size.width}×${size.height} · /teams/team-1/${path}`,
+        ).toEqual([]);
       }
     }
   });
@@ -691,26 +876,39 @@ test.describe('首屏以下的内容不会被裁掉而没人能滚', () => {
 // 开，`getBoundingClientRect` 看不见伪元素。量的是**浏览器认为点到了谁**：从按钮中心
 // 往上下左右各走 21px，那一点上 `elementFromPoint` 还得是这颗按钮（或它里面的东西）。
 // 撑得不够、或者被隔壁那颗盖住了一截，都会在这里红。
-test('手机外壳：顶栏和底栏上每一颗按钮，手指能点的范围至少 44×44', async ({ page }) => {
+test("手机外壳：顶栏和底栏上每一颗按钮，手指能点的范围至少 44×44", async ({
+  page,
+}) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await apiLogin(page);
   const rows = await openFirstProject(page);
-  const projectPath = new URL(page.url()).pathname.match(/^\/projects\/[^/]+/)?.[0];
+  const projectPath = new URL(page.url()).pathname.match(
+    /^\/projects\/[^/]+/,
+  )?.[0];
   expect(projectPath).toBeTruthy();
   await rows.first().click();
   await page.waitForURL(/\/topics\//);
   const topicHref = new URL(page.url()).pathname;
 
   await page.setViewportSize({ width: 390, height: 844 });
-  for (const path of ['/home', '/inbox', projectPath!, `${projectPath}/members`, `${projectPath}/routines`, topicHref]) {
+  for (const path of [
+    "/home",
+    "/inbox",
+    projectPath!,
+    `${projectPath}/members`,
+    `${projectPath}/routines`,
+    topicHref,
+  ]) {
     await page.goto(path);
-    await expect(page.locator('.v-app-bar')).toBeVisible();
-    await page.waitForLoadState('networkidle');
+    await expect(page.locator(".v-app-bar")).toBeVisible();
+    await page.waitForLoadState("networkidle");
     const { count, misses } = await page.evaluate(() => {
       const CONTROL = ':is(a[href], button, [role="tab"])';
       const scope = `.v-app-bar ${CONTROL}, .v-bottom-navigation ${CONTROL}`;
       const controls = [...document.querySelectorAll<HTMLElement>(scope)]
-        .filter((el) => el.checkVisibility?.({ checkVisibilityCSS: true }) ?? true)
+        .filter(
+          (el) => el.checkVisibility?.({ checkVisibilityCSS: true }) ?? true,
+        )
         .filter((el) => {
           const r = el.getBoundingClientRect();
           return r.width > 0 && r.height > 0;
@@ -722,14 +920,23 @@ test('手机外壳：顶栏和底栏上每一颗按钮，手指能点的范围�
         const r = el.getBoundingClientRect();
         const cx = r.left + r.width / 2;
         const cy = r.top + r.height / 2;
-        for (const [dx, dy] of [[-21, 0], [21, 0], [0, -21], [0, 21]]) {
+        for (const [dx, dy] of [
+          [-21, 0],
+          [21, 0],
+          [0, -21],
+          [0, 21],
+        ]) {
           // 贴着屏幕边的那一侧，手指按在屏幕边上也算点到。
           const x = Math.min(Math.max(cx + dx, 0), innerWidth - 1);
           const y = Math.min(Math.max(cy + dy, 0), innerHeight - 1);
           const hit = document.elementFromPoint(x, y);
           if (!hit || !(hit === el || el.contains(hit))) {
-            const name = (el.getAttribute('aria-label') || el.textContent || '').trim().slice(0, 16);
-            out.push(`「${name}」${Math.round(r.width)}×${Math.round(r.height)}，(${dx}, ${dy}) 处点到的是别的`);
+            const name = (el.getAttribute("aria-label") || el.textContent || "")
+              .trim()
+              .slice(0, 16);
+            out.push(
+              `「${name}」${Math.round(r.width)}×${Math.round(r.height)}，(${dx}, ${dy}) 处点到的是别的`,
+            );
             break;
           }
         }
@@ -746,28 +953,40 @@ test('手机外壳：顶栏和底栏上每一颗按钮，手指能点的范围�
 // 交给芝士、发送）。触屏上按钮之间要拉开、能点的范围要撑到 44×44，同样几颗在桌面
 // 上放得下，到手机上就会顶出输入框的边、或者互相盖住。所以这里在真触屏（pointer:
 // coarse）的手机宽度和桌面宽度各量一次：没有一颗伸出输入框，每一颗手指都点得中。
-test.describe('房间输入框：下面那一行放得下，手指点得中', () => {
+test.describe("房间输入框：下面那一行放得下，手指点得中", () => {
   test.use({ hasTouch: true, isMobile: true });
 
   async function measureComposer(page: Page) {
     return page.evaluate(() => {
       // 量按钮自己的盒子，不量这一行的 scrollWidth：触屏上每颗按钮的伪元素把能点的
       // 范围撑到 44×44，最右边那颗发送键的撑开部分本来就探出这一行 8px，那不算伸出去。
-      const box = document.querySelector<HTMLElement>('.composer-box');
-      const row = document.querySelector<HTMLElement>('.composer-actions');
+      const box = document.querySelector<HTMLElement>(".composer-box");
+      const row = document.querySelector<HTMLElement>(".composer-actions");
       if (!box || !row) return null;
       const edge = box.getBoundingClientRect();
-      const controls = [...row.querySelectorAll<HTMLElement>('button')].filter((el) => {
-        const r = el.getBoundingClientRect();
-        return r.width > 0 && r.height > 0;
-      });
+      const controls = [...row.querySelectorAll<HTMLElement>("button")].filter(
+        (el) => {
+          const r = el.getBoundingClientRect();
+          return r.width > 0 && r.height > 0;
+        },
+      );
       const outside: string[] = [];
       const wrapped: string[] = [];
       const misses: string[] = [];
       for (const el of controls) {
         const r = el.getBoundingClientRect();
-        const name = (el.getAttribute('aria-label') || el.getAttribute('title') || el.textContent || '').trim().slice(0, 16);
-        if (r.left < edge.left - 0.5 || r.right > edge.right + 0.5) outside.push(`「${name}」${Math.round(r.left)}–${Math.round(r.right)}`);
+        const name = (
+          el.getAttribute("aria-label") ||
+          el.getAttribute("title") ||
+          el.textContent ||
+          ""
+        )
+          .trim()
+          .slice(0, 16);
+        if (r.left < edge.left - 0.5 || r.right > edge.right + 0.5)
+          outside.push(
+            `「${name}」${Math.round(r.left)}–${Math.round(r.right)}`,
+          );
         // 挤不下时按钮先被压窄，字折成两行（「交给」竖着排），还没伸出去就已经坏了。
         // 只量字（文字节点），图标和 Vuetify 的叠层不算行。
         const lines = new Set<number>();
@@ -776,13 +995,19 @@ test.describe('房间输入框：下面那一行放得下，手指点得中', ()
           if (!node.textContent?.trim()) continue;
           const range = document.createRange();
           range.selectNodeContents(node);
-          for (const line of range.getClientRects()) if (line.width > 0) lines.add(Math.round(line.top));
+          for (const line of range.getClientRects())
+            if (line.width > 0) lines.add(Math.round(line.top));
         }
         if (lines.size > 1) wrapped.push(`「${name}」折成了 ${lines.size} 行`);
-        if (!matchMedia('(pointer: coarse)').matches) continue;
+        if (!matchMedia("(pointer: coarse)").matches) continue;
         const cx = r.left + r.width / 2;
         const cy = r.top + r.height / 2;
-        for (const [dx, dy] of [[-21, 0], [21, 0], [0, -21], [0, 21]]) {
+        for (const [dx, dy] of [
+          [-21, 0],
+          [21, 0],
+          [0, -21],
+          [0, 21],
+        ]) {
           const x = Math.min(Math.max(cx + dx, 0), innerWidth - 1);
           const y = Math.min(Math.max(cy + dy, 0), innerHeight - 1);
           const hit = document.elementFromPoint(x, y);
@@ -793,7 +1018,7 @@ test.describe('房间输入框：下面那一行放得下，手指点得中', ()
         }
       }
       return {
-        coarse: matchMedia('(pointer: coarse)').matches,
+        coarse: matchMedia("(pointer: coarse)").matches,
         count: controls.length,
         outside,
         wrapped,
@@ -802,7 +1027,7 @@ test.describe('房间输入框：下面那一行放得下，手指点得中', ()
     });
   }
 
-  test('手机（触屏）和桌面两档', async ({ page }) => {
+  test("手机（触屏）和桌面两档", async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await apiLogin(page);
     const rows = await openFirstProject(page);
@@ -817,14 +1042,17 @@ test.describe('房间输入框：下面那一行放得下，手指点得中', ()
       await page.setViewportSize(size);
       await page.goto(topicHref);
       // 手机上房间先开在别的页签，对话在「对话」页签里。
-      const chatTab = page.getByRole('tab', { name: '对话', exact: true });
+      const chatTab = page.getByRole("tab", { name: "对话", exact: true });
       if (size.width < 960) await chatTab.click();
-      await expect(page.locator('.composer-actions')).toBeVisible();
+      await expect(page.locator(".composer-actions")).toBeVisible();
       // 有字时发送键才可点（禁用的按钮不接点击，量不出来）。只填不发。
-      await page.locator('.composer-input textarea:not([aria-hidden])').fill('量一下');
+      await page
+        .locator(".composer-input textarea:not([aria-hidden])")
+        .fill("量一下");
       const got = await measureComposer(page);
       expect(got, `${size.width}：没找到输入框`).not.toBeNull();
-      if (size.width < 960) expect(got!.coarse, '手机这一档要在触屏下量').toBe(true);
+      if (size.width < 960)
+        expect(got!.coarse, "手机这一档要在触屏下量").toBe(true);
       // 附件 + 交给芝士 + 发送，至少这三颗；一颗都没量到就是范围选错了。
       expect(got!.count, `${size.width}`).toBeGreaterThanOrEqual(3);
       expect(got!.outside, `${size.width}：伸出输入框的按钮`).toEqual([]);
@@ -834,12 +1062,12 @@ test.describe('房间输入框：下面那一行放得下，手指点得中', ()
   });
 });
 
-// 设置浮层（`SettingsOverlay`）的外壳几何：左边灰栏定宽 264，右边内容列最宽 720、居中，
+// 设置浮层（`SettingsOverlay`）的外壳几何：「目录 + 内容列」一组居中（灰栏宽 max(264, (窗口−768)/2)），内容列最宽 720，
 // 关闭按钮右缘贴内容列右缘。这几条以前全都不成立 —— 灰栏随窗口长到 440，内容列贴着灰栏
 // 靠左、右边空出一大片，关闭按钮钉在窗口最右边（1280 宽时离内容右缘 64px，1920 宽时
 // 700 余 px）。四类设置页（个人、资料、项目、空间）各写各的宽度，同一条内容列里对不齐。
 // 量的都是渲染出来的盒子：这种错 vitest、typecheck、stylelint 全看不见。
-test.describe('设置浮层：灰栏定宽、内容列居中、关闭按钮不随内容滚走', () => {
+test.describe("设置浮层：目录和内容一组居中、关闭按钮不随内容滚走", () => {
   // 量当前打开的设置页：灰栏、内容列、关闭按钮三个盒子，外加内容列在主滚动区里两侧的
   // 留白。留白用 `clientWidth`（滚动条槽算在里面），居中的基准才是同一个宽度 —— 和
   // 「管理后台 · 队列页宽档」那条一个量法。
@@ -849,116 +1077,162 @@ test.describe('设置浮层：灰栏定宽、内容列居中、关闭按钮不�
         const el = document.querySelector(sel);
         if (!el) return null;
         const r = el.getBoundingClientRect();
-        return { left: r.left, right: r.right, width: r.width, top: r.top, height: r.height };
+        return {
+          left: r.left,
+          right: r.right,
+          width: r.width,
+          top: r.top,
+          height: r.height,
+        };
       };
-      const main = document.querySelector<HTMLElement>('.so__main');
-      const content = document.querySelector('.so__content');
+      const main = document.querySelector<HTMLElement>(".so__main");
+      const content = document.querySelector(".so__content");
       let gaps: { left: number; right: number } | null = null;
       if (main && content) {
         const mr = main.getBoundingClientRect();
         const cr = content.getBoundingClientRect();
-        gaps = { left: cr.left - mr.left, right: mr.left + main.clientWidth - cr.right };
+        gaps = {
+          left: cr.left - mr.left,
+          right: mr.left + main.clientWidth - cr.right,
+        };
       }
-      return { side: box('.so__side'), content: box('.so__content'), close: box('.so__close'), gaps };
+      return {
+        side: box(".so__side"),
+        content: box(".so__content"),
+        close: box(".so__close"),
+        gaps,
+      };
     });
   }
 
-  test('桌面三档：灰栏 264、内容列 720 且居中、关闭按钮贴内容右缘', async ({ page }) => {
+  test("桌面三档：目录和内容列一组居中、内容列 720、关闭按钮贴内容右缘", async ({
+    page,
+  }) => {
     await apiLogin(page);
     for (const width of [1280, 1440, 1920]) {
       await page.setViewportSize({ width, height: 900 });
-      await page.goto('/users/settings/security');
-      await expect(page.locator('.so__content')).toBeVisible();
+      await page.goto("/users/settings/security");
+      await expect(page.locator(".so__content")).toBeVisible();
       const g = await overlayGeometry(page);
       const label = `${width}px`;
 
-      // 灰栏定宽 264（目录 216 + 两侧各 24），不再随窗口变宽。
+      // 灰栏宽 max(264, (窗口 − 768) / 2)：够宽时「目录 + 内容列」一组居中，窄时守住 264。
       expect(g.side, `${label}：没落在桌面外壳里`).not.toBeNull();
-      expect(Math.round(g.side!.width), `${label}：灰栏宽`).toBeGreaterThanOrEqual(261);
-      expect(Math.round(g.side!.width), `${label}：灰栏宽`).toBeLessThanOrEqual(267);
+      const sideWant = Math.max(264, (width - 768) / 2);
+      expect(
+        Math.abs(g.side!.width - sideWant),
+        `${label}：灰栏宽`,
+      ).toBeLessThanOrEqual(3);
 
       // 内容列最宽 720 —— 四类设置页共用同一条。
       expect(g.content, `${label}：没有内容列`).not.toBeNull();
       expect(Math.round(g.content!.width), `${label}：内容列宽`).toBe(720);
 
-      // 内容列在主区里居中：两侧留白相等。
-      expect(g.gaps, `${label}：量不到主区`).not.toBeNull();
-      expect(Math.abs(g.gaps!.left - g.gaps!.right), `${label}：内容列没居中`).toBeLessThanOrEqual(3);
+      // 内容列贴着分界线，不再漂到主区中间和目录隔开一大段。
+      expect(
+        Math.abs(g.content!.left - g.side!.right),
+        `${label}：内容列没贴着分界线`,
+      ).toBeLessThanOrEqual(3);
 
       // 关闭按钮右缘贴内容列右缘（它离内容本身始终 24px，那是内容列的右内距）。
       expect(g.close, `${label}：没有关闭按钮`).not.toBeNull();
-      expect(Math.abs(g.close!.right - g.content!.right), `${label}：关闭按钮没贴内容右缘`).toBeLessThanOrEqual(3);
+      expect(
+        Math.abs(g.close!.right - g.content!.right),
+        `${label}：关闭按钮没贴内容右缘`,
+      ).toBeLessThanOrEqual(3);
     }
   });
 
-  test('同一宽度下，四类设置页的内容列左右缘一致', async ({ page }) => {
+  test("同一宽度下，四类设置页的内容列左右缘一致", async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await apiLogin(page);
     await openFirstProject(page);
-    const projectPath = new URL(page.url()).pathname.match(/^\/projects\/[^/]+/)?.[0];
+    const projectPath = new URL(page.url()).pathname.match(
+      /^\/projects\/[^/]+/,
+    )?.[0];
     expect(projectPath).toBeTruthy();
 
     const paths = [
-      '/users/settings/security',
-      '/users/settings/profile',
-      '/users/settings/devices',
+      "/users/settings/security",
+      "/users/settings/profile",
+      "/users/settings/devices",
       `${projectPath}/settings/agents`,
     ];
     const seen: { path: string; left: number; width: number }[] = [];
     for (const path of paths) {
       await page.goto(path);
-      await expect(page.locator('.so__content')).toBeVisible();
+      await expect(page.locator(".so__content")).toBeVisible();
       const g = await overlayGeometry(page);
       expect(g.content, `${path}：没有内容列`).not.toBeNull();
       seen.push({ path, left: g.content!.left, width: g.content!.width });
     }
     // 资料页原来写死 660（`--page-w-read`）、项目设置页原来没上限，都对不上别的页。
     for (const s of seen) {
-      expect(Math.abs(s.left - seen[0].left), `${s.path}：内容列左缘`).toBeLessThanOrEqual(2);
-      expect(Math.abs(s.width - seen[0].width), `${s.path}：内容列宽`).toBeLessThanOrEqual(2);
+      expect(
+        Math.abs(s.left - seen[0].left),
+        `${s.path}：内容列左缘`,
+      ).toBeLessThanOrEqual(2);
+      expect(
+        Math.abs(s.width - seen[0].width),
+        `${s.path}：内容列宽`,
+      ).toBeLessThanOrEqual(2);
     }
   });
 
-  test('平板 768：内容列 720 居中', async ({ page }) => {
+  test("平板 768：内容列 720 居中", async ({ page }) => {
     await apiLogin(page);
     await page.setViewportSize({ width: 768, height: 900 });
-    await page.goto('/users/settings/profile');
-    await expect(page.locator('.so__content')).toBeVisible();
+    await page.goto("/users/settings/profile");
+    await expect(page.locator(".so__content")).toBeVisible();
     const gaps = await page.evaluate(() => {
-      const phone = document.querySelector<HTMLElement>('.so__phone');
-      const content = document.querySelector('.so__content');
+      const phone = document.querySelector<HTMLElement>(".so__phone");
+      const content = document.querySelector(".so__content");
       if (!phone || !content) return null;
       const pr = phone.getBoundingClientRect();
       const cr = content.getBoundingClientRect();
-      return { left: cr.left - pr.left, right: pr.left + phone.clientWidth - cr.right };
+      return {
+        left: cr.left - pr.left,
+        right: pr.left + phone.clientWidth - cr.right,
+      };
     });
     // 窄于 960 是手机外壳（没有灰栏）：内容列铺到自己的 720 上限后就该居中，
     // 以前它贴着左边，右边空一整条。
-    expect(gaps, '768px：没落在手机外壳里').not.toBeNull();
-    expect(Math.abs(gaps!.left - gaps!.right), '768px：内容列没居中').toBeLessThanOrEqual(8);
+    expect(gaps, "768px：没落在手机外壳里").not.toBeNull();
+    expect(
+      Math.abs(gaps!.left - gaps!.right),
+      "768px：内容列没居中",
+    ).toBeLessThanOrEqual(8);
   });
 
-  test('往下滚一屏，关闭按钮仍在视口里、位置不变', async ({ page }) => {
+  test("往下滚一屏，关闭按钮仍在视口里、位置不变", async ({ page }) => {
     await apiLogin(page);
     await page.setViewportSize({ width: 1280, height: 480 });
-    await page.goto('/users/settings/security');
-    await expect(page.locator('.so__close')).toBeVisible();
-    const before = await page.locator('.so__close').boundingBox();
+    await page.goto("/users/settings/security");
+    await expect(page.locator(".so__close")).toBeVisible();
+    const before = await page.locator(".so__close").boundingBox();
     expect(before).not.toBeNull();
 
     // 真的滚了一屏：这一页不滚的话下面量的就不是「滚了还在」。
-    const scrolled = await page.locator('.so__main').evaluate((el) => {
+    const scrolled = await page.locator(".so__main").evaluate((el) => {
       el.scrollTop = el.clientHeight;
-      return { top: el.scrollTop, canScroll: el.scrollHeight > el.clientHeight + 1 };
+      return {
+        top: el.scrollTop,
+        canScroll: el.scrollHeight > el.clientHeight + 1,
+      };
     });
-    expect(scrolled.canScroll, '这一页不滚，这一条等于没做').toBeTruthy();
-    expect(scrolled.top, '没滚下去').toBeGreaterThan(0);
+    expect(scrolled.canScroll, "这一页不滚，这一条等于没做").toBeTruthy();
+    expect(scrolled.top, "没滚下去").toBeGreaterThan(0);
 
-    await expect(page.locator('.so__close')).toBeVisible();
-    const after = await page.locator('.so__close').boundingBox();
+    await expect(page.locator(".so__close")).toBeVisible();
+    const after = await page.locator(".so__close").boundingBox();
     expect(after).not.toBeNull();
-    expect(Math.abs(after!.y - before!.y), '关闭按钮跟着内容滚走了').toBeLessThanOrEqual(1);
-    expect(after!.y, '关闭按钮滚出了视口').toBeGreaterThanOrEqual(0);
-    expect(after!.y + after!.height, '关闭按钮滚出了视口').toBeLessThanOrEqual(480);
+    expect(
+      Math.abs(after!.y - before!.y),
+      "关闭按钮跟着内容滚走了",
+    ).toBeLessThanOrEqual(1);
+    expect(after!.y, "关闭按钮滚出了视口").toBeGreaterThanOrEqual(0);
+    expect(after!.y + after!.height, "关闭按钮滚出了视口").toBeLessThanOrEqual(
+      480,
+    );
   });
 });

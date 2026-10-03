@@ -193,11 +193,17 @@ onBeforeUnmount(() => {
   }
 }
 
-/* 桌面：左边一条定宽的灰栏（264 = 目录 216 + 两侧各 24），右边内容列居中。
-   灰栏不再随窗口变宽——以前它会长到 440，目录却始终 216，多出来的都空着。 */
+/* 桌面：「目录 + 内容列」作为一组在窗口里居中。灰栏从窗口左缘铺到分界线，目录（216）
+   贴着分界线靠右；内容列（720 + 两侧各 24 = 768）贴着分界线靠左。灰栏宽取
+   max(264, (窗口 − 768) / 2)：窗口够宽时左边灰栏和右边留白一样宽，这一组正好居中；
+   窄到 1296 以下就守住 264（目录 216 + 两侧各 24）。
+   以前灰栏封顶 440、内容列再贴左，1920 宽时右边空出 660px；第一版改成灰栏定宽 264、
+   内容列在剩下的地方居中，又让目录和内容之间隔出 500 多 px，两边看着不是一页。 */
 .so__side {
-  flex: 0 0 264px;
-  width: 264px;
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  width: max(264px, calc((100% - 768px) / 2));
   padding: 48px 24px 24px;
   overflow-y: auto;
   border-right: 1px solid var(--line);
@@ -272,7 +278,7 @@ onBeforeUnmount(() => {
 }
 
 /* 关闭按钮单独一层：它得跟着内容列右缘走，又不能随内容滚走。这一层粘在滚动口顶上
-   （sticky，高 0 不占地方），和 `.so__content` 同宽同居中，所以按钮右缘始终贴着内容
+   （sticky，高 0 不占地方），和 `.so__content` 同宽同位置，所以按钮右缘始终贴着内容
    列右缘，往下滚一屏也钉在原处。pointer-events 关掉，只让按钮自己收点击，别的一层
    空着的地方点击照旧落到底下。 */
 .so__close-layer {
@@ -281,15 +287,14 @@ onBeforeUnmount(() => {
   z-index: 1;
   height: 0;
   max-width: 720px;
-  margin-inline: auto;
   pointer-events: none;
 }
 
-/* 设置各页共用的一条内容列：最宽 720、居中、四边内距统一 24，正好容下一行设置
-   （672 卡片宽，见 settings-card.css）。各页自己不再设宽度和水平内距，都交给这一条。 */
+/* 设置各页共用的一条内容列：最宽 720、贴着分界线、四边内距统一 24，正好容下一行设置
+   （672 卡片宽，见 settings-card.css）。各页自己不再设宽度和水平内距，都交给这一条。
+   居中由灰栏的宽度负责（见 .so__side）。 */
 .so__content {
   max-width: 720px;
-  margin-inline: auto;
   padding: 24px;
 }
 
@@ -410,6 +415,7 @@ onBeforeUnmount(() => {
    水平内距由这一层给，页面自己只留竖向的。平板 768–959 因此不再贴着左边。 */
 @media (max-width: 959.98px) {
   .so__content {
+    margin-inline: auto;
     padding: 0 16px;
   }
 }
