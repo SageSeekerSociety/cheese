@@ -90,6 +90,13 @@ export function refusalText(body: unknown, serverWords: string): string {
   return renderNoticeMessage((body as { error?: { i18n?: unknown } } | null)?.error?.i18n, serverWords)
 }
 
+/** What a refusal body says, in the reader's language: for the callers that
+ *  read a response themselves instead of through the two API clients. */
+export function refusalWords(body: unknown): string {
+  const said = body as { message?: string; error?: { message?: string } } | null
+  return refusalText(body, said?.message || said?.error?.message || '')
+}
+
 /** One field of an event block, in the reader's language. */
 export function noticeText(block: Block, field: NoticeField = 'content'): string {
   const meta = (block.meta as Record<string, unknown> | null) ?? null

@@ -10,10 +10,12 @@
     <v-img v-if="hasAvatar" :src="avatar" @error="onAvatarError">
       <!-- Real avatar failed to load → colored initial, not a broken tile. -->
       <template #error>
-        <span class="user-avatar-char" :style="{ backgroundColor: fallbackColor }">{{ initial }}</span>
+        <span class="user-avatar-char" :style="{ backgroundColor: fallbackColor }" data-user-content>{{
+          initial
+        }}</span>
       </template>
     </v-img>
-    <span v-else class="user-avatar-char">{{ initial }}</span>
+    <span v-else class="user-avatar-char" data-user-content>{{ initial }}</span>
   </v-avatar>
 </template>
 

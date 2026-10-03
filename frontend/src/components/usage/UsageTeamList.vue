@@ -28,7 +28,7 @@ function left(team: UsageTeam): string {
   <section class="utl" :aria-label="t('usage.teams.title')">
     <h2 class="utl__title t-title">{{ t('usage.teams.title') }}</h2>
     <NavLink v-for="team in teams" :key="team.id" :to="linkOf(team)" class="utl__row">
-      <span class="utl__name">{{ team.name }}</span>
+      <span class="utl__name" data-user-content>{{ team.name }}</span>
       <span class="utl__plan">{{ team.plan.name }}</span>
       <span :class="`utl__left utl__left--${remainingTone(team.remaining_ratio)}`">{{ left(team) }}</span>
       <v-icon icon="mdi-chevron-right" size="16" class="utl__go" aria-hidden="true" />

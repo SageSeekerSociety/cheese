@@ -68,7 +68,7 @@ const emit = defineEmits<{
         @click="emit('open-page', homeKey)"
       >
         <v-icon class="rail-header__glyph" size="16" :icon="homeIcon" />
-        <span class="rail-header__name">{{ projectName }}</span>
+        <span class="rail-header__name" data-user-content>{{ projectName }}</span>
       </button>
       <!-- 有人找你：私聊的未读原来挂在「成员」那一行上，而那一行进了菜单。
            它是主导航上唯一会亮的「有人在等你回话」，所以跟着菜单入口走。 -->

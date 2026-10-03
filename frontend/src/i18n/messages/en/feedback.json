@@ -17,7 +17,7 @@
       "resolved": "Resolved: {v}",
       "deployed": "Deployed: {v}",
       "days": "Last {n} days",
-      "clear": "Clear this date filter"
+      "clear": "Clear this date filter: {chip}"
     },
     "lane": {
       "label": "Scope",

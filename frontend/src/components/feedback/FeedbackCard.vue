@@ -90,8 +90,8 @@ const to = computed(() => ({ name: 'FeedbackDetail', params: { id: props.item.id
 <template>
   <div class="fb-card">
     <NavLink class="fb-card__body" :to="to">
-      <span class="fb-card__title">{{ item.title }}</span>
-      <p v-if="showSummary" class="fb-card__summary t-body-readable">{{ item.summary }}</p>
+      <span class="fb-card__title" data-user-content>{{ item.title }}</span>
+      <p v-if="showSummary" class="fb-card__summary t-body-readable" data-user-content>{{ item.summary }}</p>
     </NavLink>
 
     <!-- 底行在链接外面（支持按钮是一颗真按钮，理由见文件头）。左半边是「哪一类、谁提的、

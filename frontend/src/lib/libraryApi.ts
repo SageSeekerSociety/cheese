@@ -6,6 +6,8 @@ import type { ApiEnvelope } from '@/cx_types'
 import { authToken, BASE, libraryFileRawUrl } from '../api'
 import { t } from '../i18n'
 
+import { refusalWords } from './noticeText'
+
 function auth(): Record<string, string> {
   const token = authToken()
   return token ? { Authorization: `Bearer ${token}` } : {}
@@ -42,7 +44,7 @@ async function libraryUpload(
   })
   const envelope = (await res.json().catch(() => null)) as ApiEnvelope<{ path: string; bytes: number }> | null
   if (!res.ok || !envelope || envelope.code !== 200) {
-    throw new Error(envelope?.message || t('files.library.uploadFailed', { status: res.status }))
+    throw new Error(refusalWords(envelope) || t('files.library.uploadFailed', { status: res.status }))
   }
   return envelope.data
 }

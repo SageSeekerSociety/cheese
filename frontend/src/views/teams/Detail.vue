@@ -13,7 +13,7 @@
     :width="pageWidth"
   >
     <template v-if="teamIntro" #meta>
-      <span class="team-intro">{{ teamIntro }}</span>
+      <span class="team-intro" data-user-content>{{ teamIntro }}</span>
     </template>
     <router-view />
   </AppPage>

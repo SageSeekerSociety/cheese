@@ -689,7 +689,7 @@ export function useAdminQueue(deps: AdminQueueDeps) {
         text: t('feedback.queue.window.deployed', { v: windowValueLabel(store.adminDeployedSince) }),
         clearAria: '',
       })
-    for (const c of chips) c.clearAria = `${t('feedback.queue.window.clear')}：${c.text}`
+    for (const c of chips) c.clearAria = t('feedback.queue.window.clear', { chip: c.text })
     return chips
   })
 

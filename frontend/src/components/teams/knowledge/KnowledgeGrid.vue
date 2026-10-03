@@ -61,11 +61,15 @@ const emit = defineEmits<{
               <span class="text-caption text-medium-emphasis">{{ formatDay(resource.createdAt) }}</span>
             </div>
 
-            <h3 class="text-subtitle-1 font-weight-medium resource-title mb-1">{{ resource.name }}</h3>
-            <p v-if="resource.description" class="text-body-2 resource-description">{{ resource.description }}</p>
+            <h3 class="text-subtitle-1 font-weight-medium resource-title mb-1" data-user-content>
+              {{ resource.name }}
+            </h3>
+            <p v-if="resource.description" class="text-body-2 resource-description" data-user-content>
+              {{ resource.description }}
+            </p>
 
             <!-- 标签 -->
-            <div v-if="resource.labels && resource.labels.length > 0" class="resource-tags mt-2">
+            <div v-if="resource.labels && resource.labels.length > 0" class="resource-tags mt-2" data-user-content>
               <v-chip
                 v-for="tag in resource.labels.slice(0, 3)"
                 :key="tag"

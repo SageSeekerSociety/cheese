@@ -71,7 +71,7 @@ export async function setDemoLanguage(
 // Set up non-auth browser scenarios through the real login and consent APIs.
 // Each Playwright test has a fresh context; the UI login path is covered in
 // auth.spec.ts instead of paying for that form navigation in every scenario.
-export async function apiLogin(page: Page) {
+export async function apiLogin(page: Page, language: "zh-CN" | "en" = "zh-CN") {
   const signedIn = await page.request.post("/api/users/auth/login", {
     data: { username: DEMO_USERNAME, password: DEMO_PASSWORD },
   });
@@ -86,19 +86,23 @@ export async function apiLogin(page: Page) {
     throw new Error("Demo login did not return a complete session");
 
   await acceptPendingConsents(page, loginData.accessToken);
-  // The suite reads Chinese (playwright.config.ts `locale`).
-  await setDemoLanguage(page, "zh-CN", loginData.accessToken);
+  // The suite reads Chinese (playwright.config.ts `locale`) unless a scenario
+  // asks for English.
+  await setDemoLanguage(page, language, loginData.accessToken);
 
   // This static asset gives the page the application's origin without booting
   // the SPA. Write storage once so later navigation cannot resurrect a session.
   const asset = await page.goto("/favicon.ico");
   if (!asset?.ok()) throw new Error("Could not initialize app-origin storage");
   await page.evaluate(
-    ({ accessToken, user }) => {
+    ({ accessToken, user, language }) => {
       localStorage.setItem("accessToken", accessToken);
       localStorage.setItem("user", JSON.stringify(user));
+      // The browser's copy of the choice (frontend/src/i18n/index.ts), read
+      // before the account answers.
+      localStorage.setItem("cheese:locale", language);
     },
-    { accessToken: loginData.accessToken, user: loginData.user },
+    { accessToken: loginData.accessToken, user: loginData.user, language },
   );
   await page.goto("/spaces");
   await page

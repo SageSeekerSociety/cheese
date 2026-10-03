@@ -1,5 +1,6 @@
 {
   "back": "返回",
+  "labelWithAside": "{label}（{aside}）",
   "cancel": "取消",
   "cheese": "知是",
   "copyright": "© {year} 知是",

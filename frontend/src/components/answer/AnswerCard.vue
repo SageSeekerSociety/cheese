@@ -3,7 +3,7 @@
   <v-card :id="`answer-${answer.id}`" flat rounded="lg">
     <v-card-item>
       <v-card-title>{{ answer.author.nickname }}</v-card-title>
-      <v-card-subtitle>{{ answer.author.intro }}</v-card-subtitle>
+      <v-card-subtitle data-user-content>{{ answer.author.intro }}</v-card-subtitle>
       <template #prepend>
         <user-avatar :avatar="getAvatarUrl(answer.author.avatarId)" />
       </template>

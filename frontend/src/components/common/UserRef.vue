@@ -37,8 +37,16 @@ function go(e: Event) {
 </script>
 
 <template>
-  <span v-if="to" class="mention" :data-handle="handle" role="link" tabindex="0" @click="go" @keydown.enter.prevent="go"
+  <span
+    v-if="to"
+    class="mention"
+    :data-handle="handle"
+    data-user-content
+    role="link"
+    tabindex="0"
+    @click="go"
+    @keydown.enter.prevent="go"
     >@{{ label }}</span
   >
-  <span v-else-if="label" class="mention mention--static">@{{ label }}</span>
+  <span v-else-if="label" class="mention mention--static" data-user-content>@{{ label }}</span>
 </template>

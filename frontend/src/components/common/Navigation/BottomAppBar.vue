@@ -11,9 +11,9 @@
       :active="item.match ? item.match(here) : undefined"
       :aria-label="
         item.badge
-          ? `${item.title}（${item.badge}）`
+          ? t('global.labelWithAside', { label: item.title, aside: item.badge })
           : item.dot
-            ? `${item.title}（${t('home.nav.unreadActivity')}）`
+            ? t('global.labelWithAside', { label: item.title, aside: t('home.nav.unreadActivity') })
             : undefined
       "
       @click="!item.to && item.action?.()"

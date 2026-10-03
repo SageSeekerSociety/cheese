@@ -4,7 +4,7 @@
       <v-col>
         <v-card v-if="questionData" rounded="lg" flat>
           <v-card-item>
-            <v-card-title class="text-h5">{{ questionData.title }}</v-card-title>
+            <v-card-title class="text-h5" data-user-content>{{ questionData.title }}</v-card-title>
             <v-card-subtitle class="d-flex align-center question-info">
               <span>{{ t('questions.detail.createdAt', { time: createdAt }) }}</span>
               <span v-if="showUpdatedAt">{{ t('questions.detail.updatedAt', { time: updatedAt }) }}</span>
