@@ -113,13 +113,15 @@ onBeforeUnmount(() => {
           </nav>
         </div>
         <main class="so__main">
+          <div class="so__close-layer">
+            <button type="button" class="so__close" :aria-label="closeLabel" :title="closeTitle" @click="emit('close')">
+              <v-icon icon="mdi-close" size="20" />
+            </button>
+          </div>
           <div class="so__content">
             <slot />
           </div>
         </main>
-        <button type="button" class="so__close" :aria-label="closeLabel" :title="closeTitle" @click="emit('close')">
-          <v-icon icon="mdi-close" size="20" />
-        </button>
       </template>
 
       <template v-else>
@@ -152,7 +154,9 @@ onBeforeUnmount(() => {
               </div>
             </div>
           </nav>
-          <slot v-else />
+          <div v-else class="so__content">
+            <slot />
+          </div>
         </div>
       </template>
     </div>
@@ -189,14 +193,12 @@ onBeforeUnmount(() => {
   }
 }
 
-/* 桌面：左边目录贴着分界线靠右，右边内容靠左，两边中间就是视线落的地方。 */
+/* 桌面：左边一条定宽的灰栏（264 = 目录 216 + 两侧各 24），右边内容列居中。
+   灰栏不再随窗口变宽——以前它会长到 440，目录却始终 216，多出来的都空着。 */
 .so__side {
-  display: flex;
-  flex: 1 1 232px;
-  justify-content: flex-end;
-  min-width: 232px;
-  max-width: 440px;
-  padding: 48px 16px 24px;
+  flex: 0 0 264px;
+  width: 264px;
+  padding: 48px 24px 24px;
   overflow-y: auto;
   border-right: 1px solid var(--line);
   background: var(--canvas);
@@ -265,17 +267,37 @@ onBeforeUnmount(() => {
   flex: 1 1 800px;
   min-width: 0;
   overflow-y: auto;
+  /* 有滚动条时内容列仍居中：槽位常驻，不随滚动条出现/消失而左右跳一格，和项目页一致。 */
+  scrollbar-gutter: stable;
 }
 
+/* 关闭按钮单独一层：它得跟着内容列右缘走，又不能随内容滚走。这一层粘在滚动口顶上
+   （sticky，高 0 不占地方），和 `.so__content` 同宽同居中，所以按钮右缘始终贴着内容
+   列右缘，往下滚一屏也钉在原处。pointer-events 关掉，只让按钮自己收点击，别的一层
+   空着的地方点击照旧落到底下。 */
+.so__close-layer {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  height: 0;
+  max-width: 720px;
+  margin-inline: auto;
+  pointer-events: none;
+}
+
+/* 设置各页共用的一条内容列：最宽 720、居中、四边内距统一 24，正好容下一行设置
+   （672 卡片宽，见 settings-card.css）。各页自己不再设宽度和水平内距，都交给这一条。 */
 .so__content {
-  max-width: 820px;
-  padding: 24px 72px 48px 16px;
+  max-width: 720px;
+  margin-inline: auto;
+  padding: 24px;
 }
 
 .so__close {
   position: absolute;
   top: 48px;
-  right: 40px;
+  right: 0;
+  pointer-events: auto;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -382,5 +404,26 @@ onBeforeUnmount(() => {
 
 .so__chevron {
   color: var(--faint);
+}
+
+/* 手机外壳（窄于 960，和 mdAndUp 同一条线）：进到某一页时内容列照旧最宽 720 居中，
+   水平内距由这一层给，页面自己只留竖向的。平板 768–959 因此不再贴着左边。 */
+@media (max-width: 959.98px) {
+  .so__content {
+    padding: 0 16px;
+  }
+}
+
+/* 触屏上手指点得中（docs/design-system.md §4、§10.1）：目录项从 36px 提到 44px，
+   关闭按钮撑到 44×44。 */
+@media (pointer: coarse) {
+  .so__item {
+    min-height: 44px;
+  }
+
+  .so__close {
+    width: 44px;
+    height: 44px;
+  }
 }
 </style>
