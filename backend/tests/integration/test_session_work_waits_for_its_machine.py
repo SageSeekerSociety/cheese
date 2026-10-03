@@ -123,6 +123,7 @@ def cloud_rooms(client, monkeypatch):
 
     hub = SimpleNamespace(
         is_online=lambda device: device in online,
+        reconnecting=lambda device: False,
         exec=AsyncMock(side_effect=install),
     )
     monkeypatch.setattr(work_lease, "device_hub", hub)
