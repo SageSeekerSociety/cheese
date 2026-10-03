@@ -51,6 +51,7 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
         receipts: ReceiptConsumer | None = None,
         pulse: subscription.Pulse | None = None,
         memory: Callable[[], Awaitable[None]] | None = None,
+        took: subscription.Took | None = None,
     ):
         super().__init__(
             session,
@@ -61,6 +62,7 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
             receipts=receipts,
             pulse=pulse,
             memory=memory,
+            took=took,
         )
         self.session_id = session_id
         self.announce = announce
@@ -93,6 +95,14 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
     def receipt(self, record: dict) -> str | None:
         if (record.get("cheese") or {}).get("receipt"):
             return said(record)
+        return None
+
+    def taken(self, record: dict) -> str | None:
+        # The echo of an input that did not open a turn: the build read it at
+        # a tool boundary of the one running (the runner's ``observe``).
+        stamp = record.get("cheese") or {}
+        if stamp.get("receipt") and not stamp.get("turn_start"):
+            return str(record.get("uuid") or "") or None
         return None
 
     def marks(self, record: dict, events: list[AgentEvent]) -> set[str]:

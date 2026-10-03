@@ -105,6 +105,7 @@ class ClaudeCodeRuntime(DrivenRuntime[Handle]):
             receipts=receipt,
             pulse=self.pulse,
             memory=self._memory_hook(handle.session.topic_id),
+            took=self._took,
         )
 
     async def memory(self, topic_id: uuid.UUID, request: dict) -> dict | None:
