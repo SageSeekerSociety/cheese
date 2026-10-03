@@ -471,10 +471,10 @@ def test_nondefault_timer_reaches_the_named_agent_through_real_turn_assembly(
         receipt_committed = asyncio.Event()
         original_receipt = chat.confirm_prompt_receipt
 
-        async def observe_receipt(topic_id, prompt):
+        async def observe_receipt(receipt):
             receipt_started.set()
             await release_receipt.wait()
-            await original_receipt(topic_id, prompt)
+            await original_receipt(receipt)
             receipt_committed.set()
 
         chat._compute.bind_receipts(observe_receipt)

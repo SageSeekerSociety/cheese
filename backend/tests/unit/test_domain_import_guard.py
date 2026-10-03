@@ -296,14 +296,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # topics.py 的 import 里读；`ProjectMachineRepository` 只在
         # `set_topic_compute_profile` 里读一次，随它搬走。拆模块没有新增跨包的边，
         # 只是发起方从 topics.py 换成了 topics_compute.py，所以按同一笔债入账。
-        # topics_messages 是从 routes/topics.py 里拆出来的那一块（房间往外说的话：
-        # 发布消息、在聊天里问一道选项题、给同 handle 的另一条线程留便条，以及消息
-        # @ 到队友后叫醒它的那一步）。它摸的 repository 是 `AgentTurnRepository`，
-        # 而 `ask_options` 是 topics.py 里**唯一**读它的地方——它随代码一起搬走，
-        # 发起方从 topics.py 换成了 topics_messages.py。`BlockRepository` 那条债仍
-        # 在 topics.py 名下（新模块从 topics.py 的 import 里拿这个名字）。拆模块
-        # 没有新增跨包的边，也没还掉任何一条，所以按同一笔债入账。
-        ("app.api.routes.topics_messages", "app.domain.agent.repositories"),
         # --- users 包 --- users.py 拆成 routes/users/ 之后（第 4 步重构），原先记在
         # users.py 名下的三条 repository 债按代码现在住的地方重新入账：账户读写、用户
         # 目录查询、用户偏好各自摸自己摸的那几条。拆模块没有新增跨包的边，也没还掉任何

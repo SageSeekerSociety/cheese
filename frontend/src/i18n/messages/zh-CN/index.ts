@@ -1,6 +1,7 @@
 import account from './account.json'
 import admin from './admin.json'
 import apiError from './apiError.json'
+import ask from './ask.json'
 import compute from './compute.json'
 import credits from './credits.json'
 import design from './design.json'
@@ -34,6 +35,7 @@ import users from './users.json'
 import work from './work.json'
 
 export default {
+  ask,
   credits,
   global,
   home,

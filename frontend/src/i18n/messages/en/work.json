@@ -413,7 +413,6 @@
       "upgrade": "Move to a new topic",
       "downloadFile": "Download {name}",
       "openFile": "Open {name}",
-      "askAnswered": "{who} picked “{option}”",
       "upgradedToTask": "Moved to a task",
       "upgradedToTopic": "Moved to a topic"
     },
@@ -440,16 +439,6 @@
       "sendPhotos": "Send photos",
       "more": "More actions",
       "send": "Send"
-    },
-    "ask": {
-      "title": "Ask with options",
-      "question": "Question",
-      "option": "Option {n}",
-      "addOption": "Add option",
-      "removeOption": "Remove option",
-      "repeated": "Same as an option above",
-      "send": "Send",
-      "failed": "Couldn't send"
     },
     "dispatched": {
       "created": "New task",
@@ -853,7 +842,6 @@
       "loadingOlder": "Loading older messages…",
       "older": "Older messages",
       "newMessagesBelow": "New messages below",
-      "pickFailed": "Couldn't select",
       "reactionFailed": "Couldn't update the reaction",
       "undoFailed": "Couldn't undo",
       "downloadFailed": "Couldn't download",

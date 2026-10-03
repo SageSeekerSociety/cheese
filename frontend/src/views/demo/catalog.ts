@@ -16,6 +16,7 @@ import type { Component } from 'vue'
 import { avatarColor } from '@/utils/avatar'
 
 import { ACCEPT_ENTRIES } from './catalogAccept'
+import { ASK_ENTRIES } from './catalogAsk'
 import { CHAT_ENTRIES } from './catalogChat'
 import { CREDITS_ENTRIES } from './catalogCredits'
 import { DASHBOARD_ENTRIES } from './catalogDashboard'
@@ -25,6 +26,8 @@ import {
   ACTION_ROWS,
   ADMIN_QUEUE,
   AGENT_NAME,
+  ASK_ANSWERED,
+  ASK_OPEN,
   BAR_ROWS,
   BAR_ROWS_LONG,
   CARD_FILED,
@@ -204,6 +207,31 @@ export const CATALOG: CatalogEntry[] = [
     component: RoomMessage,
     needs: ['vuetify', 'i18n'],
     states: [
+      {
+        name: '提问：还没答（选择后提交）',
+        note: '选项先保存在草稿里，明确提交后才作答。',
+        props: roomMessageProps(ASK_OPEN, {
+          viewer: 'wang',
+          askState: {
+            draft: { kind: null, option: '', note: '', later: false },
+            pending: null,
+            editing: false,
+            busy: false,
+            fresh: true,
+            saved: false,
+            error: null,
+            conflict: false,
+            storageBlocked: false,
+          },
+        }),
+        expect: '课程平台收文件',
+      },
+      {
+        name: '提问：已经有人答了（回执）',
+        note: '显示真实答案日志，执行者是否接续仍需回执确认。',
+        props: roomMessageProps(ASK_ANSWERED),
+        expect: '课程平台收文件',
+      },
       {
         name: '留言（没有交给芝士）',
         note: '名字、头像、时间都带上的第一条（runStart）。',
@@ -933,6 +961,8 @@ export const CATALOG: CatalogEntry[] = [
       },
     ],
   },
+  // 提案那两件（`AskCard`、`AskFlow`）在自己的文件里：`catalogAsk.ts`。
+  ...ASK_ENTRIES,
   {
     id: 'compute-choice-form',
     title: 'ComputeChoiceForm',

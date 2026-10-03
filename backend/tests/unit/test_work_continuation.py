@@ -21,10 +21,11 @@ from app.domain.agent.runtime import (
     addressed_to_agent,
 )
 from tests.support.hang import HANG_S
+from tests.support.work_chat import WorkChat
 from tests.turn_log import a_topic, open_turn
 
 
-class _Quiet:
+class _Quiet(WorkChat):
     session_factory = None
 
     def replaying(self, topic_id):
@@ -143,7 +144,7 @@ async def test_continuation_for_is_none_outside_a_running_turn(db_factory):
 # is why both are read off it — and why they must agree about which turn "now" is.
 
 
-class _Blocks:
+class _Blocks(WorkChat):
     """A turn that reaches the middle and waits, so a caller can observe the
     runner WHILE a turn is live — which is the only state `turn_author_for` is
     allowed to answer from."""

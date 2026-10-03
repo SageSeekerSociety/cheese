@@ -37,6 +37,7 @@ from typing import Any
 
 from app.domain.agent.harness import HarnessEvent, Opening, SessionRef
 from app.domain.agent.service import AgentEvent, AgentMessage
+from app.domain.delivery.input_identity import CompletionConsumer, InputRegistrar
 from tests.support.fake_subagent import FakeSubagent
 
 FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "harness-contract"
@@ -176,6 +177,7 @@ class ContractHarness:
         *,
         work_id: uuid.UUID,
         on_mark: Callable[[uuid.UUID], None],
+        register_input: InputRegistrar,
         images: list[dict] | None = None,
         owes_reply: bool = False,
     ) -> bool | None:
@@ -194,6 +196,7 @@ class ContractHarness:
         text: str,
         images: list[dict] | None = None,
         *,
+        register_input: InputRegistrar,
         expected_work_id: uuid.UUID | None = None,
         agent_handle: str | None = None,
         owes_reply: bool = False,
@@ -267,9 +270,9 @@ class ContractHarness:
         raise NotImplementedError("the contract harness runs no model")
         yield  # pragma: no cover - makes this an async generator
 
-    # The protocol asks a runtime to accept these five; it does not ask it to
-    # keep them. Nothing here ever produces an event, an activity ping, a
-    # receipt, an unread count or an unreachable machine, so a field holding
+    # The protocol asks a runtime to accept these consumers; it does not ask it
+    # to keep them. Nothing here ever produces an event, an activity ping, a
+    # receipt, a completion, an unread count or an unreachable machine. Holding
     # the consumer would be state with no reader — the kind of thing this set
     # exists to delete.
     def bind_events(self, consumer: Any) -> None:
@@ -279,6 +282,9 @@ class ContractHarness:
         return None
 
     def bind_receipts(self, consumer: Any) -> None:
+        return None
+
+    def bind_completions(self, consumer: CompletionConsumer) -> None:
         return None
 
     def bind_unread_probe(self, probe: Any) -> None:
@@ -291,6 +297,12 @@ class ContractHarness:
         return None
 
     async def memory(self, topic_id: uuid.UUID, request: dict) -> dict | None:
+        return None
+
+    async def ask_origin(
+        self, project_id: uuid.UUID, topic_id: uuid.UUID, agent_handle: str
+    ) -> dict | None:
+        # This harness runs no native model, so it cannot authenticate an Ask.
         return None
 
     def holds(self, topic_id: uuid.UUID, agent_handle: str | None = None) -> bool:

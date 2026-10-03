@@ -48,6 +48,14 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from app.domain.agent.service import AgentEvent
+from app.domain.delivery.input_identity import (
+    CompletionConsumer,
+    InputRegistrar,
+    ReceiptConsumer,
+)
+from app.domain.delivery.input_identity import (
+    TerminationConsumer as TerminationConsumer,
+)
 
 if TYPE_CHECKING:
     from app.domain.agent.compute import ComputeProvider
@@ -89,10 +97,6 @@ class ActivityConsumer(Protocol):
         agent_handle: str | None = None,
     ) -> Awaitable[None]: ...
 
-
-# (topic, prompt text) — a session CONSUMED an input we injected. Late by
-# design: the write is delivery, this is the receipt.
-ReceiptConsumer = Callable[[uuid.UUID, str], Awaitable[None]]
 
 # (topic) — lay this room's memory tree down in its session, and take back what
 # the agent wrote into it. Asked at two moments, and both ask the same question:
@@ -289,6 +293,8 @@ class Opening:
 
     system_prompt: str
     resume_token: str | None = None
+    # An Ask answer may use only this existing conversation, never a cold one.
+    expected_native_session: str | None = None
     model: str | None = None
     env: dict[str, str] | None = None
     memory_scope: str | None = None
@@ -355,6 +361,12 @@ class AgentRuntime(Protocol):
     # question ("which machine pool"), and one attribute cannot mean both.
     harness: str
 
+    async def ask_origin(
+        self, project_id: uuid.UUID, topic_id: uuid.UUID, agent_handle: str
+    ) -> dict | None:
+        """Read the exact live native seat without starting or sending work."""
+        ...
+
     async def ensure(
         self, session: SessionRef, opening: Opening, *, work_id: uuid.UUID | None = None
     ) -> object:
@@ -369,6 +381,7 @@ class AgentRuntime(Protocol):
         *,
         work_id: uuid.UUID,
         on_mark: Callable[[uuid.UUID], None],
+        register_input: InputRegistrar,
         images: list[dict] | None = None,
         owes_reply: bool = False,
     ) -> bool | None:
@@ -382,7 +395,7 @@ class AgentRuntime(Protocol):
         the room before it does anything else (`driven/runner.py`).
 
         ``work_id`` and ``on_mark`` do not belong to this contract and are
-        declared anyway, because the only caller passes them and a signature
+        declared anyway, because every caller passes them and a signature
         that pretended otherwise would be a promise no second harness could
         keep. They are the platform's turn bookkeeping — a turn is still what
         the room shows and what gets billed — and they leave when a turn stops
@@ -406,6 +419,7 @@ class AgentRuntime(Protocol):
         text: str,
         images: list[dict] | None = None,
         *,
+        register_input: InputRegistrar,
         expected_work_id: uuid.UUID | None = None,
         agent_handle: str | None = None,
         owes_reply: bool = False,
@@ -469,6 +483,7 @@ class AgentRuntime(Protocol):
         prompt: str,
         system_prompt: str,
         resume_session_id: str | None,
+        register_input: InputRegistrar,
         model: str | None = None,
         env: dict[str, str] | None = None,
         memory_scope: str | None = None,
@@ -506,6 +521,10 @@ class AgentRuntime(Protocol):
 
     def bind_receipts(self, consumer: ReceiptConsumer) -> None:
         """Where 「会话真的读到了那条消息」 goes."""
+        ...
+
+    def bind_completions(self, consumer: CompletionConsumer) -> None:
+        """Where exact durable native work completion is committed."""
         ...
 
     def bind_unread_probe(self, probe: UnreadProbe) -> None:

@@ -147,8 +147,13 @@ uv run --with lxml python3 "$SKILL/scripts/office.py" validate 报告.docx --bas
 `cheese_ask` 把两个确定的出口摆给人：
 
 ```
-cheese_ask(question="《报告》两边都改了同一段，重做落不下去",
-           option=["用我这一版（他那次修改不保留）", "用主干那一版（我这一轮不保留）"])
+cheese_ask(questions=[{
+    "question": "《报告》两边都改了同一段，重做落不下去，保留哪一版？",
+    "options": [
+        {"text": "用我这一版", "explain": "他那次修改不保留"},
+        {"text": "用主干那一版", "explain": "我这一轮不保留"}
+    ]
+}])
 ```
 
 同样交给人的还有两种：你这一轮不是用 `edit` 改的（没有可重放的替换），以及两边各自重写

@@ -21,6 +21,7 @@ from app.domain.agent.harness.launch import ExecutorLaunch
 from app.domain.agent.service import AgentMessage, AgentResult
 from app.domain.agent_session.models import SessionPlace
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.delivery.input_identity import InputIdentity, InputReceipt
 
 
 @pytest.mark.anyio
@@ -168,6 +169,7 @@ async def test_room_send_steer_and_reconnect_keep_one_work_owner(tmp_path):
     assert isinstance(runtime, AgentRuntime)
     consumer = AsyncMock()
     receipts = AsyncMock()
+    register_input = AsyncMock()
     runtime.bind_events(consumer)
     runtime.bind_receipts(receipts)
     marks = []
@@ -179,17 +181,40 @@ async def test_room_send_steer_and_reconnect_keep_one_work_owner(tmp_path):
             Opening("system"),
             work_id=work,
             on_mark=marks.append,
+            register_input=register_input,
             images=[{"path": "uploads/image.png"}],
         )
         assert marks == [work]
         assert inputs[0]["input_id"] == str(work)
         assert inputs[0]["images"] == ["data:image/png;base64,fixture"]
-        assert await runtime.deliver(session.topic_id, "steer")
+        assert await runtime.deliver(
+            session.topic_id, "steer", register_input=register_input
+        )
         assert inputs[1]["work_id"] == str(work)
         assert inputs[1]["input_id"] != inputs[0]["input_id"]
-        assert [entry.args[1] for entry in receipts.await_args_list] == [
-            "first",
-            "steer",
+        identities = [entry.args[0] for entry in register_input.await_args_list]
+        assert identities == [
+            InputIdentity(
+                session.project_id,
+                session.topic_id,
+                "agent",
+                "codex",
+                "thread",
+                work,
+                work,
+            ),
+            InputIdentity(
+                session.project_id,
+                session.topic_id,
+                "agent",
+                "codex",
+                "thread",
+                uuid.UUID(inputs[1]["input_id"]),
+                work,
+            ),
+        ]
+        assert [entry.args for entry in receipts.await_args_list] == [
+            (InputReceipt(identity, "accepted"),) for identity in identities
         ]
         # Lose only the backend reader. The remote process completes on its own.
         await runtime._detach(runtime._seat_of(session))

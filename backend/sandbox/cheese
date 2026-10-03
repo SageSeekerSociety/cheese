@@ -544,17 +544,46 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_ask",
-            "在对话里发一个带按钮的问题，用户点一下就是答案，自动带回你下一轮。"
-            "要人拍板时首选它，别让人打字。",
+            "在对话里一次创建完整题组，用户选择或填写后明确提交。"
+            "返回题组和问题 id；创建成功不表示已作答或原执行者已接续。",
             {
-                "question": _text("问题，一句话问清楚"),
-                "option": {
+                "questions": {
                     "type": "array",
-                    "items": {"type": "string"},
-                    "description": "2-4 个选项",
+                    "minItems": 1,
+                    "maxItems": 8,
+                    "description": "1-8 题，按显示顺序一次给全，不能向已有题组追加",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "question": _text("问题，一句话问清楚"),
+                            "options": {
+                                "type": "array",
+                                "minItems": 2,
+                                "maxItems": 3,
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "text": _text("选项标签"),
+                                        "explain": _text("选项说明或取舍"),
+                                    },
+                                    "required": ["text"],
+                                },
+                            },
+                            "allow_other": {
+                                "type": "boolean",
+                                "description": "允许自由输入，默认 true",
+                            },
+                            "reject_option": {
+                                "type": "boolean",
+                                "description": "显示「以上都不是」，默认 true",
+                            },
+                        },
+                        "required": ["question", "options"],
+                    },
                 },
+                "ask_group": _text("可选的题组 id；重试同一请求时保持 id 和内容不变"),
             },
-            ["question", "option"],
+            ["questions"],
         ),
         _tool(
             "cheese_feedback_propose",
@@ -750,6 +779,39 @@ def _given(args: dict, *keys: str) -> dict:
         if args.get(name) not in (None, "", []):
             body[field or name] = args[name]
     return body
+
+
+def _ask_body(args: dict) -> dict:
+    """Validate the entire group before publishing its one HTTP request."""
+    questions = args.get("questions")
+    if not isinstance(questions, list) or not 1 <= len(questions) <= 8:
+        raise ValueError("ask requires 1-8 questions")
+    for question in questions:
+        if not isinstance(question, dict):
+            raise ValueError("each question must be an object")
+        text = question.get("question")
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError("each question requires nonempty question text")
+        options = question.get("options")
+        if not isinstance(options, list) or not 2 <= len(options) <= 3:
+            raise ValueError("each question requires 2-3 object options")
+        for option in options:
+            if not isinstance(option, dict):
+                raise ValueError("each option must be a {text, explain?} object")
+            text = option.get("text")
+            if not isinstance(text, str) or not text.strip():
+                raise ValueError("each option requires nonempty text")
+            if "explain" in option and not isinstance(option["explain"], str):
+                raise ValueError("option explain must be a string")
+        for flag in ("allow_other", "reject_option"):
+            if flag in question and not isinstance(question[flag], bool):
+                raise ValueError(f"{flag} must be a boolean")
+    if "ask_group" in args:
+        group = args["ask_group"]
+        if not isinstance(group, str) or not group.strip():
+            raise ValueError("ask_group must be a nonempty string when provided")
+    # Identity is supplied by the host credential, never an author in args.
+    return {"questions": questions, **_given(args, "ask_group")}
 
 
 def routine_spec_checked(
@@ -1012,13 +1074,10 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             body["prompt"] = args["prompt"]
         return {"method": "POST", "path": "/fetch", "body": body}
     if tool == "cheese_ask":
-        options = [value.strip() for value in args["option"] if value.strip()]
-        if not 2 <= len(options) <= 4:
-            raise ValueError("ask requires 2-4 options")
         return {
             "method": "POST",
-            "path": f"/topics/{topic}/ask",
-            "body": {"question": args["question"], "options": options},
+            "path": f"/topics/{topic}/asks",
+            "body": _ask_body(args),
         }
     if tool == "cheese_notify":
         options = [
@@ -1894,6 +1953,12 @@ def _say_chat_send(args, data, env) -> str:
     return json.dumps(data, ensure_ascii=False)
 
 
+def _say_ask(args, data, env) -> str:
+    if not isinstance(data, dict) or not data.get("group") or not data.get("blocks"):
+        raise PlatformToolError("ask response has no created group or question blocks")
+    return json.dumps(data, ensure_ascii=False)
+
+
 def _say_todo(args, data, env) -> str:
     data = data or {}
     items = data.get("items") or []
@@ -2005,7 +2070,7 @@ _SAY = {
     "cheese_members": _say_members,
     "cheese_status": lambda a, d, e: _format_status(d or {}),
     "cheese_library_ls": _say_library,
-    "cheese_ask": lambda a, d, e: "已发出选项问题，用户点了按钮会带回你下一轮。",
+    "cheese_ask": _say_ask,
     # 卡片由平台渲染，所以这里只说结果。
     "cheese_feedback_propose": lambda a, d, e: (
         f"已提案（卡 id {(d or {}).get('block_id')}），等人按「提交反馈」。"

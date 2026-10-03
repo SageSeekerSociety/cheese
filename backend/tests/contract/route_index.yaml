@@ -1024,7 +1024,7 @@ routes:
   - {protocol: "http", method: "PUT", path: "/topics/{topic_id}/progress", auth: "actor.topic.enforced", owner: "topic"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/overview", auth: "actor.topic", owner: "topic"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/summon", auth: "actor.topic", owner: "topic"}
-  - {protocol: "http", method: "POST", path: "/topics/blocks/{block_id}/answer", auth: "actor.topic", owner: "topic"}
+  - {protocol: "http", method: "POST", path: "/topics/blocks/{block_id}/answers", auth: "actor.topic", owner: "topic"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/webhook-token", auth: "cheese.room.gate", owner: "webhook"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/weekly", auth: "actor.topic", owner: "topic"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/read", auth: "actor.topic", owner: "topic"}
@@ -1066,8 +1066,11 @@ routes:
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/documents/revisions", auth: "actor.topic", owner: "documents"}
   # app.api.routes.topics_messages
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/messages", auth: "actor.topic.verified", owner: "topic.chat"}
-  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/ask", auth: "actor.topic", owner: "topic.chat"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/note", auth: "cheese.room.gate", owner: "delivery"}
+  # app.api.routes.topics_asks
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/asks", auth: "actor.topic.enforced", owner: "topic.chat"}
+  - {protocol: "http", method: "GET", path: "/topics/asks/{group_id}", auth: "actor.topic.enforced", owner: "topic.chat"}
+  - {protocol: "http", method: "POST", path: "/topics/asks/{group_id}/settle", auth: "actor.topic.enforced", owner: "topic.chat"}
   # app.api.routes.topics_preview
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/preview", auth: "actor.topic", owner: "preview"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/preview/file", auth: "actor.topic", owner: "preview"}

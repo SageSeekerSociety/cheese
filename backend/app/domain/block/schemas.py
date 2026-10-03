@@ -22,13 +22,6 @@ class ReactionToggleIn(BaseModel):
     emoji: str = Field(min_length=1, max_length=32)
 
 
-class OptionAnswerIn(BaseModel):
-    """POST /topics/blocks/{id}/answer — the option picked, one of the ask's own.
-    Who picked it is the credential's, never the body's."""
-
-    option: str
-
-
 class BlockOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

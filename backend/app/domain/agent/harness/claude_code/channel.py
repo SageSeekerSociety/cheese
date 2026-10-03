@@ -138,6 +138,7 @@ class ClaudeCodeChannel:
             status["session_id"],
             agent,
             self._mirror(session, placed["resource"] + agent),
+            status.get("input_protocol"),
             frozenset(status.get("capabilities") or ()),
             screen=screen.sid,
         )
@@ -291,6 +292,7 @@ class ClaudeCodeChannel:
                     status["session_id"],
                     agent,
                     self._mirror(ref, place.resource_id + agent),
+                    status.get("input_protocol"),
                     frozenset(status.get("capabilities") or ()),
                 )
             )

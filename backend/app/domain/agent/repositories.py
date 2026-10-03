@@ -5,9 +5,10 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import select, update
+from sqlalchemy import ColumnElement, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import InstrumentedAttribute
 
 from app.domain.agent.models import AgentTurn
 
@@ -232,6 +233,31 @@ class AgentTurnRepository:
         if agent_handle is not None:
             stmt = stmt.where(AgentTurn.agent_handle == agent_handle)
         return (await self._session.execute(stmt)).scalar_one_or_none()
+
+    @staticmethod
+    def interval_is_over(
+        *,
+        turn_id: InstrumentedAttribute[uuid.UUID],
+        topic_id: InstrumentedAttribute[uuid.UUID],
+    ) -> ColumnElement[bool]:
+        """Whether the interval these columns name is one the platform ended.
+
+        A correlated EXISTS, for rows that name their work from the outside: a
+        delivery input carries the ``work_id``/``topic_id`` of the turn opened
+        to carry it, and the platform ends work by stamping ``stopped_at``. A
+        work the platform has no row for is NOT over — silence is not a
+        conclusion. As a clause rather than a second question so the caller's
+        query stays one query.
+        """
+        return (
+            select(AgentTurn.id)
+            .where(
+                AgentTurn.id == turn_id,
+                AgentTurn.topic_id == topic_id,
+                AgentTurn.stopped_at.is_not(None),
+            )
+            .exists()
+        )
 
     async def open_of(self, turn_ids: Iterable[uuid.UUID]) -> set[uuid.UUID]:
         """Which of these intervals are still open. One query for however many

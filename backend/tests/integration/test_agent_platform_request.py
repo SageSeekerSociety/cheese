@@ -10,15 +10,18 @@ credential, so what is checked is what the room gets.
 
 import importlib.util
 import json
+import uuid
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
 import pytest
 
 from app.domain.agent.harness.channel import mint_session_token
+from tests.ask_fixtures import legacy_question
 from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import (
     join_project_team,
+    post_message,
     post_project,
     room_agent_seat,
     session_auth_headers,
@@ -108,19 +111,13 @@ def test_an_operation_is_found_with_what_it_takes(room):
     answering = cheese.run_platform_tool(
         "platform_request", {"find": "option question"}, agent
     )
-    assert "POST /topics/blocks/{block_id}/answer" in answering
+    assert "POST /topics/blocks/{block_id}/answers" in answering
     assert "option" in answering
 
 
 def test_the_agent_reacts_to_a_message_in_its_room(client, room):
     _, tid, seat, agent = room
-    asked = client.post(
-        f"/topics/{tid}/ask",
-        json={"question": "分页用哪个？", "options": ["cursor", "pageStart"]},
-        headers=agent.headers,
-    )
-    assert asked.status_code == 200, asked.text
-    block = asked.json()["data"]["id"]
+    block = post_message(client, tid, "alice", {"content": "分页用哪个？"})["id"]
 
     agent.call("POST", f"/blocks/{block}/reactions", {"emoji": "👍"})
 
@@ -136,16 +133,7 @@ def test_the_agent_cannot_react_in_a_room_it_does_not_sit_in(client, room):
         json={"project_id": pid, "title": "U"},
         headers=session_auth_headers("alice"),
     ).json()["data"]["id"]
-    asked = client.post(
-        f"/topics/{other}/ask",
-        json={"question": "要不要？", "options": ["要", "不要"]},
-        headers={
-            "X-Cheese-Token": mint_session_token(
-                pid, other, room_agent_seat(client, other)
-            )
-        },
-    )
-    block = asked.json()["data"]["id"]
+    block = post_message(client, other, "alice", {"content": "要不要？"})["id"]
     r = client.delete(
         f"/topics/{other}/members/{seat}", headers=session_auth_headers("alice")
     )
@@ -170,20 +158,24 @@ def test_the_agent_answers_another_members_question(client, room):
         headers=session_auth_headers("alice"),
     )
     assert joined.status_code == 200, joined.text
-    asked = client.post(
-        f"/topics/{tid}/ask",
-        json={"question": "分页用哪个？", "options": ["cursor", "pageStart"]},
-        headers={"X-Cheese-Token": mint_session_token(pid, tid, other)},
-    )
-    assert asked.status_code == 200, asked.text
-    block = asked.json()["data"]
+    block = legacy_question(client, tid, seat=other)
 
+    client_op_id = str(uuid.uuid4())
     answered = agent.call(
-        "POST", f"/topics/blocks/{block['id']}/answer", {"option": "cursor"}
+        "POST",
+        f"/topics/blocks/{block['id']}/answers",
+        {
+            "kind": "option",
+            "option": "cursor",
+            "client_op_id": client_op_id,
+            "expect_version": 0,
+        },
     )
 
-    assert answered["data"]["meta"]["answered"] == "cursor"
-    assert answered["data"]["meta"]["answered_by"] == seat
+    (answer,) = answered["data"]["meta"]["answer_log"]
+    assert answer["option"] == "cursor"
+    assert answer["by"] == seat
+    assert answer["client_op_id"] == client_op_id
 
 
 def test_a_plain_member_agent_is_refused_the_roster(client, room):

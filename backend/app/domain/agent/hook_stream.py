@@ -808,13 +808,16 @@ async def _consume_hook_event(
             try:
                 for close_frame in await service._close_hook_work(state, event):
                     await broker.publish(str(topic_id), close_frame)
-            except Exception:  # noqa: BLE001 — Stop must close room state
+            except Exception:
                 logger.exception(
                     "hook work close failed (topic=%s, work=%s)",
                     topic_id,
                     turn_id,
                 )
-            finally:
+                # Keep this result replayable. Neither the input's durable hold
+                # nor the completion context may be discarded before commit.
+                raise
+            else:
                 hook_work.pop((topic_id, turn_id), None)
                 if state.self_started:
                     # No coroutine owns this one, so there is no `finally`

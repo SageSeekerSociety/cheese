@@ -69,6 +69,7 @@ function linkTo(item: WaitingItem) {
   return {
     name: 'workspace-topic',
     params: { projectId: item.projectId, topicId: item.topicId },
+    query: item.blockId ? { block: item.blockId } : undefined,
   }
 }
 </script>
@@ -99,7 +100,7 @@ function linkTo(item: WaitingItem) {
     <v-list v-else class="inbox__list" bg-color="transparent" lines="two">
       <v-list-item
         v-for="item in items"
-        :key="`${item.topicId}:${item.taskId ?? ''}`"
+        :key="`${item.topicId}:${item.taskId ?? ''}:${item.blockId ?? ''}`"
         :to="linkTo(item)"
         class="inbox-item"
       >

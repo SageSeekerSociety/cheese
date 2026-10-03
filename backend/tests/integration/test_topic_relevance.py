@@ -23,16 +23,15 @@ import uuid
 
 import pytest
 
+from tests.ask_fixtures import active_ask, legacy_question
 from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import (
     chat_ws_url,
     join_project_team,
     post_message,
     post_project,
-    room_agent_headers,
     session_auth_headers,
 )
-from tests.turn_log import close_turn, open_turn
 
 
 def _project(client, owner: str = "alice") -> str:
@@ -276,61 +275,44 @@ def test_a_card_already_approved_and_waiting_to_merge_is_off_the_desk(client):
 # ---- the fields are per-caller, and per-topic ----------------------------
 
 
-def _summon(client, tid: str, author: str) -> None:
-    """``author`` 点了芝士的名 —— 直接落一条带 `agent_recipient.mentioned` 的消息，
-    不经过会叫起一轮的那条路。"""
-    import asyncio
+def test_a_question_waits_on_whoever_summoned_the_agent(
+    client, stub_hooks, monkeypatch
+):
+    """点芝士名的那个人发起了一轮，题就记在他头上 —— 不能谁都不等。
 
-    from app.domain.block.models import AuthorType, Block, BlockKind
-    from app.domain.topic.models import Topic
-
-    async def _run() -> None:
-        async with client.test_factory() as s:
-            topic = await s.get(Topic, uuid.UUID(tid))
-            assert topic is not None
-            s.add(
-                Block(
-                    project_id=topic.project_id,
-                    topic_id=topic.id,
-                    kind=BlockKind.message,
-                    author_type=AuthorType.participant,
-                    author=author,
-                    content="看一下",
-                    meta={"agent_recipient": {"handle": "cheese", "mentioned": True}},
-                )
-            )
-            await s.commit()
-
-    asyncio.run(_run())
-
-
-def test_a_question_with_no_open_turn_waits_on_whoever_summoned_the_agent(client):
-    """没有开着的轮次可问时，题等的是最近点芝士名的那个人 —— 不能谁都不等。"""
+    提问是这轮里发生的，所以「它在回应谁」就是发起这轮的人：题问出口那一刻就
+    记在题上（`meta.asked`），不再以后回头去查轮次。
+    """
     pid = _project(client)
     tid = _topic(client, pid, "问答", created_by="alice")
-    _summon(client, tid, "bob")
-    r = client.post(
-        f"/topics/{tid}/ask",
-        json={"question": "按哪个口径", "options": ["按部门", "按项目"]},
-        headers=room_agent_headers(client, tid),
-    )
-    assert r.status_code == 200, r.text
+    with active_ask(client, stub_hooks, monkeypatch, tid, actor="bob") as headers:
+        r = client.post(
+            f"/topics/{tid}/asks",
+            json={
+                "questions": [
+                    {
+                        "question": "按哪个口径",
+                        "options": [{"text": "按部门"}, {"text": "按项目"}],
+                    }
+                ]
+            },
+            headers=headers,
+        )
+        assert r.status_code == 200, r.text
 
     assert _seen_by(client, pid, "bob")["问答"]["awaits_me"] is True
     assert _seen_by(client, pid, "carol")["问答"]["awaits_me"] is False
 
 
 def test_replying_in_words_instead_of_a_button_ends_the_wait(client):
-    """没点选项、直接回了一句话，也是回应过了；别人说话不算他回应。"""
+    """没点选项、直接回了一句话，也是回应过了；别人说话不算他回应。
+
+    题上记着等谁（`meta.asked`），所以只有他那句话算数。组题不走这条：组的答案
+    要明确提交，聊天里的一句话不是回答。
+    """
     pid = _project(client)
     tid = _topic(client, pid, "问答", created_by="alice")
-    _summon(client, tid, "bob")
-    r = client.post(
-        f"/topics/{tid}/ask",
-        json={"question": "按哪个口径", "options": ["按部门", "按项目"]},
-        headers=room_agent_headers(client, tid),
-    )
-    assert r.status_code == 200, r.text
+    legacy_question(client, tid, question="按哪个口径", asked="bob")
 
     _say(client, tid, "carol", "我路过")
     assert _seen_by(client, pid, "bob")["问答"]["awaits_me"] is True
@@ -339,7 +321,9 @@ def test_replying_in_words_instead_of_a_button_ends_the_wait(client):
     assert _seen_by(client, pid, "bob")["问答"]["awaits_me"] is False
 
 
-def test_a_question_awaits_only_whoever_started_the_turn(client):
+def test_a_question_awaits_only_whoever_started_the_turn(
+    client, stub_hooks, monkeypatch
+):
     """芝士停在一道提问上：只有发起那一轮的人能回答，也只有他被等着。
 
     名册上的其他人照旧看到这个房间，但不该被一道不归他答的题点亮 —— 否则一屋子
@@ -347,18 +331,21 @@ def test_a_question_awaits_only_whoever_started_the_turn(client):
     """
     pid = _project(client)
     tid = _topic(client, pid, "问答", created_by="alice")
-    turn = client.portal.call(
-        lambda: open_turn(client.test_request_factory, uuid.UUID(tid), author="bob")
-    )
-    r = client.post(
-        f"/topics/{tid}/ask",
-        json={"question": "按哪个口径", "options": ["按部门", "按项目"]},
-        headers=room_agent_headers(client, tid),
-    )
-    assert r.status_code == 200, r.text
+    with active_ask(client, stub_hooks, monkeypatch, tid, actor="bob") as headers:
+        r = client.post(
+            f"/topics/{tid}/asks",
+            json={
+                "questions": [
+                    {
+                        "question": "按哪个口径",
+                        "options": [{"text": "按部门"}, {"text": "按项目"}],
+                    }
+                ]
+            },
+            headers=headers,
+        )
+        assert r.status_code == 200, r.text
     # 芝士问完就收尾（`cheese_ask` 不等回答），这一轮随即关闭——题照样在等 bob。
-    client.portal.call(lambda: close_turn(client.test_request_factory, turn))
-
     bob = _seen_by(client, pid, "bob")["问答"]
     assert bob["awaits_me"] is True
     assert bob["i_participate"] is True

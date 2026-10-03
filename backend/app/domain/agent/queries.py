@@ -22,7 +22,7 @@ from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import NotFoundError
+from app.core.errors import NotFoundError, ValidationError
 from app.domain.agent.announce import announce
 from app.domain.agent.platform_notices import memory_changed_notice
 from app.domain.agent_instance.services import AgentInstanceService, ResolvedAgent
@@ -41,6 +41,7 @@ from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task.place import Place
 from app.domain.topic.models import Topic
+from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 
 logger = logging.getLogger(__name__)
@@ -104,6 +105,24 @@ async def _session_agent(
     return await agents.for_topic(topic, project)
 
 
+async def session_agent_in_room(
+    session: AsyncSession, topic_id: uuid.UUID, handle: str | None
+) -> ResolvedAgent | None:
+    """Resolve admission's agent from room/project policy, returning no ORM rows.
+
+    Internal admission/recovery caller owns seat authorization and transaction.
+    Missing rooms return None; existing resolution policy and errors are retained.
+    This query never commits or starts a session.
+    """
+    topic = await TopicService(session).get(topic_id)
+    if topic is None:
+        return None
+    project = await ProjectRepository(session).get(topic.project_id)
+    if project is None:
+        raise NotFoundError("Project not found")
+    return await _session_agent(AgentInstanceService(session), topic, project, handle)
+
+
 async def _agent_at(session: AsyncSession, place: Place) -> ResolvedAgent:
     """Which agent works in *place* — the THREAD's own pick when it is one.
 
@@ -149,6 +168,16 @@ async def _acting_handle(
     if seat in await TopicMemberService(session).agent_handles(topic_id):
         return seat
     return await _agent_handle(session, topic_id)
+
+
+async def require_pinned_seat(
+    session: AsyncSession, topic_id: uuid.UUID, instance_id: uuid.UUID
+) -> str:
+    """An explicit recipient never borrows the room's default seat."""
+    seat = agent_instance_handle(instance_id)
+    if seat not in await TopicMemberService(session).agent_handles(topic_id):
+        raise ValidationError("The addressed agent is no longer seated in this room")
+    return seat
 
 
 async def _gateway_budget_target(

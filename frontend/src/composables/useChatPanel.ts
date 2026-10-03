@@ -59,9 +59,10 @@ import { placeSplitMarkers } from '../lib/splitMarkers'
 import { taskTitle, topicShortId, topicStateBadge, topicTitle } from '../lib/topicState'
 import { myHandle } from '../me'
 
+import { useAskAnswers } from './useAskAnswers'
+import { useAskGroups } from './useAskGroups'
 import { useChatComposer } from './useChatComposer'
 import { useChatPaging } from './useChatPaging'
-import { useOptionQuestions } from './useOptionQuestions'
 import { useOwnChecklist } from './useOwnChecklist'
 
 import { t } from '@/i18n'
@@ -150,24 +151,23 @@ export function useChatPanel(opts: ChatPanelOptions) {
     if (b.kind === 'event' && !b.task_id) emit('site-block', b)
   }
 
+  const { askStates, askAction, askViewer, askAccount } = useAskAnswers({
+    blocks: () => messages.value,
+    replace: replaceShown,
+  })
+
+  const { askGroups, askGroupAction } = useAskGroups({
+    blocks: () => messages.value,
+    account: () => askAccount.value,
+    viewer: () => askViewer.value,
+    replace: replaceShown,
+  })
   /** 把这一条换进时间线（在的话）。 */
   function replaceShown(block: Block) {
     if (!timeline.find(block.id)) return
     timeline.replace(block)
     historyChanges?.set(block.id, block)
   }
-
-  // ---- 带选项的问题: buttons under the message, and the one a person asks
-  // from the composer —— 见 useOptionQuestions。 ----
-  const { askBusy, pickOption, askQuestion } = useOptionQuestions({
-    topicId: () => topic()?.id,
-    push: (block) => {
-      pushBlock(block)
-      scrollToBottom()
-    },
-    show: replaceShown,
-    fail: (e) => (errorMsg.value = e instanceof Error ? e.message : t('work.room.chat.pickFailed')),
-  })
 
   // 自己的清单：发一张、点记号改一步 —— 见 useOwnChecklist。
   const { postChecklist, changeChecklist } = useOwnChecklist({
@@ -972,11 +972,13 @@ export function useChatPanel(opts: ChatPanelOptions) {
     errorMsg,
     connected,
     send,
-    askBusy,
-    pickOption,
+    askGroups,
+    askGroupAction,
+    askStates,
+    askAction,
+    askViewer,
     postChecklist,
     changeChecklist,
-    askQuestion,
     onReact,
     undoTitle,
     downloadAttachment,

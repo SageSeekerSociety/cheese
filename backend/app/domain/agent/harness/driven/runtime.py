@@ -29,17 +29,20 @@ from typing import Protocol
 
 import httpx
 
+from app.core.errors import ValidationError
 from app.domain.agent import attachments
 from app.domain.agent.device_hub import DeviceCallError, DeviceNotReady, DeviceOffline
 from app.domain.agent.harness import (
     ActivityConsumer,
     Backlog,
+    CompletionConsumer,
     EventConsumer,
     MemoryConsumer,
     Opening,
     ReachabilityConsumer,
     ReceiptConsumer,
     SessionRef,
+    TerminationConsumer,
     UnreadProbe,
 )
 from app.domain.agent.harness.channel import ScreenSetupError
@@ -60,6 +63,12 @@ from app.domain.agent.platform_failures import (
 )
 from app.domain.agent.service import AgentEvent, AgentResult, AgentSessionInfo
 from app.domain.block.notice_text import say
+from app.domain.delivery.input_identity import (
+    InputIdentity,
+    InputOutcomeUnconfirmed,
+    InputReceipt,
+    InputRegistrar,
+)
 
 # Every read of a room's journal is a call to its device. A runner holds a read
 # until it has something to answer it with (``driven.runner``), so the poller
@@ -251,6 +260,8 @@ class DrivenRuntime[H: Handle]:
         self.consumer: EventConsumer | None = None
         self.activity: ActivityConsumer | None = None
         self.receipts: ReceiptConsumer | None = None
+        self.completions: CompletionConsumer | None = None
+        self.terminations: TerminationConsumer | None = None
         self.reachability: ReachabilityConsumer | None = None
         # 带下划线，因为它不能和下面那个 `memory()`（这一侧往会话里问一次对账）
         # 同名：`self.memory = None` 会把那个方法盖掉，而 `AgentRuntime` 是
@@ -312,6 +323,12 @@ class DrivenRuntime[H: Handle]:
 
     def bind_receipts(self, consumer: ReceiptConsumer) -> None:
         self.receipts = consumer
+
+    def bind_completions(self, consumer: CompletionConsumer) -> None:
+        self.completions = consumer
+
+    def bind_terminations(self, consumer: TerminationConsumer) -> None:
+        self.terminations = consumer
 
     def bind_unread_probe(self, probe: UnreadProbe) -> None:
         self.unread = probe
@@ -853,6 +870,9 @@ class DrivenRuntime[H: Handle]:
         self.answering.add(seat)
         return handle
 
+    async def check_input_protocol(self, handle: H) -> None:
+        """A harness may refuse registration before any external input attempt."""
+
     async def send(
         self,
         session: SessionRef,
@@ -861,10 +881,23 @@ class DrivenRuntime[H: Handle]:
         *,
         work_id: uuid.UUID,
         on_mark: Callable[[uuid.UUID], None],
+        register_input: InputRegistrar,
         images: list[dict] | None = None,
         owes_reply: bool = False,
     ) -> bool:
-        handle = await self.ensure(session, opening, work_id=work_id)
+        if opening.expected_native_session is not None:
+            handle = self.live.get(self._seat_of(session))
+            if (
+                handle is None
+                or self.conversation(handle) != opening.expected_native_session
+                or handle.session.project_id != session.project_id
+            ):
+                raise ValidationError(
+                    "The original Ask session is not live; no replacement started"
+                )
+        else:
+            handle = await self.ensure(session, opening, work_id=work_id)
+        await self.check_input_protocol(handle)
         payload = await self.channel.images(handle, images or [])
         on_mark(work_id)
         await self._consume(
@@ -898,9 +931,20 @@ class DrivenRuntime[H: Handle]:
         # 记忆先落到会话目录里，输入后写进去：agent 这一轮一睁眼读到的应当是平台
         # 现在这一份（别人刚改的也在里面），而不是它上一次看见的那一份。
         await self.reconcile_memory(session.topic_id)
+        identity = InputIdentity(
+            session.project_id,
+            session.topic_id,
+            handle.agent_handle,
+            self.harness,
+            self.conversation(handle),
+            work_id,
+            work_id,
+        )
+        await register_input(identity)
         try:
-            await self.channel.call(
+            await self._submit_registered(
                 handle,
+                identity,
                 "send",
                 {
                     "input_id": str(work_id),
@@ -910,8 +954,6 @@ class DrivenRuntime[H: Handle]:
                     **({"owes_reply": True} if owes_reply else {}),
                 },
             )
-            if self.receipts and self.receipt_on_accept:
-                await self.receipts(session.topic_id, message)
         finally:
             # A lost acknowledgement does not mean the session stopped working.
             self._listen(self._seat_of(session))
@@ -923,6 +965,7 @@ class DrivenRuntime[H: Handle]:
         text,
         images=None,
         *,
+        register_input: InputRegistrar,
         expected_work_id=None,
         agent_handle=None,
         owes_reply=False,
@@ -946,20 +989,51 @@ class DrivenRuntime[H: Handle]:
             return False
         if self.live.get(seat) is not handle or self.work.get(seat) != work:
             return False
-        await self.channel.call(
+        await self.check_input_protocol(handle)
+        identity = InputIdentity(
+            handle.session.project_id,
+            topic_id,
+            handle.agent_handle,
+            self.harness,
+            self.conversation(handle),
+            uuid.uuid4(),
+            work,
+        )
+        images_payload = await self.channel.images(handle, images or [])
+        await register_input(identity)
+        await self._submit_registered(
             handle,
+            identity,
             self.steer,
             {
-                "input_id": str(uuid.uuid4()),
+                "input_id": str(identity.input_id),
                 "work_id": str(work),
                 "text": text,
-                "images": await self.channel.images(handle, images or []),
+                "images": images_payload,
                 **({"owes_reply": True} if owes_reply else {}),
             },
         )
-        if self.receipts and self.receipt_on_accept:
-            await self.receipts(topic_id, text)
         return True
+
+    async def _submit_registered(
+        self, handle: H, identity: InputIdentity, method: str, params: dict
+    ) -> None:
+        accepted = False
+        try:
+            await self.channel.call(handle, method, params)
+            accepted = True
+            # Only a harness whose acceptance *is* the read reports here. A
+            # harness that says when its session read the input (Claude Code)
+            # leaves this to the echo, so a consumer still holding the receipt
+            # must never gate the send that admits it.
+            if self.receipt_on_accept:
+                if self.receipts is None:
+                    raise RuntimeError("Receipt consumer is not bound")
+                await self.receipts(InputReceipt(identity, "accepted"))
+        except Exception as exc:
+            # Even a transport error can follow admission at the remote end.
+            # Keep the committed identity; the caller must not queue a new UUID.
+            raise InputOutcomeUnconfirmed(identity, accepted=accepted) from exc
 
     def _deliver_seat(self, topic_id, expected_work_id, agent_handle) -> Seat | None:
         """Which seat a topic-addressed delivery means, or None when ambiguous."""
@@ -969,6 +1043,28 @@ class DrivenRuntime[H: Handle]:
         if expected_work_id is not None:
             working = [seat for seat in working if self.work[seat] == expected_work_id]
         return working[0] if len(working) == 1 else None
+
+    async def ask_origin(self, project_id, topic_id, agent_handle):
+        """Read this seat's exact live native identity without starting work."""
+        seat = (topic_id, agent_handle)
+        handle = self.live.get(seat)
+        work = self.work.get(seat)
+        if handle is None or work is None or handle.session.project_id != project_id:
+            return None
+        status = await self.channel.call(handle, "ping", {})
+        if (
+            not self.working(status)
+            or status.get("work_id") != str(work)
+            or self.live.get(seat) is not handle
+            or self.work.get(seat) != work
+        ):
+            return None
+        return {
+            "harness": self.harness,
+            "native_session_id": self.conversation(handle),
+            "work_id": str(work),
+            "recipient_handle": agent_handle,
+        }
 
     def seat_state(self, seat: Seat) -> str:
         """ "live" if this process holds the seat, "dead" if it watched the
@@ -1151,6 +1247,7 @@ class DrivenRuntime[H: Handle]:
     async def replay(self, session: SessionRef, *, known_texts: set[str]) -> None:
         seat = self._seat_of(session)
         if subscription := self.subscriptions.get(seat):
+            await subscription.reconcile_history()
             await subscription.drain()
             self._listen(seat)
 
@@ -1162,6 +1259,7 @@ class DrivenRuntime[H: Handle]:
         prompt,
         system_prompt,
         resume_session_id,
+        register_input: InputRegistrar,
         model=None,
         env=None,
         memory_scope=None,
@@ -1186,13 +1284,13 @@ class DrivenRuntime[H: Handle]:
                 SessionRef(project_id, topic_id, session_agent, harness=self.harness),
                 prompt,
                 Opening(
-                    system_prompt,
-                    resume_session_id,
-                    model,
-                    env,
-                    memory_scope,
-                    owner,
-                    agent_handle,
+                    system_prompt=system_prompt,
+                    resume_token=resume_session_id,
+                    model=model,
+                    env=env,
+                    memory_scope=memory_scope,
+                    owner=owner,
+                    agent_handle=agent_handle,
                     # 平台自己起的那几轮走这条入口，今天照旧租手：它们跑在项目工
                     # 作机的根话题沙箱里。写出来是为了让这条老路看得见，改不改是
                     # 另一件事 (P21 只动房间里的那一轮)。
@@ -1200,6 +1298,7 @@ class DrivenRuntime[H: Handle]:
                 ),
                 work_id=work,
                 on_mark=lambda _: None,
+                register_input=register_input,
                 images=images,
             )
             while True:

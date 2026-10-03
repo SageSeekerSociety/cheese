@@ -39,6 +39,7 @@ from pathlib import Path
 
 from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.harness.claude_code.journal import Journal
+from app.domain.agent.harness.claude_code.protocol import INPUT_PROTOCOL
 from app.domain.agent.harness.driven import runner
 from app.domain.memory.files import (
     INDEX_NAME,
@@ -603,15 +604,29 @@ class Runner(runner.Runner[Journal]):
             # inside the turn it was said to; one the session reads only after
             # that turn ended starts a turn of its own.
             if not self.working:
-                self._open(self.sent.get(str(record.get("command_uuid"))))
+                self._open(self._sent_input(str(record.get("command_uuid"))))
                 stamp["turn_start"] = True
-        elif kind == "user" and record.get("isReplay"):
-            sent = self.sent.pop(str(record.get("uuid")), None)
-            if sent is not None and sent[0] in ("send", "steer"):
-                stamp["receipt"] = True
+        elif main and kind == "user" and record.get("isReplay"):
+            identifier = str(record.get("uuid"))
+            sent = self._sent_input(identifier)
+            self.sent.pop(identifier, None)
             if not self.working:
                 self._open(sent)
                 stamp["turn_start"] = True
+            receipt = self.journal.recall(f"receipt:{identifier}")
+            if receipt is not None:
+                identity = json.loads(receipt)
+                if identity["session_id"] == self.session_id:
+                    stamp.update(
+                        receipt=True,
+                        receipt_work_id=identity["work_id"],
+                        receipt_session_id=identity["session_id"],
+                        receipt_execution_work_id=self.work,
+                    )
+                    key = f"execution_inputs:{self.work}"
+                    inputs = set(json.loads(self.journal.recall(key) or "[]"))
+                    inputs.add(identifier)
+                    self.journal.remember(key, json.dumps(sorted(inputs)))
         elif main and not self.working and kind in ("assistant", "user"):
             # Nothing of ours started this. A background task finished and the
             # notification woke the session.
@@ -626,6 +641,47 @@ class Runner(runner.Runner[Journal]):
         work = self.work if self.working else self.last_work
         if kind == "result" and self.interrupting:
             stamp["interrupted"] = True
+        elif (
+            main
+            and kind == "result"
+            and self.working
+            and self.work is not None
+            and not record.get("is_error")
+        ):
+            inputs = json.loads(
+                self.journal.recall(f"execution_inputs:{self.work}") or "[]"
+            )
+            if inputs:
+                stamp["work_completed"] = True
+                stamp["completion_session_id"] = self.session_id
+                stamp["completion_input_ids"] = inputs
+        if (
+            main
+            and kind == "result"
+            and (self.interrupting or record.get("is_error"))
+            and self.working
+            and self.work is not None
+            and self.session_id is not None
+        ):
+            # An error or a Stop ends this work without ever reaching the
+            # completion stamp, and an input row left unfinished blocks the seat
+            # for good. Say so only when all three hold: the exact work identity,
+            # the interval of inputs it really owned (the same journal key the
+            # completion stamp reads), and no harness background task still
+            # running — a result alone does not mean this session is done, one
+            # of those tasks may yet finish the work. Anything less stays an
+            # unknown outcome, which is what keeps the block in place.
+            inputs = json.loads(
+                self.journal.recall(f"execution_inputs:{self.work}") or "[]"
+            )
+            if inputs and not self.tasks:
+                stamp["work_terminated"] = True
+                stamp["termination"] = (
+                    "interrupted" if self.interrupting else "is_error"
+                )
+                stamp["termination_session_id"] = self.session_id
+                stamp["termination_work_id"] = self.work
+                stamp["termination_input_ids"] = inputs
         owner = json.loads(self.journal.recall("owner") or "{}")
         if work is not None:
             owner["work_id"] = work
@@ -644,6 +700,18 @@ class Runner(runner.Runner[Journal]):
                 if future is not None and not future.done():
                     future.set_result(record)
             self._end()
+
+    def _sent_input(self, identifier: str) -> tuple[str, str | None] | None:
+        sent = self.sent.get(identifier)
+        if sent is not None:
+            return sent
+        receipt = self.journal.recall(f"receipt:{identifier}")
+        if receipt is None:
+            return None
+        identity = json.loads(receipt)
+        if identity["session_id"] != self.session_id:
+            return None
+        return identity["how"], identity["work_id"]
 
     def _open(self, sent: tuple[str, str | None] | None) -> None:
         """A turn begins, for the input that started it (None: no input of ours)."""
@@ -903,6 +971,17 @@ class Runner(runner.Runner[Journal]):
         content: str | list = (
             [{"type": "text", "text": text}, *images] if images else text
         )
+        if how in ("send", "steer"):
+            if self.session_id is None or work is None:
+                raise ValueError("An input needs its native session and work identity")
+            # Commit the association before stdin: a failed drain can still have
+            # written the input, and an echo may arrive after runner replacement.
+            self.journal.remember(
+                f"receipt:{identifier}",
+                json.dumps(
+                    {"session_id": self.session_id, "work_id": work, "how": how}
+                ),
+            )
         self.sent[identifier] = (how, work)
         try:
             await self._write(
@@ -1064,6 +1143,7 @@ class Runner(runner.Runner[Journal]):
         if method == "ping":
             return {
                 "pid": os.getpid(),
+                "input_protocol": INPUT_PROTOCOL,
                 "session_id": self.session_id,
                 "working": self.working,
                 "work_id": self.work if self.working else None,

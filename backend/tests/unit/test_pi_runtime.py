@@ -23,6 +23,7 @@ from app.domain.agent.harness.driven.runner import LONG_POLL
 from app.domain.agent.harness.pi.journal import Journal
 from app.domain.agent.harness.pi.runtime import Handle, PiRuntime
 from app.domain.agent.service import AgentResult, AgentSessionInfo, AgentToolUse
+from app.domain.delivery.input_identity import InputIdentity, InputReceipt
 from tests.support.hang import HANG_S
 
 ENTRIES = json.loads((Path(__file__).parent / "fixtures/pi-entries.json").read_text())[
@@ -106,6 +107,7 @@ def wire(tmp_path):
 async def test_a_turn_lands_under_one_owner_and_ends_once(tmp_path):
     session, runtime, runner = wire(tmp_path)
     consumer, receipts, activity = AsyncMock(), AsyncMock(), AsyncMock()
+    register_input = AsyncMock()
     runtime.bind_events(consumer)
     runtime.bind_receipts(receipts)
     runtime.bind_activity(activity)
@@ -117,11 +119,22 @@ async def test_a_turn_lands_under_one_owner_and_ends_once(tmp_path):
         Opening("system"),
         work_id=work,
         on_mark=lambda _: None,
+        register_input=register_input,
     )
     await runtime.close(session)
 
     assert [call["text"] for call in runner.inputs] == ["改一下 greet"]
-    receipts.assert_awaited_once_with(session.topic_id, "改一下 greet")
+    identity = InputIdentity(
+        session.project_id,
+        session.topic_id,
+        "teammate",
+        "pi",
+        "pi-session",
+        work,
+        work,
+    )
+    register_input.assert_awaited_once_with(identity)
+    receipts.assert_awaited_once_with(InputReceipt(identity, "accepted"))
 
     landed = [call.args for call in consumer.await_args_list]
     assert {args[2] for args in landed} == {work}, "every event belongs to this turn"
@@ -209,15 +222,28 @@ async def test_a_person_talking_mid_turn_steers_rather_than_starting_a_turn(tmp_
     session, runtime, runner = wire(tmp_path)
     runtime.bind_events(AsyncMock())
     runtime.bind_activity(AsyncMock())
+    runtime.bind_receipts(AsyncMock())
+    register_input = AsyncMock()
     work = uuid.uuid4()
 
-    assert await runtime.deliver(session.topic_id, "等一下") is False, (
-        "there is no session here yet"
-    )
+    assert (
+        await runtime.deliver(session.topic_id, "等一下", register_input=register_input)
+        is False
+    ), "there is no session here yet"
     await runtime.send(
-        session, "开始", Opening("system"), work_id=work, on_mark=lambda _: None
+        session,
+        "开始",
+        Opening("system"),
+        work_id=work,
+        on_mark=lambda _: None,
+        register_input=register_input,
     )
-    assert await runtime.deliver(session.topic_id, "换个名字") is True
+    assert (
+        await runtime.deliver(
+            session.topic_id, "换个名字", register_input=register_input
+        )
+        is True
+    )
     assert [call["text"] for call in runner.steers] == ["换个名字"]
     assert len(runner.inputs) == 1, "steering is not a second turn"
     await runtime.close(session)
@@ -228,12 +254,14 @@ async def test_interrupt_takes_the_work_without_taking_the_session(tmp_path):
     session, runtime, runner = wire(tmp_path)
     runtime.bind_events(AsyncMock())
     runtime.bind_activity(AsyncMock())
+    runtime.bind_receipts(AsyncMock())
     await runtime.send(
         session,
         "开始",
         Opening("system"),
         work_id=uuid.uuid4(),
         on_mark=lambda _: None,
+        register_input=AsyncMock(),
     )
     assert await runtime.interrupt(session) is True
     assert runner.working is False
@@ -289,7 +317,12 @@ async def test_a_new_turn_is_read_at_once_in_a_quiet_room(tmp_path, monkeypatch)
             await asyncio.sleep(0.01)
 
     assert await runtime.send(
-        session, "开始", Opening("system"), work_id=uuid.uuid4(), on_mark=lambda _: None
+        session,
+        "开始",
+        Opening("system"),
+        work_id=uuid.uuid4(),
+        on_mark=lambda _: None,
+        register_input=AsyncMock(),
     )
     landed: list = []
     with anyio.fail_after(HANG_S):
@@ -348,6 +381,7 @@ async def test_a_send_that_lands_as_the_reader_starts_to_wait_is_read_at_once(
             Opening("system"),
             work_id=uuid.uuid4(),
             on_mark=lambda _: None,
+            register_input=AsyncMock(),
         )
     )
     await asyncio.sleep(0.1)
@@ -385,6 +419,7 @@ async def test_a_device_that_went_offline_is_not_reported_as_a_read_failure(
         Opening("system"),
         work_id=uuid.uuid4(),
         on_mark=lambda _: None,
+        register_input=AsyncMock(),
     )
 
     with caplog.at_level(logging.DEBUG, logger="app.domain.agent.harness.pi.runtime"):

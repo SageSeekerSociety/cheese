@@ -977,7 +977,7 @@ async def summon_agent(
     # 重试就换成默认芝士来接，而默认芝士那一轮的待读窗口里根本没有点名给那位队友
     # 的消息（`_addressed_to` 按收件人过滤），于是它接了一轮却读不到真正找它的那
     # 句话。没人被点名（没 @ 不等于没说），或者被点名的那位已经不在名册上（被请出
-    # 房间），才回落到默认席位 —— 和 `answer_options` 同一条规矩。
+    # 房间），才回落到默认席位。
     members = TopicMemberService(db)
     seat = await chat.pending_seat(place.room_id)
     if seat is None or seat not in await members.agent_handles(place.room_id):

@@ -1,6 +1,7 @@
 import account from './account.json'
 import admin from './admin.json'
 import apiError from './apiError.json'
+import ask from './ask.json'
 import compute from './compute.json'
 import credits from './credits.json'
 import design from './design.json'
@@ -36,6 +37,7 @@ import work from './work.json'
 // Every zh-CN key has an English value here; `frontend/src/i18n/catalog.spec.ts`
 // fails on any that is missing or empty.
 export default {
+  ask,
   credits,
   global,
   home,

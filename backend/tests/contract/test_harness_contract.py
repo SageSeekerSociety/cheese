@@ -32,6 +32,7 @@ while the path production takes broke.
 import dataclasses
 import typing
 import uuid
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -270,6 +271,7 @@ async def test_a_scenario_drives_the_six_verbs(scenario: dict) -> None:
 async def _play(runtime, steps: list[dict]) -> None:
     previous: object = None
     snapshot: list = []
+    register_input = AsyncMock()
     for index, step in enumerate(steps):
         where = f"step {index} ({step['call']})"
         call = step["call"]
@@ -289,12 +291,15 @@ async def _play(runtime, steps: list[dict]) -> None:
                 OPENING,
                 work_id=uuid.uuid4(),
                 on_mark=lambda _: None,
+                register_input=register_input,
             )
             # An ack, not an answer: a runtime handing back what the agent said
             # would make whoever holds the return value the owner of the turn.
             assert answer is step["returns"], where
         elif call == "deliver":
-            landed = await runtime.deliver(SESSION.topic_id, step["text"])
+            landed = await runtime.deliver(
+                SESSION.topic_id, step["text"], register_input=register_input
+            )
             assert landed is step["returns"], where
         elif call == "interrupt":
             assert await runtime.interrupt(SESSION) is step["returns"], where

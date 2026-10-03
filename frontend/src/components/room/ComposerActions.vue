@@ -9,7 +9,7 @@
 // 发出去」（谁在跑、叫不叫芝士、发）。话题级的设置——谁在跑、在哪跑——由外面从
 // `chips` 插槽交进来，这一行不必认识算力池。
 //
-// 手机上这一行放不下每一颗：清单、提问、提醒收进一颗 ⋯，从底部升起一个面板
+// 手机上这一行放不下每一颗：清单、提醒收进一颗 ⋯，从底部升起一个面板
 // （设计系统 §10.4，`AdaptiveMenu`）。附件和照片留在外面，它们是最常点的。
 import type { MenuAction } from '@/components/common/menuAction'
 
@@ -36,11 +36,9 @@ const props = defineProps<{
   agentName: string
   /** 能不能在这儿发一张清单（房间给了发清单的路才有这一颗）。 */
   canChecklist?: boolean
-  /** 「带选项提问」那一颗。和芝士私聊时没有：那里没有别人来答。 */
-  canAsk?: boolean
   /** 「提醒我」那一颗。房间还没定下来（没有话题）时不给。 */
   canRemind?: boolean
-  /** 窄屏：清单、提问、提醒收进一颗 ⋯。 */
+  /** 窄屏：清单、提醒收进一颗 ⋯。 */
   collapseExtras?: boolean
 }>()
 
@@ -50,7 +48,6 @@ const emit = defineEmits<{
   (e: 'pick-images'): void
   (e: 'checklist'): void
   (e: 'toggle-summon'): void
-  (e: 'ask'): void
   (e: 'remind'): void
   (e: 'send'): void
 }>()
@@ -74,7 +71,7 @@ function onFilePicked(e: Event) {
   input.value = '' // allow re-picking the same file
 }
 
-// 清单、提问、提醒：桌面上是三颗图标，手机上是 ⋯ 里的三行。只剩一样时不收，
+// 清单、提醒：桌面上是两颗图标，手机上是 ⋯ 里的两行。只剩一样时不收，
 // 一颗 ⋯ 里只有一行，比那一颗本身还多点一下。
 const extras = computed<MenuAction[]>(() => {
   const list: MenuAction[] = []
@@ -84,13 +81,6 @@ const extras = computed<MenuAction[]>(() => {
       label: t('work.room.checklist.compose'),
       icon: 'mdi-format-list-checks',
       onSelect: () => emit('checklist'),
-    })
-  if (props.canAsk)
-    list.push({
-      key: 'ask',
-      label: t('work.room.ask.title'),
-      icon: 'mdi-chat-question-outline',
-      onSelect: () => emit('ask'),
     })
   if (props.canRemind)
     list.push({
@@ -170,18 +160,6 @@ const summonText = computed(() => ({
       :title="t('work.room.checklist.compose')"
       :aria-label="t('work.room.checklist.compose')"
       @click="emit('checklist')"
-    />
-    <!-- 带选项提问：问房间里的人，点一个选项就是回答。也是「这条消息本身」。 -->
-    <v-btn
-      v-if="canAsk && !extrasCollapsed"
-      class="composer-icon"
-      icon="mdi-chat-question-outline"
-      variant="text"
-      size="small"
-      color="medium-emphasis"
-      :title="t('work.room.ask.title')"
-      :aria-label="t('work.room.ask.title')"
-      @click="emit('ask')"
     />
     <!-- 「提醒我」：到点给自己发一条通知。它说的是这个房间里的一件事，不是这条
          消息本身，但和附件一样是安静的图标，不跟右边「怎么发出去」那几样并列。 -->

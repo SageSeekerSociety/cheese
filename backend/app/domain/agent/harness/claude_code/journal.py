@@ -63,14 +63,19 @@ class Journal(journal.Journal):
                 self.advance("received", entries[-1]["sequence"])
 
     def expire(self, before: str) -> None:
-        """Drop records older than ``before``, landed or not.
+        """Expire old output, keeping echo and completion for absent readers.
 
-        The runner's side of retention: it cannot know what a reader took, and
-        a reader that has not asked for a week has no room left to land in.
+        The runner cannot know whether the backend committed settlement. Evidence
+        therefore survives output retention; the backend prunes its landed copy.
         """
         with self.connection:
             self.connection.execute(
-                f"DELETE FROM {self.table} WHERE recorded_at < ?", (before,)
+                f"DELETE FROM {self.table} WHERE recorded_at < ? "
+                f"AND COALESCE(json_extract({self.column}, "
+                "'$.cheese.receipt'), 0) != 1 "
+                f"AND COALESCE(json_extract({self.column}, "
+                "'$.cheese.work_completed'), 0) != 1",
+                (before,),
             )
 
     def facts(self, prefix: str) -> dict[str, str]:

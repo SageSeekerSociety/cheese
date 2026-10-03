@@ -5,6 +5,7 @@ import uuid
 import pytest
 
 from app.core.sandbox_auth import mint_scoped_token
+from tests.ask_fixtures import active_ask
 from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import (
     join_project_team,
@@ -79,11 +80,25 @@ def _join(client, room, handle):
     assert response.status_code == 200, response.text
 
 
-def test_cross_room_access_requires_membership_and_preserves_identity(client):
+def test_cross_room_access_requires_membership_and_preserves_identity(
+    client, stub_hooks, monkeypatch
+):
     project, origin, other = _rooms(client)
     handle = _teammate(client, project, origin)
     auth = _agent(client, project, origin, as_handle=handle)
     assert client.get(f"/topics/{other}/blocks", headers=auth).status_code == 403
+    question = {
+        "questions": [
+            {
+                "question": "Choose a day",
+                "options": [{"text": "Monday"}, {"text": "Tuesday"}],
+            }
+        ]
+    }
+    assert (
+        client.post(f"/topics/{other}/asks", json=question, headers=auth).status_code
+        == 403
+    )
     _join(client, other, handle)
     assert client.get(f"/topics/{other}/blocks", headers=auth).status_code == 200
     written = client.post(
@@ -93,13 +108,18 @@ def test_cross_room_access_requires_membership_and_preserves_identity(client):
     )
     assert written.status_code == 200, written.text
     assert written.json()["data"]["author"] == handle
-    for action, body in (
-        ("weekly", {"body": "Discussion in another joined room"}),
-        ("ask", {"question": "Choose a day", "options": ["Monday", "Tuesday"]}),
-    ):
-        response = client.post(f"/topics/{other}/{action}", json=body, headers=auth)
+    response = client.post(
+        f"/topics/{other}/weekly",
+        json={"body": "Discussion in another joined room"},
+        headers=auth,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["author"] == handle
+    with active_ask(client, stub_hooks, monkeypatch, other, actor="alice", seat=handle):
+        response = client.post(f"/topics/{other}/asks", json=question, headers=auth)
         assert response.status_code == 200, response.text
-        assert response.json()["data"]["author"] == handle
+        assert response.json()["data"]["group"]["asked_by"] == handle
+        assert [row["author"] for row in response.json()["data"]["blocks"]] == [handle]
     assert (
         client.delete(
             f"/topics/{other}/members/{handle}",
@@ -391,25 +411,54 @@ def test_room_only_credential_cannot_use_project_management_roles(client):
     assert client.delete(machine, headers=auth).status_code == 403
 
 
-def test_people_and_agents_can_ask_and_record_weeklies_with_their_own_identity(client):
+def test_people_and_agents_record_weeklies_but_only_live_agents_create_questions(
+    client, stub_hooks, monkeypatch
+):
     project, origin, _ = _rooms(client)
-    client.headers.pop("X-Cheese-Token", None)
+    setup_token = client.headers.pop("X-Cheese-Token", None)
     for handle, auth in (
         ("alice", session_auth_headers("alice")),
         (_seated_agent(client, origin), _agent(client, project, origin)),
     ):
-        for action, body in (
-            ("ask", {"question": "Which?", "options": ["A", "B"]}),
-            ("weekly", {"body": "A shared weekly"}),
-        ):
-            response = client.post(
-                f"/topics/{origin}/{action}", json=body, headers=auth
-            )
-            assert response.status_code == 200, response.text
-            assert response.json()["data"]["author"] == handle
-            # 同一个动作，人做和分身做写下的是同一种事件：区别在署名那一行，
-            # 不在档位。
-            assert response.json()["data"]["author_type"] == "participant"
+        response = client.post(
+            f"/topics/{origin}/weekly", json={"body": "A shared weekly"}, headers=auth
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["data"]["author"] == handle
+        assert response.json()["data"]["author_type"] == "participant"
+        # Membership alone cannot invent the native executor that owns an Ask.
+        assert (
+            client.post(
+                f"/topics/{origin}/asks",
+                json={
+                    "questions": [
+                        {
+                            "question": "Which?",
+                            "options": [{"text": "A"}, {"text": "B"}],
+                        }
+                    ]
+                },
+                headers=auth,
+            ).status_code
+            == 403
+        )
+    seat = _seated_agent(client, origin)
+    if setup_token is not None:
+        client.headers["X-Cheese-Token"] = setup_token
+    with active_ask(client, stub_hooks, monkeypatch, origin, actor="alice", seat=seat):
+        response = client.post(
+            f"/topics/{origin}/asks",
+            json={
+                "questions": [
+                    {"question": "Which?", "options": [{"text": "A"}, {"text": "B"}]}
+                ]
+            },
+            headers=_agent(client, project, origin),
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["data"]["group"]["asked_by"] == seat
+        assert [row["author"] for row in response.json()["data"]["blocks"]] == [seat]
+        assert response.json()["data"]["blocks"][0]["author_type"] == "participant"
 
 
 def test_review_actions_check_the_credentials_project_and_room(client):

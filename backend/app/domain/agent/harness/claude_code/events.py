@@ -393,7 +393,11 @@ class Assembler:
             # failure of anything, and saying 「出错了」 would tell the room so.
             return AgentResult(text="", **common)
         if not record.get("is_error"):
-            return AgentResult(text=str(record.get("result") or ""), **common)
+            return AgentResult(
+                text=str(record.get("result") or ""),
+                input_work_completed=True,
+                **common,
+            )
         # Failure is `is_error` and only that: an API error arrives with
         # subtype "success" and terminal_reason "api_error". The kind rides in
         # the text, where the room's classifier reads it (`billing` is how a

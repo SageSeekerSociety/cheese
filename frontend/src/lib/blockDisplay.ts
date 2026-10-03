@@ -65,14 +65,49 @@ export function artifactKind(block: Block): string {
   return fileLabel(block.content)
 }
 
-/** 这一条是不是带选项的提问（AI 队友的 `cheese_ask`，或者人在输入框旁边问的）。不是就返回 null。 */
-export function askOptions(block: Block): string[] | null {
-  const opts = (block.meta as Record<string, unknown> | null)?.options
-  return Array.isArray(opts) && opts.length ? (opts as string[]) : null
+/** 一个选项。`text` 是提问方给的那几个字，`explain` 是他补的解释，没补就没有。 */
+export type AskOption = { text: string; explain?: string }
+
+/**
+ * 当前生效的那一版答案。`answer_log` 末条才是生效的那一版，前面几条是被更正掉的。
+ */
+export type AskAnswer = {
+  kind: 'option' | 'note' | 'reject'
+  /** 这一版认的是什么 —— 按 `kind` 决定是选项文字、自由输入，还是「以上都不是」。 */
+  label: string
+  by: string
 }
 
-/** 已经有人选过了：选的哪个、谁选的。房间里所有人看到的是同一个答案。 */
-export function askAnswered(block: Block): { option: string; by: string } | null {
-  const meta = block.meta as Record<string, unknown> | null
-  return meta?.answered ? { option: String(meta.answered), by: String(meta.answered_by ?? '') } : null
+/** 这一条是不是带选项的提问（`cheese_ask`）。不是就返回 null。 */
+export function askOptions(block: Block): AskOption[] | null {
+  const opts = (block.meta as Record<string, unknown> | null)?.options
+  if (!Array.isArray(opts) || !opts.length) return null
+  // 只认 `{text}` 对象。`string[]` 是迁移前的形状，那之后没有一处还会写它。
+  const out = opts.flatMap((o) => {
+    const item = o as { text?: unknown; explain?: unknown } | null
+    if (!item || typeof item !== 'object' || typeof item.text !== 'string') return []
+    return [{ text: item.text, ...(item.explain ? { explain: String(item.explain) } : {}) }]
+  })
+  return out.length ? out : null
+}
+
+/** 已经有人答过了：答的什么、谁答的。房间里所有人看到的是同一版。 */
+export function askAnswered(block: Block): AskAnswer | null {
+  const log = (block.meta as Record<string, unknown> | null)?.answer_log
+  if (!Array.isArray(log) || !log.length) return null
+  const last = log[log.length - 1] as Record<string, unknown>
+  const kind = (last.kind ?? 'option') as AskAnswer['kind']
+  // 「以上都不是」走目录：和表单里的 reject 选项共用同一个说法。
+  const label =
+    kind === 'reject' ? t('ask.form.reject') : kind === 'note' ? String(last.note ?? '') : String(last.option ?? '')
+  return { kind, label, by: String(last.by ?? '') }
+}
+
+/**
+ * 作答时要带的那个版本号：就是日志现在的长度。初答 0，之后是 `answer_log` 末项
+ * 的 `v` —— 而末项的 `v` 恰好等于长度，所以这里不必再读一次。
+ */
+export function askVersion(block: Block): number {
+  const log = (block.meta as Record<string, unknown> | null)?.answer_log
+  return Array.isArray(log) ? log.length : 0
 }

@@ -8,6 +8,7 @@ are shortened. What the room receives is what the bound consumer receives.
 import asyncio
 import time
 import uuid
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -18,6 +19,12 @@ from app.domain.agent.platform_failures import (
     TURN_TIMEOUT_CODE,
 )
 from app.domain.agent.service import AgentResult
+from app.domain.delivery.input_identity import (
+    InputIdentity,
+    InputReceipt,
+    WorkCompletion,
+    WorkTermination,
+)
 from tests.conftest import StubChannel
 
 _REAL_SLEEP = asyncio.sleep
@@ -74,23 +81,80 @@ class Room:
         self.events: list[tuple[uuid.UUID, object]] = []
         self.receipts: list[str] = []
         self.unread: dict[str, float] = {}
+        self.inputs: dict[uuid.UUID, str] = {}
+        self.identities: dict[uuid.UUID, InputIdentity] = {}
+        self.native_receipts: dict[uuid.UUID, InputReceipt] = {}
+        self.completions: list[WorkCompletion] = []
+        self.terminations: list[WorkTermination] = []
 
         async def consume(_project, _topic, work, event, _eid, _seen, _unsolicited):
             self.events.append((work, event))
 
-        async def receipt(_topic, text):
-            self.receipts.append(text)
-            self.unread.pop(text, None)
+        async def receipt(evidence: InputReceipt):
+            assert evidence.identity == self.identities[evidence.identity.input_id]
+            if evidence.evidence == "native_echo":
+                input_id = evidence.identity.input_id
+                prior = self.native_receipts.get(input_id)
+                if prior is not None and evidence.execution_work_id is not None:
+                    assert prior.execution_work_id in (None, evidence.execution_work_id)
+                if prior is None or evidence.execution_work_id is not None:
+                    self.native_receipts[input_id] = evidence
+                text = self.inputs[evidence.identity.input_id]
+                self.receipts.append(text)
+                self.unread.pop(text, None)
+
+        def check_inputs(evidence: WorkCompletion | WorkTermination) -> None:
+            assert evidence.input_ids
+            assert len(evidence.input_ids) == len(set(evidence.input_ids))
+            for input_id in evidence.input_ids:
+                identity = self.identities[input_id]
+                # A steer can originate in one work and be read in another.
+                assert (
+                    identity.project_id,
+                    identity.topic_id,
+                    identity.recipient_handle,
+                    identity.harness,
+                    identity.native_session_id,
+                    identity.input_id,
+                ) == (
+                    evidence.project_id,
+                    evidence.topic_id,
+                    evidence.recipient_handle,
+                    evidence.harness,
+                    evidence.native_session_id,
+                    input_id,
+                )
+                assert (
+                    self.native_receipts[input_id].execution_work_id == evidence.work_id
+                )
+
+        async def completion(evidence: WorkCompletion):
+            check_inputs(evidence)
+            self.completions.append(evidence)
+
+        async def termination(evidence: WorkTermination):
+            assert evidence.reason in ("interrupted", "is_error")
+            check_inputs(evidence)
+            self.terminations.append(evidence)
 
         def oldest_unread(_topic):
             return min(self.unread.values(), default=None)
 
         self.runtime.bind_events(consume)
         self.runtime.bind_receipts(receipt)
+        self.runtime.bind_completions(completion)
+        self.runtime.bind_terminations(termination)
         self.runtime.bind_unread_probe(oldest_unread)
 
     def results(self) -> list[AgentResult]:
         return [event for _, event in self.events if isinstance(event, AgentResult)]
+
+    def register_input(self, text: str) -> AsyncMock:
+        async def register(identity: InputIdentity) -> None:
+            self.inputs[identity.input_id] = text
+            self.identities[identity.input_id] = identity
+
+        return AsyncMock(side_effect=register)
 
     async def send(self, text: str) -> None:
         self.unread[text] = time.monotonic()
@@ -100,11 +164,14 @@ class Room:
             Opening(system_prompt=""),
             work_id=self.work,
             on_mark=lambda _: None,
+            register_input=self.register_input(text),
         )
 
     async def steer(self, text: str) -> None:
         self.unread[text] = time.monotonic()
-        assert await self.runtime.deliver(self.topic, text)
+        assert await self.runtime.deliver(
+            self.topic, text, register_input=self.register_input(text)
+        )
 
     async def close(self) -> None:
         for seat in list(self.runtime.subscriptions):
@@ -315,6 +382,7 @@ async def test_a_message_read_mid_turn_is_not_failed_when_the_session_goes_idle(
             Opening(system_prompt="", agent_handle="cheese"),
             work_id=second,
             on_mark=lambda _: None,
+            register_input=room.register_input("and the linter too"),
         )
         room.channel.returns(room.topic, "Bash", "42 passed")
         room.channel.acknowledges(room.topic, "and the linter too")
@@ -356,6 +424,7 @@ async def test_a_platform_turn_taken_into_the_running_turn_still_ends():
                 prompt="tidy the notes",
                 system_prompt="",
                 resume_session_id=None,
+                register_input=room.register_input("tidy the notes"),
                 agent_handle="cheese",
                 session_agent="cheese",
             ):

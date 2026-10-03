@@ -413,7 +413,6 @@
       "upgrade": "转为话题",
       "downloadFile": "下载 {name}",
       "openFile": "打开 {name}",
-      "askAnswered": "{who} 选了「{option}」",
       "upgradedToTask": "已转为任务",
       "upgradedToTopic": "已转为话题"
     },
@@ -440,16 +439,6 @@
       "sendPhotos": "发送照片",
       "more": "更多操作",
       "send": "发送"
-    },
-    "ask": {
-      "title": "带选项提问",
-      "question": "问题",
-      "option": "选项 {n}",
-      "addOption": "添加选项",
-      "removeOption": "删除选项",
-      "repeated": "和前面的选项重复",
-      "send": "发送",
-      "failed": "发送失败"
     },
     "dispatched": {
       "created": "新建任务",
@@ -853,7 +842,6 @@
       "loadingOlder": "加载更早的消息…",
       "older": "更早的消息",
       "newMessagesBelow": "以下是新消息",
-      "pickFailed": "选择失败",
       "reactionFailed": "表情更新失败",
       "undoFailed": "撤销失败",
       "downloadFailed": "下载失败",

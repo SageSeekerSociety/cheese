@@ -10,14 +10,18 @@
 import type { Ref } from 'vue'
 import type { Block, TodoItem, Topic } from '../../cx_types'
 import type { AgentFace } from '../../lib/agentFace'
+import type { AskGroupScope } from '../../lib/askGroup'
+import type { AskGroupAction, AskGroupState } from '../../lib/askGroupState'
+import type { AskAction, AskFormState } from '../../lib/askPresentation'
 import type { RunEdge } from '../../lib/chatGrouping'
 import type { Outgoing } from '../../lib/composerDrafts'
 import type { DocReviewRequest } from '../../lib/docReview'
 import type { NoticeAgent, NoticeRow, PlatformNotice } from '../../lib/platformNotice'
 import type { SplitMarker } from '../../lib/splitMarkers'
 
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 
+import { groupKey, groupOf } from '../../lib/askGroup'
 import { dayKey, REGROUP_GAP_MS } from '../../lib/chatGrouping'
 import { editableText } from '../../lib/renderMessage'
 import { formatSpan } from '../../lib/siteLog'
@@ -66,7 +70,8 @@ const props = defineProps<{
   typing: { block: Block; edge: RunEdge }[]
   editingId: string | null
   editSaving: boolean
-  askBusy: string | null
+  askStates?: Record<string, AskFormState>
+  askGroups?: Record<string, AskGroupState>
   /** Bound with `:ref`, so the pane the panel measures is this one. */
   scrollRef: Ref<HTMLElement | null>
   contentRef: Ref<HTMLElement | null>
@@ -100,7 +105,8 @@ const emit = defineEmits<{
   (e: 'open-topic', topicId: string): void
   (e: 'open-card', taskId: string): void
   (e: 'open-resource', resource: string, turnId?: string, review?: DocReviewRequest): void
-  (e: 'answer', block: Block, option: string): void
+  (e: 'ask-action', block: Block, action: AskAction): void
+  (e: 'ask-group-action', scope: AskGroupScope, action: AskGroupAction): void
   (e: 'checklist', block: Block, items: TodoItem[]): void
   (e: 'download', block: Block): void
   (e: 'jump', blockId: string): void
@@ -115,6 +121,37 @@ const emit = defineEmits<{
   (e: 'settle-sent', event: AnimationEvent, clientId: string): void
   (e: 'outbox-leave', el: Element, done: () => void): void
 }>()
+
+const groupFocus = reactive<Record<string, string>>({})
+watch(
+  () => props.flashId,
+  (id) => {
+    const block = props.rows.find((row) => row.block.id === id)?.block
+    if (block) focusGroup(block)
+  }
+)
+function focusGroup(block: Block) {
+  const scope = groupOf(block)
+  if (scope) groupFocus[groupKey(scope)] = block.id
+}
+function groupAnchor(block: Block): string | undefined {
+  const scope = groupOf(block)
+  if (!scope) return undefined
+  const focus = groupFocus[groupKey(scope)]
+  return focus && props.rows.some((row) => row.block.id === focus) ? focus : groupFor(block)?.anchor
+}
+function groupFor(block: Block): AskGroupState | undefined {
+  const scope = groupOf(block)
+  return scope ? props.askGroups?.[groupKey(scope)] : undefined
+}
+function focusFor(block: Block): string | undefined {
+  const scope = groupOf(block)
+  return scope ? groupFocus[groupKey(scope)] : undefined
+}
+function groupAction(block: Block, action: AskGroupAction) {
+  const scope = groupOf(block)
+  if (scope) emit('ask-group-action', scope, action)
+}
 
 // 正在推进的清单：房间在跑时，每位队友最新的那一条。更早的清单即使还有一步停在
 // 「正在做」，也是上一轮没走完的，不该跟着转。
@@ -205,8 +242,8 @@ function faceStatus(face: AgentFace | undefined): string | null {
 function emitReact(block: Block, emoji: string) {
   emit('react', block, emoji)
 }
-function emitAnswer(block: Block, option: string) {
-  emit('answer', block, option)
+function emitAskAction(block: Block, action: AskAction) {
+  emit('ask-action', block, action)
 }
 function emitChecklist(block: Block, items: TodoItem[]) {
   emit('checklist', block, items)
@@ -358,7 +395,10 @@ function emitOutboxLeave(el: Element, done: () => void) {
           :refs="refs"
           :viewer="viewer"
           :active="bar.shown && bar.id === m.id"
-          :ask-busy="askBusy === m.id"
+          :ask-state="askStates?.[m.id]"
+          :ask-group-state="groupFor(m)"
+          :ask-group-anchor="groupAnchor(m)"
+          :ask-group-focus="focusFor(m)"
           :live="liveChecklists.has(m.id)"
           :face="faceRows.get(m.id)?.state ?? null"
           :face-label="faceLabel(faceRows.get(m.id))"
@@ -372,7 +412,9 @@ function emitOutboxLeave(el: Element, done: () => void) {
           @open-topic="emit('open-topic', $event)"
           @open-card="emit('open-card', $event)"
           @react="emitReact"
-          @answer="emitAnswer"
+          @ask-action="emitAskAction"
+          @ask-group-action="groupAction"
+          @ask-group-focus="focusGroup"
           @checklist="emitChecklist"
           @download="emit('download', $event)"
           @jump="emit('jump', $event)"

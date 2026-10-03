@@ -182,11 +182,13 @@ const {
   errorMsg,
   connected,
   send,
-  askBusy,
-  pickOption,
+  askGroups,
+  askGroupAction,
+  askStates,
+  askAction,
+  askViewer,
   postChecklist,
   changeChecklist,
-  askQuestion,
   onReact,
   setReply,
   undoTitle,
@@ -275,7 +277,8 @@ defineExpose({ send, connected, submitQuestion })
         :typing="typingRows"
         :editing-id="editingId"
         :edit-saving="editSaving"
-        :ask-busy="askBusy"
+        :ask-states="askStates"
+        :ask-groups="askGroups"
         :scroll-ref="timelineRefs.scrollRef"
         :content-ref="timelineRefs.contentRef"
         :is-agent-block="isAgentBlock"
@@ -292,7 +295,7 @@ defineExpose({ send, connected, submitQuestion })
         :outgoing-state="outgoingState"
         :outbox-edge="outboxEdge"
         :my-name="myName"
-        :viewer="AUTHOR"
+        :viewer="askViewer"
         @scroll="onTimelineScroll"
         @click="onMessagesClick"
         @mouseover="onTimelinePointer"
@@ -307,7 +310,8 @@ defineExpose({ send, connected, submitQuestion })
         @open-topic="emit('open-topic', $event)"
         @open-card="emit('open-card', $event)"
         @open-resource="(resource, turnId, review) => emit('open-resource', resource, turnId, review)"
-        @answer="pickOption"
+        @ask-action="askAction"
+        @ask-group-action="askGroupAction"
         @checklist="changeChecklist"
         @download="downloadAttachment"
         @jump="openAt"
@@ -365,7 +369,6 @@ defineExpose({ send, connected, submitQuestion })
         :atts-uploading="attsUploading"
         :reply-label="replyLabel"
         :post-checklist="postChecklist"
-        :post-ask="askQuestion"
         @send="onComposerSend"
         @clear-reply="clearReply"
         @files="(files) => void addFiles(files)"

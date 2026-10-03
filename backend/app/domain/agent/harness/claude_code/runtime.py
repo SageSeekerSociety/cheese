@@ -20,11 +20,20 @@ from app.domain.agent.harness.claude_code.backlog import (
     ClaudeCodeBacklog,
     control_state,
 )
+from app.domain.agent.harness.claude_code.protocol import (
+    InputProtocolUnavailable,
+    accepts_inputs,
+)
 from app.domain.agent.harness.claude_code.remote_execution.client import (
     REMOTE_CONTROLS,
 )
 from app.domain.agent.harness.claude_code.subscription import Subscription
 from app.domain.agent.harness.driven.runtime import DrivenRuntime
+from app.domain.delivery.input_identity import (
+    InputReceipt,
+    WorkCompletion,
+    WorkTermination,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +61,7 @@ class Handle:
     session_id: str
     agent_handle: str
     mirror: Path
+    input_protocol: int | None = None
     #: What its runner said it can do when it was greeted (``driven.runner``).
     capabilities: frozenset[str] = frozenset()
     #: The screen its runner was started in, when this process ensured it: a
@@ -87,9 +97,20 @@ class ClaudeCodeRuntime(DrivenRuntime[Handle]):
     def subscribe(
         self, handle: Handle, call: Callable[[str, dict], Awaitable[dict]]
     ) -> Subscription:
-        async def receipt(topic: uuid.UUID, text: str) -> None:
-            if self.receipts is not None:
-                await self.receipts(topic, text)
+        async def receipt(evidence: InputReceipt) -> None:
+            if self.receipts is None:
+                raise RuntimeError("Receipt consumer is not bound")
+            await self.receipts(evidence)
+
+        async def completion(evidence: WorkCompletion) -> None:
+            if self.completions is None:
+                raise RuntimeError("Completion consumer is not bound")
+            await self.completions(evidence)
+
+        async def termination(evidence: WorkTermination) -> None:
+            if self.terminations is None:
+                raise RuntimeError("Termination consumer is not bound")
+            await self.terminations(evidence)
 
         async def announce() -> None:
             await self.announce(handle.session.topic_id)
@@ -101,12 +122,33 @@ class ClaudeCodeRuntime(DrivenRuntime[Handle]):
             self._consume,
             self._activity,
             session_id=handle.session_id,
+            recipient_handle=handle.agent_handle,
             announce=announce,
             receipts=receipt,
+            completions=completion,
+            terminations=termination,
+            input_protocol=handle.input_protocol,
             pulse=self.pulse,
             memory=self._memory_hook(handle.session.topic_id),
             took=self._took,
         )
+
+    async def ensure(self, session, opening, *, work_id=None) -> Handle:
+        previous = self.live.get(self._seat_of(session))
+        if previous is not None and not accepts_inputs(
+            {"input_protocol": getattr(previous, "input_protocol", None)}
+        ):
+            # Do not reach launch/ensure to upgrade an adopted legacy process.
+            # It owns native pipes and may still hold the original executor's WIP.
+            await self.check_input_protocol(previous)
+        # Current handles follow DrivenRuntime's liveness and takeover rules;
+        # send still checks the ensured runner before registering any input.
+        return await super().ensure(session, opening, work_id=work_id)
+
+    async def check_input_protocol(self, handle: Handle) -> None:
+        status = await self.channel.call(handle, "ping", {})
+        if not accepts_inputs(status):
+            raise InputProtocolUnavailable()
 
     async def memory(self, topic_id: uuid.UUID, request: dict) -> dict | None:
         """One memory reconciliation, over the runner that owns this session.

@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import NotFoundError, ValidationError
 from app.domain.agent.chat import ChatService
 from app.domain.block.notice_text import say
+from app.domain.delivery.input_identity import InputReconciliationPending
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 
@@ -31,7 +32,7 @@ async def send_note(
     from_project_id: uuid.UUID,
     to_thread: uuid.UUID,
     content: str,
-) -> bool:
+) -> bool | InputReconciliationPending:
     """把一张便条递给同一个 handle 的另一条线程。返回那条线程有没有接住。
 
     没接住（那边这一刻没有在跑的轮次）不是错误：便条是递给一条**正在跑**的线程的，

@@ -32,12 +32,15 @@ if TYPE_CHECKING:
     from app.domain.agent.device_provider import DeviceChannel
     from app.domain.agent.harness import (
         ActivityConsumer,
+        CompletionConsumer,
         EventConsumer,
+        InputRegistrar,
         MemoryConsumer,
         ReachabilityConsumer,
         ReceiptConsumer,
         SessionControls,
         SessionRef,
+        TerminationConsumer,
         UnreadProbe,
     )
 
@@ -107,6 +110,7 @@ class ComputeProvider(Protocol):
         text: str,
         images: list[dict] | None = None,
         *,
+        register_input: "InputRegistrar",
         expected_work_id: uuid.UUID | None = None,
         agent_handle: str | None = None,
         owes_reply: bool = False,
@@ -211,6 +215,7 @@ class ComputePool:
         text: str,
         images: list[dict] | None = None,
         *,
+        register_input: "InputRegistrar",
         expected_work_id: uuid.UUID | None = None,
         agent_handle: str | None = None,
         owes_reply: bool = False,
@@ -236,6 +241,7 @@ class ComputePool:
                 topic_id,
                 text,
                 images=images,
+                register_input=register_input,
                 expected_work_id=expected_work_id,
                 agent_handle=agent_handle,
                 owes_reply=owes_reply,
@@ -344,6 +350,20 @@ class ComputePool:
         for runtime in self._runtimes():
             runtime.bind_receipts(consumer)
 
+    def bind_completions(self, consumer: "CompletionConsumer") -> None:
+        for runtime in self._runtimes():
+            runtime.bind_completions(consumer)
+
+    def bind_terminations(self, consumer: "TerminationConsumer") -> None:
+        """Give every runtime that can report one where a confirmed terminal
+        work outcome is committed. Asked the way ``bind_live`` is: a runtime
+        that never ends work this way has nothing to send, and saying so is not
+        part of what makes it a runtime."""
+        for runtime in self._runtimes():
+            bind = getattr(runtime, "bind_terminations", None)
+            if bind is not None:
+                bind(consumer)
+
     def bind_unread_probe(self, probe: "UnreadProbe") -> None:
         """Give every runtime a way to ask whether anything it was handed is
         still unread — the other half of the same bookkeeping."""
@@ -408,6 +428,18 @@ class ComputePool:
             if (work := runtime.work_in_flight(topic_id, agent_handle)) is not None
         }
         return works.pop() if len(works) == 1 else None
+
+    async def ask_origin(self, project_id, topic_id, agent_handle):
+        """Read exactly one owning runtime; ambiguity never chooses a seat."""
+        candidates = [
+            runtime
+            for runtime in self._runtimes()
+            if runtime.holds(topic_id, agent_handle)
+        ]
+        if len(candidates) != 1:
+            return None
+        reader = getattr(candidates[0], "ask_origin", None)
+        return await reader(project_id, topic_id, agent_handle) if reader else None
 
     def holds(self, topic_id: uuid.UUID, agent_handle: str | None = None) -> bool:
         """Does any backend still hold a live session for this topic — for

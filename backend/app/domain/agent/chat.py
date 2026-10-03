@@ -183,6 +183,7 @@ from app.domain.agent.queries import (
     _Proposed,
     _resolved_agent,
     _session_agent,
+    require_pinned_seat,
 )
 from app.domain.agent.recovery import SessionRecovery
 
@@ -235,11 +236,25 @@ from app.domain.block.models import (
 from app.domain.block.notice_text import exception_text, say
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
+from app.domain.delivery.ask_wake import expected_ask_session
+from app.domain.delivery.input_identity import (
+    InputEffects,
+    InputOutcomeUnconfirmed,
+    InputReceipt,
+    InputReconciliationPending,
+    InputRegistrar,
+    WorkCompletion,
+    WorkTermination,
+)
+from app.domain.delivery.receipts import (
+    complete_work_inputs,
+    held_blocks,
+    terminate_work_inputs,
+)
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.identity.actor import Actor
 from app.domain.identity.handles import (
-    agent_instance_handle,
     looks_like_agent_handle,
     names_a_person,
     recipient_seat,
@@ -532,30 +547,13 @@ class ChatService(SessionRecovery):
         self._dead_sessions: set[tuple] = set()
         self._compute.bind_events(self._consume_hook_event, self._set_hook_activity)
         self._compute.bind_receipts(self.confirm_prompt_receipt)
+        self._compute.bind_completions(self.confirm_work_completion)
+        self._compute.bind_terminations(self.confirm_work_termination)
         self._compute.bind_unread_probe(self.oldest_unread_at)
         self._compute.bind_reachability(self._note_reachability)
-        # Mid-turn messages whose write the transport accepted but whose
-        # UserPromptSubmit receipt has not arrived yet (#539 decision A):
-        # topic → [(injected text, block ids, consuming turn)]. The receipt
-        # stamps them consumed; until then they stay pending, so a session
-        # death replays them (宁可重复不可丢失).
-        # The loop clock reading is the fourth field, and it is what
-        # `oldest_unread_at` reports: how long something has been waiting is a
-        # different question from whether it was written, and only the first one
-        # can tell a session that stopped reading from one that is busy.
-        self._pending_receipts: dict[
-            uuid.UUID, list[tuple[str, list[uuid.UUID], uuid.UUID, float]]
-        ] = {}
-        # 写进会话、还没等到 harness 说「收下了」的人类消息：topic → [(写下去的
-        # 那段文本, 该打 👀 的 block)]。
-        #
-        # 和 `_pending_receipts` 分开，因为两者回答的是不同的问题。那一份管重放
-        # 和「有人在等、会话却不读了」（`oldest_unread_at`）——把一轮新对话塞进
-        # 去，冷启动那一分多钟就会读成「会话不读了」，而那时根本还没有会话。这一
-        # 份只管屏幕上那个记号落在哪条消息上，落完就没了。
-        self._awaiting_seen: dict[
-            uuid.UUID, list[tuple[str, list[uuid.UUID], str | None]]
-        ] = {}
+        # Liveness only, keyed by durable input UUID. Settlement never depends
+        # on this process cache; cold-start inputs are not mid-turn unread probes.
+        self._unread_inputs: dict[uuid.UUID, dict[uuid.UUID, float]] = {}
         # Per-project ExecutionProfile (model + provider). None → always the
         # agent's built-in default (tests / single-profile deploys).
         self._profiles = profiles
@@ -764,7 +762,9 @@ class ChatService(SessionRecovery):
         work_id: uuid.UUID,
         seat_handle: str,
     ) -> AsyncIterator[None]:
-        async with self._seat_lock_for(topic_id, seat_handle):
+        from app.domain.agent.seat_admission import seat_admission
+
+        async with seat_admission(self._seat_lock_for(topic_id, seat_handle)):
             self._mark_turn_active(topic_id, work_id)
             try:
                 yield
@@ -879,18 +879,9 @@ class ChatService(SessionRecovery):
                 yield {"type": "done"}
                 return
 
-            # 芝士's 👀 is NOT placed here. This point is "the platform took
-            # the message" — the delivery below has not been attempted yet, and
-            # the branch right after this one handles it FAILING. A mark put
-            # here says the AI has the message while the message may still end
-            # up back in the queue.
-            #
-            # It is placed where the harness says the session took the input:
-            # `arm_seen_receipt` names the blocks, `confirm_prompt_receipt`
-            # places the mark. That receipt is harness-independent — Claude
-            # Code's UserPromptSubmit hook, pi's and codex's app-server response
-            # — and every one of them means the same thing: it is in front of
-            # 芝士 now.
+            # The read marker belongs to the structured native echo's database
+            # transaction. Neither accepting the human message here nor an RPC
+            # acknowledgement proves the native session read the input.
 
         # A turn is already running on this topic. Don't queue behind it —
         # hand the message to the session that is running RIGHT NOW.
@@ -914,6 +905,15 @@ class ChatService(SessionRecovery):
                 author,
                 attachments,
             )
+            if isinstance(delivered, InputReconciliationPending):
+                payload = await self.post_system_event(
+                    topic_id,
+                    "输入已登记，发送结果正在核对；不会重复发送",
+                    turn_id,
+                )
+                if payload is not None:
+                    yield {"type": "event_block", "block": payload}
+                return
             if delivered is True:
                 # The answer streams out of the turn already in flight, which
                 # every client in this topic is subscribed to — this request has
@@ -974,12 +974,9 @@ class ChatService(SessionRecovery):
         continuation_id: uuid.UUID | None = None,
         provision_actor: Actor | None = None,
         recipient_handle: str | None = None,
+        recipient_instance_id: uuid.UUID | None = None,
     ) -> AsyncIterator[dict]:
-        """Run the AI half of a human message that is already durable.
-
-        ``InProcessBroker.receive_message`` owns the receive-before-admission ordering;
-        this method starts only after the project gate admits the model work.
-        """
+        """Prepare an already durable message after project admission."""
         seat_handle = await self._turn_seat_handle(
             topic_id,
             user_block_id=user_block_id,
@@ -994,6 +991,7 @@ class ChatService(SessionRecovery):
                 user_block_id=user_block_id,
                 continuation_id=continuation_id,
                 provision_actor=provision_actor,
+                recipient_instance_id=recipient_instance_id,
             ):
                 yield frame
 
@@ -1023,7 +1021,7 @@ class ChatService(SessionRecovery):
         recipient_handle: str | None = None,
         *,
         owes_reply: bool = True,
-    ) -> bool | None:
+    ) -> bool | InputReconciliationPending | None:
         """Inject a just-posted human message into the turn already running on
         this topic.
 
@@ -1031,10 +1029,9 @@ class ChatService(SessionRecovery):
         the session answers it in the room before it uses any other tool. One
         said to somebody else in the room is only for the agent to know about.
 
-        ``True`` means the live session acknowledged the message, ``False``
-        means live delivery was attempted but failed, and ``None`` means no live
-        work remained by the time this method checked. Callers use that third
-        state to distinguish a normal new message from a raced fallback.
+        ``True`` means transport acceptance was recorded. A reconciliation
+        result holds the registered identity without authorizing a queued retry.
+        ``False`` means a pre-send failure; ``None`` means no live work remained.
 
         The text is labelled the same way `prompt_line` labels a pending block,
         so a message that arrives mid-turn reads identically to one that came in
@@ -1066,30 +1063,15 @@ class ChatService(SessionRecovery):
         )
         state = self._hook_work.get((topic_id, consuming_turn_id))
         line = publication_prompt("\n".join(lines))
-        # Register BEFORE the write so a fast receipt cannot race the entry
-        # (#539 decision A). The receipt is still the consumed boundary — it
-        # just no longer gates the delivery verdict: write-accept is delivery,
-        # and the stamp lands whenever the session actually consumes the text
-        # (confirm_prompt_receipt). Until then the message stays pending, so a
-        # session death replays it — 宁可重复不可丢失.
-        pending = self._pending_receipts.setdefault(topic_id, [])
-        # 同一个回执，两件事：把消息标记成被消费（上面那段说的重放边界），以及在
-        # 它身上落下 👀。人说的话才有记号——平台自己塞进去的通知走的是同一条登记，
-        # 但它不是谁发的消息，不该被 ack。
-        self.arm_seen_receipt(
-            topic_id,
-            line,
-            list(user_block_ids),
-            by=state.acting_agent if state else None,
+        registrar = self._input_registrar(
+            InputEffects(
+                held_block_ids=tuple(user_block_ids),
+                block_ids=tuple(user_block_ids),
+                seen_block_ids=tuple(user_block_ids),
+                seen_by=state.acting_agent if state else None,
+            ),
+            probe_unread=True,
         )
-        entry = (
-            line,
-            list(user_block_ids),
-            consuming_turn_id,
-            asyncio.get_running_loop().time(),
-        )
-        pending.append(entry)
-        del pending[:-16]  # a dead session must not grow this forever
         try:
             # Read the room's status, then deliver with no transaction open: a
             # row lock held across the device call queues every writer of the
@@ -1114,20 +1096,34 @@ class ChatService(SessionRecovery):
                         topic_id,
                         line,
                         images=images,
+                        register_input=registrar,
+                        expected_work_id=consuming_turn_id,
                         agent_handle=seat_agent,
                         owes_reply=owes_reply,
                     )
                     if images
                     else await self._compute.deliver(
-                        topic_id, line, agent_handle=seat_agent, owes_reply=owes_reply
+                        topic_id,
+                        line,
+                        register_input=registrar,
+                        expected_work_id=consuming_turn_id,
+                        agent_handle=seat_agent,
+                        owes_reply=owes_reply,
                     )
                 )
-        except Exception:  # noqa: BLE001 — caller reports the queued fallback
+        except InputOutcomeUnconfirmed as exc:
+            # The registered input may already be in the native session. Leave
+            # it with that session for reconciliation, never enqueue a new input.
+            logger.exception(
+                "live input requires reconciliation (topic=%s, input=%s)",
+                topic_id,
+                exc.identity.input_id,
+            )
+            return InputReconciliationPending(exc.identity, exc.accepted)
+        except Exception:  # noqa: BLE001 — pre-send failure may queue a fallback
             logger.exception("merge into running turn failed (topic=%s)", topic_id)
             delivered = False
         if not delivered:
-            if entry in pending:
-                pending.remove(entry)
             return False
         return True
 
@@ -1195,7 +1191,7 @@ class ChatService(SessionRecovery):
                     minutes,
                     delivered,
                 )
-                return delivered
+                return delivered is True
             except Exception:  # noqa: BLE001 — one room must not stop the sweep
                 logger.exception(
                     "chat progress reminder failed (topic=%s)", state.topic_id
@@ -1211,7 +1207,7 @@ class ChatService(SessionRecovery):
         *,
         blocks: Sequence[uuid.UUID] = (),
         recipient_seat: str | None = None,
-    ) -> bool:
+    ) -> bool | InputReconciliationPending:
         """Tell the turn already running on this topic that the world changed
         under it. Returns whether the live session took it.
 
@@ -1246,19 +1242,10 @@ class ChatService(SessionRecovery):
         if consuming_turn_id is None:
             return False
         line = platform_prompt(strip_platform_notice(notice))
-        if blocks:
-            # Registered BEFORE the write, for the reason the human-message path
-            # registers first: a fast receipt must not race its own entry.
-            pending = self._pending_receipts.setdefault(topic_id, [])
-            pending.append(
-                (
-                    line,
-                    list(blocks),
-                    consuming_turn_id,
-                    asyncio.get_running_loop().time(),
-                )
-            )
-            del pending[:-16]  # a dead session must not grow this forever
+        registrar = self._input_registrar(
+            InputEffects(held_block_ids=tuple(blocks), block_ids=tuple(blocks)),
+            probe_unread=bool(blocks),
+        )
         state = self._hook_work.get((topic_id, consuming_turn_id))
         seat_agent = (
             (state.agent_instance_handle or state.acting_agent) if state else None
@@ -1268,10 +1255,18 @@ class ChatService(SessionRecovery):
                 await self._compute.deliver(
                     topic_id,
                     line,
+                    register_input=registrar,
                     expected_work_id=consuming_turn_id,
                     agent_handle=seat_agent,
                 )
             )
+        except InputOutcomeUnconfirmed as exc:
+            logger.exception(
+                "notice input requires reconciliation (topic=%s, input=%s)",
+                topic_id,
+                exc.identity.input_id,
+            )
+            return InputReconciliationPending(exc.identity, exc.accepted)
         except Exception:  # noqa: BLE001 — a failed notice must not fail the write
             logger.exception(
                 "platform notice into running turn failed (topic=%s)", topic_id
@@ -1289,55 +1284,60 @@ class ChatService(SessionRecovery):
         produce output forever with its input queue frozen. What it cannot do is
         answer anybody, so this is the check that has a person behind it.
         """
-        pending = self._pending_receipts.get(topic_id)
-        if not pending:
-            return None
-        return min(entry[3] for entry in pending)
+        pending = self._unread_inputs.get(topic_id)
+        return min(pending.values()) if pending else None
 
-    async def confirm_prompt_receipt(self, topic_id: uuid.UUID, prompt: str) -> None:
-        """A UserPromptSubmit receipt from the topic's screen: the session
-        consumed an input. If it is one we injected mid-turn, stamp its blocks
-        consumed now — this is the boundary that keeps the next turn's pending
-        window honest. A provider may append native-image mentions to the text
-        it types, so the receipt matches on equality or on carrying our text
-        as its prefix."""
-        # 落记号是尽力而为的，而它下面那段是功能性的（把消息标记成已消费，也就是
-        # 下一轮不再重发它的那个边界）。一个纯装饰的东西不许把功能路径带下去：
-        # 记号丢了只是少一个 👀，标记丢了会让这条消息在下一轮被重发一遍。
-        try:
-            await self._place_seen_receipts(topic_id, prompt)
-        except Exception:  # noqa: BLE001 — the consumed stamp matters more
-            logger.exception("failed to place the seen receipt (topic=%s)", topic_id)
-        pending = self._pending_receipts.get(topic_id)
-        if not pending:
-            return
-        for entry in pending:
-            text, block_ids, consuming_turn_id, _written_at = entry
-            if prompt == text or (text and prompt.startswith(text)):
-                pending.remove(entry)
-                try:
-                    async with self._sessions() as session:
-                        await BlockRepository(session).mark_consumed(
-                            block_ids, consuming_turn_id
-                        )
-                        from app.domain.delivery.agent import receive_attempt
+    def _input_registrar(
+        self,
+        effects: InputEffects,
+        *,
+        probe_unread: bool = False,
+        fence_delivery: bool = False,
+        parent_session_id: str | None = None,
+    ) -> InputRegistrar:
+        from app.domain.agent.input_registration import input_registrar
 
-                        await receive_attempt(
-                            session, consuming_turn_id, datetime.now(UTC)
-                        )
-                        await session.commit()
-                    logger.info(
-                        "prompt receipt matched an injected message — %d "
-                        "block(s) stamped consumed (topic=%s, turn=%s)",
-                        len(block_ids),
-                        topic_id,
-                        consuming_turn_id,
-                    )
-                except Exception:  # noqa: BLE001 — a failed stamp just replays
-                    logger.exception(
-                        "consumed stamp failed on receipt (topic=%s)", topic_id
-                    )
-                return
+        return input_registrar(
+            self._sessions,
+            effects,
+            self._unread_inputs,
+            probe_unread=probe_unread,
+            fence_delivery=fence_delivery,
+            parent_session_id=parent_session_id,
+        )
+
+    async def confirm_prompt_receipt(self, receipt: InputReceipt) -> None:
+        """Commit identity-bound effects before the journal may acknowledge.
+
+        No in-memory candidate is needed. Commit failure propagates so the same
+        journal input is retried, even by a newly reconstructed ChatService.
+        """
+        from app.domain.agent.input_registration import confirm_receipt
+
+        await confirm_receipt(self, receipt)
+
+    def nudge_ask_receipts(self, identity):
+        from app.domain.agent.ask_receipt_wait import nudge_ask_receipts
+
+        nudge_ask_receipts(self, identity)
+
+    async def confirm_work_completion(self, completion: WorkCompletion) -> None:
+        """Settle a journaled completion without process-local work context."""
+        from app.domain.agent.pending_messages import finish_work
+
+        await finish_work(self, completion, complete_work_inputs)
+
+    async def confirm_work_termination(self, termination: WorkTermination) -> None:
+        """Record that a work interval ended without completing.
+
+        Separate from :meth:`confirm_work_completion` on purpose: a terminated
+        work must never reach the completion path, which is what stamps
+        ``completed_at`` and consumes blocks. This one only frees the seat so a
+        new input can be taken.
+        """
+        from app.domain.agent.pending_messages import finish_work_termination
+
+        await finish_work_termination(self, termination, terminate_work_inputs)
 
     def session_controls(self, topic_id: uuid.UUID):
         """The runtime whose live session in this room takes controls, if any."""
@@ -1621,7 +1621,7 @@ class ChatService(SessionRecovery):
         session that stopped reading, and replays like one.
         """
         deadline = time.monotonic() + timeout_s
-        while any(self._pending_receipts.values()) and time.monotonic() < deadline:
+        while any(self._unread_inputs.values()) and time.monotonic() < deadline:
             await asyncio.sleep(0.2)
         # A replay still running reads its sessions too; the next process
         # replays them again from where this one landed.
@@ -1668,6 +1668,10 @@ class ChatService(SessionRecovery):
                     logger.exception(
                         "session recovery failed for topic %s", session.topic_id
                     )
+                else:
+                    from app.domain.agent.pending_messages import nudge_messages
+
+                    nudge_messages(self, session.topic_id)
 
     async def _said(self, session: SessionRef) -> set[str]:
         """What 芝士 has already said in this topic, as the room stores it."""
@@ -1782,6 +1786,9 @@ class ChatService(SessionRecovery):
             # 同一个时刻也看一眼文档：干过活的房间文档还空着，就请这个队友补上
             # （topic/doc_nudge.py）。
             doc_nudge.nudge(topic_id, self)
+            from app.domain.agent.pending_messages import nudge_messages
+
+            nudge_messages(self, topic_id)
 
     @staticmethod
     def room_is_a_work_room(topic: Topic) -> bool:
@@ -2178,6 +2185,24 @@ class ChatService(SessionRecovery):
         action_frames: list[dict] = []
         async with self._sessions() as session:
             blocks = BlockRepository(session)
+            # Exact native completion locks its input rows before touching blocks.
+            # A synthetic error or an identity-less result cannot release a hold.
+            if (
+                not result.is_error
+                and result.input_work_completed
+                and result.session_id
+                and result.harness
+                and result.agent_handle == state.acting_agent
+            ):
+                await complete_work_inputs(
+                    session,
+                    project_id=state.project_id,
+                    topic_id=state.topic_id,
+                    recipient_handle=result.agent_handle,
+                    harness=result.harness,
+                    native_session_id=result.session_id,
+                    work_id=state.work_id,
+                )
             if not usages:
                 await Ledger(session).record(
                     await payer_for_project(session, state.project_id),
@@ -2212,10 +2237,11 @@ class ChatService(SessionRecovery):
             fed = list(
                 state.pending_ids | set(await self._delivered_unread(session, state))
             )
-            if not result.is_error:
-                await blocks.mark_consumed(fed, state.work_id)
-            else:
+            if result.is_error:
                 await blocks.forget_prompted_turn(fed)
+            elif result.harness is None:
+                # Non-native providers do not register NativeInput batches.
+                await blocks.mark_consumed(fed, state.work_id)
             await session.commit()
 
         changeset = await self._turn_changeset(
@@ -2473,63 +2499,6 @@ class ChatService(SessionRecovery):
         if names_a_person(author):
             naming.nudge(place.room_id, "message")
         return payloads, anchor_id, block_ids, False
-
-    #: How many un-marked messages one topic keeps waiting for a receipt.
-    _SEEN_RECEIPT_BACKLOG = 8
-
-    def arm_seen_receipt(
-        self,
-        topic_id: uuid.UUID,
-        text: str,
-        block_ids: list[uuid.UUID],
-        by: str | None = None,
-    ) -> None:
-        """Say which blocks get 芝士's 👀 when the session says it took ``text``,
-        and whose 👀 it is — ``by`` is the agent running the turn; None means
-        the room's seat.
-
-        Called BEFORE the write, for the same reason the consumed-stamp entry is:
-        the receipt can come back before the caller gets its next line in.
-        """
-        if not text or not block_ids:
-            return
-        waiting = self._awaiting_seen.setdefault(topic_id, [])
-        waiting.append((text, list(block_ids), by))
-        # A receipt that never comes (the session died before reading, a harness
-        # that does not report one) leaves its entry behind, and this process
-        # runs for weeks. The mark is worth nothing once the next messages have
-        # gone by, so the oldest simply fall off — dropping one costs one 👀,
-        # never a message.
-        del waiting[: -self._SEEN_RECEIPT_BACKLOG]
-
-    async def _place_seen_receipts(self, topic_id: uuid.UUID, prompt: str) -> None:
-        """The session took ``prompt`` — put 👀 on whatever that text carried.
-
-        Matching is the same as the consumed stamp's: equality, or our text as
-        the prefix of what the session reports (a provider may append its own
-        native-image mentions to the line it types).
-        """
-        waiting = self._awaiting_seen.get(topic_id)
-        if not waiting:
-            return
-        for entry in list(waiting):
-            text, block_ids, by = entry
-            if prompt != text and not (text and prompt.startswith(text)):
-                continue
-            waiting.remove(entry)
-            if not waiting:
-                self._awaiting_seen.pop(topic_id, None)
-            from app.domain.agent.runtime import get_broker
-
-            for block_id in block_ids:
-                ack = await self.ack_summon(block_id, topic_id, by=by)
-                if ack is None:
-                    continue
-                # 这条不是从 converse 的那个生成器里出去的——回执是会话过一阵子
-                # 自己说的，那时候请求早就返回了——所以走 broker，房间里开着的
-                # 客户端照样收得到。
-                await get_broker().publish(str(topic_id), {"type": "reaction", **ack})
-            return
 
     async def ack_summon(
         self, user_block_id: uuid.UUID, topic_id: uuid.UUID, by: str | None = None
@@ -3229,16 +3198,10 @@ class ChatService(SessionRecovery):
         delivery_id: uuid.UUID | None = None,
         recipient_instance_id: uuid.UUID | None = None,
     ) -> "_TurnContext | _TurnBail":
-        """Everything a turn needs before anything runs it, read in one
-        transaction: who is here, what was said, what is remembered, which
-        machine, and the prompt built out of all of it.
+        """Read the recipient, history, memory, machine and prompt in one transaction.
 
-        Returns a ``_TurnBail`` when the turn ends here instead of starting —
-        nobody is actually waiting on an answer, or the machine is still being
-        built. Both are ordinary outcomes, not errors, and both have to reach
-        the room as frames, which is why they travel back rather than being
-        yielded: assembling is a question with an answer, and a coroutine can
-        return one.
+        Return a ``_TurnBail`` with room frames if no answer is pending or the
+        machine is still being built; neither outcome starts an executor.
         """
         started = time.monotonic()
         phases_ms: dict[str, float] = {}
@@ -3279,14 +3242,12 @@ class ChatService(SessionRecovery):
                 (addressed.meta or {}).get("agent_recipient") if addressed else None
             )
             agents = AgentInstanceService(session)
+            pinned_seat = None
             if recipient_instance_id is not None:
                 recipient = {"instance_id": str(recipient_instance_id)}
-                if agent_instance_handle(
-                    recipient_instance_id
-                ) not in await TopicMemberService(session).agent_handles(place.room_id):
-                    raise ValidationError(
-                        "The addressed agent is no longer seated in this room"
-                    )
+                pinned_seat = await require_pinned_seat(
+                    session, place.room_id, recipient_instance_id
+                )
             # 收件人是消息落库时记下来的。记的时候还没有实例行的那些旧消息，
             # 「收件人是项目的芝士」和今天的解析是同一个答案。
             if recipient is None or recipient.get("instance_id") is None:
@@ -3298,7 +3259,18 @@ class ChatService(SessionRecovery):
                         instance_id=uuid.UUID(recipient["instance_id"]),
                     )
                 )
+            acting_agent = pinned_seat or await self._acting_handle(
+                session, topic.id, agent
+            )
             pending = [block for block in pending if _addressed_to(block, agent.handle)]
+            held = await held_blocks(
+                session,
+                project_id=topic.project_id,
+                topic_id=place.room_id,
+                recipient_handle=acting_agent,
+            )
+            pending = [block for block in pending if block.id not in held]
+            notices = [block for block in notices if block.id not in held]
             prompt_pending_ids = [b.id for b in pending]
             if not pending and user_block_id is not None:
                 # 有人召唤，但他那条消息已经被前一轮读进 prompt 了（两个人几乎同时
@@ -3336,7 +3308,9 @@ class ChatService(SessionRecovery):
             # 二、这一轮要不要一双手？见 `_is_dm`：不租地点的一轮桌上只有对话、
             # 记忆和平台工具，加上会话自己那块 64 MiB 草稿区。
             needs_place = not _is_dm(topic)
-            acting_agent = await self._acting_handle(session, topic.id, agent)
+            acting_agent = pinned_seat or await self._acting_handle(
+                session, topic.id, agent
+            )
             doc_root = await blocks.doc_root(place.room_id)
             # 工作话题的文档还空着时是 `""`，不是 None：提示词据此告诉坐进来的
             # 队友「建第一版」（`build_system_prompt`）。私聊没有这份文档要维护。
@@ -3716,6 +3690,8 @@ class ChatService(SessionRecovery):
             # "this one batch keeps failing" look identical, and the second one
             # is the diagnosis. Counting at prompt-build time is the only place
             # that sees a failed attempt at all.
+            if recipient_instance_id is not None:
+                await require_pinned_seat(session, place.room_id, recipient_instance_id)
             replay_n = await blocks.bump_prompt_attempts(prompt_pending_ids, turn_id)
             # Committed HERE and not left to ride the conditional commit further
             # down: that one only fires on a topic's FIRST turn (compute_config
@@ -3748,6 +3724,8 @@ class ChatService(SessionRecovery):
                     topic, project.settings if project else None
                 ).model_dump()
                 await session.commit()
+            if recipient_instance_id is not None:
+                await require_pinned_seat(session, place.room_id, recipient_instance_id)
             phases_ms["committed"] = (time.monotonic() - started) * 1000
         logger.info(
             "chat_assembly_timing topic=%s turn=%s elapsed_ms=%.3f phases_ms=%s",
@@ -3805,7 +3783,7 @@ class ChatService(SessionRecovery):
         post_user_message), yielding WS frames as JSON-ready dicts. Runs under
         the per-topic lock; the prompt is built from history at lock time so a
         queued turn picks up every message posted while it waited."""
-
+        expected_session = await expected_ask_session(self._sessions, delivery_id)
         preparation_started = time.monotonic()
         prepared = await self._assemble_turn(
             topic_id=topic_id,
@@ -4056,12 +4034,18 @@ class ChatService(SessionRecovery):
             reply_to=user_block_id,
             agent_handle=prepared.agent.handle,
         )
-        summoned = False
-        if user_block_id is not None and not is_resume and not platform_turn:
-            summoned = True
-            self.arm_seen_receipt(
-                topic_id, prompt_text, [user_block_id], by=acting_agent
-            )
+        summoned = user_block_id is not None and not is_resume and not platform_turn
+        effects = InputEffects(
+            held_block_ids=tuple(consumed_ids),
+            # Initial prompt consumption remains tied to the clean turn ending;
+            # native echo settles the delivery and its summoning read marker.
+            seen_block_ids=(user_block_id,)
+            if user_block_id is not None and summoned
+            else (),
+            seen_by=acting_agent if summoned else None,
+            delivery_id=delivery_id,
+            attempt_id=turn_id if delivery_id is not None else None,
+        )
         try:
             # The same key `_assemble_turn` read this turn's resume token under
             # — where this conversation runs is recorded under it too, and a ref
@@ -4073,26 +4057,13 @@ class ChatService(SessionRecovery):
                 harness=prepared.harness,
             )
             await self._compute.activate(session_ref, runtime)
-            if delivery_id is not None:
-                from app.domain.delivery.agent import begin_send
-
-                await begin_send(
-                    self._sessions,
-                    delivery_id,
-                    turn_id,
-                    parent_session_id=resume_session_id,
-                )
-                # Staging a prompt on a booting machine is not receiver input.
-                # Register before send so a fast native receipt cannot race it.
-                self._pending_receipts.setdefault(topic_id, []).append(
-                    (prompt_text, [], turn_id, time.monotonic())
-                )
             ready = await runtime.send(
                 session_ref,
                 prompt_text,
                 Opening(
                     system_prompt=system_prompt,
                     resume_token=resume_session_id,
+                    expected_native_session=expected_session,
                     memory_scope="personal" if private_owner else None,
                     owner=private_owner,
                     model=model_kwargs.get("model"),
@@ -4103,8 +4074,29 @@ class ChatService(SessionRecovery):
                 work_id=turn_id,
                 images=turn_images or None,
                 on_mark=_register_work,
+                register_input=self._input_registrar(
+                    effects,
+                    fence_delivery=delivery_id is not None,
+                    parent_session_id=resume_session_id,
+                ),
                 owes_reply=summoned,
             )
+        except InputOutcomeUnconfirmed as exc:
+            # The session still owns this work. Its structured echo can settle
+            # the committed identity even after this ChatService is replaced.
+            logger.exception(
+                "initial input requires reconciliation (topic=%s, input=%s)",
+                topic_id,
+                exc.identity.input_id,
+            )
+            payload = await self.post_system_event(
+                topic_id,
+                "输入已登记，发送结果正在核对；不会重复发送",
+                turn_id,
+            )
+            if payload is not None:
+                yield {"type": "event_block", "block": payload}
+            return
         except Exception as exc:  # noqa: BLE001 — a failed write must be SAID
             # Nothing else will close this turn. `session_lifecycle` above told
             # the runner that the session owns the ending, and the session this

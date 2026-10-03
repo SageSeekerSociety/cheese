@@ -95,6 +95,56 @@ class Delivery(UuidPk, Base):
     attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
 
+class NativeInput(UuidPk, Base):
+    """One input's receiver identity, persisted before contacting the runner."""
+
+    __tablename__ = "native_inputs"
+    __table_args__ = (
+        UniqueConstraint(
+            "harness", "native_session_id", "input_id", name="uq_native_input_identity"
+        ),
+        Index("ix_native_inputs_delivery", "delivery_id"),
+    )
+
+    project_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    topic_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    recipient_handle: Mapped[str] = mapped_column(String(64))
+    harness: Mapped[str] = mapped_column(String(32))
+    native_session_id: Mapped[str] = mapped_column(String(256))
+    input_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    work_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    execution_work_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    delivery_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    attempt_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    event_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    held_block_ids: Mapped[list] = mapped_column(JSONB, default=list)
+    released_block_ids: Mapped[list] = mapped_column(JSONB, default=list)
+    block_ids: Mapped[list] = mapped_column(JSONB, default=list)
+    seen_block_ids: Mapped[list] = mapped_column(JSONB, default=list)
+    seen_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    registered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    accepted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    echoed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    settled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    #: 确认终止的时刻：那一段 work 被 Stop 打断，或者 native 报错结束了。它**不是**
+    #: 完成 —— `completed_at` 照旧为空，持有的 block 也照旧持有，因为答案到底被消费
+    #: 了没有仍然不知道。记它只为让座位不再被一段已经死掉的 work 永久占住。
+    terminated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    #: 终止原因：`interrupted` 或 `is_error`。
+    termination: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+
 class TimedDelivery(UuidPk, Base):
     """一个参与者设下的闹钟：到 `due_at` 把 `content` 递给 `recipient_handle`。
 

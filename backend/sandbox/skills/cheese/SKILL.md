@@ -65,7 +65,7 @@ description: 在 CheeseX（知是）平台里接收用户消息、开始执行�
 
 - **不自行提取凭证拼 `curl` 或裸 HTTP 请求，不翻 `/home`、`/home/node/.claude`、session 文件、`.git` 内部、系统目录**。平台数据通过平台工具、`cheese` 的子命令或 `platform_request` 访问，都按当前房间身份鉴权。找不到平台数据时用 `platform_request` 的 `find` 查接口（记忆除外：用文件工具读 `~/.cheese/memory/`），不满文件系统找。
 - **不确定某个工具或子命令的参数就看它的定义**（工具看 schema，子命令看 `--help`）,不要瞎试 `cheese_set_title`、给 `cheese_doc_get` 传 `markdown` 这种不存在的写法。
-- **要用户拍板时创建平台的带选项决策请求**，用 `cheese_ask`。原生 `AskUserQuestion` 在这里不可用；平台决策请求的按钮显示在对话里，答案下一轮自动带回。
+- **要用户拍板时用 `cheese_ask` 一次创建完整题组**。原生 `AskUserQuestion` 在这里不可用；人选择或填写后明确提交，平台再向原出题执行者投递。创建成功不表示已作答或已接续。
 - 一轮里反复探查、找不到就继续找,会把整轮拖到超时、现场刷出一堆没用的命令卡片。**先想清楚再动手,一步到位。**
 - **绝不 `git stash`**。你的工作区是一个 git worktree,而 `refs/stash` 是**整个仓库共享一个栈**——同仓库其他任务 stash 进去的东西,你 `pop` 会把它取出来并**从栈上删掉**,两边都不会报错。要把改动放一边就直接 `git commit`,或者写成 patch 文件放在工作区里。同理:**绝不写 `.git/hooks/`、不要修改共享 Git 配置**,那两样也是全仓库共享的,你在这里装的 hook 会在别人下次提交时执行。
 
@@ -253,7 +253,7 @@ GitHub 项目直接使用原生 `gh`，Forgejo 项目直接使用原生 `fj`。�
 | `cheese_docs_read(page)` | 读知是文档一整页的 Markdown 原文。page 写页名（`accept`）或检索结果里的链接；开发文档写 `dev/页名`，只有知是自己的项目能读 |
 | `cheese_fetch(url, prompt?)` | 读取网页。原生 WebFetch 也可用；需要浏览器抓取等方式时用它。带上 `prompt` 返回提问的答案，不带则返回网页内容。抓取失败会报告失败阶段 |
 | `cheese_library_ls()` | 列出资料库里的文件(用户给这个项目的文件,最近给的在前) |
-| `cheese_ask(question, option)` | 对话里发**带按钮的选项问题**;`option` 是选项列表，用户点一下就是答案(自动带回你下一轮)。要人拍板时用它，别让人打字 |
+| `cheese_ask(questions, ask_group?)` | 一次创建 1–8 题，按显示顺序给全；每题 `{question, options: [{text, explain?}], allow_other?, reject_option?}`，2–3 个对象选项，两项许可默认 true。返回题组、问题 id 和真实状态。`ask_group` 可选；重试同一创建请求时保持 id 和内容不变。用户明确提交后向原出题执行者投递，不能把创建或提交当作已消费 |
 | `cheese_machine(profile, device_id?)` | 为自己的会话选择工作电脑：`profile` 只有 `cloud`（平台开的云端机器）和 `device`（项目授权的自有设备）两个值，`device_id` 只配 `device` 用、指定哪一台，不填就自动选一台在线的。可直接切换到项目已授权的设备或云端，下次执行操作时使用新机器。更换前平台先在原来那台上把改动推送到分支（和每轮结束时的推送是同一步），推送失败或原来那台连不上就不换，并说明原因；原来那台连不上时，只有房间里的人能在成员名册里选择不推送直接更换。新机器从分支拉代码，会话进程所在机器不变。资源权限和额度限制照常检查，不创建待审批提议 |
 | `cheese_note(thread, content)` | 给**同一个 handle 的另一条线程**留一张便条。它直接进那条线程正在跑的那一轮，不进时间线；那边这一刻没在跑就没人接住，结果会如实说没人接住。跟别的参与者说话走房间里的 chat，agent 对 agent 也是 |
 | `cheese_deliver_at(at, content)` | 请平台在 `at` 那个时刻把 `content` 递给你自己（ISO-8601，带时区）。到点产生的是一条投递——平台不替你想起来该干什么，想起来要设这个闹钟的是你 |

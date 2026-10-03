@@ -54,6 +54,13 @@ from app.domain.agent.service import (
     AgentToolResult,
     AgentToolUse,
 )
+from app.domain.delivery.input_identity import (
+    CompletionConsumer,
+    InputReceipt,
+    TerminationConsumer,
+    WorkCompletion,
+    WorkTermination,
+)
 
 #: What a record says about a working session, for the liveness rules
 #: (``DrivenRuntime.verdict``): it said something, work moved. A tool starting
@@ -152,6 +159,8 @@ class Subscription[B: Backlog]:
         activity: SeatActivity,
         *,
         receipts: ReceiptConsumer | None = None,
+        completions: CompletionConsumer | None = None,
+        terminations: TerminationConsumer | None = None,
         pulse: Pulse | None = None,
         memory: Callable[[], Awaitable[None]] | None = None,
         took: Took | None = None,
@@ -159,6 +168,8 @@ class Subscription[B: Backlog]:
         self.session, self.path, self.call = session, path, call
         self.consume, self.activity = consume, activity
         self.receipts, self.pulse = receipts, pulse
+        self.completions = completions
+        self.terminations = terminations
         self.took = took
         # 一轮结束时问一次记忆（见 `MemoryConsumer`）：agent 该写的记忆按规矩写
         # 在回复之前，所以一轮读完就是它写完的时刻。
@@ -249,11 +260,45 @@ class Subscription[B: Backlog]:
         """A record from before the first input, which no turn owns."""
         raise NotImplementedError
 
-    def receipt(self, record: dict) -> str | None:
-        """The text of an input this record says the session read, if it is
-        such a record. A harness that takes an input the moment it is written
-        has nothing to report here: ``DrivenRuntime`` reports those on send."""
+    def receipt(self, record: dict) -> InputReceipt | None:
+        """Native evidence for a specific input, distinct from RPC acceptance."""
         return None
+
+    def completion(self, record: dict) -> WorkCompletion | None:
+        return None
+
+    def termination(self, record: dict) -> WorkTermination | None:
+        """The work interval this record says ended without completing.
+
+        Only a harness can answer this: whether a result is an error, or was
+        interrupted, and which inputs that work owned, are its facts. The
+        default knows nothing and frees nothing.
+        """
+        return None
+
+    async def reconcile_history(self) -> None:
+        """A harness may reconcile retained facts behind its landing cursor."""
+
+    async def settle_termination(self, record: dict) -> WorkTermination | None:
+        termination = self.termination(record)
+        if termination is not None:
+            if self.terminations is None:
+                raise RuntimeError("Termination consumer is not bound")
+            await self.terminations(termination)
+        return termination
+
+    async def settle_completion(self, record: dict) -> WorkCompletion | None:
+        # A terminated work is not a completion, and a record settles at most
+        # one of the two. Termination goes first so an error or a Stop can never
+        # fall through to the completion consumer.
+        if await self.settle_termination(record) is not None:
+            return None
+        completion = self.completion(record)
+        if completion is not None:
+            if self.completions is None:
+                raise RuntimeError("Completion consumer is not bound")
+            await self.completions(completion)
+        return completion
 
     def taken(self, record: dict) -> str | None:
         """The id of an input this record says the session read inside the
@@ -298,12 +343,25 @@ class Subscription[B: Backlog]:
             try:
                 while page := await self.on_disk(reader.unread):
                     for entry in page:
+                        assert isinstance(entry.record, dict)
+                        receipt = self.receipt(entry.record)
+                        if receipt is not None:
+                            # Settlement is never subject to output-age or poison
+                            # record skipping. Failure leaves this cursor replayable.
+                            if self.receipts is None:
+                                raise RuntimeError("Receipt consumer is not bound")
+                            await self.receipts(receipt)
+                        # Settlement precedes age/poison handling even when the
+                        # runner is idle and this process never saw the start.
+                        completion = await self.settle_completion(entry.record)
                         if entry.age_s >= STALE_S:
                             stale += 1
                         else:
                             try:
                                 delivered += await self._deliver(entry, reader)
                             except Exception:
+                                if completion is not None:
+                                    raise
                                 if not await self.on_disk(
                                     reader.refused,
                                     entry.key,
@@ -372,9 +430,10 @@ class Subscription[B: Backlog]:
                     self.seat,
                     frozenset(self.marks(record, list(events))),
                 )
-            text = self.receipt(record)
-            if text is not None and self.receipts is not None:
-                await self.receipts(self.session.topic_id, text)
+            # The input receipt is not emitted here: the drain loop emits it
+            # before the age/poison checks, so that a settlement never rides on
+            # a record the room may step over. Emitting it here as well would
+            # deliver the same receipt twice.
             taken = self.taken(record)
             if taken is not None and self.took is not None:
                 self.took(self.seat, taken, work_id)

@@ -121,6 +121,60 @@ export const ACCEPT_CARD = frame(4).card
 export const ACCEPT_CHECKS = frame(4).checks
 
 /**
+ * `cheese_ask` 的一条真问题 —— 产品**现状**那一版，不是这次要做的新版。
+ *
+ * 画它的是 `RoomMessage.vue` 本身，所以这两格就是「现在长什么样」的对照图：
+ * `meta.options` 躺在那儿，房间画出一排一键按钮；有人答过之后 `meta.answer_log`
+ * 的末条落在同一条上，房间画成「谁选了什么」的回执。
+ *
+ * 字段形状照后端写：`meta.asked` 是**在等谁答**那个 handle 或 null
+ * （`topics_messages.py` 建问题那处写 `{"options": …, "asked": …}`），不是布尔。
+ * 答完也**不清它** —— `answer_options` 只往 `answer_log` 追加，末条是生效的那一版。
+ */
+const ASK_TEXT = '这次的作业按哪种方式收？'
+const ASK_OPTIONS = [{ text: '课程平台收文件' }, { text: '发到课程邮箱' }, { text: '课上交纸质' }]
+/** 这道题在等谁答：发起那一轮的人，谁答谁就是他。 */
+const ASK_WAITING_FOR = 'wang'
+
+function askRow(answered: { option: string; by: string } | null): RoomRow {
+  const meta: Block['meta'] = { asked: ASK_WAITING_FOR, options: ASK_OPTIONS }
+  if (answered) {
+    meta.answer_log = [
+      {
+        v: 1,
+        kind: 'option',
+        option: answered.option,
+        note: null,
+        by: answered.by,
+        at: '2026-09-30T10:24:00Z',
+        client_op_id: 'demo',
+      },
+    ]
+  }
+  const block: Block = {
+    id: answered ? 'ask-demo-answered' : 'ask-demo-open',
+    topic_id: 'demo',
+    kind: 'message',
+    author_type: 'participant',
+    author: 'cheese',
+    content: ASK_TEXT,
+    created_at: '2026-09-30T10:24:00Z',
+    meta,
+  }
+  return {
+    line: { kind: 'message', id: block.id, author: block.author, text: ASK_TEXT, time: '10:24', block },
+    block,
+    notice: null,
+    run: [block],
+  }
+}
+
+/** 还没答：一排一键选项，点一下就交上去。 */
+export const ASK_OPEN = askRow(null)
+/** 已经有人答了：整排收成一句回执「某某 选了「什么」」。 */
+export const ASK_ANSWERED = askRow({ option: ASK_OPTIONS[0].text, by: 'wang' })
+
+/**
  * 预览站里会自己取数的那几件（验收卡读卡和读检查）该读到什么。装到演示后端上
  * （`demoBackend`），和 `DemoRoom.installPanelAnswers` 是同一件事。
  */

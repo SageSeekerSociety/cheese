@@ -26,7 +26,10 @@ vi.mock('@/api', async () => {
   }
 })
 
-vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }) }))
+vi.mock('vue-router', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('vue-router')>()),
+  useRouter: () => ({ push: vi.fn() }),
+}))
 
 vi.mock('@/stores/workspace', () => ({
   useWorkspaceStore: () => ({

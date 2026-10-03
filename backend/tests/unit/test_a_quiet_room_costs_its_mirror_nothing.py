@@ -11,11 +11,25 @@ from datetime import UTC, datetime
 
 import pytest
 
-from app.domain.agent.harness import SessionRef
+from app.domain.agent.harness import CLAUDE_CODE, SessionRef
 from app.domain.agent.harness.claude_code import journal as cc_journal
 from app.domain.agent.harness.claude_code.backlog import control_state
 from app.domain.agent.harness.claude_code.subscription import Subscription
 from app.domain.agent.service import AgentStepOutput, AgentToolResult
+from app.domain.delivery.input_identity import InputIdentity, InputReceipt
+
+
+@pytest.fixture
+def input_identity() -> InputIdentity:
+    return InputIdentity(
+        uuid.uuid4(),
+        uuid.uuid4(),
+        "cheese-a",
+        CLAUDE_CODE,
+        "native-session",
+        uuid.uuid4(),
+        uuid.uuid4(),
+    )
 
 
 def _record(sequence: int, record: dict) -> dict:
@@ -26,17 +40,29 @@ def _record(sequence: int, record: dict) -> dict:
     }
 
 
-def _opening(work: str) -> list[dict]:
+def _opening(identity: InputIdentity) -> list[dict]:
     """A turn that starts a subagent and is still waiting on it."""
-    stamp = {"work_id": work}
+    stamp = {
+        "work_id": str(identity.work_id),
+        "agent_handle": identity.recipient_handle,
+    }
     return [
         _record(
             1,
             {
                 "type": "user",
-                "uuid": "echo",
+                "uuid": str(identity.input_id),
+                "session_id": identity.native_session_id,
+                "isReplay": True,
                 "message": {"role": "user", "content": "look into the build"},
-                "cheese": {**stamp, "turn_start": True, "receipt": True},
+                "cheese": {
+                    **stamp,
+                    "turn_start": True,
+                    "receipt": True,
+                    "receipt_work_id": str(identity.work_id),
+                    "receipt_execution_work_id": str(identity.work_id),
+                    "receipt_session_id": identity.native_session_id,
+                },
             },
         ),
         _record(
@@ -99,7 +125,13 @@ def _report(work: str) -> list[dict]:
     ]
 
 
-def _subscription(tmp_path, journal: list[dict], landed: list[object], asked: list):
+def _subscription(
+    tmp_path,
+    journal: list[dict],
+    landed: list[object],
+    asked: list,
+    identity: InputIdentity,
+):
     async def call(method: str, params: dict) -> dict:
         assert method == "events"
         asked.append(params["after"])
@@ -114,14 +146,27 @@ def _subscription(tmp_path, journal: list[dict], landed: list[object], asked: li
     async def announce():
         pass
 
+    async def receipt(evidence: InputReceipt):
+        assert evidence == InputReceipt(
+            identity, "native_echo", execution_work_id=identity.work_id
+        )
+
+    session = SessionRef(
+        identity.project_id,
+        identity.topic_id,
+        identity.recipient_handle,
+        harness=identity.harness,
+    )
     return Subscription(
-        SessionRef(uuid.uuid4(), uuid.uuid4(), "cheese-a", harness="claude-code"),
+        session,
         tmp_path / "records.sqlite",
         call,
         consume,
         activity,
-        session_id=None,
+        session_id=identity.native_session_id,
+        recipient_handle=session.agent_handle,
         announce=announce,
+        receipts=receipt,
     )
 
 
@@ -139,12 +184,11 @@ def _count_fact_reads(monkeypatch) -> list[str]:
 
 @pytest.mark.anyio
 async def test_a_pass_with_nothing_new_does_not_read_what_the_mirror_knows(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, input_identity
 ):
-    work = str(uuid.uuid4())
-    journal = _opening(work)
+    journal = _opening(input_identity)
     landed: list[object] = []
-    reading = _subscription(tmp_path, journal, landed, [])
+    reading = _subscription(tmp_path, journal, landed, [], input_identity)
     try:
         await reading.drain()
         reads = _count_fact_reads(monkeypatch)
@@ -156,12 +200,14 @@ async def test_a_pass_with_nothing_new_does_not_read_what_the_mirror_knows(
 
 
 @pytest.mark.anyio
-async def test_a_subagent_reporting_passes_later_still_reports_as_itself(tmp_path):
-    work = str(uuid.uuid4())
-    journal = _opening(work)
+async def test_a_subagent_reporting_passes_later_still_reports_as_itself(
+    tmp_path, input_identity
+):
+    work = str(input_identity.work_id)
+    journal = _opening(input_identity)
     landed: list[object] = []
     asked: list[int] = []
-    reading = _subscription(tmp_path, journal, landed, asked)
+    reading = _subscription(tmp_path, journal, landed, asked, input_identity)
     try:
         await reading.drain()
         for _ in range(5):
@@ -181,10 +227,12 @@ async def test_a_subagent_reporting_passes_later_still_reports_as_itself(tmp_pat
 
 
 @pytest.mark.anyio
-async def test_what_the_controls_show_is_what_the_passes_learned(tmp_path):
-    work = str(uuid.uuid4())
-    journal = _opening(work)
-    reading = _subscription(tmp_path, journal, [], [])
+async def test_what_the_controls_show_is_what_the_passes_learned(
+    tmp_path, input_identity
+):
+    work = str(input_identity.work_id)
+    journal = _opening(input_identity)
+    reading = _subscription(tmp_path, journal, [], [], input_identity)
     try:
         await reading.drain()
         await reading.drain()
@@ -207,7 +255,7 @@ async def test_what_the_controls_show_is_what_the_passes_learned(tmp_path):
             },
         )
     )
-    again = _subscription(tmp_path, journal, [], [])
+    again = _subscription(tmp_path, journal, [], [], input_identity)
     try:
         await again.drain()
     finally:
