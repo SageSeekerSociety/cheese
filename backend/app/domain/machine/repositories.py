@@ -332,6 +332,19 @@ class ProjectMachineRepository:
         )
         return list(result.scalars())
 
+    async def list_left_undeleted(self) -> list[ProjectMachine]:
+        """Left VMs whose accepted delete never finished at the provider."""
+        result = await self._session.execute(
+            select(ProjectMachine).where(
+                ProjectMachine.superseded_at.is_not(None),
+                ProjectMachine.released_at.is_not(None),
+                ProjectMachine.status.not_in(
+                    [MachineStatus.deleting, MachineStatus.deleted]
+                ),
+            )
+        )
+        return list(result.scalars())
+
     async def mark_released(
         self, machine: ProjectMachine, *, when: datetime
     ) -> ProjectMachine:
