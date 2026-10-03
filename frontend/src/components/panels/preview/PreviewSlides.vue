@@ -317,7 +317,7 @@ onBeforeUnmount(() => {
 .slides--presenting {
   position: fixed;
   inset: 0;
-  z-index: 2400;
+  z-index: var(--z-overlay);
 }
 .slides__toolbar {
   display: flex;

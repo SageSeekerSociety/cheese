@@ -406,12 +406,10 @@ const directShowPrivacy = () => {
 
 .info-avatar {
   background: linear-gradient(135deg, rgb(var(--v-theme-info)), rgb(var(--v-theme-info)));
-  box-shadow: 0 2px 4px rgba(var(--v-theme-info), 0.2);
 }
 
 .warning-avatar {
   background: linear-gradient(135deg, rgb(var(--v-theme-warning)), rgb(var(--v-theme-warning)));
-  box-shadow: 0 2px 4px rgba(var(--v-theme-warning), 0.2);
 }
 
 .privacy-link {

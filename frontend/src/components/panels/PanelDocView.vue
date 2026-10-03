@@ -570,7 +570,7 @@ defineExpose({
   left: 50%;
   bottom: 18px;
   transform: translateX(-50%);
-  z-index: 30;
+  z-index: var(--z-shell);
   max-width: min(560px, calc(100% - 32px));
   overflow-wrap: anywhere;
   box-shadow: var(--shadow-2);

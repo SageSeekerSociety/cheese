@@ -311,16 +311,16 @@ watch(
 /* 后面那两张往下挪、缩一点、淡一点：露出来的那道边就是「后面还有」。它们不接事件
    ——点在那道边上要答的还是最上面那一条。 */
 .asked-card--d0 {
-  z-index: 3;
+  z-index: var(--z-raised-3);
 }
 .asked-card--d1 {
-  z-index: 2;
+  z-index: var(--z-raised-2);
   transform: translateY(6px) scale(0.985);
   opacity: 0.6;
   pointer-events: none;
 }
 .asked-card--d2 {
-  z-index: 1;
+  z-index: var(--z-raised);
   transform: translateY(12px) scale(0.97);
   opacity: 0.35;
   pointer-events: none;
@@ -367,7 +367,7 @@ watch(
 /* 答掉的那一条在原地淡出，后面那张同时顶上来。淡出期间它盖在最上面（不然它是在新
    的第一张后面消失的，看着像下一张先冒出来），也不再接事件。 */
 .asked-card-leave-active {
-  z-index: 4;
+  z-index: var(--z-raised-4);
   pointer-events: none;
 }
 .asked-card-enter-from,

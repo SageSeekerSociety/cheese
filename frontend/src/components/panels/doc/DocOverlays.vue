@@ -718,7 +718,7 @@ defineExpose({ onHover, onEdited })
 /* 浮条的外框：只管摆在哪儿，样子在 DocBubble 里。 */
 .doc-comment-cta {
   position: absolute;
-  z-index: 6;
+  z-index: var(--z-raised-6);
 }
 
 /* 手指没有悬停：手柄出不来也点不准，手机上换格式用键盘上方那一条。 */
@@ -730,7 +730,7 @@ defineExpose({ onHover, onEdited })
 /* 点手柄开出的那张：和浮条上的「正文 ▾」一个样子。 */
 .doc-block-menu {
   position: fixed;
-  z-index: 2400;
+  z-index: var(--z-overlay);
   display: flex;
   flex-direction: column;
   min-width: 168px;
@@ -831,7 +831,7 @@ defineExpose({ onHover, onEdited })
 
 .doc-codebar {
   position: absolute;
-  z-index: 6;
+  z-index: var(--z-raised-6);
   transform: translateX(-100%);
   display: flex;
   align-items: center;
@@ -893,7 +893,7 @@ defineExpose({ onHover, onEdited })
 /* Code-block copy button: the chat hover-action language — surface ground,
    hairline border, muted icon, only present while hovering the block. */
 .doc-codecopy {
-  z-index: 5;
+  z-index: var(--z-raised-5);
   display: inline-flex;
   align-items: center;
   justify-content: center;

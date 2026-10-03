@@ -56,7 +56,7 @@ watch(
 <style scoped>
 .doc-slash__menu {
   position: absolute;
-  z-index: 7;
+  z-index: var(--z-raised-7);
   display: flex;
   flex-direction: column;
   min-width: 196px;

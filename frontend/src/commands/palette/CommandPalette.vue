@@ -350,6 +350,11 @@ function shortcutLabel(shortcut: string | undefined): string | undefined {
     .join(isMac ? '' : ' ')
 }
 
+// A v-bottom-sheet's z-index prop is a number, so it cannot read the CSS token
+// (--z-menu, design-system §3.7). This is the one JS copy of that rung: the
+// sheet has to open above the palette layer (--z-overlay, 2400).
+const SHEET_Z = 2500
+
 const optionId = (index: number) => `palette-option-${index}`
 const actionId = (index: number) => `palette-action-${index}`
 
@@ -518,14 +523,14 @@ const enterKey = isMac ? '⌘' : 'Ctrl'
       </div>
     </Transition>
   </Teleport>
-  <MobileActionSheet v-model="sheetOpen" :actions="sheetActions" :title="acting?.row.title" :z-index="2500" />
+  <MobileActionSheet v-model="sheetOpen" :actions="sheetActions" :title="acting?.row.title" :z-index="SHEET_Z" />
 </template>
 
 <style scoped>
 .palette-layer {
   position: fixed;
   inset: 0;
-  z-index: 2400;
+  z-index: var(--z-overlay);
   display: flex;
   justify-content: center;
   align-items: flex-start;

@@ -50,7 +50,7 @@ async function copySha() {
   position: fixed;
   top: 6px;
   right: 8px;
-  z-index: 3000;
+  z-index: var(--z-banner);
   display: inline-flex;
   align-items: center;
   gap: 5px;
