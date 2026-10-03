@@ -60,6 +60,9 @@ export function usePreviewQuote(props: QuoteProps, canUse: (context: SlidePageCo
           page: payload.page,
           scope: payload.scope,
           text: payload.text,
+          // 选中一段才有前后文；整页这一支是 undefined，序列化时连键都不出现。
+          prefix: payload.scope === 'selection' ? payload.prefix : undefined,
+          suffix: payload.scope === 'selection' ? payload.suffix : undefined,
         },
       })
     }

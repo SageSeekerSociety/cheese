@@ -15,6 +15,8 @@ const pdf = vi.hoisted(() => ({
   renders: [] as Array<{ number: number; cancel: ReturnType<typeof vi.fn>; resolve: () => void }>,
   holdRender: false,
   text: 'PDF actual page text '.repeat(20),
+  // 文字层里那一层可选的 span：默认一整页就一句，需要时换成几段，好让选区两侧有字。
+  spans: ['Selectable original text'] as string[],
 }))
 vi.mock('pdfjs-dist/legacy/build/pdf.worker.min.mjs?url', () => ({ default: '/worker.mjs' }))
 vi.mock('pdfjs-dist/legacy/build/pdf.mjs', () => ({
@@ -28,9 +30,11 @@ vi.mock('pdfjs-dist/legacy/build/pdf.mjs', () => ({
     constructor(private options: { container: HTMLElement }) {}
     cancel() {}
     async render() {
-      const span = document.createElement('span')
-      span.textContent = 'Selectable original text'
-      this.options.container.appendChild(span)
+      for (const line of pdf.spans) {
+        const span = document.createElement('span')
+        span.textContent = line
+        this.options.container.appendChild(span)
+      }
     }
   },
 }))
@@ -60,6 +64,7 @@ beforeEach(() => {
   pdf.requests.length = 0
   pdf.renders.length = 0
   pdf.holdRender = false
+  pdf.spans = ['Selectable original text']
   vi.stubGlobal(
     'ResizeObserver',
     class {
@@ -241,10 +246,30 @@ describe('slide reader contract (PDF.js substituted)', () => {
     await fireEvent.mouseUp(ui.container.querySelector('[data-page="2"]')!)
     await waitFor(() => expect(ui.emitted().pageContext).toHaveLength(2))
     expect(ui.emitted().pageContext![1]).toEqual([
-      { text: 'Selectable original text', page: 2, scope: 'selection', context: identity },
+      { text: 'Selectable original text', page: 2, scope: 'selection', context: identity, prefix: '', suffix: '' },
     ])
     // 选中一句也带着身份出去了，不再走那句拼好的话。
     expect(ui.emitted().quote).toBeUndefined()
+    selection.removeAllRanges()
+  })
+
+  it('carries the words on either side of a slide selection, from the page text layer', async () => {
+    // 同一页上「重试 3 次」出现两次：只有两侧的字能说清选的是哪一处。
+    pdf.spans = ['先看这一段', '重试 3 次', '再看那一段重试 3 次收尾。']
+    const ui = await loaded()
+    await waitFor(() => expect(ui.container.querySelectorAll('[data-page="1"] span')).toHaveLength(3))
+    const spans = ui.container.querySelectorAll('[data-page="1"] span')
+    const range = document.createRange()
+    range.selectNodeContents(spans[1]!.firstChild!)
+    const selection = window.getSelection()!
+    selection.removeAllRanges()
+    selection.addRange(range)
+    await fireEvent.mouseUp(ui.container.querySelector('[data-page="1"]')!)
+    await waitFor(() => expect(ui.emitted().pageContext).toHaveLength(1))
+    const [payload] = ui.emitted().pageContext![0] as [{ text: string; prefix: string; suffix: string }]
+    expect(payload.text).toBe('重试 3 次')
+    expect(payload.prefix.endsWith('先看这一段')).toBe(true)
+    expect(payload.suffix.startsWith('再看那一段重试 3 次收尾')).toBe(true)
     selection.removeAllRanges()
   })
 
