@@ -350,6 +350,7 @@ watch(
   text-decoration: underline;
 }
 .made-row__when {
+  white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
 /* 收起、展开只在窄的那一档：这一块摞在板上面，全列出来就把板往下推。宽的时候它是

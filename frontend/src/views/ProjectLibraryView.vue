@@ -536,14 +536,14 @@ function read(file: LibraryFile) {
   flex: 1 1 240px;
   min-width: 0;
 }
-/* 一行排不下就横着滑，不折成两行：手机上六个筛选折下来占掉两行列表的高度。 */
+/* 一行排不下就换行，不横着滑：手机上六个筛选横滑时右边那几个被切在屏幕外，又没
+   有滚动条告诉你还有，看上去像少了两个筛选。折成两行多占一行列表的高度，但六个
+   都在。 */
 .library__kinds {
   display: flex;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   gap: 8px;
   max-width: 100%;
-  overflow-x: auto;
-  scrollbar-width: none;
 }
 .library__kind {
   flex: none;

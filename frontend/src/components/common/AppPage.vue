@@ -158,6 +158,23 @@ const { mdAndUp } = useDisplay()
 .app-page__head--full {
   padding: 0 24px;
 }
+/* 手机上这一行只剩状态，控件和状态挤不下时叠成两行：看板的「只看我的」和那一行
+   统计原来并排，窄屏上开关直接压在数字上。满宽那一档在手机上让这一行换行，控件
+   自己占一行。 */
+@media (max-width: 959.98px) {
+  .app-page__head--full {
+    height: auto;
+    min-height: var(--app-page-header-height);
+    align-content: center;
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+
+  .app-page__head--full .app-page__actions {
+    flex-basis: 100%;
+    margin-inline-start: 0;
+  }
+}
 .app-page__title {
   min-width: 0;
   margin: 0;
