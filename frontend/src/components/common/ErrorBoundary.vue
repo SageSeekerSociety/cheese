@@ -65,6 +65,9 @@ onErrorCaptured((err, _instance, info) => {
   const message = err instanceof Error ? err.message : String(err)
   const stack = err instanceof Error ? err.stack : undefined
   reportError(message, stack, `vue:${info}`)
+  // 上报代替不了控制台：返 false 后 Vue 不再走 errorHandler 里那一句 console.error，
+  // 这里自己打一份，排查时还看得到栈。
+  console.error(err)
   failed.value = true
   // 接住了：不再往上冒，界面上由下面这段兜底接手。
   return false
