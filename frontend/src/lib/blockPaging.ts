@@ -11,7 +11,7 @@
 //   - when a scroll position means "fetch the previous / next page",
 //   - how a background cache refresh merges into a window the user paged back,
 //   - when a middle stretch has met the newest page.
-import type { Block } from '../cx_types'
+import type { Block, ReactionAgg } from '../cx_types'
 
 // One page. Big enough that a normal topic never pages at all, small enough
 // that the 2226-block topic opens on ~50 rows instead of all of them.
@@ -63,6 +63,52 @@ export function scrollTopAfterPrepend(before: ScrollState, afterScrollHeight: nu
   const grew = afterScrollHeight - before.scrollHeight
   // Never scroll to a negative offset if the content somehow shrank.
   return Math.max(0, before.scrollTop + grew)
+}
+
+/**
+ * Where a block that arrives on its own goes in a window — a live frame, or the
+ * broker replaying a running turn to a socket that just connected, which sends
+ * every frame of that turn again, most of them older than the newest page.
+ *
+ * In time order. One older than the window's first block, while history above
+ * it is still unloaded, is not placed at all: it belongs to that history, and
+ * the page holding it brings it when the reader scrolls up. Appended at the
+ * bottom instead, it sits out of order, and the older pages then arrive already
+ * known, so prependOlder adds nothing and paging back never gets past them.
+ */
+export function placeBlock(window: BlockWindow, block: Block): Block[] | null {
+  const { blocks } = window
+  const at = Date.parse(block.created_at)
+  const last = blocks.at(-1)
+  if (!last || at >= Date.parse(last.created_at)) return [...blocks, block]
+  if (window.hasMore && at < Date.parse(blocks[0].created_at)) return null
+  const next = blocks.findIndex((b) => Date.parse(b.created_at) > at)
+  return [...blocks.slice(0, next), block, ...blocks.slice(next)]
+}
+
+/**
+ * A freshly read page with the live frames that arrived while it was in flight
+ * applied on top: edits and retractions win over the snapshot, and a block the
+ * snapshot lacks is placed by placeBlock — never simply appended.
+ */
+export function applyLiveChanges(
+  window: BlockWindow,
+  changes: Map<string, Block | null>,
+  reactions: Map<string, ReactionAgg[]>
+): Block[] {
+  const withReactions = (block: Block) =>
+    reactions.has(block.id) ? { ...block, reactions: reactions.get(block.id)! } : block
+  const blocks = new Map(window.blocks.map((block) => [block.id, block]))
+  const unplaced: Block[] = []
+  for (const [id, block] of changes) {
+    if (!block) blocks.delete(id)
+    else if (blocks.has(id)) blocks.set(id, block)
+    else unplaced.push(block)
+  }
+  let placed: BlockWindow = { ...window, blocks: [...blocks.values()].map(withReactions) }
+  for (const block of unplaced)
+    placed = { ...placed, blocks: placeBlock(placed, withReactions(block)) ?? placed.blocks }
+  return placed.blocks
 }
 
 /**

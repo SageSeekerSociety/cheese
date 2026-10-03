@@ -46,7 +46,7 @@ import { useTimeline } from '../components/room/composables/useTimeline'
 import { useTypingPreview } from '../components/room/composables/useTypingPreview'
 import { isAgentBlock, isAgentHandle, isPersonBlock } from '../lib/authorship'
 import { cachedWindow, pendingBlockRefresh, setCachedWindow } from '../lib/blockCache'
-import { mergeRefreshedTail, PAGE_SIZE } from '../lib/blockPaging'
+import { applyLiveChanges, mergeRefreshedTail, PAGE_SIZE } from '../lib/blockPaging'
 import { dayLabelsFor, outboxEdgeAfter, type RunEdge, runEdgeBetween, unreadAnchorBlock } from '../lib/chatGrouping'
 import { announceComments } from '../lib/docCommentSignals'
 import { activityLines as memberActivityLines } from '../lib/memberActivity'
@@ -325,7 +325,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
   function pushBlock(b: Block) {
     historyChanges?.set(b.id, b)
     const landing = timeline.append(b)
-    if (landing === 'known' || historyChanges !== null || b.author === AUTHOR) return
+    if (landing === 'known' || landing === 'above' || historyChanges !== null || b.author === AUTHOR) return
     if (landing === 'shown') arrived.add(b.id)
     if ((landing === 'held' || !atBottom.value) && b.kind !== 'event') unseen.value.push(b.id)
   }
@@ -520,16 +520,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
         : { blocks: payload.data, hasMore: more }
       // Live frames can arrive while the HTTP snapshot is pending. Apply them
       // last, including retractions, so that snapshot cannot erase newer events.
-      const blocks = new Map(merged.blocks.map((block) => [block.id, block]))
-      for (const [id, block] of changes) {
-        if (block) blocks.set(id, block)
-        else blocks.delete(id)
-      }
-      for (const [id, updated] of reactions) {
-        const block = blocks.get(id)
-        if (block) blocks.set(id, { ...block, reactions: updated })
-      }
-      merged.blocks = [...blocks.values()]
+      merged.blocks = applyLiveChanges(merged, changes, reactions)
       timeline.show(merged)
       // A reconnect starts with durable history. Settle sends that landed while
       // their echo was lost before opening the new socket; only absent client ids
