@@ -9,6 +9,7 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -183,6 +184,20 @@ def main():
                             actual = json.load(response)
                         assert actual == {"upstream": expected, "path": path, "host": host}, actual
                         print(f"PASS {label}: {host}{path} -> {expected}", flush=True)
+                    # The owner's private RPC never crosses nginx, not on the
+                    # business server and not through a preview content host.
+                    if label == "preview-owner":
+                        for host in ("app.example.com", preview_host):
+                            request = urllib.request.Request(
+                                f"http://127.0.0.1:{port}/_internal/preview/v1/inspect",
+                                headers={"Host": host},
+                            )
+                            try:
+                                urllib.request.urlopen(request, timeout=3)
+                                raise AssertionError(f"private RPC reachable via {host}")
+                            except urllib.error.HTTPError as exc:
+                                assert exc.code == 404, (host, exc.code)
+                            print(f"PASS {label}: {host}/_internal/preview/v1/inspect -> 404", flush=True)
                 finally:
                     process.terminate()
                     process.wait(timeout=5)

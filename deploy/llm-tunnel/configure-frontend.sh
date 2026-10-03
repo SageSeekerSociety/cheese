@@ -120,6 +120,12 @@ server {
     proxy_buffering off;
   }
 
+  # The preview owner's private RPC (/_internal/preview/…) never crosses the
+  # public front door, in either mode.
+  location /_internal/ {
+    return 404;
+  }
+
 ${PREVIEW_TUNNEL_LOCATION}
   location / {
     proxy_pass http://frontend_active;

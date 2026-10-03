@@ -46,6 +46,12 @@ server {
   listen 8081;
   server_name $DOMAIN *.$DOMAIN;
 
+  # A preview content host reaches the owner, but the owner's private RPC
+  # (/_internal/preview/…) stays on the compose network only.
+  location /_internal/ {
+    return 404;
+  }
+
   location / {
     $CONTENT_PROXY_PASS
     proxy_http_version 1.1;

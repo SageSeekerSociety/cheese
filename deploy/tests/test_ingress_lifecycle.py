@@ -11,6 +11,7 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -222,6 +223,17 @@ def main():
                     with urllib.request.urlopen(request, timeout=3) as response:
                         actual = json.load(response)["name"]
                     assert actual == expected, f"{host}{path} -> {actual}, want {expected}"
+                # The owner's private RPC never crosses nginx, on either origin.
+                for port, host in ((api, "app.example.test"), (api, preview_host), (public, "app.example.test")):
+                    request = urllib.request.Request(
+                        f"http://127.0.0.1:{port}/_internal/preview/v1/inspect",
+                        headers={"Host": host},
+                    )
+                    try:
+                        urllib.request.urlopen(request, timeout=3)
+                        raise AssertionError(f"private preview RPC reachable via {host}")
+                    except urllib.error.HTTPError as exc:
+                        assert exc.code == 404, (host, exc.code)
                 print(f"PASS: business traffic switched to {target.name}; {len(sockets)} existing WebSockets survived 32s", flush=True)
         finally:
             for sock in sockets:
