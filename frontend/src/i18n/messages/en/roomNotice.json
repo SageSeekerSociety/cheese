@@ -357,5 +357,10 @@
   "workspaceVcsPerms": "This turn did not start: the workspace repository has the wrong permissions.",
   "workspaceVcsPermsDetail": "The repository directory belongs to another system user, so the platform cannot access it. Project files, committed changes and history are unaffected. An admin needs to change the owner once on the machine (deploy/fix-workspace-ownership.sh); the platform cannot do it by itself. Forward this notice to an admin and retry once it is fixed.",
   "workspaceVcsPermsTitle": "Wrong permissions on the workspace repository",
-  "creditsRefused": "{reason} This turn did not run."
+  "creditsRefused": "{reason} This turn did not run.",
+  "pushInRoom": "In “{room}”",
+  "pushNotice": "A new notice from the platform",
+  "pushQuestion": "A new question",
+  "pushAwaitingAnswer": "Waiting for your answer",
+  "pushAway": "{count} new notifications while you were away"
 }

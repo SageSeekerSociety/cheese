@@ -1,19 +1,19 @@
-"""The platform's room sentences: one catalog, two ends, and the key survives.
+"""The platform's sentences: one catalog, read by both ends, and the key survives.
 
 The backend stores a room line as Chinese text plus the key and parameters of
 the sentence (`app/domain/block/notice_text.py`); a screen renders the key in its
 reader's language from the frontend catalog `roomNotice` (an error's sentence
-from `apiError`). Two things can go
-wrong without anything failing at the moment they happen:
+from `apiError`), and the backend renders the same key from the same files for
+what reaches one person away from a screen (push, the desktop app). What can go
+wrong without anything failing at the moment it happens:
 
-- the two copies of the Chinese templates drift, and the room stores one
-  sentence while a Chinese screen renders another;
+- a sentence lacks a language, or its translation names other placeholders,
+  and renders with a hole;
 - a call site names a key the catalog does not have, or fills it with the wrong
   parameters, which raises only when that notice is finally said in production.
 
-Both ends are read from their real files here, and every ``say(...)`` in the
-backend is checked against the catalog, so either mistake fails at the commit
-that makes it.
+Every ``say(...)`` in the backend is checked against the catalog, so either
+mistake fails at the commit that makes it.
 """
 
 import ast
@@ -27,11 +27,14 @@ from app.domain.block.notice_text import (
     ERROR_MESSAGES,
     HISTORICAL_NOTICE_KEYS,
     I18N_META_KEY,
+    LOCALES,
     MESSAGES,
     NOTICE_MESSAGES,
     from_descriptor,
+    in_language,
     listing,
     notice_message,
+    render,
     say,
     with_keys,
 )
@@ -54,8 +57,14 @@ def _placeholders(template: str) -> set[str]:
 
 
 @pytest.mark.parametrize(("namespace", "templates"), CATALOGS)
-def test_the_backend_templates_are_the_frontend_chinese_catalog(namespace, templates):
+def test_the_backend_says_the_frontend_chinese_catalog(namespace, templates):
     assert _catalog("zh-CN", namespace) == templates
+
+
+def test_every_language_a_person_can_pick_has_both_catalogs():
+    for locale in LOCALES:
+        for namespace, templates in CATALOGS:
+            assert set(_catalog(locale, namespace)) == set(templates)
 
 
 @pytest.mark.parametrize(("namespace", "templates"), CATALOGS)
@@ -269,3 +278,64 @@ def test_a_line_restated_in_other_words_drops_its_old_key(field):
         restated = with_keys({**meta, "detail_label": "别的话"}, content="x")
     assert restated is not None
     assert field not in restated.get(I18N_META_KEY, {})
+
+
+def test_a_stored_sentence_is_said_in_the_language_asked_for():
+    line = say("acceptReady", pr=12, reviewer="ana")
+    stored = json.loads(json.dumps(line.descriptor()))
+    assert render(stored, "en") == "PR #12 is ready to merge, waiting for ana to accept"
+    assert render(stored, "zh-CN") == "PR #12 可以合并了，等 ana 采纳"
+
+
+def test_a_nested_sentence_is_said_in_the_same_language():
+    detail = say(
+        "lines",
+        items=[
+            say("artifactVersion", name="报告", version=2),
+            say("artifactUndelivered", name="数据"),
+        ],
+    )
+    assert render(detail.descriptor(), "en") == (
+        "“报告” version 2\n“数据” not delivered yet"
+    )
+
+
+@pytest.mark.parametrize(
+    "descriptor",
+    [
+        {"key": "noSuchSentence", "params": {}},
+        {"key": "acceptReady", "params": {"pr": 1}},  # a placeholder unfilled
+        {"key": "lines", "params": {"items": [{"key": "noSuchSentence"}]}},
+        "not a descriptor",
+        None,
+    ],
+)
+def test_what_cannot_be_said_is_left_to_the_stored_text(descriptor):
+    assert render(descriptor, "en") is None
+
+
+@pytest.mark.parametrize("locale", [None, "", "fr", "zh"])
+def test_a_language_nobody_can_pick_is_not_guessed(locale):
+    line = say("acceptReady", pr=12, reviewer="ana")
+    assert render(line.descriptor(), locale) is None
+    assert in_language(line, locale) == "PR #12 可以合并了，等 ana 采纳"
+
+
+@pytest.mark.parametrize(
+    ("items", "quoted", "english", "chinese"),
+    [
+        (["a"], False, "a", "a"),
+        (["a", "b"], False, "a and b", "a、b"),
+        (["a", "b", "c"], True, "“a”, “b”, and “c”", "「a」、「b」、「c」"),
+    ],
+)
+def test_a_listing_is_joined_the_way_the_screen_joins_it(
+    items, quoted, english, chinese
+):
+    """The frontend joins with ``Intl.ListFormat`` (English long, Chinese
+    narrow) and quotes with ``global.listItemQuoted``; a push says the same."""
+    line = say("pushInRoom", room=listing(items, quoted=quoted))
+    stored = json.loads(json.dumps(line.descriptor()))
+    assert render(stored, "en") == f"In “{english}”"
+    assert render(stored, "zh-CN") == f"在「{chinese}」"
+    assert str(line) == f"在「{chinese}」"

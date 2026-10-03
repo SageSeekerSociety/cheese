@@ -5,15 +5,30 @@ import en from './messages/en'
 import zhCN from './messages/zh-CN'
 
 export type Locale = 'zh-CN' | 'en'
+// Signed in, the account's language is the choice (`services/account.ts`) and
+// this is its copy in the browser, read before the account is. Signed out, it is
+// the only place a choice is kept.
 const preferenceKey = 'cheese:locale'
 
-export function resolveInitialLocale(): Locale {
+export function isLocale(value: unknown): value is Locale {
+  return value === 'en' || value === 'zh-CN'
+}
+
+/** The language this browser keeps, or null when it was never picked here and
+ *  the page only follows the browser's own language. */
+export function storedLocale(): Locale | null {
   try {
     const saved = localStorage.getItem(preferenceKey)
-    if (saved === 'en' || saved === 'zh-CN') return saved
+    if (isLocale(saved)) return saved
   } catch {
     // Browser storage can be unavailable in private or restricted contexts.
   }
+  return null
+}
+
+export function resolveInitialLocale(): Locale {
+  const saved = storedLocale()
+  if (saved) return saved
   return typeof navigator !== 'undefined' && navigator.language.toLowerCase().startsWith('zh') ? 'zh-CN' : 'en'
 }
 
@@ -35,6 +50,8 @@ export const { t } = i18n.global
 
 export { LANGUAGE_NAMES, LANGUAGE_SWITCH_LABELS, otherLocale } from './languages'
 
+/** Show `locale` and remember it in this browser. A person picking a language
+ *  goes through `chooseLocale`. */
 export function setLocale(locale: Locale) {
   i18n.global.locale.value = locale
   try {
@@ -42,6 +59,19 @@ export function setLocale(locale: Locale) {
   } catch {
     // Switching still works for the current visit without browser storage.
   }
+}
+
+const chosen = new Set<(locale: Locale) => void>()
+
+/** A person picked `locale`: show it, and tell whoever keeps the choice — the
+ *  account, once signed in (`services/account.ts`). */
+export function chooseLocale(locale: Locale) {
+  setLocale(locale)
+  for (const listener of chosen) listener(locale)
+}
+
+export function onLocaleChosen(listener: (locale: Locale) => void) {
+  chosen.add(listener)
 }
 
 watch(

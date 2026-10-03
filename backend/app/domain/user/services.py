@@ -92,6 +92,23 @@ async def usernames_by_ids(
     return {uid: user.username for uid, user in users.items()}
 
 
+async def languages_by_ids(
+    session: AsyncSession, user_ids: Iterable[int]
+) -> dict[int, str | None]:
+    """用户 id -> 他在界面上选的语言（没选过是 None），推送按它写。一次查完。"""
+    users = await UserRepository(session).get_by_ids(list(set(user_ids)))
+    return {uid: user.language for uid, user in users.items()}
+
+
+async def set_language(session: AsyncSession, user_id: int, language: str) -> bool:
+    """记下这个人选的界面语言；账号不在了返回 False。取值由调用方先校验。"""
+    user = await UserRepository(session).get_by_id(user_id)
+    if user is None:
+        return False
+    user.language = language
+    return True
+
+
 async def lookup_account(session: AsyncSession, q: str) -> dict | None:
     """``{handle, name, avatar_id}`` for an exact username or email, or None."""
     found = await UserRepository(session).lookup_account(q)
@@ -479,6 +496,8 @@ class UserAuthService:
             # Only the owner is told: an account without an address of its own
             # must add one before it can be recovered.
             base["emailMissing"] = is_placeholder_email(user.email)
+            # Their own pick only: the page adopts it wherever they sign in.
+            base["language"] = user.language
 
         base.update(
             {

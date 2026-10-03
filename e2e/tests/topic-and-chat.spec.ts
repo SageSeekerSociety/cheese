@@ -44,4 +44,34 @@ test.describe('Topics and chat', () => {
 
     await expect(page.getByTestId('chat-scroll').getByText(message)).toBeVisible();
   });
+  // 发出去的一句先作为「发送中」那一行立刻显示，落库后换成真的那一条。换的那一刻
+  // 它不能挪：两行高度差一点，停在底部的人就看见整栏往上跳一下——这句话自己连着
+  // 上面所有的消息一起。第二句是同一个人的续话（没有名字那一行），单独钉一次。
+  test('a sent message stays where it is when it is delivered', async ({ page }) => {
+    // Hold each send long enough to look at the pending row before the reply lands.
+    await page.route('**/api/topics/*/messages', async (route) => {
+      if (route.request().method() === 'POST') await new Promise((r) => setTimeout(r, 1500));
+      await route.continue();
+    });
+    const rows = await openFirstProject(page);
+    await rows.first().click();
+    const composer = page.locator('.composer-input textarea').first();
+    await expect(composer).toBeEnabled({ timeout: 15_000 });
+    const pane = page.getByTestId('chat-scroll');
+
+    for (const message of [`first ${Date.now()}`, `then ${Date.now()}`]) {
+      await composer.fill(message);
+      await composer.press('Enter');
+      const row = pane.locator('.im-row', { hasText: message });
+      const text = row.getByText(message, { exact: true });
+      await expect(row).toHaveClass(/im-row--pending/);
+      // Measure once the row's entrance motion has finished.
+      await expect.poll(() => row.evaluate((el) => el.getAnimations({ subtree: true }).length)).toBe(0);
+      const pending = await text.boundingBox();
+      await expect(row).not.toHaveClass(/im-row--pending/, { timeout: 10_000 });
+      await expect.poll(() => row.evaluate((el) => el.getAnimations({ subtree: true }).length)).toBe(0);
+      const delivered = await text.boundingBox();
+      expect(delivered!.y, `"${message}" moved when it was delivered`).toBeCloseTo(pending!.y, 0);
+    }
+  });
 });

@@ -4,7 +4,6 @@
 # dependencies = [
 #     "httpx==0.27.2",
 #     "pydantic==2.10.4",
-#     "pydantic-settings==2.7.1",
 # ]
 # ///
 """在 Wolfram 官方 MCP 上执行 Wolfram Language：查文档、跑表达式、判真假、查精选数据。
@@ -19,7 +18,6 @@ import argparse
 import asyncio
 import base64
 import json
-import os
 import sys
 import traceback
 import uuid
@@ -53,14 +51,14 @@ def _vendor_dir() -> Path:
 SOURCE = _vendor_dir()  # 导入期只需确认随包源码在
 # 一次性调用落的图片文件、符号缓存都在这
 STATE = Path.home() / ".local" / "share" / "wolfram"
-# 必须在 import settings 前定型，settings 是导入期单例
-os.environ.setdefault("ASSET_DIR", str(STATE / "assets"))
 sys.path.insert(0, str(SOURCE))  # 让下面的 backend.* 从随包源码 import
 
 from backend.core import mcp as wmcp  # noqa: E402 - Wolfram 官方 MCP 客户端
 from backend.core.config import settings  # noqa: E402 - 上游配置单例
 from backend.core.executor import execute as wl_execute  # noqa: E402 - 执行通道
 from backend.core.safety import scan  # noqa: E402 - 安全闸门
+
+settings.ASSET_DIR = str(STATE / "assets")  # 符号缓存落在状态目录，不落进项目
 
 Content = list[dict[str, Any]]  # MCP 的 content 数组
 

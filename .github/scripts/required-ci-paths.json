@@ -1,6 +1,9 @@
 {
   "backend": [
     "backend/**",
+    "frontend/src/i18n/messages/*/roomNotice.json",
+    "frontend/src/i18n/messages/*/apiError.json",
+    "frontend/src/i18n/messages/*/global.json",
     "deploy/metering-proxy/**",
     ".pre-commit-config.yaml",
     ".github/scripts/ensure-apt.sh",

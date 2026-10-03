@@ -171,6 +171,16 @@ else
         ;;
     esac
 
+    # The backend image carries the sentence catalogs it renders push and
+    # desktop notices from (backend/Dockerfile, the `i18n` context).
+    case "$changed_path" in
+      frontend/src/i18n/messages/*/roomNotice.json \
+        | frontend/src/i18n/messages/*/apiError.json \
+        | frontend/src/i18n/messages/*/global.json)
+        backend=true
+        ;;
+    esac
+
     # The production backend bakes backend/sandbox into /app/sandbox, while the
     # same directory is also the context for both runtime images.
     case "$changed_path" in
