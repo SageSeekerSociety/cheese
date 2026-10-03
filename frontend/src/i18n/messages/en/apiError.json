@@ -12,8 +12,6 @@
   "inviteNotYours": "Only the invited person can answer this invitation",
   "cursorMessageNotFound": "That message doesn't exist",
   "optionQuestionNotFound": "This question doesn't exist",
-  "optionTaken": "{by} already chose: {option}",
-  "optionOwnQuestion": "Your own question is for others to answer",
   "titleUndoStale": "The title has been changed since, so this rename can no longer be undone",
   "roomArchiveManagerOnly": "Only the room's owner or an admin can archive or unarchive it",
   "projectHasNoCheese": "This project doesn't have Cheese yet, so this room can't tell who “I” am",

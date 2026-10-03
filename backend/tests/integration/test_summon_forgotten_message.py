@@ -117,9 +117,11 @@ def test_summon_after_someone_else_already_asked_starts_nothing(client, stub_hoo
     )
     _wait_for_prompt(stub_hooks, "这个分页方案你看下")
     _wait_until_read(client, topic_id)
+    service = client.app.dependency_overrides[get_chat_service]()
+    client.portal.call(settle_turn, service, uuid.UUID(topic_id))
     before = client.get(f"/topics/{topic_id}/blocks").json()["data"]["total"]
 
-    # 那条消息已经被读进去了。两个人先后按这一下，第二下不该再花一次钱。
+    # 已读与本轮结束是两件事；本轮结束后再点，应报告没有待读消息。
     r = client.post(
         f"/topics/{topic_id}/summon", json={}, headers=session_auth_headers("user-1")
     )

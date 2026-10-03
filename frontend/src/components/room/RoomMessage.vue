@@ -9,6 +9,7 @@
 // 算好传进来的。它自己只回答「这一块该画成什么」。
 import type { Block, TodoItem } from '../../cx_types'
 import type { FaceState } from '../../lib/agentFace'
+import type { AskGroupAction, AskGroupState } from '../../lib/askGroupState'
 import type { AskAction, AskFormState } from '../../lib/askPresentation'
 
 import { computed } from 'vue'
@@ -17,6 +18,7 @@ import { artifactKind, artifactName, askOptions, isImageBlock, replySnippet } fr
 import { fileIcon } from '../../lib/fileKind'
 import { renderMarkdown as renderMarkdownWith, renderPlain as renderPlainWith } from '../../lib/renderMessage'
 import { avatarColor, avatarInitial } from '../../utils/avatar'
+import AskGroupFlow from '../ask/AskGroupFlow.vue'
 import AskQuestionForm from '../ask/AskQuestionForm.vue'
 import AttachmentImage from '../AttachmentImage.vue'
 import CheeseAvatar from '../CheeseAvatar.vue'
@@ -55,6 +57,9 @@ const props = defineProps<{
   /** 悬停条此刻停在这一行上（指针可能在悬停条上，不在这一行上）。 */
   active?: boolean
   askState?: AskFormState
+  askGroupState?: AskGroupState
+  askGroupAnchor?: string
+  askGroupFocus?: string
   /** 这条是队友此刻正在推进的清单（房间在跑，且是它最新的一条）。 */
   live?: boolean
   /** 这一条的头像是这位队友最近出现的那个，它正在干活（或刚干完）：头像的表情。 */
@@ -92,6 +97,8 @@ const emit = defineEmits<{
   (e: 'open-card', taskId: string): void
   (e: 'react', block: Block, emoji: string): void
   (e: 'ask-action', block: Block, action: AskAction): void
+  (e: 'ask-group-action', block: Block, action: AskGroupAction): void
+  (e: 'ask-group-focus', block: Block): void
   (e: 'download', block: Block): void
   /** 跳到被回复的那一条。 */
   (e: 'jump', blockId: string): void
@@ -302,7 +309,20 @@ async function onAgentTextClick(e: MouseEvent) {
         :state="askState"
         @action="emit('ask-action', block, $event)"
       />
-      <slot v-if="block.meta?.ask_group" name="ask-group" />
+      <template v-if="block.meta?.ask_group">
+        <AskGroupFlow
+          v-if="askGroupState && askGroupAnchor === block.id"
+          :state="askGroupState"
+          :viewer="viewer"
+          :names="refs.mentionNames"
+          :focus-block="askGroupFocus ?? block.id"
+          :auto-focus="!!askGroupFocus"
+          @action="emit('ask-group-action', block, $event)"
+        />
+        <button v-else-if="askGroupState" type="button" @click="emit('ask-group-focus', block)">
+          {{ t('ask.group.open') }}
+        </button>
+      </template>
       <!-- 活引用 (eval A1): 升级出去的块指向它变成的那个地点。房间里
          升级出来的是一条支线，私聊里升级出来的才是房间——两个字段各指
          一张表，同时只会有一个非空。 -->

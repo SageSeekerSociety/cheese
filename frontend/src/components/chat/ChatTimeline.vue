@@ -26,7 +26,6 @@ import { dayKey, REGROUP_GAP_MS } from '../../lib/chatGrouping'
 import { editableText } from '../../lib/renderMessage'
 import { formatSpan } from '../../lib/siteLog'
 import { siteStatusLabel } from '../../lib/siteStatusLabel'
-import AskGroupFlow from '../ask/AskGroupFlow.vue'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
 import DispatchedMarker from '../DispatchedMarker.vue'
 import RoomHoverBar from '../room/RoomHoverBar.vue'
@@ -144,6 +143,14 @@ function groupAnchor(block: Block): string | undefined {
 function groupFor(block: Block): AskGroupState | undefined {
   const scope = groupOf(block)
   return scope ? props.askGroups?.[groupKey(scope)] : undefined
+}
+function focusFor(block: Block): string | undefined {
+  const scope = groupOf(block)
+  return scope ? groupFocus[groupKey(scope)] : undefined
+}
+function groupAction(block: Block, action: AskGroupAction) {
+  const scope = groupOf(block)
+  if (scope) emit('ask-group-action', scope, action)
 }
 
 // 正在推进的清单：房间在跑时，每位队友最新的那一条。更早的清单即使还有一步停在
@@ -389,6 +396,9 @@ function emitOutboxLeave(el: Element, done: () => void) {
           :viewer="viewer"
           :active="bar.shown && bar.id === m.id"
           :ask-state="askStates?.[m.id]"
+          :ask-group-state="groupFor(m)"
+          :ask-group-anchor="groupAnchor(m)"
+          :ask-group-focus="focusFor(m)"
           :live="liveChecklists.has(m.id)"
           :face="faceRows.get(m.id)?.state ?? null"
           :face-label="faceLabel(faceRows.get(m.id))"
@@ -403,26 +413,15 @@ function emitOutboxLeave(el: Element, done: () => void) {
           @open-card="emit('open-card', $event)"
           @react="emitReact"
           @ask-action="emitAskAction"
+          @ask-group-action="groupAction"
+          @ask-group-focus="focusGroup"
           @checklist="emitChecklist"
           @download="emit('download', $event)"
           @jump="emit('jump', $event)"
           @avatar-error="emit('avatar-error', $event)"
           @save-edit="emitSaveEdit"
           @cancel-edit="emit('cancel-edit')"
-        >
-          <template #ask-group>
-            <AskGroupFlow
-              v-if="groupAnchor(m) === m.id"
-              :state="groupFor(m)!"
-              :viewer="viewer"
-              :names="refs.mentionNames"
-              :focus-block="groupFocus[groupKey(groupFor(m)!.scope)] ?? m.id"
-              :auto-focus="!!groupFocus[groupKey(groupFor(m)!.scope)]"
-              @action="emit('ask-group-action', groupFor(m)!.scope, $event)"
-            />
-            <button v-else-if="groupFor(m)" type="button" @click="focusGroup(m)">{{ t('ask.group.open') }}</button>
-          </template>
-        </RoomMessage>
+        />
       </template>
 
       <!-- 比时间线上每一条消息都新的「已派出」标记 —— 刚派出去、之后房间里还
