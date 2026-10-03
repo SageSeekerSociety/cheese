@@ -14,7 +14,7 @@ import type { KnowledgeType } from '@/types'
 import { ref, watch } from 'vue'
 import { VForm } from 'vuetify/lib/components/index.mjs'
 
-import BaseButton from '@/components/base/BaseButton.vue'
+import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import TipTapEditor from '@/components/common/Editor/TipTapEditor.vue'
 import { t } from '@/i18n'
 import { emptyKnowledgeDraft } from '@/lib/knowledgeDraft'
@@ -60,10 +60,6 @@ function pickType(type: KnowledgeType) {
   form.value.type = type
 }
 
-function close() {
-  emit('update:modelValue', false)
-}
-
 /** 校验过的草稿才出去；原件不递（交一份快照，免得外面改到里面这一份）。 */
 async function submitUpload() {
   if (!uploadForm.value || !(await uploadForm.value.validate()).valid) {
@@ -74,217 +70,204 @@ async function submitUpload() {
 </script>
 
 <template>
-  <v-dialog :model-value="modelValue" max-width="600" @update:model-value="emit('update:modelValue', $event)">
-    <v-card rounded="lg" class="upload-dialog">
-      <v-card-title class="d-flex justify-space-between align-center pa-4">
-        <div class="text-h6 font-weight-medium">{{ t('teams.knowledge.addResource') }}</div>
-        <BaseButton icon="mdi-close" :aria-label="t('navigation.shell.close')" @click="close" />
-      </v-card-title>
+  <AdaptiveDialog
+    :model-value="modelValue"
+    :title="t('teams.knowledge.addResource')"
+    :primary-label="t('teams.knowledge.uploadSubmit')"
+    :primary-loading="uploading"
+    :primary-disabled="uploading"
+    :cancel-label="t('teams.knowledge.cancel')"
+    @update:model-value="emit('update:modelValue', $event)"
+    @primary="submitUpload"
+  >
+    <v-form ref="uploadForm" @submit.prevent="submitUpload">
+      <!-- Resource name -->
+      <v-text-field
+        v-model="form.name"
+        autocomplete="off"
+        :label="t('teams.knowledge.name')"
+        variant="outlined"
+        hide-details="auto"
+        class="mb-4"
+        density="comfortable"
+        :rules="[(v) => !!v || t('teams.knowledge.nameRequired')]"
+      ></v-text-field>
 
-      <v-card-text class="pa-4 pt-2">
-        <v-form ref="uploadForm" @submit.prevent="submitUpload">
-          <!-- 资料名称 -->
-          <v-text-field
-            v-model="form.name"
-            autocomplete="off"
-            :label="t('teams.knowledge.name')"
+      <div class="type-selector mb-5">
+        <label class="text-body-2 text-medium-emphasis mb-3 d-block">{{
+          t('teams.knowledge.resourceTypeLabel')
+        }}</label>
+
+        <div class="type-options">
+          <div
+            v-for="type in KNOWLEDGE_TYPE_OPTIONS"
+            :key="type"
+            class="type-option"
+            :class="{ 'type-option-active': form.type === type }"
+            @click="pickType(type)"
+          >
+            <div class="type-icon-wrapper">
+              <v-icon :icon="uploadTypeIcon(type)" size="18"></v-icon>
+            </div>
+            <div class="type-label">{{ knowledgeTypeLabel(type) }}</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="content-area">
+        <!-- File upload area -->
+        <div v-if="form.type === 'MATERIAL'" class="upload-content">
+          <v-file-input
+            v-model="form.file"
+            :label="t('teams.knowledge.chooseFile')"
             variant="outlined"
+            density="comfortable"
+            accept="image/*,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,video/*,audio/*"
+            :rules="[(v) => !!v || t('teams.knowledge.fileRequired')]"
             hide-details="auto"
             class="mb-4"
+            show-size
+            chips
+            prepend-icon=""
+          >
+            <template #prepend>
+              <v-icon color="primary" class="mr-2">mdi-file-upload-outline</v-icon>
+            </template>
+          </v-file-input>
+
+          <div v-if="form.file" class="file-preview py-2">
+            <v-img
+              v-if="isImageFile(form.file)"
+              :src="filePreviewUrl(form.file)"
+              height="120"
+              width="100%"
+              class="rounded-lg mb-2"
+              cover
+            ></v-img>
+            <!-- This used to carry a bare `grey-lighten-5` class: Vuetify 3 does not
+                 generate such unprefixed palette classes (only v2 did), so it was
+                 dead code with no background at all. Removed, so the next person does
+                 not "helpfully fix" it by adding a `bg-` prefix — that would nail a
+                 fixed-palette name into the template, and it would not follow theme
+                 changes (exactly what the fixed-palette gate blocks). -->
+            <div v-else class="d-flex align-center justify-center py-3 rounded-lg">
+              <v-icon :icon="fileTypeIcon(form.file)" size="36" color="primary" class="mr-2"></v-icon>
+              <span class="text-body-2">{{ form.file.name }}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Rich-text editor area -->
+        <div v-else-if="form.type === 'TEXT'" class="upload-content">
+          <div class="mb-3">
+            <TipTapEditor v-model="form.richTextContent" output="json" :min-height="180" />
+          </div>
+        </div>
+
+        <!-- Link area -->
+        <div v-else-if="form.type === 'LINK'" class="upload-content">
+          <v-text-field
+            v-model="form.url"
+            autocomplete="off"
+            :label="t('teams.knowledge.linkUrl')"
+            variant="outlined"
             density="comfortable"
-            :rules="[(v) => !!v || t('teams.knowledge.nameRequired')]"
+            hide-details="auto"
+            class="mb-4"
+            :rules="[
+              (v) => !!v || t('teams.knowledge.linkUrlRequired'),
+              (v) => /^https?:\/\//.test(v) || t('teams.knowledge.linkUrlInvalid'),
+            ]"
+            placeholder="https://"
+            prepend-inner-icon="mdi-link"
           ></v-text-field>
+          <v-text-field
+            v-model="form.title"
+            autocomplete="off"
+            :label="t('teams.knowledge.linkTitle')"
+            variant="outlined"
+            density="comfortable"
+            hide-details="auto"
+            :placeholder="t('teams.knowledge.linkTitleHint')"
+          ></v-text-field>
+        </div>
 
-          <div class="type-selector mb-5">
-            <label class="text-body-2 text-medium-emphasis mb-3 d-block">{{
-              t('teams.knowledge.resourceTypeLabel')
-            }}</label>
+        <!-- Code snippet area -->
+        <div v-else-if="form.type === 'CODE'" class="upload-content">
+          <v-select
+            v-model="form.language"
+            autocomplete="off"
+            :label="t('teams.knowledge.language')"
+            :items="languageOptions()"
+            item-title="text"
+            item-value="value"
+            variant="outlined"
+            density="comfortable"
+            hide-details="auto"
+            prepend-inner-icon="mdi-code-tags"
+            class="mb-3"
+          ></v-select>
+          <v-textarea
+            v-model="form.code"
+            autocomplete="off"
+            :label="t('teams.knowledge.codeContent')"
+            variant="outlined"
+            density="comfortable"
+            :rules="[(v) => !!v || t('teams.knowledge.codeRequired')]"
+            rows="6"
+            hide-details="auto"
+            :placeholder="t('teams.knowledge.codePlaceholder')"
+            class="code-textarea"
+            color="primary"
+          ></v-textarea>
+        </div>
+      </div>
 
-            <div class="type-options">
-              <div
-                v-for="type in KNOWLEDGE_TYPE_OPTIONS"
-                :key="type"
-                class="type-option"
-                :class="{ 'type-option-active': form.type === type }"
-                @click="pickType(type)"
-              >
-                <div class="type-icon-wrapper">
-                  <v-icon :icon="uploadTypeIcon(type)" size="18"></v-icon>
-                </div>
-                <div class="type-label">{{ knowledgeTypeLabel(type) }}</div>
+      <!-- Additional info area -->
+      <div class="additional-info mt-4">
+        <v-expansion-panels variant="accordion">
+          <v-expansion-panel>
+            <v-expansion-panel-title>
+              <div class="d-flex align-center">
+                <v-icon icon="mdi-information-outline" size="small" class="mr-2"></v-icon>
+                {{ t('teams.knowledge.additionalInfo') }}
               </div>
-            </div>
-          </div>
-
-          <div class="content-area">
-            <!-- 文件上传区 -->
-            <div v-if="form.type === 'MATERIAL'" class="upload-content">
-              <v-file-input
-                v-model="form.file"
-                :label="t('teams.knowledge.chooseFile')"
-                variant="outlined"
-                density="comfortable"
-                accept="image/*,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,video/*,audio/*"
-                :rules="[(v) => !!v || t('teams.knowledge.fileRequired')]"
-                hide-details="auto"
-                class="mb-4"
-                show-size
-                chips
-                prepend-icon=""
-              >
-                <template #prepend>
-                  <v-icon color="primary" class="mr-2">mdi-file-upload-outline</v-icon>
-                </template>
-              </v-file-input>
-
-              <div v-if="form.file" class="file-preview py-2">
-                <v-img
-                  v-if="isImageFile(form.file)"
-                  :src="filePreviewUrl(form.file)"
-                  height="120"
-                  width="100%"
-                  class="rounded-lg mb-2"
-                  cover
-                ></v-img>
-                <!-- 原来这里挂着一个裸的 `grey-lighten-5` class：Vuetify 3 不生成这种
-                     无前缀的调色板类（v2 才有），所以它一直是死代码、没有任何底色。
-                     删掉它，免得下一个人"顺手修好"、给它补上 `bg-` 前缀 —— 那等于往
-                     模板里钉一个固定色板的名字，主题一翻它不跟着走
-                     （固定色板那一关拦的就是这个）。 -->
-                <div v-else class="d-flex align-center justify-center py-3 rounded-lg">
-                  <v-icon :icon="fileTypeIcon(form.file)" size="36" color="primary" class="mr-2"></v-icon>
-                  <span class="text-body-2">{{ form.file.name }}</span>
-                </div>
-              </div>
-            </div>
-
-            <!-- 富文本编辑区 -->
-            <div v-else-if="form.type === 'TEXT'" class="upload-content">
-              <div class="mb-3">
-                <TipTapEditor v-model="form.richTextContent" output="json" :min-height="180" />
-              </div>
-            </div>
-
-            <!-- 链接添加区 -->
-            <div v-else-if="form.type === 'LINK'" class="upload-content">
-              <v-text-field
-                v-model="form.url"
-                autocomplete="off"
-                :label="t('teams.knowledge.linkUrl')"
-                variant="outlined"
-                density="comfortable"
-                hide-details="auto"
-                class="mb-4"
-                :rules="[
-                  (v) => !!v || t('teams.knowledge.linkUrlRequired'),
-                  (v) => /^https?:\/\//.test(v) || t('teams.knowledge.linkUrlInvalid'),
-                ]"
-                placeholder="https://"
-                prepend-inner-icon="mdi-link"
-              ></v-text-field>
-              <v-text-field
-                v-model="form.title"
-                autocomplete="off"
-                :label="t('teams.knowledge.linkTitle')"
-                variant="outlined"
-                density="comfortable"
-                hide-details="auto"
-                :placeholder="t('teams.knowledge.linkTitleHint')"
-              ></v-text-field>
-            </div>
-
-            <!-- 代码片段区 -->
-            <div v-else-if="form.type === 'CODE'" class="upload-content">
-              <v-select
-                v-model="form.language"
-                autocomplete="off"
-                :label="t('teams.knowledge.language')"
-                :items="languageOptions()"
-                item-title="text"
-                item-value="value"
-                variant="outlined"
-                density="comfortable"
-                hide-details="auto"
-                prepend-inner-icon="mdi-code-tags"
-                class="mb-3"
-              ></v-select>
+            </v-expansion-panel-title>
+            <v-expansion-panel-text>
               <v-textarea
-                v-model="form.code"
+                v-model="form.description"
                 autocomplete="off"
-                :label="t('teams.knowledge.codeContent')"
+                :label="t('teams.knowledge.descriptionLabel')"
                 variant="outlined"
                 density="comfortable"
-                :rules="[(v) => !!v || t('teams.knowledge.codeRequired')]"
-                rows="6"
+                rows="2"
                 hide-details="auto"
-                :placeholder="t('teams.knowledge.codePlaceholder')"
-                class="code-textarea"
-                color="primary"
+                class="mb-3"
+                :placeholder="t('teams.knowledge.descriptionPlaceholder')"
               ></v-textarea>
-            </div>
-          </div>
 
-          <!-- 附加信息区 -->
-          <div class="additional-info mt-4">
-            <v-expansion-panels variant="accordion">
-              <v-expansion-panel>
-                <v-expansion-panel-title>
-                  <div class="d-flex align-center">
-                    <v-icon icon="mdi-information-outline" size="small" class="mr-2"></v-icon>
-                    {{ t('teams.knowledge.additionalInfo') }}
-                  </div>
-                </v-expansion-panel-title>
-                <v-expansion-panel-text>
-                  <v-textarea
-                    v-model="form.description"
-                    autocomplete="off"
-                    :label="t('teams.knowledge.descriptionLabel')"
-                    variant="outlined"
-                    density="comfortable"
-                    rows="2"
-                    hide-details="auto"
-                    class="mb-3"
-                    :placeholder="t('teams.knowledge.descriptionPlaceholder')"
-                  ></v-textarea>
-
-                  <v-combobox
-                    v-model="form.labels"
-                    autocomplete="off"
-                    :label="t('teams.knowledge.tags')"
-                    variant="outlined"
-                    density="comfortable"
-                    multiple
-                    chips
-                    closable-chips
-                    hide-details="auto"
-                    :items="availableTags"
-                    :placeholder="t('teams.knowledge.tagsPlaceholder')"
-                  ></v-combobox>
-                </v-expansion-panel-text>
-              </v-expansion-panel>
-            </v-expansion-panels>
-          </div>
-        </v-form>
-      </v-card-text>
-
-      <v-divider></v-divider>
-
-      <v-card-actions class="pa-4">
-        <v-spacer></v-spacer>
-        <BaseButton kind="ghost" @click="close">{{ t('teams.knowledge.cancel') }}</BaseButton>
-        <BaseButton kind="primary" :loading="uploading" :disabled="uploading" @click="submitUpload">{{
-          t('teams.knowledge.uploadSubmit')
-        }}</BaseButton>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+              <v-combobox
+                v-model="form.labels"
+                autocomplete="off"
+                :label="t('teams.knowledge.tags')"
+                variant="outlined"
+                density="comfortable"
+                multiple
+                chips
+                closable-chips
+                hide-details="auto"
+                :items="availableTags"
+                :placeholder="t('teams.knowledge.tagsPlaceholder')"
+              ></v-combobox>
+            </v-expansion-panel-text>
+          </v-expansion-panel>
+        </v-expansion-panels>
+      </div>
+    </v-form>
+  </AdaptiveDialog>
 </template>
 
 <style scoped lang="scss">
-.upload-dialog {
-  overflow: hidden;
-}
-
 .type-selector {
   margin-bottom: 24px;
 }

@@ -153,8 +153,7 @@
     "forbidden": "Only the team owner and admins can edit the profile",
     "saved": "Saved",
     "saveFailed": "Could not save. Please try again",
-    "save": "Save",
-    "cancel": "Cancel"
+    "save": "Save"
   },
   "newProject": {
     "title": "New project",
@@ -1359,7 +1358,6 @@
     "deleteTitle": "Delete “{name}”",
     "deleteBody": "This cannot be undone, and messages that referenced it will no longer open this file",
     "deleteFailed": "Delete failed",
-    "cancel": "Cancel",
     "close": "Close",
     "actionsOf": "Actions for {name}",
     "backToList": "Back to library",
@@ -1492,7 +1490,6 @@
       "noMemories": "No memories",
       "deactivateTitle": "Deactivate \"{name}\"",
       "deactivateHint": "New topics can't choose it after this. Topics already using it carry on, and its memory is kept",
-      "cancel": "Cancel",
       "typeGeneral": "General",
       "editor": {
         "presetCustom": "Write your own",
@@ -1754,8 +1751,7 @@
     "restore": "Restore this version",
     "close": "Close",
     "deleteTitle": "Delete \"{title}\"",
-    "deleteHint": "Later rooms will no longer get it, and its version history is deleted too",
-    "cancel": "Cancel"
+    "deleteHint": "Later rooms will no longer get it, and its version history is deleted too"
   },
   "nodeBoard": {
     "loadFailed": "Couldn't load machine status",

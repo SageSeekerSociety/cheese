@@ -495,8 +495,7 @@
     "done": "Done",
     "liveTitle": "Session · {'@'}{handle}",
     "unbindTitle": "Unlink device \"{name}\"",
-    "unbindHint": "The machine disconnects at once and has to connect again to be used",
-    "cancel": "Cancel"
+    "unbindHint": "The machine disconnects at once and has to connect again to be used"
   },
   "connections": {
     "lede": "Connect your own mailbox or Feishu and choose which projects' AI teammates may use it. They read mail, write drafts and edit Feishu docs as you; mail is sent only after you confirm it",
@@ -541,7 +540,6 @@
     "sendBody": "It will be sent from your mailbox to {to}. This can't be undone",
     "sendBodyAttachments": "It will be sent from your mailbox to {to} with {n} attachments. This can't be undone",
     "sendShort": "Send",
-    "cancel": "Cancel",
     "removeTitle": "Delete \"{label}\"",
     "removeBody": "AI teammates can no longer use it, and its saved password or key is deleted too",
     "testAndSave": "Test and save",

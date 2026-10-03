@@ -167,52 +167,44 @@
       </table>
     </div>
 
-    <v-dialog v-model="deadlineOpen" max-width="420">
-      <v-card>
-        <v-card-title class="t-dialog-title">{{ t('tasks.roster.deadlineTitle') }}</v-card-title>
-        <v-card-text>
-          <p class="rs__dialog-lead">{{ t('tasks.roster.deadlineFor', { name: selected?.name ?? '' }) }}</p>
-          <v-text-field
-            v-model="deadlineValue"
-            type="datetime-local"
-            variant="outlined"
-            density="comfortable"
-            :min="minDeadline"
-            hide-details
-          />
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <BaseButton kind="ghost" @click="deadlineOpen = false">{{ t('tasks.roster.cancel') }}</BaseButton>
-          <BaseButton kind="primary" :disabled="!deadlineValue" @click="saveDeadline">
-            {{ t('tasks.roster.save') }}
-          </BaseButton>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <AdaptiveDialog
+      v-model="deadlineOpen"
+      :title="t('tasks.roster.deadlineTitle')"
+      :primary-label="t('tasks.roster.save')"
+      :primary-disabled="!deadlineValue"
+      size="sm"
+      @primary="saveDeadline"
+    >
+      <p class="rs__dialog-lead">{{ t('tasks.roster.deadlineFor', { name: selected?.name ?? '' }) }}</p>
+      <v-text-field
+        v-model="deadlineValue"
+        type="datetime-local"
+        variant="outlined"
+        density="comfortable"
+        :min="minDeadline"
+        hide-details
+      />
+    </AdaptiveDialog>
 
-    <v-dialog v-model="rejectOpen" max-width="460">
-      <v-card>
-        <v-card-title class="t-dialog-title">{{ t('tasks.roster.rejectTitle') }}</v-card-title>
-        <v-card-text>
-          <p class="rs__dialog-lead">{{ t('tasks.roster.rejectLead', { name: selected?.name ?? '' }) }}</p>
-          <v-textarea
-            v-model="rejectReason"
-            autocomplete="off"
-            :label="t('tasks.roster.rejectReasonLabel')"
-            variant="outlined"
-            rows="3"
-            counter="200"
-            maxlength="200"
-          />
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <BaseButton kind="ghost" @click="rejectOpen = false">{{ t('tasks.roster.cancel') }}</BaseButton>
-          <BaseButton kind="danger" solid @click="confirmReject">{{ t('tasks.roster.reject') }}</BaseButton>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <AdaptiveDialog
+      v-model="rejectOpen"
+      :title="t('tasks.roster.rejectTitle')"
+      :primary-label="t('tasks.roster.reject')"
+      primary-danger
+      size="sm"
+      @primary="confirmReject"
+    >
+      <p class="rs__dialog-lead">{{ t('tasks.roster.rejectLead', { name: selected?.name ?? '' }) }}</p>
+      <v-textarea
+        v-model="rejectReason"
+        autocomplete="off"
+        :label="t('tasks.roster.rejectReasonLabel')"
+        variant="outlined"
+        rows="3"
+        counter="200"
+        maxlength="200"
+      />
+    </AdaptiveDialog>
   </div>
 </template>
 
@@ -231,6 +223,7 @@ import { useI18n } from 'vue-i18n'
 import dayjs from 'dayjs'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 
 /** 一行的状态：先看领取申请批没批，批了再看最新那一版提交判没判。 */

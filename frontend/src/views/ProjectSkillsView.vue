@@ -22,6 +22,8 @@ import {
 
 import { useCommands } from '@/commands'
 import BaseButton from '@/components/base/BaseButton.vue'
+import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
+import { DIALOG_WIDTH } from '@/components/base/dialogSize'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import AppPage from '@/components/common/AppPage.vue'
@@ -41,6 +43,17 @@ const busy = ref('')
 const history = ref<{ skill: ProjectSkill; revisions: ProjectSkillRevision[] } | null>(null)
 const viewing = ref<ProjectSkillRevision | null>(null)
 const confirmingDelete = ref<ProjectSkill | null>(null)
+// 删除确认框的开关跟着「选中的那一条」走：有目标就是开着，关掉就把目标清掉。
+const deleteOpen = computed({
+  get: () => confirmingDelete.value !== null,
+  set: (value) => {
+    if (!value) confirmingDelete.value = null
+  },
+})
+// 没有目标时不给标题，省得弹窗还没开就渲染出「删除「undefined」」。
+const deleteTitle = computed(() =>
+  confirmingDelete.value ? t('work.skills.deleteTitle', { title: confirmingDelete.value.title }) : ''
+)
 
 // 手机上一行的操作收进行首的 ⋯（底部面板）。等你确认的那一条，「确认保存」仍然摆在
 // 行里——那是这一行唯一要紧的事。
@@ -171,7 +184,8 @@ async function restore(revision: number) {
   }
 }
 
-async function remove(s: ProjectSkill) {
+async function remove(s: ProjectSkill | null) {
+  if (!s) return
   confirmingDelete.value = null
   busy.value = `${s.id}:delete`
   actionError.value = ''
@@ -432,7 +446,7 @@ useCommands(() => [
       :title="editingTitle"
       :primary-label="t('work.skills.save')"
       :primary-loading="saving"
-      :max-width="640"
+      size="lg"
       @update:model-value="editing = null"
       @primary="save"
     >
@@ -506,7 +520,7 @@ useCommands(() => [
       </template>
     </AdaptiveDialog>
 
-    <v-dialog :model-value="!!history" max-width="640" @update:model-value="history = null">
+    <v-dialog :model-value="!!history" :max-width="DIALOG_WIDTH.lg" @update:model-value="history = null">
       <v-card v-if="history">
         <v-card-title class="t-dialog-title">{{
           t('work.skills.historyTitle', { title: history.skill.title })
@@ -565,19 +579,15 @@ useCommands(() => [
       </v-card>
     </v-dialog>
 
-    <v-dialog :model-value="!!confirmingDelete" max-width="420" @update:model-value="confirmingDelete = null">
-      <v-card v-if="confirmingDelete">
-        <v-card-title class="t-dialog-title">{{
-          t('work.skills.deleteTitle', { title: confirmingDelete.title })
-        }}</v-card-title>
-        <v-card-text class="t-body">{{ t('work.skills.deleteHint') }}</v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <BaseButton @click="confirmingDelete = null">{{ t('work.skills.cancel') }}</BaseButton>
-          <BaseButton kind="danger" solid @click="remove(confirmingDelete)">{{ t('work.skills.delete') }}</BaseButton>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <ConfirmDialog
+      v-model="deleteOpen"
+      :title="deleteTitle"
+      :confirm-label="t('work.skills.delete')"
+      danger
+      @confirm="remove(confirmingDelete)"
+    >
+      {{ t('work.skills.deleteHint') }}
+    </ConfirmDialog>
   </AppPage>
 </template>
 

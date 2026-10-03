@@ -59,19 +59,16 @@
       </div>
     </v-form>
 
-    <v-dialog v-model="showBackupCodeDialog" max-width="400" persistent>
-      <v-card :title="t('account.twoFactor.backupUsedTitle')">
-        <v-card-text>{{ t('account.twoFactor.backupUsedBody') }}</v-card-text>
-        <v-card-actions class="justify-end">
-          <BaseButton kind="ghost" @click="handleLater">
-            {{ t('account.twoFactor.later') }}
-          </BaseButton>
-          <BaseButton kind="primary" @click="handleGoToSecurity">
-            {{ t('account.twoFactor.regenerate') }}
-          </BaseButton>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <ConfirmDialog
+      v-model="showBackupCodeDialog"
+      :title="t('account.twoFactor.backupUsedTitle')"
+      :confirm-label="t('account.twoFactor.regenerate')"
+      :cancel-label="t('account.twoFactor.later')"
+      @confirm="handleGoToSecurity"
+      @cancel="handleLater"
+    >
+      {{ t('account.twoFactor.backupUsedBody') }}
+    </ConfirmDialog>
   </div>
 </template>
 
@@ -85,6 +82,7 @@ import { landingAfterSignIn, takeFirstStep, upgradeAfterSecondStep } from './pas
 
 import AccountHeading from '@/components/account/AccountHeading.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
+import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
 import { postLoginTarget, takeOAuthRedirect } from '@/router/loginRedirect'

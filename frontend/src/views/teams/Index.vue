@@ -14,78 +14,63 @@
 
   <router-view />
 
-  <!-- 创建小队对话框 -->
-  <v-dialog v-model="createTeamDialog" width="600">
-    <v-card rounded="lg" class="create-team-dialog elevation-0 border">
-      <v-toolbar color="transparent" flat>
-        <v-toolbar-title class="text-h6">{{ t('teams.index.create') }}</v-toolbar-title>
-        <v-spacer></v-spacer>
-        <BaseButton icon="mdi-close" :aria-label="t('navigation.shell.close')" @click="createTeamDialog = false" />
-      </v-toolbar>
+  <!-- Create team dialog -->
+  <AdaptiveDialog
+    v-model="createTeamDialog"
+    :title="t('teams.index.create')"
+    :primary-label="t('teams.index.create')"
+    :cancel-label="t('teams.index.cancel')"
+    :primary-loading="creatingTeam"
+    @primary="createTeam"
+  >
+    <v-form>
+      <v-container fluid>
+        <v-row>
+          <v-col cols="12" md="4" class="text-center">
+            <avatar-uploader v-model="teamAvatar" />
+            <p class="text-body-2 text-medium-emphasis mb-2">{{ t('teams.index.avatar') }}</p>
+          </v-col>
+          <v-col cols="12" md="8">
+            <v-text-field
+              v-model="teamName"
+              autocomplete="off"
+              :label="t('teams.index.name')"
+              variant="outlined"
+              color="primary"
+              :placeholder="t('teams.index.namePlaceholder')"
+              :rules="[(v) => !!v || t('teams.index.nameRequired')]"
+              :error-messages="teamNameError"
+              class="mb-4"
+              rounded="md"
+            ></v-text-field>
 
-      <v-divider></v-divider>
+            <v-text-field
+              v-model="teamHandle"
+              autocomplete="off"
+              :label="t('work.teamLink.address')"
+              :prefix="addressPrefix"
+              :hint="t('work.teamLink.createAddressHint')"
+              :error-messages="teamHandleError"
+              persistent-hint
+              variant="outlined"
+              color="primary"
+              class="mb-4"
+              rounded="md"
+            ></v-text-field>
 
-      <v-card-text class="py-5">
-        <v-form>
-          <v-container fluid>
-            <v-row>
-              <v-col cols="12" md="4" class="text-center">
-                <avatar-uploader v-model="teamAvatar" />
-                <p class="text-body-2 text-medium-emphasis mb-2">{{ t('teams.index.avatar') }}</p>
-              </v-col>
-              <v-col cols="12" md="8">
-                <v-text-field
-                  v-model="teamName"
-                  autocomplete="off"
-                  :label="t('teams.index.name')"
-                  variant="outlined"
-                  color="primary"
-                  :placeholder="t('teams.index.namePlaceholder')"
-                  :rules="[(v) => !!v || t('teams.index.nameRequired')]"
-                  :error-messages="teamNameError"
-                  class="mb-4"
-                  rounded="md"
-                ></v-text-field>
-
-                <v-text-field
-                  v-model="teamHandle"
-                  autocomplete="off"
-                  :label="t('work.teamLink.address')"
-                  :prefix="addressPrefix"
-                  :hint="t('work.teamLink.createAddressHint')"
-                  :error-messages="teamHandleError"
-                  persistent-hint
-                  variant="outlined"
-                  color="primary"
-                  class="mb-4"
-                  rounded="md"
-                ></v-text-field>
-
-                <p class="text-body-2 text-medium-emphasis mb-2">{{ t('teams.index.description') }}</p>
-                <tip-tap-editor
-                  ref="teamDescriptionEditor"
-                  v-model="teamDescription"
-                  output="html"
-                  :placeholder="t('teams.index.descriptionPlaceholder')"
-                  class="team-description-editor rounded-md"
-                />
-              </v-col>
-            </v-row>
-          </v-container>
-        </v-form>
-      </v-card-text>
-
-      <v-divider></v-divider>
-
-      <v-card-actions class="pa-4">
-        <v-spacer></v-spacer>
-        <BaseButton class="mr-2" @click="createTeamDialog = false">{{ t('teams.index.cancel') }}</BaseButton>
-        <BaseButton kind="primary" :loading="creatingTeam" @click="createTeam">
-          {{ t('teams.index.create') }}
-        </BaseButton>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+            <p class="text-body-2 text-medium-emphasis mb-2">{{ t('teams.index.description') }}</p>
+            <tip-tap-editor
+              ref="teamDescriptionEditor"
+              v-model="teamDescription"
+              output="html"
+              :placeholder="t('teams.index.descriptionPlaceholder')"
+              class="team-description-editor rounded-md"
+            />
+          </v-col>
+        </v-row>
+      </v-container>
+    </v-form>
+  </AdaptiveDialog>
 </template>
 
 <script setup lang="ts">
@@ -96,6 +81,7 @@ import { useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AvatarUploader from '@/components/common/AvatarUploader.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import { t } from '@/i18n'

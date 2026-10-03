@@ -1,29 +1,21 @@
 <template>
   <!-- 画在「分类」那一块下面，隔开一段。 -->
   <SettingsToolbar :title="t('spaces.settings.sections.topics')" class="mt-8">
-    <BaseButton kind="primary" prepend-icon="mdi-plus">
+    <BaseButton kind="primary" prepend-icon="mdi-plus" @click="addTopicsDialog = true">
       {{ t('spaces.detail.manageTopics.addTopics') }}
-
-      <v-dialog v-model="addTopicsDialog" activator="parent" width="800">
-        <template #default="{ isActive }">
-          <v-card>
-            <v-card-title>{{ t('spaces.detail.manageTopics.addTopics') }}</v-card-title>
-            <v-card-text>
-              <topic-selector v-model="selectedTopics" always-adding />
-            </v-card-text>
-            <v-card-actions>
-              <BaseButton kind="ghost" @click="isActive.value = false">
-                {{ t('spaces.detail.manageTopics.cancel') }}
-              </BaseButton>
-              <BaseButton kind="primary" @click="confirmAddTopics">
-                {{ t('spaces.detail.manageTopics.add') }}
-              </BaseButton>
-            </v-card-actions>
-          </v-card>
-        </template>
-      </v-dialog>
     </BaseButton>
   </SettingsToolbar>
+
+  <AdaptiveDialog
+    v-model="addTopicsDialog"
+    :title="t('spaces.detail.manageTopics.addTopics')"
+    :primary-label="t('spaces.detail.manageTopics.add')"
+    size="lg"
+    @primary="confirmAddTopics"
+  >
+    <topic-selector v-model="selectedTopics" always-adding />
+  </AdaptiveDialog>
+
   <div class="settings-card">
     <v-list v-if="classificationTopics.length > 0" class="settings-list" bg-color="transparent">
       <v-list-item v-for="(topic, index) in classificationTopics" :key="index" :title="topic.name">
@@ -52,6 +44,7 @@ import { storeToRefs } from 'pinia'
 import { useSpaceData } from '@/composables/useSpaceData'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import TopicSelector from '@/components/common/TopicSelector.vue'
 import SettingsToolbar from '@/components/spaces/SettingsToolbar.vue'
 import { useSpaceStore } from '@/stores/space'

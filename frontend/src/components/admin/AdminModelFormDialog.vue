@@ -39,7 +39,7 @@ import { useI18n } from 'vue-i18n'
 
 import { apiBaseAllowed } from '@/utils/apiBase'
 
-import BaseButton from '@/components/base/BaseButton.vue'
+import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 
 // 新增 / 编辑一个**运行时**模型的表单（契约 §3.3）。
 //
@@ -206,160 +206,154 @@ function submit() {
 </script>
 
 <template>
-  <v-dialog :model-value="modelValue" max-width="560" :persistent="saving" @update:model-value="!$event && close()">
-    <v-card rounded="lg">
-      <v-card-title class="t-dialog-title px-4 pt-4 pb-2">
-        {{ mode === 'add' ? t('models.dialog.add.title') : t('models.dialog.edit.title') }}
-      </v-card-title>
+  <AdaptiveDialog
+    :model-value="modelValue"
+    :title="mode === 'add' ? t('models.dialog.add.title') : t('models.dialog.edit.title')"
+    :primary-label="mode === 'add' ? t('models.dialog.create') : t('models.dialog.save')"
+    :primary-loading="saving"
+    :primary-disabled="!valid || saving"
+    :persistent="saving"
+    :close-disabled="saving"
+    @update:model-value="!$event && close()"
+    @primary="submit"
+  >
+    <div class="amf__fields">
+      <v-text-field
+        v-model="name"
+        autocomplete="off"
+        variant="outlined"
+        density="comfortable"
+        :label="t('models.dialog.field.name')"
+        :hint="t('models.dialog.field.nameHint')"
+        :disabled="mode === 'edit'"
+        :error="mode === 'add' && name !== '' && !nameOk"
+        hide-details="auto"
+      />
+      <v-text-field
+        v-model="label"
+        autocomplete="off"
+        variant="outlined"
+        density="comfortable"
+        :label="t('models.dialog.field.label')"
+        hide-details="auto"
+      />
+      <v-text-field
+        v-model="upstreamModel"
+        autocomplete="off"
+        variant="outlined"
+        density="comfortable"
+        :label="t('models.dialog.field.upstreamModel')"
+        :hint="t('models.dialog.field.upstreamModelHint')"
+        hide-details="auto"
+      />
+      <v-text-field
+        v-model="apiBase"
+        autocomplete="off"
+        variant="outlined"
+        density="comfortable"
+        :label="t('models.dialog.field.apiBase')"
+        :hint="t('models.dialog.field.apiBaseHint')"
+        :error="!apiBaseOk"
+        hide-details="auto"
+      />
+      <v-text-field
+        v-model="apiKey"
+        autocomplete="off"
+        type="password"
+        variant="outlined"
+        density="comfortable"
+        :label="t('models.dialog.field.apiKey')"
+        :hint="mode === 'edit' ? t('models.dialog.field.apiKeyKeep') : t('models.dialog.field.apiKeyHint')"
+        hide-details="auto"
+      />
 
-      <v-card-text class="px-4">
-        <div class="amf__fields">
-          <v-text-field
-            v-model="name"
-            autocomplete="off"
-            variant="outlined"
-            density="comfortable"
-            :label="t('models.dialog.field.name')"
-            :hint="t('models.dialog.field.nameHint')"
-            :disabled="mode === 'edit'"
-            :error="mode === 'add' && name !== '' && !nameOk"
-            hide-details="auto"
-          />
-          <v-text-field
-            v-model="label"
-            autocomplete="off"
-            variant="outlined"
-            density="comfortable"
-            :label="t('models.dialog.field.label')"
-            hide-details="auto"
-          />
-          <v-text-field
-            v-model="upstreamModel"
-            autocomplete="off"
-            variant="outlined"
-            density="comfortable"
-            :label="t('models.dialog.field.upstreamModel')"
-            :hint="t('models.dialog.field.upstreamModelHint')"
-            hide-details="auto"
-          />
-          <v-text-field
-            v-model="apiBase"
-            autocomplete="off"
-            variant="outlined"
-            density="comfortable"
-            :label="t('models.dialog.field.apiBase')"
-            :hint="t('models.dialog.field.apiBaseHint')"
-            :error="!apiBaseOk"
-            hide-details="auto"
-          />
-          <v-text-field
-            v-model="apiKey"
-            autocomplete="off"
-            type="password"
-            variant="outlined"
-            density="comfortable"
-            :label="t('models.dialog.field.apiKey')"
-            :hint="mode === 'edit' ? t('models.dialog.field.apiKeyKeep') : t('models.dialog.field.apiKeyHint')"
-            hide-details="auto"
-          />
-
-          <!-- 上架开关。没价时**灰掉**，并说明为什么 —— 一个能打开却发不出去的开关
+      <!-- 上架开关。没价时**灰掉**，并说明为什么 —— 一个能打开却发不出去的开关
                比一个灰掉的开关更容易让人在服务端 400 之后才发现原因。 -->
-          <div class="amf__switch">
-            <v-switch
-              v-model="selectable"
-              color="primary"
-              density="compact"
-              :label="t('models.dialog.field.selectable')"
-              :disabled="!canSelect"
-              hide-details
-            />
-            <p v-if="!canSelect" class="amf__hint t-meta-read">
-              {{ t('models.dialog.selectableNeedsPrice') }}
-            </p>
-          </div>
+      <div class="amf__switch">
+        <v-switch
+          v-model="selectable"
+          color="primary"
+          density="compact"
+          :label="t('models.dialog.field.selectable')"
+          :disabled="!canSelect"
+          hide-details
+        />
+        <p v-if="!canSelect" class="amf__hint t-meta-read">
+          {{ t('models.dialog.selectableNeedsPrice') }}
+        </p>
+      </div>
 
-          <p class="amf__group t-eyebrow-read">{{ t('models.dialog.group.prices') }}</p>
-          <p class="amf__hint t-meta-read">{{ t('models.dialog.priceUnit') }}</p>
-          <div class="amf__prices">
-            <v-text-field
-              v-model="priceInput"
-              autocomplete="off"
-              type="number"
-              variant="outlined"
-              density="comfortable"
-              :label="t('models.price.input')"
-              hide-details
-            />
-            <v-text-field
-              v-model="priceOutput"
-              autocomplete="off"
-              type="number"
-              variant="outlined"
-              density="comfortable"
-              :label="t('models.price.output')"
-              hide-details
-            />
-            <v-text-field
-              v-model="priceCacheRead"
-              autocomplete="off"
-              type="number"
-              variant="outlined"
-              density="comfortable"
-              :label="t('models.price.cacheRead')"
-              hide-details
-            />
-            <v-text-field
-              v-model="priceCacheCreation"
-              autocomplete="off"
-              type="number"
-              variant="outlined"
-              density="comfortable"
-              :label="t('models.price.cacheCreation')"
-              hide-details
-            />
-          </div>
+      <p class="amf__group t-eyebrow-read">{{ t('models.dialog.group.prices') }}</p>
+      <p class="amf__hint t-meta-read">{{ t('models.dialog.priceUnit') }}</p>
+      <div class="amf__prices">
+        <v-text-field
+          v-model="priceInput"
+          autocomplete="off"
+          type="number"
+          variant="outlined"
+          density="comfortable"
+          :label="t('models.price.input')"
+          hide-details
+        />
+        <v-text-field
+          v-model="priceOutput"
+          autocomplete="off"
+          type="number"
+          variant="outlined"
+          density="comfortable"
+          :label="t('models.price.output')"
+          hide-details
+        />
+        <v-text-field
+          v-model="priceCacheRead"
+          autocomplete="off"
+          type="number"
+          variant="outlined"
+          density="comfortable"
+          :label="t('models.price.cacheRead')"
+          hide-details
+        />
+        <v-text-field
+          v-model="priceCacheCreation"
+          autocomplete="off"
+          type="number"
+          variant="outlined"
+          density="comfortable"
+          :label="t('models.price.cacheCreation')"
+          hide-details
+        />
+      </div>
 
-          <p class="amf__group t-eyebrow-read">{{ t('models.dialog.group.capabilities') }}</p>
-          <div class="amf__caps">
-            <v-switch
-              v-model="reasoning"
-              color="primary"
-              density="compact"
-              :label="t('models.capability.reasoning')"
-              hide-details
-            />
-            <v-switch
-              v-model="vision"
-              color="primary"
-              density="compact"
-              :label="t('models.capability.vision')"
-              hide-details
-            />
-            <v-switch
-              v-model="adaptiveThinking"
-              color="primary"
-              density="compact"
-              :label="t('models.capability.adaptiveThinking')"
-              hide-details
-            />
-          </div>
-        </div>
+      <p class="amf__group t-eyebrow-read">{{ t('models.dialog.group.capabilities') }}</p>
+      <div class="amf__caps">
+        <v-switch
+          v-model="reasoning"
+          color="primary"
+          density="compact"
+          :label="t('models.capability.reasoning')"
+          hide-details
+        />
+        <v-switch
+          v-model="vision"
+          color="primary"
+          density="compact"
+          :label="t('models.capability.vision')"
+          hide-details
+        />
+        <v-switch
+          v-model="adaptiveThinking"
+          color="primary"
+          density="compact"
+          :label="t('models.capability.adaptiveThinking')"
+          hide-details
+        />
+      </div>
+    </div>
 
-        <v-alert v-if="error" type="error" density="compact" variant="tonal" class="amf__alert" role="alert">
-          {{ error }}
-        </v-alert>
-      </v-card-text>
-
-      <v-card-actions class="pa-4 pt-0">
-        <v-spacer />
-        <BaseButton kind="ghost" :disabled="saving" @click="close">{{ t('models.dialog.cancel') }}</BaseButton>
-        <BaseButton kind="primary" :loading="saving" :disabled="!valid || saving" @click="submit">
-          {{ mode === 'add' ? t('models.dialog.create') : t('models.dialog.save') }}
-        </BaseButton>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+    <v-alert v-if="error" type="error" density="compact" variant="tonal" class="amf__alert" role="alert">
+      {{ error }}
+    </v-alert>
+  </AdaptiveDialog>
 </template>
 
 <style scoped>

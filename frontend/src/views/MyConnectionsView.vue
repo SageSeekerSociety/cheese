@@ -20,6 +20,7 @@ import {
   updateIntegration,
 } from '../api'
 import { connectFeishu, feishuAuthorizeUrl, feishuAvailability } from '../api/feishu'
+import ConfirmDialog from '../components/base/ConfirmDialog.vue'
 import AdaptiveDialog from '../components/common/AdaptiveDialog.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -398,44 +399,36 @@ onMounted(load)
       </div>
     </section>
 
-    <v-dialog :model-value="!!confirming" max-width="480" @update:model-value="confirming = null">
-      <v-card v-if="confirming">
-        <v-card-title class="t-dialog-title">
-          {{ t('account.connections.sendTitle', { subject: confirming.subject }) }}
-        </v-card-title>
-        <v-card-text class="t-body">
-          {{
-            confirming.attachments.length
-              ? t('account.connections.sendBodyAttachments', {
-                  to: [...confirming.to, ...confirming.cc].join('、'),
-                  n: confirming.attachments.length,
-                })
-              : t('account.connections.sendBody', { to: [...confirming.to, ...confirming.cc].join('、') })
-          }}
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <BaseButton kind="ghost" @click="confirming = null">{{ t('account.connections.cancel') }}</BaseButton>
-          <BaseButton kind="primary" @click="send(confirming)">
-            {{ t('account.connections.sendShort') }}
-          </BaseButton>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <ConfirmDialog
+      :model-value="!!confirming"
+      :title="t('account.connections.sendTitle', { subject: confirming?.subject ?? '' })"
+      :confirm-label="t('account.connections.sendShort')"
+      danger
+      @update:model-value="confirming = null"
+      @confirm="confirming && send(confirming)"
+    >
+      <template v-if="confirming">
+        {{
+          confirming.attachments.length
+            ? t('account.connections.sendBodyAttachments', {
+                to: [...confirming.to, ...confirming.cc].join('、'),
+                n: confirming.attachments.length,
+              })
+            : t('account.connections.sendBody', { to: [...confirming.to, ...confirming.cc].join('、') })
+        }}
+      </template>
+    </ConfirmDialog>
 
-    <v-dialog :model-value="!!removing" max-width="420" @update:model-value="removing = null">
-      <v-card v-if="removing">
-        <v-card-title class="t-dialog-title">
-          {{ t('account.connections.removeTitle', { label: removing.label }) }}
-        </v-card-title>
-        <v-card-text class="t-body">{{ t('account.connections.removeBody') }}</v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <BaseButton kind="ghost" @click="removing = null">{{ t('account.connections.cancel') }}</BaseButton>
-          <BaseButton kind="danger" solid @click="remove(removing)">{{ t('account.connections.remove') }}</BaseButton>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <ConfirmDialog
+      :model-value="!!removing"
+      :title="t('account.connections.removeTitle', { label: removing?.label ?? '' })"
+      :confirm-label="t('account.connections.remove')"
+      danger
+      @update:model-value="removing = null"
+      @confirm="removing && remove(removing)"
+    >
+      {{ t('account.connections.removeBody') }}
+    </ConfirmDialog>
 
     <!-- 一张长表单：桌面上是对话框，手机上是整页（保存在页头右边，不会被键盘盖住）。
          只剩邮箱 —— 飞书那一栏不是一张表单，是上面那颗「连接飞书」。 -->

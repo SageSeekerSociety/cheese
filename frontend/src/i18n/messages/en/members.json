@@ -42,13 +42,11 @@
     "searchPlaceholder": "Type a handle or nickname",
     "alreadyAdmin": "Already an admin",
     "hint": "People added here can immediately read private feedback and security issues, and can add others themselves.",
-    "cancel": "Cancel",
     "submit": "Add"
   },
   "confirm": {
     "title": "Remove admin",
     "body": "Remove {handle} from the roster? They will immediately lose access to private feedback and security issues, and can no longer add people here.",
-    "cancel": "Cancel",
     "submit": "Remove"
   },
   "notice": {

@@ -149,7 +149,7 @@
     </section>
 
     <!-- Changing the password -->
-    <v-dialog v-model="showChangePassword" max-width="440" @after-leave="resetPasswordForm">
+    <v-dialog v-model="showChangePassword" :max-width="DIALOG_WIDTH.sm" @after-leave="resetPasswordForm">
       <v-card :title="t('account.security.changePasswordTitle')">
         <v-form ref="passwordForm" @submit.prevent="handleChangePassword">
           <v-card-text class="pt-2">
@@ -283,6 +283,7 @@ import { SudoCancelledError, withSudo } from '@/utils/sudo'
 import { deleteOAuthConnection, listOAuthConnections } from '@/api'
 import PasswordField from '@/components/account/PasswordField.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
+import { DIALOG_WIDTH } from '@/components/base/dialogSize'
 import i18n, { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'

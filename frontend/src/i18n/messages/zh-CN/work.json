@@ -153,8 +153,7 @@
     "forbidden": "只有团队所有者和管理员能修改资料",
     "saved": "已保存",
     "saveFailed": "保存失败，请稍后重试",
-    "save": "保存",
-    "cancel": "取消"
+    "save": "保存"
   },
   "newProject": {
     "title": "新建项目",
@@ -1359,7 +1358,6 @@
     "deleteTitle": "删除《{name}》",
     "deleteBody": "删除后无法恢复，已经引用过它的消息也将打不开这份文件",
     "deleteFailed": "删除失败",
-    "cancel": "取消",
     "close": "关闭",
     "actionsOf": "{name} 的操作",
     "backToList": "返回资料库",
@@ -1492,7 +1490,6 @@
       "noMemories": "暂无记忆",
       "deactivateTitle": "停用「{name}」",
       "deactivateHint": "停用后新话题选不到它，已在用它的话题照常工作，记忆全部保留",
-      "cancel": "取消",
       "typeGeneral": "通用",
       "editor": {
         "presetCustom": "自行填写",
@@ -1754,8 +1751,7 @@
     "restore": "恢复到这一版",
     "close": "关闭",
     "deleteTitle": "删除「{title}」",
-    "deleteHint": "删除后之后的房间不再带着它，历史版本也一起删除",
-    "cancel": "取消"
+    "deleteHint": "删除后之后的房间不再带着它，历史版本也一起删除"
   },
   "nodeBoard": {
     "loadFailed": "加载机器状态失败",

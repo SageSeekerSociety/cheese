@@ -10,18 +10,16 @@
     </v-checkbox>
     <p v-if="loadError" class="legal-consent__error">{{ loadError }}</p>
 
-    <v-dialog v-model="prompting" max-width="420" persistent>
-      <v-card>
-        <v-card-title class="text-h6">{{ t('account.consentPrompt') }}</v-card-title>
-        <v-card-text class="text-body-2">
-          <LegalLinks />
-        </v-card-text>
-        <v-card-actions class="justify-end pa-4">
-          <BaseButton kind="ghost" @click="settle(false)">{{ t('account.cancel') }}</BaseButton>
-          <BaseButton kind="primary" @click="settle(true)">{{ actionLabel }}</BaseButton>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <ConfirmDialog
+      v-model="prompting"
+      :title="t('account.consentPrompt')"
+      :confirm-label="actionLabel"
+      :cancel-label="t('account.cancel')"
+      @confirm="settle(true)"
+      @cancel="settle(false)"
+    >
+      <LegalLinks />
+    </ConfirmDialog>
   </div>
 </template>
 
@@ -40,7 +38,7 @@ import { onMounted, ref } from 'vue'
 
 import LegalLinks from './LegalLinks.vue'
 
-import BaseButton from '@/components/base/BaseButton.vue'
+import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import { t } from '@/i18n'
 import { LegalApi } from '@/network/api/legal'
 

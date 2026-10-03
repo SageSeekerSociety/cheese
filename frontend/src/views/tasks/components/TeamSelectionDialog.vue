@@ -1,5 +1,5 @@
 <template>
-  <v-dialog :model-value="open" max-width="620" scrollable @update:model-value="$emit('close')">
+  <v-dialog :model-value="open" :max-width="DIALOG_WIDTH.md" scrollable @update:model-value="$emit('close')">
     <v-card rounded="lg" elevation="3">
       <v-card-title class="pa-4 pb-3">
         <div class="d-flex align-center">
@@ -29,7 +29,7 @@
         </div>
 
         <div v-else class="px-4 pt-2 pb-4">
-          <!-- 实名认证提示 -->
+          <!-- Real-name verification notice -->
           <v-card
             v-if="taskData?.requireRealName"
             class="mb-4 info-alert-card"
@@ -160,6 +160,7 @@ import { useI18n } from 'vue-i18n'
 import { getAvatarUrl } from '@/utils/materials'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import { DIALOG_WIDTH } from '@/components/base/dialogSize'
 import { eligibilityReasonKey } from '@/views/tasks/eligibilityReason'
 
 const props = defineProps<{
