@@ -5,6 +5,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 import { useSlidesPdf } from '@/composables/useSlidesPdf'
 
+import { contextAround } from './markdownQuote'
 import SlideThumbRail from './SlideThumbRail.vue'
 
 import { t } from '@/i18n'
@@ -120,7 +121,15 @@ function quote() {
   // scope 说这是这一页里的一段。没有已验证的身份时才退回原来那句拼好的话 ——
   // 它不带版本，但也不撒谎。
   if (canQuote.value && props.context) {
-    emit('pageContext', { text, page: current.value, scope: 'selection', context: { ...props.context } })
+    // 两侧的文字帮受话人分辨同一句话在这一页的哪一处出现（整页提问没有这个说法）。
+    // 量的是这一页的文字层：`sheet` 里那块画布和文字层是同一个坐标系下的两层。
+    emit('pageContext', {
+      text,
+      page: current.value,
+      scope: 'selection',
+      context: { ...props.context },
+      ...contextAround(sheet.value, range),
+    })
     return
   }
   emit('quote', { text, page: current.value })

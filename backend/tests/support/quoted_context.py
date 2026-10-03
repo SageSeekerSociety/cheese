@@ -13,6 +13,9 @@ def slide_quote(text: str) -> dict:
         "page": 2,
         "scope": "page",
         "text": text,
+        # 整页没有「哪一处」可分，缺省就是空串；存下来的形状带着这两个键。
+        "prefix": "",
+        "suffix": "",
     }
 
 

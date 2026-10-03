@@ -110,6 +110,16 @@ it('正文一段：标题可以是空（文件开头），原文和前后文必�
   expect(isQuotedContext({ ...range, kind: 'document' })).toBe(false)
 })
 
+it('幻灯片选中一段也带前后文：可选，但带上就得是字符串', () => {
+  const selection: SlidePageQuote = { ...page, scope: 'selection', prefix: '退避', suffix: '，超过就报错' }
+  expect(isQuotedContext(selection)).toBe(true)
+  // 整页本来就没有「哪一处」可分，库里更早的整页引用也没有这两个键：都照收。
+  expect(isQuotedContext(page)).toBe(true)
+  expect(isQuotedContext({ ...page, scope: 'selection' })).toBe(true)
+  expect(isQuotedContext({ ...page, prefix: 2 })).toBe(false)
+  expect(isQuotedContext({ ...page, suffix: null })).toBe(false)
+})
+
 it('文件身份那一半对四种形状一视同仁', () => {
   for (const quote of [page, pin, cell, range]) {
     expect(isQuotedContext({ ...quote, path: '' })).toBe(false)
