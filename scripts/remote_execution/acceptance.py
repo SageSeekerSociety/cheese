@@ -425,7 +425,18 @@ def case(folder, options):
                 run(executor.command("stop"))
         before_turn(session, home)
         ended = session.turn("Run the prescribed remote execution checks.", 120)
-        assert len(server.state["requests"]) == len(actions) + 1, ended
+        # One request per scripted call plus the opening turn, and at most one
+        # more: the subagent the script starts runs in the background now, and
+        # its completion reaches the session as a turn of the build's own.
+        # Whether that turn lands on the last scripted request or after it is
+        # a race, so either count is the script running once. What no extra
+        # request may be is a turn carrying a scripted tool result — that
+        # would be the script running twice.
+        extra = server.state["requests"][len(actions) + 1 :]
+        assert len(extra) <= 1, ended
+        for body in extra:
+            added = body["messages"][len(server.state["requests"][len(actions)]["messages"]) :]
+            assert added and not tool_results({"messages": added}), ended
         # The journal is what the room reads: every scripted call has its
         # tool_result there, on the session's own thread.
         ran = session.tool_results()
