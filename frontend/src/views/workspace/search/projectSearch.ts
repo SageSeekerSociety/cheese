@@ -5,6 +5,7 @@ import type { ProjectSearchHits } from '@/api'
 import type { PaletteItem, PaletteSource } from '@/commands/palette/sources'
 
 import { searchProject } from '@/api'
+import { topicTitle } from '@/lib/topicState'
 
 // 只为让五个数据源合用一次请求，不是缓存：过一会儿再搜同样的字要看到新内容。
 const FRESH_MS = 10_000
@@ -22,6 +23,11 @@ export function hitsFor(projectId: string, query: string): Promise<ProjectSearch
     asked.set(key, entry)
   }
   return entry.hits
+}
+
+/** 结果在哪个房间：还没起名的房间按读者的语言叫「新话题」。 */
+export function searchRoomTitle(hit: { room_title: string; room_title_source?: string }): string {
+  return topicTitle({ title: hit.room_title, title_source: hit.room_title_source })
 }
 
 /** 结果下面那一行：在哪个房间、谁、什么时候。 */

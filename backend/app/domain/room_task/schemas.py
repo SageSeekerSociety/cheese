@@ -31,6 +31,9 @@ class TaskOut(BaseModel):
     # The room this thread hangs in — never another task: work does not nest.
     room_id: uuid.UUID
     title: str
+    # `placeholder`: still unnamed, and each screen says so in its reader's
+    # language instead of showing the stored placeholder text.
+    title_source: str = "human"
     status: TaskStatus
     # 唯一的主. A room answers this with a roster; a task with one handle.
     owner_handle: str | None = None

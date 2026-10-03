@@ -26,6 +26,7 @@ import UserRef from '@/components/common/UserRefLink.vue'
 import { useRoomSocket } from '@/components/room/composables/useRoomSocket'
 import { t } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
+import { topicTitle } from '@/lib/topicState'
 
 type CloudMachine = ProjectMachine & { projectName: string }
 
@@ -518,7 +519,9 @@ onBeforeUnmount(stopResync)
                 >
                   <i18n-t keypath="work.deviceInUse.line" tag="span">
                     <template #project>{{ use.project_name }}</template>
-                    <template #room>{{ use.topic_title }}</template>
+                    <template #room>{{
+                      topicTitle({ title: use.topic_title, title_source: use.topic_title_source })
+                    }}</template>
                     <template #agent>
                       <UserRef :handle="use.agent_handle" :name="use.agent_name" :project-id="use.project_id" />
                     </template>

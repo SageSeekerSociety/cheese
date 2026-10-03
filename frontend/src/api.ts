@@ -697,13 +697,7 @@ export function listTopics(
 }
 
 /** 一个话题的名字，和它在哪个项目里。跨项目找话题只要这几样。 */
-export interface TopicName {
-  id: string
-  project_id: string
-  title: string
-  kind: string
-  status: string
-}
+export type TopicName = Pick<Topic, 'id' | 'project_id' | 'title' | 'title_source' | 'kind' | 'status'>
 
 /** 我能看到的所有项目里的话题名，最近有动静的在前。私聊不在里面。 */
 export async function listTopicNames(): Promise<TopicName[]> {
@@ -716,6 +710,7 @@ export interface ProjectSearchHits {
     id: string
     room_id: string
     room_title: string
+    room_title_source?: string
     kind: 'message' | 'doc' | 'doc_node' | 'comment' | 'weekly'
     author: string
     created_at: string
@@ -723,7 +718,11 @@ export interface ProjectSearchHits {
     task_id: string | null
     snippet: string
   }[]
-  tasks: { id: string; room_id: string; room_title: string; title: string; status: string; snippet: string }[]
+  tasks: (Pick<RoomTask, 'id' | 'room_id' | 'title' | 'title_source' | 'status'> & {
+    room_title: string
+    room_title_source?: string
+    snippet: string
+  })[]
   library: { path: string; bytes: number; modified: string }[]
 }
 
@@ -1472,7 +1471,7 @@ export interface ArtifactVersion {
   filename: string | null
   url: string | null
   bytes: number | null
-  room: { id: string; title: string } | null
+  room: { id: string; title: string; title_source?: string } | null
 }
 
 export interface ProjectArtifactDetail extends ProjectArtifact {

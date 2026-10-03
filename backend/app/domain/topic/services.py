@@ -46,7 +46,7 @@ from app.domain.notification.services import ProjectNotificationService
 from app.domain.project.repositories import ProjectRepository
 from app.domain.repository import service as ws
 from app.domain.review.services import AcceptService
-from app.domain.room_task.models import Task, TaskStatus
+from app.domain.room_task.models import Task, TaskStatus, TaskTitleSource
 from app.domain.room_task.place import Place, PlaceResolver
 from app.domain.room_task.services import TaskService
 from app.domain.topic.doc_change import summarize_doc_change
@@ -876,7 +876,9 @@ class TopicService:
             task = await tasks.open_thread(
                 project_id=block.project_id,
                 room_id=parent.id,
+                # Opened unnamed: the room names it later (topics_tasks.py).
                 title=PLACEHOLDER_TITLE,
+                title_source=TaskTitleSource.placeholder,
                 reviewer_handle=reviewer_handle,
                 owner_handle=await self._resolve_owner(
                     created_by,

@@ -24,7 +24,7 @@ two that were always one, take it off). The list is read-only by design: it
 grows out of delivery, so there is no POST.
 
 What stays behind, and why. Nothing this block imports belongs to it alone.
-`ProjectService`, `project_reader`/`readable_room_titles`, `ok`/`page`,
+`ProjectService`, `project_reader`/`readable_rooms`, `ok`/`page`,
 `ActorResolverDep` and the error types are all read by handlers that stay, so
 each is imported here from the module that owns it (`app.domain.project.services`,
 `app.api.place`, `app.api.response`, `app.api.auth`, `app.core.errors`) rather
@@ -66,7 +66,7 @@ from fastapi import APIRouter
 from fastapi.responses import Response
 
 from app.api.auth import ActorResolverDep
-from app.api.place import project_reader, readable_room_titles
+from app.api.place import project_reader, readable_rooms
 from app.api.response import ok, page
 from app.api.routes.projects import DbSession
 from app.core.errors import NotFoundError, ValidationError
@@ -124,7 +124,7 @@ async def read_artifact(
     listed = await artifacts.summary(db, row.id)
     history = await artifacts.versions(db, row.id)
     # 每一版出自哪个房间，能点回去；读不了的房间不写名字。
-    titles = await readable_room_titles(db, resolver, actor, project_id)
+    rooms = await readable_rooms(db, resolver, actor, project_id)
     return ok(
         {
             "id": str(row.id),
@@ -137,7 +137,7 @@ async def read_artifact(
                 else None
             ),
             "versions": [
-                artifacts.version_payload(project_id, v, titles) for v in history
+                artifacts.version_payload(project_id, v, rooms) for v in history
             ],
         }
     )

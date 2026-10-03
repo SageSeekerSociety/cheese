@@ -380,7 +380,7 @@ async def set_task_title(
     title = (body.get("title") or "").strip()
     if not title:
         raise ValidationError("title 不能为空")
-    task.title = title[:80]
+    TaskService.rename(task, title[:80])
     out = TaskOut.model_validate(task).model_dump(mode="json")
     await db.commit()
     return ok(out)

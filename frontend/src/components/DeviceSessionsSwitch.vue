@@ -10,6 +10,7 @@ import { ApiError, listDeviceSessions, setTopicComputeChoice } from '../api'
 import { t } from '../i18n'
 import { choiceKey, choiceName, compactChoices } from '../lib/computeConfig'
 import { relTime } from '../lib/relTime'
+import { topicTitle } from '../lib/topicState'
 
 import UserRef from '@/components/common/UserRefLink.vue'
 
@@ -78,6 +79,8 @@ const selectable = computed(() => sessions.value.filter((s) => outcomes.value[s.
 const allSelected = computed(
   () => selectable.value.length > 0 && selectable.value.every((s) => selected.value.includes(s.id))
 )
+
+const sessionRoom = (s: DeviceSession) => topicTitle({ title: s.topic_title, title_source: s.topic_title_source })
 
 function toggleAll() {
   selected.value = allSelected.value ? [] : selectable.value.map((s) => s.id)
@@ -180,12 +183,12 @@ watch(open, (value) => {
                   v-model="selected"
                   :value="session.id"
                   :disabled="running || outcomes[session.id]?.state === 'done'"
-                  :aria-label="session.topic_title"
+                  :aria-label="sessionRoom(session)"
                   density="compact"
                   hide-details
                 />
                 <div class="bs-body">
-                  <div class="bs-room">{{ session.topic_title }}</div>
+                  <div class="bs-room">{{ sessionRoom(session) }}</div>
                   <div class="bs-meta">
                     <i18n-t keypath="work.bulkSwitch.meta" tag="span">
                       <template #agent><UserRef :handle="session.agent_handle" :name="session.agent_name" /></template>

@@ -461,9 +461,9 @@ class ArtifactVersion:
 
 
 def version_payload(
-    project_id: uuid.UUID, v: ArtifactVersion, room_titles: dict[uuid.UUID, str]
+    project_id: uuid.UUID, v: ArtifactVersion, rooms: dict[uuid.UUID, dict]
 ) -> dict:
-    """一版在接口上的样子。房间只在 `room_titles` 里有它时才写名字：调用方只给
+    """一版在接口上的样子。房间只在 `rooms` 里有它时才写名字：调用方只给
     读者读得了的那些房间。"""
     return {
         "number": v.number,
@@ -479,11 +479,7 @@ def version_payload(
             if v.kind == "file" and v.filename
             else None
         ),
-        "room": (
-            {"id": str(v.room_id), "title": room_titles[v.room_id]}
-            if v.room_id in room_titles
-            else None
-        ),
+        "room": rooms.get(v.room_id),
     }
 
 

@@ -1093,7 +1093,9 @@
     "notFoundHint": "它可能已被删除，或不属于这个项目",
     "resize": "拖动调整宽度，双击复位",
     "dmFailed": "打开私聊失败",
-    "untitled": "新话题"
+    "untitled": "新话题",
+    "untitledTask": "新任务",
+    "quoted": "《{title}》"
   },
   "access": {
     "signedOutTitle": "需要登录才能查看这个项目",

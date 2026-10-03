@@ -154,6 +154,14 @@ describe('一张卡按卡渲染', () => {
     expect(getRoomTask.mock.calls[0].slice(0, 2)).toEqual(['room-1', 'task-1'])
   })
 
+  it('in English an unnamed card is titled New task, not the stored placeholder', async () => {
+    setLocale('en')
+    getRoomTask.mockResolvedValue(card({ title: '新话题', title_source: 'placeholder' }))
+    const { findByText, queryByText } = mount()
+    expect(await findByText('New task')).toBeTruthy()
+    expect(queryByText('新话题')).toBeNull()
+  })
+
   it('状态词是后端算好的那一句，前端不自己推', async () => {
     const { getByTestId } = mount()
     await waitFor(() => expect(getByTestId('card-status').textContent).toBe('运行中'))

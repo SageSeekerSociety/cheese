@@ -14,6 +14,7 @@ from app.api.auth import ActorResolver
 from app.core.errors import ForbiddenError, ValidationError
 from app.domain.identity.actor import Actor
 from app.domain.room_task.place import Place
+from app.domain.topic.models import room_ref
 from app.domain.topic.services import TopicService
 
 
@@ -58,15 +59,16 @@ async def project_reader(
     return actor
 
 
-async def readable_room_titles(
+async def readable_rooms(
     db: AsyncSession, resolver: ActorResolver, actor: Actor, project_id: uuid.UUID
-) -> dict[uuid.UUID, str]:
-    """这个项目里 `actor` 读得了的房间，各叫什么。
+) -> dict[uuid.UUID, dict]:
+    """这个项目里 `actor` 读得了的房间，各自在别的清单里写成的样子（`room_ref`）。
 
     一样东西要说出它出自哪个房间时用：读不了的房间（别人的私聊）连名字也不该从
-    旁边漏出去，所以只给读得了的那些。"""
+    旁边漏出去，所以只给读得了的那些。名字连同 `title_source` 一起写出去：还没起名
+    的房间由读者的屏幕按语言叫「新话题」。"""
     rooms, _, _ = await TopicService(db).list_for_project(project_id)
     readable = await resolver.readable_topic_ids(
         actor, project_id=project_id, topics=rooms
     )
-    return {room.id: room.title for room in rooms if room.id in readable}
+    return {room.id: room_ref(room) for room in rooms if room.id in readable}

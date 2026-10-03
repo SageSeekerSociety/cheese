@@ -79,6 +79,17 @@ class TitleSource(enum.StrEnum):
     human = "human"
 
 
+def room_ref(room: "Topic") -> dict:
+    """A room named inside another listing: its id and title, and whether the
+    title is still the placeholder, which each screen renders in its reader's
+    language."""
+    return {
+        "id": str(room.id),
+        "title": room.title,
+        "title_source": TitleSource(room.title_source).value,
+    }
+
+
 class TopicRole(enum.StrEnum):
     """A member's role in a topic's roster (话题成员名册, fusion-design §3).
 

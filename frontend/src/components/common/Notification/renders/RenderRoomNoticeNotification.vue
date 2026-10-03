@@ -11,7 +11,7 @@ import type { NotificationRenderProps, RenderedNotificationContent } from './Not
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import { getStringMetadata } from './NotificationRenderUtils'
+import { getRoomTitle, getStringMetadata } from './NotificationRenderUtils'
 
 import { renderNoticeMessage } from '@/lib/noticeText'
 
@@ -27,7 +27,7 @@ const { t } = useI18n()
 
 const projectId = computed(() => getStringMetadata(props.notification, 'projectId'))
 const topicId = computed(() => getStringMetadata(props.notification, 'topicId'))
-const topicTitle = computed(() => getStringMetadata(props.notification, 'topicTitle'))
+const topicTitle = computed(() => getRoomTitle(props.notification))
 
 const title = computed(
   () =>

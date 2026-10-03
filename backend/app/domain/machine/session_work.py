@@ -228,6 +228,7 @@ async def device_sessions(db, project_id, device_id: str) -> list[tuple]:
                     "id": str(row.id),
                     "topic_id": str(topic.id),
                     "topic_title": topic.title,
+                    "topic_title_source": str(topic.title_source),
                     "agent_handle": row.agent_handle,
                     "agent_name": await _agent_name(
                         db, project, topic, row.agent_handle
@@ -350,6 +351,7 @@ async def device_users(db, device_ids: list[str]) -> dict[str, list[dict]]:
                 "project_name": project.name,
                 "topic_id": str(topic.id),
                 "topic_title": topic.title,
+                "topic_title_source": str(topic.title_source),
                 "agent_handle": session.agent_handle,
                 "agent_name": await _agent_name(
                     db, project, topic, session.agent_handle
@@ -399,6 +401,7 @@ async def tell_device_owner(db, *, topic, row, device, lease) -> None:
                 "teamHandle": team.handle if team is not None else None,
                 "topicId": str(topic.id),
                 "topicTitle": topic.title,
+                "topicTitleSource": str(topic.title_source),
                 "agentHandle": row.agent_handle,
                 "agentName": agent,
                 "deviceId": device.device_id,

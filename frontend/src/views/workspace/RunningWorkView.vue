@@ -30,7 +30,7 @@ import { isAgentHandle } from '@/lib/authorship'
 import { BOARD_COLUMNS, columnDotStyle, columnLabel, compareTasks, liveBoardTasks, phraseLabel } from '@/lib/board'
 import { readProjectTasks } from '@/lib/projectTasks'
 import { relTime } from '@/lib/relTime'
-import { topicTitle } from '@/lib/topicState'
+import { taskTitle, topicTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 
@@ -357,7 +357,7 @@ function openTask(task: RoomTask) {
               </li>
               <li v-for="row in inColumn(col.key)" :key="row.id">
                 <button type="button" class="board-card" @click="openTask(row)">
-                  <span class="board-card__title t-body">{{ row.title }}</span>
+                  <span class="board-card__title t-body">{{ taskTitle(row) }}</span>
                   <span class="board-card__owner t-meta">
                     <span class="board-card__room">{{ roomTitle(row.room_id) }}</span>
                     <span class="board-card__sep">·</span>
@@ -445,7 +445,7 @@ function openTask(task: RoomTask) {
             <li v-for="row in doneRows" :key="row.id">
               <button type="button" class="done-row" @click="openTask(row)">
                 <span class="board-dot" :style="columnDotStyle(row.presentation.column)" aria-hidden="true" />
-                <span class="done-row__title t-body">{{ row.title }}</span>
+                <span class="done-row__title t-body">{{ taskTitle(row) }}</span>
                 <span class="done-row__room t-meta">{{ roomTitle(row.room_id) }}</span>
                 <span class="done-row__phrase t-meta">{{ phraseLabel(row.presentation.phrase) }}</span>
               </button>

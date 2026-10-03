@@ -1,6 +1,8 @@
 import type { Notification } from '@/network/api/notifications/types'
 import type { EntityInfo } from '@/network/api/notifications/types'
 
+import { topicTitle } from '@/lib/topicState'
+
 /**
  * 通知渲染组件的Props接口
  */
@@ -59,4 +61,12 @@ export function getMetadata<T>(notification: Notification, key: string, defaultV
 export function getStringMetadata(notification: Notification, key: string, defaultValue: string = ''): string {
   const value = notification.contextMetadata[key]
   return value !== undefined ? String(value) : defaultValue
+}
+
+/** 通知说的那个房间叫什么：还没起名的（`topicTitleSource = placeholder`）按读者的语言叫「新话题」。 */
+export function getRoomTitle(notification: Notification): string {
+  return topicTitle({
+    title: getStringMetadata(notification, 'topicTitle'),
+    title_source: getStringMetadata(notification, 'topicTitleSource'),
+  })
 }

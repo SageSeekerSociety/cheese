@@ -18,7 +18,7 @@ import type { NotificationRenderProps, RenderedNotificationContent } from './Not
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import { getMetadata, getStringMetadata } from './NotificationRenderUtils'
+import { getMetadata, getRoomTitle, getStringMetadata } from './NotificationRenderUtils'
 
 import UserRef from '@/components/common/UserRefLink.vue'
 
@@ -36,7 +36,10 @@ const title = computed(() =>
 )
 
 const body = computed(() => {
-  const where = t('notifications.DEVICE_IN_USE.body', { project: text('projectName'), room: text('topicTitle') })
+  const where = t('notifications.DEVICE_IN_USE.body', {
+    project: text('projectName'),
+    room: getRoomTitle(props.notification),
+  })
   return getMetadata(props.notification, 'machineAccess', false)
     ? `${where} · ${t('notifications.DEVICE_IN_USE.wholeMachine')}`
     : where

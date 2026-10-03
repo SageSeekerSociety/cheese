@@ -39,6 +39,14 @@ class TaskStatus(enum.StrEnum):
     closed = "closed"
 
 
+class TaskTitleSource(enum.StrEnum):
+    """Whether a task has been named. A room's own flag has a third value, for
+    the platform renaming it; nothing renames a task on its own."""
+
+    placeholder = "placeholder"  # still the unnamed-room title it opened with
+    human = "human"
+
+
 class TaskSnapshot(UuidPk, Timestamps, Base):
     """An immutable backup of uncommitted work, separate from the review branch."""
 
@@ -102,6 +110,16 @@ class Task(UuidPk, Timestamps, Base):
         ForeignKey("topics.id", ondelete="CASCADE"), index=True
     )
     title: Mapped[str] = mapped_column(String(300))
+    # `placeholder` while the task still carries the unnamed-room title it was
+    # opened with (a message upgraded into a task starts unnamed). The stored
+    # text is for agents; each screen renders the placeholder in its reader's
+    # language, which is why the flag and not the text says so. `human` once a
+    # title was given.
+    title_source: Mapped[TaskTitleSource] = mapped_column(
+        Enum(TaskTitleSource, native_enum=False, length=16),
+        default=TaskTitleSource.human,
+        server_default=TaskTitleSource.human.value,
+    )
     status: Mapped[TaskStatus] = mapped_column(
         Enum(TaskStatus, native_enum=False, length=16),
         default=TaskStatus.open,
