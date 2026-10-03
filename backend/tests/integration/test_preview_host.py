@@ -6,6 +6,7 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 
 from app.api.preview_host import cookie_name, mint_preview_token, preview_origin
+from app.api.preview_runtime import inject_runtime_script
 from app.common.auth import verify_access_token
 from app.core.config import settings
 from app.domain.library import service as library
@@ -23,6 +24,11 @@ from tests.integration.test_app_preview_proxy import (
 from tests.integration.test_app_preview_proxy import (
     preview_config as preview_config,
 )
+
+
+def served(text: str) -> str:
+    """房间里的一段 HTML 从内容域发出去时的样子：运行时先被注入进去。"""
+    return inject_runtime_script(text.encode()).decode()
 
 
 @pytest.fixture
@@ -59,7 +65,7 @@ def test_preview_session_opens_selected_artifact_and_assets(client, static_previ
     assert cookie.startswith("cheese-preview-local=")
     assert "HttpOnly" in cookie and "Path=/" in cookie and "Domain=" not in cookie
     response = client.get(origin + "/?theme=dark")
-    assert response.status_code == 200 and response.text == html
+    assert response.status_code == 200 and response.text == served(html)
     assert "allow-same-origin" in response.headers["content-security-policy"]
     # 页面里点开新标签页的外链要真的开得出去：文档自己的 sandbox 也得放行。
     sandbox = response.headers["content-security-policy"].split(";")[0].split()
@@ -75,7 +81,8 @@ def test_preview_session_opens_selected_artifact_and_assets(client, static_previ
         assert response.text == content
     head = client.head(origin + "/")
     assert head.status_code == 200 and head.content == b""
-    assert int(head.headers["content-length"]) == len(html.encode())
+    served_length = len(inject_runtime_script(html.encode()))
+    assert int(head.headers["content-length"]) == served_length
     assert client.post(origin + "/", content=b"overwrite").status_code == 405
     assert client.get(origin + "/api/projects").status_code == 404
     assert (
@@ -261,7 +268,7 @@ def test_static_preview_tracks_selected_artifact_directory(client, static_previe
     assert response.status_code == 200, response.text
     library.write_room_file(project_id, topic_id, "other/main.js", b"second module")
     origin = preview_origin(topic_id)
-    assert client.get(origin + "/").text == "selected second page"
+    assert client.get(origin + "/").text == served("selected second page")
     assert client.get(origin + "/main.js").text == "second module"
     assert client.get(origin + "/image.svg").status_code == 404
     assert client.get(origin + "/web/report.html").status_code == 404
@@ -344,7 +351,7 @@ def test_a_room_file_renders_without_any_artifact(client, room_file_preview):
     assert exchange.headers["location"] == "/_cheese/room/pages/site.html"
     page = client.get(origin + "/_cheese/room/pages/site.html")
     assert page.status_code == 200, page.text
-    assert page.text == "<h1>room page</h1>"
+    assert page.text == served("<h1>room page</h1>")
     assert page.headers["content-type"].startswith("text/html")
     # 页面里的相对资源落在同一份文件旁边，而且和页面同源——iframe 里的相对引用
     # 才不用改写。
@@ -356,8 +363,33 @@ def test_a_room_file_renders_without_any_artifact(client, room_file_preview):
     assert logo.headers["content-type"].startswith("image/svg+xml")
     head = client.head(origin + "/_cheese/room/pages/site.html")
     assert head.status_code == 200 and head.content == b""
-    assert int(head.headers["content-length"]) == len(b"<h1>room page</h1>")
+    served_length = len(inject_runtime_script(b"<h1>room page</h1>"))
+    assert int(head.headers["content-length"]) == served_length
     assert client.post(origin + "/_cheese/room/pages/site.html").status_code == 405
+
+
+def test_html_room_file_is_served_with_the_runtime_injected_after_head(
+    client, preview_config
+):
+    project, topic = _project_topic(client)
+    project_id, topic_id = uuid.UUID(project["id"]), uuid.UUID(topic["id"])
+    original = (
+        b"<!doctype html><html><head><title>t</title></head><body>hi</body></html>"
+    )
+    library.write_room_file(project_id, topic_id, "pages/doc.html", original)
+    library.write_room_file(project_id, topic_id, "pages/doc.css", b"body{color:red}")
+    _open_preview(client, topic_id, path="/_cheese/room/pages/doc.html")
+    origin = preview_origin(topic_id)
+    page = client.get(origin + "/_cheese/room/pages/doc.html")
+    assert page.status_code == 200, page.text
+    assert page.text == inject_runtime_script(original).decode()
+    assert '<script src="/_cheese/runtime.js"></script>' in page.text
+    # HEAD 报的是注入之后的长度，正文为空。
+    head = client.head(origin + "/_cheese/room/pages/doc.html")
+    assert head.status_code == 200 and head.content == b""
+    assert int(head.headers["content-length"]) == len(inject_runtime_script(original))
+    # 非 HTML 的兄弟文件一个字节都不动。
+    assert client.get(origin + "/_cheese/room/pages/doc.css").text == "body{color:red}"
 
 
 @pytest.mark.parametrize(
@@ -402,8 +434,8 @@ def test_a_room_file_is_addressed_by_its_own_path_not_the_artifacts(
     # artifact 所在目录之外：老地址取不到（这是它一贯的边界）。
     assert client.get(origin + "/other/page.html").status_code == 404
     # 房间文件按房间相对路径寻址，和 artifact 是谁无关。
-    assert (
-        client.get(origin + "/_cheese/room/other/page.html").text == "<p>elsewhere</p>"
+    assert client.get(origin + "/_cheese/room/other/page.html").text == served(
+        "<p>elsewhere</p>"
     )
 
 
@@ -480,7 +512,7 @@ def test_private_room_roster_is_required_even_for_project_members(
         return
     _open_preview(client, preview_id, "bob")
     origin = preview_origin(uuid.UUID(preview_id))
-    assert client.get(origin + "/").text == "private preview"
+    assert client.get(origin + "/").text == served("private preview")
     removed = client.delete(f"/topics/{room_id}/members/bob", headers=owner)
     assert removed.status_code == 200, removed.text
     assert client.get(origin + "/").status_code == 404

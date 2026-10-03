@@ -4,6 +4,7 @@ import uuid
 from urllib.parse import urlsplit
 
 from app.api.preview_host import cookie_name, preview_origin
+from app.api.preview_runtime import inject_runtime_script
 from app.core.config import settings
 from app.domain.agent import preview_tunnel as wire
 from app.domain.agent.preview_hub import preview_hub
@@ -18,6 +19,11 @@ from tests.integration.test_app_preview_proxy import (
 )
 from tests.integration.test_app_preview_proxy import preview_config as preview_config
 from tests.integration.test_preview_host import static_preview as static_preview
+
+
+def served(text: str) -> str:
+    """房间里的一段 HTML 从内容域发出去时的样子：运行时先被注入进去。"""
+    return inject_runtime_script(text.encode()).decode()
 
 
 def test_owner_mode_all_three_authorized_reads_share_the_owner(
@@ -119,7 +125,7 @@ def test_fixed_file_survives_latest_change_and_rejects_changed_entry(
     )
     assert exchange.status_code == 303 and exchange.headers["location"] == "/"
     token = exchange.cookies.get(cookie_name())
-    assert client.get(origin + "/").text == html
+    assert client.get(origin + "/").text == served(html)
     bridge = client.get(origin + "/_cheese/runtime.js")
     assert bridge.status_code == 200 and "CheesePreviewRuntime" in bridge.text
     assert settings.frontend_url in bridge.text
@@ -141,7 +147,7 @@ def test_fixed_file_survives_latest_change_and_rejects_changed_entry(
         headers=session_auth_headers("alice"),
     )
     assert shown.status_code == 200
-    assert client.get(origin + "/").text == html
+    assert client.get(origin + "/").text == served(html)
     live = client.post(
         f"/topics/{topic}/preview-session", headers=session_auth_headers("alice")
     ).json()["data"]
@@ -151,8 +157,8 @@ def test_fixed_file_survives_latest_change_and_rejects_changed_entry(
         headers={"Origin": settings.frontend_url},
         follow_redirects=False,
     )
-    assert client.get(preview_origin(topic) + "/").text == "new latest"
-    assert client.get(origin + "/").text == html
+    assert client.get(preview_origin(topic) + "/").text == served("new latest")
+    assert client.get(origin + "/").text == served(html)
     library.write_room_file(project, topic, "web/report.html", b"changed")
     assert client.get(origin + "/").status_code == 409
     assert client.get(origin + "/main.js").status_code == 200

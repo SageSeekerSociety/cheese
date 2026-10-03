@@ -1,4 +1,4 @@
-"""Execute the actual opt-in bridge in a JS context with controlled parent events."""
+"""Run the injected bridge in a JS context; prove the injection function."""
 
 import json
 import shutil
@@ -6,7 +6,67 @@ import subprocess
 
 import pytest
 
-from app.api.preview_runtime import RUNTIME_SCRIPT
+from app.api.preview_runtime import RUNTIME_SCRIPT, RUNTIME_TAG, inject_runtime_script
+
+
+def _node():
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is required to execute the injected JavaScript bridge")
+    return node
+
+
+def test_injection_lands_after_head_html_or_at_the_front():
+    tag = RUNTIME_TAG
+    # head 之后（带属性、大小写混着来也一样）。
+    assert inject_runtime_script(b"<head><title>x</title></head>") == (
+        b"<head>" + tag + b"<title>x</title></head>"
+    )
+    assert inject_runtime_script(b'<HEAD class="a">x') == (
+        b'<HEAD class="a">' + tag + b"x"
+    )
+    # head 里带引号包着的 `>`，结束位置要认引号里的那一个才算对。
+    assert inject_runtime_script(b'<head data-x="a>b"></head>') == (
+        b'<head data-x="a>b">' + tag + b"</head>"
+    )
+    # 没有 head 就插在 html 之后。
+    assert inject_runtime_script(b'<html lang="en"><body>x</body></html>') == (
+        b'<html lang="en">' + tag + b"<body>x</body></html>"
+    )
+    # 两个都没有就插在最前面。
+    assert inject_runtime_script(b"<p>hello</p>") == tag + b"<p>hello</p>"
+
+
+def test_injection_keeps_doctype_comments_and_bom_in_place():
+    tag = RUNTIME_TAG
+    document = b"\xef\xbb\xbf<!-- a note --><!DOCTYPE html><html><head></head></html>"
+    injected = inject_runtime_script(document)
+    assert injected == (
+        b"\xef\xbb\xbf<!-- a note --><!DOCTYPE html><html><head>"
+        + tag
+        + b"</head></html>"
+    )
+    assert injected.startswith(b"\xef\xbb\xbf")  # BOM 还在最前面
+    # 注释里写着的 `<head` 不算数，插在真正的那个之后。
+    assert inject_runtime_script(b"<!-- <head> fake --><head></head>") == (
+        b"<!-- <head> fake --><head>" + tag + b"</head>"
+    )
+
+
+def test_injection_is_skipped_when_already_present_or_not_ascii_compatible():
+    tag = RUNTIME_TAG
+    # 已经引了脚本的页面不动。
+    already = b'<head><script src="/_cheese/runtime.js"></script></head>'
+    assert inject_runtime_script(already) == already
+    # 不是合法 UTF-8 但 ASCII 兼容（latin-1 的 é）照样按字节插，不会错位。
+    latin1 = b"<head>caf\xe9</head>"
+    assert inject_runtime_script(latin1) == b"<head>" + tag + b"caf\xe9</head>"
+    # UTF-16 的 BOM：ASCII 字节在那里不是 ASCII 字符，整份不插。
+    utf16 = b"\xff\xfe<\x00h\x00e\x00a\x00d\x00>\x00"
+    assert inject_runtime_script(utf16) == utf16
+    # meta 声明了非 ASCII 兼容的编码：同样不插。
+    declared = b'<meta charset="utf-16le"><head></head>'
+    assert inject_runtime_script(declared) == declared
 
 
 def test_bridge_caches_early_ready_and_checks_parent_origin_session():
@@ -171,6 +231,195 @@ assert.equal(messages.length, 1);
 listeners.keydown(press({code: 'KeyF', shiftKey: true}));
 flush();
 assert.equal(messages[1].data.id, 'library.upload');
+"""
+    result = subprocess.run(
+        [node, "-e", harness], input=script, text=True, capture_output=True, timeout=10
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_bridge_forwards_escape_with_page_modal_and_coalescing_rules():
+    node = _node()
+    script = RUNTIME_SCRIPT.replace(
+        "__PLATFORM_ORIGIN__", json.dumps("https://platform.example")
+    )
+    harness = r"""
+const vm = require('node:vm');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const messages = [];
+const listeners = {};
+const timers = [];
+const modal = { open: false, aria: [] };
+const parent = { postMessage: (data, origin) => messages.push({data, origin}) };
+const doc = {
+  activeElement: null,
+  querySelector: (sel) => (modal.open && sel === 'dialog[open]' ? {} : null),
+  querySelectorAll: (sel) => (sel === '[aria-modal="true"]' ? modal.aria : []),
+};
+const window = {
+  parent,
+  addEventListener: (type, handler) => { listeners[type] = handler; },
+};
+vm.runInNewContext(fs.readFileSync(0, 'utf8'), {
+  window, document: doc,
+  setTimeout: (run, delay) => { timers.push({ run, delay: delay || 0 }); },
+});
+// 到点的那一批先取下来再跑，跑的过程里新排的（比如 500ms 窗口）留到下一批。
+const flush = (delay = 0) => {
+  const due = timers.filter((t) => (t.delay || 0) === delay);
+  due.forEach((t) => timers.splice(timers.indexOf(t), 1));
+  due.forEach((t) => t.run());
+};
+listeners.message({ source: parent, origin: 'https://platform.example', data: {
+  channel: 'cheese-preview-runtime', version: 1, type: 'hello', sessionId: 's',
+  keys: [],
+}});
+messages.length = 0;
+const esc = (over) => ({
+  key: 'Escape', code: 'Escape', metaKey: false, ctrlKey: false, shiftKey: false,
+  altKey: false, repeat: false, defaultPrevented: false, ...over,
+});
+// 一次 ESC 报一次 escape，带当前 session 和平台 origin。
+listeners.keydown(esc({}));
+flush();
+assert.equal(messages.length, 1);
+assert.equal(messages[0].data.type, 'escape');
+assert.equal(messages[0].data.sessionId, 's');
+assert.equal(messages[0].origin, 'https://platform.example');
+// 500ms 窗口内连按不报；窗口过期后再按才报。
+listeners.keydown(esc({}));
+flush();
+assert.equal(messages.length, 1);
+flush(500);
+listeners.keydown(esc({}));
+flush();
+assert.equal(messages.length, 2);
+flush(500);
+// 按住不放的重复事件不报。
+listeners.keydown(esc({ repeat: true }));
+flush();
+assert.equal(messages.length, 2);
+// 页面自己的 <dialog open> 开着时不报。
+modal.open = true;
+listeners.keydown(esc({}));
+flush();
+assert.equal(messages.length, 2);
+modal.open = false;
+// 可见的 aria-modal 元素也一样。
+modal.aria = [
+  { hidden: false, getBoundingClientRect: () => ({ width: 10, height: 10 }) },
+];
+listeners.keydown(esc({}));
+flush();
+assert.equal(messages.length, 2);
+modal.aria = [];
+// 页面在这一轮任务里 preventDefault 了，就不报。
+const handled = esc({});
+listeners.keydown(handled);
+handled.defaultPrevented = true;
+flush();
+assert.equal(messages.length, 2);
+// 通道没被前几次按下关掉：再来一次仍然报得出去。
+listeners.keydown(esc({}));
+flush();
+assert.equal(messages.length, 3);
+"""
+    result = subprocess.run(
+        [node, "-e", harness], input=script, text=True, capture_output=True, timeout=10
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_bridge_does_not_forward_plain_keys_while_typing():
+    node = _node()
+    script = RUNTIME_SCRIPT.replace(
+        "__PLATFORM_ORIGIN__", json.dumps("https://platform.example")
+    )
+    harness = r"""
+const vm = require('node:vm');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const messages = [];
+const listeners = {};
+const timers = [];
+const parent = { postMessage: (data, origin) => messages.push({data, origin}) };
+const doc = { activeElement: null };
+const window = {
+  parent,
+  addEventListener: (type, handler) => { listeners[type] = handler; },
+};
+vm.runInNewContext(fs.readFileSync(0, 'utf8'), {
+  window, document: doc,
+  setTimeout: (run) => { timers.push({ run, delay: 0 }); },
+});
+const flush = () => { timers.splice(0).forEach((t) => t.run()); };
+listeners.message({ source: parent, origin: 'https://platform.example', data: {
+  channel: 'cheese-preview-runtime', version: 1, type: 'hello', sessionId: 's',
+  keys: [
+    {id: 'go', mod: true, shift: false, alt: false, code: 'Digit1'},
+    {id: 'type-m', mod: false, shift: false, alt: false, code: 'KeyM'},
+    {id: 'mod-m', mod: true, shift: false, alt: false, code: 'KeyM'},
+  ],
+}});
+messages.length = 0;
+const key = (over) => ({
+  key: 'm', code: 'KeyM', metaKey: false, ctrlKey: false, shiftKey: false,
+  altKey: false, repeat: false, defaultPrevented: false, ...over,
+});
+const input = (type) => ({
+  nodeType: 1,
+  tagName: 'INPUT',
+  getAttribute: (name) => (name === 'type' ? type : null),
+});
+// 在输入框里打 m：裸键是文字，不报。
+listeners.keydown(key({ target: input('text') }));
+flush();
+assert.equal(messages.length, 0);
+// 按钮、勾选框、单选框不是「在打字」，裸键照报。
+for (const type of ['button', 'checkbox', 'radio']) {
+  listeners.keydown(key({ target: input(type) }));
+  flush();
+  assert.equal(messages.length, 1, type);
+  assert.equal(messages[0].data.id, 'type-m');
+  messages.length = 0;
+}
+// 带 mod 的键在输入框里也报——那是快捷键，不是文字。
+listeners.keydown(key({ target: input('text'), metaKey: true }));
+flush();
+assert.equal(messages.length, 1);
+assert.equal(messages[0].data.id, 'mod-m');
+messages.length = 0;
+// textarea、select、contenteditable 一样是「在打字」。
+for (const node of [
+  { nodeType: 1, tagName: 'TEXTAREA' },
+  { nodeType: 1, tagName: 'SELECT' },
+  { nodeType: 1, tagName: 'DIV', isContentEditable: true },
+]) {
+  listeners.keydown(key({ target: node }));
+  flush();
+  assert.equal(messages.length, 0);
+}
+// 焦点落在帧里的可编辑元素上（事件自己没带 target）也要挡住。
+doc.activeElement = { nodeType: 1, tagName: 'TEXTAREA' };
+listeners.keydown(key({}));
+flush();
+assert.equal(messages.length, 0);
+// 不在打字的地方，裸键照报。
+doc.activeElement = null;
+listeners.keydown(key({ target: { nodeType: 1, tagName: 'BODY' } }));
+flush();
+assert.equal(messages.length, 1);
+assert.equal(messages[0].data.id, 'type-m');
+// ESC 不受可编辑过滤影响：只要页面没处理过，还是报出去。
+messages.length = 0;
+listeners.keydown({
+  key: 'Escape', code: 'Escape', metaKey: false, ctrlKey: false, shiftKey: false,
+  altKey: false, repeat: false, defaultPrevented: false, target: input('text'),
+});
+flush();
+assert.equal(messages.length, 1);
+assert.equal(messages[0].data.type, 'escape');
 """
     result = subprocess.run(
         [node, "-e", harness], input=script, text=True, capture_output=True, timeout=10
