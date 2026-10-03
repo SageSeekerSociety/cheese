@@ -100,6 +100,11 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
   // 路上那一次属于哪一代：话题换了、或者又按了一次刷新，先前那一次的结果就不再算数
   // （它带的是上一份内容，落下来就是「刚切换的这一格显示着上一格的东西」）。
   let generation = 0
+  // 换实例后跟上去最多试多久（毫秒）：应用冷启动、授权一时被拒都在这段时间里重试，
+  // 过了就认输，把「刷新」那条路还给用户——不能一直无声地跟。
+  const FOLLOW_WINDOW_MS = 60_000
+  // 第一次看到「屏幕上这一帧的实例被换掉」的时刻；不在替换状态时为 null。
+  let followSince: number | null = null
 
   // ---- 这一份是什么 ----
   // 「三种查看器怎么分派」「什么时候该把字节交给 iframe」的判据都在这一小撮里，画的
@@ -249,17 +254,44 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
       previewAppNote.value = art.kind === 'app' ? art.path : ''
       previewTunnelUp.value = !!art.tunnel_up
       // 屏幕上这一帧被换掉了实例、或者断线后又回来了：不能只把状态画出来——旧那一帧
-      // 的请求已经被拒了，不重新授权它就一直白屏到人手动刷新。跟上去，并说一句让人
-      // 看见（`change` 非空、且看的是同一件产物时，下面两处「还是同一件」的近路都要
-      // 让开；换了产物那本来就是一次正常的换页，不该说成「应用重启」）。
+      // 的请求可能已经被拒了。换实例就跟上去：`observeConnection` 在替换期间每一轮都
+      // 报，所以一次跟丢（授权 404、应用还在冷启动）还能在后面的轮询里再试，试到
+      // FOLLOW_WINDOW_MS 为止；已经有一帧在往新实例上装时不踩它。
+      //
+      // 同一实例断线又回来通常不用动——应用没死，页面自己会接上（HMR 重连后客户端自己
+      // 重载），替它重载反而抹掉表单和 SPA 状态（#2349 避开的正是这个）。只有这一帧的
+      // 导航真的失败过（从没装上、或加载超时），回来时才替它重来一次。
       const change = art.kind === 'app' ? host.observeConnection(art.instance, !!art.url && !!art.tunnel_up) : null
       let follow = false
       if (art.kind === 'app') {
         const displayed = host.displayed.value
         const sameArtifact =
           !!displayed?.identity && JSON.parse(displayed.identity)[2] === (art.artifact_id ?? art.path)
-        follow = change !== null && sameArtifact
-        if (change === 'instance-changed' && sameArtifact) autoReloaded.value = true
+        const replaced = change === 'instance-changed' && sameArtifact
+        // 已经有一帧在往新实例上装（授权或导航中）：这一程还没成也没败，别踩掉它。
+        const pending =
+          host.incoming.value?.identity === identity &&
+          (host.navigation.value === 'authorizing' || host.navigation.value === 'navigating')
+        if (replaced) {
+          if (followSince === null) followSince = Date.now()
+        } else {
+          followSince = null
+        }
+        const expired = replaced && followSince !== null && Date.now() - followSince >= FOLLOW_WINDOW_MS
+        if (expired && !pending) {
+          // 跟了一分钟还没跟上：应用一直没起来，或授权一直被拒。别再无声白等，
+          // 回到手动刷新那条路（这句报错下面自带一个「重试」按钮）。
+          previewUrl.value = null
+          host.authorize(identity)
+          host.fail(t('work.room.preview.instanceGoneManual'))
+          return
+        }
+        // 跟上去，并说一句让人看见（`replaced`、且看的是同一件产物时，下面两处「还是
+        // 同一件」的近路都要让开；换了产物那本来就是一次正常的换页，不该说成「应用重启」）。
+        follow =
+          (replaced && !pending) ||
+          (change === 'instance-recovered' && sameArtifact && host.navigation.value === 'failed')
+        if (replaced && !pending) autoReloaded.value = true
         if (!opts.reload && !follow && displayed?.live && displayed.instance && sameArtifact) {
           return
         }
@@ -361,6 +393,7 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
         loading.value = false
         refreshing.value = false
         autoReloaded.value = false
+        followSince = null
         if (!host.displayed.value) {
           previewUrl.value = null
         }
@@ -380,6 +413,7 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
       previewNamed.value = false
       previewAppNote.value = ''
       autoReloaded.value = false
+      followSince = null
       loading.value = false
       refreshing.value = false
       if (props.active) void load()

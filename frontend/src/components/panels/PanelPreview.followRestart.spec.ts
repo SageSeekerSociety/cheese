@@ -74,6 +74,12 @@ async function loadFrame(target: string) {
   frame.dispatchEvent(new Event('load'))
   await flush()
 }
+/** 让某一帧报加载失败：那一程导航判失败，屏幕上留下旧帧等下一轮。 */
+async function failFrame(target: string) {
+  const frame = document.querySelector(`iframe[name="${target}"]`)!
+  frame.dispatchEvent(new Event('error'))
+  await flush()
+}
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -137,7 +143,7 @@ describe('应用重启/断线后面板自己跟上去', () => {
     expect(queryByText('应用已重启，已自动重新载入')).toBeNull()
   })
 
-  it('同一实例断线又回来：重载一次（断线里的请求都失败了）', async () => {
+  it('同一实例断线又回来：不重载也不提示（应用没死，页面自己会接上）', async () => {
     const { container } = mount()
     await flush()
     await loadFrame(submissions[0]!.target)
@@ -149,15 +155,65 @@ describe('应用重启/断线后面板自己跟上去', () => {
     expect(requestPreviewSession).toHaveBeenCalledTimes(1)
     expect(container.querySelector('iframe')).toBe(firstFrame)
 
-    // 隧道回来了，还是同一实例——页面在这段断线里的请求都失败了，要重载一次。
+    // 隧道回来了，还是同一实例——应用没死，不重新授权（重载会抹掉表单和 SPA 状态）。
     getPreview.mockResolvedValue(appArtifact(instanceA))
     await tick(FAST_MS)
+    expect(requestPreviewSession).toHaveBeenCalledTimes(1)
+    expect(submissions).toHaveLength(1)
+    expect(container.querySelector('iframe')).toBe(firstFrame)
+    expect(container.textContent).not.toContain('应用已重启')
+  })
+
+  it('实例指纹缺失（探针没答）：不当成换实例，不重新授权也不提示', async () => {
+    const { container, queryByText } = mount()
+    await flush()
+    await loadFrame(submissions[0]!.target)
+    expect(requestPreviewSession).toHaveBeenCalledTimes(1)
+
+    // 后端隧道在线、但实例探针没答：url 有、instance 为 null。这不是「换了一个实例」——
+    // 认错会签出一张没绑资源的空头授权。
+    getPreview.mockResolvedValue({ ...appArtifact(instanceA), instance: null })
+    await tick(POLL_MS)
+
+    expect(requestPreviewSession).toHaveBeenCalledTimes(1)
+    expect(submissions).toHaveLength(1)
+    expect(queryByText('应用已重启，已自动重新载入')).toBeNull()
+    // 状态仍是「在线」，不是「原实例已替换」。
+    expect(container.textContent).not.toContain('原实例已替换')
+  })
+
+  it('第一次跟不上（新帧报错）：后面的轮询再试，成了才停', async () => {
+    const { queryByText } = mount()
+    await flush()
+    await loadFrame(submissions[0]!.target)
+    expect(requestPreviewSession).toHaveBeenCalledTimes(1)
+
+    // 实例换了：第一次跟过去，拿的是新实例。
+    getPreview.mockResolvedValue(appArtifact(instanceB))
+    await tick(POLL_MS)
     expect(requestPreviewSession).toHaveBeenCalledTimes(2)
     expect(requestPreviewSession).toHaveBeenLastCalledWith('topic-a', {
       artifact_id: 'artifact-a',
-      instance: instanceA,
+      instance: instanceB,
     })
+
+    // 这一程没成：新那一帧报加载失败。屏幕上仍是旧帧，实例也还是旧的。
+    await failFrame(submissions[1]!.target)
     expect(submissions).toHaveLength(2)
+
+    // 替换状态按 2 秒问：下一轮再跟一次，这次跟上。
+    await tick(FAST_MS)
+    expect(requestPreviewSession).toHaveBeenCalledTimes(3)
+    expect(requestPreviewSession).toHaveBeenLastCalledWith('topic-a', {
+      artifact_id: 'artifact-a',
+      instance: instanceB,
+    })
+    expect(submissions).toHaveLength(3)
+    expect(submissions[2]!.target).not.toBe(submissions[0]!.target)
+
+    // 新帧装好，那一句解释让位。
+    await loadFrame(submissions[2]!.target)
+    expect(queryByText('应用已重启，已自动重新载入')).toBeNull()
   })
 
   it('不在线时按 2 秒轮询，回到在线后退回 20 秒', async () => {
@@ -177,7 +233,7 @@ describe('应用重启/断线后面板自己跟上去', () => {
     await tick(FAST_MS)
     expect(getPreview).toHaveBeenCalledTimes(3)
 
-    // 回来了：这一次轮询恢复并重载，间隔也退回正常档。
+    // 回来了：间隔退回正常档。
     getPreview.mockResolvedValue(appArtifact(instanceA))
     await tick(2 * FAST_MS)
     expect(getPreview).toHaveBeenCalledTimes(4)
