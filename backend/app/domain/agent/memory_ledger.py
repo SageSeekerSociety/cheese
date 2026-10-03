@@ -4,7 +4,8 @@
 `_sync_memory*` / `sweep_memory_dreams` / `run_memory_dream` 与那两条说进总览的话，
 连同它们按房间记的四份状态。`ChatService` 上留 `sweep_memory_dreams` /
 `run_memory_dream` 两行委托，调用点（`core/background.py` 的周期任务、测试）一格
-没动；`_output_tokens_since` / `_dream_rooms` 照旧从 `chat.py` 导得出来。
+没动；`_output_tokens_since` 照旧从 `chat.py` 导得出来（有一条测试在那里导它），
+其余名字都从本模块取。
 
 **四份状态只在这里读写**，它们原先是 `ChatService` 构造函数里的四个字段：
 `_turns`（这一轮署谁的名、算谁的 private）、`_dreams`（正在跑整理的房间）、
@@ -12,7 +13,9 @@
 这一簇自己回答，所以它们跟着这一簇走。
 
 对账走的是会话那条通道（`ComputePool.bind_memory`），所以这个对象由 `ChatService`
-自己装上去，不是外面传进来的。
+自己装上去，不是外面传进来的。库里要用的几件协作者（会话工厂、算力池、网关、网关
+锁、基础提示词）走构造入参，留在 `ChatService` 上的只有 `_lock_for` 与
+`_model_kwargs`——见 `_MemoryHost`。
 """
 
 import asyncio
@@ -69,18 +72,16 @@ MEMORY_TURNS_KEPT = 512
 
 
 class _MemoryHost(Protocol):
-    """这条路的收件人：``ChatService`` 上留在原地的那几件东西。
+    """这条路的收件人：``ChatService`` 上留在原地的那两件事。
 
-    跑整理是**一轮真会话**（`runtime.run_turn`），而会话那套机件——每个房间一把
-    的锁、模型与网关 key 的解析——没有跟着这一簇搬出来，因为普通对话那一轮也在
-    用它们。本模块声明自己会问哪些，类型在调用点核对；这里只列签名，不写实现。
+    跑整理是**一轮真会话**（`runtime.run_turn`），会话那套机件里有两件跟着这一簇
+    走不了：``_lock_for`` 是每个房间一把、换环境也在用的那把锁，``_model_kwargs``
+    内部还要问项目的档位与队友配置。它们各自还有别的调用方，方法在 ``ChatService``
+    上原样留着。本模块声明自己会问哪些，类型在调用点核对；这里只列签名，不写实现。
+
+    库里其余几件（会话工厂、算力池、网关、网关锁、基础提示词）不在这里：它们是
+    注入进来的协作者，按 ``gateway_usage._model_kwargs`` 的口径走显式入参。
     """
-
-    _sessions: async_sessionmaker
-    _compute: ComputePool
-    _gateway: LlmGateway | None
-    _gateway_lock: asyncio.Lock
-    _base_prompt: str
 
     def _lock_for(self, topic_id: uuid.UUID) -> asyncio.Lock: ...
 
@@ -97,7 +98,21 @@ class _MemoryHost(Protocol):
 class MemoryLedger:
     """记忆的对账与整理。见模块开头。"""
 
-    def __init__(self, host: _MemoryHost) -> None:
+    def __init__(
+        self,
+        *,
+        sessions: async_sessionmaker,
+        compute: ComputePool,
+        gateway: LlmGateway | None,
+        gateway_lock: asyncio.Lock,
+        base_prompt: str,
+        host: _MemoryHost,
+    ) -> None:
+        self._sessions = sessions
+        self._compute = compute
+        self._gateway = gateway
+        self._gateway_lock = gateway_lock
+        self._base_prompt = base_prompt
         self._host = host
         # 每一间房这一轮的记忆账：署谁的名、算谁的 private（组装那一轮时记下，
         # 见 `remember_turn`）。两个对账时刻手上只有一个 topic id，所以这份点名
@@ -163,13 +178,13 @@ class MemoryLedger:
         """
         scopes = self._scopes(topic_id)
         updated_by = self._turns.get(topic_id, ("system", ()))[0] or "system"
-        async with self._host._sessions() as session:
+        async with self._sessions() as session:
             topic = await TopicRepository(session).get(topic_id)
             if topic is None:
                 return
             project_id = topic.project_id
             stored = await read_tree(session, project_id, scopes)
-        answer = await self._host._compute.memory(topic_id, {"scopes": stored.scopes})
+        answer = await self._compute.memory(topic_id, {"scopes": stored.scopes})
         if answer is None:
             # 这间房现在没有能对账的会话：没有活着的会话，或者这个 harness 的会话
             # 不落记忆文件。两种都只是「这里没有这件事」，不是失败。
@@ -186,7 +201,7 @@ class MemoryLedger:
             logger.warning("memory dream refused a bulk delete: %s", refusal)
             self._refusals[topic_id] = refusal
             return
-        async with self._host._sessions() as session:
+        async with self._sessions() as session:
             change = await apply_tree(
                 session,
                 project_id,
@@ -216,7 +231,7 @@ class MemoryLedger:
         """
         done: list[str] = []
         failed: list[str] = []
-        async with self._host._sessions() as session:
+        async with self._sessions() as session:
             # An archived project runs nothing, a dream (a real turn) included.
             project_ids = [
                 p.id
@@ -247,7 +262,7 @@ class MemoryLedger:
         跑在这个项目默认芝士的会话上，用它自己的模型。
         """
         now = datetime.now(UTC)
-        async with self._host._sessions() as session:
+        async with self._sessions() as session:
             project = await ProjectRepository(session).get(project_id)
             if project is None:
                 raise NotFoundError("Project not found")
@@ -289,7 +304,7 @@ class MemoryLedger:
         # 铺给它的那一份：team 加**这个项目全部**的 private。不是「本轮在场的几
         # 个人」——整理是唯一一个把整棵树放在一起看的时刻，漏掉一个没说过话的人，
         # 等于他的记忆没有人整理（`private_owners` 的开头那一段）。
-        async with self._host._sessions() as session:
+        async with self._sessions() as session:
             owners = await private_owners(session, project_id)
             scopes: list[tuple[MemoryFileScope, str | None]] = [
                 (MemoryFileScope.team, None),
@@ -309,10 +324,10 @@ class MemoryLedger:
         # 那时才落到会话的磁盘上），一轮结束时又按它收回来。
         self.remember_turn(root_topic_id, acting=agent_handle, speakers=tuple(owners))
         self._dreams.add(root_topic_id)
-        provider = self._host._compute.platform_work(compute_id)
+        provider = self._compute.platform_work(compute_id)
         runtime = runtime_for(provider)
         system_prompt = build_system_prompt(
-            self._host._base_prompt,
+            self._base_prompt,
             "",  # 场景技能不带：整理这件事的规矩在 prompt 里，不在某个场景里。
             None,
             index,
@@ -356,7 +371,7 @@ class MemoryLedger:
             self._dreams.discard(root_topic_id)
         refusal = self._refusals.pop(root_topic_id, None)
 
-        async with self._host._sessions() as session:
+        async with self._sessions() as session:
             after = await read_tree(session, project_id, scopes)
             # 「改了哪些文件」由前后两份树比出来，不用另一条回执：`stored` 是铺下
             # 去之前的，`after` 是收回来之后的，中间那些就是这一轮的成果。
@@ -411,9 +426,9 @@ class MemoryLedger:
             len(changed),
         )
         await drain_dream_spend(
-            self._host._sessions,
-            self._host._gateway,
-            self._host._gateway_lock,
+            self._sessions,
+            self._gateway,
+            self._gateway_lock,
             project_id,
             root_topic_id,
             run_id,
@@ -442,7 +457,7 @@ class MemoryLedger:
         他的内容。整理的人自己写的那段交代不进来——它是看着所有人的 private 写的，
         留在 `memory_dream_runs.summary` 里。
         """
-        async with self._host._sessions() as session:
+        async with self._sessions() as session:
             project = await ProjectRepository(session).get(project_id)
             if project is None or project.root_topic_id is None:
                 return
@@ -472,7 +487,7 @@ class MemoryLedger:
         拦下的是哪个作用域、哪几条不在这里说：那可能是某个人 private 里的文件，而
         总览全项目都看得见。它们记在 `memory_dream_runs` 这一条的 summary 里。
         """
-        async with self._host._sessions() as session:
+        async with self._sessions() as session:
             project = await ProjectRepository(session).get(project_id)
             if project is None or project.root_topic_id is None:
                 return

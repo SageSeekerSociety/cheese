@@ -534,11 +534,6 @@ class ChatService(SessionRecovery):
         self._compute.bind_receipts(self.confirm_prompt_receipt)
         self._compute.bind_unread_probe(self.oldest_unread_at)
         self._compute.bind_reachability(self._note_reachability)
-        # 记忆的对账（铺下去 / 收回来）走的是会话那条通道，所以回调挂在这里，
-        # 由 harness 在两个时刻问它：输入之前、这一轮结束之后。这一簇连同它按
-        # 房间记的四份状态都在 `memory_ledger.py` 里。
-        self._memory = MemoryLedger(self)
-        self._compute.bind_memory(self._memory.sync)
         # Mid-turn messages whose write the transport accepted but whose
         # UserPromptSubmit receipt has not arrived yet (#539 decision A):
         # topic → [(injected text, block ids, consuming turn)]. The receipt
@@ -570,6 +565,20 @@ class ChatService(SessionRecovery):
         # project.settings (single-process reality, like the topic locks).
         self._gateway = gateway
         self._gateway_lock = asyncio.Lock()
+        # 记忆的对账（铺下去 / 收回来）走的是会话那条通道，所以回调挂在这里，
+        # 由 harness 在两个时刻问它：输入之前、这一轮结束之后。这一簇连同它按
+        # 房间记的四份状态都在 `memory_ledger.py` 里；它会用到的四件协作者显式
+        # 传进去（`gateway`/`gateway_lock` 要先建好），留在 `ChatService` 上的
+        # 只有 `_lock_for` 和 `_model_kwargs` 两件同事还在用的东西。
+        self._memory = MemoryLedger(
+            sessions=session_factory,
+            compute=compute,
+            gateway=gateway,
+            gateway_lock=self._gateway_lock,
+            base_prompt=base_system_prompt,
+            host=self,
+        )
+        self._compute.bind_memory(self._memory.sync)
         # Keep the publication contract present before native skills are invoked.
         self._skills = NATIVE_CHAT_GUIDANCE
         # Prompt construction is serialized per (topic, agent) seat: two agents
