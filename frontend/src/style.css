@@ -1365,3 +1365,17 @@ button:not(.v-btn) {
     -moz-osx-font-smoothing: auto;
   }
 }
+
+/* 中文排版的两条全局规则。
+   - text-autospace：中文和拉丁字母、数字之间自动留 1/4 字宽（「待 alice 审阅」「3 个任务」），
+     不用在文案里手打空格。不支持的浏览器忽略这一条，和现在一样。
+   - font-synthesis: style：不让浏览器把没有粗体字形的中文字体描粗。PingFang SC 等最粗只到
+     Semibold，650/700 会被合成出发糊的假粗；禁掉后落到字体真有的那一档。斜体合成照旧。 */
+html {
+  text-autospace: ideograph-alpha ideograph-numeric;
+  font-synthesis: style;
+}
+/* 等宽字体靠字符网格对齐（代码、时间戳、ID），插进去的 1/4 字宽会打乱列。 */
+:is(pre, code, kbd, samp, .t-meta, .t-meta-read) {
+  text-autospace: normal;
+}
