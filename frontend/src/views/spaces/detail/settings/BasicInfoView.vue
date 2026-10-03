@@ -289,13 +289,6 @@ const submit = handleSubmit((data) => {
   max-width: 140px;
 }
 
-.settings-foot {
-  display: flex;
-  justify-content: flex-end;
-  padding: 16px 24px;
-  border-top: 1px solid var(--line);
-}
-
 .danger .srow {
   grid-template-columns: minmax(0, 1fr) auto;
   padding: 16px 24px;

@@ -212,6 +212,12 @@ async function openTeaching(view: ReturnType<typeof render>) {
   await nextTick()
 }
 
+/** 摊开指导里的「高级选项」——周次和另外三格清单都折在里面。 */
+async function openTeachingAdvanced(view: ReturnType<typeof render>) {
+  await fireEvent.click(view.getByText('高级选项'))
+  await view.findByLabelText('当前周次')
+}
+
 /** 摊开「参考资料」那一格里的资料库清单。它默认收起，勾选框点开才在。 */
 async function openMaterials(view: ReturnType<typeof render>) {
   await fireEvent.click(view.getByTestId('teaching-materials-toggle'))
@@ -601,6 +607,7 @@ describe('发题页：给 AI 队友的指导', () => {
     await openTeaching(view)
 
     await fireEvent.update(view.getByLabelText('对 AI 的要求'), '第 {current_week} 周：讲完链表了。')
+    await openTeachingAdvanced(view)
     await fireEvent.update(view.getByLabelText('当前周次'), '3')
 
     await waitFor(() => expect(textOf(view.container, 'publish-ok')).toBe('看起来没问题。'))
@@ -645,6 +652,7 @@ describe('发题页：给 AI 队友的指导', () => {
     // 写在切换之前：PDF 那一态里没有这张卡（它属于「手写一道」那一半），但这一页的
     // 状态活着，切过去照样带得走。
     await openTeaching(view)
+    await openTeachingAdvanced(view)
     await fireEvent.update(view.getByLabelText('当前周次'), '5')
     await switchToPdf(view)
     await pick(view.getByLabelText('上传题目 PDF') as HTMLInputElement, pdfFile())

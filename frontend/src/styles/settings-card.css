@@ -95,6 +95,16 @@
   color: var(--text);
 }
 
+/* The last row of a card that holds a FORM: its one main action, at the end of
+   the thing it submits. A card of a LIST page has no foot — its actions belong
+   to a row, or to the toolbar above. */
+.settings-foot {
+  display: flex;
+  justify-content: flex-end;
+  padding: 16px 24px;
+  border-top: 1px solid var(--line);
+}
+
 /* A card that holds a list (categories, templates, invite codes): one row per
    item, separated by --line, with the item's actions at the end. */
 .settings-list {
