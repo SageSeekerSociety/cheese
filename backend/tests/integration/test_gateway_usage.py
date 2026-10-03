@@ -427,6 +427,7 @@ async def test_key_lookup_does_not_queue_behind_the_gateway_lock(
     fake = FakeGateway()
     svc, _factory, pid, _tid = await _mk_service(business_db_factory, tmp_path, fake)
     key = await svc.project_gateway_key(pid)
+    budgets = list(fake.budgets)
 
     # Some other caller is inside the lock: a mint, a re-price, or a drain.
     await svc._gateway_lock.acquire()
@@ -439,7 +440,7 @@ async def test_key_lookup_does_not_queue_behind_the_gateway_lock(
 
     # And answering from the persisted row wrote nothing back.
     assert fake.minted == [pid]
-    assert fake.budgets == []
+    assert fake.budgets == budgets
 
 
 @pytest.mark.anyio
@@ -491,11 +492,8 @@ async def test_credits_burn_by_real_spend_not_raw_tokens(
     business_db_factory, tmp_path, monkeypatch
 ):
     """Gateway-routed turns consume credits from the REAL spend (cache discounts
-    included), not the flat token rate — so 120+30 tokens at ¥0.02 with a
-    ¥0.08/credit price burns 0.25 credits, not tokens/10k = 0.015."""
-    from app.core.config import settings as app_settings
-
-    monkeypatch.setattr(app_settings, "llm_gateway_credit_usd", 0.08)
+    included), not the flat token rate — so 120+30 tokens that cost $0.02
+    burn 2 credits at a cent each, not tokens/10k = 0.015."""
     fake = FakeGateway()
     fake.days[gw.utc_today()] = {"claude-sonnet-5": (120, 30, 0.02)}
     svc, factory, pid, tid = await _mk_service(business_db_factory, tmp_path, fake)
@@ -517,7 +515,7 @@ async def test_credits_burn_by_real_spend_not_raw_tokens(
 
     async with factory() as session:
         summary = await UsageService(session).project_credits(pid)
-    assert summary["credits_used"] == pytest.approx(0.02 / 0.08)  # 0.25, spend-priced
+    assert summary["credits_used"] == pytest.approx(2.0)  # spend-priced
 
 
 @pytest.mark.anyio

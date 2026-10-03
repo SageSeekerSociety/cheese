@@ -1,5 +1,6 @@
 // 芝士额度页（个人、团队）的数据形状和判断：`/users/me/credits/usage` 与
-// `/teams/{id}/credits/usage` 的回答，全是比例，不含额度数和 token。
+// `/teams/{id}/credits/usage` 的回答。额度数以点计（1 点 = 0.01 美元），时间窗口只给比例；
+// 不含 token。
 
 export type UsageLine = 'collab' | 'ask' | 'write'
 
@@ -14,6 +15,9 @@ export const LINE_KEY: Record<UsageLine, string> = {
 
 export interface UsagePeriod {
   unlimited: boolean
+  /** 本月方案额度共多少点、用了多少点；不限时为 `null`。 */
+  credits_total: number | null
+  credits_used: number | null
   /** 本月方案额度用掉的比例；不限或这个方案不按月发时为 `null`。 */
   used_ratio: number | null
   remaining_ratio: number | null
@@ -36,22 +40,24 @@ export interface UsagePack {
   task_id: number | null
   project_name: string | null
   task_name: string | null
+  credits_total: number
+  credits_remaining: number
   remaining_ratio: number
   expires_at: string | null
 }
 
 export interface UsageDay {
   date: string
-  /** 这一天占本月用量的比例；还没到的日子为 `null`。 */
-  share: number | null
+  /** 这一天用了多少点；还没到的日子为 `null`。 */
+  credits: number | null
   lines?: Record<UsageLine, number>
 }
 
 export interface UsageProject {
   id: string
   name: string | null
-  /** 这个项目占本月用量的比例，各项目加起来是 1。 */
-  share: number
+  /** 这个项目本月用了多少点。 */
+  credits: number
 }
 
 export interface UsageTeam {
@@ -61,17 +67,29 @@ export interface UsageTeam {
   plan: { key: string; name: string }
   unlimited: boolean
   remaining_ratio: number | null
+  /** 按月发放的方案本月还剩多少点；按时间窗口限额或不限时为 `null`，看 `remaining_ratio`。 */
+  credits_remaining: number | null
+}
+
+/** 方案包含什么：按月发放的点数，或有哪些时间窗口，和能用哪些模型。 */
+export interface UsagePlan {
+  key: string
+  name: string
+  unlimited: boolean
+  credits_per_period: number | null
+  windows: { hours: number | null; calendar: 'week' | 'month' | null; credits: number }[]
+  models: string[]
 }
 
 export interface CreditUsage {
-  plan: { key: string; name: string }
+  plan: UsagePlan
   /** 按月发放的方案（或不限）；按时间窗口限额的方案为 `null`，看 `windows`。 */
   period: UsagePeriod | null
   windows: UsageWindow[]
   packs: UsagePack[]
   days: UsageDay[]
   projects: UsageProject[]
-  /** 个人页才有：本月用量按产品线分的比例。 */
+  /** 个人页才有：本月各产品线用了多少点。 */
   lines?: Record<UsageLine, number>
   /** 个人页才有：我所在的团队。 */
   teams?: UsageTeam[]
@@ -89,6 +107,11 @@ export function remainingTone(remaining: number | null): RemainingTone {
 
 export function pct(ratio: number): string {
   return `${Math.round(ratio * 100)}%`
+}
+
+/** 点数：10 点以下留一位小数，以上取整。 */
+export function fmtPoints(n: number, locale: string): string {
+  return new Intl.NumberFormat(locale, { maximumFractionDigits: Math.abs(n) < 10 ? 1 : 0 }).format(n)
 }
 
 export function fmtMonthDay(iso: string, locale: string): string {

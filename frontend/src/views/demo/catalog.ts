@@ -59,6 +59,7 @@ import { RAIL_ENTRIES } from './catalogRail'
 import { ROOM_ENTRIES } from './catalogRoom'
 import { SETTINGS_ENTRIES } from './catalogSettings'
 import { TASK_FORM_ENTRIES } from './catalogTaskForm'
+import { USAGE_ENTRIES } from './catalogUsage'
 
 import LegalLinks from '@/components/account/LegalLinks.vue'
 import AdminActionList from '@/components/admin/AdminActionList.vue'
@@ -661,6 +662,7 @@ export const CATALOG: CatalogEntry[] = [
   ...MODELS_ENTRIES,
   // 方案与额度那五件在自己的文件里：`catalogCredits.ts`。
   ...CREDITS_ENTRIES,
+  ...USAGE_ENTRIES,
   // 验收卡那一组（从 1215 行的 TopicAcceptCard 拆出来的八件，数据在
   // `catalogFixtures.ts`）在自己的文件里：`catalogAccept.ts`。
   ...ACCEPT_ENTRIES,

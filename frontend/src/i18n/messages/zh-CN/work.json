@@ -1353,7 +1353,7 @@
       "title": "额度",
       "none": "暂无额度信息",
       "unlimited": "未设置额度上限",
-      "remaining": "额度剩余",
+      "remaining": "点剩余",
       "usedOfTotal": "已使用 / 共发放",
       "exhausted": "额度已用完，联系团队管理员或额度发放方补充",
       "source": "包含团队共享额度和本项目的定向额度，优先使用定向额度"

@@ -3,9 +3,10 @@ import type { UsagePack } from '@/lib/creditUsage'
 
 import { useI18n } from 'vue-i18n'
 
-import { fmtMonthDay, pct } from '@/lib/creditUsage'
+import { fmtMonthDay, fmtPoints } from '@/lib/creditUsage'
 
-// 方案之外的额度：管理员发放、购买、题目给项目的定向额度，各剩多少、何时到期。
+// 方案之外的额度：管理员发放、购买、题目给项目的定向额度，各剩多少点、共多少点、
+// 何时到期，以及什么时候用到它：题目给项目的最先用，其余在方案额度用完后用。
 defineProps<{ packs: UsagePack[] }>()
 
 const { t, locale } = useI18n()
@@ -21,6 +22,8 @@ function name(pack: UsagePack): string {
 
 function meta(pack: UsagePack): string {
   const parts = [
+    pack.source === 'task_earmark' ? t('usage.packs.first') : t('usage.packs.afterPlan'),
+    t('usage.packs.total', { n: fmtPoints(pack.credits_total, locale.value) }),
     pack.expires_at
       ? t('usage.packs.expires', { date: fmtMonthDay(pack.expires_at, locale.value) })
       : t('usage.packs.noExpiry'),
@@ -41,7 +44,9 @@ function meta(pack: UsagePack): string {
       <span class="upk__bar" aria-hidden="true">
         <span class="upk__fill" :style="{ width: `${pack.remaining_ratio * 100}%` }" />
       </span>
-      <span class="upk__left t-num">{{ t('usage.packs.remaining', { pct: pct(pack.remaining_ratio) }) }}</span>
+      <span class="upk__left t-num">{{
+        t('usage.packs.remaining', { n: fmtPoints(pack.credits_remaining, locale) })
+      }}</span>
     </div>
   </section>
 </template>

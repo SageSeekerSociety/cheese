@@ -5,17 +5,18 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import NavLink from '@/components/common/NavLink.vue'
-import { pct } from '@/lib/creditUsage'
+import { fmtPoints } from '@/lib/creditUsage'
 
-// 本月用量按项目分：每个项目占多少。条的长度按占比最大的那个折算。
+// 本月用量按项目分：每个项目用了多少点。条的长度按用得最多的那个折算。
 const props = defineProps<{
   title: string
-  items: { id: string; name: string; share: number; to?: NavTarget }[]
+  /** `credits`：本月用了多少点。 */
+  items: { id: string; name: string; credits: number; to?: NavTarget }[]
 }>()
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
-const top = computed(() => Math.max(0, ...props.items.map((i) => i.share)))
+const top = computed(() => Math.max(0, ...props.items.map((i) => i.credits)))
 </script>
 
 <template>
@@ -26,9 +27,9 @@ const top = computed(() => Math.max(0, ...props.items.map((i) => i.share)))
       <NavLink v-if="item.to" :to="item.to" class="usl__name">{{ item.name }}</NavLink>
       <span v-else class="usl__name">{{ item.name }}</span>
       <span class="usl__bar" aria-hidden="true">
-        <span class="usl__fill" :style="{ width: top > 0 ? `${(item.share / top) * 100}%` : '0%' }" />
+        <span class="usl__fill" :style="{ width: top > 0 ? `${(item.credits / top) * 100}%` : '0%' }" />
       </span>
-      <span class="usl__pct t-num">{{ pct(item.share) }}</span>
+      <span class="usl__pct t-num">{{ t('usage.points', { n: fmtPoints(item.credits, locale) }) }}</span>
     </div>
   </section>
 </template>
@@ -54,7 +55,7 @@ const top = computed(() => Math.max(0, ...props.items.map((i) => i.share)))
 
 .usl__row {
   display: grid;
-  grid-template-columns: minmax(0, 200px) minmax(0, 1fr) 48px;
+  grid-template-columns: minmax(0, 200px) minmax(0, 1fr) 72px;
   gap: 16px;
   align-items: center;
 }

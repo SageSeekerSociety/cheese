@@ -16,6 +16,7 @@ from app.core.config import settings
 from app.domain.feature_stats import pricing
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
+from app.domain.usage.credits import CREDIT_USD
 from app.domain.usage.ledger import Ledger, Rates, payer_for_person
 from app.domain.usage.models import ResourceUsage
 from app.domain.usage.repositories import UsageRepository
@@ -44,7 +45,6 @@ async def _seed(factory, credits: float | None = 100.0):
 # 1-hour cache write.
 OPUS = (5e-6, 25e-6, 5e-7, 6.25e-6, 10e-6)
 HAIKU = (1e-6, 5e-6, 1e-7, 1.25e-6, 2e-6)
-CREDIT_USD = 0.01
 
 
 def _price(monkeypatch, table: dict | None) -> None:
@@ -54,7 +54,6 @@ def _price(monkeypatch, table: dict | None) -> None:
         return table
 
     monkeypatch.setattr(pricing, "model_rates", rates)
-    monkeypatch.setattr(settings, "llm_gateway_credit_usd", CREDIT_USD)
 
 
 async def _rows(factory, pid) -> list[ResourceUsage]:

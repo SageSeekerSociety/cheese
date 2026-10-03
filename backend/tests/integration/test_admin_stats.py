@@ -770,7 +770,6 @@ def test_personal_credits_stay_out_of_the_project_credit_board(
 ):
     """个人额度是每个人名下团队按月发的方案包：一个人把这个月的额度用超了，看板
     的「已耗尽」里不该多出一行团队池，项目额度的燃烧速率也不该算上他花的钱。"""
-    monkeypatch.setattr(settings, "llm_gateway_credit_usd", 0.01)
     seed_user(client, REPORTER)
 
     async def _seed() -> None:

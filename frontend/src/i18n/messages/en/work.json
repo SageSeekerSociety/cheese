@@ -1353,7 +1353,7 @@
       "title": "Credits",
       "none": "No credit information",
       "unlimited": "No credit limit set",
-      "remaining": "credits left",
+      "remaining": "pts left",
       "usedOfTotal": "Used / issued",
       "exhausted": "Credits are used up. Ask a team admin or whoever issues credits for more",
       "source": "Includes the team's shared credits and credits issued to this project; project credits are used first"
