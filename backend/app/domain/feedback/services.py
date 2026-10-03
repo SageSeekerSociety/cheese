@@ -41,11 +41,13 @@ from app.auth.project_access import may_read_topic
 from app.core.config import settings
 from app.core.errors import (
     BadRequestError,
+    ConflictError,
     ForbiddenError,
     NotFoundError,
     PreconditionFailedError,
 )
 from app.domain.block.notice_text import say
+from app.domain.feedback import claims
 from app.domain.feedback import repositories as repo
 from app.domain.feedback.models import (
     Feedback,
@@ -230,6 +232,27 @@ class FeedbackService:
         if handle is None:
             return False
         return handle in (row.author_handle, row.submitted_by_handle)
+
+    async def may_claim(
+        self,
+        handle: str | None,
+        *,
+        is_admin: bool,
+        room_project_id: uuid.UUID | None = None,
+    ) -> bool:
+        """谁能领取一条（看得见它之外）—— 反馈管理员，或者在做知是本身的人。
+
+        和 `may_delete_feedback` 同一个用法：`claim` 领之前问它，`detail_of` 拿它填
+        `can_claim`，按钮照服务端的答案画。`room_project_id` 见
+        `claims.works_on_platform`。
+        """
+        if not handle:
+            return False
+        if is_admin:
+            return True
+        return await claims.works_on_platform(
+            self._session, handle, room_project_id=room_project_id
+        )
 
     # --- 读 -----------------------------------------------------------------
 
@@ -579,6 +602,10 @@ class FeedbackService:
         activity = await self._repo.latest_activity_of([row.id])
         # 和 `delete_feedback` 共用同一个判据，所以按钮和权限不会分家。
         can_delete = self.may_delete_feedback(row, handle=handle, is_admin=is_admin)
+        # 领取和放弃也一样：和 `claim` / `release` 同一处判据。
+        holder = row.assignee_handle
+        can_claim = holder is None and await self.may_claim(handle, is_admin=is_admin)
+        can_release = holder is not None and (is_admin or holder == handle)
         # Notes are admin-only, so resolving faces for them is not extra work a
         # non-admin pays for: the list is empty and contributes no handles.
         notes = await self._repo.list_notes(row.id) if is_admin else []
@@ -618,6 +645,8 @@ class FeedbackService:
             timeline=await self._repo.list_timeline(row.id),
             notes=notes,
             can_delete=can_delete,
+            can_claim=can_claim,
+            can_release=can_release,
         )
 
     async def mark_read(self, *, handle: str) -> datetime:
@@ -871,6 +900,76 @@ class FeedbackService:
             # the row alone, so it goes in the history.
             await self._repo.append_timeline(row.id, row.status, by_handle)
         return row
+
+    # --- 领取 -----------------------------------------------------------------
+
+    async def visible_ref(
+        self, ref: str, *, handle: str | None, is_admin: bool
+    ) -> Feedback:
+        """`visible_row`, by `FB-12` or uuid. Unknown and invisible are one 404."""
+        row = await claims.find(self._session, ref)
+        if row is None or not await self.may_see(row, handle=handle, is_admin=is_admin):
+            raise NotFoundError(say("feedbackNotFound"))
+        return row
+
+    async def claim(
+        self,
+        ref: str,
+        *,
+        handle: str,
+        is_admin: bool,
+        room_project_id: uuid.UUID | None = None,
+    ) -> Feedback:
+        """领取：这条记到 `handle` 名下，并从此刻算「处理中」。
+
+        领取是为了**别让两个人修同一个问题**，所以第二个人的领取必须失败，而且要
+        说出是谁在修 —— 他下一步是去找那个人，不是换个说法再领一次。判「有没有人」
+        之前先锁住这一行（`claims.lock`）：两个同时到的领取，后到的那个读到的是先到的
+        已经提交的持有人。
+
+        自己再领一次是空操作，不是第二条时间线。状态走 `advance`：只往前走，已经
+        修好、上线或不修复的，领了也不动它的状态。
+        """
+        row = await self.visible_ref(ref, handle=handle, is_admin=is_admin)
+        if not await self.may_claim(
+            handle, is_admin=is_admin, room_project_id=room_project_id
+        ):
+            raise ForbiddenError(say("feedbackClaimDevelopersOnly"))
+        locked = await claims.lock(self._session, row.id)
+        if locked is None:
+            raise NotFoundError(say("feedbackNotFound"))
+        holder = locked.assignee_handle
+        if holder == handle:
+            return locked
+        if holder is not None:
+            raise ConflictError(
+                say("feedbackClaimedByOther", holder=holder), data={"holder": holder}
+            )
+        await self._repo.set_assignee(locked, handle)
+        await self.advance(
+            locked,
+            FeedbackStatus.in_progress,
+            by_handle=handle,
+            note=claims.CLAIMED_NOTE,
+        )
+        return locked
+
+    async def release(self, ref: str, *, handle: str, is_admin: bool) -> Feedback:
+        """放弃领取：持有人自己，或反馈管理员。没人领着时是空操作。
+
+        状态不退回：「处理中」记的是有人动过它，这件事放弃之后也还是发生过。
+        """
+        row = await self.visible_ref(ref, handle=handle, is_admin=is_admin)
+        locked = await claims.lock(self._session, row.id)
+        if locked is None:
+            raise NotFoundError(say("feedbackNotFound"))
+        holder = locked.assignee_handle
+        if holder is None:
+            return locked
+        if holder != handle and not is_admin:
+            raise ForbiddenError(say("feedbackReleaseHolderOnly", holder=holder))
+        await self._repo.set_assignee(locked, None)
+        return locked
 
     # --- 支持 / 评论 ----------------------------------------------------------
 

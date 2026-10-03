@@ -614,6 +614,12 @@
       "placeholder": "补充你遇到的情况，或者说明为什么这个改动对你重要",
       "submit": "发表评论"
     },
+    "claim": {
+      "title": "处理人",
+      "nobody": "还没人领取",
+      "claim": "领取",
+      "release": "放弃"
+    },
     "aside": {
       "progress": "进展",
       "supports": "支持人数",

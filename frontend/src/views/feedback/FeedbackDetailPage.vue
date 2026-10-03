@@ -1,12 +1,16 @@
 <script setup lang="ts">
+import type { FeedbackDetail } from '@/cx_types'
+
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { ApiError, getFeedback } from '@/api'
+import { claimFeedback, type FeedbackClaimFlags, releaseFeedback } from '@/api/feedbackClaim'
 import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import FeedbackAuthorAvatar from '@/components/feedback/FeedbackAuthorAvatar.vue'
+import FeedbackClaimCard from '@/components/feedback/FeedbackClaimCard.vue'
 import FeedbackCommentsThread from '@/components/feedback/FeedbackCommentsThread.vue'
 import FeedbackErrorBanner from '@/components/feedback/FeedbackErrorBanner.vue'
 import { kindLabel, sourceLabel } from '@/components/feedback/feedbackLabels'
@@ -193,6 +197,27 @@ async function doDelete() {
   }
   // 删完回反馈中心。用 `replace`：这一条已经不存在了，回退键不该回到一个 404。
   void router.replace('/feedback')
+}
+
+/** 领取 / 放弃。两个按钮画不画由服务端的 `can_claim` / `can_release` 定（见
+ *  `FeedbackClaimFlags`）。成败都重读一遍这条：失败多半是别人刚领走了（409），
+ *  屏幕上该换成是谁领着，而服务端那句原话（「已经由 X 领取」）留在错误条里。 */
+const claim = computed(() => item.value as (FeedbackDetail & FeedbackClaimFlags) | null)
+const claiming = ref(false)
+
+async function changeClaim(take: boolean) {
+  if (!item.value || claiming.value) return
+  claiming.value = true
+  const feedbackId = item.value.id
+  let failure: string | null = null
+  try {
+    await (take ? claimFeedback(feedbackId) : releaseFeedback(feedbackId))
+  } catch (error) {
+    failure = error instanceof Error && error.message ? error.message : t('feedback.errors.actionFailed')
+  }
+  await store.loadDetail(feedbackId)
+  if (failure) store.error = failure
+  claiming.value = false
 }
 
 async function share() {
@@ -425,6 +450,19 @@ async function share() {
           <div class="fb-aside__card">
             <div class="t-eyebrow mb-3">{{ t('feedback.detail.aside.progress') }}</div>
             <FeedbackStatusTimeline :timeline="item.timeline" :status="item.status" :ladder="store.statusLadder" />
+          </div>
+
+          <!-- 谁领着这条。没人领、这个读者也领不了的时候不画：那一格对他只是一句
+               「还没人领取」，回答的不是他会问的问题。 -->
+          <div v-if="claim && (claim.assignee_handle || claim.can_claim)" class="fb-aside__card">
+            <FeedbackClaimCard
+              :holder="claim.assignee_handle"
+              :can-claim="claim.can_claim"
+              :can-release="claim.can_release"
+              :busy="claiming"
+              @claim="changeClaim(true)"
+              @release="changeClaim(false)"
+            />
           </div>
 
           <div class="fb-aside__card">
