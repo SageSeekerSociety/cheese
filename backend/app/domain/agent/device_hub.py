@@ -367,6 +367,19 @@ class DeviceHub:
         device = self._devices.get(device_id)
         return device is not None and device.transport is not None
 
+    def reconnecting(self, device_id: str) -> bool:
+        """Whether the machine has no link but lost it less than
+        ``RECONNECT_GRACE_S`` ago: a call to it now waits for it to come back
+        (``_linked``) rather than failing, so whoever decides whether to make
+        that call should not read it as away."""
+        device = self._devices.get(device_id)
+        if device is None or device.transport is not None:
+            return False
+        if device.dropped_at is None:
+            return False
+        elapsed = asyncio.get_event_loop().time() - device.dropped_at
+        return elapsed < RECONNECT_GRACE_S
+
     def silence_allowed(self, device_id: str) -> float | None:
         """How long the link may go without a frame from the machine before it
         is taken as lost; None when silence says nothing about it.

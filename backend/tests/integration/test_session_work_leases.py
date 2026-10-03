@@ -15,6 +15,7 @@ from sqlalchemy import select
 
 from app.core.sandbox_auth import bind_resource_token, mint_scoped_token
 from app.domain.agent import execution
+from app.domain.agent.device_hub import DeviceOffline
 from app.domain.agent.dispatch_log import DispatchRow
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.supply import Supply, Visibility
@@ -121,7 +122,9 @@ async def test_every_session_in_a_room_acquires_the_rooms_device(
         }
 
     hub = SimpleNamespace(
-        is_online=lambda device: True, exec=AsyncMock(side_effect=install)
+        is_online=lambda device: True,
+        reconnecting=lambda device: False,
+        exec=AsyncMock(side_effect=install),
     )
     monkeypatch.setattr(work_lease, "device_hub", hub)
 
@@ -1129,3 +1132,93 @@ async def test_calls_on_held_hands_are_answered_while_they_are_rechecked(
         assert recheck.result(10).status_code == 200
     assert during.status_code == 200, during.text
     assert during.json() == {"ran": "control"}
+
+
+async def test_an_own_machine_that_just_dropped_is_called_not_refused(
+    client, monkeypatch
+):
+    """A person's own machine whose link dropped a moment ago is on its way
+    back: the command goes to it and waits there, rather than being answered
+    「工作电脑未连接」 on the spot. One that does not come back in time is then
+    answered as not connected, like one already away."""
+    project = post_project(client, json={"name": "Own machine"}, owner="alice").json()[
+        "data"
+    ]
+    room = client.post(
+        "/topics",
+        json={"project_id": project["id"], "title": "Room"},
+        headers=session_auth_headers("alice"),
+    ).json()["data"]
+    project_id, topic_id = uuid.UUID(project["id"]), uuid.UUID(room["id"])
+    async with client.test_factory() as db:
+        devices = sql_device_service(db)
+        owner = await db.scalar(select(User).where(User.username == "alice"))
+        agent = await IdentityService(db).ensure_room_agent_user(topic_id)
+        topic = await db.get(Topic, topic_id)
+        resource = str(topic.resource_id or topic_id)
+        device = await devices.approve(
+            await devices.start("laptop"),
+            owner_user_id=owner.id,
+            supply=Supply.self_hosted,
+            visibility=Visibility.host,
+        )
+        await devices.assign_to_project(
+            device.device_id, project_id, actor_user_id=owner.id
+        )
+        topic.compute_config = {
+            "name": "laptop",
+            "profile": "device",
+            "device_id": device.device_id,
+        }
+        session = await AgentSessionService(db).ensure(
+            topic_id, "cheese", harness="claude-code"
+        )
+        session.runtime_location = {
+            "device_id": "center",
+            "resource_id": resource,
+            "channel": "device",
+        }
+        session_id, device_id = session.id, device.device_id
+        token = bind_resource_token(
+            mint_scoped_token(
+                project_id=str(project_id),
+                topic_id=str(topic_id),
+                agent_handle=agent.username,
+            ),
+            resource,
+            session_id=str(session_id),
+        )
+        await db.commit()
+
+    async def install(device, argv, **kwargs):
+        return {
+            "exit": 0,
+            "stdout": json.dumps(
+                {"state": f"/{device}/state", "workspace": "/w", "mcp_servers": []}
+            ),
+        }
+
+    hub = SimpleNamespace(
+        is_online=lambda _device: False,
+        reconnecting=lambda _device: True,
+        exec=AsyncMock(side_effect=DeviceOffline(device_id)),
+    )
+    monkeypatch.setattr(work_lease, "device_hub", hub)
+    monkeypatch.setattr(execution, "call", AsyncMock(return_value={}))
+
+    def lease():
+        return client.post(
+            f"/topics/{topic_id}/sessions/{session_id}/work-lease",
+            headers={"X-Cheese-Token": token},
+            json={"env": {}},
+        )
+
+    gone = lease()
+    assert gone.status_code == 200, gone.text
+    assert gone.json()["data"]["unavailable"]
+    assert hub.exec.await_count == 1, "The call went to the machine"
+
+    hub.exec.side_effect = install
+    back = lease()
+    assert back.status_code == 200, back.text
+    assert back.json()["data"]["target"]["device_id"] == device_id

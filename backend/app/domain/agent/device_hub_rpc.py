@@ -316,6 +316,9 @@ class RemoteDeviceHub:
     def is_online(self, device_id: str) -> bool:
         return bool(self._devices.get(device_id, {}).get("online"))
 
+    def reconnecting(self, device_id: str) -> bool:
+        return bool(self._devices.get(device_id, {}).get("reconnecting"))
+
     def online_device_ids(self) -> list[str]:
         return [key for key, value in self._devices.items() if value["online"]]
 

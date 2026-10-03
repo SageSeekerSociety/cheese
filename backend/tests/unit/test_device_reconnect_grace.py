@@ -127,3 +127,36 @@ async def test_a_call_in_flight_when_the_link_drops_is_not_sent_again():
     with pytest.raises(DeviceOffline):
         await asyncio.wait_for(command, 1)
     assert frames(new, "exec") == []
+
+
+async def test_the_backend_sees_a_machine_on_its_way_back(monkeypatch):
+    """The backend decides from the owner's snapshot whether to call a machine
+    at all; a machine that just dropped must not read there as away."""
+    import httpx
+
+    from app.core.config import settings
+    from app.device_connection_app import app as owner_app
+    from app.domain.agent.device_hub import device_hub as owner_hub
+    from app.domain.agent.device_hub_rpc import RemoteDeviceHub
+
+    monkeypatch.setattr(settings, "device_connection_secret", "test-owner-secret")
+    monkeypatch.setattr(device_hub, "RECONNECT_GRACE_S", 0.2)
+    backend = RemoteDeviceHub(
+        "http://owner",
+        settings.device_connection_auth_secret,
+        transport=httpx.ASGITransport(app=owner_app),
+    )
+    link = Link()
+    await owner_hub.attach_device("snapshot-machine", link)
+    try:
+        await owner_hub.detach_device("snapshot-machine", link)
+        await backend.refresh()
+        assert not backend.is_online("snapshot-machine")
+        assert backend.reconnecting("snapshot-machine")
+
+        await asyncio.sleep(0.25)
+        await backend.refresh()
+        assert not backend.reconnecting("snapshot-machine")
+    finally:
+        owner_hub._devices.pop("snapshot-machine", None)
+        await backend.close()

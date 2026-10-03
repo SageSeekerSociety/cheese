@@ -473,7 +473,7 @@ async def push_before_switch(
     installed with, and a sync fixed since would still fail there the old way.
     """
     # A lease that never finished installing has no executor to run the push.
-    if not lease.get("state") or not device_hub.is_online(lease["device_id"]):
+    if not lease.get("state") or not _reachable(device_hub, lease["device_id"]):
         raise WorkComputerUnreachable(PUSH_UNREACHABLE)
     try:
         try:
@@ -883,6 +883,14 @@ class _Preparing:
     detail: dict = field(default_factory=dict)
 
 
+def _reachable(hub, device_id: str) -> bool:
+    """Whether a call to this machine is worth making: it is online, or its link
+    dropped moments ago and the call will wait for it to come back
+    (``device_hub.reconnecting``). One that does not come back in time fails
+    that call as offline, which each caller already answers."""
+    return hub.is_online(device_id) or hub.reconnecting(device_id)
+
+
 async def ensure(
     db,
     *,
@@ -1009,7 +1017,7 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
             selected = await devices.first_healthy_device(
                 topic.project_id, hub.is_online
             )
-        if selected is None or not hub.is_online(selected.device_id):
+        if selected is None or not _reachable(hub, selected.device_id):
             await db.commit()
             return {"unavailable": "工作电脑未连接；对话和平台工具仍可用。"}
         if selected.supply != Supply.self_hosted:
