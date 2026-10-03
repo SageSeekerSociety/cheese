@@ -3,7 +3,8 @@
 // 这几条钉的是「界面上看到的」与「发出去的请求」：下载走的是判权限的那条路由
 // （清单里刻意没有 url），改档之后拿服务端回来的那一版重画（不是本地猜），移除
 // 点两下才发请求，而且**服务端说不能管就没有那几个入口** —— 后端也挡（403），
-// 但入口不该先摆在那里让人点。
+// 但入口不该先摆在那里让人点。引用计数那一格也一样：它是「撤之前心里有数」用的，
+// 只有能管的人看得见，判据是键在不在，不是数值多少。
 import { defineComponent, h } from 'vue'
 import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
 import { createVuetify } from 'vuetify'
@@ -158,6 +159,31 @@ describe('资料库页', () => {
     expect(screen.queryByText('上传资料')).toBeNull()
     expect(screen.queryByText('移除')).toBeNull()
     expect(screen.queryByText('所有成员')).toBeNull()
+  })
+
+  it('能管的人看得见「被几处引用」，撤之前心里有数', async () => {
+    listMaterials.mockImplementation(async () => listed({ usedByCount: 3 }))
+    await mount()
+
+    expect(document.body.textContent).toContain('被 3 处引用')
+  })
+
+  it('一处也没列着就直说「未被引用」，不摆一个 0', async () => {
+    listMaterials.mockImplementation(async () => listed({ usedByCount: 0 }))
+    await mount()
+
+    expect(document.body.textContent).toContain('未被引用')
+  })
+
+  it('成员那一侧不摆这一格，哪怕这一格被塞了过来', async () => {
+    // 真实的服务端对成员不补这个键（不是补 0）。这里故意塞一个进去，钉的是**判据
+    // 是 canManage，不只是「键在不在」** —— 后端哪天改了形状，界面也不该把「被几处
+    // 引用」摆给一个改不了档、删不掉的人看。
+    listMaterials.mockImplementation(async () => listed({ usedByCount: 3 }, false))
+    await mount()
+
+    expect(document.body.textContent).not.toContain('未被引用')
+    expect(document.body.textContent).not.toContain('处引用')
   })
 
   it('传不上去时说清楚，界面不装作传成功了', async () => {

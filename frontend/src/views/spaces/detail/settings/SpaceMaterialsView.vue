@@ -157,6 +157,16 @@ function onVisibility(item: SpaceMaterial, picked: SpaceMaterialVisibility) {
             <span v-if="item.size !== null">{{ formatFileSize(item.size) }}</span>
             <span>{{ t('spaces.materials.uploadedOn', { date: uploadedOn(item.createdAt) }) }}</span>
             <span>{{ t('spaces.materials.downloads', { n: item.downloadCount }) }}</span>
+            <!-- 这一格只有能管的人拿得到（服务端只给 canManage 那一侧补这个键），
+                 所以判据是「这个键在不在」，不是数值多少 —— 成员那一侧不该出现
+                 「未被引用」这种话，那会读成「他也能删」。 -->
+            <span v-if="canManage && item.usedByCount !== undefined">
+              {{
+                item.usedByCount > 0
+                  ? t('spaces.materials.usedBy', { n: item.usedByCount })
+                  : t('spaces.materials.unused')
+              }}
+            </span>
           </div>
 
           <template #append>

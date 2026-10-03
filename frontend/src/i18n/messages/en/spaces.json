@@ -559,6 +559,8 @@
     },
     "uploadedOn": "Uploaded {date}",
     "downloads": "{n} downloads",
+    "usedBy": "Referenced in {n} places",
+    "unused": "Not referenced",
     "toast": {
       "loadFailed": "Could not load the library",
       "uploaded": "Uploaded",
