@@ -5,7 +5,7 @@
 //
 // Everything it draws arrives as a prop and everything a person does leaves as
 // an event: this component knows what a row LOOKS like, never what the room is
-// doing. The three animation sets (`arrived` / `older` / `delivered`) are read
+// doing. The two animation sets (`arrived` / `delivered`) are read
 // here as class bindings and cleared by the row's own animationend.
 import type { Ref } from 'vue'
 import type { Block, TodoItem, Topic } from '../../cx_types'
@@ -40,7 +40,6 @@ const props = defineProps<{
   splitMarkers: { before: Map<string, SplitMarker[]>; tail: SplitMarker[] }
   runEdges: RunEdge[]
   arrived: Set<string>
-  older: Set<string>
   delivered: Set<string>
   sentNow: Set<string>
   flashId: string | null
@@ -299,7 +298,7 @@ function emitOutboxLeave(el: Element, done: () => void) {
         />
         <RoomNotice
           v-if="notice"
-          :class="{ 'tl-arrive': arrived.has(m.id), 'tl-older': older.has(m.id) }"
+          :class="{ 'tl-arrive': arrived.has(m.id) }"
           :block="m"
           :notice="notice"
           :run="run"
@@ -324,7 +323,6 @@ function emitOutboxLeave(el: Element, done: () => void) {
           v-else-if="!notice"
           :class="{
             'tl-arrive': arrived.has(m.id),
-            'tl-older': older.has(m.id),
             'tl-flash': flashId === m.id,
             'tl-delivered': delivered.has(m.id),
             'im-row--time': timeShownId === m.id,
@@ -503,15 +501,6 @@ function emitOutboxLeave(el: Element, done: () => void) {
 @keyframes tl-delivered {
   from {
     opacity: 0.62;
-  }
-}
-/* 翻上去时拼进来的更早的一页：只淡入（见 `older`）。 */
-.tl-older {
-  animation: tl-older var(--dur-base) var(--ease-out);
-}
-@keyframes tl-older {
-  from {
-    opacity: 0;
   }
 }
 /* 跳到的那一条：底色从琥珀的浅底褪回去。它和新消息线、未读是同一族——「你要找的

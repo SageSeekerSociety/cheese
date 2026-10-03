@@ -129,6 +129,21 @@ function fakeMetrics(el: HTMLElement, initial: Metrics): Metrics {
   return m
 }
 
+/**
+ * Content height follows the rows actually on the page: each row added after this
+ * call makes the pane `perRow` taller, the moment it is rendered and not before —
+ * which is when the browser would report it.
+ */
+function growWithRows(pane: HTMLElement, m: Metrics, perRow: number) {
+  const rows = () => pane.querySelectorAll('[data-mid]').length
+  const start = rows()
+  const base = m.scrollHeight
+  Object.defineProperty(pane, 'scrollHeight', {
+    configurable: true,
+    get: () => base + (rows() - start) * perRow,
+  })
+}
+
 async function flush(times = 6) {
   for (let i = 0; i < times; i += 1) await new Promise((resolve) => setTimeout(resolve, 0))
 }
@@ -224,12 +239,33 @@ describe('往回翻历史', () => {
 
     // The older page lands ABOVE the viewport: the content grew by 1000, so
     // scrollTop has to move down by that much for the reader to stay put.
-    m.scrollHeight = 3000
+    growWithRows(pane, m, 500)
     gate.resolve(OLDER(['o1', 'o2']))
     await flush()
 
     expect(shown(container)).toEqual(['o1', 'o2', 'n1', 'n2', 'n3'])
     expect(m.scrollTop).toBe(1000)
+  })
+
+  it('一页在飞的时候还在往上滑：落下来时留在滑到的地方，不被拽回请求发出时的位置', async () => {
+    const { container, pane, m } = await mount()
+
+    const gate = deferred<BlockPage>()
+    listBlocks.mockImplementationOnce(async () => gate.promise)
+    // A flick: the loader fires near the top, and the pane keeps gliding up
+    // while the page is on its way.
+    m.scrollTop = 120
+    pane.dispatchEvent(new Event('scroll'))
+    await flush()
+    expect(beforeCalls()).toEqual(['n1'])
+    m.scrollTop = 30
+
+    growWithRows(pane, m, 500)
+    gate.resolve(OLDER(['o1', 'o2']))
+    await flush()
+
+    expect(shown(container)).toEqual(['o1', 'o2', 'n1', 'n2', 'n3'])
+    expect(m.scrollTop, 'where the reader had glided to, pushed down by the 1000 that went in above').toBe(1030)
   })
 
   it('一页在飞的时候再滚一次不会把同一个游标问第二遍', async () => {
@@ -244,7 +280,7 @@ describe('往回翻历史', () => {
 
     expect(beforeCalls()).toEqual(['n1'])
 
-    m.scrollHeight = 3000
+    growWithRows(pane, m, 500)
     gate.resolve(OLDER(['o1', 'o2']))
     await flush()
     expect(beforeCalls()).toEqual(['n1'])
