@@ -214,24 +214,24 @@ async def answer_after_recovery(descriptor, chat, channel, factory):
                                     await session.scalars(
                                         select(NativeInput).where(
                                             NativeInput.delivery_id == delivery.id,
-                                            NativeInput.attempt_id == delivery.attempt_id,
+                                            NativeInput.attempt_id
+                                            == delivery.attempt_id,
                                         )
                                     )
                                 )
                             )
                             if len(inputs) == 1:
                                 target = inputs[0]
+                                payload = {
+                                    "delivery_id": str(delivery.id),
+                                    "attempt_id": str(target.attempt_id),
+                                    "input_id": str(target.input_id),
+                                    "work_id": str(target.work_id),
+                                    "native_session_id": target.native_session_id,
+                                    "recipient_handle": target.recipient_handle,
+                                }
                                 Path(descriptor["correction_target"]).write_text(
-                                    json.dumps(
-                                        {
-                                            "delivery_id": str(delivery.id),
-                                            "attempt_id": str(target.attempt_id),
-                                            "input_id": str(target.input_id),
-                                            "work_id": str(target.work_id),
-                                            "native_session_id": target.native_session_id,
-                                            "recipient_handle": target.recipient_handle,
-                                        }
-                                    )
+                                    json.dumps(payload)
                                 )
                         if target is None:
                             await asyncio.sleep(0.05)
