@@ -16,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import BadRequestError, NotFoundError
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 from app.domain.usage.ledger import Ledger, month_of
 from app.domain.usage.models import (
     ComputeGrant,

@@ -13,9 +13,9 @@ from datetime import UTC, datetime
 from sqlalchemy import select, text
 
 from app.core.errors import ConflictError, NotFoundError, ValidationError
+from app.core.sentences import say
 from app.domain.block.answers import Answer
 from app.domain.block.models import AuthorType, Block, BlockKind
-from app.domain.block.notice_text import say
 
 
 def required_text(value, field):

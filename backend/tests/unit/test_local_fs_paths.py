@@ -8,7 +8,7 @@ implementation is wrong, which is why none of them was derived by reading it.
 
 import pytest
 
-from app.domain.block.notice_text import in_language
+from app.core.sentences import in_language
 from app.domain.local_fs.paths import (
     PathRefused,
     Platform,

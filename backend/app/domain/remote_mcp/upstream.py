@@ -21,7 +21,7 @@ from urllib.parse import urljoin, urlsplit
 
 import httpx
 
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 from app.domain.remote_mcp import http
 
 logger = logging.getLogger(__name__)

@@ -20,7 +20,7 @@ import logging
 import uuid
 from collections.abc import Awaitable, Callable
 
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 
 logger = logging.getLogger("cheese.machine.wakeup")
 

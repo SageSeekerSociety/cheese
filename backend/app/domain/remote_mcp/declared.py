@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from app.core import background
 from app.core.errors import GatewayUnavailableError
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 from app.domain.textfile import MAX_TEXT_BYTES, decode_text
 
 logger = logging.getLogger(__name__)

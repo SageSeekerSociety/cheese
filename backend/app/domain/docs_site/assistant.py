@@ -45,7 +45,7 @@ from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 from app.domain.docs_site import tools, visits
 from app.domain.docs_site.models import DocsQuestion
 from app.domain.docs_site.retrieval import Hit

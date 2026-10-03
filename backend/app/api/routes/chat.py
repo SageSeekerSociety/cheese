@@ -47,10 +47,10 @@ from app.api.auth import ActorResolver
 from app.api.deps import get_broker, get_chat_service
 from app.core.errors import ForbiddenError
 from app.core.obs import get_logger
+from app.core.sentences import error_frame
 from app.domain.agent.chat import ChatService
 from app.domain.agent.runtime import InProcessBroker
 from app.domain.authz.policy import refuse_unauthenticated_chat
-from app.domain.block.notice_text import error_frame
 from app.domain.room_task.services import TaskService
 
 router = APIRouter(tags=["chat"])

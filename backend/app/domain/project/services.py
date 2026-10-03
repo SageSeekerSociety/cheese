@@ -8,8 +8,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError, NotFoundError, ValidationError
+from app.core.sentences import say
 from app.domain.agent_instance.services import AgentInstanceService
-from app.domain.block.notice_text import say
 from app.domain.project.models import AiMode, Project
 from app.domain.project.repositories import ProjectRepository
 from app.domain.task.models import Task, TaskMembership

@@ -3,10 +3,10 @@
 from dataclasses import dataclass
 
 from app.core.errors import ValidationError
+from app.core.sentences import say
 from app.domain.agent.market import subscription_model_alias
 from app.domain.agent.supply import SUBSCRIPTION
 from app.domain.agent_instance.configuration import model_choices
-from app.domain.block.notice_text import say
 from app.domain.room_task.models import Task
 
 

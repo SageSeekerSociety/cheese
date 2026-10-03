@@ -21,9 +21,9 @@ from app.api.response import ok
 from app.auth.checker import require_auth_user, require_permission
 from app.auth.core import Action, AuthUserInfo, Resource
 from app.core.errors import NotFoundError
+from app.core.sentences import say
 from app.db.session import get_db
 from app.domain.agent_instance.configuration import model_choices
-from app.domain.block.notice_text import say
 from app.domain.project.services import ProjectService
 from app.domain.task.services import TaskService
 from app.domain.team.services import team_service

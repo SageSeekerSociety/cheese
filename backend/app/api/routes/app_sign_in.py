@@ -29,8 +29,8 @@ from app.common.auth import (
 )
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, InternalServerError
+from app.core.sentences import say
 from app.core.single_use_state import SingleUseUnavailableError, claim, reserve
-from app.domain.block.notice_text import say
 from app.domain.user.services import UserAuthService
 
 router = APIRouter(prefix="/users", tags=["Users"])

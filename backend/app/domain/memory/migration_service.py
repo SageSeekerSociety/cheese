@@ -34,6 +34,7 @@ from app.core.errors import (
     ForbiddenError,
     NotFoundError,
 )
+from app.core.sentences import exception_text, say
 from app.domain.agent.announce import announce
 from app.domain.agent.platform_notices import (
     EVENT_MEMORY_ORGANIZING,
@@ -42,7 +43,6 @@ from app.domain.agent.platform_notices import (
     WHO_PLATFORM,
     notice,
 )
-from app.domain.block.notice_text import exception_text, say
 from app.domain.gateway_chat import GatewayCallError, GatewayChat
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.membership.roster import roster

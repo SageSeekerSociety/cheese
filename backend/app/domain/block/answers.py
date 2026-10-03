@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from app.core.errors import ConflictError, ValidationError
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 
 
 @dataclass(frozen=True)

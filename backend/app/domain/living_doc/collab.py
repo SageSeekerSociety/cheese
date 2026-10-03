@@ -26,7 +26,7 @@ import jwt
 
 from app.core.config import settings
 from app.core.errors import ConflictError, SystemBusyError, UnprocessableEntityError
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 
 #: How long a ticket opens a connection for. The connection outlives it; a
 #: reconnect asks for a new one.

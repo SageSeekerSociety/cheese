@@ -14,10 +14,10 @@ from app.core.errors import (
     NotFoundError,
     ValidationError,
 )
+from app.core.sentences import say
 from app.domain.agent import execution
 from app.domain.agent.device_hub import DeviceNotReady, DeviceOffline
 from app.domain.agent_session.services import AgentSessionService
-from app.domain.block.notice_text import say
 from app.domain.project.forge import (
     binding_for_project,
     branch_head,

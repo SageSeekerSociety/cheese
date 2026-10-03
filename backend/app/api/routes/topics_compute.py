@@ -60,6 +60,7 @@ from app.api.response import ok
 from app.api.routes.topics import DbSession, ProjectRepository
 from app.core.config import settings
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
+from app.core.sentences import say
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.market import (
     COMPUTE_DEVICE,
@@ -69,7 +70,6 @@ from app.domain.agent.market import (
     compute_selectable,
     visibility_listings,
 )
-from app.domain.block.notice_text import say
 from app.domain.device.wiring import sql_device_service
 from app.domain.machine.services import MachineService
 from app.domain.policy import gate

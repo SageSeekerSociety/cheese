@@ -38,9 +38,9 @@ from app.core.errors import (
     GatewayUnavailableError,
 )
 from app.core.sandbox_auth import scoped_token_claims
+from app.core.sentences import say
 from app.domain.agent.forgejo_tokens import ForgejoTokenError
 from app.domain.agent.github_app import GitHubAppError
-from app.domain.block.notice_text import say
 
 router = APIRouter(prefix="/sandbox", tags=["sandbox"])
 

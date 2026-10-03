@@ -16,8 +16,8 @@ from app.core.errors import (
     NotFoundError,
     ValidationError,
 )
+from app.core.sentences import say
 from app.domain.authz.policy import can_manage_project_members
-from app.domain.block.notice_text import say
 from app.domain.identity.actor import Actor
 from app.domain.membership.repositories import InvitationRepository, MemberRepository
 from app.domain.project.models import (

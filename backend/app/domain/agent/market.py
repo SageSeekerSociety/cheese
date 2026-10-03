@@ -18,8 +18,8 @@ only honest when it would.
 
 from dataclasses import dataclass
 
+from app.core.sentences import say
 from app.domain.agent.profiles import ProfileRegistry
-from app.domain.block.notice_text import say
 from app.domain.device.supply import (
     Visibility,
     default_visibility,

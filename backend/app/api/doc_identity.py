@@ -3,7 +3,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AuthenticationRequiredError, ForbiddenError
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
 from app.domain.user.services import user_by_handle

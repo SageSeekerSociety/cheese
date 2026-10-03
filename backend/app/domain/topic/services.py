@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.errors import ConflictError, NotFoundError, ValidationError
+from app.core.sentences import say
 from app.domain.agent import clone
 from app.domain.agent.harness import harness_for
 from app.domain.agent_instance.services import (
@@ -33,7 +34,6 @@ from app.domain.block.models import (
     Block,
     BlockKind,
 )
-from app.domain.block.notice_text import say
 from app.domain.block.repositories import BlockRepository
 from app.domain.identity.handles import (
     CHEESE_NAME,

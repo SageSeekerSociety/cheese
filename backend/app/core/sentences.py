@@ -1,4 +1,9 @@
-"""The sentences the platform says in a room, as a key and its parameters.
+"""The sentences the platform says — room lines, refusals, pushes — as a key
+and its parameters.
+
+Infrastructure, not a domain: every layer says them, ``app/core/errors.py``
+included, and the module needs nothing but the standard library and the
+catalog files.
 
 A room is read by several people at once, each in the language they picked, and
 the language switch has to re-render lines that are already on the screen. So
@@ -65,11 +70,12 @@ from typing import Final
 I18N_META_KEY: Final = "i18n"
 
 
-#: The frontend's catalogs. Four levels up is the repository root in a
-#: checkout, and the filesystem root in the backend image, where the Dockerfile
-#: puts the same files under the same relative path.
+#: The frontend's catalogs. Three levels above ``app/core/`` is the repository
+#: root in a checkout (``backend/app/core``), and the filesystem root in the
+#: backend image (``/app/app/core``), where the Dockerfile puts the same files
+#: under the same relative path.
 CATALOG_DIR: Final = (
-    Path(__file__).resolve().parents[4] / "frontend" / "src" / "i18n" / "messages"
+    Path(__file__).resolve().parents[3] / "frontend" / "src" / "i18n" / "messages"
 )
 
 #: The UI languages a person can pick (``frontend/src/i18n/index.ts``). The

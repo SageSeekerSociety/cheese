@@ -24,7 +24,7 @@ from app.api.auth import ActorResolverDep
 from app.api.response import ok, page
 from app.core.db import get_db
 from app.core.errors import ForbiddenError, ValidationError
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 from app.domain.membership.services import MemberService
 from app.domain.memory.files import (
     INDEX_NAME,

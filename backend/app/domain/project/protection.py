@@ -30,7 +30,7 @@ from dataclasses import dataclass
 import httpx
 
 from app.core.forge_http import forge_client
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 from app.domain.project.models import Project
 
 BRANCH_PROTECTION_KEY = "branch_protection"

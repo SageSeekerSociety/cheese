@@ -1,7 +1,7 @@
 // The platform's lines in a room, rendered in the reader's language.
 //
 // The backend stores which sentence it said and with what (`meta.i18n.<field>`
-// = `{ key, params }`, see `backend/app/domain/block/notice_text.py`) beside the
+// = `{ key, params }`, see `backend/app/core/sentences.py`) beside the
 // finished Chinese text. The sentence is looked up here, at display time, so a
 // language switch re-renders the lines already on screen. A line without a key
 // (written before lines had one) or with a key this build does not know shows
@@ -31,7 +31,7 @@ function isMessage(value: unknown): value is NoticeMessage {
   return typeof key === 'string' && /^\w+$/.test(key)
 }
 
-/** Several items said as one parameter (`listing()` in `notice_text.py`). */
+/** Several items said as one parameter (`listing()` in `app/core/sentences.py`). */
 interface NoticeListing {
   list: unknown[]
   quoted?: boolean
@@ -64,7 +64,7 @@ function param(value: unknown): unknown {
 }
 
 // The catalog entry a key names. The backend's two catalogs share one key space
-// (`notice_text.py` refuses a key in both), so at most one of these matches.
+// (`app/core/sentences.py` refuses a key in both), so at most one of these matches.
 // `zh-CN` is the complete catalog; asking it keeps a key that only lacks
 // English on the fallback path of vue-i18n rather than on `fallback`.
 function entryOf(key: string): string | null {

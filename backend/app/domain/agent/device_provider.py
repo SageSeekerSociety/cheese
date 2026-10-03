@@ -33,6 +33,7 @@ from app.core.sandbox_auth import (
     scoped_token_claims,
     token_agent_handle,
 )
+from app.core.sentences import NoticeText, say
 from app.domain.agent import machine_launcher, provider_env, screen_identity
 from app.domain.agent.device_hub import (
     DeviceCallError,
@@ -63,7 +64,6 @@ from app.domain.agent.platform_failures import (
     DEVICE_OFFLINE_MESSAGE,
     HOST_UNREACHABLE_CODE,
 )
-from app.domain.block.notice_text import NoticeText, say
 from app.domain.device.models import DeviceRow
 from app.domain.device.service import DeviceService
 from app.domain.device.supply import (

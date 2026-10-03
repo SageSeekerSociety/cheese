@@ -9,8 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import NotFoundError, UnprocessableEntityError
+from app.core.sentences import listing, say
 from app.db.session import get_db
-from app.domain.block.notice_text import listing, say
 from app.domain.legal.documents import (
     DOCUMENTS,
     LegalDocument,

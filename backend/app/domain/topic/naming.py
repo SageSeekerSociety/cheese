@@ -49,8 +49,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.errors import ValidationError
 from app.core.redis import get_redis_client
+from app.core.sentences import say
 from app.domain.block.models import AuthorType, Block, BlockKind
-from app.domain.block.notice_text import say
 from app.domain.gateway_chat import Usage, response_cost
 from app.domain.identity.handles import names_a_person
 from app.domain.project.models import Project

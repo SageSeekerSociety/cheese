@@ -6,9 +6,9 @@ from dataclasses import dataclass
 from sqlalchemy import select
 
 from app.core.errors import ValidationError
+from app.core.sentences import say
 from app.domain.block.answers import Answer
 from app.domain.block.models import AuthorType, Block, BlockKind
-from app.domain.block.notice_text import say
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 

@@ -16,6 +16,7 @@ from app.auth.core import AuthUserInfo
 from app.core.db import get_db
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sandbox_auth import scoped_token_claims
+from app.core.sentences import notice_keys, say
 from app.domain.agent.chat import ChatService
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_provider import environment_status
@@ -27,7 +28,6 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.agent.runtime import addressed_to_agent
-from app.domain.block.notice_text import notice_keys, say
 from app.domain.device.wiring import sql_device_service
 from app.domain.machine.models import MachineStatus
 from app.domain.machine.repositories import ProjectMachineRepository

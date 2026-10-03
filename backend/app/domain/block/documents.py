@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError
+from app.core.sentences import NoticeList, listing, say
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.doc_tree import PARAGRAPH, markdown_to_nodes
 from app.domain.block.models import (
@@ -19,7 +20,6 @@ from app.domain.block.models import (
     agent_notice,
     consumed_turn,
 )
-from app.domain.block.notice_text import NoticeList, listing, say
 from app.domain.block.repositories import BlockRepository
 from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.living_doc.services import DocumentJournal

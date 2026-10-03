@@ -26,7 +26,7 @@ from io import BytesIO
 
 import httpx
 
-from app.domain.block.notice_text import listing, say
+from app.core.sentences import listing, say
 
 #: Only `.xlsx`. Recomputing something with no formulas in it is a request
 #: that cannot be meant, and `.xlsm` is left out for the opposite reason: the

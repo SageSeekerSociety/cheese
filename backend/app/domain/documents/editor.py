@@ -32,7 +32,7 @@ from urllib.parse import urlsplit
 import jwt
 
 from app.core.config import settings
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 
 #: What the editor can open, and as which of its three editors. Only the Office
 #: Open XML formats are editable: the editor can open the older ones, but saving

@@ -21,6 +21,7 @@ from app.core.db import SessionFactory, release_read_session
 from app.core.errors import GatewayUnavailableError
 from app.core.forge_events import project_secret
 from app.core.forge_http import forge_client
+from app.core.sentences import say
 from app.domain.agent.forgejo_tokens import (
     ForgejoTokens,
     forge_password,
@@ -31,7 +32,6 @@ from app.domain.agent.github_app import (
     GitHubAppTokens,
     github_app_tokens_for_project,
 )
-from app.domain.block.notice_text import say
 from app.domain.project.models import Project, ProjectForge
 from app.domain.project.repositories import ProjectGitInstallationRepository
 from app.domain.review.forgejo_pr import ForgejoClient, ForgejoPRClient

@@ -189,6 +189,13 @@ class TestUnhandledExceptionHandler:
         body = self._client().get("/boom").json()
         assert "QueuePool" not in body["message"]
 
+    def test_unhandled_error_is_said_in_the_reader_s_language(self) -> None:
+        """The screen renders ``error.i18n``; without it an English reader
+        got the Chinese sentence."""
+        body = self._client().get("/boom").json()
+        assert body["error"]["i18n"] == {"key": "serverInternalError", "params": {}}
+        assert body["error"]["message"] == body["message"]
+
 
 class TestConditionsThatAreNotThisServerSFault:
     """A 500 says 「this server broke」. Two things that are not that were
@@ -241,6 +248,13 @@ class TestConditionsThatAreNotThisServerSFault:
             response = self._client().get("/hung-up")
         assert response.status_code == 499
         assert [r for r in caplog.records if r.levelno >= logging.ERROR] == []
+
+    def test_each_answer_carries_the_key_a_screen_renders(self) -> None:
+        client = self._client()
+        offline = client.get("/offline").json()["error"]["i18n"]
+        hung_up = client.get("/hung-up").json()["error"]["i18n"]
+        assert offline == {"key": "deviceOffline", "params": {"device": "machine-7"}}
+        assert hung_up == {"key": "clientDisconnected", "params": {}}
 
 
 class TestABrowserThatHangsUpOnAContentHost:

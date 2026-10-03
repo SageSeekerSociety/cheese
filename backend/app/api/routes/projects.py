@@ -25,13 +25,13 @@ from app.core.errors import (
     NotFoundError,
     ValidationError,
 )
+from app.core.sentences import exception_text, say
 from app.domain.agent.chat import ChatService
 from app.domain.agent.github_app import (
     github_app_read_token_for_project,
 )
 from app.domain.agent.liveness import task_liveness
 from app.domain.agent.profiles import ProfileRegistry
-from app.domain.block.notice_text import exception_text, say
 from app.domain.block.queries import (
     tasks_awaiting_an_answer,
     weeklies_for_project,

@@ -46,6 +46,7 @@ from app.core.errors import (
     NotFoundError,
     UnauthorizedError,
 )
+from app.core.sentences import say
 from app.domain.agent.device_hub import (
     DeviceCallError,
     DeviceOffline,
@@ -53,7 +54,6 @@ from app.domain.agent.device_hub import (
     ViewerTransport,
     device_hub,
 )
-from app.domain.block.notice_text import say
 from app.domain.device import owner_reads
 from app.domain.device.repository import Device
 from app.domain.device.service import DeviceService

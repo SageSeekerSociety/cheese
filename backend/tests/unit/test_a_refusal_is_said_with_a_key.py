@@ -35,7 +35,7 @@ HOW_TO_FIX = (
     "Chinese text raised as an error. Add the sentence to both "
     "frontend/src/i18n/messages/zh-CN/apiError.json and "
     "frontend/src/i18n/messages/en/apiError.json under one key, and raise "
-    "say('<key>', **params) instead (app/domain/block/notice_text.py; "
+    "say('<key>', **params) instead (app/core/sentences.py; "
     "docs/i18n.md). If this text truly is not shown to a person, put "
     "'# i18n-exempt: <reason>' on its line."
 )
@@ -207,7 +207,7 @@ def f(name, say):
 def test_a_sentence_and_plain_english_pass(tmp_path):
     source = """
 from app.core.errors import ConflictError
-from app.domain.block.notice_text import listing, say
+from app.core.sentences import listing, say
 
 def f(names):
     raise ConflictError(say("inviteSelf"))

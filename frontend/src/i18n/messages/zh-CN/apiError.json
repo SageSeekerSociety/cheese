@@ -953,5 +953,9 @@
   "askFieldBoolean": "{field} 必须是布尔值",
   "askFieldArray": "{field} 必须是数组",
   "askFieldObjects": "{field} 每项必须是对象",
-  "answerOptionNotAllowed": "kind={kind} 不给 option"
+  "answerOptionNotAllowed": "kind={kind} 不给 option",
+  "serverInternalError": "服务器内部错误",
+  "clientDisconnected": "客户端已断开",
+  "deviceOffline": "设备 {device} 离线",
+  "deviceLinkInterrupted": "与设备 {device} 的连接在执行中断开，这次操作的结果未知"
 }

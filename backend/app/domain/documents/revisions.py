@@ -33,7 +33,7 @@ from importlib.machinery import SourceFileLoader
 from pathlib import Path
 from typing import Any
 
-from app.domain.block.notice_text import listing, say
+from app.core.sentences import listing, say
 
 #: The script ships to rooms from here; see `agent.skills._NATIVE_SKILL_SRC`.
 _SCRIPT = (

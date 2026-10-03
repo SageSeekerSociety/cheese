@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 from app.core.config import settings
 from app.core.errors import ForbiddenError, ValidationError
-from app.domain.block.notice_text import listing, say
+from app.core.sentences import listing, say
 from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.project.models import AiMode, Project
 from app.domain.review.models import (

@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver
 from app.core.errors import ForbiddenError, ValidationError
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 from app.domain.identity.actor import Actor
 from app.domain.room_task.place import Place
 from app.domain.topic.models import room_ref

@@ -11,8 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.errors import NotFoundError, ValidationError
+from app.core.sentences import say
 from app.core.storage import S3StorageBackend, StorageBackend
-from app.domain.block.notice_text import say
 from app.domain.room_task.models import Task, TaskSnapshot
 
 

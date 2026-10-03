@@ -48,8 +48,8 @@ from app.api.auth import ActorResolverDep
 from app.api.response import ok
 from app.api.routes.topics import DbSession, Topic
 from app.core.errors import ForbiddenError, ValidationError
+from app.core.sentences import say
 from app.domain.agent.runtime import announce_stale
-from app.domain.block.notice_text import say
 from app.domain.topic import naming
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService

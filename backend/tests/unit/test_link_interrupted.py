@@ -139,6 +139,14 @@ async def test_the_agent_is_told_the_outcome_is_unknown(monkeypatch, tmp_path):
     assert str(raised.value) == executor_transport.LINK_INTERRUPTED
 
 
+async def test_a_person_reads_the_interruption_in_their_own_language():
+    body = (await _platform_answer(LinkInterrupted("abcd1234"))).json()
+    assert body["error"]["i18n"] == {
+        "key": "deviceLinkInterrupted",
+        "params": {"device": "abcd1234"},
+    }
+
+
 async def test_a_machine_that_is_gone_is_still_out_of_reach(monkeypatch, tmp_path):
     answer = await _platform_answer(DeviceOffline("abcd1234"))
     client = _client_hearing(monkeypatch, tmp_path, answer)

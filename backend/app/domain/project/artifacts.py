@@ -68,7 +68,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 from app.domain.library import service as library
 from app.domain.project.models import ProjectArtifact
 from app.domain.review.models import AcceptCard, AcceptStatus

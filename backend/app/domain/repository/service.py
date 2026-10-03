@@ -19,8 +19,8 @@ from pathlib import Path
 
 from app.core.config import settings
 from app.core.errors import ValidationError
+from app.core.sentences import say
 from app.domain.agent.platform_failures import WORKSPACE_VCS_PERMS_CODE
-from app.domain.block.notice_text import say
 
 logger = logging.getLogger("cheesex.repository")
 

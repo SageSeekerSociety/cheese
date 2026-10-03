@@ -231,8 +231,8 @@ def get_cloud_wakeup() -> CloudWakeup:
         )
 
     async def announce_failure(topic_id: uuid.UUID, text: str) -> None:
+        from app.core.sentences import say
         from app.domain.agent.platform_notices import SEVERITY_ERROR, WHO_HUMAN
-        from app.domain.block.notice_text import say
 
         block = await chat.post_system_event(
             topic_id,

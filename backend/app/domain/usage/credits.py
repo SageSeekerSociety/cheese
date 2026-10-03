@@ -9,13 +9,13 @@ The exhaustion message is PLATFORM copy posted as a structured system event —
 never words put in 芝士's mouth (CLAUDE.md 硬性禁止 #4).
 """
 
+from app.core.sentences import say
 from app.domain.agent.platform_notices import (
     EVENT_TURN_FAILED,
     SEVERITY_ERROR,
     WHO_HUMAN,
     notice,
 )
-from app.domain.block.notice_text import say
 
 #: USD per credit (one 点).
 CREDIT_USD = 0.01

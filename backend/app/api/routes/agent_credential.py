@@ -24,8 +24,8 @@ from app.api.auth import ActorResolverDep
 from app.api.response import ok
 from app.core.db import get_db
 from app.core.errors import ForbiddenError, NotFoundError
+from app.core.sentences import say
 from app.domain.agent_credential.services import ProjectAgentCredentialService
-from app.domain.block.notice_text import say
 from app.domain.membership.services import MemberService
 from app.domain.project.repositories import ProjectRepository
 

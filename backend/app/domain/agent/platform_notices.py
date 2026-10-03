@@ -33,8 +33,8 @@ from __future__ import annotations
 
 from typing import Final
 
+from app.core.sentences import notice_keys, say
 from app.domain.block.models import AGENT_NOTICE_META_KEY
-from app.domain.block.notice_text import notice_keys, say
 from app.domain.memory.files import rejected_path
 
 # --- severity ---------------------------------------------------------------

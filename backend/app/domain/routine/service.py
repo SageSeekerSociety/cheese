@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.db import SessionFactory
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
+from app.core.sentences import listing, say, with_keys
 from app.domain.agent.models import AgentTurn
 from app.domain.agent.platform_notices import (
     EVENT_ROUTINE_PROPOSED,
@@ -34,7 +35,6 @@ from app.domain.agent.platform_notices import (
 )
 from app.domain.block.authorship import AuthorType
 from app.domain.block.models import Block, BlockKind
-from app.domain.block.notice_text import listing, say, with_keys
 from app.domain.delivery.agent import dispatch_pending, instance_for_seat, record_agent
 from app.domain.delivery.ledger import DeliveryEvent
 from app.domain.delivery.models import Delivery

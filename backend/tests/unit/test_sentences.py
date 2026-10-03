@@ -1,7 +1,7 @@
 """The platform's sentences: one catalog, read by both ends, and the key survives.
 
 The backend stores a room line as Chinese text plus the key and parameters of
-the sentence (`app/domain/block/notice_text.py`); a screen renders the key in its
+the sentence (`app/core/sentences.py`); a screen renders the key in its
 reader's language from the frontend catalog `roomNotice` (an error's sentence
 from `apiError`), and the backend renders the same key from the same files for
 what reaches one person away from a screen (push, the desktop app). What can go
@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-from app.domain.block.notice_text import (
+from app.core.sentences import (
     ERROR_MESSAGES,
     HISTORICAL_NOTICE_KEYS,
     I18N_META_KEY,
@@ -130,7 +130,7 @@ def _unnamed_current_sentences():
     named = {
         node.value
         for path in APP.rglob("*.py")
-        if path != APP / "domain/block/notice_text.py"
+        if path != APP / "core/sentences.py"
         for node in ast.walk(ast.parse(path.read_text("utf-8")))
         if isinstance(node, ast.Constant) and isinstance(node.value, str)
     }

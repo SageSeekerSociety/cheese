@@ -23,9 +23,9 @@ from app.api.response import ok
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, NotFoundError
+from app.core.sentences import say
 from app.domain.agent.preview_hub import preview_hub
 from app.domain.agent.preview_owner import inspect_owner
-from app.domain.block.notice_text import say
 from app.domain.block.queries import latest_preview_for_room
 from app.domain.library import service as library
 from app.domain.project.room_files import clean_artifact_path

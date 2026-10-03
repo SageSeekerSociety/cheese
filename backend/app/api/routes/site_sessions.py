@@ -10,7 +10,7 @@ from app.api.auth import ActorResolverDep
 from app.api.response import ok
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, NotFoundError
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 from app.domain.site.hosting import (
     AUTH_PATH,
     GRANT_TTL,

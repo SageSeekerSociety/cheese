@@ -33,6 +33,7 @@ from app.api.response import ok
 from app.api.routes.admin_common import DbSession, PlatformAdminDep
 from app.core.config import settings
 from app.core.errors import BaseError, GatewayUnavailableError
+from app.core.sentences import exception_text
 from app.domain.agent.gateway_admin import (
     GatewayAdmin,
     GatewayRefused,
@@ -45,7 +46,6 @@ from app.domain.agent.schemas import (
     ModelCreate,
     ModelUpdate,
 )
-from app.domain.block.notice_text import exception_text
 
 router = APIRouter(prefix="/admin/gateway", tags=["admin"])
 

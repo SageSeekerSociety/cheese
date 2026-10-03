@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.response import ok
 from app.core.db import async_session_factory, get_db
 from app.core.errors import AuthenticationRequiredError, ValidationError
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 from app.domain.project.services import refuse_writes_if_archived
 from app.domain.topic.repositories import TopicRepository
 from app.domain.webhook import service as webhook_service

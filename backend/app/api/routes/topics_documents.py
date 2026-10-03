@@ -54,7 +54,7 @@ from app.api.routes.topics import DbSession, _actor_in_place
 from app.api.routes.topics_file_sources import source_bytes
 from app.core.config import settings
 from app.core.errors import ConflictError, SystemBusyError, ValidationError
-from app.domain.block.notice_text import exception_text, say
+from app.core.sentences import exception_text, say
 from app.domain.documents.convert import (
     ConvertFailed,
     ConvertUnavailable,

@@ -22,13 +22,13 @@ from app.api.routes.topics import (
     DbSession,
 )
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
+from app.core.sentences import say
 from app.domain.agent.announce import notify_question
 from app.domain.agent.ask_origin import ask_origin
 from app.domain.agent.chat import ChatService
 from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.block.answer_submission import add_answer_wake, submit_answer
 from app.domain.block.ask_groups import AskGroups, parse_questions, required_text
-from app.domain.block.notice_text import say
 from app.domain.delivery.agent import dispatch_pending
 from app.domain.delivery.ask_receipts import ask_receipt
 from app.domain.delivery.ask_wake import (

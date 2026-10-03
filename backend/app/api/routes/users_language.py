@@ -20,8 +20,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError, NotFoundError
+from app.core.sentences import LOCALES
 from app.db.session import get_db
-from app.domain.block.notice_text import LOCALES
 from app.domain.user.services import set_language
 
 router = APIRouter(prefix="/users", tags=["Users"])

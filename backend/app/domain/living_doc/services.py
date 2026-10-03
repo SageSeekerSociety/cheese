@@ -15,7 +15,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 from app.domain.living_doc.models import (
     DocumentLock,
     DocumentOperation,

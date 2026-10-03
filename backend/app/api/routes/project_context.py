@@ -24,8 +24,8 @@ from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.response import ok
 from app.core.db import get_db
 from app.core.errors import NotFoundError, ValidationError
+from app.core.sentences import say
 from app.domain.block.models import Block, BlockKind
-from app.domain.block.notice_text import say
 from app.domain.identity.actor import Actor
 from app.domain.library import service as library
 from app.domain.project.models import ProjectArtifact

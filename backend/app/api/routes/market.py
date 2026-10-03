@@ -16,6 +16,7 @@ from app.api.deps import get_profile_registry, get_work_runner
 from app.api.response import ok
 from app.core.config import settings
 from app.core.db import get_db
+from app.core.sentences import notice_keys, say
 from app.domain.agent.market import (
     COMPUTE_CLOUD,
     COMPUTE_DEVICE,
@@ -26,7 +27,6 @@ from app.domain.agent.market import (
 )
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent.runtime import AgentWorkRunner
-from app.domain.block.notice_text import notice_keys, say
 
 router = APIRouter(prefix="/market", tags=["market"])
 

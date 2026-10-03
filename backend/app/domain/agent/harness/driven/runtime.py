@@ -30,6 +30,7 @@ from typing import Protocol
 import httpx
 
 from app.core.errors import ValidationError
+from app.core.sentences import say
 from app.domain.agent import attachments
 from app.domain.agent.device_hub import DeviceCallError, DeviceNotReady, DeviceOffline
 from app.domain.agent.harness import (
@@ -62,7 +63,6 @@ from app.domain.agent.platform_failures import (
     TURN_TIMEOUT_MESSAGE,
 )
 from app.domain.agent.service import AgentEvent, AgentResult, AgentSessionInfo
-from app.domain.block.notice_text import say
 from app.domain.delivery.input_identity import (
     InputIdentity,
     InputOutcomeUnconfirmed,

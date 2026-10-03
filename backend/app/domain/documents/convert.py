@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import httpx
 
-from app.domain.block.notice_text import listing, say
+from app.core.sentences import listing, say
 
 #: Which conversions the service will do, mirrored here so a request that cannot
 #: be meant is refused with a sentence instead of an HTTP code from one hop

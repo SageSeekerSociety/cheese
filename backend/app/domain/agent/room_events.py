@@ -28,6 +28,7 @@ from typing import Protocol
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from app.core.sentences import say
 from app.domain.agent.announce import announce
 from app.domain.agent.event_lines import (
     _change_summary_meta,
@@ -49,7 +50,6 @@ from app.domain.agent.step_output import output_tail
 from app.domain.agent.tool_preview import tool_detail, tool_preview, work_subpath
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, BlockKind
-from app.domain.block.notice_text import say
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.room_task.models import Task

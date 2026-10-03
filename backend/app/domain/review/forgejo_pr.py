@@ -8,7 +8,7 @@ import httpx
 
 from app.core.config import settings
 from app.core.forge_http import forge_client
-from app.domain.block.notice_text import exception_text, say
+from app.core.sentences import exception_text, say
 from app.domain.review.github_pr import (
     GitHubPRError,
     GitHubPrError,

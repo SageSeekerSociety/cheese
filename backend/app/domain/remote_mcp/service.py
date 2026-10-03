@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import single_use_state
 from app.core.crypto import DecryptionError, Purpose, decrypt, encrypt
 from app.core.errors import NotFoundError, ValidationError
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 from app.domain.remote_mcp import declared, oauth, upstream
 from app.domain.remote_mcp.declared import Declared, RemoteServer
 from app.domain.remote_mcp.models import ProjectMcpConnection, ProjectMcpSecret

@@ -24,7 +24,7 @@ import uuid
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 from app.domain.local_fs.paths import (
     PathRefused,
     Platform,

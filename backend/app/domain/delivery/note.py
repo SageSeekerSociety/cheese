@@ -13,8 +13,8 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
+from app.core.sentences import say
 from app.domain.agent.chat import ChatService
-from app.domain.block.notice_text import say
 from app.domain.delivery.input_identity import InputReconciliationPending
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService

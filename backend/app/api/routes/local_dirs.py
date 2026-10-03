@@ -42,8 +42,8 @@ from app.core.errors import (
     UnauthorizedError,
     ValidationError,
 )
+from app.core.sentences import say
 from app.domain.agent.device_hub import device_hub
-from app.domain.block.notice_text import say
 from app.domain.device.wiring import sql_device_service
 from app.domain.local_fs.enforcement import PushOutcome, push_grants
 from app.domain.local_fs.paths import Platform

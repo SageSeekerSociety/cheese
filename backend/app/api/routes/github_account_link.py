@@ -35,8 +35,8 @@ from app.core.github_install_state import (
     mint_account_link_state,
     verify_account_link_state,
 )
+from app.core.sentences import say
 from app.core.single_use_state import SingleUseUnavailableError, claim, reserve
-from app.domain.block.notice_text import say
 from app.domain.oauth.repositories import OAuthConnectionRepository
 from app.domain.oauth.services import OAuthService
 

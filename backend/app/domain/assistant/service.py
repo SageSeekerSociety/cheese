@@ -34,6 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.background import spawn
 from app.core.config import settings
 from app.core.sandbox_auth import mint_personal_credential
+from app.core.sentences import error_frame, say
 from app.domain.agent.harness.pi.handless import (
     Answered,
     HandlessSessions,
@@ -46,7 +47,6 @@ from app.domain.assistant import billing, tools
 from app.domain.assistant.asking import BUSY_SECONDS
 from app.domain.assistant.models import AssistantConversation, AssistantMessage
 from app.domain.assistant.prompt import earlier, system_prompt
-from app.domain.block.notice_text import error_frame, say
 
 logger = logging.getLogger(__name__)
 

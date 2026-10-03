@@ -28,7 +28,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 from app.domain.project.forge import (
     ForgeRateLimitedError,
     background_may_use_forge,

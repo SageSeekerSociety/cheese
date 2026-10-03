@@ -20,7 +20,7 @@ from app.core.errors import (
     NotFoundError,
     ValidationError,
 )
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 from app.domain.membership.services import MemberService
 from app.domain.project.models import Project
 from app.domain.project.services import ProjectService

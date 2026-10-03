@@ -34,6 +34,7 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.sentences import notice_message
 from app.domain.agent.mentions import _MENTION_RE
 from app.domain.agent.platform_notices import (
     SEVERITY_INFO,
@@ -43,7 +44,6 @@ from app.domain.agent.platform_notices import (
 )
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, Block, BlockKind
-from app.domain.block.notice_text import notice_message
 from app.domain.block.repositories import BlockRepository
 from app.domain.delivery.addressing import (
     NAMES_NOBODY,

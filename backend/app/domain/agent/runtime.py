@@ -26,6 +26,7 @@ from sqlalchemy import select
 from app.core.background import hold
 from app.core.errors import AppError
 from app.core.obs import bind_context, clear_context
+from app.core.sentences import error_frame, listing, say
 from app.domain.agent import death_evidence, dispatch_log, turn_inputs
 from app.domain.agent.activity import RoomActivity
 from app.domain.agent.admission import (
@@ -57,7 +58,6 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.agent.repositories import AgentTurnRepository, TurnRecord
-from app.domain.block.notice_text import error_frame, listing, say
 from app.domain.delivery.addressing import NOBODY, Addressed, Event, Hand, address
 from app.domain.delivery.input_identity import InputReconciliationPending
 from app.domain.identity.actor import Actor

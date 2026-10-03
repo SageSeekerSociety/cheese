@@ -19,7 +19,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import AppError, BaseError, ValidationError
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 from app.domain.site.services import (
     get_current_release,
     read_release_file,

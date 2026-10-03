@@ -20,12 +20,12 @@ from __future__ import annotations
 
 from typing import Final, Protocol
 
+from app.core.sentences import say
 from app.domain.agent.platform_notices import (
     EVENT_CI_FAILED,
     EVENT_PR_CONFLICT,
     EVENT_PR_REVIEW,
 )
-from app.domain.block.notice_text import say
 from app.domain.review import notes, pr_signals
 from app.domain.review.models import AcceptCard
 

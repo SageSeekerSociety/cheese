@@ -32,7 +32,7 @@ from app.core.errors import (
     message_key,
 )
 from app.core.sandbox_auth import scoped_token_claims
-from app.domain.block.notice_text import exception_text, say
+from app.core.sentences import exception_text, say
 from app.domain.membership.roster import roster
 from app.domain.project.models import Project
 from app.domain.remote_mcp import oauth, service, upstream

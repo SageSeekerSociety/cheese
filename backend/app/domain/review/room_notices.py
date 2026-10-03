@@ -27,6 +27,7 @@ from collections.abc import Sequence
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.background import spawn
+from app.core.sentences import say
 from app.domain.agent.announce import announce
 from app.domain.agent.platform_notices import (
     EVENT_ACCEPT_READY,
@@ -38,7 +39,6 @@ from app.domain.agent.platform_notices import (
     WHO_HUMAN,
     notice,
 )
-from app.domain.block.notice_text import say
 from app.domain.delivery.addressing import Event
 from app.domain.project import artifacts
 from app.domain.review import notes, pr_signals

@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Final
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ValidationError
+from app.core.sentences import NoticeText, say
 from app.domain.agent.platform_notices import (
     EVENT_ACCEPT_DISMISSED as EVENT_ACCEPT_DISMISSED,
 )
@@ -70,7 +71,6 @@ from app.domain.agent.platform_notices import (
 from app.domain.agent.platform_notices import (
     notice as notice,
 )
-from app.domain.block.notice_text import NoticeText, say
 from app.domain.block.repositories import BlockRepository as BlockRepository
 from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository as ProjectRepository

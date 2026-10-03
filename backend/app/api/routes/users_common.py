@@ -72,7 +72,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.common.auth import SudoPurpose, create_access_token
 from app.core.config import GATEWAY_MOUNT, settings
 from app.core.errors import BadRequestError, InternalServerError, SudoRequiredError
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 from app.domain.user.sessions import SessionService
 from app.domain.user.trusted_devices import Granted, TrustedDeviceService
 

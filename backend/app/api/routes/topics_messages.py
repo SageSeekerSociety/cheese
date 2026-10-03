@@ -89,6 +89,7 @@ from app.core.errors import (
     ForbiddenError,
     ValidationError,
 )
+from app.core.sentences import listing, say
 from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService, project_refs_text
 from app.domain.agent.platform_notices import (
@@ -99,7 +100,6 @@ from app.domain.agent.platform_notices import (
 )
 from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.block.message_input import ChatAttachmentIn, ChatMessageIn  # noqa: F401
-from app.domain.block.notice_text import listing, say
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 

@@ -41,7 +41,7 @@ from sqlalchemy import and_, case, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.block.notice_text import NoticeText, say
+from app.core.sentences import NoticeText, say
 from app.domain.usage.credits import spend_to_credits
 from app.domain.usage.models import ComputeGrant, GrantSource, Plan, PlanWindowUse
 from app.domain.usage.repositories import UsageRepository

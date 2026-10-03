@@ -70,6 +70,7 @@ from app.api.response import ok
 from app.api.routes.projects import DbSession, ProjectRepository
 from app.core.config import settings
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
+from app.core.sentences import say
 from app.domain.agent.compute_configs import (
     ProjectComputeConfigs,
     project_configs,
@@ -81,7 +82,6 @@ from app.domain.agent.market import (
     compute_selectable,
 )
 from app.domain.agent_instance.configuration import model_choices
-from app.domain.block.notice_text import say
 from app.domain.machine.services import MachineService
 from app.domain.membership.services import MemberService
 from app.domain.policy import gate
