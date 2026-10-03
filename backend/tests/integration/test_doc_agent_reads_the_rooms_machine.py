@@ -117,6 +117,7 @@ async def test_a_room_without_its_machine_in_hand_lends_none(
     [
         ("control", {"subtype": "files", "operation": "read", "path": "a"}, True),
         ("control", {"subtype": "files", "operation": "grep", "path": "."}, True),
+        ("control", {"subtype": "git", "command": "diff", "base": "main"}, True),
         ("control", {"subtype": "files", "operation": "write", "path": "a"}, False),
         ("control", {"subtype": "files", "operation": "mkdir", "path": "d"}, False),
         (

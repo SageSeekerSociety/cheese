@@ -3,13 +3,15 @@ started by the real launch, reading the room's checkout through the executor.
 
 Rules held here:
 
-* it reads the room's checkout as the room's agent left it;
+* it reads the room's checkout as the room's agent left it, and what the
+  room's branch changed against the trunk, uncommitted work included;
 * it has pi's tools that only read, and none that write a file or run a
   command;
 * a file the project's settings deny its agent is denied to it too.
 """
 
 import json
+import subprocess
 import uuid
 
 import pytest
@@ -89,3 +91,45 @@ async def test_a_file_the_project_denies_stays_unread(
 
     assert len(fake.requests) == 2
     assert "hunter2" not in json.dumps(fake.requests[1], ensure_ascii=False)
+
+
+@pytest.mark.anyio
+async def test_it_sees_what_the_rooms_branch_changed(
+    host,  # noqa: F811
+    platform,  # noqa: F811
+    tmp_path,
+):
+    _hub, sessions = host
+    checkout = tmp_path / "room"
+    checkout.mkdir()
+
+    def git(*args: str) -> None:
+        subprocess.run(["git", "-C", str(checkout), *args], check=True)
+
+    git("init", "-q", "-b", "main")
+    git("config", "user.email", "a@example.test")
+    git("config", "user.name", "a")
+    git("config", "commit.gpgsign", "false")
+    (checkout / "plan.md").write_text("第一节\n")
+    git("add", ".")
+    git("commit", "-qm", "start")
+    git("checkout", "-qb", "work")
+    (checkout / "plan.md").write_text("第一节\n第二节还没提交\n")
+    fake = platform(
+        [
+            {
+                "tool": "git",
+                "arguments": {
+                    "command": "diff",
+                    "base": "main",
+                    "since_branched": True,
+                },
+            },
+            {"text": "加了第二节。"},
+        ],
+        tools_path="/doc-agent/tools",
+    )
+    with room_machine(tmp_path, checkout=checkout) as machine:
+        await _ask(sessions, _launch(machine), "这个分支改了什么？")
+
+    assert "+第二节还没提交" in json.dumps(fake.requests[1], ensure_ascii=False)

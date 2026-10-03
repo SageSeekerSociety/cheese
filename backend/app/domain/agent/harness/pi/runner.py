@@ -55,9 +55,9 @@ from app.domain.agent.nonce import nonce_in
 # progress within a message, and the entry for it does not exist yet.
 SETTLES = frozenset({"message_end", "turn_end", "agent_end", "agent_settled"})
 
-#: pi's own tools that only read, which a session reading the room's machine
-#: has (`_start_without_hands`).
-READING_TOOLS = ("read", "ls", "find", "grep")
+#: The tools that only read, which a session reading the room's machine has
+#: (`_start_without_hands`): pi's own, and the checkout's history (`git`).
+READING_TOOLS = ("read", "ls", "find", "grep", "git")
 
 
 class Runner(runner.Runner[Journal]):
@@ -997,6 +997,9 @@ class Runner(runner.Runner[Journal]):
             return await self.tool_hooks(params)
         if method == "files":
             return await self.files(params)
+        if method == "git":
+            assert self.machine is not None
+            return await asyncio.to_thread(self.machine.git, params)
         if method == "shell":
             return await self.shell(params)
         if method == "context":

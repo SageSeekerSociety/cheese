@@ -138,6 +138,8 @@ class Machine:
         # The lease whose executor was found to take file operations (`files`),
         # as a one-item tuple: a machine with no generation is still checked.
         self.files_checked: tuple | None = None
+        # The same, for the checkout's history (`git`).
+        self.git_checked: tuple | None = None
         # What `access` brought back for the tool call that asked, by path.
         self.opened: dict[str, dict] = {}
 
@@ -336,6 +338,21 @@ class Machine:
             # as the session spells it: not the machine's own checkout when it
             # sees a placeholder, nor the machine's copy of its skills.
             answer["paths"] = [posixpath.join(path, found) for found in answer["paths"]]
+        return answer
+
+    def git(self, request: dict) -> dict:
+        """One of git's reading commands in the checkout, answered by the
+        machine's executor (`remote_execution/machine_git.py`). Raises
+        `OSError` with what it said when it could not."""
+        lease = (self.client.config.get("generation"),)
+        if self.git_checked != lease:
+            capabilities = self.client.call("ping").get("capabilities") or []
+            if "machine_git" not in capabilities:
+                raise OSError(OLD_EXECUTOR)
+            self.git_checked = lease
+        answer = self.client.control({**request, "subtype": "git"})
+        if "error" in answer:
+            raise OSError(answer["error"])
         return answer
 
     # pi's read asks whether it may read a file, what kind of file it is, and

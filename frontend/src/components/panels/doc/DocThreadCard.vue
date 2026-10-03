@@ -70,6 +70,7 @@ const TOOL_STEPS: Record<string, string> = {
   ls: 'readingCode',
   find: 'readingCode',
   grep: 'readingCode',
+  git: 'readingCode',
   search_project: 'searching',
   read_memory: 'readingMemory',
   read_attachment: 'readingAttachment',

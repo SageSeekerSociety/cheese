@@ -41,8 +41,9 @@ _NOT_ACCEPTED = "Request ID already belongs to different input"
 
 
 #: What a reading credential may ask of the machine (``bind_resource_token``
-#: ``reading``): whether it is there, its files read, listed and searched, and
-#: the project's own checks around such a read, which can refuse it.
+#: ``reading``): whether it is there, its files read, listed and searched, the
+#: checkout's history (``machine_git``, git's reading commands only), and the
+#: project's own checks around such a read, which can refuse it.
 _READ_OPERATIONS = frozenset({"open", "read", "stat", "list", "glob", "grep"})
 
 
@@ -53,7 +54,7 @@ def _reads(method: str, params: dict) -> bool:
         return False
     if params.get("subtype") == "files":
         return params.get("operation") in _READ_OPERATIONS and not params.get("write")
-    return params.get("subtype") == "tool_hooks"
+    return params.get("subtype") in ("git", "tool_hooks")
 
 
 class ExecutionRequest(BaseModel):
