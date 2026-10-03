@@ -88,7 +88,7 @@ onBeforeUnmount(clearTimers)
   position: fixed;
   bottom: 16px;
   left: 50%;
-  z-index: 30;
+  z-index: var(--z-shell);
   align-items: center;
   box-sizing: border-box;
   gap: 12px;

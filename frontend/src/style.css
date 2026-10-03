@@ -280,6 +280,54 @@
   --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1); /* arriving */
   --ease-in: cubic-bezier(0.4, 0, 1, 1); /* leaving */
   --ease-standard: cubic-bezier(0.4, 0, 0.2, 1); /* changing in place */
+
+  /* ---- z-index ----
+     One ladder for the whole product (design-system §3.8). A raw number in a
+     component is a bug waiting to happen: the layer it belongs to is invisible
+     from the call site, so the next person has to guess a value and lands on a
+     neighbour's. Read the band, then pick the token.
+
+     Bands, ascending. Vuetify's own layers are NOT touched, so our tokens have
+     to sit on either side of them:
+       raised      1..8   a thing lifted above its own siblings in ONE component's
+                          stacking context; the number is only an ordering, not a
+                          meaning, so the doc editor's 2..8 ladder and a chart
+                          tooltip's 1 both come from here
+       sticky      10     a bar pinned over its own scroll pane (page header,
+                          sidebar header, the landing bar)
+       panel       20/22  floating bits local to a panel (doc table handles, the
+                          doc comment drawer)
+       shell       30     floating chrome over the shell: hover bars, undo strips,
+                          toasts raised by a panel
+       below-vuetify 1999 the full-window layers a Vuetify menu/dialog must beat
+                          (the settings overlay) — Vuetify overlays start at 2000
+       overlay     2400   app fixed overlays sitting at Vuetify's dialog base:
+                          command palette, presenting slides, doc keyboard bar,
+                          doc popovers. Vuetify stacks a second overlay at 2410+
+       overlay-2   2450   above dialogs: the fullscreen rich-text editor
+       menu        2500   menus that open above those overlays (editor toolbar)
+       banner      3000   offline banner, version badge — above everything app-level
+                          (sonner toasts sit above the whole scale on purpose)
+
+     Values are exactly what the components used before, so nothing moved; the
+     names only make the band explicit. Theme-independent, written once here. */
+  --z-raised: 1;
+  --z-raised-2: 2;
+  --z-raised-3: 3;
+  --z-raised-4: 4;
+  --z-raised-5: 5;
+  --z-raised-6: 6;
+  --z-raised-7: 7;
+  --z-raised-8: 8;
+  --z-sticky: 10;
+  --z-panel: 20;
+  --z-panel-2: 22;
+  --z-shell: 30;
+  --z-overlay-below-vuetify: 1999;
+  --z-overlay: 2400;
+  --z-overlay-2: 2450;
+  --z-menu: 2500;
+  --z-banner: 3000;
 }
 
 /* 手机外壳（窄于 960，和 Vuetify 的 mdAndUp 同一条线）里一页只有一栏，所以两档页宽

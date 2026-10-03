@@ -100,7 +100,7 @@ const defaults = {
 .account-art__brand,
 .account-art__fine {
   position: relative;
-  z-index: 1;
+  z-index: var(--z-raised);
 }
 
 .account-art__fine {
@@ -321,7 +321,7 @@ const defaults = {
     position: absolute;
     top: 0;
     right: 0;
-    z-index: 2;
+    z-index: var(--z-raised-2);
     padding: 12px 16px;
   }
 

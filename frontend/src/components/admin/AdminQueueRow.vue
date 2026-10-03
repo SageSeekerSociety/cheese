@@ -302,7 +302,7 @@ const updatedAt = computed(() => relTime(props.item.last_activity_at ?? props.it
   justify-content: center;
   box-sizing: border-box;
   position: relative;
-  z-index: 1;
+  z-index: var(--z-raised);
   width: max-content;
   min-width: 56px;
   height: 24px;

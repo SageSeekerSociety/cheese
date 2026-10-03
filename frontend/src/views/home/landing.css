@@ -37,7 +37,7 @@
   display: flex;
   position: sticky;
   top: 0;
-  z-index: 5;
+  z-index: var(--z-sticky);
   height: var(--bar-h);
   padding: 0 var(--gutter);
   background: color-mix(in srgb, var(--canvas) 86%, transparent);
@@ -788,7 +788,7 @@
 
   .story-stage {
     top: var(--bar-h);
-    z-index: 1;
+    z-index: var(--z-raised);
     height: 56dvh;
     background: var(--canvas);
     order: -1;

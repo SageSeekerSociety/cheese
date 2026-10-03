@@ -380,7 +380,7 @@ defineExpose({ open, locate, toggle, close, opened, busy })
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
   background: var(--raised);
-  z-index: 22;
+  z-index: var(--z-panel-2);
   box-shadow: var(--shadow-2);
 }
 .doc-comment-panel--compact {
@@ -442,7 +442,7 @@ defineExpose({ open, locate, toggle, close, opened, busy })
   position: absolute;
   inset: 0 auto 0 -4px;
   width: 8px;
-  z-index: 2;
+  z-index: var(--z-raised-2);
   cursor: col-resize;
   touch-action: none;
 }

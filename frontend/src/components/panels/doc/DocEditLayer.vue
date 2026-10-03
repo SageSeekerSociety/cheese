@@ -241,7 +241,7 @@ onBeforeUnmount(() => {
 .doc-edit-layer {
   position: absolute;
   inset: 0;
-  z-index: 5;
+  z-index: var(--z-raised-5);
   pointer-events: none;
 }
 .doc-edit-layer__card {

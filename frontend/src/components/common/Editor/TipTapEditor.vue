@@ -163,7 +163,7 @@ defineExpose({
   position: fixed;
   inset: 0;
   /* 盖住页面和弹窗（Vuetify 弹窗 2400），工具栏的下拉（2500）仍在它之上。 */
-  z-index: 2450;
+  z-index: var(--z-overlay-2);
   border: none;
   border-radius: 0;
 }

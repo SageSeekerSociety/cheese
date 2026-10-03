@@ -123,7 +123,7 @@ onBeforeUnmount(() => props.target.editor.off('update', docChanged))
 <style scoped>
 .doc-link-callout {
   position: absolute;
-  z-index: 8;
+  z-index: var(--z-raised-8);
   display: flex;
   align-items: center;
   flex-wrap: wrap;

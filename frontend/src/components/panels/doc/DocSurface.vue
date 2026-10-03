@@ -622,7 +622,7 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
    imperatively inside the (scoped) .doc-editor-wrap. */
 .doc-editor-wrap :deep(.node-flash-overlay) {
   position: absolute;
-  z-index: 3;
+  z-index: var(--z-raised-3);
   pointer-events: none;
   border-radius: var(--radius-sm);
   margin: -3px -8px;
@@ -706,7 +706,7 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
   content: '';
   position: absolute;
   inset: 0;
-  z-index: 2;
+  z-index: var(--z-raised-2);
   pointer-events: none;
   background: rgba(var(--v-theme-primary), 0.1);
 }

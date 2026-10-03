@@ -132,7 +132,7 @@ watch(
 .file-list--cover {
   position: absolute;
   inset: 0;
-  z-index: 1;
+  z-index: var(--z-raised);
   border-right: 0;
 }
 .file-list--cover .file-item {
