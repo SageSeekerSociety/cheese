@@ -652,7 +652,7 @@ async def answer(
         await edits_of(redis, work)
     await _reply(factory, room_id, project_id, thread_id, bound, reply)
     if spent:
-        await chat._drain_gateway_usage(project_id, room_id, work)
+        await chat.charge_turn_spend(project_id, room_id, work)
 
 
 async def _reply(

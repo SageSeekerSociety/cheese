@@ -5,8 +5,8 @@
 - **准入之前**：这一轮用哪个模型、哪套环境（``_model_kwargs``）、项目的虚拟网关
   key 长什么样、它的 L2 预算要不要跟着项目额度调（``project_gateway_key``、
   ``_gateway_project_env``）；
-- **这一轮结束之后**：网关那一侧的用量读回来，落成用量行、扣掉额度、推进检查点
-  （``_drain_gateway_usage``），这一遍读不到就晚一点再读一遍
+- **这一轮结束之后**：项目这把 key 怎么读、钱记给谁（``ProjectGatewayKey``，读和
+  记账本身在 ``gateway_spend``），这一遍读不到就晚一点再读一遍
   （``_schedule_deferred_drain``）。
 
 搬出来时按原样搬 —— 入参出参就是它们与调用方之间全部的约定，行为一格没动。形状
@@ -24,10 +24,9 @@
 ``_model_policy_call`` 也跟着搬来了：它只被这一族和轮次组装问，而后者照旧从
 ``app.domain.agent.chat`` 这个门面上拿得到这个名字。
 
-``app.api`` 一步都不碰（``LlmGateway`` 与 ``drain_new_usage`` 都来自
-``app.domain.agent.gateway``），事务边界也一格没动 —— sessionmaker 本身是入参，
-所以每一处 ``async with self._sessions()`` 都变成了同一处的
-``async with sessions()``。
+``app.api`` 一步都不碰（``LlmGateway`` 来自 ``app.domain.agent.gateway``），
+事务边界也一格没动 —— sessionmaker 本身是入参，所以每一处
+``async with self._sessions()`` 都变成了同一处的 ``async with sessions()``。
 """
 
 import asyncio
@@ -35,6 +34,7 @@ import hashlib
 import json
 import logging
 import uuid
+from dataclasses import dataclass
 from typing import Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -43,7 +43,8 @@ from app.core.background import hold
 from app.core.config import settings
 from app.core.errors import GatewayUnavailableError, NotFoundError
 from app.domain.agent.compute import ComputeProvider
-from app.domain.agent.gateway import LlmGateway, drain_new_usage
+from app.domain.agent.gateway import LlmGateway
+from app.domain.agent.gateway_spend import Charge, settle
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent.queries import _Proposed
 from app.domain.agent.service import AgentUsage
@@ -55,8 +56,7 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task import binding
 from app.domain.topic.models import TopicKind
 from app.domain.topic.repositories import TopicRepository
-from app.domain.usage.credits import spend_to_credits
-from app.domain.usage.ledger import Ledger, payer_for_project, team_terms
+from app.domain.usage.ledger import Payer, payer_for_project, team_terms
 
 logger = logging.getLogger(__name__)
 
@@ -145,7 +145,7 @@ async def _model_kwargs(
 
     ``platform`` is a turn the platform runs for itself (memory
     consolidation): it runs on the project's platform key, whose spend
-    `_drain_gateway_usage(platform=True)` lands as the platform's.
+    `ProjectGatewayKey(platform=True)` charges to the platform.
 
     Which model comes from the binding of the work this turn belongs to —
     and a room's main thread is not a piece of work, so it always gets the
@@ -437,6 +437,81 @@ async def _gateway_platform_env(
         return None
 
 
+@dataclass(frozen=True)
+class ProjectGatewayKey:
+    """A project's key on the gateway, or with ``platform`` the platform's own
+    key inside the project, whose spend the platform pays (#2233). Both live in
+    the project's settings beside their checkpoints."""
+
+    project_id: uuid.UUID
+    platform: bool = False
+
+    @property
+    def _fields(self) -> tuple[str, str]:
+        if self.platform:
+            return _GW_PLATFORM_KEY, _GW_PLATFORM_CKPT
+        return _GW_KEY, _GW_CKPT
+
+    async def read(
+        self, session: AsyncSession, *, for_update: bool = False
+    ) -> tuple[str, dict | None] | None:
+        project = await ProjectRepository(session).get(self.project_id)
+        if project is None:
+            return None
+        if for_update:
+            # Another backend process can charge during a rollout.
+            await session.refresh(project, with_for_update=True)
+        key_field, ckpt_field = self._fields
+        s = project.settings or {}
+        key = s.get(key_field)
+        if not isinstance(key, str) or not key:
+            return None  # nothing ever routed → nothing to meter
+        ckpt = s.get(ckpt_field)
+        return key, ckpt if isinstance(ckpt, dict) else None
+
+    async def advance(self, session: AsyncSession, checkpoint: dict) -> None:
+        project = await ProjectRepository(session).get(self.project_id)
+        assert project is not None
+        project.settings = {**(project.settings or {}), self._fields[1]: checkpoint}
+
+    async def payer(self, session: AsyncSession) -> Payer | None:
+        if self.platform:
+            return None
+        return await payer_for_project(session, self.project_id)
+
+
+#: A turn's spend is read when it ends, and once more this much later if the
+#: gateway had not logged it yet.
+TURN_RETRY_AFTER = (3.0,)
+#: How long after that a turn whose spend still had not surfaced is read again.
+LATE_S = 20.0
+
+
+async def charge_turn_spend(
+    sessions: async_sessionmaker,
+    gateway: LlmGateway | None,
+    gateway_lock: asyncio.Lock,
+    project_id: uuid.UUID,
+    topic_id: uuid.UUID,
+    turn_id: uuid.UUID,
+) -> list[AgentUsage] | None:
+    """Charge what the project's key spent for a turn, one row per model,
+    reading again once if the gateway has not logged it yet."""
+    return await settle(
+        sessions,
+        gateway,
+        ProjectGatewayKey(project_id),
+        Charge(
+            model=settings.agent_model,
+            project_id=project_id,
+            topic_id=topic_id,
+            turn_id=turn_id,
+        ),
+        retry_after=TURN_RETRY_AFTER,
+        lock=gateway_lock,
+    )
+
+
 def _schedule_deferred_drain(
     sessions: async_sessionmaker,
     gateway: LlmGateway | None,
@@ -446,17 +521,16 @@ def _schedule_deferred_drain(
     topic_id: uuid.UUID,
     turn_id: uuid.UUID,
 ) -> None:
-    """Late-landing spend rows: drain again in the background and land the
-    usage row + credit deduction when they show up. Strong-ref'd so the
-    pending commit can't be GC'd."""
+    """Late-landing spend rows: charge again in the background. Strong-ref'd so
+    the pending commit can't be GC'd."""
 
     async def _later() -> None:
-        await asyncio.sleep(20.0)
-        usages = await _drain_gateway_usage(
+        await asyncio.sleep(LATE_S)
+        usages = await charge_turn_spend(
             sessions, gateway, gateway_lock, project_id, topic_id, turn_id
         )
         if not usages:
-            return  # still nothing — the next turn's drain picks it up
+            return  # still nothing — the next turn's charge picks it up
         logger.info(
             "deferred usage drain landed for turn %s (%s)",
             turn_id,
@@ -470,133 +544,3 @@ def _schedule_deferred_drain(
         background_tasks,
         name=f"deferred-usage-drain-{turn_id}",
     )
-
-
-async def _drain_gateway_usage(
-    sessions: async_sessionmaker,
-    gateway: LlmGateway | None,
-    gateway_lock: asyncio.Lock,
-    project_id: uuid.UUID,
-    topic_id: uuid.UUID,
-    turn_id: uuid.UUID,
-    *,
-    platform_kind: str | None = None,
-) -> list[AgentUsage] | None:
-    """L1: real usage for gateway-routed turns, **one entry per model**.
-
-    ``platform_kind`` drains the project's platform key instead (the work the
-    platform did there for itself) and lands its rows as the platform's,
-    under that kind: no team pays for them.
-
-    The hooks backends can't see token usage locally (interactive Claude
-    Code reports none → usage=0), so read the project's NEW spend from the
-    gateway's log instead — an exactly-once daily cumulative delta per
-    model (see gateway.drain_new_usage), so late-logged rows surface in a
-    later drain instead of being lost. Usage rows, credits and the checkpoint
-    commit together. ``None`` covers both "nothing to
-    land yet" and "could not ask the gateway" — the callers treat them the
-    same (retry now / settle later) and only differ on whether the
-    checkpoint was advanced, which this function already did or did not
-    do."""
-    if gateway is None:
-        return None
-    key_field, ckpt_field = (
-        (_GW_PLATFORM_KEY, _GW_PLATFORM_CKPT) if platform_kind else (_GW_KEY, _GW_CKPT)
-    )
-    try:
-        for attempt in range(2):
-            if attempt:
-                # Spend rows can arrive late. Wait without holding the lock
-                # needed by new model requests, then read the current checkpoint.
-                await asyncio.sleep(3.0)
-            # Read the checkpoint and ASK THE GATEWAY outside the lock. The
-            # ask is an HTTP round trip to LiteLLM (`/spend/logs`), and
-            # `_gateway_lock` is the box-wide lock that `/llm/admission`
-            # takes per request — holding it across a slow spend read queued
-            # every admission on the platform behind it (measured on dev,
-            # 2026-09-23: 25 admissions in one second, 1.1–6.1 s each, with a
-            # drain in flight). Only the checkpoint read-modify-write below
-            # needs to be exclusive.
-            async with sessions() as session:
-                project = await ProjectRepository(session).get(project_id)
-                if project is None:
-                    return None
-                s = dict(project.settings or {})
-                key = s.get(key_field)
-                if not isinstance(key, str) or not key:
-                    return None  # nothing ever routed → nothing to meter
-                ckpt = s.get(ckpt_field)
-                ckpt = ckpt if isinstance(ckpt, dict) else None
-            drained = await drain_new_usage(gateway, key, ckpt)
-            if not attempt and (drained is None or not drained[0]):
-                continue
-            if drained is None:
-                return None
-            rows, next_ckpt = drained
-            # Exactly-once, and two drains can now be in flight at once: the
-            # checkpoint must still be the one we read before this drain is
-            # allowed to bill its delta. A drain that finds it already
-            # advanced has had its window taken by the other one and must
-            # land nothing — otherwise the same spend rows are billed twice.
-            async with gateway_lock:
-                async with sessions() as session:
-                    project = await ProjectRepository(session).get(project_id)
-                    if project is None:
-                        return None
-                    # Another backend process can drain during a rollout.
-                    # Lock and refresh the row before comparing checkpoints.
-                    await session.refresh(project, with_for_update=True)
-                    s = dict(project.settings or {})
-                    if s.get(ckpt_field) != ckpt:
-                        return None
-                    usages = [
-                        AgentUsage(
-                            model=row.model,
-                            input_tokens=row.prompt_tokens,
-                            output_tokens=row.completion_tokens,
-                            cost_usd=row.spend_usd,
-                        )
-                        for row in rows
-                    ]
-                    payer = (
-                        None
-                        if platform_kind
-                        else await payer_for_project(session, project_id)
-                    )
-                    for usage in usages:
-                        if payer is None:
-                            await Ledger(session).record_platform(
-                                kind=platform_kind or "",
-                                model=usage.model or settings.agent_model,
-                                input_tokens=usage.input_tokens,
-                                output_tokens=usage.output_tokens,
-                                cost_usd=usage.cost_usd,
-                                project_id=project_id,
-                                topic_id=topic_id,
-                                turn_id=turn_id,
-                            )
-                            continue
-                        await Ledger(session).record(
-                            payer,
-                            credits=spend_to_credits(usage.cost_usd),
-                            topic_id=topic_id,
-                            model=usage.model or settings.agent_model,
-                            input_tokens=usage.input_tokens,
-                            output_tokens=usage.output_tokens,
-                            cost_usd=usage.cost_usd,
-                            route="gateway",
-                            turn_id=turn_id,
-                        )
-                    s[ckpt_field] = next_ckpt
-                    project.settings = s
-                    await session.commit()
-            # `model=""` is the one pre-split migration row (see
-            # gateway.drain_new_usage): it is real spend we can only state
-            # as a total. Stamp the default name so it is still visible,
-            # exactly as before the split — do NOT invent a model.
-            # None, not []: "no rows" and "gateway unreachable" both mean
-            # there is nothing to land this pass (see the docstring).
-            return usages or None
-    except Exception:  # noqa: BLE001 — metering must never fail a turn
-        logger.exception("gateway usage drain failed for %s", project_id)
-        return None
