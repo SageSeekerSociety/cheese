@@ -566,6 +566,75 @@ async def test_update_is_pushed_once_per_connection_and_again_on_reconnect(
     assert t2.sent[-1] == {"t": "update"}
 
 
+@pytest.fixture
+def origin(tmp_path, monkeypatch):
+    """The backend that publishes the connector, apart from this process.
+
+    This process keeps a copy of its own (``dist_dir``), as the connection owner
+    does in its image, and it can lag the origin's: the owner is not restarted
+    by a release."""
+    import httpx
+
+    from app.core.config import settings
+
+    published: dict[str, bytes] = {}
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        target = request.url.path.split("/")[3]
+        if target not in published:
+            return httpx.Response(404)
+        digest = hashlib.sha256(published[target]).hexdigest()
+        return httpx.Response(200, headers={"X-Checksum-SHA256": digest})
+
+    monkeypatch.setattr(settings, "connector_origin_url", "http://origin")
+    monkeypatch.setattr(
+        connector_build, "origin_transport", httpx.MockTransport(answer)
+    )
+    monkeypatch.setattr(connector_build, "_published", {})
+    monkeypatch.setattr(connector_build, "dist_dir", lambda: tmp_path)
+    return published
+
+
+async def _hello(build: bytes) -> FakeDeviceTransport:
+    hub = DeviceHub()
+    t = FakeDeviceTransport()
+    await hub.attach_device("dev1", t)
+    await hub.on_device_message(
+        "dev1",
+        {
+            "t": "hello",
+            "v": 1,
+            "build": hashlib.sha256(build).hexdigest(),
+            "target": "linux-amd64",
+        },
+    )
+    return t
+
+
+async def test_a_connector_on_the_published_build_is_left_alone_however_old_our_copy(
+    origin, tmp_path
+):
+    _publish(tmp_path, "linux-amd64", b"owner's older build")
+    origin["linux-amd64"] = b"published build"
+    t = await _hello(b"published build")
+    assert t.sent == [{"t": "welcome", "v": 1}]
+
+
+async def test_a_connector_on_our_older_copy_is_still_told_to_update(origin, tmp_path):
+    _publish(tmp_path, "linux-amd64", b"owner's older build")
+    origin["linux-amd64"] = b"published build"
+    t = await _hello(b"owner's older build")
+    assert t.sent[-1] == {"t": "update"}
+
+
+async def test_a_connector_is_left_alone_when_the_origin_cannot_say(origin, tmp_path):
+    """Only ever on a definite answer: updating on a guess re-execs the machine
+    on every reconnect and never converges."""
+    _publish(tmp_path, "linux-amd64", b"owner's older build")
+    t = await _hello(b"some build")
+    assert t.sent == [{"t": "welcome", "v": 1}]
+
+
 class DyingTransport(FakeDeviceTransport):
     """A socket whose peer vanishes mid-life: writes start failing, but the
     receive loop hears nothing, so nobody calls ``detach_device``."""
