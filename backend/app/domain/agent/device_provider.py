@@ -106,15 +106,9 @@ class EnvironmentPreparationError(ScreenSetupError):
 # `isolated` machine is not unhealthy, so this must never quarantine it; it is a
 # 「该档尚未实现」 turn error the owner resolves by opting the machine into
 # whole-machine (Hosted Machine), or by waiting for the sandbox transport (step 2).
-DEVICE_ISOLATED_UNSUPPORTED_MESSAGE = (
-    "话题与机器的绑定登记为『沙盒』档（visibility=isolated），但按房间隔离的容器传输"
-    "尚未实现（#358 第二步）；平台拒绝以裸跑代替——那等于静默把整台机器暴露给这个"
-    "房间。把这台机器改登记为「整台机器」后再继续。"
-)
+DEVICE_ISOLATED_UNSUPPORTED_MESSAGE = say("deviceIsolatedUnsupported")
 
-DEVICE_NOT_HOSTED_MESSAGE = (
-    "话题当前绑定的是云端工作电脑，不是自有设备；平台不会把云端机器当作自有设备运行。"
-)
+DEVICE_NOT_HOSTED_MESSAGE = say("deviceNotHosted")
 
 
 async def resolve_pinned_device(

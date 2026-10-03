@@ -29,30 +29,40 @@ def _room(client, owner: str = "owner") -> tuple[str, str]:
     return project_id, room.json()["data"]["id"]
 
 
-def test_a_memory_file_that_is_not_markdown_is_refused_in_english(client):
+_MEMORY = """---
+name: answer-first
+description: 回答先给结论
+type: feedback
+---
+
+有结论就先说结论，理由跟在后面。
+"""
+
+
+def test_a_new_memory_under_a_taken_name_is_refused_in_english(client):
     alice = session_auth_headers("alice")
     project = post_project(client, json={"name": "记忆"}, headers=alice)
-    project_id = project.json()["data"]["id"]
-
-    r = client.put(
-        "/memory/files",
-        json={
-            "project_id": project_id,
-            "scope": "team",
-            "path": "notes.txt",
-            "content": "x",
-        },
-        headers=alice,
-    )
-
-    assert r.status_code == 422, r.text
-    error = r.json()["error"]
-    assert error["message"] == "记忆文件必须是 .md：'notes.txt'"
-    assert error["i18n"] == {
-        "key": "memoryMustBeMarkdown",
-        "params": {"path": "'notes.txt'"},
+    body = {
+        "project_id": project.json()["data"]["id"],
+        "scope": "team",
+        "path": "answer-first.md",
+        "content": _MEMORY,
     }
-    assert _english(error) == "A memory file must be .md: 'notes.txt'"
+    assert client.put("/memory/files", json=body, headers=alice).status_code == 200
+
+    r = client.put("/memory/files", json=body, headers=alice)
+
+    assert r.status_code == 409, r.text
+    error = r.json()["error"]
+    assert error["message"] == (
+        "answer-first.md 的这一版已经改不动了：它已经存在（现在是第 1 版）。"
+        "重读一次，把改动并进去，再写。"
+    )
+    assert error["i18n"]["key"] == "memoryFileVersionConflict"
+    assert _english(error) == (
+        "This version of answer-first.md can no longer be changed: it already "
+        "exists (now at version 1). Read it again, merge your changes in, then write."
+    )
 
 
 def test_cloning_a_room_that_never_ran_is_refused_in_english(client):

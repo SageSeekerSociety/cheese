@@ -74,7 +74,7 @@ def task_draft_key_spec() -> KeySpec:
 
 
 RateTable = Mapping[str, RateRow]
-_NOT_OPEN = "从 PDF 生成草稿暂未开放，稍后再试。"
+_NOT_OPEN = say("pdfDraftNotOpen")
 
 # 整页渲染的清晰度，与读文档那条路（backend/sandbox/skills/documents/scripts/
 # read.py 的 ``--render``）同档：够模型看清正文，又不至于把一页顶到几十 MB。

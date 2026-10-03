@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from app.domain.review.services import AcceptService
     from app.domain.topic.models import Topic
 
-BINDING_UNKNOWN_MESSAGE = "采纳未完成：暂时无法读取项目的代码仓库，稍后重试采纳"
+BINDING_UNKNOWN_MESSAGE = say("acceptRepositoryUnreadable")
 FORGE_KIND_UNKNOWN = "unknown"
 FORGE_UNKNOWN_DECLARATION = "暂时无法读取项目的代码仓库，稍后重试"
 

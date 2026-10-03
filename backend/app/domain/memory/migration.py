@@ -28,7 +28,7 @@ import json
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-from app.domain.block.notice_text import exception_text, listing, say
+from app.domain.block.notice_text import listing, say
 from app.domain.memory.files import (
     INDEX_LINE_MAX,
     INDEX_NAME,
@@ -604,7 +604,7 @@ def _check_path(path: str) -> None:
     try:
         check_path(path)
     except MemoryFileError as exc:
-        raise MigrationError(exception_text(exc)) from exc
+        raise MigrationError(str(exc)) from exc
 
 
 # ---------------------------------------------------------------------------

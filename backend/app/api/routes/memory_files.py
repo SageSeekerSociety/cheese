@@ -24,7 +24,6 @@ from app.api.auth import ActorResolverDep
 from app.api.response import ok, page
 from app.core.db import get_db
 from app.core.errors import ForbiddenError, ValidationError
-from app.domain.block.notice_text import exception_text
 from app.domain.membership.services import MemberService
 from app.domain.memory.files import (
     INDEX_NAME,
@@ -121,7 +120,7 @@ def _checked_path(raw: str) -> str:
     try:
         return check_path(path)
     except MemoryFileError as exc:
-        raise ValidationError(exception_text(exc)) from exc
+        raise ValidationError(str(exc)) from exc
 
 
 def _owner_of(scope: MemoryFileScope, owner: str | None) -> str | None:
@@ -266,5 +265,5 @@ async def delete_memory_file(
             expected_version=expected,
         )
     except MemoryFileMissing as exc:
-        raise ValidationError(exception_text(exc)) from exc
+        raise ValidationError(str(exc)) from exc
     return ok({"deleted": path, "deleted_by": actor})
