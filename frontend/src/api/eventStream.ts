@@ -15,6 +15,26 @@ export class StreamRefused extends Error {
   }
 }
 
+/** A refusal's body. The route answers JSON; one raised before it (an expired
+ *  sign-in, a malformed request) answers this request's `Accept:
+ *  text/event-stream` with a single `event: error` frame whose data is
+ *  `{ message, i18n }`. Either way it comes back shaped like an API error body,
+ *  so `refusalText` words it in the reader's language. */
+async function refusedBody(res: Response): Promise<StreamRefused['body']> {
+  const text = await res.text().catch(() => '')
+  try {
+    return JSON.parse(text) as StreamRefused['body']
+  } catch {
+    const data = /^data: (.*)$/m.exec(text)?.[1]
+    try {
+      const frame = (data ? JSON.parse(data) : {}) as { message?: string; i18n?: unknown }
+      return { message: frame.message, error: { i18n: frame.i18n } }
+    } catch {
+      return {}
+    }
+  }
+}
+
 export async function postEventStream(
   path: string,
   body: unknown,
@@ -38,10 +58,7 @@ export async function postEventStream(
     await refreshNow()
     res = await send()
   }
-  if (!res.ok || !res.body) {
-    const refused = (await res.json().catch(() => ({}))) as StreamRefused['body']
-    throw new StreamRefused(res.status, refused)
-  }
+  if (!res.ok || !res.body) throw new StreamRefused(res.status, await refusedBody(res))
   options.onOpen?.()
   const reader = res.body.getReader()
   const decoder = new TextDecoder()

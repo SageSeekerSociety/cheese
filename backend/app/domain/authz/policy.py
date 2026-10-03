@@ -10,6 +10,7 @@ lead — requires the project's owner or an owner/admin of the project's team.
 import uuid
 from collections.abc import Awaitable, Callable
 
+from app.domain.block.notice_text import say
 from app.domain.identity.actor import Actor
 from app.domain.topic.models import TopicRole
 
@@ -65,8 +66,8 @@ def refuse_unauthenticated_chat(
     if actor.authenticated:
         return None
     if token_presented:
-        return ("auth_expired", "登录状态已失效，请重新登录后再发言")
-    return ("auth_required", "请先登录再进入话题")
+        return ("auth_expired", say("chatSignInAgain"))
+    return ("auth_required", say("chatSignInFirst"))
 
 
 async def refuse_management_action(

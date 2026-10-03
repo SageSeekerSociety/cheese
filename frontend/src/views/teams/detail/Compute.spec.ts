@@ -357,6 +357,25 @@ it('a refused feed says why and stops asking, instead of retrying into the refus
   }
 })
 
+it('in English a refused feed says why in English', async () => {
+  setLocale('en')
+  try {
+    const view = mountWith({ p1: [starting] })
+    expect(await view.findByText('starting')).toBeTruthy()
+
+    latestSocket().deliver({
+      type: 'error',
+      code: 'auth_expired',
+      message: '登录状态已失效，请重新登录',
+      i18n: { key: 'signInAgain', params: {} },
+    })
+    latestSocket().onclose?.()
+    expect(await view.findByText('Your sign-in has expired. Sign in again')).toBeTruthy()
+  } finally {
+    setLocale('zh-CN')
+  }
+})
+
 it('re-reads every project on the resync while the page is shown', async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true })
   try {

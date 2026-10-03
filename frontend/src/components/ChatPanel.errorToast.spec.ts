@@ -110,4 +110,22 @@ describe('出错提示', () => {
     expect(toastText()).toContain('你已不在这个项目里')
     view.unmount()
   })
+
+  it('in English a keyed error says its sentence in English; an unknown key shows the server text', async () => {
+    setLocale('en')
+    const view = await openRoom()
+    frame({
+      type: 'error',
+      message: '本轮已被强制停止',
+      persisted: false,
+      i18n: { key: 'turnForceStopped', params: {} },
+    })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(toastText()).toContain('This turn was force-stopped')
+
+    frame({ type: 'error', message: 'server words', i18n: { key: 'noSuchSentence', params: {} } })
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(toastText()).toContain('server words')
+    view.unmount()
+  })
 })

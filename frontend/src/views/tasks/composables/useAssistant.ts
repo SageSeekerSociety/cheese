@@ -11,7 +11,7 @@ import { computed, ref } from 'vue'
 import { request } from '@/api'
 import { postEventStream, StreamRefused } from '@/api/eventStream'
 import { isCreditRefusal } from '@/lib/creditUsage'
-import { refusalText } from '@/lib/noticeText'
+import { refusalText, renderNoticeMessage } from '@/lib/noticeText'
 
 export interface AssistantConversation {
   id: string
@@ -113,7 +113,10 @@ export function useAssistant(taskId: () => number) {
             tool.value = typeof payload.name === 'string' ? payload.name : null
           } else if (event === 'error') {
             failed = true
-            notice.value = typeof payload.message === 'string' && payload.message ? payload.message : fallback
+            notice.value = renderNoticeMessage(
+              payload.i18n,
+              typeof payload.message === 'string' && payload.message ? payload.message : fallback
+            )
           }
         }
         await postEventStream(`/assistant/conversations/${id}/ask`, { question: text }, onEvent, {

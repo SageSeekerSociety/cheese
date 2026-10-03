@@ -502,6 +502,13 @@
     "lede": "Connect your own mailbox or Feishu and choose which projects' AI teammates may use it. They read mail, write drafts and edit Feishu docs as you; mail is sent only after you confirm it",
     "refresh": "Refresh",
     "feishuAuthorized": "Feishu authorized",
+    "feishuOutcome": {
+      "invalidLink": "The authorization link is invalid",
+      "denied": "Authorization was not granted",
+      "deleted": "The connection has been deleted",
+      "failed": "Feishu authorization did not complete",
+      "withDetail": "{sentence}: {detail}"
+    },
     "pendingTitle": "Mail waiting to send",
     "pendingEmpty": "No mail waiting to send",
     "to": "To",

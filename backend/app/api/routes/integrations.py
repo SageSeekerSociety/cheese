@@ -21,7 +21,12 @@ from app.api.response import ok, page
 from app.core.config import settings
 from app.core.crypto import Purpose, keyed_digest, keyed_digests
 from app.core.db import get_db
-from app.core.errors import AuthenticationRequiredError, ForbiddenError, ValidationError
+from app.core.errors import (
+    AuthenticationRequiredError,
+    ForbiddenError,
+    ValidationError,
+    message_key,
+)
 from app.domain.agent.platform_notices import (
     EVENT_MAIL_DRAFTED,
     EVENT_MAIL_RESULT,
@@ -33,7 +38,7 @@ from app.domain.agent.platform_notices import (
 )
 from app.domain.block.authorship import AuthorType
 from app.domain.block.models import Block, BlockKind
-from app.domain.block.notice_text import listing, say, with_keys
+from app.domain.block.notice_text import exception_text, listing, say, with_keys
 from app.domain.identity.actor import Actor
 from app.domain.integration.feishu import FeishuClient
 from app.domain.integration.models import Integration, MailDraft
@@ -313,7 +318,21 @@ async def feishu_callback(
 async def _finish_feishu(
     db: AsyncSession, code: str, state: str, error: str
 ) -> RedirectResponse:
+    """Finish authorizing and land on 我的连接 with the outcome in ``?feishu=``.
+
+    The outcome is a code the page words from its catalog in its reader's
+    language: ``ok``, ``invalid_link``, ``denied``, ``deleted`` or
+    ``exchange_failed``, or the key of a refusal of ours said with ``say()``.
+    What Feishu itself answered, when there is something, goes along as
+    ``feishu_detail`` in Feishu's own words."""
     back = f"{settings.frontend_url}/users/settings/connections"
+
+    def land(outcome: str, detail: str = "") -> RedirectResponse:
+        query = {"feishu": outcome}
+        if detail:
+            query["feishu_detail"] = detail[:200]
+        return RedirectResponse(f"{back}?{urlencode(query)}", 302)
+
     try:
         raw_id, kid, digest = state.split(".")
         integration_id = uuid.UUID(raw_id)
@@ -323,23 +342,26 @@ async def _finish_feishu(
         if expected is None or not hmac.compare_digest(expected.hex(), digest):
             raise ValueError
     except ValueError:
-        return RedirectResponse(f"{back}?{urlencode({'feishu': '授权链接无效'})}", 302)
+        return land("invalid_link")
     if error or not code:
-        return RedirectResponse(
-            f"{back}?{urlencode({'feishu': error or '没有授权'})}", 302
-        )
+        return land("denied", error)
     row = await db.get(Integration, integration_id)
     if row is None:
-        return RedirectResponse(f"{back}?{urlencode({'feishu': '连接已删除'})}", 302)
+        return land("deleted")
     try:
         config = await feishu_settings_for(db, row)
         await FeishuClient(config).exchange_code(code, _redirect_uri())
     except Exception as exc:  # noqa: BLE001 — the person reads why, on the page
-        return RedirectResponse(f"{back}?{urlencode({'feishu': str(exc)[:200]})}", 302)
+        # A refusal of ours goes by its sentence's key; Feishu's answer by
+        # Feishu's own words.
+        said = message_key(exception_text(exc))
+        if said is not None:
+            return land(said["key"])
+        return land("exchange_failed", getattr(exc, "reply", ""))
     keep_feishu_tokens(row, config)
     row.status, row.last_error = "ok", ""
     await db.commit()
-    return RedirectResponse(f"{back}?{urlencode({'feishu': 'ok'})}", 302)
+    return land("ok")
 
 
 @router.get("/me/mail-drafts")

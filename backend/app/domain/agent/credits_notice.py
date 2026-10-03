@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.agent.room_events import post_system_event
+from app.domain.block.notice_text import error_frame
 from app.domain.usage.credits import CREDITS_EXHAUSTED_META, credits_event
 
 logger = logging.getLogger(__name__)
@@ -58,7 +59,7 @@ async def note_credits_refusal(
 
             await get_broker().publish(
                 str(topic_id),
-                {"type": "error", "message": line, "persisted": True},
+                error_frame(line, type="error", persisted=True),
             )
     except Exception:  # noqa: BLE001 — see docstring
         logger.exception("could not post credits-refused notice for topic %s", topic_id)

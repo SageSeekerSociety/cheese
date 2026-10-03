@@ -1210,6 +1210,7 @@
     "loadFailed": "Failed to load MCP servers",
     "connectFailed": "Failed to connect",
     "connectFailedWith": "Failed to connect {name}: {reason}",
+    "connectFailedNamed": "Failed to connect {name}",
     "connectedNotice": "{name} connected",
     "disconnectFailed": "Failed to disconnect",
     "saveFailed": "Failed to save",

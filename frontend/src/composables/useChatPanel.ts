@@ -49,6 +49,7 @@ import { cachedWindow, pendingBlockRefresh, setCachedWindow } from '../lib/block
 import { mergeRefreshedTail, PAGE_SIZE } from '../lib/blockPaging'
 import { dayLabelsFor, outboxEdgeAfter, type RunEdge, runEdgeBetween, unreadAnchorBlock } from '../lib/chatGrouping'
 import { activityLines as memberActivityLines } from '../lib/memberActivity'
+import { renderNoticeMessage } from '../lib/noticeText'
 import { outgoingMessageBody, pendingMessageBlock } from '../lib/outgoingMessage'
 import { AGENT_STATUS_EVENTS, collapseNotices, type PlatformNotice } from '../lib/platformNotice'
 import { coalesceSplitFencedCodeBlocks } from '../lib/renderMessage'
@@ -376,13 +377,13 @@ export function useChatPanel(opts: ChatPanelOptions) {
         // frame, so latch the reason and stop the reconnect loop from burying it.
         if (isConnectRefusal(frame.code)) {
           connectRefused.value = true
-          errorMsg.value = frame.message
+          errorMsg.value = renderNoticeMessage(frame.i18n, frame.message)
           awaitingReply.value = false
           return
         }
         // A persisted turn failure is already in the timeline as an event block
         // (现场即事实记录); only un-persisted errors need the floating banner.
-        if (!frame.persisted) errorMsg.value = frame.message
+        if (!frame.persisted) errorMsg.value = renderNoticeMessage(frame.i18n, frame.message)
         turns.settleIfIdle()
         break
       case 'done':

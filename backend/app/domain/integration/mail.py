@@ -33,9 +33,11 @@ class IntegrationError(BaseError):
 
     STATUS = {"auth_failed": 401, "forbidden": 403, "not_found": 404}
 
-    def __init__(self, kind: str, message: str) -> None:
+    def __init__(self, kind: str, message: str, reply: str = "") -> None:
         super().__init__(self.STATUS.get(kind, 502), message, {"kind": kind})
         self.kind = kind
+        #: What the service itself answered, in its own words, without ours.
+        self.reply = reply
 
 
 @dataclass(frozen=True)
