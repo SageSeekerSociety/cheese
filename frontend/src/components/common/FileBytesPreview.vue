@@ -11,7 +11,7 @@ import PreviewPages from '@/components/panels/preview/PreviewPages.vue'
 import PreviewSheet from '@/components/panels/preview/PreviewSheet.vue'
 import PreviewSlides from '@/components/panels/preview/PreviewSlides.vue'
 import { t } from '@/i18n'
-import { DOCUMENT_TYPES, IMAGE_SUFFIXES, imageMimeOf, NEEDS_CONVERSION, suffixOf } from '@/lib/fileKind'
+import { DOCUMENT_TYPES, IMAGE_SUFFIXES, imageMimeOf, NEEDS_CONVERSION, sheetKindOf, suffixOf } from '@/lib/fileKind'
 
 const props = defineProps<{
   filename: string
@@ -81,7 +81,7 @@ onBeforeUnmount(() => {
     <template v-else-if="data">
       <PreviewSlides v-if="['pptx', 'ppt', 'odp'].includes(suffix)" :data="data" :title="filename" />
       <PreviewPages v-else-if="view === 'pages'" :data="data" />
-      <PreviewSheet v-else-if="view === 'sheet'" :data="data" :kind="suffix === 'csv' ? 'csv' : 'workbook'" />
+      <PreviewSheet v-else-if="view === 'sheet'" :data="data" :kind="sheetKindOf(suffix)" />
       <DesignImage v-else-if="imageUrl" :src="imageUrl" :alt="filename" :identity="source" />
       <pre v-else-if="text !== null" class="file-preview__text t-body">{{ text }}</pre>
       <p v-else class="file-preview__note t-body c-muted">{{ t('work.library.downloadOnly') }}</p>

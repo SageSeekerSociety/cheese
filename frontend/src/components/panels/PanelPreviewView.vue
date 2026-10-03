@@ -663,7 +663,7 @@ async function onAnnotate(payload: AnnotateDraft) {
           @pin="pageLocator.onPin"
           @dropped="clearLocator"
         />
-        <PreviewSheet v-else :data="docBytes" :kind="documentSuffix === 'csv' ? 'csv' : 'workbook'" @cell="onCell" />
+        <PreviewSheet v-else :data="docBytes" :kind="documentType.sheet ?? 'workbook'" @cell="onCell" />
 
         <!-- 修订清单。页面上已经能看见改动了（LibreOffice 会把修订画出来），这里是
              用来逐条处理的。改动那一格用的是同一个组件。 -->
