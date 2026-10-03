@@ -365,6 +365,9 @@ it('已有选中时点空白：放下选中，空白拖照旧给区域选择', a
   await painted(ui)
   await drawRect(ui)
   expect(handleCount(ui)).toBe(8)
+  // 画完自动选中、工具切回 select，区域选择器这才挂上；同一毫秒里的按下会被 Vue 丢掉（见
+  // nextMillisecond），真人的手没这么快。
+  await nextMillisecond()
   const region = ui.container.querySelector('.raster-region') as HTMLElement
   region.setPointerCapture = vi.fn()
   // 离把手足够远（外框在显示 (50,50)-(300,200)）。
