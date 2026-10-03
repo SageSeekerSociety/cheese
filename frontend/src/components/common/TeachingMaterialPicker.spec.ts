@@ -133,6 +133,31 @@ describe('TeachingMaterialPicker', () => {
     expect(view.queryByTestId('teaching-materials')).toBeNull()
   })
 
+  it('chip 上的 ✕ 键盘也按得动：那颗 chip 不把 Enter/Space 抢走', () => {
+    const view = mount([161])
+    const x = view.getByTestId('teaching-material-chip-remove-161')
+
+    // v-chip 因为绑了 click 会给根节点挂一个 keydown 处理器，Enter/Space 上一律
+    // `preventDefault`；那颗 ✕ 是它的子孙，键事件冒上去就被取消掉，键盘用户按它
+    // 什么也不会发生。按钮上的 `.stop` 就是挡这个 —— 这里量的是它没被取消。
+    for (const key of ['Enter', ' ']) {
+      const press = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+      x.dispatchEvent(press)
+      expect(press.defaultPrevented).toBe(false)
+    }
+  })
+
+  it('换一块板（重新取数）时清单收回去，不带着上次的展开状态回来', async () => {
+    const view = mount([])
+    await expand(view)
+    expect(view.getByTestId('teaching-materials')).toBeTruthy()
+
+    await view.rerender({ modelValue: [], materials: [], state: 'loading' })
+    await view.rerender({ modelValue: [], materials: MATERIALS, state: 'ready' })
+
+    expect(view.queryByTestId('teaching-materials')).toBeNull()
+  })
+
   it('chip 按勾的顺序摆，不按清单顺序', () => {
     const view = mount([163, 161])
 

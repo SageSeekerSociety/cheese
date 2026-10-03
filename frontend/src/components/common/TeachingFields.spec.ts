@@ -104,15 +104,11 @@ describe('TeachingFields', () => {
     expect(view.queryByText('答案')).toBeNull()
   })
 
-  it('读不出清单时不判失效：编号留着，也没摆出候选', async () => {
-    const view = mount({
-      modelValue: { materialIds: [11] },
-      materials: [],
-      materialsState: 'error',
-    })
+  it('取数状态递到了选择器：读取中就摆读取中，不摆候选', async () => {
+    const view = mount({ materialsState: 'loading' })
 
-    expect(view.queryByTestId('teaching-materials-dangling')).toBeNull()
-    expect(view.getByTestId('teaching-materials-error')).toBeTruthy()
+    expect(view.getByTestId('teaching-materials-loading')).toBeTruthy()
+    expect(view.queryByTestId('teaching-materials-toggle')).toBeNull()
   })
 
   it('改一格报的是整份：填上的那格在内，其余空格落成 null / []', async () => {

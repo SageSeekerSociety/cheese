@@ -16,7 +16,7 @@
 // - **读不出清单时不判失效。** 一次网络失败不该让人删掉有效的引用。
 import type { SpaceMaterial, SpaceMaterialsState } from '@/types'
 
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 const props = defineProps<{
@@ -37,6 +37,16 @@ const { t } = useI18n()
 /** 清单摊开没有。默认收起：多数题目一份课件都不带，摊着只是挡路。 */
 const open = ref(false)
 
+// 换一块板（或者重取一次）时收回去。`open` 挂在这个组件上，而取数那段时间只是
+// 换了里面的分支、组件本身没重建，不收的话新清单会带着上一次的展开状态回来 ——
+// 与「默认收起」这条规矩对不上。
+watch(
+  () => props.state,
+  (next) => {
+    if ((next ?? 'ready') !== 'ready') open.value = false
+  }
+)
+
 /** 选得到的：只有「所有成员」那一档。 */
 const selectable = computed(() => props.materials.filter((item) => item.visibility === 'members'))
 
@@ -53,9 +63,11 @@ const chosen = computed(() =>
  * 判据拿的是 `selectable` 而不是整份 `materials` —— 拿后者的话，一份被改成「仅管理
  * 员」的素材两头都不在：既不在候选里，也不算失效，编号就留在配置里看不见、去不掉，
  * 保存时静默写回去。这正是这一段要防的。
+ *
+ * 不用在这里挡「清单没读出来」：这一段只在 `state` 是 `ready` 的那一支里摆（错误
+ * 和读取中各摆各的话），所以能走到这里就是读到了。
  */
 const dangling = computed(() => {
-  if ((props.state ?? 'ready') !== 'ready') return []
   const known = new Set(selectable.value.map((item) => item.id))
   return props.modelValue.filter((id) => !known.has(id))
 })
@@ -114,6 +126,7 @@ function toggle(id: number, on: boolean) {
             :data-testid="`teaching-material-chip-remove-${item.id}`"
             :aria-label="t('spaces.teaching.fields.materialsRemove', { name: item.name })"
             @click.stop="toggle(item.id, false)"
+            @keydown.stop
           >
             ✕
           </button>
