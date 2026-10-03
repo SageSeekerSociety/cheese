@@ -683,7 +683,13 @@ function receiptLabel(r: AskReceipt | null | undefined) {
      `overflow: hidden` 正是裁掉它的原因）；② 题面那一段（`.ask-form`）原本有
      640px 上限——那是给消息流里的窄卡片定的，接管时那一格就是输入框的宽度，
      要跟着走。 */
-  max-height: min(60vh, 560px);
+  /* 高度交给 flex，而不是按视口算：面板在那一列里是 flex 项，空间不够时**它自己缩**
+     并在内部滚动，而不是把整列顶高、把输入区推到屏幕外。上一版用
+     `max-height: min(60vh, 560px)`，窗口一矮（或面板一长）就还是顶出去——
+     46 寸屏之外这件事都不成立。 */
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 100%;
   overflow-y: auto;
   overscroll-behavior: contain;
   /* 上面那条 `max-height` 管得住「太高」，管不住「被压扁」。输入框那一格是个
