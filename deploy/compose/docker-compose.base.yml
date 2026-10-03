@@ -22,7 +22,10 @@ services:
     environment:
       - DEVICE_CONNECTION_URL=
       - DEVICE_CONNECTION_OWNER=1
-      - CONNECTOR_ORIGIN_URL=http://${API_UPSTREAM:-backend:8081}
+      # The compose backend by its service name, not API_UPSTREAM: a rollout
+      # box points that at host.docker.internal, which only the frontend
+      # resolves to the host (on dev the owner gets a proxy's fake address).
+      - CONNECTOR_ORIGIN_URL=http://backend:8081
       - DEPLOYED_VIA_COMPOSE=1
       # A light database user; the backend pair takes the server's budget
       # (see db_pool_size in app/core/config.py).
