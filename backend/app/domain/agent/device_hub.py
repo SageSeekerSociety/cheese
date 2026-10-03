@@ -57,6 +57,29 @@ class DeviceUnreachable(DeviceOffline):
     """
 
 
+class LinkInterrupted(DeviceOffline):
+    """链路断在一次调用的半路：那一帧已经出去了，答复回不来了。
+
+    那台机器可能已经把这件事做完了，也可能没有，这一侧不知道。所以它不能像
+    ``DeviceUnreachable`` 那样被当成「确定没发生」，也不该说成「机器不在」：
+    链路断了的机器多半几秒后就回来（``RECONNECT_GRACE_S``），下一次调用照样
+    能用。告诉调用方的只有一件事 —— 这一次的结果不知道。
+    """
+
+
+def offline_headers(exc: DeviceOffline) -> dict[str, str]:
+    """How a ``DeviceOffline`` crosses HTTP, as the 409 that carries it.
+
+    ``X-Device-Id`` says the machine is not there; ``X-Device-Link:
+    interrupted`` that the link went down under this very call
+    (``LinkInterrupted``), so its outcome is unknown. The connection owner, the
+    backend and the executor client each read the pair the same way."""
+    headers = {"X-Device-Id": exc.device_id}
+    if isinstance(exc, LinkInterrupted):
+        headers["X-Device-Link"] = "interrupted"
+    return headers
+
+
 class DeviceCallError(RuntimeError):
     """The machine answered a call with a failure of its own.
 
@@ -246,7 +269,7 @@ class HubDevice:
                         self.writing = None
             except TimeoutError:
                 if stall.expired():
-                    raise DeviceOffline(self.device_id) from None
+                    raise LinkInterrupted(self.device_id) from None
                 raise
             except ConnectionError as exc:
                 # The receive loop only learns of a dead link when the peer says
@@ -255,7 +278,7 @@ class HubDevice:
                 # into it and fails, once a minute for a storage sweep. A failed
                 # send is the proof the receive loop never gets.
                 self.drop_transport(transport)
-                raise DeviceOffline(self.device_id) from exc
+                raise LinkInterrupted(self.device_id) from exc
 
     def drop_transport(self, transport: DeviceTransport) -> bool:
         """Forget ``transport`` if it is still the live one; fail what waited on it.
@@ -280,7 +303,7 @@ class HubDevice:
         ]
         for future in waiting:
             if not future.done():
-                future.set_exception(DeviceOffline(self.device_id))
+                future.set_exception(LinkInterrupted(self.device_id))
         return True
 
 

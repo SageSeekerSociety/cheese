@@ -15,6 +15,7 @@ from app.domain.agent.device_hub import (
     DeviceCallError,
     DeviceOffline,
     HubScreen,
+    LinkInterrupted,
 )
 
 logger = logging.getLogger(__name__)
@@ -226,6 +227,8 @@ class RemoteDeviceHub:
             # going offline.
             offline = response.headers.get("X-Device-Id")
             if offline is not None:
+                if response.headers.get("X-Device-Link") == "interrupted":
+                    raise LinkInterrupted(offline)
                 raise DeviceOffline(offline)
         if response.status_code == 502:
             # The owner relaying the machine's own failure (errors.py,

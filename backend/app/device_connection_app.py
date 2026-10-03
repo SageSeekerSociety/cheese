@@ -13,7 +13,7 @@ from app.api.routes.execution import router as execution_router
 from app.core.config import settings
 from app.core.errors import register_exception_handlers
 from app.core.obs import configure_logging
-from app.domain.agent.device_hub import DeviceOffline, device_hub
+from app.domain.agent.device_hub import DeviceOffline, device_hub, offline_headers
 from app.domain.agent.device_hub_rpc import screen_to_json
 
 # The same logging as the business backend: plain tracebacks rendered off the
@@ -182,7 +182,7 @@ async def call(
         raise HTTPException(
             status_code=409,
             detail="device offline",
-            headers={"X-Device-Id": exc.device_id},
+            headers=offline_headers(exc),
         ) from exc
     except TimeoutError as exc:
         # A device that holds a link but never answers. ``device_hub.exec``
