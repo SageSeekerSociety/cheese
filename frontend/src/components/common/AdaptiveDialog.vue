@@ -144,16 +144,19 @@ function primary() {
           >
             <v-icon size="22">{{ props.primaryIcon }}</v-icon>
           </v-btn>
-          <BaseButton
+          <!-- 手机整页的页头动作和左边的 ✕ 是一套顶栏写法（44px、文字色），
+               不是 BaseButton 的四种角色之一，先保持 v-btn。 -->
+          <v-btn
             v-else
-            :kind="props.primaryDanger ? 'danger' : 'primary'"
+            variant="text"
+            :color="props.primaryDanger ? 'error' : 'primary'"
             class="adaptive-dialog__primary"
             :loading="props.primaryLoading"
             :disabled="props.primaryDisabled"
             @click="primary"
           >
             {{ props.primaryLabel }}
-          </BaseButton>
+          </v-btn>
         </template>
       </header>
       <div class="adaptive-dialog__body">

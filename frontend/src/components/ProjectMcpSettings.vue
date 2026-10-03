@@ -222,7 +222,7 @@ watch(() => props.projectId, load)
               <div v-if="server.auth === 'oauth'" class="mcp-row__action">
                 <BaseButton
                   v-if="server.status === 'connected'"
-                  kind="danger"
+                  kind="ghost"
                   size="sm"
                   :loading="busy === server.name"
                   @click="disconnect(server)"

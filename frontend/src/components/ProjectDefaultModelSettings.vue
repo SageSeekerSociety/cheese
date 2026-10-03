@@ -121,12 +121,13 @@ watch(() => props.projectId, load)
           persistent-hint
         />
         <div class="d-flex align-center" style="gap: 12px">
-          <BaseButton v-if="state.can_manage" kind="primary" :disabled="busy || !dirty" @click="save">
+          <BaseButton v-if="state.can_manage" kind="primary" size="sm" :disabled="busy || !dirty" @click="save">
             {{ t('work.projectSettings.defaultModelBlock.save') }}
           </BaseButton>
           <BaseButton
             v-if="state.can_manage && state.model !== null"
             kind="secondary"
+            size="sm"
             :disabled="busy"
             @click="resetToDeploymentDefault"
           >

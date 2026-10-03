@@ -60,6 +60,7 @@ function onKeydown(e: KeyboardEvent) {
       <BaseButton
         :icon="visible ? 'mdi-eye-off-outline' : 'mdi-eye-outline'"
         size="sm"
+        density="comfortable"
         :aria-label="visible ? t('account.field.hidePassword') : t('account.field.showPassword')"
         :aria-pressed="visible"
         @click="visible = !visible"

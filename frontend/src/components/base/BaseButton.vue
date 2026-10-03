@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * 知是的按钮。业务代码写按钮只用它，不直接写 `<v-btn>`
- * （docs/design-system.md §3.6「按钮」）。
+ * （docs/design-system.md §3.6「按钮」；琥珀的用法见 §1.6）。
  *
  * 它只回答两个问题：**这颗按钮在这块区域里是什么角色**（`kind`），**多大**（`size`）。
  * 颜色、样式变体、圆角、字重都由角色推出来，调用处不再写 `variant` / `color`：
@@ -53,7 +53,9 @@ const look = computed(() => {
     case 'danger':
       return props.solid
         ? ({ variant: 'flat', color: 'error' } as const)
-        : ({ variant: 'text', color: 'error' } as const)
+        : // 不给 color：Vuetify 会把它变成带 !important 的 .text-error，压掉下面的
+          // --danger-ink，字就成了只配当标记色的 --danger。
+          ({ variant: 'text', color: undefined } as const)
     default:
       return { variant: 'text', color: undefined } as const
   }
@@ -87,6 +89,8 @@ if (import.meta.env.DEV && props.icon && !attrs['aria-label'] && !attrs.title) {
    这几条以前散在每个调用处的 class 和 style 里。 */
 .base-btn--sm {
   font-size: 13px;
+}
+.base-btn--sm:not(.base-btn--icon) {
   padding-inline: 10px;
 }
 .base-btn--md,

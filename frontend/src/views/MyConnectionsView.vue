@@ -314,7 +314,7 @@ onMounted(load)
           <dd>{{ projectName(d.project_id) }} · <UserRef :handle="d.created_by" :project-id="d.project_id" /></dd>
         </dl>
         <div class="conn-actions">
-          <BaseButton kind="ghost" size="sm" :loading="busy === `${d.id}:discard`" @click="discard(d)">
+          <BaseButton kind="danger" size="sm" :loading="busy === `${d.id}:discard`" @click="discard(d)">
             {{ t('account.connections.discard') }}
           </BaseButton>
           <BaseButton kind="primary" size="sm" :loading="busy === `${d.id}:send`" @click="confirming = d">
