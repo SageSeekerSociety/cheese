@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service
-from app.api.doc_edits import decide
+from app.api.doc_edits import Decision, decide
 from app.api.doc_identity import operation_actor
 from app.api.doc_store import announce, store
 from app.api.response import ok
@@ -29,11 +29,12 @@ from app.core.errors import (
     NotFoundError,
     ValidationError,
 )
+from app.core.redis import get_redis_client
 from app.core.sentences import say
 from app.domain.agent.chat import ChatService
 from app.domain.block.schemas import BlockOut
 from app.domain.identity.services import IdentityService
-from app.domain.living_doc import collab
+from app.domain.living_doc import collab, work_edits
 from app.domain.living_doc.schemas import PassageEditsIn, RestoreIn
 from app.domain.living_doc.services import DocumentJournal, content_hash
 from app.domain.mentions import canonicalize_refs
@@ -209,24 +210,36 @@ async def edit_doc_passages(
     if doc is None:
         raise NotFoundError(say("topicHasNoLivingDoc"))
     edits = [edit.model_dump() for edit in body.edits]
-    decision = await decide(
-        db,
-        room_id=place.room_id,
-        actor=actor.handle,
-        content=doc.content,
-        edits=edits,
-        asked=body.mode,
-    )
+    # A 芝士 answering someone's question edits as itself, for that person,
+    # directly: the person asked for exactly this change.
+    delegation = resolver.delegation()
+    if delegation is not None:
+        if delegation.agent is None:
+            raise ForbiddenError("This credential names no agent to edit as")
+        author = delegation.agent
+        decision = Decision(mode="direct", requested_by=actor.handle)
+    else:
+        author = actor.handle
+        decision = await decide(
+            db,
+            room_id=place.room_id,
+            actor=actor.handle,
+            content=doc.content,
+            edits=edits,
+            asked=body.mode,
+        )
     # The service's store takes the room's lock in a transaction of its own.
     await db.commit()
     result = await collab.edit(
         place.room_id,
         edits=edits,
-        actor=actor.handle,
+        actor=author,
         requested_by=decision.requested_by,
         mode=decision.mode,
         reason=body.reason,
     )
+    if delegation is not None:
+        await work_edits.record(get_redis_client(), delegation.work, edits)
     stored = result.get("stored") or {}
     return ok(
         {

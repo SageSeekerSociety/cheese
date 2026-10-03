@@ -61,6 +61,9 @@ def test_preview_session_opens_selected_artifact_and_assets(client, static_previ
     response = client.get(origin + "/?theme=dark")
     assert response.status_code == 200 and response.text == html
     assert "allow-same-origin" in response.headers["content-security-policy"]
+    # 页面里点开新标签页的外链要真的开得出去：文档自己的 sandbox 也得放行。
+    sandbox = response.headers["content-security-policy"].split(";")[0].split()
+    assert {"allow-popups", "allow-popups-to-escape-sandbox"} <= set(sandbox)
     assert "worker-src 'none'" in response.headers["content-security-policy"]
     assert response.headers["cache-control"] == "no-store"
     assert response.headers["cross-origin-resource-policy"] == "same-origin"

@@ -5,6 +5,7 @@ import { useRouter } from 'vue-router'
 import FeedbackPageShell from '@/components/feedback/FeedbackPageShell.vue'
 import SubmitFeedbackForm from '@/components/feedback/SubmitFeedbackForm.vue'
 import { t } from '@/i18n'
+import { stepBack } from '@/lib/backOut'
 import { useFeedbackStore } from '@/stores/feedback'
 
 // 提交反馈**页面**（`/feedback/new`）。反馈中心和「我的反馈」两个入口都到这一页。
@@ -48,9 +49,7 @@ function onSubmitted(id: string) {
  *  不提交了，不是把写的东西删掉；要删有表单上那个「丢弃草稿」。 */
 function leave() {
   store.closeSubmit()
-  const back = router.options.history.state.back
-  if (typeof back === 'string' && back) router.back()
-  else void router.push({ name: 'FeedbackCenter' })
+  stepBack(router, { name: 'FeedbackCenter' })
 }
 </script>
 

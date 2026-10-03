@@ -5,6 +5,9 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query
 
+from app.api.auth import ActorResolverDep
+from app.api.response import ok
+
 # 给了题目的「给 AI 队友的指导」(#944)：请求体沿用 项目集 PATCH 那个严格模型，
 # 读写与引用校验在 app.api.task_teaching 里，接口形状在 app.api.task_serialization。
 from app.api.routes.tasks._common import (
@@ -21,6 +24,7 @@ from app.auth.core import AuthUserInfo
 from app.auth.space_access import may_teach_task
 from app.core.config import settings
 from app.core.errors import (
+    AuthenticationRequiredError,
     BadRequestError,
     ForbiddenError,
     NotFoundError,
@@ -41,6 +45,7 @@ from app.domain.task.repositories import (
 )
 from app.domain.task.services import (
     TaskMembershipService,
+    TaskService,
 )
 from app.domain.team.repositories import TeamRepository
 from app.domain.user.repositories import (
@@ -48,6 +53,28 @@ from app.domain.user.repositories import (
 )
 
 router = APIRouter(prefix="/tasks")
+
+
+@router.get("/joined", summary="Tasks the caller takes part in")
+async def list_joined_tasks(resolver: ActorResolverDep, db=Depends(get_db)) -> dict:
+    """The tasks the caller takes part in, across every space: what a person's
+    芝士 lists when asked what is on their plate."""
+    actor = await resolver.resolve()
+    if not actor.authenticated or actor.user_id is None:
+        raise AuthenticationRequiredError("Login required")
+    tasks = await TaskService.of(db).list_joined(actor.user_id)
+    return ok(
+        [
+            {
+                "id": task.id,
+                "title": task.name,
+                "intro": task.intro,
+                "deadline": task.deadline.isoformat() if task.deadline else None,
+                "ended": task.ended_at is not None,
+            }
+            for task in tasks
+        ]
+    )
 
 
 async def _participation_response(db, task, membership, auth_user) -> dict:

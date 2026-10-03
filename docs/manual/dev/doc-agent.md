@@ -5,13 +5,14 @@ summary: 在实况文档的评论里 @ 芝士，或者选中文字找它以后�
 covers:
   - backend/app/api/doc_agent.py
   - backend/app/api/doc_agent_box.py
-  - backend/app/api/routes/doc_agent.py
   - backend/app/api/routes/topics_doc_agent.py
   - frontend/src/composables/useDocAgent.ts
   - frontend/src/components/panels/doc/DocAgentBox.vue
   - backend/app/domain/agent/harness/pi/document.py
   - backend/app/domain/agent/harness/pi/handless.py
-  - backend/app/api/doc_agent_tools.py
+  - backend/app/core/sandbox_auth.py
+  - backend/app/api/auth.py
+  - backend/app/domain/living_doc/work_edits.py
   - backend/app/domain/machine/reading.py
 ---
 
@@ -78,19 +79,21 @@ covers:
 
 ## 工具与凭据 {#tools}
 
-会话拿的是房间的凭据：写着项目、房间、这个队友，外加这个评论串（`mint_scoped_token` 的 `resource_id`）。它只开 `/doc-agent/tools/{name}` 和 `/llm/v1/*`。
+会话有两张凭据。启动时拿的是房间的凭据：写着项目、房间、这个队友，外加这个评论串（`mint_scoped_token` 的 `resource_id`），只用来经 `/llm/v1/*` 调模型，花费记在项目上。每次提问另签一张代行凭据（`cxdg_`，`sandbox_auth.mint_delegated_credential`），随问题交给会话，工具都用它。代行凭据写着提问人、这个队友、项目和房间、这次回答的编号，以及这一问能不能改文档；有效期是回答上限再加一分钟。
+
+工具是平台工具表里的几项（`sandbox/cheese`），调的就是界面用的那些接口。代行凭据只在 `api/auth.py` 的 `DELEGATED_ROUTES` 列出的接口上有效，按提问人的权限判断，只在签它的那个房间里有效。
 
 | 工具 | 做什么 |
 |---|---|
-| `read_document` | 读实况文档最新全文 |
-| `edit_document` | 改文档里的几处文字，和 `cheese_doc_edit` 同一套规则（原文只出现一次，有一处用不上就一处都不改） |
-| `search_project` | 按关键词搜项目：频道名、消息、文档段落、评论、周报、任务卡、资料库文件名、产物，和搜索面板同一套（`project_context.search_everything`）。只搜提问人能看的频道 |
-| `read_memory` | 读项目共享记忆里一条的正文（系统提示词里只有索引） |
-| `read_attachment` | 读消息附件或资料库里的文件，只读文本，最多 3 万字 |
+| `cheese_doc_get` | 读实况文档最新全文 |
+| `cheese_doc_edit` | 改文档里的几处文字（原文只出现一次，有一处用不上就一处都不改） |
+| `cheese_project_search` | 按关键词搜项目：频道名、消息、文档段落、评论、周报、任务卡、资料库文件名、产物，和搜索面板同一个接口。只搜提问人能看的频道 |
+| `cheese_memory_read` | 读项目共享记忆里一条的正文（系统提示词里只有索引） |
+| `cheese_attachment_read` | 读消息附件或资料库里的文件，只读文本，最多 3 万字 |
 | `read`、`ls`、`find`、`grep` | pi 自己的读文件工具，读房间工作电脑上的代码；只有房间的电脑开着时才有，见[房间的工作电脑](#machine) |
 | `git` | 看房间工作目录的 git：状态、提交记录、和某个分支比的改动（可以从分出来的地方算起，即「这个分支相对主干改了什么」，含没提交的）、某次提交、每行是谁改的；同样只有房间的电脑开着时才有 |
 
-工具只在这个会话正有问题在回答时才开，而且只认这个会话、这个房间、这个队友；没带会话的房间凭据打不开。改动以队友的名义直接改，记成「某某让队友改」，某某是问的那个人；这一问不许改时，改文档的工具只回一句「这次只回答」。
+改动以队友的名义直接改，记成「某某让队友改」，某某是问的那个人；改了哪几处记在这次回答的编号下（`living_doc/work_edits.py`），输入框拿它显示改动和撤销。这一问不许改时，改文档被拒；回答结束、凭据过期后，工具一律被拒。
 
 ## 回答 {#answer}
 

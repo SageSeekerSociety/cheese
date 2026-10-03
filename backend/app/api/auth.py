@@ -26,7 +26,10 @@ from app.core.errors import (
 )
 from app.core.obs import get_logger
 from app.core.sandbox_auth import (
+    DelegatedClaims,
+    delegated_claims,
     is_global_sandbox_token,
+    looks_like_delegated_credential,
     looks_like_project_agent_credential,
     project_agent_claims,
     scoped_token_claims,
@@ -52,6 +55,21 @@ from app.domain.topic_membership.services import TopicMemberService
 from app.domain.user.repositories import UserRepository
 
 _log = get_logger("cheesex.auth")
+
+#: The routes a delegated credential opens (`sandbox_auth.DelegatedClaims`), by
+#: endpoint, and whether each changes something. Every other route refuses it:
+#: a 芝士 answering for someone acts through these and nothing else, so a new
+#: tool for it is a new line here, read by whoever reviews it.
+DELEGATED_ROUTES: dict[str, bool] = {
+    "app.api.routes.living_docs.get_topic_doc": False,
+    "app.api.routes.living_docs.edit_doc_passages": True,
+    "app.api.routes.project_context.search_project_context": False,
+    "app.api.routes.topics_preview.preview_file": False,
+    "app.api.routes.memory_files.list_memory_files": False,
+    "app.api.routes.docs_site.agent_search_docs": False,
+    "app.api.routes.docs_site.agent_read_docs": False,
+    "app.api.routes.tasks.participation.list_joined_tasks": False,
+}
 
 
 def _bearer(header: str | None) -> str | None:
@@ -90,8 +108,12 @@ class ActorResolver:
         cheese_token: str,
         screen_token: str = "",
         writes: bool = False,
+        endpoint: str | None = None,
     ):
         self._session = session
+        # Which route this is (``module.function``), for a delegated credential,
+        # which opens only the routes in ``DELEGATED_ROUTES``.
+        self._endpoint = endpoint
         # Whether this request changes something. A write that names a project,
         # or a room of one, is refused while that project is archived — here,
         # once, so that no write route can forget to ask (see ``resolve``).
@@ -103,6 +125,54 @@ class ActorResolver:
         # agent-user (device agent-as-user, P3), not the platform 芝士 — see resolve().
         self._screen_token = screen_token
         self._credentials = ProjectAgentCredentialService(session)
+
+    def delegation(self) -> DelegatedClaims | None:
+        """The question the presented credential acts for, when it is a valid
+        delegated one: who asked, which agent answers, under which work."""
+        return delegated_claims(self._cheese_token) if self._cheese_token else None
+
+    async def _resolve_delegated(
+        self,
+        *,
+        topic_id: uuid.UUID | None,
+        project_id: uuid.UUID | None,
+        read_only: bool,
+    ) -> Actor:
+        """The person a 芝士 answers for, as the actor: what the route allows is
+        judged by what that person may do. Refused outright (never anonymous)
+        when the credential is not valid, the route is not one it opens, the
+        route changes something and the question may only be answered, or the
+        route acts somewhere the credential was not minted for."""
+        claims = self.delegation()
+        if claims is None:
+            raise AuthenticationRequiredError(
+                "Delegated credential is invalid or expired"
+            )
+        writes = DELEGATED_ROUTES.get(self._endpoint or "")
+        if writes is None:
+            raise ForbiddenError("This credential does not open this route")
+        if writes and claims.read_only:
+            raise ForbiddenError("This question may only be answered, not act")
+        if topic_id is not None and project_id is None:
+            project_id = await self.project_of_topic(topic_id)
+        if claims.project_id is None:
+            if topic_id is not None or project_id is not None:
+                raise ForbiddenError(say("tokenOtherProject"))
+        elif project_id is None and topic_id is None:
+            # Minted for a room, and this route names none to hold it to.
+            raise ForbiddenError("This credential is restricted to one room")
+        else:
+            if project_id is not None and str(project_id) != claims.project_id:
+                raise ForbiddenError(say("tokenOtherProject"))
+            if (
+                topic_id is not None
+                and claims.topic_id is not None
+                and str(topic_id) != claims.topic_id
+            ):
+                raise ForbiddenError(say("tokenOtherTopic"))
+        if not read_only:
+            await self._refuse_archived_write(project_id=project_id, topic_id=topic_id)
+        return Actor(handle=claims.handle, user_id=claims.user_id, via="delegated")
 
     def credential_agent(self) -> str | None:
         """The teammate the presented cheese credential itself names (its ``a``
@@ -144,6 +214,11 @@ class ActorResolver:
         place that covers them all, including the ones added later. A POST that
         only reads (it mints a viewing grant) passes ``read_only``.
         """
+
+        if looks_like_delegated_credential(self._cheese_token):
+            return await self._resolve_delegated(
+                topic_id=topic_id, project_id=project_id, read_only=read_only
+            )
 
         # A scoped token that is genuinely valid but minted for ANOTHER topic /
         # project is a scope violation, not "no credential". It used to fall
@@ -749,7 +824,15 @@ def get_actor_resolver(
         cheese_token=request.headers.get("x-cheese-token") or "",
         screen_token=request.headers.get("x-cheese-screen") or "",
         writes=request.method not in ("GET", "HEAD", "OPTIONS"),
+        endpoint=_endpoint_name(request),
     )
+
+
+def _endpoint_name(request: Request) -> str | None:
+    endpoint = request.scope.get("endpoint")
+    if endpoint is None:
+        return None
+    return f"{endpoint.__module__}.{endpoint.__qualname__}"
 
 
 # Browsers cannot set an Authorization header on a WebSocket, so the chat route

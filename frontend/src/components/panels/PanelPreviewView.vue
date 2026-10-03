@@ -517,7 +517,7 @@ async function onAnnotate(payload: AnnotateDraft) {
             :aria-hidden="frame.id !== displayedFrame?.id"
             :tabindex="frame.id === displayedFrame?.id ? 0 : -1"
             :title="t('work.room.preview.frameTitle')"
-            sandbox="allow-scripts allow-forms allow-same-origin"
+            sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-popups-to-escape-sandbox"
             @load="emit('frame-load', frame.id, $event)"
             @error="emit('frame-error', frame.id, $event)"
           />
@@ -527,7 +527,7 @@ async function onAnnotate(payload: AnnotateDraft) {
           :name="frameName"
           class="preview-frame"
           :title="t('work.room.preview.frameTitle')"
-          sandbox="allow-scripts allow-forms allow-same-origin"
+          sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-popups-to-escape-sandbox"
         />
       </div>
     </div>

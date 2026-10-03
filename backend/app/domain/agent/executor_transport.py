@@ -396,7 +396,9 @@ class RemoteClient:
         ):
             raise ValueError("Platform requests require a relative API path and method")
         api = os.environ.get("CHEESE_API", "").rstrip("/")
-        token = (
+        # A session answering someone's question calls the platform with the
+        # credential minted for that question, never the one it started with.
+        token = self.config.get("platform_token") or (
             self.execution_token()
             if self.config.get("token_file")
             else os.environ.get("CHEESE_TOKEN", "")

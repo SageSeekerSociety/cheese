@@ -48,9 +48,9 @@ def _done(events: list) -> dict:
 
 
 def _edit_to(old: str, new: str):
-    async def edit(launch, question):
+    async def edit(credential, question):
         await _tool(
-            launch.token, "edit_document", {"edits": [{"old": old, "new": new}]}
+            credential, "cheese_doc_edit", {"edits": [{"old": old, "new": new}]}
         )
         return "改好了。", None
 
@@ -138,7 +138,7 @@ def test_a_shortcut_that_does_not_fit_is_refused(client, sessions):
 def test_the_answer_goes_into_the_askers_own_thread_only(client, sessions):
     room, seat = _document(client)
 
-    async def answer(launch, question):
+    async def answer(credential, question):
         return "第二段的范围和第一段的目标对得上。", None
 
     sessions.script = answer

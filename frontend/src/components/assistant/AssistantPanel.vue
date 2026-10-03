@@ -179,10 +179,10 @@ const ready = computed(() => draft.value.trim().length > 0 && !props.busy)
 
 const toolLabel = computed(() => {
   switch (props.tool) {
-    case 'search_docs':
-    case 'read_doc':
+    case 'cheese_docs_search':
+    case 'cheese_docs_read':
       return t('tasks.assistant.readingDocs')
-    case 'my_tasks':
+    case 'cheese_my_tasks':
       return t('tasks.assistant.readingTasks')
     default:
       return t('tasks.assistant.thinking')

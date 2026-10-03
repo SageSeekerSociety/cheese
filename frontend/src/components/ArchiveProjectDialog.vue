@@ -46,7 +46,8 @@ async function submit() {
   archiving.value = false
   // 项目已经不在清单里了：清单刷一遍，人回到首页（落在另一个项目上，或者待办）。刷不成功不该把归档变成失败。
   await Promise.allSettled([store.refreshProjects()])
-  await router.push('/')
+  // replace：归档完再按回退键，人不该又落回这个项目的设置页 —— 它已经不在清单里了。
+  await router.replace('/')
 }
 </script>
 

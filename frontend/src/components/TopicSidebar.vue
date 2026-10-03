@@ -484,7 +484,7 @@ const onDocs = computed(() => !!props.activeDocs)
                 @toggle="toggleOthers"
               />
 
-              <v-list density="compact" nav class="py-0">
+              <v-list v-if="section.rows.length" density="compact" nav class="py-0">
                 <!-- 顺序按最近动静排，一条新消息会把一个房间顶到上面。换位置时让行滑过
                      去（FLIP），而不是整列瞬间重排——人找的那一行刚才在哪、现在去了
                      哪，要看得见。按项目换 key：切项目是换了一整份列表，不是这份列表

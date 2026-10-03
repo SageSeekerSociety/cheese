@@ -64,16 +64,16 @@ function rendered(author: string, content: string): { html: boolean; text: strin
 
 // 芝士正在用的工具，说成它在做的事；没列出的就说在回答
 const TOOL_STEPS: Record<string, string> = {
-  read_document: 'reading',
-  edit_document: 'editing',
+  cheese_doc_get: 'reading',
+  cheese_doc_edit: 'editing',
   read: 'readingCode',
   ls: 'readingCode',
   find: 'readingCode',
   grep: 'readingCode',
   git: 'readingCode',
-  search_project: 'searching',
-  read_memory: 'readingMemory',
-  read_attachment: 'readingAttachment',
+  cheese_project_search: 'searching',
+  cheese_memory_read: 'readingMemory',
+  cheese_attachment_read: 'readingAttachment',
 }
 
 const step = computed(() => {

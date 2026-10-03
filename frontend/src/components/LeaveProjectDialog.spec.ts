@@ -25,8 +25,9 @@ vi.mock('@/api', async () => {
   }
 })
 
-const push = vi.fn()
-vi.mock('vue-router', () => ({ useRouter: () => ({ push, replace: vi.fn() }), useRoute: () => ({ query: {} }) }))
+// replace 而不是 push：退出成功后再按回退键不该落回这个项目（见组件里那句注释）。
+const replace = vi.fn()
+vi.mock('vue-router', () => ({ useRouter: () => ({ replace }), useRoute: () => ({ query: {} }) }))
 
 const refreshMembers = vi.fn()
 const refreshProjects = vi.fn()
@@ -75,7 +76,7 @@ beforeEach(() => {
   leaveProject.mockReset().mockResolvedValue({ deleted: true })
   refreshMembers.mockReset().mockResolvedValue(undefined)
   refreshProjects.mockReset().mockResolvedValue(undefined)
-  push.mockReset()
+  replace.mockReset()
 })
 
 /** 挂一个外置开关：弹窗的 open 由它供着，测试能真的关了再开。 */
@@ -103,7 +104,7 @@ describe('LeaveProjectDialog 的被拒语义', () => {
     // 弹窗还开着：确认那一排按钮都还在，人还点得动「取消」。
     expect(await screen.findByRole('button', { name: '退出' })).toBeTruthy()
     expect(await screen.findByRole('button', { name: '取消' })).toBeTruthy()
-    expect(push).not.toHaveBeenCalled()
+    expect(replace).not.toHaveBeenCalled()
   })
 
   it('重开弹窗时旧错误清掉——上一次的拒绝不该还挂着', async () => {
@@ -148,7 +149,7 @@ describe('LeaveProjectDialog 的被拒语义', () => {
     mount()
     await fireEvent.click(await screen.findByRole('button', { name: '退出' }))
     await waitFor(() => expect(leaveProject).toHaveBeenCalledWith('p1'))
-    await waitFor(() => expect(push).toHaveBeenCalledWith({ name: 'HomeSpaces' }))
+    await waitFor(() => expect(replace).toHaveBeenCalledWith({ name: 'HomeSpaces' }))
     expect(screen.queryByText(/退出失败/)).toBeNull()
     expect(refreshMembers).toHaveBeenCalled()
     expect(refreshProjects).toHaveBeenCalled()

@@ -242,13 +242,15 @@ class HandlessSessions:
     # --- a question ----------------------------------------------------------
 
     async def _send(
-        self, launch: Started, work: str, text: str, earlier: str
+        self, launch: Started, work: str, text: str, earlier: str, credential: str
     ) -> Session:
         """Put the question into the session, starting it again when the one
         this process knew has gone (it exits once idle).
 
         ``earlier`` is what was said before the session existed; a session
-        nobody has asked anything is given it once, ahead of the question."""
+        nobody has asked anything is given it once, ahead of the question.
+        ``credential`` is what the session's tools call the platform with while
+        they answer it: one minted for this question."""
         marker = new_nonce()
         for attempt in range(2):
             session = await self.ensure(launch)
@@ -260,7 +262,12 @@ class HandlessSessions:
                 await self.call(
                     session,
                     "send",
-                    {"input_id": work, "work_id": work, "text": prompt},
+                    {
+                        "input_id": work,
+                        "work_id": work,
+                        "text": prompt,
+                        "platform_token": credential,
+                    },
                 )
             except (DeviceOffline, DeviceCallError) as exc:
                 self.forget(launch.key)
@@ -279,6 +286,7 @@ class HandlessSessions:
         work_id: uuid.UUID,
         text: str,
         *,
+        credential: str,
         earlier: str = "",
         ceiling_s: float,
     ) -> AsyncIterator[Said | Looking | Answered]:
@@ -288,7 +296,7 @@ class HandlessSessions:
         and the answer is what failed to arrive."""
         work = str(work_id)
         deadline = time.monotonic() + ceiling_s
-        session = await self._send(launch, work, text, earlier)
+        session = await self._send(launch, work, text, earlier, credential)
         reading = _Reading(work)
         mark: str | None = None
         failing_since: float | None = None

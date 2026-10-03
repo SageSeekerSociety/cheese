@@ -56,9 +56,8 @@ class Launch:
     user_id: int
     conversation_id: uuid.UUID
     system_prompt: str
-    #: The platform path its tools are called under, and what they are.
-    tools_path: str
-    tools: list[dict]
+    #: The table tools it has (`sandbox/cheese`), by name.
+    tools: tuple[str, ...]
     #: Its personal credential (`sandbox_auth.mint_personal_credential`).
     token: str
     model: str
@@ -144,5 +143,5 @@ def configuration(launch: Launch) -> dict:
         "extension": extension(),
         "notice": "",
         "idle_exit_s": IDLE_EXIT_S,
-        "tools": {"path": launch.tools_path, "specs": launch.tools},
+        "tools": {"names": list(launch.tools)},
     }

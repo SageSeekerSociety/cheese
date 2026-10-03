@@ -101,6 +101,7 @@ onBeforeUnmount(() => {
                 v-for="item in group.items"
                 :key="item.key"
                 :to="item.to"
+                replace
                 class="so__item"
                 :class="{ 'so__item--active': item.key === active, 'so__item--danger': item.danger }"
                 :aria-current="item.key === active ? 'page' : undefined"
@@ -126,7 +127,7 @@ onBeforeUnmount(() => {
           <button v-if="showIndex" type="button" class="so__back" :aria-label="closeLabel" @click="emit('close')">
             <v-icon icon="mdi-chevron-left" size="24" />
           </button>
-          <NavLink v-else :to="indexTo" class="so__back" :aria-label="backLabel">
+          <NavLink v-else :to="indexTo" replace class="so__back" :aria-label="backLabel">
             <v-icon icon="mdi-chevron-left" size="24" />
           </NavLink>
           <span class="so__bar-title">{{ showIndex ? label : activeItem?.label }}</span>
@@ -141,6 +142,7 @@ onBeforeUnmount(() => {
                   v-for="item in group.items"
                   :key="item.key"
                   :to="item.to"
+                  replace
                   class="so__index-row"
                   :class="{ 'so__item--danger': item.danger }"
                 >
