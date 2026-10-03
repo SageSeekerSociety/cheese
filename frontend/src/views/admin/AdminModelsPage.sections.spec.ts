@@ -65,7 +65,7 @@ function model(over: Record<string, unknown> = {}) {
     selectable: true,
     priced: true,
     offered: true,
-    blocked_reason: null,
+    blocked_reasons: [],
     unpriced_reason: null,
     upstream: { model: 'anthropic/glm-4.7', host: 'open.bigmodel.cn', provider: 'anthropic' },
     prices: { input: 1e-6, output: 2e-6 },
@@ -280,13 +280,32 @@ describe('模型管理 · 模型那一段', () => {
 
   it('被停用的模型：上架那一格写「已停用」，并把服务端给的原因挂在旁边', async () => {
     getGatewayModels.mockResolvedValue(
-      modelsPayload([model({ blocked: true, offered: false, blocked_reason: '上游限流，先摘下来' })])
+      modelsPayload([model({ blocked: true, offered: false, blocked_reasons: ['blocked'] })])
     )
     const page = await mountLoaded()
 
     const row = texts(page.container, '.amd__gridwrap tbody tr')[0]!
     expect(row).toContain('已停用')
-    expect(row).toContain('上游限流，先摘下来')
+    expect(row).toContain('已在网关停用，选择器不会提供它')
+  })
+
+  it('in English every reason a model is not offered is said in English', async () => {
+    setLocale('en')
+    try {
+      getGatewayModels.mockResolvedValue(
+        modelsPayload([
+          model({ selectable: false, priced: false, offered: false, blocked_reasons: ['unlisted', 'unpriced'] }),
+        ])
+      )
+      const page = await mountLoaded()
+
+      const row = texts(page.container, '.amd__gridwrap tbody tr')[0]!
+      expect(row).toContain('Not listed: the gateway does not mark it cheese_selectable')
+      expect(row).toContain('Not priced')
+      expect(row).not.toMatch(/[\u4e00-\u9fff]/)
+    } finally {
+      setLocale('zh-CN')
+    }
   })
 
   it('config 来源的行只读：那一格是「只读 · 查看改法」，不是三个死按钮', async () => {

@@ -119,14 +119,14 @@ class FeishuAppService:
         already stored, so the page can be saved without retyping the secret it
         never shows."""
         if domain not in ("feishu", "lark"):
-            raise ValidationError("domain 只能是 feishu 或 lark")
+            raise ValidationError(say("feishuDomainInvalid"))
         row = await self.current()
         if row is None:
             row = FeishuApp(id=FEISHU_APP_ROW_ID, secret="")
         if app_secret:
             seal_app(row, {"app_secret": app_secret})
         elif not row.secret:
-            raise ValidationError("App Secret 不能为空")
+            raise ValidationError(say("feishuAppSecretRequired"))
         row.app_id = app_id
         row.domain = domain
         row.updated_by = by

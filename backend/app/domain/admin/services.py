@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.errors import BadRequestError, ConflictError, ForbiddenError
 from app.domain.admin import repositories as repo
+from app.domain.block.notice_text import say
 from app.domain.identity.services import IdentityService
 from app.domain.user.services import (
     chosen_avatars_by_handle,
@@ -62,11 +63,11 @@ class AdminService:
 
     async def require_admin(self, handle: str | None) -> str:
         if not handle:
-            raise ForbiddenError("需要登录")
+            raise ForbiddenError(say("signInRequired"))
         if not await self.is_admin(handle):
             # 403 here and not 404: /admin/* is documented as existing, so its
             # existence is not a secret — only its contents are.
-            raise ForbiddenError("需要平台管理员")
+            raise ForbiddenError(say("platformAdminRequired"))
         return handle
 
     # --- 名单 ---------------------------------------------------------------

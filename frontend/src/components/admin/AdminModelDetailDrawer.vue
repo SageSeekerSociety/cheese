@@ -8,6 +8,7 @@ import { useDisplay } from 'vuetify'
 import { getGatewayModel } from '@/api'
 import AdminLineChart from '@/components/admin/AdminLineChart.vue'
 import AdminModelPriceCell from '@/components/admin/AdminModelPriceCell.vue'
+import { blockedReasonText } from '@/lib/adminModels'
 import { fmtCost, fmtNum, fmtPercent } from '@/lib/usageFormat'
 
 // 一个模型的详情抽屉（契约 §3.2）。**它自己去拉数据**（收一个 `name`），不接一个塞满
@@ -45,7 +46,7 @@ interface Detail {
   selectable: boolean
   priced: boolean
   offered: boolean
-  blocked_reason?: string | null
+  blocked_reasons?: string[]
   unpriced_reason?: string | null
   upstream: { model: string; host?: string | null; provider?: string }
   prices: Record<string, number | null | undefined>
@@ -207,8 +208,8 @@ function close() {
             <span v-if="model.blocked" class="amdd__tag amdd__tag--muted">{{ t('models.table.blocked') }}</span>
           </div>
 
-          <p v-if="!model.offered && model.blocked_reason" class="amdd__reason t-meta-read">
-            {{ model.blocked_reason }}
+          <p v-if="!model.offered && blockedReasonText(model)" class="amdd__reason t-meta-read">
+            {{ blockedReasonText(model) }}
           </p>
 
           <section class="amdd__block">

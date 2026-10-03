@@ -43,7 +43,7 @@ function model(
     selectable: true,
     priced: true,
     offered: true,
-    blocked_reason: null,
+    blocked_reasons: [],
     unpriced_reason: null,
     upstream: { model: name, host, provider: host.split('.')[0] },
     prices: { input: 3, output: 15, cache_read: 0.3, cache_creation: 3.75 },
@@ -71,7 +71,7 @@ const MODELS: GatewayModelInfo[] = [
   model('deepseek-v4', 'DeepSeek V4', 'api.deepseek.com', usage(0, 0, 0), {
     blocked: true,
     offered: false,
-    blocked_reason: '管理员停用：上游频繁超时',
+    blocked_reasons: ['blocked'],
   }),
 ]
 
