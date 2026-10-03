@@ -10,9 +10,20 @@ is still at work. The database has the turn's interval open
 Here rather than on the broker because `runtime.py` is over its size cap.
 """
 
+import uuid
 from collections.abc import Iterable
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.agent.runtime import InProcessBroker
+
+
+async def open_turns_on(
+    session: AsyncSession, room_id: uuid.UUID, *, task_id: uuid.UUID | None
+) -> list[tuple[str, float, str | None]]:
+    """The delivered turns still open on the room's line, or the card's."""
+    return await AgentTurnRepository(session).open_on(room_id, task_id=task_id)
 
 
 def adopt(

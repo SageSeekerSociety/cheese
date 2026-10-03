@@ -49,9 +49,8 @@ from app.core.errors import ForbiddenError
 from app.core.obs import get_logger
 from app.core.sentences import error_frame
 from app.domain.agent.chat import ChatService
-from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.agent.runtime import InProcessBroker
-from app.domain.agent.turn_adoption import adopt
+from app.domain.agent.turn_adoption import adopt, open_turns_on
 from app.domain.authz.policy import refuse_unauthenticated_chat
 from app.domain.room_task.services import TaskService
 
@@ -139,8 +138,10 @@ async def chat(
                     # then the recreated one), so a turn started before it, or
                     # on the other container while both ran, is missing from it
                     # though its agent is still at work.
-                    open_turns = await AgentTurnRepository(auth_session).open_on(
-                        room_id, task_id=card.id if card is not None else None
+                    open_turns = await open_turns_on(
+                        auth_session,
+                        room_id,
+                        task_id=card.id if card is not None else None,
                     )
         if refusal is not None:
             code, message = refusal
