@@ -24,7 +24,7 @@ The verified credential resolves the handle. `body.author` cannot provide operat
 
 Pre-journal deployed snapshots are seeded on the first recorded update. Earlier unavailable versions are not fabricated. New brief seeds are journaled without inventing a conversation contribution event. PostgreSQL rejects updates/deletes of history while its document exists; deleting the document may cascade its retained journal. Historical event ids are evidence values, so event deletion cannot mutate history through SET NULL.
 
-After a store commits, the room gets the event block and a `state`/`doc` frame; the frame refreshes what derives from the stored version (comment anchors, the overview). Editors do not need it: they already hold the text.
+After a store commits, the room gets the event block and a `state`/`doc` frame; the frame refreshes what derives from the stored version (the overview). Editors do not need it: they already hold the text.
 
 A deferred PostgreSQL constraint refuses an operation transaction that commits without its receipt, rolling back root/nodes/history/events together. Operation-specific authorization is enforced even when the legacy room-auth flag is disabled.
 
