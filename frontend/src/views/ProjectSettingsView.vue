@@ -327,12 +327,14 @@ function close() {
 
 <style scoped>
 /* 这一页各块的窄屏排法按内容列有多宽决定，不按窗口（docs/design-system.md §3.5）：
-   子组件（队友、环境变量）里的 @container 也量的是这一格。 */
+   子组件（队友、环境变量）里的 @container 也量的是这一格。
+   宽度和水平内距不在这里：这一页也住在浮层那一条内容列里（SettingsOverlay 的
+   `.so__content`，720 居中），四类设置页共用同一条，只留这一页自己的竖向节奏。 */
 .settings-page-body {
   display: flex;
   flex-direction: column;
   gap: 20px;
-  padding: 24px 32px 48px;
+  padding: 24px 0 48px;
 }
 .settings-head {
   display: flex;
@@ -410,7 +412,7 @@ function close() {
 }
 @media (max-width: 599.98px) {
   .settings-page-body {
-    padding: 16px 16px 32px;
+    padding: 16px 0 32px;
   }
   .page-section {
     padding: 16px;

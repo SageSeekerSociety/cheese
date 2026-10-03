@@ -1,5 +1,5 @@
 <template>
-  <div class="settings-page profile">
+  <div class="settings-page">
     <header class="profile__head">
       <div>
         <h1 class="t-page-title">{{ t('account.profile.title') }}</h1>
@@ -261,9 +261,9 @@ onMounted(ensureDefaultAvatarId)
 <style scoped src="@/styles/settings-card.css"></style>
 
 <style scoped>
-.profile {
-  max-width: var(--page-w-read);
-}
+/* 这一页不再自己设宽度：宽度和水平内距由浮层的内容列给（SettingsOverlay 的
+   `.so__content`，720 居中）。以前这里写死 `--page-w-read`（660），比别的设置页窄
+   一截，同一条内容列里只有它不一样。 */
 
 .profile__head {
   display: flex;

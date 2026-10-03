@@ -57,11 +57,13 @@ const { t } = useI18n()
 </script>
 
 <style scoped>
+/* 空间设置这一栏也住在浮层那一条内容列里（SettingsOverlay 的 `.so__content`，
+   720 居中）：宽度和水平内距不在这里，只留这一页自己的竖向节奏，四类设置页才对齐。 */
 .space-settings {
   display: flex;
   flex-direction: column;
   gap: 20px;
-  padding: 24px 32px 48px;
+  padding: 24px 0 48px;
 }
 
 .whose {
@@ -95,7 +97,7 @@ const { t } = useI18n()
 
 @media (max-width: 599.98px) {
   .space-settings {
-    padding: 16px 16px 32px;
+    padding: 16px 0 32px;
   }
 }
 </style>

@@ -833,3 +833,143 @@ test.describe('房间输入框：下面那一行放得下，手指点得中', ()
     }
   });
 });
+
+// 设置浮层（`SettingsOverlay`）的外壳几何：「目录 + 内容列」一组居中（灰栏宽 max(264, (窗口−720)/2)），内容列最宽 720，
+// 关闭按钮右缘贴内容列右缘。这几条以前全都不成立 —— 灰栏随窗口长到 440，内容列贴着灰栏
+// 靠左、右边空出一大片，关闭按钮钉在窗口最右边（1280 宽时离内容右缘 64px，1920 宽时
+// 700 余 px）。四类设置页（个人、资料、项目、空间）各写各的宽度，同一条内容列里对不齐。
+// 量的都是渲染出来的盒子：这种错 vitest、typecheck、stylelint 全看不见。
+test.describe('设置浮层：目录和内容一组居中、关闭按钮不随内容滚走', () => {
+  // 量当前打开的设置页：灰栏、内容列、关闭按钮三个盒子，外加内容列在主滚动区里两侧的
+  // 留白。留白用 `clientWidth`（滚动条槽算在里面），居中的基准才是同一个宽度 —— 和
+  // 「管理后台 · 队列页宽档」那条一个量法。
+  async function overlayGeometry(page: Page) {
+    return page.evaluate(() => {
+      const box = (sel: string) => {
+        const el = document.querySelector(sel);
+        if (!el) return null;
+        const r = el.getBoundingClientRect();
+        return { left: r.left, right: r.right, width: r.width, top: r.top, height: r.height };
+      };
+      const main = document.querySelector<HTMLElement>('.so__main');
+      const content = document.querySelector('.so__content');
+      let gaps: { left: number; right: number } | null = null;
+      if (main && content) {
+        const mr = main.getBoundingClientRect();
+        const cr = content.getBoundingClientRect();
+        gaps = { left: cr.left - mr.left, right: mr.left + main.clientWidth - cr.right };
+      }
+      return { side: box('.so__side'), content: box('.so__content'), close: box('.so__close'), gaps };
+    });
+  }
+
+  test('桌面三档：目录和内容列一组居中、内容列 720、关闭按钮贴内容右缘且不压页头', async ({ page }) => {
+    await apiLogin(page);
+    for (const width of [1280, 1440, 1920]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto('/users/settings/security');
+      await expect(page.locator('.so__content')).toBeVisible();
+      const g = await overlayGeometry(page);
+      const label = `${width}px`;
+
+      // 灰栏宽 max(264, (窗口 − 720) / 2)：够宽时「目录 + 内容列」一组居中，窄时守住 264。
+      expect(g.side, `${label}：没落在桌面外壳里`).not.toBeNull();
+      const sideWant = Math.max(264, (width - 720) / 2);
+      expect(Math.abs(g.side!.width - sideWant), `${label}：灰栏宽`).toBeLessThanOrEqual(3);
+
+      // 内容列最宽 720 —— 四类设置页共用同一条。
+      expect(g.content, `${label}：没有内容列`).not.toBeNull();
+      expect(Math.round(g.content!.width), `${label}：内容列宽`).toBe(720);
+
+      // 内容列贴着分界线，不再漂到主区中间和目录隔开一大段。
+      expect(Math.abs(g.content!.left - g.side!.right), `${label}：内容列没贴着分界线`).toBeLessThanOrEqual(3);
+
+      // 够宽时左边灰栏和右边留白一样宽（右边扣掉滚动条槽，容差放到 16）。
+      if (width >= 1440) {
+        expect(g.gaps, `${label}：量不到主区`).not.toBeNull();
+        expect(Math.abs(g.side!.width - g.gaps!.right), `${label}：目录和内容这一组没居中`).toBeLessThanOrEqual(16);
+      }
+
+      // 关闭按钮右缘贴内容列右缘，并且整颗落在内容上方的内距里，不压页头的按钮。
+      expect(g.close, `${label}：没有关闭按钮`).not.toBeNull();
+      expect(Math.abs(g.close!.right - g.content!.right), `${label}：关闭按钮没贴内容右缘`).toBeLessThanOrEqual(3);
+      const headTop = await page.evaluate(() => {
+        const first = document.querySelector('.so__content > *');
+        const kids = first ? [...first.querySelectorAll('h1, h2, button, a')] : [];
+        return kids.length ? Math.min(...kids.map((k) => k.getBoundingClientRect().top)) : Infinity;
+      });
+      expect(g.close!.top + g.close!.height, `${label}：关闭按钮压到了页头`).toBeLessThanOrEqual(headTop + 1);
+    }
+  });
+
+  test('同一宽度下，四类设置页的内容列左右缘一致', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await apiLogin(page);
+    await openFirstProject(page);
+    const projectPath = new URL(page.url()).pathname.match(/^\/projects\/[^/]+/)?.[0];
+    expect(projectPath).toBeTruthy();
+
+    const paths = [
+      '/users/settings/security',
+      '/users/settings/profile',
+      '/users/settings/devices',
+      `${projectPath}/settings/agents`,
+    ];
+    const seen: { path: string; left: number; width: number }[] = [];
+    for (const path of paths) {
+      await page.goto(path);
+      await expect(page.locator('.so__content')).toBeVisible();
+      const g = await overlayGeometry(page);
+      expect(g.content, `${path}：没有内容列`).not.toBeNull();
+      seen.push({ path, left: g.content!.left, width: g.content!.width });
+    }
+    // 资料页原来写死 660（`--page-w-read`）、项目设置页原来没上限，都对不上别的页。
+    for (const s of seen) {
+      expect(Math.abs(s.left - seen[0].left), `${s.path}：内容列左缘`).toBeLessThanOrEqual(2);
+      expect(Math.abs(s.width - seen[0].width), `${s.path}：内容列宽`).toBeLessThanOrEqual(2);
+    }
+  });
+
+  test('平板 768：内容列 720 居中', async ({ page }) => {
+    await apiLogin(page);
+    await page.setViewportSize({ width: 768, height: 900 });
+    await page.goto('/users/settings/profile');
+    await expect(page.locator('.so__content')).toBeVisible();
+    const gaps = await page.evaluate(() => {
+      const phone = document.querySelector<HTMLElement>('.so__phone');
+      const content = document.querySelector('.so__content');
+      if (!phone || !content) return null;
+      const pr = phone.getBoundingClientRect();
+      const cr = content.getBoundingClientRect();
+      return { left: cr.left - pr.left, right: pr.left + phone.clientWidth - cr.right };
+    });
+    // 窄于 960 是手机外壳（没有灰栏）：内容列铺到自己的 720 上限后就该居中，
+    // 以前它贴着左边，右边空一整条。
+    expect(gaps, '768px：没落在手机外壳里').not.toBeNull();
+    expect(Math.abs(gaps!.left - gaps!.right), '768px：内容列没居中').toBeLessThanOrEqual(8);
+  });
+
+  test('往下滚一屏，关闭按钮仍在视口里、位置不变', async ({ page }) => {
+    await apiLogin(page);
+    await page.setViewportSize({ width: 1280, height: 480 });
+    await page.goto('/users/settings/security');
+    await expect(page.locator('.so__close')).toBeVisible();
+    const before = await page.locator('.so__close').boundingBox();
+    expect(before).not.toBeNull();
+
+    // 真的滚了一屏：这一页不滚的话下面量的就不是「滚了还在」。
+    const scrolled = await page.locator('.so__main').evaluate((el) => {
+      el.scrollTop = el.clientHeight;
+      return { top: el.scrollTop, canScroll: el.scrollHeight > el.clientHeight + 1 };
+    });
+    expect(scrolled.canScroll, '这一页不滚，这一条等于没做').toBeTruthy();
+    expect(scrolled.top, '没滚下去').toBeGreaterThan(0);
+
+    await expect(page.locator('.so__close')).toBeVisible();
+    const after = await page.locator('.so__close').boundingBox();
+    expect(after).not.toBeNull();
+    expect(Math.abs(after!.y - before!.y), '关闭按钮跟着内容滚走了').toBeLessThanOrEqual(1);
+    expect(after!.y, '关闭按钮滚出了视口').toBeGreaterThanOrEqual(0);
+    expect(after!.y + after!.height, '关闭按钮滚出了视口').toBeLessThanOrEqual(480);
+  });
+});

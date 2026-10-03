@@ -381,9 +381,8 @@ onMounted(() => {
 <style scoped src="@/styles/settings-card.css"></style>
 
 <style scoped>
-.realname {
-  max-width: var(--page-w-read);
-}
+/* 不再自己设宽度：这一页也在浮层那一条 720 居中的内容列里（SettingsOverlay 的
+   `.so__content`），和别的设置页同宽。 */
 
 .realname__pending {
   min-height: 296px;
