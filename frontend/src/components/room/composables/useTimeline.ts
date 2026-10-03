@@ -18,10 +18,13 @@ import type { BlockWindow } from '../../../lib/blockPaging'
 
 import { ref } from 'vue'
 
-import { joinNewest, prependOlder } from '../../../lib/blockPaging'
+import { joinNewest, placeBlock, prependOlder } from '../../../lib/blockPaging'
 
-/** 新来的一块落在哪：显示出来了、收在背后的最新一段里、还是本来就有。 */
-export type Landing = 'shown' | 'held' | 'known'
+/**
+ * 新来的一块落在哪：显示出来了、收在背后的最新一段里、本来就有，还是比这一段更早、
+ * 留给往上翻的那一页带回来（见 placeBlock）。
+ */
+export type Landing = 'shown' | 'held' | 'known' | 'above'
 
 export function useTimeline() {
   /** 显示着的块，从旧到新。 */
@@ -55,15 +58,25 @@ export function useTimeline() {
     return messages.value.find((m) => m.id === id)
   }
 
-  /** 新来的一块接到最新一段的末尾。停在中间时它收在背后，不显示。 */
+  /** 新来的一块按时间落进最新一段。停在中间时它收在背后，不显示。 */
   function append(block: Block): Landing {
     if (newestHeld) {
       if (newestHeld.blocks.some((m) => m.id === block.id)) return 'known'
-      newestHeld.blocks.push(block)
+      const placed = placeBlock(newestHeld, block)
+      if (!placed) return 'above'
+      newestHeld = { ...newestHeld, blocks: placed }
       return 'held'
     }
     if (messages.value.some((m) => m.id === block.id)) return 'known'
-    messages.value.push(block)
+    const last = messages.value.at(-1)
+    // 平常新来的都比末尾那块新：原地接上，不换掉整个数组。
+    if (!last || Date.parse(block.created_at) >= Date.parse(last.created_at)) {
+      messages.value.push(block)
+      return 'shown'
+    }
+    const placed = placeBlock(current(), block)
+    if (!placed) return 'above'
+    messages.value = placed
     return 'shown'
   }
 
