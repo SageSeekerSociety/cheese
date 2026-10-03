@@ -741,6 +741,9 @@ async function onAnnotate(payload: AnnotateDraft) {
       <div>{{ t('work.room.preview.empty') }}</div>
     </div>
 
+    <!-- 这个房间里摆出来过的东西，以及把其中一份留进资料库的那个动作 (#1085 结
+         论四)。上面那块预览只看得到最后一样，而那个动作只有人能按。 -->
+    <RoomOutputs v-if="!path" :topic-id="topicId" @open="emit('open-file', $event)" />
     <PreviewLocator
       v-model:note="locatorNote"
       :target="imageRegion.target.value ? null : locator"
@@ -748,9 +751,6 @@ async function onAnnotate(payload: AnnotateDraft) {
       @send="sendLocator"
       @cancel="clearLocator"
     />
-    <!-- 这个房间里摆出来过的东西，以及把其中一份留进资料库的那个动作 (#1085 结
-         论四)。上面那块预览只看得到最后一样，而那个动作只有人能按。 -->
-    <RoomOutputs v-if="!path" :topic-id="topicId" @open="emit('open-file', $event)" />
 
     <v-dialog :model-value="!!editing" fullscreen @update:model-value="(open: boolean) => !open && closeEditor()">
       <RoomFileEditor
