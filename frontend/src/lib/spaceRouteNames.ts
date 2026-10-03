@@ -57,3 +57,10 @@ export const publishDoneRoute = (spaceId: number | string) => ({
   params: { spaceId },
   query: { filter: 'publishing' },
 })
+
+/** 空间设置里的「资料库」那一页。参考资料选择器里「上传到资料库」照它跳 ——
+ *  清单里没找着要的那份课件时，出口就在手边。
+ *
+ *  写的是路径不是路由名：这一条只是给不认得这块板的组件指路，而按名寻址要调用方
+ *  也装着一个认识那个名字的路由器，不值的。路径与 `router/spaces.ts` 的那一条一致。 */
+export const spaceLibraryPath = (spaceId: number | string) => `/spaces/${spaceId}/manage/settings/materials`

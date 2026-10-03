@@ -58,8 +58,6 @@
 
     <p v-else class="settings-empty">{{ t('spaces.detail.manageCategories.noCategories') }}</p>
 
-    <CategoryTeachingDialog :category="teachingCategory" @close="teachingCategory = null" />
-
     <!-- 创建/编辑分类对话框 -->
     <v-dialog v-model="dialogOpen" max-width="500">
       <v-card>
@@ -125,8 +123,6 @@ import { vuetifyConfig } from '@/utils/form'
 
 import { useSpaceData } from '@/composables/useSpaceData'
 
-import CategoryTeachingDialog from './CategoryTeachingDialog.vue'
-
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import SettingsToolbar from '@/components/spaces/SettingsToolbar.vue'
 import { useDialog } from '@/plugins/dialog'
@@ -142,8 +138,6 @@ const { confirm } = useDialog()
 // 表单相关
 const dialogOpen = ref(false)
 const editingCategory = ref<SpaceCategory | null>(null)
-/** 正在编辑「给芝士的指导」的那个分类。 */
-const teachingCategory = ref<SpaceCategory | null>(null)
 
 /** 一个分类那一行的 ⋯：归档了的只剩「恢复」和「删除」。 */
 function categoryActions(category: SpaceCategory): MenuAction[] {
@@ -158,12 +152,6 @@ function categoryActions(category: SpaceCategory): MenuAction[] {
           },
         ]
       : [
-          {
-            key: 'teaching',
-            label: t('spaces.detail.manageCategories.teaching.menu'),
-            icon: 'mdi-school-outline',
-            onSelect: () => (teachingCategory.value = category),
-          },
           {
             key: 'archive',
             label: t('spaces.detail.manageCategories.archiveCategory'),
