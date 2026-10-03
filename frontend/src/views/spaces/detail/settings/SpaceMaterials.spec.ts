@@ -4,7 +4,8 @@
 // （清单里刻意没有 url），改档之后拿服务端回来的那一版重画（不是本地猜），移除
 // 点两下才发请求，而且**服务端说不能管就没有那几个入口** —— 后端也挡（403），
 // 但入口不该先摆在那里让人点。引用计数那一格也一样：它是「撤之前心里有数」用的，
-// 只有能管的人看得见，判据是键在不在，不是数值多少。
+// 只有能管的人看得见 —— 判据是 `canManage`，服务端那一侧对能管的人一定补上这个键，
+// 键在不在只是防后端形状退回的保险。
 import { defineComponent, h } from 'vue'
 import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
 import { createVuetify } from 'vuetify'
@@ -180,6 +181,16 @@ describe('资料库页', () => {
     // 是 canManage，不只是「键在不在」** —— 后端哪天改了形状，界面也不该把「被几处
     // 引用」摆给一个改不了档、删不掉的人看。
     listMaterials.mockImplementation(async () => listed({ usedByCount: 3 }, false))
+    await mount()
+
+    expect(document.body.textContent).not.toContain('未被引用')
+    expect(document.body.textContent).not.toContain('处引用')
+  })
+
+  it('能管、但服务端没给这一格时宁可不摆，也不落一句假的「未被引用」', async () => {
+    // 服务端今天一定给能管的人补这个键，所以这条钉的是**保险**那一半：真到了没键的
+    // 那一天，`undefined > 0` 会落成「未被引用」——那是一句假话，比不摆更糟。
+    listMaterials.mockImplementation(async () => listed({}))
     await mount()
 
     expect(document.body.textContent).not.toContain('未被引用')

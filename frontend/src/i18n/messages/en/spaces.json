@@ -559,7 +559,7 @@
     },
     "uploadedOn": "Uploaded {date}",
     "downloads": "{n} downloads",
-    "usedBy": "Referenced in {n} places",
+    "usedBy": "Referenced in 1 place | Referenced in {n} places",
     "unused": "Not referenced",
     "toast": {
       "loadFailed": "Could not load the library",
