@@ -367,6 +367,39 @@ async def test_a_refused_subagent_tells_the_room_when_the_credits_come_back(clie
 
 
 @pytest.mark.anyio
+async def test_a_monthly_refusal_says_when_it_reopens(client):
+    """The proxy turns this into the reset headers Claude Code reads, so the
+    refused turn waits for the allowance to come back rather than retrying."""
+    from datetime import UTC, datetime
+
+    from app.domain.usage.ledger import Ledger, month_end, month_of, payer_for_project
+
+    pid = _make_project(client)
+    async with client.test_factory() as session:
+        await set_free_plan_credits(session, 1)
+        payer = await payer_for_project(session, uuid.UUID(pid))
+        await Ledger(session).record(
+            payer,
+            credits=1,
+            model="m",
+            input_tokens=1,
+            output_tokens=1,
+            cost_usd=0.0,
+            route="gateway",
+        )
+        await session.commit()
+    token = mint_scoped_token(project_id=pid)
+
+    body = client.post(
+        "/llm/admission", headers={"Authorization": f"Bearer {token}"}
+    ).json()["data"]
+
+    assert body["allow"] is False
+    resets = month_end(month_of(datetime.now(UTC)))
+    assert body["reopens_at"] == int(resets.timestamp())
+
+
+@pytest.mark.anyio
 async def test_admission_refusal_posts_nothing_with_no_turn_running(client):
     """No turn is in flight at this place — that is the turn-START refusal
     path's job (it already posts its own exhaustion notice), not admission's.

@@ -359,6 +359,14 @@ async def admission(
             "allow": refused is None,
             "reason": "admitted" if refused is None else str(refused.message),
             "reason_kind": "budget",
+            # The proxy turns this into the reset headers Claude Code reads, so
+            # a refused turn says when it can run again and is not retried
+            # before then.
+            "reopens_at": (
+                int(refused.reopens_at.timestamp())
+                if refused is not None and refused.reopens_at is not None
+                else None
+            ),
             "supply": supply,
         }
     )
