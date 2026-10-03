@@ -6,10 +6,17 @@ the backend cannot pick the language: it says **which** sentence and **with
 what**, and the reader's screen renders it
 (``frontend/src/lib/noticeText.ts``, catalog ``roomNotice``).
 
-The finished Chinese sentence is still stored as ``content``. Everything that
-is not a screen reads that: the agents reading their room, browser push and the
-desktop app (the server does not know the recipient's language), and any row
-written before a line had a key.
+The finished Chinese sentence is still stored as ``content``. The agents
+reading their room read that, and so does anything that meets a row written
+before a line had a key.
+
+What reaches one person away from a screen — browser push, the desktop app's
+system notifications — is rendered here instead, in that person's own language
+(``user.language``, see :func:`render`): it is one recipient, and nothing has
+to change once it is shown. Web Push has nothing like APNs ``loc-key``: the
+payload is encrypted for the browser and shown as it arrives, so the words are
+chosen on the server. The few words a push puts around the line (``pushInRoom`` and
+the like, ``notification/push.py``) are sentences of ``roomNotice`` too.
 
 ``say()`` returns a :class:`NoticeText`, which *is* that Chinese string — every
 function between the call site and the database keeps taking ``str`` — and
@@ -31,18 +38,20 @@ Anything done to a :class:`NoticeText` as a string (``+``, an f-string,
 ``.strip()``) returns a plain ``str`` and loses the key, which is the honest
 result: that text is no longer the catalog's sentence.
 
-``notice_messages.json`` holds the Chinese templates. The frontend's
-``zh-CN/roomNotice.json`` holds the same ones and a test keeps the two equal, so
-what the room stores and what a screen renders cannot say different things.
+The templates are the frontend's catalogs, read from where they are written
+(``frontend/src/i18n/messages/<locale>/roomNotice.json``): there is one copy, so
+what the room stores, what a screen renders and what a push says cannot say
+different things. The backend image carries those files at the same place
+relative to this module (``backend/Dockerfile``, the ``i18n`` build context).
 
 A refusal is a sentence too. An error raised with ``say()`` as its message
 (``raise ValidationError(say("inviteSelf"))``) goes out with its key beside the
 Chinese ``message`` in the error body (``error.i18n``, see
 ``app/core/errors.py``), and the browser shows it in its reader's language.
-Those sentences live in ``error_messages.json``, mirrored by the frontend
-catalog ``apiError``: they are shown in a toast or a form, not in a room. The
-two files share one key space, so a key names one sentence wherever it is
-said — an error's sentence can also end up in a room line.
+Those sentences live in the catalog ``apiError``: they are shown in a toast or
+a form, not in a room. The two catalogs share one key space, so a key names one
+sentence wherever it is said — an error's sentence can also end up in a room
+line.
 """
 
 from __future__ import annotations
@@ -56,14 +65,27 @@ from typing import Final
 I18N_META_KEY: Final = "i18n"
 
 
-def _templates(name: str) -> dict[str, str]:
-    return json.loads(Path(__file__).with_name(name).read_text(encoding="utf-8"))
+#: The frontend's catalogs. Four levels up is the repository root in a
+#: checkout, and the filesystem root in the backend image, where the Dockerfile
+#: puts the same files under the same relative path.
+CATALOG_DIR: Final = (
+    Path(__file__).resolve().parents[4] / "frontend" / "src" / "i18n" / "messages"
+)
+
+#: The UI languages a person can pick (``frontend/src/i18n/index.ts``). The
+#: stored sentence is in the first.
+LOCALES: Final = ("zh-CN", "en")
 
 
-#: key → Chinese template of a room line, from ``notice_messages.json``.
-NOTICE_MESSAGES: Final[dict[str, str]] = _templates("notice_messages.json")
-#: key → Chinese template of an error, from ``error_messages.json``.
-ERROR_MESSAGES: Final[dict[str, str]] = _templates("error_messages.json")
+def _templates(locale: str, namespace: str) -> dict[str, str]:
+    path = CATALOG_DIR / locale / f"{namespace}.json"
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+#: key → Chinese template of a room line, from ``roomNotice``.
+NOTICE_MESSAGES: Final[dict[str, str]] = _templates("zh-CN", "roomNotice")
+#: key → Chinese template of an error, from ``apiError``.
+ERROR_MESSAGES: Final[dict[str, str]] = _templates("zh-CN", "apiError")
 if NOTICE_MESSAGES.keys() & ERROR_MESSAGES.keys():
     raise RuntimeError(
         "a key is both a room line and an error: "
@@ -75,6 +97,24 @@ if NOTICE_MESSAGES.keys() & ERROR_MESSAGES.keys():
 #: (``<@handle>``), never literal text: vue-i18n reads a bare ``@`` as a linked
 #: message.
 MESSAGES: Final[dict[str, str]] = {**NOTICE_MESSAGES, **ERROR_MESSAGES}
+
+#: locale → how one item of a quoted listing is written (``global.listItemQuoted``,
+#: the template the frontend quotes with).
+QUOTED_ITEM: Final[dict[str, str]] = {
+    locale: _templates(locale, "global")["listItemQuoted"] for locale in LOCALES
+}
+
+#: locale → key → template, both catalogs.
+TEMPLATES: Final[dict[str, dict[str, str]]] = {
+    "zh-CN": MESSAGES,
+    **{
+        locale: {
+            **_templates(locale, "roomNotice"),
+            **_templates(locale, "apiError"),
+        }
+        for locale in LOCALES[1:]
+    },
+}
 
 #: Keys that only replay stored room/notification descriptors; new notices must
 #: not say them. Ordinary comments no longer schedule agent turns, and agents no
@@ -286,3 +326,55 @@ def notice_message(meta: Mapping | None) -> dict:
     beside its Chinese ``content`` so the reader's screen can render it."""
     keys = (meta or {}).get(I18N_META_KEY) or {}
     return {"message": keys["content"]} if "content" in keys else {}
+
+
+def render(descriptor: object, locale: str | None) -> str | None:
+    """The sentence a stored key names, said in ``locale``.
+
+    None when it cannot be said there — an unknown locale (a person who never
+    picked one), a key or a nested key that language does not have, parameters
+    that do not fit — and the caller shows the stored Chinese text, as a screen
+    does. A nested sentence is said in the same language, never half in one and
+    half in the other."""
+    templates = TEMPLATES.get(locale or "")
+    if locale is None or templates is None or not isinstance(descriptor, Mapping):
+        return None
+    try:
+        return _render(descriptor, templates, locale)
+    except (KeyError, IndexError, TypeError, ValueError, AttributeError):
+        return None
+
+
+def _render(descriptor: Mapping, templates: Mapping[str, str], locale: str) -> str:
+    params = dict(descriptor.get("params") or {})
+    return templates[str(descriptor["key"])].format(
+        **{name: _rendered(value, templates, locale) for name, value in params.items()}
+    )
+
+
+def _rendered(value: object, templates: Mapping[str, str], locale: str) -> object:
+    if isinstance(value, Mapping) and isinstance(value.get("list"), list):
+        items = [str(_rendered(item, templates, locale)) for item in value["list"]]
+        if value.get("quoted"):
+            items = [QUOTED_ITEM[locale].format(item=item) for item in items]
+        return _joined(items, locale)
+    if isinstance(value, Mapping):
+        return _render(value, templates, locale)
+    if isinstance(value, list):
+        return "\n".join(str(_rendered(item, templates, locale)) for item in value)
+    return value
+
+
+def _joined(items: list[str], locale: str) -> str:
+    """``items`` as one phrase, the way a screen joins them
+    (``Intl.ListFormat``: Chinese narrow, English long)."""
+    if locale != "en":
+        return "、".join(items)
+    if len(items) < 3:
+        return " and ".join(items)
+    return ", ".join(items[:-1]) + ", and " + items[-1]
+
+
+def in_language(sentence: NoticeText, locale: str | None) -> str:
+    """``sentence`` in ``locale``, or in Chinese when that language lacks it."""
+    return render(sentence.descriptor(), locale) or str(sentence)

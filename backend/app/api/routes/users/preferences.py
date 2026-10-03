@@ -171,7 +171,6 @@ async def get_user_settings(
     settings = {
         "emailNotification": True,
         "pushNotification": True,
-        "language": "zh-CN",
         "theme": "light",
     }
     return {"code": 200, "message": "OK", "data": {"settings": settings}}
@@ -191,7 +190,6 @@ async def update_user_settings(
     settings = {
         "emailNotification": payload.get("emailNotification", True),
         "pushNotification": payload.get("pushNotification", True),
-        "language": payload.get("language", "zh-CN"),
         "theme": payload.get("theme", "light"),
     }
     return {"code": 200, "message": "OK", "data": {"settings": settings}}

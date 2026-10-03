@@ -21,8 +21,9 @@ from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.notification.models import NotificationType
-from app.domain.notification.push import PUSHABLE, push_link, push_text
+from app.domain.notification.push import PUSHABLE, away_text, push_link, push_text
 from app.domain.notification.repositories import NotificationRepository
+from app.domain.user.services import languages_by_ids
 
 #: At most this many are handed over at once: back from a night asleep, the
 #: system's notification list should not fill up.
@@ -65,16 +66,24 @@ async def notices_after(db: AsyncSession, user_id: int, after: int | None) -> di
     """What browser push would have said to `user_id` since notice `after`, newest
     `NOTICES_AT_ONCE` of them, unread only; and where that leaves off. With no
     `after`, only where "now" is: a first connection is shown nothing from before.
+
+    Said in the person's language, read each time: switching it on the page
+    changes the next notice, with no reconnect. ``away`` is the one line the app
+    shows instead when several came while it was away.
     """
     repo = NotificationRepository(db)
     latest = await repo.latest_id_for_user(user_id, PUSHABLE)
     if after is None:
         return {"latest": latest, "items": []}
+    locale = (await languages_by_ids(db, [user_id])).get(user_id)
     items = []
     for row in await repo.pushable_after(user_id, PUSHABLE, after, NOTICES_AT_ONCE):
         payload = row.metadata_payload or {}
-        title, body = push_text(NotificationType(row.type), payload)
+        title, body = push_text(NotificationType(row.type), payload, locale)
         items.append(
             {"id": row.id, "title": title, "body": body, "url": push_link(payload)}
         )
-    return {"latest": max(latest or after, after), "items": items}
+    frame: dict = {"latest": max(latest or after, after), "items": items}
+    if items:
+        frame["away"] = away_text(len(items), locale)
+    return frame

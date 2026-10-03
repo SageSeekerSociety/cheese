@@ -1,6 +1,7 @@
 //! The app's own connection to the server for the person's notices
 //! (backend/app/api/routes/notifications_live.py). It shows what browser push
-//! would have said as system notifications, the moment it is committed, and
+//! would have said as system notifications, the moment it is committed, in the
+//! words the server sends — already in the person's language — and
 //! keeps the count of things waiting on the icon. It needs no page: a closed
 //! window, a frozen web view or a page on another screen changes nothing.
 //!
@@ -52,7 +53,14 @@ struct Credential {
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 enum Frame {
-    Notices { latest: Option<u64>, items: Vec<Notice> },
+    Notices {
+        latest: Option<u64>,
+        items: Vec<Notice>,
+        /// The one line for a backlog, in the person's language. A server from
+        /// before it was sent has none; the Chinese line below stands in.
+        #[serde(default)]
+        away: Option<String>,
+    },
     Waiting { count: u32 },
     Beat,
 }
@@ -166,9 +174,9 @@ async fn listen_once(app: &AppHandle, credential: &Credential) -> Ended {
             _ => continue,
         };
         match serde_json::from_str::<Frame>(&text) {
-            Ok(Frame::Notices { latest, items }) => {
+            Ok(Frame::Notices { latest, items, away }) => {
                 if backlog && items.len() > ONE_BY_ONE {
-                    let title = format!("离开期间有 {} 条新通知", items.len());
+                    let title = away.unwrap_or_else(|| format!("离开期间有 {} 条新通知", items.len()));
                     resident::show_notice(app, title, String::new(), "/inbox".into());
                 } else {
                     for notice in items {
@@ -221,9 +229,11 @@ mod tests {
     #[test]
     fn reads_every_frame_the_server_sends() {
         let notices = r#"{"kind":"notices","latest":7,"items":[{"id":7,"title":"用哪个数据库？","body":"在「迁移」","url":"/projects/p/topics/t"}]}"#;
-        assert!(matches!(serde_json::from_str(notices), Ok(Frame::Notices { latest: Some(7), items }) if items.len() == 1));
+        assert!(matches!(serde_json::from_str(notices), Ok(Frame::Notices { latest: Some(7), items, .. }) if items.len() == 1));
+        let away = r#"{"kind":"notices","latest":9,"items":[],"away":"4 new notifications while you were away"}"#;
+        assert!(matches!(serde_json::from_str(away), Ok(Frame::Notices { away: Some(line), .. }) if line.starts_with("4 new")));
         let first = r#"{"kind":"notices","latest":null,"items":[]}"#;
-        assert!(matches!(serde_json::from_str(first), Ok(Frame::Notices { latest: None, .. })));
+        assert!(matches!(serde_json::from_str(first), Ok(Frame::Notices { latest: None, away: None, .. })));
         assert!(matches!(serde_json::from_str(r#"{"kind":"waiting","count":3}"#), Ok(Frame::Waiting { count: 3 })));
         assert!(matches!(serde_json::from_str(r#"{"kind":"beat"}"#), Ok(Frame::Beat)));
     }

@@ -98,25 +98,28 @@
   margin-bottom: 2px;
 }
 /* 续话不重复署名。鼠标设备在同一行的 header 内留出动作位置，正文仍用整宽；
-   留白在悬停之前就存在，指针进入不会把内容推开。触屏仍走长按操作面板。 */
+   留白在悬停之前就存在，指针进入不会把内容推开。触屏仍走长按操作面板。
+   还没落库的那一行（--pending：发送中、队友正在写）没有动作，也留同样的位置：
+   落库时它被换成真的那一条，两行差一个 header 的高度，停在底部的人就看见整栏
+   往上跳一下。 */
 .im-row--cont .im-meta {
   display: none;
 }
 @media (hover: hover) {
-  .im-row[data-actions] .im-meta {
+  .im-row:is([data-actions], .im-row--pending) .im-meta {
     display: flex;
     flex-wrap: wrap;
     min-height: 28px;
     padding-right: 148px;
   }
-  .im-row[data-actions] .im-meta .im-name {
+  .im-row:is([data-actions], .im-row--pending) .im-meta .im-name {
     min-width: 0;
     overflow-wrap: anywhere;
   }
   /* 310px 列扣掉 gutter/padding 后有240px正文：完整动作148px之外
      还能给署名92px。再窄时只留28px更多入口和8px间隔。 */
   @container chat-timeline (width < 310px) {
-    .im-row[data-actions] .im-meta {
+    .im-row:is([data-actions], .im-row--pending) .im-meta {
       padding-right: 36px;
     }
   }

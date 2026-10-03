@@ -15,6 +15,7 @@ from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from app.common.auth import create_access_token
+from app.domain.block.notice_text import notice_message, say, with_keys
 from app.domain.notification.handlers import (
     InAppNotificationHandler,
     NotificationDelivery,
@@ -111,6 +112,41 @@ def test_a_notice_reaches_the_open_connection_with_the_pushs_words(client):
     assert [(i["title"], i["body"], i["url"]) for i in live["items"]] == [
         ("用哪个数据库？", "在「迁移」", "/projects/p1/topics/t1")
     ]
+
+
+def test_the_app_speaks_the_language_the_person_picked(client):
+    user_id, _, page = _signed_in(client, "eli")
+    resp = client.put(
+        "/users/me/language",
+        json={"language": "en"},
+        headers={"Authorization": f"Bearer {page}"},
+    )
+    assert resp.status_code == 200, resp.text
+    notices = _notices_token(client, page)
+    headers = {"Authorization": f"Bearer {notices}"}
+
+    with client.websocket_connect("/notifications/live", headers=headers) as ws:
+        ws.send_json({"after": None})
+        stopped_at = _next(ws, "notices")["latest"] or 0
+
+    line = say("acceptReady", pr=7, reviewer="ana")
+    room_notice = {
+        "content": str(line),
+        "topicTitle": "迁移",
+        **notice_message(with_keys(None, content=line)),
+    }
+    _deliver(client, user_id, NotificationType.ROOM_NOTICE, room_notice)
+    _deliver(client, user_id, NotificationType.CHEESE_QUESTION, QUESTION)
+
+    with client.websocket_connect("/notifications/live", headers=headers) as ws:
+        ws.send_json({"after": stopped_at})
+        missed = _next(ws, "notices")
+
+    assert [(i["title"], i["body"]) for i in missed["items"]] == [
+        ("PR #7 is ready to merge, waiting for ana to accept", "In “迁移”"),
+        ("用哪个数据库？", "In “迁移”"),
+    ]
+    assert missed["away"] == "2 new notifications while you were away"
 
 
 def test_coming_back_hands_over_what_came_meanwhile_once(client):

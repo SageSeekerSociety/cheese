@@ -612,6 +612,7 @@ routes:
   - {protocol: "http", method: "GET", path: "/connector/pi/{version}/{platform}/pi.tar.gz", auth: "public.catalogue", owner: "installer"}
   - {protocol: "http", method: "GET", path: "/connector/toolchain/{tool}/{platform}/artifact", auth: "public.catalogue", owner: "installer"}
   - {protocol: "http", method: "GET", path: "/connector/latest/{target}/{name}", auth: "public.catalogue", owner: "installer"}
+  - {protocol: "http", method: "HEAD", path: "/connector/latest/{target}/{name}", auth: "public.catalogue", owner: "installer"}
   # app.api.routes.integrations
   - {protocol: "http", method: "GET", path: "/me/integrations", auth: "integration.person", owner: "integration"}
   - {protocol: "http", method: "POST", path: "/me/integrations/mail", auth: "integration.person", owner: "integration"}
@@ -1102,6 +1103,7 @@ routes:
   - {protocol: "http", method: "GET", path: "/users/registration-config", auth: "legacy.users.get_registration_config", owner: "user"}
   - {protocol: "http", method: "POST", path: "/users", auth: "legacy.users.register_user", owner: "user"}
   - {protocol: "http", method: "GET", path: "/users/me", auth: "legacy.answers.list_answers", owner: "user"}
+  - {protocol: "http", method: "PUT", path: "/users/me/language", auth: "user.session", owner: "user"}
   - {protocol: "http", method: "POST", path: "/users/me/email/code", auth: "legacy.users.send_add_email_code", owner: "user"}
   - {protocol: "http", method: "POST", path: "/users/me/email", auth: "legacy.users.send_add_email_code", owner: "user"}
   - {protocol: "http", method: "GET", path: "/users/me/auth-methods", auth: "legacy.answers.list_answers", owner: "user"}

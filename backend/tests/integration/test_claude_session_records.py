@@ -219,6 +219,68 @@ def test_a_long_command_gets_the_progress_reminder_written_to_the_session(
         assert _until_done(ws)[-1]["type"] == "done"
 
 
+def test_a_message_read_inside_the_running_turn_ends_with_it(
+    client, stub_hooks, monkeypatch, caplog
+):
+    """A message that reaches the session while it is in the middle of a turn
+    is read at that turn's next tool boundary and answered inside it. When that
+    turn ends, so does the message's own: its turn has an end time, and the
+    agent is not reminded about a person it has already answered."""
+    chat = client.app.dependency_overrides[get_chat_service]()
+    prompts: list[str] = []
+
+    def turn(topic, prompt, reply, agent=None):
+        prompts.append(prompt)
+        if len(prompts) == 1:
+            stub_hooks.starts(topic)
+            stub_hooks.acknowledges(topic, prompt)
+            stub_hooks.uses(topic, "Bash", command="make test")
+
+    stub_hooks.emit_turn = turn
+    room = _room(client)
+    topic = uuid.UUID(room)
+    with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
+        post_message(client, room, "alice", {"content": "@芝士 跑一下测试"})
+        _until(
+            ws,
+            lambda f: f["type"] == "event_block" and "make test" in str(f["block"]),
+        )
+
+        # The room no longer counted the first turn as live when the next
+        # message came in, so it went to the session as a turn of its own.
+        async def no_live_turn(*_args, **_kwargs):
+            return None
+
+        monkeypatch.setattr(chat, "merge_into_running_turn", no_live_turn)
+        post_message(client, room, "alice", {"content": "@芝士 顺便跑一下 lint"})
+        assert _wait_for(client, room, lambda: len(prompts) == 2)
+
+        stub_hooks.returns(topic, "Bash", "42 passed")
+        stub_hooks.acknowledges(topic, prompts[1])
+        stub_hooks.says(topic, "测试和 lint 都过了")
+        stub_hooks.stops(topic, "测试和 lint 都过了")
+        assert _until_done(ws)[-1]["type"] == "done"
+
+    async def open_turns() -> list[AgentTurn]:
+        async with client.test_factory() as session:
+            return list(
+                await session.scalars(
+                    select(AgentTurn).where(
+                        AgentTurn.topic_id == topic, AgentTurn.stopped_at.is_(None)
+                    )
+                )
+            )
+
+    assert _wait_for(client, room, lambda: not asyncio.run(open_turns())), [
+        turn.content for turn in asyncio.run(open_turns())
+    ]
+
+    monkeypatch.setattr(settings, "chat_progress_reminder_after_s", 0)
+    with caplog.at_level("INFO", logger="app.domain.agent.chat"):
+        client.portal.call(chat.remind_silent_turns)
+    assert "chat progress reminder topic=" not in caplog.text
+
+
 def test_a_sub_threads_work_lands_on_its_card(client, stub_hooks):
     """Everything a worker does is on the card it was started for: the steps it
     prints on stdout, and those of an agent it starts in turn, which only that

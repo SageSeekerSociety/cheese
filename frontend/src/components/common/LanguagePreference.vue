@@ -11,7 +11,7 @@
       :model-value="current"
       :options="options"
       :label="t('navigation.userMenu.language')"
-      @update:model-value="setLocale"
+      @update:model-value="chooseLocale"
     />
   </div>
 </template>
@@ -23,7 +23,7 @@ import { computed } from 'vue'
 
 import SegmentedControl from './SegmentedControl.vue'
 
-import i18n, { LANGUAGE_NAMES, setLocale, t } from '@/i18n'
+import i18n, { chooseLocale, LANGUAGE_NAMES, t } from '@/i18n'
 
 const current = computed(() => i18n.global.locale.value as Locale)
 const options = (Object.keys(LANGUAGE_NAMES) as Locale[]).map((locale) => ({

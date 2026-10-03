@@ -225,6 +225,11 @@ function faceLabel(face: AgentFace | undefined): string | null {
   return `${label} · ${t('work.room.site.status.elapsed', { span })}`
 }
 
+// 读屏读到的那一句只有状态，不带秒数：头像的名字每秒一换，读屏就可能每秒再念一遍。
+function faceStatus(face: AgentFace | undefined): string | null {
+  return face?.status ? siteStatusLabel(face.status) : null
+}
+
 // Child rows emit the same events the panel listens for; the extra hop is what
 // keeps this component free of the room's own bookkeeping. Thin wrappers so the
 // template stays a table of rows instead of a wall of arrows.
@@ -337,6 +342,7 @@ function emitOutboxLeave(el: Element, done: () => void) {
           :cont="noticeCont[i]"
           :face="faceRows.get(m.id)?.state ?? null"
           :face-label="faceLabel(faceRows.get(m.id))"
+          :face-status="faceStatus(faceRows.get(m.id))"
           :time="fmtTime(notice.mode === 'agent-status' ? notice.updatedAt : m.created_at)"
           :agent-name="agentName"
           :refs="refs"
@@ -378,6 +384,7 @@ function emitOutboxLeave(el: Element, done: () => void) {
           :live="liveChecklists.has(m.id)"
           :face="faceRows.get(m.id)?.state ?? null"
           :face-label="faceLabel(faceRows.get(m.id))"
+          :face-status="faceStatus(faceRows.get(m.id))"
           :editing="editingId === m.id"
           :edit-text="editingId === m.id ? editableText(m.content, refs) : undefined"
           :saving="editSaving"

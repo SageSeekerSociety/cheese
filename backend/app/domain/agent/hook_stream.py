@@ -710,7 +710,7 @@ async def _consume_hook_event(
         )
         if payload is not None:
             frame = {"type": "event_block", "block": payload}
-    elif isinstance(event, AgentResult):
+    elif isinstance(event, AgentResult) and event.taken_into is None:
         error_line, error_code = "", None
         if event.session_id:
             await service._save_session_pointer(
@@ -802,6 +802,9 @@ async def _consume_hook_event(
         # correct answer either way.
         await service._close_open_turns(topic_id, turn_id)
         if state is not None:
+            if event.taken_into is not None:
+                # Its commits are the turn's that read it, which reports them.
+                state.known_commits = None
             try:
                 for close_frame in await service._close_hook_work(state, event):
                     await broker.publish(str(topic_id), close_frame)
@@ -820,8 +823,11 @@ async def _consume_hook_event(
                     # No coroutine owns this one, so there is no `finally`
                     # anywhere else to drop the marks it left in the runner.
                     work_runner.close_turn_the_session_started(turn_id)
-        elif event.is_error:
+        elif event.is_error and event.taken_into is None:
             await service._forget_room_claims(topic_id)
+        if event.taken_into is not None:
+            # The room was told when the turn that read it ended.
+            return
         if event.is_error:
             frame_out = error_frame(
                 error_line or event.text, type="error", persisted=True

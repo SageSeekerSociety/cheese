@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import DesignImage from './DesignImage.vue'
 
 import { setLocale } from '@/i18n'
+import { nextMillisecond } from '@/test/nextMillisecond'
 
 /** 原图 1000×500 上唯一的一块内容：自然像素 (150,150)-(250,250)。 */
 const BLOCK = { x: 150, y: 150, width: 100, height: 100 }
@@ -82,7 +83,7 @@ async function pickTool(ui: ReturnType<typeof render>, label: string) {
       ui.container.querySelector(`.sketch-toolbar__tool[aria-label="${label}"]`)?.getAttribute('aria-pressed')
     ).toBe('true')
   )
-  await new Promise((resolve) => setTimeout(resolve, 0))
+  await nextMillisecond()
 }
 
 /** 在屏上这个点上点一下（不拖）。 */

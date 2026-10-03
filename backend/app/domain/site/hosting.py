@@ -29,6 +29,16 @@ GRANT_TTL = 30
 SESSION_TTL = 8 * 3600
 AUTH_PATH = "/_cheese/session"
 
+# Content origins serve documents somebody else wrote. Shut the device surface on the
+# document itself — not on the embedding frame, and not by trusting the browser's
+# default for cross-origin frames. A document's own policy can only take features
+# away, so this answer holds however the page is reached: framed, in a tab of its
+# own, or from a host that later becomes same-origin with the platform.
+DEVICE_FEATURES_OFF = (
+    "camera=(), microphone=(), geolocation=(), display-capture=(), "
+    "accelerometer=(), gyroscope=(), magnetometer=()"
+)
+
 
 def content_origin(project_id: uuid.UUID) -> str:
     domain = settings.sites_domain.strip().lower()
@@ -103,6 +113,7 @@ def _private(response: Response) -> Response:
     response.headers["Cache-Control"] = "no-store"
     response.headers["Referrer-Policy"] = "no-referrer"
     response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Permissions-Policy"] = DEVICE_FEATURES_OFF
     # Keep localStorage and ordinary scripts, but prevent persistent interception
     # by a Service Worker after project membership is revoked.
     response.headers["Content-Security-Policy"] = (

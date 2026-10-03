@@ -1,5 +1,11 @@
 import { test, expect } from "@playwright/test";
-import { DEMO_USERNAME, DEMO_PASSWORD } from "./helpers";
+import { DEMO_USERNAME, DEMO_PASSWORD, setDemoLanguage } from "./helpers";
+
+// Signing in shows the language kept on the account; these scenarios read
+// Chinese unless they pick another one on the page.
+test.beforeEach(async ({ page }) => {
+  await setDemoLanguage(page, "zh-CN");
+});
 
 test.describe("Login", () => {
   test("valid credentials sign the user in and land on the authenticated app shell", async ({
@@ -127,13 +133,24 @@ test.describe("English login", () => {
     await page.getByLabel("Password", { exact: true }).fill(DEMO_PASSWORD);
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
 
+    // The account kept Chinese; English picked on this browser wins, and is
+    // what the account keeps from now on.
     await expect(page.getByText("Signed in", { exact: true })).toBeVisible();
     await page
       .locator(".app-rail-item:not(.app-rail-item--add)")
       .first()
       .waitFor();
-    expect(
-      await page.evaluate(() => localStorage.getItem("accessToken")),
-    ).toBeTruthy();
+    const accessToken = await page.evaluate(() =>
+      localStorage.getItem("accessToken"),
+    );
+    expect(accessToken).toBeTruthy();
+    await expect
+      .poll(async () => {
+        const me = await page.request.get("/api/users/me", {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        return (await me.json()).data.user.language;
+      })
+      .toBe("en");
   });
 });

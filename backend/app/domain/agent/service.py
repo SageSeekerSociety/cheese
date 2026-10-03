@@ -19,6 +19,7 @@ None means the session's own thread: a main thread's records carry no label at
 all, so absent IS the answer rather than a gap to reconcile.
 """
 
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -241,6 +242,10 @@ class AgentResult:
     harness: str | None = None
     # Successful native main-work completion, not cancellation or synthetic Stop.
     input_work_completed: bool = False
+    # A message the session read inside a turn already running has no ending
+    # of its own: it ends with that turn, which this names. The room heard
+    # that turn end; this ending only settles the message's own work.
+    taken_into: uuid.UUID | None = None
 
 
 @dataclass

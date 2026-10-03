@@ -172,4 +172,25 @@ describe('对话里在动的头像', () => {
 
     expect(view.queryAllByRole('button', { name: LIVE })).toEqual([])
   })
+
+  it('读屏读到的名字不随秒数变，秒数只在悬停的那一句里走', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
+    try {
+      const { view, socket } = await mount([earlier, ask, latest])
+      socket.emit({ type: 'turn_started', turn_id: 't1', agent: 'cheese-a1' })
+      await flush()
+      const live = view.getByRole('button', { name: LIVE })
+      const name = live.getAttribute('aria-label') ?? ''
+
+      vi.advanceTimersByTime(3000)
+      await flush()
+
+      // 名字一变，读屏就可能再念一遍：每秒念一次「已用 N 秒」。
+      expect(view.getByRole('button', { name })).toBe(live)
+      await fireEvent.mouseEnter(live)
+      await waitFor(() => expect(screen.getByText(/已用 3 秒/)).toBeTruthy())
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

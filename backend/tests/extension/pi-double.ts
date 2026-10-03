@@ -156,14 +156,33 @@ export function beforeAgentStart(cwd: string, options: any = {}) {
 
 const rubbish: string[] = [];
 
+// What a test leaves running when it fails before its own `close()`: a command
+// `machine()` started, and the socket listening for the extension. Either one
+// keeps this process alive, so a failed assertion would become a run that never
+// exits until CI's job timeout ends it. `cleanup` stops both, commands first,
+// since a running command also holds its output pipes open.
+const stillRunning = new Set<number>();
+const servers: net.Server[] = [];
+
 export function scratch(): string {
   const made = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ext-"));
   rubbish.push(made);
   return made;
 }
 
-/** Hand this to `after()` in every file that calls `scratch` or `load`. */
+/** Hand this to `after()` in every file that calls `scratch`, `load`, `runner`
+ *  or `machine`. */
 export function cleanup() {
+  for (const group of stillRunning) {
+    try {
+      process.kill(-group, "SIGKILL");
+    } catch {
+      /* gone */
+    }
+  }
+  stillRunning.clear();
+  for (const server of servers) server.close();
+  servers.length = 0;
   for (const directory of rubbish) {
     fs.rmSync(directory, { recursive: true, force: true });
   }
@@ -202,6 +221,7 @@ export async function runner(answer: (request: any) => any) {
     });
   });
   await new Promise<void>((done) => server.listen(address, done));
+  servers.push(server);
   return { address, asked, close: () => server.close() };
 }
 
@@ -231,7 +251,9 @@ export async function machine(other: (request: any) => any = () => ({ result: {}
       };
       child.stdout.on("data", take);
       child.stderr.on("data", take);
+      stillRunning.add(record.pid);
       child.on("close", (code, signal) => {
+        stillRunning.delete(record.pid);
         record.exit = code ?? -(signal === "SIGKILL" ? 9 : 15);
       });
       commands.set(id, record);

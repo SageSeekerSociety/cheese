@@ -18,10 +18,12 @@
 
 import uuid
 
-from app.domain.block.models import AuthorType
+from app.domain.agent.announce import notify_question
+from app.domain.block.models import AuthorType, Block
 from app.domain.block.repositories import BlockRepository
 from app.domain.room_task.presentation import NeedsYou
 from app.domain.topic.models import Topic
+from app.domain.topic.services import TopicService
 from tests.ask_fixtures import active_ask, legacy_question, wait_turn_idle
 from tests.conftest import seed_user
 from tests.integration.conftest import (
@@ -314,3 +316,122 @@ def test_answering_the_question_settles_its_notification(
         "/notifications/unread-count", headers={"Authorization": f"Bearer {alice}"}
     )
     assert unread.json()["data"]["count"] == 0
+
+
+def _say(client, room: str, text: str, handle: str = "alice") -> None:
+    """人在房间输入框里打了一句话发出去 —— 没点选项，走的是消息那条路。"""
+    r = client.post(
+        f"/topics/{room}/messages",
+        json={"content": text, "request_id": str(uuid.uuid4())},
+        headers=session_auth_headers(handle),
+    )
+    assert r.status_code == 200, r.text
+
+
+def _ask_an_old_question(
+    client, room: str, *, asked: str, question: str = "预算按哪个口径统计"
+) -> dict:
+    """迁移留下的非组题，连它那条通知一起 —— 旧代码问出口时通知就落下了。
+
+    合并后的提问入口一律建组，非组形状只剩数据库里已有的行，所以这道题和它的通知
+    都由测试摆出来；通知仍走生产那条路（`notify_question`），不是手写一条记录。
+    """
+    block = legacy_question(client, room, question=question, asked=asked)
+
+    async def notify() -> None:
+        async with client.test_factory() as session:
+            row = await session.get(Block, uuid.UUID(str(block["id"])))
+            assert row is not None
+            await notify_question(
+                session,
+                place=await TopicService(session).place_or_404(row.topic_id),
+                block=row,
+                question=row.content,
+                asker=row.author,
+                asked=asked,
+            )
+            await session.commit()
+
+    client.portal.call(notify)
+    return block
+
+
+def test_typing_a_reply_settles_a_legacy_question(client):
+    """没点选项、直接打字回了一句，也是回答：通知不再是未读，也不再说「待你回答」。
+
+    实况：被问的人在房间里打字答了，首页「动态」里那条还是未读，还写着「已暂停，
+    待你回答」。组题不走这条路（整组明确提交才算），所以这里用迁移留下的非组形状。
+    """
+    alice = seed_user(client, "alice")
+    pid, room = _room(client)
+    _ask_an_old_question(client, room, asked="alice")
+    assert _shown(client, pid, room)["phrase"] == NeedsYou.awaiting_answer
+    (before,) = _questions(client, alice)
+    assert before["read"] is False
+
+    _say(client, room, "按项目，外包单列")
+
+    assert _shown(client, pid, room)["phrase"] != NeedsYou.awaiting_answer
+    (row,) = _questions(client, alice)
+    assert row["read"] is True
+    assert row["contextMetadata"]["answered"] == "按项目，外包单列"
+    unread = client.get(
+        "/notifications/unread-count", headers={"Authorization": f"Bearer {alice}"}
+    )
+    assert unread.json()["data"]["count"] == 0
+
+
+def test_the_mention_in_a_typed_reply_is_not_part_of_the_answer(client):
+    """回话时点了队友的名，通知里记的回答只有他说的话，不带那个 @。"""
+    alice = seed_user(client, "alice")
+    _pid, room = _room(client)
+    _ask_an_old_question(client, room, asked="alice")
+
+    _say(client, room, f"<@{room_agent_seat(client, room)}> 按部门")
+
+    (row,) = _questions(client, alice)
+    assert row["contextMetadata"]["answered"] == "按部门"
+
+
+def test_a_long_typed_answer_is_shortened_in_the_notification(client):
+    """通知里的回答是一行说明，不是聊天记录 —— 太长就截到 `ANSWER_EXCERPT_CHARS`。"""
+    alice = seed_user(client, "alice")
+    _pid, room = _room(client)
+    _ask_an_old_question(client, room, asked="alice")
+    reply = "按项目统计，" + "外包和临时人员的费用都单独列一栏，" * 10
+
+    _say(client, room, reply)
+
+    (row,) = _questions(client, alice)
+    answered = row["contextMetadata"]["answered"]
+    assert answered.startswith("按项目统计，外包和临时人员")
+    assert answered.endswith("…")
+    assert len(answered) < len(reply)
+
+
+def test_only_the_next_message_is_the_answer(client):
+    """答完又接着说了几句：通知里记的还是回答那一句，不被后面的话改写。"""
+    alice = seed_user(client, "alice")
+    _pid, room = _room(client)
+    _ask_an_old_question(client, room, asked="alice")
+
+    _say(client, room, "按项目")
+    _say(client, room, "顺便把上个月的也重算一下")
+
+    (row,) = _questions(client, alice)
+    assert row["contextMetadata"]["answered"] == "按项目"
+
+
+def test_someone_else_typing_does_not_answer_for_the_person_asked(client):
+    """题问的是 bob；房间里 alice 说话不是他的回答。"""
+    seed_user(client, "alice")
+    bob = seed_user(client, "bob")
+    pid, room = _room(client)
+    _ask_an_old_question(client, room, asked="bob")
+
+    _say(client, room, "我觉得按部门")
+
+    assert _shown(client, pid, room)["phrase"] == NeedsYou.awaiting_answer
+    (row,) = _questions(client, bob)
+    assert row["read"] is False
+    assert "answered" not in row["contextMetadata"]

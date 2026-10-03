@@ -274,15 +274,19 @@ export const CATALOG: CatalogEntry[] = [
       },
       ...(
         [
-          ['think', '在想', '思考中 · 已用 6 秒'],
-          ['work', '在干活', '正在运行命令 · 已用 41 秒'],
-          ['stuck', '卡住了', '重试中（第 2 次） · 已用 1 分 12 秒'],
-          ['done', '做完了', null],
+          ['think', '在想', '思考中', ' · 已用 6 秒'],
+          ['work', '在干活', '正在运行命令', ' · 已用 41 秒'],
+          ['stuck', '卡住了', '重试中（第 2 次）', ' · 已用 1 分 12 秒'],
+          ['done', '做完了', null, ''],
         ] as const
-      ).map(([face, label, faceLabel]) => ({
+      ).map(([face, label, faceStatus, elapsed]) => ({
         name: `芝士的头像：${label}`,
         note: '队友在干活时，对话里它最近出现的那个头像跟着状态动；在动时点它去现场。',
-        props: roomMessageProps(CHEESE_LINES[0], { face, faceLabel }),
+        props: roomMessageProps(CHEESE_LINES[0], {
+          face,
+          faceLabel: faceStatus && faceStatus + elapsed,
+          faceStatus,
+        }),
         expect: '写完递验收卡给你',
       })),
       {

@@ -25,6 +25,9 @@ services:
     volumes:
       - ./backend:/app
       - /app/.venv
+      # The sentence catalogs the backend renders notices from, where
+      # app/domain/block/notice_text.py looks for them.
+      - ./frontend/src/i18n/messages:/frontend/src/i18n/messages:ro
     depends_on:
       postgres:
         condition: service_healthy

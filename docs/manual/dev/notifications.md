@@ -39,11 +39,11 @@ covers:
 - **入库时间是「现在」，不是事件发生的时刻**。收件箱按 `created_at DESC` 翻页，落一个旧时间戳会把这一条插进二十分钟前的位置——未读数加一，人打开收件箱却看不到新东西。事件发生的时刻记在账本的 `deliveries.event_at` 上。
 - **渠道说没收到，就不算送到**。`NotificationEventHandler.dispatch` 的返回值是「每个渠道都收下了」，而账本靠这个返回值决定回不回写 `sent_at`；吞掉一个渠道的异常还报成功，账本就会记下一笔根本没发出去的投递，而那正是补发要救的那一档。
 
-`build_notification_event_handler`（`publisher.py`）装配两个渠道：`InAppNotificationHandler` 和 `ChannelIntentHandler`。前者写站内行，**包在一个 savepoint 里**——只 try/except 不够：一个写库的 handler 可能在 flush 中途失败，那样整个共享 session 的事务在 Postgres 里已经废了，即使 Python 层抓住了异常，调用方之后的 commit 也会无声地坏掉；savepoint 把这个失败圈在它自己的写入里。后者（`outbox.py` 的 `ChannelIntentHandler`）只**记意图**：把每一笔展开成 `email` 行（类型在 `MAILBOX_ONLY` 里的除外）、以及（`push_enabled` 且类型在 `PUSHABLE` 里时）一行 `push`，带标题正文和 project/topic id，`on_conflict_do_nothing` 撞唯一约束 `uq_delivery_channel`。真正打网络是别的循环的事。
+`build_notification_event_handler`（`publisher.py`）装配两个渠道：`InAppNotificationHandler` 和 `ChannelIntentHandler`。前者写站内行，**包在一个 savepoint 里**——只 try/except 不够：一个写库的 handler 可能在 flush 中途失败，那样整个共享 session 的事务在 Postgres 里已经废了，即使 Python 层抓住了异常，调用方之后的 commit 也会无声地坏掉；savepoint 把这个失败圈在它自己的写入里。后者（`outbox.py` 的 `ChannelIntentHandler`）只**记意图**：把每一笔展开成 `email` 行（类型在 `MAILBOX_ONLY` 里的除外）、以及（`push_enabled` 且类型在 `PUSHABLE` 里时）一行 `push`，带按收件人语言写好的标题正文和 project/topic id，`on_conflict_do_nothing` 撞唯一约束 `uq_delivery_channel`。真正打网络是别的循环的事。
 
 `MAILBOX_ONLY` 目前只有 `SPACE_ANNOUNCEMENT`：一条空间公告同时发给全空间，按人发邮件就是一个班的信箱各收一封，它要的只是人回到平台时在「动态」里看得见。它也不在 `PUSHABLE` 里，所以只落站内那一行。
 
-账本另有三个事后的动作，都按事件 id 找回那件事发出去的每一笔（`deliveries.event_id` 上有索引）：`amend` 把已发出的收件箱行和账本行的 `payload` 换成新的说法，不改已读未读，也不再发一遍；`retract` 删掉收件箱行、外发意图和账本行；账本行留着的话，补发会把收件箱那一行写回来。`settle` 是那件事办完了：结果并进收件箱行和账本行的 `payload`，收件箱那一行标为已读并记下 `resolved_at`。公告的修改和删除走 `amend` 和 `retract`；芝士的提问被点选项答掉时走 `settle`（并进 `answered`），通知随之改说「已回答：…」，不再说「待你回答」。
+账本另有三个事后的动作，都按事件 id 找回那件事发出去的每一笔（`deliveries.event_id` 上有索引）：`amend` 把已发出的收件箱行和账本行的 `payload` 换成新的说法，不改已读未读，也不再发一遍；`retract` 删掉收件箱行、外发意图和账本行；账本行留着的话，补发会把收件箱那一行写回来。`settle` 是那件事办完了：结果并进收件箱行和账本行的 `payload`，收件箱那一行标为已读并记下 `resolved_at`。公告的修改和删除走 `amend` 和 `retract`；芝士的提问答掉时走 `settle`（并进 `answered`），通知随之改说「已回答：…」，不再说「待你回答」，图标也从警示色换成已回答的对勾。答掉有两条路：点选项，`answered` 是那一项；或者被问的人在同一条线上打字回了一句，问出口之后他说的第一句话就是回答，`answered` 是这句话去掉 `<@handle>` 后的前 40 个字（`settle_questions_answered_by`，判据和看板「待回答」的同一条）。
 
 ## 外发渠道：租约、重试、死信 {#outbox}
 
@@ -59,7 +59,7 @@ covers:
 
 这不是省事，是判据：芝士跑一轮会产生几十条消息，按消息推送就是几十条推送，人会直接把这个渠道关掉，之后真正要他动手的那一条也就收不到了。推送的价值全在「收到就意味着该我动了」。
 
-- **文字就是通知里的文字**。`push_text` 不另写一套措辞：`ROOM_NOTICE` 的标题是 `payload.content`（房间里那一行），`CHEESE_QUESTION` 的标题是芝士问的原话；正文只说「在哪个房间」，因为推送脱离上下文出现在系统通知栏里，而「是哪件工作」正是人判断要不要立刻打开的依据。站内通知和房间里那一行按读者选的语言渲染同一个键（`payload.message`，见 `block/notice_text.py`）；推送用的是那一行存下的中文，因为推送由服务端加密后发出，而读者选的语言只存在浏览器里。
+- **文字就是通知里的文字**。`push_text` 不另写一套措辞：`ROOM_NOTICE` 的标题是 `payload.content`（房间里那一行），`CHEESE_QUESTION` 的标题是芝士问的原话；正文只说「在哪个房间」，因为推送脱离上下文出现在系统通知栏里，而「是哪件工作」正是人判断要不要立刻打开的依据。站内通知和房间里那一行在读者的屏幕上按他选的语言渲染同一个键（`payload.message`，见 `block/notice_text.py`）；推送和桌面端通知由后端在记意图（`outbox.py`）和发帧（`live.py`）时按收件人的 `user.language` 渲染这个键，因为推送由服务端加密后发出，浏览器收到就原样显示。没选过语言的人、没带键或那种语言缺这一句的行，整条用存下的中文。
 - **服务端看不到内容**。Web Push 的正文由**浏览器的**密钥加密（`p256dh` / `auth`），服务端加密完就再也解不开。所以那张表存的不是「发过什么」，只是「往哪儿发、用哪把钥匙」。
 - **订阅是 upsert，而且要覆盖**（`PushSubscriptionRepository.save`）。同一个浏览器会反复订阅（权限重新授予、service worker 换代、清了站点数据又装回来），每次都换回同一个 endpoint；两把加密材料**可能变了**，拿旧钥匙加密的内容新浏览器解不开，症状是推送静默地不出现。`user_id` 也要覆盖：同一台机器换人登录，那个 endpoint 就属于新的人了。
 - **退订要带上自己的 id**。endpoint 唯一但它不是秘密——只按 endpoint 删，等于任何登录用户拿到别人的 endpoint 就能替他关掉推送。而投递发现订阅没了（404/410）时**不带**：那时判据来自服务商、和哪个人无关，那一行本来就该消失。

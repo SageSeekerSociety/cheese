@@ -757,6 +757,51 @@ class BlockRepository:
             return {place: (asked, selected[place]) for place, asked in waiting.items()}
         return waiting
 
+    async def questions_a_reply_answers(self, reply: Block) -> list[Block]:
+        """`reply` 这句话答掉的那几道题：同一条线上问他、还没人点过选项、而且问出口
+        之后他还没说过话的题。
+
+        判据和 `_awaiting_an_answer` 里「直接打字回了一句」是同一条：题问出来之后，
+        被问的那个人在这里说的第一句话就是回应。只认第一句 —— 他答完又接着说的话，
+        不再算是这道题的答案。只管非组题：组题的答案要整组明确提交（作答时那句回话
+        由 `ask_groups` 记在 `later` 一栏），看板的组题判据也只读 `answer_log`，这里
+        跟着读同一套就不会出现「通知说答了、房间还挂着」。作答记录本身按
+        `_awaiting_an_answer` 的两条一起读：少了 `answer_log`，从题目板答过的题会在
+        这里再被结一次。
+        """
+        place = self._in_place(reply.topic_id, reply.task_id)
+        spoke_before = (
+            select(func.max(Block.created_at))
+            .where(
+                *place,
+                Block.kind == BlockKind.message,
+                participant_blocks(),
+                Block.author == reply.author,
+                Block.id != reply.id,
+            )
+            .scalar_subquery()
+        )
+        stmt = (
+            select(Block)
+            .where(
+                *place,
+                QUESTION_ROWS,
+                Block.meta["ask_group"].as_string().is_(None),
+                Block.meta["asked"].as_string() == reply.author,
+                Block.meta["answered"].as_string().is_(None),
+                Block.id != reply.id,
+                or_(spoke_before.is_(None), Block.created_at > spoke_before),
+            )
+            .order_by(Block.created_at)
+        )
+        # `answer_log` 为空（还没有人答）没有作答的含义，所以按真值判断，不能按键
+        # 在不在 —— 和 `_awaiting_an_answer` 的判据一致。
+        return [
+            block
+            for block in (await self._session.scalars(stmt)).all()
+            if not (block.meta or {}).get("answer_log")
+        ]
+
     async def list_for_topic(
         self, topic_id: uuid.UUID, *, task_id: uuid.UUID | None = None
     ) -> list[Block]:

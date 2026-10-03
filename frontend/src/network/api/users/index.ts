@@ -125,6 +125,14 @@ export namespace UserApi {
       method: 'GET',
     })
 
+  /** The UI language the signed-in person picked; their notifications follow it. */
+  export const setLanguage = (language: string) =>
+    ApiInstance.request<{ language: string }>({
+      url: '/users/me/language',
+      method: 'PUT',
+      data: { language },
+    })
+
   export const getUserInfo = (userid: number) =>
     ApiInstance.request<GetUserInfoResponse>({
       // url: `https://stoplight.io/mocks/huanchengstudio/cheese/2398548/users/${userid}`,

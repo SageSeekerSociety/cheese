@@ -61,6 +61,8 @@ const props = defineProps<{
   face?: FaceState | null
   /** 头像在动时，悬停看到的那一句（现场顶上那一行）。 */
   faceLabel?: string | null
+  /** 头像在动时，读屏读到的那一句：只有状态，不带在走的秒数，免得每秒再念一遍。 */
+  faceStatus?: string | null
   /**
    * 这一条还没落库——已经在屏幕上，正在（或没能）送出去。淡一档，形状不变：
    * 它就是那条消息，不是另一种东西。`time` 那一格这时装的是送达状态。
@@ -79,6 +81,9 @@ const props = defineProps<{
 // 在动的头像：读出来和悬停看到的是「名字 · 它此刻在干什么」，点下去去现场。
 const personLabel = computed(() =>
   props.faceLabel ? t('work.agentAvatar.live', { name: props.authorName, status: props.faceLabel }) : props.authorName
+)
+const personName = computed(() =>
+  props.faceStatus ? t('work.agentAvatar.live', { name: props.authorName, status: props.faceStatus }) : props.authorName
 )
 
 const emit = defineEmits<{
@@ -174,7 +179,7 @@ async function onAgentTextClick(e: MouseEvent) {
         class="im-person"
         :data-handle="block.author"
         :data-site="faceLabel ? '' : undefined"
-        :aria-label="personLabel"
+        :aria-label="personName"
         :title="faceLabel ? undefined : personLabel"
       >
         <!-- 在动的头像那一句带着秒数，每秒换一次字。原生 title 一换字就收起再弹，
@@ -203,7 +208,7 @@ async function onAgentTextClick(e: MouseEvent) {
     <span v-if="outgoing && !runStart && time" class="im-pending-state">{{ time }}</span>
 
     <div class="im-main">
-      <div v-if="runStart || !outgoing" class="im-meta">
+      <div class="im-meta">
         <template v-if="runStart">
           <button type="button" class="im-name im-person" :data-handle="block.author">{{ authorName }}</button>
           <ExternalTag v-if="external && !isAgent" />

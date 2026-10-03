@@ -59,6 +59,7 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
         pulse: subscription.Pulse | None = None,
         memory: Callable[[], Awaitable[None]] | None = None,
         input_protocol: int | None = INPUT_PROTOCOL,
+        took: subscription.Took | None = None,
     ):
         super().__init__(
             session,
@@ -71,6 +72,7 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
             terminations=terminations,
             pulse=pulse,
             memory=memory,
+            took=took,
         )
         self.session_id = session_id
         self.recipient_handle = recipient_handle
@@ -278,6 +280,14 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
             tuple(uuid.UUID(value) for value in stamp["termination_input_ids"]),
             reason,
         )
+
+    def taken(self, record: dict) -> str | None:
+        # The echo of an input that did not open a turn: the build read it at
+        # a tool boundary of the one running (the runner's ``observe``).
+        stamp = record.get("cheese") or {}
+        if stamp.get("receipt") and not stamp.get("turn_start"):
+            return str(record.get("uuid") or "") or None
+        return None
 
     def marks(self, record: dict, events: list[AgentEvent]) -> set[str]:
         marks = subscription.marks_of(events)

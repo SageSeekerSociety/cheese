@@ -179,6 +179,11 @@ class Settings(BaseSettings):
     device_connection_url: str = ""
     device_connection_secret: str = ""
     device_connection_owner: bool = False
+    # Where the connection owner asks which connector build is published: the
+    # backend that serves `/connector/latest/...`, the same files a machine's
+    # self-update downloads. The owner is not restarted by a release, so its own
+    # copy of those files lags them. Empty = this process serves them itself.
+    connector_origin_url: str = ""
 
     @property
     def device_connection_auth_secret(self) -> str:

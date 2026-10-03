@@ -85,6 +85,10 @@ def test_site_cookie_loads_modules_without_platform_credentials(client, publishe
     assert "allow-same-origin" in page.headers["content-security-policy"]
     assert "worker-src 'none'" in page.headers["content-security-policy"]
     assert page.headers["cache-control"] == "no-store"
+    # The page is somebody else's code. The devices are shut on the document itself,
+    # so a later `allow` on whichever frame embeds it cannot reopen them.
+    for device in ("camera", "microphone", "geolocation", "display-capture"):
+        assert f"{device}=()" in page.headers["permissions-policy"]
     assert client.get(origin + "/app.js").text == 'document.body.dataset.ready = "yes";'
     assert (
         client.get(origin + "/app.js", headers={"Service-Worker": "script"}).status_code

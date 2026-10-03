@@ -14,6 +14,11 @@
 不另写一套措辞：人在推送里读到的、在站内通知里读到的、回房间看到的，是同一句话。
 这条在 `agent/announce.py` 里已经定过一次，这里只是同一条规矩的第三个渠道。
 
+那句话用收件人自己选的语言说（`user.language`）：推送是服务端替一个人加密好发出去
+的，浏览器收到就原样显示，没有 APNs `loc-key` 那样让收件端查词表的机会，所以只能在
+这里按收件人渲染。房间里那一行的键在 `payload["message"]`，词表是前端那一份
+（`block/notice_text.py`）。
+
 ## 服务端看不到内容
 
 Web Push 的内容由**浏览器的**密钥加密（`p256dh` / `auth`），服务端加密完就再也解不
@@ -30,6 +35,7 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.block.notice_text import LOCALES, in_language, render, say
 from app.domain.notification.models import NotificationType
 from app.domain.notification.push_models import PushSubscription
 
@@ -112,23 +118,36 @@ class PushSubscriptionRepository:
         )
 
 
-def push_text(type_: NotificationType, payload: dict[str, Any]) -> tuple[str, str]:
-    """(标题, 正文) —— 推送上显示的那两行。
+def push_text(
+    type_: NotificationType, payload: dict[str, Any], locale: str | None
+) -> tuple[str, str]:
+    """(标题, 正文) —— 推送上显示的那两行，用 `locale` 说。
 
-    标题就是后端已经算好的那一句，不在这里拼模板：`ROOM_NOTICE` 的 `content` 是房
-    间里那一行，`CHEESE_QUESTION` 的 `question` 是芝士问的原话。`content` 是那一行
-    的中文：屏幕按读者的语言渲染它的键（`payload["message"]`），推送却是服务端加密
-    好发出去的，而服务端不知道收件人选了哪种语言（选择只存在浏览器里）。正文说「在哪个房
-    间」，因为推送脱离了上下文出现在系统通知栏里，而「是哪件工作」正是人判断要不要
-    立刻打开的依据。
+    标题就是后端已经算好的那一句，不在这里拼模板：`ROOM_NOTICE` 是房间里那一行
+    （键在 `payload["message"]`，旁边的 `content` 是它的中文），`CHEESE_QUESTION`
+    的 `question` 是芝士问的原话，不翻译。正文说「在哪个房间」，因为推送脱离了上
+    下文出现在系统通知栏里，而「是哪件工作」正是人判断要不要立刻打开的依据。
+
+    那一行说不成 `locale`（没带键的旧行、那种语言缺这句）就整条用中文：标题只剩存
+    下的中文，正文也跟着它，免得一条通知半句中文半句英文。
     """
     room = str(payload.get("topicTitle") or "").strip()
-    where = f"在「{room}」" if room else ""
     if type_ is NotificationType.CHEESE_QUESTION:
         question = str(payload.get("question") or "").strip()
-        return (question or "有一个新问题", where or "等你回答")
-    content = str(payload.get("content") or "").strip()
-    return (content or "平台有一条提示", where)
+        where = in_language(say("pushInRoom", room=room), locale) if room else ""
+        title = question or in_language(say("pushQuestion"), locale)
+        return (title, where or in_language(say("pushAwaitingAnswer"), locale))
+    said = render(payload.get("message"), locale)
+    if said is None:
+        locale = LOCALES[0]
+    content = (said or str(payload.get("content") or "")).strip()
+    where = in_language(say("pushInRoom", room=room), locale) if room else ""
+    return (content or in_language(say("pushNotice"), locale), where)
+
+
+def away_text(count: int, locale: str | None) -> str:
+    """离开期间攒下 `count` 条时，桌面端合成的那一条通知的标题。"""
+    return in_language(say("pushAway", count=count), locale)
 
 
 def push_link(payload: dict[str, Any]) -> str:

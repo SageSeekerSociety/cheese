@@ -357,5 +357,10 @@
   "workspaceVcsPerms": "本轮未开始，工作区版本库的权限不正确。",
   "workspaceVcsPermsDetail": "版本库目录属于另一个系统用户，平台无法访问。项目文件、已提交的改动和版本历史都没有受到影响。需要管理员在机器上修改一次属主（deploy/fix-workspace-ownership.sh），平台无法自行处理。把这条提示转给管理员，修复后可以重试。",
   "workspaceVcsPermsTitle": "工作区版本库权限异常",
-  "creditsRefused": "{reason}这一轮没有执行。"
+  "creditsRefused": "{reason}这一轮没有执行。",
+  "pushInRoom": "在「{room}」",
+  "pushNotice": "平台有一条提示",
+  "pushQuestion": "有一个新问题",
+  "pushAwaitingAnswer": "等你回答",
+  "pushAway": "离开期间有 {count} 条新通知"
 }

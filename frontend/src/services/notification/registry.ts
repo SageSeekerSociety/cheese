@@ -1,5 +1,5 @@
 import type { Component } from 'vue'
-import type { NotificationType } from '@/network/api/notifications/types'
+import type { Notification, NotificationType } from '@/network/api/notifications/types'
 
 import RenderCheeseQuestionNotification from '@/components/common/Notification/renders/RenderCheeseQuestionNotification.vue'
 import RenderDeadlineRemindNotification from '@/components/common/Notification/renders/RenderDeadlineRemindNotification.vue'
@@ -121,4 +121,16 @@ export function getNotificationColor(type: NotificationType): string {
     default:
       return 'primary'
   }
+}
+
+/**
+ * 这一条通知此刻的图标和颜色。大多数类型只看类型；芝士的提问答过之后（服务端
+ * `ledger.settle` 把回答并进 `answered`）就不再是「待你处理」，换成和房间里那张
+ * 卡一样的已回答对勾，颜色从 warning 退成 success —— 还画成警示色，等于说它还在等人。
+ */
+export function getNotificationMark(notification: Notification): { icon: string; color: string } {
+  if (notification.type === 'CHEESE_QUESTION' && notification.contextMetadata?.answered) {
+    return { icon: 'mdi-check-circle-outline', color: 'success' }
+  }
+  return { icon: getNotificationIcon(notification.type), color: getNotificationColor(notification.type) }
 }

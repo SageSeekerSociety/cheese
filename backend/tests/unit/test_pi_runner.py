@@ -15,9 +15,11 @@ from pathlib import Path
 import pytest
 
 from app.domain.agent.harness import Opening, SessionRef
+from app.domain.agent.harness.driven import runner as driven_runner
 from app.domain.agent.harness.pi.runner import Runner, socket_path
 from app.domain.agent.harness.pi.subscription import Subscription
 from app.domain.agent.nonce import new_nonce
+from tests.support.hang import HANG_S
 from tests.support.room_machine import NO_MACHINE, room_machine
 
 FAKE = Path(__file__).resolve().parents[1] / "support/fake_pi.py"
@@ -115,6 +117,46 @@ async def test_an_idle_session_is_let_go_while_a_backend_keeps_reading_it(tmp_pa
         assert resumed == session_id
     finally:
         await again.close()
+
+
+@pytest.mark.anyio
+async def test_a_session_is_idle_from_its_last_record_not_from_when_the_runner_looked(
+    tmp_path, monkeypatch
+):
+    """How long a session has sat idle is what decides which of a person's
+    sessions lets go when another starts (`host._make_room`). It counts from
+    the session's last record, not from the runner's next look at its journal,
+    which comes up to ``IDLE_CHECK_S`` later: a session that looked used a few
+    seconds after it went quiet is kept in place of one used since."""
+    monkeypatch.setattr(driven_runner, "IDLE_CHECK_S", 1.0)
+    runner, _ = await running(tmp_path, idle_exit_s=60)
+    listening = time.monotonic()
+    try:
+        await call(
+            runner.state,
+            "send",
+            {"input_id": str(uuid.uuid4()), "text": "开始", "work_id": "w"},
+        )
+        # Quiet: the turn is over, and nothing is written for a while after.
+        async with asyncio.timeout(HANG_S):
+            while True:
+                working = (await call(runner.state, "ping"))["working"]
+                written = (await call(runner.state, "entries"))["entries"]
+                quiet_since = time.monotonic()
+                await asyncio.sleep(0.2)
+                after = (await call(runner.state, "entries"))["entries"]
+                if not working and after == written:
+                    break
+        assert quiet_since - listening < 1.0, "the turn outlasted the first look"
+        # Past the runner's first look at the journal, which finds it grown.
+        await asyncio.sleep(listening + 1.5 - time.monotonic())
+        quiet_for = time.monotonic() - quiet_since
+
+        idle_s = (await call(runner.state, "ping"))["idle_s"]
+
+        assert idle_s >= quiet_for, (idle_s, quiet_for)
+    finally:
+        await runner.close()
 
 
 @pytest.mark.anyio
