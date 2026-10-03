@@ -29,13 +29,42 @@
         { "at": 200, "do": "say", "who": "wang", "text": "<@cheese> 登录页按新设计稿改，手机上也要好看" },
         { "at": 900, "do": "turn", "who": "cheese", "turn": "t1" },
         { "at": 900, "do": "seat", "who": "cheese", "session": "会话 s-3f1", "state": "在跑一轮" },
-        { "at": 1300, "do": "act", "who": "cheese", "turn": "t1", "tool": "cheese_worktree", "arg": "a17c · 登录页改版", "platform": true },
-        { "at": 1900, "do": "act", "who": "cheese", "turn": "t1", "tool": "Read", "arg": "frontend/src/views/account/SignIn.vue" },
+        {
+          "at": 1300,
+          "do": "act",
+          "who": "cheese",
+          "turn": "t1",
+          "tool": "cheese_worktree",
+          "arg": "a17c · 登录页改版",
+          "platform": true
+        },
+        {
+          "at": 1900,
+          "do": "act",
+          "who": "cheese",
+          "turn": "t1",
+          "tool": "Read",
+          "arg": "frontend/src/views/account/SignIn.vue"
+        },
         { "at": 2600, "do": "say", "who": "li", "text": "<@cheese-k> 注册接口补上按 IP 限速" },
         { "at": 3200, "do": "turn", "who": "cheese-k", "turn": "t2" },
         { "at": 3200, "do": "seat", "who": "cheese-k", "session": "会话 s-8c4", "state": "在跑一轮" },
-        { "at": 3600, "do": "act", "who": "cheese-k", "turn": "t2", "tool": "Grep", "arg": "rate_limit backend/app/api/account" },
-        { "at": 4100, "do": "act", "who": "cheese", "turn": "t1", "tool": "Edit", "arg": "frontend/src/views/account/SignIn.vue" }
+        {
+          "at": 3600,
+          "do": "act",
+          "who": "cheese-k",
+          "turn": "t2",
+          "tool": "Grep",
+          "arg": "rate_limit backend/app/api/account"
+        },
+        {
+          "at": 4100,
+          "do": "act",
+          "who": "cheese",
+          "turn": "t1",
+          "tool": "Edit",
+          "arg": "frontend/src/views/account/SignIn.vue"
+        }
       ]
     },
     {
@@ -45,9 +74,30 @@
       "events": [
         { "at": 200, "do": "say", "who": "wang", "text": "<@cheese> 按钮用主色，别用描边" },
         { "at": 900, "do": "note", "who": "cheese", "turn": "t1", "text": "收到补充：登录按钮改成主色实心。" },
-        { "at": 1400, "do": "act", "who": "cheese-k", "turn": "t2", "tool": "Edit", "arg": "backend/app/api/account/signup.py" },
-        { "at": 2000, "do": "act", "who": "cheese", "turn": "t1", "tool": "Edit", "arg": "frontend/src/views/account/SignIn.vue" },
-        { "at": 2600, "do": "act", "who": "cheese-k", "turn": "t2", "tool": "Write", "arg": "backend/tests/api/test_signup_rate_limit.py" }
+        {
+          "at": 1400,
+          "do": "act",
+          "who": "cheese-k",
+          "turn": "t2",
+          "tool": "Edit",
+          "arg": "backend/app/api/account/signup.py"
+        },
+        {
+          "at": 2000,
+          "do": "act",
+          "who": "cheese",
+          "turn": "t1",
+          "tool": "Edit",
+          "arg": "frontend/src/views/account/SignIn.vue"
+        },
+        {
+          "at": 2600,
+          "do": "act",
+          "who": "cheese-k",
+          "turn": "t2",
+          "tool": "Write",
+          "arg": "backend/tests/api/test_signup_rate_limit.py"
+        }
       ]
     },
     {
@@ -56,9 +106,29 @@
       "tag": "没点名的归被点名唤起的轮次或默认队友",
       "events": [
         { "at": 200, "do": "say", "who": "li", "text": "登录页顺手把「忘记密码」的链接也加上吧" },
-        { "at": 1000, "do": "note", "who": "cheese", "turn": "t1", "text": "这条没点名，我是房间默认队友，认领：加「忘记密码」链接。" },
-        { "at": 1600, "do": "act", "who": "cheese", "turn": "t1", "tool": "Edit", "arg": "frontend/src/views/account/SignIn.vue" },
-        { "at": 2200, "do": "act", "who": "cheese-k", "turn": "t2", "tool": "Read", "arg": "backend/app/core/ratelimit.py" }
+        {
+          "at": 1000,
+          "do": "note",
+          "who": "cheese",
+          "turn": "t1",
+          "text": "这条没点名，我是房间默认队友，认领：加「忘记密码」链接。"
+        },
+        {
+          "at": 1600,
+          "do": "act",
+          "who": "cheese",
+          "turn": "t1",
+          "tool": "Edit",
+          "arg": "frontend/src/views/account/SignIn.vue"
+        },
+        {
+          "at": 2200,
+          "do": "act",
+          "who": "cheese-k",
+          "turn": "t2",
+          "tool": "Read",
+          "arg": "backend/app/core/ratelimit.py"
+        }
       ]
     },
     {
@@ -66,12 +136,35 @@
       "focus": "seats",
       "tag": "各推各的分支；跑大测试先占锁",
       "events": [
-        { "at": 200, "do": "act", "who": "cheese-k", "turn": "t2", "tool": "cheese_lock", "arg": "heavy", "platform": true },
+        {
+          "at": 200,
+          "do": "act",
+          "who": "cheese-k",
+          "turn": "t2",
+          "tool": "cheese_lock",
+          "arg": "heavy",
+          "platform": true
+        },
         { "at": 200, "do": "lock", "who": "cheese-k" },
         { "at": 300, "do": "seat", "who": "cheese-k", "state": "占着重资源锁" },
-        { "at": 800, "do": "act", "who": "cheese-k", "turn": "t2", "tool": "Bash", "arg": "uv run pytest tests/api -x -q" },
+        {
+          "at": 800,
+          "do": "act",
+          "who": "cheese-k",
+          "turn": "t2",
+          "tool": "Bash",
+          "arg": "uv run pytest tests/api -x -q"
+        },
         { "at": 1400, "do": "act", "who": "cheese", "turn": "t1", "tool": "Bash", "arg": "git push origin task/a17c" },
-        { "at": 2400, "do": "act", "who": "cheese-k", "turn": "t2", "tool": "cheese_unlock", "arg": "heavy", "platform": true },
+        {
+          "at": 2400,
+          "do": "act",
+          "who": "cheese-k",
+          "turn": "t2",
+          "tool": "cheese_unlock",
+          "arg": "heavy",
+          "platform": true
+        },
         { "at": 2400, "do": "lock", "who": null },
         { "at": 2500, "do": "seat", "who": "cheese-k", "state": "在跑一轮" },
         { "at": 3000, "do": "act", "who": "cheese-k", "turn": "t2", "tool": "Bash", "arg": "git push origin task/b42e" }
@@ -82,11 +175,29 @@
       "focus": "tabs",
       "tag": "现场按队友分组，标签报出在干活的几位",
       "events": [
-        { "at": 600, "do": "act", "who": "cheese", "turn": "t1", "tool": "cheese_accept_request", "arg": "feat(signin): new sign-in page", "platform": true },
-        { "at": 1200, "do": "say", "who": "cheese", "text": "登录页改好了：主色按钮、忘记密码链接，手机和桌面各截了图，验收卡已递给 <@wang>。" },
+        {
+          "at": 600,
+          "do": "act",
+          "who": "cheese",
+          "turn": "t1",
+          "tool": "cheese_accept_request",
+          "arg": "feat(signin): new sign-in page",
+          "platform": true
+        },
+        {
+          "at": 1200,
+          "do": "say",
+          "who": "cheese",
+          "text": "登录页改好了：主色按钮、忘记密码链接，手机和桌面各截了图，验收卡已递给 <@wang>。"
+        },
         { "at": 1500, "do": "end", "turn": "t1" },
         { "at": 1500, "do": "seat", "who": "cheese", "state": "空闲" },
-        { "at": 2600, "do": "say", "who": "cheese-k", "text": "注册接口按 IP 限速，每分钟 5 次，测试 12 条全过，PR 已开。" },
+        {
+          "at": 2600,
+          "do": "say",
+          "who": "cheese-k",
+          "text": "注册接口按 IP 限速，每分钟 5 次，测试 12 条全过，PR 已开。"
+        },
         { "at": 2900, "do": "end", "turn": "t2" },
         { "at": 2900, "do": "seat", "who": "cheese-k", "state": "空闲" }
       ]

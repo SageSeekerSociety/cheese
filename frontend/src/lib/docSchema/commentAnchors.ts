@@ -7,13 +7,12 @@
 // as one replacement drops it with them, and then the thread has nothing left
 // to point at.
 //
-// Whatever rewrites a passage (typing over it, the agent's edit, a whole
-// document written from Markdown) builds the new words without the mark, so
-// every such change is followed by `carryCommentAnchors`: a thread whose words
-// are still there gets its mark back on them, and a thread whose words were
-// replaced gets it on what replaced them, so it still points at about the same
-// place. Only words deleted with nothing in their place leave a thread without
-// a mark.
+// Whatever rewrites a passage (the agent's edit, a whole document written from
+// Markdown) builds the new text without marks, so every such change is
+// followed by `carryCommentAnchors`: a thread whose words are still there gets
+// its mark back on them. Words that were rewritten or deleted are not the words
+// the comment was about, so the mark is not moved onto what replaced them; the
+// thread keeps where it was instead (lib/docCommentSpots, `placeOf`).
 //
 // It is not part of the text. The document's Markdown (what is stored,
 // searched and given to the agent) has no trace of it, and copying marked text
@@ -66,9 +65,9 @@ export const CommentAnchor = Mark.create({
     return [
       new Plugin({
         key: new PluginKey('cheeseCommentAnchorPaste'),
-        // Typing over marked words, or replacing them in one step, keeps the
-        // thread on what replaced them. A change from another reader already
-        // carries its marks: their editor did this.
+        // A local change that rebuilt marked words without changing them (a
+        // block style, a paste over the same text) puts the mark back. A change
+        // from another reader already carries its marks: their editor did this.
         appendTransaction(trs, before, after) {
           if (!trs.some((tr) => tr.docChanged) || trs.some((tr) => tr.getMeta(CARRIED) || isRemote(tr))) return null
           const tr = after.tr
@@ -119,9 +118,9 @@ function flatten(doc: PMNode): { text: string; pos: number[] } {
   return { text, pos }
 }
 
-/** `after`, with the comment marks `before` had and `after` lost put back:
- *  on the same words when they are still there, otherwise on what replaced
- *  them. `after` itself when nothing was lost. */
+/** `after`, with the comment marks `before` had and `after` lost put back on
+ *  the same words, where those words are still there. `after` itself when
+ *  nothing was lost. */
 export function carryCommentAnchors(before: PMNode, after: PMNode): PMNode {
   const runs = lostAnchors(before, after)
   if (!runs.length) return after
@@ -156,18 +155,25 @@ function lostAnchors(before: PMNode, after: PMNode): { from: number; to: number;
     const from = indexOf(old, ranges[0].from)
     const to = indexOf(old, ranges[ranges.length - 1].to)
     const words = old.text.slice(from, to)
-    // Where the words would be if they did not change.
-    const expected = from < head ? from : from + shift
+    if (!words) continue
     let start = -1
-    for (let at = now.text.indexOf(words); at >= 0 && words; at = now.text.indexOf(words, at + 1)) {
-      if (start < 0 || Math.abs(at - expected) < Math.abs(start - expected)) start = at
+    if (to <= head) start = from
+    else if (from >= old.text.length - tail) start = from + shift
+    else {
+      // The change spans them: they are still theirs only if the same words
+      // are still in what changed, nearest to where they were.
+      const expected = from + shift
+      const until = now.text.length - tail
+      for (
+        let at = now.text.indexOf(words, head);
+        at >= 0 && at + words.length <= until;
+        at = now.text.indexOf(words, at + 1)
+      ) {
+        if (start < 0 || Math.abs(at - expected) < Math.abs(start - expected)) start = at
+      }
     }
-    let end = start + words.length
-    if (start < 0) {
-      // The words were rewritten: what is left of them and what replaced them.
-      start = Math.min(from, head)
-      end = Math.max(to + shift, now.text.length - tail)
-    }
+    if (start < 0) continue
+    const end = start + words.length
     const mark = type.create({ thread: id })
     for (let i = Math.max(0, start); i < Math.min(end, now.pos.length); i++) {
       const at = now.pos[i]

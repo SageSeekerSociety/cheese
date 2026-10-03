@@ -13,7 +13,7 @@ import type { CommentSpot } from '../../lib/docCommentSpots'
 import type { DocEdit } from '../../lib/docEdits'
 import type { DocVersionPage } from '../../lib/docHistory'
 import type { DocReviewRequest } from '../../lib/docReview'
-import type { DocThreadActions, DocThreadState } from '../../lib/docThreadTypes'
+import type { DocThreadActions, DocThreadState, ThreadPlace } from '../../lib/docThreadTypes'
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
@@ -191,8 +191,8 @@ const openThreads = computed(
   () =>
     new Set(props.threadState.threads.filter((thread) => thread.state === 'open').map((thread) => thread.comment.id))
 )
-function anchored(id: string) {
-  return surfaceRef.value?.threadAnchored(id) ?? false
+function placeOfThread(id: string): ThreadPlace {
+  return surfaceRef.value?.threadPlace(id) ?? null
 }
 function revealThread(id: string) {
   surfaceRef.value?.revealThread(id)
@@ -353,7 +353,7 @@ defineExpose({
           :send-comment="postComment"
           :thread-state="threadState"
           :thread-actions="threadActions"
-          :anchored="anchored"
+          :place-of="placeOfThread"
           :agent-name="agentName"
           :mention-names="mentionNames"
           :name-of="nameOf"

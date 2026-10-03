@@ -42,7 +42,7 @@ describe('asking the AI teammate in a document comment', () => {
           replies: [],
         },
         active: false,
-        anchored: true,
+        place: 'marked',
         busy: false,
         unknown: false,
         agentName: '芝士',

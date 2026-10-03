@@ -2,7 +2,7 @@
 // 评论栏这一列：够宽时贴在正文右边，窄时盖在正文上面；宽度能拖。里面是 DocComments。
 import type { SendDocComment } from '../../../composables/useDocCommentDraft'
 import type { CommentSpot } from '../../../lib/docCommentSpots'
-import type { DocThreadActions, DocThreadState } from '../../../lib/docThreadTypes'
+import type { DocThreadActions, DocThreadState, ThreadPlace } from '../../../lib/docThreadTypes'
 
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
@@ -17,7 +17,8 @@ const props = defineProps<{
   threadActions: DocThreadActions
   sendComment?: SendDocComment
   openId: string | null
-  anchored: (id: string) => boolean
+  /** 这一串评的那几个字在正文里的哪。 */
+  placeOf: (id: string) => ThreadPlace
   agentName: string
   mentionNames: Record<string, string>
   nameOf: (handle: string) => string
@@ -332,7 +333,7 @@ defineExpose({ open, locate, toggle, close, opened, busy })
           :thread-state="threadState"
           :thread-actions="threadActions"
           :open-id="openId"
-          :anchored="anchored"
+          :place-of="placeOf"
           :agent-name="agentName"
           :mention-names="mentionNames"
           :name-of="nameOf"

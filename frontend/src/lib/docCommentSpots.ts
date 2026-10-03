@@ -12,18 +12,27 @@
 //
 // Putting the mark on is not an edit the commenter would undo: it stays out of
 // the undo history.
+//
+// The thread also remembers where its words began, as a position in the
+// shared document kept beside the text (the `commentPlaces` map). When the
+// words are rewritten or deleted the mark goes with them, but that position
+// survives, pointing at the nearest text still there: the thread can still be
+// shown at about the place it was about.
 import type { Editor } from '@tiptap/core'
 import type { EditorState } from '@tiptap/pm/state'
-import type * as Y from 'yjs'
 
 import {
   absolutePositionToRelativePosition,
   relativePositionToAbsolutePosition,
   ySyncPluginKey,
 } from '@tiptap/y-tiptap'
+import * as Y from 'yjs'
 
 import { nearestText } from './docEditMarks'
 import { COMMENT_ANCHOR } from './docSchema'
+
+/** The shared map of where each thread's words began. */
+const PLACES = 'commentPlaces'
 
 export interface CommentSpot {
   /** The selected words, shown on the thread and looked for if the positions are lost. */
@@ -78,5 +87,25 @@ export function anchorComment(editor: Editor, spot: CommentSpot, thread: string)
   const type = editor.schema.marks[COMMENT_ANCHOR]
   if (!at || !type) return false
   editor.view.dispatch(editor.state.tr.addMark(at.from, at.to, type.create({ thread })).setMeta('addToHistory', false))
+  const y = ySync(editor.state)
+  if (y) {
+    const place = absolutePositionToRelativePosition(at.from, y.type, y.binding.mapping as never)
+    y.doc.getMap<Uint8Array>(PLACES).set(thread, Y.encodeRelativePosition(place as Y.RelativePosition))
+  }
   return true
+}
+
+/** Where `thread`'s words began, even after they were rewritten or deleted;
+ *  null for a thread that never had a place (written before places were kept). */
+export function placeOf(editor: Editor, thread: string): number | null {
+  const y = ySync(editor.state)
+  const saved = y?.doc.getMap<Uint8Array>(PLACES).get(thread)
+  if (!y || !saved) return null
+  const at = relativePositionToAbsolutePosition(
+    y.doc,
+    y.type,
+    Y.decodeRelativePosition(saved) as never,
+    y.binding.mapping as never
+  )
+  return at === null ? null : Math.min(at, editor.state.doc.content.size)
 }

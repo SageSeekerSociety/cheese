@@ -106,19 +106,26 @@ describe('comment anchors through rewrites', () => {
     expect(words(liveNode(doc), 't1')).toEqual(['五百万行'])
   })
 
-  it('move onto what replaced their words, so the thread still points at about the same place', async () => {
+  it('keep their words when a whole-document rewrite moves them within a changed paragraph', async () => {
+    const { doc, ed } = await shared('数据量到五百万行就评估迁移。\n')
+    comment(ed, '五百万行', 't1')
+    writeMarkdown(doc, '先评估，数据量到五百万行再迁移。\n')
+    expect(words(liveNode(doc), 't1')).toEqual(['五百万行'])
+  })
+
+  it('do not move onto what replaced their words: those are not the words commented on', async () => {
     const { doc, ed } = await shared('数据量到五百万行就评估迁移。\n')
     comment(ed, '五百万行', 't1')
     writeMarkdown(doc, '数据量到一千万条就评估迁移。\n')
-    expect(words(liveNode(doc), 't1')).toEqual(['一千万条'])
+    expect(words(liveNode(doc), 't1')).toEqual([])
   })
 
-  it('move onto words typed over them', async () => {
+  it('do not move onto words typed over them', async () => {
     const ed = open('数据量到五百万行就评估迁移。')
     comment(ed, '五百万行', 't1')
     const { from, to } = span(ed, '五百万行')
     ed.view.dispatch(ed.state.tr.insertText('一千万条', from, to))
-    expect(marked(ed, 't1')).toEqual(['一千万条'])
+    expect(marked(ed, 't1')).toEqual([])
   })
 
   it('are gone with words deleted outright', async () => {

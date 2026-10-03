@@ -8,7 +8,7 @@ import { createVuetify } from 'vuetify'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { anchorComment } from '../../../lib/docCommentSpots'
+import { anchorComment, placeOf } from '../../../lib/docCommentSpots'
 import { localDocSession } from '../../../lib/docLocalSession'
 import { commentAnchors } from '../../../lib/docSchema'
 
@@ -230,20 +230,32 @@ describe('production surface comment selections', () => {
     f.ed.view.dispatch(f.ed.state.tr.insertText('先用 PostgreSQL，', span(f.ed, '数据量').from))
     await nextTick()
     expect(highlighted()).toEqual({ t1: '五百万行' })
-    expect(f.surface.value!.threadAnchored('t1')).toBe(true)
+    expect(f.surface.value!.threadPlace('t1')).toBe('marked')
   })
 
-  it('stops highlighting a resolved thread, and has nothing to show once its words are deleted', async () => {
-    const f = await mountDoc('<p>数据量到五百万行就评估。</p>')
+  it('stops highlighting a resolved thread, and keeps where deleted words were', async () => {
+    const f = await mountDoc('<p>第一段。</p><p>数据量到五百万行就评估。</p>')
     await commentOn(f, '五百万行', 't1')
     f.openThreads.value = new Set()
     await nextTick()
     expect(highlighted()).toEqual({})
-    expect(f.surface.value!.threadAnchored('t1')).toBe(true)
+    expect(f.surface.value!.threadPlace('t1')).toBe('marked')
     const words = span(f.ed, '五百万行')
     f.ed.view.dispatch(f.ed.state.tr.delete(words.from, words.to))
     await nextTick()
-    expect(f.surface.value!.threadAnchored('t1')).toBe(false)
+    expect(f.surface.value!.threadPlace('t1')).toBe('placed')
+    // Where it was is still in the second paragraph.
+    expect(f.ed.state.doc.resolve(placeOf(f.ed, 't1')!).parent.textContent).toBe('数据量到就评估。')
+  })
+
+  it('does not move onto words typed over its own', async () => {
+    const f = await mountDoc('<p>数据量到五百万行就评估。</p>')
+    await commentOn(f, '五百万行', 't1')
+    const words = span(f.ed, '五百万行')
+    f.ed.view.dispatch(f.ed.state.tr.insertText('一千万条', words.from, words.to))
+    await nextTick()
+    expect(highlighted()).toEqual({})
+    expect(f.surface.value!.threadPlace('t1')).toBe('placed')
   })
 
   it('offers no comment on a document that takes none', async () => {

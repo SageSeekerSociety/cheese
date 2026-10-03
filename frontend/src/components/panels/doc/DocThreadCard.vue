@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 一条评论串一张卡：上面是评的那几个字，下面是来回的每一句；AI 队友在答时说它到了哪一步。
 // 点卡片就是在看它（正文滚到那几个字）；在看的那张才给回复框和解决。
-import type { DocThread, DocThreadActivity } from '../../../lib/docThreadTypes'
+import type { DocThread, DocThreadActivity, ThreadPlace } from '../../../lib/docThreadTypes'
 
 import { computed, nextTick, ref, watch } from 'vue'
 
@@ -17,8 +17,8 @@ const props = defineProps<{
   thread: DocThread
   /** 正在看的那一串。 */
   active: boolean
-  /** 评的那几个字还在文档里。 */
-  anchored: boolean
+  /** 评的那几个字在正文里的哪：还在、改写或删掉了但记得原来的位置、无从找起。 */
+  place: ThreadPlace
   activity?: DocThreadActivity
   /** 有一次写还没回来：这时不再接新的。 */
   busy: boolean
@@ -135,9 +135,9 @@ function onCard(e: MouseEvent) {
       v-if="thread.comment.anchor_quote"
       type="button"
       class="doc-thread-card__quote"
-      :class="{ 'is-gone': !anchored }"
-      :disabled="!anchored"
-      :title="anchored ? undefined : t('work.room.comments.quoteGone')"
+      :class="{ 'is-gone': place !== 'marked' }"
+      :disabled="!place"
+      :title="place === 'placed' ? t('work.room.comments.quoteChanged') : undefined"
       dir="auto"
       @click="emit('locate')"
     >
@@ -271,6 +271,8 @@ function onCard(e: MouseEvent) {
 .doc-thread-card__quote.is-gone {
   border-left-color: var(--line-2);
   color: var(--faint);
+}
+.doc-thread-card__quote:disabled {
   cursor: default;
 }
 .doc-thread-card__message + .doc-thread-card__message,

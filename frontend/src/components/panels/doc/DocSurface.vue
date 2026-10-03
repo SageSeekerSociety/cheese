@@ -15,6 +15,7 @@ import type { SuggestionProps } from '@tiptap/suggestion'
 import type { DocSession } from '../../../composables/useDocCollab'
 import type { Block, Topic } from '../../../cx_types'
 import type { CommentSpot } from '../../../lib/docCommentSpots'
+import type { ThreadPlace } from '../../../lib/docThreadTypes'
 import type { DocLinkTarget } from '../../../lib/docLinks'
 import type { SlashItem } from '../../../lib/docSlashMenu'
 
@@ -34,6 +35,7 @@ import {
   createTokenChips,
   liveRefKey,
 } from '../../../lib/docDecorations'
+import { placeOf } from '../../../lib/docCommentSpots'
 import { createEditMarks } from '../../../lib/docEditMarks'
 import { captureDocLink, safeDocHref } from '../../../lib/docLinks'
 import { commentAnchors, docExtensions, serializeDoc } from '../../../lib/docSchema'
@@ -142,22 +144,30 @@ async function highlightTurn(turnId: string) {
   await flashBlocks(aligned.filter((a) => a.node.turn_id === turnId).map((a) => a.el))
 }
 
-/** 正文滚到这一串评的那几个字；它们已经不在文档里时是 false。 */
+/** 正文滚到这一串评的那几个字；字已经不在了，就滚到原来那个位置，把那一段闪一下。 */
 function revealThread(threadId: string): boolean {
   const ed = editor.value
-  const range = ed ? commentAnchors(ed.state.doc).get(threadId)?.[0] : undefined
-  if (!ed || !range) return false
-  const { node } = ed.view.domAtPos(range.from)
+  if (!ed) return false
+  const range = commentAnchors(ed.state.doc).get(threadId)?.[0]
+  const at = range?.from ?? placeOf(ed, threadId)
+  if (at === null || at === undefined) return false
+  const { node } = ed.view.domAtPos(at)
   const el = node instanceof Element ? node : node.parentElement
-  el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-  return true
+  if (range) {
+    el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    return true
+  }
+  const block = el?.closest('.ProseMirror > *') as HTMLElement | null
+  if (block) void flashBlocks([block])
+  return !!block
 }
 
-/** 这一串评的那几个字还在不在文档里。 */
-function threadAnchored(threadId: string): boolean {
+function threadPlace(threadId: string): ThreadPlace {
   void displayTick.value
   const ed = editor.value
-  return !!ed && commentAnchors(ed.state.doc).has(threadId)
+  if (!ed) return null
+  if (commentAnchors(ed.state.doc).has(threadId)) return 'marked'
+  return placeOf(ed, threadId) === null ? null : 'placed'
 }
 
 const linkTarget = shallowRef<DocLinkTarget | null>(null)
@@ -408,7 +418,7 @@ defineExpose({
   serializeVisual,
   highlightTurn,
   revealThread,
-  threadAnchored,
+  threadPlace,
 })
 
 // 空文档里的灰字住在 CSS 的 ::before 里；按当前语言取值，带上引号交给 content。

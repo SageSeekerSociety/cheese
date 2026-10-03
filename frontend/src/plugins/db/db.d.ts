@@ -1,4 +1,4 @@
-import type { LocalDB } from "@/utils/local-db"
+import type { LocalDB } from '@/utils/local-db'
 
 export {}
 

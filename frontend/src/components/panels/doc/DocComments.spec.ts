@@ -3,7 +3,7 @@
 // 点卡片是看它（正文跟着滚过去），拖着选字不算；长的对话中间先收起来；AI 队友在答时
 // 卡上说它到了哪一步；回复发出去了才清空，失败了字还在。
 import type { CommentSpot } from '../../../lib/docCommentSpots'
-import type { DocThread, DocThreadActions, DocThreadState } from '../../../lib/docThreadTypes'
+import type { DocThread, DocThreadActions, DocThreadState, ThreadPlace } from '../../../lib/docThreadTypes'
 
 import { defineComponent, h, reactive, ref } from 'vue'
 import { createVuetify } from 'vuetify'
@@ -47,7 +47,7 @@ function mount(
     send?: ReturnType<typeof vi.fn>
     threads?: DocThread[]
     actions?: Partial<DocThreadActions>
-    anchored?: boolean
+    place?: ThreadPlace
     filter?: 'open' | 'resolved'
     topicId?: string
   } = {}
@@ -83,7 +83,7 @@ function mount(
             threadActions: actions,
             sendComment: options.send === null ? undefined : send,
             openId: openId.value,
-            anchored: () => options.anchored ?? true,
+            placeOf: () => (options.place === undefined ? 'marked' : options.place),
             agentName: '芝士',
             mentionNames: {},
             nameOf: (handle: string) => handle,
@@ -238,8 +238,12 @@ describe('a thread’s card', () => {
     expect(screen.getByText('评论 b')).toBeTruthy()
   })
 
-  it('does not offer to go to words that are no longer in the document', () => {
-    mount({ threads: [thread('a')], anchored: false })
+  it('still goes to where rewritten words were, and only nowhere-to-be-found words cannot be gone to', async () => {
+    const view = mount({ threads: [thread('a')], place: 'placed' })
+    await fireEvent.click(screen.getByRole('button', { name: '五百万行' }))
+    expect(view.located).toEqual(['a'])
+    cleanup()
+    mount({ threads: [thread('a')], place: null })
     expect((screen.getByRole('button', { name: '五百万行' }) as HTMLButtonElement).disabled).toBe(true)
   })
 })

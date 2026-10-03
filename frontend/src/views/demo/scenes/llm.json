@@ -37,7 +37,13 @@
       "events": [
         { "at": 200, "do": "hop", "station": "proxy", "state": "ok", "note": "转发之前先问准入" },
         { "at": 300, "do": "hop", "station": "admission", "state": "on", "note": "用沙盒自己的短期令牌鉴权" },
-        { "at": 1400, "do": "hop", "station": "admission", "state": "ok", "note": "allow: true · pool: gateway · 模型名写进请求体" }
+        {
+          "at": 1400,
+          "do": "hop",
+          "station": "admission",
+          "state": "ok",
+          "note": "allow: true · pool: gateway · 模型名写进请求体"
+        }
       ]
     },
     {
@@ -48,7 +54,14 @@
         { "at": 200, "do": "hop", "station": "gateway", "state": "on", "note": "换上项目虚拟 key" },
         { "at": 900, "do": "hop", "station": "gateway", "state": "ok", "note": "按 key 记账，没超 max_budget" },
         { "at": 1000, "do": "hop", "station": "model", "state": "on", "note": "流式返回中…" },
-        { "at": 1300, "do": "act", "who": "cheese", "turn": "t1", "tool": "Edit", "arg": "frontend/src/views/account/SignIn.vue" },
+        {
+          "at": 1300,
+          "do": "act",
+          "who": "cheese",
+          "turn": "t1",
+          "tool": "Edit",
+          "arg": "frontend/src/views/account/SignIn.vue"
+        },
         { "at": 2100, "do": "hop", "station": "model", "state": "ok", "note": "这次 3.1 万 token" },
         { "at": 2200, "do": "meter", "label": "项目额度", "value": "剩 61%" },
         { "at": 2600, "do": "say", "who": "cheese", "text": "错误提示改成红色了，截图在预览里。" },
@@ -65,7 +78,13 @@
         { "at": 300, "do": "say", "who": "wang", "text": "<@cheese> 再把注册页也改一下" },
         { "at": 900, "do": "hop", "station": "session", "state": "ok", "note": "POST /v1/messages" },
         { "at": 1100, "do": "hop", "station": "proxy", "state": "ok", "note": "转发之前先问准入" },
-        { "at": 1400, "do": "hop", "station": "admission", "state": "deny", "note": "allow: false · reason_kind: budget" },
+        {
+          "at": 1400,
+          "do": "hop",
+          "station": "admission",
+          "state": "deny",
+          "note": "allow: false · reason_kind: budget"
+        },
         { "at": 2000, "do": "mark", "text": "平台提示：可用的 tokens 额度已用完，这轮没有执行" }
       ]
     },
@@ -78,7 +97,13 @@
         { "at": 100, "do": "meter", "label": "项目额度", "value": "剩 40%" },
         { "at": 300, "do": "hop", "station": "session", "state": "ok", "note": "POST /v1/messages" },
         { "at": 500, "do": "hop", "station": "proxy", "state": "ok", "note": "转发之前先问准入" },
-        { "at": 900, "do": "hop", "station": "admission", "state": "deny", "note": "allow: false · reason_kind: binding（绑定的模型已下架）" },
+        {
+          "at": 900,
+          "do": "hop",
+          "station": "admission",
+          "state": "deny",
+          "note": "allow: false · reason_kind: binding（绑定的模型已下架）"
+        },
         { "at": 1300, "do": "hop", "station": "subscription", "state": "off", "note": "不会拿它顶替" }
       ]
     },
@@ -104,7 +129,13 @@
         { "at": 300, "do": "say", "who": "wang", "text": "<@cheese> 让分身用小模型去扫一遍日志" },
         { "at": 900, "do": "turn", "who": "cheese", "turn": "t2" },
         { "at": 1300, "do": "act", "who": "cheese", "turn": "t2", "tool": "Agent", "arg": "扫日志 · model: haiku" },
-        { "at": 1500, "do": "hop", "station": "session", "state": "ok", "note": "分身请求头 x-cheese-child-model: haiku" },
+        {
+          "at": 1500,
+          "do": "hop",
+          "station": "session",
+          "state": "ok",
+          "note": "分身请求头 x-cheese-child-model: haiku"
+        },
         { "at": 1700, "do": "hop", "station": "proxy", "state": "ok", "note": "和父会话不同：是显式指定" },
         { "at": 2100, "do": "hop", "station": "admission", "state": "ok", "note": "haiku 在项目目录里，允许，就用它" },
         { "at": 2600, "do": "hop", "station": "gateway", "state": "ok", "note": "项目虚拟 key" },

@@ -1,6 +1,6 @@
 // The agent's passage edits replay only the blocks they touch, rebuilt from
 // Markdown, which has no comment marks; the words a comment is about keep their
-// thread through such an edit, or hand it to what replaced them.
+// thread through such an edit, and words the edit rewrote do not pass it on.
 import type { Node as PMNode } from '@tiptap/pm/model'
 
 import { Transform } from '@tiptap/pm/transform'
@@ -31,10 +31,10 @@ describe('a comment through the agent’s edit', () => {
     expect(marked(result.doc, 't1')).toEqual(['五百万行'])
   })
 
-  it('moves onto what replaced its words', () => {
+  it('does not pass it on to the words that replaced its own', () => {
     const live = commented('数据量到五百万行就评估迁移。\n', '五百万行', 't1')
     const result = applyEdits(live, [{ old: '五百万行', new: '一千万条' }], 'direct', 'cheese')
     if (!result.ok) throw new Error(JSON.stringify(result))
-    expect(marked(result.doc, 't1')).toEqual(['一千万条'])
+    expect(marked(result.doc, 't1')).toEqual([])
   })
 })

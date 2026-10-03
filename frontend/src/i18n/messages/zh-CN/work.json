@@ -826,11 +826,11 @@
       "emptyOpen": "暂无评论",
       "emptyResolved": "暂无已解决的评论",
       "moreReplies": "展开 {n} 条回复",
-      "quoteGone": "原文已不在文档中",
       "unknown": "发送结果未知",
       "resend": "重新发送",
       "reading": "{agent}正在读文档…",
-      "editing": "{agent}正在修改文档…"
+      "editing": "{agent}正在修改文档…",
+      "quoteChanged": "原文已改动"
     },
     "chat": {
       "pickTopic": "选择一个话题开始对话",

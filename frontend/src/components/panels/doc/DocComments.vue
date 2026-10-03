@@ -5,7 +5,7 @@
 // 评论串从上面递进来（useDocThreads），写也交给上面；这一层只管草稿、筛选、在看哪一串。
 import type { SendDocComment } from '../../../composables/useDocCommentDraft'
 import type { CommentSpot } from '../../../lib/docCommentSpots'
-import type { DocThreadActions, DocThreadState } from '../../../lib/docThreadTypes'
+import type { DocThreadActions, DocThreadState, ThreadPlace } from '../../../lib/docThreadTypes'
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
@@ -22,8 +22,8 @@ const props = defineProps<{
   threadActions: DocThreadActions
   sendComment?: SendDocComment
   openId: string | null
-  /** 这一串评的那几个字还在不在文档里。 */
-  anchored: (id: string) => boolean
+  /** 这一串评的那几个字在正文里的哪。 */
+  placeOf: (id: string) => ThreadPlace
   agentName: string
   mentionNames: Record<string, string>
   nameOf: (handle: string) => string
@@ -191,7 +191,7 @@ defineExpose({ open, locate })
         :ref="(card) => (cards[thread.comment.id] = card as InstanceType<typeof DocThreadCard> | null)"
         :thread="thread"
         :active="openId === thread.comment.id"
-        :anchored="anchored(thread.comment.id)"
+        :place="placeOf(thread.comment.id)"
         :activity="threadState.activity[thread.comment.id]"
         :busy="threadState.busy"
         :unknown="threadState.unknown === thread.comment.id"

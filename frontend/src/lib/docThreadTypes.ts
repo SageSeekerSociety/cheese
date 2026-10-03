@@ -39,3 +39,6 @@ export interface DocThreadState {
   /** The thread whose last write may or may not have landed. */
   unknown: string | null
 }
+/** Where a thread's words are in the text: still there (marked), rewritten or
+ *  deleted but with the place they were remembered, or nowhere to be found. */
+export type ThreadPlace = 'marked' | 'placed' | null

@@ -73,7 +73,7 @@ async function mountPanel(sendComment = vi.fn(async (): Promise<void> => undefin
                 reopen: async () => {},
                 recover: async () => undefined,
               },
-              anchored: () => true,
+              placeOf: () => 'marked' as const,
               agentName: '芝士',
               mentionNames: {},
               nameOf: (handle: string) => handle,
