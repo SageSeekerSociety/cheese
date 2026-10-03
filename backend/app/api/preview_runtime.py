@@ -43,8 +43,11 @@ RUNTIME_SCRIPT = r"""(() => {
     try { return typeof document === 'undefined' ? null : document; }
     catch (e) { return null; }
   }
-  // 一个元素是不是「正在输入」的地方：input（按钮、勾选框、单选框除外）、textarea、
-  // select、contenteditable。打字的地方按下的裸键是文字，不是宿主的快捷键。
+  // 一个元素是不是「正在输入」的地方：能打字的 input、textarea、select、
+  // contenteditable、开了 designMode 的文档。打字的地方按下的裸键是文字，不是宿主
+  // 的快捷键。按钮、滑块、取色这类 input 不算，在那里按的键照常是快捷键。
+  const TEXT_INPUTS = ['', 'text', 'search', 'email', 'url', 'tel', 'password',
+    'number', 'date', 'datetime-local', 'month', 'week', 'time'];
   function editable(node) {
     if (!node || node.nodeType !== 1 || !node.tagName) return false;
     const name = node.tagName.toLowerCase();
@@ -53,13 +56,14 @@ RUNTIME_SCRIPT = r"""(() => {
       const type = String(
         (node.getAttribute && node.getAttribute('type')) || node.type || ''
       ).toLowerCase();
-      return type !== 'button' && type !== 'checkbox' && type !== 'radio';
+      return TEXT_INPUTS.indexOf(type) !== -1;
     }
     return node.isContentEditable === true;
   }
   function typing(event) {
     if (editable(event.target)) return true;
     const doc = frameDocument();
+    if (doc && String(doc.designMode).toLowerCase() === 'on') return true;
     return !!(doc && editable(doc.activeElement));
   }
   // 页面自己开着的浮层（`<dialog open>`、可见的 `aria-modal`）收 ESC：这一下归页面，
@@ -82,8 +86,12 @@ RUNTIME_SCRIPT = r"""(() => {
   }
   // 抓取阶段先认出可能是宿主的那个键，等这一轮任务跑完再报：在那之前页面还能对
   // 同一个事件 preventDefault，而页面自己处理掉的键不归宿主。帧只报 id，不报键名。
+  // 输入法正在拼字时按下的键归输入法：ESC 是取消这次拼写，不是交回宿主。
+  function composing(event) {
+    return event.isComposing === true || event.keyCode === 229;
+  }
   function forwardKey(event) {
-    if (!hello || event.repeat || event.defaultPrevented) return;
+    if (!hello || event.repeat || event.defaultPrevented || composing(event)) return;
     const key = matchKey(event);
     if (key === null) return;
     // 在可编辑的地方，不带 mod 也不带 alt 的键是文字不是快捷键。带修饰键的照报。
@@ -101,7 +109,7 @@ RUNTIME_SCRIPT = r"""(() => {
   // forwardKey 一样（页面先处理、按住不放不报），另外页面自己的浮层开着时不报，
   // 而且 500 毫秒内只报一次：连按不该让宿主连着退好几层。
   function forwardEscape(event) {
-    if (!hello || event.repeat || event.defaultPrevented) return;
+    if (!hello || event.repeat || event.defaultPrevented || composing(event)) return;
     if (modalOpen()) return;
     const session = hello.sessionId;
     setTimeout(() => {
@@ -156,40 +164,17 @@ RUNTIME_TAG = f'<script src="{RUNTIME_PATH}"></script>'.encode()
 # 会把插入点之后整体错位。遇到就整份不插，让这一页照旧自己 opt-in。
 _NON_ASCII_COMPATIBLE = ("utf-16", "utf-32", "ucs-2", "ucs-4", "utf-7", "ebcdic")
 _CHARSET = re.compile(rb"charset\s*=\s*[\"']?\s*([a-z0-9_-]+)")
-_TAGS = {
-    b"head": re.compile(rb"<head(?=[\s/>])", re.IGNORECASE),
-    b"html": re.compile(rb"<html(?=[\s/>])", re.IGNORECASE),
-}
+_HTML = re.compile(rb"<html(?=[\s/>])", re.IGNORECASE)
+_HEAD = re.compile(rb"<head(?=[\s/>])", re.IGNORECASE)
+_SPACE = b" \t\n\r\f"
 
 
-def _mask_comments(data: bytes) -> bytes:
-    """注释体换成空格（换行留着），标签的位置就还在原地。
-
-    这样再找 `<head` 时不会命中注释里写着的那个，也不必把位置映射回原文。
-    """
-    out = bytearray(data)
-    low = data.lower()
-    i = 0
-    while True:
-        start = low.find(b"<!--", i)
-        if start == -1:
-            return bytes(out)
-        end = low.find(b"-->", start + 4)
-        stop = len(data) if end == -1 else end + 3
-        for k in range(start, stop):
-            if out[k] not in (0x0A, 0x0D):
-                out[k] = 0x20
-        if end == -1:
-            return bytes(out)
-        i = end + 3
-
-
-def _open_tag_end(masked: bytes, start: int) -> int | None:
+def _open_tag_end(data: bytes, start: int) -> int | None:
     """从 `<` 起，跳过属性引号里的 `>`，返回开标签结束（含 `>`）后的下标。"""
     i = start + 1
     quote = 0
-    while i < len(masked):
-        byte = masked[i]
+    while i < len(data):
+        byte = data[i]
         if quote:
             if byte == quote:
                 quote = 0
@@ -201,11 +186,49 @@ def _open_tag_end(masked: bytes, start: int) -> int | None:
     return None
 
 
-def _find_tag_end(masked: bytes, name: bytes) -> int | None:
-    match = _TAGS[name].search(masked)
-    if match is None:
-        return None
-    return _open_tag_end(masked, match.start())
+def _skip_prolog(data: bytes, i: int) -> int | None:
+    """跳过空白、注释、doctype、`<?xml ...?>`；停在第一个别的东西上。
+
+    注释没收口时答 None：后面全是注释，插哪儿都不对。
+    """
+    while True:
+        while i < len(data) and data[i] in _SPACE:
+            i += 1
+        if data.startswith(b"<!--", i):
+            end = data.find(b"-->", i + 4)
+            if end == -1:
+                return None
+            i = end + 3
+        elif data.startswith(b"<!", i) or data.startswith(b"<?", i):
+            end = data.find(b">", i + 2)
+            if end == -1:
+                return None
+            i = end + 1
+        else:
+            return i
+
+
+def _insertion_point(data: bytes) -> int | None:
+    """文档开头那一段里，脚本该落的位置。
+
+    只看文档最前面：BOM、空白、注释、doctype，然后可有可无的 `<html ...>`，再然后
+    可有可无的 `<head ...>`。插在走到的那一处。不往后搜 `<head`：后面的
+    `<head` 可能在 `<script>` 的字符串里、`<template>` 里、属性值里，插进去会把页面
+    自己的脚本截断。省略了 html/head 标签的文档，脚本落在第一个别的东西之前，HTML
+    解析器照样把它放进隐含的 head，doctype 也还在最前面，页面不会掉进怪异模式。
+    """
+    i = 3 if data.startswith(b"\xef\xbb\xbf") else 0
+    for tag in (_HTML, _HEAD):
+        at = _skip_prolog(data, i)
+        if at is None:
+            return None
+        i = at
+        if tag.match(data, i):
+            end = _open_tag_end(data, i)
+            if end is None:
+                return None
+            i = end
+    return i
 
 
 def _declares_non_ascii_compatible(data: bytes) -> bool:
@@ -224,7 +247,8 @@ def inject_runtime_script(data: bytes) -> bytes:
 
     这是产品定下的那一件事：每一份被预览的 HTML 页面都装上键盘桥，普通报告里 ESC
     和快捷键才回得到宿主。插在 `<head ...>` 开标签之后；没有 head 就插在 `<html ...>`
-    之后；两个都没有就插在最前面。doctype、注释、BOM 都还留在原地。
+    之后；两个都没有就插在 doctype 和开头注释之后、第一个别的东西之前（见
+    `_insertion_point`）。doctype、注释、BOM 都还留在原地。
 
     三条不插（都宁可让这一页照旧 opt-in，也不插错）：
     - 已经引了 `/_cheese/runtime.js` 的页面不插第二次。
@@ -237,11 +261,7 @@ def inject_runtime_script(data: bytes) -> bytes:
         return data
     if _declares_non_ascii_compatible(data):
         return data
-    masked = _mask_comments(data)
-    head = _find_tag_end(masked, b"head")
-    if head is not None:
-        return data[:head] + RUNTIME_TAG + data[head:]
-    html = _find_tag_end(masked, b"html")
-    if html is not None:
-        return data[:html] + RUNTIME_TAG + data[html:]
-    return RUNTIME_TAG + data
+    at = _insertion_point(data)
+    if at is None:
+        return data
+    return data[:at] + RUNTIME_TAG + data[at:]

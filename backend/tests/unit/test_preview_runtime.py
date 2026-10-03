@@ -37,6 +37,34 @@ def test_injection_lands_after_head_html_or_at_the_front():
     assert inject_runtime_script(b"<p>hello</p>") == tag + b"<p>hello</p>"
 
 
+def test_injection_keeps_a_tagless_document_in_standards_mode():
+    # 省略了 html/head 的 HTML5 文档：脚本落在 doctype 之后。落在 doctype 之前，
+    # 浏览器会把整页按怪异模式排版。
+    assert inject_runtime_script(b"<!doctype html><title>x</title><p>hi") == (
+        b"<!doctype html>" + RUNTIME_TAG + b"<title>x</title><p>hi"
+    )
+
+
+def test_injection_never_lands_inside_page_script_template_or_attribute():
+    # 只认文档开头那一段的 html/head；后面写着的 `<head`（脚本字符串里、template
+    # 里、属性值里）一概不碰。插进 `<script>` 字符串，注入的 `</script>` 会把页面
+    # 自己的脚本截断。
+    for later in (
+        b'<script>var s="<head>";</script>',
+        b"<template><head></head></template>",
+        b"<style>/* <head> */</style>",
+        b'<div title="<head>"></div>',
+    ):
+        document = b"<!doctype html>" + later
+        assert inject_runtime_script(document) == (
+            b"<!doctype html>" + RUNTIME_TAG + later
+        )
+    # 注释没收口：后面全是注释，不插。
+    assert inject_runtime_script(b"<!-- never closed <head>") == (
+        b"<!-- never closed <head>"
+    )
+
+
 def test_injection_keeps_doctype_comments_and_bom_in_place():
     tag = RUNTIME_TAG
     document = b"\xef\xbb\xbf<!-- a note --><!DOCTYPE html><html><head></head></html>"
@@ -320,6 +348,13 @@ listeners.keydown(handled);
 handled.defaultPrevented = true;
 flush();
 assert.equal(messages.length, 2);
+// 输入法拼字时按的 ESC 是取消拼写，不报。
+listeners.keydown(esc({ isComposing: true }));
+flush();
+assert.equal(messages.length, 2);
+listeners.keydown(esc({ keyCode: 229 }));
+flush();
+assert.equal(messages.length, 2);
 // 通道没被前几次按下关掉：再来一次仍然报得出去。
 listeners.keydown(esc({}));
 flush();
@@ -376,8 +411,9 @@ const input = (type) => ({
 listeners.keydown(key({ target: input('text') }));
 flush();
 assert.equal(messages.length, 0);
-// 按钮、勾选框、单选框不是「在打字」，裸键照报。
-for (const type of ['button', 'checkbox', 'radio']) {
+// 按钮、勾选框、滑块、提交这类 input 不是「在打字」，裸键照报。
+const notTyping = ['button', 'checkbox', 'radio', 'range', 'submit', 'color', 'file'];
+for (const type of notTyping) {
   listeners.keydown(key({ target: input(type) }));
   flush();
   assert.equal(messages.length, 1, type);
@@ -400,6 +436,23 @@ for (const node of [
   flush();
   assert.equal(messages.length, 0);
 }
+// 不写 type、写 search 的 input 也是在打字。
+for (const type of [null, 'search']) {
+  listeners.keydown(key({ target: input(type) }));
+  flush();
+  assert.equal(messages.length, 0, String(type));
+}
+// 整份文档开了 designMode 也是在打字。
+doc.designMode = 'on';
+listeners.keydown(key({ target: { nodeType: 1, tagName: 'BODY' } }));
+flush();
+assert.equal(messages.length, 0);
+doc.designMode = 'off';
+// 输入法拼字时按的键不报，带 mod 的也一样。
+listeners.keydown(key({ target: { nodeType: 1, tagName: 'BODY' }, isComposing: true }));
+listeners.keydown(key({ metaKey: true, keyCode: 229 }));
+flush();
+assert.equal(messages.length, 0);
 // 焦点落在帧里的可编辑元素上（事件自己没带 target）也要挡住。
 doc.activeElement = { nodeType: 1, tagName: 'TEXTAREA' };
 listeners.keydown(key({}));
