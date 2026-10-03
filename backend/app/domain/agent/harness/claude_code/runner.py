@@ -664,17 +664,22 @@ class Runner(runner.Runner[Journal]):
             and self.session_id is not None
         ):
             # An error or a Stop ends this work without ever reaching the
-            # completion stamp, and an input row left unfinished blocks the seat
-            # for good. Say so only when all three hold: the exact work identity,
-            # the interval of inputs it really owned (the same journal key the
-            # completion stamp reads), and no harness background task still
-            # running — a result alone does not mean this session is done, one
-            # of those tasks may yet finish the work. Anything less stays an
-            # unknown outcome, which is what keeps the block in place.
+            # completion stamp, and an input row left unfinished blocks the
+            # seat for good. Say so when the exact work identity holds and the
+            # interval of inputs it really owned is known — the same journal
+            # key the completion stamp reads — and say it on this record,
+            # because this is the last one this work can ever be written on:
+            # the next belongs to a new work. A withheld termination is not a
+            # delay, it is a seat that never opens again. A harness background
+            # task still running is no reason to withhold it: that task goes on
+            # in an interval of its own, which is what the completion above
+            # assumes too. What the stamp opens is the seat, not the work: the
+            # rows keep their holds, and a later clean completion still writes
+            # their completed_at.
             inputs = json.loads(
                 self.journal.recall(f"execution_inputs:{self.work}") or "[]"
             )
-            if inputs and not self.tasks:
+            if inputs:
                 stamp["work_terminated"] = True
                 stamp["termination"] = (
                     "interrupted" if self.interrupting else "is_error"
