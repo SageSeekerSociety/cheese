@@ -64,6 +64,17 @@ it('两侧各取 32 个字，取的是渲染出来的那一段文字', () => {
   expect(quote.suffix.startsWith('一二三')).toBe(true)
 })
 
+it('两侧按字符数取，不把 emoji 劈成半个', () => {
+  const emoji = '😀'.repeat(40)
+  const root = rootFrom(`<p>${emoji}中间这句${emoji}</p>`)
+  // 每个 emoji 占两个 UTF-16 码元，所以这一段在下标 80..84。
+  const quote = quoteFromSelection(root, select(root.querySelector('p')!.firstChild!, 80, 84))!
+  expect(quote.text).toBe('中间这句')
+  // 按码点切：32 个 emoji 就是 32 个，不会剩下半个渲染成问号。
+  expect(quote.prefix).toBe('😀'.repeat(CONTEXT_CHARS))
+  expect(quote.suffix).toBe('😀'.repeat(CONTEXT_CHARS))
+})
+
 it('文件开头的那一段，前面没有字就是空的', () => {
   const root = rootFrom('<p>开头的一段话。</p>')
   const quote = quoteFromSelection(root, select(root.querySelector('p')!.firstChild!, 0, 6))!

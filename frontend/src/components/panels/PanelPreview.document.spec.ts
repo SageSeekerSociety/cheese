@@ -262,6 +262,73 @@ it('turns a selected markdown sentence into a message naming its section', async
   selection.removeAllRanges()
 })
 
+it('writes only the near side when the quote runs to the end of the document', async () => {
+  getPreview.mockResolvedValue(artifact('output/说明.md', 'text/markdown'))
+  readPreviewFile.mockResolvedValue({
+    path: 'output/说明.md',
+    content: '# 配置\n\n重试 3 次。\n',
+    version: 'v1',
+    bytes: 20,
+    binary: false,
+    too_large: false,
+  })
+  const { emitted } = mount()
+
+  // 拖满整段：它前面是标题，后面什么都没有。后面那一侧写「下文「」」是没话找话。
+  const md = await screen.findByTestId('markdown')
+  const node = md.querySelector('p')!.firstChild!
+  const range = document.createRange()
+  range.setStart(node, 0)
+  range.setEnd(node, node.textContent!.length)
+  const selection = window.getSelection()!
+  selection.removeAllRanges()
+  selection.addRange(range)
+  await fireEvent.mouseUp(md)
+
+  await fireEvent.update(screen.getByPlaceholderText('说明要改什么'), '这一整段都要重写')
+  await fireEvent.click(screen.getByText('发送'))
+
+  await waitFor(() => expect(emitted().locate).toBeTruthy())
+  const [message] = emitted().locate as { message: string }[][]
+  const [, context] = message[0].message.split('\n')
+  expect(context).toBe('上文「配置」')
+  selection.removeAllRanges()
+})
+
+it('says the quote is at the top of the file when nothing precedes it', async () => {
+  getPreview.mockResolvedValue(artifact('output/说明.md', 'text/markdown'))
+  readPreviewFile.mockResolvedValue({
+    path: 'output/说明.md',
+    content: '重试 3 次。\n\n还有别的。\n',
+    version: 'v1',
+    bytes: 20,
+    binary: false,
+    too_large: false,
+  })
+  const { emitted } = mount()
+
+  const md = await screen.findByTestId('markdown')
+  const node = md.querySelector('p')!.firstChild!
+  const range = document.createRange()
+  range.setStart(node, 0)
+  range.setEnd(node, 2)
+  const selection = window.getSelection()!
+  selection.removeAllRanges()
+  selection.addRange(range)
+  await fireEvent.mouseUp(md)
+
+  await fireEvent.update(screen.getByPlaceholderText('说明要改什么'), '这句话要改')
+  await fireEvent.click(screen.getByText('发送'))
+
+  await waitFor(() => expect(emitted().locate).toBeTruthy())
+  const [message] = emitted().locate as { message: string }[][]
+  const [sentence, context] = message[0].message.split('\n')
+  // 这段之前没有标题，位置就说是文件开头；前侧同样什么都没有，只有下文。
+  expect(sentence).toBe('在 output/说明.md 的 文件开头（「重试」）：这句话要改')
+  expect(context).toBe('下文「3 次。 还有别的。」')
+  selection.removeAllRanges()
+})
+
 it('says nothing until the reader has written what is wrong', async () => {
   const { emitted } = mount()
 

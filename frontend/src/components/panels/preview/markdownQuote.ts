@@ -53,7 +53,13 @@ function comesBefore(earlier: Node, later: Node): boolean {
 }
 
 function clipStart(text: string, max: number): string {
-  return text.length > max ? `…${text.slice(1 - max)}` : text
+  const points = codePoints(text)
+  return points.length > max ? `…${points.slice(1 - max).join('')}` : text
+}
+
+/** 按码点切开，别把 emoji 这类代理对劈成半个，屏幕上会渲染成一个问号。 */
+function codePoints(text: string): string[] {
+  return Array.from(text)
 }
 
 /** 选区两侧的文字：`prefix` 取选区之前那一段的末尾，`suffix` 取之后的头一段。 */
@@ -65,8 +71,8 @@ function contextAround(root: HTMLElement, range: Range): { prefix: string; suffi
   after.selectNodeContents(root)
   after.setStart(range.endContainer, range.endOffset)
   return {
-    prefix: normaliseText(before.toString()).slice(-CONTEXT_CHARS),
-    suffix: normaliseText(after.toString()).slice(0, CONTEXT_CHARS),
+    prefix: codePoints(normaliseText(before.toString())).slice(-CONTEXT_CHARS).join(''),
+    suffix: codePoints(normaliseText(after.toString())).slice(0, CONTEXT_CHARS).join(''),
   }
 }
 

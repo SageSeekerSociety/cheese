@@ -266,12 +266,18 @@ function onCell(payload: { address: string; value: string; sheet: string }) {
 }
 
 function onMarkdownQuote(payload: MarkdownQuote) {
-  // 位置说的是「哪一节」，不是行号：markdown 里改一句话要重新渲染，行号在下一版就
-  // 不成立了。它之前没有标题的，就说这一段在文件开头。
+  // 位置说的是「哪一节」而不是行号：改一句话要重新渲染，行号下一版就不成立了；它之前没有标题就是文件开头。
   const where = payload.heading
     ? t('work.room.preview.mdHeading', { heading: payload.heading })
     : t('work.room.preview.mdTop')
   openLocator(where, payload.text.slice(0, 200), where, { prefix: payload.prefix, suffix: payload.suffix })
+}
+
+function contextLine({ prefix, suffix }: QuoteContext): string {
+  if (prefix && suffix) return t('work.room.preview.locateContext', { prefix, suffix })
+  // 空的那一侧不写——写出来只是一对空引号。
+  if (prefix) return t('work.room.preview.locateContextBefore', { prefix })
+  return t('work.room.preview.locateContextAfter', { suffix })
 }
 
 function sendLocator() {
@@ -317,10 +323,9 @@ function sendLocator() {
     note,
   })
   // 选中那段文字的两侧（markdown 才有）。两侧都是空的时候没什么可分辨的，别写进去。
-  const context = target.context?.prefix || target.context?.suffix ? target.context : null
-  emit('locate', {
-    message: context ? `${message}\n${t('work.room.preview.locateContext', context)}` : message,
-  })
+  const ctx = target.context
+  const context = ctx && (ctx.prefix || ctx.suffix) ? contextLine(ctx) : ''
+  emit('locate', { message: context ? `${message}\n${context}` : message })
   clearLocator()
 }
 

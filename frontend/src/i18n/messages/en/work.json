@@ -559,6 +559,8 @@
       "emptyCell": "(empty)",
       "locateMessage": "In {path} at {address} (“{quote}”): {note}",
       "locateContext": "Between “{prefix}” and “{suffix}”",
+      "locateContextBefore": "Preceded by “{prefix}”",
+      "locateContextAfter": "Followed by “{suffix}”",
       "mdHeading": "heading “{heading}”",
       "mdTop": "the top of the file",
       "publishSite": "Publish site",

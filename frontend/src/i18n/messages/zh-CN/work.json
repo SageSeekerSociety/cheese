@@ -559,6 +559,8 @@
       "emptyCell": "（空）",
       "locateMessage": "在 {path} 的 {address}（「{quote}」）：{note}",
       "locateContext": "上文「{prefix}」下文「{suffix}」",
+      "locateContextBefore": "上文「{prefix}」",
+      "locateContextAfter": "下文「{suffix}」",
       "mdHeading": "标题「{heading}」",
       "mdTop": "文件开头",
       "publishSite": "发布网站",
