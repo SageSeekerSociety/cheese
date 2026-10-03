@@ -26,6 +26,10 @@ export interface ChatRowActionsDeps {
   editingId: Ref<string | null>
 }
 
+/** 悬停条比它那一行的顶边高多少（RoomHoverBar 的 `top`），和行的上内边距。 */
+const BAR_LIFT = 24
+const ROW_PAD = 4
+
 export function useChatRowActions(deps: ChatRowActionsDeps) {
   const { timeline, scrollRef, contentRef, rows, reactionPickerFor, editingId } = deps
 
@@ -82,6 +86,19 @@ export function useChatRowActions(deps: ChatRowActionsDeps) {
     bar.shown = true
   }
 
+  /** 指针是不是正往条上去：在条那一横带里（这一行的顶边往上 BAR_LIFT，到这一行
+   *  字的上沿），在条的左边，而且这一下是往右、不往下走。往上去点上一行的东西时
+   *  不算，条照常跟过去，不压着那一行。 */
+  let last: { x: number; y: number } | null = null
+  function headingForBar(e: MouseEvent, from: { x: number; y: number } | null): boolean {
+    const content = contentRef.value
+    const el = content?.querySelector<HTMLElement>('.hover-bar')
+    if (!content || !el || !from) return false
+    const y = e.clientY - content.getBoundingClientRect().top
+    if (y < bar.top - BAR_LIFT || y > bar.top + ROW_PAD) return false
+    return e.clientX < el.getBoundingClientRect().left && e.clientX > from.x && e.clientY <= from.y
+  }
+
   function hideBar() {
     if (reactionPickerFor.value) return
     bar.shown = false
@@ -91,10 +108,15 @@ export function useChatRowActions(deps: ChatRowActionsDeps) {
     // 触屏上没有悬停：浏览器照样补发 mouseover，悬停条出来了就再也收不回去。这些操作
     // 在触屏上是长按一条消息打开的面板（见下面 touchOnly）。
     if (touchOnly.value) return
+    const from = last
+    last = { x: e.clientX, y: e.clientY }
     const target = e.target as HTMLElement | null
     if (!target || target.closest('.hover-bar')) return
     const row = target.closest<HTMLElement>('[data-mid], .notice-row, .room-happening, .dispatched, .tl-mark, .im-row')
     if (!row) return
+    // 条浮在它那一行的字上面，压着上一行的末尾。指针从这一行斜着往条上走，会先经过
+    // 上一行：正朝着条去的那几下不换行，不然条在指针到之前就跳走了。
+    if (bar.shown && row.dataset.mid !== bar.id && headingForBar(e, from)) return
     if (row.matches('[data-actions]')) showBarAt(row)
     else hideBar()
   }
