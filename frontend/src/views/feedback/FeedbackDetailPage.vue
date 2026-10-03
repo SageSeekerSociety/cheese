@@ -18,6 +18,7 @@ import FeedbackPageShell from '@/components/feedback/FeedbackPageShell.vue'
 import FeedbackStatusChip from '@/components/feedback/FeedbackStatusChip.vue'
 import FeedbackStatusTimeline from '@/components/feedback/FeedbackStatusTimeline.vue'
 import { t } from '@/i18n'
+import { stepBack } from '@/lib/backOut'
 import { isClosed } from '@/lib/feedbackMeta'
 import { relTime } from '@/lib/relTime'
 import { useFeedbackStore } from '@/stores/feedback'
@@ -96,6 +97,12 @@ const missingState = computed(() =>
 )
 
 onMounted(() => void reload())
+
+/** 「返回」回反馈中心：身后有应用内来路（从中心点进来的）就退一格，贴链接冷开就换到
+ *  中心 —— 深链打开时 `router.back()` 是把整个应用退出去，而人以为自己按的是「回去」。 */
+function backToCenter() {
+  stepBack(router, '/feedback')
+}
 // 从「相关反馈」跳到另一条时组件不会重建（同一个路由，只换参数），所以要自己跟。
 watch(id, () => void reload())
 
@@ -238,7 +245,7 @@ async function share() {
     <!-- 返回那一条**只在真的有一条反馈时画**：加载中和「这条不存在」两态没有可返回
          的「上一页」这回事（这一页就是它们的落点）。 -->
     <template v-if="item" #head>
-      <button class="fb-back" @click="router.push('/feedback')">
+      <button class="fb-back" @click="backToCenter()">
         <v-icon size="15" aria-hidden="true">mdi-chevron-left</v-icon>{{ t('feedback.detail.back') }}
       </button>
     </template>
@@ -254,7 +261,7 @@ async function share() {
       :icon="missingState.icon"
       :tone="gone ? 'neutral' : 'error'"
       :action="t('feedback.detail.missingBack')"
-      @action="router.push('/feedback')"
+      @action="backToCenter()"
     >
       <!-- 服务端那句话照直画出来，但「这条不存在」那一态不画：那句话说的是「这一次
            为什么没拉到」，而在 404 这一态它只会把上面那句换个说法再说一遍。 -->

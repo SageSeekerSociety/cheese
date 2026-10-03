@@ -244,7 +244,8 @@ const saveTemplate = async () => {
     toast.success(
       isEditing.value ? t('spaces.detail.templateForm.updateSuccess') : t('spaces.detail.templateForm.createSuccess')
     )
-    router.push(listRoute)
+    // replace：表单已经收工了，再按回退键不该回到一张已经保存过的表单上。
+    router.replace(listRoute)
   } catch (error) {
     console.error(t('spaces.detail.templateForm.saveTemplateFailed'), error)
     toast.error(t('spaces.detail.templateForm.saveTemplateFailed'))

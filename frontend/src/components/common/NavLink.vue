@@ -25,6 +25,8 @@ import { useNavigation } from '@/composables/useNavigation'
 const props = defineProps<{
   /** 去处。宿主没有路由、或者这条路不认识它，就画成不可点的。 */
   to: NavTarget
+  /** 换掉当前这一格而不是压上一条（设置里换栏、底栏换页签）。见 lib/backOut 文件头。 */
+  replace?: boolean
 }>()
 
 const nav = useNavigation()
@@ -39,7 +41,7 @@ function onClick(e: MouseEvent): void {
   // 最不能原地跳走的两种。判据和 router-link 的 `guardEvent` 一字不差。
   if (/\b_blank\b/i.test((e.currentTarget as Element | null)?.getAttribute('target') ?? '')) return
   e.preventDefault()
-  nav?.navigate(props.to)
+  nav?.navigate(props.to, { replace: props.replace })
 }
 </script>
 

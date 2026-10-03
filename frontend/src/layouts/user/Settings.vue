@@ -34,6 +34,7 @@ import { getAvatarUrl } from '@/utils/materials'
 
 import SettingsOverlay from '@/components/common/SettingsOverlay.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
+import { closeOverlay } from '@/lib/backOut'
 import { pageBeforeSettings } from '@/lib/settingsReturn'
 import AccountService from '@/services/account'
 import { settingsGroups } from '@/views/user/settings/sections'
@@ -61,7 +62,7 @@ watch(
 )
 
 function close() {
-  router.push(pageBeforeSettings({ name: 'HomeHub' }))
+  closeOverlay(router, pageBeforeSettings({ name: 'HomeHub' }))
 }
 </script>
 

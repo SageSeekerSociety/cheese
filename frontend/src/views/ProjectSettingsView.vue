@@ -24,6 +24,7 @@ import GithubAccountSettings from '@/components/settings/GithubAccountSettings.v
 import GithubRepoSettings from '@/components/settings/GithubRepoSettings.vue'
 import UpstreamRepoSettings from '@/components/settings/UpstreamRepoSettings.vue'
 import { t } from '@/i18n'
+import { closeOverlay } from '@/lib/backOut'
 import { pageBeforeSettings } from '@/lib/settingsReturn'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -162,7 +163,7 @@ const section = computed(() => {
 const sectionLabel = computed(() => (section.value ? t(`work.projectSettings.sections.${section.value}`) : ''))
 
 function close() {
-  router.push(pageBeforeSettings({ name: 'workspace-project', params: { projectId: props.projectId } }))
+  closeOverlay(router, pageBeforeSettings({ name: 'workspace-project', params: { projectId: props.projectId } }))
 }
 </script>
 

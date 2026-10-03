@@ -17,10 +17,11 @@ vi.mock('@/api', async () => {
 const refreshProjects = vi.fn()
 vi.mock('@/stores/workspace', () => ({ useWorkspaceStore: () => ({ refreshProjects }) }))
 
-const push = vi.fn()
+// replace 而不是 push：归档完再按回退键不该落回这个项目的设置页（见组件里那句注释）。
+const replace = vi.fn()
 vi.mock('vue-router', async () => ({
   ...(await vi.importActual<typeof import('vue-router')>('vue-router')),
-  useRouter: () => ({ push }),
+  useRouter: () => ({ replace }),
 }))
 
 import ArchiveProjectDialog from './ArchiveProjectDialog.vue'
@@ -59,7 +60,7 @@ beforeEach(() => {
   setLocale('zh-CN')
   archiveProject.mockReset().mockResolvedValue({})
   refreshProjects.mockReset().mockResolvedValue(undefined)
-  push.mockReset().mockResolvedValue(undefined)
+  replace.mockReset().mockResolvedValue(undefined)
 })
 
 async function mount() {
@@ -93,7 +94,7 @@ describe('ArchiveProjectDialog', () => {
     await fireEvent.update(await screen.findByLabelText('输入项目名称「毕业设计」确认'), '毕业设计')
     await fireEvent.click(archiveButton())
     await waitFor(() => expect(archiveProject).toHaveBeenCalledWith('p1'))
-    await waitFor(() => expect(push).toHaveBeenCalledWith('/'))
+    await waitFor(() => expect(replace).toHaveBeenCalledWith('/'))
     expect(refreshProjects).toHaveBeenCalled()
   })
 
@@ -103,6 +104,6 @@ describe('ArchiveProjectDialog', () => {
     await fireEvent.update(await screen.findByLabelText('输入项目名称「毕业设计」确认'), '毕业设计')
     await fireEvent.click(archiveButton())
     expect(await screen.findByText('只有项目所有者能归档或取消归档项目')).toBeTruthy()
-    expect(push).not.toHaveBeenCalled()
+    expect(replace).not.toHaveBeenCalled()
   })
 })
