@@ -24,6 +24,7 @@ import AnnouncementCard from './AnnouncementCard.vue'
 import { useSpaceAnnouncements } from './useSpaceAnnouncements'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import { SpacesApi } from '@/network/api/spaces'
 import { useDialog } from '@/plugins/dialog'
@@ -185,51 +186,47 @@ async function remove(a: SpaceAnnouncement) {
       {{ t('spaces.announcements.empty') }}
     </p>
 
-    <v-dialog v-model="editing" max-width="600">
-      <v-card rounded="lg" class="pa-5">
-        <h3 class="ann__dialog-title t-dialog-title">
-          {{ t(editingId === null ? 'spaces.announcements.publish' : 'spaces.announcements.editTitle') }}
-        </h3>
+    <AdaptiveDialog
+      v-model="editing"
+      :title="t(editingId === null ? 'spaces.announcements.publish' : 'spaces.announcements.editTitle')"
+      :primary-label="t(editingId === null ? 'spaces.announcements.form.publish' : 'spaces.announcements.form.save')"
+      :primary-loading="submitting"
+      :primary-disabled="!draftTitle.trim()"
+      @primary="submit"
+    >
+      <v-text-field
+        v-model="draftTitle"
+        autocomplete="off"
+        :label="t('spaces.announcements.form.title')"
+        variant="outlined"
+        density="comfortable"
+        maxlength="255"
+      />
+      <TipTapEditor v-model="draftContent" output="html" :aria-label="t('spaces.announcements.form.content')" />
+      <div class="ann__opts">
+        <!-- Pinning is only chosen while posting; a published announcement uses the card's own action. -->
+        <v-checkbox
+          v-if="editingId === null"
+          v-model="draftPinned"
+          :label="t('spaces.announcements.form.pinned')"
+          density="comfortable"
+          hide-details
+          color="primary"
+        />
         <v-text-field
-          v-model="draftTitle"
-          autocomplete="off"
-          :label="t('spaces.announcements.form.title')"
+          v-model="draftExpiry"
+          type="date"
+          :label="t('spaces.announcements.form.expiry')"
           variant="outlined"
           density="comfortable"
-          maxlength="255"
+          hide-details
+          clearable
+          :min="earliestExpiry"
+          class="ann__expiry"
         />
-        <TipTapEditor v-model="draftContent" output="html" :aria-label="t('spaces.announcements.form.content')" />
-        <div class="ann__opts">
-          <!-- 置顶只在发布时一起选；已经发出去的公告走卡片上那个单独的动作。 -->
-          <v-checkbox
-            v-if="editingId === null"
-            v-model="draftPinned"
-            :label="t('spaces.announcements.form.pinned')"
-            density="comfortable"
-            hide-details
-            color="primary"
-          />
-          <v-text-field
-            v-model="draftExpiry"
-            type="date"
-            :label="t('spaces.announcements.form.expiry')"
-            variant="outlined"
-            density="comfortable"
-            hide-details
-            clearable
-            :min="earliestExpiry"
-            class="ann__expiry"
-          />
-        </div>
-        <p v-if="editingId === null && notifyHint" class="ann__hint">{{ notifyHint }}</p>
-        <div class="d-flex justify-end ga-2 mt-4">
-          <BaseButton kind="ghost" @click="editing = false">{{ t('spaces.announcements.form.cancel') }}</BaseButton>
-          <BaseButton kind="primary" :loading="submitting" :disabled="!draftTitle.trim()" @click="submit">
-            {{ t(editingId === null ? 'spaces.announcements.form.publish' : 'spaces.announcements.form.save') }}
-          </BaseButton>
-        </div>
-      </v-card>
-    </v-dialog>
+      </div>
+      <p v-if="editingId === null && notifyHint" class="ann__hint">{{ notifyHint }}</p>
+    </AdaptiveDialog>
   </div>
 </template>
 
@@ -268,10 +265,6 @@ async function remove(a: SpaceAnnouncement) {
 
 .ann__fold-icon {
   margin-left: auto;
-}
-
-.ann__dialog-title {
-  margin: 0 0 16px;
 }
 
 .ann__opts {

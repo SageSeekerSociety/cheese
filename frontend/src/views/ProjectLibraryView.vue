@@ -24,6 +24,7 @@ import { libraryFileBytes, replaceLibraryFile, uploadLibraryFile } from '../lib/
 
 import { useCommands } from '@/commands'
 import BaseButton from '@/components/base/BaseButton.vue'
+import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import FileBytesPreview from '@/components/common/FileBytesPreview.vue'
@@ -232,6 +233,12 @@ async function download(file: LibraryFile) {
   } catch (e) {
     actionError.value = e instanceof Error ? e.message : t('work.library.downloadFailed')
   }
+}
+
+/** 确认框点「删除」：这时 `confirming` 一定是有值的，取出来交给 `remove`。 */
+function confirmRemove() {
+  const file = confirming.value
+  if (file) void remove(file)
 }
 
 async function remove(file: LibraryFile) {
@@ -469,36 +476,29 @@ function read(file: LibraryFile) {
       </section>
     </div>
 
-    <!-- 替换改的是每一条引用它的消息读到的内容，所以先说清楚再动。 -->
-    <v-dialog :model-value="!!replacing" max-width="420" @update:model-value="replacing = null">
-      <v-card v-if="replacing">
-        <v-card-title class="t-dialog-title">{{
-          t('work.library.replaceTitle', { name: replacing.target.path })
-        }}</v-card-title>
-        <v-card-text class="t-body">{{ t('work.library.replaceBody', { file: replacing.file.name }) }}</v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <BaseButton @click="replacing = null">{{ t('work.library.cancel') }}</BaseButton>
-          <BaseButton kind="primary" @click="replace">{{ t('work.library.replaceConfirm') }}</BaseButton>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <!-- Replace changes what every message referencing this file reads, so say it before acting. -->
+    <ConfirmDialog
+      :model-value="!!replacing"
+      :title="t('work.library.replaceTitle', { name: replacing?.target.path ?? '' })"
+      :confirm-label="t('work.library.replaceConfirm')"
+      @update:model-value="replacing = null"
+      @confirm="replace"
+    >
+      {{ t('work.library.replaceBody', { file: replacing?.file.name ?? '' }) }}
+    </ConfirmDialog>
 
-    <!-- 删除是不可逆的，而且这一份可能已经被好几条消息引用着：那些引用会随之
-         打不开，所以这一下要问一句。 -->
-    <v-dialog :model-value="!!confirming" max-width="420" @update:model-value="confirming = null">
-      <v-card v-if="confirming">
-        <v-card-title class="t-dialog-title">{{
-          t('work.library.deleteTitle', { name: confirming.path })
-        }}</v-card-title>
-        <v-card-text class="t-body">{{ t('work.library.deleteBody') }}</v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <BaseButton @click="confirming = null">{{ t('work.library.cancel') }}</BaseButton>
-          <BaseButton kind="danger" solid @click="remove(confirming)">{{ t('work.library.delete') }}</BaseButton>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <!-- Deleting is irreversible, and this file may already be referenced by several
+         messages: those references will stop opening, so ask before it happens. -->
+    <ConfirmDialog
+      :model-value="!!confirming"
+      :title="t('work.library.deleteTitle', { name: confirming?.path ?? '' })"
+      :confirm-label="t('work.library.delete')"
+      danger
+      @update:model-value="confirming = null"
+      @confirm="confirmRemove"
+    >
+      {{ t('work.library.deleteBody') }}
+    </ConfirmDialog>
   </AppPage>
 </template>
 

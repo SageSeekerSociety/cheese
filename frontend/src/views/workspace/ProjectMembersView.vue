@@ -42,6 +42,7 @@ import {
 } from '@/api'
 import { useCommands } from '@/commands'
 import BaseButton from '@/components/base/BaseButton.vue'
+import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
@@ -546,19 +547,16 @@ useCommands(() => [
     <LeaveProjectDialog v-model="leaveOpen" :project-id="props.projectId" />
     <TransferProjectDialog v-model="transferOpen" :project-id="props.projectId" />
 
-    <v-dialog :model-value="removeTarget !== null" max-width="420" @update:model-value="removeTarget = null">
-      <v-card>
-        <v-card-title class="t-dialog-title pt-4">{{
-          t('work.members.removeTitle', { name: memberName(removeTarget) || removeTarget?.user_handle || '' })
-        }}</v-card-title>
-        <v-card-text class="t-body c-muted">{{ t('work.members.removeBody') }}</v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <BaseButton @click="removeTarget = null">{{ t('work.members.cancel') }}</BaseButton>
-          <BaseButton kind="danger" solid @click="confirmRemove">{{ t('work.members.confirmRemove') }}</BaseButton>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <ConfirmDialog
+      :model-value="removeTarget !== null"
+      :title="t('work.members.removeTitle', { name: memberName(removeTarget) || removeTarget?.user_handle || '' })"
+      :confirm-label="t('work.members.confirmRemove')"
+      danger
+      @update:model-value="removeTarget = null"
+      @confirm="confirmRemove"
+    >
+      {{ t('work.members.removeBody') }}
+    </ConfirmDialog>
   </AppPage>
 </template>
 

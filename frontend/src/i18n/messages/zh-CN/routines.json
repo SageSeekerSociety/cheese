@@ -95,7 +95,6 @@
   "archivedStopped": "已随话题归档停止",
   "readonly": "这条规则由 {owner} 管，只有他和项目管理员能改",
   "refreshAria": "刷新规则",
-  "cancel": "取消",
   "save": "保存",
   "weekday": {
     "mon": "周一",

@@ -1,35 +1,29 @@
 <template>
-  <v-dialog :model-value="pending.length > 0" max-width="440" persistent>
-    <v-card>
-      <v-card-title class="text-h6">{{ t('account.rulesUpdated') }}</v-card-title>
-      <v-card-text class="text-body-2">
-        <p class="mb-3">{{ t('account.rulesUpdatedBody') }}</p>
-        <ul class="pl-4">
-          <li v-for="doc in pending" :key="doc.document">
-            <NavLink
-              :to="{ name: doc.document === 'terms' ? 'LegalTerms' : 'LegalPrivacy' }"
-              target="_blank"
-              class="text-primary text-decoration-none"
-            >
-              {{ doc.title }}
-            </NavLink>
-            <span style="color: var(--muted)">
-              · {{ t('account.legalEffectiveDate', { date: doc.effectiveDate }) }}
-            </span>
-          </li>
-        </ul>
-        <p v-if="error" class="mt-3" style="color: rgb(var(--v-theme-error))">{{ error }}</p>
-      </v-card-text>
-      <v-card-actions class="justify-end pa-4">
-        <BaseButton kind="ghost" :disabled="accepting" @click="decline">{{
-          t('account.disagreeAndSignOut')
-        }}</BaseButton>
-        <BaseButton kind="primary" :loading="accepting" @click="accept">
-          {{ t('account.agreeAndContinue') }}
-        </BaseButton>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+  <!-- Agree / disagree gate: title, the documents that changed, and the two choices. -->
+  <ConfirmDialog
+    :model-value="pending.length > 0"
+    :title="t('account.rulesUpdated')"
+    :confirm-label="t('account.agreeAndContinue')"
+    :cancel-label="t('account.disagreeAndSignOut')"
+    :loading="accepting"
+    @confirm="accept"
+    @cancel="decline"
+  >
+    <p class="mb-3">{{ t('account.rulesUpdatedBody') }}</p>
+    <ul class="pl-4">
+      <li v-for="doc in pending" :key="doc.document">
+        <NavLink
+          :to="{ name: doc.document === 'terms' ? 'LegalTerms' : 'LegalPrivacy' }"
+          target="_blank"
+          class="text-primary text-decoration-none"
+        >
+          {{ doc.title }}
+        </NavLink>
+        <span style="color: var(--muted)"> · {{ t('account.legalEffectiveDate', { date: doc.effectiveDate }) }} </span>
+      </li>
+    </ul>
+    <p v-if="error" class="mt-3" style="color: rgb(var(--v-theme-error))">{{ error }}</p>
+  </ConfirmDialog>
 </template>
 
 <script setup lang="ts">
@@ -48,7 +42,7 @@ import type { LegalDocumentSummary } from '@/network/api/legal/types'
 import { ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
-import BaseButton from '@/components/base/BaseButton.vue'
+import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import NavLink from '@/components/common/NavLink.vue'
 import { t } from '@/i18n'
 import { LegalApi } from '@/network/api/legal'

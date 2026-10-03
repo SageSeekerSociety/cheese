@@ -495,8 +495,7 @@
     "done": "完成",
     "liveTitle": "现场 · {'@'}{handle}",
     "unbindTitle": "解绑设备「{name}」",
-    "unbindHint": "解绑后这台机器立即断开，需重新接入才能再次使用",
-    "cancel": "取消"
+    "unbindHint": "解绑后这台机器立即断开，需重新接入才能再次使用"
   },
   "connections": {
     "lede": "接入自己的邮箱或飞书，并选择允许哪些项目的 AI 队友使用。AI 队友以你的账号读邮件、写草稿、读写飞书文档，邮件须经你确认后才会发出",
@@ -541,7 +540,6 @@
     "sendBody": "将从你的邮箱发给 {to}。发出后无法撤回",
     "sendBodyAttachments": "将从你的邮箱发给 {to}，带 {n} 个附件。发出后无法撤回",
     "sendShort": "发送",
-    "cancel": "取消",
     "removeTitle": "删除「{label}」",
     "removeBody": "删除后 AI 队友不再能用它，保存的密码或密钥一并删除",
     "testAndSave": "测试并保存",
