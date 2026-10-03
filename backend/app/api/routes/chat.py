@@ -49,7 +49,9 @@ from app.core.errors import ForbiddenError
 from app.core.obs import get_logger
 from app.core.sentences import error_frame
 from app.domain.agent.chat import ChatService
+from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.agent.runtime import InProcessBroker
+from app.domain.agent.turn_adoption import adopt
 from app.domain.authz.policy import refuse_unauthenticated_chat
 from app.domain.room_task.services import TaskService
 
@@ -84,6 +86,7 @@ async def chat(
 
     token = websocket.query_params.get("token") or ""
     refusal: tuple[str, str] | None = None
+    open_turns: list[tuple[str, float, str | None]] = []
 
     async def relay(queue: asyncio.Queue[dict]) -> None:
         while True:
@@ -129,6 +132,16 @@ async def chat(
                         )
                     except ForbiddenError as exc:
                         refusal = ("forbidden", exc.args[0])
+                if refusal is None:
+                    # The turns still running here, as the database has them.
+                    # The broker's own list lives in this process only, and a
+                    # deploy replaces the process (twice: the next container,
+                    # then the recreated one), so a turn started before it, or
+                    # on the other container while both ran, is missing from it
+                    # though its agent is still at work.
+                    open_turns = await AgentTurnRepository(auth_session).open_on(
+                        room_id, task_id=card.id if card is not None else None
+                    )
         if refusal is not None:
             code, message = refusal
             _log.info("chat_ws_refused", code=code, topic=str(topic_id))
@@ -141,6 +154,7 @@ async def chat(
         # that starts after this has its turn_started queued; one that ends
         # while the turn_active frame is in flight has its turn_finished
         # queued — the client can never be left permanently "working".
+        adopt(broker, channel, open_turns)
         active_turn_ids = broker.active_turn_ids(channel)
         await websocket.accept()
         if active_turn_ids:
