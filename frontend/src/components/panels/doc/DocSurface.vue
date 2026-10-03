@@ -542,12 +542,20 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
 .doc-editor :deep(.doc-review-new) {
   background: var(--ok-wash);
   cursor: pointer;
+  animation: docReviewIn 320ms var(--ease-out);
 }
 .doc-editor :deep(.doc-review-old) {
   margin-right: 2px;
   color: var(--danger-ink);
   text-decoration: line-through var(--danger);
   user-select: none;
+  animation: docReviewIn 320ms var(--ease-out);
+}
+@keyframes docReviewIn {
+  from {
+    background: transparent;
+    opacity: 0.4;
+  }
 }
 .doc-editor :deep(.doc-review-new.is-active),
 .doc-editor :deep(.doc-review-old.is-active) {
@@ -559,6 +567,22 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
 .doc-editor :deep(.doc-edit-target--select),
 .doc-editor :deep(.doc-edit-target--pending) {
   background: var(--selection-bg);
+}
+/* 在改：选中的那段一明一暗，看得出它正在被处理。 */
+.doc-editor :deep(.doc-edit-target--pending) {
+  animation: docEditPending 1.4s ease-in-out infinite;
+}
+@keyframes docEditPending {
+  50% {
+    background: color-mix(in srgb, var(--selection-bg) 45%, transparent);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .doc-editor :deep(.doc-review-new),
+  .doc-editor :deep(.doc-review-old),
+  .doc-editor :deep(.doc-edit-target--pending) {
+    animation: none;
+  }
 }
 .doc-editor :deep(.doc-edit-target--flash) {
   animation: docEditFlash 2.4s var(--ease-out) forwards;
