@@ -763,7 +763,14 @@
         "code": "代码块",
         "quote": "引用",
         "table": "表格",
-        "hr": "分割线"
+        "hr": "分割线",
+        "callout": "提示框",
+        "timeline": "时间线",
+        "stats": "指标卡",
+        "columns": "分栏",
+        "details": "折叠",
+        "math": "公式",
+        "status": "状态标签"
       },
       "status": {
         "inProgress": "进行中",
@@ -793,7 +800,56 @@
       "you": "你",
       "emptyLineHint": "输入 / 插入内容",
       "undo": "撤销",
-      "redo": "重做"
+      "redo": "重做",
+      "blocks": {
+        "calloutKind": "提示框类型",
+        "kinds": {
+          "NOTE": "说明",
+          "TIP": "提示",
+          "IMPORTANT": "重要",
+          "WARNING": "注意",
+          "CAUTION": "警告"
+        },
+        "kindHints": {
+          "NOTE": "补充信息",
+          "TIP": "建议",
+          "IMPORTANT": "结论、决定",
+          "WARNING": "风险",
+          "CAUTION": "会出事的操作"
+        },
+        "fields": {
+          "when": "时间",
+          "title": "标题",
+          "body": "说明",
+          "name": "名称",
+          "value": "数值",
+          "delta": "变化",
+          "summary": "标题"
+        },
+        "itemActions": "这一项的操作",
+        "moveUp": "上移",
+        "moveDown": "下移",
+        "addAfter": "在后面加一项",
+        "removeItem": "删除这一项",
+        "addStat": "加一张指标卡",
+        "removeStat": "删除这张指标卡",
+        "columnActions": "这一栏的操作",
+        "addColumn": "在右边加一栏",
+        "removeColumn": "删除这一栏",
+        "toggleDetails": "展开或收起",
+        "emptyFormula": "空公式",
+        "formulaError": "公式无法显示",
+        "formulaSource": "公式内容",
+        "footnoteMissing": "找不到这条脚注",
+        "editFootnote": "编辑脚注",
+        "statusWords": "状态文字",
+        "statusKinds": {
+          "ok": "是、通过",
+          "no": "否、不通过",
+          "warn": "有风险、待定"
+        },
+        "statusOff": "去掉"
+      }
     },
     "comments": {
       "comment": "评论",

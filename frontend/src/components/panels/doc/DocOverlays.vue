@@ -26,6 +26,7 @@ import { BUBBLE_META } from '../../../lib/docBubble'
 import { spotAt } from '../../../lib/docCommentSpots'
 import { captureNewDocLink } from '../../../lib/docLinks'
 import { BLOCK_ITEMS, blockKeyOf } from '../../../lib/docSlashMenu'
+import { statusAt } from '../../../lib/docStatus'
 
 import DocBubble from './DocBubble.vue'
 import DocKeyboardBar from './DocKeyboardBar.vue'
@@ -82,6 +83,8 @@ interface CommentCta {
   doc: PMNode
   selection: Selection
   topicId: string
+  /** The caret sits in a status tag: the bar offers its kinds, over the tag. */
+  status?: { from: number; to: number }
 }
 const commentCta = shallowRef<CommentCta | null>(null)
 // 手指点的屏幕上（手机、平板），能改时浮条换成键盘上方的那一条：系统自己的选区菜单会
@@ -134,8 +137,12 @@ function positionCta() {
   }
   try {
     const sel = cta.selection
-    const a = ed.view.coordsAtPos(sel instanceof CellSelection ? sel.$anchorCell.pos + 1 : sel.from)
-    const h = ed.view.coordsAtPos(sel instanceof CellSelection ? sel.$headCell.pos + 1 : sel.to)
+    const a = ed.view.coordsAtPos(
+      cta.status ? cta.status.from : sel instanceof CellSelection ? sel.$anchorCell.pos + 1 : sel.from
+    )
+    const h = ed.view.coordsAtPos(
+      cta.status ? cta.status.to : sel instanceof CellSelection ? sel.$headCell.pos + 1 : sel.to
+    )
     if (Math.max(a.bottom, h.bottom) < top || Math.min(a.top, h.top) > bottom) {
       commentCta.value = null
       return
@@ -157,6 +164,24 @@ function schedulePosition() {
 }
 function updateCommentCta(ed: CoreEditor) {
   const sel = ed.state.selection
+  if (sel.empty && props.topicId && !sameSelection(ed) && props.editable && ed.isEditable && !touch.value) {
+    const status = statusAt(ed.state, sel.from)
+    if (status) {
+      commentCta.value = {
+        top: 0,
+        left: 0,
+        quote: '',
+        editor: ed,
+        doc: ed.state.doc,
+        selection: sel,
+        topicId: props.topicId,
+        status,
+      }
+      positionCta()
+      schedulePosition()
+      return
+    }
+  }
   if (sel.empty || !props.topicId || sameSelection(ed)) {
     commentCta.value = null
     return
@@ -544,6 +569,7 @@ defineExpose({ onHover, onEdited })
         :agent-handle="agentHandle"
         :editable="editable && commentCta.editor.isEditable"
         :restyle="restyle(commentCta)"
+        :status-only="!!commentCta.status"
         :can-agent="canAgent"
         :can-comment="canComment"
         @agent="agentOnSelection"
