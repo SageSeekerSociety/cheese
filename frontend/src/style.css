@@ -282,7 +282,7 @@
   --ease-standard: cubic-bezier(0.4, 0, 0.2, 1); /* changing in place */
 
   /* ---- z-index ----
-     One ladder for the whole product (design-system §3.7). A raw number in a
+     One ladder for the whole product (design-system §3.8). A raw number in a
      component is a bug waiting to happen: the layer it belongs to is invisible
      from the call site, so the next person has to guess a value and lands on a
      neighbour's. Read the band, then pick the token.

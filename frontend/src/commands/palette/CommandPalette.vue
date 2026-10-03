@@ -351,7 +351,7 @@ function shortcutLabel(shortcut: string | undefined): string | undefined {
 }
 
 // A v-bottom-sheet's z-index prop is a number, so it cannot read the CSS token
-// (--z-menu, design-system §3.7). This is the one JS copy of that rung: the
+// (--z-menu, design-system §3.8). This is the one JS copy of that rung: the
 // sheet has to open above the palette layer (--z-overlay, 2400).
 const SHEET_Z = 2500
 

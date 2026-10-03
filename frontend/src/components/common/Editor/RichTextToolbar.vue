@@ -153,7 +153,7 @@ const insertActions: Simple[] = [
 ]
 
 // 弹层要盖得住全屏的编辑器（TipTapEditor 里那一层是 2450，在弹窗 2400 之上）。
-// z-index 属性只收数字，读不到 CSS token，这里是 `--z-menu`（design-system §3.7）在 JS
+// z-index 属性只收数字，读不到 CSS token，这里是 `--z-menu`（design-system §3.8）在 JS
 // 里的唯一一份。
 const MENU_Z = 2500
 
