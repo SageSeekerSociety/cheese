@@ -6,7 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 
 from app.api.auth import ActorResolverDep
-from app.api.deps import get_chat_service, get_handless_sessions
+from app.api.deps import get_chat_service, get_session_host
 from app.api.doc_identity import operation_actor
 from app.api.response import ok, page
 from app.api.routes.living_docs import _frozen
@@ -16,8 +16,8 @@ from app.core.sentences import say
 from app.domain.agent.chat import ChatService
 from app.domain.agent.document.question import answering
 from app.domain.agent.document.thread import hand_to_agent, mentioned_seat
-from app.domain.agent.harness.pi.handless import HandlessSessions
 from app.domain.agent.runtime import announce_stale
+from app.domain.agent.session_host.host import SessionHost
 from app.domain.block.comment_schemas import ReplyIn, ThreadMutation
 from app.domain.block.comment_threads import CommentThreads
 from app.domain.living_doc.services import DocumentJournal
@@ -118,7 +118,7 @@ async def reply(
     db: DbSession,
     resolver: ActorResolverDep,
     chat: Annotated[ChatService, Depends(get_chat_service)],
-    sessions: Annotated[HandlessSessions, Depends(get_handless_sessions)],
+    sessions: Annotated[SessionHost, Depends(get_session_host)],
 ) -> dict:
     """A reply that @-mentions the room's agent hands the thread to it
     (``app.domain.agent.document.thread``)."""

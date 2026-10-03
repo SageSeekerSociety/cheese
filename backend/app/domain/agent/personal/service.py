@@ -1,7 +1,7 @@
 """A person's conversations with their 芝士, and asking one question (#2285).
 
 A question is answered by the conversation's own pi session on the session host
-(``agent.harness.pi.personal``), which keeps the conversation: it is started
+(``personal.session``), which keeps the conversation: it is started
 with the conversation's id, lets go when idle, and picks the conversation up
 again when the next question starts it. ``AssistantMessage`` rows are what the
 person said and was told, in order, and are what the panel shows.
@@ -33,20 +33,21 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.background import spawn
-from app.core.config import settings
-from app.core.sandbox_auth import mint_delegated_credential, mint_personal_credential
+from app.core.sandbox_auth import mint_delegated_credential
 from app.core.sentences import error_frame, say
 from app.domain.agent.admission import Hold, Slot, enter
-from app.domain.agent.harness.pi.handless import (
-    Answered,
-    HandlessSessions,
-    Looking,
-    Said,
-    SessionError,
-)
-from app.domain.agent.harness.pi.personal import Launch
 from app.domain.agent.personal import billing
-from app.domain.agent.personal.prompt import earlier, system_prompt
+from app.domain.agent.personal.prompt import earlier
+from app.domain.agent.session_host.answer import Answer, Tool, Words
+from app.domain.agent.session_host.answer import ask as ask_session
+from app.domain.agent.session_host.contract import (
+    Access,
+    Prompt,
+    SessionError,
+    SessionRef,
+    SessionSpec,
+)
+from app.domain.agent.session_host.host import SessionHost
 from app.domain.assistant.models import AssistantConversation, AssistantMessage
 from app.domain.user.services import usernames_by_ids
 
@@ -56,8 +57,6 @@ TITLE_CHARS = 40
 
 #: Said when the model could not be reached or failed mid-answer.
 FAILED = say("assistantFailed")
-#: What a person's 芝士 may look up (`sandbox/cheese`), as that person.
-TOOLS = ("cheese_my_tasks", "cheese_docs_search", "cheese_docs_read")
 #: How long one question may take, from when it took its conversation.
 ANSWER_S = 170.0
 #: How much longer than that a question's credential lasts.
@@ -185,25 +184,13 @@ def sse(event: str, data: dict) -> bytes:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n".encode()
 
 
-def launch(user_id: int, conversation_id: uuid.UUID, place: str) -> Launch:
-    """What the conversation's session is started with."""
-    return Launch(
-        user_id=user_id,
-        conversation_id=conversation_id,
-        system_prompt=system_prompt(place),
-        tools=TOOLS,
-        token=mint_personal_credential(
-            user_id=user_id, conversation_id=str(conversation_id)
-        ),
-        model=settings.assistant_model,
-    )
-
-
 async def ask(
     *,
     sessions: async_sessionmaker[AsyncSession],
-    people: HandlessSessions,
-    started: Launch,
+    people: SessionHost,
+    user_id: int,
+    conversation_id: uuid.UUID,
+    started: tuple[SessionRef, SessionSpec, Access],
     question: str,
     held_at: float,
     on_done: Callable[[], Awaitable[None]] | None = None,
@@ -213,8 +200,8 @@ async def ask(
 
     The caller has already checked that the conversation is the person's, that
     they may see its place and have credits left, and has started the session
-    (``started``) and taken the conversation's hold at ``held_at``."""
-    user_id, conversation_id = started.user_id, started.conversation_id
+    (``started``, `personal.session`) and taken the conversation's hold at
+    ``held_at``."""
     work = uuid.uuid4()
     async with sessions() as session:
         store = AssistantConversations(session)
@@ -237,19 +224,18 @@ async def ask(
     async def run() -> None:
         answer, failure = "", None
         try:
-            async for event in people.ask(
-                started,
-                work,
-                question,
-                credential=acting,
-                earlier=earlier(before),
+            async for event in ask_session(
+                people,
+                *started,
+                Prompt(work, question, acting=acting, preface=earlier(before)),
+                work_id=work,
                 ceiling_s=ANSWER_S - (time.monotonic() - held_at),
             ):
-                if isinstance(event, Said):
+                if isinstance(event, Words):
                     queue.put_nowait(sse("delta", {"text": event.text}))
-                elif isinstance(event, Looking):
-                    queue.put_nowait(sse("tool", {"name": event.tool}))
-                elif isinstance(event, Answered):
+                elif isinstance(event, Tool):
+                    queue.put_nowait(sse("tool", {"name": event.name}))
+                elif isinstance(event, Answer):
                     answer, failure = event.text, event.error
                     if failure:
                         logger.warning(

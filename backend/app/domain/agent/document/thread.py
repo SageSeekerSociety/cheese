@@ -35,14 +35,11 @@ from app.core.redis import get_redis_client
 from app.domain.agent.chat import ChatService
 from app.domain.agent.document import question
 from app.domain.agent.document.question import Bound, Surroundings
-from app.domain.agent.harness.pi.handless import (
-    Answered,
-    HandlessSessions,
-    HostFull,
-    Looking,
-    SessionError,
-)
+from app.domain.agent.document.session import session_for
 from app.domain.agent.runtime import announce_stale, get_broker
+from app.domain.agent.session_host.answer import Answer, Tool, ask
+from app.domain.agent.session_host.contract import HostFull, Prompt, SessionError
+from app.domain.agent.session_host.host import SessionHost
 from app.domain.block.comment_threads import CommentThreads
 from app.domain.delivery.mention import mentioned_handles
 from app.domain.identity.actor import Actor
@@ -84,7 +81,7 @@ async def mentioned_seat(
 
 def hand_to_agent(
     chat: ChatService,
-    sessions: HandlessSessions,
+    sessions: SessionHost,
     *,
     place: Place,
     actor: Actor,
@@ -132,7 +129,7 @@ async def thread_question(
 
 async def answer(
     chat: ChatService,
-    sessions: HandlessSessions,
+    sessions: SessionHost,
     *,
     project_id: uuid.UUID,
     room_id: uuid.UUID,
@@ -179,7 +176,7 @@ async def answer(
                 work=work,
                 may_edit=True,
             )
-        launch = question.launch_for(
+        started = session_for(
             project_id=project_id,
             room_id=room_id,
             key=thread_id,
@@ -189,12 +186,16 @@ async def answer(
         )
         text, failure = "", None
         spent = True
-        async for event in sessions.ask(
-            launch, work, prompt, credential=acting, ceiling_s=question.ANSWER_S
+        async for event in ask(
+            sessions,
+            *started,
+            Prompt(work, prompt, acting=acting),
+            work_id=work,
+            ceiling_s=question.ANSWER_S,
         ):
-            if isinstance(event, Looking):
-                await _tell(room_id, thread_id, "working", event.tool)
-            elif isinstance(event, Answered):
+            if isinstance(event, Tool):
+                await _tell(room_id, thread_id, "working", event.name)
+            elif isinstance(event, Answer):
                 text, failure = event.text, event.error
         if failure:
             logger.warning("doc agent answer failed thread=%s: %s", thread_id, failure)

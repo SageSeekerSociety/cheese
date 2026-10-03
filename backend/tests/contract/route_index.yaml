@@ -289,7 +289,7 @@ owners:
   integration: "Personal and room mail/Feishu connections, drafts and OAuth callback; domain/integration/IntegrationService."
   remote_mcp: "Declared remote MCP connection, per-project secrets and forwarding; domain/remote_mcp service/oauth/upstream."
   fetch: "Outbound URL retrieval; domain/fetch service/guard/layers."
-  doc_agent: "The room's AI teammate answering from the living document — a comment thread's session, or a selection box's — domain/agent/document orchestration over domain/agent/harness/pi/document and living_doc/collab."
+  doc_agent: "The room's AI teammate answering from the living document — a comment thread's session, or a selection box's — domain/agent/document orchestration over domain/agent/session_host and living_doc/collab."
   docs_site: "Manual/dev-doc access, assistant/search and visit attribution; domain/docs_site access/library/visits."
   repository.transport: "Task workspace Git and snapshots; git_http/workspace routes compose domain/repository forge_files and room_task snapshot/checkout services. Existing route assembly owns transport."
   forge.transport: "Forge capability transport and token leases; forge_token route composes domain/project/forge, agent GitHub/Forgejo token adapters."

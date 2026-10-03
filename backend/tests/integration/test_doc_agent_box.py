@@ -116,8 +116,8 @@ def test_a_follow_up_goes_to_the_same_session_and_is_the_askers_alone(client, se
 
     status, _ = _ask(client, room, conversation=conversation, text="再短一点")
     assert status == 200
-    first_launch, second_launch = (launch for launch, _ in sessions.asked)
-    assert first_launch.key == second_launch.key == uuid.UUID(conversation)
+    first, second = (session for session, _ in sessions.asked)
+    assert first == second and conversation in first.home
 
     refused, _ = _ask(client, room, by="bob", conversation=conversation, text="我也来")
     assert refused == 403

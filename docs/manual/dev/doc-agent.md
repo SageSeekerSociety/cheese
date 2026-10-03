@@ -7,8 +7,7 @@ covers:
   - backend/app/api/routes/topics_doc_agent.py
   - frontend/src/composables/useDocAgent.ts
   - frontend/src/components/panels/doc/DocAgentBox.vue
-  - backend/app/domain/agent/harness/pi/document.py
-  - backend/app/domain/agent/harness/pi/handless.py
+  - backend/app/domain/agent/session_host/
   - backend/app/core/sandbox_auth.py
   - backend/app/api/auth.py
   - backend/app/domain/living_doc/work_edits.py
@@ -47,7 +46,7 @@ covers:
 
 ## 会话 {#session}
 
-和[个人芝士](/dev/assistant#session)是同一套底座（`harness/pi/handless.py`）：中心会话机上钉住版本的 pi，只开平台给它的工具，房间的工作电脑开着时再加上读那台电脑的四个工具。
+和[个人芝士](/dev/assistant#session)是同一套底座（会话核心 `agent/session_host/`，会话是什么样的写在 `document/session.py`）：中心会话机上钉住版本的 pi，只开平台给它的工具，房间的工作电脑开着时再加上读那台电脑的四个工具。
 
 - **一个评论串一个 pi 会话**，会话 id 就是评论串第一条评论的 id；输入框的会话 id 是第一次提问时生成的。都放在会话机的 `~/.cheese/docs/<项目 id>/<会话 id>`。同一串里的追问接着上文，不同的会话互不相干。
 - **空闲 60 秒退出**，对话留在磁盘上，下一个问题在同一个对话上重新起来。

@@ -22,7 +22,7 @@ from fastapi import APIRouter, Depends, Path
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
-from app.api.deps import get_handless_sessions
+from app.api.deps import get_session_host
 from app.api.response import ok
 from app.api.routes.admin_common import DbSession
 from app.auth.checker import require_auth_user
@@ -37,15 +37,18 @@ from app.core.errors import (
 )
 from app.core.redis import get_redis_client
 from app.core.sentences import say
-from app.domain.agent.harness.pi.handless import (
-    HandlessSessions,
-    HostFull,
-    SessionError,
-)
-from app.domain.agent.harness.pi.personal import Launch
 from app.domain.agent.personal import service as assistant
 from app.domain.agent.personal.keys import person_key
 from app.domain.agent.personal.prompt import task_brief
+from app.domain.agent.personal.session import session as conversation_session
+from app.domain.agent.session_host.contract import (
+    Access,
+    HostFull,
+    SessionError,
+    SessionRef,
+    SessionSpec,
+)
+from app.domain.agent.session_host.host import SessionHost
 from app.domain.feature_stats import pricing
 from app.domain.task.services import TaskService, ensure_task_readable
 from app.domain.usage.ledger import Ledger, Rates, payer_for_person
@@ -54,7 +57,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/assistant", tags=["assistant"])
 
 AuthUser = Annotated[AuthUserInfo, Depends(require_auth_user)]
-People = Annotated[HandlessSessions, Depends(get_handless_sessions)]
+People = Annotated[SessionHost, Depends(get_session_host)]
 
 
 def _task_place(task_id: int) -> assistant.Place:
@@ -136,7 +139,7 @@ async def read_conversation(
             place = None
         if place is not None:
             spawn(
-                _prestart(people, assistant.launch(auth.user_id, row.id, place)),
+                _prestart(people, conversation_session(auth.user_id, row.id, place)),
                 name=f"assistant-prestart-{row.id}",
             )
     return ok(
@@ -154,9 +157,11 @@ async def read_conversation(
     )
 
 
-async def _prestart(people: HandlessSessions, started: Launch) -> None:
+async def _prestart(
+    people: SessionHost, started: tuple[SessionRef, SessionSpec, Access]
+) -> None:
     try:
-        await people.ensure(started)
+        await people.start(*started)
     except Exception:  # noqa: BLE001 — the question starts it, or says why not
         logger.info("pre-starting a person's session failed", exc_info=True)
 
@@ -224,9 +229,9 @@ async def ask(
     held_at = time.monotonic()
     release = slot.release
 
-    started = assistant.launch(auth.user_id, conversation_id, place)
+    started = conversation_session(auth.user_id, conversation_id, place)
     try:
-        await people.ensure(started)
+        await people.start(*started)
     except HostFull:
         await release()
         return _refuse(503, say("assistantBusy"), 10)
@@ -239,6 +244,8 @@ async def ask(
         assistant.ask(
             sessions=async_session_factory,
             people=people,
+            user_id=auth.user_id,
+            conversation_id=conversation_id,
             started=started,
             question=body.question,
             held_at=held_at,
