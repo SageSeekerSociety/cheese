@@ -132,7 +132,11 @@ async def published_digest(target: str) -> str | None:
     base = settings.connector_origin_url.rstrip("/")
     url = f"{base}/connector/latest/{target}/{binary_name(target)}"
     try:
-        async with httpx.AsyncClient(transport=origin_transport, timeout=10) as client:
+        # An address inside the deployment: never through an outbound proxy
+        # the environment may name.
+        async with httpx.AsyncClient(
+            transport=origin_transport, timeout=10, trust_env=False
+        ) as client:
             response = await client.head(url)
     except httpx.HTTPError as exc:
         logger.warning("cannot ask %s which connector is published: %s", url, exc)
