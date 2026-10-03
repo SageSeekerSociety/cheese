@@ -157,7 +157,11 @@ export function useChatPanel(opts: ChatPanelOptions) {
     replace: replaceShown,
   })
 
-  const { askGroups, askGroupAction } = useAskGroups({
+  const {
+    askGroups,
+    askGroupAction,
+    openRoom: openAskGroups,
+  } = useAskGroups({
     blocks: () => messages.value,
     account: () => askAccount.value,
     viewer: () => askViewer.value,
@@ -480,6 +484,9 @@ export function useChatPanel(opts: ChatPanelOptions) {
       // Recovery keeps its history-first reconciliation for lost message echoes.
       await ensureFreshToken()
       if (!stillHere()) return
+      // 一进房间就问一次：这一间里我还欠哪些组的回答，不等它们在时间线里滚出来。
+      // 早先发的组可能不在默认加载的那一屏里，靠块登记的话面板要往上翻才接管。
+      void openAskGroups(room.id)
       const parallelSocket = entering && outbox.value.length === 0
       if (parallelSocket) connectSocket(room.id)
       // 打开话题的那次导航已经替它起了头（router/index.ts），它往往比下面这一条先

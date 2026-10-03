@@ -585,6 +585,65 @@ class BlockRepository:
             await self._awaiting_an_answer(Block.task_id, task_ids, with_blocks=True),
         )
 
+    async def groups_awaiting_an_answer(
+        self, topic_id: uuid.UUID, viewer: str
+    ) -> list[dict]:
+        """This room's open groups that still owe `viewer` an answer.
+
+        `_awaiting_an_answer` answers "does this place wait on someone", once per
+        place; the composer takeover needs every group the person now looking at
+        the room has to answer, listed whole — the panel must appear from the
+        first frame even when the member blocks sit outside the loaded timeline
+        window. One addressee per membership: `asked` is written identically on
+        every member at creation, so filtering on it selects whole groups. A
+        group is open until it settles (`group_settle` lands on every member)
+        while at least one member still carries no `answer_log` — exactly the
+        conditions `useAskTakeover.needsAnswer` reads off the group reader.
+        """
+        if not viewer:
+            return []
+        stmt = (
+            select(Block)
+            .where(
+                Block.topic_id == topic_id,
+                Block.meta["ask_group"]["id"].as_string().isnot(None),
+                Block.meta["asked"].as_string() == viewer,
+            )
+            .order_by(Block.created_at, Block.id)
+        )
+        grouped: dict[str, list[Block]] = {}
+        for row in await self._session.scalars(stmt):
+            group = (row.meta or {}).get("ask_group") or {}
+            group_id = group.get("id")
+            if group_id is None:
+                continue
+            grouped.setdefault(group_id, []).append(row)
+        groups: list[dict] = []
+        for group_id, members in grouped.items():
+            if any((member.meta or {}).get("group_settle") for member in members):
+                continue
+            if not any(not (member.meta or {}).get("answer_log") for member in members):
+                continue
+            ordered = sorted(
+                members,
+                key=lambda member: ((member.meta or {}).get("ask_group") or {}).get(
+                    "index", 0
+                ),
+            )
+            first = ordered[0]
+            group = (first.meta or {}).get("ask_group") or {}
+            groups.append(
+                {
+                    "topic_id": str(first.topic_id),
+                    "asked_by": group.get("asked_by"),
+                    "id": group_id,
+                    "members": list(group.get("members") or []),
+                    "total": group.get("total"),
+                    "anchor": str(first.id),
+                }
+            )
+        return groups
+
     @overload
     async def _awaiting_an_answer(
         self,

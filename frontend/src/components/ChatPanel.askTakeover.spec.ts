@@ -32,11 +32,11 @@ function topicOf(id: string): Topic {
   } as Topic
 }
 
-function askBlock(id: string, index: number, members: string[], answered = false): Block {
+function askBlock(id: string, index: number, members: string[], answered = false, topic = 't1'): Block {
   return {
     id,
     project_id: 'p1',
-    topic_id: 't1',
+    topic_id: topic,
     kind: 'message',
     author_type: 'participant',
     author: 'agent',
@@ -57,19 +57,28 @@ function askBlock(id: string, index: number, members: string[], answered = false
   } as unknown as Block
 }
 
-function groupData(members: string[], answered = false) {
-  const group = { topic_id: 't1', asked_by: 'agent', id: 'group-1', members, total: members.length }
+function groupData(members: string[], answered = false, topic = 't1') {
+  const group = { topic_id: topic, asked_by: 'agent', id: 'group-1', members, total: members.length }
   return {
     group,
     settlement: null,
     receipt: null,
-    blocks: members.map((id, index) => askBlock(id, index, members, answered)),
+    blocks: members.map((id, index) => askBlock(id, index, members, answered, topic)),
   }
 }
 
 let vuetify: ReturnType<typeof createVuetify>
 let history: Block[] = []
 let group: ReturnType<typeof groupData> | null = null
+// 进房间那次「我还欠哪些组」的读结果。默认空 —— 组题的登记仍走已加载的时间线。
+let awaiting: Array<{
+  topic_id: string
+  asked_by: string
+  id: string
+  members: string[]
+  total: number
+  anchor: string
+}> = []
 
 beforeAll(() => {
   vuetify = createVuetify({ components, directives })
@@ -79,6 +88,7 @@ beforeEach(() => {
   setLocale('zh-CN')
   history = []
   group = null
+  awaiting = []
   localStorage.setItem('user', JSON.stringify({ id: 1, username: 'me', nickname: 'me' }))
   vi.stubGlobal(
     'WebSocket',
@@ -93,13 +103,15 @@ beforeEach(() => {
     ok: true,
     status: 200,
     json: async () =>
-      String(url).includes('/topics/asks/')
-        ? { code: 200, data: group }
-        : String(url).includes('/progress')
-          ? { code: 200, data: { items: [], updated_at: null } }
-          : String(url).includes('/tasks')
-            ? { code: 200, data: { data: [], total: 0 } }
-            : { code: 200, data: { data: history, total: history.length, has_more: false } },
+      String(url).includes('/asks/awaiting')
+        ? { code: 200, data: { groups: awaiting } }
+        : String(url).includes('/topics/asks/')
+          ? { code: 200, data: group }
+          : String(url).includes('/progress')
+            ? { code: 200, data: { items: [], updated_at: null } }
+            : String(url).includes('/tasks')
+              ? { code: 200, data: { data: [], total: 0 } }
+              : { code: 200, data: { data: history, total: history.length, has_more: false } },
   }))
 })
 
@@ -107,10 +119,14 @@ const settle = () => new Promise((r) => setTimeout(r, 0))
 async function flush(times = 6) {
   for (let i = 0; i < times; i++) await settle()
 }
+/** 串行几次读之后才落定，等一个条件成立，不去猜需要几个 tick。 */
+async function until(ready: () => boolean, times = 200) {
+  for (let i = 0; i < times && !ready(); i++) await settle()
+}
 
-async function open() {
+async function open(topic = 't1') {
   const ui = render(Panel, {
-    props: { topic: topicOf('t1'), showComposer: true },
+    props: { topic: topicOf(topic), showComposer: true },
     global: { plugins: [vuetify, i18n] },
   })
   await flush()
@@ -157,5 +173,23 @@ describe('提问接管输入框', () => {
     await fireEvent.click(pill!)
     await flush()
     expect(container.querySelector('.ask-group--composer')).toBeTruthy()
+  })
+
+  it('题发出很久、块不在已加载的那一屏里时，打开房间也接管', async () => {
+    // 16:01 发的组，19:00 才打开房间：时间线默认只取最近一屏，这组题早滚出去了。
+    // 从前只有「块冒出来」才登记，于是面板要往上翻到那条才接管；进房间那次读接口
+    // 现在把我还欠的组直接交回来。
+    const members = ['old-1', 'old-2']
+    // 换一间房：上面的用例把 t1 的时间线缓存在模块里了，同一间会串味。
+    history = [] // 那一屏里没有这组题
+    group = groupData(members, false, 't-old')
+    awaiting = [
+      { topic_id: 't-old', asked_by: 'agent', id: 'group-1', members, total: members.length, anchor: 'old-1' },
+    ]
+    const { container } = await open('t-old')
+    // 两次串行的读：先问有哪些组，再读回组的题。
+    await until(() => !!container.querySelector('.ask-group--composer'))
+    expect(container.querySelector('.ask-group--composer')).toBeTruthy()
+    expect(container.querySelector('.composer')).toBeNull()
   })
 })
