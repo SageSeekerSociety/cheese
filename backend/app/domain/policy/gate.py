@@ -203,7 +203,6 @@ def _proposal_line(call: Call, actor: str) -> str:
 
 
 def _refusal_line(call: Call) -> str:
-    return (
-        f"{_WHAT[call.resource]}「{call.label}」属于 {call.tier} 档，"
-        "不在本项目允许的档位内；请改用档内的资源，或让项目管理者调整档位策略。"
+    return say(
+        "policyOverTier", what=_WHAT[call.resource], label=call.label, tier=call.tier
     )

@@ -79,7 +79,7 @@ covers:
 | `AppError` 及其子类（`ValidationError`、`UnauthorizedError`、`GatewayUnavailableError`） | 类属性 `code` | `{"code", "message", "data": null, "error": {"name", "message", "retryable": false}}` |
 | `StarletteHTTPException`（路由里 `raise HTTPException(...)`） | 原状态码 | 走 `format_error_response`，`name` 恒为 `"Error"`；**异常自带 headers 会带出去** |
 | `RequestValidationError`（请求体不合模型） | 400（不是 FastAPI 默认的 422） | `BadRequestError` 的形状，细节在 `error.data.details` |
-| `DeviceOffline` | 409 | 带 `X-Device-Id` 头 —— 客户端靠它区分「机器不在」和「调用出错」，见[设备与机器接入](/dev/machines#failure) |
+| `DeviceOffline` | 409 | 带 `X-Device-Id` 头 —— 客户端靠它区分「机器不在」和「调用出错」，见[设备与机器接入](/dev/machines#failure)。子类 `LinkInterrupted`（链路断在调用半路，结果未知）另带 `X-Device-Link: interrupted` |
 | `DeviceCallError` | 502 | 机器自己的原话，`failure_code` 挂在 `error` 下 |
 | `ClientDisconnect`（浏览器读到一半挂了） | 499 | 只记一条 info，不当故障 |
 | 其它任何异常 | 500 | `{"code": 500, "message": "服务器内部错误", "data": null}`，真正的原因只进日志 |

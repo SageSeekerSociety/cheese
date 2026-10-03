@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 from app.core.config import settings
 from app.core.errors import ForbiddenError, ValidationError
-from app.domain.block.notice_text import say
+from app.domain.block.notice_text import listing, say
 from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.project.models import AiMode, Project
 from app.domain.review.models import (
@@ -68,21 +68,13 @@ async def _reviewer_or_project_default(
         {t.reviewer_handle for t in (from_work or []) if t.reviewer_handle}
     )
     if len(handed_to) > 1:
-        raise ValidationError(
-            "这批活派出去时定的验收人不是同一个人（"
-            + "、".join(handed_to)
-            + "），平台不替你选。递卡时点名一个。"
-        )
+        raise ValidationError(say("reviewersDiffer", reviewers=listing(handed_to)))
     if handed_to:
         return handed_to[0]
     default = branch_protection_of(project).default_reviewer
     if default:
         return default
-    raise ValidationError(
-        "没说验收卡递给谁，项目也没有设默认验收人。"
-        "点名一个人（`cheese_members` 查准确 handle），"
-        "或者在项目设置的「分支保护 → 任务默认 reviewer」里填一个。"
-    )
+    raise ValidationError(say("reviewerUnnamed"))
 
 
 async def _require_reviewer_in_room(
@@ -157,7 +149,7 @@ def _forbid_ai(
         and project.ai_mode == AiMode.collaborative
         and looks_like_agent_handle(handle)
     ):
-        raise ValidationError(f"AI 不能{action}自己的改动，需要由人操作")
+        raise ValidationError(say("aiCannotOwnChange", action=action))
 
 
 def _required_absence_overdue(self: pkg.AcceptService, card: AcceptCard) -> bool:

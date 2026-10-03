@@ -15,6 +15,7 @@ from sqlalchemy.orm import aliased
 from app.core.errors import ConflictError, NotFoundError
 from app.domain.block.comment_models import DocCommentReply, DocCommentThread
 from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.notice_text import say
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.living_doc.services import DocumentJournal
@@ -53,7 +54,7 @@ class CommentThreads:
             self.roots_query(room_id).where(Block.id == comment_id)
         )
         if row is None:
-            raise NotFoundError("文档原评论不存在")
+            raise NotFoundError(say("docCommentNotFound"))
         return row
 
     async def capture(self, comment: Block) -> DocCommentThread:
@@ -100,10 +101,10 @@ class CommentThreads:
         thread = await self.capture(comment)
         await self.session.refresh(thread)
         if thread.revision != expected_revision:
-            raise ConflictError("评论线程已更新，请重新读取")
+            raise ConflictError(say("commentThreadUpdated"))
         if action == "reply":
             if thread.state != "open":
-                raise ConflictError("评论已解决，请先重开")
+                raise ConflictError(say("commentResolvedReopenFirst"))
             assert content is not None
             reply = await self.blocks.add(
                 project_id=project_id,
@@ -125,7 +126,7 @@ class CommentThreads:
         else:
             target = "resolved" if action == "resolve" else "open"
             if thread.state == target:
-                raise ConflictError("评论已经处于目标状态")
+                raise ConflictError(say("commentAlreadyInState"))
             thread.state = target
         thread.revision += 1
         await self.session.flush()

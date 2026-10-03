@@ -39,7 +39,7 @@ def _doc_conflict(current_version: int) -> ConflictError:
     """The living doc moved under a writer. The current version rides along so
     the caller can re-read and rebase without a second round trip."""
     return ConflictError(
-        "实况文档已经被改过了，你手上这份是旧的",
+        say("liveDocStale"),
         data={"doc_version": current_version},
     )
 

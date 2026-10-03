@@ -145,42 +145,44 @@ def branch_protection_of(project: Project | None) -> BranchProtection:
 def _validate_glob(path: object) -> str:
     text = str(path or "").strip()
     if not text:
-        raise ValueError("检查的路径范围不能是空串")
+        raise ValueError(say("checkPathEmpty"))
     if len(text) > MAX_PATH_CHARS:
         raise ValueError(say("pathScopeTooLong", max=MAX_PATH_CHARS))
     if "\x00" in text or "\n" in text:
-        raise ValueError("路径范围不能包含 NUL 或换行")
+        raise ValueError(say("checkPathControlChars"))
     if text.startswith("/"):
         raise ValueError(say("pathScopeAbsolute", path=repr(text)))
     try:
         re.compile(fnmatch.translate(text))
     except re.error as e:  # pragma: no cover — translate rarely yields bad re
-        raise ValueError(f"路径范围不是合法 glob：{text!r}（{e}）") from None
+        raise ValueError(
+            say("checkPathBadGlob", path=repr(text), error=str(e))
+        ) from None
     return text
 
 
 def _validate_required_checks(value: object) -> list[dict]:
     if not isinstance(value, list):
-        raise ValueError("required_checks 必须是列表")
+        raise ValueError(say("requiredChecksNotList"))
     if len(value) > MAX_REQUIRED_CHECKS:
         raise ValueError(say("requiredChecksTooMany", max=MAX_REQUIRED_CHECKS))
     checks: list[dict] = []
     for item in value:
         if not isinstance(item, dict):
-            raise ValueError("每条必跑检查要写成 {name, paths?}")
+            raise ValueError(say("requiredCheckShape", shape="{name, paths?}"))
         name = str(item.get("name") or "").strip()
         if not name:
-            raise ValueError("检查名不能为空")
+            raise ValueError(say("checkNameEmpty"))
         if len(name) > MAX_CHECK_NAME_CHARS:
             raise ValueError(say("checkNameTooLong", max=MAX_CHECK_NAME_CHARS))
         if "\x00" in name or "\n" in name:
-            raise ValueError("检查名不能包含 NUL 或换行")
+            raise ValueError(say("checkNameControlChars"))
         raw_paths = item.get("paths")
         if raw_paths in (None, []):
             checks.append({"name": name})
             continue
         if not isinstance(raw_paths, list):
-            raise ValueError(f"检查 {name!r} 的 paths 必须是列表")
+            raise ValueError(say("checkPathsNotList", name=repr(name)))
         if len(raw_paths) > MAX_PATHS_PER_CHECK:
             raise ValueError(say("checkPathsTooMany", max=MAX_PATHS_PER_CHECK))
         checks.append({"name": name, "paths": [_validate_glob(p) for p in raw_paths]})
@@ -189,16 +191,18 @@ def _validate_required_checks(value: object) -> list[dict]:
 
 def _validate_handles(value: object, *, what: str) -> list[str]:
     if not isinstance(value, list):
-        raise ValueError(f"{what} 必须是列表")
+        raise ValueError(say("protectionNotList", what=what))
     if len(value) > MAX_OVERRIDE_HANDLES:
-        raise ValueError(f"{what} 最多 {MAX_OVERRIDE_HANDLES} 人")
+        raise ValueError(
+            say("protectionTooManyHandles", what=what, max=MAX_OVERRIDE_HANDLES)
+        )
     handles: list[str] = []
     for h in value:
         handle = str(h or "").strip()
         if not handle:
-            raise ValueError(f"{what} 里有空的 handle")
+            raise ValueError(say("protectionEmptyHandle", what=what))
         if len(handle) > MAX_HANDLE_CHARS:
-            raise ValueError(f"handle 不能超过 {MAX_HANDLE_CHARS} 个字符")
+            raise ValueError(say("handleTooLong", max=MAX_HANDLE_CHARS))
         if handle not in handles:
             handles.append(handle)
     return handles
@@ -206,7 +210,7 @@ def _validate_handles(value: object, *, what: str) -> list[str]:
 
 def _require_bool(value: object, *, key: str) -> bool:
     if not isinstance(value, bool):
-        raise ValueError(f"{key} 必须是 true/false")
+        raise ValueError(say("protectionNotBoolean", field=key))
     return value
 
 
@@ -232,14 +236,14 @@ def apply_branch_protection_update(stored: object, body: dict) -> dict:
             new.pop("override_handles", None)  # back to owner + leads
         else:
             new["override_handles"] = _validate_handles(
-                body["override_handles"], what="人工放行名单"
+                body["override_handles"], what=say("protectionOverrideList")
             )
     if "default_reviewer" in body:
         reviewer = str(body["default_reviewer"] or "").strip()
         if len(reviewer) > MAX_HANDLE_CHARS:
-            raise ValueError(f"handle 不能超过 {MAX_HANDLE_CHARS} 个字符")
+            raise ValueError(say("handleTooLong", max=MAX_HANDLE_CHARS))
         if "\x00" in reviewer:
-            raise ValueError("default_reviewer 不能包含 NUL 字节")
+            raise ValueError(say("defaultReviewerNul"))
         if reviewer:
             new["default_reviewer"] = reviewer
         else:

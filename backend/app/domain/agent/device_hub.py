@@ -57,6 +57,29 @@ class DeviceUnreachable(DeviceOffline):
     """
 
 
+class LinkInterrupted(DeviceOffline):
+    """链路断在一次调用的半路：那一帧已经出去了，答复回不来了。
+
+    那台机器可能已经把这件事做完了，也可能没有，这一侧不知道。所以它不能像
+    ``DeviceUnreachable`` 那样被当成「确定没发生」，也不该说成「机器不在」：
+    链路断了的机器多半几秒后就回来（``RECONNECT_GRACE_S``），下一次调用照样
+    能用。告诉调用方的只有一件事 —— 这一次的结果不知道。
+    """
+
+
+def offline_headers(exc: DeviceOffline) -> dict[str, str]:
+    """How a ``DeviceOffline`` crosses HTTP, as the 409 that carries it.
+
+    ``X-Device-Id`` says the machine is not there; ``X-Device-Link:
+    interrupted`` that the link went down under this very call
+    (``LinkInterrupted``), so its outcome is unknown. The connection owner, the
+    backend and the executor client each read the pair the same way."""
+    headers = {"X-Device-Id": exc.device_id}
+    if isinstance(exc, LinkInterrupted):
+        headers["X-Device-Link"] = "interrupted"
+    return headers
+
+
 class DeviceCallError(RuntimeError):
     """The machine answered a call with a failure of its own.
 
@@ -114,6 +137,13 @@ HEARTBEAT_S = 15.0
 # reply before it gives up and raises `TimeoutError`.
 EXEC_REPLY_SLACK_S = 5
 LINK_SILENCE_S = 3 * HEARTBEAT_S
+# How long after its link drops a machine counts as reconnecting rather than
+# gone. A connector redials at once and then after 1s, 2s, 4s, 5s
+# (`cli/internal/link/link.go`), so a link that blinks is back within a few
+# seconds; three of those attempts fit here. A call that finds no link inside
+# this window waits for the machine to say hello again, instead of reporting a
+# machine that is on its way back as offline. Past it, the machine is away.
+RECONNECT_GRACE_S = 15.0
 
 
 class DeviceTransport(Protocol):
@@ -184,6 +214,14 @@ class HubDevice:
     update_pushed: bool = False
     # Last time the device sent any frame (hello/heartbeat/…).
     last_seen: float = 0.0
+    # When this machine's last link dropped (loop time); None while it is linked
+    # and for a machine this process has never seen linked. See
+    # `RECONNECT_GRACE_S`.
+    dropped_at: float | None = None
+    # Set by `hello` on the current link, cleared when that link drops: what a
+    # call waiting out a reconnect waits on. Hello rather than attach, because
+    # what a call needs (`executor` above) is only known from hello.
+    announced: asyncio.Event = field(default_factory=asyncio.Event)
     # Whether the connector on THIS connection sends heartbeats. One that does
     # and then falls silent for ``LINK_SILENCE_S`` has lost its link, whatever
     # the socket says (`silence_allowed`). Reset on every attach.
@@ -231,7 +269,7 @@ class HubDevice:
                         self.writing = None
             except TimeoutError:
                 if stall.expired():
-                    raise DeviceOffline(self.device_id) from None
+                    raise LinkInterrupted(self.device_id) from None
                 raise
             except ConnectionError as exc:
                 # The receive loop only learns of a dead link when the peer says
@@ -240,7 +278,7 @@ class HubDevice:
                 # into it and fails, once a minute for a storage sweep. A failed
                 # send is the proof the receive loop never gets.
                 self.drop_transport(transport)
-                raise DeviceOffline(self.device_id) from exc
+                raise LinkInterrupted(self.device_id) from exc
 
     def drop_transport(self, transport: DeviceTransport) -> bool:
         """Forget ``transport`` if it is still the live one; fail what waited on it.
@@ -252,6 +290,8 @@ class HubDevice:
         if self.transport is not transport:
             return False
         self.transport = None
+        self.dropped_at = asyncio.get_running_loop().time()
+        self.announced.clear()
         if self.writing is not None:
             # Expire it now: the write is abandoned and ``send`` says offline.
             self.writing.reschedule(0)
@@ -263,7 +303,7 @@ class HubDevice:
         ]
         for future in waiting:
             if not future.done():
-                future.set_exception(DeviceOffline(self.device_id))
+                future.set_exception(LinkInterrupted(self.device_id))
         return True
 
 
@@ -275,6 +315,31 @@ class DeviceHub:
 
     def _device(self, device_id: str) -> HubDevice:
         return self._devices.setdefault(device_id, HubDevice(device_id=device_id))
+
+    async def _linked(self, device: HubDevice) -> bool:
+        """Whether ``device`` has a link to send on, waiting out a reconnect.
+
+        A machine whose link dropped less than ``RECONNECT_GRACE_S`` ago is
+        waited for until it says hello again; one that has been away longer, or
+        that this process has never seen linked (it started after the machine
+        went, or the machine never came), is answered at once. Each caller then
+        raises exactly what it raised before for a machine with no link.
+
+        A machine that has dialled back in but not yet said hello is still on
+        its way: what it can run is only known from that hello."""
+        if device.dropped_at is None:
+            return device.transport is not None
+        if device.transport is not None and device.announced.is_set():
+            return True
+        loop = asyncio.get_running_loop()
+        remaining = RECONNECT_GRACE_S - (loop.time() - device.dropped_at)
+        if remaining > 0:
+            try:
+                async with asyncio.timeout(remaining):
+                    await device.announced.wait()
+            except TimeoutError:
+                pass
+        return device.transport is not None
 
     # -- device connection -------------------------------------------------
 
@@ -301,6 +366,19 @@ class DeviceHub:
     def is_online(self, device_id: str) -> bool:
         device = self._devices.get(device_id)
         return device is not None and device.transport is not None
+
+    def reconnecting(self, device_id: str) -> bool:
+        """Whether the machine has no link but lost it less than
+        ``RECONNECT_GRACE_S`` ago: a call to it now waits for it to come back
+        (``_linked``) rather than failing, so whoever decides whether to make
+        that call should not read it as away."""
+        device = self._devices.get(device_id)
+        if device is None or device.transport is not None:
+            return False
+        if device.dropped_at is None:
+            return False
+        elapsed = asyncio.get_event_loop().time() - device.dropped_at
+        return elapsed < RECONNECT_GRACE_S
 
     def silence_allowed(self, device_id: str) -> float | None:
         """How long the link may go without a frame from the machine before it
@@ -510,7 +588,7 @@ class DeviceHub:
         self, device_id: str, message: dict[str, Any], *, timeout: float = 30
     ) -> Any:
         device = self._device(device_id)
-        if device.transport is None:
+        if not await self._linked(device):
             raise DeviceOffline(device_id)
         request_id = uuid.uuid4().hex
         future = asyncio.get_running_loop().create_future()
@@ -595,7 +673,7 @@ class DeviceHub:
         failure, and the reason in it is what the person is shown.
         """
         device = self._device(device_id)
-        if device.transport is None:
+        if not await self._linked(device):
             raise DeviceOffline(device_id)
         device.local_fs_seq += 1
         op_id = f"o{device.local_fs_seq}"
@@ -622,10 +700,11 @@ class DeviceHub:
     ) -> dict[str, Any]:
         """One-shot command on the device → ``{stdout, stderr, exit, truncated}``.
 
-        Raises ``DeviceOffline`` at once when the device has no link, rather than
-        sending into the void and timing out ``timeout``+5s later."""
+        Raises ``DeviceOffline`` when the device has no link and is not on its
+        way back (``_linked``), rather than sending into the void and timing out
+        ``timeout``+5s later."""
         device = self._device(device_id)
-        if device.transport is None:
+        if not await self._linked(device):
             raise DeviceOffline(device_id)
         device.exec_seq += 1
         eid = f"e{device.exec_seq}"
@@ -661,7 +740,7 @@ class DeviceHub:
         trace_id: str | None = None,
     ) -> dict:
         device = self._device(device_id)
-        if device.transport is None:
+        if not await self._linked(device):
             # 发出之前。往下每一步都可能是「已经出去了」，所以这条分界只在这里。
             raise DeviceUnreachable(device_id)
         identifier = trace_id or "execution-" + uuid.uuid4().hex
@@ -762,6 +841,8 @@ class DeviceHub:
             device.build = msg.build
             device.target = msg.target
             device.executor = msg.executor
+            device.dropped_at = None
+            device.announced.set()
             if device.proto not in (None, PROTOCOL_VERSION):
                 self._on_version_skew(device_id, device.proto)
             await self._update_if_stale(device, msg)

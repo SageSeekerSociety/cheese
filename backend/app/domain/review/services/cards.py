@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from app.core.errors import NotFoundError, ValidationError
-from app.domain.block.notice_text import listing, say
+from app.domain.block.notice_text import exception_text, listing, say
 from app.domain.library import service as library
 from app.domain.project import artifacts
 from app.domain.review import (
@@ -121,16 +121,16 @@ async def create_card(
     topic = await self._topic_or_404(topic_id)
     task = await TaskService(self._session).require_in_room(topic_id, task_id)
     if topic.status == TopicStatus.archived:
-        raise ValidationError("话题已归档，不能再提交验收")
+        raise ValidationError(say("topicArchivedNoReview"))
     if task.status != TaskStatus.open or not task.branch_name:
-        raise ValidationError("这条任务已结束或没有工作分支")
+        raise ValidationError(say("taskEndedOrNoBranch"))
     subject = (change_subject or "").strip()
     if not subject:
         raise ValidationError(_MISSING_SUBJECT)
     try:
         subject = commit_message.check_subject(subject)
     except commit_message.InvalidSubject as exc:
-        raise ValidationError(str(exc)) from exc
+        raise ValidationError(exception_text(exc)) from exc
     # 这次交付更新了哪一项产物 (#1085 结论三)。先验参数、后落行：一张递不上
     # 去的卡（分支没提交、已经有一张未决的卡）不该在清单上留下一项。
     #
@@ -156,7 +156,9 @@ async def create_card(
         self._session, task.project_id, task.id
     ).comparison()
     if not comparison or not comparison.get("total_commits"):
-        raise ValidationError(f"任务分支 {task.branch_name} 没有可交付的提交")
+        raise ValidationError(
+            say("taskBranchNothingToDeliver", branch=task.branch_name)
+        )
     reviewer_handle = await self._reviewer_or_project_default(
         await self._projects.get(topic.project_id),
         reviewer_handle,
@@ -338,7 +340,7 @@ async def finish_gate(
     (同样不递出去，但检查对代码没有结论，别说成"未通过")."""
     card = await self._card_or_404(card_id)
     if card.status != AcceptStatus.pending_gate:
-        raise ValidationError("只有等待检查的验收卡能记录检查结果")
+        raise ValidationError(say("reviewCheckOnlyWhenWaiting"))
     card.gate_output = output_tail
     if outcome == GateOutcome.passed:
         card.status = AcceptStatus.pending

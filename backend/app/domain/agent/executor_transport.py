@@ -50,6 +50,14 @@ OUT_OF_REACH_STATUSES = frozenset({502, 503, 504})
 # 里找 bug。数字和响应体进的是进程日志 —— agent 读不到它们，平台读得到。
 EXECUTOR_CALL_FAILED = "这次调用失败了，机器还在：其他工具照常可用，这一个可以重试。"
 
+# 链路断在这次调用的半路（`_link_interrupted`）。机器多半几秒后就回来，所以不是
+# 够不着；可这一次做没做过不知道，所以也不能说「可以重试」—— 照做一遍，改动就可能
+# 做两次。
+LINK_INTERRUPTED = (
+    "执行中与机器的连接断了一下，这次操作可能已经执行，也可能没有；"
+    "先查看结果，再决定要不要重做。其他工具照常可用。"
+)
+
 
 def _device_is_offline(response) -> bool:
     """Whether this answer says the hands are gone rather than one call went wrong.
@@ -67,6 +75,15 @@ def _device_is_offline(response) -> bool:
     a retryable one-call failure while chat and platform tools kept working.
     """
     return response.status == 409 and response.getheader("X-Device-Id") is not None
+
+
+def _link_interrupted(response) -> bool:
+    """Whether the link went down under this very call: an offline answer that
+    also carries ``X-Device-Link: interrupted`` (``device_hub.offline_headers``)."""
+    return (
+        _device_is_offline(response)
+        and response.getheader("X-Device-Link") == "interrupted"
+    )
 
 
 # What a tool call waiting for its machine tells the agent, once, when the wait
@@ -929,6 +946,8 @@ class RemoteClient:
                         logger.warning(
                             "executor %s -> %s: %s", method, response.status, data[:200]
                         )
+                        if _link_interrupted(response):
+                            raise RuntimeError(LINK_INTERRUPTED)
                         if (
                             response.status in OUT_OF_REACH_STATUSES
                             or _device_is_offline(response)

@@ -23,6 +23,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import InternalServerError
+from app.domain.block.notice_text import say
 from app.domain.user.models import UserTrustedDevice
 
 TRUST_DAYS = 30
@@ -114,7 +115,7 @@ class TrustedDeviceService:
         """
         trust = await self._db.get(UserTrustedDevice, trust_device_id)
         if trust is None:
-            raise InternalServerError("暂时无法完成登录，请稍后重试")
+            raise InternalServerError(say("signInUnavailable"))
         trust.last_used_at = _now()
         trust.session_id = session_id
         await self._db.flush()

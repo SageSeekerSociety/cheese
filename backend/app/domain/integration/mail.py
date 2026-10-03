@@ -22,6 +22,7 @@ from email.utils import formatdate, getaddresses, make_msgid, parsedate_to_datet
 from html.parser import HTMLParser
 
 from app.core.errors import BaseError, ValidationError
+from app.domain.block.notice_text import say
 
 TIMEOUT = 30
 DRAFT_FOLDERS = ("Drafts", "草稿箱", "[Gmail]/Drafts", "INBOX.Drafts", "Draft")
@@ -55,12 +56,14 @@ class MailSettings:
 def _auth_error(exc: Exception) -> IntegrationError:
     return IntegrationError(
         "auth_failed",
-        f"邮箱拒绝了登录（{exc}）：密码或授权码可能已失效，到「我的连接」里更新",
+        say("mailLoginRejected", error=str(exc)),
     )
 
 
 def _unreachable(exc: Exception, host: str) -> IntegrationError:
-    return IntegrationError("unreachable", f"连不上邮件服务器 {host}（{exc}）")
+    return IntegrationError(
+        "unreachable", say("mailServerUnreachable", host=host, error=str(exc))
+    )
 
 
 def _imap(settings: MailSettings) -> imaplib.IMAP4:
@@ -117,7 +120,9 @@ def _quote(folder: str) -> str:
 def _select(box: imaplib.IMAP4, folder: str, *, readonly: bool = True) -> None:
     status, data = box.select(_quote(folder), readonly=readonly)
     if status != "OK":
-        raise IntegrationError("not_found", f"邮箱里没有文件夹「{folder}」（{data}）")
+        raise IntegrationError(
+            "not_found", say("mailFolderNotFound", folder=folder, reply=str(data))
+        )
 
 
 def _decode(value: str | None) -> str:
@@ -193,7 +198,7 @@ def _criteria(
         elif literal is None:
             literal = (key, value.encode())
         else:
-            raise ValidationError("中文等非英文的关键词一次只能填一项（比如只填主题）")
+            raise ValidationError(say("mailNonAsciiOneField"))
     if since:
         parts += ["SINCE", since.strftime("%d-%b-%Y")]
     if literal is not None:
@@ -296,9 +301,11 @@ def search(
             else:
                 status, data = box.uid("SEARCH", *criteria)
         except imaplib.IMAP4.error as exc:
-            raise IntegrationError("error", f"邮箱不支持这个搜索（{exc}）") from exc
+            raise IntegrationError(
+                "error", say("mailSearchUnsupported", error=str(exc))
+            ) from exc
         if status != "OK":
-            raise IntegrationError("error", f"搜索失败：{data}")
+            raise IntegrationError("error", say("mailSearchFailed", reply=str(data)))
         newest = [u.decode() for u in (data[0] or b"").split()][::-1]
         if query or sender or subject:
             uids = _verified(
@@ -351,9 +358,7 @@ def _fetch(box: imaplib.IMAP4, uid: str) -> EmailMessage:
     status, parts = box.uid("FETCH", uid, "(BODY.PEEK[])")
     raw = next((p[1] for p in parts if isinstance(p, tuple)), None)
     if status != "OK" or raw is None:
-        raise IntegrationError(
-            "not_found", f"找不到这封邮件（UID {uid}），可能已被移走或删除"
-        )
+        raise IntegrationError("not_found", say("mailMessageNotFound", uid=uid))
     message = email.message_from_bytes(raw, policy=email.policy.default)
     assert isinstance(message, EmailMessage)
     return message
@@ -395,7 +400,9 @@ def attachment(
                 payload = part.get_payload(decode=True)
                 data = payload if isinstance(payload, bytes) else b""
                 return name, part.get_content_type(), data
-        raise IntegrationError("not_found", f"这封邮件没有第 {index + 1} 个附件")
+        raise IntegrationError(
+            "not_found", say("mailAttachmentNotFound", number=index + 1)
+        )
     finally:
         _logout(box)
 
@@ -473,7 +480,7 @@ def append_draft(settings: MailSettings, message: EmailMessage) -> str:
             status, data = box.create(_quote("Drafts"))
             if status != "OK":
                 raise IntegrationError(
-                    "not_found", f"邮箱里没有草稿箱，也建不了（{data}）"
+                    "not_found", say("mailNoDraftsFolder", reply=str(data))
                 )
             folder = "Drafts"
         status, data = box.append(
@@ -483,7 +490,7 @@ def append_draft(settings: MailSettings, message: EmailMessage) -> str:
             message.as_bytes(),
         )
         if status != "OK":
-            raise IntegrationError("error", f"草稿没有存进邮箱：{data}")
+            raise IntegrationError("error", say("mailDraftNotSaved", reply=str(data)))
         return folder
     finally:
         _logout(box)
@@ -547,10 +554,11 @@ def send(settings: MailSettings, message: EmailMessage) -> list[str]:
         refused = smtp.send_message(message)
     except smtplib.SMTPRecipientsRefused as exc:
         raise IntegrationError(
-            "error", f"邮件服务器拒收了全部收件人：{', '.join(exc.recipients)}"
+            "error",
+            say("mailAllRecipientsRefused", recipients=", ".join(exc.recipients)),
         ) from exc
     except (OSError, smtplib.SMTPException) as exc:
-        raise IntegrationError("error", f"发送失败：{exc}") from exc
+        raise IntegrationError("error", say("mailSendFailed", error=str(exc))) from exc
     finally:
         try:
             smtp.quit()
@@ -580,5 +588,5 @@ def save_sent(settings: MailSettings, message: EmailMessage) -> str | None:
 def addresses(raw: list[str]) -> list[str]:
     parsed = [addr for _name, addr in getaddresses(raw) if "@" in addr]
     if len(parsed) != len([r for r in raw if r.strip()]):
-        raise ValidationError("收件人里有不是邮箱地址的项")
+        raise ValidationError(say("mailRecipientInvalid"))
     return parsed

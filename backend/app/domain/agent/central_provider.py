@@ -22,6 +22,7 @@ from app.domain.agent.harness.channel import Placement, ScreenSetupError
 from app.domain.agent.harness.launch import LaunchPlan
 from app.domain.agent_instance.services import agent_stdio_servers
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.block.notice_text import say
 from app.domain.remote_mcp import service as remote_mcp
 from app.domain.topic.services import TopicService
 from app.domain.user.services import user_by_handle
@@ -151,7 +152,7 @@ class CentralChannel(DeviceChannel):
             # the one where the object did not satisfy the protocol that
             # guarantees it — a message that crashes reports nothing.
             named = getattr(launch, "harness", type(launch).__name__)
-            raise ScreenSetupError(f"{named} 不能在独立执行机上运行，它没有执行器")
+            raise ScreenSetupError(say("screenNoExecutorOnStandalone", harness=named))
         async with self.prepare_session(
             session=session,
             token=token,
@@ -217,7 +218,7 @@ class CentralChannel(DeviceChannel):
             if actor and actor != agent_handle:
                 user = await user_by_handle(db, actor)
                 if user is None:
-                    raise ScreenSetupError("本轮 agent 身份不存在，无法启动执行机")
+                    raise ScreenSetupError(say("screenAgentIdentityMissing"))
                 agent_user_id, agent_handle = user.id, user.username
             mark("room_lock")
             resource = room.resource_id or room.id
@@ -244,7 +245,7 @@ class CentralChannel(DeviceChannel):
             place = None
         center = place.machine if place else settings.agent_session_device_id
         if not center:
-            raise ScreenSetupError("本房间的 Claude Code 中心会话机器未连接")
+            raise ScreenSetupError(say("screenCentralMachineOffline"))
         await self._wait_for_session_host(center, session)
         values = {**(env or {}), "CHEESE_RESOURCE_ID": str(resource)}
         # Every room's session shares this machine's kernel: each runs under a
@@ -342,7 +343,7 @@ class CentralChannel(DeviceChannel):
         async with factory() as db:
             room = await TopicService(db).lock_for_execution(topic_id)
             if (room.resource_id or room.id) != resource:
-                raise ScreenSetupError("房间已经重新打开，本轮没有启动旧执行环境")
+                raise ScreenSetupError(say("screenRoomReopenedOldEnvSkipped"))
             await AgentSessionService(db).remember_place(
                 topic_id=topic_id,
                 agent_handle=session.agent_handle,

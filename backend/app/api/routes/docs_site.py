@@ -31,6 +31,7 @@ from app.core.errors import (
 )
 from app.core.redis import get_redis_client
 from app.domain.admin.services import AdminService
+from app.domain.block.notice_text import exception_text
 from app.domain.docs_site import access, assistant, library, retrieval, tools
 from app.domain.docs_site.limits import AskLimits
 from app.domain.feature_stats import pricing
@@ -357,7 +358,7 @@ async def agent_read_docs(
     except library.DevDocsForbidden as exc:
         raise ForbiddenError("开发文档只对知是自己的项目开放") from exc
     except ValueError as exc:
-        raise ValidationError(str(exc)) from exc
+        raise ValidationError(exception_text(exc)) from exc
     if text is None:
         raise NotFoundError(f"没有这一页：{body.page}")
     return ok({"page": library.page_slug(body.page), "markdown": text})

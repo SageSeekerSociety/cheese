@@ -63,7 +63,7 @@ class TopicMemberService:
             topic_id, actor
         ):
             return
-        raise ForbiddenError("只有话题的 owner / admin 能管理成员")
+        raise ForbiddenError(say("topicMembersManagerOnly"))
 
     async def _has_manager(self, topic_id: uuid.UUID) -> bool:
         return any(
@@ -482,16 +482,16 @@ class TopicMemberService:
 
             owner = await AgentInstanceService(self._session).project_of_seat(handle)
             if owner is not None and owner != topic.project_id:
-                raise NotFoundError("这个项目里没有这个 AI 队友")
+                raise NotFoundError(say("projectAiTeammateNotFound"))
         elif not await self._on_project(topic.project_id, handle):
             # A room seat admits on its own, so seating someone the project does
             # not have would let them in without an invitation they accepted.
             # People come into the project first — from its team, or as an
             # external member — and rooms choose among them.
-            raise ValidationError("只能添加项目成员")
+            raise ValidationError(say("topicAddProjectMembersOnly"))
         existing = await self._repo.get(topic_id=topic_id, member_handle=handle)
         if existing is not None:
-            raise ValidationError("该成员已在话题里")
+            raise ValidationError(say("topicMemberAlready"))
         return await self._repo.add(topic_id=topic_id, member_handle=handle, role=role)
 
     async def _on_project(self, project_id: uuid.UUID, handle: str) -> bool:
@@ -506,14 +506,14 @@ class TopicMemberService:
         await self._require_manager(topic_id, actor)
         member = await self._repo.get(topic_id=topic_id, member_handle=handle)
         if member is None:
-            raise NotFoundError("成员不存在")
+            raise NotFoundError(say("topicMemberNotFound"))
         # Demoting the last owner would orphan the room — block it.
         if (
             member.role == TopicRole.owner
             and role != TopicRole.owner
             and await self._repo.count_owners(topic_id) <= 1
         ):
-            raise ValidationError("不能把最后一个 owner 降级")
+            raise ValidationError(say("topicLastOwnerDemote"))
         return await self._repo.update_role(member, role=role)
 
     async def remove(self, *, topic_id: uuid.UUID, handle: str, actor: str) -> None:
@@ -521,13 +521,13 @@ class TopicMemberService:
         await self._require_manager(topic_id, actor)
         member = await self._repo.get(topic_id=topic_id, member_handle=handle)
         if member is None:
-            raise NotFoundError("成员不存在")
+            raise NotFoundError(say("topicMemberNotFound"))
         # Never remove the last owner — a topic must always have one.
         if (
             member.role == TopicRole.owner
             and await self._repo.count_owners(topic_id) <= 1
         ):
-            raise ValidationError("不能移除最后一个 owner")
+            raise ValidationError(say("topicLastOwnerRemove"))
         await self._repo.delete(member)
 
     async def hand_over_project_seats(

@@ -77,7 +77,7 @@ def script() -> Any:
         loader = SourceFileLoader("cheese_office_script", str(_SCRIPT))
         spec = importlib.util.spec_from_loader("cheese_office_script", loader)
         if spec is None:  # pragma: no cover - a missing script is a broken build
-            raise RevisionsFailed("找不到处理文档修订的脚本")
+            raise RevisionsFailed(say("revisionsScriptMissing"))
         module = importlib.util.module_from_spec(spec)
         quiet = sys.dont_write_bytecode
         sys.dont_write_bytecode = True
@@ -185,7 +185,7 @@ def decide(
     for number in reject:
         chosen[number] = False
     if not chosen:
-        raise RevisionsFailed("没有说要接受或拒绝哪一处")
+        raise RevisionsFailed(say("revisionsNoneChosen"))
     unknown = sorted(n for n in chosen if n not in known)
     if unknown:
         raise RevisionsFailed(

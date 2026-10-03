@@ -1418,10 +1418,10 @@ class ChatService(SessionRecovery):
         """Prevent a new prompt from racing an explicit environment change."""
         lock = self._lock_for(topic_id)
         if lock.locked() or self.has_running_turn(topic_id):
-            raise ValidationError("房间正在工作，请结束当前工作后再应用环境配置")
+            raise ValidationError(say("roomBusyFinishBeforeEnvironment"))
         async with lock:
             if self.has_running_turn(topic_id):
-                raise ValidationError("房间正在工作，请稍后重试")
+                raise ValidationError(say("roomBusyRetryLater"))
             yield
 
     def session_took_over(self, topic_id: uuid.UUID, turn_id: uuid.UUID) -> bool:
@@ -3216,7 +3216,7 @@ class ChatService(SessionRecovery):
                 raise NotFoundError("Topic not found")
             topic = place.room
             if topic.status == TopicStatus.archived:
-                raise ValidationError("房间已归档，请先取消归档再继续工作")
+                raise ValidationError(say("roomArchivedUnarchiveFirst"))
 
             # Speaker-labelled prompt covering every human message 芝士 hasn't
             # been handed yet — so messages posted without @芝士 are still seen on

@@ -387,7 +387,12 @@ def register_exception_handlers(app: FastAPI) -> None:
     # Imported here, not at module scope: `device_hub` sits above this module and
     # imports back through `app.core`, and nothing but this registration needs
     # the name.
-    from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
+    from app.domain.agent.device_hub import (
+        DeviceCallError,
+        DeviceOffline,
+        LinkInterrupted,
+        offline_headers,
+    )
 
     async def _handle_device_offline(_: Request, exc: DeviceOffline) -> JSONResponse:
         """A machine that is off is an answer, not a fault of this server.
@@ -404,15 +409,23 @@ def register_exception_handlers(app: FastAPI) -> None:
         already read to tell 「the machine is not there」 from 「the call went
         wrong」 — waiting fixes the second and never the first.
         """
-        _log.warning("device_offline", device=exc.device_id)
+        interrupted = isinstance(exc, LinkInterrupted)
+        _log.warning(
+            "device_link_interrupted" if interrupted else "device_offline",
+            device=exc.device_id,
+        )
         return JSONResponse(
             status_code=HTTP_409_CONFLICT,
             content=format_error_response(
                 status_code=HTTP_409_CONFLICT,
-                message=f"设备 {exc.device_id} 离线",
-                name="DeviceOffline",
+                message=(
+                    f"与设备 {exc.device_id} 的连接在执行中断开，这次操作的结果未知"
+                    if interrupted
+                    else f"设备 {exc.device_id} 离线"
+                ),
+                name="LinkInterrupted" if interrupted else "DeviceOffline",
             ),
-            headers={"X-Device-Id": exc.device_id},
+            headers=offline_headers(exc),
         )
 
     async def _handle_device_call_error(

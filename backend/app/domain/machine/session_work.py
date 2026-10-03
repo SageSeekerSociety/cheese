@@ -21,7 +21,7 @@ from app.domain.agent.compute_configs import (
     choice_label,
     room_choice,
 )
-from app.domain.agent.device_hub import DeviceCallError, device_hub
+from app.domain.agent.device_hub import DeviceCallError, DeviceOffline, device_hub
 from app.domain.agent.device_provider import (
     _preview_ws_url,
     device_api_base,
@@ -433,8 +433,8 @@ class WorkComputerUnreachable(ConflictError):
 # How long a switch waits for the machine it leaves to push. The executor gives
 # a command 120s and then reports it as still running (``runtime.bash``).
 PUSH_WAIT_S = 150.0
-PUSH_UNREACHABLE = "原来那台工作电脑连不上，无法推送改动，没有更换"
-WORKING = "正在运行任务，稍后再换"
+PUSH_UNREACHABLE = say("switchOldComputerUnreachable")
+WORKING = say("switchWhileWorking")
 
 
 async def _room_is_working(db, topic_id) -> bool:
@@ -476,7 +476,7 @@ async def push_before_switch(
     installed with, and a sync fixed since would still fail there the old way.
     """
     # A lease that never finished installing has no executor to run the push.
-    if not lease.get("state") or not device_hub.is_online(lease["device_id"]):
+    if not lease.get("state") or not _reachable(device_hub, lease["device_id"]):
         raise WorkComputerUnreachable(PUSH_UNREACHABLE)
     try:
         try:
@@ -494,7 +494,9 @@ async def push_before_switch(
         )
     # DeviceOffline and DeviceCallError are RuntimeErrors, as is a failed start.
     except (RuntimeError, TimeoutError) as exc:
-        raise WorkComputerUnreachable(f"{PUSH_UNREACHABLE}：{exc}") from exc
+        raise WorkComputerUnreachable(
+            say("switchOldComputerUnreachableBecause", error=str(exc))
+        ) from exc
     if "error" in result:
         raise ConflictError(say("switchPushFailed", error=result["error"]))
     output = result["value"]
@@ -886,6 +888,14 @@ class _Preparing:
     detail: dict = field(default_factory=dict)
 
 
+def _reachable(hub, device_id: str) -> bool:
+    """Whether a call to this machine is worth making: it is online, or its link
+    dropped moments ago and the call will wait for it to come back
+    (``device_hub.reconnecting``). One that does not come back in time fails
+    that call as offline, which each caller already answers."""
+    return hub.is_online(device_id) or hub.reconnecting(device_id)
+
+
 async def ensure(
     db,
     *,
@@ -1012,7 +1022,7 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
             selected = await devices.first_healthy_device(
                 topic.project_id, hub.is_online
             )
-        if selected is None or not hub.is_online(selected.device_id):
+        if selected is None or not _reachable(hub, selected.device_id):
             await db.commit()
             return {"unavailable": "工作电脑未连接；对话和平台工具仍可用。"}
         if selected.supply != Supply.self_hosted:
@@ -1044,7 +1054,7 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
     verdict = gate.check(call, gate.policy_of(project.settings), claims.get("a", ""))
     authorized = request.get("authorized_by")
     if isinstance(verdict, gate.Proposal):
-        raise ForbiddenError("所选机器超出项目允许的档位，请选择已授权的资源")
+        raise ForbiddenError(say("machineTierNotAllowed"))
     if choice.profile == "cloud":
         allocation_actor = (
             Actor(**authorized)
@@ -1169,13 +1179,22 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
                 target["environment_status"] = status
         if target["status"] == "ready":
             await execution.call(target, "ping", {}, hub=hub)
-    except Exception:
+    except Exception as exc:
         # Setup is resumable at the same physical allocation; it is not a
         # dispatched model operation and must not create a replacement lease.
         row = await sessions.by_id(session_id, lock=True)
         if row and (row.work_lease or {}).get("claim") == claim:
             row.work_lease = {**holding, "claim_until": now.isoformat()}
-            await db.commit()
+        await db.commit()
+        if isinstance(exc, DeviceOffline):
+            # The machine went away while its executor was being set up: the
+            # same answer as when it is away before setup starts (above).
+            if choice.profile == "cloud":
+                return _Preparing(
+                    "云端工作电脑正在准备；对话和平台工具仍可用。",
+                    partial(_cloud_progress, db, hub, machine.id),
+                )
+            return {"unavailable": "工作电脑未连接；对话和平台工具仍可用。"}
         raise
     current = await TopicService(db).lock_for_execution(topic_id)
     row = await sessions.by_id(session_id, lock=True)

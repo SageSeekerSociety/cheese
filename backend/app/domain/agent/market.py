@@ -19,6 +19,7 @@ only honest when it would.
 from dataclasses import dataclass
 
 from app.domain.agent.profiles import ProfileRegistry
+from app.domain.block.notice_text import say
 from app.domain.device.supply import (
     Visibility,
     default_visibility,
@@ -354,7 +355,7 @@ def subscription_model_alias(mid: str | None) -> str:
             return alias
     from app.core.errors import ValidationError
 
-    raise ValidationError(f"未知订阅模型 {mid!r}")
+    raise ValidationError(say("marketUnknownSubscriptionModel", model=repr(mid)))
 
 
 def subscription_model_ids() -> set[str]:

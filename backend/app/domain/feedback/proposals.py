@@ -263,7 +263,7 @@ class ProposalService:
             problem=body.problem,
         )
         if fingerprint in await self._dismissed(topic_id):
-            raise PreconditionFailedError("这个提案已经被「不用」过了，不要重复提")
+            raise PreconditionFailedError(say("feedbackProposalDeclined"))
         # One read serves both remaining limits: the duplicate check and the cap
         # are the same list of cards, counted two ways.
         cards = await self._proposals_since(
@@ -280,14 +280,10 @@ class ProposalService:
             # cannot be done — yet the person pressing 「提交反馈」 picks public or
             # private in the send form, so the change was one click away.
             if earlier.get(ACCEPTED_FEEDBACK_KEY):
-                raise PreconditionFailedError("这个问题刚作为反馈发出去了，不要重复提")
-            raise PreconditionFailedError(
-                "这个提案刚提过，那张卡还在话题里等人发送，不要重复提。"
-                "标题、正文和可见性（公开/私密）都由按「提交反馈」的人在表单里定，"
-                "想改成私密，请他发送时在表单里选私密"
-            )
+                raise PreconditionFailedError(say("feedbackAlreadySent"))
+            raise PreconditionFailedError(say("feedbackProposalPending"))
         if len(cards) >= settings.feedback_proposals_per_topic_per_day:
-            raise PreconditionFailedError("今天这个话题的反馈提案已经够了，明天再说")
+            raise PreconditionFailedError(say("feedbackProposalDailyLimit"))
         return fingerprint
 
     async def dismiss(

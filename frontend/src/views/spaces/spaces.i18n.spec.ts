@@ -35,6 +35,7 @@ vi.mock('@/network/api/spaces', () => ({
     detail: (...a: unknown[]) => spaceDetail(...a),
     listCategories: (...a: unknown[]) => listCategories(...a),
     listDomainGroups: (...a: unknown[]) => listDomainGroups(...a),
+    listMaterials: vi.fn().mockResolvedValue({ data: { materials: [], canManage: false } }),
   },
 }))
 

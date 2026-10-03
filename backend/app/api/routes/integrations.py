@@ -41,6 +41,7 @@ from app.domain.block.models import Block, BlockKind
 from app.domain.block.notice_text import exception_text, listing, say, with_keys
 from app.domain.identity.actor import Actor
 from app.domain.integration.feishu import FeishuClient
+from app.domain.integration.mail import IntegrationError
 from app.domain.integration.models import Integration, MailDraft
 from app.domain.integration.service import (
     FeishuAppService,
@@ -352,8 +353,11 @@ async def _finish_feishu(
         config = await feishu_settings_for(db, row)
         await FeishuClient(config).exchange_code(code, _redirect_uri())
     except Exception as exc:  # noqa: BLE001 — the person reads why, on the page
-        # A refusal of ours goes by its sentence's key; Feishu's answer by
-        # Feishu's own words.
+        # Feishu's answer goes by Feishu's own words, under the code the page
+        # words; an IntegrationError is that answer even when it is said with
+        # a key. A refusal of ours goes by its sentence's key.
+        if isinstance(exc, IntegrationError):
+            return land("exchange_failed", exc.reply)
         said = message_key(exception_text(exc))
         if said is not None:
             return land(said["key"])
