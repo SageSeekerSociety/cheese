@@ -2,11 +2,15 @@
 // The words a comment is about: marked in the document, gone from its Markdown,
 // not copied along with pasted text, and still on the same words after text
 // lands before them.
+import type { Node as PMNode } from '@tiptap/pm/model'
+
 import { Editor } from '@tiptap/core'
+import Collaboration from '@tiptap/extension-collaboration'
 import { Slice } from '@tiptap/pm/model'
 import { afterEach, describe, expect, it } from 'vitest'
+import * as Y from 'yjs'
 
-import { COMMENT_ANCHOR, commentAnchors, docExtensions, serializeDoc } from '.'
+import { COMMENT_ANCHOR, commentAnchors, docExtensions, liveNode, serializeDoc, writeMarkdown } from '.'
 
 let editor: Editor | null = null
 afterEach(() => {
@@ -76,5 +80,52 @@ describe('comment anchors', () => {
     ed.view.dispatch(ed.state.tr.replace(span(ed, '另一段').to, span(ed, '另一段').to, slice))
 
     expect(marked(ed, 't1')).toEqual(['五百万行'])
+  })
+})
+
+describe('comment anchors through rewrites', () => {
+  async function shared(markdown: string) {
+    const doc = new Y.Doc()
+    writeMarkdown(doc, markdown)
+    const ed = new Editor({
+      element: document.createElement('div'),
+      extensions: [...docExtensions(), Collaboration.configure({ document: doc })],
+    })
+    editor = ed
+    await new Promise((done) => setTimeout(done, 20))
+    return { doc, ed }
+  }
+  function words(node: PMNode, thread: string): string[] {
+    return (commentAnchors(node).get(thread) ?? []).map((r) => node.textBetween(r.from, r.to))
+  }
+
+  it('keep their words when the whole document is written from Markdown', async () => {
+    const { doc, ed } = await shared('数据量到五百万行就评估迁移。\n\n第二段。\n')
+    comment(ed, '五百万行', 't1')
+    writeMarkdown(doc, '先用 PostgreSQL。数据量到五百万行就评估迁移。\n\n第二段，改过了。\n')
+    expect(words(liveNode(doc), 't1')).toEqual(['五百万行'])
+  })
+
+  it('move onto what replaced their words, so the thread still points at about the same place', async () => {
+    const { doc, ed } = await shared('数据量到五百万行就评估迁移。\n')
+    comment(ed, '五百万行', 't1')
+    writeMarkdown(doc, '数据量到一千万条就评估迁移。\n')
+    expect(words(liveNode(doc), 't1')).toEqual(['一千万条'])
+  })
+
+  it('move onto words typed over them', async () => {
+    const ed = open('数据量到五百万行就评估迁移。')
+    comment(ed, '五百万行', 't1')
+    const { from, to } = span(ed, '五百万行')
+    ed.view.dispatch(ed.state.tr.insertText('一千万条', from, to))
+    expect(marked(ed, 't1')).toEqual(['一千万条'])
+  })
+
+  it('are gone with words deleted outright', async () => {
+    const ed = open('数据量到五百万行就评估迁移。')
+    comment(ed, '五百万行', 't1')
+    const { from, to } = span(ed, '五百万行')
+    ed.view.dispatch(ed.state.tr.delete(from, to))
+    expect(marked(ed, 't1')).toEqual([])
   })
 })

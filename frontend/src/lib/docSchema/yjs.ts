@@ -14,6 +14,7 @@ import { MarkdownManager } from '@tiptap/markdown'
 import { prosemirrorJSONToYXmlFragment, updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap'
 import * as Y from 'yjs'
 
+import { carryCommentAnchors } from './commentAnchors'
 import { docExtensions } from './extensions'
 import { docMarked, finishMarkdown } from './markdown'
 import { pendingSuggestions, withoutSuggestions } from './suggestions'
@@ -62,7 +63,9 @@ export function writeMarkdown(doc: Y.Doc, md: string): void {
     doc.transact(() => prosemirrorJSONToYXmlFragment(schema, next.toJSON(), fragment))
     return
   }
-  doc.transact(() => updateYFragment(doc, fragment, next, { mapping: new Map(), isOMark: new Map() }))
+  // Markdown has no comment marks: give back the ones the rewrite would drop.
+  const marked = carryCommentAnchors(liveNode(doc), next)
+  doc.transact(() => updateYFragment(doc, fragment, marked, { mapping: new Map(), isOMark: new Map() }))
 }
 
 /** Whether the live document still reads `base`: the same text, or — for a
