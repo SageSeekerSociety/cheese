@@ -218,7 +218,7 @@ async function onAgentTextClick(e: MouseEvent) {
     <span v-if="outgoing && !runStart && time" class="im-pending-state">{{ time }}</span>
 
     <div class="im-main">
-      <div v-if="runStart || !outgoing" class="im-meta">
+      <div class="im-meta">
         <template v-if="runStart">
           <button type="button" class="im-name im-person" :data-handle="block.author">{{ authorName }}</button>
           <ExternalTag v-if="external && !isAgent" />
