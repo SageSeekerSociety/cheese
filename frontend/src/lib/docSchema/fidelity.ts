@@ -44,8 +44,9 @@ const fidelityMarked = new Marked(markedCjkFriendly())
 //      text continued at 2 spaces; only the item markers state the nesting, and
 //      those are left strict. A line that follows a BLANK line keeps its indent,
 //      which is what leaves 4-space indented code blocks strict.
-//  14. Blank lines between adjacent list-item markers are presentation-only;
-//      indentation and paragraph breaks remain strict.
+//  14. Blank lines before a list-item marker, after another item or after an
+//      item's indented content, are presentation-only; indentation and
+//      paragraph breaks remain strict.
 //  15. A fold's `<summary>` may sit on the line after `<details>`, and
 //      `<details open>` folds the same text: both are the one-line head the
 //      serializer writes. A footnote definition, a fold's head and its
@@ -179,7 +180,10 @@ export function normalizeMarkdown(md: string): string {
       // Keep paragraph breaks and list indentation strict.
       const next = spaced.slice(index + 1).find((line) => line.text !== '')
       const listItem = /^ {0,3}(?:[-*+]|\d+[.)])\s/
-      if (!next?.literal && listItem.test(collapsed.at(-1) ?? '') && listItem.test(next?.text ?? '')) continue
+      // So is a blank line before the next item after an item's indented
+      // content (a closing fence, a second paragraph).
+      const prev = collapsed.at(-1) ?? ''
+      if (!next?.literal && (listItem.test(prev) || /^ {2,}\S/.test(prev)) && listItem.test(next?.text ?? '')) continue
       if (prevBlank) continue
       prevBlank = true
     } else {

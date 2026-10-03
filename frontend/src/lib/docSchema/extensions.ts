@@ -11,7 +11,7 @@ import type { marked } from 'marked'
 import { Extension, InputRule, Mark, mergeAttributes, Node } from '@tiptap/core'
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
 import Image from '@tiptap/extension-image'
-import { ListItem, TaskItem, TaskList } from '@tiptap/extension-list'
+import { ListItem, OrderedList, TaskItem, TaskList } from '@tiptap/extension-list'
 import { TableKit } from '@tiptap/extension-table'
 import { Markdown } from '@tiptap/markdown'
 import StarterKit from '@tiptap/starter-kit'
@@ -222,6 +222,12 @@ const DocListItem = ListItem.extend({
   },
 })
 
+// An ordered list is read by marked, the same way a bullet list is. tiptap's
+// own ordered-list reader takes an item's content as starting two columns in
+// where `1. ` takes three, so a fenced code block under a step lost its first
+// space, and one after a second paragraph was dropped.
+const DocOrderedList = OrderedList.extend({ markdownTokenizer: null as never })
+
 /** The full extension list for the living-doc editor (and its tests). */
 export function docExtensions(opts: DocExtensionsOptions = {}): AnyExtension[] {
   return [
@@ -237,6 +243,7 @@ export function docExtensions(opts: DocExtensionsOptions = {}): AnyExtension[] {
       // record a version, and two readers would append two paragraphs.
       trailingNode: opts.standalone ? undefined : false,
       listItem: false,
+      orderedList: false,
       link: {
         // No click-through plugin: in edit mode a plain click just places the
         // caret (⌘-click opens via DocPanel's delegated handler); in read
@@ -255,6 +262,7 @@ export function docExtensions(opts: DocExtensionsOptions = {}): AnyExtension[] {
     DocComment,
     TableKit.configure({ table: { resizable: false } }),
     DocListItem,
+    DocOrderedList,
     TaskList,
     TaskItem.configure({ nested: true }),
     DocImage.configure({

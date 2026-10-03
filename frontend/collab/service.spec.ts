@@ -314,15 +314,15 @@ describe('the live document', () => {
     expect(exportMarkdown(a.doc)).toContain('人刚改的')
   })
 
-  it('refuses a Markdown write that would lose visible text, says which line, and changes nothing', async () => {
+  it('refuses a Markdown write that would lose visible text or misshape a block, says which line, and changes nothing', async () => {
     const { backend, url, http } = await setup('第一段。\n')
     const a = client(url, ticket('xiaowang'))
     await until(() => exportMarkdown(a.doc).includes('第一段'))
     const versions = backend.versions.length
-    const footnote = '第一段。[^1]\n\n## 资料\n\n[^1]: 出自教务处二〇二五年的数据\n'
+    const footnote = '第一段。[^1]\n\n## 资料\n\n[^2]: 出自教务处二〇二五年的数据\n'
     const table = '第一段。\n\n| 项目 | 分值 |\n| --- | --- |\n| 完成度 | 60 | 备注写在这里 |\n'
     for (const [content, line] of [
-      [footnote, 5],
+      [footnote, 1],
       [table, 5],
     ] as const) {
       const response = await replace(http, { content, base: backend.content, actor: 'cheese-agent', check: true })
@@ -438,7 +438,12 @@ describe('an edit to part of the live document', () => {
     const { backend, http, a } = await opened()
     const versions = backend.versions.length
     const response = await edit(http, {
-      edits: [{ old: '第二段讲范围。', new: '第二段讲范围。[^1]\n\n[^1]: 出自教务处的数据' }],
+      edits: [
+        {
+          old: '第二段讲范围。',
+          new: '第二段讲范围。\n\n| 项目 | 分值 |\n| --- | --- |\n| 出自教务处 | 60 | 多一格 |',
+        },
+      ],
       actor: 'cheese-agent',
       mode: 'direct',
     })
