@@ -116,6 +116,20 @@ def setup(folder, options, api):
     return executor, target
 
 
+def is_notification(body):
+    """A request whose last message is a background command's completion
+    notice. Past the script, one of those is a turn the build started by
+    itself, not a step of the script."""
+    messages = body.get("messages") or []
+    last = messages[-1] if messages else {}
+    if last.get("role") != "user":
+        return False
+    content = last.get("content")
+    if not isinstance(content, str):
+        content = json.dumps(content, ensure_ascii=False)
+    return "<task-notification>" in content
+
+
 def tool_results(body):
     return [
         block
@@ -425,7 +439,14 @@ def case(folder, options):
                 run(executor.command("stop"))
         before_turn(session, home)
         ended = session.turn("Run the prescribed remote execution checks.", 120)
-        assert len(server.state["requests"]) == len(actions) + 1, ended
+        # The script's own turns, then the closing one. The build also starts a
+        # turn of its own when a background command finishes
+        # (`task-notification`), so the closing turn is not always the last
+        # request: every request past it is that notice and nothing else.
+        # `missing` below is what holds the script to running once, in order.
+        rest = server.state["requests"][len(actions):]
+        assert rest, ended
+        assert all(is_notification(body) for body in rest[1:]), rest
         # The journal is what the room reads: every scripted call has its
         # tool_result there, on the session's own thread.
         ran = session.tool_results()
