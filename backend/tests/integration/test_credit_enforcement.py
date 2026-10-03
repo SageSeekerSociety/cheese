@@ -10,7 +10,6 @@ from zoneinfo import ZoneInfo
 import pytest
 from sqlalchemy import select, update
 
-from app.core.config import settings
 from app.domain.policy import gate
 from app.domain.project.models import Project
 from app.domain.team.models import Team
@@ -274,7 +273,6 @@ async def test_a_plan_that_turns_windowed_leaves_this_months_pack_unspent(
 async def test_a_windowed_plans_gateway_budget_is_what_its_fullest_window_allows(
     db_factory, monkeypatch
 ):
-    monkeypatch.setattr(settings, "llm_gateway_credit_usd", 0.01)
     async with db_factory() as session:
         await _windowed(
             session, {"hours": 5, "credits": 10}, {"calendar": "week", "credits": 30}
@@ -352,7 +350,6 @@ async def test_the_gateway_budget_narrows_as_packs_lapse_and_clears_on_reserve(
     from tests.conftest import stub_compute
     from tests.integration.test_gateway_usage import FakeGateway
 
-    monkeypatch.setattr(settings, "llm_gateway_credit_usd", 0.01)
     fake = FakeGateway()
     svc = ChatService(
         session_factory=business_db_factory,

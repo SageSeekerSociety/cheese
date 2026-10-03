@@ -37,6 +37,13 @@
     "empty": "No models yet",
     "calls": "calls",
     "blocked": "Blocked",
+    "blockedReason": {
+      "blocked": "Disabled at the gateway, so the picker does not offer it",
+      "unlisted": "Not listed: the gateway does not mark it cheese_selectable",
+      "unpriced": "Not priced: an input or output price is missing, and offering it would silently disable the project's max_budget brake",
+      "pending": "Waiting for the gateway to read it back",
+      "separator": "; "
+    },
     "howToEdit": "Read-only · How to edit",
     "failRate": "{rate} failed",
     "sparklineHint": "Daily token usage",

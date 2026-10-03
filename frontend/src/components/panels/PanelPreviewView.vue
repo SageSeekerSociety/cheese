@@ -17,18 +17,19 @@ import type { DocumentIdentity, DocumentSnapshot } from '../../lib/documentBytes
 import type { FileKind } from '../../lib/fileKind'
 import type { PreviewLocate, SubmitPreviewQuestion } from '../../lib/previewQuestion'
 import type { RasterSelection } from './preview/designRegion'
+import type { MarkdownQuote, QuoteContext } from './preview/markdownQuote'
 import type { SlidePageContext, SlideSource } from './preview/slidesContext'
 
 import { computed, defineAsyncComponent, ref, watch } from 'vue'
 import { useFullscreen } from '@vueuse/core'
 
 import { t } from '../../i18n'
-import { markdown, sanitizeRendered } from '../../lib/markdown'
 import { roomFileDestination } from '../../lib/previewSession'
 
 import DesignImage from './preview/DesignImage.vue'
 import DesignRegionNote from './preview/DesignRegionNote.vue'
 import PreviewLocator from './preview/PreviewLocator.vue'
+import PreviewMarkdown from './preview/PreviewMarkdown.vue'
 import PreviewPages from './preview/PreviewPages.vue'
 import PreviewSheet from './preview/PreviewSheet.vue'
 import PreviewSlides from './preview/PreviewSlides.vue'
@@ -168,19 +169,6 @@ async function fullscreen() {
 // 同住 `lib/fileKind`：一个文件是哪种类型只能有一个答案（取数那一层也是拿它
 // 决定把不把字节交给 iframe 的）。
 
-// Markdown 由这里渲染，不交给 iframe：内容域按 artifact 自己的 mime 原样发字节，
-// 而 text/markdown 对浏览器来说不是网页——挂上去读者看到的是星号和竖线（这就是
-// 它一直以来的样子）。解析器和聊天、文档面板是同一个实例（lib/markdown.ts），
-// 所以 CJK 的 `**这句。**下一句` 在哪儿都不断行，链接也统一新开一页。
-//
-// 不传 breaks：文件里的单个换行是软换行，中文写作者在 .md 里不会为了断行敲回车。
-// 聊天那边反过来（breaks: true），那里的换行就是作者敲的那个换行。
-const previewMarkdownHtml = computed(() => {
-  const source = props.previewFile?.content
-  if (!source || props.documentType?.view !== 'markdown') return ''
-  return sanitizeRendered(markdown.parse(source, { async: false, gfm: true }) as string)
-})
-
 // 在线编辑：Word、表格、幻灯片在房间里直接改，改完存回同一份文件。编辑器开在全屏
 // 对话框里；关掉之后预览按新版本重取。
 const EDITABLE_SUFFIXES = new Set(['docx', 'xlsx', 'pptx'])
@@ -203,7 +191,7 @@ const pagesRef = ref<InstanceType<typeof PreviewPages> | null>(null)
 // 读者指着文档里的一处说「这里不对」，交给芝士的是一句话：文件、位置、原文。
 // 不做能长期保留的批注——读者要改的那句话，正是芝士下一轮要改掉的那句话，锚点必然
 // 失效。这条评论只在下一轮被读一次，之后它属于对话记录。
-const locator = ref<{ label: string; quote: string; address: string } | null>(null)
+const locator = ref<{ label: string; quote: string; address: string; context?: QuoteContext } | null>(null)
 const pageContext = ref<SlidePageContext | null>(null)
 const locatorNote = ref('')
 const imageRegion = usePreviewImageRegion(props, clearLocator)
@@ -213,11 +201,11 @@ const pageLocator = usePreviewPagePin(props, {
   clear: clearLocator,
 })
 
-function openLocator(label: string, quote: string, address: string) {
+function openLocator(label: string, quote: string, address: string, context?: QuoteContext) {
   imageRegion.clear()
   pageContext.value = null
   pageLocator.pin.value = null
-  locator.value = { label, quote, address }
+  locator.value = { label, quote, address, context }
   locatorNote.value = ''
 }
 
@@ -243,6 +231,9 @@ function onPageContext(payload: SlidePageContext) {
 }
 watch(
   [
+    // markdown 没有下面那套文档身份，屏幕上换了一份文件时没人撤掉上一份的指认——
+    // 那句话说的是文件 A 里的位置，发出去时标题上写的却是文件 B 的名字。
+    () => props.previewFile?.path,
     () => props.docBytes,
     () => props.docSnapshot,
     () => props.docIdentity?.topicId,
@@ -272,6 +263,21 @@ function onCell(payload: { address: string; value: string; sheet: string }) {
   // CSV 没有工作表名，`!B7` 会让读者以为前面漏了个名字。
   const where = payload.sheet ? `${payload.sheet}!${payload.address}` : payload.address
   openLocator(where, payload.value || t('work.room.preview.emptyCell'), where)
+}
+
+function onMarkdownQuote(payload: MarkdownQuote) {
+  // 位置说的是「哪一节」而不是行号：改一句话要重新渲染，行号下一版就不成立了；它之前没有标题就是文件开头。
+  const where = payload.heading
+    ? t('work.room.preview.mdHeading', { heading: payload.heading })
+    : t('work.room.preview.mdTop')
+  openLocator(where, payload.text.slice(0, 200), where, { prefix: payload.prefix, suffix: payload.suffix })
+}
+
+function contextLine({ prefix, suffix }: QuoteContext): string {
+  if (prefix && suffix) return t('work.room.preview.locateContext', { prefix, suffix })
+  // 空的那一侧不写——写出来只是一对空引号。
+  if (prefix) return t('work.room.preview.locateContextBefore', { prefix })
+  return t('work.room.preview.locateContextAfter', { suffix })
 }
 
 function sendLocator() {
@@ -310,14 +316,16 @@ function sendLocator() {
     if (accepted) clearLocator()
     return
   }
-  emit('locate', {
-    message: t('work.room.preview.locateMessage', {
-      path: props.previewFile?.path ?? '',
-      address: target.address,
-      quote: target.quote,
-      note,
-    }),
+  const message = t('work.room.preview.locateMessage', {
+    path: props.previewFile?.path ?? '',
+    address: target.address,
+    quote: target.quote,
+    note,
   })
+  // 选中那段文字的两侧（markdown 才有）。两侧都是空的时候没什么可分辨的，别写进去。
+  const ctx = target.context
+  const context = ctx && (ctx.prefix || ctx.suffix) ? contextLine(ctx) : ''
+  emit('locate', { message: context ? `${message}\n${context}` : message })
   clearLocator()
 }
 
@@ -617,13 +625,10 @@ async function onAnnotate(payload: AnnotateDraft) {
       <!-- Markdown 排在最前面：它不走 docBytes 那条路（loadDocument 直接跳过），
            所以下面「缺转换服务」「转不了」两句对它都不成立，先落到这里才不会
            把一篇好端端的 .md 显示成「文档预览未启用」。 -->
-      <!-- eslint-disable-next-line vue/no-v-html -- previewMarkdownHtml 是
-           sanitizeRendered 的输出，不是文件原文。 -->
-      <div
+      <PreviewMarkdown
         v-if="documentType.view === 'markdown'"
-        class="doc__md md-content"
-        data-testid="markdown"
-        v-html="previewMarkdownHtml"
+        :source="previewFile?.content ?? null"
+        @quote="onMarkdownQuote"
       />
 
       <!-- 只在还没有东西可看时转圈。面板每 20 秒重读一次，芝士一存文件版本就变——
@@ -663,7 +668,7 @@ async function onAnnotate(payload: AnnotateDraft) {
           @pin="pageLocator.onPin"
           @dropped="clearLocator"
         />
-        <PreviewSheet v-else :data="docBytes" :kind="documentSuffix === 'csv' ? 'csv' : 'workbook'" @cell="onCell" />
+        <PreviewSheet v-else :data="docBytes" :kind="documentType.sheet ?? 'workbook'" @cell="onCell" />
 
         <!-- 修订清单。页面上已经能看见改动了（LibreOffice 会把修订画出来），这里是
              用来逐条处理的。改动那一格用的是同一个组件。 -->

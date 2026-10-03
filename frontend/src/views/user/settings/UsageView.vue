@@ -31,10 +31,13 @@ const projects = computed(() =>
   (props.usage?.projects ?? []).map((p) => ({
     id: p.id,
     name: p.name ?? t('usage.projects.unnamed'),
-    share: p.share,
+    credits: p.credits,
     to: { name: 'workspace-project', params: { projectId: p.id } },
   }))
 )
+
+/** 方案之外的额度还剩多少点。 */
+const otherCredits = computed(() => (props.usage?.packs ?? []).reduce((sum, p) => sum + p.credits_remaining, 0))
 
 const teamLink = (team: UsageTeam) => ({ name: 'TeamsDetailCredits', params: { handle: team.handle } })
 </script>
@@ -60,7 +63,8 @@ const teamLink = (team: UsageTeam) => ({ name: 'TeamsDetailCredits', params: { h
       <section class="settings-card usv__card">
         <UsagePeriodCard
           :period="usage.period"
-          :plan-name="usage.plan.name"
+          :plan="usage.plan"
+          :other-credits="otherCredits"
           :month="month"
           :lines="usage.lines ?? null"
           :windows="usage.windows"

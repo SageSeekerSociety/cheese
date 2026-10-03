@@ -39,6 +39,7 @@ from app.domain.assistant.models import AssistantMessage
 from app.domain.feature_stats import pricing
 from app.domain.task.models import Task, TaskMembership
 from app.domain.team.models import Team
+from app.domain.usage.credits import CREDIT_USD
 from app.domain.usage.models import ComputeGrant, ResourceUsage
 from app.domain.user.models import User
 from app.main import app
@@ -52,8 +53,7 @@ USAGE = {
     "total_tokens": 320,
     "prompt_tokens_details": {"cached_tokens": 200},
 }
-RATES = (1e-6, 2e-6, 1e-8)  # input, output, cached input — USD per token
-CREDIT_USD = 1e-5
+RATES = (1e-3, 2e-3, 1e-5)  # input, output, cached input — USD per token
 #: What the gateway spends on one call of ``USAGE``, cache share at its rate.
 CALL_USD = 100 * RATES[0] + 200 * RATES[2] + 20 * RATES[1]
 
@@ -231,7 +231,6 @@ def gateway(client, monkeypatch: pytest.MonkeyPatch, tmp_path):
     gw = Gateway()
     monkeypatch.setattr(settings, "llm_gateway_admin_base", gw.url)
     monkeypatch.setattr(settings, "llm_gateway_admin_key", "sk-master")
-    monkeypatch.setattr(settings, "llm_gateway_credit_usd", CREDIT_USD)
     monkeypatch.setattr(settings, "anthropic_base_url", gw.url)
     pricing.forget()
     # Answers settle on sessions of their own, after the response.

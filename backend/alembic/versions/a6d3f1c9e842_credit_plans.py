@@ -20,7 +20,6 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 
 from alembic import op
-from app.core.config import settings
 
 revision: str = "a6d3f1c9e842"
 down_revision: str | Sequence[str] | None = "f2a9c4e7b318"
@@ -31,8 +30,20 @@ FREE_USD_PER_MONTH = 5.0
 FREE_CREDITS_WITHOUT_A_PRICE = 125.0
 
 
+def _price_per_credit() -> float | None:
+    """``LLM_GATEWAY_CREDIT_USD`` as the deployment set it; the setting itself
+    has since gone (credits are a fixed hundredth of a dollar)."""
+    from pydantic_settings import BaseSettings, SettingsConfigDict
+
+    class _Deployment(BaseSettings):
+        model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+        llm_gateway_credit_usd: float | None = None
+
+    return _Deployment().llm_gateway_credit_usd
+
+
 def _free_credits() -> float:
-    price = settings.llm_gateway_credit_usd
+    price = _price_per_credit()
     if not price or price <= 0:
         return FREE_CREDITS_WITHOUT_A_PRICE
     return float(round(FREE_USD_PER_MONTH / price))

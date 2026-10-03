@@ -30,6 +30,7 @@ import logging
 import re
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from redis.asyncio import Redis
@@ -90,8 +91,12 @@ FAILED = "{agent}暂时无法回复，稍后重试"
 # --- whose turn --------------------------------------------------------------
 
 
-def _thread_key(thread_id: uuid.UUID | str) -> str:
-    return f"doc-agent:asking:{thread_id}"
+def _hold_key(key: uuid.UUID | str) -> str:
+    return f"doc-agent:asking:{key}"
+
+
+def _edits_key(work: uuid.UUID | str) -> str:
+    return f"doc-agent:edits:{work}"
 
 
 def _slot_key(project_id: uuid.UUID, slot: int) -> str:
@@ -100,58 +105,107 @@ def _slot_key(project_id: uuid.UUID, slot: int) -> str:
 
 @dataclass(frozen=True)
 class Asking:
-    """The question a thread is being answered for right now."""
+    """The question a conversation (a comment thread, or a selection's box) is
+    being answered for right now."""
 
     asker: str
     seat: str
     room_id: uuid.UUID
+    #: Whether this question may change the document.
+    may_edit: bool = True
+    #: The answer's work id: what the session changes is recorded under it.
+    work: str = ""
 
 
-async def asking(redis: Redis, thread_id: uuid.UUID | str) -> Asking | None:
-    """The question this thread is being answered for, if one is."""
-    raw = await redis.get(_thread_key(thread_id))
+async def asking(redis: Redis, key: uuid.UUID | str) -> Asking | None:
+    """The question this conversation is being answered for, if one is."""
+    raw = await redis.get(_hold_key(key))
     if not raw:
         return None
     held = json.loads(raw)
-    return Asking(held["asker"], held["seat"], uuid.UUID(held["room"]))
+    return Asking(
+        held["asker"],
+        held["seat"],
+        uuid.UUID(held["room"]),
+        bool(held.get("may_edit", True)),
+        str(held.get("work") or ""),
+    )
 
 
 async def _take_turn(
-    redis: Redis, project_id: uuid.UUID, thread_id: uuid.UUID, held: Asking
+    redis: Redis,
+    project_id: uuid.UUID,
+    key: uuid.UUID,
+    held: Asking,
+    *,
+    on_wait: Callable[[], Awaitable[None]] | None = None,
+    stopped: Callable[[], Awaitable[bool]] | None = None,
 ) -> int | None:
-    """Hold the thread and one of the project's answering slots, waiting for
-    them up to ``WAIT_S``. The slot held, or None when the turn never came.
+    """Hold the conversation and one of the project's answering slots, waiting
+    for them up to ``WAIT_S``. The slot held, or None when the turn never came
+    (or ``stopped`` says the asker no longer wants it). ``on_wait`` is told
+    once, the first time the question has to wait.
 
     Both holds lapse on their own after ``ANSWER_S`` past the wait, so a
-    worker that dies mid-answer cannot keep a thread or a slot for good."""
+    worker that dies mid-answer cannot keep a conversation or a slot for good."""
     expires = int(WAIT_S + ANSWER_S)
     value = json.dumps(
-        {"asker": held.asker, "seat": held.seat, "room": str(held.room_id)}
+        {
+            "asker": held.asker,
+            "seat": held.seat,
+            "room": str(held.room_id),
+            "may_edit": held.may_edit,
+            "work": held.work,
+        }
     )
     deadline = time.monotonic() + WAIT_S
-    have_thread = False
+    have_hold = False
+    told = False
     while True:
-        if not have_thread:
-            have_thread = bool(
-                await redis.set(_thread_key(thread_id), value, nx=True, ex=expires)
+        if not have_hold:
+            have_hold = bool(
+                await redis.set(_hold_key(key), value, nx=True, ex=expires)
             )
-        if have_thread:
+        if have_hold:
             for slot in range(ANSWERING_PER_PROJECT):
                 if await redis.set(
-                    _slot_key(project_id, slot), str(thread_id), nx=True, ex=expires
+                    _slot_key(project_id, slot), str(key), nx=True, ex=expires
                 ):
                     return slot
-        if time.monotonic() >= deadline:
-            if have_thread:
-                await redis.delete(_thread_key(thread_id))
+        given_up = time.monotonic() >= deadline or (
+            stopped is not None and await stopped()
+        )
+        if given_up:
+            if have_hold:
+                await redis.delete(_hold_key(key))
             return None
+        if on_wait is not None and not told:
+            told = True
+            await on_wait()
         await asyncio.sleep(POLL_S)
 
 
 async def _give_back(
-    redis: Redis, project_id: uuid.UUID, thread_id: uuid.UUID, slot: int
+    redis: Redis, project_id: uuid.UUID, key: uuid.UUID, slot: int
 ) -> None:
-    await redis.delete(_slot_key(project_id, slot), _thread_key(thread_id))
+    await redis.delete(_slot_key(project_id, slot), _hold_key(key))
+
+
+async def record_edits(redis: Redis, work: str, edits: list[dict]) -> None:
+    """Note what the session changed while answering ``work``."""
+    if not work or not edits:
+        return
+    name = _edits_key(work)
+    await redis.rpush(name, *(json.dumps(edit, ensure_ascii=False) for edit in edits))
+    await redis.expire(name, int(WAIT_S + ANSWER_S))
+
+
+async def edits_of(redis: Redis, work: uuid.UUID | str) -> list[dict]:
+    """What the session changed while answering ``work``, in order."""
+    name = _edits_key(work)
+    raw = await redis.lrange(name, 0, -1)
+    await redis.delete(name)
+    return [json.loads(item) for item in raw]
 
 
 # --- the agent and its model -------------------------------------------------
@@ -263,12 +317,23 @@ def hand_to_agent(
 
 # --- what the session is told ------------------------------------------------
 
+#: Where the answer is read: a comment thread, or the card beside a selection.
+_WHERE = {
+    "thread": (
+        "有人在这个话题的实况文档里评论并点了你的名，你在这个评论串里回答。",
+        "你最后写的文字会原样成为你在评论串里的回复。直接写回复本身",
+    ),
+    "box": (
+        "有人在这个话题的实况文档里选中文字（或者对整篇）找你，要你改或者问你。",
+        "你最后写的文字显示在提问人旁边的小卡上，只有他看得到。改了文档时只用一句话"
+        "说改了什么；没改时直接回答",
+    ),
+}
+
 _RULES = (
-    "你是{agent}，这个项目的 AI 队友。有人在这个话题的实况文档里评论并点了你的名，"
-    "你在这个评论串里回答。\n\n"
+    "你是{agent}，这个项目的 AI 队友。{place}\n\n"
     "规则：\n"
-    "1. 你最后写的文字会原样成为你在评论串里的回复。直接写回复本身，简洁，"
-    "先给结论；用提问人的语言。\n"
+    "1. {answer}，简洁，先给结论；用提问人的语言。\n"
     "2. 要你改文档时，用 edit_document 直接改：只改要求的部分，保留原来的 "
     "Markdown 格式（加粗、链接、@ 提及、高亮），不加原文没有的事实。old 要从文档"
     "原文逐字照抄；改失败了先用 read_document 读最新的全文再改。改完在回复里用一句话"
@@ -280,11 +345,18 @@ _RULES = (
 )
 
 
-def system_prompt(agent_name: str, charter: str | None, memory: str | None) -> str:
+def system_prompt(
+    agent_name: str,
+    charter: str | None,
+    memory: str | None,
+    *,
+    where: str = "thread",
+) -> str:
     """The rules, the project's charter and the index of its memory: what stays
     the same for the session's life, so every question shares the cached
-    prefix."""
-    parts = [_RULES.format(agent=agent_name)]
+    prefix. ``where`` is where the answer is read (``_WHERE``)."""
+    place, answer = _WHERE[where]
+    parts = [_RULES.format(agent=agent_name, place=place, answer=answer)]
     if charter:
         parts.append(f"## 项目章程\n<章程>\n{charter}\n</章程>")
     if memory:
@@ -324,40 +396,43 @@ def section_of(content: str, quote: str) -> str | None:
 
 
 @dataclass(frozen=True)
-class Gathered:
-    question: str
+class Surroundings:
+    """What every question of a room's document is asked with, read now."""
+
+    content: str
+    messages: str
     charter: str | None
     memory: str | None
 
+    def document(self) -> str:
+        return f"<文档全文>\n{self.content or '（文档还是空的）'}\n</文档全文>"
 
-async def gather(
-    db: AsyncSession, *, project_id: uuid.UUID, room_id: uuid.UUID, thread_id: uuid.UUID
-) -> Gathered:
-    """What one question is asked with, read now."""
-    threads = CommentThreads(db)
-    thread = await threads.describe(await threads.root(room_id, thread_id))
-    comments = [thread["comment"], *(r["comment"] for r in thread["replies"])]
-    said = "\n".join(f"<@{c['author']}>：{c['content']}" for c in comments)
-    quote = thread["comment"].get("anchor_quote") or ""
+    def conversation(self) -> list[str]:
+        if not self.messages:
+            return []
+        return [f"<话题里最近的对话>\n{self.messages}\n</话题里最近的对话>"]
+
+    def around(self, passage: str, label: str) -> list[str]:
+        """``passage`` under ``label``, and the section of the document it is in."""
+        if not passage:
+            return []
+        parts = [f"<{label}>\n{passage}\n</{label}>"]
+        section = section_of(self.content, passage)
+        if section:
+            parts.append(f"<这段文字所在的一节>\n{section}\n</这段文字所在的一节>")
+        return parts
+
+
+async def surroundings(
+    db: AsyncSession, *, project_id: uuid.UUID, room_id: uuid.UUID
+) -> Surroundings:
     doc = await TopicService(db).doc_of_room(room_id)
-    content = doc.content if doc is not None else ""
     recent = await BlockRepository(db).page_for_topic(
         room_id, limit=RECENT_MESSAGES, kinds=[BlockKind.message]
     )
     messages = "\n".join(
         f"<@{block.author}>：{block.content}" for block in recent.items
     )
-    parts = [f"<评论串>\n{said}\n</评论串>"]
-    if quote:
-        parts.append(f"<评论指着的文字>\n{quote}\n</评论指着的文字>")
-        section = section_of(content, quote)
-        if section:
-            parts.append(f"<这段文字所在的一节>\n{section}\n</这段文字所在的一节>")
-    parts.append(f"<文档全文>\n{content or '（文档还是空的）'}\n</文档全文>")
-    if messages:
-        parts.append(f"<话题里最近的对话>\n{messages}\n</话题里最近的对话>")
-    parts.append(f"回答评论串里 <@{comments[-1]['author']}> 的最后一条评论。")
-
     project = await ProjectService(db).get_or_404(project_id)
     charter = None
     if project.root_topic_id is not None and project.root_topic_id != room_id:
@@ -369,7 +444,59 @@ async def gather(
         if not index.is_empty()
         else None
     )
-    return Gathered("\n\n".join(parts), charter, memory)
+    return Surroundings(
+        doc.content if doc is not None else "", messages, charter, memory
+    )
+
+
+async def thread_question(
+    db: AsyncSession, around: Surroundings, *, room_id: uuid.UUID, thread_id: uuid.UUID
+) -> str:
+    """A thread's question: the thread so far, what it points at, the document
+    and the room's latest messages."""
+    threads = CommentThreads(db)
+    thread = await threads.describe(await threads.root(room_id, thread_id))
+    comments = [thread["comment"], *(r["comment"] for r in thread["replies"])]
+    said = "\n".join(f"<@{c['author']}>：{c['content']}" for c in comments)
+    quote = thread["comment"].get("anchor_quote") or ""
+    parts = [
+        f"<评论串>\n{said}\n</评论串>",
+        *around.around(quote, "评论指着的文字"),
+        around.document(),
+        *around.conversation(),
+        f"回答评论串里 <@{comments[-1]['author']}> 的最后一条评论。",
+    ]
+    return "\n\n".join(parts)
+
+
+def launch_for(
+    *,
+    project_id: uuid.UUID,
+    room_id: uuid.UUID,
+    key: uuid.UUID,
+    bound: Bound,
+    around: Surroundings,
+    where: str,
+) -> document.Launch:
+    """The session of conversation ``key``, on the agent's model and the
+    room's credential for that conversation."""
+    return document.Launch(
+        project_id=project_id,
+        thread_id=key,
+        system_prompt=system_prompt(
+            bound.agent_name, around.charter, around.memory, where=where
+        ),
+        tools_path=TOOLS_PATH,
+        tools=TOOLS,
+        token=mint_scoped_token(
+            project_id=str(project_id),
+            topic_id=str(room_id),
+            agent_handle=bound.agent_handle,
+            resource_id=str(key),
+            ttl_s=TOKEN_TTL_S,
+        ),
+        model=bound.wire_model,
+    )
 
 
 # --- one answer ----------------------------------------------------------------
@@ -394,42 +521,35 @@ async def answer(
     if redis is None:
         await _reply(factory, room_id, project_id, thread_id, bound, FAILED)
         return
+    work = uuid.uuid4()
     slot = await _take_turn(
-        redis, project_id, thread_id, Asking(asker, bound.agent_handle, room_id)
+        redis,
+        project_id,
+        thread_id,
+        Asking(asker, bound.agent_handle, room_id, work=str(work)),
     )
     if slot is None:
         await _reply(factory, room_id, project_id, thread_id, bound, BUSY)
         return
-    work = uuid.uuid4()
     spent = False
     try:
         async with factory() as db:
             await admit(db, project_id, bound)
-            gathered = await gather(
-                db, project_id=project_id, room_id=room_id, thread_id=thread_id
+            around = await surroundings(db, project_id=project_id, room_id=room_id)
+            question = await thread_question(
+                db, around, room_id=room_id, thread_id=thread_id
             )
-        launch = document.Launch(
+        launch = launch_for(
             project_id=project_id,
-            thread_id=thread_id,
-            system_prompt=system_prompt(
-                bound.agent_name, gathered.charter, gathered.memory
-            ),
-            tools_path=TOOLS_PATH,
-            tools=TOOLS,
-            token=mint_scoped_token(
-                project_id=str(project_id),
-                topic_id=str(room_id),
-                agent_handle=bound.agent_handle,
-                resource_id=str(thread_id),
-                ttl_s=TOKEN_TTL_S,
-            ),
-            model=bound.wire_model,
+            room_id=room_id,
+            key=thread_id,
+            bound=bound,
+            around=around,
+            where="thread",
         )
         text, failure = "", None
         spent = True
-        async for event in sessions.ask(
-            launch, work, gathered.question, ceiling_s=ANSWER_S
-        ):
+        async for event in sessions.ask(launch, work, question, ceiling_s=ANSWER_S):
             if isinstance(event, Answered):
                 text, failure = event.text, event.error
         if failure:
@@ -448,6 +568,7 @@ async def answer(
         reply = FAILED
     finally:
         await _give_back(redis, project_id, thread_id, slot)
+        await edits_of(redis, work)
     await _reply(factory, room_id, project_id, thread_id, bound, reply)
     if spent:
         await chat._drain_gateway_usage(project_id, room_id, work)

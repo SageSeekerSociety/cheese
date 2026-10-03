@@ -18,7 +18,7 @@
     "column": {
       "name": "Plan",
       "audience": "For",
-      "credits": "Monthly credits",
+      "credits": "Points a month",
       "windows": "Usage caps",
       "tiers": "Models",
       "actions": "Actions",
@@ -27,12 +27,12 @@
     "tagDefault": "Default",
     "tagAdminOnly": "Admin only",
     "noWindows": "None",
-    "window": "Up to {credits} per {hours} h",
+    "window": "Up to {credits} pts per {hours} h",
     "empty": "No plans yet",
     "loadFailed": "Couldn't load plans",
     "retry": "Retry",
-    "windowWeek": "Up to {credits} per week",
-    "windowMonth": "Up to {credits} per month"
+    "windowWeek": "Up to {credits} pts per week",
+    "windowMonth": "Up to {credits} pts per month"
   },
   "planDialog": {
     "createTitle": "New plan",
@@ -42,7 +42,7 @@
     "perPeriod": "Monthly grant",
     "windowHours": "Per hours",
     "windowCredits": "Up to",
-    "unit": "credits",
+    "unit": "pts",
     "addWindow": "Add usage cap",
     "removeWindow": "Remove this cap",
     "tiers": "Models",
@@ -121,12 +121,12 @@
     "emptyHistory": "No history yet",
     "historyFailed": "Couldn't load the history",
     "logPlan": "Plan changed from {from} to {to}",
-    "logGrant": "Granted {credits} credits, {expiry}",
+    "logGrant": "Granted {credits} pts, {expiry}",
     "by": "{'@'}{handle} · {time}"
   },
   "grantDialog": {
     "title": "Grant credits to “{team}”",
-    "amount": "Amount",
+    "amount": "Points",
     "expiry": "Expiry",
     "never": "No expiry",
     "onDate": "On a date",

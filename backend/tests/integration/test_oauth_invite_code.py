@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.routes.users import _issue_oauth_state_token
+from app.api.routes.users.oauth import _issue_oauth_state_token
 from app.core.config import settings
 from app.domain.invite.models import InviteCode
 from app.domain.invite.services import InviteCodeService

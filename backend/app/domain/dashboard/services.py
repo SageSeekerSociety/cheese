@@ -25,7 +25,7 @@ from app.domain.notification.repositories import NotificationRepository
 from app.domain.platform_stats.windows import dense_series, utc_day, utc_day_window
 from app.domain.project.repositories import ProjectRepository
 from app.domain.space.repositories import SpaceRepository
-from app.domain.topic.models import Topic, TopicStatus
+from app.domain.topic.models import Topic, TopicStatus, room_ref
 from app.domain.topic.repositories import TopicRepository
 
 if TYPE_CHECKING:
@@ -110,7 +110,7 @@ class DashboardService:
         )
         topics = await self._topics.list_for_project(project_id)
         started = [
-            {"id": str(t.id), "title": t.title, "status": t.status.value}
+            {**room_ref(t), "status": t.status.value}
             for t in topics
             if t.created_by == user_handle
         ]
@@ -130,7 +130,7 @@ class DashboardService:
             .all()
         )
         topics_active = [
-            {"id": str(t.id), "title": t.title, "status": t.status.value}
+            {**room_ref(t), "status": t.status.value}
             for t in topics
             if t.status == TopicStatus.active and t.id in worked_topic_ids
         ]
@@ -440,8 +440,7 @@ class DashboardService:
         }
         return [
             {
-                "id": str(topic_id),
-                "title": topics[topic_id].title,
+                **room_ref(topics[topic_id]),
                 "status": topics[topic_id].status.value,
                 "project_id": str(topics[topic_id].project_id),
                 "project_name": names[topics[topic_id].project_id],

@@ -57,7 +57,7 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.agent.repositories import AgentTurnRepository, TurnRecord
-from app.domain.block.notice_text import say
+from app.domain.block.notice_text import listing, say
 from app.domain.delivery.addressing import NOBODY, Addressed, Event, Hand, address
 from app.domain.delivery.input_identity import InputReconciliationPending
 from app.domain.identity.actor import Actor
@@ -1591,9 +1591,8 @@ class AgentWorkRunner:
             # 不受 `allow_actions` 管：那道门挡的是「平台还要不要替他做点什么」，而
             # 这条恰恰是平台做不了了才发的。关着门的那一档正是话题里有轮次卡死 ——
             # 机器死在手上，最需要说这句话的那一档。
-            waiting = "、".join(
-                f"{dispatch.tool}（{dispatch.key}）" for dispatch in unknown
-            )
+            calls = (say("dispatchCall", tool=d.tool, id=d.key) for d in unknown)
+            waiting = listing(calls)
             await self._post_orphan_event(
                 chat_service,
                 topic_id,

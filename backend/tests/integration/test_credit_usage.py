@@ -1,7 +1,7 @@
 """What members see of their credits (#2397, #2233): a team's members read its
 month, nobody else does; a person's own page splits their spend by product
-line; and every figure is a ratio, never a credit amount or a person's share
-of a team's projects (#394)."""
+line; figures are in credits (点), never tokens or a person's share of a
+team's projects (#394)."""
 
 import asyncio
 import json
@@ -95,6 +95,9 @@ def test_members_read_their_teams_usage_and_others_cannot(client, plan):
     assert r.status_code == 200, r.text
     data = r.json()["data"]
     assert data["plan"]["key"] == "free"
+    assert data["plan"]["credits_per_period"] == 100
+    assert data["period"]["credits_used"] == 25
+    assert data["period"]["credits_total"] == 100
     assert data["period"]["used_ratio"] == pytest.approx(0.25)
     assert data["period"]["remaining_ratio"] == pytest.approx(0.75)
     assert data["period"]["resets_at"]
@@ -119,16 +122,16 @@ def test_a_persons_page_splits_their_spend_by_product_line(client, plan):
     data = client.get("/users/me/credits/usage", headers=me).json()["data"]
 
     assert data["lines"] == {
-        "collab": pytest.approx(0.5),
-        "ask": pytest.approx(0.4),
-        "write": pytest.approx(0.1),
+        "collab": pytest.approx(10),
+        "ask": pytest.approx(8),
+        "write": pytest.approx(2),
     }
-    assert data["period"]["used_ratio"] == pytest.approx(0.2)
+    assert data["period"]["credits_used"] == pytest.approx(20)
     [project] = data["projects"]
-    assert project["name"] == "Mine" and project["share"] == pytest.approx(0.5)
+    assert project["name"] == "Mine" and project["credits"] == pytest.approx(10)
 
 
-def test_project_shares_add_up_to_the_teams_month(client, plan):
+def test_project_spend_adds_up_to_the_teams_month(client, plan):
     owner = _auth(seed_user(client, "cu-owner"))
     team = _shared_team(client, owner, "culab")
     ids = [
@@ -142,15 +145,14 @@ def test_project_shares_add_up_to_the_teams_month(client, plan):
 
     data = client.get(f"/teams/{team}/credits/usage", headers=owner).json()["data"]
 
-    shares = {p["name"]: p["share"] for p in data["projects"]}
-    assert shares == {
-        "A": pytest.approx(0.6),
-        "B": pytest.approx(0.3),
-        "C": pytest.approx(0.1),
+    spent = {p["name"]: p["credits"] for p in data["projects"]}
+    assert spent == {
+        "A": pytest.approx(12),
+        "B": pytest.approx(6),
+        "C": pytest.approx(2),
     }
-    assert sum(shares.values()) == pytest.approx(1.0)
-    days = [d["share"] for d in data["days"] if d["share"] is not None]
-    assert sum(days) == pytest.approx(1.0)
+    days = [d["credits"] for d in data["days"] if d["credits"] is not None]
+    assert sum(days) == pytest.approx(data["period"]["credits_used"]) == 20
 
 
 def test_no_figure_is_a_persons_share_of_a_teams_projects(client, plan):
@@ -171,10 +173,10 @@ def test_no_figure_is_a_persons_share_of_a_teams_projects(client, plan):
     assert mine["projects"] == []
     assert mine["lines"] == {"collab": 0, "ask": 0, "write": 0}
     [lab] = mine["teams"]
-    assert lab["id"] == team and lab["remaining_ratio"] == pytest.approx(0.6)
-    # Ratios only: no credit amounts, tokens or person ids anywhere.
+    assert lab["id"] == team and lab["credits_remaining"] == pytest.approx(60)
+    # No tokens, costs or person ids anywhere.
     for body in (json.dumps(team_view), json.dumps(mine)):
-        for word in ("credits_", "tokens", "user_id", "cost"):
+        for word in ("tokens", "user_id", "cost"):
             assert word not in body, word
 
 

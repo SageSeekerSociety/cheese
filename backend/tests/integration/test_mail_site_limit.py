@@ -178,7 +178,7 @@ def test_a_refusal_for_one_address_does_not_spend_the_allowance(
 def test_codes_for_an_accounts_first_email_count_against_the_allowance(
     _portal, api_client: TestClient, user_client: UserCreator, outbox: Outbox
 ):
-    from app.api.routes.users import _issue_oauth_state_token
+    from app.api.routes.users.oauth import _issue_oauth_state_token
 
     placeholder = user_client.create_user(
         email=f"oauth-ruc-{uuid.uuid4().hex[:8]}@placeholder.internal"

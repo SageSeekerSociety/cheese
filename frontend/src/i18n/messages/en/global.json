@@ -30,5 +30,6 @@
     "promptTitle": "Enter a value"
   },
   "unknownError": "Unknown error",
+  "listItemQuoted": "“{item}”",
   "confirm": "Confirm"
 }

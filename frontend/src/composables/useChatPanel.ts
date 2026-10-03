@@ -54,7 +54,7 @@ import { AGENT_STATUS_EVENTS, collapseNotices, type PlatformNotice } from '../li
 import { coalesceSplitFencedCodeBlocks } from '../lib/renderMessage'
 import { siteStatusLabel } from '../lib/siteStatusLabel'
 import { placeSplitMarkers } from '../lib/splitMarkers'
-import { topicShortId, topicStateBadge } from '../lib/topicState'
+import { taskTitle, topicShortId, topicStateBadge, topicTitle } from '../lib/topicState'
 import { myHandle } from '../me'
 
 import { useAskAnswers } from './useAskAnswers'
@@ -769,8 +769,8 @@ export function useChatPanel(opts: ChatPanelOptions) {
     [() => topicList(), roomTasks],
     ([ts, tasks]) => {
       for (const k of Object.keys(topicTitles)) delete topicTitles[k]
-      for (const t of ts) topicTitles[t.id] = t.title
-      for (const t of tasks) topicTitles[t.id] = t.title
+      for (const t of ts) topicTitles[t.id] = topicTitle(t)
+      for (const t of tasks) topicTitles[t.id] = taskTitle(t)
     },
     { immediate: true, deep: true }
   )

@@ -18,7 +18,7 @@ model table (``feature_stats.pricing.model_rates``) carries price-only entries
 for the Claude models, and each call's buckets — fresh input, output, cache
 reads, cache writes to the five-minute and to the one-hour cache — are billed at
 that model's rates; the credits are
-that cost over ``llm_gateway_credit_usd``, the same quotient as gateway rows.
+that cost over ``CREDIT_USD``, the same quotient as gateway rows.
 Cache reads dominate (one observed task: 2.9M cached vs 141k fresh) and are
 billed at the cache-read rate, not as fresh input.
 

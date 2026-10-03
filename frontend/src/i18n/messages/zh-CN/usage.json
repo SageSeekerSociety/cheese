@@ -11,11 +11,13 @@
   "period": {
     "label": "本月",
     "used": "{month}已用",
-    "remaining": "还剩 {pct}",
+    "remaining": "还剩 {n} 点",
     "resets": "{at} 重置",
     "usedUp": "本月已用完",
     "unlimited": "不限",
-    "usedAria": "本月已用 {pct}"
+    "usedAria": "本月已用 {used} 点，共 {total} 点",
+    "figure": "{used} / {total} 点",
+    "usedUpOther": "方案额度已用完，正在使用其他额度"
   },
   "windows": {
     "title": "使用上限",
@@ -30,14 +32,17 @@
     "task": "题目「{task}」",
     "taskUnknown": "题目额度",
     "other": "其他额度",
-    "remaining": "剩余 {pct}",
+    "remaining": "剩余 {n} 点",
     "expires": "{date}到期",
     "noExpiry": "不过期",
-    "project": "仅限项目「{project}」"
+    "project": "仅限项目「{project}」",
+    "total": "共 {n} 点",
+    "afterPlan": "方案额度用完后使用",
+    "first": "最先使用"
   },
   "daily": {
     "title": "每天用量",
-    "aria": "{date} 占本月用量 {pct}"
+    "aria": "{date} 用了 {n} 点"
   },
   "projects": {
     "mine": "我的项目",
@@ -47,8 +52,21 @@
   },
   "teams": {
     "title": "我所在的团队",
-    "remaining": "剩余 {pct}",
+    "remaining": "剩余 {n} 点",
     "usedUp": "已用完",
-    "unlimited": "不限"
+    "unlimited": "不限",
+    "remainingWindow": "剩余 {pct}"
+  },
+  "points": "{n} 点",
+  "plan": {
+    "label": "查看方案「{name}」的内容",
+    "monthly": "每月 {n} 点",
+    "windows": "使用上限：{list}",
+    "hours": "每 {hours} 小时",
+    "week": "每周",
+    "month": "每月",
+    "unlimited": "不限量",
+    "models": "可用模型",
+    "noModels": "暂无可用模型"
   }
 }

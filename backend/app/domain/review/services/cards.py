@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from app.core.errors import NotFoundError, ValidationError
-from app.domain.block.notice_text import say
+from app.domain.block.notice_text import listing, say
 from app.domain.library import service as library
 from app.domain.project import artifacts
 from app.domain.review import (
@@ -283,10 +283,10 @@ async def _warn_about_a_second_pending_migration(
     ]
     if not collisions:
         return
-    rooms = []
+    rooms = listing([], quoted=True)
     for other in collisions:
         sibling = await self._topics.get(other.topic_id)
-        rooms.append(f"「{sibling.title}」" if sibling else str(other.topic_id))
+        rooms.items.append(sibling.title if sibling else str(other.topic_id))
     self._notify_merge_result(
         topic,
         say("migrationCollision"),
@@ -294,7 +294,7 @@ async def _warn_about_a_second_pending_migration(
             EVENT_MIGRATION_COLLISION,
             severity=SEVERITY_WARN,
             who=WHO_HUMAN,
-            detail=say("migrationCollisionDetail", rooms="、".join(rooms)),
+            detail=say("migrationCollisionDetail", rooms=rooms),
             detail_label=say("labelReason"),
         ),
     )

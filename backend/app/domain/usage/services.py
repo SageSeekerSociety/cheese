@@ -17,20 +17,19 @@ from datetime import date, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
 from app.domain.usage import ledger
 from app.domain.usage import repositories as repo
+from app.domain.usage.credits import CREDIT_USD
 from app.domain.usage.model_access import ModelAccess, model_access
 
 
 def _gateway_budget(balance: ledger.Balance, spent_usd: float) -> float | None:
     """The ``max_budget`` a project's gateway key should carry: what the key
     has spent so far, plus what the project may still spend, in USD. None is no
-    brake at all: an unlimited plan, or no price per credit to convert with."""
-    price = settings.llm_gateway_credit_usd
-    if balance.unlimited or not price:
+    brake at all: an unlimited plan."""
+    if balance.unlimited:
         return None
-    return round(spent_usd + max(0.0, balance.credits_remaining) * price, 4)
+    return round(spent_usd + max(0.0, balance.credits_remaining) * CREDIT_USD, 4)
 
 
 class UsageService:

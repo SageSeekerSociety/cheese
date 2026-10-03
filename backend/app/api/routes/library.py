@@ -13,7 +13,7 @@ from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
-from app.api.place import project_reader, readable_room_titles
+from app.api.place import project_reader, readable_rooms
 from app.api.response import ok, page
 from app.core.db import get_db
 from app.core.errors import ValidationError
@@ -86,8 +86,8 @@ async def list_library(
     await ProjectService(db).get_or_404(project_id)
     actor = await project_reader(db, resolver, project_id, topic)
     files = library.list_library_files(project_id)
-    titles = await readable_room_titles(db, resolver, actor, project_id)
-    listed = await library_records.describe(db, project_id, files, titles)
+    rooms = await readable_rooms(db, resolver, actor, project_id)
+    listed = await library_records.describe(db, project_id, files, rooms)
     return ok(page(listed, len(listed)))
 
 

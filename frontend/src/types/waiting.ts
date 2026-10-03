@@ -11,8 +11,10 @@ export interface WaitingItem {
   projectName: string
   topicId: string
   topicTitle: string
+  topicTitleSource?: string
   taskId: string | null
   taskTitle: string | null
+  taskTitleSource?: string | null
   phrase: BoardPhrase
   reason: 'reviewer' | 'reporter' | 'asked'
   blockId?: string | null

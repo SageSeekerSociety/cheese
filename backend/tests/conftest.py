@@ -1324,7 +1324,7 @@ def _plans_migration():
 
     path = (
         Path(__file__).resolve().parent.parent
-        / "alembic/versions/a6d3f1c9e842_credit_plans.py"
+        / "alembic/versions/ddf13581d122_credits_are_cents.py"
     )
     spec = importlib.util.spec_from_file_location("_plans_seed", path)
     assert spec is not None and spec.loader is not None

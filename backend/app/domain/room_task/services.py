@@ -16,6 +16,7 @@ from app.domain.room_task.models import (
     RoomLock,
     Task,
     TaskStatus,
+    TaskTitleSource,
 )
 from app.domain.room_task.repositories import TaskRepository
 from app.domain.room_task.thread_label import task_of_thread_label
@@ -26,6 +27,11 @@ class TaskService:
     def __init__(self, session: AsyncSession):
         self._session = session
         self._repo = TaskRepository(session)
+
+    @staticmethod
+    def rename(task: Task, title: str) -> None:
+        """Give ``task`` a title; from then on it is named, whatever the words."""
+        task.title, task.title_source = title, TaskTitleSource.human
 
     async def get(self, task_id: uuid.UUID) -> Task | None:
         return await self._repo.get(task_id)
@@ -285,6 +291,7 @@ class TaskService:
         reporter_handle: str | None = None,
         contributor_handles: list[str] | None = None,
         base_task_id: uuid.UUID | None = None,
+        title_source: TaskTitleSource = TaskTitleSource.human,
     ) -> Task:
         """Record a task's branch; its executor creates the worktree on its machine."""
         from app.domain.project.forge import default_branch
@@ -303,6 +310,7 @@ class TaskService:
             owner_handle=owner_handle,
             reviewer_handle=reviewer_handle,
             created_by=created_by,
+            title_source=title_source,
         )
         await self.set_credits(
             task,

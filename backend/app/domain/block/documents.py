@@ -19,7 +19,7 @@ from app.domain.block.models import (
     agent_notice,
     consumed_turn,
 )
-from app.domain.block.notice_text import say
+from app.domain.block.notice_text import NoticeList, listing, say
 from app.domain.block.repositories import BlockRepository
 from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.living_doc.services import DocumentJournal
@@ -57,7 +57,7 @@ DOC_SUGGESTED_KEY = "doc_suggested"
 DOC_SUGGESTIONS_KEY = "doc_suggestions"
 
 
-def _actor_label(handles: list[str]) -> str:
+def _actor_label(handles: list[str]) -> NoticeList:
     """Everyone in an edit run, as the event names them. A human is the
     structured <@handle> token the client renders as a mention chip; 芝士 is
     one familiar name whichever 分身 wrote (each authors under its own
@@ -67,7 +67,7 @@ def _actor_label(handles: list[str]) -> str:
         name = say("actorCheese") if looks_like_agent_handle(handle) else f"<@{handle}>"
         if name not in names:
             names.append(name)
-    return "、".join(names)
+    return listing(names)
 
 
 def _notice_kind(meta: dict) -> str:

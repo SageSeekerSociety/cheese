@@ -42,6 +42,7 @@ import i18n, { t } from '@/i18n'
 import { label, NOTIF_KIND, TOPIC_STATUS } from '@/labels'
 import { activityWeeks, formatUtcDay, HALF_YEAR_WEEKS } from '@/lib/activityYear'
 import { relTime } from '@/lib/relTime'
+import { topicTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
 
 defineOptions({ name: 'ProfileView' })
@@ -336,7 +337,7 @@ const roleInProject = computed(() => inProject.value?.source ?? null)
                   :to="{ name: 'workspace-topic', params: { projectId, topicId: topic.id } }"
                 >
                   <span class="status-dot" :class="topicDot(topic.status)" />
-                  <span class="t-body profile__ink">{{ topic.title }}</span>
+                  <span class="t-body profile__ink">{{ topicTitle(topic) }}</span>
                 </router-link>
               </div>
             </div>
@@ -470,7 +471,7 @@ const roleInProject = computed(() => inProject.value?.source ?? null)
                     :aria-label="label(TOPIC_STATUS, topic.status)"
                   />
                   <span class="profile__row-text">
-                    <span class="t-body profile__ink profile__topic-title">{{ topic.title }}</span>
+                    <span class="t-body profile__ink profile__topic-title">{{ topicTitle(topic) }}</span>
                     <span v-if="compact" class="t-meta-read">
                       {{ topic.project_name }} · {{ t('users.profile.topics.count', { count: topic.contributions }) }} ·
                       {{ relTime(topic.last_participated_at) }}

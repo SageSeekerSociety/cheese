@@ -1,6 +1,7 @@
-// 「芝士额度」: what a person sees of their month — when it is used up, when it
-// resets, the credits besides the plan's only when there are some, and a way to
-// each of their teams' pages.
+// 「芝士额度」: what a person sees of their month — how many points are used and
+// left, when it is used up and when it resets, the credits besides the plan's
+// only when there are some, what the plan includes, and a way to each of their
+// teams' pages.
 import type { Component } from 'vue'
 import type { CreditUsage } from '@/lib/creditUsage'
 
@@ -8,8 +9,8 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { cleanup, render, within } from '@testing-library/vue'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { cleanup, fireEvent, render, within } from '@testing-library/vue'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import UsageView from './UsageView.vue'
 
@@ -18,22 +19,49 @@ import i18n, { setLocale } from '@/i18n'
 function days(): CreditUsage['days'] {
   return Array.from({ length: 31 }, (_, i) => ({
     date: `2026-10-${String(i + 1).padStart(2, '0')}`,
-    share: i < 2 ? 0.5 : i < 20 ? 0 : null,
-    lines: { collab: i < 2 ? 0.5 : 0, ask: 0, write: 0 },
+    credits: i < 2 ? 145 : i < 20 ? 0 : null,
+    lines: { collab: i < 2 ? 145 : 0, ask: 0, write: 0 },
   }))
 }
 
-const PERIOD = { unlimited: false, used_ratio: 0.58, remaining_ratio: 0.42, resets_at: '2026-10-31T16:00:00+00:00' }
+const PERIOD = {
+  unlimited: false,
+  credits_total: 500,
+  credits_used: 290,
+  used_ratio: 0.58,
+  remaining_ratio: 0.42,
+  resets_at: '2026-10-31T16:00:00+00:00',
+}
+
+const PACK = {
+  id: 'g1',
+  source: 'admin_grant',
+  project_id: null,
+  task_id: null,
+  project_name: null,
+  task_name: null,
+  credits_total: 300,
+  credits_remaining: 210,
+  remaining_ratio: 0.7,
+  expires_at: null,
+}
 
 function usage(over: Partial<CreditUsage> = {}): CreditUsage {
   return {
-    plan: { key: 'free', name: 'Free' },
+    plan: {
+      key: 'free',
+      name: 'Free',
+      unlimited: false,
+      credits_per_period: 500,
+      windows: [],
+      models: ['DeepSeek Flash'],
+    },
     period: PERIOD,
     windows: [],
     packs: [],
     days: days(),
-    projects: [{ id: 'p1', name: '空气质量看板', share: 1 }],
-    lines: { collab: 0.6, ask: 0.3, write: 0.1 },
+    projects: [{ id: 'p1', name: '空气质量看板', credits: 290 }],
+    lines: { collab: 174, ask: 87, write: 29 },
     teams: [
       {
         id: 3,
@@ -42,6 +70,7 @@ function usage(over: Partial<CreditUsage> = {}): CreditUsage {
         plan: { key: 'free', name: 'Free' },
         unlimited: false,
         remaining_ratio: 0.08,
+        credits_remaining: 40,
       },
     ],
     ...over,
@@ -64,16 +93,49 @@ function show(data: CreditUsage) {
   })
 }
 
+beforeAll(() => {
+  // The plan's details open in a menu, which measures the viewport.
+  vi.stubGlobal('devicePixelRatio', 1)
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+  )
+  vi.stubGlobal('visualViewport', {
+    width: 1280,
+    height: 800,
+    offsetLeft: 0,
+    offsetTop: 0,
+    pageLeft: 0,
+    pageTop: 0,
+    scale: 1,
+    addEventListener() {},
+    removeEventListener() {},
+  })
+})
 beforeEach(() => setLocale('zh-CN'))
 afterEach(cleanup)
 
 describe('芝士额度', () => {
   it('a used-up month says so and when it resets', async () => {
-    const view = show(usage({ period: { ...PERIOD, used_ratio: 1, remaining_ratio: 0 } }))
+    const view = show(usage({ period: { ...PERIOD, credits_used: 500, used_ratio: 1, remaining_ratio: 0 } }))
 
     expect(await view.findAllByText('本月已用完')).not.toHaveLength(0)
     expect(view.getByText(/重置/)).toBeTruthy()
     expect(view.queryByText(/还剩/)).toBeNull()
+  })
+
+  it('a used-up month with other credits left says those are in use', async () => {
+    const view = show(
+      usage({ period: { ...PERIOD, credits_used: 500, used_ratio: 1, remaining_ratio: 0 }, packs: [PACK] })
+    )
+
+    const month = await view.findByRole('region', { name: '本月' })
+    expect(within(month).queryByText('本月已用完')).toBeNull()
+    expect(within(month).getAllByText(/正在使用其他额度/)).not.toHaveLength(0)
   })
 
   it('a plan limited by time windows is never shown as unlimited', async () => {
@@ -94,14 +156,22 @@ describe('芝士额度', () => {
     expect(within(plan).getAllByText(/重置/)).toHaveLength(2)
   })
 
-  it("the legend's three lines add up to the month's used share", async () => {
+  it("the month reads in points: used of the plan's, what is left and each line's", async () => {
     const view = show(usage())
     const month = await view.findByRole('region', { name: '本月' })
-    expect(within(month).getByText('58%')).toBeTruthy()
-    // 0.58 × (0.6, 0.3, 0.1)
-    expect(within(month).getByText('35%')).toBeTruthy()
-    expect(within(month).getByText('17%')).toBeTruthy()
-    expect(within(month).getByText('6%')).toBeTruthy()
+    expect(within(month).getByText(/290\D+500/)).toBeTruthy()
+    expect(within(month).getByText(/210/)).toBeTruthy()
+    for (const spent of ['174', '87', '29']) expect(within(month).getByText(new RegExp(`^${spent}\\D`))).toBeTruthy()
+  })
+
+  it("the plan's name opens what the plan includes", async () => {
+    const view = show(usage())
+    const month = await view.findByRole('region', { name: '本月' })
+    await fireEvent.click(within(month).getByRole('button', { name: /Free/ }))
+
+    const details = within(document.body)
+    expect(await details.findByText(/DeepSeek Flash/)).toBeTruthy()
+    expect(details.getByText(/每月 500/)).toBeTruthy()
   })
 
   it('shows the other credits only when there are some', async () => {
@@ -110,22 +180,7 @@ describe('芝士额度', () => {
     expect(without.queryByText('其他额度')).toBeNull()
     cleanup()
 
-    const withPack = show(
-      usage({
-        packs: [
-          {
-            id: 'g1',
-            source: 'admin_grant',
-            project_id: null,
-            task_id: null,
-            project_name: null,
-            task_name: null,
-            remaining_ratio: 0.7,
-            expires_at: null,
-          },
-        ],
-      })
-    )
+    const withPack = show(usage({ packs: [PACK] }))
     expect(await withPack.findByText('其他额度')).toBeTruthy()
     expect(withPack.getByText('管理员发放')).toBeTruthy()
   })

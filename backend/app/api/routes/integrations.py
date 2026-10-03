@@ -33,7 +33,7 @@ from app.domain.agent.platform_notices import (
 )
 from app.domain.block.authorship import AuthorType
 from app.domain.block.models import Block, BlockKind
-from app.domain.block.notice_text import say, with_keys
+from app.domain.block.notice_text import listing, say, with_keys
 from app.domain.identity.actor import Actor
 from app.domain.integration.feishu import FeishuClient
 from app.domain.integration.models import Integration, MailDraft
@@ -540,7 +540,7 @@ async def mail_draft(
             "mailDraftSummaryWithFiles",
             to=", ".join(draft.to),
             subject=draft.subject,
-            files="、".join(a["name"] for a in draft.attachments),
+            files=listing(a["name"] for a in draft.attachments),
         )
         if draft.attachments
         else say("mailDraftSummary", to=", ".join(draft.to), subject=draft.subject)

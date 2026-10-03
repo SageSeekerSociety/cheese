@@ -10,6 +10,7 @@ import AppPage from '@/components/common/AppPage.vue'
 import { t } from '@/i18n'
 import { phraseLabel } from '@/lib/board'
 import { DEFAULT_SHELL, termParams } from '@/lib/shell'
+import { taskTitle, topicTitle } from '@/lib/topicState'
 import { useWorkspaceStore } from '@/stores/workspace'
 import JoinSpaceDialog from '@/views/home/JoinSpaceDialog.vue'
 import NotificationFeed from '@/views/home/NotificationFeed.vue'
@@ -58,6 +59,12 @@ const REASON: Record<WaitingItem['reason'], string> = {
   asked: 'home.inbox.reason.asked',
 }
 
+/** 活的事写活的名字，房间自己的事写房间的；还没起名的按读者的语言说。 */
+function itemTitle(item: WaitingItem): string {
+  if (item.taskTitle) return taskTitle({ title: item.taskTitle, title_source: item.taskTitleSource })
+  return topicTitle({ title: item.topicTitle, title_source: item.topicTitleSource })
+}
+
 function linkTo(item: WaitingItem) {
   return {
     name: 'workspace-topic',
@@ -101,7 +108,7 @@ function linkTo(item: WaitingItem) {
           <span class="inbox-item__mark" />
         </template>
         <v-list-item-title class="inbox-item__title">
-          {{ item.taskTitle || item.topicTitle }}
+          {{ itemTitle(item) }}
         </v-list-item-title>
         <v-list-item-subtitle class="inbox-item__meta">
           {{ t(REASON[item.reason]) }} · {{ phraseLabel(item.phrase) }} · {{ item.projectName }}

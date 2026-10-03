@@ -6,8 +6,9 @@ import re
 import uuid
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from pydantic_core import PydanticCustomError
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.domain.block.notice_text import say
 
 
 class EnvironmentConfig(BaseModel):
@@ -21,9 +22,7 @@ class EnvironmentConfig(BaseModel):
     @classmethod
     def script_text(cls, value: str) -> str:
         if "\x00" in value:
-            raise PydanticCustomError(
-                "environment_script", "scripts cannot contain NUL"
-            )
+            raise ValueError(say("environmentScriptNul"))
         return value.replace("\r\n", "\n")
 
     @field_validator("variables")
@@ -67,17 +66,9 @@ class EnvironmentConfig(BaseModel):
                     ("CHEESE_", "CLAUDE_", "ANTHROPIC_", "LD_", "DYLD_")
                 )
             ):
-                raise PydanticCustomError(
-                    "environment_variable",
-                    "environment variable {name} is reserved or invalid",
-                    {"name": key},
-                )
+                raise ValueError(say("environmentVariableNameInvalid", name=key))
             if "\x00" in value or len(value) > 16384:
-                raise PydanticCustomError(
-                    "environment_variable",
-                    "environment variable {name} has an invalid value",
-                    {"name": key},
-                )
+                raise ValueError(say("environmentVariableValueInvalid", name=key))
         return values
 
     def snapshot(self) -> dict:

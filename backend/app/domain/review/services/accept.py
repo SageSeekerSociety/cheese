@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, NoReturn
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.errors import ForbiddenError, ValidationError
-from app.domain.block.notice_text import say
+from app.domain.block.notice_text import listing, say
 from app.domain.review import (
     archive,
     merge_state,
@@ -396,7 +396,7 @@ async def _dismiss_stale_accept(
     await self._repo.clear_approvals(card.id)
     card.auto_merge_armed_by = None
     card.auto_merge_armed_at = None
-    voided = "、".join(sorted({*approvers, *((armed,) if armed else ())}))
+    voided = listing(sorted({*approvers, *((armed,) if armed else ())}))
     await self._tell_the_reviewer(
         card,
         topic,

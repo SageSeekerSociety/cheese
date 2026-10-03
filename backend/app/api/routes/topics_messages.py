@@ -99,7 +99,7 @@ from app.domain.agent.platform_notices import (
 )
 from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.block.message_input import ChatAttachmentIn, ChatMessageIn  # noqa: F401
-from app.domain.block.notice_text import say
+from app.domain.block.notice_text import listing, say
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 
@@ -248,7 +248,7 @@ async def _summon_the_named(
                     detail=say(
                         "mentionFusedDetail",
                         limit=AGENT_MENTIONS_PER_HOUR,
-                        names="、".join(summoned.fused),
+                        names=listing(summoned.fused),
                     ),
                 ),
             )

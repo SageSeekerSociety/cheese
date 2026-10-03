@@ -26,6 +26,7 @@ from app.domain.docs_site.limits import AskLimits
 from app.domain.docs_site.models import DocsQuestion, ServiceCredential
 from app.domain.feature_stats import pricing
 from app.domain.team.models import Team
+from app.domain.usage.credits import CREDIT_USD
 from app.domain.usage.models import ComputeGrant, ResourceUsage
 from tests.conftest import seed_user
 from tests.integration.conftest import free_plan_credits, session_auth_headers
@@ -180,7 +181,6 @@ def gateway(client, monkeypatch: pytest.MonkeyPatch) -> dict:
     )
     monkeypatch.setattr(settings, "llm_gateway_admin_base", "http://gateway")
     monkeypatch.setattr(settings, "llm_gateway_admin_key", "sk-master")
-    monkeypatch.setattr(settings, "llm_gateway_credit_usd", 1e-5)
     pricing.forget()
     # Questions are recorded after the response, on a session of their own.
     monkeypatch.setattr(route, "async_session_factory", client.test_request_factory)
@@ -478,8 +478,8 @@ def test_a_question_is_paid_for_by_the_asker_at_the_models_price(
     # Priced at what the model charges, so a dearer model costs more credits
     # for the same tokens.
     cost = 300 * rates[0] + 20 * rates[1]
-    assert grant.credits_used == pytest.approx(cost / settings.llm_gateway_credit_usd)
-    assert grant.credits_total == 125  # Free's month where no price is set
+    assert grant.credits_used == pytest.approx(cost / CREDIT_USD)
+    assert grant.credits_total == 500  # Free's month
     # Outside any project, against the person who asked.
     assert spent.project_id is None
     assert _personal_team_owner(client, grant.team_id) == spent.user_id
@@ -498,7 +498,7 @@ def test_prompt_tokens_served_from_the_cache_cost_the_cache_price(
     [grant], [spent] = _ledger(client)
     cost = 100 * 1e-6 + 200 * 1e-8 + 20 * 2e-6
     assert spent.cost_usd == pytest.approx(cost)
-    assert grant.credits_used == pytest.approx(cost / settings.llm_gateway_credit_usd)
+    assert grant.credits_used == pytest.approx(cost / CREDIT_USD)
 
 
 def test_a_month_gives_one_grant_however_many_questions(client, asker, gateway):
@@ -512,7 +512,7 @@ def test_with_no_credits_left_the_question_is_refused_until_the_month_turns(
     client, asker, gateway, monkeypatch
 ):
     # One question overdraws the month; the next is refused before the model.
-    free_plan_credits(client, 1.0)
+    free_plan_credits(client, 0.01)
     assert _ask(client, asker).status_code == 200
     calls = len(gateway["completions"])
 

@@ -32,6 +32,7 @@ import RevisionList from './preview/RevisionList.vue'
 import ChangesFileTree from './ChangesFileTree.vue'
 
 import { t } from '@/i18n'
+import { taskTitle } from '@/lib/topicState'
 
 const props = defineProps<{
   topicId: string | null
@@ -212,7 +213,7 @@ function revisionReadOnly(): boolean {
               v-for="task in props.taskOptions"
               :key="task.id"
               :active="props.selectedTask === task.id"
-              :title="task.title"
+              :title="taskTitle(task)"
               :subtitle="phraseLabel(task.presentation.phrase)"
               @click="emit('open-task', task.id)"
             />
@@ -365,7 +366,7 @@ function revisionReadOnly(): boolean {
       <p v-else-if="props.tasksLoaded && !props.taskOptions.length" class="source-note">
         {{ t('work.room.changes.noTaskChanges') }}
       </p>
-      <article v-for="task in props.taskOptions" :key="task.id" class="task-change-group" :aria-label="task.title">
+      <article v-for="task in props.taskOptions" :key="task.id" class="task-change-group" :aria-label="taskTitle(task)">
         <!-- 进任务和铺开文件是两件事，所以是两个按钮：点整行进这条任务，点最右边
              那个箭头才在当前页展开它自己的改动清单。 -->
         <div class="task-change-head">
@@ -374,7 +375,7 @@ function revisionReadOnly(): boolean {
             class="task-change-heading"
             @click="emit('open-task', task.id, props.requestedPath ?? undefined)"
           >
-            <span class="t-title">{{ task.title }}</span>
+            <span class="t-title">{{ taskTitle(task) }}</span>
             <span class="source-status">{{ phraseLabel(task.presentation.phrase) }}</span>
             <span v-if="props.overviewDiffs[task.id]" class="task-file-count">{{
               t('work.room.changes.fileCount', { count: props.overviewDiffs[task.id].length })
@@ -392,8 +393,8 @@ function revisionReadOnly(): boolean {
             "
             :aria-label="
               props.expandedTasks.has(task.id)
-                ? t('work.room.changes.collapseFilesOf', { title: task.title })
-                : t('work.room.changes.expandFilesOf', { title: task.title })
+                ? t('work.room.changes.collapseFilesOf', { title: taskTitle(task) })
+                : t('work.room.changes.expandFilesOf', { title: taskTitle(task) })
             "
             @click="emit('toggle-task-files', task.id)"
           >
@@ -521,7 +522,7 @@ function revisionReadOnly(): boolean {
               </div>
               <div v-else class="doc-view__body">
                 <PreviewPages v-if="props.openDocumentType?.view === 'pages'" :data="props.docBytes" />
-                <PreviewSheet v-else :data="props.docBytes" kind="workbook" />
+                <PreviewSheet v-else :data="props.docBytes" :kind="props.openDocumentType?.sheet ?? 'workbook'" />
                 <RevisionList
                   :topic-id="props.topicId"
                   :path="props.revisionPath"

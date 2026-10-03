@@ -29,10 +29,13 @@ const projects = computed(() =>
   (props.usage?.projects ?? []).map((p) => ({
     id: p.id,
     name: p.name ?? t('usage.projects.unnamed'),
-    share: p.share,
+    credits: p.credits,
     to: { name: 'workspace-project', params: { projectId: p.id } },
   }))
 )
+
+/** 方案之外的额度还剩多少点。 */
+const otherCredits = computed(() => (props.usage?.packs ?? []).reduce((sum, p) => sum + p.credits_remaining, 0))
 </script>
 
 <template>
@@ -49,7 +52,13 @@ const projects = computed(() =>
     />
 
     <template v-else-if="usage">
-      <UsagePeriodCard :period="usage.period" :plan-name="usage.plan.name" :month="month" :windows="usage.windows" />
+      <UsagePeriodCard
+        :period="usage.period"
+        :plan="usage.plan"
+        :month="month"
+        :windows="usage.windows"
+        :other-credits="otherCredits"
+      />
       <UsagePackList v-if="usage.packs.length" :packs="usage.packs" />
       <UsageDailyChart :days="usage.days" />
       <UsageShareList :title="t('usage.projects.byProject')" :items="projects" />

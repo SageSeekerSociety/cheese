@@ -55,6 +55,7 @@ from app.domain.agent.gateway_admin import (
 )
 from app.domain.agent.models import GatewayAdminAudit
 from app.domain.agent.schemas import ModelCreate, ModelUpdate, api_base_allowed
+from app.domain.block.notice_text import say
 from app.domain.project.services import ProjectService
 from app.domain.usage.services import UsageService
 
@@ -176,9 +177,9 @@ class GatewayModelsService:
     async def _gateway_up(self) -> None:
         """网关管理 API 可达吗？不可达就直接抛 —— 下面每个读法都只有网关能答。"""
         if self._admin is None:
-            raise GatewayUnreachable("未配置网关管理凭据")
+            raise GatewayUnreachable(say("gatewayAdminNotConfigured"))
         if await self._readiness() is None:
-            raise GatewayUnreachable("网关不可达")
+            raise GatewayUnreachable(say("gatewayUnreachable"))
 
     async def _readiness(self) -> str | None:
         assert self._admin is not None
@@ -208,7 +209,7 @@ class GatewayModelsService:
         models = await self._require_models()
         found = next((m for m in models if m.name == name), None)
         if found is None:
-            raise NotFoundError(f"模型 {name} 不存在")
+            raise NotFoundError(say("gatewayModelNotFound", name=name))
         return found
 
     async def _snapshot_model(self, name: str) -> dict | None:
@@ -471,7 +472,7 @@ class GatewayModelsService:
         if not upstream_model:
             # 上游标识是这条模型唯一「打到哪儿去」的答案，缺了它网关只会建出一条
             # 谁调谁失败的模型 —— 那不是模型，是一条陷阱。
-            raise BadRequestError("上游模型标识不能为空")
+            raise BadRequestError(say("upstreamModelRequired"))
         api_base = data.get("api_base")
         _validate_api_base(api_base)
         selectable = bool(data.get("selectable"))
@@ -602,7 +603,7 @@ class GatewayModelsService:
         current = await self._current_model(name)
         # 网关不支持停用 config 模型 —— 页面上它对停用是只读的，这里也如实拒绝，
         # 而不是做一个只改平台数据的假象。
-        _refuse_config_write(current, verb="停用/启用")
+        _refuse_config_write(current, toggle=True)
         await self._admin.set_blocked(current.model_id, blocked)  # type: ignore[union-attr]
         await self._after_write()
 
@@ -638,7 +639,7 @@ class GatewayModelsService:
     ) -> dict:
         project = await ProjectService(self._db).get(project_id)
         if project is None:
-            raise NotFoundError(f"项目 {project_id} 不存在")
+            raise NotFoundError(say("projectNotFoundById", project_id=project_id))
         await self._gateway_up()
         keys = await self._keys_raw()
         by_alias = {k.alias: k for k in keys}
@@ -647,7 +648,7 @@ class GatewayModelsService:
             f"project:{project.id}"
         )
         if key is None:
-            raise BadRequestError(f"项目「{project.name}」还没有网关密钥，无法设置预算")
+            raise BadRequestError(say("projectNoGatewayKey", name=project.name))
         await self._admin.set_key_budget(  # type: ignore[union-attr]
             key.key_hash, max_budget_usd
         )
@@ -723,7 +724,7 @@ class GatewayModelsService:
             "priced": model.priced,
             "tier": model.tier,
             "offered": offered,
-            "blocked_reason": None if offered else _offered_reason(model),
+            "blocked_reasons": [] if offered else _offered_reasons(model),
             "unpriced_reason": None if model.priced else model.supports_notes,
             "upstream": {
                 "model": model.upstream_model,
@@ -794,19 +795,20 @@ def _usage_to_dict(usage: ModelUsage | None) -> dict:
     }
 
 
-def _offered_reason(model: AdminModel) -> str:
-    """`offered=false` 时给一句人话，把**所有**挡住它的原因都列上 —— 只报第一个
-    会让人改完发现还是上不了架。"""
+def _offered_reasons(model: AdminModel) -> list[str]:
+    """`offered=false` 时挡住它的**所有**原因，按码给出，管理页按读者的语言说 ——
+    只报第一个会让人改完发现还是上不了架。
+
+    ``blocked``：已在网关停用；``unlisted``：网关里没有标 cheese_selectable；
+    ``unpriced``：缺输入或输出单价。"""
     reasons: list[str] = []
     if model.blocked:
-        reasons.append("已在网关停用，选择器不会提供它")
+        reasons.append("blocked")
     if not model.selectable:
-        reasons.append("未上架（网关里没有标 cheese_selectable）")
+        reasons.append("unlisted")
     if not model.priced:
-        reasons.append(
-            "未定价：缺输入或输出单价，上架会让项目的 max_budget 这道刹车静默失效"
-        )
-    return "；".join(reasons)
+        reasons.append("unpriced")
+    return reasons
 
 
 def _host_of(api_base: str | None) -> str | None:
@@ -830,10 +832,7 @@ def _require_price_when_selectable(selectable: bool, prices: dict | None) -> Non
         _price_is_positive(prices.get("input"))
         and _price_is_positive(prices.get("output"))
     ):
-        raise BadRequestError(
-            "上架必须同时有输入与输出单价：无价模型会让项目的 max_budget 这道"
-            "刹车静默失效"
-        )
+        raise BadRequestError(say("offeredNeedsPrices"))
 
 
 def _prices_for_gateway(prices: dict | None) -> dict:
@@ -847,26 +846,21 @@ def _prices_for_gateway(prices: dict | None) -> dict:
 
 def _validate_name(name: str) -> None:
     if not _NAME_RE.match(name or ""):
-        raise BadRequestError("模型名必须是 1..64 位的字母、数字、点、下划线或连字符")
+        raise BadRequestError(say("modelNameInvalid"))
 
 
 def _validate_api_base(api_base: str | None) -> None:
     if api_base is None:
         return
     if not api_base_allowed(api_base):
-        raise BadRequestError(
-            "上游 API 地址必须以 https:// 开头（计量代理的 ChatGPT 入口 "
-            "http://metering-proxy:8445/chatgpt/<账号> 除外）"
-        )
+        raise BadRequestError(say("apiBaseNeedsHttps"))
 
 
-def _refuse_config_write(model: AdminModel, *, verb: str = "修改") -> None:
+def _refuse_config_write(model: AdminModel, *, toggle: bool = False) -> None:
     if model.origin != "config":
         return
-    raise BadRequestError(
-        f"模型 {model.name} 由 deploy/gateway/config.yaml 声明，网关不接受在运行时"
-        f"{verb}它；要改请编辑 deploy/gateway/config.yaml 并发布网关。"
-    )
+    verb = say("configVerbToggle" if toggle else "configVerbEdit")
+    raise BadRequestError(say("configModelReadOnly", name=model.name, verb=verb))
 
 
 def _is_key_field(field: object) -> bool:
@@ -994,7 +988,8 @@ def _item_from_payload(
         "priced": priced,
         "tier": data.get("tier") or "included",
         "offered": selectable and priced,
-        "blocked_reason": None if (selectable and priced) else "等待网关读回",
+        # 网关还没读回这条新模型：`pending`。
+        "blocked_reasons": [] if (selectable and priced) else ["pending"],
         "unpriced_reason": None if priced else "网关尚未读回单价",
         "upstream": {
             "model": data.get("upstream_model"),

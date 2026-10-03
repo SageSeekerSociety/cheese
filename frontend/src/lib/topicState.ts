@@ -45,3 +45,11 @@ export function topicTitle(topic: { kind?: string | null; title: string; title_s
   if (topic.kind === 'root') return t('navigation.project.general')
   return topic.title_source === 'placeholder' ? t('work.topic.untitled') : topic.title
 }
+
+/**
+ * 一条活在屏幕上叫什么。从一条消息升级出来、还没人起名的活（`title_source =
+ * placeholder`）按读者的语言叫「新任务」：库里那份占位标题是给 agent 读的中文。
+ */
+export function taskTitle(task: { title: string; title_source?: string | null }): string {
+  return task.title_source === 'placeholder' ? t('work.topic.untitledTask') : task.title
+}

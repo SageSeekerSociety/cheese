@@ -25,7 +25,7 @@ from app.domain.agent.skills import (
     SKILL_FILE_SUFFIXES,
     native_skill_files,
 )
-from app.domain.block.notice_text import say
+from app.domain.block.notice_text import listing, say
 from app.domain.project_skill.models import ProjectSkill, ProjectSkillRevision
 
 NAME = re.compile(r"^[a-z0-9][a-z0-9-]{1,47}$")
@@ -58,7 +58,7 @@ def _validate_files(files: dict) -> dict[str, str]:
         ):
             raise ValidationError(say("skillFilePathInvalid", path=raw))
         if path.suffix not in SKILL_FILE_SUFFIXES:
-            allowed = "、".join(SKILL_FILE_SUFFIXES)
+            allowed = listing(SKILL_FILE_SUFFIXES)
             raise ValidationError(say("skillFileNotText", path=raw, allowed=allowed))
         if not isinstance(content, str):
             raise ValidationError(f"{raw}：内容要是文本")

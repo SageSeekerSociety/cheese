@@ -34,7 +34,7 @@ from app.domain.agent.platform_notices import (
 )
 from app.domain.block.authorship import AuthorType
 from app.domain.block.models import Block, BlockKind
-from app.domain.block.notice_text import say, with_keys
+from app.domain.block.notice_text import listing, say, with_keys
 from app.domain.delivery.agent import dispatch_pending, instance_for_seat, record_agent
 from app.domain.delivery.ledger import DeliveryEvent
 from app.domain.delivery.models import Delivery
@@ -879,7 +879,7 @@ async def _announce_finished(session: AsyncSession) -> None:
         }[run.status]
         said = run.summary if ok_ else (run.error or run.summary)
         body = (
-            say("routineResultWithFiles", body=said, files="、".join(run.outputs))
+            say("routineResultWithFiles", body=said, files=listing(run.outputs))
             if run.outputs
             else said
         )

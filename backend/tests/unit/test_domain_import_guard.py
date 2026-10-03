@@ -286,13 +286,22 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # topics.py 的 import 里读；`ProjectMachineRepository` 只在
         # `set_topic_compute_profile` 里读一次，随它搬走。拆模块没有新增跨包的边，
         # 只是发起方从 topics.py 换成了 topics_compute.py，所以按同一笔债入账。
-        ("app.api.routes.users", "app.domain.answers.repositories"),
-        ("app.api.routes.users", "app.domain.questions.repositories"),
-        ("app.api.routes.users", "app.domain.user.repositories"),
+        # --- users 包 --- users.py 拆成 routes/users/ 之后（第 4 步重构），原先记在
+        # users.py 名下的三条 repository 债按代码现在住的地方重新入账：账户读写、用户
+        # 目录查询、用户偏好各自摸自己摸的那几条。拆模块没有新增跨包的边，也没还掉任何
+        # 一条，只是发起方换了名字，所以按同一笔债入账（记法同下面的 users_team）。
+        ("app.api.routes.users.account", "app.domain.user.repositories"),
+        ("app.api.routes.users.directory", "app.domain.answers.repositories"),
+        ("app.api.routes.users.directory", "app.domain.questions.repositories"),
+        ("app.api.routes.users.directory", "app.domain.user.repositories"),
+        ("app.api.routes.users.preferences", "app.domain.answers.repositories"),
+        ("app.api.routes.users.preferences", "app.domain.questions.repositories"),
+        ("app.api.routes.users.preferences", "app.domain.user.repositories"),
+        ("app.api.routes.users.registration", "app.domain.user.repositories"),
         # --- users_team --- (#2143) the six /users/me/team* routes left
         # users.py; `leave_team` still builds a TeamRepository itself and the
         # `get_team_membership_service` dependency that moved with them builds
-        # TeamMembershipApplicationRepository. The same debt as the users.py
+        # TeamMembershipApplicationRepository. The same debt as the users/package
         # lines above, re-attributed to the module the code now lives in.
         ("app.api.routes.users_team", "app.domain.team.repositories"),
         ("app.api.routes.webhooks", "app.domain.topic.repositories"),

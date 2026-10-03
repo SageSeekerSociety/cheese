@@ -1,37 +1,50 @@
 <script setup lang="ts">
-import type { UsageLine, UsagePeriod, UsageWindow } from '@/lib/creditUsage'
+import type { UsageLine, UsagePeriod, UsagePlan, UsageWindow } from '@/lib/creditUsage'
 
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import { fmtResetAt, LINE_KEY, pct, remainingTone, USAGE_LINES } from '@/lib/creditUsage'
+import UsagePlanTag from '@/components/usage/UsagePlanTag.vue'
+import { fmtPoints, fmtResetAt, LINE_KEY, pct, remainingTone, USAGE_LINES } from '@/lib/creditUsage'
 
-// 方案这一块。按月发放的方案：本月用了多少、还剩多少、什么时候重置，个人页的条按
+// 方案这一块。按月发放的方案：本月用了多少点、还剩多少、什么时候重置，个人页的条按
 // 产品线分三色，团队页是一种颜色。按时间窗口限额的方案没有月额度，每个窗口一行：
-// 用了多少、什么时候清零。
+// 用了多少、什么时候清零。方案名点开看方案包含什么。
 const props = defineProps<{
   /** `null`：方案按时间窗口限额，看 `windows`。 */
   period: UsagePeriod | null
-  planName: string
+  plan: UsagePlan
   /** 「十月」这样的月份名。 */
   month: string
-  /** 本月用量按产品线分的比例；给了就画三色条和图例。 */
+  /** 本月各产品线用了多少点；给了就画三色条和图例。 */
   lines?: Record<UsageLine, number> | null
   windows?: UsageWindow[]
+  /** 方案之外的额度还剩多少点：方案额度用完后，从这里接着扣。 */
+  otherCredits?: number
 }>()
 
 const { t, locale } = useI18n()
 
-const used = computed(() => props.period?.used_ratio ?? null)
+const used = computed(() => props.period?.credits_used ?? null)
+const total = computed(() => props.period?.credits_total ?? null)
 const remaining = computed(() => props.period?.remaining_ratio ?? null)
-const tone = computed(() => remainingTone(remaining.value))
-const usedUp = computed(() => tone.value === 'out')
+const usedUp = computed(() => remainingTone(remaining.value) === 'out')
+/** 方案额度用完、还有其他额度时只是提醒：调用照常进行。 */
+const tone = computed(() => (usedUp.value && (props.otherCredits ?? 0) > 0 ? 'low' : remainingTone(remaining.value)))
+const usedUpText = computed(() =>
+  (props.otherCredits ?? 0) > 0 ? t('usage.period.usedUpOther') : t('usage.period.usedUp')
+)
 
-/** 三色条每一段的宽度，也是图例上的数：已用的比例按各产品线的份额分，三段加起来就是已用。 */
+function points(n: number): string {
+  return fmtPoints(n, locale.value)
+}
+
+/** 三色条每一段的宽度：各产品线用的点数占本月方案额度的比例。 */
 const segments = computed(() => {
-  const u = used.value ?? 0
-  if (!props.lines) return [{ line: 'collab' as UsageLine, width: u }]
-  return USAGE_LINES.map((line) => ({ line, width: u * (props.lines?.[line] ?? 0) }))
+  const whole = total.value ?? 0
+  const share = (n: number) => (whole > 0 ? Math.min(1, n / whole) : 0)
+  if (!props.lines) return [{ line: 'collab' as UsageLine, width: share(used.value ?? 0) }]
+  return USAGE_LINES.map((line) => ({ line, width: share(props.lines?.[line] ?? 0) }))
 })
 
 function windowUsed(w: UsageWindow): string {
@@ -48,16 +61,20 @@ function windowUsed(w: UsageWindow): string {
       <div class="upc__head">
         <span class="upc__label">
           {{ t('usage.period.used', { month }) }}
-          <span class="upc__plan">{{ planName }}</span>
+          <UsagePlanTag :plan="plan" />
         </span>
         <span class="upc__figure t-num">
-          {{ period.unlimited || used === null ? t('usage.period.unlimited') : pct(used) }}
+          {{
+            period.unlimited || used === null || total === null
+              ? t('usage.period.unlimited')
+              : t('usage.period.figure', { used: points(used), total: points(total) })
+          }}
         </span>
       </div>
-      <template v-if="!period.unlimited && used !== null">
+      <template v-if="!period.unlimited && used !== null && total !== null">
         <div class="upc__meta">
           <span :class="`upc__left upc__left--${tone}`">
-            {{ usedUp ? t('usage.period.usedUp') : t('usage.period.remaining', { pct: pct(remaining ?? 0) }) }}
+            {{ usedUp ? usedUpText : t('usage.period.remaining', { n: points(Math.max(0, total - used)) }) }}
           </span>
           <span v-if="period.resets_at">{{
             t('usage.period.resets', { at: fmtResetAt(period.resets_at, locale) })
@@ -66,7 +83,7 @@ function windowUsed(w: UsageWindow): string {
         <div
           class="upc__bar"
           role="img"
-          :aria-label="usedUp ? t('usage.period.usedUp') : t('usage.period.usedAria', { pct: pct(used) })"
+          :aria-label="usedUp ? usedUpText : t('usage.period.usedAria', { used: points(used), total: points(total) })"
         >
           <span
             v-for="segment in segments"
@@ -80,7 +97,7 @@ function windowUsed(w: UsageWindow): string {
         <span v-for="line in USAGE_LINES" :key="line" class="upc__key">
           <span :class="`upc__dot upc__seg--${line}`" aria-hidden="true" />
           {{ t(LINE_KEY[line]) }}
-          <span class="upc__keypct t-num">{{ pct((used ?? 0) * (lines[line] ?? 0)) }}</span>
+          <span class="upc__keypct t-num">{{ t('usage.points', { n: points(lines[line] ?? 0) }) }}</span>
         </span>
       </div>
     </template>
@@ -88,7 +105,7 @@ function windowUsed(w: UsageWindow): string {
       <div class="upc__head">
         <span class="upc__label">
           {{ t('usage.windows.title') }}
-          <span class="upc__plan">{{ planName }}</span>
+          <UsagePlanTag :plan="plan" />
         </span>
       </div>
       <div v-for="w in windows ?? []" :key="w.calendar ?? w.hours ?? ''" class="upc__window">
@@ -113,6 +130,7 @@ function windowUsed(w: UsageWindow): string {
 
 .upc__head {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
@@ -120,6 +138,7 @@ function windowUsed(w: UsageWindow): string {
 
 .upc__label {
   display: inline-flex;
+  white-space: nowrap;
   align-items: center;
   gap: 8px;
   color: var(--ink);
@@ -128,17 +147,8 @@ function windowUsed(w: UsageWindow): string {
   line-height: var(--lh-15);
 }
 
-.upc__plan {
-  padding: 0 6px;
-  background: var(--fill-2);
-  border-radius: var(--radius-sm);
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 500;
-  line-height: var(--lh-12);
-}
-
 .upc__figure {
+  white-space: nowrap;
   color: var(--ink);
   font-size: 23px;
   font-weight: 600;

@@ -127,6 +127,7 @@
   "deviceWaiting": "等待机器连接",
   "dispatchUnknown": "{count} 次工具调用没有返回结果，平台不会自动重试",
   "dispatchUnknownDetail": "这些调用已经发出，但机器没有返回结果，所以只有那台机器知道它们是否执行过：{calls}。自动重发可能把已经生效的改动再做一遍。确认之后可以重试，会从那里继续。",
+  "dispatchCall": "{tool}（{id}）",
   "docCommentMentioned": "{person} 在文档评论里提到了 {agent}",
   "docCommented": "{actor} 评论了文档",
   "docCommentedHandedTo": "{actor} 评论了文档，已交给 {seat}",

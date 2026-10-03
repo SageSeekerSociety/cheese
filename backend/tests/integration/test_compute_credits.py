@@ -14,6 +14,7 @@ import time
 
 import pytest
 
+from app.domain.usage.credits import CREDIT_USD
 from tests.conftest import seed_task_with_protocol, seed_user, wait_work_idle
 from tests.integration.conftest import (
     chat_ws_url,
@@ -28,21 +29,18 @@ from tests.integration.conftest import (
 # $25 per million, at $0.01 per credit.
 STUB_TURN_TOKENS = 15
 _RATES = {"claude-opus-5": (5e-6, 25e-6, 5e-7, 6.25e-6)}
-_CREDIT_USD = 0.01
-CREDITS_PER_TURN = (10 * 5e-6 + 5 * 25e-6) / _CREDIT_USD
+CREDITS_PER_TURN = (10 * 5e-6 + 5 * 25e-6) / CREDIT_USD
 
 
 @pytest.fixture(autouse=True)
 def _priced(monkeypatch):
     """The gateway's price table and the deployment's price per credit."""
-    from app.core.config import settings
     from app.domain.feature_stats import pricing
 
     async def rates(transport=None):
         return _RATES
 
     monkeypatch.setattr(pricing, "model_rates", rates)
-    monkeypatch.setattr(settings, "llm_gateway_credit_usd", _CREDIT_USD)
 
 
 def _mk_project(client, name: str = "Demo", *, from_task: int | None = None) -> str:

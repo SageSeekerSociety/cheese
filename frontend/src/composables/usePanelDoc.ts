@@ -9,17 +9,21 @@
 // 同一份，协同服务在停手几秒后把它存回去。评论锚着的是服务端那一侧的节点，存回之后房
 // 间里会收到一帧 state/doc，父层把它变成 activityTick，这一层据此重读评论和节点。
 import type { Block, Topic } from '../cx_types'
+import type { DocAgentListener, DocAgentRequest } from '../lib/docAgent'
 import type { SelectionTarget } from '../lib/docBubble'
-import type { DocEdit, DocRewriteRequest } from '../lib/docEdits'
+import type { DocEdit } from '../lib/docEdits'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { addComment, getComments, getDocNodes, workspaceFileRawUrl } from '../api'
-import { applyDocEdits, getPendingSuggestions, rewriteDocSelection } from '../api/docEdits'
+import { askDocAgent, replyWithAnswer, stopDocAgent } from '../api/docAgent'
+import { applyDocEdits, getPendingSuggestions } from '../api/docEdits'
 import { getDocVersions, restoreDocVersion } from '../api/docHistory'
-import { getDocThread } from '../api/docThreads'
-import { isAgentBlock, isAgentHandle } from '../lib/authorship'
+import { StreamRefused } from '../api/eventStream'
+import { isAgentHandle } from '../lib/authorship'
+import { dispatch } from '../lib/docAgent'
 import { expandMentions } from '../lib/expandMentions'
+import { refusalText } from '../lib/noticeText'
 import { myHandle } from '../me'
 
 import { useDocCollab } from './useDocCollab'
@@ -153,29 +157,31 @@ export function usePanelDoc(props: PanelDocProps) {
     return getDocNodes(tid).then((r) => r.data)
   }
 
-  /** 让 AI 队友改选中的字：它直接改协同文档，回执说改成了什么。 */
-  function rewriteSelection(request: DocRewriteRequest) {
+  /** 在文档里找 AI 队友：它在自己的会话里答，答的过程一条条交给 `listener`。 */
+  async function askAgent(request: DocAgentRequest, listener: DocAgentListener): Promise<void> {
     const tid = props.topic?.id
-    if (!tid) return Promise.reject(new Error(t('work.room.docEdit.unavailable')))
-    return rewriteDocSelection(tid, request)
+    if (!tid) throw new Error(t('work.room.docEdit.unavailable'))
+    try {
+      await askDocAgent(tid, request, (event, data) => dispatch(listener, event, data))
+    } catch (error) {
+      if (error instanceof StreamRefused) throw new Error(refusalText(error.body, error.message))
+      throw error
+    }
   }
 
-  /** 问 AI 队友：一句话连同选中的字发成点了它名的评论，回答回到这条评论下面。 */
-  async function askAgent(target: SelectionTarget, question: string): Promise<string> {
+  function stopAgent(conversation: string) {
     const tid = props.topic?.id
-    if (!tid || !props.agentHandle) throw new Error(t('work.room.comments.unavailable'))
-    const content = `<@${props.agentHandle}> ${question}`
-    const posted = await addComment(tid, content, target.anchorId ?? undefined, target.quote)
+    return tid ? stopDocAgent(tid, conversation) : Promise.resolve()
+  }
+
+  /** 把这一问的回答放进一条新评论：评论写着问了什么，回答是 AI 队友在下面的回复。 */
+  async function answerToComment(conversation: string, target: SelectionTarget, question: string): Promise<string> {
+    const tid = props.topic?.id
+    if (!tid) throw new Error(t('work.room.comments.unavailable'))
+    const posted = await addComment(tid, question, target.anchorId ?? undefined, target.quote || undefined)
+    await replyWithAnswer(tid, conversation, posted.id)
     void refreshComments()
     return posted.id
-  }
-
-  /** 那条评论下 AI 队友的第一条回答。 */
-  async function answerOf(threadId: string): Promise<string | null> {
-    const tid = props.topic?.id
-    if (!tid) return null
-    const thread = await getDocThread(tid, threadId)
-    return thread.replies.find((reply) => isAgentBlock(reply.comment))?.comment.content ?? null
   }
 
   /** 以自己的名义替换正文里的字：撤销、还原 AI 队友的修改都走这里。 */
@@ -288,7 +294,8 @@ export function usePanelDoc(props: PanelDocProps) {
     sendComment: (topicId: string, content: string, anchor?: string, quote?: string) =>
       addComment(topicId, withMentions(content), anchor, quote),
     askAgent,
-    answerOf,
+    stopAgent,
+    answerToComment,
     lastEdit: computed(() => (lastEdit.value ? { name: nameOf(lastEdit.value.actor), at: lastEdit.value.at } : null)),
     nameOf,
     loadVersions,
@@ -298,7 +305,6 @@ export function usePanelDoc(props: PanelDocProps) {
     setError,
     fetchDocNodes,
     imageSrc,
-    rewriteSelection,
     applyEdits,
   }
 }

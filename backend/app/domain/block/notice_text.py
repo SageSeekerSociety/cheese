@@ -22,7 +22,10 @@ also carries the key. Where a line is stored, the key is written next to it in
 
 A parameter may itself be a :class:`NoticeText` — a word the sentence chooses,
 such as whose memory changed — and is then stored as a nested key. A list
-parameter is rendered one item per line (the rows of a detail).
+parameter is rendered one item per line (the rows of a detail). A list said
+inside a sentence — the rooms that collided, the names that were not woken —
+is a :func:`listing`: its items go out as they are, and each screen joins and
+quotes them the way its reader's language does.
 
 Anything done to a :class:`NoticeText` as a string (``+``, an f-string,
 ``.strip()``) returns a plain ``str`` and loses the key, which is the honest
@@ -45,7 +48,7 @@ said — an error's sentence can also end up in a room line.
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Final
 
@@ -89,6 +92,39 @@ HISTORICAL_NOTICE_KEYS: Final = frozenset(
 )
 
 
+class NoticeList:
+    """Several items said as one parameter of a sentence (:func:`listing`).
+
+    Its Chinese text is the items joined with 「、」, each in 「」 when
+    ``quoted``: the words the sentence always had. Stored, it is
+    ``{"list": [...], "quoted": bool}``, and the reader's screen joins the items
+    with its own language's list pattern and quotes."""
+
+    def __init__(self, items: Iterable[object], quoted: bool = False) -> None:
+        self.items = list(items)
+        self.quoted = quoted
+
+    def __str__(self) -> str:
+        words = (_text(item) for item in self.items)
+        return "、".join(f"「{w}」" if self.quoted else w for w in words)
+
+    def __eq__(self, other: object) -> bool:
+        return (
+            isinstance(other, NoticeList)
+            and other.items == self.items
+            and other.quoted == self.quoted
+        )
+
+    def __hash__(self) -> int:
+        return hash((tuple(map(str, self.items)), self.quoted))
+
+
+def listing(items: Iterable[object], *, quoted: bool = False) -> NoticeList:
+    """``items`` as one parameter of a sentence; ``quoted`` puts each in quotes
+    (room titles, file names)."""
+    return NoticeList(items, quoted)
+
+
 class NoticeText(str):
     """A platform sentence: the Chinese text, plus the key that renders it."""
 
@@ -115,6 +151,8 @@ class NoticeText(str):
 
 
 def _text(value: object) -> str:
+    if isinstance(value, NoticeList):
+        return str(value)
     # A list parameter is one item per line: the rows of a detail.
     if isinstance(value, (list, tuple)):
         return "\n".join(_text(item) for item in value)
@@ -124,6 +162,8 @@ def _text(value: object) -> str:
 def _stored(value: object) -> object:
     if isinstance(value, NoticeText):
         return value.descriptor()
+    if isinstance(value, NoticeList):
+        return {"list": [_stored(item) for item in value.items], "quoted": value.quoted}
     if isinstance(value, (list, tuple)):
         return [_stored(item) for item in value]
     # Stored in JSON: a number stays a number, anything else (an id, an enum)
@@ -169,6 +209,10 @@ def from_descriptor(descriptor: Mapping) -> NoticeText | None:
 
 
 def _loaded(value: object) -> object:
+    if isinstance(value, Mapping) and isinstance(value.get("list"), list):
+        return NoticeList(
+            [_loaded(item) for item in value["list"]], bool(value.get("quoted"))
+        )
     if isinstance(value, Mapping):
         loaded = from_descriptor(value)
         if loaded is None:

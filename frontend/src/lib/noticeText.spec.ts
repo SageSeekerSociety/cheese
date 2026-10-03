@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import NotificationItem from '../components/common/Notification/NotificationItem.vue'
 import RoomNotice from '../components/room/RoomNotice.vue'
 
+import { renderNoticeMessage } from './noticeText'
 import { collapseNotices } from './platformNotice'
 
 import i18n, { setLocale } from '@/i18n'
@@ -238,5 +239,36 @@ describe('the same line in Activity', () => {
     setLocale('en')
     await waitFor(() => expect(view.getByText('PR #41 is ready to merge, waiting for alice to accept')).toBeTruthy())
     expect(view.getByText('In "issue 1086"')).toBeTruthy()
+  })
+})
+
+// 句子里的一串（几个房间、几个文件）存成条目本身，由读者的屏幕按语言连起来、加引号。
+describe('a list said inside a sentence', () => {
+  const collided = {
+    key: 'migrationCollisionDetail',
+    params: { rooms: { list: ['Pricing', 'Search', 'Billing'], quoted: true } },
+  }
+
+  it('in English is joined with commas and "and", each item in English quotes', () => {
+    setLocale('en')
+    expect(renderNoticeMessage(collided, '')).toMatch(/^The other change is in: “Pricing”, “Search”, and “Billing”\./)
+  })
+
+  it('in Chinese is joined with 、, each item in 「」, as the stored sentence says it', () => {
+    setLocale('zh-CN')
+    expect(renderNoticeMessage(collided, '')).toMatch(/^另一项改动在：「Pricing」、「Search」、「Billing」。/)
+  })
+
+  it('without quotes, and with a sentence as an item, each item renders in the reader language', () => {
+    setLocale('en')
+    const edited = { key: 'docEdited', params: { actor: { list: ['<@alice>', { key: 'actorCheese', params: {} }] } } }
+    expect(renderNoticeMessage(edited, '')).toBe('<@alice> and Cheese edited the doc')
+    const missing = { key: 'revisionNumbersMissing', params: { rows: { list: [3, 5] }, total: 4 } }
+    expect(renderNoticeMessage(missing, '')).toMatch(/^No tracked change numbered 3 and 5\./)
+  })
+
+  it('a plain parameter still shows as it was sent', () => {
+    setLocale('en')
+    expect(renderNoticeMessage({ key: 'docEdited', params: { actor: 'alice' } }, '')).toBe('alice edited the doc')
   })
 })

@@ -21,6 +21,7 @@ import { relTime } from '../../lib/relTime'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
 
 import { t } from '@/i18n'
+import { taskTitle } from '@/lib/topicState'
 
 const props = withDefaults(
   defineProps<{
@@ -174,7 +175,9 @@ const needsYouCount = computed(() => (byColumn.value.get('needs_you') ?? []).len
                     <span class="board-dot" :style="columnDotStyle(row.presentation.column)" aria-hidden="true" />
                     <span class="task-row__text">
                       <span class="task-row__line1 t-body">
-                        {{ t('work.room.taskProgress.row', { n: numberOf.get(row.id) ?? '', title: row.title }) }}</span
+                        {{
+                          t('work.room.taskProgress.row', { n: numberOf.get(row.id) ?? '', title: taskTitle(row) })
+                        }}</span
                       >
                       <span class="task-row__line2 t-meta">
                         <span class="task-row__state">{{ phraseLabel(row.presentation.phrase) }}</span>
@@ -209,7 +212,9 @@ const needsYouCount = computed(() => (byColumn.value.get('needs_you') ?? []).len
                     <span class="board-dot" :style="columnDotStyle(row.presentation.column)" aria-hidden="true" />
                     <span class="task-row__text">
                       <span class="task-row__line1 t-body">
-                        {{ t('work.room.taskProgress.row', { n: numberOf.get(row.id) ?? '', title: row.title }) }}</span
+                        {{
+                          t('work.room.taskProgress.row', { n: numberOf.get(row.id) ?? '', title: taskTitle(row) })
+                        }}</span
                       >
                       <span class="task-row__line2 t-meta">
                         <span class="task-row__state">{{ phraseLabel(row.presentation.phrase) }}</span>

@@ -46,7 +46,7 @@ function detailPayload(over: Record<string, unknown> = {}) {
       selectable: true,
       priced: true,
       offered: true,
-      blocked_reason: null,
+      blocked_reasons: [],
       unpriced_reason: null,
       upstream: { model: 'anthropic/glm-5.2', host: 'open.bigmodel.cn', provider: 'anthropic' },
       prices: { input: 2.5e-6, output: 1e-5 },
