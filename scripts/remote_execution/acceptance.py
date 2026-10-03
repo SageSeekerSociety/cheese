@@ -274,8 +274,11 @@ def case(folder, options):
                 "name": "mcp__native__platform_request",
                 "input": {"method": "GET", "path": "/platform-fixture"},
             },
-            # An isolated subagent would be built on this host, inside the
-            # read-only project view; the call is refused before anything is.
+            # A subagent that asks for isolation runs anyway, with its tools on
+            # this host like every other one; the parameter is dropped and the
+            # result says so (`ignoringIsolation` in the remote proxy). Its
+            # request is the one request in this session that is not a turn of
+            # the script — `is_child` in model_fixture.py answers it apart.
             {
                 "name": "Agent",
                 "input": {
@@ -420,6 +423,9 @@ def case(folder, options):
         before_turn(session, home)
         ended = session.turn("Run the prescribed remote execution checks.", 120)
         assert len(server.state["requests"]) == len(actions) + 1, ended
+        # The spawn above reached this gateway as a child of its own: asking
+        # for isolation no longer stops it, and the script above still ran once.
+        assert len(server.state.get("child_requests", [])) >= 1, ended
         # The journal is what the room reads: every scripted call has its
         # tool_result there, on the session's own thread.
         ran = session.tool_results()
