@@ -22,6 +22,7 @@ services:
     environment:
       - DEVICE_CONNECTION_URL=
       - DEVICE_CONNECTION_OWNER=1
+      - CONNECTOR_ORIGIN_URL=http://${API_UPSTREAM:-backend:8081}
       - DEPLOYED_VIA_COMPOSE=1
       # A light database user; the backend pair takes the server's budget
       # (see db_pool_size in app/core/config.py).

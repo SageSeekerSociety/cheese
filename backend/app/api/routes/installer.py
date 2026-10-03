@@ -12,6 +12,8 @@ by scripts/build-connector.sh from the main repo's cli/). A target with no built
 binary 404s until a build runs — the endpoint degrades, never crashes.
 """
 
+import asyncio
+
 from fastapi import APIRouter, Request
 from fastapi.responses import FileResponse, PlainTextResponse, Response
 
@@ -304,8 +306,10 @@ async def download_toolchain(tool: str, platform: str) -> Response:
     )
 
 
-@router.get("/latest/{target}/{name}")
+@router.api_route("/latest/{target}/{name}", methods=["GET", "HEAD"])
 async def download_binary(target: str, name: str) -> Response:
+    """The connector for ``target``. ``X-Checksum-SHA256`` names its bytes, so
+    the connection owner can ask which build is published with a HEAD."""
     if not _TARGET_RE.match(target) or target not in _TARGETS:
         return PlainTextResponse("unknown target", status_code=404)
     if name != connector_build.binary_name(target):
@@ -316,8 +320,10 @@ async def download_binary(target: str, name: str) -> Response:
             "binary not built for this target — run backend/scripts/build-connector.sh",
             status_code=404,
         )
+    digest = await asyncio.to_thread(connector_build.served_digest, target)
     return FileResponse(
         binary,
         media_type="application/octet-stream",
         filename="cheesehost",
+        headers={"X-Checksum-SHA256": digest} if digest else None,
     )

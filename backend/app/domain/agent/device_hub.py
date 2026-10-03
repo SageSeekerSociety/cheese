@@ -886,19 +886,17 @@ class DeviceHub:
         half-answer would re-exec the machine on every reconnect and never
         converge, which is worse than the drift.
 
-        "The one we serve" is this process's copy, and the connection owner is
-        released on its own schedule: the origin the machine downloads from can
-        publish a different build. So the request means "take what the origin
-        publishes", and a connector already running those bytes stays as it is
-        (`update.ErrCurrent` in the connector).
+        The build to be on is the one the origin publishes, the file the
+        machine's self-update downloads (`connector_build.published_digest`),
+        not this process's own copy, which lags it between owner releases.
         """
         if device.update_pushed:
             return
         if msg.build or msg.target:
             if not (msg.build and msg.target):
                 return
-            served = await asyncio.to_thread(connector_build.served_digest, msg.target)
-            if served is None or served == msg.build:
+            published = await connector_build.published_digest(msg.target)
+            if published is None or published == msg.build:
                 return
         elif not await asyncio.to_thread(connector_build.has_any_build):
             # It says nothing about itself, so it predates saying anything and
@@ -907,7 +905,7 @@ class DeviceHub:
             return
         device.update_pushed = True
         logger.warning(
-            "device %s runs connector build %s for %s, not the one we serve — "
+            "device %s runs connector build %s for %s, not the published one — "
             "pushing self-update",
             device.device_id,
             msg.build or "<unreported>",
