@@ -27,7 +27,7 @@ import { sameDocumentIdentity, useDocumentBytes } from '../lib/documentBytes'
 import { DOCUMENT_TYPES, IMAGE_SUFFIXES, isWebPage, suffixOf, webMimeOf } from '../lib/fileKind'
 import { roomFileDestination } from '../lib/previewSession'
 
-import { usePreviewFrames } from './usePreviewFrames'
+import { APP_NAVIGATION_BUDGET_MS, usePreviewFrames } from './usePreviewFrames'
 
 import { t } from '@/i18n'
 
@@ -325,6 +325,8 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
             version: art.version ?? null,
             live: art.kind === 'app',
             identity,
+            // 应用可能正赶上机器冷启动，那 30 秒的默认档会把它误报成超时。
+            budgetMs: art.kind === 'app' ? APP_NAVIGATION_BUDGET_MS : undefined,
           },
           stillCurrent
         )

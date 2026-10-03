@@ -20,9 +20,40 @@ export interface PreviewFrame {
   runtime?: 'unconfirmed' | 'ready' | 'failed'
   connection?: 'online' | 'disconnected' | 'gone'
   runtimeError?: string
+  /** 这一份资源允许等多久，见 `navigationBudget()`。不填＝默认那档。 */
+  budgetMs?: number
 }
 
 export type PreviewNavigation = 'idle' | 'authorizing' | 'navigating' | 'loaded' | 'failed'
+
+/** 一整页的默认预算。 */
+const FILE_NAVIGATION_BUDGET_MS = 30_000
+
+/** 应用要过隧道，还可能赶上机器冷启动（座位那次实测 2 分 17 秒），默认那 30 秒会把它
+ *  误报成「加载超时」。130 秒是 CC 自己的默认档（`13e4`）。 */
+export const APP_NAVIGATION_BUDGET_MS = 130_000
+
+/** 硬顶和余量同样照 CC：正数先被夹进 10 分钟，再留 2 秒给最后那一程。 */
+const MAX_NAVIGATION_BUDGET_MS = 600_000
+const NAVIGATION_BUDGET_SLACK_MS = 2_000
+
+/** 这一份资源是哪个档，单位毫秒：调用方给的正数被夹进 10 分钟硬顶；没给、或者给的
+ *  是 0、负数、`NaN`、`Infinity`，退回文件档——这些值不是「立刻失败」，是「没填」。
+ *
+ *  文案说的是这个数：那 2 秒余量是我们的，不是这一份资源的。 */
+export function navigationTier(requested?: number): number {
+  return typeof requested === 'number' && Number.isFinite(requested) && requested > 0
+    ? Math.min(requested, MAX_NAVIGATION_BUDGET_MS)
+    : FILE_NAVIGATION_BUDGET_MS
+}
+
+/** 一次导航真正等多久，单位毫秒——档位，再加上最后那 2 秒余量（照 CC 的消费式）。
+ *  多出来的这 2 秒是给「就快好了」那一程和 500 毫秒的轮询粒度留的，不进文案。 */
+export function navigationBudget(requested?: number): number {
+  return typeof requested === 'number' && Number.isFinite(requested) && requested > 0
+    ? navigationTier(requested) + NAVIGATION_BUDGET_SLACK_MS
+    : navigationTier(requested)
+}
 
 /** Incoming navigation never destroys the last observed loaded browsing context. */
 export function usePreviewFrames(frameName: string) {
@@ -124,7 +155,7 @@ export function usePreviewFrames(frameName: string) {
 
   async function navigate(
     session: PreviewSession,
-    page: Pick<PreviewFrame, 'url' | 'label' | 'mime' | 'version' | 'live' | 'identity'>,
+    page: Pick<PreviewFrame, 'url' | 'label' | 'mime' | 'version' | 'live' | 'identity' | 'budgetMs'>,
     stillCurrent: () => boolean,
     path?: string
   ) {
@@ -152,9 +183,12 @@ export function usePreviewFrames(frameName: string) {
     lastTick = performance.now()
     visible = !document.hidden
     document.addEventListener('visibilitychange', visibilityChanged)
+    // 预算按这一份资源定：一份静态网页 30 秒够了，一个可能正在冷启动的应用不是。
+    const budget = navigationBudget(page.budgetMs)
+    const tierSeconds = Math.round(navigationTier(page.budgetMs) / 1000)
     timer = setInterval(() => {
       accountTime()
-      if (elapsed >= 30_000) fail(t('work.room.preview.navigationTimeout'))
+      if (elapsed >= budget) fail(t('work.room.preview.navigationTimeout', { seconds: tierSeconds }))
     }, 500)
     try {
       postPreviewSession(session, { target: incoming.value.name, ...(path ? { path } : {}) })
