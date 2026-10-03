@@ -9,7 +9,7 @@ the thread's own session, not by a turn of the room.
   asker may read, and stop working once the answer is over.
 - A session that fails still leaves the thread an answer from the agent.
 
-The session itself is faked at its boundary (``HandlessSessions.ask``); its
+The session host is faked at its boundary (``SessionHost``); the session's
 tools reach the platform the way a real session's do, as the request each table
 tool plans (`sandbox/cheese`), with the question's credential. The
 collaboration service is tests/support/collab.py.
@@ -24,10 +24,11 @@ from collections.abc import Awaitable, Callable
 import httpx
 import pytest
 
-from app.api.deps import get_handless_sessions
+from app.api.deps import get_session_host
 from app.domain.agent.document import question as doc_question
 from app.domain.agent.harness.pi import catalog
-from app.domain.agent.harness.pi.handless import Answered
+from app.domain.agent.service import AgentMessage, AgentResult
+from app.domain.agent.session_host.contract import Read, SessionRef
 from app.domain.memory.files import MemoryFileScope
 from app.domain.memory.files_store import MemoryFileStore
 from app.main import app
@@ -36,26 +37,48 @@ from tests.integration.test_doc_edits import ALICE_PARAGRAPH, _doc, _document
 
 
 class FakeSessions:
-    """The session host: every question it is asked, answered by ``script``."""
+    """The session host: every prompt sent to a session, answered by
+    ``script`` with the credential the prompt's tools act with."""
 
     def __init__(self) -> None:
-        self.asked: list[tuple] = []
+        #: (the session, what it was told), in order.
+        self.asked: list[tuple[SessionRef, str]] = []
         self.script: Callable[..., Awaitable[tuple[str, str | None]]] | None = None
+        self._answers: dict[SessionRef, tuple[str, str, str | None]] = {}
 
-    async def ask(self, launch, work_id, text, *, credential, earlier="", ceiling_s):
-        self.asked.append((launch, text))
+    def available(self) -> bool:
+        return True
+
+    async def start(self, ref, spec, access) -> None:
+        pass
+
+    async def send(self, ref, spec, access, prompt, *, work_id):
+        self.asked.append((ref, prompt.text))
         answer, error = "好的。", None
         if self.script is not None:
-            answer, error = await self.script(credential, text)
-        yield Answered(answer, error)
+            answer, error = await self.script(prompt.acting, prompt.text)
+        self._answers[ref] = (str(work_id), answer, error)
+        return None
+
+    async def read(self, ref, after):
+        work, answer, error = self._answers.pop(ref)
+        if answer:
+            yield Read(None, work, AgentMessage(answer))
+        yield Read(None, work, AgentResult(error or "", None, is_error=bool(error)))
+
+    async def status(self, ref):
+        return None
+
+    async def stop(self, ref) -> bool:
+        return False
 
 
 @pytest.fixture
 def sessions():
     fake = FakeSessions()
-    app.dependency_overrides[get_handless_sessions] = lambda: fake
+    app.dependency_overrides[get_session_host] = lambda: fake
     yield fake
-    app.dependency_overrides.pop(get_handless_sessions, None)
+    app.dependency_overrides.pop(get_session_host, None)
 
 
 async def _tool(credential: str, name: str, args: dict) -> httpx.Response:
@@ -128,8 +151,8 @@ def test_a_comment_naming_the_agent_is_answered_in_its_thread(client, sessions):
     root = _comment(client, room, f"<@{seat}> 这里的范围指什么？")
 
     assert _answers(client, room, root, seat) == ["好的。"]
-    [(launch, question)] = sessions.asked
-    assert launch.key == uuid.UUID(root)
+    [(session, question)] = sessions.asked
+    assert root in session.home
     assert "这里的范围指什么？" in question
     assert ALICE_PARAGRAPH in question
 
@@ -181,7 +204,7 @@ def test_a_later_question_in_the_thread_goes_to_the_same_session(client, session
     _reply(client, room, root, f"<@{seat}> 再短一点")
     assert len(_answers(client, room, root, seat, count=2)) == 2
     first, second = sessions.asked
-    assert first[0].key == second[0].key == uuid.UUID(root)
+    assert first[0] == second[0] and root in first[0].home
     assert "这里要不要展开" in first[1] and "你来看看" in first[1]
 
 
@@ -212,8 +235,9 @@ def test_what_the_session_changes_is_recorded_as_asked_by_the_commenter(
 
 def test_the_tools_stop_working_once_the_answer_is_over(client, sessions, monkeypatch):
     room, seat = _document(client)
-    monkeypatch.setattr(doc_question, "ANSWER_S", 0.0)
-    monkeypatch.setattr(doc_question, "CREDENTIAL_MARGIN_S", 1)
+    # An answer may take a second, and its credential lasts no longer.
+    monkeypatch.setattr(doc_question, "ANSWER_S", 1.0)
+    monkeypatch.setattr(doc_question, "CREDENTIAL_MARGIN_S", 0)
     held: dict[str, str] = {}
 
     async def keep(credential, question):

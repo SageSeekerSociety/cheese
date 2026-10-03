@@ -44,6 +44,20 @@ $$
 
 九月花费 $1,274。
 
+:::chart line
+| 周 | 改版前(次) | 改版后(次) |
+|---|---|---|
+| 第 1 周 | 1,020 | 1,980 |
+| 第 2 周 | 1,060 | 2,150 |
+:::
+
+\`\`\`mermaid
+flowchart TD
+  A[提交] --> B{检查通过?}
+  B -->|是| C[合并]
+  B -->|否| D[退回]
+\`\`\`
+
 [^1]: 改版前日均 1,049 次：2,140 ÷ 1,049 − 1 ≈ 104%。
 `
 
@@ -72,6 +86,45 @@ describe('a block in the wrong shape', () => {
 
   it('refuses columns that are not two or three', () => {
     expect(checkMarkdownWrite('::::columns\n:::column\n只有一栏\n:::\n::::\n')).not.toBeNull()
+  })
+
+  it('refuses a chart of a type the document does not draw, naming its line', () => {
+    expect(checkMarkdownWrite('正文\n\n:::chart radar\n| a | b |\n|---|---|\n| x | 1 |\n:::\n')?.line).toBe(3)
+  })
+
+  it('refuses horizontal on a chart that has no bars', () => {
+    expect(checkMarkdownWrite(':::chart pie horizontal\n| a | b |\n|---|---|\n| x | 1 |\n:::\n')).not.toBeNull()
+  })
+
+  it('refuses a chart that holds something besides its table', () => {
+    expect(checkMarkdownWrite(':::chart bar\n说明\n\n| a | b |\n|---|---|\n| x | 1 |\n:::\n')).not.toBeNull()
+  })
+
+  it('refuses words where a chart needs a number, naming the row', () => {
+    expect(
+      checkMarkdownWrite(':::chart bar\n| 周 | 次数 |\n|---|---|\n| 一 | 10 |\n| 二 | 约 20 次 |\n:::\n')?.line
+    ).toBe(5)
+  })
+
+  it('refuses a pie with more than one series', () => {
+    expect(checkMarkdownWrite(':::chart pie\n| a | b | c |\n|---|---|---|\n| x | 1 | 2 |\n:::\n')).not.toBeNull()
+  })
+
+  it('accepts numbers written with separators, signs, percent and currency, and empty cells', () => {
+    const md =
+      ':::chart bar\n| 月 | 收入 | 增长 |\n|---|---|---|\n| 一 | $1,274 | +12% |\n| 二 | ¥3.5 | |\n| 三 | 900 | -1.3 |\n:::\n'
+    expect(checkMarkdownWrite(md)).toBeNull()
+  })
+
+  it.each(['pie title 花费\n  "云" : 410', 'xychart-beta\n  bar [1, 2]', 'timeline\n  2024 : 上线'])(
+    'refuses a mermaid diagram the document has its own block for: %s',
+    (diagram) => {
+      expect(checkMarkdownWrite(`正文\n\n\`\`\`mermaid\n${diagram}\n\`\`\`\n`)?.line).toBe(4)
+    }
+  )
+
+  it('accepts the other mermaid diagrams', () => {
+    expect(checkMarkdownWrite('```mermaid\n%% 注释\nerDiagram\n  A ||--o{ B : has\n```\n')).toBeNull()
   })
 
   it('refuses a footnote with no definition', () => {

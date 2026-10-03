@@ -12,21 +12,34 @@ Rules held here:
   are two sessions.
 """
 
+import dataclasses
 import json
 import uuid
 
 import pytest
 
 from app.core.config import settings
-from app.core.sandbox_auth import mint_delegated_credential, mint_scoped_token
-from app.domain.agent.document import question as doc_question
-from app.domain.agent.harness.pi import document
-from app.domain.agent.harness.pi.handless import Answered, HandlessSessions, Looking
+from app.core.sandbox_auth import mint_delegated_credential
+from app.domain.agent.document import session as doc_session
+from app.domain.agent.document.question import Bound, Surroundings
+from app.domain.agent.session_host.answer import Answer, Tool, ask
+from app.domain.agent.session_host.contract import Prompt
+from app.domain.agent.session_host.host import SessionHost
 from tests.support.session_host import DEVICE, Host, install_pi, stop_all
 from tests.unit.test_personal_sessions import Platform
 
 PROJECT = uuid.uuid4()
 ROOM = uuid.uuid4()
+AGENT = Bound(
+    agent_handle="agent-seat",
+    agent_name="芝士",
+    model="fixture-model",
+    wire_model="fixture-model",
+    supply="gateway",
+)
+AROUND = Surroundings(
+    content="", messages="", charter="本项目做存储选型。", memory=None
+)
 
 
 @pytest.fixture
@@ -35,7 +48,7 @@ def host(tmp_path, monkeypatch):
     install_pi(home)
     monkeypatch.setattr(settings, "agent_session_device_id", DEVICE)
     hub = Host(home)
-    yield hub, HandlessSessions(hub)
+    yield hub, SessionHost(hub)
     stop_all(home)
 
 
@@ -54,21 +67,16 @@ def platform(monkeypatch):
         fake.close()
 
 
-def _launch(thread: uuid.UUID | None = None) -> document.Launch:
-    thread = thread or uuid.uuid4()
-    return document.Launch(
+def _session(thread: uuid.UUID | None = None, *, machine: dict | None = None):
+    """A thread's session as the document's 芝士 starts it, with the room's
+    machine lent to it when there is one."""
+    return doc_session.session_for(
         project_id=PROJECT,
         room_id=ROOM,
-        thread_id=thread,
-        system_prompt=doc_question.system_prompt("芝士", "本项目做存储选型。", None),
-        tools=doc_question.TOOLS,
-        token=mint_scoped_token(
-            project_id=str(PROJECT),
-            topic_id=str(ROOM),
-            agent_handle="agent-seat",
-            resource_id=str(thread),
-        ),
-        model="fixture-model",
+        key=thread or uuid.uuid4(),
+        bound=AGENT,
+        around=dataclasses.replace(AROUND, machine=machine),
+        where="thread",
     )
 
 
@@ -85,14 +93,15 @@ def _credential() -> str:
     )
 
 
-async def _ask(sessions, launch, text, credential: str = "") -> list:
+async def _ask(sessions, started, text, credential: str = "") -> list:
+    work = uuid.uuid4()
     return [
         event
-        async for event in sessions.ask(
-            launch,
-            uuid.uuid4(),
-            text,
-            credential=credential or _credential(),
+        async for event in ask(
+            sessions,
+            *started,
+            Prompt(work, text, acting=credential or _credential()),
+            work_id=work,
             ceiling_s=120,
         )
     ]
@@ -102,13 +111,13 @@ async def _ask(sessions, launch, text, credential: str = "") -> list:
 async def test_a_thread_has_the_documents_tools_and_acts_for_the_asker(host, platform):
     hub, sessions = host
     fake = platform([{"tool": "cheese_doc_get"}, {"text": "读过了。"}])
-    launch = _launch()
+    started = _session()
     acting = _credential()
 
-    events = await _ask(sessions, launch, "这里的范围指什么？", acting)
+    events = await _ask(sessions, started, "这里的范围指什么？", acting)
 
-    assert events[-1] == Answered("读过了。")
-    assert Looking("cheese_doc_get") in events
+    assert events[-1] == Answer("读过了。")
+    assert Tool("cheese_doc_get") in events
     first = fake.requests[0]
     # The document's own tools and the project lookups; no machine is lent
     # here, so none of pi's own.
@@ -122,7 +131,8 @@ async def test_a_thread_has_the_documents_tools_and_acts_for_the_asker(host, pla
     system = first["messages"][0]["content"]
     system = system if isinstance(system, str) else system[0]["text"]
     assert "本项目做存储选型。" in system
-    assert set(fake.model_auth) == {f"Bearer {launch.token}"}
+    _, _, access = started
+    assert set(fake.model_auth) == {f"Bearer {access.credential}"}
     assert fake.tool_calls == [(f"GET /topics/{ROOM}/doc", acting)]
     ran = [argv for argv in hub.execs if argv != ["cat", "/proc/meminfo"]]
     assert ran and all(argv == ["python3", "-"] for argv in ran)
@@ -136,13 +146,14 @@ async def test_a_thread_keeps_its_conversation_and_threads_are_apart(host, platf
     )
     thread = uuid.uuid4()
 
-    await _ask(sessions, _launch(thread), "The password is PINEAPPLE.")
-    await _ask(sessions, _launch(), "别的评论串")
-    events = await _ask(sessions, _launch(thread), "What was the password?")
+    await _ask(sessions, _session(thread), "The password is PINEAPPLE.")
+    await _ask(sessions, _session(), "别的评论串")
+    events = await _ask(sessions, _session(thread), "What was the password?")
 
-    assert events[-1] == Answered("PINEAPPLE。")
+    assert events[-1] == Answer("PINEAPPLE。")
     other = json.dumps(fake.requests[1]["messages"], ensure_ascii=False)
     assert "PINEAPPLE" not in other
     asked = json.dumps(fake.requests[2]["messages"], ensure_ascii=False)
     assert "The password is PINEAPPLE." in asked
-    assert hub.alive(document.state_dir(PROJECT, thread))
+    ref, _, _ = _session(thread)
+    assert hub.alive(ref.state)

@@ -51,6 +51,8 @@ export interface PresetContext {
   list: boolean
   /** The selection is written in Chinese: it translates into English, else into Chinese. */
   chinese: boolean
+  /** The selection is code, a diagram's source among it: the shortcuts are for prose. */
+  code?: boolean
 }
 
 /** The shortcuts the box offers, by group. */
@@ -65,6 +67,7 @@ export function presetsFor(scope: AgentScope, context: PresetContext): PresetGro
       ],
     }
   }
+  if (context.code) return { edit: [], ask: [] }
   const translate = preset(
     'translate',
     'edit',

@@ -7,10 +7,20 @@
 // Each message names the line and gives the right form, so the writer can fix
 // it without looking anything up.
 
-import type { Token } from 'marked'
+import type { Token, Tokens } from 'marked'
 import type { WriteProblem } from './writeCheck'
 
-const CONTAINERS: Record<string, string> = { timeline: '时间线', stats: '指标卡', columns: '分栏', column: '分栏' }
+import { CHART_KINDS, chartInfo, chartNumber } from '../src/lib/docSchema/blocks'
+
+const CONTAINERS: Record<string, string> = {
+  timeline: '时间线',
+  stats: '指标卡',
+  columns: '分栏',
+  column: '分栏',
+  chart: '图表',
+}
+const CHART_FORM =
+  '图表写成 :::chart 类型，下一行起放一张 Markdown 表格（第一列是分类，其余每列一组数），最后单独一行 :::'
 const CONTAINER_LINE = /^\s*(:{3,})([a-z]*)/
 const FOOTNOTE_DEF_LINE = /^ {0,3}\[\^[^\]\s^]+\]:/
 const ITEM_LINE = /^[-*+][ \t]+/
@@ -33,7 +43,7 @@ function strayProblem(raw: string, line: number): WriteProblem | null {
       if (!CONTAINERS[name]) {
         return {
           line: at,
-          message: `第 ${at} 行的「:::${name}」不是文档支持的块。支持的是 :::timeline（时间线）、:::stats（指标卡）、::::columns（分栏）。`,
+          message: `第 ${at} 行的「:::${name}」不是文档支持的块。支持的是 :::timeline（时间线）、:::stats（指标卡）、::::columns（分栏）、:::chart（图表）。`,
         }
       }
       if (name === 'column') {
@@ -42,6 +52,7 @@ function strayProblem(raw: string, line: number): WriteProblem | null {
           message: `第 ${at} 行的「:::column」不在分栏里。分栏写成 ::::columns，里面放两到三个 :::column … :::，最后一行 ::::。`,
         }
       }
+      if (name === 'chart') return chartHeadProblem(text, at)
       const columns = name === 'columns' ? '，里面是两到三个 :::column … :::' : ''
       return {
         line: at,
@@ -68,10 +79,84 @@ function fieldsProblem(raw: string, line: number, kind: 'timeline' | 'stats'): W
   return null
 }
 
+/** A `:::chart` line that did not open a chart: its type, or what it holds. */
+function chartHeadProblem(text: string, at: number): WriteProblem {
+  const info = text.replace(/^\s*:{3,}chart/, '').trim()
+  if (!chartInfo(info)) {
+    return {
+      line: at,
+      message: `第 ${at} 行的图表类型「${info}」不对。类型是 ${CHART_KINDS.join('、')} 之一；只有 bar 和 stacked 能在后面加 horizontal（横着画）。`,
+    }
+  }
+  return {
+    line: at,
+    message: `第 ${at} 行的图表没有读成块：里面只能有一张表格，前面要空一行。${CHART_FORM}。`,
+  }
+}
+
+/** A chart whose table cannot be drawn: too few columns, or words where numbers go. */
+function chartProblem(token: Token, line: number): WriteProblem | null {
+  const table = (token as Tokens.Generic).tokens?.[0] as Tokens.Table | undefined
+  if (!table) return null
+  const kind = (token as Tokens.Generic).kind as string
+  const head = token.raw.split('\n').findIndex((text) => text.trim().startsWith('|'))
+  const width = table.header.length
+  if (width < 2 || table.rows.length === 0) {
+    return { line: line + head, message: `第 ${line + head} 行的图表至少要两列、一行数据。${CHART_FORM}。` }
+  }
+  if (kind === 'pie' && width !== 2) {
+    return {
+      line: line + head,
+      message: `第 ${line + head} 行的饼图有 ${width} 列。饼图只画一组数：表格写两列，名称 | 数值。`,
+    }
+  }
+  const from = kind === 'scatter' ? 0 : 1
+  for (const [r, row] of table.rows.entries()) {
+    for (let c = from; c < row.length; c++) {
+      if (chartNumber(row[c].text) !== null) continue
+      const at = line + head + 2 + r
+      return {
+        line: at,
+        message: `第 ${at} 行图表数据「${row[c].text.trim()}」不是一个数。格子里只写数（可以带 , % 和货币符号），单位写进这一列的表头。`,
+      }
+    }
+  }
+  return null
+}
+
+// Mermaid kinds the document has its own block for: on a phone they are cut
+// off, carry no value labels, and their legend colours do not match.
+const MERMAID_REPLACED: Record<string, string> = {
+  pie: '饼图改用图表块：:::chart pie，里面一张两列的表格（名称 | 数值）',
+  'xychart-beta': '柱状图和折线图改用图表块：:::chart bar 或 :::chart line，里面一张表格，第一列是横轴，其余每列一组数',
+  xychart: '柱状图和折线图改用图表块：:::chart bar 或 :::chart line，里面一张表格，第一列是横轴，其余每列一组数',
+  timeline: '时间线改用时间线块：:::timeline，每项写成 - 时间 | 标题',
+}
+
+/** A mermaid diagram of a kind the document draws with its own block. */
+function mermaidProblem(token: Tokens.Code, line: number): WriteProblem | null {
+  if (token.lang?.trim().toLowerCase() !== 'mermaid') return null
+  const lines = token.text.split('\n')
+  let i = 0
+  if (lines[0]?.trim() === '---') {
+    i = lines.findIndex((text, n) => n > 0 && text.trim() === '---') + 1
+    if (i === 0) return null
+  }
+  for (; i < lines.length; i++) {
+    const text = lines[i].trim()
+    if (!text || text.startsWith('%%')) continue
+    const fix = MERMAID_REPLACED[text.split(/\s/)[0]]
+    return fix ? { line: line + 1 + i, message: `第 ${line + 1 + i} 行的 mermaid ${fix}。` } : null
+  }
+  return null
+}
+
 /** The first block on this top-level token written in the wrong shape. */
 export function blockProblem(token: Token, line: number): WriteProblem | null {
   if (token.type === 'timeline' || token.type === 'stats') return fieldsProblem(token.raw, line, token.type)
-  if (token.type === 'columns' || token.type === 'code' || token.type === 'footnoteDef') return null
+  if (token.type === 'chart') return chartProblem(token, line)
+  if (token.type === 'code') return mermaidProblem(token as Tokens.Code, line)
+  if (token.type === 'columns' || token.type === 'footnoteDef') return null
   return strayProblem(token.raw, line)
 }
 
