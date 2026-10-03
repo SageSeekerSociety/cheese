@@ -197,8 +197,12 @@ describe('plans and credits', () => {
     listPlanModels.mockResolvedValue({ models: [{ id: 'sonnet', label: 'Claude Sonnet', tier: 'premium' }] })
     const dialog = await editPlan(mountPage(), 'Free')
     expect(await dialog.findByRole('checkbox', { name: /credits.tier.premium.*Claude Sonnet/ })).toBeTruthy()
-    expect(dialog.getByRole('checkbox', { name: /credits.tier.included.*credits.planDialog.tierModelsNone/ })).toBeTruthy()
-    expect(dialog.getByRole('checkbox', { name: /credits.tier.frontier.*credits.planDialog.tierModelsNone/ })).toBeTruthy()
+    expect(
+      dialog.getByRole('checkbox', { name: /credits.tier.included.*credits.planDialog.tierModelsNone/ })
+    ).toBeTruthy()
+    expect(
+      dialog.getByRole('checkbox', { name: /credits.tier.frontier.*credits.planDialog.tierModelsNone/ })
+    ).toBeTruthy()
   })
 
   it('a plan switched to time windows is saved without a monthly amount', async () => {
