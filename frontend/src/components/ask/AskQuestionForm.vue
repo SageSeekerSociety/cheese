@@ -17,7 +17,7 @@ const props = defineProps<{
   state?: AskFormState
   grouped?: boolean
 }>()
-const emit = defineEmits<{ (e: 'action', action: AskAction): void }>()
+const emit = defineEmits<{ (e: 'action', action: AskAction): void; (e: 'picked'): void }>()
 const answers = computed(() => props.block.meta?.answer_log ?? [])
 const allowed = computed(() => canAnswer(props.block, props.viewer))
 const editing = computed(() => !answers.value.length || props.state?.editing)
@@ -78,11 +78,25 @@ function change(patch: Partial<AskDraft>) {
 function reply(value: string) {
   change(customReply.value ? { kind: 'note', option: '', note: value } : { note: value })
 }
-function selectOption(text: string) {
+function selectOption(text: string, pick = true) {
   change({
     kind: 'option',
     option: text,
   })
+  // 点选一个选项就是一次确认：面板据此延迟一小会儿再往前推进。
+  if (pick) emit('picked')
+}
+function isPicked(text: string): boolean {
+  return props.state?.draft.kind === 'option' && props.state.draft.option === text
+}
+// 方向键在选项之间移动：只换高亮，不算一次确认。
+function moveOption(delta: number): boolean {
+  const options = props.block.meta?.options ?? []
+  if (locked.value || !editing.value || !props.grouped || !options.length) return false
+  const current = options.findIndex((option) => isPicked(option.text))
+  const next = Math.min(options.length - 1, Math.max(0, (current < 0 ? 0 : current) + delta))
+  selectOption(options[next]!.text, false)
+  return true
 }
 function focusReply(): boolean {
   const field = replyField.value
@@ -116,7 +130,7 @@ function handleShortcut(event: KeyboardEvent): boolean {
   }
   return true
 }
-defineExpose({ focusReply, handleShortcut })
+defineExpose({ focusReply, handleShortcut, moveOption })
 function submit() {
   if (!props.grouped && !props.block.meta?.ask_group && canSubmit.value) emit('action', { type: 'submit' })
 }
@@ -159,18 +173,22 @@ function submit() {
           v-for="(option, index) in block.meta?.options"
           :key="option.text"
           class="ask-form-option"
-          :class="{ 'ask-form-option-picked': state.draft.kind === 'option' && state.draft.option === option.text }"
+          :class="{ 'ask-form-option-picked': isPicked(option.text) }"
         >
           <input
             type="radio"
             :name="`ask-${block.id}`"
             :value="option.text"
-            :checked="state.draft.kind === 'option' && state.draft.option === option.text"
+            :checked="isPicked(option.text)"
             @change="selectOption(option.text)"
           />
-          <span v-if="!grouped || (block.meta?.options?.length ?? 0) > 1" class="ask-form-number" aria-hidden="true">{{
-            index + 1
-          }}</span>
+          <span
+            v-if="!grouped || (block.meta?.options?.length ?? 0) > 1"
+            class="ask-form-number"
+            :class="{ 'ask-form-number-picked': grouped && isPicked(option.text) }"
+            aria-hidden="true"
+            ><span class="ask-form-dot" />{{ index + 1 }}</span
+          >
           <span class="ask-form-copy">
             <span class="ask-form-label-row">
               <span class="ask-form-label">{{ grouped ? optionLabel(option.text) : option.text }}</span>
@@ -187,26 +205,45 @@ function submit() {
             />
           </svg>
         </label>
-        <label v-if="block.meta?.allow_other && !grouped" class="ask-form-option">
+        <label
+          v-if="block.meta?.allow_other"
+          class="ask-form-option"
+          :class="{ 'ask-form-option-picked': grouped && state.draft.kind === 'note' }"
+        >
           <input
             type="radio"
             :name="`ask-${block.id}`"
             :checked="state.draft.kind === 'note'"
             @change="change({ kind: 'note', option: '' })"
           />
-          <span>{{ t('ask.form.other') }}</span>
+          <span
+            v-if="grouped"
+            class="ask-form-number"
+            :class="{ 'ask-form-number-picked': state.draft.kind === 'note' }"
+            aria-hidden="true"
+            ><span class="ask-form-dot" />{{ (block.meta?.options?.length ?? 0) + 1 }}</span
+          >
+          <span class="ask-form-copy"
+            ><span class="ask-form-label">{{ t('ask.form.other') }}</span></span
+          >
         </label>
-        <label v-if="block.meta?.reject_option" class="ask-form-option">
+        <label
+          v-if="block.meta?.reject_option"
+          class="ask-form-option"
+          :class="{ 'ask-form-option-picked': grouped && state.draft.kind === 'reject' }"
+        >
           <input
             type="radio"
             :name="`ask-${block.id}`"
             :checked="state.draft.kind === 'reject'"
             @change="change({ kind: 'reject', option: '' })"
           />
-          <span>{{ t('ask.form.reject') }}</span>
+          <span class="ask-form-copy"
+            ><span class="ask-form-label">{{ t('ask.form.reject') }}</span></span
+          >
         </label>
       </fieldset>
-      <div :class="{ 'ask-form-reply-row': grouped }">
+      <div v-if="!grouped || state.draft.kind === 'note'" :class="{ 'ask-form-reply-row': grouped }">
         <label class="ask-form-note" :class="{ 'ask-form-sr-only': customReply }" :for="`ask-note-${block.id}`">{{
           customReply || state.draft.kind === 'note' ? t('ask.form.answer') : t('ask.form.note')
         }}</label>
@@ -221,8 +258,8 @@ function submit() {
           :placeholder="replyPlaceholder"
           @input="reply(($event.target as HTMLTextAreaElement).value)"
         />
-        <slot name="actions" />
       </div>
+      <slot name="actions" />
       <details
         v-if="customReply && ['option', 'reject'].includes(state.draft.kind ?? '')"
         class="ask-form-supplement"
@@ -501,6 +538,26 @@ function submit() {
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
+}
+
+/* 选中：标记翻成实心（深底浅点），数字换成 6px 圆点。 */
+.ask-form-grouped .ask-form-number-picked {
+  font-size: 0;
+  color: var(--surface);
+  background: var(--ink);
+  border-color: var(--ink);
+}
+
+.ask-form-dot {
+  display: none;
+  width: 6px;
+  height: 6px;
+  background: currentcolor;
+  border-radius: var(--radius-pill);
+}
+
+.ask-form-grouped .ask-form-number-picked .ask-form-dot {
+  display: block;
 }
 
 .ask-form-grouped .ask-form-explain {

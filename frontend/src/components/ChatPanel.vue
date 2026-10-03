@@ -8,12 +8,14 @@
 // is doing, a view knows what it looks like — and the views under ./chat are
 // those pieces: header, timeline, new-message pill, error toast.
 import type { ProjectMemberRow, Topic } from '../cx_types'
+import type { AskGroupAction } from '../lib/askGroupState'
 
 import { computed } from 'vue'
 
 import { type ChatPanelEmit, useChatPanel } from '../composables/useChatPanel'
 import { createQuestionSubmit } from '../lib/previewQuestion'
 
+import AskGroupFlow from './ask/AskGroupFlow.vue'
 import ChatErrorToast from './chat/ChatErrorToast.vue'
 import ChatNewMessagesPill from './chat/ChatNewMessagesPill.vue'
 import ChatPanelHeader from './chat/ChatPanelHeader.vue'
@@ -182,11 +184,14 @@ const {
   errorMsg,
   connected,
   send,
-  askGroups,
   askGroupAction,
   askStates,
   askAction,
   askViewer,
+  askTakeover,
+  askReturn,
+  dismissAsk,
+  restoreAsk,
   postChecklist,
   changeChecklist,
   onReact,
@@ -207,6 +212,15 @@ const timelineRefs = { scrollRef, contentRef }
 // off it once for the one row that needs them, not once per render.
 const retryIndex = computed(() => (canRetryAt(rows.value.length - 1) ? rows.value.length - 1 : -1))
 const barEditable = computed(() => !!barBlock.value && canEdit(barBlock.value))
+
+// 接管时面板的动作要走回那一组。接管组是响应式计算出来的，这里读一次当前值即可。
+const takeoverScope = computed(() => askTakeover.value?.scope ?? null)
+function onAskAction(action: AskGroupAction) {
+  if (takeoverScope.value) askGroupAction(takeoverScope.value, action)
+}
+function onAskDismiss() {
+  if (takeoverScope.value) dismissAsk(takeoverScope.value)
+}
 
 // The page that owns the address drives the composer through this (TopicView
 // keeps its own input bar for the root topic), so it stays exposed.
@@ -278,7 +292,6 @@ defineExpose({ send, connected, submitQuestion })
         :editing-id="editingId"
         :edit-saving="editSaving"
         :ask-states="askStates"
-        :ask-groups="askGroups"
         :scroll-ref="timelineRefs.scrollRef"
         :content-ref="timelineRefs.contentRef"
         :is-agent-block="isAgentBlock"
@@ -311,7 +324,6 @@ defineExpose({ send, connected, submitQuestion })
         @open-card="emit('open-card', $event)"
         @open-resource="(resource, turnId, review) => emit('open-resource', resource, turnId, review)"
         @ask-action="askAction"
-        @ask-group-action="askGroupAction"
         @checklist="changeChecklist"
         @download="downloadAttachment"
         @jump="openAt"
@@ -353,9 +365,24 @@ defineExpose({ send, connected, submitQuestion })
           {{ t('slides.removeQuote') }}
         </button>
       </div>
+      <!-- 提问接管输入框：两者是同一格里的二选一，不是浮层。有题要答就把
+           composer 换下来（不用点），答完或没有题时它自己回来。Esc 收起后
+           「有 N 个问题待回答」那一条让人重新把它叫回来，问题不会被永久藏掉。 -->
+      <button v-if="showComposer && askReturn > 0" type="button" class="composer-ask-return" @click="restoreAsk">
+        {{ t('ask.group.returnHint', { count: askReturn }) }}
+      </button>
+      <AskGroupFlow
+        v-if="showComposer && askTakeover"
+        :state="askTakeover"
+        :viewer="askViewer"
+        :names="refMaps.mentionNames"
+        composer
+        @action="onAskAction"
+        @dismiss="onAskDismiss"
+      />
       <!-- Built-in composer (private chat / standalone use). -->
       <RoomComposer
-        v-if="showComposer"
+        v-else-if="showComposer"
         ref="composerRef"
         v-model="draft"
         :topic="topic"
@@ -389,6 +416,20 @@ defineExpose({ send, connected, submitQuestion })
 <style scoped>
 .composer-quote {
   margin: 0 16px 8px;
+}
+.composer-ask-return {
+  align-self: center;
+  padding: 4px 12px;
+  margin: 0 16px 8px;
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--muted);
+  background: var(--fill);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-pill);
+}
+.composer-ask-return:hover {
+  color: var(--text);
 }
 .composer-quote__remove {
   color: var(--faint);

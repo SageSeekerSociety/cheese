@@ -61,6 +61,7 @@ import { myHandle } from '../me'
 
 import { useAskAnswers } from './useAskAnswers'
 import { useAskGroups } from './useAskGroups'
+import { useAskTakeover } from './useAskTakeover'
 import { useChatComposer } from './useChatComposer'
 import { useChatPaging } from './useChatPaging'
 import { useOwnChecklist } from './useOwnChecklist'
@@ -162,6 +163,9 @@ export function useChatPanel(opts: ChatPanelOptions) {
     viewer: () => askViewer.value,
     replace: replaceShown,
   })
+  // 提问接管输入框：面板与 composer 互斥地驻留在同一格（见 useAskTakeover）。
+  const takeover = useAskTakeover({ groups: askGroups, viewer: () => askViewer.value })
+  const { askTakeover, askReturn, dismissAsk, restoreAsk } = takeover
   /** 把这一条换进时间线（在的话）。 */
   function replaceShown(block: Block) {
     if (!timeline.find(block.id)) return
@@ -975,6 +979,10 @@ export function useChatPanel(opts: ChatPanelOptions) {
     askGroups,
     askGroupAction,
     askStates,
+    askTakeover,
+    askReturn,
+    dismissAsk,
+    restoreAsk,
     askAction,
     askViewer,
     postChecklist,

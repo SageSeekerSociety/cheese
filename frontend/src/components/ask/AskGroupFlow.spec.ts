@@ -1,6 +1,6 @@
 import type { AskGroupAction, AskGroupState } from '../../lib/askGroupState'
 
-import { effectScope } from 'vue'
+import { effectScope, reactive } from 'vue'
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -25,11 +25,11 @@ vi.mock('../../api', () => ({
   },
 }))
 
-function fixture(): AskGroupState {
-  const scope = { topic_id: 'room', asked_by: 'agent', id: 'group', members: ['q1', 'q2'], total: 2 }
-  return {
+function fixture(members: string[] = ['q1', 'q2']): AskGroupState {
+  const scope = { topic_id: 'room', asked_by: 'agent', id: 'group', members, total: members.length }
+  return reactive({
     scope,
-    anchor: 'q1',
+    anchor: members[0]!,
     pending: null,
     busy: false,
     fresh: true,
@@ -39,7 +39,7 @@ function fixture(): AskGroupState {
     conflict: false,
     unavailable: false,
     forms: Object.fromEntries(
-      scope.members.map((id) => [
+      members.map((id) => [
         id,
         {
           draft: emptyAskDraft(),
@@ -58,7 +58,7 @@ function fixture(): AskGroupState {
       group: scope,
       settlement: null,
       receipt: null,
-      blocks: scope.members.map((id, index) => ({
+      blocks: members.map((id, index) => ({
         id,
         topic_id: 'room',
         kind: 'message',
@@ -74,119 +74,214 @@ function fixture(): AskGroupState {
         },
       })),
     },
+  }) as AskGroupState
+}
+
+// 把面板发出来的动作写回 state，和真实房间里 useAskGroups 做的一样。这样断言看到的
+// 才是「点下去之后界面变成什么样」，而不是某条消息的字面形状。
+function apply(state: AskGroupState, action: AskGroupAction) {
+  if (action.type === 'question' && action.action.type === 'draft') {
+    const form = state.forms[action.blockId]
+    if (form) {
+      form.draft = action.action.draft
+      form.editing = true
+    }
+  } else if (action.type === 'later') {
+    const form = state.forms[action.blockId]
+    if (form) form.draft = { ...form.draft, later: !form.draft.later }
   }
 }
+
+function mount(state: AskGroupState, extra: Record<string, unknown> = {}) {
+  const actions: AskGroupAction[] = []
+  const ui = render(AskGroupFlow, {
+    props: {
+      state,
+      viewer: 'alice',
+      names: {},
+      onAction: (action: AskGroupAction) => {
+        actions.push(action)
+        apply(state, action)
+      },
+      ...extra,
+    },
+  })
+  return { ui, actions }
+}
+
 beforeEach(() => setLocale('zh-CN'))
 afterEach(cleanup)
 
-describe('group question presentation', () => {
-  it('keeps a failed pending submission visible when collapsed and preserves its draft', async () => {
+describe('接管输入框的一问一答', () => {
+  it('defaults a single-select question to its first option without a click', async () => {
     const state = fixture()
-    state.busy = true
-    state.forms.q1!.draft = { ...emptyAskDraft(), kind: 'option', option: 'A', note: 'keep this detail' }
-    const ui = render(AskGroupFlow, { props: { state, viewer: 'alice', names: {} } })
-    await fireEvent.click(ui.getByRole('button', { name: '收起提问' }))
-    const failed = { ...state, busy: false, error: 'Submission result unknown; original operation retained' }
-    await ui.rerender({ state: failed })
-    expect(ui.getByRole('alert').textContent).toBe(failed.error)
-    expect(ui.queryByRole('heading', { name: '问题 1' })).toBeNull()
-    expect(ui.emitted().action).toBeUndefined()
-    await fireEvent.click(ui.getByRole('button', { name: '展开提问' }))
-    expect((ui.getByRole('radio', { name: /A/ }) as HTMLInputElement).checked).toBe(true)
-    expect((ui.getByRole('textbox') as HTMLTextAreaElement).value).toBe('keep this detail')
-    expect(ui.getByRole('alert').textContent).toBe(failed.error)
+    const { ui } = mount(state)
+    await waitFor(() => expect((ui.getByRole('radio', { name: /A/ }) as HTMLInputElement).checked).toBe(true))
+    expect(state.forms.q1!.draft).toMatchObject({ kind: 'option', option: 'A' })
   })
 
-  it('selects a numbered draft from the card once and leaves typing or modified keys alone', async () => {
+  it('holds the picked option for a beat then advances, dropping a second pick in that window', async () => {
+    const state = fixture()
+    const { ui } = mount(state)
+    await waitFor(() => expect(state.forms.q1!.draft.kind).toBe('option'))
+    await fireEvent.change(ui.getByRole('radio', { name: /B/ }))
+    expect(state.forms.q1!.draft.option).toBe('B')
+    // 窗口内再点第一个：高亮不动，读数也不该被改回去。
+    await fireEvent.change(ui.getByRole('radio', { name: /A/ }))
+    expect(state.forms.q1!.draft.option).toBe('B')
+    await waitFor(() => expect(ui.getByRole('heading', { name: '问题 2' })).toBeTruthy())
+  })
+
+  it('submits with Enter: next question while there is one, the whole group at the end', async () => {
+    const state = fixture()
+    const { ui, actions } = mount(state)
+    await waitFor(() => expect(state.forms.q1!.draft.kind).toBe('option'))
+    const card = ui.getByRole('region', { name: '整组回答' })
+    await fireEvent.keyDown(card, { key: 'Enter' })
+    await waitFor(() => expect(ui.getByRole('heading', { name: '问题 2' })).toBeTruthy())
+    await waitFor(() => expect(state.forms.q2!.draft.kind).toBe('option'))
+    await fireEvent.keyDown(card, { key: 'Enter' })
+    expect(actions.at(-1)).toEqual({ type: 'submit' })
+  })
+
+  it('moves the highlight with up/down and switches question with left/right', async () => {
+    const state = fixture()
+    const { ui } = mount(state)
+    await waitFor(() => expect(state.forms.q1!.draft.option).toBe('A'))
+    const card = ui.getByRole('region', { name: '整组回答' })
+    await fireEvent.keyDown(card, { key: 'ArrowDown' })
+    expect(state.forms.q1!.draft.option).toBe('B')
+    await fireEvent.keyDown(card, { key: 'ArrowUp' })
+    expect(state.forms.q1!.draft.option).toBe('A')
+    await fireEvent.keyDown(card, { key: 'ArrowRight' })
+    expect(ui.getByRole('heading', { name: '问题 2' })).toBeTruthy()
+    await fireEvent.keyDown(card, { key: 'ArrowLeft' })
+    expect(ui.getByRole('heading', { name: '问题 1' })).toBeTruthy()
+  })
+
+  it('skip defers a question you left untouched and moves on', async () => {
+    const state = fixture()
+    const { ui, actions } = mount(state)
+    await waitFor(() => expect(state.forms.q1!.draft.kind).toBe('option'))
+    await fireEvent.click(ui.getByRole('button', { name: '跳过' }))
+    expect(actions.some((action) => action.type === 'later' && action.blockId === 'q1')).toBe(true)
+    await waitFor(() => expect(ui.getByRole('heading', { name: '问题 2' })).toBeTruthy())
+  })
+
+  it('skip carries a written free-text answer forward instead of deferring it', async () => {
     const state = fixture()
     state.data!.blocks[0]!.meta!.allow_other = true
-    state.forms.q1!.draft.note = 'Keep this detail'
-    const ui = render(AskGroupFlow, { props: { state, viewer: 'alice', names: {} } })
-    const card = ui.getByRole('region', { name: '整组回答' })
-    await fireEvent.keyDown(card, { key: '2' })
-    expect(ui.emitted().action).toEqual([
-      [
-        {
-          type: 'question',
-          blockId: 'q1',
-          action: { type: 'draft', draft: { ...state.forms.q1!.draft, kind: 'option', option: 'B' } },
-        },
-      ],
-    ])
-    await fireEvent.keyDown(ui.getAllByRole('radio')[0]!, { key: '1' })
-    expect(ui.emitted().action).toHaveLength(2)
-    const reply = ui.getByRole('textbox', { name: '你的回答' })
-    await fireEvent.keyDown(reply, { key: '2' })
-    await fireEvent.keyDown(card, { key: '1', isComposing: true })
-    await fireEvent.keyDown(card, { key: '1', ctrlKey: true })
-    await fireEvent.keyDown(card, { key: '1', altKey: true })
-    await fireEvent.keyDown(card, { key: '1', metaKey: true })
-    expect(ui.emitted().action).toHaveLength(2)
-    await fireEvent.keyDown(card, { key: '3' })
-    expect(ui.emitted().action?.at(-1)).toEqual([
-      {
-        type: 'question',
-        blockId: 'q1',
-        action: { type: 'draft', draft: { ...state.forms.q1!.draft, kind: 'note', option: '' } },
+    const { ui, actions } = mount(state)
+    await waitFor(() => expect(state.forms.q1!.draft.kind).toBe('option'))
+    await fireEvent.change(ui.getByRole('radio', { name: /自己填写/ }))
+    await fireEvent.update(ui.getByRole('textbox', { name: '你的回答' }), '我自己写的')
+    await fireEvent.click(ui.getByRole('button', { name: '跳过' }))
+    expect(actions.some((action) => action.type === 'later')).toBe(false)
+    await waitFor(() => expect(ui.getByRole('heading', { name: '问题 2' })).toBeTruthy())
+  })
+
+  it('Escape dismisses the panel without submitting or clearing the draft', async () => {
+    const state = fixture()
+    const { ui, actions } = mount(state)
+    await waitFor(() => expect(state.forms.q1!.draft.kind).toBe('option'))
+    await fireEvent.keyDown(ui.getByRole('region', { name: '整组回答' }), { key: 'Escape' })
+    expect(ui.emitted().dismiss).toHaveLength(1)
+    expect(actions.some((action) => action.type === 'submit')).toBe(false)
+    expect(state.forms.q1!.draft).toMatchObject({ kind: 'option', option: 'A' })
+  })
+
+  it('keeps a failed submission filled in and offers the original retry', async () => {
+    const state = fixture(['q1'])
+    state.forms.q1!.draft = { ...emptyAskDraft(), kind: 'option', option: 'B' }
+    state.forms.q1!.editing = true
+    state.pending = {
+      account: 'alice-id',
+      scope: groupKey(state.scope),
+      payload: {
+        topic_id: 'room',
+        asked_by: 'agent',
+        answered: [],
+        later: [],
+        unanswered: [{ block_id: 'q1', client_op_id: 'op-q1' }],
+        expect_version: 0,
+        client_op_id: 'op',
       },
-    ])
-    await waitFor(() => expect(document.activeElement).toBe(reply))
-    expect(ui.emitted().action).toHaveLength(3)
-  })
-
-  it('routes deliberate question navigation to the answer while refresh preserves another input focus', async () => {
-    const state = fixture()
-    state.data!.blocks[1]!.meta!.options = []
-    state.data!.blocks[1]!.meta!.allow_other = true
-    const external = document.createElement('textarea')
-    document.body.append(external)
-    external.focus()
-    try {
-      const ui = render(AskGroupFlow, { props: { state, viewer: 'alice', names: {}, focusBlock: 'q1' } })
-      expect(document.activeElement).toBe(external)
-      await fireEvent.click(ui.getByRole('button', { name: '下一题' }))
-      await waitFor(() => expect(document.activeElement).toBe(ui.getByRole('textbox', { name: '你的回答' })))
-      await fireEvent.click(ui.getByRole('button', { name: '上一题' }))
-      await waitFor(() => expect(document.activeElement).toBe(ui.getByRole('region', { name: '整组回答' })))
-      await ui.rerender({ autoFocus: true, focusBlock: 'q2' })
-      await waitFor(() => expect(document.activeElement).toBe(ui.getByRole('textbox', { name: '你的回答' })))
-      external.focus()
-      await ui.rerender({ state: { ...state, data: { ...state.data!, blocks: state.data!.blocks.slice() } } })
-      expect(document.activeElement).toBe(external)
-    } finally {
-      external.remove()
     }
+    state.error = '提交结果未确认'
+    const { ui } = mount(state)
+    expect(ui.getByRole('alert').textContent).toContain('提交结果未确认')
+    expect((ui.getByRole('radio', { name: /B/ }) as HTMLInputElement).checked).toBe(true)
+    expect(state.forms.q1!.draft.option).toBe('B')
+    expect(ui.getByRole('button', { name: '重试原提交' })).toBeTruthy()
   })
 
-  it('does not offer a numbered custom shortcut beyond nine or edit a locked question', async () => {
+  it('ignores keyboard shortcuts on a question that is no longer fresh', async () => {
     const state = fixture()
-    state.data!.blocks[0]!.meta!.options = Array.from({ length: 9 }, (_, i) => ({ text: `Option ${i + 1}` }))
-    state.data!.blocks[0]!.meta!.allow_other = true
-    const ui = render(AskGroupFlow, { props: { state, viewer: 'alice', names: {} } })
-    const card = ui.getByRole('region', { name: '整组回答' })
-    await fireEvent.keyDown(card, { key: '9' })
-    expect(ui.emitted().action?.at(-1)).toEqual([
-      expect.objectContaining({
-        action: expect.objectContaining({ draft: expect.objectContaining({ option: 'Option 9' }) }),
-      }),
-    ])
-    await fireEvent.keyDown(card, { key: '0' })
-    await fireEvent.keyDown(card, { key: '10' })
-    expect(ui.emitted().action).toHaveLength(1)
-    await ui.rerender({ state: { ...state, forms: { ...state.forms, q1: { ...state.forms.q1!, fresh: false } } } })
-    await fireEvent.keyDown(card, { key: '1' })
-    expect(ui.emitted().action).toHaveLength(1)
+    const { ui, actions } = mount(state)
+    await waitFor(() => expect(state.forms.q1!.draft.kind).toBe('option'))
+    const before = actions.length
+    state.forms.q1!.fresh = false
+    await fireEvent.keyDown(ui.getByRole('region', { name: '整组回答' }), { key: '2' })
+    expect(actions).toHaveLength(before)
   })
 
   it('offers a retry after the initial question group could not be loaded', async () => {
     const state = fixture()
     state.data = null
     state.error = '无法读取'
-    const ui = render(AskGroupFlow, { props: { state, viewer: 'alice', names: {} } })
+    const { ui } = mount(state)
     await fireEvent.click(ui.getByRole('button', { name: '刷新状态' }))
     expect(ui.emitted().action).toEqual([[{ type: 'refresh' }]])
   })
-  it('keeps the selected question through refresh while following new references and groups', async () => {
+
+  it('navigates the whole group without submitting anything by itself', async () => {
+    const state = fixture()
+    const { ui } = mount(state)
+    await fireEvent.click(ui.getByRole('button', { name: '切换问题' }))
+    await fireEvent.click(ui.getByRole('button', { name: '第 2 题' }))
+    expect(ui.getByRole('heading', { name: '问题 2' })).toBeTruthy()
+    expect(ui.emitted().action).not.toContainEqual([{ type: 'submit' }])
+  })
+
+  it('offers back and submit-anyway separately, preserving the actual counts', async () => {
+    const state = fixture()
+    state.confirm = true
+    const { ui } = mount(state)
+    expect(ui.getByText('待提交 0 题 · 稍后 0 题 · 未答 2 题')).toBeTruthy()
+    await fireEvent.click(ui.getByRole('button', { name: '回去补' }))
+    await fireEvent.click(ui.getByRole('button', { name: '照样交' }))
+    expect(ui.emitted().action).toEqual([[{ type: 'back' }], [{ type: 'confirm' }]])
+  })
+
+  it('keeps unknown receipt distinct from saved answers', () => {
+    const state = fixture()
+    state.data!.settlement = {
+      v: 1,
+      by: 'alice',
+      at: null,
+      answered: [],
+      later: ['q1'],
+      unanswered: ['q2'],
+      payload_hash: 'hash',
+      client_op_id: 'op',
+      delivery_event_id: 'event',
+    }
+    state.data!.receipt = {
+      event_id: 'event',
+      state: 'uncertain',
+      attempts: 1,
+      last_error: null,
+      sent_at: null,
+      received_at: null,
+      completed_at: null,
+    }
+    const { ui } = mount(state, { focusBlock: 'q2' })
+    expect(ui.getByRole('heading', { name: '问题 2' })).toBeTruthy()
+    expect(ui.getByText('答案已保存，接续结果不确定；不会盲目重发')).toBeTruthy()
+    expect(ui.queryByText('原执行者已完成本次接续')).toBeNull()
+  })
+
+  it('keeps the selected question through a refresh driven by the real group store', async () => {
     const data = fixture().data!
     mocks.read.mockResolvedValue(data)
     const scope = effectScope()
@@ -210,120 +305,15 @@ describe('group question presentation', () => {
         },
       })
       await waitFor(() => expect(ui.getByRole('heading', { name: '问题 2' })).toBeTruthy())
-      await fireEvent.click(ui.getByRole('button', { name: '切换问题' }))
-      await fireEvent.click(ui.getByRole('button', { name: '第 1 题' }))
-      expect(ui.getByRole('heading', { name: '问题 1' })).toBeTruthy()
       const previous = state.data
       mocks.read.mockResolvedValue({ ...data, blocks: data.blocks.slice() })
+      // 刷新按钮在进度那一栏里，先把那一栏展开。
       await fireEvent.click(ui.getByRole('button', { name: '切换问题' }))
       await fireEvent.click(ui.getByRole('button', { name: '刷新状态' }))
       await waitFor(() => expect(state.data).not.toBe(previous))
-      expect(ui.getByRole('heading').textContent).toBe('问题 1')
-
-      await ui.rerender({ focusBlock: 'q1' })
-      await ui.rerender({ focusBlock: 'q2' })
-      expect(ui.getByRole('heading', { name: '问题 2' })).toBeTruthy()
-
-      const next = fixture()
-      next.scope = { ...next.scope, id: 'next-group', members: ['q3', 'q4'] }
-      next.forms = { q3: next.forms.q1!, q4: next.forms.q2! }
-      next.data = {
-        ...next.data!,
-        group: next.scope,
-        blocks: next.data!.blocks.map((block, index) => ({
-          ...block,
-          id: next.scope.members[index]!,
-          content: `下一组问题 ${index + 1}`,
-          meta: { ...block.meta, ask_group: { ...next.scope, index } },
-        })),
-      }
-      await ui.rerender({ state: next, focusBlock: 'q4' })
-      expect(ui.getByRole('heading', { name: '下一组问题 2' })).toBeTruthy()
-      await ui.rerender({ state: fixture(), focusBlock: undefined })
-      expect(ui.getByRole('heading', { name: '问题 1' })).toBeTruthy()
+      expect(ui.getByRole('heading').textContent).toBe('问题 2')
     } finally {
       scope.stop()
     }
-  })
-
-  it('can dismiss and reopen a question without discarding drafts or sending an answer', async () => {
-    const state = fixture()
-    state.forms.q1!.draft = { ...emptyAskDraft(), kind: 'option', option: 'A' }
-    state.forms.q1!.editing = true
-    const ui = render(AskGroupFlow, { props: { state, viewer: 'alice', names: {} } })
-    await fireEvent.click(ui.getByRole('button', { name: '收起提问' }))
-    expect(ui.queryByRole('heading', { name: '问题 1' })).toBeNull()
-    await fireEvent.click(ui.getByRole('button', { name: '展开提问' }))
-    expect((ui.getByRole('radio', { name: /A/ }) as HTMLInputElement).checked).toBe(true)
-    await fireEvent.keyDown(ui.getByRole('region', { name: '整组回答' }), { key: 'Escape' })
-    expect(ui.queryByRole('heading', { name: '问题 1' })).toBeNull()
-    expect(ui.emitted().action).toBeUndefined()
-  })
-  it('moves between questions from the header while leaving text-entry keys alone', async () => {
-    const ui = render(AskGroupFlow, { props: { state: fixture(), viewer: 'alice', names: {} } })
-    await fireEvent.click(ui.getByRole('button', { name: '下一题' }))
-    expect(ui.getByRole('heading', { name: '问题 2' })).toBeTruthy()
-    await fireEvent.keyDown(ui.getByRole('textbox'), { key: 'ArrowLeft' })
-    expect(ui.getByRole('heading', { name: '问题 2' })).toBeTruthy()
-    await fireEvent.keyDown(ui.getByRole('region', { name: '整组回答' }), { key: 'ArrowLeft' })
-    expect(ui.getByRole('heading', { name: '问题 1' })).toBeTruthy()
-    expect(ui.emitted().action).toBeUndefined()
-  })
-
-  it('navigates the complete group and emits a draft without submitting', async () => {
-    const state = fixture()
-    const ui = render(AskGroupFlow, { props: { state, viewer: 'alice', names: {} } })
-    await fireEvent.click(ui.getByRole('button', { name: '切换问题' }))
-    await fireEvent.click(ui.getByRole('button', { name: '第 2 题' }))
-    expect(ui.getByRole('heading', { name: '问题 2' })).toBeTruthy()
-    await fireEvent.change(ui.getByRole('radio', { name: /A/ }))
-    expect(ui.emitted().action).toEqual([
-      [
-        expect.objectContaining({
-          type: 'question',
-          blockId: 'q2',
-          action: expect.objectContaining({ type: 'draft' }),
-        }),
-      ],
-    ])
-    expect(ui.queryByRole('button', { name: '提交答案' })).toBeNull()
-  })
-
-  it('offers back and submit-anyway separately, preserving the actual counts', async () => {
-    const state = fixture()
-    state.confirm = true
-    const ui = render(AskGroupFlow, { props: { state, viewer: 'alice', names: {} } })
-    expect(ui.getByText('待提交 0 题 · 稍后 0 题 · 未答 2 题')).toBeTruthy()
-    await fireEvent.click(ui.getByRole('button', { name: '回去补' }))
-    await fireEvent.click(ui.getByRole('button', { name: '照样交' }))
-    expect(ui.emitted().action).toEqual([[{ type: 'back' }], [{ type: 'confirm' }]])
-  })
-
-  it('opens the exact referenced member and keeps unknown receipt distinct from saved answers', () => {
-    const state = fixture()
-    state.data!.settlement = {
-      v: 1,
-      by: 'alice',
-      at: null,
-      answered: [],
-      later: ['q1'],
-      unanswered: ['q2'],
-      payload_hash: 'hash',
-      client_op_id: 'op',
-      delivery_event_id: 'event',
-    }
-    state.data!.receipt = {
-      event_id: 'event',
-      state: 'uncertain',
-      attempts: 1,
-      last_error: null,
-      sent_at: null,
-      received_at: null,
-      completed_at: null,
-    }
-    const ui = render(AskGroupFlow, { props: { state, viewer: 'alice', names: {}, focusBlock: 'q2' } })
-    expect(ui.getByRole('heading', { name: '问题 2' })).toBeTruthy()
-    expect(ui.getByText('答案已保存，接续结果不确定；不会盲目重发')).toBeTruthy()
-    expect(ui.queryByText('原执行者已完成本次接续')).toBeNull()
   })
 })
