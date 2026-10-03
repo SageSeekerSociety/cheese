@@ -181,6 +181,27 @@ def test_removing_the_last_owner_of_a_topic_writes_nothing(client, bearer):
     assert "alice" in _topic_handles(client, tid)
 
 
+def test_the_rooms_that_would_lose_their_owner_are_named_as_a_list(client, bearer):
+    """The refusal names every room as one list parameter, so each screen joins
+    and quotes them its own way; the Chinese sentence reads as it always did."""
+    pid = _project(client)
+    _add(client, pid, "alice")
+    _topic(client, pid, "alice", title="设计讨论")
+    _topic(client, pid, "alice", title="周会")
+
+    r = _leave(client, pid, "alice")
+
+    assert r.status_code == 422, r.text
+    assert (
+        r.json()["message"]
+        == "你是话题「周会」、「设计讨论」唯一的 owner，先把话题交给别人"
+    )
+    assert r.json()["error"]["i18n"] == {
+        "key": "soleTopicOwner",
+        "params": {"topics": {"list": ["周会", "设计讨论"], "quoted": True}},
+    }
+
+
 def test_a_teammate_cannot_be_removed_from_the_project(client):
     """团队成员在名册上是从团队读出来的，没有一条可删的成员行 —— 移他是 404，人
     还在（这条路由仍然只对外部成员和 AI 队友的座位成立）。

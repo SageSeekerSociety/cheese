@@ -10,7 +10,7 @@ from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import NotFoundError, UnprocessableEntityError
 from app.db.session import get_db
-from app.domain.block.notice_text import say
+from app.domain.block.notice_text import listing, say
 from app.domain.legal.documents import (
     DOCUMENTS,
     LegalDocument,
@@ -21,6 +21,10 @@ from app.domain.legal.documents import (
 from app.domain.legal.services import ConsentService
 
 router = APIRouter(tags=["Legal"])
+
+#: The sentence that names each document, so a refusal names it in its
+#: reader's language: the titles in ``DOCUMENTS`` are the Chinese ones.
+_TITLE_SENTENCE = {"terms": "legalDocTerms", "privacy": "legalDocPrivacy"}
 
 
 def client_context(request: Request) -> tuple[str, str]:
@@ -127,8 +131,8 @@ async def accept_documents(
     pending = await service.pending(auth_user.user_id)
     missing = [k for k in pending if k not in payload.documents]
     if missing:
-        titles = "、".join(f"《{DOCUMENTS[k].title}》" for k in missing)
-        raise UnprocessableEntityError(f"还需要同意{titles}")
+        titles = listing(say(_TITLE_SENTENCE[k]) for k in missing)
+        raise UnprocessableEntityError(say("consentStillNeeded", documents=titles))
     ip, user_agent = client_context(request)
     await service.record(
         user_id=auth_user.user_id,

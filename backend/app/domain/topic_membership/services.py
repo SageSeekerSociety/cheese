@@ -14,7 +14,7 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
-from app.domain.block.notice_text import say
+from app.domain.block.notice_text import listing, say
 from app.domain.identity.handles import (
     AGENT_HANDLE_PREFIX,
     CHEESE_HANDLE,
@@ -630,7 +630,7 @@ class TopicMemberService:
         )
         if orphaned:
             raise ValidationError(
-                say("soleTopicOwner", topics="".join(f"「{t}」" for t in orphaned))
+                say("soleTopicOwner", topics=listing(orphaned, quoted=True))
             )
         # 一条 DELETE 清掉全部席位，返回值就是数据库真的删掉的那些房间。以前是一条
         # 一条 get + delete —— 项目多少间房就多少次往返，而且「查到」被当成了「删
