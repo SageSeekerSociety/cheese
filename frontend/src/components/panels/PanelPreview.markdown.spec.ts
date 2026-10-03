@@ -53,6 +53,8 @@ function props(path = 'output/说明.md', content = SOURCE) {
     docLoading: false,
     docError: '',
     docRendererMissing: false,
+    // 这一份文件在屏幕上的身份：发出去的结构化引用要带上它（path/source/version）。
+    docIdentity: { topicId: 'room', path, taskId: null, source: 'live' as const, version: 'v1' },
   }
 }
 
@@ -106,4 +108,55 @@ it('屏幕上换成另一份文件时，这条指认自己撤掉', async () => {
 
   expect(ui.queryByPlaceholderText('说明要改什么')).toBeNull()
   expect(ui.emitted().locate).toBeUndefined()
+})
+
+/** 在「配置」那一节里选中「重试 3 次」这一段，和上面两条一样。 */
+async function selectPassage(ui: ReturnType<typeof mount>) {
+  const md = ui.getByTestId('markdown')
+  const node = md.querySelector('p')!.firstChild!
+  const range = document.createRange()
+  range.setStart(node, 4)
+  range.setEnd(node, 10)
+  const selection = window.getSelection()!
+  selection.removeAllRanges()
+  selection.addRange(range)
+  await fireEvent.mouseUp(md)
+}
+
+it('选中一段发出去时带的是带文件身份的 text-range 引用', async () => {
+  const submit = vi.fn().mockReturnValue(true)
+  const ui = mount({ submitQuestion: submit })
+  await selectPassage(ui)
+  await fireEvent.update(ui.getByPlaceholderText('说明要改什么'), '改这句')
+  await fireEvent.click(ui.getByText('发送'))
+
+  const request = submit.mock.calls[0]?.[0]
+  expect(request).toMatchObject({ topicId: 'room', intent: 'ask-agent', content: '改这句' })
+  expect(request.quotedContext).toMatchObject({
+    kind: 'text-range',
+    path: 'output/说明.md',
+    source: 'live',
+    version: 'v1',
+    task_id: null,
+    text: '重试 3 次',
+    heading: '配置',
+  })
+  // 两侧各带一段前后文，受话人靠它分辨同一句话的哪一处出现。
+  expect(request.quotedContext.prefix.endsWith('失败以后')).toBe(true)
+  expect(request.quotedContext.suffix.startsWith('。')).toBe(true)
+  // 走的是结构化那条路，不再额外拼一句话。
+  expect(ui.emitted().locate).toBeUndefined()
+})
+
+it('拿不到文件身份时退回拼一句话那条老路', async () => {
+  const submit = vi.fn().mockReturnValue(true)
+  const ui = mount({ submitQuestion: submit, docIdentity: null })
+  await selectPassage(ui)
+  await fireEvent.update(ui.getByPlaceholderText('说明要改什么'), '改这句')
+  await fireEvent.click(ui.getByText('发送'))
+
+  expect(submit).not.toHaveBeenCalled()
+  const [payload] = ui.emitted().locate as { message: string }[][]
+  expect(payload[0].message).toContain('重试 3 次')
+  expect(payload[0].message).toContain('改这句')
 })
