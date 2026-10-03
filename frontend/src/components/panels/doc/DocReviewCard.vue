@@ -29,6 +29,8 @@ const emit = defineEmits<{ (e: 'restore'): void }>()
   border: 1px solid var(--line-2);
   border-radius: var(--radius-lg);
   background: var(--raised);
+  /* 浮在正文上的审阅卡（DocEditLayer 绝对定位），和同一槽位的 DocSuggestionCard 一样带投影。 */
+  box-shadow: var(--shadow-2);
 }
 .doc-review-card__text {
   flex: 1 1 auto;

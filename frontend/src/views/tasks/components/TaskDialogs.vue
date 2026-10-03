@@ -401,7 +401,7 @@ const directShowPrivacy = () => {
 <style scoped>
 .info-alert-card {
   border: 1px solid rgba(var(--v-border-color), 0.12);
-  transition: all 0.2s ease;
+  transition: border-color var(--dur-quick) var(--ease-standard);
 }
 
 .info-avatar {
@@ -414,7 +414,7 @@ const directShowPrivacy = () => {
 
 .privacy-link {
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: color var(--dur-quick) var(--ease-standard);
   border-bottom: 1px dashed rgba(var(--v-theme-primary), 0.5);
 }
 
