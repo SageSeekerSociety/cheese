@@ -18,7 +18,7 @@ import type { BlockWindow } from '../../../lib/blockPaging'
 
 import { ref } from 'vue'
 
-import { joinNewest, prependOlder } from '../../../lib/blockPaging'
+import { capWindow, joinNewest, prependOlder } from '../../../lib/blockPaging'
 
 /** 新来的一块落在哪：显示出来了、收在背后的最新一段里、还是本来就有。 */
 export type Landing = 'shown' | 'held' | 'known'
@@ -88,6 +88,30 @@ export function useTimeline() {
   }
 
   /**
+   * 显示的这一段涨过上限时，把**最新**的那一截从屏上挪到背后去。
+   *
+   * 挪走而不是删掉：新消息要有个地方落（`append` 收进 `newestHeld`，算「held」），
+   * 「回到最新」要有东西可换（`backToNewest`），往下翻也要有东西可以接（`appendNewer`
+   * 拿 after 游标接上它就合成一段）。于是「停在历史中间」那套原样生效，只是它是被
+   * 裁出来的，不是从一条旧消息打开的。
+   *
+   * 单独一步、不在 `prepend` 里做：裁掉的行在视口下方，删掉不该动滚动位置，而
+   * `prepend` 的滚动补偿量的是 scrollHeight 的差；两者同一次落进 DOM 的话补偿会少
+   * 掉这一截，读的人每翻一页就被往上拽一下——正是这套窗口要避免的事。调用方在补偿
+   * 之后再叫它。
+   */
+  function capNewest() {
+    const capped = capWindow(messages.value)
+    if (!capped) return
+    messages.value = capped.keep
+    // 停在中间（背后已经有一段最新的）时，裁下来的这一截夹在显示段和它之间，留着会
+    // 让两段之间出现一个从没取过的洞，`joinNewest` 却以为接上了。丢掉即可：往下翻时
+    // 用 after 游标还会再取回来。
+    if (!newestHeld) newestHeld = { blocks: capped.dropped, hasMore: true }
+    hasNewer.value = true
+  }
+
+  /**
    * 换成历史中间的一段（`around` 一条消息取回来的那一页）。它要是已经和最新的一段
    * 接上了，就直接合成一段最新的。
    */
@@ -131,6 +155,7 @@ export function useTimeline() {
     replace,
     remove,
     prepend,
+    capNewest,
     showMiddle,
     appendNewer,
     backToNewest,
