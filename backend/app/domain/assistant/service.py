@@ -48,7 +48,7 @@ from app.domain.agent.harness.pi.personal import Launch
 from app.domain.assistant import billing
 from app.domain.assistant.models import AssistantConversation, AssistantMessage
 from app.domain.assistant.prompt import earlier, system_prompt
-from app.domain.user.repositories import UserRepository
+from app.domain.user.services import usernames_by_ids
 
 logger = logging.getLogger(__name__)
 
@@ -221,13 +221,13 @@ async def ask(
         conversation = await store.owned(user_id, conversation_id)
         before = await store.messages(conversation_id)
         await store.append(conversation, "user", question)
-        person = await UserRepository(session).get_by_id(user_id)
+        handle = (await usernames_by_ids(session, [user_id])).get(user_id)
         await session.commit()
     # What its tools read with while answering: this person's own view, for no
     # longer than the answer may take, and nothing it could change.
     acting = mint_delegated_credential(
         user_id=user_id,
-        handle=person.username if person is not None else str(user_id),
+        handle=handle or str(user_id),
         work=str(work),
         ttl_s=int(ANSWER_S) + CREDENTIAL_MARGIN_S,
     )
