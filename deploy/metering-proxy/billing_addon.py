@@ -774,6 +774,14 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
     }
 
     selected_model = flow.request.headers.pop("x-cheese-child-model", "")
+    # 小快家族的名字不是「指定」——CLI 自己的后台类请求(会话标题、路径建议、
+    # WebFetch 的摘要子请求)就带着它,而 harness 的传输层把这具请求体顶层的
+    # model 抄进了这个头。请求体那条路已经这么判(见 `request` 钩子与
+    # `is_haiku_name`),这一条头部快路是它的早期分支,判据要一样:漏了就成了
+    # 「主 agent 指名了一个目录里没有的模型」,一个目录外的小快名字把整个工具
+    # 调用 400 掉。
+    if is_subagent and is_haiku_name(selected_model):
+        selected_model = ""
     child_model = selected_model if is_subagent else ""
 
     # A subagent's /v1/messages defers everything from here to the `request`
