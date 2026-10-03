@@ -25,6 +25,7 @@ import { CellSelection } from '@tiptap/pm/tables'
 
 import { BUBBLE_META } from '../../../lib/docBubble'
 import { captureNewDocLink } from '../../../lib/docLinks'
+import { BLOCK_ITEMS, blockKeyOf } from '../../../lib/docSlashMenu'
 
 import DocBubble from './DocBubble.vue'
 import DocKeyboardBar from './DocKeyboardBar.vue'
@@ -492,6 +493,50 @@ function addBlockBelow() {
     .run()
 }
 
+// ---- 行首手柄点一下：这一块换成别的块（和浮条上的「正文 ▾」同一张表），不用先选字。
+// 拖它照旧是挪这一块。菜单量着手柄的位置摆在屏幕上，手柄因为鼠标移开而收起时它还在。
+const blockMenu = ref<{ pos: number; current: string; top: number; left: number } | null>(null)
+function openBlockMenu(e: MouseEvent) {
+  const ed = props.editor
+  if (!ed || hoverPos.value == null) return
+  const node = ed.state.doc.nodeAt(hoverPos.value)
+  if (!node) return
+  const at = (e.currentTarget as HTMLElement).getBoundingClientRect()
+  blockMenu.value = { pos: hoverPos.value, current: blockKeyOf(node), top: at.bottom + 4, left: at.left }
+}
+function pickBlock(item: SlashItem) {
+  const ed = props.editor
+  const menu = blockMenu.value
+  blockMenu.value = null
+  const node = ed && menu ? ed.state.doc.nodeAt(menu.pos) : null
+  if (!ed || !menu || !node) return
+  item
+    .run(
+      ed
+        .chain()
+        .focus()
+        .setTextSelection({ from: menu.pos + 1, to: menu.pos + node.nodeSize - 1 })
+    )
+    .run()
+}
+function closeBlockMenu(e: Event) {
+  if (e instanceof KeyboardEvent && e.key !== 'Escape') return
+  if (e.target instanceof Element && e.target.closest('.doc-block-menu')) return
+  blockMenu.value = null
+}
+watch(blockMenu, (open, was) => {
+  if (open && !was) {
+    document.addEventListener('mousedown', closeBlockMenu, true)
+    document.addEventListener('keydown', closeBlockMenu, true)
+    document.addEventListener('scroll', closeBlockMenu, true)
+  } else if (!open && was) {
+    document.removeEventListener('mousedown', closeBlockMenu, true)
+    document.removeEventListener('keydown', closeBlockMenu, true)
+    document.removeEventListener('scroll', closeBlockMenu, true)
+  }
+})
+onBeforeUnmount(() => (blockMenu.value = null))
+
 /** 正文在光标底下换了（人工编辑，或者装进来的一版）：这个按钮指着的段落已经不是
  *  原来那一段了，收回去。装配服务端那一版时上面不会喊这一声。 */
 function onEdited() {
@@ -507,35 +552,37 @@ function newLink() {
   const target = captureNewDocLink(cta.editor, cta.selection)
   if (target) emit('open-link', target)
 }
-/** 选区在一段之内（块样式按段换）。 */
-function singleBlock(cta: CommentCta): boolean {
+/** 选中的是正文里的字（一段或跨几段）：块样式能换。 */
+function restyle(cta: CommentCta): boolean {
   const sel = cta.selection
-  return sel instanceof TextSelection && sel.$from.depth > 0 && sel.$from.sameParent(sel.$to)
+  return sel instanceof TextSelection && sel.$from.depth > 0
 }
 defineExpose({ onHover, onEdited })
 </script>
 
 <template>
   <!-- 选中文字后的浮条：贴着选区，跟着正文滚。 -->
-  <div
-    v-if="commentCta && !(touch && editable)"
-    ref="toolbar"
-    class="doc-comment-cta"
-    :style="{ top: `${commentCta.top}px`, left: `${commentCta.left}px` }"
-  >
-    <DocBubble
-      :editor="commentCta.editor"
-      :agent-name="agentName"
-      :agent-handle="agentHandle"
-      :editable="editable && commentCta.editor.isEditable"
-      :single-block="singleBlock(commentCta)"
-      :can-agent="canAgent"
-      @agent="agentOnSelection"
-      @comment="commentOnSelection"
-      @link="newLink"
-      @copy="copySelection"
-    />
-  </div>
+  <Transition name="doc-comment-cta">
+    <div
+      v-if="commentCta && !(touch && editable)"
+      ref="toolbar"
+      class="doc-comment-cta"
+      :style="{ top: `${commentCta.top}px`, left: `${commentCta.left}px` }"
+    >
+      <DocBubble
+        :editor="commentCta.editor"
+        :agent-name="agentName"
+        :agent-handle="agentHandle"
+        :editable="editable && commentCta.editor.isEditable"
+        :restyle="restyle(commentCta)"
+        :can-agent="canAgent"
+        @agent="agentOnSelection"
+        @comment="commentOnSelection"
+        @link="newLink"
+        @copy="copySelection"
+      />
+    </div>
+  </Transition>
   <!-- 手机上能改时：键盘上方的那一条代替浮条，没选中字时也在。 -->
   <DocKeyboardBar v-if="touch && editable && editor" :editor="editor">
     <DocBubble
@@ -613,35 +660,140 @@ defineExpose({ onHover, onEdited })
     >
       <v-icon size="15">mdi-plus</v-icon>
     </button>
-    <span class="doc-handle__btn doc-handle__grip" :title="t('work.room.doc.dragToReorder')">
+    <span
+      class="doc-handle__btn doc-handle__grip"
+      role="button"
+      aria-haspopup="menu"
+      :aria-expanded="!!blockMenu"
+      :aria-label="t('work.room.doc.blockHandle')"
+      :title="t('work.room.doc.blockHandle')"
+      @click="openBlockMenu"
+    >
       <v-icon size="15">mdi-drag-vertical</v-icon>
     </span>
   </DragHandle>
+  <Teleport to="body">
+    <div
+      v-if="blockMenu"
+      class="doc-block-menu"
+      role="menu"
+      :aria-label="t('work.room.doc.blockType')"
+      :style="{ top: `${blockMenu.top}px`, left: `${blockMenu.left}px` }"
+    >
+      <button
+        v-for="item in BLOCK_ITEMS"
+        :key="item.key"
+        type="button"
+        role="menuitemradio"
+        :aria-checked="item.key === blockMenu.current"
+        class="doc-block-menu__item"
+        @click="pickBlock(item)"
+      >
+        <v-icon size="16">{{ item.icon }}</v-icon>
+        {{ item.label }}
+      </button>
+    </div>
+  </Teleport>
 </template>
 
 <style scoped>
+.doc-comment-cta-enter-active {
+  transition:
+    opacity 120ms ease-out,
+    transform 140ms cubic-bezier(0.2, 0, 0, 1);
+}
+.doc-comment-cta-leave-active {
+  transition: opacity 80ms ease-in;
+}
+.doc-comment-cta-enter-from {
+  opacity: 0;
+  transform: translateY(4px);
+}
+.doc-comment-cta-leave-to {
+  opacity: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .doc-comment-cta-enter-active,
+  .doc-comment-cta-leave-active {
+    transition: none;
+  }
+}
 /* 浮条的外框：只管摆在哪儿，样子在 DocBubble 里。 */
 .doc-comment-cta {
   position: absolute;
   z-index: 6;
 }
 
+/* 手指没有悬停：手柄出不来也点不准，手机上换格式用键盘上方那一条。 */
+@media (hover: none) {
+  .doc-handle {
+    display: none;
+  }
+}
+/* 点手柄开出的那张：和浮条上的「正文 ▾」一个样子。 */
+.doc-block-menu {
+  position: fixed;
+  z-index: 2400;
+  display: flex;
+  flex-direction: column;
+  min-width: 168px;
+  padding: 4px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-lg);
+  background: var(--raised);
+  box-shadow: var(--shadow-2);
+  animation: docBlockMenuIn 120ms ease-out;
+}
+@keyframes docBlockMenuIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+.doc-block-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 32px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.doc-block-menu__item:hover,
+.doc-block-menu__item[aria-checked='true'] {
+  background: var(--fill);
+}
+.doc-block-menu__item .v-icon {
+  color: var(--muted);
+}
+@media (prefers-reduced-motion: reduce) {
+  .doc-block-menu {
+    animation: none;
+  }
+}
 /* Feishu-style left gutter block handles — REAL controls, not decoration.
    The DragHandle floats next to the hovered block (positioned by the extension).
    ＋ inserts a block below (click); ⠿ drags to reorder. */
 .doc-handle {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 0;
   /* The DragHandle plugin pins this element's RIGHT edge to the text's left
      edge — without the padding the ⠿ glyph literally touches the first
-     character. The padding is the breathing room (Feishu keeps ~14px). */
-  padding-right: 14px;
+     character. The whole handle (42px) has to fit in the page's left
+     padding (PanelDocView .doc-page), or the scroller clips it. */
+  padding-right: 6px;
   /* Nudge down so the 22px buttons center on the ~29px first text line. */
   transform: translateY(3.4px);
 }
 .doc-handle__btn {
-  width: 20px;
+  width: 18px;
   height: 22px;
   display: flex;
   align-items: center;

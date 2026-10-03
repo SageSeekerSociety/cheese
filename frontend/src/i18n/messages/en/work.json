@@ -748,7 +748,7 @@
       "options": "Document options",
       "setReadOnly": "Make read-only",
       "insertBelow": "Insert a block below",
-      "dragToReorder": "Drag to reorder",
+      "blockHandle": "Drag to move, click to change the style",
       "language": "Language",
       "copyFailed": "Couldn't copy",
       "commentOnSelection": "Comment on the selection",

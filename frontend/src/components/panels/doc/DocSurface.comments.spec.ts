@@ -329,16 +329,18 @@ describe('production surface comment selections', () => {
     expect(f.ed.getHTML()).toContain('<mark>一千万</mark>')
   })
 
-  it('changes the paragraph style only for a selection inside one paragraph', async () => {
-    const f = await mountDoc('<p>第一段文字</p><p>第二段文字</p>')
+  it('changes the paragraph style of every paragraph the selection touches, and no other', async () => {
+    const f = await mountDoc('<p>第一段文字</p><p>第二段文字</p><p>第三段文字</p>')
     await select(f.ed, '一段')
     await fireEvent.click(screen.getByRole('button', { name: t('work.room.doc.blockType') }))
     await fireEvent.click(screen.getByRole('menuitemradio', { name: new RegExp(t('work.room.doc.slash.h2')) }))
-    expect(f.ed.getHTML()).toBe('<h2>第一段文字</h2><p>第二段文字</p>')
+    expect(f.ed.getHTML()).toBe('<h2>第一段文字</h2><p>第二段文字</p><p>第三段文字</p>')
 
     f.ed.commands.setTextSelection({ from: span(f.ed, '一段').from, to: span(f.ed, '第二').to })
     await nextTick()
-    expect(screen.queryByRole('button', { name: t('work.room.doc.blockType') })).toBeNull()
+    await fireEvent.click(screen.getByRole('button', { name: t('work.room.doc.blockType') }))
+    await fireEvent.click(screen.getByRole('menuitemradio', { name: new RegExp(t('work.room.doc.slash.h3')) }))
+    expect(f.ed.getHTML()).toBe('<h3>第一段文字</h3><h3>第二段文字</h3><p>第三段文字</p>')
   })
 
   it('keeps mapped identity across a new top-level block and hides a newly ambiguous quote', async () => {

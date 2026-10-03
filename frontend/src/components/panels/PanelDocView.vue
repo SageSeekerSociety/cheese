@@ -483,6 +483,12 @@ defineExpose({
     padding: 24px 44px 72px;
   }
 }
+/* 能悬停的设备上，行首的手柄（DocOverlays .doc-handle，42px）待在左边距里，不被裁掉。 */
+@media (hover: hover) {
+  .doc-page {
+    padding-left: 48px;
+  }
+}
 /* The topic title, above the document. */
 .doc-page__title {
   max-width: 720px;
