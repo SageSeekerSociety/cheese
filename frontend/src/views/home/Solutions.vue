@@ -5,6 +5,7 @@ import LandingShell from './LandingShell.vue'
 import LandingTopic from './LandingTopic.vue'
 
 import BrandScene from '@/components/account/brandScene/BrandScene.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
 // The page for the people who bring Cheese into an organisation — schools,
@@ -161,9 +162,9 @@ const trust = computed(() => [
         <h1 class="hero-title">{{ t('publicSite.solutionsPage.heroTitle') }}</h1>
         <p class="hero-position">{{ t('publicSite.solutionsPage.heroBody') }}</p>
         <div class="hero-actions">
-          <v-btn :href="contactHref" color="primary" variant="flat" size="x-large" append-icon="mdi-email-outline">
+          <BaseButton :href="contactHref" kind="primary" size="lg" append-icon="mdi-email-outline">
             {{ t('publicSite.solutionsPage.contact') }}
-          </v-btn>
+          </BaseButton>
           <router-link class="text-link" :to="entryHref">
             {{ t('publicSite.solutionsPage.tryProduct') }}
             <v-icon icon="mdi-arrow-right" size="16" />
@@ -309,9 +310,9 @@ const trust = computed(() => [
         <h2 class="cta-title">{{ t('publicSite.solutionsPage.ctaTitle') }}</h2>
         <p class="cta-body">{{ t('publicSite.solutionsPage.ctaBody') }}</p>
         <div class="hero-actions">
-          <v-btn :href="contactHref" color="primary" variant="flat" size="x-large" append-icon="mdi-email-outline">
+          <BaseButton :href="contactHref" kind="primary" size="lg" append-icon="mdi-email-outline">
             {{ t('publicSite.solutionsPage.contact') }}
-          </v-btn>
+          </BaseButton>
         </div>
       </div>
     </section>

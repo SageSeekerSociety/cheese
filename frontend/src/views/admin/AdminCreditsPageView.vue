@@ -20,6 +20,7 @@ import AdminCreditTeamsTable from '@/components/admin/credits/AdminCreditTeamsTa
 import AdminGrantDialog from '@/components/admin/credits/AdminGrantDialog.vue'
 import AdminPlanDialog from '@/components/admin/credits/AdminPlanDialog.vue'
 import AdminPlansTable from '@/components/admin/credits/AdminPlansTable.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 import { teamTitle } from '@/lib/adminCredits'
 
 // 方案与额度（`/admin/credits`）的画法：方案一览、团队一览，点开一个团队是右边的面板。
@@ -96,9 +97,9 @@ const kindOptions = computed(() => [
       <section class="acr__section">
         <div class="acr__sectionhead">
           <h2 class="acr__h t-title">{{ t('credits.plans.title') }}</h2>
-          <v-btn color="primary" size="small" prepend-icon="mdi-plus" @click="emit('open-plan', null)">
+          <BaseButton kind="primary" size="sm" prepend-icon="mdi-plus" @click="emit('open-plan', null)">
             {{ t('credits.plans.add') }}
-          </v-btn>
+          </BaseButton>
         </div>
         <AdminPlansTable
           :plans="props.plans"

@@ -3,6 +3,7 @@ import { computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 
 import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 import FeedbackCard from '@/components/feedback/FeedbackCard.vue'
 import FeedbackErrorBanner from '@/components/feedback/FeedbackErrorBanner.vue'
 import FeedbackList from '@/components/feedback/FeedbackList.vue'
@@ -79,12 +80,12 @@ function onEmptyAction() {
 <template>
   <FeedbackPageShell :title="t('feedback.mine.title')">
     <template #actions>
-      <v-btn variant="text" color="secondary" size="small" to="/feedback">
+      <BaseButton size="sm" to="/feedback">
         {{ t('feedback.mine.back') }}
-      </v-btn>
-      <v-btn color="primary" prepend-icon="mdi-plus" :to="{ name: 'FeedbackSubmit' }">
+      </BaseButton>
+      <BaseButton kind="primary" prepend-icon="mdi-plus" :to="{ name: 'FeedbackSubmit' }">
         {{ t('feedback.mine.submit') }}
-      </v-btn>
+      </BaseButton>
     </template>
 
     <!-- 这一页的说明。**总数只在拉到之后才说**：加载中写「共 0 条」是在报一个还不知道

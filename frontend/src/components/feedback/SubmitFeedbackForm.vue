@@ -5,6 +5,7 @@ import { computed, onMounted, ref } from 'vue'
 
 import { kindLabel } from './feedbackLabels'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { cleanTags, EXPECTATION_KINDS, MAX_TAGS, REPRO_KINDS, useFeedbackStore } from '@/stores/feedback'
 
@@ -245,9 +246,9 @@ onMounted(() => {
     <div v-if="restoredNotice" class="sb-restored">
       <v-icon size="16" aria-hidden="true">mdi-history</v-icon>
       <span class="t-meta-read t-num">{{ t('feedback.submit.draft.restored') }}</span>
-      <v-btn variant="text" size="small" color="secondary" @click="discardDraft">
+      <BaseButton kind="ghost" size="sm" @click="discardDraft">
         {{ t('feedback.submit.draft.discard') }}
-      </v-btn>
+      </BaseButton>
     </div>
 
     <!-- 类型放最前面：它决定后面问哪几栏。它自己不挡提交（有默认值），所以不进必填那
@@ -444,13 +445,13 @@ onMounted(() => {
     <p v-if="store.error" class="sb-note sb-note--error">{{ store.error }}</p>
 
     <div class="sb-actions">
-      <v-btn variant="text" color="secondary" :disabled="store.submitting" @click="emit('cancel')">
+      <BaseButton kind="ghost" :disabled="store.submitting" @click="emit('cancel')">
         {{ t('feedback.submit.cancel') }}
-      </v-btn>
+      </BaseButton>
       <v-spacer />
-      <v-btn color="primary" type="submit" :loading="store.submitting" :disabled="!canSubmit">
+      <BaseButton kind="primary" type="submit" :loading="store.submitting" :disabled="!canSubmit">
         {{ fromProposal ? t('feedback.submit.send') : t('feedback.submit.submit') }}
-      </v-btn>
+      </BaseButton>
     </div>
   </form>
 </template>

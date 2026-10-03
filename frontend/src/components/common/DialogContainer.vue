@@ -15,8 +15,10 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
-          <v-btn v-if="dialog.showCancel" variant="text" @click="onCancel(dialog)">{{ t('global.cancel') }}</v-btn>
-          <v-btn color="primary" variant="flat" @click="onConfirm(dialog)">{{ t('shell.dialog.ok') }}</v-btn>
+          <BaseButton v-if="dialog.showCancel" kind="ghost" @click="onCancel(dialog)">{{
+            t('global.cancel')
+          }}</BaseButton>
+          <BaseButton kind="primary" @click="onConfirm(dialog)">{{ t('shell.dialog.ok') }}</BaseButton>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -26,6 +28,7 @@
 <script lang="ts" setup>
 import type { DialogInstance } from '@/plugins/dialog'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { closeDialog, dialogs } from '@/plugins/dialog'
 

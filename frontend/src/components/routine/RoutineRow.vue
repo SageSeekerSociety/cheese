@@ -19,6 +19,7 @@ import { useDisplay } from 'vuetify'
 
 import NavLink from '../common/NavLink.vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import UserRef from '@/components/common/UserRef.vue'
 import { t } from '@/i18n'
@@ -147,12 +148,10 @@ const inMenu = computed(() => (mdAndUp.value ? [] : rowActions()))
       </v-chip>
       <AdaptiveMenu v-if="routine.can_manage && inMenu.length" :actions="inMenu" :title="routine.title">
         <template #activator="{ props: menuProps }">
-          <v-btn
+          <BaseButton
             v-bind="menuProps"
             icon="mdi-dots-horizontal"
-            size="small"
-            variant="text"
-            color="on-surface-variant"
+            size="sm"
             class="tap-target"
             :aria-label="t('routines.action.more')"
           />
@@ -191,33 +190,33 @@ const inMenu = computed(() => (mdAndUp.value ? [] : rowActions()))
 
     <div v-if="routine.can_manage" class="routine-row__actions">
       <template v-if="draft">
-        <v-btn size="small" color="primary" variant="flat" :loading="busyOn('confirm')" @click="emit('confirm')">
+        <BaseButton kind="primary" size="sm" :loading="busyOn('confirm')" @click="emit('confirm')">
           {{ t('routines.action.confirm') }}
-        </v-btn>
+        </BaseButton>
         <template v-if="mdAndUp">
-          <v-btn size="small" variant="text" @click="emit('edit')">{{ t('routines.action.edit') }}</v-btn>
-          <v-btn size="small" variant="text" color="on-surface-variant" @click="emit('delete')">
+          <BaseButton kind="ghost" size="sm" @click="emit('edit')">{{ t('routines.action.edit') }}</BaseButton>
+          <BaseButton kind="ghost" size="sm" @click="emit('delete')">
             {{ t('routines.action.drop') }}
-          </v-btn>
+          </BaseButton>
         </template>
       </template>
       <template v-else-if="mdAndUp">
-        <v-btn v-if="running" size="small" variant="text" :loading="busyOn('pause')" @click="emit('pause')">
+        <BaseButton v-if="running" kind="ghost" size="sm" :loading="busyOn('pause')" @click="emit('pause')">
           {{ t('routines.action.pause') }}
-        </v-btn>
-        <v-btn v-else size="small" variant="text" :loading="busyOn('resume')" @click="emit('resume')">
+        </BaseButton>
+        <BaseButton v-else kind="ghost" size="sm" :loading="busyOn('resume')" @click="emit('resume')">
           {{ t('routines.action.resume') }}
-        </v-btn>
-        <v-btn size="small" variant="text" :loading="busyOn('run-now')" @click="emit('run-now')">
+        </BaseButton>
+        <BaseButton kind="ghost" size="sm" :loading="busyOn('run-now')" @click="emit('run-now')">
           {{ t('routines.action.runNow') }}
-        </v-btn>
-        <v-btn size="small" variant="text" @click="emit('edit')">{{ t('routines.action.edit') }}</v-btn>
-        <v-btn size="small" variant="text" @click="emit('toggle-runs')">
+        </BaseButton>
+        <BaseButton kind="ghost" size="sm" @click="emit('edit')">{{ t('routines.action.edit') }}</BaseButton>
+        <BaseButton kind="ghost" size="sm" @click="emit('toggle-runs')">
           {{ open ? t('routines.action.hideRuns') : t('routines.action.showRuns') }}
-        </v-btn>
-        <v-btn size="small" variant="text" color="on-surface-variant" @click="emit('delete')">
+        </BaseButton>
+        <BaseButton kind="ghost" size="sm" @click="emit('delete')">
           {{ t('routines.action.delete') }}
-        </v-btn>
+        </BaseButton>
       </template>
     </div>
     <!-- 别人的规则：一颗按钮都不画，但要说清为什么 —— 一条没有按钮的规则和一条你没

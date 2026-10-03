@@ -37,17 +37,17 @@
 
       <p class="account-hint">{{ t('account.twoFactor.lockout') }}</p>
 
-      <v-btn
+      <BaseButton
         block
-        color="primary"
-        size="large"
+        kind="primary"
+        size="lg"
         type="submit"
         class="account-submit"
         :loading="loading"
         :disabled="!validateCode(codeType === 'totp' ? totpCode : backupCode)"
       >
         {{ codeType === 'totp' ? t('account.twoFactor.totpSubmit') : t('account.twoFactor.backupSubmit') }}
-      </v-btn>
+      </BaseButton>
 
       <div class="account-foot account-foot--split">
         <button type="button" class="account-link" @click="toggleCodeType">
@@ -63,12 +63,12 @@
       <v-card :title="t('account.twoFactor.backupUsedTitle')">
         <v-card-text>{{ t('account.twoFactor.backupUsedBody') }}</v-card-text>
         <v-card-actions class="justify-end">
-          <v-btn variant="text" @click="handleLater">
+          <BaseButton kind="ghost" @click="handleLater">
             {{ t('account.twoFactor.later') }}
-          </v-btn>
-          <v-btn color="primary" variant="flat" @click="handleGoToSecurity">
+          </BaseButton>
+          <BaseButton kind="primary" @click="handleGoToSecurity">
             {{ t('account.twoFactor.regenerate') }}
-          </v-btn>
+          </BaseButton>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -84,6 +84,7 @@ import { attemptMessage } from './attemptWait'
 import { landingAfterSignIn, takeFirstStep, upgradeAfterSecondStep } from './passkeyEnrollment'
 
 import AccountHeading from '@/components/account/AccountHeading.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
 import { postLoginTarget, takeOAuthRedirect } from '@/router/loginRedirect'

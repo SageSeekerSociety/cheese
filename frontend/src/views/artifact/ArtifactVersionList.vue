@@ -8,6 +8,7 @@ import type { ArtifactVersion } from '@/api'
 
 import { computed, ref } from 'vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
@@ -66,49 +67,39 @@ function previous(version: ArtifactVersion): ArtifactVersion | undefined {
             </template>
           </div>
           <div class="version__actions">
-            <v-btn
+            <BaseButton
               v-if="version.kind === 'file'"
-              size="small"
-              variant="text"
-              color="on-surface-variant"
+              size="sm"
               :loading="downloading === version.card_id"
               @click="emit('download', version)"
             >
               {{ t('tasks.artifact.download') }}
-            </v-btn>
-            <v-btn
+            </BaseButton>
+            <BaseButton
               v-else-if="version.kind === 'link' && version.url"
-              size="small"
-              variant="text"
-              color="on-surface-variant"
+              size="sm"
               :href="version.url"
               target="_blank"
               rel="noopener noreferrer"
             >
               {{ t('tasks.artifact.open') }}
-            </v-btn>
+            </BaseButton>
             <!-- 交出去的是一次合并，或者这一版早于交付物留存：两种都没有文件可给，
                  而它们不是同一件事，所以话也不一样。 -->
             <span v-else class="t-meta c-faint version__none">
               {{ version.kind === 'merge' ? t('tasks.artifact.mergeOnly') : t('tasks.artifact.notRetained') }}
             </span>
-            <v-btn
-              v-if="previous(version)"
-              size="small"
-              variant="text"
-              color="on-surface-variant"
-              @click="emit('compare', version)"
-            >
+            <BaseButton v-if="previous(version)" size="sm" @click="emit('compare', version)">
               {{ t('tasks.artifact.compareWith', { number: version.number - 1 }) }}
-            </v-btn>
+            </BaseButton>
           </div>
         </div>
       </li>
     </ul>
     <p v-else class="t-body c-muted versions__empty">{{ t('tasks.artifact.noVersions') }}</p>
-    <v-btn v-if="hidden > 0" variant="text" size="small" color="on-surface-variant" @click="all = true">
+    <BaseButton v-if="hidden > 0" size="sm" @click="all = true">
       {{ t('tasks.artifact.showEarlier', { n: hidden }) }}
-    </v-btn>
+    </BaseButton>
   </div>
 </template>
 

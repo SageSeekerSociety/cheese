@@ -4,6 +4,7 @@ import type { ModelTier, Plan, PlanAudience, PlanInput, PlanWindow } from '@/lib
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { AUDIENCE_KEY, MODEL_TIERS, planTiers, TIER_KEY } from '@/lib/adminCredits'
 
 // 新建或编辑一个方案：名称、适用对象、排序、计费方式（按月发放，或按时间窗口限额，
@@ -238,7 +239,9 @@ function submit() {
                   divided
                   @update:model-value="setBilling"
                 >
+                  <!-- eslint-disable-next-line vue/no-restricted-syntax -- a segment of v-btn-toggle, not one of the BaseButton roles -->
                   <v-btn value="monthly" size="small">{{ t('credits.planDialog.billingMonthly') }}</v-btn>
+                  <!-- eslint-disable-next-line vue/no-restricted-syntax -- a segment of v-btn-toggle, not one of the BaseButton roles -->
                   <v-btn value="windows" size="small">{{ t('credits.planDialog.billingWindows') }}</v-btn>
                 </v-btn-toggle>
               </div>
@@ -296,19 +299,18 @@ function submit() {
                     hide-details
                     class="apd__num"
                   />
-                  <v-btn
+                  <BaseButton
                     icon="mdi-close"
-                    variant="text"
-                    size="small"
+                    size="sm"
                     :disabled="windows.length === 1"
                     :aria-label="t('credits.planDialog.removeWindow')"
                     @click="removeWindow(i)"
                   />
                 </div>
                 <div class="apd__line">
-                  <v-btn variant="text" size="small" prepend-icon="mdi-plus" @click="addWindow">
+                  <BaseButton kind="ghost" size="sm" prepend-icon="mdi-plus" @click="addWindow">
                     {{ t('credits.planDialog.addWindow') }}
-                  </v-btn>
+                  </BaseButton>
                   <span v-if="duplicateWindow" class="apd__warn t-meta-read">
                     {{ t('credits.planDialog.duplicateWindow') }}
                   </span>
@@ -349,22 +351,22 @@ function submit() {
         <template v-if="editing">
           <span v-if="undeletable" class="apd__note t-meta-read">{{ undeletable }}</span>
           <template v-else-if="confirmingDelete">
-            <v-btn color="error" variant="text" :loading="saving" :disabled="saving" @click="emit('delete')">
+            <BaseButton kind="danger" solid :loading="saving" :disabled="saving" @click="emit('delete')">
               {{ t('credits.planDialog.confirmDelete') }}
-            </v-btn>
-            <v-btn variant="text" :disabled="saving" @click="confirmingDelete = false">
+            </BaseButton>
+            <BaseButton kind="ghost" :disabled="saving" @click="confirmingDelete = false">
               {{ t('credits.planDialog.keep') }}
-            </v-btn>
+            </BaseButton>
           </template>
-          <v-btn v-else variant="text" :disabled="saving" @click="confirmingDelete = true">
+          <BaseButton v-else kind="ghost" :disabled="saving" @click="confirmingDelete = true">
             {{ t('credits.planDialog.delete') }}
-          </v-btn>
+          </BaseButton>
         </template>
         <v-spacer />
-        <v-btn variant="text" :disabled="saving" @click="close">{{ t('credits.planDialog.cancel') }}</v-btn>
-        <v-btn color="primary" variant="flat" :loading="saving" :disabled="invalid || saving" @click="submit">
+        <BaseButton kind="ghost" :disabled="saving" @click="close">{{ t('credits.planDialog.cancel') }}</BaseButton>
+        <BaseButton kind="primary" :loading="saving" :disabled="invalid || saving" @click="submit">
           {{ editing ? t('credits.planDialog.save') : t('credits.planDialog.create') }}
-        </v-btn>
+        </BaseButton>
       </v-card-actions>
     </v-card>
   </v-dialog>

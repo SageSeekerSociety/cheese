@@ -21,6 +21,7 @@ import type { DocumentTemplate, RoomOutput } from '@/api'
 import { computed, ref, useId, watch } from 'vue'
 
 import { listDocumentTemplates, listRoomOutputs, newFromTemplate, saveRoomOutputToLibrary } from '@/api'
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
 
@@ -207,15 +208,15 @@ defineExpose({ reload: load })
         <!-- 有几样东西是这一块唯一该说清的事，收起时更得说。 -->
         <span v-if="files.length" class="outs__count t-meta">· {{ files.length }}</span>
       </button>
-      <v-btn
-        size="small"
-        variant="text"
+      <BaseButton
+        kind="ghost"
+        size="sm"
         prepend-icon="mdi-file-plus-outline"
         data-testid="new-from-template"
         @click="toggleTemplates"
       >
         {{ t('tasks.preview.roomOutputs.newFromTemplate') }}
-      </v-btn>
+      </BaseButton>
     </div>
     <ul v-if="choosing && !picking" class="outs__templates">
       <li v-if="!templates.length" class="t-meta c-faint">
@@ -236,12 +237,12 @@ defineExpose({ reload: load })
         autocomplete="off"
         :label="t('tasks.preview.roomOutputs.newFromTemplateLabel', { name: picking.name })"
       />
-      <v-btn size="small" color="primary" variant="flat" :loading="creating" @click="create">
+      <BaseButton kind="primary" size="sm" :loading="creating" @click="create">
         {{ t('tasks.preview.roomOutputs.createAndOpen') }}
-      </v-btn>
-      <v-btn size="small" variant="text" @click="toggleTemplates">
+      </BaseButton>
+      <BaseButton kind="ghost" size="sm" @click="toggleTemplates">
         {{ t('tasks.preview.roomOutputs.cancel') }}
-      </v-btn>
+      </BaseButton>
     </div>
     <p v-if="error" role="alert" class="outs__error t-meta">{{ error }}</p>
     <ul :id="rowsId" class="outs__list">
@@ -256,28 +257,15 @@ defineExpose({ reload: load })
         </button>
         <span class="outs-row__when t-meta c-faint">{{ relTime(output.shown_at) }}</span>
         <span v-if="saved[output.path]" class="t-meta c-faint">{{ saved[output.path] }}</span>
-        <v-btn
-          v-else
-          size="small"
-          variant="text"
-          color="on-surface-variant"
-          :loading="saving === output.path"
-          @click="save(output)"
-        >
+        <BaseButton v-else kind="ghost" size="sm" :loading="saving === output.path" @click="save(output)">
           {{ t('tasks.preview.roomOutputs.saveToLibrary') }}
-        </v-btn>
+        </BaseButton>
       </li>
       <!-- 收起来的那些去哪儿了：说清一共有多少样，按钮就在这一行的末尾。 -->
       <li v-if="hiddenCount > 0" class="outs__more">
-        <v-btn
-          size="small"
-          variant="text"
-          color="primary"
-          data-testid="room-outputs-expand-all"
-          @click="toggleExpanded"
-        >
+        <BaseButton kind="ghost" size="sm" data-testid="room-outputs-expand-all" @click="toggleExpanded">
           {{ t('tasks.preview.roomOutputs.expandAll', { count: files.length }) }}
-        </v-btn>
+        </BaseButton>
       </li>
     </ul>
   </section>

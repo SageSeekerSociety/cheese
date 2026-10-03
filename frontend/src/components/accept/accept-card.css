@@ -14,10 +14,3 @@
   position: relative;
   background: transparent;
 }
-
-/* Secondary button: 1px border, neutral text, surface bg. */
-.btn-secondary {
-  border: 1px solid var(--line-2);
-  color: var(--text);
-  background: var(--surface);
-}

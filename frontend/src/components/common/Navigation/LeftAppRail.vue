@@ -69,6 +69,7 @@
 
         <UserMenuCard :menu="userMenu" />
       </v-menu>
+      <!-- eslint-disable-next-line vue/no-restricted-syntax -- nav bar button whose look this component styles exactly (design-system §3.6 exception) -->
       <v-btn
         v-else
         to="/account/signin"

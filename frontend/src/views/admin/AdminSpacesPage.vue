@@ -10,6 +10,7 @@ import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminFlash from '@/components/admin/AdminFlash.vue'
 import AdminPage from '@/components/admin/AdminPage.vue'
 import AdminTabs from '@/components/admin/AdminTabs.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { relTime } from '@/lib/relTime'
@@ -139,10 +140,9 @@ onMounted(load)
   <div class="asp">
     <AdminPage :title="t('navigation.admin.spaces')" :sub="t('spaces.review.adminHelp')">
       <template #tools>
-        <v-btn
+        <BaseButton
           icon="mdi-refresh"
-          variant="text"
-          size="small"
+          size="sm"
           :aria-label="t('spaces.review.refresh')"
           :loading="loading"
           :disabled="saving"
@@ -225,12 +225,12 @@ onMounted(load)
                 </p>
               </div>
               <div v-if="item.reviewStatus === 'PENDING'" class="asp__actions">
-                <v-btn color="primary" size="small" variant="flat" :disabled="saving" @click="decide(item, true)">
+                <BaseButton kind="primary" size="sm" :disabled="saving" @click="decide(item, true)">
                   {{ t('spaces.review.approve') }}
-                </v-btn>
-                <v-btn size="small" variant="text" :disabled="saving" @click="reject(item)">
+                </BaseButton>
+                <BaseButton size="sm" :disabled="saving" @click="reject(item)">
                   {{ t('spaces.review.reject') }}
-                </v-btn>
+                </BaseButton>
               </div>
             </li>
           </ul>
@@ -238,12 +238,12 @@ onMounted(load)
 
         <!-- 只有一页时不留一排灰按钮：分页控件是「还有别的东西」的意思。 -->
         <div v-if="offset > 0 || hasMore" class="asp__pager">
-          <v-btn variant="text" size="small" :disabled="!offset || loading || saving" @click="page(-PAGE)">
+          <BaseButton size="sm" :disabled="!offset || loading || saving" @click="page(-PAGE)">
             {{ t('spaces.review.previous') }}
-          </v-btn>
-          <v-btn variant="text" size="small" :disabled="!hasMore || loading || saving" @click="page(PAGE)">
+          </BaseButton>
+          <BaseButton size="sm" :disabled="!hasMore || loading || saving" @click="page(PAGE)">
             {{ t('spaces.review.next') }}
-          </v-btn>
+          </BaseButton>
         </div>
       </div>
     </AdminPage>
@@ -272,16 +272,16 @@ onMounted(load)
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
           <v-spacer />
-          <v-btn variant="text" :disabled="saving" @click="selected = null">{{ t('spaces.create.cancel') }}</v-btn>
-          <v-btn
-            color="primary"
-            variant="flat"
+          <BaseButton :disabled="saving" @click="selected = null">{{ t('spaces.create.cancel') }}</BaseButton>
+          <BaseButton
+            kind="danger"
+            solid
             :loading="saving"
             :disabled="!reason.trim() || saving"
             @click="selected && decide(selected, false)"
           >
             {{ t('spaces.review.reject') }}
-          </v-btn>
+          </BaseButton>
         </v-card-actions>
       </v-card>
     </v-dialog>

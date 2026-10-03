@@ -17,13 +17,13 @@
             <rich-editor holder="editor" :config="editorConfig" @create="onCreate" />
             <topic-selector v-model="topics" class="mt-4" v-bind="topicsProps" :max="5" />
             <div class="d-flex align-center" style="gap: 16px">
-              <v-btn
-                variant="text"
+              <BaseButton
+                kind="secondary"
                 :prepend-icon="hasBounty ? 'mdi-currency-usd-off' : 'mdi-currency-usd'"
                 @click="hasBounty ? removeBounty() : addBounty()"
               >
                 {{ hasBounty ? t('questions.ask.removeBounty') : t('questions.ask.addBounty') }}
-              </v-btn>
+              </BaseButton>
               <v-slide-x-reverse-transition mode="out-in">
                 <v-slider
                   v-if="hasBounty"
@@ -50,9 +50,9 @@
       </v-col>
 
       <v-col cols="12" md="4" lg="3">
-        <v-btn block flat rounded="lg" color="primary" :loading="isSubmitting" class="mb-4" @click="submit">
+        <BaseButton kind="primary" block :loading="isSubmitting" class="mb-4" @click="submit">
           {{ t('questions.ask.submit') }}
-        </v-btn>
+        </BaseButton>
         <v-sheet rounded="lg" class="pa-4 mb-4">
           <div class="text-h5">{{ t('questions.ask.guide.title') }}</div>
           <p>{{ t('questions.ask.guide.tried') }}</p>
@@ -79,6 +79,7 @@ import { z } from 'zod'
 import { defaultEditorConfig } from '@/utils/editor'
 import { vuetifyConfig } from '@/utils/form'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import RichEditor from '@/components/common/Editor/Editor.vue'
 import TopicSelector from '@/components/common/TopicSelector.vue'
 import { QuestionApi } from '@/network/api/questions'

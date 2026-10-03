@@ -7,6 +7,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ApiError, getFeedback } from '@/api'
 import { claimFeedback, type FeedbackClaimFlags, releaseFeedback } from '@/api/feedbackClaim'
 import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import FeedbackAuthorAvatar from '@/components/feedback/FeedbackAuthorAvatar.vue'
@@ -289,18 +290,18 @@ async function share() {
             <h1 class="t-page-title fb-title">{{ item.title }}</h1>
             <v-spacer />
             <template v-if="!confirmingDelete">
-              <v-btn variant="text" color="secondary" size="small" @click="confirmingDelete = true">
+              <BaseButton size="sm" @click="confirmingDelete = true">
                 {{ t('feedback.detail.delete.label') }}
-              </v-btn>
+              </BaseButton>
             </template>
             <template v-else>
               <span class="fb-del__ask t-meta-read">{{ deleteAsk }}</span>
-              <v-btn variant="text" color="error" size="small" :loading="deletingDelete" @click="doDelete">
+              <BaseButton kind="danger" solid size="sm" :loading="deletingDelete" @click="doDelete">
                 {{ t('feedback.detail.delete.confirm') }}
-              </v-btn>
-              <v-btn variant="text" color="secondary" size="small" @click="confirmingDelete = false">
+              </BaseButton>
+              <BaseButton size="sm" @click="confirmingDelete = false">
                 {{ t('feedback.detail.delete.cancel') }}
-              </v-btn>
+              </BaseButton>
             </template>
           </div>
           <h1 v-else class="t-page-title fb-title">{{ item.title }}</h1>
@@ -441,16 +442,15 @@ async function share() {
                   @blur="onComposerBlur"
                 />
                 <div class="d-flex justify-end mt-2">
-                  <v-btn
-                    color="primary"
-                    variant="flat"
-                    size="small"
+                  <BaseButton
+                    kind="primary"
+                    size="sm"
                     :disabled="!commentDraft.trim()"
                     :loading="posting"
                     @click="postComment"
                   >
                     {{ t('feedback.detail.composer.submit') }}
-                  </v-btn>
+                  </BaseButton>
                 </div>
               </template>
             </div>
@@ -513,9 +513,8 @@ async function share() {
            私密和安全问题整条栏都不画：那两类连支持都不成立（支持是公开表态），
            分享出去的链接对别人也打不开 —— 摆两颗按不动的按钮比不摆更坏。 -->
       <div v-if="!restricted" class="fb-actionbar">
-        <v-btn
-          :color="item.supported ? 'secondary' : 'primary'"
-          :variant="item.supported ? 'tonal' : undefined"
+        <BaseButton
+          :kind="item.supported ? 'secondary' : 'primary'"
           :prepend-icon="item.supported ? 'mdi-thumb-up' : 'mdi-thumb-up-outline'"
           :disabled="!supportable"
           :title="supportable ? '' : t('feedback.closedHint')"
@@ -523,10 +522,10 @@ async function share() {
         >
           {{ item.supported ? t('feedback.detail.action.supported') : t('feedback.detail.action.support') }}
           <span class="fb-support-count">{{ item.supports }}</span>
-        </v-btn>
-        <v-btn variant="outlined" color="secondary" prepend-icon="mdi-share-variant-outline" @click="share">
+        </BaseButton>
+        <BaseButton kind="secondary" prepend-icon="mdi-share-variant-outline" @click="share">
           {{ t('feedback.detail.action.share') }}
-        </v-btn>
+        </BaseButton>
       </div>
     </template>
   </FeedbackPageShell>

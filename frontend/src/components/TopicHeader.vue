@@ -22,6 +22,7 @@ import { useDisplay } from 'vuetify'
 import { getProjectUsage, getTopicUsage } from '@/api'
 import { menuActionOf, useCommands } from '@/commands'
 import { topicActions } from '@/commands/topicActions'
+import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import MobileActionSheet from '@/components/common/MobileActionSheet.vue'
 import TopicMembers from '@/components/TopicMembers.vue'
@@ -177,12 +178,10 @@ useCommands(roomCommands)
 
       <!-- 专注模式开着的时候，出口必须摆在外面：对话栏已经让开了，这一颗就是
            「你现在在专注模式里」的那句话。进去的入口在 ⋯ 里。 -->
-      <v-btn
+      <BaseButton
         v-if="mdAndUp && focus"
         icon="mdi-arrow-collapse"
-        size="small"
-        variant="text"
-        color="on-surface"
+        size="sm"
         :title="t('work.room.menu.exitFocus')"
         :aria-label="t('work.room.menu.exitFocus')"
         @click="emit('toggle-focus')"
@@ -193,12 +192,10 @@ useCommands(roomCommands)
            连接状态不在这里：连着是常态不用说，断了页头上自己会写「未连接」。 -->
       <v-menu v-if="mdAndUp" v-model="usageOpen" :close-on-content-click="false" location="bottom end">
         <template #activator="{ props: menuProps }">
-          <v-btn
+          <BaseButton
             v-bind="menuProps"
             icon="mdi-dots-horizontal"
-            size="small"
-            variant="text"
-            color="medium-emphasis"
+            size="sm"
             class="tap-target"
             :title="t('work.room.menu.more')"
             :aria-label="t('work.room.menu.more')"
@@ -224,11 +221,9 @@ useCommands(roomCommands)
       </v-menu>
       <!-- 手机上同一块内容从底部升起，和别的手机菜单一样（设计系统 §10.4）。 -->
       <template v-else>
-        <v-btn
+        <BaseButton
           icon="mdi-dots-horizontal"
-          size="small"
-          variant="text"
-          color="medium-emphasis"
+          size="sm"
           class="tap-target"
           :title="t('work.room.menu.more')"
           :aria-label="t('work.room.menu.more')"

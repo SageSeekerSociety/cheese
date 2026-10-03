@@ -31,6 +31,8 @@ import TaskFormTimeCard from './form/TaskFormTimeCard.vue'
 import TaskFormVideoCard from './form/TaskFormVideoCard.vue'
 import TaskFormVideoDialog from './form/TaskFormVideoDialog.vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
+
 const { t } = useI18n()
 
 const props = withDefaults(
@@ -190,12 +192,12 @@ const {
     <div class="d-flex justify-end">
       <slot name="buttons" :is-submitting="isSubmitting">
         <div class="d-flex gap-4">
-          <v-btn v-if="isEditing" variant="text" :disabled="isSubmitting" @click="handleCancel">{{
+          <BaseButton v-if="isEditing" kind="ghost" :disabled="isSubmitting" @click="handleCancel">{{
             t('global.cancel')
-          }}</v-btn>
-          <v-btn type="submit" color="primary" size="large" :loading="isSubmitting">{{
+          }}</BaseButton>
+          <BaseButton kind="primary" type="submit" size="lg" :loading="isSubmitting">{{
             submitButtonText || t('tasks.form.submit')
-          }}</v-btn>
+          }}</BaseButton>
         </div>
       </slot>
     </div>

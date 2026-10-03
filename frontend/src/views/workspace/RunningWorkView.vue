@@ -21,6 +21,7 @@ import { avatarColor, avatarInitial } from '@/utils/avatar'
 import { getAvatarUrl } from '@/utils/materials'
 
 import ArtifactManifest from '@/components/ArtifactManifest.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
@@ -314,7 +315,7 @@ function openTask(task: RoomTask) {
 
       <div v-if="errorMsg" class="pa-6 t-body c-muted">
         {{ errorMsg }}
-        <v-btn class="ms-2" size="small" variant="text" @click="load()">{{ t('work.board.retry') }}</v-btn>
+        <BaseButton kind="secondary" class="ms-2" size="sm" @click="load()">{{ t('work.board.retry') }}</BaseButton>
       </div>
 
       <template v-else-if="nothingYet">
@@ -323,9 +324,9 @@ function openTask(task: RoomTask) {
            这一屏上也不画：没有派出去过一条活的项目不可能有产物。 -->
         <div class="board__start">
           <p class="t-body">{{ t('work.room.noTasks') }}</p>
-          <v-btn v-if="rootTopicId" class="mt-4" color="primary" variant="flat" @click="openHomeRoom">{{
+          <BaseButton v-if="rootTopicId" kind="secondary" class="mt-4" @click="openHomeRoom">{{
             t('work.board.openChat')
-          }}</v-btn>
+          }}</BaseButton>
         </div>
       </template>
 

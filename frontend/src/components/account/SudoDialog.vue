@@ -24,18 +24,17 @@
       <template v-else>
         <transition name="sudo-method" mode="out-in" @after-enter="focusFirst">
           <div :key="method" ref="panel">
-            <v-btn
+            <BaseButton
               v-if="method === 'passkey'"
+              kind="primary"
+              size="lg"
               block
-              color="primary"
-              size="large"
-              class="sudo__submit"
+              prepend-icon="mdi-key-chain"
               :loading="loading"
               @click="verifyPasskey"
             >
-              <v-icon start icon="mdi-key-chain" size="20" />
               {{ t('account.sudo.passkey') }}
-            </v-btn>
+            </BaseButton>
 
             <v-form v-else-if="method === 'password'" @submit.prevent="verifyPassword">
               <!-- Tells a password manager whose password this is, so it can fill it. -->
@@ -58,24 +57,23 @@
                   hide-details
                 />
               </AccountField>
-              <v-btn block color="primary" size="large" type="submit" class="sudo__submit" :loading="loading">
+              <BaseButton kind="primary" size="lg" block type="submit" :loading="loading">
                 {{ t('account.sudo.submit') }}
-              </v-btn>
+              </BaseButton>
             </v-form>
 
             <template v-else-if="method === 'email_code'">
-              <v-btn
+              <BaseButton
                 v-if="!codeSentTo"
+                kind="primary"
+                size="lg"
                 block
-                color="primary"
-                size="large"
-                class="sudo__submit"
+                prepend-icon="mdi-email-outline"
                 :loading="sending"
                 @click="sendEmailCode"
               >
-                <v-icon start icon="mdi-email-outline" size="20" />
                 {{ t('account.sudo.sendEmailCode') }}
-              </v-btn>
+              </BaseButton>
               <v-form v-else @submit.prevent="verifyEmailCode">
                 <p :id="codeLabelId" class="sudo__label">
                   {{ t('account.verifyEmail.sentTo', { email: codeSentTo }) }}
@@ -89,17 +87,16 @@
                   :disabled="loading"
                   @finish="verifyEmailCode"
                 />
-                <v-btn
+                <BaseButton
+                  kind="primary"
+                  size="lg"
                   block
-                  color="primary"
-                  size="large"
                   type="submit"
-                  class="sudo__submit"
                   :loading="loading"
                   :disabled="code.length !== 6"
                 >
                   {{ t('account.sudo.submit') }}
-                </v-btn>
+                </BaseButton>
                 <p class="sudo__resend">
                   <span v-if="resendWait > 0">{{ t('account.verifyEmail.resendIn', { seconds: resendWait }) }}</span>
                   <button v-else type="button" class="sudo__link" :disabled="sending" @click="sendEmailCode">
@@ -120,17 +117,9 @@
                 :disabled="loading"
                 @finish="verifyTotp"
               />
-              <v-btn
-                block
-                color="primary"
-                size="large"
-                type="submit"
-                class="sudo__submit"
-                :loading="loading"
-                :disabled="code.length !== 6"
-              >
+              <BaseButton kind="primary" size="lg" block type="submit" :loading="loading" :disabled="code.length !== 6">
                 {{ t('account.sudo.submit') }}
-              </v-btn>
+              </BaseButton>
             </v-form>
           </div>
         </transition>
@@ -153,17 +142,17 @@
       </template>
 
       <div class="sudo__actions">
-        <v-btn
+        <BaseButton
           v-if="methods !== null && method !== primary"
-          variant="text"
+          kind="ghost"
           prepend-icon="mdi-chevron-left"
           :disabled="loading"
           @click="switchTo(primary)"
         >
           {{ t('global.back') }}
-        </v-btn>
+        </BaseButton>
         <v-spacer />
-        <v-btn variant="text" @click="cancel">{{ t('account.cancel') }}</v-btn>
+        <BaseButton kind="ghost" @click="cancel">{{ t('account.cancel') }}</BaseButton>
       </div>
     </v-card>
   </v-dialog>
@@ -184,6 +173,7 @@ import { pendingSudo } from '@/utils/sudo'
 
 import AccountField from '@/components/account/AccountField.vue'
 import PasswordField from '@/components/account/PasswordField.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
@@ -507,10 +497,6 @@ function verifyEmailCode() {
 
 .sudo .v-btn--size-large {
   height: 44px;
-}
-
-.sudo__submit {
-  font-size: 15px;
 }
 
 .sudo__others {

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import BaseButton from '@/components/base/BaseButton.vue'
 import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
 import { t } from '@/i18n'
 
@@ -48,9 +49,9 @@ const emit = defineEmits<{ more: [] }>()
     <!-- 翻页那一行只在**真的还有下一页**时出现（`hasMore` 比的是手上条数和总数）。
          到底了不画「已到底」：那一行字只是在告诉读者「这个按钮你按不了了」。 -->
     <div v-if="count && hasMore" class="fb-more">
-      <v-btn variant="outlined" color="secondary" size="small" :loading="loadingMore" @click="emit('more')">
+      <BaseButton kind="secondary" size="sm" :loading="loadingMore" @click="emit('more')">
         {{ t('feedback.center.more.load') }}
-      </v-btn>
+      </BaseButton>
       <span class="t-meta-read t-num">{{ t('feedback.center.more.showing', { shown, total }) }}</span>
     </div>
 

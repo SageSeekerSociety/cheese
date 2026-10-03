@@ -124,6 +124,7 @@ const to = computed(() => ({ name: 'FeedbackDetail', params: { id: props.item.id
       </span>
       <FeedbackStatusChip class="fb-card__status" :status="item.status" />
       <!-- 支持。`margin-left: auto` 在状态那一颗上，把它连同这一颗一起推到右边。 -->
+      <!-- eslint-disable-next-line vue/no-restricted-syntax -- the support toggle has a selected state BaseButton lacks -->
       <v-btn
         v-if="supportShown"
         class="fb-card__support-btn"

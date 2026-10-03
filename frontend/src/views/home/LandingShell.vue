@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import BrandLockup from '@/components/common/BrandLockup.vue'
 import LanguageToggle from '@/components/common/LanguageToggle.vue'
 import i18n, { t } from '@/i18n'
@@ -46,7 +47,7 @@ const entryLabel = computed(() => (loggedIn.value ? t('publicSite.openWorkspace'
       </nav>
       <div class="site-actions">
         <LanguageToggle />
-        <v-btn :to="entryHref" variant="outlined" append-icon="mdi-arrow-top-right">{{ entryLabel }}</v-btn>
+        <BaseButton :to="entryHref" kind="secondary" append-icon="mdi-arrow-top-right">{{ entryLabel }}</BaseButton>
       </div>
     </header>
 

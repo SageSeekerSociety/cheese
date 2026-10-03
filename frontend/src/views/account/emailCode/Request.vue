@@ -21,17 +21,17 @@
         />
       </AccountField>
 
-      <v-btn
+      <BaseButton
         block
-        color="primary"
-        size="large"
+        kind="primary"
+        size="lg"
         type="submit"
         class="account-submit"
         :loading="isSubmitting"
         :disabled="waiting"
       >
         {{ t('account.emailCode.send') }}
-      </v-btn>
+      </BaseButton>
 
       <p class="account-foot">
         <router-link :to="backToSignIn" class="account-link account-link--quiet">
@@ -57,6 +57,7 @@ import { pendingCode, rememberCodeSent } from './pendingCode'
 
 import AccountField from '@/components/account/AccountField.vue'
 import AccountHeading from '@/components/account/AccountHeading.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'

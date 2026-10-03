@@ -63,6 +63,14 @@ describe('BaseButton', () => {
     expect(button.classList.contains('base-btn--danger')).toBe(true)
   })
 
+  it('passes density through for buttons that sit inside a field', () => {
+    const button = mount(
+      { icon: 'mdi-eye-outline', size: 'sm' },
+      { density: 'comfortable', 'aria-label': '显示密码' }
+    ).getByRole('button')
+    expect(button.classList.contains('v-btn--density-comfortable')).toBe(true)
+  })
+
   it('ignores solid on roles other than danger', () => {
     const button = mount({ kind: 'ghost', solid: true }).getByRole('button')
     expect(button.classList.contains('bg-error')).toBe(false)

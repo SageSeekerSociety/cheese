@@ -32,11 +32,10 @@
           <template #text>
             <p>{{ t('tasks.submit.limitText') }}</p>
             <div class="mt-2">
-              <v-btn
-                color="primary"
-                variant="text"
+              <BaseButton
+                kind="secondary"
                 :to="{ name: routeNames.submissions, params: { spaceId: taskData.space?.id, taskId: taskData.id } }"
-                >{{ t('tasks.submit.viewMine') }}</v-btn
+                >{{ t('tasks.submit.viewMine') }}</BaseButton
               >
             </div>
           </template>
@@ -121,19 +120,16 @@
             </template>
 
             <div class="d-flex justify-end mt-4">
-              <v-btn
+              <BaseButton
                 type="submit"
-                color="primary"
-                size="large"
-                rounded="pill"
+                kind="primary"
+                size="lg"
+                prepend-icon="mdi-check"
                 :loading="submitting"
                 :disabled="submitting || !canSubmit"
-                min-width="120"
-                class="px-8"
               >
-                <v-icon start>mdi-check</v-icon>
                 {{ t('tasks.submit.submit') }}
-              </v-btn>
+              </BaseButton>
             </div>
           </div>
         </v-form>
@@ -227,6 +223,7 @@ import { useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 import { throttle } from 'lodash-es'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
 import { AttachmentsApi } from '@/network/api/attachments'
 import { TasksApi } from '@/network/api/tasks'

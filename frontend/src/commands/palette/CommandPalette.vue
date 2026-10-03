@@ -24,6 +24,7 @@ import { paletteSources } from './sources'
 import { paletteAsk, paletteOpen } from './state'
 
 import { defineCommands, menuActionOf } from '@/commands'
+import BaseButton from '@/components/base/BaseButton.vue'
 import MobileActionSheet from '@/components/common/MobileActionSheet.vue'
 import { t } from '@/i18n'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -363,11 +364,10 @@ const enterKey = isMac ? '⌘' : 'Ctrl'
         <div v-if="mdAndUp" class="palette-scrim" @click="close" />
         <div class="palette" role="dialog" aria-modal="true" :aria-label="t('navigation.palette.open')">
           <div class="palette__input">
-            <v-btn
+            <BaseButton
               v-if="!mdAndUp"
               icon="mdi-arrow-left"
-              variant="text"
-              size="small"
+              size="sm"
               class="tap-target"
               :aria-label="t('navigation.palette.close')"
               @click="close"

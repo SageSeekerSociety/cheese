@@ -7,10 +7,10 @@
         </div>
       </template>
       <template #actions>
-        <v-btn variant="text" @click="hasSavedInfo = false">{{ t('tasks.verifyForm.ignore') }}</v-btn>
-        <v-btn color="primary" variant="flat" append-icon="mdi-lightning-bolt" @click="fillSavedInfo">{{
+        <BaseButton kind="ghost" @click="hasSavedInfo = false">{{ t('tasks.verifyForm.ignore') }}</BaseButton>
+        <BaseButton kind="primary" append-icon="mdi-lightning-bolt" @click="fillSavedInfo">{{
           t('tasks.verifyForm.fill')
-        }}</v-btn>
+        }}</BaseButton>
       </template>
     </v-banner>
 
@@ -100,6 +100,7 @@ import { z } from 'zod'
 
 import { vuetifyConfig } from '@/utils/form'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { useEvents } from '@/views/tasks/events'
 
 const { t } = useI18n()

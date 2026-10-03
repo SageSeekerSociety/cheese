@@ -14,14 +14,21 @@
       {{ t('account.appSignIn.waiting') }}
     </v-alert>
 
-    <v-btn block color="primary" size="large" class="account-submit" :loading="busy" @click="emit('open')">
-      <v-icon start icon="mdi-open-in-new" size="20" />
+    <BaseButton
+      block
+      kind="primary"
+      size="lg"
+      class="account-submit"
+      prepend-icon="mdi-open-in-new"
+      :loading="busy"
+      @click="emit('open')"
+    >
       {{ opened ? t('account.appSignIn.openAgain') : t(`account.appSignIn.${entry}.open`) }}
-    </v-btn>
+    </BaseButton>
 
-    <v-btn v-if="opened" block variant="text" class="mt-2" @click="emit('copy')">
+    <BaseButton v-if="opened" block kind="ghost" class="mt-2" @click="emit('copy')">
       {{ t('account.appSignIn.copyLink') }}
-    </v-btn>
+    </BaseButton>
 
     <p class="account-fine desktop-sign-in__switch">
       <template v-if="entry === 'signup'">
@@ -44,6 +51,7 @@
 import type { BrowserSignInEntry } from '@/lib/desktopApp'
 
 import AccountHeading from '@/components/account/AccountHeading.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
 defineProps<{

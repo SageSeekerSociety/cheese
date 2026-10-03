@@ -11,13 +11,7 @@
           <span v-if="remaining" class="t-meta-read t-num">{{ remaining }}</span>
           <AdaptiveMenu v-if="identity.approved === 'APPROVED'" :actions="mineActions">
             <template #activator="{ props: menu }">
-              <v-btn
-                v-bind="menu"
-                icon="mdi-dots-horizontal"
-                size="x-small"
-                variant="text"
-                :aria-label="t('tasks.side.more')"
-              />
+              <BaseButton v-bind="menu" icon="mdi-dots-horizontal" size="sm" :aria-label="t('tasks.side.more')" />
             </template>
           </AdaptiveMenu>
         </div>
@@ -26,23 +20,23 @@
         <template v-if="identity.approved === 'APPROVED'">
           <p v-if="projectsFailed" class="ts__note">
             {{ t('tasks.side.projectsFailed') }}
-            <v-btn variant="text" size="x-small" @click="loadProjects">{{ t('tasks.side.retry') }}</v-btn>
+            <BaseButton kind="secondary" size="sm" @click="loadProjects">{{ t('tasks.side.retry') }}</BaseButton>
           </p>
           <router-link v-for="p in projects" :key="p.id" :to="`/projects/${p.id}`" class="ts__project">
             <v-icon size="14">mdi-folder-outline</v-icon>
             <span>{{ p.name }}</span>
           </router-link>
           <!-- 先列已有的项目再给「新建」：直接给一颗会默默再建一个的按钮，人会建出第二个、第三个同样的项目。 -->
-          <v-btn
+          <BaseButton
             v-if="!projectsLoading && !projectsFailed"
-            variant="text"
-            size="small"
+            kind="ghost"
+            size="sm"
             prepend-icon="mdi-plus"
             class="ts__new"
             @click="createProject"
           >
             {{ t('tasks.side.newProject') }}
-          </v-btn>
+          </BaseButton>
         </template>
       </div>
     </section>
@@ -97,6 +91,7 @@ import { useTaskInheritance } from '../composables/useTaskInheritance'
 import TaskInheritance from './TaskInheritance.vue'
 
 import { listProjectsForTask } from '@/api'
+import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 
 const props = defineProps<{

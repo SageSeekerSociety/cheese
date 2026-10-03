@@ -28,6 +28,7 @@ import TopicAcceptCard from '../TopicAcceptCard.vue'
 
 import TodoChecklist from './TodoChecklist.vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
 import { taskTitle } from '@/lib/topicState'
@@ -368,9 +369,9 @@ async function send() {
 
     <div v-else-if="!card" class="px-3 py-4 t-body c-muted">
       {{ errorMsg ?? t('work.room.card.notFound') }}
-      <v-btn v-if="errorMsg" size="small" variant="text" class="ms-1" @click="load()">{{
+      <BaseButton v-if="errorMsg" kind="secondary" size="sm" class="ms-1" @click="load()">{{
         t('work.room.card.retry')
-      }}</v-btn>
+      }}</BaseButton>
     </div>
 
     <template v-else>

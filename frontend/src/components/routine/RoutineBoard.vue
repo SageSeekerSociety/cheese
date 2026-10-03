@@ -11,6 +11,7 @@ import { computed, ref } from 'vue'
 
 import RoutineRow from './RoutineRow.vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { routineRoomTarget } from '@/lib/routine'
 
@@ -142,8 +143,8 @@ function confirmDelete() {
         <v-card-text class="t-body">{{ t('routines.deleteBody') }}</v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn variant="text" color="on-surface-variant" @click="confirming = null">{{ t('routines.cancel') }}</v-btn>
-          <v-btn variant="text" color="error" @click="confirmDelete">{{ t('routines.action.delete') }}</v-btn>
+          <BaseButton kind="ghost" @click="confirming = null">{{ t('routines.cancel') }}</BaseButton>
+          <BaseButton kind="danger" solid @click="confirmDelete">{{ t('routines.action.delete') }}</BaseButton>
         </v-card-actions>
       </v-card>
     </v-dialog>

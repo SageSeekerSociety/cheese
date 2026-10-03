@@ -4,6 +4,7 @@
 import { ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { spaceEntryRoute } from '@/lib/spaceEntry'
 import { SpacesApi } from '@/network/api/spaces'
@@ -59,8 +60,8 @@ async function submit() {
       </v-card-text>
       <v-card-actions>
         <v-spacer />
-        <v-btn variant="text" @click="open = false">{{ t('work.joinCancel') }}</v-btn>
-        <v-btn color="primary" variant="flat" :loading="joining" @click="submit">{{ t('work.joinSubmit') }}</v-btn>
+        <BaseButton @click="open = false">{{ t('work.joinCancel') }}</BaseButton>
+        <BaseButton kind="primary" :loading="joining" @click="submit">{{ t('work.joinSubmit') }}</BaseButton>
       </v-card-actions>
     </v-card>
   </v-dialog>

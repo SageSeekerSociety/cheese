@@ -11,10 +11,10 @@
     />
     <div :class="contentClass" @click="onButtonClick">
       <slot>
-        <v-btn variant="outlined" :disabled="disabled">
+        <BaseButton kind="secondary" :disabled="disabled">
           <v-icon>mdi-upload</v-icon>
           {{ t('shell.fileSelect.upload') }}
-        </v-btn>
+        </BaseButton>
       </slot>
     </div>
   </div>
@@ -23,6 +23,7 @@
 <script setup lang="ts">
 import { ref, toRefs } from 'vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
 const input = ref<HTMLInputElement | null>(null)

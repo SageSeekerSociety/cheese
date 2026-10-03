@@ -21,10 +21,12 @@
         <p v-if="error" class="mt-3" style="color: rgb(var(--v-theme-error))">{{ error }}</p>
       </v-card-text>
       <v-card-actions class="justify-end pa-4">
-        <v-btn variant="text" :disabled="accepting" @click="decline">{{ t('account.disagreeAndSignOut') }}</v-btn>
-        <v-btn color="primary" variant="flat" :loading="accepting" @click="accept">
+        <BaseButton kind="ghost" :disabled="accepting" @click="decline">{{
+          t('account.disagreeAndSignOut')
+        }}</BaseButton>
+        <BaseButton kind="primary" :loading="accepting" @click="accept">
           {{ t('account.agreeAndContinue') }}
-        </v-btn>
+        </BaseButton>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -46,6 +48,7 @@ import type { LegalDocumentSummary } from '@/network/api/legal/types'
 import { ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import NavLink from '@/components/common/NavLink.vue'
 import { t } from '@/i18n'
 import { LegalApi } from '@/network/api/legal'

@@ -71,6 +71,7 @@ const open = ref(false)
         </v-list-item-title>
         <template #append>
           <TopicRailBadge v-if="unreadOf(topic.id) > 0" class="me-1" :count="unreadOf(topic.id)" />
+          <!-- eslint-disable-next-line vue/no-restricted-syntax -- nav bar button whose look this component styles exactly (design-system §3.6 exception) -->
           <v-btn
             v-if="topic.can_archive"
             icon="mdi-archive-arrow-up-outline"

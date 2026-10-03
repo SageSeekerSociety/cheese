@@ -46,19 +46,19 @@
         <slot name="actions"></slot>
         <!-- 页面用 useCommands 登记的页头命令，和 AppPage 画法一样；手机上由顶栏画。 -->
         <template v-if="$vuetify.display.mdAndUp">
-          <v-btn
+          <BaseButton
             v-for="command in headerCommands"
             :key="command.id"
+            :kind="command.header?.accent ? 'primary' : 'ghost'"
             :prepend-icon="command.icon"
-            :color="command.header?.accent ? 'primary' : undefined"
-            :variant="command.header?.accent ? 'flat' : 'text'"
+            size="sm"
             :to="command.to"
             :loading="command.loading"
             :disabled="command.disabled"
             @click="command.run?.()"
           >
             {{ command.title }}
-          </v-btn>
+          </BaseButton>
         </template>
       </v-defaults-provider>
     </div>
@@ -76,6 +76,7 @@ import { storeToRefs } from 'pinia'
 import { useBreadcrumb } from '@/composables/useBreadcrumb'
 
 import { headerCommands } from '@/commands'
+import BaseButton from '@/components/base/BaseButton.vue'
 import NavLink from '@/components/common/NavLink.vue'
 import { useNavigationStore } from '@/stores/navigation'
 

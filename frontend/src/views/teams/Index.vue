@@ -6,16 +6,9 @@
         <v-tab :to="{ name: 'HomeTeamsMine' }">{{ t('teams.index.tabMine') }}</v-tab>
         <v-tab :to="{ name: 'HomeTeamsPending' }">{{ t('teams.index.tabPending') }}</v-tab>
       </v-tabs>
-      <v-btn
-        color="primary"
-        variant="tonal"
-        rounded="md"
-        size="small"
-        prepend-icon="mdi-plus"
-        @click="openCreateTeamDialog"
-      >
+      <BaseButton kind="primary" size="sm" prepend-icon="mdi-plus" @click="openCreateTeamDialog">
         {{ t('teams.index.create') }}
-      </v-btn>
+      </BaseButton>
     </template>
   </PageHeader>
 
@@ -27,9 +20,7 @@
       <v-toolbar color="transparent" flat>
         <v-toolbar-title class="text-h6">{{ t('teams.index.create') }}</v-toolbar-title>
         <v-spacer></v-spacer>
-        <v-btn icon variant="text" @click="createTeamDialog = false">
-          <v-icon>mdi-close</v-icon>
-        </v-btn>
+        <BaseButton icon="mdi-close" :aria-label="t('navigation.shell.close')" @click="createTeamDialog = false" />
       </v-toolbar>
 
       <v-divider></v-divider>
@@ -88,10 +79,10 @@
 
       <v-card-actions class="pa-4">
         <v-spacer></v-spacer>
-        <v-btn variant="text" class="mr-2" @click="createTeamDialog = false">{{ t('teams.index.cancel') }}</v-btn>
-        <v-btn color="primary" variant="elevated" rounded="md" :loading="creatingTeam" @click="createTeam">
+        <BaseButton class="mr-2" @click="createTeamDialog = false">{{ t('teams.index.cancel') }}</BaseButton>
+        <BaseButton kind="primary" :loading="creatingTeam" @click="createTeam">
           {{ t('teams.index.create') }}
-        </v-btn>
+        </BaseButton>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -104,6 +95,7 @@ import { defineAsyncComponent, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import AvatarUploader from '@/components/common/AvatarUploader.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import { t } from '@/i18n'

@@ -1,20 +1,12 @@
 <template>
   <div>
-    <v-btn
-      v-if="questionData"
-      exact
-      block
-      variant="flat"
-      class="mb-4"
-      color="surface"
-      :to="{ name: 'QuestionAnswerList' }"
-    >
+    <BaseButton v-if="questionData" exact block kind="secondary" class="mb-4" :to="{ name: 'QuestionAnswerList' }">
       {{
         t('questions.detail.buttons.allAnswers', {
           count: questionData.answer_count,
         })
       }}
-    </v-btn>
+    </BaseButton>
     <v-skeleton-loader v-else type="heading" class="mb-4" />
     <answer-card v-if="answerData" :answer="answerData" :question="questionData" />
     <v-skeleton-loader v-else type="list-item-avatar, paragraph, button@2" />
@@ -29,6 +21,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 
 import AnswerCard from '@/components/answer/AnswerCard.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 import { AnswersApi } from '@/network/api/answers'
 
 const { t } = useI18n()

@@ -23,6 +23,7 @@ import { dayOfExpiry, expiryFromDay } from '../model'
 import AnnouncementCard from './AnnouncementCard.vue'
 import { useSpaceAnnouncements } from './useSpaceAnnouncements'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import { SpacesApi } from '@/network/api/spaces'
 import { useDialog } from '@/plugins/dialog'
@@ -141,9 +142,9 @@ async function remove(a: SpaceAnnouncement) {
     <!-- 插槽本身不能带 v-if：PageHeader 只在挂上那一刻看有没有操作区插槽，空间读回来、
          知道你是管理员时它已经不再看了。条件放在按钮上。 -->
     <template #actions>
-      <v-btn v-if="isManager" color="primary" variant="flat" @click="openCreate">
+      <BaseButton v-if="isManager" kind="primary" @click="openCreate">
         {{ t('spaces.announcements.publish') }}
-      </v-btn>
+      </BaseButton>
     </template>
   </PageHeader>
   <div class="ann">
@@ -222,10 +223,10 @@ async function remove(a: SpaceAnnouncement) {
         </div>
         <p v-if="editingId === null && notifyHint" class="ann__hint">{{ notifyHint }}</p>
         <div class="d-flex justify-end ga-2 mt-4">
-          <v-btn variant="text" @click="editing = false">{{ t('spaces.announcements.form.cancel') }}</v-btn>
-          <v-btn color="primary" variant="flat" :loading="submitting" :disabled="!draftTitle.trim()" @click="submit">
+          <BaseButton kind="ghost" @click="editing = false">{{ t('spaces.announcements.form.cancel') }}</BaseButton>
+          <BaseButton kind="primary" :loading="submitting" :disabled="!draftTitle.trim()" @click="submit">
             {{ t(editingId === null ? 'spaces.announcements.form.publish' : 'spaces.announcements.form.save') }}
-          </v-btn>
+          </BaseButton>
         </div>
       </v-card>
     </v-dialog>

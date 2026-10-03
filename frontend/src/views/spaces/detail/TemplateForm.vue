@@ -142,8 +142,8 @@
       </section>
 
       <div class="tform__actions">
-        <v-btn variant="text" :to="listRoute">{{ t('spaces.detail.templateForm.cancel') }}</v-btn>
-        <v-btn type="submit" color="primary" variant="flat">{{ t('spaces.detail.templateForm.save') }}</v-btn>
+        <BaseButton kind="ghost" :to="listRoute">{{ t('spaces.detail.templateForm.cancel') }}</BaseButton>
+        <BaseButton kind="primary" type="submit">{{ t('spaces.detail.templateForm.save') }}</BaseButton>
       </div>
     </v-form>
   </div>
@@ -160,6 +160,7 @@ import { storeToRefs } from 'pinia'
 
 import { useSpaceData } from '@/composables/useSpaceData'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { closeOverlay } from '@/lib/backOut'
 import { useSpaceStore } from '@/stores/space'
 

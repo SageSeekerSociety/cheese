@@ -12,6 +12,7 @@ import type { AudioMeta, FileMeta, ImageMeta, VideoMeta } from '@/types/material
 
 import { getAvatarUrl } from '@/utils/materials'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import TipTapViewer from '@/components/common/Editor/TipTapViewer.vue'
 import { t } from '@/i18n'
 import {
@@ -45,7 +46,11 @@ const emit = defineEmits<{
     <v-card v-if="resource" class="resource-detail-card">
       <v-card-title class="d-flex justify-space-between align-center pa-4">
         <div>{{ resource.name }}</div>
-        <v-btn icon="mdi-close" variant="text" @click="emit('update:modelValue', false)"></v-btn>
+        <BaseButton
+          icon="mdi-close"
+          :aria-label="t('navigation.shell.close')"
+          @click="emit('update:modelValue', false)"
+        />
       </v-card-title>
       <v-divider></v-divider>
 
@@ -104,9 +109,9 @@ const emit = defineEmits<{
               <div class="text-caption text-medium-emphasis mb-3">
                 {{ formatFileSize((resource.material.meta as FileMeta).size) }}
               </div>
-              <v-btn color="primary" size="small" @click="emit('openLink', resource)">{{
+              <BaseButton kind="secondary" size="sm" @click="emit('openLink', resource)">{{
                 t('teams.knowledge.openDocument')
-              }}</v-btn>
+              }}</BaseButton>
             </div>
           </v-sheet>
 
@@ -132,9 +137,9 @@ const emit = defineEmits<{
                 <h3 class="text-h6 mb-1">{{ content.title || resource.name }}</h3>
                 <p class="text-body-2 mb-2">{{ content.description || resource.description }}</p>
                 <div class="text-caption text-medium-emphasis mb-3 text-truncate">{{ content.url }}</div>
-                <v-btn color="primary" size="small" @click="emit('openLink', resource)">{{
+                <BaseButton kind="secondary" size="sm" @click="emit('openLink', resource)">{{
                   t('teams.knowledge.visitLink')
-                }}</v-btn>
+                }}</BaseButton>
               </div>
             </div>
           </v-sheet>
@@ -244,18 +249,13 @@ const emit = defineEmits<{
 
       <v-card-actions class="pa-4">
         <v-spacer></v-spacer>
-        <v-btn
-          v-if="canEditKnowledge(resource, ownerId)"
-          color="error"
-          variant="text"
-          @click="emit('delete', resource)"
-        >
+        <BaseButton v-if="canEditKnowledge(resource, ownerId)" kind="ghost" @click="emit('delete', resource)">
           {{ t('teams.knowledge.deleteResource') }}
-        </v-btn>
-        <v-btn color="primary" variant="tonal" @click="emit('openLink', resource)">
+        </BaseButton>
+        <BaseButton kind="primary" @click="emit('openLink', resource)">
           <v-icon start>mdi-open-in-new</v-icon>
           {{ t('teams.knowledge.openResource') }}
-        </v-btn>
+        </BaseButton>
       </v-card-actions>
     </v-card>
   </v-dialog>

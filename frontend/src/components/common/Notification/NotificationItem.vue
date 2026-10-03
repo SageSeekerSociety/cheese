@@ -22,41 +22,38 @@
 
         <div class="d-flex justify-end align-center mt-2">
           <template v-if="renderedActions && renderedActions.length > 0">
-            <v-btn
+            <BaseButton
               v-for="(action, index) in renderedActions"
               :key="index"
-              variant="text"
+              :kind="action.color === 'error' ? 'danger' : 'ghost'"
+              size="sm"
               density="comfortable"
-              size="small"
-              :color="action.color || 'primary'"
               class="px-2 ms-2"
               @click.stop="action.handler"
             >
               {{ action.text }}
-            </v-btn>
+            </BaseButton>
           </template>
           <template v-else>
-            <v-btn
+            <BaseButton
               v-if="!notification.read"
-              variant="text"
+              kind="ghost"
+              size="sm"
               density="comfortable"
-              size="small"
-              :color="notificationColor"
               class="px-2"
               @click.stop="markAsRead"
             >
               {{ t('notifications.common.markAsRead') }}
-            </v-btn>
-            <v-btn
-              variant="text"
+            </BaseButton>
+            <BaseButton
+              kind="danger"
+              size="sm"
               density="comfortable"
-              size="small"
-              color="error"
               class="px-2 ms-2"
               @click.stop="deleteNotification"
             >
               {{ t('notifications.common.delete') }}
-            </v-btn>
+            </BaseButton>
           </template>
         </div>
       </div>
@@ -85,41 +82,38 @@
 
         <div class="d-flex justify-end align-center mt-2">
           <template v-if="renderedActions && renderedActions.length > 0">
-            <v-btn
+            <BaseButton
               v-for="(action, index) in renderedActions"
               :key="index"
-              variant="text"
+              :kind="action.color === 'error' ? 'danger' : 'ghost'"
+              size="sm"
               density="comfortable"
-              size="small"
-              :color="action.color || 'primary'"
               class="px-2 ms-2"
               @click.stop="action.handler"
             >
               {{ action.text }}
-            </v-btn>
+            </BaseButton>
           </template>
           <template v-else>
-            <v-btn
+            <BaseButton
               v-if="!notification.read"
-              variant="text"
+              kind="ghost"
+              size="sm"
               density="comfortable"
-              size="small"
-              :color="notificationColor"
               class="px-2"
               @click.stop="markAsRead"
             >
               {{ t('notifications.common.markAsRead') }}
-            </v-btn>
-            <v-btn
-              variant="text"
+            </BaseButton>
+            <BaseButton
+              kind="danger"
+              size="sm"
               density="comfortable"
-              size="small"
-              color="error"
               class="px-2 ms-2"
               @click.stop="deleteNotification"
             >
               {{ t('notifications.common.delete') }}
-            </v-btn>
+            </BaseButton>
           </template>
         </div>
       </div>
@@ -141,7 +135,8 @@ import { useFormattedTime } from '@/utils/dateTime'
 
 import NotificationAvatar from './NotificationAvatar.vue'
 
-import { getNotificationColor, getNotificationRenderer } from '@/services/notification/registry'
+import BaseButton from '@/components/base/BaseButton.vue'
+import { getNotificationRenderer } from '@/services/notification/registry'
 
 const props = defineProps<{
   notification: Notification
@@ -153,8 +148,6 @@ const { t } = useI18n()
 const { formatTime } = useFormattedTime()
 
 const formattedTime = computed(() => formatTime(props.notification.createdAt))
-
-const notificationColor = computed(() => getNotificationColor(props.notification.type))
 
 const contentComponent = computed<Component>(() => {
   return getNotificationRenderer(props.notification.type)

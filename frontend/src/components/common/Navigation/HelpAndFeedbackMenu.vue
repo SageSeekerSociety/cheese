@@ -90,6 +90,7 @@ watch(loggedIn, refresh, { immediate: true })
 <template>
   <v-menu location="bottom end" :offset="8" transition="scale-transition">
     <template #activator="{ props: activator }">
+      <!-- eslint-disable-next-line vue/no-restricted-syntax -- nav bar button whose look this component styles exactly (design-system §3.6 exception) -->
       <v-btn
         v-bind="activator"
         class="help-entry"

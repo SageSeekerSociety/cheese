@@ -15,6 +15,7 @@
  */
 import { onUnmounted, ref, watch } from 'vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { enablePush, permissionSettled, pushAvailable, pushSupported } from '@/services/webPush'
 
@@ -99,12 +100,12 @@ function decline() {
         <div class="push-ask">
           <span class="push-ask__text">{{ t('work.push.ask') }}</span>
           <div class="push-ask__actions">
-            <v-btn variant="text" size="small" color="primary" :loading="busy" @click="accept">{{
+            <BaseButton kind="primary" size="sm" :loading="busy" @click="accept">{{
               t('work.push.enable')
-            }}</v-btn>
-            <v-btn variant="text" size="small" color="medium-emphasis" :disabled="busy" @click="decline">{{
+            }}</BaseButton>
+            <BaseButton kind="ghost" size="sm" :disabled="busy" @click="decline">{{
               t('work.push.decline')
-            }}</v-btn>
+            }}</BaseButton>
           </div>
         </div>
       </div>

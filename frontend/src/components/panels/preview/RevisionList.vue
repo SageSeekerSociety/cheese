@@ -18,6 +18,7 @@ import { computed, ref, watch } from 'vue'
 import { decideDocumentRevisions, documentRevisions } from '../../../api'
 import { isLibraryPath } from '../../../lib/library'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
 const props = withDefaults(
@@ -127,26 +128,24 @@ defineExpose({ reload: load })
     <div v-if="revisions.length" class="revs__bar">
       <span class="revs__count t-eyebrow">{{ t('work.room.revisions.count', { count: revisions.length }) }}</span>
       <v-spacer />
-      <v-btn
+      <BaseButton
         v-if="!readOnly"
-        size="x-small"
-        variant="text"
-        color="medium-emphasis"
+        kind="ghost"
+        size="sm"
         :disabled="deciding > 0"
         @click="decide({ accept: revisions.map((r) => r.number) })"
       >
         {{ t('work.room.revisions.acceptAll') }}
-      </v-btn>
-      <v-btn
+      </BaseButton>
+      <BaseButton
         v-if="!readOnly"
-        size="x-small"
-        variant="text"
-        color="medium-emphasis"
+        kind="ghost"
+        size="sm"
         :disabled="deciding > 0"
         @click="decide({ reject: revisions.map((r) => r.number) })"
       >
         {{ t('work.room.revisions.rejectAll') }}
-      </v-btn>
+      </BaseButton>
     </div>
 
     <p v-if="readOnly && revisions.length" class="revs__note t-meta">
@@ -165,18 +164,12 @@ defineExpose({ reload: load })
           }}
         </div>
         <div v-if="!readOnly" class="revs__acts">
-          <v-btn size="x-small" variant="text" :disabled="deciding > 0" @click="decide({ accept: [row.number] })">
+          <BaseButton kind="ghost" size="sm" :disabled="deciding > 0" @click="decide({ accept: [row.number] })">
             {{ t('work.room.revisions.accept') }}
-          </v-btn>
-          <v-btn
-            size="x-small"
-            variant="text"
-            color="medium-emphasis"
-            :disabled="deciding > 0"
-            @click="decide({ reject: [row.number] })"
-          >
+          </BaseButton>
+          <BaseButton kind="ghost" size="sm" :disabled="deciding > 0" @click="decide({ reject: [row.number] })">
             {{ t('work.room.revisions.reject') }}
-          </v-btn>
+          </BaseButton>
         </div>
       </li>
     </ul>

@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { fmtCost } from '@/lib/usageFormat'
 
 // 给一个项目的网关 key 设「刹车值」（`max_budget`，契约 §3.4）。
@@ -111,19 +112,19 @@ function submit() {
 
       <v-card-actions class="pa-4 pt-0">
         <!-- 清除只在一个值确实存在时才有意义（没有覆盖值时它是个空操作）。 -->
-        <v-btn
+        <BaseButton
           v-if="project?.max_budget_usd !== null && project?.max_budget_usd !== undefined"
-          variant="text"
+          kind="ghost"
           :disabled="saving"
           @click="emit('submit', null)"
         >
           {{ t('models.budget.dialog.clear') }}
-        </v-btn>
+        </BaseButton>
         <v-spacer />
-        <v-btn variant="text" :disabled="saving" @click="close">{{ t('models.dialog.cancel') }}</v-btn>
-        <v-btn color="primary" :loading="saving" :disabled="invalid || saving" @click="submit">
+        <BaseButton kind="ghost" :disabled="saving" @click="close">{{ t('models.dialog.cancel') }}</BaseButton>
+        <BaseButton kind="primary" :loading="saving" :disabled="invalid || saving" @click="submit">
           {{ t('models.dialog.save') }}
-        </v-btn>
+        </BaseButton>
       </v-card-actions>
     </v-card>
   </v-dialog>

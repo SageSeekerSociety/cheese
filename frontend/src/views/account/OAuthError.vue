@@ -14,20 +14,12 @@
     </v-alert>
 
     <div class="account-actions">
-      <v-btn block color="primary" size="large" to="/account/signin" class="account-submit">
+      <BaseButton block kind="primary" size="lg" to="/account/signin" class="account-submit">
         {{ t('account.backToSignIn') }}
-      </v-btn>
-      <v-btn
-        v-if="providerId"
-        block
-        variant="outlined"
-        color="on-surface"
-        size="large"
-        class="account-secondary"
-        @click="retryOAuth"
-      >
+      </BaseButton>
+      <BaseButton v-if="providerId" block kind="secondary" size="lg" @click="retryOAuth">
         {{ t('account.oauth.error.retry', { provider: providerName }) }}
-      </v-btn>
+      </BaseButton>
     </div>
   </div>
 </template>
@@ -39,6 +31,7 @@ import { useRoute } from 'vue-router'
 import { oauthProviderName } from './oauthProvider'
 
 import AccountHeading from '@/components/account/AccountHeading.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
 

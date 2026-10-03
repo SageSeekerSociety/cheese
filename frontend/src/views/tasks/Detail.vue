@@ -21,6 +21,7 @@ import TaskEligibilityAlerts from './components/TaskEligibilityAlerts.vue'
 import TaskSide from './components/TaskSide.vue'
 
 import AssistantPanel from '@/components/assistant/AssistantPanel.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import { TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
@@ -287,8 +288,12 @@ onMounted(() => {
     </nav>
     <template #actions>
       <template v-if="canManage">
-        <v-btn prepend-icon="mdi-pencil-outline" @click="editTask">{{ t('tasks.page.edit') }}</v-btn>
-        <v-btn prepend-icon="mdi-delete-outline" @click="confirmDeleteTask">{{ t('tasks.page.delete') }}</v-btn>
+        <BaseButton kind="secondary" prepend-icon="mdi-pencil-outline" @click="editTask">{{
+          t('tasks.page.edit')
+        }}</BaseButton>
+        <BaseButton kind="ghost" prepend-icon="mdi-delete-outline" @click="confirmDeleteTask">{{
+          t('tasks.page.delete')
+        }}</BaseButton>
       </template>
     </template>
   </PageHeader>
@@ -316,30 +321,28 @@ onMounted(() => {
       </div>
 
       <div class="td__act">
-        <v-btn class="td__ask" variant="outlined" :active="asking" data-testid="task-ask" @click="openAssistant">
+        <BaseButton kind="secondary" class="td__ask" :active="asking" data-testid="task-ask" @click="openAssistant">
           <span class="td__ask-mark" aria-hidden="true"><CheeseAvatar :size="18" /></span>
           {{ t('tasks.assistant.ask') }}
-        </v-btn>
-        <v-btn
+        </BaseButton>
+        <BaseButton
           v-if="submitAction"
-          color="primary"
-          variant="flat"
+          kind="primary"
           prepend-icon="mdi-plus"
           :to="{ name: routeNames.submit, params }"
         >
           {{ submitAction }}
-        </v-btn>
-        <v-btn
+        </BaseButton>
+        <BaseButton
           v-else-if="!joined && claim"
           class="td__claim"
           data-testid="task-claim"
-          :color="claim.disabled || canManage ? undefined : 'primary'"
-          :variant="claim.disabled ? 'tonal' : canManage ? 'outlined' : 'flat'"
+          :kind="claim.disabled ? 'ghost' : canManage ? 'secondary' : 'primary'"
           :disabled="claim.disabled"
           @click="onClaim"
         >
           {{ claim.label }}
-        </v-btn>
+        </BaseButton>
       </div>
     </header>
 

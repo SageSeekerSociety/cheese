@@ -2,6 +2,7 @@
 import { onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import FeedbackPageShell from '@/components/feedback/FeedbackPageShell.vue'
 import SubmitFeedbackForm from '@/components/feedback/SubmitFeedbackForm.vue'
 import { t } from '@/i18n'
@@ -56,9 +57,7 @@ function leave() {
 <template>
   <FeedbackPageShell :title="t('feedback.submit.title')" flush-bottom>
     <template #lead>
-      <v-btn icon size="small" variant="text" color="secondary" :aria-label="t('feedback.submit.back')" @click="leave">
-        <v-icon size="20">mdi-arrow-left</v-icon>
-      </v-btn>
+      <BaseButton icon="mdi-arrow-left" size="sm" :aria-label="t('feedback.submit.back')" @click="leave" />
     </template>
 
     <SubmitFeedbackForm shell="page" @submitted="onSubmitted" @cancel="leave" />

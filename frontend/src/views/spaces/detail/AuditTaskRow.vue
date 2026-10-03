@@ -7,6 +7,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import dayjs from 'dayjs'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import TaskDescription from '@/components/tasks/TaskDescription.vue'
 
 const props = defineProps<{ task: Task; open: boolean }>()
@@ -82,12 +83,12 @@ const facts = computed(() => {
       </section>
 
       <div class="ar__actions">
-        <v-btn variant="outlined" color="error" @click="$emit('reject')">
+        <BaseButton kind="ghost" @click="$emit('reject')">
           {{ t('spaces.detail.auditTasks.reject') }}
-        </v-btn>
-        <v-btn variant="flat" color="primary" @click="$emit('approve')">
+        </BaseButton>
+        <BaseButton kind="primary" @click="$emit('approve')">
           {{ t('spaces.detail.auditTasks.approve') }}
-        </v-btn>
+        </BaseButton>
       </div>
     </div>
   </article>

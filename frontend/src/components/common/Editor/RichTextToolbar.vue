@@ -10,6 +10,7 @@ import { computed, reactive, ref, toRaw, watch } from 'vue'
 
 import { ALIGNMENTS, CONTENT_COLORS, FONT_FAMILIES, FONT_SIZES, HEADING_LEVELS } from './richTextOptions'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
 const props = defineProps<{
@@ -502,8 +503,8 @@ function moveFocus(event: KeyboardEvent) {
         />
         <v-checkbox v-model="link.newTab" :label="label('linkNewTab')" density="compact" hide-details />
         <div class="rt-pop__actions">
-          <v-btn v-if="state.link" variant="text" size="small" @click="removeLink">{{ label('unlink') }}</v-btn>
-          <v-btn type="submit" color="primary" variant="flat" size="small">{{ label('linkApply') }}</v-btn>
+          <BaseButton v-if="state.link" kind="ghost" size="sm" @click="removeLink">{{ label('unlink') }}</BaseButton>
+          <BaseButton type="submit" kind="primary" size="sm">{{ label('linkApply') }}</BaseButton>
         </div>
       </form>
     </v-menu>

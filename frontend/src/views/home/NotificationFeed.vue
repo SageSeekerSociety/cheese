@@ -4,9 +4,9 @@
   <section class="notification-feed">
     <header class="notification-feed__head">
       <h2 class="notification-feed__title">{{ t('home.inbox.feed') }}</h2>
-      <v-btn v-if="hasUnread" variant="text" size="small" @click="markAllAsRead">
+      <BaseButton v-if="hasUnread" size="sm" @click="markAllAsRead">
         {{ t('notifications.common.markAllAsRead') }}
-      </v-btn>
+      </BaseButton>
     </header>
     <div v-if="notifications.length > 0" class="notification-feed__list">
       <v-list density="compact" lines="three" class="py-0" bg-color="transparent">
@@ -19,9 +19,9 @@
         />
       </v-list>
       <div v-if="hasMore" class="notification-feed__more">
-        <v-btn variant="text" size="small" :loading="loading" @click="loadMore">
+        <BaseButton size="sm" :loading="loading" @click="loadMore">
           {{ t('notifications.common.loadMore') }}
-        </v-btn>
+        </BaseButton>
       </div>
     </div>
     <p v-else-if="!loading" class="notification-feed__quiet t-body">{{ t('notifications.common.noNotifications') }}</p>
@@ -36,6 +36,7 @@ import { useI18n } from 'vue-i18n'
 
 import { useUnreadNotifications } from '@/composables/useUnreadNotifications'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import NotificationItem from '@/components/common/Notification/NotificationItem.vue'
 import { NotificationsApi } from '@/network/api/notifications'
 

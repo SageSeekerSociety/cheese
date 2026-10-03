@@ -16,6 +16,7 @@ import { getAvatarUrl } from '@/utils/materials'
 
 import { useSpaceData } from '@/composables/useSpaceData'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import { myHandle } from '@/me'
@@ -188,16 +189,16 @@ async function transferOwner(row: Row) {
           </td>
           <td class="mem__actions">
             <template v-if="isOwner && row.role !== 'OWNER'">
-              <v-btn v-if="row.role === 'MEMBER'" size="small" variant="text" :disabled="busy" @click="makeAdmin(row)">
+              <BaseButton v-if="row.role === 'MEMBER'" kind="ghost" size="sm" :disabled="busy" @click="makeAdmin(row)">
                 {{ t('spaces.members.makeAdmin') }}
-              </v-btn>
+              </BaseButton>
               <template v-else>
-                <v-btn size="small" variant="text" :disabled="busy" @click="transferOwner(row)">
+                <BaseButton kind="ghost" size="sm" :disabled="busy" @click="transferOwner(row)">
                   {{ t('spaces.members.transfer') }}
-                </v-btn>
-                <v-btn size="small" variant="text" :disabled="busy" @click="revokeAdmin(row)">
+                </BaseButton>
+                <BaseButton kind="ghost" size="sm" :disabled="busy" @click="revokeAdmin(row)">
                   {{ t('spaces.members.revoke') }}
-                </v-btn>
+                </BaseButton>
               </template>
             </template>
           </td>

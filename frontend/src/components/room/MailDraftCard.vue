@@ -12,6 +12,8 @@ import { useMailDraftActions } from '../../composables/useMailDraftActions'
 import i18n, { t } from '../../i18n'
 import { myHandle } from '../../me'
 
+import BaseButton from '@/components/base/BaseButton.vue'
+
 const props = defineProps<{
   mail: MailDraftView
   /** 房间里已经记下的下落；没有就是还在等。 */
@@ -65,12 +67,12 @@ function when(iso: string | null): string {
       }}</template>
     </div>
     <div v-else-if="mine" class="mail-card__actions">
-      <v-btn size="small" color="primary" variant="flat" :loading="busy === 'send'" :disabled="!!busy" @click="send">
+      <BaseButton kind="primary" size="sm" :loading="busy === 'send'" :disabled="!!busy" @click="send">
         {{ t('work.room.mail.confirmSend') }}
-      </v-btn>
-      <v-btn size="small" variant="text" :loading="busy === 'discard'" :disabled="!!busy" @click="discard">
+      </BaseButton>
+      <BaseButton kind="ghost" size="sm" :loading="busy === 'discard'" :disabled="!!busy" @click="discard">
         {{ t('work.room.mail.discard') }}
-      </v-btn>
+      </BaseButton>
       <span class="mail-card__hint">{{ t('work.room.mail.hint') }}</span>
     </div>
     <div v-else class="mail-card__state" data-testid="mail-waiting">

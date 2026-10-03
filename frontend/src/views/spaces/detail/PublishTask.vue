@@ -23,6 +23,7 @@ import { useSpaceMaterials } from '@/composables/useSpaceMaterials'
 import PdfGenerate from './PdfGenerate.vue'
 import { MAX_DRAFTS, MAX_PDF_BYTES, TASK_SUBMISSION_SCHEMA } from './publishLimits'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import TeachingFields from '@/components/common/TeachingFields.vue'
 import PanelCard from '@/components/spaces/PanelCard.vue'
@@ -361,9 +362,11 @@ async function confirmQuickFromPdf(taskData: TaskFormSubmitData, id: number) {
   <PageHeader show-on-mobile>
     <template #actions>
       <v-btn-toggle v-model="mode" density="compact" variant="outlined" divided mandatory class="pub__mode">
+        <!-- eslint-disable-next-line vue/no-restricted-syntax -- a segment of v-btn-toggle, not one of the BaseButton roles -->
         <v-btn value="write" size="small" prepend-icon="mdi-pencil-outline">{{
           t('spaces.detail.publishTask.mode.write')
         }}</v-btn>
+        <!-- eslint-disable-next-line vue/no-restricted-syntax -- a segment of v-btn-toggle, not one of the BaseButton roles -->
         <v-btn value="pdf" size="small" prepend-icon="mdi-file-pdf-box">{{
           t('spaces.detail.publishTask.mode.pdf')
         }}</v-btn>
@@ -404,16 +407,15 @@ async function confirmQuickFromPdf(taskData: TaskFormSubmitData, id: number) {
           <div class="pdf__actions">
             <span class="pdf__actions-note">{{ t('spaces.detail.publishTask.quick.readOnlyNote') }}</span>
             <v-spacer />
-            <v-btn
-              color="primary"
-              variant="flat"
+            <BaseButton
+              kind="primary"
+              prepend-icon="mdi-eye-outline"
               :loading="quickLoading"
               :disabled="quickLoading || quickConfirming || !selectedQuickPdf"
               @click="previewFromPdf"
             >
-              <v-icon start>mdi-eye-outline</v-icon>
               {{ t('spaces.detail.publishTask.quick.preview') }}
-            </v-btn>
+            </BaseButton>
           </div>
         </PanelCard>
 
@@ -464,9 +466,9 @@ async function confirmQuickFromPdf(taskData: TaskFormSubmitData, id: number) {
               >
             </i18n-t>
             <v-spacer />
-            <v-btn variant="text" :disabled="quickConfirming" @click="clearQuickDrafts">{{
+            <BaseButton kind="ghost" :disabled="quickConfirming" @click="clearQuickDrafts">{{
               t('spaces.detail.publishTask.quick.clear')
-            }}</v-btn>
+            }}</BaseButton>
           </div>
         </PanelCard>
 
@@ -486,12 +488,13 @@ async function confirmQuickFromPdf(taskData: TaskFormSubmitData, id: number) {
           :subtitle="t('spaces.detail.publishTask.teaching.subtitle')"
         >
           <template #actions>
-            <v-btn
-              size="small"
-              variant="text"
+            <BaseButton
+              kind="ghost"
+              size="sm"
               class="publish-teaching__toggle"
               data-testid="publish-teaching-toggle"
               :aria-expanded="teachingOpen"
+              :append-icon="teachingOpen ? 'mdi-chevron-up' : 'mdi-chevron-down'"
               @click="teachingOpen = !teachingOpen"
             >
               {{
@@ -501,8 +504,7 @@ async function confirmQuickFromPdf(taskData: TaskFormSubmitData, id: number) {
                     : 'spaces.detail.publishTask.teaching.expand'
                 )
               }}
-              <v-icon :icon="teachingOpen ? 'mdi-chevron-up' : 'mdi-chevron-down'" size="18" end />
-            </v-btn>
+            </BaseButton>
           </template>
           <TeachingFields
             v-if="teachingOpen"
@@ -564,15 +566,14 @@ async function confirmQuickFromPdf(taskData: TaskFormSubmitData, id: number) {
           <p v-else class="pub__wait" data-testid="publish-checks-waiting">
             {{ t('spaces.detail.publishTask.checks.waiting') }}
           </p>
-          <v-btn
+          <BaseButton
+            kind="primary"
             block
-            color="primary"
-            variant="flat"
             :disabled="!formChecks || formChecks.length > 0"
             @click="submitFromChecklist"
           >
             {{ t('spaces.detail.publishTask.checks.submit') }}
-          </v-btn>
+          </BaseButton>
         </PanelCard>
       </aside>
     </div>

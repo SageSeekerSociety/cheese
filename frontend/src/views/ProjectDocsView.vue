@@ -13,6 +13,7 @@ import { relTime } from '../lib/relTime'
 import { myHandle } from '../me'
 
 import { useCommands } from '@/commands'
+import BaseButton from '@/components/base/BaseButton.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import i18n, { t } from '@/i18n'
 import { markdown, sanitizeRendered } from '@/lib/markdown'
@@ -207,11 +208,10 @@ useCommands(() => {
                 {{ relTime(e.created_at) }}
               </div>
             </div>
-            <v-btn
+            <BaseButton
               icon="mdi-delete-outline"
-              size="x-small"
-              variant="text"
-              color="medium-emphasis"
+              kind="danger"
+              size="sm"
               class="memory-card__del"
               :title="t('project.docs.memoryDelete')"
               @click="removeMemory(e.id)"
@@ -245,16 +245,16 @@ useCommands(() => {
         <div v-if="weeklies.length === 0" class="text-medium-emphasis text-body-2 py-6 text-center">
           <div>{{ t('project.docs.weekliesEmpty') }}</div>
           <div class="text-caption mt-1">{{ t('project.docs.weekliesHint') }}</div>
-          <v-btn
+          <BaseButton
             v-if="rootTopicId"
             :to="topicTo(rootTopicId)"
-            variant="text"
-            size="small"
-            class="mt-2 text-none"
+            kind="secondary"
+            size="sm"
+            class="mt-2"
             append-icon="mdi-arrow-right"
           >
             {{ t('project.docs.goToRoom') }}
-          </v-btn>
+          </BaseButton>
         </div>
         <!-- 一份周报是一份读的东西，不是一行导航：它有自己的窗口、自己的正文，
                还有「写在哪」。所以整卡摊开。 -->
@@ -266,16 +266,15 @@ useCommands(() => {
                 <span class="t-body" style="font-weight: 500">{{ weeklyWindow(w) }}</span>
                 <span class="t-meta">{{ t('project.docs.recordedOn', { date: fmtDate(w.created_at) }) }}</span>
                 <v-spacer />
-                <v-btn
+                <BaseButton
                   v-if="w.topic_id"
                   :to="topicTo(w.topic_id)"
-                  size="x-small"
-                  variant="text"
-                  color="medium-emphasis"
+                  kind="ghost"
+                  size="sm"
                   append-icon="mdi-arrow-top-right"
                 >
                   {{ t('project.docs.fromTopic') }}
-                </v-btn>
+                </BaseButton>
               </div>
               <div class="md-content text-body-2" v-html="renderMarkdown(w.content)" />
             </div>

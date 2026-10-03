@@ -1,8 +1,8 @@
 <template>
   <SettingsToolbar :title="t('spaces.settings.sections.categories')">
-    <v-btn variant="text" prepend-icon="mdi-plus" @click="openCreateDialog">
+    <BaseButton kind="primary" prepend-icon="mdi-plus" @click="openCreateDialog">
       {{ t('spaces.detail.manageCategories.addCategory') }}
-    </v-btn>
+    </BaseButton>
   </SettingsToolbar>
   <div class="settings-card">
     <div v-if="loadingCategories" class="pa-4 text-center">
@@ -27,29 +27,36 @@
         <template #append>
           <v-tooltip v-if="!category.archivedAt && currentSpace?.defaultCategoryId !== category.id" location="top">
             <template #activator="{ props }">
-              <v-btn
+              <BaseButton
                 v-bind="props"
+                kind="ghost"
                 icon="mdi-star-outline"
-                variant="text"
-                size="small"
+                size="sm"
+                :aria-label="t('spaces.detail.manageCategories.setAsDefault')"
                 @click="setAsDefault(category.id)"
-              ></v-btn>
+              />
             </template>
             {{ t('spaces.detail.manageCategories.setAsDefault') }}
           </v-tooltip>
 
-          <v-btn
+          <BaseButton
             v-if="!category.archivedAt"
+            kind="ghost"
             icon="mdi-pencil-outline"
-            variant="text"
-            size="small"
+            size="sm"
             :aria-label="t('spaces.detail.manageCategories.updateCategory')"
             @click="openEditDialog(category)"
-          ></v-btn>
+          />
 
           <AdaptiveMenu :actions="categoryActions(category)" :title="category.name">
             <template #activator="{ props }">
-              <v-btn icon="mdi-dots-horizontal" variant="text" size="small" v-bind="props"></v-btn>
+              <BaseButton
+                v-bind="props"
+                kind="ghost"
+                icon="mdi-dots-horizontal"
+                size="sm"
+                :aria-label="t('navigation.shell.more')"
+              />
             </template>
           </AdaptiveMenu>
         </template>
@@ -99,10 +106,12 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
-          <v-btn variant="text" @click="dialogOpen = false">{{ t('spaces.detail.manageCategories.cancel') }}</v-btn>
-          <v-btn color="primary" :loading="isSubmitting" @click="submitForm">{{
+          <BaseButton kind="ghost" @click="dialogOpen = false">{{
+            t('spaces.detail.manageCategories.cancel')
+          }}</BaseButton>
+          <BaseButton kind="primary" :loading="isSubmitting" @click="submitForm">{{
             t('spaces.detail.manageCategories.confirm')
-          }}</v-btn>
+          }}</BaseButton>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -123,6 +132,7 @@ import { vuetifyConfig } from '@/utils/form'
 
 import { useSpaceData } from '@/composables/useSpaceData'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import SettingsToolbar from '@/components/spaces/SettingsToolbar.vue'
 import { useDialog } from '@/plugins/dialog'

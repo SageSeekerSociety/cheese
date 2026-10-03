@@ -33,12 +33,12 @@
         />
       </div>
       <div class="realname__foot realname__foot--form">
-        <v-btn variant="text" color="on-surface" :disabled="saving" @click="cancel">
+        <BaseButton :disabled="saving" @click="cancel">
           {{ t('account.realName.cancel') }}
-        </v-btn>
-        <v-btn type="submit" color="primary" variant="flat" :loading="saving">
+        </BaseButton>
+        <BaseButton type="submit" kind="primary" :loading="saving">
           {{ t('account.realName.save') }}
-        </v-btn>
+        </BaseButton>
       </div>
     </form>
 
@@ -46,18 +46,16 @@
       <div class="settings-card__head">
         <h2 class="settings-card__title">{{ t('account.realName.yours') }}</h2>
         <div class="realname__actions">
-          <v-btn
-            variant="text"
-            color="on-surface"
+          <BaseButton
             :prepend-icon="full ? 'mdi-eye-off-outline' : 'mdi-eye-outline'"
             :loading="revealing"
             @click="toggleFull"
           >
             {{ full ? t('account.realName.hideFull') : t('account.realName.showFull') }}
-          </v-btn>
-          <v-btn variant="outlined" color="on-surface" :loading="opening" @click="startEditing">
+          </BaseButton>
+          <BaseButton kind="secondary" :loading="opening" @click="startEditing">
             {{ t('account.realName.edit') }}
-          </v-btn>
+          </BaseButton>
         </div>
       </div>
       <div v-for="field in FIELDS" :key="field.key" class="srow srow--pair">
@@ -71,9 +69,9 @@
         <span v-else class="realname__value realname__value--none">{{ t('account.realName.notGiven') }}</span>
       </div>
       <div class="realname__foot">
-        <v-btn variant="text" class="realname__delete" :loading="deleting" @click="remove">
+        <BaseButton :loading="deleting" @click="remove">
           {{ t('account.realName.delete') }}
-        </v-btn>
+        </BaseButton>
         <span class="realname__foot-note">{{ t('account.realName.deleteNote') }}</span>
       </div>
     </section>
@@ -81,7 +79,7 @@
     <section v-else class="settings-card realname__empty">
       <h2 class="t-title">{{ t('account.realName.emptyTitle') }}</h2>
       <p class="realname__empty-body">{{ t('account.realName.emptyBody') }}</p>
-      <v-btn color="primary" variant="flat" @click="startEditing">{{ t('account.realName.fill') }}</v-btn>
+      <BaseButton kind="secondary" @click="startEditing">{{ t('account.realName.fill') }}</BaseButton>
     </section>
 
     <!-- Kept after a record is deleted: it says what already happened. -->
@@ -138,9 +136,9 @@
           }}</time>
         </div>
         <div v-if="logsHaveMore" class="realname__log-more">
-          <v-btn variant="text" color="on-surface" size="small" :loading="loadingLogs" @click="loadLogs(false)">
+          <BaseButton size="sm" :loading="loadingLogs" @click="loadLogs(false)">
             {{ t('account.realName.log.more') }}
-          </v-btn>
+          </BaseButton>
         </div>
       </div>
     </section>
@@ -163,6 +161,7 @@ import { SudoCancelledError, withSudo } from '@/utils/sudo'
 
 import { ensureDefaultAvatarId, isChosenAvatar } from '@/composables/useChosenAvatar'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import i18n, { t } from '@/i18n'
@@ -465,10 +464,6 @@ onMounted(() => {
   justify-content: flex-end;
   padding: 16px 24px;
   background: var(--canvas);
-}
-
-.realname__delete {
-  color: var(--danger-ink);
 }
 
 .realname__foot-note {

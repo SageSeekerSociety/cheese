@@ -14,6 +14,7 @@ import type { KnowledgeType } from '@/types'
 import { ref, watch } from 'vue'
 import { VForm } from 'vuetify/lib/components/index.mjs'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import TipTapEditor from '@/components/common/Editor/TipTapEditor.vue'
 import { t } from '@/i18n'
 import { emptyKnowledgeDraft } from '@/lib/knowledgeDraft'
@@ -77,7 +78,7 @@ async function submitUpload() {
     <v-card rounded="lg" class="upload-dialog">
       <v-card-title class="d-flex justify-space-between align-center pa-4">
         <div class="text-h6 font-weight-medium">{{ t('teams.knowledge.addResource') }}</div>
-        <v-btn icon="mdi-close" variant="text" @click="close"></v-btn>
+        <BaseButton icon="mdi-close" :aria-label="t('navigation.shell.close')" @click="close" />
       </v-card-title>
 
       <v-card-text class="pa-4 pt-2">
@@ -270,10 +271,10 @@ async function submitUpload() {
 
       <v-card-actions class="pa-4">
         <v-spacer></v-spacer>
-        <v-btn variant="text" @click="close">{{ t('teams.knowledge.cancel') }}</v-btn>
-        <v-btn color="primary" :loading="uploading" :disabled="uploading" @click="submitUpload">{{
+        <BaseButton kind="ghost" @click="close">{{ t('teams.knowledge.cancel') }}</BaseButton>
+        <BaseButton kind="primary" :loading="uploading" :disabled="uploading" @click="submitUpload">{{
           t('teams.knowledge.uploadSubmit')
-        }}</v-btn>
+        }}</BaseButton>
       </v-card-actions>
     </v-card>
   </v-dialog>

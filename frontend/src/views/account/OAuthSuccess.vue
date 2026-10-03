@@ -5,9 +5,9 @@
       <v-alert type="error" variant="tonal" density="comfortable" class="mb-6">
         {{ error }}
       </v-alert>
-      <v-btn block color="primary" size="large" to="/account/signin" class="account-submit">
+      <BaseButton block kind="primary" size="lg" to="/account/signin" class="account-submit">
         {{ t('account.backToSignIn') }}
-      </v-btn>
+      </BaseButton>
     </template>
 
     <template v-else>
@@ -33,6 +33,7 @@ import { rememberSignIn } from './lastSignIn'
 import { oauthProviderName } from './oauthProvider'
 
 import AccountHeading from '@/components/account/AccountHeading.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { takeOAuthRedirect } from '@/router/loginRedirect'
 import AccountService from '@/services/account'

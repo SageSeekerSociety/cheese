@@ -8,6 +8,7 @@
 // —— 后者是需要人看一眼的状态，不是代码的问题。
 import type { AcceptCard } from '@/cx_types'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
 
@@ -38,14 +39,14 @@ defineEmits<{ (e: 'update:open', open: boolean): void }>()
           <template #agent><UserRef :handle="agentHandle" :name="agentName" /></template>
         </i18n-t>
       </div>
-      <v-btn
-        size="small"
-        variant="text"
+      <BaseButton
+        kind="ghost"
+        size="sm"
         :prepend-icon="open ? 'mdi-chevron-up' : 'mdi-chevron-down'"
         @click="$emit('update:open', !open)"
       >
         {{ open ? t('work.room.accept.hideGateOutput') : t('work.room.accept.showGateOutput') }}
-      </v-btn>
+      </BaseButton>
       <pre v-if="open" class="gate-output mt-2">{{ card.gate_output || t('work.room.accept.noGateOutput') }}</pre>
     </div>
   </v-card>

@@ -67,18 +67,12 @@
             </v-form>
           </template>
           <template #actions>
-            <v-btn v-if="latestSubmission.review?.reviewed" color="error" variant="tonal" @click="cancelReview">
+            <BaseButton v-if="latestSubmission.review?.reviewed" kind="danger" @click="cancelReview">
               {{ t('tasks.submissionHistory.cancelReview') }}
-            </v-btn>
-            <v-btn
-              color="primary"
-              variant="tonal"
-              :loading="isSubmitting"
-              :disabled="isSubmitting"
-              @click="submitReview"
-            >
+            </BaseButton>
+            <BaseButton kind="primary" :loading="isSubmitting" :disabled="isSubmitting" @click="submitReview">
               {{ t('tasks.submissionHistory.submit') }}
-            </v-btn>
+            </BaseButton>
           </template>
         </v-card>
         <SubmissionReviewStatus v-else-if="latestSubmission.review" class="mt-4" :review="latestSubmission.review" />
@@ -159,6 +153,7 @@ import { usePaging } from '@/utils/paging'
 import SubmissionContentCard from './SubmissionContentCard.vue'
 import SubmissionReviewStatus from './SubmissionReviewStatus.vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
 import { TasksApi } from '@/network/api/tasks'
 

@@ -14,6 +14,7 @@ import type { UserRefTarget } from '@/lib/userRef'
 import RoutineBoard from '../routine/RoutineBoard.vue'
 import RoutineFormDialog from '../routine/RoutineFormDialog.vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
 withDefaults(
@@ -74,14 +75,13 @@ const emit = defineEmits<{
 <template>
   <div class="routine-panel">
     <div class="routine-panel__bar">
-      <v-btn size="small" variant="text" prepend-icon="mdi-plus" class="tap-target" @click="emit('start-new')">{{
+      <BaseButton kind="primary" size="sm" prepend-icon="mdi-plus" class="tap-target" @click="emit('start-new')">{{
         t('routines.action.new')
-      }}</v-btn>
-      <v-btn
+      }}</BaseButton>
+      <BaseButton
+        kind="ghost"
         icon="mdi-refresh"
-        size="small"
-        variant="text"
-        color="on-surface-variant"
+        size="sm"
         class="tap-target"
         :aria-label="t('routines.refreshAria')"
         :loading="loading"
