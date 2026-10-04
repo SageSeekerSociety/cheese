@@ -34,6 +34,8 @@ export interface ChatPagingDeps {
   rememberScroll: (topicId: string | undefined) => void
   scrollToMessage: (id: string, behavior?: 'smooth' | 'auto') => void
   scrollToBottom: () => void
+  /** 首屏分批挂行还没挂完（useRowBatch）：顶上还有没挂的行，滚到那儿不是真的到顶。 */
+  rowsPending?: () => boolean
 }
 
 export function useChatPaging(deps: ChatPagingDeps) {
@@ -50,6 +52,7 @@ export function useChatPaging(deps: ChatPagingDeps) {
     scrollToMessage,
     scrollToBottom,
   } = deps
+  const rowsPending = deps.rowsPending ?? (() => false)
   const { messages, hasMore, hasNewer } = timeline
 
   // --- paging back through history --------------------------------------------
@@ -64,7 +67,7 @@ export function useChatPaging(deps: ChatPagingDeps) {
   async function fillViewportIfNeeded() {
     await nextTick()
     const el = scrollRef.value
-    if (!el || !hasMore.value || loadingOlder.value) return
+    if (!el || !hasMore.value || loadingOlder.value || rowsPending()) return
     if (el.scrollHeight > el.clientHeight) return
     await loadOlder()
   }
@@ -200,7 +203,8 @@ export function useChatPaging(deps: ChatPagingDeps) {
   function onTimelineScroll() {
     rememberScroll(topic()?.id)
     const el = scrollRef.value
-    if (el && shouldLoadOlder(el.scrollTop, { hasMore: hasMore.value, loading: loadingOlder.value })) void loadOlder()
+    if (el && !rowsPending() && shouldLoadOlder(el.scrollTop, { hasMore: hasMore.value, loading: loadingOlder.value }))
+      void loadOlder()
     const fromBottom = el ? el.scrollHeight - el.scrollTop - el.clientHeight : Infinity
     if (shouldLoadNewer(fromBottom, { hasNewer: hasNewer.value, loading: loadingNewer.value })) void loadNewer()
   }

@@ -86,7 +86,7 @@ describe('反馈页面的滚动归自己领', () => {
     expect(rule).toContain('height: 100%')
     expect(rule).toContain('min-height: 0')
     // 而且真的有一个能滚的格子在里面，不是「把滚动挪走了」就完事。
-    expect(cssRule('components/admin/AdminGrid.vue', '.agrid__scroll')).toContain('overflow: auto')
+    expect(cssRule('components/base/BaseTable.vue', '.agrid__scroll')).toContain('overflow: auto')
   })
 
   it('薄壳那条老地址仍然指向队列', () => {

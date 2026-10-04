@@ -71,6 +71,7 @@ const emit = defineEmits<{
   // 指针停在一行上：让父组件（拥有这一行的路由的那个）顺手把它预热了。点这一行
   // 会发生什么由 select-topic 的接收方决定，所以「提前准备什么」也归它。
   (e: 'hover-topic', id: string): void
+  (e: 'press-topic', id: string): void
   (e: 'leave-topic'): void
   (e: 'create-topic', title: string): void
   // 已归档那一组里行尾的「取消归档」。
@@ -469,6 +470,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
             :unread-of="unreadOf"
             @select-topic="emit('select-topic', $event)"
             @hover-topic="emit('hover-topic', $event)"
+            @press-topic="emit('press-topic', $event)"
             @leave-topic="emit('leave-topic')"
             @open-page="openProjectPage"
             @hover-page="hoverProjectPage"
@@ -562,6 +564,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                       :actions="actionsFor"
                       @select="emit('select-topic', $event)"
                       @hover="emit('hover-topic', $event)"
+                      @press="emit('press-topic', $event)"
                       @leave="emit('leave-topic')"
                       @toggle-collapse="toggleCollapse"
                       @commit-rename="(draft: string) => commitRename(item.topic, draft)"
@@ -590,6 +593,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
             :unread-of="unreadOf"
             @select-topic="emit('select-topic', $event)"
             @hover-topic="emit('hover-topic', $event)"
+            @press-topic="emit('press-topic', $event)"
             @leave-topic="emit('leave-topic')"
             @unarchive-topic="emit('unarchive-topic', $event)"
           />

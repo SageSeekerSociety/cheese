@@ -99,10 +99,10 @@ describe('管理台表格壳', () => {
   })
 
   it('滚动容器是这一层自己，表头才 sticky 得住', () => {
-    const src = readFileSync(join(here, 'AdminGrid.vue'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+    const src = readFileSync(join(here, '../base/BaseTable.vue'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
     const rule = (selector: string) => {
       const at = src.indexOf(`${selector} {`)
-      if (at < 0) throw new Error(`AdminGrid.vue 里找不到 ${selector}`)
+      if (at < 0) throw new Error(`BaseTable.vue 里找不到 ${selector}`)
       return src.slice(at, src.indexOf('}', at))
     }
     expect(rule('.agrid__scroll')).toContain('overflow: auto')
@@ -155,7 +155,7 @@ describe('管理台表格壳', () => {
   })
 
   it('卡片模式的触发条件是容器宽度，不是视口', () => {
-    const src = readFileSync(join(here, 'AdminGrid.vue'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+    const src = readFileSync(join(here, '../base/BaseTable.vue'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
     // 这一段和上面那条「滚动容器是自己」一样，jsdom 里量不到（没有布局引擎、
     // 也不解析容器查询），只能钉源码。
     expect(src).toContain('container: agrid / inline-size')
@@ -171,10 +171,10 @@ describe('管理台表格壳', () => {
   })
 
   it('真行的几何按结构选（`:deep`），不按「页面得记得加的那个类」选', () => {
-    const src = readFileSync(join(here, 'AdminGrid.vue'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+    const src = readFileSync(join(here, '../base/BaseTable.vue'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
     const rule = (selector: string) => {
       const at = src.indexOf(`${selector} {`)
-      if (at < 0) throw new Error(`AdminGrid.vue 里找不到 ${selector}`)
+      if (at < 0) throw new Error(`BaseTable.vue 里找不到 ${selector}`)
       return src.slice(at, src.indexOf('}', at))
     }
 

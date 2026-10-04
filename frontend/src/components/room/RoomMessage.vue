@@ -16,6 +16,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { artifactKind, artifactName, askOptions, isImageBlock, replySnippet } from '../../lib/blockDisplay'
 import { foldHeight, overflowsFold } from '../../lib/chatFold'
 import { fileIcon } from '../../lib/fileKind'
+import { cancelMeasure, observeSize, queueMeasure } from '../../lib/foldMeasure'
 import { renderPlain as renderPlainWith } from '../../lib/renderMessage'
 import { avatarColor, avatarInitial } from '../../utils/avatar'
 import AskQuestionForm from '../ask/AskQuestionForm.vue'
@@ -124,7 +125,9 @@ const foldEl = ref<HTMLElement | null>(null)
 const foldable = ref(false)
 const expanded = ref(false)
 const foldPx = ref(0)
-let foldObserver: ResizeObserver | null = null
+let unobserveFold: (() => void) | null = null
+// 这一行在批次里的身份（lib/foldMeasure）。
+const foldOwner = {}
 
 const canFold = computed(() => !props.outgoing && !props.editing)
 const clamped = computed(() => canFold.value && foldable.value && !expanded.value)
@@ -136,21 +139,33 @@ function foldTarget(): HTMLElement | null {
   return (foldEl.value?.firstElementChild as HTMLElement | null) ?? null
 }
 
+// 读和写分开排进同一帧的批次（lib/foldMeasure）：首屏几十行一起挂上来时，先全部读
+// 完布局再全部写，不在每一行之间逼浏览器重算一次布局。
 function measureFold() {
-  const el = foldTarget()
-  if (!el || !canFold.value) {
-    foldable.value = false
-    return
-  }
-  const lineHeight = Number.parseFloat(getComputedStyle(el).lineHeight)
-  foldPx.value = foldHeight(lineHeight)
-  foldable.value = overflowsFold(el.scrollHeight, foldPx.value)
+  queueMeasure(
+    foldOwner,
+    () => {
+      const el = foldTarget()
+      if (!el || !canFold.value) return null
+      const px = foldHeight(Number.parseFloat(getComputedStyle(el).lineHeight))
+      return { px, overflows: overflowsFold(el.scrollHeight, px) }
+    },
+    (m) => {
+      if (!m) {
+        foldable.value = false
+        return
+      }
+      foldPx.value = m.px
+      foldable.value = m.overflows
+    }
+  )
 }
 
 function observeFold() {
-  foldObserver?.disconnect()
+  unobserveFold?.()
+  unobserveFold = null
   const el = foldTarget()
-  if (foldObserver && el && canFold.value) foldObserver.observe(el)
+  if (el && canFold.value) unobserveFold = observeSize(el, measureFold)
   measureFold()
 }
 
@@ -184,12 +199,14 @@ function toggleFold() {
 }
 
 onMounted(() => {
-  if (typeof ResizeObserver !== 'undefined') foldObserver = new ResizeObserver(() => measureFold())
   observeFold()
   void nextTick(observeFold)
 })
 watch([() => props.block.content, () => props.editing, canFold], () => void nextTick(observeFold))
-onBeforeUnmount(() => foldObserver?.disconnect())
+onBeforeUnmount(() => {
+  unobserveFold?.()
+  cancelMeasure(foldOwner)
+})
 
 function renderPlain(text: string): string {
   return renderPlainWith(text, props.refs)
@@ -208,6 +225,7 @@ function renderPlain(text: string): string {
     }"
     :data-mid="block.id"
     :data-actions="outgoing ? undefined : ''"
+    :tabindex="outgoing ? undefined : 0"
   >
     <!-- avatar gutter: only on the first of a run -->
     <div class="im-gutter">
@@ -236,6 +254,9 @@ function renderPlain(text: string): string {
           class="im-avatar im-avatar--photo"
           :src="avatar"
           :alt="authorName"
+          width="28"
+          height="28"
+          decoding="async"
           @error="emit('avatar-error', block.author)"
         />
         <div v-else class="im-avatar" :style="{ backgroundColor: avatarColor(block.author) }">
@@ -409,6 +430,12 @@ function renderPlain(text: string): string {
 <style scoped src="./room-row.css"></style>
 
 <style scoped>
+/* 键盘走到一条消息时，焦点环画在行内（offset 取负）。行是整宽的，而且滚动区在
+   水平方向会裁掉溢出的部分：正 offset 的环在手机上会被左右两边切掉，看不出光标
+   停在哪一条。见 docs/design-system.md 的焦点圈一节。 */
+.im-row:focus-visible {
+  outline-offset: -2px;
+}
 /* B3: the "回复 X：…" cue above a reply. */
 .im-replied {
   display: inline-flex;
