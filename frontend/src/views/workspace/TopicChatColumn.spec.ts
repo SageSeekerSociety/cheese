@@ -41,7 +41,7 @@ const topic = {
 
 let vuetify: ReturnType<typeof createVuetify>
 let history: unknown[] = []
-const sockets: { onopen?: () => void }[] = []
+const sockets: { onopen?: () => void; onmessage?: (event: { data: string }) => void }[] = []
 
 beforeAll(() => {
   vuetify = createVuetify({ components, directives })
