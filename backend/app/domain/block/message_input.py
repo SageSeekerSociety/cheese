@@ -95,8 +95,100 @@ class TextRangeQuoteIn(BaseModel):
     suffix: str
 
 
+class WebRectIn(BaseModel):
+    """位置引用共用的矩形：`x`/`y` 是左上角，`w`/`h` 是宽高，单位都是视口像素。
+
+    像素而不是比例，是因为网页没有稳定的「页面」可以归一到哪儿去 —— 视口宽度随
+    窗口变，两者一起记下来才说得清这块区域当时指的是哪一段版面。数值不设死上限，
+    但要求有限且非负：`inf`/`nan` 穿过 JSON 会变成读不懂的东西。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    x: float = Field(ge=0, allow_inf_nan=False)
+    y: float = Field(ge=0, allow_inf_nan=False)
+    w: float = Field(ge=0, allow_inf_nan=False)
+    h: float = Field(ge=0, allow_inf_nan=False)
+
+
+class WebViewportIn(BaseModel):
+    """选区当时视口的大小，和 `WebRectIn` 一起还原出位置。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    w: float = Field(gt=0, allow_inf_nan=False)
+    h: float = Field(gt=0, allow_inf_nan=False)
+
+
+class WebElementQuoteIn(BaseModel):
+    """网页里指向的一处元素：选择器定位，标签和文字帮受话人认出来。
+
+    `selector` 是运行时在页面里现场算出的短 CSS 路径，`text` 是那处元素的可见文字
+    （截到 500 码点）。`rect`/`viewport` 是它当时在屏幕上的位置，好让受话人知道
+    「说的就是这里出现的这一处」，而不是页面上任何同名的一处。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["web-element"]
+    path: str = Field(min_length=1)
+    source: Literal["live", "committed"]
+    version: str = Field(min_length=1)
+    task_id: uuid.UUID | None = None
+    selector: str = Field(min_length=1, max_length=256)
+    tag: str = Field(default="", max_length=32)
+    text: str = Field(default="", max_length=500)
+    rect: WebRectIn
+    viewport: WebViewportIn
+
+
+class WebTextQuoteIn(BaseModel):
+    """网页里选中一段文字：形状同 `WebElementQuoteIn`，另带两侧的文字。
+
+    `prefix`/`suffix` 是选中那段前后各 32 码点，用来说清同一句话在页面上出现的
+    是哪一处；上限放到 64 是容另一种归一化，同时挡住塞进提示词的长串。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["web-text"]
+    path: str = Field(min_length=1)
+    source: Literal["live", "committed"]
+    version: str = Field(min_length=1)
+    task_id: uuid.UUID | None = None
+    selector: str = Field(min_length=1, max_length=256)
+    tag: str = Field(default="", max_length=32)
+    text: str = Field(min_length=1, max_length=500)
+    prefix: str = Field(default="", max_length=64)
+    suffix: str = Field(default="", max_length=64)
+    rect: WebRectIn
+    viewport: WebViewportIn
+
+
+class WebRegionQuoteIn(BaseModel):
+    """网页上框选的一块区域：只记网址和位置，不记页面内容。
+
+    这类引用来自没有注入运行时的网页应用（隧道托管的 `cheese serve`），宿主读不到
+    里面的元素和文字，能说的只有「在这张网页的这个位置框了一块」。所以它不带文件
+    身份（`path`/`source`/`version`）：应用预览本就没有版本可言，网址就是它的身份。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["web-region"]
+    url: str = Field(min_length=1)
+    rect: WebRectIn
+    viewport: WebViewportIn
+
+
 QuotedContextIn = Annotated[
-    SlidePageQuoteIn | PagePinQuoteIn | SheetCellQuoteIn | TextRangeQuoteIn,
+    SlidePageQuoteIn
+    | PagePinQuoteIn
+    | SheetCellQuoteIn
+    | TextRangeQuoteIn
+    | WebElementQuoteIn
+    | WebTextQuoteIn
+    | WebRegionQuoteIn,
     Field(discriminator="kind"),
 ]
 

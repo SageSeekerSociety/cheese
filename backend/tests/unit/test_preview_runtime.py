@@ -478,3 +478,160 @@ assert.equal(messages[0].data.type, 'escape');
         [node, "-e", harness], input=script, text=True, capture_output=True, timeout=10
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_bridge_picks_an_element_or_a_selection_and_reports_it():
+    """圈选：宿主打开后，帧报的是选择器、标签、文字和位置，报完自动关掉。
+
+    这一处报错读不出来（比如把 nth-of-type 算成兄弟总数）就会指错地方，而宿主
+    只当它是对的那一处发出去——所以定位、文字归一化、以及「一次只指一处」都要在
+    真正的 JS 里跑一遍。
+    """
+    node = _node()
+    script = RUNTIME_SCRIPT.replace(
+        "__PLATFORM_ORIGIN__", json.dumps("https://platform.example")
+    )
+    harness = r"""
+const vm = require('node:vm');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const messages = [];
+const windowListeners = {};
+const docListeners = {};
+const parent = { postMessage: (data, origin) => messages.push({data, origin}) };
+function el(tag, opts) {
+  const node = {
+    nodeType: 1,
+    tagName: tag.toUpperCase(),
+    id: (opts && opts.id) || '',
+    innerText: (opts && opts.text) || '',
+    parentElement: (opts && opts.parent) || null,
+    children: (opts && opts.children) || [],
+    previousElementSibling: null,
+    getBoundingClientRect: () => (opts && opts.rect) ||
+      {left: 0, top: 0, width: 10, height: 20},
+    appendChild(child) { child.parentNode = node; node.children.push(child); },
+    removeChild(child) { child.parentNode = null; },
+    style: {},
+  };
+  return node;
+}
+const root = el('html');
+const body = el('body', {parent: root});
+root.children = [body];
+const para = el('p', {parent: body, text: '  Hello  world  ',
+  rect: {left: 5, top: 6, width: 50, height: 20}});
+body.children = [para];
+const doc = {
+  documentElement: root,
+  body,
+  addEventListener: (type, handler) => { docListeners[type] = handler; },
+  removeEventListener: (type, handler) => {
+    if (docListeners[type] === handler) delete docListeners[type];
+  },
+  createElement: () => ({
+    style: {},
+    attrs: {},
+    setAttribute(name) { this.attrs[name] = ''; },
+    hasAttribute(name) {
+      return Object.prototype.hasOwnProperty.call(this.attrs, name);
+    },
+    parentNode: null,
+  }),
+};
+const selection = {
+  rangeCount: 1,
+  isCollapsed: false,
+  toString: () => 'Hello',
+  getRangeAt: () => ({
+    startContainer: {nodeType: 3, data: 'xxHello'},
+    startOffset: 2,
+    endContainer: {nodeType: 3, data: 'worldyy'},
+    endOffset: 5,
+    commonAncestorContainer: {nodeType: 3, data: 'Hello', parentElement: para},
+    getBoundingClientRect: () => ({left: 1, top: 2, width: 30, height: 10}),
+  }),
+};
+const window = {
+  parent,
+  innerWidth: 1024,
+  innerHeight: 768,
+  addEventListener: (type, handler) => { windowListeners[type] = handler; },
+  getSelection: () => selection,
+};
+vm.runInNewContext(fs.readFileSync(0, 'utf8'), {
+  window, document: doc, setTimeout: () => {},
+});
+const receive = (data, origin) => windowListeners.message({
+  source: parent, origin: origin || 'https://platform.example',
+  data: {channel: 'cheese-preview-runtime', version: 1, ...data},
+});
+receive({type: 'hello', sessionId: 's'});
+messages.length = 0;
+
+// 还没开圈选：页面上就没挂鼠标监听，鼠标动静都不会报。
+assert.equal(docListeners.mousemove, undefined);
+
+// 换一个会话的迟到开关不算：监听器一个也不挂。
+receive({type: 'pick-mode', sessionId: 'other', on: true});
+assert.equal(docListeners.mousemove, undefined);
+
+// 本会话打开：捕获阶段挂上鼠标三件事，光标变成十字。
+receive({type: 'pick-mode', sessionId: 's', on: true});
+assert.equal(typeof docListeners.mousemove, 'function');
+assert.equal(typeof docListeners.mouseup, 'function');
+assert.equal(typeof docListeners.click, 'function');
+assert.equal(root.style.cursor, 'crosshair');
+
+// 悬停给元素描边，框跟着元素的位置和大小走。
+docListeners.mousemove({target: para});
+const box = body.children.find((c) => c.setAttribute);
+assert.ok(box, 'hovering must add a highlight box');
+assert.equal(box.style.display, 'block');
+assert.equal(box.style.left, '5px');
+assert.equal(box.style.top, '6px');
+assert.equal(box.style.width, '50px');
+assert.equal(box.style.height, '20px');
+
+// 点一个元素：报选择器、标签、归一化后的文字、矩形和视口。
+let clickHandled = false;
+docListeners.click({target: para,
+  preventDefault() { clickHandled = true; }, stopPropagation() {}});
+assert.ok(clickHandled, 'the page must not also receive this click');
+assert.equal(messages.length, 1);
+const picked = messages[0].data;
+assert.equal(picked.type, 'pick');
+assert.equal(picked.sessionId, 's');
+assert.equal(messages[0].origin, 'https://platform.example');
+assert.equal(picked.selection, false);
+assert.equal(picked.selector, 'body > p');
+assert.equal(picked.tag, 'p');
+assert.equal(picked.text, 'Hello world');
+assert.equal(JSON.stringify(picked.rect), JSON.stringify({x: 5, y: 6, w: 50, h: 20}));
+assert.equal(JSON.stringify(picked.viewport), JSON.stringify({w: 1024, h: 768}));
+
+// 报完自动关掉：监听器摘掉、光标还原、悬停框收走。
+assert.equal(docListeners.mousemove, undefined);
+assert.equal(root.style.cursor, '');
+assert.equal(box.style.display, 'none');
+
+// 再开一次，选一段文字：报 selection:true，带两侧各 32 字和选中段落所在的元素。
+messages.length = 0;
+receive({type: 'pick-mode', sessionId: 's', on: true});
+docListeners.mouseup({target: para});
+assert.equal(messages.length, 1);
+const sel = messages[0].data;
+assert.equal(sel.selection, true);
+assert.equal(sel.selector, 'body > p');
+assert.equal(sel.text, 'Hello');
+assert.equal(sel.prefix, 'xx');
+assert.equal(sel.suffix, 'yy');
+assert.equal(JSON.stringify(sel.rect), JSON.stringify({x: 1, y: 2, w: 30, h: 10}));
+// 选完那一下之后还会跟一个 click：监听器已经摘掉，不会再报一处。
+assert.equal(docListeners.click, undefined);
+assert.equal(messages.length, 1);
+"""
+    result = subprocess.run(
+        [node, "-e", harness], input=script, text=True, capture_output=True, timeout=10
+    )
+    assert result.returncode == 0, result.stderr

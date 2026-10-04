@@ -578,6 +578,8 @@
       "autoReloaded": "The app restarted; reloaded automatically",
       "runningApp": "Running app",
       "download": "Download",
+      "pick": "Pick",
+      "webRegion": "Boxed a region",
       "frameTitle": "Topic preview",
       "authorizing": "Authorizing the preview…",
       "navigating": "Loading the new page…",

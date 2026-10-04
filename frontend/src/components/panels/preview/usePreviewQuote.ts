@@ -1,6 +1,7 @@
+import type { FramePick } from '@/composables/usePreviewFrames'
 import type { DocumentIdentity } from '@/lib/documentBytes'
 import type { SubmitPreviewQuestion } from '@/lib/previewQuestion'
-import type { SheetCellQuote, TextRangeQuote } from '@/lib/quotedContext'
+import type { SheetCellQuote, TextRangeQuote, WebElementQuote, WebTextQuote } from '@/lib/quotedContext'
 import type { MarkdownQuote } from './markdownQuote'
 import type { SlidePageContext } from './slidesContext'
 
@@ -14,8 +15,13 @@ interface QuoteProps {
 }
 
 type Identity = 'path' | 'source' | 'version' | 'task_id'
-/** 表格里的一格、渲染正文里的一段：指的那一刻留下来，发的时候才配上文件身份。 */
-type FilePick = Omit<SheetCellQuote, Identity> | Omit<TextRangeQuote, Identity>
+/** 表格里的一格、渲染正文里的一段、网页里点中的元素 / 选中的一段：指的那一刻留下来，
+ *  发的时候才配上文件身份。 */
+type FilePick =
+  | Omit<SheetCellQuote, Identity>
+  | Omit<TextRangeQuote, Identity>
+  | Omit<WebElementQuote, Identity>
+  | Omit<WebTextQuote, Identity>
 
 /** 指着文件里一处提问时，随消息走的那份结构化引用。
  *
@@ -39,6 +45,32 @@ export function usePreviewQuote(props: QuoteProps, canUse: (context: SlidePageCo
     // 文件开头那一段没有标题；发出去写 null，别让空串冒充一个叫「」的标题。
     const { text, heading, prefix, suffix } = payload
     pick.value = { kind: 'text-range', text, heading: heading || null, prefix, suffix }
+  }
+
+  /** 网页预览里圈选的一处：点中一个元素，或者选中一段文字。位置（选择器、标签）和当时
+   *  量出来的几何都在帧报上来的 `payload` 里，发的时候再配上这一版文件的身份。 */
+  function web(payload: FramePick) {
+    if (payload.selection) {
+      pick.value = {
+        kind: 'web-text',
+        selector: payload.selector,
+        tag: payload.tag,
+        text: payload.text,
+        prefix: payload.prefix,
+        suffix: payload.suffix,
+        rect: payload.rect,
+        viewport: payload.viewport,
+      }
+    } else {
+      pick.value = {
+        kind: 'web-element',
+        selector: payload.selector,
+        tag: payload.tag,
+        text: payload.text,
+        rect: payload.rect,
+        viewport: payload.viewport,
+      }
+    }
   }
 
   /** 发出去了答 true；幻灯片那一页已不可信答 false；该退回拼一句话时答 null。 */
@@ -77,5 +109,5 @@ export function usePreviewQuote(props: QuoteProps, canUse: (context: SlidePageCo
     return props.submitQuestion({ intent: 'ask-agent', topicId, content: note, quotedContext }) ? true : null
   }
 
-  return { page, pick, clear, cell, range, send }
+  return { page, pick, clear, cell, range, web, send }
 }
