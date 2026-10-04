@@ -1,0 +1,600 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- 方案对比模板 - 完整文档，直接在里面写。槽位见 references/compare.md。
+     一份给团队拍板的对比：结论顶到最前，候选并排，再按标准打分，然后风险、待决事项。
+     token 与组件取自 references/design-system.md（知是设计系统），--cx-* 前缀，两套主题。 -->
+<title><!-- SLOT: TITLE — 这份对比的名字，两到四个词，专指这件事 -->方案名称</title>
+<style>
+:root {
+  color-scheme: light;
+
+  /* 中性色阶（暖冷灰）：每档按「信息离读者多远」选，不跳档 */
+  --cx-ink: #191a1c;      /* 标题 */
+  --cx-text: #36383c;     /* 正文 */
+  --cx-muted: #5a5e66;    /* 次要：副标题、说明、轴标签、表头 */
+  --cx-faint: #747a82;    /* 元信息：时间戳、ID、计数 */
+
+  --cx-line: #ecedef;     /* 发丝分隔线 */
+  --cx-line-2: #e2e3e6;   /* 更明显的分隔线，也是选中行底色 */
+  --cx-fill: #f4f5f7;     /* 悬停、内嵌区块 */
+  --cx-fill-2: #eeeff1;   /* 比 fill 重一档 */
+
+  --cx-canvas: #f7f8fa;   /* 页面底色 */
+  --cx-surface: #ffffff;  /* 内容区、卡片 */
+  --cx-raised: #ffffff;   /* 浮层：菜单、弹窗、抽屉 */
+
+  /* 琥珀：全页只给一处 */
+  --cx-accent: #f57f17;
+  --cx-accent-press: #d96e0a;
+  --cx-accent-ink: #9a5413;   /* 琥珀色文字（--cx-accent 写字对比度不够） */
+  --cx-accent-wash: #fdf1e2;  /* 极浅琥珀底，罕用 */
+  --cx-on-accent: #ffffff;    /* 琥珀实心上的字 */
+
+  /* 状态三件套：记号 / 文字 / 底，不可换用 */
+  --cx-ok: #1f9d55;     --cx-ok-ink: #12703a;     --cx-ok-wash: #e8f6ee;
+  --cx-warn: #e8901c;   --cx-warn-ink: #8f5406;   --cx-warn-wash: #faf0dc;
+  --cx-danger: #dc2626; --cx-danger-ink: #b91c1c; --cx-danger-wash: #fdecec;
+
+  /* 图表系列：分类用，最多六条。两条以内优先用 --cx-text / --cx-muted 加线型 */
+  --cx-chart-1: #3d6bb3;
+  --cx-chart-2: #2a9d8f;
+  --cx-chart-3: #d9822b;
+  --cx-chart-4: #8a63c2;
+  --cx-chart-5: #c9506f;
+  --cx-chart-6: #6b7b8c;
+
+  /* 代码块：两套主题下都反色 */
+  --cx-code-bg: #212121;
+  --cx-code-ink: #e0e0e0;
+
+  /* 圆角：三档加胶囊 */
+  --cx-radius-sm: 6px;     /* 标签、chip、小徽章 */
+  --cx-radius-md: 8px;     /* 按钮、输入框、卡片内的小块 */
+  --cx-radius-lg: 12px;    /* 卡片、面板、callout、图 */
+  --cx-radius-pill: 999px; /* 胶囊、状态标签、圆点 */
+
+  /* 投影：只给浮层，卡片只描边 */
+  --cx-shadow-1: 0 1px 2px rgba(25, 26, 28, 0.06), 0 2px 8px rgba(25, 26, 28, 0.06);
+  --cx-shadow-2: 0 4px 12px rgba(25, 26, 28, 0.1), 0 12px 32px rgba(25, 26, 28, 0.1);
+  --cx-focus-ring: #c2570a; /* 键盘焦点环，别移除 */
+
+  /* 字体：只用系统中文字体栈，不引外部字体（CJK 网络字体每字重好几兆，也连不上） */
+  --cx-font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "PingFang SC",
+    "HarmonyOS Sans SC", "MiSans", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --cx-font-display: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "PingFang SC",
+    "HarmonyOS Sans SC", "MiSans", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  /* 前四个 Windows 上没有，落到裸 monospace 会被映射成宋体；垫上自带的 Cascadia Mono / Consolas */
+  --cx-font-mono: ui-monospace, SFMono-Regular, Menlo, "Cascadia Mono", Consolas,
+    "Liberation Mono", monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --cx-ink: #f3f4f6;
+    --cx-text: #d3d6db;
+    --cx-muted: #aeb4bd;
+    --cx-faint: #888ea0;
+
+    --cx-line: #2b2e33;
+    --cx-line-2: #3a3e45;
+    --cx-fill: #212429;
+    --cx-fill-2: #282c31;
+
+    --cx-canvas: #141517;   /* 不用纯黑：纯黑之下没有更暗的一档，卡片浮不起来 */
+    --cx-surface: #1b1d20;
+    --cx-raised: #212429;   /* 比 surface 亮一档，浮层靠亮度而非投影分开 */
+
+    --cx-accent: #ffa733;   /* 深色下必须提亮，否则按钮上的字读不出 */
+    --cx-accent-press: #ffbc5e; /* 深色下按下变亮，不像亮色那样变深 */
+    --cx-accent-ink: #ffc670;
+    --cx-accent-wash: #2e2216;
+    --cx-on-accent: #191a1c; /* 浅琥珀上的字要用深色 */
+
+    --cx-ok: #3fbf7f;     --cx-ok-ink: #6fd9a0;     --cx-ok-wash: #14261d;
+    --cx-warn: #f0a94a;   --cx-warn-ink: #f7c078;   --cx-warn-wash: #2a2114;
+    --cx-danger: #f0625c; --cx-danger-ink: #f79490; --cx-danger-wash: #2e1a1a;
+
+    --cx-chart-1: #7aa2e3;
+    --cx-chart-2: #4fb8aa;
+    --cx-chart-3: #eba25a;
+    --cx-chart-4: #ad8fe2;
+    --cx-chart-5: #e57f99;
+    --cx-chart-6: #9eacba;
+
+    --cx-code-bg: #282c31;  /* 反色块在深色下改用 fill-2，否则和卡片糊在一起 */
+    --cx-code-ink: #d3d6db;
+
+    --cx-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.3);
+    --cx-shadow-2: 0 4px 12px rgba(0, 0, 0, 0.5), 0 12px 32px rgba(0, 0, 0, 0.4);
+    --cx-focus-ring: rgba(255, 167, 51, 0.65);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --cx-ink: #f3f4f6;
+  --cx-text: #d3d6db;
+  --cx-muted: #aeb4bd;
+  --cx-faint: #888ea0;
+
+  --cx-line: #2b2e33;
+  --cx-line-2: #3a3e45;
+  --cx-fill: #212429;
+  --cx-fill-2: #282c31;
+
+  --cx-canvas: #141517;
+  --cx-surface: #1b1d20;
+  --cx-raised: #212429;
+
+  --cx-accent: #ffa733;
+  --cx-accent-press: #ffbc5e;
+  --cx-accent-ink: #ffc670;
+  --cx-accent-wash: #2e2216;
+  --cx-on-accent: #191a1c;
+
+  --cx-ok: #3fbf7f;     --cx-ok-ink: #6fd9a0;     --cx-ok-wash: #14261d;
+  --cx-warn: #f0a94a;   --cx-warn-ink: #f7c078;   --cx-warn-wash: #2a2114;
+  --cx-danger: #f0625c; --cx-danger-ink: #f79490; --cx-danger-wash: #2e1a1a;
+
+  --cx-chart-1: #7aa2e3;
+  --cx-chart-2: #4fb8aa;
+  --cx-chart-3: #eba25a;
+  --cx-chart-4: #ad8fe2;
+  --cx-chart-5: #e57f99;
+  --cx-chart-6: #9eacba;
+
+  --cx-code-bg: #282c31;
+  --cx-code-ink: #d3d6db;
+
+  --cx-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.3);
+  --cx-shadow-2: 0 4px 12px rgba(0, 0, 0, 0.5), 0 12px 32px rgba(0, 0, 0, 0.4);
+  --cx-focus-ring: rgba(255, 167, 51, 0.65);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--cx-canvas); /* body 必须显式设背景，透明会露出宿主底色还不报警 */
+  color: var(--cx-text);
+  font-family: var(--cx-font-sans);
+  font-size: 16px;
+  line-height: 1.75;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+:focus-visible { outline: 2px solid var(--cx-focus-ring); outline-offset: 2px; border-radius: var(--cx-radius-sm); }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+
+/* ---- 页面骨架 ---- */
+/* 对比页有并排卡和宽表，用宽栏（1100）；连续正文再各自收窄到 660。 */
+.page {
+  max-width: 1100px;
+  margin-inline: auto;
+  padding-block: 48px 64px;
+  padding-inline: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+}
+
+.masthead {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 24px;
+  border-bottom: 1px solid var(--cx-line);
+}
+.eyebrow { margin: 0; font-size: 13px; line-height: 20px; color: var(--cx-muted); }
+.title { margin: 0; font-size: 34px; line-height: 1.2; font-weight: 650; color: var(--cx-ink); text-wrap: balance; }
+.subtitle { margin: 0; font-size: 18px; line-height: 27px; color: var(--cx-muted); }
+
+.section { display: flex; flex-direction: column; gap: 12px; }
+.section > h2 { margin: 0; font-size: 22px; line-height: 30px; font-weight: 650; color: var(--cx-ink); text-wrap: balance; }
+.section > h3 { margin: 0; font-size: 18px; line-height: 27px; font-weight: 600; color: var(--cx-ink); }
+.section > p  { margin: 0; font-size: 16px; line-height: 28px; color: var(--cx-text); max-width: 660px; }
+
+.footnote { border-top: 1px solid var(--cx-line); padding-top: 16px; }
+.footnote p { margin: 0; font-size: 13px; line-height: 20px; color: var(--cx-muted); max-width: 660px; }
+
+/* ---- lede：结论顶到最前，靠底纹 + 描边立起来（不用左竖条，那在 AI 味清单里） ---- */
+.lede {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 16px 20px;
+  max-width: 660px;
+  background: var(--cx-fill);
+  border: 1px solid var(--cx-line);
+  border-radius: var(--cx-radius-lg);
+}
+.lede__label { margin: 0; font-size: 13px; line-height: 20px; font-weight: 600; color: var(--cx-muted); }
+.lede p { margin: 0; font-size: 15px; line-height: 26px; color: var(--cx-text); }
+/* 全页唯一的琥珀：这一页最要紧的那个名字 */
+.lede .pick { color: var(--cx-accent-ink); }
+
+/* ---- 候选方案：并排卡，窄屏折成一列 ---- */
+.options { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+.option {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 16px 18px;
+  background: var(--cx-surface);
+  border: 1px solid var(--cx-line);
+  border-radius: var(--cx-radius-lg);
+}
+.option__head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.option h3 { margin: 0; font-size: 18px; line-height: 27px; font-weight: 600; color: var(--cx-ink); }
+.option__tagline { margin: 0; font-size: 13px; line-height: 20px; color: var(--cx-muted); }
+.option ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.option li { position: relative; padding-left: 18px; font-size: 14px; line-height: 22px; color: var(--cx-text); }
+.option li::before { position: absolute; left: 0; font-weight: 650; }
+.option .pro::before { content: "+"; color: var(--cx-ok-ink); }
+.option .con::before { content: "−"; color: var(--cx-danger-ink); }
+
+/* ---- 状态标签（pill）：x-ink 写字、x-wash 做底、x 画点 ---- */
+.pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 2px 10px;
+  font-size: 13px; line-height: 20px;
+  border-radius: var(--cx-radius-pill);
+  white-space: nowrap;
+}
+.pill__dot { width: 6px; height: 6px; border-radius: var(--cx-radius-pill); flex: none; }
+.pill--neutral { color: var(--cx-muted);      background: var(--cx-fill); }
+.pill--neutral .pill__dot { background: var(--cx-faint); }
+
+/* ---- 数据表：外层横滑，窄屏右缘渐隐 + 一行小字 ---- */
+.table-outer { position: relative; }
+.table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--cx-line);
+  border-radius: var(--cx-radius-md);
+  background: var(--cx-surface);
+}
+.table-wrap table { width: 100%; border-collapse: collapse; font-size: 14px; line-height: 20px; }
+.table-wrap th, .table-wrap td {
+  padding: 10px 14px; text-align: left; white-space: nowrap;
+  border-bottom: 1px solid var(--cx-line);
+}
+.table-wrap thead th { font-size: 13px; font-weight: 600; color: var(--cx-muted); }
+.table-wrap tbody tr:last-child td { border-bottom: 0; }
+.table-wrap .crit { font-weight: 600; color: var(--cx-ink); }
+.table-wrap .num { text-align: right; font-variant-numeric: tabular-nums; }
+.rating { font-variant-numeric: tabular-nums; }
+.rating.hi { color: var(--cx-ok-ink); font-weight: 650; }
+.rating.mid { color: var(--cx-muted); }
+.rating.lo { color: var(--cx-danger-ink); font-weight: 650; }
+.rating.na { color: var(--cx-faint); }        /* 未测：中性，别和「中」混为一谈 */
+
+.scroll-hint { display: none; margin: 6px 0 0; font-size: 12px; line-height: 18px; color: var(--cx-faint); }
+@media (max-width: 720px) {
+  .table-outer::after {
+    content: ""; position: absolute; top: 0; right: 0; bottom: 0; width: 32px;
+    background: linear-gradient(to right, transparent, var(--cx-surface));
+    pointer-events: none;
+    border-top-right-radius: var(--cx-radius-md); border-bottom-right-radius: var(--cx-radius-md);
+  }
+  .figure-outer::after {
+    content: ""; position: absolute; top: 0; right: 0; bottom: 0; width: 32px;
+    background: linear-gradient(to right, transparent, var(--cx-canvas));
+    pointer-events: none;
+  }
+  .scroll-hint { display: block; }
+}
+
+/* ---- 图 + 图注 + 数据表孪生体 ---- */
+.figure { margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.figure-outer { position: relative; }
+.figure-scroll { overflow-x: auto; }
+/* min-width 保图内文字 ≥11px，max-width 免宽屏上文字被放大到离谱 */
+.figure svg { display: block; width: 100%; height: auto; min-width: 560px; max-width: 680px; }
+.figcaption { font-size: 13px; line-height: 20px; color: var(--cx-muted); }
+.data-twin { font-size: 13px; }
+.data-twin > summary { cursor: pointer; color: var(--cx-muted); padding: 2px 0; }
+.data-twin > summary:hover { color: var(--cx-text); }
+.data-twin[open] > summary { margin-bottom: 8px; }
+
+/* ---- callout：风险 / 说明 ---- */
+.callout {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 14px 18px;
+  border: 1px solid var(--cx-line);
+  border-radius: var(--cx-radius-lg);
+}
+.callout__title { margin: 0; font-size: 13px; line-height: 20px; font-weight: 600; }
+.callout__body { margin: 0; font-size: 15px; line-height: 26px; color: var(--cx-text); max-width: 660px; }
+.callout--note   { background: var(--cx-fill); }
+.callout--note   .callout__title { color: var(--cx-muted); }
+.callout--warn   { background: var(--cx-warn-wash); border-color: transparent; }
+.callout--warn   .callout__title { color: var(--cx-warn-ink); }
+.callout-stack { display: flex; flex-direction: column; gap: 12px; }
+
+@media print {
+  /* 打印固定亮色，不管屏幕主题或宿主的主题标记。 */
+  :root, :root[data-theme="dark"], :root:not([data-theme="light"]) {
+    color-scheme: light;
+    --cx-ink: #191a1c;
+    --cx-text: #36383c;
+    --cx-muted: #5a5e66;
+    --cx-faint: #747a82;
+    --cx-line: #ecedef;
+    --cx-line-2: #e2e3e6;
+    --cx-fill: #f4f5f7;
+    --cx-fill-2: #eeeff1;
+    --cx-canvas: #ffffff;
+    --cx-surface: #ffffff;
+    --cx-accent: #f57f17;
+    --cx-accent-ink: #9a5413;
+    --cx-on-accent: #ffffff;
+    --cx-ok-ink: #12703a;
+    --cx-warn-ink: #8f5406;
+    --cx-danger-ink: #b91c1c;
+    --cx-ok-wash: #e8f6ee;
+    --cx-warn-wash: #faf0dc;
+    --cx-danger-wash: #fdecec;
+  }
+  body { font-size: 12pt; }
+  .page { max-width: none; padding: 0; }
+  .lede, .option, .callout, table, figure, .data-twin { break-inside: avoid; }
+  thead { display: table-header-group; }
+  h2, h3 { break-after: avoid; }
+  .figure svg { min-width: 0; max-width: 100%; }
+}
+
+/* ---- 窄屏（≤480px）：图不横向滚动，数值靠展开的数据表读 ----
+   手写 SVG 带 min-width，窄屏会横向滚动、图内文字缩到读不清。这里让图缩到一栏宽
+   （不再横滑），并由页尾的脚本把它的数据表孪生体展开——数值不只活在图形里。 */
+@media screen and (max-width: 480px) {
+  .figure svg { min-width: 0; }
+  .figure-scroll { overflow-x: visible; }
+  /* 图不再横滑，那行「左右滑动看图」的提示和右缘渐隐都不成立了，去掉 */
+  .figure > .scroll-hint { display: none; }
+  .figure-outer::after { display: none; }
+
+  /* 评分表窄屏改成一行一张卡：标准当标题，每个方案各占一行，第二个方案不再被横滑挡在外面 */
+  .table-outer:has(.rating) .table-wrap { overflow-x: visible; border: 0; background: transparent; }
+  .table-outer:has(.rating)::after { display: none; }
+  .table-outer:has(.rating) + .scroll-hint { display: none; }
+  .table-outer:has(.rating) table,
+  .table-outer:has(.rating) tbody { display: block; }
+  .table-outer:has(.rating) thead { display: none; }
+  .table-outer:has(.rating) tr {
+    display: block;
+    border: 1px solid var(--cx-line);
+    border-radius: var(--cx-radius-md);
+    background: var(--cx-surface);
+    padding: 10px 14px;
+    margin-bottom: 8px;
+  }
+  .table-outer:has(.rating) td {
+    display: flex; justify-content: space-between; gap: 8px 12px;
+    padding: 3px 0; border-bottom: 0; white-space: normal;
+  }
+  .table-outer:has(.rating) td.crit { display: block; padding: 0 0 6px; font-weight: 600; }
+  .table-outer:has(.rating) td:not(.crit)::before { content: attr(data-label); color: var(--cx-muted); }
+}
+</style>
+</head>
+<body>
+<!-- CONTENT:START -->
+
+<main class="page">
+
+  <header class="masthead">
+    <p class="eyebrow"><!-- SLOT: EYEBROW — 可选眉标，如「方案对比 · 2026 年 10 月」 -->眉标</p>
+    <h1 class="title"><!-- SLOT: TITLE — 这份对比的名字，两到四个词，专指这件事 -->方案名称</h1>
+    <p class="subtitle"><!-- SLOT: SUBTITLE — 要回答的那个问题，一句话 -->要回答的那个问题。</p>
+  </header>
+
+  <!-- SLOT: RECOMMENDATION
+       结论顶到最前：一段话给出推荐哪个方案、为什么。这是全页最先被读到的一块，不要放在末尾。
+       用 <strong class="pick"> 标出推荐的名字——它是全页唯一的琥珀。 -->
+  <div class="lede">
+    <p class="lede__label">推荐</p>
+    <p>推荐 <strong class="pick">方案名</strong>，因为一句话理由；兜底方案是哪个，什么情况下用它。</p>
+  </div>
+
+  <!-- SLOT: OPTIONS
+       每个候选方案一张 .option 卡，并排。每张：h3 名字、一句 tagline、几条利（.pro）弊（.con）。
+       2-4 张最清楚，多了折成多行。推荐的方案排在最前，可在标题旁加一颗中性 pill「推荐」。 -->
+  <section class="section">
+    <h2>候选方案</h2>
+    <div class="options">
+      <div class="option">
+        <div class="option__head">
+          <h3>方案 A</h3>
+          <span class="pill pill--neutral"><span class="pill__dot"></span>推荐</span>
+        </div>
+        <p class="option__tagline">一句话说清它是什么。</p>
+        <ul>
+          <li class="pro">利：具体好处，带真实数字。</li>
+          <li class="con">弊：具体代价。</li>
+        </ul>
+      </div>
+      <div class="option">
+        <div class="option__head"><h3>方案 B</h3></div>
+        <p class="option__tagline">一句话说清它是什么。</p>
+        <ul>
+          <li class="pro">利：具体好处。</li>
+          <li class="con">弊：具体代价。</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- SLOT: CRITERIA
+       按标准逐项打分：一行一个标准，一列一个方案。评分用 .rating 配 hi（好）/ mid（中）/ lo（差），
+       测不到的值写「未测」并用 .na，别拿中等的分数冒充实测。表头或下方写清评分口径。列数要和 OPTIONS 对齐。 -->
+  <section class="section">
+    <h2>按标准比较</h2>
+    <div class="table-outer">
+      <div class="table-wrap" tabindex="0" role="region" aria-label="方案评分对照表">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">标准</th>
+              <th scope="col">方案 A</th>
+              <th scope="col">方案 B</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td class="crit">标准一</td><td class="rating hi" data-label="方案 A">优</td><td class="rating mid" data-label="方案 B">中</td></tr>
+            <tr><td class="crit">标准二</td><td class="rating mid" data-label="方案 A">中</td><td class="rating na" data-label="方案 B">未测</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <p class="scroll-hint">左右滑动看全部列</p>
+    <p>评分口径：说明每个等级背后的标准、谁定的；能引实测数据就引，引不到就说是估计。</p>
+  </section>
+
+  <!-- SLOT: CHART
+       可选：一张对比图，放在它支撑的那一节里，紧跟一张数据表（<details> 里）。
+       内联 SVG 手写，颜色走 style="fill:var(--cx-…)":变量在 SVG 呈现属性里不生效。
+       单一系列用 --cx-text；图内文字 ≥11px（窄屏靠 .figure-scroll 与 min-width 保底）；
+       测不到的值在图上显式标「未测」，别画一根默认长度的柱。没有图就整块删掉。 -->
+  <section class="section">
+    <h2>对比图</h2>
+    <figure class="figure">
+      <div class="figure-outer">
+      <div class="figure-scroll">
+                <svg viewBox="0 0 600 220" role="img" aria-label="各方案预览就绪时间对比，A 约 1 秒，B 17 到 60 秒，C 42 到 54 秒，D 未测出">
+          <g style="stroke:var(--cx-line)" stroke-width="1">
+            <line x1="250" y1="22" x2="250" y2="178"/>
+            <line x1="385" y1="22" x2="385" y2="178"/>
+            <line x1="520" y1="22" x2="520" y2="178"/>
+          </g>
+          <line x1="115" y1="22" x2="115" y2="178" style="stroke:var(--cx-line-2)" stroke-width="1"/>
+          <!-- 轨道：0 到量程上限，把「区间」的起点画出来；量程画满整块图，刻度位置才准 -->
+          <g style="fill:var(--cx-fill)">
+            <rect x="115" y="34" width="405" height="16" rx="3"/>
+            <rect x="115" y="72" width="405" height="16" rx="3"/>
+            <rect x="115" y="110" width="405" height="16" rx="3"/>
+            <rect x="115" y="148" width="405" height="16" rx="3"/>
+          </g>
+          <!-- 单一系列用 --cx-text，区间条从最好值画到最差值 -->
+          <g style="fill:var(--cx-text)">
+            <rect x="115" y="34" width="7" height="16" rx="2"/>
+            <rect x="229.8" y="72" width="290.2" height="16" rx="3"/>
+            <rect x="398.5" y="110" width="81" height="16" rx="3"/>
+          </g>
+          <g style="fill:var(--cx-muted)" font-size="13" text-anchor="end" font-family="var(--cx-font-sans)">
+            <text x="105" y="46">方案 A</text>
+            <text x="105" y="84">方案 B</text>
+            <text x="105" y="122">方案 C</text>
+            <text x="105" y="160">方案 D</text>
+          </g>
+          <g style="fill:var(--cx-muted)" font-size="13" text-anchor="start" font-family="var(--cx-font-sans)">
+            <text x="130" y="46">约 1s</text>
+            <text x="528" y="84">17–60s</text>
+            <text x="488" y="122">42–54s</text>
+          </g>
+          <text x="123" y="160" style="fill:var(--cx-faint)" font-size="13" font-family="var(--cx-font-sans)">未测</text>
+          <g style="fill:var(--cx-muted)" font-size="13" text-anchor="middle" font-family="var(--cx-font-sans)">
+            <text x="115" y="196">0</text>
+            <text x="250" y="196">20</text>
+            <text x="385" y="196">40</text>
+            <text x="520" y="196">60</text>
+          </g>
+          <text x="536" y="196" style="fill:var(--cx-faint)" font-size="13" font-family="var(--cx-font-sans)">秒</text>
+        </svg>
+      </div>
+      </div>
+      <p class="scroll-hint">窄屏可左右滑动看图</p>
+      <figcaption class="figcaption">图 1 · 各方案就绪时间（秒，越短越好）；D 今天未测出。数据见下方数据表。</figcaption>
+      <details class="data-twin">
+        <summary>查看数据表</summary>
+        <div class="table-outer">
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th scope="col">方案</th><th scope="col" class="num">就绪时间</th></tr></thead>
+            <tbody>
+              <tr><td>方案 A</td><td class="num">约 1 秒</td></tr>
+              <tr><td>方案 B</td><td class="num">17–60 秒</td></tr>
+              <tr><td>方案 C</td><td class="num">42–54 秒</td></tr>
+              <tr><td>方案 D</td><td class="num">未测</td></tr>
+            </tbody>
+          </table>
+        </div>
+        </div>
+        <p class="scroll-hint">左右滑动看全部列</p>
+      </details>
+    </figure>
+  </section>
+
+  <!-- SLOT: RISKS
+       选推荐方案要承担的风险：每条一句话说清风险是什么、以及怎么应对或降级。
+       没有真实风险就整块删掉，别硬凑。 -->
+  <section class="section">
+    <h2>风险</h2>
+    <div class="callout-stack">
+      <div class="callout callout--warn">
+        <p class="callout__title">风险</p>
+        <p class="callout__body">具体风险是什么，以及怎么应对或降级到哪条路。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- SLOT: DECISIONS
+       要拍板的事、和由谁拍。三列：待决事项、涉及的选项、由谁定（带期限）。
+       写具体的人和时间，别写「尽快」。 -->
+  <section class="section">
+    <h2>待决事项</h2>
+    <div class="table-outer">
+      <div class="table-wrap" tabindex="0" role="region" aria-label="待决事项">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">待决事项</th>
+              <th scope="col">选项</th>
+              <th scope="col">由谁定</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>要定的事</td><td>A / B</td><td>某某，某日期前</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <p class="scroll-hint">左右滑动看全部列</p>
+  </section>
+
+  <footer class="footnote">
+    <p><!-- SLOT: FOOTNOTE — 数据来源与口径，一行 -->数据来源：……</p>
+  </footer>
+
+</main>
+<!-- CONTENT:END -->
+
+
+<script>
+  // 窄屏（≤480px）：把手写 SVG 图的 data twin（数据表）展开，数值不只活在图形里；
+  // 图本身在窄屏由样式缩到一栏宽、不再横向滚动（见样式里的 480px 块）。
+  (() => {
+    const mq = window.matchMedia('(max-width: 480px)');
+    const sync = () => {
+      document.querySelectorAll('.figure').forEach((fig) => {
+        const twin = fig.querySelector('details.data-twin');
+        if (!twin) return;
+        if (mq.matches) {
+          if (!twin.open) { twin.open = true; twin.dataset.autoOpen = '1'; }
+        } else if (twin.dataset.autoOpen) {
+          twin.open = false;
+          delete twin.dataset.autoOpen;
+        }
+      });
+    };
+    sync();
+    mq.addEventListener('change', sync);
+  })();
+</script>
+</body>
+</html>

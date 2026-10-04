@@ -616,7 +616,11 @@ details[open]::details-content {
   color: var(--danger-ink);
 }
 
-/* 房间里发生的事：谁都没做这件事，所以它不进头像列，也不上正文轴，居中一行淡字。 */
+/* 房间里发生的事：谁都没做这件事，所以它不进头像列，也不上正文轴，居中一行淡字。
+   它也是时间线里的一行，和事件行（AgentNoticeFrame 的 .notice-row）、消息行
+   （room-row.css 的 .im-row）一样：离屏的不渲染，但留在 DOM 里 —— Ctrl+F、读屏、
+   选中都还找得到它。`auto 20px` 是这一行「12px 淡字」的估计高度，只在从未渲染过时
+   占位；`auto` 让渲染过的行记住真实高度。测量帧（.cv-measure）里按真实高度铺开。 */
 .room-happening {
   margin: 10px 16px;
   text-align: center;
@@ -624,6 +628,13 @@ details[open]::details-content {
   line-height: var(--lh-12);
   color: var(--faint);
   overflow-wrap: anywhere;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 20px;
+}
+/* 测量帧（向上翻页补偿、scrollIntoView）：这一窗里的行按真实高度铺开。见
+   lib/contentVisibility。 */
+.cv-measure .room-happening {
+  content-visibility: visible;
 }
 .room-happening :deep(.mention) {
   color: var(--muted);
