@@ -38,6 +38,8 @@ const LAYOUT_KEY = 'cheesex.layout'
 interface StoredLayout {
   chatPct?: number
   lastProjectId?: string
+  /** 每个项目上次打开的话题 id：回到那个项目时，rail 那一格直接落回这个房间。 */
+  lastTopicByProject?: Record<string, string>
 }
 
 function loadLayout(): StoredLayout {
@@ -47,6 +49,17 @@ function loadLayout(): StoredLayout {
   } catch {
     return {} // malformed stored layout
   }
+}
+
+// 存进来的这份是整个浏览器一份，可能是老版本写的、也可能被人手改过：只留下
+// projectId → topicId 都是字符串的那些，别的当没记过。
+function validTopicMap(value: unknown): Record<string, string> {
+  if (typeof value !== 'object' || value === null) return {}
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).filter((entry): entry is [string, string] => {
+      return typeof entry[1] === 'string'
+    })
+  )
 }
 
 const clampNum = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
@@ -131,18 +144,54 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
 
   const stored = loadLayout()
   const chatPct = ref(typeof stored.chatPct === 'number' ? stored.chatPct : 50)
+  // 每个项目上次打开的话题。rail 的项目格子用它落回那个房间，而不是每次都落在
+  // 项目首页（每天都走的主路径不该多加一跳）。
+  const lastTopicByProject = ref<Record<string, string>>(validTopicMap(stored.lastTopicByProject))
   function persistLayout() {
     localStorage.setItem(
       LAYOUT_KEY,
       JSON.stringify({
         chatPct: chatPct.value,
         lastProjectId: projectId.value ?? undefined,
+        lastTopicByProject: lastTopicByProject.value,
       })
     )
   }
   function setChatPct(pct: number) {
     chatPct.value = clampNum(pct, 25, 80)
     persistLayout()
+  }
+
+  /** 记住正待着的这个房间是**哪个项目**的：回到项目时 rail 那一格落回它。 */
+  function rememberTopic(pid: string, topicId: string) {
+    if (!pid || !topicId || lastTopicByProject.value[pid] === topicId) return
+    lastTopicByProject.value = { ...lastTopicByProject.value, [pid]: topicId }
+    persistLayout()
+  }
+
+  /**
+   * 这个项目上次打开的话题；不在了就交回 null，落回项目首页。
+   *
+   * 「还在不在」在第一次读到这个项目的清单时校验（`forgetMissingTopic`）：记着的
+   * 那个话题被删了、或被收成了别的房间，就不该再把人送进一个打不开的房间。
+   */
+  function lastTopicIdFor(pid: string): string | null {
+    return lastTopicByProject.value[pid] ?? null
+  }
+
+  function forgetRememberedTopic(pid: string) {
+    if (!(pid in lastTopicByProject.value)) return
+    const next = { ...lastTopicByProject.value }
+    delete next[pid]
+    lastTopicByProject.value = next
+    persistLayout()
+  }
+
+  /** 刚读到的清单里没有记着的那个话题了：忘掉它，这一格回落项目首页。 */
+  function forgetMissingTopic(pid: string, list: Topic[]) {
+    const remembered = lastTopicByProject.value[pid]
+    if (!remembered || list.length === 0 || list.some((row) => row.id === remembered)) return
+    forgetRememberedTopic(pid)
   }
 
   const error = ref<string | null>(null)
@@ -268,6 +317,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
       const payload = await readLatest(`topics:${pid}:${revision}`, () => listTopics(pid, TOPIC_SORT))
       if (epoch === projectEpoch && projectId.value === pid && revision === topicRevision) {
         topics.value = payload.data
+        forgetMissingTopic(pid, payload.data)
         noteArchived(payload.data)
       }
     } catch {
@@ -309,6 +359,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
       const payload = await readLatest(`topics:${id}:${revision}`, () => listTopics(id, TOPIC_SORT))
       if (epoch !== projectEpoch || projectId.value !== id) return
       if (revision === topicRevision) topics.value = payload.data
+      forgetMissingTopic(id, payload.data)
       noteArchived(payload.data)
     } catch (e) {
       // 「进不来」和「进来了但这一次没取到」是两件事：前者要一屏说明，后者是那条
@@ -467,6 +518,9 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
         topicRevision += 1
         Object.assign(topic, updated)
       }
+      // 刚归档的正是记着的那一个：rail 那一格不该再把项目落在它身上（归档的话题还
+      // 在清单里，`forgetMissingTopic` 找不到它），直接忘掉。
+      if (topic && lastTopicByProject.value[topic.project_id] === topicId) forgetRememberedTopic(topic.project_id)
       void refreshTopics()
     } catch (e) {
       reportError(e, t('shell.workspaceErrors.archive'))
@@ -564,6 +618,8 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     undoAutoTitle,
     archive,
     unarchive,
+    rememberTopic,
+    lastTopicIdFor,
     create,
     upgradeMessage,
   }

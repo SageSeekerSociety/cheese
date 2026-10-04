@@ -49,6 +49,13 @@ export interface NavSources {
   createProject: () => void
   /** 待我处理的件数；还没读到是 0。桌面首页那一格和手机底栏「待办」都画它。 */
   awaitingCount?: number
+  /** 这个项目里有几件待我处理；还没读到或没有就是 0。桌面项目格子上画它。 */
+  projectAwaitingCount?: (projectId: string) => number
+  /**
+   * 这个项目上次打开的话题 id；记着的那一个还在的话，格子直接落回那个话题，
+   * 否则落到项目首页。第一次打开这个项目时会校验一次，不在了就忘掉。
+   */
+  projectLastTopic?: (projectId: string) => string | null
   /** 有没有没读的动态（提到你、回复你……）。没有待处理的事时，用一颗小点提醒它。 */
   unreadActivity?: boolean
   /** 右键一个项目格子能做什么。由宿主拼好：里面要用到路由、剪贴板和退出确认框。 */
@@ -94,6 +101,12 @@ function marks(src: NavSources): Pick<NavItem, 'badge' | 'dot'> {
   return { badge, dot: !badge && !!src.unreadActivity }
 }
 
+/** 项目格子的记号：这个项目里有几件待我处理。和首页那一格同一种画法。 */
+function projectMarks(src: NavSources, projectId: string): Pick<NavItem, 'badge'> {
+  const badge = src.projectAwaitingCount?.(projectId) ?? 0
+  return badge > 0 ? { badge } : {}
+}
+
 /**
  * 桌面 rail 的三格长什么样，按 key 摆好等壳来排。
  *
@@ -107,19 +120,25 @@ function railParts(src: NavSources, shell: Shell): Record<string, NavGenericItem
     projects: [
       ...(src.projects.length ? [{ key: 'cx-divider', type: 'divider' as const }] : []),
       // Discord 式：一个项目一格方头像（首字母 + 颜色），不是截断的标题。
-      ...src.projects.map((p) => ({
-        key: `cx-${p.id}`,
-        type: 'item' as const,
-        title: p.name,
-        projectId: p.id,
-        to: `/projects/${p.id}`,
-        // 项目里的每一页（话题、看板、设置）都算站在这一格上。选中框靠这个画：
-        // RailItem 自己绑着 aria-current，没有 match 的格子绑上去的是 undefined，
-        // 会盖掉链接本来算出的激活态。
-        match: (path: string) => path === `/projects/${p.id}` || path.startsWith(`/projects/${p.id}/`),
-        img: src.projectAvatar(p.name),
-        menu: src.projectMenu?.(p),
-      })),
+      ...src.projects.map((p) => {
+        const lastTopic = src.projectLastTopic?.(p.id) ?? null
+        return {
+          key: `cx-${p.id}`,
+          type: 'item' as const,
+          title: p.name,
+          projectId: p.id,
+          // 上次打开的那个话题还在，就直接落回它——每天的主路径是「回到昨天那个
+          // 房间」，先落到项目首页等于多加一跳。不在了（或没记过）才落到项目首页。
+          to: lastTopic ? `/projects/${p.id}/topics/${lastTopic}` : `/projects/${p.id}`,
+          // 项目里的每一页（话题、看板、设置）都算站在这一格上。选中框靠这个画：
+          // RailItem 自己绑着 aria-current，没有 match 的格子绑上去的是 undefined，
+          // 会盖掉链接本来算出的激活态。
+          match: (path: string) => path === `/projects/${p.id}` || path.startsWith(`/projects/${p.id}/`),
+          img: src.projectAvatar(p.name),
+          menu: src.projectMenu?.(p),
+          ...projectMarks(src, p.id),
+        }
+      }),
     ],
     add: [
       {
@@ -134,14 +153,24 @@ function railParts(src: NavSources, shell: Shell): Record<string, NavGenericItem
   }
 }
 
+/** rail 上一格能带的快捷方式编号上限。App 登记的是 mod+1..9，再多也没键可触发。 */
+const MAX_SHORTCUT = 9
+
 /** 桌面左侧 rail：首页（待办、团队、空间都在它的侧栏里）+ 项目实例 + ＋新建项目。 */
 export function railItems(src: NavSources, shell: Shell): NavGenericItem[] {
   const parts = railParts(src, shell)
   const items = orderedNav(shell, 'rail', Object.keys(parts)).flatMap((key) => parts[key])
   // ⌘N 是**画出来的位置**，不是某一格固有的属性：壳把项目排到第一格时，⌘1 就该是
   // 那个项目。所以编号发生在排完之后，而不是在建格子的地方写死。
-  let n = 1
-  return items.map((item) => (item.type === 'item' && item.to ? { ...item, shortcut: n++ } : item))
+  //
+  // 只编到 9：App 只登记 mod+1..9，第 10 格往后拿到的数字没有任何键能触发，浮层上
+  // 那句「⌘10」是一句谎话。项目多到 9 个以上时，多出来的格子没有快捷方式。
+  let n = 0
+  return items.map((item) => {
+    if (item.type !== 'item' || !item.to || n >= MAX_SHORTCUT) return item
+    n += 1
+    return { ...item, shortcut: n }
+  })
 }
 
 /**

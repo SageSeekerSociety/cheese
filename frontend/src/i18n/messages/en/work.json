@@ -295,6 +295,10 @@
       "usageSplit": "Input {input} · Output {output}",
       "noUsage": "No data"
     },
+    "archiveNotice": {
+      "done": "Archived",
+      "undo": "Undo"
+    },
     "progress": {
       "title": "Progress",
       "tally": "{done}/{total} done"
