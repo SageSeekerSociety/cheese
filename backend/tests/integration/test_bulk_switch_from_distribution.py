@@ -16,7 +16,7 @@ from app.common.auth import create_access_token
 from app.domain.agent import execution
 from app.domain.agent.models import AgentTurn
 from app.domain.agent_session.services import AgentSessionService
-from app.domain.device.supply import Supply, Visibility
+from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.machine import session_work as work_lease
 from app.domain.project.models import Project
@@ -72,7 +72,6 @@ async def _project_on_a_device(client):
                 await devices.start(name),
                 owner_user_id=alice.id,
                 supply=Supply.self_hosted,
-                visibility=Visibility.host,
             )
             await devices.assign_to_project(
                 device.device_id, project_id, actor_user_id=alice.id
