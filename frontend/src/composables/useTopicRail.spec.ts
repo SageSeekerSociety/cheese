@@ -73,7 +73,7 @@ function mount(topics: Topic[]) {
   return render(Host, { global: { plugins: [createPinia()] } })
 }
 
-const marksOf = (container: HTMLElement, room: string) =>
+const marksOf = (container: Element, room: string) =>
   [...container.querySelectorAll(`[data-room="${room}"]`)].map((el) => ({
     state: el.getAttribute('data-state'),
     name: el.getAttribute('data-name'),
