@@ -856,6 +856,7 @@
       "allKnowledgePoints": "All",
       "summary": "{projects} member projects · {students} members · {questions} messages · {stuck} shared sticking points",
       "noProjects": "No member projects visible",
+      "loadFailed": "Couldn't load learning data",
       "queue": {
         "title": "To handle",
         "hint": "Shared sticking points, ordered by how many members hit them",
@@ -875,8 +876,6 @@
       "outlineHint": "Sections follow the order you ticked",
       "toast": {
         "filtersFailed": "Couldn't load learning filters",
-        "queuesFailed": "Couldn't load the queue",
-        "questionsFailed": "Couldn't load member messages",
         "outlineFailed": "Couldn't build the outline"
       },
       "unclassified": "Unclassified",

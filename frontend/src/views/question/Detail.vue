@@ -173,6 +173,13 @@
           </v-card-actions>
         </v-card>
 
+        <BaseLoadError
+          v-else-if="loadFailed"
+          :title="t('questions.detail.loadFailed')"
+          :error="loadError"
+          @retry="retryLoad"
+        />
+
         <v-skeleton-loader v-else type="list-item-avatar, paragraph, button@2" />
       </v-col>
     </v-row>
@@ -260,6 +267,7 @@ import { parse } from '@/utils/parser'
 import { usePageTitle } from '@/composables/usePageTitle'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import { DIALOG_WIDTH } from '@/components/base/dialogSize'
 import ContentVoter from '@/components/common/ContentVoter.vue'
 import RichEditor from '@/components/common/Editor/Editor.vue'
@@ -288,6 +296,9 @@ const bountyLoading = ref(false)
 const questionId = computed(() => parseInt(route.params.questionId as string))
 
 const questionData = ref<Question | null>(null)
+// 读失败与「还没加载出来」是两件事：失败替换掉这张卡片，不再一直停在骨架上。
+const loadFailed = ref(false)
+const loadError = ref<string | null>(null)
 
 provide(questionDataInjectionKey, questionData)
 
@@ -331,11 +342,21 @@ const addBounty = async () => {
 }
 
 const load = async (id: number) => {
-  const {
-    data: { question },
-  } = await QuestionApi.detail(id)
-  questionData.value = question
+  loadFailed.value = false
+  loadError.value = null
+  try {
+    const {
+      data: { question },
+    } = await QuestionApi.detail(id)
+    questionData.value = question
+  } catch (error) {
+    console.error('Failed to load the question', error)
+    loadFailed.value = true
+    loadError.value = error instanceof Error && error.message ? error.message : null
+  }
 }
+
+const retryLoad = () => load(questionId.value)
 
 const submit = async () => {
   try {
