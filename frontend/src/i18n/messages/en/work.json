@@ -825,6 +825,14 @@
       "emptyLineHint": "Type, or / to insert",
       "undo": "Undo",
       "redo": "Redo",
+      "outline": "Outline",
+      "outlineEmpty": "No headings in this document",
+      "find": "Find in document",
+      "findPlaceholder": "Find in document",
+      "findNoResults": "No results",
+      "findPrev": "Previous match",
+      "findNext": "Next match",
+      "findClose": "Close find",
       "blocks": {
         "calloutKind": "Callout type",
         "kinds": {

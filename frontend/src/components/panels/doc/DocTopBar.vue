@@ -6,6 +6,7 @@
 // 格式不在这里：选中文字时浮条上有，块的样式在「/」和左边的 ＋ 里。
 import type { DocAgentController } from '../../../composables/useDocAgent'
 import type { DocConnection, DocPeer } from '../../../composables/useDocCollab'
+import type { OutlineHeading } from '../../../lib/docOutline'
 
 import { ref, watch } from 'vue'
 
@@ -14,6 +15,7 @@ import CheeseAvatar from '../../CheeseAvatar.vue'
 
 import DocAgentBox from './DocAgentBox.vue'
 import DocAgentResult from './DocAgentResult.vue'
+import DocOutline from './DocOutline.vue'
 import DocPresence from './DocPresence.vue'
 
 import { t } from '@/i18n'
@@ -37,6 +39,10 @@ const props = defineProps<{
   /** 对整篇找 AI 队友；认不出它时是 undefined，不给这个按钮。 */
   agent?: DocAgentController
   mentionNames: Record<string, string>
+  /** 大纲：正文里的标题（h1–h3）；还没有标题时是空数组。 */
+  headings: OutlineHeading[]
+  /** 查找条开着没有，按钮据此发亮。 */
+  findOpen: boolean
 }>()
 const emit = defineEmits<{
   (e: 'toggle-suggestions'): void
@@ -45,6 +51,8 @@ const emit = defineEmits<{
   (e: 'history'): void
   (e: 'export'): void
   (e: 'open-thread', id: string): void
+  (e: 'toggle-find'): void
+  (e: 'outline-select', pos: number): void
 }>()
 
 // 对整篇：菜单里先是输入框，交出去以后是那张卡。菜单关上就收起这一次（正在做的不收）。
@@ -57,6 +65,13 @@ async function toComment() {
   const thread = await props.agent?.toComment()
   agentOpen.value = false
   if (thread) emit('open-thread', thread)
+}
+
+// 大纲下拉：点了某一节，先收起菜单再往上发（滚到那一节是面板的事）。
+const outlineOpen = ref(false)
+function pickHeading(pos: number) {
+  outlineOpen.value = false
+  emit('outline-select', pos)
 }
 </script>
 
@@ -93,6 +108,31 @@ async function toComment() {
     </div>
     <div class="doc-top-bar__actions">
       <DocPresence v-if="connection === 'connected'" :peers="peers" class="me-1" />
+      <v-menu v-if="!loading" v-model="outlineOpen" location="bottom end" offset="6">
+        <template #activator="{ props: menuProps }">
+          <button
+            v-bind="menuProps"
+            type="button"
+            class="doc-top-bar__btn"
+            :aria-label="t('work.room.doc.outline')"
+            :title="t('work.room.doc.outline')"
+          >
+            <v-icon size="17">mdi-format-list-bulleted</v-icon>
+          </button>
+        </template>
+        <DocOutline :headings="headings" @select="pickHeading" />
+      </v-menu>
+      <button
+        v-if="!loading"
+        type="button"
+        class="doc-top-bar__btn"
+        :aria-pressed="findOpen"
+        :aria-label="t('work.room.doc.find')"
+        :title="t('work.room.doc.find')"
+        @click="emit('toggle-find')"
+      >
+        <v-icon size="17">mdi-magnify</v-icon>
+      </button>
       <button
         v-if="suggestionCount > 0"
         type="button"
