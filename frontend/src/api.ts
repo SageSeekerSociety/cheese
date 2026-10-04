@@ -997,14 +997,13 @@ export interface ComputeProposal {
   content: string
 }
 
-// 一个话题一个容器：改的是整个房间，房间里每一条会话都跟着搬。平台先在各自离开
-// 的那台上把改动推上去，推不上去就整个不换。`abandonUnpushed` 只在原来那台够不着
-// 时成立（`WorkComputerUnreachable`）；`ifIdle` 跳过正在干活的房间（409
-// SessionWorking）。
+// 一个话题一个容器：改的是整个房间，每条会话都跟着搬，先推送，推不上去就整个不换。`abandonUnpushed` 只在原来那台
+// 够不着时成立（`WorkComputerUnreachable`）；`ifIdle` 跳过正在干活的房间（409 SessionWorking）；`visibility` 是房间在
+// 点名那台上能看到什么，不给就保持原样，新绑上的是隔离环境。
 export function setTopicComputeChoice(
   topicId: string,
   choice: import('./cx_types').ComputeChoice,
-  options: { abandonUnpushed?: boolean; ifIdle?: boolean } = {}
+  options: { abandonUnpushed?: boolean; ifIdle?: boolean; visibility?: 'host' | 'isolated' } = {}
 ): Promise<{ choice: import('./cx_types').ComputeChoice; proposal: ComputeProposal | null }> {
   return request(`/topics/${encodeURIComponent(topicId)}/compute-profile`, {
     method: 'PUT',
@@ -1012,6 +1011,7 @@ export function setTopicComputeChoice(
       choice,
       ...(options.abandonUnpushed ? { abandon_unpushed: true } : {}),
       ...(options.ifIdle ? { if_idle: true } : {}),
+      ...(options.visibility ? { visibility: options.visibility } : {}),
     }),
   })
 }

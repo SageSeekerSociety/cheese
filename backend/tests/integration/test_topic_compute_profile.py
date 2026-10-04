@@ -225,7 +225,6 @@ def test_named_device_resolves_instead_of_first_healthy_device(client, monkeypat
 
     assert response.status_code == 200
     assert response.json()["data"]["device_id"] == named
-    assert _resolve_topic_device(client, pid, tid, lambda _device_id: True) == named
     assert _topic_binding(client, tid).device_id == named
     assert first != named
 
@@ -251,7 +250,7 @@ def test_named_device_waits_when_offline_instead_of_using_online_peer(
     assert response.json()["data"]["device_id"] == named_offline_device
     binding = _topic_binding(client, tid)
     assert binding.device_id == named_offline_device
-    assert binding.visibility is Visibility.host
+    assert binding.visibility is Visibility.isolated
     with pytest.raises(ScreenSetupError) as excinfo:
         _resolve_topic_device(
             client,
@@ -290,9 +289,10 @@ def test_get_lists_only_project_devices_with_live_online_state(client, monkeypat
     body = client.get(f"/topics/{tid}/compute-profile").json()["data"]
 
     assert body["device_id"] is None
+    common = {"owned": False, "sandbox_unavailable": None}
     assert body["devices"] == [
-        {"device_id": office, "name": "办公室 Mac mini", "online": True},
-        {"device_id": home, "name": "家里那台", "online": False},
+        {"device_id": office, "name": "办公室 Mac mini", "online": True, **common},
+        {"device_id": home, "name": "家里那台", "online": False, **common},
     ]
     assert outside not in {device["device_id"] for device in body["devices"]}
 
@@ -394,26 +394,23 @@ def test_selecting_cloud_without_machine_create_authority_is_refused(
 
 
 def test_visibility_block_is_present(client):
-    """#282 §四 / #358: the compute-profile response a room reads carries the
+    """#282 §四: the compute-profile response a room reads carries the
     visibility 档 so the room can SHOW whether a turn sees the whole machine.
 
-    The default is whichever 档 has a transport, and today that is whole-machine:
-    boxed `isolated` is honestly undeployed until #358 step 2, so naming it the
-    default here — as this test used to — told a room its topic was boxed while
-    the resolver bound it to the whole machine. A room on Cloud has no agent on
-    an enrolled machine, so `machine_access` is False."""
+    Both run; the default is the isolated one (#2320), and the whole machine
+    is something an owner gives. A room on Cloud has no agent on an enrolled
+    machine, so `machine_access` is False."""
     pid = _project(client)
     tid = _topic(client, pid)
     _project_default(client, pid, standard_choice("cloud"))
     vis = client.get(f"/topics/{tid}/compute-profile").json()["data"]["visibility"]
 
     opts = {o["id"]: o for o in vis["options"]}
-    assert opts["isolated"]["available"] is False
-    assert opts["isolated"]["default"] is False
+    assert opts["isolated"]["available"] is True
+    assert opts["isolated"]["default"] is True
     assert opts["host"]["available"] is True
-    assert opts["host"]["default"] is True
+    assert opts["host"]["default"] is False
     assert "整台机器" in opts["host"]["description"]
-    # Survives step 2 flipping the answer: one default, and it can run.
     defaults = [o for o in vis["options"] if o["default"]]
     assert len(defaults) == 1 and defaults[0]["available"] is True
 
@@ -459,9 +456,9 @@ def _visibility(client, tid: str) -> dict:
     return client.get(f"/topics/{tid}/compute-profile").json()["data"]["visibility"]
 
 
-def test_a_room_that_let_the_system_pick_an_enrolled_machine_shows_the_badge(client):
-    """「系统挑一台」的房间没有钉子，但房间里的手已经站在那台登记过的机器上——它
-    看得见整台机器，和点名那台的房间一样。"""
+def test_a_room_that_let_the_system_pick_an_enrolled_machine_runs_isolated(client):
+    """「系统挑一台」的房间没有钉子，房间里的手已经站在那台登记过的机器上：没有
+    人给过它整台机器，所以它在那台上是隔离环境（#2320），不显示整机提醒。"""
     pid = _project(client)
     tid = _topic(client, pid)
     (lab,) = _project_devices(client, pid, "lab")
@@ -480,11 +477,11 @@ def test_a_room_that_let_the_system_pick_an_enrolled_machine_shows_the_badge(cli
 
     vis = _visibility(client, tid)
     assert _topic_binding(client, tid) is None
-    assert vis["effective"] == "host"
-    assert vis["machine_access"] is True
+    assert vis["effective"] == "isolated"
+    assert vis["machine_access"] is False
 
 
-def test_a_room_moved_to_an_enrolled_machine_later_shows_the_badge(client):
+def test_a_room_moved_to_an_enrolled_machine_later_runs_isolated_there(client):
     pid = _project(client)
     tid = _topic(client, pid)
     (lab,) = _project_devices(client, pid, "lab")
@@ -504,12 +501,13 @@ def test_a_room_moved_to_an_enrolled_machine_later_shows_the_badge(client):
 
     vis = _visibility(client, tid)
     assert _topic_binding(client, tid).device_id == lab
-    assert vis["effective"] == "host"
-    assert vis["machine_access"] is True
+    assert vis["effective"] == "isolated"
+    assert vis["machine_access"] is False
 
 
 def test_a_room_whose_next_session_starts_on_an_enrolled_machine_says_so(client):
-    """Before anyone has run, the badge answers for where the first agent goes."""
+    """Before anyone has run, the badge answers for where the first agent goes:
+    isolated on an enrolled machine nobody gave it (#2320)."""
     pid = _project(client)
     tid = _topic(client, pid)
     (lab,) = _project_devices(client, pid, "lab")
@@ -517,7 +515,9 @@ def test_a_room_whose_next_session_starts_on_an_enrolled_machine_says_so(client)
         client, pid, ComputeChoice(name="Lab", profile="device", device_id=lab)
     )
 
-    assert _visibility(client, tid)["machine_access"] is True
+    vis = _visibility(client, tid)
+    assert vis["effective"] == "isolated"
+    assert vis["machine_access"] is False
 
 
 def test_sessions_on_cloud_machines_show_no_badge(client):

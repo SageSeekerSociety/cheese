@@ -8,7 +8,7 @@ Enrolled devices provide execution for ordinary rooms: project files, shell comm
 
 ## 0. Hosted 机器不是我们的
 
-> 机器形态（Cloud / Hosted Sandbox / Hosted Machine）见 **#358**——三类里两类还没传输，去读那条，别从这里推。本节只讲**已落地、改代码必须守住**的一条约束。
+> 执行环境（沙箱，还是整台机器）见 **#2320** 和 `where-a-turn-runs.md` §四。本节只讲**已落地、改代码必须守住**的一条约束。
 
 只适用于 **Hosted**（人接入的常驻机器）：那是别人的笔记本、别人的 `claude`，他借我们算力，不是把机器交给我们。**Cloud 不适用**——平台按话题开的一次性机器，随便处置。
 
@@ -16,7 +16,7 @@ Enrolled devices provide execution for ordinary rooms: project files, shell comm
 
 - Cheese installs its Claude build at `~/.cheese/claude/versions/<pin>`. It leaves the owner's version store and `~/.local/bin/claude` unchanged.
 - Session configuration, home and worktrees live under Cheese-owned directories. Machine credentials are read from the owner's configuration under the existing authorization; the launcher writes neither the owner's `~/.claude` nor project configuration. Native skills live in the session's `$CLAUDE_CONFIG_DIR/skills/`.
-- This boundary applies to the Cheese integration. By the user's explicit choice, Hosted Machine agents run with `--permission-mode bypassPermissions` and their existing access to the machine.
+- This boundary applies to the Cheese integration. A room on an enrolled machine runs its tools in a bubblewrap sandbox by default, and over the whole machine only when the machine's owner gave it that (`where-a-turn-runs.md` §四). Nothing is installed with the owner's sudo: a Linux machine without bubblewrap or unprivileged user namespaces refuses an isolated room with what to install.
 - 装在**他能写的目录**——否则自更新永远失败，且无声（#501）。
 
 ### 为什么这条特别容易破

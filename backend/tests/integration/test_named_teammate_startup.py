@@ -42,7 +42,10 @@ async def test_invited_teammate_is_the_startup_identity(
     assert joined.status_code == 200, joined.text
     project_id, room_id = uuid.UUID(project["id"]), uuid.UUID(room["id"])
     monkeypatch.setattr(settings, "agent_session_device_id", "center")
-    hub = SimpleNamespace(is_online=lambda host: host in {"center", "executor"})
+    hub = SimpleNamespace(
+        target=lambda _device: "linux-amd64",
+        is_online=lambda host: host in {"center", "executor"},
+    )
     device = DeviceChannel(hub=hub, session_factory=client.test_request_factory)
     async with client.test_factory() as db:
         default = await IdentityService(db).ensure_room_agent_user(room_id)

@@ -20,12 +20,7 @@ from dataclasses import dataclass
 
 from app.core.sentences import say
 from app.domain.agent.profiles import ProfileRegistry
-from app.domain.device.supply import (
-    Supply,
-    Visibility,
-    default_visibility,
-    has_runnable_transport,
-)
+from app.domain.device.supply import Visibility, default_visibility
 
 # Compute provider names (match ComputeProvider.name in compute.py).
 COMPUTE_DEVICE = "device"
@@ -221,11 +216,12 @@ MACHINE_VISIBILITY_NOTICE = "让它看到整台机器（能操作这台机器上
 def visibility_listings() -> list[PoolListing]:
     """The visibility 档 a room may run its self-hosted compute under (#282 §四).
 
-    ``available`` says whether a 档 has a transport; ``default`` says which one a
-    topic gets when nobody picks. Both come from `device.supply`, so this catalogue
-    cannot tell someone their topic is boxed while the resolver binds it to the
-    whole machine — which is exactly what it used to do, `isolated` being declared
-    the default here while `resolve_pinned_device` wrote `host` unconditionally.
+    Both run on every enrolled machine the platform supports; ``default`` says
+    which one a room gets when nobody picks, and comes from `device.supply`, the
+    answer every binding point reads too, so this catalogue cannot tell someone
+    their room is boxed while the binding gives it the whole machine. Whether
+    one particular machine can sandbox a session depends on what it runs, and
+    the room's compute profile says that per machine (``sandbox_unavailable``).
 
     ``host``'s description IS the #282 safety line, so whoever renders the picker
     or the room badge reads the warning straight from the catalogue."""
@@ -234,11 +230,11 @@ def visibility_listings() -> list[PoolListing]:
         PoolListing(
             kind="visibility",
             id=VISIBILITY_ISOLATED,
-            label="沙盒（只看自己的工作树）",
+            label="沙箱（只看自己的工作目录）",
             tier="included",
             price="包含",
-            description="每条会话一个沙箱，只看得到自己的工作目录，会话之间互不串扰；即将上线。",
-            available=has_runnable_transport(Visibility.isolated, Supply.self_hosted),
+            description="每条会话一个沙箱，只看得到自己的工作目录和本项目的包缓存，看不到机器主人的文件和别的会话。",
+            available=True,
             default=default is Visibility.isolated,
         ),
         PoolListing(
@@ -248,7 +244,7 @@ def visibility_listings() -> list[PoolListing]:
             tier="byo",
             price="自备",
             description=MACHINE_VISIBILITY_NOTICE,
-            available=has_runnable_transport(Visibility.host, Supply.self_hosted),
+            available=True,
             default=default is Visibility.host,
         ),
     ]

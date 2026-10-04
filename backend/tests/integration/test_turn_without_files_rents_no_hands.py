@@ -77,6 +77,7 @@ def central_over_offline_hands(client, monkeypatch):
     """中心会话机在线，而每一台工作机都不在——I2 说的就是这个局面。"""
     monkeypatch.setattr(settings, "agent_session_device_id", "center")
     hub: Any = SimpleNamespace(
+        target=lambda _device: "linux-amd64",
         is_online=lambda device: device == "center",
         call_executor=AsyncMock(return_value={"generation": "fixture", "entries": {}}),
         exec=AsyncMock(return_value={"exit": 0, "stdout": json.dumps(INSTALLED)}),
@@ -129,7 +130,10 @@ async def test_a_channel_nobody_wraps_answers_the_question_too(
     """
     project, topic = room
     monkeypatch.setattr(settings, "agent_session_device_id", "center")
-    hub: Any = SimpleNamespace(is_online=lambda device: device == "center")
+    hub: Any = SimpleNamespace(
+        target=lambda _device: "linux-amd64",
+        is_online=lambda device: device == "center",
+    )
     channel = DeviceChannel(hub=hub, session_factory=business_db_factory)
     session = SessionRef(project, topic, "cheese", harness="pi")
 
@@ -203,7 +207,9 @@ async def test_the_hands_decide_the_workspace_not_the_memory_scope(
     的那条路就会在会话机上打开项目工作区——一个事实只该声明一次。
     """
     project, topic = room
-    hub: Any = SimpleNamespace(is_online=lambda device: True)
+    hub: Any = SimpleNamespace(
+        target=lambda _device: "linux-amd64", is_online=lambda device: True
+    )
     channel = DeviceChannel(hub=hub, session_factory=business_db_factory)
     channel._existing_screen = lambda *args: None
     channel._ensure_screen = AsyncMock(
@@ -289,7 +295,9 @@ async def test_session_host_check_releases_connection_without_acquiring_hands(
     project, topic = room
     monkeypatch.setattr(settings, "agent_session_device_id", "center")
     counter = CountsConnections(business_db_factory)
-    hub: Any = SimpleNamespace(is_online=lambda device: True)
+    hub: Any = SimpleNamespace(
+        target=lambda _device: "linux-amd64", is_online=lambda device: True
+    )
     executor = DeviceChannel(hub=hub, session_factory=counter)
     central: Any = CentralChannel(executor)
     held_when_asked: list[int] = []

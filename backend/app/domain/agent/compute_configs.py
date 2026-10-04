@@ -14,6 +14,7 @@ from app.domain.agent.market import (
     cloud_provisionable,
     compute_default_name,
 )
+from app.domain.device.supply import default_visibility
 from app.domain.device.wiring import sql_device_service
 from app.domain.policy import gate
 from app.domain.user.models import User as UserRow
@@ -146,7 +147,7 @@ async def bind_room_device_choice(
             await devices.bind_topic_device(
                 topic.id,
                 choice.device_id,
-                await devices.binding_visibility(choice.device_id),
+                default_visibility(),
             )
     topic.compute_config = choice.model_dump()
 

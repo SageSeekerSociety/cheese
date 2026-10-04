@@ -136,6 +136,7 @@ async def room(client):
 def channel(client, monkeypatch):
     monkeypatch.setattr(settings, "agent_session_device_id", "center")
     hub: Any = SimpleNamespace(
+        target=lambda _device: "linux-amd64",
         is_online=lambda device: device in {"center", "executor"},
         call_executor=AsyncMock(return_value={"generation": "fixture", "entries": {}}),
         exec=AsyncMock(

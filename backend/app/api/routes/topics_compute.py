@@ -70,6 +70,12 @@ from app.domain.agent.market import (
     compute_selectable,
     visibility_listings,
 )
+from app.domain.device.supply import (
+    Supply,
+    Visibility,
+    default_visibility,
+    sandbox_unavailable,
+)
 from app.domain.device.wiring import sql_device_service
 from app.domain.machine.services import MachineService
 from app.domain.policy import gate
@@ -145,6 +151,21 @@ async def get_topic_compute_profile(
                     "device_id": device.device_id,
                     "name": device.name,
                     "online": device_hub.is_online(device.device_id),
+                    # Whether the reader may give a room this whole machine.
+                    "owned": actor.via == "token"
+                    and actor.user_id == device.owner_user_id,
+                    # Why a session here cannot have a sandbox, in the reader's
+                    # language, or None (also before the machine said hello).
+                    "sandbox_unavailable": (
+                        reason.descriptor()
+                        if (
+                            reason := sandbox_unavailable(
+                                device_hub.target(device.device_id)
+                            )
+                        )
+                        is not None
+                        else None
+                    ),
                 }
                 for device in devices
             ],
@@ -292,10 +313,33 @@ async def set_topic_compute_profile(
         await validate_choice(db, topic.project_id, choice)
 
     device_service = sql_device_service(db)
+    named_device = None
     if device_id is not None:
         scoped_devices = await device_service.list_devices_for_project(topic.project_id)
-        if device_id not in {device.device_id for device in scoped_devices}:
+        named_device = next(
+            (device for device in scoped_devices if device.device_id == device_id),
+            None,
+        )
+        if named_device is None:
             raise ValidationError(say("deviceNotInProject"))
+
+    # What the room sees of that machine: its own sandbox, or the whole machine.
+    # Left out, a room keeps what it has there and a new binding gets the
+    # default. The whole machine is the owner's to give, and only as a person:
+    # an agent asking with its session credential would be a sandboxed room
+    # letting itself out.
+    visibility = None
+    if body.get("visibility") is not None:
+        try:
+            visibility = Visibility(body["visibility"])
+        except ValueError as exc:
+            raise ValidationError(say("visibilityInvalid")) from exc
+        if named_device is None or named_device.supply is not Supply.self_hosted:
+            raise ValidationError(say("visibilityNeedsDevice"))
+        if visibility is Visibility.host and (
+            actor.via != "token" or actor.user_id != named_device.owner_user_id
+        ):
+            raise ForbiddenError(say("visibilityHostOwnerOnly"))
 
     # 要一台机器，先过项目的档位策略（结论 40 后半）。闸门和模型那一侧是同一个
     # （`domain/policy/gate.py`）：撞上策略的调用不报错、也不挂着等，它变成一条给
@@ -381,11 +425,20 @@ async def set_topic_compute_profile(
             topic_id, reason="the room moved to another work computer"
         )
         binding = None
+    if (
+        binding is not None
+        and visibility is not None
+        and binding.visibility is not visibility
+    ):
+        # The session's executor follows at its next start: the install sees
+        # the sandbox it is asked for differ from the one running.
+        await device_service.release_topic_device(
+            topic_id, reason=f"the room's machine access became {visibility}"
+        )
+        binding = None
     if name == COMPUTE_DEVICE and device_id is not None and binding is None:
         await device_service.bind_topic_device(
-            topic_id,
-            device_id,
-            visibility=await device_service.binding_visibility(device_id),
+            topic_id, device_id, visibility=visibility or default_visibility()
         )
     await db.flush()
     return ok(

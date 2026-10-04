@@ -35,9 +35,27 @@ exec cheese sync --all
 """
 
 
-def can_prepare(info):
+class SandboxRefused(RuntimeError):
+    """The machine refused to install a room's executor because it cannot
+    give the room its isolated environment (`bootstrap.SandboxUnavailable`);
+    the message is the machine's, saying what would let it."""
+
+
+def refused(installed: dict) -> SandboxRefused | None:
+    """The refusal an install's exec result reports, if it is one."""
+    if installed.get("exit") != bootstrap.SANDBOX_UNAVAILABLE_EXIT:
+        return None
+    return SandboxRefused((installed.get("stderr") or "").strip())
+
+
+def can_prepare(info, sandbox=None):
+    """Whether the running executor that answered `info` can be prepared in
+    place: it runs this release, and, when `sandbox` is given, runs in a
+    sandbox exactly when asked to. One that does not is installed again, and
+    the install replaces it once it is idle (`bootstrap.prepared`)."""
     return (
-        "prepare" in info.get("capabilities", [])
+        (sandbox is None or bool(info.get("sandbox")) == bool(sandbox))
+        and "prepare" in info.get("capabilities", [])
         and not info.get("upgrading")
         and info.get("protocol_version") == runtime.PROTOCOL_VERSION
         and all(
@@ -71,11 +89,17 @@ def file_sources():
     }
 
 
-def payload_for(project_id, resource_id, env, known_files=None, *, sandbox):
+def payload_for(
+    project_id, resource_id, env, known_files=None, *, sandbox, platform_machine
+):
     """What the executor is installed or prepared from. ``sandbox`` says
     whether it runs in a sandbox of its own (`bootstrap.sandbox_argv`) or over
-    the whole machine, as the session's visibility on that machine decides; a
-    sandbox is sent with the limits it runs under."""
+    the whole machine, as the room's access to that machine decides.
+    ``platform_machine``: the platform provisioned the machine, so the install
+    may add what a sandbox needs there and the sandbox gets a network and
+    limits of its own, sent here. On a machine a person enrolled nothing is
+    installed and there is no root to give either: its sandbox is sent
+    without limits and shares the machine's network."""
     files = file_sources()
     values = {
         name: value
@@ -90,14 +114,19 @@ def payload_for(project_id, resource_id, env, known_files=None, *, sandbox):
     return {
         "protocol_version": runtime.PROTOCOL_VERSION,
         "toolchain_fonts": toolchain.fonts_pin(),
-        "sandbox": {
-            "memory_mb": settings.cloud_sandbox_memory_mb,
-            "swap_mb": settings.cloud_sandbox_swap_mb,
-            "cpus": settings.cloud_sandbox_cpus,
-            "pids": settings.cloud_sandbox_pids,
-        }
+        "sandbox": (
+            {
+                "memory_mb": settings.cloud_sandbox_memory_mb,
+                "swap_mb": settings.cloud_sandbox_swap_mb,
+                "cpus": settings.cloud_sandbox_cpus,
+                "pids": settings.cloud_sandbox_pids,
+            }
+            if platform_machine
+            else {"limits": None}
+        )
         if sandbox
         else None,
+        "platform_machine": platform_machine,
         "project": str(project_id),
         "resource": str(resource_id),
         "env": values,
@@ -123,8 +152,14 @@ def payload_for(project_id, resource_id, env, known_files=None, *, sandbox):
     }
 
 
-def script(project_id, resource_id, env, *, sandbox):
-    payload = payload_for(project_id, resource_id, env, sandbox=sandbox)
+def script(project_id, resource_id, env, *, sandbox, platform_machine):
+    payload = payload_for(
+        project_id,
+        resource_id,
+        env,
+        sandbox=sandbox,
+        platform_machine=platform_machine,
+    )
     return (
         Path(bootstrap.__file__).read_text()
         + "\nconfigure(json.loads("

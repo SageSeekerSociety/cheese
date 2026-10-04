@@ -10,7 +10,7 @@ from app.core.sentences import say
 from app.domain.agent.device_hub import DeviceHub, device_hub
 from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness.channel import ScreenSetupError
-from app.domain.device.supply import Supply
+from app.domain.device.supply import Supply, default_visibility
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
@@ -128,7 +128,7 @@ class CloudChannel(DeviceChannel):
                 await devices.bind_topic_device(
                     topic_id,
                     lease.device_id,
-                    visibility=await devices.binding_visibility(lease.device_id),
+                    visibility=default_visibility(),
                 )
             # 答这间房的那个 agent 的身份：它的会话就是以这个身份记录和恢复的 (#660)。
             agent = await IdentityService(session).ensure_room_agent_user(topic_id)

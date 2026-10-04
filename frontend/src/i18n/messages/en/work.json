@@ -65,7 +65,12 @@
     "saveFailed": "Could not choose the work computer",
     "retry": "Retry",
     "here": "This topic runs on: {name}",
-    "abandon": "The old computer is unreachable: switch without pushing"
+    "abandon": "The old computer is unreachable: switch without pushing",
+    "accessHeading": "What this room sees of {name}",
+    "isolated": "Isolated environment",
+    "isolatedHint": "Its own work directory and the project's package cache. Not the owner's files, the tools installed in their home folder, or other rooms.",
+    "host": "Full machine access",
+    "hostOwnerOnly": "Only the machine's owner can turn this on"
   },
   "deviceInUse": {
     "line": "In use: {project} · {room} · {agent}",

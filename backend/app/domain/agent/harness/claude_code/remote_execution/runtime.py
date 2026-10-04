@@ -1844,13 +1844,13 @@ class Executor:
             return {
                 "pid": os.getpid(),
                 "workspace": str(self.root),
-                # Where the platform's skills are on this machine: the files a
-                # skill's text names beside it (`bootstrap.plant_native_skills`).
+                # Where the skills are here (`bootstrap.plant_native_skills`).
                 "config_dir": os.environ.get("CLAUDE_CONFIG_DIR"),
                 "files": files,
                 "runtime_sha256": SOURCE_SHA256,
                 "protocol_version": PROTOCOL_VERSION,
                 "release": self.config.get("release"),
+                "sandbox": bool(self.config.get("sandbox")),  # launch.can_prepare
                 "upgrading": self.upgrading,
                 "capabilities": [
                     "prepare",

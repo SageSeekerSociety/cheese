@@ -121,6 +121,7 @@ async def test_every_session_in_a_room_acquires_the_rooms_device(
         }
 
     hub = SimpleNamespace(
+        target=lambda _device: "linux-amd64",
         is_online=lambda device: True,
         reconnecting=lambda device: False,
         exec=AsyncMock(side_effect=install),
@@ -142,6 +143,8 @@ async def test_every_session_in_a_room_acquires_the_rooms_device(
 
             return {
                 "capabilities": ["prepare"],
+                # Installed isolated, as a room nobody gave the machine is.
+                "sandbox": True,
                 "protocol_version": runtime.PROTOCOL_VERSION,
                 "files": {
                     name: hashlib.sha256(value.encode()).hexdigest()
@@ -595,6 +598,7 @@ async def test_lazy_executor_lifecycle_keeps_the_same_allocation(
         "mcp_servers": [],
     }
     hub = SimpleNamespace(
+        target=lambda _device: "linux-amd64",
         is_online=lambda _: True,
         exec=AsyncMock(return_value={"exit": 0, "stdout": json.dumps(info)}),
     )
@@ -615,6 +619,8 @@ async def test_lazy_executor_lifecycle_keeps_the_same_allocation(
                 return {"capabilities": ["prepare"], "files": {}}
             return {
                 "capabilities": ["prepare"],
+                # Installed isolated, as a room nobody gave the machine is.
+                "sandbox": True,
                 "protocol_version": runtime.PROTOCOL_VERSION,
                 "files": {
                     name: hashlib.sha256(value.encode()).hexdigest()
@@ -672,8 +678,9 @@ async def test_lazy_executor_lifecycle_keeps_the_same_allocation(
             assert time.monotonic() < deadline, "the preview helper never started"
             time.sleep(0.01)
         assert args[args.index("--url") + 1] == launch_env["CHEESE_PREVIEW_URL"]
-    # A self-hosted machine's sessions see it whole: no sandbox yet (#2320).
-    assert launch_options == {"sandbox": False}
+    # A room nobody gave the machine runs isolated there (#2320), and the
+    # machine is a person's: nothing is installed on it for the sandbox.
+    assert launch_options == {"sandbox": True, "platform_machine": False}
     assert launch_env["CHEESE_AUTHOR"] == actor_handle
     assert launch_env["GIT_AUTHOR_NAME"] == actor_handle
     assert launch_env["GIT_AUTHOR_EMAIL"] == f"{actor_handle}@agent.cheese.local"
@@ -995,6 +1002,7 @@ async def test_each_dialer_gets_its_configured_base_not_the_request_host(
     monkeypatch.setattr(executor_launch, "script", capture_script)
     info = {"state": "/w/state", "workspace": "/w/work", "mcp_servers": []}
     hub = SimpleNamespace(
+        target=lambda _device: "linux-amd64",
         is_online=lambda _: True,
         exec=AsyncMock(return_value={"exit": 0, "stdout": json.dumps(info)}),
     )
@@ -1082,6 +1090,7 @@ async def test_calls_on_held_hands_are_answered_while_they_are_rechecked(
 
     info = {"state": "/executor/state", "workspace": "/work", "mcp_servers": []}
     hub = SimpleNamespace(
+        target=lambda _device: "linux-amd64",
         is_online=lambda _: True,
         exec=AsyncMock(return_value={"exit": 0, "stdout": json.dumps(info)}),
     )
@@ -1098,6 +1107,8 @@ async def test_calls_on_held_hands_are_answered_while_they_are_rechecked(
                     await asyncio.sleep(0.01)
             return {
                 "capabilities": ["prepare"],
+                # Installed isolated, as a room nobody gave the machine is.
+                "sandbox": True,
                 "protocol_version": runtime.PROTOCOL_VERSION,
                 "files": {
                     name: hashlib.sha256(value.encode()).hexdigest()
@@ -1197,6 +1208,7 @@ async def test_an_own_machine_that_just_dropped_is_called_not_refused(
         }
 
     hub = SimpleNamespace(
+        target=lambda _device: "linux-amd64",
         is_online=lambda _device: False,
         reconnecting=lambda _device: True,
         exec=AsyncMock(side_effect=DeviceOffline(device_id)),

@@ -1,5 +1,9 @@
 """Device-side checks and deletion, restricted to a recorded resource directory."""
 
+# Annotations stay unevaluated: this runs on whatever Python 3 the machine has,
+# macOS's own 3.9 among them, which cannot evaluate `dict | None`.
+from __future__ import annotations
+
 import json
 import os
 import runpy
@@ -787,13 +791,17 @@ def stop_executor(home: Path, resource: str) -> None:
     if sandboxed:
         # Everything the room started is in its sandbox, the preview and
         # tunnel helpers too, and goes with it; the pid files below are the
-        # room's to write and number processes in its own namespace. A machine
-        # without the helper never gave a sandbox a network or a cgroup, and
-        # its sandboxes end with their executor.
+        # room's to write and number processes in its own namespace. Where
+        # the helper gave the sandbox a cgroup, that is killed; a machine a
+        # person enrolled has neither the helper nor the cgroup, and what the
+        # room left running there outlives its executor under the sandbox's
+        # first process, which the install recorded and this ends.
         if Path(SANDBOX_HOST).exists():
             result = run_command(["sudo", "-n", SANDBOX_HOST, "down", home.name])
             if result.returncode:
                 raise RuntimeError("sandbox has not stopped: " + result.stderr)
+        runner = runpy.run_path(str(platform_program(home, "cheese-environment.py")))
+        runner["end_sandbox"](home)
         return
     # Both helpers can outlive the agent, including launches without an executor.
     for name in ("cheese-preview", "cheese-tunnel"):

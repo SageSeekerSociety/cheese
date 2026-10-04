@@ -611,6 +611,7 @@ def test_executor_bootstrap_starts_in_room_without_a_git_checkout(
         resource,
         {"CHEESE_API": "http://unused", "CHEESE_TOKEN": "test"},
         sandbox=False,
+        platform_machine=False,
     )
     call = ast.parse(program).body[-1].value
     payload = json.loads(ast.literal_eval(call.args[0].args[0]))
@@ -741,6 +742,7 @@ def test_executor_rooms_share_installed_tools(
                     "CHEESE_ENVIRONMENT": json.dumps(environment),
                 },
                 sandbox=False,
+                platform_machine=False,
             )
             bootstrap.configure(payload)
             capsys.readouterr()
@@ -827,6 +829,7 @@ def _room_prepared_under_the_previous_root(tmp_path, monkeypatch):
         resource,
         {"CHEESE_API": "http://unused", "CHEESE_TOKEN": "test"},
         sandbox=False,
+        platform_machine=False,
     )
     call = ast.parse(program).body[-1].value
     payload = json.loads(ast.literal_eval(call.args[0].args[0]))
@@ -949,6 +952,7 @@ def test_executor_upgrade_retries_after_installer_failure(
         resource,
         {"CHEESE_API": "http://unused", "CHEESE_TOKEN": "test"},
         sandbox=False,
+        platform_machine=False,
     )
     home = tmp_path / ".cheese/home" / str(project) / str(resource)
     state = home / ".cheese/executor"
@@ -1129,6 +1133,7 @@ def test_executor_release_waits_for_commands_and_preserves_results(
         resource,
         {"CHEESE_API": "http://unused", "CHEESE_TOKEN": "test"},
         sandbox=False,
+        platform_machine=False,
     )
     home = tmp_path / ".cheese/home" / str(project) / str(resource)
     state = home / ".cheese/executor"
@@ -1280,6 +1285,7 @@ def test_running_executor_prepares_updated_room_without_restart(
                     "CHEESE_TOKEN": "first",
                 },
                 sandbox=False,
+                platform_machine=False,
             )
         )
         .body[-1]
@@ -1311,7 +1317,12 @@ def test_running_executor_prepares_updated_room_without_restart(
         )
 
         delta = payload_for(
-            project, resource, payload["env"], original["files"], sandbox=False
+            project,
+            resource,
+            payload["env"],
+            original["files"],
+            sandbox=False,
+            platform_machine=False,
         )
         # The fixture replaces the CLI; all other installed helpers are unchanged.
         assert set(delta["files"]) == {"cheese"}
