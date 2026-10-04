@@ -26,6 +26,64 @@ export interface DiffLine {
   text: string
 }
 
+/** A line plus the old/new line numbers the gutter shows. `null` on a side the
+ * line does not exist on (an addition has no old number), and on the header
+ * lines that address no line at all. */
+export interface DiffRow extends DiffLine {
+  oldNumber: number | null
+  newNumber: number | null
+}
+
+/** How many diff lines the panel renders before it stops and offers the rest.
+ * A whole-worktree diff can run to tens of thousands of lines; laying every one
+ * out as its own element is what makes the tab hang. */
+export const DIFF_WINDOW = 400
+
+/** `@@ -oldStart[,oldCount] +newStart[,newCount] @@ optional context`. */
+const HUNK_HEADER = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/
+
+/** Header lines git writes between the `diff --git` line and the first `@@`.
+ * They describe the change (mode, rename, binary) but are not content, so the
+ * gutter must leave them blank — rendered as context they showed up as "0 0". */
+const META_HEADER =
+  /^(old mode |new mode |Binary files |GIT binary patch|copy from |copy to |rename from |rename to |dissimilarity index )/
+
+/**
+ * Walk one file's hunk text and carry the two running counters the gutter needs.
+ * A diff line does not carry its own number: `@@` says where each side starts,
+ * and every context/add/del line moves the matching counter one step. Getting
+ * this wrong shifts every number after the mistake, silently — so it is a pure
+ * function, tested against a real `git diff`.
+ */
+export function numberDiffLines(lines: DiffLine[]): DiffRow[] {
+  let oldNo = 0
+  let newNo = 0
+  return lines.map((line) => {
+    if (line.kind === 'hunk') {
+      const m = HUNK_HEADER.exec(line.text)
+      oldNo = m ? Number.parseInt(m[1] ?? '0', 10) : 0
+      newNo = m ? Number.parseInt(m[2] ?? '0', 10) : 0
+      return { ...line, oldNumber: null, newNumber: null }
+    }
+    if (line.kind === 'meta') return { ...line, oldNumber: null, newNumber: null }
+    if (line.kind === 'add') {
+      const row = { ...line, oldNumber: null, newNumber: newNo }
+      newNo += 1
+      return row
+    }
+    if (line.kind === 'del') {
+      const row = { ...line, oldNumber: oldNo, newNumber: null }
+      oldNo += 1
+      return row
+    }
+    // A context line exists on both sides, so it advances both counters.
+    const row = { ...line, oldNumber: oldNo, newNumber: newNo }
+    oldNo += 1
+    newNo += 1
+    return row
+  })
+}
+
 /** Unquote git's C-style path escaping (`"a\tb"`), which it uses for paths with
  * spaces or non-ASCII bytes. Left as-is when the path is not quoted. */
 function unquote(path: string): string {
@@ -118,6 +176,11 @@ export function parseDiffLines(body: string): DiffLine[] {
       return { kind: 'meta' as const, text }
     }
     if (text.startsWith('similarity index') || text.startsWith('rename ')) return { kind: 'meta' as const, text }
+    // A line that is content on neither side: git's "\ No newline at end of
+    // file" marker — it annotates the line above, so it is not a line itself —
+    // and the mode/binary headers. As "context" they advanced both counters,
+    // shifting every number after them, and the gutter showed them as "0 0".
+    if (text.startsWith('\\') || META_HEADER.test(text)) return { kind: 'meta' as const, text }
     if (text.startsWith('+')) return { kind: 'add' as const, text }
     if (text.startsWith('-')) return { kind: 'del' as const, text }
     return { kind: 'context' as const, text }

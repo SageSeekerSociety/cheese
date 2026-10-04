@@ -488,6 +488,7 @@
       "noFileOpen": "未打开文件",
       "unsaved": "未保存",
       "diffView": "差异",
+      "diffMore": "显示剩余 {count} 行",
       "fullText": "全文",
       "edit": "编辑",
       "save": "保存",
