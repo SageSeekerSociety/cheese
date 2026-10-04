@@ -110,7 +110,6 @@ class ClaudeCodeRuntime(DrivenRuntime[Handle]):
             input_protocol=handle.input_protocol,
             pulse=self.pulse,
             memory=self._memory_hook(handle.session.topic_id),
-            took=self._took,
         )
 
     async def ensure(self, session, opening, *, work_id=None) -> Handle:

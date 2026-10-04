@@ -54,6 +54,7 @@ from app.domain.agent.platform_notices import (
 )
 from app.domain.agent.prompt import _compaction_notice
 from app.domain.agent.queries import _block_payload
+from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.agent.room_events import (
     _mark_step_failed,
     _persist_subagent_result,
@@ -82,6 +83,7 @@ from app.domain.agent.step_output import without_output
 from app.domain.agent.turn_inputs import bind, mark_session_for_turn, transition
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
+from app.domain.delivery.receipts import inputs_answered_inside
 from app.domain.memory.models import MemoryScope
 
 logger = logging.getLogger(__name__)
@@ -238,6 +240,16 @@ class _HookStream(Protocol):
     ) -> list[dict]: ...
 
     async def _forget_room_claims(self, topic_id: uuid.UUID) -> None: ...
+
+    async def _set_hook_activity(
+        self,
+        project_id: uuid.UUID,
+        topic_id: uuid.UUID,
+        work_id: uuid.UUID,
+        active: bool,
+        *,
+        agent_handle: str | None = None,
+    ) -> None: ...
 
 
 # What an exhausted relay balance looks like coming back from newapi. It arrives
@@ -828,6 +840,22 @@ async def _consume_hook_event(
         if event.taken_into is not None:
             # The room was told when the turn that read it ended.
             return
+        if event.thread_label is None:
+            await _end_inputs_answered_inside(
+                service,
+                sessions,
+                hook_work,
+                retry_notes,
+                waiting_notes,
+                compact_notes,
+                room_session_agents,
+                active_turn_ids,
+                work_runner,
+                project_id,
+                topic_id,
+                turn_id,
+                event,
+            )
         if event.is_error:
             frame_out = error_frame(
                 error_line or event.text, type="error", persisted=True
@@ -836,6 +864,67 @@ async def _consume_hook_event(
                 frame_out["code"] = error_code
             await broker.publish(str(topic_id), frame_out)
         await broker.publish(str(topic_id), {"type": "done"})
+
+
+async def _end_inputs_answered_inside(
+    service: _HookStream,
+    sessions: async_sessionmaker,
+    hook_work: dict[TurnKey, _HookWorkState],
+    retry_notes: dict[uuid.UUID, uuid.UUID],
+    waiting_notes: dict[uuid.UUID, uuid.UUID],
+    compact_notes: dict[uuid.UUID, uuid.UUID],
+    room_session_agents: dict[uuid.UUID, str],
+    active_turn_ids: dict[uuid.UUID, set[uuid.UUID]],
+    work_runner: _WorkRunner,
+    project_id: uuid.UUID,
+    topic_id: uuid.UUID,
+    turn_id: uuid.UUID,
+    result: AgentResult,
+) -> None:
+    """End the turns whose input the session read inside ``turn_id``.
+
+    A message sent while the session is mid-turn is read at that turn's next
+    tool boundary and answered inside it. Nothing the session writes names its
+    own turn again, so it ends here, the way ``turn_id`` ended: consumed, or
+    left to be re-sent if it failed, each as its own Stop would have closed it.
+    Which inputs those were is the delivery ledger's, written when the session
+    echoed them: dev replaces its backend on every merge, and the one that
+    hears this turn end is often not the one that saw them read.
+    """
+    async with sessions() as session:
+        taken = await AgentTurnRepository(session).still_open(
+            topic_id, await inputs_answered_inside(session, topic_id, turn_id)
+        )
+    for input_turn in taken:
+        await _consume_hook_event(
+            service,
+            sessions,
+            hook_work,
+            retry_notes,
+            waiting_notes,
+            compact_notes,
+            room_session_agents,
+            active_turn_ids,
+            work_runner,
+            project_id,
+            topic_id,
+            input_turn,
+            AgentResult(
+                text="",
+                session_id=result.session_id,
+                is_error=result.is_error,
+                failure_code=result.failure_code,
+                agent_handle=result.agent_handle,
+                harness=result.harness,
+                taken_into=turn_id,
+            ),
+            None,
+            False,
+            False,
+        )
+        await service._set_hook_activity(
+            project_id, topic_id, input_turn, False, agent_handle=result.agent_handle
+        )
 
 
 async def _note_retry(

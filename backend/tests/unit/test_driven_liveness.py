@@ -400,12 +400,18 @@ async def test_a_message_read_mid_turn_is_not_failed_when_the_session_goes_idle(
         await _until(lambda: seat not in room.runtime.answering)
         await _REAL_SLEEP(0.3)
 
-        # The running turn ended cleanly, and so did the message it took in.
+        # The running turn ended cleanly, and the session's echo told the room
+        # it read the message inside that turn: what ends the message with it.
         assert {
             work: event.is_error
             for work, event in room.events
             if isinstance(event, AgentResult)
-        } == {room.work: False, second: False}
+        } == {room.work: False}
+        assert [
+            receipt.execution_work_id
+            for receipt in room.native_receipts.values()
+            if receipt.identity.work_id == second
+        ] == [room.work]
         assert "session process exited" not in str(room.results())
     finally:
         await room.close()
