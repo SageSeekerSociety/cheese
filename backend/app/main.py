@@ -14,6 +14,7 @@ import importlib
 import logging
 import pkgutil
 import re
+import signal
 import time
 
 # (logging is configured right after imports — see basicConfig below.)
@@ -310,6 +311,74 @@ async def lifespan(_: FastAPI):
     from app.domain.agent.preview_owner import reuse_preview_owner_connections
     from app.domain.machine.microcloud import reuse_connections
 
+    async def hand_over() -> None:
+        # Hand the running work to the next process, in the order that lets
+        # it pick every turn up where it stands: no new turn starts here;
+        # the prompts on their way out arrive; the sessions stop being read
+        # here before anyone else reads them; only then is the lock let go.
+        get_work_runner().hold_turns()
+        get_work_runner().own_sessions(False)
+        taking_over.cancel()
+        await asyncio.gather(taking_over, return_exceptions=True)
+        for watch in held_the_work:
+            watch.cancel()
+        await asyncio.gather(*held_the_work, return_exceptions=True)
+        if held_the_work:
+            handover_started = time.monotonic()
+            undelivered = await get_work_runner().settle_deliveries(
+                settings.handover_timeout_s
+            )
+            if undelivered:
+                get_logger("cheesex.runtime").warning(
+                    "handing over turns whose prompt never arrived",
+                    turns=sorted(undelivered),
+                )
+            await get_chat_service().stop_listening(
+                max(
+                    0.0,
+                    settings.handover_timeout_s - (time.monotonic() - handover_started),
+                )
+            )
+            await get_work_runner().let_go()
+        for task in forge_events:
+            task.cancel()
+        await asyncio.gather(*forge_events, return_exceptions=True)
+        for job in reversed(jobs):
+            await job.stop()
+        await ownership.release()
+
+    handing_over: list[asyncio.Task] = []
+
+    def hand_over_once() -> asyncio.Task:
+        if not handing_over:
+            handing_over.append(
+                asyncio.create_task(hand_over(), name="hand over running work")
+            )
+        return handing_over[0]
+
+    # A rollout moves traffic to the next backend about 30 s before it stops
+    # this one, so the requests already here can finish. The running work does
+    # not wait for that: at the switch `deploy-docker.sh` sends SIGUSR1, and
+    # this process hands the work over while it goes on answering what it
+    # still has. Moved only at stop, every new turn on the next backend waited
+    # out the drain — on dev on 2026-10-04, a message sent in that window
+    # waited 40 s (median) for its turn to start, against 0.2 s outside it.
+    def on_handover_signal() -> None:
+        get_logger("cheesex.runtime").info(
+            "asked to hand the running work over; still serving requests"
+        )
+        hand_over_once()
+
+    loop = asyncio.get_running_loop()
+    try:
+        loop.add_signal_handler(signal.SIGUSR1, on_handover_signal)
+        listening_for_handover = True
+    except (RuntimeError, ValueError):
+        # Off the main thread — the test client runs the app there, and only a
+        # process's main thread can take a signal. The work still moves at stop.
+        # asyncio says so with RuntimeError, uvloop with ValueError.
+        listening_for_handover = False
+
     async with (
         reuse_preview_owner_connections(),
         reuse_connections(),
@@ -322,41 +391,9 @@ async def lifespan(_: FastAPI):
             reading_questions.cancel()
             await asyncio.gather(reading_questions, return_exceptions=True)
             await get_consumptions().let_go()
-            # Hand the running work to the next process, in the order that lets
-            # it pick every turn up where it stands: no new turn starts here;
-            # the prompts on their way out arrive; the sessions stop being read
-            # here before anyone else reads them; only then is the lock let go.
-            get_work_runner().hold_turns()
-            get_work_runner().own_sessions(False)
-            taking_over.cancel()
-            await asyncio.gather(taking_over, return_exceptions=True)
-            for watch in held_the_work:
-                watch.cancel()
-            await asyncio.gather(*held_the_work, return_exceptions=True)
-            if held_the_work:
-                handover_started = time.monotonic()
-                undelivered = await get_work_runner().settle_deliveries(
-                    settings.handover_timeout_s
-                )
-                if undelivered:
-                    get_logger("cheesex.runtime").warning(
-                        "handing over turns whose prompt never arrived",
-                        turns=sorted(undelivered),
-                    )
-                await get_chat_service().stop_listening(
-                    max(
-                        0.0,
-                        settings.handover_timeout_s
-                        - (time.monotonic() - handover_started),
-                    )
-                )
-                await get_work_runner().let_go()
-            for task in forge_events:
-                task.cancel()
-            await asyncio.gather(*forge_events, return_exceptions=True)
-            for job in reversed(jobs):
-                await job.stop()
-            await ownership.release()
+            await hand_over_once()
+            if listening_for_handover:
+                loop.remove_signal_handler(signal.SIGUSR1)
             if hasattr(hub_runtime, "close"):
                 await hub_runtime.close()
 
