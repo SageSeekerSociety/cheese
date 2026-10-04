@@ -67,6 +67,8 @@ export const TOOL_LABELS: Record<string, string> = {
   cheese_doc_set: 'toolLabels.cheeseDocSet',
   cheese_doc_get: 'toolLabels.cheeseDocGet',
   cheese_doc_edit: 'toolLabels.cheeseDocEdit',
+  cheese_doc_new: 'toolLabels.cheeseDocNew',
+  cheese_doc_list: 'toolLabels.cheeseDocList',
   cheese_doc_comment_reply: 'toolLabels.cheeseDocCommentReply',
   cheese_task: 'toolLabels.cheeseTask',
   cheese_worktree: 'toolLabels.cheeseWorktree',
