@@ -305,6 +305,15 @@ def test_a_screen_with_no_room_context_is_given_none_rather_than_empty():
 
     placed = machine_launcher.screen_env(_place(), token="t")
     assert placed["CHEESE_TOPIC"] == "T"
+    # The seat's name is NOT one of the absent-when-unknown ones: an empty
+    # handle hashes to a name of its own, and that name is what keeps the
+    # launcher from putting a room's one agent into a teammate's directory.
+    # It is the SEAT's name, not the handle it came from and not the room's.
+    from app.domain.agent.place import seat_name
+
+    handle = _place().agent_handle
+    assert placed["CHEESE_SEAT"] == seat_name(handle)
+    assert placed["CHEESE_SEAT"] != handle
 
 
 # --- the machine's document toolchain ---------------------------------------

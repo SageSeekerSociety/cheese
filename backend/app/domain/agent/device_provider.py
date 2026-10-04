@@ -58,6 +58,7 @@ from app.domain.agent.place import (
     SANDBOXES_DIR,
     footprint_root,
     seat_dir,
+    seat_name,
     session_platform_dirs,
 )
 from app.domain.agent.platform_failures import (
@@ -1653,8 +1654,10 @@ class DeviceChannel(Channel):
         zero everywhere the failure cannot happen.
 
         Which port to ask about is the machine's answer, not ours: the helper
-        bound whatever the kernel gave it and recorded it in the room's home, so
-        the probe reads it from there.
+        bound whatever the kernel gave it and recorded it in ITS SEAT's
+        directory, so the probe reads it from there. Per seat, not per room: a
+        room may seat several agents, and each has its own helper — one helper
+        carries one credential, and the credential names the teammate.
 
         Conservative in the same direction as the runner check: only an explicit
         `down` retires a screen. An exec failure, a non-zero exit, or an `unknown`
@@ -1671,7 +1674,10 @@ class DeviceChannel(Channel):
             result = await self._hub.exec(
                 screen.device_id,
                 ["sh", "-c", DEVICE_TUNNEL_PROBE],
-                env={"CHEESE_TUNNEL_PROBE_HOME": home_dir},
+                env={
+                    "CHEESE_TUNNEL_PROBE_HOME": home_dir,
+                    "CHEESE_TUNNEL_PROBE_SEAT": seat_name(screen.agent_handle or ""),
+                },
                 timeout=_ALIVE_PROBE_TIMEOUT_S,
             )
         except Exception:  # noqa: BLE001 — a probe failure is not proof of death

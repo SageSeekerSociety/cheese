@@ -654,10 +654,10 @@ async def test_no_tunnel_deployment_pays_nothing_for_the_gate(monkeypatch):
 def test_the_tunnel_probe_reads_a_real_listening_socket(tmp_path, host: str):
     """The probe is a shell script parsing /proc/net/tcp, which is exactly the kind
     of thing that passes review and is wrong on the box. Run it for real: against
-    the port a room's port file records, it must say `up` while the recorded
+    the port a seat's port file records, it must say `up` while the recorded
     helper pid (this test) is listening there, `down` once nothing holds it, and
     `down` when the port is held by a process other than the recorded helper —
-    the listener another room's helper becomes once the kernel hands it a dead
+    the listener another seat's helper becomes once the kernel hands it a dead
     helper's port."""
     import socket
 
@@ -666,7 +666,7 @@ def test_the_tunnel_probe_reads_a_real_listening_socket(tmp_path, host: str):
     if host == "::1" and not socket.has_ipv6:
         pytest.skip("IPv6 is unavailable on this platform")
     family = socket.AF_INET6 if host == "::1" else socket.AF_INET
-    port_file = tmp_path / "room" / ".cheese" / "cheese-tunnel.port"
+    port_file = _seat_dir(tmp_path) / "cheese-tunnel.port"
     pid_file = port_file.with_name("cheese-tunnel.pid")
     port_file.parent.mkdir(parents=True)
 
@@ -693,9 +693,21 @@ def test_the_tunnel_probe_reads_a_real_listening_socket(tmp_path, host: str):
     assert verdict(free, os.getpid()) == "down"
 
 
-def _tunnel_probe(machine_home: Path) -> str:
+# The seat name the launcher derives from the handle under test — the sha256
+# prefix `place.seat_name` gives a `cheese-…` handle, spelled opaquely here.
+_TUNNEL_PROBE_SEAT = "46dd0e26bf01"
+
+
+def _seat_dir(machine_home: Path, seat: str = _TUNNEL_PROBE_SEAT) -> Path:
+    """Where a launch leaves one seat's helper files."""
+    return machine_home / "room" / ".cheese" / "seats" / seat
+
+
+def _tunnel_probe(machine_home: Path, seat: str = _TUNNEL_PROBE_SEAT) -> str:
     """The probe as the backend runs it: the room's home named with the literal
-    `$HOME` placeholder, resolved against the machine's own HOME."""
+    `$HOME` placeholder, resolved against the machine's own HOME, and the seat
+    whose helper is being asked after — per seat, because a room may seat
+    several agents and each has a helper of its own."""
     return subprocess.run(
         ["sh", "-c", DEVICE_TUNNEL_PROBE],
         capture_output=True,
@@ -704,6 +716,7 @@ def _tunnel_probe(machine_home: Path) -> str:
             **os.environ,
             "HOME": str(machine_home),
             "CHEESE_TUNNEL_PROBE_HOME": "$HOME/room",
+            "CHEESE_TUNNEL_PROBE_SEAT": seat,
         },
         timeout=30,
     ).stdout.strip()
@@ -716,7 +729,7 @@ def test_a_room_without_a_readable_port_file_is_unknown_not_down(tmp_path, conte
     file that is not a number is no evidence the helper died — `down` here would
     throw away a working screen on a probe that never looked at a port."""
     if content is not None:
-        port_file = tmp_path / "room" / ".cheese" / "cheese-tunnel.port"
+        port_file = _seat_dir(tmp_path) / "cheese-tunnel.port"
         port_file.parent.mkdir(parents=True)
         port_file.write_text(content)
 
@@ -726,7 +739,7 @@ def test_a_room_without_a_readable_port_file_is_unknown_not_down(tmp_path, conte
 def test_a_room_without_a_recorded_helper_pid_is_unknown_not_down(tmp_path):
     """Whose socket the port is can only be told from the pid the helper was
     started as. Without that record the probe has no evidence either way."""
-    port_file = tmp_path / "room" / ".cheese" / "cheese-tunnel.port"
+    port_file = _seat_dir(tmp_path) / "cheese-tunnel.port"
     port_file.parent.mkdir(parents=True)
     port_file.write_text("40000\n")
 
