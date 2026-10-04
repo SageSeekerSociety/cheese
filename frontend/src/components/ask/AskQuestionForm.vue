@@ -33,6 +33,12 @@ const replyPlaceholder = computed(() =>
     : undefined
 )
 const replyField = ref<HTMLTextAreaElement | null>(null)
+// 两个备注框共用同一个上限。以前只写在 maxlength 上，粘一段长文字进来会被悄悄截掉；
+// 现在同一个数字同时喂给 maxlength 和计数器。
+const NOTE_MAX = 2000
+const noteLength = computed(() => (props.state?.draft.note ?? '').length)
+// 第一个框在「选了选项又留过备注」时显示的是空串，字数要跟着**显示的值**走。
+const replyLength = computed(() => (customReply.value && props.state?.draft.kind !== 'note' ? 0 : noteLength.value))
 const canSubmit = computed(
   () =>
     !!props.state &&
@@ -259,12 +265,16 @@ function submit() {
           ref="replyField"
           :disabled="locked"
           :value="customReply && state.draft.kind !== 'note' ? '' : state.draft.note"
-          maxlength="2000"
+          :maxlength="NOTE_MAX"
+          :aria-describedby="grouped ? undefined : `ask-note-count-${block.id}`"
           autocomplete="off"
           :rows="grouped ? 1 : 3"
           :placeholder="replyPlaceholder"
           @input="reply(($event.target as HTMLTextAreaElement).value)"
         />
+        <p v-if="!grouped" :id="`ask-note-count-${block.id}`" class="ask-form-counter t-num">
+          {{ replyLength }}/{{ NOTE_MAX }}
+        </p>
       </div>
       <slot name="actions" />
       <details
@@ -277,11 +287,15 @@ function submit() {
           :disabled="locked"
           :aria-label="t('ask.form.note')"
           :value="state.draft.note"
-          maxlength="2000"
+          :maxlength="NOTE_MAX"
+          :aria-describedby="`ask-note-supplement-count-${block.id}`"
           rows="2"
           autocomplete="off"
           @input="change({ note: ($event.target as HTMLTextAreaElement).value })"
         />
+        <p :id="`ask-note-supplement-count-${block.id}`" class="ask-form-counter t-num">
+          {{ noteLength }}/{{ NOTE_MAX }}
+        </p>
       </details>
       <p v-if="state.saved && !state.pending" class="ask-form-hint" role="status">{{ t('ask.flow.draftSaved') }}</p>
       <p v-if="state.pending" class="ask-form-hint" role="status">{{ t('ask.flow.unconfirmed') }}</p>
@@ -393,6 +407,15 @@ function submit() {
 .ask-form-note {
   display: block;
   margin: 16px 0 8px;
+}
+
+/* 备注的字数。和 BaseField 的计数器同一档：12px、--muted、靠右、等宽数字。 */
+.ask-form-counter {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--muted);
+  text-align: end;
 }
 
 .ask-form textarea {

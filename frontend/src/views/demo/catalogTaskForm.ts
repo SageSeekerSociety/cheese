@@ -277,7 +277,7 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
         name: '开了',
         note: '开了之后底下换成三条承诺；至于「提交前要不要先弹那段隐私说明」，那是提交那条路上的事（`useTaskForm.ts` 的第一道闸门），卡片不知道有弹窗。',
         props: { requireRealName: true, requireRealNameControl: OK },
-        expect: '您已选择要求实名信息',
+        expect: '你已选择要求实名信息',
       },
     ],
   },

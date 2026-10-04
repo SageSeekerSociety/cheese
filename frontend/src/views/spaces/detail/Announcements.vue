@@ -197,6 +197,8 @@ async function remove(a: SpaceAnnouncement) {
           variant="outlined"
           density="comfortable"
           maxlength="255"
+          :counter="255"
+          persistent-counter
         />
         <TipTapEditor v-model="draftContent" output="html" :aria-label="t('spaces.announcements.form.content')" />
         <div class="ann__opts">

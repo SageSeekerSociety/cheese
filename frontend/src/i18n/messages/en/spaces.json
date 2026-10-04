@@ -109,7 +109,7 @@
       "isDefault": "(default)",
       "cancel": "Cancel",
       "confirm": "Confirm",
-      "categoryNameRequired": "Category name is required",
+      "categoryNameRequired": "Enter a category name",
       "categoryNameMaxLength": "Category name can be at most 32 characters",
       "descriptionMaxLength": "Description can be at most 255 characters",
       "displayOrderHint": "Lower numbers show first",
@@ -363,7 +363,7 @@
     "addDomain": "Add domain",
     "domainPlaceholder": "e.g. example.com",
     "confirmDelete": "Delete the domain group {name}?",
-    "nameRequired": "Domain group name is required",
+    "nameRequired": "Enter a domain group name",
     "invalidDomain": "Enter a valid domain",
     "deleteGroup": "Delete domain group"
   },

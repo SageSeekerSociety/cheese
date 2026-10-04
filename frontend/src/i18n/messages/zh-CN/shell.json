@@ -46,7 +46,7 @@
     "actionFailed": "操作失败",
     "teamLockedBy": "团队已锁定：参与了任务 {tasks}",
     "teamLocked": "团队已锁定，无法修改成员",
-    "noPermission": "您没有权限执行此操作",
+    "noPermission": "你没有权限执行此操作",
     "sessionExpired": "身份过期，请重新登录",
     "network": "网络请求失败",
     "server": "服务器错误"

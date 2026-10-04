@@ -62,7 +62,7 @@
       "operationFailed": "操作失败",
       "rejectReason": "请输入驳回理由",
       "rejectReasonDialogTitle": "驳回理由",
-      "rejectReasonRequired": "请输入驳回理由",
+      "rejectReasonRequired": "填写驳回理由",
       "by": "{name} 发布",
       "noDeadline": "不截止",
       "deadline": "{date} 截止",
@@ -121,7 +121,7 @@
       "unarchiveFailed": "恢复分类失败",
       "setDefaultSuccess": "设置默认分类成功",
       "setDefaultFailed": "设置默认分类失败",
-      "categoryNameRequired": "分类名称不能为空",
+      "categoryNameRequired": "填写分类名称",
       "categoryNameMaxLength": "分类名称最多32个字符",
       "descriptionMaxLength": "描述最多255个字符",
       "displayOrderHint": "越小越靠前显示",
@@ -364,7 +364,7 @@
     "addDomain": "添加域名",
     "domainPlaceholder": "例如: example.com",
     "confirmDelete": "确定要删除域名组 {name} 吗？",
-    "nameRequired": "域名组名称不能为空",
+    "nameRequired": "填写域名组名称",
     "invalidDomain": "请输入有效的域名格式"
   },
   "inviteCodes": {
