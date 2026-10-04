@@ -22,8 +22,14 @@ import { nextTick, onBeforeUnmount, watch } from 'vue'
  */
 export function useFocusReturn(open: Ref<boolean>, fallback?: () => HTMLElement | null): void {
   let returnFocus: HTMLElement | null = null
+  // 有没有经历过一次「打开」——只有打开过才有要收的尾。挂载时就关着的浮层（收到
+  // `immediate` 那一下 `restore`）和从没打开就卸载的浮层，不能因为 `returnFocus`
+  // 是空的就拿兜底容器去抓焦点：那会在挂载/卸载时把用户正拿着的焦点挪走。
+  let opened = false
 
   function restore(): void {
+    if (!opened) return
+    opened = false
     const el = returnFocus
     returnFocus = null
     // 等这一轮渲染跑完再还：Vuetify 的对话框在 isActive 变假的那一瞬间才摘掉自己的
@@ -43,6 +49,7 @@ export function useFocusReturn(open: Ref<boolean>, fallback?: () => HTMLElement 
     open,
     (isOpen) => {
       if (isOpen) {
+        opened = true
         // 不认 `body`：焦点已经在 body 上时「还给它」是个空动作，还会盖掉别处的收尾
         // （有页面自己在关掉时把焦点送回触发它的按钮）。没得还就当没有打开它的那一处，
         // 走兜底。
