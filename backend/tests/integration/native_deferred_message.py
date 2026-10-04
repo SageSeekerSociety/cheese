@@ -8,7 +8,6 @@ from sqlalchemy import select
 from app.api.deps import get_chat_service, get_work_runner
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
-from app.domain.agent.harness.claude_code.runtime import ClaudeCodeRuntime
 from app.domain.agent.models import AgentTurn
 from app.domain.block.models import Block, consumed_turn, prompt_attempts
 from app.domain.delivery.models import NativeInput
@@ -36,6 +35,7 @@ async def finish_deferred_message(
     take_recovery,
 ):
     import app.domain.agent.chat as chat_module
+    import app.domain.agent.room.turn as turn_module
     from app.domain.agent import pending_messages
 
     monkeypatch.setattr(pending_messages, "_runner", get_work_runner())
@@ -82,7 +82,7 @@ async def finish_deferred_message(
             ordinary = await session.get(Block, ordinary_id)
             ordinary.created_at = datetime.now(UTC) - timedelta(hours=3)
             await session.commit()
-        runtime = ClaudeCodeRuntime(channel)
+        runtime = channel.next_process()
         take_recovery(chat, runtime)
         chat = ChatService(
             session_factory=client.test_request_factory,
@@ -113,7 +113,7 @@ async def finish_deferred_message(
 
             assemble = chat._assemble_turn
             lookup = AgentInstanceService.get_in_project
-            held_blocks = chat_module.held_blocks
+            held_blocks = turn_module.held_blocks
             held_seats = []
             preparing = None
 
@@ -141,12 +141,10 @@ async def finish_deferred_message(
 
             monkeypatch.setattr(chat, "_assemble_turn", tracked_assembly)
             monkeypatch.setattr(AgentInstanceService, "get_in_project", paused_lookup)
-            monkeypatch.setattr(chat_module, "held_blocks", observed_holds)
+            monkeypatch.setattr(turn_module, "held_blocks", observed_holds)
         allow.set()
         async with asyncio.timeout(30):
             while not queued.is_set():
-                for subscription in runtime.subscriptions.values():
-                    await subscription.drain()
                 await asyncio.sleep(0.01)
         try:
             from tests.integration.conftest import session_auth_headers
@@ -187,8 +185,6 @@ async def finish_deferred_message(
 
     async with asyncio.timeout(60):
         while operations.count("send") == sends:
-            for subscription in runtime.subscriptions.values():
-                await subscription.drain()
             await asyncio.sleep(0.01)
         # Concurrent recovery scans must not send the deferred block again.
         await asyncio.gather(

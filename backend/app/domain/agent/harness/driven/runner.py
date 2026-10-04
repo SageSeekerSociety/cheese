@@ -18,6 +18,7 @@ import sys
 import time
 import uuid
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Generic, TypeVar
 
@@ -25,6 +26,18 @@ from app.domain.agent.harness.driven.journal import Journal
 
 # Not PEP 695 syntax: this module runs on the session machine's interpreter.
 J = TypeVar("J", bound=Journal)
+
+
+@dataclass(frozen=True)
+class SessionStart:
+    """What a runner starts its harness's session with, read once, at launch:
+    a session that is merely reused keeps the one it started with."""
+
+    system_prompt: str
+    resume_token: str | None = None
+    model: str | None = None
+    #: The agent it acts as, when a room addressed a teammate.
+    agent_handle: str | None = None
 
 
 # --- letting an idle session go ------------------------------------------------
@@ -345,9 +358,9 @@ class Runner(Generic[J]):  # noqa: UP046
         Waiting is not activity (``_idle``): an idle session is let go with a
         read still waiting on it, and that read is answered as the runner
         closes. A closing runner answers that its agent is gone, though the
-        process may not have ended yet: the backend reuses a seat whose runner
-        said it is alive (``DrivenRuntime.answering``), and one that is going
-        will refuse the next send.
+        process may not have ended yet: the backend reuses a launch only while
+        its runner says it is alive, and one that is going will refuse the next
+        send.
         """
         if "wait" not in params:
             return {}

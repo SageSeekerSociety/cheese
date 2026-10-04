@@ -3,12 +3,14 @@
 A screen's session reads what it was started with once and keeps it, so a turn
 that finds one running asks whether that is still what the backend would start
 today (``launch_identity``), and a screen a turn already brought up to date is
-known by what it was brought up to date with (``settled_with``).
+known by what it was brought up to date with (``settled_with``). What this
+process knows of each, it keeps in a ``ScreenLedger``.
 """
 
 import dataclasses
 import hashlib
 import json
+import uuid
 
 from app.core.sandbox_auth import scoped_token_claims
 from app.domain.agent import machine_launcher
@@ -79,3 +81,52 @@ def settled_with(*, agent_configuration: str, place: MachinePlace, token: str) -
             sort_keys=True,
         ).encode()
     ).hexdigest()
+
+
+class ScreenLedger:
+    """What this process brought each live screen up to date with, and which
+    seats owe a relaunch it put off. Memory only: a backend that takes the
+    rooms over compares every screen again (`RoomSessions.unchecked`)."""
+
+    def __init__(self) -> None:
+        # sid → what a turn here brought that screen up to date with
+        # (``settled_with``), and when the credential it wrote expires.
+        self._settled: dict[str, tuple[str, int]] = {}
+        # (topic, acting agent) whose session is not what the backend would
+        # start today, its relaunch put off because it was working: the room
+        # brings it up to date once it goes quiet (`agent.prewarm`) instead of
+        # on the next message.
+        self._owed: set[tuple[uuid.UUID, str]] = set()
+
+    def current(self, sid: str, settled_with: str, *, valid_after: int) -> bool:
+        """Brought up to date with exactly this, on a credential still good
+        past ``valid_after``."""
+        settled = self._settled.get(sid)
+        return (
+            settled is not None
+            and settled[0] == settled_with
+            and settled[1] > valid_after
+        )
+
+    def record(
+        self,
+        sid: str,
+        seat: tuple[uuid.UUID, str],
+        settled_with: str,
+        token: str,
+        *,
+        settled: bool = True,
+    ) -> None:
+        """A turn here brought the screen up to date, or put its relaunch off."""
+        if not settled:
+            self._owed.add(seat)
+            return
+        claims = scoped_token_claims(token) or {}
+        self._settled[sid] = (settled_with, int(claims.get("exp") or 0))
+        self._owed.discard(seat)
+
+    def forget(self, sid: str) -> None:
+        self._settled.pop(sid, None)
+
+    def owes(self, seat: tuple[uuid.UUID, str]) -> bool:
+        return seat in self._owed

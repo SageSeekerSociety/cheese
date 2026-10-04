@@ -10,6 +10,7 @@ import dayjs from 'dayjs'
 import { formatFileSize } from '@/utils/materials'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import SettingsToolbar from '@/components/spaces/SettingsToolbar.vue'
 
 defineProps<{
@@ -219,7 +220,7 @@ function onVisibility(item: SpaceMaterial, picked: SpaceMaterialVisibility) {
         </v-list-item>
       </v-list>
 
-      <p v-else class="settings-empty">{{ t('spaces.materials.empty') }}</p>
+      <BaseEmptyState v-else size="inline" class="settings-empty" :title="t('spaces.materials.empty')" />
     </div>
   </div>
 </template>

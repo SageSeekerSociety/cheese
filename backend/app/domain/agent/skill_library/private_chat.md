@@ -1,7 +1,6 @@
 ---
 name: private-chat
 title: 私聊
-scenarios: [private]
 description: 成员与芝士的私聊，可以查询项目、记录偏好、起草文档和处理小文件。
 ---
 

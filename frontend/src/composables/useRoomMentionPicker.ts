@@ -187,7 +187,10 @@ export function useRoomMentionPicker(deps: MentionPickerDeps) {
           sub: tp.status === 'archived' ? t('work.room.mention.archived') : t('work.room.mention.inProgress'),
           agent: false,
         })),
-    ].filter((i) => i.label.toLowerCase().includes(ql))
+      // 人和话题都按**名字**搜；人还多认一个 handle（`sub` 里那个 `@xxx`）——有人记
+      // 得住 `@cheese-topica`，记不住中文名叫什么，只按名字搜等于他默写一遍也找不到。
+      // 群播是 fixed-literal token，它的 insert（`all` / `here`）在别处单独匹配。
+    ].filter((i: MentionItem) => i.label.toLowerCase().includes(ql) || !!i.handle?.toLowerCase().includes(ql))
     // Agent 排在最前，群播让位。第一格就是 Enter 的默认答案，而「打一个 @ 然后回
     // 车」在这个产品里压倒性地是「交给芝士」——把 @all 摆在那个位置，等于让最常见
     // 的一次输入默认去打扰整个话题的所有人。群播是 fixed-literal token，换个位置
@@ -242,7 +245,12 @@ export function useRoomMentionPicker(deps: MentionPickerDeps) {
   const index = ref(0)
   // Esc 收起候选（@ 还留在正文里，那只是一次临时收起）。再打一个字它就重新打开。
   const closed = ref(false)
-  const menuOpen = computed(() => matches.value.length > 0 && !closed.value)
+  // 菜单画不画：`@` 还留在正文里，也没被 Esc 收起。**没有候选时它不消失**，而是说
+  // 一句「暂无匹配」——整块收起来看起来像那个 `@` 没生效，人只会以为自己打错了。
+  const menuVisible = computed(() => query.value !== null && !closed.value)
+  // 菜单里有东西可挑。键盘只在这个前提下接管 ↑/↓ 和回车：空态里按 ↑/↓ 该去挪光标，
+  // 回车该把这条发出去（`@` 那半截字还在正文里，发出去就是一次没 @ 到的普通发言）。
+  const menuOpen = computed(() => menuVisible.value && matches.value.length > 0)
   // 读的时候夹一下：候选会自己变短（名册更新、资料库到货），下标不该指着一条已经不在
   // 列表里的项——那样回车一条也挑不动。
   const activeIndex = computed(() => Math.min(index.value, Math.max(0, matches.value.length - 1)))
@@ -288,5 +296,18 @@ export function useRoomMentionPicker(deps: MentionPickerDeps) {
     index.value = i
   }
 
-  return { query, matches, level, menuOpen, activeIndex, pick, move, pickActive, close, backToRoot, hover }
+  return {
+    query,
+    matches,
+    level,
+    menuVisible,
+    menuOpen,
+    activeIndex,
+    pick,
+    move,
+    pickActive,
+    close,
+    backToRoot,
+    hover,
+  }
 }

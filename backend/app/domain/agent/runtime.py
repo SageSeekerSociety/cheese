@@ -1310,11 +1310,6 @@ class AgentWorkRunner:
         and closed by the Stop that screen eventually sends, exactly as if
         nothing had happened. Nothing is said, because nothing broke.
 
-        That used to be inferred rather than known. The sweep read the topic's
-        blocks looking for traces that claude had been talking, because the
-        platform had no way to ask whether the session was still there. It can
-        ask now, so the tracing is gone.
-
         What is left needs a remedy:
 
         - WEDGED (in `_live`, silent): the thing the task drove — the sandbox
@@ -1543,6 +1538,8 @@ class AgentWorkRunner:
         except Exception:  # noqa: BLE001 — a failed probe must not kill the sweep
             logger.exception("orphan block probe failed for %s", topic_id)
         attach = bool(delivered) or not probe_ok
+        if probe_ok:  # what reached nobody leaves no live turn behind
+            chat_service.retire_unheard({r.turn_id for r in entries} - delivered)
 
         # Each re-send and the agent it goes back to (None: the room decides).
         resends: dict[str | None, TurnRecord] = {}

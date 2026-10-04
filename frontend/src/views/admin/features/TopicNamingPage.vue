@@ -5,12 +5,12 @@ import type { FeatureDays, TopicNamingReport } from '@/views/admin/features/feat
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminKpiCard from '@/components/admin/AdminKpiCard.vue'
 import AdminLineChart from '@/components/admin/AdminLineChart.vue'
 import AdminMetricList from '@/components/admin/AdminMetricList.vue'
 import AdminPage from '@/components/admin/AdminPage.vue'
 import AdminTabs from '@/components/admin/AdminTabs.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import { fmtCost, fmtNum, fmtPercent } from '@/lib/usageFormat'
 import { getTopicNamingReport } from '@/views/admin/features/featureApi'
 
@@ -224,12 +224,11 @@ const personRows = computed(() => {
     <div class="anaming__body admin-page__body">
       <p v-if="window" class="anaming__stamp t-meta-read">{{ window }}</p>
 
-      <AdminEmptyState
+      <BaseLoadError
         v-if="failed"
         :title="t('featureStats.page.loadFailed')"
-        :action="t('featureStats.page.retry')"
-        tone="error"
-        @action="load"
+        :retry-label="t('featureStats.page.retry')"
+        @retry="load"
       />
 
       <template v-else>

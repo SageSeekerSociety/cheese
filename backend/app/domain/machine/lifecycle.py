@@ -59,6 +59,12 @@ from app.domain.machine.repositories import CloudHostRepository
 
 logger = logging.getLogger("cheese.machine.lifecycle")
 
+
+class SandboxBusy(Exception):
+    """The session's home is being stopped, archived or restored by someone
+    else; the tool call waits for that to finish."""
+
+
 #: How long a stop, an archive or a restore may hold a home before another
 #: sweep may take it over: past the longest the host is given for the step.
 STOP_HOLD = timedelta(minutes=3)
@@ -67,7 +73,11 @@ ARCHIVE_HOLD = timedelta(minutes=25)
 URL_TTL_S = 3600
 #: A sandbox whose background command keeps it up is asked again this often.
 RECHECK = timedelta(minutes=1)
-#: Homes looked at per sweep: stopping is quick, archiving is not.
+#: An archive that failed — a file the host cannot read, a home over the
+#: archive limit, a home not on its host — is tried again after this long, not
+#: on every sweep; the home stays where it is meanwhile.
+ARCHIVE_RETRY = timedelta(hours=6)
+#: Stops and archives made per sweep: stopping is quick, archiving is not.
 STOPS_PER_SWEEP = 20
 ARCHIVES_PER_SWEEP = 3
 
@@ -163,6 +173,23 @@ class SandboxLifecycle:
         """Stop every idle sandbox; returns how many were stopped."""
         now = datetime.now(UTC)
         idle_for = timedelta(seconds=settings.cloud_sandbox_idle_stop_s)
+        from app.domain.agent.models import AgentTurn
+
+        # A turn running in the room, or one that ended within the idle time,
+        # keeps every sandbox of the room awake; a home its session left is
+        # measured by its own activity alone. Decided here, not after a limit:
+        # a busy room's homes would otherwise take every place in the batch.
+        room_active = (
+            select(AgentTurn.id)
+            .where(
+                AgentTurn.topic_id == CloudHostHome.topic_id,
+                or_(
+                    AgentTurn.stopped_at.is_(None),
+                    AgentTurn.stopped_at > now - idle_for,
+                ),
+            )
+            .exists()
+        )
         rows = await self._session.execute(
             select(
                 CloudHostHome.id,
@@ -182,14 +209,20 @@ class SandboxLifecycle:
                 CloudHostHome.active_at < now - idle_for,
                 CloudHost.released_at.is_(None),
                 CloudHost.device_id.is_not(None),
+                or_(
+                    CloudHostHome.left_at.is_not(None),
+                    CloudHostHome.session_id.is_(None),
+                    ~room_active,
+                ),
             )
             .order_by(CloudHostHome.active_at)
-            .limit(STOPS_PER_SWEEP)
         )
         candidates = list(rows.all())
         await self._session.commit()
         stopped = 0
         for home in candidates:
+            if stopped >= STOPS_PER_SWEEP:
+                break
             if not self._hub.is_online(home.device_id):
                 continue
             since = await self._idle_since(home, now)
@@ -345,6 +378,10 @@ class SandboxLifecycle:
                     CloudHostHome.busy_until.is_(None),
                     CloudHostHome.busy_until < now,
                 ),
+                or_(
+                    CloudHostHome.archive_failed_at.is_(None),
+                    CloudHostHome.archive_failed_at < now - ARCHIVE_RETRY,
+                ),
                 CloudHost.released_at.is_(None),
                 CloudHost.device_id.is_not(None),
                 or_(
@@ -358,14 +395,16 @@ class SandboxLifecycle:
                 CloudHostHome.waiting_since.desc().nulls_last(),
                 CloudHostHome.active_at,
             )
-            .limit(ARCHIVES_PER_SWEEP)
         )
         due = list(rows.all())
         await self._session.commit()
-        archived = 0
+        archived = tried = 0
         for home_id, device_id in due:
+            if tried >= ARCHIVES_PER_SWEEP:
+                break
             if not self._hub.is_online(device_id):
                 continue
+            tried += 1
             try:
                 if await self.archive(home_id):
                     archived += 1
@@ -398,6 +437,14 @@ class SandboxLifecycle:
         device_id = host.device_id
         home.busy_until = now + ARCHIVE_HOLD
         project, resource = str(home.project_id), home.resource_id
+        if home.archive_key is not None:
+            # Placed here to be restored, and not restored yet: its work is in
+            # the archive it has. Whatever is here is at most half of that.
+            home.host_id = None
+            await self._session.commit()
+            await self._drop(device_id, home_id, project, resource)
+            await self._release(home_id)
+            return True
         await self._session.commit()
 
         bucket = self._bucket()
@@ -419,8 +466,8 @@ class SandboxLifecycle:
                     f"the bucket holds {stored}, the host wrote "
                     f"{(written['size'], written['md5'])}"
                 )
-        except BaseException:
-            await self._release(home_id)
+        except BaseException as exc:
+            await self._release(home_id, failed=str(exc) or type(exc).__name__)
             await delete_archive(key)
             raise
 
@@ -435,6 +482,16 @@ class SandboxLifecycle:
         home.archive_size = int(written["size"])
         home.archive_md5 = str(written["md5"])
         await self._session.commit()
+        await self._drop(device_id, home_id, project, resource)
+        await self._release(home_id)
+        logger.info(
+            "cloud sandbox home %s archived (%s bytes)", home_id, written["size"]
+        )
+        return True
+
+    async def _drop(
+        self, device_id: str, home_id: uuid.UUID, project: str, resource: str
+    ) -> None:
         try:
             await run_on_host(
                 self._hub,
@@ -448,16 +505,18 @@ class SandboxLifecycle:
             # The home is safe in the bucket. What is left on the host goes
             # with the host, or is replaced if the home comes back to it.
             logger.warning("dropping archived home %s failed", home_id, exc_info=True)
-        await self._release(home_id)
-        logger.info(
-            "cloud sandbox home %s archived (%s bytes)", home_id, written["size"]
-        )
-        return True
 
-    async def _release(self, home_id: uuid.UUID) -> None:
+    async def _release(self, home_id: uuid.UUID, *, failed: str | None = None) -> None:
+        """Let the home go; ``failed`` says why the archive did not happen,
+        which keeps the sweep off it for ``ARCHIVE_RETRY``."""
         home = await self._repo.lock_home(home_id)
         if home is not None:
             home.busy_until = None
+            if failed is not None:
+                home.archive_failed_at = datetime.now(UTC)
+                home.archive_error = failed[-1000:]
+            else:
+                home.archive_failed_at = home.archive_error = None
         await self._session.commit()
 
     # --- restore -------------------------------------------------------------
@@ -465,27 +524,42 @@ class SandboxLifecycle:
     async def restore(self, home_id: uuid.UUID, device_id: str) -> dict | None:
         """Unpack the home's archive on the host it was placed on, then let
         the archive go. Returns the room line to publish, if any: one saying
-        the archive was gone, when it was."""
-        home = await self._session.get(CloudHostHome, home_id, populate_existing=True)
+        the archive was gone, when it was.
+
+        Holds the home while it runs, for longer than a tool call's claim on
+        its session lasts: a second call waits for this restore
+        (``SandboxBusy``) instead of starting another over the same directory.
+        """
+        now = datetime.now(UTC)
+        home = await self._repo.lock_home(home_id)
         assert home is not None and home.archive_key is not None
+        if home.busy_until is not None and home.busy_until > now:
+            await self._session.commit()
+            raise SandboxBusy()
+        home.busy_until = now + ARCHIVE_HOLD
         key, size, md5 = home.archive_key, home.archive_size, home.archive_md5
         project, resource = str(home.project_id), home.resource_id
         await self._session.commit()
-        url = await self._bucket().presign(key, "get_object", URL_TTL_S)
-        answer = await run_on_host(
-            self._hub,
-            device_id,
-            "restore",
-            timeout=ARCHIVE_HOLD.total_seconds() - 60,
-            project=project,
-            resource=resource,
-            url=url,
-            size=size,
-            md5=md5,
-        )
+        try:
+            url = await self._bucket().presign(key, "get_object", URL_TTL_S)
+            answer = await run_on_host(
+                self._hub,
+                device_id,
+                "restore",
+                timeout=ARCHIVE_HOLD.total_seconds() - 60,
+                project=project,
+                resource=resource,
+                url=url,
+                size=size,
+                md5=md5,
+            )
+        except BaseException:
+            await self._release(home_id)
+            raise
         home = await self._repo.lock_home(home_id)
         line = None
         if home is not None:
+            home.busy_until = None
             home.archive_key = home.archive_size = home.archive_md5 = None
             if answer.get("missing"):
                 logger.warning("sandbox archive %s was gone at restore", key)

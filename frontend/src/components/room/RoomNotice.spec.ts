@@ -168,7 +168,7 @@ describe('芝士起草、等人确认的那一行', () => {
     expect(link.getAttribute('href')).toBe('/projects/proj-1/routines?routine=r-9')
   })
 
-  it('整理的工作方法：通到工作方法页的那一条', async () => {
+  it('整理的技能：通到技能页的那一条', async () => {
     const { getByTestId } = await mountWithRouter(proposed({ event_type: 'skill_proposed', skill_id: 's-3' }))
     expect(getByTestId('notice-confirm').getAttribute('href')).toBe('/projects/proj-1/skills?skill=s-3')
   })

@@ -7,7 +7,6 @@
       "title": "这个房间里的东西",
       "expand": "展开",
       "collapse": "收起",
-      "expandAll": "展开全部 {count} 项",
       "openFile": "打开 {path}",
       "newFromTemplate": "从模板新建",
       "readingTemplates": "正在读取模板…",
@@ -343,7 +342,8 @@
     "deadlineFailed": "截止时间设置失败",
     "unknownUser": "未知用户",
     "unknownTeam": "未知团队",
-    "memberWithId": "{name}（{id}）"
+    "memberWithId": "{name}（{id}）",
+    "tableLabel": "报名名单"
   },
   "edit": {
     "saveChanges": "保存更改",
@@ -351,8 +351,7 @@
     "resubmitted": "重新提交审核成功，等待管理员审核"
   },
   "loadError": {
-    "title": "加载失败",
-    "retry": "重试"
+    "title": "加载失败"
   },
   "loadFailed": "加载题目信息失败",
   "teamStatus": {
@@ -621,6 +620,9 @@
     "readingDocs": "正在查文档…",
     "readingTasks": "正在看你参与的题…",
     "today": "今天",
+    "queued": "正在排队，资源空出后自动开始",
+    "stop": "停止",
+    "stopped": "已停止",
     "failed": "芝士暂时答不上来，稍后再试。",
     "starters": {
       "basics": "做这道题要先会什么？",

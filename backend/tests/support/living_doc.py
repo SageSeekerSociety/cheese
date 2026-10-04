@@ -14,13 +14,26 @@ from app.domain.topic.services import TopicService
 
 
 async def write_doc(
-    session: AsyncSession, room_id: uuid.UUID, content: str, actor: str = "alice"
+    session: AsyncSession,
+    room_id: uuid.UUID,
+    content: str,
+    actor: str = "alice",
+    *,
+    quiet: bool = False,
 ):
-    """Record ``content`` as the room's next document version, by ``actor``."""
-    place = await TopicService(session).place_or_404(room_id)
+    """Record ``content`` as the room's next document version, by ``actor``.
+    ``quiet``: the room is not told (no "编辑了文档" line)."""
+    topics = TopicService(session)
+    place = await topics.place_or_404(room_id)
+    doc = await topics.room_doc(place.room_id, place.project_id)
     return await DocumentWriter(session, summarize_doc_change).record(
-        room_id=place.room_id,
-        project_id=place.project_id,
-        content=content,
-        actors=[actor],
+        doc, content=content, actors=[actor], quiet=quiet
     )
+
+
+def document_of(client, room_id, **kwargs) -> str:
+    """The id of the room's living document, as a page finds it out
+    (``GET /topics/{id}/document``); ``kwargs`` go with the request (headers)."""
+    response = client.get(f"/topics/{room_id}/document", **kwargs)
+    assert response.status_code == 200, response.text
+    return response.json()["data"]["id"]

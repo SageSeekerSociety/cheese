@@ -125,7 +125,11 @@ def _machines(monkeypatch):
     monkeypatch.setattr(
         work_lease,
         "device_hub",
-        SimpleNamespace(is_online=lambda d: True, exec=AsyncMock(side_effect=install)),
+        SimpleNamespace(
+            target=lambda _device: "linux-amd64",
+            is_online=lambda d: True,
+            exec=AsyncMock(side_effect=install),
+        ),
     )
     monkeypatch.setattr(execution, "call", AsyncMock(return_value={}))
 
@@ -164,8 +168,9 @@ async def test_the_owner_is_told_once_when_an_agent_starts_on_their_device(
     assert said["topicTitle"] == "Pricing"
     assert said["agentName"]
     assert said["deviceName"] == "workstation"
-    assert said["machineAccess"] is True
-    assert "能访问整台机器" in said["content"]
+    # Nobody gave the room the whole machine: it runs isolated there (#2320).
+    assert said["machineAccess"] is False
+    assert "能访问整台机器" not in said["content"]
 
 
 async def test_an_owner_in_the_room_is_not_told(client, monkeypatch):

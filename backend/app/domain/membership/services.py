@@ -180,9 +180,10 @@ class MemberService:
 
         Refused, each before anything is written: an unverified caller; the owner,
         who must first hand the project to someone else; and anyone with neither a
-        row, a seat, nor the team. Removing the last owner of a room is refused
-        inside ``revoke_project_seats``, before it deletes anything — and that
-        refusal writes nothing here either, including the exclusion.
+        row, a seat, nor the team. Removing the last owner of a room other people
+        still sit in is refused inside ``revoke_project_seats``, before it deletes
+        anything — and that refusal writes nothing here either, including the
+        exclusion.
         """
         project = await self._ensure_project(project_id)
         if not actor.authenticated:

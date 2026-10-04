@@ -209,7 +209,7 @@ describe('现场按队友看：一次一页', () => {
 
     // 读的人上滚到顶：这一页之前还有更早的（has_more），该去要。
     const gate = deferred<{ data: Block[]; total: number; has_more: boolean }>()
-    getTranscript.mockImplementationOnce(async (_tid: string, opts: Record<string, unknown> = {}) => {
+    getTranscript.mockImplementationOnce((_tid: string, opts: Record<string, unknown> = {}) => {
       expect(opts).toEqual({ limit: SITE_PAGE_SIZE, before: 'a0', author: 'cheese-a1' })
       return gate.promise
     })
@@ -219,9 +219,13 @@ describe('现场按队友看：一次一页', () => {
 
     expect(getTranscript.mock.calls, '上滑才拉更早的一页').toHaveLength(3)
 
-    // 更早的一页插在视口**上面**：内容长高了 1000，滚动位置要跟着往下让这么多。
-    m.scrollHeight = 3000
+    // 更早的一页插在视口**上面**：loadOlder 在请求回来之后、拼进 DOM 之前量 before
+    //（见 useSiteTranscript），这一页的 1000 是那之后才长出来的。排在紧接着的微任务里，
+    // 就落在 before 与拼进 DOM 那一下之间；滚动位置要跟着往下让这么多。
     gate.resolve({ data: OLDER_A, total: 1, has_more: false })
+    queueMicrotask(() => {
+      m.scrollHeight = 3000
+    })
     await flush()
 
     expect(args(pane)).toEqual(['git log', 'ls docs', 'pytest -q'])

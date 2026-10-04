@@ -162,4 +162,18 @@ describe('空间成员页', () => {
     await fireEvent.click(button(document, '确定'))
     await waitFor(() => expect(updateAdmin).toHaveBeenCalledWith(SPACE_ID, ADMIN.id, { role: 'OWNER' }))
   })
+
+  it('读失败时成员那一块换成原因和一条重试，不再假装只有管理员', async () => {
+    listMembers.mockRejectedValueOnce(new Error('HTTP 500 for /members'))
+    await mount(OWNER.id)
+    // 名单没读到就整块换成失败：屏幕上是原因和重试，不是「管理员一个人在」的假名单。
+    // 标题经 useI18n（这里被 mock 成原样返回 key），重试按钮走全局 t（真 i18n）。
+    await waitFor(() => expect(document.body.textContent).toContain('spaces.members.loadMembersFailed'))
+    expect(document.body.textContent).toContain('HTTP 500 for /members')
+    expect(rows().length).toBe(0)
+
+    await fireEvent.click(button(document, '重试'))
+    await waitFor(() => expect(listMembers).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(rows().length).toBe(4))
+  })
 })

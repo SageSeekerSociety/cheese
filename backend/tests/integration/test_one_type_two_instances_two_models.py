@@ -19,7 +19,7 @@ from app.domain.room_task.models import Task
 from app.domain.topic.services import TopicService
 from tests.integration.conftest import registered
 
-RETIRED = {"harness", "effort"}
+RETIRED = {"harness"}
 
 
 @pytest.mark.anyio

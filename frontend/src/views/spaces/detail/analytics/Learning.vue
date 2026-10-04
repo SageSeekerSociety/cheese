@@ -28,9 +28,19 @@
 
     <v-progress-linear v-if="loading && !queues" indeterminate color="primary" />
 
-    <p v-if="learningFilters && learningFilters.projectCount === 0" class="an-note">
-      {{ t('spaces.analytics.learning.noProjects') }}
-    </p>
+    <BaseEmptyState
+      v-if="learningFilters && learningFilters.projectCount === 0"
+      size="inline"
+      :title="t('spaces.analytics.learning.noProjects')"
+    />
+
+    <!-- The queues and messages are this block's whole content; if they failed to load, replace them with the reason and a way to retry. -->
+    <BaseLoadError
+      v-else-if="failed"
+      :title="t('spaces.analytics.learning.loadFailed')"
+      :error="errorDetail"
+      @retry="load"
+    />
 
     <template v-else>
       <section class="lr__block">
@@ -42,9 +52,12 @@
 
           <template v-if="queues.reviewFlag.available">
             <LearningQuoteItem v-for="item in queues.reviewFlag.items" :key="item.blockId" :excerpt="item" />
-            <p v-if="!queues.reviewFlag.items.length" class="an-note lr__gap">
-              {{ t('spaces.analytics.learning.queue.noFlagged') }}
-            </p>
+            <BaseEmptyState
+              v-if="!queues.reviewFlag.items.length"
+              size="inline"
+              class="lr__gap"
+              :title="t('spaces.analytics.learning.queue.noFlagged')"
+            />
           </template>
 
           <template v-else>
@@ -62,7 +75,7 @@
             @update:checked="(value) => setSelected(point.example.blockId, value)"
           />
         </div>
-        <p v-else-if="queues" class="an-note">{{ t('spaces.analytics.learning.queue.noStuck') }}</p>
+        <BaseEmptyState v-else-if="queues" size="inline" :title="t('spaces.analytics.learning.queue.noStuck')" />
       </section>
 
       <section class="lr__block">
@@ -79,7 +92,7 @@
             @update:checked="(value) => setSelected(question.blockId, value)"
           />
         </div>
-        <p v-else-if="!loading" class="an-note">{{ t('spaces.analytics.learning.questions.empty') }}</p>
+        <BaseEmptyState v-else-if="!loading" size="inline" :title="t('spaces.analytics.learning.questions.empty')" />
       </section>
 
       <div class="an-card lr__actions">
@@ -123,6 +136,8 @@ import { dedupeBlockIds, formatCount } from './helpers'
 import { buildAnalyticsApiParams, buildLearningQueueParams } from './utils'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import { SpacesApi } from '@/network/api/spaces'
 
 const { t } = useI18n()
@@ -134,6 +149,10 @@ const learningFilters = ref<SpaceLearningFilters | null>(null)
 const queues = ref<SpaceLearningQueues | null>(null)
 const questions = ref<SpaceLearningQuestion[]>([])
 const outline = ref<SpaceLearningOutline | null>(null)
+
+//: 队列 + 发言没读到时的长相：替换掉内容，就地给原因和一条重试的路。
+const failed = ref(false)
+const errorDetail = ref<string | null>(null)
 
 //: 勾中的发言。顺序就是提纲里的讲次顺序，所以只往后加、不重排。
 const selected = ref<string[]>([])
@@ -185,32 +204,27 @@ const loadFilters = async () => {
 }
 
 const loadQueues = async () => {
-  try {
-    const { data } = await SpacesApi.getLearningQueues(spaceId.value, buildLearningQueueParams(filters.value))
-    queues.value = data
-  } catch (error) {
-    console.error('load learning queues failed', error)
-    toast.error(t('spaces.analytics.learning.toast.queuesFailed'))
-  }
+  const { data } = await SpacesApi.getLearningQueues(spaceId.value, buildLearningQueueParams(filters.value))
+  queues.value = data
 }
 
 const loadQuestions = async () => {
-  try {
-    const { data } = await SpacesApi.getLearningQuestions(
-      spaceId.value,
-      buildAnalyticsApiParams('learning', filters.value)
-    )
-    questions.value = data.questions
-  } catch (error) {
-    console.error('load learning questions failed', error)
-    toast.error(t('spaces.analytics.learning.toast.questionsFailed'))
-  }
+  const { data } = await SpacesApi.getLearningQuestions(
+    spaceId.value,
+    buildAnalyticsApiParams('learning', filters.value)
+  )
+  questions.value = data.questions
 }
 
 const load = async () => {
   loading.value = true
+  failed.value = false
+  errorDetail.value = null
   try {
     await Promise.all([loadQueues(), loadQuestions()])
+  } catch (error) {
+    failed.value = true
+    errorDetail.value = error instanceof Error && error.message ? error.message : null
   } finally {
     loading.value = false
   }

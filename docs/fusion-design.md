@@ -127,7 +127,7 @@
 
 ## 7. 同源共识（两边一致，无需融合）
 
-记忆、万物皆块（reply_to 对话树 + struct_parent 文档树 +
+记忆、块（reply_to 对话树 +
 block_ref）、改文档=下指令、人验收才算数——同源 spec。
 
 ## 8. 分期建议
@@ -147,10 +147,11 @@ block_ref）、改文档=下指令、人验收才算数——同源 spec。
 后端已删除（2026-08-19）——它是「起一个子进程、流式读完、退出」那一种形状，而拿着迭代器的
 人就拥有那一轮，平台里每一件打捞机器都是从这条性质长出来的。留下的是可以重连的那一种：
 会话机上的 runner 握着 headless `claude -p` 的管道、把记录写进日志，后端从游标读、崩溃后
-`recover` 重新找到它（`harness/driven/runtime.py`）。
+`recover` 重新找到它（`agent/room/sessions.py`）。
 
-- **组合替代继承**：一轮的流程住在 `DrivenRuntime` 里，它**持有**一条 channel（找到或开起会话、
-  把调用送到 runner）；订阅、活跃度、收据全在缝的上面写一次，第二个 harness 是 M+N 不是 M×N。
+- **组合替代继承**：会话核心（`agent/session_host/`）起会话、送输入、读记录，各 harness 只给一个
+  驱动；房间的一轮流程住在 `RoomSessions` 里，它**持有**核心和一条 channel（决定会话放在哪、
+  手在哪台机器）。订阅、活跃度、收据全在缝的上面写一次，第二个 harness 是 M+N 不是 M×N。
 - **池子按 (机器, harness)**：`ComputePool` 里机器选不到会退回默认，harness 选不到**直接拒绝**
   （跑成别的 agent 比不跑更糟）。崩溃恢复和补录由 runtime 交出拼好的 `AgentEvent`，chat.py
   落库发帧，翻译不是它的活；`test_harness_boundary` 守这条缝。

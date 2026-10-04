@@ -292,6 +292,12 @@ class CloudHostHome(UuidPk, Timestamps, Base):
     archive_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     archive_size: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     archive_md5: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # The last archive of this home failed, and why; it is not tried again
+    # until ``lifecycle.ARCHIVE_RETRY`` has passed. Cleared by one that works.
+    archive_failed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    archive_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 def capacity(host: CloudHost) -> int:

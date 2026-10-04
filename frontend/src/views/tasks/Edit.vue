@@ -6,7 +6,11 @@
         {{ t('tasks.detail.editTask') }}
       </v-card-title>
       <v-divider class="mb-4"></v-divider>
-      <LoadingErrorContainer v-if="loading || error" :loading="loading" :error="error" @retry="loadTaskData" />
+      <div v-if="loading" class="py-12 text-center">
+        <v-progress-circular indeterminate color="primary" />
+      </div>
+      <!-- A failed read trades the form for the error (docs/design-system.md §3.10). -->
+      <BaseLoadError v-else-if="error" :title="t('tasks.loadError.title')" :error="error" @retry="loadTaskData" />
       <TaskForm
         v-else-if="taskData"
         ref="taskFormRef"
@@ -41,9 +45,6 @@
           </div>
         </template>
       </TaskForm>
-
-      <!-- 提交审核成功提示 -->
-      <v-snackbar v-model="showResubmitSuccess" :timeout="3000">{{ t('tasks.edit.resubmitted') }}</v-snackbar>
     </v-card>
   </v-container>
 </template>
@@ -52,14 +53,15 @@
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
+import { toast } from 'vuetify-sonner'
 import { storeToRefs } from 'pinia'
 
 import { useSpaceData } from '@/composables/useSpaceData'
 
-import { LoadingErrorContainer } from './components'
 import { useTaskData, useTaskManagement } from './composables'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import TaskForm from '@/components/tasks/TaskForm.vue'
 import { closeOverlay } from '@/lib/backOut'
 import { TasksApi } from '@/network/api/tasks'
@@ -85,7 +87,6 @@ const { domainGroups } = storeToRefs(spaceStore)
 
 // 状态
 const isResubmitting = ref(false)
-const showResubmitSuccess = ref(false)
 const taskFormRef = ref<InstanceType<typeof TaskForm> | null>(null)
 
 // 显示重新提交审核按钮的条件
@@ -115,7 +116,7 @@ const handleSubmitWithReapproval = async (formData: any) => {
   try {
     await submitEditTask(formData)
     await TasksApi.resubmitTask(taskId)
-    showResubmitSuccess.value = true
+    toast.success(t('tasks.edit.resubmitted'))
 
     setTimeout(() => {
       navigateToDetail()

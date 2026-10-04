@@ -57,7 +57,7 @@ def _turn(client, room: str, text: str) -> None:
 def test_a_room_with_no_history_gets_no_such_line(client, stub_hooks):
     room = _room(client)
     _turn(client, room, "@芝士 hi")
-    assert _LINE.search(stub_hooks.last_system_prompt or "") is None
+    assert _LINE.search(stub_hooks.told) is None
 
 
 def test_a_fresh_session_in_a_room_with_history_is_told_how_to_read_it(
@@ -71,7 +71,7 @@ def test_a_fresh_session_in_a_room_with_history_is_told_how_to_read_it(
 
     _turn(client, room, "@芝士 接着做")
 
-    prompt = stub_hooks.last_system_prompt or ""
+    prompt = stub_hooks.told
     found = _LINE.search(prompt)
     assert found is not None, prompt[-2000:]
     # The message that opened this turn is delivered with it; it is not history.
@@ -85,4 +85,4 @@ def test_a_resumed_session_is_not_told_to_read_what_it_already_has(client, stub_
     room = _room(client)
     _turn(client, room, "@芝士 先看一下这个问题")
     _turn(client, room, "@芝士 接着做")
-    assert _LINE.search(stub_hooks.last_system_prompt or "") is None
+    assert _LINE.search(stub_hooks.told) is None

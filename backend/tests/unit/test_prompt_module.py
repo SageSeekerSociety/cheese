@@ -3,14 +3,13 @@
 与 ``test_event_lines.py`` 同一套口径，三条：
 
 - 直接 import 新模块就能测，不经过 ``ChatService``、不碰数据库、不起 app fixture；
-- 搬走的名字在 ``app.domain.agent.chat`` 上仍然导得出来——那是兼容门面，既有调用点
-  与测试不用改一行；
+- chat.py 还导出的那些名字，和新模块里的是同一个对象；
 - 新模块不反向 import chat，否则门面就成了循环。
 
 行为本身（进度层、开场事实、话题披露、平台提示进 prompt 的那一段）由
 ``test_progress_prompt.py``、``test_session_opening_prompt.py``、
 ``test_prompt_topic_disclosure.py`` 与 ``test_doc_change_notice.py`` /
-``test_message_edit.py`` 从门面那条路径覆盖。这里补的是搬出来之后新出现的两样东西：
+``test_message_edit.py`` 覆盖。这里补的是搬出来之后新出现的两样东西：
 模块边界，和原先没有直接单测的那几件——「哪些块是这一轮还没读进去的输入」「重放几次
 才值得说一句」「整理上下文那两行怎么变」。
 """
@@ -86,8 +85,11 @@ def _block(
 
 
 def test_the_moved_names_are_the_same_objects_behind_the_facade():
+    """chat.py 还导得出的那些，是同一个对象。只有轮次组装（``room/turn.py``）用到
+    的那几个，chat.py 已经不再导出。"""
     for name in MOVED:
-        assert getattr(chat, name) is getattr(prompt, name), name
+        if hasattr(chat, name):
+            assert getattr(chat, name) is getattr(prompt, name), name
 
 
 def test_the_module_does_not_import_the_facade_back():
@@ -165,7 +167,6 @@ def test_a_platform_event_is_not_an_input_to_read():
 def test_only_what_a_participant_said_counts_as_pending_input():
     assert prompt._is_pending_input(_block(kind=BlockKind.message))
     assert prompt._is_pending_input(_block(kind=BlockKind.attachment))
-    assert not prompt._is_pending_input(_block(kind=BlockKind.doc))
     assert not prompt._is_pending_input(_block(kind=BlockKind.weekly))
     assert not prompt._is_pending_input(
         _block(author_type=AuthorType.platform, kind=BlockKind.message)

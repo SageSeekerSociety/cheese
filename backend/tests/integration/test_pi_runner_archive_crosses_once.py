@@ -6,17 +6,15 @@ archive follows only when the host says it does not hold that one.
 """
 
 import ast
-import base64
 import json
 
 import pytest
 
-from app.domain.agent.harness import Opening, SessionRef
-from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
+from app.domain.agent.harness import PI, SessionRef
 from app.domain.agent.harness.pi import launch as pi_launch
-from app.domain.agent.harness.pi.channel import PiChannel
+from app.domain.agent.room.sessions import RoomSessions
 from tests.integration import test_central_room_sessions as central_sessions
-from tests.integration.test_central_room_sessions import AGENT, channel
+from tests.integration.test_central_room_sessions import AGENT, channel, sessions
 
 #: A project with its agent and one room in it.
 room = central_sessions.room
@@ -59,15 +57,21 @@ class PiHost:
         return {"exit": 0, "stdout": json.dumps(answer)}
 
 
-def pi_seat(client, monkeypatch) -> tuple[PiHost, PiChannel]:
+def pi_seat(client, monkeypatch) -> tuple[PiHost, RoomSessions]:
     central = channel(client, monkeypatch)
     host = PiHost()
     central._hub.exec = host.exec
-    return host, PiChannel(central, ClaudeLaunch("system").execution)
+    return host, sessions(central, PI)
 
 
 def _carried_archive(program: str) -> bool:
-    return len(program) > len(base64.b64encode(pi_launch.build()))
+    # Read off the payload rather than the program's length: the launch also
+    # carries the platform's skills, which alone outgrew the archive.
+    line = next(line for line in program.splitlines() if line.startswith("payload="))
+    payload = json.loads(
+        ast.literal_eval(line.removeprefix("payload=json.loads(")[:-1])
+    )
+    return "archive" in payload
 
 
 @pytest.mark.anyio
@@ -76,23 +80,25 @@ async def test_pi_is_sent_its_runner_only_when_the_host_does_not_hold_it(
 ):
     project, topic = room
     host, pi = pi_seat(client, monkeypatch)
-    session = SessionRef(project, topic, AGENT, harness="pi")
-    opening = Opening("System", model="fixture")
+    session = SessionRef(project, topic, AGENT, harness=PI)
 
     async def exercise():
-        await pi.ensure(session, opening)
+        await pi.ensure(session, system_prompt="System", model="fixture")
         assert [_carried_archive(each) for each in host.programs] == [False, True]
 
         # The next launch the host is asked for (a restarted backend, say).
+        restarted = sessions(pi.channel, PI)
         host.programs.clear()
-        await pi.ensure(session, opening)
+        await restarted.ensure(session, system_prompt="System", model="fixture")
         assert [_carried_archive(each) for each in host.programs] == [False]
 
         # A deploy changed the runner.
         built = pi_launch.build()
         monkeypatch.setattr(pi_launch, "build", lambda: built + b"\n")
         host.programs.clear()
-        await pi.ensure(session, opening)
+        await sessions(pi.channel, PI).ensure(
+            session, system_prompt="System", model="fixture"
+        )
         assert [_carried_archive(each) for each in host.programs] == [False, True]
 
     client.portal.call(exercise)

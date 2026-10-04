@@ -142,11 +142,13 @@ ${PREVIEW_TUNNEL_LOCATION}
 }
 EOF
 
-# TLS for the public names, terminated here in the mainland rather than at the
-# Hong Kong relay: Hong Kong forwards the encrypted stream by SNI and prepends
-# a PROXY protocol header, so it never holds the plaintext and the client's
-# address still arrives. Emitted only once a certificate is in place (see
-# tls-renew.sh), so a box without one keeps serving the plain listener alone.
+# A TLS listener for the public names, for a relay that forwards the encrypted
+# stream by SNI and prepends a PROXY protocol header, so the client's address
+# still arrives. Public traffic does not use it while TLS ends at the Hong Kong
+# relay (docs/infrastructure.md, "Public edge"); the relay's watchdog probes
+# through it, and the passthrough route returns the public names to it.
+# Emitted only once a certificate is in place (see tls-renew.sh), so a box
+# without one keeps serving the plain listener alone.
 #
 # "listen ... http2" rather than "http2 on;": the latter is unknown before
 # nginx 1.25.1, and CI's distro nginx is older than the box's image.

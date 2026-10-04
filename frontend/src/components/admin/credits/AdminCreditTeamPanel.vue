@@ -5,10 +5,10 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useDisplay } from 'vuetify'
 
-import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminFlash from '@/components/admin/AdminFlash.vue'
 import AdminMeterBar from '@/components/admin/AdminMeterBar.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import { fmtCredits, fmtDate, fmtDateTime, fmtMonth, meterTone, teamTitle } from '@/lib/adminCredits'
 
 // 一个团队的额度：挂哪个方案、手上每一笔额度用了多少、管理员对它做过什么。
@@ -131,14 +131,12 @@ function historyLine(entry: CreditAudit): string {
       <div class="actp__body">
         <v-skeleton-loader v-if="loading && !team" type="list-item-two-line, list-item-two-line" />
 
-        <AdminEmptyState
+        <BaseLoadError
           v-else-if="error && !team"
-          compact
-          tone="error"
           :title="t('credits.panel.loadFailed')"
-          :desc="error"
-          :action="t('credits.panel.retry')"
-          @action="emit('retry')"
+          :error="error"
+          :retry-label="t('credits.panel.retry')"
+          @retry="emit('retry')"
         />
 
         <template v-else-if="team">

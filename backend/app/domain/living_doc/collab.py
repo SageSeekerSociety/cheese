@@ -1,7 +1,7 @@
 """The living document lives in the collaboration service; this is how the
 backend talks to it.
 
-Every room's document is a Yjs document held by the collaboration service
+Every document is a Yjs document held by the collaboration service
 (frontend/collab). People edit it there over a WebSocket, with a ticket this
 module signs. The service stores the document back here — the Yjs state and
 the Markdown it exports — and that store is the only path that records a new
@@ -18,15 +18,19 @@ else. A ticket cannot double as the bearer.
 
 import hashlib
 import hmac
+import logging
 import time
 import uuid
 
 import httpx
 import jwt
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.errors import ConflictError, SystemBusyError, UnprocessableEntityError
 from app.core.sentences import say
+from app.domain.living_doc.models import Document
+from app.domain.living_doc.repositories import DocumentRepository
 
 #: How long a ticket opens a connection for. The connection outlives it; a
 #: reconnect asks for a new one.
@@ -39,6 +43,7 @@ _REPLACE_TIMEOUT_S = 30
 #: How requests reach the service. None is the network; a test puts a stand-in
 #: for the service here (tests/support/collab.py).
 transport: httpx.AsyncBaseTransport | None = None
+_log = logging.getLogger(__name__)
 
 
 class CollabRefused(Exception):
@@ -58,23 +63,32 @@ def _key(purpose: str) -> str:
     ).hexdigest()
 
 
-def document_name(room_id: uuid.UUID) -> str:
-    return f"room:{room_id}"
+def document_name(document_id: uuid.UUID) -> str:
+    return f"doc:{document_id}"
 
 
-def room_of(name: str) -> uuid.UUID:
+def document_of(name: str) -> uuid.UUID:
     prefix, _, ident = name.partition(":")
-    if prefix != "room":
-        raise ValueError(f"not a room document: {name}")
+    if prefix != "doc":
+        raise ValueError(f"not a document: {name}")
     return uuid.UUID(ident)
 
 
+async def document_named(session: AsyncSession, name: str) -> Document | None:
+    """The document a service-side name (``doc:<id>``) names, if it exists."""
+    try:
+        document_id = document_of(name)
+    except ValueError:
+        return None
+    return await DocumentRepository(session).get(document_id)
+
+
 def sign_ticket(
-    *, room_id: uuid.UUID, handle: str, agent: bool, read_only: bool
+    *, document_id: uuid.UUID, handle: str, agent: bool, read_only: bool
 ) -> str:
     return jwt.encode(
         {
-            "doc": document_name(room_id),
+            "doc": document_name(document_id),
             "sub": handle,
             "agent": agent,
             "ro": read_only,
@@ -93,7 +107,7 @@ def verify_service(authorization: str | None) -> None:
 
 
 async def replace(
-    room_id: uuid.UUID,
+    document_id: uuid.UUID,
     *,
     content: str,
     base: str | None,
@@ -118,7 +132,7 @@ async def replace(
     """
     url = (
         settings.collab_internal_url.rstrip("/")
-        + f"/internal/documents/{document_name(room_id)}/replace"
+        + f"/internal/documents/{document_name(document_id)}/replace"
     )
     try:
         async with httpx.AsyncClient(
@@ -165,7 +179,7 @@ _EDIT_REFUSALS = {
 
 
 async def edit(
-    room_id: uuid.UUID,
+    document_id: uuid.UUID,
     *,
     edits: list[dict],
     actor: str,
@@ -187,7 +201,7 @@ async def edit(
     """
     url = (
         settings.collab_internal_url.rstrip("/")
-        + f"/internal/documents/{document_name(room_id)}/edit"
+        + f"/internal/documents/{document_name(document_id)}/edit"
     )
     try:
         async with httpx.AsyncClient(
@@ -224,3 +238,38 @@ async def edit(
     if response.status_code != 200:
         raise SystemBusyError(say("collabEditIncomplete"))
     return body
+
+
+#: How long telling the document's readers something may hold up the request
+#: that has it to tell.
+_TELL_TIMEOUT_S = 3.0
+
+
+async def tell(document_id: uuid.UUID, frame: dict) -> None:
+    """Pass ``frame`` to everyone who has the document open: its comments were
+    written, a stored version moved on, an agent is answering a thread. Not a
+    record: whoever opens the document later reads the state itself, so a
+    frame the service never got is lost to nobody but the readers who missed a
+    refresh, and is not worth failing the change it announces."""
+    url = (
+        settings.collab_internal_url.rstrip("/")
+        + f"/internal/documents/{document_name(document_id)}/tell"
+    )
+    try:
+        async with httpx.AsyncClient(
+            timeout=_TELL_TIMEOUT_S, transport=transport
+        ) as client:
+            response = await client.post(
+                url,
+                json=frame,
+                headers={"Authorization": f"Bearer {_key('internal')}"},
+            )
+    except httpx.HTTPError:
+        _log.warning("could not tell document %s's readers", document_id)
+        return
+    if response.status_code != 200:
+        _log.warning(
+            "the collaboration service refused to tell document %s's readers: %s",
+            document_id,
+            response.status_code,
+        )

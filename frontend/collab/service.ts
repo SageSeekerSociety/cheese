@@ -1,4 +1,4 @@
-// The collaboration service: every room's living document, live.
+// The collaboration service: every document, live.
 //
 // People edit a document here together over a WebSocket (Hocuspocus, Yjs). The
 // backend keeps the record: this service loads a document from it, and stores
@@ -9,7 +9,10 @@
 // `/internal/documents/:name/replace` (the whole document) or
 // `/internal/documents/:name/edit` (passages of it, directly or as suggestions;
 // see ./edit.ts), and becomes a change to the live document. Written to the
-// database directly it would be overwritten by the next store.
+// database directly it would be overwritten by the next store. What the
+// backend has to tell a document's open editors that is not the text (its
+// comments changed, an agent is answering a thread) comes through
+// `/internal/documents/:name/tell`, as a stateless message.
 //
 // Three rules hold the record together:
 //   - A document opened from Markdown is converted and its state stored before
@@ -197,13 +200,22 @@ export function createCollabServer(config: CollabConfig): Server {
         respond(response, 200, { ok: true })
         throw null
       }
-      const match = /^\/internal\/documents\/([^/]+)\/(replace|edit)$/.exec(url.pathname)
+      const match = /^\/internal\/documents\/([^/]+)\/(replace|edit|tell)$/.exec(url.pathname)
       if (!match || request.method !== 'POST') return
       if (!verifyBearer(request.headers.authorization, internalKey)) {
         respond(response, 403, { message: 'not the backend' })
         throw null
       }
       const name = decodeURIComponent(match[1])
+      if (match[2] === 'tell') {
+        // A frame for whoever has the document open (its comments changed, an
+        // agent is answering a thread). Nobody has it open: nobody to tell,
+        // and it is not loaded for this.
+        const body = await readJson(request)
+        instance.documents.get(name)?.broadcastStateless(JSON.stringify(body))
+        respond(response, 200, {})
+        throw null
+      }
       if (match[2] === 'edit') {
         await edit(instance, name, (await readJson(request)) as EditBody, response)
         throw null

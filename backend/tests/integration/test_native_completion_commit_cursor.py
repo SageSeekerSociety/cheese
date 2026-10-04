@@ -213,8 +213,13 @@ def test_native_completion_commit_failure_replays_after_start_landed(
             finally:
                 journal.close()
             aborted = []
+            # The listener is on every Session in the process, and the app's
+            # periodic jobs commit too: only this task's commits are the drain's.
+            draining = asyncio.current_task()
 
             def fail_commit(session):
+                if asyncio.current_task() is not draining:
+                    return
                 session.flush()
                 aborted.append(True)
                 session.execute(text("SELECT 1 / 0"))

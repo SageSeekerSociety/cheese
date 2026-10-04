@@ -41,7 +41,7 @@ from app.domain.device.repository import (
     TopicDevice,
     Visibility,
 )
-from app.domain.device.supply import binding_visibility
+from app.domain.device.supply import default_visibility
 
 logger = logging.getLogger(__name__)
 
@@ -268,10 +268,7 @@ class DeviceService:
 
     async def serves_project(self, device_id: str, project_id: uuid.UUID) -> bool:
         """Whether a project or its team currently shares this device."""
-        return any(
-            device.device_id == device_id
-            for device in await self.list_devices_for_project(project_id)
-        )
+        return await self._repo.serves_project(device_id, project_id)
 
     async def list_devices_for_project(self, project_id: uuid.UUID) -> list[Device]:
         return await self._repo.list_devices_by_project(project_id)
@@ -306,18 +303,16 @@ class DeviceService:
         """Topics whose durable affinity points at ``device_id``."""
         return await self._repo.list_topic_bindings(device_id)
 
-    async def binding_visibility(self, device_id: str) -> Visibility:
-        """这台机器上一条新绑定该登记成哪个档。
-
-        每个绑定点都问这一句，没有一个自己挑：档由机器的供给决定（见
-        ``device.supply.binding_visibility``），而绑定点知道的只是「我要绑这一
-        台」。找不到这台机器时按人接入的那一档答——不存在的机器绑不上，真正的拒绝
-        在 ``bind_topic_device`` 之后的解析里，这里不替它多造一种失败。
-        """
-        device = await self._repo.get_device(device_id)
-        return binding_visibility(
-            device.supply if device is not None else Supply.self_hosted
-        )
+    async def room_visibility(self, topic_id: uuid.UUID, device_id: str) -> Visibility:
+        """What a session of room ``topic_id`` sees of machine ``device_id``:
+        what the room's binding to that machine says, or, for a room not bound
+        to it (「系统挑一台」 leaves no pin), the default every binding gets.
+        This is what decides whether the session's executor runs in a sandbox,
+        and what the room's badge shows."""
+        binding = await self.topic_binding(topic_id)
+        if binding is not None and binding.device_id == device_id:
+            return binding.visibility
+        return default_visibility()
 
     async def bind_topic_device(
         self, topic_id: uuid.UUID, device_id: str, visibility: Visibility

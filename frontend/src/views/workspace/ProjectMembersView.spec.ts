@@ -53,6 +53,8 @@ let projects: {
 }[] = []
 vi.mock('@/stores/workspace', () => ({
   useWorkspaceStore: () => ({
+    // 成员页总是开在 store 正开着的那个项目上。
+    projectId: 'p1',
     members,
     privateUnreadMap,
     projects: projects.map((row) => ({ ...row, can_manage_members: undefined })),

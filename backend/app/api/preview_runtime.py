@@ -128,17 +128,227 @@ RUNTIME_SCRIPT = r"""(() => {
     if (event.key === 'Escape') forwardEscape(event);
     else forwardKey(event);
   }
+  // ---- 圈选 ----
+  // 宿主打开圈选后，帧把鼠标收上来：悬停给元素描边，点一个元素、或者选一段文字，就把
+  // 这一处报回宿主。页面自己收不到这一次点击（捕获阶段 preventDefault），圈选期间不会
+  // 误触页面上的链接和按钮。报完自动关掉——一次圈选只指一处。
+  let pick = false;
+  let pickBox = null;
+  let swallowClick = false;
+  function pickDoc() { return frameDocument(); }
+  // 走到最近一个有 id 的祖先、或文档根为止，每层带 tag；同级同名时补 nth-of-type。
+  // 不能半路停在某个层数上限：停在半路的 `div > div > p` 是条相对选择器，querySelector
+  // 会拿它匹配文档里第一个对上的子树，页面结构一重复就指到别处去了。走到 body 或某个
+  // id 才算落在一处唯一的地方。总长封顶 256（后端字段的上限），超了从里层往外丢、留住
+  // 锚点那一头，绝不截断半个层级。
+  function escapeIdent(name) {
+    try {
+      if (window.CSS && typeof window.CSS.escape === 'function') {
+        return window.CSS.escape(String(name));
+      }
+    } catch (e) { /* fall through to the simple escaper */ }
+    return String(name).replace(/[^a-zA-Z0-9_-]/g, function (ch) { return '\\' + ch; });
+  }
+  function buildSelector(node) {
+    const doc = pickDoc();
+    const root = doc && doc.documentElement;
+    const parts = [];
+    let current = node;
+    // 层级兜底只为防一条坏链（parentElement 成环）走不完；正常链走到 body 就停。
+    let guard = 0;
+    while (current && current.nodeType === 1 && current !== root && guard < 64) {
+      if (current.id) { parts.unshift('#' + escapeIdent(current.id)); break; }
+      const tag = current.tagName ? current.tagName.toLowerCase() : '';
+      if (!tag) break;
+      let part = tag;
+      const parent = current.parentElement;
+      if (parent && parent.children) {
+        // 数同级时跳过自己插进去的那个描边框：它是圈选期间才有的，混进来会让同一
+        // 处元素在圈选和不圈选时得到两个不同的选择器。
+        let sameTag = 0;
+        let index = 0;
+        for (let i = 0; i < parent.children.length; i++) {
+          const sibling = parent.children[i];
+          if (sibling.hasAttribute &&
+              sibling.hasAttribute('data-cheese-pick')) continue;
+          if (sibling.tagName !== current.tagName) continue;
+          sameTag++;
+          if (sibling === current) index = sameTag;
+        }
+        // 只在真有同名兄弟时才补 nth-of-type，路径上不挂没用的序号。
+        if (sameTag > 1 && index > 0) part += ':nth-of-type(' + index + ')';
+      }
+      parts.unshift(part);
+      current = parent;
+      guard++;
+    }
+    // 长度封顶：保住锚点（最外层）那一头，从里层往外丢，别把选择器截成半个层级。
+    while (parts.length > 1 && parts.join(' > ').length > 256) parts.pop();
+    return parts.join(' > ').slice(0, 256);
+  }
+  function boxOf(node) {
+    try {
+      const rect = node.getBoundingClientRect();
+      if (rect) return { x: rect.left, y: rect.top, w: rect.width, h: rect.height };
+    } catch (e) { /* no layout engine: report a zero-size box */ }
+    return { x: 0, y: 0, w: 0, h: 0 };
+  }
+  function viewportOf() {
+    return {
+      w: typeof window.innerWidth === 'number' ? window.innerWidth : 0,
+      h: typeof window.innerHeight === 'number' ? window.innerHeight : 0,
+    };
+  }
+  // 文字里的空白折成一个空格：跨越换行的一段话，原样带着换行读起来不像「一句话」。
+  function visibleText(node) {
+    return String(node.innerText || node.textContent || '')
+      .replace(/\s+/g, ' ').trim().slice(0, 500);
+  }
+  function postPick(payload) {
+    if (!hello) return;
+    window.parent.postMessage({
+      channel: 'cheese-preview-runtime', version: 1,
+      sessionId: hello.sessionId, type: 'pick', ...payload,
+    }, hello.origin);
+  }
+  function clearHover() {
+    if (pickBox) pickBox.style.display = 'none';
+  }
+  function onPickMove(event) {
+    if (!pick) return;
+    const node = event.target && event.target.nodeType === 1 ? event.target : null;
+    if (pickBox && node) {
+      const box = boxOf(node);
+      pickBox.style.display = 'block';
+      pickBox.style.left = box.x + 'px';
+      pickBox.style.top = box.y + 'px';
+      pickBox.style.width = box.w + 'px';
+      pickBox.style.height = box.h + 'px';
+    }
+  }
+  function pickElement(node) {
+    postPick({
+      selection: false,
+      selector: buildSelector(node) || 'html',
+      tag: node.tagName ? node.tagName.toLowerCase() : '',
+      text: visibleText(node),
+      prefix: '', suffix: '',
+      rect: boxOf(node),
+      viewport: viewportOf(),
+    });
+    setPick(false);
+  }
+  // 选中的一段：原文、两侧各 32 个字符，还有它落在哪个元素里。分辨同一句话在页面上
+  // 的哪一处，靠的正是这两侧。
+  function pickSelection(selection) {
+    let range = null;
+    try { range = selection.getRangeAt(0); } catch (e) { return false; }
+    const text = String(selection.toString() || '')
+      .replace(/\s+/g, ' ').trim().slice(0, 500);
+    if (!text) return false;
+    let node = range.commonAncestorContainer;
+    if (node && node.nodeType === 3) node = node.parentElement;
+    if (!node || node.nodeType !== 1) node = null;
+    let prefix = '';
+    let suffix = '';
+    if (range.startContainer && range.startContainer.nodeType === 3) {
+      const data = String(range.startContainer.data || '');
+      prefix = data.slice(Math.max(0, range.startOffset - 32), range.startOffset);
+    }
+    if (range.endContainer && range.endContainer.nodeType === 3) {
+      suffix = String(range.endContainer.data || '').slice(
+        range.endOffset, range.endOffset + 32);
+    }
+    let rect = null;
+    try { rect = range.getBoundingClientRect(); } catch (e) { rect = null; }
+    postPick({
+      selection: true,
+      selector: node ? (buildSelector(node) || 'html') : 'html',
+      tag: node && node.tagName ? node.tagName.toLowerCase() : '',
+      text: text,
+      prefix: prefix, suffix: suffix,
+      rect: rect
+        ? { x: rect.left, y: rect.top, w: rect.width, h: rect.height }
+        : (node ? boxOf(node) : { x: 0, y: 0, w: 0, h: 0 }),
+      viewport: viewportOf(),
+    });
+    setPick(false);
+    return true;
+  }
+  function selectionText() {
+    try {
+      if (typeof window.getSelection !== 'function') return null;
+      const selection = window.getSelection();
+      if (!selection || !selection.rangeCount || selection.isCollapsed) return null;
+      return String(selection.toString() || '').trim();
+    } catch (e) { return null; }
+  }
+  function onPickUp(event) {
+    if (!pick) return;
+    if (selectionText() === null) return;
+    // 选中了就得比选之前先取下来：这一下不打开链接、不触发页面自己的点击。
+    const selection = window.getSelection();
+    if (pickSelection(selection)) swallowClick = true;
+  }
+  function onPickClick(event) {
+    if (!pick) return;
+    event.preventDefault();
+    event.stopPropagation();
+    // 选一段文字的那一下 mouseup 之后还会跟一个 click：别把它当成点元素。
+    if (swallowClick) { swallowClick = false; return; }
+    const node = event.target && event.target.nodeType === 1 ? event.target : null;
+    if (node) pickElement(node);
+  }
+  function setPick(on) {
+    const enable = on === true;
+    const doc = pickDoc();
+    if (!doc || !doc.addEventListener) { pick = false; return; }
+    pick = enable;
+    if (pick) {
+      if (!pickBox && typeof doc.createElement === 'function') {
+        pickBox = doc.createElement('div');
+        pickBox.setAttribute('data-cheese-pick', '');
+        pickBox.style.cssText = 'position:fixed;left:0;top:0;pointer-events:none;' +
+          'z-index:2147483647;border:2px solid #3b82f6;' +
+          'background:rgba(59,130,246,0.12);border-radius:2px;display:none;';
+        (doc.body || doc.documentElement).appendChild(pickBox);
+      }
+      doc.addEventListener('mousemove', onPickMove, true);
+      doc.addEventListener('mouseup', onPickUp, true);
+      doc.addEventListener('click', onPickClick, true);
+      if (doc.documentElement && doc.documentElement.style) {
+        doc.documentElement.style.cursor = 'crosshair';
+      }
+    } else {
+      doc.removeEventListener('mousemove', onPickMove, true);
+      doc.removeEventListener('mouseup', onPickUp, true);
+      doc.removeEventListener('click', onPickClick, true);
+      if (doc.documentElement && doc.documentElement.style) {
+        doc.documentElement.style.cursor = '';
+      }
+      clearHover();
+      if (pickBox && pickBox.parentNode) pickBox.parentNode.removeChild(pickBox);
+      pickBox = null;
+      swallowClick = false;
+    }
+  }
   window.addEventListener('keydown', onKeydown, true);
   window.addEventListener('message', (event) => {
     const data = event.data;
     if (event.source !== window.parent || event.origin !== __PLATFORM_ORIGIN__ ||
-        !data || data.channel !== 'cheese-preview-runtime' || data.version !== 1 ||
-        data.type !== 'hello' || typeof data.sessionId !== 'string' ||
-        data.sessionId.length > 128) return;
-    hello = { sessionId: data.sessionId, origin: event.origin };
-    // 键表随握手过来，最多 16 条；不认识的条目丢掉，不认识的键就不报。
-    keys = Array.isArray(data.keys) ? data.keys.filter(usableKey).slice(0, 16) : [];
-    publish();
+        !data || data.channel !== 'cheese-preview-runtime' ||
+        data.version !== 1) return;
+    if (data.type === 'hello') {
+      if (typeof data.sessionId !== 'string' || data.sessionId.length > 128) return;
+      hello = { sessionId: data.sessionId, origin: event.origin };
+      // 键表随握手过来，最多 16 条；不认识的条目丢掉，不认识的键就不报。
+      keys = Array.isArray(data.keys) ? data.keys.filter(usableKey).slice(0, 16) : [];
+      publish();
+      return;
+    }
+    // 圈选开关只认当前会话：换了一帧、上一个会话的迟到消息，都不算。
+    if (!hello || data.sessionId !== hello.sessionId) return;
+    if (data.type === 'pick-mode') setPick(data.on === true);
   });
   window.CheesePreviewRuntime = Object.freeze({
     ready() { state = { type: 'ready' }; publish(); },

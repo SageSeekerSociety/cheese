@@ -118,13 +118,6 @@ def _room_with_threads(client) -> dict:
                 "第三句",
                 datetime(2026, 8, 1, 4, tzinfo=UTC),
             )
-            # 文档视图的东西不进对话
-            _block(
-                talkative,
-                BlockKind.comment,
-                "段落评论",
-                datetime(2026, 8, 1, 5, tzinfo=UTC),
-            )
             _block(
                 elsewhere,
                 BlockKind.message,

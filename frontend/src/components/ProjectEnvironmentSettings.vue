@@ -4,10 +4,12 @@ import type { EnvironmentStatus, ProjectEnvironmentInfo } from '../cx_types'
 import { onBeforeUnmount, ref, watch } from 'vue'
 
 import { holdRevealGate } from '@/composables/useRevealGate'
+import { useSaveState } from '@/composables/useSaveState'
 
 import { applyRoomEnvironment, getProjectEnvironment, getRoomEnvironment, saveProjectEnvironment } from '../api'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import SaveStatus from '@/components/base/SaveStatus.vue'
 import i18n, { t } from '@/i18n'
 import { responseText } from '@/lib/noticeText'
 
@@ -19,9 +21,27 @@ const variables = ref<{ key: string; value: string }[]>([])
 const selectedRoom = ref<string | null>(null)
 const status = ref<EnvironmentStatus | null>(null)
 const error = ref('')
-const notice = ref('')
-const saving = ref(false)
-const applying = ref(false)
+// 保存脚本与环境变量：一直留在屏幕上的设置区块，结果就地回执（§3.11）。
+const {
+  saving,
+  saved,
+  error: saveError,
+  run: runSave,
+} = useSaveState({
+  feedback: 'inline',
+  messages: {
+    saved: t('work.projectSettings.environment.saved'),
+    failed: t('work.projectSettings.environment.saveFailed'),
+  },
+})
+// 应用（部署一个版本）是一次性动作：结果跟这一次点击走，用 toast 说一声。
+const { saving: applying, run: runApply } = useSaveState({
+  feedback: 'toast',
+  messages: {
+    saved: t('work.projectSettings.environment.applyScheduled'),
+    failed: t('work.projectSettings.environment.applyFailed'),
+  },
+})
 let timer: ReturnType<typeof setTimeout> | undefined
 let disposed = false
 let generation = 0
@@ -64,10 +84,7 @@ async function refreshStatus() {
 }
 
 async function save() {
-  saving.value = true
-  error.value = ''
-  notice.value = ''
-  try {
+  await runSave(async () => {
     const values: Record<string, string> = Object.create(null)
     for (const row of variables.value) {
       if (!row.key || Object.hasOwn(values, row.key)) throw new Error(t('work.projectSettings.environment.varInvalid'))
@@ -79,28 +96,16 @@ async function save() {
       variables: values,
     })
     if (info.value) info.value.config = config
-    notice.value = t('work.projectSettings.environment.saved')
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : t('work.projectSettings.environment.saveFailed')
-  } finally {
-    saving.value = false
-  }
+  })
 }
 
 async function apply(latest: boolean) {
-  if (!selectedRoom.value) return
-  applying.value = true
-  error.value = ''
-  notice.value = ''
-  try {
-    await applyRoomEnvironment(props.projectId, selectedRoom.value, latest)
-    notice.value = t('work.projectSettings.environment.applyScheduled')
+  const room = selectedRoom.value
+  if (!room) return
+  await runApply(async () => {
+    await applyRoomEnvironment(props.projectId, room, latest)
     await refreshStatus()
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : t('work.projectSettings.environment.applyFailed')
-  } finally {
-    applying.value = false
-  }
+  })
 }
 
 // 首次取数期间占住设置页的显示闸，见 useRevealGate。
@@ -128,7 +133,6 @@ onBeforeUnmount(() => {
     </div>
     <div class="page-section-body">
       <v-alert v-if="error" type="error" variant="tonal" class="mb-3">{{ error }}</v-alert>
-      <v-alert v-if="notice" type="success" variant="tonal" class="mb-3">{{ notice }}</v-alert>
       <v-progress-linear v-if="!info && !error" indeterminate />
       <BaseButton v-if="!info && error" kind="secondary" @click="load">{{
         t('work.projectSettings.environment.reload')
@@ -195,13 +199,19 @@ onBeforeUnmount(() => {
             @click="variables.splice(index, 1)"
           />
         </div>
-        <div v-if="info.can_edit" class="d-flex ga-2 mb-3">
+        <div v-if="info.can_edit" class="d-flex ga-2 align-center mb-3">
           <BaseButton kind="secondary" @click="variables.push({ key: '', value: '' })">{{
             t('work.projectSettings.environment.addVar')
           }}</BaseButton>
           <BaseButton kind="primary" :loading="saving" @click="save">{{
             t('work.projectSettings.environment.save')
           }}</BaseButton>
+          <SaveStatus
+            :saving="saving"
+            :saved="saved"
+            :error="saveError"
+            :saved-text="t('work.projectSettings.environment.saved')"
+          />
         </div>
         <p class="t-body c-muted mb-3">{{ t('work.projectSettings.environment.saveNote') }}</p>
         <details class="t-body c-faint mb-4">

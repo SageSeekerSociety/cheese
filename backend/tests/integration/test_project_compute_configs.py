@@ -9,7 +9,7 @@ from app.core.config import settings
 from app.domain.agent.compute_configs import ComputeChoice, bind_room_device_choice
 from app.domain.agent.device_provider import resolve_pinned_device
 from app.domain.agent.harness.channel import ScreenSetupError
-from app.domain.device.supply import Supply
+from app.domain.device.supply import Supply, Visibility
 from app.domain.device.wiring import sql_device_service
 from app.domain.project.repositories import ProjectRepository
 from app.domain.team.models import TeamMemberRole
@@ -116,12 +116,7 @@ def test_team_device_can_be_project_default_without_project_assignment(
             topic = await TopicService(session).get_or_404(uuid.UUID(tid))
             await bind_room_device_choice(session, topic, project.settings)
             devices = sql_device_service(session)
-            assert (
-                await resolve_pinned_device(
-                    devices, lambda _: True, project.id, topic.id
-                )
-                == device_id
-            )
+            assert (await devices.topic_binding(topic.id)).device_id == device_id
             owner = await UserRepository(session).get_by_username("config_owner")
             await devices.unassign_from_team(
                 device_id, project.team_id, actor_user_id=owner.id
@@ -228,6 +223,10 @@ def test_the_project_shows_where_its_started_agents_work(client, monkeypatch):
             )
             await agent(room, "writer", on_lab)
             await agent(room, "idle", None)
+            # Its owner gave this room the whole machine (#2320).
+            await devices.bind_topic_device(
+                uuid.UUID(room), device.device_id, Visibility.host
+            )
             await agent(archived, "retired", on_lab)
             (
                 await session.get(Topic, uuid.UUID(archived))

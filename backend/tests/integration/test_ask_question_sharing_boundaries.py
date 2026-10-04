@@ -17,7 +17,8 @@ from app.core.errors import ValidationError
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
 from app.domain.agent.harness import CLAUDE_CODE
-from app.domain.agent.harness.claude_code.runtime import ClaudeCodeRuntime
+from app.domain.agent.room.sessions import RoomSessions
+from app.domain.agent.session_host.host import SessionHost
 from app.domain.block.ask_groups import AskGroups, parse_questions
 from app.domain.block.models import AuthorType
 from app.domain.block.repositories import BlockRepository
@@ -175,7 +176,12 @@ def test_question_sharing_refuses_unproven_or_conflicting_batches(client, bounda
             base_system_prompt="fixture",
             workspace_root="/unused",
             compute=ComputePool(
-                [ClaudeCodeRuntime(SimpleNamespace(name="unused"))], "unused"
+                [
+                    RoomSessions(
+                        SimpleNamespace(name="unused"), CLAUDE_CODE, SessionHost()
+                    )
+                ],
+                "unused",
             ),
         )
         if boundary == "unproven-continuation":

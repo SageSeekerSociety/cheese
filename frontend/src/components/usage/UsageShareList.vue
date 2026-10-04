@@ -4,6 +4,7 @@ import type { NavTarget } from '@/lib/navTarget'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import NavLink from '@/components/common/NavLink.vue'
 import { fmtPoints } from '@/lib/creditUsage'
 
@@ -22,7 +23,7 @@ const top = computed(() => Math.max(0, ...props.items.map((i) => i.credits)))
 <template>
   <section class="usl" :aria-label="title">
     <h2 class="usl__title t-title">{{ title }}</h2>
-    <p v-if="!items.length" class="usl__empty">{{ t('usage.projects.empty') }}</p>
+    <BaseEmptyState v-if="!items.length" size="inline" :title="t('usage.projects.empty')" />
     <div v-for="item in items" :key="item.id" class="usl__row">
       <NavLink v-if="item.to" :to="item.to" class="usl__name">{{ item.name }}</NavLink>
       <span v-else class="usl__name">{{ item.name }}</span>
@@ -44,13 +45,6 @@ const top = computed(() => Math.max(0, ...props.items.map((i) => i.credits)))
 .usl__title {
   margin: 0;
   color: var(--ink);
-}
-
-.usl__empty {
-  margin: 0;
-  color: var(--muted);
-  font-size: 13px;
-  line-height: var(--lh-13);
 }
 
 .usl__row {

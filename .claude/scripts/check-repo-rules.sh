@@ -292,21 +292,22 @@ check_fixed_palette() {
 # Rule 7 — CLAUDE.md's "This repo does not adapt to the platform": a repository
 # must never have to change in order to be hosted, so nothing equally true of
 # every hosted repo belongs in THIS repo's CLAUDE.md. The `cheese` CLI is the
-# sharpest form of that leak. It already reaches every hosted repo through
-# backend/sandbox/skills/cheese/SKILL.md (injected into the system prompt), so a
+# sharpest form of that leak. It already reaches every hosted repo: the tools
+# carry their own descriptions and the subcommands are in the `cheese` skill
+# every session receives, so a
 # second copy here rots on its own schedule AND demonstrates the very adaptation
 # we promise nobody has to make. This guard exists because the leak is invisible
 # from inside: we are both the platform and a repo it hosts, so platform prose
 # reads perfectly natural here — a jj section sat at the top of CLAUDE.md for
 # months opening with a sentence that is false on any laptop.
 #
-# The subcommand list comes from the skill's own command table, so a new
-# subcommand is guarded the day it is documented and there is nothing here to
-# update. Scoped to invocations, never the bare word: CLAUDE.md may name the
+# The tool names come from the CLI's own tool table and the subcommands from the
+# skill's command table, so a new one is guarded the day it exists and there is
+# nothing here to update. Scoped to invocations, never the bare word: CLAUDE.md may name the
 # product, the skill's path, and `cheese` among the CLIs that describe
 # themselves — and it does all three.
 check_platform_cli_in_claude_md() {
-  local skill="$ROOT/backend/sandbox/skills/cheese/SKILL.md" subs hits targets=()
+  local skill="$ROOT/backend/sandbox/skills/cheese/SKILL.md" cli="$ROOT/backend/sandbox/cheese" subs hits targets=()
   [ -f "$skill" ] || return 0
   [ -f "$ROOT/CLAUDE.md" ] && targets+=("$ROOT/CLAUDE.md")
   # .claude/rules/ too, and not as an afterthought: the leak this guard was
@@ -317,12 +318,12 @@ check_platform_cli_in_claude_md() {
   # knowledge filed under one gets loaded on an unrelated criterion.
   for f in "$ROOT"/.claude/rules/*.md; do [ -e "$f" ] && targets+=("$f"); done
   [ ${#targets[@]} -eq 0 ] && return 0
-  # The skill documents each subcommand as a tool row (`cheese_doc_set(`) and
-  # may still mention the shell form (`cheese doc`); both name the same thing,
-  # and either spelling in CLAUDE.md is the leak. `|| true`: a skill with no
-  # rows must leave this guard inert, not abort the script under `set -e`.
+  # A tool (`cheese_doc_set`) and a subcommand (`cheese sync`) name the same
+  # kind of thing, and either spelling in CLAUDE.md is the leak. `|| true`: a
+  # skill or CLI with no names must leave this guard inert, not abort the
+  # script under `set -e`.
   subs="$( { grep -oE '`cheese [a-z][a-z-]*' "$skill" 2>/dev/null | sed 's/.*cheese //'; \
-             grep -oE '`cheese_[a-z]+' "$skill" 2>/dev/null | sed 's/.*cheese_//'; } \
+             grep -oE '^ +"cheese_[a-z_]+",' "$cli" 2>/dev/null | sed 's/.*"cheese_//; s/",$//'; } \
     | tr '_' '-' | sort -u | paste -sd'|' - || true)"
   [ -z "$subs" ] && return 0
   tools="$(printf '%s' "$subs" | tr '-' '_')"
@@ -330,7 +331,7 @@ check_platform_cli_in_claude_md() {
   [ -z "$hits" ] && return 0
   echo "FAIL: platform CLI documented in a file only this repo sees"
   report "the cheese CLI in CLAUDE.md / .claude/rules — a hosted repo never sees either" \
-    "move it to backend/sandbox/skills/cheese/SKILL.md, which every session's system prompt already carries" \
+    "move it to backend/sandbox/skills/cheese/SKILL.md (or the tool's own description), which every session receives" \
     "$hits"
 }
 

@@ -1,5 +1,6 @@
 <script setup lang="ts">
-// 总览 —— 一个房间的右半边，从上到下：看板、上一轮的进度清单，然后是房间文档。
+// 总览 —— 一个房间的右半边，从上到下：看板、上一轮的进度清单、房间文档，最底下
+// 一行收起着的「这个房间里的东西」。
 //
 // 在它之前这是两个平级 tab（文档 / 任务）。合成一个不是为了少一格：它们回答的是
 // 同一个问题的两半——「这个房间在干什么」——而分成两格意味着看完一半得先想起来
@@ -8,11 +9,12 @@
 // 点开看板上的一张卡就在这一格里往下钻一层：整段换成那张卡（`PanelCard`），左上角
 // 一个「看板」退回来。地址里的 `?card=` 说的就是这一层，所以它是一条能发给别人的
 // 链接 —— 而不是「跳到一个新地点」：一件活不是地点。
-import type { Topic } from '../../cx_types'
+import type { ProjectMemberRow, Topic } from '../../cx_types'
 import type { DocReviewRequest } from '../../lib/docReview'
 
 import { defineAsyncComponent, ref, watch } from 'vue'
 
+import RoomOutputs from './preview/RoomOutputs.vue'
 import PanelCard from './PanelCard.vue'
 import PanelProgress from './PanelProgress.vue'
 import TaskProgress from './TaskProgress.vue'
@@ -39,6 +41,8 @@ const props = withDefaults(
     agentName?: string
     /** 项目 AI 队友的 handle，传给文档那一格。 */
     agentHandle?: string | null
+    /** 项目名册，传给文档那一格。 */
+    members?: ProjectMemberRow[]
     /** handle → 名字，给钻进去的那张卡换点名和说话人。 */
     memberNames?: Record<string, string>
   }>(),
@@ -50,6 +54,7 @@ const props = withDefaults(
     cardFocusBlock: null,
     agentName: () => t('work.room.defaultAgentName'),
     agentHandle: null,
+    members: () => [],
     memberNames: () => ({}),
   }
 )
@@ -61,7 +66,16 @@ const emit = defineEmits<{
   (e: 'review'): void
   (e: 'mention-click', handle: string): void
   (e: 'open-file', path: string): void
+  /** 「这个房间里的东西」里点开了一份：开成自由区的一个页签。 */
+  (e: 'open-output', path: string): void
 }>()
+
+// 一轮结束时房间里可能多摆了一样东西；这一块一直挂着，所以跟着那一下重读。
+const outputsRef = ref<{ reload: () => Promise<void> } | null>(null)
+watch(
+  () => props.refreshTick,
+  () => void outputsRef.value?.reload()
+)
 
 const docRef = ref<{
   pulse: () => void
@@ -122,6 +136,7 @@ defineExpose({
           ref="docRef"
           :agent-name="props.agentName"
           :agent-handle="props.agentHandle"
+          :members="props.members"
           class="panel-overview__doc"
           :topic="props.topic"
           :activity-tick="props.activityTick"
@@ -130,6 +145,7 @@ defineExpose({
           @mention-click="emit('mention-click', $event)"
           @open-file="emit('open-file', $event)"
         />
+        <RoomOutputs ref="outputsRef" :topic-id="props.topic?.id ?? null" @open="emit('open-output', $event)" />
       </div>
     </Transition>
   </div>

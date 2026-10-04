@@ -326,11 +326,12 @@ const updatedAt = computed(() => relTime(props.item.last_activity_at ?? props.it
   }
 }
 
-/* 窄屏（≤700，和 `AdminPage` 同一条线）：**一行翻成一张小卡片**，
+/* 内容列窄于 700（容器查询挂在后台内容列上，§3.5，不是视口；和 `AdminPage`
+   同一条线）：**一行翻成一张小卡片**，
    不再横着滚。原来那条「整行 1100px、容器横着滚」在 390 下等于把「指派」整列和
    「下一步」按钮推到屏幕外 —— 而这两样正是这一页要回答的问题（归谁、我该做什么），
    看不见就等于这条队列只剩标题可读。61px 的行高在这一档放开：卡片按内容长。 */
-@media (max-width: 700px) {
+@container admin (max-width: 700px) {
   .qrow {
     flex-wrap: wrap;
     align-items: center;

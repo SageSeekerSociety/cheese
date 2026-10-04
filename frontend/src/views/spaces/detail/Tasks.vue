@@ -40,7 +40,13 @@
       <template v-if="publishedLoading && !publishedTasks.length">
         <v-skeleton-loader v-for="index in 3" :key="index" type="list-item-three-line" />
       </template>
-      <v-empty-state
+      <BaseLoadError
+        v-else-if="publishedFailed"
+        :title="t('spaces.detail.tasks.loadFailed')"
+        :error="publishedError"
+        @retry="loadPublishedTasks"
+      />
+      <BaseEmptyState
         v-else-if="!visiblePublishedTasks.length"
         icon="mdi-pencil-box-multiple-outline"
         :title="t('spaces.detail.tasks.noTasks')"
@@ -60,10 +66,12 @@
         :has-more="hasMore"
         :initial-loading="refreshing"
         :is-empty="tasks.length === 0"
+        :shown="tasks.length"
+        :total="total"
         @load-more="loadMore"
       >
         <template #empty>
-          <v-empty-state icon="mdi-trophy" :title="t('spaces.detail.tasks.noTasks')"></v-empty-state>
+          <BaseEmptyState icon="mdi-trophy" :title="t('spaces.detail.tasks.noTasks')" />
         </template>
         <TaskRow v-for="task in tasks" :key="task.id" :task="task" :query="route.query" />
       </infinite-scroll>
@@ -79,7 +87,6 @@ import type { TaskScope, TaskSortKey } from './taskListFilters'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
-import { toast } from 'vuetify-sonner'
 import { storeToRefs } from 'pinia'
 
 import { createEmptyResult, usePaging } from '@/utils/paging'
@@ -91,6 +98,8 @@ import TaskListToolbar from './TaskListToolbar.vue'
 import TaskRow from './TaskRow.vue'
 
 import { useCommands } from '@/commands'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
 import { SpacesApi } from '@/network/api/spaces'
 import { TasksApi } from '@/network/api/tasks'
@@ -217,6 +226,7 @@ const {
   hasMore,
   refreshing,
   loadingMore,
+  total,
 } = usePaging<Task, QueryOptions, string>(
   async (pageStart, queryOptions) => {
     if (!queryOptions || !queryOptions.space) return createEmptyResult<Task, string>()
@@ -241,11 +251,16 @@ const {
 
 const publishedTasks = ref<SpaceMyPublishedTask[]>([])
 const publishedLoading = ref(false)
+// 读失败和「还没发过题」是两件事：失败替换掉这一格，空状态才说「暂无」。
+const publishedFailed = ref(false)
+const publishedError = ref<string | null>(null)
 
 const loadPublishedTasks = async () => {
   const spaceId = Number(route.params.spaceId)
   if (!spaceId) return
   publishedLoading.value = true
+  publishedFailed.value = false
+  publishedError.value = null
   try {
     const { data } = await SpacesApi.getMyPublishedTasks(spaceId, {
       categoryId: selectedCategoryId.value ?? undefined,
@@ -255,7 +270,8 @@ const loadPublishedTasks = async () => {
     publishedTasks.value = data.tasks
   } catch (error) {
     console.error('load my published tasks failed', error)
-    toast.error(t('spaces.detail.tasks.loadFailed'))
+    publishedFailed.value = true
+    publishedError.value = error instanceof Error && error.message ? error.message : null
   } finally {
     publishedLoading.value = false
   }
@@ -331,6 +347,10 @@ onMounted(async () => {
 <style scoped lang="scss">
 .task-container {
   border: none;
+  /* 一栏题目列表：1920/2560 上铺满整屏会把每行的两头拉得很远，视线横穿整行才
+     找得到右边的状态。封顶居中，和上面的筛选条同一栏。 */
+  max-width: 1100px;
+  margin-inline: auto;
 }
 
 .category-nav-mobile {

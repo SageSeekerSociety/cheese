@@ -1,15 +1,16 @@
 """A platform notice reaches the running turn on every harness, and only it.
 
 The silence reminder, a doc edit, a note from another thread: each goes out as
-``ChatService.notify_running_turn`` → ``compute.deliver(topic, text,
-expected_work_id=…)``, and each harness's runtime turns that into its own
+``ChatService.notify_running_turn`` → ``compute.steer(topic, text,
+expected_work_id=…)``, and the session core turns that into each harness's own
 mid-turn verb — Claude Code's ``steer`` written at the next tool boundary,
 Codex's ``send`` that its runner turns into ``turn/steer``, pi's ``steer``.
 The work id is the guard: a notice meant for a turn that has since been
 replaced must not land in the next one.
 
 Claude Code runs its real runner behind ``StubChannel``; Codex and pi run
-their real runtimes against a runner that answers the three calls this needs.
+the real room sessions and session core against a runner that answers the
+three calls this needs.
 """
 
 import asyncio
@@ -19,14 +20,10 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.domain.agent.harness import CLAUDE_CODE, Opening, SessionRef
-from app.domain.agent.harness.codex.runtime import CodexRuntime
-from app.domain.agent.harness.codex.runtime import Handle as CodexHandle
-from app.domain.agent.harness.driven.runner import LONG_POLL
-from app.domain.agent.harness.pi.runtime import Handle as PiHandle
-from app.domain.agent.harness.pi.runtime import PiRuntime
+from app.domain.agent.harness import CLAUDE_CODE, CODEX, PI, SessionRef
 from tests.conftest import StubChannel
 from tests.support.room_reader import room_reader
+from tests.support.seat_channel import SeatChannel
 
 NOTICE = "【平台】You have published nothing to this room for 10 minutes."
 
@@ -76,23 +73,22 @@ class _Runner:
         return {"ok": True, "turn_id": "turn"}
 
 
-def _driven(runtime_class, handle_class, harness, working, tmp_path):
-    session = SessionRef(uuid.uuid4(), uuid.uuid4(), harness=harness)
-    handle = handle_class(
-        session,
-        "device",
-        "/state",
-        "id",
-        "agent",
-        tmp_path / "m",
-        frozenset({LONG_POLL}),
-    )
+class _Seats(SeatChannel):
+    def __init__(self, harness: str, runner: _Runner) -> None:
+        super().__init__(harness=harness)
+        self.runner = runner
+
+    async def open(self, session, agent, launch):
+        pass
+
+    async def call(self, handle, method, params):
+        return await self.runner.call(handle, method, params)
+
+
+def _driven(harness, working):
+    session = SessionRef(uuid.uuid4(), uuid.uuid4(), "agent", harness=harness)
     runner = _Runner(working)
-    channel = AsyncMock()
-    channel.ensure.return_value = handle
-    channel.images.return_value = []
-    channel.call.side_effect = runner.call
-    runtime = runtime_class(channel)
+    runtime = _Seats(harness, runner).runtime
     return session, runtime, lambda: [m["text"] for m in runner.mid_turn], runner
 
 
@@ -114,22 +110,14 @@ async def _claude_code(tmp_path):
 
 async def _codex(tmp_path):
     session, runtime, heard, runner = _driven(
-        CodexRuntime,
-        CodexHandle,
-        "codex",
-        lambda r: {"turn_id": "turn" if r.turns else None},
-        tmp_path,
+        CODEX, lambda r: {"alive": True, "turn_id": "turn" if r.turns else None}
     )
     return session, runtime, heard, runner
 
 
 async def _pi(tmp_path):
     session, runtime, heard, runner = _driven(
-        PiRuntime,
-        PiHandle,
-        "pi",
-        lambda r: {"alive": True, "working": bool(r.turns), "work_id": None},
-        tmp_path,
+        PI, lambda r: {"alive": True, "working": bool(r.turns), "work_id": None}
     )
     return session, runtime, heard, runner
 
@@ -138,9 +126,9 @@ async def _working(runtime, session) -> None:
     """Until the session says a turn is in flight — the state a notice is for."""
     deadline = time.monotonic() + 8
     while True:
-        handle = runtime.live.get(runtime._seat_of(session))
-        status = await runtime.channel.call(handle, "ping", {}) if handle else {}
-        if runtime.working(status):
+        live = runtime.live.get(runtime._seat_of(session))
+        status = await runtime.host.status(live.ref) if live else None
+        if status is not None and status.working:
             return
         assert time.monotonic() < deadline, "the turn never started"
         await asyncio.sleep(0.01)
@@ -150,31 +138,32 @@ async def _working(runtime, session) -> None:
 @pytest.mark.parametrize("wire", [_claude_code, _codex, _pi], ids=lambda w: w.__name__)
 async def test_a_notice_reaches_the_turn_it_was_meant_for(tmp_path, wire):
     session, runtime, heard, _ = await wire(tmp_path)
-    runtime.bind_reader(
-        room_reader(events=AsyncMock(), activity=AsyncMock(), receipts=AsyncMock())
+    runtime.report_to(
+        room_reader(events=AsyncMock(), activity=AsyncMock(), receipts=AsyncMock()),
+        unread=lambda _topic: None,
+        memory=AsyncMock(),
     )
-    runtime.bind_unread_probe(lambda _topic: None)
     register_input = AsyncMock()
     work = uuid.uuid4()
     try:
         await runtime.send(
             session,
             "检查一下",
-            Opening("system"),
+            system_prompt="system",
             work_id=work,
             on_mark=lambda _: None,
             register_input=register_input,
         )
         await _working(runtime, session)
 
-        stale = await runtime.deliver(
+        stale = await runtime.steer(
             session.topic_id,
             "stale",
             expected_work_id=uuid.uuid4(),
             register_input=register_input,
         )
         assert stale is False, "a notice for another turn must not land in this one"
-        assert await runtime.deliver(
+        assert await runtime.steer(
             session.topic_id,
             NOTICE,
             expected_work_id=work,

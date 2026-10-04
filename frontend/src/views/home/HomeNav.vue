@@ -11,11 +11,13 @@ import type { MenuAction } from '@/components/common/menuAction'
 import type { Team } from '@/types'
 
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
+import { toast } from 'vuetify-sonner'
 
 import { getAvatarUrl } from '@/utils/materials'
 
 import { awaitingCount } from '@/composables/useAwaitingCount'
+import { useRowMenu } from '@/composables/useRowMenu'
 
 import JoinSpaceDialog from './JoinSpaceDialog.vue'
 
@@ -24,7 +26,13 @@ import { t } from '@/i18n'
 import { spaceEntryRoute } from '@/lib/spaceEntry'
 import { SpacesApi } from '@/network/api/spaces'
 import { TeamsApi } from '@/network/api/teams'
+import { useDialog } from '@/plugins/dialog'
+import AccountService from '@/services/account'
+import errorHandler from '@/services/ErrorHandler'
+import { useWorkspaceStore } from '@/stores/workspace'
+import DisbandTeamDialog from '@/views/teams/DisbandTeamDialog.vue'
 import TeamProfileEditDialog from '@/views/teams/TeamProfileEditDialog.vue'
+import TransferTeamDialog from '@/views/teams/TransferTeamDialog.vue'
 
 defineProps<{
   /** 手机上「待办」是底栏的一格，这里就不再列一次。 */
@@ -32,6 +40,8 @@ defineProps<{
 }>()
 
 const route = useRoute()
+const router = useRouter()
+const dialog = useDialog()
 const awaiting = awaitingCount()
 
 const teams = ref<Team[]>([])
@@ -120,22 +130,110 @@ const isAdmin = (team: Team) => team.role === 'OWNER' || team.role === 'ADMIN'
 
 const editing = ref<Team | null>(null)
 
-/** 管理员在一个团队那一行的 ⋯ 里能做的事。 */
+/** 一个团队那一行的 ⋯（和右键）里能做的事：管理员邀请、改资料；不是所有者的能退出。 */
 function teamActions(team: Team): MenuAction[] {
-  return [
-    {
-      key: 'invite',
-      label: t('home.nav.inviteMembers'),
-      icon: 'mdi-account-plus-outline',
-      to: { name: 'TeamsDetailMembers', params: { handle: team.handle }, query: { invite: '1' } },
-    },
-    {
-      key: 'edit',
-      label: t('work.teamProfile.edit'),
-      icon: 'mdi-pencil-outline',
-      onSelect: () => (editing.value = team),
-    },
-  ]
+  if (team.personal) return []
+  const actions: MenuAction[] = []
+  if (isAdmin(team))
+    actions.push(
+      {
+        key: 'invite',
+        label: t('home.nav.inviteMembers'),
+        icon: 'mdi-account-plus-outline',
+        to: { name: 'TeamsDetailMembers', params: { handle: team.handle }, query: { invite: '1' } },
+      },
+      {
+        key: 'edit',
+        label: t('work.teamProfile.edit'),
+        icon: 'mdi-pencil-outline',
+        onSelect: () => (editing.value = team),
+      }
+    )
+  // 所有者退不掉（后端拒：先转让或解散），所以他看到的是那两条出路。
+  if (team.role === 'OWNER')
+    actions.push(
+      {
+        key: 'transfer',
+        label: t('home.nav.transferTeam'),
+        icon: 'mdi-account-arrow-right-outline',
+        onSelect: () => (transferring.value = team),
+      },
+      {
+        key: 'disband',
+        label: t('home.nav.disbandTeam'),
+        icon: 'mdi-delete-outline',
+        danger: true,
+        onSelect: () => (disbanding.value = team),
+      }
+    )
+  else
+    actions.push({
+      key: 'leave',
+      label: t('home.nav.leaveTeam'),
+      icon: 'mdi-exit-to-app',
+      danger: true,
+      onSelect: () => void leaveTeam(team),
+    })
+  return actions
+}
+
+// 右键一行，弹的就是 ⋯ 那一份，弹在鼠标那一点上。
+const rowMenu = useRowMenu<number>()
+
+// 转让团队：交出去之后我是管理员，这一行的菜单跟着新角色长（这时才有「退出团队」）。
+const transferring = ref<Team | null>(null)
+const transferOpen = computed({
+  get: () => transferring.value !== null,
+  set: (value: boolean) => {
+    if (!value) transferring.value = null
+  },
+})
+function onTransferred(updated: Team) {
+  teams.value = teams.value.map((team) => (team.id === updated.id ? { ...team, ...updated, role: 'ADMIN' } : team))
+}
+
+// 解散团队：撤不回，所以要把团队名打一遍才按得下去（DisbandTeamDialog）。后端拒绝时
+// 理由留在弹窗里；成了就和退出一样，这一行和它的项目从侧栏上下去。
+const disbanding = ref<Team | null>(null)
+const disbandOpen = computed({
+  get: () => disbanding.value !== null,
+  set: (value: boolean) => {
+    if (!value) disbanding.value = null
+  },
+})
+function onDisbanded(team: Team) {
+  toast.success(t('home.nav.disbandTeamDone', { name: team.name }))
+  forgetTeam(team)
+}
+
+// 退出团队：退掉的是整个团队，它的项目也一起看不到了，所以先确认。退出这一下成功了
+// 就算成功，后面的刷新失败不改口。
+async function leaveTeam(team: Team) {
+  const userId = AccountService.user?.id
+  if (typeof userId !== 'number') return
+  const confirmed = await dialog
+    .confirm(t('home.nav.leaveTeamBody'), {
+      title: t('home.nav.leaveTeamTitle', { name: team.name }),
+      confirmLabel: t('home.nav.leaveTeam'),
+      danger: true,
+    })
+    .wait()
+    .catch(() => false)
+  if (!confirmed) return
+  const result = await errorHandler.withErrorHandling(() => TeamsApi.removeMember(team.id, userId), {
+    defaultMessage: t('home.nav.leaveTeamFailed'),
+  })
+  if (result === undefined) return
+  toast.success(t('home.nav.leaveTeamDone', { name: team.name }))
+  forgetTeam(team)
+}
+
+// 这个团队不再是我的了：这一行消失；它的项目也不再是我的，rail 上那几格跟着项目清单走；
+// 正看着它的某一页的话回待办。
+function forgetTeam(team: Team) {
+  teams.value = teams.value.filter((row) => row.id !== team.id)
+  void useWorkspaceStore().refreshProjects()
+  if (currentHandle.value?.toLowerCase() === team.handle.toLowerCase()) void router.replace({ name: 'inbox' })
 }
 const editOpen = computed({
   get: () => editing.value !== null,
@@ -174,6 +272,7 @@ const joinOpen = ref(false)
           :aria-expanded="isOpen(team)"
           :aria-label="t(isOpen(team) ? 'home.nav.collapse' : 'home.nav.expand', { name: team.name })"
           @click="toggle(team.handle)"
+          @contextmenu="teamActions(team).length && rowMenu.open(team.id, $event)"
         >
           <template #prepend>
             <v-icon size="16" class="home-nav__caret">{{
@@ -195,7 +294,12 @@ const joinOpen = ref(false)
           </template>
           <v-list-item-title class="home-nav__name" data-user-content>{{ team.name }}</v-list-item-title>
           <template #append>
-            <AdaptiveMenu v-if="!team.personal && isAdmin(team)" :actions="teamActions(team)" :title="team.name">
+            <AdaptiveMenu
+              v-if="teamActions(team).length"
+              v-bind="rowMenu.bind(team.id)"
+              :actions="teamActions(team)"
+              :title="team.name"
+            >
               <template #activator="{ props }">
                 <!-- eslint-disable-next-line vue/no-restricted-syntax -- nav bar button whose look this component styles exactly (design-system §3.6 exception) -->
                 <v-btn
@@ -263,53 +367,66 @@ const joinOpen = ref(false)
 
   <JoinSpaceDialog v-model="joinOpen" @joined="loadSpaces" />
   <TeamProfileEditDialog v-if="editing" v-model="editOpen" :team="editing" @updated="onTeamUpdated" />
+  <DisbandTeamDialog v-if="disbanding" v-model="disbandOpen" :team="disbanding" @disbanded="onDisbanded" />
+  <TransferTeamDialog v-if="transferring" v-model="transferOpen" :team="transferring" @transferred="onTransferred" />
 </template>
 
 <style scoped>
 /* 行高、悬停、选中、图标大小都是全站那套侧栏行（common.scss 的 .side-nav）。这里只
    管首页这份目录自己多出来的东西：团队行的箭头和头像、展开出来的四样。 */
+
 /* 每一行的前缀占同样宽：团队行是「箭头 + 头像」，其余行把图标或首字放在头像那一格，
    所以所有名字从同一条竖线开始，展开出来的四样东西也和团队名对齐。 */
 .home-nav :deep(.v-list-item__prepend) {
   display: flex;
   justify-content: flex-end;
   gap: 6px;
+
   /* 箭头 16 + 6 + 头像 22 + 6：团队行最宽，这一格按它定，别的行只是左边空着。 */
   width: 50px;
 }
+
 /* Vuetify 在图标后面的 spacer 留 8px、头像后面留 0，于是图标行的图标比团队头像往左
    错出 8px。统一成 0，前缀里只剩上面那个 6px 的间隔。 */
 .home-nav :deep(.v-list-item__prepend > .v-list-item__spacer) {
   width: 0 !important;
 }
+
 /* 图标占头像那一格（22px 宽）居中，名字才和团队名、空间名从同一条竖线开始。 */
 .home-nav :deep(.v-list-item__prepend > .v-icon) {
   width: 22px;
 }
+
 .home-nav__mark {
-  flex: none;
-  /* 形状照 GitHub：人是圆的，团队、空间是圆角方块。 */
-  border-radius: var(--radius-md) !important;
   font-size: 12px;
   font-weight: 600;
   color: var(--muted);
   background: var(--fill-2);
+
+  /* 形状照 GitHub：人是圆的，团队、空间是圆角方块。 */
+  border-radius: var(--radius-md) !important;
+  flex: none;
 }
+
 /* 头像读不到（没传过、或头像服务不在）时退回首字，和空间那一格同一个样子。 */
+
 /* 自己名下那一行是本人：用人的圆形。 */
 .home-nav__mark--person {
   border-radius: var(--radius-pill) !important;
 }
+
 .home-nav__mark :deep(.v-img__error) {
   display: flex;
   align-items: center;
   justify-content: center;
   height: 100%;
 }
+
 .home-nav__more {
   width: 24px;
   height: 24px;
 }
+
 .home-nav__mark--letter {
   display: inline-flex;
   align-items: center;
@@ -318,30 +435,51 @@ const joinOpen = ref(false)
   height: 22px;
   border-radius: var(--radius-md);
 }
+
 .home-nav__caret {
   color: var(--faint);
 }
+
 .home-nav__name {
-  color: var(--ink);
   font-size: 14px;
+  color: var(--ink);
 }
+
 .home-nav__leaf {
   padding-inline-start: 58px !important;
 }
+
 .home-nav__leaf :deep(.v-list-item-title) {
-  color: var(--muted);
   font-size: 13px;
+  color: var(--muted);
 }
+
 .home-nav__action :deep(.v-list-item-title) {
-  color: var(--muted);
   font-size: 13px;
+  color: var(--muted);
 }
+
 .home-nav__meta {
-  color: var(--faint);
   font-size: 12px;
+  color: var(--faint);
 }
+
 .home-nav__more {
   margin-inline-start: 4px;
   color: var(--muted);
+}
+
+/* 手指点得中（设计系统 §10.1）：这颗只有 24px，触屏上把能点的范围撑到 44×44，画出来
+   的样子不变。 */
+@media (pointer: coarse) {
+  .home-nav__more::before {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+    content: '';
+    transform: translate(-50%, -50%);
+  }
 }
 </style>

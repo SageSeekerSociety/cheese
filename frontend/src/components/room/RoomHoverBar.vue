@@ -14,6 +14,8 @@ import type { MenuAction } from '../common/menuAction'
 
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 
+import { useMessageLink } from '@/composables/useMessageLink'
+
 import AdaptiveMenu from '../common/AdaptiveMenu.vue'
 
 import { copyMessage, QUICK_EMOJIS } from './messageActions'
@@ -32,6 +34,8 @@ const props = defineProps<{
   pickerOpen: boolean
   /** 这条是我自己发的消息：多一颗「编辑」。 */
   editable: boolean
+  /** 右键这一条时鼠标的位置：每次右键一个新对象，认到就在那一点打开 ⋯。 */
+  menuAt?: { x: number; y: number } | null
 }>()
 
 const emit = defineEmits<{
@@ -45,9 +49,26 @@ const emit = defineEmits<{
 // 复制之后原地说一声「已复制」，一会儿再换回来；换了一条消息就不再说。
 const COPIED_MS = 1500
 const copied = ref(false)
+// 复制链接是另一颗按钮，自己的「已复制」：两颗共用一个的话，复制正文明明成了，
+// 链接那颗也跟着亮。
+const linkCopied = ref(false)
 const menuOpen = ref(false)
 const focusWithin = ref(false)
+// 右键打开时菜单弹在鼠标那一点；点 ⋯ 打开时挂在 ⋯ 下面。
+const menuPoint = ref<[number, number] | null>(null)
+watch(
+  () => props.menuAt,
+  (at) => {
+    if (!at) return
+    menuPoint.value = [at.x, at.y]
+    menuOpen.value = true
+  }
+)
+watch(menuOpen, (open) => {
+  if (!open) menuPoint.value = null
+})
 let copiedTimer: ReturnType<typeof setTimeout> | undefined
+let linkCopiedTimer: ReturnType<typeof setTimeout> | undefined
 let focusRecoveryFrame: number | undefined
 function cancelFocusRecovery() {
   if (focusRecoveryFrame !== undefined) cancelAnimationFrame(focusRecoveryFrame)
@@ -57,7 +78,9 @@ watch(
   () => props.block?.id,
   () => {
     copied.value = false
+    linkCopied.value = false
     clearTimeout(copiedTimer)
+    clearTimeout(linkCopiedTimer)
     if (!props.block) {
       cancelFocusRecovery()
       menuOpen.value = false
@@ -67,6 +90,7 @@ watch(
 )
 onBeforeUnmount(() => {
   clearTimeout(copiedTimer)
+  clearTimeout(linkCopiedTimer)
   cancelFocusRecovery()
 })
 
@@ -78,6 +102,17 @@ async function copyBlock(block: Block | null, isAgent: boolean) {
   copied.value = true
   clearTimeout(copiedTimer)
   copiedTimer = setTimeout(() => (copied.value = false), COPIED_MS)
+}
+
+// 这条消息的站内链接（组件不碰路由，走 composable）。宿主没有路由时给不出链接，
+// 这一颗就不画，而不是画一颗点了没反应的。
+const { hrefOf, copy: copyHref } = useMessageLink()
+const canLink = computed(() => !!props.block && hrefOf(props.block) !== null)
+async function copyLink(block: Block | null) {
+  if (!block || !(await copyHref(block))) return
+  linkCopied.value = true
+  clearTimeout(linkCopiedTimer)
+  linkCopiedTimer = setTimeout(() => (linkCopied.value = false), COPIED_MS)
 }
 
 // 浮层里鼠标已不在消息上：操作仍属于打开菜单时的那一条。
@@ -107,6 +142,13 @@ const menuActions = computed<MenuAction[]>(() => {
       onSelect: () => void copyBlock(block, target.isAgent),
     },
   ]
+  if (hrefOf(block) !== null)
+    actions.push({
+      key: 'link',
+      label: t('work.room.message.copyLink'),
+      icon: 'mdi-link-variant',
+      onSelect: () => void copyLink(block),
+    })
   if (target.editable)
     actions.push({
       key: 'edit',
@@ -206,6 +248,17 @@ function onFocusOut(event: FocusEvent) {
         >
           <v-icon size="15">{{ copied ? 'mdi-check' : 'mdi-content-copy' }}</v-icon>
         </button>
+        <!-- A deep link to this one message. Absent when the host has no router
+             (there is no address to build) rather than a button that does nothing. -->
+        <button
+          v-if="canLink"
+          type="button"
+          class="hover-bar__act"
+          :title="linkCopied ? t('work.room.message.linkCopied') : t('work.room.message.copyLink')"
+          @click="copyLink(block)"
+        >
+          <v-icon size="15">{{ linkCopied ? 'mdi-check' : 'mdi-link-variant' }}</v-icon>
+        </button>
         <button
           type="button"
           class="hover-bar__act"
@@ -215,7 +268,7 @@ function onFocusOut(event: FocusEvent) {
           <v-icon size="15">mdi-comment-arrow-right-outline</v-icon>
         </button>
       </div>
-      <AdaptiveMenu v-model="menuOpen" :actions="menuActions">
+      <AdaptiveMenu v-model="menuOpen" :actions="menuActions" :point="menuPoint">
         <template #activator="{ props: menu }">
           <button
             v-bind="menu"

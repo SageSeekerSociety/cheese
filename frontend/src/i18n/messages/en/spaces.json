@@ -455,6 +455,7 @@
     "confirmRevoke": "Remove {name} as an admin?",
     "confirmTransfer": "Transfer ownership to {name}? You will become an admin.",
     "empty": "No members",
+    "loadMembersFailed": "Couldn't load members",
     "role": {
       "owner": "Owner",
       "admin": "Admin",
@@ -733,7 +734,9 @@
         "pendingReviewCount": "To review",
         "submissionConversionRate": "Submit rate",
         "successRate": "Success rate"
-      }
+      },
+      "empty": "No tasks",
+      "tableLabel": "Task list"
     },
     "publishers": {
       "export": "Export publisher data",
@@ -762,7 +765,9 @@
         "bestRate": "Best success rate",
         "mostClaims": "Most claims",
         "claims": "{n} claims"
-      }
+      },
+      "empty": "No publishers",
+      "tableLabel": "Publisher list"
     },
     "participants": {
       "approval": "Claim review",
@@ -856,6 +861,7 @@
       "allKnowledgePoints": "All",
       "summary": "{projects} member projects · {students} members · {questions} messages · {stuck} shared sticking points",
       "noProjects": "No member projects visible",
+      "loadFailed": "Couldn't load learning data",
       "queue": {
         "title": "To handle",
         "hint": "Shared sticking points, ordered by how many members hit them",
@@ -875,8 +881,6 @@
       "outlineHint": "Sections follow the order you ticked",
       "toast": {
         "filtersFailed": "Couldn't load learning filters",
-        "queuesFailed": "Couldn't load the queue",
-        "questionsFailed": "Couldn't load member messages",
         "outlineFailed": "Couldn't build the outline"
       },
       "unclassified": "Unclassified",

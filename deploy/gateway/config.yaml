@@ -16,6 +16,10 @@
 #   cheese_label: "GLM-5.2"    what to call it; the model_name when absent.
 #   cheese_tier: premium       which plans may use it (included / premium /
 #                              frontier); included when absent.
+#   cheese_efforts: [low, high]  the thinking efforts it honours (low / medium
+#                              / high / max), offered on a teammate's settings
+#                              and passed by Claude Code as output_config.effort.
+#                              None when absent: the model's own default.
 #
 # A selectable model with no price is not offered — see the pricing note below
 # for why a missing price is worse than a missing model.
@@ -41,6 +45,10 @@ model_list:
       cheese_label: MiMo V2.6 Pro
       supports_reasoning: true
       supports_vision: true
+      # Measured 2026-10-04: a system-role message in the middle of the
+      # conversation is forwarded untouched and the upstream drops it, so
+      # Claude Code is launched to put that content in the first user message.
+      supports_mid_conversation_system: false
 
   - model_name: kimi-k3
     litellm_params:
@@ -59,6 +67,7 @@ model_list:
     model_info:
       cheese_selectable: true
       cheese_label: Kimi K3
+      cheese_efforts: [low, high, max]
       # K3 always reasons: keep native effort, but omit adaptive thinking.
       supports_output_config: true
       supports_max_reasoning_effort: true
@@ -116,6 +125,7 @@ model_list:
     model_info:
       cheese_selectable: true
       cheese_label: DeepSeek V4.1 Flash
+      cheese_efforts: [low, high]
       # Official peak rates bound the budget estimate; off-peak billing is half.
       # https://api-docs.deepseek.com/quick_start/pricing/
       input_cost_per_token: 0.0000003
@@ -247,10 +257,14 @@ general_settings:
     port: 6379
 
 litellm_settings:
-  # The whole point: a row per call, which is what /spend/logs reads back and
-  # what the backend drains into resource_usage. Without this the gateway would
-  # route traffic and still tell us nothing.
+  # The whole point: a row per call. LiteLLM sums those rows into daily totals
+  # per key and model, which the backend drains into resource_usage. Without
+  # this the gateway would route traffic and still tell us nothing.
   success_callback: ["postgres"]
   failure_callback: ["postgres"]
+  # Requests routed to ChatGPT carry the Claude Code session as `session_id`,
+  # which is what keeps a conversation on one Codex machine and its prompt
+  # cache hitting (#2597, `chatgpt_session.py`).
+  callbacks: ["cheese_chatgpt_session.handler"]
   # Keep a failed upstream from looking like a gateway bug in the logs.
   drop_params: true

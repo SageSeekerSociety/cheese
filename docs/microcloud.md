@@ -58,7 +58,7 @@ the hour, from the same packs as model calls (`docs/manual/dev/billing.md`, 云�
 - **Archived**: the host writes the home to one `.tar.gz` and PUTs it to the private bucket
   (`TRANSCRIPT_S3_BUCKET`) through a URL signed for that one object; the backend compares the
   size and MD5 the host wrote with the bucket's size and ETag, and only then deletes the home
-  from the host. An archive that does not verify is deleted and the home stays. The next tool
+  from the host. An archive that does not verify is deleted and the home stays; a home that cannot be archived (a file the host cannot read, over 4 GiB compressed) is tried again after six hours, not on every sweep. The archive also carries the Python interpreters uv installed into the project's package store, which the home's venvs link to by absolute path; a restore puts back the ones the new host lacks. The next tool
   call places the session on any host, which downloads and checks the archive and unpacks it
   before the executor starts (「正在从归档恢复沙箱」); the object is deleted once restored.
   Code is truth in git — every turn's Stop checkpoint has already run `cheese sync --all` —

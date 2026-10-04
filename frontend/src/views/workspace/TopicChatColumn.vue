@@ -5,10 +5,14 @@ import type { MemberActivityLine } from '@/lib/memberActivity'
 import type { CardPhase } from '@/lib/topicState'
 import type { SubmitPreviewQuestion } from '../../lib/previewQuestion'
 
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref, toRef, watch } from 'vue'
+import { useRouter } from 'vue-router'
+
+import { useSkillProposals } from './useSkillProposals'
 
 import ChatPanel from '@/components/ChatPanel.vue'
 import AgentFeedbackCard from '@/components/feedback/AgentFeedbackCard.vue'
+import SkillProposalCard from '@/components/room/SkillProposalCard.vue'
 import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
 import { t } from '@/i18n'
 
@@ -45,6 +49,9 @@ const emit = defineEmits<{
   // 谁在这个房间里忙：现场那一格画同一份。
   (e: 'activity', lines: MemberActivityLine[]): void
   (e: 'state-changed', payload: unknown): void
+  // 芝士摆出来一份东西：面板立刻看一眼当前预览。必须一路透传，漏掉的话「预览」
+  // 那一格又回到等轮询。
+  (e: 'preview-shown'): void
   (e: 'mention-click', handle: string): void
   (e: 'open-file', path: string, taskId?: string | null): void
   // 参数都要转：`turnId` 决定文档面板高亮哪一轮改的段落，`review` 是「查看改动」要标出
@@ -67,6 +74,22 @@ const chatRef = ref<{
 const acceptRef = ref<{ reload: (silent?: boolean) => Promise<void> } | null>(null)
 const feedbackRef = ref<{ reload: () => Promise<void> } | null>(null)
 
+const router = useRouter()
+// 技能的提议卡：取数在这里（组件下不许取数），卡片只画。换房间就重读。
+const skills = useSkillProposals(
+  toRef(() => props.topic.project_id),
+  toRef(() => props.topic.id)
+)
+onMounted(skills.load)
+watch(() => props.topic.id, skills.load)
+function openSkill(skill: { id: string }) {
+  void router.push({
+    name: 'project-skills',
+    params: { projectId: props.topic.project_id },
+    query: { skill: skill.id },
+  })
+}
+
 const connected = computed(() => !!chatRef.value?.connected)
 const submitQuestion: SubmitPreviewQuestion = (request) => chatRef.value?.submitQuestion(request) ?? false
 
@@ -74,6 +97,7 @@ defineExpose({
   connected,
   reloadAccept: (silent?: boolean) => acceptRef.value?.reload(silent),
   reloadFeedback: () => feedbackRef.value?.reload(),
+  reloadSkills: () => skills.load(),
   // 普通定位沿用聊天提交；图上画过东西时随行带那张合成图。明确的整页 AI 提问由
   // submitQuestion 在正文点名。
   say: (content: string, attachments?: ChatAttachment[]) => chatRef.value?.send(content, true, attachments) ?? false,
@@ -99,6 +123,7 @@ defineExpose({
       @site-turns="emit('site-turns', $event)"
       @activity="emit('activity', $event)"
       @state-changed="emit('state-changed', $event)"
+      @preview-shown="emit('preview-shown')"
       @mention-click="emit('mention-click', $event)"
       @open-file="(path, taskId) => emit('open-file', path, taskId)"
       @open-resource="
@@ -130,6 +155,17 @@ defineExpose({
              「不用」记在服务端（按指纹），所以拒绝过一次的问题不会因为刷新又回来；
              换个说法重提的会回来 —— 那是另一次提问，值得再问一遍。 -->
         <AgentFeedbackCard ref="feedbackRef" :topic-id="topic.id" />
+        <!-- 技能提议卡：芝士把一套做法整理好了，请人就地决定存不存。同样由服务端
+             说了算：列的是这个房间里还在等人的提议，没有就什么都不画。 -->
+        <SkillProposalCard
+          :proposals="skills.proposals.value"
+          :saved="skills.saved.value"
+          :busy="skills.busy.value"
+          :error="skills.error.value"
+          @save="skills.save"
+          @decline="skills.decline"
+          @open="openSkill"
+        />
       </template>
       <!-- 输入区那一行只放**这条消息**的动作，所以这里只剩话题的状态。谁在跑
          （AI 队友）和在哪跑（工作电脑）都不是某条消息的动作，摆在输入区上纯是占
@@ -147,13 +183,17 @@ defineExpose({
 .archived-chip {
   font-size: 12px;
 }
-/* 和对话同一栏：ChatPanel 在手机外壳里把时间线和输入框收到 --page-w 居中，贴在输
-   入框上的这一条跟着收，不然它比上下两块都宽。 */
+/* 和对话同一栏：时间线（ChatTimeline）、输入框（ChatPanel）各把自己收成一栏居中，
+   贴在输入框上的这一条（验收卡）跟着收同一个值，不然它比上下两块都宽。桌面上是读
+   的一栏 --page-w-read，手机外壳里是 --page-w，三块始终对齐。 */
+.chat-dock {
+  width: 100%;
+  max-width: var(--page-w-read);
+  margin-inline: auto;
+}
 @media (max-width: 959.98px) {
   .chat-dock {
-    width: 100%;
     max-width: var(--page-w);
-    margin-inline: auto;
   }
 }
 .chat-col {

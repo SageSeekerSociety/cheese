@@ -19,8 +19,10 @@ import ExternalTag from '../common/ExternalTag.vue'
 import { t } from '@/i18n'
 
 defineProps<{
-  /** 候选是不是该露出来。Esc 收起之后它是 false（`@` 还留在正文里）。 */
+  /** 菜单是不是该露出来。Esc 收起之后它是 false（`@` 还留在正文里）。
+   *  一条候选都没有时它仍是 true——那时候菜单画的是一句「暂无匹配」。 */
   open: boolean
+  /** 候选。空数组不是「什么都没发生」：菜单会画空态那句话。 */
   matches: MentionItem[]
   /** 高亮的是第几项。鼠标划过和 ↑/↓ 改的是同一个值。 */
   activeIndex: number
@@ -28,6 +30,8 @@ defineProps<{
   level: 'root' | 'library'
   /** 触摸屏上回车是换行，那条「Enter 挑这一项」的提示就不该出现。 */
   enterSends: boolean
+  /** 贴在这个位置（文档里的光标处），而不是浮在输入框上方。 */
+  at?: { top: number; left: number; width?: number } | null
 }>()
 
 const emit = defineEmits<{
@@ -54,7 +58,15 @@ defineExpose({ scrollActiveIntoView })
 
 <template>
   <Transition name="menu-rise">
-    <div v-if="open || level === 'library'" ref="menuEl" class="mention-menu">
+    <div
+      v-if="open"
+      ref="menuEl"
+      class="mention-menu"
+      :class="{ 'mention-menu--at': at }"
+      :style="
+        at ? { top: `${at.top}px`, left: `${at.left}px`, width: at.width ? `${at.width}px` : undefined } : undefined
+      "
+    >
       <!-- 进资料库是往里走一层：这一层往左让开，下一层从右边进来；退回来反过来。 -->
       <Transition :name="level === 'library' ? 'level-in' : 'level-out'" mode="out-in">
         <div :key="level" class="mention-menu-level">
@@ -115,8 +127,12 @@ defineExpose({ scrollActiveIntoView })
               <span v-else-if="i === activeIndex && enterSends" class="mention-menu-hint">Enter</span>
             </button>
           </template>
-          <div v-if="level === 'library' && !matches.length" class="mention-menu-group">
-            {{ t('work.room.mention.noFiles') }}
+          <!-- No candidates at all: the menu does not disappear, it just says so.
+               Collapsing the whole box reads as if that @ did nothing. The library
+               level speaks of files; the root searches people, topics and files
+               together, so it says something broader. -->
+          <div v-if="!matches.length" class="mention-menu-empty">
+            {{ t(level === 'library' ? 'work.room.mention.noFiles' : 'work.room.mention.noMatch') }}
           </div>
         </div>
       </Transition>
@@ -153,6 +169,13 @@ defineExpose({ scrollActiveIntoView })
   max-height: calc((var(--app-height, 100dvh) - var(--keyboard-inset, 0px)) * 0.4);
   background: var(--surface);
   box-shadow: var(--shadow-2);
+}
+.mention-menu--at {
+  right: auto;
+  bottom: auto;
+  width: 280px;
+  margin-bottom: 0;
+  max-height: 264px;
 }
 .mention-menu-item {
   display: flex;
@@ -265,6 +288,13 @@ defineExpose({ scrollActiveIntoView })
 .mention-menu-group {
   padding: 6px 12px 2px;
   font-size: 12px;
+  color: var(--faint);
+}
+/* 一条候选都没有。它顶替的是一整列候选行，所以内边距和字号跟着候选行走（13px、
+   上下 10px），而不是跟着组标题走——不然空态看起来像一个没写完的小标题。 */
+.mention-menu-empty {
+  padding: 10px 12px;
+  font-size: 13px;
   color: var(--faint);
 }
 .mention-menu-name {

@@ -1,0 +1,11 @@
+[Unit]
+Description=Check the GitHub Actions runner is still talking to GitHub every five minutes
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=5min
+Persistent=true
+Unit=cheese-runner-watchdog.service
+
+[Install]
+WantedBy=timers.target

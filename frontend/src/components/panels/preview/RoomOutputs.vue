@@ -13,15 +13,19 @@
 //
 // 只有一样东西时这一块照样出现：上面那块预览只是在看它，而这个动作只在这里有。
 //
-// 列表长了要收得住：一个跑久了的房间能摆出三十几样东西，全都摊在这里会把上面那条
-// 应用条顶出屏幕（早先更糟——它会把那一格压成 0 高，条和 iframe 溢出来叠在标题行
-// 上）。所以小标题那一行是个折叠开关，默认短列表全摊开、长列表只露最近几行。
+// 它挂在总览的最底下、实况文档下面，默认收起，只露小标题那一行（带件数）。它原先
+// 在预览那一格的底部，和预览抢高度；预览那一格现在只放预览。小标题那一行是折叠开
+// 关，摊开后列表有高度上限、自己滚，不把上面的文档挤没。
 import type { DocumentTemplate, RoomOutput } from '@/api'
+import type { MenuAction } from '@/components/common/menuAction'
 
 import { computed, ref, useId, watch } from 'vue'
 
+import { useRowMenu } from '@/composables/useRowMenu'
+
 import { listDocumentTemplates, listRoomOutputs, newFromTemplate, saveRoomOutputToLibrary } from '@/api'
 import BaseButton from '@/components/base/BaseButton.vue'
+import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
 
@@ -40,19 +44,16 @@ const saved = ref<Record<string, string>>({})
 const files = computed(() => outputs.value.filter((o) => o.kind === 'file'))
 
 // ---- 折叠 ----
-// 收起来时露几行。长列表留最近这几行做引子（末尾给「展开全部 N 项」），短列表收
-// 起来就是收起来 —— 一共三五样还留五行，等于按了没反应。
-const PREVIEW_COUNT = 5
-// 按话题存，键里存的是人自己按的那一下：键不在 = 还没按过，按列表长短取默认。
-// 默认跟着长度走，所以默认态不能只靠「键不在」表达——这个键要写 0 和 1 两个值。
-const EXPANDED_PREFIX = 'cheesex.roomOutputsExpanded.v1:'
+// 按话题存人自己按的那一下；键不在 = 没按过 = 收起。v1 是它还在预览格里、默认按
+// 列表长短摊开时存的，搬进总览后默认变了，旧值不再沿用。
+const EXPANDED_PREFIX = 'cheesex.roomOutputsExpanded.v2:'
 
 function storageKey(topicId: string | null): string | null {
   const id = (topicId ?? '').trim()
   return id ? `${EXPANDED_PREFIX}${encodeURIComponent(id)}` : null
 }
 
-/** null = 没存过（人没按过），调用方按列表长短决定默认。 */
+/** null = 没存过（人没按过），调用方取默认的收起。 */
 function loadExpanded(topicId: string | null): boolean | null {
   const key = storageKey(topicId)
   if (!key || typeof localStorage === 'undefined') return null
@@ -74,14 +75,7 @@ function saveExpanded(topicId: string | null, expanded: boolean): void {
   }
 }
 
-const expanded = ref(true)
-
-/** 露在外面的那几行。 */
-const rows = computed(() => {
-  if (expanded.value) return files.value
-  return files.value.length > PREVIEW_COUNT ? files.value.slice(0, PREVIEW_COUNT) : []
-})
-const hiddenCount = computed(() => files.value.length - rows.value.length)
+const expanded = ref(false)
 
 const rowsId = `room-outputs-${useId()}`
 
@@ -90,9 +84,9 @@ function toggleExpanded() {
   saveExpanded(props.topicId, expanded.value)
 }
 
-/** 人按过的那一下优先；没按过看长短——短列表摊开，长列表收在最近几行。 */
+/** 人按过的那一下优先；没按过就收起。 */
 function applyDefault() {
-  expanded.value = loadExpanded(props.topicId) ?? files.value.length <= PREVIEW_COUNT
+  expanded.value = loadExpanded(props.topicId) ?? false
 }
 
 async function load() {
@@ -102,15 +96,42 @@ async function load() {
     const listed = await listRoomOutputs(topicId)
     outputs.value = listed.data
   } catch {
-    // 读不到这一块就不显示它：这一格的主体是上面那块预览。
+    // 读不到这一块就不显示列表：这一格的主体是上面的文档。
     outputs.value = []
   }
-  // 默认态跟着列表长短走，所以得等列表回来再定。
-  applyDefault()
 }
 
 // 换一个话题就是换一份列表，折叠态也跟着换一份。
-watch(() => props.topicId, applyDefault)
+applyDefault()
+watch(
+  () => props.topicId,
+  () => {
+    applyDefault()
+    void load()
+  }
+)
+
+// 右键一个文件：打开它、存进资料库（已经存过的不再给），弹在鼠标那一点上。
+const rowMenu = useRowMenu<string>()
+function outputActions(output: RoomOutput): MenuAction[] {
+  const actions: MenuAction[] = [
+    {
+      key: 'open',
+      label: t('tasks.preview.roomOutputs.openFile', { path: name(output.path) }),
+      icon: 'mdi-file-eye-outline',
+      onSelect: () => emit('open', output.path),
+    },
+  ]
+  if (!saved.value[output.path])
+    actions.push({
+      key: 'save',
+      label: t('tasks.preview.roomOutputs.saveToLibrary'),
+      icon: 'mdi-folder-arrow-down-outline',
+      loading: saving.value === output.path,
+      onSelect: () => void save(output),
+    })
+  return actions
+}
 
 async function save(output: RoomOutput) {
   const topicId = props.topicId
@@ -190,8 +211,7 @@ defineExpose({ reload: load })
 <template>
   <section v-if="topicId" class="outs" data-testid="room-outputs">
     <div class="outs__head">
-      <!-- 小标题这一行就是折叠开关：长列表收在最近几行，点它摊开／收起整个列表。
-           aria-expanded 说的是「全摊开了没有」——收起来时那几行只是引子。 -->
+      <!-- 小标题这一行就是折叠开关：点它摊开／收起整个列表。 -->
       <button
         type="button"
         class="outs__toggle"
@@ -245,8 +265,11 @@ defineExpose({ reload: load })
       </BaseButton>
     </div>
     <p v-if="error" role="alert" class="outs__error t-meta">{{ error }}</p>
-    <ul :id="rowsId" class="outs__list">
-      <li v-for="output in rows" :key="output.path" class="outs-row">
+    <ul v-show="expanded" :id="rowsId" class="outs__list">
+      <li v-for="output in files" :key="output.path" class="outs-row" @contextmenu="rowMenu.open(output.path, $event)">
+        <AdaptiveMenu v-bind="rowMenu.bind(output.path)" :actions="outputActions(output)" :title="name(output.path)">
+          <template #activator />
+        </AdaptiveMenu>
         <button
           type="button"
           class="outs-row__name t-body"
@@ -261,26 +284,20 @@ defineExpose({ reload: load })
           {{ t('tasks.preview.roomOutputs.saveToLibrary') }}
         </BaseButton>
       </li>
-      <!-- 收起来的那些去哪儿了：说清一共有多少样，按钮就在这一行的末尾。 -->
-      <li v-if="hiddenCount > 0" class="outs__more">
-        <BaseButton kind="ghost" size="sm" data-testid="room-outputs-expand-all" @click="toggleExpanded">
-          {{ t('tasks.preview.roomOutputs.expandAll', { count: files.length }) }}
-        </BaseButton>
-      </li>
     </ul>
   </section>
 </template>
 
 <style scoped>
 .outs {
-  padding: 8px 12px 12px;
+  flex: none;
+  padding: 8px 12px;
   border-top: 1px solid var(--line);
 }
 .outs__head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 6px;
 }
 .outs__title {
   margin: 0;
@@ -307,11 +324,6 @@ defineExpose({ reload: load })
   margin-left: 4px;
   color: var(--faint);
   font-variant-numeric: tabular-nums;
-}
-/* 「展开全部 N 项」跟着列表末尾，不另起一块。 */
-.outs__more {
-  display: flex;
-  justify-content: flex-start;
 }
 .outs__templates {
   list-style: none;
@@ -347,7 +359,10 @@ defineExpose({ reload: load })
 .outs__list {
   list-style: none;
   padding: 0;
-  margin: 0;
+  margin: 6px 0 0;
+  /* 摊开了也只占总览约四成高，再多就自己滚：上面的文档才是这一格的主体。 */
+  max-height: 40vh;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 4px;

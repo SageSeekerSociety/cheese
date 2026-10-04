@@ -13,13 +13,16 @@ means to fetch anything itself.
 """
 
 import uuid
+from typing import Annotated
 
+import httpx
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from app.api.auth import ActorResolverDep
 from app.api.response import ok
 from app.core.config import settings
+from app.core.errors import SystemBusyError
 from app.domain.fetch.service import fetch as fetch_url
 
 router = APIRouter(prefix="", tags=["fetch"])
@@ -86,3 +89,58 @@ async def read_url(body: FetchIn, actor: ActorResolverDep) -> dict:
             "trail": outcome.trail(),
         }
     )
+
+
+class PageCheckIn(BaseModel):
+    #: The page itself, not a path: the agent checks what it is about to show,
+    #: before it is shown, and the file is on its machine rather than ours.
+    html: str = Field(min_length=1, max_length=5_000_000)
+    widths: list[Annotated[int, Field(ge=200, le=2000)]] = Field(
+        default=[400, 1280], min_length=1, max_length=3
+    )
+    color_scheme: str = Field(default="light", pattern="^(light|dark)$")
+    #: Also print an A4 PDF with these margins; see browser-render's `/inspect`.
+    pdf_margin: str | None = Field(
+        default=None,
+        pattern=r"^[0-9.]+(mm|cm|in|px)?( [0-9.]+(mm|cm|in|px)?)?$",
+    )
+    topic: uuid.UUID | None = None
+    project: uuid.UUID | None = None
+
+
+#: Two widths at a second or two each, plus a cold browser on the first call.
+PAGE_CHECK_TIMEOUT_S = 90.0
+
+
+@router.post("/page-check", summary="Render a page an agent made and report it")
+async def check_page(body: PageCheckIn, actor: ActorResolverDep) -> dict:
+    """The platform's browser looks at a page so the agent does not need one.
+
+    Full-page screenshots at each width, how wide the page really is, what
+    pushes it wider than the screen, and what failed to load or run. Rendered
+    by the browser-render service that also serves `/fetch` (its own browser
+    there, under the same public-only egress), so the page's own requests
+    cannot reach into this network either.
+    """
+    await actor.require_verified_caller(topic_id=body.topic, project_id=body.project)
+    endpoint = settings.fetch_browser_endpoint
+    if not endpoint:
+        raise SystemBusyError("No page renderer is configured on this deployment")
+    try:
+        async with httpx.AsyncClient(timeout=PAGE_CHECK_TIMEOUT_S) as client:
+            r = await client.post(
+                endpoint.rstrip("/") + "/inspect",
+                json={
+                    "html": body.html,
+                    "widths": body.widths,
+                    "color_scheme": body.color_scheme,
+                    "pdf_margin": body.pdf_margin,
+                },
+            )
+    except httpx.HTTPError as exc:
+        raise SystemBusyError(
+            f"Page renderer unreachable: {type(exc).__name__}"
+        ) from exc
+    if r.status_code != 200:
+        raise SystemBusyError(f"Page renderer answered HTTP {r.status_code}")
+    return ok(r.json())

@@ -7,7 +7,7 @@
 """
 
 from app.domain.agent.harness.prompt import (
-    build_system_prompt,
+    build_session_opening,
     fit_doc_to_budget,
 )
 from app.domain.memory.files_store import IndexSection, MemoryIndex
@@ -66,22 +66,20 @@ def test_an_unsectioned_doc_is_truncated_from_the_tail_with_a_note():
 
 
 def test_the_topic_doc_note_names_the_full_read_command():
-    prompt = build_system_prompt("底稿", "", "## 临时\n" + "长" * 9000, None)
+    opening = build_session_opening(doc="## 临时\n" + "长" * 9000).text
 
-    assert "cheese_doc_get" in prompt
+    assert "cheese_doc_get" in opening
 
 
 def test_compressed_docs_leave_the_memory_block_untouched():
-    prompt = build_system_prompt(
-        "底稿",
-        "",
-        "## 临时\n" + "长" * 9000,
-        _index("- [甲](a.md) — 记忆甲", "- [乙](b.md) — 记忆乙"),
+    prompt = build_session_opening(
+        doc="## 临时\n" + "长" * 9000,
+        memory=_index("- [甲](a.md) — 记忆甲", "- [乙](b.md) — 记忆乙"),
         overview_doc="## 临时\n" + "短" * 9000,
         # 记忆那两段要有得看，得先说清这一轮跑的骨架会把文件对账回去
         # （`keeps_memory`，见 `test_the_memory_section_follows_the_harness.py`）。
         keeps_memory=True,
-    )
+    ).text
 
     assert "记忆甲" in prompt and "记忆乙" in prompt
     assert "## 你的记忆（索引" in prompt

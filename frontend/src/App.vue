@@ -1,4 +1,16 @@
 <template>
+  <!-- The "restoring your session / unreachable, retry" layer for a cold open. It
+       comes first because it has to cover both branches — the shell and the public
+       page: on a weak network, someone whose session was still good used to be
+       sent to the marketing page. See RestorePhase in services/account.ts. -->
+  <SessionRestoreGate
+    :visible="restoreVisible"
+    :phase="restorePhase"
+    :retrying="restoreRetrying"
+    :navigation-failed="restoreNavigationFailed"
+    @retry="retryRestore"
+    @continue="continueAsGuest"
+  />
   <router-view v-if="currentRoute.meta.publicLanding" />
   <my-app v-else>
     <!-- Skip-to-content: the shell's first focusable element, so one Tab lands
@@ -39,7 +51,11 @@
       id="main-content"
       ref="mainRef"
       class="bg-background h-100"
-      :class="{ 'app-main--pending': firstRoutePending, 'app-main--phone': !$vuetify.display.mdAndUp }"
+      :class="{
+        'app-main--pending': firstRoutePending,
+        'app-main--phone': !$vuetify.display.mdAndUp,
+        'app-main--tabs': !hideAppBar && !hideTabs,
+      }"
       tabindex="-1"
     >
       <!-- 内容区是一整块 surface，外框（一级导航、侧栏、顶栏）是 canvas：设计规范 §1.4。
@@ -78,6 +94,9 @@
 
     <!-- 敏感操作前确认身份；withSudo 打开它 -->
     <SudoDialog v-if="sudoWanted" />
+
+    <!-- The main app's keyboard shortcut sheet (? or the keyboard button by the message box). -->
+    <AppShortcutSheet />
 
     <!-- 新建项目 (opened by the rail's "+" affordance)。要填好几项，手机上是整页：
          下一步 / 创建在页头右边，键盘弹起来也够得着。 -->
@@ -217,13 +236,6 @@
       </template>
     </AdaptiveDialog>
 
-    <v-snackbar v-model="showProjectListWarning" :timeout="8000">
-      {{ projectListWarning }}
-      <template #actions>
-        <BaseButton kind="secondary" @click="loadCxProjects">{{ t('work.newProject.retry') }}</BaseButton>
-      </template>
-    </v-snackbar>
-
     <!-- 内测: running-build badge, self-hides unless the box opted in. -->
     <VersionBadge />
 
@@ -251,6 +263,8 @@ import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, r
 import { useRoute } from 'vue-router'
 import { useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
+import { toast } from 'vuetify-sonner'
+import { useEventListener } from '@vueuse/core'
 
 import { avatarColor } from '@/utils/avatar'
 import { scrollBehavior } from '@/utils/motion'
@@ -259,27 +273,38 @@ import { pendingSudo } from '@/utils/sudo'
 import { awaitingCountByProject, useAwaitingCount } from '@/composables/useAwaitingCount'
 import { defaultTeamFor, teamHandleInPath, useNewProjectDialog } from '@/composables/useNewProjectDialog'
 import { usePageTitle } from '@/composables/usePageTitle'
+import { useProjectMenu } from '@/composables/useProjectMenu'
+import { useSessionRestore } from '@/composables/useSessionRestore'
 import { useUnreadNotifications } from '@/composables/useUnreadNotifications'
 import { useWorkspaceLayout } from '@/composables/useWorkspaceLayout'
 
 import ConsentGate from './components/account/ConsentGate.vue'
 import MyApp from './components/common/MyApp.vue'
 import BottomAppBar from './components/common/Navigation/BottomAppBar.vue'
-import { railItems, shortcutTarget, tabItems, workspaceProject } from './components/common/Navigation/destinations'
+import {
+  railItems,
+  railShortcut,
+  shortcutTarget,
+  tabItems,
+  workspaceProject,
+} from './components/common/Navigation/destinations'
 import LeftAppRail from './components/common/Navigation/LeftAppRail.vue'
 import { DEFAULT_SHELL, shellFor, termParams } from './lib/shell'
 import { usePageTitleStore } from './stores/title'
 
 import { createProject, listProjects } from '@/api'
 import { defineCommands } from '@/commands'
-import { copyLink, linkOf } from '@/commands/copy'
+import { copyLink } from '@/commands/copy'
 import CommandPalette from '@/commands/palette/CommandPalette.vue'
-import { installShortcuts } from '@/commands/shortcuts'
+import { installShortcuts, isTypingTarget } from '@/commands/shortcuts'
 import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
+import AppShortcutSheet from '@/components/common/AppShortcutSheet.vue'
 import AppBar from '@/components/common/Navigation/AppBar.vue'
 import MobileAppBar from '@/components/common/Navigation/MobileAppBar.vue'
 import OfflineBanner from '@/components/common/OfflineBanner.vue'
+import SessionRestoreGate from '@/components/common/SessionRestoreGate.vue'
+import { appShortcutSheetOpen } from '@/components/common/shortcutSheet'
 import VersionBadge from '@/components/common/VersionBadge.vue'
 import LeaveProjectDialog from '@/components/LeaveProjectDialog.vue'
 import ResourceLimitsNotice from '@/components/ResourceLimitsNotice.vue'
@@ -417,23 +442,22 @@ function reorderRail(movedId: string, targetId: string, edge: DropEdge) {
   saveProjectOrder(myHandle(), next)
 }
 
-const projectListWarning = ref('')
-const showProjectListWarning = ref(false)
-
 async function loadCxProjects() {
   // Public visitors have no project list; a 401 here would interrupt the landing page.
   if (!AccountService.loggedIn) {
     cxProjects.value = []
-    showProjectListWarning.value = false
     return
   }
   try {
     cxProjects.value = (await listProjects()).data
     saveCachedProjects(myHandle(), cxProjects.value)
-    showProjectListWarning.value = false
   } catch {
-    projectListWarning.value = cxProjects.value.length ? t('work.projectList.stale') : t('work.projectList.unavailable')
-    showProjectListWarning.value = true
+    // 一次性提示：之前是一条常驻的 snackbar，现在并进全局 toast（§3.11）。
+    const message = cxProjects.value.length ? t('work.projectList.stale') : t('work.projectList.unavailable')
+    toast.warning(message, {
+      duration: 8000,
+      action: { label: t('work.newProject.retry'), onClick: () => void loadCxProjects() },
+    })
   }
 }
 onMounted(loadCxProjects)
@@ -442,6 +466,17 @@ onMounted(loadCxProjects)
 // 到的时候，项目侧栏也还没注册，内容区先按没有侧栏的宽度画出来，侧栏一到整块内容
 // 往右跳一个侧栏宽——每个项目页冷打开时最大的一次布局偏移。在那之前内容区不可见、
 // 也不做内边距过渡，露出来的时候已经在最终位置上。
+// 冷打开时「正在恢复登录状态 / 连不上、可以重试」那一层。逻辑在 composable 里
+// ——组件边界规则不允许子组件碰 services/router，而这里是视图那一层。
+const {
+  visible: restoreVisible,
+  phase: restorePhase,
+  retrying: restoreRetrying,
+  navigationFailed: restoreNavigationFailed,
+  retry: retryRestore,
+  continueAsGuest,
+} = useSessionRestore()
+
 const firstRoutePending = ref(true)
 const mainRef = ref<{ $el: Element } | null>(null)
 
@@ -555,39 +590,8 @@ const { count: unreadActivity } = useUnreadNotifications()
 // The same number on the desktop app's icon, whenever this page has read it.
 watch(awaitingCount, desktopBadge)
 
-// 右键 rail 上一个项目：复制链接、打开项目设置，不是所有者的还能退出。都是别处已有
-// 的操作——项目菜单、成员页——这里只是把它们挂到那一格上，对的是那一格的项目，
-// 不一定是正开着的这个。
-const leaveOpen = ref(false)
-const leavingProjectId = ref<string | null>(null)
-function projectMenu(project: Project): MenuAction[] {
-  const actions: MenuAction[] = [
-    {
-      key: 'project.copyLink',
-      label: t('work.room.menu.copyLink'),
-      icon: 'mdi-link-variant',
-      onSelect: () => void copyLink(linkOf(router, { name: 'workspace-project', params: { projectId: project.id } })),
-    },
-    {
-      key: 'project.settings',
-      label: t('work.projectSettings.title'),
-      icon: 'mdi-cog-outline',
-      onSelect: () => void router.push({ name: 'project-settings', params: { projectId: project.id } }),
-    },
-  ]
-  if (project.owner_handle !== myHandle())
-    actions.push({
-      key: 'project.leave',
-      label: t('work.members.leave'),
-      icon: 'mdi-exit-to-app',
-      danger: true,
-      onSelect: () => {
-        leavingProjectId.value = project.id
-        leaveOpen.value = true
-      },
-    })
-  return actions
-}
+// 右键 rail 上一个项目：那一份菜单和退出确认框的状态见 useProjectMenu。
+const { projectMenu, leaveOpen, leavingProjectId } = useProjectMenu(router)
 
 const navSources = computed<NavSources>(() => ({
   projects: railProjects.value,
@@ -612,22 +616,38 @@ const navShell = computed(() => shellFor(railProjects.value, openProjectId.value
 
 const rail = computed(() => railItems(navSources.value, navShell.value))
 
-// rail 的悬停浮层一直在说 ⌘N 能切过去；这里是它真正被绑上的地方。只有真的对上
-// 某一格的数字才登记，对不上的照旧归浏览器——项目只有三个的时候 ⌘7 仍然切你的第
-// 七个标签页。
+// rail 的悬停浮层写着第 N 格的快捷键；这里是它真正被绑上的地方。浏览器里是 G 然后 N，
+// 桌面 app 里是 ⌘N（railShortcut 说了为什么）。只有真的对上某一格的数字才登记。
 defineCommands(() =>
   [1, 2, 3, 4, 5, 6, 7, 8, 9].flatMap((digit) => {
     const to = shortcutTarget(rail.value, digit)
     const item = rail.value.find((it) => it.type === 'item' && it.to === to)
     const title = item?.type === 'item' ? item.title : to
     return to
-      ? [{ id: `rail.${digit}`, title: title ?? to, shortcut: `mod+${digit}`, to, palette: false as const }]
+      ? [
+          {
+            id: `rail.${digit}`,
+            title: title ?? to,
+            shortcut: railShortcut(digit, inApp).shortcut,
+            to,
+            palette: false as const,
+          },
+        ]
       : []
   })
 )
 let stopShortcuts: (() => void) | undefined
 onMounted(() => (stopShortcuts = installShortcuts(router)))
 onBeforeUnmount(() => stopShortcuts?.())
+// `?` 打开快捷键表：焦点不在输入框里、不带修饰键（Shift 本身是打出 ? 的那一下）。后台
+// 有自己那张表（AdminLayout），那里不开这一张。
+useEventListener(window, 'keydown', (event: KeyboardEvent) => {
+  if (event.key !== '?' || event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return
+  // 门口页面（官网）上没有应用外壳，这张表不在 DOM 里；后台有自己那张。
+  if (isTypingTarget(event.target) || currentRoute.meta.publicLanding || currentRoute.path.startsWith('/admin')) return
+  event.preventDefault()
+  appShortcutSheetOpen.value = true
+})
 const tabs = computed(() => tabItems(navSources.value, navShell.value))
 // The "+" rail affordance opens an in-app dialog (no native prompt). On confirm
 // we create the project owned by the current user, refresh the rail so the new
@@ -802,6 +822,20 @@ function projectAvatar(name: string): string {
    不在了，内容还在往下挪。这一下跟着换页一起完成，不单独演。 */
 .app-main--phone {
   transition: none;
+  /* 刘海 / 状态栏：顶栏自己让了 `safe-area-inset-top`（style.css），但 Vuetify 量
+     `--v-layout-top` 用的是它标称的 56px，内容区因此照旧停在 56——多出来的那一截
+     被顶栏压住。补上同一截就对上了；没有顶栏的页面（账号那几页 hideAppBar）这边
+     `--v-layout-top` 是 0，补的就是裸的安全区，内容也不会钻进刘海底下。
+
+     底边不在这里无条件补：顶栏是每页都在的，底栏不是——没有底栏的页面（话题页）
+     最底下那件东西是输入区，安全区由它自己出（见 ChatPanel.vue 那段注释），这里
+     再补一次会叠出两倍的空。所以底边只在底栏真挂着的页面上补（`--tabs`）。
+
+     `env()` 在桌面和无安全区的设备上是 0，整条在那里是空操作。 */
+  padding-top: calc(var(--v-layout-top, 0px) + env(safe-area-inset-top, 0px));
+}
+.app-main--phone.app-main--tabs {
+  padding-bottom: calc(var(--v-layout-bottom, 0px) + env(safe-area-inset-bottom, 0px));
 }
 .page-enter--forward {
   animation: page-enter-forward var(--dur-base) var(--ease-standard) backwards;
@@ -847,8 +881,10 @@ function projectAvatar(name: string): string {
 
 .skip-link {
   position: fixed;
-  top: 10px;
-  left: 16px;
+  /* 出现在左上角：让出顶部与左侧安全区，刘海机上聚焦时不压进状态栏 / 圆角。桌面上
+     `env()` 是 0，位置不变。 */
+  top: calc(10px + env(safe-area-inset-top, 0px));
+  left: calc(16px + env(safe-area-inset-left, 0px));
   z-index: var(--z-banner); /* 压在顶栏和抽屉之上，和 OfflineBanner 同一档 */
   padding: 8px 14px;
   font-size: 14px;

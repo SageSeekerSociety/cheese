@@ -131,7 +131,8 @@ export interface DocAgentListener {
   conversation: (id: string) => void
   queued: () => void
   working: () => void
-  delta: (text: string) => void
+  /** More of the answer: `text` from its `at`-th character on. */
+  delta: (text: string, at?: number) => void
   done: (result: { answer: string; edits: DocEdit[]; stopped: boolean }) => void
   error: (message: string) => void
 }
@@ -142,7 +143,7 @@ export function dispatch(listener: DocAgentListener, event: string, data: Record
   if (event === 'conversation') listener.conversation(text('id'))
   else if (event === 'queued') listener.queued()
   else if (event === 'working') listener.working()
-  else if (event === 'delta') listener.delta(text('text'))
+  else if (event === 'delta') listener.delta(text('text'), typeof data.at === 'number' ? data.at : undefined)
   else if (event === 'done')
     listener.done({
       answer: text('answer'),

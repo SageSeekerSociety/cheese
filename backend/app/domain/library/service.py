@@ -219,6 +219,14 @@ def keep_replaced(project_id: uuid.UUID, name: str, record_id: uuid.UUID) -> Non
     target.write_bytes(source.read_bytes())
 
 
+def read_replaced(project_id: uuid.UUID, name: str, record_id: uuid.UUID) -> bytes:
+    """被替换下来的那一版的字节（`keep_replaced` 存进去的那一份）。"""
+    target = _history_root(project_id) / str(record_id) / PurePosixPath(name).name
+    if not target.is_file():
+        raise NotFoundError(say("libraryVersionNotFound"))
+    return target.read_bytes()
+
+
 def overwrite_library_file(project_id: uuid.UUID, name: str, data: bytes) -> None:
     """用新的字节替换这个名字下的那一份。先写到旁边再换过去，读的人不会读到半份。"""
     target = _safe_path(library_root(project_id), name)

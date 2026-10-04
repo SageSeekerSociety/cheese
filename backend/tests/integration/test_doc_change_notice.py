@@ -19,13 +19,10 @@ import pytest
 
 from app.api.deps import get_chat_service
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.agent.chat import (
-    ChatService,
-    _pending_platform_notices,
-    _platform_preamble,
-)
+from app.domain.agent.chat import ChatService
 from app.domain.agent.harness import CLAUDE_CODE, SessionRef
 from app.domain.agent.harness.prompt import PLATFORM_NOTICE
+from app.domain.agent.prompt import _pending_platform_notices, _platform_preamble
 from app.domain.block.models import AGENT_NOTICE_META_KEY, Block, agent_notice
 from app.domain.block.repositories import BlockRepository
 from app.domain.delivery.input_identity import (
@@ -41,6 +38,12 @@ from tests.integration.conftest import (
     room_agent_seat,
     session_auth_headers,
 )
+from tests.support.living_doc import document_of
+
+
+def _doc(client, room) -> str:
+    """The room's document, as its routes address it."""
+    return f"/documents/{document_of(client, room)}"
 
 
 def _sandbox(project_id: str, topic_id: str) -> dict[str, str]:
@@ -91,7 +94,7 @@ class _Screen:
         self.inputs: list[InputIdentity] = []
         self.pushed: list[str] = []
 
-    async def deliver(
+    async def steer(
         self,
         topic_id,
         text,
@@ -141,7 +144,7 @@ def _running_turn(client, topic_id: str) -> _Screen:
     work_id = uuid.uuid4()
     screen = _Screen(session, work_id, service.confirm_prompt_receipt)
     service._active_turn_ids[uuid.UUID(topic_id)] = {work_id}
-    service._compute.deliver = screen.deliver  # type: ignore[method-assign]
+    service._compute.steer = screen.steer  # type: ignore[method-assign]
     app.dependency_overrides[get_chat_service] = lambda: service
     return screen
 
@@ -154,7 +157,7 @@ def _restore_chat_service():
 
 def _put(client, topic_id, content, version, author="alice", headers=None):
     return client.put(
-        f"/topics/{topic_id}/doc",
+        _doc(client, topic_id),
         json={"content": content, "expected_version": version},
         headers=headers or session_auth_headers(author),
     )
@@ -216,7 +219,7 @@ def test_a_doc_edit_between_turns_is_pushed_at_nobody(client):
         workspace_root="/tmp/doc-notice-ws",
         compute=stub_compute(),
     )
-    service._compute.deliver = screen.deliver  # type: ignore[method-assign]
+    service._compute.steer = screen.steer  # type: ignore[method-assign]
     app.dependency_overrides[get_chat_service] = lambda: service
 
     assert _put(client, tid, DOC + "\n再补一段\n", 1).status_code == 200
@@ -309,7 +312,7 @@ def test_the_version_it_was_told_is_the_one_it_must_write_against(client):
         headers=sandbox,
     )
     assert rebased.status_code == 200
-    doc = client.get(f"/topics/{tid}/doc").json()["data"]
+    doc = client.get(_doc(client, tid)).json()["data"]
     assert "人补的：先做召回" in doc["content"]
     assert "芝士写的：召回做完了" in doc["content"]
 

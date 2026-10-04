@@ -4,8 +4,12 @@
     :active="!notification.read"
     :class="{ 'unread-notification': !notification.read }"
     class="notification-item py-2 px-4 transition-fast-in-fast-out"
+    @contextmenu="rowMenu.open('item', $event)"
     @click="navigateToTarget"
   >
+    <AdaptiveMenu v-bind="rowMenu.bind('item')" :actions="itemActions">
+      <template #activator />
+    </AdaptiveMenu>
     <div class="d-flex align-start w-100">
       <notification-avatar :notification="notification" class="me-3 mt-1" />
 
@@ -25,7 +29,7 @@
              have no hover, so they are always shown there. Type-specific actions
              (accept / decline) do not carry this class and stay visible. -->
         <div
-          class="d-flex justify-end align-center mt-2"
+          class="d-flex justify-end align-center mt-3"
           :class="{ 'notification-item__actions': !(renderedActions && renderedActions.length > 0) }"
         >
           <template v-if="renderedActions && renderedActions.length > 0">
@@ -52,7 +56,7 @@
             >
               {{ t('notifications.common.markAsRead') }}
             </BaseButton>
-            <BaseButton kind="ghost" size="sm" density="comfortable" class="px-2 ms-2" @click.stop="deleteNotification">
+            <BaseButton kind="ghost" size="sm" density="comfortable" class="px-2 ms-4" @click.stop="askDelete">
               {{ t('notifications.common.delete') }}
             </BaseButton>
           </template>
@@ -66,7 +70,11 @@
     :active="!notification.read"
     :class="{ 'unread-notification': !notification.read }"
     class="notification-item py-2 px-4 transition-fast-in-fast-out"
+    @contextmenu="rowMenu.open('item', $event)"
   >
+    <AdaptiveMenu v-bind="rowMenu.bind('item')" :actions="itemActions">
+      <template #activator />
+    </AdaptiveMenu>
     <div class="d-flex align-start w-100">
       <notification-avatar :notification="notification" class="me-3 mt-1" />
 
@@ -86,7 +94,7 @@
              have no hover, so they are always shown there. Type-specific actions
              (accept / decline) do not carry this class and stay visible. -->
         <div
-          class="d-flex justify-end align-center mt-2"
+          class="d-flex justify-end align-center mt-3"
           :class="{ 'notification-item__actions': !(renderedActions && renderedActions.length > 0) }"
         >
           <template v-if="renderedActions && renderedActions.length > 0">
@@ -113,7 +121,7 @@
             >
               {{ t('notifications.common.markAsRead') }}
             </BaseButton>
-            <BaseButton kind="ghost" size="sm" density="comfortable" class="px-2 ms-2" @click.stop="deleteNotification">
+            <BaseButton kind="ghost" size="sm" density="comfortable" class="px-2 ms-4" @click.stop="askDelete">
               {{ t('notifications.common.delete') }}
             </BaseButton>
           </template>
@@ -121,10 +129,23 @@
       </div>
     </div>
   </v-list-item>
+
+  <!-- 删除是一条不可撤销的动，所以先问一句（设计系统 §3.7）：确认键写动作本身、
+     实心红，且不在悬停里出现。点遮罩或按 Esc 都不关。 -->
+  <ConfirmDialog
+    v-model="confirmingDelete"
+    :title="t('notifications.common.deleteTitle')"
+    :confirm-label="t('notifications.common.delete')"
+    danger
+    @confirm="doDelete"
+  >
+    {{ t('notifications.common.deleteHint') }}
+  </ConfirmDialog>
 </template>
 
 <script setup lang="ts">
 import type { Component } from 'vue'
+import type { MenuAction } from '@/components/common/menuAction'
 import type { Notification } from '@/network/api/notifications/types'
 import type { RenderedNotificationContent } from './renders/NotificationRenderUtils'
 
@@ -135,9 +156,13 @@ import { toast } from 'vuetify-sonner'
 
 import { useFormattedTime } from '@/utils/dateTime'
 
+import { useRowMenu } from '@/composables/useRowMenu'
+
 import NotificationAvatar from './NotificationAvatar.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
+import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import { getNotificationRenderer } from '@/services/notification/registry'
 
 const props = defineProps<{
@@ -165,6 +190,35 @@ const updateContentCache = () => {
 }
 
 const renderedActions = computed(() => contentCache.value?.actions || [])
+
+// 右键一条通知：行里那几颗（这一类自己的，或标为已读、删除）收成一份，弹在鼠标那一点上。
+const rowMenu = useRowMenu<'item'>()
+const itemActions = computed<MenuAction[]>(() => {
+  if (renderedActions.value.length > 0)
+    return renderedActions.value.map((action, index) => ({
+      key: `action.${index}`,
+      label: action.text,
+      icon: action.color === 'error' ? 'mdi-close' : 'mdi-check',
+      danger: action.color === 'error',
+      onSelect: () => void action.handler(),
+    }))
+  const actions: MenuAction[] = []
+  if (!props.notification.read)
+    actions.push({
+      key: 'read',
+      label: t('notifications.common.markAsRead'),
+      icon: 'mdi-check-all',
+      onSelect: () => props.onMarkAsRead(props.notification.id),
+    })
+  actions.push({
+    key: 'delete',
+    label: t('notifications.common.delete'),
+    icon: 'mdi-delete-outline',
+    danger: true,
+    onSelect: () => (confirmingDelete.value = true),
+  })
+  return actions
+})
 
 const hasRouterLink = computed(() => {
   return !!contentCache.value?.routerLink
@@ -206,8 +260,15 @@ const markAsRead = (event: Event) => {
   props.onMarkAsRead(props.notification.id)
 }
 
-const deleteNotification = (event: Event) => {
+// 删除不可撤销，点一下先弹确认框：这颗按钮就在正文旁边，条条都常驻，误触的代价是
+// 一条再也回不来的通知。确认之后再真的删。
+const confirmingDelete = ref(false)
+const askDelete = (event: Event) => {
   event.stopPropagation()
+  confirmingDelete.value = true
+}
+const doDelete = () => {
+  confirmingDelete.value = false
   props.onDelete(props.notification.id)
 }
 

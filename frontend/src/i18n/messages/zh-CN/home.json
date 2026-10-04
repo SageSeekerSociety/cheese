@@ -3,7 +3,6 @@
     "waiting": "等你处理",
     "waitingEmpty": "暂无等你处理的事项",
     "loadFailed": "无法读取待处理事项",
-    "retry": "重试",
     "feed": "动态",
     "reason": {
       "reviewer": "待你审阅",
@@ -22,6 +21,23 @@
     "expand": "展开 {name}",
     "collapse": "收起 {name}",
     "unreadActivity": "有新动态",
-    "teamCredits": "额度"
+    "teamCredits": "额度",
+    "leaveTeam": "退出团队",
+    "leaveTeamTitle": "退出「{name}」？",
+    "leaveTeamBody": "退出后你不再是这个团队的成员，也看不到它的项目了。要回来得重新加入。",
+    "leaveTeamDone": "已退出「{name}」",
+    "leaveTeamFailed": "退出团队失败",
+    "transferTeam": "转让团队",
+    "transferTeamTitle": "转让「{name}」",
+    "transferTeamBody": "选一位成员接手这个团队。转让后 TA 是所有者，你成为管理员。",
+    "transferTeamNoOne": "团队里还没有别的成员可以接手。",
+    "transferTeamLoadFailed": "读取团队成员失败",
+    "transferTeamFailed": "转让团队失败",
+    "disbandTeam": "解散团队",
+    "disbandTeamTitle": "解散「{name}」？",
+    "disbandTeamBody": "解散后所有成员都会离开这个团队，无法撤销。团队里的项目要先全部归档；归档的项目解散后只有项目所有者和外部成员还看得到。",
+    "disbandTeamDone": "已解散「{name}」",
+    "disbandTeamFailed": "解散团队失败",
+    "disbandTeamTypeName": "输入团队名「{name}」确认"
   }
 }

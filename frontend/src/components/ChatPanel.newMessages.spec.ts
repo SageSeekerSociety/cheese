@@ -59,12 +59,14 @@ function arrive(block: Block) {
   sockets[0].onmessage?.({ data: JSON.stringify({ type: 'user_block', block }) })
 }
 
-// happy-dom 不排版：给滚动容器一个高度，并把它停在离底部很远的地方。
+// happy-dom 不排版：给滚动容器一个高度，并让人从底部往上翻到离底部很远的地方。
 function scrollAway(pane: HTMLElement) {
   Object.defineProperty(pane, 'scrollHeight', { configurable: true, value: 4000 })
   Object.defineProperty(pane, 'clientHeight', { configurable: true, value: 600 })
-  pane.scrollTop = 0
   pane.scrollTo = vi.fn()
+  pane.scrollTop = 3400
+  pane.dispatchEvent(new Event('scroll'))
+  pane.scrollTop = 0
   pane.dispatchEvent(new Event('scroll'))
 }
 

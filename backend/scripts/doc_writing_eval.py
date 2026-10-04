@@ -7,8 +7,8 @@ analysis), each with its material and a follow-up edit. Each model writes
 every document with the guide as its system prompt, then makes the edit; a
 judge model scores each document against the rubric below without knowing
 which model wrote it. Run it after changing the guide
-(`app/domain/agent/skill_library/doc_writing.md`) or the always-on writing
-rules, and compare the averages with the previous run.
+(`app/domain/agent/skill_library/doc_writing.md` and `doc_blocks.md`) or the
+always-on writing rules, and compare the averages with the previous run.
 
 It calls models through the LLM gateway with the admin key, so it runs where
 the backend's settings are. Pass the script with `-c`, which leaves stdin for
@@ -20,9 +20,9 @@ the documents:
         judge gpt-6.1-sol < written.jsonl > scores.jsonl
     python backend/scripts/doc_writing_eval.py summary < scores.jsonl
 
-To try a guide before it is deployed, add
-`-e DOC_WRITING_GUIDE="$(awk 'n>=2; /^---$/{n++}' <the guide file>)"` to the
-`write` command.
+To try a guide before it is deployed, print it from the checkout and pass it
+in: add `-e DOC_WRITING_GUIDE="$(cd backend && PYTHONPATH=. uv run python
+scripts/doc_writing_eval.py guide)"` to the `write` command.
 
 Use it to decide the guide and the blocks, not to pick a model: six documents
 are too few, and the judge is a model too.
@@ -285,9 +285,17 @@ def guide() -> str:
 
     if os.environ.get("DOC_WRITING_GUIDE"):
         return os.environ["DOC_WRITING_GUIDE"]
+    from app.domain.agent.harness.prompt import WRITING
     from app.domain.agent.skills import load_skills
 
-    return load_skills(["doc-writing"])
+    # What a document agent gets: the writing rules, the guide, and the blocks.
+    return "\n\n".join(
+        [
+            WRITING,
+            load_skills(["cheese-docs"]),
+            "## references/blocks.md\n\n" + load_skills(["doc-blocks"]),
+        ]
+    )
 
 
 def write(models: list[str]) -> None:
@@ -360,8 +368,10 @@ def main() -> None:
         judge(rest[0], rows())
     elif command == "summary":
         summary(rows())
+    elif command == "guide":
+        print(guide())
     else:
-        raise SystemExit(f"unknown command {command!r}: write, judge or summary")
+        raise SystemExit(f"unknown command {command!r}: write, judge, summary or guide")
 
 
 if __name__ == "__main__":

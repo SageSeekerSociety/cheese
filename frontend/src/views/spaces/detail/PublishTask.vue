@@ -583,6 +583,8 @@ async function confirmQuickFromPdf(taskData: TaskFormSubmitData, id: number) {
 </template>
 
 <style scoped lang="scss">
+@use '../../../styles/breakpoints.scss' as bp;
+
 .pub__mode {
   flex: 0 0 auto;
 }
@@ -646,7 +648,8 @@ async function confirmQuickFromPdf(taskData: TaskFormSubmitData, id: number) {
   line-height: 1.7;
 }
 
-@media (max-width: 1100px) {
+// 断点收进共享 token（`styles/breakpoints.scss`）：1100 → 1180（`$bp-compact`）。
+@include bp.below(bp.$bp-compact) {
   .pub__grid {
     grid-template-columns: minmax(0, 1fr);
   }

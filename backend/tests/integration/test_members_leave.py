@@ -170,7 +170,9 @@ def test_removing_the_last_owner_of_a_topic_writes_nothing(client, bearer):
     都不做更难收拾，因为名册上那个人已经进不去任何房间了。"""
     pid = _project(client)
     _add(client, pid, "alice")
+    _add(client, pid, "bob")
     tid = _topic(client, pid, "alice", title="设计讨论")
+    _seat(client, tid, "bob", by="alice")
 
     r = client.delete(
         f"/projects/{pid}/members/alice", headers=session_auth_headers(OWNER)
@@ -186,8 +188,9 @@ def test_the_rooms_that_would_lose_their_owner_are_named_as_a_list(client, beare
     and quotes them its own way; the Chinese sentence reads as it always did."""
     pid = _project(client)
     _add(client, pid, "alice")
-    _topic(client, pid, "alice", title="设计讨论")
-    _topic(client, pid, "alice", title="周会")
+    _add(client, pid, "bob")
+    for title in ("设计讨论", "周会"):
+        _seat(client, _topic(client, pid, "alice", title=title), "bob", by="alice")
 
     r = _leave(client, pid, "alice")
 
@@ -209,7 +212,8 @@ def test_an_unnamed_room_is_named_in_the_readers_language(client, bearer):
     showing Chinese inside an English line."""
     pid = _project(client)
     _add(client, pid, "alice")
-    _topic(client, pid, "alice", title=None)
+    _add(client, pid, "bob")
+    _seat(client, _topic(client, pid, "alice", title=None), "bob", by="alice")
 
     r = _leave(client, pid, "alice")
 
@@ -321,15 +325,17 @@ def test_a_non_member_gets_a_conflict(client, bearer):
     assert r.json()["error"]["message"] == "Not a member"
 
 
-def test_the_last_owner_of_a_topic_cannot_walk_out(client, bearer):
-    """他是某间房唯一的 owner 时退不了 —— 撤掉他，那间房就没 owner 了。
+def test_the_last_owner_of_a_topic_cannot_walk_out_on_its_other_members(client, bearer):
+    """他是某间房唯一的 owner、房里还坐着别人时退不了 —— 撤掉他，那几个人就留在
+    一间没人管得了的房里。
 
-    这不是「少了一个人」：只有 owner / admin 能管名册，而无主房间在产品里是死路
-    （``TopicMemberService._require_manager`` 那个逃逸口就是为修这种房间存在的）。
-    所以报错要点名是哪间房，并且**什么也不改**。"""
+    只有 owner / admin 能管名册（``TopicMemberService._require_manager`` 那个逃逸口
+    就是为修这种房间存在的）。所以报错要点名是哪间房，并且**什么也不改**。"""
     pid = _project(client)
     _add(client, pid, "alice")
+    join_project_team(client, pid, "bob")
     tid = _topic(client, pid, "alice", title="设计讨论")
+    _seat(client, tid, "bob", by="alice")
 
     r = _leave(client, pid, "alice")
     assert r.status_code == 422, r.text
@@ -340,9 +346,7 @@ def test_the_last_owner_of_a_topic_cannot_walk_out(client, bearer):
     assert "alice" in _project_handles(client, pid)
     assert "alice" in _topic_handles(client, tid)
 
-    # 而且这不是死结：把房间交给别人（一位队友）之后，她就走得掉了。
-    join_project_team(client, pid, "bob")
-    _seat(client, tid, "bob", by="alice")
+    # 而且这不是死结：把房间交给那位室友之后，她就走得掉了。
     handed_over = client.put(
         f"/topics/{tid}/members/bob",
         json={"role": "owner"},
@@ -350,6 +354,40 @@ def test_the_last_owner_of_a_topic_cannot_walk_out(client, bearer):
     )
     assert handed_over.status_code == 200, handed_over.text
     assert _leave(client, pid, "alice").status_code == 200
+
+
+def test_a_room_with_only_its_owner_in_it_does_not_hold_them_back(client, bearer):
+    """房里除了她只有芝士：没有谁会被留在一间没人管的房里，所以她退得掉。
+
+    房间还在，项目里的人照样进得来，管项目的人也能从逃逸口接手它。"""
+    pid = _project(client)
+    _add(client, pid, "alice")
+    tid = _topic(client, pid, "alice", title="她一个人的房")
+
+    r = _leave(client, pid, "alice")
+
+    assert r.status_code == 200, r.text
+    assert "alice" not in _project_handles(client, pid)
+    assert "alice" not in _topic_handles(client, tid)
+    room = client.get(f"/topics/{tid}", headers=session_auth_headers(OWNER))
+    assert room.status_code == 200, room.text
+
+
+def test_a_room_with_an_admin_in_it_does_not_hold_its_owner_back(client, bearer):
+    """房里另有一位 admin：他管得了名册，owner 走了房间也不会没人管，所以不拦。"""
+    pid = _project(client)
+    _add(client, pid, "alice")
+    _add(client, pid, "bob")
+    _add(client, pid, "carol")
+    tid = _topic(client, pid, "alice", title="有人管的房")
+    _seat(client, tid, "bob", by="alice", role="admin")
+    _seat(client, tid, "carol", by="alice")
+
+    r = _leave(client, pid, "alice")
+
+    assert r.status_code == 200, r.text
+    assert set(_topic_handles(client, tid)) >= {"bob", "carol"}
+    assert "alice" not in _topic_handles(client, tid)
 
 
 def test_a_previous_owner_leaves_the_project_and_stays_on_its_team(client, bearer):
@@ -377,6 +415,7 @@ def test_a_previous_owner_leaves_the_project_and_stays_on_its_team(client, beare
     sources = {m["user_handle"]: m.get("source") for m in rows if not m.get("agent")}
     assert sources["bob"] == "owner"
     assert sources["alice"] == "team"
+    _seat(client, root, "bob", by="alice")
 
     refused = _leave(client, pid, "alice")
     assert refused.status_code == 422, refused.text
@@ -385,7 +424,6 @@ def test_a_previous_owner_leaves_the_project_and_stays_on_its_team(client, beare
     assert "alice" in _project_handles(client, pid)
 
     # 把总览那一间交给 bob 之后，她就走得掉了。
-    _seat(client, root, "bob", by="alice")
     moved = client.put(
         f"/topics/{root}/members/bob",
         json={"role": "owner"},

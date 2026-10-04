@@ -47,11 +47,15 @@ async def test_a_machine_still_updating_its_connector_is_not_a_server_fault() ->
 async def test_the_owner_going_away_mid_read_is_waited_out_not_reported(
     monkeypatch, caplog
 ) -> None:
-    from app.domain.agent.harness.driven import runtime as driven_runtime
-    from app.domain.agent.harness.pi import runtime as pi_runtime
+    from app.domain.agent.session_host import host as session_host
+    from app.domain.agent.session_host.contract import SessionRef
+    from app.domain.agent.session_host.driver import Launched
 
-    poller = pi_runtime.PiRuntime.__new__(pi_runtime.PiRuntime)
-    seat = (__import__("uuid").uuid4(), "pi")
+    host = session_host.SessionHost(hub=object())
+    ref = SessionRef("pi", "rooms/a-room/pi")
+    running = session_host._Running(
+        "center", Launched("", frozenset(), ""), None, "", None
+    )
     reads = 0
 
     class Subscription:
@@ -62,20 +66,11 @@ async def test_the_owner_going_away_mid_read_is_waited_out_not_reported(
             nonlocal reads
             reads += 1
             if reads > 2:
-                poller.subscriptions.clear()
+                running.stopping = True
                 return 0
             raise httpx.RemoteProtocolError(
                 "Server disconnected without sending a response."
             )
-
-    poller.subscriptions = {seat: Subscription()}
-    poller.work = {}
-    poller.live = {}
-    poller.woken = {}
-    poller.tasks = {}
-    poller.unreachable = {}
-    poller.told_waiting = {}
-    poller.answering = set()
 
     class _NoSleep:
         """Real asyncio, minus the two-second wait between retries."""
@@ -86,12 +81,16 @@ async def test_the_owner_going_away_mid_read_is_waited_out_not_reported(
         async def sleep(self, _seconds):
             return None
 
-    monkeypatch.setattr(driven_runtime, "asyncio", _NoSleep())
+    monkeypatch.setattr(session_host, "asyncio", _NoSleep())
+    heard = []
 
-    with caplog.at_level(logging.WARNING, logger=pi_runtime.logger.name):
-        await poller._poll(seat)
+    async def hand(read):
+        heard.append(read.event)
 
-    said = [r for r in caplog.records if r.name == pi_runtime.logger.name]
+    with caplog.at_level(logging.WARNING, logger=session_host.logger.name):
+        await host._pump(ref, running, Subscription(), hand, False)
+
+    said = [r for r in caplog.records if r.name == session_host.logger.name]
     assert len(said) == 1, said
     assert said[0].levelname == "WARNING"
     assert "waiting for the connection owner" in said[0].getMessage()

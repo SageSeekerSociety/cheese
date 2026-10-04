@@ -2,23 +2,21 @@
 lacks it, and a seat whose runner is known to be alive is not launched again
 while nothing the host holds a running runner to has changed.
 
-The channel as a room's sends reach it, against a session host that keeps the
+A room's sessions as its sends start them, against a session host that keeps the
 archives it was given by digest and the one runner of the seat, and keeps every
 launch program it was sent.
 """
 
 import ast
-import base64
 import json
 
 import pytest
 
-from app.domain.agent.harness import Opening, SessionRef
-from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
+from app.domain.agent.harness import CODEX, SessionRef
 from app.domain.agent.harness.codex import launch as codex_launch
-from app.domain.agent.harness.codex.channel import CodexChannel
+from app.domain.agent.room.sessions import RoomSessions
 from tests.integration import test_central_room_sessions as central_sessions
-from tests.integration.test_central_room_sessions import AGENT, channel
+from tests.integration.test_central_room_sessions import AGENT, channel, sessions
 
 #: A project with its agent and one room in it.
 room = central_sessions.room
@@ -26,7 +24,7 @@ room = central_sessions.room
 
 class CodexHost:
     """The session host as a Codex launch finds it (``host.configure``): a
-    running runner keeps its execution target, owner and teammate, and is moved
+    running runner keeps its execution target and teammate, and is moved
     to the model a launch asks for."""
 
     def __init__(self) -> None:
@@ -56,15 +54,21 @@ class CodexHost:
         return {"exit": 0, "stdout": json.dumps(answer)}
 
 
-def codex_seat(client, monkeypatch) -> tuple[CodexHost, CodexChannel]:
+def codex_seat(client, monkeypatch) -> tuple[CodexHost, RoomSessions]:
     central = channel(client, monkeypatch)
     host = CodexHost()
     central._hub.exec = host.exec
-    return host, CodexChannel(central, ClaudeLaunch("system").execution)
+    return host, sessions(central, CODEX)
 
 
 def _carried_archive(program: str) -> bool:
-    return len(program) > len(base64.b64encode(codex_launch.build()))
+    # Read off the payload rather than the program's length: the launch also
+    # carries the platform's skills, which alone outgrew the archive.
+    line = next(line for line in program.splitlines() if line.startswith("payload="))
+    payload = json.loads(
+        ast.literal_eval(line.removeprefix("payload=json.loads(")[:-1])
+    )
+    return "archive" in payload
 
 
 @pytest.mark.anyio
@@ -73,23 +77,26 @@ async def test_codex_is_sent_its_runner_only_when_the_host_does_not_hold_it(
 ):
     project, topic = room
     host, codex = codex_seat(client, monkeypatch)
-    session = SessionRef(project, topic, AGENT, harness="codex")
-    opening = Opening("System", model="fixture")
+    session = SessionRef(project, topic, AGENT, harness=CODEX)
 
     async def exercise():
-        await codex.ensure(session, opening)
+        await codex.ensure(session, system_prompt="System", model="fixture")
         assert [_carried_archive(each) for each in host.programs] == [False, True]
 
         # The next launch the host is asked for (a restarted backend, say).
         host.programs.clear()
-        await codex.ensure(session, opening)
+        await sessions(codex.channel, CODEX).ensure(
+            session, system_prompt="System", model="fixture"
+        )
         assert [_carried_archive(each) for each in host.programs] == [False]
 
         # A deploy changed the runner.
         built = codex_launch.build()
         monkeypatch.setattr(codex_launch, "build", lambda: built + b"\n")
         host.programs.clear()
-        await codex.ensure(session, opening)
+        await sessions(codex.channel, CODEX).ensure(
+            session, system_prompt="System", model="fixture"
+        )
         assert [_carried_archive(each) for each in host.programs] == [False, True]
 
     client.portal.call(exercise)
@@ -101,27 +108,28 @@ async def test_a_live_codex_seat_is_launched_again_only_when_its_launch_changed(
 ):
     project, topic = room
     host, codex = codex_seat(client, monkeypatch)
-    session = SessionRef(project, topic, AGENT, harness="codex")
+    session = SessionRef(project, topic, AGENT, harness=CODEX)
 
     async def exercise():
-        first = await codex.ensure(session, Opening("System", model="fixture"))
+        first = await codex.ensure(session, system_prompt="System", model="fixture")
         host.programs.clear()
         # A warm turn: another system prompt, nothing the runner is held to.
         again = await codex.ensure(
-            session, Opening("Another prompt", model="fixture"), first
+            session, system_prompt="Another prompt", model="fixture"
         )
-        assert again is first
+        assert again == first
         assert host.programs == []
 
         # A new model has to reach the running runner.
-        moved = await codex.ensure(session, Opening("System", model="another"), first)
+        await codex.ensure(session, system_prompt="System", model="another")
         assert len(host.programs) == 1
         assert host.model == "another"
-        assert moved.launch != first.launch
 
         # Nobody vouches for the seat: the host is asked.
         host.programs.clear()
-        await codex.ensure(session, Opening("System", model="another"))
+        await sessions(codex.channel, CODEX).ensure(
+            session, system_prompt="System", model="another"
+        )
         assert len(host.programs) == 1
 
     client.portal.call(exercise)

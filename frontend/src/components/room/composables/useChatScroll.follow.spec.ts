@@ -52,6 +52,7 @@ async function mounted(content: number) {
   scroll.contentRef.value = document.createElement('div')
   await nextTick()
   box.el.scrollTop = content
+  scroll.rememberScroll('room') // 那一下滚动的 scroll 事件
   return { box, scroll }
 }
 
@@ -70,5 +71,33 @@ describe('停在底部时跟着内容走', () => {
     box.grow(10)
     fire()
     expect(box.el.scrollTop).toBe(100)
+  })
+})
+
+// 刚打开的话题停在底部：底下那几行第一次画出来，比占位的估计高度高出一大截。浏览器
+// 先用滚动锚定把 scrollTop 挪一点、发一个 scroll 事件，ResizeObserver 晚一步才看到
+// 变高——线上实测每次整页打开都停在离最新一条 1152px 的地方。
+describe('打开话题，底下的行画出来变高了', () => {
+  it('浏览器自己挪的那一下不算人往上翻：最后仍停在最新一条', async () => {
+    const { box, scroll } = await mounted(1000)
+    expect(box.el.scrollTop).toBe(600)
+    box.grow(1800)
+    box.el.scrollTop = 600 + 900 // 锚定只补回了一半，离底部还差 900px
+    scroll.rememberScroll('t-open') // 那个 scroll 事件
+    fire() // 然后才是 ResizeObserver
+    expect(box.el.scrollTop).toBe(2400)
+    expect(scroll.atBottom.value).toBe(true)
+    expect(scroll.restoresToBottom('t-open')).toBe(true)
+  })
+
+  it('人真的往上翻了：不跟、不拽回去，下次打开回到他停的地方', async () => {
+    const { box, scroll } = await mounted(1000)
+    box.el.scrollTop = 300
+    scroll.rememberScroll('t-read')
+    box.grow(500)
+    fire()
+    expect(box.el.scrollTop).toBe(300)
+    expect(scroll.atBottom.value).toBe(false)
+    expect(scroll.restoresToBottom('t-read')).toBe(false)
   })
 })

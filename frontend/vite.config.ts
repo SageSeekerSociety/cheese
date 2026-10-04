@@ -6,15 +6,19 @@ import vue from '@vitejs/plugin-vue'
 import vueJsx from '@vitejs/plugin-vue-jsx'
 // Utilities
 import { defineConfig, type Plugin } from 'vite'
-import { prismjsPlugin } from 'vite-plugin-prismjs'
 import { VitePWA } from 'vite-plugin-pwa'
 import vuetify, { transformAssetUrls } from 'vite-plugin-vuetify'
 import svgLoader from 'vite-svg-loader'
 import { configDefaults } from 'vitest/config'
 
-// 每个 fork 常驻约 3–5 GB（happy-dom 加上各自编一遍 Vuetify/SCSS），所以按内存算上限：每 6 GB 一个、封顶 16，VITEST_MAX_FORKS 可覆盖。
+// fork 数取「核数 - 1」和「每 3 GB 内存一个」中较小的那个，封顶 16，VITEST_MAX_FORKS 可覆盖。
+// 一个 fork 的内存峰值实测约 1.7–2.1 GB（happy-dom 加上各自编一遍 Vuetify/SCSS）。
+// CI 的 4 核 16 GB 机器上算出来是 3：fork 数和核数相同时，对时序敏感的组件测试会偶发失败。
 const envMaxForks = Number.parseInt(process.env.VITEST_MAX_FORKS ?? '', 10)
-const maxForks = envMaxForks > 0 ? envMaxForks : Math.max(1, Math.min(16, Math.floor(os.totalmem() / 6 / 1024 ** 3)))
+const maxForks =
+  envMaxForks > 0
+    ? envMaxForks
+    : Math.max(1, Math.min(16, os.availableParallelism() - 1, Math.floor(os.totalmem() / 3 / 1024 ** 3)))
 
 // https://vitejs.dev/config/
 // /demo/<名字> 是演示页（demo.html），不是应用。线上由 nginx.conf 那条 location 分开，
@@ -106,10 +110,9 @@ const MINIFY = {
   codegen: true,
 }
 
-// What Prism highlights (see the prismjsPlugin call for why these). The plugin
-// adds their imports while transforming, which the dev server's dependency scan
-// cannot see; optimizeDeps.include lists them for the reason it lists
-// Vuetify's components.
+// What Prism highlights. The application imports these grammars/plugins itself
+// (src/utils/prism.ts — keep the two in sync); they are listed again in
+// optimizeDeps.include for the reason it lists Vuetify's components.
 const PRISM_LANGUAGES = [
   'markup',
   'css',
@@ -131,6 +134,107 @@ const PRISM_LANGUAGES = [
 ]
 const PRISM_PLUGINS = ['line-numbers', 'copy-to-clipboard']
 
+// The named chunks, a library before the ones built on it (see codeSplitting).
+const CHUNKS = [
+  'preload-helper',
+  // The transpiler's own helpers (~1 KB), claimed before any library that uses
+  // them. Without this group the `marked` group takes them with it as imports
+  // (see codeSplitting), and because the eager app code — class fields in
+  // `services/account.ts` and the axios layer — needs `_defineProperty`, the
+  // entry ended up importing the `marked` chunk and pulling 88 KB of Markdown
+  // parser onto first paint for a helper one twentieth its size.
+  'runtime-helpers',
+  'vue',
+  'dayjs',
+  'lodash',
+  'axios',
+  'zod',
+  'dompurify',
+  'marked',
+  'prosemirror',
+  'vuetify',
+  'tiptap',
+  'viewerjs',
+  'editorjs',
+  'monaco',
+]
+
+// Which named chunk a module goes in; null leaves it to Rolldown, which places
+// a module by who imports it.
+function chunkName(id: string): string | null {
+  // Vite's dynamic-import helper (`\0vite/preload-helper.js`), which every
+  // chunk with an `import()` shares, in a chunk of its own.
+  if (id.includes('vite/preload-helper')) {
+    return 'preload-helper'
+  }
+  // The OXc/Babel helper shims (`@oxc-project/runtime/helpers/esm/*`) that the
+  // transpiled libraries and app code share. Their id is the virtual
+  // `\0@oxc-project+runtime@…/helpers/esm/*` — a `\0` prefix, the pnpm
+  // directory's `+`, and no `node_modules` segment — so this test sits before
+  // that guard and matches on the package name alone. Their own chunk keeps
+  // them out of whichever library would otherwise claim them as an import.
+  if (id.includes('oxc-project')) {
+    return 'runtime-helpers'
+  }
+  if (id.includes('node_modules')) {
+    // Monaco is the largest package in node_modules and only the code
+    // panels use it, yet the catch-all `vendor` at the bottom pulled it
+    // into the one chunk every page preloads (1.29 MB gzipped, most of
+    // it Monaco). In its own chunk it is reachable only from the lazy
+    // TopicView route, so first paint no longer pays for it.
+    if (id.includes('monaco-editor')) {
+      return 'monaco'
+    }
+    if (id.includes('prosemirror')) {
+      return 'prosemirror'
+    }
+    if (id.includes('dompurify')) {
+      return 'dompurify'
+    }
+    if (id.includes('marked')) {
+      return 'marked'
+    }
+    if (id.includes('zod')) {
+      return 'zod'
+    }
+    if (id.includes('viewerjs')) {
+      return 'viewerjs'
+    }
+    if (id.includes('tiptap')) {
+      return 'tiptap'
+    }
+    if (id.includes('vuetify')) {
+      return 'vuetify'
+    }
+    // Vue 及其相关
+    if (id.match(/(vue|vue-router)/)) {
+      return 'vue'
+    }
+    // lodash 单独一个 chunk
+    if (id.includes('lodash')) {
+      return 'lodash'
+    }
+    // Editor.js 相关依赖归为一组
+    if (id.includes('@editorjs')) {
+      return 'editorjs'
+    }
+    // dayjs 单独一个 chunk
+    if (id.includes('dayjs')) {
+      return 'dayjs'
+    }
+    // axios 如果使用量较大，也可单独拆分
+    if (id.includes('axios')) {
+      return 'axios'
+    }
+    // Everything else is left to Rolldown, which places a package by who
+    // imports it. A catch-all `vendor` here once put exceljs, pdf.js,
+    // xterm, yjs and KaTeX on every first paint, although the code only
+    // reaches them through `import()`: a manual chunk ignores that and
+    // becomes a static import of the entry.
+  }
+  return null
+}
+
 export default defineConfig({
   plugins: [
     demoPages(),
@@ -147,27 +251,12 @@ export default defineConfig({
       // class. This file points both at the app's own font stack.
       styles: { configFile: 'src/styles/vuetify-settings.scss' },
     }),
-    prismjsPlugin({
-      // The list is what this product's code blocks actually contain — agent
-      // output and repository snippets — not what Prism offers. **Adding a
-      // grammar is a bundle decision**: `'all'` meant 297 grammars in a 569 KB
-      // chunk that every service-worker install downloaded, for languages no
-      // session here will ever emit. Anything not listed renders as
-      // unhighlighted plain text, which is the accepted trade — do not add a
-      // fallback loader; add the grammar and take the bytes knowingly.
-      //
-      // Dependencies resolve themselves (babel-plugin-prismjs runs Prism's own
-      // dependency loader), so this is top-level languages only: `markup`
-      // covers html/xml/svg, `bash` covers sh/shell, `typescript` covers ts.
-      // `vue` is not a Prism grammar at all — a ```vue block degrades to plain
-      // text and there is nothing to add for it.
-      languages: PRISM_LANGUAGES,
-      // 配置行号插件
-      plugins: PRISM_PLUGINS,
-      // 主题名
-      theme: 'solarizedlight',
-      css: true,
-    }),
+    // Prism 不用 vite-plugin-prismjs 注入。该插件把 `import Prism from 'prismjs'`
+    // 展开成一串「引用全局 Prism」的脚本导入，而 prism-core 是 CJS、在 Rolldown 下被
+    // 包成惰性求值 —— 脚本先求值、core 还没跑，于是整块抛 `Prism is not defined`，凡是
+    // 加载 Prism 的路由（空间待审核、题目答案、Markdown 渲染）都会白屏。改由应用自己按
+    // 「先 core、后语法/插件」的顺序导入，见 src/utils/prism.ts（其中的语法/插件清单要与
+    // 下面的 PRISM_LANGUAGES / PRISM_PLUGINS 保持一致）。
     // PWA / offline support. Goal (owner spec): the app shell + already-seen
     // content load offline; live features (WS chat, notifications)
     // degrade gracefully and auto-recover when the network returns. NO offline
@@ -296,7 +385,8 @@ export default defineConfig({
         // 这两行**故意不写**（原来写着 clientsClaim/skipWaiting，都是 true）。
         // 它们是「新 worker 立刻接管」的开关，留着就等于绕过 registerType: 'prompt'
         // 的等待——开着的页面会在人眼皮底下被新代码接管。删掉之后新 worker 停在
-        // waiting，直到下一次应用内跳转（pwa.ts 的路由守卫 → messageSkipWaiting）。
+        // waiting，由 pwa.ts 决定什么时候接管：这一页跑的已经是新版就立刻接管，
+        // 否则等下一次应用内跳转（路由守卫 → messageSkipWaiting）。
         //
         // 下面那条 NetworkOnly 规则去网上取当前 HTML，但网络一失败就退回**这个
         // worker 自己**预缓存的 index.html。所以旧 worker 还接着时，一次整页加载
@@ -326,10 +416,13 @@ export default defineConfig({
             // offline reader got `precacheFallback: index.html` — the
             // application, rendered under a documentation URL, with nothing
             // saying so. A plain browser error is the honest answer there.
+            // `downloads` (desktop installers) must reach the network directly:
+            // Safari mishandles downloads a service worker answers (WebKit bug
+            // 245249 and relatives); here it rendered the .dmg bytes as text.
             urlPattern: ({ url, request, sameOrigin }) =>
               sameOrigin &&
               request.mode === 'navigate' &&
-              !/^\/(?:api|connector|users|docs)(?:\/|$)/.test(url.pathname),
+              !/^\/(?:api|connector|users|docs|downloads)(?:\/|$)/.test(url.pathname),
             handler: 'NetworkOnly',
             options: {
               fetchOptions: { cache: 'no-cache' },
@@ -477,76 +570,19 @@ export default defineConfig({
       },
       output: {
         minify: MINIFY,
-        manualChunks(id) {
-          // Vite's dynamic-import helper (`\0vite/preload-helper.js`) is a
-          // virtual module every chunk with a lazy import shares. Left
-          // unassigned, Rollup merged it into the first manual chunk that
-          // needed it, which after the split below was `monaco`, so the entry
-          // and every route chunk imported `monaco` just to reach the helper
-          // and Monaco was back on the first paint. Give it a chunk of its own.
-          if (id.includes('vite/preload-helper')) {
-            return 'preload-helper'
-          }
-          if (id.includes('node_modules')) {
-            // Monaco is the largest package in node_modules and only the code
-            // panels use it, yet the catch-all `vendor` at the bottom pulled it
-            // into the one chunk every page preloads (1.29 MB gzipped, most of
-            // it Monaco). In its own chunk it is reachable only from the lazy
-            // TopicView route, so first paint no longer pays for it.
-            if (id.includes('monaco-editor')) {
-              return 'monaco'
-            }
-            if (id.includes('prosemirror')) {
-              return 'prosemirror'
-            }
-            if (id.includes('dompurify')) {
-              return 'dompurify'
-            }
-            if (id.includes('marked')) {
-              return 'marked'
-            }
-            if (id.includes('zod')) {
-              return 'zod'
-            }
-            if (id.includes('viewerjs')) {
-              return 'viewerjs'
-            }
-            if (id.includes('tiptap')) {
-              return 'tiptap'
-            }
-            if (id.includes('vuetify')) {
-              return 'vuetify'
-            }
-            // Vue 及其相关
-            if (id.match(/(vue|vue-router)/)) {
-              return 'vue'
-            }
-            // lodash 单独一个 chunk
-            if (id.includes('lodash')) {
-              return 'lodash'
-            }
-            // Editor.js 相关依赖归为一组
-            if (id.includes('@editorjs')) {
-              return 'editorjs'
-            }
-            // dayjs 单独一个 chunk
-            if (id.includes('dayjs')) {
-              return 'dayjs'
-            }
-            // prismjs 单独一个 chunk
-            if (id.includes('prismjs')) {
-              return 'prismjs'
-            }
-            // axios 如果使用量较大，也可单独拆分
-            if (id.includes('axios')) {
-              return 'axios'
-            }
-            // Everything else is left to Rollup, which places a package by who
-            // imports it. A catch-all `vendor` here once put exceljs, pdf.js,
-            // xterm, yjs and KaTeX on every first paint, although the code only
-            // reaches them through `import()`: a manual chunk ignores that and
-            // becomes a static import of the entry.
-          }
+        codeSplitting: {
+          // A group also takes whatever its modules import, so the group that
+          // claims a shared module first decides where it lives. Each library
+          // is claimed before the libraries built on it: with the order left
+          // to chance, the Vue runtime went into `tiptap` (through
+          // @tiptap/vue-3) and Vite's dynamic-import helper into `monaco`
+          // (through its lazy imports), and the entry imported both chunks,
+          // putting Monaco and the editor back on the first paint.
+          groups: CHUNKS.map((name, i) => ({
+            name,
+            test: (id: string) => chunkName(id) === name,
+            priority: CHUNKS.length - i,
+          })),
         },
       },
     },
@@ -673,8 +709,8 @@ export default defineConfig({
       'vuetify/iconsets/mdi',
       'vuetify/labs/VDateInput',
       'vuetify/locale',
-      // vite-plugin-prismjs 加的那几行 import，同样只在 transform 之后才看得见。漏了会在
-      // 冷启动时整体重新预打包，正在加载的依赖全部 504。
+      // Prism 的语法/插件（src/utils/prism.ts 导入）。它们是深层路径，按需预打包，先列出来
+      // 免得冷启动时整体重新预打包、正在加载的依赖全部 504。
       'prismjs/components/prism-core',
       'prismjs/components/prism-clike',
       ...PRISM_LANGUAGES.map((name) => `prismjs/components/prism-${name}`),

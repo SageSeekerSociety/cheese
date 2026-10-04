@@ -234,6 +234,9 @@ def _conflict_nudge(*, card: AcceptCard, status) -> pr_signals.PendingNudge | No
             f"PR #{card.pr_number}（{card.pr_url}）的{where}和目标分支冲突了，"
             "GitHub 现在合不了它。\n"
             "先确认 PR 当前目标分支，在对应任务目录合入该分支、解决冲突并验证。"
+            "撞的是 .docx、.pptx、.xlsx 这类文件时不要合并内容：git 不在这类文件里"
+            "留冲突标记，直接提交会把对方的修改悄悄丢掉。在对方那一版上把你的改动"
+            "重做一遍，做法见 cheese 技能里「合并冲突」一节。"
             "提交后用 cheese push-fix 更新原 PR，说明处理结果。\n"
             "如果冲突解不动、或者不该由你来解，在话题里说清楚卡在哪。"
         ),

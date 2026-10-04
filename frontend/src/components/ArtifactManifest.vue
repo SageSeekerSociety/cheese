@@ -25,6 +25,8 @@ import type { MenuAction } from './common/menuAction'
 
 import { computed, ref, watch } from 'vue'
 
+import { useRowMenu } from '@/composables/useRowMenu'
+
 import { deleteProjectArtifact, listProjectArtifacts, mergeProjectArtifacts, renameProjectArtifact } from '../api'
 import { t } from '../i18n'
 import { relTime } from '../lib/relTime'
@@ -43,6 +45,7 @@ const emit = defineEmits<{ count: [number] }>()
 const rows = ref<ProjectArtifact[]>([])
 const actionError = ref('')
 const busy = ref('')
+const rowMenu = useRowMenu<string>()
 
 // 窄的时候这一块摞在板上面，只列前几项，其余的收着，点开才全列出来。宽的时候它是
 // 一整列，自己滚，全列着——收起只在窄的那一档起作用（见样式里的 @container）。
@@ -179,7 +182,13 @@ watch(
     <p v-if="actionError" role="alert" class="made__error t-meta">{{ actionError }}</p>
     <ul class="made__list">
       <li v-if="!rows.length" class="made__empty t-body">{{ t('project.artifacts.empty') }}</li>
-      <li v-for="(row, index) in rows" :key="row.id" class="made-row" :class="{ 'made-row--folded': index >= FOLDED }">
+      <li
+        v-for="(row, index) in rows"
+        :key="row.id"
+        class="made-row"
+        :class="{ 'made-row--folded': index >= FOLDED }"
+        @contextmenu="rowMenu.open(row.id, $event)"
+      >
         <!-- 点进去是这一项自己那一页：版本历史、下载当时交出去的那一份。 -->
         <div class="made-row__what">
           <NavLink
@@ -193,7 +202,7 @@ watch(
           <span v-if="row.about" class="made-row__about t-meta c-faint">{{ row.about }}</span>
           <span class="made-row__when t-meta c-faint">{{ version(row) }}</span>
         </div>
-        <AdaptiveMenu :actions="rowActions(row)" :title="row.name">
+        <AdaptiveMenu v-bind="rowMenu.bind(row.id)" :actions="rowActions(row)" :title="row.name">
           <template #activator="{ props: menu }">
             <BaseButton
               v-bind="menu"

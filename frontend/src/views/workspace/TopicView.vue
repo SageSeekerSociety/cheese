@@ -5,15 +5,16 @@ import type { MemberActivityLine } from '@/lib/memberActivity'
 import type { CardPhase } from '@/lib/topicState'
 import type { PreviewLocate, SubmitPreviewQuestion } from '../../lib/previewQuestion'
 
-import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
+import { useEscapeLayer } from '@/composables/useEscapeStack'
 import { usePageTitle } from '@/composables/usePageTitle'
 import { useRoomTabHistory } from '@/composables/useRoomTabHistory'
 import { useTopicMemory } from '@/composables/useTopicMemory'
+import { useCompactDesktop } from '@/composables/useWorkspaceLayout'
 
-import { listTopicMembers } from '@/api'
 import { useCommands } from '@/commands'
 import { useTopBarBack } from '@/components/common/topBarBack'
 import PushPermissionPrompt from '@/components/PushPermissionPrompt.vue'
@@ -21,7 +22,8 @@ import TopicHeader from '@/components/TopicHeader.vue'
 import WorkPanel from '@/components/WorkPanel.vue'
 import { t } from '@/i18n'
 import { agentNames, memberName } from '@/lib/agentNames'
-import { announceComments } from '@/lib/docCommentSignals'
+import { warmRoutesWhenIdle } from '@/lib/routePrefetch'
+import { cachedTopicPanel, fetchTopicMembers } from '@/lib/topicPanelCache'
 import { onTopicRosterChange } from '@/lib/topicRosterChanges'
 import { topicTitle } from '@/lib/topicState'
 import { userRefRoute } from '@/lib/userRef'
@@ -39,6 +41,8 @@ defineOptions({ name: 'TopicView' })
 
 const props = defineProps<{ projectId: string; topicId: string }>()
 const { mdAndUp } = useDisplay()
+// 平板横放那一档（960–1180）：对话占满整宽，工作面板是从右边拉进来的浮层。
+const compact = useCompactDesktop()
 const router = useRouter()
 const route = useRoute()
 const store = useWorkspaceStore()
@@ -91,6 +95,40 @@ function onOpenCard(taskId: string | null) {
   tabHistory.openCard(taskId)
 }
 
+// ---- 平板横放：工作面板的收 / 开 ----
+// 这一档里对话占满整宽，面板是一只从右边拉进来的浮层，默认收起。「面板开着」这件事
+// 就写在地址里——`?tab=` 或 `?card=` 就是「有人打开了这一格」，于是对话里点「查看改
+// 动」、点开一张卡、别人发来的链接，全走同一条路（`onPanelTab` / `onOpenCard` 本来就
+// 在改地址）。宽档里面板一直开着（就在对话旁边），手机上是 tab 栏的第一格，两处都不
+// 经过这里。
+const panelOpen = computed(() => !compact.value || !!panelTab.value || !!openCardId.value)
+// 收起之后从页头那颗开关再打开时回到哪一格：面板此刻在画哪一格。这一格未必来自地址
+// ——平板横放里进房间时自动选中的那一格（芝士在干活就是「现场」、卡等你验收就是「改
+// 动」）只留在面板里、没写进地址，收起再打开要回到它。量不到就落在总览。
+function openPanel() {
+  const want = panelRef.value?.activeTab() ?? panelTab.value ?? 'overview'
+  void router.replace({ query: { ...route.query, tab: want } })
+}
+function closePanel() {
+  if (!compact.value) return
+  // 清掉地址里的 tab / card：面板收起了，地址就不该再写着一格开着——不然下一次点
+  // 「查看改动」时 goTab 会因为「已经在 changes」而什么都不做，面板打不开。
+  void router.replace({ query: { ...route.query, tab: undefined, card: undefined } })
+  // Esc 关掉浮层，焦点回到打开它那颗开关（键盘和读屏用户必须回得去）。
+  void nextTick(() => document.querySelector<HTMLElement>('[data-panel-toggle]')?.focus())
+}
+function togglePanel() {
+  if (panelOpen.value) closePanel()
+  else openPanel()
+}
+// 平板横放：面板浮层按 Esc 收起，焦点回到页头那颗开关。这一档里二级侧栏浮层也可能
+// 同时开着，两层共用一个 Esc 栈：一下 Esc 只关最上面那层（后打开的那层），第二下才
+// 轮到另一层。见 useEscapeStack。
+useEscapeLayer(
+  computed(() => compact.value && panelOpen.value),
+  closePanel
+)
+
 const AUTHOR = myHandle()
 
 // URL 里的这个 id 指向一个房间。列表里没有就直接去问它——深链接、刷新，都走这条路。
@@ -108,6 +146,20 @@ watch(
   { immediate: true }
 )
 onUnmounted(() => clearDynamicTitle('workspace-topic'))
+
+// 话题画出来之后，趁浏览器空着把从这里最常去的几页的代码先下下来：看板、资料库、
+// 项目文档、搜索。点过去时就只剩取数据那一段等待（lib/routePrefetch.ts）。
+let cancelRouteWarm: (() => void) | null = null
+onMounted(() => {
+  const params = { projectId: props.projectId }
+  cancelRouteWarm = warmRoutesWhenIdle(router, [
+    { name: 'workspace-running', params },
+    { name: 'project-library', params },
+    { name: 'project-docs', params: { ...params, kind: 'charter' } },
+    { name: 'project-search', params },
+  ])
+})
+onUnmounted(() => cancelRouteWarm?.())
 // The list is still on its way, so "not found" is not yet a fact. Neither is it
 // one while this id is being asked about directly — the path a deep link takes.
 const resolving = computed(
@@ -126,9 +178,18 @@ function openTopic(topicId: string) {
 // one of its own (`cheesex.toolWidth`), plus a 钉住 toggle that decided whether
 // the doc made room for it at all.
 const { focusMode } = useTopicMemory() // 专注模式 (spec §7.1): session-only, a transient mode
-// 专注模式只在桌面上有：手机上本来就只有一栏。
+// 平板横放那一档里对话永远占满整宽，没有「让开一半」这回事，专注模式在这一档里不
+// 成立：一进来就把它关掉，免得从宽档带来的那个开关和这里的布局打架。
+watch(
+  compact,
+  (on) => {
+    if (on) focusMode.value = false
+  },
+  { immediate: true }
+)
+// 专注模式只在宽档的桌面上有：手机上一栏，平板横放里对话本来就是整宽。
 useCommands(() =>
-  mdAndUp.value
+  mdAndUp.value && !compact.value
     ? [
         {
           id: 'room.focus',
@@ -139,6 +200,9 @@ useCommands(() =>
       ]
     : []
 )
+// 对话那一栏的宽度：宽档是 `0 0 N%`（可拖的分隔），平板横放里它吃掉整宽——面板浮在
+// 上面，不再分地方。
+const chatStyle = computed(() => (compact.value ? { flex: '1 1 0', minWidth: 0 } : { flex: `0 0 ${store.chatPct}%` }))
 // 收起 / 拉开的那一下里，栏在变窄变宽，里面的东西不跟着变：几百条消息每一帧按新
 // 宽度重新折行，既费又难看。把里面钉在这一栏落定时的宽度上，栏只是把它裁开、露出。
 function freezeChatWidth(el: Element) {
@@ -152,11 +216,15 @@ const panelRef = ref<{
   openFile?: (path: string, taskId?: string | null) => void
   siteBlock?: (block: Block) => void
   reviewDoc?: (request: DocReviewRequest) => void
+  previewShown?: () => void
+  // 面板此刻在画哪一格。收起再打开要回到它——自动选中的那一格不在地址里，只能问它。
+  activeTab: () => string
 } | null>(null)
 const chatColumn = ref<{
   connected: boolean
   reloadAccept: (silent?: boolean) => void
   reloadFeedback: () => void
+  reloadSkills: () => void
   say: (content: string, attachments?: ChatAttachment[]) => boolean
   submitQuestion: SubmitPreviewQuestion
 } | null>(null)
@@ -205,6 +273,9 @@ const chatEvents = {
   'site-block': (block: Block) => panelRef.value?.siteBlock?.(block),
   'site-turns': (turns: Record<string, number>) => (siteTurns.value = turns),
   'state-changed': handleStateChanged,
+  // 芝士摆出来一份东西：面板立刻看一眼当前预览，不等轮询。
+  'preview-shown': () => panelRef.value?.previewShown?.(),
+
   'mention-click': handleMentionClick,
   'open-file': (path: string, taskId?: string | null) => panelRef.value?.openFile?.(path, taskId),
   'open-resource': handleOpenResource,
@@ -217,6 +288,13 @@ const chatEvents = {
 
 // 有没有队友正在这个话题里跑一轮 —— 工作面板的「现场」那一格和推送提示读它。
 const working = ref(false)
+
+// 页头那颗点说的是「这个房间跟不跟得上」——它和工作条必须同源。对话栏报上来的
+// `composerReady` 是 socket 的那一帧，而 socket 会在连接打嗝时闪断：那一瞬它说
+// 未连接，可这一轮还在跑（工作条写着「正在工作 · 重试中」，因为重试就是靠它自己
+// 接着干）。一轮没跑完，这个房间就是连着的 —— 断了它没法把这一轮干完。所以两个
+// 一起看：只要工作条在说「正在工作」，页头就不能同时说「未连接」。
+const roomConnected = computed(() => composerReady.value || working.value)
 // 此刻谁在这个房间里忙，对话栏从 socket 上学来：现场那一格画其中在干活的队友。
 const activity = ref<MemberActivityLine[]>([])
 // 会话状态的最近一帧，对话栏从 socket 上收到，现场那格的会话详情读它。
@@ -256,12 +334,12 @@ function handleTurnDone() {
 // sent the frame) — refresh the affected panel live (§3.1.1).
 function handleStateChanged(resource: string) {
   if (resource === 'topics') void store.refreshTopics()
-  // 文档的评论变了：这个房间的文档那一格自己重读评论，不重读整篇。
-  else if (resource === 'comments') announceComments(props.topicId, { kind: 'changed' })
   // silent：卡是这一刻递上来的，框里原有的留在屏幕上换新，不先清空再长出来。
   else if (resource === 'accept') chatColumn.value?.reloadAccept(true)
   // 提案卡落下、被发出去、被「不用」：卡片跟着变，不等刷新。
   else if (resource === 'feedback') chatColumn.value?.reloadFeedback()
+  // 技能的提议落下、被保存或被拒：那张卡跟着变。
+  else if (resource === 'skills') chatColumn.value?.reloadSkills()
   else activityTick.value += 1 // doc / notify → reload
 }
 
@@ -314,14 +392,14 @@ const unreadOnOpen = store.unreadMap[props.topicId] ?? 0
 // 友一个规矩：署作者，不署「这个房间的那位」——一个房间可以先后交给两个队友。
 // 那一格自己不拉名册，所以在这里拉一次传下去。AI 队友的名字和对话栏同一个出处
 // （`agentNames`）：已经不在这间房里的队友，项目名册上还叫得出。
-const roomMembers = ref<TopicMemberRow[]>([])
+const roomMembers = ref<TopicMemberRow[]>(cachedTopicPanel('members', props.topicId)?.data ?? [])
 const memberNames = computed<Record<string, string>>(() => ({
   ...Object.fromEntries(roomMembers.value.map((m) => [m.member_handle, memberName(m) || m.member_handle])),
   ...Object.fromEntries(agentNames(roomMembers.value, store.members)),
 }))
 async function loadMemberNames() {
   try {
-    roomMembers.value = (await listTopicMembers(props.topicId)).data
+    roomMembers.value = (await fetchTopicMembers(props.topicId)).data
   } catch {
     // 名册拉不到，现场那一格就按 handle 署名——比空白好，也比报错好。
   }
@@ -366,9 +444,11 @@ void openPlace()
         :topic="selectedTopic"
         :members="store.members"
         :me="AUTHOR"
-        :connected="composerReady"
+        :connected="roomConnected"
         :focus="focusMode"
+        :panel-open="panelOpen"
         @toggle-focus="focusMode = !focusMode"
+        @toggle-panel="togglePanel"
         @open-topic="openTopic"
         @rename="(title) => store.renameTopic(topicId, title)"
       />
@@ -381,14 +461,15 @@ void openPlace()
       <div class="panes d-flex flex-grow-1" style="min-width: 0; min-height: 0; position: relative">
         <!-- 桌面：对话是左边那一栏，和工作面板之间有一条可拖的分隔。
            专注模式开关时这一栏像抽屉一样收起 / 拉开，而不是一下消失、面板一下跳宽：
-           人要看得出面板是从哪儿长过来的。 -->
+           人要看得出面板是从哪儿长过来的。平板横放那一档里这一栏占满整宽，面板是浮在
+           它上面的浮层（见下面的 panel-host--sheet），不再分地方。 -->
         <Transition name="focus-chat" @before-enter="freezeChatWidth" @before-leave="freezeChatWidth">
           <TopicChatColumn
             v-if="mdAndUp"
             v-show="!focusMode"
             ref="chatColumn"
             class="col col-chat"
-            :style="{ flex: `0 0 ${store.chatPct}%` }"
+            :style="chatStyle"
             :topic="selectedTopic"
             :members="store.members"
             :topic-list="store.topics"
@@ -398,53 +479,70 @@ void openPlace()
           />
         </Transition>
         <div
-          v-if="mdAndUp && !focusMode"
+          v-if="mdAndUp && !focusMode && !compact"
           class="pane-resizer"
           :title="t('work.topic.resize')"
           @mousedown.prevent="startPaneDrag"
           @dblclick="store.setChatPct(50)"
         />
-        <WorkPanel
-          ref="panelRef"
-          :submit-question="submitQuestion"
-          :agent-name="store.agentName"
-          :agent-handle="store.agentHandle"
-          :activity="activity"
-          class="col col-doc"
-          :style="{ flex: '1 1 0', minWidth: 0 }"
-          :topic="selectedTopic"
-          :activity-tick="activityTick"
-          :working="working"
-          :agent-control="agentControl"
-          :site-turns="siteTurns"
-          :topic-list="store.topics"
-          :tab="panelTab"
-          :card-phase="cardPhase"
-          :with-chat="!mdAndUp"
-          :open-card-id="openCardId"
-          :card-focus-block="cardFocusBlock"
-          :member-names="memberNames"
-          @open-topic="openTopic"
-          @open-card="onOpenCard"
-          @review="onReview"
-          @mention-click="handleMentionClick"
-          @update:tab="onPanelTab"
-          @locate="onLocate"
+
+        <!-- 平板横放：面板浮层背后的遮罩。点它收起面板——和 Esc 同一条路。 -->
+        <Transition name="panel-scrim">
+          <div v-if="compact && panelOpen" class="panel-scrim" @click="closePanel" />
+        </Transition>
+
+        <!-- 工作面板。宽档里它是对分里右边那一栏（今天的样子，行内排布）；
+             平板横放里它是一只从右边拉进来的浮层：对话占满整宽，面板默认收起，
+             打开它的是页头那颗开关（或地址里的 ?tab= / ?card=）。收起时 visibility
+             一并藏掉，浮层里的东西不进 tab 序、也不进读屏的树。 -->
+        <div
+          :id="compact ? 'topic-panel' : undefined"
+          class="col col-doc panel-host"
+          :class="{ 'panel-host--sheet': compact, 'panel-host--open': compact && panelOpen }"
+          :style="compact ? undefined : { flex: '1 1 0', minWidth: 0 }"
         >
-          <!-- 手机：一屏放不下两栏，对话是 tab 栏里的第一格。 -->
-          <template #chat>
-            <TopicChatColumn
-              ref="chatColumn"
-              class="col col-chat flex-grow-1"
-              :topic="selectedTopic"
-              :members="store.members"
-              :topic-list="store.topics"
-              :unread-on-open="unreadOnOpen"
-              :focus-block="chatFocusBlock"
-              v-on="chatEvents"
-            />
-          </template>
-        </WorkPanel>
+          <WorkPanel
+            ref="panelRef"
+            :submit-question="submitQuestion"
+            :agent-name="store.agentName"
+            :agent-handle="store.agentHandle"
+            :members="store.members"
+            :activity="activity"
+            :topic="selectedTopic"
+            :activity-tick="activityTick"
+            :working="working"
+            :agent-control="agentControl"
+            :site-turns="siteTurns"
+            :topic-list="store.topics"
+            :tab="panelTab"
+            :card-phase="cardPhase"
+            :with-chat="!mdAndUp"
+            :compact="compact"
+            :open-card-id="openCardId"
+            :card-focus-block="cardFocusBlock"
+            :member-names="memberNames"
+            @open-topic="openTopic"
+            @open-card="onOpenCard"
+            @review="onReview"
+            @mention-click="handleMentionClick"
+            @update:tab="onPanelTab"
+            @locate="onLocate"
+          >
+            <!-- 手机：一屏放不下两栏，对话是 tab 栏里的第一格。 -->
+            <template #chat>
+              <TopicChatColumn
+                ref="chatColumn"
+                class="col col-chat flex-grow-1"
+                :topic="selectedTopic"
+                :members="store.members"
+                :topic-list="store.topics"
+                :unread-on-open="unreadOnOpen"
+                :focus-block="chatFocusBlock"
+                v-on="chatEvents"
+              />
+            </template>
+          </WorkPanel>
+        </div>
       </div>
     </template>
   </div>
@@ -460,6 +558,8 @@ void openPlace()
      这条视图以前不画底、直接透出 body 的 --canvas，于是侧栏和正文同色，两者
      之间只剩一条边线在撑。 */
   background: var(--surface);
+  /* Switching topics on a wide screen cross-fades this view only (lib/viewTransition.ts). */
+  view-transition-name: topic-view;
 }
 .col {
   min-width: 0;
@@ -508,5 +608,69 @@ void openPlace()
 }
 .pane-resizer:hover {
   background: var(--faint);
+}
+
+/* 工作面板的外壳（里面就是 WorkPanel 本身）。宽档里它是一个普通的 flex 子项——
+   今天的样子；平板横放里它被下面的 --sheet 改成一只浮层。 */
+.panel-host {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* 平板横放的面板浮层：从对话右边拉进来的一张纸。收起时同时走进屏幕右侧、并把
+   visibility 藏掉——藏掉的浮层不占 tab 序，也不进读屏的树，这比只 translate 出去
+   干净。visibility 的过渡带一个等于位移时长的延迟：拉开时立刻可见，收起时等位移
+   走完才藏。 */
+.panel-host--sheet {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: var(--z-panel-2);
+  width: min(520px, 100%);
+  background: var(--surface);
+  border-left: 1px solid var(--line);
+  box-shadow: var(--shadow-2);
+  transform: translateX(100%);
+  visibility: hidden;
+  transition:
+    transform var(--dur-base) var(--ease-standard),
+    visibility 0s linear var(--dur-base);
+}
+.panel-host--open {
+  transform: none;
+  visibility: visible;
+  transition:
+    transform var(--dur-base) var(--ease-out),
+    visibility 0s;
+}
+
+/* 浮层背后的遮罩：点它就和按 Esc 一样收起面板。 */
+.panel-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-panel);
+  background: var(--overlay);
+}
+.panel-scrim-enter-active,
+.panel-scrim-leave-active {
+  transition: opacity var(--dur-base) var(--ease-standard);
+}
+.panel-scrim-enter-from,
+.panel-scrim-leave-to {
+  opacity: 0;
+}
+
+/* 用户关掉了动画就别拉。 */
+@media (prefers-reduced-motion: reduce) {
+  .panel-host--sheet,
+  .panel-host--open,
+  .panel-scrim-enter-active,
+  .panel-scrim-leave-active {
+    transition: none;
+  }
 }
 </style>

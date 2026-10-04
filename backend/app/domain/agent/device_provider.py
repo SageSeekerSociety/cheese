@@ -31,7 +31,6 @@ from app.core.config import settings
 from app.core.sandbox_auth import (
     mint_scoped_token,
     scoped_token_claims,
-    token_agent_handle,
 )
 from app.core.sentences import NoticeText, say
 from app.domain.agent import machine_launcher, provider_env, screen_identity
@@ -67,10 +66,7 @@ from app.domain.agent.platform_failures import (
 )
 from app.domain.device.models import DeviceRow
 from app.domain.device.service import DeviceService
-from app.domain.device.supply import (
-    Supply,
-    has_runnable_transport,
-)
+from app.domain.device.supply import Supply, Visibility, default_visibility
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
 from app.domain.topic.services import TopicService
@@ -123,22 +119,25 @@ async def resolve_pinned_device(
     A topic's work tree + resumable claude session live on ONE machine. So:
       * an existing binding — either a machine named before the first turn or the
         machine frozen by an earlier automatic choice — takes precedence over
-        automatic selection. Return it **iff hosted, online, and runnable**; an
-        offline binding raises
-        (queue/retry) and an `isolated` binding raises the #358 「尚未实现」 error.
-        NEVER fall back to another device, which would break an explicit choice or
-        start a resumed topic from an empty tree;
+        automatic selection. Return it **iff hosted, online, and `host`**; an
+        offline binding raises (queue/retry) and an `isolated` one raises
+        ``DEVICE_ISOLATED_UNSUPPORTED_MESSAGE``. NEVER fall back to another
+        device, which would break an explicit choice or start a resumed topic
+        from an empty tree;
       * no binding means 「系统挑一台」 on the first turn: pick the first online,
-        **non-quarantined** hosted device serving the project and create a runnable
-        ``host`` binding (write-once), so every later turn returns to it. Quarantined
-        = judged unhealthy by ``device.health``; a topic that is already bound
-        is never moved — not here, not anywhere (``agent.host_failure``).
+        **non-quarantined** hosted device serving the project and bind it at the
+        default 档 (write-once), so every later turn returns to it — when this
+        channel can run that 档, which it cannot while the default is
+        `isolated`, so it refuses and pins nothing. Quarantined = judged
+        unhealthy by ``device.health``; a topic that is already bound is never
+        moved — not here, not anywhere (``agent.host_failure``).
 
-    The #358 visibility gate lives entirely here (the one resolution point every
-    production turn passes through), so an `isolated` binding on a machine with no
-    sandbox for it (self-hosted, until #2320 step 2) is never launched bare-on-host
-    in its place: silently degrading `isolated` to bare is exactly the
-    whole-machine exposure the gate exists to prevent.
+    This channel starts the agent in a screen on the machine itself, which no
+    sandbox wraps; sessions that run in a sandbox (#2320) reach the machine
+    through their executor (`machine.session_work`) instead. So a room bound
+    `isolated` is refused here rather than launched bare-on-host: silently
+    degrading `isolated` to bare is exactly the whole-machine exposure this
+    gate exists to prevent.
 
     Returns the device id, or ``None`` when no runnable bound device is online at all
     (the caller turns that into a clean "no online device" turn error)."""
@@ -150,7 +149,7 @@ async def resolve_pinned_device(
         device_id = chosen.device_id
         if not await service.serves_project(device_id, project_id):
             raise ScreenSetupError(say("screenDeviceRemoved"))
-        if (hosted := await service.get_hosted_device(device_id)) is None:
+        if await service.get_hosted_device(device_id) is None:
             raise ScreenSetupError(DEVICE_NOT_HOSTED_MESSAGE)
         if not is_online(device_id):
             raise ScreenSetupError(
@@ -158,7 +157,7 @@ async def resolve_pinned_device(
             )
         # An isolated binding must refuse rather than run bare — the pin does not
         # move, but the turn will not silently expose the whole machine either.
-        if not has_runnable_transport(chosen.visibility, hosted.supply):
+        if chosen.visibility is Visibility.isolated:
             raise ScreenSetupError(DEVICE_ISOLATED_UNSUPPORTED_MESSAGE)
         return device_id
     # 「系统挑一台」 on the first turn: pick from machines that are online AND not
@@ -174,13 +173,11 @@ async def resolve_pinned_device(
         return None
     # The same fact the market catalogue publishes as `default=True`, read from
     # one place so the picker can never advertise a 档 the resolver does not
-    # bind. On a self-hosted machine that is `host` until #2320 step 2 gives
-    # `isolated` a transport there; then this and the catalogue move together.
-    await service.bind_topic_device(
-        topic_id,
-        device.device_id,
-        visibility=await service.binding_visibility(device.device_id),
-    )
+    # bind — and that default is a sandbox, which this channel cannot give.
+    visibility = default_visibility()
+    if visibility is Visibility.isolated:
+        raise ScreenSetupError(DEVICE_ISOLATED_UNSUPPORTED_MESSAGE)
+    await service.bind_topic_device(topic_id, device.device_id, visibility=visibility)
     return device.device_id
 
 
@@ -506,9 +503,7 @@ class DeviceChannel(Channel):
         # resolver is used lazily (keeps this module importable without a DB).
         self._device_resolver = device_resolver
         self._public_base = (public_base or settings.connector_public_base).rstrip("/")
-        # sid → what a turn here brought that screen up to date with
-        # (``settled_with``), and when the credential it wrote expires.
-        self._settled: dict[str, tuple[str, int]] = {}
+        self.screen_ledger = screen_identity.ScreenLedger()
 
     def available(self) -> bool:
         """Whether any device is currently connected (online). Project-level checks
@@ -697,7 +692,7 @@ class DeviceChannel(Channel):
             screen.sid,
             reason,
         )
-        self._settled.pop(screen.sid, None)
+        self.screen_ledger.forget(screen.sid)
         await self._hub.close_screen(screen.device_id, screen.sid)
 
     def _existing_screen(
@@ -1307,9 +1302,11 @@ class DeviceChannel(Channel):
         if (
             runner_alive
             and existing is not None
-            and self._settled.get(existing.sid, ("", 0))[0] == settled_with
-            and self._settled[existing.sid][1]
-            > int(time.time()) + _CREDENTIAL_EXPIRY_MARGIN_S
+            and self.screen_ledger.current(
+                existing.sid,
+                settled_with,
+                valid_after=int(time.time()) + _CREDENTIAL_EXPIRY_MARGIN_S,
+            )
             and not await self._tunnel_helper_is_down(existing, home_dir)
         ):
             mark("screen_settled")
@@ -1340,7 +1337,7 @@ class DeviceChannel(Channel):
         screen_env["CHEESE_AGENT_CONFIG"] = configuration
         # Whether this turn leaves the screen running what it would be started
         # with today, so the next send to it may skip all of this
-        # (``_settled``). A relaunch or a release put off for running work
+        # (``screen_ledger``). A relaunch or a release put off for running work
         # leaves it behind.
         settled = True
         if existing is not None and existing.agent_configuration != configuration:
@@ -1479,8 +1476,10 @@ class DeviceChannel(Channel):
             )
             if inspect.isawaitable(updated):
                 existing = await updated
-            if settled:
-                self._settle(existing.sid, settled_with, token)
+            seat = (topic_id, agent_handle)
+            self.screen_ledger.record(
+                existing.sid, seat, settled_with, token, settled=settled
+            )
             return existing
         screen = await self._hub.open_screen(
             device_id,
@@ -1508,12 +1507,10 @@ class DeviceChannel(Channel):
         )
         if inspect.isawaitable(updated):
             screen = await updated
-        self._settle(screen.sid, settled_with, token)
+        self.screen_ledger.record(
+            screen.sid, (topic_id, agent_handle), settled_with, token
+        )
         return screen
-
-    def _settle(self, sid: str, settled_with: str, token: str) -> None:
-        claims = scoped_token_claims(token) or {}
-        self._settled[sid] = (settled_with, int(claims.get("exp") or 0))
 
     # --- turn --------------------------------------------------------------
 
@@ -1597,15 +1594,11 @@ class DeviceChannel(Channel):
 
     async def precheck(self, session: SessionRef, *, needs_place: bool) -> Placement:
         """Resolve the topic's pinned/online device + its agent identity before
-        anything is started on it. The resolved tuple is handed back to
-        ``ensure_ready`` via ``precheck``. Raises ``ScreenSetupError`` (offline
-        pinned device, or none online).
+        anything is started on it. Raises ``ScreenSetupError`` (offline pinned
+        device, or none online).
 
-        一轮不租手时解析的是这条会话自己的机器，不是项目钉住的工作机。pi 直接用
-        这条通道 (它是唯一没有包在 ``CentralChannel`` 外面的 backend)，所以「要不
-        要一双手」这一问在这里也必须答得出来——答不出来，一间私聊就会因为项目没
-        有在线工作机而整轮开不起来，正是 I2 要禁止的那件事。答案随 ``Placement``
-        交给 ``ensure_ready``，由它决定这一轮开在草稿区还是项目工作区。"""
+        一轮不租手时解析的是这条会话自己的机器，不是项目钉住的工作机：答不出来，
+        一间私聊就会因为项目没有在线工作机而整轮开不起来，正是 I2 要禁止的那件事。"""
         if not needs_place:
             return await self._session_host_agent(session)
         resolved = await self._resolve_device_agent(
@@ -1619,159 +1612,6 @@ class DeviceChannel(Channel):
             agent = await self._session_agent(db, session)
             await db.commit()
             return Placement(resolved[0], agent.id, agent.username, rented=True)
-
-    async def ensure_ready(
-        self,
-        *,
-        session: SessionRef,
-        token: str,
-        env: dict[str, str] | None,
-        memory_scope: str | None,
-        owner: str | None,
-        turn_id: uuid.UUID | None,
-        launch: MachinePlan,
-        precheck: object,
-    ) -> HubScreen:
-        """Reuse/open the topic's screen on the device resolved by ``precheck``;
-        return the screen (ctx). Raises ScreenSetupError when the screen fails.
-
-        What runs in that screen is the plan's answer, not this file's: a device
-        launch is a shell script, and the platform half of it is the same for
-        every harness (``machine_launcher``) while the harness fills the rest.
-        This channel says where — the home, the workdir, the state directory the
-        connector will resolve — and merges the two environments."""
-        assert isinstance(precheck, Placement)  # from our precheck
-        project_id, topic_id = session.project_id, session.topic_id
-        device_id = precheck.machine
-        agent_user_id, agent_handle = precheck.agent_user_id, precheck.agent_handle
-        rented = precheck.rented
-        # 记忆算谁的（``memory_scope`` / ``owner``）到这一层就为止了。它曾经从这里
-        # 塞进 ``CHEESE_MEMORY_SCOPE``/``CHEESE_OWNER`` 给 ``cheese remember`` 用，
-        # 而那个工具已经撤掉（记忆现在直接写文件），两个变量没有读取方了。这一轮开
-        # 在哪个工作区是 ``rented`` 的事，下面那一句说。
-        prepares_environment = (
-            bool((env or {}).get("CHEESE_ENVIRONMENT"))
-            and rented
-            and not (env or {}).get("CHEESE_EXECUTION_TARGET")
-        )
-        try:
-            from app.core.db import async_session_factory
-
-            factory = self._session_factory or async_session_factory
-            # Read which generation of the room this is, then let the connection
-            # go: nothing below writes, and every path into `ensure_ready` runs
-            # under ChatService's per-topic lock (`_prompt_lock`), so the row
-            # lock serialized nothing this process was not serializing already.
-            # Held across the device work it cost a pool connection, and the
-            # room's own row, for as long as starting an agent on a remote
-            # machine takes — which queued every writer of that row (a title, an
-            # archive, a read mark) behind it, each holding a connection of its
-            # own until the start finished.
-            async with factory() as room_session:
-                room = await TopicService(room_session).lock_for_execution(topic_id)
-                resource_id = room.resource_id or room.id
-                # Use the same actor for the repository and for tools, including
-                # a non-default teammate whose identity differs from the machine
-                # precheck. A token that names nobody keeps the precheck identity.
-                actor = token_agent_handle(token)
-                if actor and actor != agent_handle:
-                    user = await user_by_handle(room_session, actor)
-                    if user is None:
-                        raise ScreenSetupError(say("screenAgentIdentityMissing"))
-                    agent_user_id, agent_handle = user.id, user.username
-            env = {**(env or {}), "CHEESE_RESOURCE_ID": str(resource_id)}
-            # 这一轮没租手，所以它跑在这条会话自己的草稿区里：一个有界的一次
-            # 性容器，开在会话自己的机器上，不是一个地点 (结论 19)。做这个选
-            # 择的是「租到手没有」，不是「这间房是不是私聊」。
-            if not rented:
-                from app.domain.agent.private_chat import scratch_target
-
-                env["CHEESE_EXECUTION_TARGET"] = json.dumps(
-                    scratch_target(project_id, resource_id, device_id=device_id)
-                )
-            before = (
-                await environment_status(self._hub, device_id, project_id, resource_id)
-                if prepares_environment
-                else {}
-            )
-            prior_screen = self._existing_screen(
-                device_id, topic_id, resource_id, agent_handle
-            )
-            screen = await self._ensure_screen(
-                device_id=device_id,
-                agent_user_id=agent_user_id,
-                agent_handle=agent_handle,
-                project_id=project_id,
-                topic_id=topic_id,
-                token=token,
-                env=env,
-                launch=launch,
-                environment_before=before,
-            )
-            if prepares_environment:
-                # A process started before this feature keeps its environment
-                # until its next restart; it has no preparation receipt yet.
-                # Reasserting a live screen does not rerun its environment. A new
-                # screen must still wait for its own preparation attempt below.
-                if (
-                    before.get("state") in {"pending", "ready"}
-                    and screen is prior_screen
-                ):
-                    return screen
-                try:
-                    polling_started = time.monotonic()
-                    start_deadline = polling_started + 60
-                    async with asyncio.timeout(3660):
-                        while True:
-                            status = await environment_status(
-                                self._hub,
-                                device_id,
-                                project_id,
-                                resource_id,
-                                wait_ready=time.monotonic() - polling_started < 10,
-                            )
-                            if status["state"] == "ready":
-                                break
-                            if status["state"] == "stopped" and status.get(
-                                "attempt"
-                            ) != before.get("attempt"):
-                                raise ScreenSetupError(
-                                    say("screenSessionExitedAfterSetup")
-                                )
-                            if (
-                                status["state"] == "pending"
-                                or status.get("attempt") == before.get("attempt")
-                                and before.get("state") != "preparing"
-                            ) and time.monotonic() >= start_deadline:
-                                raise ScreenSetupError(say("screenExecutorNotStarted"))
-                            if status["state"] == "failed" and (
-                                before.get("state") == "preparing"
-                                or status.get("attempt") != before.get("attempt")
-                            ):
-                                raise EnvironmentPreparationError(status)
-                            # Fast launches should not sit behind a two-second
-                            # poll; long installers keep the low-frequency checks.
-                            await asyncio.sleep(
-                                0.2 if time.monotonic() - polling_started < 10 else 2
-                            )
-                except asyncio.CancelledError:
-                    await asyncio.shield(
-                        environment_status(
-                            self._hub, device_id, project_id, topic_id, action="cancel"
-                        )
-                    )
-                    raise
-            return screen
-        except EnvironmentPreparationError:
-            raise
-        except Exception as exc:  # noqa: BLE001 — any setup failure ends the turn
-            # str(exc) is EMPTY for a bare TimeoutError — the failure that used to
-            # reach the room as 「device 后端启动失败：」 with nothing after the
-            # colon. Fall back to the exception type so the message always says
-            # *something* about what went wrong.
-            raise ScreenSetupError(
-                say("deviceBackendFailed", detail=str(exc) or exc.__class__.__name__)
-            ) from exc
 
     def _credential_is_stale(self, screen: HubScreen) -> bool:
         """Whether the credential this screen's `claude` was LAUNCHED with has

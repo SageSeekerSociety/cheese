@@ -15,6 +15,9 @@ as plain string replacement: each ``old`` must occur exactly once. A
 suggestion leaves the text alone and is kept here as pending, and every store
 reports what is pending, as the service does.
 
+``told`` keeps what the backend told each document's open editors (``tell``),
+in order, so a test can read what an editor would have heard.
+
 ``type_in`` is somebody typing in an editor: a store carrying their handle.
 ``type_unsaved`` is typing the service holds but has not stored yet; like the
 service, this one stores it before refusing a writer that did not see it.
@@ -41,6 +44,8 @@ class FakeCollab:
         self.pending: dict[str, list[dict]] = {}
         #: Per document: (text, handle) typed since the last store.
         self._unsaved: dict[str, tuple[str, str]] = {}
+        #: Per document: the frames told to whoever has it open.
+        self.told: dict[str, list[dict]] = {}
 
     def _client(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(
@@ -53,6 +58,9 @@ class FakeCollab:
     async def handle(self, request: httpx.Request) -> httpx.Response:
         name = request.url.path.split("/")[3]
         body = _json(request)
+        if request.url.path.endswith("/tell"):
+            self.told.setdefault(name, []).append(body)
+            return httpx.Response(200, json={})
         if request.url.path.endswith("/edit"):
             return await self._edit(name, body)
         if body.get("check") and self.refuse_writes is not None:
@@ -135,13 +143,34 @@ class FakeCollab:
         return httpx.Response(200, json={"stored": stored.json(), "edits": applied})
 
     async def type_in(self, room_id: uuid.UUID, content: str, *actors: str) -> dict:
+        name = await self._room_document(room_id)
         async with self._client() as backend:
-            return await self._store(
-                backend, collab.document_name(room_id), content, *actors
-            )
+            return await self._store(backend, name, content, *actors)
 
-    def type_unsaved(self, room_id: uuid.UUID, content: str, actor: str) -> None:
-        self._unsaved[collab.document_name(room_id)] = (content, actor)
+    async def type_unsaved(self, room_id: uuid.UUID, content: str, actor: str) -> None:
+        self._unsaved[await self._room_document(room_id)] = (content, actor)
+
+    async def _room_document(self, room_id: uuid.UUID) -> str:
+        """The service name of the room's document. An editor holds a ticket
+        before it types, and signing one is what makes the document exist."""
+        from app.core.db import get_db
+        from app.domain.living_doc.services import Documents
+        from app.domain.topic.models import Topic
+
+        # The database the app is answering from, which a test may override.
+        sessions = self._app.dependency_overrides.get(get_db, get_db)()
+        session = await anext(sessions)
+        try:
+            room = await session.get(Topic, room_id)
+            assert room is not None
+            doc = await Documents(session).ensure_for_room(
+                room_id=room_id, project_id=room.project_id
+            )
+            name = collab.document_name(doc.id)
+            await session.commit()
+        finally:
+            await sessions.aclose()
+        return name
 
     async def _store(
         self, backend: httpx.AsyncClient, name: str, content: str, *actors: str

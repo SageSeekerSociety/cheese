@@ -16,13 +16,14 @@ that cannot start one is a refusal rather than a broken stream.
 import logging
 import time
 import uuid
+from dataclasses import replace
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
-from app.api.deps import get_session_host
+from app.api.deps import get_consumptions, get_session_host
 from app.api.response import ok
 from app.api.routes.admin_common import DbSession
 from app.auth.checker import require_auth_user
@@ -41,10 +42,9 @@ from app.domain.agent.personal import service as assistant
 from app.domain.agent.personal.keys import person_key
 from app.domain.agent.personal.prompt import task_brief
 from app.domain.agent.personal.session import session as conversation_session
+from app.domain.agent.session_host.consumptions import Consumptions
 from app.domain.agent.session_host.contract import (
     Access,
-    HostFull,
-    SessionError,
     SessionRef,
     SessionSpec,
 )
@@ -58,6 +58,7 @@ router = APIRouter(prefix="/assistant", tags=["assistant"])
 
 AuthUser = Annotated[AuthUserInfo, Depends(require_auth_user)]
 People = Annotated[SessionHost, Depends(get_session_host)]
+Questions = Annotated[Consumptions, Depends(get_consumptions)]
 
 
 def _task_place(task_id: int) -> assistant.Place:
@@ -124,8 +125,11 @@ async def read_conversation(
     db: DbSession,
     auth: AuthUser,
     people: People,
+    questions: Questions,
 ) -> dict:
-    """The conversation and what was said in it.
+    """The conversation and what was said in it, and the question being
+    answered in it now, if one is (``answering``: read its stream to see the
+    answer as it is written).
 
     Opening a conversation is what precedes asking in it, so its session is
     started now, in the background, if it is not running: the first question
@@ -142,13 +146,20 @@ async def read_conversation(
                 _prestart(people, conversation_session(auth.user_id, row.id, place)),
                 name=f"assistant-prestart-{row.id}",
             )
+    answering = (
+        await questions.current(assistant.KIND, str(row.id))
+        if get_redis_client() is not None
+        else None
+    )
     return ok(
         {
             **_conversation_out(row),
+            "answering": None if answering is None else answering.work_id,
             "messages": [
                 {
                     "role": m.role,
                     "text": m.text,
+                    "stopped": m.stopped,
                     "at": m.created_at.isoformat(),
                 }
                 for m in messages
@@ -160,8 +171,10 @@ async def read_conversation(
 async def _prestart(
     people: SessionHost, started: tuple[SessionRef, SessionSpec, Access]
 ) -> None:
+    ref, spec, access = started
     try:
-        await people.start(*started)
+        # Only when the host has room now: a question waits for it, and says so.
+        await people.start(ref, replace(spec, host_wait_s=0), access)
     except Exception:  # noqa: BLE001 — the question starts it, or says why not
         logger.info("pre-starting a person's session failed", exc_info=True)
 
@@ -203,9 +216,13 @@ async def ask(
     db: DbSession,
     auth: AuthUser,
     people: People,
+    questions: Questions,
 ):
-    """Answer one question, streamed as server-sent events: ``delta`` (text),
-    ``tool`` (what 芝士 is looking at), ``error``, ``done``."""
+    """Answer one question, streamed as server-sent events: ``answering`` (the
+    question's id, to read on from elsewhere), then ``queued`` (waiting for the
+    session host), ``delta`` (text), ``tool`` (what 芝士 is looking at),
+    ``error``, ``done`` (``stopped``). Each event carries its place in the
+    question's stream (``id``)."""
     row = await _owned(db, auth.user_id, conversation_id)
     place = await _place(db, row, auth)
 
@@ -224,33 +241,72 @@ async def ask(
         if redis is None
         else await assistant.take_conversation(redis, conversation_id)
     )
-    if slot is None:
+    if redis is None or slot is None:
         return _refuse(429, say("assistantStillAnswering"), 5)
     held_at = time.monotonic()
-    release = slot.release
 
-    started = conversation_session(auth.user_id, conversation_id, place)
     try:
-        await people.start(*started)
-    except HostFull:
-        await release()
-        return _refuse(503, say("assistantBusy"), 10)
-    except SessionError as exc:
-        logger.warning("a person's session did not start: %s", exc)
-        await release()
-        return _refuse(503, assistant.FAILED, 10)
-
-    return StreamingResponse(
-        assistant.ask(
+        asked = await assistant.ask(
             sessions=async_session_factory,
-            people=people,
+            consumptions=questions,
             user_id=auth.user_id,
             conversation_id=conversation_id,
-            started=started,
+            started=conversation_session(auth.user_id, conversation_id, place),
             question=body.question,
             held_at=held_at,
-            on_done=release,
-        ),
+            slot=slot,
+        )
+    except BaseException:
+        await slot.release()
+        raise
+    return _stream(questions, asked.work_id)
+
+
+@router.get("/conversations/{conversationId}/answers/{work}")
+async def read_answer(
+    conversation_id: Annotated[uuid.UUID, Path(alias="conversationId")],
+    work: uuid.UUID,
+    db: DbSession,
+    auth: AuthUser,
+    questions: Questions,
+    after: str = "0",
+):
+    """The stream of a question asked in this conversation, from ``after`` (the
+    ``id`` of the last event read) to its end, as ``ask`` streams it."""
+    row = await _owned(db, auth.user_id, conversation_id)
+    await db.commit()
+    asked = await questions.get(str(work))
+    if asked is None or asked.kind != assistant.KIND or asked.key != str(row.id):
+        raise NotFoundError.for_resource("answer", str(work))
+    return _stream(questions, asked.work_id, after)
+
+
+def _stream(questions: Consumptions, work: str, after: str = "0") -> StreamingResponse:
+    async def events():
+        if after == "0":
+            yield assistant.sse("answering", {"id": work})
+        async for position, event, data in questions.watch(work, after):
+            yield assistant.sse(event, data, position)
+
+    return StreamingResponse(
+        events(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
     )
+
+
+@router.post("/conversations/{conversationId}/stop")
+async def stop(
+    conversation_id: Annotated[uuid.UUID, Path(alias="conversationId")],
+    db: DbSession,
+    auth: AuthUser,
+    people: People,
+) -> dict:
+    """Stop the question being answered: its wait for the session host, or the
+    answer being written. What was written is kept, marked as stopped."""
+    row = await _owned(db, auth.user_id, conversation_id)
+    await db.commit()
+    redis = get_redis_client()
+    if redis is not None:
+        await assistant.stop(redis, people, auth.user_id, row.id)
+    return ok({})

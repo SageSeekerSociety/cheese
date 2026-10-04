@@ -23,7 +23,7 @@ from typing import Protocol, runtime_checkable
 class ExecutorLaunch(Protocol):
     """Harness-owned installation and history transfer over a device transport."""
 
-    def can_prepare(self, info: dict) -> bool: ...
+    def can_prepare(self, info: dict, sandbox: bool | None = None) -> bool: ...
 
     def payload_for(
         self,
@@ -33,9 +33,18 @@ class ExecutorLaunch(Protocol):
         known_files: dict | None = None,
         *,
         sandbox: bool,
+        platform_machine: bool,
     ) -> dict: ...
 
-    def script(self, project_id, resource_id, env: dict, *, sandbox: bool) -> str: ...
+    def script(
+        self,
+        project_id,
+        resource_id,
+        env: dict,
+        *,
+        sandbox: bool,
+        platform_machine: bool,
+    ) -> str: ...
 
     def private_script(self, target: dict, env: dict) -> str: ...
 

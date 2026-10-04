@@ -1,3 +1,4 @@
+import type { TopicNotifyLevel } from '@/api'
 import type { Project, ProjectMemberRow, Topic } from '@/cx_types'
 
 import { computed, ref } from 'vue'
@@ -9,11 +10,14 @@ import {
   getPrivateUnread,
   getProject,
   getTopic,
+  getTopicNotifyLevels,
   getTopicUnread,
   listProjectMembers,
   listProjects,
   listTopics,
+  markAllTopicsRead,
   markTopicRead,
+  setTopicNotifyLevel,
   setTopicTitle,
   unarchiveProject,
   unarchiveTopic,
@@ -136,6 +140,22 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   // ('cheese' = the 芝士 DM) — DM rows come from the roster and carry no topic id.
   const unreadMap = ref<Record<string, number>>({})
   const privateUnreadMap = ref<Record<string, number>>({})
+  // 我静音了哪些房间（{topic_id: 'mute'}，默认的不在里面）。静音的房间未读照样记在
+  // unreadMap 里——打开它时「新消息从哪开始」那条线要用——但不进任何角标与总数：
+  // 侧栏用的是下面的 badgeUnreadMap。
+  const notifyLevels = ref<Record<string, TopicNotifyLevel>>({})
+  const badgeUnreadMap = computed<Record<string, number>>(() => {
+    const muted = notifyLevels.value
+    if (!Object.keys(muted).length) return unreadMap.value
+    return Object.fromEntries(Object.entries(unreadMap.value).filter(([id]) => muted[id] !== 'mute'))
+  })
+  function isMuted(topicId: string): boolean {
+    return notifyLevels.value[topicId] === 'mute'
+  }
+  // 本地刚改过（静音、全部已读）就 +1：那一刻已经在飞的轮询回来时认得出自己是改之前
+  // 发出去的，不把旧答案盖回来。
+  let levelsWrite = 0
+  let unreadWrite = 0
 
   // What the URL says is open. Set by the shell from the route, read here so a
   // background unread refresh never lights a badge on the thing you're reading.
@@ -195,6 +215,13 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   }
 
   const error = ref<string | null>(null)
+  /**
+   * 话题清单这一块没读到时服务端给的原因，交给侧栏**就地**显示 + 重试
+   * （docs/design-system.md §3.10）。和上面那条 `error`（弹一条就走的全局 toast）
+   * 分开：读不到话题清单要留在它读的那块地方——那条红条几秒就没，之后和「暂无
+   * 话题」长得一模一样，人再也分不出是「坏了」还是「本来就没有」。
+   */
+  const topicsError = ref<string | null>(null)
   function reportError(e: unknown, fallback: string) {
     // 项目在这期间被所有者归档了：那不是一次失败，是这个项目换了状态，整块换成说明。
     if (isProjectArchivedError(e)) {
@@ -308,6 +335,11 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
 
   // Silent refresh of the topic list (no spinner), so sub-topics 芝士 splits off
   // show up on their own.
+  //
+  // 这是 ProjectShell 那条 30 秒轮询走的路。`listTopics` 内部带条件请求：清单没变服务
+  // 端回 304，我们拿回的还是上一次那同一个 payload 对象（见 api.listTopics）。这时候
+  // `topics.value === payload.data` 已经成立，整段就跳过去 —— 不换数组，不为一份逐字节
+  // 一样的数据把侧栏重画一遍。真的变了才落新的一份。
   async function refreshTopics() {
     const revision = topicRevision
     const pid = projectId.value
@@ -316,12 +348,37 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     try {
       const payload = await readLatest(`topics:${pid}:${revision}`, () => listTopics(pid, TOPIC_SORT))
       if (epoch === projectEpoch && projectId.value === pid && revision === topicRevision) {
-        topics.value = payload.data
+        if (topics.value !== payload.data) topics.value = payload.data
         forgetMissingTopic(pid, payload.data)
         noteArchived(payload.data)
       }
     } catch {
       // Best-effort background refresh; ignore.
+    }
+  }
+
+  /**
+   * 读一个项目的话题清单，读到了就落进 `topics`，读不到就把服务端那句原因写进
+   * `topicsError`（侧栏就地显示 + 重试）。
+   *
+   * 返回 false 表示这一趟已经作废（项目已经换了）或者「进不来」（401/403 交给
+   * `accessDenied` 那一屏）——两种都不该再往下走。返回 true 表示这一趟算数，调用
+   * 方可以接着刷未读这些跟项目的动作。
+   */
+  async function loadTopicsInto(id: string, revision: number, epoch: number): Promise<boolean> {
+    try {
+      const payload = await readLatest(`topics:${id}:${revision}`, () => listTopics(id, TOPIC_SORT))
+      if (epoch !== projectEpoch || projectId.value !== id) return false
+      if (revision === topicRevision) topics.value = payload.data
+      forgetMissingTopic(id, payload.data)
+      noteArchived(payload.data)
+      return true
+    } catch (e) {
+      // 「进不来」和「进来了但这一次没取到」是两件事：前者要一屏说明，后者是侧栏
+      // 里那块就地报错。分不开的话，一次网络抖动会被写成「你没有权限」。
+      if (epoch !== projectEpoch || projectId.value !== id || noteAccess(e)) return false
+      topicsError.value = e instanceof Error ? e.message : t('shell.workspaceErrors.loadTopics')
+      return true
     }
   }
 
@@ -350,26 +407,28 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     members.value = []
     unreadMap.value = {}
     privateUnreadMap.value = {}
+    notifyLevels.value = {}
     loadingTopics.value = true
     accessDenied.value = null
     openedProject.value = null
+    topicsError.value = null
     void refreshMembers()
     if (projects.value.length === 0) void refreshProjects()
-    try {
-      const payload = await readLatest(`topics:${id}:${revision}`, () => listTopics(id, TOPIC_SORT))
-      if (epoch !== projectEpoch || projectId.value !== id) return
-      if (revision === topicRevision) topics.value = payload.data
-      forgetMissingTopic(id, payload.data)
-      noteArchived(payload.data)
-    } catch (e) {
-      // 「进不来」和「进来了但这一次没取到」是两件事：前者要一屏说明，后者是那条
-      // 红条。分不开的话，一次网络抖动会被写成「你没有权限」。
-      if (epoch !== projectEpoch || projectId.value !== id || noteAccess(e)) return
-      reportError(e, t('shell.workspaceErrors.loadTopics'))
-    } finally {
-      if (epoch === projectEpoch && projectId.value === id) loadingTopics.value = false
-    }
-    void refreshUnread()
+    const proceed = await loadTopicsInto(id, revision, epoch)
+    if (epoch === projectEpoch && projectId.value === id) loadingTopics.value = false
+    if (proceed) void refreshUnread()
+  }
+
+  /** 侧栏那块「加载话题失败」的「重试」：再读一次当前项目的话题清单。 */
+  async function reloadTopics() {
+    const id = projectId.value
+    if (!id) return
+    const revision = topicRevision
+    const epoch = projectEpoch
+    topicsError.value = null
+    loadingTopics.value = true
+    await loadTopicsInto(id, revision, epoch)
+    if (epoch === projectEpoch && projectId.value === id) loadingTopics.value = false
   }
 
   /** 已归档的项目本身（名字、所有者）。「项目已归档」那一屏打开时来取。 */
@@ -408,9 +467,11 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     const epoch = projectEpoch
     if (!pid || !me) return
     void refreshPrivateUnread(pid, me)
+    void refreshNotifyLevels(pid)
+    const write = unreadWrite
     try {
       const map = await readLatest(`unread:${pid}:${me}`, () => getTopicUnread(pid, me))
-      if (epoch !== projectEpoch || projectId.value !== pid) return
+      if (epoch !== projectEpoch || projectId.value !== pid || write !== unreadWrite) return
       // The open topic is being read right now — its badge never shows.
       if (activeTopicId.value) delete map[activeTopicId.value]
       // Background-refresh the timeline cache of topics whose unread grew: by
@@ -429,6 +490,52 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     } catch {
       // Best-effort; badges just stay as they were.
     }
+  }
+
+  async function refreshNotifyLevels(pid: string) {
+    const epoch = projectEpoch
+    const write = levelsWrite
+    try {
+      const levels = await readLatest(`notify-levels:${pid}`, () => getTopicNotifyLevels(pid))
+      if (epoch !== projectEpoch || projectId.value !== pid || write !== levelsWrite) return
+      notifyLevels.value = levels
+    } catch {
+      // Best-effort: without it every room simply counts, as before.
+    }
+  }
+
+  /** 静音 / 取消静音一间房。先改本地，失败了改回去并说一声。 */
+  async function setMuted(topicId: string, muted: boolean) {
+    // 只改、只还原这一间：别的房间这期间被轮询或另一次静音改过的，不跟着回滚。
+    const put = (on: boolean) => {
+      const next = { ...notifyLevels.value }
+      if (on) next[topicId] = 'mute'
+      else delete next[topicId]
+      notifyLevels.value = next
+    }
+    levelsWrite += 1
+    put(muted)
+    try {
+      await setTopicNotifyLevel(topicId, muted ? 'mute' : 'all')
+    } catch (e) {
+      put(!muted)
+      reportError(e, t('work.room.menu.muteFailed'))
+    }
+  }
+
+  /** 全部标为已读：先清掉本地角标，再让服务器把每一间的已读位推到现在。 */
+  async function markAllRead() {
+    const pid = projectId.value
+    if (!pid) return
+    unreadWrite += 1
+    unreadMap.value = {}
+    try {
+      await markAllTopicsRead(pid)
+    } catch (e) {
+      reportError(e, t('work.room.menu.markAllReadFailed'))
+    }
+    // 成功失败都以服务器为准再拉一次：失败了角标回来的是此刻真实的数，不是点之前那一份。
+    void refreshUnread()
   }
 
   async function refreshPrivateUnread(pid: string, me: string) {
@@ -511,32 +618,51 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   }
 
   async function archive(topicId: string) {
+    const topic = topics.value.find((row) => row.id === topicId)
+    const prevStatus = topic?.status
+    // 归档的正是 rail 记着的那一个：就地忘掉（归档的话题还在清单里，
+    // `forgetMissingTopic` 找不到它）。失败时这一步要退回去。
+    const wasRemembered = !!topic && lastTopicByProject.value[topic.project_id] === topicId
+    // 乐观：本地这一行立刻变成已归档——菜单、列表、rail 当场就是归档后的样子，省掉的
+    // 是「点一下到界面动」之间那一次往返。服务端那份回来覆盖它；失败时还原并说一声。
+    if (topic) {
+      topicRevision += 1
+      topic.status = 'archived'
+      if (wasRemembered) forgetRememberedTopic(topic.project_id)
+    }
     try {
       const updated = await archiveTopic(topicId)
-      const topic = topics.value.find((row) => row.id === topicId)
-      if (topic) {
-        topicRevision += 1
-        Object.assign(topic, updated)
-      }
-      // 刚归档的正是记着的那一个：rail 那一格不该再把项目落在它身上（归档的话题还
-      // 在清单里，`forgetMissingTopic` 找不到它），直接忘掉。
-      if (topic && lastTopicByProject.value[topic.project_id] === topicId) forgetRememberedTopic(topic.project_id)
+      const row = topics.value.find((r) => r.id === topicId)
+      if (row) Object.assign(row, updated)
       void refreshTopics()
     } catch (e) {
+      if (topic && prevStatus !== undefined) {
+        topicRevision += 1
+        topic.status = prevStatus
+        if (wasRemembered) rememberTopic(topic.project_id, topicId)
+      }
       reportError(e, t('shell.workspaceErrors.archive'))
     }
   }
 
   async function unarchive(topicId: string) {
+    const topic = topics.value.find((row) => row.id === topicId)
+    const prevStatus = topic?.status
+    // 乐观：同上，先把这一行翻回在用。
+    if (topic) {
+      topicRevision += 1
+      topic.status = 'active'
+    }
     try {
       const updated = await unarchiveTopic(topicId)
-      const topic = topics.value.find((row) => row.id === topicId)
-      if (topic) {
-        topicRevision += 1
-        Object.assign(topic, updated)
-      }
+      const row = topics.value.find((r) => r.id === topicId)
+      if (row) Object.assign(row, updated)
       void refreshTopics()
     } catch (e) {
+      if (topic && prevStatus !== undefined) {
+        topicRevision += 1
+        topic.status = prevStatus
+      }
       reportError(e, t('shell.workspaceErrors.unarchive'))
     }
   }
@@ -592,11 +718,17 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     isExternal,
     loadingTopics,
     unreadMap,
+    badgeUnreadMap,
+    notifyLevels,
+    isMuted,
+    setMuted,
+    markAllRead,
     privateUnreadMap,
     activeTopicId,
     activeDmPeer,
     chatPct,
     error,
+    topicsError,
     rootTopic,
     projectName,
     setChatPct,
@@ -604,6 +736,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     refreshProjects,
     refreshMembers,
     refreshTopics,
+    reloadTopics,
     refreshUnread,
     refreshTopicRow,
     loadPlace,

@@ -28,6 +28,10 @@ class Journal:
     #: reopens the journal the old one wrote.
     table: str
     column: str
+    #: An SQL condition on ``column`` true of every record that can end a turn.
+    #: The step over records too old to land stops at one, so that its turn
+    #: still ends; one it is true of that ends nothing only shortens the step.
+    turn_end: str
     #: ``CREATE TABLE`` for the records table; it must have ``sequence``,
     #: ``recorded_at`` and ``column``.
     schema: str
@@ -106,8 +110,7 @@ class Journal:
             "WHERE sequence > ? AND (recorded_at >= ? "
             f"OR json_extract({self.column}, '$.cheese.receipt') = 1 "
             f"OR json_extract({self.column}, '$.cheese.work_completed') = 1 "
-            f"OR (json_extract({self.column}, '$.type') = 'result' "
-            f"AND json_extract({self.column}, '$.cheese.work_id') IS NOT NULL))",
+            f"OR ({self.turn_end}))",
             (after, before),
         ).fetchone()
         count, last = self.connection.execute(

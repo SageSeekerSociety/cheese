@@ -2,7 +2,8 @@ import DOMPurify from 'dompurify'
 import { Marked } from 'marked'
 import markedCjkFriendly from 'marked-cjk-friendly'
 import { markedHighlight } from 'marked-highlight'
-import Prism from 'prismjs'
+
+import Prism from '@/utils/prism'
 
 import markedKatex from './katexExt'
 

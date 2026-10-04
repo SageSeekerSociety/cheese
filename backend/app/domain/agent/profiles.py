@@ -7,7 +7,7 @@ pool"). The `claude-opus` profile is tagged `testing` — it exists for the team
 own dogfooding (a personal seat is ToS-compliant); the multi-user product path
 defaults to the pool.
 
-Compute (which node runs the sandbox) is a separate axis — see ComputeProvider.
+Compute (which node runs the sandbox) is a separate axis — see ComputePool.
 This module only resolves model + provider env.
 """
 

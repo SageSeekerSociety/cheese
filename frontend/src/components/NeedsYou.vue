@@ -29,6 +29,7 @@ import { getInbox, markRead, resolveAlert, sendFeedback } from '@/api'
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { label, NOTIF_KIND } from '@/labels'
+import { markAllAlertsRead } from '@/lib/alerts'
 import { myHandle } from '@/me'
 
 const props = defineProps<{ projectId: string }>()
@@ -38,6 +39,8 @@ const router = useRouter()
 const rows = ref<InboxItem[]>([])
 const actionError = ref('')
 const busy = ref<number | null>(null)
+/** 整队收起那次请求还没回来：一队一百条，那一下不是瞬时的。 */
+const busyAll = ref(false)
 
 /** 这一叠最多摆几张。第三张已经只剩一道边，再多一张看不出区别，只是多一层渲染。 */
 const DEPTH = 3
@@ -150,6 +153,25 @@ async function dismiss(row: InboxItem) {
   await act(row, () => markRead(row.id), t('work.needsYou.dismissFailed'))
 }
 
+/** 整队收起：一队一百条不该要一百下「收起」。走项目级的已读接口（和收件箱的
+ *  「标记全部已读」同一条路）——它只标自己的，而且留着没拍板的决策请求，所以这一下
+ *  清掉的是变更提醒和读过就走的验收卡，不是还没答的问题。 */
+async function dismissAll() {
+  const projectId = props.projectId
+  const me = myHandle()
+  if (!me) return
+  busyAll.value = true
+  actionError.value = ''
+  try {
+    await markAllAlertsRead(projectId, me)
+    await load()
+  } catch (e) {
+    actionError.value = e instanceof Error ? e.message : t('work.needsYou.dismissFailed')
+  } finally {
+    busyAll.value = false
+  }
+}
+
 async function rate(row: InboxItem, feedback: 'up' | 'down') {
   await act(row, () => sendFeedback(row.id, feedback), t('work.needsYou.feedbackFailed'))
 }
@@ -178,10 +200,18 @@ watch(
           <!-- 「1/3」：一叠摆出来的是一条，所以件数得连着位置一起说，光写 3 会读成
                「这张卡有三个选项」。只有一条的时候不写——那时候位置不是信息。 -->
           <span v-if="rows.length > 1" class="asked__count t-meta c-faint">{{ cursor + 1 }}/{{ rows.length }}</span>
-          <button v-if="rows.length > 1" type="button" class="asked__next t-meta" @click="next">
-            {{ t('work.needsYou.next') }}
-            <v-icon size="14" aria-hidden="true">mdi-chevron-right</v-icon>
-          </button>
+          <!-- When a second item is waiting, a hundred-strong queue should not still cost
+               a hundred dismiss clicks: the batch action sits here, on the same route as
+               the inbox's mark-all-as-read (the same word, the same key). -->
+          <div v-if="rows.length > 1" class="asked__actions">
+            <BaseButton kind="ghost" size="sm" :loading="busyAll" @click="dismissAll">
+              {{ t('notifications.common.markAllAsRead') }}
+            </BaseButton>
+            <button type="button" class="asked__next t-meta tap-target" @click="next">
+              {{ t('work.needsYou.next') }}
+              <v-icon size="14" aria-hidden="true">mdi-chevron-right</v-icon>
+            </button>
+          </div>
         </header>
         <p v-if="actionError" role="alert" class="asked__error t-meta">{{ actionError }}</p>
         <!-- 一叠卡：三张都落在同一个网格格子里，所以这一叠的高度是最高那张的高度，
@@ -266,101 +296,125 @@ watch(
   display: grid;
   grid-template-rows: 1fr;
 }
+
 /* 内边距归到里面这一层：留在外面的话，这一块收到 0 之后还剩一条 14px 的空白。
    和「做出了什么」、下面那块板左右对齐——板自己 12px，这里再补 10px。 */
 .asked__inner {
   min-height: 0;
-  overflow: hidden;
   padding: 0 10px 14px;
+  overflow: hidden;
 }
+
 .asked__head {
   display: flex;
   align-items: baseline;
   gap: 6px;
   margin: 0 0 8px;
 }
+
 .asked__title {
   margin: 0;
 }
+
 .asked__count {
   font-variant-numeric: tabular-nums;
 }
+/* 这一队次要动作（整队收起 / 下一条）靠右排；它们比标题矮一档，按中线对齐标题那一行。 */
+.asked__actions {
+  display: flex;
+  align-items: center;
+  align-self: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
 /* 悬停只改颜色，不改位置。 */
 .asked__next {
   display: flex;
+  position: relative;
   align-items: center;
-  margin-left: auto;
   color: var(--muted);
   cursor: pointer;
 }
+
 .asked__next:hover {
   color: var(--text);
 }
+
 /* 错误是给人读的一行字，所以用墨色那一档：`--danger` 是记号的颜色，写字读不出来。 */
 .asked__error {
   margin: 0 0 8px;
   color: var(--danger-ink);
 }
+
 /* 三张卡共用一个格子。格子的高度是最高那张的高度，而最上面那张的结构（一行标题 +
    两行正文 + 一行按钮）是固定的，所以这一叠的高度是常数。 */
 .asked__deck {
   display: grid;
-  list-style: none;
   padding: 0;
   margin: 0;
+  list-style: none;
 }
+
 /* 一条是一个问题：上面是它问了什么，下面是答它的那几个按钮。左边那道暖色竖线和
    看板里「待处理」那一列同一个 token——整个首页上「该你动手了」只有这一种颜色。 */
 .asked-card {
-  grid-area: 1 / 1;
   display: flex;
-  flex-direction: column;
   padding: 10px 10px 6px 12px;
-  border: 1px solid var(--line);
-  border-left: 2px solid var(--warn);
-  border-radius: var(--radius-md);
   background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  grid-area: 1 / 1;
+  flex-direction: column;
+  border-left: 2px solid var(--warn);
 }
+
 /* 后面那两张往下挪、缩一点、淡一点：露出来的那道边就是「后面还有」。它们不接事件
    ——点在那道边上要答的还是最上面那一条。 */
 .asked-card--d0 {
   z-index: var(--z-raised-3);
 }
+
 .asked-card--d1 {
   z-index: var(--z-raised-2);
-  transform: translateY(6px) scale(0.985);
-  opacity: 0.6;
   pointer-events: none;
+  opacity: 0.6;
+  transform: translateY(6px) scale(0.985);
 }
+
 .asked-card--d2 {
   z-index: var(--z-raised);
-  transform: translateY(12px) scale(0.97);
-  opacity: 0.35;
   pointer-events: none;
+  opacity: 0.35;
+  transform: translateY(12px) scale(0.97);
 }
+
 .asked-card__head {
   display: flex;
   align-items: baseline;
   gap: 8px;
 }
+
 /* 标题一行，超出截断：两行的标题会把这一叠撑高一行，而它得是常数。 */
 .asked-card__title {
   min-width: 0;
   overflow: hidden;
+  color: var(--text);
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text);
 }
+
 .asked-card__body {
   display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
   min-height: 2.8em;
   margin: 4px 0 0;
+  overflow: hidden;
   line-height: 1.4;
   white-space: pre-wrap;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
+
 .asked-card__acts {
   display: flex;
   align-items: center;
@@ -377,21 +431,25 @@ watch(
     transform 0.3s ease,
     opacity 0.2s ease;
 }
+
 /* 答掉的那一条在原地淡出，后面那张同时顶上来。淡出期间它盖在最上面（不然它是在新
    的第一张后面消失的，看着像下一张先冒出来），也不再接事件。 */
 .asked-card-leave-active {
   z-index: var(--z-raised-4);
   pointer-events: none;
 }
+
 .asked-card-enter-from,
 .asked-card-leave-to {
   opacity: 0;
 }
+
 .asked-fold-leave-active {
   transition:
     grid-template-rows 0.3s ease,
     opacity 0.2s ease;
 }
+
 .asked-fold-leave-to {
   grid-template-rows: 0fr;
   opacity: 0;

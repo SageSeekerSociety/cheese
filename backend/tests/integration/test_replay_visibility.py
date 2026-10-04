@@ -54,7 +54,7 @@ class SilentScreen(StubChannel):
 class UnlaunchedScreen(StubChannel):
     """Fail before a runner or native input exists, so retry is unambiguous."""
 
-    async def ensure(self, session, opening, live=None):
+    async def precheck(self, session, *, needs_place):
         raise ScreenSetupError("The executor could not be launched")
 
 

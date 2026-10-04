@@ -65,7 +65,7 @@ covers:
 
 | 路 | 谁记 | 怎么进账 |
 |---|---|---|
-| 网关路 | LiteLLM 逐次记在项目虚拟 key 上 | 主 API 按天、按模型读取 `/spend/logs` 的累计差值，只消费一次 |
+| 网关路 | LiteLLM 逐次记在项目虚拟 key 上 | 主 API 读取 LiteLLM 按 key、按天、按模型记的累计值（`/user/daily/activity`），只消费差值，每笔只消费一次 |
 | 订阅路 | 计量代理每个 `/v1/messages` 响应写一行 `usage.jsonl` | 主 API 定时把新行收进 `resource_usage`，和检查点在同一个事务里推进，只收一次（`subscription_ingest.py`） |
 
 交互式的 Claude Code 自己不报告用量，所以两条路都只能在流量经过的地方计量。

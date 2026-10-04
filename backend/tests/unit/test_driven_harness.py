@@ -13,7 +13,7 @@ import json
 import sqlite3
 import threading
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -28,6 +28,7 @@ from app.domain.agent.service import AgentMessage, AgentResult
 class Journal(journal.Journal):
     table = "records"
     column = "record"
+    turn_end = "json_extract(record, '$.reply') IS NOT NULL"
     schema = """
         CREATE TABLE IF NOT EXISTS records (
             sequence INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -109,7 +110,7 @@ class Backlog(JournalBacklog[Journal]):
             key=f"{row['sequence']:019d}",
             eid=f"stand-in:{row['sequence']}",
             record=row["record"],
-            age_s=0,
+            age_s=(now - datetime.fromisoformat(row["at"])).total_seconds(),
         )
 
     def assemble(self, entry: HarnessEvent) -> list:
@@ -156,6 +157,7 @@ class Room:
 
     def __init__(self):
         self.landed: list[tuple[str, str]] = []
+        self.events: list = []
         self.turns: list[bool] = []
         self.refuse_next = False
 
@@ -164,6 +166,7 @@ class Room:
             self.refuse_next = False
             raise ConnectionError("the database went away")
         self.landed.append((eid, type(event).__name__))
+        self.events.append(event)
 
     async def activity(self, project, topic, work, active):
         self.turns.append(active)
@@ -226,6 +229,31 @@ async def test_a_restarted_runner_is_read_on_from_its_cursor_exactly_once(
     # Every turn opened once and closed once, including the one that failed
     # halfway: its opening had landed, so only its reply was read again.
     assert room.turns == [True, False, True, False, True, False]
+
+
+@pytest.mark.anyio
+async def test_a_turn_whose_end_waited_too_long_still_ends_and_lands_nothing(
+    tmp_path,
+):
+    """Nobody read the session for longer than a record may wait. What it said
+    is stepped over; its turn still ends, with nothing for the room to show."""
+    state, mirror, room = tmp_path / "state", tmp_path / "mirror.sqlite", Room()
+    work = str(uuid.uuid4())
+    running = Runner(state)
+    await running.start()
+    try:
+        await call(state, "send", send("one", "first", work))
+        then = datetime.now(UTC) - timedelta(seconds=subscription.STALE_S + 60)
+        with running.journal.connection as connection:
+            connection.execute("UPDATE records SET recorded_at = ?", [then.isoformat()])
+        assert await subscribe(state, mirror, room).drain() == 0
+    finally:
+        await running.close()
+
+    assert [type(event).__name__ for event in room.events] == ["AgentResult"]
+    (ending,) = room.events
+    assert ending.late and ending.text == ""
+    assert room.turns == [False]
 
 
 @pytest.mark.anyio

@@ -18,6 +18,7 @@
           (currentSpace?.defaultCategoryId === category.id ? ' ' + t('spaces.detail.manageCategories.isDefault') : '')
         "
         :subtitle="category.description || undefined"
+        @contextmenu="rowMenu.open(category.id, $event)"
       >
         <template #prepend>
           <v-icon size="18" class="c-faint">{{
@@ -48,7 +49,7 @@
             @click="openEditDialog(category)"
           />
 
-          <AdaptiveMenu :actions="categoryActions(category)" :title="category.name">
+          <AdaptiveMenu v-bind="rowMenu.bind(category.id)" :actions="categoryActions(category)" :title="category.name">
             <template #activator="{ props }">
               <BaseButton
                 v-bind="props"
@@ -63,7 +64,12 @@
       </v-list-item>
     </v-list>
 
-    <p v-else class="settings-empty">{{ t('spaces.detail.manageCategories.noCategories') }}</p>
+    <BaseEmptyState
+      v-else
+      size="inline"
+      class="settings-empty"
+      :title="t('spaces.detail.manageCategories.noCategories')"
+    />
 
     <!-- Create/edit category form: dialog on desktop, full page on phones (AdaptiveDialog). -->
     <AdaptiveDialog
@@ -120,9 +126,11 @@ import { z } from 'zod'
 
 import { vuetifyConfig } from '@/utils/form'
 
+import { useRowMenu } from '@/composables/useRowMenu'
 import { useSpaceData } from '@/composables/useSpaceData'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import SettingsToolbar from '@/components/spaces/SettingsToolbar.vue'
@@ -135,6 +143,7 @@ const spaceData = useSpaceData()
 const { currentSpace, categories, loadingCategories } = storeToRefs(spaceStore)
 const { t } = useI18n()
 const { confirm } = useDialog()
+const rowMenu = useRowMenu<number>()
 
 // 表单相关
 const dialogOpen = ref(false)
@@ -246,7 +255,10 @@ const submitForm = handleSubmit(async (values) => {
 })
 
 const deleteCategory = async (categoryId: number) => {
-  const confirmed = await confirm(t('spaces.detail.manageCategories.confirmDelete')).wait()
+  const confirmed = await confirm(t('spaces.detail.manageCategories.confirmDelete'), {
+    confirmLabel: t('spaces.detail.manageCategories.deleteCategory'),
+    danger: true,
+  }).wait()
   if (!confirmed) return
 
   try {

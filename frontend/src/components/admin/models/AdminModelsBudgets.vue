@@ -3,9 +3,10 @@ import type { ProjectRow, ProjectsPayload } from '@/lib/adminModels'
 
 import { useI18n } from 'vue-i18n'
 
-import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
-import AdminGrid from '@/components/admin/AdminGrid.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
+import BaseTable from '@/components/base/BaseTable.vue'
 import { fmtCost, fmtNum } from '@/lib/usageFormat'
 
 // 额度那一段：给项目的网关 key 设「刹车值」。和模型分开，因为它们回答的是两个不同的
@@ -32,7 +33,7 @@ const { t } = useI18n()
 
 <template>
   <div class="amd__gridwrap amd__gridwrap--short">
-    <AdminGrid
+    <BaseTable
       :label="t('models.budget.label')"
       :cols="['240px', '132px', '170px', '186px', '150px', '96px']"
       :bone-widths="['60%', '52%', '64%', '58%', '56%', '48%']"
@@ -56,18 +57,16 @@ const { t } = useI18n()
       <!-- 读失败给中性标题、原话落到说明行、并给重试；**不**退化成空表（空表说的是
        「还没有项目」）。它和模型段各说自己的那一次失败，不由一个页面级的横幅代劳。 -->
       <template #error>
-        <AdminEmptyState
-          compact
-          tone="error"
+        <BaseLoadError
           :title="t('models.budget.loadFailed')"
-          :desc="props.error || undefined"
-          :action="t('models.page.retry')"
-          @action="emit('retry')"
+          :error="props.error || undefined"
+          :retry-label="t('models.page.retry')"
+          @retry="emit('retry')"
         />
       </template>
 
       <template #empty>
-        <AdminEmptyState compact :title="t('models.budget.empty')" />
+        <BaseEmptyState size="compact" :title="t('models.budget.empty')" />
       </template>
 
       <tr v-for="row in props.projects?.projects ?? []" :key="row.project_id" class="amd__row">
@@ -120,7 +119,7 @@ const { t } = useI18n()
           </BaseButton>
         </td>
       </tr>
-    </AdminGrid>
+    </BaseTable>
   </div>
 </template>
 

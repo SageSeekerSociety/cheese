@@ -1,6 +1,8 @@
 // Shared types matching the backend API contract (CheeseX Phase 0).
 
+import type { AgentControlState } from './types/agentControl'
 import type { AskBlockMeta } from './types/ask'
+export type { AgentControlState } from './types/agentControl'
 export type { AskAnswerEntry, AskOption } from './types/ask'
 export type { WaitingItem } from './types/waiting'
 
@@ -340,30 +342,11 @@ export type WsServerFrame =
   // An existing block's data changed in place (an option question got answered): replace it in the timeline.
   | { type: 'block_updated'; block: Block }
   | { type: 'pong' } // answer to the client's liveness ping; carries nothing
-  | { type: 'comment_activity'; thread: string; state: 'queued' | 'working'; tool?: string } // agent on a doc thread
   // The room's session state moved: a task started or finished (the harness's
   // own, or a command the executor runs), or the session reported its model.
   // The same shape `GET /topics/{id}/agent/control` answers.
   | { type: 'agent_control'; state: AgentControlState }
   | import('./types/live').LiveFrame
-
-export interface AgentControlState {
-  id: string | null
-  connected: boolean
-  controls?: string[]
-  tasks?: Record<
-    string,
-    {
-      task_id: string
-      description?: string
-      status?: string
-      subtype?: string
-      tool_use_id?: string
-      task_type?: string
-    }
-  >
-  state?: Record<string, Record<string, unknown>>
-}
 
 // An uploaded worktree file the message carries. `path` comes from
 // POST /topics/{id}/attachments; the WS frame only references it (no binary).
@@ -927,12 +910,9 @@ export interface ProjectCredits {
 
 // ---- 题目匹配市场 (spec §13 阶段 6: Space 发布题目, 团队应征) ----
 
-// #282 §四 / #358 · whether an agent in this room can see a whole enrolled machine.
-// `effective` is the widest visibility any agent session here has on the enrolled
-// machine it works on ('host' | 'isolated' | null when none is on one); `machine_access`
-// is the one flag the room's 「能访问整台机器」 notice keys on (its tooltip, the honest
-// #282 line, is `work.roomMachine.wholeMachineNotice`). `options` carries the two 档 with
-// their capability copy (isolated = boxed default, host = whole-machine, 申请制).
+// #282 §四 · whether an agent in this room can see a whole enrolled machine. `effective`: 'host' | 'isolated' | null
+// (no agent on one); `machine_access` is the flag the room's 「能访问整台机器」 notice keys on (tooltip:
+// `work.roomMachine.wholeMachineNotice`). `options`: the two 档 (isolated = default, host = the owner gives it).
 export interface TopicComputeVisibility {
   options: PoolListing[]
   effective: 'host' | 'isolated' | null
@@ -943,6 +923,8 @@ export interface TopicComputeDevice {
   device_id: string
   name: string
   online: boolean
+  owned?: boolean // the reader enrolled it, signed in: only they may give a room the whole machine
+  sandbox_unavailable?: import('./lib/noticeText').NoticeMessage | null // why it cannot isolate a room
 }
 
 // GET /topics/{id}/compute-profile — the room's one work computer (一个话题一个容器, 2026-09-28).
@@ -1172,19 +1154,19 @@ export interface AgentType {
   created_at?: string | null
 }
 
-// GET /projects/{id}/agents — one agent working in this project.
-// Saved teammate role and optional project-scoped model override.
+// GET /projects/{id}/agents — a teammate's role, model override, thinking effort and compaction share (50–90).
 export interface AgentConfiguration {
   body: string
   skills: string[]
   model?: string | null
+  effort?: 'low' | 'medium' | 'high' | 'max' | null
+  compact_percent?: number | null
 }
 
 export interface ProjectAgent {
   configuration: AgentConfiguration
   id: string
   project_id: string
-  // The memory pool key inside the project (`{project}:{handle}`).
   handle: string
   // 它坐在房间名册上时用的 handle —— 把它请进一个房间就是往名册上加这个。
   seat_handle: string

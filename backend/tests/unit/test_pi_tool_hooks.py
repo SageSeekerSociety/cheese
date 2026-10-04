@@ -16,7 +16,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from app.domain.agent.harness import Opening
+from app.domain.agent.harness.driven.runner import SessionStart
 from app.domain.agent.harness.pi.runner import Runner
 from tests.support.room_machine import room_machine
 from tests.unit.test_pi_runner import call, shim
@@ -134,7 +134,7 @@ async def _session(tmp_path: Path, work: Path, calls: list[tuple[str, dict]]):
     machine = room_machine(tmp_path / "machine", checkout=work)
     target = machine.__enter__()
     await runner.start(
-        Opening("system prompt", None, agent_handle="teammate"),
+        SessionStart("system prompt", None, agent_handle="teammate"),
         binary=shim(tmp_path),
         cwd=str(tmp_path),
         env={"PATH": "/usr/bin:/bin"},
@@ -243,7 +243,7 @@ def test_a_tool_claude_code_has_no_equivalent_for_keeps_its_own_name(tmp_path):
         runner = Runner(tmp_path / "state")
         with room_machine(tmp_path / "machine", checkout=work) as target:
             await runner.start(
-                Opening("system prompt", None, agent_handle="teammate"),
+                SessionStart("system prompt", None, agent_handle="teammate"),
                 binary=shim(tmp_path),
                 cwd=str(tmp_path),
                 env={"PATH": "/usr/bin:/bin"},
@@ -355,7 +355,7 @@ def _asked(tmp_path: Path, work: Path, calls: list[tuple[str, dict]]):
         runner = Runner(tmp_path / "state")
         with room_machine(tmp_path / "machine", checkout=work) as target:
             await runner.start(
-                Opening("system prompt", None, agent_handle="teammate"),
+                SessionStart("system prompt", None, agent_handle="teammate"),
                 binary=shim(tmp_path),
                 cwd=str(tmp_path),
                 env={"PATH": "/usr/bin:/bin"},

@@ -20,6 +20,7 @@
     "loading": "加载中...",
     "empty": "暂无数据",
     "loadMore": "加载更多",
+    "showing": "已显示 {shown} / 共 {total} 条",
     "end": "没有更多了"
   },
   "loading": "加载中",
@@ -52,6 +53,14 @@
     "server": "服务器错误"
   },
   "agentDefaultName": "芝士",
+  "restore": {
+    "restoring": "正在恢复登录状态…",
+    "unreachable": "连不上服务器，暂时确认不了登录状态",
+    "unreachableHint": "网络恢复后会自动重试，也可以现在手动重试。",
+    "retry": "重试",
+    "continueAsGuest": "以访客身份继续",
+    "navigationFailed": "网络仍不稳定，请稍后再试"
+  },
   "workspaceErrors": {
     "loadProject": "加载项目失败",
     "loadTopics": "加载话题失败",

@@ -16,25 +16,55 @@ export function memberName(row: { name?: string | null; name_source?: string | n
   return row ? teammateName(row.name, row.name_source) : ''
 }
 
+/** 名册上一行队友的两个答案：它叫什么，和它是哪一位。 */
+interface AgentSeat {
+  name: string
+  /** 同一位队友的每个 handle 都指到这一个：它名册上的座位 handle。 */
+  identity: string
+}
+
+/**
+ * AI 队友的 handle → 它叫什么、是哪一位。一个队友有两个 handle：坐在名册上的座位
+ * （`cheese-<hex>`，块署名、@ 用它），和它自己的 handle（`cheese`、`cheese-kimi`，
+ * 会话、轮次帧、消息的收件人用它）。两个都认，且都归到同一位——同一个人在记录里
+ * 用了两个 handle，不是两个人。房间名册先说（房间那一行的名字是房间现在交给的那
+ * 位），项目名册补上不在这间房里的队友和队友自己的 handle。
+ *
+ * 名字和身份由这一处一起产出：各建一张表，迟早有一张忘了改。
+ */
+function agentSeats(room: TopicMemberRow[], project: ProjectMemberRow[]): Map<string, AgentSeat> {
+  const seats = new Map<string, AgentSeat>()
+  for (const row of project) {
+    if (!row.agent) continue
+    const seat: AgentSeat = { name: memberName(row), identity: row.user_handle }
+    seats.set(row.user_handle, seat)
+    if (row.instance_handle) seats.set(row.instance_handle, seat)
+  }
+  for (const row of room) {
+    if (row.agent) seats.set(row.member_handle, { name: memberName(row), identity: row.member_handle })
+  }
+  return seats
+}
+
 /**
  * AI 队友的 handle → 它叫什么。界面上给队友署名的地方都从这里取，不各查各的。
- *
- * 一个队友有两个 handle：坐在名册上的座位（`cheese-<hex>`，块署名、@ 用它），和它
- * 自己的 handle（`cheese-kimi`，会话、轮次帧、消息的收件人用它）。两个都认。房间
- * 名册先说（房间那一行的名字是房间现在交给的那位），项目名册补上不在这间房里的队
- * 友和队友自己的 handle。都认不出的 handle 不在表里，兜底由调用方决定。
+ * 都认不出的 handle 不在表里，兜底由调用方决定。
  */
 export function agentNames(room: TopicMemberRow[], project: ProjectMemberRow[]): Map<string, string> {
   const names = new Map<string, string>()
-  for (const row of project) {
-    const name = memberName(row)
-    if (!row.agent || !name) continue
-    names.set(row.user_handle, name)
-    if (row.instance_handle) names.set(row.instance_handle, name)
-  }
-  for (const row of room) {
-    const name = memberName(row)
-    if (row.agent && name) names.set(row.member_handle, name)
+  for (const [handle, seat] of agentSeats(room, project)) {
+    if (seat.name) names.set(handle, seat.name)
   }
   return names
+}
+
+/**
+ * AI 队友的 handle → 它是哪一位：同一个队友的每个 handle 都映到它座位那个 handle。
+ * 「同一位只画一次」按这张表认人，不按 handle 比字符串——一位队友在一处挂的是座位、
+ * 另一处挂的是它自己的 handle，比字符串就会把它画成两个人。
+ */
+export function agentIdentities(room: TopicMemberRow[], project: ProjectMemberRow[]): Map<string, string> {
+  const identities = new Map<string, string>()
+  for (const [handle, seat] of agentSeats(room, project)) identities.set(handle, seat.identity)
+  return identities
 }
