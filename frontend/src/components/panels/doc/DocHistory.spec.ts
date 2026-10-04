@@ -64,7 +64,7 @@ describe('修改记录', () => {
 
   it('最新那一版没有恢复', async () => {
     mount([version(3, 'bob', 1), version(2, 'alice', 60)])
-    await screen.findByText('第 3 版')
+    await screen.findAllByText('bob')
     expect(screen.queryByRole('button', { name: t('work.room.doc.restore') })).toBeNull()
   })
 
@@ -82,8 +82,26 @@ describe('修改记录', () => {
       version(2, 'alice', 4),
       version(1, 'bob', 5),
     ])
-    await screen.findByText('第 5 版')
+    await screen.findAllByText('alice')
     expect(screen.getAllByText('bob')).toHaveLength(2)
     expect(screen.getAllByText('alice')).toHaveLength(1)
+  })
+
+  it('右边默认是和上一条比的改动，能切到全文', async () => {
+    const { container } = mount([version(2, 'bob', 1, '标题\n新加的一段\n结尾'), version(1, 'alice', 60, '标题\n结尾')])
+    await screen.findAllByText('bob')
+    await waitFor(() =>
+      expect(container.ownerDocument.querySelector('.vdiff__row--add')?.textContent).toContain('新加的一段')
+    )
+    await fireEvent.click(screen.getByRole('button', { name: t('work.room.doc.historyFull') }))
+    await waitFor(() => expect(container.ownerDocument.querySelector('.vdiff')).toBeNull())
+  })
+
+  it('第一版没有上一版：整篇算新加的', async () => {
+    const { container } = mount([version(1, 'alice', 60, '只有一段')])
+    await screen.findAllByText('alice')
+    await waitFor(() =>
+      expect(container.ownerDocument.querySelector('.vdiff__row--add')?.textContent).toContain('只有一段')
+    )
   })
 })

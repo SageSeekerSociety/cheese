@@ -952,7 +952,16 @@
           "diagram": "Diagram",
           "image": "Image"
         }
-      }
+      },
+      "historyView": "Show",
+      "historyDiff": "Compare with previous",
+      "historyFull": "Full text",
+      "diffSummary": "{added} added · {removed} removed · {changed} changed",
+      "diffNone": "No changes from the previous version",
+      "diffSkipped": "{count} unchanged",
+      "diffAdded": "Added: ",
+      "diffRemoved": "Removed: ",
+      "diffLoading": "Loading the previous version"
     },
     "comments": {
       "comment": "Comment",
