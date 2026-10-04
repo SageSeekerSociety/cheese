@@ -655,6 +655,8 @@ routes:
   - {protocol: "http", method: "POST", path: "/users/me/consents", auth: "user.session", owner: "legal"}
   # app.api.routes.library
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/library/raw", auth: "project.reader", owner: "library"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/library/versions", auth: "project.reader", owner: "library"}
+  - {protocol: "http", method: "POST", path: "/projects/{project_id}/library/restore", auth: "library.keeper", owner: "library"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/library", auth: "project.reader", owner: "library"}
   - {protocol: "http", method: "POST", path: "/projects/{project_id}/library", auth: "library.keeper", owner: "library"}
   - {protocol: "http", method: "PUT", path: "/projects/{project_id}/library", auth: "library.keeper", owner: "library"}
