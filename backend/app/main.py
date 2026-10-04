@@ -373,9 +373,10 @@ async def lifespan(_: FastAPI):
     try:
         loop.add_signal_handler(signal.SIGUSR1, on_handover_signal)
         listening_for_handover = True
-    except RuntimeError:
+    except (RuntimeError, ValueError):
         # Off the main thread — the test client runs the app there, and only a
         # process's main thread can take a signal. The work still moves at stop.
+        # asyncio says so with RuntimeError, uvloop with ValueError.
         listening_for_handover = False
 
     async with (
