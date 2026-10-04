@@ -86,7 +86,7 @@ describe('周报集', () => {
     })
     // 窗口是这一行的身份：并排摆着的几份周报，是它把它们分开的。
     expect(view.getByText('8月31日 – 9月6日')).toBeTruthy()
-    expect(view.getByText('本周交付了产物页预览。')).toBeTruthy()
+    expect(await view.findByText('本周交付了产物页预览。')).toBeTruthy()
     expect(view.getByText('来自话题')).toBeTruthy()
     view.unmount()
   })
