@@ -103,27 +103,44 @@ def temporary_beside(destination):
 
 
 PROJECT_SKILLS_MANIFEST = "skills/.cheese-project-skills.json"
-#: The platform's own skill folders; a project skill never takes these names.
-PLATFORM_SKILLS = frozenset({"documents", "cheese", "cheese-docs", "chat-detail"})
+PLATFORM_SKILLS_MANIFEST = "skills/.cheese-platform-skills.json"
 
 
-def prune_project_skills(config_dir, names):
-    """Remove the project skills planted last time that are no longer shipped."""
+def _skill_folder(name):
+    return (
+        isinstance(name, str) and name and "/" not in name and name not in (".", "..")
+    )
+
+
+def prune_project_skills(config_dir, names, platform):
+    """Remove the project skills planted last time that are no longer shipped.
+    The platform's own folders are never touched here."""
     manifest = config_dir / PROJECT_SKILLS_MANIFEST
     try:
         previous = json.loads(manifest.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         previous = []
-    for name in set(previous) - set(names):
-        if (
-            not isinstance(name, str)
-            or not name
-            or "/" in name
-            or name in (".", "..")
-            or name in PLATFORM_SKILLS
-        ):
-            continue
-        shutil.rmtree(config_dir / "skills" / name, ignore_errors=True)
+    for name in set(previous) - set(names) - set(platform):
+        if _skill_folder(name):
+            shutil.rmtree(config_dir / "skills" / name, ignore_errors=True)
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(json.dumps(sorted(names)), encoding="utf-8")
+
+
+def prune_platform_skills(config_dir, names, project, before_the_list):
+    """Remove the platform skills planted last time that are no longer shipped.
+
+    Files are only ever written here, so a retired skill would otherwise stay
+    for good. A machine with no list yet is taken to have been shipped
+    ``before_the_list``. A project skill of the same name stays."""
+    manifest = config_dir / PLATFORM_SKILLS_MANIFEST
+    try:
+        previous = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        previous = list(before_the_list)
+    for name in set(previous) - set(names) - set(project):
+        if _skill_folder(name):
+            shutil.rmtree(config_dir / "skills" / name, ignore_errors=True)
     manifest.parent.mkdir(parents=True, exist_ok=True)
     manifest.write_text(json.dumps(sorted(names)), encoding="utf-8")
 
@@ -529,7 +546,12 @@ def prepared(
         # Under the lock like everything else this writes: the temporary file
         # each copy goes through is one name, and two prepares of one room
         # would otherwise be renaming the same `.next` file.
-        prune_project_skills(config_dir, payload.get("project_skills") or [])
+        platform = payload.get("platform_skills") or []
+        project = payload.get("project_skills") or []
+        prune_platform_skills(
+            config_dir, platform, project, payload.get("skills_before_list") or []
+        )
+        prune_project_skills(config_dir, project, platform)
         plant_native_skills(config_dir, payload.get("skills") or {})
         release, contents = stage_release(release_store(owner), platform_dir, payload)
         stop_previous_root(home, release)

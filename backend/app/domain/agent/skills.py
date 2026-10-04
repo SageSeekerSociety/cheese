@@ -72,14 +72,17 @@ SKILL_FILE_SUFFIXES = (".md", ".py", ".sh", ".txt", ".json", ".typ")
 
 
 #: Folder names a project's own skill may not take: the platform ships these.
-RESERVED_SKILL_NAMES = frozenset(
-    {
-        *_SHIPPED_NATIVE_SKILLS,
-        "cheese",
-        "cheese-docs",
-        "cheese-chat",
-    }
-)
+RESERVED_SKILL_NAMES = frozenset({*_SHIPPED_NATIVE_SKILLS, "cheese-docs"})
+
+#: Platform skills machines received before each one kept a list of what it was
+#: shipped (`.cheese-platform-skills`). A machine with no list yet is treated as
+#: having been shipped these, so the ones no longer shipped are removed there too.
+SKILLS_SHIPPED_BEFORE_THE_LIST = ("cheese-chat", "chat-detail", "cheese-writing")
+
+
+def shipped_skill_names() -> list[str]:
+    """The platform skill folders a session is shipped now."""
+    return sorted({path.split("/")[1] for path in native_skill_files()})
 
 
 def native_skill_files() -> dict[str, str]:
