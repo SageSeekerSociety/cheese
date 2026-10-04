@@ -26,9 +26,7 @@ const props = withDefaults(
 )
 
 // 切回来过的房间先画上次那份清单，背后再重取（lib/topicPanelCache.ts）。
-const items = ref<TodoItem[]>(
-  (props.topic?.id && cachedTopicPanel('progress', props.topic.id)?.items) || []
-)
+const items = ref<TodoItem[]>((props.topic?.id && cachedTopicPanel('progress', props.topic.id)?.items) || [])
 const open = ref(false)
 
 async function load() {

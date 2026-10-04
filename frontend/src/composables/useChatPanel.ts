@@ -755,7 +755,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     () => topic()?.id,
     async (id) => {
       // 切回来过的房间先用上次那份画标记，背后再重取（lib/topicPanelCache.ts）。
-      roomTasks.value = id ? (cachedTopicPanel('roomTasks', id)?.data ?? []) : []
+      roomTasks.value = id ? cachedTopicPanel('roomTasks', id)?.data ?? [] : []
       if (!id) return
       try {
         const rows = (await fetchRoomTasks(id)).data

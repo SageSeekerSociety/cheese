@@ -11,12 +11,7 @@ import type { ProjectMemberRow, TopicComputeProfile, TopicMemberRow } from '../c
 
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
-import {
-  addTopicMember,
-  getTopicComputeProfile,
-  removeTopicMember,
-  updateTopicMemberRole,
-} from '../api'
+import { addTopicMember, getTopicComputeProfile, removeTopicMember, updateTopicMemberRole } from '../api'
 import { t } from '../i18n'
 import { memberName } from '../lib/agentNames'
 import { choiceKey, choiceName } from '../lib/computeConfig'
