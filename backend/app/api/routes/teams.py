@@ -12,7 +12,6 @@ from app.core.errors import (
 from app.db.session import get_db
 from app.domain.machine.limits import get_machine_limit
 from app.domain.machine.services import MachineService
-from app.domain.project.repositories import ProjectRepository
 from app.domain.project.services import ProjectService
 from app.domain.team.membership_services import TeamMembershipService
 from app.domain.team.models import (
@@ -797,7 +796,7 @@ async def delete_team(
     await service.delete_team(
         team_id=team_id,
         actor_user_id=auth_user.user_id,
-        has_projects=bool(await ProjectRepository(db).list_by_team(team_id)),
+        has_projects=bool(await ProjectService(db).list_for_team(team_id)),
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
