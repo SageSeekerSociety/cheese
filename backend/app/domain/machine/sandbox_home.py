@@ -121,6 +121,9 @@ def drop(cleanup, project, resource):
     for path in (work, home, cleanup["resource_tmp"](resource)):
         if path.exists():
             cleanup["remove_tree"](path)
+    # Last, as the room's cleanup does: until the home is gone, it is the
+    # sandbox's to have written. A restore writes the record again on install.
+    cleanup["sandbox_marker"](home).unlink(missing_ok=True)
     return {"dropped": True}
 
 
