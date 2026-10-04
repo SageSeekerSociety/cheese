@@ -396,7 +396,10 @@ onBeforeUnmount(stopResync)
               <div class="text-caption text-medium-emphasis mt-2">
                 {{ t('teams.compute.billedTo', { project: machine.projectName }) }}
               </div>
-              <div v-if="machine.ip" class="text-caption text-medium-emphasis mt-1">
+              <!-- 私网地址只给所有者/管理员看：`192.168.x.x` 这类地址是机器在网络里的
+                   位置，普通成员用不到它（卡片其余部分成员照看）。`machine.ip` 为空时
+                   本来就不画。 -->
+              <div v-if="canManage && machine.ip" class="text-caption text-medium-emphasis mt-1">
                 {{ t('teams.compute.address', { ip: machine.ip }) }}
               </div>
               <div class="text-caption mt-1" :class="machine.device_id ? 'text-success' : 'text-medium-emphasis'">
