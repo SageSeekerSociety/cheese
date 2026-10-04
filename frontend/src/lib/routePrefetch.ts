@@ -74,6 +74,15 @@ function isLazyLoader(component: unknown): component is () => unknown {
   return !('displayName' in component) && !('props' in component) && !('__vccOpts' in component)
 }
 
+// 正在下的预取 chunk。下不下来就是没预热成，但缺块的失败 Vite 照样会广播成
+// `vite:preloadError`，而 services/staleBuild.ts 听到它就整页刷新——它得先问这里。
+let chunksInFlight = 0
+
+/** 有没有预取的 chunk 还在下。 */
+export function prefetchingChunks(): boolean {
+  return chunksInFlight > 0
+}
+
 function warmRoute(router: Router, to: RouteLocationRaw): void {
   let resolved: ReturnType<Router['resolve']>
   try {
@@ -88,7 +97,10 @@ function warmRoute(router: Router, to: RouteLocationRaw): void {
       if (!isLazyLoader(component)) continue
       try {
         const loading = component() as Promise<unknown> | unknown
-        if (loading instanceof Promise) loading.catch(() => {})
+        if (loading instanceof Promise) {
+          chunksInFlight++
+          void loading.catch(() => {}).finally(() => chunksInFlight--)
+        }
       } catch {
         // 失败就是没预热成，下次点进去照常走一遍，用户看不见任何东西
       }
