@@ -17,6 +17,32 @@ class RestoreIn(BaseModel):
     operation_id: uuid.UUID
 
 
+class DocumentIn(BaseModel):
+    """A new document of the project's own (``POST /projects/{id}/documents``)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(default="", max_length=200)
+    #: What it says to begin with, in Markdown; checked like any write from
+    #: outside an editor.
+    content: str | None = Field(default=None, max_length=500_000)
+    #: Copy what this document says now (另存为文档): a room's document kept
+    #: beyond its room. The copy and the original change apart from then on.
+    copy_of: uuid.UUID | None = None
+
+    @model_validator(mode="after")
+    def _one_source(self) -> "DocumentIn":
+        if self.content is not None and self.copy_of is not None:
+            raise ValueError("give content or copy_of, not both")
+        return self
+
+
+class DocumentRenameIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(max_length=200)
+
+
 class PassageEdit(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -90,6 +116,21 @@ def document_snapshot(doc: Document) -> dict:
         "content": doc.content,
         "doc_version": doc.version,
         "content_hash": content_hash(doc.content),
+        "author": doc.author,
+        "created_at": doc.created_at.isoformat(),
+        "updated_at": doc.updated_at.isoformat(),
+    }
+
+
+def document_row(doc: Document) -> dict:
+    """A document as a list names it: everything but what it says."""
+    return {
+        "id": str(doc.id),
+        "project_id": str(doc.project_id),
+        "topic_id": str(doc.room_id) if doc.room_id else None,
+        "kind": doc.kind,
+        "title": doc.title,
+        "doc_version": doc.version,
         "author": doc.author,
         "created_at": doc.created_at.isoformat(),
         "updated_at": doc.updated_at.isoformat(),

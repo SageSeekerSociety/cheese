@@ -794,6 +794,7 @@
   "docRestoreNeedsWriter": "Restoring the document requires an authenticated writer",
   "docVersionNotFound": "This document version doesn't exist",
   "docCollabOnly": "Only requests from the document collaboration service are accepted",
+  "docBelongsToRoom": "A conversation's doc belongs to the conversation and can't be renamed or deleted on its own",
   "docNotFound": "This document doesn't exist",
   "localDirSignIn": "Sign in to grant access to a local folder",
   "localDirGrantNotFound": "This grant doesn't exist",

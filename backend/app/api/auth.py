@@ -496,6 +496,17 @@ class ActorResolver:
             self._session, self._cheese_token, project_id=project_id
         )
 
+    def origin_room(self) -> uuid.UUID | None:
+        """The room the presenting agent's session runs in, from its scoped
+        token: where what it does elsewhere in the project is told. None for a
+        person, a project credential, a delegated one, or a token naming no
+        room. Only meaningful once the request resolved to that agent."""
+        if not self._cheese_token:
+            return None
+        claims = scoped_token_claims(self._cheese_token)
+        room = claims.get("t") if claims else None
+        return uuid.UUID(room) if room else None
+
     def speaks_for_this_rooms_turn(self, topic_id: uuid.UUID) -> bool:
         """这张凭据就是**这个房间这一轮**的那张令牌吗。
 
