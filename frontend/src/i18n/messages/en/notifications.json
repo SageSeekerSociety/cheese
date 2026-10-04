@@ -7,6 +7,7 @@
     "deleteHint": "It will disappear from your inbox and can’t be brought back.",
     "noNotifications": "No notifications",
     "noUnread": "No unread notifications",
+    "loadFailed": "Couldn't load activity",
     "markAllAsRead": "Mark all as read",
     "loadMore": "Load more",
     "filterAll": "All",

@@ -16,7 +16,18 @@
         </BaseButton>
       </div>
     </header>
-    <div v-if="notifications.length > 0" class="notification-feed__list">
+    <!-- 读不到动态：就地换成错误 + 重试（docs/design-system.md §3.10）。以前这一块
+         读失败只是 console.error，页面上留一片空白，和「暂无通知」分不出来。 -->
+    <BaseLoadError
+      v-if="failed"
+      class="notification-feed__load-error"
+      :title="t('notifications.common.loadFailed')"
+      :error="errorReason || null"
+      @retry="reload"
+    />
+    <!-- 首次加载行还在路上：行形状可预测，先画行的骨架，别留一片空白。 -->
+    <LoadingSkeleton v-else-if="loading && !notifications.length" variant="list" class="notification-feed__skel" />
+    <div v-else-if="notifications.length > 0" class="notification-feed__list">
       <v-list density="compact" lines="three" class="py-0" bg-color="transparent">
         <notification-item
           v-for="notification in notifications"
@@ -47,6 +58,8 @@ import { useI18n } from 'vue-i18n'
 import { useUnreadNotifications } from '@/composables/useUnreadNotifications'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
+import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
 import NotificationItem from '@/components/common/Notification/NotificationItem.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import { NotificationsApi } from '@/network/api/notifications'
@@ -73,6 +86,9 @@ const filterOptions = computed<ReadonlyArray<{ value: FeedFilter; label: string 
 
 const notifications = ref<Notification[]>([])
 const loading = ref(false)
+// 动态没读出来：就地显示错误 + 重试，而不是留一片空白装作「暂无通知」。
+const failed = ref(false)
+const errorReason = ref('')
 const cursorStart = ref<string | undefined>(undefined)
 const pageSize = ref(10)
 const hasMore = ref(false)
@@ -88,6 +104,8 @@ const fetchNotifications = async () => {
 
   const mine = generation
   loading.value = true
+  failed.value = false
+  errorReason.value = ''
   try {
     const { data } = await NotificationsApi.list({
       // 未读筛选只问服务端要没读的；「全部」不传这一位，行为和从前一样。
@@ -102,6 +120,10 @@ const fetchNotifications = async () => {
     cursorStart.value = data.page.nextStart
   } catch (error) {
     console.error('获取通知失败:', error)
+    if (mine === generation) {
+      failed.value = true
+      errorReason.value = error instanceof Error ? error.message : ''
+    }
   } finally {
     if (mine === generation) loading.value = false
   }
@@ -220,6 +242,17 @@ onMounted(() => {
   border-radius: var(--radius-lg);
   background: var(--surface);
   overflow: hidden;
+}
+/* 首次加载的骨架坐在和真实列表同一张卡里，行到齐时这一块不换高度。 */
+.notification-feed__skel {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  overflow: hidden;
+  padding: 8px 12px;
+}
+.notification-feed__load-error {
+  padding: 8px 0;
 }
 .notification-feed__more {
   display: flex;

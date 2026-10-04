@@ -28,6 +28,7 @@ import { VIRTUAL_LIST_CONTENT_THRESHOLD } from '../lib/virtualList'
 import { useCommands } from '@/commands'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import AppPage from '@/components/common/AppPage.vue'
@@ -49,7 +50,10 @@ const rowMenu = useRowMenu<string>()
 
 const files = ref<LibraryFile[]>([])
 const loading = ref(false)
-const loadError = ref('')
+// 列表整块没读出来时：就地换成 BaseLoadError + 重试（docs/design-system.md §3.10），
+// 不再是一行裸红字。`loadReason` 是服务端那句真实原因，有就照原样显示。
+const loadFailed = ref(false)
+const loadReason = ref('')
 const actionError = ref('')
 const busy = ref('')
 const uploading = ref(false)
@@ -66,14 +70,16 @@ const listEl = ref<HTMLElement | null>(null)
 async function load() {
   const projectId = props.projectId
   loading.value = true
-  loadError.value = ''
+  loadFailed.value = false
+  loadReason.value = ''
   try {
     const listed = await listProjectLibrary(projectId)
     if (props.projectId !== projectId) return
     files.value = listed.data
   } catch (e) {
     if (props.projectId !== projectId) return
-    loadError.value = e instanceof Error ? e.message : t('work.library.loadError')
+    loadFailed.value = true
+    loadReason.value = e instanceof Error ? e.message : ''
   } finally {
     if (props.projectId === projectId) loading.value = false
   }
@@ -129,6 +135,11 @@ function kindLabel(kind: Kind): string {
 
 const query = ref('')
 const kind = ref<Kind>('all')
+// 「筛选空」那句下面的一键清除：清掉搜索框和类型筛选，列表自己回来（§8.1）。
+function clearFilters() {
+  query.value = ''
+  kind.value = 'all'
+}
 const shown = computed(() => {
   const q = query.value.trim().toLowerCase()
   return files.value.filter(
@@ -369,7 +380,14 @@ function read(file: LibraryFile) {
       <!-- 列表：手机上看着一份文件时让出整页。 -->
       <section v-if="mdAndUp || !selected" ref="listEl" class="library__list">
         <p class="t-body c-muted library__intro" :title="t('work.library.dropHint')">{{ t('work.library.intro') }}</p>
-        <p v-if="loadError" role="alert" class="t-body c-danger">{{ loadError }}</p>
+        <!-- 列表没读到：就地换成错误 + 重试，不退化成一个红色的空列表。 -->
+        <BaseLoadError
+          v-if="loadFailed"
+          class="library__load-error"
+          :title="t('work.library.loadError')"
+          :error="loadReason || null"
+          @retry="load"
+        />
         <p v-if="actionError" role="alert" class="t-body c-danger">{{ actionError }}</p>
 
         <div v-if="files.length" class="library__tools">
@@ -455,15 +473,19 @@ function read(file: LibraryFile) {
           </VirtualList>
         </ul>
 
+        <!-- 有资料但被搜索/类型筛掉了：说的是「筛掉了」，和「暂无资料」分开，
+             并给一键清除（§8.1）。 -->
         <BaseEmptyState
           v-else-if="files.length"
           size="inline"
           align="center"
           class="library__empty"
           :title="t('work.library.noMatch')"
+          :action="t('work.library.clearFilters')"
+          @action="clearFilters"
         />
         <BaseEmptyState
-          v-else-if="!loadError && !loading"
+          v-else-if="!loadFailed && !loading"
           size="inline"
           align="center"
           class="library__empty"
@@ -573,6 +595,10 @@ function read(file: LibraryFile) {
 
 .library__intro {
   margin: 0;
+}
+
+.library__load-error {
+  padding: 8px 0;
 }
 
 .library__tools {

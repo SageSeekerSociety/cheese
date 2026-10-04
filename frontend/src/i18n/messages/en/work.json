@@ -1227,7 +1227,8 @@
     "made": "What was made",
     "findPlaceholder": "Find by title (/)",
     "findLabel": "Find tasks on the board by title",
-    "findNone": "No task titles in this column contain “{text}”"
+    "findNone": "No task titles in this column contain “{text}”",
+    "clearFilter": "Clear filter"
   },
   "publishedSite": {
     "revisionChanged": "The project's accepted version changed. Check it, then publish",
@@ -1418,6 +1419,7 @@
     },
     "empty": "No files yet",
     "noMatch": "No matching files",
+    "clearFilters": "Clear filters",
     "loading": "Loading the library",
     "loadError": "Could not load the library",
     "unknownSource": "Unknown source",

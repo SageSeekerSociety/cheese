@@ -118,3 +118,43 @@ describe('搜索结果页', () => {
     await waitFor(() => expect(searchProjectCounted).toHaveBeenLastCalledWith('p1', '浅色', expect.anything()))
   })
 })
+
+/** 搜不到时：结果那一块就地换成错误 + 重试（docs/design-system.md §3.10），搜索框和
+ *  分栏留在原地；翻下一页失败时，已经到手的那一段不能扔。
+ */
+describe('搜索结果读不到时', () => {
+  it('结果那一块就地显示原因和重试，搜索框还在', async () => {
+    searchProjectCounted.mockRejectedValueOnce(new Error('服务器错误'))
+    await mount('/projects/p1/search?q=深色')
+
+    expect(await screen.findByText(t('navigation.search.failed'))).toBeTruthy()
+    expect(screen.getByText('服务器错误')).toBeTruthy()
+    expect(screen.getByRole('searchbox')).toBeTruthy()
+    expect(screen.getByRole('button', { name: t('global.loadError.retry') })).toBeTruthy()
+  })
+
+  it('点重试真的再搜一遍', async () => {
+    searchProjectCounted.mockRejectedValueOnce(new Error('服务器错误'))
+    await mount('/projects/p1/search?q=深色')
+    await screen.findByText(t('navigation.search.failed'))
+    expect(searchProjectCounted).toHaveBeenCalledTimes(1)
+
+    await fireEvent.click(screen.getByRole('button', { name: t('global.loadError.retry') }))
+
+    await waitFor(() => expect(searchProjectCounted).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.queryByText(t('navigation.search.failed'))).toBeNull())
+  })
+
+  it('翻下一页失败：到手的这一段留着，错误接在它下面，重试接着翻', async () => {
+    await mount('/projects/p1/search?q=深色&kind=messages')
+    await waitFor(() => expect(rows().length).toBe(20))
+
+    searchProject.mockRejectedValueOnce(new Error('翻页失败'))
+    reachBottom()
+    expect(await screen.findByText('翻页失败')).toBeTruthy()
+    expect(rows().length).toBe(20)
+
+    await fireEvent.click(screen.getByRole('button', { name: t('global.loadError.retry') }))
+    await waitFor(() => expect(rows().length).toBe(ALL.length))
+  })
+})

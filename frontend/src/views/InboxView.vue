@@ -7,6 +7,7 @@ import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
 
 import { listAwaitingMe } from '@/api'
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import { t } from '@/i18n'
 import { phraseLabel } from '@/lib/board'
@@ -29,14 +30,17 @@ defineOptions({ name: 'InboxView' })
 const items = ref<WaitingItem[]>([])
 const loading = ref(true)
 const failed = ref(false)
+const errorReason = ref('')
 
 async function load() {
   loading.value = true
   failed.value = false
+  errorReason.value = ''
   try {
     items.value = (await listAwaitingMe()).data
-  } catch {
+  } catch (e) {
     failed.value = true
+    errorReason.value = e instanceof Error ? e.message : ''
   } finally {
     loading.value = false
   }
@@ -127,10 +131,15 @@ function linkTo(item: WaitingItem) {
     <div v-if="loading" class="inbox__quiet">
       <v-progress-circular indeterminate size="18" width="2" />
     </div>
-    <div v-else-if="failed" class="inbox__quiet">
-      <span>{{ t('home.inbox.loadFailed') }}</span>
-      <BaseButton kind="secondary" size="sm" @click="load">{{ t('home.inbox.retry') }}</BaseButton>
-    </div>
+    <!-- 读不到待处理事项：就地换成错误 + 重试（docs/design-system.md §3.10），统一
+         到全产品同一副失败长相，不再是这一页自制的裸字 + 按钮。 -->
+    <BaseLoadError
+      v-else-if="failed"
+      class="inbox__load-error"
+      :title="t('home.inbox.loadFailed')"
+      :error="errorReason || null"
+      @retry="load"
+    />
     <p v-else-if="items.length === 0" class="inbox__quiet">{{ t('home.inbox.waitingEmpty') }}</p>
     <v-list v-else class="inbox__list" bg-color="transparent" lines="two">
       <v-list-item
@@ -229,6 +238,9 @@ function linkTo(item: WaitingItem) {
   border-radius: var(--radius-lg);
   background: var(--surface);
   color: var(--faint);
+}
+.inbox__load-error {
+  padding: 8px 0;
 }
 .inbox__list {
   padding: 0;

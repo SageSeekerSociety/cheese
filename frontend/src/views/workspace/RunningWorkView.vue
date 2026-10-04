@@ -12,24 +12,23 @@
 // 到别处去了」。这两条理由是这一页存在的全部原因，改成板不能把它们弄丢。
 //
 // 屏幕上每一个状态词都是后端算好的 `presentation.phrase`，这里一个都不推。
-import type { BoardColumn, ProjectMemberRow, RoomTask, Topic } from '@/cx_types'
+import type { BoardColumn, RoomTask, Topic } from '@/cx_types'
 
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
 import { avatarColor, avatarInitial } from '@/utils/avatar'
-import { getAvatarUrl } from '@/utils/materials'
 
 import ArtifactManifest from '@/components/ArtifactManifest.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
 import VirtualList from '@/components/common/VirtualList.vue'
 import NeedsYou from '@/components/NeedsYou.vue'
 import { t } from '@/i18n'
-import { memberName } from '@/lib/agentNames'
 import { isAgentHandle } from '@/lib/authorship'
 import { BOARD_COLUMNS, columnDotStyle, columnLabel, compareTasks, liveBoardTasks, phraseLabel } from '@/lib/board'
 import { readProjectTasks } from '@/lib/projectTasks'
@@ -38,6 +37,7 @@ import { taskTitle, topicTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 import BoardFind from '@/views/workspace/BoardFind.vue'
+import { useBoardMembers } from '@/views/workspace/useBoardMembers'
 
 const props = defineProps<{ projectId: string }>()
 
@@ -53,7 +53,10 @@ const rows = ref<RoomTask[]>([])
  *  项目什么都没交出去」。和 `countsPending` 是同一条规矩。 */
 const madeCount = ref<number | null>(null)
 const loading = ref(false)
-const errorMsg = ref<string | null>(null)
+// 整块板没读出来时：一句「加载失败」（标题）＋服务端那句原因，就地替换板体，
+// 带一条重试的路（docs/design-system.md §3.10）。不再是裸灰字 + 自制按钮。
+const failed = ref(false)
+const errorReason = ref('')
 // 已完成折起来。板面留给还需要人看的东西，但要说得出有多少件——悄悄不显示会让人
 // 以为这个项目从来没交付过什么。
 const showDone = ref(false)
@@ -71,7 +74,7 @@ const REFRESH_MS = 15_000
 
 /** 重拉。
  *
- *  `silent` 的一次不碰 `loading`、不清 `rows`、失败也不写 `errorMsg` —— 正在看的
+ *  `silent` 的一次不碰 `loading`、不清 `rows`、失败也不写 `failed` —— 正在看的
  *  那几列因此不会闪回骨架，也不会因为一次网络抖动整块变成「加载失败」。同
  *  `TopicAcceptCard.vue` 的 `loadAcceptCard(silent)`，那里的注释解释了为什么这两
  *  种加载必须分开。 */
@@ -83,7 +86,8 @@ async function load(silent = false) {
   inFlight = true
   if (!silent) {
     loading.value = true
-    errorMsg.value = null
+    failed.value = false
+    errorReason.value = ''
   }
   try {
     // 每次都真读（板是进项目的第一屏），只是和同一刻别处发出的那一次合并。
@@ -91,10 +95,14 @@ async function load(silent = false) {
     if (props.projectId === pid) {
       rows.value = payload.data
       // 上一次前台加载失败过、这一次悄悄成功了：把错误收掉，人不用自己点重试。
-      errorMsg.value = null
+      failed.value = false
+      errorReason.value = ''
     }
-  } catch {
-    if (!silent && props.projectId === pid) errorMsg.value = t('work.board.loadFailed')
+  } catch (e) {
+    if (!silent && props.projectId === pid) {
+      failed.value = true
+      errorReason.value = e instanceof Error ? e.message : ''
+    }
   } finally {
     inFlight = false
     if (!silent && props.projectId === pid) loading.value = false
@@ -135,30 +143,8 @@ const roomTitle = computed(() => {
   return (roomId: string) => byId.get(roomId) ?? t('work.board.unknownRoom')
 })
 
-// 「谁在做」是一个人，不是一个 handle。名册里有昵称和他自己挑的头像，卡上就该是
-// 那两样——`n1ctheboy` 这种串认得出来的只有他本人。
-const memberByHandle = computed(() => new Map((store.members as ProjectMemberRow[]).map((m) => [m.user_handle, m])))
-
-/** 名册上的昵称；名册里没有这个 handle 就把 handle 原样显示出来（同
- *  `ChatPanel.vue` 的 `displayName`）—— 退回空白等于把「这条活有主」也一起抹掉。 */
-function ownerName(handle?: string | null): string {
-  if (!handle) return ''
-  return memberName(memberByHandle.value.get(handle)) || handle
-}
-
-// 真头像加载失败过的 handle —— 退回彩色首字母，不留破图。
-const avatarBroken = ref<Set<string>>(new Set())
-function avatarSrc(handle?: string | null): string | null {
-  if (!handle || avatarBroken.value.has(handle)) return null
-  const id = memberByHandle.value.get(handle)?.avatar_id
-  // 名册上没这个人、或这行没有头像时返回 null：宁可留一个按 handle 哈希、认得出
-  // 是谁的色块，也不要 getAvatarUrl(undefined) 给所有没挑过头像的人配同一张脸。
-  return id == null ? null : getAvatarUrl(id)
-}
-function onAvatarError(handle?: string | null): void {
-  if (!handle || avatarBroken.value.has(handle)) return
-  avatarBroken.value = new Set(avatarBroken.value).add(handle)
-}
+// 卡上「谁在做」那一小块的名册信息（昵称、头像、破图退回）分在 useBoardMembers 里。
+const { ownerName, avatarSrc, onAvatarError } = useBoardMembers()
 
 /** 这会儿真的在跑的那些。
  *
@@ -201,6 +187,10 @@ watch(
 )
 const findNeedle = computed(() => find.value.trim().toLocaleLowerCase())
 const filtered = computed(() => mine.value || !!findNeedle.value)
+// 「筛选空」那句下面的一键清除：清掉搜索框里的词，内容自己回来（docs/design-system.md §8.1）。
+function clearFind() {
+  find.value = ''
+}
 
 const visibleRows = computed(() => {
   let list = boardRows.value
@@ -340,14 +330,15 @@ function taskRowKey(row: unknown): string {
             <span>{{ item.label }} {{ item.n }}</span>
           </template>
         </template>
-        <!-- 正文已经整屏说了「暂无任务」时，这里不再说第二遍。 -->
-        <template v-else-if="!loading && !nothingYet">{{ t('work.room.noTasks') }}</template>
+        <!-- 正文已经整屏说了「暂无任务」时，这里不再说第二遍；读失败时也不许把
+             「暂无任务」写进这句摘要——那正是失败退化成空状态。 -->
+        <template v-else-if="!loading && !nothingYet && !failed">{{ t('work.room.noTasks') }}</template>
       </span>
     </template>
     <!-- 「只看我的」：一个项目上百个房间，「待处理」那一列里大部分不是等你。
          登录身份取不到时不画这个开关——按空 handle 筛只会把整块板清空。 -->
     <template #controls>
-      <BoardFind v-if="!nothingYet && !errorMsg" v-model="find" />
+      <BoardFind v-if="!nothingYet && !failed" v-model="find" />
       <button
         v-if="mineHandle"
         type="button"
@@ -369,10 +360,13 @@ function taskRowKey(row: unknown): string {
       <!-- 等你决定：芝士 问了你一句话，在等你回答。 -->
       <NeedsYou :project-id="projectId" />
 
-      <div v-if="errorMsg" class="pa-6 t-body c-muted">
-        {{ errorMsg }}
-        <BaseButton kind="secondary" class="ms-2" size="sm" @click="load()">{{ t('work.board.retry') }}</BaseButton>
-      </div>
+      <BaseLoadError
+        v-if="failed"
+        class="pa-6"
+        :title="t('work.board.loadFailed')"
+        :error="errorReason || null"
+        @retry="load()"
+      />
 
       <template v-else-if="nothingYet">
         <!-- 刚建出来的项目落在这儿时，几列空格子是它的整个第一屏。把那一屏换成
@@ -417,7 +411,11 @@ function taskRowKey(row: unknown): string {
             <TransitionGroup v-else tag="ul" name="board-card" class="board-col__list">
               <!-- 空列自己说它空，到此为止（设计规范 §8.1）。 -->
               <li v-if="!inColumn(col.key).length" key="empty" class="board-col__empty t-body">
-                {{ emptyLine(col.key) }}
+                <span>{{ emptyLine(col.key) }}</span>
+                <!-- 筛出来是空的：说清是「被搜索框筛掉了」，再给一键清掉它 -->
+                <BaseButton v-if="findNeedle" kind="secondary" size="sm" class="mt-2" @click="clearFind()">
+                  {{ t('work.board.clearFilter') }}
+                </BaseButton>
               </li>
               <li v-for="row in inColumn(col.key)" :key="row.id">
                 <button type="button" class="board-card" @click="openTask(row)">
@@ -521,7 +519,10 @@ function taskRowKey(row: unknown): string {
                semantics in both paths. -->
           <ul v-if="showDone" ref="doneScroll" class="board__done-list" role="list">
             <li v-if="!doneRows.length" class="board-col__empty t-body">
-              {{ findNeedle ? t('work.board.findNone', { text: find.trim() }) : t('work.board.noneMine') }}
+              <span>{{ findNeedle ? t('work.board.findNone', { text: find.trim() }) : t('work.board.noneMine') }}</span>
+              <BaseButton v-if="findNeedle" kind="secondary" size="sm" class="mt-2" @click="clearFind()">
+                {{ t('work.board.clearFilter') }}
+              </BaseButton>
             </li>
             <VirtualList
               :items="doneRows"

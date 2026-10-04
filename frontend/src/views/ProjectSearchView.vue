@@ -14,6 +14,7 @@ import { useDisplay } from 'vuetify'
 import { searchProject, searchProjectCounted } from '@/api'
 import { firstWord } from '@/commands/palette/results'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import { t } from '@/i18n'
 import { docs } from '@/views/workspace/search/docs.palette'
@@ -72,6 +73,11 @@ const preview = ref<{ kind: ContentKind; items: PaletteItem[] }[]>([])
 const items = ref<PaletteItem[]>([])
 const loading = ref(false)
 const failed = ref(false)
+// 滚到底加载下一页失败：已经到手的那一段不能扔，只在它下面就地报错 + 重试
+// ——整页换成一个错误会把已经看到的结果也弄没。
+const moreFailed = ref(false)
+// 服务端那句真实原因（初始和翻页共用，任一时刻只有一个块会显示它）。
+const errorReason = ref('')
 const exhausted = ref(false)
 // 词或栏换了，还在路上的那一次回来时不认。
 let asked = 0
@@ -82,6 +88,8 @@ async function load() {
   items.value = []
   exhausted.value = false
   failed.value = false
+  moreFailed.value = false
+  errorReason.value = ''
   counts.value = null
   if (!query.value) return
   loading.value = true
@@ -100,8 +108,11 @@ async function load() {
         (group) => group.items.length
       )
     }
-  } catch {
-    if (ask === asked) failed.value = true
+  } catch (e) {
+    if (ask === asked) {
+      failed.value = true
+      errorReason.value = e instanceof Error ? e.message : ''
+    }
   } finally {
     if (ask === asked) loading.value = false
   }
@@ -112,6 +123,7 @@ async function loadMore() {
   if (!current || loading.value || exhausted.value || failed.value) return
   const ask = asked
   loading.value = true
+  moreFailed.value = false
   try {
     const hits = await searchProject(props.projectId, query.value, PAGE, {
       only: current.only,
@@ -121,11 +133,20 @@ async function loadMore() {
     const more = current.itemsOf(hits, props.projectId, router)
     items.value = [...items.value, ...more]
     exhausted.value = more.length < PAGE
-  } catch {
-    if (ask === asked) failed.value = true
+  } catch (e) {
+    if (ask === asked) {
+      moreFailed.value = true
+      errorReason.value = e instanceof Error ? e.message : ''
+    }
   } finally {
     if (ask === asked) loading.value = false
   }
+}
+
+// 「暂无结果」下面的一键清除：清掉搜索词，回到还没输的状态（§8.1）。
+function clearQuery() {
+  draft.value = ''
+  void router.replace({ query: { ...route.query, q: undefined } })
 }
 
 watch([() => props.projectId, query, kind], () => void load(), { immediate: true })
@@ -193,13 +214,23 @@ function segments(item: PaletteItem): { text: string; hit: boolean }[] {
         </v-tab>
       </v-tabs>
 
-      <p v-if="failed" role="alert" class="t-body c-danger">{{ t('navigation.search.failed') }}</p>
+      <!-- 搜索没读到：就地换成错误 + 重试，替换的是结果那一块，不是整页——搜索框和
+           分栏还在原地（docs/design-system.md §3.10）。 -->
+      <BaseLoadError
+        v-if="failed"
+        class="search-page__load-error"
+        :title="t('navigation.search.failed')"
+        :error="errorReason || null"
+        @retry="load"
+      />
       <BaseEmptyState
         v-else-if="query && !loading && !items.length && !preview.length"
         size="inline"
         align="center"
         class="search-page__empty"
         :title="t('navigation.palette.empty')"
+        :action="t('navigation.search.clear')"
+        @action="clearQuery"
       />
 
       <!-- 「全部」每类一段，段头带「查看全部」；某一栏就是一段，没有段头。 -->
@@ -233,7 +264,15 @@ function segments(item: PaletteItem): { text: string; hit: boolean }[] {
           </li>
         </ul>
       </section>
-      <div v-if="kind && !exhausted && !failed" ref="sentinel" class="search-page__sentinel" />
+      <!-- 翻下一栏失败：到手的这一段留着，错误就接在它下面 + 重试，不把整页清空。 -->
+      <BaseLoadError
+        v-if="moreFailed"
+        class="search-page__load-error"
+        :title="t('navigation.search.failed')"
+        :error="errorReason || null"
+        @retry="loadMore"
+      />
+      <div v-if="kind && !exhausted && !failed && !moreFailed" ref="sentinel" class="search-page__sentinel" />
 
       <div v-if="loading" class="d-flex justify-center py-6" role="status" :aria-label="t('navigation.search.loading')">
         <v-progress-circular indeterminate size="24" color="primary" />
@@ -260,6 +299,9 @@ function segments(item: PaletteItem): { text: string; hit: boolean }[] {
 .search-page__empty {
   padding: 24px 0;
   text-align: center;
+}
+.search-page__load-error {
+  padding: 8px 0;
 }
 .search-group__head {
   display: flex;

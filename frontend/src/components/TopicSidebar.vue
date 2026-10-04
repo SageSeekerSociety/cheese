@@ -40,6 +40,7 @@ import TransferProjectDialog from './TransferProjectDialog.vue'
 import { menuActionOf } from '@/commands'
 import { openPalette } from '@/commands/palette/state'
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import { t } from '@/i18n'
 
 const props = defineProps<{
@@ -48,6 +49,8 @@ const props = defineProps<{
   topics: Topic[]
   selectedTopicId: string | null
   loadingTopics: boolean
+  /** 话题清单没读到时服务端给的原因；有值就地显示失败 + 重试，不画骨架。 */
+  error?: string | null
   creatingTopic?: boolean
   // Which 项目文档 is open in the main area ('charter'|'weeklies'|'memory'),
   // or null when none — the rail shows ONE 项目文档 row, active for
@@ -77,6 +80,8 @@ const emit = defineEmits<{
   (e: 'press-topic', id: string): void
   (e: 'leave-topic'): void
   (e: 'create-topic', title: string): void
+  // 话题清单读失败后那颗「重试」：让拥有这份数据的父级再读一次。
+  (e: 'retry'): void
   // 已归档那一组里行尾的「取消归档」。
   (e: 'unarchive-topic', id: string): void
   // Rename a topic's title from the row's ⋯ actions. A name a person chose is
@@ -498,7 +503,18 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
             />
           </div>
 
-          <LoadingSkeleton v-if="loadingTopics" variant="list" class="rail-skel" />
+          <!-- 话题清单没读到：就地换成错误 + 重试（docs/design-system.md §3.10），
+               不是弹一条几秒就走的红条——那条红条过去之后，这一块和「暂无话题」
+               长得一模一样，人分不出是坏了还是本来就没有。 -->
+          <BaseLoadError
+            v-if="error"
+            :title="t('shell.workspaceErrors.loadTopics')"
+            :error="error"
+            class="rail-error"
+            @retry="emit('retry')"
+          />
+
+          <LoadingSkeleton v-else-if="loadingTopics" variant="list" class="rail-skel" />
 
           <template v-else>
             <!-- 一组都不相关的时候（刚进项目、还没参与任何话题），上组是空的。
@@ -635,6 +651,11 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
    这条 rail 上「再离底一档」的那个值（选中行用的也是它），在两个主题下都看得见。 */
 .rail-skel {
   --skel-bone: var(--line-2);
+}
+
+/* 就地报错和上面那一列话题对齐（subhead 的内距是 16px），右边留出一点收口。 */
+.rail-error {
+  padding: 8px 16px 4px;
 }
 
 /* 行换位置、进出（见模板里 TransitionGroup 那段）。走掉的那一行脱离文档流，否则
