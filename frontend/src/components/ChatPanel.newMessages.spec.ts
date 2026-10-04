@@ -118,8 +118,17 @@ describe('往上翻着时来了新消息', () => {
     scrollAway(getByTestId('chat-scroll'))
     arrive(said('mine', 'me'))
     await flush()
-    expect(pill(container)).toBeNull()
+    // 翻上去了，入口还在（写「回到最新」）；但自己说的那条没有变成「新消息」去计数。
+    expect(pill(container)?.textContent).toContain(t('work.room.backToLatest'))
+    expect(pill(container)?.textContent).not.toContain(t('work.room.newMessages'))
     localStorage.removeItem('user')
+  })
+
+  it('只是往上翻了翻、没有新消息，也有回到最新的入口', async () => {
+    const { container, getByTestId } = await mountRoom()
+    scrollAway(getByTestId('chat-scroll'))
+    await flush()
+    expect(pill(container)?.textContent).toContain(t('work.room.backToLatest'))
   })
 
   it('点一下回到最新，提示收起', async () => {
@@ -131,6 +140,10 @@ describe('往上翻着时来了新消息', () => {
     await fireEvent.click(pill(container)!)
     await vi.advanceTimersByTimeAsync(400)
     expect(pane.scrollTo).toHaveBeenCalled()
+    // 平滑滚动落了地：滚动事件到，位置回到最底下，提示才收起。
+    Object.defineProperty(pane, 'scrollTop', { configurable: true, value: 4000 - 600, writable: true })
+    pane.dispatchEvent(new Event('scroll'))
+    await flush()
     expect(pill(container)).toBeNull()
   })
 })
