@@ -27,7 +27,7 @@ import { applyEdits, writeNode } from './edit'
 import { createCollabServer } from './service'
 
 const SECRET = 'test-secret'
-const DOC = 'room:6f1c0a52-8a51-4f8e-9d55-2f4d2b1f8a10'
+const DOC = 'doc:6f1c0a52-8a51-4f8e-9d55-2f4d2b1f8a10'
 
 interface Version {
   content: string
@@ -218,7 +218,7 @@ describe('the live document', () => {
   it('refuses a connection without a valid ticket for this document', async () => {
     const { url } = await setup('原文。\n')
     const forged = client(url, ticket('mallory', { key: 'not-the-key' }))
-    const elsewhere = client(url, ticket('mallory', { doc: 'room:00000000-0000-0000-0000-000000000000' }))
+    const elsewhere = client(url, ticket('mallory', { doc: 'doc:00000000-0000-0000-0000-000000000000' }))
     await until(() => forged.failed() && elsewhere.failed())
     expect(forged.doc.getXmlFragment('default').length).toBe(0)
   })

@@ -38,6 +38,12 @@ async def member_in_room(db, resolver, topic_id):
     return place, actor, identity
 
 
+async def _lock_doc(db, place) -> None:
+    """Comment threads are read and written under the document's lock."""
+    doc = await TopicService(db).room_doc(place.room_id, place.project_id)
+    await DocumentJournal(db).lock(doc.id)
+
+
 @router.get("/{topic_id}/comments/threads")
 async def list_threads(
     topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
@@ -46,7 +52,7 @@ async def list_threads(
     whether the room's agent is answering it now (``queued`` while it waits
     for a free session, ``working`` while it answers)."""
     place, _, _ = await member_in_room(db, resolver, topic_id)
-    await DocumentJournal(db).lock(place.room_id)
+    await _lock_doc(db, place)
     service = CommentThreads(db)
     items = [await service.describe(c) for c in await service.roots(place.room_id)]
     await db.commit()
@@ -66,7 +72,7 @@ async def read_thread(
     resolver: ActorResolverDep,
 ) -> dict:
     place, _, _ = await member_in_room(db, resolver, topic_id)
-    await DocumentJournal(db).lock(place.room_id)
+    await _lock_doc(db, place)
     service = CommentThreads(db)
     result = await service.describe(await service.root(place.room_id, comment_id))
     await db.commit()
@@ -77,9 +83,10 @@ async def mutate(db, resolver, topic_id, comment_id, body, action, hand_off=None
     """Apply one thread mutation once per operation id. ``hand_off(place,
     actor)`` runs after a first application commits, never on a replay."""
     place, actor, identity = await member_in_room(db, resolver, topic_id)
+    doc = await TopicService(db).room_doc(place.room_id, place.project_id)
     journal = DocumentJournal(db)
     operation = await journal.claim(
-        room_id=place.room_id,
+        document_id=doc.id,
         actor=identity,
         action="comment-thread",
         operation_id=body.operation_id,

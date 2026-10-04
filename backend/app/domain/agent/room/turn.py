@@ -74,6 +74,7 @@ from app.domain.delivery.ask_wake import expected_ask_session
 from app.domain.delivery.input_identity import InputEffects, InputOutcomeUnconfirmed
 from app.domain.delivery.receipts import held_blocks
 from app.domain.identity.actor import Actor
+from app.domain.living_doc.services import Documents
 from app.domain.membership.roster import roster_rows
 from app.domain.memory.files_store import MemoryIndex, memory_index
 from app.domain.memory.models import MemoryScope
@@ -479,7 +480,7 @@ class RoomTurns:
             acting_agent = pinned_seat or await self._acting_handle(
                 session, topic.id, agent
             )
-            doc_root = await blocks.doc_root(place.room_id)
+            doc_root = await Documents(session).of_room(place.room_id)
             # 工作话题的文档还空着时是 `""`，不是 None：提示词据此告诉坐进来的
             # 队友「建第一版」（`build_system_prompt`）。私聊没有这份文档要维护。
             doc_text = doc_root.content if doc_root else None
@@ -519,7 +520,7 @@ class RoomTurns:
             # 总览房间自己那一轮不读第二遍：`doc_text` 已经是它（下面注入那一步会
             # 把两者合起来，那里才是「注入什么」的决定）。
             overview_root = (
-                await blocks.doc_root(project.root_topic_id)
+                await Documents(session).of_room(project.root_topic_id)
                 if project is not None
                 and project.root_topic_id is not None
                 and project.root_topic_id != place.room_id

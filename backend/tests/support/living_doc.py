@@ -17,10 +17,9 @@ async def write_doc(
     session: AsyncSession, room_id: uuid.UUID, content: str, actor: str = "alice"
 ):
     """Record ``content`` as the room's next document version, by ``actor``."""
-    place = await TopicService(session).place_or_404(room_id)
+    topics = TopicService(session)
+    place = await topics.place_or_404(room_id)
+    doc = await topics.room_doc(place.room_id, place.project_id)
     return await DocumentWriter(session, summarize_doc_change).record(
-        room_id=place.room_id,
-        project_id=place.project_id,
-        content=content,
-        actors=[actor],
+        doc, content=content, actors=[actor]
     )
