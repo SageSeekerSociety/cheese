@@ -560,6 +560,7 @@ routes:
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/feedback-proposals/{block_id}/accept", auth: "feedback.proposal", owner: "feedback"}
   # app.api.routes.fetch
   - {protocol: "http", method: "POST", path: "/fetch", auth: "fetch.caller", owner: "fetch"}
+  - {protocol: "http", method: "POST", path: "/page-check", auth: "fetch.caller", owner: "fetch"}
   # app.api.routes.forge_token
   - {protocol: "ws", method: "WS", path: "/sandbox/forge-tunnel/{project_id}", auth: "capability.forge", owner: "forge.transport"}
   - {protocol: "http", method: "DELETE", path: "/sandbox/forge/{project_id}/{path:path}", auth: "capability.forge", owner: "forge.transport"}
