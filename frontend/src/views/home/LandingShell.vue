@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import BrandLockup from '@/components/common/BrandLockup.vue'
@@ -24,19 +24,48 @@ const entryLabel = computed(() => (loggedIn.value ? t('publicSite.openWorkspace'
 // live behind a disclosure button instead: without it /download and /docs/ are
 // unreachable from the homepage. `Esc` closes it and hands focus back to the
 // button that opened it.
+// Opening moves focus to the first link, since the panel sits before the button
+// in the DOM and Tab would otherwise walk past it. A press outside the header
+// closes it, and so does widening past the breakpoint, so a stale open state
+// never comes back when the window narrows again.
 const menuOpen = ref(false)
 const menuToggle = ref<HTMLButtonElement | null>(null)
+const siteBar = ref<HTMLElement | null>(null)
 
 function closeMenu() {
   if (!menuOpen.value) return
   menuOpen.value = false
   menuToggle.value?.focus()
 }
+
+async function toggleMenu() {
+  menuOpen.value = !menuOpen.value
+  if (!menuOpen.value) return
+  await nextTick()
+  siteBar.value?.querySelector<HTMLElement>('#site-menu a')?.focus()
+}
+
+function onPointerDown(e: PointerEvent) {
+  if (menuOpen.value && !siteBar.value?.contains(e.target as Node)) menuOpen.value = false
+}
+
+const narrow = typeof window !== 'undefined' && window.matchMedia ? window.matchMedia('(width <= 900px)') : null
+function onBreakpoint(e: MediaQueryListEvent) {
+  if (!e.matches) menuOpen.value = false
+}
+onMounted(() => {
+  document.addEventListener('pointerdown', onPointerDown)
+  narrow?.addEventListener('change', onBreakpoint)
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', onPointerDown)
+  narrow?.removeEventListener('change', onBreakpoint)
+})
 </script>
 
 <template>
   <main id="top" class="landing" :class="{ 'menu-open': menuOpen }" :lang="i18n.global.locale.value">
-    <header class="site-bar" @keydown.esc="closeMenu">
+    <header ref="siteBar" class="site-bar" @keydown.esc="closeMenu">
       <router-link class="brand" :to="homeHref" :aria-label="t('publicSite.cheeseHome')">
         <BrandLockup />
       </router-link>
@@ -69,7 +98,7 @@ function closeMenu() {
           class="site-menu-toggle"
           :aria-expanded="menuOpen"
           aria-controls="site-menu"
-          @click="menuOpen = !menuOpen"
+          @click="toggleMenu"
         >
           <span class="visually-hidden">{{ t('publicSite.menu') }}</span>
           <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
