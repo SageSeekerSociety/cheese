@@ -75,7 +75,7 @@ async def test_what_a_dream_spends_is_the_platforms_and_no_team_pays(
 
     await drain_dream_spend(factory, fake, svc._gateway_lock, pid, tid, run)
     # A room turn's drain afterwards reads only the key the project pays for.
-    await svc._drain_gateway_usage(pid, tid, uuid.uuid4())
+    await svc.charge_turn_spend(pid, tid, uuid.uuid4())
 
     async with factory() as session:
         rows = list(

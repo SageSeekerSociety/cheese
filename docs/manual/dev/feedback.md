@@ -87,13 +87,44 @@ covers:
 
 `set_status` 是**唯一**写 `status` 的方法，它和 `append_timeline` 共用调用方的事务 —— 没有一条路由能写状态却不写历史。同状态重复提交是空操作，不是第二条历史：相隔一秒的两条一模一样的记录读起来像历史出了 bug。`patch_admin` 只收 `priority` / `assignee_handle` / `security`，**不收** `visibility`、也不收 `status`。
 
-中间两级平台自己记，因为几乎没人手动去按：指派给某人的那一刻记「处理中」（`patch_admin`，`by_handle` 是指派的管理员，`note` 写指派给了谁），修它的 PR 合并的那一刻记「已修复」；没人指派过的，同时按那个 PR 打开的时间补记「处理中」（见[下一节](#shipped)）。两处都走 `FeedbackService.advance`，它只往前走：已经到了或过了那一级的不动，`declined` 也不动，所以自动的一步不会推翻人做过的决定。手动设置照旧可用。
+中间两级平台自己记，因为几乎没人手动去按：指派给某人、或有人自己[领取](#claim)的那一刻记「处理中」（指派走 `patch_admin`，`by_handle` 是指派的管理员，`note` 写指派给了谁；领取的 `by_handle` 是领的人，`note` 是「已领取」），修它的 PR 合并的那一刻记「已修复」；没人指派过的，同时按那个 PR 打开的时间补记「处理中」（见[后面那一节](#shipped)）。几处都走 `FeedbackService.advance`，它只往前走：已经到了或过了那一级的不动，`declined` 也不动，所以自动的一步不会推翻人做过的决定。手动设置照旧可用。
 
 `security` 变化会补一条时间线（状态不变）：把一条标成安全问题是一次路由决定，提它的人应当看得见，而那也是它停止对同事可见的一刻。
 
 评论是**两层**：`parent_id` 永远指向顶层评论，回复的回复被重新挂到祖父上（和原型 `stores/feedback.ts::addComment` 一样）。`reply_to_handle` 是为了补上折叠丢掉的那一点 —— 折叠之后浏览器分不清这条在回楼主还是在回楼里的另一条，所以服务端在写入时，从它加载的那一行记下被点「回复」的手柄，客户端不许自己编一个名字。只有被回复的那条本身也是回复时才写。
 
 支持是 `FeedbackSupport`，唯一约束 `(feedback_id, author_handle)` 让重复点是空操作；已办完的（`CLOSED_STATUSES` = resolved + deployed + declined）不再接受支持，回 412 而不是 403（客户端该做的是重新读一遍这条，不是别问了）。
+
+## 领取：一条反馈只有一个人在修 {#claim}
+
+领取就是把 `assignee_handle` 写成自己，和管理员的指派是同一列：两列会各说一个「谁在管它」，而领取本来就是「指派给我自己」。所以领取不需要迁移，「我的反馈」里「指派给我的」那一臂也自动包括领到的。
+
+| 入口 | 作用 |
+| --- | --- |
+| `POST /feedback/{ref}/claim` | 领取。`ref` 是 `FB-12` 或 uuid；回整条详情 |
+| `DELETE /feedback/{ref}/claim` | 放弃。持有人自己，或反馈管理员 |
+
+领取存在只为一件事：**别让两个人修同一个问题**。所以第二个人的领取必须失败，回 409（`feedbackClaimedByOther`），原话里点名持有人，`error.data.holder` 也带着他——他下一步是去找那个人，不是换个说法再领一次。判「有没有人领着」之前先 `SELECT … FOR UPDATE` 锁住这一行（`claims.lock`）：两个同时到的领取，后到的那个在锁上等先到的提交，再读到它写下的名字。不锁的话两个都读到「没人」，后写的悄悄盖掉先到的，两个人都以为是自己在修。持有人自己再领一次是空操作。
+
+谁能领（`FeedbackService.may_claim`）：看得见这条（看不见的照旧 404），并且是反馈管理员，或者在做这个平台本身——判据和开发文档同一个，`settings.docs_dev_repositories` 里那个仓库所在的项目（`docs_site.library.platform_projects`）。人看他能不能进其中一个项目；agent 带上 `?topic=<房间>`（见[下一节](#agent-reads)），看房间的项目。agent 用的是 `cheese_feedback_claim` / `cheese_feedback_release` 两样工具（`backend/sandbox/cheese`），领不到时把原因原样转给它，并告诉它不要修。
+
+领取走 `advance` 记「处理中」，所以已经修好、上线、不修复的，领了也不动它的状态。放弃只清掉持有人，不退回状态，也不写时间线：「处理中」记的是有人动过它，放弃之后这件事也还是发生过。详情上的 `can_claim` / `can_release` 由服务端用同一处判据算好，详情页右栏「处理人」那一格照它画「领取」「放弃」两个按钮。
+
+## agent 读反馈中心 {#agent-reads}
+
+agent 的凭据只认一个房间：不说房间的 `/feedback/*` 请求会被拒（「This credential is restricted to one room」）。所以它要读的几条路由都收 `?topic=<房间>`，和领取一样在那个房间里认人（`_in_room`：`authorize_topic`，`enforce=True`，不在那个房间里就 403）：
+
+| 入口 | 作用 | agent 的工具 |
+| --- | --- | --- |
+| `GET /feedback` | 公开列表，栏位和 `q` / `status` / `kind` / `author` / `since` 筛选和页面同一份 | `cheese_feedback_list` |
+| `GET /feedback/{ref}` | 一条的详情：正文、时间线、第一页评论、`can_claim`。`ref` 是 `FB-12` 或 uuid | `cheese_feedback_get` |
+| `GET /feedback/{id}/comments` | 往下翻评论 | `cheese_feedback_get` 在评论多于一页时接着取 |
+
+带了房间，就只认做平台本身的项目里的房间（`FeedbackService.require_platform_room`，和领取同一个判据 `claims.is_platform_project`）；别的房间回 403（`feedbackReadPlatformRoomsOnly`）。反馈中心装的是平台本身的活，在别的项目里的 agent 一条也领不了，读到的只会是它不该动手的东西，所以直接告诉它为什么读不到。
+
+读到哪些，用的还是 `may_see`，handle 是 agent 自己的。agent 永远拿不到管理员那一臂（`_is_admin` 对带 agent 绑定的 handle 降级），所以它看见的就是项目里一个**不是反馈管理员的成员**看见的：公开的；它自己提过的（提案卡路径上作者是它）；提出时它在那个房间的名册里、今天还读得到那个房间的私密反馈。别人提的私密反馈、管理员标成安全问题的，它和那个成员一样是 404。列表只有公开的那一臂，私密的那几条只能拿编号读。
+
+写操作除了领取和放弃都不收房间：agent 不在反馈中心里评论、支持或删除。
 
 ## 修复合并、上线时自动改成「已修复」「已上线」 {#shipped}
 

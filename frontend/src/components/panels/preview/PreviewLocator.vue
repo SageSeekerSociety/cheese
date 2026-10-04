@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from 'vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
 const props = defineProps<{
@@ -30,8 +31,8 @@ function send(event: KeyboardEvent | MouseEvent) {
   <Transition name="locator">
     <div v-if="target" class="locator">
       <div class="locator__where">
-        <span class="locator__label t-meta">{{ target.label }}</span>
-        <span class="locator__quote">{{ target.quote }}</span>
+        <span class="locator__label t-meta" :title="target.label">{{ target.label }}</span>
+        <span class="locator__quote" :title="target.quote">{{ target.quote }}</span>
       </div>
       <input
         ref="input"
@@ -44,27 +45,24 @@ function send(event: KeyboardEvent | MouseEvent) {
         @keydown.enter="send"
         @keydown.esc.prevent="emit('cancel')"
       />
-      <v-btn size="small" color="primary" variant="flat" :disabled="!note.trim() || busy" @click="send">
+      <BaseButton kind="primary" size="sm" :disabled="!note.trim() || busy" @click="send">
         {{ t('work.room.preview.send') }}
-      </v-btn>
-      <v-btn
-        icon="mdi-close"
-        size="small"
-        variant="text"
-        color="medium-emphasis"
-        :title="t('work.room.preview.cancel')"
-        @click="emit('cancel')"
-      />
+      </BaseButton>
+      <BaseButton icon="mdi-close" size="sm" :title="t('work.room.preview.cancel')" @click="emit('cancel')" />
     </div>
   </Transition>
 </template>
 
 <style scoped>
+/* 跟着面板一起排版，再贴住可见区的底边。原来用 absolute 钉在面板底边：面板自己
+   在滚，钉住的是内容的那一处，于是它永远压着下面「这个房间里的东西」那几行，滚也
+   滚不开。sticky 时滚到底它就落回列表后面。 */
 .locator {
-  position: absolute;
-  left: 12px;
-  right: 12px;
+  position: sticky;
   bottom: 12px;
+  z-index: var(--z-raised);
+  flex: none;
+  margin: 0 12px 12px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -82,8 +80,12 @@ function send(event: KeyboardEvent | MouseEvent) {
   flex-direction: column;
   gap: 2px;
 }
+/* 位置可能是一串很长的标题路径，折成几行会把下面那行原文挤出框外。只占一行。 */
 .locator__label {
   color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .locator__quote {
   font-size: 13px;

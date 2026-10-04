@@ -21,12 +21,16 @@ import {
 } from '../api'
 
 import { useCommands } from '@/commands'
+import BaseButton from '@/components/base/BaseButton.vue'
+import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
+import { DIALOG_WIDTH } from '@/components/base/dialogSize'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import i18n, { t } from '@/i18n'
 import { focusRow } from '@/lib/focusRow'
+import { useDialog } from '@/plugins/dialog'
 
 const props = defineProps<{ projectId: string }>()
 const route = useRoute()
@@ -40,6 +44,18 @@ const busy = ref('')
 const history = ref<{ skill: ProjectSkill; revisions: ProjectSkillRevision[] } | null>(null)
 const viewing = ref<ProjectSkillRevision | null>(null)
 const confirmingDelete = ref<ProjectSkill | null>(null)
+const dialog = useDialog()
+// 删除确认框的开关跟着「选中的那一条」走：有目标就是开着，关掉就把目标清掉。
+const deleteOpen = computed({
+  get: () => confirmingDelete.value !== null,
+  set: (value) => {
+    if (!value) confirmingDelete.value = null
+  },
+})
+// 没有目标时不给标题，省得弹窗还没开就渲染出「删除「undefined」」。
+const deleteTitle = computed(() =>
+  confirmingDelete.value ? t('work.skills.deleteTitle', { title: confirmingDelete.value.title }) : ''
+)
 
 // 手机上一行的操作收进行首的 ⋯（底部面板）。等你确认的那一条，「确认保存」仍然摆在
 // 行里——那是这一行唯一要紧的事。
@@ -130,8 +146,18 @@ async function confirm(s: ProjectSkill) {
   }
 }
 
-// 芝士改过的那一份不要了：回到正在用的那一版，改动作废。
+// 芝士改过的那一份不要了：回到正在用的那一版，改动作废。改动丢了找不回来，先确认
+// （§3.7）：行里的入口是灰的，红只出现在这一下确认上。
 async function discard(s: ProjectSkill) {
+  const confirmed = await dialog
+    .confirm(t('work.skills.discardHint'), {
+      title: t('work.skills.discardTitle', { title: s.title }),
+      confirmLabel: t('work.skills.discard'),
+      danger: true,
+    })
+    .wait()
+    .catch(() => false)
+  if (!confirmed) return
   busy.value = `${s.id}:discard`
   actionError.value = ''
   try {
@@ -170,7 +196,8 @@ async function restore(revision: number) {
   }
 }
 
-async function remove(s: ProjectSkill) {
+async function remove(s: ProjectSkill | null) {
+  if (!s) return
   confirmingDelete.value = null
   busy.value = `${s.id}:delete`
   actionError.value = ''
@@ -337,12 +364,10 @@ useCommands(() => [
                 <v-chip size="small" color="warning" variant="tonal">{{ t('work.skills.pending') }}</v-chip>
                 <AdaptiveMenu v-if="!mdAndUp" :actions="draftActions(s)" :title="s.title">
                   <template #activator="{ props: menuProps }">
-                    <v-btn
+                    <BaseButton
                       v-bind="menuProps"
                       icon="mdi-dots-horizontal"
-                      size="small"
-                      variant="text"
-                      color="on-surface-variant"
+                      size="sm"
                       class="tap-target"
                       :aria-label="t('work.skills.more')"
                     />
@@ -364,37 +389,22 @@ useCommands(() => [
                 </template>
               </dl>
               <div class="skill-row__actions">
-                <v-btn
-                  size="small"
-                  color="primary"
-                  variant="flat"
-                  :loading="busy === `${s.id}:confirm`"
-                  @click="confirm(s)"
-                >
+                <BaseButton kind="primary" size="sm" :loading="busy === `${s.id}:confirm`" @click="confirm(s)">
                   {{ t('work.skills.confirm') }}
-                </v-btn>
-                <v-btn v-if="mdAndUp" size="small" variant="text" @click="startEdit(s)">{{
-                  t('work.skills.edit')
-                }}</v-btn>
-                <v-btn
+                </BaseButton>
+                <BaseButton v-if="mdAndUp" size="sm" @click="startEdit(s)">{{ t('work.skills.edit') }}</BaseButton>
+                <BaseButton
                   v-if="mdAndUp && s.shipped_revision"
-                  size="small"
-                  variant="text"
-                  color="on-surface-variant"
+                  kind="ghost"
+                  size="sm"
                   :loading="busy === `${s.id}:discard`"
                   @click="discard(s)"
                 >
                   {{ t('work.skills.discard') }}
-                </v-btn>
-                <v-btn
-                  v-if="mdAndUp && !s.shipped_revision"
-                  size="small"
-                  variant="text"
-                  color="on-surface-variant"
-                  @click="confirmingDelete = s"
-                >
+                </BaseButton>
+                <BaseButton v-if="mdAndUp && !s.shipped_revision" size="sm" @click="confirmingDelete = s">
                   {{ t('work.skills.drop') }}
-                </v-btn>
+                </BaseButton>
               </div>
             </li>
           </ul>
@@ -417,12 +427,10 @@ useCommands(() => [
               </div>
               <AdaptiveMenu v-if="!mdAndUp" :actions="activeActions(s)" :title="s.title">
                 <template #activator="{ props: menuProps }">
-                  <v-btn
+                  <BaseButton
                     v-bind="menuProps"
                     icon="mdi-dots-horizontal"
-                    size="small"
-                    variant="text"
-                    color="on-surface-variant"
+                    size="sm"
                     class="tap-target"
                     :aria-label="t('work.skills.more')"
                   />
@@ -430,11 +438,9 @@ useCommands(() => [
               </AdaptiveMenu>
             </div>
             <div v-if="mdAndUp" class="skill-row__actions">
-              <v-btn size="small" variant="text" @click="startEdit(s)">{{ t('work.skills.edit') }}</v-btn>
-              <v-btn size="small" variant="text" @click="openHistory(s)">{{ t('work.skills.history') }}</v-btn>
-              <v-btn size="small" variant="text" color="on-surface-variant" @click="confirmingDelete = s">{{
-                t('work.skills.delete')
-              }}</v-btn>
+              <BaseButton size="sm" @click="startEdit(s)">{{ t('work.skills.edit') }}</BaseButton>
+              <BaseButton size="sm" @click="openHistory(s)">{{ t('work.skills.history') }}</BaseButton>
+              <BaseButton size="sm" @click="confirmingDelete = s">{{ t('work.skills.delete') }}</BaseButton>
             </div>
           </li>
         </ul>
@@ -452,7 +458,7 @@ useCommands(() => [
       :title="editingTitle"
       :primary-label="t('work.skills.save')"
       :primary-loading="saving"
-      :max-width="640"
+      size="lg"
       @update:model-value="editing = null"
       @primary="save"
     >
@@ -517,18 +523,16 @@ useCommands(() => [
             auto-grow
             class="skill-file__body"
           />
-          <v-btn size="small" variant="text" color="on-surface-variant" @click="form.files.splice(i, 1)">{{
-            t('work.skills.form.removeFile')
-          }}</v-btn>
+          <BaseButton size="sm" @click="form.files.splice(i, 1)">{{ t('work.skills.form.removeFile') }}</BaseButton>
         </div>
-        <v-btn size="small" variant="text" @click="form.files.push({ path: '', content: '' })">{{
-          t('work.skills.form.addFile')
-        }}</v-btn>
+        <BaseButton kind="secondary" size="sm" @click="form.files.push({ path: '', content: '' })">
+          {{ t('work.skills.form.addFile') }}
+        </BaseButton>
         <p v-if="formError" role="alert" class="t-body c-danger mt-2">{{ formError }}</p>
       </template>
     </AdaptiveDialog>
 
-    <v-dialog :model-value="!!history" max-width="640" @update:model-value="history = null">
+    <v-dialog :model-value="!!history" :max-width="DIALOG_WIDTH.lg" @update:model-value="history = null">
       <v-card v-if="history">
         <v-card-title class="t-dialog-title">{{
           t('work.skills.historyTitle', { title: history.skill.title })
@@ -555,18 +559,17 @@ useCommands(() => [
                 </v-chip>
               </div>
               <div class="skill-row__actions">
-                <v-btn size="small" variant="text" @click="viewing = viewing === r ? null : r">
+                <BaseButton size="sm" @click="viewing = viewing === r ? null : r">
                   {{ viewing === r ? t('work.skills.collapse') : t('work.skills.view') }}
-                </v-btn>
-                <v-btn
+                </BaseButton>
+                <BaseButton
                   v-if="r.revision !== history.skill.shipped_revision"
-                  size="small"
-                  variant="text"
+                  size="sm"
                   :loading="busy === `${history.skill.id}:restore:${r.revision}`"
                   @click="restore(r.revision)"
                 >
                   {{ t('work.skills.restore') }}
-                </v-btn>
+                </BaseButton>
               </div>
               <dl v-if="viewing === r" class="skill-row__spec t-meta">
                 <dt>{{ t('work.skills.fields.description') }}</dt>
@@ -583,26 +586,20 @@ useCommands(() => [
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn variant="text" @click="history = null">{{ t('work.skills.close') }}</v-btn>
+          <BaseButton @click="history = null">{{ t('work.skills.close') }}</BaseButton>
         </v-card-actions>
       </v-card>
     </v-dialog>
 
-    <v-dialog :model-value="!!confirmingDelete" max-width="420" @update:model-value="confirmingDelete = null">
-      <v-card v-if="confirmingDelete">
-        <v-card-title class="t-dialog-title">{{
-          t('work.skills.deleteTitle', { title: confirmingDelete.title })
-        }}</v-card-title>
-        <v-card-text class="t-body">{{ t('work.skills.deleteHint') }}</v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" color="on-surface-variant" @click="confirmingDelete = null">{{
-            t('work.skills.cancel')
-          }}</v-btn>
-          <v-btn variant="text" color="error" @click="remove(confirmingDelete)">{{ t('work.skills.delete') }}</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <ConfirmDialog
+      v-model="deleteOpen"
+      :title="deleteTitle"
+      :confirm-label="t('work.skills.delete')"
+      danger
+      @confirm="remove(confirmingDelete)"
+    >
+      {{ t('work.skills.deleteHint') }}
+    </ConfirmDialog>
   </AppPage>
 </template>
 

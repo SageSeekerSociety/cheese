@@ -18,11 +18,11 @@ import time
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Path, Request
+from fastapi import APIRouter, Depends, Path
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
-from app.api.deps import get_handless_sessions
+from app.api.deps import get_session_host
 from app.api.response import ok
 from app.api.routes.admin_common import DbSession
 from app.auth.checker import require_auth_user
@@ -31,26 +31,24 @@ from app.core.background import spawn
 from app.core.config import settings
 from app.core.db import async_session_factory
 from app.core.errors import (
-    AuthenticationRequiredError,
     BaseError,
-    ForbiddenError,
     NotFoundError,
     message_key,
 )
 from app.core.redis import get_redis_client
-from app.core.sandbox_auth import personal_claims
-from app.domain.agent.harness.pi.handless import (
-    HandlessSessions,
+from app.core.sentences import say
+from app.domain.agent.personal import service as assistant
+from app.domain.agent.personal.keys import person_key
+from app.domain.agent.personal.prompt import task_brief
+from app.domain.agent.personal.session import session as conversation_session
+from app.domain.agent.session_host.contract import (
+    Access,
     HostFull,
     SessionError,
+    SessionRef,
+    SessionSpec,
 )
-from app.domain.agent.harness.pi.personal import Launch
-from app.domain.assistant import asking
-from app.domain.assistant import service as assistant
-from app.domain.assistant import tools as personal_tools
-from app.domain.assistant.keys import person_key
-from app.domain.assistant.prompt import task_brief
-from app.domain.block.notice_text import say
+from app.domain.agent.session_host.host import SessionHost
 from app.domain.feature_stats import pricing
 from app.domain.task.services import TaskService, ensure_task_readable
 from app.domain.usage.ledger import Ledger, Rates, payer_for_person
@@ -59,7 +57,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/assistant", tags=["assistant"])
 
 AuthUser = Annotated[AuthUserInfo, Depends(require_auth_user)]
-People = Annotated[HandlessSessions, Depends(get_handless_sessions)]
+People = Annotated[SessionHost, Depends(get_session_host)]
 
 
 def _task_place(task_id: int) -> assistant.Place:
@@ -141,7 +139,7 @@ async def read_conversation(
             place = None
         if place is not None:
             spawn(
-                _prestart(people, assistant.launch(auth.user_id, row.id, place)),
+                _prestart(people, conversation_session(auth.user_id, row.id, place)),
                 name=f"assistant-prestart-{row.id}",
             )
     return ok(
@@ -159,9 +157,11 @@ async def read_conversation(
     )
 
 
-async def _prestart(people: HandlessSessions, started: Launch) -> None:
+async def _prestart(
+    people: SessionHost, started: tuple[SessionRef, SessionSpec, Access]
+) -> None:
     try:
-        await people.ensure(started)
+        await people.start(*started)
     except Exception:  # noqa: BLE001 — the question starts it, or says why not
         logger.info("pre-starting a person's session failed", exc_info=True)
 
@@ -219,19 +219,19 @@ async def ask(
         return _refuse(429, refused.message, refused.retry_after_s())
 
     redis = get_redis_client()
-    if redis is None or not await asking.hold(redis, conversation_id):
+    slot = (
+        None
+        if redis is None
+        else await assistant.take_conversation(redis, conversation_id)
+    )
+    if slot is None:
         return _refuse(429, say("assistantStillAnswering"), 5)
     held_at = time.monotonic()
+    release = slot.release
 
-    async def release() -> None:
-        try:
-            await asking.release(redis, conversation_id)
-        except Exception:  # noqa: BLE001 — the lock expires by itself
-            pass
-
-    started = assistant.launch(auth.user_id, conversation_id, place)
+    started = conversation_session(auth.user_id, conversation_id, place)
     try:
-        await people.ensure(started)
+        await people.start(*started)
     except HostFull:
         await release()
         return _refuse(503, say("assistantBusy"), 10)
@@ -244,6 +244,8 @@ async def ask(
         assistant.ask(
             sessions=async_session_factory,
             people=people,
+            user_id=auth.user_id,
+            conversation_id=conversation_id,
             started=started,
             question=body.question,
             held_at=held_at,
@@ -252,38 +254,3 @@ async def ask(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
     )
-
-
-@router.post("/tools/{name}", include_in_schema=False)
-async def personal_tool(name: str, request: Request, db: DbSession) -> dict:
-    """One tool call of a person's 芝士, run as that person.
-
-    The session presents its personal credential, and nothing else opens this:
-    not a person's login, not a room's or a project's credential, not the
-    platform's own secret. The conversation it names must still be the person's.
-    """
-    claims = personal_claims(request.headers.get("x-cheese-token") or "")
-    if claims is None:
-        raise AuthenticationRequiredError("A personal credential is required")
-    try:
-        conversation_id = uuid.UUID(claims.conversation_id)
-        await assistant.AssistantConversations(db).owned(
-            claims.user_id, conversation_id
-        )
-    except (ValueError, assistant.ConversationNotFound) as exc:
-        raise ForbiddenError("This credential's conversation is gone") from exc
-    if name not in personal_tools.NAMES:
-        raise NotFoundError.for_resource("tool", name)
-    try:
-        arguments = await request.json()
-    except ValueError:
-        # What the model wrote is not ours to crash on; the tool reads it as
-        # no arguments and says so in its answer.
-        arguments = {}
-    text = await personal_tools.run(
-        name,
-        arguments if isinstance(arguments, dict) else {},
-        user_id=claims.user_id,
-        sessions=async_session_factory,
-    )
-    return ok({"text": text})

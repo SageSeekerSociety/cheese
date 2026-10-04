@@ -97,8 +97,6 @@
     "registrationStartAtHint": "留空表示不限制报名开始时间",
     "deadline": "报名截止日期",
     "defaultDeadline": "默认完成期限",
-    "allowMultipleSubmissions": "允许多次提交",
-    "allowEditSubmissions": "允许编辑提交",
     "taskDescription": "题目描述",
     "participantLimitHint": "留空表示不限制参与人数",
     "teamLockingPolicy": "队伍成员锁定策略",
@@ -184,15 +182,11 @@
   },
   "detail": {
     "editTask": "编辑题目",
-    "save": "保存",
-    "updateSuccess": "题目更新成功",
-    "updateFailed": "更新题目失败"
+    "updateSuccess": "题目更新成功"
   },
   "publish": {
     "title": "发布题目",
-    "back": "返回",
-    "submit": "提交",
-    "createFailed": "创建题目失败"
+    "submit": "提交"
   },
   "eligibility": {
     "TASK_NOT_APPROVED": "这道题还没有通过审核，通过后才能领取",
@@ -337,7 +331,6 @@
     },
     "deadlineTitle": "设置截止时间",
     "deadlineFor": "{name} 的提交截止时间",
-    "cancel": "取消",
     "save": "保存",
     "rejectTitle": "拒绝领取申请",
     "rejectLead": "拒绝 {name} 领取这道题",
@@ -495,7 +488,7 @@
     "progressTitle": "大家走到哪一步了",
     "progressNote": "通过率 {rate}%，未通过 {rejected} 人。这个比例跟整个空间的平均比对，才看得出题目是偏难还是偏松。",
     "teamsTitle": "小队构成",
-    "peopleUnit": " 人",
+    "people": "{n} 人",
     "teamsEmpty": "还没有人成组",
     "guard": "这一页只对这道题的出题人本人和管理员开放。",
     "notFound": "找不到这道题"

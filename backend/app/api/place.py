@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver
 from app.core.errors import ForbiddenError, ValidationError
+from app.core.sentences import say
 from app.domain.identity.actor import Actor
 from app.domain.room_task.place import Place
 from app.domain.topic.models import room_ref
@@ -35,10 +36,10 @@ async def authorized_place(
     try:
         topic_id = uuid.UUID(topic_raw)
     except ValueError as exc:
-        raise ValidationError("topic 不是合法的话题 id") from exc
+        raise ValidationError(say("topicIdInvalid")) from exc
     place = await TopicService(db).place_or_404(topic_id)
     if place.project_id != project_id:
-        raise ForbiddenError("这个话题不属于 URL 中的项目")
+        raise ForbiddenError(say("topicNotInUrlProject"))
     actor = await resolver.resolve(topic_id=place.room_id, project_id=project_id)
     await resolver.authorize_topic(actor, project_id=project_id, topic_id=place.room_id)
     return place, actor

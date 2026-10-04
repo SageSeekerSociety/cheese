@@ -14,8 +14,8 @@
 
 对账走的是会话那条通道（`ComputePool.bind_memory`），所以这个对象由 `ChatService`
 自己装上去，不是外面传进来的。库里要用的几件协作者（会话工厂、算力池、网关、网关
-锁、基础提示词）走构造入参，留在 `ChatService` 上的只有 `_lock_for` 与
-`_model_kwargs`——见 `_MemoryHost`。
+锁、基础提示词）走构造入参，房间锁、模型配置与原生输入登记仍由
+`ChatService` 提供——见 `_MemoryHost`。
 """
 
 import asyncio
@@ -28,6 +28,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.errors import NotFoundError
+from app.core.sentences import say
 from app.domain.agent.announce import announce
 from app.domain.agent.compute import ComputePool, ComputeProvider
 from app.domain.agent.dream_usage import drain_dream_spend, record_dream_usage
@@ -49,8 +50,8 @@ from app.domain.agent.queries import (
 from app.domain.agent.service import AgentResult, AgentUsage
 from app.domain.agent.work_policy import resolve_compute_id
 from app.domain.block.models import Block, BlockKind
-from app.domain.block.notice_text import say
 from app.domain.block.repositories import BlockRepository
+from app.domain.delivery.input_identity import InputEffects, InputRegistrar
 from app.domain.memory import dream
 from app.domain.memory.dream_prompt import dream_prompt
 from app.domain.memory.files import MemoryFileScope
@@ -72,18 +73,21 @@ MEMORY_TURNS_KEPT = 512
 
 
 class _MemoryHost(Protocol):
-    """这条路的收件人：``ChatService`` 上留在原地的那两件事。
+    """这条路的收件人：``ChatService`` 上留在原地的协作者。
 
     跑整理是**一轮真会话**（`runtime.run_turn`），会话那套机件里有两件跟着这一簇
     走不了：``_lock_for`` 是每个房间一把、换环境也在用的那把锁，``_model_kwargs``
     内部还要问项目的档位与队友配置。它们各自还有别的调用方，方法在 ``ChatService``
-    上原样留着。本模块声明自己会问哪些，类型在调用点核对；这里只列签名，不写实现。
+    上原样留着。原生输入登记也由 host 提供，空效果仍须登记输入身份。
+    本模块声明自己会问哪些，类型在调用点核对；这里只列签名，不写实现。
 
     库里其余几件（会话工厂、算力池、网关、网关锁、基础提示词）不在这里：它们是
     注入进来的协作者，按 ``gateway_usage._model_kwargs`` 的口径走显式入参。
     """
 
     def _lock_for(self, topic_id: uuid.UUID) -> asyncio.Lock: ...
+
+    def _input_registrar(self, effects: InputEffects) -> InputRegistrar: ...
 
     async def _model_kwargs(
         self,
@@ -351,6 +355,9 @@ class MemoryLedger:
                     prompt=prompt,
                     system_prompt=system_prompt,
                     resume_session_id=None,
+                    # A platform dream holds no blocks, but its native receipt
+                    # still needs a registered identity.
+                    register_input=self._host._input_registrar(InputEffects()),
                     turn_id=run_id,
                     **model_kwargs,
                 ):

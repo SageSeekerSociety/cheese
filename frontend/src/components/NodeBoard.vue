@@ -5,6 +5,7 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
 
 import { getMarketNodes } from '../api'
 import { t } from '../i18n'
+import { responseText } from '../lib/noticeText'
 
 // 节点状态 (spec §9.1): the physical side of the compute pools — every machine
 // pool this deployment can run a turn on, and whether it can run one right now.
@@ -70,7 +71,7 @@ onBeforeUnmount(() => {
         <h3 class="node-card__title">{{ n.label }}</h3>
         <p class="node-card__desc c-muted">{{ n.description }}</p>
         <div class="node-card__meta">
-          <span class="node-card__detail c-faint">{{ n.detail }}</span>
+          <span class="node-card__detail c-faint">{{ responseText(n, 'detail') }}</span>
         </div>
       </article>
     </div>

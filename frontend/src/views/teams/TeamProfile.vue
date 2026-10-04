@@ -9,6 +9,7 @@ import { computed, ref } from 'vue'
 import { squareRadius } from '@/utils/avatar'
 import { getAvatarUrl } from '@/utils/materials'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
 
@@ -67,9 +68,9 @@ async function submit() {
 
     <template v-if="team.joinStatus === 'member'">
       <p class="t-body c-muted mb-4">{{ t('work.teamProfile.member') }}</p>
-      <v-btn color="primary" variant="flat" :to="{ name: 'TeamsDetailDefault', params: { handle: team.handle } }">
+      <BaseButton kind="primary" :to="{ name: 'TeamsDetailDefault', params: { handle: team.handle } }">
         {{ t('work.teamProfile.enter') }}
-      </v-btn>
+      </BaseButton>
     </template>
     <p v-else-if="team.joinStatus === 'pending'" class="t-body c-muted">{{ t('work.teamProfile.pending') }}</p>
     <div v-else>
@@ -88,9 +89,9 @@ async function submit() {
         hide-details
         class="mb-4"
       />
-      <v-btn color="primary" variant="flat" :loading="busy" @click="submit">
+      <BaseButton kind="primary" :loading="busy" @click="submit">
         {{ team.joinApproval ? t('work.teamProfile.apply') : t('work.teamProfile.join') }}
-      </v-btn>
+      </BaseButton>
     </div>
   </v-card>
 </template>

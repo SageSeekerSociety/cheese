@@ -240,10 +240,10 @@ describe('页面接管 ←', () => {
   })
 })
 
-// ← 回的是人实际从哪一页来的，不是层级上的父级：从话题 A 跳到话题 B，← 回 A，
-// 而不是回话题列表。只有没有应用内来路时（贴链接直接打开）才退到上面那套层级。
-// 测试环境的 history.back/go 什么都不做，所以这里看的是 ← 有没有让浏览器后退一步。
-describe('有来路时，← 让浏览器后退一步', () => {
+// 顶栏的 ← 回答「这一层上面是谁」；浏览器那一颗才回答「我刚才在哪」。声明了父级的
+// 页面一律按声明走：从话题 A 跳到话题 B，← 回话题列表而不是回 A——A 和 B 是并列的
+// 两层，不是上下级。只有声明不出父级的页面（下一组用例）才回退到「来路」。
+describe('声明了父级时，← 走层级而不是来路', () => {
   function webRouter() {
     return createRouter({
       history: createWebHistory(),
@@ -257,13 +257,32 @@ describe('有来路时，← 让浏览器后退一步', () => {
   afterEach(() => vi.restoreAllMocks())
 
   it.each([
-    ['从一个话题跳到另一个话题', '/projects/project-a/topics/topic-a', '/projects/project-a/topics/topic-b'],
-    ['从小队页进项目看板', '/teams/12', '/projects/project-a/running'],
-    ['从小队页进项目设置', '/teams/12/members', '/projects/project-a/settings'],
-  ])('%s，← 后退而不是去层级上的父级', async (_, from, to) => {
+    [
+      '从一个话题跳到另一个话题',
+      '/projects/project-a/topics/topic-a',
+      '/projects/project-a/topics/topic-b',
+      '/projects/project-a',
+    ],
+    ['从小队页进项目设置', '/teams/12/members', '/projects/project-a/settings', '/projects/project-a'],
+  ])('%s：从 %s 跳到 %s 之后，← 去声明的父级 %s', async (_, from, to, parent) => {
     const router = webRouter()
     await router.push(from)
     await router.push(to)
+    const go = vi.spyOn(window.history, 'go')
+    const { getByRole } = await mount(router)
+    const link = getByRole('link', { name: '返回上一级' })
+    expect(link.getAttribute('href')).toBe(parent)
+    await fireEvent.click(link)
+    await waitFor(() => expect(router.currentRoute.value.path).toBe(parent))
+    expect(go).not.toHaveBeenCalled()
+  })
+
+  // 项目看板在桌面上就是项目的根，根没有可声明的父级；这一组用例里也没有小队数据，
+  // 于是层级给不出答案——这时才回退到「从哪来的」，按浏览器的语义退一格。
+  it('层级给不出答案时，退回浏览器的一步', async () => {
+    const router = webRouter()
+    await router.push('/teams/12')
+    await router.push('/projects/project-a/running')
     const go = vi.spyOn(window.history, 'go')
     const { getByRole, queryByRole } = await mount(router)
     expect(queryByRole('link', { name: /^返回/ })).toBeNull()

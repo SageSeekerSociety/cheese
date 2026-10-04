@@ -16,24 +16,26 @@ import type { Component } from 'vue'
 import { avatarColor } from '@/utils/avatar'
 
 import { ACCEPT_ENTRIES } from './catalogAccept'
+import { ASK_ENTRIES } from './catalogAsk'
+import { BASE_ENTRIES } from './catalogBase'
 import { CHAT_ENTRIES } from './catalogChat'
 import { CREDITS_ENTRIES } from './catalogCredits'
 import { DASHBOARD_ENTRIES } from './catalogDashboard'
+import { DOC_BLOCK_ENTRIES } from './catalogDoc'
 import {
   ACCEPT_CARD,
   ACCEPT_DONE,
   ACTION_ROWS,
   ADMIN_QUEUE,
   AGENT_NAME,
+  ASK_ANSWERED,
+  ASK_OPEN,
   BAR_ROWS,
   BAR_ROWS_LONG,
   CARD_FILED,
   CHANGES_EMPTY,
   changesPanelProps,
   CHEESE_LINES,
-  CLOUD_SUPPLY,
-  CLOUD_SUPPLY_UNKNOWN,
-  COMPUTE_DEVICES,
   docPanelProps,
   docSession,
   EXCERPTS,
@@ -71,7 +73,6 @@ import MobileActionSheet from '@/components/common/MobileActionSheet.vue'
 import BottomAppBar from '@/components/common/Navigation/BottomAppBar.vue'
 import NavLink from '@/components/common/NavLink.vue'
 import UserRef from '@/components/common/UserRef.vue'
-import ComputeChoiceForm from '@/components/ComputeChoiceForm.vue'
 import FeedbackCard from '@/components/feedback/FeedbackCard.vue'
 import PanelChangesView from '@/components/panels/PanelChangesView.vue'
 import PanelDocView from '@/components/panels/PanelDocView.vue'
@@ -204,6 +205,31 @@ export const CATALOG: CatalogEntry[] = [
     component: RoomMessage,
     needs: ['vuetify', 'i18n'],
     states: [
+      {
+        name: '提问：还没答（选择后提交）',
+        note: '选项先保存在草稿里，明确提交后才作答。',
+        props: roomMessageProps(ASK_OPEN, {
+          viewer: 'wang',
+          askState: {
+            draft: { kind: null, option: '', note: '', later: false },
+            pending: null,
+            editing: false,
+            busy: false,
+            fresh: true,
+            saved: false,
+            error: null,
+            conflict: false,
+            storageBlocked: false,
+          },
+        }),
+        expect: '课程平台收文件',
+      },
+      {
+        name: '提问：已经有人答了（回执）',
+        note: '显示真实答案日志，执行者是否接续仍需回执确认。',
+        props: roomMessageProps(ASK_ANSWERED),
+        expect: '课程平台收文件',
+      },
       {
         name: '留言（没有交给芝士）',
         note: '名字、头像、时间都带上的第一条（runStart）。',
@@ -670,8 +696,7 @@ export const CATALOG: CatalogEntry[] = [
   // 验收卡那一组（从 1215 行的 TopicAcceptCard 拆出来的八件，数据在
   // `catalogFixtures.ts`）在自己的文件里：`catalogAccept.ts`。
   ...ACCEPT_ENTRIES,
-  // 输入区那一组（从 1039 行的 RoomComposer 拆出来的三件）在自己的文件里：
-  // `catalogRoom.ts`（数据就在那份里，它们要的都是几行字）。
+  // 输入区那一组（从 1039 行的 RoomComposer 拆出来的三件，数据就在那份里）在 `catalogRoom.ts`。
   ...ROOM_ENTRIES,
   // 知识库那六件（从 1508 行的 Knowledge.vue 拆出来的四块模板 + 两个对话框）在自己的
   // 文件里：`catalogKnowledge.ts`（数据在 `catalogKnowledgeFixtures.ts`）。
@@ -933,34 +958,10 @@ export const CATALOG: CatalogEntry[] = [
       },
     ],
   },
-  {
-    id: 'compute-choice-form',
-    title: 'ComputeChoiceForm',
-    about: '选一台工作电脑：云端或自有设备；云端可自定义规格，先看云端此刻能开的范围。',
-    file: 'src/components/ComputeChoiceForm.vue',
-    component: ComputeChoiceForm,
-    needs: UI,
-    states: [
-      {
-        name: '查到了范围',
-        note: '勾「自定义」后显示可选范围（云端供应与平台允许值的交集）；填超的那一格标红，按钮变灰。数字是示例。',
-        props: { devices: COMPUTE_DEVICES, cloudAvailable: true, supply: CLOUD_SUPPLY },
-        expect: '自定义 CPU、内存和磁盘',
-      },
-      {
-        name: '查不到范围',
-        note: '云端没应答时照实说查不到、说原因，不显示任何范围数字，仍可保存，开机时由云端校验。',
-        props: { devices: COMPUTE_DEVICES, cloudAvailable: true, supply: CLOUD_SUPPLY_UNKNOWN },
-        expect: '自定义 CPU、内存和磁盘',
-      },
-      {
-        name: '正在查',
-        note: '范围还在路上时按钮不可点，不拿旧数或默认数先顶上。',
-        props: { devices: COMPUTE_DEVICES, cloudAvailable: true, supply: null, supplyLoading: true },
-        expect: '自定义 CPU、内存和磁盘',
-      },
-    ],
-  },
+  // 提案那两件、文档里的块、基础组件各在自己的文件里：`catalogAsk.ts`、`catalogDoc.ts`、`catalogBase.ts`。
+  ...ASK_ENTRIES,
+  ...DOC_BLOCK_ENTRIES,
+  ...BASE_ENTRIES,
 ]
 
 /** 按 id 找一条（地址里那一段）。 */

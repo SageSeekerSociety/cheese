@@ -6,8 +6,8 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError
+from app.core.sentences import say
 from app.domain.avatars.models import Avatar
-from app.domain.block.notice_text import say
 from app.domain.project.models import (
     AiMode,
     Project,

@@ -21,6 +21,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from starlette.websockets import WebSocket, WebSocketState
 
 from app.api.auth import ActorResolver
+from app.api.preview_runtime import inject_runtime_script
 from app.api.routes.app_preview import relay_http, relay_ws
 from app.core.config import settings
 from app.core.db import get_db
@@ -168,8 +169,12 @@ def _private(response: Response) -> Response:
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
     response.headers["Permissions-Policy"] = DEVICE_FEATURES_OFF
+    # A link the page opens in a new tab is the person leaving the preview: the
+    # document's own sandbox has to allow it as well as the iframe's (each can only
+    # take flags away), and the site it opens is not ours to sandbox. Same as sites.
     response.headers["Content-Security-Policy"] = (
-        "sandbox allow-scripts allow-same-origin allow-forms allow-downloads; "
+        "sandbox allow-scripts allow-same-origin allow-forms allow-downloads "
+        "allow-popups allow-popups-to-escape-sandbox; "
         "worker-src 'none'; object-src 'none'; "
         f"frame-ancestors 'self' {platform.scheme}://{platform.netloc}"
     )
@@ -183,6 +188,18 @@ def _destination(path: str) -> bool:
         and "\\" not in path
         and not any(ord(char) < 32 for char in path)
     )
+
+
+HTML_MEDIA = {"text/html", "application/xhtml+xml"}
+
+
+def _served_body(data: bytes, media: str | None) -> bytes:
+    """这一段字节发出去时的样子：HTML 文档装上运行时，其余原样。
+
+    只动真 HTML（product decision：普通报告里也要有键盘桥）。静态 artifact 的
+    409 版本校验在那之前已经拿**原始**字节算过了，注入发生在它后面。
+    """
+    return inject_runtime_script(data) if media in HTML_MEDIA else data
 
 
 class PreviewHostMiddleware:
@@ -381,11 +398,12 @@ class PreviewHostMiddleware:
                 library.read_room_file, project, topic_id, target
             )
             media = mimetypes.guess_type(target)[0]
+            body = _served_body(data, media)
             response = Response(
-                data if request.method != "HEAD" else b"",
+                body if request.method != "HEAD" else b"",
                 media_type=media or "application/octet-stream",
             )
-            response.headers["Content-Length"] = str(len(data))
+            response.headers["Content-Length"] = str(len(body))
             return response
         if resource:
             if resource["kind"] == "app":
@@ -417,11 +435,12 @@ class PreviewHostMiddleware:
             if relative == PurePosixPath(entry).name
             else mimetypes.guess_type(relative)[0]
         )
+        body = _served_body(data, media)
         response = Response(
-            data if request.method != "HEAD" else b"",
+            body if request.method != "HEAD" else b"",
             media_type=media or "application/octet-stream",
         )
-        response.headers["Content-Length"] = str(len(data))
+        response.headers["Content-Length"] = str(len(body))
         return response
 
     async def websocket(

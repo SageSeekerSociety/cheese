@@ -35,6 +35,7 @@ from fastapi.responses import FileResponse
 
 from app.core.config import settings
 from app.core.errors import NotFoundError
+from app.core.sentences import say
 
 router = APIRouter(tags=["uploads"])
 
@@ -76,9 +77,9 @@ def _safe_path(key: str) -> Path:
     root = _resolved_root()
     candidate = (root / key).resolve()
     if candidate != root and root not in candidate.parents:
-        raise NotFoundError("文件不存在")
+        raise NotFoundError(say("fileNotFound"))
     if not candidate.is_file():
-        raise NotFoundError("文件不存在")
+        raise NotFoundError(say("fileNotFound"))
     return candidate
 
 

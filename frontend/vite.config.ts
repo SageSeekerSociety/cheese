@@ -516,12 +516,19 @@ export default defineConfig({
     // 界面刚渲染到一半，页面被换掉了。它只在冷启动的第一轮出现，而 CI 每一轮都是冷的
     // （`node_modules/.vite` 不在 pnpm store 里），于是**每次跑 e2e 都在赌同一件事**。
     //
-    // 列在这里的会被启动时一次性打进去，之后不再有中途补打包。原生标签（`<v-combobox>`）
-    // 由插件转成下面这些模块，所以新加组件时要照着补一行；漏了不会坏，只是回到上面那种
-    // 冷启动重载。
+    // 关键点：vite 启动时那次依赖扫描**看不到这些深路径**。扫描只读源代码里写着的
+    // import，而 `vuetify/components/VXxx` 是插件在**编译后的模板**里才生成的，源代码里
+    // 根本没有这一行。所以入口扫描（index.html 的静态图）无论怎么配都补不上它 —— 只有这份
+    // include 清单能。
     //
-    // 重新生成这份清单：冷启动一次、把用到的页面都点一遍，然后
-    // `ls node_modules/.vite/deps | grep '^vuetify'`（下划线是路径分隔符）。
+    // 因此清单要**穷尽 src 里出现的每一个 vuetify 标签**，不能靠「把用到的页面点一遍」——
+    // 没点到的页面就是下一次冷启动重载的来源（VBottomSheet、VLayout、VPagination 就是这么
+    // 漏掉的）。列在这里的会在启动时一次性打进去，之后不再有中途补打包；漏了不会坏，只是
+    // 回到上面那种冷启动重载。
+    //
+    // 重新生成：`grep -rhoE '<v-[a-z-]+' src --include=*.vue | sort -u` 列出用到的标签，
+    // 逐个按 `vuetify/dist/json/importMap.json`（插件生成 import 时用的正是这张表）映射成
+    // `vuetify/<lib>/<from>`；`<v-sonner>` 来自 vuetify-sonner，不在那张表里。
     include: [
       'editorjs-parser',
       'vuetify/components/VAlert',
@@ -532,6 +539,7 @@ export default defineConfig({
       'vuetify/components/VBadge',
       'vuetify/components/VBanner',
       'vuetify/components/VBottomNavigation',
+      'vuetify/components/VBottomSheet',
       'vuetify/components/VBtn',
       'vuetify/components/VBtnGroup',
       'vuetify/components/VBtnToggle',
@@ -555,6 +563,7 @@ export default defineConfig({
       'vuetify/components/VHover',
       'vuetify/components/VIcon',
       'vuetify/components/VImg',
+      'vuetify/components/VLayout',
       'vuetify/components/VLazy',
       'vuetify/components/VList',
       'vuetify/components/VMain',
@@ -562,6 +571,7 @@ export default defineConfig({
       'vuetify/components/VNavigationDrawer',
       'vuetify/components/VOtpInput',
       'vuetify/components/VOverlay',
+      'vuetify/components/VPagination',
       'vuetify/components/VProgressCircular',
       'vuetify/components/VProgressLinear',
       'vuetify/components/VRadio',

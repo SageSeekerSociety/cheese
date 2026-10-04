@@ -23,6 +23,7 @@ import dayjs from 'dayjs'
 
 import { currentInviteCode, inviteCodeStatus } from '../model'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import SettingsToolbar from '@/components/spaces/SettingsToolbar.vue'
 import { SpacesApi } from '@/network/api/spaces'
@@ -202,9 +203,13 @@ async function submitCreate() {
 
 <template>
   <SettingsToolbar>
-    <v-btn variant="text" prepend-icon="mdi-plus" @click="(newOpen = true), (editingId = null), (confirmingId = null)">
+    <BaseButton
+      kind="primary"
+      prepend-icon="mdi-plus"
+      @click="(newOpen = true), (editingId = null), (confirmingId = null)"
+    >
       {{ t('spaces.inviteCodes.create') }}
-    </v-btn>
+    </BaseButton>
   </SettingsToolbar>
   <div class="invite-codes">
     <!-- 「当前使用中的码」单列在这里，不和列表第一格混为一谈：用尽或过期的码就躺在
@@ -214,10 +219,10 @@ async function submitCreate() {
       <div class="current__label">{{ t('spaces.inviteCodes.current') }}</div>
       <div v-if="active" class="current__body">
         <code class="current__code">{{ active.code }}</code>
-        <v-btn
+        <BaseButton
+          kind="ghost"
           :icon="copiedId === active.id ? 'mdi-check' : 'mdi-content-copy'"
-          size="small"
-          variant="text"
+          size="sm"
           :title="t('spaces.inviteCodes.copy')"
           :aria-label="t('spaces.inviteCodes.copy')"
           @click="copyCode(active)"
@@ -263,10 +268,12 @@ async function submitCreate() {
         />
       </div>
       <div class="form__actions">
-        <v-btn variant="text" :disabled="busy" @click="newOpen = false">{{ t('spaces.inviteCodes.cancel') }}</v-btn>
-        <v-btn color="primary" variant="flat" :loading="busy" @click="submitCreate">
+        <BaseButton kind="ghost" :disabled="busy" @click="newOpen = false">{{
+          t('spaces.inviteCodes.cancel')
+        }}</BaseButton>
+        <BaseButton kind="primary" :loading="busy" @click="submitCreate">
           {{ t('spaces.inviteCodes.generate') }}
-        </v-btn>
+        </BaseButton>
       </div>
     </div>
 
@@ -279,10 +286,10 @@ async function submitCreate() {
         <v-list-item v-for="item in codes" :key="item.id">
           <v-list-item-title class="codes__head">
             <span class="codes__text">{{ item.code }}</span>
-            <v-btn
+            <BaseButton
+              kind="ghost"
               :icon="copiedId === item.id ? 'mdi-check' : 'mdi-content-copy'"
-              size="x-small"
-              variant="text"
+              size="sm"
               :title="t('spaces.inviteCodes.copy')"
               :aria-label="t('spaces.inviteCodes.copy')"
               @click="copyCode(item)"
@@ -348,29 +355,29 @@ async function submitCreate() {
               />
             </div>
             <div class="form__actions">
-              <v-btn variant="text" size="small" :disabled="busy" @click="editingId = null">
+              <BaseButton kind="ghost" size="sm" :disabled="busy" @click="editingId = null">
                 {{ t('spaces.inviteCodes.cancel') }}
-              </v-btn>
-              <v-btn color="primary" variant="flat" size="small" :loading="busy" @click="saveEdit(item)">
+              </BaseButton>
+              <BaseButton kind="primary" size="sm" :loading="busy" @click="saveEdit(item)">
                 {{ t('spaces.inviteCodes.save') }}
-              </v-btn>
+              </BaseButton>
             </div>
           </div>
 
           <template #append>
             <div class="codes__actions">
-              <v-btn v-if="editingId !== item.id" size="small" variant="text" :disabled="busy" @click="startEdit(item)">
+              <BaseButton v-if="editingId !== item.id" kind="ghost" size="sm" :disabled="busy" @click="startEdit(item)">
                 {{ t('spaces.inviteCodes.edit') }}
-              </v-btn>
-              <v-btn
-                size="small"
-                :variant="confirmingId === item.id ? 'flat' : 'text'"
-                :color="confirmingId === item.id ? 'error' : undefined"
+              </BaseButton>
+              <BaseButton
+                size="sm"
+                :kind="confirmingId === item.id ? 'danger' : 'ghost'"
+                :solid="confirmingId === item.id"
                 :disabled="busy"
                 @click="revoke(item)"
               >
                 {{ confirmingId === item.id ? t('spaces.inviteCodes.confirmRevoke') : t('spaces.inviteCodes.revoke') }}
-              </v-btn>
+              </BaseButton>
             </div>
           </template>
         </v-list-item>

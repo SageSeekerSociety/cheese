@@ -7,6 +7,7 @@ import json
 import time
 from pathlib import Path
 
+from app.core.sentences import say
 from app.domain.agent import (
     environment_runner,
     forge_cli,
@@ -152,26 +153,28 @@ async def transfer_history(hub, source, center, project, resource, resume):
             + "))\n",
         )
         if result.get("exit") != 0 or result.get("truncated"):
-            raise ScreenSetupError(result.get("stderr") or "完整会话历史迁移失败")
+            raise ScreenSetupError(
+                result.get("stderr") or say("handoffHistoryMigrationFailed")
+            )
         return json.loads(result["stdout"])
 
     deadline = time.monotonic() + 60
     stopped = await exchange(source, "stop", request_exit=True)
     while not stopped["stopped"]:
         if time.monotonic() >= deadline:
-            raise ScreenSetupError("原机器上的会话尚未退出，尚未切换到中心")
+            raise ScreenSetupError(say("handoffSessionNotExited"))
         await asyncio.sleep(0.5)
         stopped = await exchange(source, "stop", request_exit=False)
     manifest = (await exchange(source, "list"))["files"]
     if not any(Path(item["path"]).name == resume + ".jsonl" for item in manifest):
-        raise ScreenSetupError("原机器缺少要继续的完整会话文件，尚未切换到中心")
+        raise ScreenSetupError(say("handoffSessionFilesIncomplete"))
     for item in manifest:
         offset = 0
         while offset < item["size"] or item["size"] == 0 and offset == 0:
             chunk = await exchange(source, "read", path=item["path"], offset=offset)
             count = len(base64.b64decode(chunk["data"], validate=True))
             if not count and item["size"]:
-                raise ScreenSetupError("原会话文件在复制完成前结束")
+                raise ScreenSetupError(say("handoffSessionFileEndedEarly"))
             await exchange(
                 center,
                 "write",
@@ -185,4 +188,4 @@ async def transfer_history(hub, source, center, project, resource, resume):
             if item["size"] == 0:
                 break
     if (await exchange(source, "list"))["files"] != manifest:
-        raise ScreenSetupError("原会话记录仍在变化，尚未切换到中心")
+        raise ScreenSetupError(say("handoffSessionStillChanging"))

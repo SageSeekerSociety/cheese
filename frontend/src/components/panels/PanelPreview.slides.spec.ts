@@ -43,6 +43,8 @@ vi.mock('./preview/PreviewSlides.vue', () => ({
                   page: 2,
                   scope: 'selection',
                   context: props.context,
+                  prefix: '前面那句',
+                  suffix: '后面那句',
                 }),
             },
             'selection'
@@ -174,6 +176,9 @@ it('sends a selected run on the slide as a quoted context, marked as a selection
     page: 2,
     scope: 'selection',
     text: 'Selected run on the slide',
+    // 两侧的字跟着出去：受话人靠它分辨同一句话在这一页的哪一处出现。
+    prefix: '前面那句',
+    suffix: '后面那句',
   })
 })
 it('drops a selected run whose version moved on before send, like the whole-page path', async () => {

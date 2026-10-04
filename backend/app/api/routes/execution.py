@@ -19,6 +19,7 @@ from app.core.errors import (
     NotFoundError,
 )
 from app.core.sandbox_auth import scoped_token_claims
+from app.core.sentences import say
 from app.domain.agent import dispatch_log, execution
 from app.domain.agent.device_hub import (
     DeviceCallError,
@@ -38,6 +39,23 @@ logger = logging.getLogger(__name__)
 #: 器**上回来的，而那台机器跑的可能是上一版脚本。对不上就读不出这一档，退回「不
 #: 结清」—— 也就是这条记录的默认那一档。
 _NOT_ACCEPTED = "Request ID already belongs to different input"
+
+
+#: What a reading credential may ask of the machine (``bind_resource_token``
+#: ``reading``): whether it is there, its files read, listed and searched, the
+#: checkout's history (``machine_git``, git's reading commands only), and the
+#: project's own checks around such a read, which can refuse it.
+_READ_OPERATIONS = frozenset({"open", "read", "stat", "list", "glob", "grep"})
+
+
+def _reads(method: str, params: dict) -> bool:
+    if method == "ping":
+        return True
+    if method != "control":
+        return False
+    if params.get("subtype") == "files":
+        return params.get("operation") in _READ_OPERATIONS and not params.get("write")
+    return params.get("subtype") in ("git", "tool_hooks")
 
 
 class ExecutionRequest(BaseModel):
@@ -120,6 +138,8 @@ async def execute(
         "control",
     }:
         raise ForbiddenError("This executor operation is not available to the session")
+    if claims.get("ro") and not _reads(payload.method, payload.params):
+        raise ForbiddenError("This credential only reads the machine's files")
     target = lease
     if not (
         await machine_owner_reads.active_cloud_device_for_project(
@@ -220,7 +240,7 @@ async def execute(
         # 一次工具报错交给模型，这一轮照样跑下去 —— 就没有重派，也没有谁需要读它。
         # 它不会顶掉别的轮次的重发：``unsettled()`` 只回答「这几轮里有什么悬着」，见
         # 那里的 ``since``。
-        raise GatewayTimeoutError("机器没有在时限内回应这次执行调用") from exc
+        raise GatewayTimeoutError(say("executionTimedOut")) from exc
     else:
         await _settle(db, dispatch, dispatch_log.Outcome.done)
         return answer

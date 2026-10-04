@@ -20,8 +20,10 @@ import {
   updateIntegration,
 } from '../api'
 import { connectFeishu, feishuAuthorizeUrl, feishuAvailability } from '../api/feishu'
+import ConfirmDialog from '../components/base/ConfirmDialog.vue'
 import AdaptiveDialog from '../components/common/AdaptiveDialog.vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
 import { goAuthorize } from '@/lib/desktopApp'
@@ -277,10 +279,9 @@ onMounted(load)
         <h1 class="t-page-title">{{ t('account.settings.connections') }}</h1>
         <p class="settings-page__lede">{{ t('account.connections.lede') }}</p>
       </div>
-      <v-btn
+      <BaseButton
         icon="mdi-refresh"
-        variant="text"
-        size="small"
+        size="sm"
         :loading="loading"
         :aria-label="t('account.connections.refresh')"
         :title="t('account.connections.refresh')"
@@ -314,12 +315,12 @@ onMounted(load)
           <dd>{{ projectName(d.project_id) }} · <UserRef :handle="d.created_by" :project-id="d.project_id" /></dd>
         </dl>
         <div class="conn-actions">
-          <v-btn variant="text" size="small" :loading="busy === `${d.id}:discard`" @click="discard(d)">
+          <BaseButton kind="ghost" size="sm" :loading="busy === `${d.id}:discard`" @click="discard(d)">
             {{ t('account.connections.discard') }}
-          </v-btn>
-          <v-btn color="primary" variant="flat" size="small" :loading="busy === `${d.id}:send`" @click="confirming = d">
+          </BaseButton>
+          <BaseButton kind="primary" size="sm" :loading="busy === `${d.id}:send`" @click="confirming = d">
             {{ t('account.connections.send') }}
-          </v-btn>
+          </BaseButton>
         </div>
       </div>
     </section>
@@ -328,19 +329,19 @@ onMounted(load)
       <div class="settings-card__head">
         <div class="settings-card__title">{{ t('account.connections.accountsTitle') }}</div>
         <div class="conn__add">
-          <v-btn prepend-icon="mdi-email-plus-outline" variant="outlined" size="small" @click="adding = true">
+          <BaseButton kind="secondary" size="sm" prepend-icon="mdi-email-plus-outline" @click="adding = true">
             {{ t('account.connections.addMail') }}
-          </v-btn>
-          <v-btn
+          </BaseButton>
+          <BaseButton
+            kind="secondary"
+            size="sm"
             prepend-icon="mdi-link-variant-plus"
-            variant="outlined"
-            size="small"
             :disabled="feishuMissing"
             :loading="busy === 'feishu:connect'"
             @click="connectFeishuAccount"
           >
             {{ t('integrations.member.connect') }}
-          </v-btn>
+          </BaseButton>
         </div>
       </div>
       <p v-if="feishuMissing" class="settings-card__desc">{{ t('integrations.member.notConfigured') }}</p>
@@ -378,64 +379,55 @@ onMounted(load)
           @update:model-value="(v: string[]) => setGrants(row, v)"
         />
         <div class="conn-actions">
-          <v-btn variant="text" size="small" :loading="busy === `${row.id}:check`" @click="recheck(row)">
+          <BaseButton kind="ghost" size="sm" :loading="busy === `${row.id}:check`" @click="recheck(row)">
             {{ t('account.connections.check') }}
-          </v-btn>
+          </BaseButton>
           <!-- 自带凭据的老连接：授权个人账号是它在搜索上差的那一步，按钮留着是为了让
                这些行照旧能用（`feishu_settings` 优先用它自己那套凭据）。走平台应用的那
                些行没有这一颗 —— 它们连接的方式就是上面那颗「连接飞书」。 -->
-          <v-btn
+          <BaseButton
             v-if="row.provider === 'feishu' && !row.shared_app"
-            variant="text"
-            size="small"
+            kind="ghost"
+            size="sm"
             :loading="busy === `${row.id}:auth`"
             @click="authorize(row)"
           >
             {{ row.user_authorized ? t('account.connections.reauthorize') : t('account.connections.authorize') }}
-          </v-btn>
-          <v-btn variant="text" size="small" @click="removing = row">{{ t('account.connections.remove') }}</v-btn>
+          </BaseButton>
+          <BaseButton kind="ghost" size="sm" @click="removing = row">{{ t('account.connections.remove') }}</BaseButton>
         </div>
       </div>
     </section>
 
-    <v-dialog :model-value="!!confirming" max-width="480" @update:model-value="confirming = null">
-      <v-card v-if="confirming">
-        <v-card-title class="t-dialog-title">
-          {{ t('account.connections.sendTitle', { subject: confirming.subject }) }}
-        </v-card-title>
-        <v-card-text class="t-body">
-          {{
-            confirming.attachments.length
-              ? t('account.connections.sendBodyAttachments', {
-                  to: [...confirming.to, ...confirming.cc].join('、'),
-                  n: confirming.attachments.length,
-                })
-              : t('account.connections.sendBody', { to: [...confirming.to, ...confirming.cc].join('、') })
-          }}
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" @click="confirming = null">{{ t('account.connections.cancel') }}</v-btn>
-          <v-btn variant="text" color="primary" @click="send(confirming)">
-            {{ t('account.connections.sendShort') }}
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <ConfirmDialog
+      :model-value="!!confirming"
+      :title="t('account.connections.sendTitle', { subject: confirming?.subject ?? '' })"
+      :confirm-label="t('account.connections.sendShort')"
+      @update:model-value="confirming = null"
+      @confirm="confirming && send(confirming)"
+    >
+      <template v-if="confirming">
+        {{
+          confirming.attachments.length
+            ? t('account.connections.sendBodyAttachments', {
+                to: [...confirming.to, ...confirming.cc].join('、'),
+                n: confirming.attachments.length,
+              })
+            : t('account.connections.sendBody', { to: [...confirming.to, ...confirming.cc].join('、') })
+        }}
+      </template>
+    </ConfirmDialog>
 
-    <v-dialog :model-value="!!removing" max-width="420" @update:model-value="removing = null">
-      <v-card v-if="removing">
-        <v-card-title class="t-dialog-title">
-          {{ t('account.connections.removeTitle', { label: removing.label }) }}
-        </v-card-title>
-        <v-card-text class="t-body">{{ t('account.connections.removeBody') }}</v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" @click="removing = null">{{ t('account.connections.cancel') }}</v-btn>
-          <v-btn variant="text" color="error" @click="remove(removing)">{{ t('account.connections.remove') }}</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <ConfirmDialog
+      :model-value="!!removing"
+      :title="t('account.connections.removeTitle', { label: removing?.label ?? '' })"
+      :confirm-label="t('account.connections.remove')"
+      danger
+      @update:model-value="removing = null"
+      @confirm="removing && remove(removing)"
+    >
+      {{ t('account.connections.removeBody') }}
+    </ConfirmDialog>
 
     <!-- 一张长表单：桌面上是对话框，手机上是整页（保存在页头右边，不会被键盘盖住）。
          只剩邮箱 —— 飞书那一栏不是一张表单，是上面那颗「连接飞书」。 -->

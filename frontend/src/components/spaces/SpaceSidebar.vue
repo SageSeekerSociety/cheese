@@ -4,7 +4,7 @@
     <router-link :to="{ name: 'inbox' }" class="sidebar-header space-head" :aria-label="t('spaces.sidebar.back')">
       <v-icon size="18" class="space-head__back">mdi-chevron-left</v-icon>
       <v-avatar size="20" rounded="sm" :image="getAvatarUrl(space?.avatarId)" />
-      <span class="space-head__name t-title">{{ space?.name }}</span>
+      <span class="space-head__name t-title" data-user-content>{{ space?.name }}</span>
     </router-link>
 
     <!-- 手机上侧栏是抽屉，每一行至少 44px 高，手指点得准；桌面上用紧凑行。 -->
@@ -32,6 +32,7 @@
         :to="{ name: 'SpacesDetailTasksList', params: { spaceId }, query: { category: category.id } }"
         :active="isTasksLinkActive({ category: category.id.toString() })"
         :title="category.name"
+        data-user-content
       />
 
       <template v-if="isManager">

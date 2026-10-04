@@ -23,11 +23,14 @@ import { deleteLibraryFile, downloadFile, libraryFileRawUrl, listProjectLibrary 
 import { libraryFileBytes, replaceLibraryFile, uploadLibraryFile } from '../lib/libraryApi'
 
 import { useCommands } from '@/commands'
+import BaseButton from '@/components/base/BaseButton.vue'
+import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import FileBytesPreview from '@/components/common/FileBytesPreview.vue'
 import { useTopBarBack } from '@/components/common/topBarBack'
 import { t } from '@/i18n'
+import { closeOverlay } from '@/lib/backOut'
 import { relTime } from '@/lib/relTime'
 import { topicTitle } from '@/lib/topicState'
 import { usePageTitleStore } from '@/stores/title'
@@ -139,7 +142,9 @@ function open(file: LibraryFile) {
 function close() {
   const rest = { ...route.query }
   delete rest.file
-  void router.replace({ query: rest })
+  // 手机上开一份文件是 push 进一页，所以这里退一格能真的把它弹掉；桌面上开一份是
+  // replace（只换右边那一栏），退一格会退到资料库外面去 —— closeOverlay 认来路。
+  closeOverlay(router, { query: rest })
 }
 
 useTopBarBack(() =>
@@ -228,6 +233,12 @@ async function download(file: LibraryFile) {
   } catch (e) {
     actionError.value = e instanceof Error ? e.message : t('work.library.downloadFailed')
   }
+}
+
+/** 确认框点「删除」：这时 `confirming` 一定是有值的，取出来交给 `remove`。 */
+function confirmRemove() {
+  const file = confirming.value
+  if (file) void remove(file)
 }
 
 async function remove(file: LibraryFile) {
@@ -398,12 +409,10 @@ function read(file: LibraryFile) {
             </button>
             <AdaptiveMenu :actions="fileActions(file)" :title="file.path">
               <template #activator="{ props: menuProps }">
-                <v-btn
+                <BaseButton
                   v-bind="menuProps"
                   icon="mdi-dots-horizontal"
-                  size="small"
-                  variant="text"
-                  color="on-surface-variant"
+                  size="sm"
                   class="tap-target"
                   :loading="busy === file.path"
                   :aria-label="t('work.library.actionsOf', { name: file.path })"
@@ -441,74 +450,55 @@ function read(file: LibraryFile) {
             }}</template>
           </p>
           <div v-if="mdAndUp" class="library__detail-actions">
-            <v-btn size="small" variant="text" prepend-icon="mdi-download-outline" @click="download(selected)">
+            <BaseButton kind="primary" size="sm" prepend-icon="mdi-download-outline" @click="download(selected)">
               {{ t('work.library.download') }}
-            </v-btn>
-            <v-btn
-              size="small"
-              variant="text"
+            </BaseButton>
+            <BaseButton
+              kind="secondary"
+              size="sm"
               prepend-icon="mdi-file-replace-outline"
               :loading="busy === selected.path"
               @click="pickReplacement(selected)"
             >
               {{ t('work.library.replace') }}
-            </v-btn>
-            <v-btn
-              size="small"
-              variant="text"
-              prepend-icon="mdi-close"
-              :aria-label="t('work.library.close')"
-              @click="close"
-            >
+            </BaseButton>
+            <BaseButton size="sm" prepend-icon="mdi-close" :aria-label="t('work.library.close')" @click="close">
               {{ t('work.library.close') }}
-            </v-btn>
+            </BaseButton>
           </div>
         </header>
         <div class="library__preview">
           <FileBytesPreview :filename="selected.path" :source="`${selected.path}#${revision}`" :read="read(selected)" />
         </div>
         <div v-if="!mdAndUp" class="library__bar">
-          <v-btn color="primary" variant="flat" block @click="download(selected)">{{
-            t('work.library.download')
-          }}</v-btn>
+          <BaseButton kind="primary" block @click="download(selected)">{{ t('work.library.download') }}</BaseButton>
         </div>
       </section>
     </div>
 
-    <!-- 替换改的是每一条引用它的消息读到的内容，所以先说清楚再动。 -->
-    <v-dialog :model-value="!!replacing" max-width="420" @update:model-value="replacing = null">
-      <v-card v-if="replacing">
-        <v-card-title class="t-dialog-title">{{
-          t('work.library.replaceTitle', { name: replacing.target.path })
-        }}</v-card-title>
-        <v-card-text class="t-body">{{ t('work.library.replaceBody', { file: replacing.file.name }) }}</v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" color="on-surface-variant" @click="replacing = null">{{
-            t('work.library.cancel')
-          }}</v-btn>
-          <v-btn variant="text" color="primary" @click="replace">{{ t('work.library.replaceConfirm') }}</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <!-- Replace changes what every message referencing this file reads, so say it before acting. -->
+    <ConfirmDialog
+      :model-value="!!replacing"
+      :title="t('work.library.replaceTitle', { name: replacing?.target.path ?? '' })"
+      :confirm-label="t('work.library.replaceConfirm')"
+      @update:model-value="replacing = null"
+      @confirm="replace"
+    >
+      {{ t('work.library.replaceBody', { file: replacing?.file.name ?? '' }) }}
+    </ConfirmDialog>
 
-    <!-- 删除是不可逆的，而且这一份可能已经被好几条消息引用着：那些引用会随之
-         打不开，所以这一下要问一句。 -->
-    <v-dialog :model-value="!!confirming" max-width="420" @update:model-value="confirming = null">
-      <v-card v-if="confirming">
-        <v-card-title class="t-dialog-title">{{
-          t('work.library.deleteTitle', { name: confirming.path })
-        }}</v-card-title>
-        <v-card-text class="t-body">{{ t('work.library.deleteBody') }}</v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" color="on-surface-variant" @click="confirming = null">{{
-            t('work.library.cancel')
-          }}</v-btn>
-          <v-btn variant="text" color="error" @click="remove(confirming)">{{ t('work.library.delete') }}</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <!-- Deleting is irreversible, and this file may already be referenced by several
+         messages: those references will stop opening, so ask before it happens. -->
+    <ConfirmDialog
+      :model-value="!!confirming"
+      :title="t('work.library.deleteTitle', { name: confirming?.path ?? '' })"
+      :confirm-label="t('work.library.delete')"
+      danger
+      @update:model-value="confirming = null"
+      @confirm="confirmRemove"
+    >
+      {{ t('work.library.deleteBody') }}
+    </ConfirmDialog>
   </AppPage>
 </template>
 
@@ -546,14 +536,14 @@ function read(file: LibraryFile) {
   flex: 1 1 240px;
   min-width: 0;
 }
-/* 一行排不下就横着滑，不折成两行：手机上六个筛选折下来占掉两行列表的高度。 */
+/* 一行排不下就换行，不横着滑：手机上六个筛选横滑时右边那几个被切在屏幕外，又没
+   有滚动条告诉你还有，看上去像少了两个筛选。折成两行多占一行列表的高度，但六个
+   都在。 */
 .library__kinds {
   display: flex;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   gap: 8px;
   max-width: 100%;
-  overflow-x: auto;
-  scrollbar-width: none;
 }
 .library__kind {
   flex: none;

@@ -10,6 +10,7 @@ import { useRoute } from 'vue-router'
 
 import { MAX_DRAFTS, MAX_PDF_BYTES, TASK_SUBMISSION_SCHEMA } from './publishLimits'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import PanelCard from '@/components/spaces/PanelCard.vue'
 import { publishDoneRoute, TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
 import { TasksApi } from '@/network/api/tasks'
@@ -219,12 +220,10 @@ async function parsePdf() {
 
 /** 出处标记。题目模型里没有「来源」这一列，也不给它加 —— 标记写进**简介**：
  *  简介会跟着这道题一路走，审核队列那一行显示的就是它。 */
-// 这个标记是写进题目数据里的固定格式（`views/spaces/model.ts` 的 `ORIGIN_PREFIX` 按它剥离），
-// 不随界面语言变，所以不进词条目录。
-const ORIGIN_EXAMPLE = '【PDF · 第 N 页】'
+const ORIGIN_EXAMPLE = '【PDF · 第 N 页】' // i18n-data: 写进题目简介的固定标记，界面上原样展示它长什么样
 
 function originTag(page: number): string {
-  return `【PDF · 第 ${page} 页】`
+  return `【PDF · 第 ${page} 页】` // i18n-data: 写进题目简介的固定标记，model.ts 的 ORIGIN_PREFIX 按它剥离
 }
 
 function toDraftPayload(draft: PdfDraft): PdfTaskDraftData {
@@ -326,14 +325,14 @@ async function confirmPdf() {
         </li>
       </ul>
       <div class="pdf__actions">
-        <v-btn variant="text" @click="resetPdf">{{ t('spaces.detail.pdfGenerate.receipt.again') }}</v-btn>
+        <BaseButton kind="ghost" @click="resetPdf">{{ t('spaces.detail.pdfGenerate.receipt.again') }}</BaseButton>
         <v-spacer />
-        <v-btn variant="tonal" :to="publishDoneRoute(spaceId)">{{
+        <BaseButton kind="secondary" :to="publishDoneRoute(spaceId)">{{
           t('spaces.detail.pdfGenerate.receipt.viewMine')
-        }}</v-btn>
-        <v-btn color="primary" variant="flat" :to="{ name: 'SpacesDetailAuditTasks', params: { spaceId } }">
+        }}</BaseButton>
+        <BaseButton kind="primary" :to="{ name: 'SpacesDetailAuditTasks', params: { spaceId } }">
           {{ t('spaces.detail.pdfGenerate.receipt.toQueue') }}
-        </v-btn>
+        </BaseButton>
       </div>
     </PanelCard>
 
@@ -395,15 +394,9 @@ async function confirmPdf() {
         </div>
 
         <div class="pdf__actions">
-          <v-btn
-            color="primary"
-            variant="flat"
-            :loading="parsing"
-            :disabled="!selectedPdf || confirming"
-            @click="parsePdf"
-          >
+          <BaseButton kind="primary" :loading="parsing" :disabled="!selectedPdf || confirming" @click="parsePdf">
             {{ t('spaces.detail.pdfGenerate.parse') }}
-          </v-btn>
+          </BaseButton>
           <i18n-t scope="global" keypath="spaces.detail.pdfGenerate.parseNote" tag="span" class="pdf__actions-note">
             <template #param><code>?templateId=</code></template>
             <template #max>{{ MAX_DRAFTS }}</template>
@@ -542,18 +535,12 @@ async function confirmPdf() {
             >
           </i18n-t>
           <v-spacer />
-          <v-btn variant="text" :disabled="confirming" @click="resetPdf">{{
+          <BaseButton kind="ghost" :disabled="confirming" @click="resetPdf">{{
             t('spaces.detail.pdfGenerate.cancel')
-          }}</v-btn>
-          <v-btn
-            color="primary"
-            variant="flat"
-            :loading="confirming"
-            :disabled="!pickedDrafts.length"
-            @click="confirmPdf"
-          >
+          }}</BaseButton>
+          <BaseButton kind="primary" :loading="confirming" :disabled="!pickedDrafts.length" @click="confirmPdf">
             {{ t('spaces.detail.pdfGenerate.confirm', { n: pickedDrafts.length }) }}
-          </v-btn>
+          </BaseButton>
         </div>
       </PanelCard>
     </template>

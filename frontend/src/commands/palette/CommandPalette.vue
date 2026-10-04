@@ -24,6 +24,7 @@ import { paletteSources } from './sources'
 import { paletteAsk, paletteOpen } from './state'
 
 import { defineCommands, menuActionOf } from '@/commands'
+import BaseButton from '@/components/base/BaseButton.vue'
 import MobileActionSheet from '@/components/common/MobileActionSheet.vue'
 import { t } from '@/i18n'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -349,6 +350,11 @@ function shortcutLabel(shortcut: string | undefined): string | undefined {
     .join(isMac ? '' : ' ')
 }
 
+// A v-bottom-sheet's z-index prop is a number, so it cannot read the CSS token
+// (--z-menu, design-system §3.8). This is the one JS copy of that rung: the
+// sheet has to open above the palette layer (--z-overlay, 2400).
+const SHEET_Z = 2500
+
 const optionId = (index: number) => `palette-option-${index}`
 const actionId = (index: number) => `palette-action-${index}`
 
@@ -363,11 +369,10 @@ const enterKey = isMac ? '⌘' : 'Ctrl'
         <div v-if="mdAndUp" class="palette-scrim" @click="close" />
         <div class="palette" role="dialog" aria-modal="true" :aria-label="t('navigation.palette.open')">
           <div class="palette__input">
-            <v-btn
+            <BaseButton
               v-if="!mdAndUp"
               icon="mdi-arrow-left"
-              variant="text"
-              size="small"
+              size="sm"
               class="tap-target"
               :aria-label="t('navigation.palette.close')"
               @click="close"
@@ -518,14 +523,14 @@ const enterKey = isMac ? '⌘' : 'Ctrl'
       </div>
     </Transition>
   </Teleport>
-  <MobileActionSheet v-model="sheetOpen" :actions="sheetActions" :title="acting?.row.title" :z-index="2500" />
+  <MobileActionSheet v-model="sheetOpen" :actions="sheetActions" :title="acting?.row.title" :z-index="SHEET_Z" />
 </template>
 
 <style scoped>
 .palette-layer {
   position: fixed;
   inset: 0;
-  z-index: 2400;
+  z-index: var(--z-overlay);
   display: flex;
   justify-content: center;
   align-items: flex-start;

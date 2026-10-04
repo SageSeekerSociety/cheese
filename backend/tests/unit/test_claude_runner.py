@@ -53,7 +53,7 @@ def contract():
 class Machine:
     """An isolated HOME with a git workspace, and a model fixture to talk to."""
 
-    def __init__(self, contract, root: Path):
+    def __init__(self, contract, root: Path, handler=None):
         self.contract = contract
         self.root = root
         self.home = root / "home"
@@ -65,7 +65,7 @@ class Machine:
         (root / "tmp").mkdir()
         (root / "fixture").mkdir()
         self.state = root / "state"
-        self.server = contract.Server(("127.0.0.1", 0), contract.Handler)
+        self.server = contract.Server(("127.0.0.1", 0), handler or contract.Handler)
         self.server.state = {
             "dir": root / "fixture",
             "actions": contract.Directives(),
@@ -248,7 +248,13 @@ def test_a_send_opens_a_turn_for_its_work_and_result_closes_it(screen, contract)
     owner = {"harness": "claude-code", "agent_handle": AGENT, "work_id": work}
     assert opened["record"]["cheese"] == {**owner, "turn_start": True}
     assert echo["record"]["isReplay"] is True
-    assert echo["record"]["cheese"] == {**owner, "receipt": True}
+    assert echo["record"]["cheese"] == {
+        **owner,
+        "receipt": True,
+        "receipt_work_id": work,
+        "receipt_execution_work_id": work,
+        "receipt_session_id": screen.call("ping")["session_id"],
+    }
     turn = _turn(screen.records(), opened["sequence"])
     assert turn[-1] == result
     assert {e["record"]["cheese"].get("work_id") for e in turn} == {work}
@@ -438,6 +444,76 @@ def test_an_interrupt_marks_the_result_it_ends(screen, contract):
     assert result["record"]["cheese"]["interrupted"] is True
     assert result["record"]["cheese"]["work_id"] == work
     assert screen.call("ping")["working"] is False
+
+
+def test_an_error_ends_the_work_though_a_background_task_runs_on(contract, tmp_path):
+    """A turn the API killed is over; a task it left behind does not undo that.
+
+    An unfinished input shuts the seat, and the only thing that opens it again
+    is the terminal stamp on the record that ended the work. The build can only
+    ever write it there — the next record belongs to a new work — so a session
+    that stays quiet keeps its seat shut for good: the platform defers every
+    later message, no turn runs, and the room is answered by silence.
+
+    A task still running is an interval of its own: it can never settle the
+    inputs of the work that ended, while the hold on those inputs is what stops
+    anyone resending them. The clean completion above takes no account of such
+    tasks either.
+    """
+
+    class Refusing(contract.Handler):
+        """The script answers its first request, then the budget is gone."""
+
+        def do_POST(self):
+            if not self.server.state["requests"]:
+                # Nothing answered yet: this is the request the script serves.
+                return super().do_POST()
+            self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            data = json.dumps(
+                {
+                    "type": "error",
+                    "error": {
+                        "type": "rate_limit_error",
+                        "message": "Budget has been exceeded!",
+                    },
+                }
+            ).encode()
+            self.send_response(429)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+    machine = Machine(contract, tmp_path, handler=Refusing)
+    try:
+        stray = contract.do(
+            "Bash",
+            command="sleep 300; echo LATE",
+            description="long",
+            run_in_background=True,
+        )
+        machine.server.state["actions"] = [json.loads(stray[3:])]
+        screen = Screen(machine, env={"CLAUDE_CODE_MAX_RETRIES": "1"})
+        try:
+            work = str(uuid.uuid4())
+            sent = screen.send("hello", work_id=work)
+            screen.wait(_is("system", "task_started"))
+            assert screen.call("ping")["tasks"]
+
+            result = screen.wait(_is("result"), timeout=180)
+            assert result["record"]["is_error"] is True
+            stamp = result["record"]["cheese"]
+            assert stamp["work_terminated"] is True
+            assert stamp["termination"] == "is_error"
+            assert stamp["termination_work_id"] == work
+            assert stamp["termination_input_ids"] == [sent]
+            # The task goes on running, and the input keeps its hold: what the
+            # stamp opened is the seat, not the work.
+            assert screen.call("ping")["tasks"]
+        finally:
+            screen.stop()
+    finally:
+        machine.close()
 
 
 # --- 6-8: the class itself, where the archive exposes no knob --------------------

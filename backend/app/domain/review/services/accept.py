@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, NoReturn
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.errors import ForbiddenError, ValidationError
-from app.domain.block.notice_text import listing, say
+from app.core.sentences import listing, say
 from app.domain.review import (
     archive,
     merge_state,
@@ -86,7 +86,7 @@ async def accept(
     if topic.status == TopicStatus.archived:
         raise ValidationError(say("topicArchivedNoAccept"))
     project = await self._projects.get(topic.project_id)
-    self._forbid_ai(project, decided_by, "采纳")
+    self._forbid_ai(project, decided_by, say("reviewActionAccept"))
 
     # Institution protocol from linked Task Templates (spec §4.2).
     await self._enforce_protocol(topic, decided_by)

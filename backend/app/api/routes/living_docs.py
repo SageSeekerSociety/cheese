@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service
-from app.api.doc_edits import decide
+from app.api.doc_edits import Decision, decide
 from app.api.doc_identity import operation_actor
 from app.api.doc_store import announce, store
 from app.api.response import ok
@@ -29,10 +29,12 @@ from app.core.errors import (
     NotFoundError,
     ValidationError,
 )
+from app.core.redis import get_redis_client
+from app.core.sentences import say
 from app.domain.agent.chat import ChatService
 from app.domain.block.schemas import BlockOut
 from app.domain.identity.services import IdentityService
-from app.domain.living_doc import collab
+from app.domain.living_doc import collab, work_edits
 from app.domain.living_doc.schemas import PassageEditsIn, RestoreIn
 from app.domain.living_doc.services import DocumentJournal, content_hash
 from app.domain.mentions import canonicalize_refs
@@ -128,7 +130,7 @@ async def _base(db, place: Place, expected_version: int) -> str | None:
         return read
     # A version that was never recorded: nothing to compare.
     raise ConflictError(
-        "实况文档已经被改过了，你手上这份是旧的",
+        say("livingDocStale"),
         data={"doc_version": current},
     )
 
@@ -199,33 +201,45 @@ async def edit_doc_passages(
     place = await topics.place_or_404(topic_id)
     actor = await resolver.resolve(topic_id=place.room_id, project_id=place.project_id)
     if not actor.authenticated:
-        raise AuthenticationRequiredError("修改文档需要已认证的写入者")
+        raise AuthenticationRequiredError(say("docEditNeedsWriter"))
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
     )
     topics.require_doc_writable(place)
     doc = await topics.doc_of_room(place.room_id)
     if doc is None:
-        raise NotFoundError("本话题还没有实况文档")
+        raise NotFoundError(say("topicHasNoLivingDoc"))
     edits = [edit.model_dump() for edit in body.edits]
-    decision = await decide(
-        db,
-        room_id=place.room_id,
-        actor=actor.handle,
-        content=doc.content,
-        edits=edits,
-        asked=body.mode,
-    )
+    # A 芝士 answering someone's question edits as itself, for that person,
+    # directly: the person asked for exactly this change.
+    delegation = resolver.delegation()
+    if delegation is not None:
+        if delegation.agent is None:
+            raise ForbiddenError("This credential names no agent to edit as")
+        author = delegation.agent
+        decision = Decision(mode="direct", requested_by=actor.handle)
+    else:
+        author = actor.handle
+        decision = await decide(
+            db,
+            room_id=place.room_id,
+            actor=actor.handle,
+            content=doc.content,
+            edits=edits,
+            asked=body.mode,
+        )
     # The service's store takes the room's lock in a transaction of its own.
     await db.commit()
     result = await collab.edit(
         place.room_id,
         edits=edits,
-        actor=actor.handle,
+        actor=author,
         requested_by=decision.requested_by,
         mode=decision.mode,
         reason=body.reason,
     )
+    if delegation is not None:
+        await work_edits.record(get_redis_client(), delegation.work, edits)
     stored = result.get("stored") or {}
     return ok(
         {
@@ -285,7 +299,7 @@ async def document_receipt(
     place = await TopicService(db).place_or_404(topic_id)
     actor = await _actor_in_place(resolver, place)
     if not actor.authenticated:
-        raise AuthenticationRequiredError("操作回执需要已认证的写入者")
+        raise AuthenticationRequiredError(say("docReceiptNeedsWriter"))
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
     )
@@ -296,7 +310,7 @@ async def document_receipt(
         operation_id=operation_id,
     )
     if receipt is None:
-        raise NotFoundError("没有这份文档操作回执")
+        raise NotFoundError(say("docReceiptNotFound"))
     return receipt
 
 
@@ -311,7 +325,7 @@ async def restore_document(
     place = await topics.place_or_404(topic_id)
     actor = await _actor_in_place(resolver, place)
     if not actor.authenticated:
-        raise AuthenticationRequiredError("恢复文档需要已认证的写入者")
+        raise AuthenticationRequiredError(say("docRestoreNeedsWriter"))
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
     )
@@ -326,7 +340,7 @@ async def restore_document(
         return receipt
     content = await DocumentJournal(db).version_content(place.room_id, body.version)
     if content is None:
-        raise NotFoundError("没有这份历史文档版本")
+        raise NotFoundError(say("docVersionNotFound"))
     base = await _base(db, place, body.expected_version)
     await db.commit()
     return await collab.replace(
@@ -347,7 +361,7 @@ def _service(authorization: Annotated[str | None, Header()] = None) -> None:
     try:
         collab.verify_service(authorization)
     except collab.CollabRefused as exc:
-        raise ForbiddenError("只接受文档协同服务的请求") from exc
+        raise ForbiddenError(say("docCollabOnly")) from exc
 
 
 ServiceOnly = Annotated[None, Depends(_service)]
@@ -357,7 +371,7 @@ def _room(name: str) -> uuid.UUID:
     try:
         return collab.room_of(name)
     except ValueError as exc:
-        raise NotFoundError("没有这份文档") from exc
+        raise NotFoundError(say("docNotFound")) from exc
 
 
 @internal.get("/documents/{name}")

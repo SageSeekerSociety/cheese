@@ -11,9 +11,9 @@
 
     <div v-if="shouldShowBtn" class="collapse-button-container" @click="show = true">
       <slot name="button">
-        <v-btn variant="plain" block :ripple="false" prepend-icon="mdi-chevron-down" class="collapse-button">
+        <BaseButton kind="ghost" block :ripple="false" prepend-icon="mdi-chevron-down" class="collapse-button">
           {{ t('questions.detail.buttons.showAll') }}
-        </v-btn>
+        </BaseButton>
       </slot>
     </div>
   </div>
@@ -22,6 +22,8 @@
 <script setup lang="ts">
 import { computed, ref, toRefs } from 'vue'
 import { useI18n } from 'vue-i18n'
+
+import BaseButton from '@/components/base/BaseButton.vue'
 
 const { t } = useI18n()
 
@@ -71,7 +73,7 @@ const contentDivStyles = computed(() => ({
     padding-top: 64px;
     background: linear-gradient(rgba(var(--v-theme-background), 0), rgba(var(--v-theme-background), 1));
     opacity: 0.75;
-    transition: all 0.3s;
+    transition: opacity 0.3s;
     cursor: pointer;
     text-align: center;
 

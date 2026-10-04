@@ -138,7 +138,7 @@ uv run --with playwright python scripts/shots.py
 
 ## 5. 提交规范
 - 不擅自 commit；都走 PR、不上 main（项目规范）。
-- commit/PR/代码注释**英文**；产品文档（本文件、spec、evals）中文。
+- 提交标题（Conventional Commits 的 subject）**英文**；PR 描述与它进 main 的提交正文**中文**；代码注释**英文**；产品文档（本文件、spec、evals）**中文**。
 - `.env`、`tmp_*`、`tmp_review/`、`.workspaces/` 不进版本库。
 
 ---

@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from app.core.errors import ForbiddenError, ValidationError
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 from app.domain.repository import identity
 from app.domain.review import (
     merge_state,
@@ -68,7 +68,7 @@ async def arm_auto_merge(
         raise ValidationError(say("autoMergeNeedsOpenPr"))
     topic = await self._topic_or_404(card.topic_id)
     project = await self._projects.get(topic.project_id)
-    self._forbid_ai(project, decided_by, "设置自动合并")
+    self._forbid_ai(project, decided_by, say("reviewActionAutoMerge"))
     if enabled and not branch_protection_of(project).auto_merge_allowed:
         raise ValidationError(say("autoMergeNotEnabled"))
     allowed = {card.reviewer_handle}

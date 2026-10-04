@@ -3,9 +3,10 @@ title: 个人芝士
 kind: 流程
 summary: 项目之外的芝士：一个人在某个地方和芝士的对话怎么存、在哪里跑、怎么扣钱。
 covers:
-  - backend/app/domain/assistant/
+  - backend/app/domain/agent/personal/
+  - backend/app/domain/assistant/models.py
   - backend/app/api/routes/assistant.py
-  - backend/app/domain/agent/harness/pi/personal.py
+  - backend/app/domain/agent/session_host/
   - frontend/src/components/assistant/AssistantPanel.vue
   - frontend/src/views/tasks/composables/useAssistant.ts
 ---
@@ -24,7 +25,7 @@ covers:
 
 ## 会话 {#session}
 
-和房间里的芝士是同一套底座：中心会话机上钉住版本的 pi，由 runner 守着，用同一个启动脚本起（`harness/pi/launch.py`、`host.py`），后端用同一种「等到有新东西才回」的读法读它的日志和正在写的内容（`driven/runner.py`）。区别是没有房间要的那些东西：没有项目、执行机、话题锁、工作租约和房间日志。起会话、读回答这一段和[文档里的芝士](/dev/doc-agent#session)共用（`harness/pi/handless.py`），这里只决定会话怎么起（`personal.py`）。
+和房间里的芝士是同一套底座：中心会话机上钉住版本的 pi，由 runner 守着，用同一个启动脚本起（`harness/pi/launch.py`、`host.py`），后端用同一种「等到有新东西才回」的读法读它的日志和正在写的内容（`driven/runner.py`）。区别是没有房间要的那些东西：没有项目、执行机、话题锁、工作租约和房间日志。起会话、发问题、读回答由会话核心做（`agent/session_host/`），和[文档里的芝士](/dev/doc-agent#session)共用；这里只决定会话是什么样的（`personal/session.py`）。
 
 - **一段对话一个 pi 会话**，会话 id 就是对话 id，放在会话机的 `~/.cheese/personal/<用户 id>/<对话 id>`。
 - **没有手**：不给执行目标，pi 只开平台列给它的三个工具（`--tools`），pi 自己的读写文件、跑命令都不开。系统提示词替换掉 pi 默认的那份编程助手说明。
@@ -38,21 +39,16 @@ covers:
 
 ## 凭据 {#credential}
 
-会话拿的是个人凭据（`cxpu_`，`sandbox_auth.mint_personal_credential`），写着这个人和这段对话，不带任何项目、房间、队友的信息。它只开两扇门，别的凭据也开不了这两扇：
+会话启动时拿的是个人凭据（`cxpu_`，`sandbox_auth.mint_personal_credential`），写着这个人和这段对话，不带任何项目、房间、队友的信息。它只开 `/llm/v1/*`：换上这个人自己的网关虚拟 key 转发给网关，前提是这段对话正有一个问题在回答。房间的凭据、项目凭据、平台密钥、人自己的登录都不能代替它；它也打不开任何房间或项目的接口，打不开人自己的 API。
 
-| 门 | 做什么 | 条件 |
-|---|---|---|
-| `/assistant/tools/{name}` | 以这个人的身份跑 `my_tasks`、`search_docs`、`read_doc` | 对话还是这个人的 |
-| `/llm/v1/*` | 换上这个人自己的网关虚拟 key 转发给网关 | 这段对话正有一个问题在回答 |
-
-房间的凭据、项目凭据、平台密钥、人自己的登录都打不开前一扇；个人凭据打不开任何房间或项目的接口，也打不开人自己的 API。
+工具用的是每次提问另签的代行凭据（`cxdg_`，`sandbox_auth.mint_delegated_credential`）：写着这个人和这次回答的编号，只读，有效期是回答上限再加一分钟。工具调的是平台工具表里的 `cheese_my_tasks`（`GET /tasks/joined`）、`cheese_docs_search` 和 `cheese_docs_read`（`/docs/agent/search`、`/docs/agent/read`，不带房间，只读人人能读的页），按这个人的权限判断；代行凭据只在 `api/auth.py` 的 `DELEGATED_ROUTES` 列出的接口上有效。
 
 ## 一次提问 {#ask}
 
 `POST /api/assistant/conversations/{id}/ask`，以 server-sent events 流式返回：`delta`（文字）、`tool`（芝士在用哪个工具）、`error`、`done`。
 
-1. **准入**：对话是本人的；对话所在的题目本人打得开（和题目页同一个判断，`_ensure_task_readable`）；网关上 `ASSISTANT_MODEL` 有单价、这个人有一把只认当前 `ASSISTANT_MODEL` 的网关 key（第一次提问时开；模型换了就先把旧 key 的花费扣完，再换一把新的，旧的在网关上吊销），会话机在线，否则拒绝；个人额度有剩余，否则 429 并写明哪天重置；同一段对话同一时间只答一个问题（Valkey 锁，180 秒过期）。然后起会话，起不来就拒绝这次提问。
-2. **跑**：问题送进会话，pi 经 `/llm/v1` 调模型、经 `/assistant/tools` 调工具。后端读会话：正在写的文字变成 `delta`，正在调的工具变成 `tool`；日志里这一问的最后一条记录是答案。答完后会话若还在压缩对话，等它做完再放开锁。
+1. **准入**：对话是本人的；对话所在的题目本人打得开（和题目页同一个判断，`_ensure_task_readable`）；网关上 `ASSISTANT_MODEL` 有单价、这个人有一把只认当前 `ASSISTANT_MODEL` 的网关 key（第一次提问时开；模型换了就先把旧 key 的花费扣完，再换一把新的，旧的在网关上吊销），会话机在线，否则拒绝；个人额度有剩余，否则 429 并写明哪天重置；同一段对话同一时间只答一个问题（Valkey 里的锁，和房间、文档的芝士用同一套 `agent/admission.py`：回答期间续期，后端进程退出后 30 秒内自动释放）。然后起会话，起不来就拒绝这次提问。
+2. **跑**：问题连同这一问的代行凭据送进会话，pi 经 `/llm/v1` 调模型，工具带着代行凭据调平台接口。后端读会话：正在写的文字变成 `delta`，正在调的工具变成 `tool`；日志里这一问的最后一条记录是答案。答完后会话若还在压缩对话，等它做完再放开锁。
 3. **收尾**：这一问在后台任务里跑，响应只从队列里读。读者中途离开，照样答完、存下、扣费。答案存进 `assistant_messages`，放开锁，然后读这个人 key 上新增的网关花费，扣个人额度（`billing.py`，`kind = "assistant"`，缓存命中的部分按网关的缓存价）。网关的花费记录晚到时过几秒再读；更晚到的由下一次提问读到。
 
 ## 面板 {#panel}

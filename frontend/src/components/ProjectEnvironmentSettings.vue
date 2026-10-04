@@ -7,7 +7,9 @@ import { holdRevealGate } from '@/composables/useRevealGate'
 
 import { applyRoomEnvironment, getProjectEnvironment, getRoomEnvironment, saveProjectEnvironment } from '../api'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import i18n, { t } from '@/i18n'
+import { responseText } from '@/lib/noticeText'
 
 const props = defineProps<{ projectId: string }>()
 const info = ref<ProjectEnvironmentInfo | null>(null)
@@ -128,9 +130,9 @@ onBeforeUnmount(() => {
       <v-alert v-if="error" type="error" variant="tonal" class="mb-3">{{ error }}</v-alert>
       <v-alert v-if="notice" type="success" variant="tonal" class="mb-3">{{ notice }}</v-alert>
       <v-progress-linear v-if="!info && !error" indeterminate />
-      <v-btn v-if="!info && error" variant="text" @click="load">{{
+      <BaseButton v-if="!info && error" kind="secondary" @click="load">{{
         t('work.projectSettings.environment.reload')
-      }}</v-btn>
+      }}</BaseButton>
       <template v-if="info">
         <p class="t-body c-muted mb-3">
           {{ t('work.projectSettings.environment.intro') }}
@@ -184,23 +186,22 @@ onBeforeUnmount(() => {
             auto-grow
             :readonly="!info.can_edit"
           />
-          <v-btn
+          <BaseButton
             v-if="info.can_edit"
             icon="mdi-close"
-            variant="text"
-            size="small"
+            size="sm"
             :aria-label="t('work.projectSettings.environment.removeVar')"
             class="env-var__remove"
             @click="variables.splice(index, 1)"
           />
         </div>
         <div v-if="info.can_edit" class="d-flex ga-2 mb-3">
-          <v-btn variant="text" @click="variables.push({ key: '', value: '' })">{{
+          <BaseButton kind="secondary" @click="variables.push({ key: '', value: '' })">{{
             t('work.projectSettings.environment.addVar')
-          }}</v-btn>
-          <v-btn color="primary" :loading="saving" @click="save">{{
+          }}</BaseButton>
+          <BaseButton kind="primary" :loading="saving" @click="save">{{
             t('work.projectSettings.environment.save')
-          }}</v-btn>
+          }}</BaseButton>
         </div>
         <p class="t-body c-muted mb-3">{{ t('work.projectSettings.environment.saveNote') }}</p>
         <details class="t-body c-faint mb-4">
@@ -217,7 +218,12 @@ onBeforeUnmount(() => {
             :label="t('work.projectSettings.environment.roomSelect')"
             variant="outlined"
             density="compact"
-          />
+          >
+            <!-- 房间名是人起的，不跟着界面语言变。 -->
+            <template #selection="{ item }">
+              <span data-user-content>{{ item.title }}</span>
+            </template>
+          </v-select>
           <p v-if="status" class="t-body mb-2">
             {{ stateLabel(status.state)
             }}<span v-if="status.stage">
@@ -268,27 +274,27 @@ onBeforeUnmount(() => {
             {{ t('work.projectSettings.environment.recoveryNeedsHelp') }}
           </p>
           <div class="d-flex flex-wrap ga-2 mb-3">
-            <v-btn variant="text" @click="refreshStatus">{{
+            <BaseButton kind="secondary" @click="refreshStatus">{{
               t('work.projectSettings.environment.refreshStatus')
-            }}</v-btn>
-            <v-btn
+            }}</BaseButton>
+            <BaseButton
               v-if="info.can_edit"
-              variant="outlined"
+              kind="primary"
               :loading="applying"
               :disabled="saving || status?.busy || status?.state === 'preparing'"
               @click="apply(true)"
-              >{{ t('work.projectSettings.environment.applyNext') }}</v-btn
+              >{{ t('work.projectSettings.environment.applyNext') }}</BaseButton
             >
-            <v-btn
+            <BaseButton
               v-if="info.can_edit && status?.state === 'failed'"
-              variant="text"
+              kind="secondary"
               :disabled="applying || status?.busy"
               @click="apply(false)"
-              >{{ t('work.projectSettings.environment.retryNext') }}</v-btn
+              >{{ t('work.projectSettings.environment.retryNext') }}</BaseButton
             >
           </div>
           <p class="t-body c-faint mb-2">{{ t('work.projectSettings.environment.roomNote') }}</p>
-          <pre v-if="status?.log" class="environment-log">{{ status.log }}</pre>
+          <pre v-if="status?.log" class="environment-log">{{ responseText(status, 'log') }}</pre>
         </template>
       </template>
     </div>

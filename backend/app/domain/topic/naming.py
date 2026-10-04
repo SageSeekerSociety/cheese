@@ -49,8 +49,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.errors import ValidationError
 from app.core.redis import get_redis_client
+from app.core.sentences import say
 from app.domain.block.models import AuthorType, Block, BlockKind
-from app.domain.block.notice_text import say
 from app.domain.gateway_chat import Usage, response_cost
 from app.domain.identity.handles import names_a_person
 from app.domain.project.models import Project
@@ -813,10 +813,10 @@ async def undo(
     block = await session.get(Block, event_id)
     meta = (block.meta or {}) if block is not None else {}
     if block is None or block.topic_id != room.id or meta.get("action") != "title":
-        raise ValidationError("这条记录不是这个话题的自动改名")
+        raise ValidationError(say("renameRecordNotThisTopic"))
     if room.title_source != TitleSource.auto or room.title != meta.get("to"):
         raise ValidationError(say("titleUndoStale"))
     previous = meta.get("from")
     if not isinstance(previous, str) or not previous:
-        raise ValidationError("这条记录没有原标题")
+        raise ValidationError(say("renameRecordNoTitle"))
     await rename_by_person(session, room, previous, by=by, reason="undo")

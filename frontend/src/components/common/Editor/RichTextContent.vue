@@ -219,7 +219,7 @@ const emptyPlaceholder = computed(() => JSON.stringify(props.placeholder ?? ''))
   content: '';
   position: absolute;
   inset: 0;
-  z-index: 2;
+  z-index: var(--z-raised-2);
   pointer-events: none;
   background: var(--fill);
 }

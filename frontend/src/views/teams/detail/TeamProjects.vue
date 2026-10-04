@@ -12,6 +12,7 @@ import { useRouter } from 'vue-router'
 import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
 
 import { listProjects } from '@/api'
+import BaseButton from '@/components/base/BaseButton.vue'
 import i18n, { t } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
 
@@ -63,9 +64,9 @@ watch(teamId, load)
         </p>
       </div>
       <v-spacer />
-      <v-btn color="primary" variant="flat" prepend-icon="mdi-plus" @click="newProject">{{
+      <BaseButton kind="primary" prepend-icon="mdi-plus" @click="newProject">{{
         t('teams.projects.newProject')
-      }}</v-btn>
+      }}</BaseButton>
     </div>
 
     <div v-if="loading" class="py-10 text-center">
@@ -80,9 +81,9 @@ watch(teamId, load)
       <v-icon icon="mdi-rocket-launch-outline" size="56" class="mb-3 empty-state-icon" />
       <h3 class="text-subtitle-1 font-weight-medium mb-1">{{ t('teams.projects.emptyTitle') }}</h3>
       <p class="text-body-2 text-medium-emphasis mb-4">{{ t('teams.projects.emptyHint') }}</p>
-      <v-btn color="primary" variant="flat" prepend-icon="mdi-plus" @click="newProject">{{
+      <BaseButton kind="secondary" prepend-icon="mdi-plus" @click="newProject">{{
         t('teams.projects.newProject')
-      }}</v-btn>
+      }}</BaseButton>
     </div>
 
     <v-row v-else>

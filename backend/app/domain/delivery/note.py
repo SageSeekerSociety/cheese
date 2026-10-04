@@ -13,16 +13,15 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
+from app.core.sentences import say
 from app.domain.agent.chat import ChatService
+from app.domain.delivery.input_identity import InputReconciliationPending
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 
 #: 送给别的 handle 时说的那一句。说清楚还有哪条路可走 —— 收件人不对不是故障，是这
 #: 条通道本来就只通向自己。
-NOT_YOUR_OWN_THREAD = (
-    "便条只能留给同一个 handle 的另一条线程。跟别的参与者说话走房间里的 chat，"
-    "agent 对 agent 也是。"
-)
+NOT_YOUR_OWN_THREAD = say("noteOwnHandleOnly")
 
 
 async def send_note(
@@ -33,14 +32,14 @@ async def send_note(
     from_project_id: uuid.UUID,
     to_thread: uuid.UUID,
     content: str,
-) -> bool:
+) -> bool | InputReconciliationPending:
     """把一张便条递给同一个 handle 的另一条线程。返回那条线程有没有接住。
 
     没接住（那边这一刻没有在跑的轮次）不是错误：便条是递给一条**正在跑**的线程的，
     那边空着的时候没有人要被打断，如实回一个 False。
     """
     if not content.strip():
-        raise ValidationError("便条不能是空的")
+        raise ValidationError(say("deliveryNoteEmpty"))
     try:
         target = await TopicService(session).place_or_404(to_thread)
     except NotFoundError:

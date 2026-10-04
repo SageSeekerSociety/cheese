@@ -5,6 +5,8 @@ from typing import Annotated
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator
 
+from app.core.sentences import say
+
 
 def parse_uuid(value):
     if isinstance(value, uuid.UUID):
@@ -28,5 +30,5 @@ class ReplyIn(ThreadMutation):
     @classmethod
     def nonblank(cls, value):
         if not value.strip():
-            raise ValueError("评论内容不能为空")
+            raise ValueError(say("commentContentRequired"))
         return value

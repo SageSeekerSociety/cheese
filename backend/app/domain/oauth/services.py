@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.crypto import Purpose, decrypt, encrypt
 from app.core.errors import BadRequestError, ConflictError, NotFoundError
+from app.core.sentences import say
 from app.domain.oauth.repositories import OAuthConnectionRepository
 
 logger = logging.getLogger(__name__)
@@ -800,9 +801,7 @@ class OAuthService:
                 or other_sign_in
                 or not is_placeholder_email(user.email)
             ):
-                raise ConflictError(
-                    "这是你唯一的登录方式，请先设置密码或添加通行密钥后再解绑"
-                )
+                raise ConflictError(say("oauthLastSignInMethod"))
         return await self._repo.delete_by_id(connection_id, user_id)
 
     def _connection_to_dict(self, conn) -> dict:

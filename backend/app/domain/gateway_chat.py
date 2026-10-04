@@ -16,6 +16,7 @@ from dataclasses import dataclass
 
 import httpx
 
+from app.core.sentences import say
 from app.domain.service_keys import gateway_base
 
 logger = logging.getLogger(__name__)
@@ -130,12 +131,14 @@ class GatewayChat:
                     json=body,
                 )
         except httpx.TimeoutException as exc:
-            raise GatewayCallError(f"模型 {timeout:.0f} 秒内没有答完") from exc
+            raise GatewayCallError(
+                say("gatewayModelTimeout", seconds=format(timeout, ".0f"))
+            ) from exc
         except httpx.HTTPError as exc:
-            raise GatewayCallError("连不上模型网关") from exc
+            raise GatewayCallError(say("modelGatewayUnreachable")) from exc
         if r.status_code != 200:
             logger.warning("gateway answered %s: %s", r.status_code, r.text[:300])
-            raise GatewayCallError(f"模型网关返回了 {r.status_code}")
+            raise GatewayCallError(say("gatewayReturnedStatus", status=r.status_code))
         payload = r.json()
         choices = payload.get("choices") or [{}]
         content = (choices[0].get("message") or {}).get("content") or ""

@@ -11,7 +11,10 @@ import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminFlash from '@/components/admin/AdminFlash.vue'
 import AdminGrid from '@/components/admin/AdminGrid.vue'
 import AdminPage from '@/components/admin/AdminPage.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
+import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
+import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { relTime } from '@/lib/relTime'
@@ -148,7 +151,8 @@ const addedRows = computed<AddedRowView[]>(() =>
 /** 六条列。**只有「添加信息」那一列是 `null`**（自适应）—— `table-layout: fixed`
  *  下没有宽度的列会平分剩余空间，多给一列就散架。第一列要装下头像 + 昵称 + handle
  *  （+ 可能的 agent 徽章），300px 够（超长的由 ellipsis 收，`title` 里拿全文）。
- *  定宽合计 770px，AdminGrid 的 1080 min-width 下自适应列拿 ~310px。 */
+ *  定宽合计 770px，表格下限收到 1000（见样式里那条 `--agrid-min`）时自适应列
+ *  还拿得到 230px。 */
 const COLS: (string | null)[] = ['300px', '140px', '100px', '110px', null, '120px']
 const BONE_WIDTHS = ['58%', '44%', '52%', '40%', '64%', '42%']
 
@@ -282,18 +286,17 @@ onMounted(load)
     <AdminPage :title="t('navigation.admin.members')" :sub="t('members.header.subtitle')">
       <template #tools>
         <span class="t-meta-read t-num am__count">{{ countLine }}</span>
-        <v-btn
+        <BaseButton
           icon="mdi-refresh"
-          variant="text"
-          size="small"
+          size="sm"
           :aria-label="t('members.toolbar.refresh')"
           :loading="loading"
           @click="load"
         />
         <!-- 全页唯一一块琥珀：这一页确实有一个主操作，而它就是这个。 -->
-        <v-btn color="primary" size="small" prepend-icon="mdi-account-plus-outline" @click="openDialog">
+        <BaseButton kind="primary" size="sm" prepend-icon="mdi-account-plus-outline" @click="openDialog">
           {{ t('members.toolbar.add') }}
-        </v-btn>
+        </BaseButton>
       </template>
 
       <div class="am__body admin-page__body">
@@ -507,14 +510,9 @@ onMounted(load)
                  名字覆盖掉，读屏念的就不再是「移出」这两个字了。）
                  颜色**留中性**（不写 `color`）：每行一颗红按钮会把这张表变吵，而这一页
                  的琥珀是「添加管理员」；破坏性那一颗的红留给确认框里那一颗。 -->
-                <v-btn
-                  variant="outlined"
-                  size="small"
-                  :loading="removing === row.handle"
-                  @click="askRemove($event, row.handle)"
-                >
+                <BaseButton size="sm" :loading="removing === row.handle" @click="askRemove($event, row.handle)">
                   {{ t('members.row.remove') }}
-                </v-btn>
+                </BaseButton>
               </td>
             </tr>
             <tr v-if="!added.length" class="am__row" data-card="flat">
@@ -535,82 +533,70 @@ onMounted(load)
          查成了 `pengwenbo` 并回了一行，组件再拿「彭文博」去比 `pengwenbo`，不匹配，
          当场筛掉。表现是「输入 handle 搜得到、输入中文名搜不到」，而接口、fixture、
          服务端用例三处各自看都对。 -->
-    <v-dialog v-model="dialogOpen" max-width="520" persistent>
-      <v-card rounded="lg">
-        <v-card-title class="t-dialog-title px-4 pt-4 pb-2">{{ t('members.addDialog.title') }}</v-card-title>
-        <v-card-text class="px-4">
-          <v-autocomplete
-            v-model="selected"
-            v-model:search="search"
-            autocomplete="off"
-            :label="t('members.addDialog.searchLabel')"
-            :placeholder="t('members.addDialog.searchPlaceholder')"
-            variant="outlined"
-            density="comfortable"
-            :items="candidates"
-            :loading="searching"
-            :no-filter="true"
-            item-title="handle"
-            item-value="handle"
-            return-object
-            multiple
-            chips
-            closable-chips
-            hide-no-data
-          >
-            <template #item="{ item, props }">
-              <v-list-item v-bind="props" :disabled="item.raw.already_admin">
-                <template #prepend>
-                  <UserAvatar :name="item.raw.handle" :avatar="avatarUrl(item.raw.avatar_id)" :size="30" />
-                </template>
-                <v-list-item-title>{{ item.raw.nickname }}</v-list-item-title>
-                <v-list-item-subtitle>{{ item.raw.handle }}</v-list-item-subtitle>
-                <template #append>
-                  <span v-if="item.raw.already_admin" class="chip-neutral">{{
-                    t('members.addDialog.alreadyAdmin')
-                  }}</span>
-                </template>
-              </v-list-item>
+    <AdaptiveDialog
+      v-model="dialogOpen"
+      :title="t('members.addDialog.title')"
+      :primary-label="t('members.addDialog.submit')"
+      :primary-loading="adding"
+      :primary-disabled="!selected.length"
+      persistent
+      @primary="addSelected"
+    >
+      <v-autocomplete
+        v-model="selected"
+        v-model:search="search"
+        autocomplete="off"
+        :label="t('members.addDialog.searchLabel')"
+        :placeholder="t('members.addDialog.searchPlaceholder')"
+        variant="outlined"
+        density="comfortable"
+        :items="candidates"
+        :loading="searching"
+        :no-filter="true"
+        item-title="handle"
+        item-value="handle"
+        return-object
+        multiple
+        chips
+        closable-chips
+        hide-no-data
+      >
+        <template #item="{ item, props }">
+          <v-list-item v-bind="props" :disabled="item.raw.already_admin">
+            <template #prepend>
+              <UserAvatar :name="item.raw.handle" :avatar="avatarUrl(item.raw.avatar_id)" :size="30" />
             </template>
-          </v-autocomplete>
-          <div class="t-meta mt-2">{{ t('members.addDialog.hint') }}</div>
-        </v-card-text>
-        <v-card-actions class="pa-4 pt-0">
-          <v-spacer />
-          <v-btn variant="text" @click="dialogOpen = false">{{ t('members.addDialog.cancel') }}</v-btn>
-          <v-btn color="primary" :loading="adding" :disabled="!selected.length" @click="addSelected">
-            {{ t('members.addDialog.submit') }}
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+            <v-list-item-title>{{ item.raw.nickname }}</v-list-item-title>
+            <v-list-item-subtitle>{{ item.raw.handle }}</v-list-item-subtitle>
+            <template #append>
+              <span v-if="item.raw.already_admin" class="chip-neutral">{{ t('members.addDialog.alreadyAdmin') }}</span>
+            </template>
+          </v-list-item>
+        </template>
+      </v-autocomplete>
+      <div class="t-meta mt-2">{{ t('members.addDialog.hint') }}</div>
+    </AdaptiveDialog>
 
     <!-- 移出要问一句：这个动作当场改的是**谁能看别人的私密反馈**，而且按钮就在一行
          名字旁边，点错了没有任何东西拦着。 -->
-    <v-dialog :model-value="!!confirmHandle" max-width="420" @update:model-value="confirmHandle = null">
-      <v-card rounded="lg">
-        <v-card-title class="t-dialog-title px-4 pt-4 pb-2">{{ t('members.confirm.title') }}</v-card-title>
-        <v-card-text class="px-4">
-          <!-- 正文是全仓第一处 `<i18n-t>`：handle 回显**加粗**（按按钮的人要看得见
-               删的是谁），而英文语序和中文不同 —— 句子碎片键被 i18n.md §3 禁掉，
-               插槽是唯一合规的写法。 -->
-          <i18n-t keypath="members.confirm.body" tag="span">
-            <template #handle>
-              <strong>{{ confirmHandle }}</strong>
-            </template>
-          </i18n-t>
-        </v-card-text>
-        <v-card-actions class="pa-4 pt-0">
-          <v-spacer />
-          <v-btn variant="text" @click="confirmHandle = null">{{ t('members.confirm.cancel') }}</v-btn>
-          <!-- `color="error"`（→ `--danger`）：琥珀按设计系统只给一屏唯一的主操作，
-               而这一页的主操作是「添加管理员」（工具条里那颗）。移出是不可逆的破坏性
-               动作，红是它该有的颜色；本仓先例：MyDevicesView、ProjectLibraryView、
-               teams/detail/Members 的删除按钮。 -->
-          <v-btn color="error" :loading="!!removing" @click="remove">{{ t('members.confirm.submit') }}</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <ConfirmDialog
+      :model-value="!!confirmHandle"
+      :title="t('members.confirm.title')"
+      :confirm-label="t('members.confirm.submit')"
+      :loading="!!removing"
+      danger
+      @update:model-value="confirmHandle = null"
+      @confirm="remove"
+    >
+      <!-- The body echoes the handle in bold (the person pressing must see who is being
+           removed), and English word order differs, so the i18n-t slot is the only
+           compliant phrasing. -->
+      <i18n-t keypath="members.confirm.body" tag="span">
+        <template #handle>
+          <strong>{{ confirmHandle }}</strong>
+        </template>
+      </i18n-t>
+    </ConfirmDialog>
   </div>
 </template>
 
@@ -638,6 +624,13 @@ onMounted(load)
   display: flex;
   flex: 0 1 auto;
   min-height: 0;
+}
+
+/* 1440 下这一页的容器只有约 1051px，而 `AdminGrid` 默认的 1080 表格下限比它宽
+   29px —— 最后一列「操作」被裁掉一截，「不可移出」显示成「不可移」。成员表六列
+   的定宽合计只有 770，1000 就排得下，剩下的 230 给自适应的「添加信息」那一列。 */
+.am :deep(.agrid__table) {
+  --agrid-min: 1000px;
 }
 
 .am__group {

@@ -12,6 +12,8 @@ import type { Knowledge } from '@/types'
 
 import { getAvatarUrl } from '@/utils/materials'
 
+import BaseButton from '@/components/base/BaseButton.vue'
+import { t } from '@/i18n'
 import { formatDay, resourceTypeIcon, resourceTypeName } from '@/lib/knowledgeFormat'
 
 defineOptions({ name: 'KnowledgeGrid' })
@@ -61,11 +63,15 @@ const emit = defineEmits<{
               <span class="text-caption text-medium-emphasis">{{ formatDay(resource.createdAt) }}</span>
             </div>
 
-            <h3 class="text-subtitle-1 font-weight-medium resource-title mb-1">{{ resource.name }}</h3>
-            <p v-if="resource.description" class="text-body-2 resource-description">{{ resource.description }}</p>
+            <h3 class="text-subtitle-1 font-weight-medium resource-title mb-1" data-user-content>
+              {{ resource.name }}
+            </h3>
+            <p v-if="resource.description" class="text-body-2 resource-description" data-user-content>
+              {{ resource.description }}
+            </p>
 
             <!-- 标签 -->
-            <div v-if="resource.labels && resource.labels.length > 0" class="resource-tags mt-2">
+            <div v-if="resource.labels && resource.labels.length > 0" class="resource-tags mt-2" data-user-content>
               <v-chip
                 v-for="tag in resource.labels.slice(0, 3)"
                 :key="tag"
@@ -89,13 +95,14 @@ const emit = defineEmits<{
             <span class="text-caption ml-2">{{ resource.creator.nickname }}</span>
             <v-spacer></v-spacer>
             <!-- 删除键在网格里没有：卡上那一颗是「打开」。只有列表视图给了删除。 -->
-            <v-btn
-              variant="text"
-              size="small"
+            <BaseButton
+              kind="ghost"
+              size="sm"
               density="comfortable"
               icon="mdi-open-in-new"
+              :aria-label="t('navigation.palette.newTab')"
               @click.stop="emit('openLink', resource)"
-            ></v-btn>
+            />
           </v-card-actions>
         </v-card>
       </v-hover>
@@ -105,13 +112,12 @@ const emit = defineEmits<{
 
 <style scoped lang="scss">
 .resource-card {
-  transition: all 0.3s ease;
   border: 1px solid var(--line);
   overflow: hidden;
+  transition: border-color var(--dur-quick) var(--ease-standard);
 
   &.card-hover {
-    transform: translateY(-2px);
-    box-shadow: var(--shadow-1);
+    border-color: var(--line-2);
   }
 }
 

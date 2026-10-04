@@ -11,6 +11,7 @@ import { onMounted, ref, watch } from 'vue'
 import { downloadRoomFileRevision, restoreRoomFileRevision, roomFileRevisions } from '../../../api'
 import i18n, { t } from '../../../i18n'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 
 const props = defineProps<{ topicId: string; path: string; version?: string | null }>()
@@ -96,30 +97,29 @@ defineExpose({ reload: load })
         <div class="t-meta">{{ when(row.created_at) }}</div>
         <div v-if="row.note" class="rh__note">{{ row.note }}</div>
         <div class="rh__actions">
-          <v-btn size="x-small" variant="text" prepend-icon="mdi-download" @click="download(row)">{{
+          <BaseButton kind="ghost" size="sm" prepend-icon="mdi-download" @click="download(row)">{{
             t('work.room.fileHistory.downloadVersion')
-          }}</v-btn>
-          <v-btn
+          }}</BaseButton>
+          <BaseButton
             v-if="i !== 0"
-            size="x-small"
-            variant="text"
-            color="primary"
+            kind="ghost"
+            size="sm"
             prepend-icon="mdi-restore"
             :loading="busy === row.id"
             @click="confirming = row"
           >
             {{ t('work.room.fileHistory.restoreVersion') }}
-          </v-btn>
+          </BaseButton>
         </div>
         <div v-if="confirming?.id === row.id" class="rh__confirm">
           {{ t('work.room.fileHistory.restoreConfirm', { seq: row.seq }) }}
           <div class="mt-1">
-            <v-btn size="x-small" color="primary" variant="flat" @click="restore(row)">{{
+            <BaseButton kind="primary" size="sm" @click="restore(row)">{{
               t('work.room.fileHistory.restore')
-            }}</v-btn>
-            <v-btn size="x-small" variant="text" @click="confirming = null">{{
+            }}</BaseButton>
+            <BaseButton kind="ghost" size="sm" @click="confirming = null">{{
               t('work.room.fileHistory.cancel')
-            }}</v-btn>
+            }}</BaseButton>
           </div>
         </div>
       </li>

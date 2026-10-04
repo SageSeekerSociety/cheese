@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from app.core.sentences import say
 from app.domain.agent.device_hub import DeviceHub, device_hub
 from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness.channel import ScreenSetupError
@@ -56,7 +57,7 @@ class CloudChannel(DeviceChannel):
     provisions_machine = True
     # 要手要不到的那一句。要不要手、要不到就停，那条分支在基类上只有一份 —— 这
     # 条通道改的只有供给和这一句话。
-    no_machine_message = "云端工作电脑尚未完成连接"
+    no_machine_message = say("cloudComputerNotConnected")
 
     def __init__(
         self,
@@ -107,7 +108,7 @@ class CloudChannel(DeviceChannel):
     ) -> tuple[str, int, str] | None:
         lease = await self._read_topic_cloud(topic_id)
         if lease is None or lease.project_id != project_id:
-            raise ScreenSetupError("这个房间没有自己的云端工作电脑")
+            raise ScreenSetupError(say("screenRoomHasNoCloudComputer"))
         if (
             not lease.machine_ready
             or not lease.ai_ready
@@ -119,12 +120,10 @@ class CloudChannel(DeviceChannel):
             devices = sql_device_service(session)
             endpoint = await devices.get_device(lease.device_id)
             if endpoint is None or endpoint.supply is not Supply.cloud:
-                raise ScreenSetupError("这个房间的云端工作电脑没有有效的连接")
+                raise ScreenSetupError(say("screenCloudComputerNoConnection"))
             binding = await devices.topic_binding(topic_id)
             if binding is not None and binding.device_id != lease.device_id:
-                raise ScreenSetupError(
-                    "这个房间已绑定到别的云端工作电脑；不借用另一个房间的机器"
-                )
+                raise ScreenSetupError(say("screenCloudComputerOtherRoom"))
             if binding is None:
                 await devices.bind_topic_device(
                     topic_id,

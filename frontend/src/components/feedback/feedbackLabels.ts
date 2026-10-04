@@ -25,6 +25,26 @@ const STATUS_KEY: Partial<Record<FeedbackStatus, string>> = {
   declined: 'feedback.status.declined',
 }
 
+/** 时间线上**还没轮到**那一档的名字。中文去掉「已」（已修复 → 修复），英文换成动词
+ *  原形（Resolved → Resolve）—— 过去分词本身就带着「已经」，还没发生的档位顶着它，
+ *  和中文顶着「已修复」是同一个错。走到了的档位仍用 `STATUS_KEY`。 */
+const PENDING_STATUS_KEY: Partial<Record<FeedbackStatus, string>> = {
+  received: 'feedback.status.pending.received',
+  in_progress: 'feedback.status.pending.in_progress',
+  resolved: 'feedback.status.pending.resolved',
+  deployed: 'feedback.status.pending.deployed',
+}
+
+/** 时间线上**已经走过去**那一档的名字。只有「处理中」到了这里要换一副面孔
+ *  （处理中 → 已处理）：它说的是「有人正在弄」，可这一步已经过去了；其余三档
+ *  「正在」和「走过」本来就是同一个名字。 */
+const PASSED_STATUS_KEY: Partial<Record<FeedbackStatus, string>> = {
+  received: 'feedback.status.passed.received',
+  in_progress: 'feedback.status.passed.in_progress',
+  resolved: 'feedback.status.passed.resolved',
+  deployed: 'feedback.status.passed.deployed',
+}
+
 const KIND_KEY: Partial<Record<FeedbackKind, string>> = {
   bug: 'feedback.kind.bug',
   suggestion: 'feedback.kind.suggestion',
@@ -35,6 +55,19 @@ const KIND_KEY: Partial<Record<FeedbackKind, string>> = {
 export function statusLabel(status: FeedbackStatus | undefined): string {
   const key = status ? STATUS_KEY[status] : undefined
   return key ? t(key) : t('feedback.status.unknown')
+}
+
+/** 时间线上**还没轮到**的那一档。取不到时退回 `statusLabel`：宁可名字带着「已」，
+ *  也不要一格空着。 */
+export function pendingStatusLabel(status: FeedbackStatus | undefined): string {
+  const key = status ? PENDING_STATUS_KEY[status] : undefined
+  return key ? t(key) : statusLabel(status)
+}
+
+/** 时间线上**已经走过去**的那一档。取不到时同样退回 `statusLabel`。 */
+export function passedStatusLabel(status: FeedbackStatus | undefined): string {
+  const key = status ? PASSED_STATUS_KEY[status] : undefined
+  return key ? t(key) : statusLabel(status)
 }
 
 /** 类型（Bug / 建议 / 其他）。服务端多出一个没见过的类型时**原样显示它自己的名字**：

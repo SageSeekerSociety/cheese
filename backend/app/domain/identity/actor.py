@@ -15,6 +15,9 @@ Resolution order (fusion-design §4: "actor 在信任边界注入,永不从 body
    verified handle, `via="token"`.
 2. **Agent scoped token** (``X-Cheese-Token`` on a cheese-gated route) — resolves
    to the ``cheese`` agent-user, `via="cheese"`.
+3. **Delegated credential** (``X-Cheese-Token``, a 芝士 answering someone) —
+   resolves to the person it answers, `via="delegated"`, on the few routes that
+   accept it (``app.api.auth.DELEGATED_ROUTES``).
 
 Nothing else names the caller. A handle in a body or a query parameter is never
 an identity, so a request with neither credential resolves to nobody.
@@ -51,13 +54,13 @@ class Actor:
 
     handle: str
     user_id: int | None
-    via: str  # "token" | "cheese" | "anonymous"
+    via: str  # "token" | "cheese" | "delegated" | "anonymous"
 
     @property
     def authenticated(self) -> bool:
         """True when the actor came from a verified credential (token or the
         agent's scoped token), False for the anonymous placeholder."""
-        return self.via in ("token", "cheese")
+        return self.via in ("token", "cheese", "delegated")
 
 
 async def resolve_actor(

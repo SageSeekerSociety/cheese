@@ -1,5 +1,9 @@
 // Shared types matching the backend API contract (CheeseX Phase 0).
 
+import type { AskBlockMeta } from './types/ask'
+export type { AskAnswerEntry, AskOption } from './types/ask'
+export type { WaitingItem } from './types/waiting'
+
 import type { MemberActivity, MemberWait } from '@/lib/memberActivity'
 import type { Shell } from '@/lib/shell'
 
@@ -113,7 +117,7 @@ export interface ReactionAgg {
   authors: string[]
 }
 
-export interface BlockMeta {
+export interface BlockMeta extends AskBlockMeta {
   [key: string]: unknown
   tool?: string
   arg?: string
@@ -196,23 +200,6 @@ export interface ApiEnvelope<T> {
 export interface ListPayload<T> {
   data: T[]
   total: number
-}
-
-/** 待我处理清单里的一件事（后端 `room_task/awaiting.py`）。`phrase` 是看板卡面上那一句的码，后端算好的
- *  —— 前端不推状态，理由和 `Presentation` 那一段一样。`reason` 说的是这件事为什么点到我：递给我验收
- *  (`reviewer`)、我提的需求有了结果 (`reporter`)、或者芝士停在一个只有我能回答的问题上 (`asked`)。 */
-export interface WaitingItem {
-  projectId: string
-  projectName: string
-  topicId: string
-  topicTitle: string
-  topicTitleSource?: string
-  taskId: string | null
-  taskTitle: string | null
-  taskTitleSource?: string | null
-  phrase: BoardPhrase
-  reason: 'reviewer' | 'reporter' | 'asked'
-  at: string
 }
 
 /** 一份 .docx 里的一处修订（后端 `documents/revisions.py`）。
@@ -431,6 +418,7 @@ export interface ProjectMemberRow {
   // source 为 team 时，带他进来的那个团队的 handle（团队页 `/teams/<handle>`）。
   team_handle?: string
   name?: string
+  name_source?: 'default' | 'human'
   // 这个人**自己选的**头像素材 id（getAvatarUrl 拼成 /avatars/{id}）。两种情况
   // 为 null：名册行背后没有 fusion 用户档案，或者他从来没设过头像（档案还指着
   // 全局默认头像，后端已替我们判掉）。两种都用彩色首字母兜底 —— 别去取
@@ -476,6 +464,7 @@ export interface TopicMemberRow {
   // 芝士那一行上，这是**这个房间现在交给的那个队友**的名字（换队友就跟着变），
   // 不是座位账号的昵称 —— 座位昵称是建号时写死的常量，永远是「芝士」。
   name?: string
+  name_source?: 'default' | 'human'
   // 这个人**自己挑的**头像素材 id，同 ProjectMemberRow.avatar_id：没挑过就是
   // null，画彩色首字母。别拿它去取 /avatars/default。
   avatar_id?: number | null
@@ -596,6 +585,7 @@ export interface ProfileUnderstanding {
   project_name: string | null
   agent_handle: string | null
   agent_name: string | null
+  agent_name_source?: string | null
 }
 
 // GET /api/users/{handle}/profile — cut to what the viewer may see.
@@ -981,14 +971,13 @@ export interface ProjectMachine {
 // #282 §四 / #358 · whether an agent in this room can see a whole enrolled machine.
 // `effective` is the widest visibility any agent session here has on the enrolled
 // machine it works on ('host' | 'isolated' | null when none is on one); `machine_access`
-// is the one flag the room's 「能访问整台机器」 notice keys on; `notice` is the honest
-// #282 UI line, used as the badge's tooltip. `options` carries the two 档 with
+// is the one flag the room's 「能访问整台机器」 notice keys on (its tooltip, the honest
+// #282 line, is `work.roomMachine.wholeMachineNotice`). `options` carries the two 档 with
 // their capability copy (isolated = boxed default, host = whole-machine, 申请制).
 export interface TopicComputeVisibility {
   options: PoolListing[]
   effective: 'host' | 'isolated' | null
   machine_access: boolean
-  notice: string
 }
 
 export interface TopicComputeDevice {
@@ -1068,19 +1057,6 @@ export interface ProjectComputeConfigs {
   devices: TopicComputeDevice[]
   cloud_available: boolean
   distribution: ComputeDistribution
-}
-
-// One agent session on a self-hosted device, as the bulk switch lists it; `working` = mid-turn, left alone.
-export interface DeviceSession {
-  id: string
-  topic_id: string
-  topic_title: string
-  topic_title_source?: string
-  agent_handle: string
-  agent_name: string
-  choice: ComputeChoice
-  last_active: string
-  working: boolean
 }
 
 export interface ComputeDistribution {
@@ -1199,6 +1175,7 @@ export interface DeviceUser {
   topic_title_source?: string
   agent_handle: string
   agent_name: string
+  agent_name_source?: string
 }
 
 // A team the signed-in user belongs to (GET /teams/my-teams) — trimmed to what
@@ -1255,6 +1232,7 @@ export interface ProjectAgent {
   seat_handle: string
   type_name: string | null
   display_name: string
+  name_source?: 'default' | 'human'
   // What a new topic in this project gets.
   is_default: boolean
   // False = 已停用. Still listed and still working in the topics that already

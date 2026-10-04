@@ -1,5 +1,5 @@
 <template>
-  <div class="settings-page profile">
+  <div class="settings-page">
     <header class="profile__head">
       <div>
         <h1 class="t-page-title">{{ t('account.profile.title') }}</h1>
@@ -20,25 +20,22 @@
           <UserAvatar class="avatar-field__img" :avatar="shownAvatar" :name="avatarSeed" size="64" />
           <div class="avatar-field__side">
             <div class="avatar-field__actions">
-              <v-btn
-                variant="outlined"
-                color="on-surface"
+              <BaseButton
+                kind="secondary"
                 :loading="changingAvatar"
                 :disabled="removingAvatar"
                 @click="avatarInput?.click()"
               >
                 {{ t('account.profile.changeAvatar') }}
-              </v-btn>
-              <v-btn
+              </BaseButton>
+              <BaseButton
                 v-if="canRemoveAvatar"
-                variant="text"
-                color="on-surface"
                 :loading="removingAvatar"
                 :disabled="changingAvatar"
                 @click="removeAvatar"
               >
                 {{ t('account.profile.removeAvatar') }}
-              </v-btn>
+              </BaseButton>
             </div>
             <span class="field-note">{{ t('account.profile.avatarHint') }}</span>
           </div>
@@ -96,12 +93,12 @@
           <div class="foot-reveal__clip">
             <div class="profile__foot">
               <span class="profile__foot-note">{{ t('account.profile.unsaved') }}</span>
-              <v-btn variant="text" color="on-surface" :disabled="saving" @click="revert">
+              <BaseButton :disabled="saving" @click="revert">
                 {{ t('account.profile.revert') }}
-              </v-btn>
-              <v-btn type="submit" color="primary" variant="flat" :disabled="!valid" :loading="saving">
+              </BaseButton>
+              <BaseButton type="submit" kind="primary" :disabled="!valid" :loading="saving">
                 {{ t('account.profile.save') }}
-              </v-btn>
+              </BaseButton>
             </div>
           </div>
         </div>
@@ -120,6 +117,7 @@ import { getAvatarUrl } from '@/utils/materials'
 
 import { ensureDefaultAvatarId, globalDefaultAvatarId, isChosenAvatar } from '@/composables/useChosenAvatar'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import { t } from '@/i18n'
 import { AvatarsApi } from '@/network/api/avatars'
@@ -263,9 +261,9 @@ onMounted(ensureDefaultAvatarId)
 <style scoped src="@/styles/settings-card.css"></style>
 
 <style scoped>
-.profile {
-  max-width: var(--page-w-read);
-}
+/* 这一页不再自己设宽度：宽度和水平内距由浮层的内容列给（SettingsOverlay 的
+   `.so__content`，720 居中）。以前这里写死 `--page-w-read`（660），比别的设置页窄
+   一截，同一条内容列里只有它不一样。 */
 
 .profile__head {
   display: flex;

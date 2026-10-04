@@ -21,6 +21,7 @@ import TaskEligibilityAlerts from './components/TaskEligibilityAlerts.vue'
 import TaskSide from './components/TaskSide.vue'
 
 import AssistantPanel from '@/components/assistant/AssistantPanel.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import { TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
@@ -283,12 +284,16 @@ onMounted(() => {
     <nav class="td__crumb">
       <router-link :to="listTo" class="td__crumb-parent">{{ t('spaces.detail.allContests') }}</router-link>
       <v-icon size="16" class="td__crumb-sep">mdi-chevron-right</v-icon>
-      <span class="td__crumb-here">{{ taskData?.name ?? '' }}</span>
+      <span class="td__crumb-here" data-user-content>{{ taskData?.name ?? '' }}</span>
     </nav>
     <template #actions>
       <template v-if="canManage">
-        <v-btn prepend-icon="mdi-pencil-outline" @click="editTask">{{ t('tasks.page.edit') }}</v-btn>
-        <v-btn prepend-icon="mdi-delete-outline" @click="confirmDeleteTask">{{ t('tasks.page.delete') }}</v-btn>
+        <BaseButton kind="secondary" prepend-icon="mdi-pencil-outline" @click="editTask">{{
+          t('tasks.page.edit')
+        }}</BaseButton>
+        <BaseButton kind="ghost" prepend-icon="mdi-delete-outline" @click="confirmDeleteTask">{{
+          t('tasks.page.delete')
+        }}</BaseButton>
       </template>
     </template>
   </PageHeader>
@@ -299,45 +304,45 @@ onMounted(() => {
     <header class="td__head">
       <div class="td__lead">
         <div class="td__titleline">
-          <h1 class="td__title t-page-title">{{ taskData.name }}</h1>
+          <h1 class="td__title t-page-title" data-user-content>{{ taskData.name }}</h1>
           <span v-if="taskState" class="td__state" :class="`td__state--${taskState.tone}`">
             {{ taskState.label }}
           </span>
         </div>
         <p class="td__by t-meta-read">
           <span>{{ t('tasks.page.publishedBy', { name: publisherName, date: publishedOn }) }}</span>
-          <span v-if="taskData.category">{{ taskData.category.name }}</span>
+          <span v-if="taskData.category" data-user-content>{{ taskData.category.name }}</span>
           <span v-if="intro.origin" class="td__origin">{{ intro.origin }}</span>
-          <span v-for="topic in taskData.topics ?? []" :key="topic.id" class="td__topic">#{{ topic.name }}</span>
+          <span v-for="topic in taskData.topics ?? []" :key="topic.id" class="td__topic" data-user-content
+            >#{{ topic.name }}</span
+          >
         </p>
-        <p v-if="intro.summary" class="td__summary">{{ intro.summary }}</p>
+        <p v-if="intro.summary" class="td__summary" data-user-content>{{ intro.summary }}</p>
       </div>
 
       <div class="td__act">
-        <v-btn class="td__ask" variant="outlined" :active="asking" data-testid="task-ask" @click="openAssistant">
+        <BaseButton kind="secondary" class="td__ask" :active="asking" data-testid="task-ask" @click="openAssistant">
           <span class="td__ask-mark" aria-hidden="true"><CheeseAvatar :size="18" /></span>
           {{ t('tasks.assistant.ask') }}
-        </v-btn>
-        <v-btn
+        </BaseButton>
+        <BaseButton
           v-if="submitAction"
-          color="primary"
-          variant="flat"
+          kind="primary"
           prepend-icon="mdi-plus"
           :to="{ name: routeNames.submit, params }"
         >
           {{ submitAction }}
-        </v-btn>
-        <v-btn
+        </BaseButton>
+        <BaseButton
           v-else-if="!joined && claim"
           class="td__claim"
           data-testid="task-claim"
-          :color="claim.disabled || canManage ? undefined : 'primary'"
-          :variant="claim.disabled ? 'tonal' : canManage ? 'outlined' : 'flat'"
+          :kind="claim.disabled ? 'ghost' : canManage ? 'secondary' : 'primary'"
           :disabled="claim.disabled"
           @click="onClaim"
         >
           {{ claim.label }}
-        </v-btn>
+        </BaseButton>
       </div>
     </header>
 

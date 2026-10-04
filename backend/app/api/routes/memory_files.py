@@ -24,6 +24,7 @@ from app.api.auth import ActorResolverDep
 from app.api.response import ok, page
 from app.core.db import get_db
 from app.core.errors import ForbiddenError, ValidationError
+from app.core.sentences import say
 from app.domain.membership.services import MemberService
 from app.domain.memory.files import (
     INDEX_NAME,
@@ -61,7 +62,7 @@ def _scope_of(raw: str) -> MemoryFileScope:
     try:
         return MemoryFileScope(raw)
     except ValueError as exc:
-        raise ValidationError("scope 只能是 team 或 private") from exc
+        raise ValidationError(say("memoryScopeInvalid")) from exc
 
 
 async def _readable(
@@ -83,7 +84,7 @@ async def _readable(
     await resolver.authorize_project(actor, project_id=project_id)
     if owner is not None and owner != actor.handle:
         if not await MemberService(db).manages(project_id, actor.handle):
-            raise ForbiddenError("私人记忆只有本人和项目管理员看得见")
+            raise ForbiddenError(say("privateMemoryOwnerSees"))
     return actor.handle
 
 
@@ -105,7 +106,7 @@ async def _writable(
     """
     actor = await _readable(db, resolver, project_id, owner)
     if owner is not None and owner != actor:
-        raise ForbiddenError("私人记忆只有本人改得动——管理员看得见，但改不了")
+        raise ForbiddenError(say("privateMemoryOwnerEdits"))
     return actor
 
 
@@ -128,7 +129,7 @@ def _owner_of(scope: MemoryFileScope, owner: str | None) -> str | None:
     if scope is MemoryFileScope.team:
         return None
     if not owner:
-        raise ValidationError("private 记忆必须带 owner_handle")
+        raise ValidationError(say("privateMemoryNeedsOwner"))
     return owner
 
 
@@ -167,21 +168,21 @@ async def write_memory_file(
     try:
         project_id = uuid.UUID(str(body.get("project_id") or ""))
     except ValueError as exc:
-        raise ValidationError("project_id 无效") from exc
+        raise ValidationError(say("projectIdInvalid")) from exc
     which = _scope_of(str(body.get("scope") or "team"))
     owner = _owner_of(which, (body.get("owner_handle") or "").strip() or None)
     actor = await _writable(db, resolver, project_id, owner)
     path = _checked_path(str(body.get("path") or ""))
     content = body.get("content")
     if not isinstance(content, str):
-        raise ValidationError("content 必须是字符串")
+        raise ValidationError(say("contentMustBeString"))
     raw_version = body.get("version")
     expected: int | None = None
     if raw_version is not None:
         try:
             expected = int(raw_version)
         except (TypeError, ValueError) as exc:
-            raise ValidationError("version 必须是整数") from exc
+            raise ValidationError(say("versionMustBeInteger")) from exc
     store = MemoryFileStore(db)
     if path == INDEX_NAME:
         row = await store.write(
@@ -237,25 +238,23 @@ async def delete_memory_file(
     try:
         project_id = uuid.UUID(str(body.get("project_id") or ""))
     except ValueError as exc:
-        raise ValidationError("project_id 无效") from exc
+        raise ValidationError(say("projectIdInvalid")) from exc
     which = _scope_of(str(body.get("scope") or "team"))
     owner = _owner_of(which, (body.get("owner_handle") or "").strip() or None)
     actor = await _writable(db, resolver, project_id, owner)
     raw_path = str(body.get("path") or "").strip()
     if not raw_path:
-        raise ValidationError("path 不能为空")
+        raise ValidationError(say("pathEmpty"))
     path = _checked_path(raw_path)
     if path == INDEX_NAME:
-        raise ValidationError(
-            "索引本身不删——它不是一个作用域里的第一条记忆；要清空就把它写成空文件"
-        )
+        raise ValidationError(say("memoryIndexNotDeleted"))
     raw_version = body.get("version")
     expected: int | None = None
     if raw_version is not None:
         try:
             expected = int(raw_version)
         except (TypeError, ValueError) as exc:
-            raise ValidationError("version 必须是整数") from exc
+            raise ValidationError(say("versionMustBeInteger")) from exc
     try:
         await MemoryFileStore(db).delete(
             project_id=project_id,

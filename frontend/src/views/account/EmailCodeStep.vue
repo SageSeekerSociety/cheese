@@ -15,17 +15,17 @@
         @update:model-value="(value: string) => value.length === 6 && submit()"
       />
 
-      <v-btn
+      <BaseButton
         block
-        color="primary"
-        size="large"
+        kind="primary"
+        size="lg"
         type="submit"
         class="account-submit"
         :loading="submitting"
         :disabled="code.length !== 6 || waiting"
       >
         {{ submitLabel }}
-      </v-btn>
+      </BaseButton>
 
       <div class="account-foot account-foot--split">
         <span>
@@ -55,6 +55,7 @@ import { toast } from 'vuetify-sonner'
 import { emailCodeMessage, useAttemptWait } from './attemptWait'
 
 import AccountHeading from '@/components/account/AccountHeading.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
 // The server refuses a new code within a minute of the last one.

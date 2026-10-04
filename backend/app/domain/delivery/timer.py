@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import SessionFactory
 from app.core.errors import ValidationError
+from app.core.sentences import say, with_keys
 from app.domain.agent.platform_notices import (
     EVENT_TIMED_DELIVERY,
     SEVERITY_INFO,
@@ -23,7 +24,6 @@ from app.domain.agent.platform_notices import (
 )
 from app.domain.block.authorship import AuthorType
 from app.domain.block.models import Block, BlockKind
-from app.domain.block.notice_text import say, with_keys
 from app.domain.delivery.agent import dispatch_pending, instance_for_seat, record_agent
 from app.domain.delivery.ledger import DeliveryEvent, Ledger
 from app.domain.delivery.models import TimedDelivery
@@ -50,9 +50,9 @@ async def deliver_at(
     project_id: uuid.UUID,
 ) -> TimedDelivery:
     if when.tzinfo is None:
-        raise ValidationError("投递时刻要带时区")
+        raise ValidationError(say("deliveryTimeNeedsZone"))
     if not event.strip():
-        raise ValidationError("要递的东西不能是空的")
+        raise ValidationError(say("deliveryContentEmpty"))
     agent_id = receiver_id = None
     if how_it_arrives(recipient) is Arrival.turn:
         agent = await instance_for_seat(session, project_id, recipient)

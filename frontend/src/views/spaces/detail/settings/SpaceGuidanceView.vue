@@ -4,17 +4,22 @@
 //
 // 这一栏是四级继承的最外层（空间 → 项目集 → 题目 → 项目，整份替换、不深合）：
 // 这里留空的那几格就是「没说」，下面哪一层说了就听哪一层。
-import type { SpaceTeaching } from '@/types'
+import type { SpaceMaterial, SpaceMaterialsState, SpaceTeaching } from '@/types'
 
 import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import TeachingFields from '@/components/common/TeachingFields.vue'
-import SettingsToolbar from '@/components/spaces/SettingsToolbar.vue'
 
 const props = defineProps<{
   /** 这块板今天存着的那份默认；`undefined`（没设过）与 `{}` 一样地填成空格子。 */
   teaching?: SpaceTeaching
+  /** 参考资料那一格的候选。取数在容器那边。 */
+  materials?: SpaceMaterial[]
+  materialsState?: SpaceMaterialsState
+  /** 这块板「资料库」页的地址，给选择器里那条「上传到资料库」用。 */
+  libraryTo?: string
   saving: boolean
 }>()
 
@@ -42,18 +47,25 @@ function submit() {
 </script>
 
 <template>
-  <SettingsToolbar />
+  <!-- 这一栏是**表单页**，不是清单页：所以它和「基本信息」同形 —— 页头一句说明，
+       卡片里摆控件，「保存」在卡片最底下那一条。清单页（资料库、分类与话题、邀请码）
+       才把动作摆在标题下面那条工具行里，那是「新建 / 上传」的位置，不是「保存」的。 -->
+  <p class="settings-page__lede guidance__lede">{{ t('spaces.guidance.intro') }}</p>
 
   <form class="settings-card" novalidate @submit.prevent="submit">
-    <div class="settings-card__title">{{ t('spaces.guidance.title') }}</div>
-    <p class="settings-card__desc">{{ t('spaces.guidance.intro') }}</p>
     <div class="guidance__body">
-      <TeachingFields v-model="draft" />
+      <TeachingFields
+        v-model="draft"
+        :materials="props.materials ?? []"
+        :materials-state="props.materialsState"
+        :library-to="props.libraryTo"
+      />
     </div>
+
     <div class="settings-foot">
-      <v-btn color="primary" variant="flat" :loading="saving" @click="submit">
+      <BaseButton kind="primary" :loading="saving" @click="submit">
         {{ t('spaces.guidance.save') }}
-      </v-btn>
+      </BaseButton>
     </div>
   </form>
 </template>
@@ -61,23 +73,16 @@ function submit() {
 <style scoped src="@/styles/settings-card.css"></style>
 
 <style scoped>
-.guidance__body {
-  padding: 8px 24px 20px;
+.guidance__lede {
+  margin: 0 0 12px;
 }
 
-.settings-foot {
-  display: flex;
-  justify-content: flex-end;
-  padding: 16px 24px;
-  border-top: 1px solid var(--line);
+.guidance__body {
+  padding: 16px 24px 20px;
 }
 
 @media (max-width: 599.98px) {
   .guidance__body {
-    padding: 8px 16px 16px;
-  }
-
-  .settings-foot {
     padding: 16px;
   }
 }

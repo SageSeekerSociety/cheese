@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.errors import NotFoundError, ValidationError
+from app.core.sentences import say
 from app.core.storage import S3StorageBackend, StorageBackend
 from app.domain.room_task.models import Task, TaskSnapshot
 
@@ -48,17 +49,17 @@ async def save(
         re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", value)
         for value in (head_sha, snapshot_sha)
     ):
-        raise ValidationError("任务备份的提交编号无效")
+        raise ValidationError(say("snapshotCommitInvalid"))
     file.seek(0)
     # BinaryIO and SpooledTemporaryFile both supply the readinto interface.
     actual_digest = await asyncio.to_thread(
         hashlib.file_digest, cast(Any, file), "sha256"
     )
     if actual_digest.hexdigest() != digest:
-        raise ValidationError("备份传输校验失败，请重新同步")
+        raise ValidationError(say("snapshotTransferCorrupt"))
     file.seek(0)
     if file.readline() not in (b"# v2 git bundle\n", b"# v3 git bundle\n"):
-        raise ValidationError("任务备份不是 Git bundle")
+        raise ValidationError(say("snapshotNotBundle"))
     file.seek(0)
     existing = await session.scalar(
         select(TaskSnapshot)
@@ -104,7 +105,7 @@ async def latest(session: AsyncSession, task_id: uuid.UUID) -> TaskSnapshot:
         .limit(1)
     )
     if row is None:
-        raise NotFoundError("这条任务还没有未提交文件备份")
+        raise NotFoundError(say("snapshotNone"))
     return row
 
 
@@ -115,7 +116,7 @@ async def download(
     async with asyncio.timeout(120):
         content = await storage.download(row.storage_key)
     if content is None:
-        raise NotFoundError("任务备份文件不存在")
+        raise NotFoundError(say("snapshotFileMissing"))
     if hashlib.sha256(content).hexdigest() != row.digest:
-        raise ValidationError("任务备份校验失败，未恢复任何文件")
+        raise ValidationError(say("snapshotCheckFailed"))
     return content

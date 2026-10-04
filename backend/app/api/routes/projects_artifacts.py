@@ -70,7 +70,7 @@ from app.api.place import project_reader, readable_rooms
 from app.api.response import ok, page
 from app.api.routes.projects import DbSession
 from app.core.errors import NotFoundError, ValidationError
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 from app.domain.documents.text import delivered_comparison
 from app.domain.library import service as library
 from app.domain.preview import office
@@ -318,4 +318,4 @@ def _artifact_ref(raw: object) -> uuid.UUID:
     try:
         return uuid.UUID(str(raw or ""))
     except ValueError as exc:
-        raise ValidationError("into 必须是清单上另一项的 id") from exc
+        raise ValidationError(say("mergeIntoOtherItem")) from exc

@@ -16,6 +16,8 @@ other three open:
   project and to days instead of one turn, so an agent running OUTSIDE the
   platform process can hold one. A per-turn token cannot leave the turn that
   minted it, which is why nothing off-box could act as 芝士 before.
+- **Delegated credential** (below): one question's, for the 芝士 answering
+  it on someone's behalf, judged by the asker's permissions.
 - **Global SANDBOX_TOKEN**: the signing secret, also accepted directly as a dev /
   trusted-single-host override. Drop this acceptance once untrusted (remote /
   competition) nodes exist — see design v2 R5/R6.
@@ -113,8 +115,12 @@ def bind_resource_token(
     *,
     session_id: str | None = None,
     lease_generation: str | None = None,
+    reading: bool = False,
 ) -> str:
-    """Bind an existing scoped launch credential to its allocated execution."""
+    """Bind an existing scoped launch credential to its allocated execution.
+
+    ``reading`` makes it a credential that only reads the machine's files
+    (``routes/execution.py``): a document's 芝士 looking at the room's work."""
     claims = scoped_token_claims(token)
     if claims is None:
         raise ValueError("A valid scoped launch credential is required")
@@ -125,6 +131,8 @@ def bind_resource_token(
         claims["session"] = session_id
     if lease_generation is not None:
         claims["lease"] = lease_generation
+    if reading:
+        claims["ro"] = True
     raw = json.dumps(claims, separators=(",", ":")).encode()
     body = base64.urlsafe_b64encode(raw).decode().rstrip("=")
     if "session" in claims:
@@ -358,6 +366,120 @@ def personal_claims(token: str) -> PersonalClaims | None:
     if not isinstance(expires, int) or expires < time.time():
         return None
     return PersonalClaims(user_id=user_id, conversation_id=conversation)
+
+
+# A 芝士 answering someone's question acts for that person: what it reads is
+# judged by what the asker may read, and what it changes is recorded as done by
+# the agent at the asker's request. The credential is minted for one question
+# and lives no longer than the answer may, and it opens only the routes that
+# declare they accept it (`api.auth.DELEGATED_ROUTES`). Its own prefix and
+# signing domain make it no credential at all to every path that reads the
+# other kinds.
+DELEGATED_CREDENTIAL_PREFIX = "cxdg_"
+_DELEGATED_CREDENTIAL_DOMAIN = "cxdg1"
+
+
+@dataclass(frozen=True)
+class DelegatedClaims:
+    """What a VALID delegated credential asserts."""
+
+    #: The person the question is from, whose permissions apply: their handle,
+    #: and their account's id when the asker has one on record.
+    user_id: int | None
+    handle: str
+    #: The agent answering, who authors what it changes; None for a person's
+    #: own 芝士, which changes nothing.
+    agent: str | None
+    #: Where it may act: one project and one room, or (both None) nowhere but
+    #: the routes that name neither.
+    project_id: str | None
+    topic_id: str | None
+    #: The answer it was minted for: what it changes is noted under it.
+    work: str
+    #: A question that may only be answered changes nothing.
+    read_only: bool
+
+
+def mint_delegated_credential(
+    *,
+    user_id: int | None,
+    handle: str,
+    work: str,
+    ttl_s: int,
+    agent: str | None = None,
+    project_id: str | None = None,
+    topic_id: str | None = None,
+    read_only: bool = True,
+) -> str:
+    now = int(time.time())
+    payload = {
+        "u": user_id,
+        "h": handle,
+        "a": agent,
+        "p": project_id,
+        "t": topic_id,
+        "w": work,
+        "ro": read_only,
+        "iat": now,
+        "exp": now + ttl_s,
+    }
+    raw = json.dumps(payload, separators=(",", ":")).encode()
+    body = base64.urlsafe_b64encode(raw).decode().rstrip("=")
+    signature = _sign(f"{_DELEGATED_CREDENTIAL_DOMAIN}.{body}")
+    return f"{DELEGATED_CREDENTIAL_PREFIX}{body}.{signature}"
+
+
+def looks_like_delegated_credential(token: str) -> bool:
+    return token.startswith(DELEGATED_CREDENTIAL_PREFIX)
+
+
+def delegated_claims(token: str) -> DelegatedClaims | None:
+    """The claims of a well-formed, correctly-signed, unexpired delegated
+    credential, else ``None`` — never an exception."""
+    if not looks_like_delegated_credential(token):
+        return None
+    try:
+        body, signature = token[len(DELEGATED_CREDENTIAL_PREFIX) :].split(".", 1)
+    except ValueError:
+        return None
+    expected = _sign(f"{_DELEGATED_CREDENTIAL_DOMAIN}.{body}")
+    if not hmac.compare_digest(signature, expected):
+        return None
+    try:
+        padded = body + "=" * (-len(body) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded))
+    except (ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    user_id, handle = payload.get("u"), payload.get("h")
+    expires, work = payload.get("exp"), payload.get("w")
+    if user_id is not None and (
+        not isinstance(user_id, int) or isinstance(user_id, bool) or user_id <= 0
+    ):
+        return None
+    if not isinstance(handle, str) or not handle:
+        return None
+    if not isinstance(work, str) or not work:
+        return None
+    if not isinstance(expires, int) or expires < time.time():
+        return None
+    project, topic, agent = payload.get("p"), payload.get("t"), payload.get("a")
+    if not all(
+        v is None or (isinstance(v, str) and v) for v in (project, topic, agent)
+    ):
+        return None
+    if topic is not None and project is None:
+        return None
+    return DelegatedClaims(
+        user_id=user_id,
+        handle=handle,
+        agent=agent,
+        project_id=project,
+        topic_id=topic,
+        work=work,
+        read_only=payload.get("ro") is not False,
+    )
 
 
 def is_global_sandbox_token(token: str) -> bool:

@@ -87,7 +87,6 @@
       "addTopics": "Add topics",
       "noTopics": "No topics yet",
       "add": "Add",
-      "cancel": "Cancel",
       "addSuccess": "Topic added",
       "addFailed": "Couldn't add topic",
       "delete": "Remove topic"
@@ -112,21 +111,6 @@
       "categoryNameRequired": "Category name is required",
       "categoryNameMaxLength": "Category name can be at most 32 characters",
       "descriptionMaxLength": "Description can be at most 255 characters",
-      "teaching": {
-        "menu": "Guidance for the AI teammate",
-        "title": "Guidance for the AI teammate: {name}",
-        "intro": "Projects created from tasks in this category read this when the AI teammate starts a new conversation. A single task can set its own.",
-        "systemPrompt": "Role",
-        "systemPromptHint": "You can use {'{current_week}'}, {'{allowed_topics}'} and {'{avoid_in_code}'}; they are replaced with the values below",
-        "currentWeek": "Current week",
-        "currentWeekHint": "Leave empty to leave it unset",
-        "allowedTopics": "Topics covered so far",
-        "avoidInCode": "Constructs not to use yet",
-        "avoidInCodeHint": "Comma-separated, e.g. recursion, pointers",
-        "materialIds": "Material IDs",
-        "knowledgeIds": "Knowledge entry IDs",
-        "listHint": "Comma-separated"
-      },
       "displayOrderHint": "Lower numbers show first",
       "loadFailed": "Couldn't load the categories",
       "createSuccess": "Category created",
@@ -200,7 +184,9 @@
       },
       "teaching": {
         "title": "Guidance for the AI teammate",
-        "subtitle": "Just for this challenge. Leave it blank to use the board's default; filling it in replaces that default whole."
+        "subtitle": "Just for this challenge. Leave it blank to use the board's default; filling it in replaces that default whole.",
+        "expand": "Expand",
+        "collapse": "Collapse"
       }
     },
     "selectTemplate": {
@@ -511,29 +497,43 @@
     "back": "Back to space settings"
   },
   "guidance": {
-    "title": "Guidance for the AI teammate",
     "intro": "This board's default. Projects built from its challenges read it when the AI teammate starts a new conversation; a single challenge can set its own to override it.",
     "save": "Save",
     "saveSuccess": "Saved",
     "saveFailed": "Couldn't save"
   },
   "teaching": {
+    "defaultTemplate": "First work out which step they are stuck on, then decide how to help. Do not hand over the answer; let them get there themselves.\n\nLead with questions: ask what they observed and what they have tried, let them state their own reading of it, and only then point at a direction.\n\nMove one step at a time and ask one question at a time; wait until they have followed before going on.\n\nWhen they get it wrong, do not correct them outright - ask a question that lets them find it. When you explain the mistake, say why it is wrong and how they could have spotted it themselves, not just the correct form.\n\nIf they keep asking for the answer, tell them that being handed the answer will not help them, then offer a smaller hint and keep working through it with them.",
+    "useDefaultTemplate": "Use this default",
     "fields": {
-      "systemPrompt": "Role",
-      "systemPromptHint": "You can use {'{current_week}'}, {'{allowed_topics}'} and {'{avoid_in_code}'}; they are replaced with the values below",
+      "systemPrompt": "What the AI should do",
+      "systemPromptHint": "The AI reads this; students do not see the text. You can use {'{current_week}'}, {'{allowed_topics}'} and {'{avoid_in_code}'}; they are replaced with the values below. Leave empty and this guidance adds no requirement at all.",
       "currentWeek": "Current week",
       "currentWeekHint": "Leave empty to leave it unset",
       "advanced": "Advanced options",
       "allowedTopics": "Topics covered so far",
       "avoidInCode": "Constructs not to use yet",
       "avoidInCodeHint": "Comma-separated, e.g. recursion, pointers",
-      "materialIds": "Material IDs",
       "knowledgeIds": "Knowledge entry IDs",
-      "listHint": "Comma-separated"
+      "listHint": "Comma-separated",
+      "materials": "Reference materials",
+      "materialsHint": "Tick files from this board's library. Leave empty to bring no courseware; the “admins only” tier is not listed.",
+      "materialsLibrary": "Space library",
+      "materialsNone": "Click to pick from the library",
+      "materialsExpand": "Expand the library list",
+      "materialsCollapse": "Collapse the library list",
+      "materialsRemove": "Remove {name}",
+      "materialsUpload": "Upload to the library",
+      "materialsLoading": "Reading the library…",
+      "materialsError": "Could not read the library. Leave this alone for now.",
+      "materialsEmpty": "The library is still empty. Upload a file on the “Library” page first.",
+      "materialsDangling": "IDs {ids} are no longer in the library (deleted, or moved to “admins only”). Remove them before saving.",
+      "materialsDanglingDrop": "Remove {id}"
     }
   },
   "materials": {
     "upload": "Upload",
+    "intro": "Everyone in this space can see these. Anything marked “admins only” is hidden from members and from their AI teammates.",
     "uploadTitle": "Upload a file",
     "pickFile": "Choose a file",
     "visibility": "Who can see it",
@@ -558,6 +558,8 @@
     },
     "uploadedOn": "Uploaded {date}",
     "downloads": "{n} downloads",
+    "usedBy": "Referenced in 1 place | Referenced in {n} places",
+    "unused": "Not referenced",
     "toast": {
       "loadFailed": "Could not load the library",
       "uploaded": "Uploaded",
@@ -591,7 +593,6 @@
       "pinned": "Pin",
       "expiry": "Expires on (optional)",
       "notifyHint": "{count} members of this space will be notified. Later edits notify no one.",
-      "cancel": "Cancel",
       "publish": "Post",
       "save": "Save"
     },

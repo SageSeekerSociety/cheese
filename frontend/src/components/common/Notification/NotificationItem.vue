@@ -10,53 +10,44 @@
       <notification-avatar :notification="notification" class="me-3 mt-1" />
 
       <div class="flex-grow-1 d-flex flex-column">
-        <div class="d-flex flex-row justify-space-between align-center">
+        <div class="d-flex flex-row justify-space-between align-center notification-item__top">
           <component
             :is="contentComponent"
             ref="contentRef"
             :notification="notification"
             @update-notification="onUpdateNotification"
           />
-          <span class="text-caption text-medium-emphasis ms-2">{{ formattedTime }}</span>
+          <span class="notification-item__time text-caption text-medium-emphasis">{{ formattedTime }}</span>
         </div>
 
         <div class="d-flex justify-end align-center mt-2">
           <template v-if="renderedActions && renderedActions.length > 0">
-            <v-btn
+            <BaseButton
               v-for="(action, index) in renderedActions"
               :key="index"
-              variant="text"
+              :kind="action.color === 'error' ? 'danger' : 'ghost'"
+              size="sm"
               density="comfortable"
-              size="small"
-              :color="action.color || 'primary'"
               class="px-2 ms-2"
               @click.stop="action.handler"
             >
               {{ action.text }}
-            </v-btn>
+            </BaseButton>
           </template>
           <template v-else>
-            <v-btn
+            <BaseButton
               v-if="!notification.read"
-              variant="text"
+              kind="ghost"
+              size="sm"
               density="comfortable"
-              size="small"
-              :color="notificationColor"
               class="px-2"
               @click.stop="markAsRead"
             >
               {{ t('notifications.common.markAsRead') }}
-            </v-btn>
-            <v-btn
-              variant="text"
-              density="comfortable"
-              size="small"
-              color="error"
-              class="px-2 ms-2"
-              @click.stop="deleteNotification"
-            >
+            </BaseButton>
+            <BaseButton kind="ghost" size="sm" density="comfortable" class="px-2 ms-2" @click.stop="deleteNotification">
               {{ t('notifications.common.delete') }}
-            </v-btn>
+            </BaseButton>
           </template>
         </div>
       </div>
@@ -73,53 +64,44 @@
       <notification-avatar :notification="notification" class="me-3 mt-1" />
 
       <div class="flex-grow-1 d-flex flex-column">
-        <div class="d-flex flex-row justify-space-between align-center">
+        <div class="d-flex flex-row justify-space-between align-center notification-item__top">
           <component
             :is="contentComponent"
             ref="contentRef"
             :notification="notification"
             @update-notification="onUpdateNotification"
           />
-          <span class="text-caption text-medium-emphasis ms-2">{{ formattedTime }}</span>
+          <span class="notification-item__time text-caption text-medium-emphasis">{{ formattedTime }}</span>
         </div>
 
         <div class="d-flex justify-end align-center mt-2">
           <template v-if="renderedActions && renderedActions.length > 0">
-            <v-btn
+            <BaseButton
               v-for="(action, index) in renderedActions"
               :key="index"
-              variant="text"
+              :kind="action.color === 'error' ? 'danger' : 'ghost'"
+              size="sm"
               density="comfortable"
-              size="small"
-              :color="action.color || 'primary'"
               class="px-2 ms-2"
               @click.stop="action.handler"
             >
               {{ action.text }}
-            </v-btn>
+            </BaseButton>
           </template>
           <template v-else>
-            <v-btn
+            <BaseButton
               v-if="!notification.read"
-              variant="text"
+              kind="ghost"
+              size="sm"
               density="comfortable"
-              size="small"
-              :color="notificationColor"
               class="px-2"
               @click.stop="markAsRead"
             >
               {{ t('notifications.common.markAsRead') }}
-            </v-btn>
-            <v-btn
-              variant="text"
-              density="comfortable"
-              size="small"
-              color="error"
-              class="px-2 ms-2"
-              @click.stop="deleteNotification"
-            >
+            </BaseButton>
+            <BaseButton kind="ghost" size="sm" density="comfortable" class="px-2 ms-2" @click.stop="deleteNotification">
               {{ t('notifications.common.delete') }}
-            </v-btn>
+            </BaseButton>
           </template>
         </div>
       </div>
@@ -141,7 +123,8 @@ import { useFormattedTime } from '@/utils/dateTime'
 
 import NotificationAvatar from './NotificationAvatar.vue'
 
-import { getNotificationColor, getNotificationRenderer } from '@/services/notification/registry'
+import BaseButton from '@/components/base/BaseButton.vue'
+import { getNotificationRenderer } from '@/services/notification/registry'
 
 const props = defineProps<{
   notification: Notification
@@ -153,8 +136,6 @@ const { t } = useI18n()
 const { formatTime } = useFormattedTime()
 
 const formattedTime = computed(() => formatTime(props.notification.createdAt))
-
-const notificationColor = computed(() => getNotificationColor(props.notification.type))
 
 const contentComponent = computed<Component>(() => {
   return getNotificationRenderer(props.notification.type)
@@ -249,5 +230,26 @@ const onUpdateNotification = (notificationId: number) => {
 
 .unread-notification {
   background-color: var(--accent-wash);
+}
+
+/* 时间戳不许被挤：内容那一列可以收窄换行，它按原样待着。不这么写时，窄屏上
+   「1 小时前」会被正文压成一列一个字，竖着排下来。 */
+.notification-item__time {
+  flex: none;
+  margin-inline-start: 8px;
+  white-space: nowrap;
+}
+
+/* 窄屏上正文占满一行，时间挪到它下面一行右对齐；上面那条留出的 8px 换成行距。 */
+@media (max-width: 599.98px) {
+  .notification-item__top {
+    flex-wrap: wrap;
+  }
+
+  .notification-item__time {
+    flex-basis: 100%;
+    margin-inline-start: 0;
+    text-align: right;
+  }
 }
 </style>

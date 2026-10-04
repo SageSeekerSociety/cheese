@@ -11,7 +11,7 @@
 //   - when a scroll position means "fetch the previous / next page",
 //   - how a background cache refresh merges into a window the user paged back,
 //   - when a middle stretch has met the newest page.
-import type { Block } from '../cx_types'
+import type { Block, ReactionAgg } from '../cx_types'
 
 // One page. Big enough that a normal topic never pages at all, small enough
 // that the 2226-block topic opens on ~50 rows instead of all of them.
@@ -20,6 +20,13 @@ export const PAGE_SIZE = 50
 // How close to the top (px) starts fetching the previous page. A whole viewport
 // of slack, so the rows are usually there before the user reaches them.
 export const LOAD_OLDER_THRESHOLD = 400
+
+// How many blocks one topic's window may hold. Paging back has no natural end —
+// the reader can keep going up through a topic that is years long — so without
+// a ceiling the window climbs back to the 2226 rows / 2.1 MB that wedged the
+// browser, just more slowly. 600 is a dozen pages: far more scrollback than is
+// on screen at once, far less than the whole timeline.
+export const MAX_WINDOW = 600
 
 // A slice of a topic's timeline, oldest-first, plus whether older blocks exist
 // above it. `hasMore` is about OLDER blocks only; whether a middle stretch has
@@ -66,6 +73,52 @@ export function scrollTopAfterPrepend(before: ScrollState, afterScrollHeight: nu
 }
 
 /**
+ * Where a block that arrives on its own goes in a window — a live frame, or the
+ * broker replaying a running turn to a socket that just connected, which sends
+ * every frame of that turn again, most of them older than the newest page.
+ *
+ * In time order. One older than the window's first block, while history above
+ * it is still unloaded, is not placed at all: it belongs to that history, and
+ * the page holding it brings it when the reader scrolls up. Appended at the
+ * bottom instead, it sits out of order, and the older pages then arrive already
+ * known, so prependOlder adds nothing and paging back never gets past them.
+ */
+export function placeBlock(window: BlockWindow, block: Block): Block[] | null {
+  const { blocks } = window
+  const at = Date.parse(block.created_at)
+  const last = blocks.at(-1)
+  if (!last || at >= Date.parse(last.created_at)) return [...blocks, block]
+  if (window.hasMore && at < Date.parse(blocks[0].created_at)) return null
+  const next = blocks.findIndex((b) => Date.parse(b.created_at) > at)
+  return [...blocks.slice(0, next), block, ...blocks.slice(next)]
+}
+
+/**
+ * A freshly read page with the live frames that arrived while it was in flight
+ * applied on top: edits and retractions win over the snapshot, and a block the
+ * snapshot lacks is placed by placeBlock — never simply appended.
+ */
+export function applyLiveChanges(
+  window: BlockWindow,
+  changes: Map<string, Block | null>,
+  reactions: Map<string, ReactionAgg[]>
+): Block[] {
+  const withReactions = (block: Block) =>
+    reactions.has(block.id) ? { ...block, reactions: reactions.get(block.id)! } : block
+  const blocks = new Map(window.blocks.map((block) => [block.id, block]))
+  const unplaced: Block[] = []
+  for (const [id, block] of changes) {
+    if (!block) blocks.delete(id)
+    else if (blocks.has(id)) blocks.set(id, block)
+    else unplaced.push(block)
+  }
+  let placed: BlockWindow = { ...window, blocks: [...blocks.values()].map(withReactions) }
+  for (const block of unplaced)
+    placed = { ...placed, blocks: placeBlock(placed, withReactions(block)) ?? placed.blocks }
+  return placed.blocks
+}
+
+/**
  * Extend a window upwards with a freshly fetched older page.
  *
  * De-dupes on id: a block can arrive twice if the tail shifted between the two
@@ -77,6 +130,28 @@ export function prependOlder(current: BlockWindow, older: Block[], hasMore: bool
     blocks: [...older.filter((b) => !known.has(b.id)), ...current.blocks],
     hasMore,
   }
+}
+
+/**
+ * Split a window that has grown past the cap: the oldest `max` blocks stay, the
+ * newest overflow comes back so the caller can hold it aside. `null` when the
+ * window already fits.
+ *
+ * The overflow is taken from the NEWEST end on purpose. Paging older means the
+ * reader is scrolling UP, so the rows that must not move are the ones above the
+ * viewport they are reading; dropping them would delete what they just pulled
+ * in. The rows dropped here sit BELOW the viewport, where removing them moves
+ * nothing on screen.
+ *
+ * It is a separate step from `prependOlder` (and never folded into it) because
+ * the scroll compensation around a prepend measures the change in `scrollHeight`
+ * — see `scrollTopAfterPrepend`. A trim in the same DOM update would subtract
+ * the height it removed and pull the reader up by that much on every page. Do
+ * the prepend, compensate, then trim.
+ */
+export function capWindow(blocks: Block[], max = MAX_WINDOW): { keep: Block[]; dropped: Block[] } | null {
+  if (blocks.length <= max) return null
+  return { keep: blocks.slice(0, max), dropped: blocks.slice(max) }
 }
 
 /**

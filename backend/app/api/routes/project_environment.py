@@ -16,6 +16,7 @@ from app.auth.core import AuthUserInfo
 from app.core.db import get_db
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sandbox_auth import scoped_token_claims
+from app.core.sentences import notice_keys, say
 from app.domain.agent.chat import ChatService
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_provider import environment_status
@@ -27,7 +28,6 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.agent.runtime import addressed_to_agent
-from app.domain.block.notice_text import say
 from app.domain.device.wiring import sql_device_service
 from app.domain.machine.models import MachineStatus
 from app.domain.machine.repositories import ProjectMachineRepository
@@ -175,7 +175,8 @@ async def get_room_environment(
             # message alone is not a pending machine reservation.
             state = {"state": "unbound"}
         elif any(machine.status == MachineStatus.error for machine in machines):
-            state = {"state": "failed", "log": "云端工作电脑创建失败，尚未接入。"}
+            log = say("envCloudMachineFailed")
+            state = {"state": "failed", "log": log, **notice_keys(log=log)}
         else:
             # A cloud machine on its way IS preparation, whatever stage it's at.
             state = {"state": "pending"}
@@ -271,7 +272,7 @@ async def overview_access(request: Request, db: Db, project_id: uuid.UUID):
         or claims.get("p") != str(project_id)
         or claims.get("t") != str(project.root_topic_id)
     ):
-        raise ForbiddenError("只有本项目总览芝士能处理环境修复")
+        raise ForbiddenError(say("envRepairOverviewOnly"))
     return project
 
 
@@ -283,7 +284,7 @@ async def inspect_recovery(
     topic = await room(db, project_id, topic_id)
     incident = await latest_recovery(db, topic_id)
     if incident is None:
-        raise NotFoundError("没有待处理的环境故障")
+        raise NotFoundError(say("envNoPendingFailure"))
     binding = await sql_device_service(db).topic_binding(topic_id)
     status = (
         await environment_status(
@@ -321,7 +322,7 @@ async def repairable_incident(db: AsyncSession, topic: Topic, body: RepairEnviro
         or (incident.meta or {}).get("state") != "requested"
         or (topic.environment or {}).get("revision") != body.expected_revision
     ):
-        raise ValidationError("环境已变化或自动重试已使用，请重新查看状态")
+        raise ValidationError(say("envChangedOrRetried"))
     return incident
 
 
@@ -342,7 +343,7 @@ async def repair_environment(
         incident = await repairable_incident(db, topic, body)
         if body.config is None:
             if not body.reason.strip():
-                raise ValidationError("请说明需要什么协助")
+                raise ValidationError(say("envHelpWhat"))
             topic = await room(db, project_id, topic_id, lock=True)
             incident = await repairable_incident(db, topic, body)
             incident.meta = {
@@ -354,7 +355,7 @@ async def repair_environment(
             return ok({"state": "needs_help"})
         binding = await sql_device_service(db).topic_binding(topic_id)
         if binding is None or not device_hub.is_online(binding.device_id):
-            raise ValidationError("机器离线，暂时无法修复")
+            raise ValidationError(say("envMachineOffline"))
         attempt = incident.meta.get("attempt")
         resource_id = topic.resource_id or topic_id
         # Same as reset_idle_room: the device answers with no transaction open.
@@ -363,7 +364,7 @@ async def repair_environment(
             device_hub, binding.device_id, project_id, resource_id
         )
         if state.get("state") != "failed" or state.get("attempt") != attempt:
-            raise ValidationError("房间已不处于本次失败状态，请重新查看状态")
+            raise ValidationError(say("envRoomRecovered"))
         await reset_idle_room(db, topic_id, project_id)
         topic = await room(db, project_id, topic_id, lock=True)
         await require_idle(db, topic)

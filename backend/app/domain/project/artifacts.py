@@ -68,7 +68,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 from app.domain.library import service as library
 from app.domain.project.models import ProjectArtifact
 from app.domain.review.models import AcceptCard, AcceptStatus
@@ -154,14 +154,10 @@ def clean_about(raw: str | None, *, subject: str | None = None) -> str:
         return ""
     if len(about) > ABOUT_MAX:
         raise ValidationError(
-            f"这一句话最长 {ABOUT_MAX} 个字，现在有 {len(about)} 个。"
-            "它说的是这样东西本身（是什么、给谁的），不是这一版的说明。"
+            say("artifactAboutTooLong", max=ABOUT_MAX, length=len(about))
         )
     if subject is not None and about == " ".join(subject.split()):
-        raise ValidationError(
-            "这一句话和本次改动的标题一模一样。标题说的是这一版做了什么（卡上已经"
-            "有了），这一句话说的是这样东西本身 —— 它在第 1 版和第 20 版都得成立。"
-        )
+        raise ValidationError(say("artifactAboutSameAsTitle"))
     return about
 
 
@@ -240,13 +236,10 @@ async def reuse(
     same_name = next((row for row in listed if row.name == _unwrap(wanted)), None)
     if same_name is not None:
         raise ValidationError(
-            f"artifact 要的是清单上那一项的 id，不是名字。《{same_name.name}》的 "
-            f"id 是 {same_name.id}。"
+            say("artifactNameNotId", name=same_name.name, id=same_name.id)
         )
     raise ValidationError(
-        f"产物清单上没有 id 为 {wanted} 的那一项。"
-        + _what_the_list_has(listed)
-        + "确实是一样新做出来的东西，就用 new_artifact 加上它的名字声明它。"
+        say("artifactIdNotListed", id=wanted, listed=_what_the_list_has(listed))
     )
 
 
@@ -266,18 +259,11 @@ async def claim(
     （写对了的那句话不会过期），而清单上一项没有它，下一次交付就又只能看着名字猜。
     """
     if not about:
-        raise ValidationError(
-            "新声明一项产物要用一句话说清它是什么、给谁的 —— 清单上只有名字的话，"
-            "下一次交付判断不了「我做的是不是它的新一版」。写这样东西本身，不写这"
-            "一版做了什么：这句话在第 1 版和第 20 版都得成立。"
-        )
+        raise ValidationError(say("artifactNeedsAbout"))
     clean = clean_name(name)
     listed = await list_for_project(session, project_id)
     if any(row.name == clean for row in listed):
-        raise ValidationError(
-            f"产物清单上已经有《{clean}》了。这次交付是它的新一版就用 artifact "
-            "沿用它；确实是另一样东西，就换一个说得出区别的名字。"
-        )
+        raise ValidationError(say("artifactNameAlreadyListed", name=clean))
     found = await _by_name(session, project_id=project_id, name=clean)
     if found is not None:
         # 这个名字此前被声明过，但那次交付没落地，所以它不在清单上。落回同一行：
@@ -355,9 +341,9 @@ async def merge(
     边加起来，不需要另外搬什么。方向由人定：留哪个名字是他的判断。
     """
     if source.id == target.id:
-        raise ValidationError("不能把一项合并到它自己")
+        raise ValidationError(say("artifactMergeIntoSelf"))
     if source.project_id != target.project_id:
-        raise ValidationError("只能在同一个项目的清单里合并")
+        raise ValidationError(say("artifactMergeSameProject"))
     await session.execute(
         update(AcceptCard)
         .where(AcceptCard.artifact_id == source.id)
@@ -540,9 +526,9 @@ def _what_the_list_has(listed: list[ArtifactSummary]) -> str:
     """清单现在有什么，连 id 一起 —— 读这句话的是一个下一轮就要重递的 agent，
     只说「没有这一项」等于让它再猜一轮。"""
     if not listed:
-        return "这个项目还没有交付过任何东西，清单是空的。"
+        return say("artifactListEmpty")
     rows = "；".join(f"《{row.name}》 id={row.id}" for row in listed)
-    return f"清单上现在有：{rows}。"
+    return say("artifactListHas", rows=rows)
 
 
 def _as_uuid(value: str) -> uuid.UUID | None:

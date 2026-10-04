@@ -13,9 +13,11 @@ import { relTime } from '../lib/relTime'
 import { myHandle } from '../me'
 
 import { useCommands } from '@/commands'
+import BaseButton from '@/components/base/BaseButton.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import i18n, { t } from '@/i18n'
 import { markdown, sanitizeRendered } from '@/lib/markdown'
+import { useDialog } from '@/plugins/dialog'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 // 项目级文档 (spec §7.1): 章程 / 周报集 / 记忆 — one address each
@@ -127,8 +129,20 @@ function weeklyWindow(w: Block): string {
 }
 
 // ---- 记忆 (spec §8.4 记忆可见): entries 芝士 remembered, human-prunable ----
+const dialog = useDialog()
+
 // 删一条要写回缓存里的那份，不然离开这一页再回来它又出现了。
+// 删掉找不回，先确认（§3.7）：行里的入口是灰的，红只出现在这一下确认上。
 async function removeMemory(id: string) {
+  const confirmed = await dialog
+    .confirm(t('project.docs.memoryDeleteBody'), {
+      title: t('project.docs.memoryDeleteTitle'),
+      confirmLabel: t('project.docs.memoryDelete'),
+      danger: true,
+    })
+    .wait()
+    .catch(() => false)
+  if (!confirmed) return
   await deleteMemory(id)
   if (data.value) data.value.memoryEntries = data.value.memoryEntries.filter((e) => e.id !== id)
 }
@@ -207,11 +221,10 @@ useCommands(() => {
                 {{ relTime(e.created_at) }}
               </div>
             </div>
-            <v-btn
+            <BaseButton
               icon="mdi-delete-outline"
-              size="x-small"
-              variant="text"
-              color="medium-emphasis"
+              kind="ghost"
+              size="sm"
               class="memory-card__del"
               :title="t('project.docs.memoryDelete')"
               @click="removeMemory(e.id)"
@@ -245,16 +258,16 @@ useCommands(() => {
         <div v-if="weeklies.length === 0" class="text-medium-emphasis text-body-2 py-6 text-center">
           <div>{{ t('project.docs.weekliesEmpty') }}</div>
           <div class="text-caption mt-1">{{ t('project.docs.weekliesHint') }}</div>
-          <v-btn
+          <BaseButton
             v-if="rootTopicId"
             :to="topicTo(rootTopicId)"
-            variant="text"
-            size="small"
-            class="mt-2 text-none"
+            kind="secondary"
+            size="sm"
+            class="mt-2"
             append-icon="mdi-arrow-right"
           >
             {{ t('project.docs.goToRoom') }}
-          </v-btn>
+          </BaseButton>
         </div>
         <!-- 一份周报是一份读的东西，不是一行导航：它有自己的窗口、自己的正文，
                还有「写在哪」。所以整卡摊开。 -->
@@ -266,16 +279,15 @@ useCommands(() => {
                 <span class="t-body" style="font-weight: 500">{{ weeklyWindow(w) }}</span>
                 <span class="t-meta">{{ t('project.docs.recordedOn', { date: fmtDate(w.created_at) }) }}</span>
                 <v-spacer />
-                <v-btn
+                <BaseButton
                   v-if="w.topic_id"
                   :to="topicTo(w.topic_id)"
-                  size="x-small"
-                  variant="text"
-                  color="medium-emphasis"
+                  kind="ghost"
+                  size="sm"
                   append-icon="mdi-arrow-top-right"
                 >
                   {{ t('project.docs.fromTopic') }}
-                </v-btn>
+                </BaseButton>
               </div>
               <div class="md-content text-body-2" v-html="renderMarkdown(w.content)" />
             </div>
@@ -341,6 +353,18 @@ useCommands(() => {
 }
 .memory-card:hover .memory-card__del {
   opacity: 1;
+}
+/* 窄屏这一行放不下：三个 tab 加上右边的状态和动作，状态那句「没连上」被裁成
+   半截、最后一个 tab 被挤出可视区。让状态栏整条换到 tab 下面去 —— 它在那一行
+   上有全宽可用，tab 也不用再让位。 */
+@media (max-width: 599.98px) {
+  .docs-tabs {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+  .docs-tabs__bar {
+    flex: 0 0 100%;
+  }
 }
 /* 没有 hover 的设备上（手机、平板）等不到它出现，所以常驻。按输入方式判断，不按
    视口宽度，和话题侧栏的行操作同一个判断。 */

@@ -14,6 +14,7 @@ import AdminModelsConfirmDialog from '@/components/admin/models/AdminModelsConfi
 import AdminModelsFlash from '@/components/admin/models/AdminModelsFlash.vue'
 import AdminModelsHeader from '@/components/admin/models/AdminModelsHeader.vue'
 import AdminModelsTable from '@/components/admin/models/AdminModelsTable.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 
 // 管理后台的「模型管理」（`/admin/models`）。它管的是**网关那一侧的模型台账**，不是
 // 平台自己声明的东西 —— 页面上的每一行都来自 `GET /model/info`，每一处改动都落回网关。
@@ -130,9 +131,9 @@ const {
         <section class="amd__section">
           <div class="amd__sectiontools">
             <div class="amd__spacer" />
-            <v-btn color="primary" size="small" prepend-icon="mdi-plus" :disabled="gatewayDown" @click="openAdd">
+            <BaseButton kind="primary" size="sm" prepend-icon="mdi-plus" :disabled="gatewayDown" @click="openAdd">
               {{ t('models.page.add') }}
-            </v-btn>
+            </BaseButton>
           </div>
 
           <AdminModelsTable
@@ -211,6 +212,7 @@ const {
       :body="t('models.confirm.delete.body', { name: deleteTarget?.name ?? '' })"
       :confirm-label="t('models.confirm.delete.confirm')"
       :busy="deleting"
+      danger
       @update:model-value="closeDelete"
       @confirm="confirmDelete"
     />
@@ -226,6 +228,7 @@ const {
       "
       :confirm-label="t(blockTarget?.blocked ? 'models.confirm.unblock.confirm' : 'models.confirm.block.confirm')"
       :busy="blocking"
+      :danger="!blockTarget?.blocked"
       @update:model-value="closeBlock"
       @confirm="confirmBlock"
     />

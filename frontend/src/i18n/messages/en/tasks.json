@@ -327,7 +327,6 @@
     },
     "deadlineTitle": "Set deadline",
     "deadlineFor": "Submission deadline for {name}",
-    "cancel": "Cancel",
     "save": "Save",
     "rejectTitle": "Decline claim",
     "rejectLead": "Decline {name}'s claim on this challenge",
@@ -485,7 +484,7 @@
     "progressTitle": "Where everyone is",
     "progressNote": "Pass rate {rate}%, {rejected} not passed. Compare this with the space average to see whether the challenge is on the hard or easy side.",
     "teamsTitle": "Teams",
-    "peopleUnit": "",
+    "people": "1 person | {n} people",
     "teamsEmpty": "No teams yet",
     "guard": "Only this challenge's publisher and admins can open this page.",
     "notFound": "Couldn't find this challenge"

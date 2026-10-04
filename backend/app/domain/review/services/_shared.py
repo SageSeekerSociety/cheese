@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Final
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ValidationError
+from app.core.sentences import NoticeText, say
 from app.domain.agent.platform_notices import (
     EVENT_ACCEPT_DISMISSED as EVENT_ACCEPT_DISMISSED,
 )
@@ -70,7 +71,6 @@ from app.domain.agent.platform_notices import (
 from app.domain.agent.platform_notices import (
     notice as notice,
 )
-from app.domain.block.notice_text import NoticeText, say
 from app.domain.block.repositories import BlockRepository as BlockRepository
 from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository as ProjectRepository
@@ -336,29 +336,16 @@ def approvals_required_of(project: Project | None) -> int:
 #: 每一轮的开场都带着它。
 #:
 #: 合并型的交付走不到这里，见 `_ARTIFACT_ACTION_UNWANTED`。
-_ARTIFACT_ACTION_MISSING = (
-    "没说这次交付动的是哪一项产物。交出去一份文件或一个地址时，两种说法选一种：\n"
-    "  artifact=<清单上那一项的 id>    这次交付是那一项的新一版\n"
-    "  new_artifact=<新的真名>          这次交付做出了一样清单上还没有的东西\n"
-    "清单在系统提示的「这个项目的产物清单」里，每一项的 id 就印在名字旁边；"
-    "新建的那一次会把新的 id 返回来。"
-)
+_ARTIFACT_ACTION_MISSING = say("artifactActionMissing")
 
-_ARTIFACT_ACTION_BOTH = (
-    "artifact 和 new_artifact 只能给一个：这次交付要么是清单上某一项的新一版，"
-    "要么做出了一样清单上还没有的东西。"
-)
+_ARTIFACT_ACTION_BOTH = say("artifactActionBoth")
 
 #: 合并交出去的是项目那个仓库本身，而一个项目只有一个仓库 —— 没有什么可判断的，
 #: 所以这里不收声明，平台自己认得出是哪一项。
 #:
 #: 打回而不是默默忽略：一个收下了却不起作用的参数，读起来跟起了作用一模一样，而
 #: 传它的那一方正以为自己说清了一件要紧的事。
-_ARTIFACT_ACTION_UNWANTED = (
-    "合并交出去的是这个项目的仓库本身，不用声明产物 —— 平台认得出是清单上哪一项，"
-    "这次交付会成为它的新一版。artifact / new_artifact / about 是交一份文件"
-    "（deliver）或一个地址（deliver_url）时才要说的。"
-)
+_ARTIFACT_ACTION_UNWANTED = say("artifactActionUnwanted")
 
 
 def _one_artifact_action(artifact: str | None, new_artifact: str | None) -> None:
@@ -389,9 +376,7 @@ def _no_artifact_action(
 
 #: 这一版交出去的是什么 (#1085 结论五)。一份文件、一个地址，或者两个都不给 ——
 #: 那就是交出去这次合并本身（代码仓库这类项目交的就是主干往前走一步）。
-_DELIVERABLE_BOTH = (
-    "deliver 和 deliver_url 只能给一个：这次交出去的要么是一份文件，要么是一个地址。"
-)
+_DELIVERABLE_BOTH = say("deliverableBoth")
 
 #: 单份交付物的上限。成品不进库，所以这个数管的是平台那块盘，而不是用户的仓库。
 _DELIVERABLE_MAX_BYTES = 80 * 1024 * 1024
@@ -402,7 +387,7 @@ def _one_deliverable(deliver: str | None, deliver_url: str | None) -> None:
     if path and url:
         raise ValidationError(_DELIVERABLE_BOTH)
     if url and not url.startswith(("http://", "https://")):
-        raise ValidationError("deliver_url 要是一个能打开的网址（http:// 或 https://）")
+        raise ValidationError(say("deliverUrlInvalid"))
 
 
 async def _read_deliverable(
@@ -417,8 +402,11 @@ async def _read_deliverable(
     data, _ = await ProjectFiles(session, project_id, task_id).raw(path, "live")
     if len(data) > pkg._DELIVERABLE_MAX_BYTES:
         raise ValidationError(
-            f"{path} 有 {len(data) // 1024 // 1024}MB，超过单份交付物的 "
-            f"{pkg._DELIVERABLE_MAX_BYTES // 1024 // 1024}MB 上限。"
-            "交出去的是一个地址时用 deliver_url 记地址。"
+            say(
+                "deliverableTooLarge",
+                path=path,
+                size=len(data) // 1024 // 1024,
+                max=pkg._DELIVERABLE_MAX_BYTES // 1024 // 1024,
+            )
         )
     return PurePosixPath(path).name, data

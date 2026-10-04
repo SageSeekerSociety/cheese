@@ -70,6 +70,7 @@ from app.api.response import ok
 from app.api.routes.projects import DbSession, ProjectRepository
 from app.core.config import settings
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
+from app.core.sentences import say
 from app.domain.agent.compute_configs import (
     ProjectComputeConfigs,
     project_configs,
@@ -81,7 +82,6 @@ from app.domain.agent.market import (
     compute_selectable,
 )
 from app.domain.agent_instance.configuration import model_choices
-from app.domain.block.notice_text import say
 from app.domain.machine.services import MachineService
 from app.domain.membership.services import MemberService
 from app.domain.policy import gate
@@ -333,11 +333,13 @@ async def set_tier_policy(
         elif isinstance(tiers, list) and all(isinstance(t, str) for t in tiers):
             values[gate.ALLOWED_TIERS_KEY] = sorted({t.strip() for t in tiers if t})
         else:
-            raise ValidationError("allowed_tiers 必须是字符串数组或 null")
+            raise ValidationError(say("allowedTiersInvalid"))
     if gate.OVER_TIER_KEY in body:
         disposition = body.get(gate.OVER_TIER_KEY)
         if disposition not in gate.DISPOSITIONS:
-            raise ValidationError(f"over_tier 只能是 {sorted(gate.DISPOSITIONS)} 之一")
+            raise ValidationError(
+                say("overTierInvalid", values=str(sorted(gate.DISPOSITIONS)))
+            )
         values[gate.OVER_TIER_KEY] = disposition
     project.settings = values
     await db.flush()

@@ -1,33 +1,21 @@
 <template>
   <div>
-    <AccountHeading
-      :title="t('account.oauth.error.title')"
-      :lede="
-        providerName
-          ? t('account.oauth.error.lede', { provider: providerName })
-          : t('account.oauth.error.ledeUnknownProvider')
-      "
-    />
+    <!-- The title carries the result; the buttons carry the next step. The
+         alert is only here when the error code adds a reason the title does
+         not, so the failure is not stated twice. -->
+    <AccountHeading :title="t('account.oauth.error.title')" />
 
-    <v-alert type="error" variant="tonal" density="comfortable" class="mb-6">
+    <v-alert v-if="errorDescription" type="error" variant="tonal" density="comfortable" class="mb-6">
       {{ errorDescription }}
     </v-alert>
 
     <div class="account-actions">
-      <v-btn block color="primary" size="large" to="/account/signin" class="account-submit">
+      <BaseButton block kind="primary" size="lg" to="/account/signin" class="account-submit">
         {{ t('account.backToSignIn') }}
-      </v-btn>
-      <v-btn
-        v-if="providerId"
-        block
-        variant="outlined"
-        color="on-surface"
-        size="large"
-        class="account-secondary"
-        @click="retryOAuth"
-      >
+      </BaseButton>
+      <BaseButton v-if="providerId" block kind="secondary" size="lg" @click="retryOAuth">
         {{ t('account.oauth.error.retry', { provider: providerName }) }}
-      </v-btn>
+      </BaseButton>
     </div>
   </div>
 </template>
@@ -39,6 +27,7 @@ import { useRoute } from 'vue-router'
 import { oauthProviderName } from './oauthProvider'
 
 import AccountHeading from '@/components/account/AccountHeading.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
 
@@ -91,7 +80,9 @@ const errorDescription = computed(() => {
     case 'WEAK_PASSWORD':
       return t('account.rule.passwordInvalid')
     default:
-      return t('account.oauth.error.unknown')
+      // No reason to add: the title already says the sign-in failed, and the
+      // buttons below are the next step.
+      return ''
   }
 })
 

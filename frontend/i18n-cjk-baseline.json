@@ -1,8 +1,0 @@
-{
-  "_comment": "Frozen hardcoded Chinese: lines in src/ carrying a Chinese string literal or template text instead of going through the i18n catalog. The ratchet blocks any NEW one; these are pre-existing and may only go down. Regenerate with `pnpm run lint:i18n:update`. See docs/i18n.md §5.",
-  "files": {
-    "src/commands/palette/match.ts": 23,
-    "src/views/spaces/detail/PdfGenerate.vue": 2,
-    "src/views/spaces/detail/publishLimits.ts": 1
-  }
-}

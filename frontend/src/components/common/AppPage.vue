@@ -18,6 +18,7 @@ import type { NavTarget } from '@/lib/navTarget'
 import { useDisplay } from 'vuetify'
 
 import { headerCommands } from '@/commands'
+import BaseButton from '@/components/base/BaseButton.vue'
 import NavLink from '@/components/common/NavLink.vue'
 
 withDefaults(
@@ -64,11 +65,11 @@ const { mdAndUp } = useDisplay()
         <div v-if="$slots.controls || (mdAndUp && headerCommands.length)" class="app-page__actions">
           <slot name="controls" />
           <template v-for="command in headerCommands" :key="command.id">
-            <v-btn
+            <BaseButton
               v-if="command.header?.iconOnly"
+              kind="ghost"
               :icon="command.icon"
-              variant="text"
-              size="small"
+              size="sm"
               :to="command.to"
               :loading="command.loading"
               :disabled="command.disabled"
@@ -76,19 +77,18 @@ const { mdAndUp } = useDisplay()
               :title="command.title"
               @click="command.run?.()"
             />
-            <v-btn
+            <BaseButton
               v-else
+              :kind="command.header?.accent ? 'primary' : 'ghost'"
               :prepend-icon="command.icon"
-              :color="command.header?.accent ? 'primary' : undefined"
-              :variant="command.header?.accent ? 'flat' : 'text'"
-              size="small"
+              size="sm"
               :to="command.to"
               :loading="command.loading"
               :disabled="command.disabled"
               @click="command.run?.()"
             >
               {{ command.title }}
-            </v-btn>
+            </BaseButton>
           </template>
         </div>
       </div>
@@ -157,6 +157,23 @@ const { mdAndUp } = useDisplay()
    工作电脑）都离左边 24。页头标题跟着它们缩进同样的距离。 */
 .app-page__head--full {
   padding: 0 24px;
+}
+/* 手机上这一行只剩状态，控件和状态挤不下时叠成两行：看板的「只看我的」和那一行
+   统计原来并排，窄屏上开关直接压在数字上。满宽那一档在手机上让这一行换行，控件
+   自己占一行。 */
+@media (max-width: 959.98px) {
+  .app-page__head--full {
+    height: auto;
+    min-height: var(--app-page-header-height);
+    align-content: center;
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+
+  .app-page__head--full .app-page__actions {
+    flex-basis: 100%;
+    margin-inline-start: 0;
+  }
 }
 .app-page__title {
   min-width: 0;

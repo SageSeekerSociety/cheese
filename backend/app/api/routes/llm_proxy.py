@@ -49,12 +49,13 @@ from app.core.sandbox_auth import (
     personal_claims,
     scoped_token_claims,
 )
+from app.core.sentences import listing, say
 from app.domain.agent.chat import ChatService
 from app.domain.agent.credits_notice import note_credits_refusal
+from app.domain.agent.personal.keys import stored_key
+from app.domain.agent.personal.service import answering
 from app.domain.agent.supply import GATEWAY
 from app.domain.agent_instance import configuration
-from app.domain.assistant.asking import answering
-from app.domain.assistant.keys import stored_key
 from app.domain.policy import gate
 from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task import binding
@@ -168,15 +169,14 @@ async def _bind_requested_subagent_model(
     ):
         if isinstance(configured, str) and configured and configured in choices:
             allowed.add(configured)
-    offer = "、".join(sorted(allowed)) or "（这个项目当前没有可指定的模型）"
+    offer = listing(sorted(allowed)) if allowed else say("noModelToOffer")
     if requested_id is None:
         raise ValidationError(
-            f"分身指定的模型 {requested!r} 当前项目的模型目录里没有；可指定：{offer}"
+            say("subagentModelNotInCatalog", model=repr(requested), offer=offer)
         )
     if requested_id not in allowed:
         raise ValidationError(
-            f"分身指定的模型 {requested!r} 不在当前项目可用的模型范围内；"
-            f"可指定：{offer}"
+            say("subagentModelNotAllowed", model=repr(requested), offer=offer)
         )
     return binding.resolve(None, choices, agent_model=requested_id)
 
@@ -359,6 +359,14 @@ async def admission(
             "allow": refused is None,
             "reason": "admitted" if refused is None else str(refused.message),
             "reason_kind": "budget",
+            # The proxy turns this into the reset headers Claude Code reads, so
+            # a refused turn says when it can run again and is not retried
+            # before then.
+            "reopens_at": (
+                int(refused.reopens_at.timestamp())
+                if refused is not None and refused.reopens_at is not None
+                else None
+            ),
             "supply": supply,
         }
     )

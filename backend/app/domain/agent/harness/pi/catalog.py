@@ -56,6 +56,20 @@ def tools() -> list[dict]:
     ]
 
 
+def schemas_of(names: list[str]) -> list[dict]:
+    """The table entries ``names`` name, from the room's table or the one for a
+    芝士 answering someone (`DELEGATED_TOOLS`), in the order given."""
+    module = _module()
+    known = {
+        tool["name"]: tool
+        for tool in (
+            *module.PLATFORM_TOOLS.schemas(),
+            *module.DELEGATED_TOOLS.schemas(),
+        )
+    }
+    return [known[name] for name in names if name in known]
+
+
 def is_platform_tool(tool: str) -> bool:
     return tool in _module().PLATFORM_TOOLS
 

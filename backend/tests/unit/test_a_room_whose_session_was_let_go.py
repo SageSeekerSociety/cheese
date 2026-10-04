@@ -36,6 +36,7 @@ async def _say(room: Room, text: str, teammate: str) -> None:
         Opening(system_prompt="", agent_handle=teammate),
         work_id=uuid.uuid4(),
         on_mark=lambda _: None,
+        register_input=room.register_input(text),
     )
 
 

@@ -17,15 +17,18 @@ import type { CommentSpot } from '../../../lib/docCommentSpots'
 import type { DocLinkTarget } from '../../../lib/docLinks'
 import type { SlashItem } from '../../../lib/docSlashMenu'
 
-import { onBeforeUnmount, ref, shallowRef, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import { DragHandle } from '@tiptap/extension-drag-handle-vue-3'
 import { TextSelection } from '@tiptap/pm/state'
 import { CellSelection } from '@tiptap/pm/tables'
+
+import { useFocusReturn } from '@/composables/useFocusReturn'
 
 import { BUBBLE_META } from '../../../lib/docBubble'
 import { spotAt } from '../../../lib/docCommentSpots'
 import { captureNewDocLink } from '../../../lib/docLinks'
 import { BLOCK_ITEMS, blockKeyOf } from '../../../lib/docSlashMenu'
+import { statusAt } from '../../../lib/docStatus'
 
 import DocBubble from './DocBubble.vue'
 import DocKeyboardBar from './DocKeyboardBar.vue'
@@ -82,6 +85,8 @@ interface CommentCta {
   doc: PMNode
   selection: Selection
   topicId: string
+  /** The caret sits in a status tag: the bar offers its kinds, over the tag. */
+  status?: { from: number; to: number }
 }
 const commentCta = shallowRef<CommentCta | null>(null)
 // 手指点的屏幕上（手机、平板），能改时浮条换成键盘上方的那一条：系统自己的选区菜单会
@@ -134,8 +139,12 @@ function positionCta() {
   }
   try {
     const sel = cta.selection
-    const a = ed.view.coordsAtPos(sel instanceof CellSelection ? sel.$anchorCell.pos + 1 : sel.from)
-    const h = ed.view.coordsAtPos(sel instanceof CellSelection ? sel.$headCell.pos + 1 : sel.to)
+    const a = ed.view.coordsAtPos(
+      cta.status ? cta.status.from : sel instanceof CellSelection ? sel.$anchorCell.pos + 1 : sel.from
+    )
+    const h = ed.view.coordsAtPos(
+      cta.status ? cta.status.to : sel instanceof CellSelection ? sel.$headCell.pos + 1 : sel.to
+    )
     if (Math.max(a.bottom, h.bottom) < top || Math.min(a.top, h.top) > bottom) {
       commentCta.value = null
       return
@@ -157,6 +166,24 @@ function schedulePosition() {
 }
 function updateCommentCta(ed: CoreEditor) {
   const sel = ed.state.selection
+  if (sel.empty && props.topicId && !sameSelection(ed) && props.editable && ed.isEditable && !touch.value) {
+    const status = statusAt(ed.state, sel.from)
+    if (status) {
+      commentCta.value = {
+        top: 0,
+        left: 0,
+        quote: '',
+        editor: ed,
+        doc: ed.state.doc,
+        selection: sel,
+        topicId: props.topicId,
+        status,
+      }
+      positionCta()
+      schedulePosition()
+      return
+    }
+  }
   if (sel.empty || !props.topicId || sameSelection(ed)) {
     commentCta.value = null
     return
@@ -507,6 +534,9 @@ watch(blockMenu, (open, was) => {
 })
 onBeforeUnmount(() => (blockMenu.value = null))
 
+// 块手柄菜单关上时把焦点还回手柄。
+useFocusReturn(computed(() => !!blockMenu.value))
+
 /** 正文在光标底下换了（人工编辑，或者装进来的一版）：这个按钮指着的段落已经不是
  *  原来那一段了，收回去。装配服务端那一版时上面不会喊这一声。 */
 function onEdited() {
@@ -544,6 +574,7 @@ defineExpose({ onHover, onEdited })
         :agent-handle="agentHandle"
         :editable="editable && commentCta.editor.isEditable"
         :restyle="restyle(commentCta)"
+        :status-only="!!commentCta.status"
         :can-agent="canAgent"
         :can-comment="canComment"
         @agent="agentOnSelection"
@@ -692,7 +723,7 @@ defineExpose({ onHover, onEdited })
 /* 浮条的外框：只管摆在哪儿，样子在 DocBubble 里。 */
 .doc-comment-cta {
   position: absolute;
-  z-index: 6;
+  z-index: var(--z-raised-6);
 }
 
 /* 手指没有悬停：手柄出不来也点不准，手机上换格式用键盘上方那一条。 */
@@ -704,7 +735,7 @@ defineExpose({ onHover, onEdited })
 /* 点手柄开出的那张：和浮条上的「正文 ▾」一个样子。 */
 .doc-block-menu {
   position: fixed;
-  z-index: 2400;
+  z-index: var(--z-overlay);
   display: flex;
   flex-direction: column;
   min-width: 168px;
@@ -805,7 +836,7 @@ defineExpose({ onHover, onEdited })
 
 .doc-codebar {
   position: absolute;
-  z-index: 6;
+  z-index: var(--z-raised-6);
   transform: translateX(-100%);
   display: flex;
   align-items: center;
@@ -867,7 +898,7 @@ defineExpose({ onHover, onEdited })
 /* Code-block copy button: the chat hover-action language — surface ground,
    hairline border, muted icon, only present while hovering the block. */
 .doc-codecopy {
-  z-index: 5;
+  z-index: var(--z-raised-5);
   display: inline-flex;
   align-items: center;
   justify-content: center;

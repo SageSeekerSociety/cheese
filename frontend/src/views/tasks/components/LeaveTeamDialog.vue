@@ -1,82 +1,71 @@
 <template>
-  <v-dialog :model-value="open" max-width="560" scrollable @update:model-value="$emit('close')">
-    <v-card rounded="lg" elevation="3">
-      <v-card-title class="pa-4 pb-3">
-        <div class="d-flex align-center">
-          <v-icon color="error" class="mr-3" size="28">mdi-exit-run</v-icon>
-          <span class="text-h5 font-weight-medium">{{ t('tasks.leaveTeam.title') }}</span>
-        </div>
-      </v-card-title>
-      <v-divider></v-divider>
-      <v-card-text class="pa-0">
-        <div class="px-4 pt-4 pb-3">
-          <div class="text-body-1">{{ t('tasks.leaveTeam.choose') }}</div>
-          <div class="text-caption text-medium-emphasis mt-1">
-            {{ t('tasks.leaveTeam.hint') }}
-          </div>
-        </div>
+  <AdaptiveDialog
+    :model-value="open"
+    :title="t('tasks.leaveTeam.title')"
+    :primary-label="t('tasks.leaveTeam.title')"
+    primary-danger
+    :primary-disabled="!selectedTeamId"
+    @update:model-value="$emit('close')"
+    @primary="$emit('confirm')"
+  >
+    <div class="px-4 pt-4 pb-3">
+      <div class="text-body-1">{{ t('tasks.leaveTeam.choose') }}</div>
+      <div class="text-caption text-medium-emphasis mt-1">
+        {{ t('tasks.leaveTeam.hint') }}
+      </div>
+    </div>
 
-        <div v-if="loading" class="d-flex justify-center my-8">
-          <v-progress-circular indeterminate color="primary" size="56"></v-progress-circular>
-        </div>
+    <div v-if="loading" class="d-flex justify-center my-8">
+      <v-progress-circular indeterminate color="primary" size="56"></v-progress-circular>
+    </div>
 
-        <div v-else-if="joinedTeams.length === 0" class="text-center py-8 px-4">
-          <v-avatar color="info" class="mb-4" size="64">
-            <!-- info 底上的反白图标：深色下 info 是 #AEB4BD，白色只有 2.1:1 -->
-            <v-icon icon="mdi-information-outline" color="surface" size="36"></v-icon>
-          </v-avatar>
-          <div class="text-h6 font-weight-medium mb-2">{{ t('tasks.leaveTeam.emptyTitle') }}</div>
-          <div class="text-body-1 text-medium-emphasis max-width-400 mx-auto">{{ t('tasks.leaveTeam.emptyText') }}</div>
-        </div>
+    <div v-else-if="joinedTeams.length === 0" class="text-center py-8 px-4">
+      <v-avatar color="info" class="mb-4" size="64">
+        <!-- Inverted icon on the info colour: white is only 2.1:1 when info is #AEB4BD in dark mode -->
+        <v-icon icon="mdi-information-outline" color="surface" size="36"></v-icon>
+      </v-avatar>
+      <div class="text-h6 font-weight-medium mb-2">{{ t('tasks.leaveTeam.emptyTitle') }}</div>
+      <div class="text-body-1 text-medium-emphasis max-width-400 mx-auto">{{ t('tasks.leaveTeam.emptyText') }}</div>
+    </div>
 
-        <div v-else class="px-4 pt-2 pb-4">
-          <div class="leave-team-cards-container mt-2">
-            <v-card
-              v-for="team in joinedTeams"
-              :key="team.id"
-              class="team-card mb-3"
-              flat
-              rounded="lg"
-              :color="selectedTeamId === team.id ? 'error-lighten-5' : undefined"
-              :border="selectedTeamId === team.id ? true : false"
-              variant="outlined"
-              @click="$emit('select', team.id)"
-            >
-              <div class="d-flex pa-3">
-                <v-avatar size="52" class="mr-3 flex-shrink-0">
-                  <v-img v-if="team.avatarId" :src="getAvatarUrl(team.avatarId)" :alt="team.name"></v-img>
-                  <v-icon v-else size="28" color="primary">mdi-account-group</v-icon>
-                </v-avatar>
+    <div v-else class="px-4 pt-2 pb-4">
+      <div class="leave-team-cards-container mt-2">
+        <v-card
+          v-for="team in joinedTeams"
+          :key="team.id"
+          class="team-card mb-3"
+          flat
+          rounded="lg"
+          :color="selectedTeamId === team.id ? 'error-lighten-5' : undefined"
+          :border="selectedTeamId === team.id ? true : false"
+          variant="outlined"
+          @click="$emit('select', team.id)"
+        >
+          <div class="d-flex pa-3">
+            <v-avatar size="52" class="mr-3 flex-shrink-0">
+              <v-img v-if="team.avatarId" :src="getAvatarUrl(team.avatarId)" :alt="team.name"></v-img>
+              <v-icon v-else size="28" color="primary">mdi-account-group</v-icon>
+            </v-avatar>
 
-                <div class="flex-grow-1 min-width-0">
-                  <div class="d-flex align-center flex-wrap gap-2 mb-1">
-                    <span class="text-subtitle-1 font-weight-medium text-truncate">{{ team.name }}</span>
-                    <v-chip size="small" color="info" label class="px-2">{{ t('tasks.leaveTeam.joined') }}</v-chip>
-                  </div>
-
-                  <div class="text-body-2 text-medium-emphasis text-truncate mb-2">{{ team.intro }}</div>
-                </div>
-
-                <div class="select-btn-container ml-3 d-flex align-center">
-                  <v-radio-group v-model="selectedTeamIdProxy" hide-details>
-                    <v-radio :value="team.id"></v-radio>
-                  </v-radio-group>
-                </div>
+            <div class="flex-grow-1 min-width-0">
+              <div class="d-flex align-center flex-wrap gap-2 mb-1">
+                <span class="text-subtitle-1 font-weight-medium text-truncate">{{ team.name }}</span>
+                <v-chip size="small" color="info" label class="px-2">{{ t('tasks.leaveTeam.joined') }}</v-chip>
               </div>
-            </v-card>
+
+              <div class="text-body-2 text-medium-emphasis text-truncate mb-2">{{ team.intro }}</div>
+            </div>
+
+            <div class="select-btn-container ml-3 d-flex align-center">
+              <v-radio-group v-model="selectedTeamIdProxy" hide-details>
+                <v-radio :value="team.id"></v-radio>
+              </v-radio-group>
+            </div>
           </div>
-        </div>
-      </v-card-text>
-      <v-divider></v-divider>
-      <v-card-actions class="pa-4">
-        <v-spacer></v-spacer>
-        <v-btn variant="text" @click="$emit('close')">{{ t('global.cancel') }}</v-btn>
-        <v-btn color="error" variant="flat" :disabled="!selectedTeamId" @click="$emit('confirm')">{{
-          t('tasks.leaveTeam.title')
-        }}</v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+        </v-card>
+      </div>
+    </div>
+  </AdaptiveDialog>
 </template>
 
 <script setup lang="ts">
@@ -86,6 +75,8 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { getAvatarUrl } from '@/utils/materials'
+
+import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 
 const { t } = useI18n()
 
@@ -123,7 +114,10 @@ const selectedTeamIdProxy = computed({
 
 .team-card {
   position: relative;
-  transition: all 0.2s ease;
+  transition:
+    border-color 0.2s ease,
+    background-color 0.2s ease,
+    transform 0.2s ease;
   border: 1px solid rgba(var(--v-border-color), 0.15);
   background-color: rgb(var(--v-theme-surface));
   cursor: pointer;

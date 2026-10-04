@@ -23,6 +23,7 @@ import type { SlidePageContext, SlideSource } from './preview/slidesContext'
 import { computed, defineAsyncComponent, ref, watch } from 'vue'
 import { useFullscreen } from '@vueuse/core'
 
+import { usePreviewEscape } from '../../composables/usePreviewEscape'
 import { t } from '../../i18n'
 import { roomFileDestination } from '../../lib/previewSession'
 
@@ -37,6 +38,9 @@ import RevisionList from './preview/RevisionList.vue'
 import RoomOutputs from './preview/RoomOutputs.vue'
 import { usePreviewImageRegion } from './preview/usePreviewImageRegion'
 import { usePreviewPagePin } from './preview/usePreviewPagePin'
+import { usePreviewQuote } from './preview/usePreviewQuote'
+
+import BaseButton from '@/components/base/BaseButton.vue'
 
 // The editor and its history only load once someone opens them: most previews
 // never do, and every panel that shows a preview would otherwise carry them.
@@ -73,6 +77,8 @@ const props = withDefaults(
     previewAppNote: string
     previewTunnelUp: boolean
     previewNamedPath: string
+    /** 刚跟着重启后的应用自动重载过：一句话解释那一闪，免得像是面板自己坏了。 */
+    autoReloaded?: boolean
     previewError: string | null
     previewReadError: string | null
     /** 这一份是哪种文件：下面三样查看器和「是不是图片」都由它分派。 */
@@ -95,6 +101,7 @@ const props = withDefaults(
     uploadAnnotation: undefined,
     active: true,
     path: null,
+    autoReloaded: false,
     frames: undefined,
     displayedFrame: null,
     navigation: 'idle',
@@ -192,7 +199,6 @@ const pagesRef = ref<InstanceType<typeof PreviewPages> | null>(null)
 // 不做能长期保留的批注——读者要改的那句话，正是芝士下一轮要改掉的那句话，锚点必然
 // 失效。这条评论只在下一轮被读一次，之后它属于对话记录。
 const locator = ref<{ label: string; quote: string; address: string; context?: QuoteContext } | null>(null)
-const pageContext = ref<SlidePageContext | null>(null)
 const locatorNote = ref('')
 const imageRegion = usePreviewImageRegion(props, clearLocator)
 const pageLocator = usePreviewPagePin(props, {
@@ -200,10 +206,11 @@ const pageLocator = usePreviewPagePin(props, {
   open: openLocator,
   clear: clearLocator,
 })
+const quoted = usePreviewQuote(props, (context) => pageLocator.canUse(context))
 
 function openLocator(label: string, quote: string, address: string, context?: QuoteContext) {
   imageRegion.clear()
-  pageContext.value = null
+  quoted.clear()
   pageLocator.pin.value = null
   locator.value = { label, quote, address, context }
   locatorNote.value = ''
@@ -212,11 +219,14 @@ function openLocator(label: string, quote: string, address: string, context?: Qu
 function clearLocator() {
   imageRegion.clear()
   locator.value = null
-  pageContext.value = null
+  quoted.clear()
   pageLocator.pin.value = null
   pagesRef.value?.clearMark()
   locatorNote.value = ''
 }
+// 帧里的 ESC 交给宿主：先收标注条，再退全屏，最后把焦点收回面板（判据在 usePreviewEscape）。
+const handleEscape = usePreviewEscape(panelElement, previewFull, fullscreen, clearLocator, () => !!locator.value)
+defineExpose({ handleEscape })
 function onImageRegion(selection: RasterSelection) {
   const captured = imageRegion.capture(selection)
   if (!captured) return
@@ -227,7 +237,7 @@ function onPageContext(payload: SlidePageContext) {
   if (!pageLocator.canUse(payload.context)) return
   const page = t('work.room.preview.page', { page: payload.page })
   openLocator(page, payload.scope === 'page' ? t('slides.wholePage') : payload.text.slice(0, 200), page)
-  pageContext.value = { ...payload, context: { ...payload.context } }
+  quoted.page.value = { ...payload, context: { ...payload.context } }
 }
 watch(
   [
@@ -263,6 +273,7 @@ function onCell(payload: { address: string; value: string; sheet: string }) {
   // CSV 没有工作表名，`!B7` 会让读者以为前面漏了个名字。
   const where = payload.sheet ? `${payload.sheet}!${payload.address}` : payload.address
   openLocator(where, payload.value || t('work.room.preview.emptyCell'), where)
+  quoted.cell(payload)
 }
 
 function onMarkdownQuote(payload: MarkdownQuote) {
@@ -271,6 +282,7 @@ function onMarkdownQuote(payload: MarkdownQuote) {
     ? t('work.room.preview.mdHeading', { heading: payload.heading })
     : t('work.room.preview.mdTop')
   openLocator(where, payload.text.slice(0, 200), where, { prefix: payload.prefix, suffix: payload.suffix })
+  quoted.range(payload)
 }
 
 function contextLine({ prefix, suffix }: QuoteContext): string {
@@ -295,25 +307,10 @@ function sendLocator() {
     clearLocator()
     return
   }
-  if (pageContext.value) {
-    const payload = pageContext.value
-    if (!pageLocator.canUse(payload.context)) return
-    const accepted = props.submitQuestion?.({
-      intent: 'ask-agent',
-      topicId: payload.context.topicId,
-      content: note,
-      quotedContext: {
-        kind: 'slide-page',
-        path: payload.context.path,
-        source: payload.context.source,
-        version: payload.context.version,
-        task_id: payload.context.taskId ?? null,
-        page: payload.page,
-        scope: payload.scope,
-        text: payload.text,
-      },
-    })
-    if (accepted) clearLocator()
+  // 结构化引用发得出去就走它；没有可发的（null）才退回下面拼一句话那条老路。
+  const sent = quoted.send(note)
+  if (sent !== null) {
+    if (sent) clearLocator()
     return
   }
   const message = t('work.room.preview.locateMessage', {
@@ -363,49 +360,40 @@ async function onAnnotate(payload: AnnotateDraft) {
 </script>
 
 <template>
-  <div ref="panelElement" class="panel-preview">
+  <div ref="panelElement" class="panel-preview" tabindex="-1">
     <!-- 这一条管的都是「当前预览」：发布、新标签页打开、全屏、重读。指定了文件的那一
          格没有这些——文档和表格自己有一条带名字和下载的条，网页那一条在它自己的预览
          条上（见下面）。 -->
     <div v-if="!path" class="preview-head">
       <!-- 发布是项目级的事，落点是项目首页上那块「网站」——在房间里看着一份页面
            想把它发出去，这是唯一要跳出去的一下。 -->
-      <v-btn
-        v-if="projectId"
-        :to="{ name: 'workspace-running', params: { projectId } }"
-        size="small"
-        variant="text"
-        color="medium-emphasis"
-      >
+      <BaseButton v-if="projectId" kind="ghost" size="sm" :to="{ name: 'workspace-running', params: { projectId } }">
         {{ t('work.room.preview.publishSite') }}
-      </v-btn>
+      </BaseButton>
       <v-spacer />
       <template v-if="previewUrl || previewFile">
-        <v-btn
+        <BaseButton
+          kind="ghost"
           icon="mdi-open-in-new"
-          size="small"
-          variant="text"
-          color="medium-emphasis"
+          size="sm"
           :title="t(displayedFrame?.live ? 'work.room.preview.openLatestPreview' : 'work.room.preview.openInNewTab')"
           @click="openPreviewInNewTab()"
         />
         <!-- 图片也要全屏：它正是那种「放大才画得准」的东西，而滚轮缩放只在全屏里
              开着（见 DesignImage 的 zoomOnWheel）。 -->
-        <v-btn
+        <BaseButton
           v-if="fullscreenSupported && (previewUrl || isImageArtifact)"
+          kind="ghost"
           :icon="previewFull ? 'mdi-fullscreen-exit' : 'mdi-arrow-expand-all'"
-          size="small"
-          variant="text"
-          color="medium-emphasis"
+          size="sm"
           :title="previewFull ? t('work.room.preview.exitFullscreen') : t('work.room.preview.fullscreen')"
           @click="fullscreen"
         />
       </template>
-      <v-btn
+      <BaseButton
+        kind="ghost"
         icon="mdi-refresh"
-        size="small"
-        variant="text"
-        color="medium-emphasis"
+        size="sm"
         :title="t('work.room.preview.refresh')"
         :loading="refreshing"
         @click="emit('refresh')"
@@ -413,6 +401,7 @@ async function onAnnotate(payload: AnnotateDraft) {
     </div>
 
     <v-alert v-if="fullscreenError" type="warning" density="compact">{{ fullscreenError }}</v-alert>
+    <v-alert v-if="autoReloaded" type="info" density="compact">{{ t('work.room.preview.autoReloaded') }}</v-alert>
 
     <div v-if="loading && !frames?.length" class="d-flex justify-center py-8">
       <v-progress-circular indeterminate color="primary" size="28" />
@@ -440,19 +429,17 @@ async function onAnnotate(payload: AnnotateDraft) {
              页打开）都不给它——这一份自己的两条留在这里，和文档条上那两条一样。 -->
         <template v-if="path">
           <v-spacer />
-          <v-btn
+          <BaseButton
+            kind="ghost"
             icon="mdi-open-in-new"
-            size="small"
-            variant="text"
-            color="medium-emphasis"
+            size="sm"
             :title="t(displayedFrame?.live ? 'work.room.preview.openLatestPreview' : 'work.room.preview.openInNewTab')"
             @click="openPreviewInNewTab(path)"
           />
-          <v-btn
+          <BaseButton
+            kind="ghost"
             icon="mdi-download"
-            size="small"
-            variant="text"
-            color="medium-emphasis"
+            size="sm"
             :title="t('work.room.preview.download')"
             @click="emit('download')"
           />
@@ -499,11 +486,13 @@ async function onAnnotate(payload: AnnotateDraft) {
           {{ t(previewTunnelUp ? 'tasks.preview.appUnavailable' : 'tasks.preview.connectionUnavailable') }}
         </div>
         <span v-if="displayedFrame">{{ t('work.room.preview.retainedPage') }}</span>
-        <v-btn size="small" variant="text" @click="emit('refresh')">{{ t('work.room.preview.retryTarget') }}</v-btn>
+        <BaseButton kind="secondary" size="sm" @click="emit('refresh')">{{
+          t('work.room.preview.retryTarget')
+        }}</BaseButton>
       </div>
-      <v-btn v-if="path" size="small" variant="text" :title="t('work.room.preview.refresh')" @click="emit('refresh')">{{
+      <BaseButton v-if="path" kind="ghost" size="sm" :title="t('work.room.preview.refresh')" @click="emit('refresh')">{{
         t('work.room.preview.refresh')
-      }}</v-btn>
+      }}</BaseButton>
       <!-- Authorization still POSTs only to named sandboxed content-domain frames. -->
       <div class="preview-frames">
         <template v-if="frames">
@@ -517,7 +506,7 @@ async function onAnnotate(payload: AnnotateDraft) {
             :aria-hidden="frame.id !== displayedFrame?.id"
             :tabindex="frame.id === displayedFrame?.id ? 0 : -1"
             :title="t('work.room.preview.frameTitle')"
-            sandbox="allow-scripts allow-forms allow-same-origin"
+            sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-popups-to-escape-sandbox"
             @load="emit('frame-load', frame.id, $event)"
             @error="emit('frame-error', frame.id, $event)"
           />
@@ -527,7 +516,7 @@ async function onAnnotate(payload: AnnotateDraft) {
           :name="frameName"
           class="preview-frame"
           :title="t('work.room.preview.frameTitle')"
-          sandbox="allow-scripts allow-forms allow-same-origin"
+          sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-popups-to-escape-sandbox"
         />
       </div>
     </div>
@@ -538,7 +527,9 @@ async function onAnnotate(payload: AnnotateDraft) {
       <div v-if="previewAppNote && !previewUrl" class="text-caption mt-1">
         {{ t(previewTunnelUp ? 'tasks.preview.appUnavailable' : 'tasks.preview.connectionUnavailable') }}
       </div>
-      <v-btn size="small" variant="text" @click="emit('refresh')">{{ t('work.room.preview.retryTarget') }}</v-btn>
+      <BaseButton kind="secondary" size="sm" @click="emit('refresh')">{{
+        t('work.room.preview.retryTarget')
+      }}</BaseButton>
     </div>
     <div v-else-if="previewReadError" class="text-center text-medium-emphasis py-8">
       <v-icon size="32" class="text-warning mb-2">mdi-file-alert-outline</v-icon>
@@ -574,37 +565,29 @@ async function onAnnotate(payload: AnnotateDraft) {
         <span class="doc__name">{{ documentName }}</span>
         <span class="doc__type t-meta">{{ documentType.label }}</span>
         <v-spacer />
-        <v-btn
+        <BaseButton
           v-if="canEdit && previewFile"
-          size="small"
-          variant="text"
-          color="primary"
+          kind="secondary"
+          size="sm"
           prepend-icon="mdi-pencil-outline"
           data-testid="edit-file"
           @click="editing = previewFile.path"
         >
           {{ t('work.room.preview.edit') }}
-        </v-btn>
-        <v-btn
+        </BaseButton>
+        <BaseButton
           v-if="previewFile && !previewFile.path.startsWith('library/')"
-          size="small"
-          variant="text"
-          color="medium-emphasis"
+          kind="ghost"
+          size="sm"
           prepend-icon="mdi-history"
           data-testid="file-history"
           @click="showHistory = !showHistory"
         >
           {{ t('work.room.preview.history') }}
-        </v-btn>
-        <v-btn
-          size="small"
-          variant="text"
-          color="medium-emphasis"
-          prepend-icon="mdi-download"
-          @click="emit('download')"
-        >
+        </BaseButton>
+        <BaseButton kind="ghost" size="sm" prepend-icon="mdi-download" @click="emit('download')">
           {{ t('work.room.preview.download') }}
-        </v-btn>
+        </BaseButton>
       </div>
       <RoomFileHistory
         v-if="showHistory && topicId && previewFile"
@@ -726,21 +709,24 @@ async function onAnnotate(payload: AnnotateDraft) {
       <div class="text-caption mt-1">{{ t('work.room.preview.notTextDetail', { path: previewFile.path }) }}</div>
       <!-- 指定了文件的那一格也走这条路：内容域按路径服务房间里的任意一份，所以那
            一句话在这一格同样成立——它带着文件自己的地址过去。 -->
-      <v-btn
+      <BaseButton
+        kind="secondary"
+        size="sm"
         class="mt-3"
-        size="small"
-        variant="tonal"
         prepend-icon="mdi-open-in-new"
         @click="openPreviewInNewTab(previewFile.path)"
       >
         {{ t('work.room.preview.openInNewWindow') }}
-      </v-btn>
+      </BaseButton>
     </div>
     <div v-else class="text-center text-medium-emphasis py-8">
       <v-icon size="32" class="text-disabled mb-2">mdi-eye-off-outline</v-icon>
       <div>{{ t('work.room.preview.empty') }}</div>
     </div>
 
+    <!-- 这个房间里摆出来过的东西，以及把其中一份留进资料库的那个动作 (#1085 结
+         论四)。上面那块预览只看得到最后一样，而那个动作只有人能按。 -->
+    <RoomOutputs v-if="!path" :topic-id="topicId" @open="emit('open-file', $event)" />
     <PreviewLocator
       v-model:note="locatorNote"
       :target="imageRegion.target.value ? null : locator"
@@ -748,9 +734,6 @@ async function onAnnotate(payload: AnnotateDraft) {
       @send="sendLocator"
       @cancel="clearLocator"
     />
-    <!-- 这个房间里摆出来过的东西，以及把其中一份留进资料库的那个动作 (#1085 结
-         论四)。上面那块预览只看得到最后一样，而那个动作只有人能按。 -->
-    <RoomOutputs v-if="!path" :topic-id="topicId" @open="emit('open-file', $event)" />
 
     <v-dialog :model-value="!!editing" fullscreen @update:model-value="(open: boolean) => !open && closeEditor()">
       <RoomFileEditor

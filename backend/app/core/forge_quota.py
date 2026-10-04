@@ -14,7 +14,6 @@ to a request carrying any other credential is not looked at.
 
 from __future__ import annotations
 
-import math
 import time
 from dataclasses import dataclass
 
@@ -76,13 +75,6 @@ def wait_seconds(response: httpx.Response) -> float | None:
     if (reset := response.headers.get("x-ratelimit-reset")) and reset.isdigit():
         return float(reset) - time.time()
     return None
-
-
-def wait_text(wait_s: float | None) -> str:
-    """A refusal's wait in the words a person reads."""
-    if wait_s is None:
-        return "稍后自动恢复"
-    return f"约 {max(1, math.ceil(wait_s / 60))} 分钟后恢复"
 
 
 def refused_until(installation_id: int) -> float | None:

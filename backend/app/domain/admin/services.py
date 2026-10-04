@@ -11,8 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.errors import BadRequestError, ConflictError, ForbiddenError
+from app.core.sentences import say
 from app.domain.admin import repositories as repo
-from app.domain.block.notice_text import say
 from app.domain.identity.services import IdentityService
 from app.domain.user.services import (
     chosen_avatars_by_handle,
@@ -191,14 +191,14 @@ class AdminService:
         """
         wanted = handle.strip()
         if not wanted:
-            raise BadRequestError("要加的人不能是空的")
+            raise BadRequestError(say("adminAddWhom"))
         if wanted in root_admin_handles():
-            raise ConflictError(f"{wanted} 是部署配置里的根管理员，不用在页面上加")
+            raise ConflictError(say("adminAlreadyRootAdmin", handle=wanted))
         user = await user_by_handle(self._session, wanted)
         if user is None:
-            raise BadRequestError(f"平台里没有 handle 是 {wanted} 的账号")
+            raise BadRequestError(say("adminNoSuchAccount", handle=wanted))
         if await IdentityService(self._session).is_agent(wanted):
-            raise BadRequestError(f"{wanted} 是 agent，而管理动作 agent 不能做")
+            raise BadRequestError(say("adminAgentCannotAdmin", handle=wanted))
         written = await self._repo.add_admin(wanted, by)
         # 刚加完的人，同一个请求里再问一次 `is_admin` 要能看见他（比如接口返回
         # 新名单）。memo 是请求级的，但请求还没结束。
@@ -214,9 +214,7 @@ class AdminService:
         """
         wanted = handle.strip()
         if wanted in root_admin_handles():
-            raise ConflictError(
-                f"{wanted} 是部署配置里的根管理员，页面上删不掉 —— 改配置要有服务器权限"
-            )
+            raise ConflictError(say("adminRootAdminCannotRemove", handle=wanted))
         removed = await self._repo.remove_admin(wanted)
         self._admin_handles = None
         return removed

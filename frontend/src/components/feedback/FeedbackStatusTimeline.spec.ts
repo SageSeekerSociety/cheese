@@ -78,7 +78,89 @@ describe('不修复', () => {
       'declined'
     )
     const titles = Array.from(container.querySelectorAll('.fb-step__title'), (el) => el.textContent?.trim())
-    expect(titles).toEqual(['已收录', '处理中', '不修复'])
+    // 「处理中」那一档后面接了「不修复」，也就是已经走过去了；走过去的那一档
+    // 换成「已处理」（它说的是「有人正在弄」，可这一步已经不在当前了）。
+    expect(titles).toEqual(['已收录', '已处理', '不修复'])
     expect(container.querySelector('.fb-step--current .fb-step__title')?.textContent?.trim()).toBe('不修复')
+  })
+})
+
+/**
+ * 说明栏上的两种空档，说的都是记录，不是这件事做没做：当前这一步之后的写「未开始」；
+ * 之前的说明它已经过去了、只是没单独留下时间 —— 后台能把一条反馈从「已收录」一步按到
+ * 「已上线」；STATUS_LADDER 也允许直达，直达不补写中间那几行，那里写「未开始」和事实
+ * 相反。断言行为、不锁具体用词。
+ */
+describe('没有记录的那些档', () => {
+  const t = (key: string) => i18n.global.t(key)
+  const count = (haystack: string, needle: string) => haystack.split(needle).length - 1
+
+  it('一步按到「已上线」时，中间两档不说「未开始」', () => {
+    const { container } = mountTimeline(
+      [
+        { status: 'received', by_handle: 'someone', at: '2026-09-20T00:00:00Z', note: null },
+        { status: 'deployed', by_handle: 'andy', at: '2026-09-21T00:00:00Z', note: null },
+      ],
+      'deployed'
+    )
+    const text = container.textContent ?? ''
+    expect(count(text, t('feedback.timeline.notStarted'))).toBe(0)
+    expect(count(text, t('feedback.timeline.noRecord'))).toBe(2)
+  })
+
+  it('还没走到的档照旧说「未开始」', () => {
+    const { container } = mountTimeline(
+      [
+        { status: 'received', by_handle: 'someone', at: '2026-09-20T00:00:00Z', note: null },
+        { status: 'in_progress', by_handle: 'andy', at: '2026-09-21T00:00:00Z', note: null },
+      ],
+      'in_progress'
+    )
+    expect(count(container.textContent ?? '', t('feedback.timeline.notStarted'))).toBe(2)
+  })
+})
+
+/**
+ * 档位的名字分三副：还没轮到的不带「已」，正在这一步的和已经走过的各自一副。
+ * 「处理中」走过去之后是「已处理」—— 它说的是「有人正在弄」，可这一步已经过去了。
+ * 断的是「换上了另一套名字」，不锁具体用词。
+ */
+describe('档位的三副名字', () => {
+  const t = (key: string) => i18n.global.t(key)
+  const titles = (el: Element) => Array.from(el.querySelectorAll('.fb-step__title'), (n) => n.textContent?.trim())
+
+  it('停在「处理中」时，后面两档用没走到的名字', () => {
+    const { container } = mountTimeline(
+      [
+        { status: 'received', by_handle: 'someone', at: '2026-09-20T00:00:00Z', note: null },
+        { status: 'in_progress', by_handle: 'andy', at: '2026-09-21T00:00:00Z', note: null },
+      ],
+      'in_progress'
+    )
+    expect(titles(container)).toEqual([
+      t('feedback.status.received'),
+      t('feedback.status.in_progress'),
+      t('feedback.status.pending.resolved'),
+      t('feedback.status.pending.deployed'),
+    ])
+    // 还没走到第三步：这一格是「正在处理」，不能提前说成「已处理」。
+    expect(titles(container)[1]).not.toBe(t('feedback.status.passed.in_progress'))
+  })
+
+  it('走到「已上线」之后，四格都用走到的名字', () => {
+    const { container } = mountTimeline(
+      [
+        { status: 'received', by_handle: 'someone', at: '2026-09-20T00:00:00Z', note: null },
+        { status: 'deployed', by_handle: 'andy', at: '2026-09-21T00:00:00Z', note: null },
+      ],
+      'deployed'
+    )
+    expect(titles(container)).toEqual([
+      t('feedback.status.received'),
+      // 「处理中」说的是「有人正在弄」，可这条已经上线了：走过去的那一档换一副面孔。
+      t('feedback.status.passed.in_progress'),
+      t('feedback.status.resolved'),
+      t('feedback.status.deployed'),
+    ])
   })
 })

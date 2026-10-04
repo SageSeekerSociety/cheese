@@ -11,6 +11,7 @@ import type { Block, RoomTask, TodoItem } from '../../cx_types'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 import { ApiError, editMessage, getProgress, getRoomTask, sayOnRoomTask } from '../../api'
+import { useStickToBottom } from '../../composables/useStickToBottom'
 import { isAgentBlock, isAgentHandle } from '../../lib/authorship'
 import { columnDotStyle, phraseLabel } from '../../lib/board'
 import { noticeText } from '../../lib/noticeText'
@@ -27,6 +28,7 @@ import TopicAcceptCard from '../TopicAcceptCard.vue'
 
 import TodoChecklist from './TodoChecklist.vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
 import { taskTitle } from '@/lib/topicState'
@@ -73,6 +75,7 @@ const sending = ref(false)
 // 只在任务没加载出来时才画，写进它的话永远不会出现在屏幕上。
 const sendError = ref<string | null>(null)
 const timelineRef = ref<HTMLElement | null>(null)
+useStickToBottom(timelineRef, 80)
 
 async function load(silent = false) {
   const room = props.roomId
@@ -366,9 +369,9 @@ async function send() {
 
     <div v-else-if="!card" class="px-3 py-4 t-body c-muted">
       {{ errorMsg ?? t('work.room.card.notFound') }}
-      <v-btn v-if="errorMsg" size="small" variant="text" class="ms-1" @click="load()">{{
+      <BaseButton v-if="errorMsg" kind="secondary" size="sm" class="ms-1" @click="load()">{{
         t('work.room.card.retry')
-      }}</v-btn>
+      }}</BaseButton>
     </div>
 
     <template v-else>

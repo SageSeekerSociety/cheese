@@ -6,6 +6,7 @@
   it never shows.
 -->
 <template>
+  <!-- eslint-disable-next-line vue/no-restricted-syntax -- nav bar button whose look this component styles exactly (design-system §3.6 exception) -->
   <v-btn
     v-if="status?.state === 'ready'"
     class="update-ready"

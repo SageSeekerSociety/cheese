@@ -20,12 +20,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.errors import NotFoundError, ValidationError
+from app.core.sentences import listing, say
 from app.domain.agent.skills import (
     RESERVED_SKILL_NAMES,
     SKILL_FILE_SUFFIXES,
     native_skill_files,
 )
-from app.domain.block.notice_text import listing, say
 from app.domain.project_skill.models import ProjectSkill, ProjectSkillRevision
 
 NAME = re.compile(r"^[a-z0-9][a-z0-9-]{1,47}$")
@@ -44,7 +44,7 @@ def mirror_root(project_id: uuid.UUID | str) -> Path:
 
 def _validate_files(files: dict) -> dict[str, str]:
     if not isinstance(files, dict):
-        raise ValidationError("配套文件要是「路径 → 内容」")
+        raise ValidationError(say("skillFilesShape"))
     if len(files) > MAX_FILES:
         raise ValidationError(say("skillFilesTooMany", max=MAX_FILES))
     out: dict[str, str] = {}
@@ -61,7 +61,7 @@ def _validate_files(files: dict) -> dict[str, str]:
             allowed = listing(SKILL_FILE_SUFFIXES)
             raise ValidationError(say("skillFileNotText", path=raw, allowed=allowed))
         if not isinstance(content, str):
-            raise ValidationError(f"{raw}：内容要是文本")
+            raise ValidationError(say("skillFileContentNotText", path=raw))
         if len(content.encode()) > MAX_FILE_BYTES:
             raise ValidationError(
                 say("skillFileTooLarge", path=raw, kb=MAX_FILE_BYTES // 1000)

@@ -19,6 +19,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import AppError, BaseError, ValidationError
+from app.core.sentences import say
 from app.domain.site.services import (
     get_current_release,
     read_release_file,
@@ -43,12 +44,12 @@ DEVICE_FEATURES_OFF = (
 def content_origin(project_id: uuid.UUID) -> str:
     domain = settings.sites_domain.strip().lower()
     if not domain or not re.fullmatch(r"[a-z0-9]+(?:[.-][a-z0-9]+)*", domain):
-        raise ValidationError("Site 托管域名尚未配置")
+        raise ValidationError(say("siteDomainUnset"))
     local = domain == "localhost" or domain.endswith(".localhost")
     if settings.sites_scheme != "https" and not (
         local and settings.sites_scheme == "http"
     ):
-        raise ValidationError("Site 托管需要 HTTPS")
+        raise ValidationError(say("siteNeedsHttps"))
     platform_host = urlsplit(settings.frontend_url).hostname or ""
     if not local and (
         len(domain.split(".")) < 2
@@ -56,7 +57,7 @@ def content_origin(project_id: uuid.UUID) -> str:
     ):
         # Conservative for multi-label suffixes such as co.uk: deployments can
         # use distinct top-level domains instead of relying on a stale PSL.
-        raise ValidationError("Site 托管域名必须与平台域名隔离")
+        raise ValidationError(say("siteDomainNotIsolated"))
     port = f":{settings.sites_port}" if settings.sites_port else ""
     return f"{settings.sites_scheme}://{project_id.hex}.{domain}{port}"
 

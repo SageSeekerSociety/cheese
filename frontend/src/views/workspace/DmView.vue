@@ -8,6 +8,7 @@ import { useDisplay } from 'vuetify'
 import { getPrivateChat, listProjectAgents } from '@/api'
 import ChatPanel from '@/components/ChatPanel.vue'
 import { t } from '@/i18n'
+import { memberName, teammateName } from '@/lib/agentNames'
 import { agentHandleOf } from '@/lib/dm'
 import { userRefRoute } from '@/lib/userRef'
 import { myHandle } from '@/me'
@@ -37,13 +38,16 @@ const loading = ref(false)
 const error = ref<string | null>(null)
 // The teammate's own name, once the room is open — a project may have several
 // and 「芝士」 for all of them would make the header a lie.
-const agentName = ref<string | null>(null)
+const agentRow = ref<{ display_name: string; name_source?: string } | null>(null)
+const agentName = computed(() =>
+  agentRow.value ? teammateName(agentRow.value.display_name, agentRow.value.name_source) || null : null
+)
 
 // Header label: the peer's name for a person DM, else this teammate's.
 const title = computed<string>(() => {
   if (agentHandle.value !== null) return agentName.value || agentHandle.value
   const m = store.members.find((x) => x.user_handle === peerHandle.value)
-  return m?.name || peerHandle.value || ''
+  return memberName(m) || peerHandle.value || ''
 })
 
 // 手机上只有一条顶栏：它写对方的名字，← 回名册（路由的 backTo），页内那条头就
@@ -59,7 +63,7 @@ async function load() {
   loading.value = true
   error.value = null
   topic.value = null
-  agentName.value = null
+  agentRow.value = null
   try {
     const fetched = await getPrivateChat(pid, me, peer ?? undefined, agent ?? undefined)
     if (props.projectId !== pid || peerHandle.value !== peer) return
@@ -83,7 +87,7 @@ async function loadAgentName(pid: string, handle: string) {
   try {
     const found = (await listProjectAgents(pid)).data.find((a) => a.handle === handle)
     if (props.projectId === pid && agentHandle.value === handle) {
-      agentName.value = found?.display_name || null
+      agentRow.value = found ?? null
     }
   } catch {
     // 标题退回 handle。

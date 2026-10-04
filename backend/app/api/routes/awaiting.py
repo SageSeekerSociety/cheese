@@ -103,8 +103,11 @@ async def waiting_items(
     beats = await TaskRepository(db).last_block_at_for_tasks(task_ids)
     # {地点: 这道题在等谁}。一个待确认问题只有**发起那一轮的人**能回答，提问那一刻
     # 就记在题上——不是事后去问轮次：芝士问完就收尾，那一轮早就关了。
-    asked_tasks = await blocks.tasks_awaiting_an_answer(task_ids)
-    asked_rooms = await blocks.rooms_awaiting_an_answer(topic_ids)
+    room_questions, task_questions = await blocks.awaiting_answer_blocks(
+        topic_ids, task_ids
+    )
+    asked_tasks = {place: question[0] for place, question in task_questions.items()}
+    asked_rooms = {place: question[0] for place, question in room_questions.items()}
     # 「运行中」也在这一页出现（一列里的每一格都是同一个函数算的），所以这一屏每行
     # 要的两位当下事实也一次问完 —— 这批活的屏幕和分身（`agent.liveness`）。
     live = await task_liveness(chat, db, tasks)
@@ -150,6 +153,7 @@ async def waiting_items(
                 phrase=shown.phrase,
                 reason=reason,
                 at=beats.get(task.id) or task.updated_at,
+                block_id=task_questions[task.id][1] if reason == "asked" else None,
             )
         )
 
@@ -190,6 +194,7 @@ async def waiting_items(
                 phrase=shown.phrase,
                 reason=reason,
                 at=topic.updated_at,
+                block_id=room_questions[topic.id][1] if reason == "asked" else None,
             )
         )
 

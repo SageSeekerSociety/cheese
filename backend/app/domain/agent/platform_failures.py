@@ -23,7 +23,7 @@ import errno
 import re
 from dataclasses import dataclass, replace
 
-from app.domain.block.notice_text import NoticeText, notice_keys, say
+from app.core.sentences import NoticeText, notice_keys, say
 
 STORAGE_EXHAUSTED_CODE = "storage_exhausted"
 RUNTIME_IMAGE_MISSING_CODE = "runtime_image_missing"

@@ -14,13 +14,13 @@ from app.domain.agent.cloud_provider import CloudChannel, CloudLease
 from app.domain.agent.compute import ComputePool, build_compute_pool
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.gateway import LlmGateway
-from app.domain.agent.harness.pi.handless import HandlessSessions
 from app.domain.agent.profiles import ProfileRegistry, build_registry
 from app.domain.agent.runtime import (
     AgentWorkRunner,
     addressed_to_agent,
     get_broker,
 )
+from app.domain.agent.session_host.host import SessionHost
 from app.domain.device.service import DeviceService
 from app.domain.device.sql_repository import SqlDeviceRepository
 from app.domain.identity.actor import Actor
@@ -44,7 +44,7 @@ from app.domain.user.services import UserAuthService
 __all__ = [
     "get_db",
     "get_chat_service",
-    "get_handless_sessions",
+    "get_session_host",
     "get_profile_registry",
     "get_broker",
     "get_work_runner",
@@ -132,11 +132,11 @@ def get_llm_gateway() -> LlmGateway | None:
 
 
 @lru_cache
-def get_handless_sessions() -> HandlessSessions:
-    """Every session with no hands this process talks to — a person's 芝士, a
-    document thread's. One per process, like the chat service: it remembers
-    which sessions are running and where each one's answer was read to."""
-    return HandlessSessions(device_hub)
+def get_session_host() -> SessionHost:
+    """The sessions on the session host this process talks to — a person's
+    芝士, a document thread's. One per process, like the chat service: it
+    remembers which sessions are running and where each one was read to."""
+    return SessionHost(device_hub)
 
 
 @lru_cache
@@ -231,8 +231,8 @@ def get_cloud_wakeup() -> CloudWakeup:
         )
 
     async def announce_failure(topic_id: uuid.UUID, text: str) -> None:
+        from app.core.sentences import say
         from app.domain.agent.platform_notices import SEVERITY_ERROR, WHO_HUMAN
-        from app.domain.block.notice_text import say
 
         block = await chat.post_system_event(
             topic_id,

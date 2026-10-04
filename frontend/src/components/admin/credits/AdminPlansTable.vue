@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 
 import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminGrid from '@/components/admin/AdminGrid.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 import { AUDIENCE_KEY, fmtCredits, planTiers, TIER_KEY } from '@/lib/adminCredits'
 
 // 方案一览：每个方案发多少、限多少、能用哪几档模型。
@@ -94,7 +95,7 @@ function tiersText(plan: Plan): string {
         {{ fmtCredits(plan.team_count, locale) }}
       </td>
       <td class="acp__num" :data-label="t('credits.plans.column.actions')">
-        <v-btn variant="text" size="small" @click="emit('edit', plan)">{{ t('credits.plans.edit') }}</v-btn>
+        <BaseButton kind="ghost" size="sm" @click="emit('edit', plan)">{{ t('credits.plans.edit') }}</BaseButton>
       </td>
     </tr>
   </AdminGrid>

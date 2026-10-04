@@ -240,6 +240,8 @@ class AgentResult:
     thread_label: str | None = None
     agent_handle: str | None = None
     harness: str | None = None
+    # Successful native main-work completion, not cancellation or synthetic Stop.
+    input_work_completed: bool = False
     # A message the session read inside a turn already running has no ending
     # of its own: it ends with that turn, which this names. The room heard
     # that turn end; this ending only settles the message's own work.

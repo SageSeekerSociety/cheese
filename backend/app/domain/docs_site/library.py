@@ -12,13 +12,15 @@ only, and asking for a developer page by name is refused, not answered empty.
 """
 
 import re
+import uuid
 from dataclasses import dataclass
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.sentences import say
 from app.domain.docs_site import access, retrieval
 from app.domain.project.models import ProjectForge, ProjectGitInstallation
 
@@ -30,26 +32,30 @@ class DevDocsForbidden(Exception):
     """A developer page asked for from a project that may not read them."""
 
 
-async def reads_dev_docs(session: AsyncSession, project_id) -> bool:
-    """Whether this project works on the platform's own repository."""
+async def platform_projects(session: AsyncSession) -> set[uuid.UUID]:
+    """The projects working on the platform's own repository.
+
+    Two gates read it: the developer pages here, and who may claim a report in
+    the feedback center (`FeedbackService.may_claim`).
+    """
     allowed = {r.strip().lower() for r in settings.docs_dev_repositories if r.strip()}
     if not allowed:
-        return False
-    repos = [
-        *(
+        return set()
+    found: set[uuid.UUID] = set()
+    for model in (ProjectForge, ProjectGitInstallation):
+        found.update(
             await session.scalars(
-                select(ProjectForge.repo).where(ProjectForge.project_id == project_id)
-            )
-        ).all(),
-        *(
-            await session.scalars(
-                select(ProjectGitInstallation.repo).where(
-                    ProjectGitInstallation.project_id == project_id
+                select(model.project_id).where(
+                    func.lower(func.trim(model.repo)).in_(allowed)
                 )
             )
-        ).all(),
-    ]
-    return any((repo or "").strip().lower() in allowed for repo in repos)
+        )
+    return found
+
+
+async def reads_dev_docs(session: AsyncSession, project_id) -> bool:
+    """Whether this project works on the platform's own repository."""
+    return project_id in await platform_projects(session)
 
 
 @dataclass(frozen=True)
@@ -116,7 +122,7 @@ async def read_page(
     ``ValueError`` for something that is not a page name."""
     slug = page_slug(page)
     if slug is None:
-        raise ValueError(f"不是文档页：{page}（写页名，如 accept 或 dev/turn）")
+        raise ValueError(say("docsNotAPage", page=page))
     if slug.startswith("dev/") and not dev:
         raise DevDocsForbidden(slug)
     base = _docs_base()

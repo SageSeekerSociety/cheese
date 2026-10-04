@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
+from app.core.sentences import say
 from app.domain.agent.chat import announce_mentions, text_as_sent
 from app.domain.agent.harness.prompt import thread_relay_prompt
 from app.domain.block.about import EventAbout, landing
@@ -30,7 +31,6 @@ from app.domain.block.models import (
     BlockKind,
     consumed_turn,
 )
-from app.domain.block.notice_text import say
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.room_task.services import TaskService

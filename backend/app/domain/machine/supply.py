@@ -16,6 +16,7 @@ from typing import Any
 
 from app.core.config import settings
 from app.core.errors import ValidationError
+from app.core.sentences import say
 from app.domain.agent.compute_configs import PLATFORM_BOUNDS, ComputeChoice
 from app.domain.machine.microcloud import MicroCloudClient, MicroCloudError
 
@@ -91,7 +92,7 @@ class SupplyRange:
         problems = self.problems(values)
         if problems:
             raise ValidationError(
-                "所选云配置超出当前供应范围：" + "；".join(problems) + "。请调整后再试"
+                say("machineConfigOutOfSupply", problems="；".join(problems))
             )
 
     def as_json(self) -> dict[str, Any]:

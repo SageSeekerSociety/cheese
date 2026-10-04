@@ -66,7 +66,14 @@ export interface Person {
 export type SceneEvent =
   // 有人在房间里说一句话（人或队友）。点名写成 <@handle>，和真消息一样。
   // 带 `options` 的是芝士用 cheese_ask 发的按钮卡；`id` 让后面的 answer 找得到它。
-  | { at: number; do: 'say'; who: string; text: string; id?: string; options?: string[] }
+  | {
+      at: number
+      do: 'say'
+      who: string
+      text: string
+      id?: string
+      options?: { text: string; explain?: string }[]
+    }
   // 有人点了按钮卡上的一个选项。
   | { at: number; do: 'answer'; id: string; option: string; by: string }
   // 芝士的步骤清单（todo_write）。同一个 id 再写一次是改那一条，不是新发一条。
@@ -363,7 +370,7 @@ export function frameAt(scene: Scene, step: number, elapsed: number): Frame {
             author: e.who,
             content: e.text,
             created_at,
-            ...(e.options ? { meta: { options: e.options } } : {}),
+            ...(e.options ? { meta: { options: e.options, allow_other: true, reject_option: true } } : {}),
           }
           chat.push({ kind: 'message', id: block.id, author: e.who, text: e.text, time: hhmm(clock), block })
           break
@@ -371,7 +378,23 @@ export function frameAt(scene: Scene, step: number, elapsed: number): Frame {
         case 'answer': {
           const line = chat.find((l) => l.id === e.id)
           if (line?.block)
-            line.block = { ...line.block, meta: { ...line.block.meta, answered: e.option, answered_by: e.by } }
+            line.block = {
+              ...line.block,
+              meta: {
+                ...line.block.meta,
+                answer_log: [
+                  {
+                    v: 1,
+                    kind: 'option',
+                    option: e.option,
+                    note: null,
+                    by: e.by,
+                    at: `${created_at}`,
+                    client_op_id: 'demo',
+                  },
+                ],
+              },
+            }
           break
         }
         case 'checklist': {

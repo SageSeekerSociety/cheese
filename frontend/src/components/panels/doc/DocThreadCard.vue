@@ -62,13 +62,26 @@ function rendered(author: string, content: string): { html: boolean; text: strin
     : { html: false, text: plainTokens(content, maps) }
 }
 
+// 芝士正在用的工具，说成它在做的事；没列出的就说在回答
+const TOOL_STEPS: Record<string, string> = {
+  cheese_doc_get: 'reading',
+  cheese_doc_edit: 'editing',
+  read: 'readingCode',
+  ls: 'readingCode',
+  find: 'readingCode',
+  grep: 'readingCode',
+  git: 'readingCode',
+  cheese_project_search: 'searching',
+  cheese_memory_read: 'readingMemory',
+  cheese_attachment_read: 'readingAttachment',
+}
+
 const step = computed(() => {
   const a = props.activity
   if (!a) return null
   if (a.state === 'queued') return t('work.room.docAgent.queued', { agent: props.agentName })
-  if (a.tool === 'read_document') return t('work.room.comments.reading', { agent: props.agentName })
-  if (a.tool === 'edit_document') return t('work.room.comments.editing', { agent: props.agentName })
-  return t('work.room.docAgent.answering', { agent: props.agentName })
+  const doing = a.tool ? TOOL_STEPS[a.tool] : undefined
+  return t(doing ? `work.room.comments.${doing}` : 'work.room.docAgent.answering', { agent: props.agentName })
 })
 
 // ---- 回复框：在看这张时才有，随字长高；回车发出去，Shift+回车换行 ----
@@ -233,15 +246,17 @@ function onCard(e: MouseEvent) {
   background: var(--surface);
   cursor: pointer;
   transition:
-    border-color var(--dur-quick) var(--ease-standard),
-    box-shadow var(--dur-quick) var(--ease-standard);
+    background-color var(--dur-quick) var(--ease-standard),
+    border-color var(--dur-quick) var(--ease-standard);
 }
 .doc-thread-card:hover {
   border-color: var(--line-2);
 }
+/* The card carries no shadow (§3.4), so the active thread is marked by the fill
+   a selected row uses, not by a border the hover state already shows. */
 .doc-thread-card.is-active {
   border-color: var(--line-2);
-  box-shadow: var(--shadow-1);
+  background: var(--fill);
   cursor: default;
 }
 .doc-thread-card.is-resolved:not(.is-active) {

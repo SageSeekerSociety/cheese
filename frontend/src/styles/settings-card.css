@@ -1,11 +1,14 @@
 /* The settings pages' shared frame: a page title with its lede, then cards of
-   rows, each row a label, what is there now, and the action on it. */
+   rows, each row a label, what is there now, and the action on it.
+   Width and horizontal padding are NOT set here: every settings page lives in
+   the overlay's one content column (components/common/SettingsOverlay,
+   `.so__content` — 720 centred, 24 in). Only this page's own vertical rhythm
+   stays. */
 
 .settings-page {
   display: grid;
   gap: 20px;
-  max-width: var(--page-w, 920px);
-  padding: 24px 32px 48px;
+  padding: 24px 0 48px;
 }
 
 .settings-page__lede {
@@ -95,6 +98,16 @@
   color: var(--text);
 }
 
+/* The last row of a card that holds a FORM: its one main action, at the end of
+   the thing it submits. A card of a LIST page has no foot — its actions belong
+   to a row, or to the toolbar above. */
+.settings-foot {
+  display: flex;
+  justify-content: flex-end;
+  padding: 16px 24px;
+  border-top: 1px solid var(--line);
+}
+
 /* A card that holds a list (categories, templates, invite codes): one row per
    item, separated by --line, with the item's actions at the end. */
 .settings-list {
@@ -120,7 +133,7 @@
 
 @media (max-width: 599.98px) {
   .settings-page {
-    padding: 16px 16px 32px;
+    padding: 16px 0 32px;
   }
 
   .srow {

@@ -26,6 +26,7 @@ import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { getInbox, markRead, resolveAlert, sendFeedback } from '@/api'
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { label, NOTIF_KIND } from '@/labels'
 import { myHandle } from '@/me'
@@ -64,6 +65,15 @@ const deck = computed(() => {
 const heading = computed(() =>
   deck.value[0]?.kind === 'change_alert' ? t('work.needsYou.changeAlert') : t('work.needsYou.waiting')
 )
+
+/** 卡里那一行 kind 标签还要不要写。
+ *
+ *  这一叠的标题说的是最上面那条是什么，而一条变更提醒的标题就是「变更提醒」——卡里
+ *  再写一遍是同一句话说两次。决策请求不同：标题写的是「等你回答」，标签「决策请求」
+ *  是它才有的信息，留着。 */
+function showKind(row: InboxItem): boolean {
+  return label(NOTIF_KIND, row.kind) !== heading.value
+}
 
 /** 这一条要「点进去看」的地方 —— 它的房间。
  *
@@ -190,51 +200,51 @@ watch(
                  答案。 -->
             <template v-if="depth === 0">
               <div class="asked-card__head">
-                <span class="asked-card__kind t-meta c-faint">{{ label(NOTIF_KIND, row.kind) }}</span>
+                <!-- The heading above already names a change alert, so the card does not
+                     repeat it; a decision request is headed 「等你回答」 and keeps its tag. -->
+                <span v-if="showKind(row)" class="asked-card__kind t-meta c-faint">{{
+                  label(NOTIF_KIND, row.kind)
+                }}</span>
                 <span class="asked-card__title t-body">{{ row.title }}</span>
               </div>
               <!-- 两行，短的也占两行：一叠卡的高度必须是常数，否则答完一条、下一条
                    问得短一点，板就跟着抬一下。 -->
               <p class="asked-card__body t-meta c-muted">{{ row.body }}</p>
               <div class="asked-card__acts">
-                <v-btn
+                <BaseButton
                   v-for="option in optionsOf(row)"
                   :key="option"
-                  size="small"
-                  variant="outlined"
-                  color="primary"
+                  kind="secondary"
+                  size="sm"
                   :loading="busy === row.id"
                   @click="decide(row, option)"
                 >
                   {{ option }}
-                </v-btn>
-                <v-btn v-if="canOpen(row)" size="small" variant="outlined" color="primary" @click="open(row)">
+                </BaseButton>
+                <BaseButton v-if="canOpen(row)" kind="secondary" size="sm" @click="open(row)">
                   {{ t('work.needsYou.open') }}
-                </v-btn>
-                <v-btn
+                </BaseButton>
+                <BaseButton
                   v-if="!optionsOf(row).length"
-                  size="small"
-                  variant="text"
-                  color="on-surface-variant"
+                  kind="ghost"
+                  size="sm"
                   :loading="busy === row.id"
                   @click="dismiss(row)"
                 >
                   {{ t('work.needsYou.dismiss') }}
-                </v-btn>
+                </BaseButton>
                 <v-spacer />
-                <v-btn
+                <BaseButton
                   icon="mdi-thumb-up-outline"
-                  size="x-small"
-                  variant="text"
-                  :color="row.feedback === 'up' ? 'primary' : 'on-surface-variant'"
+                  size="sm"
+                  :kind="row.feedback === 'up' ? 'primary' : 'ghost'"
                   :aria-label="t('work.needsYou.helpful')"
                   @click="rate(row, 'up')"
                 />
-                <v-btn
+                <BaseButton
                   icon="mdi-thumb-down-outline"
-                  size="x-small"
-                  variant="text"
-                  :color="row.feedback === 'down' ? 'primary' : 'on-surface-variant'"
+                  size="sm"
+                  :kind="row.feedback === 'down' ? 'primary' : 'ghost'"
                   :aria-label="t('work.needsYou.notHelpful')"
                   @click="rate(row, 'down')"
                 />
@@ -314,16 +324,16 @@ watch(
 /* 后面那两张往下挪、缩一点、淡一点：露出来的那道边就是「后面还有」。它们不接事件
    ——点在那道边上要答的还是最上面那一条。 */
 .asked-card--d0 {
-  z-index: 3;
+  z-index: var(--z-raised-3);
 }
 .asked-card--d1 {
-  z-index: 2;
+  z-index: var(--z-raised-2);
   transform: translateY(6px) scale(0.985);
   opacity: 0.6;
   pointer-events: none;
 }
 .asked-card--d2 {
-  z-index: 1;
+  z-index: var(--z-raised);
   transform: translateY(12px) scale(0.97);
   opacity: 0.35;
   pointer-events: none;
@@ -370,7 +380,7 @@ watch(
 /* 答掉的那一条在原地淡出，后面那张同时顶上来。淡出期间它盖在最上面（不然它是在新
    的第一张后面消失的，看着像下一张先冒出来），也不再接事件。 */
 .asked-card-leave-active {
-  z-index: 4;
+  z-index: var(--z-raised-4);
   pointer-events: none;
 }
 .asked-card-enter-from,

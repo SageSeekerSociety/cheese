@@ -19,15 +19,25 @@ from app.domain.agent.harness.driven.journal import PAGE
 from app.domain.agent.service import AgentMessage, AgentResult
 
 
+async def _settle_receipt(receipt):
+    """These tests exercise output delivery; receipt persistence is available."""
+
+
 def _journal(work: str) -> list[dict]:
     stamp = {"work_id": work}
     records = [
         {
             "type": "user",
-            "uuid": "echo",
+            "uuid": str(uuid.uuid4()),
             "isReplay": True,
             "message": {"role": "user", "content": "clean up the build"},
-            "cheese": {**stamp, "turn_start": True, "receipt": True},
+            "cheese": {
+                **stamp,
+                "turn_start": True,
+                "receipt": True,
+                "receipt_work_id": work,
+                "receipt_session_id": "native-session",
+            },
         },
         {
             "type": "assistant",
@@ -125,8 +135,10 @@ async def test_a_refused_command_does_not_stop_the_room_reading_the_turn(tmp_pat
         call,
         consume,
         activity,
-        session_id=None,
+        session_id="native-session",
+        recipient_handle="cheese-a",
         announce=announce,
+        receipts=_settle_receipt,
         pulse=lambda seat, marks: pulses.append(marks),
     )
     try:
@@ -152,10 +164,16 @@ def _long_turn(work: str, said: int) -> list[dict]:
     records = [
         {
             "type": "user",
-            "uuid": "echo",
+            "uuid": str(uuid.uuid4()),
             "isReplay": True,
             "message": {"role": "user", "content": "go"},
-            "cheese": {**stamp, "turn_start": True, "receipt": True},
+            "cheese": {
+                **stamp,
+                "turn_start": True,
+                "receipt": True,
+                "receipt_work_id": work,
+                "receipt_session_id": "native-session",
+            },
         },
         *(
             {
@@ -236,8 +254,10 @@ async def test_a_backlog_many_pages_long_reaches_the_room_a_page_at_a_time(tmp_p
             call,
             consume,
             activity,
-            session_id=None,
+            session_id="native-session",
+            recipient_handle="cheese-a",
             announce=announce,
+            receipts=_settle_receipt,
         )
         made.pages = []
         return made
@@ -324,8 +344,10 @@ async def test_what_nobody_read_for_hours_never_reaches_the_room(tmp_path):
             call,
             consume,
             activity,
-            session_id=None,
+            session_id="native-session",
+            recipient_handle="cheese-a",
             announce=announce,
+            receipts=_settle_receipt,
         )
 
     first = reading()
@@ -346,6 +368,102 @@ async def test_what_nobody_read_for_hours_never_reaches_the_room(tmp_path):
         await second.release()
     assert landed == ["said just now", "said next"]
     assert opened == [fresh, later]
+
+
+@pytest.mark.anyio
+async def test_a_turn_whose_inputs_cannot_be_proven_still_ends_in_the_room(tmp_path):
+    """A session on a runner older than the input protocol: its turns settle
+    from what the journal retained. One that read an input without the exact
+    receipt identity can never be settled that way, and the room still has to
+    hear the turn end and everything the session says after it."""
+    now = datetime.now(UTC)
+    work, later = str(uuid.uuid4()), str(uuid.uuid4())
+    stamp = {"work_id": work, "agent_handle": "cheese-a"}
+    turn = [
+        {
+            "type": "user",
+            "uuid": str(uuid.uuid4()),
+            "isReplay": True,
+            # The echo itself does not say which session read it.
+            "message": {"role": "user", "content": "check the build"},
+            "cheese": {
+                **stamp,
+                "turn_start": True,
+                "receipt": True,
+                "receipt_work_id": work,
+                "receipt_session_id": "native-session",
+            },
+        },
+        {
+            "type": "assistant",
+            "uuid": "reply",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "The build is green."}],
+            },
+            "cheese": stamp,
+        },
+        {
+            "type": "result",
+            "uuid": "result",
+            "subtype": "success",
+            "is_error": False,
+            "result": "The build is green.",
+            "session_id": "native-session",
+            "cheese": stamp,
+        },
+    ]
+    journal = [
+        {"sequence": number, "at": now.isoformat(), "record": record}
+        for number, record in enumerate(turn, start=1)
+    ]
+    journal.extend(_said_turn(later, "said next", first=4, at=now))
+    ended: list[str] = []
+    said: list[str] = []
+    settled: list[object] = []
+
+    async def call(method: str, params: dict) -> dict:
+        return {"events": [e for e in journal if e["sequence"] > params["after"]]}
+
+    async def consume(project, topic, work_id, event, eid, seen, unsolicited):
+        if isinstance(event, AgentResult):
+            ended.append(str(work_id))
+        elif isinstance(event, AgentMessage):
+            said.append(event.text)
+
+    async def activity(project, seat, work_id, active):
+        pass
+
+    async def announce():
+        pass
+
+    async def completion(value):
+        settled.append(value)
+
+    reading = Subscription(
+        SessionRef(uuid.uuid4(), uuid.uuid4(), "cheese-a", harness="claude-code"),
+        tmp_path / "records.sqlite",
+        call,
+        consume,
+        activity,
+        session_id="native-session",
+        recipient_handle="cheese-a",
+        announce=announce,
+        receipts=_settle_receipt,
+        completions=completion,
+        input_protocol=None,
+    )
+    try:
+        await reading.drain()
+        assert ended == [work, later]
+        assert said == ["The build is green.", "said next"]
+        assert settled == []
+
+        # Landed once: the next drain has nothing to repeat.
+        await reading.drain()
+        assert ended == [work, later]
+    finally:
+        await reading.release()
 
 
 class _Clock:
@@ -400,8 +518,10 @@ async def test_a_record_the_room_goes_on_refusing_is_stepped_over(
             call,
             consume,
             activity,
-            session_id=None,
+            session_id="native-session",
+            recipient_handle="cheese-a",
             announce=announce,
+            receipts=_settle_receipt,
         )
         try:
             await reading.drain()
@@ -437,6 +557,10 @@ async def test_a_day_of_unread_output_is_stepped_over_without_reading_it(tmp_pat
         {**row, "at": (now - timedelta(days=1)).isoformat()}
         for row in _long_turn(str(uuid.uuid4()), 5 * PAGE)
     ]
+    # Only expired output: neither a receipt nor an attributed legacy result.
+    # Both are retained independently until their input can be reconciled.
+    old[0]["record"]["cheese"].pop("receipt")
+    old[-1]["record"]["cheese"] = {}
     journal = [
         *old,
         *_said_turn(str(uuid.uuid4()), "said just now", first=len(old) + 1, at=now),
@@ -472,8 +596,10 @@ async def test_a_day_of_unread_output_is_stepped_over_without_reading_it(tmp_pat
         call,
         consume,
         activity,
-        session_id=None,
+        session_id="native-session",
+        recipient_handle="cheese-a",
         announce=announce,
+        receipts=_settle_receipt,
     )
     reading.pages = []
     try:

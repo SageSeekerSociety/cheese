@@ -23,6 +23,7 @@ class _Screen(StubChannel):
 
     def __init__(self, session_id: str = "s-1") -> None:
         super().__init__()
+        self.new_session_id = session_id
         self._sid = session_id
         #: 每次 `ensure` 拿到的 resume 指针，按顺序。冷启动是唯一用得上它的
         #: 时刻，所以这就是「这条会话接不接得回去」的全部证据。

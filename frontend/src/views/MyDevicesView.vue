@@ -9,6 +9,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 
 import { listMyDevices, listMyTeams, renameMyDevice, unbindMyDevice } from '../api'
+import AdaptiveDialog from '../components/common/AdaptiveDialog.vue'
 import AdaptiveMenu from '../components/common/AdaptiveMenu.vue'
 import DeviceLiveViewer from '../components/DeviceLiveViewer.vue'
 import {
@@ -21,6 +22,8 @@ import {
 } from '../lib/desktop'
 
 import { useCommands } from '@/commands'
+import BaseButton from '@/components/base/BaseButton.vue'
+import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import { t } from '@/i18n'
 import accountService from '@/services/account'
 
@@ -166,6 +169,18 @@ async function saveRename(d: MyDevice) {
 const unbindTarget = ref<MyDevice | null>(null)
 const unbinding = ref(false)
 
+// The confirm box is open exactly while a device is picked to unlink; closing it
+// (cancel) clears the target. Title only resolves while a device is picked.
+const unbindOpen = computed({
+  get: () => unbindTarget.value !== null,
+  set: (open) => {
+    if (!open) unbindTarget.value = null
+  },
+})
+const unbindTitle = computed(() =>
+  unbindTarget.value ? t('account.devices.unbindTitle', { name: unbindTarget.value.name }) : ''
+)
+
 // 手机上一台设备的操作（改名、解绑）收进行尾的 ⋯（底部面板）：名字旁那颗小铅笔和
 // 行尾的「解绑」都比手指小，挨着「在线」两个字也容易按错。
 const { mdAndUp } = useDisplay()
@@ -228,18 +243,17 @@ useCommands(() =>
         <p class="settings-page__lede">{{ t('account.devices.lede') }}</p>
       </div>
       <div v-if="isLoggedIn" class="devices__actions">
-        <v-btn
+        <BaseButton
           icon="mdi-refresh"
-          variant="text"
-          size="small"
+          size="sm"
           :loading="loading"
           :aria-label="t('account.devices.refresh')"
           :title="t('account.devices.refresh')"
           @click="load"
         />
-        <v-btn color="primary" variant="flat" prepend-icon="mdi-plus" @click="addDeviceOpen = true">
+        <BaseButton kind="primary" prepend-icon="mdi-plus" @click="addDeviceOpen = true">
           {{ t('account.devices.add') }}
-        </v-btn>
+        </BaseButton>
       </div>
     </header>
 
@@ -263,9 +277,9 @@ useCommands(() =>
           <span>{{ t('account.devices.empty') }}</span>
           <!-- 在桌面 app 里，最直接的是把这台电脑接进来。 -->
           <template v-if="desktop">
-            <v-btn variant="outlined" :loading="thisComputer.connecting" @click="connectThisMachine">
+            <BaseButton kind="secondary" :loading="thisComputer.connecting" @click="connectThisMachine">
               {{ t('account.devices.connectThis') }}
-            </v-btn>
+            </BaseButton>
             <span v-if="thisComputer.connecting">{{ thisComputer.step }}</span>
             <span v-if="thisComputer.error" class="c-danger">{{ thisComputer.error }}</span>
           </template>
@@ -288,10 +302,9 @@ useCommands(() =>
             />
             <template v-else>
               <span class="device__name">{{ d.name }}</span>
-              <v-btn
+              <BaseButton
                 v-if="mdAndUp"
-                variant="text"
-                size="x-small"
+                size="sm"
                 icon="mdi-pencil-outline"
                 :aria-label="t('account.devices.rename')"
                 :title="t('account.devices.rename')"
@@ -301,16 +314,15 @@ useCommands(() =>
             <span class="device__state" :class="{ 'device__state--on': d.online }">
               {{ d.online ? t('account.devices.online') : t('account.devices.offline') }}
             </span>
-            <v-btn v-if="mdAndUp" variant="text" size="small" @click="askUnbind(d)">
+            <BaseButton v-if="mdAndUp" kind="ghost" size="sm" @click="askUnbind(d)">
               {{ t('account.devices.unbind') }}
-            </v-btn>
+            </BaseButton>
             <AdaptiveMenu v-else :actions="deviceActions(d)" :title="d.name">
               <template #activator="{ props: menuProps }">
-                <v-btn
+                <BaseButton
                   v-bind="menuProps"
                   icon="mdi-dots-horizontal"
-                  size="small"
-                  variant="text"
+                  size="sm"
                   class="tap-target"
                   :aria-label="t('account.devices.more')"
                 />
@@ -355,98 +367,85 @@ useCommands(() =>
           <span class="srow__k">{{ c.os }}</span>
           <div class="install-cmd">
             <code class="install-cmd__code">{{ c.command }}</code>
-            <v-btn
-              variant="text"
-              size="small"
+            <BaseButton
+              kind="ghost"
+              size="sm"
               :prepend-icon="copied === c.command ? 'mdi-check' : 'mdi-content-copy'"
               @click="copyInstall(c.command)"
             >
               {{ copied === c.command ? t('account.devices.copied') : t('account.devices.copy') }}
-            </v-btn>
+            </BaseButton>
           </div>
         </div>
       </section>
     </template>
 
-    <!-- 添加设备：这台电脑或另一台机器怎么接进来。 -->
-    <v-dialog v-model="addDeviceOpen" max-width="560">
-      <v-card class="pa-5">
-        <div class="d-flex align-center mb-1">
-          <span class="t-title">{{ t('account.devices.add') }}</span>
-          <v-spacer />
-          <v-btn
-            variant="text"
-            icon="mdi-close"
-            size="small"
-            :aria-label="t('account.devices.close')"
-            @click="addDeviceOpen = false"
-          />
+    <!-- Add a device: how this computer or another machine connects. -->
+    <AdaptiveDialog
+      v-model="addDeviceOpen"
+      :title="t('account.devices.add')"
+      :primary-label="t('account.devices.done')"
+      @primary="addDeviceOpen = false"
+    >
+      <!-- In the desktop app this computer connects in place; in a browser, Mac and Windows
+           install the desktop app and every other machine (servers, Linux) runs the command. -->
+      <template v-if="desktop">
+        <div class="t-title mt-3 mb-1">{{ t('account.devices.thisComputer') }}</div>
+        <div class="t-caption c-muted mb-3">{{ t('account.devices.thisComputerHint') }}</div>
+        <BaseButton kind="primary" :loading="thisComputer.connecting" @click="connectThisMachine">
+          {{ t('account.devices.connectThis') }}
+        </BaseButton>
+        <div v-if="thisComputer.connecting" class="t-caption c-muted mt-2">{{ thisComputer.step }}</div>
+        <div v-if="thisComputer.error" class="t-caption c-danger mt-2">{{ thisComputer.error }}</div>
+      </template>
+      <template v-else>
+        <div class="t-title mt-3 mb-1">{{ t('account.devices.desktopTitle') }}</div>
+        <div class="t-caption c-muted mb-3">{{ t('account.devices.desktopHint') }}</div>
+        <div class="d-flex flex-wrap ga-2">
+          <BaseButton
+            v-for="(d, i) in downloads"
+            :key="d.href"
+            :kind="i === 0 ? 'primary' : 'secondary'"
+            prepend-icon="mdi-download"
+            :href="d.href"
+          >
+            {{ t(d.labelKey) }}
+          </BaseButton>
         </div>
-        <!-- 在桌面 app 里这台电脑原地接入；在浏览器里，Mac 和 Windows 装桌面端，别的机器
-             （服务器、Linux）走命令。 -->
-        <template v-if="desktop">
-          <div class="t-title mt-3 mb-1">{{ t('account.devices.thisComputer') }}</div>
-          <div class="t-caption c-muted mb-3">{{ t('account.devices.thisComputerHint') }}</div>
-          <v-btn color="primary" variant="flat" :loading="thisComputer.connecting" @click="connectThisMachine">
-            {{ t('account.devices.connectThis') }}
-          </v-btn>
-          <div v-if="thisComputer.connecting" class="t-caption c-muted mt-2">{{ thisComputer.step }}</div>
-          <div v-if="thisComputer.error" class="t-caption c-danger mt-2">{{ thisComputer.error }}</div>
-        </template>
-        <template v-else>
-          <div class="t-title mt-3 mb-1">{{ t('account.devices.desktopTitle') }}</div>
-          <div class="t-caption c-muted mb-3">{{ t('account.devices.desktopHint') }}</div>
-          <div class="d-flex flex-wrap ga-2">
-            <v-btn
-              v-for="(d, i) in downloads"
-              :key="d.href"
-              :color="i === 0 ? 'primary' : undefined"
-              :variant="i === 0 ? 'flat' : 'outlined'"
-              prepend-icon="mdi-download"
-              :href="d.href"
-            >
-              {{ t(d.labelKey) }}
-            </v-btn>
-          </div>
-          <div class="t-caption c-muted mt-2">{{ t('account.devices.gatekeeper') }}</div>
-        </template>
+        <div class="t-caption c-muted mt-2">{{ t('account.devices.gatekeeper') }}</div>
+      </template>
 
-        <div class="t-title mt-6 mb-1">
-          {{ desktop ? t('account.devices.otherMachines') : t('account.devices.serverTitle') }}
+      <div class="t-title mt-6 mb-1">
+        {{ desktop ? t('account.devices.otherMachines') : t('account.devices.serverTitle') }}
+      </div>
+      <div v-for="c in installCommands" :key="c.command" class="mb-3">
+        <div class="t-caption c-muted mb-1">{{ c.os }}</div>
+        <div class="install-cmd">
+          <code class="install-cmd__code">{{ c.command }}</code>
+          <BaseButton
+            kind="ghost"
+            size="sm"
+            :prepend-icon="copied === c.command ? 'mdi-check' : 'mdi-content-copy'"
+            @click="copyInstall(c.command)"
+          >
+            {{ copied === c.command ? t('account.devices.copied') : t('account.devices.copy') }}
+          </BaseButton>
         </div>
-        <div v-for="c in installCommands" :key="c.command" class="mb-3">
-          <div class="t-caption c-muted mb-1">{{ c.os }}</div>
-          <div class="install-cmd">
-            <code class="install-cmd__code">{{ c.command }}</code>
-            <v-btn
-              variant="text"
-              size="small"
-              :prepend-icon="copied === c.command ? 'mdi-check' : 'mdi-content-copy'"
-              @click="copyInstall(c.command)"
-            >
-              {{ copied === c.command ? t('account.devices.copied') : t('account.devices.copy') }}
-            </v-btn>
-          </div>
-        </div>
+      </div>
 
-        <ol class="steps">
-          <li>{{ t('account.devices.step1') }}</li>
-          <li>{{ t('account.devices.step2') }}</li>
-          <li>{{ t('account.devices.step3') }}</li>
-        </ol>
-
-        <div class="d-flex justify-end mt-4">
-          <v-btn variant="flat" color="primary" @click="addDeviceOpen = false">{{ t('account.devices.done') }}</v-btn>
-        </div>
-      </v-card>
-    </v-dialog>
+      <ol class="steps">
+        <li>{{ t('account.devices.step1') }}</li>
+        <li>{{ t('account.devices.step2') }}</li>
+        <li>{{ t('account.devices.step3') }}</li>
+      </ol>
+    </AdaptiveDialog>
 
     <v-dialog :model-value="liveScreen !== null" max-width="900" @update:model-value="liveScreen = null">
       <v-card v-if="liveScreen" class="pa-3">
         <div class="d-flex align-center mb-2">
           <span class="t-title">{{ t('account.devices.liveTitle', { handle: liveScreen.agent_handle }) }}</span>
           <v-spacer />
-          <v-btn variant="text" icon="mdi-close" :aria-label="t('account.devices.close')" @click="liveScreen = null" />
+          <BaseButton icon="mdi-close" :aria-label="t('account.devices.close')" @click="liveScreen = null" />
         </div>
         <div style="height: 60vh">
           <DeviceLiveViewer :sid="liveScreen.sid" />
@@ -454,19 +453,17 @@ useCommands(() =>
       </v-card>
     </v-dialog>
 
-    <!-- 解绑前问一句：应用里的对话框，不是浏览器自带的 confirm()。 -->
-    <v-dialog :model-value="unbindTarget !== null" max-width="440" @update:model-value="unbindTarget = null">
-      <v-card v-if="unbindTarget" class="pa-5">
-        <div class="t-title mb-3">{{ t('account.devices.unbindTitle', { name: unbindTarget.name }) }}</div>
-        <div class="t-caption c-muted mb-5">{{ t('account.devices.unbindHint') }}</div>
-        <div class="d-flex justify-end">
-          <v-btn variant="text" class="mr-2" @click="unbindTarget = null">{{ t('account.devices.cancel') }}</v-btn>
-          <v-btn color="error" variant="flat" :loading="unbinding" @click="confirmUnbind">
-            {{ t('account.devices.unbind') }}
-          </v-btn>
-        </div>
-      </v-card>
-    </v-dialog>
+    <!-- Ask before unlinking: an in-app dialog, not the browser's native confirm(). -->
+    <ConfirmDialog
+      v-model="unbindOpen"
+      :title="unbindTitle"
+      :confirm-label="t('account.devices.unbind')"
+      danger
+      :loading="unbinding"
+      @confirm="confirmUnbind"
+    >
+      {{ t('account.devices.unbindHint') }}
+    </ConfirmDialog>
   </div>
 </template>
 
@@ -569,8 +566,8 @@ useCommands(() =>
   align-items: center;
 }
 
-/* 一行可以复制的命令：等宽字放在浅灰底里，复制按钮贴在后面。窄屏上命令横着滚，
-   不折行。 */
+/* 一行可以复制的命令：等宽字放在浅灰底里，复制按钮贴在后面。手机宽度下命令折行、
+   复制按钮另起一行，见下面 599.98px 的媒体查询。 */
 .install-cmd {
   display: flex;
   gap: 8px;
@@ -614,6 +611,22 @@ useCommands(() =>
 
   .srow:has(.install-cmd) {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* 命令整条占一行、断行折开，复制按钮落到下一行并靠右。
+     390px 上原来是一行两件：命令被按钮挤掉一半，剩下那半截横着滚——滚动条
+     看不见、也没有任何提示，读到的是一个从中间断掉的 URL。 */
+  .install-cmd {
+    flex-wrap: wrap;
+    row-gap: 2px;
+    justify-content: flex-end;
+  }
+
+  .install-cmd__code {
+    flex: 1 1 100%;
+    overflow-x: visible;
+    white-space: normal;
+    word-break: break-all;
   }
 }
 </style>

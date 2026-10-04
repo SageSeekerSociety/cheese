@@ -1,20 +1,30 @@
 import { defineComponent, h, nextTick } from 'vue'
+import { createMemoryHistory, createRouter } from 'vue-router'
 import { render } from '@testing-library/vue'
 import { afterEach, expect, it, vi } from 'vitest'
 
+import { defineCommands } from '../../commands'
+import { installShortcuts } from '../../commands/shortcuts'
 import { usePreviewFrames } from '../usePreviewFrames'
+
+// 一个真的监听实例指纹：64 位十六进制。
+const LISTENER = 'a'.repeat(64)
 
 vi.mock('../../lib/previewSession', () => ({ postPreviewSession: vi.fn() }))
 
 const wrappers: ReturnType<typeof render>[] = []
-afterEach(() => wrappers.splice(0).forEach((wrapper) => wrapper.unmount()))
+const undos: (() => void)[] = []
+afterEach(() => {
+  wrappers.splice(0).forEach((wrapper) => wrapper.unmount())
+  undos.splice(0).forEach((undo) => undo())
+})
 
-async function setup() {
+async function setup(options: Parameters<typeof usePreviewFrames>[1] = {}) {
   let host!: ReturnType<typeof usePreviewFrames>
   const wrapper = render(
     defineComponent({
       setup() {
-        host = usePreviewFrames('runtime-test')
+        host = usePreviewFrames('runtime-test', options)
         return () =>
           h(
             'div',
@@ -29,7 +39,7 @@ async function setup() {
       url: 'https://preview-fixed.example/_cheese/session',
       grant: 'grant',
       resource_id: 'resource',
-      resource: { kind: 'app', path: 'http://localhost:5173', instance: 'listener' },
+      resource: { kind: 'app', path: 'http://localhost:5173', instance: LISTENER },
     },
     {
       url: 'https://preview-fixed.example/',
@@ -130,16 +140,58 @@ it('a bridge loaded after navigation can request the current handshake without r
   expect(document.querySelector(`iframe[name="${shown!.name}"]`)).toBe(frame)
 })
 
-it('disconnect and same-instance recovery preserve browsing context; replacement stays gone', async () => {
+it('keys travel with the handshake and only an id from that table runs a command', async () => {
+  const run = vi.fn()
+  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/:p(.*)*', component: {} }] })
+  undos.push(installShortcuts(router))
+  undos.push(defineCommands(() => [{ id: 'rail.1', title: '首页', shortcut: 'mod+1', run }]))
+  const { frame, hello } = await setup()
+  expect(hello.keys).toEqual([{ id: 'rail.1', mod: true, shift: false, alt: false, code: 'Digit1' }])
+  const dispatch = (data: unknown) =>
+    window.dispatchEvent(
+      new MessageEvent('message', { origin: 'https://preview-fixed.example', source: frame.contentWindow, data })
+    )
+  // 别的 id、上个会话的 id、被换掉的会话，都不算。
+  dispatch({ ...hello, type: 'key', id: 'library.upload' })
+  dispatch({ ...hello, type: 'key', id: 'rail.1', sessionId: 'old' })
+  dispatch({ ...hello, type: 'key', id: 'rail.1', version: 2 })
+  expect(run).not.toHaveBeenCalled()
+  dispatch({ ...hello, type: 'key', id: 'rail.1' })
+  expect(run).toHaveBeenCalledTimes(1)
+})
+
+it('disconnect and same-instance recovery preserve browsing context; only a real replacement is gone', async () => {
   const { host, frame } = await setup()
   const displayed = host.displayed.value
   host.observeConnection(null, false)
   expect(host.displayed.value?.connection).toBe('disconnected')
-  host.observeConnection('listener', true)
+  host.observeConnection(LISTENER, true)
   expect(host.displayed.value?.connection).toBe('online')
   expect(host.displayed.value).toBe(displayed)
   expect(document.querySelector(`iframe[name="${displayed!.name}"]`)).toBe(frame)
-  host.observeConnection('replacement', true)
+  // 指纹缺失不算换了进程（只有两个不同的 64 位指纹才算）。
+  host.observeConnection(null, true)
+  expect(host.displayed.value?.connection).toBe('online')
+  host.observeConnection('b'.repeat(64), true)
   expect(host.displayed.value?.connection).toBe('gone')
   expect(host.incoming.value).toBeNull()
+})
+
+it('an escape from the current frame and session is handed back to the host', async () => {
+  const escaped = vi.fn()
+  const { host, frame, hello } = await setup({ onEscape: escaped })
+  const dispatch = (
+    data: unknown,
+    source: MessageEventSource | null = frame.contentWindow,
+    origin = 'https://preview-fixed.example'
+  ) => window.dispatchEvent(new MessageEvent('message', { origin, source, data }))
+  // 别的窗口、别的来源、别的会话发来的 escape 都不算。
+  dispatch({ ...hello, type: 'escape' }, window)
+  dispatch({ ...hello, type: 'escape' }, frame.contentWindow, 'https://wrong.example')
+  dispatch({ ...hello, type: 'escape', sessionId: 'old' })
+  expect(escaped).not.toHaveBeenCalled()
+  dispatch({ ...hello, type: 'escape' })
+  expect(escaped).toHaveBeenCalledTimes(1)
+  // 交回控制权不是就绪信号：注入的页面从没报过 ready，它就绪状态仍是未确认。
+  expect(host.displayed.value?.runtime).toBe('unconfirmed')
 })

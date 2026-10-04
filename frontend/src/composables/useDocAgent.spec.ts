@@ -10,6 +10,7 @@ import Collaboration from '@tiptap/extension-collaboration'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as Y from 'yjs'
 
+import { presetsFor } from '../lib/docAgent'
 import { spotAt } from '../lib/docCommentSpots'
 import { createEditMarks, editMarks } from '../lib/docEditMarks'
 import { flatText, occurrences, rangeOf } from '../lib/docEdits'
@@ -242,5 +243,17 @@ describe('在文档里找 AI 队友', () => {
     ctl.say('这个数对吗')
     await vi.waitFor(() => expect(ctl.phase.value).toBe('answered'))
     expect(ctl.kind.value).toBe('ask')
+  })
+
+  it('选中的是代码（流程图的源码也是）：不给润色、改成列表这类说法，只留输入框', () => {
+    const { doc, editor } = room('正文一句。\n\n```mermaid\nflowchart TD\n  A --> B\n```')
+    const { ctl } = controller(editor, service(doc))
+
+    ctl.open(select(editor, 'A --> B'))
+    const groups = presetsFor('selection', ctl.context.value)
+    expect([...groups.edit, ...groups.ask]).toEqual([])
+
+    ctl.open(select(editor, '正文一句'))
+    expect(presetsFor('selection', ctl.context.value).edit.length).toBeGreaterThan(0)
   })
 })

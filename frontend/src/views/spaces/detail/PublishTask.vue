@@ -18,14 +18,16 @@ import { toast } from 'vuetify-sonner'
 import { storeToRefs } from 'pinia'
 
 import { useSpaceData } from '@/composables/useSpaceData'
+import { useSpaceMaterials } from '@/composables/useSpaceMaterials'
 
 import PdfGenerate from './PdfGenerate.vue'
 import { MAX_DRAFTS, MAX_PDF_BYTES, TASK_SUBMISSION_SCHEMA } from './publishLimits'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import TeachingFields from '@/components/common/TeachingFields.vue'
 import PanelCard from '@/components/spaces/PanelCard.vue'
-import { publishDoneRoute } from '@/lib/spaceRouteNames'
+import { publishDoneRoute, spaceLibraryPath } from '@/lib/spaceRouteNames'
 import { PUBLISH_CHECKS_SINK } from '@/lib/taskPublishChecks'
 import { isTeachingBlank } from '@/lib/teaching'
 import { TasksApi } from '@/network/api/tasks'
@@ -80,6 +82,10 @@ async function loadSpace(id: number) {
 }
 
 watch(spaceId, (id) => void loadSpace(id), { immediate: true })
+
+/** 参考资料那一格的候选。**不并进 `loadSpace` 的成败里** —— 取不到也照常发得了题
+ *  （这一节默认还是收起的），选择器那边会说清是读不出来。 */
+const { materials: teachingMaterials, state: teachingMaterialsState } = useSpaceMaterials(spaceId)
 
 /** 活跃（未归档）的分类，按 `displayOrder` 排 —— 与老页同一口径：下拉里只有能选的。 */
 const activeCategories = computed(() =>
@@ -161,6 +167,9 @@ const attachmentUploading = ref(false)
 
 /** 这道题自己的「给 AI 队友的指导」覆盖（#944）。留空就什么都不发，用空间的默认。 */
 const teachingOverride = ref<SpaceTeaching>({})
+
+/** 那一节默认收起：多数题目一个字都不用写它，摊开着只是挡路。 */
+const teachingOpen = ref(false)
 
 /** 交给接口的那一份：六格全空就不带它 —— 让空间（或项目集）的默认生效，而不是写
  *  一份空的把下面那层盖住。两条发题路共用同一个判据。 */
@@ -353,9 +362,11 @@ async function confirmQuickFromPdf(taskData: TaskFormSubmitData, id: number) {
   <PageHeader show-on-mobile>
     <template #actions>
       <v-btn-toggle v-model="mode" density="compact" variant="outlined" divided mandatory class="pub__mode">
+        <!-- eslint-disable-next-line vue/no-restricted-syntax -- a segment of v-btn-toggle, not one of the BaseButton roles -->
         <v-btn value="write" size="small" prepend-icon="mdi-pencil-outline">{{
           t('spaces.detail.publishTask.mode.write')
         }}</v-btn>
+        <!-- eslint-disable-next-line vue/no-restricted-syntax -- a segment of v-btn-toggle, not one of the BaseButton roles -->
         <v-btn value="pdf" size="small" prepend-icon="mdi-file-pdf-box">{{
           t('spaces.detail.publishTask.mode.pdf')
         }}</v-btn>
@@ -396,16 +407,15 @@ async function confirmQuickFromPdf(taskData: TaskFormSubmitData, id: number) {
           <div class="pdf__actions">
             <span class="pdf__actions-note">{{ t('spaces.detail.publishTask.quick.readOnlyNote') }}</span>
             <v-spacer />
-            <v-btn
-              color="primary"
-              variant="flat"
+            <BaseButton
+              kind="primary"
+              prepend-icon="mdi-eye-outline"
               :loading="quickLoading"
               :disabled="quickLoading || quickConfirming || !selectedQuickPdf"
               @click="previewFromPdf"
             >
-              <v-icon start>mdi-eye-outline</v-icon>
               {{ t('spaces.detail.publishTask.quick.preview') }}
-            </v-btn>
+            </BaseButton>
           </div>
         </PanelCard>
 
@@ -456,9 +466,9 @@ async function confirmQuickFromPdf(taskData: TaskFormSubmitData, id: number) {
               >
             </i18n-t>
             <v-spacer />
-            <v-btn variant="text" :disabled="quickConfirming" @click="clearQuickDrafts">{{
+            <BaseButton kind="ghost" :disabled="quickConfirming" @click="clearQuickDrafts">{{
               t('spaces.detail.publishTask.quick.clear')
-            }}</v-btn>
+            }}</BaseButton>
           </div>
         </PanelCard>
 
@@ -469,13 +479,40 @@ async function confirmQuickFromPdf(taskData: TaskFormSubmitData, id: number) {
         />
 
         <!-- 这道题自己的「给 AI 队友的指导」（#944）：写了就盖过空间（与项目集）
-             的默认，整份替换；六格全空就是不设，仍旧听空间的。两条发题路都带它。 -->
+             的默认，整份替换；六格全空就是不设，仍旧听空间的。两条发题路都带它。
+             默认收起 —— 摊开着会挡住下面真正要填的那些格；收起时页头仍写着这一节
+             是干什么的，普通题目不用点开。 -->
         <PanelCard
           data-testid="publish-teaching"
           :title="t('spaces.detail.publishTask.teaching.title')"
           :subtitle="t('spaces.detail.publishTask.teaching.subtitle')"
         >
-          <TeachingFields v-model="teachingOverride" />
+          <template #actions>
+            <BaseButton
+              kind="ghost"
+              size="sm"
+              class="publish-teaching__toggle"
+              data-testid="publish-teaching-toggle"
+              :aria-expanded="teachingOpen"
+              :append-icon="teachingOpen ? 'mdi-chevron-up' : 'mdi-chevron-down'"
+              @click="teachingOpen = !teachingOpen"
+            >
+              {{
+                t(
+                  teachingOpen
+                    ? 'spaces.detail.publishTask.teaching.collapse'
+                    : 'spaces.detail.publishTask.teaching.expand'
+                )
+              }}
+            </BaseButton>
+          </template>
+          <TeachingFields
+            v-if="teachingOpen"
+            v-model="teachingOverride"
+            :materials="teachingMaterials"
+            :materials-state="teachingMaterialsState"
+            :library-to="spaceLibraryPath(spaceId)"
+          />
         </PanelCard>
 
         <!-- 共享的发题表单（见文件头）。空间**装完再挂**：`v-if="ready"` 就是那件事。 -->
@@ -529,15 +566,14 @@ async function confirmQuickFromPdf(taskData: TaskFormSubmitData, id: number) {
           <p v-else class="pub__wait" data-testid="publish-checks-waiting">
             {{ t('spaces.detail.publishTask.checks.waiting') }}
           </p>
-          <v-btn
+          <BaseButton
+            kind="primary"
             block
-            color="primary"
-            variant="flat"
             :disabled="!formChecks || formChecks.length > 0"
             @click="submitFromChecklist"
           >
             {{ t('spaces.detail.publishTask.checks.submit') }}
-          </v-btn>
+          </BaseButton>
         </PanelCard>
       </aside>
     </div>

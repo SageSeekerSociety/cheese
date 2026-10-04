@@ -31,6 +31,7 @@ import PreviewSheet from './preview/PreviewSheet.vue'
 import RevisionList from './preview/RevisionList.vue'
 import ChangesFileTree from './ChangesFileTree.vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { taskTitle } from '@/lib/topicState'
 
@@ -185,11 +186,10 @@ function revisionReadOnly(): boolean {
          总览不要这一条：页签已经写着「改动」，再写一遍「房间改动」只是重复。 -->
     <div v-if="!props.overview" class="changes-bar" :class="{ 'changes-bar--phone': !mdAndUp }">
       <div class="source-heading">
-        <v-btn
+        <BaseButton
+          kind="ghost"
           icon="mdi-arrow-left"
-          size="small"
-          variant="text"
-          color="medium-emphasis"
+          size="sm"
           :class="{ 'tap-target': !mdAndUp }"
           :title="t('work.room.changes.roomChanges')"
           :aria-label="t('work.room.changes.roomChanges')"
@@ -204,7 +204,7 @@ function revisionReadOnly(): boolean {
               :title="t('work.room.changes.switchSource')"
               :aria-label="t('work.room.changes.switchSourceTo', { source: props.sourceTitle })"
             >
-              <span class="source-pick__name">{{ props.sourceTitle }}</span>
+              <span class="source-pick__name" :title="props.sourceTitle">{{ props.sourceTitle }}</span>
               <v-icon size="16">mdi-chevron-down</v-icon>
             </button>
           </template>
@@ -230,17 +230,15 @@ function revisionReadOnly(): boolean {
       </div>
       <template v-if="props.fileToolReady">
         <span v-if="mdAndUp" class="changes-bar__sep" aria-hidden="true" />
-        <v-btn
-          icon
-          size="x-small"
-          variant="text"
+        <BaseButton
+          kind="ghost"
+          icon="mdi-format-list-bulleted"
+          size="sm"
           class="file-icon-btn"
           :class="{ 'file-icon-btn--on': fileListOpen, 'tap-target': !mdAndUp }"
           :title="t('work.room.changes.fileList')"
           @click="fileListOpen = !fileListOpen"
-        >
-          <v-icon size="18">mdi-format-list-bulleted</v-icon>
-        </v-btn>
+        />
         <span class="changes-bar__path" :title="props.openPath || ''">
           {{ (mdAndUp ? props.openPath : props.openPath?.split('/').pop()) || t('work.room.changes.noFileOpen') }}
         </span>
@@ -274,24 +272,22 @@ function revisionReadOnly(): boolean {
         <span v-if="mdAndUp && props.fileReadOnly && props.openPath" class="changes-bar__ro">{{
           t('work.room.changes.readOnly')
         }}</span>
-        <v-btn
+        <BaseButton
           v-else-if="mdAndUp && !props.fileReadOnly && props.effectiveView === 'edit'"
-          size="x-small"
-          variant="flat"
-          color="primary"
+          kind="primary"
+          size="sm"
           :loading="props.fileSaving"
           :disabled="!props.fileDirty"
           @click="emit('save')"
         >
           {{ t('work.room.changes.save') }}
-        </v-btn>
+        </BaseButton>
       </template>
       <template v-if="!mdAndUp">
-        <v-btn
+        <BaseButton
+          kind="ghost"
           icon="mdi-dots-horizontal"
-          size="small"
-          variant="text"
-          color="medium-emphasis"
+          size="sm"
           class="tap-target"
           :title="t('work.room.changes.more')"
           :aria-label="t('work.room.changes.more')"
@@ -302,12 +298,11 @@ function revisionReadOnly(): boolean {
       </template>
       <v-menu v-else location="bottom end">
         <template #activator="{ props: menuProps }">
-          <v-btn
+          <BaseButton
             v-bind="menuProps"
+            kind="ghost"
             icon="mdi-dots-horizontal"
-            size="small"
-            variant="text"
-            color="medium-emphasis"
+            size="sm"
             :title="t('work.room.changes.more')"
             :aria-label="t('work.room.changes.more')"
             :loading="props.refreshing"
@@ -447,12 +442,12 @@ function revisionReadOnly(): boolean {
       </div>
       <v-alert v-else-if="props.errorMsg" type="error" density="compact" class="ma-4 file-load-error">
         {{ props.errorMsg }}
-        <v-btn
+        <BaseButton
           v-if="props.fileSource === 'live'"
-          variant="text"
-          size="small"
+          kind="secondary"
+          size="sm"
           @click="emit('select-version', 'committed')"
-          >{{ t('work.room.changes.switchToCommitted') }}</v-btn
+          >{{ t('work.room.changes.switchToCommitted') }}</BaseButton
         >
       </v-alert>
 
@@ -478,10 +473,12 @@ function revisionReadOnly(): boolean {
         <div v-if="props.fileConflict" class="file-conflict">
           <v-icon size="15" class="me-1">mdi-alert-outline</v-icon>
           <span class="file-conflict__text"> {{ t('work.room.changes.conflict') }} </span>
-          <v-btn size="x-small" variant="text" @click="emit('reload')">{{ t('work.room.changes.reloadLatest') }}</v-btn>
-          <v-btn size="x-small" variant="text" color="error" :loading="props.fileSaving" @click="emit('overwrite')">
+          <BaseButton kind="ghost" size="sm" @click="emit('reload')">{{
+            t('work.room.changes.reloadLatest')
+          }}</BaseButton>
+          <BaseButton kind="danger" size="sm" :loading="props.fileSaving" @click="emit('overwrite')">
             {{ t('work.room.changes.saveAnyway') }}
-          </v-btn>
+          </BaseButton>
         </div>
         <div class="file-body" :class="{ 'file-body--phone': !mdAndUp }">
           <ChangesFileTree
@@ -506,19 +503,19 @@ function revisionReadOnly(): boolean {
               <div v-else-if="props.docRendererMissing && !props.docBytes" class="file-blob">
                 <v-icon size="30" class="c-faint mb-2">mdi-eye-off-outline</v-icon>
                 <div class="file-blob__title">{{ t('work.room.changes.docPreviewDisabled') }}</div>
-                <v-btn size="small" variant="tonal" class="mt-3" @click="emit('download')">
+                <BaseButton kind="secondary" size="sm" class="mt-3" @click="emit('download')">
                   <v-icon size="16" class="me-1">mdi-download-outline</v-icon>
                   {{ t('work.room.changes.downloadOriginal') }}
-                </v-btn>
+                </BaseButton>
               </div>
               <div v-else-if="props.docError && !props.docBytes" class="file-blob">
                 <v-icon size="30" class="text-warning mb-2">mdi-file-alert-outline</v-icon>
                 <div class="file-blob__title">{{ t('work.room.changes.cantDisplay') }}</div>
                 <div class="file-blob__note">{{ props.docError }}</div>
-                <v-btn size="small" variant="tonal" class="mt-3" @click="emit('download')">
+                <BaseButton kind="secondary" size="sm" class="mt-3" @click="emit('download')">
                   <v-icon size="16" class="me-1">mdi-download-outline</v-icon>
                   {{ t('work.room.changes.downloadOriginal') }}
-                </v-btn>
+                </BaseButton>
               </div>
               <div v-else class="doc-view__body">
                 <PreviewPages v-if="props.openDocumentType?.view === 'pages'" :data="props.docBytes" />
@@ -555,10 +552,10 @@ function revisionReadOnly(): boolean {
                 {{ props.fileTooLarge ? t('work.room.changes.tooLarge') : t('work.room.changes.binary') }}
               </div>
               <div class="file-blob__note">{{ props.openPath }} · {{ fmtBytes(props.fileBytes) }}</div>
-              <v-btn size="small" variant="tonal" class="mt-3" @click="emit('download')">
+              <BaseButton kind="secondary" size="sm" class="mt-3" @click="emit('download')">
                 <v-icon size="16" class="me-1">mdi-download-outline</v-icon>
                 {{ t('work.room.changes.downloadOriginal') }}
-              </v-btn>
+              </BaseButton>
             </div>
             <!-- 手机上只读：软键盘配 Monaco 不是能救的组合，给一个明确的说法比给一个
                难用的编辑器好。 -->

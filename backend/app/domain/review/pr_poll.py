@@ -16,8 +16,8 @@ from datetime import UTC, datetime
 import httpx
 from sqlalchemy import select
 
+from app.core.sentences import say
 from app.domain.agent.chat import ChatService
-from app.domain.block.notice_text import say
 
 logger = logging.getLogger("cheesex.review.pr_poll")
 

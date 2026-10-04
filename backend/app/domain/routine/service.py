@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.db import SessionFactory
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
+from app.core.sentences import listing, say, with_keys
 from app.domain.agent.models import AgentTurn
 from app.domain.agent.platform_notices import (
     EVENT_ROUTINE_PROPOSED,
@@ -34,7 +35,6 @@ from app.domain.agent.platform_notices import (
 )
 from app.domain.block.authorship import AuthorType
 from app.domain.block.models import Block, BlockKind
-from app.domain.block.notice_text import listing, say, with_keys
 from app.domain.delivery.agent import dispatch_pending, instance_for_seat, record_agent
 from app.domain.delivery.ledger import DeliveryEvent
 from app.domain.delivery.models import Delivery
@@ -111,12 +111,12 @@ def _validate(trigger: str, spec: dict, tz: str) -> dict:
     try:
         kind = RoutineTrigger(trigger)
     except ValueError as exc:
-        raise ValidationError("触发方式只能是定时或三种项目事件之一") from exc
+        raise ValidationError(say("routineTriggerInvalid")) from exc
     if kind is RoutineTrigger.schedule:
         return schedule.normalize(spec or {}, tz)
     scope = (spec or {}).get("scope", "room")
     if scope not in ("room", "project"):
-        raise ValidationError("事件范围只能是 room 或 project")
+        raise ValidationError(say("routineEventScopeInvalid"))
     if kind is RoutineTrigger.library_file_added:
         scope = "project"
     return {"scope": scope}
@@ -182,16 +182,14 @@ class RoutineService:
         if by_agent:
             agent = await self._agent_for(topic.id, agent_handle or by)
             if not owner_handle:
-                raise ValidationError("芝士起草时要写明是替谁设的（owner_handle）")
+                raise ValidationError(say("routineDraftNeedsOwner"))
             members, _ = await TopicMemberService(self._session).list_for_topic(
                 topic.id
             )
             seats = await TopicMemberService(self._session).agent_handles(topic.id)
             people = {m.member_handle for m in members} - set(seats)
             if owner_handle not in people:
-                raise ValidationError(
-                    f"{owner_handle} 不是这个房间里的人，结果没法通知给他"
-                )
+                raise ValidationError(say("routineOwnerNotInRoom", handle=owner_handle))
             owner = owner_handle
         else:
             agent = await self._agent_for(topic.id, agent_handle)
@@ -464,14 +462,14 @@ class RoutineService:
     ) -> RoutineRun:
         routine = await self.get(run.routine_id)
         if by != routine.agent_handle:
-            raise ForbiddenError("只有执行这条周期任务的 AI 队友能交回结果")
+            raise ForbiddenError(say("routineOnlyRunnerReports"))
         if status not in (RunStatus.succeeded, RunStatus.failed):
-            raise ValidationError("status 只能是 succeeded 或 failed")
+            raise ValidationError(say("routineStatusInvalid"))
         late = run.status == RunStatus.failed and run.error == NO_REPORT
         if run.status in TERMINAL_RUN_STATUSES and not late:
-            raise ValidationError("这次执行已经结束了")
+            raise ValidationError(say("routineRunEnded"))
         if status == RunStatus.failed and not summary.strip():
-            raise ValidationError("失败要写明原因")
+            raise ValidationError(say("routineFailureNeedsReason"))
         run.status = status
         run.summary = summary.strip()
         run.outputs = [str(p) for p in outputs][:50]

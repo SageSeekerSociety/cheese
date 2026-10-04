@@ -27,6 +27,7 @@ from app.core.errors import (
     ValidationError,
     message_key,
 )
+from app.core.sentences import exception_text, listing, say, with_keys
 from app.domain.agent.platform_notices import (
     EVENT_MAIL_DRAFTED,
     EVENT_MAIL_RESULT,
@@ -38,9 +39,9 @@ from app.domain.agent.platform_notices import (
 )
 from app.domain.block.authorship import AuthorType
 from app.domain.block.models import Block, BlockKind
-from app.domain.block.notice_text import exception_text, listing, say, with_keys
 from app.domain.identity.actor import Actor
 from app.domain.integration.feishu import FeishuClient
+from app.domain.integration.mail import IntegrationError
 from app.domain.integration.models import Integration, MailDraft
 from app.domain.integration.service import (
     FeishuAppService,
@@ -167,7 +168,7 @@ async def connect_mail(body: MailIn, db: DbSession, resolver: ActorResolverDep) 
     actor = await _person(resolver)
     assert actor.user_id is not None
     if body.security not in ("ssl", "starttls", "plain"):
-        raise ValidationError("security 只能是 ssl、starttls 或 plain")
+        raise ValidationError(say("mailSecurityInvalid"))
     address = body.address or body.username
     row = await IntegrationService(db).connect(
         owner_user_id=actor.user_id,
@@ -352,8 +353,11 @@ async def _finish_feishu(
         config = await feishu_settings_for(db, row)
         await FeishuClient(config).exchange_code(code, _redirect_uri())
     except Exception as exc:  # noqa: BLE001 — the person reads why, on the page
-        # A refusal of ours goes by its sentence's key; Feishu's answer by
-        # Feishu's own words.
+        # Feishu's answer goes by Feishu's own words, under the code the page
+        # words; an IntegrationError is that answer even when it is said with
+        # a key. A refusal of ours goes by its sentence's key.
+        if isinstance(exc, IntegrationError):
+            return land("exchange_failed", exc.reply)
         said = message_key(exception_text(exc))
         if said is not None:
             return land(said["key"])
@@ -462,7 +466,7 @@ async def project_integrations(
 ) -> dict:
     project, _room, _speaker = await _in_room(db, resolver, topic)
     if project != project_id:
-        raise ForbiddenError("这个房间不属于这个项目")
+        raise ForbiddenError(say("roomNotInProject"))
     rows = await IntegrationService(db).granted(project_id)
     items = [
         {
@@ -685,9 +689,7 @@ async def feishu_edit(
 ) -> dict:
     row, *_ = await _usable(db, resolver, integration_id, topic)
     if not body.append and not (body.block_id and body.text is not None):
-        raise ValidationError(
-            "要么给 append（追加的内容），要么给 block_id 和 text（改哪一段、改成什么）"
-        )
+        raise ValidationError(say("feishuDocEditShape"))
 
     async def edit(client: FeishuClient) -> dict:
         if body.append:

@@ -18,10 +18,13 @@ import type { BlockWindow } from '../../../lib/blockPaging'
 
 import { ref } from 'vue'
 
-import { joinNewest, prependOlder } from '../../../lib/blockPaging'
+import { capWindow, joinNewest, placeBlock, prependOlder } from '../../../lib/blockPaging'
 
-/** 新来的一块落在哪：显示出来了、收在背后的最新一段里、还是本来就有。 */
-export type Landing = 'shown' | 'held' | 'known'
+/**
+ * 新来的一块落在哪：显示出来了、收在背后的最新一段里、本来就有，还是比这一段更早、
+ * 留给往上翻的那一页带回来（见 placeBlock）。
+ */
+export type Landing = 'shown' | 'held' | 'known' | 'above'
 
 export function useTimeline() {
   /** 显示着的块，从旧到新。 */
@@ -55,15 +58,25 @@ export function useTimeline() {
     return messages.value.find((m) => m.id === id)
   }
 
-  /** 新来的一块接到最新一段的末尾。停在中间时它收在背后，不显示。 */
+  /** 新来的一块按时间落进最新一段。停在中间时它收在背后，不显示。 */
   function append(block: Block): Landing {
     if (newestHeld) {
       if (newestHeld.blocks.some((m) => m.id === block.id)) return 'known'
-      newestHeld.blocks.push(block)
+      const placed = placeBlock(newestHeld, block)
+      if (!placed) return 'above'
+      newestHeld = { ...newestHeld, blocks: placed }
       return 'held'
     }
     if (messages.value.some((m) => m.id === block.id)) return 'known'
-    messages.value.push(block)
+    const last = messages.value.at(-1)
+    // 平常新来的都比末尾那块新：原地接上，不换掉整个数组。
+    if (!last || Date.parse(block.created_at) >= Date.parse(last.created_at)) {
+      messages.value.push(block)
+      return 'shown'
+    }
+    const placed = placeBlock(current(), block)
+    if (!placed) return 'above'
+    messages.value = placed
     return 'shown'
   }
 
@@ -85,6 +98,30 @@ export function useTimeline() {
     const next = prependOlder(current(), older, more)
     messages.value = next.blocks
     hasMore.value = next.hasMore
+  }
+
+  /**
+   * 显示的这一段涨过上限时，把**最新**的那一截从屏上挪到背后去。
+   *
+   * 挪走而不是删掉：新消息要有个地方落（`append` 收进 `newestHeld`，算「held」），
+   * 「回到最新」要有东西可换（`backToNewest`），往下翻也要有东西可以接（`appendNewer`
+   * 拿 after 游标接上它就合成一段）。于是「停在历史中间」那套原样生效，只是它是被
+   * 裁出来的，不是从一条旧消息打开的。
+   *
+   * 单独一步、不在 `prepend` 里做：裁掉的行在视口下方，删掉不该动滚动位置，而
+   * `prepend` 的滚动补偿量的是 scrollHeight 的差；两者同一次落进 DOM 的话补偿会少
+   * 掉这一截，读的人每翻一页就被往上拽一下——正是这套窗口要避免的事。调用方在补偿
+   * 之后再叫它。
+   */
+  function capNewest() {
+    const capped = capWindow(messages.value)
+    if (!capped) return
+    messages.value = capped.keep
+    // 停在中间（背后已经有一段最新的）时，裁下来的这一截夹在显示段和它之间，留着会
+    // 让两段之间出现一个从没取过的洞，`joinNewest` 却以为接上了。丢掉即可：往下翻时
+    // 用 after 游标还会再取回来。
+    if (!newestHeld) newestHeld = { blocks: capped.dropped, hasMore: true }
+    hasNewer.value = true
   }
 
   /**
@@ -131,6 +168,7 @@ export function useTimeline() {
     replace,
     remove,
     prepend,
+    capNewest,
     showMiddle,
     appendNewer,
     backToNewest,

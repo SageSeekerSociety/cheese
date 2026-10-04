@@ -8,8 +8,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError, NotFoundError, ValidationError
+from app.core.sentences import say
 from app.domain.agent_instance.services import AgentInstanceService
-from app.domain.block.notice_text import say
 from app.domain.project.models import AiMode, Project
 from app.domain.project.repositories import ProjectRepository
 from app.domain.task.models import Task, TaskMembership
@@ -91,12 +91,12 @@ class ProjectService:
         if project_id is not None and (earlier := await self._repo.get(project_id)):
             # An earlier attempt committed but its answer never reached the client.
             if earlier.owner_handle != owner_handle:
-                raise ConflictError("这个项目编号已被使用")
+                raise ConflictError(say("projectNumberTaken"))
             return earlier
         if team_id is None and owner_handle:
             team_id = await self._resolve_personal_team_id(owner_handle)
         if team_id is None:
-            raise ValidationError("项目需要归属一个团队")
+            raise ValidationError(say("projectNeedsTeam"))
         project = await self._repo.add(
             name=name,
             owner_handle=owner_handle,

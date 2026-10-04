@@ -18,7 +18,7 @@ import time
 import uuid
 from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from functools import lru_cache
 
 from sqlalchemy import select
@@ -26,11 +26,17 @@ from sqlalchemy import select
 from app.core.background import hold
 from app.core.errors import AppError
 from app.core.obs import bind_context, clear_context
+from app.core.redis import get_redis_client
+from app.core.sentences import error_frame, listing, say
 from app.domain.agent import death_evidence, dispatch_log, turn_inputs
 from app.domain.agent.activity import RoomActivity
 from app.domain.agent.admission import (
     HOST_BUSY_META,
     QUEUED_META,
+    Pool,
+    Slot,
+    enter,
+    queued,
     queued_text,
     wait_for_host,
 )
@@ -57,8 +63,8 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.agent.repositories import AgentTurnRepository, TurnRecord
-from app.domain.block.notice_text import error_frame, listing, say
 from app.domain.delivery.addressing import NOBODY, Addressed, Event, Hand, address
+from app.domain.delivery.input_identity import InputReconciliationPending
 from app.domain.identity.actor import Actor
 from app.domain.identity.arrival import Arrival, how_it_arrives
 from app.domain.identity.handles import names_a_person, recipient_seat
@@ -157,6 +163,11 @@ async def _close_turns(session_factory, turn_ids) -> None:
 # What the room is told while a message waits for its turn. Neither is the
 # turn's outcome, so neither means the turn happened.
 _WAITING = frozenset({EVENT_TURN_QUEUED, EVENT_DELIVERY_FALLBACK})
+
+
+def _project_pool(project_id: uuid.UUID | str, limit: int) -> Pool:
+    """A project's turns: at most ``max_concurrent_turns`` run at once."""
+    return Pool(f"project-turns:{project_id}", limit)
 
 
 def _utcnow() -> datetime:
@@ -491,12 +502,6 @@ class AgentWorkRunner:
         self._tasks: set[asyncio.Task] = set()
         # 可 debug: lifecycle summaries of the last ~100 turns (/debug/turns).
         self._recent: deque[dict] = deque(maxlen=100)
-        # Project-level concurrency gate (spec §9.1): at most N turns run at
-        # once per project; excess turns queue on the semaphore (FIFO). The
-        # queue is asyncio-only — a restart drops it, and the process that takes
-        # the work over starts what it dropped (`resume_lost_messages`).
-        self._project_sems: dict[str, asyncio.Semaphore] = {}
-        self._project_waiting: dict[str, int] = {}
         # Turn ids THIS process is actually executing right now → the task
         # running them. The durable registry on disk cannot answer that question
         # — it records every turn that ever started and was not cleaned up,
@@ -796,9 +801,9 @@ class AgentWorkRunner:
             }
         return None
 
-    def project_queue_depth(self, project_id: uuid.UUID | str) -> int:
-        """Turns currently waiting on this project's concurrency semaphore."""
-        return self._project_waiting.get(str(project_id), 0)
+    async def project_queue_depth(self, project_id: uuid.UUID | str) -> int:
+        """Turns currently waiting for one of this project's slots."""
+        return await queued(get_redis_client(), _project_pool(project_id, 0))
 
     def submit(
         self,
@@ -872,9 +877,19 @@ class AgentWorkRunner:
             recipient_instance_id=recipient_instance_id,
         )
         if delivery_id is not None:
+            from app.domain.agent.answer_delivery import run_with_answer_offer
             from app.domain.delivery.agent import run_attempt
 
-            work = run_attempt(chat_service.session_factory, delivery_id, turn_id, work)
+            work = run_with_answer_offer(
+                self, chat_service, topic_id, delivery_id, turn_id, content, work
+            )
+            work = run_attempt(
+                chat_service.session_factory,
+                delivery_id,
+                turn_id,
+                work,
+                chat=chat_service,
+            )
         task = asyncio.create_task(
             work,
             name=f"turn:{turn_id}",
@@ -887,6 +902,9 @@ class AgentWorkRunner:
 
     def subscribe_messages(self) -> None:
         """Attach the process-owned runner to accepted room messages."""
+        from app.domain.agent.pending_messages import bind_runner
+
+        bind_runner(self)
         self._broker.subscribe_messages(self._receive_message)
 
     def _receive_message(self, chat_service, topic_id, turn_id, **message) -> None:
@@ -1220,7 +1238,7 @@ class AgentWorkRunner:
         `sweep_orphans` with the young-entry guard switched off."""
         return await self.sweep_orphans(chat_service, min_age_s=0.0)
 
-    async def resume_lost_messages(self, chat_service) -> int:
+    async def resume_lost_messages(self, chat_service, *, topic_id=None) -> int:
         """Start the turns a previous owner accepted a message for and never
         began. Returns how many turns it started.
 
@@ -1238,95 +1256,9 @@ class AgentWorkRunner:
         turn does, and teammates in one room run side by side, so another
         agent's turn neither picks this message up nor holds it back.
         """
-        from app.domain.agent.models import AgentTurn
-        from app.domain.block.models import (
-            CONSUMED_TURN_META_KEY,
-            Block,
-            BlockKind,
-            consumed_turn,
-            prompt_attempts,
-        )
+        from app.domain.agent.pending_messages import resume_messages
 
-        since = _utcnow() - timedelta(seconds=self.ORPHAN_STALE_S)
-        async with chat_service.session_factory() as session:
-            mentioned = [
-                block
-                for block in await session.scalars(
-                    select(Block)
-                    .where(
-                        Block.created_at >= since,
-                        Block.kind == BlockKind.message,
-                        Block.meta["agent_recipient"]["mentioned"].as_boolean(),
-                    )
-                    .order_by(Block.created_at)
-                )
-                if CONSUMED_TURN_META_KEY in (block.meta or {})
-                and consumed_turn(block) is None
-                and prompt_attempts(block) == 0
-            ]
-            if not mentioned:
-                return 0
-            ids = [block.id for block in mentioned]
-            begun = set(
-                await session.scalars(select(AgentTurn.id).where(AgentTurn.id.in_(ids)))
-            )
-            # Whose turns are running, by room. A turn not yet assembled has
-            # no agent (None) and may still turn out to be anybody's.
-            busy: dict[uuid.UUID, set[str | None]] = {}
-            for topic_id, agent_handle in await session.execute(
-                select(AgentTurn.topic_id, AgentTurn.agent_handle).where(
-                    AgentTurn.stopped_at.is_(None)
-                )
-            ):
-                busy.setdefault(topic_id, set()).add(agent_handle)
-            answered = {
-                block.turn_id
-                for block in await session.scalars(
-                    select(Block).where(Block.turn_id.in_(ids), Block.id.not_in(ids))
-                )
-                if (block.meta or {}).get("event_type") not in _WAITING
-            }
-        seats: dict[tuple[uuid.UUID, str | None], Block] = {}
-        for block in mentioned:
-            if block.id in begun or block.id in answered:
-                continue
-            # Accepted by this process while it waited to take over: its turn is
-            # already on its way here, and a second one would race it.
-            if self.turn_pending(block.id):
-                continue
-            seat = ((block.meta or {}).get("agent_recipient") or {}).get("handle")
-            running = busy.get(block.topic_id, set())
-            if (
-                None in running
-                or seat in running
-                or chat_service.has_running_turn(block.topic_id, seat)
-            ):
-                continue
-            seats.setdefault((block.topic_id, seat), block)
-        for (topic_id, _), block in seats.items():
-            recipient = (block.meta or {}).get("agent_recipient") or {}
-            logger.info(
-                "starting the turn a previous backend never began topic=%s block=%s",
-                topic_id,
-                block.id,
-            )
-            self._receive_message(
-                chat_service,
-                topic_id,
-                block.id,
-                addressed=addressed_to_agent(recipient_seat(recipient)),
-                continuation_id=block.id,
-                author=block.author,
-                content=block.content,
-                reply_to=str(block.reply_to) if block.reply_to else None,
-                attachments=None,
-                provision_actor=None,
-                landed_user_block_id=block.id,
-                landed_user_block_ids=[block.id],
-                live_delivery_expected=False,
-                recipient_handle=recipient.get("handle"),
-            )
-        return len(seats)
+        return await resume_messages(self, chat_service, topic_id=topic_id)
 
     async def sweep_orphans(
         self,
@@ -1930,14 +1862,14 @@ class AgentWorkRunner:
 
     async def _admit(
         self, chat_service, topic_id: uuid.UUID, turn_id: uuid.UUID
-    ) -> tuple[str, asyncio.Semaphore | None]:
+    ) -> tuple[str, Slot | None]:
         """Admission control (spec §9.1 算力额度真实化), before any execution:
 
         - credits exhausted → ("reject", None): the caller refuses the turn.
         - its session starts on a session host with no memory for it → wait.
-        - project concurrency full → queue on the project semaphore (FIFO),
-          after posting a visible "排队中" system event. Returns ("ok", sem)
-          with the ACQUIRED semaphore (caller must release).
+        - project concurrency full → wait for one of the project's slots, first
+          come first served, after posting a visible "排队中" system event.
+          Returns ("ok", slot) with the slot held (caller must release).
         - topic unknown / policy lookup failed → ("ok", None): admit ungated;
           the turn itself surfaces the real error.
         """
@@ -1958,31 +1890,25 @@ class AgentWorkRunner:
                 chat_service, topic_id, turn_id, text, meta=HOST_BUSY_META
             ),
         )
-        key = policy["project_id"]
-        sem = self._project_sems.get(key)
-        if sem is None:
-            sem = asyncio.Semaphore(policy["max_concurrent_turns"])
-            self._project_sems[key] = sem
-        if sem.locked():
-            ahead = self._project_waiting.get(key, 0)
+
+        async def tell_queued(ahead: int) -> None:
             await self._post_event(
-                chat_service,
-                topic_id,
-                turn_id,
-                queued_text(ahead),
-                meta=QUEUED_META,
+                chat_service, topic_id, turn_id, queued_text(ahead), meta=QUEUED_META
             )
-            logger.info("turn %s queued (project=%s ahead=%s)", turn_id, key, ahead)
-        self._project_waiting[key] = self._project_waiting.get(key, 0) + 1
-        try:
-            await sem.acquire()
-        finally:
-            left = self._project_waiting.get(key, 1) - 1
-            if left > 0:
-                self._project_waiting[key] = left
-            else:
-                self._project_waiting.pop(key, None)
-        return "ok", sem
+            logger.info(
+                "turn %s queued (project=%s ahead=%s)",
+                turn_id,
+                policy["project_id"],
+                ahead,
+            )
+
+        slot = await enter(
+            get_redis_client(),
+            str(turn_id),
+            pool=_project_pool(policy["project_id"], policy["max_concurrent_turns"]),
+            on_queued=tell_queued,
+        )
+        return "ok", slot
 
     async def _refuse_exhausted(
         self,
@@ -2070,6 +1996,14 @@ class AgentWorkRunner:
                     else {}
                 ),
             )
+            if isinstance(delivered, InputReconciliationPending):
+                await self._post_event(
+                    chat_service,
+                    topic_id,
+                    turn_id,
+                    "输入已登记，发送结果正在核对；不会重复发送",
+                )
+                return True
             if delivered is True:
                 # 这里曾经打 👀。现在不打了：这一句证明的是「传输层收下了这次写
                 # 入」，而 harness 说「会话把它读进去了」是另一件事，由
@@ -2166,41 +2100,56 @@ class AgentWorkRunner:
             return
         lifecycle = {"started": False, "session_owned": False}
         try:
-            if landed_user_block_id is not None:
-                frames = chat_service.converse_prepared(
-                    topic_id=topic_id,
-                    author=author,
-                    content=content,
-                    turn_id=turn_id,
-                    user_block_id=landed_user_block_id,
-                    continuation_id=continuation_id,
-                    provision_actor=provision_actor,
-                    **(
-                        {"recipient_handle": recipient_handle}
-                        if recipient_handle is not None
-                        else {}
-                    ),
-                )
-            await self._execute(
+            from app.domain.agent.answer_delivery import admitted_initial
+
+            async with admitted_initial(
                 chat_service,
                 topic_id,
+                delivery_id,
                 turn_id,
-                author=author,
-                content=content,
-                addressed=addressed,
-                reply_to=reply_to,
-                attachments=attachments,
-                is_resume=is_resume,
-                resume_reason=resume_reason,
-                nudge_event=nudge_event,
-                nudge_meta=nudge_meta,
-                continuation_id=continuation_id,
-                provision_actor=provision_actor,
-                frames=frames,
-                lifecycle=lifecycle,
-                delivery_id=delivery_id,
+                content,
+                user_block_id=landed_user_block_id,
                 recipient_instance_id=recipient_instance_id,
-            )
+                recipient_handle=recipient_handle,
+            ) as offered:
+                if offered:
+                    return
+                if landed_user_block_id is not None:
+                    frames = chat_service.converse_prepared(
+                        topic_id=topic_id,
+                        author=author,
+                        content=content,
+                        turn_id=turn_id,
+                        user_block_id=landed_user_block_id,
+                        continuation_id=continuation_id,
+                        provision_actor=provision_actor,
+                        recipient_instance_id=recipient_instance_id,
+                        **(
+                            {"recipient_handle": recipient_handle}
+                            if recipient_handle is not None
+                            else {}
+                        ),
+                    )
+                await self._execute(
+                    chat_service,
+                    topic_id,
+                    turn_id,
+                    author=author,
+                    content=content,
+                    addressed=addressed,
+                    reply_to=reply_to,
+                    attachments=attachments,
+                    is_resume=is_resume,
+                    resume_reason=resume_reason,
+                    nudge_event=nudge_event,
+                    nudge_meta=nudge_meta,
+                    continuation_id=continuation_id,
+                    provision_actor=provision_actor,
+                    frames=frames,
+                    lifecycle=lifecycle,
+                    delivery_id=delivery_id,
+                    recipient_instance_id=recipient_instance_id,
+                )
         finally:
             # Close what this turn opened, unless the session took over THIS
             # turn — asking by id rather than trusting the handover.
@@ -2245,7 +2194,10 @@ class AgentWorkRunner:
             self._last_frame_at.pop(str(turn_id), None)
             self._live_topics.pop(str(turn_id), None)
             if gate is not None:
-                gate.release()
+                await gate.release()
+            from app.domain.agent.pending_messages import nudge_messages
+
+            nudge_messages(chat_service, topic_id)
 
     def _credential_is_known_expired(self, topic_id: uuid.UUID) -> bool:
         """Does the backend already KNOW this topic's model credential is expired?

@@ -1,4 +1,4 @@
-"""Asking the room's AI teammate from the document (``app.api.doc_agent_box``).
+"""Asking the room's AI teammate from the document (``app.domain.agent.document.box``).
 
 A person who may comment on the document may ask; whether the answer may change
 the document is the document's to say (an archived room or project is read-only),
@@ -16,9 +16,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 
-from app.api import doc_agent, doc_agent_box
 from app.api.auth import ActorResolverDep
-from app.api.deps import get_chat_service, get_handless_sessions
+from app.api.deps import get_chat_service, get_session_host
 from app.api.doc_identity import human_operation_actor
 from app.api.response import ok
 from app.api.routes.living_docs import _frozen
@@ -26,8 +25,10 @@ from app.api.routes.topics import DbSession, _actor_in_place
 from app.core.background import spawn
 from app.core.errors import ForbiddenError, SystemBusyError, ValidationError
 from app.core.redis import get_redis_client
+from app.core.sentences import error_frame, say
 from app.domain.agent.chat import ChatService
-from app.domain.agent.harness.pi.handless import HandlessSessions
+from app.domain.agent.document import box, question, thread
+from app.domain.agent.session_host.host import SessionHost
 from app.domain.block.comment_threads import CommentThreads
 from app.domain.living_doc.schemas import AgentAskIn
 from app.domain.topic.services import TopicService
@@ -36,7 +37,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/topics", tags=["doc-agent"])
 
 Chat = Annotated[ChatService, Depends(get_chat_service)]
-Sessions = Annotated[HandlessSessions, Depends(get_handless_sessions)]
+Sessions = Annotated[SessionHost, Depends(get_session_host)]
 
 
 def _sse(event: str, data: dict) -> bytes:
@@ -52,7 +53,7 @@ async def _asker(db, resolver, topic_id: uuid.UUID):
     )
     redis = get_redis_client()
     if redis is None:
-        raise SystemBusyError("暂时无法提问，稍后重试")
+        raise SystemBusyError(say("docAgentAskUnavailable"))
     return place, actor, redis
 
 
@@ -69,23 +70,21 @@ async def ask_agent(
     ``queued``, ``working``, ``delta``, ``tool``, then ``done`` (``answer``,
     ``edits``, ``stopped``) or ``error``."""
     place, actor, redis = await _asker(db, resolver, topic_id)
-    preset = doc_agent_box.PRESETS.get(body.preset or "") if body.preset else None
+    preset = box.PRESETS.get(body.preset or "") if body.preset else None
     if body.preset and preset is None:
-        raise ValidationError("没有这个选项")
+        raise ValidationError(say("docAgentPresetNotFound"))
     if preset is not None and (preset.scope == "selection") != (
         body.selection is not None
     ):
-        raise ValidationError("这个选项要选中文字才能用")
+        raise ValidationError(say("docAgentPresetNeedsSelection"))
     if body.conversation is not None:
-        await doc_agent_box.owned(
+        await box.owned(
             redis, body.conversation, asker=actor.handle, room_id=place.room_id
         )
     conversation = body.conversation or uuid.uuid4()
     may_edit = not await _frozen(db, place)
     selection = (
-        doc_agent_box.Selection(
-            body.selection.block, body.selection.start, body.selection.end
-        )
+        box.Selection(body.selection.block, body.selection.start, body.selection.end)
         if body.selection is not None
         else None
     )
@@ -99,7 +98,7 @@ async def ask_agent(
 
     async def run() -> None:
         try:
-            await doc_agent_box.ask(
+            await box.ask(
                 chat,
                 sessions,
                 redis,
@@ -115,7 +114,7 @@ async def ask_agent(
             )
         except Exception:  # noqa: BLE001 — the box is told; the log keeps why
             logger.warning("doc agent box failed", exc_info=True)
-            await emit("error", {"message": "暂时无法回答，稍后重试"})
+            await emit("error", error_frame(say("docAgentCantAnswer")))
         finally:
             queue.put_nowait(None)
 
@@ -143,11 +142,9 @@ async def stop_agent(
     """Stop the box's question: its wait for a turn, or the answer being
     written. What was already changed stays, for the box to undo."""
     place, actor, redis = await _asker(db, resolver, topic_id)
-    await doc_agent_box.owned(
-        redis, conversation, asker=actor.handle, room_id=place.room_id
-    )
+    await box.owned(redis, conversation, asker=actor.handle, room_id=place.room_id)
     await db.commit()
-    await doc_agent_box.stop(
+    await box.stop(
         redis, sessions, project_id=place.project_id, conversation=conversation
     )
     return ok({})
@@ -165,22 +162,22 @@ async def reply_in_thread(
     """Put the box's last answer into a comment thread the person started for
     it (「转成评论」), as the teammate's reply."""
     place, actor, redis = await _asker(db, resolver, topic_id)
-    box = await doc_agent_box.owned(
+    held = await box.owned(
         redis, conversation, asker=actor.handle, room_id=place.room_id
     )
     root = await CommentThreads(db).root(place.room_id, thread_id)
     if root.author != actor.handle:
         raise ForbiddenError("Only the thread you started takes this answer")
-    if not box.answer:
-        raise ValidationError("这次没有可放进评论的回答")
-    bound = await doc_agent.bind(db, place.room_id)
+    if not held.answer:
+        raise ValidationError(say("docAgentNoAnswerToComment"))
+    bound = await question.bind(db, place.room_id)
     await db.commit()
-    await doc_agent._reply(
+    await thread.reply(
         chat.session_factory,
         place.room_id,
         place.project_id,
         thread_id,
         bound,
-        box.answer,
+        held.answer,
     )
     return ok({})

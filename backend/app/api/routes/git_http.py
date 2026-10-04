@@ -13,6 +13,7 @@ from app.api.response import ok
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, NotFoundError, ValidationError
 from app.core.sandbox_auth import token_agent_handle, verify_scoped_token
+from app.core.sentences import say
 
 router = APIRouter(prefix="/projects", tags=["git"])
 
@@ -30,7 +31,7 @@ async def _task_for(db, project_id, task_id, token):
             token, project_id=str(project_id), topic_id=str(task.room_id)
         )
     ):
-        raise NotFoundError("这个房间里没有这条工作任务")
+        raise NotFoundError(say("workTaskNotInRoom"))
     await require_seated_agent(db, token, project_id=project_id, topic_id=task.room_id)
     return task
 
@@ -54,9 +55,7 @@ async def save_task_snapshot(
         async for chunk in request.stream():
             size += len(chunk)
             if size > 512 * 1024 * 1024:
-                raise ValidationError(
-                    "单次任务备份超过 512 MiB，请将大文件移入附件存储"
-                )
+                raise ValidationError(say("taskBackupTooLarge"))
             await asyncio.to_thread(file.write, chunk)
         row = await snapshots.save(
             db,
@@ -106,7 +105,7 @@ async def download_task_snapshot(
     await _task_for(db, project_id, task_id, x_cheese_token)
     row = await db.get(TaskSnapshot, snapshot_id)
     if row is None or row.task_id != task_id:
-        raise NotFoundError("这条任务没有此备份")
+        raise NotFoundError(say("taskBackupNotFound"))
     return Response(
         await snapshots.download(row),
         media_type="application/x-git-bundle",
@@ -128,7 +127,7 @@ async def open_task_workspace(
     if not acting:
         raise AuthenticationRequiredError("Opening a task needs an agent identity")
     if task.status == "closed":
-        raise ValidationError("这条任务已结束，请创建新任务")
+        raise ValidationError(say("taskEndedCreateNew"))
     await TaskService(db).record_author(task, acting)
     result = await task_workspace(project_id, task_id, db, x_cheese_token)
     await db.commit()
@@ -151,17 +150,17 @@ async def task_workspace(
 
     task = await TaskService(db).get(task_id)
     if task is None or task.project_id != project_id or task.branch_name is None:
-        raise NotFoundError("这个项目里没有这条工作任务")
+        raise NotFoundError(say("workTaskNotInProject"))
     if not verify_scoped_token(
         x_cheese_token or "", project_id=str(project_id), topic_id=str(task.room_id)
     ):
-        raise NotFoundError("这个房间里没有这条工作任务")
+        raise NotFoundError(say("workTaskNotInRoom"))
     await require_seated_agent(
         db, x_cheese_token, project_id=project_id, topic_id=task.room_id
     )
     binding = await binding_for_project(project_id, db)
     if binding is None:
-        raise NotFoundError("这个项目还没有代码仓库")
+        raise NotFoundError(say("projectHasNoRepo"))
     from app.domain.repository import identity
     from app.domain.topic.services import TopicService
 

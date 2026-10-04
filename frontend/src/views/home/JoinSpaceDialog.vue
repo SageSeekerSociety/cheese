@@ -4,6 +4,7 @@
 import { ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
+import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import { t } from '@/i18n'
 import { spaceEntryRoute } from '@/lib/spaceEntry'
 import { SpacesApi } from '@/network/api/spaces'
@@ -42,26 +43,24 @@ async function submit() {
 </script>
 
 <template>
-  <v-dialog v-model="open" max-width="440">
-    <v-card rounded="lg">
-      <v-card-title class="t-dialog-title">{{ t('work.joinTitle') }}</v-card-title>
-      <v-card-text>
-        <p class="t-body c-muted mb-3">{{ t('work.joinBody') }}</p>
-        <v-text-field
-          v-model="code"
-          :label="t('work.joinLabel')"
-          :error-messages="error"
-          autocomplete="off"
-          autofocus
-          hide-details="auto"
-          @keyup.enter="submit"
-        />
-      </v-card-text>
-      <v-card-actions>
-        <v-spacer />
-        <v-btn variant="text" @click="open = false">{{ t('work.joinCancel') }}</v-btn>
-        <v-btn color="primary" variant="flat" :loading="joining" @click="submit">{{ t('work.joinSubmit') }}</v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+  <AdaptiveDialog
+    v-model="open"
+    size="sm"
+    :title="t('work.joinTitle')"
+    :primary-label="t('work.joinSubmit')"
+    :primary-loading="joining"
+    :cancel-label="t('work.joinCancel')"
+    @primary="submit"
+  >
+    <p class="t-body c-muted mb-3">{{ t('work.joinBody') }}</p>
+    <v-text-field
+      v-model="code"
+      :label="t('work.joinLabel')"
+      :error-messages="error"
+      autocomplete="off"
+      autofocus
+      hide-details="auto"
+      @keyup.enter="submit"
+    />
+  </AdaptiveDialog>
 </template>

@@ -16,6 +16,7 @@ from app.api.deps import get_profile_registry, get_work_runner
 from app.api.response import ok
 from app.core.config import settings
 from app.core.db import get_db
+from app.core.sentences import notice_keys, say
 from app.domain.agent.market import (
     COMPUTE_CLOUD,
     COMPUTE_DEVICE,
@@ -65,8 +66,8 @@ async def list_nodes(runner: Runner) -> dict:
     default_name = compute_default_name(settings)
     # What makes each pool live, in its own terms — the mono line under the card.
     detail = {
-        COMPUTE_DEVICE: ("有已连接的设备", "暂无已连接的设备"),
-        COMPUTE_CLOUD: ("可以为房间开一台云端机器", "这个部署还没有接入云端"),
+        COMPUTE_DEVICE: (say("nodeDeviceOnline"), say("nodeDeviceOffline")),
+        COMPUTE_CLOUD: (say("nodeCloudOnline"), say("nodeCloudOffline")),
     }
     nodes = [
         {
@@ -77,6 +78,7 @@ async def list_nodes(runner: Runner) -> dict:
             "current": pool.id == default_name,
             "detail": detail[pool.id][0 if pool.available else 1],
             "description": pool.description,
+            **notice_keys(detail=detail[pool.id][0 if pool.available else 1]),
         }
         for pool in compute_listings(settings)
     ]

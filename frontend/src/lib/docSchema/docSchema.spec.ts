@@ -137,6 +137,17 @@ describe('round-trip corpus', () => {
     }
   })
 
+  it('keeps a code block under a numbered step, after a second paragraph too', () => {
+    for (const md of [
+      '1. 安装。\n   ```\n   curl x | sh\n   ```\n2. 下一步。',
+      '1. 安装。\n\n   跑同一条命令：\n\n   ```\n   curl x | sh\n   ```\n\n2. 下一步。',
+    ]) {
+      const rt = roundTrip(md)
+      expect(rt).toContain('\n   curl x | sh\n')
+      expect(compareRoundTrip(md, rt).clean).toBe(true)
+    }
+  })
+
   it('task list', () => {
     expectClean('- [ ] 未完成的任务\n- [x] 已完成的任务\n- [ ] 还有一个')
   })

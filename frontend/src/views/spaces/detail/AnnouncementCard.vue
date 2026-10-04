@@ -10,6 +10,8 @@ import { announcementDay, expiryDay } from '../model'
 
 import { useAnnouncementDay } from './useAnnouncementDay'
 
+import BaseButton from '@/components/base/BaseButton.vue'
+
 const TipTapViewer = defineAsyncComponent(() => import('@/components/common/Editor/TipTapViewer.vue'))
 
 const props = defineProps<{ announcement: SpaceAnnouncement; expired?: boolean; manager: boolean }>()
@@ -46,29 +48,29 @@ const byline = computed(() => {
         {{ t('spaces.announcements.expiresOn', { day: dayText(expiryDay(announcement.expiresAt)) }) }}
       </span>
       <span v-if="manager" class="acard__ops">
-        <v-btn
+        <BaseButton
           v-if="!expired"
+          kind="ghost"
           :icon="announcement.pinned ? 'mdi-pin-off-outline' : 'mdi-pin-outline'"
           :aria-label="t(announcement.pinned ? 'spaces.announcements.unpin' : 'spaces.announcements.pin')"
           :title="t(announcement.pinned ? 'spaces.announcements.unpin' : 'spaces.announcements.pin')"
-          size="small"
-          variant="text"
+          size="sm"
           @click="$emit('pin')"
         />
-        <v-btn
+        <BaseButton
+          kind="ghost"
           icon="mdi-pencil-outline"
           :aria-label="t('spaces.announcements.edit')"
           :title="t('spaces.announcements.edit')"
-          size="small"
-          variant="text"
+          size="sm"
           @click="$emit('edit')"
         />
-        <v-btn
+        <BaseButton
+          kind="ghost"
           icon="mdi-delete-outline"
           :aria-label="t('spaces.announcements.delete')"
           :title="t('spaces.announcements.delete')"
-          size="small"
-          variant="text"
+          size="sm"
           @click="$emit('remove')"
         />
       </span>

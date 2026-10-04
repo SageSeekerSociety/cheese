@@ -22,11 +22,13 @@ import type { ThreadPlace } from '../../../lib/docThreadTypes'
 import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import Collaboration from '@tiptap/extension-collaboration'
 import CollaborationCaret from '@tiptap/extension-collaboration-caret'
-import { Editor, EditorContent } from '@tiptap/vue-3'
+import { EditorContent } from '@tiptap/vue-3'
+
+import { scrollBehavior } from '@/utils/motion'
 
 import { BUBBLE_META } from '../../../lib/docBubble'
 import { renderCaret } from '../../../lib/docCaret'
-import { placeOf } from '../../../lib/docCommentSpots'
+import { placeOf, spotAt } from '../../../lib/docCommentSpots'
 import {
   commentHighlightKey,
   createCommentHighlights,
@@ -42,7 +44,9 @@ import { commentAnchors, docExtensions, serializeDoc } from '../../../lib/docSch
 import { createSlashCommands } from '../../../lib/docSlashMenu'
 import LoadingSkeleton from '../../common/LoadingSkeleton.vue'
 
+import { editorBlocks, newStatusAt } from './blocks'
 import { alignedDocBlocks } from './docBlocks'
+import { DocEditor } from './docEditor'
 import DocLinkCallout from './DocLinkCallout.vue'
 import DocOverlays from './DocOverlays.vue'
 
@@ -118,7 +122,7 @@ async function flashBlocks(els: HTMLElement[]) {
     props.pulse()
     return
   }
-  els[0].scrollIntoView({ behavior: 'smooth', block: 'center' })
+  els[0].scrollIntoView({ behavior: scrollBehavior(), block: 'center' })
   // Read positions after the smooth-scroll settles enough to be visible;
   // getBoundingClientRect is read once, so the flash is anchored to where the
   // block is now (fine for a ~1.5s cue).
@@ -154,7 +158,7 @@ function revealThread(threadId: string): boolean {
   const { node } = ed.view.domAtPos(at)
   const el = node instanceof Element ? node : node.parentElement
   if (range) {
-    el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    el?.scrollIntoView({ behavior: scrollBehavior(), block: 'center' })
     return true
   }
   const block = el?.closest('.ProseMirror > *') as HTMLElement | null
@@ -332,12 +336,14 @@ const displayTick = ref(0)
 
 // 编辑器绑在这一份协同文档上：文档换了（换房间、重连拿到的是另一份）就整个重建，
 // 因为 Collaboration 扩展只在建编辑器时认一次文档。
-const editor = shallowRef<Editor | undefined>()
+const editor = shallowRef<DocEditor | undefined>()
 
-function buildEditor(session: DocSession): Editor {
-  return new Editor({
+function buildEditor(session: DocSession): DocEditor {
+  return new DocEditor({
     extensions: [
-      ...docExtensions({ resolveImageSrc: (src) => props.imageSrc(src) }),
+      ...editorBlocks(docExtensions({ resolveImageSrc: (src) => props.imageSrc(src) }), () =>
+        props.agentHandle ? { name: props.agentName, run: (ed, from, to) => emit('agent', spotAt(ed, from, to)) } : null
+      ),
       Collaboration.configure({ document: session.doc }),
       CollaborationCaret.configure({ provider: session.provider, user: session.user, render: renderCaret }),
       // 几种装饰都只读递进来的输入（哪一段有装饰、装饰上写什么），扩展本身不认识
@@ -359,6 +365,7 @@ function buildEditor(session: DocSession): Editor {
         onUpdate: showSlashMenu,
         onExit: onSlashExit,
         onKeyDown: onSlashKeyDown,
+        onAction: (_action, ed) => newStatusAt(ed),
       }),
     ],
     editable: props.editable,
@@ -615,7 +622,7 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
    imperatively inside the (scoped) .doc-editor-wrap. */
 .doc-editor-wrap :deep(.node-flash-overlay) {
   position: absolute;
-  z-index: 3;
+  z-index: var(--z-raised-3);
   pointer-events: none;
   border-radius: var(--radius-sm);
   margin: -3px -8px;
@@ -699,7 +706,7 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
   content: '';
   position: absolute;
   inset: 0;
-  z-index: 2;
+  z-index: var(--z-raised-2);
   pointer-events: none;
   background: rgba(var(--v-theme-primary), 0.1);
 }

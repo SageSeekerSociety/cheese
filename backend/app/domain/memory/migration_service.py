@@ -34,6 +34,7 @@ from app.core.errors import (
     ForbiddenError,
     NotFoundError,
 )
+from app.core.sentences import exception_text, say
 from app.domain.agent.announce import announce
 from app.domain.agent.platform_notices import (
     EVENT_MEMORY_ORGANIZING,
@@ -42,7 +43,6 @@ from app.domain.agent.platform_notices import (
     WHO_PLATFORM,
     notice,
 )
-from app.domain.block.notice_text import say
 from app.domain.gateway_chat import GatewayCallError, GatewayChat
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.membership.roster import roster
@@ -252,7 +252,7 @@ class MemoryMigrationService:
         """读旧记忆、问模型、出一份计划。**这一步一个字都不写进新树。**"""
         gathered = await self.gather(project_id)
         if not gathered.entries:
-            raise BadRequestError("这个项目没有还没搬过的旧记忆")
+            raise BadRequestError(say("migrationNothingToMove"))
         raw = await self._ask(gathered)
         try:
             plan = build_plan(
@@ -264,7 +264,9 @@ class MemoryMigrationService:
                 raw_decisions=raw,
             )
         except MigrationError as exc:
-            raise BadRequestError(f"这一版搬迁计划不成立：{exc}") from exc
+            raise BadRequestError(
+                say("migrationPlanInvalid", reason=exception_text(exc))
+            ) from exc
         row = MemoryMigrationPlan(
             project_id=project_id,
             status=MemoryMigrationStatus.draft.value,
@@ -323,7 +325,7 @@ class MemoryMigrationService:
         """分批问模型。一批里的决定只看得见这一批的旧记忆，合并时一起校验。"""
         chat = await self._model()
         if chat is None:
-            raise BadRequestError("没有配置模型，搬迁要一个模型来判去处")
+            raise BadRequestError(say("migrationNoModel"))
         decisions: list[dict] = []
         size = max(1, settings.memory_migration_chunk)
         for start in range(0, len(gathered.entries), size):
@@ -343,7 +345,9 @@ class MemoryMigrationService:
                     timeout=settings.memory_migration_timeout_s,
                 )
             except GatewayCallError as exc:
-                raise BadRequestError(f"问模型这一步失败了：{exc}") from exc
+                raise BadRequestError(
+                    say("migrationModelFailed", reason=exception_text(exc))
+                ) from exc
             # 搬迁是平台自己做的事，花销记在平台头上，不扣任何团队（#2233）。
             await Ledger(self._session).record_platform(
                 kind=USAGE_KIND,
@@ -355,7 +359,9 @@ class MemoryMigrationService:
             try:
                 decisions += decode_answer(answer.content)
             except MigrationError as exc:
-                raise BadRequestError(f"模型这一批的回答读不了：{exc}") from exc
+                raise BadRequestError(
+                    say("migrationAnswerUnreadable", reason=exception_text(exc))
+                ) from exc
         return decisions
 
     # --- 点头 -----------------------------------------------------------
@@ -366,10 +372,10 @@ class MemoryMigrationService:
         reviewer = settings.memory_migration_reviewer
         if by != reviewer:
             raise ForbiddenError(
-                f"旧表迁移由 {reviewer} 复核，不是你。报告在计划 {row.id} 上。"
+                say("migrationReviewerOnly", reviewer=reviewer, plan=str(row.id))
             )
         if row.status != MemoryMigrationStatus.draft.value:
-            raise ConflictError(f"这份计划已经是 {row.status}，不能再点头")
+            raise ConflictError(say("migrationPlanAlreadyDecided", status=row.status))
         row.status = MemoryMigrationStatus.approved.value
         row.approved_by = by
         row.approved_at = datetime.now(UTC)
@@ -379,7 +385,7 @@ class MemoryMigrationService:
     async def get_or_404(self, plan_id: uuid.UUID) -> MemoryMigrationPlan:
         row = await self._session.get(MemoryMigrationPlan, plan_id)
         if row is None:
-            raise NotFoundError("没有这份搬迁计划")
+            raise NotFoundError(say("migrationPlanNotFound"))
         return row
 
     async def plans_of(self, project_id: uuid.UUID) -> list[MemoryMigrationPlan]:
@@ -406,8 +412,11 @@ class MemoryMigrationService:
         row = await self.get_or_404(plan_id)
         if row.status != MemoryMigrationStatus.approved.value:
             raise ForbiddenError(
-                f"这份计划还没复核（现在是 {row.status}）。"
-                f"复核人是 {settings.memory_migration_reviewer}。"
+                say(
+                    "migrationPlanNotReviewed",
+                    status=row.status,
+                    reviewer=settings.memory_migration_reviewer,
+                )
             )
         gathered = await self.gather(row.project_id)
         # 指纹算的是**现在读出来的那一份**，不是报告里存着的那一份——后者和

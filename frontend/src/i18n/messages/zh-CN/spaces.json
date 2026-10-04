@@ -36,14 +36,7 @@
   },
   "detail": {
     "announcements": "公告",
-    "showMore": "查看更多",
-    "showLess": "收起",
-    "collapseSidebar": "收起侧边栏",
-    "expandSidebar": "展开侧边栏",
-    "contests": "题目",
     "allContests": "全部题目",
-    "deleteAnnouncement": "删除公告",
-    "publishedAt": "发布于 {time}",
     "updateSuccess": "更新成功",
     "updateFailed": "更新失败",
     "deleteSpace": "删除空间",
@@ -81,7 +74,6 @@
       "noDescription": "暂无题目描述"
     },
     "manageTemplates": {
-      "back": "返回",
       "createTemplate": "创建模板",
       "noTemplates": "暂无题目模板",
       "deleteConfirm": "确定要删除这个模板吗？",
@@ -95,7 +87,6 @@
       "addTopics": "添加话题",
       "noTopics": "暂无话题",
       "add": "添加",
-      "cancel": "取消",
       "addSuccess": "添加话题成功",
       "addFailed": "添加话题失败",
       "delete": "移除话题"
@@ -114,10 +105,6 @@
       "name": "分类名称",
       "description": "分类描述",
       "displayOrder": "显示顺序",
-      "createdAt": "创建时间",
-      "archivedStatus": "归档状态",
-      "archived": "已归档",
-      "active": "活跃",
       "isDefault": "（默认）",
       "cancel": "取消",
       "confirm": "确认",
@@ -136,46 +123,15 @@
       "categoryNameRequired": "分类名称不能为空",
       "categoryNameMaxLength": "分类名称最多32个字符",
       "descriptionMaxLength": "描述最多255个字符",
-      "teaching": {
-        "menu": "给 AI 队友的指导",
-        "title": "给 AI 队友的指导：{name}",
-        "intro": "从这个分类的题建出的项目，AI 队友开新对话时会读到这里的内容。单道题可以另行设置。",
-        "systemPrompt": "角色设定",
-        "systemPromptHint": "可以写 {'{current_week}'}、{'{allowed_topics}'}、{'{avoid_in_code}'}，发送时替换成下面填写的内容",
-        "currentWeek": "当前周次",
-        "currentWeekHint": "留空表示不设",
-        "allowedTopics": "目前的内容范围",
-        "avoidInCode": "暂时不该用到的写法",
-        "avoidInCodeHint": "用逗号分隔，例如「递归」「指针」",
-        "materialIds": "材料编号",
-        "knowledgeIds": "知识条目编号",
-        "listHint": "用逗号分隔"
-      },
       "displayOrderHint": "越小越靠前显示",
       "loadFailed": "获取分类失败"
     },
     "publishTask": {
-      "title": "发布题目",
-      "back": "返回",
-      "taskName": "任务名称",
-      "participantType": "参与者类型",
-      "individual": "个人参与",
-      "team": "团队参与",
-      "taskLevel": "任务等级",
-      "beginner": "初级",
-      "intermediate": "中级",
-      "advanced": "高级",
-      "deadline": "截止时间",
-      "allowMultipleSubmissions": "允许多次提交",
-      "allowEditSubmissions": "允许编辑提交",
-      "taskDescription": "任务描述",
-      "submit": "提交",
       "createSuccess": "创建任务成功",
       "createSuccessAndWaitingAudit": "创建任务成功，等待审核",
       "createFailed": "创建任务失败",
       "spaceIdNotFound": "未找到空间 ID",
       "initializationFailed": "初始化失败",
-      "loadTemplateFailed": "加载模板失败",
       "attachmentsUploading": "附件还在上传，请稍候再发布",
       "pendingQueue": "待审核",
       "mode": {
@@ -228,7 +184,9 @@
       },
       "teaching": {
         "title": "给 AI 队友的指导",
-        "subtitle": "这道题自己的。留空就用这块板的默认；写上一份会整份盖过它。"
+        "subtitle": "这道题自己的。留空就用这块板的默认；写上一份会整份盖过它。",
+        "expand": "展开",
+        "collapse": "收起"
       }
     },
     "selectTemplate": {
@@ -246,10 +204,8 @@
       },
       "publishTask": "发布题目",
       "noTasks": "暂无题目",
-      "getSpaceDetailsFailed": "获取空间详情失败:",
       "topic": "话题",
       "category": "所属分类",
-      "noCategory": "无分类",
       "allTopics": "全部话题",
       "scope": {
         "all": "全部",
@@ -407,12 +363,6 @@
     "addDomain": "添加域名",
     "domainPlaceholder": "例如: example.com",
     "confirmDelete": "确定要删除域名组 {name} 吗？",
-    "createSuccess": "创建域名组成功",
-    "createFailed": "创建域名组失败",
-    "updateSuccess": "更新域名组成功",
-    "updateFailed": "更新域名组失败",
-    "deleteSuccess": "删除域名组成功",
-    "deleteFailed": "删除域名组失败",
     "nameRequired": "域名组名称不能为空",
     "invalidDomain": "请输入有效的域名格式"
   },
@@ -462,7 +412,6 @@
     }
   },
   "index": {
-    "searchPlaceholder": "搜索空间",
     "sortOptions": {
       "newest": "最新",
       "hot": "最热"
@@ -548,29 +497,43 @@
     "back": "返回空间设置"
   },
   "guidance": {
-    "title": "给 AI 队友的指导",
     "intro": "这块板的默认。从这里的题建出的项目，AI 队友开新对话时会读它；单道题可以另设一份盖过它。",
     "save": "保存",
     "saveSuccess": "已保存",
     "saveFailed": "保存失败"
   },
   "teaching": {
+    "defaultTemplate": "先弄清他卡在哪一步，再决定怎么帮。不要直接给出答案，让他自己做出来。\n\n用问题带着他走：先问「你观察到了什么」「试过什么」，再让他自己说出判断，最后才给方向。\n\n一次只推进一步，一次只问一个问题；他跟上了再往下。\n\n他做错时不要直接纠正，用一个问题让他自己发现；讲错在哪时说清「为什么会错」和「怎么才能自己看出来」，不只给正确写法。\n\n他反复索要答案时，说明给了答案对他没帮助，然后换一个更小的提示接着陪他做。",
+    "useDefaultTemplate": "用这段默认要求",
     "fields": {
-      "systemPrompt": "角色设定",
-      "systemPromptHint": "可以写 {'{current_week}'}、{'{allowed_topics}'}、{'{avoid_in_code}'}，发送时替换成下面填写的内容",
+      "systemPrompt": "对 AI 的要求",
+      "systemPromptHint": "这段话是给 AI 看的，学生看不到原文。可以写 {'{current_week}'}、{'{allowed_topics}'}、{'{avoid_in_code}'}，发送时替换成下面填写的内容。留空 = 这条指导不加任何要求。",
       "currentWeek": "当前周次",
       "currentWeekHint": "留空表示不设",
       "advanced": "高级选项",
       "allowedTopics": "目前的内容范围",
       "avoidInCode": "暂时不该用到的写法",
       "avoidInCodeHint": "用逗号分隔，例如「递归」「指针」",
-      "materialIds": "材料编号",
       "knowledgeIds": "知识条目编号",
-      "listHint": "用逗号分隔"
+      "listHint": "用逗号分隔",
+      "materials": "参考资料",
+      "materialsHint": "从这块板的资料库勾选。留空 = 不带课件；「仅管理员」档不在清单里。",
+      "materialsLibrary": "空间资料库",
+      "materialsNone": "点击从资料库选择",
+      "materialsExpand": "展开资料库清单",
+      "materialsCollapse": "收起资料库清单",
+      "materialsRemove": "去掉 {name}",
+      "materialsUpload": "上传到资料库",
+      "materialsLoading": "正在读资料库…",
+      "materialsError": "资料库读不出来，先别改这一项。",
+      "materialsEmpty": "资料库里还没有文件，先去「资料库」传一份。",
+      "materialsDangling": "编号 {ids} 已经不在资料库里（删掉了，或者改成了「仅管理员」）。保存前请把它们去掉。",
+      "materialsDanglingDrop": "去掉 {id}"
     }
   },
   "materials": {
     "upload": "上传资料",
+    "intro": "空间成员都能看。标了「仅管理员」的，成员看不到，成员项目里的 AI 队友也读不到。",
     "uploadTitle": "上传一份资料",
     "pickFile": "选一个文件",
     "visibility": "谁能看",
@@ -595,6 +558,8 @@
     },
     "uploadedOn": "{date} 上传",
     "downloads": "{n} 次下载",
+    "usedBy": "被 {n} 处引用",
+    "unused": "未被引用",
     "toast": {
       "loadFailed": "资料读不出来",
       "uploaded": "已上传",
@@ -628,7 +593,6 @@
       "pinned": "置顶",
       "expiry": "到期日（选填）",
       "notifyHint": "发布后通知空间内 {count} 位成员，后续修改不再通知",
-      "cancel": "取消",
       "publish": "发布",
       "save": "保存"
     },

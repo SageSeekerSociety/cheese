@@ -13,14 +13,14 @@ import uuid
 
 from app.domain.room_task.models import Task
 from app.domain.room_task.presentation import NeedsYou
+from tests.ask_fixtures import active_ask
 from tests.delivery import delivery_headers, delivery_task, delivery_task_id
 from tests.integration.conftest import (
     join_project_team,
     post_project,
-    room_agent_headers,
     session_auth_headers,
 )
-from tests.turn_log import close_turn, open_turn
+from tests.turn_log import open_turn
 
 
 def _project(client, handle: str) -> str:
@@ -62,12 +62,20 @@ def _set_reporter(client, room: str, handle: str) -> None:
     client.portal.call(go)
 
 
-def _ask(client, room: str) -> None:
-    """芝士在这一轮里问出口的题 —— 用房间里那位队友自己的凭据。"""
+def _ask(client, room: str, headers: dict[str, str], *, group_id=None) -> None:
+    """芝士在这一轮里问出口的题 —— 凭据是这轮自己的那位队友。"""
     r = client.post(
-        f"/topics/{room}/ask",
-        json={"question": "预算按哪个口径统计", "options": ["按部门", "按项目"]},
-        headers=room_agent_headers(client, room),
+        f"/topics/{room}/asks",
+        json={
+            **({"ask_group": group_id} if group_id is not None else {}),
+            "questions": [
+                {
+                    "question": "预算按哪个口径统计",
+                    "options": [{"text": "按部门"}, {"text": "按项目"}],
+                }
+            ],
+        },
+        headers=headers,
     )
     assert r.status_code == 200, r.text
 
@@ -108,47 +116,48 @@ def test_the_person_who_asked_for_the_work_is_on_it_too(client):
     assert item["reason"] == "reporter"
 
 
-def test_a_question_is_only_on_the_list_of_whoever_started_the_turn(client):
+def test_a_question_is_only_on_the_list_of_whoever_started_the_turn(
+    client, stub_hooks, monkeypatch
+):
     """一个待回答的问题只有发起那一轮的人能回答。
 
     凭房间名册推收件人，等于把一条只有一个人该处理的事项摆进一屋子人的待办里。
     """
     project = _project(client, "alice")
     room = _room(client, project, "alice")
-    client.portal.call(
-        lambda: open_turn(client.test_request_factory, uuid.UUID(room), author="alice")
-    )
 
-    _ask(client, room)
-
-    (item,) = _mine(client, "alice")
-    assert item["phrase"] == NeedsYou.awaiting_answer
-    assert item["reason"] == "asked"
-    assert item["taskId"] is None  # 房间自己那条线上的提问
+    with active_ask(client, stub_hooks, monkeypatch, room, actor="alice") as headers:
+        _ask(client, room, headers)
+        (item,) = _mine(client, "alice")
+        assert item["phrase"] == NeedsYou.awaiting_answer
+        assert item["reason"] == "asked"
+        assert item["taskId"] is None  # 房间自己那条线上的提问
 
 
-def test_a_question_still_waits_on_its_person_after_the_turn_ends(client):
+def test_a_question_still_waits_on_its_person_after_the_turn_ends(
+    client, stub_hooks, monkeypatch
+):
     """`cheese_ask` 不等回答：芝士问完就收尾，这一轮随即关闭。
 
     题还摆在那儿，等的还是那个人——「在等谁」不能在轮次关掉的那一刻跟着消失。
     """
     project = _project(client, "alice")
     room = _room(client, project, "alice")
-    turn = client.portal.call(
-        lambda: open_turn(client.test_request_factory, uuid.UUID(room), author="alice")
-    )
-    _ask(client, room)
-    client.portal.call(lambda: close_turn(client.test_request_factory, turn))
+    with active_ask(client, stub_hooks, monkeypatch, room, actor="alice") as headers:
+        _ask(client, room, headers)
 
     (item,) = _mine(client, "alice")
     assert item["reason"] == "asked"
 
 
-def test_the_newest_open_turn_decides_who_the_question_is_waiting_on(client):
-    """一个房间可能留着不止一个没关的轮次 —— 取最近开始的那一个。
+def test_a_leftover_turn_does_not_decide_who_the_question_waits_on(
+    client, stub_hooks, monkeypatch
+):
+    """扫底没关掉的旧轮次不该替正在跑的这一轮回答「这在等谁」。
 
-    扫底没来得及关掉的旧轮次不该替新的那一轮回答「这在等谁」：那会把事项摆到一个
-    早就走开的人的清单里，而真正在等的人什么都看不到。
+    那会把事项摆到一个早就走开的人的清单里，而真正在等的人什么都看不到。
+    现在「在等谁」问的是在跑的这一轮：题问出口那一刻记在题上（`meta.asked`），
+    旧轮次留下的记录连提问都影响不了 —— 状态对不上时提问直接被拒，不猜人。
     """
     project = _project(client, "alice")
     room = _room(client, project, "alice")
@@ -157,29 +166,28 @@ def test_the_newest_open_turn_decides_who_the_question_is_waiting_on(client):
             client.test_factory, uuid.UUID(room), author="bob", age_s=3600
         )
     )
-    client.portal.call(
-        lambda: open_turn(
-            client.test_request_factory, uuid.UUID(room), author="alice", age_s=5
-        )
-    )
 
-    _ask(client, room)
+    with active_ask(client, stub_hooks, monkeypatch, room, actor="alice") as headers:
+        _ask(client, room, headers)
 
     (item,) = _mine(client, "alice")
     assert item["reason"] == "asked"
     assert _mine(client, "bob") == []
 
 
-def test_a_question_in_a_platform_turn_is_on_nobody_s_list(client):
+def test_a_question_in_a_platform_turn_is_on_nobody_s_list(
+    client, stub_hooks, monkeypatch
+):
     project = _project(client, "alice")
     room = _room(client, project, "alice")
-    client.portal.call(
-        lambda: open_turn(client.test_request_factory, uuid.UUID(room), author="system")
-    )
 
-    _ask(client, room)
+    with active_ask(
+        client, stub_hooks, monkeypatch, room, actor="alice", platform_turn=True
+    ) as headers:
+        _ask(client, room, headers)
 
     assert _mine(client, "alice") == []
+    assert _mine(client, "bob") == []
 
 
 def test_an_idle_room_is_not_something_to_process(client):
@@ -188,6 +196,25 @@ def test_an_idle_room_is_not_something_to_process(client):
     _room(client, project, "alice")
 
     assert _mine(client, "alice") == []
+
+
+def test_equal_group_names_in_two_rooms_both_remain_on_my_list(
+    client, stub_hooks, monkeypatch
+):
+    project = _project(client, "alice")
+    rooms = [_room(client, project, "alice", title) for title in ("预算", "发布")]
+    for room in rooms:
+        with active_ask(
+            client, stub_hooks, monkeypatch, room, actor="alice"
+        ) as headers:
+            _ask(client, room, headers, group_id="decision")
+
+    questions = [
+        item
+        for item in _mine(client, "alice")
+        if item["phrase"] == NeedsYou.awaiting_answer
+    ]
+    assert {item["topicId"] for item in questions} == set(rooms)
 
 
 def test_a_visitor_has_nothing_to_process(client):

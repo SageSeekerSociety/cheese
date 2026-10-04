@@ -4,7 +4,7 @@
  * 这一条守两件事：形状不对的引用不许进对话（房间那头按这份结构读「他指的是哪儿」），
  * 以及冻结之后谁都改不动——它描述的是「当时那一版」，被改过就不再是同一件事了。
  */
-import type { PagePinQuote, SlidePageQuote } from './quotedContext'
+import type { PagePinQuote, SheetCellQuote, SlidePageQuote, TextRangeQuote } from './quotedContext'
 
 import { frozenQuote, isQuotedContext } from './quotedContext'
 
@@ -29,9 +29,34 @@ const pin: PagePinQuote = {
   y: 0.17,
 }
 
-it('两种形状都收：整页文字和页上的一点', () => {
+const cell: SheetCellQuote = {
+  kind: 'sheet-cell',
+  path: 'budget.xlsx',
+  source: 'committed',
+  version: 'v7',
+  task_id: null,
+  sheet: '预算',
+  address: 'B7',
+  value: '1200',
+}
+
+const range: TextRangeQuote = {
+  kind: 'text-range',
+  path: '说明.md',
+  source: 'live',
+  version: 'v7',
+  task_id: null,
+  text: '失败以后重试 3 次',
+  heading: '配置',
+  prefix: '退避',
+  suffix: '，超过就报错',
+}
+
+it('四种形状都收：整页文字、页上的一点、表格一格、正文一段', () => {
   expect(isQuotedContext(page)).toBe(true)
   expect(isQuotedContext(pin)).toBe(true)
+  expect(isQuotedContext(cell)).toBe(true)
+  expect(isQuotedContext(range)).toBe(true)
 })
 
 it('共同的部分缺一样就不收：文件身份、版本、页码', () => {
@@ -62,6 +87,47 @@ it('整页那一支少了原文就不收；页上那一点少了比例也不收'
   expect(isQuotedContext({ ...pin, kind: 'region' })).toBe(false)
   expect(isQuotedContext(null)).toBe(false)
   expect(isQuotedContext('quote')).toBe(false)
+})
+
+it('表格一格：地址不能空，工作表名可以是空的（CSV），不需要页码', () => {
+  // CSV 没有工作表名，空串是正常形状，不是缺字段。
+  expect(isQuotedContext({ ...cell, sheet: '' })).toBe(true)
+  expect(isQuotedContext({ ...cell, value: '' })).toBe(true)
+  expect(isQuotedContext({ ...cell, address: '' })).toBe(false)
+  expect(isQuotedContext({ ...cell, address: undefined })).toBe(false)
+  expect(isQuotedContext({ ...cell, sheet: 2 })).toBe(false)
+  expect(isQuotedContext({ ...cell, value: undefined })).toBe(false)
+  expect(isQuotedContext({ ...cell, kind: 'grid' })).toBe(false)
+})
+
+it('正文一段：标题可以是空（文件开头），原文和前后文必须在', () => {
+  expect(isQuotedContext({ ...range, heading: null })).toBe(true)
+  expect(isQuotedContext({ ...range, heading: '' })).toBe(true)
+  expect(isQuotedContext({ ...range, text: undefined })).toBe(false)
+  expect(isQuotedContext({ ...range, prefix: undefined })).toBe(false)
+  expect(isQuotedContext({ ...range, suffix: 3 })).toBe(false)
+  expect(isQuotedContext({ ...range, heading: 5 })).toBe(false)
+  expect(isQuotedContext({ ...range, kind: 'document' })).toBe(false)
+})
+
+it('幻灯片选中一段也带前后文：可选，但带上就得是字符串', () => {
+  const selection: SlidePageQuote = { ...page, scope: 'selection', prefix: '退避', suffix: '，超过就报错' }
+  expect(isQuotedContext(selection)).toBe(true)
+  // 整页本来就没有「哪一处」可分，库里更早的整页引用也没有这两个键：都照收。
+  expect(isQuotedContext(page)).toBe(true)
+  expect(isQuotedContext({ ...page, scope: 'selection' })).toBe(true)
+  expect(isQuotedContext({ ...page, prefix: 2 })).toBe(false)
+  expect(isQuotedContext({ ...page, suffix: null })).toBe(false)
+})
+
+it('文件身份那一半对四种形状一视同仁', () => {
+  for (const quote of [page, pin, cell, range]) {
+    expect(isQuotedContext({ ...quote, path: '' })).toBe(false)
+    expect(isQuotedContext({ ...quote, path: undefined })).toBe(false)
+    expect(isQuotedContext({ ...quote, version: '' })).toBe(false)
+    expect(isQuotedContext({ ...quote, source: 'working' })).toBe(false)
+    expect(isQuotedContext({ ...quote, task_id: 3 })).toBe(false)
+  }
 })
 
 it('冻结之后改不动：这一份说的是当时那一版', () => {

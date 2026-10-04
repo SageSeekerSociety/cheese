@@ -26,8 +26,11 @@ import {
   setProjectDefaultAgent,
 } from '@/api'
 import AgentEditorDialog from '@/components/agents/AgentEditorDialog.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
+import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import { t } from '@/i18n'
+import { teammateName } from '@/lib/agentNames'
 import { memoryCountsByHandle, typeLabel } from '@/lib/projectAgents'
 import { relTime } from '@/lib/relTime'
 
@@ -101,6 +104,22 @@ const memoryCounts = computed(() => memoryCountsByHandle(memories.value, props.p
 const editing = ref<ProjectAgent | null>(null)
 const editorOpen = ref(false)
 const deactivateTarget = ref<ProjectAgent | null>(null)
+// 确认框的开关跟着「选中的那个队友」走：有目标就是开着，关掉就把目标清掉。
+const deactivateOpen = computed({
+  get: () => deactivateTarget.value !== null,
+  set: (value) => {
+    if (!value) deactivateTarget.value = null
+  },
+})
+const deactivateTitle = computed(() =>
+  deactivateTarget.value
+    ? t('work.projectSettings.agents.deactivateTitle', {
+        name:
+          teammateName(deactivateTarget.value.display_name, deactivateTarget.value.name_source) ||
+          deactivateTarget.value.handle,
+      })
+    : ''
+)
 const deactivating = ref(false)
 // 展开看记忆的那一行。一次只展开一个 —— 这一栏是用来「看这个队友学到了什么」，
 // 不是用来横向对比的。
@@ -169,26 +188,24 @@ async function confirmDeactivate() {
       <v-icon size="14" class="c-faint">mdi-robot-outline</v-icon>
       <span class="page-section-title">{{ t('work.projectSettings.agents.title') }}</span>
       <v-spacer />
-      <v-btn
-        variant="text"
+      <BaseButton
         icon="mdi-refresh"
-        size="small"
+        size="sm"
         class="mr-1"
         :aria-label="t('work.projectSettings.agents.refresh')"
         :loading="loading || refreshing"
         @click="refresh"
       />
-      <v-btn
+      <BaseButton
         v-if="!backendMissing"
-        color="primary"
-        variant="flat"
-        size="small"
+        kind="primary"
+        size="sm"
         prepend-icon="mdi-plus"
         :disabled="loading"
         @click="openCreate"
       >
         {{ t('work.projectSettings.agents.create') }}
-      </v-btn>
+      </BaseButton>
     </div>
     <div class="page-section-body">
       <p class="t-body c-muted mb-6" style="max-width: 640px">
@@ -210,23 +227,25 @@ async function confirmDeactivate() {
       <div v-else-if="!backendMissing && agents.length === 0" class="empty-state text-center py-10">
         <v-icon size="34" class="mb-3 c-muted">mdi-robot-outline</v-icon>
         <div class="t-body c-muted mb-4">{{ t('work.projectSettings.agents.empty') }}</div>
-        <v-btn color="primary" variant="flat" prepend-icon="mdi-plus" @click="openCreate">
+        <BaseButton kind="primary" prepend-icon="mdi-plus" @click="openCreate">
           {{ t('work.projectSettings.agents.create') }}
-        </v-btn>
+        </BaseButton>
       </div>
 
       <v-card v-for="a in agents" :key="a.id" class="mb-3 pa-4" variant="outlined">
         <div class="agent-head">
           <div class="agent-head__id">
             <CheeseAvatar
-              :name="a.display_name || a.handle"
+              :name="teammateName(a.display_name, a.name_source) || a.handle"
               :handle="a.seat_handle"
               :size="36"
               class="mr-3 flex-shrink-0"
             />
             <div class="min-w-0">
               <div class="d-flex align-center flex-wrap ga-2">
-                <span class="t-title agent-head__name">{{ a.display_name || a.handle }}</span>
+                <span class="t-title agent-head__name">{{
+                  teammateName(a.display_name, a.name_source) || a.handle
+                }}</span>
                 <v-chip v-if="a.is_default" size="x-small" color="primary" variant="tonal">{{
                   t('work.projectSettings.agents.default')
                 }}</v-chip>
@@ -238,19 +257,18 @@ async function confirmDeactivate() {
             </div>
           </div>
           <div class="agent-head__actions">
-            <v-btn
+            <BaseButton
               v-if="!a.is_default && a.is_active !== false"
-              variant="text"
-              size="small"
+              size="sm"
               :loading="settingDefault === a.id"
               @click="makeDefault(a)"
             >
               {{ t('work.projectSettings.agents.setDefault') }}
-            </v-btn>
-            <v-btn variant="text" size="small" @click="openEdit(a)">{{ t('work.projectSettings.agents.edit') }}</v-btn>
-            <v-btn v-if="a.is_active !== false" variant="text" size="small" color="error" @click="deactivateTarget = a">
+            </BaseButton>
+            <BaseButton size="sm" @click="openEdit(a)">{{ t('work.projectSettings.agents.edit') }}</BaseButton>
+            <BaseButton v-if="a.is_active !== false" size="sm" @click="deactivateTarget = a">
               {{ t('work.projectSettings.agents.deactivate') }}
-            </v-btn>
+            </BaseButton>
           </div>
         </div>
 
@@ -282,27 +300,16 @@ async function confirmDeactivate() {
 
     <AgentEditorDialog v-model="editorOpen" :project-id="projectId" :agent="editing" :types="types" @saved="refresh" />
 
-    <v-dialog :model-value="deactivateTarget !== null" max-width="440" @update:model-value="deactivateTarget = null">
-      <v-card v-if="deactivateTarget" class="pa-5">
-        <div class="d-flex align-center mb-3">
-          <v-icon color="error" class="mr-2">mdi-account-off-outline</v-icon>
-          <span class="t-title">{{
-            t('work.projectSettings.agents.deactivateTitle', {
-              name: deactivateTarget.display_name || deactivateTarget.handle,
-            })
-          }}</span>
-        </div>
-        <div class="t-caption c-muted mb-5">{{ t('work.projectSettings.agents.deactivateHint') }}</div>
-        <div class="d-flex justify-end">
-          <v-btn variant="text" class="mr-2" @click="deactivateTarget = null">{{
-            t('work.projectSettings.agents.cancel')
-          }}</v-btn>
-          <v-btn color="error" variant="flat" :loading="deactivating" @click="confirmDeactivate">{{
-            t('work.projectSettings.agents.deactivate')
-          }}</v-btn>
-        </div>
-      </v-card>
-    </v-dialog>
+    <ConfirmDialog
+      v-model="deactivateOpen"
+      :title="deactivateTitle"
+      :confirm-label="t('work.projectSettings.agents.deactivate')"
+      danger
+      :loading="deactivating"
+      @confirm="confirmDeactivate"
+    >
+      {{ t('work.projectSettings.agents.deactivateHint') }}
+    </ConfirmDialog>
   </section>
 </template>
 

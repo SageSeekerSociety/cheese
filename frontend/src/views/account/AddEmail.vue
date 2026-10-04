@@ -34,9 +34,9 @@
           />
         </AccountField>
 
-        <v-btn type="submit" block color="primary" size="large" class="account-submit" :loading="sending">
+        <BaseButton type="submit" block kind="primary" size="lg" class="account-submit" :loading="sending">
           {{ t('account.addEmail.send') }}
-        </v-btn>
+        </BaseButton>
 
         <p class="account-foot">
           <button type="button" class="account-link account-link--quiet" :disabled="signingOut" @click="signOut()">
@@ -62,6 +62,7 @@ import EmailCodeStep from './EmailCodeStep.vue'
 
 import AccountField from '@/components/account/AccountField.vue'
 import AccountHeading from '@/components/account/AccountHeading.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
 import { postLoginTarget } from '@/router/loginRedirect'

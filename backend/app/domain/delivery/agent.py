@@ -12,13 +12,17 @@ import contextlib
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import or_, select, true, update
 from sqlalchemy.dialects.postgresql import insert
 
 from app.core.errors import ValidationError
 from app.domain.agent_instance.models import AgentInstance
+from app.domain.delivery.ask_receipt_wait import (
+    ASK_RECEIPT_WAIT,
+    AskReceiptPending,
+)
 from app.domain.delivery.ledger import DeliveryEvent, dedup_key
-from app.domain.delivery.models import Delivery, TimedDelivery
+from app.domain.delivery.models import Delivery, NativeInput, TimedDelivery
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import Topic, TopicStatus
@@ -28,8 +32,29 @@ LEASE_SECONDS = 120
 RETRY_SECONDS = 30
 
 
+class DeliveryTargetChanged(ValidationError):
+    """The owned attempt has a confirmed invalid target; commit its failure."""
+
+
 def now():
     return datetime.now(UTC)
+
+
+def work_interval_is_over():
+    """Whether this input's own work interval is one the platform ended.
+
+    A correlated EXISTS over the turn intervals, anchored on the input row that
+    names its work (``work_id``/``topic_id``). The fact belongs to the agent
+    domain's turn intervals, and that domain already imports this one (it reads
+    answer ownership), so the question goes out through this seam — importing
+    the turn models on the delivery side would close a domain cycle (C3 in
+    backend/.importlinter).
+    """
+    from app.domain.agent.runtime import AgentTurnRepository
+
+    return AgentTurnRepository.interval_is_over(
+        turn_id=NativeInput.work_id, topic_id=NativeInput.topic_id
+    )
 
 
 async def instance_for_seat(session, project_id, seat):
@@ -102,7 +127,7 @@ async def record_task_instruction(
     )
 
 
-async def dispatch_pending(sessions, *, chat, runner, limit=100):
+async def dispatch_pending(sessions, *, chat, runner, limit=100, delivery_ids=None):
     """Claim committed intent; expired sending attempts require reconciliation."""
     stamp = now()
     claimed = []
@@ -115,6 +140,9 @@ async def dispatch_pending(sessions, *, chat, runner, limit=100):
                         Delivery.agent_instance_id.is_not(None),
                         Delivery.task_id.is_not(None),
                     ),
+                    Delivery.id.in_(delivery_ids)
+                    if delivery_ids is not None
+                    else true(),
                     Delivery.sent_at.is_(None),
                     Delivery.state.in_(("pending", "claimed", "sending")),
                     or_(Delivery.lease_until.is_(None), Delivery.lease_until <= stamp),
@@ -179,6 +207,12 @@ async def dispatch_pending(sessions, *, chat, runner, limit=100):
                 row.state = "failed"
                 row.last_error = "Recipient no longer has an active seat in this room"
                 continue
+            # A new attempt must not reuse an earlier receipt-wait marker.
+            row.payload = {
+                key: value
+                for key, value in row.payload.items()
+                if key != ASK_RECEIPT_WAIT
+            }
             row.state = "claimed"
             row.attempt_id = uuid.uuid4()
             row.lease_until = stamp + timedelta(seconds=LEASE_SECONDS)
@@ -220,7 +254,7 @@ async def dispatch_pending(sessions, *, chat, runner, limit=100):
     return len(claimed)
 
 
-async def run_attempt(sessions, delivery_id, attempt_id, work):
+async def run_attempt(sessions, delivery_id, attempt_id, work, *, chat=None):
     """Renew admission ownership while queued; settle only this claimed attempt."""
 
     async def renew():
@@ -239,8 +273,11 @@ async def run_attempt(sessions, delivery_id, attempt_id, work):
                 await session.commit()
 
     heartbeat = asyncio.create_task(renew())
+    waiting = None
     try:
         await work
+    except AskReceiptPending as exc:
+        waiting = exc
     finally:
         heartbeat.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -262,6 +299,28 @@ async def run_attempt(sessions, delivery_id, attempt_id, work):
                         "Input was not dispatched; "
                         "admission or preparation did not complete"
                     )
+                    if (
+                        waiting is not None
+                        and waiting.delivery_id == row.id
+                        and waiting.attempt_id == row.attempt_id
+                        and waiting.identity.topic_id == row.topic_id
+                        and waiting.identity.recipient_handle == row.recipient_handle
+                        and waiting.group_id == row.payload.get("ask_group")
+                        and all(
+                            (row.payload.get("ask_origin") or {}).get(field)
+                            == getattr(waiting.identity, field)
+                            for field in (
+                                "recipient_handle",
+                                "harness",
+                                "native_session_id",
+                            )
+                        )
+                    ):
+                        row.payload = {
+                            **row.payload,
+                            ASK_RECEIPT_WAIT: waiting.marker(),
+                        }
+                        row.last_error = "Waiting for this group's native receipt"
                 elif row.state == "sending":
                     row.state = "uncertain"
                     row.last_error = (
@@ -271,52 +330,82 @@ async def run_attempt(sessions, delivery_id, attempt_id, work):
                 row.lease_until = None
             await session.commit()
 
+    if waiting is not None and chat is not None:
+        # Covers the receipt that committed before the wait marker was stored.
+        chat.nudge_ask_receipts(waiting.identity)
+
 
 async def begin_send(sessions, delivery_id, attempt_id, *, parent_session_id=None):
     """Fence stale queued runners immediately before they contact the receiver."""
+    rejected: DeliveryTargetChanged | None = None
     async with sessions() as session:
-        row = await session.scalar(
-            select(Delivery)
-            .where(
-                Delivery.id == delivery_id,
-                Delivery.attempt_id == attempt_id,
+        try:
+            await fence_send(
+                session, delivery_id, attempt_id, parent_session_id=parent_session_id
             )
-            .with_for_update()
-        )
-        if row is not None and row.task_id is not None:
-            task = await session.get(Task, row.task_id)
-            if (
-                task is None
-                or task.status != TaskStatus.open
-                or task.execution_agent_instance_id != row.agent_instance_id
-                or task.subagent_id != row.payload.get("worker_id")
-                or task.execution_parent_session_id
-                != row.payload.get("parent_session_id")
-                or (
-                    row.payload.get("parent_session_id") is not None
-                    and parent_session_id != row.payload["parent_session_id"]
-                )
-            ):
-                row.state = "failed"
-                row.last_error = (
-                    "The target worker or native parent changed before delivery"
-                )
-                await session.commit()
-                raise ValidationError(row.last_error)
-        result = await session.execute(
-            update(Delivery)
-            .where(
-                Delivery.id == delivery_id,
-                Delivery.attempt_id == attempt_id,
-                Delivery.state == "claimed",
-                Delivery.lease_until > now(),
-            )
-            .values(state="sending")
-            .returning(Delivery.id)
-        )
-        if result.scalar_one_or_none() is None:
-            raise ValidationError("Delivery attempt no longer owns this input")
+        except DeliveryTargetChanged as exc:
+            rejected = exc
         await session.commit()
+    if rejected is not None:
+        raise rejected
+
+
+async def fence_send(session, delivery_id, attempt_id, *, parent_session_id=None):
+    """Fence in the caller's identity-registration transaction; never commit here."""
+    row = await session.scalar(
+        select(Delivery)
+        .where(
+            Delivery.id == delivery_id,
+            Delivery.attempt_id == attempt_id,
+            Delivery.state == "claimed",
+            Delivery.lease_until > now(),
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if row is None:
+        raise ValidationError("Delivery attempt no longer owns this input")
+    if row.task_id is not None:
+        task = await session.get(Task, row.task_id)
+        if (
+            task is None
+            or task.status != TaskStatus.open
+            or task.execution_agent_instance_id != row.agent_instance_id
+            or task.subagent_id != row.payload.get("worker_id")
+            or task.execution_parent_session_id != row.payload.get("parent_session_id")
+            or (
+                row.payload.get("parent_session_id") is not None
+                and parent_session_id != row.payload["parent_session_id"]
+            )
+        ):
+            message = "The target worker or native parent changed before delivery"
+            result = await session.execute(
+                update(Delivery)
+                .where(
+                    Delivery.id == delivery_id,
+                    Delivery.attempt_id == attempt_id,
+                    Delivery.state == "claimed",
+                    Delivery.lease_until > now(),
+                )
+                .values(state="failed", last_error=message, lease_until=None)
+                .returning(Delivery.id)
+            )
+            if result.scalar_one_or_none() is None:
+                raise ValidationError("Delivery attempt no longer owns this input")
+            raise DeliveryTargetChanged(message)
+    result = await session.execute(
+        update(Delivery)
+        .where(
+            Delivery.id == delivery_id,
+            Delivery.attempt_id == attempt_id,
+            Delivery.state == "claimed",
+            Delivery.lease_until > now(),
+        )
+        .values(state="sending")
+        .returning(Delivery.id)
+    )
+    if result.scalar_one_or_none() is None:
+        raise ValidationError("Delivery attempt no longer owns this input")
 
 
 async def receive_attempt(session, attempt_id, stamp):

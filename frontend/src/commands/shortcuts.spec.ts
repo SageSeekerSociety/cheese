@@ -3,7 +3,7 @@
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { installShortcuts } from './shortcuts'
+import { frameKeys, installShortcuts, runFrameKey } from './shortcuts'
 import { defineCommands } from '.'
 
 const cleanups: (() => void)[] = []
@@ -66,5 +66,47 @@ describe('快捷键', () => {
 
     expect(press({ code: 'Digit1', key: '1', ctrlKey: true }).defaultPrevented).toBe(false)
     expect(run).not.toHaveBeenCalled()
+  })
+})
+
+describe('交给预览帧的键', () => {
+  it('按登记顺序列出来，没有快捷键的和禁用的都不给', async () => {
+    await setup()
+    cleanups.push(
+      defineCommands(() => [
+        { id: 'rail.1', title: '首页', shortcut: 'mod+1', run: vi.fn() },
+        { id: 'rail.2', title: '知是', shortcut: 'mod+2', disabled: true, run: vi.fn() },
+        { id: 'library.upload', title: '上传', shortcut: 'mod+shift+f', run: vi.fn() },
+        { id: 'plain', title: '没快捷键', run: vi.fn() },
+      ])
+    )
+
+    expect(frameKeys()).toEqual([
+      { id: 'rail.1', mod: true, shift: false, alt: false, code: 'Digit1' },
+      { id: 'library.upload', mod: true, shift: true, alt: false, code: 'KeyF' },
+    ])
+  })
+
+  it('表有上限，多出来的不发出去', async () => {
+    await setup()
+    cleanups.push(
+      defineCommands(() =>
+        ['1', '2', '3'].map((n) => ({ id: `rail.${n}`, title: n, shortcut: `mod+${n}`, run: vi.fn() }))
+      )
+    )
+
+    expect(frameKeys(2).map((key) => key.id)).toEqual(['rail.1', 'rail.2'])
+    expect(frameKeys()).toHaveLength(3)
+  })
+
+  it('帧只报 id：表里的能跑，别的 id 一律不跑', async () => {
+    const run = vi.fn()
+    await setup()
+    cleanups.push(defineCommands(() => [{ id: 'rail.1', title: '首页', shortcut: 'mod+1', run }]))
+
+    expect(runFrameKey('rail.1')).toBe(true)
+    expect(run).toHaveBeenCalledTimes(1)
+    for (const id of ['library.upload', 'rail.9', '']) expect(runFrameKey(id)).toBe(false)
+    expect(run).toHaveBeenCalledTimes(1)
   })
 })

@@ -42,6 +42,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.errors import BadRequestError, NotFoundError
+from app.core.sentences import say
 from app.domain.agent import gateway_catalog
 from app.domain.agent.gateway import LlmGateway
 from app.domain.agent.gateway_admin import (
@@ -55,7 +56,6 @@ from app.domain.agent.gateway_admin import (
 )
 from app.domain.agent.models import GatewayAdminAudit
 from app.domain.agent.schemas import ModelCreate, ModelUpdate, api_base_allowed
-from app.domain.block.notice_text import say
 from app.domain.project.services import ProjectService
 from app.domain.usage.services import UsageService
 

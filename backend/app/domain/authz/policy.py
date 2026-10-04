@@ -10,7 +10,7 @@ lead — requires the project's owner or an owner/admin of the project's team.
 import uuid
 from collections.abc import Awaitable, Callable
 
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 from app.domain.identity.actor import Actor
 from app.domain.topic.models import TopicRole
 

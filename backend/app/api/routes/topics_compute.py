@@ -60,17 +60,16 @@ from app.api.response import ok
 from app.api.routes.topics import DbSession, ProjectRepository
 from app.core.config import settings
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
+from app.core.sentences import say
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.market import (
     COMPUTE_DEVICE,
-    MACHINE_VISIBILITY_NOTICE,
     VISIBILITY_HOST,
     compute_default_name,
     compute_listings,
     compute_selectable,
     visibility_listings,
 )
-from app.domain.block.notice_text import say
 from app.domain.device.wiring import sql_device_service
 from app.domain.machine.services import MachineService
 from app.domain.policy import gate
@@ -164,10 +163,9 @@ async def get_topic_compute_profile(
                 # "host" | "isolated" | null (no agent here on an enrolled machine).
                 "effective": effective_visibility,
                 # The one boolean the room's badge keys on: this turn can see and
-                # operate the whole machine.
+                # operate the whole machine. Its wording is the reader's language
+                # (frontend `work.roomMachine.wholeMachineNotice`), not this payload's.
                 "machine_access": effective_visibility == VISIBILITY_HOST,
-                # The honest #282 line, for the badge text / tooltip.
-                "notice": MACHINE_VISIBILITY_NOTICE,
             },
         }
     )
@@ -215,7 +213,7 @@ async def acquire_session_work_lease(
                 )
             )
     except TimeoutError as exc:
-        raise GatewayTimeoutError("工作电脑仍在准备，对话和平台工具仍可用") from exc
+        raise GatewayTimeoutError(say("workComputerPreparing")) from exc
 
 
 @router.put("/{topic_id}/compute-profile")
@@ -273,15 +271,15 @@ async def set_topic_compute_profile(
             }
         )
     except SchemaError as exc:
-        raise ValidationError("工作电脑配置无效：检查名称、设备和规格") from exc
+        raise ValidationError(say("workComputerConfigInvalid")) from exc
     name = choice.profile
     body = {**body, "device_id": choice.device_id}
     raw_device_id = body.get("device_id")
     if raw_device_id is not None and not isinstance(raw_device_id, str):
-        raise ValidationError("device_id 必须是字符串")
+        raise ValidationError(say("deviceIdMustBeString"))
     device_id = (raw_device_id or "").strip() or None
     if name != COMPUTE_DEVICE and device_id is not None:
-        raise ValidationError("只有自有设备可以指定 device_id")
+        raise ValidationError(say("deviceIdOwnDeviceOnly"))
 
     device_online = await project_device_online(db, topic.project_id)
     allowed = {v.id for v in compute_selectable(settings, device_online=device_online)}

@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import single_use_state
 from app.core.crypto import DecryptionError, Purpose, decrypt, encrypt
 from app.core.errors import NotFoundError, ValidationError
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 from app.domain.remote_mcp import declared, oauth, upstream
 from app.domain.remote_mcp.declared import Declared, RemoteServer
 from app.domain.remote_mcp.models import ProjectMcpConnection, ProjectMcpSecret
@@ -488,7 +488,7 @@ async def set_secret(
     if not any(name in server.all_variables() for server in found.servers):
         raise NotFoundError(say("mcpVariableNotUsed"))
     if not value:
-        raise ValidationError("值不能为空")
+        raise ValidationError(say("mcpValueRequired"))
     row = await db.scalar(
         select(ProjectMcpSecret).where(
             ProjectMcpSecret.project_id == project_id, ProjectMcpSecret.name == name
@@ -538,9 +538,9 @@ async def _bearer(
         .with_for_update()
     )
     if row is None:
-        raise NotConnected(f"{name} 需要在项目设置里连接")
+        raise NotConnected(say("mcpConnectInSettings", server=name))
     if row.needs_reconnect or row.server_url != url:
-        raise NotConnected(f"{name} 需要在项目设置里重新连接")
+        raise NotConnected(say("mcpReconnectInSettings", server=name))
     token = _open(row, "access_token")
     assert token is not None
     due = (
@@ -554,7 +554,7 @@ async def _bearer(
     if not refresh_token:
         row.needs_reconnect = True
         await db.commit()
-        raise NotConnected(f"{name} 的授权已过期，需要在项目设置里重新连接")
+        raise NotConnected(say("mcpServerAuthExpired", server=name))
     try:
         tokens = await oauth.refresh(
             token_endpoint=row.token_endpoint,
@@ -567,7 +567,7 @@ async def _bearer(
     except oauth.AuthorizationRefused:
         row.needs_reconnect = True
         await db.commit()
-        raise NotConnected(f"{name} 的授权已失效，需要在项目设置里重新连接") from None
+        raise NotConnected(say("mcpAuthInvalid", server=name)) from None
     binding = _token_binding(project_id, name, "access_token")
     row.access_token = _seal(Purpose.MCP_OAUTH_TOKEN, tokens.access_token, binding)
     if tokens.refresh_token:
@@ -599,12 +599,14 @@ async def call(
     that session has: the project's, or its own type's."""
     server = (await _seat_declared(db, project_id, agent_handle)).get(name)
     if server is None:
-        raise NotFoundError("这个队友没有叫这个名字的远程 MCP 服务器")
+        raise NotFoundError(say("mcpServerNotOnTeammate"))
     values = _secret_values(project_id, await _secret_rows(db, project_id))
     try:
         url, headers = server.expanded(values)
     except KeyError as missing:
-        raise NotConnected(f"{name} 需要在项目设置里填写 {missing.args[0]}") from None
+        raise NotConnected(
+            say("mcpFillInSettings", server=name, field=missing.args[0])
+        ) from None
     key = (project_id, name, topic_id)
     if not server.uses_oauth:
         await db.rollback()
@@ -639,6 +641,4 @@ async def call(
             params=params,
         )
     except upstream.Unauthorized:
-        raise NotConnected(
-            f"{name} 拒绝了项目的授权，需要在项目设置里重新连接"
-        ) from None
+        raise NotConnected(say("mcpAuthRefused", server=name)) from None

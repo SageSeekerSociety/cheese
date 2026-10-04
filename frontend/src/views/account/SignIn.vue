@@ -17,22 +17,21 @@
          order, not reordered by CSS, so the keyboard walks it the same way. -->
     <template v-for="part in parts" :key="part">
       <div v-if="part === 'alt'" class="signin-alt">
-        <v-btn
+        <BaseButton
           v-for="way in alternatives"
           :key="way.key"
           block
-          variant="outlined"
-          color="on-surface"
-          size="large"
+          kind="secondary"
+          size="lg"
           class="signin-alt__btn"
+          :prepend-icon="way.icon"
           :loading="busy === way.key"
           :disabled="!!busy && busy !== way.key"
           @click="way.go"
         >
-          <v-icon start :icon="way.icon" size="20" />
           {{ way.label }}
           <span v-if="way.key === last" class="signin-alt__last">{{ t('account.signIn.lastUsed') }}</span>
-        </v-btn>
+        </BaseButton>
       </div>
 
       <div v-else-if="part === 'or'" class="signin-or">{{ t('account.signIn.or') }}</div>
@@ -68,17 +67,17 @@
           />
         </AccountField>
 
-        <v-btn
+        <BaseButton
           block
-          color="primary"
-          size="large"
+          kind="primary"
+          size="lg"
           type="submit"
           class="account-submit"
           :loading="isSubmitting"
           :disabled="waiting"
         >
           {{ t('account.signIn.submit') }}
-        </v-btn>
+        </BaseButton>
       </v-form>
     </template>
 
@@ -124,6 +123,7 @@ import AccountField from '@/components/account/AccountField.vue'
 import AccountHeading from '@/components/account/AccountHeading.vue'
 import LegalLinks from '@/components/account/LegalLinks.vue'
 import PasswordField from '@/components/account/PasswordField.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'

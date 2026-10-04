@@ -45,6 +45,7 @@ async def _send(room: Room, text: str) -> None:
         Opening(system_prompt="", agent_handle="cheese"),
         work_id=room.work,
         on_mark=lambda _: None,
+        register_input=room.register_input(text),
     )
 
 

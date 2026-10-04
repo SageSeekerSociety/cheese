@@ -26,8 +26,8 @@ from app.core.errors import (
     NotFoundError,
     ValidationError,
 )
+from app.core.sentences import say
 from app.domain.agent.compute_configs import ComputeChoice, room_choice
-from app.domain.block.notice_text import say
 from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply, Visibility
 from app.domain.device.wiring import sql_device_service
@@ -93,11 +93,7 @@ class CloudKeepsFailing(Exception):
 
     def __init__(self, failures: int) -> None:
         minutes = int(PROVIDER_ERROR_WINDOW.total_seconds() // 60)
-        super().__init__(
-            f"云端工作电脑创建失败：供应方连续 {failures} 次报告错误，"
-            f"每次都已删除出错的机器并换一台重试，仍未成功。"
-            f"{minutes} 分钟内不再自动申请。对话和平台工具仍可用。"
-        )
+        super().__init__(say("cloudKeepsFailing", failures=failures, minutes=minutes))
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,7 +129,7 @@ class MachineService:
         refusal names that operation rather than one they never attempted.
         """
         if not actor.authenticated or actor.user_id is None:
-            raise AuthenticationRequiredError(f"请先登录再{action}云端机器")
+            raise AuthenticationRequiredError(say("machineSignInTo", action=action))
         project = await self._projects.get(project_id)
         if project is None:
             raise NotFoundError("Project not found")
@@ -141,7 +137,7 @@ class MachineService:
         if not await teams.is_team_member(project.team_id, actor.user_id):
             raise NotFoundError("Project not found")
         if not await teams.is_team_at_least_admin(project.team_id, actor.user_id):
-            raise ForbiddenError(f"只有团队所有者或管理员可以{action}云端机器")
+            raise ForbiddenError(say("machineAdminOnlyTo", action=action))
 
     async def admit_choice(
         self, project_id: uuid.UUID, actor: Actor, choice: ComputeChoice
@@ -460,7 +456,7 @@ class MachineService:
             raise NotFoundError("project not found")
         choice = room_choice(topic, project.settings)
         if choice.profile != "cloud":
-            raise ValidationError("当前房间未选择云端配置")
+            raise ValidationError(say("machineNoCloudConfig"))
         topic.compute_config = choice.model_dump()
         agent = await IdentityService(self._session).ensure_room_agent_user(topic_id)
         return await self.provision(

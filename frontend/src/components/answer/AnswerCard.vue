@@ -3,7 +3,7 @@
   <v-card :id="`answer-${answer.id}`" flat rounded="lg">
     <v-card-item>
       <v-card-title>{{ answer.author.nickname }}</v-card-title>
-      <v-card-subtitle>{{ answer.author.intro }}</v-card-subtitle>
+      <v-card-subtitle data-user-content>{{ answer.author.intro }}</v-card-subtitle>
       <template #prepend>
         <user-avatar :avatar="getAvatarUrl(answer.author.avatarId)" />
       </template>
@@ -13,15 +13,9 @@
         <div class="rich-content" v-html="contentHtml"></div>
       </collapsible-content>
       <div v-if="question && question.author.id === currentUserId" class="mt-4">
-        <v-btn
-          v-if="!question.accepted_answer"
-          color="success"
-          variant="flat"
-          prepend-icon="mdi-check"
-          @click="acceptAnswer"
-        >
+        <BaseButton v-if="!question.accepted_answer" kind="primary" prepend-icon="mdi-check" @click="acceptAnswer">
           {{ t('questions.detail.buttons.accept') }}
-        </v-btn>
+        </BaseButton>
       </div>
     </v-card-text>
     <v-card-actions class="px-3">
@@ -33,15 +27,15 @@
         @downvote="downvote"
         @cancel-vote="cancelVote"
       />
-      <v-btn variant="plain">
+      <BaseButton kind="ghost">
         <v-icon size="18" class="me-2">mdi-comment-outline</v-icon>
         {{ t('questions.detail.buttons.comment') }}
         <span v-if="answer.comment_count">{{ answer.comment_count }}</span>
-      </v-btn>
-      <v-btn variant="plain" @click="favorite">
+      </BaseButton>
+      <BaseButton kind="ghost" @click="favorite">
         <v-icon size="18" class="me-2">mdi-star-outline</v-icon>
         {{ answer.is_favorite ? t('questions.detail.buttons.unfavorite') : t('questions.detail.buttons.favorite') }}
-      </v-btn>
+      </BaseButton>
     </v-card-actions>
   </v-card>
 </template>
@@ -60,6 +54,7 @@ import CollapsibleContent from '../common/CollapsibleContent.vue'
 import ContentVoter from '../common/ContentVoter.vue'
 import UserAvatar from '../common/UserAvatar.vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { NewAttitudeType } from '@/constants'
 import { refreshInjectionKey } from '@/keys'
 import { AnswersApi } from '@/network/api/answers'

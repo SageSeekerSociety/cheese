@@ -6,7 +6,7 @@ places later. A conversation is visible to its owner only.
 
 What was said is kept as ``AssistantMessage`` rows, in order; the panel shows
 them. The model's own copy of the conversation is its session's, on the session
-host (``agent.harness.pi.personal``).
+host (``agent.personal.session``).
 """
 
 import uuid

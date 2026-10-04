@@ -2,6 +2,7 @@ import type { PreviewSession } from '../api'
 
 import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
 
+import { frameKeys, runFrameKey } from '../commands/shortcuts'
 import { t } from '../i18n'
 import { postPreviewSession } from '../lib/previewSession'
 
@@ -19,13 +20,66 @@ export interface PreviewFrame {
   instance?: string
   runtime?: 'unconfirmed' | 'ready' | 'failed'
   connection?: 'online' | 'disconnected' | 'gone'
+  /** 这一帧自己那次导航没装成（发送失败、超时、文档报错）。屏幕上留下的还是上一帧。 */
+  navigationFailed?: boolean
   runtimeError?: string
+  /** 这一份资源允许等多久，见 `navigationBudget()`。不填＝默认那档。 */
+  budgetMs?: number
 }
 
 export type PreviewNavigation = 'idle' | 'authorizing' | 'navigating' | 'loaded' | 'failed'
 
+/** 连接状态的一次转折，报给取数那一层：实例被换掉（要跟到新实例），或同一实例断线
+ *  后又回来（这段断线里的请求都失败了，要重载一次）。状态没变就是 null。 */
+export type ConnectionChange = 'instance-changed' | 'instance-recovered' | null
+
+/** 一整页的默认预算。 */
+const FILE_NAVIGATION_BUDGET_MS = 30_000
+
+/** 应用要过隧道，还可能赶上机器冷启动（座位那次实测 2 分 17 秒），默认那 30 秒会把它
+ *  误报成「加载超时」。130 秒是 CC 自己的默认档（`13e4`）。 */
+export const APP_NAVIGATION_BUDGET_MS = 130_000
+
+/** 监听实例指纹：sha256(boot_id:port:socket inode) 的十六进制串（后端也按这个形状校验）。
+ *  探针没回来时后端会给出 `url` 但不给 `instance`——「没有证据」不是「换了一个实例」，
+ *  认错会把授权签成一张没绑资源的空头支票，所以只有两个合法指纹不同才算换实例。 */
+const INSTANCE_FINGERPRINT = /^[0-9a-f]{64}$/
+function isInstanceFingerprint(value: string | null | undefined): value is string {
+  return typeof value === 'string' && INSTANCE_FINGERPRINT.test(value)
+}
+
+/** 硬顶和余量同样照 CC：正数先被夹进 10 分钟，再留 2 秒给最后那一程。 */
+const MAX_NAVIGATION_BUDGET_MS = 600_000
+const NAVIGATION_BUDGET_SLACK_MS = 2_000
+
+/** 这一份资源是哪个档，单位毫秒：调用方给的正数被夹进 10 分钟硬顶；没给、或者给的
+ *  是 0、负数、`NaN`、`Infinity`，退回文件档——这些值不是「立刻失败」，是「没填」。
+ *
+ *  文案说的是这个数：那 2 秒余量是我们的，不是这一份资源的。 */
+export function navigationTier(requested?: number): number {
+  return typeof requested === 'number' && Number.isFinite(requested) && requested > 0
+    ? Math.min(requested, MAX_NAVIGATION_BUDGET_MS)
+    : FILE_NAVIGATION_BUDGET_MS
+}
+
+/** 一次导航真正等多久，单位毫秒——档位，再加上最后那 2 秒余量（照 CC 的消费式）。
+ *  多出来的这 2 秒是给「就快好了」那一程和 500 毫秒的轮询粒度留的，不进文案。 */
+export function navigationBudget(requested?: number): number {
+  return typeof requested === 'number' && Number.isFinite(requested) && requested > 0
+    ? navigationTier(requested) + NAVIGATION_BUDGET_SLACK_MS
+    : navigationTier(requested)
+}
+
+export interface PreviewFrameOptions {
+  /**
+   * 帧里的 ESC 交回宿主时叫一次。怎么处理由画的那一半决定（关标注条、退全屏、把
+   * 焦点收回面板），这一层只管把这件事报上来。
+   */
+  onEscape?: () => void
+}
+
 /** Incoming navigation never destroys the last observed loaded browsing context. */
-export function usePreviewFrames(frameName: string) {
+export function usePreviewFrames(frameName: string, options: PreviewFrameOptions = {}) {
   const displayed = ref<PreviewFrame | null>(null)
   const incoming = ref<PreviewFrame | null>(null)
   const navigation = ref<PreviewNavigation>('idle')
@@ -50,6 +104,9 @@ export function usePreviewFrames(frameName: string) {
           type: 'hello',
           sessionId: runtimeSession,
           resourceId: frame.resourceId ?? null,
+          // 焦点在帧里时宿主的键盘监听收不到按键，所以键表随握手一起过去：
+          // 帧只回 id，跑哪条命令由这边决定。表是活的，每送一次都重取。
+          keys: frameKeys(),
         },
         new URL(frame.url).origin
       )
@@ -70,7 +127,13 @@ export function usePreviewFrames(frameName: string) {
       return
     }
     if (data.sessionId !== runtimeSession) return
-    if (data.type === 'ready') {
+    if (data.type === 'key' && typeof data.id === 'string') {
+      // 帧只回 id。认不认这条 id 由 `runFrameKey` 拿刚发下去那张表来判。
+      runFrameKey(data.id)
+    } else if (data.type === 'escape') {
+      // 帧里按了 ESC：把控制权要回宿主。不改变就绪状态——注入的页面从不报 ready。
+      options.onEscape?.()
+    } else if (data.type === 'ready') {
       frame.runtime = 'ready'
       frame.runtimeError = ''
     } else if (data.type === 'error' && typeof data.message === 'string') {
@@ -80,11 +143,21 @@ export function usePreviewFrames(frameName: string) {
   }
   window.addEventListener('message', runtimeMessage)
 
-  function observeConnection(instance: string | null | undefined, online: boolean) {
+  function observeConnection(instance: string | null | undefined, online: boolean): ConnectionChange {
     const frame = displayed.value
-    if (!frame?.live) return
-    frame.connection = !online ? 'disconnected' : frame.instance && instance !== frame.instance ? 'gone' : 'online'
-    // Recovery updates status only: never POST/remount a loaded browsing context.
+    if (!frame?.live) return null
+    const previous = frame.connection
+    // 「换了实例」要求两边都是合法指纹且不同：缺 instance（探针没答）时只是没证据，
+    // 状态仍是 online，不是 gone。见上面 INSTANCE_FINGERPRINT 的理由。
+    const replaced =
+      online && isInstanceFingerprint(instance) && isInstanceFingerprint(frame.instance) && instance !== frame.instance
+    frame.connection = !online ? 'disconnected' : replaced ? 'gone' : 'online'
+    // 状态更新不动这一帧：旧页面一直显示到新一帧装上为止（双缓冲）。gone 每一轮都报，
+    // 因为一次跟丢（授权 404、应用还在冷启动）之后还要再试——取数那一层按次数/时间
+    // 收口。#2349 说的是授权该拒谁，没变；变的是面板自己注意到了「该换一帧了」。
+    if (replaced) return 'instance-changed'
+    if (frame.connection === 'online' && previous === 'disconnected') return 'instance-recovered'
+    return null
   }
 
   function stopTimer() {
@@ -107,6 +180,11 @@ export function usePreviewFrames(frameName: string) {
 
   function fail(message: string) {
     stopTimer()
+    // 这一程要放上屏幕的正是屏幕上这一帧本身（同一个 identity），它却没装成——那就是
+    // 「屏幕上这一帧的导航失败了一次」。留下记号：同实例断线再回来时据此替它重来一遍。
+    // 换到别的实例去的那次失败（identity 不同）不算，健康的旧帧不该被连坐。
+    const shown = displayed.value
+    if (shown && attemptIdentity && shown.identity === attemptIdentity) shown.navigationFailed = true
     incoming.value = null
     navigation.value = 'failed'
     failedIdentity.value = attemptIdentity
@@ -124,7 +202,7 @@ export function usePreviewFrames(frameName: string) {
 
   async function navigate(
     session: PreviewSession,
-    page: Pick<PreviewFrame, 'url' | 'label' | 'mime' | 'version' | 'live' | 'identity'>,
+    page: Pick<PreviewFrame, 'url' | 'label' | 'mime' | 'version' | 'live' | 'identity' | 'budgetMs'>,
     stillCurrent: () => boolean,
     path?: string
   ) {
@@ -152,9 +230,12 @@ export function usePreviewFrames(frameName: string) {
     lastTick = performance.now()
     visible = !document.hidden
     document.addEventListener('visibilitychange', visibilityChanged)
+    // 预算按这一份资源定：一份静态网页 30 秒够了，一个可能正在冷启动的应用不是。
+    const budget = navigationBudget(page.budgetMs)
+    const tierSeconds = Math.round(navigationTier(page.budgetMs) / 1000)
     timer = setInterval(() => {
       accountTime()
-      if (elapsed >= 30_000) fail(t('work.room.preview.navigationTimeout'))
+      if (elapsed >= budget) fail(t('work.room.preview.navigationTimeout', { seconds: tierSeconds }))
     }, 500)
     try {
       postPreviewSession(session, { target: incoming.value.name, ...(path ? { path } : {}) })
@@ -185,6 +266,8 @@ export function usePreviewFrames(frameName: string) {
     // A document reload keeps its frame but must establish a fresh runtime session.
     frame.runtime = 'unconfirmed'
     frame.runtimeError = ''
+    // 装成了：这一帧上一次的失败（如果有）到此为止。
+    frame.navigationFailed = false
     runtimeWindow = event.target.contentWindow
     runtimeSession = crypto.randomUUID()
     sendRuntimeHello(frame)

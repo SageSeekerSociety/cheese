@@ -65,7 +65,7 @@ description: 在 CheeseX（知是）平台里接收用户消息、开始执行�
 
 - **不自行提取凭证拼 `curl` 或裸 HTTP 请求，不翻 `/home`、`/home/node/.claude`、session 文件、`.git` 内部、系统目录**。平台数据通过平台工具、`cheese` 的子命令或 `platform_request` 访问，都按当前房间身份鉴权。找不到平台数据时用 `platform_request` 的 `find` 查接口（记忆除外：用文件工具读 `~/.cheese/memory/`），不满文件系统找。
 - **不确定某个工具或子命令的参数就看它的定义**（工具看 schema，子命令看 `--help`）,不要瞎试 `cheese_set_title`、给 `cheese_doc_get` 传 `markdown` 这种不存在的写法。
-- **要用户拍板时创建平台的带选项决策请求**，用 `cheese_ask`。原生 `AskUserQuestion` 在这里不可用；平台决策请求的按钮显示在对话里，答案下一轮自动带回。
+- **要用户拍板时用 `cheese_ask` 一次创建完整题组**。原生 `AskUserQuestion` 在这里不可用；人选择或填写后明确提交，平台再向原出题执行者投递。创建成功不表示已作答或已接续。
 - 一轮里反复探查、找不到就继续找,会把整轮拖到超时、现场刷出一堆没用的命令卡片。**先想清楚再动手,一步到位。**
 - **绝不 `git stash`**。你的工作区是一个 git worktree,而 `refs/stash` 是**整个仓库共享一个栈**——同仓库其他任务 stash 进去的东西,你 `pop` 会把它取出来并**从栈上删掉**,两边都不会报错。要把改动放一边就直接 `git commit`,或者写成 patch 文件放在工作区里。同理:**绝不写 `.git/hooks/`、不要修改共享 Git 配置**,那两样也是全仓库共享的,你在这里装的 hook 会在别人下次提交时执行。
 
@@ -114,8 +114,9 @@ GitHub 项目直接使用原生 `gh`，Forgejo 项目直接使用原生 `fj`。�
 - 图片 `![说明](工作区相对路径)`
 - 粗体 `**…**`、斜体 `*…*`、删除线 `~~…~~`、下划线 `++…++`、行内代码、链接 `[文字](地址)`、高亮 `<mark>…</mark>`
 - 平台标记 `<@某人>`、`<#话题 id>`、`<&文件路径>`；注释 `<!-- … -->` 会保存但不显示
+- 块：提示框 `> [!NOTE]`、状态标签 `{✓ 文字}`、时间线 `:::timeline`、指标卡 `:::stats`、分栏 `::::columns`、折叠 `<details>`、公式 `$…$` / `$$…$$`、脚注 `[^1]`。各自怎么写、什么时候用，见 cheese-writing 技能
 
-不支持脚注（`[^1]` 和 `[^1]: …`）和链接引用定义（`[文字][名字]` 配 `[名字]: 地址`）。写入时平台会检查：只是写法不同（空格、转义、列表符号、表格对齐）照样写入；会丢掉文字时整次写入被拒、文档不变，返回里写着哪一行、什么写法、怎么改，照着改完再写。其他的字面写法（`<mark>` 以外的 HTML 标签、`$公式$`）原样作为文字保留。
+不支持链接引用定义（`[文字][名字]` 配 `[名字]: 地址`）。写入时平台会检查：只是写法不同（空格、转义、列表符号、表格对齐）照样写入；会丢掉文字、或者块写错了形状时，整次写入被拒、文档不变，返回里写着哪一行、什么写法、怎么改，照着改完再写。其他的字面写法（`<mark>` 等以外的 HTML 标签）原样作为文字保留。
 
 ## 引用某个文件
 
@@ -241,7 +242,7 @@ GitHub 项目直接使用原生 `gh`，Forgejo 项目直接使用原生 `fj`。�
 | `cheese_title(text, task?)` | 修改房间标题；带 `task` 时修改该任务标题 |
 | `cheese_task(title, brief?, reviewer?, base_task?, reported_by?, contributor?)` | 创建任务卡和它的独立分支，返回任务 id 和**线程标识**；不碰机器。之后用 Bash 跑 `cheese worktree <任务 id>` 准备工作目录再动手。交给原生后台分身时，由你先跑 `cheese worktree`，把它返回的目录和线程标识原样写进给它的 prompt 里：平台按它把分身干的每件事记进这条活的时间线；**不写的后果是无声的**——活看着没人做，事件全记在房间头上。简报写目标、约束和验收标准。执行者可以是人、主 agent 或原生后台分身；`cheese_task` 本身不启动执行者。验收人取 `reviewer` 或项目默认值；依赖未合并的任务时用 `base_task`，PR 以父任务分支为目标 |
 | `cheese_close_task(task, conclusion?)` | 放弃或撤销任务时显式关闭；正常交付由采纳成功关闭。分身停止只更新完成说明，不代表代码已被采纳 |
-| `cheese_accept_request(task, subject, reviewer?, reason?, body?, deliver? 或 deliver_url?, artifact? 或 new_artifact?, about?)` | 为一条任务请求验收。先让机器把这条任务的提交推上去再递卡，推不上去就不递。`reason` 给出验收证据。`subject` 必填，使用英文 Conventional Commits、≤72 字符、结尾无句号；`deliver` / `deliver_url` 说清这一版交出去的是什么——任务工作目录里那一份文件的相对路径，或者一个地址，**两个都不给就是交出去这次合并本身**。交合并的**不声明产物**（交出去的是这个项目的仓库，平台自己认；传了 `artifact` / `new_artifact` 会被打回）；交文件或地址的，`artifact` / `new_artifact` **必须给且只给一个**——前者沿用产物清单上已有的那一项，值是**那一项的 id**（照抄系统提示里的清单），后者给一个名字并配 `about` 一句话说清这是什么东西、给谁的，返回里带回它的 id。`about` 沿用时可给可不给，给了就以新的为准；它在第 1 版和第 20 版都得成立，抄改动标题会被打回。`body` 说明原因。卡和 PR 属于同一任务，未指定验收人时沿用派活时的人选；修订后用 `cheese_describe` 修改说明。人点击采纳 PR 时合并他看到的 commit |
+| `cheese_accept_request(task, subject, reviewer?, reason?, body?, deliver? 或 deliver_url?, artifact? 或 new_artifact?, about?)` | 为一条任务请求验收。先让机器把这条任务的提交推上去再递卡，推不上去就不递。`reason` 给出验收证据。`subject` 必填，使用英文 Conventional Commits、≤72 字符、结尾无句号；`deliver` / `deliver_url` 说清这一版交出去的是什么——任务工作目录里那一份文件的相对路径，或者一个地址，**两个都不给就是交出去这次合并本身**。交合并的**不声明产物**（交出去的是这个项目的仓库，平台自己认；传了 `artifact` / `new_artifact` 会被打回）；交文件或地址的，`artifact` / `new_artifact` **必须给且只给一个**——前者沿用产物清单上已有的那一项，值是**那一项的 id**（照抄系统提示里的清单），后者给一个名字并配 `about` 一句话说清这是什么东西、给谁的，返回里带回它的 id。`about` 沿用时可给可不给，给了就以新的为准；它在第 1 版和第 20 版都得成立，抄改动标题会被打回。`body` 用中文说明原因。卡和 PR 属于同一任务，未指定验收人时沿用派活时的人选；修订后用 `cheese_describe` 修改说明。人点击采纳 PR 时合并他看到的 commit |
 | `cheese_ready(task)` | 执行者把自己任务的 draft PR 标记为可评审；只改变 draft 状态。需要请人验收时用 `cheese_accept_request`，它也会把 draft 翻成 ready |
 | `cheese_describe(task, subject?, body?)` | 同步修改该任务尚未采纳的卡与 PR 的标题、正文；采纳时以卡为准 |
 | `cheese_tell(target, message)` | 在任务时间线上留消息；不启动或唤醒执行者。`target` 可用 id、`<#id>` 或标题指定 |
@@ -253,7 +254,7 @@ GitHub 项目直接使用原生 `gh`，Forgejo 项目直接使用原生 `fj`。�
 | `cheese_docs_read(page)` | 读知是文档一整页的 Markdown 原文。page 写页名（`accept`）或检索结果里的链接；开发文档写 `dev/页名`，只有知是自己的项目能读 |
 | `cheese_fetch(url, prompt?)` | 读取网页。原生 WebFetch 也可用；需要浏览器抓取等方式时用它。带上 `prompt` 返回提问的答案，不带则返回网页内容。抓取失败会报告失败阶段 |
 | `cheese_library_ls()` | 列出资料库里的文件(用户给这个项目的文件,最近给的在前) |
-| `cheese_ask(question, option)` | 对话里发**带按钮的选项问题**;`option` 是选项列表，用户点一下就是答案(自动带回你下一轮)。要人拍板时用它，别让人打字 |
+| `cheese_ask(questions, ask_group?)` | 一次创建 1–8 题，按显示顺序给全；每题 `{question, options: [{text, explain?}], allow_other?, reject_option?}`，2–3 个对象选项，两项许可默认 true。返回题组、问题 id 和真实状态。`ask_group` 可选；重试同一创建请求时保持 id 和内容不变。用户明确提交后向原出题执行者投递，不能把创建或提交当作已消费 |
 | `cheese_machine(profile, device_id?)` | 为自己的会话选择工作电脑：`profile` 只有 `cloud`（平台开的云端机器）和 `device`（项目授权的自有设备）两个值，`device_id` 只配 `device` 用、指定哪一台，不填就自动选一台在线的。可直接切换到项目已授权的设备或云端，下次执行操作时使用新机器。更换前平台先在原来那台上把改动推送到分支（和每轮结束时的推送是同一步），推送失败或原来那台连不上就不换，并说明原因；原来那台连不上时，只有房间里的人能在成员名册里选择不推送直接更换。新机器从分支拉代码，会话进程所在机器不变。资源权限和额度限制照常检查，不创建待审批提议 |
 | `cheese_note(thread, content)` | 给**同一个 handle 的另一条线程**留一张便条。它直接进那条线程正在跑的那一轮，不进时间线；那边这一刻没在跑就没人接住，结果会如实说没人接住。跟别的参与者说话走房间里的 chat，agent 对 agent 也是 |
 | `cheese_deliver_at(at, content)` | 请平台在 `at` 那个时刻把 `content` 递给你自己（ISO-8601，带时区）。到点产生的是一条投递——平台不替你想起来该干什么，想起来要设这个闹钟的是你 |
@@ -263,11 +264,13 @@ GitHub 项目直接使用原生 `gh`，Forgejo 项目直接使用原生 `fj`。�
 | `cheese_routine_pause(routine)` | 暂停一条规则：停的是执行，不是这条规则本身。你没有恢复的权限，请人来点 |
 | `cheese_routine_report(run, status, summary?, outputs?)` | 被一条规则唤起的那一轮**必须**交回结果（成功失败都要交），`status` 取 `succeeded`/`failed`，失败要写清原因。没交回结果的一轮会被记为失败。返回这一轮现在记着的状态、结果和产出 |
 | `cheese_feedback_propose(title, kind, visibility, user_said, why?, what_happened?, expectation?, repro?, evidence?, summary?, problem?, tags?, session_id?, environment?)` | 撞到平台本身的毛病时报一条——**你不是在抱怨,是在交证据**:一件事贴一两行,只写观察到的和期望的,错误原文短就照抄,根因没验证过就别写。落下的是一张**提案卡**,不是反馈:人在聊天里按「提交反馈」才算发布,所以提案之后不用等他,也别在正文里宣布你提了这件事——卡本身就是那句话。**agent 不能直接发布反馈**,这条是唯一的通道。`user_said` 必填:引用用户原话,用户没说过就照抄那句规定好的「用户没有就这个问题说过话,以上是芝士自己观察到的」。同一个话题一天最多两张;提过的、被「不用」过的会被拒(412),那不是故障也不是让你换个说法再提——别重试 |
+| `cheese_feedback_list(query?, tab?, status?, kind?, author?, since?, offset?)` / `cheese_feedback_get(feedback)` | 读反馈中心：列表和反馈中心页面上是同一份公开列表、同样的筛选，每页 20 条；`get` 读一条的全部（正文、时间线、谁领着、评论和回复）。`feedback` 写 `FB-12` 或 id。你看得见的和项目里一个不是反馈管理员的成员一样：公开的、你提过的、你当时在房间里看着人提的私密那几条。只有做这个平台本身的项目里的房间读得到，别的房间会被拒 |
+| `cheese_feedback_claim(feedback)` / `cheese_feedback_release(feedback)` | 领取、放掉反馈中心里的一条反馈。领到就记在你名下、状态变成「处理中」，别人再领会失败——这是为了不让两个人修同一个问题。**修一条反馈：先 `cheese_feedback_get` 读，再领，领到了才修；领不到就停下不修**，把返回的原因（谁已经领着，或者你所在的项目不是在做这个平台本身）告诉用户。不修了、修不了就放掉 |
 | `platform_request(find?, method?, path?, body?)` | **两张表里都没有的平台接口的入口**：给消息加表情、拉人进房间和改角色、回答问到你的选项问题、读自己的收件箱……房间成员在网页上能做的，多半在这里。接口或参数不确定时先只传 `find`（几个英文关键词，如 `reaction`、`members`、`inbox`），返回匹配接口的方法、路径、说明、参数和请求体字段，什么都不传列出接口分组；再传 `method`、`path`（相对 API 根，查询参数写进 path，如 `?topic=…`）和 `body` 调用，返回后端的 JSON 原文。只收发 JSON：取文件用 `cheese pull` / `cheese library get`，上传类接口调不了。用的是你的房间凭据，后端按你在房间里的角色和项目成员身份照常检查，跟同一个位置上的人一样：普通成员改不了名册，owner / admin 才能。被拒时读返回的原因，不要换路径绕。两张表里有的动作用表里那一样，它们校验多、返回的话也是写给你读的 |
 
 > 递卡前按**这个仓库自己的约定**（README/CONTRIBUTING/CI 配置写的那套 lint 和测试）先把检查跑绿——决定权在 PR 上的真 CI，红着递卡就是多一个来回。
 >
-> 这次提交修的是反馈中心里的一条反馈（编号形如 `FB-12`）时，在提交信息里单独顶格写一行 `Fixes-feedback: FB-12`（多条用逗号隔开；缩进的行不生效）。写在提交信息里，不写在 PR 描述里；`FB-` 前缀不能省，`#12` 在 GitHub 上指第 12 号 issue。带这一行的提交随部署上线后，那条反馈会自动改成「已上线」，并在时间线上附上 PR 链接。
+> 这次提交修的是反馈中心里的一条反馈（编号形如 `FB-12`）时，动手之前先 `cheese_feedback_get` 读它、`cheese_feedback_claim` 领下它，领不到就不修；提交时在提交信息里单独顶格写一行 `Fixes-feedback: FB-12`（多条用逗号隔开；缩进的行不生效）。写在提交信息里，不写在 PR 描述里；`FB-` 前缀不能省，`#12` 在 GitHub 上指第 12 号 issue。带这一行的提交随部署上线后，那条反馈会自动改成「已上线」，并在时间线上附上 PR 链接。
 
 ### `cheese` 的子命令
 

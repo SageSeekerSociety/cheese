@@ -19,6 +19,7 @@ from pathlib import Path
 
 from app.core.config import settings
 from app.core.errors import ValidationError
+from app.core.sentences import say
 from app.domain.agent.platform_failures import WORKSPACE_VCS_PERMS_CODE
 
 logger = logging.getLogger("cheesex.repository")
@@ -57,7 +58,7 @@ def _terminate_confirmed(proc: subprocess.Popen) -> None:
     except subprocess.TimeoutExpired as exc:
         # Genuinely stuck (e.g. uninterruptible I/O wait) — surface it rather
         # than silently proceeding as if the process were gone.
-        raise ValidationError(f"子进程 pid={proc.pid} 在 SIGKILL 后仍未退出") from exc
+        raise ValidationError(say("subprocessNotKilled", pid=proc.pid)) from exc
 
 
 def _clear_own_lock(cwd: Path) -> None:
@@ -99,7 +100,7 @@ def _run_subprocess(
         _terminate_confirmed(proc)
         _clear_own_lock(cwd)
         raise GitTimeoutError(
-            f"{argv[0] if argv else '?'} 超时（>{timeout}s），子进程已确认终止"
+            say("gitTimeout", command=argv[0] if argv else "?", seconds=timeout)
         ) from exc
     return subprocess.CompletedProcess(argv, proc.returncode, stdout, stderr)
 
@@ -178,11 +179,7 @@ def _names_a_store_it_cannot_enter(detail: str, tree: Path) -> bool:
 
 
 def _permission_hint(detail: str) -> str:
-    return (
-        f"工作区仓库里有当前进程（uid={os.getuid()}）无权访问的文件。"
-        "请检查历史工作区的目录权限。"
-        f"原始报错：{detail}"
-    )
+    return say("workspacePermissionDenied", uid=os.getuid(), detail=detail)
 
 
 SANDBOX_TOPICS_ROOT = "/topics"

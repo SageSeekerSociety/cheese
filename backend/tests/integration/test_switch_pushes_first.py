@@ -140,8 +140,11 @@ async def _room(client, *, on_cloud=False):
         )
 
 
-def _machines(monkeypatch, *, online=True, push=PUSHED):
-    hub = SimpleNamespace(is_online=lambda device: online)
+def _machines(monkeypatch, *, online=True, reconnecting=False, push=PUSHED):
+    hub = SimpleNamespace(
+        is_online=lambda device: online,
+        reconnecting=lambda device: reconnecting,
+    )
     monkeypatch.setattr(work_lease, "device_hub", hub)
     remote = AsyncMock(
         side_effect=push
@@ -181,6 +184,20 @@ async def test_a_switch_pushes_on_the_old_machine_before_it_happens(
     assert session.work_lease is None
     # A self-hosted machine keeps the session's directory for the room's cleanup.
     assert session.execution_request["retained_leases"] == [room.lease]
+
+
+async def test_an_old_machine_that_just_dropped_is_still_pushed_on(client, monkeypatch):
+    """Its link dropped a moment ago and it is on its way back: the push goes
+    to it and waits there, rather than the switch being refused as if the
+    machine were gone."""
+    room = await _room(client)
+    remote = _machines(monkeypatch, online=False, reconnecting=True)
+
+    switched = client.put(room.path, headers=room.person, json=_to_new(room))
+
+    assert switched.status_code == 200, switched.text
+    target, method, _params = remote.await_args.args
+    assert target["device_id"] == room.old_device and method == "control"
 
 
 @pytest.mark.parametrize(

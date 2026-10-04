@@ -120,6 +120,7 @@ def _agent_out(
         seat_handle=agent_instance_handle(agent.instance_id),
         type_name=agent.type_name,
         display_name=agent.display_name,
+        name_source=agent.name_source.value,
         configuration=AgentConfiguration.model_validate(agent.configuration),
         is_default=is_default,
         is_active=is_active,

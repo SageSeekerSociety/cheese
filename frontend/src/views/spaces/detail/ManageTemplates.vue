@@ -1,8 +1,8 @@
 <template>
   <SettingsToolbar>
-    <v-btn variant="text" prepend-icon="mdi-plus" @click="createTemplate">{{
+    <BaseButton kind="primary" prepend-icon="mdi-plus" @click="createTemplate">{{
       t('spaces.detail.manageTemplates.createTemplate')
-    }}</v-btn>
+    }}</BaseButton>
   </SettingsToolbar>
   <div class="settings-card">
     <v-list v-if="templates.length > 0" class="settings-list" bg-color="transparent" lines="three">
@@ -17,20 +17,20 @@
         </div>
         <p v-if="template.description" class="tpl__desc">{{ template.description }}</p>
         <template #append>
-          <v-btn
+          <BaseButton
+            kind="ghost"
             icon="mdi-pencil-outline"
-            variant="text"
-            size="small"
+            size="sm"
             :aria-label="t('spaces.detail.manageTemplates.edit')"
             @click="editTemplate(index)"
-          ></v-btn>
-          <v-btn
+          />
+          <BaseButton
+            kind="ghost"
             icon="mdi-delete-outline"
-            variant="text"
-            size="small"
+            size="sm"
             :aria-label="t('spaces.detail.manageTemplates.delete')"
             @click="deleteTemplate(index)"
-          ></v-btn>
+          />
         </template>
       </v-list-item>
     </v-list>
@@ -46,6 +46,7 @@ import { storeToRefs } from 'pinia'
 
 import { useSpaceData } from '@/composables/useSpaceData'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import SettingsToolbar from '@/components/spaces/SettingsToolbar.vue'
 import { useDialog } from '@/plugins/dialog'
 import { useSpaceStore } from '@/stores/space'

@@ -27,6 +27,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.sentences import say
 from app.domain.agent.harness.prompt import (
     is_inline_image,
     platform_prompt,
@@ -48,7 +49,6 @@ from app.domain.block.models import (
     agent_notice,
     consumed_turn,
 )
-from app.domain.block.notice_text import say
 from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.library import service as library
 from app.domain.project.models import Project

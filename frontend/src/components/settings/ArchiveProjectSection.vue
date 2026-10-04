@@ -4,6 +4,7 @@
 import { ref } from 'vue'
 
 import ArchiveProjectDialog from '@/components/ArchiveProjectDialog.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
 defineProps<{ projectId: string; projectName: string }>()
@@ -20,9 +21,9 @@ const open = ref(false)
     <div class="page-section-body">
       <div class="archive-row">
         <span class="t-body c-muted">{{ t('work.projectSettings.archive.hint') }}</span>
-        <v-btn variant="outlined" color="error" size="small" @click="open = true">{{
+        <BaseButton kind="ghost" size="sm" @click="open = true">{{
           t('work.projectSettings.archive.action')
-        }}</v-btn>
+        }}</BaseButton>
       </div>
     </div>
     <ArchiveProjectDialog v-model="open" :project-id="projectId" :project-name="projectName" />

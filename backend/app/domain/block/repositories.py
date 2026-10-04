@@ -4,11 +4,13 @@ import uuid
 from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Literal, overload
 
 from sqlalchemy import Text, and_, cast, func, or_, select, tuple_, update
 from sqlalchemy.dialects.postgresql import JSONB, array
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.sentences import with_keys
 from app.core.work_context import current_work_id
 from app.domain.block.authorship import is_participant, participant_blocks
 from app.domain.block.indexed_rows import CLOUD_PROVISIONING_ROWS, QUESTION_ROWS
@@ -25,7 +27,6 @@ from app.domain.block.models import (
     BlockReaction,
     prompt_attempts,
 )
-from app.domain.block.notice_text import with_keys
 from app.domain.identity.handles import agent_handle_column, looks_like_agent_handle
 
 
@@ -106,7 +107,7 @@ class BlockRepository:
         ):
             meta = {CONSUMED_TURN_META_KEY: None, **(meta or {})}
         # A platform sentence carries its key; the reader's screen renders it
-        # in the reader's language (`notice_text.py`).
+        # in the reader's language (`app/core/sentences.py`).
         meta = with_keys(meta, content=content)
         block = Block(
             project_id=project_id,
@@ -547,14 +548,18 @@ class BlockRepository:
     ) -> dict[uuid.UUID, str | None]:
         """这些活里，哪几条停在一个未回答的提问上，各自在等谁 —— 一次查完。
 
-        判据是 #1084 定的那一条：**最近一条提问消息没有 `answered`**。不需要新增
-        存储，因为回答本来就记在提问那一块上（`meta.answered`）。取「最近一条」而
-        不是「有没有任何一条」：已回答的旧提问不该让这条活长期停留在待处理。
+        判据是 #1084 定的那一条：**最近一条提问消息没有作答记录**。不需要新增
+        存储，因为回答本来就记在提问那一块上（`meta.answer_log`，末条是当前生效的
+        那一版）。取「最近一条」而不是「有没有任何一条」：已回答的旧提问不该让这条
+        活长期停留在待处理。
 
-        等谁也记在那一块上（`meta.asked`，提问那一刻写下的，见 `ask_options`）。
-        None 是「这道题指不到具体的人」。只关心停没停的调用方照样拿它做 `in`。
+        两类候选分开选（见 `_awaiting_an_answer`）：非组的题每处只取最近一条，组题
+        按组看未答成员 —— 否则组后面来了别的题、那道答完，没答完的组就被遮住了。
 
-        每条活只取一行（`DISTINCT ON`），走 `ix_blocks_task_questions`。
+        等谁也记在那一块上（`meta.asked`，提问那一刻写下的）。None 是「这道题指不
+        到具体的人」。只关心停没停的调用方照样拿它做 `in`。
+
+        两类候选都走 `ix_blocks_task_questions`；非组题每条活只取一行。
         """
         return await self._awaiting_an_answer(Block.task_id, task_ids)
 
@@ -571,28 +576,184 @@ class BlockRepository:
             Block.topic_id, topic_ids, Block.task_id.is_(None)
         )
 
+    async def awaiting_answer_blocks(self, topic_ids, task_ids):
+        """Return addressed person and exact question for each waiting place."""
+        return (
+            await self._awaiting_an_answer(
+                Block.topic_id, topic_ids, Block.task_id.is_(None), with_blocks=True
+            ),
+            await self._awaiting_an_answer(Block.task_id, task_ids, with_blocks=True),
+        )
+
+    async def groups_awaiting_an_answer(
+        self, topic_id: uuid.UUID, viewer: str
+    ) -> list[dict]:
+        """This room's open groups that still owe `viewer` an answer.
+
+        `_awaiting_an_answer` answers "does this place wait on someone", once per
+        place; the composer takeover needs every group the person now looking at
+        the room has to answer, listed whole — the panel must appear from the
+        first frame even when the member blocks sit outside the loaded timeline
+        window. One addressee per membership: `asked` is written identically on
+        every member at creation, so filtering on it selects whole groups. A
+        group is open until it settles (`group_settle` lands on every member)
+        while at least one member still carries no `answer_log` — exactly the
+        conditions `useAskTakeover.needsAnswer` reads off the group reader.
+        """
+        if not viewer:
+            return []
+        stmt = (
+            select(Block)
+            .where(
+                Block.topic_id == topic_id,
+                Block.meta["ask_group"]["id"].as_string().isnot(None),
+                Block.meta["asked"].as_string() == viewer,
+            )
+            .order_by(Block.created_at, Block.id)
+        )
+        grouped: dict[str, list[Block]] = {}
+        for row in await self._session.scalars(stmt):
+            group = (row.meta or {}).get("ask_group") or {}
+            group_id = group.get("id")
+            if group_id is None:
+                continue
+            grouped.setdefault(group_id, []).append(row)
+        groups: list[dict] = []
+        for group_id, members in grouped.items():
+            if any((member.meta or {}).get("group_settle") for member in members):
+                continue
+            if not any(not (member.meta or {}).get("answer_log") for member in members):
+                continue
+            ordered = sorted(
+                members,
+                key=lambda member: ((member.meta or {}).get("ask_group") or {}).get(
+                    "index", 0
+                ),
+            )
+            first = ordered[0]
+            group = (first.meta or {}).get("ask_group") or {}
+            groups.append(
+                {
+                    "topic_id": str(first.topic_id),
+                    "asked_by": group.get("asked_by"),
+                    "id": group_id,
+                    "members": list(group.get("members") or []),
+                    "total": group.get("total"),
+                    "anchor": str(first.id),
+                }
+            )
+        return groups
+
+    @overload
     async def _awaiting_an_answer(
-        self, place_column, place_ids: list[uuid.UUID], *extra
-    ) -> dict[uuid.UUID, str | None]:
+        self,
+        place_column,
+        place_ids: list[uuid.UUID],
+        *extra,
+        with_blocks: Literal[False] = False,
+    ) -> dict[uuid.UUID, str | None]: ...
+
+    @overload
+    async def _awaiting_an_answer(
+        self,
+        place_column,
+        place_ids: list[uuid.UUID],
+        *extra,
+        with_blocks: Literal[True],
+    ) -> dict[uuid.UUID, tuple[str | None, uuid.UUID]]: ...
+
+    async def _awaiting_an_answer(
+        self, place_column, place_ids: list[uuid.UUID], *extra, with_blocks=False
+    ):
         if not place_ids:
             return {}
-        stmt = (
-            select(place_column, Block.meta, Block.created_at, Block.author)
+        # 两类候选按真实存储的 `ask_group` 分开选，不看作者前缀也不看当前名册：
+        # scalar 每处只取最近一题（#1084 的原语义），组题的候选是各组的未答成员，
+        # 不参加那个「最近一题」的 distinct —— 否则组后面来了 scalar、scalar 一答完，
+        # 未完成的组就被那道已答题遮掉了。
+        scalar = (
+            select(place_column, Block.meta, Block.created_at, Block.author, Block.id)
             .where(
                 place_column.in_(place_ids),
                 # 和 `ix_blocks_task_questions` / `ix_blocks_room_questions` 的
                 # 谓词是同一个对象，规划器才认得出能用那两个部分索引。
                 QUESTION_ROWS,
+                Block.meta["ask_group"].as_string().is_(None),
                 *extra,
             )
             .order_by(place_column, Block.created_at.desc())
             .distinct(place_column)
         )
-        rows = [
-            (place_id, meta or {}, at, asker)
-            for place_id, meta, at, asker in (await self._session.execute(stmt)).all()
-            if place_id is not None and not (meta or {}).get("answered")
-        ]
+        grouped = (
+            select(place_column, Block.meta, Block.created_at, Block.author, Block.id)
+            .where(
+                place_column.in_(place_ids),
+                QUESTION_ROWS,
+                Block.meta["ask_group"].as_string().isnot(None),
+                *extra,
+            )
+            .order_by(Block.created_at, Block.id)
+        )
+        scalar_rows = (await self._session.execute(scalar)).all()
+        grouped_rows = (await self._session.execute(grouped)).all()
+        member_ids = {
+            uuid.UUID(member)
+            for _, meta, _, _, _ in grouped_rows
+            for member in (meta or {}).get("ask_group", {}).get("members", [])
+        }
+        members = (
+            {
+                str(block.id): block
+                for block in await self._session.scalars(
+                    select(Block).where(Block.id.in_(member_ids))
+                )
+            }
+            if member_ids
+            else {}
+        )
+        candidates = []
+        for place_id, meta, at, asker, block_id in scalar_rows:
+            if place_id is None:
+                continue
+            meta = meta or {}
+            if meta.get("answer_log") or meta.get("answered"):
+                # Two answered marks live side by side: `answer_log` is the
+                # versioned one, `answered` the two-key shape a person's
+                # historical question still carries (the migration leaves those
+                # rows alone — see `e5a1c7d3b284`).
+                continue
+            candidates.append((at, place_id, meta, asker, block_id))
+        seen_groups: set[tuple[uuid.UUID, str, str]] = set()
+        for place_id, meta, _, asker, _ in grouped_rows:
+            if place_id is None:
+                continue
+            meta = meta or {}
+            group = meta.get("ask_group") or {}
+            group_id = group.get("id")
+            if group_id is None:
+                continue
+            group_key = (place_id, asker, group_id)
+            if group_key in seen_groups:
+                continue
+            seen_groups.add(group_key)
+            # A wake or follow-up message must not erase deferred members.
+            pending = [
+                members[key]
+                for key in group.get("members") or []
+                if key in members and not (members[key].meta or {}).get("answer_log")
+            ]
+            if not pending:
+                continue
+            block = pending[0]
+            candidates.append(
+                (block.created_at, place_id, block.meta or {}, block.author, block.id)
+            )
+        rows = []
+        selected = {}
+        for at, place_id, meta, asker, block_id in sorted(
+            candidates, key=lambda c: c[0]
+        ):
+            rows.append((place_id, meta, at, asker, block_id))
         if not rows:
             return {}
         # 没点按钮、直接打字回了一句，也是回应过了：题问出来之后，被问的那个人
@@ -600,7 +761,7 @@ class BlockRepository:
         spoke = (
             select(place_column, Block.author, func.max(Block.created_at))
             .where(
-                place_column.in_([place_id for place_id, _, _, _ in rows]),
+                place_column.in_([place_id for place_id, *_ in rows]),
                 Block.kind == BlockKind.message,
                 participant_blocks(),
                 ~agent_handle_column(Block.author),
@@ -620,7 +781,7 @@ class BlockRepository:
         agent_spoke = (
             select(place_column, Block.author, func.max(Block.created_at))
             .where(
-                place_column.in_([place_id for place_id, _, _, _ in rows]),
+                place_column.in_([place_id for place_id, *_ in rows]),
                 Block.kind == BlockKind.message,
                 participant_blocks(),
                 agent_handle_column(Block.author),
@@ -632,8 +793,12 @@ class BlockRepository:
         for place_id, author, at in (await self._session.execute(agent_spoke)).all():
             said_by_agent.setdefault(place_id, {})[author] = at
         waiting: dict[uuid.UUID, str | None] = {}
-        for place_id, meta, asked_at, asker in rows:
+        for place_id, meta, asked_at, asker, block_id in rows:
             asked = meta.get("asked")
+            if meta.get("ask_group"):
+                waiting[place_id] = asked
+                selected[place_id] = block_id
+                continue
             said = last_said.get(place_id, {})
             if asked:
                 times = [said[asked]] if asked in said else []
@@ -646,6 +811,9 @@ class BlockRepository:
                 if own is not None and own > asked_at:
                     continue
             waiting[place_id] = asked
+            selected[place_id] = block_id
+        if with_blocks:
+            return {place: (asked, selected[place]) for place, asked in waiting.items()}
         return waiting
 
     async def questions_a_reply_answers(self, reply: Block) -> list[Block]:
@@ -654,7 +822,11 @@ class BlockRepository:
 
         判据和 `_awaiting_an_answer` 里「直接打字回了一句」是同一条：题问出来之后，
         被问的那个人在这里说的第一句话就是回应。只认第一句 —— 他答完又接着说的话，
-        不再算是这道题的答案。
+        不再算是这道题的答案。只管非组题：组题的答案要整组明确提交（作答时那句回话
+        由 `ask_groups` 记在 `later` 一栏），看板的组题判据也只读 `answer_log`，这里
+        跟着读同一套就不会出现「通知说答了、房间还挂着」。作答记录本身按
+        `_awaiting_an_answer` 的两条一起读：少了 `answer_log`，从题目板答过的题会在
+        这里再被结一次。
         """
         place = self._in_place(reply.topic_id, reply.task_id)
         spoke_before = (
@@ -673,6 +845,7 @@ class BlockRepository:
             .where(
                 *place,
                 QUESTION_ROWS,
+                Block.meta["ask_group"].as_string().is_(None),
                 Block.meta["asked"].as_string() == reply.author,
                 Block.meta["answered"].as_string().is_(None),
                 Block.id != reply.id,
@@ -680,29 +853,13 @@ class BlockRepository:
             )
             .order_by(Block.created_at)
         )
-        return list((await self._session.scalars(stmt)).all())
-
-    async def last_summoner(self, room_id: uuid.UUID) -> str | None:
-        """房间自己那条线上，最近一个点了 AI 名的人。
-
-        `cheese_ask` 要记下「这道题在等谁」，本该问开着的那一轮是谁发起的；轮次
-        没记下来的时候（有些执行路径不开轮次区间），退到这一条：芝士此刻在回应的，
-        就是最近叫它的那个人。
-        """
-        stmt = (
-            select(Block.author)
-            .where(
-                Block.topic_id == room_id,
-                Block.task_id.is_(None),
-                Block.kind == BlockKind.message,
-                participant_blocks(),
-                ~agent_handle_column(Block.author),
-                Block.meta["agent_recipient"]["mentioned"].as_boolean(),
-            )
-            .order_by(Block.created_at.desc())
-            .limit(1)
-        )
-        return (await self._session.execute(stmt)).scalar_one_or_none()
+        # `answer_log` 为空（还没有人答）没有作答的含义，所以按真值判断，不能按键
+        # 在不在 —— 和 `_awaiting_an_answer` 的判据一致。
+        return [
+            block
+            for block in (await self._session.scalars(stmt)).all()
+            if not (block.meta or {}).get("answer_log")
+        ]
 
     async def list_for_topic(
         self, topic_id: uuid.UUID, *, task_id: uuid.UUID | None = None

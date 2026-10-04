@@ -9,15 +9,16 @@ import uuid
 import pytest
 from sqlalchemy import select
 
+from app.core.sentences import from_descriptor
 from app.domain.agent.models import AgentTurn
 from app.domain.agent.runtime import (
     AgentWorkRunner,
     InProcessBroker,
     addressed_to_agent,
 )
-from app.domain.block.notice_text import from_descriptor
 from app.domain.identity.actor import Actor
 from tests.support.hang import HANG_S
+from tests.support.work_chat import WorkChat
 from tests.turn_log import a_topic, open_turn, open_turn_ids, turn_row
 
 
@@ -33,7 +34,7 @@ async def _park_a_task() -> asyncio.Task:
     return task
 
 
-class _FakeChat:
+class _FakeChat(WorkChat):
     """Stand-in ChatService.converse: yields a fixed frame sequence, recording
     that it ran even if no one consumes the result.
 
@@ -302,7 +303,7 @@ async def test_wedged_turn_times_out_and_is_cancelled(db_factory):
     runner = AgentWorkRunner(broker, turn_timeout_s=0.05)
     cancelled = asyncio.Event()
 
-    class _Hang:
+    class _Hang(WorkChat):
         session_factory = db_factory
 
         def replaying(self, topic_id):
@@ -351,7 +352,7 @@ async def test_turn_ceiling_frame_reschedules_the_outer_timeout(db_factory):
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker, turn_timeout_s=0.05)  # the generic default
 
-    class _LongTmuxTurn:
+    class _LongTmuxTurn(WorkChat):
         session_factory = db_factory
 
         def replaying(self, topic_id):
@@ -387,7 +388,7 @@ async def test_topic_turn_reports_the_rescheduled_ceiling(db_factory):
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker, turn_timeout_s=0.05)
 
-    class _Turn:
+    class _Turn(WorkChat):
         session_factory = db_factory
 
         def replaying(self, topic_id):
@@ -421,7 +422,7 @@ async def test_running_topic_ids_reports_only_in_flight_turns(db_factory):
     started = asyncio.Event()
     release = asyncio.Event()
 
-    class _SlowTurn:
+    class _SlowTurn(WorkChat):
         session_factory = db_factory
 
         def replaying(self, topic_id):
@@ -468,7 +469,7 @@ async def test_runner_publishes_friendly_error_on_failure(db_factory):
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
 
-    class _Boom:
+    class _Boom(WorkChat):
         session_factory = db_factory
 
         def replaying(self, topic_id):
@@ -499,7 +500,7 @@ async def test_turn_failure_lands_in_the_timeline(db_factory):
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
 
-    class _Boom:
+    class _Boom(WorkChat):
         session_factory = db_factory
 
         def __init__(self) -> None:
@@ -556,7 +557,7 @@ async def test_platform_failure_is_coded_and_never_auto_resumes(
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
 
-    class _Full:
+    class _Full(WorkChat):
         session_factory = db_factory
 
         def __init__(self) -> None:
@@ -620,7 +621,7 @@ async def test_failed_turn_fails_loud_and_does_not_resume(db_factory):
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
 
-    class _Svc:
+    class _Svc(WorkChat):
         session_factory = db_factory
 
         def __init__(self) -> None:
@@ -671,7 +672,7 @@ async def test_a_resent_turn_that_crashes_also_fails_loud(db_factory):
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
 
-    class _BoomAgain:
+    class _BoomAgain(WorkChat):
         session_factory = db_factory
 
         def __init__(self) -> None:
@@ -1490,7 +1491,7 @@ async def test_live_turn_for_topic_tracks_a_running_turn(db_factory):
     streaming = asyncio.Event()
     finish = asyncio.Event()
 
-    class _Slow:
+    class _Slow(WorkChat):
         session_factory = db_factory
 
         def replaying(self, topic_id):
@@ -1544,7 +1545,7 @@ async def test_a_killed_turn_stops_claiming_to_be_running(db_factory):
     topic = await a_topic(db_factory)
     streaming = asyncio.Event()
 
-    class _DeadContainer:
+    class _DeadContainer(WorkChat):
         """A turn whose sandbox died mid-stream: frames stop, the task lives."""
 
         session_factory = db_factory
@@ -1656,7 +1657,7 @@ async def test_a_delivered_prompt_is_recorded_before_the_process_can_die(db_fact
     stamped = asyncio.Event()
     release = asyncio.Event()
 
-    class _GatedChat:
+    class _GatedChat(WorkChat):
         """Yields the delivery frame, then holds the turn open."""
 
         session_factory = db_factory
@@ -1799,7 +1800,7 @@ async def test_unclassified_failure_hands_to_a_human_without_retrying(db_factory
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
 
-    class _AlwaysBroken:
+    class _AlwaysBroken(WorkChat):
         """Fails with an exception no classifier recognises — where all 257 of
         dev's measured failures landed, every one with an empty meta.code."""
 
@@ -1854,7 +1855,7 @@ async def test_a_timeout_hands_to_a_human_without_retrying(db_factory):
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker, turn_timeout_s=0.01)
 
-    class _AlwaysHangs:
+    class _AlwaysHangs(WorkChat):
         session_factory = db_factory
 
         def __init__(self) -> None:
@@ -1914,7 +1915,7 @@ async def test_a_slow_setup_does_not_spend_the_ceiling_before_the_turn_starts(
     # Generic default long enough that the fuse is not what cuts here.
     runner = AgentWorkRunner(broker, turn_timeout_s=5.0)
 
-    class _SlowSetup:
+    class _SlowSetup(WorkChat):
         session_factory = db_factory
 
         def replaying(self, topic_id):
@@ -1957,7 +1958,7 @@ async def test_a_turn_cut_by_the_fuse_still_ends_its_stream(db_factory):
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker, turn_timeout_s=0.05)
 
-    class _NeverFinishes:
+    class _NeverFinishes(WorkChat):
         session_factory = db_factory
 
         def replaying(self, topic_id):
@@ -1993,7 +1994,7 @@ async def test_a_turn_that_keeps_calling_tools_outlives_its_ceiling(db_factory):
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker, turn_timeout_s=5.0)
 
-    class _KeepsWorking:
+    class _KeepsWorking(WorkChat):
         session_factory = db_factory
 
         def replaying(self, topic_id):
@@ -2032,7 +2033,7 @@ async def test_crossing_the_ceiling_is_recorded_and_ends_nothing(db_factory, cap
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker, turn_timeout_s=5.0)
 
-    class _TalksPastTheCeiling:
+    class _TalksPastTheCeiling(WorkChat):
         session_factory = db_factory
 
         def replaying(self, topic_id):

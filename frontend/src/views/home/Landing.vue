@@ -5,6 +5,7 @@ import LandingRoom from './LandingRoom.vue'
 import LandingShell from './LandingShell.vue'
 
 import BrandScene from '@/components/account/brandScene/BrandScene.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
 // The manifesto lights up clause by clause as it scrolls through the viewport.
@@ -55,9 +56,9 @@ onBeforeUnmount(() => observer?.disconnect())
         <h1 class="hero-title">{{ t('publicSite.slogan') }}</h1>
         <p class="hero-position">{{ t('publicSite.positioning') }}</p>
         <div class="hero-actions">
-          <v-btn :to="entryHref" color="primary" variant="flat" size="x-large" append-icon="mdi-arrow-top-right">
+          <BaseButton :to="entryHref" kind="primary" size="lg" append-icon="mdi-arrow-top-right">
             {{ entryLabel }}
-          </v-btn>
+          </BaseButton>
           <router-link class="text-link" to="/solutions">
             {{ t('publicSite.solutionsLink') }}
             <v-icon icon="mdi-arrow-right" size="16" />
@@ -111,9 +112,9 @@ onBeforeUnmount(() => observer?.disconnect())
         <h2 class="cta-title">{{ t('publicSite.ctaTitle') }}</h2>
         <p class="cta-body">{{ t('publicSite.ctaBody') }}</p>
         <div class="hero-actions">
-          <v-btn :to="entryHref" color="primary" variant="flat" size="x-large" append-icon="mdi-arrow-top-right">
+          <BaseButton :to="entryHref" kind="primary" size="lg" append-icon="mdi-arrow-top-right">
             {{ entryLabel }}
-          </v-btn>
+          </BaseButton>
           <router-link class="text-link" to="/solutions">
             {{ t('publicSite.solutionsLink') }}
             <v-icon icon="mdi-arrow-right" size="16" />

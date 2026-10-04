@@ -33,9 +33,9 @@
         />
       </AccountField>
 
-      <v-btn block color="primary" size="large" type="submit" class="account-submit" :loading="isSubmitting">
+      <BaseButton block kind="primary" size="lg" type="submit" class="account-submit" :loading="isSubmitting">
         {{ t('account.resetPassword.submit') }}
-      </v-btn>
+      </BaseButton>
 
       <p class="account-foot">
         <router-link to="/account/signin" class="account-link account-link--quiet">
@@ -62,6 +62,7 @@ import { REGEX_PASSWORD, vuetifyConfig } from '@/utils/form'
 import AccountField from '@/components/account/AccountField.vue'
 import AccountHeading from '@/components/account/AccountHeading.vue'
 import PasswordField from '@/components/account/PasswordField.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'

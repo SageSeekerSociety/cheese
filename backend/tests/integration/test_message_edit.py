@@ -289,7 +289,15 @@ class _Screen:
         self.pushed: list[str] = []
 
     async def deliver(
-        self, topic_id, text, images=None, *, expected_work_id=None, agent_handle=None
+        self,
+        topic_id,
+        text,
+        images=None,
+        *,
+        register_input=None,
+        expected_work_id=None,
+        agent_handle=None,
+        owes_reply=False,
     ):
         self.pushed.append(text)
         return True

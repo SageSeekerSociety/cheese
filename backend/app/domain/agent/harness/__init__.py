@@ -48,16 +48,15 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from app.domain.agent.service import AgentEvent
+from app.domain.delivery.input_identity import InputRegistrar
 
 if TYPE_CHECKING:
     from app.domain.agent.compute import ComputeProvider
+    from app.domain.agent.reads import Read
 
 
-# What the platform hands a runtime so the room can hear it. The vocabulary is
-# ``AgentEvent`` — a message, a tool call, a result — which every harness has to
-# speak anyway; nothing about these three says how the events were sensed. They
-# lived in the Claude Code adapter under names starting with "Hook", which is
-# how they were sensed and not what they are.
+# How a runtime's subscription hands what it read to the runtime, which keeps
+# its own books on it before the room hears it (``DrivenRuntime._consume``).
 #
 # (project, topic, work id, event, event id, final text already seen, unsolicited)
 EventConsumer = Callable[
@@ -74,25 +73,14 @@ EventConsumer = Callable[
 ]
 
 
-# (project, topic, work id, active) — a session started or stopped working.
-# ``agent_handle`` names the seat that started or stopped: several seats work
-# side by side in one room, and the consumer's 「谁在干活」 frame is a guess
-# without it. Keyword-only so existing doubles keep ``active`` at args[-1].
-class ActivityConsumer(Protocol):
-    def __call__(
-        self,
-        project_id: uuid.UUID,
-        topic_id: uuid.UUID,
-        work_id: uuid.UUID,
-        active: bool,
-        *,
-        agent_handle: str | None = None,
-    ) -> Awaitable[None]: ...
+# Where the room hears its sessions: one item at a time, each for the session
+# that produced it, in the order the runtime read them. What the session said
+# and did, when it started and stopped working, which inputs it took in, how
+# its work ended, whether the machine under it is reachable, and what it is in
+# the middle of writing all arrive here (``reads.Read``); the
+# room decides what each one means for it.
+RoomReader = Callable[["SessionRef", "Read"], Awaitable[None]]
 
-
-# (topic, prompt text) — a session CONSUMED an input we injected. Late by
-# design: the write is delivery, this is the receipt.
-ReceiptConsumer = Callable[[uuid.UUID, str], Awaitable[None]]
 
 # (topic) — lay this room's memory tree down in its session, and take back what
 # the agent wrote into it. Asked at two moments, and both ask the same question:
@@ -103,18 +91,10 @@ ReceiptConsumer = Callable[[uuid.UUID, str], Awaitable[None]]
 # owns the room (`chat.ChatService`).
 MemoryConsumer = Callable[[uuid.UUID], Awaitable[None]]
 
-# (project, topic, work id, reachable, reason) — the machine an open turn runs on
-# went out of reach (False, with what the runtime saw) or came back (True). Not
-# an event of the session's: the session is on the far side of the gap, and
-# only the runtime reading it can say that it is there.
-ReachabilityConsumer = Callable[
-    [uuid.UUID, uuid.UUID, uuid.UUID, bool, str], Awaitable[None]
-]
-
 # (topic) → the loop-clock reading at which the OLDEST message we injected and
 # have not seen consumed was written, or None when nothing is waiting.
 #
-# The receipt above answers "did this one land"; this answers "is anything still
+# A receipt (``Received``) answers "did this one land"; this answers "is anything still
 # unanswered, and since when". A session that has stopped reading its input can
 # go on producing output indefinitely, so nothing else in the liveness picture
 # notices it: the hooks keep arriving and the screen stays alive. What it cannot
@@ -150,6 +130,7 @@ def _known(name: str, source: str) -> str:
     架，而「跑的是哪个」正是结论 28 要求只有一个答法的那件事。
     """
     if name not in (CLAUDE_CODE, CODEX, PI):
+        # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
         raise ValueError(f"{source} 指定的骨架 {name!r} 没有适配层")
     return name
 
@@ -172,6 +153,7 @@ def deployment_harnesses() -> tuple[str, ...]:
         return _UNCONFIGURED
     for name in configured:
         if _known(name, "agent_harnesses") not in HARNESSES:
+            # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
             raise ValueError(
                 f"agent_harnesses 列的骨架 {name!r} 这套部署没有；"
                 f"有的是 {sorted(HARNESSES)}"
@@ -287,6 +269,8 @@ class Opening:
 
     system_prompt: str
     resume_token: str | None = None
+    # An Ask answer may use only this existing conversation, never a cold one.
+    expected_native_session: str | None = None
     model: str | None = None
     env: dict[str, str] | None = None
     memory_scope: str | None = None
@@ -353,6 +337,12 @@ class AgentRuntime(Protocol):
     # question ("which machine pool"), and one attribute cannot mean both.
     harness: str
 
+    async def ask_origin(
+        self, project_id: uuid.UUID, topic_id: uuid.UUID, agent_handle: str
+    ) -> dict | None:
+        """Read the exact live native seat without starting or sending work."""
+        ...
+
     async def ensure(
         self, session: SessionRef, opening: Opening, *, work_id: uuid.UUID | None = None
     ) -> object:
@@ -367,6 +357,7 @@ class AgentRuntime(Protocol):
         *,
         work_id: uuid.UUID,
         on_mark: Callable[[uuid.UUID], None],
+        register_input: InputRegistrar,
         images: list[dict] | None = None,
         owes_reply: bool = False,
     ) -> bool | None:
@@ -380,7 +371,7 @@ class AgentRuntime(Protocol):
         the room before it does anything else (`driven/runner.py`).
 
         ``work_id`` and ``on_mark`` do not belong to this contract and are
-        declared anyway, because the only caller passes them and a signature
+        declared anyway, because every caller passes them and a signature
         that pretended otherwise would be a promise no second harness could
         keep. They are the platform's turn bookkeeping — a turn is still what
         the room shows and what gets billed — and they leave when a turn stops
@@ -404,6 +395,7 @@ class AgentRuntime(Protocol):
         text: str,
         images: list[dict] | None = None,
         *,
+        register_input: InputRegistrar,
         expected_work_id: uuid.UUID | None = None,
         agent_handle: str | None = None,
         owes_reply: bool = False,
@@ -467,6 +459,7 @@ class AgentRuntime(Protocol):
         prompt: str,
         system_prompt: str,
         resume_session_id: str | None,
+        register_input: InputRegistrar,
         model: str | None = None,
         env: dict[str, str] | None = None,
         memory_scope: str | None = None,
@@ -494,24 +487,12 @@ class AgentRuntime(Protocol):
         """
         ...
 
-    def bind_events(self, consumer: EventConsumer) -> None:
-        """Where the room's persistence and broadcast live."""
-        ...
-
-    def bind_activity(self, consumer: ActivityConsumer) -> None:
-        """Where 「这个会话在干活 / 停了」 goes."""
-        ...
-
-    def bind_receipts(self, consumer: ReceiptConsumer) -> None:
-        """Where 「会话真的读到了那条消息」 goes."""
+    def bind_reader(self, reader: RoomReader) -> None:
+        """Where the room hears everything its sessions say and do."""
         ...
 
     def bind_unread_probe(self, probe: UnreadProbe) -> None:
         """Where 「还有没有消息在等着被读」 is asked."""
-        ...
-
-    def bind_reachability(self, consumer: ReachabilityConsumer) -> None:
-        """Where 「这一轮在等它的设备」 goes."""
         ...
 
     def bind_memory(self, consumer: MemoryConsumer) -> None:
@@ -743,6 +724,7 @@ class Harness:
         for requirement in SubagentRequirement:
             answer = self.subagents.get(requirement)
             if type(answer) is not str or not answer.strip():
+                # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
                 raise ValueError(
                     f"{self.name} 没有答「{requirement}」。这是硬性要求（结论 43）："
                     "答得出的骨架才上注册表，答不出的留着代码不注册。"
@@ -750,6 +732,7 @@ class Harness:
                 )
         for capability, answer in self.capabilities.items():
             if type(answer) is not str or not answer.strip():
+                # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
                 raise ValueError(
                     f"{self.name} 声明了「{capability}」却没说怎么做到的。"
                     "做不到就不写这一项。"

@@ -5,6 +5,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { getAgentControl, getRoomMcpServers, sendAgentControl } from '../api'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
@@ -181,9 +182,9 @@ const formattedOutput = computed(() => {
   <section class="session-inspector" :aria-label="t('work.room.site.session.label')">
     <div class="inspector-bar">
       <span>{{ t(state?.connected ? 'work.room.site.session.connected' : 'work.room.site.session.none') }}</span>
-      <v-btn size="small" variant="text" :aria-expanded="expanded" @click="expanded = !expanded">{{
+      <BaseButton kind="ghost" size="sm" :aria-expanded="expanded" @click="expanded = !expanded">{{
         t(expanded ? 'work.room.site.session.collapse' : 'work.room.site.session.expand')
-      }}</v-btn>
+      }}</BaseButton>
     </div>
     <v-alert v-if="error" type="error" density="compact" class="ma-2">{{ error }}</v-alert>
     <div v-if="expanded" class="inspector-body">
@@ -236,9 +237,9 @@ const formattedOutput = computed(() => {
           hide-details
           required
         />
-        <v-btn type="submit" size="small" color="primary" variant="tonal" :disabled="busy || !state?.connected">{{
+        <BaseButton kind="primary" size="sm" type="submit" :disabled="busy || !state?.connected">{{
           t('work.room.site.session.view')
-        }}</v-btn>
+        }}</BaseButton>
       </form>
       <pre v-if="formattedOutput" class="inspector-output">{{ formattedOutput }}</pre>
     </div>

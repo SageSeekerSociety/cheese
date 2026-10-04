@@ -142,8 +142,8 @@
       </section>
 
       <div class="tform__actions">
-        <v-btn variant="text" :to="listRoute">{{ t('spaces.detail.templateForm.cancel') }}</v-btn>
-        <v-btn type="submit" color="primary" variant="flat">{{ t('spaces.detail.templateForm.save') }}</v-btn>
+        <BaseButton kind="ghost" :to="listRoute">{{ t('spaces.detail.templateForm.cancel') }}</BaseButton>
+        <BaseButton kind="primary" type="submit">{{ t('spaces.detail.templateForm.save') }}</BaseButton>
       </div>
     </v-form>
   </div>
@@ -160,6 +160,8 @@ import { storeToRefs } from 'pinia'
 
 import { useSpaceData } from '@/composables/useSpaceData'
 
+import BaseButton from '@/components/base/BaseButton.vue'
+import { closeOverlay } from '@/lib/backOut'
 import { useSpaceStore } from '@/stores/space'
 
 const TipTapEditor = defineAsyncComponent(() => import('@/components/common/Editor/TipTapEditor.vue'))
@@ -244,7 +246,11 @@ const saveTemplate = async () => {
     toast.success(
       isEditing.value ? t('spaces.detail.templateForm.updateSuccess') : t('spaces.detail.templateForm.createSuccess')
     )
-    router.push(listRoute)
+    // 表单已经收工了，再按回退键不该回到一张已经保存过的表单上。去向是定的（列表），
+    // 所以走 closeOverlay：身后正是列表就退一格。**不能 replace** —— 进来是 push 的，
+    // replace 换掉的是表单这一格，身后那条还是列表，于是连出两条一样的地址，← 按下去
+    // 看不出变化，要按两下才出得去。
+    closeOverlay(router, listRoute)
   } catch (error) {
     console.error(t('spaces.detail.templateForm.saveTemplateFailed'), error)
     toast.error(t('spaces.detail.templateForm.saveTemplateFailed'))

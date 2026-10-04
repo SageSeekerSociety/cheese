@@ -4,6 +4,7 @@
   <v-bottom-navigation class="bottom-tabs" :elevation="0" bg-color="background" grow order="-2">
     <!-- 收到的就是手机那份清单（destinations.ts 的 tabItems），这里不再过滤：
          底栏装什么是清单的事，不是渲染的事。 -->
+    <!-- eslint-disable-next-line vue/no-restricted-syntax -- nav bar button whose look this component styles exactly (design-system §3.6 exception) -->
     <v-btn
       v-for="item in items"
       :key="item.key"
@@ -11,9 +12,9 @@
       :active="item.match ? item.match(here) : undefined"
       :aria-label="
         item.badge
-          ? `${item.title}（${item.badge}）`
+          ? t('global.labelWithAside', { label: item.title, aside: item.badge })
           : item.dot
-            ? `${item.title}（${t('home.nav.unreadActivity')}）`
+            ? t('global.labelWithAside', { label: item.title, aside: t('home.nav.unreadActivity') })
             : undefined
       "
       @click="!item.to && item.action?.()"

@@ -48,7 +48,7 @@ from dataclasses import dataclass
 from typing import Final
 
 from app.core.errors import ValidationError
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 
 #: 项目设置里的两个键。允许的档位缺席 = 不限档；处置缺席 = 拒绝。
 ALLOWED_TIERS_KEY: Final = "allowed_tiers"
@@ -203,7 +203,6 @@ def _proposal_line(call: Call, actor: str) -> str:
 
 
 def _refusal_line(call: Call) -> str:
-    return (
-        f"{_WHAT[call.resource]}「{call.label}」属于 {call.tier} 档，"
-        "不在本项目允许的档位内；请改用档内的资源，或让项目管理者调整档位策略。"
+    return say(
+        "policyOverTier", what=_WHAT[call.resource], label=call.label, tier=call.tier
     )

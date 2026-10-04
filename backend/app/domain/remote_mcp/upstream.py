@@ -21,6 +21,7 @@ from urllib.parse import urljoin, urlsplit
 
 import httpx
 
+from app.core.sentences import say
 from app.domain.remote_mcp import http
 
 logger = logging.getLogger(__name__)
@@ -103,11 +104,15 @@ class _Streamable:
                 raise _SessionExpired
             if "id" not in message:
                 if response.status_code >= 400:
-                    raise UpstreamError(f"MCP 服务器返回 {response.status_code}")
+                    raise UpstreamError(
+                        say("mcpServerReturned", status=response.status_code)
+                    )
                 return None
             if response.status_code != 200:
                 await response.aread()
-                raise UpstreamError(f"MCP 服务器返回 {response.status_code}")
+                raise UpstreamError(
+                    say("mcpServerReturned", status=response.status_code)
+                )
             if message.get("method") == "initialize":
                 self.session_id = response.headers.get("mcp-session-id")
             kind = response.headers.get("content-type", "")
@@ -119,7 +124,7 @@ class _Streamable:
                         continue
                     if isinstance(reply, dict) and reply.get("id") == message["id"]:
                         return reply
-                raise UpstreamError("MCP 服务器没有返回这次请求的结果")
+                raise UpstreamError(say("mcpServerNoResult"))
             return json.loads(await response.aread())
 
     async def _initialize(self, auth: dict[str, str]) -> None:
@@ -210,12 +215,14 @@ class _Legacy:
                 if response.status_code == 401:
                     raise Unauthorized
                 if response.status_code != 200:
-                    raise UpstreamError(f"MCP 服务器返回 {response.status_code}")
+                    raise UpstreamError(
+                        say("mcpServerReturned", status=response.status_code)
+                    )
                 async for event, data in _events(response):
                     if event == "endpoint":
                         endpoint = urljoin(self.url, data.strip())
                         if urlsplit(endpoint).netloc != urlsplit(self.url).netloc:
-                            raise UpstreamError("MCP 服务器把请求指向了另一个主机")
+                            raise UpstreamError(say("mcpServerRedirectedHost"))
                         if not opened.done():
                             opened.set_result(endpoint)
                         continue
@@ -234,7 +241,7 @@ class _Legacy:
                     waiter.set_exception(exc)
         finally:
             self.ready = False
-            error = UpstreamError("MCP 服务器断开了连接")
+            error = UpstreamError(say("mcpServerDisconnected"))
             if not opened.done():
                 opened.set_exception(error)
             for waiter in self.pending.values():
@@ -253,7 +260,7 @@ class _Legacy:
         if response.status_code == 401:
             raise Unauthorized
         if response.status_code >= 400:
-            raise UpstreamError(f"MCP 服务器返回 {response.status_code}")
+            raise UpstreamError(say("mcpServerReturned", status=response.status_code))
 
     async def _send(self, auth: dict[str, str], method: str, params: dict) -> dict:
         identity = next(_ids)

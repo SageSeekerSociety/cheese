@@ -6,6 +6,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
 
 import { listAwaitingMe } from '@/api'
+import BaseButton from '@/components/base/BaseButton.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import { t } from '@/i18n'
 import { phraseLabel } from '@/lib/board'
@@ -69,6 +70,7 @@ function linkTo(item: WaitingItem) {
   return {
     name: 'workspace-topic',
     params: { projectId: item.projectId, topicId: item.topicId },
+    query: item.blockId ? { block: item.blockId } : undefined,
   }
 }
 </script>
@@ -78,12 +80,12 @@ function linkTo(item: WaitingItem) {
     <section v-if="noProjects" class="inbox__start">
       <p class="t-title">{{ t('work.emptyTitle', projectTerm) }}</p>
       <div class="inbox__start-actions">
-        <v-btn color="primary" variant="flat" prepend-icon="mdi-plus" @click="showNewProjectDialog()">
+        <BaseButton kind="primary" prepend-icon="mdi-plus" @click="showNewProjectDialog()">
           {{ t('navigation.newProject', projectTerm) }}
-        </v-btn>
-        <v-btn variant="outlined" prepend-icon="mdi-ticket-confirmation-outline" @click="joinOpen = true">
+        </BaseButton>
+        <BaseButton kind="secondary" prepend-icon="mdi-ticket-confirmation-outline" @click="joinOpen = true">
           {{ t('work.joinAction') }}
-        </v-btn>
+        </BaseButton>
       </div>
     </section>
 
@@ -93,13 +95,13 @@ function linkTo(item: WaitingItem) {
     </div>
     <div v-else-if="failed" class="inbox__quiet">
       <span>{{ t('home.inbox.loadFailed') }}</span>
-      <v-btn variant="text" size="small" @click="load">{{ t('home.inbox.retry') }}</v-btn>
+      <BaseButton kind="secondary" size="sm" @click="load">{{ t('home.inbox.retry') }}</BaseButton>
     </div>
     <p v-else-if="items.length === 0" class="inbox__quiet">{{ t('home.inbox.waitingEmpty') }}</p>
     <v-list v-else class="inbox__list" bg-color="transparent" lines="two">
       <v-list-item
         v-for="item in items"
-        :key="`${item.topicId}:${item.taskId ?? ''}`"
+        :key="`${item.topicId}:${item.taskId ?? ''}:${item.blockId ?? ''}`"
         :to="linkTo(item)"
         class="inbox-item"
       >

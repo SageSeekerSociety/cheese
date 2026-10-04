@@ -2,17 +2,21 @@
 // 「现在的分布」里一台自有设备上的 agent：列出来，选一些换到另一台工作电脑。一个话题
 // 一个容器（2026-09-28，推翻结论 60）：换的是它所在的整个房间，走和成员名册同一条
 // 更换（先推送，失败就不换并说明原因），同房间的队友一起搬；房间正在干活的跳过，不打断。
-import type { ComputeChoice, DeviceSession, TopicComputeDevice } from '../cx_types'
+import type { ComputeChoice, TopicComputeDevice } from '../cx_types'
+import type { DeviceSession } from '../types/deviceSessions'
 
 import { computed, ref, watch } from 'vue'
 
 import { ApiError, listDeviceSessions, setTopicComputeChoice } from '../api'
 import { t } from '../i18n'
+import { teammateName } from '../lib/agentNames'
 import { choiceKey, choiceName, compactChoices } from '../lib/computeConfig'
 import { relTime } from '../lib/relTime'
 import { topicTitle } from '../lib/topicState'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
+import { useDialog } from '@/plugins/dialog'
 
 const props = defineProps<{
   projectId: string
@@ -37,6 +41,7 @@ const target = ref('')
 const running = ref(false)
 const outcomes = ref<Record<string, Outcome>>({})
 const moved = ref(false)
+const dialog = useDialog()
 
 const choices = computed(() => {
   const cloud: ComputeChoice = {
@@ -136,9 +141,20 @@ async function run() {
 
 // The one override, per session, after that session's machine could not be
 // reached: the person decides for this agent that its unpushed work stays behind.
+// The unpushed changes are gone for good, so the row's gray entry asks once more
+// before it happens (red only on that confirming button, §3.7).
 async function abandon(session: DeviceSession) {
   const choice = picked.value
   if (!choice) return
+  const confirmed = await dialog
+    .confirm(t('work.sessionMachine.abandonWarning'), {
+      title: t('work.sessionMachine.abandonTitle'),
+      confirmLabel: t('work.sessionMachine.abandon'),
+      danger: true,
+    })
+    .wait()
+    .catch(() => false)
+  if (!confirmed) return
   running.value = true
   await switchOne(session, choice, true)
   running.value = false
@@ -191,7 +207,11 @@ watch(open, (value) => {
                   <div class="bs-room">{{ sessionRoom(session) }}</div>
                   <div class="bs-meta">
                     <i18n-t keypath="work.bulkSwitch.meta" tag="span">
-                      <template #agent><UserRef :handle="session.agent_handle" :name="session.agent_name" /></template>
+                      <template #agent
+                        ><UserRef
+                          :handle="session.agent_handle"
+                          :name="teammateName(session.agent_name, session.agent_name_source)"
+                      /></template>
                       <template #time>{{ relTime(session.last_active) }}</template>
                     </i18n-t>
                     <template v-if="session.working"> · {{ t('work.bulkSwitch.working') }}</template>
@@ -205,9 +225,9 @@ watch(open, (value) => {
                   </p>
                   <template v-if="outcomes[session.id]?.state === 'unreachable'">
                     <p class="bs-error">{{ t('work.sessionMachine.abandonWarning') }}</p>
-                    <v-btn size="small" variant="text" :disabled="running" @click="abandon(session)">{{
+                    <BaseButton kind="ghost" size="sm" :disabled="running" @click="abandon(session)">{{
                       t('work.sessionMachine.abandon')
-                    }}</v-btn>
+                    }}</BaseButton>
                   </template>
                 </div>
               </li>
@@ -227,16 +247,11 @@ watch(open, (value) => {
         </template>
       </v-card-text>
       <v-card-actions>
-        <v-btn variant="text" :disabled="running" @click="open = false">{{ t('global.cancel') }}</v-btn>
+        <BaseButton kind="ghost" :disabled="running" @click="open = false">{{ t('global.cancel') }}</BaseButton>
         <v-spacer />
-        <v-btn
-          color="primary"
-          variant="tonal"
-          :disabled="running || !picked || !selected.length"
-          :loading="running"
-          @click="run"
-          >{{ t('work.sessionMachine.confirm') }}</v-btn
-        >
+        <BaseButton kind="primary" :disabled="running || !picked || !selected.length" :loading="running" @click="run">{{
+          t('work.sessionMachine.confirm')
+        }}</BaseButton>
       </v-card-actions>
     </v-card>
   </v-dialog>

@@ -22,6 +22,7 @@ from app.api.auth import ActorResolverDep
 from app.api.response import ok, page
 from app.core.db import get_db
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
+from app.core.sentences import say
 from app.domain.memory.models import (
     MemoryEntry,
     MemoryScope,
@@ -82,7 +83,7 @@ async def list_memory(
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     if user_handle and user_handle != actor.handle:
-        raise ForbiddenError("只能查看关于你自己的记忆")
+        raise ForbiddenError(say("memoryOwnOnly"))
     agent_cond = MemoryEntry.scope == MemoryScope.agent_project
     if agent_handle:
         cond = agent_cond & (
@@ -140,8 +141,8 @@ async def delete_memory(
     try:
         row_id = uuid.UUID(entry_id)
     except ValueError as exc:
-        raise ValidationError("无效的记忆条目 id") from exc
-    missing = NotFoundError("记忆条目不存在")
+        raise ValidationError(say("memoryEntryIdInvalid")) from exc
+    missing = NotFoundError(say("memoryEntryNotFound"))
     entry = await db.get(MemoryEntry, row_id)
     if entry is None:
         raise missing

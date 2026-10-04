@@ -21,6 +21,25 @@ def log(path, value):
         stream.flush()
 
 
+def is_child(body):
+    """A subagent's request: the CLI writes its own identity into the body.
+
+    The marker is the first system block, `cc_is_subagent=true`, which the
+    build under test writes for every child request and no parent request
+    carries. Read from the body rather than from a routing header: the CLI in
+    an acceptance session is the one thing here that decides what a child is,
+    and this is what it says. See `scripts/remote_execution/subagent_headers.py`
+    for the header it also sets.
+    """
+    system = body.get("system")
+    if not isinstance(system, list) or not system:
+        return False
+    first = system[0]
+    return isinstance(first, dict) and "cc_is_subagent=true" in (
+        first.get("text") or ""
+    )
+
+
 class Server(ThreadingHTTPServer):
     daemon_threads = False
     closing = False
@@ -111,6 +130,39 @@ class Handler(BaseHTTPRequestHandler):
                 }
             )
         state = self.server.state
+        # A script given as a list is positional: one action per request, and
+        # no way to tell a child request from a turn of the session. Serving a
+        # child an action would shift every later action onto the wrong
+        # request, and counting it would break the caller's "the script ran
+        # exactly once" assertion, so it is answered apart. A script that
+        # routes by content (`Directives`) answers a child itself.
+        if isinstance(state["actions"], list) and is_child(body):
+            state.setdefault("child_requests", []).append(body)
+            count = len(state["child_requests"])
+            # Its own file for the body and for the build's routing headers:
+            # a child that is answered apart from the script is still a
+            # request whose headers are worth reading (`subagent_headers.py`).
+            dump(state["dir"] / f"child-request-{count}.json", body)
+            dump(
+                state["dir"] / f"child-headers-{count}.json",
+                {
+                    key: value
+                    for key, value in self.headers.items()
+                    if key.lower().startswith("x-claude-code-")
+                },
+            )
+            return self.reply(
+                {
+                    "id": "msg_child",
+                    "type": "message",
+                    "role": "assistant",
+                    "model": body.get("model"),
+                    "content": [{"type": "text", "text": "CHILD_DONE"}],
+                    "stop_reason": "end_turn",
+                    "stop_sequence": None,
+                    "usage": {"input_tokens": 10, "output_tokens": 5},
+                }
+            )
         index = len(state["requests"])
         action = state["actions"][index] if index < len(state["actions"]) else None
         if callable(action):

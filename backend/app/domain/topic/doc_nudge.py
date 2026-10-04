@@ -39,6 +39,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.redis import get_redis_client
+from app.core.sentences import say
 from app.domain.agent.platform_notices import (
     EVENT_DOC_MISSING,
     SEVERITY_INFO,
@@ -46,7 +47,6 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.block.models import Block, BlockKind
-from app.domain.block.notice_text import say
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
 from app.domain.topic_membership.services import TopicMemberService
 
@@ -65,12 +65,13 @@ MIN_TOOL_EVENTS = 5
 SETTLE_S = 8.0
 
 EVENT_LINE = say("docMissing")
+#: 只说「现在建」，不复述怎么写：怎么写是系统提示词里「当前话题的实况文档」那一节
+#: （`harness/prompt.py` 的 `DOC_FORM`），这一轮的提示词里本来就有。这里再抄一份
+#: 模板，两份迟早不一样，而这条提醒是用户消息，模型会照它写。
 PROMPT = (
-    "本话题已经有了实质进展，但实况文档还是空的。它是给没参与讨论的人和下一轮的你"
-    "看的，由在这里干活的 AI 队友维护，不论你是哪个队友。\n"
-    "请现在先 `cheese_doc_get`，再用 `cheese_doc_set` 建第一版，按这几块写：目标（≤3 "
-    "句）、当前结论（此刻成立的状态）、进行中与下一步（每条带负责人）、待决（需要人"
-    "拍板的问题）。只写现在成立的东西，不写过程。\n"
+    "本话题已经有了实质进展，但实况文档还是空的。\n"
+    "请现在先 `cheese_doc_get`，再用 `cheese_doc_set` 建第一版，按系统提示词里"
+    "「当前话题的实况文档」一节写。\n"
     "写完不必在聊天里另外宣布。这是平台对本话题唯一一次这样的提醒。"
 )
 

@@ -9,6 +9,7 @@ import uuid
 import pytest
 from sqlalchemy import select
 
+from app.core.errors import ValidationError
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute_configs import (
     ComputeChoice,
@@ -22,6 +23,8 @@ from app.domain.agent_session.models import AgentSession
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.delivery.input_identity import InputIdentity, InputReceipt
+from app.domain.delivery.models import NativeInput
 from app.domain.identity.handles import (
     CHEESE_HANDLE,
     agent_instance_handle,
@@ -109,7 +112,10 @@ async def test_broker_live_quote_uses_saved_data_and_retries_only_once(
             saved = await BlockRepository(session).get(landed)
             assert saved.meta["quoted_context"] == quote
             assert consumed_turn(saved) is None
-        await svc.confirm_prompt_receipt(topic_id, provider.delivered[0])
+        identity = await _input_holding(factory, topic_id, landed)
+        await svc.confirm_prompt_receipt(
+            InputReceipt(identity, "native_echo", identity.work_id)
+        )
         async with factory() as session:
             saved = await BlockRepository(session).get(landed)
             assert consumed_turn(saved) is not None
@@ -136,6 +142,36 @@ async def test_broker_live_quote_uses_saved_data_and_retries_only_once(
 def _said(message: dict) -> str:
     content = message["message"]["content"]
     return content if isinstance(content, str) else content[0]["text"]
+
+
+async def _input_holding(
+    factory, topic_id: uuid.UUID, block_id: uuid.UUID
+) -> InputIdentity:
+    """The identity of the registered input holding this block.
+
+    Registration is the real production one, so this row is the durable link
+    between the text a session was handed and the identity a receipt names.
+    Matching a receipt by prompt text is gone; matching it by input identity is
+    what the journal does.
+    """
+    async with factory() as session:
+        rows = list(
+            await session.scalars(
+                select(NativeInput).where(NativeInput.topic_id == topic_id)
+            )
+        )
+    for row in rows:
+        if str(block_id) in {str(value) for value in row.held_block_ids}:
+            return InputIdentity(
+                row.project_id,
+                row.topic_id,
+                row.recipient_handle,
+                row.harness,
+                row.native_session_id,
+                row.input_id,
+                row.work_id,
+            )
+    raise AssertionError(f"no registered input holds block {block_id}")
 
 
 class SlowScreen(StubChannel):
@@ -178,6 +214,8 @@ class SlowScreen(StubChannel):
 
 
 class InstantScreen(StubChannel):
+    new_session_id = "s-affinity"
+
     def emit_turn(
         self,
         topic_id: uuid.UUID,
@@ -368,6 +406,8 @@ async def test_receiving_a_message_mints_no_second_agent(business_db_factory, tm
 
 class ProcessNotesScreen(StubChannel):
     """A turn that narrates as it works: two assistant messages, then the end."""
+
+    new_session_id = "s-notes"
 
     def emit_turn(
         self,
@@ -1301,8 +1341,11 @@ async def test_summon_during_active_work_is_injected_without_a_second_done(
     assert len(merged) == 1
     assert consumed_turn(merged[0]) is None
 
-    # The session consumes the injected text → its receipt stamps the block.
-    await svc.confirm_prompt_receipt(topic_id, provider.delivered[0])
+    # The session consumes the injected input → its receipt stamps the block.
+    identity = await _input_holding(factory, topic_id, merged[0].id)
+    await svc.confirm_prompt_receipt(
+        InputReceipt(identity, "native_echo", identity.work_id)
+    )
     async with factory() as session:
         history = await BlockRepository(session).list_for_topic(topic_id)
     merged = [b for b in history if b.content == "等一下，先别跑"]
@@ -1322,17 +1365,21 @@ async def test_summon_during_active_work_is_injected_without_a_second_done(
 
 
 @pytest.mark.anyio
-async def test_failed_live_delivery_reports_error_then_queues_work(
+async def test_unconfirmed_live_delivery_reports_error_without_queuing_work(
     business_db_factory, tmp_path
 ):
-    """A failed live handoff is visible before the message runs from the queue."""
+    """A transport exception after registration keeps the input for reconciliation."""
     from app.domain.agent.compute import ComputePool
+    from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
+    from app.domain.block.models import consumed_turn
+    from app.domain.delivery.answer_ownership import seat_has_unfinished_input
+    from tests.conftest import close_topic_subscriptions
 
     factory = business_db_factory  # type: ignore[attr-defined]
 
     class _NoScreen(_SlowLiveScreen):
-        """The live handoff fails at the transport: the second write does not
-        land on the screen, so the message has to run from the queue instead."""
+        """The transport fails after the attempt starts, without proving whether
+        the remote session took the input."""
 
         name = "fake-noscreen"
 
@@ -1343,10 +1390,20 @@ async def test_failed_live_delivery_reports_error_then_queues_work(
             # the whole subject, and it either happens while the first turn is
             # still working or it does not happen at all.
             self.tried = asyncio.Event()
+            self.attempted: InputIdentity | None = None
 
         async def call(self, handle, method: str, params: dict) -> dict:
             if method == "steer":
                 self.delivered.append(params["text"])
+                self.attempted = InputIdentity(
+                    handle.session.project_id,
+                    handle.session.topic_id,
+                    handle.agent_handle,
+                    self.runtime.harness,
+                    handle.session_id,
+                    uuid.UUID(params["input_id"]),
+                    uuid.UUID(params["work_id"]),
+                )
                 self.tried.set()
                 raise ScreenSetupError("屏幕没了")
             return await super().call(handle, method, params)
@@ -1376,46 +1433,96 @@ async def test_failed_live_delivery_reports_error_then_queues_work(
             )
         ]
 
+    async def assert_unknown_input() -> set[uuid.UUID]:
+        identity = provider.attempted
+        assert identity is not None
+        async with factory() as session:
+            history = await BlockRepository(session).list_for_topic(topic_id)
+            messages = [block for block in history if block.content == "第二件事"]
+            assert len(messages) == 1
+            message = messages[0]
+            assert consumed_turn(message) is None
+            rows = list(
+                await session.scalars(
+                    select(NativeInput).where(NativeInput.topic_id == topic_id)
+                )
+            )
+            assert len(rows) == 2  # original prompt and the one attempted steer
+            held = [row for row in rows if str(message.id) in row.held_block_ids]
+            assert len(held) == 1
+            row = held[0]
+            assert all(
+                getattr(row, field) == getattr(identity, field)
+                for field in InputIdentity.__dataclass_fields__
+            )
+            assert row.held_block_ids == [str(message.id)]
+            assert row.block_ids == [str(message.id)]
+            assert row.released_block_ids == []
+            assert row.registered_at is not None
+            assert row.accepted_at is None
+            assert row.echoed_at is None
+            assert row.execution_work_id is None
+            assert row.settled_at is None
+            assert row.completed_at is None
+            assert row.terminated_at is None
+            assert await seat_has_unfinished_input(
+                session, topic_id, identity.recipient_handle
+            )
+            return {row.id for row in rows}
+
     first = asyncio.create_task(summoned("user-1", "第一件事"))
-    await asyncio.wait_for(provider.started.wait(), 5)
+    second = None
+    try:
+        await asyncio.wait_for(provider.started.wait(), HANG_S)
+        second = asyncio.create_task(summoned("user-2", "第二件事"))
+        await asyncio.wait_for(provider.tried.wait(), HANG_S)
+        second_frames = await asyncio.wait_for(second, HANG_S)
+        notices = [
+            frame["block"]
+            for frame in second_frames
+            if frame["type"] == "event_block"
+            and "发送结果正在核对" in frame["block"]["content"]
+        ]
+        assert len(notices) == 1
+        assert notices[0]["content"] == "输入已登记，发送结果正在核对；不会重复发送"
+        assert notices[0]["author_type"] == "platform"
+        assert all(frame["type"] not in {"done", "error"} for frame in second_frames)
+        assert not any(
+            frame["type"] == "event_block"
+            and (frame["block"].get("meta") or {}).get("event_type")
+            == "delivery_fallback"
+            for frame in second_frames
+        )
+        original_rows = await assert_unknown_input()
+        assert len(provider.sessions) == 1
+        assert provider.runs == 1
 
-    second = asyncio.create_task(summoned("user-2", "第二件事"))
-    # Wait for the write to be attempted, not for a slice of wall clock. A tenth
-    # of a second used to stand in for "the second message has got as far as the
-    # live handoff"; a loaded box does not honour that, and then the first turn
-    # is released before the handoff happens — `deliver` finds no work in
-    # flight, returns False without ever reaching the screen, and the test fails
-    # on an empty `delivered` that says nothing about what it meant to check.
-    await asyncio.wait_for(provider.tried.wait(), 5)
-    assert not second.done()  # queued behind the lock, exactly as before
-
-    provider.release.set()
-    await asyncio.wait_for(first, 5)
-    second_frames = await asyncio.wait_for(second, 5)
-    assert provider.runs == 2
-    assert [p.split("\n\n", 1)[0] for p in provider.delivered] == ["[user-2]: 第二件事"]
-
-    fallback_frames = [
-        frame
-        for frame in second_frames
-        if frame["type"] == "event_block"
-        and frame["block"]["meta"].get("event_type") == "delivery_fallback"
-    ]
-    assert len(fallback_frames) == 1
-    fallback = fallback_frames[0]["block"]
-    assert fallback["meta"]["severity"] == "error"
-    assert fallback["meta"]["who"] == "platform"
-    assert all(frame["type"] != "error" for frame in second_frames)
-
-    async with factory() as session:
-        history = await BlockRepository(session).list_for_topic(topic_id)
-    persisted = [
-        block
-        for block in history
-        if (block.meta or {}).get("event_type") == "delivery_fallback"
-    ]
-    assert len(persisted) == 1
-    await finish_turn(svc, topic_id)
+        # The original prompt's clean completion cannot settle an input that
+        # never appeared in its native journal. A recovery scan also keeps it.
+        provider.release.set()
+        await asyncio.wait_for(first, HANG_S)
+        await finish_turn(svc, topic_id)
+        runner = AgentWorkRunner(InProcessBroker())
+        assert await runner.resume_lost_messages(svc, topic_id=topic_id) == 0
+        assert await assert_unknown_input() == original_rows
+        assert len(provider.sessions) == 1
+        assert provider.runs == 1
+        assert [p.split("\n\n", 1)[0] for p in provider.delivered] == [
+            "[user-2]: 第二件事"
+        ]
+        async with factory() as session:
+            history = await BlockRepository(session).list_for_topic(topic_id)
+        assert [
+            block.id for block in history if "发送结果正在核对" in block.content
+        ] == [uuid.UUID(notices[0]["id"])]
+    finally:
+        provider.release.set()
+        tasks = [first] if second is None else [first, second]
+        await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), HANG_S)
+        try:
+            await finish_turn(svc, topic_id)
+        finally:
+            await close_topic_subscriptions(svc, topic_id)
 
 
 @pytest.mark.anyio
@@ -1450,7 +1557,16 @@ async def test_midturn_delivery_holds_no_topic_lock(
     in_flight = asyncio.Event()
     release = asyncio.Event()
 
-    async def slow_deliver(tid, text, images=None, agent_handle=None, owes_reply=False):
+    async def slow_deliver(
+        tid,
+        text,
+        images=None,
+        *,
+        register_input=None,
+        expected_work_id=None,
+        agent_handle=None,
+        owes_reply=False,
+    ):
         in_flight.set()
         await release.wait()
         return True
@@ -1505,8 +1621,33 @@ async def test_midturn_message_stays_pending_until_its_receipt(
 
     delivered_texts: list[str] = []
     owed: list[bool] = []
+    minted: list[InputIdentity] = []
 
-    async def fake_deliver(tid, text, images=None, agent_handle=None, owes_reply=False):
+    async def fake_deliver(
+        tid,
+        text,
+        images=None,
+        *,
+        register_input,
+        expected_work_id=None,
+        agent_handle=None,
+        owes_reply=False,
+    ):
+        # Only the transport is faked here. The registration the real deliver
+        # performs before it reaches the channel is made with the real
+        # registrar, so the receipt below has a genuine input to name rather
+        # than a stand-in queued by prompt text.
+        identity = InputIdentity(
+            project.id,
+            tid,
+            "cheese",
+            "stub-session",
+            f"session-{expected_work_id}",
+            uuid.uuid4(),
+            expected_work_id,
+        )
+        await register_input(identity)
+        minted.append(identity)
         delivered_texts.append(text)
         owed.append(owes_reply)
         return True
@@ -1531,11 +1672,27 @@ async def test_midturn_message_stays_pending_until_its_receipt(
 
     # Write accepted but not yet consumed: must stay pending.
     assert await _consumed() is False
-    # A receipt for some OTHER input must not stamp this message.
-    await svc.confirm_prompt_receipt(topic_id, "别的输入")
+    # A receipt naming some OTHER input must not stamp this message. Nobody
+    # registered that identity, so the journal rejects it outright instead of
+    # falling back to matching by the text it was given.
+    first = minted[0]
+    other = InputIdentity(
+        first.project_id,
+        first.topic_id,
+        first.recipient_handle,
+        first.harness,
+        first.native_session_id,
+        uuid.uuid4(),
+        first.work_id,
+    )
+    with pytest.raises(ValidationError):
+        await svc.confirm_prompt_receipt(
+            InputReceipt(other, "native_echo", other.work_id)
+        )
     assert await _consumed() is False
-    # The matching receipt stamps it.
-    await svc.confirm_prompt_receipt(topic_id, delivered_texts[0])
+    # The receipt naming THIS input stamps it.
+    await svc.confirm_prompt_receipt(InputReceipt(first, "accepted"))
+    await svc.confirm_prompt_receipt(InputReceipt(first, "native_echo", first.work_id))
     assert await _consumed() is True
 
 

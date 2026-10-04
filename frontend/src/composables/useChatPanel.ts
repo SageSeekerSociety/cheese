@@ -22,6 +22,8 @@ import type { ChatPanelOptions } from './chatPanelContract'
 
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 
+import { scrollBehavior } from '@/utils/motion'
+
 import {
   ApiError,
   attachmentRawUrl,
@@ -46,7 +48,7 @@ import { useTimeline } from '../components/room/composables/useTimeline'
 import { useTypingPreview } from '../components/room/composables/useTypingPreview'
 import { isAgentBlock, isAgentHandle, isPersonBlock } from '../lib/authorship'
 import { cachedWindow, pendingBlockRefresh, setCachedWindow } from '../lib/blockCache'
-import { mergeRefreshedTail, PAGE_SIZE } from '../lib/blockPaging'
+import { applyLiveChanges, mergeRefreshedTail, PAGE_SIZE } from '../lib/blockPaging'
 import { dayLabelsFor, outboxEdgeAfter, type RunEdge, runEdgeBetween, unreadAnchorBlock } from '../lib/chatGrouping'
 import { announceComments } from '../lib/docCommentSignals'
 import { activityLines as memberActivityLines } from '../lib/memberActivity'
@@ -59,9 +61,11 @@ import { placeSplitMarkers } from '../lib/splitMarkers'
 import { taskTitle, topicShortId, topicStateBadge, topicTitle } from '../lib/topicState'
 import { myHandle } from '../me'
 
+import { useAskAnswers } from './useAskAnswers'
+import { useAskGroups } from './useAskGroups'
+import { useAskTakeover } from './useAskTakeover'
 import { useChatComposer } from './useChatComposer'
 import { useChatPaging } from './useChatPaging'
-import { useOptionQuestions } from './useOptionQuestions'
 import { useOwnChecklist } from './useOwnChecklist'
 
 import { t } from '@/i18n'
@@ -150,24 +154,30 @@ export function useChatPanel(opts: ChatPanelOptions) {
     if (b.kind === 'event' && !b.task_id) emit('site-block', b)
   }
 
+  const { askStates, askAction, askViewer, askAccount } = useAskAnswers({
+    blocks: () => messages.value,
+    replace: replaceShown,
+  })
+
+  const {
+    askGroups,
+    askGroupAction,
+    openRoom: openAskGroups,
+  } = useAskGroups({
+    blocks: () => messages.value,
+    account: () => askAccount.value,
+    viewer: () => askViewer.value,
+    replace: replaceShown,
+  })
+  // 提问接管输入框：面板与 composer 互斥地驻留在同一格（见 useAskTakeover）。
+  const takeover = useAskTakeover({ groups: askGroups, viewer: () => askViewer.value })
+  const { askTakeover, askReturn, dismissAsk, restoreAsk } = takeover
   /** 把这一条换进时间线（在的话）。 */
   function replaceShown(block: Block) {
     if (!timeline.find(block.id)) return
     timeline.replace(block)
     historyChanges?.set(block.id, block)
   }
-
-  // ---- 带选项的问题: buttons under the message, and the one a person asks
-  // from the composer —— 见 useOptionQuestions。 ----
-  const { askBusy, pickOption, askQuestion } = useOptionQuestions({
-    topicId: () => topic()?.id,
-    push: (block) => {
-      pushBlock(block)
-      scrollToBottom()
-    },
-    show: replaceShown,
-    fail: (e) => (errorMsg.value = e instanceof Error ? e.message : t('work.room.chat.pickFailed')),
-  })
 
   // 自己的清单：发一张、点记号改一步 —— 见 useOwnChecklist。
   const { postChecklist, changeChecklist } = useOwnChecklist({
@@ -321,7 +331,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
   function pushBlock(b: Block) {
     historyChanges?.set(b.id, b)
     const landing = timeline.append(b)
-    if (landing === 'known' || historyChanges !== null || b.author === AUTHOR) return
+    if (landing === 'known' || landing === 'above' || historyChanges !== null || b.author === AUTHOR) return
     if (landing === 'shown') arrived.add(b.id)
     if ((landing === 'held' || !atBottom.value) && b.kind !== 'event') unseen.value.push(b.id)
   }
@@ -476,6 +486,9 @@ export function useChatPanel(opts: ChatPanelOptions) {
       // Recovery keeps its history-first reconciliation for lost message echoes.
       await ensureFreshToken()
       if (!stillHere()) return
+      // 一进房间就问一次：这一间里我还欠哪些组的回答，不等它们在时间线里滚出来。
+      // 早先发的组可能不在默认加载的那一屏里，靠块登记的话面板要往上翻才接管。
+      void openAskGroups(room.id)
       const parallelSocket = entering && outbox.value.length === 0
       if (parallelSocket) connectSocket(room.id)
       // 打开话题的那次导航已经替它起了头（router/index.ts），它往往比下面这一条先
@@ -516,16 +529,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
         : { blocks: payload.data, hasMore: more }
       // Live frames can arrive while the HTTP snapshot is pending. Apply them
       // last, including retractions, so that snapshot cannot erase newer events.
-      const blocks = new Map(merged.blocks.map((block) => [block.id, block]))
-      for (const [id, block] of changes) {
-        if (block) blocks.set(id, block)
-        else blocks.delete(id)
-      }
-      for (const [id, updated] of reactions) {
-        const block = blocks.get(id)
-        if (block) blocks.set(id, { ...block, reactions: updated })
-      }
-      merged.blocks = [...blocks.values()]
+      merged.blocks = applyLiveChanges(merged, changes, reactions)
       timeline.show(merged)
       // A reconnect starts with durable history. Settle sends that landed while
       // their echo was lost before opening the new socket; only absent client ids
@@ -583,7 +587,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
       errorMsg.value = e instanceof Error ? e.message : t('work.room.chat.downloadFailed')
     }
   }
-  function scrollToMessage(id: string, behavior: 'smooth' | 'auto' = 'smooth') {
+  function scrollToMessage(id: string, behavior: ScrollBehavior = scrollBehavior()) {
     const el = scrollRef.value?.querySelector(`[data-mid="${id}"]`)
     if (!el) return
     el.scrollIntoView({ behavior, block: 'center' })
@@ -972,11 +976,17 @@ export function useChatPanel(opts: ChatPanelOptions) {
     errorMsg,
     connected,
     send,
-    askBusy,
-    pickOption,
+    askGroups,
+    askGroupAction,
+    askStates,
+    askTakeover,
+    askReturn,
+    dismissAsk,
+    restoreAsk,
+    askAction,
+    askViewer,
     postChecklist,
     changeChecklist,
-    askQuestion,
     onReact,
     undoTitle,
     downloadAttachment,

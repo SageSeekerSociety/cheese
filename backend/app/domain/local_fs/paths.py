@@ -45,6 +45,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+from app.core.sentences import say
+
 __all__ = [
     "MAX_PATH_LENGTH",
     "MAX_SEGMENTS",
@@ -170,15 +172,13 @@ def normalize(raw: str, platform: Platform) -> NormalizedPath:
     compare is already in the form the filesystem would have used.
     """
     if not isinstance(raw, str):
-        raise PathRefused("not_text", "路径必须是文本", repr(raw))
+        raise PathRefused("not_text", say("pathNotText"), repr(raw))
     if not raw.strip():
-        raise PathRefused("empty", "路径为空", raw)
+        raise PathRefused("empty", say("localPathEmpty"), raw)
     if _has_control_char(raw):
-        raise PathRefused("control_char", "路径含控制字符", raw)
+        raise PathRefused("control_char", say("pathControlChars"), raw)
     if len(raw) > MAX_PATH_LENGTH:
-        raise PathRefused(
-            "too_long", "路径超过 " + str(MAX_PATH_LENGTH) + " 个字符", raw
-        )
+        raise PathRefused("too_long", say("pathTooLong", max=MAX_PATH_LENGTH), raw)
 
     if platform is Platform.WINDOWS:
         root, segments = _windows(raw)
@@ -186,7 +186,7 @@ def normalize(raw: str, platform: Platform) -> NormalizedPath:
         root, segments = _posix(raw)
 
     if len(segments) > MAX_SEGMENTS:
-        raise PathRefused("too_deep", "路径超过 " + str(MAX_SEGMENTS) + " 层", raw)
+        raise PathRefused("too_deep", say("pathTooDeep", max=MAX_SEGMENTS), raw)
 
     text = _join(root, segments)
     key = text.casefold() if platform.case_insensitive else text
@@ -217,17 +217,17 @@ def _windows(raw: str) -> tuple[str, tuple[str, ...]]:
     # keep this module's assumption true: that Win32's own normalization agrees
     # with ours.
     if text.startswith("//?/") or text.startswith("//./"):
-        raise PathRefused("device_prefix", "不支持 Win32 设备命名空间前缀", raw)
+        raise PathRefused("device_prefix", say("pathDevicePrefix"), raw)
 
     if text.startswith("//"):
         # UNC ``//server/share/rest``. Server and share are the root; ``..`` must
         # not be able to climb above the share into another share on the server.
         parts = [p for p in text[2:].split("/") if p not in ("", ".")]
         if len(parts) < 2:
-            raise PathRefused("unc_incomplete", "UNC 路径缺少共享名", raw)
+            raise PathRefused("unc_incomplete", say("pathUncNoShare"), raw)
         server, share, rest = parts[0], parts[1], parts[2:]
         if not server or not share:
-            raise PathRefused("unc_incomplete", "UNC 路径缺少服务器或共享名", raw)
+            raise PathRefused("unc_incomplete", say("pathUncIncomplete"), raw)
         root = "//" + server + "/" + share
         segments = _collapse(rest, root, raw, fold_segment=_fold_windows_segment)
         return root, segments
@@ -238,7 +238,7 @@ def _windows(raw: str) -> tuple[str, tuple[str, ...]]:
         # on", which is not a fact this module knows) and the second is relative to
         # a working directory that is not a fact either. A relative path cannot be
         # authorized, because the directory it denotes is not fixed.
-        raise PathRefused("not_absolute", "Windows 路径必须以盘符或 UNC 共享开头", raw)
+        raise PathRefused("not_absolute", say("pathWindowsNotAbsolute"), raw)
     letter = text[0].upper()
     rest = text[2:]
     if not rest.startswith("/"):
@@ -246,7 +246,7 @@ def _windows(raw: str) -> tuple[str, tuple[str, ...]]:
         # of drive C", whose location depends on per-drive process state. Two runs
         # of the same request can name two different files, so it cannot be
         # authorized at all.
-        raise PathRefused("drive_relative", "不支持盘符相对路径（如 C:foo）", raw)
+        raise PathRefused("drive_relative", say("pathDriveRelative"), raw)
     root = letter + ":"
     segments = _collapse(
         [p for p in rest.split("/") if p not in ("", ".")],
@@ -269,7 +269,7 @@ def _posix(raw: str) -> tuple[str, tuple[str, ...]]:
         # tilde before normalization, which is why what reaches here is absolute.
         raise PathRefused(
             "not_absolute",
-            "路径必须是绝对路径（~ 与相对路径请在设备上解析为绝对路径）",
+            say("pathNotAbsolute"),
             raw,
         )
     # POSIX allows exactly two leading slashes to be implementation-defined; one
@@ -308,7 +308,9 @@ def _collapse(
             continue
         if part == "..":
             if not out:
-                raise PathRefused("escapes_root", "路径向上越过了根 " + root, raw)
+                raise PathRefused(
+                    "escapes_root", say("pathEscapesRoot", root=root), raw
+                )
             out.pop()
             continue
         if fold_segment is not None:
@@ -337,12 +339,10 @@ def _fold_windows_segment(segment: str, raw: str) -> str:
     """
     stripped = segment.rstrip(" .")
     if not stripped:
-        raise PathRefused("empty_segment", "段在去掉结尾的点与空格后为空", raw)
+        raise PathRefused("empty_segment", say("pathSegmentEmpty"), raw)
     stem = stripped.split(".")[0]
     if stem.casefold() in _RESERVED_WINDOWS_NAMES:
-        raise PathRefused(
-            "reserved_name", "「" + stripped + "」是 Windows 保留设备名", raw
-        )
+        raise PathRefused("reserved_name", say("pathReservedName", name=stripped), raw)
     return stripped
 
 

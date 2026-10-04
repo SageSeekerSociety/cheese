@@ -15,8 +15,8 @@ from app.auth.caller import may_access_project
 from app.core.db import get_db
 from app.core.errors import GatewayUnavailableError, NotFoundError, ValidationError
 from app.core.sandbox_auth import verify_scoped_token
+from app.core.sentences import say
 from app.domain.agent_session.services import AgentSessionService
-from app.domain.block.notice_text import say
 from app.domain.project.services import ProjectService
 from app.domain.repository.forge_files import ProjectFiles
 from app.domain.room_task.models import TaskStatus

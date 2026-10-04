@@ -15,6 +15,7 @@ import pymupdf4llm
 
 from app.core.config import settings
 from app.core.errors import BadRequestError, QuotaExceededError, SystemBusyError
+from app.core.sentences import exception_text, say
 from app.core.storage import (
     compute_file_hash,
     generate_storage_key,
@@ -73,7 +74,7 @@ def task_draft_key_spec() -> KeySpec:
 
 
 RateTable = Mapping[str, RateRow]
-_NOT_OPEN = "从 PDF 生成草稿暂未开放，稍后再试。"
+_NOT_OPEN = say("pdfDraftNotOpen")
 
 # 整页渲染的清晰度，与读文档那条路（backend/sandbox/skills/documents/scripts/
 # read.py 的 ``--render``）同档：够模型看清正文，又不至于把一页顶到几十 MB。
@@ -82,18 +83,12 @@ _RENDER_DPI = 150
 
 def _scanned_page_without_vision(page_number: int, model: str) -> str:
     """这页没有文字层，而当前模型读不了图 —— 兜底根本没机会跑。"""
-    return (
-        f"第 {page_number} 页没有文字层（扫描件/图片页），渲染成图片也读不出来："
-        f"当前草稿模型 {model} 读不了图片。换一个能读图的草稿模型再试。"
-    )
+    return say("pdfScannedPageNoVision", page=page_number, model=model)
 
 
 def _scan_fallback_failed(page_number: int, detail: str) -> str:
     """渲染后模型也没读出内容 —— 说清是这条兜底路自己没读出来。"""
-    return (
-        f"第 {page_number} 页是扫描件（没有文字层）：已把这一页渲染成图片发给模型，"
-        f"但模型仍没读出可用内容（{detail}）。"
-    )
+    return say("pdfScanFallbackFailed", page=page_number, detail=detail)
 
 
 class TaskPdfDraftService:
@@ -463,7 +458,7 @@ class TaskPdfDraftService:
                 timeout=self._timeout_seconds,
             )
         except GatewayCallError as exc:
-            raise BadRequestError(str(exc)) from exc
+            raise BadRequestError(exception_text(exc)) from exc
         self.spent += response.usage
 
         parsed = self._parse_llm_json(response.content)
@@ -514,7 +509,9 @@ class TaskPdfDraftService:
                 timeout=self._timeout_seconds,
             )
         except GatewayCallError as exc:
-            raise BadRequestError(_scan_fallback_failed(page_number, str(exc))) from exc
+            raise BadRequestError(
+                _scan_fallback_failed(page_number, exception_text(exc))
+            ) from exc
         self.spent += response.usage
 
         try:
@@ -532,7 +529,9 @@ class TaskPdfDraftService:
                 for candidate in candidates
             ]
         except BadRequestError as exc:
-            raise BadRequestError(_scan_fallback_failed(page_number, str(exc))) from exc
+            raise BadRequestError(
+                _scan_fallback_failed(page_number, exception_text(exc))
+            ) from exc
 
         return payloads, response.usage.total_tokens
 

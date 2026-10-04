@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import AdminTabs from '@/components/admin/AdminTabs.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 
 // 模型管理页页头右边那排工具：网关健康灯、窗口页签、刷新。标题和说明（带当前窗口）由
 // 页面交给 `AdminPage`。
@@ -48,10 +49,9 @@ const options = computed(() => props.windows.map((n) => ({ value: String(n), lab
     :options="options"
     @update:model-value="emit('change-window', Number($event))"
   />
-  <v-btn
+  <BaseButton
     icon="mdi-refresh"
-    variant="text"
-    size="small"
+    size="sm"
     :aria-label="t('models.page.refresh')"
     :loading="loading"
     @click="emit('refresh')"

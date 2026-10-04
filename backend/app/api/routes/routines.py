@@ -26,6 +26,7 @@ from app.api.response import ok, page
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import ForbiddenError, NotFoundError
+from app.core.sentences import say
 from app.domain.identity.actor import Actor
 from app.domain.membership.services import MemberService
 from app.domain.routine import service as routines
@@ -173,7 +174,7 @@ async def _viewer(
     if not resolver.on_the_dev_credential(actor) and not await _sees_room(
         db, actor, project_id, topic_id
     ):
-        raise ForbiddenError("你不是这个房间的成员，看不到这个房间的周期任务")
+        raise ForbiddenError(say("routinesRoomMemberOnly"))
     return actor
 
 
@@ -200,12 +201,14 @@ async def _require_manage(
         return
     if _is_person(actor):
         raise ForbiddenError(
-            f"「{row.title}」是 {row.owner_handle} 设的周期任务，"
-            f"只有他本人或项目管理员能{what}"
+            say(
+                "routineOwnerOrAdmin",
+                title=row.title,
+                owner=row.owner_handle,
+                what=what,
+            )
         )
-    raise ForbiddenError(
-        f"{what}周期任务要由规则主人或项目管理员来做，AI 队友只能起草和修改"
-    )
+    raise ForbiddenError(say("routineManagerOnly", what=what))
 
 
 async def _can_manage(db: AsyncSession, actor: Actor, row: Routine) -> bool:
@@ -250,7 +253,7 @@ async def _speaker(db: AsyncSession, actor: Actor, room_id: uuid.UUID) -> str:
 
 def _person(actor: Actor, what: str) -> None:
     if not _is_person(actor):
-        raise ForbiddenError(f"{what}要由人来做，AI 队友只能起草和修改")
+        raise ForbiddenError(say("personOnlyAction", what=what))
 
 
 async def _readable_rules(
@@ -342,7 +345,7 @@ async def update_routine(
 ) -> dict:
     row, actor = await _routine_actor(db, resolver, routine_id)
     if _is_person(actor):
-        await _require_manage(db, actor, row, "修改")
+        await _require_manage(db, actor, row, say("routineEdit"))
     row = await RoutineService(db).update(
         row,
         by_agent=not _is_person(actor),
@@ -358,8 +361,8 @@ async def confirm_routine(
     routine_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     row, actor = await _routine_actor(db, resolver, routine_id)
-    _person(actor, "确认启用")
-    await _require_manage(db, actor, row, "确认启用")
+    _person(actor, say("routineConfirmEnable"))
+    await _require_manage(db, actor, row, say("routineConfirmEnable"))
     row = await RoutineService(db).confirm(row, by=actor.handle)
     presented = await _present_one(db, actor, row)
     await db.commit()
@@ -374,7 +377,7 @@ async def pause_routine(
     # 芝士今天就能暂停（人写的规则也暂停），这一档不变：暂停停下的是执行，不
     # 是新工作；其余的操作仍要人来做。
     if _is_person(actor):
-        await _require_manage(db, actor, row, "暂停")
+        await _require_manage(db, actor, row, say("routinePause"))
     row = await RoutineService(db).pause(row)
     presented = await _present_one(db, actor, row)
     await db.commit()
@@ -386,8 +389,8 @@ async def resume_routine(
     routine_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     row, actor = await _routine_actor(db, resolver, routine_id)
-    _person(actor, "恢复执行")
-    await _require_manage(db, actor, row, "恢复执行")
+    _person(actor, say("routineResume"))
+    await _require_manage(db, actor, row, say("routineResume"))
     row = await RoutineService(db).resume(row)
     presented = await _present_one(db, actor, row)
     await db.commit()
@@ -401,8 +404,8 @@ async def run_routine_now(
     from app.api.deps import get_chat_service, get_work_runner
 
     row, actor = await _routine_actor(db, resolver, routine_id)
-    _person(actor, "立即执行")
-    await _require_manage(db, actor, row, "立即执行")
+    _person(actor, say("routineRunNow"))
+    await _require_manage(db, actor, row, say("routineRunNow"))
     run = await RoutineService(db).run_now(row, by=actor.handle)
     await db.commit()
     chat = get_chat_service()
@@ -417,8 +420,8 @@ async def delete_routine(
     routine_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     row, actor = await _routine_actor(db, resolver, routine_id)
-    _person(actor, "删除")
-    await _require_manage(db, actor, row, "删除")
+    _person(actor, say("routineDelete"))
+    await _require_manage(db, actor, row, say("routineDelete"))
     await RoutineService(db).delete(row)
     await db.commit()
     return ok({"deleted": str(routine_id)})
@@ -439,7 +442,7 @@ async def report_run(
 ) -> dict:
     run = await db.get(RoutineRun, run_id)
     if run is None:
-        raise NotFoundError("没有这次执行")
+        raise NotFoundError(say("routineRunNotFound"))
     routine, actor = await _routine_actor(db, resolver, run.routine_id)
     run = await RoutineService(db).report(
         run,

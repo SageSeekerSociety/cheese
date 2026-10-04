@@ -10,6 +10,7 @@ import { computed, reactive, ref, toRaw, watch } from 'vue'
 
 import { ALIGNMENTS, CONTENT_COLORS, FONT_FAMILIES, FONT_SIZES, HEADING_LEVELS } from './richTextOptions'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
 const props = defineProps<{
@@ -152,6 +153,8 @@ const insertActions: Simple[] = [
 ]
 
 // 弹层要盖得住全屏的编辑器（TipTapEditor 里那一层是 2450，在弹窗 2400 之上）。
+// z-index 属性只收数字，读不到 CSS token，这里是 `--z-menu`（design-system §3.8）在 JS
+// 里的唯一一份。
 const MENU_Z = 2500
 
 const label = (key: string) => t(`editor.toolbar.${key}`)
@@ -502,8 +505,8 @@ function moveFocus(event: KeyboardEvent) {
         />
         <v-checkbox v-model="link.newTab" :label="label('linkNewTab')" density="compact" hide-details />
         <div class="rt-pop__actions">
-          <v-btn v-if="state.link" variant="text" size="small" @click="removeLink">{{ label('unlink') }}</v-btn>
-          <v-btn type="submit" color="primary" variant="flat" size="small">{{ label('linkApply') }}</v-btn>
+          <BaseButton v-if="state.link" kind="ghost" size="sm" @click="removeLink">{{ label('unlink') }}</BaseButton>
+          <BaseButton type="submit" kind="primary" size="sm">{{ label('linkApply') }}</BaseButton>
         </div>
       </form>
     </v-menu>

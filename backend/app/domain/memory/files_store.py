@@ -18,6 +18,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError, NotFoundError, ValidationError
+from app.core.sentences import say
 from app.domain.memory.files import (
     INDEX_NAME,
     MemoryFileScope,
@@ -41,13 +42,13 @@ class MemoryFileConflict(ConflictError):
         self.expected = expected
         self.current = current
         if current is None:
-            detail = "它已经被删掉了"
+            detail = say("memoryFileDeleted")
         elif expected is None:
-            detail = f"它已经存在（现在是第 {current} 版）"
+            detail = say("memoryFileAlreadyExists", current=current)
         else:
-            detail = f"读到的是第 {expected} 版，现在是第 {current} 版"
+            detail = say("memoryFileVersionMoved", expected=expected, current=current)
         super().__init__(
-            f"{path} 的这一版已经改不动了：{detail}。重读一次，把改动并进去，再写。",
+            say("memoryFileVersionConflict", path=path, detail=detail),
             # 两个版本号也进 `data`：那句话是给人读的，而重读这件事要动手，动手
             # 的人（界面上的那次重试）需要知道自己在重读第几版。
             data={"path": path, "expected": expected, "current": current},
@@ -60,7 +61,7 @@ class MemoryFileLimit(ValidationError):
     def __init__(self, path: str, reason: str):
         self.path = path
         self.reason = reason
-        super().__init__(f"{path} 没有写入：{reason}")
+        super().__init__(say("memoryFileNotWritten", path=path, reason=reason))
 
 
 class MemoryFileMissing(NotFoundError):
@@ -223,7 +224,7 @@ class MemoryFileStore:
         check_path(path)
         row = await self.get(project_id, scope, owner_handle, path, for_update=True)
         if row is None:
-            raise MemoryFileMissing(f"{path} 不在了")
+            raise MemoryFileMissing(say("memoryFileGone", path=path))
         if expected_version is not None and expected_version != row.version:
             raise MemoryFileConflict(path, expected_version, row.version)
         await self._session.execute(

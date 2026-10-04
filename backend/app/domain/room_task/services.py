@@ -7,8 +7,8 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
+from app.core.sentences import say
 from app.domain.block.models import Block
-from app.domain.block.notice_text import say
 from app.domain.room_task.checkouts import after_close
 from app.domain.room_task.models import (
     HEAVY_LOCK_TTL,
@@ -249,7 +249,7 @@ class TaskService:
                 not names_a_person(handle)
                 or await user_by_handle(self._session, handle) is None
             ):
-                raise ValidationError(f"贡献署名必须指向真实用户：{handle}")
+                raise ValidationError(say("contributorMustBeUser", handle=handle))
         task.reporter_handle = reporter_handle
         task.contributor_handles = contributors
         await self._session.flush()
@@ -300,7 +300,7 @@ class TaskService:
         if base_task_id is not None:
             parent = await self.require_in_room(room_id, base_task_id)
             if parent.branch_name is None:
-                raise ValidationError("历史任务没有可依赖的工作分支")
+                raise ValidationError(say("pastTaskNoBranch"))
             if parent.accepted_at is None and parent.delivered_head is None:
                 base = parent.branch_name
         task = await self._repo.add(

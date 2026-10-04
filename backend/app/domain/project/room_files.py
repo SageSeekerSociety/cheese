@@ -38,6 +38,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError, NotFoundError, ValidationError
+from app.core.sentences import say
 from app.domain.agent.announce import announce
 from app.domain.agent.platform_notices import (
     EVENT_LIBRARY_SAVED,
@@ -45,7 +46,6 @@ from app.domain.agent.platform_notices import (
     WHO_HUMAN,
     notice,
 )
-from app.domain.block.notice_text import say
 from app.domain.library import records as library_records
 from app.domain.library import service as library
 from app.domain.preview import office
@@ -71,7 +71,7 @@ async def save_to_library(
     """
     leaf = PurePosixPath(path).name
     if not leaf:
-        raise ValidationError("这不是房间里的一份文件")
+        raise ValidationError(say("notARoomFile"))
     data = await asyncio.to_thread(library.read_room_file, project_id, room_id, path)
     name = await library_records.add(
         session,

@@ -356,8 +356,9 @@ class Settings(BaseSettings):
     # it with an internal pass (docs_site/access.py). Agents read it only in
     # projects whose repository is one of `docs_dev_repositories`.
     docs_dev_index_url: str | None = "http://frontend/docs/dev/ask-index.json"
-    # Projects whose agents may read the developer docs: the ones working on
-    # this platform's own code ("owner/repo", case-insensitive).
+    # Projects working on this platform's own code ("owner/repo",
+    # case-insensitive): their agents may read the developer docs, and their
+    # members and agents may claim feedback (`FeedbackService.may_claim`).
     docs_dev_repositories: list[str] = ["SageSeekerSociety/cheese"]
     # The gateway model 问芝士 answers with. Its virtual key is minted through
     # `llm_gateway_admin_base`; what it spends is charged to the asker's
@@ -370,7 +371,7 @@ class Settings(BaseSettings):
     # Answers in flight across one backend process.
     docs_assistant_concurrency: int = 8
 
-    # --- A person's 芝士 outside any project (app/domain/assistant, #2285) ---
+    # --- A person's 芝士 outside any project (app/domain/agent/personal, #2285) ---
     # The gateway model it answers with; charged to the asker's personal
     # credits at what the gateway spent, so the model must be priced there.
     assistant_model: str = "deepseek-flash"

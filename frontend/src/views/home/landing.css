@@ -37,7 +37,7 @@
   display: flex;
   position: sticky;
   top: 0;
-  z-index: 5;
+  z-index: var(--z-sticky);
   height: var(--bar-h);
   padding: 0 var(--gutter);
   background: color-mix(in srgb, var(--canvas) 86%, transparent);
@@ -84,6 +84,33 @@
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+/* The phone nav disclosure. It only exists below 900px (see the narrow block);
+   on wider screens the four links sit in the bar themselves. */
+.site-menu-toggle {
+  display: none;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--ink);
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+}
+
+.site-menu-toggle svg {
+  display: block;
+  width: 20px;
+  height: 20px;
+}
+
+.site-menu-toggle:hover {
+  border-color: var(--line-2);
+  background: var(--fill);
 }
 
 /* ---- Hero ---- */
@@ -773,8 +800,32 @@
     --gutter: 16px;
   }
 
+  /* The four links no longer fit in the bar, so they drop below it as a panel
+     the button opens. Same links, same accessible nav. */
   .site-nav {
     display: none;
+    position: absolute;
+    inset: var(--bar-h) 0 auto;
+    flex-direction: column;
+    gap: 0;
+    padding: 4px var(--gutter) 12px;
+    border-bottom: 1px solid var(--line);
+    background: var(--canvas);
+    box-shadow: var(--shadow-1);
+    font-size: 15px;
+    line-height: var(--lh-15);
+  }
+
+  .landing.menu-open .site-nav {
+    display: flex;
+  }
+
+  .site-nav a {
+    padding: 12px 0;
+  }
+
+  .site-menu-toggle {
+    display: inline-flex;
   }
 
   .hero-scene {
@@ -788,7 +839,7 @@
 
   .story-stage {
     top: var(--bar-h);
-    z-index: 1;
+    z-index: var(--z-raised);
     height: 56dvh;
     background: var(--canvas);
     order: -1;

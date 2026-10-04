@@ -136,7 +136,7 @@ describe('the email of a new third-party account', () => {
     expect(emailField(view).value).toBe('')
 
     await submitForm(view)
-    await view.findByText('Enter a valid email address')
+    await view.findByText('Invalid email address')
     expect(UserApi.sendOAuthEmailCode).not.toHaveBeenCalled()
 
     await fireEvent.update(emailField(view), 'ada@example.com')

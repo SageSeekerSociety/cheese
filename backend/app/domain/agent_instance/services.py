@@ -7,11 +7,11 @@ from dataclasses import dataclass, field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
+from app.core.sentences import say
 from app.domain.agent_instance.configuration import AgentConfiguration
-from app.domain.agent_instance.models import AgentInstance
+from app.domain.agent_instance.models import AgentInstance, NameSource
 from app.domain.agent_instance.repositories import AgentInstanceRepository
 from app.domain.agent_type.library import AgentTypeDef, preset_types
-from app.domain.block.notice_text import say
 from app.domain.identity.handles import (
     CHEESE_HANDLE,
     CHEESE_NAME,
@@ -43,6 +43,9 @@ class ResolvedAgent:
     handle: str
     type_name: str | None
     display_name: str
+    # ``default`` while it still carries 「芝士」, the name it was born with;
+    # screens show that in their reader's language (``models.NameSource``).
+    name_source: NameSource = NameSource.human
     configuration: dict = field(default_factory=dict)
 
 
@@ -252,9 +255,7 @@ class AgentInstanceService:
     ) -> AgentInstance:
         handle = handle.strip()
         if not _HANDLE_RE.match(handle):
-            raise ValidationError(
-                "agent handle 只能包含小写字母、数字和 .-_，且以字母或数字开头"
-            )
+            raise ValidationError(say("agentHandleFormat"))
         if handle == UNRESOLVED_AGENT_HANDLE:
             raise ValidationError(say("agentHandleReserved", handle=repr(handle)))
         if await self._repo.get_by_handle(project_id=project_id, handle=handle):
@@ -262,11 +263,13 @@ class AgentInstanceService:
         await self._require_known_type(type_name)
         config = configuration or initial_configuration(type_name)
         await self._validate_model(project_id, config)
+        name = display_name.strip()
         instance = await self._repo.create(
             project_id=project_id,
             handle=handle,
             type_name=type_name or None,
-            display_name=display_name.strip() or CHEESE_NAME,
+            display_name=name or CHEESE_NAME,
+            name_source=NameSource.human if name else NameSource.default,
             configuration=config.model_dump(),
         )
         await self.ensure_identity(instance)
@@ -331,10 +334,11 @@ class AgentInstanceService:
         that keys the memory pool, so a rename must not move what it knows."""
         name = display_name.strip()
         if not name:
-            raise ValidationError("名字不能为空")
+            raise ValidationError(say("agentNameRequired"))
         if len(name) > 64:
-            raise ValidationError("名字最多 64 个字")
+            raise ValidationError(say("agentNameTooLong"))
         instance.display_name = name
+        instance.name_source = NameSource.human
         return instance
 
     async def deactivate(self, project: Project, instance: AgentInstance) -> None:
@@ -399,6 +403,7 @@ class AgentInstanceService:
             handle=CHEESE_HANDLE,
             type_name=None,
             display_name=CHEESE_NAME,
+            name_source=NameSource.default,
             configuration=initial_configuration().model_dump(),
         )
         if display_name is not None:
@@ -421,7 +426,7 @@ class AgentInstanceService:
 
     async def _require_known_type(self, type_name: str | None) -> None:
         if type_name and type_name not in preset_types():
-            raise ValidationError(f"agent 类型 {type_name!r} 不存在")
+            raise ValidationError(say("agentTypeNotFound", type=repr(type_name)))
 
     @staticmethod
     def resolved(instance: AgentInstance) -> ResolvedAgent:
@@ -430,5 +435,10 @@ class AgentInstanceService:
             handle=instance.handle,
             type_name=instance.type_name,
             display_name=instance.display_name or CHEESE_NAME,
+            name_source=(
+                NameSource(instance.name_source)
+                if instance.display_name
+                else NameSource.default
+            ),
             configuration=instance.configuration,
         )

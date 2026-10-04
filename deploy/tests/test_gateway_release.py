@@ -63,7 +63,9 @@ class GatewayReleaseTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(any(c["args"][0] == "compose" for c in calls))
 
-    def test_releases_only_gateway_after_saving_previous_config(self):
+    def test_releases_the_gateway_and_its_redis_after_saving_previous_config(self):
+        """The budget brake's spend counters live in litellm-redis, so a release
+        has to bring it up with the gateway; the gateway database is left alone."""
         result, calls = self.run_release()
         self.assertEqual(result.returncode, 0, result.stderr)
         actions = [c["args"][0] for c in calls]
@@ -71,7 +73,7 @@ class GatewayReleaseTest(unittest.TestCase):
         rollout = [c for c in calls if c["args"][0] == "compose"]
         self.assertEqual(len(rollout), 1)
         self.assertEqual(
-            rollout[0]["args"][-8:],
+            rollout[0]["args"][-9:],
             [
                 "up",
                 "-d",
@@ -80,9 +82,11 @@ class GatewayReleaseTest(unittest.TestCase):
                 "--wait",
                 "--wait-timeout",
                 "150",
+                "litellm-redis",
                 "litellm",
             ],
         )
+        self.assertNotIn("litellm-db", rollout[0]["args"])
 
     def test_unhealthy_release_restores_old_image_and_config(self):
         result, calls = self.run_release(FAIL_RELEASE="1")

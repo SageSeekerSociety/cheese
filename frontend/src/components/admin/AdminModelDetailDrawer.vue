@@ -8,6 +8,7 @@ import { useDisplay } from 'vuetify'
 import { getGatewayModel } from '@/api'
 import AdminLineChart from '@/components/admin/AdminLineChart.vue'
 import AdminModelPriceCell from '@/components/admin/AdminModelPriceCell.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 import { blockedReasonText } from '@/lib/adminModels'
 import { fmtCost, fmtNum, fmtPercent } from '@/lib/usageFormat'
 
@@ -180,7 +181,7 @@ function close() {
           <span class="amdd__name t-title">{{ model?.label || name || t('models.detail.title') }}</span>
           <span v-if="model" class="amdd__slug t-meta-read">{{ model.name }}</span>
         </div>
-        <v-btn icon="mdi-close" variant="text" size="small" :aria-label="t('models.detail.close')" @click="close" />
+        <BaseButton icon="mdi-close" size="sm" :aria-label="t('models.detail.close')" @click="close" />
       </header>
 
       <div class="amdd__body">
@@ -192,7 +193,7 @@ function close() {
         <v-alert v-else-if="error" type="error" density="compact" variant="tonal" role="alert">
           {{ error }}
           <template #append>
-            <v-btn variant="text" size="small" @click="load">{{ t('models.page.retry') }}</v-btn>
+            <BaseButton kind="secondary" size="sm" @click="load">{{ t('models.page.retry') }}</BaseButton>
           </template>
         </v-alert>
 
@@ -262,9 +263,9 @@ function close() {
           <section v-if="model.config_yaml" class="amdd__block">
             <div class="amdd__blockhead">
               <h2 class="amdd__blocktitle t-eyebrow-read">{{ t('models.detail.configYaml') }}</h2>
-              <v-btn variant="text" size="small" @click="copyConfig">
+              <BaseButton kind="ghost" size="sm" @click="copyConfig">
                 {{ copied ? t('models.detail.copied') : t('models.detail.copy') }}
-              </v-btn>
+              </BaseButton>
             </div>
             <pre class="amdd__pre t-num">{{ model.config_yaml }}</pre>
             <p class="amdd__note t-meta-read">{{ t('models.detail.configNote') }}</p>

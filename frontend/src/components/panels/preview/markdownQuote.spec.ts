@@ -7,7 +7,7 @@
  */
 import { afterEach, expect, it } from 'vitest'
 
-import { CONTEXT_CHARS, headingPath, quoteFromSelection } from './markdownQuote'
+import { CONTEXT_CHARS, contextAround, headingPath, quoteFromSelection } from './markdownQuote'
 
 afterEach(() => {
   window.getSelection()?.removeAllRanges()
@@ -97,4 +97,36 @@ it('指不成的一律不出去：太短、没选、或者选到了这块正文�
   expect(quoteFromSelection(root, null)).toBeNull()
   // 正对照：同一块正文里选中同样长的一段，照样出得去——免得上面几条只是「什么都没发生」。
   expect(quoteFromSelection(root, select(node, 0, 4))!.text).toBe('失败以后')
+})
+
+it('选区贴着这一块的开头或结尾时，空的那一侧就是空的', () => {
+  const root = rootFrom('<p>前面这段文字选中后面这段</p>')
+  const node = root.querySelector('p')!.firstChild!
+  const text = node.textContent!
+  // 贴开头：前面一个字都没有，`prefix` 是空串，不是缺字段。
+  const start = contextAround(root, select(node, 0, 4).getRangeAt(0))
+  expect(start.prefix).toBe('')
+  expect(start.suffix).toBe(text.slice(4))
+  // 贴结尾：后面没有字，`suffix` 是空串。
+  const end = contextAround(root, select(node, text.length - 4, text.length).getRangeAt(0))
+  expect(end.suffix).toBe('')
+  expect(end.prefix).toBe(text.slice(0, text.length - 4))
+})
+
+it('同一句话在一页上出现两次时，前后文说的是哪一处', () => {
+  const root = rootFrom('<p>先看这一段重试 3 次，后面又说重试 3 次收尾。</p>')
+  const node = root.querySelector('p')!.firstChild!
+  const text = node.textContent!
+  const phrase = '重试 3 次'
+  const firstAt = text.indexOf(phrase)
+  const secondAt = text.lastIndexOf(phrase)
+  const first = contextAround(root, select(node, firstAt, firstAt + phrase.length).getRangeAt(0))
+  const second = contextAround(root, select(node, secondAt, secondAt + phrase.length).getRangeAt(0))
+  expect(first.prefix.endsWith('先看这一段')).toBe(true)
+  expect(first.suffix.startsWith('，后面又说')).toBe(true)
+  expect(second.prefix.endsWith('，后面又说')).toBe(true)
+  expect(second.suffix.startsWith('收尾')).toBe(true)
+  // 两处的前后文不一样，受话人才分得清发的是哪一处 —— 这正是这对字段存在的理由。
+  expect(first.prefix).not.toBe(second.prefix)
+  expect(first.suffix).not.toBe(second.suffix)
 })

@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.crypto import Purpose, decrypt, encrypt
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 from app.domain.integration import mail
 from app.domain.integration.feishu import FeishuClient, FeishuSettings
 from app.domain.integration.mail import IntegrationError, MailSettings
@@ -351,11 +351,10 @@ class IntegrationService:
     ) -> Integration:
         row = await self._session.get(Integration, integration_id)
         if row is None:
-            raise NotFoundError("没有这个连接")
+            raise NotFoundError(say("integrationNotFound"))
         if str(project_id) not in (row.grants or []):
             raise ForbiddenError(
-                f"{row.owner_handle} 没有把这个连接授权给这个项目使用；"
-                "请他在「我的连接」里勾选这个项目"
+                say("integrationNotSharedWithProject", owner=row.owner_handle)
             )
         return row
 
@@ -475,7 +474,7 @@ class IntegrationService:
 
     async def _mail(self, row: Integration, fn, *args, **kwargs):
         if row.provider != "mail":
-            raise ValidationError("这个连接不是邮箱")
+            raise ValidationError(say("integrationNotMail"))
         await asyncio.to_thread(guard_mail_hosts, row.config)
         try:
             return await asyncio.to_thread(fn, mail_settings(row), *args, **kwargs)
@@ -491,7 +490,7 @@ class IntegrationService:
             try:
                 query["since"] = date.fromisoformat(since)
             except ValueError as exc:
-                raise ValidationError("since 要写成 2026-09-01 这样的日期") from exc
+                raise ValidationError(say("mailSinceFormat")) from exc
         return await self._mail(row, mail.search, **query)
 
     async def read(self, row: Integration, uid: str, folder: str) -> dict:
@@ -507,9 +506,7 @@ class IntegrationService:
         try:
             return library.read_room_file(project_id, room_id, path)
         except ValidationError as exc:
-            raise ValidationError(
-                f"附件「{path}」不在房间文件里：先用 cheese show 把它放进房间"
-            ) from exc
+            raise ValidationError(say("mailAttachmentNotInRoom", path=path)) from exc
 
     def _message(
         self, row: Integration, draft: MailDraft, files: list[tuple[str, bytes]]
@@ -541,7 +538,7 @@ class IntegrationService:
     ) -> MailDraft:
         to, cc = mail.addresses(to), mail.addresses(cc)
         if not to:
-            raise ValidationError("至少要有一个收件人")
+            raise ValidationError(say("mailRecipientRequired"))
         files: list[tuple[str, bytes]] = []
         recorded = []
         for path in attachments:
@@ -557,7 +554,7 @@ class IntegrationService:
                 }
             )
         if sum(len(d) for _n, d in files) > MAX_ATTACHMENT_BYTES:
-            raise ValidationError("附件合计超过 20 MB")
+            raise ValidationError(say("mailAttachmentsTooLarge"))
         draft = MailDraft(
             id=uuid.uuid4(),
             integration_id=row.id,
@@ -660,7 +657,7 @@ class IntegrationService:
 
     async def feishu(self, row: Integration, action):
         if row.provider != "feishu":
-            raise ValidationError("这个连接不是飞书")
+            raise ValidationError(say("integrationNotFeishu"))
         settings = await feishu_settings_for(self._session, row)
         client = FeishuClient(settings)
         try:

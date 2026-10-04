@@ -23,7 +23,7 @@ import httpx
 
 from app.core.config import settings
 from app.core.errors import ValidationError
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 from app.domain.remote_mcp import http
 
 

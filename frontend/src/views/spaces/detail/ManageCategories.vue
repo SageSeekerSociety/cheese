@@ -1,8 +1,8 @@
 <template>
   <SettingsToolbar :title="t('spaces.settings.sections.categories')">
-    <v-btn variant="text" prepend-icon="mdi-plus" @click="openCreateDialog">
+    <BaseButton kind="primary" prepend-icon="mdi-plus" @click="openCreateDialog">
       {{ t('spaces.detail.manageCategories.addCategory') }}
-    </v-btn>
+    </BaseButton>
   </SettingsToolbar>
   <div class="settings-card">
     <div v-if="loadingCategories" class="pa-4 text-center">
@@ -27,29 +27,36 @@
         <template #append>
           <v-tooltip v-if="!category.archivedAt && currentSpace?.defaultCategoryId !== category.id" location="top">
             <template #activator="{ props }">
-              <v-btn
+              <BaseButton
                 v-bind="props"
+                kind="ghost"
                 icon="mdi-star-outline"
-                variant="text"
-                size="small"
+                size="sm"
+                :aria-label="t('spaces.detail.manageCategories.setAsDefault')"
                 @click="setAsDefault(category.id)"
-              ></v-btn>
+              />
             </template>
             {{ t('spaces.detail.manageCategories.setAsDefault') }}
           </v-tooltip>
 
-          <v-btn
+          <BaseButton
             v-if="!category.archivedAt"
+            kind="ghost"
             icon="mdi-pencil-outline"
-            variant="text"
-            size="small"
+            size="sm"
             :aria-label="t('spaces.detail.manageCategories.updateCategory')"
             @click="openEditDialog(category)"
-          ></v-btn>
+          />
 
           <AdaptiveMenu :actions="categoryActions(category)" :title="category.name">
             <template #activator="{ props }">
-              <v-btn icon="mdi-dots-horizontal" variant="text" size="small" v-bind="props"></v-btn>
+              <BaseButton
+                v-bind="props"
+                kind="ghost"
+                icon="mdi-dots-horizontal"
+                size="sm"
+                :aria-label="t('navigation.shell.more')"
+              />
             </template>
           </AdaptiveMenu>
         </template>
@@ -58,56 +65,46 @@
 
     <p v-else class="settings-empty">{{ t('spaces.detail.manageCategories.noCategories') }}</p>
 
-    <CategoryTeachingDialog :category="teachingCategory" @close="teachingCategory = null" />
+    <!-- Create/edit category form: dialog on desktop, full page on phones (AdaptiveDialog). -->
+    <AdaptiveDialog
+      v-model="dialogOpen"
+      :title="
+        editingCategory
+          ? t('spaces.detail.manageCategories.updateCategory')
+          : t('spaces.detail.manageCategories.createCategory')
+      "
+      :primary-label="t('spaces.detail.manageCategories.confirm')"
+      :primary-loading="isSubmitting"
+      @primary="submitForm"
+    >
+      <v-form @submit.prevent="submitForm">
+        <v-text-field
+          v-model="formData.name"
+          autocomplete="off"
+          :label="t('spaces.detail.manageCategories.name')"
+          required
+          v-bind="nameProps"
+        ></v-text-field>
 
-    <!-- 创建/编辑分类对话框 -->
-    <v-dialog v-model="dialogOpen" max-width="500">
-      <v-card>
-        <v-card-title>
-          {{
-            editingCategory
-              ? t('spaces.detail.manageCategories.updateCategory')
-              : t('spaces.detail.manageCategories.createCategory')
-          }}
-        </v-card-title>
-        <v-card-text>
-          <v-form ref="form" @submit.prevent="submitForm">
-            <v-text-field
-              v-model="formData.name"
-              autocomplete="off"
-              :label="t('spaces.detail.manageCategories.name')"
-              required
-              v-bind="nameProps"
-            ></v-text-field>
+        <v-textarea
+          v-model="formData.description"
+          autocomplete="off"
+          :label="t('spaces.detail.manageCategories.description')"
+          v-bind="descriptionProps"
+          rows="3"
+          auto-grow
+        ></v-textarea>
 
-            <v-textarea
-              v-model="formData.description"
-              autocomplete="off"
-              :label="t('spaces.detail.manageCategories.description')"
-              v-bind="descriptionProps"
-              rows="3"
-              auto-grow
-            ></v-textarea>
-
-            <v-text-field
-              v-model.number="formData.displayOrder"
-              :label="t('spaces.detail.manageCategories.displayOrder')"
-              type="number"
-              min="0"
-              :hint="t('spaces.detail.manageCategories.displayOrderHint')"
-              v-bind="displayOrderProps"
-            ></v-text-field>
-          </v-form>
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer></v-spacer>
-          <v-btn variant="text" @click="dialogOpen = false">{{ t('spaces.detail.manageCategories.cancel') }}</v-btn>
-          <v-btn color="primary" :loading="isSubmitting" @click="submitForm">{{
-            t('spaces.detail.manageCategories.confirm')
-          }}</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+        <v-text-field
+          v-model.number="formData.displayOrder"
+          :label="t('spaces.detail.manageCategories.displayOrder')"
+          type="number"
+          min="0"
+          :hint="t('spaces.detail.manageCategories.displayOrderHint')"
+          v-bind="displayOrderProps"
+        ></v-text-field>
+      </v-form>
+    </AdaptiveDialog>
   </div>
 </template>
 
@@ -125,8 +122,8 @@ import { vuetifyConfig } from '@/utils/form'
 
 import { useSpaceData } from '@/composables/useSpaceData'
 
-import CategoryTeachingDialog from './CategoryTeachingDialog.vue'
-
+import BaseButton from '@/components/base/BaseButton.vue'
+import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import SettingsToolbar from '@/components/spaces/SettingsToolbar.vue'
 import { useDialog } from '@/plugins/dialog'
@@ -142,8 +139,6 @@ const { confirm } = useDialog()
 // 表单相关
 const dialogOpen = ref(false)
 const editingCategory = ref<SpaceCategory | null>(null)
-/** 正在编辑「给芝士的指导」的那个分类。 */
-const teachingCategory = ref<SpaceCategory | null>(null)
 
 /** 一个分类那一行的 ⋯：归档了的只剩「恢复」和「删除」。 */
 function categoryActions(category: SpaceCategory): MenuAction[] {
@@ -158,12 +153,6 @@ function categoryActions(category: SpaceCategory): MenuAction[] {
           },
         ]
       : [
-          {
-            key: 'teaching',
-            label: t('spaces.detail.manageCategories.teaching.menu'),
-            icon: 'mdi-school-outline',
-            onSelect: () => (teachingCategory.value = category),
-          },
           {
             key: 'archive',
             label: t('spaces.detail.manageCategories.archiveCategory'),

@@ -29,9 +29,13 @@ import { deleteProjectArtifact, listProjectArtifacts, mergeProjectArtifacts, ren
 import { t } from '../i18n'
 import { relTime } from '../lib/relTime'
 
+import AdaptiveDialog from './common/AdaptiveDialog.vue'
 import AdaptiveMenu from './common/AdaptiveMenu.vue'
 import NavLink from './common/NavLink.vue'
 import PublishedSite from './PublishedSite.vue'
+
+import BaseButton from '@/components/base/BaseButton.vue'
+import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 
 const props = defineProps<{ projectId: string }>()
 const emit = defineEmits<{ count: [number] }>()
@@ -191,12 +195,10 @@ watch(
         </div>
         <AdaptiveMenu :actions="rowActions(row)" :title="row.name">
           <template #activator="{ props: menu }">
-            <v-btn
+            <BaseButton
               v-bind="menu"
               icon="mdi-dots-horizontal"
-              size="x-small"
-              variant="text"
-              color="on-surface-variant"
+              size="sm"
               :loading="busy === row.id"
               :aria-label="t('project.artifacts.actionsOf', { name: row.name })"
             />
@@ -212,73 +214,64 @@ watch(
       </li>
     </ul>
 
-    <!-- 改名。卡指着的是这一项，不是这个名字，所以已经交付过的那几版照样算它的。 -->
-    <v-dialog :model-value="!!renaming" max-width="420" @update:model-value="renaming = null">
-      <v-card v-if="renaming">
-        <v-card-title class="t-dialog-title">{{ t('project.artifacts.rename') }}</v-card-title>
-        <v-card-text>
-          <v-text-field
-            v-model="newName"
-            :label="t('project.artifacts.nameLabel')"
-            autocomplete="off"
-            density="compact"
-            variant="outlined"
-            hide-details
-            autofocus
-            @keyup.enter="rename"
-          />
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" color="on-surface-variant" @click="renaming = null">{{ t('global.cancel') }}</v-btn>
-          <v-btn variant="text" color="primary" :disabled="!newName.trim()" @click="rename">{{
-            t('global.save')
-          }}</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <!-- Rename: the card points at this item, not the name, so already-delivered versions still count as its own. -->
+    <AdaptiveDialog
+      :model-value="!!renaming"
+      :title="t('project.artifacts.rename')"
+      :primary-label="t('global.save')"
+      :primary-disabled="!newName.trim()"
+      size="sm"
+      @update:model-value="renaming = null"
+      @primary="rename"
+    >
+      <v-text-field
+        v-if="renaming"
+        v-model="newName"
+        :label="t('project.artifacts.nameLabel')"
+        autocomplete="off"
+        density="compact"
+        variant="outlined"
+        hide-details
+        autofocus
+        @keyup.enter="rename"
+      />
+    </AdaptiveDialog>
 
-    <!-- 合并：同一样东西被声明成了两项，这是把它们收回一项。 -->
-    <v-dialog :model-value="!!merging" max-width="420" @update:model-value="merging = null">
-      <v-card v-if="merging">
-        <v-card-title class="t-dialog-title">{{
-          t('project.artifacts.mergeTitle', { name: merging.name })
-        }}</v-card-title>
-        <v-card-text>
-          <v-select
-            v-model="mergeInto"
-            :items="mergeTargets"
-            autocomplete="off"
-            :label="t('project.artifacts.mergeLabel')"
-            density="compact"
-            variant="outlined"
-            hide-details
-          />
-          <p class="t-meta c-faint mt-3">{{ t('project.artifacts.mergeHint', { name: merging.name }) }}</p>
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" color="on-surface-variant" @click="merging = null">{{ t('global.cancel') }}</v-btn>
-          <v-btn variant="text" color="primary" :disabled="!mergeInto" @click="merge">{{
-            t('project.artifacts.merge')
-          }}</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <!-- Merge: the same thing was declared as two items; this folds them back into one. -->
+    <AdaptiveDialog
+      :model-value="!!merging"
+      :title="t('project.artifacts.mergeTitle', { name: merging?.name ?? '' })"
+      :primary-label="t('project.artifacts.merge')"
+      :primary-disabled="!mergeInto"
+      size="sm"
+      @update:model-value="merging = null"
+      @primary="merge"
+    >
+      <template v-if="merging">
+        <v-select
+          v-model="mergeInto"
+          :items="mergeTargets"
+          autocomplete="off"
+          :label="t('project.artifacts.mergeLabel')"
+          density="compact"
+          variant="outlined"
+          hide-details
+        />
+        <p class="t-meta c-faint mt-3">{{ t('project.artifacts.mergeHint', { name: merging.name }) }}</p>
+      </template>
+    </AdaptiveDialog>
 
-    <v-dialog :model-value="!!removing" max-width="420" @update:model-value="removing = null">
-      <v-card v-if="removing">
-        <v-card-title class="t-dialog-title">{{
-          t('project.artifacts.deleteTitle', { name: removing.name })
-        }}</v-card-title>
-        <v-card-text class="t-body">{{ t('project.artifacts.deleteBody') }}</v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" color="on-surface-variant" @click="removing = null">{{ t('global.cancel') }}</v-btn>
-          <v-btn variant="text" color="error" @click="remove">{{ t('project.artifacts.delete') }}</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <!-- Deleting an item is not reversible: ask before it happens. -->
+    <ConfirmDialog
+      :model-value="!!removing"
+      :title="t('project.artifacts.deleteTitle', { name: removing?.name ?? '' })"
+      :confirm-label="t('project.artifacts.delete')"
+      danger
+      @update:model-value="removing = null"
+      @confirm="remove"
+    >
+      {{ t('project.artifacts.deleteBody') }}
+    </ConfirmDialog>
   </div>
 </template>
 
@@ -352,6 +345,7 @@ watch(
   text-decoration: underline;
 }
 .made-row__when {
+  white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
 /* 收起、展开只在窄的那一档：这一块摞在板上面，全列出来就把板往下推。宽的时候它是

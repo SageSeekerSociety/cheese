@@ -8,6 +8,7 @@ import { useDisplay } from 'vuetify'
 import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminFlash from '@/components/admin/AdminFlash.vue'
 import AdminMeterBar from '@/components/admin/AdminMeterBar.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 import { fmtCredits, fmtDate, fmtDateTime, fmtMonth, meterTone, teamTitle } from '@/lib/adminCredits'
 
 // 一个团队的额度：挂哪个方案、手上每一笔额度用了多少、管理员对它做过什么。
@@ -119,10 +120,9 @@ function historyLine(entry: CreditAudit): string {
           <span class="actp__title t-title">{{ title }}</span>
           <span class="actp__meta t-meta-read">{{ meta }}</span>
         </div>
-        <v-btn
+        <BaseButton
           icon="mdi-close"
-          variant="text"
-          size="small"
+          size="sm"
           :aria-label="t('credits.panel.close')"
           @click="emit('update:modelValue', false)"
         />
@@ -169,7 +169,7 @@ function historyLine(entry: CreditAudit): string {
           <section class="actp__section">
             <div class="actp__sectionhead">
               <h3 class="actp__h t-title">{{ t('credits.panel.credits') }}</h3>
-              <v-btn variant="outlined" size="small" @click="emit('grant')">{{ t('credits.panel.grant') }}</v-btn>
+              <BaseButton kind="secondary" size="sm" @click="emit('grant')">{{ t('credits.panel.grant') }}</BaseButton>
             </div>
             <ul v-if="team.packs.length" class="actp__packs">
               <li v-for="pack in team.packs" :key="pack.id" class="actp__pack">

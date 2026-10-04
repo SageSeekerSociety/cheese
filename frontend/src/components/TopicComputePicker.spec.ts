@@ -80,7 +80,6 @@ function profile(overrides: Partial<TopicComputeProfile> = {}): TopicComputeProf
       options: [],
       effective: null,
       machine_access: false,
-      notice: '让它看到能访问整台机器',
     },
     ...overrides,
   }

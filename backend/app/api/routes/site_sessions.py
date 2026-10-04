@@ -10,6 +10,7 @@ from app.api.auth import ActorResolverDep
 from app.api.response import ok
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, NotFoundError
+from app.core.sentences import say
 from app.domain.site.hosting import (
     AUTH_PATH,
     GRANT_TTL,
@@ -32,10 +33,10 @@ async def site_session(
     # site is kept like the rest of its data, and this POST only mints a grant.
     actor = await resolver.resolve(project_id=project_id, read_only=True)
     if not actor.authenticated:
-        raise AuthenticationRequiredError("请先登录")
+        raise AuthenticationRequiredError(say("signInFirst"))
     await require_site_access(db, actor.handle, project_id)
     if await get_current_release(db, project_id) is None:
-        raise NotFoundError("暂无已发布的网站")
+        raise NotFoundError(say("noPublishedSite"))
     response.headers["Cache-Control"] = "no-store"
     return ok(
         {

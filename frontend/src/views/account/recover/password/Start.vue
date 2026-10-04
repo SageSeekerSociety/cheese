@@ -4,9 +4,9 @@
          what happens next rather than staying up with a banner over it. -->
     <template v-if="sent">
       <AccountHeading :title="t('account.recover.sentTitle')" :lede="t('account.recover.sent')" />
-      <v-btn block color="primary" size="large" to="/account/signin" class="account-submit">
+      <BaseButton block kind="primary" size="lg" to="/account/signin" class="account-submit">
         {{ t('account.backToSignIn') }}
-      </v-btn>
+      </BaseButton>
     </template>
 
     <template v-else>
@@ -31,9 +31,9 @@
           />
         </AccountField>
 
-        <v-btn block color="primary" size="large" type="submit" class="account-submit" :loading="isSubmitting">
+        <BaseButton block kind="primary" size="lg" type="submit" class="account-submit" :loading="isSubmitting">
           {{ t('account.recover.submit') }}
-        </v-btn>
+        </BaseButton>
 
         <p class="account-foot">
           {{ t('account.recover.rememberPassword') }}
@@ -54,6 +54,7 @@ import { vuetifyConfig } from '@/utils/form'
 
 import AccountField from '@/components/account/AccountField.vue'
 import AccountHeading from '@/components/account/AccountHeading.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'

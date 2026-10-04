@@ -17,7 +17,7 @@
 那句话用收件人自己选的语言说（`user.language`）：推送是服务端替一个人加密好发出去
 的，浏览器收到就原样显示，没有 APNs `loc-key` 那样让收件端查词表的机会，所以只能在
 这里按收件人渲染。房间里那一行的键在 `payload["message"]`，词表是前端那一份
-（`block/notice_text.py`）。
+（`backend/app/core/sentences.py`）。
 
 ## 服务端看不到内容
 
@@ -35,7 +35,7 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.block.notice_text import LOCALES, in_language, render, say
+from app.core.sentences import LOCALES, in_language, render, say
 from app.domain.notification.models import NotificationType
 from app.domain.notification.push_models import PushSubscription
 

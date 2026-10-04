@@ -16,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import BadRequestError, NotFoundError
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 from app.domain.usage.ledger import Ledger, month_of
 from app.domain.usage.models import (
     ComputeGrant,
@@ -85,29 +85,33 @@ def _plan_fields(data: dict) -> dict:
 def _check_plan_fields(data: dict) -> None:
     credits = data.get("credits_per_period")
     if credits is not None and (not math.isfinite(credits) or credits < 0):
-        raise BadRequestError("每月额度必须是不小于 0 的数")
+        raise BadRequestError(say("planMonthlyNonNegative"))
     keys = set()
     for window in data.get("windows") or []:
         hours, calendar = window.get("hours"), window.get("calendar")
         cap = window.get("credits")
         if (hours is None) == (calendar is None):
-            raise BadRequestError("时间窗口要么按小时，要么按周或按月")
+            raise BadRequestError(say("planWindowUnit"))
         if calendar is not None and calendar not in CALENDARS:
-            raise BadRequestError("时间窗口只能按周或按月重置")
+            raise BadRequestError(say("planWindowReset"))
         if hours is not None and (not isinstance(hours, int | float) or hours <= 0):
-            raise BadRequestError("时间窗口的长度必须是正数小时")
+            raise BadRequestError(say("planWindowHoursPositive"))
         if not isinstance(cap, int | float) or not math.isfinite(cap) or cap <= 0:
-            raise BadRequestError("时间窗口的额度必须是正数")
+            raise BadRequestError(say("planWindowLimitPositive"))
         key = calendar or f"{hours:g}h"
         if key in keys:
-            raise BadRequestError("同样长度的时间窗口只能有一个")
+            raise BadRequestError(say("planWindowDuplicate"))
         keys.add(key)
     audience = data.get("audience")
     if audience is not None and audience not in AUDIENCES:
-        raise BadRequestError(f"适用对象只能是 {', '.join(sorted(AUDIENCES))}")
+        raise BadRequestError(
+            say("planAudienceInvalid", options=", ".join(sorted(AUDIENCES)))
+        )
     tiers = data.get("model_tiers")
     if tiers is not None and not set(tiers) <= MODEL_TIERS:
-        raise BadRequestError(f"模型档位只能是 {', '.join(sorted(MODEL_TIERS))}")
+        raise BadRequestError(
+            say("planModelTierInvalid", options=", ".join(sorted(MODEL_TIERS)))
+        )
 
 
 def _check_billing(plan: Plan) -> None:
@@ -118,9 +122,9 @@ def _check_billing(plan: Plan) -> None:
     monthly = plan.credits_per_period is not None
     windowed = bool(plan.windows)
     if monthly and windowed:
-        raise BadRequestError("方案只能二选一：按月发放额度，或按时间窗口限额")
+        raise BadRequestError(say("planEitherMonthlyOrWindows"))
     if not monthly and not windowed:
-        raise BadRequestError("方案要么按月发放额度，要么至少有一个时间窗口")
+        raise BadRequestError(say("planNeedsMonthlyOrWindow"))
 
 
 def _period(held: list[ComputeGrant]) -> dict:
@@ -217,12 +221,10 @@ class PlanService:
 
         plan = await self._plan(key)
         if key == DEFAULT_PLAN_KEY:
-            raise BadRequestError(f"「{plan.name}」是新团队默认的方案，不能删除")
+            raise BadRequestError(say("planDefaultCannotDelete", plan=plan.name))
         teams = (await team_service(self._session).teams_per_plan()).get(key, 0)
         if teams:
-            raise BadRequestError(
-                f"还有 {teams} 个团队在用「{plan.name}」，先把它们换到别的方案"
-            )
+            raise BadRequestError(say("planInUse", count=teams, plan=plan.name))
         before = plan_out(plan)
         await self._session.delete(plan)
         await self._session.flush()

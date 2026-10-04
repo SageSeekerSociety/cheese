@@ -1,12 +1,17 @@
 <script setup lang="ts">
+import type { FeedbackDetail } from '@/cx_types'
+
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { ApiError, getFeedback } from '@/api'
+import { claimFeedback, type FeedbackClaimFlags, releaseFeedback } from '@/api/feedbackClaim'
 import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import FeedbackAuthorAvatar from '@/components/feedback/FeedbackAuthorAvatar.vue'
+import FeedbackClaimCard from '@/components/feedback/FeedbackClaimCard.vue'
 import FeedbackCommentsThread from '@/components/feedback/FeedbackCommentsThread.vue'
 import FeedbackErrorBanner from '@/components/feedback/FeedbackErrorBanner.vue'
 import { kindLabel, sourceLabel } from '@/components/feedback/feedbackLabels'
@@ -14,6 +19,7 @@ import FeedbackPageShell from '@/components/feedback/FeedbackPageShell.vue'
 import FeedbackStatusChip from '@/components/feedback/FeedbackStatusChip.vue'
 import FeedbackStatusTimeline from '@/components/feedback/FeedbackStatusTimeline.vue'
 import { t } from '@/i18n'
+import { closeOverlay } from '@/lib/backOut'
 import { isClosed } from '@/lib/feedbackMeta'
 import { relTime } from '@/lib/relTime'
 import { useFeedbackStore } from '@/stores/feedback'
@@ -92,6 +98,15 @@ const missingState = computed(() =>
 )
 
 onMounted(() => void reload())
+
+/** 「返回」回反馈中心：按钮上写的就是这个地名（`feedback.detail.back` /
+ *  `feedback.detail.missingBack`），所以去向是定的，不是「往回走一格」—— 从话题里点
+ *  开一条反馈（`AgentFeedbackCard`），它又打不开时，`router.back()` 会把人送回那个
+ *  话题，而按钮上写的是回中心。身后正是中心就退一格（不在身后再压一条一模一样的），
+ *  否则 replace 过去。 */
+function backToCenter() {
+  closeOverlay(router, '/feedback')
+}
 // 从「相关反馈」跳到另一条时组件不会重建（同一个路由，只换参数），所以要自己跟。
 watch(id, () => void reload())
 
@@ -191,8 +206,30 @@ async function doDelete() {
     confirmingDelete.value = false
     return
   }
-  // 删完回反馈中心。用 `replace`：这一条已经不存在了，回退键不该回到一个 404。
-  void router.replace('/feedback')
+  // 删完回反馈中心：这一条已经不存在了，回退键不该回到一个 404。和上面那颗「返回」
+  // 同一件事，走同一条路。
+  backToCenter()
+}
+
+/** 领取 / 放弃。两个按钮画不画由服务端的 `can_claim` / `can_release` 定（见
+ *  `FeedbackClaimFlags`）。成败都重读一遍这条：失败多半是别人刚领走了（409），
+ *  屏幕上该换成是谁领着，而服务端那句原话（「已经由 X 领取」）留在错误条里。 */
+const claim = computed(() => item.value as (FeedbackDetail & FeedbackClaimFlags) | null)
+const claiming = ref(false)
+
+async function changeClaim(take: boolean) {
+  if (!item.value || claiming.value) return
+  claiming.value = true
+  const feedbackId = item.value.id
+  let failure: string | null = null
+  try {
+    await (take ? claimFeedback(feedbackId) : releaseFeedback(feedbackId))
+  } catch (error) {
+    failure = error instanceof Error && error.message ? error.message : t('feedback.errors.actionFailed')
+  }
+  await store.loadDetail(feedbackId)
+  if (failure) store.error = failure
+  claiming.value = false
 }
 
 async function share() {
@@ -213,7 +250,7 @@ async function share() {
     <!-- 返回那一条**只在真的有一条反馈时画**：加载中和「这条不存在」两态没有可返回
          的「上一页」这回事（这一页就是它们的落点）。 -->
     <template v-if="item" #head>
-      <button class="fb-back" @click="router.push('/feedback')">
+      <button class="fb-back" @click="backToCenter()">
         <v-icon size="15" aria-hidden="true">mdi-chevron-left</v-icon>{{ t('feedback.detail.back') }}
       </button>
     </template>
@@ -229,7 +266,7 @@ async function share() {
       :icon="missingState.icon"
       :tone="gone ? 'neutral' : 'error'"
       :action="t('feedback.detail.missingBack')"
-      @action="router.push('/feedback')"
+      @action="backToCenter()"
     >
       <!-- 服务端那句话照直画出来，但「这条不存在」那一态不画：那句话说的是「这一次
            为什么没拉到」，而在 404 这一态它只会把上面那句换个说法再说一遍。 -->
@@ -253,18 +290,18 @@ async function share() {
             <h1 class="t-page-title fb-title">{{ item.title }}</h1>
             <v-spacer />
             <template v-if="!confirmingDelete">
-              <v-btn variant="text" color="secondary" size="small" @click="confirmingDelete = true">
+              <BaseButton size="sm" @click="confirmingDelete = true">
                 {{ t('feedback.detail.delete.label') }}
-              </v-btn>
+              </BaseButton>
             </template>
             <template v-else>
               <span class="fb-del__ask t-meta-read">{{ deleteAsk }}</span>
-              <v-btn variant="text" color="error" size="small" :loading="deletingDelete" @click="doDelete">
+              <BaseButton kind="danger" solid size="sm" :loading="deletingDelete" @click="doDelete">
                 {{ t('feedback.detail.delete.confirm') }}
-              </v-btn>
-              <v-btn variant="text" color="secondary" size="small" @click="confirmingDelete = false">
+              </BaseButton>
+              <BaseButton size="sm" @click="confirmingDelete = false">
                 {{ t('feedback.detail.delete.cancel') }}
-              </v-btn>
+              </BaseButton>
             </template>
           </div>
           <h1 v-else class="t-page-title fb-title">{{ item.title }}</h1>
@@ -405,16 +442,15 @@ async function share() {
                   @blur="onComposerBlur"
                 />
                 <div class="d-flex justify-end mt-2">
-                  <v-btn
-                    color="primary"
-                    variant="flat"
-                    size="small"
+                  <BaseButton
+                    kind="primary"
+                    size="sm"
                     :disabled="!commentDraft.trim()"
                     :loading="posting"
                     @click="postComment"
                   >
                     {{ t('feedback.detail.composer.submit') }}
-                  </v-btn>
+                  </BaseButton>
                 </div>
               </template>
             </div>
@@ -425,6 +461,19 @@ async function share() {
           <div class="fb-aside__card">
             <div class="t-eyebrow mb-3">{{ t('feedback.detail.aside.progress') }}</div>
             <FeedbackStatusTimeline :timeline="item.timeline" :status="item.status" :ladder="store.statusLadder" />
+          </div>
+
+          <!-- 谁领着这条。没人领、这个读者也领不了的时候不画：那一格对他只是一句
+               「还没人领取」，回答的不是他会问的问题。 -->
+          <div v-if="claim && (claim.assignee_handle || claim.can_claim)" class="fb-aside__card">
+            <FeedbackClaimCard
+              :holder="claim.assignee_handle"
+              :can-claim="claim.can_claim"
+              :can-release="claim.can_release"
+              :busy="claiming"
+              @claim="changeClaim(true)"
+              @release="changeClaim(false)"
+            />
           </div>
 
           <div class="fb-aside__card">
@@ -464,9 +513,8 @@ async function share() {
            私密和安全问题整条栏都不画：那两类连支持都不成立（支持是公开表态），
            分享出去的链接对别人也打不开 —— 摆两颗按不动的按钮比不摆更坏。 -->
       <div v-if="!restricted" class="fb-actionbar">
-        <v-btn
-          :color="item.supported ? 'secondary' : 'primary'"
-          :variant="item.supported ? 'tonal' : undefined"
+        <BaseButton
+          :kind="item.supported ? 'secondary' : 'primary'"
           :prepend-icon="item.supported ? 'mdi-thumb-up' : 'mdi-thumb-up-outline'"
           :disabled="!supportable"
           :title="supportable ? '' : t('feedback.closedHint')"
@@ -474,10 +522,10 @@ async function share() {
         >
           {{ item.supported ? t('feedback.detail.action.supported') : t('feedback.detail.action.support') }}
           <span class="fb-support-count">{{ item.supports }}</span>
-        </v-btn>
-        <v-btn variant="outlined" color="secondary" prepend-icon="mdi-share-variant-outline" @click="share">
+        </BaseButton>
+        <BaseButton kind="secondary" prepend-icon="mdi-share-variant-outline" @click="share">
           {{ t('feedback.detail.action.share') }}
-        </v-btn>
+        </BaseButton>
       </div>
     </template>
   </FeedbackPageShell>
@@ -664,7 +712,7 @@ async function share() {
 .fb-composer {
   position: sticky;
   bottom: 0;
-  z-index: 2;
+  z-index: var(--z-raised-2);
   margin-top: 12px;
   /* 下内边距就是这一页末尾的留白（`.fb-page` 那 48px 挪到这儿了）。 */
   padding: 8px 0 16px;
@@ -729,7 +777,7 @@ async function share() {
 .fb-actionbar {
   position: sticky;
   bottom: 0;
-  z-index: 3;
+  z-index: var(--z-raised-3);
   display: flex;
   align-items: center;
   box-sizing: border-box;

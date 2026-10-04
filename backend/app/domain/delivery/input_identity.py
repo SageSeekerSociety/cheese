@@ -1,0 +1,89 @@
+"""Transport identity and evidence; no database or runtime dependencies."""
+
+import uuid
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from typing import Literal
+
+
+@dataclass(frozen=True)
+class InputIdentity:
+    project_id: uuid.UUID
+    topic_id: uuid.UUID
+    recipient_handle: str
+    harness: str
+    native_session_id: str
+    input_id: uuid.UUID
+    work_id: uuid.UUID
+
+
+@dataclass(frozen=True)
+class InputReceipt:
+    identity: InputIdentity
+    evidence: Literal["accepted", "native_echo"]
+    execution_work_id: uuid.UUID | None = None
+
+
+@dataclass(frozen=True)
+class WorkCompletion:
+    project_id: uuid.UUID
+    topic_id: uuid.UUID
+    recipient_handle: str
+    harness: str
+    native_session_id: str
+    work_id: uuid.UUID
+    input_ids: tuple[uuid.UUID, ...]
+
+
+@dataclass(frozen=True)
+class WorkTermination:
+    """A work interval known to have ended without completing.
+
+    Carries the identity and the input interval a :class:`WorkCompletion` does,
+    because that is what proves which inputs this is about. It never asserts
+    those inputs were consumed: an outcome nobody confirmed is not a delivery
+    anyone may repeat.
+    """
+
+    project_id: uuid.UUID
+    topic_id: uuid.UUID
+    recipient_handle: str
+    harness: str
+    native_session_id: str
+    work_id: uuid.UUID
+    input_ids: tuple[uuid.UUID, ...]
+    reason: Literal["interrupted", "is_error"]
+
+
+@dataclass(frozen=True)
+class InputEffects:
+    held_block_ids: tuple[uuid.UUID, ...] = ()
+    block_ids: tuple[uuid.UUID, ...] = ()
+    seen_block_ids: tuple[uuid.UUID, ...] = ()
+    seen_by: str | None = None
+    delivery_id: uuid.UUID | None = None
+    attempt_id: uuid.UUID | None = None
+
+
+@dataclass(frozen=True)
+class InputReconciliationPending:
+    identity: InputIdentity
+    accepted: bool
+
+
+class InputOutcomeUnconfirmed(Exception):
+    """An external call began; failure is not permission to send a new input."""
+
+    def __init__(self, identity: InputIdentity, *, accepted: bool):
+        self.identity = identity
+        self.accepted = accepted
+        super().__init__(
+            f"Input {identity.input_id} requires reconciliation "
+            f"(transport accepted={accepted})"
+        )
+
+
+InputRegistrar = Callable[[InputIdentity], Awaitable[None]]
+ReceiptConsumer = Callable[[InputReceipt], Awaitable[None]]
+CompletionConsumer = Callable[[WorkCompletion], Awaitable[None]]
+TerminationConsumer = Callable[[WorkTermination], Awaitable[None]]

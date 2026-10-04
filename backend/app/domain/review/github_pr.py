@@ -24,10 +24,17 @@ import httpx
 
 from app.core.config import settings
 from app.core.forge_http import forge_client
+from app.core.sentences import exception_text, say
 from app.domain.agent.github_app import GitHubAppTokens
 from app.domain.review.pr_signals import ReviewSignal
 
 logger = logging.getLogger(__name__)
+
+
+def _refused(key: str, resp: httpx.Response) -> "GitHubPrError":
+    """GitHub said no: sentence ``key``, with the status and GitHub's own words."""
+    return GitHubPrError(say(key, status=resp.status_code, reply=resp.text[:300]))
+
 
 #: `no_checks` is NOT a flavour of success: it means "no workflow will ever
 #: produce a check for this ref" (every workflow's `paths-ignore` skipped it).
@@ -652,9 +659,7 @@ class HttpxGitHubPrClient:
                 # the error GitHub actually gave us.
                 if claimed is not None:
                     return claimed
-        raise GitHubPrError(
-            f"GitHub 拒绝开 PR（HTTP {resp.status_code}）：{resp.text[:300]}"
-        )
+        raise _refused("githubRefusedOpenPr", resp)
 
     async def _find_open_pull_request(
         self,
@@ -712,9 +717,7 @@ class HttpxGitHubPrClient:
                 params={"per_page": 100},
             )
         if resp.status_code != 200:
-            raise GitHubPrError(
-                f"GitHub 拒绝查检查状态（HTTP {resp.status_code}）：{resp.text[:300]}"
-            )
+            raise _refused("githubRefusedCheckStatus", resp)
         runs = resp.json().get("check_runs", [])
         if runs:
             # Real check-runs showed up — whatever ambiguity there was about
@@ -867,10 +870,7 @@ class HttpxGitHubPrClient:
                 params={"per_page": 100},
             )
         if resp.status_code != 200:
-            raise GitHubPrError(
-                f"GitHub 拒绝查 check-suites"
-                f"（HTTP {resp.status_code}）：{resp.text[:300]}"
-            )
+            raise _refused("githubRefusedCheckSuites", resp)
         return resp.json().get("check_suites", [])
 
     async def compare_files(
@@ -883,9 +883,7 @@ class HttpxGitHubPrClient:
                 params={"per_page": 100},
             )
         if resp.status_code != 200:
-            raise GitHubPrError(
-                f"GitHub 拒绝比较改动范围（HTTP {resp.status_code}）：{resp.text[:300]}"
-            )
+            raise _refused("githubRefusedCompare", resp)
         payload = resp.json()
         files = payload.get("files")
         if not isinstance(files, list):
@@ -911,9 +909,7 @@ class HttpxGitHubPrClient:
                 headers=self._headers(token),
             )
         if resp.status_code != 200:
-            raise GitHubPrError(
-                f"GitHub 拒绝查 PR 状态（HTTP {resp.status_code}）：{resp.text[:300]}"
-            )
+            raise _refused("githubRefusedPrStatus", resp)
         return resp.json()["head"]["sha"]
 
     async def pull_request_status(
@@ -925,9 +921,7 @@ class HttpxGitHubPrClient:
                 headers=self._headers(token),
             )
         if resp.status_code != 200:
-            raise GitHubPrError(
-                f"GitHub 拒绝查 PR 状态（HTTP {resp.status_code}）：{resp.text[:300]}"
-            )
+            raise _refused("githubRefusedPrStatus", resp)
         return parse_pull_request_status(resp.json())
 
     async def merge_pull_request(
@@ -977,9 +971,7 @@ class HttpxGitHubPrClient:
                 blocked_reason=_github_message(resp),
                 stale_head=resp.status_code == 409,
             )
-        raise GitHubPrError(
-            f"GitHub 拒绝合并 PR（HTTP {resp.status_code}）：{resp.text[:300]}"
-        )
+        raise _refused("githubRefusedMerge", resp)
 
     async def merge_queue_entry(self, *, owner, repo, number, token) -> bool:
         async with forge_client(transport=self._transport, timeout=30.0) as client:
@@ -1012,10 +1004,7 @@ class HttpxGitHubPrClient:
                 params={"per_page": 100},
             )
         if resp.status_code != 200:
-            raise GitHubPrError(
-                f"GitHub 拒绝列出 check-runs（HTTP {resp.status_code}）："
-                f"{resp.text[:300]}"
-            )
+            raise _refused("githubRefusedCheckRuns", resp)
         runs = resp.json().get("check_runs") or []
         return [run for run in runs if isinstance(run, dict)]
 
@@ -1030,10 +1019,7 @@ class HttpxGitHubPrClient:
                 params={"head_sha": head_sha, "per_page": 5},
             )
         if resp.status_code != 200:
-            raise GitHubPrError(
-                f"GitHub 拒绝查部署 workflow 状态（HTTP {resp.status_code}）："
-                f"{resp.text[:300]}"
-            )
+            raise _refused("githubRefusedDeployStatus", resp)
         runs = resp.json().get("workflow_runs", [])
         if not runs:
             return "pending", "部署 workflow 还没被触发/还没跑起来"
@@ -1058,10 +1044,7 @@ class HttpxGitHubPrClient:
                 params={"per_page": max(1, min(limit, 100))},
             )
         if resp.status_code != 200:
-            raise GitHubPrError(
-                f"GitHub 拒绝列出部署 workflow 的运行记录"
-                f"（HTTP {resp.status_code}）：{resp.text[:300]}"
-            )
+            raise _refused("githubRefusedDeployRuns", resp)
         runs = resp.json().get("workflow_runs", [])
         out: list[WorkflowRun] = []
         for run in runs:
@@ -1095,10 +1078,7 @@ class HttpxGitHubPrClient:
                 params={"per_page": 100},
             )
         if resp.status_code != 200:
-            raise GitHubPrError(
-                f"GitHub 拒绝查部署运行的 job 列表"
-                f"（HTTP {resp.status_code}）：{resp.text[:300]}"
-            )
+            raise _refused("githubRefusedDeployJobs", resp)
         out: list[WorkflowJob] = []
         for job in resp.json().get("jobs", []):
             if not isinstance(job, dict):
@@ -1131,10 +1111,7 @@ class HttpxGitHubPrClient:
                 params={"per_page": 1},
             )
         if resp.status_code != 200:
-            raise GitHubPrError(
-                f"GitHub 拒绝比较两个 commit 的先后关系"
-                f"（HTTP {resp.status_code}）：{resp.text[:300]}"
-            )
+            raise _refused("githubRefusedCommitOrder", resp)
         status = resp.json().get("status")
         return status if isinstance(status, str) else None
 
@@ -1148,10 +1125,7 @@ class HttpxGitHubPrClient:
                 params={"per_page": 100},
             )
         if resp.status_code != 200:
-            raise GitHubPrError(
-                f"GitHub 拒绝列出 check-runs（HTTP {resp.status_code}）："
-                f"{resp.text[:300]}"
-            )
+            raise _refused("githubRefusedCheckRuns", resp)
         runs = resp.json().get("check_runs") or []
         return {
             str(run.get("name"))
@@ -1221,8 +1195,12 @@ class HttpxGitHubPrClient:
             # non-fatal; the next poll re-evaluates from scratch.
             return False
         raise GitHubPrError(
-            f"GitHub 拒绝更新 PR #{number} 的分支"
-            f"（HTTP {resp.status_code}）：{resp.text[:300]}"
+            say(
+                "githubRefusedUpdateBranch",
+                number=number,
+                status=resp.status_code,
+                reply=resp.text[:300],
+            )
         )
 
 
@@ -1624,7 +1602,11 @@ class GitHubPRClient:
             )
         if resp.status_code != 200:
             raise GitHubPRError(
-                f"PR 正文更新失败 (HTTP {resp.status_code}): {resp.text[:300]}"
+                say(
+                    "githubPrBodyUpdateFailed",
+                    status=resp.status_code,
+                    reply=resp.text[:300],
+                )
             )
         return resp.json()
 
@@ -1661,13 +1643,19 @@ class GitHubPRClient:
             )
         if resp.status_code != 200:
             raise GitHubPRError(
-                f"PR 转 ready 失败 (HTTP {resp.status_code}): {resp.text[:300]}"
+                say(
+                    "githubPrReadyFailed",
+                    status=resp.status_code,
+                    reply=resp.text[:300],
+                )
             )
         # GraphQL answers 200 with an `errors` array, so a non-200 check alone
         # would read every refusal as a success.
         payload = resp.json()
         if payload.get("errors"):
-            raise GitHubPRError(f"PR 转 ready 失败：{str(payload['errors'])[:300]}")
+            raise GitHubPRError(
+                say("githubPrReadyFailedErrors", errors=str(payload["errors"])[:300])
+            )
 
     @_as_pr_error
     async def merge_pr(self, number: int, *, title: str, message: str) -> dict:
@@ -1692,7 +1680,7 @@ class GitHubPRClient:
                     None,
                 )
             except GitHubPrError as exc:
-                raise GitHubPRError(str(exc)) from exc
+                raise GitHubPRError(exception_text(exc)) from exc
             if queued is not None:
                 return {"merged": False, "queued": True, "sha": None}
             resp = await client.put(

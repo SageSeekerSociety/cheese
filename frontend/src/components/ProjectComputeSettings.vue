@@ -15,6 +15,8 @@ import { choiceDetail, choiceName, deviceName } from '../lib/computeConfig'
 import ComputeChoiceForm from './ComputeChoiceForm.vue'
 import DeviceSessionsSwitch from './DeviceSessionsSwitch.vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
+
 const props = defineProps<{ projectId: string }>()
 const { supply: cloudSupply, loading: supplyLoading, load: loadSupply } = useCloudSupply(() => props.projectId)
 const state = ref<ProjectComputeConfigs | null>(null)
@@ -65,14 +67,14 @@ watch(editing, (open) => {
         <span class="c-muted">{{ t('work.projectMachine.defaultLabel') }}</span>
         <span class="default-name">{{ choiceName(state.default) }}</span>
         <span class="c-muted">{{ choiceDetail(state.default) }}</span>
-        <v-btn
+        <BaseButton
           v-if="state.can_manage"
-          size="small"
-          variant="text"
+          kind="secondary"
+          size="sm"
           class="ml-auto"
           :disabled="busy"
           @click="editing = !editing"
-          >{{ editing ? t('work.projectMachine.collapse') : t('work.projectMachine.change') }}</v-btn
+          >{{ editing ? t('work.projectMachine.collapse') : t('work.projectMachine.change') }}</BaseButton
         >
       </div>
       <p class="t-body c-muted mt-1 mb-2">{{ t('work.projectMachine.hint') }}</p>

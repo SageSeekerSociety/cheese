@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass
 
 from app.core.errors import ValidationError
+from app.core.sentences import say
 from app.domain.block.doc_tree import _HEADING_RE, _is_fence, markdown_to_nodes
 
 
@@ -60,5 +61,5 @@ def raw_blocks(source: str) -> list[RawBlock]:
     if [block.normalized for block in blocks] != [
         node.content for node in markdown_to_nodes(source)
     ]:
-        raise ValidationError("该文档结构不能证明原文坐标，请重新选择")
+        raise ValidationError(say("docSelectionUnprovable"))
     return blocks

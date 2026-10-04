@@ -62,8 +62,11 @@ function codePoints(text: string): string[] {
   return Array.from(text)
 }
 
-/** 选区两侧的文字：`prefix` 取选区之前那一段的末尾，`suffix` 取之后的头一段。 */
-function contextAround(root: HTMLElement, range: Range): { prefix: string; suffix: string } {
+/** 选区两侧的文字：`prefix` 取选区之前那一段的末尾，`suffix` 取之后的头一段。
+ *
+ *  正文和幻灯片共用这一条：两边都是「一块放得下选区、也放得下它前后文的元素」，
+ *  分辨同一句话的哪一处出现，靠的是同一套归一化和同一道 32 字的上限。 */
+export function contextAround(root: HTMLElement, range: Range): { prefix: string; suffix: string } {
   const before = document.createRange()
   before.selectNodeContents(root)
   before.setEnd(range.startContainer, range.startOffset)

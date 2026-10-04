@@ -97,6 +97,7 @@ def valid_name(name: str) -> bool:
 
 def check_name(name: str) -> str:
     if not valid_name(name):
+        # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
         raise MemoryFileError(
             "name 必须是 kebab-case（小写字母、数字、连字符，如 "
             "integration-tests-hit-a-real-db）"
@@ -137,6 +138,7 @@ def parse_memory_file(text: str) -> MemoryFile:
     """
     match = _FRONTMATTER_RE.match(text)
     if match is None:
+        # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
         raise MemoryFileError("记忆文件必须以 frontmatter（首尾各一行 `---`）开头")
     fields: dict[str, str] = {}
     for line in match.group(1).splitlines():
@@ -144,20 +146,24 @@ def parse_memory_file(text: str) -> MemoryFile:
             continue
         key, separator, value = line.partition(":")
         if not separator:
+            # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
             raise MemoryFileError(f"frontmatter 里的这一行不是 `key: value`：{line}")
         fields[key.strip().lower()] = value.strip()
     for required in ("name", "description", "type"):
         if not fields.get(required):
+            # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
             raise MemoryFileError(f"frontmatter 缺少 {required}")
     try:
         kind = MemoryType(fields["type"])
     except ValueError as exc:
+        # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
         raise MemoryFileError(
             "type 只能是 user / feedback / project / reference，"
             f"拿到的是 {fields['type']}"
         ) from exc
     body = text[match.end() :].strip()
     if not body:
+        # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
         raise MemoryFileError("记忆文件没有正文——一条记忆一件事，正文才是那件事")
     return MemoryFile(
         name=check_name(fields["name"]),
@@ -284,20 +290,26 @@ def check_path(path: str) -> str:
     是另一个字段，不在这里。
     """
     if not path or path.startswith("/") or "\\" in path or "\x00" in path:
+        # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
         raise MemoryFileError(f"记忆文件的路径不能是 {path!r}")
     if len(path) > PATH_MAX:
+        # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
         raise MemoryFileError(
             f"记忆文件的路径太长（最多 {PATH_MAX} 个字符，这条 {len(path)} 个）："
             "文件名短一点，长的那部分写进正文"
         )
     parts = path.split("/")
     if any(part in ("", ".", "..") for part in parts):
+        # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
         raise MemoryFileError(f"记忆文件的路径不能越出本目录：{path!r}")
     if len(parts) != 1:
+        # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
         raise MemoryFileError(f"一条记忆就一个文件，不放在子目录里：{path!r}")
     if not path.endswith(".md"):
+        # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
         raise MemoryFileError(f"记忆文件必须是 .md：{path!r}")
     if path != INDEX_NAME and not valid_name(path[: -len(".md")]):
+        # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
         raise MemoryFileError(f"记忆文件名必须是 kebab-case：{path!r}")
     return path
 
@@ -315,6 +327,7 @@ def scoped_prefix(scope: MemoryFileScope, owner_handle: str | None) -> str:
     if scope is MemoryFileScope.team:
         return TEAM_PREFIX
     if not owner_handle:
+        # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
         raise MemoryFileError("private 记忆必须带 owner_handle")
     return f"{PRIVATE_PREFIX}/{owner_handle}"
 
@@ -331,10 +344,12 @@ def check_scoped_path(path: str) -> tuple[str, str]:
     elif len(parts) >= 2 and parts[0] == PRIVATE_PREFIX:
         prefix, rest = f"{PRIVATE_PREFIX}/{parts[1]}", parts[2:]
     else:
+        # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
         raise MemoryFileError(
             f"记忆文件的路径必须以 team/ 或 private/<handle>/ 开头：{path!r}"
         )
     if len(rest) != 1:
+        # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
         raise MemoryFileError(f"一条记忆就一个文件，路径不对：{path!r}")
     check_path(rest[0])
     return prefix, rest[0]

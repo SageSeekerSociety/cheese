@@ -55,6 +55,10 @@ from app.domain.agent.nonce import nonce_in
 # progress within a message, and the entry for it does not exist yet.
 SETTLES = frozenset({"message_end", "turn_end", "agent_end", "agent_settled"})
 
+#: The tools that only read, which a session reading the room's machine has
+#: (`_start_without_hands`): pi's own, and the checkout's history (`git`).
+READING_TOOLS = ("read", "ls", "find", "grep", "git")
+
 
 class Runner(runner.Runner[Journal]):
     def __init__(self, state: Path, *, idle_exit_s: float = runner.IDLE_EXIT_S):
@@ -115,10 +119,11 @@ class Runner(runner.Runner[Journal]):
         self.model = ""
         self.skill_args: list[str] = []
         self.extension_files: dict[str, str] = {}
-        # A session with no hands (`_start_without_hands`): where on the
-        # platform its tools are run (`path`), and what they are (`specs`).
+        # A session with no hands (`_start_without_hands`): the table tools it
+        # has (`names`), and the credential the question being answered was
+        # given, which each of them calls the platform with.
         self.tools: dict = {}
-        self.platform: RemoteClient | None = None
+        self.platform_token = ""
         self.children = Subagents(self)
         # The blocks of the assistant message pi is writing, by its content
         # index (``write``), and how many messages ended and how many of them
@@ -438,6 +443,8 @@ class Runner(runner.Runner[Journal]):
                     "socket": socket_path(self.state),
                     "state": str(self.state),
                     "hands": hands,
+                    # A session without hands that reads the room's machine.
+                    "reading": not hands and self.machine is not None,
                     # The checkout as the session sees it on the room's machine:
                     # where pi's own tools resolve a path and run a command.
                     "workspace": self.workspace,
@@ -490,11 +497,14 @@ class Runner(runner.Runner[Journal]):
         have been typed fails here rather than reaching the CLI as a malformed
         command line.
 
-        A session with no hands has neither: each of its tools is one request
-        to the platform, under the tools' path and the session's own credential.
+        A session with no hands, or one that only reads the machine, has
+        neither: each of its tools is one request to the platform, under the
+        tools' path and the session's own credential.
         """
-        if self.machine is None:
-            return await asyncio.to_thread(self._platform_tool, tool, arguments)
+        if self.machine is None or self.tools:
+            return await asyncio.to_thread(
+                self._platform_tool, tool, arguments, call_id
+            )
         if catalog.is_platform_tool(tool):
             host = PlatformHost(
                 self.machine.client, self._invoke, call_id, self.doc_versions
@@ -516,24 +526,27 @@ class Runner(runner.Runner[Journal]):
             "stderr": "",
         }
 
-    def _platform_tool(self, tool: str, arguments: dict) -> dict:
-        names = {spec["name"] for spec in self.tools.get("specs") or []}
-        if tool not in names:
+    def _platform_tool(self, tool: str, arguments: dict, call_id: str) -> dict:
+        if tool not in (self.tools.get("names") or []):
             return {"status": 1, "stdout": "", "stderr": f"{tool}: no such tool"}
-        if self.platform is None:
-            self.platform = RemoteClient({})
+        if not self.platform_token:
+            # Never the credential the session started with: that one is the
+            # room's, and a tool acts for whoever asked.
+            return {
+                "status": 1,
+                "stdout": "",
+                "stderr": "No question is being answered",
+            }
+        host = PlatformHost(
+            RemoteClient({"platform_token": self.platform_token}),
+            None,
+            call_id,
+            self.doc_versions,
+        )
         try:
-            answer = self.platform.platform_request(
-                {
-                    "method": "POST",
-                    "path": f"{self.tools['path'].rstrip('/')}/{tool}",
-                    "body": arguments,
-                }
-            )
-            body = json.loads(answer["value"]["stdout"] or "{}")
+            text = catalog.run_platform_tool(tool, arguments, host)
         except Exception as error:  # noqa: BLE001 — the agent reads the reason
             return {"status": 1, "stdout": "", "stderr": str(error)}
-        text = str((body.get("data") or {}).get("text") or "")
         return {"status": 0, "stdout": text, "stderr": ""}
 
     async def tool_hooks(self, params: dict) -> dict:
@@ -684,7 +697,8 @@ class Runner(runner.Runner[Journal]):
 
         A `target` of None is a session with no hands at all (`_start_without_
         hands`): a person's 芝士, which has no project, no machine and no files,
-        and only the tools `tools` lists."""
+        and only the tools `tools` lists. A `target` with `tools` is one that
+        only reads the room's machine besides them: a document's 芝士."""
         self.claim()
         # pi's own temporary files — the whole output of a long command, which
         # its bash names for the model to read — stay with the session.
@@ -695,7 +709,10 @@ class Runner(runner.Runner[Journal]):
         self.binary, self.args = binary, list(args)
         self.model = opening.model or ""
         self.extension_files = dict(extension or {})
-        if target is None:
+        if target is None or tools is not None:
+            if target is not None:
+                self.machine = Machine(target, scratch=scratch, reading=True)
+                self.workspace = self.machine.workspace
             return await self._start_without_hands(
                 opening, binary, cwd, env, extension or {}, tools or {}
             )
@@ -789,17 +806,24 @@ class Runner(runner.Runner[Journal]):
         extension: dict[str, str],
         tools: dict,
     ) -> str:
-        """A session with nothing to work on but a conversation: no machine, no
-        project, no files and no commands — pi's own tools are not even
-        enabled — only the tools ``tools`` names, which the platform runs
-        (``run_cli``). Its system prompt replaces pi's own, which is a coding
-        assistant's and describes tools this session does not have."""
+        """A session with nothing to work on but a conversation: no project, no
+        files and no commands — pi's own tools are not even enabled — only the
+        tools ``tools`` names, which the platform runs (``run_cli``). Its system
+        prompt replaces pi's own, which is a coding assistant's and describes
+        tools this session does not have.
+
+        With a machine to read (`start`), pi's tools that only read are enabled
+        as well, their hands on the room's checkout. Nothing else of the room's
+        reaches it: the repository's instructions and skills, its MCP servers,
+        background jobs and subagents are read or run by commands, and this
+        session runs none."""
         self.tools = tools
-        specs = list(tools.get("specs") or [])
+        specs = catalog.schemas_of(list(tools.get("names") or []))
         session_id = self._session_id(opening)
         prompt = self.state / "system-prompt.md"
         prompt.write_text(opening.system_prompt, encoding="utf-8")
-        names = ",".join(spec["name"] for spec in specs)
+        own = READING_TOOLS if self.machine is not None else ()
+        names = ",".join([*own, *(spec["name"] for spec in specs)])
         flags = ["--system-prompt", str(prompt)]
         flags += ["--tools", names] if names else ["--no-tools"]
         home = self.write_extension(extension, "", tools=specs)
@@ -944,6 +968,8 @@ class Runner(runner.Runner[Journal]):
             news = await self.news_for(after, params)
             return {"entries": [row["record"] for row in self.records(after)], **news}
         if method == "send":
+            if "platform_token" in params:
+                self.platform_token = str(params.get("platform_token") or "")
             return await self.send(
                 params["input_id"],
                 params["text"],
@@ -979,6 +1005,9 @@ class Runner(runner.Runner[Journal]):
             return await self.tool_hooks(params)
         if method == "files":
             return await self.files(params)
+        if method == "git":
+            assert self.machine is not None
+            return await asyncio.to_thread(self.machine.git, params)
         if method == "shell":
             return await self.shell(params)
         if method == "context":
@@ -1041,7 +1070,7 @@ class Runner(runner.Runner[Journal]):
                 # sessions is the least recently used (`host.configure`).
                 "idle_s": time.monotonic() - self.active_at,
                 # The model it was started on: a session asked for another one
-                # is started again (`handless.HandlessSessions.ensure`).
+                # is started again (`session_host.SessionHost.start`).
                 "model": self.model,
             }
         raise ValueError(f"Unknown pi session operation: {method}")

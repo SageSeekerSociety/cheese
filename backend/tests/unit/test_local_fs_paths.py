@@ -8,6 +8,7 @@ implementation is wrong, which is why none of them was derived by reading it.
 
 import pytest
 
+from app.core.sentences import in_language
 from app.domain.local_fs.paths import (
     PathRefused,
     Platform,
@@ -155,3 +156,15 @@ def test_escaping_and_normalizing_reach_the_same_answer():
     stays_inside = normalize("/home/alice/MyDocs/sub/../notes.txt", Platform.LINUX)
     assert stays_inside.text == "/home/alice/MyDocs/notes.txt"
     assert contains(grant, stays_inside)
+
+
+def test_a_refusal_is_told_to_the_person_in_their_language():
+    """The reason a person sees for a refused path is a catalog sentence, so a
+    reader who picked English is told in English."""
+    with pytest.raises(PathRefused) as caught:
+        normalize("C:/granted/NUL.txt", Platform.WINDOWS)
+    assert caught.value.detail == "「NUL.txt」是 Windows 保留设备名"
+    assert (
+        in_language(caught.value.detail, "en")
+        == "“NUL.txt” is a reserved Windows device name"
+    )

@@ -351,6 +351,35 @@ def test_a_refusal_says_what_kind_it_is_so_it_can_be_rendered_as_itself():
     assert verdict.reason_kind == core.BINDING
 
 
+def test_a_budget_refusal_carries_when_it_reopens():
+    import io
+    from unittest import mock
+
+    captured = json.dumps(
+        {
+            "data": {
+                "allow": False,
+                "reason": "本月额度已用完，11月1日重置。",
+                "reason_kind": "budget",
+                "reopens_at": 1793491200,
+                "supply": {},
+            }
+        }
+    ).encode()
+
+    class _Resp:
+        def __enter__(self):
+            return io.BytesIO(captured)
+
+        def __exit__(self, *a):
+            return False
+
+    with mock.patch.object(core.urllib.request, "urlopen", return_value=_Resp()):
+        verdict = core._post_admission("http://backend/llm/admission", "tok", 3.0)
+
+    assert verdict.reopens_at == 1793491200
+
+
 def test_a_backend_that_names_no_kind_is_read_as_a_budget_refusal():
     """The kind a proxy older than this field always assumed."""
     assert core.Verdict(False, "budget spent").reason_kind == core.BUDGET

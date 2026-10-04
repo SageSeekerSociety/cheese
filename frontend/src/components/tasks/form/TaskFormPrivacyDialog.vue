@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 
+import BaseButton from '@/components/base/BaseButton.vue'
+import { DIALOG_WIDTH } from '@/components/base/dialogSize'
+
 const { t } = useI18n()
 
 // 「实名信息隐私保护」那段说明：出题人第一次要求实名信息、要交卷时弹出来，读完点
@@ -20,7 +23,7 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <v-dialog v-model="open" max-width="600" persistent scrollable>
+  <v-dialog v-model="open" :max-width="DIALOG_WIDTH.md" persistent scrollable>
     <v-card rounded="lg">
       <v-card-title class="d-flex align-center px-4 pt-4 pb-2">
         <v-icon color="primary" class="mr-3" size="28">mdi-shield-check</v-icon>
@@ -176,8 +179,8 @@ const emit = defineEmits<{
 
       <v-card-actions class="pa-4 pt-2">
         <v-spacer></v-spacer>
-        <v-btn color="secondary" variant="text" @click="emit('cancel')">{{ t('global.cancel') }}</v-btn>
-        <v-btn color="primary" variant="flat" @click="emit('confirm')">{{ t('tasks.form.privacy.understood') }}</v-btn>
+        <BaseButton kind="ghost" @click="emit('cancel')">{{ t('global.cancel') }}</BaseButton>
+        <BaseButton kind="primary" @click="emit('confirm')">{{ t('tasks.form.privacy.understood') }}</BaseButton>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -192,7 +195,9 @@ const emit = defineEmits<{
 .privacy-usage-card {
   border: 1px solid rgba(var(--v-border-color), 0.12);
   background-color: var(--surface);
-  transition: all 0.2s ease;
+  transition:
+    border-color 0.2s ease,
+    background-color 0.2s ease;
 }
 
 .privacy-usage-card:hover {

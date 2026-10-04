@@ -30,6 +30,7 @@ class PrivateScreen(StubChannel):
     def __init__(self, name):
         self.name = name
         super().__init__()
+        self.new_session_id = "private-session"
         self.prompts = []
         self.openings = []
 

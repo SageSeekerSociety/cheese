@@ -15,6 +15,7 @@ import type { MenuAction } from './menuAction'
 
 import { computed, ref } from 'vue'
 
+import { useFocusReturn } from '@/composables/useFocusReturn'
 import { useNavigation } from '@/composables/useNavigation'
 
 const open = defineModel<boolean>({ default: false })
@@ -103,6 +104,9 @@ function reset() {
 }
 
 const panelStyle = computed(() => (offset.value ? { transform: `translateY(${offset.value}px)` } : undefined))
+
+// 关掉时把焦点还回打开它的那一处：v-bottom-sheet 没有 activator，Vuetify 自己不管。
+useFocusReturn(open)
 </script>
 
 <template>

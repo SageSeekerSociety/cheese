@@ -23,18 +23,16 @@ from starlette.status import (
     HTTP_504_GATEWAY_TIMEOUT,
 )
 
+from app.core.sentences import NoticeText, say
+
 
 def message_key(message: object) -> dict | None:
     """The key and parameters of a message said with ``say()``, or None.
 
     A client shows ``error.message`` as it is; when the message is a catalog
-    sentence (``app/domain/block/notice_text.py``) its key goes out beside it
-    as ``error.i18n``, and the browser renders that in its reader's language.
-    Read by attribute rather than by type: this layer does not import the
-    domain the sentences live in."""
-    describe = getattr(message, "descriptor", None)
-    key = describe() if callable(describe) else None
-    return key if isinstance(key, dict) else None
+    sentence (``app/core/sentences.py``) its key goes out beside it
+    as ``error.i18n``, and the browser renders that in its reader's language."""
+    return message.descriptor() if isinstance(message, NoticeText) else None
 
 
 def _with_key(error: dict, message: object) -> dict:
@@ -212,12 +210,15 @@ def format_error_response(status_code: int, message: str, name: str = "Error") -
     return {
         "code": status_code,
         "message": f"{name}: {message}",
-        "error": {
-            "name": name,
-            "retryable": False,
-            "message": message,
-            "data": None,
-        },
+        "error": _with_key(
+            {
+                "name": name,
+                "retryable": False,
+                "message": message,
+                "data": None,
+            },
+            message,
+        ),
     }
 
 
@@ -387,7 +388,12 @@ def register_exception_handlers(app: FastAPI) -> None:
     # Imported here, not at module scope: `device_hub` sits above this module and
     # imports back through `app.core`, and nothing but this registration needs
     # the name.
-    from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
+    from app.domain.agent.device_hub import (
+        DeviceCallError,
+        DeviceOffline,
+        LinkInterrupted,
+        offline_headers,
+    )
 
     async def _handle_device_offline(_: Request, exc: DeviceOffline) -> JSONResponse:
         """A machine that is off is an answer, not a fault of this server.
@@ -404,15 +410,22 @@ def register_exception_handlers(app: FastAPI) -> None:
         already read to tell 「the machine is not there」 from 「the call went
         wrong」 — waiting fixes the second and never the first.
         """
-        _log.warning("device_offline", device=exc.device_id)
+        interrupted = isinstance(exc, LinkInterrupted)
+        _log.warning(
+            "device_link_interrupted" if interrupted else "device_offline",
+            device=exc.device_id,
+        )
         return JSONResponse(
             status_code=HTTP_409_CONFLICT,
             content=format_error_response(
                 status_code=HTTP_409_CONFLICT,
-                message=f"设备 {exc.device_id} 离线",
-                name="DeviceOffline",
+                message=say(
+                    "deviceLinkInterrupted" if interrupted else "deviceOffline",
+                    device=exc.device_id,
+                ),
+                name="LinkInterrupted" if interrupted else "DeviceOffline",
             ),
-            headers={"X-Device-Id": exc.device_id},
+            headers=offline_headers(exc),
         )
 
     async def _handle_device_call_error(
@@ -465,7 +478,9 @@ def register_exception_handlers(app: FastAPI) -> None:
         return JSONResponse(
             status_code=499,
             content=format_error_response(
-                status_code=499, message="客户端已断开", name="ClientDisconnect"
+                status_code=499,
+                message=say("clientDisconnected"),
+                name="ClientDisconnect",
             ),
         )
 
@@ -506,12 +521,16 @@ def register_exception_handlers(app: FastAPI) -> None:
             method=request.method,
             error=type(exc).__name__,
         )
+        message = say("serverInternalError")
         return JSONResponse(
             status_code=HTTP_500_INTERNAL_SERVER_ERROR,
             content={
                 "code": HTTP_500_INTERNAL_SERVER_ERROR,
-                "message": "服务器内部错误",
+                "message": message,
                 "data": None,
+                "error": _with_key(
+                    {"name": "InternalServerError", "message": message}, message
+                ),
             },
         )
 

@@ -8,6 +8,7 @@ import { onMounted, ref } from 'vue'
 import { listArchivedProjects, unarchiveProject } from '../api'
 
 import { useCommands } from '@/commands'
+import BaseButton from '@/components/base/BaseButton.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import i18n, { t } from '@/i18n'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -73,9 +74,9 @@ onMounted(load)
           <div class="t-title text-truncate">{{ p.name }}</div>
           <div class="t-meta">{{ t('project.archived.on', { date: archivedOn(p) }) }}</div>
         </div>
-        <v-btn variant="tonal" size="small" :loading="restoring === p.id" @click="restore(p)">{{
-          t('project.archived.unarchive')
-        }}</v-btn>
+        <BaseButton kind="secondary" size="sm" :loading="restoring === p.id" @click="restore(p)">
+          {{ t('project.archived.unarchive') }}
+        </BaseButton>
       </li>
     </ul>
   </AppPage>

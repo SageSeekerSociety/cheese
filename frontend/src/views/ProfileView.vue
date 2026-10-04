@@ -33,6 +33,7 @@ import { ensureDefaultAvatarId, isChosenAvatar } from '@/composables/useChosenAv
 import { usePageTitle } from '@/composables/usePageTitle'
 
 import { deleteUnderstanding, getMemberSummary, getUserProfile, getUserTopics } from '@/api'
+import BaseButton from '@/components/base/BaseButton.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import ExternalTag from '@/components/common/ExternalTag.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
@@ -41,6 +42,7 @@ import ActivityHeatmap from '@/components/profile/ActivityHeatmap.vue'
 import i18n, { t } from '@/i18n'
 import { label, NOTIF_KIND, TOPIC_STATUS } from '@/labels'
 import { activityWeeks, formatUtcDay, HALF_YEAR_WEEKS } from '@/lib/activityYear'
+import { teammateName } from '@/lib/agentNames'
 import { relTime } from '@/lib/relTime'
 import { topicTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
@@ -122,9 +124,10 @@ function roleLabel(role: ProfileProjectRole): string {
 }
 
 function projectStats(p: ProfileProject): string {
-  const parts = compact.value
-    ? [t('users.profile.projects.contributions', { count: p.contributions })]
-    : [t('users.profile.projects.stats', { topics: p.topics_started, count: p.contributions })]
+  // 手机上也写「发起 N 个话题」这一截：它是这个项目干了多少事的一半，窄屏没有
+  // 理由把它省掉 —— 少了它，同一张卡片在两个宽度下说的不是同一件事。这一行放
+  // 不下时自己折行（`.profile__row-text` 是 flex 列，里面的字没有不折行的规矩）。
+  const parts = [t('users.profile.projects.stats', { topics: p.topics_started, count: p.contributions })]
   if (p.last_active_at) parts.push(t('users.profile.projects.active', { when: relTime(p.last_active_at) }))
   return parts.join(' · ')
 }
@@ -246,7 +249,7 @@ const roleInProject = computed(() => inProject.value?.source ?? null)
 
       <div v-else-if="error" class="profile__state">
         <p class="t-body">{{ t('users.profile.loadFailed') }}</p>
-        <v-btn variant="outlined" color="on-surface" @click="refresh">{{ t('users.profile.retry') }}</v-btn>
+        <BaseButton kind="secondary" @click="refresh">{{ t('users.profile.retry') }}</BaseButton>
       </div>
 
       <div v-else-if="missing" class="profile__state">
@@ -267,17 +270,10 @@ const roleInProject = computed(() => inProject.value?.source ?? null)
               </div>
             </div>
           </div>
-          <p v-if="profile.bio" class="t-body-readable profile__bio">{{ profile.bio }}</p>
-          <v-btn
-            v-if="isSelf"
-            :to="{ name: 'UserSettingsProfile' }"
-            variant="outlined"
-            color="on-surface"
-            block
-            class="profile__edit"
-          >
+          <p v-if="profile.bio" class="t-body-readable profile__bio" data-user-content>{{ profile.bio }}</p>
+          <BaseButton v-if="isSelf" :to="{ name: 'UserSettingsProfile' }" kind="secondary" block class="profile__edit">
             {{ t('users.profile.edit') }}
-          </v-btn>
+          </BaseButton>
           <div class="profile__facts">
             <div class="profile__fact">
               <v-icon size="16" icon="mdi-calendar-blank-outline" aria-hidden="true" />
@@ -286,7 +282,7 @@ const roleInProject = computed(() => inProject.value?.source ?? null)
             <div v-if="profile.teams.length" class="profile__fact">
               <v-icon size="16" icon="mdi-account-multiple-outline" aria-hidden="true" />
               <!-- 一个团队一行：名字在行中间折开，读起来就分不清是一个团队还是两个。 -->
-              <ul class="profile__teams">
+              <ul class="profile__teams" data-user-content>
                 <li v-for="team in profile.teams" :key="team.id">
                   <router-link v-if="team.handle" :to="{ name: 'TeamsDetail', params: { handle: team.handle } }">{{
                     team.name
@@ -318,7 +314,7 @@ const roleInProject = computed(() => inProject.value?.source ?? null)
                   {{ t('users.profile.inProject.waitingEmpty') }}
                 </p>
                 <div v-for="w in inProject.waiting_on_you" :key="w.id" class="profile__waiting">
-                  <span class="t-body profile__ink">{{ w.title }}</span>
+                  <span class="t-body profile__ink" data-user-content>{{ w.title }}</span>
                   <span class="t-meta-read">{{ label(NOTIF_KIND, w.kind) }}</span>
                 </div>
               </div>
@@ -337,7 +333,9 @@ const roleInProject = computed(() => inProject.value?.source ?? null)
                   :to="{ name: 'workspace-topic', params: { projectId, topicId: topic.id } }"
                 >
                   <span class="status-dot" :class="topicDot(topic.status)" />
-                  <span class="t-body profile__ink">{{ topicTitle(topic) }}</span>
+                  <span class="t-body profile__ink" :data-user-content="topic.title || undefined">{{
+                    topicTitle(topic)
+                  }}</span>
                 </router-link>
               </div>
             </div>
@@ -381,10 +379,10 @@ const roleInProject = computed(() => inProject.value?.source ?? null)
                 class="profile__row profile__row--project"
                 :to="{ name: 'workspace-project', params: { projectId: p.project_id } }"
               >
-                <span class="profile__tile" aria-hidden="true">{{ p.name.slice(0, 1) }}</span>
+                <span class="profile__tile" aria-hidden="true" data-user-content>{{ p.name.slice(0, 1) }}</span>
                 <span class="profile__row-text">
                   <span class="profile__row-title">
-                    <span class="profile__project-name">{{ p.name }}</span>
+                    <span class="profile__project-name" data-user-content>{{ p.name }}</span>
                     <ExternalTag v-if="p.source === 'external'" />
                     <span v-else class="chip-neutral">{{ roleLabel(p.source) }}</span>
                   </span>
@@ -425,16 +423,15 @@ const roleInProject = computed(() => inProject.value?.source ?? null)
                       <UserRef
                         v-if="note.agent_handle || note.agent_name"
                         :handle="note.agent_handle"
-                        :name="note.agent_name"
+                        :name="teammateName(note.agent_name, note.agent_name_source)"
                         :project-id="note.project_id"
                       />
                     </span>
                   </span>
-                  <v-btn
+                  <BaseButton
                     icon="mdi-close"
-                    variant="text"
-                    color="on-surface-variant"
-                    size="small"
+                    kind="ghost"
+                    size="sm"
                     :aria-label="t('users.profile.notes.delete')"
                     :title="t('users.profile.notes.delete')"
                     @click="forget(note)"
@@ -471,7 +468,11 @@ const roleInProject = computed(() => inProject.value?.source ?? null)
                     :aria-label="label(TOPIC_STATUS, topic.status)"
                   />
                   <span class="profile__row-text">
-                    <span class="t-body profile__ink profile__topic-title">{{ topicTitle(topic) }}</span>
+                    <span
+                      class="t-body profile__ink profile__topic-title"
+                      :data-user-content="topic.title || undefined"
+                      >{{ topicTitle(topic) }}</span
+                    >
                     <span v-if="compact" class="t-meta-read">
                       {{ topic.project_name }} · {{ t('users.profile.topics.count', { count: topic.contributions }) }} ·
                       {{ relTime(topic.last_participated_at) }}

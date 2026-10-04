@@ -20,7 +20,7 @@ import PushPermissionPrompt from '@/components/PushPermissionPrompt.vue'
 import TopicHeader from '@/components/TopicHeader.vue'
 import WorkPanel from '@/components/WorkPanel.vue'
 import { t } from '@/i18n'
-import { agentNames } from '@/lib/agentNames'
+import { agentNames, memberName } from '@/lib/agentNames'
 import { announceComments } from '@/lib/docCommentSignals'
 import { onTopicRosterChange } from '@/lib/topicRosterChanges'
 import { topicTitle } from '@/lib/topicState'
@@ -316,7 +316,7 @@ const unreadOnOpen = store.unreadMap[props.topicId] ?? 0
 // （`agentNames`）：已经不在这间房里的队友，项目名册上还叫得出。
 const roomMembers = ref<TopicMemberRow[]>([])
 const memberNames = computed<Record<string, string>>(() => ({
-  ...Object.fromEntries(roomMembers.value.map((m) => [m.member_handle, m.name || m.member_handle])),
+  ...Object.fromEntries(roomMembers.value.map((m) => [m.member_handle, memberName(m) || m.member_handle])),
   ...Object.fromEntries(agentNames(roomMembers.value, store.members)),
 }))
 async function loadMemberNames() {
@@ -355,6 +355,12 @@ void openPlace()
     </div>
 
     <template v-else>
+      <!-- Screen-reader heading for the room. Text from `topicTitle`, the same
+           source as the `workspace-topic` dynamic title the top bar reads. The
+           room name is drawn as a span in TopicHeader (not a heading); the
+           project shell adds its own h1 for the project. Hidden: the name is
+           already on screen. -->
+      <h1 class="visually-hidden">{{ topicTitle(selectedTopic) }}</h1>
       <!-- 一条话题头部，横跨对话和工作面板 -->
       <TopicHeader
         :topic="selectedTopic"
@@ -489,7 +495,7 @@ void openPlace()
    比屏幕上任何一条线都粗，悬停还变琥珀——琥珀留给主操作。 */
 .pane-resizer {
   position: relative;
-  z-index: 1;
+  z-index: var(--z-raised);
   flex: 0 0 1px;
   cursor: col-resize;
   background: var(--line);

@@ -142,6 +142,7 @@ async def ensure_teaching_references(
             )
             locked = [mid for mid in material_ids if mid not in readable]
             if locked:
+                # i18n-exempt: an English message; 课件 is the UI label it names
                 raise BadRequestError(
                     "teaching.materialIds names a 课件 that is only visible to a "
                     "board's managers",

@@ -59,6 +59,7 @@ from app.api.response import ok, page
 from app.api.routes.topics import BlockRepository, DbSession, _actor_in_place
 from app.core.config import settings
 from app.core.errors import ValidationError
+from app.core.sentences import listing, say
 from app.domain.agent.preview_hub import preview_hub
 from app.domain.agent.preview_owner import inspect_owner
 from app.domain.block.shown import add_shown_block
@@ -104,22 +105,14 @@ async def _reject_unreachable_app(topic_id: uuid.UUID, seat: str) -> None:
         else await preview_hub.wait_online(topic_id, seat, _PREVIEW_ATTACH_WAIT_S)
     )
     if not tunnel_up:
-        raise ValidationError(
-            "这台机器还没有把预览通道拨出来，预览到不了运行中的应用。"
-            "用 cheese serve <端口> 登记（它会把通道带起来）；"
-            "要给人看结果也可以用 cheese show 点名一个文件——网页、图片，"
-            "或报告、表格这类文档。"
-        )
+        raise ValidationError(say("previewTunnelDown"))
     alive = (
         inspection.alive
         if inspection is not None
         else await preview_hub.probe(topic_id, seat)
     )
     if not alive:
-        raise ValidationError(
-            "登记的端口上没有服务在应答，预览会是一个白框。"
-            "先把应用起在 127.0.0.1 上、确认能访问，再登记这个端口。"
-        )
+        raise ValidationError(say("previewPortSilent"))
 
 
 @router.post("/{topic_id}/shown")
@@ -155,8 +148,13 @@ async def show_in_room(
     as_ = declared or artifact_kind_for(path)
     mime = ARTIFACT_MIME.get(as_)
     if mime is None:
-        allowed = "、".join(ARTIFACT_MIME)
-        raise ValidationError(f"暂不支持的类型 {as_!r}（可选：{allowed}）")
+        raise ValidationError(
+            say(
+                "artifactKindUnsupported",
+                kind=repr(as_),
+                allowed=listing(ARTIFACT_MIME),
+            )
+        )
     if as_ != "app" and ("content" in body or "content_b64" in body):
         # A remote machine's file is not in the backend worktree until published.
         # Office files and PDFs are not text, so they travel base64-encoded; a
@@ -166,19 +164,19 @@ async def show_in_room(
         if "content_b64" in body:
             encoded = body["content_b64"]
             if not isinstance(encoded, str):
-                raise ValidationError("content_b64 必须是文本")
+                raise ValidationError(say("contentB64MustBeText"))
             try:
                 raw = base64.b64decode(encoded, validate=True)
             except (ValueError, binascii.Error) as exc:
-                raise ValidationError("content_b64 不是合法的 base64") from exc
+                raise ValidationError(say("contentB64Invalid")) from exc
         else:
             content = body["content"]
             if not isinstance(content, str):
-                raise ValidationError("content 必须是文本")
+                raise ValidationError(say("contentMustBeText"))
             raw = content.encode()
         if len(raw) > MAX_ARTIFACT_BYTES:
             raise ValidationError(
-                f"产物太大（上限 {MAX_ARTIFACT_BYTES // (1024 * 1024)}MB）"
+                say("artifactTooLarge", mb=MAX_ARTIFACT_BYTES // (1024 * 1024))
             )
     if as_ != "app" and ("content" in body or "content_b64" in body):
         # Through the draft history: the state this replaces stays restorable,

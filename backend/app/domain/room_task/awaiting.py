@@ -52,6 +52,7 @@ class WaitingItem:
     reason: str
     #: 排序用：这件事最后一次动是什么时候。
     at: datetime
+    block_id: uuid.UUID | None = None
 
     def as_dict(self) -> dict:
         return {
@@ -65,5 +66,6 @@ class WaitingItem:
             "taskTitleSource": self.task_title_source,
             "phrase": self.phrase,
             "reason": self.reason,
+            "blockId": str(self.block_id) if self.block_id else None,
             "at": self.at.isoformat(),
         }

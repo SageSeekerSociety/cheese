@@ -8,6 +8,7 @@ import type { KnowledgeType } from '@/types'
 
 import { computed } from 'vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { knowledgeTypeLabel } from '@/lib/knowledgeFormat'
 
@@ -102,9 +103,9 @@ function pickTag(value: unknown) {
 
     <v-spacer></v-spacer>
 
-    <v-btn color="primary" prepend-icon="mdi-upload" class="mr-2" @click="emit('upload')">{{
+    <BaseButton kind="primary" prepend-icon="mdi-upload" class="mr-2" @click="emit('upload')">{{
       t('teams.knowledge.upload')
-    }}</v-btn>
+    }}</BaseButton>
 
     <v-btn-toggle
       :model-value="viewMode"
@@ -113,7 +114,9 @@ function pickTag(value: unknown) {
       rounded="lg"
       @update:model-value="emit('update:viewMode', $event)"
     >
+      <!-- eslint-disable-next-line vue/no-restricted-syntax -- a segment of v-btn-toggle, not one of the BaseButton roles -->
       <v-btn value="grid" icon="mdi-view-grid"></v-btn>
+      <!-- eslint-disable-next-line vue/no-restricted-syntax -- a segment of v-btn-toggle, not one of the BaseButton roles -->
       <v-btn value="list" icon="mdi-view-list"></v-btn>
     </v-btn-toggle>
   </div>

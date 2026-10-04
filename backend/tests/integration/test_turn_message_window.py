@@ -30,6 +30,8 @@ class RecordingScreen(StubChannel):
     它那条 AI 回复之前。
     """
 
+    new_session_id = "s-window"
+
     def __init__(self) -> None:
         super().__init__()
         self.prompts: list[str] = []

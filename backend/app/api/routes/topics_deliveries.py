@@ -21,6 +21,7 @@ from app.api.auth import ActorResolverDep
 from app.api.response import ok
 from app.api.routes.topics import DbSession
 from app.core.errors import ValidationError
+from app.core.sentences import say
 from app.domain.delivery.timer import deliver_at
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
@@ -58,7 +59,7 @@ async def ask_for_a_delivery(
     try:
         when = datetime.fromisoformat(raw.replace("Z", "+00:00"))
     except ValueError:
-        raise ValidationError("at 要是一个 ISO-8601 时刻") from None
+        raise ValidationError(say("atMustBeIso")) from None
     row = await deliver_at(
         db,
         when=when,

@@ -13,9 +13,9 @@
         <span v-else class="avatar-field__img avatar-field__img--empty" aria-hidden="true">
           <v-icon size="24">mdi-image-outline</v-icon>
         </span>
-        <v-btn variant="outlined" color="on-surface" @click="avatarInput?.click()">
+        <BaseButton kind="secondary" @click="avatarInput?.click()">
           {{ t('spaces.settings.basic.changeAvatar') }}
-        </v-btn>
+        </BaseButton>
         <input
           ref="avatarInput"
           class="avatar-field__input"
@@ -82,9 +82,9 @@
     </div>
 
     <div class="settings-foot">
-      <v-btn color="primary" variant="flat" :loading="saving" @click="submit">
+      <BaseButton kind="primary" :loading="saving" @click="submit">
         {{ t('spaces.settings.basic.save') }}
-      </v-btn>
+      </BaseButton>
     </div>
   </form>
 
@@ -96,9 +96,9 @@
         <span class="srow__k">{{ t('spaces.detail.deleteSpace') }}</span>
         <span class="field-note">{{ t('spaces.detail.deleteSpaceHint') }}</span>
       </div>
-      <v-btn variant="outlined" color="error" :loading="deleting" @click="emit('delete')">
+      <BaseButton kind="ghost" :loading="deleting" @click="emit('delete')">
         {{ t('spaces.detail.deleteSpace') }}
-      </v-btn>
+      </BaseButton>
     </div>
   </section>
 </template>
@@ -116,6 +116,8 @@ import { z } from 'zod'
 
 import { vuetifyConfig } from '@/utils/form'
 import { getAvatarUrl } from '@/utils/materials'
+
+import BaseButton from '@/components/base/BaseButton.vue'
 
 export interface BasicInfoChange {
   name: string
@@ -287,13 +289,6 @@ const submit = handleSubmit((data) => {
 
 .limit-field__input {
   max-width: 140px;
-}
-
-.settings-foot {
-  display: flex;
-  justify-content: flex-end;
-  padding: 16px 24px;
-  border-top: 1px solid var(--line);
 }
 
 .danger .srow {

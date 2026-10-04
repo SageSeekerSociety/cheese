@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import httpx
 
+from app.core.sentences import listing, say
+
 #: Which conversions the service will do, mirrored here so a request that cannot
 #: be meant is refused with a sentence instead of an HTTP code from one hop
 #: further away. A format converting to itself is absent on purpose: that is
@@ -77,11 +79,18 @@ async def convert(
     target = target.lower().strip().lstrip(".")
     allowed = CONVERTIBLE.get(suffix)
     if not allowed:
-        raise ConvertFailed(f"不能转换这个格式：{suffix or path}")
+        raise ConvertFailed(say("convertFormatUnsupported", format=suffix or path))
     if target not in allowed:
-        raise ConvertFailed(f"{suffix} 只能转成 {'、'.join(allowed)}，收到 {target!r}")
+        raise ConvertFailed(
+            say(
+                "convertTargetUnsupported",
+                format=suffix,
+                targets=listing(allowed),
+                target=repr(target),
+            )
+        )
     if not endpoint:
-        raise ConvertUnavailable("这个部署没有启用格式转换")
+        raise ConvertUnavailable(say("convertDisabled"))
 
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
@@ -92,7 +101,7 @@ async def convert(
                 headers={"Content-Type": "application/octet-stream"},
             )
     except Exception as exc:  # noqa: BLE001 — every transport failure reads alike
-        raise ConvertUnavailable("格式转换服务暂时无法访问") from exc
+        raise ConvertUnavailable(say("convertUnreachable")) from exc
 
     if response.status_code != 200:
         detail = ""
@@ -103,17 +112,17 @@ async def convert(
         if response.status_code >= 500 or response.status_code in (404, 405):
             # 404/405: the running renderer predates this endpoint. That is the
             # deployment's state, not a problem with the document.
-            raise ConvertUnavailable(detail or "格式转换服务出错")
+            raise ConvertUnavailable(detail or say("convertServiceError"))
         raise ConvertFailed(
-            detail or f"无法转换这个文件（HTTP {response.status_code}）"
+            detail or say("convertFailedStatus", status=response.status_code)
         )
 
     made = response.content
     if not made:
-        raise ConvertFailed("转换没有产出内容")
+        raise ConvertFailed(say("convertNoOutput"))
     # Every target here is either a zip (OOXML) or a PDF. Checking is what keeps
     # an error page from being written into the workspace under a real name.
     expected = b"%PDF" if target == "pdf" else b"PK"
     if not made.startswith(expected):
-        raise ConvertFailed(f"转换结果不是一个 {target}")
+        raise ConvertFailed(say("convertWrongOutput", target=target))
     return made

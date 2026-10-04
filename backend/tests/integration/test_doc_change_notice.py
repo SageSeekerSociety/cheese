@@ -24,12 +24,23 @@ from app.domain.agent.chat import (
     _pending_platform_notices,
     _platform_preamble,
 )
+from app.domain.agent.harness import CLAUDE_CODE, SessionRef
 from app.domain.agent.harness.prompt import PLATFORM_NOTICE
 from app.domain.block.models import AGENT_NOTICE_META_KEY, Block, agent_notice
 from app.domain.block.repositories import BlockRepository
+from app.domain.delivery.input_identity import (
+    InputIdentity,
+    InputReceipt,
+    InputRegistrar,
+    ReceiptConsumer,
+)
 from app.main import app
 from tests.conftest import stub_compute
-from tests.integration.conftest import post_project, session_auth_headers
+from tests.integration.conftest import (
+    post_project,
+    room_agent_seat,
+    session_auth_headers,
+)
 
 
 def _sandbox(project_id: str, topic_id: str) -> dict[str, str]:
@@ -67,27 +78,69 @@ class _Screen:
     """Stands in for the session a turn is running on: it records what the
     platform pushed at it, and answers the way a live transport does."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        session: SessionRef | None = None,
+        work_id: uuid.UUID | None = None,
+        receipts: ReceiptConsumer | None = None,
+    ) -> None:
+        self.session = session
+        self.work_id = work_id
+        self.receipts = receipts
+        self.native_session_id = str(uuid.uuid4())
+        self.inputs: list[InputIdentity] = []
         self.pushed: list[str] = []
 
     async def deliver(
-        self, topic_id, text, images=None, *, expected_work_id=None, agent_handle=None
+        self,
+        topic_id,
+        text,
+        images=None,
+        *,
+        register_input: InputRegistrar,
+        expected_work_id=None,
+        agent_handle=None,
+        owes_reply=False,
     ) -> bool:
+        assert self.session is not None and self.receipts is not None
+        assert topic_id == self.session.topic_id
+        assert expected_work_id is not None and expected_work_id == self.work_id
+        assert agent_handle in (None, self.session.agent_handle)
+        identity = InputIdentity(
+            self.session.project_id,
+            self.session.topic_id,
+            self.session.agent_handle,
+            self.session.harness,
+            self.native_session_id,
+            uuid.uuid4(),
+            expected_work_id,
+        )
+        await register_input(identity)
+        self.inputs.append(identity)
         self.pushed.append(text)
+        await self.receipts(InputReceipt(identity, "accepted"))
         return True
 
 
 def _running_turn(client, topic_id: str) -> _Screen:
     """One ChatService for the whole test, with a turn running on this topic and
     a screen to receive what the platform sends it."""
-    screen = _Screen()
     service = ChatService(
         session_factory=client.test_request_factory,
         base_system_prompt="你是芝士。",
         workspace_root="/tmp/doc-notice-ws",
         compute=stub_compute(),
     )
-    service._active_turn_ids[uuid.UUID(topic_id)] = {uuid.uuid4()}
+    topic = client.get(f"/topics/{topic_id}").json()["data"]
+    session = SessionRef(
+        uuid.UUID(topic["project_id"]),
+        uuid.UUID(topic_id),
+        room_agent_seat(client, topic_id),
+        harness=CLAUDE_CODE,
+    )
+    work_id = uuid.uuid4()
+    screen = _Screen(session, work_id, service.confirm_prompt_receipt)
+    service._active_turn_ids[uuid.UUID(topic_id)] = {work_id}
     service._compute.deliver = screen.deliver  # type: ignore[method-assign]
     app.dependency_overrides[get_chat_service] = lambda: service
     return screen
@@ -209,7 +262,11 @@ async def test_a_notice_the_running_turn_took_is_not_said_again(client):
     assert len(await _waiting_notices(client, tid)) == 1
 
     client.portal.call(
-        lambda: service.confirm_prompt_receipt(uuid.UUID(tid), screen.pushed[0])
+        lambda: service.confirm_prompt_receipt(
+            InputReceipt(
+                screen.inputs[0], "native_echo", execution_work_id=screen.work_id
+            )
+        )
     )
 
     assert await _waiting_notices(client, tid) == []

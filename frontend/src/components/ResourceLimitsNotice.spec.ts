@@ -18,11 +18,15 @@ function mount() {
 }
 
 describe('resource limits before project creation', () => {
-  it('shows deployment values and distinguishes concurrency from inventory', async () => {
+  it('leads with the concurrency a new project runs at, and keeps the quota one step away', async () => {
     vi.mocked(getResourceLimits).mockResolvedValue({ max_machines_per_team: 7, max_concurrent_turns: 5 })
     const view = mount()
-    expect(await view.findByText('项目数量：当前未设置上限')).toBeTruthy()
-    expect(view.getByText(/最多同时运行 5 个 AI 任务，超出后排队/)).toBeTruthy()
+    expect(await view.findByText(/最多同时运行 5 个 AI 任务，超出后排队/)).toBeTruthy()
+    // The quota detail is not in the first view; it is one press away.
+    expect(view.queryByText('项目数量：当前未设置上限')).toBeNull()
+    expect(view.queryByText(/团队默认共享 7 台名额/)).toBeNull()
+    await fireEvent.click(view.getByRole('button', { name: '资源限制' }))
+    expect(view.getByText('项目数量：当前未设置上限')).toBeTruthy()
     expect(view.getByText(/团队默认共享 7 台名额/)).toBeTruthy()
   })
 
@@ -34,6 +38,7 @@ describe('resource limits before project creation', () => {
     expect(await view.findByText('资源限制加载失败')).toBeTruthy()
     expect(view.queryByText(/团队默认共享/)).toBeNull()
     await fireEvent.click(view.getByRole('button', { name: '重试' }))
-    expect(await view.findByText(/团队默认共享 3 台名额/)).toBeTruthy()
+    await fireEvent.click(await view.findByRole('button', { name: '资源限制' }))
+    expect(view.getByText(/团队默认共享 3 台名额/)).toBeTruthy()
   })
 })

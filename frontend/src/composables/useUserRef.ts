@@ -5,6 +5,7 @@
 // 装路由」的测试/演示环境。现在查询和跳转在这一层，展示组件只认 props。
 import { computed, getCurrentInstance, type MaybeRefOrGetter, toValue } from 'vue'
 
+import { memberName } from '@/lib/agentNames'
 import { userRefRoute, type UserRefTarget } from '@/lib/userRef'
 import { useWorkspaceStore } from '@/stores/workspace'
 
@@ -28,7 +29,7 @@ export function useUserRef(
     const h = toValue(handle)
     if (!h) return ''
     const row = store?.members.find((m) => m.user_handle === h)
-    return row?.name || h
+    return memberName(row) || h
   })
 
   const to = computed<UserRefTarget | null>(() => {

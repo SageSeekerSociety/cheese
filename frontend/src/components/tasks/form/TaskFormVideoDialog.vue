@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 
+import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
+
 const { t } = useI18n()
 
 // 「视频链接提示」那一段：填了一个解析不了的地址时弹出来问一句 —— 现在只有 B 站能
@@ -18,21 +20,16 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <v-dialog v-model="open" max-width="450" persistent>
-    <v-card>
-      <v-card-title class="text-h6">{{ t('tasks.form.video.dialogTitle') }}</v-card-title>
-      <v-card-text>
-        <v-alert type="warning" variant="tonal" class="mb-0">
-          {{ t('tasks.form.video.dialogBody') }}
-        </v-alert>
-      </v-card-text>
-      <v-card-actions class="pa-4 pt-0">
-        <v-spacer></v-spacer>
-        <v-btn variant="text" @click="emit('cancel')">{{ t('global.cancel') }}</v-btn>
-        <v-btn color="primary" variant="flat" @click="emit('confirm')">{{
-          t('tasks.form.video.dialogContinue')
-        }}</v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+  <ConfirmDialog
+    v-model="open"
+    :title="t('tasks.form.video.dialogTitle')"
+    :confirm-label="t('tasks.form.video.dialogContinue')"
+    :cancel-label="t('global.cancel')"
+    @confirm="emit('confirm')"
+    @cancel="emit('cancel')"
+  >
+    <v-alert type="warning" variant="tonal" class="mb-0">
+      {{ t('tasks.form.video.dialogBody') }}
+    </v-alert>
+  </ConfirmDialog>
 </template>

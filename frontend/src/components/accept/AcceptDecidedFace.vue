@@ -3,6 +3,7 @@
 // 理由就是给一次反悔留个入口。
 import type { AcceptCard } from '@/cx_types'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
 
@@ -20,16 +21,9 @@ defineEmits<{ (e: 'revoke'): void }>()
       <i18n-t scope="global" keypath="work.room.accept.acceptedBy" tag="div" class="text-body-2 c-muted mb-3">
         <template #who><UserRef :handle="card.decided_by" /></template>
       </i18n-t>
-      <v-btn
-        variant="outlined"
-        class="btn-secondary"
-        :loading="busy"
-        :disabled="busy"
-        prepend-icon="mdi-undo"
-        @click="$emit('revoke')"
-      >
+      <BaseButton kind="secondary" :loading="busy" :disabled="busy" prepend-icon="mdi-undo" @click="$emit('revoke')">
         {{ t('work.room.accept.revoke') }}
-      </v-btn>
+      </BaseButton>
     </div>
   </v-card>
 </template>

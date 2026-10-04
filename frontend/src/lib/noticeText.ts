@@ -1,7 +1,7 @@
 // The platform's lines in a room, rendered in the reader's language.
 //
 // The backend stores which sentence it said and with what (`meta.i18n.<field>`
-// = `{ key, params }`, see `backend/app/domain/block/notice_text.py`) beside the
+// = `{ key, params }`, see `backend/app/core/sentences.py`) beside the
 // finished Chinese text. The sentence is looked up here, at display time, so a
 // language switch re-renders the lines already on screen. A line without a key
 // (written before lines had one) or with a key this build does not know shows
@@ -31,7 +31,7 @@ function isMessage(value: unknown): value is NoticeMessage {
   return typeof key === 'string' && /^\w+$/.test(key)
 }
 
-/** Several items said as one parameter (`listing()` in `notice_text.py`). */
+/** Several items said as one parameter (`listing()` in `app/core/sentences.py`). */
 interface NoticeListing {
   list: unknown[]
   quoted?: boolean
@@ -64,7 +64,7 @@ function param(value: unknown): unknown {
 }
 
 // The catalog entry a key names. The backend's two catalogs share one key space
-// (`notice_text.py` refuses a key in both), so at most one of these matches.
+// (`app/core/sentences.py` refuses a key in both), so at most one of these matches.
 // `zh-CN` is the complete catalog; asking it keeps a key that only lacks
 // English on the fallback path of vue-i18n rather than on `fallback`.
 function entryOf(key: string): string | null {
@@ -90,11 +90,27 @@ export function refusalText(body: unknown, serverWords: string): string {
   return renderNoticeMessage((body as { error?: { i18n?: unknown } } | null)?.error?.i18n, serverWords)
 }
 
+/** What a refusal body says, in the reader's language: for the callers that
+ *  read a response themselves instead of through the two API clients. */
+export function refusalWords(body: unknown): string {
+  const said = body as { message?: string; error?: { message?: string } } | null
+  return refusalText(body, said?.message || said?.error?.message || '')
+}
+
 /** One field of an event block, in the reader's language. */
 export function noticeText(block: Block, field: NoticeField = 'content'): string {
   const meta = (block.meta as Record<string, unknown> | null) ?? null
   const stored = field === 'content' ? block.content : meta?.[field]
   const fallback = typeof stored === 'string' ? stored : ''
   const keys = meta?.i18n as Record<string, unknown> | undefined
+  return renderNoticeMessage(keys?.[field], fallback)
+}
+
+/** One text field of an API response, in the reader's language. A field the
+ *  backend said with `say()` has its key beside it, as `i18n.<field>`. */
+export function responseText(owner: object, field: string): string {
+  const record = owner as Record<string, unknown>
+  const fallback = typeof record[field] === 'string' ? (record[field] as string) : ''
+  const keys = record.i18n as Record<string, unknown> | undefined
   return renderNoticeMessage(keys?.[field], fallback)
 }

@@ -9,9 +9,9 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import async_session_factory
+from app.core.sentences import say
 from app.domain.agent.announce import announce
 from app.domain.block.models import Block, BlockKind
-from app.domain.block.notice_text import say
 from app.domain.block.schemas import BlockOut
 from app.domain.machine.models import (
     MAX_PROVIDER_ERRORS,

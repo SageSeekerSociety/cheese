@@ -28,6 +28,7 @@ import json
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from app.core.sentences import listing, say
 from app.domain.memory.files import (
     INDEX_LINE_MAX,
     INDEX_NAME,
@@ -358,15 +359,15 @@ def decode_answer(answer: str) -> list[dict]:
     try:
         parsed = json.loads(text)
     except json.JSONDecodeError as exc:
-        raise MigrationError(f"模型返回的不是 JSON：{exc}") from exc
+        raise MigrationError(say("migrationNotJson", error=str(exc))) from exc
     if isinstance(parsed, dict):
         parsed = parsed.get("decisions")
     if not isinstance(parsed, list):
-        raise MigrationError("模型返回的 JSON 里没有 decisions 列表")
+        raise MigrationError(say("migrationNoDecisions"))
     decisions: list[dict] = []
     for item in parsed:
         if not isinstance(item, dict):
-            raise MigrationError(f"decisions 里有一条不是对象：{item!r}")
+            raise MigrationError(say("migrationDecisionNotObject", item=repr(item)))
         decisions.append(item)
     return decisions
 
@@ -390,7 +391,7 @@ def build_plan(
     """
     by_id = {entry.source_id: entry for entry in entries}
     if len(by_id) != len(entries):
-        raise MigrationError("旧记忆里有重复的 source_id，报告对不上")
+        raise MigrationError(say("migrationDuplicateSource"))
     decisions = _decisions(raw_decisions, by_id=by_id, owners=owners, files=files)
     planned, indexes, suggestions = _lay_out(
         decisions=decisions, existing=existing, files=files
@@ -430,13 +431,18 @@ def _decisions(
     for item in raw:
         decision = _one(item, by_id=by_id, owners=owners, keep=keep)
         if decision.source_id in seen:
-            raise MigrationError(f"{decision.source_id} 有两个去处")
+            raise MigrationError(
+                say("migrationTwoDestinations", source=decision.source_id)
+            )
         seen.add(decision.source_id)
         target = decision.target_path()
         if decision.destination is Destination.merge and target not in known_files:
             raise MigrationError(
-                f"{decision.source_id} 说要并进 {target}，"
-                "但那条记忆不在（merge 只能并进已经存在的一条）"
+                say(
+                    "migrationMergeTargetMissing",
+                    source=decision.source_id,
+                    target=target,
+                )
             )
         if (
             decision.destination in (Destination.team, Destination.private)
@@ -446,16 +452,18 @@ def _decisions(
             # 别人写进去的东西一起换掉。这次迁移没有「覆盖」这个动作：要动一条已经
             # 存在的记忆，只有 merge。
             raise MigrationError(
-                f"{decision.source_id} 说要新建 {target}，但它已经存在了——"
-                "要动它请用 merge"
+                say("migrationCreateExists", source=decision.source_id, target=target)
             )
         decisions.append(decision)
     missing = sorted(set(by_id) - seen)
     if missing:
         raise MigrationError(
-            f"这些旧记忆没有去处（共 {len(missing)} 条）："
-            + "、".join(missing[:10])
-            + ("…" if len(missing) > 10 else "")
+            say(
+                "migrationUnplaced",
+                count=len(missing),
+                sources=listing(missing[:10]),
+                more="…" if len(missing) > 10 else "",
+            )
         )
     return decisions
 
@@ -469,19 +477,22 @@ def _one(
 ) -> Decision:
     source_id = str(item.get("source") or item.get("source_id") or "").strip()
     if source_id not in by_id:
-        raise MigrationError(f"决定里的 source 不是一条已知的旧记忆：{source_id!r}")
+        raise MigrationError(say("migrationUnknownSource", source=repr(source_id)))
     entry = by_id[source_id]
     raw_destination = str(item.get("destination") or "").strip().lower()
     try:
         destination = Destination(raw_destination)
     except ValueError as exc:
         raise MigrationError(
-            f"{source_id} 的去处只能是 team / private / merge / suggest / discard，"
-            f"拿到的是 {raw_destination!r}"
+            say(
+                "migrationDestinationInvalid",
+                source=source_id,
+                destination=repr(raw_destination),
+            )
         ) from exc
     reason = " ".join(str(item.get("reason") or "").split())[:REASON_MAX]
     if not reason:
-        raise MigrationError(f"{source_id} 没写理由——报告上每一条都要有一句话")
+        raise MigrationError(say("migrationNoReason", source=source_id))
     scope: MemoryFileScope | None = None
     if destination is Destination.private:
         scope = MemoryFileScope.private
@@ -494,16 +505,18 @@ def _one(
     owner = str(item.get("owner") or "").strip()
     if scope is MemoryFileScope.private and owner not in owners:
         raise MigrationError(
-            f"{source_id} 要写进 {owner or '(没写主人)'} 的 private，"
-            "但这个人不在这份迁移里"
+            say(
+                "migrationOwnerNotInMigration",
+                source=source_id,
+                owner=owner or say("migrationOwnerUnnamed"),
+            )
         )
     type_name = str(item.get("type") or "").strip().lower()
     try:
         kind = MemoryType(type_name) if type_name else None
     except ValueError as exc:
         raise MigrationError(
-            f"{source_id} 的 type 只能是 user / feedback / project / reference，"
-            f"拿到的是 {type_name!r}"
+            say("migrationTypeInvalid", source=source_id, type=repr(type_name))
         ) from exc
     decision = Decision(
         source_id=source_id,
@@ -528,16 +541,18 @@ def _slug(item: dict, *, destination: Destination, source_id: str) -> str:
         raw = raw[: -len(".md")]
     if raw.upper() == INDEX_NAME[: -len(".md")]:
         raise MigrationError(
-            f"{source_id} 要写进 {INDEX_NAME}——索引里只有一行行指针，没有正文"
+            say("migrationIntoIndex", source=source_id, index=INDEX_NAME)
         )
     if raw and not valid_name(raw):
-        raise MigrationError(f"{source_id} 给的文件名不是 kebab-case：{raw!r}")
+        raise MigrationError(
+            say("migrationNameNotKebab", source=source_id, name=repr(raw))
+        )
     if not raw and destination in (
         Destination.team,
         Destination.private,
         Destination.merge,
     ):
-        raise MigrationError(f"{source_id} 没给文件名（path / name）")
+        raise MigrationError(say("migrationNoFileName", source=source_id))
     return raw
 
 
@@ -549,11 +564,10 @@ def _check(decision: Decision, *, entry: OldEntry, keep: set[str]) -> None:
     ):
         if decision.target_prefix() == "team":
             raise MigrationError(
-                f"{decision.source_id} 是从「关于某个人的」池子来的，不能进 team"
-                "（private 的内容不许升级成全项目的规矩）"
+                say("migrationPersonalIntoTeam", source=decision.source_id)
             )
     if decision.destination is Destination.suggest and not decision.target:
-        raise MigrationError(f"{decision.source_id} 要提建议，但没说提到哪儿")
+        raise MigrationError(say("migrationSuggestNoTarget", source=decision.source_id))
     if decision.destination is Destination.discard:
         return
     if decision.destination is Destination.suggest:
@@ -561,25 +575,28 @@ def _check(decision: Decision, *, entry: OldEntry, keep: set[str]) -> None:
     if decision.destination is Destination.merge:
         # 并进去的那一段要有正文；目标文件的 type 说了算，不从这一条上取。
         if not decision.body:
-            raise MigrationError(f"{decision.source_id} 说要合并，却没给正文")
+            raise MigrationError(say("migrationMergeNoBody", source=decision.source_id))
         return
     if decision.type is None:
-        raise MigrationError(f"{decision.source_id} 没给 type")
+        raise MigrationError(say("migrationNoType", source=decision.source_id))
     allowed = _ALLOWED_TYPES[decision.destination]
     if decision.type not in allowed:
         raise MigrationError(
-            f"{decision.source_id} 的 type 是 {decision.type.value}，"
-            f"不能放在 {decision.destination.value} 里"
-            "（user 永远 private，team 只放 project / reference / feedback）"
+            say(
+                "migrationTypeWrongPlace",
+                source=decision.source_id,
+                type=decision.type.value,
+                destination=decision.destination.value,
+            )
         )
     if not decision.description:
-        raise MigrationError(f"{decision.source_id} 没给 description（索引那行的钩子）")
+        raise MigrationError(say("migrationNoDescription", source=decision.source_id))
     if not decision.body:
-        raise MigrationError(f"{decision.source_id} 没给正文")
+        raise MigrationError(say("migrationNoBody", source=decision.source_id))
     prefix = decision.target_prefix()
     if prefix not in keep:
         raise MigrationError(
-            f"{decision.source_id} 要去 {prefix}，但那个作用域还没建立"
+            say("migrationScopeMissing", source=decision.source_id, scope=prefix)
         )
 
 
@@ -645,8 +662,14 @@ def _lay_out(
             scope, owner, name, version = versions[path]
             content = _append_to(existing.get(path, ""), group)
         if breach := limit_breach(name, content, existing.get(path)):
-            sources = "、".join(decision.source_id for decision in group)
-            raise MigrationError(f"{path}（来自 {sources}）写不进去：{breach}")
+            raise MigrationError(
+                say(
+                    "migrationFileTooBig",
+                    path=path,
+                    sources=listing(decision.source_id for decision in group),
+                    breach=breach,
+                )
+            )
         planned[path] = PlannedFile(
             scope=scope,
             owner=owner,

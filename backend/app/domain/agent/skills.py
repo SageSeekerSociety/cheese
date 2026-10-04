@@ -93,7 +93,8 @@ NATIVE_CHAT_GUIDANCE = (
     "普通输出和最终答复不会发布到聊天；用 chat_send 工具主动发送。"
     "平台操作用同名的 cheese_* 工具，没有对应工具的平台 API 用 platform_request。"
     "聊天协作的其余细则（语气、发布调用、与文档配合）用 Skill 工具加载 chat-detail。"
-    "编写或更新话题文档时加载 cheese-docs。"
+    "编写或更新话题文档时加载 cheese-docs；写方案、报告、纪要这类给人读的文档时加载 "
+    "cheese-writing。"
     "能直接回答就发送答案，需要继续处理就先发送你理解的意思和下一步。"
     "排队或执行中追加的用户消息也按此处理。"
     "分身向主 agent 回报。\n\n"
@@ -128,7 +129,14 @@ SKILL_FILE_SUFFIXES = (".md", ".py", ".sh", ".txt", ".json", ".typ")
 
 #: Folder names a project's own skill may not take: the platform ships these.
 RESERVED_SKILL_NAMES = frozenset(
-    {*_SHIPPED_NATIVE_SKILLS, "cheese", "cheese-docs", "chat-detail", "cheese-chat"}
+    {
+        *_SHIPPED_NATIVE_SKILLS,
+        "cheese",
+        "cheese-docs",
+        "cheese-writing",
+        "chat-detail",
+        "cheese-chat",
+    }
 )
 
 
@@ -146,11 +154,18 @@ def native_skill_files() -> dict[str, str]:
             files[f"skills/{relative}"] = source.read_text(encoding="utf-8")
     for source, name in (
         ("doc_form.md", "cheese-docs"),
+        ("doc_writing.md", "cheese-writing"),
         ("chat_detail.md", "chat-detail"),
     ):
         meta, body = _parse(_SKILL_DIR / source)
-        body = body.replace("doc-form", "cheese-docs")
-        description = meta["description"].replace("doc-form", "cheese-docs")
+        body = body.replace("doc-form", "cheese-docs").replace(
+            "doc-writing", "cheese-writing"
+        )
+        description = (
+            meta["description"]
+            .replace("doc-form", "cheese-docs")
+            .replace("doc-writing", "cheese-writing")
+        )
         description = description.replace("chat 技能", "会话内的聊天说明")
         files[f"skills/{name}/SKILL.md"] = (
             f"---\nname: {name}\n"

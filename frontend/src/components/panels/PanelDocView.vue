@@ -17,6 +17,8 @@ import type { DocThreadActions, DocThreadState, ThreadPlace } from '../../lib/do
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
+import { scrollBehavior } from '@/utils/motion'
+
 import { useDocAgent } from '../../composables/useDocAgent'
 import { useDocReview } from '../../composables/useDocReview'
 import { useDocSuggestions } from '../../composables/useDocSuggestions'
@@ -33,6 +35,7 @@ import DocSurface from './doc/DocSurface.vue'
 import DocTopBar from './doc/DocTopBar.vue'
 import OverviewAuto from './doc/OverviewAuto.vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
 const props = withDefaults(
@@ -146,7 +149,7 @@ let pulseTimer: ReturnType<typeof setTimeout> | undefined
 const pulsing = ref(false)
 
 async function pulse() {
-  bodyRef.value?.scrollTo({ top: 0, behavior: 'smooth' })
+  bodyRef.value?.scrollTo({ top: 0, behavior: scrollBehavior() })
   if (pulseTimer) clearTimeout(pulseTimer)
   pulsing.value = false
   await nextTick()
@@ -292,7 +295,7 @@ defineExpose({
     <div v-else-if="outdated" class="flex-grow-1 d-flex align-center justify-center">
       <div class="text-center">
         <div class="t-body mb-3">{{ t('work.room.doc.outdated') }}</div>
-        <v-btn color="primary" variant="flat" size="small" @click="reload">{{ t('work.room.doc.reload') }}</v-btn>
+        <BaseButton kind="secondary" size="sm" @click="reload">{{ t('work.room.doc.reload') }}</BaseButton>
       </div>
     </div>
 
@@ -569,7 +572,7 @@ defineExpose({
   left: 50%;
   bottom: 18px;
   transform: translateX(-50%);
-  z-index: 30;
+  z-index: var(--z-shell);
   max-width: min(560px, calc(100% - 32px));
   overflow-wrap: anywhere;
   box-shadow: var(--shadow-2);

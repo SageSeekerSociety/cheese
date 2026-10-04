@@ -6,6 +6,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 
 import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminTabs from '@/components/admin/AdminTabs.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 import FeedbackCard from '@/components/feedback/FeedbackCard.vue'
 import FeedbackErrorBanner from '@/components/feedback/FeedbackErrorBanner.vue'
 import { kindLabel, statusLabel } from '@/components/feedback/feedbackLabels'
@@ -250,21 +251,21 @@ function clearFilters() {
            docs/topics/feedback-前端原型.md 里。 -->
       <!-- 「我的反馈」对**所有人**都在（包括没登录的访客，他去了会看到空列表）。
            它不发请求问「我是谁」：清单的边界在服务端，这一页只是那一摞的门。 -->
-      <v-btn variant="text" color="secondary" size="small" to="/feedback/mine">
+      <BaseButton size="sm" to="/feedback/mine">
         {{ t('feedback.center.mine') }}
-      </v-btn>
+      </BaseButton>
       <!-- 管理后台的入口**只在服务端说我是管理员时出现**。上一轮这里是一个可以拨的
            开关；现在拨不动了，因为拨的其实是「我能不能看见别人的私密反馈」这件事，
            而那件事只能由服务端答。 -->
-      <v-btn v-if="store.isAdmin" variant="outlined" color="secondary" size="small" to="/admin/feedback">
+      <BaseButton v-if="store.isAdmin" kind="secondary" size="sm" to="/admin/feedback">
         {{ t('feedback.center.admin') }}
-      </v-btn>
+      </BaseButton>
       <!-- 提交走**独立页面**（`/feedback/new`），不是就地开一个浮层。这一颗只是那一页
            的门：草稿由那一页自己准备（`SubmitFeedbackForm` 挂载时调 `openSubmit`），
            这里不再调一次 —— 两处都调的话，第二次会把刚捞回来的草稿重判一遍。 -->
-      <v-btn color="primary" prepend-icon="mdi-plus" :to="{ name: 'FeedbackSubmit' }">
+      <BaseButton kind="primary" prepend-icon="mdi-plus" :to="{ name: 'FeedbackSubmit' }">
         {{ t('feedback.center.submit') }}
-      </v-btn>
+      </BaseButton>
     </template>
 
     <!-- 栏位切换走一个 action，不直接绑 `store.tab`：栏位是**服务端**的筛选，改了的

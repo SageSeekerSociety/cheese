@@ -32,15 +32,14 @@ from tests.support.hang import HANG_S
 
 
 def _replace_chat_sleep(monkeypatch, sleep):
-    from app.domain.agent import chat, gateway_usage
+    from app.domain.agent import chat, gateway_spend, gateway_usage
 
     # Replacing the shared module's sleep also stalls the TestClient's loop monitor.
-    # The turn's two waits — the settle-retry before the second spend read, and the
-    # deferred drain's twenty seconds — moved with the rest of the gateway path into
-    # `gateway_usage` (slice 7), so both modules get the replacement: either way it
-    # is a module global, because each module looks up its own `asyncio` name.
+    # The turn's waits — the settle-retry before the second spend read, and the
+    # deferred drain's twenty seconds — are `gateway_spend.settle`'s, so the
+    # replacement goes on each module's own `asyncio` name.
     stub = SimpleNamespace(**{**vars(asyncio), "sleep": sleep})
-    for module in (chat, gateway_usage):
+    for module in (chat, gateway_spend, gateway_usage):
         monkeypatch.setattr(module, "asyncio", stub)
 
 
@@ -79,9 +78,9 @@ class QuietScreen(StubChannel):
         agent: str | None = None,
     ) -> None:
         del reply
-        self.starts(topic_id, session_id="s1")
+        self.starts(topic_id)
         self.acknowledges(topic_id, prompt)
-        self.stops(topic_id, "ok", session_id="s1")
+        self.stops(topic_id, "ok")
 
 
 class FakeGateway:
@@ -345,7 +344,7 @@ async def test_settling_usage_allows_key_lookup_and_keeps_checkpoint_current(
         await resume.wait()
 
     _replace_chat_sleep(monkeypatch, wait_for_rows)
-    pending = asyncio.create_task(svc._drain_gateway_usage(pid, tid, uuid.uuid4()))
+    pending = asyncio.create_task(svc.charge_turn_spend(pid, tid, uuid.uuid4()))
     try:
         await asyncio.wait_for(settling.wait(), timeout=HANG_S)
         # New inference must proceed while an earlier turn waits for spend rows.
@@ -353,7 +352,7 @@ async def test_settling_usage_allows_key_lookup_and_keeps_checkpoint_current(
             await asyncio.wait_for(svc.project_gateway_key(pid), timeout=HANG_S) == key
         )
         other = await asyncio.wait_for(
-            svc._drain_gateway_usage(pid, tid, uuid.uuid4()), timeout=HANG_S
+            svc.charge_turn_spend(pid, tid, uuid.uuid4()), timeout=HANG_S
         )
         assert other is not None
         assert [(u.model, u.input_tokens, u.output_tokens) for u in other] == [
@@ -388,7 +387,7 @@ async def test_failed_usage_insert_does_not_advance_gateway_checkpoint(
         return await add(self, **kwargs)
 
     monkeypatch.setattr(UsageRepository, "add", fail_once)
-    assert await svc._drain_gateway_usage(pid, tid, turn_id) is None
+    assert await svc.charge_turn_spend(pid, tid, turn_id) is None
     async with factory() as session:
         project = await ProjectRepository(session).get(pid)
         aggregate = await UsageRepository(session).for_project(pid)
@@ -396,7 +395,7 @@ async def test_failed_usage_insert_does_not_advance_gateway_checkpoint(
     assert "llm_gateway_usage_ckpt" not in (project.settings or {})
     assert aggregate["total_tokens"] == 0
 
-    assert await svc._drain_gateway_usage(pid, tid, turn_id) is not None
+    assert await svc.charge_turn_spend(pid, tid, turn_id) is not None
     async with factory() as session:
         project = await ProjectRepository(session).get(pid)
         aggregate = await UsageRepository(session).for_project(pid)
@@ -464,7 +463,7 @@ async def test_a_slow_spend_read_does_not_stall_key_lookup(
         return await FakeGateway.daily_spend_by_model(fake, api_key, date)
 
     fake.daily_spend_by_model = slow_daily_spend_by_model  # type: ignore[method-assign]
-    pending = asyncio.create_task(svc._drain_gateway_usage(pid, tid, uuid.uuid4()))
+    pending = asyncio.create_task(svc.charge_turn_spend(pid, tid, uuid.uuid4()))
     try:
         await asyncio.wait_for(reading.wait(), timeout=HANG_S)
         assert (

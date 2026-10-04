@@ -28,6 +28,7 @@ import ArtifactVersionList from './artifact/ArtifactVersionList.vue'
 
 import { useCommands } from '@/commands'
 import { copyLink, linkOf } from '@/commands/copy'
+import BaseButton from '@/components/base/BaseButton.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import MobileActionSheet from '@/components/common/MobileActionSheet.vue'
 import { usePageTitleStore } from '@/stores/title'
@@ -288,30 +289,28 @@ const facts = computed(() => {
 
         <!-- 手机上：版本历史从底下升起来，拿走这一版的那颗按钮贴着底边。 -->
         <div v-if="!mdAndUp && current" class="artifact__bar">
-          <v-btn variant="outlined" class="flex-grow-1" @click="historyOpen = true">
+          <BaseButton kind="secondary" class="flex-grow-1" @click="historyOpen = true">
             {{ t('tasks.artifact.historyCount', { n: versions.length }) }}
-          </v-btn>
-          <v-btn
+          </BaseButton>
+          <BaseButton
             v-if="current.kind === 'file'"
-            color="primary"
-            variant="flat"
+            kind="primary"
             class="flex-grow-1"
             :loading="downloading === current.card_id"
             @click="download(current)"
           >
             {{ t('tasks.artifact.download') }}
-          </v-btn>
-          <v-btn
+          </BaseButton>
+          <BaseButton
             v-else-if="current.kind === 'link' && current.url"
-            color="primary"
-            variant="flat"
+            kind="primary"
             class="flex-grow-1"
             :href="current.url"
             target="_blank"
             rel="noopener noreferrer"
           >
             {{ t('tasks.artifact.open') }}
-          </v-btn>
+          </BaseButton>
         </div>
       </section>
 

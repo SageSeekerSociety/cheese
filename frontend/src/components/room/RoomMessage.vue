@@ -9,23 +9,25 @@
 // 算好传进来的。它自己只回答「这一块该画成什么」。
 import type { Block, TodoItem } from '../../cx_types'
 import type { FaceState } from '../../lib/agentFace'
+import type { AskAction, AskFormState } from '../../lib/askPresentation'
 
-import { computed, ref, watch } from 'vue'
+import { computed } from 'vue'
 
-import { artifactKind, artifactName, askAnswered, askOptions, isImageBlock, replySnippet } from '../../lib/blockDisplay'
+import { artifactKind, artifactName, askOptions, isImageBlock, replySnippet } from '../../lib/blockDisplay'
 import { fileIcon } from '../../lib/fileKind'
 import { renderMarkdown as renderMarkdownWith, renderPlain as renderPlainWith } from '../../lib/renderMessage'
 import { avatarColor, avatarInitial } from '../../utils/avatar'
+import AskQuestionForm from '../ask/AskQuestionForm.vue'
 import AttachmentImage from '../AttachmentImage.vue'
 import CheeseAvatar from '../CheeseAvatar.vue'
 import ExternalTag from '../common/ExternalTag.vue'
-import UserRef from '../common/UserRefLink.vue'
 
 import ChecklistMessage from './ChecklistMessage.vue'
 import MessageEditor from './MessageEditor.vue'
 import MessageQuote from './MessageQuote.vue'
 import RollingNumber from './RollingNumber.vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
 const props = defineProps<{
@@ -53,7 +55,7 @@ const props = defineProps<{
   viewer: string
   /** 悬停条此刻停在这一行上（指针可能在悬停条上，不在这一行上）。 */
   active?: boolean
-  askBusy: boolean
+  askState?: AskFormState
   /** 这条是队友此刻正在推进的清单（房间在跑，且是它最新的一条）。 */
   live?: boolean
   /** 这一条的头像是这位队友最近出现的那个，它正在干活（或刚干完）：头像的表情。 */
@@ -90,7 +92,7 @@ const emit = defineEmits<{
   (e: 'open-topic', id: string): void
   (e: 'open-card', taskId: string): void
   (e: 'react', block: Block, emoji: string): void
-  (e: 'answer', block: Block, option: string): void
+  (e: 'ask-action', block: Block, action: AskAction): void
   (e: 'download', block: Block): void
   /** 跳到被回复的那一条。 */
   (e: 'jump', blockId: string): void
@@ -143,22 +145,6 @@ async function copyText(text: string): Promise<boolean> {
     return false
   }
 }
-
-// 选项作答：点下去的那一项先变实、其余淡下去，等答案落库再换成「谁选了什么」。
-// 请求没成（askBusy 落回去了、也没有答案）就松手，几个选项回到原样。
-const picked = ref<string | null>(null)
-function pick(option: string) {
-  // 问的人不答自己的题：按钮在他那里是灰的，这一行是灰按钮之外的第二道。
-  if (props.mine) return
-  picked.value = option
-  emit('answer', props.block, option)
-}
-watch(
-  () => props.askBusy,
-  (busy) => {
-    if (!busy && !askAnswered(props.block)) picked.value = null
-  }
-)
 
 async function onAgentTextClick(e: MouseEvent) {
   const btn = (e.target as HTMLElement | null)?.closest('.md-copy') as HTMLButtonElement | null
@@ -239,17 +225,17 @@ async function onAgentTextClick(e: MouseEvent) {
          (click opens the original in a new tab). 字节在 AttachmentImage
          里取——raw 端点只认 Authorization 头，裸挂 URL 是匿名请求。 -->
       <AttachmentImage v-if="isImageBlock(block)" :topic-id="topicId" :path="block.content" />
-      <v-btn
+      <BaseButton
         v-else-if="block.kind === 'attachment'"
-        variant="text"
+        kind="ghost"
         prepend-icon="mdi-file-document-outline"
         append-icon="mdi-download-outline"
-        class="text-none im-file-link"
+        class="im-file-link"
         :title="t('work.room.message.downloadFile', { name: artifactName(block) })"
         @click="emit('download', block)"
       >
         <span class="text-truncate">{{ artifactName(block) }}</span>
-      </v-btn>
+      </BaseButton>
       <!-- 芝士摆出来给人看的一份东西（`cheese show`）。后端一直在往时间线
          写这样一块（kind=artifact，content 是路径），而这里一直没有认它的
          分支，于是它掉进最下面那个兜底里，渲染成一行光秃秃的文件名——
@@ -309,35 +295,14 @@ async function onAgentTextClick(e: MouseEvent) {
           {{ t('work.room.outbox.edit') }}
         </button>
       </div>
-      <!-- 带选项的问题: one-click answer buttons; answered state shows the
-         pick + who made it (everyone sees it). The asker sees the options
-         but does not answer their own question. -->
-      <Transition name="ask-swap" mode="out-in">
-        <div v-if="askOptions(block) && !askAnswered(block)" key="options" class="ask-row">
-          <button
-            v-for="opt in askOptions(block)!"
-            :key="opt"
-            type="button"
-            class="ask-option"
-            :class="{ 'ask-option--picked': picked === opt, 'ask-option--dim': picked !== null && picked !== opt }"
-            :disabled="askBusy || picked !== null || mine"
-            @click="pick(opt)"
-          >
-            {{ opt }}
-          </button>
-        </div>
-        <div v-else-if="askOptions(block)" key="answered" class="ask-row">
-          <div class="ask-answered">
-            <v-icon size="13" class="c-ok">mdi-check-circle</v-icon>
-            <i18n-t scope="global" keypath="work.room.message.askAnswered" tag="span">
-              <template #who>
-                <UserRef :handle="askAnswered(block)!.by" :name="refs.mentionNames[askAnswered(block)!.by]" />
-              </template>
-              <template #option>{{ askAnswered(block)!.option }}</template>
-            </i18n-t>
-          </div>
-        </div>
-      </Transition>
+      <AskQuestionForm
+        v-if="askOptions(block) && !block.meta?.ask_group"
+        :block="block"
+        :viewer="viewer"
+        :names="refs.mentionNames"
+        :state="askState"
+        @action="emit('ask-action', block, $event)"
+      />
       <!-- 活引用 (eval A1): 升级出去的块指向它变成的那个地点。房间里
          升级出来的是一条支线，私聊里升级出来的才是房间——两个字段各指
          一张表，同时只会有一个非空。 -->
@@ -529,61 +494,6 @@ async function onAgentTextClick(e: MouseEvent) {
 /* 引用 chip（@人 / 文件 / 话题）的样式在 style.css 里，一份定义给所有渲染这份
    markup 的地方用——动作卡和系统事件行里的同款 chip 不在 .im-text 里面，写在组件
    的 scoped 块里就只有对话栏看得见；现场那一栏也渲染同一份 chip。 */
-
-/* 带选项的问题 buttons: quiet outlined buttons. 悬停只加深一档，不上琥珀：
-   一排选项里没有哪一个是「主操作」。 */
-.ask-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 6px;
-}
-.ask-option {
-  border: 1px solid var(--line-2);
-  background: var(--surface);
-  border-radius: var(--radius-md);
-  padding: 5px 14px;
-  font-size: 13px;
-  cursor: pointer;
-  transition:
-    border-color var(--dur-quick) var(--ease-standard),
-    background-color var(--dur-quick) var(--ease-standard),
-    color var(--dur-quick) var(--ease-standard),
-    opacity var(--dur-base) var(--ease-standard);
-}
-.ask-option:hover:not(:disabled) {
-  border-color: var(--faint);
-  background: var(--fill);
-}
-.ask-option:disabled {
-  cursor: default;
-}
-.ask-option--picked {
-  border-color: var(--muted);
-  background: var(--line-2);
-  color: var(--ink);
-}
-.ask-option--dim {
-  opacity: 0.45;
-}
-/* 选项换成「谁选了什么」：先淡出，再淡入。 */
-.ask-swap-enter-active {
-  transition: opacity var(--dur-base) var(--ease-out);
-}
-.ask-swap-leave-active {
-  transition: opacity var(--dur-quick) var(--ease-in);
-}
-.ask-swap-enter-from,
-.ask-swap-leave-to {
-  opacity: 0;
-}
-.ask-answered {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 13px;
-  color: var(--muted);
-}
 
 /* Reaction chips under a message: emoji + count; own reactions get a darker
    outline and ground (Slack's "you reacted" affordance), not amber. */

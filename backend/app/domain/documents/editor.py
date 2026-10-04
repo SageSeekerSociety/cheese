@@ -32,6 +32,7 @@ from urllib.parse import urlsplit
 import jwt
 
 from app.core.config import settings
+from app.core.sentences import say
 
 #: What the editor can open, and as which of its three editors. Only the Office
 #: Open XML formats are editable: the editor can open the older ones, but saving
@@ -100,7 +101,7 @@ def document_key(room_id: uuid.UUID, path: str, version: str | None) -> str:
 
 def _secret() -> str:
     if not settings.office_editor_jwt_secret:
-        raise EditorUnavailable("这个部署没有启用在线编辑")
+        raise EditorUnavailable(say("editorDisabled"))
     return settings.office_editor_jwt_secret
 
 
@@ -130,7 +131,7 @@ def read_link(token: str) -> Link:
     try:
         claims = jwt.decode(token, _link_secret(), algorithms=["HS256"])
     except jwt.PyJWTError as exc:
-        raise EditorRefused("编辑链接无效或已过期") from exc
+        raise EditorRefused(say("editorLinkInvalid")) from exc
     return Link(
         project_id=uuid.UUID(claims["p"]),
         room_id=uuid.UUID(claims["r"]),
@@ -208,11 +209,11 @@ def verify_callback(body: dict, authorization: str | None) -> dict:
     if not token and authorization and authorization.lower().startswith("bearer "):
         token = authorization.split(" ", 1)[1]
     if not token:
-        raise EditorRefused("回调没有签名")
+        raise EditorRefused(say("editorCallbackUnsigned"))
     try:
         claims = jwt.decode(token, _secret(), algorithms=["HS256"])
     except jwt.PyJWTError as exc:
-        raise EditorRefused("回调签名不对") from exc
+        raise EditorRefused(say("editorCallbackBadSignature")) from exc
     # Header-carried tokens wrap the body as `payload`.
     return claims.get("payload", claims)
 
@@ -228,7 +229,7 @@ def internal_download_url(url: str) -> str:
     parts = urlsplit(url)
     at = parts.path.find("/cache/files/")
     if at < 0:
-        raise EditorRefused("回调给的下载地址不是编辑器的")
+        raise EditorRefused(say("editorCallbackForeignUrl"))
     tail = parts.path[at:]
     query = f"?{parts.query}" if parts.query else ""
     return settings.office_editor_internal_url.rstrip("/") + tail + query

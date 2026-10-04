@@ -24,6 +24,7 @@ from app.api.auth import ActorResolverDep
 from app.api.response import ok
 from app.core.db import get_db
 from app.core.errors import ForbiddenError, NotFoundError
+from app.core.sentences import say
 from app.domain.agent_credential.services import ProjectAgentCredentialService
 from app.domain.membership.services import MemberService
 from app.domain.project.repositories import ProjectRepository
@@ -49,13 +50,13 @@ async def require_project_steward(
     """
     actor = await resolver.resolve(project_id=project_id)
     if not actor.authenticated:
-        raise ForbiddenError("只有项目所有者或团队管理员能管理项目凭证")
+        raise ForbiddenError(say("projectCredentialManagerOnly"))
     project = await ProjectRepository(db).get(project_id)
     if project is None:
         raise NotFoundError("Project not found")
     if await MemberService(db).manages(project_id, actor.handle):
         return
-    raise ForbiddenError("只有项目所有者或团队管理员能管理项目凭证")
+    raise ForbiddenError(say("projectCredentialManagerOnly"))
 
 
 class IssueCredentialIn(BaseModel):

@@ -4,7 +4,8 @@
 
 - ``GET /spaces/{spaceId}/materials`` 清单。成员看得到「所有成员」那一档，
   管理员两档都看得到；响应里另外带一个 ``canManage``，界面拿它决定摆不摆那一组
-  管理入口。
+  管理入口，以及每一行带一个 ``usedByCount``（被几处教学配置引用）—— 后者只发给
+  能删的人，见 ``list_space_materials``。
 - ``POST /spaces/{spaceId}/materials`` 传一份上去（multipart），同时定档。
 - ``PATCH /spaces/{spaceId}/materials/{materialId}`` 改档。
 - ``DELETE /spaces/{spaceId}/materials/{materialId}`` 从板上撤下来（软删关联行）。
@@ -28,6 +29,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, Path, Response, UploadFile, status
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.routes.spaces import require_reviewed_space
 from app.auth.checker import require_auth_user
@@ -35,6 +37,7 @@ from app.auth.core import AuthUserInfo
 from app.core.storage import get_storage_backend
 from app.db.session import get_db
 from app.domain.space.material_service import SpaceMaterialService
+from app.domain.task.teaching import count_material_references
 
 router = APIRouter(
     prefix="/spaces", tags=["Spaces"], dependencies=[Depends(require_reviewed_space)]
@@ -59,14 +62,17 @@ async def list_space_materials(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceMaterialService = Depends(get_space_material_service),
+    db: AsyncSession = Depends(get_db),
 ) -> dict:
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": await service.list_for_space(
-            space_id=space_id, user_id=auth_user.user_id
-        ),
-    }
+    data = await service.list_for_space(space_id=space_id, user_id=auth_user.user_id)
+    if data["canManage"]:
+        # 「还有几处配置列着它」只发给能删的人：这是删除之前的判断依据（撤了就
+        # 留下几处指着空处），成员那一侧既看不见管理入口，也不该看见别人的配置
+        # 里有没有它。
+        counts = await count_material_references(db, space_id=space_id)
+        for item in data["materials"]:
+            item["usedByCount"] = counts.get(item["id"], 0)
+    return {"code": 200, "message": "OK", "data": data}
 
 
 @router.post(

@@ -44,10 +44,9 @@
           <v-list-item-title class="text-body-2">{{ file.name }}</v-list-item-title>
           <v-list-item-subtitle class="text-caption">{{ formatFileSize(file.size) }}</v-list-item-subtitle>
           <template #append>
-            <v-btn
+            <BaseButton
               icon="mdi-close"
-              variant="text"
-              size="small"
+              size="sm"
               :disabled="uploading"
               :aria-label="t('tasks.attachmentPicker.remove', { name: file.name })"
               @click="drop(file.id)"
@@ -66,6 +65,7 @@ import { toast } from 'vuetify-sonner'
 
 import { formatFileSize } from '@/utils/materials'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { AttachmentsApi } from '@/network/api/attachments'
 
 const { t } = useI18n()
@@ -161,12 +161,10 @@ defineExpose({ uploaded, uploading })
 .form-card {
   border: 1px solid rgba(var(--v-border-color), 0.12);
   background-color: rgb(var(--v-theme-surface));
-  transition: all 0.2s ease;
+  transition: border-color var(--dur-quick) var(--ease-standard);
 }
 
 .form-card:hover {
   border-color: rgba(var(--v-theme-primary), 0.15);
-  transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(var(--v-theme-primary), 0.05);
 }
 </style>

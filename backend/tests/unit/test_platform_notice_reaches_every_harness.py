@@ -26,6 +26,7 @@ from app.domain.agent.harness.driven.runner import LONG_POLL
 from app.domain.agent.harness.pi.runtime import Handle as PiHandle
 from app.domain.agent.harness.pi.runtime import PiRuntime
 from tests.conftest import StubChannel
+from tests.support.room_reader import room_reader
 
 NOTICE = "【平台】You have published nothing to this room for 10 minutes."
 
@@ -149,22 +150,36 @@ async def _working(runtime, session) -> None:
 @pytest.mark.parametrize("wire", [_claude_code, _codex, _pi], ids=lambda w: w.__name__)
 async def test_a_notice_reaches_the_turn_it_was_meant_for(tmp_path, wire):
     session, runtime, heard, _ = await wire(tmp_path)
-    runtime.bind_events(AsyncMock())
-    runtime.bind_activity(AsyncMock())
-    runtime.bind_receipts(AsyncMock())
+    runtime.bind_reader(
+        room_reader(events=AsyncMock(), activity=AsyncMock(), receipts=AsyncMock())
+    )
     runtime.bind_unread_probe(lambda _topic: None)
+    register_input = AsyncMock()
     work = uuid.uuid4()
     try:
         await runtime.send(
-            session, "检查一下", Opening("system"), work_id=work, on_mark=lambda _: None
+            session,
+            "检查一下",
+            Opening("system"),
+            work_id=work,
+            on_mark=lambda _: None,
+            register_input=register_input,
         )
         await _working(runtime, session)
 
         stale = await runtime.deliver(
-            session.topic_id, "stale", expected_work_id=uuid.uuid4()
+            session.topic_id,
+            "stale",
+            expected_work_id=uuid.uuid4(),
+            register_input=register_input,
         )
         assert stale is False, "a notice for another turn must not land in this one"
-        assert await runtime.deliver(session.topic_id, NOTICE, expected_work_id=work)
+        assert await runtime.deliver(
+            session.topic_id,
+            NOTICE,
+            expected_work_id=work,
+            register_input=register_input,
+        )
         deadline = time.monotonic() + 8
         while not any(NOTICE in said for said in heard()):
             assert time.monotonic() < deadline, f"the session heard {heard()}"

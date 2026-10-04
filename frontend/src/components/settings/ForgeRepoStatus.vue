@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { ForgeConnection } from '@/cx_types'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
 // 由平台托管的项目（forgejo）的「代码仓库」那一块：一行状态加一颗「打开仓库」。
@@ -28,16 +29,16 @@ defineProps<{
           forge.connected ? t('work.projectSettings.forge.hosted') : t('work.projectSettings.forge.preparing')
         }}</span>
         <v-spacer />
-        <v-btn
+        <BaseButton
           v-if="forge.url"
+          kind="secondary"
           :href="forge.url"
           target="_blank"
           rel="noopener noreferrer"
-          size="small"
-          variant="tonal"
+          size="sm"
         >
           {{ t('work.projectSettings.forge.open') }}
-        </v-btn>
+        </BaseButton>
       </div>
       <p class="t-body c-faint mt-2 settings-hint">{{ t('work.projectSettings.forge.hint') }}</p>
     </div>

@@ -6,6 +6,7 @@
 // 这一条只画，不知道卡里是什么：一行上的四个字（图标、颜色、标题、等谁）由调用方
 // 从卡上算好递进来，点的两下报回去。展开的收放也是调用方的事 —— 展开的那一块长在
 // 这一条的上面，不在它里面。
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
 defineProps<{
@@ -41,9 +42,9 @@ defineEmits<{
     </button>
     <!-- 决策在聊天，审查在面板: the bar asks for a decision, and the thing the
          decision is about is a diff in the panel next to it. -->
-    <v-btn v-if="canReview" size="small" color="primary" variant="flat" @click="$emit('review')">
+    <BaseButton v-if="canReview" kind="primary" size="sm" @click="$emit('review')">
       {{ t('work.room.accept.review') }}
-    </v-btn>
+    </BaseButton>
   </div>
 </template>
 

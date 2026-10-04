@@ -177,7 +177,24 @@ export type SpaceMaterial = {
   uploaderId: number | null
   createdAt: number
   downloadCount: number
+  /**
+   * 这块板里**还有几处教学配置列着它**。只有能管资料库的人拿得到这一格 ——
+   * 成员那一侧连键都没有，不是 0。
+   *
+   * 数的是「列着」，不是「生效」：指导是四层整份替换，里层非空就盖住外层，一份
+   * 只被空间默认列着、其实全被里层盖住的课件照样算一处。所以界面上不能写成
+   * 「会影响 N 道题」，那是个我们算不出来的数。
+   */
+  usedByCount?: number
 }
 
 /** 谁能看见这一份。两档，没有第三档。 */
 export type SpaceMaterialVisibility = 'members' | 'admins'
+
+/**
+ * 资料库清单现在到哪一步了。
+ *
+ * `error` 与「这一份都没有」是两件事：读不出来的时候不能把指导里已经引用的编号当成
+ * 失效的 —— 那等于让人凭一次网络失败删掉有效的引用。
+ */
+export type SpaceMaterialsState = 'loading' | 'ready' | 'error'

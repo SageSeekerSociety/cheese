@@ -1,6 +1,12 @@
 <template>
   <router-view v-if="currentRoute.meta.publicLanding" />
   <my-app v-else>
+    <!-- Skip-to-content: the shell's first focusable element, so one Tab lands
+         on it. Kept out of view until focused (see .skip-link). Target is the
+         <main> below (id="main-content" + tabindex="-1"). -->
+    <a class="skip-link" href="#main-content" @click.prevent="skipToContent">{{
+      t('navigation.shell.skipToContent')
+    }}</a>
     <!-- 桌面端：使用 StatusBar -->
     <template v-if="$vuetify.display.mdAndUp">
       <keep-alive>
@@ -30,9 +36,11 @@
     </template>
 
     <v-main
+      id="main-content"
       ref="mainRef"
       class="bg-background h-100"
       :class="{ 'app-main--pending': firstRoutePending, 'app-main--phone': !$vuetify.display.mdAndUp }"
+      tabindex="-1"
     >
       <!-- 内容区是一整块 surface，外框（一级导航、侧栏、顶栏）是 canvas：设计规范 §1.4。
            左边那条线就是侧栏和内容的分界；没有侧栏的页面，这块面挨着一级导航，左上角
@@ -103,8 +111,13 @@
           :inheritance="sourceInheritance"
           :loading="sourceInheritanceLoading"
         />
+        <!-- Three lines of quota detail sat right under the floating label of the
+             field below. The one line that changes what a project can expect
+             stays; the rest moves behind the notice's own disclosure, and the
+             gap below clears the label. -->
         <ResourceLimitsNotice
           v-if="newProjectDialog"
+          class="mt-3 mb-6"
           :own="newProjectTeams.find((team) => team.id === newProjectTeamId)?.personal"
         />
         <v-text-field
@@ -169,9 +182,9 @@
         </div>
         <v-alert v-if="teamLoadError" type="error" density="compact" variant="tonal" class="mt-3">
           {{ teamLoadError }}
-          <v-btn variant="text" size="small" :loading="loadingTeams" @click="loadProjectTeams">{{
+          <BaseButton kind="secondary" size="sm" :loading="loadingTeams" @click="loadProjectTeams">{{
             t('work.newProject.retry')
-          }}</v-btn>
+          }}</BaseButton>
         </v-alert>
       </div>
       <div v-if="newProjectStep === 2">
@@ -186,10 +199,9 @@
           @keyup.enter="confirmNewProject"
         >
           <template #append-inner>
-            <v-btn
-              variant="text"
+            <BaseButton
               icon="mdi-dice-multiple-outline"
-              size="small"
+              size="sm"
               :aria-label="t('work.teammate.random')"
               :title="t('work.teammate.random')"
               :disabled="creatingProject"
@@ -203,16 +215,16 @@
         {{ newProjectError }}
       </v-alert>
       <template v-if="newProjectStep === 2" #actions>
-        <v-btn variant="text" :disabled="creatingProject" @click="newProjectStep = 1">{{
+        <BaseButton kind="ghost" :disabled="creatingProject" @click="newProjectStep = 1">{{
           t('work.teammate.back')
-        }}</v-btn>
+        }}</BaseButton>
       </template>
     </AdaptiveDialog>
 
     <v-snackbar v-model="showProjectListWarning" :timeout="8000">
       {{ projectListWarning }}
       <template #actions>
-        <v-btn variant="text" @click="loadCxProjects">{{ t('work.newProject.retry') }}</v-btn>
+        <BaseButton kind="secondary" @click="loadCxProjects">{{ t('work.newProject.retry') }}</BaseButton>
       </template>
     </v-snackbar>
 
@@ -245,6 +257,7 @@ import { useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
 import { avatarColor } from '@/utils/avatar'
+import { scrollBehavior } from '@/utils/motion'
 import { pendingSudo } from '@/utils/sudo'
 
 import { useAwaitingCount } from '@/composables/useAwaitingCount'
@@ -266,6 +279,7 @@ import { defineCommands } from '@/commands'
 import { copyLink, linkOf } from '@/commands/copy'
 import CommandPalette from '@/commands/palette/CommandPalette.vue'
 import { installShortcuts } from '@/commands/shortcuts'
+import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AppBar from '@/components/common/Navigation/AppBar.vue'
 import MobileAppBar from '@/components/common/Navigation/MobileAppBar.vue'
@@ -434,6 +448,16 @@ onMounted(loadCxProjects)
 // 也不做内边距过渡，露出来的时候已经在最终位置上。
 const firstRoutePending = ref(true)
 const mainRef = ref<{ $el: Element } | null>(null)
+
+/** 跳到正文：把焦点落到 <main>（要 tabindex="-1" 才接得住），并把它滚进视野。
+ *  滚动的快慢跟着「减弱动效」走（utils/motion）。 */
+function skipToContent(): void {
+  const el = mainRef.value?.$el
+  if (!(el instanceof HTMLElement)) return
+  el.focus()
+  el.scrollIntoView({ block: 'start', behavior: scrollBehavior() })
+}
+
 onMounted(async () => {
   await router.isReady().catch(() => {})
   await nextTick()
@@ -812,6 +836,37 @@ function projectAvatar(name: string): string {
     animation: none;
   }
 }
+
+/* 跳到正文：外壳的第一个可聚焦元素。平时藏在屏幕上沿之外，键盘聚焦时才滑下来，
+   露出琥珀色焦点环（全局 :focus-visible 那条）。只动 transform，不碰其他属性 ——
+   设计规范 §9；减弱动效由 style.css 末尾的全局规则统一压掉。 */
+/* 跳转目标只是落点，不是控件：程序化 focus 之后不给整个内容区画一圈焦点环。 */
+#main-content:focus {
+  outline: none;
+}
+
+.skip-link {
+  position: fixed;
+  top: 10px;
+  left: 16px;
+  z-index: var(--z-banner); /* 压在顶栏和抽屉之上，和 OfflineBanner 同一档 */
+  padding: 8px 14px;
+  font-size: 14px;
+  line-height: var(--lh-14);
+  color: var(--ink);
+  text-decoration: none;
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  box-shadow: var(--shadow-2);
+  transform: translateY(-160%);
+  transition: transform var(--dur-quick) var(--ease-out);
+}
+.skip-link:focus,
+.skip-link:focus-visible {
+  transform: none;
+}
+
 .app-content {
   min-height: 0;
   overflow: auto;

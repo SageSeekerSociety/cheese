@@ -306,8 +306,9 @@ SUBSCRIPTION = "subscription"
 GATEWAY = "gateway"
 
 # Which layer `reason` came from, and so how a refusal carrying it is rendered:
-# a budget refusal is a 429 the client should back off from, a binding refusal
-# is a 400 nobody should retry until the card changes.
+# a budget refusal is a 429 that tells the client the cap is reached and not to
+# retry into it, a binding refusal is a 400 nobody should retry until the card
+# changes.
 BUDGET = "budget"
 BINDING = "binding"
 
@@ -339,6 +340,9 @@ class Verdict:
     # this is the only thing that says which model the turn runs on. Empty means
     # the backend did not say, and the client's own choice is forwarded.
     model: str = ""
+    # When a budget refusal stops applying, in Unix seconds; None when nothing
+    # will change it on its own (the credits are spent, not a window full).
+    reopens_at: int | None = None
     # True = NOBODY ANSWERED. This verdict was manufactured here — admission is
     # unconfigured, the project is unknown, or the backend could not be reached
     # — so every field on it is a default, `pool` included. Defaults to True so
@@ -386,6 +390,7 @@ def _post_admission(
     pool = supply.get("pool")
     model = supply.get("model")
     kind = data.get("reason_kind")
+    reopens_at = data.get("reopens_at")
     return Verdict(
         allow=bool(data.get("allow", True)),
         reason=str(data.get("reason", "")),
@@ -393,6 +398,7 @@ def _post_admission(
         pool=pool if pool in (SUBSCRIPTION, GATEWAY) else SUBSCRIPTION,
         key=supply.get("key") or None,
         model=model if isinstance(model, str) else "",
+        reopens_at=reopens_at if isinstance(reopens_at, int) else None,
         # The backend answered; `pool` below is its word, not a default.
         fail_open=False,
     )

@@ -15,9 +15,13 @@ from sqlalchemy import select
 
 from app.api.deps import get_chat_service
 from app.core.config import settings
+from app.domain.agent import room_reads
 from app.domain.agent.chat import ChatService
+from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.models import AgentTurn
 from app.domain.block.models import Block
+from app.domain.delivery.input_identity import InputIdentity, InputReceipt
+from app.domain.delivery.models import NativeInput
 from app.main import app
 from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.conftest import wait_work_idle as _wait_work_idle
@@ -28,6 +32,7 @@ from tests.integration.conftest import (
     session_auth_headers,
     session_token,
 )
+from tests.support.room_reader import room_reader
 
 
 def _bearer(handle: str) -> dict:
@@ -123,14 +128,29 @@ def test_an_input_counts_as_received_only_once_the_session_echoes_it(
     """The build taking an input off its queue is not the build having it: only
     the echo of that exact input (``isReplay``) is the receipt."""
     chat = client.app.dependency_overrides[get_chat_service]()
-    receipts: list[str] = []
+    receipts: list[InputReceipt] = []
     original = chat.confirm_prompt_receipt
 
-    async def observe(topic_id, prompt):
-        receipts.append(prompt)
-        await original(topic_id, prompt)
+    async def observe(receipt: InputReceipt):
+        await original(receipt)
+        if receipt.evidence == "native_echo":
+            session = stub_hooks._session_for(receipt.identity.topic_id)
+            input_id = uuid.UUID(taken[0])
+            assert receipt.identity == InputIdentity(
+                session.project_id,
+                session.topic_id,
+                session.actor,
+                CLAUDE_CODE,
+                session.session_id,
+                input_id,
+                input_id,
+            )
+            assert receipt.execution_work_id == uuid.UUID(session.work)
+            receipts.append(receipt)
 
-    chat._compute.bind_receipts(observe)
+    chat._compute.bind_reader(
+        room_reader(receipts=observe, rest=room_reads.reader(chat))
+    )
     taken: list[str] = []
 
     def turn(topic, prompt, reply, agent=None):
@@ -231,20 +251,36 @@ def test_a_message_read_inside_the_running_turn_ends_with_it(
             lambda f: f["type"] == "event_block" and "make test" in str(f["block"]),
         )
 
-        # The room no longer counted the first turn as live when the next
-        # message came in, so it went to the session as a turn of its own.
-        async def no_live_turn(*_args, **_kwargs):
-            return None
-
-        monkeypatch.setattr(chat, "merge_into_running_turn", no_live_turn)
+        # Use the running session's actual injection path. Hiding that path
+        # exercises durable deferral, not a message read inside this work.
+        before = len(_written(stub_hooks, room))
         post_message(client, room, "alice", {"content": "@芝士 顺便跑一下 lint"})
-        assert _wait_for(client, room, lambda: len(prompts) == 2)
+        assert _wait_for(client, room, lambda: len(_written(stub_hooks, room)) > before)
+        injected = _written(stub_hooks, room)[-1]["message"]["content"]
+        assert "顺便跑一下 lint" in injected
+        # The stub calls emit_turn for each stdin write, including steer.
+        assert len(prompts) == 2
 
         stub_hooks.returns(topic, "Bash", "42 passed")
-        stub_hooks.acknowledges(topic, prompts[1])
+        stub_hooks.acknowledges(topic, injected)
         stub_hooks.says(topic, "测试和 lint 都过了")
         stub_hooks.stops(topic, "测试和 lint 都过了")
         assert _until_done(ws)[-1]["type"] == "done"
+
+    client.portal.call(settle_turn, chat, topic)
+
+    async def assert_same_work():
+        async with client.test_factory() as session:
+            inputs = list(
+                await session.scalars(
+                    select(NativeInput).where(NativeInput.topic_id == topic)
+                )
+            )
+            assert len(inputs) == 2
+            assert len({row.execution_work_id for row in inputs}) == 1
+            assert all(row.echoed_at and row.completed_at for row in inputs)
+
+    client.portal.call(assert_same_work)
 
     async def open_turns() -> list[AgentTurn]:
         async with client.test_factory() as session:
@@ -264,6 +300,80 @@ def test_a_message_read_inside_the_running_turn_ends_with_it(
     with caplog.at_level("INFO", logger="app.domain.agent.chat"):
         client.portal.call(chat.remind_silent_turns)
     assert "chat progress reminder topic=" not in caplog.text
+
+
+def test_a_message_without_live_handoff_waits_for_completion_then_recovers(
+    client, stub_hooks, monkeypatch
+):
+    """Losing the live handoff must not bypass unfinished durable work or lose
+    the next message: committed completion resumes it without another summon."""
+    chat = client.app.dependency_overrides[get_chat_service]()
+    prompts: list[str] = []
+
+    def turn(topic, prompt, reply, agent=None):
+        prompts.append(prompt)
+        stub_hooks.starts(topic)
+        stub_hooks.acknowledges(topic, prompt)
+        if len(prompts) == 1:
+            stub_hooks.uses(topic, "Bash", command="make test")
+        else:
+            stub_hooks.says(topic, "lint 也过了")
+            stub_hooks.stops(topic, "lint 也过了")
+
+    stub_hooks.emit_turn = turn
+    room = _room(client)
+    topic = uuid.UUID(room)
+
+    async def no_live_handoff(*args, **kwargs):
+        return None
+
+    with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
+        post_message(client, room, "alice", {"content": "@芝士 跑一下测试"})
+        _until(
+            ws,
+            lambda f: f["type"] == "event_block" and "make test" in str(f["block"]),
+        )
+        before = len(_written(stub_hooks, room))
+        with monkeypatch.context() as hidden:
+            hidden.setattr(chat, "merge_into_running_turn", no_live_handoff)
+            second = post_message(
+                client, room, "alice", {"content": "@芝士 顺便跑一下 lint"}
+            )
+
+            def deferred():
+                blocks = _blocks(client, id=uuid.UUID(second["id"]))
+                return blocks and (blocks[0].meta or {}).get("deferred_native_input")
+
+            assert _wait_for(client, room, deferred)
+            assert len(prompts) == 1
+            assert len(_written(stub_hooks, room)) == before
+
+        stub_hooks.returns(topic, "Bash", "42 passed")
+        stub_hooks.stops(topic, "测试过了")
+        assert _wait_for(client, room, lambda: len(prompts) == 2)
+
+    client.portal.call(settle_turn, chat, topic)
+    assert "顺便跑一下 lint" in prompts[1]
+
+    async def completed_separately():
+        async with client.test_factory() as session:
+            inputs = list(
+                await session.scalars(
+                    select(NativeInput).where(NativeInput.topic_id == topic)
+                )
+            )
+            assert len(inputs) == 2
+            assert len({row.execution_work_id for row in inputs}) == 2
+            assert all(row.echoed_at and row.completed_at for row in inputs)
+            turns = list(
+                await session.scalars(
+                    select(AgentTurn).where(AgentTurn.topic_id == topic)
+                )
+            )
+            assert len(turns) == 2
+            assert all(row.stopped_at for row in turns)
+
+    client.portal.call(completed_separately)
 
 
 def test_a_sub_threads_work_lands_on_its_card(client, stub_hooks):

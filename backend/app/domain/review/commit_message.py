@@ -16,6 +16,8 @@ to the writer instead of the parser.
 
 import re
 
+from app.core.sentences import say
+
 #: The Conventional Commits v1.0.0 types, plus `revert`. Kept deliberately
 #: closed: an open type list is how `misc:` and `update:` creep in.
 TYPES = (
@@ -58,29 +60,21 @@ def check_subject(subject: str) -> str:
     point — an error that only says "invalid" costs a whole turn to act on."""
     subject = subject.strip()
     if not subject:
-        raise InvalidSubject("提交标题不能为空")
+        raise InvalidSubject(say("commitSubjectEmpty"))
     if "\n" in subject:
-        raise InvalidSubject("提交标题只能有一行；解释写进正文（--body）")
+        raise InvalidSubject(say("commitSubjectOneLine"))
     match = _SUBJECT.match(subject)
     if match is None:
-        raise InvalidSubject(
-            "提交标题要符合 Conventional Commits：`type(scope): description`，"
-            f"type 取值 {', '.join(TYPES)}。例：`fix(accept): keep the PR "
-            "branch when a merge conflicts`"
-        )
+        raise InvalidSubject(say("commitSubjectConventional", types=", ".join(TYPES)))
     if len(subject) > MAX_SUBJECT:
         raise InvalidSubject(
-            f"提交标题 {len(subject)} 字符，超过 {MAX_SUBJECT}；"
-            "把细节挪进正文（--body），标题只说改了什么"
+            say("commitSubjectTooLong", length=len(subject), max=MAX_SUBJECT)
         )
     if subject.endswith("."):
-        raise InvalidSubject("提交标题结尾不加句号")
+        raise InvalidSubject(say("commitSubjectNoPeriod"))
     description = match.group("description")
     if _CJK.search(description):
-        raise InvalidSubject(
-            "提交标题用英文祈使句（这是要进 git 历史、给仓库所有读者看的）。"
-            "话题里照常说中文，只有提交标题和正文是英文"
-        )
+        raise InvalidSubject(say("commitSubjectEnglish"))
     # Deliberately NOT enforced: a lowercase first letter. `fix(accept):
     # GitHub token refresh fails` is correct and starts with a capital, and no
     # cheap rule separates that from `Fix the thing` without rejecting real

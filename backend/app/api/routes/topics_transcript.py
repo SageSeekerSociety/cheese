@@ -57,9 +57,9 @@ from app.api.routes.topics import (
     _actor_in_place,
 )
 from app.core.errors import NotFoundError
+from app.core.sentences import say
 from app.domain.agent.step_output import without_output
 from app.domain.agent.turn_times import turn_starts
-from app.domain.block.notice_text import say
 from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="/topics", tags=["topics"])

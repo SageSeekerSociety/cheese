@@ -23,6 +23,7 @@ from app.api.response import ok
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, NotFoundError
+from app.core.sentences import say
 from app.domain.agent.preview_hub import preview_hub
 from app.domain.agent.preview_owner import inspect_owner
 from app.domain.block.queries import latest_preview_for_room
@@ -49,7 +50,7 @@ async def preview_session(
 ) -> dict:
     actor = await resolver.resolve(topic_id=topic_id)
     if not actor.authenticated:
-        raise AuthenticationRequiredError("请先登录")
+        raise AuthenticationRequiredError(say("signInFirst"))
     place = await require_preview_access(db, topic_id, actor.handle)
     resource = None
     if selection is not None:

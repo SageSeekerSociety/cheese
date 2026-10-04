@@ -6,6 +6,7 @@ import { computed, ref, toRaw, watch } from 'vue'
 
 import { createProjectAgent, getProjectDefaultModel, updateProjectAgent } from '../../api'
 import { t } from '../../i18n'
+import { teammateName } from '../../lib/agentNames'
 import { modelChoiceProps } from '../../lib/modelChoices'
 import { displayNameError, handleError } from '../../lib/projectAgents'
 import AdaptiveDialog from '../common/AdaptiveDialog.vue'
@@ -19,6 +20,8 @@ const props = defineProps<{
 const emit = defineEmits<{ 'update:modelValue': [boolean]; saved: [] }>()
 const isNew = computed(() => props.agent === null)
 const displayName = ref('')
+// The name the field opened with. Saved unchanged, it is not sent.
+const shownName = ref('')
 const handle = ref('')
 const presetName = ref<string | null>(null)
 const draft = ref<AgentConfiguration>({ body: '', skills: [] })
@@ -62,7 +65,8 @@ watch(
     if (!open) return
     submitted.value = false
     error.value = null
-    displayName.value = props.agent?.display_name ?? ''
+    displayName.value = props.agent ? teammateName(props.agent.display_name, props.agent.name_source) : ''
+    shownName.value = displayName.value
     handle.value = props.agent?.handle ?? ''
     presetName.value = null
     specifyModel.value = !!props.agent?.configuration.model
@@ -92,7 +96,14 @@ async function save() {
       display_name: displayName.value.trim(),
       configuration: { ...draft.value, model: specifyModel.value ? draft.value.model : null },
     }
-    if (props.agent?.id) await updateProjectAgent(props.projectId, props.agent.id, payload)
+    // A name left as it was shown stays unset: saving the default teammate's
+    // settings must not turn the name it is shown by into one somebody chose.
+    if (props.agent?.id)
+      await updateProjectAgent(
+        props.projectId,
+        props.agent.id,
+        payload.display_name === shownName.value ? { configuration: payload.configuration } : payload
+      )
     else
       await createProjectAgent(props.projectId, {
         ...payload,

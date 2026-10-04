@@ -7,6 +7,7 @@ import { useI18n } from 'vue-i18n'
 import { getPlatformFeishuApp, savePlatformFeishuApp } from '@/api/feishu'
 import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminPage from '@/components/admin/AdminPage.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 import { relTime } from '@/lib/relTime'
 
 // 管理后台的「飞书应用」（`/admin/integrations`）：平台**唯一**一处飞书应用凭据。
@@ -147,9 +148,9 @@ onMounted(load)
           <p v-if="saveError" role="alert" class="afi__error t-body">{{ saveError }}</p>
           <div class="afi__actions">
             <span v-if="saved" role="status" class="t-meta c-faint">{{ t('integrations.admin.saved') }}</span>
-            <v-btn color="primary" variant="flat" :loading="saving" :disabled="loading" @click="save">
+            <BaseButton kind="primary" :loading="saving" :disabled="loading" @click="save">
               {{ t('integrations.admin.save') }}
-            </v-btn>
+            </BaseButton>
           </div>
         </div>
       </template>

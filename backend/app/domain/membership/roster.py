@@ -69,6 +69,9 @@ class Member:
     # message's recipient names (``AgentInstance.handle``). The row is found by
     # it wherever only that handle is known.
     instance_handle: str | None = None
+    # A teammate's ``name_source``: ``default`` while it still carries the name
+    # it was born with, which a screen shows in its reader's language.
+    name_source: str | None = None
 
     def as_dict(self) -> dict:
         """读名册的调用方拿到的那一行。
@@ -94,6 +97,8 @@ class Member:
             row["created_at"] = self.created_at
         if self.instance_handle is not None:
             row["instance_handle"] = self.instance_handle
+        if self.name_source is not None:
+            row["name_source"] = self.name_source
         return row
 
 
@@ -154,6 +159,7 @@ async def roster(session: AsyncSession, project_id: uuid.UUID) -> tuple[Member, 
     for instance in await AgentInstanceService(session).list_for_project(project_id):
         seat = agent_instance_handle(instance.id)
         name = instance.display_name or instance.handle
+        name_source = AgentInstanceService.resolved(instance).name_source.value
         index = at.get(seat)
         if index is None:
             rows.append(
@@ -165,6 +171,7 @@ async def roster(session: AsyncSession, project_id: uuid.UUID) -> tuple[Member, 
                     project_default=instance.id == default_instance_id,
                     source="agent",
                     instance_handle=instance.handle,
+                    name_source=name_source,
                 )
             )
             at[seat] = len(rows) - 1
@@ -184,6 +191,7 @@ async def roster(session: AsyncSession, project_id: uuid.UUID) -> tuple[Member, 
             team_handle=held.team_handle,
             created_at=held.created_at,
             instance_handle=instance.handle,
+            name_source=name_source,
         )
     return tuple(rows)
 

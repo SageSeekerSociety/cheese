@@ -61,7 +61,7 @@ const liveName = computed(() =>
     </span>
     <div class="notice-row__body">
       <div v-if="!cont" class="notice-row__meta">
-        <span class="notice-row__name">{{ name }}</span>
+        <span class="notice-row__name" data-user-content>{{ name }}</span>
         <span class="notice-row__meta-time">{{ time }}</span>
       </div>
       <slot />

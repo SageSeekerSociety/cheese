@@ -678,14 +678,16 @@ def stop_executor(home: Path, resource: str) -> None:
         if sys.platform == "win32":
             stop_windows_helper(home, pid, expected)
             continue
-        command = run_command(["ps", "-p", str(pid), "-o", "args="])
+        # -ww: ps otherwise truncates each line to the terminal width, and a
+        # long tmp path then fails the substring check below without a word.
+        command = run_command(["ps", "-ww", "-p", str(pid), "-o", "args="])
         if expected in command.stdout:
             try:
                 os.kill(pid, 15)
             except ProcessLookupError:
                 continue
             for _ in range(30):
-                command = run_command(["ps", "-p", str(pid), "-o", "args="])
+                command = run_command(["ps", "-ww", "-p", str(pid), "-o", "args="])
                 if expected not in command.stdout:
                     break
                 time.sleep(0.1)

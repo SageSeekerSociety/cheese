@@ -174,8 +174,8 @@ COPY --chown=cheese:python alembic.ini ./
 # The sentences the platform says — room lines, refusals, push — in every UI
 # language. Their one copy is the frontend's catalog, outside this context, so
 # it comes in through the named `i18n` context (build.yml), to the place
-# app/domain/block/notice_text.py reads it from: four levels above that module,
-# which here is /. Without it the backend does not start.
+# app/core/sentences.py reads it from: three levels above that module's
+# directory (/app/app/core), which here is /. Without it the backend does not start.
 COPY --from=i18n --chown=cheese:python zh-CN/roomNotice.json zh-CN/apiError.json zh-CN/global.json /frontend/src/i18n/messages/zh-CN/
 COPY --from=i18n --chown=cheese:python en/roomNotice.json en/apiError.json en/global.json /frontend/src/i18n/messages/en/
 # The agent-side assets the BACKEND serves at runtime: the `cheese` platform CLI

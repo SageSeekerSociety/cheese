@@ -69,7 +69,7 @@ import type { AgentFieldChoice } from './lib/modelChoices'
 import type { SitePage } from './types/site'
 
 import { desktopAppHeaders } from './lib/desktopApp'
-import { refusalText } from './lib/noticeText'
+import { refusalText, refusalWords } from './lib/noticeText'
 import { createPreviewPdfReader } from './lib/previewPdf'
 import { rateLimitedText, rateLimitRetryMs } from './lib/rateLimit'
 import { refreshSession } from './lib/session'
@@ -377,7 +377,7 @@ async function connectorRequest<T>(path: string, init?: RequestInit): Promise<T>
     let message = `HTTP ${res.status}`
     try {
       const body = await res.json()
-      message = body?.message || body?.detail || message
+      message = refusalWords(body) || body?.detail || message
     } catch {
       // non-JSON error body — keep the status message
     }
@@ -408,9 +408,9 @@ async function legacyRequest<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiError(res.status, transportFailureMessage(method, res.status))
   }
   if (!res.ok) {
-    const said = body as { message?: string; error?: { name?: string; message?: string } }
-    const serverSaid = refusalText(body, said.message || said.error?.message || '')
-    throw new Error(serverSaid ? `${serverSaid}（HTTP ${res.status}）` : `HTTP ${res.status} for ${path}`)
+    const serverSaid = refusalWords(body)
+    const http = `HTTP ${res.status}`
+    throw new Error(serverSaid ? t('global.labelWithAside', { label: serverSaid, aside: http }) : `${http} for ${path}`)
   }
   const envelope = body as ApiEnvelope<T>
   if (envelope.code !== 200) {
@@ -970,7 +970,7 @@ export function getTopicComputeProfile(topicId: string): Promise<TopicComputePro
 export function listDeviceSessions(
   projectId: string,
   deviceId: string
-): Promise<{ sessions: import('./cx_types').DeviceSession[]; hidden: number }> {
+): Promise<{ sessions: import('./types/deviceSessions').DeviceSession[]; hidden: number }> {
   return request(`/projects/${encodeURIComponent(projectId)}/devices/${encodeURIComponent(deviceId)}/sessions`)
 }
 
@@ -1602,7 +1602,7 @@ export async function attachLibraryFile(topicId: string, libraryPath: string): P
   })
   const envelope = (await res.json().catch(() => null)) as ApiEnvelope<ChatAttachment> | null
   if (!res.ok || !envelope || envelope.code !== 200) {
-    throw new Error(envelope?.message || t('global.request.addFailed', { status: res.status }))
+    throw new Error(refusalWords(envelope) || t('global.request.addFailed', { status: res.status }))
   }
   return envelope.data
 }
@@ -1627,7 +1627,7 @@ export async function uploadAttachment(
   })
   const envelope = (await res.json().catch(() => null)) as ApiEnvelope<ChatAttachment> | null
   if (!res.ok || !envelope || envelope.code !== 200) {
-    throw new Error(envelope?.message || t('global.request.uploadFailed', { status: res.status }))
+    throw new Error(refusalWords(envelope) || t('global.request.uploadFailed', { status: res.status }))
   }
   return envelope.data
 }

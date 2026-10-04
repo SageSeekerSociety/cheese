@@ -22,20 +22,22 @@
       >
         <template #buttons="{ isSubmitting }">
           <div class="d-flex gap-4">
-            <v-btn variant="text" :disabled="isSubmitting || isResubmitting" @click="navigateToDetail">{{
+            <BaseButton kind="ghost" :disabled="isSubmitting || isResubmitting" @click="navigateToDetail">{{
               t('global.cancel')
-            }}</v-btn>
-            <v-btn color="primary" :loading="isSubmitting" type="submit">{{ t('tasks.edit.saveChanges') }}</v-btn>
-            <v-btn
+            }}</BaseButton>
+            <BaseButton kind="primary" :loading="isSubmitting" type="submit">{{
+              t('tasks.edit.saveChanges')
+            }}</BaseButton>
+            <BaseButton
               v-if="showResubmitButton"
-              color="success"
+              kind="secondary"
               :loading="isResubmitting"
               :disabled="isSubmitting"
               type="button"
               @click="submitWithReapproval"
             >
               {{ t('tasks.edit.saveAndResubmit') }}
-            </v-btn>
+            </BaseButton>
           </div>
         </template>
       </TaskForm>
@@ -57,7 +59,9 @@ import { useSpaceData } from '@/composables/useSpaceData'
 import { LoadingErrorContainer } from './components'
 import { useTaskData, useTaskManagement } from './composables'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import TaskForm from '@/components/tasks/TaskForm.vue'
+import { closeOverlay } from '@/lib/backOut'
 import { TasksApi } from '@/network/api/tasks'
 import { useSpaceStore } from '@/stores/space'
 
@@ -123,8 +127,13 @@ const handleSubmitWithReapproval = async (formData: any) => {
   }
 }
 
+// 保存 / 取消之后回题目详情。**不是 push**：进来时就是从详情 push 过来的（`Detail.vue`
+// 的 `editTask`），出去再 push 一次，身后就多一条详情，按 ← 会落回那张刚保存过的表单。
+// 去向是定的（详情），所以走 closeOverlay：身后正是它就退一格，否则 replace 过去。
+// 题目详情不在 `App.vue` 的 `keptAlivePages` 里，退回去是重新挂载、重取一遍，不会拿
+// 编辑前的旧数据。
 const navigateToDetail = () => {
-  router.push({ name: 'TasksDetail', params: { spaceId: taskData.value?.space?.id, taskId: taskId } })
+  closeOverlay(router, { name: 'TasksDetail', params: { spaceId: taskData.value?.space?.id, taskId: taskId } })
 }
 
 onMounted(async () => {

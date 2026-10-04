@@ -13,9 +13,9 @@
       <div class="srow">
         <span class="srow__k">{{ t('account.security.password') }}</span>
         <span class="srow__v">{{ t('account.security.passwordNote') }}</span>
-        <v-btn variant="outlined" color="on-surface" size="small" @click="showChangePassword = true">
+        <BaseButton kind="secondary" size="sm" @click="showChangePassword = true">
           {{ t('account.security.change') }}
-        </v-btn>
+        </BaseButton>
       </div>
 
       <div class="srow">
@@ -27,16 +27,15 @@
           }}</template>
           <template v-else>{{ t('account.security.noPasskeys') }}</template>
         </span>
-        <v-btn
-          variant="outlined"
-          color="on-surface"
-          size="small"
+        <BaseButton
+          kind="secondary"
+          size="sm"
           :disabled="!webAuthnSupported"
           :loading="addingPasskey"
           @click="handleAddPasskey"
         >
           {{ t('account.security.add') }}
-        </v-btn>
+        </BaseButton>
       </div>
       <div v-for="passkey in passkeys" :key="passkey.id" class="srow srow--sub">
         <span class="srow__k srow__k--quiet">
@@ -44,15 +43,14 @@
           {{ passkey.backedUp ? t('account.security.passkeySynced') : t('account.security.passkeyOneDevice') }}
         </span>
         <span class="srow__v">{{ t('account.security.addedOn', { date: formatDate(passkey.createdAt) }) }}</span>
-        <v-btn
-          variant="text"
-          color="on-surface"
-          size="small"
+        <BaseButton
+          kind="ghost"
+          size="sm"
           :loading="deletingPasskey === passkey.id"
           @click="handleDeletePasskey(passkey.id)"
         >
           {{ t('account.security.remove') }}
-        </v-btn>
+        </BaseButton>
       </div>
 
       <div class="srow">
@@ -61,29 +59,22 @@
           <span class="status-dot" :class="{ 'status-dot--on': totpEnabled }" aria-hidden="true" />
           {{ totpEnabled ? t('account.security.twoFactorOn') : t('account.security.twoFactorOff') }}
         </span>
-        <v-btn
-          variant="outlined"
-          color="on-surface"
-          size="small"
+        <BaseButton
+          kind="secondary"
+          size="sm"
           :loading="totpBusy"
           @click="totpEnabled ? handleDisableTOTP() : handleInitTOTP()"
         >
           {{ totpEnabled ? t('account.security.turnOff') : t('account.security.turnOn') }}
-        </v-btn>
+        </BaseButton>
       </div>
 
       <div v-if="totpEnabled" class="srow">
         <span class="srow__k">{{ t('account.security.backupCodes') }}</span>
         <span class="srow__v">{{ t('account.security.backupCodesNote') }}</span>
-        <v-btn
-          variant="text"
-          color="on-surface"
-          size="small"
-          :loading="generatingCodes"
-          @click="handleGenerateBackupCodes"
-        >
+        <BaseButton kind="ghost" size="sm" :loading="generatingCodes" @click="handleGenerateBackupCodes">
           {{ t('account.security.regenerate') }}
-        </v-btn>
+        </BaseButton>
       </div>
     </section>
 
@@ -102,15 +93,9 @@
             t('account.security.linkedOn', { date: formatDate(conn.connectedAt) })
           }}</template>
         </span>
-        <v-btn
-          variant="text"
-          color="on-surface"
-          size="small"
-          :loading="unbinding === conn.id"
-          @click="handleUnbind(conn)"
-        >
+        <BaseButton kind="ghost" size="sm" :loading="unbinding === conn.id" @click="handleUnbind(conn)">
           {{ t('account.security.unlink') }}
-        </v-btn>
+        </BaseButton>
       </div>
       <div v-if="connectionsLoaded && !connections.length" class="srow srow--empty">
         {{ t('account.security.noConnections') }}
@@ -120,16 +105,15 @@
     <section class="settings-card">
       <div class="settings-card__head">
         <h2 class="settings-card__title">{{ t('account.security.sessions') }}</h2>
-        <v-btn
+        <BaseButton
           v-if="sessions.some((s) => !s.current)"
-          variant="text"
-          color="on-surface"
-          size="small"
+          kind="ghost"
+          size="sm"
           :loading="signingOutOthers"
           @click="handleSignOutOthers"
         >
           {{ t('account.security.signOutOthers') }}
-        </v-btn>
+        </BaseButton>
       </div>
 
       <div v-for="session in sessions" :key="session.id" class="srow">
@@ -137,7 +121,7 @@
           <v-icon :icon="sessionIcon(session.userAgent)" size="18" />
           {{ deviceLabel(session.userAgent) }}
         </span>
-        <span class="srow__v srow__v--parts">
+        <span class="srow__v srow__v--parts" :title="sessionDetails(session).join(' · ')">
           <!-- The separator belongs to the part after it, so a wrapped row
                never leaves a dot alone at the end of a line; one that lands
                at the start of a line is clipped (see .srow__v--parts). -->
@@ -149,16 +133,15 @@
             ><span v-if="i" class="srow__sep" aria-hidden="true">·</span>{{ part }}</span
           >
         </span>
-        <v-btn
+        <BaseButton
           v-if="!session.current"
-          variant="text"
-          color="on-surface"
-          size="small"
+          kind="ghost"
+          size="sm"
           :loading="signingOut === session.id"
           @click="signOutDevice(session.id)"
         >
           {{ t('account.security.signOutDevice') }}
-        </v-btn>
+        </BaseButton>
       </div>
       <div v-if="sessionsLoaded && !sessions.length" class="srow srow--empty">
         {{ t('account.security.noSessions') }}
@@ -166,7 +149,7 @@
     </section>
 
     <!-- Changing the password -->
-    <v-dialog v-model="showChangePassword" max-width="440" @after-leave="resetPasswordForm">
+    <v-dialog v-model="showChangePassword" :max-width="DIALOG_WIDTH.sm" @after-leave="resetPasswordForm">
       <v-card :title="t('account.security.changePasswordTitle')">
         <v-form ref="passwordForm" @submit.prevent="handleChangePassword">
           <v-card-text class="pt-2">
@@ -190,10 +173,10 @@
           </v-card-text>
           <v-card-actions>
             <v-spacer />
-            <v-btn variant="text" @click="showChangePassword = false">{{ t('account.cancel') }}</v-btn>
-            <v-btn color="primary" variant="flat" type="submit" :loading="changingPassword">
+            <BaseButton kind="ghost" @click="showChangePassword = false">{{ t('account.cancel') }}</BaseButton>
+            <BaseButton kind="primary" type="submit" :loading="changingPassword">
               {{ t('account.security.changePasswordSubmit') }}
-            </v-btn>
+            </BaseButton>
           </v-card-actions>
         </v-form>
       </v-card>
@@ -219,10 +202,9 @@
               <p class="setup__manual">{{ t('account.security.manualKey') }}</p>
               <div class="setup__secret">
                 <code>{{ totpSecret }}</code>
-                <v-btn
+                <BaseButton
                   icon="mdi-content-copy"
-                  size="small"
-                  variant="text"
+                  size="sm"
                   :aria-label="t('account.security.copy')"
                   @click="copy(totpSecret)"
                 />
@@ -248,39 +230,39 @@
               <ul class="setup__codes">
                 <li v-for="code in backupCodes" :key="code">{{ code }}</li>
               </ul>
-              <v-btn
-                variant="outlined"
-                color="on-surface"
-                size="small"
+              <BaseButton
+                kind="secondary"
+                size="sm"
                 prepend-icon="mdi-content-copy"
                 @click="copy(backupCodes.join('\n'))"
               >
                 {{ t('account.security.copyAll') }}
-              </v-btn>
+              </BaseButton>
             </div>
           </transition>
         </v-card-text>
 
         <v-card-actions>
-          <v-btn v-if="setupStep === 'verify'" variant="text" @click="setupStep = 'qr'">
+          <BaseButton v-if="setupStep === 'verify'" kind="ghost" @click="setupStep = 'qr'">
             {{ t('account.security.back') }}
-          </v-btn>
+          </BaseButton>
           <v-spacer />
-          <v-btn v-if="setupStep !== 'backup'" variant="text" @click="closeTotp">{{ t('account.cancel') }}</v-btn>
-          <v-btn v-if="setupStep === 'qr'" color="primary" variant="flat" @click="setupStep = 'verify'">
+          <BaseButton v-if="setupStep !== 'backup'" kind="ghost" @click="closeTotp">{{
+            t('account.cancel')
+          }}</BaseButton>
+          <BaseButton v-if="setupStep === 'qr'" kind="primary" @click="setupStep = 'verify'">
             {{ t('account.security.next') }}
-          </v-btn>
-          <v-btn
+          </BaseButton>
+          <BaseButton
             v-else-if="setupStep === 'verify'"
-            color="primary"
-            variant="flat"
+            kind="primary"
             :loading="totpBusy"
             :disabled="verificationCode.length !== 6"
             @click="handleEnableTOTP"
           >
             {{ t('account.security.verify') }}
-          </v-btn>
-          <v-btn v-else color="primary" variant="flat" @click="closeTotp">{{ t('account.security.done') }}</v-btn>
+          </BaseButton>
+          <BaseButton v-else kind="primary" @click="closeTotp">{{ t('account.security.done') }}</BaseButton>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -300,6 +282,8 @@ import { SudoCancelledError, withSudo } from '@/utils/sudo'
 
 import { deleteOAuthConnection, listOAuthConnections } from '@/api'
 import PasswordField from '@/components/account/PasswordField.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
+import { DIALOG_WIDTH } from '@/components/base/dialogSize'
 import i18n, { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
@@ -726,13 +710,27 @@ onMounted(async () => {
 /* A row of parts joined by dots. Every part reserves the width of one
    separator after it, and every part but the first pulls its own separator
    back into that space. A part that wraps to the start of a line pulls its
-   separator past the left edge instead, where the clip hides it. */
+   separator past the left edge instead, where the clip hides it.
+
+   On the wide layout the row is one line: a device's details that wrap to a
+   second line push the row taller than the sign-out button beside it and the
+   button looks misaligned. So at sm (600px) and up the parts are laid out inline in a
+   single clipped line — anything past the edge is hidden and the full text is
+   on `title`. Below md the row has its own full-width line and wraps freely. */
 .srow__v--parts {
   --sep: 20px;
 
   column-gap: 0;
   row-gap: 2px;
   overflow: hidden;
+}
+
+@media (min-width: 600px) {
+  .srow__v--parts {
+    display: block;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
 }
 
 .srow__part {

@@ -47,7 +47,8 @@
     "confirm": "Push and change",
     "unavailable": "{name} · Unavailable",
     "abandonWarning": "Changing without pushing leaves the unpushed changes on the old computer. They will not reach the new one.",
-    "abandon": "Change without pushing"
+    "abandon": "Change without pushing",
+    "abandonTitle": "Change without pushing?"
   },
   "roomMachine": {
     "edit": "Edit",
@@ -56,6 +57,7 @@
     "more": "Other configurations and devices",
     "projectDefault": "Project default",
     "wholeMachine": "Can access the whole machine",
+    "wholeMachineNotice": "Lets it see the whole machine: it can operate this machine's services and other topics",
     "online": "Online",
     "offline": "Offline",
     "removed": "Removed from the team",
@@ -152,8 +154,7 @@
     "forbidden": "Only the team owner and admins can edit the profile",
     "saved": "Saved",
     "saveFailed": "Could not save. Please try again",
-    "save": "Save",
-    "cancel": "Cancel"
+    "save": "Save"
   },
   "newProject": {
     "title": "New project",
@@ -181,7 +182,8 @@
   },
   "resourceLimits": {
     "projects": "Projects: no limit is set",
-    "concurrent": "Work computers are created on demand. A new project runs at most {count} AI tasks at a time by default; the rest wait in a queue.",
+    "concurrent": "A new project runs at most {count} AI tasks at a time by default; the rest wait in a queue",
+    "detail": "Resource limits",
     "machines": "Cloud machines: a team shares {count} by default. See the team's Work computers page for quota and usage.",
     "machinesOwn": "Cloud machines: projects under your name share {count} by default; see Work computers under your name for credits and usage",
     "failed": "Could not load resource limits",
@@ -412,7 +414,6 @@
       "upgrade": "Move to a new topic",
       "downloadFile": "Download {name}",
       "openFile": "Open {name}",
-      "askAnswered": "{who} picked “{option}”",
       "upgradedToTask": "Moved to a task",
       "upgradedToTopic": "Moved to a topic"
     },
@@ -439,16 +440,6 @@
       "sendPhotos": "Send photos",
       "more": "More actions",
       "send": "Send"
-    },
-    "ask": {
-      "title": "Ask with options",
-      "question": "Question",
-      "option": "Option {n}",
-      "addOption": "Add option",
-      "removeOption": "Remove option",
-      "repeated": "Same as an option above",
-      "send": "Send",
-      "failed": "Couldn't send"
     },
     "dispatched": {
       "created": "New task",
@@ -576,14 +567,16 @@
       "runtimeReady": "App confirmed ready",
       "runtimeFailed": "App reported failure",
       "runtimeUnconfirmed": "Navigation loaded; app readiness unconfirmed",
-      "instanceDisconnected": "Disconnected; keeping the loaded page and waiting for the same instance",
-      "instanceGone": "Original instance replaced; old requests stopped. Refresh to open the current instance",
+      "instanceDisconnected": "Disconnected; still showing the loaded page. The app may be restarting",
+      "instanceGone": "Original instance replaced; old requests stopped",
+      "instanceGoneManual": "The original instance was replaced and the new one hasn't come up. Refresh to open the current instance",
+      "autoReloaded": "The app restarted; reloaded automatically",
       "runningApp": "Running app",
       "download": "Download",
       "frameTitle": "Topic preview",
       "authorizing": "Authorizing the preview…",
       "navigating": "Loading the new page…",
-      "navigationTimeout": "The new page took too long to load. Try again.",
+      "navigationTimeout": "The new page didn't load within {seconds} seconds. Try again.",
       "navigationFailed": "The new page couldn't load. Try again.",
       "retainedPage": "New content hasn't loaded. Still showing the previously opened page.",
       "retryTarget": "Retry new content",
@@ -773,7 +766,16 @@
         "code": "Code block",
         "quote": "Quote",
         "table": "Table",
-        "hr": "Divider"
+        "hr": "Divider",
+        "callout": "Callout",
+        "timeline": "Timeline",
+        "stats": "Stat cards",
+        "columns": "Columns",
+        "details": "Collapsible section",
+        "math": "Formula",
+        "chart": "Chart",
+        "diagram": "Diagram",
+        "status": "Status tag"
       },
       "status": {
         "inProgress": "In progress",
@@ -803,7 +805,96 @@
       "you": "you",
       "emptyLineHint": "Type, or / to insert",
       "undo": "Undo",
-      "redo": "Redo"
+      "redo": "Redo",
+      "blocks": {
+        "calloutKind": "Callout type",
+        "kinds": {
+          "NOTE": "Note",
+          "TIP": "Tip",
+          "IMPORTANT": "Important",
+          "WARNING": "Warning",
+          "CAUTION": "Caution"
+        },
+        "kindHints": {
+          "NOTE": "Extra context",
+          "TIP": "Advice",
+          "IMPORTANT": "Conclusions, decisions",
+          "WARNING": "Risks",
+          "CAUTION": "Actions that can break things"
+        },
+        "fields": {
+          "when": "Time",
+          "title": "Title",
+          "body": "Details",
+          "name": "Name",
+          "value": "Value",
+          "delta": "Change",
+          "summary": "Title"
+        },
+        "itemActions": "Item actions",
+        "moveUp": "Move up",
+        "moveDown": "Move down",
+        "addAfter": "Add an item after",
+        "removeItem": "Delete this item",
+        "addStat": "Add a stat card",
+        "removeStat": "Delete this stat card",
+        "columnActions": "Column actions",
+        "addColumn": "Add a column to the right",
+        "removeColumn": "Delete this column",
+        "toggleDetails": "Expand or collapse",
+        "emptyFormula": "Empty formula",
+        "formulaError": "This formula can’t be displayed",
+        "formulaSource": "Formula",
+        "footnoteMissing": "This footnote can’t be found",
+        "editFootnote": "Edit footnote",
+        "statusWords": "Status text",
+        "statusKinds": {
+          "ok": "Yes, passed",
+          "no": "No, failed",
+          "warn": "At risk, pending"
+        },
+        "statusOff": "Remove",
+        "chartKind": "Chart type",
+        "chartKinds": {
+          "bar": "Bar",
+          "horizontal": "Horizontal bar",
+          "line": "Line",
+          "area": "Area",
+          "stacked": "Stacked bar",
+          "pie": "Pie",
+          "scatter": "Scatter"
+        },
+        "chartHints": {
+          "bar": "Compare sizes",
+          "horizontal": "Compare sizes with long names or many items",
+          "line": "Show a trend",
+          "area": "Show a trend and its total",
+          "stacked": "Compare totals and their parts",
+          "pie": "Show shares",
+          "scatter": "Relate two numbers"
+        },
+        "chartData": "Data",
+        "chartCategory": "Category",
+        "chartValue": "Value",
+        "chartSlice": "{name}: {value} ({percent}%)",
+        "diagramSource": "Source",
+        "askAgent": "Ask {name} to change it",
+        "emptyDiagram": "No content",
+        "diagramError": "The diagram cannot be shown: {reason}",
+        "openDiagram": "View full screen",
+        "closeDiagram": "Close",
+        "rowActions": "Row actions",
+        "columnActionsTable": "Column actions",
+        "addRowEnd": "Add a row at the end",
+        "addColumnEnd": "Add a column at the end",
+        "rowAbove": "Insert a row above",
+        "rowBelow": "Insert a row below",
+        "rowDelete": "Delete this row",
+        "columnLeft": "Insert a column to the left",
+        "columnRight": "Insert a column to the right",
+        "columnDelete": "Delete this column",
+        "diagramTooLong": "The diagram is too large to draw; showing its source"
+      }
     },
     "comments": {
       "comment": "Comment",
@@ -830,6 +921,10 @@
       "resend": "Send again",
       "reading": "{agent} is reading the document…",
       "editing": "{agent} is editing the document…",
+      "readingCode": "{agent} is reading the code…",
+      "searching": "{agent} is searching the project…",
+      "readingMemory": "{agent} is reading the project memory…",
+      "readingAttachment": "{agent} is reading an attachment…",
       "quoteChanged": "The quoted text has changed"
     },
     "chat": {
@@ -848,7 +943,6 @@
       "loadingOlder": "Loading older messages…",
       "older": "Older messages",
       "newMessagesBelow": "New messages below",
-      "pickFailed": "Couldn't select",
       "reactionFailed": "Couldn't update the reaction",
       "undoFailed": "Couldn't undo",
       "downloadFailed": "Couldn't download",
@@ -1268,7 +1362,6 @@
     "deleteTitle": "Delete “{name}”",
     "deleteBody": "This cannot be undone, and messages that referenced it will no longer open this file",
     "deleteFailed": "Delete failed",
-    "cancel": "Cancel",
     "close": "Close",
     "actionsOf": "Actions for {name}",
     "backToList": "Back to library",
@@ -1401,7 +1494,6 @@
       "noMemories": "No memories",
       "deactivateTitle": "Deactivate \"{name}\"",
       "deactivateHint": "New topics can't choose it after this. Topics already using it carry on, and its memory is kept",
-      "cancel": "Cancel",
       "typeGeneral": "General",
       "editor": {
         "presetCustom": "Write your own",
@@ -1607,6 +1699,8 @@
   "skills": {
     "edit": "Edit",
     "discard": "Discard changes",
+    "discardTitle": "Discard the changes to \"{title}\"?",
+    "discardHint": "The changes are dropped and the shipped version comes back. They can't be recovered.",
     "drop": "Discard",
     "history": "Version history",
     "delete": "Delete",
@@ -1663,8 +1757,7 @@
     "restore": "Restore this version",
     "close": "Close",
     "deleteTitle": "Delete \"{title}\"",
-    "deleteHint": "Later rooms will no longer get it, and its version history is deleted too",
-    "cancel": "Cancel"
+    "deleteHint": "Later rooms will no longer get it, and its version history is deleted too"
   },
   "nodeBoard": {
     "loadFailed": "Couldn't load machine status",

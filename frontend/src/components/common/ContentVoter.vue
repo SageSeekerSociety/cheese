@@ -1,11 +1,14 @@
 <template>
   <div class="d-flex align-center voter">
+    <!-- eslint-disable-next-line vue/no-restricted-syntax -- vote counter button, to be folded into BaseButton -->
     <v-btn color="primary" :variant="upvoteBtnVariant" min-width="32px" @click="upvote">
       <v-icon size="24">mdi-menu-up</v-icon>
     </v-btn>
+    <!-- eslint-disable-next-line vue/no-restricted-syntax -- vote counter button, to be folded into BaseButton -->
     <v-btn color="on-background" variant="plain" min-width="0px" class="ms-2" @click="clickCount">
       {{ score }}
     </v-btn>
+    <!-- eslint-disable-next-line vue/no-restricted-syntax -- vote counter button, to be folded into BaseButton -->
     <v-btn color="primary" :variant="downvoteBtnVariant" min-width="32px" @click="downvote">
       <v-icon size="24">mdi-menu-down</v-icon>
     </v-btn>

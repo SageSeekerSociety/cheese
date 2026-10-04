@@ -7,21 +7,15 @@ import { describe, expect, it, vi } from 'vitest'
 
 import en from './messages/en'
 import zhCN from './messages/zh-CN'
-import untranslatedDebt from './untranslated.json'
-import unusedDebt from './unused.json'
 
 // The two catalog directories must describe the same product. A namespace that
 // exists in one locale and not the other is how PR #929 shipped: an English
 // visitor reached the workspace and got a silently half-Chinese screen, and
 // nothing in the build said so. These tests are that "something".
 //
-// Two committed debt lists make the remaining gaps explicit rather than silent:
-//   untranslated.json — leaves that render but have no English
-//   unused.json       — leaves no source file references
-// They are disjoint: a leaf nobody renders is not a translation backlog, and
-// counting it as one would inflate how much work is actually left.
-// Both may only be edited deliberately: an entry that no longer describes
-// reality fails the suite, so the lists shrink honestly instead of rotting.
+// There is no exception list. Every zh-CN leaf has a non-empty English value,
+// and every leaf has a call site; a key that cannot meet both is translated or
+// deleted, never parked.
 
 const SRC = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -122,11 +116,12 @@ for (const template of dynamicTemplates) {
 }
 
 describe('locale catalogs', () => {
-  it('has a zh-CN and an en entry for every key, or an explicit debt entry', () => {
-    const untranslated = new Set(untranslatedDebt)
-    const unused = new Set(unusedDebt)
-    const missing = zhIds.filter((id) => !enById.has(id) && !untranslated.has(id) && !unused.has(id))
-    expect(missing, `${missing.length} 个键既没有英文也不在任何一份清单里`).toEqual([])
+  it('has a non-empty English value for every zh-CN key', () => {
+    const missing = zhIds.filter((id) => !enById.get(id)?.trim())
+    expect(
+      missing,
+      `${missing.length} 个键没有英文（或英文是空串）：在 messages/en/<命名空间>.json 里写上译文`
+    ).toEqual([])
   })
 
   it('has no English key that zh-CN lacks', () => {
@@ -138,28 +133,6 @@ describe('locale catalogs', () => {
       .map((e) => e.id)
       .sort()
     expect(orphans, '这些键只在 en 里存在，永远不会被渲染').toEqual([])
-  })
-
-  it('keeps untranslated.json honest — no stale or dangling entries', () => {
-    expect(
-      untranslatedDebt.filter((id) => enById.has(id)),
-      '这些键已经有英文了，请从 untranslated.json 删掉'
-    ).toEqual([])
-    expect(
-      untranslatedDebt.filter((id) => !zhById.has(id)),
-      '这些键在 zh-CN 里都不存在，是悬空条目——列出叶子，不要列子树'
-    ).toEqual([])
-    expect(
-      untranslatedDebt.filter((id) => unusedDebt.includes(id)),
-      '这些键也躺在 unused.json 里：没人渲染的东西不算翻译欠账，请从 untranslated.json 删掉'
-    ).toEqual([])
-  })
-
-  it('reports how much is still untranslated', () => {
-    // Not an assertion about the size — just make the number visible in the run
-    // output, so "we translated everything" is checkable at a glance.
-    console.log(`[i18n] untranslated: ${untranslatedDebt.length} / ${zhIds.length} keys`)
-    expect(untranslatedDebt.length).toBeLessThanOrEqual(zhIds.length)
   })
 
   it('uses the same placeholders in both locales', () => {
@@ -241,16 +214,8 @@ describe('source and catalog agree', () => {
     expect(empty.sort(), '源码在运行时拼出的键，catalog 里一个对得上的都没有').toEqual([])
   })
 
-  it('does not carry keys no source file uses, unless listed in unused.json', () => {
-    const debt = new Set(unusedDebt)
-    const unused = zhIds.filter((id) => !referenced.has(id) && !debt.has(id)).sort()
-    expect(unused, '这些键没有任何文件引用，要么接上要么删掉，或加进 unused.json').toEqual([])
-  })
-
-  it('keeps unused.json honest — every entry is genuinely unreferenced', () => {
-    const revived = unusedDebt.filter((id) => referenced.has(id)).sort()
-    expect(revived, '这些键已经有人用了，请从 unused.json 删掉').toEqual([])
-    const dangling = unusedDebt.filter((id) => !zhById.has(id)).sort()
-    expect(dangling, '这些键在 zh-CN 里都不存在，是悬空条目——列出叶子，不要列子树').toEqual([])
+  it('does not carry keys no source file uses', () => {
+    const unused = zhIds.filter((id) => !referenced.has(id)).sort()
+    expect(unused, '这些键没有任何文件引用：接上调用，或者从 zh-CN 和 en 两边删掉').toEqual([])
   })
 })

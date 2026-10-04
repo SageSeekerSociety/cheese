@@ -44,6 +44,7 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.sentences import say
 from app.domain.agent.platform_notices import (
     EVENT_GATE_ABANDONED,
     SEVERITY_WARN,
@@ -52,7 +53,6 @@ from app.domain.agent.platform_notices import (
 )
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, BlockKind
-from app.domain.block.notice_text import say
 from app.domain.block.repositories import BlockRepository
 from app.domain.review import archive, notes
 from app.domain.review.gate import GATE_TIMEOUT_S

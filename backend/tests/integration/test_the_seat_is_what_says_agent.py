@@ -21,6 +21,7 @@ import uuid
 
 from app.core.sandbox_auth import mint_project_agent_credential, mint_scoped_token
 from app.domain.identity.handles import agent_instance_handle
+from tests.ask_fixtures import active_ask
 from tests.integration.conftest import (
     join_project_team,
     post_project,
@@ -222,22 +223,34 @@ def test_the_project_s_own_credential_speaks_in_every_room_of_it(client):
     assert published.json()["data"]["author"] == handle
 
 
-def test_the_question_that_credential_asks_is_not_an_input_it_must_read(client):
+def test_the_question_that_credential_asks_is_not_an_input_it_must_read(
+    client, stub_hooks, monkeypatch
+):
     """同一条判据的另一半：它自己问出口的题，不该再回头当成一条没读过的话。
 
-    `/ask` 盖不盖待读标记就看这一问。答错了，「忘了 @」的补救按钮不再答「没有待读
+    `/asks` 盖不盖待读标记就看这一问。答错了，「忘了 @」的补救按钮不再答「没有待读
     的东西」，白开一轮，而那一轮的 prompt 里躺着它刚问出口的这道题。
     """
     project = _project(client, "Project credential asks")
     room = _room(client, project, title="不是根房间")
     token, _ = _project_credential(client, project)
 
-    asked = client.post(
-        f"/topics/{room['id']}/ask",
-        json={"question": "先做哪一个？", "options": ["A", "B"]},
-        headers={"X-Cheese-Token": token},
-    )
-    assert asked.status_code == 200, asked.text
+    # 提问要有在跑的那一轮（它就是「这道题在等谁」的出处），所以题是在这一轮里
+    # 问出口的，用的仍是那张项目凭证。
+    with active_ask(client, stub_hooks, monkeypatch, room["id"], actor="alice"):
+        asked = client.post(
+            f"/topics/{room['id']}/asks",
+            json={
+                "questions": [
+                    {
+                        "question": "先做哪一个？",
+                        "options": [{"text": "A"}, {"text": "B"}],
+                    }
+                ]
+            },
+            headers={"X-Cheese-Token": token},
+        )
+        assert asked.status_code == 200, asked.text
 
     summoned = client.post(
         f"/topics/{room['id']}/summon",

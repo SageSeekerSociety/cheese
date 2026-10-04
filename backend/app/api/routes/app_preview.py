@@ -14,6 +14,11 @@ from fastapi.responses import Response, StreamingResponse
 from starlette.websockets import WebSocket, WebSocketDisconnect, WebSocketState
 
 from app.api import proxy
+from app.api.preview_interstitial import (
+    UNAVAILABLE,
+    is_document_navigation,
+    preview_unavailable_response,
+)
 from app.core.config import settings
 from app.core.sandbox_auth import scoped_token_claims
 from app.domain.agent import preview_tunnel as wire
@@ -321,20 +326,18 @@ async def relay_http(
                 {waiting, gone}, return_when=asyncio.FIRST_COMPLETED
             )
             if gone in done:
+                # The requester left before we had an answer — a page reload
+                # cancels its in-flight fetches. Nobody is here to render a
+                # waiting page, and the app may be perfectly fine, so this is
+                # not the "app unreachable" case the interstitial speaks for.
                 return Response(status_code=404, content=b"preview unavailable")
             try:
                 upstream = await waiting
             except PreviewAdmissionError as exc:
-                return Response(
-                    status_code=409 if exc.state == "instance_gone" else 503,
-                    content=b"preview unavailable",
-                    headers={
-                        "Cache-Control": "no-store",
-                        "X-Cheese-Preview-State": exc.state,
-                        **(
-                            {"Retry-After": "1"} if exc.state != "instance_gone" else {}
-                        ),
-                    },
+                return preview_unavailable_response(
+                    state=exc.state,
+                    navigation=is_document_navigation(request.method, request.headers),
+                    accept_language=request.headers.get("accept-language"),
                 )
         finally:
             gone.cancel()
@@ -342,12 +345,15 @@ async def relay_http(
                 waiting.cancel()
             await asyncio.gather(waiting, gone, return_exceptions=True)
         if upstream is None:
-            if hub is preview_hub:
-                return Response(status_code=404, content=b"preview unavailable")
-            return Response(
-                status_code=503,
-                content=b"preview unavailable",
-                headers={"Retry-After": "1", "Cache-Control": "no-store"},
+            # No response from the app at all: the tunnel dropped, the app is
+            # restarting, the stream timed out. The legacy path answered a bare
+            # 404 here, which a navigation renders as a white frame. Both paths
+            # now say the same transient thing; a navigation also gets the page
+            # that keeps trying.
+            return preview_unavailable_response(
+                state=UNAVAILABLE,
+                navigation=is_document_navigation(request.method, request.headers),
+                accept_language=request.headers.get("accept-language"),
             )
         kept = _response_headers(upstream.headers)
         media_type = next((v for k, v in kept if k.lower() == "content-type"), None)

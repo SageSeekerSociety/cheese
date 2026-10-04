@@ -65,7 +65,7 @@ async def list_topic_members(
             topic.project_id
         )
     }
-    fallback_name = (await TopicService(db).resolve_agent(topic)).display_name
+    fallback = await TopicService(db).resolve_agent(topic)
     items = []
     for m in members:
         d = TopicMemberOut.model_validate(m).model_dump(mode="json")
@@ -76,7 +76,9 @@ async def list_topic_members(
         d["agent"] = is_agent
         if is_agent:
             seated = seats.get(m.member_handle)
-            d["name"] = seated.display_name if seated else fallback_name
+            agent = AgentInstanceService.resolved(seated) if seated else fallback
+            d["name"] = agent.display_name
+            d["name_source"] = agent.name_source.value
         else:
             d["name"] = (
                 profile.nickname if profile and profile.nickname else m.member_handle

@@ -17,7 +17,7 @@
       "resolved": "解决：{v}",
       "deployed": "上线：{v}",
       "days": "近 {n} 天",
-      "clear": "清除这个日期筛选"
+      "clear": "清除这个日期筛选：{chip}"
     },
     "lane": {
       "label": "栏位",
@@ -529,10 +529,23 @@
     "resolved": "已修复",
     "deployed": "已上线",
     "unknown": "未知",
-    "declined": "不修复"
+    "declined": "不修复",
+    "pending": {
+      "received": "收录",
+      "in_progress": "处理",
+      "resolved": "修复",
+      "deployed": "上线"
+    },
+    "passed": {
+      "received": "已收录",
+      "in_progress": "已处理",
+      "resolved": "已修复",
+      "deployed": "已上线"
+    }
   },
   "timeline": {
-    "notStarted": "未开始"
+    "notStarted": "未开始",
+    "noRecord": "无记录"
   },
   "kind": {
     "bug": "Bug",
@@ -613,6 +626,12 @@
       "open": "写下你的评论…",
       "placeholder": "补充你遇到的情况，或者说明为什么这个改动对你重要",
       "submit": "发表评论"
+    },
+    "claim": {
+      "title": "处理人",
+      "nobody": "还没人领取",
+      "claim": "领取",
+      "release": "放弃"
     },
     "aside": {
       "progress": "进展",

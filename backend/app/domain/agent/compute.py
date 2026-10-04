@@ -31,11 +31,9 @@ from app.domain.agent.harness import (
 if TYPE_CHECKING:
     from app.domain.agent.device_provider import DeviceChannel
     from app.domain.agent.harness import (
-        ActivityConsumer,
-        EventConsumer,
+        InputRegistrar,
         MemoryConsumer,
-        ReachabilityConsumer,
-        ReceiptConsumer,
+        RoomReader,
         SessionControls,
         SessionRef,
         UnreadProbe,
@@ -107,6 +105,7 @@ class ComputeProvider(Protocol):
         text: str,
         images: list[dict] | None = None,
         *,
+        register_input: "InputRegistrar",
         expected_work_id: uuid.UUID | None = None,
         agent_handle: str | None = None,
         owes_reply: bool = False,
@@ -211,6 +210,7 @@ class ComputePool:
         text: str,
         images: list[dict] | None = None,
         *,
+        register_input: "InputRegistrar",
         expected_work_id: uuid.UUID | None = None,
         agent_handle: str | None = None,
         owes_reply: bool = False,
@@ -236,6 +236,7 @@ class ComputePool:
                 topic_id,
                 text,
                 images=images,
+                register_input=register_input,
                 expected_work_id=expected_work_id,
                 agent_handle=agent_handle,
                 owes_reply=owes_reply,
@@ -322,38 +323,17 @@ class ComputePool:
             )
         return found
 
-    def bind_events(
-        self,
-        consumer: "EventConsumer",
-        activity: "ActivityConsumer | None" = None,
-    ) -> None:
-        """Give every runtime the room-side persistence and activity owners,
-        and the room's ear for what an agent is in the middle of writing."""
-        from app.domain.agent.live_frames import publish_live
-
+    def bind_reader(self, reader: "RoomReader") -> None:
+        """Give every runtime the room's ear: what its sessions say and do,
+        one item at a time (``RoomReader``)."""
         for runtime in self._runtimes():
-            runtime.bind_events(consumer)
-            if activity is not None:
-                runtime.bind_activity(activity)
-            if (bind_live := getattr(runtime, "bind_live", None)) is not None:
-                bind_live(publish_live)
-
-    def bind_receipts(self, consumer: "ReceiptConsumer") -> None:
-        """Give every runtime the owner of prompt receipts — the consumed-stamp
-        side of #539 decision A."""
-        for runtime in self._runtimes():
-            runtime.bind_receipts(consumer)
+            runtime.bind_reader(reader)
 
     def bind_unread_probe(self, probe: "UnreadProbe") -> None:
         """Give every runtime a way to ask whether anything it was handed is
         still unread — the other half of the same bookkeeping."""
         for runtime in self._runtimes():
             runtime.bind_unread_probe(probe)
-
-    def bind_reachability(self, consumer: "ReachabilityConsumer") -> None:
-        """Give every runtime the owner of 「这一轮在等它的设备」."""
-        for runtime in self._runtimes():
-            runtime.bind_reachability(consumer)
 
     def bind_memory(self, consumer: "MemoryConsumer") -> None:
         """Give every runtime the owner of 「记忆该对账了」.
@@ -408,6 +388,18 @@ class ComputePool:
             if (work := runtime.work_in_flight(topic_id, agent_handle)) is not None
         }
         return works.pop() if len(works) == 1 else None
+
+    async def ask_origin(self, project_id, topic_id, agent_handle):
+        """Read exactly one owning runtime; ambiguity never chooses a seat."""
+        candidates = [
+            runtime
+            for runtime in self._runtimes()
+            if runtime.holds(topic_id, agent_handle)
+        ]
+        if len(candidates) != 1:
+            return None
+        reader = getattr(candidates[0], "ask_origin", None)
+        return await reader(project_id, topic_id, agent_handle) if reader else None
 
     def holds(self, topic_id: uuid.UUID, agent_handle: str | None = None) -> bool:
         """Does any backend still hold a live session for this topic — for
@@ -570,7 +562,7 @@ def build_compute_pool(cloud_channel: "DeviceChannel | None" = None) -> ComputeP
     # 挂谁，由注册表说（结论 43）。一个骨架答不出四条硬性要求就不在 `HARNESSES`
     # 里，而「不在注册表里」如果只是矩阵上少一列，它照样是个活调用点：
     # `recover_sessions` 进程重启后会把它的旧会话恢复回来并写进 `_owners`，
-    # `bind_events` 照样把房间侧的持久化交给它，`deliver` 在没有 owner 的时候照样
+    # `bind_reader` 照样把房间的耳朵交给它，`deliver` 在没有 owner 的时候照样
     # 按 `holds()` 找到它。所以判据落在装配这一步：注册表是唯一的那一处，什么时候
     # 答得出四条、什么时候写回 `HARNESSES`，这里不用跟着改。
     if forwards(CODEX):

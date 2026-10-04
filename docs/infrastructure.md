@@ -79,24 +79,92 @@ calls finish, and is never called by the normal app deployment workflows. It
 reads the same box-local deploy environment and compose overlays as the app
 deployment.
 
-The owner's database pool is set in the compose file (`DB_POOL_SIZE=5`,
-`DB_MAX_OVERFLOW=5` on `device-connection`) and the backend's in
-`app/core/config.py`; together they are sized so the two backends of a rollout
-plus the owner fit a 100-connection server.
+Each standing owner's database pool is set in the compose file
+(`DB_POOL_SIZE=5`, `DB_MAX_OVERFLOW=5` on `device-connection`; `3` and `2` on
+`preview-connection`) and the backend's in `app/core/config.py`; together they
+are sized so the two backends of a rollout plus BOTH owners fit a
+100-connection server — 2×36 + 10 + 5 + 10 reserved for ops = 97, the
+post-superuser budget exactly. That arithmetic is checked by
+`backend/tests/unit/test_db_pool_fits_the_server.py`, which sums every owner
+rather than only the device one; raising either owner pool without re-checking
+it spends a connection the server does not have.
 
-Which side of that arithmetic a deploy actually moves depends on where the
-change is. A change to the compose file's `device-connection` block is picked
-up by the next ordinary deploy, because compose recreates a service whose
-definition changed (observed on dev, 2026-09-19: the owner came up on the new
-pool without anyone releasing it). A change that lives only in the image —
-`app/core/config.py`, or anything else the backend carries — does not reach the
-owner until it is released, because the deploy leaves its container alone. So
+Neither side moves on its own: nothing a deploy changes reaches a running owner.
+`ensure_device_connection_owner` in `deploy/deploy-docker.sh` looks only at
+whether the container is running, and if it is, the deploy logs that it is
+leaving it alone and returns without ever calling `docker compose up` on it. So
+a change to the compose file's `device-connection` block (its pool, or an
+`extra_hosts` entry) reaches the owner exactly as a change that lives only in
+the image — `app/core/config.py`, or anything else the backend carries — does:
+when the owner is started, which on an ordinary deploy happens only if the
+deploy finds it absent, or otherwise through a release. So
 on a box whose server still has the default 100 (prod, etrip), **a release that
-raises the backend pool without also changing the owner's compose block goes
-out owner-first**: until the owner is released it holds the pool its running
-image was built with, and a backend rollout beside it can ask the server for
-more connections than it has — the 2026-09-16 failure. dev's server was raised
-to 200, so the order does not matter there.
+raises the backend pool goes out owner-first**: until the owner is released it
+holds the pool its running image was built with, and a backend rollout beside it
+can ask the server for more connections than it has — the 2026-09-16 failure.
+dev's server was raised to 200, so the order does not matter there.
+
+Preview control traffic has its own boundary too, on the `preview-connection`
+service. It owns the machine preview tunnels — both the `/preview/tunnel` and
+`/api/preview/tunnel` spellings the helper dials — and the preview content hosts
+(`preview-<uuid>.[-<resource>]<SITES_DOMAIN>`). A normal app release starts it if
+it is absent and otherwise leaves its running container and image alone, exactly
+like `device-connection`. One ordering rule is load-bearing: the owner is
+started, and checked healthy, **before** api-front is pointed at it and before
+any backend is replaced in owner mode. A machine helper only retries an upgrade
+on 502/503/504; a 404 (which is what a half-switched route answers) makes it
+exit for good, so the route must never land ahead of the owner that serves it.
+If the owner cannot become healthy the deploy fails before it touches a route or
+a backend.
+
+Health is not enough on a subscription box. The owner reads static previews and
+room files off `settings.workspace_root`, which the shared env file names as a
+HOST path (a sandbox sibling resolves its own `-v <src>` against the host daemon,
+so the backend mirrors the tree at that same absolute path —
+`docker-compose.subscription.yml`). Miss that mirror on `preview-connection` and
+the owner still answers `/healthz` while every preview fails on a path that was
+never mounted. So after the health probe, and still before any route or backend
+change, the deploy runs a one-shot check inside the owner against the same
+`Settings` the app reads; an unmounted workspace or uploads path fails the deploy
+with the routes untouched.
+
+Updating the owner itself drops every live preview tunnel, and unlike the device
+owner it has no drain endpoint — the helper redials on its own, so there is
+nothing to wait for. It is therefore a separate manual operation: dispatch
+**Release preview connection owner**, which runs
+`deploy/release-preview-connection.sh`, pulls and force-recreates only
+`preview-connection`, and waits for its health check. It demands
+`PREVIEW_CONNECTION_INTERRUPT=1` as the operator's explicit acknowledgement that
+live tunnels will drop and redial, rather than pretending it can wait for idle.
+
+The whole cutover is behind a repo-level kill switch so reverting needs no box
+access: `deploy/preview-connection.env` sets `PREVIEW_CONNECTION_MODE` to `owner`
+or `legacy`. Flipping the file to `legacy` and letting one ordinary deploy run is
+the supported revert, and it does three things in order, because doing them out of
+order breaks live previews:
+
+1. the backends roll back to `legacy` (they stop expecting an owner);
+2. api-front moves the tunnel map and the content-host split back to app-router;
+3. **the running owner is stopped and removed** (`retire_preview_connection_owner`
+   in `deploy/deploy-docker.sh`).
+
+Step 3 is not cosmetic: re-pointing the routes alone leaves helpers connected to
+the owner while new tunnel requests land on an empty backend hub. On the way in
+the order is the mirror image — while a legacy flip still finds a running owner,
+the routes stay on that owner through the routing pass so a helper redial never
+reaches a backend that has not rolled back yet. The mode is resolved before any
+compose call, so a box that cannot reach an owner never renders one.
+
+**A raw `git revert` of this change is NOT the revert.** It takes back
+`deploy/preview-connection.env` and the scripts, but two things it does not touch
+keep previews on the owner: `active/sites.conf` is box-generated, so the
+`map $host $content_upstream` the deploy wrote into it stays there (the repo file
+only supplies the template), and the orphaned `preview-connection` container
+keeps running and keeps serving the tunnels whose `active/preview-routing.conf`
+still points at it. If the revert is somehow required, follow it with a deploy in
+`legacy` mode — or at minimum flip the switch first and revert second. A box that
+has no `preview-connection` container and no split in its `sites.conf` is
+unaffected either way.
 
 Cloud-machine SSH forwards share this stable connection boundary. Normal app
 deployments leave `cheese-cloud-control` running. To update it, dispatch
@@ -108,10 +176,27 @@ reconnection after active calls have finished.
 
 **Application switches leave the persistent ingress running.** On boxes with
 `ACTIVE_BACKEND_DIR`, `cheese-api-front` keeps its device, screen, execution,
-model-tunnel and forge-event routes. Business requests pass to the separate
-`cheese-app-router` nginx on loopback **:18085** (backend) and **:18086**
-(frontend). Only app-router reads the changing `backend.conf` and
-`frontend.conf` upstream files and reloads during an ordinary application release.
+model-tunnel, preview-tunnel and forge-event routes. Business requests pass to
+the separate `cheese-app-router` nginx on loopback **:18085** (backend) and
+**:18086** (frontend). Only app-router reads the changing `backend.conf` and
+`frontend.conf` upstream files and reloads during an ordinary application
+release.
+
+The preview routes are the exception that moves only on a cutover. The tunnel's
+target is a `map $host` in `active/preview-routing.conf`, written by
+`deploy/llm-tunnel/configure-preview.sh` for the effective mode; the location
+itself lives in `nginx.conf`, so reverting *that* file alone drops the route back
+to the business backend — which is why the cutover is reverted by the kill switch
+and not by reverting files (see above). Preview content hosts cannot be split with a `server_name`: the
+box-generated `active/sites.conf` already owns them with `server_name DOMAIN
+*.DOMAIN`, and no other server can beat a `*.DOMAIN` wildcard (a middle wildcard
+is invalid and a regex loses). So the split lives *inside* that wildcard server:
+`configure-sites.sh` writes a `map $host $content_upstream` whose default is the
+active backend and whose regex sends `preview-<uuid>` hosts to the owner, and the
+deploy re-renders `sites.conf` from the repo for the effective mode. A box with
+no content domain, or one the operator disabled, is left alone. The owner's
+internal RPC path (`/_internal/preview/`) is reachable only inside the compose
+network, never through nginx.
 
 The deploy starts a healthy successor, switches app-router to it, drains old
 workers, recreates the compose service, switches back and drains again before

@@ -15,7 +15,7 @@ import httpx
 
 from app.core.config import settings
 from app.core.errors import ValidationError
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 from app.domain.integration.service import refuse_internal_host
 
 #: Some MCP hosts sit behind bot filters that refuse the default Python agent.

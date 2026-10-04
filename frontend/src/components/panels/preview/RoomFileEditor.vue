@@ -19,6 +19,7 @@ import { t } from '../../../i18n'
 
 import RoomFileHistory from './RoomFileHistory.vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 
 const props = defineProps<{ topicId: string; path: string }>()
@@ -156,12 +157,12 @@ onBeforeUnmount(() => {
       <span v-else-if="unsaved" class="t-meta">{{ t('work.room.fileEditor.unsaved') }}</span>
       <span v-else-if="savedSeq" class="t-meta">{{ t('work.room.fileEditor.savedAs', { seq: savedSeq }) }}</span>
       <v-spacer />
-      <v-btn size="small" variant="text" prepend-icon="mdi-history" @click="showHistory = !showHistory">
+      <BaseButton kind="ghost" size="sm" prepend-icon="mdi-history" @click="showHistory = !showHistory">
         {{ t('work.room.fileEditor.history') }}
-      </v-btn>
-      <v-btn
-        size="small"
-        variant="text"
+      </BaseButton>
+      <BaseButton
+        kind="ghost"
+        size="sm"
         icon="mdi-close"
         :title="t('work.room.fileEditor.close')"
         @click="emit('close')"
@@ -184,9 +185,9 @@ onBeforeUnmount(() => {
       <div class="t-meta">
         {{ t('work.room.fileEditor.staleNote') }}
       </div>
-      <v-btn size="small" color="primary" variant="flat" class="mt-1" @click="start">{{
+      <BaseButton kind="secondary" size="sm" class="mt-1" @click="start">{{
         t('work.room.fileEditor.loadNew')
-      }}</v-btn>
+      }}</BaseButton>
     </v-alert>
 
     <v-alert v-if="failure" type="warning" density="compact" class="ma-2">{{ failure }}</v-alert>
@@ -204,9 +205,9 @@ onBeforeUnmount(() => {
               autocomplete="off"
               hide-details
             />
-            <v-btn color="primary" variant="flat" class="mt-2" @click="makeCopy">{{
+            <BaseButton kind="secondary" class="mt-2" @click="makeCopy">{{
               t('work.room.fileEditor.makeCopy')
-            }}</v-btn>
+            }}</BaseButton>
             <div class="t-meta mt-1">{{ t('work.room.fileEditor.originalKept') }}</div>
           </div>
         </div>
@@ -282,7 +283,7 @@ onBeforeUnmount(() => {
 .rfe--phone .rfe__side {
   position: absolute;
   inset: 0;
-  z-index: 1;
+  z-index: var(--z-raised);
   width: auto;
   border-left: 0;
   background: var(--surface);

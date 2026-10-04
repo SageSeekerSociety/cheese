@@ -58,10 +58,10 @@
     />
 
     <div class="afb__actions">
-      <v-btn variant="text" @click="$emit('reset')">{{ t('spaces.analytics.filter.reset') }}</v-btn>
-      <v-btn variant="outlined" color="on-surface" @click="$emit('apply')">
+      <BaseButton kind="ghost" @click="$emit('reset')">{{ t('spaces.analytics.filter.reset') }}</BaseButton>
+      <BaseButton kind="primary" @click="$emit('apply')">
         {{ t('spaces.analytics.filter.apply') }}
-      </v-btn>
+      </BaseButton>
     </div>
   </div>
 </template>
@@ -71,6 +71,8 @@ import type { SpaceAnalyticsQueryState } from '../utils'
 
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+
+import BaseButton from '@/components/base/BaseButton.vue'
 
 const model = defineModel<SpaceAnalyticsQueryState>({ required: true })
 

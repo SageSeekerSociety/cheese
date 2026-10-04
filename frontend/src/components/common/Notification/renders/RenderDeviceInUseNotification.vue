@@ -3,7 +3,7 @@
     <div class="text-subtitle-2 font-weight-medium">
       <i18n-t keypath="notifications.DEVICE_IN_USE.title" tag="span">
         <template #agent>
-          <UserRef :handle="text('agentHandle')" :name="text('agentName')" :project-id="text('projectId') || null" />
+          <UserRef :handle="text('agentHandle')" :name="agentName" :project-id="text('projectId') || null" />
         </template>
         <template #device>{{ text('deviceName') }}</template>
       </i18n-t>
@@ -21,6 +21,7 @@ import { useI18n } from 'vue-i18n'
 import { getMetadata, getRoomTitle, getStringMetadata } from './NotificationRenderUtils'
 
 import UserRef from '@/components/common/UserRefLink.vue'
+import { teammateName } from '@/lib/agentNames'
 
 /**
  * 一个 agent 开始在你登记的设备上工作（#1900 第 5 步）。只是告知：哪个项目、哪个
@@ -30,9 +31,10 @@ const props = defineProps<NotificationRenderProps>()
 const { t } = useI18n()
 
 const text = (key: string) => getStringMetadata(props.notification, key)
+const agentName = computed(() => teammateName(text('agentName'), text('agentNameSource')))
 
 const title = computed(() =>
-  t('notifications.DEVICE_IN_USE.title', { agent: text('agentName'), device: text('deviceName') })
+  t('notifications.DEVICE_IN_USE.title', { agent: agentName.value, device: text('deviceName') })
 )
 
 const body = computed(() => {

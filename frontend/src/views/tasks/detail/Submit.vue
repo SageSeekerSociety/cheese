@@ -32,11 +32,10 @@
           <template #text>
             <p>{{ t('tasks.submit.limitText') }}</p>
             <div class="mt-2">
-              <v-btn
-                color="primary"
-                variant="text"
+              <BaseButton
+                kind="secondary"
                 :to="{ name: routeNames.submissions, params: { spaceId: taskData.space?.id, taskId: taskData.id } }"
-                >{{ t('tasks.submit.viewMine') }}</v-btn
+                >{{ t('tasks.submit.viewMine') }}</BaseButton
               >
             </div>
           </template>
@@ -121,19 +120,16 @@
             </template>
 
             <div class="d-flex justify-end mt-4">
-              <v-btn
+              <BaseButton
                 type="submit"
-                color="primary"
-                size="large"
-                rounded="pill"
+                kind="primary"
+                size="lg"
+                prepend-icon="mdi-check"
                 :loading="submitting"
                 :disabled="submitting || !canSubmit"
-                min-width="120"
-                class="px-8"
               >
-                <v-icon start>mdi-check</v-icon>
                 {{ t('tasks.submit.submit') }}
-              </v-btn>
+              </BaseButton>
             </div>
           </div>
         </v-form>
@@ -169,7 +165,7 @@
     </v-card>
 
     <!-- 上传进度对话框 -->
-    <v-dialog v-model="progressDialog" persistent max-width="480" class="upload-progress-dialog">
+    <v-dialog v-model="progressDialog" persistent :max-width="DIALOG_WIDTH.md" class="upload-progress-dialog">
       <v-card rounded="lg" class="pa-6">
         <v-card-title class="text-h6 d-flex align-center pb-3">
           <v-icon color="primary" class="mr-3">mdi-cloud-upload</v-icon>
@@ -227,6 +223,8 @@ import { useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 import { throttle } from 'lodash-es'
 
+import BaseButton from '@/components/base/BaseButton.vue'
+import { DIALOG_WIDTH } from '@/components/base/dialogSize'
 import { TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
 import { AttachmentsApi } from '@/network/api/attachments'
 import { TasksApi } from '@/network/api/tasks'
@@ -481,12 +479,8 @@ const submitTask = async () => {
 </script>
 
 <style scoped>
-.submission-entry {
-  transition: all 0.3s ease;
-}
-
 .submission-input {
-  transition: all 0.2s ease;
+  transition: transform 0.2s ease;
 }
 
 .submission-input:focus-within {

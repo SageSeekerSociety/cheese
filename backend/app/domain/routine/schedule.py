@@ -7,7 +7,7 @@ from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.core.errors import ValidationError
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 
 FREQS = ("hourly", "daily", "weekly", "monthly")
 WEEKDAY_NAMES = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
@@ -34,7 +34,7 @@ def normalize(spec: dict, tz: str) -> dict:
     zone(tz)
     freq = spec.get("freq")
     if freq not in FREQS:
-        raise ValidationError("频率只能是 hourly、daily、weekly、monthly 之一")
+        raise ValidationError(say("routineFrequencyInvalid"))
     if freq == "hourly":
         minute = spec.get("minute")
         if not isinstance(minute, int) or not 0 <= minute <= 59:
@@ -89,7 +89,7 @@ def next_after(spec: dict, tz: str, after: datetime) -> datetime:
         candidate = datetime.combine(day, clock, tzinfo=z)
         if candidate.astimezone(UTC) > after:
             return candidate.astimezone(UTC)
-    raise ValidationError("这个时间安排算不出下一次执行时间")
+    raise ValidationError(say("routineNoNextRun"))
 
 
 def describe(spec: dict, tz: str) -> str:

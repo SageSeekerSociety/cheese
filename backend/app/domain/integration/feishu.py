@@ -17,6 +17,7 @@ from urllib.parse import urlencode
 
 import httpx
 
+from app.core.sentences import say
 from app.domain.integration.mail import IntegrationError
 
 DOMAINS = {"feishu": "https://open.feishu.cn", "lark": "https://open.larksuite.com"}
@@ -64,19 +65,21 @@ def _raise(status: int, body: dict | None, action: str) -> None:
     code = (body or {}).get("code")
     msg = (body or {}).get("msg") or (body or {}).get("message") or ""
     reply = f"{code if code is not None else status} {msg}".strip()
-    detail = f"{action}：飞书返回 {reply}"
+    detail = say("feishuReplied", action=action, reply=reply)
     if status == 401 or code in AUTH_CODES:
         raise IntegrationError(
-            "auth_failed", f"{detail}。授权已失效，到「我的连接」里重新授权", reply
+            "auth_failed", say("feishuAuthExpiredAfter", detail=detail), reply
         )
     if status == 403 or code in FORBIDDEN_CODES:
         raise IntegrationError(
             "forbidden",
-            f"{detail}。没有这份文档的权限：把文档分享给应用或授权账号后再试",
+            say("feishuNoDocAccessAfter", detail=detail),
             reply,
         )
     if status == 404 or code in NOT_FOUND_CODES:
-        raise IntegrationError("not_found", f"{detail}。找不到这份文档", reply)
+        raise IntegrationError(
+            "not_found", say("feishuDocNotFoundAfter", detail=detail), reply
+        )
     raise IntegrationError("error", detail, reply)
 
 
@@ -105,7 +108,9 @@ class FeishuClient:
                 response = await http.request(method, path, headers=headers, **kwargs)
         except httpx.HTTPError as exc:
             raise IntegrationError(
-                "unreachable", f"{action}：连不上飞书（{exc}）", str(exc)
+                "unreachable",
+                say("feishuActionUnreachable", action=action, error=str(exc)),
+                str(exc),
             ) from exc
         try:
             body = response.json()
@@ -128,10 +133,12 @@ class FeishuClient:
                     },
                 )
         except httpx.HTTPError as exc:
-            raise IntegrationError("unreachable", f"连不上飞书（{exc}）") from exc
+            raise IntegrationError(
+                "unreachable", say("feishuUnreachable", error=str(exc))
+            ) from exc
         body = response.json() if response.content else {}
         if response.status_code >= 400 or body.get("code", 0) != 0:
-            _raise(response.status_code, body, "用应用凭据取令牌")
+            _raise(response.status_code, body, say("feishuActionTenantToken"))
         token = body["tenant_access_token"]
         self._tenant = (token, time.time() + int(body.get("expire", 7200)))
         return token
@@ -167,7 +174,9 @@ class FeishuClient:
                 )
         except httpx.HTTPError as exc:
             raise IntegrationError(
-                "unreachable", f"{action}：连不上飞书（{exc}）", str(exc)
+                "unreachable",
+                say("feishuActionUnreachable", action=action, error=str(exc)),
+                str(exc),
             ) from exc
         body = response.json() if response.content else {}
         if (
@@ -191,20 +200,18 @@ class FeishuClient:
                 "code": code,
                 "redirect_uri": redirect_uri,
             },
-            "换取用户授权",
+            say("feishuActionExchangeAuth"),
         )
 
     async def refresh_user_token(self) -> None:
         if not self.settings.refresh_token:
-            raise IntegrationError(
-                "auth_failed", "授权已失效，到「我的连接」里重新授权"
-            )
+            raise IntegrationError("auth_failed", say("feishuAuthExpired"))
         await self._user_token(
             {
                 "grant_type": "refresh_token",
                 "refresh_token": self.settings.refresh_token,
             },
-            "刷新用户授权",
+            say("feishuActionRefreshAuth"),
         )
 
     # ── documents ──────────────────────────────────────────────────────────
@@ -214,7 +221,7 @@ class FeishuClient:
             data = await self._call(
                 "POST",
                 "/open-apis/suite/docs-api/search/object",
-                "搜索文档",
+                say("feishuActionSearchDocs"),
                 json={
                     "search_key": query,
                     "count": limit,
@@ -233,14 +240,14 @@ class FeishuClient:
         if not self.settings.folders:
             raise IntegrationError(
                 "forbidden",
-                "只用应用凭据时飞书不提供全文搜索：在「我的连接」里授权个人账号，或登记应用能看到的文件夹",
+                say("feishuSearchNeedsUser"),
             )
         found = []
         for folder in self.settings.folders:
             data = await self._call(
                 "GET",
                 "/open-apis/drive/v1/files",
-                "列出文件夹",
+                say("feishuActionListFolder"),
                 params={"folder_token": folder, "page_size": 200},
             )
             for f in data.get("files", []):
@@ -266,7 +273,7 @@ class FeishuClient:
             data = await self._call(
                 "POST",
                 "/open-apis/drive/v1/metas/batch_query",
-                "取文档链接",
+                say("feishuActionDocLinks"),
                 json={
                     "request_docs": [{"doc_token": document_id, "doc_type": "docx"}],
                     "with_url": True,
@@ -285,7 +292,7 @@ class FeishuClient:
             data = await self._call(
                 "GET",
                 f"/open-apis/docx/v1/documents/{document_id}/blocks",
-                "读取文档",
+                say("feishuActionReadDoc"),
                 params=params,
             )
             items += data.get("items", [])
@@ -295,7 +302,9 @@ class FeishuClient:
 
     async def read(self, document_id: str) -> dict:
         meta = await self._call(
-            "GET", f"/open-apis/docx/v1/documents/{document_id}", "读取文档"
+            "GET",
+            f"/open-apis/docx/v1/documents/{document_id}",
+            say("feishuActionReadDoc"),
         )
         blocks = await self.blocks(document_id)
         paragraphs = []
@@ -356,7 +365,7 @@ class FeishuClient:
             await self._call(
                 "POST",
                 f"/open-apis/docx/v1/documents/{document_id}/blocks/{document_id}/children",
-                "往文档里追加内容",
+                say("feishuActionAppendDoc"),
                 json={"children": children[start : start + 50], "index": -1},
             )
         return len(children)
@@ -365,7 +374,7 @@ class FeishuClient:
         await self._call(
             "PATCH",
             f"/open-apis/docx/v1/documents/{document_id}/blocks/{block_id}",
-            "修改文档段落",
+            say("feishuActionEditParagraph"),
             json={
                 "update_text_elements": {"elements": [{"text_run": {"content": text}}]}
             },
@@ -377,12 +386,12 @@ class FeishuClient:
         data = await self._call(
             "POST",
             "/open-apis/docx/v1/documents",
-            "新建文档",
+            say("feishuActionCreateDoc"),
             json={"title": title, **({"folder_token": folder} if folder else {})},
         )
         document_id = (data.get("document") or {}).get("document_id")
         if not document_id:
-            raise IntegrationError("error", "飞书没有返回新文档的 id")
+            raise IntegrationError("error", say("feishuNoNewDocId"))
         written = await self.append(document_id, markdown) if markdown.strip() else 0
         return {
             "document_id": document_id,

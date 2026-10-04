@@ -1,8 +1,8 @@
 <template>
   <SettingsToolbar>
-    <v-btn variant="text" prepend-icon="mdi-plus" @click="openCreateDialog">
+    <BaseButton kind="primary" prepend-icon="mdi-plus" @click="openCreateDialog">
       {{ t('spaces.domainGroups.createGroup') }}
-    </v-btn>
+    </BaseButton>
   </SettingsToolbar>
   <div class="settings-card">
     <div v-if="loading" class="pa-4 text-center">
@@ -20,89 +20,83 @@
           <v-icon size="18" class="c-faint">mdi-web</v-icon>
         </template>
         <template #append>
-          <v-btn
+          <BaseButton
+            kind="ghost"
             icon="mdi-pencil-outline"
-            variant="text"
-            size="small"
+            size="sm"
             :aria-label="t('spaces.domainGroups.editGroup')"
             @click="openEditDialog(group)"
-          ></v-btn>
-          <v-btn
+          />
+          <BaseButton
+            kind="ghost"
             icon="mdi-delete-outline"
-            variant="text"
-            size="small"
+            size="sm"
             :aria-label="t('spaces.domainGroups.deleteGroup')"
             @click="deleteGroup(group)"
-          ></v-btn>
+          />
         </template>
       </v-list-item>
     </v-list>
 
     <p v-else class="settings-empty">{{ t('spaces.domainGroups.noGroups') }}</p>
 
-    <!-- 创建/编辑对话框 -->
-    <v-dialog v-model="dialogOpen" max-width="520">
-      <v-card>
-        <v-card-title>
-          {{ editingGroup ? t('spaces.domainGroups.editGroup') : t('spaces.domainGroups.createGroup') }}
-        </v-card-title>
-        <v-card-text>
-          <v-form ref="formRef" @submit.prevent="submitForm">
+    <!-- Create / edit dialog -->
+    <AdaptiveDialog
+      v-model="dialogOpen"
+      :title="editingGroup ? t('spaces.domainGroups.editGroup') : t('spaces.domainGroups.createGroup')"
+      :primary-label="t('spaces.detail.manageCategories.confirm')"
+      :cancel-label="t('spaces.detail.manageCategories.cancel')"
+      :primary-loading="isSubmitting"
+      @primary="submitForm"
+    >
+      <v-form ref="formRef" @submit.prevent="submitForm">
+        <v-text-field
+          v-model="formData.name"
+          autocomplete="off"
+          :label="t('spaces.domainGroups.groupName')"
+          required
+          v-bind="nameProps"
+        ></v-text-field>
+
+        <v-textarea
+          v-model="formData.description"
+          autocomplete="off"
+          :label="t('spaces.domainGroups.groupDescription')"
+          rows="2"
+          auto-grow
+        ></v-textarea>
+
+        <div class="text-subtitle-2 mb-2">{{ t('spaces.domainGroups.domains') }}</div>
+        <v-row v-for="(_, index) in domainList" :key="index" align="center" class="mb-1">
+          <v-col cols="10">
             <v-text-field
-              v-model="formData.name"
               autocomplete="off"
-              :label="t('spaces.domainGroups.groupName')"
-              required
-              v-bind="nameProps"
+              :model-value="domainList[index]"
+              :placeholder="t('spaces.domainGroups.domainPlaceholder')"
+              density="compact"
+              hide-details="auto"
+              @update:model-value="(val: string) => updateDomain(index, val)"
             ></v-text-field>
-
-            <v-textarea
-              v-model="formData.description"
-              autocomplete="off"
-              :label="t('spaces.domainGroups.groupDescription')"
-              rows="2"
-              auto-grow
-            ></v-textarea>
-
-            <div class="text-subtitle-2 mb-2">{{ t('spaces.domainGroups.domains') }}</div>
-            <v-row v-for="(_, index) in domainList" :key="index" align="center" class="mb-1">
-              <v-col cols="10">
-                <v-text-field
-                  autocomplete="off"
-                  :model-value="domainList[index]"
-                  :placeholder="t('spaces.domainGroups.domainPlaceholder')"
-                  density="compact"
-                  hide-details="auto"
-                  @update:model-value="(val: string) => updateDomain(index, val)"
-                ></v-text-field>
-              </v-col>
-              <v-col cols="2">
-                <v-btn
-                  icon="mdi-close"
-                  variant="text"
-                  size="small"
-                  :disabled="domainList.length <= 1"
-                  @click="removeDomain(index)"
-                ></v-btn>
-              </v-col>
-            </v-row>
-            <p v-if="domainAllProps['error-messages']?.length" class="text-error text-caption mt-1">
-              {{ domainAllProps['error-messages'][0] }}
-            </p>
-            <v-btn variant="text" color="primary" prepend-icon="mdi-plus" size="small" @click="addDomain">
-              {{ t('spaces.domainGroups.addDomain') }}
-            </v-btn>
-          </v-form>
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer></v-spacer>
-          <v-btn variant="text" @click="dialogOpen = false">{{ t('spaces.detail.manageCategories.cancel') }}</v-btn>
-          <v-btn color="primary" :loading="isSubmitting" @click="submitForm">
-            {{ t('spaces.detail.manageCategories.confirm') }}
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+          </v-col>
+          <v-col cols="2">
+            <BaseButton
+              kind="ghost"
+              icon="mdi-close"
+              size="sm"
+              :aria-label="t('spaces.materials.remove')"
+              :disabled="domainList.length <= 1"
+              @click="removeDomain(index)"
+            />
+          </v-col>
+        </v-row>
+        <p v-if="domainAllProps['error-messages']?.length" class="text-error text-caption mt-1">
+          {{ domainAllProps['error-messages'][0] }}
+        </p>
+        <BaseButton kind="secondary" prepend-icon="mdi-plus" size="sm" @click="addDomain">
+          {{ t('spaces.domainGroups.addDomain') }}
+        </BaseButton>
+      </v-form>
+    </AdaptiveDialog>
   </div>
 </template>
 
@@ -121,6 +115,8 @@ import { vuetifyConfig } from '@/utils/form'
 
 import { useSpaceData } from '@/composables/useSpaceData'
 
+import BaseButton from '@/components/base/BaseButton.vue'
+import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import SettingsToolbar from '@/components/spaces/SettingsToolbar.vue'
 import { SpacesApi } from '@/network/api/spaces'
 import { useDialog } from '@/plugins/dialog'

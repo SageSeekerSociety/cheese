@@ -26,6 +26,8 @@ services:
     depends_on:
       litellm-db:
         condition: service_healthy
+      litellm-redis:
+        condition: service_healthy
     environment:
       # Admin credential. The backend holds the same value as
       # LLM_GATEWAY_ADMIN_KEY and mints per-project virtual keys with it.
@@ -85,6 +87,21 @@ services:
       - litellm-pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U litellm -d litellm"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  litellm-redis:
+    # The budget brake's spend counters (general_settings.coordination_redis in
+    # deploy/gateway/config.yaml). Every value in it is reseeded from
+    # litellm-db when missing, so nothing is persisted: a snapshot reloaded
+    # after a restart would hand back counters lower than what was spent.
+    # Only on this stack's default network, so nothing but the gateway reaches it.
+    image: redis:7
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 10

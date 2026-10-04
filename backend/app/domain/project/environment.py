@@ -8,7 +8,7 @@ import uuid
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.block.notice_text import say
+from app.core.sentences import say
 
 
 class EnvironmentConfig(BaseModel):

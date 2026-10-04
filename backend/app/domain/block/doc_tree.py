@@ -10,6 +10,11 @@ are inferred, only structure (allowed by CLAUDE.md).
 Phase 1 granularity: a node is a top-level markdown block separated by blank
 lines (a paragraph, a heading, a whole list, a fenced code block, a blockquote).
 Per-list-item / per-todo splitting is a later phase (A2).
+
+A block that encloses others is one node however many blank lines it holds: a
+`:::` container (timeline, stat cards, columns), a `<details>` fold, a `$$`
+formula. The editor shows each of them as one block, and comments anchor by
+counting the editor's blocks against these nodes.
 """
 
 import re
@@ -32,6 +37,11 @@ class DocNode:
 
     node_type: str
     content: str
+
+
+_CONTAINER_OPEN_RE = re.compile(r"(:{3,})[a-z]+")
+_CONTAINER_CLOSE_RE = re.compile(r"(:{3,})\s*$")
+_DETAILS_RE = re.compile(r"<(/?)details\b[^>]*>", re.IGNORECASE)
 
 
 def _is_fence(line: str) -> bool:
@@ -66,7 +76,60 @@ def markdown_to_nodes(md: str) -> list[DocNode]:
             blocks.append(text)
         cur = []
 
+    # The block that encloses others, while one is open: what closes it, and how
+    # many of the same kind are open inside it.
+    enclosure: list[int] | None = None  # container colon counts, innermost last
+    details = 0
+    in_math = False
+
     for line in lines:
+        stripped = line.strip()
+        if enclosure is not None:
+            cur.append(line)
+            opened = _CONTAINER_OPEN_RE.match(stripped)
+            closed = _CONTAINER_CLOSE_RE.match(stripped)
+            if opened:
+                enclosure.append(len(opened.group(1)))
+            elif closed and enclosure and enclosure[-1] == len(closed.group(1)):
+                enclosure.pop()
+            if not enclosure:
+                enclosure = None
+                flush()
+            continue
+        if details:
+            cur.append(line)
+            for tag in _DETAILS_RE.finditer(line):
+                details += -1 if tag.group(1) else 1
+            if details <= 0:
+                details = 0
+                flush()
+            continue
+        if in_math:
+            cur.append(line)
+            if stripped.endswith("$$"):
+                in_math = False
+                flush()
+            continue
+        if not in_fence and (opener := _CONTAINER_OPEN_RE.match(stripped)):
+            flush()
+            cur = [line]
+            enclosure = [len(opener.group(1))]
+            continue
+        if not in_fence and stripped.lower().startswith("<details"):
+            flush()
+            cur = [line]
+            for tag in _DETAILS_RE.finditer(line):
+                details += -1 if tag.group(1) else 1
+            if details <= 0:
+                details = 0
+                flush()
+            continue
+        one_line_math = len(stripped) > 2 and stripped.endswith("$$")
+        if not in_fence and stripped.startswith("$$") and not one_line_math:
+            flush()
+            cur = [line]
+            in_math = True
+            continue
         if in_fence:
             cur.append(line)
             if _is_fence(line):

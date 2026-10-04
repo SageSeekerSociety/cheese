@@ -90,6 +90,7 @@ watch(loggedIn, refresh, { immediate: true })
 <template>
   <v-menu location="bottom end" :offset="8" transition="scale-transition">
     <template #activator="{ props: activator }">
+      <!-- eslint-disable-next-line vue/no-restricted-syntax -- nav bar button whose look this component styles exactly (design-system §3.6 exception) -->
       <v-btn
         v-bind="activator"
         class="help-entry"
@@ -127,8 +128,13 @@ watch(loggedIn, refresh, { immediate: true })
   font-size: 13px;
 }
 
-/* 手机上顶栏更窄，只留图标。 */
+/* 手机上顶栏更窄，只留图标。Vuetify 给按钮的 64 最小宽度在手机上白占 20px —— 它左右
+   挨着的是项目名那一格，390 宽的项目首页上那 20px 就是「cheese 自建」和「cheese …」
+   的差别。画出来 44 宽（纯图标，44 是 §10.1 那条线；能点的范围由 .tap-target 自己
+   撑，所以控件本身得有定位）。 */
 .help-entry--compact {
+  position: relative;
+  min-width: 44px;
   padding: 0 8px;
 }
 

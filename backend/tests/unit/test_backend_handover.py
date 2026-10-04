@@ -26,6 +26,7 @@ from sqlalchemy import text
 
 from app.core.ownership import OWNER_LOCK, Ownership
 from app.domain.agent import attachments
+from app.domain.agent.chat import ChatService
 from app.domain.agent.device_hub import DeviceOffline
 from app.domain.agent.harness import CLAUDE_CODE, Opening, SessionRef
 from app.domain.agent.harness.claude_code.runtime import ClaudeCodeRuntime
@@ -35,6 +36,8 @@ from app.domain.agent.runtime import (
     addressed_to_agent,
 )
 from app.domain.agent.service import AgentResult
+from tests.conftest import stub_compute
+from tests.support.room_reader import room_reader
 from tests.turn_log import a_topic, open_turn_ids
 from tests.unit.test_driven_liveness import Room, Scripted
 
@@ -117,12 +120,16 @@ async def test_a_backend_that_dies_hands_the_work_over_too(db_factory):
         await incoming.release()
 
 
-class _Chat:
-    """What the runner needs of a ChatService to run a turn: where its turn
-    intervals live, and the turn itself."""
+class _Chat(ChatService):
+    """Real admission and seat identity, with a scripted conversation."""
 
     def __init__(self, session_factory, turn) -> None:
-        self.session_factory = session_factory
+        super().__init__(
+            session_factory=session_factory,
+            base_system_prompt="",
+            workspace_root="",
+            compute=stub_compute(),
+        )
         self._turn = turn
         self.started = 0
         self.events: list[str] = []
@@ -246,7 +253,7 @@ async def test_session_output_lands_once_through_the_backend_that_took_over():
     async def consume(_project, _topic, work, event, _eid, _seen, _unsolicited):
         landed_by_incoming.append((work, event))
 
-    incoming.bind_events(consume)
+    incoming.bind_reader(room_reader(events=consume))
     try:
         await room.send("fix the login page")
         await _until(lambda: room.receipts == ["fix the login page"])
@@ -318,6 +325,7 @@ async def test_a_stop_whose_seat_was_won_keeps_the_new_source_and_finishes_its_o
             Opening(system_prompt=""),
             work_id=uuid.uuid4(),
             on_mark=lambda _: None,
+            register_input=room.register_input("write the docs"),
         )
         await _until(lambda: seat_b in runtime.subscriptions)
         old_b = runtime.subscriptions[seat_b]

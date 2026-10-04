@@ -119,6 +119,7 @@ from app.domain.agent.harness.claude_code import ClaudeCodeRuntime  # noqa: E402
 from app.domain.agent.harness.claude_code.journal import (  # noqa: E402
     Journal as ClaudeJournal,
 )
+from app.domain.agent.harness.claude_code.protocol import INPUT_PROTOCOL  # noqa: E402
 from app.domain.agent.harness.claude_code.runner import Runner  # noqa: E402
 from app.domain.agent.harness.claude_code.runtime import Handle  # noqa: E402
 from app.main import app  # noqa: E402
@@ -339,6 +340,7 @@ class ScriptedSession(Runner):
         if method == "ping":
             return {
                 "session_id": self.session_id,
+                "input_protocol": INPUT_PROTOCOL,
                 "working": self.working,
                 "work_id": self.work if self.working else None,
                 "tasks": dict(self.tasks),
@@ -448,6 +450,7 @@ class StubChannel:
             runner.session_id,
             agent,
             self.root / str(session.topic_id) / agent / "mirror.sqlite",
+            INPUT_PROTOCOL,
             frozenset(runner.capabilities),
         )
 
@@ -518,6 +521,7 @@ class StubChannel:
                 session.session_id,
                 session.actor,
                 self.root / str(topic_id) / session.actor / "mirror.sqlite",
+                INPUT_PROTOCOL,
                 frozenset(session.capabilities),
             )
             for (topic_id, _), session in self.sessions.items()

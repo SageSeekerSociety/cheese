@@ -15,7 +15,7 @@ from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from app.common.auth import create_access_token
-from app.domain.block.notice_text import notice_message, say, with_keys
+from app.core.sentences import notice_message, say, with_keys
 from app.domain.notification.handlers import (
     InAppNotificationHandler,
     NotificationDelivery,

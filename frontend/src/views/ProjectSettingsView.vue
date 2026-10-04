@@ -7,6 +7,7 @@ import { useBranchProtection } from '@/composables/useBranchProtection'
 import { useProjectSettings } from '@/composables/useProjectSettings'
 import { provideRevealGate } from '@/composables/useRevealGate'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import SettingsOverlay from '@/components/common/SettingsOverlay.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import ProjectComputeSettings from '@/components/ProjectComputeSettings.vue'
@@ -24,6 +25,7 @@ import GithubAccountSettings from '@/components/settings/GithubAccountSettings.v
 import GithubRepoSettings from '@/components/settings/GithubRepoSettings.vue'
 import UpstreamRepoSettings from '@/components/settings/UpstreamRepoSettings.vue'
 import { t } from '@/i18n'
+import { closeOverlay } from '@/lib/backOut'
 import { pageBeforeSettings } from '@/lib/settingsReturn'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -162,7 +164,7 @@ const section = computed(() => {
 const sectionLabel = computed(() => (section.value ? t(`work.projectSettings.sections.${section.value}`) : ''))
 
 function close() {
-  router.push(pageBeforeSettings({ name: 'workspace-project', params: { projectId: props.projectId } }))
+  closeOverlay(router, pageBeforeSettings({ name: 'workspace-project', params: { projectId: props.projectId } }))
 }
 </script>
 
@@ -191,15 +193,15 @@ function close() {
       <header class="settings-head">
         <h1 class="t-page-title">{{ sectionLabel }}</h1>
         <!-- 队友可以从市场里挑：这一颗原来在整页的页头上，拆开后跟着队友那一栏。 -->
-        <v-btn
+        <BaseButton
           v-if="section === 'agents'"
-          variant="text"
-          size="small"
+          kind="secondary"
+          size="sm"
           prepend-icon="mdi-storefront-outline"
           :to="{ name: 'market' }"
         >
           {{ t('work.projectSettings.market') }}
-        </v-btn>
+        </BaseButton>
       </header>
 
       <div v-if="loading" class="d-flex justify-center py-10">
@@ -325,12 +327,14 @@ function close() {
 
 <style scoped>
 /* 这一页各块的窄屏排法按内容列有多宽决定，不按窗口（docs/design-system.md §3.5）：
-   子组件（队友、环境变量）里的 @container 也量的是这一格。 */
+   子组件（队友、环境变量）里的 @container 也量的是这一格。
+   宽度和水平内距不在这里：这一页也住在浮层那一条内容列里（SettingsOverlay 的
+   `.so__content`，720 居中），四类设置页共用同一条，只留这一页自己的竖向节奏。 */
 .settings-page-body {
   display: flex;
   flex-direction: column;
   gap: 20px;
-  padding: 24px 32px 48px;
+  padding: 24px 0 48px;
 }
 .settings-head {
   display: flex;
@@ -408,7 +412,7 @@ function close() {
 }
 @media (max-width: 599.98px) {
   .settings-page-body {
-    padding: 16px 16px 32px;
+    padding: 16px 0 32px;
   }
   .page-section {
     padding: 16px;

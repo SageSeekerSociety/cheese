@@ -8,6 +8,7 @@ import { useRoute, useRouter } from 'vue-router'
 import TeamProfile from './teams/TeamProfile.vue'
 
 import { authToken } from '@/api'
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { TeamsApi } from '@/network/api/teams'
 import { BusinessError } from '@/network/types/error'
@@ -64,11 +65,13 @@ watch(() => route.params.token, load, { immediate: true })
       <h1 class="t-page-title mb-4">{{ t('work.teamProfile.joinTitle') }}</h1>
       <template v-if="needsLogin">
         <p class="t-body c-muted mb-6">{{ t('work.teamProfile.loginHint') }}</p>
-        <v-btn color="primary" variant="flat" @click="signIn">{{ t('work.teamProfile.login') }}</v-btn>
+        <BaseButton kind="primary" @click="signIn">{{ t('work.teamProfile.login') }}</BaseButton>
       </template>
       <v-alert v-else-if="error" type="error" class="mb-4">{{ error }}</v-alert>
       <v-progress-linear v-if="busy" indeterminate :aria-label="t('work.teamProfile.loading')" />
-      <v-btn v-else-if="error && !invalid" variant="text" @click="load">{{ t('work.teamProfile.retry') }}</v-btn>
+      <BaseButton v-else-if="error && !invalid" kind="secondary" @click="load">{{
+        t('work.teamProfile.retry')
+      }}</BaseButton>
     </v-card>
   </v-container>
 </template>

@@ -2,9 +2,9 @@
   <v-sheet flat rounded="lg">
     <v-toolbar :title="t('spaces.detail.selectTemplate.title')" color="transparent" density="compact">
       <template #prepend>
-        <v-btn variant="text" prepend-icon="mdi-chevron-left" @click="goBack">{{
+        <BaseButton kind="ghost" prepend-icon="mdi-chevron-left" @click="goBack">{{
           t('spaces.detail.selectTemplate.back')
-        }}</v-btn>
+        }}</BaseButton>
       </template>
     </v-toolbar>
 
@@ -36,6 +36,8 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 
+import BaseButton from '@/components/base/BaseButton.vue'
+import { stepBack } from '@/lib/backOut'
 import { useSpaceStore } from '@/stores/space'
 
 const router = useRouter()
@@ -47,8 +49,10 @@ const { templates } = storeToRefs(spaceStore)
 
 const { t } = useI18n()
 
+// 往回走：身后有应用内来路就退一格，没有（贴链接直接开这一页）就去这条路声明好的
+// 上一级（router/spaces.ts 里 `meta.backTo`），而不是把一颗按下去没反应的按钮留在那。
 const goBack = () => {
-  router.go(-1)
+  stepBack(router, { name: 'SpacesDetailTasksList', params: { spaceId } })
 }
 
 const selectTemplate = (template: SpaceTaskTemplate | null) => {

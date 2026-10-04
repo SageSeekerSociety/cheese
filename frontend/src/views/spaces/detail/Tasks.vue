@@ -166,7 +166,7 @@ const selectScope = (value: TaskScope) => {
   if (value === 'all') delete query.filter
   else query.filter = value
   if (value !== 'publishing') delete query.pending
-  router.push({ name: 'SpacesDetailTasksList', params: { spaceId: route.params.spaceId }, query })
+  router.replace({ name: 'SpacesDetailTasksList', params: { spaceId: route.params.spaceId }, query })
 }
 
 /** 「只看待处理」：只在「我发布的」下生效，写在地址的 `pending=1` 里。 */
@@ -176,7 +176,7 @@ const setPendingOnly = (on: boolean) => {
   const query = { ...route.query }
   if (on) query.pending = '1'
   else delete query.pending
-  router.push({ name: 'SpacesDetailTasksList', params: { spaceId: route.params.spaceId }, query })
+  router.replace({ name: 'SpacesDetailTasksList', params: { spaceId: route.params.spaceId }, query })
 }
 
 const categoryFilterOptions = computed(() => [
@@ -195,7 +195,7 @@ const selectedCategoryIdModel = computed({
     const query = { ...route.query }
     if (value) query.category = String(value)
     else delete query.category
-    router.push({ name: 'SpacesDetailTasksList', params: { spaceId: route.params.spaceId }, query })
+    router.replace({ name: 'SpacesDetailTasksList', params: { spaceId: route.params.spaceId }, query })
   },
 })
 

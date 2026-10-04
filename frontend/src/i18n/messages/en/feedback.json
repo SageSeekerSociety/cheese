@@ -17,7 +17,7 @@
       "resolved": "Resolved: {v}",
       "deployed": "Deployed: {v}",
       "days": "Last {n} days",
-      "clear": "Clear this date filter"
+      "clear": "Clear this date filter: {chip}"
     },
     "lane": {
       "label": "Scope",
@@ -529,10 +529,23 @@
     "resolved": "Resolved",
     "deployed": "Deployed",
     "unknown": "Unknown",
-    "declined": "Won't fix"
+    "declined": "Won't fix",
+    "pending": {
+      "received": "Receive",
+      "in_progress": "Process",
+      "resolved": "Resolve",
+      "deployed": "Deploy"
+    },
+    "passed": {
+      "received": "Received",
+      "in_progress": "Processed",
+      "resolved": "Resolved",
+      "deployed": "Deployed"
+    }
   },
   "timeline": {
-    "notStarted": "Not started"
+    "notStarted": "Not started",
+    "noRecord": "No record"
   },
   "kind": {
     "bug": "Bug",
@@ -613,6 +626,12 @@
       "open": "Write a comment…",
       "placeholder": "Add what you ran into, or why this change matters to you",
       "submit": "Post comment"
+    },
+    "claim": {
+      "title": "Owner",
+      "nobody": "Nobody has claimed it yet",
+      "claim": "Claim",
+      "release": "Release"
     },
     "aside": {
       "progress": "Progress",

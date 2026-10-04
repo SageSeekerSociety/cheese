@@ -12,8 +12,12 @@ import type { ChainedCommands, Editor } from '@tiptap/core'
 
 import { computed, onBeforeUnmount, ref, toRaw, watch } from 'vue'
 
+import { useFocusReturn } from '@/composables/useFocusReturn'
+
 import { BUBBLE_META } from '../../../lib/docBubble'
+import { STATUS_KINDS } from '../../../lib/docSchema/blocks'
 import { BLOCK_ITEMS, blockKeyOf } from '../../../lib/docSlashMenu'
+import { canSetStatus, currentStatus, statusTransaction } from '../../../lib/docStatus'
 import CheeseAvatar from '../../CheeseAvatar.vue'
 
 import { t } from '@/i18n'
@@ -34,8 +38,10 @@ const props = withDefaults(
     variant?: 'float' | 'bar'
     /** 选中了字（键盘上方那一条在没选中时也在）。 */
     hasSelection?: boolean
+    /** 光标停在一个状态标签里：只给三种状态和「去掉」。 */
+    statusOnly?: boolean
   }>(),
-  { agentHandle: null, canComment: true, restyle: undefined, variant: 'float', hasSelection: true }
+  { agentHandle: null, canComment: true, restyle: undefined, variant: 'float', hasSelection: true, statusOnly: false }
 )
 const emit = defineEmits<{
   (e: 'agent'): void
@@ -92,6 +98,22 @@ function format(run: (chain: ChainedCommands) => ChainedCommands) {
   run(editor.chain().focus(undefined, { scrollIntoView: false }).setMeta(BUBBLE_META, true)).run()
 }
 
+// ---- 状态标签：和加粗一样是字的样式。选中的字、或者光标所在的那个标签，换成这一种；
+// 已经是这一种就去掉。
+const STATUS_ORDER = Object.keys(STATUS_KINDS) as (keyof typeof STATUS_KINDS)[]
+const statuses = computed(() => {
+  void revision.value
+  const { state } = toRaw(props.editor)
+  const current = currentStatus(state)
+  const can = canSetStatus(state)
+  return STATUS_ORDER.map((kind) => ({ kind, mark: STATUS_KINDS[kind], active: current === kind, disabled: !can }))
+})
+function applyStatus(kind: keyof typeof STATUS_KINDS | null) {
+  const editor = toRaw(props.editor)
+  const tr = statusTransaction(editor.state, kind)
+  if (tr) editor.view.dispatch(tr)
+}
+
 // ---- 「正文 ▾」：把选中的这一块（或者这几块）换成别的块。和 slash 菜单是同一张表，
 // 去掉插入新东西的那几项（表格、分隔线）。
 const blockMenu = computed(() => {
@@ -118,6 +140,9 @@ watch(blockOpen, (open) => {
   else document.removeEventListener('mousedown', closeBlocks, true)
 })
 onBeforeUnmount(() => document.removeEventListener('mousedown', closeBlocks, true))
+
+// 菜单关上时把焦点还回先前拿着焦点的地方（多半是正文编辑器）。
+useFocusReturn(blockOpen)
 </script>
 
 <template>
@@ -128,101 +153,137 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', closeBlocks, tru
     :aria-label="t('work.room.doc.selectionToolbar')"
     @mousedown.prevent
   >
-    <button
-      v-if="canAgent"
-      type="button"
-      class="doc-bubble__agent"
-      :aria-label="agentName"
-      :disabled="!hasSelection"
-      @click="emit('agent')"
-    >
-      <CheeseAvatar :size="16" :name="agentName" :handle="agentHandle" />
-      {{ agentName }}
-    </button>
-    <span v-if="canAgent && canComment" class="doc-bubble__sep" aria-hidden="true" />
-    <button
-      v-if="canComment"
-      type="button"
-      :aria-label="t('work.room.doc.commentOnSelection')"
-      :disabled="!hasSelection"
-      @click="emit('comment')"
-    >
-      {{ t('work.room.comments.comment') }}
-    </button>
-    <template v-if="editable">
-      <span class="doc-bubble__sep" aria-hidden="true" />
-      <div v-if="blockMenu" class="doc-bubble__blocks">
-        <button
-          type="button"
-          :aria-label="t('work.room.doc.blockType')"
-          aria-haspopup="menu"
-          :aria-expanded="blockOpen"
-          @click="blockOpen = !blockOpen"
-        >
-          {{ currentBlock.label }}
-          <v-icon size="14">mdi-chevron-down</v-icon>
-        </button>
-        <div v-if="blockOpen" class="doc-bubble__menu" role="menu">
-          <button
-            v-for="item in BLOCK_ITEMS"
-            :key="item.key"
-            type="button"
-            role="menuitemradio"
-            :aria-checked="item.key === currentBlock.key"
-            class="doc-bubble__item"
-            @click="pickBlock(item.run)"
-          >
-            <v-icon size="16">{{ item.icon }}</v-icon>
-            {{ item.label }}
-          </button>
-        </div>
-      </div>
+    <template v-if="statusOnly">
       <button
-        v-for="item in marks"
-        :key="item.key"
+        v-for="item in statuses"
+        :key="item.kind"
         type="button"
-        class="doc-bubble__icon"
-        :aria-label="t(`work.room.doc.format.${item.key}`)"
-        :title="t(`work.room.doc.format.${item.key}`)"
+        class="doc-bubble__icon doc-bubble__status"
+        :class="`doc-bubble__status--${item.kind}`"
+        :aria-label="t(`work.room.doc.blocks.statusKinds.${item.kind}`)"
+        :title="t(`work.room.doc.blocks.statusKinds.${item.kind}`)"
         :aria-pressed="item.active"
-        :disabled="item.disabled"
-        @click="format((c) => c.toggleMark(item.mark))"
+        @click="applyStatus(item.kind)"
       >
-        <v-icon size="17">{{ item.icon }}</v-icon>
+        {{ item.mark }}
       </button>
+      <span class="doc-bubble__sep" aria-hidden="true" />
+      <button type="button" @click="applyStatus(null)">{{ t('work.room.doc.blocks.statusOff') }}</button>
+    </template>
+    <template v-else>
       <button
-        v-if="variant === 'float'"
+        v-if="canAgent"
         type="button"
-        class="doc-bubble__icon"
-        :aria-label="t('work.room.docLink.title')"
-        :title="t('work.room.docLink.title')"
-        @click="emit('link')"
+        class="doc-bubble__agent"
+        :aria-label="agentName"
+        :disabled="!hasSelection"
+        @click="emit('agent')"
       >
-        <v-icon size="17">mdi-link-variant</v-icon>
+        <CheeseAvatar :size="16" :name="agentName" :handle="agentHandle" />
+        {{ agentName }}
       </button>
-      <template v-else>
+      <span v-if="canAgent && canComment" class="doc-bubble__sep" aria-hidden="true" />
+      <button
+        v-if="canComment"
+        type="button"
+        :aria-label="t('work.room.doc.commentOnSelection')"
+        :disabled="!hasSelection"
+        @click="emit('comment')"
+      >
+        {{ t('work.room.comments.comment') }}
+      </button>
+      <template v-if="editable">
+        <span class="doc-bubble__sep" aria-hidden="true" />
+        <div v-if="blockMenu" class="doc-bubble__blocks">
+          <button
+            type="button"
+            :aria-label="t('work.room.doc.blockType')"
+            aria-haspopup="menu"
+            :aria-expanded="blockOpen"
+            @click="blockOpen = !blockOpen"
+          >
+            {{ currentBlock.label }}
+            <v-icon size="14">mdi-chevron-down</v-icon>
+          </button>
+          <div v-if="blockOpen" class="doc-bubble__menu" role="menu">
+            <button
+              v-for="item in BLOCK_ITEMS"
+              :key="item.key"
+              type="button"
+              role="menuitemradio"
+              :aria-checked="item.key === currentBlock.key"
+              class="doc-bubble__item"
+              @click="pickBlock(item.run)"
+            >
+              <v-icon size="16">{{ item.icon }}</v-icon>
+              {{ item.label }}
+            </button>
+          </div>
+        </div>
+        <button
+          v-for="item in marks"
+          :key="item.key"
+          type="button"
+          class="doc-bubble__icon"
+          :aria-label="t(`work.room.doc.format.${item.key}`)"
+          :title="t(`work.room.doc.format.${item.key}`)"
+          :aria-pressed="item.active"
+          :disabled="item.disabled"
+          @click="format((c) => c.toggleMark(item.mark))"
+        >
+          <v-icon size="17">{{ item.icon }}</v-icon>
+        </button>
         <span class="doc-bubble__sep" aria-hidden="true" />
         <button
+          v-for="item in statuses"
+          :key="item.kind"
           type="button"
-          class="doc-bubble__icon"
-          :aria-label="t('work.room.doc.undo')"
-          :disabled="!canUndo"
-          @click="format((c) => c.undo())"
+          class="doc-bubble__icon doc-bubble__status"
+          :class="`doc-bubble__status--${item.kind}`"
+          :aria-label="t(`work.room.doc.blocks.statusKinds.${item.kind}`)"
+          :title="t(`work.room.doc.blocks.statusKinds.${item.kind}`)"
+          :aria-pressed="item.active"
+          :disabled="item.disabled"
+          @click="applyStatus(item.kind)"
         >
-          <v-icon size="17">mdi-undo</v-icon>
+          {{ item.mark }}
         </button>
         <button
+          v-if="variant === 'float'"
           type="button"
           class="doc-bubble__icon"
-          :aria-label="t('work.room.doc.redo')"
-          :disabled="!canRedo"
-          @click="format((c) => c.redo())"
+          :aria-label="t('work.room.docLink.title')"
+          :title="t('work.room.docLink.title')"
+          @click="emit('link')"
         >
-          <v-icon size="17">mdi-redo</v-icon>
+          <v-icon size="17">mdi-link-variant</v-icon>
         </button>
+        <template v-else>
+          <span class="doc-bubble__sep" aria-hidden="true" />
+          <button
+            type="button"
+            class="doc-bubble__icon"
+            :aria-label="t('work.room.doc.undo')"
+            :disabled="!canUndo"
+            @click="format((c) => c.undo())"
+          >
+            <v-icon size="17">mdi-undo</v-icon>
+          </button>
+          <button
+            type="button"
+            class="doc-bubble__icon"
+            :aria-label="t('work.room.doc.redo')"
+            :disabled="!canRedo"
+            @click="format((c) => c.redo())"
+          >
+            <v-icon size="17">mdi-redo</v-icon>
+          </button>
+        </template>
       </template>
+      <button v-else type="button" :disabled="!hasSelection" @click="emit('copy')">
+        {{ t('work.room.doc.copy') }}
+      </button>
     </template>
-    <button v-else type="button" :disabled="!hasSelection" @click="emit('copy')">{{ t('work.room.doc.copy') }}</button>
   </div>
 </template>
 
@@ -277,6 +338,19 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', closeBlocks, tru
 }
 .doc-bubble__agent {
   font-weight: 600;
+}
+/* 三种状态各用它在正文里的颜色，一眼认得出是哪一种。 */
+.doc-bubble__status {
+  font-weight: 700;
+}
+.doc-bubble__status--ok {
+  color: var(--ok-ink);
+}
+.doc-bubble__status--no {
+  color: var(--danger-ink);
+}
+.doc-bubble__status--warn {
+  color: var(--warn-ink);
 }
 /* 手机上键盘上方的那一条：浅色，按钮按手指的大小，放不下时横着滑。 */
 .doc-bubble--bar {

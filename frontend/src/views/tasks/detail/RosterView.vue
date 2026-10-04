@@ -82,41 +82,35 @@
               <td>
                 <div class="rs__ops">
                   <template v-if="row.status === 'CLAIM_PENDING'">
-                    <v-btn
-                      size="small"
-                      variant="outlined"
-                      :loading="busyId === row.id"
-                      @click="emit('approve', row.id)"
-                    >
+                    <BaseButton kind="primary" size="sm" :loading="busyId === row.id" @click="emit('approve', row.id)">
                       {{ t('tasks.roster.approve') }}
-                    </v-btn>
-                    <v-btn size="small" variant="outlined" @click="openReject(row)">{{
+                    </BaseButton>
+                    <BaseButton kind="ghost" size="sm" @click="openReject(row)">{{
                       t('tasks.roster.reject')
-                    }}</v-btn>
+                    }}</BaseButton>
                   </template>
-                  <v-btn
+                  <BaseButton
                     v-else-if="row.status === 'REVIEW_PENDING'"
-                    size="small"
-                    variant="outlined"
+                    kind="primary"
+                    size="sm"
                     @click="emit('review', { id: row.id, name: row.name })"
                   >
                     {{ t('tasks.roster.review') }}
-                  </v-btn>
-                  <v-btn
+                  </BaseButton>
+                  <BaseButton
                     v-else-if="row.latest"
-                    size="small"
-                    variant="text"
+                    kind="ghost"
+                    size="sm"
                     @click="emit('review', { id: row.id, name: row.name })"
                   >
                     {{ t('tasks.roster.view') }}
-                  </v-btn>
+                  </BaseButton>
                   <AdaptiveMenu v-if="row.approved === 'APPROVED'" :actions="rowActions(row)">
                     <template #activator="{ props: menu }">
-                      <v-btn
+                      <BaseButton
                         v-bind="menu"
                         icon="mdi-dots-horizontal"
-                        size="small"
-                        variant="text"
+                        size="sm"
                         :aria-label="t('tasks.roster.more')"
                       />
                     </template>
@@ -173,52 +167,44 @@
       </table>
     </div>
 
-    <v-dialog v-model="deadlineOpen" max-width="420">
-      <v-card>
-        <v-card-title class="t-dialog-title">{{ t('tasks.roster.deadlineTitle') }}</v-card-title>
-        <v-card-text>
-          <p class="rs__dialog-lead">{{ t('tasks.roster.deadlineFor', { name: selected?.name ?? '' }) }}</p>
-          <v-text-field
-            v-model="deadlineValue"
-            type="datetime-local"
-            variant="outlined"
-            density="comfortable"
-            :min="minDeadline"
-            hide-details
-          />
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" @click="deadlineOpen = false">{{ t('tasks.roster.cancel') }}</v-btn>
-          <v-btn color="primary" variant="flat" :disabled="!deadlineValue" @click="saveDeadline">
-            {{ t('tasks.roster.save') }}
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <AdaptiveDialog
+      v-model="deadlineOpen"
+      :title="t('tasks.roster.deadlineTitle')"
+      :primary-label="t('tasks.roster.save')"
+      :primary-disabled="!deadlineValue"
+      size="sm"
+      @primary="saveDeadline"
+    >
+      <p class="rs__dialog-lead">{{ t('tasks.roster.deadlineFor', { name: selected?.name ?? '' }) }}</p>
+      <v-text-field
+        v-model="deadlineValue"
+        type="datetime-local"
+        variant="outlined"
+        density="comfortable"
+        :min="minDeadline"
+        hide-details
+      />
+    </AdaptiveDialog>
 
-    <v-dialog v-model="rejectOpen" max-width="460">
-      <v-card>
-        <v-card-title class="t-dialog-title">{{ t('tasks.roster.rejectTitle') }}</v-card-title>
-        <v-card-text>
-          <p class="rs__dialog-lead">{{ t('tasks.roster.rejectLead', { name: selected?.name ?? '' }) }}</p>
-          <v-textarea
-            v-model="rejectReason"
-            autocomplete="off"
-            :label="t('tasks.roster.rejectReasonLabel')"
-            variant="outlined"
-            rows="3"
-            counter="200"
-            maxlength="200"
-          />
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" @click="rejectOpen = false">{{ t('tasks.roster.cancel') }}</v-btn>
-          <v-btn color="error" variant="flat" @click="confirmReject">{{ t('tasks.roster.reject') }}</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <AdaptiveDialog
+      v-model="rejectOpen"
+      :title="t('tasks.roster.rejectTitle')"
+      :primary-label="t('tasks.roster.reject')"
+      primary-danger
+      size="sm"
+      @primary="confirmReject"
+    >
+      <p class="rs__dialog-lead">{{ t('tasks.roster.rejectLead', { name: selected?.name ?? '' }) }}</p>
+      <v-textarea
+        v-model="rejectReason"
+        autocomplete="off"
+        :label="t('tasks.roster.rejectReasonLabel')"
+        variant="outlined"
+        rows="3"
+        counter="200"
+        maxlength="200"
+      />
+    </AdaptiveDialog>
   </div>
 </template>
 
@@ -236,6 +222,8 @@ import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import dayjs from 'dayjs'
 
+import BaseButton from '@/components/base/BaseButton.vue'
+import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 
 /** 一行的状态：先看领取申请批没批，批了再看最新那一版提交判没判。 */

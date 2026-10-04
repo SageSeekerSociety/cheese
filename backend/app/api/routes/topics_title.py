@@ -48,8 +48,8 @@ from app.api.auth import ActorResolverDep
 from app.api.response import ok
 from app.api.routes.topics import DbSession, Topic
 from app.core.errors import ForbiddenError, ValidationError
+from app.core.sentences import say
 from app.domain.agent.runtime import announce_stale
-from app.domain.block.notice_text import say
 from app.domain.topic import naming
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
@@ -100,7 +100,7 @@ async def _title_actor(
     actor = await resolver.resolve(topic_id=room.id, project_id=room.project_id)
     await resolver.authorize_topic(actor, project_id=room.project_id, topic_id=room.id)
     if not actor.authenticated:
-        raise ForbiddenError("改标题需要登录")
+        raise ForbiddenError(say("renameSignIn"))
     return room, actor.handle
 
 
@@ -114,7 +114,7 @@ async def undo_title(
     try:
         event_id = uuid.UUID(str(body.get("event_id")))
     except ValueError as exc:
-        raise ValidationError("event_id 不是有效的 id") from exc
+        raise ValidationError(say("eventIdInvalid")) from exc
     await naming.undo(db, room, event_id, by=handle)
     await db.flush()
     out = TopicOut.model_validate(room).model_dump(mode="json")

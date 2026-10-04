@@ -1,0 +1,851 @@
+/* The document's blocks: callouts, status tags, timelines, stat cards,
+   columns, folds, formulas, footnotes, and a reader's table on a phone.
+
+   Global on purpose: every editor built on the document schema renders these
+   blocks (the document, a task description, a knowledge entry), and the node
+   views' popovers sit on <body>. Selectors are the blocks' own data attributes,
+   so nothing else on the page matches them. Controls a block carries only
+   show while the text can be edited. */
+
+.ProseMirror[contenteditable='false']
+  :is(.doc-callout__kind, .doc-tl__dot, .doc-stat__remove, .doc-stats__add, .doc-column__menu) {
+  pointer-events: none;
+}
+
+.ProseMirror[contenteditable='false'] :is(.doc-stat__remove, .doc-stats__add, .doc-column__menu) {
+  display: none;
+}
+
+/* ---- Callout ------------------------------------------------------------ */
+
+[data-block='callout'] {
+  --doc-callout: var(--usage-write);
+  --doc-callout-ink: var(--usage-write);
+
+  margin: 12px 0;
+  padding: 8px 16px;
+  border-left: 4px solid var(--doc-callout);
+  border-top-right-radius: var(--radius-md);
+  border-bottom-right-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--doc-callout) 9%, transparent);
+}
+
+[data-block='callout'][data-kind='TIP'] {
+  --doc-callout: var(--ok);
+  --doc-callout-ink: var(--ok-ink);
+}
+
+[data-block='callout'][data-kind='IMPORTANT'] {
+  --doc-callout: var(--usage-ask);
+  --doc-callout-ink: var(--usage-ask);
+}
+
+[data-block='callout'][data-kind='WARNING'] {
+  --doc-callout: var(--warn);
+  --doc-callout-ink: var(--warn-ink);
+}
+
+[data-block='callout'][data-kind='CAUTION'] {
+  --doc-callout: var(--danger);
+  --doc-callout-ink: var(--danger-ink);
+}
+
+[data-block='callout'] > div > :first-child {
+  margin-top: 0;
+}
+
+[data-block='callout'] > div > :last-child {
+  margin-bottom: 0;
+}
+
+.doc-callout__kind {
+  padding: 0 4px;
+  margin-left: -4px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: var(--lh-13);
+  color: var(--doc-callout-ink);
+  background: none;
+  cursor: pointer;
+}
+
+.doc-callout__kind:hover,
+.doc-callout__kind[aria-expanded='true'] {
+  background: color-mix(in srgb, var(--doc-callout) 14%, transparent);
+}
+
+/* ---- Status tag --------------------------------------------------------- */
+
+[data-status] {
+  padding: 1px 6px;
+  margin: 0 1px;
+  border-radius: var(--radius-sm);
+  font-size: 0.9em;
+  font-weight: 500;
+  color: var(--ok-ink);
+  background: var(--ok-wash);
+  box-decoration-break: clone;
+}
+
+[data-status]::before {
+  margin-right: 3px;
+  content: '✓';
+}
+
+[data-status='no'] {
+  color: var(--danger-ink);
+  background: var(--danger-wash);
+}
+
+[data-status='no']::before {
+  content: '✗';
+}
+
+[data-status='warn'] {
+  color: var(--warn-ink);
+  background: var(--warn-wash);
+}
+
+[data-status='warn']::before {
+  font-weight: 700;
+  content: '!';
+}
+
+/* ---- Fields: the short lines of a timeline item or a stat card ----------- */
+
+.doc-field--empty::before {
+  float: left;
+  height: 0;
+  color: var(--faint);
+  white-space: nowrap;
+  pointer-events: none;
+  content: attr(data-placeholder);
+}
+
+.doc-field--blank {
+  height: 0;
+  overflow: hidden;
+}
+
+/* ---- Timeline ----------------------------------------------------------
+   No grid inside the editable part: Chrome puts the caret on a grid
+   container when you click beside short text. The time column is placed
+   absolutely, as wide as the longest time (measured by the view). */
+
+[data-block='timeline'] {
+  --doc-tl-w: 4em;
+
+  margin: 16px 0;
+}
+
+[data-item='timeline'] {
+  position: relative;
+  padding-left: calc(var(--doc-tl-w) + 32px);
+}
+
+[data-item='timeline'] [data-field='when'] {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: var(--doc-tl-w);
+  overflow: hidden;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  line-height: inherit;
+  color: var(--muted);
+  text-align: right;
+  white-space: nowrap;
+}
+
+[data-item='timeline'] [data-field='when'].doc-field--empty::before {
+  float: right;
+}
+
+[data-item='timeline'] [data-field='title'] {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+[data-item='timeline'] [data-field='body'] {
+  padding-bottom: 12px;
+  font-size: 14px;
+  line-height: var(--lh-14);
+  color: var(--muted);
+}
+
+[data-item='timeline'] [data-field='body'].doc-field--blank {
+  padding-bottom: 12px;
+}
+
+.doc-tl__dot {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--doc-tl-w) + 8px);
+  width: 16px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+.doc-tl__dot::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 7px;
+  width: 2px;
+  background: var(--line);
+  content: '';
+}
+
+[data-item='timeline']:last-child .doc-tl__dot::before {
+  bottom: auto;
+  height: 14px;
+}
+
+.doc-tl__dot::after {
+  position: absolute;
+  top: 8px;
+  left: 3px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--muted);
+  box-shadow: 0 0 0 3px var(--surface);
+  content: '';
+}
+
+.doc-tl__dot:hover::after,
+.doc-tl__dot[aria-expanded='true']::after {
+  background: var(--ink);
+}
+
+/* ---- Stat cards --------------------------------------------------------- */
+
+[data-block='stats'] {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.doc-stats__cards {
+  display: contents;
+}
+
+[data-item='stat'] {
+  position: relative;
+  min-width: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+[data-item='stat'] [data-field='name'] {
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+}
+
+[data-item='stat'] [data-field='value'] {
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  line-height: var(--lh-18);
+  color: var(--ink);
+}
+
+[data-item='stat'] [data-field='delta'] {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  line-height: var(--lh-12);
+  color: var(--muted);
+}
+
+[data-item='stat'] [data-trend='up']::before {
+  content: '▲ ';
+}
+
+[data-item='stat'] [data-trend='down']::before {
+  content: '▼ ';
+}
+
+.doc-stat__remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  color: var(--muted);
+  background: none;
+  opacity: 0;
+  cursor: pointer;
+}
+
+[data-item='stat']:hover .doc-stat__remove,
+[data-item='stat']:focus-within .doc-stat__remove {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .doc-stat__remove {
+    opacity: 0.6;
+  }
+}
+
+.doc-stats__add {
+  display: none;
+  min-height: 72px;
+  border: 1px dashed var(--line-2);
+  border-radius: var(--radius-md);
+  font-size: 18px;
+  color: var(--muted);
+  background: none;
+  cursor: pointer;
+}
+
+/* Only while the caret is in the cards: hidden, it would still hold a row. */
+.doc-editing > .doc-stats__add {
+  display: block;
+}
+
+.doc-stats__add:hover,
+.doc-stat__remove:hover {
+  color: var(--ink);
+  background: var(--fill);
+}
+
+/* ---- Columns ------------------------------------------------------------ */
+
+[data-block='columns'] {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px 24px;
+  margin: 12px 0;
+}
+
+[data-item='column'] {
+  position: relative;
+  min-width: 0;
+}
+
+[data-item='column'] > div > :first-child {
+  margin-top: 0;
+}
+
+.doc-column__menu {
+  position: absolute;
+  top: -4px;
+  right: -8px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  background: none;
+  opacity: 0;
+  cursor: pointer;
+}
+
+[data-item='column']:hover > .doc-column__menu,
+[data-item='column']:focus-within > .doc-column__menu,
+.doc-column__menu[aria-expanded='true'] {
+  opacity: 1;
+}
+
+.doc-column__menu:hover {
+  background: var(--fill);
+}
+
+/* ---- Fold --------------------------------------------------------------- */
+
+[data-block='details'] {
+  position: relative;
+  margin: 12px 0;
+  padding-left: 24px;
+}
+
+[data-block='details'] [data-field='summary'] {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+[data-block='details']:not(.doc-details--open) [data-field='details'] {
+  display: none;
+}
+
+[data-block='details'] [data-field='details'] {
+  margin-top: 4px;
+}
+
+.doc-details__toggle {
+  position: absolute;
+  top: 2px;
+  left: 0;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  background: none;
+  cursor: pointer;
+}
+
+.doc-details__toggle::before {
+  display: inline-block;
+  transition: transform var(--dur-quick) var(--ease-standard);
+  content: '▸';
+}
+
+.doc-details--open > .doc-details__toggle::before {
+  transform: rotate(90deg);
+}
+
+.doc-details__toggle:hover {
+  color: var(--ink);
+  background: var(--fill);
+}
+
+/* ---- Formulas ----------------------------------------------------------- */
+
+[data-math] {
+  cursor: default;
+}
+
+.ProseMirror[contenteditable='true'] [data-math] {
+  cursor: pointer;
+}
+
+.ProseMirror[contenteditable='true'] [data-math]:hover {
+  border-radius: var(--radius-sm);
+  background: var(--fill);
+}
+
+[data-math='block'] {
+  margin: 12px 0;
+  overflow-x: auto;
+  text-align: center;
+}
+
+.doc-math--empty,
+.doc-math--error {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.doc-math--error {
+  color: var(--danger-ink);
+}
+
+/* ---- Footnotes ---------------------------------------------------------- */
+
+sup[data-footnote-ref] {
+  padding: 0 2px;
+  font-size: 12px;
+  color: var(--accent-ink);
+  cursor: pointer;
+}
+
+sup[data-footnote-ref]::before {
+  content: '[';
+}
+
+sup[data-footnote-ref]::after {
+  content: ']';
+}
+
+div[data-footnote] {
+  margin: 4px 0;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+}
+
+div[data-footnote]::before {
+  margin-right: 6px;
+  color: var(--faint);
+  content: '[' attr(data-footnote) ']';
+}
+
+/* A reader sees the note where it is referenced, so the list at the end is
+   only for whoever edits it. */
+.ProseMirror[contenteditable='false'] div[data-footnote] {
+  display: none;
+}
+
+/* ---- Popovers the blocks open ------------------------------------------- */
+
+.doc-pop {
+  position: absolute;
+  z-index: var(--z-overlay);
+  display: grid;
+  min-width: 180px;
+  max-width: min(360px, calc(100vw - 16px));
+  padding: 4px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-md);
+  font-size: 14px;
+  line-height: var(--lh-14);
+  color: var(--text);
+  background: var(--raised);
+  box-shadow: var(--shadow-2);
+}
+
+.doc-pop button {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  padding: 6px 12px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  font: inherit;
+  color: var(--text);
+  text-align: left;
+  background: none;
+  cursor: pointer;
+}
+
+.doc-pop button span {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.doc-pop button:hover,
+.doc-pop button[aria-checked='true'] {
+  background: var(--fill);
+}
+
+.doc-pop input,
+.doc-pop textarea {
+  margin: 4px;
+  padding: 4px 8px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface);
+}
+
+.doc-pop textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+
+.doc-pop__preview {
+  min-height: 24px;
+  padding: 4px 8px;
+  overflow-x: auto;
+}
+
+.doc-pop--note p {
+  margin: 4px 8px;
+}
+
+.doc-pop__kinds {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+}
+
+.doc-pop__kinds button {
+  flex: 1;
+  justify-content: center;
+}
+
+.doc-pop__kinds button[aria-pressed='true'] {
+  background: var(--fill-2);
+}
+
+/* ---- A reader's table on a phone ---------------------------------------- */
+
+@media (max-width: 600px) {
+  .ProseMirror[contenteditable='false'] .tableWrapper[data-shape='cards'] {
+    overflow: visible;
+  }
+
+  .ProseMirror[contenteditable='false'] .tableWrapper[data-shape='cards'] :is(table, tbody, tr, td) {
+    display: block;
+    width: auto !important;
+    border: 0;
+  }
+
+  .ProseMirror[contenteditable='false'] .tableWrapper[data-shape='cards'] colgroup,
+  .ProseMirror[contenteditable='false'] .tableWrapper[data-shape='cards'] tr:first-child {
+    display: none;
+  }
+
+  .ProseMirror[contenteditable='false'] .tableWrapper[data-shape='cards'] tr {
+    margin: 8px 0;
+    padding: 8px 12px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+  }
+
+  .ProseMirror[contenteditable='false'] .tableWrapper[data-shape='cards'] td {
+    padding: 2px 0;
+  }
+
+  .ProseMirror[contenteditable='false'] .tableWrapper[data-shape='cards'] td::before {
+    display: block;
+    font-size: 12px;
+    line-height: var(--lh-12);
+    color: var(--muted);
+    content: attr(data-label);
+  }
+
+  .ProseMirror[contenteditable='false'] .tableWrapper[data-shape='cards'] td:first-child {
+    font-weight: 600;
+    color: var(--ink);
+  }
+
+  .ProseMirror[contenteditable='false'] .tableWrapper[data-shape='cards'] td:first-child::before {
+    display: none;
+  }
+
+  .ProseMirror[contenteditable='false'] .tableWrapper[data-shape='numbers'] {
+    overflow-x: auto;
+  }
+
+  .ProseMirror[contenteditable='false'] .tableWrapper[data-shape='numbers'] :is(th, td):first-child {
+    position: sticky;
+    left: 0;
+    z-index: var(--z-raised);
+    background: var(--surface);
+  }
+}
+
+/* ---- Chart -------------------------------------------------------------- */
+
+[data-block='chart'] {
+  margin: 16px 0;
+}
+
+.doc-chart__bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+}
+
+.doc-chart__kind,
+.doc-chart__toggle,
+.doc-mermaid__bar button {
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+  background: none;
+  cursor: pointer;
+}
+
+.doc-chart__kind {
+  margin-left: -6px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.doc-chart__kind::after {
+  margin-left: 4px;
+  color: var(--faint);
+  content: '▾';
+}
+
+.doc-chart__toggle {
+  margin-left: auto;
+}
+
+.doc-chart__toggle::before {
+  display: inline-block;
+  margin-right: 4px;
+  transition: transform var(--dur-quick) var(--ease-standard);
+  content: '▸';
+}
+
+:is(.doc-chart__kind, .doc-chart__toggle, .doc-mermaid__bar button):hover,
+.doc-chart__kind[aria-expanded='true'] {
+  color: var(--ink);
+  background: var(--fill);
+}
+
+.doc-chart__canvas {
+  width: 100%;
+  height: 240px;
+  margin-top: 4px;
+}
+
+/* The table shows while editing unless folded, and stays folded while
+   reading unless opened. */
+.ProseMirror[contenteditable='false'] [data-block='chart']:not(.doc-chart--open) .doc-chart__data,
+.ProseMirror[contenteditable='true'] [data-block='chart'].doc-chart--closed .doc-chart__data {
+  display: none;
+}
+
+.ProseMirror[contenteditable='true'] [data-block='chart']:not(.doc-chart--closed) .doc-chart__toggle::before,
+[data-block='chart'].doc-chart--open .doc-chart__toggle::before {
+  transform: rotate(90deg);
+}
+
+.ProseMirror[contenteditable='false'] .doc-chart__kind {
+  pointer-events: none;
+}
+
+.ProseMirror[contenteditable='false'] .doc-chart__kind::after {
+  content: none;
+}
+
+.doc-chart__data {
+  margin-top: 4px;
+}
+
+.doc-chart__data table {
+  margin: 0;
+}
+
+/* ---- Mermaid diagram ---------------------------------------------------- */
+
+[data-block='mermaid'] {
+  margin: 16px 0;
+}
+
+.doc-mermaid__bar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  min-height: 24px;
+}
+
+.ProseMirror[contenteditable='false'] .doc-mermaid__bar {
+  display: none;
+}
+
+.doc-mermaid__figure {
+  overflow-x: auto;
+  text-align: center;
+  cursor: zoom-in;
+}
+
+.doc-mermaid__figure--scroll {
+  text-align: left;
+}
+
+.doc-mermaid--empty .doc-mermaid__figure {
+  padding: 16px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  color: var(--faint);
+  cursor: default;
+}
+
+.doc-mermaid__error {
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--danger-ink);
+}
+
+.doc-mermaid__error:empty {
+  display: none;
+}
+
+/* The source shows while the caret is in it, and while the diagram cannot be
+   drawn or has nothing to draw. */
+[data-block='mermaid']:not(.doc-mermaid--source, .doc-mermaid--error, .doc-mermaid--empty) > pre,
+.ProseMirror[contenteditable='false'] [data-block='mermaid'] > pre {
+  display: none;
+}
+
+[data-block='mermaid'] > pre {
+  margin-top: 8px;
+}
+
+.doc-mermaid-full {
+  position: fixed;
+  z-index: var(--z-overlay);
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  background: var(--surface);
+}
+
+.doc-mermaid-full__close {
+  align-self: flex-end;
+  margin: 8px 16px;
+  padding: 4px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  font: inherit;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.doc-mermaid-full__body {
+  flex: 1;
+  overflow: auto;
+  padding: 16px;
+  text-align: center;
+}
+
+.doc-mermaid-full__body svg {
+  max-width: none;
+  height: auto;
+}
+
+/* ---- Table handles ------------------------------------------------------ */
+
+.doc-th,
+.doc-th-add {
+  position: absolute;
+  z-index: var(--z-panel);
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  color: var(--faint);
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.doc-th {
+  width: 20px;
+  height: 20px;
+  border-color: var(--line);
+}
+
+.doc-th-add--row {
+  height: 16px;
+}
+
+.doc-th-add--col {
+  width: 16px;
+}
+
+:is(.doc-th, .doc-th-add):hover,
+.doc-th[aria-expanded='true'] {
+  border-color: var(--line);
+  color: var(--ink);
+  background: var(--fill);
+}
+
+@media (hover: none) {
+  .doc-th-add {
+    border-color: var(--line);
+  }
+}

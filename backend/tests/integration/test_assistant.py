@@ -30,11 +30,11 @@ import pytest
 from redis.asyncio import from_url
 from sqlalchemy import select, text, update
 
-from app.api.deps import get_handless_sessions
+from app.api.deps import get_session_host
 from app.api.routes import assistant as route
 from app.api.routes import llm_proxy
 from app.core.config import settings
-from app.domain.agent.harness.pi.handless import HandlessSessions
+from app.domain.agent.session_host.host import SessionHost
 from app.domain.assistant.models import AssistantMessage
 from app.domain.feature_stats import pricing
 from app.domain.task.models import Task, TaskMembership
@@ -260,13 +260,13 @@ def gateway(client, monkeypatch: pytest.MonkeyPatch, tmp_path):
     home = tmp_path / "host"
     install_pi(home)
     host = Host(home)
-    people = HandlessSessions(host)
-    app.dependency_overrides[get_handless_sessions] = lambda: people
+    people = SessionHost(host)
+    app.dependency_overrides[get_session_host] = lambda: people
     gw.host = host  # type: ignore[attr-defined]
     try:
         yield gw
     finally:
-        app.dependency_overrides.pop(get_handless_sessions, None)
+        app.dependency_overrides.pop(get_session_host, None)
         stop_all(home)
         relay.close()
         gw.close()
@@ -560,12 +560,12 @@ def test_my_tasks_reports_only_what_the_asker_takes_part_in(client, gateway):
 
     asyncio.run(join())
     conversation = _start(client, here, me)
-    gateway.script = [("tool", "my_tasks", {}), ("text", "你领了一道题。")]
+    gateway.script = [("tool", "cheese_my_tasks", {}), ("text", "你领了一道题。")]
 
     r = _ask(client, conversation, "我领了哪些题？", me)
 
     assert r.status_code == 200
-    assert ("tool", {"name": "my_tasks"}) in _events(r.text)
+    assert ("tool", {"name": "cheese_my_tasks"}) in _events(r.text)
     tool_result = json.dumps(gateway.requests[-1]["messages"][-1], ensure_ascii=False)
     assert "我领的那道" in tool_result
     assert "别人的那道" not in tool_result

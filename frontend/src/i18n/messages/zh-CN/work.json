@@ -47,7 +47,8 @@
     "confirm": "推送并更换",
     "unavailable": "{name} · 不可用",
     "abandonWarning": "不推送直接更换的话，原来那台上没推送的改动会留在那台电脑上，不会跟到新电脑。",
-    "abandon": "不推送，直接更换"
+    "abandon": "不推送，直接更换",
+    "abandonTitle": "不推送直接更换？"
   },
   "roomMachine": {
     "edit": "改",
@@ -56,6 +57,7 @@
     "more": "其他配置与设备",
     "projectDefault": "项目默认",
     "wholeMachine": "能访问整台机器",
+    "wholeMachineNotice": "让它看到整台机器（能操作这台机器上的服务和其他房间）",
     "online": "在线",
     "offline": "离线",
     "removed": "已移出团队",
@@ -152,8 +154,7 @@
     "forbidden": "只有团队所有者和管理员能修改资料",
     "saved": "已保存",
     "saveFailed": "保存失败，请稍后重试",
-    "save": "保存",
-    "cancel": "取消"
+    "save": "保存"
   },
   "newProject": {
     "title": "新建项目",
@@ -181,7 +182,8 @@
   },
   "resourceLimits": {
     "projects": "项目数量：当前未设置上限",
-    "concurrent": "工作电脑按需创建；新项目默认最多同时运行 {count} 个 AI 任务，超出后排队",
+    "concurrent": "新项目默认最多同时运行 {count} 个 AI 任务，超出后排队",
+    "detail": "资源限制",
     "machines": "云端机器：团队默认共享 {count} 台名额，额度与用量见团队的「工作电脑」页",
     "machinesOwn": "云端机器：你名下的项目默认共享 {count} 台名额，额度与用量见你名下的「工作电脑」页",
     "failed": "资源限制加载失败",
@@ -412,7 +414,6 @@
       "upgrade": "转为话题",
       "downloadFile": "下载 {name}",
       "openFile": "打开 {name}",
-      "askAnswered": "{who} 选了「{option}」",
       "upgradedToTask": "已转为任务",
       "upgradedToTopic": "已转为话题"
     },
@@ -439,16 +440,6 @@
       "sendPhotos": "发送照片",
       "more": "更多操作",
       "send": "发送"
-    },
-    "ask": {
-      "title": "带选项提问",
-      "question": "问题",
-      "option": "选项 {n}",
-      "addOption": "添加选项",
-      "removeOption": "删除选项",
-      "repeated": "和前面的选项重复",
-      "send": "发送",
-      "failed": "发送失败"
     },
     "dispatched": {
       "created": "新建任务",
@@ -576,14 +567,16 @@
       "runtimeReady": "应用已确认就绪",
       "runtimeFailed": "应用报告失败",
       "runtimeUnconfirmed": "导航已加载，应用就绪未确认",
-      "instanceDisconnected": "连接断开，保留已加载页；等待同一实例重连",
-      "instanceGone": "原实例已替换，旧请求已停止；刷新打开当前实例",
+      "instanceDisconnected": "连接中断，仍显示已加载的页面；应用可能正在重启",
+      "instanceGone": "原实例已替换，旧请求已停止",
+      "instanceGoneManual": "原实例已被替换，新的还没就绪。刷新以打开当前实例",
+      "autoReloaded": "应用已重启，已自动重新载入",
       "runningApp": "运行中的应用",
       "download": "下载",
       "frameTitle": "话题预览",
       "authorizing": "正在获取预览授权…",
       "navigating": "正在加载新页面…",
-      "navigationTimeout": "新页面加载超时，请重试。",
+      "navigationTimeout": "新页面 {seconds} 秒内没能加载出来，请重试。",
       "navigationFailed": "新页面未能加载，请重试。",
       "retainedPage": "新内容未加载，当前仍显示上次打开的页面。",
       "retryTarget": "重试新内容",
@@ -773,7 +766,16 @@
         "code": "代码块",
         "quote": "引用",
         "table": "表格",
-        "hr": "分割线"
+        "hr": "分割线",
+        "callout": "提示框",
+        "timeline": "时间线",
+        "stats": "指标卡",
+        "columns": "分栏",
+        "details": "折叠",
+        "math": "公式",
+        "chart": "图表",
+        "diagram": "流程图",
+        "status": "状态标签"
       },
       "status": {
         "inProgress": "进行中",
@@ -803,7 +805,96 @@
       "you": "你",
       "emptyLineHint": "输入 / 插入内容",
       "undo": "撤销",
-      "redo": "重做"
+      "redo": "重做",
+      "blocks": {
+        "calloutKind": "提示框类型",
+        "kinds": {
+          "NOTE": "说明",
+          "TIP": "提示",
+          "IMPORTANT": "重要",
+          "WARNING": "注意",
+          "CAUTION": "警告"
+        },
+        "kindHints": {
+          "NOTE": "补充信息",
+          "TIP": "建议",
+          "IMPORTANT": "结论、决定",
+          "WARNING": "风险",
+          "CAUTION": "会出事的操作"
+        },
+        "fields": {
+          "when": "时间",
+          "title": "标题",
+          "body": "说明",
+          "name": "名称",
+          "value": "数值",
+          "delta": "变化",
+          "summary": "标题"
+        },
+        "itemActions": "这一项的操作",
+        "moveUp": "上移",
+        "moveDown": "下移",
+        "addAfter": "在后面加一项",
+        "removeItem": "删除这一项",
+        "addStat": "加一张指标卡",
+        "removeStat": "删除这张指标卡",
+        "columnActions": "这一栏的操作",
+        "addColumn": "在右边加一栏",
+        "removeColumn": "删除这一栏",
+        "toggleDetails": "展开或收起",
+        "emptyFormula": "空公式",
+        "formulaError": "公式无法显示",
+        "formulaSource": "公式内容",
+        "footnoteMissing": "找不到这条脚注",
+        "editFootnote": "编辑脚注",
+        "statusWords": "状态文字",
+        "statusKinds": {
+          "ok": "是、通过",
+          "no": "否、不通过",
+          "warn": "有风险、待定"
+        },
+        "statusOff": "去掉",
+        "chartKind": "图表类型",
+        "chartKinds": {
+          "bar": "柱状图",
+          "horizontal": "横向柱状图",
+          "line": "折线图",
+          "area": "面积图",
+          "stacked": "堆叠柱状图",
+          "pie": "饼图",
+          "scatter": "散点图"
+        },
+        "chartHints": {
+          "bar": "比大小",
+          "horizontal": "名称长、项目多时比大小",
+          "line": "看趋势",
+          "area": "看趋势和总量",
+          "stacked": "比总量和组成",
+          "pie": "看占比",
+          "scatter": "看两个数的关系"
+        },
+        "chartData": "数据",
+        "chartCategory": "类别",
+        "chartValue": "数值",
+        "chartSlice": "{name}：{value}（{percent}%）",
+        "diagramSource": "源码",
+        "askAgent": "让{name}改",
+        "emptyDiagram": "暂无内容",
+        "diagramError": "图无法显示：{reason}",
+        "openDiagram": "全屏查看",
+        "closeDiagram": "关闭",
+        "rowActions": "这一行的操作",
+        "columnActionsTable": "这一列的操作",
+        "addRowEnd": "在末尾加一行",
+        "addColumnEnd": "在末尾加一列",
+        "rowAbove": "在上方插入一行",
+        "rowBelow": "在下方插入一行",
+        "rowDelete": "删除这一行",
+        "columnLeft": "在左边插入一列",
+        "columnRight": "在右边插入一列",
+        "columnDelete": "删除这一列",
+        "diagramTooLong": "图太大，只显示源码"
+      }
     },
     "comments": {
       "comment": "评论",
@@ -830,6 +921,10 @@
       "resend": "重新发送",
       "reading": "{agent}正在读文档…",
       "editing": "{agent}正在修改文档…",
+      "readingCode": "{agent}正在看代码…",
+      "searching": "{agent}正在搜索项目…",
+      "readingMemory": "{agent}正在读项目记忆…",
+      "readingAttachment": "{agent}正在读附件…",
       "quoteChanged": "原文已改动"
     },
     "chat": {
@@ -848,7 +943,6 @@
       "loadingOlder": "加载更早的消息…",
       "older": "更早的消息",
       "newMessagesBelow": "以下是新消息",
-      "pickFailed": "选择失败",
       "reactionFailed": "表情更新失败",
       "undoFailed": "撤销失败",
       "downloadFailed": "下载失败",
@@ -1268,7 +1362,6 @@
     "deleteTitle": "删除《{name}》",
     "deleteBody": "删除后无法恢复，已经引用过它的消息也将打不开这份文件",
     "deleteFailed": "删除失败",
-    "cancel": "取消",
     "close": "关闭",
     "actionsOf": "{name} 的操作",
     "backToList": "返回资料库",
@@ -1401,7 +1494,6 @@
       "noMemories": "暂无记忆",
       "deactivateTitle": "停用「{name}」",
       "deactivateHint": "停用后新话题选不到它，已在用它的话题照常工作，记忆全部保留",
-      "cancel": "取消",
       "typeGeneral": "通用",
       "editor": {
         "presetCustom": "自行填写",
@@ -1607,6 +1699,8 @@
   "skills": {
     "edit": "修改",
     "discard": "放弃改动",
+    "discardTitle": "放弃对「{title}」的改动？",
+    "discardHint": "改动作废，回到正在用的那一版；这一版改动找不回来。",
     "drop": "不要了",
     "history": "历史版本",
     "delete": "删除",
@@ -1663,8 +1757,7 @@
     "restore": "恢复到这一版",
     "close": "关闭",
     "deleteTitle": "删除「{title}」",
-    "deleteHint": "删除后之后的房间不再带着它，历史版本也一起删除",
-    "cancel": "取消"
+    "deleteHint": "删除后之后的房间不再带着它，历史版本也一起删除"
   },
   "nodeBoard": {
     "loadFailed": "加载机器状态失败",

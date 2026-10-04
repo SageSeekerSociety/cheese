@@ -1,0 +1,238 @@
+"""Isolated full-service recovery client for a retained native runner socket.
+
+Discovery uses the test's saved descriptor, not production device discovery.
+The worker never starts or stops the runner/native process.
+"""
+
+import asyncio
+import json
+import sys
+import uuid
+from pathlib import Path
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+from app.domain.agent.chat import ChatService
+from app.domain.agent.compute import ComputePool
+from app.domain.agent.harness import CLAUDE_CODE, SessionRef
+from app.domain.agent.harness.claude_code.runtime import ClaudeCodeRuntime, Handle
+from app.domain.agent.harness.driven.runner import socket_path
+from app.domain.agent.models import AgentTurn
+from app.domain.block.models import Block, consumed_turn
+from app.domain.delivery.models import NativeInput
+from app.domain.delivery.receipts import held_blocks
+
+
+class SocketChannel:
+    name = "isolated-native-socket"
+    provisions_machine = False
+    deferred_work = False
+    builds_model_env = False
+
+    def __init__(self, descriptor):
+        self.descriptor = descriptor
+        self.handle = Handle(
+            SessionRef(
+                uuid.UUID(descriptor["project"]),
+                uuid.UUID(descriptor["topic"]),
+                descriptor["session_agent"],
+                harness=CLAUDE_CODE,
+            ),
+            "isolated-device",
+            descriptor["state"],
+            descriptor["native"],
+            descriptor["agent"],
+            Path(descriptor["mirror"]),
+            descriptor["protocol"],
+            frozenset(descriptor.get("capabilities") or ()),
+        )
+        self.calls = []
+        self.input_states = []
+        self.runtime = ClaudeCodeRuntime(self)
+
+    def available(self):
+        return True
+
+    async def prepare_topic(self, **kwargs):
+        return True, ""
+
+    async def ensure(self, session, opening, live=None):
+        assert session == self.handle.session
+        return live if live is not None else self.handle
+
+    async def discover(self, device_id):
+        status = await self.call(self.handle, "ping", {})
+        assert status["alive"] and status["session_id"] == self.handle.session_id
+        return [self.handle]
+
+    async def images(self, handle, images):
+        assert not images
+        return []
+
+    async def call(self, handle, method, params):
+        assert handle == self.handle
+        assert method not in ("interrupt", "close"), (
+            "Recovery may not stop its executor"
+        )
+        if method in ("send", "steer"):
+            status = await self.call(handle, "ping", {})
+            self.input_states.append(
+                {
+                    "method": method,
+                    "input_id": params.get("input_id"),
+                    "work_id": params.get("work_id"),
+                    "working": status["working"],
+                    "native_work_id": status.get("work_id"),
+                    "session_id": status["session_id"],
+                }
+            )
+            assert (method == "steer") == status["working"], status
+        self.calls.append(method)
+        reader, writer = await asyncio.open_unix_connection(
+            socket_path(Path(handle.state))
+        )
+        try:
+            writer.write(
+                json.dumps({"method": method, "params": params}).encode() + b"\n"
+            )
+            await writer.drain()
+            answer = json.loads(await reader.readline())
+            assert "error" not in answer, answer
+            return answer["result"]
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+
+async def run(descriptor):
+    engine = create_async_engine(descriptor["database"])
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    channel = SocketChannel(descriptor)
+    chat = ChatService(
+        session_factory=factory,
+        base_system_prompt="你是芝士。",
+        workspace_root=descriptor["workspace"],
+        compute=ComputePool([channel.runtime], channel.name),
+    )
+    topic, work = uuid.UUID(descriptor["topic"]), uuid.UUID(descriptor["work"])
+    try:
+        assert await chat.recover_sessions() == 1
+        await chat.replays_settled()
+        status = await channel.call(channel.handle, "ping", {})
+        assert status["pid"] == descriptor["native_pid"]
+        assert not any(method in ("send", "steer") for method in channel.calls)
+        http = descriptor["mode"].startswith("http-")
+        busy = descriptor["mode"].endswith("busy")
+        http_result = None
+        if http:
+            from tests.native_http_recovery import answer_after_recovery
+
+            assert status["working"] == busy
+            http_result = await answer_after_recovery(
+                descriptor, chat, channel, factory
+            )
+        elif busy:
+            assert status["working"] and status["work_id"] == str(work)
+            assert (topic, work) in chat._hook_work
+            assert await chat.notify_running_turn(
+                topic,
+                "原答者已提交回答",
+                blocks=tuple(uuid.UUID(x) for x in descriptor["blocks"]),
+            )
+            Path(descriptor["gate"]).touch()
+        else:
+            assert not status["working"] and not chat._hook_work
+            from app.api.deps import get_work_runner
+            from app.domain.delivery.addressing import Addressed, Recipient
+
+            work_runner = get_work_runner()
+            turn = work_runner.submit(
+                chat,
+                topic,
+                author="alice",
+                content="@芝士 原答者已提交回答",
+                addressed=Addressed((Recipient(descriptor["agent"], "asked"),)),
+            )
+            async with asyncio.timeout(90):
+                while work_runner.turn_pending(turn):
+                    await asyncio.sleep(0.05)
+        async with asyncio.timeout(90):
+            while True:
+                for subscription in channel.runtime.subscriptions.values():
+                    await subscription.drain()
+                status = await channel.call(channel.handle, "ping", {})
+                if not status["working"] and not chat._hook_work:
+                    break
+                await asyncio.sleep(0.05)
+        async with factory() as session:
+            rows = list(
+                await session.scalars(
+                    select(NativeInput).where(NativeInput.topic_id == topic)
+                )
+            )
+            assert len(rows) == (3 if http else 2)
+            if http:
+                assert all(row.completed_at for row in rows)
+            assert {row.native_session_id for row in rows} == {descriptor["native"]}
+            assert all(row.echoed_at and row.settled_at for row in rows)
+            assert all(
+                set(row.held_block_ids) <= set(row.released_block_ids) for row in rows
+            )
+            assert (
+                await held_blocks(
+                    session,
+                    project_id=uuid.UUID(descriptor["project"]),
+                    topic_id=topic,
+                    recipient_handle=descriptor["agent"],
+                )
+                == set()
+            )
+            for row in rows:
+                ids = [uuid.UUID(x) for x in row.held_block_ids]
+                assert ids
+                blocks = list(
+                    await session.scalars(select(Block).where(Block.id.in_(ids)))
+                )
+                assert len(blocks) == len(ids)
+                assert {consumed_turn(block) for block in blocks} == {
+                    str(row.execution_work_id)
+                }
+            turns = list(
+                await session.scalars(
+                    select(AgentTurn).where(AgentTurn.topic_id == topic)
+                )
+            )
+            if busy:
+                assert {row.execution_work_id for row in rows} == {work}
+                assert len(turns) == 1
+                assert channel.calls.count("steer") == (2 if http else 1)
+                assert channel.calls.count("send") == 0
+            else:
+                count = 3 if http else 2
+                assert len({row.execution_work_id for row in rows}) == count
+                assert len(turns) == count
+                assert channel.calls.count("send") == (2 if http else 1)
+                assert channel.calls.count("steer") == 0
+        print(
+            json.dumps(
+                {
+                    "pid": __import__("os").getpid(),
+                    "native_pid": status["pid"],
+                    "native": status["session_id"],
+                    "send": channel.calls.count("send"),
+                    "steer": channel.calls.count("steer"),
+                    "turns": len(turns),
+                    "http": http_result,
+                    "input_states": channel.input_states,
+                }
+            ),
+            flush=True,
+        )
+    finally:
+        await channel.runtime.stop_listening()
+        await engine.dispose()
+
+
+if __name__ == "__main__":
+    asyncio.run(run(json.loads(Path(sys.argv[1]).read_text())))

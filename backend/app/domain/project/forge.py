@@ -3,6 +3,7 @@
 import hashlib
 import hmac
 import logging
+import math
 import re
 import uuid
 from dataclasses import dataclass
@@ -20,6 +21,7 @@ from app.core.db import SessionFactory, release_read_session
 from app.core.errors import GatewayUnavailableError
 from app.core.forge_events import project_secret
 from app.core.forge_http import forge_client
+from app.core.sentences import say
 from app.domain.agent.forgejo_tokens import (
     ForgejoTokens,
     forge_password,
@@ -54,7 +56,7 @@ async def tokens_for_project(project_id: uuid.UUID, session: AsyncSession):
         return ForgejoTokens(
             binding, sessions=async_sessionmaker(session.bind, expire_on_commit=False)
         )
-    raise GatewayUnavailableError("项目的代码托管类型无法识别")
+    raise GatewayUnavailableError(say("forgeKindUnknown"))
 
 
 # A GitHub App installation has ONE hourly REST quota for everything the
@@ -165,13 +167,13 @@ async def ensure_author_email(
     if binding is None or binding.kind != "forgejo":
         return
     if not binding.account_password:
-        raise GatewayUnavailableError("项目的代码托管凭据尚未配置")
+        raise GatewayUnavailableError(say("forgeCredentialsMissing"))
     endpoint = binding.api_url.rstrip("/") + "/user/emails"
     auth = (binding.repo.split("/", 1)[0], forge_password(binding))
     async with forge_client(transport=transport, timeout=30, auth=auth) as client:
         response = await client.get(endpoint)
         if response.status_code != 200:
-            raise GatewayUnavailableError("无法读取代码托管账号的作者邮箱")
+            raise GatewayUnavailableError(say("forgeAuthorEmailUnreadable"))
         emails = response.json()
         if not any(row["email"] == email for row in emails):
             response = await client.post(endpoint, json={"emails": [email]})
@@ -179,10 +181,10 @@ async def ensure_author_email(
                 # Concurrent tasks can register the same project agent.
                 response = await client.get(endpoint)
             if response.status_code not in (200, 201):
-                raise GatewayUnavailableError("无法登记代码托管账号的作者邮箱")
+                raise GatewayUnavailableError(say("forgeAuthorEmailUnregistered"))
             emails = response.json()
         if not any(row["email"] == email and row["verified"] for row in emails):
-            raise GatewayUnavailableError("代码托管服务尚未验证 agent 的作者邮箱")
+            raise GatewayUnavailableError(say("forgeAuthorEmailUnverified"))
 
 
 async def proposal_client(project_id: uuid.UUID, session: AsyncSession):
@@ -191,7 +193,7 @@ async def proposal_client(project_id: uuid.UUID, session: AsyncSession):
         return None
     tokens = await tokens_for_project(project_id, session)
     if tokens is None:
-        raise GatewayUnavailableError("项目的代码托管凭据尚未配置")
+        raise GatewayUnavailableError(say("forgeCredentialsMissing"))
     owner, repo = binding.repo.split("/", 1)
     if binding.kind == "github_app":
         return GitHubPRClient(
@@ -203,12 +205,12 @@ async def proposal_client(project_id: uuid.UUID, session: AsyncSession):
 async def status_client(project_id: uuid.UUID, session: AsyncSession):
     binding = await binding_for_project(project_id, session)
     if binding is None:
-        raise GatewayUnavailableError("项目没有代码仓库")
+        raise GatewayUnavailableError(say("forgeNoRepository"))
     if binding.kind == "github_app":
         return default_client()
     if binding.kind == "forgejo":
         return ForgejoClient(binding.api_url)
-    raise GatewayUnavailableError("项目的代码托管类型无法识别")
+    raise GatewayUnavailableError(say("forgeKindUnknown"))
 
 
 async def repository_data(
@@ -222,7 +224,7 @@ async def repository_data(
     binding = await binding_for_project(project_id, session)
     tokens = await tokens_for_project(project_id, session)
     if binding is None or tokens is None:
-        raise GatewayUnavailableError("项目的代码仓库或凭据不可用")
+        raise GatewayUnavailableError(say("forgeRepositoryUnavailable"))
     if release_session:
         await release_read_session(session)
     token, _ = await tokens.installation_token()
@@ -238,16 +240,16 @@ async def repository_data(
                 },
             )
     except httpx.TimeoutException as exc:
-        raise GatewayUnavailableError("代码仓库响应超时，请稍后重试") from exc
+        raise GatewayUnavailableError(say("forgeTimeout")) from exc
     except httpx.RequestError as exc:
-        raise GatewayUnavailableError("暂时无法连接代码仓库，请稍后重试") from exc
+        raise GatewayUnavailableError(say("forgeUnreachable")) from exc
     if response.status_code == 404:
         return None
     if forge_quota.rate_limited(response):
         raise ForgeRateLimitedError(_rate_limit_message(response))
     if response.is_error:
         raise GatewayUnavailableError(
-            f"读取代码仓库失败（HTTP {response.status_code}）"
+            say("forgeReadFailed", status=response.status_code)
         )
     return response.text if diff else response.json()
 
@@ -264,8 +266,13 @@ class ForgeRateLimitedError(GatewayUnavailableError):
 
 
 def _rate_limit_message(response: httpx.Response) -> str:
-    wait = forge_quota.wait_text(forge_quota.wait_seconds(response))
-    return f"代码仓库的 API 额度暂时用完了，{wait}，届时重试即可"
+    wait_s = forge_quota.wait_seconds(response)
+    wait = (
+        say("forgeQuotaBackSoon")
+        if wait_s is None
+        else say("forgeQuotaBackInMinutes", minutes=max(1, math.ceil(wait_s / 60)))
+    )
+    return say("forgeQuotaExhausted", wait=wait)
 
 
 async def branch_head(
@@ -282,17 +289,17 @@ async def branch_head(
         return None
     binding = await binding_for_project(project_id, session)
     if binding is None:
-        raise GatewayUnavailableError("项目没有代码仓库")
+        raise GatewayUnavailableError(say("forgeNoRepository"))
     return data["commit"]["id" if binding.kind == "forgejo" else "sha"]
 
 
 async def default_branch(project_id: uuid.UUID, session: AsyncSession) -> str:
     binding = await binding_for_project(project_id, session)
     if binding is None:
-        raise GatewayUnavailableError("项目没有代码仓库")
+        raise GatewayUnavailableError(say("forgeNoRepository"))
     data = await repository_data(project_id, session)
     if not data or not data.get("default_branch"):
-        raise GatewayUnavailableError("代码仓库没有默认分支")
+        raise GatewayUnavailableError(say("forgeNoDefaultBranch"))
     binding.default_branch = data["default_branch"]
     await session.flush()
     return binding.default_branch
@@ -326,9 +333,9 @@ async def provision_repository(
             project_id, session, initialize=initialize, transport=transport
         )
     except httpx.TimeoutException as exc:
-        raise ForgeUnreachableError("代码仓库服务响应超时，请稍后重试") from exc
+        raise ForgeUnreachableError(say("forgeServiceTimeout")) from exc
     except httpx.RequestError as exc:
-        raise ForgeUnreachableError("暂时无法连接代码仓库服务，请稍后重试") from exc
+        raise ForgeUnreachableError(say("forgeServiceUnreachable")) from exc
 
 
 async def _provision_repository(
@@ -344,9 +351,9 @@ async def _provision_repository(
         return existing
     project = await session.get(Project, project_id)
     if project and (project.settings or {}).get("forge_kind") == "github_app":
-        raise GatewayUnavailableError("请先在项目设置中连接 GitHub 仓库")
+        raise GatewayUnavailableError(say("forgeConnectGithubFirst"))
     if not settings.forgejo_url or not settings.forgejo_admin_token:
-        raise GatewayUnavailableError("此部署尚未配置项目代码托管服务")
+        raise GatewayUnavailableError(say("forgeHostingNotConfigured"))
     public = settings.forgejo_url.rstrip("/")
     api = (settings.forgejo_api_url or public + "/api/v1").rstrip("/")
     username = _ACCOUNT_PREFIX + project_id.hex
@@ -376,7 +383,7 @@ async def _provision_repository(
         )
         if response.status_code not in (201, 422):
             raise GatewayUnavailableError(
-                f"Forgejo 项目账户创建失败（HTTP {response.status_code}）"
+                say("forgejoAccountCreateFailed", status=response.status_code)
             )
         # Authenticate as that account, even after 422; never adopt an unknown owner.
         auth = (username, password)
@@ -398,7 +405,7 @@ async def _provision_repository(
                 response = await client.get(repo_url, auth=auth)
         if response.status_code not in (200, 201):
             raise GatewayUnavailableError(
-                f"Forgejo 项目仓库创建失败（HTTP {response.status_code}）"
+                say("forgejoRepoCreateFailed", status=response.status_code)
             )
         data = response.json()
     binding = ProjectForge(
@@ -509,7 +516,7 @@ async def ensure_repository_webhook(
         },
     }
     if binding.account_password is None:
-        raise GatewayUnavailableError("项目的代码托管凭据尚未配置")
+        raise GatewayUnavailableError(say("forgeCredentialsMissing"))
     auth = (binding.repo.split("/", 1)[0], forge_password(binding))
     async with forge_client(transport=transport, timeout=30, auth=auth) as client:
         matching = []

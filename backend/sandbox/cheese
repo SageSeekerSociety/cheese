@@ -168,6 +168,45 @@ FEEDBACK_DESCRIPTION = (
     "卡本身就是那句话。"
 )
 
+FEEDBACK_CLAIM_DESCRIPTION = (
+    "领取反馈中心里的一条反馈：记到你名下，状态变成「处理中」，之后别人再领会失败。"
+    "领取是为了不让两个人修同一个问题。\n"
+    "\n"
+    "**动手修一条反馈之前先领。领不到就不要修**：已经有人领着（返回里说是谁）、"
+    "或者你所在的项目不是在做这个平台本身——把原因告诉用户，别换个办法接着修。\n"
+    "\n"
+    "修它的提交在提交信息里单独写一行 "
+    "`Fixes-feedback: FB-12`，合并和上线时平台会自动记「已修复」「已上线」。"
+    "不修了用 `cheese_feedback_release` 放掉。"
+)
+
+FEEDBACK_LIST_DESCRIPTION = (
+    "列反馈中心里的公开反馈，新提的在前，每页 20 条：编号、状态、类型、标题、"
+    "支持数、评论数、谁领着。和反馈中心的列表是同一份，筛选也一样："
+    "`query` 搜标题和正文，`tab` 选栏（all 全部、hot 热门、active 进行中、"
+    "resolved 办完了），`status` / `kind` / `author` / `since` 叠在栏上再收窄。"
+    "私密反馈不在列表里；你提过的、或者你当时在房间里看着人提的那几条，"
+    "拿编号用 `cheese_feedback_get` 读得到。只有做这个平台本身的项目里的房间读得到"
+    "反馈中心，别的房间会被拒。"
+)
+
+FEEDBACK_GET_DESCRIPTION = (
+    "读反馈中心里一条反馈的全部：正文、复现、证据、状态和它的时间线、谁领着、"
+    "评论和回复。修一条反馈之前先读它，再 `cheese_feedback_claim` 领下来。"
+    "看不见的（私密且不是你提的，或者编号不存在）会说没有这一条，那就不要修。"
+)
+
+_FEEDBACK_REF = _text("反馈编号，如 FB-12（详情页上印的那个），或者它的 id")
+
+#: How the platform names each status to a person; the agent repeats it to one.
+_FEEDBACK_STATUS = {
+    "received": "已收录",
+    "in_progress": "处理中",
+    "resolved": "已修复",
+    "deployed": "已上线",
+    "declined": "不修复",
+}
+
 
 # The only profiles `PUT /topics/{topic}/compute-profile` accepts. This script is
 # shipped to machines on its own and cannot import the backend, so the set is a
@@ -404,7 +443,7 @@ PLATFORM_TOOLS = ToolTable(
                 "subject": _text("英文 Conventional Commits 标题，≤72 字符，无句号"),
                 "reviewer": _text("验收人 handle；省略沿用任务上的人选"),
                 "reason": _text("验收证据和要对方检查的内容"),
-                "body": _text("改动原因和验证说明"),
+                "body": _text("改动原因和验证说明，用中文"),
                 "artifact": _text("产物清单上那一项的 id，照抄系统提示里的清单"),
                 "new_artifact": _text("清单上还没有的东西的真名"),
                 "about": _text("这样东西是什么、给谁的；第 1 版和第 20 版都得成立"),
@@ -419,7 +458,7 @@ PLATFORM_TOOLS = ToolTable(
             {
                 "task": _TASK,
                 "subject": _text("英文 Conventional Commits 标题，≤72 字符"),
-                "body": _text("改动原因和验证说明"),
+                "body": _text("改动原因和验证说明，用中文"),
             },
             ["task"],
         ),
@@ -521,17 +560,46 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_ask",
-            "在对话里发一个带按钮的问题，用户点一下就是答案，自动带回你下一轮。"
-            "要人拍板时首选它，别让人打字。",
+            "在对话里一次创建完整题组，用户选择或填写后明确提交。"
+            "返回题组和问题 id；创建成功不表示已作答或原执行者已接续。",
             {
-                "question": _text("问题，一句话问清楚"),
-                "option": {
+                "questions": {
                     "type": "array",
-                    "items": {"type": "string"},
-                    "description": "2-4 个选项",
+                    "minItems": 1,
+                    "maxItems": 8,
+                    "description": "1-8 题，按显示顺序一次给全，不能向已有题组追加",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "question": _text("问题，一句话问清楚"),
+                            "options": {
+                                "type": "array",
+                                "minItems": 2,
+                                "maxItems": 3,
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "text": _text("选项标签"),
+                                        "explain": _text("选项说明或取舍"),
+                                    },
+                                    "required": ["text"],
+                                },
+                            },
+                            "allow_other": {
+                                "type": "boolean",
+                                "description": "允许自由输入，默认 true",
+                            },
+                            "reject_option": {
+                                "type": "boolean",
+                                "description": "显示「以上都不是」，默认 true",
+                            },
+                        },
+                        "required": ["question", "options"],
+                    },
                 },
+                "ask_group": _text("可选的题组 id；重试同一请求时保持 id 和内容不变"),
             },
-            ["question", "option"],
+            ["questions"],
         ),
         _tool(
             "cheese_feedback_propose",
@@ -561,6 +629,50 @@ PLATFORM_TOOLS = ToolTable(
                 "tags": _text("逗号分隔"),
             },
             ["title", "kind", "visibility", "user_said"],
+        ),
+        _tool(
+            "cheese_feedback_list",
+            FEEDBACK_LIST_DESCRIPTION,
+            {
+                "query": _text("搜索的文字，匹配标题和正文"),
+                "tab": {
+                    "type": "string",
+                    "enum": ["all", "hot", "active", "resolved"],
+                    "description": "哪一栏，默认 all",
+                },
+                "status": {
+                    "type": "string",
+                    "enum": list(_FEEDBACK_STATUS),
+                    "description": "只看这一个状态",
+                },
+                "kind": {
+                    "type": "string",
+                    "enum": ["bug", "suggestion", "other"],
+                    "description": "只看这一类",
+                },
+                "author": _text("只看这个人（handle）提的"),
+                "since": _text("只看这个时刻之后提的，ISO-8601"),
+                "offset": {"type": "integer", "description": "跳过前几条，翻页用"},
+            },
+        ),
+        _tool(
+            "cheese_feedback_get",
+            FEEDBACK_GET_DESCRIPTION,
+            {"feedback": _FEEDBACK_REF},
+            ["feedback"],
+        ),
+        _tool(
+            "cheese_feedback_claim",
+            FEEDBACK_CLAIM_DESCRIPTION,
+            {"feedback": _FEEDBACK_REF},
+            ["feedback"],
+        ),
+        _tool(
+            "cheese_feedback_release",
+            "放掉你领取的一条反馈，让别人能领。决定不修、或者修不了的时候调它；"
+            "状态不退回。",
+            {"feedback": _FEEDBACK_REF},
+            ["feedback"],
         ),
         _tool(
             "cheese_machine",
@@ -692,10 +804,52 @@ PLATFORM_TOOLS = ToolTable(
     )
 )
 
+#: 替人答题的芝士（文档里的、个人的）才有的几样：它们以提问人的身份查东西，
+#: 凭的是这一问签出来的代行凭证（`sandbox_auth.DelegatedClaims`）。房间里的芝士
+#: 是自己在干活，没有「提问人」可代，所以不在 `PLATFORM_TOOLS` 里给它。
+DELEGATED_TOOLS = ToolTable(
+    (
+        _tool(
+            "cheese_project_search",
+            "按关键词搜这个项目：频道名、消息、文档段落、评论、周报、任务卡、资料库文件名、"
+            "产物。只搜提问人能看的频道。返回每条命中在哪个频道、谁写的和一段摘录。"
+            "每个词都要命中，没找到就换个说法或少几个词再搜。",
+            {"query": _text("关键词")},
+            ["query"],
+        ),
+        _tool(
+            "cheese_memory_read",
+            "读项目共享记忆里的一条正文："
+            "给出索引里那一条链接的文件名（如 deploy.md）。",
+            {"name": _text("记忆的文件名")},
+            ["name"],
+        ),
+        _tool(
+            "cheese_attachment_read",
+            "读消息里附带的文件或资料库里的文件（消息里写着的地址，资料库的以 library/ "
+            "开头）。只读得了文本；二进制的文件只返回大小。",
+            {"path": _text("文件的地址")},
+            ["path"],
+        ),
+        _tool(
+            "cheese_my_tasks",
+            "列出提问人参加的题目：标题、简介、截止时间、是否已结束。",
+        ),
+    )
+)
+
 #: 要本话题 / 本项目才答得出的那些。缺了就在发出去之前说清楚，不让后端去猜。
-_NEEDS_TOPIC = frozenset(PLATFORM_TOOLS.names()) - {"cheese_fetch", "platform_request"}
+#: 文档检索不在其中：个人芝士没有话题，只读谁都能读的那些页。
+_NEEDS_TOPIC = frozenset(PLATFORM_TOOLS.names()) - {
+    "cheese_fetch",
+    "platform_request",
+    "cheese_docs_search",
+    "cheese_docs_read",
+} | {"cheese_attachment_read"}
 _NEEDS_PROJECT = frozenset(
     {
+        "cheese_project_search",
+        "cheese_memory_read",
         "cheese_notify",
         "cheese_library_ls",
         "cheese_routine_list",
@@ -714,6 +868,39 @@ def _given(args: dict, *keys: str) -> dict:
         if args.get(name) not in (None, "", []):
             body[field or name] = args[name]
     return body
+
+
+def _ask_body(args: dict) -> dict:
+    """Validate the entire group before publishing its one HTTP request."""
+    questions = args.get("questions")
+    if not isinstance(questions, list) or not 1 <= len(questions) <= 8:
+        raise ValueError("ask requires 1-8 questions")
+    for question in questions:
+        if not isinstance(question, dict):
+            raise ValueError("each question must be an object")
+        text = question.get("question")
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError("each question requires nonempty question text")
+        options = question.get("options")
+        if not isinstance(options, list) or not 2 <= len(options) <= 3:
+            raise ValueError("each question requires 2-3 object options")
+        for option in options:
+            if not isinstance(option, dict):
+                raise ValueError("each option must be a {text, explain?} object")
+            text = option.get("text")
+            if not isinstance(text, str) or not text.strip():
+                raise ValueError("each option requires nonempty text")
+            if "explain" in option and not isinstance(option["explain"], str):
+                raise ValueError("option explain must be a string")
+        for flag in ("allow_other", "reject_option"):
+            if flag in question and not isinstance(question[flag], bool):
+                raise ValueError(f"{flag} must be a boolean")
+    if "ask_group" in args:
+        group = args["ask_group"]
+        if not isinstance(group, str) or not group.strip():
+            raise ValueError("ask_group must be a nonempty string when provided")
+    # Identity is supplied by the host credential, never an author in args.
+    return {"questions": questions, **_given(args, "ask_group")}
 
 
 def routine_spec_checked(
@@ -960,14 +1147,25 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         return {
             "method": "POST",
             "path": "/docs/agent/search",
-            "body": {"query": args["query"], "topic": topic},
+            "body": {"query": args["query"], **({"topic": topic} if topic else {})},
         }
     if tool == "cheese_docs_read":
         return {
             "method": "POST",
             "path": "/docs/agent/read",
-            "body": {"page": args["page"], "topic": topic},
+            "body": {"page": args["page"], **({"topic": topic} if topic else {})},
         }
+    if tool == "cheese_project_search":
+        query = urllib.parse.urlencode({"q": args["query"], "limit": 8})
+        return {"method": "GET", "path": f"/projects/{project}/context/search?{query}"}
+    if tool == "cheese_memory_read":
+        query = urllib.parse.urlencode({"project_id": project, "scope": "team"})
+        return {"method": "GET", "path": f"/memory/files?{query}"}
+    if tool == "cheese_attachment_read":
+        query = urllib.parse.urlencode({"path": args["path"].strip()})
+        return {"method": "GET", "path": f"/topics/{topic}/preview/file?{query}"}
+    if tool == "cheese_my_tasks":
+        return {"method": "GET", "path": "/tasks/joined"}
     if tool == "cheese_fetch":
         # 带上话题：不带的话每一次调用都会被判成 "Agent credential is invalid or
         # expired"——沙箱 token 是带作用域的。
@@ -976,13 +1174,10 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             body["prompt"] = args["prompt"]
         return {"method": "POST", "path": "/fetch", "body": body}
     if tool == "cheese_ask":
-        options = [value.strip() for value in args["option"] if value.strip()]
-        if not 2 <= len(options) <= 4:
-            raise ValueError("ask requires 2-4 options")
         return {
             "method": "POST",
-            "path": f"/topics/{topic}/ask",
-            "body": {"question": args["question"], "options": options},
+            "path": f"/topics/{topic}/asks",
+            "body": _ask_body(args),
         }
     if tool == "cheese_notify":
         options = [
@@ -1030,6 +1225,33 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "method": "POST",
             "path": f"/topics/{topic}/feedback-proposals",
             "body": body,
+        }
+    # 反馈不属于房间（`/feedback` 下面），但读的、领的人是你：你的凭据只在这个房间
+    # 里认得出你，所以带上房间，后端在房间里认人，再拿房间的项目判你是不是在做这个
+    # 平台本身。
+    if tool == "cheese_feedback_list":
+        params = {
+            "topic": topic,
+            **_given(
+                args,
+                "query:q",
+                "tab",
+                "status",
+                "kind",
+                "author",
+                "since",
+                "offset:page_start",
+            ),
+        }
+        return {"method": "GET", "path": "/feedback?" + urllib.parse.urlencode(params)}
+    if tool == "cheese_feedback_get":
+        ref = urllib.parse.quote(str(args["feedback"]).strip(), safe="")
+        return {"method": "GET", "path": f"/feedback/{ref}?topic={topic}"}
+    if tool in ("cheese_feedback_claim", "cheese_feedback_release"):
+        ref = urllib.parse.quote(str(args["feedback"]).strip(), safe="")
+        return {
+            "method": "POST" if tool == "cheese_feedback_claim" else "DELETE",
+            "path": f"/feedback/{ref}/claim?topic={topic}",
         }
     if tool == "cheese_machine":
         body = {"profile": args["profile"], **_given(args, "device_id")}
@@ -1139,7 +1361,8 @@ class PlatformHTTPError(RuntimeError):
 
 
 def run_platform_tool(tool: str, args: dict, host) -> str:
-    """Run one tool from `PLATFORM_TOOLS` and say, in text, what came of it.
+    """Run one tool from `PLATFORM_TOOLS` or `DELEGATED_TOOLS` and say, in
+    text, what came of it.
 
     `host` is where the session runs, and supplies the four things a tool can
     need: `environ` (the room's CHEESE_* values), `request(plan)` (one backend
@@ -1148,10 +1371,13 @@ def run_platform_tool(tool: str, args: dict, host) -> str:
     plus a `doc_versions` dict that outlives a single call. The text is what the
     agent acts on — ids, the next call to make — so it is written for that
     reader, not dumped JSON."""
-    if tool not in PLATFORM_TOOLS:
+    table = next(
+        (t for t in (PLATFORM_TOOLS, DELEGATED_TOOLS) if tool in t), None
+    )
+    if table is None:
         raise ValueError(f"Unknown platform tool: {tool}")
     # 拒在发出任何请求、碰任何机器之前：一张已经递出去的卡收不回来。
-    schema = next(t for t in PLATFORM_TOOLS.schemas() if t["name"] == tool)
+    schema = next(t for t in table.schemas() if t["name"] == tool)
     missing = [
         name
         for name in schema["inputSchema"].get("required", ())
@@ -1665,6 +1891,185 @@ def _describe_operation(method: str, path: str, operation: dict, spec: dict) -> 
     return "\n".join(lines)
 
 
+def _feedback_refusal(exc: Exception) -> str | None:
+    """The backend's own sentence for a refused claim or release, if it sent one."""
+    try:
+        return json.loads(exc.body)["error"]["message"]  # type: ignore[attr-defined]
+    except (AttributeError, ValueError, KeyError, TypeError):
+        return None
+
+
+def _feedback_read(tool: str, args: dict, host) -> dict:
+    """One read of the feedback center, its refusals said to the agent."""
+    try:
+        return host.request(request_plan(tool, args, host.environ))
+    except Exception as exc:
+        status = getattr(exc, "status", None)
+        why = _feedback_refusal(exc)
+        if status == 404 and tool == "cheese_feedback_get":
+            raise PlatformToolError(
+                f"没有 {args['feedback']} 这条反馈，或者它是私密的、你看不见。"
+                "核对编号；看不见的不要修。"
+            ) from exc
+        if status in (400, 403) and why:
+            raise PlatformToolError(f"没读到：{why.rstrip('。')}。") from exc
+        raise
+
+
+def _feedback_card_line(item: dict) -> str:
+    status = _FEEDBACK_STATUS.get(item.get("status"), item.get("status"))
+    line = (
+        f"{item.get('display_id')} [{status}] {item.get('title')}"
+        f" — {item.get('kind')}，支持 {item.get('supports', 0)}，"
+        f"评论 {item.get('comments', 0)}"
+    )
+    if item.get("assignee_handle"):
+        line += f"，{item['assignee_handle']} 领着"
+    return line
+
+
+_FEEDBACK_FILTERS = ("query", "tab", "status", "kind", "author", "since")
+
+
+def _feedback_list(args: dict, host) -> str:
+    data = _feedback_read("cheese_feedback_list", args, host).get("data") or {}
+    items = data.get("data") or []
+    if not items:
+        return "没有符合条件的公开反馈。"
+    offset = args.get("offset") or 0
+    total = data.get("total", len(items))
+    lines = [f"共 {total} 条，这是第 {offset + 1}–{offset + len(items)} 条："]
+    lines += [_feedback_card_line(item) for item in items]
+    if offset + len(items) < total:
+        lines.append(
+            "下一页："
+            + _chat_call(
+                "cheese_feedback_list",
+                **{k: args[k] for k in _FEEDBACK_FILTERS if args.get(k)},
+                offset=offset + len(items),
+            )
+        )
+    lines.append("读某一条用 cheese_feedback_get(feedback=编号)。")
+    return "\n".join(lines)
+
+
+#: 日志可以很长（两万字），一次读回来会挤掉别的；前面这么多字通常够判断。
+_FEEDBACK_LOG_BUDGET = 4000
+
+
+def _feedback_get(args: dict, host) -> str:
+    item = _feedback_read("cheese_feedback_get", args, host).get("data") or {}
+    shown = item.get("display_id") or args["feedback"]
+    status = _FEEDBACK_STATUS.get(item.get("status"), item.get("status"))
+    lines = [
+        f"{shown}「{item.get('title')}」",
+        f"状态：{status}；类型：{item.get('kind')}；"
+        f"{'私密' if item.get('visibility') == 'private' else '公开'}；"
+        f"支持 {item.get('supports', 0)}",
+        f"提的人：{item.get('author_handle')}"
+        + (
+            f"（{item['submitted_by_handle']} 发出）"
+            if item.get("submitted_by_handle")
+            else ""
+        ),
+        f"领取：{item.get('assignee_handle') or '没人领着'}",
+    ]
+    for label, key in (
+        ("摘要", "summary"),
+        ("问题", "problem"),
+        ("为什么要紧", "why"),
+        ("发生了什么", "what_happened"),
+        ("怎么复现", "repro"),
+        ("期望", "expectation"),
+        ("证据", "evidence"),
+        ("环境", "environment"),
+    ):
+        if item.get(key):
+            lines.append(f"{label}：{item[key]}")
+    logs = item.get("logs") or ""
+    if logs:
+        lines.append(f"日志：{logs[:_FEEDBACK_LOG_BUDGET]}")
+        if len(logs) > _FEEDBACK_LOG_BUDGET:
+            lines.append(
+                f"（日志共 {len(logs)} 字，只给了前 {_FEEDBACK_LOG_BUDGET} 字）"
+            )
+    timeline = item.get("timeline") or []
+    if timeline:
+        lines.append("时间线：")
+        for step in timeline:
+            name = _FEEDBACK_STATUS.get(step.get("status"), step.get("status"))
+            by = f" {step['by_handle']}" if step.get("by_handle") else ""
+            note = f"（{step['note']}）" if step.get("note") else ""
+            lines.append(f"  {step.get('at')} {name}{by}{note}")
+    thread = list(item.get("thread") or [])
+    cursor = item.get("thread_next_cursor")
+    topic = host.environ.get("CHEESE_TOPIC", "")
+    while cursor:
+        query = urllib.parse.urlencode({"topic": topic, "after": cursor})
+        path = f"/feedback/{item['id']}/comments?{query}"
+        more = host.request({"method": "GET", "path": path}).get("data") or {}
+        thread += more.get("items") or []
+        cursor = more.get("next_cursor")
+    if thread:
+        lines.append(f"评论（{item.get('comments', len(thread))} 条）：")
+        for comment in thread:
+            indent = "    ↳ " if comment.get("parent_id") else "  "
+            lines.append(
+                f"{indent}{comment.get('author_handle')}：{comment.get('body')}"
+            )
+            hidden = comment.get("reply_count", 0) - sum(
+                1 for c in thread if c.get("parent_id") == comment.get("id")
+            )
+            if not comment.get("parent_id") and hidden > 0:
+                lines.append(f"    （还有 {hidden} 条回复没展开，到反馈中心看）")
+    if item.get("assignee_handle"):
+        lines.append(f"这一条 {item['assignee_handle']} 领着；不是你的就不要修。")
+    elif item.get("can_claim"):
+        lines.append(f'要修它，先 cheese_feedback_claim(feedback="{shown}") 领下来。')
+    return "\n".join(lines)
+
+
+def _feedback_claim(args: dict, host) -> str:
+    try:
+        data = host.request(request_plan("cheese_feedback_claim", args, host.environ))
+    except Exception as exc:
+        status = getattr(exc, "status", None)
+        why = _feedback_refusal(exc)
+        if status == 404:
+            raise PlatformToolError(
+                f"没有 {args['feedback']} 这条反馈，或者它是私密的、你看不见。"
+                "核对编号；看不见的不要修。"
+            ) from exc
+        if status in (403, 409) and why:
+            raise PlatformToolError(
+                f"没领到，**不要修这一条**：{why.rstrip('。')}。把这个原因告诉用户。"
+            ) from exc
+        raise
+    item = data.get("data") or {}
+    shown = item.get("display_id") or args["feedback"]
+    status = _FEEDBACK_STATUS.get(item.get("status"), item.get("status"))
+    return (
+        f"{shown}「{item.get('title')}」记在你名下了，现在是「{status}」。"
+        f"修它的提交在提交信息里单独写一行 `Fixes-feedback: {shown}`；"
+        "不修了用 cheese_feedback_release 放掉。"
+    )
+
+
+def _feedback_release(args: dict, host) -> str:
+    try:
+        data = host.request(
+            request_plan("cheese_feedback_release", args, host.environ)
+        )
+    except Exception as exc:
+        status = getattr(exc, "status", None)
+        why = _feedback_refusal(exc)
+        if status in (403, 404) and why:
+            raise PlatformToolError(f"没放掉：{why.rstrip('。')}。") from exc
+        raise
+    item = data.get("data") or {}
+    return f"{item.get('display_id') or args['feedback']} 现在没人领着，别人可以领了。"
+
+
 _STEPS = {
     "cheese_chat_get": _chat_get,
     "cheese_chat_list": _chat_page("cheese_chat_list"),
@@ -1676,6 +2081,10 @@ _STEPS = {
     "cheese_accept_request": _accept_request,
     "cheese_tell": _tell,
     "platform_request": _platform_request,
+    "cheese_feedback_list": _feedback_list,
+    "cheese_feedback_get": _feedback_get,
+    "cheese_feedback_claim": _feedback_claim,
+    "cheese_feedback_release": _feedback_release,
 }
 
 
@@ -1733,6 +2142,41 @@ def _say_docs_read(args, data, env) -> str:
     return (data or {}).get("markdown") or ""
 
 
+#: 一个附件交回去的最多字数。
+_ATTACHMENT_CHARS = 30_000
+
+
+def _say_project_search(args, data, env) -> str:
+    hits = (data or {}).get("hits") or {}
+    if not any(hits.values()):
+        return "没有找到。换个说法或少几个词再搜。"
+    return json.dumps(hits, ensure_ascii=False)
+
+
+def _say_memory_read(args, data, env) -> str:
+    rows = (data or {}).get("data") if isinstance(data, dict) else data
+    name = args["name"].strip().removeprefix("team/")
+    for row in rows or []:
+        if row.get("path") == name and name != "index.md":
+            return row.get("content") or ""
+    return "没有这一条记忆。"
+
+
+def _say_attachment_read(args, data, env) -> str:
+    content = (data or {}).get("content")
+    if content is None:
+        return f"这个文件不是文本，读不了（{(data or {}).get('bytes')} 字节）。"
+    if len(content) > _ATTACHMENT_CHARS:
+        return content[:_ATTACHMENT_CHARS] + f"\n\n（只给了前 {_ATTACHMENT_CHARS} 字）"
+    return content
+
+
+def _say_my_tasks(args, data, env) -> str:
+    if not data:
+        return "提问人没有参加任何题目。"
+    return json.dumps(data, ensure_ascii=False)
+
+
 def _say_fetch(args, data, env) -> str:
     data = data or {}
     if not data.get("ok"):
@@ -1783,6 +2227,12 @@ def _say_library(args, data, env) -> str:
 
 
 def _say_chat_send(args, data, env) -> str:
+    return json.dumps(data, ensure_ascii=False)
+
+
+def _say_ask(args, data, env) -> str:
+    if not isinstance(data, dict) or not data.get("group") or not data.get("blocks"):
+        raise PlatformToolError("ask response has no created group or question blocks")
     return json.dumps(data, ensure_ascii=False)
 
 
@@ -1894,10 +2344,14 @@ _SAY = {
     "cheese_fetch": _say_fetch,
     "cheese_docs_search": _say_docs_search,
     "cheese_docs_read": _say_docs_read,
+    "cheese_project_search": _say_project_search,
+    "cheese_memory_read": _say_memory_read,
+    "cheese_attachment_read": _say_attachment_read,
+    "cheese_my_tasks": _say_my_tasks,
     "cheese_members": _say_members,
     "cheese_status": lambda a, d, e: _format_status(d or {}),
     "cheese_library_ls": _say_library,
-    "cheese_ask": lambda a, d, e: "已发出选项问题，用户点了按钮会带回你下一轮。",
+    "cheese_ask": _say_ask,
     # 卡片由平台渲染，所以这里只说结果。
     "cheese_feedback_propose": lambda a, d, e: (
         f"已提案（卡 id {(d or {}).get('block_id')}），等人按「提交反馈」。"

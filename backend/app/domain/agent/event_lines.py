@@ -20,8 +20,8 @@ import codecs
 import re
 from dataclasses import dataclass
 
+from app.core.sentences import say
 from app.domain.agent.tool_preview import SHELL_TOOLS, ToolPreview, cheese_subcommand
-from app.domain.block.notice_text import say
 
 # 施工现场: render each tool call like a Claude Code action line — a Chinese verb
 # plus a short preview of its most telling argument. Stored in the event block as

@@ -13,12 +13,20 @@
 // Each top-level block is converted on its own and its letters and digits are
 // counted on both sides; the document side counts the text and the attributes
 // that carry text (a link's address, an image's path and alt, a code block's
-// language), so `[文字](地址)` loses nothing.
+// language, a formula, a footnote's label), so `[文字](地址)` loses nothing.
+// What only names a block (`> [!NOTE]`, `:::timeline`, `<details>`) is
+// structure, like a list marker.
+//
+// Counting characters cannot see a block written in the wrong shape: a
+// timeline item without its `|` keeps every letter and still reads wrong. So
+// the blocks are also checked for shape, and the message gives the right form.
 
 import type { Node as PMNode } from '@tiptap/pm/model'
 import type { Tokens } from 'marked'
 
 import { docMarked, parseMarkdown } from '../src/lib/docSchema'
+
+import { blockProblem, footnoteProblem } from './blockCheck'
 
 export interface WriteProblem {
   /** 1-based line in the written Markdown. */
@@ -29,11 +37,13 @@ export interface WriteProblem {
 const VISIBLE = /[\p{L}\p{N}]/gu
 // What only spells structure, line by line: quote markers, list and task
 // markers. The digits of an ordered list are its numbering, not its text.
-const LINE_SYNTAX = /^(?:\s*>)*\s*(?:(?:[-*+]|\d{1,9}[.)])\s+(?:\[[ xX]\]\s+)?)?/
+const LINE_SYNTAX = /^(?:\s*>)*\s*(?:\[![A-Za-z]+\]|(?:[-*+]|\d{1,9}[.)])\s+(?:\[[ xX]\]\s+)?)?/
+// A container's opening and closing lines (with a chart's type), and a fold's tags.
+const BLOCK_SYNTAX = /^\s*:{3,}[a-z]*(?:[ \t]+[a-z]+)*\s*$|<\/?(?:details|summary)(?:\s+open)?>/g
 // An entity is one character on screen, whatever letters spell it.
 const ENTITY = /&(?:#\d+|#x[0-9a-f]+|[a-z][a-z0-9]*);/gi
 // Attributes whose value a reader can see or follow.
-const TEXT_ATTRS = ['href', 'src', 'alt', 'title', 'language', 'source']
+const TEXT_ATTRS = ['href', 'src', 'alt', 'title', 'language', 'source', 'latex', 'label']
 
 function count(text: string, into = new Map<string, number>()): Map<string, number> {
   for (const char of text.match(VISIBLE) ?? []) into.set(char, (into.get(char) ?? 0) + 1)
@@ -42,7 +52,9 @@ function count(text: string, into = new Map<string, number>()): Map<string, numb
 
 function sourceChars(raw: string): Map<string, number> {
   const counts = new Map<string, number>()
-  for (const line of raw.split('\n')) count(line.replace(LINE_SYNTAX, '').replace(ENTITY, ' '), counts)
+  for (const line of raw.split('\n')) {
+    count(line.replace(LINE_SYNTAX, '').replace(BLOCK_SYNTAX, '').replace(ENTITY, ' '), counts)
+  }
   return counts
 }
 
@@ -89,12 +101,6 @@ function preview(text: string): string {
 }
 
 function definitionProblem(token: Tokens.Def, line: number): WriteProblem {
-  if (token.tag.startsWith('^')) {
-    return {
-      line,
-      message: `第 ${line} 行是脚注定义（${preview(token.raw)}），实况文档不支持脚注，这一行会被整行丢掉。请把脚注内容改成正文里的括注。`,
-    }
-  }
   return {
     line,
     message: `第 ${line} 行是链接引用定义（${preview(token.raw)}），实况文档不支持，这一行会被整行丢掉。请把链接直接写成 [文字](地址)。`,
@@ -125,6 +131,8 @@ export function checkMarkdownWrite(markdown: string): WriteProblem | null {
     offset += token.raw.length
     if (token.type === 'space') continue
     if (token.type === 'def') return definitionProblem(token as Tokens.Def, line + leadingBlankLines(token.raw))
+    const shape = blockProblem(token, line + leadingBlankLines(token.raw))
+    if (shape) return shape
     const missing = lost(sourceChars(token.raw), documentChars(parseMarkdown(token.raw)))
     if (missing.size === 0) continue
     if (token.type === 'table') {
@@ -142,7 +150,7 @@ export function checkMarkdownWrite(markdown: string): WriteProblem | null {
       message: `第 ${line + at} 行（${preview(lines[at])}）有文字写不进实况文档：「${gone}」会被丢掉。这种写法不受支持，请改用实况文档支持的写法。`,
     }
   }
-  return null
+  return footnoteProblem(markdown)
 }
 
 function leadingBlankLines(raw: string): number {

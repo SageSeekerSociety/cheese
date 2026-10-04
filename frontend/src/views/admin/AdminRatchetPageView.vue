@@ -39,6 +39,7 @@ import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminFlash from '@/components/admin/AdminFlash.vue'
 import AdminPage from '@/components/admin/AdminPage.vue'
 import AdminRatchetArea from '@/components/admin/ratchet/AdminRatchetArea.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 
 defineOptions({ name: 'AdminRatchetPageView' })
 
@@ -106,10 +107,9 @@ const collectionFailedLine = computed(() => {
 <template>
   <AdminPage :title="t('navigation.admin.ratchet')" :sub="t('ratchet.page.subtitle')">
     <template #tools>
-      <v-btn
+      <BaseButton
         icon="mdi-refresh"
-        variant="text"
-        size="small"
+        size="sm"
         :aria-label="t('ratchet.action.refresh')"
         :loading="refreshing"
         @click="emit('refresh')"

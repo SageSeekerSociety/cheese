@@ -9,8 +9,8 @@ Rules held here:
 
 * the session has the tools it is given and nothing of pi's own (no files, no
   commands), and thinks not at all;
-* the model and the tools are reached with the person's credential, and nothing
-  of a machine or a container is touched;
+* the model is reached with the person's credential and the tools with the one
+  minted for the question, and nothing of a machine or a container is touched;
 * an answer arrives as it is written, and ends with what was said;
 * an idle session exits, and the next question finds its conversation again;
 * a person keeps at most two sessions running, the least recently used one
@@ -20,6 +20,7 @@ Rules held here:
 """
 
 import asyncio
+import dataclasses
 import json
 import threading
 import time
@@ -29,34 +30,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
 
 from app.core.config import settings
-from app.core.sandbox_auth import mint_personal_credential
-from app.domain.agent.harness.pi import personal
-from app.domain.agent.harness.pi.handless import (
-    Answered,
-    HandlessSessions,
-    Looking,
-    Said,
-)
-from app.domain.agent.harness.pi.personal import Launch
+from app.core.sandbox_auth import mint_delegated_credential
+from app.domain.agent.personal import session as personal
+from app.domain.agent.session_host.answer import Answer, Tool, Words, ask
+from app.domain.agent.session_host.contract import Prompt
+from app.domain.agent.session_host.host import SessionHost
 from tests.support.session_host import DEVICE, Host, install_pi, stop_all
 
 PROMPT = "你是芝士。只用给你的工具。"
-TOOLS = [
-    {
-        "name": "my_tasks",
-        "description": "我参与的题。",
-        "inputSchema": {"type": "object", "properties": {}},
-    },
-    {
-        "name": "search_docs",
-        "description": "检索文档。",
-        "inputSchema": {
-            "type": "object",
-            "properties": {"query": {"type": "string"}},
-            "required": ["query"],
-        },
-    },
-]
+TOOLS = ("cheese_my_tasks", "cheese_docs_search")
 
 
 #: The longest the fake holds the rest of an answer back for a reader that
@@ -64,16 +46,23 @@ TOOLS = [
 HELD_S = 10.0
 
 
+#: What the platform's routes answer a tool's request with, by path prefix.
+ANSWERS = {
+    "/tasks/joined": [{"id": 7, "title": "一道题", "intro": "", "deadline": None}],
+    "/topics/": {"content": "文档正文", "doc_version": 3},
+}
+
+
 class Platform:
     """The backend as the session reaches it: the model behind ``/llm/v1``,
-    the person's tools behind ``/assistant/tools``."""
+    and every other request a tool makes of the platform's own routes, which
+    it records with the credential each one carried."""
 
     def __init__(
         self,
         steps: list,
         *,
         first_token_s: float = 0.0,
-        tools_path: str = "/assistant/tools",
         rest_held_until: threading.Event | None = None,
     ):
         self.steps = steps
@@ -81,7 +70,8 @@ class Platform:
         self.rest_held_until = rest_held_until
         self.requests: list[dict] = []
         self.model_auth: list[str] = []
-        self.tool_calls: list[tuple[str, str, dict]] = []
+        #: (method and path, credential) of each request a tool made.
+        self.tool_calls: list[tuple[str, str]] = []
         outer = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -90,16 +80,25 @@ class Platform:
             def log_message(self, *_):
                 pass
 
+            def do_GET(self):
+                self._platform()
+
+            def _platform(self):
+                outer.tool_calls.append(
+                    (
+                        f"{self.command} {self.path.split('?')[0]}",
+                        self.headers.get("X-Cheese-Token", ""),
+                    )
+                )
+                data = next(
+                    (v for k, v in ANSWERS.items() if self.path.startswith(k)), {}
+                )
+                self._json({"code": 200, "data": data})
+
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-                if self.path.startswith(f"{tools_path}/"):
-                    name = self.path.rsplit("/", 1)[1]
-                    outer.tool_calls.append(
-                        (name, self.headers.get("X-Cheese-Token", ""), body)
-                    )
-                    self._json(
-                        {"code": 200, "data": {"text": f"{name} 的结果：一道题"}}
-                    )
+                if not self.path.startswith("/llm"):
+                    self._platform()
                     return
                 outer.model_auth.append(self.headers.get("Authorization", ""))
                 index = len(outer.requests)
@@ -185,7 +184,7 @@ def host(tmp_path, monkeypatch):
     install_pi(home)
     monkeypatch.setattr(settings, "agent_session_device_id", DEVICE)
     hub = Host(home)
-    sessions = HandlessSessions(hub)
+    sessions = SessionHost(hub)
     yield hub, sessions
     stop_all(home)
 
@@ -205,26 +204,52 @@ def platform(monkeypatch):
         fake.close()
 
 
-def _launch(user: int, conversation: uuid.UUID | None = None) -> Launch:
-    conversation = conversation or uuid.uuid4()
-    return Launch(
-        user_id=user,
-        conversation_id=conversation,
-        system_prompt=PROMPT,
-        tools_path="/assistant/tools",
-        tools=TOOLS,
-        token=mint_personal_credential(user_id=user, conversation_id=str(conversation)),
-        model="fixture-model",
+class Started:
+    """A conversation's session as a person's 芝士 starts it, given ``PROMPT``
+    and ``TOOLS``."""
+
+    def __init__(self, user: int, conversation: uuid.UUID | None = None):
+        self.user = user
+        ref, spec, self.access = personal.session(
+            user, conversation or uuid.uuid4(), ""
+        )
+        self.ref = ref
+        self.spec = dataclasses.replace(
+            spec, system_prompt=PROMPT, tools=TOOLS, model="fixture-model"
+        )
+
+    def __iter__(self):
+        return iter((self.ref, self.spec, self.access))
+
+
+def _launch(user: int, conversation: uuid.UUID | None = None) -> Started:
+    return Started(user, conversation)
+
+
+def question_credential(user: int) -> str:
+    return mint_delegated_credential(
+        user_id=user, handle=f"user{user}", work=str(uuid.uuid4()), ttl_s=300
+    )
+
+
+def _asking(sessions, launch, text, *, credential: str = "", earlier: str = ""):
+    work = uuid.uuid4()
+    return ask(
+        sessions,
+        *launch,
+        Prompt(
+            work,
+            text,
+            acting=credential or question_credential(launch.user),
+            preface=earlier,
+        ),
+        work_id=work,
+        ceiling_s=120,
     )
 
 
 async def _ask(sessions, launch, text, **options) -> list:
-    return [
-        event
-        async for event in sessions.ask(
-            launch, uuid.uuid4(), text, ceiling_s=120, **options
-        )
-    ]
+    return [event async for event in _asking(sessions, launch, text, **options)]
 
 
 async def _until(check, timeout: float = 60.0) -> None:
@@ -240,31 +265,30 @@ async def test_a_session_has_its_tools_and_nothing_else_and_does_not_think(
     hub, sessions = host
     first_words_seen = threading.Event()
     fake = platform(
-        [{"tool": "my_tasks"}, {"text": "你领了一道题：图像分类基线复现。"}],
+        [{"tool": "cheese_my_tasks"}, {"text": "你领了一道题：图像分类基线复现。"}],
         rest_held_until=first_words_seen,
     )
     launch = _launch(7)
+    acting = question_credential(7)
 
     events = []
-    async for event in sessions.ask(
-        launch, uuid.uuid4(), "我领了哪些题？", ceiling_s=120
-    ):
+    async for event in _asking(sessions, launch, "我领了哪些题？", credential=acting):
         events.append(event)
-        if isinstance(event, Said):
+        if isinstance(event, Words):
             first_words_seen.set()
 
-    said = "".join(e.text for e in events if isinstance(e, Said))
+    said = "".join(e.text for e in events if isinstance(e, Words))
     assert said == "你领了一道题：图像分类基线复现。"
-    assert Looking("my_tasks") in events
-    assert events[-1] == Answered("你领了一道题：图像分类基线复现。")
+    assert Tool("cheese_my_tasks") in events
+    assert events[-1] == Answer("你领了一道题：图像分类基线复现。")
     # More than one piece: the first words were handed on while the model was
     # still writing the rest.
-    assert len([e for e in events if isinstance(e, Said)]) > 1
+    assert len([e for e in events if isinstance(e, Words)]) > 1
 
     first = fake.requests[0]
     assert sorted(t["function"]["name"] for t in first["tools"]) == [
-        "my_tasks",
-        "search_docs",
+        "cheese_docs_search",
+        "cheese_my_tasks",
     ]
     assert first["thinking"] == {"type": "disabled"}
     assert "reasoning_effort" not in first
@@ -276,13 +300,12 @@ async def test_a_session_has_its_tools_and_nothing_else_and_does_not_think(
         "Current working directory" not in system
         and "read" not in system.split(PROMPT)[1]
     )
-    # Everything reaches the platform as the person, with their credential.
-    assert set(fake.model_auth) == {f"Bearer {launch.token}"}
-    assert [(name, token) for name, token, _ in fake.tool_calls] == [
-        ("my_tasks", launch.token)
-    ]
+    # The model is reached with the person's credential; the tool, with the
+    # one minted for this question, at the platform's own route.
+    assert set(fake.model_auth) == {f"Bearer {launch.access.credential}"}
+    assert fake.tool_calls == [("GET /tasks/joined", acting)]
     # The tool's answer went back to the model.
-    assert "my_tasks 的结果" in json.dumps(fake.requests[1], ensure_ascii=False)
+    assert "一道题" in json.dumps(fake.requests[1], ensure_ascii=False)
     # Nothing but the launch ran on the host: no machine, no container.
     ran = [argv for argv in hub.execs if argv != ["cat", "/proc/meminfo"]]
     assert ran and all(argv == ["python3", "-"] for argv in ran)
@@ -296,7 +319,7 @@ async def test_an_idle_session_exits_and_comes_back_with_its_conversation(
     monkeypatch.setattr(personal, "IDLE_EXIT_S", 1.0)
     fake = platform([{"text": "记住了。"}, {"text": "PINEAPPLE。"}])
     launch = _launch(7)
-    state = personal.state_dir(7, launch.conversation_id)
+    state = launch.ref.state
 
     await _ask(sessions, launch, "The password is PINEAPPLE.")
     await _until(lambda: not hub.alive(state))
@@ -304,7 +327,7 @@ async def test_an_idle_session_exits_and_comes_back_with_its_conversation(
 
     events = await _ask(sessions, launch, "What was the password?")
 
-    assert events[-1] == Answered("PINEAPPLE。")
+    assert events[-1] == Answer("PINEAPPLE。")
     asked = json.dumps(fake.requests[-1]["messages"], ensure_ascii=False)
     assert "The password is PINEAPPLE." in asked
     # It was started again, on the conversation it had.
@@ -324,7 +347,7 @@ async def test_a_third_session_lets_the_least_recently_used_one_go(host, platfor
     await _ask(sessions, third, "三")
 
     def running(launch):
-        return hub.alive(personal.state_dir(launch.user_id, launch.conversation_id))
+        return hub.alive(launch.ref.state)
 
     assert not running(first)
     assert running(second) and running(third)
@@ -357,8 +380,8 @@ async def _first_word(sessions, launch, text) -> float:
     """Seconds from asking to the first piece of the answer."""
     started = time.monotonic()
     first = None
-    async for event in sessions.ask(launch, uuid.uuid4(), text, ceiling_s=120):
-        if isinstance(event, Said) and first is None:
+    async for event in _asking(sessions, launch, text):
+        if isinstance(event, Words) and first is None:
             first = time.monotonic() - started
     assert first is not None
     return first
@@ -378,7 +401,7 @@ async def test_an_answer_starts_as_soon_as_the_model_does(host, platform, monkey
 
     new = await _first_word(sessions, launch, "一")
     warm = [await _first_word(sessions, launch, "再一") for _ in range(3)]
-    await _until(lambda: not hub.alive(personal.state_dir(7, launch.conversation_id)))
+    await _until(lambda: not hub.alive(launch.ref.state))
     resumed = await _first_word(sessions, launch, "回来")
 
     print(

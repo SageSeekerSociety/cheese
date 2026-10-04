@@ -34,9 +34,9 @@ export function resolveInitialLocale(): Locale {
 
 // A key missing from the active locale falls back to `zh-CN` so a half-translated
 // screen degrades to readable text rather than to the raw key. That fallback is
-// silent at runtime by design — the guarantee that the gap is *known* lives in
-// `untranslated.json` and `catalog.spec.ts`, not here. Development builds warn on
-// every missing and every fallback so the gap is visible while working.
+// silent at runtime by design — the guarantee that no key is missing English
+// lives in `catalog.spec.ts`, not here. Development builds warn on every missing
+// and every fallback so a gap is visible while working.
 const i18n = createI18n({
   legacy: false,
   locale: resolveInitialLocale(),

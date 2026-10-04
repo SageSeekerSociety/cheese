@@ -19,9 +19,9 @@
         />
       </AccountField>
 
-      <v-btn type="submit" block color="primary" size="large" class="account-submit" :loading="loading">
+      <BaseButton type="submit" block kind="primary" size="lg" class="account-submit" :loading="loading">
         {{ t('account.oauth.verify.submit') }}
-      </v-btn>
+      </BaseButton>
 
       <p class="account-foot">
         <router-link to="/account/signin" class="account-link account-link--quiet">
@@ -39,6 +39,7 @@ import { useRoute } from 'vue-router'
 import AccountField from '@/components/account/AccountField.vue'
 import AccountHeading from '@/components/account/AccountHeading.vue'
 import PasswordField from '@/components/account/PasswordField.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
 

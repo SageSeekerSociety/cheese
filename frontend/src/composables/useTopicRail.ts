@@ -27,6 +27,7 @@ import {
   saveOthersGroupOpen,
   visibleRows,
 } from '../lib/topicTree'
+import { VIRTUAL_LIST_THRESHOLD } from '../lib/virtualList'
 
 import { t } from '@/i18n'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -48,6 +49,12 @@ export interface TreeRow {
   depth: number
 }
 
+/** 侧栏从外面拿到的「把某一组滚到第几行」：一组行太多、交给虚拟化之后，行不在 DOM 里
+ *  （没被窗口挂上），`scrollIntoView` 够不着，只能按序号让那一组自己滚。 */
+export interface RailScrollTarget {
+  scrollToIndex: (sectionKey: string, index: number) => void
+}
+
 /** 一组行：一组一个组头，两组的行是同一种形态。 */
 export interface RailSection {
   key: string
@@ -59,7 +66,7 @@ export interface RailSection {
   rows: VisibleRow<Topic>[]
 }
 
-export function useTopicRail(source: TopicRailSource) {
+export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollTarget) {
   const store = useWorkspaceStore()
 
   // ---- 树 ----
@@ -248,6 +255,17 @@ export function useTopicRail(source: TopicRailSource) {
     async (id) => {
       if (!id) return
       await nextTick()
+      // 选中的那一行在不在一份虚拟化的列表里？在的话它多半**不在 DOM 里**（没被窗口
+      // 挂上），`scrollIntoView` 够不着它——只能按序号让那一组自己滚过去。整列都在
+      // DOM 里时照旧走 querySelector：它只滚「最近的那一段」，不把整列跳一下。
+      //
+      // 归档组走的是下面那条兜底：它不在 railSections 里（那一组自己管收展），但它的行
+      // 同样带 `data-room-id`、选中的那一行同样常驻 DOM，所以按 id 找得到、滚得动。
+      const at = selectedLocation.value
+      if (at && scrollTarget && isVirtualSection(at.key)) {
+        scrollTarget.scrollToIndex(at.key, at.index)
+        return
+      }
       document.querySelector(`[data-room-id="${CSS.escape(id)}"]`)?.scrollIntoView?.({ block: 'nearest' })
     }
   )
@@ -320,6 +338,27 @@ export function useTopicRail(source: TopicRailSource) {
     },
   ])
 
+  // 选中的话题落在哪一组、那一组里排第几行。上面那条 watch 要按**序号**滚虚拟化的
+  // 那一组（那种时候行不在 DOM 里，光有 id 够不着），所以除了「在不在这一组」还得知道
+  // 它排第几。收起来的子树里的行不在 rows 里，也就落不到这儿（那种行本来也不在屏幕上）。
+  // 归档组不在 railSections 里（它的收展是那个组件自己的状态），所以它也落不到这儿——
+  // 它走 watch 里那条 `querySelector` 兜底，靠的是归档行的 `data-room-id`。
+  const selectedLocation = computed<{ key: string; index: number } | null>(() => {
+    const id = source.selectedTopicId
+    if (!id) return null
+    for (const section of railSections.value) {
+      const index = section.rows.findIndex((row) => row.topic.id === id)
+      if (index >= 0) return { key: section.key, index }
+    }
+    return null
+  })
+
+  /** 这一组行数过门槛了吗？过的人和 `VirtualList` 用同一个常量，两边不能各记一个数。 */
+  function isVirtualSection(key: string): boolean {
+    const section = railSections.value.find((s) => s.key === key)
+    return !!section && section.rows.length > VIRTUAL_LIST_THRESHOLD
+  }
+
   // The root topic (本体) — the pinned 「全局」 row at the top of the list.
   const rootTopic = computed<Topic | null>(() => source.topics.find((t) => inferTopicKind(t) === 'root') ?? null)
 
@@ -349,6 +388,7 @@ export function useTopicRail(source: TopicRailSource) {
     othersHoldsSelected,
     toggleOthers,
     railSections,
+    selectedLocation,
     // 折叠
     toggleCollapse,
     // 状态

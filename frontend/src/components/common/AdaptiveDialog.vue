@@ -15,8 +15,11 @@
 //
 // 多出来的次要操作（分步表单的「上一步」）放进 #actions：桌面上排在取消和主操作
 // 之间，手机上排在正文最后。
+import { computed } from 'vue'
 import { useDisplay } from 'vuetify'
 
+import BaseButton from '@/components/base/BaseButton.vue'
+import { DIALOG_WIDTH, type DialogSize } from '@/components/base/dialogSize'
 import { t } from '@/i18n'
 
 const open = defineModel<boolean>({ default: false })
@@ -34,7 +37,10 @@ const props = withDefaults(
     primaryDanger?: boolean
     /** 桌面上关闭按钮的字，默认「取消」。 */
     cancelLabel?: string
-    /** 桌面宽度。 */
+    /** 桌面宽度，三档（docs/design-system.md §3.7）：sm 420（一两个字段）、md 560（默认，
+     *  一般表单）、lg 720（并排两列、带预览的表单）。 */
+    size?: DialogSize
+    /** 旧写法，只留给三档都放不下的少数弹窗；新代码用 size。 */
     maxWidth?: number | string
     /** 点遮罩、按 Esc 不关（表单填到一半时）。 */
     persistent?: boolean
@@ -48,7 +54,8 @@ const props = withDefaults(
     primaryDisabled: false,
     primaryDanger: false,
     cancelLabel: undefined,
-    maxWidth: 480,
+    size: 'md',
+    maxWidth: undefined,
     persistent: false,
     closeDisabled: false,
   }
@@ -62,6 +69,7 @@ defineSlots<{
 }>()
 
 const { mdAndUp } = useDisplay()
+const width = computed(() => props.maxWidth ?? DIALOG_WIDTH[props.size])
 
 function close() {
   if (props.closeDisabled) return
@@ -78,7 +86,7 @@ function primary() {
   <v-dialog
     v-if="mdAndUp"
     v-model="open"
-    :max-width="props.maxWidth"
+    :max-width="width"
     :persistent="props.persistent || props.closeDisabled"
     scrollable
   >
@@ -87,20 +95,20 @@ function primary() {
       <v-card-text class="adaptive-dialog__desktop-body"><slot /></v-card-text>
       <v-card-actions class="px-4 pb-3">
         <v-spacer />
-        <v-btn variant="text" :disabled="props.closeDisabled" @click="close">{{
+        <BaseButton kind="ghost" :disabled="props.closeDisabled" @click="close">{{
           props.cancelLabel ?? t('global.cancel')
-        }}</v-btn>
+        }}</BaseButton>
         <slot name="actions" />
-        <v-btn
+        <BaseButton
           v-if="props.primaryLabel"
-          :color="props.primaryDanger ? 'error' : 'primary'"
-          variant="flat"
+          :kind="props.primaryDanger ? 'danger' : 'primary'"
+          :solid="props.primaryDanger"
           :loading="props.primaryLoading"
           :disabled="props.primaryDisabled"
           @click="primary"
         >
           {{ props.primaryLabel }}
-        </v-btn>
+        </BaseButton>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -115,6 +123,7 @@ function primary() {
   >
     <div class="adaptive-dialog__page" role="document">
       <header class="adaptive-dialog__head">
+        <!-- eslint-disable-next-line vue/no-restricted-syntax -- phone full-page dialog header action (design-system §3.6 exception) -->
         <v-btn
           icon
           variant="text"
@@ -129,6 +138,7 @@ function primary() {
         </v-btn>
         <h2 class="adaptive-dialog__title t-title">{{ props.title }}</h2>
         <template v-if="props.primaryLabel">
+          <!-- eslint-disable-next-line vue/no-restricted-syntax -- phone full-page dialog header action (design-system §3.6 exception) -->
           <v-btn
             v-if="props.primaryIcon"
             icon
@@ -143,6 +153,9 @@ function primary() {
           >
             <v-icon size="22">{{ props.primaryIcon }}</v-icon>
           </v-btn>
+          <!-- 手机整页的页头动作和左边的 ✕ 是一套顶栏写法（44px、文字色），
+               不是 BaseButton 的四种角色之一，先保持 v-btn。 -->
+          <!-- eslint-disable-next-line vue/no-restricted-syntax -- phone full-page dialog header action (design-system §3.6 exception) -->
           <v-btn
             v-else
             variant="text"

@@ -35,6 +35,7 @@ vi.mock('@/network/api/spaces', () => ({
     detail: (...a: unknown[]) => spaceDetail(...a),
     listCategories: (...a: unknown[]) => listCategories(...a),
     listDomainGroups: (...a: unknown[]) => listDomainGroups(...a),
+    listMaterials: vi.fn().mockResolvedValue({ data: { materials: [], canManage: false } }),
   },
 }))
 
@@ -199,5 +200,21 @@ describe('spaces in English', () => {
     ].map((view) => view.container.innerHTML)
 
     for (const html of texts) expect(html).not.toMatch(CJK)
+  })
+
+  it('the bar list counts people in English, one person and several people', () => {
+    const plugins = [createVuetify({ components, directives }), i18n]
+    const view = render(BarList as Component, {
+      props: {
+        rows: [
+          { label: 'Team A', value: 3 },
+          { label: 'Solo', value: 1 },
+        ],
+        format: (n: number) => i18n.global.t('tasks.insights.people', n),
+      },
+      global: { plugins },
+    })
+    expect(view.getByText('3 people')).toBeTruthy()
+    expect(view.getByText('1 person')).toBeTruthy()
   })
 })

@@ -1,10 +1,9 @@
-"""重放可见 (#416): a batch of messages that keeps being re-sent must say so.
+"""重放可见 (#416): a batch confirmed not sent must say when it is retried.
 
-A turn only stamps `consumed_turn` when it FINISHES, which is deliberate — a
-turn that dies must not eat the message. The cost is that a failing turn
-re-sends the identical batch next turn, and the next, with nothing anywhere
-saying it is the same batch. From the room that is indistinguishable from "this
-topic is broken", and the difference is the whole diagnosis.
+A turn only stamps `consumed_turn` when it FINISHES. A failed launch has sent
+nothing and its batch can be retried. Once a native input is registered, its
+outcome must be reconciled before that batch can be sent again; an error result
+and another work's clean Stop do not consume or release it.
 
 These tests drive real turns through the WS against a provider whose result is
 an error, and assert what a person sitting in the room would see.
@@ -13,9 +12,13 @@ an error, and assert what a person sitting in the room would see.
 import uuid
 
 import pytest
+from sqlalchemy import select
 
 from app.api.deps import get_chat_service
 from app.domain.agent.chat import ChatService
+from app.domain.agent.harness.channel import ScreenSetupError
+from app.domain.block.models import Block, consumed_turn
+from app.domain.delivery.models import NativeInput
 from app.main import app
 from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.integration.conftest import (
@@ -48,7 +51,14 @@ class SilentScreen(StubChannel):
         del topic_id, prompt, reply
 
 
-def _use_failing_agent(client, monkeypatch) -> SilentScreen:
+class UnlaunchedScreen(StubChannel):
+    """Fail before a runner or native input exists, so retry is unambiguous."""
+
+    async def ensure(self, session, opening, live=None):
+        raise ScreenSetupError("The executor could not be launched")
+
+
+def _use_failing_agent(client, monkeypatch) -> UnlaunchedScreen:
     """A topic whose every turn dies, with nothing else re-prompting it.
 
     A turn that dies to the substrate is not re-run by the platform — it fails
@@ -56,7 +66,7 @@ def _use_failing_agent(client, monkeypatch) -> SilentScreen:
     batch behind these tests' backs. That is what makes it safe to count how
     many times ONE batch is sent, which is the whole assertion here.
     """
-    screen = SilentScreen()
+    screen = UnlaunchedScreen()
 
     service = ChatService(
         session_factory=client.test_request_factory,
@@ -263,12 +273,13 @@ def test_a_turn_that_outlives_its_backend_does_not_replay_its_batch(client):
 
 
 @pytest.mark.parametrize("worked_first", [True, False])
-def test_a_batch_whose_session_fails_after_a_restart_is_still_replayed(
+def test_a_batch_whose_session_fails_after_a_restart_stays_held_without_replay(
     client, worked_first
 ):
-    """换进程之后，会话在新进程上以失败收尾（额度用完、API 拒绝）。那批消息没有被
-    处理完，之后会话自己起的一轮干净地停下，也不能把它们标成已读。失败前它可能
-    还在新进程上干过活，也可能一句话都没来得及说。"""
+    """失败结果不等于处理完成；另一轮的干净 Stop 也不能替原输入完成结算。
+
+    原消息保留原登记身份、未消费且仍被持有，新消息不能把它换一个输入 id 再送。
+    """
     topic_id, after, service = _restarted_mid_turn(client, "第一句")
     room = uuid.UUID(topic_id)
 
@@ -289,10 +300,33 @@ def test_a_batch_whose_session_fails_after_a_restart_is_still_replayed(
     after.stops(room, "顺手看了一眼")
     client.portal.call(settle_turn, service, room)
 
+    async def original_input_is_still_held():
+        async with client.test_request_factory() as session:
+            blocks = list(
+                await session.scalars(select(Block).where(Block.topic_id == room))
+            )
+            original = next(
+                block
+                for block in blocks
+                if block.author == "user-1" and "第一句" in block.content
+            )
+            rows = list(
+                await session.scalars(
+                    select(NativeInput).where(NativeInput.topic_id == room)
+                )
+            )
+            holders = [row for row in rows if str(original.id) in row.held_block_ids]
+            assert len(holders) == 1
+            assert holders[0].completed_at is None
+            assert str(original.id) not in holders[0].released_block_ids
+            assert consumed_turn(original) is None
+
+    client.portal.call(original_input_is_still_held)
     _say(client, topic_id, "第二句")
     assert after.last_prompt is not None
     assert "第二句" in after.last_prompt
-    assert "第一句" in after.last_prompt, after.last_prompt
+    assert "第一句" not in after.last_prompt, after.last_prompt
+    client.portal.call(original_input_is_still_held)
 
 
 class DiesOnceScreen(SilentScreen):
