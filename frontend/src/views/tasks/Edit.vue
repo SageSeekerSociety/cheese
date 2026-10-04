@@ -6,7 +6,11 @@
         {{ t('tasks.detail.editTask') }}
       </v-card-title>
       <v-divider class="mb-4"></v-divider>
-      <LoadingErrorContainer v-if="loading || error" :loading="loading" :error="error" @retry="loadTaskData" />
+      <div v-if="loading" class="py-12 text-center">
+        <v-progress-circular indeterminate color="primary" />
+      </div>
+      <!-- A failed read trades the form for the error (docs/design-system.md §3.10). -->
+      <BaseLoadError v-else-if="error" :title="t('tasks.loadError.title')" :error="error" @retry="loadTaskData" />
       <TaskForm
         v-else-if="taskData"
         ref="taskFormRef"
@@ -54,10 +58,10 @@ import { storeToRefs } from 'pinia'
 
 import { useSpaceData } from '@/composables/useSpaceData'
 
-import { LoadingErrorContainer } from './components'
 import { useTaskData, useTaskManagement } from './composables'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import TaskForm from '@/components/tasks/TaskForm.vue'
 import { closeOverlay } from '@/lib/backOut'
 import { TasksApi } from '@/network/api/tasks'

@@ -346,8 +346,7 @@
     "resubmitted": "Resubmitted — waiting for an admin to review it"
   },
   "loadError": {
-    "title": "Couldn't load",
-    "retry": "Try again"
+    "title": "Couldn't load"
   },
   "loadFailed": "Couldn't load the challenge",
   "teamStatus": {

@@ -20,6 +20,7 @@
     "loading": "Loading…",
     "empty": "No data",
     "loadMore": "Load more",
+    "showing": "Showing {shown} of {total}",
     "end": "No more"
   },
   "loading": "Loading",

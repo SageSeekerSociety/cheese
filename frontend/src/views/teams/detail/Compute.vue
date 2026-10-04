@@ -31,9 +31,11 @@ import { teamDataInjectionKey } from '@/keys'
 import { teammateName } from '@/lib/agentNames'
 import { renderNoticeMessage } from '@/lib/noticeText'
 import { topicTitle } from '@/lib/topicState'
+import { useDialog } from '@/plugins/dialog'
 
 type CloudMachine = ProjectMachine & { projectName: string }
 
+const { confirm } = useDialog()
 const teamData = inject(teamDataInjectionKey, ref())
 const teamId = computed(() => teamData.value?.id ?? 0)
 const canManage = computed(() => ['OWNER', 'ADMIN'].includes(teamData.value?.role ?? ''))
@@ -230,7 +232,11 @@ async function addMachine(device: MyDevice) {
 }
 
 async function removeMachine(device: MyDevice) {
-  if (!window.confirm(t(`teams.compute.${scope.value}.removeDeviceConfirm`, { name: device.name }))) return
+  const ok = await confirm(t(`teams.compute.${scope.value}.removeDeviceConfirm`, { name: device.name }), {
+    danger: true,
+    confirmLabel: t(`teams.compute.${scope.value}.remove`),
+  }).wait()
+  if (!ok) return
   busy.value = device.device_id
   error.value = null
   try {
@@ -244,7 +250,11 @@ async function removeMachine(device: MyDevice) {
 }
 
 async function destroyCloud(machine: CloudMachine) {
-  if (!window.confirm(t('teams.compute.destroyConfirm', { hostname: machine.hostname }))) return
+  const ok = await confirm(t('teams.compute.destroyConfirm', { hostname: machine.hostname }), {
+    danger: true,
+    confirmLabel: t('teams.compute.release'),
+  }).wait()
+  if (!ok) return
   busy.value = machine.id
   error.value = null
   try {
@@ -258,8 +268,13 @@ async function destroyCloud(machine: CloudMachine) {
 }
 
 async function changePower(machine: CloudMachine, operation: 'suspend' | 'resume') {
-  if (operation === 'suspend' && !window.confirm(t('teams.compute.suspendConfirm', { hostname: machine.hostname })))
-    return
+  if (operation === 'suspend') {
+    const ok = await confirm(t('teams.compute.suspendConfirm', { hostname: machine.hostname }), {
+      danger: true,
+      confirmLabel: t('teams.compute.suspend'),
+    }).wait()
+    if (!ok) return
+  }
   busy.value = machine.id
   error.value = null
   try {
