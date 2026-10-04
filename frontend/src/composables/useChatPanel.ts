@@ -38,7 +38,9 @@ import {
 import { postChatMessage } from '../api/messages'
 import { useChatRowActions } from '../components/chat/composables/useChatRowActions'
 import { useTimelineMotion } from '../components/chat/composables/useTimelineMotion'
+import { useActivityLines } from '../components/room/composables/useActivityLines'
 import { useChatScroll } from '../components/room/composables/useChatScroll'
+import { useLiveSteps } from '../components/room/composables/useLiveSteps'
 import { SendRefused, useOutbox } from '../components/room/composables/useOutbox'
 import { useRoomActivity } from '../components/room/composables/useRoomActivity'
 import { useRoomRoster } from '../components/room/composables/useRoomRoster'
@@ -51,12 +53,10 @@ import { cachedWindow, pendingBlockRefresh, setCachedWindow } from '../lib/block
 import { applyLiveChanges, mergeRefreshedTail, PAGE_SIZE } from '../lib/blockPaging'
 import { dayLabelsFor, outboxEdgeAfter, type RunEdge, runEdgeBetween, unreadAnchorBlock } from '../lib/chatGrouping'
 import { announceComments } from '../lib/docCommentSignals'
-import { activityLines as memberActivityLines } from '../lib/memberActivity'
 import { renderNoticeMessage } from '../lib/noticeText'
 import { outgoingMessageBody, pendingMessageBlock } from '../lib/outgoingMessage'
 import { AGENT_STATUS_EVENTS, collapseNotices, type PlatformNotice } from '../lib/platformNotice'
 import { coalesceSplitFencedCodeBlocks } from '../lib/renderMessage'
-import { siteStatusLabel } from '../lib/siteStatusLabel'
 import { placeSplitMarkers } from '../lib/splitMarkers'
 import { taskTitle, topicShortId, topicStateBadge, topicTitle } from '../lib/topicState'
 import { myHandle } from '../me'
@@ -281,20 +281,17 @@ export function useChatPanel(opts: ChatPanelOptions) {
     errorMsg,
   })
 
-  // 此刻谁在这个房间里忙（打字的人、干活的队友）—— 见 room/composables/useRoomActivity。
-  // 名字从名册来，干活的那一步从它在动的头像来，和现场顶上说的是同一句。
+  // 此刻谁在这个房间里忙（打字的人、干活的队友）—— 见 room/composables/useRoomActivity；
+  // 拼成输入框下面那一行的数据见 useActivityLines（阶段、当前一步、多久没新帧）。
   const activity = useRoomActivity({ me: AUTHOR, send: sendOnSocket })
-  const activityLines = computed(() =>
-    memberActivityLines(
-      activity.others.value,
-      (handle) =>
-        agentNameOf(handle) ??
-        (isAgentHandle(handle) ? agentDisplayName(handle) : memberByHandle.value.get(handle)?.name || handle),
-      (handle) => {
-        const status = turns.faces.value[handle]?.status
-        return status ? siteStatusLabel(status) : null
-      }
-    )
+  const liveSteps = useLiveSteps()
+  const activityLines = useActivityLines(
+    activity.others,
+    liveSteps,
+    (handle) =>
+      agentNameOf(handle) ??
+      (isAgentHandle(handle) ? agentDisplayName(handle) : memberByHandle.value.get(handle)?.name || handle),
+    (handle) => turns.faces.value[handle]?.status
   )
   watch(activityLines, (v) => emit('activity', v))
 
@@ -428,6 +425,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
         break
       }
     }
+    liveSteps.follow(frame)
     typing.follow(frame, !awaitingReply.value)
   }
 
@@ -461,6 +459,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     turns.reset()
     typing.clear()
     activity.reset()
+    liveSteps.reset()
     reactionPickerFor.value = null
     rowActions.resetBar()
     unreadAnchorId.value = null
