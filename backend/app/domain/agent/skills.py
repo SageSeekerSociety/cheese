@@ -68,7 +68,25 @@ _SHIPPED_NATIVE_SKILLS = ("cheese", "documents", "wolfram")
 #: rather than fail. Anything added to a skill outside this list is caught by
 #: `tests/unit/test_native_skill_files.py` at build time instead of silently
 #: not being shipped.
-SKILL_FILE_SUFFIXES = (".md", ".py", ".sh", ".txt", ".json", ".typ")
+SKILL_FILE_SUFFIXES = (
+    ".md",
+    ".txt",
+    ".py",
+    ".sh",
+    ".js",
+    ".mjs",
+    ".ts",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".csv",
+    ".html",
+    ".css",
+    ".xml",
+    ".xsd",
+    ".typ",
+)
 
 
 #: Folder names a project's own skill may not take: the platform ships these.

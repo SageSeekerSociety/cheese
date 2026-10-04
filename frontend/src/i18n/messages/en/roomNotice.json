@@ -314,7 +314,7 @@
   "sessionStartWorkMachineUnbound": "the work machine chosen for this room has been unbound; choose one again",
   "sessionStartingMessageQueued": "The session on the machine is starting; the message is waiting and will be sent automatically",
   "skillProposed": "Cheese proposes a new skill, “{title}”",
-  "skillProposedDetail": "Purpose: {description}\n\nSteps and rules:\n{steps}",
+  "skillProposedDetail": "Purpose: {description}\n\n{body}",
   "storageExhausted": "The work machine is out of disk space. This turn is paused while the platform cleans up.",
   "storageExhaustedDetail": "Project files and finished changes are all still there. Retry once the cleanup is done; if it keeps happening, contact an admin.",
   "storageExhaustedTitle": "The work machine is out of disk space",
