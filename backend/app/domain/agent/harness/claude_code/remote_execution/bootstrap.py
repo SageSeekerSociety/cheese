@@ -492,7 +492,9 @@ def sandbox_argv(argv, *, owner, home, claude, sockets):
 
 
 @contextlib.contextmanager
-def prepared(payload, owner, verified=None, *, refresh_runtime=False):
+def prepared(
+    payload, owner, verified=None, *, refresh_runtime=False, fetch_toolchain=True
+):
     project, resource = (
         str(uuid.UUID(payload["project"])),
         str(uuid.UUID(payload["resource"])),
@@ -691,13 +693,13 @@ def prepared(payload, owner, verified=None, *, refresh_runtime=False):
             "stdout": subprocess.DEVNULL,
             "stderr": subprocess.DEVNULL,
         }
-        if sys.platform == "win32":
+        if fetch_toolchain and sys.platform == "win32":
             helpers = portable(release)
             helpers["popen_daemon"](
                 helpers["which"](["sh", str(release / "cheese-toolchain")]),
                 **toolchain_options,
             )
-        else:
+        elif fetch_toolchain:
             subprocess.Popen(
                 ["sh", str(release / "cheese-toolchain")],
                 start_new_session=True,

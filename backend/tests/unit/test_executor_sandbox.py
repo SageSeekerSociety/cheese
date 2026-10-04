@@ -134,9 +134,13 @@ while True:
 """
 
 
-def _previous_executor(tmp_path, named=None):
+def _previous_executor(tmp_path, named=None, through_link=False):
     state = tmp_path / "executor"
     state.mkdir()
+    if through_link:
+        # A home reached through a link, as the platform spells it.
+        (tmp_path / "linked").symlink_to(tmp_path)
+        state = tmp_path / "linked/executor"
     program = tmp_path / "previous/runtime.py"
     program.parent.mkdir()
     program.write_text(_PREVIOUS_EXECUTOR)
@@ -149,11 +153,13 @@ def _previous_executor(tmp_path, named=None):
     return state, process
 
 
-def test_an_executor_from_before_stop_requests_is_still_stopped(tmp_path):
+@pytest.mark.parametrize("through_link", [False, True])
+def test_an_executor_from_before_stop_requests_is_still_stopped(tmp_path, through_link):
     """Every running executor was started by an earlier release, which stopped
     on SIGTERM and does not know `shutdown`. The stop that replaces it has to
-    take those down too, or no room could be upgraded off them."""
-    state, process = _previous_executor(tmp_path)
+    take those down too, or no room could be upgraded off them — including
+    one whose state path the platform spelled through a link."""
+    state, process = _previous_executor(tmp_path, through_link=through_link)
     try:
         stopped = _stop(state)
         assert stopped.returncode == 0, stopped.stderr
