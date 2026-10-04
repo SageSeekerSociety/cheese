@@ -121,6 +121,17 @@ export function prefetchOnHover(target: HoverTarget): void {
   }, HOVER_INTENT_MS)
 }
 
+/**
+ * 已经按下去了：意图确定，不再等停住，也不再问是不是精确指针——触屏上这是唯一的
+ * 提前量。省流量和慢网照旧让开。
+ */
+export function prefetchNow(target: HoverTarget): void {
+  cancelPrefetch()
+  if (!connectionAllows()) return
+  if (target.router && target.to !== undefined) warmRoute(target.router, target.to)
+  if (target.topicId) void warmTopic(target.topicId)
+}
+
 /** 指针在停住之前就走了：那不是意图，什么都不该发生。 */
 export function cancelPrefetch(): void {
   if (pending !== null) {

@@ -8,7 +8,7 @@ import { showsTopicList, useWorkspaceLayout } from '@/composables/useWorkspaceLa
 import { useCommands } from '@/commands'
 import TopicSidebar from '@/components/TopicSidebar.vue'
 import { t } from '@/i18n'
-import { cancelPrefetch, prefetchOnHover } from '@/lib/routePrefetch'
+import { cancelPrefetch, prefetchNow, prefetchOnHover } from '@/lib/routePrefetch'
 import { useWorkspaceStore } from '@/stores/workspace'
 import BoardSummary from '@/views/workspace/BoardSummary.vue'
 import SplitListColumn from '@/views/workspace/SplitListColumn.vue'
@@ -53,6 +53,16 @@ function openDocs(kind: string) {
 // 那一页消息。走的是同一个 openTopic 的落点，所以预热的和点开的永远是同一个东西。
 function onHoverTopic(topicId: string) {
   prefetchOnHover({
+    router,
+    to: { name: 'workspace-topic', params: { projectId: props.projectId, topicId } },
+    topicId,
+  })
+}
+
+// 按下去到松开、路由真的跳过去之间还有几十到一百多毫秒；触屏上没有「停住」这回事，
+// 这是唯一的提前量。
+function onPressTopic(topicId: string) {
+  prefetchNow({
     router,
     to: { name: 'workspace-topic', params: { projectId: props.projectId, topicId } },
     topicId,
@@ -109,6 +119,7 @@ useCommands(() => [
       :private-unread-map="store.privateUnreadMap"
       @select-topic="openTopic"
       @hover-topic="onHoverTopic"
+      @press-topic="onPressTopic"
       @leave-topic="cancelPrefetch"
       @select-docs="openDocs"
       @unarchive-topic="store.unarchive"

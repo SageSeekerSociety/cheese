@@ -44,7 +44,7 @@ const captionPlaceholder = computed(() => JSON.stringify(t('editor.image.caption
 <template>
   <NodeViewWrapper class="rt-image" :class="{ 'is-selected': selected }">
     <div class="rt-image__frame" :style="frameStyle" contenteditable="false">
-      <img v-if="src" :src="src" :alt="node.attrs.alt ?? ''" loading="lazy" />
+      <img v-if="src" :src="src" :alt="node.attrs.alt ?? ''" loading="lazy" decoding="async" />
       <span v-else-if="failed" class="rt-image__failed">{{ t('editor.image.loadFailed') }}</span>
     </div>
     <NodeViewContent

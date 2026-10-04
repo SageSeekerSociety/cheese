@@ -236,6 +236,9 @@ function renderPlain(text: string): string {
           class="im-avatar im-avatar--photo"
           :src="avatar"
           :alt="authorName"
+          width="28"
+          height="28"
+          decoding="async"
           @error="emit('avatar-error', block.author)"
         />
         <div v-else class="im-avatar" :style="{ backgroundColor: avatarColor(block.author) }">

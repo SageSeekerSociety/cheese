@@ -37,6 +37,7 @@ defineProps<{
 const emit = defineEmits<{
   (e: 'select-topic', id: string): void
   (e: 'hover-topic', id: string): void
+  (e: 'press-topic', id: string): void
   (e: 'leave-topic'): void
   (e: 'open-page', key: string): void
   (e: 'hover-page', key: string): void
@@ -58,6 +59,9 @@ const emit = defineEmits<{
       @click="emit('select-topic', rootTopic.id)"
       @mouseenter="emit('hover-topic', rootTopic.id)"
       @mouseleave="emit('leave-topic')"
+      @focusin="emit('hover-topic', rootTopic.id)"
+      @focusout="emit('leave-topic')"
+      @pointerdown="emit('press-topic', rootTopic.id)"
     >
       <template #prepend>
         <!-- 置顶行的槽住的是它自己的图标：# / 看板 / 资料库 各不相同，

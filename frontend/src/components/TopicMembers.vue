@@ -221,6 +221,7 @@ async function onSetRole(handle: string, role: string) {
               :style="{ zIndex: MAX_FACES - i }"
             />
             <img
+              decoding="async"
               v-else-if="faceSrc(m)"
               class="members-mini__face members-mini__face--photo"
               :src="faceSrc(m)!"
@@ -252,6 +253,7 @@ async function onSetRole(handle: string, role: string) {
         <li v-for="m in members" :key="m.id" class="roster__item">
           <CheeseAvatar v-if="m.agent" :size="26" :name="memberName(m) || m.member_handle" :handle="m.member_handle" />
           <img
+            decoding="async"
             v-else-if="faceSrc(m)"
             class="roster__avatar roster__avatar--photo"
             :src="faceSrc(m)!"
@@ -347,6 +349,7 @@ async function onSetRole(handle: string, role: string) {
               <template #prepend>
                 <CheeseAvatar v-if="item.raw.agent" :size="26" :name="item.raw.title" :handle="item.raw.value" />
                 <img
+                  decoding="async"
                   v-else-if="item.raw.face"
                   class="roster__avatar roster__avatar--photo"
                   :src="item.raw.face"
