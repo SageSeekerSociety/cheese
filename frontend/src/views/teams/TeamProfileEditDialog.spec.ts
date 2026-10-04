@@ -139,7 +139,7 @@ describe('editing what a team looks like', () => {
     await fireEvent.update(await screen.findByLabelText('团队名称'), '   ')
     await fireEvent.click(screen.getByRole('button', { name: '保存' }))
 
-    await screen.findByText('请输入团队名称')
+    await screen.findByText('填写团队名称')
     expect(update).not.toHaveBeenCalled()
   })
 

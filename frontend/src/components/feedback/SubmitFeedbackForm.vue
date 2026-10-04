@@ -6,8 +6,13 @@ import { computed, onMounted, ref } from 'vue'
 import { kindLabel } from './feedbackLabels'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseField from '@/components/base/BaseField.vue'
 import { t } from '@/i18n'
 import { cleanTags, EXPECTATION_KINDS, MAX_TAGS, REPRO_KINDS, useFeedbackStore } from '@/stores/feedback'
+
+// 标题上限。以前只写在输入框的 maxlength 上，粘一段长标题进来会被悄悄截掉；现在同一个
+// 数字同时喂给 maxlength 和计数器。
+const TITLE_MAX = 300
 
 // 提交反馈的**那一份表单**。它有两个壳，字段只有这一份：
 //
@@ -283,18 +288,24 @@ onMounted(() => {
         {{ t('feedback.submit.field.title.label') }}
         <span class="sb-req" aria-hidden="true">*</span>
       </label>
-      <input
-        id="sb-title"
-        v-model="store.draft.title"
-        class="sb-input"
-        type="text"
-        autocomplete="off"
-        spellcheck="false"
-        maxlength="300"
-        aria-required="true"
-        :placeholder="t('feedback.submit.field.title.placeholder')"
-        @input="store.touchDraft()"
-      />
+      <BaseField id="sb-title" :counter="{ current: store.draft.title.length, max: TITLE_MAX }">
+        <template #default="{ id, describedby, invalid }">
+          <input
+            :id="id"
+            v-model="store.draft.title"
+            class="sb-input"
+            type="text"
+            autocomplete="off"
+            spellcheck="false"
+            :maxlength="TITLE_MAX"
+            aria-required="true"
+            :aria-describedby="describedby"
+            :aria-invalid="invalid"
+            :placeholder="t('feedback.submit.field.title.placeholder')"
+            @input="store.touchDraft()"
+          />
+        </template>
+      </BaseField>
     </div>
 
     <div class="sb-field">

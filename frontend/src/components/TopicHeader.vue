@@ -249,9 +249,10 @@ useCommands(roomCommands)
             v-model="draftTitle"
             :label="t('work.room.menu.topicName')"
             :maxlength="TOPIC_TITLE_MAX_LENGTH"
+            :counter="TOPIC_TITLE_MAX_LENGTH"
+            persistent-counter
             autocomplete="off"
             autofocus
-            hide-details
             @keyup.enter="saveRename"
           />
         </AdaptiveDialog>

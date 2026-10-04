@@ -148,7 +148,7 @@
     "nameLabel": "团队名称",
     "introLabel": "团队介绍",
     "introHint": "显示在侧栏团队名字下面，最多 250 字",
-    "nameRequired": "请输入团队名称",
+    "nameRequired": "填写团队名称",
     "nameTaken": "这个名称已被占用，换一个试试",
     "forbidden": "只有团队所有者和管理员能修改资料",
     "saved": "已保存",
@@ -1506,7 +1506,7 @@
         "body": "角色设定（可留空）",
         "editHint": "修改只影响这个队友，下次运行时生效，已有记忆保留",
         "handleInvalid": "只能用小写字母、数字和 . _ -，且以字母或数字开头",
-        "nameRequired": "请填写名字",
+        "nameRequired": "填写名字",
         "nameTooLong": "名字最长 {max} 个字"
       }
     },
