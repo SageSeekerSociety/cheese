@@ -148,10 +148,10 @@ router.beforeEach(async (to, from, next) => {
   next()
 })
 
-router.afterEach((to, _from, failure) => {
+router.afterEach((to, from, failure) => {
   const store = usePageTitleStore()
   store.triggerUpdate()
-  if (!failure) rememberPageBeforeSettings(to)
+  if (!failure) rememberPageBeforeSettings(to, from)
 })
 
 // 话题的消息和话题页的代码同时去取。不在这里起头的话，消息要等话题页那一串
