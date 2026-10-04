@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,6 +27,7 @@ from app.domain.agent.runtime import announce_stale
 from app.domain.block.authorship import AuthorType
 from app.domain.block.models import Block, BlockKind
 from app.domain.identity.actor import Actor
+from app.domain.membership.services import MemberService
 from app.domain.memory.files import (
     MEMORY_ROOT,
     TEAM_PREFIX,
@@ -37,6 +38,7 @@ from app.domain.memory.files import (
     parse_memory_file,
 )
 from app.domain.memory.files_store import MemoryFileStore
+from app.domain.project_skill import importer
 from app.domain.project_skill.models import ProjectSkill, ProjectSkillRevision
 from app.domain.project_skill.service import ProjectSkillService
 from app.domain.topic.services import TopicService
@@ -51,9 +53,7 @@ class SkillIn(BaseModel):
     name: str = Field(min_length=2, max_length=48)
     title: str = Field(min_length=1, max_length=200)
     description: str = Field(min_length=1)
-    inputs: str = ""
-    steps: str = Field(min_length=1)
-    outputs: str = ""
+    body: str = Field(min_length=1)
     files: dict[str, str] = Field(default_factory=dict)
     # What a teammate's proposal rests on; shown on the card a person saves it
     # from. Ignored when a person writes the method.
@@ -66,9 +66,7 @@ class SkillIn(BaseModel):
 class SkillPatch(BaseModel):
     title: str | None = None
     description: str | None = None
-    inputs: str | None = None
-    steps: str | None = None
-    outputs: str | None = None
+    body: str | None = None
     files: dict[str, str] | None = None
     # A teammate's edit: the correction it answers.
     reason: str = ""
@@ -113,11 +111,10 @@ def _skill(row: ProjectSkill) -> dict:
         "name": row.name,
         "title": row.title,
         "description": row.description,
-        "inputs": row.inputs,
-        "steps": row.steps,
-        "outputs": row.outputs,
+        "body": row.body,
         "files": row.files,
         "state": row.state,
+        "origin": row.origin,
         "shipped_revision": row.shipped_revision,
         "proposed_by": row.proposed_by,
         "confirmed_by": row.confirmed_by,
@@ -236,7 +233,7 @@ async def create_skill(
                             detail=say(
                                 "skillProposedDetail",
                                 description=row.description,
-                                steps=row.steps,
+                                body=row.body,
                             ),
                             detail_label=say("labelSkillToConfirm"),
                         ),
@@ -250,6 +247,76 @@ async def create_skill(
     await service.publish(place.project_id)
     await announce_stale(place.room_id, "skills")
     return ok(_skill(row))
+
+
+class PersonSkillIn(BaseModel):
+    name: str = Field(min_length=2, max_length=48)
+    title: str = Field(min_length=1, max_length=200)
+    description: str = Field(min_length=1)
+    body: str = Field(min_length=1)
+    files: dict[str, str] = Field(default_factory=dict)
+    # Read from elsewhere through the import preview; a manager's to add.
+    imported: bool = False
+
+
+async def _person_in_project(
+    db: AsyncSession, resolver: ActorResolver, project_id: uuid.UUID, what: str
+) -> Actor:
+    actor = await _in_project(db, resolver, project_id, None)
+    _person(actor, what)
+    return actor
+
+
+@router.post("/projects/{project_id}/skills")
+async def add_skill(
+    project_id: uuid.UUID,
+    body: PersonSkillIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """A person writes a skill, or adds one read through the import preview."""
+    actor = await _person_in_project(db, resolver, project_id, say("skillAdd"))
+    if body.imported:
+        # What comes from outside reaches every later session and runs its
+        # scripts on the work computer; the project's managers decide that.
+        await MemberService(db).require_manager(project_id, actor)
+    service = ProjectSkillService(db)
+    row = await service.create(
+        project_id=project_id,
+        topic_id=None,
+        by=actor.handle,
+        by_agent=False,
+        name=body.name,
+        fields=body.model_dump(exclude={"name", "imported"}),
+        imported=body.imported,
+    )
+    await db.commit()
+    await service.publish(project_id)
+    return ok(_skill(row))
+
+
+@router.post("/projects/{project_id}/skills/import-preview")
+async def preview_import(
+    project_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    file: UploadFile | None = File(None),
+    url: str = Form(""),
+) -> dict:
+    """Read a skill from an uploaded SKILL.md or zip, or a GitHub folder, and
+    lay it out for a manager to look over. Nothing is saved."""
+    actor = await _person_in_project(db, resolver, project_id, say("skillImport"))
+    await MemberService(db).require_manager(project_id, actor)
+    if file is not None:
+        data = await file.read(importer.MAX_TOTAL_BYTES + 1)
+        if len(data) > importer.MAX_TOTAL_BYTES:
+            raise ValidationError(say("skillImportTooLarge"))
+        read = importer.read_upload(file.filename or "", data)
+    elif url.strip():
+        read = await importer.read_github(url)
+    else:
+        raise ValidationError(say("skillImportNothing"))
+    return ok(read.to_json())
 
 
 async def _changed(row: ProjectSkill) -> None:

@@ -96,9 +96,7 @@ def test_a_refusal_with_parameters_carries_them(client, bearer, tmp_path, monkey
         "name": "weekly-report",
         "title": "项目周报",
         "description": "把一周的项目进展整理成一页周报",
-        "inputs": "本周的时间范围",
-        "steps": "1. 列出本周完成的任务",
-        "outputs": "一页 markdown",
+        "body": "1. 列出本周完成的任务",
     }
     assert client.post(f"/topics/{room}/skills", json=method).status_code == 200
 
@@ -112,4 +110,4 @@ def test_a_refusal_with_parameters_carries_them(client, bearer, tmp_path, monkey
         "key": "skillNameTaken",
         "params": {"name": "weekly-report"},
     }
-    assert error["message"] == "这个项目里已经有叫「weekly-report」的技能"
+    assert error["message"] == "这个项目里已经有调用名为「weekly-report」的技能"

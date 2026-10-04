@@ -36,9 +36,8 @@ class ProjectSkill(UuidPk, Timestamps, Base):
     title: Mapped[str] = mapped_column(String(200))
     #: 用途 — also the native skill's description, which decides when it is used.
     description: Mapped[str] = mapped_column(Text)
-    inputs: Mapped[str] = mapped_column(Text, default="", server_default="")
-    steps: Mapped[str] = mapped_column(Text)
-    outputs: Mapped[str] = mapped_column(Text, default="", server_default="")
+    #: 正文 — the method itself, in markdown, as an imported SKILL.md's body is.
+    body: Mapped[str] = mapped_column(Text, default="", server_default="")
     #: {relative path: text} shipped beside SKILL.md (scripts, templates, notes).
     files: Mapped[dict] = mapped_column(JSONB, default=dict)
     #: draft (proposed or edited by an AI teammate, not shipped) | active |
@@ -49,6 +48,10 @@ class ProjectSkill(UuidPk, Timestamps, Base):
     #: related, absorbs, reason), shown on the card that asks a person to save
     #: it. None once a person wrote or saved it.
     proposal: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    #: Who wrote it first: cheese (an AI teammate) | person | import.
+    origin: Mapped[str] = mapped_column(
+        String(16), default="person", server_default="person"
+    )
     source_topic_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("topics.id", ondelete="SET NULL"), nullable=True
     )
@@ -73,7 +76,7 @@ class ProjectSkillRevision(UuidPk, Base):
         ForeignKey("project_skills.id", ondelete="CASCADE"), index=True
     )
     revision: Mapped[int] = mapped_column(BigInteger)
-    #: title, description, inputs, steps, outputs, files as confirmed.
+    #: title, description, body, files as confirmed.
     content: Mapped[dict] = mapped_column(JSONB)
     confirmed_by: Mapped[str] = mapped_column(String(64))
     note: Mapped[str] = mapped_column(Text, default="", server_default="")

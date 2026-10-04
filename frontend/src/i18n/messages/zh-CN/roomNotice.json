@@ -312,7 +312,7 @@
   "sessionStartWorkMachineUnbound": "这个房间选的工作电脑已经解绑，需要重新选择",
   "sessionStartingMessageQueued": "机器上的会话正在启动，消息已就位，会自动发送",
   "skillProposed": "芝士提议新增技能「{title}」",
-  "skillProposedDetail": "用途：{description}\n\n步骤与规则：\n{steps}",
+  "skillProposedDetail": "用途：{description}\n\n{body}",
   "storageExhausted": "工作电脑存储空间不足，本轮已暂停，平台正在清理。",
   "storageExhaustedDetail": "项目文件和已完成的改动都还在。清理完成后可以重试；如果反复出现，联系管理员。",
   "storageExhaustedTitle": "工作电脑存储空间不足",

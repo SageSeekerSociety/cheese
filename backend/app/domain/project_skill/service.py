@@ -36,7 +36,7 @@ MAX_FILES = 30
 #: initiative, not people: past about twenty skills a model picks the right one
 #: noticeably less often, and a person adding one more has weighed that.
 PROPOSAL_LIMIT = 20
-FIELDS = ("title", "description", "inputs", "steps", "outputs", "files")
+FIELDS = ("title", "description", "body", "files")
 
 
 def _now() -> datetime:
@@ -87,7 +87,7 @@ def render_skill(
     revision: int,
     confirmed_by: str,
 ) -> str:
-    """The SKILL.md a session reads: a method, with this run's inputs left open."""
+    """The SKILL.md a session reads: the skill's body, framed as the project's."""
     files = sorted(content.get("files") or {})
     lines = [
         "---",
@@ -107,17 +107,7 @@ def render_skill(
         "每次使用都以这一次用户给的输入为准，不沿用以前某一次的具体材料；"
         "缺少必需的输入就先问用户。",
         "",
-        "## 需要的输入",
-        "",
-        content.get("inputs") or "（按用户这次给的材料）",
-        "",
-        "## 步骤与规则",
-        "",
-        content["steps"],
-        "",
-        "## 输出要求",
-        "",
-        content.get("outputs") or "（按用户这次的要求）",
+        content["body"],
     ]
     if files:
         lines += ["", "## 配套文件", ""]
@@ -127,7 +117,7 @@ def render_skill(
         "## 用的时候",
         "",
         "照这份做时被用户纠正了、或者发现它哪里不对，就用 "
-        f'`cheese_skill_update(method="{skill_id}", …)` 提议修改这一份，'
+        f'`cheese_skill_update(skill="{skill_id}", …)` 提议修改这一份，'
         "`reason` 写用户纠正的原话或者哪里不对。确认之前大家继续用这一版。",
     ]
     return "\n".join(lines) + "\n"
@@ -195,12 +185,12 @@ class ProjectSkillService:
         )
 
     def _apply(self, row: ProjectSkill, changes: dict) -> None:
-        for key in ("title", "description", "inputs", "steps", "outputs"):
+        for key in ("title", "description", "body"):
             if changes.get(key) is not None:
                 setattr(row, key, str(changes[key]).strip())
         if changes.get("files") is not None:
             row.files = _validate_files(changes["files"])
-        if not row.title or not row.description or not row.steps:
+        if not row.title or not row.description or not row.body:
             raise ValidationError(say("skillFieldsRequired"))
 
     async def create(
@@ -213,6 +203,7 @@ class ProjectSkillService:
         name: str,
         fields: dict,
         proposal: dict | None = None,
+        imported: bool = False,
     ) -> ProjectSkill:
         name = (name or "").strip().lower()
         if not NAME.match(name):
@@ -238,12 +229,13 @@ class ProjectSkillService:
             name=name,
             title="",
             description="",
-            steps="",
+            body="",
             files={},
             state="draft",
             source_topic_id=topic_id,
             proposed_by=by,
             proposal=proposal if by_agent else None,
+            origin="cheese" if by_agent else "import" if imported else "person",
         )
         self._apply(row, fields)
         self._session.add(row)
