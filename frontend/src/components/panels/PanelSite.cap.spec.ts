@@ -145,8 +145,12 @@ async function pageOlder(pane: HTMLElement, m: Metrics): Promise<void> {
   const before = m.scrollHeight
   m.scrollTop = 0
   pane.dispatchEvent(new Event('scroll'))
-  // `before` 是 loadOlder 同步量下来的，所以这行紧跟着 dispatch 写进去是安全的。
-  m.scrollHeight = before + 1200
+  // loadOlder 在请求回来之后、把这一页拼进 DOM 之前量 before（见 useSiteTranscript），
+  // 高度是**那一刻之后**才长出来的。排在紧接着的微任务里，好落在 before 与拼进 DOM
+  // 那一下之间，跟真实浏览器「DOM 一更新就长高」一致。
+  queueMicrotask(() => {
+    m.scrollHeight = before + 1200
+  })
   await flush()
   await flush()
 }
@@ -186,7 +190,10 @@ describe('现场窗口封顶', () => {
     const before = m.scrollHeight
     m.scrollTop = 0
     pane.dispatchEvent(new Event('scroll'))
-    m.scrollHeight = before + 1200
+    // 同上：loadOlder 量 before 在请求回来之后，这一页的高度要在这之后才长出来。
+    queueMicrotask(() => {
+      m.scrollHeight = before + 1200
+    })
     await flush()
 
     expect(m.scrollTop, '插进去的一页不能把读的人顶走').toBe(1200)
