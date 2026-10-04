@@ -17,6 +17,42 @@
   display: none;
 }
 
+/* ---- 正文块：离屏的先不画，但留在 DOM 里 --------------------------------
+   一块正文（一段、一张表、一个图、一段代码）滚出屏幕后，里面的公式、图表、语法高亮
+   就没有再摆一次的必要；跳过它，翻起长文档来省的是这部分的 layout/paint。DOM 不动，
+   所以 Ctrl+F、读屏、选中都还找得到它 —— 这是「不虚拟化」。
+   `auto 28px`：28px 是一段正文的估计高度，只在这一块从未渲染过时用来占位；渲染过一次
+   之后 `auto` 记住真实高度，于是向上翻页按 scrollHeight 差补偿（见 lib/blockPaging）、
+   滚到某条都不因估计值漂（测量帧的关掉见下面 .cv-measure）。
+   `.md-reader`：读的那一份（MarkdownView，见其根节点）。两处例外 —— 对话栏那一列
+   （.im-row）和现场那一栏（.site-msg）里各自有东西量这一层的真实高度（长回复折叠、
+   要不要夹），行内的块再来一次会把它们量成估计值，判错。 */
+.md-reader > * {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 28px;
+}
+/* 长文档：只读的文档那一份（编辑器只在不能编辑时才带 .doc-reading，见 blocks/index.ts）。
+   只读时它就是一篇读的长文，和读者一样跳离屏的块；能编辑时 DOM 归 ProseMirror 摆布，
+   位置、选区都靠它量，不动。 */
+.doc-reading.doc-prose > * {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 28px;
+}
+/* 对话栏那一列里的正文块不必再来一次：那一行本身已经这么做（room-row.css 的 .im-row），
+   行内的块再来一次的话，长回复折叠量到的是估计高度，判定会错（见 lib/chatFold）。 */
+.im-row .md-reader > * {
+  content-visibility: visible;
+}
+/* 现场那一栏同理：useSiteClamp 每次更新都要读每一条 .site-msg__body 的高度决定要不要夹
+   （见 useSiteClamp），量离屏的块就是估计值，判错。 */
+.site-msg .md-reader > * {
+  content-visibility: visible;
+}
+/* 测量帧（向上翻页补偿）：这一窗里的块按真实高度铺开。见 lib/contentVisibility。 */
+.cv-measure .md-reader > * {
+  content-visibility: visible;
+}
+
 /* ---- Callout ------------------------------------------------------------ */
 
 [data-block='callout'] {
