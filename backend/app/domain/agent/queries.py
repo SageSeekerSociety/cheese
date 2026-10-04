@@ -340,7 +340,7 @@ async def _say_memory_change(
             ),
             summary=part.summary(),
             diff=part.diff,
-            refused=tuple(sorted(part.refused)),
+            refused=part.refused,
             rejected=part.rejected,
         )
         await announce(session, place_id=room, content=content, meta=meta)
