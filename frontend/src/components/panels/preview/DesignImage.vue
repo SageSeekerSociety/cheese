@@ -745,7 +745,15 @@ onBeforeUnmount(() => {
           @lostpointercapture.capture="sheetCancel"
           @dblclick.capture="sheetDoubleClick"
         >
-          <img :key="`${identity}:${src}`" ref="image" :src="src" :alt="alt" draggable="false" @load="loaded" />
+          <img
+            :key="`${identity}:${src}`"
+            ref="image"
+            :src="src"
+            :alt="alt"
+            decoding="async"
+            draggable="false"
+            @load="loaded"
+          />
           <DesignSketchOverlay
             v-if="strokes.length"
             :strokes="strokes"

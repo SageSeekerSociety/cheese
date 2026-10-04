@@ -170,3 +170,129 @@ def test_a_skill_is_a_project_thing_and_names_are_checked(client):
         401,
         403,
     )
+
+
+# --- What a teammate may propose, and what a person decides ------------------
+
+
+def _proposal(name: str = "weekly-report", **extra) -> dict:
+    return {
+        **METHOD,
+        "name": name,
+        "taught": ["先写变坏的指标", "数字后面标来源"],
+        "accepted": "用户说就这样",
+        **extra,
+    }
+
+
+def test_a_declined_proposal_is_not_proposed_again_but_a_person_may_write_it(client):
+    project = _project(client)
+    room = _room(client, project)
+    skill = client.post(f"/topics/{room}/skills", json=_proposal()).json()["data"]
+    declined = client.post(f"/skills/{skill['id']}/decline", headers=PERSON)
+    assert declined.status_code == 200, declined.text
+
+    listed = client.get(f"/projects/{project}/skills", headers=PERSON).json()["data"]
+    assert listed["data"] == [], "a declined proposal still shows as a method"
+    again = client.post(f"/topics/{room}/skills", json=_proposal())
+    assert again.status_code == 422, "the teammate proposed what was declined"
+
+    written = client.post(f"/topics/{room}/skills", json=METHOD, headers=PERSON)
+    assert written.status_code == 200, written.text
+    assert "skills/weekly-report/SKILL.md" in _shipped(project)
+
+
+def test_a_teammate_waits_for_one_proposal_before_the_next(client):
+    project = _project(client)
+    room = _room(client, project)
+    assert client.post(f"/topics/{room}/skills", json=_proposal()).status_code == 200
+    second = client.post(f"/topics/{room}/skills", json=_proposal("grading"))
+    assert second.status_code == 422, "two proposals waited in one room"
+
+
+def test_at_the_limit_a_teammate_stops_proposing_but_a_person_does_not(client):
+    from app.domain.project_skill.service import PROPOSAL_LIMIT
+
+    project = _project(client)
+    room = _room(client, project)
+    for i in range(PROPOSAL_LIMIT):
+        made = client.post(
+            f"/topics/{room}/skills", json={**METHOD, "name": f"m-{i}"}, headers=PERSON
+        )
+        assert made.status_code == 200, made.text
+
+    refused = client.post(f"/topics/{room}/skills", json=_proposal("one-more"))
+    assert refused.status_code == 422, "a teammate added past the limit"
+    by_person = client.post(
+        f"/topics/{room}/skills", json={**METHOD, "name": "one-more"}, headers=PERSON
+    )
+    assert by_person.status_code == 200, "a person was held to the teammate's limit"
+
+
+def test_saving_a_proposal_removes_the_team_memories_it_absorbed(client):
+    project = _project(client)
+    room = _room(client, project)
+    rule = "---\nname: weekly-order\ndescription: 周报先写坏消息\ntype: feedback\n---\n"
+    rule += "周报先写坏消息"
+    kept = "---\nname: style\ndescription: 回答要短\ntype: feedback\n---\n回答要短"
+    for path, content in (("weekly-order.md", rule), ("style.md", kept)):
+        wrote = client.put(
+            "/memory/files",
+            json={
+                "project_id": project,
+                "scope": "team",
+                "path": path,
+                "content": content,
+            },
+            headers=PERSON,
+        )
+        assert wrote.status_code == 200, wrote.text
+    index = "- [周报顺序](weekly-order.md) — 周报先写坏消息\n"
+    index += "- [风格](style.md) — 回答要短\n"
+    client.put(
+        "/memory/files",
+        json={
+            "project_id": project,
+            "scope": "team",
+            "path": "MEMORY.md",
+            "content": index,
+        },
+        headers=PERSON,
+    )
+
+    skill = client.post(
+        f"/topics/{room}/skills",
+        json=_proposal(absorbs=["team/weekly-order.md"]),
+    ).json()["data"]
+    team = {
+        f["path"]: f["content"]
+        for f in client.get(
+            f"/memory/files?project_id={project}&scope=team", headers=PERSON
+        ).json()["data"]["data"]
+    }
+    assert "weekly-order.md" in team, "a proposal removed memories before it was saved"
+    # The person deciding sees which memory goes by its title, not its file.
+    assert skill["proposal"]["absorbs"] == [
+        {"path": "team/weekly-order.md", "title": "周报顺序"}
+    ]
+
+    client.post(f"/skills/{skill['id']}/confirm", headers=PERSON)
+    team = {
+        f["path"]: f["content"]
+        for f in client.get(
+            f"/memory/files?project_id={project}&scope=team", headers=PERSON
+        ).json()["data"]["data"]
+    }
+    assert "weekly-order.md" not in team
+    assert "weekly-order.md" not in team["MEMORY.md"]
+    assert "style.md" in team and "style.md" in team["MEMORY.md"]
+
+
+def test_a_proposal_cannot_absorb_someones_private_memory(client):
+    project = _project(client)
+    room = _room(client, project)
+    refused = client.post(
+        f"/topics/{room}/skills",
+        json=_proposal(absorbs=[f"private/{OWNER}/style.md"]),
+    )
+    assert refused.status_code == 422, "a project method absorbed a personal memory"

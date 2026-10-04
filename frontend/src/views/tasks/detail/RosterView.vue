@@ -3,7 +3,7 @@
        取数和写操作在 `Roster.vue`，这里只报「对谁做什么」。 -->
   <div class="rs">
     <div class="rs__bar">
-      <div class="rs__seg" role="tablist" :aria-label="t('tasks.roster.filterLabel')">
+      <div v-roving-tabs class="rs__seg" role="tablist" :aria-label="t('tasks.roster.filterLabel')">
         <button
           v-for="f in filters"
           :key="f.key"
@@ -32,151 +32,130 @@
       :title="rows.length ? t('tasks.roster.noMatch') : t('tasks.roster.empty')"
     />
 
-    <div v-else class="rs__scroll">
-      <table class="rs__table">
-        <thead>
-          <tr>
-            <th>{{ t('tasks.roster.col.who') }}</th>
-            <th>{{ t('tasks.roster.col.claimedAt') }}</th>
-            <th>{{ t('tasks.roster.col.status') }}</th>
-            <th>{{ t('tasks.roster.col.latest') }}</th>
-            <th>{{ t('tasks.roster.col.deadline') }}</th>
-            <th>
-              <span class="rs__sr">{{ t('tasks.roster.col.ops') }}</span>
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          <template v-for="row in visible" :key="row.id">
-            <tr
-              class="rs__row"
-              :data-status="row.status"
-              @contextmenu="row.approved === 'APPROVED' && rowMenu.open(row.id, $event)"
+    <BaseTable v-else class="rs__grid" :cols="ROSTER_COLS" :label="t('tasks.roster.tableLabel')" min-width="760px">
+      <template #head>
+        <tr>
+          <BaseTableTh>{{ t('tasks.roster.col.who') }}</BaseTableTh>
+          <BaseTableTh>{{ t('tasks.roster.col.claimedAt') }}</BaseTableTh>
+          <BaseTableTh>{{ t('tasks.roster.col.status') }}</BaseTableTh>
+          <BaseTableTh>{{ t('tasks.roster.col.latest') }}</BaseTableTh>
+          <BaseTableTh>{{ t('tasks.roster.col.deadline') }}</BaseTableTh>
+          <BaseTableTh>
+            <span class="rs__sr">{{ t('tasks.roster.col.ops') }}</span>
+          </BaseTableTh>
+        </tr>
+      </template>
+      <template v-for="row in visible" :key="row.id">
+        <tr
+          class="rs__row"
+          :data-status="row.status"
+          @contextmenu="row.approved === 'APPROVED' && rowMenu.open(row.id, $event)"
+        >
+          <td>
+            <button
+              type="button"
+              class="rs__who"
+              :aria-expanded="expanded === row.id"
+              :disabled="!row.hasDetails"
+              @click="expanded = expanded === row.id ? null : row.id"
             >
-              <td>
-                <button
-                  type="button"
-                  class="rs__who"
-                  :aria-expanded="expanded === row.id"
-                  :disabled="!row.hasDetails"
-                  @click="expanded = expanded === row.id ? null : row.id"
-                >
-                  <span class="rs__avatar" :class="{ 'rs__avatar--team': row.teamSize }">{{
-                    row.name.slice(0, 1)
-                  }}</span>
-                  <span class="rs__name">{{ row.name }}</span>
-                  <small v-if="row.teamSize" class="rs__small">{{
-                    t('tasks.roster.teamSize', { n: row.teamSize })
-                  }}</small>
-                  <v-icon v-if="row.hasDetails" size="14" class="rs__chev">
-                    {{ expanded === row.id ? 'mdi-chevron-up' : 'mdi-chevron-down' }}
-                  </v-icon>
-                </button>
-              </td>
-              <td class="rs__meta t-num">{{ day(row.claimedAt) }}</td>
-              <td>
-                <span class="rs__status" :class="`rs__status--${STATUS[row.status].tone}`">
-                  {{ t(STATUS[row.status].label) }}
-                </span>
-              </td>
-              <td>
-                <template v-if="row.latest">{{
-                  t('tasks.roster.latest', { n: row.latest.version, when: when(row.latest.createdAt) })
-                }}</template>
-                <span v-else class="rs__meta">—</span>
-              </td>
-              <td class="rs__meta t-num">{{ row.deadline ? day(row.deadline) : '—' }}</td>
-              <td>
-                <div class="rs__ops">
-                  <template v-if="row.status === 'CLAIM_PENDING'">
-                    <BaseButton kind="primary" size="sm" :loading="busyId === row.id" @click="emit('approve', row.id)">
-                      {{ t('tasks.roster.approve') }}
-                    </BaseButton>
-                    <BaseButton kind="ghost" size="sm" @click="openReject(row)">{{
-                      t('tasks.roster.reject')
-                    }}</BaseButton>
-                  </template>
-                  <BaseButton
-                    v-else-if="row.status === 'REVIEW_PENDING'"
-                    kind="primary"
-                    size="sm"
-                    @click="emit('review', { id: row.id, name: row.name })"
-                  >
-                    {{ t('tasks.roster.review') }}
-                  </BaseButton>
-                  <BaseButton
-                    v-else-if="row.latest"
-                    kind="ghost"
-                    size="sm"
-                    @click="emit('review', { id: row.id, name: row.name })"
-                  >
-                    {{ t('tasks.roster.view') }}
-                  </BaseButton>
-                  <AdaptiveMenu
-                    v-if="row.approved === 'APPROVED'"
-                    v-bind="rowMenu.bind(row.id)"
-                    :actions="rowActions(row)"
-                  >
-                    <template #activator="{ props: menu }">
-                      <BaseButton
-                        v-bind="menu"
-                        icon="mdi-dots-horizontal"
-                        size="sm"
-                        :aria-label="t('tasks.roster.more')"
-                      />
-                    </template>
-                  </AdaptiveMenu>
-                </div>
-              </td>
-            </tr>
-            <tr v-if="expanded === row.id" class="rs__detail">
-              <td colspan="6">
-                <dl>
-                  <div v-if="row.m.realNameInfo?.realName">
-                    <dt>{{ t('tasks.roster.detail.realName') }}</dt>
-                    <dd>{{ realNameLine(row.m.realNameInfo) }}</dd>
-                  </div>
-                  <div v-if="row.m.teamMembers?.length">
-                    <dt>{{ t('tasks.roster.detail.teamMembers') }}</dt>
-                    <dd>
-                      <span v-for="(member, i) in row.m.teamMembers" :key="i" class="rs__member">
-                        {{
-                          member.isLeader
-                            ? t('tasks.roster.detail.leader', { name: memberName(member) })
-                            : memberName(member)
-                        }}
-                      </span>
-                    </dd>
-                  </div>
-                  <div v-if="row.m.phone">
-                    <dt>{{ t('tasks.roster.detail.phone') }}</dt>
-                    <dd>{{ row.m.phone }}</dd>
-                  </div>
-                  <div v-if="row.m.email">
-                    <dt>{{ t('tasks.roster.detail.email') }}</dt>
-                    <dd>{{ row.m.email }}</dd>
-                  </div>
-                  <div v-if="row.m.applyReason">
-                    <dt>{{ t('tasks.roster.detail.applyReason') }}</dt>
-                    <dd>{{ row.m.applyReason }}</dd>
-                  </div>
-                  <div v-if="row.m.personalAdvantage">
-                    <dt>
-                      {{
-                        row.teamSize
-                          ? t('tasks.roster.detail.teamAdvantage')
-                          : t('tasks.roster.detail.personalAdvantage')
-                      }}
-                    </dt>
-                    <dd>{{ row.m.personalAdvantage }}</dd>
-                  </div>
-                </dl>
-              </td>
-            </tr>
-          </template>
-        </tbody>
-      </table>
-    </div>
+              <span class="rs__avatar" :class="{ 'rs__avatar--team': row.teamSize }">{{ row.name.slice(0, 1) }}</span>
+              <span class="rs__name">{{ row.name }}</span>
+              <small v-if="row.teamSize" class="rs__small">{{ t('tasks.roster.teamSize', { n: row.teamSize }) }}</small>
+              <v-icon v-if="row.hasDetails" size="14" class="rs__chev">
+                {{ expanded === row.id ? 'mdi-chevron-up' : 'mdi-chevron-down' }}
+              </v-icon>
+            </button>
+          </td>
+          <td class="rs__meta t-num">{{ day(row.claimedAt) }}</td>
+          <td>
+            <span class="rs__status" :class="`rs__status--${STATUS[row.status].tone}`">
+              {{ t(STATUS[row.status].label) }}
+            </span>
+          </td>
+          <td>
+            <template v-if="row.latest">{{
+              t('tasks.roster.latest', { n: row.latest.version, when: when(row.latest.createdAt) })
+            }}</template>
+            <span v-else class="rs__meta">—</span>
+          </td>
+          <td class="rs__meta t-num">{{ row.deadline ? day(row.deadline) : '—' }}</td>
+          <td>
+            <div class="rs__ops">
+              <template v-if="row.status === 'CLAIM_PENDING'">
+                <BaseButton kind="primary" size="sm" :loading="busyId === row.id" @click="emit('approve', row.id)">
+                  {{ t('tasks.roster.approve') }}
+                </BaseButton>
+                <BaseButton kind="ghost" size="sm" @click="openReject(row)">{{ t('tasks.roster.reject') }}</BaseButton>
+              </template>
+              <BaseButton
+                v-else-if="row.status === 'REVIEW_PENDING'"
+                kind="primary"
+                size="sm"
+                @click="emit('review', { id: row.id, name: row.name })"
+              >
+                {{ t('tasks.roster.review') }}
+              </BaseButton>
+              <BaseButton
+                v-else-if="row.latest"
+                kind="ghost"
+                size="sm"
+                @click="emit('review', { id: row.id, name: row.name })"
+              >
+                {{ t('tasks.roster.view') }}
+              </BaseButton>
+              <AdaptiveMenu v-if="row.approved === 'APPROVED'" v-bind="rowMenu.bind(row.id)" :actions="rowActions(row)">
+                <template #activator="{ props: menu }">
+                  <BaseButton v-bind="menu" icon="mdi-dots-horizontal" size="sm" :aria-label="t('tasks.roster.more')" />
+                </template>
+              </AdaptiveMenu>
+            </div>
+          </td>
+        </tr>
+        <tr v-if="expanded === row.id" class="rs__detail">
+          <td colspan="6">
+            <dl>
+              <div v-if="row.m.realNameInfo?.realName">
+                <dt>{{ t('tasks.roster.detail.realName') }}</dt>
+                <dd>{{ realNameLine(row.m.realNameInfo) }}</dd>
+              </div>
+              <div v-if="row.m.teamMembers?.length">
+                <dt>{{ t('tasks.roster.detail.teamMembers') }}</dt>
+                <dd>
+                  <span v-for="(member, i) in row.m.teamMembers" :key="i" class="rs__member">
+                    {{
+                      member.isLeader
+                        ? t('tasks.roster.detail.leader', { name: memberName(member) })
+                        : memberName(member)
+                    }}
+                  </span>
+                </dd>
+              </div>
+              <div v-if="row.m.phone">
+                <dt>{{ t('tasks.roster.detail.phone') }}</dt>
+                <dd>{{ row.m.phone }}</dd>
+              </div>
+              <div v-if="row.m.email">
+                <dt>{{ t('tasks.roster.detail.email') }}</dt>
+                <dd>{{ row.m.email }}</dd>
+              </div>
+              <div v-if="row.m.applyReason">
+                <dt>{{ t('tasks.roster.detail.applyReason') }}</dt>
+                <dd>{{ row.m.applyReason }}</dd>
+              </div>
+              <div v-if="row.m.personalAdvantage">
+                <dt>
+                  {{
+                    row.teamSize ? t('tasks.roster.detail.teamAdvantage') : t('tasks.roster.detail.personalAdvantage')
+                  }}
+                </dt>
+                <dd>{{ row.m.personalAdvantage }}</dd>
+              </div>
+            </dl>
+          </td>
+        </tr>
+      </template>
+    </BaseTable>
 
     <AdaptiveDialog
       v-model="deadlineOpen"
@@ -237,11 +216,17 @@ import { useRowMenu } from '@/composables/useRowMenu'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
+import BaseTable from '@/components/base/BaseTable.vue'
+import BaseTableTh from '@/components/base/BaseTableTh.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
+import { vRovingTabs } from '@/lib/rovingTabs'
 
 /** 一行的状态：先看领取申请批没批，批了再看最新那一版提交判没判。 */
 type Status = 'CLAIM_PENDING' | 'CLAIM_REJECTED' | 'IN_PROGRESS' | 'REVIEW_PENDING' | 'PASSED' | 'FAILED'
+
+// 第一列是谁来领的（名字、团队人数），吃剩下的宽度；其余定宽。
+const ROSTER_COLS = [null, '104px', '96px', '170px', '104px', '150px']
 
 const STATUS: Record<Status, { label: string; tone: string }> = {
   CLAIM_PENDING: { label: 'tasks.roster.claimPending', tone: 'muted' },
@@ -518,31 +503,10 @@ function saveDeadline() {
   line-height: var(--lh-13);
 }
 
-.rs__scroll {
-  overflow-x: auto;
-}
-
-.rs__table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-
-.rs__table th {
-  padding: 8px;
-  border-bottom: 1px solid var(--line-2);
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 600;
-  text-align: left;
-  white-space: nowrap;
-}
-
-.rs__table td {
-  padding: 8px;
-  border-bottom: 1px solid var(--line);
+/* 表格壳是 BaseTable；这里只留名册自己的：不换行、正文色。 */
+.rs__grid td {
   color: var(--text);
-  vertical-align: middle;
+  font-size: 13px;
   white-space: nowrap;
 }
 
@@ -603,7 +567,7 @@ function saveDeadline() {
   justify-content: flex-end;
 }
 
-.rs__detail td {
+.rs__grid .rs__detail td {
   padding: 4px 8px 12px 38px;
   background: var(--fill);
   white-space: normal;

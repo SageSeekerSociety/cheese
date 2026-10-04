@@ -271,7 +271,11 @@ async def test_the_slot_a_question_holds_stays_held_and_is_let_go_at_its_end(
     release.set()
     await _until(lambda: _ended(after))
 
-    assert await redis.exists(hold) == 0
+    # The answer is kept before the slot is let go, so the end shows first.
+    async def let_go() -> bool:
+        return await redis.exists(hold) == 0
+
+    await _until(let_go, timeout=10.0)
 
 
 @pytest.mark.anyio

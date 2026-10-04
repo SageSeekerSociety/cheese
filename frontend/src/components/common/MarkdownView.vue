@@ -59,5 +59,7 @@ defineExpose({ el: host })
 </script>
 
 <template>
-  <div ref="host" />
+  <!-- .md-reader: this is reading-mode body copy; each block gets content-visibility
+       off-screen (see styles/docBlocks.css). -->
+  <div ref="host" class="md-reader" />
 </template>

@@ -146,7 +146,7 @@ export const workspaceRoutes: RouteRecordRaw = {
       },
     },
     {
-      // 工作方法：这个项目存下来的做法。项目级，因为存下来就是给之后每个房间用的。
+      // 技能：这个项目存下来的做法。项目级，因为存下来就是给之后每个房间用的。
       name: 'project-skills',
       path: 'skills',
       component: () => import('@/views/ProjectSkillsView.vue'),

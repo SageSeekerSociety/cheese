@@ -4,11 +4,15 @@ import type { SendDocComment } from '../../../composables/useDocCommentDraft'
 import type { CommentSpot } from '../../../lib/docCommentSpots'
 import type { DocThreadActions, DocThreadState, ThreadPlace } from '../../../lib/docThreadTypes'
 
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
 
 import DocComments from './DocComments.vue'
 
 import { t } from '@/i18n'
+import { vRovingTabs } from '@/lib/rovingTabs'
+
+// 「未解决 / 已解决」两格页签切换的就是下面那张批注列表。
+const listId = `doc-comments-${useId()}`
 
 const props = defineProps<{
   topicId: string | null
@@ -277,7 +281,7 @@ defineExpose({ open, locate, toggle, close, opened, busy })
         @keydown="resizeKey"
       />
       <header class="doc-comment-panel__head">
-        <div class="doc-comment-panel__tabs" role="tablist" :aria-label="t('work.room.comments.filter')">
+        <div v-roving-tabs class="doc-comment-panel__tabs" role="tablist" :aria-label="t('work.room.comments.filter')">
           <button
             v-for="kind in ['open', 'resolved'] as const"
             :key="kind"
@@ -285,6 +289,7 @@ defineExpose({ open, locate, toggle, close, opened, busy })
             role="tab"
             class="doc-comment-panel__tab"
             :aria-selected="filter === kind"
+            :aria-controls="listId"
             @click="filter = kind"
           >
             {{ t(`work.room.comments.${kind}`) }}
@@ -326,7 +331,10 @@ defineExpose({ open, locate, toggle, close, opened, busy })
       </header>
       <div class="doc-tool-content">
         <DocComments
+          :id="listId"
           ref="commentsRef"
+          role="tabpanel"
+          :aria-label="t(`work.room.comments.${filter}`)"
           :topic-id="topicId"
           :author="author"
           :send-comment="sendComment"

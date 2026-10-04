@@ -30,9 +30,12 @@ vi.mock('@/api', () => ({
   resolveAlert: vi.fn(),
   sendFeedback: vi.fn(),
 }))
+// 整队收起走的是独立那一个 helper（`api.ts` 在上限之上，只能变短）。
+vi.mock('@/lib/alerts', () => ({ markAllAlertsRead: vi.fn() }))
 vi.mock('@/me', () => ({ myHandle: vi.fn(() => 'alice') }))
 
 const { getInbox, markRead, resolveAlert, sendFeedback } = await import('@/api')
+const { markAllAlertsRead } = await import('@/lib/alerts')
 const { myHandle } = await import('@/me')
 
 const vuetify = createVuetify({ components, directives })
@@ -78,10 +81,23 @@ function three() {
   ]
 }
 
+/** 芝士 干完活说的那一句：没有选项，只有一个去处。 */
+function notice(overrides: Record<string, unknown> = {}) {
+  return item({
+    kind: 'change_alert',
+    title: '文档预览的转圈修好了',
+    body: '改了一个竞态，顺手补了回归测试',
+    payload: {},
+    topic_id: 't1',
+    ...overrides,
+  })
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   vi.mocked(myHandle).mockReturnValue('alice')
   vi.mocked(getInbox).mockResolvedValue({ data: [item()], total: 1 })
+  vi.mocked(markAllAlertsRead).mockResolvedValue({ marked: 0 })
   vi.mocked(resolveAlert).mockResolvedValue(item({ resolved_at: '2026-09-20T11:00:00Z' }))
   vi.mocked(markRead).mockResolvedValue(item({ read: true }))
   vi.mocked(sendFeedback).mockResolvedValue(item({ feedback: 'up' }))
@@ -296,18 +312,6 @@ describe('等你回答：一叠而不是一列', () => {
 })
 
 describe('变更提醒', () => {
-  /** 芝士 干完活说的那一句：没有选项，只有一个去处。 */
-  function notice(overrides: Record<string, unknown> = {}) {
-    return item({
-      kind: 'change_alert',
-      title: '文档预览的转圈修好了',
-      body: '改了一个竞态，顺手补了回归测试',
-      payload: {},
-      topic_id: 't1',
-      ...overrides,
-    })
-  }
-
   it('摆的是「变更提醒」，不是「等你回答」', async () => {
     vi.mocked(getInbox).mockResolvedValue({ data: [notice()], total: 1 })
     const { container } = mount()
@@ -369,5 +373,72 @@ describe('变更提醒', () => {
 
     await waitFor(() => expect(container.textContent).toContain('先做哪一个'))
     expect(container.textContent).toContain('等你回答')
+  })
+})
+
+describe('整队收起', () => {
+  /** 一叠里不止一条：两条变更提醒压着一条没拍板的决策请求。 */
+  function mixed() {
+    return [notice({ id: 9 }), notice({ id: 8 }), item({ id: 1 })]
+  }
+
+  it('一叠不止一条的时候，摆一个「全部标记已读」', async () => {
+    vi.mocked(getInbox).mockResolvedValue({ data: mixed(), total: 3 })
+    const { container } = mount()
+    await waitFor(() => expect(container.textContent).toContain('文档预览的转圈修好了'))
+
+    expect(button(container, '标记全部已读')).toBeTruthy()
+  })
+
+  it('只有一条的时候不摆整队入口——一下的事，不用第二个按钮', async () => {
+    const { container } = mount()
+    await waitFor(() => expect(container.textContent).toContain('先做哪一个'))
+
+    expect(button(container, '标记全部已读')).toBeUndefined()
+  })
+
+  it('点它走的是项目级那一条路，不是把每一条挨个收起', async () => {
+    vi.mocked(getInbox).mockResolvedValue({ data: mixed(), total: 3 })
+    const { container } = mount()
+    await waitFor(() => expect(container.textContent).toContain('文档预览的转圈修好了'))
+
+    await fireEvent.click(button(container, '标记全部已读')!)
+
+    // 一百条不该是一百次 markRead：一次请求，标的是自己名下整队已读。
+    await waitFor(() => expect(markAllAlertsRead).toHaveBeenCalledWith('p1', 'alice'))
+    expect(markRead).not.toHaveBeenCalled()
+  })
+
+  it('收起之后重读收件箱，还没拍板的问题仍然留着', async () => {
+    vi.mocked(getInbox).mockResolvedValue({ data: mixed(), total: 3 })
+    const { container } = mount()
+    await waitFor(() => expect(container.textContent).toContain('文档预览的转圈修好了'))
+
+    // 后端那一条只清读完就走的，留着没拍板的决策请求（`mark_all_read_in_project`）。
+    vi.mocked(getInbox).mockResolvedValue({ data: [item({ id: 1 })], total: 1 })
+    await fireEvent.click(button(container, '标记全部已读')!)
+
+    await waitFor(() => expect(container.textContent).toContain('先做哪一个'))
+    expect(container.textContent).toContain('等你回答')
+    // 只剩一条，整队入口跟着收掉。
+    expect(button(container, '标记全部已读')).toBeUndefined()
+  })
+
+  it('这一下没成的时候说出原因，整队还留着', async () => {
+    vi.mocked(getInbox).mockResolvedValue({ data: mixed(), total: 3 })
+    vi.mocked(markAllAlertsRead).mockRejectedValue(new Error('服务不可用'))
+    const { container } = mount()
+    await waitFor(() => expect(container.textContent).toContain('文档预览的转圈修好了'))
+
+    await fireEvent.click(button(container, '标记全部已读')!)
+
+    const alert = await waitFor(() => {
+      const found = container.querySelector('[role="alert"]')
+      expect(found).toBeTruthy()
+      return found!
+    })
+    expect(alert.textContent).toContain('服务不可用')
+    // 没标成，一条都不该少。
+    expect(container.textContent).toContain('文档预览的转圈修好了')
   })
 })

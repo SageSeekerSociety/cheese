@@ -30,7 +30,7 @@ import type { PreviewLocate, SubmitPreviewQuestion } from '../lib/previewQuestio
 import type { CardPhase } from '../lib/topicState'
 import type { TabDef, TabKey } from './panels/panelTabList'
 
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, useId, watch } from 'vue'
 
 import { getTopicWorkSummary, readPreviewFile } from '../api'
 import { useTopicMemory } from '../composables/useTopicMemory'
@@ -38,6 +38,7 @@ import { previewCanShowInRoom } from '../lib/fileKind'
 import { whenIdle } from '../lib/idle'
 import { cachedPreviewPointer, refreshPreviewPointer } from '../lib/previewPointer'
 import { cachedTopicPanel, fetchRoomTasks } from '../lib/topicPanelCache'
+import { withViewTransition } from '../lib/viewTransition'
 
 import ErrorBoundary from './common/ErrorBoundary.vue'
 import PanelChanges from './panels/PanelChanges.vue'
@@ -198,6 +199,14 @@ async function setTab(key: string, opts: { guard?: boolean; announce?: boolean }
   if (key === 'changes') markChangesSeen()
   if (opts.announce !== false) emit('update:tab', key)
   return true
+}
+
+// 人点了一格页签：宽屏上内容区淡入淡出一下（lib/viewTransition.ts；窄屏走上面的
+// tabpane-in）。确认「放弃没发的批注」要在过渡之前问完，过渡里不能等人。
+async function selectTab(key: string) {
+  if (key === active.value) return
+  if (!(await confirmAnnotationDiscard())) return
+  withViewTransition(() => setTab(key, { guard: false }))
 }
 
 // ---- 开在哪个 tab 上 (规则 3) ----
@@ -525,6 +534,16 @@ function signalFor(key: TabKey): PanelTab['signal'] {
 }
 
 /** 交给 `PanelTabs` 的那几格：文案、图标、有没有东西、信号。 */
+// 页签和它切换的内容区（role="tabpanel"）靠这个 id 连起来：读屏在页签上念得出它管哪一块。
+const tabPanelId = `wp-panel-${useId()}`
+// 内容区在错误边界里面：某一格渲染出错时它会被换成兜底提示，那时页签不再指向它。
+const tabBodyRef = ref<HTMLElement | null>(null)
+const activeTabLabel = computed(() =>
+  active.value.startsWith('file:')
+    ? active.value.slice('file:'.length).split('/').pop()
+    : panelTabs.value.find((tab) => tab.key === active.value)?.label
+)
+
 const panelTabs = computed<PanelTab[]>(() =>
   tabs.value.map((tab) => ({
     key: tab.key,
@@ -736,7 +755,8 @@ defineExpose({ pulse, highlightTurn, reviewDoc, openFile, siteBlock, previewShow
         :active="active"
         :files="openFiles"
         :phone="withChat"
-        @select="setTab"
+        :panel-id="tabBodyRef ? tabPanelId : undefined"
+        @select="selectTab"
         @close-file="closeFile"
         @pin-file="pinFile"
       />
@@ -745,7 +765,14 @@ defineExpose({ pulse, highlightTurn, reviewDoc, openFile, siteBlock, previewShow
            throws shows the fallback here while the strip stays usable.
            resetKey = topic id, so switching topics recovers on its own. -->
       <ErrorBoundary variant="compact" :reset-key="topic.id">
-        <div class="tabbody" :class="{ 'tabbody--phone': withChat }">
+        <div
+          :id="tabPanelId"
+          ref="tabBodyRef"
+          class="tabbody"
+          :class="{ 'tabbody--phone': withChat }"
+          role="tabpanel"
+          :aria-label="activeTabLabel"
+        >
           <!-- 对话这一格由 TopicView 填（它拿着 ChatPanel 的那一堆接线）。一直挂着
                而不是切走就卸载：卸掉会断掉连接、丢掉滚动位置。 -->
           <div v-if="withChat" v-show="active === 'chat'" class="tabpane-chat" :class="enterClass('chat')">
@@ -890,6 +917,8 @@ defineExpose({ pulse, highlightTurn, reviewDoc, openFile, siteBlock, previewShow
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
+  /* Panel tab switches cross-fade this block only (lib/viewTransition.ts). */
+  view-transition-name: wp-tabbody;
 }
 /* 挪进来的那 20px 不该撑出一条横向滚动。 */
 .tabbody--phone {

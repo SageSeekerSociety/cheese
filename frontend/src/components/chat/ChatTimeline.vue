@@ -19,6 +19,7 @@ import type { SplitMarker } from '../../lib/splitMarkers'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
+import { replySnippet } from '../../lib/blockDisplay'
 import { dayKey, REGROUP_GAP_MS } from '../../lib/chatGrouping'
 import { editableText } from '../../lib/renderMessage'
 import { formatSpan } from '../../lib/siteLog'
@@ -37,6 +38,8 @@ import { t } from '@/i18n'
 const props = defineProps<{
   topic: Topic | null
   rows: NoticeRow[]
+  /** 开头还没挂上的行数（首屏分批挂行，room/composables/useRowBatch）。 */
+  hiddenRows?: number
   dayLabels: Map<string, string>
   unreadAnchorId: string | null
   splitMarkers: { before: Map<string, SplitMarker[]>; tail: SplitMarker[] }
@@ -210,6 +213,25 @@ function emitReact(block: Block, emoji: string) {
 function emitAskAction(block: Block, action: AskAction) {
   emit('ask-action', block, action)
 }
+// ---- 读屏播报：新到的一整条消息念一句「谁：开头一段」 ----
+// 整条时间线不做 aria-live：历史加载、翻页、流式输出都会让读屏一直念。只在一条别人
+// 发的消息「刚到、并且出现在屏幕上」（`arrived`）时换一句话；正在写的那条（typing
+// 预览）不在 rows 里，不会被念。
+const liveAnnouncement = ref('')
+watch(
+  () => props.rows.at(-1)?.block.id,
+  (id) => {
+    const row = props.rows.at(-1)
+    if (!id || !row || row.notice || !props.arrived.has(id)) return
+    const block = row.block
+    if (props.isMine(block) || (block.kind !== 'message' && block.kind !== 'attachment')) return
+    liveAnnouncement.value = t('work.room.chat.liveNew', {
+      name: props.displayName(block),
+      text: replySnippet(block, props.refs, 140),
+    })
+  }
+)
+
 function emitChecklist(block: Block, items: TodoItem[]) {
   emit('checklist', block, items)
 }
@@ -240,6 +262,8 @@ function emitOutboxLeave(el: Element, done: () => void) {
   <!-- Message stream — Feishu group chat: left-aligned rows, grouped runs,
            per-row hover action bar, centered system/event lines. -->
   <div :ref="scrollRef" class="messages flex-grow-1 overflow-y-auto py-2" data-testid="chat-scroll">
+    <!-- Screen readers hear one line per newly arrived message (who + the start of it), never the streaming text. -->
+    <p class="visually-hidden" role="status" aria-live="polite" data-testid="chat-live">{{ liveAnnouncement }}</p>
     <!-- Single wrapper so a ResizeObserver can watch the timeline's total
              content height (rows + streaming bubble + timeline-end slot). -->
     <div :ref="contentRef" class="tl-content">
@@ -293,94 +317,97 @@ function emitOutboxLeave(el: Element, done: () => void) {
       </div>
 
       <template v-for="({ block: m, notice, run }, i) in rows" :key="m.id">
-        <!-- 时间刻度: 换天了。一个跑几周的话题里，一串 09:32 / 14:07 分不出
+        <!-- Leading rows wait for the first-paint batch (useRowBatch); every row ends up in the DOM. -->
+        <template v-if="i >= (hiddenRows ?? 0)">
+          <!-- 时间刻度: 换天了。一个跑几周的话题里，一串 09:32 / 14:07 分不出
                哪条是今天的——这条线是唯一说得出「那是上周」的东西。 -->
-        <TimelineMark v-if="dayLabels.get(m.id)" quiet>{{ dayLabels.get(m.id) }}</TimelineMark>
-        <!-- 时间刻度: 你上次离开时看到哪儿。侧栏的未读角标只回答「有没有新的」,
+          <TimelineMark v-if="dayLabels.get(m.id)" quiet>{{ dayLabels.get(m.id) }}</TimelineMark>
+          <!-- 时间刻度: 你上次离开时看到哪儿。侧栏的未读角标只回答「有没有新的」,
                这条线回答「新的从哪开始」。开话题时算一次就冻住，不随新消息移动。 -->
-        <TimelineMark v-if="m.id === unreadAnchorId" tone="unread">
-          <v-icon size="12">mdi-arrow-down</v-icon>
-          {{ t('work.room.chat.newMessagesBelow') }}
-        </TimelineMark>
-        <!-- 「已派出」标记 (issue #314): 拆出子话题在库里不留任何 block，所以
+          <TimelineMark v-if="m.id === unreadAnchorId" tone="unread">
+            <v-icon size="12">mdi-arrow-down</v-icon>
+            {{ t('work.room.chat.newMessagesBelow') }}
+          </TimelineMark>
+          <!-- 「已派出」标记 (issue #314): 拆出子话题在库里不留任何 block，所以
                这一行是按支线的 created_at 现算出来的，插在它被派出去的那个时刻
                上。它不是消息，但会像 event 一样把消息分组打断。 -->
-        <DispatchedMarker
-          v-for="marker in splitMarkers.before.get(m.id) ?? []"
-          :key="marker.taskId"
-          :marker="marker"
-          @open="emit('open-card', $event)"
-        />
-        <RoomNotice
-          v-if="notice"
-          :class="{ 'tl-arrive': arrived.has(m.id) }"
-          :block="m"
-          :notice="notice"
-          :run="run"
-          :agent="noticeAgent(m, notice)"
-          :cont="noticeCont[i]"
-          :face="faceRows.get(m.id)?.state ?? null"
-          :face-label="faceLabel(faceRows.get(m.id))"
-          :face-status="faceStatus(faceRows.get(m.id))"
-          :time="fmtTime(notice.mode === 'agent-status' ? notice.updatedAt : m.created_at)"
-          :agent-name="agentName"
-          :refs="refs"
-          :can-retry="i === retryIndex"
-          :retrying="retryBusy"
-          :project-id="topic?.project_id ?? null"
-          :data-row-id="m.id"
-          @animationend="settleRow"
-          @open-resource="emitOpenResource"
-          @undo-title="emit('undo-title', $event)"
-          @open-card="emit('open-card', $event)"
-          @retry="emit('retry')"
-        />
-        <!-- message row -->
-        <RoomMessage
-          v-else-if="!notice"
-          :class="{
-            'tl-arrive': arrived.has(m.id),
-            'tl-flash': flashId === m.id,
-            'tl-delivered': delivered.has(m.id),
-            'im-row--time': timeShownId === m.id,
-          }"
-          :block="m"
-          :parent="showReplyCue(m) ? parentOf(m) ?? null : null"
-          :parent-name="showReplyCue(m) ? displayName(parentOf(m)!) : null"
-          :run-start="runEdges[i] !== 'cont'"
-          :regroup="runEdges[i] === 'regroup'"
-          :mine="isMine(m)"
-          :topic-id="topic?.id ?? null"
-          :author-name="displayName(m)"
-          :external="isExternal(m.author)"
-          :avatar="avatarSrc(m.author)"
-          :is-agent="isAgentBlock(m)"
-          :time="fmtTime(m.created_at)"
-          :refs="refs"
-          :viewer="viewer"
-          :active="bar.shown && bar.id === m.id"
-          :ask-state="askStates?.[m.id]"
-          :live="liveChecklists.has(m.id)"
-          :face="faceRows.get(m.id)?.state ?? null"
-          :face-label="faceLabel(faceRows.get(m.id))"
-          :face-status="faceStatus(faceRows.get(m.id))"
-          :editing="editingId === m.id"
-          :edit-text="editingId === m.id ? editableText(m.content, refs) : undefined"
-          :saving="editSaving"
-          :data-row-id="m.id"
-          @animationend="settleRow"
-          @open-file="emitOpenFile"
-          @open-topic="emit('open-topic', $event)"
-          @open-card="emit('open-card', $event)"
-          @react="emitReact"
-          @ask-action="emitAskAction"
-          @checklist="emitChecklist"
-          @download="emit('download', $event)"
-          @jump="emit('jump', $event)"
-          @avatar-error="emit('avatar-error', $event)"
-          @save-edit="emitSaveEdit"
-          @cancel-edit="emit('cancel-edit')"
-        />
+          <DispatchedMarker
+            v-for="marker in splitMarkers.before.get(m.id) ?? []"
+            :key="marker.taskId"
+            :marker="marker"
+            @open="emit('open-card', $event)"
+          />
+          <RoomNotice
+            v-if="notice"
+            :class="{ 'tl-arrive': arrived.has(m.id) }"
+            :block="m"
+            :notice="notice"
+            :run="run"
+            :agent="noticeAgent(m, notice)"
+            :cont="noticeCont[i]"
+            :face="faceRows.get(m.id)?.state ?? null"
+            :face-label="faceLabel(faceRows.get(m.id))"
+            :face-status="faceStatus(faceRows.get(m.id))"
+            :time="fmtTime(notice.mode === 'agent-status' ? notice.updatedAt : m.created_at)"
+            :agent-name="agentName"
+            :refs="refs"
+            :can-retry="i === retryIndex"
+            :retrying="retryBusy"
+            :project-id="topic?.project_id ?? null"
+            :data-row-id="m.id"
+            @animationend="settleRow"
+            @open-resource="emitOpenResource"
+            @undo-title="emit('undo-title', $event)"
+            @open-card="emit('open-card', $event)"
+            @retry="emit('retry')"
+          />
+          <!-- message row -->
+          <RoomMessage
+            v-else-if="!notice"
+            :class="{
+              'tl-arrive': arrived.has(m.id),
+              'tl-flash': flashId === m.id,
+              'tl-delivered': delivered.has(m.id),
+              'im-row--time': timeShownId === m.id,
+            }"
+            :block="m"
+            :parent="showReplyCue(m) ? parentOf(m) ?? null : null"
+            :parent-name="showReplyCue(m) ? displayName(parentOf(m)!) : null"
+            :run-start="runEdges[i] !== 'cont'"
+            :regroup="runEdges[i] === 'regroup'"
+            :mine="isMine(m)"
+            :topic-id="topic?.id ?? null"
+            :author-name="displayName(m)"
+            :external="isExternal(m.author)"
+            :avatar="avatarSrc(m.author)"
+            :is-agent="isAgentBlock(m)"
+            :time="fmtTime(m.created_at)"
+            :refs="refs"
+            :viewer="viewer"
+            :active="bar.shown && bar.id === m.id"
+            :ask-state="askStates?.[m.id]"
+            :live="liveChecklists.has(m.id)"
+            :face="faceRows.get(m.id)?.state ?? null"
+            :face-label="faceLabel(faceRows.get(m.id))"
+            :face-status="faceStatus(faceRows.get(m.id))"
+            :editing="editingId === m.id"
+            :edit-text="editingId === m.id ? editableText(m.content, refs) : undefined"
+            :saving="editSaving"
+            :data-row-id="m.id"
+            @animationend="settleRow"
+            @open-file="emitOpenFile"
+            @open-topic="emit('open-topic', $event)"
+            @open-card="emit('open-card', $event)"
+            @react="emitReact"
+            @ask-action="emitAskAction"
+            @checklist="emitChecklist"
+            @download="emit('download', $event)"
+            @jump="emit('jump', $event)"
+            @avatar-error="emit('avatar-error', $event)"
+            @save-edit="emitSaveEdit"
+            @cancel-edit="emit('cancel-edit')"
+          />
+        </template>
       </template>
 
       <!-- 比时间线上每一条消息都新的「已派出」标记 —— 刚派出去、之后房间里还

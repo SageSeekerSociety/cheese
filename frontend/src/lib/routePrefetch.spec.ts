@@ -361,3 +361,35 @@ describe('首屏之后空闲预取路由', () => {
     expect(load).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('按下去就预取', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.clearAllMocks()
+    setActivePinia(createPinia())
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('不等停住，也不问是不是精确指针', async () => {
+    pointer('(hover: none)')
+    Reflect.deleteProperty(navigator, 'connection')
+    const { prefetchNow } = await fresh()
+    const { router, load } = lazyRouter()
+
+    prefetchNow({ router, to: { name: 'topic', params: { id: 't1' } } })
+    expect(load).toHaveBeenCalledTimes(1)
+  })
+
+  it('省流量时照样让开', async () => {
+    desktop()
+    connection({ saveData: true })
+    const { prefetchNow } = await fresh()
+    const { router, load } = lazyRouter()
+
+    prefetchNow({ router, to: { name: 'topic', params: { id: 't1' } } })
+    expect(load).not.toHaveBeenCalled()
+  })
+})
