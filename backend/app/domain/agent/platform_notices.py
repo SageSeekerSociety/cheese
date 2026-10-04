@@ -35,7 +35,11 @@ from typing import Final
 
 from app.core.sentences import notice_keys, say
 from app.domain.block.models import AGENT_NOTICE_META_KEY
-from app.domain.memory.files import rejected_path
+from app.domain.memory.files import (
+    conflict_path,
+    prompt_path,
+    rejected_path,
+)
 
 # --- severity ---------------------------------------------------------------
 SEVERITY_INFO: Final = "info"
@@ -338,15 +342,15 @@ def memory_changed_notice(
     where: str,
     summary: str,
     diff: str,
-    refused: tuple[str, ...],
+    refused: dict[str, str],
     rejected: dict[str, str] | None = None,
 ) -> tuple[str, dict]:
     """记忆树的一次改动：一行说改了哪一棵、改了几条，diff 收进 `detail`。
 
     `where` 是那棵树的名字（「项目共享」/「你的私人」）。`refused` 非空是说会话里
-    写的那几版被平台这一份盖回来了 —— 它得重读再写，否则下一轮写的还是它刚才那
-    一版。这句话只说进那棵树自己的房间：同一句带 diff 的话说进总览，就是把一个人
-    的偏好广播给了整个项目。
+    写的那几版被平台这一份盖回来了（路径 → 会话那一版的正文，空串是它把这条删
+    了）—— 它得重读再写，否则下一轮写的还是它刚才那一版。这句话只说进那棵树自己
+    的房间：同一句带 diff 的话说进总览，就是把一个人的偏好广播给了整个项目。
 
     **被盖回去这件事必须进 `agent_notice`**（`AGENT_NOTICE_META_KEY`）。那条灰字
     事件是给人看的，agent 一个字的 prompt 都读不到它：写记忆的 agent 在会话机上，
@@ -376,7 +380,7 @@ def memory_changed_notice(
     )
     for_agent = []
     if refused:
-        for_agent.append(memory_conflict_notice(where=where, paths=refused))
+        for_agent.append(memory_conflict_notice(where=where, refused=refused))
     if rejected:
         for_agent.append(memory_rejected_notice(where=where, reasons=rejected))
     if for_agent:
@@ -387,7 +391,8 @@ def memory_changed_notice(
 def memory_rejected_notice(*, where: str, reasons: dict[str, str]) -> str:
     """说给 agent 的那句：哪几条因为太长没存下、为什么、它写的那一版在哪。"""
     lines = "\n".join(
-        f"- `{path}`（你写的那一版在 `{rejected_path(path)}`）：{reason}"
+        f"- `{prompt_path(path)}`（你写的那一版在 "
+        f"`{prompt_path(rejected_path(path))}`）：{reason}"
         for path, reason in sorted(reasons.items())
     )
     return (
@@ -397,22 +402,35 @@ def memory_rejected_notice(*, where: str, reasons: dict[str, str]) -> str:
     )
 
 
-def memory_conflict_notice(*, where: str, paths: tuple[str, ...]) -> str:
+def memory_conflict_notice(*, where: str, refused: dict[str, str]) -> str:
     """说给 agent 的那句：哪几条被平台版盖了、去哪儿找它刚写的那一版。
 
     点名到条是为了让它下一步就能动手：一句「有改动被盖了」它得先猜是哪一条，而
-    猜错的那一次是把别的记忆又覆盖一遍。旁路文件名是 `runner.sync_memory` 写下来
-    的那个（`<文件名>.conflict.md`，同一个目录），两处说的是同一件事，所以这里把
-    完整路径写出来。
+    猜错的那一次是把别的记忆又覆盖一遍。路径按它那一侧的说法写全
+    （`files.prompt_path`）：写成 `team/a.md`，它手里的文件工具把这次 Read 发给
+    工作机，那里没有记忆树，读回来是「文件不存在」。
+
+    正文为空的那几条（`memory.tree.REMOVED`：它把这条删了，平台那一份也动过）
+    没有副本：`runner._keep_refused` 不落空文件，所以不能指一个旁路文件给它。
     """
-    lines = "\n".join(
-        f"- `{path}`（你写的那一版在 `{path[:-3]}.conflict.md`）" for path in paths
-    )
+    lines = []
+    for path in sorted(refused):
+        if refused[path]:
+            lines.append(
+                f"- `{prompt_path(path)}`（你写的那一版在 "
+                f"`{prompt_path(conflict_path(path))}`）"
+            )
+        else:
+            lines.append(
+                f"- `{prompt_path(path)}`（你那一版是删掉它，平台这一版留着，没有副本）"
+            )
+    body = "\n".join(lines)
     return (
         f"{where}记忆里有几条被平台的版本盖回去了——平台这一份也动过它们，"
-        "按规矩平台赢。下面每一条都是你刚才写的、现在不在树里了：\n"
-        f"{lines}\n"
-        "**重读它们，把你要写的东西重新写进去**（你写的那一版留在旁边那个 "
-        "`.conflict.md` 里，从那里取回你要写的内容，别整个文件照抄回去）。"
-        "这几条你手里的副本已经旧了，照旧的写只会再被盖一次。"
+        "按规矩平台赢。下面每一条都是你刚才动的、现在不是你以为的那一版了：\n"
+        f"{body}\n"
+        "**重读它们，把你要写的东西重新写进去。**上面给了副本的，从旁边那个 "
+        "`.conflict.md` 里取回你要写的内容，别整个文件照抄回去；上面说没有副本的"
+        "那几条，读一下平台这一版再决定还删不删。这几条你手里的副本已经旧了，"
+        "照旧的写只会再被盖一次。"
     )
