@@ -30,12 +30,13 @@ import type { PreviewLocate, SubmitPreviewQuestion } from '../lib/previewQuestio
 import type { CardPhase } from '../lib/topicState'
 import type { TabDef, TabKey } from './panels/panelTabList'
 
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 
-import { getPreview, getTopicWorkSummary, listRoomTasks, readPreviewFile } from '../api'
+import { getTopicWorkSummary, listRoomTasks, readPreviewFile } from '../api'
 import { useTopicMemory } from '../composables/useTopicMemory'
 import { previewCanShowInRoom } from '../lib/fileKind'
 import { whenIdle } from '../lib/idle'
+import { cachedPreviewPointer, refreshPreviewPointer } from '../lib/previewPointer'
 
 import ErrorBoundary from './common/ErrorBoundary.vue'
 import PanelChanges from './panels/PanelChanges.vue'
@@ -299,17 +300,23 @@ function markPreviewSeen(id?: string | null) {
 }
 
 // Fetch the POINTER only (no file read, no cookie priming) so the dot can appear
-// while 预览 is not the open tab. Cheap enough to run on every turn boundary.
-async function pollPreviewPointer(opts: { seen?: boolean } = {}) {
+// while 预览 is not the open tab. Goes through lib/previewPointer, so a request the
+// router guard already started for this topic is reused rather than repeated — and
+// the answer here feeds that cache for the next time the room is opened.
+//
+// 返回的是「这次问到的产物 id」：`null` 是「这个房间没有预览」（一个真看到过的
+// 状态），`undefined` 是「这一问没成」（没话题 id，或者网络断了）——两者不能混，兜
+// 底轮询要拿它分「变了」和「没问成、下次再比」。
+async function pollPreviewPointer(opts: { seen?: boolean } = {}): Promise<string | null | undefined> {
   const tid = props.topic?.id
-  if (!tid) return
+  if (!tid) return undefined
   let art: PreviewInfo | null = null
   try {
-    art = await getPreview(tid)
+    art = await refreshPreviewPointer(tid)
   } catch {
     // A failed poll is not a state — leave the dot as it was. The real load
     // reports errors; this one only ever adds a hint.
-    return
+    return undefined
   }
   previewPath.value = art?.path ?? null
   const id = art?.artifact_id ?? null
@@ -318,6 +325,82 @@ async function pollPreviewPointer(opts: { seen?: boolean } = {}) {
   // at it.
   if (opts.seen || active.value === 'preview') markPreviewSeen(id)
   else previewLatest.value = id
+  return id
+}
+
+// ---- 预览指针的兜底轮询 ----
+// 芝士摆出新东西时那条 WS 帧会立刻叫我们来看一眼（`previewShown`）。这条定时是兜底：
+// 帧可能在断线那一小段里丢了，而「预览」这一格开着的时候，屏幕上等的正是它。所以这
+// 一格开着、页面又在前台时每 5 秒问一次指针；指针真换了才 `refreshTick` 一下，让预览
+// 那一格重取（没换就不打扰任何一格）。切回窗口 / 回到前台立刻补一次。
+const PREVIEW_POINTER_POLL_MS = 5_000
+let previewPollTimer: ReturnType<typeof setInterval> | null = null
+// 上一次看到的产物 id。`undefined` = 还没看过；`null` 是「这个房间没有预览」，是一
+// 个真看到过的值，和「还没看过」不是一回事——问失败不能把它擦回「还没看过」，不然
+// 断线后第一个看到的就又被当成基线放过去了。
+let lastPolledPointerId: string | null | undefined = undefined
+
+async function tickPreviewPointer() {
+  if (document.hidden) return
+  // 「面板里此刻展示的是哪一份」在问之前先记下来：第一次兜底轮询拿它当基线。不这么
+  // 做的话，开格头 5 秒里换的那一份（那条 WS 帧可能正好丢在断线里——这正是这条兜底
+  // 要接住的时刻）会被当成「第一次看到的」悄悄放过去，屏幕上还是旧的，直到 20 秒那
+  // 一档才追上。
+  const shown = previewSeen.value
+  const id = await pollPreviewPointer()
+  // 这一问没成：什么都不动，下一次再比（别把上一次看到的当成没看过）。
+  if (id === undefined) return
+  if (lastPolledPointerId === undefined) lastPolledPointerId = shown
+  if (lastPolledPointerId !== id) {
+    lastPolledPointerId = id
+    refreshTick.value += 1
+  }
+}
+
+function stopPreviewPoll() {
+  if (previewPollTimer) clearInterval(previewPollTimer)
+  previewPollTimer = null
+}
+function syncPreviewPoll() {
+  stopPreviewPoll()
+  if (active.value !== 'preview' || document.hidden) return
+  previewPollTimer = setInterval(() => void tickPreviewPointer(), PREVIEW_POINTER_POLL_MS)
+}
+// 回到前台 / 窗口重新拿到焦点：别等下一个 5 秒，立刻补一次（在预览这一格上时）。
+function refetchPreviewOnReturn() {
+  if (!document.hidden && active.value === 'preview') void tickPreviewPointer()
+}
+onMounted(() => {
+  window.addEventListener('focus', refetchPreviewOnReturn)
+  document.addEventListener('visibilitychange', onVisibilityChange)
+  syncPreviewPoll()
+})
+onUnmounted(() => {
+  window.removeEventListener('focus', refetchPreviewOnReturn)
+  document.removeEventListener('visibilitychange', onVisibilityChange)
+  stopPreviewPoll()
+})
+function onVisibilityChange() {
+  syncPreviewPoll()
+  refetchPreviewOnReturn()
+}
+// 开上 / 离开预览这一格：这格开着才轮询它（见上）。开的那一下也顺手重排一次定时。
+watch(active, () => syncPreviewPoll())
+
+// 芝士在房间里摆出来一份东西（对话栏听完 socket 往上报的那一声）：立刻问一次指针，
+// 别等下一次轮询——「预览」那一格开着就顺手重取，没开就只是让那颗「有新内容」的点
+// 冒出来。指针真换了才 `refreshTick`：那一格全房间共用，总览会跟着重取房间产物，同一
+// 份东西被重复摆一次不该惊动它们。
+function previewShown() {
+  const before = previewSeen.value
+  void pollPreviewPointer().then((id) => {
+    if (id === undefined) return
+    lastPolledPointerId = id
+    // 只有「预览」这一格开着、而且指针真的换了，才需要一个 `refreshTick` 把重取读出
+    // 去。没开那一格时，那颗「有新内容」的点（previewLatest）已经把话说完了，别的格
+    // （总览会跟着重取房间产物）不该陪着白跑一趟。
+    if (active.value === 'preview' && id !== before) refreshTick.value += 1
+  })
 }
 
 // ---- 这一格此刻有没有东西 ----
@@ -460,7 +543,15 @@ const panelTabs = computed<PanelTab[]>(() =>
   settled.value = !!asked
   markPreviewSeen(null)
   if (id) {
-    void pollPreviewPointer({ seen: true })
+    // 这个房间的当前预览，路由守卫通常已经先问过了（lib/previewPointer.ts）：命中就
+    // 直接用——面板挂上来时那份答案就在手边，不必再等一轮网络。没命中才自己问。
+    const warm = cachedPreviewPointer(id)
+    if (warm !== undefined) {
+      previewPath.value = warm?.path ?? null
+      markPreviewSeen(warm?.artifact_id ?? null)
+    } else {
+      void pollPreviewPointer({ seen: true })
+    }
     // 这一条要等服务端算（几秒），而它只决定「改动」那一格的深浅、以及该开在哪一格。
     // 推到首屏画完、浏览器空下来再问：它不该和真正要把内容画出来的那些请求抢同一条
     // 网络和主线程。角标随后补上，逻辑不受影响（`summaryLoaded` 那只看的是有没有回过）。
@@ -616,7 +707,7 @@ function siteBlock(block: Block) {
 
 // 面板此刻在画哪一格。地址不一定写得出来——平板横放里自动挑中的那一格就没写进地址，
 // 而收起浮层再打开要回到它，所以这里是那份记忆的出处（TopicView 打开浮层时来问）。
-defineExpose({ pulse, highlightTurn, reviewDoc, openFile, siteBlock, activeTab: () => active.value })
+defineExpose({ pulse, highlightTurn, reviewDoc, openFile, siteBlock, previewShown, activeTab: () => active.value })
 </script>
 
 <template>
