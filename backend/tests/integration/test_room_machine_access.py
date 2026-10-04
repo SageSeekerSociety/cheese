@@ -246,7 +246,7 @@ def test_the_picker_says_whose_machine_it_is_and_which_cannot_isolate(
     assert {device["owned"] for device in as_owner.values()} == {True}
     assert {device["owned"] for device in as_member.values()} == {False}
     assert as_owner[linux]["sandbox_unavailable"] is None
-    assert as_owner[mac]["sandbox_unavailable"]["key"] == "sandboxUnavailableMacos"
+    assert as_owner[mac]["sandbox_unavailable"] is None
     assert as_owner[windows]["sandbox_unavailable"]["key"] == (
         "sandboxUnavailableWindows"
     )
@@ -296,17 +296,18 @@ def _hub(target: str, install=None):
     )
 
 
-def test_an_isolated_room_on_a_mac_is_told_to_ask_for_full_access(client, monkeypatch):
-    """macOS has no isolated environment yet: the room's agent is told so,
-    nothing is installed on the machine, and the conversation goes on."""
+def test_an_isolated_room_on_windows_is_told_what_to_do_instead(client, monkeypatch):
+    """Windows has no isolated environment of its own: the room's agent is
+    told to use WSL or ask for full access, nothing is installed on the
+    machine, and the conversation goes on."""
     from app.core.sentences import say
 
     pid, tid = _room(client)
-    mac = _machine(client, pid, "laptop")
-    assert _choose(client, tid, mac, session_auth_headers(OWNER)).status_code == 200
-    hub = _hub("darwin-arm64")
+    pc = _machine(client, pid, "desktop")
+    assert _choose(client, tid, pc, session_auth_headers(OWNER)).status_code == 200
+    hub = _hub("windows-amd64")
     monkeypatch.setattr(work_lease, "device_hub", hub)
-    session_id, token = asyncio.run(_session_on(client, tid, mac))
+    session_id, token = asyncio.run(_session_on(client, tid, pc))
 
     answer = client.post(
         f"/topics/{tid}/sessions/{session_id}/work-lease",
@@ -315,7 +316,9 @@ def test_an_isolated_room_on_a_mac_is_told_to_ask_for_full_access(client, monkey
     )
 
     assert answer.status_code == 200, answer.text
-    assert answer.json()["data"] == {"unavailable": str(say("sandboxUnavailableMacos"))}
+    assert answer.json()["data"] == {
+        "unavailable": str(say("sandboxUnavailableWindows"))
+    }
     hub.exec.assert_not_awaited()
 
 

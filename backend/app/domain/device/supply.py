@@ -76,13 +76,13 @@ def default_visibility() -> Visibility:
     return Visibility.isolated
 
 
-# The connector systems with no isolated environment yet, and the sentence a
-# room there is refused with. Which environment a system gets is
-# `bootstrap.sandbox_argv`'s to build: bubblewrap on Linux. A system gains one
-# by leaving this table in the same change that teaches that function to build
-# it. Windows is meant to get it through WSL, whose connector is a Linux one.
+# The connector systems with no isolated environment, and the sentence a room
+# there is refused with. Which environment a system gets is the bootstrap's to
+# build (`bootstrap.sandbox_tools`): bubblewrap on Linux, `sandbox-exec` on
+# macOS. A system gains one by leaving this table in the same change that
+# teaches the bootstrap to build it. Windows gets it through WSL, whose
+# connector is a Linux one.
 _NO_SANDBOX = {
-    "darwin": "sandboxUnavailableMacos",
     "windows": "sandboxUnavailableWindows",
 }
 

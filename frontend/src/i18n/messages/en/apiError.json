@@ -745,7 +745,6 @@
   "machineActionResume": "resume",
   "machineActionDelete": "delete",
   "deviceIsolatedUnsupported": "This room runs in a sandbox on this machine, and this way of starting an agent would run it on the machine directly, outside any sandbox. The platform refuses rather than expose the whole machine to the room.",
-  "sandboxUnavailableMacos": "This room runs in an isolated environment, which macOS machines do not have yet; it is coming. For now, the machine's owner can give this room full machine access.",
   "sandboxUnavailableWindows": "This room runs in an isolated environment, which Windows machines do not have. Install WSL, enroll the WSL environment as a machine and choose it for this room, or have the machine's owner give this room full machine access.",
   "visibilityInvalid": "Machine access must be “isolated” or “host”",
   "visibilityNeedsDevice": "Machine access can only be chosen together with a named enrolled machine",

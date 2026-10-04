@@ -20,6 +20,7 @@ from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.agent.harness.claude_code.remote_execution import (
     bootstrap,
     cli_client,
+    confinement,
     private,
     runtime,
     sandbox_host,
@@ -82,6 +83,7 @@ def file_sources():
         "cheese-preview-up": CHEESE_PREVIEW_UP,
         "cheese-sync": CHEESE_SYNC_SCRIPT,
         "remote-execution/sandbox_host.py": Path(sandbox_host.__file__).read_text(),
+        "remote-execution/confinement.py": Path(confinement.__file__).read_text(),
         **{
             name: (BACKEND / source).read_text()
             for name, source in runtime.RELEASE_FILES.items()

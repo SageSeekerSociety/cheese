@@ -208,6 +208,45 @@ def platform_program(home: Path, relative: str) -> Path:
     return (release if release else platform_dir(home)) / relative
 
 
+def git_profile(rooms: list[Path]) -> str:
+    """The macOS sandbox git runs in for a sandboxed room (`git`): what the
+    Linux one gives it, the room's directories and none of the owner's, and
+    no network, which status and pruning do not need."""
+
+    def quoted(path: Path) -> str:
+        return json.dumps(os.path.realpath(str(path)))
+
+    owner = Path.home()
+    above = sorted(
+        {
+            str(parent)
+            for room in rooms
+            for parent in Path(os.path.realpath(str(room))).parents
+        }
+    )
+    subpaths = " ".join(f"(subpath {quoted(room)})" for room in rooms)
+    lines = [
+        "(version 1)",
+        "(allow default)",
+        "(deny network*)",
+        "(deny file-write*)",
+        f'(allow file-write* {subpaths} (literal "/dev/null"))',
+        f"(deny file-read* (subpath {quoted(owner)}))",
+        "(deny lsopen)",
+        "(deny signal)",
+        "(allow signal (target same-sandbox))",
+    ]
+    # Only with rooms to name: an `allow` with no filter allows everything.
+    if rooms:
+        lines.append(f"(allow file-read* {subpaths})")
+        lines.append(
+            "(allow file-read-metadata "
+            + " ".join(f"(literal {json.dumps(path)})" for path in above)
+            + ")"
+        )
+    return "\n".join(lines)
+
+
 def git(args: list[str], cwd: Path, home: Path | None) -> subprocess.CompletedProcess:
     """Git in a checkout of the room whose home is `home` (None: of no room).
     A sandboxed room wrote that checkout's config, hooks and attributes, and
@@ -216,10 +255,18 @@ def git(args: list[str], cwd: Path, home: Path | None) -> subprocess.CompletedPr
     of the owner's."""
     argv = ["git", *args]
     if home is not None and sandbox_release(home) is not None:
+        paths = [
+            path
+            for path in resource_paths(Path.home(), home.parent.name, home.name)
+            if path.exists()
+        ]
+        if sys.platform == "darwin":
+            return run_command(
+                ["/usr/bin/sandbox-exec", "-p", git_profile(paths), *argv], cwd=cwd
+            )
         rooms = []
-        for path in resource_paths(Path.home(), home.parent.name, home.name):
-            if path.exists():
-                rooms += ["--bind", str(path), str(path)]
+        for path in paths:
+            rooms += ["--bind", str(path), str(path)]
         argv = [
             "bwrap",
             "--unshare-all",

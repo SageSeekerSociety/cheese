@@ -745,7 +745,6 @@
   "machineActionResume": "恢复",
   "machineActionDelete": "删除",
   "deviceIsolatedUnsupported": "这个房间在这台机器上按沙箱运行，而这种启动方式会让 agent 直接跑在机器上、不在任何沙箱里。平台拒绝启动，不会把整台机器暴露给这个房间。",
-  "sandboxUnavailableMacos": "这个房间在隔离环境里运行，macOS 机器上还没有隔离环境，正在开发。目前可以由机器的主人为这个房间开启整台机器的访问权限。",
   "sandboxUnavailableWindows": "这个房间在隔离环境里运行，Windows 机器上没有隔离环境。可以安装 WSL，把 WSL 环境登记为一台机器并为这个房间选它；或者由机器的主人为这个房间开启整台机器的访问权限。",
   "visibilityInvalid": "机器访问范围只能是「isolated」或「host」",
   "visibilityNeedsDevice": "只有指定了一台登记的机器，才能选机器访问范围",
