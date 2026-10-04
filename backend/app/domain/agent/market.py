@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from app.core.sentences import say
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.device.supply import (
+    Supply,
     Visibility,
     default_visibility,
     has_runnable_transport,
@@ -236,8 +237,8 @@ def visibility_listings() -> list[PoolListing]:
             label="沙盒（只看自己的工作树）",
             tier="included",
             price="包含",
-            description="每个房间一个容器，只看得到自己的工作树，房间之间互不串扰；即将上线。",
-            available=has_runnable_transport(Visibility.isolated),
+            description="每条会话一个沙箱，只看得到自己的工作目录，会话之间互不串扰；即将上线。",
+            available=has_runnable_transport(Visibility.isolated, Supply.self_hosted),
             default=default is Visibility.isolated,
         ),
         PoolListing(
@@ -247,7 +248,7 @@ def visibility_listings() -> list[PoolListing]:
             tier="byo",
             price="自备",
             description=MACHINE_VISIBILITY_NOTICE,
-            available=has_runnable_transport(Visibility.host),
+            available=has_runnable_transport(Visibility.host, Supply.self_hosted),
             default=default is Visibility.host,
         ),
     ]

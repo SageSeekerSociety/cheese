@@ -126,12 +126,24 @@ def test_the_default_visibility_is_one_that_can_actually_run():
     makes that combination unrepresentable."""
     from app.domain.device.supply import default_visibility, has_runnable_transport
 
-    assert has_runnable_transport(default_visibility())
+    assert has_runnable_transport(default_visibility(), Supply.self_hosted)
+
+
+def test_only_a_cloud_machine_runs_a_session_isolated():
+    """`isolated` runs where there is a sandbox for it: every session's executor
+    on a Cloud machine, nothing on a self-hosted one yet (#2320 step 2). `host`
+    runs anywhere."""
+    from app.domain.device.supply import has_runnable_transport
+
+    assert has_runnable_transport(Visibility.isolated, Supply.cloud)
+    assert not has_runnable_transport(Visibility.isolated, Supply.self_hosted)
+    assert has_runnable_transport(Visibility.host, Supply.cloud)
+    assert has_runnable_transport(Visibility.host, Supply.self_hosted)
 
 
 def test_the_default_is_the_most_conservative_runnable_visibility():
     """Given a choice, the default is the SMALLEST blast radius that works —
-    so when #358 step 2 gives `isolated` a transport, the default moves to it
+    so when #2320 step 2 gives `isolated` a transport, the default moves to it
     without anyone editing a second place."""
     from app.domain.device import supply as supply_mod
     from app.domain.device.supply import Visibility, default_visibility
@@ -140,7 +152,7 @@ def test_the_default_is_the_most_conservative_runnable_visibility():
 
     original = supply_mod.has_runnable_transport
     try:
-        supply_mod.has_runnable_transport = lambda _v: True
+        supply_mod.has_runnable_transport = lambda _v, _s: True
         assert default_visibility() is Visibility.isolated
     finally:
         supply_mod.has_runnable_transport = original
@@ -149,25 +161,23 @@ def test_the_default_is_the_most_conservative_runnable_visibility():
 def test_the_binding_visibility_follows_the_supply_and_nothing_else():
     """一条新绑定的档由机器的供给决定，不由哪个调用点在绑决定。
 
-    平台开的机器一个房间一台，它本身就是那个盒子——「看得见整台机器」在上面不多给
-    任何能力，这根轴在这一档塌掉了。人接入的机器上，档是「哪个档今天真有传输层」
-    推出来的那一个，所以 #358 第二步给 `isolated` 接上传输层那天，它和市场目录一
-    起移动，而不是留下四个各写一个字面量的绑定点。
+    平台开的机器上每条会话跑在自己的沙箱里，所以是 `isolated`。人接入的机器上，
+    档是「哪个档今天真有传输层」推出来的那一个，所以 #2320 第二步给那里的
+    `isolated` 接上传输层那天，它和市场目录一起移动，而不是留下四个各写一个字面
+    量的绑定点。
     """
     from app.domain.device.supply import binding_visibility, default_visibility
 
-    assert binding_visibility(Supply.cloud) is Visibility.host
+    assert binding_visibility(Supply.cloud) is Visibility.isolated
     assert binding_visibility(Supply.self_hosted) is default_visibility()
 
     from app.domain.device import supply as supply_mod
 
     original = supply_mod.has_runnable_transport
     try:
-        supply_mod.has_runnable_transport = lambda _v: True
+        supply_mod.has_runnable_transport = lambda _v, _s: True
         assert binding_visibility(Supply.self_hosted) is Visibility.isolated
-        # 而 Cloud 那一档不跟着动：它不是「最小爆炸半径」的问题，是这根轴在一台
-        # 一次性、一个房间独占的机器上没有第二个取值。
-        assert binding_visibility(Supply.cloud) is Visibility.host
+        assert binding_visibility(Supply.cloud) is Visibility.isolated
     finally:
         supply_mod.has_runnable_transport = original
 

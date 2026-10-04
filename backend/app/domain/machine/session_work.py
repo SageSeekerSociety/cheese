@@ -78,12 +78,10 @@ def presentation(row):
 
 
 async def _visibility_of(devices, device_id: str | None) -> Visibility | None:
-    """What an agent on this machine can see of it: a whole self-hosted machine,
-    or nothing worth a notice. ``None`` for a device id stands for an enrolled
-    machine the platform picks when the session leases, which is still one.
-
-    Only machines a person enrolled count. A Cloud box is the room's own and
-    seeing all of it grants nothing more (``device.supply.binding_visibility``).
+    """What an agent on this machine can see of it (``device.supply.
+    binding_visibility``): the whole machine, or its own sandbox. ``None`` for a
+    device id stands for an enrolled machine the platform picks when the
+    session leases, which is still one; ``None`` back is a machine that is gone.
     """
     supply = Supply.self_hosted
     if device_id is not None:
@@ -91,7 +89,7 @@ async def _visibility_of(devices, device_id: str | None) -> Visibility | None:
         if device is None:
             return None
         supply = device.supply
-    return binding_visibility(supply) if supply is Supply.self_hosted else None
+    return binding_visibility(supply)
 
 
 async def session_machines(db, topic) -> list[dict]:
@@ -572,10 +570,15 @@ def _executor_env(env, *, api, token, project_id, topic_id, author, work_resourc
     }
 
 
-async def _start_executor(hub, lease, *, device_id, project_id, work_resource, setup):
+async def _start_executor(
+    hub, lease, *, device_id, project_id, work_resource, setup, sandbox
+):
     """Bring a session's executor up on ``device_id`` and answer what it
     reports: a running one on this release is prepared in place, anything else
-    (none running, another release) is installed, which starts it."""
+    (none running, another release) is installed, which starts it.
+
+    ``sandbox``: whether it runs in a sandbox of its own, which is what an
+    ``isolated`` machine gives a session (`_sandboxed`)."""
     if lease and lease.get("state"):
         try:
             running = await execution.call(lease, "ping", {}, hub=hub)
@@ -595,18 +598,29 @@ async def _start_executor(hub, lease, *, device_id, project_id, work_resource, s
                     uuid.UUID(work_resource),
                     setup,
                     running.get("files"),
+                    sandbox=sandbox,
                 ),
                 hub=hub,
             )
     installed = await hub.exec(
         device_id,
         ["python3", "-"],
-        stdin=launch.script(project_id, uuid.UUID(work_resource), setup),
+        stdin=launch.script(
+            project_id, uuid.UUID(work_resource), setup, sandbox=sandbox
+        ),
         timeout=660,
     )
     if installed.get("exit") != 0 or installed.get("truncated"):
         raise RuntimeError(installed.get("stderr") or "Executor setup failed")
     return json.loads(installed["stdout"])
+
+
+async def _sandboxed(db, device_id: str) -> bool:
+    """Whether a session's executor on ``device_id`` runs in a sandbox of its
+    own: on every machine whose sessions are ``isolated``, which the machine's
+    supply decides (``device.supply.binding_visibility``)."""
+    visibility = await sql_device_service(db).binding_visibility(device_id)
+    return visibility is Visibility.isolated
 
 
 async def _restart_executor(db, row, lease):
@@ -645,6 +659,7 @@ async def _restart_executor(db, row, lease):
         device_id=lease["device_id"],
         project_id=project.id,
         work_resource=work_resource,
+        sandbox=await _sandboxed(db, lease["device_id"]),
         setup=_executor_env(
             {"CHEESE_ENVIRONMENT": json.dumps(environment)},
             api=api,
@@ -1040,7 +1055,7 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
         if await devices.get_hosted_device(selected.device_id) is None:
             raise ForbiddenError("Device is not hosted")
         if not has_runnable_transport(
-            await devices.binding_visibility(selected.device_id)
+            await devices.binding_visibility(selected.device_id), selected.supply
         ):
             raise ForbiddenError("Device has no supported execution isolation")
     approver = project.owner_handle or ""
@@ -1099,6 +1114,7 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
     # Each dialer reaches the backend over its own configured base.
     host_api = await device_api_base(db, host, settings.connector_public_base)
     api = await device_api_base(db, device_id, settings.connector_public_base)
+    sandbox = await _sandboxed(db, device_id)
     # Existing leases can outlive a deploy that changes the host's API address.
     # Ping/prepare must dial the current configured base, just like a new lease.
     if lease:
@@ -1161,6 +1177,7 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
             project_id=project_id,
             work_resource=work_resource,
             setup=setup,
+            sandbox=sandbox,
         )
         target = {
             **reservation,

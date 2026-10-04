@@ -134,3 +134,12 @@ STAGED_DIR = "attachments"
 #: same way they already carry the footprint root.
 #:
 CHECKOUT_DIR = "room"
+
+#: Under the footprint root, beside the rooms and never inside one: which rooms
+#: run in a sandbox, a file per room naming the release it was started from
+#: (`remote_execution/bootstrap.record_sandbox`). A sandboxed room can write all
+#: of its home, so what runs outside its sandbox for it — the teardown, the
+#: environment reset — reads this to take its programs from that release, which
+#: no room can write, rather than from the room. Copied by the bootstrap and the
+#: cleanup script, held to this one by `tests/unit/test_footprint_root.py`.
+SANDBOXES_DIR = "sandboxes"
