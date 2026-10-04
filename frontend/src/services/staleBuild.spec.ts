@@ -5,6 +5,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('virtual:pwa-register', () => ({ registerSW: () => async () => {} }))
 
+type Notice = { id: number; text: string; action?: { label?: string; onClick?: () => void } }
+// What is on screen right now.
+const notices: Notice[] = []
+let nextNotice = 0
+vi.mock('vuetify-sonner', () => ({
+  toast: {
+    warning: (text: string, options?: Omit<Notice, 'id' | 'text'>) => {
+      notices.push({ id: ++nextNotice, text, ...options })
+      return nextNotice
+    },
+    dismiss: (id: number) => notices.splice(notices.findIndex((n) => n.id === id) >>> 0, 1),
+  },
+}))
+
 let reload: ReturnType<typeof vi.fn>
 let assign: ReturnType<typeof vi.fn>
 let order: string[]
@@ -34,6 +48,7 @@ function fakeBrowser({ newVersionOnServer }: { newVersionOnServer: boolean }) {
 
 beforeEach(() => {
   sessionStorage.clear()
+  notices.length = 0
   order = []
   reload = vi.fn(() => order.push('reload'))
   assign = vi.fn((to: string) => order.push(`assign:${to}`))
@@ -155,5 +170,86 @@ describe('发版之后开着的一页，代码块缺了由谁来处理', () => {
     await app()
     await goneChunk('Dialog')().catch(() => {})
     await vi.waitFor(() => expect(reload).toHaveBeenCalledOnce())
+  })
+})
+
+/**
+ * 一次整页加载之后的那一页：模块重新求值，sessionStorage 还是同一份（同一个标签页）。
+ * `failing` 里的页面代码块取不到——网络还没好，或者这一页本来就缺。
+ */
+const pageListeners: [string, EventListenerOrEventListenerObject][] = []
+const listen = window.addEventListener.bind(window)
+window.addEventListener = (type: string, listener: EventListenerOrEventListenerObject, options?: unknown) => {
+  pageListeners.push([type, listener])
+  listen(type, listener, options as AddEventListenerOptions)
+}
+
+async function pageLoad(at: string, failing: string[]) {
+  // A full load leaves nothing of the last page behind: its window listeners go with it.
+  for (const [type, listener] of pageListeners.splice(0)) window.removeEventListener(type, listener)
+  vi.resetModules()
+  const staleBuild = await import('./staleBuild')
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: ['/a', '/b'].map((path) => ({
+      path,
+      component: failing.includes(path) ? goneChunk(path.slice(1)) : blank,
+    })),
+  })
+  staleBuild.watchForStaleBuild()
+  staleBuild.recoverNavigations(router)
+  await router.push(at).catch(() => {})
+  await settled()
+  return router
+}
+
+describe('网络不好：整页加载过一次，要的页面还是取不到', () => {
+  it('打开就要的那块取不到：只整页加载这一次，不来回刷', async () => {
+    fakeBrowser({ newVersionOnServer: false })
+    const first = await pageLoad('/a', ['/b'])
+    await first.push('/b').catch(() => {})
+    await vi.waitFor(() => expect(assign).toHaveBeenCalledWith('/b'))
+
+    await pageLoad('/b', ['/b'])
+    await settled()
+    expect(assign).toHaveBeenCalledOnce()
+    expect(reload).not.toHaveBeenCalled()
+  })
+
+  it('取不到的时候告诉人，点「重试」整页加载到要去的那一页', async () => {
+    fakeBrowser({ newVersionOnServer: false })
+    const first = await pageLoad('/a', ['/b'])
+    await first.push('/b').catch(() => {})
+    await vi.waitFor(() => expect(assign).toHaveBeenCalledOnce())
+
+    await pageLoad('/b', ['/b'])
+    expect(notices).toHaveLength(1)
+    notices[0].action?.onClick?.()
+    await vi.waitFor(() => expect(assign).toHaveBeenCalledTimes(2))
+    expect(assign).toHaveBeenLastCalledWith('/b')
+  })
+
+  it('之后别的页面打开了：提示收起来', async () => {
+    fakeBrowser({ newVersionOnServer: false })
+    const first = await pageLoad('/a', ['/b'])
+    await first.push('/b').catch(() => {})
+    await vi.waitFor(() => expect(assign).toHaveBeenCalledOnce())
+
+    const second = await pageLoad('/b', ['/b'])
+    expect(notices).toHaveLength(1)
+    await second.push('/a')
+    expect(notices).toHaveLength(0)
+  })
+
+  it('整页加载救回来、页面打开过之后，下一次缺块还会再整页加载', async () => {
+    fakeBrowser({ newVersionOnServer: false })
+    const first = await pageLoad('/a', ['/b'])
+    await first.push('/b').catch(() => {})
+    await vi.waitFor(() => expect(assign).toHaveBeenCalledOnce())
+
+    const second = await pageLoad('/a', ['/b'])
+    await second.push('/b').catch(() => {})
+    await vi.waitFor(() => expect(assign).toHaveBeenCalledTimes(2))
+    expect(notices).toHaveLength(0)
   })
 })

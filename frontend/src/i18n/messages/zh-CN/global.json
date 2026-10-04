@@ -9,6 +9,7 @@
   },
   "loadError": {
     "title": "加载失败",
+    "page": "页面没能打开，网络可能不稳定",
     "retry": "重试"
   },
   "cancel": "取消",
