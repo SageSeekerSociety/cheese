@@ -37,6 +37,8 @@ from app.domain.topic.models import Topic
 
 #: How many changed files one comparison reads for a line diff.
 MAX_DIFFED_FILES = 200
+#: The longest listing every committed file of one revision may take.
+TREE_DEADLINE_S = 30
 
 
 def _file_entry(path: str, entry: dict) -> dict:
@@ -167,18 +169,20 @@ class ProjectFiles:
         ], source
 
     async def committed_entries(self, revision: str):
-        """List immutable entries, retaining unsafe modes for release validation."""
-        pending = [("", revision)]
-        files = []
-        while pending:
-            prefix, sha = pending.pop()
-            for entry in await self._tree(sha):
-                name = prefix + entry["path"]
-                if entry["type"] == "tree":
-                    pending.append((name + "/", entry["sha"]))
-                else:
-                    files.append(_file_entry(name, entry))
-        return sorted(files, key=lambda f: f["path"])
+        """List immutable entries, retaining unsafe modes for release validation.
+
+        One recursive tree read (paged on Forgejo) rather than one request per
+        directory, and the whole listing has one deadline: a page waiting on
+        it is a person waiting on the file panel or the site settings."""
+        try:
+            async with asyncio.timeout(TREE_DEADLINE_S):
+                entries = await self._tree(revision, recursive=True)
+        except TimeoutError as exc:
+            raise GatewayUnavailableError(say("forgeTimeout")) from exc
+        return sorted(
+            (_file_entry(e["path"], e) for e in entries if e["type"] != "tree"),
+            key=lambda f: f["path"],
+        )
 
     async def _changed_entries(
         self, before: str, after: str
@@ -413,13 +417,17 @@ class ProjectFiles:
             raise NotFoundError(say("revisionDiffNotFound"))
         return data
 
-    async def _tree(self, sha):
+    async def _tree(self, sha, *, recursive: bool = False):
         entries, page_number = [], 1
+        # GitHub answers a recursive tree in one response (`truncated` past its
+        # size limit, which is raised below); Forgejo pages it like any tree.
+        recurse = "&recursive=1" if recursive else ""
         while True:
             data = await self._data(
                 self.project_id,
                 self.session,
-                f"/git/trees/{quote(sha, safe='')}?per_page=500&page={page_number}",
+                f"/git/trees/{quote(sha, safe='')}?per_page=500&page={page_number}"
+                + recurse,
             )
             if data is None:
                 raise NotFoundError(say("committedDirNotFound"))
