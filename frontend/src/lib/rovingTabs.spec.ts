@@ -39,19 +39,22 @@ describe('页签键盘', () => {
     expect(tabs().map((t) => t.tabIndex)).toEqual([-1, -1, 0])
   })
 
-  it('→ 移到下一格并选中，到头绕回；Home/End 到两端', async () => {
+  it('方向键只移焦点、不选中；Enter（按钮的点击）才选中', async () => {
     const { tabs, selected } = mount()
     tabs()[0].focus()
     await fireEvent.keyDown(tabs()[0], { key: 'ArrowRight' })
-    expect(selected.value).toBe('b')
     expect(document.activeElement).toBe(tabs()[1])
-    await fireEvent.keyDown(tabs()[1], { key: 'End' })
-    expect(selected.value).toBe('c')
-    await fireEvent.keyDown(tabs()[2], { key: 'ArrowRight' })
     expect(selected.value).toBe('a')
+    expect(tabs().map((t) => t.tabIndex)).toEqual([-1, 0, -1])
+    await fireEvent.keyDown(tabs()[1], { key: 'End' })
+    expect(document.activeElement).toBe(tabs()[2])
+    await fireEvent.keyDown(tabs()[2], { key: 'ArrowRight' })
+    expect(document.activeElement).toBe(tabs()[0])
     await fireEvent.keyDown(tabs()[0], { key: 'ArrowLeft' })
-    expect(selected.value).toBe('c')
+    expect(document.activeElement).toBe(tabs()[2])
     await fireEvent.keyDown(tabs()[2], { key: 'Home' })
+    expect(document.activeElement).toBe(tabs()[0])
+    await fireEvent.click(tabs()[0])
     expect(selected.value).toBe('a')
   })
 

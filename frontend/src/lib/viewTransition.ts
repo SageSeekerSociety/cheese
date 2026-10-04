@@ -11,8 +11,21 @@ import type { Router } from 'vue-router'
 
 import { nextTick } from 'vue'
 
+interface ViewTransitionHandle {
+  ready: Promise<void>
+  finished: Promise<void>
+}
+
 type VTDocument = Document & {
-  startViewTransition?: (update: () => Promise<void> | void) => { finished: Promise<void> }
+  startViewTransition?: (update: () => Promise<void> | void) => ViewTransitionHandle
+}
+
+// 被下一次过渡顶掉（连按两下页签）、页面在后台时，浏览器会跳过这次过渡并让这两个
+// promise 失败。那不是错误——内容照样换了——不接住的话会变成一条未处理的 rejection，
+// 被前端错误上报当成故障发出去。
+function quiet(handle: ViewTransitionHandle): void {
+  handle.ready.catch(() => {})
+  handle.finished.catch(() => {})
 }
 
 const WIDE = '(min-width: 960px)'
@@ -31,10 +44,12 @@ export function withViewTransition(update: () => unknown): void {
     void update()
     return
   }
-  ;(document as VTDocument).startViewTransition!(async () => {
-    await update()
-    await nextTick()
-  })
+  quiet(
+    (document as VTDocument).startViewTransition!(async () => {
+      await update()
+      await nextTick()
+    })
+  )
 }
 
 /**
@@ -50,7 +65,7 @@ export function installTopicTransitions(router: Router): void {
     if (to.name !== 'workspace-topic' || from.name !== 'workspace-topic') return
     if (to.params.topicId === from.params.topicId || !canViewTransition()) return
     return new Promise<void>((proceed) => {
-      ;(document as VTDocument).startViewTransition!(
+      const handle = (document as VTDocument).startViewTransition!(
         () =>
           new Promise<void>((done) => {
             const timer = setTimeout(() => settle(), 300)
@@ -63,6 +78,9 @@ export function installTopicTransitions(router: Router): void {
             proceed()
           })
       )
+      quiet(handle)
+      // 万一这次过渡在拍旧快照之前就被跳过，也别让导航卡住。
+      handle.ready.catch(() => proceed())
     })
   })
   router.afterEach(() => {

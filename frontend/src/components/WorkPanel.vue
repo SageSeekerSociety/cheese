@@ -528,6 +528,8 @@ function signalFor(key: TabKey): PanelTab['signal'] {
 /** 交给 `PanelTabs` 的那几格：文案、图标、有没有东西、信号。 */
 // 页签和它切换的内容区（role="tabpanel"）靠这个 id 连起来：读屏在页签上念得出它管哪一块。
 const tabPanelId = `wp-panel-${useId()}`
+// 内容区在错误边界里面：某一格渲染出错时它会被换成兜底提示，那时页签不再指向它。
+const tabBodyRef = ref<HTMLElement | null>(null)
 const activeTabLabel = computed(() =>
   active.value.startsWith('file:')
     ? active.value.slice('file:'.length).split('/').pop()
@@ -745,7 +747,7 @@ defineExpose({ pulse, highlightTurn, reviewDoc, openFile, siteBlock, previewShow
         :active="active"
         :files="openFiles"
         :phone="withChat"
-        :panel-id="tabPanelId"
+        :panel-id="tabBodyRef ? tabPanelId : undefined"
         @select="selectTab"
         @close-file="closeFile"
         @pin-file="pinFile"
@@ -757,6 +759,7 @@ defineExpose({ pulse, highlightTurn, reviewDoc, openFile, siteBlock, previewShow
       <ErrorBoundary variant="compact" :reset-key="topic.id">
         <div
           :id="tabPanelId"
+          ref="tabBodyRef"
           class="tabbody"
           :class="{ 'tabbody--phone': withChat }"
           role="tabpanel"
