@@ -32,7 +32,9 @@
         </BaseButton>
       </div>
     </div>
-    <p v-else-if="!loading" class="notification-feed__quiet t-body">{{ t('notifications.common.noNotifications') }}</p>
+    <p v-else-if="!loading" class="notification-feed__quiet t-body">
+      {{ filter === 'unread' ? t('notifications.common.noUnread') : t('notifications.common.noNotifications') }}
+    </p>
   </section>
 </template>
 
@@ -78,10 +80,13 @@ const hasMore = ref(false)
 // 判断是否有未读通知
 const hasUnread = computed(() => notifications.value.some((notification) => !notification.read))
 
-// 获取通知列表
+// 获取通知列表。每换一次筛选 generation 加一：换之前发出、换之后才回来的那一页
+// 属于上一种筛选，丢掉，不然「未读」那一栏会混进已读的。
+let generation = 0
 const fetchNotifications = async () => {
   if (loading.value) return
 
+  const mine = generation
   loading.value = true
   try {
     const { data } = await NotificationsApi.list({
@@ -91,18 +96,21 @@ const fetchNotifications = async () => {
       pageSize: pageSize.value,
     })
 
+    if (mine !== generation) return
     notifications.value = [...notifications.value, ...data.notifications]
     hasMore.value = data.page.hasMore
     cursorStart.value = data.page.nextStart
   } catch (error) {
     console.error('获取通知失败:', error)
   } finally {
-    loading.value = false
+    if (mine === generation) loading.value = false
   }
 }
 
 // 换筛选就是从第一页重新问一遍：游标是跟着上一种筛选走的，接着往下翻会漏。
 function reload() {
+  generation += 1
+  loading.value = false
   cursorStart.value = undefined
   notifications.value = []
   hasMore.value = false

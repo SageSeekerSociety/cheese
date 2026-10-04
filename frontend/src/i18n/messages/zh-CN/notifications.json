@@ -4,6 +4,7 @@
     "markAsRead": "标记为已读",
     "delete": "删除",
     "noNotifications": "暂无通知",
+    "noUnread": "暂无未读通知",
     "markAllAsRead": "标记全部已读",
     "loadMore": "加载更多",
     "filterAll": "全部",
