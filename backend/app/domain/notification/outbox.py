@@ -13,18 +13,12 @@ from sqlalchemy import or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from app.domain.delivery.models import ChannelDelivery
-from app.domain.notification.models import NotificationType
-from app.domain.notification.push import PUSHABLE, push_text
+from app.domain.notification.preferences import default_preferences, resolve
+from app.domain.notification.preferences_models import PreferencesRepository
+from app.domain.notification.push import push_text
 from app.domain.user.services import languages_by_ids
 
 LEASE_SECONDS = 120
-
-#: 只进站内收件箱的类别码：不发邮件（推送另有 `PUSHABLE` 那一道，它们也不在里
-#: 面）。一条公告同时发给整个空间，一个百来人的班发一条就是百来封信，而它要的只
-#: 是人回到平台上时看得见。
-MAILBOX_ONLY: frozenset[NotificationType] = frozenset(
-    {NotificationType.SPACE_ANNOUNCEMENT}
-)
 
 
 class ChannelIntentHandler:
@@ -36,24 +30,44 @@ class ChannelIntentHandler:
 
     async def send_batch(self, deliveries):
         stamp = datetime.now(UTC)
+        # 渠道由收件人自己的偏好裁（`preferences.resolve`）：矩阵那一层给每一类事件
+        # 单独挑渠道，总开关盖在上面，安静时段再压掉推送与立即邮件。以前这里是写死
+        # 的：除了 `MAILBOX_ONLY` 都发邮件、只有 `PUSHABLE` 才推。
+        prefs = await PreferencesRepository(self.session).for_users(
+            d.recipient_id for d in deliveries
+        )
+        intents = {
+            d.delivery_key: resolve(
+                prefs.get(d.recipient_id) or default_preferences(),
+                d.type,
+                now=stamp,
+            )
+            for d in deliveries
+        }
         rows = []
         # A push is written in its recipient's language, so it is rendered here,
         # per person, and the browser shows it as it arrives (`push.py`).
         pushed = [
             d.recipient_id
             for d in deliveries
-            if self.push_enabled and d.type in PUSHABLE
+            if self.push_enabled and intents[d.delivery_key].push
         ]
         languages = await languages_by_ids(self.session, pushed)
         for delivery in deliveries:
+            intent = intents[delivery.delivery_key]
             common = {
                 "recipientId": delivery.recipient_id,
                 "type": delivery.type.value,
                 "payload": delivery.payload,
                 "deliveryKey": delivery.delivery_key,
             }
-            channels = [] if delivery.type in MAILBOX_ONLY else [("email", common)]
-            if self.push_enabled and delivery.type in PUSHABLE:
+            channels = []
+            if intent.email:
+                channels.append(("email", common))
+            # 立即发不出去的（安静时段压掉的、本就选摘要的）记一笔，等摘要合并发出。
+            if intent.digest:
+                channels.append(("digest", common))
+            if self.push_enabled and intent.push:
                 title, body = push_text(
                     delivery.type,
                     delivery.payload,

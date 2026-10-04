@@ -136,6 +136,8 @@ settings.authz_enforce_topic_access = True
 # membership to FAILED. Zero is the same "not on this box" switch a deployment
 # uses.
 settings.notification_email_drain_interval_s = 0
+# 摘要 job 同理：它会在测试背后按周期给攒够的人发信。测试自己调入口去发。
+settings.notification_digest_interval_s = 0
 settings.task_deadline_sweep_interval_s = 0
 # Request limits stay on, set far above anything a test does. Their rate state
 # lives in Redis, which no test resets, and across a suite the same handles

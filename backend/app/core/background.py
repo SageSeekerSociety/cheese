@@ -365,6 +365,7 @@ def periodic_jobs(
     from app.domain.delivery.timer import deliver_due
     from app.domain.docs_site.assistant import purge_old_questions
     from app.domain.machine.warm import sweep_warm_pool
+    from app.domain.notification.digest import run_notification_digests
     from app.domain.notification.maintenance import drain_email_queue
     from app.domain.notification.push_delivery import drain_push_queue
     from app.domain.project.forge import (
@@ -478,6 +479,13 @@ def periodic_jobs(
             "notification push drain",
             settings.notification_push_drain_interval_s,
             lambda: drain_push_queue(sessions),
+        ),
+        # 通知摘要（设计稿「摘要频率」）：攒够一个人的周期（每天 / 每周）才发一封。
+        # 这个 job 只是「多久去看一眼谁攒够了」，不跑就没有任何一封摘要会出去。
+        PeriodicRunner(
+            "notification digest",
+            settings.notification_digest_interval_s,
+            lambda: run_notification_digests(sessions),
         ),
         # 投递账本上那些「记下了、没发出去」的行的唯一出路。那一行已经和引发它的
         # 事件一起提交了，而发送这一半的进程可能在中间就没了 —— 不跑这个 job，账本

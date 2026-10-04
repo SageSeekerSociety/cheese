@@ -9,9 +9,20 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.core.db import SessionFactory
 from app.core.email import get_email_sender, is_placeholder_email
+from app.domain.notification.push import push_link
 from app.domain.user.models import User
 
 logger = logging.getLogger(__name__)
+
+
+def email_link(payload: Any) -> str:
+    """这封邮件该把人送到哪儿：`payload` 指得到原件就送到那一条，指不到就送待办。
+
+    和推送同一条规则（`push.push_link`），只是补上站点前缀 —— 邮件里要的是能被点
+    开的绝对地址，不能像前端那样用相对路径。
+    """
+    path = push_link(payload if isinstance(payload, dict) else {})
+    return f"{settings.frontend_url.rstrip('/')}{path}"
 
 
 #: 通知类型到邮件标题里那句人话。收件人是在自己的邮箱里读到它的，那里没有任何
@@ -38,6 +49,14 @@ _SUBJECT_LINES: Final[dict[str, str]] = {
 _SUMMARY_KEYS: Final = ("content", "text", "title", "message", "name")
 
 
+def headline_for(type_: str) -> str:
+    """一个通知类型在邮件里那句人话；认不出来就用通用那句。
+
+    单封邮件（`_compose_email`）和摘要（`digest`）都要它，所以它是公开的。
+    """
+    return _SUBJECT_LINES.get(type_, "你在芝士上有一条新通知")
+
+
 def _compose_email(item: dict[str, Any]) -> tuple[str, str]:
     """(标题, HTML 正文)。
 
@@ -45,11 +64,15 @@ def _compose_email(item: dict[str, Any]) -> tuple[str, str]:
     不解析每种类型的 payload（那需要把 entity resolver 那一套依赖都拖进来），
     只给类型的人话、一段可能有的摘要，和一个链接。
 
+    链接指向**这条通知说的那件事**（那个房间、那条消息、那张卡），不是站点根。点
+    邮件的人要的正是那一条，落在首页等于让他自己再找一遍 —— 推送那边早就这么算
+    （`push.push_link`），这里跟它用同一套。
+
     每一段用户内容都转义过：`payload` 里装的是别人写的字，而这段 HTML 会落进
     某个人的邮件客户端。
     """
     type_ = str(item.get("type") or "")
-    headline = _SUBJECT_LINES.get(type_, "你在芝士上有一条新通知")
+    headline = headline_for(type_)
 
     summary = ""
     payload = item.get("payload")
@@ -60,7 +83,7 @@ def _compose_email(item: dict[str, Any]) -> tuple[str, str]:
                 summary = value.strip()[:200]
                 break
 
-    link = settings.frontend_url
+    link = email_link(payload)
     body = [f"<p>{html.escape(headline)}</p>"]
     if summary:
         body.append(f"<blockquote>{html.escape(summary)}</blockquote>")

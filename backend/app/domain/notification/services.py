@@ -28,6 +28,8 @@ from app.domain.notification.models import (
     NotificationLevel,
     NotificationType,
 )
+from app.domain.notification.preferences import in_app_allowed
+from app.domain.notification.preferences_models import PreferencesRepository
 from app.domain.notification.repositories import NotificationRepository
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic_membership.services import TopicMemberService
@@ -236,6 +238,7 @@ class ProjectNotificationService:
         self._session = session
         self._repo = NotificationRepository(session)
         self._projects = ProjectRepository(session)
+        self._prefs = PreferencesRepository(session)
 
     async def create(
         self,
@@ -271,6 +274,12 @@ class ProjectNotificationService:
         rows: list[Notification] = []
         for handle in recipients:
             user = await user_by_handle(self._session, handle)
+            # 站内也是收件人的选择：这一类他关掉了就不写进他的收件箱。没有账号行
+            # 的收件人（`receiver_id` 为空）读不到偏好，按默认（进站内）。
+            if user is not None:
+                pref = await self._prefs.for_user(user.id)
+                if not in_app_allowed(pref, kind):
+                    continue
             rows.append(
                 await self._repo.add(
                     project_id=project_id,
