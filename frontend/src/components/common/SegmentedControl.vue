@@ -4,7 +4,16 @@
 // 不用琥珀：这是偏好，不是这一屏的主操作。
 defineProps<{
   modelValue: T
-  options: ReadonlyArray<{ value: T; label: string; ariaLabel?: string; lang?: string }>
+  // `disabled`: shown but not choosable here (a teammate's model that does not
+  // take that thinking effort); `title` says why.
+  options: ReadonlyArray<{
+    value: T
+    label: string
+    ariaLabel?: string
+    lang?: string
+    disabled?: boolean
+    title?: string
+  }>
   label: string
   // md 和 32px 的输入框、下拉并排时用（题目列表的工具栏）；默认那一号是偏好设置里的。
   size?: 'sm' | 'md'
@@ -25,6 +34,8 @@ const emit = defineEmits<{ 'update:modelValue': [value: T] }>()
       :aria-checked="option.value === modelValue"
       :aria-label="option.ariaLabel ?? option.label"
       :lang="option.lang"
+      :disabled="option.disabled"
+      :title="option.title"
       @click.stop="emit('update:modelValue', option.value)"
     >
       {{ option.label }}
@@ -65,8 +76,13 @@ const emit = defineEmits<{ 'update:modelValue': [value: T] }>()
   line-height: var(--lh-13);
 }
 
-.segmented__option:hover {
+.segmented__option:hover:not(:disabled) {
   color: var(--text);
+}
+
+.segmented__option:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .segmented__option--on {

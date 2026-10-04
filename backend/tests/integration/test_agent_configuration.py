@@ -5,6 +5,7 @@ from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.agent_type.library import preset_types
 from app.domain.project.services import ProjectService
 from tests.integration.conftest import (
+    add_external_member,
     post_project,
     put_on_plan,
     registered,
@@ -120,16 +121,24 @@ def test_room_switch_preserves_the_selected_agents_role(client):
 
 def test_a_teammate_saves_how_hard_it_thinks_and_when_it_compacts(client):
     """Effort and compaction share are a teammate's, saved with its role."""
-    project = post_project(client, json={"name": "Effort"}).json()["data"]
+    project = post_project(client, json={"name": "Effort"}, owner="alice").json()[
+        "data"
+    ]
     pid = project["id"]
-    default = client.get(f"/projects/{pid}/agents").json()["data"]["data"][0]
+    alice = session_auth_headers("alice")
+    default = client.get(f"/projects/{pid}/agents", headers=alice).json()["data"][
+        "data"
+    ][0]
 
     saved = client.put(
         f"/projects/{pid}/agents/{default['id']}",
         json={"configuration": {"effort": "high", "compact_percent": 70}},
+        headers=alice,
     )
     assert saved.status_code == 200, saved.text
-    after = client.get(f"/projects/{pid}/agents").json()["data"]["data"][0]
+    after = client.get(f"/projects/{pid}/agents", headers=alice).json()["data"]["data"][
+        0
+    ]
     assert after["configuration"]["effort"] == "high"
     assert after["configuration"]["compact_percent"] == 70
 
@@ -137,5 +146,64 @@ def test_a_teammate_saves_how_hard_it_thinks_and_when_it_compacts(client):
         answer = client.put(
             f"/projects/{pid}/agents/{default['id']}",
             json={"configuration": refused},
+            headers=alice,
         )
         assert answer.status_code == 400, answer.text
+
+
+def test_only_a_manager_changes_a_teammates_advanced_settings(client):
+    """The highest effort, compaction and skills are a manager's, as the project
+    main model is; anything else on a teammate is any member's to change."""
+    project = post_project(client, json={"name": "Advanced"}, owner="alice").json()[
+        "data"
+    ]
+    pid = project["id"]
+    add_external_member(client, pid, "bob", by="alice")
+    bob = session_auth_headers("bob")
+    default = client.get(f"/projects/{pid}/agents", headers=bob).json()["data"]["data"][
+        0
+    ]
+    url = f"/projects/{pid}/agents/{default['id']}"
+
+    for advanced in (
+        {"effort": "max"},
+        {"compact_percent": 60},
+        {"skills": ["documents"]},
+    ):
+        refused = client.put(url, json={"configuration": advanced}, headers=bob)
+        assert refused.status_code == 403, (advanced, refused.text)
+
+    for advanced in ({"skills": ["documents"]}, {"compact_percent": 60}):
+        made = client.post(
+            f"/projects/{pid}/agents",
+            json={"display_name": "x", "configuration": advanced},
+            headers=bob,
+        )
+        assert made.status_code == 403, (advanced, made.text)
+    preset = client.post(
+        f"/projects/{pid}/agents",
+        json={"display_name": "y", "type_name": "fullstack-engineer"},
+        headers=bob,
+    )
+    assert preset.status_code == 200, preset.text
+
+    basic = client.put(
+        url,
+        json={"configuration": {"body": "Review", "effort": "high"}},
+        headers=bob,
+    )
+    assert basic.status_code == 200, basic.text
+
+    owner = client.put(
+        url,
+        json={"configuration": {"body": "Review", "compact_percent": 60}},
+        headers=session_auth_headers("alice"),
+    )
+    assert owner.status_code == 200, owner.text
+    # Saving it back as it is, with the role rewritten, is still bob's to do.
+    kept = client.put(
+        url,
+        json={"configuration": {"body": "Review again", "compact_percent": 60}},
+        headers=bob,
+    )
+    assert kept.status_code == 200, kept.text
