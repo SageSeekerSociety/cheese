@@ -181,6 +181,8 @@ const claimTrend = computed(() => {
 </template>
 
 <style scoped lang="scss">
+@use '../../styles/breakpoints.scss' as bp;
+
 .ins__kpis {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
@@ -195,7 +197,8 @@ const claimTrend = computed(() => {
   align-items: start;
 }
 
-@media (max-width: 900px) {
+// 断点收进共享 token（`styles/breakpoints.scss`）：900 → 960（`$bp-mobile`）。
+@include bp.below(bp.$bp-mobile) {
   .ins__grid {
     grid-template-columns: 1fr;
   }
@@ -205,7 +208,8 @@ const claimTrend = computed(() => {
   grid-column: span 2;
 }
 
-@media (max-width: 900px) {
+// 断点收进共享 token（`styles/breakpoints.scss`）：900 → 960（`$bp-mobile`）。
+@include bp.below(bp.$bp-mobile) {
   .ins__span2 {
     grid-column: span 1;
   }
