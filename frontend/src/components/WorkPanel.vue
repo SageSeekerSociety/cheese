@@ -32,11 +32,12 @@ import type { TabDef, TabKey } from './panels/panelTabList'
 
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 
-import { getTopicWorkSummary, listRoomTasks, readPreviewFile } from '../api'
+import { getTopicWorkSummary, readPreviewFile } from '../api'
 import { useTopicMemory } from '../composables/useTopicMemory'
 import { previewCanShowInRoom } from '../lib/fileKind'
 import { whenIdle } from '../lib/idle'
 import { cachedPreviewPointer, refreshPreviewPointer } from '../lib/previewPointer'
+import { cachedTopicPanel, fetchRoomTasks } from '../lib/topicPanelCache'
 
 import ErrorBoundary from './common/ErrorBoundary.vue'
 import PanelChanges from './panels/PanelChanges.vue'
@@ -449,14 +450,21 @@ function markChangesSeen() {
 // of a room that never dispatched anything.
 const threads = ref<{ total: number; open: number }>({ total: 0, open: 0 })
 
+function countThreads(rows: { status: string }[]) {
+  threads.value = { total: rows.length, open: rows.filter((r) => r.status === 'open').length }
+}
+
 async function pollThreads() {
   const roomId = props.topic?.id
   if (!roomId) return
+  // Switching back to a room: show the count from last time while the fresh one loads.
+  const cached = cachedTopicPanel('roomTasks', roomId)
+  if (cached) countThreads(cached.data)
   try {
     // limit: 1 — see TaskProgress. Without it this asks for every card's whole
-    // history just to count them.
-    const rows = (await listRoomTasks(roomId, { limit: 1 })).data
-    threads.value = { total: rows.length, open: rows.filter((r) => r.status === 'open').length }
+    // history just to count them. Shared with TaskProgress and the chat panel.
+    const rows = (await fetchRoomTasks(roomId)).data
+    if (props.topic?.id === roomId) countThreads(rows)
   } catch {
     // A failed poll is not a state — same rule as the two polls above.
   }

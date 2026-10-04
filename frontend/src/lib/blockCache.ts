@@ -33,6 +33,12 @@ export function cachedWindow(topicId: string): { blocks: Block[]; hasMore: boole
   return { blocks, hasMore: blockHasMore.get(topicId) ?? false }
 }
 
+/** 退出登录时调用：消息是上一个人的房间内容，不能留给下一个人。 */
+export function clearBlockCache(): void {
+  blockCache.clear()
+  blockHasMore.clear()
+}
+
 export function setCachedWindow(topicId: string, window: { blocks: Block[]; hasMore: boolean }): void {
   blockCache.set(topicId, window.blocks)
   blockHasMore.set(topicId, window.hasMore)

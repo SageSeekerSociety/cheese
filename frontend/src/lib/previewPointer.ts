@@ -13,7 +13,11 @@ import type { PreviewInfo } from '../cx_types'
 import { getPreview } from '../api'
 
 // 取过就有（文件或 null=这个房间还没有预览），没取过是 undefined。
+// 最多记 MAX_TOPICS 个房间，和工作面板那几份（lib/topicPanelCache.ts）同一个上限。
+const MAX_TOPICS = 20
 const cache = new Map<string, PreviewInfo | null>()
+// 清空一次 +1：那一刻还在飞的请求回来后不写回来。
+let generation = 0
 const inFlight = new Map<string, Promise<PreviewInfo | null>>()
 
 /** 这个房间的当前预览，取过就有；没取过是 undefined，取过而没有是 null。 */
@@ -23,7 +27,14 @@ export function cachedPreviewPointer(topicId: string): PreviewInfo | null | unde
 
 /** 面板自己取回来的那一份也写回来，下一次开同一个房间就先有。 */
 export function setPreviewPointer(topicId: string, art: PreviewInfo | null): void {
+  // 先删再写，最近写过的排到最后；超出上限丢最久没写过的那个房间。
+  cache.delete(topicId)
   cache.set(topicId, art)
+  while (cache.size > MAX_TOPICS) {
+    const oldest = cache.keys().next()
+    if (oldest.done) break
+    cache.delete(oldest.value)
+  }
 }
 
 /**
@@ -35,10 +46,11 @@ export function setPreviewPointer(topicId: string, art: PreviewInfo | null): voi
 export function refreshPreviewPointer(topicId: string): Promise<PreviewInfo | null> {
   const running = inFlight.get(topicId)
   if (running) return running
+  const startedAt = generation
   const started = getPreview(topicId)
     .then((art) => {
       const value = art ?? null
-      setPreviewPointer(topicId, value)
+      if (startedAt === generation) setPreviewPointer(topicId, value)
       return value
     })
     .finally(() => inFlight.delete(topicId))
@@ -61,8 +73,9 @@ export function warmPreviewPointer(topicId: string): Promise<PreviewInfo | null>
   return undefined
 }
 
-/** 测完一个用例把这份记忆擦干净：同一个进程里两段测试之间它不该带过去。 */
+/** 退出登录时、以及测完一个用例时把这份记忆擦干净：上一个人（上一段测试）的不该带过去。 */
 export function resetPreviewPointerCache(): void {
+  generation += 1
   cache.clear()
   inFlight.clear()
 }

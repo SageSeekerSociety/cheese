@@ -10,7 +10,7 @@ import type { TodoItem, Topic } from '../../cx_types'
 
 import { computed, ref, watch } from 'vue'
 
-import { getProgress } from '../../api'
+import { cachedTopicPanel, fetchTopicProgress } from '../../lib/topicPanelCache'
 
 import TodoChecklist from './TodoChecklist.vue'
 
@@ -25,7 +25,10 @@ const props = withDefaults(
   { refreshTick: 0 }
 )
 
-const items = ref<TodoItem[]>([])
+// 切回来过的房间先画上次那份清单，背后再重取（lib/topicPanelCache.ts）。
+const items = ref<TodoItem[]>(
+  (props.topic?.id && cachedTopicPanel('progress', props.topic.id)?.items) || []
+)
 const open = ref(false)
 
 async function load() {
@@ -35,8 +38,8 @@ async function load() {
     return
   }
   try {
-    const progress = await getProgress(tid)
-    items.value = progress.items ?? []
+    const progress = await fetchTopicProgress(tid)
+    if (props.topic?.id === tid) items.value = progress.items ?? []
   } catch {
     // 进度是背景信息，拿不到就不画，不为它报错。
   }

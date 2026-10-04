@@ -15,9 +15,9 @@ import type { Block, BoardColumn, RoomTask, Topic } from '../../cx_types'
 
 import { computed, ref, watch } from 'vue'
 
-import { listRoomTasks } from '../../api'
 import { BOARD_COLUMNS, columnDotStyle, columnLabel, compareTasks, phraseLabel } from '../../lib/board'
 import { relTime } from '../../lib/relTime'
+import { cachedTopicPanel, fetchRoomTasks } from '../../lib/topicPanelCache'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
 
 import { t } from '@/i18n'
@@ -51,6 +51,9 @@ const open = ref(false)
 // 已完成默认折起来。件数写在按钮上，所以折起来不等于藏起来。
 const showDone = ref(false)
 
+// 手上这份 rows 是哪个房间的：切到另一个房间时，缓存里那份才该顶上来。
+let rowsFor: string | null = null
+
 async function load() {
   const place = props.topic
   if (!place) {
@@ -58,17 +61,26 @@ async function load() {
     return
   }
   const roomId = place.id
+  // 切回来过的房间先画上次那一份，背后再重取：不转圈、不闪空。
+  const cached = cachedTopicPanel('roomTasks', roomId)
+  if (cached && rowsFor !== roomId) {
+    rows.value = cached.data
+    rowsFor = roomId
+    emit('count', cached.data.length)
+  }
   loading.value = true
   errorMsg.value = null
   try {
     // limit: 1 是必须的，不是优化。不传的话后端会把房间里**每一条**支线的完整
     // 历史都吐回来，而一个跑久了的房间有近两百条活。这里只要每条最新的那一块，
     // 用来说「最后活动」。
-    const payload = await listRoomTasks(roomId, { limit: 1 })
+    const payload = await fetchRoomTasks(roomId)
+    if (props.topic?.id !== roomId) return
     rows.value = payload.data
+    rowsFor = roomId
     emit('count', payload.data.length)
   } catch {
-    errorMsg.value = t('work.room.taskProgress.loadFailed')
+    if (props.topic?.id === roomId) errorMsg.value = t('work.room.taskProgress.loadFailed')
   } finally {
     loading.value = false
   }

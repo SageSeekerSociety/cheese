@@ -4,10 +4,13 @@ import type { User } from '@/types/users'
 import { computed, ref } from 'vue'
 
 import i18n, { isLocale, onLocaleChosen, setLocale, storedLocale } from '@/i18n'
+import { clearBlockCache } from '@/lib/blockCache'
 import { clearComposerDrafts } from '@/lib/composerDrafts'
 import { forgetFeedbackDraft } from '@/lib/feedbackDraft'
 import { clearPageCache } from '@/lib/pageCache'
+import { resetPreviewPointerCache } from '@/lib/previewPointer'
 import { announceSignIn, announceSignOut, onSessionEvent, refreshSession } from '@/lib/session'
+import { clearTopicPanelCache } from '@/lib/topicPanelCache'
 import { UserApi } from '@/network/api/users'
 import { disablePush } from '@/services/webPush'
 import { resetFeedbackCaches } from '@/stores/feedback'
@@ -307,6 +310,11 @@ export class AccountService {
     // 同理，页面缓存住在内存里，退出登录不清就还在：下一个人打开总览会先看到上
     // 一个人的项目名，然后才被后台刷新盖掉——那一眼已经泄露了。
     clearPageCache()
+    // 话题里那几份同理：消息窗口、工作面板的进度/成员/派出的活、预览指针，都是上一
+    // 个人的房间内容。
+    clearBlockCache()
+    clearTopicPanelCache()
+    resetPreviewPointerCache()
     // 反馈那三份同理，而且它们更直接：「我的反馈」和详情装的就是这个人自己那几条。
     resetFeedbackCaches()
     // 输入框草稿同样：它是 localStorage 里的一句半句话，属于上一个人。

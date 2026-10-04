@@ -31,7 +31,6 @@ import {
   ensureFreshToken,
   isRetryableGetFailure,
   listBlocks,
-  listRoomTasks,
   toggleReaction as apiToggleReaction,
   undoTopicTitle,
 } from '../api'
@@ -58,6 +57,7 @@ import { outgoingMessageBody, pendingMessageBlock } from '../lib/outgoingMessage
 import { AGENT_STATUS_EVENTS, collapseNotices, type PlatformNotice, rendersInRoom } from '../lib/platformNotice'
 import { coalesceSplitFencedCodeBlocks } from '../lib/renderMessage'
 import { placeSplitMarkers } from '../lib/splitMarkers'
+import { cachedTopicPanel, fetchRoomTasks } from '../lib/topicPanelCache'
 import { taskTitle, topicShortId, topicStateBadge, topicTitle } from '../lib/topicState'
 import { myHandle } from '../me'
 
@@ -754,10 +754,12 @@ export function useChatPanel(opts: ChatPanelOptions) {
   watch(
     () => topic()?.id,
     async (id) => {
-      roomTasks.value = []
+      // 切回来过的房间先用上次那份画标记，背后再重取（lib/topicPanelCache.ts）。
+      roomTasks.value = id ? (cachedTopicPanel('roomTasks', id)?.data ?? []) : []
       if (!id) return
       try {
-        roomTasks.value = (await listRoomTasks(id, { limit: 1 })).data
+        const rows = (await fetchRoomTasks(id)).data
+        if (topic()?.id === id) roomTasks.value = rows
       } catch {
         // 标记是派生出来的装饰，不是内容。拉不到就少几行标记，不该让整个时间线红掉。
       }

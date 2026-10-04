@@ -21,7 +21,6 @@ import {
   getGitDiff,
   getGitLog,
   listFiles,
-  listRoomTasks,
   readFile,
   workspaceFileRawUrl,
   writeFile,
@@ -30,6 +29,7 @@ import { phraseLabel } from '../lib/board'
 import { parseDiffLines, splitDiffByFile } from '../lib/diff'
 import { useDocumentBytes } from '../lib/documentBytes'
 import { DOCUMENT_TYPES, needsDocumentView, suffixOf } from '../lib/fileKind'
+import { fetchRoomTasks } from '../lib/topicPanelCache'
 
 import { useTopicMemory } from './useTopicMemory'
 
@@ -121,7 +121,7 @@ export function usePanelChanges(props: PanelChangesProps) {
     if (!room) return
     taskLoadError.value = null
     try {
-      const tasks = await listRoomTasks(room, { limit: 1 })
+      const tasks = await fetchRoomTasks(room)
       if (request !== taskRequest) return
       taskOptions.value = tasks.data.filter((task) => !!task.branch_name)
       if (!tasksLoaded.value) {
