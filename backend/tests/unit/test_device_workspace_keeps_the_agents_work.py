@@ -901,3 +901,86 @@ def test_a_closed_tasks_failed_backup_leaves_the_room_notice_to_the_platform(
     assert len(told) == 1
     assert open_task in told[0]
     assert closed not in told[0]
+
+
+def test_a_backup_leaves_out_generated_and_oversized_untracked_files_and_says_so(
+    device, monkeypatch, tmp_path, capsys
+):
+    """Build output a repository does not ignore would otherwise ride along in
+    every backup of the task. An edit to a tracked file is work however large,
+    and so is a file the agent staged; what is left out is said to the agent
+    that synced and to whoever recovers the backup."""
+    cli, tasks, _remote, _home = device
+    monkeypatch.setattr(cli, "_UNTRACKED_BACKUP_BUDGET", 1000)
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    (work / "same.txt").write_text("tracked edit\n" * 200)
+    (work / "staged.bin").write_bytes(b"s" * 2000)
+    git(work, "add", "staged.bin")
+    (work / "notes.txt").write_text("new, small\n")
+    (work / "dist").mkdir()
+    (work / "dist" / "bundle.js").write_bytes(b"x" * 3000)
+    (work / "node_modules" / "pkg").mkdir(parents=True)
+    (work / "node_modules" / "pkg" / "index.js").write_text("module.exports = 1\n")
+
+    monkeypatch.setattr(sys, "argv", ["cheese", "sync", "--task", task])
+    cli.main()
+    told_agent = capsys.readouterr().err
+    assert "dist/bundle.js" in told_agent
+    assert "node_modules/" in told_agent
+
+    elsewhere = tmp_path / "another-machine"
+    elsewhere.mkdir()
+    monkeypatch.setenv("HOME", str(elsewhere))
+    cli._recover_task(task)
+    (recovered,) = (elsewhere / ".cheese" / "recovered").iterdir()
+    assert (recovered / "same.txt").read_text() == "tracked edit\n" * 200
+    assert (recovered / "staged.bin").read_bytes() == b"s" * 2000
+    assert (recovered / "notes.txt").read_text() == "new, small\n"
+    assert not (recovered / "dist").exists()
+    assert not (recovered / "node_modules").exists()
+    told_recoverer = capsys.readouterr().out
+    assert "dist/bundle.js" in told_recoverer
+    assert "node_modules/" in told_recoverer
+
+
+def test_the_room_hears_once_of_each_large_file_a_backup_leaves_behind(
+    device, monkeypatch, capsys
+):
+    """A large file nobody committed may be hours of work, and it goes with the
+    machine, so the room is told. A generated directory comes back with an
+    install, and a file the room has already heard of is not news at every
+    sync. The push before a switch stays silent about either: the platform
+    reads everything it prints as a failure."""
+    cli, tasks, _remote, home = device
+    monkeypatch.setattr(cli, "_UNTRACKED_BACKUP_BUDGET", 1000)
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+
+    def told():
+        posted = home / "posted.jsonl"
+        if not posted.exists():
+            return []
+        return [
+            json.loads(line)["body"]["content"]
+            for line in posted.read_text().splitlines()
+        ]
+
+    (work / "node_modules").mkdir()
+    (work / "node_modules" / "big.js").write_bytes(b"x" * 5000)
+    cli._sync_all_tasks()
+    assert told() == []
+    assert "PUT " not in (home / "requests.log").read_text()
+
+    (work / "model.bin").write_bytes(b"m" * 3000)
+    cli._sync_all_tasks()
+    cli._sync_all_tasks()
+    (work / "export.bin").write_bytes(b"e" * 4000)
+    cli._sync_all_tasks()
+
+    first, second = told()
+    assert "model.bin" in first
+    assert tasks[task]["branch"] in first
+    assert "export.bin" in second
+    assert "model.bin" not in second
+    assert capsys.readouterr().err == ""
