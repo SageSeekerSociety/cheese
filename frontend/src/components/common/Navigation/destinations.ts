@@ -163,14 +163,25 @@ export function railItems(src: NavSources, shell: Shell): NavGenericItem[] {
   // ⌘N 是**画出来的位置**，不是某一格固有的属性：壳把项目排到第一格时，⌘1 就该是
   // 那个项目。所以编号发生在排完之后，而不是在建格子的地方写死。
   //
-  // 只编到 9：App 只登记 mod+1..9，第 10 格往后拿到的数字没有任何键能触发，浮层上
-  // 那句「⌘10」是一句谎话。项目多到 9 个以上时，多出来的格子没有快捷方式。
+  // 只编到 9：App 只登记 1..9（railShortcut），第 10 格往后拿到的数字没有任何键能触发，浮层上
+  // 那句「G 10」是一句谎话。项目多到 9 个以上时，多出来的格子没有快捷方式。
   let n = 0
   return items.map((item) => {
     if (item.type !== 'item' || !item.to || n >= MAX_SHORTCUT) return item
     n += 1
     return { ...item, shortcut: n }
   })
+}
+
+/**
+ * 第 N 格的快捷键，按「在哪儿跑」分两种（App.vue 登记、RailItem 浮层显示，同一个出处）：
+ *
+ * - 浏览器里是序列键 `G` 然后 `N`。⌘1–9 是浏览器切标签页的键，抢过来会让人切不回自己
+ *   的第 N 个标签页；后台的 `G Q / G D` 是同一个约定。
+ * - 桌面 app 没有浏览器标签页，⌘N 不抢任何人的，照旧用它。
+ */
+export function railShortcut(n: number, desktop: boolean): { shortcut: string; keys: string[] } {
+  return desktop ? { shortcut: `mod+${n}`, keys: ['⌘', String(n)] } : { shortcut: `g ${n}`, keys: ['G', String(n)] }
 }
 
 /**

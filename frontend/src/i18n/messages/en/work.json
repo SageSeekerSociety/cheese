@@ -982,6 +982,7 @@
       "today": "Today",
       "yesterday": "Yesterday",
       "topicFallback": "Topic",
+      "timelineLabel": "Conversation",
       "liveNew": "{name}: {text}"
     },
     "header": {
