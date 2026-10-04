@@ -436,8 +436,11 @@ PLATFORM_TOOLS = ToolTable(
             "递卡前先让机器把这条任务的提交推上去，所以机器要够得着。"
             "交出去的是什么三选一：deliver（任务目录里的一份文件，当场留快照，"
             "≤80MB）、deliver_url（一个地址）、都不给（这次合并本身）。"
-            "交文件或地址时 artifact（清单上那一项的 id）与 new_artifact"
-            "（新名字，配 about）必给其一；交合并时两个都不给。",
+            "交文件或地址时 artifact（清单上那一项的 id，照抄，不写名字）与 "
+            "new_artifact（新名字，配 about）必给其一；交合并时两个都不给，"
+            "交的是项目那个仓库，平台自己认得出。about 说这样东西本身是什么、给谁的："
+            "第 1 版和第 20 版都要成立；换到清单上另一项头上也说得通就是白写；"
+            "不抄 subject，抄了会被打回。",
             {
                 "task": _TASK,
                 "subject": _text("英文 Conventional Commits 标题，≤72 字符，无句号"),

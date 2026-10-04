@@ -69,7 +69,7 @@ def test_a_project_that_has_produced_nothing_is_told_to_name_the_first_one():
     # 也出现，单独断言它，空清单这一支把它整个掉了也照样绿。
     assert "`new_artifact=<真名>` 加 `about=<一句话>`" in prompt
     # 整套检验跟着清单走，不跟着空清单走（#1535）：空清单这一段是短指针。
-    assert "第 1 版和第 20 版都成立" not in prompt
+    assert "第 1 版和第 20 版" not in prompt
 
 
 def test_the_prompt_says_a_merge_declares_nothing():
@@ -83,11 +83,27 @@ def test_the_prompt_says_a_merge_declares_nothing():
 
 
 def test_the_sentence_and_the_name_come_with_how_to_check_them():
-    """规则会忘，检验方法当场能自查 —— 所以两者一起给。"""
-    prompt = _prompt([REPORT])
-
-    assert "第 1 版和第 20 版都成立" in prompt
+    """规则会忘，检验方法当场能自查 —— 所以两者一起给，给在递卡的工具上。"""
+    assert "第 1 版和第 20 版都要成立" in _accept_request_description()
 
 
 def test_a_room_that_does_not_deliver_gets_no_manifest_section():
     assert "产物清单" not in _prompt(None)
+
+
+def _accept_request_description() -> str:
+    import importlib.util
+    from importlib.machinery import SourceFileLoader
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[2] / "sandbox" / "cheese"
+    loader = SourceFileLoader("cheese_cli_manifest", str(path))
+    spec = importlib.util.spec_from_loader("cheese_cli_manifest", loader)
+    assert spec
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    schemas = module.PLATFORM_TOOLS.schemas()
+    schemas = schemas if isinstance(schemas, list) else list(schemas.values())
+    return next(
+        s["description"] for s in schemas if s["name"] == "cheese_accept_request"
+    )
