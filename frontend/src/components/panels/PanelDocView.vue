@@ -55,7 +55,7 @@ const props = withDefaults(
     mentionNames?: Record<string, string>
     /** 正文里打 @ 时列出来的人。 */
     mentionPeople?: MentionPoolEntry[]
-    /** 项目话题表：正文里的支线徽章、`<#id>` chip 都靠它认名字与状态。 */
+    /** 项目话题表：正文里的 `<#id>` chip 靠它认名字。 */
     topicList?: Topic[]
     /** 画在一整页里（项目文档的章程）：页头已经说了这是什么，不再画大标题和总览自动区。 */
     bare?: boolean
@@ -81,11 +81,10 @@ const props = withDefaults(
     threadState: DocThreadState
     threadActions: DocThreadActions
     /** 发一条评论（评的是 `quote` 那几个字）；回执里有它的 id，标记由这一层放到字上。 */
-    sendComment?: (topicId: string, content: string, quote: string) => Promise<{ id: string }>
+    sendComment?: (content: string, quote: string) => Promise<{ id: string }>
     /** 重读评论串。 */
     refreshThreads?: () => Promise<void>
     // ---- 装饰的原料（原样递给正文那一半） ----
-    liveRefIndex: Map<number, string>
     /** 修改建议的理由（建议 id → 理由），卡上写出来。 */
     suggestionReasons?: Record<string, string>
     /** 文档里有了新的修改建议时调一下：读它们的理由。 */
@@ -191,9 +190,9 @@ function openComment(spot: CommentSpot) {
   commentsRef.value?.open(spot)
 }
 /** 发出一条评论，再把它的标记放到评的那几个字上。 */
-const postComment: SendDocComment = async (topicId, content, spot) => {
+const postComment: SendDocComment = async (_topicId, content, spot) => {
   if (!props.sendComment) throw new Error(t('work.room.comments.unavailable'))
-  const posted = await props.sendComment(topicId, content, spot.quote)
+  const posted = await props.sendComment(content, spot.quote)
   const ed = surfaceRef.value?.editor
   if (ed && spot.quote) anchorComment(ed, spot, posted.id)
   openId.value = posted.id
@@ -424,7 +423,6 @@ defineExpose({
                 :topic-list="topicList"
                 :mention-names="mentionNames"
                 :mention-people="mentionPeople"
-                :live-ref-index="liveRefIndex"
                 :can-comment="!readOnly"
                 :open-threads="openThreads"
                 :active-thread="openId"

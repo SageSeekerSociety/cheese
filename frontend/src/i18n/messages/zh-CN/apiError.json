@@ -975,5 +975,7 @@
   "skillAdd": "添加技能",
   "skillImport": "导入技能",
   "skillImportUnreadable": "无法读取这个文件",
-  "topicNotifyLevelInvalid": "通知级别只能是「全部」或「静音」"
+  "topicNotifyLevelInvalid": "通知级别只能是「全部」或「静音」",
+  "libraryVersionNotFound": "找不到这一版",
+  "libraryVersionIsCurrent": "这一版已经是现在这一份"
 }

@@ -13,6 +13,7 @@ from tests.integration.conftest import (
     session_auth_headers,
     session_token,
 )
+from tests.support.living_doc import document_of
 
 
 def _login(client, handle: str) -> str:
@@ -37,6 +38,11 @@ def _project_topic(client, owner: str) -> tuple[str, str]:
     return p["id"], t["id"]
 
 
+def _doc(client, tid: str, owner: str = "alice") -> str:
+    """The room's document, found out by a member."""
+    return document_of(client, tid, headers=session_auth_headers(owner))
+
+
 def test_login_returns_verifiable_token(client):
     token = _login(client, "alice")
     claims = verify_access_token(token)
@@ -50,7 +56,7 @@ def test_token_actor_wins_over_body_author(client):
     token = _login(client, "alice")
     _, tid = _project_topic(client, owner="alice")
     r = client.put(
-        f"/topics/{tid}/doc",
+        f"/documents/{_doc(client, tid)}",
         json={"content": "# hi", "expected_version": 0},
         headers=_bearer(token),
     )
@@ -64,7 +70,7 @@ def test_no_token_falls_back_to_body_author(client):
     _login(client, "alice")
     _, tid = _project_topic(client, owner="alice")
     r = client.put(
-        f"/topics/{tid}/doc",
+        f"/documents/{_doc(client, tid)}",
         json={"content": "# hi", "expected_version": 0},
         headers=session_auth_headers("alice"),
     )
@@ -78,7 +84,7 @@ def test_token_outsider_denied_on_rostered_topic(client):
     _, tid = _project_topic(client, owner="alice")
     outsider = _login(client, "mallory")
     r = client.put(
-        f"/topics/{tid}/doc",
+        f"/documents/{_doc(client, tid)}",
         json={"content": "# sneaky", "expected_version": 0},
         headers=_bearer(outsider),
     )
@@ -90,7 +96,7 @@ def test_token_owner_allowed(client):
     token = _login(client, "alice")
     _, tid = _project_topic(client, owner="alice")
     r = client.put(
-        f"/topics/{tid}/doc",
+        f"/documents/{_doc(client, tid)}",
         json={"content": "# ok", "expected_version": 0},
         headers=_bearer(token),
     )
@@ -153,7 +159,7 @@ def test_project_member_allowed_even_if_not_in_roster(client):
     join_project_team(client, pid, "bob")
 
     r = client.put(
-        f"/topics/{tid}/doc",
+        f"/documents/{_doc(client, tid)}",
         json={"content": "# member", "expected_version": 0},
         headers=_bearer(token),
     )
@@ -163,9 +169,10 @@ def test_project_member_allowed_even_if_not_in_roster(client):
 @pytest.mark.parametrize(
     "path",
     [
-        "/topics/{tid}/doc",
-        "/topics/{tid}/docs",
-        "/topics/{tid}/comments/threads",
+        "/topics/{tid}/document",
+        "/documents/{doc}",
+        "/documents/{doc}/nodes",
+        "/documents/{doc}/comments/threads",
         "/topics/{tid}/transcript",
         "/topics/{tid}/status",
         "/topics/{tid}/progress",
@@ -178,8 +185,9 @@ def test_read_surfaces_deny_the_outsider(client, path):
     rendered a whole foreign project around one 403. Every read surface must
     answer 403 to the outsider, exactly like /blocks."""
     _, tid = _project_topic(client, owner="alice")
+    doc = _doc(client, tid)
     outsider = _login(client, "mallory")
-    r = client.get(path.format(tid=tid), headers=_bearer(outsider))
+    r = client.get(path.format(tid=tid, doc=doc), headers=_bearer(outsider))
     assert r.status_code == 403, f"{path}: {r.status_code} {r.text[:120]}"
 
 
@@ -205,9 +213,11 @@ def test_member_still_reads_everything(client):
     """The guard must not lock the door on the people who belong inside."""
     token = _login(client, "alice")
     pid, tid = _project_topic(client, owner="alice")
+    doc = _doc(client, tid)
     for path in (
-        f"/topics/{tid}/doc",
-        f"/topics/{tid}/comments/threads",
+        f"/topics/{tid}/document",
+        f"/documents/{doc}",
+        f"/documents/{doc}/comments/threads",
         f"/topics?project_id={pid}",
     ):
         r = client.get(path, headers=_bearer(token))

@@ -147,7 +147,6 @@ class DocumentWriter:
         """
         if not actors:
             raise ValueError("a document version needs the actor who wrote it")
-        assert doc.room_id is not None, "only a room's document is recorded here"
         room_id = doc.room_id
         project_id = doc.project_id
         self.notice_merged = False
@@ -171,10 +170,12 @@ class DocumentWriter:
         if updated is None:
             raise _doc_conflict(doc.version)
         doc = updated
-        # Append-only conversation event (spec H1): the doc edit is visible.
+        # Append-only conversation event (spec H1): the doc edit is visible in
+        # the room whose document it is. A document in no room has no
+        # conversation to tell; its history is the record.
         before_lines = _doc_edit_lines(previous_content)
         after_lines = _doc_edit_lines(content)
-        if quiet or before_lines == after_lines:
+        if quiet or room_id is None or before_lines == after_lines:
             await journal.append(
                 document_id=doc.id,
                 version=doc.version,

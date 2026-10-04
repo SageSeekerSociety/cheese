@@ -3,7 +3,7 @@
 // 行数、`---`/`+++`、新增文件那条 `new file mode`。
 import { describe, expect, it } from 'vitest'
 
-import { diffOf, docBlock, previewContentOf, previewInfoOf, progressOf } from './demoPanels'
+import { diffOf, previewContentOf, previewInfoOf, progressOf } from './demoPanels'
 
 describe('diffOf', () => {
   it('writes the header and hunk of an added file from the scene’s lines', () => {
@@ -62,11 +62,6 @@ describe('the other payload builders', () => {
     expect(progress.updated_at).not.toBeNull()
     expect(progressOf(null).items).toEqual([])
     expect(progressOf(null).updated_at).toBeNull()
-  })
-
-  it('draws the room document only when the scene wrote one', () => {
-    expect(docBlock('')).toBeNull()
-    expect(docBlock('# 实况文档')?.kind).toBe('doc')
   })
 
   it('answers the preview with the file the scene put on show', () => {

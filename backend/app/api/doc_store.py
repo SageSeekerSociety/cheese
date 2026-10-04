@@ -22,6 +22,7 @@ from app.domain.agent.chat import ChatService
 from app.domain.block.documents import DocumentWriter, persisted_notice
 from app.domain.block.models import Block
 from app.domain.block.schemas import BlockOut
+from app.domain.living_doc import collab
 from app.domain.living_doc.models import Document
 from app.domain.living_doc.schemas import document_snapshot
 from app.domain.living_doc.services import DocumentJournal
@@ -131,7 +132,13 @@ async def store(
 
 
 async def announce(doc: Document, stored: Stored, chat: ChatService) -> None:
-    """After the commit: tell the room what the store changed."""
+    """After the commit: tell the document's open editors what the store
+    changed, and, for a room's document, the room."""
+    if stored.changed:
+        # The editors already hold the text; what refreshes on this frame is
+        # everything derived from the stored version: comment anchors, the
+        # last edit, the history.
+        await collab.tell(doc.id, {"type": "state", "resource": "doc"})
     room_id = doc.room_id
     if room_id is None:
         return
@@ -148,8 +155,6 @@ async def announce(doc: Document, stored: Stored, chat: ChatService) -> None:
         if line := persisted_notice(stored.notice):
             await chat.notify_running_turn(room_id, line, blocks=[stored.notice.id])
     if stored.changed:
-        # The editors already hold the text; what refreshes on this frame is
-        # everything derived from the stored version — comment anchors and the
-        # overview.
+        # The room's overview shows what the document says.
         await broker.publish(str(room_id), {"type": "state", "resource": "doc"})
         naming.nudge(room_id, "signal")

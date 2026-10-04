@@ -49,6 +49,11 @@ const getPreview = vi.fn()
 const getTopicWorkSummary = vi.fn()
 const addComment = vi.fn()
 
+vi.mock('../../api/docCollab', async () => ({
+  ...(await vi.importActual<typeof import('../../api/docCollab')>('../../api/docCollab')),
+  // 测试里房间的文档就用房间的 id 来认：fakeDocCollab 按它预置文档。
+  getRoomDocument: async (topicId: string) => ({ id: topicId }),
+}))
 vi.mock('../../composables/useDocCollab', async () => ({
   useDocCollab: (await import('../../test/fakeDocCollab')).useFakeDocCollab,
 }))

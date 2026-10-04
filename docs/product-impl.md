@@ -39,7 +39,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 | `reply_to` | 对话树 | 群聊回复线程 |
 | `refs[]` | 引用 | 决策/结论指回来源（如 `return_conclusion` 写 `refs=[sub_id]`） |
 | `upgraded_to_topic_id` | 活引用 | 升级过的块指向其新话题 |
-| `kind` | 块类型 | `message`/`comment`/`decision`/`event`/`attachment`/`artifact`/`weekly` 等 |
+| `kind` | 块类型 | `message`/`decision`/`event`/`attachment`/`artifact`/`weekly` 等（文档上的评论在 `document_comments`，不是块） |
 | `author_type` | 作者 | `participant`（人和 agent 都是参与者）/ `platform`（平台自己）。「是人还是芝士」看 `author` 这条 handle |
 
 这些字段经 `BlockOut`（Batch A）全部暴露给前端。
@@ -122,8 +122,8 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 ### 3.4 实况文档（改文档即指令）  ✅ / 🟡
 
 - **行为**：右栏是芝士维护的 markdown 实况文档（状态，不是流水账）；用户可直接编辑，**改了等于给芝士下指令**——正在跑的那一轮当场收到「第几版 + 一句改了哪」的通知，不在跑就由下一轮开头读到最新文档。
-- **实现**：文档是协同服务（`frontend/collab/`，Hocuspocus）里的一份 Yjs 文档，几个人同时编辑、看得到彼此的光标；协同服务停手几秒后把它存回后端，那一次存回才记一版（`api/doc_store.py`）。doc 块 `kind=doc` 里的 Markdown 是从它导出的。归档话题文档只读。细节见 `docs/docs-canonical-data-map.md`。
-- **编辑器以外的写入都经过协同服务**：`PUT /api/topics/{id}/doc` 带 `expected_version`（读到的那一版，0 = 还没有文档），协同服务只在实时文档还是那一版时应用，否则 409。芝士侧 `cheese_doc_get` 记住它给出的版本、`cheese_doc_set` 按那一版写——版本是读过的证据，没有让它自己声明的口子。
+- **实现**：文档是协同服务（`frontend/collab/`，Hocuspocus）里的一份 Yjs 文档，几个人同时编辑、看得到彼此的光标；协同服务停手几秒后把它存回后端，那一次存回才记一版（`api/doc_store.py`），`documents.content` 里的 Markdown 是从它导出的。归档话题文档只读。细节见 `docs/docs-canonical-data-map.md`。
+- **编辑器以外的写入都经过协同服务**：`PUT /api/documents/{文档}` 带 `expected_version`（读到的那一版，0 = 还没有文档），协同服务只在实时文档还是那一版时应用，否则 409。芝士侧 `cheese_doc_get` 记住它给出的版本、`cheese_doc_set` 按那一版写——版本是读过的证据，没有让它自己声明的口子。
 - 🟡 未做：编辑文档后对话流出现「编辑了文档」系统事件（存回时已写 event 块，但前端对话流过滤了 ai-event；human/system event 会显示）。
 
 ### 3.5 验收 / 采纳（状态机）  ✅

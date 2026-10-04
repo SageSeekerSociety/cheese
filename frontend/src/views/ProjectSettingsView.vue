@@ -179,6 +179,13 @@ function close() {
     :back-label="t('work.projectSettings.back')"
     @close="close"
   >
+    <!-- Deliberately not an AppPage: this is a settings overlay
+         (components/common/SettingsOverlay, meta.settingsOverlay) — it brings
+         its own 264px index and a 720px centred content column, the same frame
+         the personal and space settings share, and the page name is written in
+         that content, so there is no AppPage header to add
+         (docs/design-system.md §3.5). -->
+
     <template #head>
       <div class="whose">
         <UserAvatar :name="projectName" size="32" kind="org" />

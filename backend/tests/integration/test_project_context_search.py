@@ -13,6 +13,7 @@ from app.domain.project.models import ProjectArtifact
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.repositories import TopicRepository
 from tests.integration.conftest import post_project, session_auth_headers
+from tests.support.living_doc import document_of
 
 OWNER = "user-1"
 
@@ -336,7 +337,13 @@ def test_one_page_can_hold_several_kinds(client):
     project = _project(client)
     room = _room(client, project, "文档")
     _seed(client, _paragraph(project, room, "接口约定写在这里"))
-    _seed(client, _say(project, room, "接口约定第二段要改", kind=BlockKind.comment))
+    owner = session_auth_headers(OWNER)
+    commented = client.post(
+        f"/documents/{document_of(client, room, headers=owner)}/comments",
+        json={"content": "接口约定第二段要改", "quote": "接口约定"},
+        headers=owner,
+    )
+    assert commented.status_code == 200, commented.text
     _seed(client, _say(project, room, "接口约定聊过了"))
 
     r = client.get(
