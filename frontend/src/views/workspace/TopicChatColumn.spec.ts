@@ -82,14 +82,20 @@ beforeEach(() => {
 const settle = () => new Promise((r) => setTimeout(r, 0))
 
 describe('对话栏的接线', () => {
-  it('连接建立后刷新文档，补上离线时错过的保存通知', async () => {
+  it('首次连上不重读文档；房间推来 state/doc 帧才刷新', async () => {
     history = []
     const { emitted } = render(Column, {
       props: { topic, members: [], topicList: [] },
       global: { plugins: [vuetify, createPinia(), i18n], stubs: stubbedChildren },
     })
     await settle()
+    // 首次连接：文档那一格正拿新的一份在载入，不该再触发一次重读（每次切话题
+    // 会白多 /docs + /doc/history 两条）。重连才补离线时错过的保存，见
+    // ChatPanel.reconnect.spec.ts。
     sockets.at(-1)?.onopen?.()
+    expect(emitted()['state-changed'] ?? []).not.toContainEqual(['doc'])
+    // 房间落下一帧 state/doc（文档真被存回了）：转上去，让文档那一格刷新。
+    sockets.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'state', resource: 'doc' }) })
     expect(emitted()['state-changed']).toContainEqual(['doc'])
   })
 
