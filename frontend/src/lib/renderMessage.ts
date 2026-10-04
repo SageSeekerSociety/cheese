@@ -1,93 +1,38 @@
 // Message rendering, extracted from ChatPanel so it's unit-testable.
 //
 // References are encoded tokens (not guessed-from-prose): `<@handle>` for a
-// teammate, `<#topicId>` for a topic/its doc. Both 芝士 and the composer emit
-// them; we render each as a clickable chip showing the name/title. The
-// handle→name and id→title maps are provided by the caller (roster / topics).
+// teammate, `<#topicId>` for a topic/its doc, `<&path>` for a file. Both 芝士
+// and the composer emit them; each renders as a clickable chip (lib/refChip.ts).
+// 芝士's Markdown is drawn by the reader (components/common/MarkdownView.vue);
+// what is here is the rest: a person's own words, and the text put back into
+// the box when they edit a message.
 import type { Block } from '../cx_types'
-
-import { t } from '../i18n'
+import type { RefNames } from './refChip'
 
 import { isAgentBlock } from './authorship'
-import { markdown, sanitizeRendered } from './markdown'
-import { userRefHtml } from './userRef'
-
-export interface RefMaps {
-  mentionNames: Record<string, string>
-  topicTitles: Record<string, string>
-}
-
-export function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-}
-
-function tokenChip(kind: string, id: string, maps: RefMaps): string {
-  if (kind === '@') {
-    return userRefHtml(id, maps.mentionNames[id] || id)
-  }
-  if (kind === '&') {
-    // 文件引用: <&backend/app/main.py> → 一枚文件图标 + main.py 的 chip，点开文件。
-    // 图标走 @mdi/font 的字体类（全局 CSS）而不是 emoji：emoji 在各系统上是彩色
-    // 位图，字号、基线、颜色都不跟着正文走，混在一行字里很脏。
-    const base = id.split('/').pop() || id
-    return `<span class="mention file-ref" data-file="${escapeHtml(id)}" title="${escapeHtml(id)}"><i class="mdi mdi-file-document-outline file-ref__icon" aria-hidden="true"></i>${escapeHtml(base)}</span>`
-  }
-  const title = maps.topicTitles[id] || t('work.room.chat.topicFallback')
-  return `<span class="mention topic-ref" data-topic="${id}">#${escapeHtml(title)}</span>`
-}
-
-// Expand reference tokens to chip spans AFTER escaping/markdown: marked (and our
-// escape) turn "<@h>" into "&lt;@h&gt;", so we match that escaped form and swap in
-// the chip HTML — injecting raw <span> *before* marked would get re-escaped.
-//
-// 文件引用允许带行号：`<&path/to/x.ts:176-196>`。这是我们自己的工具链里到处在用
-// 的写法，而一个没被认出来的 token 不会安静地失败——它原样躺在正文里，把「点开
-// 那段代码」变成「读一串尖括号」。行号那一段是显式的 `:数字[-数字]`，不是往路径
-// 字符集里塞一个冒号：后者会把 `见 <&a.ts>:` 这种句子里的标点也吞进路径。
-// 资料库保留上传原名，重名时追加 (n)：括号也是文件路径的一部分。
-const ESCAPED_TOKEN = /&lt;([@#])([\w-]+)&gt;|&lt;(&amp;|&)([\w./\u4e00-\u9fff()-]+(?::\d+(?:-\d+)?)?)&gt;/g
-
-export function highlightTokens(html: string, maps: RefMaps): string {
-  return html.replace(ESCAPED_TOKEN, (_m, k, id, _fk, fid) =>
-    fid ? tokenChip('&', fid, maps) : tokenChip(k, id, maps)
-  )
-}
-
-// 同样的 token，读成一行纯文本里的字：@名字、#话题名、文件名。引用条和回复标签
-// 只有一行字、没有 chip，漏掉这一步，读者看到的就是 `<@cheese-3fa2>`。
-const RAW_TOKEN = /<([@#])([\w-]+)>|<&([\w./\u4e00-\u9fff()-]+(?::\d+(?:-\d+)?)?)>/g
-
-export function plainTokens(text: string, maps: RefMaps): string {
-  return text.replace(RAW_TOKEN, (_m, k, id, fid) => {
-    if (fid) return fid.split('/').pop() || fid
-    if (k === '@') return `@${maps.mentionNames[id] || id}`
-    return `#${maps.topicTitles[id] || t('work.room.chat.topicFallback')}`
-  })
-}
+import { refChip, refTokens } from './refChip'
 
 // 改一条自己发过的消息时，输入框里放的字：点过名的人写回「@名字」，和当初在输入框
 // 里打的一样，保存时后端再把名字认回 token。话题和文件引用原样留着 —— 写成标题或
 // 文件名的话，保存时就认不回原来那一个了。
 const MENTION_TOKEN = /<@([\w-]+)>/g
 
-export function editableText(text: string, maps: RefMaps): string {
+export function editableText(text: string, maps: RefNames): string {
   return text.replace(MENTION_TOKEN, (_m, handle) => `@${maps.mentionNames[handle] || handle}`)
 }
 
-// 芝士's markdown replies → safe HTML (spec §3: AI 必须说人话, 可读).
-// breaks:true — this is chat: a single newline the author typed IS a line
-// break; strict-markdown paragraph rules would silently swallow it.
-export function renderMarkdown(text: string, maps: RefMaps): string {
-  return sanitizeRendered(
-    highlightTokens(markdown.parse(text, { async: false, gfm: true, breaks: true }) as string, maps)
-  )
-}
-
-// Plain (non-markdown) human text → escape, expand reference tokens, keep
-// newlines. The newlines survive here as literal \n; the host element must
-// render with `white-space: pre-wrap` or the browser collapses them.
-export function renderPlain(text: string, maps: RefMaps): string {
-  return sanitizeRendered(highlightTokens(escapeHtml(text), maps))
+// A person's words: as typed, with each reference token drawn as its chip.
+// The newlines survive as literal \n; the host element must render with
+// `white-space: pre-wrap` or the browser collapses them.
+export function renderPlain(text: string, maps: RefNames): string {
+  const box = document.createElement('span')
+  let at = 0
+  for (const ref of refTokens(text)) {
+    box.append(text.slice(at, ref.index), refChip(ref.kind, ref.id, maps))
+    at = ref.index + ref.length
+  }
+  box.append(text.slice(at))
+  return box.innerHTML
 }
 
 interface FenceState {
