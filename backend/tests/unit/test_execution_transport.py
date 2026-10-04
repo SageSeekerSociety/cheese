@@ -1506,14 +1506,14 @@ def test_a_lease_request_that_times_out_is_still_a_machine_being_prepared(
     client = executor_transport.RemoteClient(
         {
             "kind": "deferred",
-            "workspace": "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/701a90a8-997c-47d6-baa4-9125c99f1b25/room",
+            "workspace": "/unavailable-project",
             "lease_path": "/lease",
         }
     )
     request = {
         "id": "write-after-a-timed-out-lease",
         "tool": "Bash",
-        "args": {"command": "printf remote > /home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/701a90a8-997c-47d6-baa4-9125c99f1b25/room/output.txt"},
+        "args": {"command": "printf remote > /unavailable-project/output.txt"},
     }
     try:
         result = client.call("invoke", request, abandoned=lambda: False)
