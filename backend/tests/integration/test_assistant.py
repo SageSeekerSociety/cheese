@@ -25,6 +25,7 @@ import time
 import uuid
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from redis.asyncio import from_url
@@ -90,9 +91,12 @@ class Gateway:
                         ]
                     }
                     self._json(body)
-                elif self.path.startswith("/spend/logs"):
-                    hashed = self.path.split("api_key=")[1].split("&")[0]
-                    self._json([row for row in outer.spend if row["key"] == hashed])
+                elif self.path.startswith("/spend/logs/v2"):
+                    query = parse_qs(urlsplit(self.path).query)
+                    rows = [r for r in outer.spend if r["key"] == query["api_key"][0]]
+                    size = int(query["page_size"][0])
+                    start = (int(query["page"][0]) - 1) * size
+                    self._json({"data": rows[start : start + size]})
                 else:
                     self._json({}, 404)
 

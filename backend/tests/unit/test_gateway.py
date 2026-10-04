@@ -30,30 +30,32 @@ async def test_mint_set_budget_and_daily_spend_roundtrip():
         if request.url.path == "/key/update":
             assert json.loads(request.content)["max_budget"] == 1.5
             return httpx.Response(200, json={})
-        if request.url.path == "/spend/logs":
+        if request.url.path == "/spend/logs/v2":
             import hashlib
 
             expected = hashlib.sha256(b"sk-virtual").hexdigest()
             assert request.url.params["api_key"] == expected
             return httpx.Response(
                 200,
-                json=[
-                    {
-                        "model": "mimo-v2.6-pro",
-                        "prompt_tokens": 10,
-                        "completion_tokens": 2,
-                        "spend": 0.001,
-                    },
-                    {
-                        "model": "claude-sonnet-5",
-                        "prompt_tokens": 5,
-                        "completion_tokens": 1,
-                        "spend": 0.0005,
-                    },
-                    # no model field → counted under the empty name
-                    {"prompt_tokens": 3, "completion_tokens": 0, "spend": 0.0},
-                    "not-a-dict",  # tolerated
-                ],
+                json={
+                    "data": [
+                        {
+                            "model": "mimo-v2.6-pro",
+                            "prompt_tokens": 10,
+                            "completion_tokens": 2,
+                            "spend": 0.001,
+                        },
+                        {
+                            "model": "claude-sonnet-5",
+                            "prompt_tokens": 5,
+                            "completion_tokens": 1,
+                            "spend": 0.0005,
+                        },
+                        # no model field → counted under the empty name
+                        {"prompt_tokens": 3, "completion_tokens": 0, "spend": 0.0},
+                        "not-a-dict",  # tolerated
+                    ]
+                },
             )
         return httpx.Response(404)
 
@@ -81,9 +83,44 @@ async def test_mint_set_budget_and_daily_spend_roundtrip():
     assert [p for _m, p in calls] == [
         "/key/generate",
         "/key/update",
-        "/spend/logs",
-        "/spend/logs",
+        "/spend/logs/v2",
+        "/spend/logs/v2",
     ]
+
+
+@pytest.mark.anyio
+async def test_a_day_longer_than_one_page_is_summed_whole():
+    """A busy key logs more rows in a day than one page holds. Every page is
+    read, and a row that two pages both return (a row logged mid-read shifts
+    the rest) counts once."""
+    rows = [
+        {
+            "request_id": f"r{i}",
+            "model": "glm-5.2",
+            "prompt_tokens": 1,
+            "completion_tokens": 1,
+            "spend": 0.001,
+        }
+        for i in range(2500)
+    ]
+
+    # Page two starts one row early, as if a row had been inserted before it
+    # between the two reads: r999 comes back again and everything after it
+    # moves one place along.
+    pages = {1: rows[:1000], 2: rows[999:1999], 3: rows[1999:]}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/spend/logs/v2"
+        assert request.url.params["page_size"] == "1000"
+        return httpx.Response(
+            200, json={"data": pages[int(request.url.params["page"])]}
+        )
+
+    g = gw.LlmGateway("http://gw", "mk", transport=_transport(handler))
+    by = await g.daily_spend_by_model("sk-virtual", gw.utc_today())
+
+    assert by["glm-5.2"].prompt_tokens == 2500
+    assert by["glm-5.2"].spend_usd == pytest.approx(2.5)
 
 
 @pytest.mark.anyio
@@ -109,14 +146,16 @@ async def test_failed_read_cannot_reset_checkpoint_and_rebill_prior_spend():
             return httpx.Response(500, text="temporary gateway failure")
         return httpx.Response(
             200,
-            json=[
-                {
-                    "model": "mimo-v2.6-pro",
-                    "prompt_tokens": 150,
-                    "completion_tokens": 30,
-                    "spend": 0.015,
-                }
-            ],
+            json={
+                "data": [
+                    {
+                        "model": "mimo-v2.6-pro",
+                        "prompt_tokens": 150,
+                        "completion_tokens": 30,
+                        "spend": 0.015,
+                    }
+                ]
+            },
         )
 
     gateway = gw.LlmGateway("http://gw", "mk", transport=_transport(handler))
