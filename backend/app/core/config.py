@@ -664,6 +664,20 @@ class Settings(BaseSettings):
     microcloud_direct_control: bool = False
     microcloud_warm_max_age_seconds: int = Field(default=3600, ge=300, le=86400)
     microcloud_login_user: str = "cheese"
+    # What one session's sandbox on a Cloud machine may use
+    # (`remote_execution/sandbox_host.py`), whatever else shares the machine.
+    # Memory: 3 GiB of the default 4 GiB machine. Sessions in this repository's
+    # own earlier sandboxes had `pnpm run build` and `vue-tsc` OOM-killed at
+    # 2 GiB (docs/topics), and the limit is there so that a session over it is
+    # killed alone, not to share the machine out evenly. No swap, so a session
+    # at its limit is killed instead of pushing the machine into swap. CPU:
+    # the default machine's two cores, a ceiling that only binds on larger
+    # machines; below it sessions share by equal weight. Processes: stops a
+    # fork bomb, well above the threads a Node or JVM build starts.
+    cloud_sandbox_memory_mb: int = Field(default=3072, ge=64)
+    cloud_sandbox_swap_mb: int = Field(default=0, ge=0)
+    cloud_sandbox_cpus: int = Field(default=2, ge=1, le=1024)
+    cloud_sandbox_pids: int = Field(default=4096, ge=16)
     # An operator's SSH public key, authorised on every machine the platform
     # opens, next to the one-shot bootstrap key. That key is erased the moment
     # enrollment succeeds, so without this nobody can read a Cloud machine's

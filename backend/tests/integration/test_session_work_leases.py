@@ -18,7 +18,7 @@ from app.domain.agent import execution
 from app.domain.agent.device_hub import DeviceOffline
 from app.domain.agent.dispatch_log import DispatchRow
 from app.domain.agent_session.services import AgentSessionService
-from app.domain.device.supply import Supply, Visibility
+from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
 from app.domain.machine import session_work as work_lease
@@ -68,7 +68,6 @@ async def test_every_session_in_a_room_acquires_the_rooms_device(
                 code,
                 owner_user_id=owner.id,
                 supply=Supply.self_hosted,
-                visibility=Visibility.host,
             )
             await devices.assign_to_project(
                 device.device_id, project_id, actor_user_id=owner.id
@@ -540,7 +539,6 @@ async def test_lazy_executor_lifecycle_keeps_the_same_allocation(
                 code,
                 owner_user_id=owner.id,
                 supply=Supply.self_hosted,
-                visibility=Visibility.host,
             )
             await devices.assign_to_project(
                 device.device_id, project_id, actor_user_id=owner.id
@@ -879,7 +877,6 @@ async def test_the_rooms_agent_may_choose_cloud(client, monkeypatch):
             code,
             owner_user_id=actor_id,
             supply=Supply.self_hosted,
-            visibility=Visibility.host,
         )
         await devices.assign_to_project(
             device.device_id,
@@ -956,7 +953,6 @@ async def test_each_dialer_gets_its_configured_base_not_the_request_host(
             await devices.start("worker"),
             owner_user_id=owner.id,
             supply=Supply.self_hosted,
-            visibility=Visibility.host,
         )
         await devices.assign_to_project(
             device.device_id, project_id, actor_user_id=owner.id
@@ -1055,7 +1051,6 @@ async def test_calls_on_held_hands_are_answered_while_they_are_rechecked(
             await devices.start("ada"),
             owner_user_id=owner.id,
             supply=Supply.self_hosted,
-            visibility=Visibility.host,
         )
         await devices.assign_to_project(
             device.device_id, project_id, actor_user_id=owner.id
@@ -1164,7 +1159,6 @@ async def test_an_own_machine_that_just_dropped_is_called_not_refused(
             await devices.start("laptop"),
             owner_user_id=owner.id,
             supply=Supply.self_hosted,
-            visibility=Visibility.host,
         )
         await devices.assign_to_project(
             device.device_id, project_id, actor_user_id=owner.id

@@ -1,3 +1,4 @@
+/// <reference types="node" />
 import { createHash, webcrypto } from 'node:crypto'
 
 import type { FileContent } from '../../cx_types'

@@ -13,7 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.core.errors import ValidationError
-from app.domain.device.supply import Supply, Visibility
+from app.domain.device.supply import Supply
 from app.domain.machine import enrollment
 from app.domain.machine.models import MAX_ENROLL_ATTEMPTS, AiStatus, MachineStatus
 
@@ -26,24 +26,21 @@ class FakeDevices:
         self.team_assigned: list[tuple[str, int]] = []
         self.started: list[str] = []
         self.approved_supply: list[Supply] = []
-        self.approved_visibility: list[Visibility] = []
 
     async def start(self, name):
         self.started.append(name)
         return "code-1"
 
-    async def approve(self, code, *, owner_user_id, supply, visibility, name=None):
-        # `supply`/`visibility` are required on the real service (#282 决定 2 /
+    async def approve(self, code, *, owner_user_id, supply, name=None):
+        # `supply` is required on the real service (#282 决定 2 /
         # #358) — mirrored here so this double cannot go on accepting a call the
         # production one rejects.
         self.approved_supply.append(supply)
-        self.approved_visibility.append(visibility)
         return SimpleNamespace(
             device_id="dev123",
             token="SECRET-TOKEN",
             owner_user_id=owner_user_id,
             supply=supply,
-            visibility=visibility,
         )
 
     async def assign_to_project(self, device_id, project_id, *, actor_user_id):
@@ -183,14 +180,12 @@ async def test_the_credential_is_committed_before_the_machine_is_told_to_dial(
 async def test_a_machine_the_platform_opened_is_enrolled_as_cloud_supply(monkeypatch):
     """入口决定待遇 (#282 决定 2): this door is the platform asking MicroCloud for a
     machine, so what it enrols is disposable (`cloud`), never derived from the
-    machine; the connector door writes `self_hosted` for the very same hardware.
-    Its sessions each run in a sandbox of their own (#2320), so it is `isolated`."""
+    machine; the connector door writes `self_hosted` for the very same hardware."""
     service, _ = build_service(monkeypatch)
 
     await service.enroll(make_machine())
 
     assert service._devices.approved_supply == [Supply.cloud]
-    assert service._devices.approved_visibility == [Visibility.isolated]
 
 
 async def test_team_machine_enrolls_into_the_team_pool(monkeypatch):

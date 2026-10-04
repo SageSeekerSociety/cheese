@@ -1,3 +1,6 @@
+// 渲染 KaTeX 需要的样式跟着渲染代码走，不再由首屏全局带上。
+import 'katex/dist/katex.min.css'
+
 import edjsParser from 'editorjs-parser'
 import katex from 'katex'
 import Prism from 'prismjs'

@@ -1053,7 +1053,8 @@
       "typingOne": "{name} is typing…",
       "typingTwo": "{first} and {second} are typing…",
       "typingMany": "Several people are typing…",
-      "separator": " · "
+      "separator": " · ",
+      "stalled": "No new output for {span}"
     },
     "docEdit": {
       "failed": "Edit failed: {reason}",

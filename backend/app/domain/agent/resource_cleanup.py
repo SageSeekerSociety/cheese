@@ -43,6 +43,9 @@ CHECKOUT_DIR = "room"
 # installation, and not git's config, hooks and attributes in its checkouts,
 # which name programs git runs.
 SANDBOXES = "sandboxes"
+# What gives a sandboxed room its network and limits, and takes them down — a
+# copy of `bootstrap.SANDBOX_HOST`, held to it by test_footprint_root.py.
+SANDBOX_HOST = "/usr/local/libexec/cheese-sandbox"
 
 # Where an archived room's session transcripts wait under FOOTPRINT_ROOT until
 # the cleanup that retained them deletes them (topic/retire.py sets how long).
@@ -463,7 +466,12 @@ def remove_tree(path: Path) -> None:
 
 def request_exit(home: Path, work: Path, lock_fd: int) -> None:
     marker = home / ".cheese/environment-session.json"
-    if not marker.exists():
+    # A sandboxed room has no terminal of the platform's on this machine, and
+    # wrote this marker itself if it is there: it would name a terminal server
+    # the room started, whose pane pids are numbered in the room's own pid
+    # namespace and name other processes out here. Its processes end with its
+    # sandbox (`stop_executor`).
+    if sandbox_release(home) is not None or not marker.exists():
         return
     socket, name, *_ = json.loads(marker.read_text())
     # cksum consumes stdin below; do not trust a session name from an arbitrary file.
@@ -721,10 +729,48 @@ def stop_windows_helper(home: Path, pid: int, expected: str) -> None:
     raise RuntimeError(Path(expected).stem + " helper has not stopped")
 
 
+def stop_sandboxed_executor(home: Path) -> None:
+    """Ask a sandboxed room's executor to stop, reached through its state
+    directory opened without following a link (`bootstrap.executor_state`):
+    the room writes its home, and a state that is a link to another room's
+    would have this stop that room's executor. A room whose state is not a
+    plain directory gets no request; its sandbox is taken down regardless."""
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    try:
+        descriptor = os.open(home, flags)
+    except OSError:
+        return
+    for part in (FOOTPRINT_ROOT, "executor"):
+        try:
+            following = os.open(part, flags, dir_fd=descriptor)
+        except OSError:
+            # Held open, the room's own home would keep its teardown waiting.
+            os.close(descriptor)
+            return
+        os.close(descriptor)
+        descriptor = following
+    try:
+        state = Path(f"/proc/self/fd/{descriptor}")
+        runtime = platform_program(home, "remote-execution/runtime.py")
+        helper = runpy.run_path(str(runtime))
+        if Path(helper["socket_path"](state)).exists():
+            # Whatever it answers, the sandbox goes next and everything in it.
+            run_command(
+                [sys.executable, str(runtime), "stop", "--state", str(state)],
+                pass_fds=(descriptor,),
+            )
+    finally:
+        os.close(descriptor)
+
+
 def stop_executor(home: Path, resource: str) -> None:
+    sandboxed = sandbox_release(home) is not None
     installed = platform_dir(home)
     marker = installed / "execution-owner.json"
-    if marker.exists():
+    if sandboxed:
+        # The room wrote the marker and the state, so neither decides anything.
+        stop_sandboxed_executor(home)
+    elif marker.exists():
         if json.loads(marker.read_text())["resource"] != str(uuid.UUID(resource)):
             raise RuntimeError("execution marker names another resource generation")
         runtime = platform_program(home, "remote-execution/runtime.py")
@@ -738,6 +784,17 @@ def stop_executor(home: Path, resource: str) -> None:
                 raise RuntimeError("executor has not stopped: " + result.stderr)
             if sys.platform == "win32":
                 wait_for_launcher(home, state)
+    if sandboxed:
+        # Everything the room started is in its sandbox, the preview and
+        # tunnel helpers too, and goes with it; the pid files below are the
+        # room's to write and number processes in its own namespace. A machine
+        # without the helper never gave a sandbox a network or a cgroup, and
+        # its sandboxes end with their executor.
+        if Path(SANDBOX_HOST).exists():
+            result = run_command(["sudo", "-n", SANDBOX_HOST, "down", home.name])
+            if result.returncode:
+                raise RuntimeError("sandbox has not stopped: " + result.stderr)
+        return
     # Both helpers can outlive the agent, including launches without an executor.
     for name in ("cheese-preview", "cheese-tunnel"):
         marker = home / ".cheese" / (name + ".pid")

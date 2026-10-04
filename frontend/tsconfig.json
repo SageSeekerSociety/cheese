@@ -14,6 +14,7 @@
     "lib": [
       "ESNext",
       "DOM",
+      "DOM.Iterable",
       "esnext.asynciterable"
     ],
     "skipLibCheck": true,

@@ -5,13 +5,11 @@
  */
 
 import 'editorjs-latex/dist/editorjs-latex.bundle.css'
-import 'katex/dist/katex.min.css'
 import '@/styles/content.scss'
 import '@/styles/fonts.css'
 import '@/styles/docBlocks.css'
 
 import 'dayjs/locale/zh-cn'
-import 'wc-waterfall'
 
 import dayjs from 'dayjs'
 import duration from 'dayjs/plugin/duration'
@@ -33,12 +31,6 @@ dayjs.extend(relativeTime)
 import './style.css'
 
 import { createApp, watch } from 'vue'
-import i18next from 'i18next'
-import { z } from 'zod'
-import { zodI18nMap } from 'zod-i18n-map'
-import englishTranslation from 'zod-i18n-map/locales/en/zod.json'
-// Import your language translation files
-import translation from 'zod-i18n-map/locales/zh-CN/zod.json'
 
 import App from './App.vue'
 import { installErrorReporter } from './errorReporter'
@@ -69,21 +61,9 @@ watchForStaleBuild()
 // agents (who can't read a user's console) can debug them. See errorReporter.ts.
 installErrorReporter(app)
 
-i18next.init({
-  lng: i18n.global.locale.value,
-  resources: {
-    'zh-CN': {
-      zod: translation,
-    },
-    en: { zod: englishTranslation },
-  },
-})
-z.setErrorMap(zodI18nMap)
-
 watch(
   i18n.global.locale,
   (locale) => {
-    void i18next.changeLanguage(locale)
     dayjs.locale(locale === 'en' ? 'en' : 'zh-cn')
     vuetify.locale.current.value = locale === 'en' ? 'en' : 'zhHans'
   },

@@ -19,7 +19,7 @@ from app.domain.agent.platform_failures import (
 from app.domain.device.health import DEFAULT_QUARANTINE
 from app.domain.device.memory_repository import InMemoryDeviceRepository
 from app.domain.device.service import DeviceService
-from app.domain.device.supply import Supply, Visibility
+from app.domain.device.supply import Supply
 
 OWNER = 1
 T0 = datetime(2026, 8, 12, 9, 0, tzinfo=UTC)
@@ -46,15 +46,13 @@ async def _device_on_project(
     service: DeviceService, project_id: uuid.UUID, name: str
 ) -> str:
     code = await service.start(name)
-    # `supply`/`visibility` are required with no default (#282 决定 2 / #358): every
-    # enrolment site states its own answer. These tests enrol a self-hosted box and
-    # exercise health/quarantine, which read NEITHER field — both are stated, not
-    # asserted, so they take the conservative self-hosted defaults.
+    # `supply` is required with no default (#282 决定 2): every enrolment site
+    # states its own answer. Health/quarantine does not read it, so these tests
+    # enrol the conservative self-hosted box.
     device = await service.approve(
         code,
         owner_user_id=OWNER,
         supply=Supply.self_hosted,
-        visibility=Visibility.isolated,
     )
     await service.assign_to_project(device.device_id, project_id, actor_user_id=OWNER)
     return device.device_id

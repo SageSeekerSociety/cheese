@@ -28,6 +28,10 @@ RUNTIME = Path(runtime.__file__)
 
 
 def _bubblewrap_runs() -> bool:
+    # A sandbox's network and limits are set up as root (`sandbox_host.py`),
+    # which only a machine that opted in lets a test do: CI's runner.
+    if os.environ.get("CHEESE_TEST_SANDBOX_HOST") != "1":
+        return False
     if not sys.platform.startswith("linux") or shutil.which("bwrap") is None:
         return False
     probe = subprocess.run(
@@ -39,7 +43,8 @@ def _bubblewrap_runs() -> bool:
 
 
 sandboxed = pytest.mark.skipif(
-    not _bubblewrap_runs(), reason="needs bubblewrap with user namespaces (Linux)"
+    not _bubblewrap_runs(),
+    reason="needs bubblewrap, user namespaces and sudo (CHEESE_TEST_SANDBOX_HOST=1)",
 )
 
 

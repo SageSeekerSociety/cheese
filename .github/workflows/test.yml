@@ -238,8 +238,13 @@ jobs:
 
       - name: Ensure required test tools
         run: |
-          # bubblewrap: a Cloud session's executor runs in its sandbox.
-          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh bubblewrap lsof ripgrep tmux zsh
+          # bubblewrap: a Cloud session's executor runs in its sandbox, whose
+          # network the machine connects with iproute2 and iptables as root.
+          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh bubblewrap iproute2 iptables lsof ripgrep tmux zsh
+          # The hosted runner is a throwaway VM with passwordless sudo, so the
+          # tests that start a sandbox may change its iptables rules and
+          # cgroups the way a Cloud machine's are (tests/unit/test_sandbox_network.py).
+          echo "CHEESE_TEST_SANDBOX_HOST=1" >> "$GITHUB_ENV"
           # Tests that launch a room's session, or sandbox an executor, need
           # its namespace.
           "$GITHUB_WORKSPACE"/.github/scripts/allow-user-namespaces.sh

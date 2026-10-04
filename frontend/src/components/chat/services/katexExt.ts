@@ -1,3 +1,6 @@
+// 渲染 KaTeX 需要的样式跟着渲染代码走，不再由首屏全局带上。
+import 'katex/dist/katex.min.css'
+
 import katex, { type KatexOptions } from 'katex'
 import { MarkedExtension, TokenizerAndRendererExtension } from 'marked'
 
