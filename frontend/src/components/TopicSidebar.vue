@@ -477,6 +477,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
             :page="page === true"
             :unread-of="unreadOf"
             :muted-of="mutedOf"
+            :root-actions="rootTopic ? actionsFor(rootTopic).map(menuActionOf) : []"
             @select-topic="emit('select-topic', $event)"
             @hover-topic="emit('hover-topic', $event)"
             @press-topic="emit('press-topic', $event)"

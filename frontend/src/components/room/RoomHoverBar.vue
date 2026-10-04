@@ -34,6 +34,8 @@ const props = defineProps<{
   pickerOpen: boolean
   /** 这条是我自己发的消息：多一颗「编辑」。 */
   editable: boolean
+  /** 右键这一条时鼠标的位置：每次右键一个新对象，认到就在那一点打开 ⋯。 */
+  menuAt?: { x: number; y: number } | null
 }>()
 
 const emit = defineEmits<{
@@ -52,6 +54,19 @@ const copied = ref(false)
 const linkCopied = ref(false)
 const menuOpen = ref(false)
 const focusWithin = ref(false)
+// 右键打开时菜单弹在鼠标那一点；点 ⋯ 打开时挂在 ⋯ 下面。
+const menuPoint = ref<[number, number] | null>(null)
+watch(
+  () => props.menuAt,
+  (at) => {
+    if (!at) return
+    menuPoint.value = [at.x, at.y]
+    menuOpen.value = true
+  }
+)
+watch(menuOpen, (open) => {
+  if (!open) menuPoint.value = null
+})
 let copiedTimer: ReturnType<typeof setTimeout> | undefined
 let linkCopiedTimer: ReturnType<typeof setTimeout> | undefined
 let focusRecoveryFrame: number | undefined
@@ -253,7 +268,7 @@ function onFocusOut(event: FocusEvent) {
           <v-icon size="15">mdi-comment-arrow-right-outline</v-icon>
         </button>
       </div>
-      <AdaptiveMenu v-model="menuOpen" :actions="menuActions">
+      <AdaptiveMenu v-model="menuOpen" :actions="menuActions" :point="menuPoint">
         <template #activator="{ props: menu }">
           <button
             v-bind="menu"

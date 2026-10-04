@@ -17,11 +17,15 @@
 // 在预览那一格的底部，和预览抢高度；预览那一格现在只放预览。小标题那一行是折叠开
 // 关，摊开后列表有高度上限、自己滚，不把上面的文档挤没。
 import type { DocumentTemplate, RoomOutput } from '@/api'
+import type { MenuAction } from '@/components/common/menuAction'
 
 import { computed, ref, useId, watch } from 'vue'
 
+import { useRowMenu } from '@/composables/useRowMenu'
+
 import { listDocumentTemplates, listRoomOutputs, newFromTemplate, saveRoomOutputToLibrary } from '@/api'
 import BaseButton from '@/components/base/BaseButton.vue'
+import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
 
@@ -106,6 +110,28 @@ watch(
     void load()
   }
 )
+
+// 右键一个文件：打开它、存进资料库（已经存过的不再给），弹在鼠标那一点上。
+const rowMenu = useRowMenu<string>()
+function outputActions(output: RoomOutput): MenuAction[] {
+  const actions: MenuAction[] = [
+    {
+      key: 'open',
+      label: t('tasks.preview.roomOutputs.openFile', { path: name(output.path) }),
+      icon: 'mdi-file-eye-outline',
+      onSelect: () => emit('open', output.path),
+    },
+  ]
+  if (!saved.value[output.path])
+    actions.push({
+      key: 'save',
+      label: t('tasks.preview.roomOutputs.saveToLibrary'),
+      icon: 'mdi-folder-arrow-down-outline',
+      loading: saving.value === output.path,
+      onSelect: () => void save(output),
+    })
+  return actions
+}
 
 async function save(output: RoomOutput) {
   const topicId = props.topicId
@@ -240,7 +266,10 @@ defineExpose({ reload: load })
     </div>
     <p v-if="error" role="alert" class="outs__error t-meta">{{ error }}</p>
     <ul v-show="expanded" :id="rowsId" class="outs__list">
-      <li v-for="output in files" :key="output.path" class="outs-row">
+      <li v-for="output in files" :key="output.path" class="outs-row" @contextmenu="rowMenu.open(output.path, $event)">
+        <AdaptiveMenu v-bind="rowMenu.bind(output.path)" :actions="outputActions(output)" :title="name(output.path)">
+          <template #activator />
+        </AdaptiveMenu>
         <button
           type="button"
           class="outs-row__name t-body"

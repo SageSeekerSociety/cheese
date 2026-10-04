@@ -363,11 +363,11 @@ class TeamService:
         return team
 
     async def delete_team(
-        self, *, team_id: int, actor_user_id: int, has_projects: bool
+        self, *, team_id: int, actor_user_id: int, has_live_projects: bool
     ) -> None:
-        """``has_projects``: the team still owns projects. The caller reads it — a
-        project names its team, so asking from here would make the two domains
-        import each other."""
+        """``has_live_projects``: the team still owns projects that are not
+        archived. The caller reads it — a project names its team, so asking from
+        here would make the two domains import each other."""
         team = await self._get_team_or_error(team_id)
         actor_relation = await self._repo.get_member_relation(team_id, actor_user_id)
         if actor_relation is None or actor_relation.role != TeamMemberRole.OWNER:
@@ -375,8 +375,10 @@ class TeamService:
         if team.personal_owner_user_id is not None:
             # 个人团队承载着这个人的个人项目和工作电脑，它跟着账号走，不能解散。
             raise ForbiddenError(say("personalTeamCannotDisband"))
-        if has_projects:
-            # 项目归团队：团队没了，项目就挂在一个不存在的团队上，谁能进来再也说不清。
+        if has_live_projects:
+            # 还在用的项目要先归档：团队一解散，队友就进不来了，正在做的事不能这样
+            # 悄悄断掉。归档了的留着，项目所有者（和外部成员）照样读得到，取消归档
+            # 也还在他手上。
             raise ConflictError(say("teamHasProjects"))
 
         members = await self._repo.list_members_of_team(team_id)

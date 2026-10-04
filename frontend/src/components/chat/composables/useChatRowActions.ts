@@ -63,7 +63,15 @@ export function useChatRowActions(deps: ChatRowActionsDeps) {
   // 指针落在一条消息上就移过去；落在行与行之间的空隙里就留在原地（从一行滑到下一行
   // 的路上不该让它一闪一闪）；落在别的行上（事件、标记）或移出整列
   // 就收起。表情选择条开着的时候钉在那一行上，不跟指针走。
-  const bar = reactive({ id: null as string | null, shown: false, top: 0, jump: false })
+  // menuAt：右键一条消息时鼠标的位置。每次右键都是一个新对象，悬停条认到它就在那一点
+  // 打开这一条的 ⋯（见 room/RoomHoverBar）。
+  const bar = reactive({
+    id: null as string | null,
+    shown: false,
+    top: 0,
+    jump: false,
+    menuAt: null as { x: number; y: number } | null,
+  })
   const barBlock = computed(() => (bar.id ? timeline.find(bar.id) ?? null : null))
 
   function rowTop(row: HTMLElement): number | null {
@@ -272,6 +280,22 @@ export function useChatRowActions(deps: ChatRowActionsDeps) {
     keyboardInBar = false
     next.focus({ preventScroll: true })
   }
+
+  // 右键一条消息：弹它的 ⋯，和桌面上别处的行一样。正在选字、或者右键在链接、输入框上
+  // 时不拦——那时要的是浏览器那一份（复制、在新标签打开）。触屏上的同一组操作是长按。
+  function onRowContextMenu(e: MouseEvent) {
+    if (touchOnly.value) return
+    const target = e.target as HTMLElement | null
+    if (!target || target.closest('.hover-bar, a[href], input, textarea, [contenteditable="true"]')) return
+    if (window.getSelection()?.isCollapsed === false) return
+    const row = target.closest<HTMLElement>('[data-mid][data-actions]')
+    if (!row || row.dataset.mid === editingId.value) return
+    e.preventDefault()
+    showBarAt(row)
+    if (bar.id !== row.dataset.mid) return
+    bar.menuAt = { x: e.clientX, y: e.clientY }
+  }
+  useEventListener(scrollRef, 'contextmenu', onRowContextMenu)
 
   useEventListener(scrollRef, 'focusin', onRowFocus)
   useEventListener(scrollRef, 'focusout', onRowBlur)

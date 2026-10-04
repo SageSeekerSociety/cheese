@@ -35,7 +35,7 @@
     "transferTeamFailed": "转让团队失败",
     "disbandTeam": "解散团队",
     "disbandTeamTitle": "解散「{name}」？",
-    "disbandTeamBody": "解散后所有成员都会离开这个团队，无法撤销。团队里还有项目时不能解散。",
+    "disbandTeamBody": "解散后所有成员都会离开这个团队，无法撤销。团队里的项目要先全部归档；归档的项目解散后只有项目所有者和外部成员还看得到。",
     "disbandTeamDone": "已解散「{name}」",
     "disbandTeamFailed": "解散团队失败"
   }
