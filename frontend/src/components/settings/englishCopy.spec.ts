@@ -15,6 +15,17 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
+  return {
+    ...actual,
+    getProjectDefaultModel: vi.fn().mockResolvedValue({ choices: [{ id: 'm1', label: 'Model one' }] }),
+    archiveProject: vi.fn(),
+    setProjectOwner: vi.fn(),
+    listProjectMembers: vi.fn().mockResolvedValue({ data: [] }),
+    lookupUser: vi.fn().mockResolvedValue({ handle: 'bob', name: 'Bob', avatar_id: null }),
+    listTopics: vi.fn().mockResolvedValue({ data: [{ id: 'room-1', title: 'Report room', status: 'active' }] }),
+  }
+})
+vi.mock('@/api/projectSkills', () => {
   const skill = {
     project_id: 'p1',
     title: 'Weekly report',
@@ -27,17 +38,11 @@ vi.mock('@/api', async () => {
     confirmed_by: 'u1',
     confirmed_at: '2026-09-25T00:00:00Z',
     source_topic_id: 'room-1',
+    proposal: null,
     created_at: '2026-09-25T00:00:00Z',
     updated_at: '2026-09-25T00:00:00Z',
   }
   return {
-    ...actual,
-    getProjectDefaultModel: vi.fn().mockResolvedValue({ choices: [{ id: 'm1', label: 'Model one' }] }),
-    archiveProject: vi.fn(),
-    setProjectOwner: vi.fn(),
-    listProjectMembers: vi.fn().mockResolvedValue({ data: [] }),
-    lookupUser: vi.fn().mockResolvedValue({ handle: 'bob', name: 'Bob', avatar_id: null }),
-    listTopics: vi.fn().mockResolvedValue({ data: [{ id: 'room-1', title: 'Report room', status: 'active' }] }),
     listProjectSkills: vi.fn().mockResolvedValue({
       data: [
         { ...skill, id: 'draft-1', name: 'summary', state: 'draft', shipped_revision: 2 },
