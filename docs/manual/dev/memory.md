@@ -37,13 +37,13 @@ note: 右下角「幕后」是会话目录里的记忆文件树；上面那格�
 embed: memory
 steps:
   - label: 输入之前：铺好、注入索引
-    desc: 平台把库里这一份铺进会话目录，新会话的开场快照里带上 team/MEMORY.md 和本轮说话那个人的 private 索引。正文不注入，芝士要用时自己读。
+    desc: 平台把库里这一份铺进会话目录，新会话的开场快照里带上 project/MEMORY.md 和本轮说话那个人的 private 索引。正文不注入，芝士要用时自己读。
     link: /dev/memory#scopes
   - label: 被纠正
     desc: 纠正的是做法倾向才值得记；纠正的是某一次的结果，改完就结束。
     link: /dev/memory#write
   - label: 写之前先查重
-    desc: 表达习惯进说话人的 private，项目规矩才进 team。同一件事已有文件就改它，不新建副本。
+    desc: 表达习惯进说话人的 private，项目规矩才进 project。同一件事已有文件就改它，不新建副本。
     link: /dev/memory#write
   - label: 写一条：一个文件加索引一行
     desc: 新建一条记忆是新建一个文件、索引里加一行。索引一行不超过 150 字符，正文不超过 1000 字，超了存成 .rejected.md。
@@ -52,7 +52,7 @@ steps:
     desc: 会话改过的收回来写进库。两边都改了同一条时平台那一份赢，会话那一版存成旁路的 .conflict.md，并请它重读再写。
     link: /dev/memory#write
   - label: 房间里的那条事件
-    desc: 有改动就留一条折叠的灰字事件，不点任何人的名。team 的改动说进总览房间，private 的改动说进那个人的私聊。
+    desc: 有改动就留一条折叠的灰字事件，不点任何人的名。project 的改动说进总览房间，private 的改动说进那个人的私聊。
     link: /dev/memory#events
   - label: 下一次开场
     desc: 别人刚改的也在铺进来的那一份里。换一个人说话，注入的 private 索引跟着换成他的。
@@ -79,10 +79,10 @@ steps:
 
 | 作用域 | 前缀 | 是谁的 | 看得见的人 |
 |---|---|---|---|
-| team | `team/` | 这个项目所有人和所有芝士共看共写 | 项目成员 |
+| project | `project/` | 这个项目所有人和所有芝士共看共写 | 项目成员 |
 | private | `private/<handle>/` | **人 × 项目**：某一个人在这个项目里的那一份 | 本人 + 项目管理员 |
 
-注入的规矩：**`team/MEMORY.md` 加本轮说话那个人的 `private/<handle>/MEMORY.md`**，不是所有人的（`files_store.memory_index`，`speaker_handles` 里只进 `names_a_person()` 认的人）。项目里的人可以很多，索引是每一轮都要付的预算，付在一个没说话的人的偏好上是白付。
+注入的规矩：**`project/MEMORY.md` 加本轮说话那个人的 `private/<handle>/MEMORY.md`**，不是所有人的（`files_store.memory_index`，`speaker_handles` 里只进 `names_a_person()` 认的人）。项目里的人可以很多，索引是每一轮都要付的预算，付在一个没说话的人的偏好上是白付。
 
 这句话不是权限，是预算：`private` 的可见性是另一道闸，在 API 上（见下）。
 
@@ -96,7 +96,7 @@ steps:
 1. **输入之前**：把数据库这一份铺进会话目录。agent 一睁眼读到的就是平台现在这一份，别人刚改的也在里面。
 2. **这一轮结束之后**：会话改过的收回来，写进 `memory_files`，并在房间里留一条折叠事件（带 diff）。
 
-两次做的是同一件事，因为对账**幂等**：谁比谁新不靠调用点记，靠会话机上那份基线（`runner.MEMORY_BASELINE`，`$HOME/.cheese/memory/.baseline.json`）。**基线和这棵树同生同死**：它俩在一个目录里，会话的家被重建（`resource_cleanup` 会删掉它）时一起没了，于是「磁盘空、基线满」这个状态不会出现——真出现的话，读起来就是「这个会话把整棵树删光了」，而平台上那份团队记忆会被整批删掉、没有历史可以恢复。就算基线还在，也还有一道保险：一次对账里某个作用域要删的条数超过一半、而且超过 3 条时，取消这次删除、原样铺回平台的版本，并把拦下的路径写进 runner 日志（`tree.BULK_DELETE_RATIO` / `BULK_DELETE_MIN`，`TreeSync.held`）。批量删除是个信号，不是一步操作。
+两次做的是同一件事，因为对账**幂等**：谁比谁新不靠调用点记，靠会话机上那份基线（`runner.MEMORY_BASELINE`，`$HOME/.cheese/memory/.baseline.json`）。**基线和这棵树同生同死**：它俩在一个目录里，会话的家被重建（`resource_cleanup` 会删掉它）时一起没了，于是「磁盘空、基线满」这个状态不会出现——真出现的话，读起来就是「这个会话把整棵树删光了」，而平台上那份项目记忆会被整批删掉、没有历史可以恢复。就算基线还在，也还有一道保险：一次对账里某个作用域要删的条数超过一半、而且超过 3 条时，取消这次删除、原样铺回平台的版本，并把拦下的路径写进 runner 日志（`tree.BULK_DELETE_RATIO` / `BULK_DELETE_MIN`，`TreeSync.held`）。批量删除是个信号，不是一步操作。
 
 合成哪一份的规矩在 `tree.sync_tree`（纯函数，两侧跑的是同一段代码），一句话：**平台这一份赢冲突**。三种情形——会话没动过 → 用平台那一份；平台没动过 → 用会话那一份；两边都动了 → 平台赢，会话那一版**存成旁路文件**（`<名字>.conflict.md`，同一个目录，`runner._keep_refused`）并在房间里说一句「重读再写」。旁路文件不在树里、不进索引、也不会被同步回库（`read_memory` 只收过得去 `check_scoped_path` 的 `.md`，那个名字带点，过不去），它只是留给写的人重读自己那一版的东西。**删除只在自己点过名的作用域里认**：这一轮没轮到的 `private` 会被从会话目录里收走，那是「收走」，不是「删掉」。
 
@@ -133,7 +133,7 @@ limits: INDEX_MAX_LINES, INDEX_MAX_BYTES, INDEX_LINE_MAX, BODY_MAX
 
 | 操作 | 谁可以 |
 |---|---|
-| 读 / 写 / 删 `team` | 项目成员 |
+| 读 / 写 / 删 `project` | 项目成员 |
 | 读 `private/<handle>` | 本人；项目管理员也看得见（`MemberService.manages`） |
 | 写 / 删 `private/<handle>` | **只有本人**，管理员也不行 |
 
@@ -145,7 +145,7 @@ limits: INDEX_MAX_LINES, INDEX_MAX_BYTES, INDEX_LINE_MAX, BODY_MAX
 
 每次真的改了东西，说进那棵树自己的房间，**不点任何人的名**（`memory_changed`，`platform_notices.memory_changed_notice`）：
 
-- `team/` 的改动 → **项目总览房间**；
+- `project/` 的改动 → **项目总览房间**；
 - `private/<handle>/` 的改动 → **那个人的私聊**（没有就现开一间）。
 
 一条记忆是 agent 写下的一份观察，没有人欠它一个动作，所以它是一条灰字事件，事件本身收进 `meta.detail`（统一 diff，按路径分段、每段上限 200 行）。两棵树分开说，因为读它们的人不是一批：把某个人的 private diff 说进总览，等于把一个人的偏好广播给整个项目。
@@ -182,9 +182,9 @@ limits: INDEX_MAX_LINES, INDEX_MAX_BYTES, INDEX_LINE_MAX, BODY_MAX
 - **这一轮删得太多就先当它没删。** 一次整理删掉某个作用域一半以上、且超过 3 条，判为「这不像是整理，更像是那棵树出了事」：整轮作废、平台上一条都不少（`dream.removal_refused`，数值和会话侧那次对账共用一份 `tree.BULK_DELETE_*`）。批量删除是个信号，不是一步操作。
 - **拒绝也记一次账。** 拒绝执行的那次照样推进 `last_dream_at`：不推进的话下一次巡检立刻再跑一遍，一个坏掉的树会把 token 烧在一遍遍重复的拒绝上。拒绝本身记在 `memory_dream_runs`（`status=refused`），给人看。
 
-**怎么跑。** 派法是 `platform_work` + `send`：跑在这个项目**默认芝士**的会话上，用它自己的模型。读进来的是 team 和每个人的 private 的 L1 索引加 L2 正文、有新增对话的房间的记录与活文档、是代码项目的话还有仓库和 `CLAUDE.md`。工具只有只读的那些，加一只能在记忆目录里写和删的手。提示词照搬 Claude Code 2.1.283 的 dream 段（`strings` 从二进制里取出来，见 `dream_prompt.py`），翻成中文、按芝士的量纲改过：四段（Orient / Gather / Consolidate / Prune-and-index）、团队记忆那一段、以及「拿记忆和 `CLAUDE.md` 对一遍」都在。**两条规矩一字不改**：private 的内容永远不许升级进 team；和 `CLAUDE.md` 冲突时只做标注，不改 `CLAUDE.md`。
+**怎么跑。** 派法是 `platform_work` + `send`：跑在这个项目**默认芝士**的会话上，用它自己的模型。读进来的是 project 和每个人的 private 的 L1 索引加 L2 正文、有新增对话的房间的记录与活文档、是代码项目的话还有仓库和 `CLAUDE.md`。工具只有只读的那些，加一只能在记忆目录里写和删的手。提示词照搬 Claude Code 2.1.283 的 dream 段（`strings` 从二进制里取出来，见 `dream_prompt.py`），翻成中文、按芝士的量纲改过：四段（Orient / Gather / Consolidate / Prune-and-index）、项目记忆那一段、以及「拿记忆和 `CLAUDE.md` 对一遍」都在。**两条规矩一字不改**：private 的内容永远不许升级进 project；和 `CLAUDE.md` 冲突时只做标注，不改 `CLAUDE.md`。
 
-**结果。** 写下去的就是普通的记忆文件，走 `memory_files` 那条路（版本、冲突、房间事件都一样）。收尾时在**总览房间**发一条折叠事件，只列 team 里改动的文件，**不点任何人的名**，然后把判据那个计数器归零。private 的文件名和整理的人写下的那段交代都不进总览：总览全项目都看得见，而那段交代是看着所有人的 private 写的；它们留在 `memory_dream_runs`（`files`、`summary`）。拒绝执行时也一样，总览只说「这一次没做」，拦下的是哪几条记在那一条运行记录里。
+**结果。** 写下去的就是普通的记忆文件，走 `memory_files` 那条路（版本、冲突、房间事件都一样）。收尾时在**总览房间**发一条折叠事件，只列 project 里改动的文件，**不点任何人的名**，然后把判据那个计数器归零。private 的文件名和整理的人写下的那段交代都不进总览：总览全项目都看得见，而那段交代是看着所有人的 private 写的；它们留在 `memory_dream_runs`（`files`、`summary`）。拒绝执行时也一样，总览只说「这一次没做」，拦下的是哪几条记在那一条运行记录里。
 
 同一间房的两场对账排队跑（`ChatService._sync_memory`）：整理那一轮结束时，轮次钩子和整理收尾各要对一次账，交错时后一场读到的是前一场提交之前的数据库，整理算出的「改了哪些」就会是空的。
 
@@ -198,7 +198,7 @@ limits: INDEX_MAX_LINES, INDEX_MAX_BYTES, INDEX_LINE_MAX, BODY_MAX
 2. 同一张表里 `scope = user` 的池（某个 agent 关于某个人的认识）；
 3. 项目总览文档里的「大家都该知道的」和「项目记忆（由记忆整理迁入）」两节。
 
-**去处五选一，每条都有：** `team`（新建一条全项目共读的）、`private/<handle>`（新建一条只属于某人的）、`merge`（并进一条已经存在的记忆）、`suggest`（只建议写进 `CLAUDE.md` / `SKILL.md`，**一个字都不自动改**）、`discard`（不值得变成记忆，但理由要写出来）。去处由模型判（它读得到正文，这是「进 team 还是进某个人的 private」唯一的判据），判完的结论和报告一起**存下来**——人复核的是那一份，落笔时重放它，不问第二次模型。
+**去处五选一，每条都有：** `project`（新建一条全项目共读的）、`private/<handle>`（新建一条只属于某人的）、`merge`（并进一条已经存在的记忆）、`suggest`（只建议写进 `CLAUDE.md` / `SKILL.md`，**一个字都不自动改**）、`discard`（不值得变成记忆，但理由要写出来）。去处由模型判（它读得到正文，这是「进 project 还是进某个人的 private」唯一的判据），判完的结论和报告一起**存下来**——人复核的是那一份，落笔时重放它，不问第二次模型。
 
 **先报告，人点头，才写。** 三步，中间那步是人：
 
@@ -212,19 +212,19 @@ limits: INDEX_MAX_LINES, INDEX_MAX_BYTES, INDEX_LINE_MAX, BODY_MAX
 
 报告上的每一条是「哪一条旧记忆 → 去哪儿 + 一句话理由」，加上要写的新文件的正文预览。两条硬规矩在 `migration._check` 里，不成立时**整份计划不成立**、不是跳过那一条：
 
-- 从「关于某个人」的池子来的条目，去处不能是 `team`（private 的内容不许升级成全项目的规矩）；
+- 从「关于某个人」的池子来的条目，去处不能是 `project`（private 的内容不许升级成全项目的规矩）；
 - `user` 这个 `type` 只出现在 private 里。
 
 落笔前还会核一次旧记忆的指纹（`sources_digest`）：复核那几分钟里旧表被谁改过，这份报告描述的就已经不是现在的旧表了，重跑 `dry-run`。`MemoryFileStore.write` 那一关管另一半——复核之后有人改过那棵树，写下去就是覆盖他的改动，那里 409，整次都不写。
 
 **旧表在这条路上是只读的**：搬完不删、不改、不标记，`apply` 对它只有一次 `SELECT`。删表是另一个迁移，等搬完看一阵（30 天）再做。已经搬过的 `source_id` 记在计划里，第二次 `dry-run` 不会再搬一遍。
 
-这次迁移的另一个目标是 **team 的 L1 索引回到 ≤ 120 行**（`migration.TEAM_INDEX_GOAL_LINES`）。那是**目标不是闸**：超了照样出报告，但报告上会红着写出来——压不回去这件事得让人看见。上限本身是 200 行（`INDEX_MAX_LINES`），那是「读不读得到」的线。
+这次迁移的另一个目标是 **project 的 L1 索引回到 ≤ 120 行**（`migration.PROJECT_INDEX_GOAL_LINES`）。那是**目标不是闸**：超了照样出报告，但报告上会红着写出来——压不回去这件事得让人看见。上限本身是 200 行（`INDEX_MAX_LINES`），那是「读不读得到」的线。
 
 ## 正文到底被读过几次 {#reads}
 
 索引每轮注入，正文要 agent 自己去读一个文件——这整套机制成立的前提就是**它会去读**。所以有一个数：`Read` 打到 `.cheese/memory/` 下的、不是 `MEMORY.md` 的那些调用，**按项目、按天**（`domain/memory/reads.py`）。
 
-数的是事件块（`blocks.kind = 'event'`，`meta.tool` / `meta.detail`），所以没有新表、没有新迁移，历史是免费的。判据用 `meta.detail`（**未剪裁**的参数原文）而不是 `meta.arg`：后者是给人看的预览，长路径会被剪成 `…/team/x.md`，拿它判目录不准。天按 **UTC** 切（`platform_stats.windows.utc_day`）——单参数的 `date_trunc('day', timestamptz)` 按会话时区切天，而部署的会话时区不一定是 UTC（本机是 `Asia/Shanghai`），那会把每天的边界挪几小时，还会让返回的日期和实际分桶的那条边界差一天。
+数的是事件块（`blocks.kind = 'event'`，`meta.tool` / `meta.detail`），所以没有新表、没有新迁移，历史是免费的。判据用 `meta.detail`（**未剪裁**的参数原文）而不是 `meta.arg`：后者是给人看的预览，长路径会被剪成 `…/project/x.md`，拿它判目录不准。天按 **UTC** 切（`platform_stats.windows.utc_day`）——单参数的 `date_trunc('day', timestamptz)` 按会话时区切天，而部署的会话时区不一定是 UTC（本机是 `Asia/Shanghai`），那会把每天的边界挪几小时，还会让返回的日期和实际分桶的那条边界差一天。
 
 查：`GET /admin/memory/reads?days=7&project_id=…`（默认七天）。它回答的是「有没有人翻开」，不是「有没有用上」——读了没读懂照样 +1，要回答后者得看别的东西。试点要回答的问题是「一周下来是不是接近 0」；真是 0 的话，下一步是让索引行本身更有信息量，或者把最常要用的几条正文也放进注入预算，不是回去做关键词召回。

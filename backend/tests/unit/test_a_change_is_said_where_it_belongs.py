@@ -1,6 +1,6 @@
 """一次对账改了什么、这句话说给谁听。
 
-同一份改动要说进两间房：team 的说进项目总览，某个人的 private 只说进他的私聊。所
+同一份改动要说进两间房：project 的说进项目总览，某个人的 private 只说进他的私聊。所
 以改动按路径分段存着，谁要哪一段自己取——把一个人的 private diff 说进总览，等于把
 他的偏好广播给整个项目。空改动一个字都不说。
 """
@@ -12,14 +12,14 @@ from app.domain.memory.session import DIFF_MAX_LINES, MemoryChange
 
 def _change() -> MemoryChange:
     return MemoryChange(
-        added=("team/b.md", "private/alice/p.md"),
-        updated=("team/a.md",),
+        added=("project/b.md", "private/alice/p.md"),
+        updated=("project/a.md",),
         removed=("private/alice/gone.md",),
         conflicted=("private/bob/c.md",),
-        refused={"team/a.md": "会话那一版\n"},
+        refused={"project/a.md": "会话那一版\n"},
         diffs={
-            "team/a.md": "--- team/a.md\n+++ team/a.md\n-旧\n+新\n",
-            "team/b.md": "--- team/b.md\n+++ team/b.md\n+新条目\n",
+            "project/a.md": "--- project/a.md\n+++ project/a.md\n-旧\n+新\n",
+            "project/b.md": "--- project/b.md\n+++ project/b.md\n+新条目\n",
             "private/alice/p.md": "--- private/alice/p.md\n+++ ...\n+偏好\n",
         },
     )
@@ -39,12 +39,12 @@ def test_nothing_changed_says_nothing():
 
 
 def test_the_scope_it_is_said_in_lifts_out_only_its_own_tree():
-    team = _change().scoped("team")
-    assert team.added == ("team/b.md",)
-    assert team.updated == ("team/a.md",)
-    assert team.removed == ()
-    assert team.conflicted == ()
-    assert set(team.diffs) == {"team/a.md", "team/b.md"}
+    project = _change().scoped("project")
+    assert project.added == ("project/b.md",)
+    assert project.updated == ("project/a.md",)
+    assert project.removed == ()
+    assert project.conflicted == ()
+    assert set(project.diffs) == {"project/a.md", "project/b.md"}
 
     alice = _change().scoped("private/alice")
     assert alice.added == ("private/alice/p.md",)
@@ -60,15 +60,17 @@ def test_a_scope_with_nothing_in_it_is_an_empty_change():
 
 
 def test_the_diff_is_a_prefix_of_its_own_paths_in_order():
-    diff = _change().scoped("team").diff
-    assert diff.startswith("--- team/a.md")
-    assert diff.index("team/a.md") < diff.index("team/b.md")
+    diff = _change().scoped("project").diff
+    assert diff.startswith("--- project/a.md")
+    assert diff.index("project/a.md") < diff.index("project/b.md")
     assert "private/alice" not in diff
 
 
 def test_a_huge_diff_is_clamped_to_the_room_event_budget():
     """索引能有几千行，一条事件不该跟着变成没人展开的附件——截断并说清还有多少。"""
-    many = MemoryChange(diffs={"team/a.md": "".join(f"+第{i}行\n" for i in range(500))})
+    many = MemoryChange(
+        diffs={"project/a.md": "".join(f"+第{i}行\n" for i in range(500))}
+    )
     lines = many.diff.splitlines()
     assert len(lines) == DIFF_MAX_LINES + 1
     assert lines[-1].startswith("…")
@@ -81,7 +83,7 @@ def _notice(refused: tuple[str, ...]):
     return memory_changed_notice(
         where="项目共享",
         summary="新增 1 条、1 条被别人抢先改了",
-        diff="--- team/a.md\n+++ team/a.md\n-旧\n+新\n",
+        diff="--- project/a.md\n+++ project/a.md\n-旧\n+新\n",
         refused=refused,
     )
 
@@ -89,12 +91,12 @@ def _notice(refused: tuple[str, ...]):
 def test_a_refused_version_is_said_to_the_agent_and_not_only_to_the_room():
     """那条灰字是给人看的，而写记忆的 agent 在会话机上——它下一轮带进 prompt 的
     只有 `agent_notice`。不说，它会以为写成功了，下一轮再写一遍同一版。"""
-    _, meta = _notice(("team/a.md",))
+    _, meta = _notice(("project/a.md",))
 
     told = meta[AGENT_NOTICE_META_KEY]
-    assert "team/a.md" in told
+    assert "project/a.md" in told
     # 它写的那一版还在旁边：说出路径，下一步才是 Read 它、把内容取回来。
-    assert "team/a.conflict.md" in told
+    assert "project/a.conflict.md" in told
     assert "重读" in told
 
 

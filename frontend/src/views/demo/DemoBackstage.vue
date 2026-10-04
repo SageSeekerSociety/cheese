@@ -12,7 +12,7 @@ const TITLES = { memory: '幕后 · 记忆文件', pipeline: '幕后 · 这次�
 const title = computed(() => (props.scene.backstage ? TITLES[props.scene.backstage] : ''))
 
 // ---- memory ----
-// 按目录分组：team/、private/<handle>/ 各一组，组里 MEMORY.md 排第一。
+// 按目录分组：project/、private/<handle>/ 各一组，组里 MEMORY.md 排第一。
 const folders = computed(() => {
   const groups = new Map<string, Frame['files']>()
   for (const f of props.frame.files) {

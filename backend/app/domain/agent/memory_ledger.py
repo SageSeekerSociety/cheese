@@ -123,7 +123,7 @@ class MemoryLedger:
         self._host = host
         # 每一间房这一轮的记忆账：署谁的名、算谁的 private（组装那一轮时记下，
         # 见 `remember_turn`）。两个对账时刻手上只有一个 topic id，所以这份点名
-        # 只能从别的时刻留下来。没记过的房间按「只有 team」对。
+        # 只能从别的时刻留下来。没记过的房间按「只有 project」对。
         self._turns: dict[uuid.UUID, tuple[str, tuple[str, ...]]] = {}
         # 正在跑整理的那几间房（一场整理一次，跑完就撤）。它只改一件事：这一轮
         # 结束时的对账多问一句「这次是不是要删掉一大半」——见 `sync_once`。
@@ -151,14 +151,14 @@ class MemoryLedger:
             del self._turns[next(iter(self._turns))]
 
     def _scopes(self, topic_id: uuid.UUID) -> list[tuple[MemoryFileScope, str | None]]:
-        """这一次对账要点名的那几棵树：team 一份，本轮发言人一人一份 private。
+        """这一次对账要点名的那几棵树：project 一份，本轮发言人一人一份 private。
 
         点过名的作用域才是这一次对账的范围（`memory.session` 的开头那一段）：
         没点到的 private 既不铺也不收，别人的偏好不会被这一间房的一次对账碰掉。
         """
         _, speakers = self._turns.get(topic_id, ("", ()))
         return [
-            (MemoryFileScope.team, None),
+            (MemoryFileScope.project, None),
             *((MemoryFileScope.private, handle) for handle in speakers),
         ]
 
@@ -308,13 +308,13 @@ class MemoryLedger:
             run_id,
         )
 
-        # 铺给它的那一份：team 加**这个项目全部**的 private。不是「本轮在场的几
+        # 铺给它的那一份：project 加**这个项目全部**的 private。不是「本轮在场的几
         # 个人」——整理是唯一一个把整棵树放在一起看的时刻，漏掉一个没说过话的人，
         # 等于他的记忆没有人整理（`private_owners` 的开头那一段）。
         async with self._sessions() as session:
             owners = await private_owners(session, project_id)
             scopes: list[tuple[MemoryFileScope, str | None]] = [
-                (MemoryFileScope.team, None),
+                (MemoryFileScope.project, None),
                 *[(MemoryFileScope.private, owner) for owner in owners],
             ]
             stored = await read_tree(session, project_id, scopes)
@@ -457,9 +457,9 @@ class MemoryLedger:
             root_topic_id,
             run_id,
         )
-        team_changed = [path for path in changed if path.startswith("team/")]
-        if status is MemoryDreamRunStatus.completed and team_changed:
-            await self._say_dream(project_id, team_changed)
+        project_changed = [path for path in changed if path.startswith("project/")]
+        if status is MemoryDreamRunStatus.completed and project_changed:
+            await self._say_dream(project_id, project_changed)
         if refusal:
             await self._say_dream_refused(project_id, run_id)
         return {
@@ -470,14 +470,14 @@ class MemoryLedger:
         }
 
     async def _say_dream(self, project_id: uuid.UUID, changed: list[str]) -> None:
-        """整理跑完了：在项目总览里说一句 team 改了哪几条。
+        """整理跑完了：在项目总览里说一句 project 改了哪几条。
 
         谁的名都不点：一条记忆是 agent 写下的一份观察，没有人在等它（`who`
         是 platform，投递那一层因此发不出收件人）。改动的 diff 由对账那条路自己说
-        （`_say_memory_change`，team 的进总览、某个人的 private 只进他的私聊），这
-        一条说的是**这一次整理本身**动了 team 的哪些文件。
+        （`_say_memory_change`，project 的进总览、某个人的 private 只进他的私聊），这
+        一条说的是**这一次整理本身**动了 project 的哪些文件。
 
-        总览是全项目都看得见的房间，所以只说 team：某个人 private 里的文件名也是
+        总览是全项目都看得见的房间，所以只说 project：某个人 private 里的文件名也是
         他的内容。整理的人自己写的那段交代不进来——它是看着所有人的 private 写的，
         留在 `memory_dream_runs.summary` 里。
         """

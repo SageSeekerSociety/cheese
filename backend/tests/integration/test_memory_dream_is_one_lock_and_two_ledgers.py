@@ -202,7 +202,7 @@ async def test_a_refused_dream_still_moves_the_origin(business_db_factory):
             session,
             run,
             status=MemoryDreamRunStatus.refused,
-            summary="拒绝执行：team 要删 4 条",
+            summary="拒绝执行：project 要删 4 条",
             files=[],
             now=_NOW,
         )
@@ -217,7 +217,7 @@ async def test_a_refused_dream_still_moves_the_origin(business_db_factory):
         assert stored is not None
         assert stored.status == MemoryDreamRunStatus.refused.value
         assert stored.files_changed == []
-        assert "team" in stored.summary
+        assert "project" in stored.summary
 
 
 # --- 谁有 private 记忆 ------------------------------------------------------

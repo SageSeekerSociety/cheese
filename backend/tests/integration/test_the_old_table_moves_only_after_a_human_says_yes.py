@@ -110,9 +110,9 @@ async def _old_rows(session, project_id) -> list[str]:
     return [row.content for row in rows.all()]
 
 
-async def _team_files(session, project_id) -> dict[str, str]:
-    """新树 team 那一半：路径 → 正文。"""
-    rows = await MemoryFileStore(session).list(project_id, MemoryFileScope.team)
+async def _project_files(session, project_id) -> dict[str, str]:
+    """新树 project 那一半：路径 → 正文。"""
+    rows = await MemoryFileStore(session).list(project_id, MemoryFileScope.project)
     return {row.path: row.content for row in rows}
 
 
@@ -138,7 +138,7 @@ async def test_the_report_comes_before_any_write(business_db_factory):
             [
                 _decision(
                     f"entry:{entry.id}",
-                    "team",
+                    "project",
                     path="run-e2e-before-release",
                     type="project",
                     description="发版前跑 make e2e",
@@ -154,9 +154,9 @@ async def test_the_report_comes_before_any_write(business_db_factory):
         assert plan.status == MemoryMigrationStatus.draft.value
         # 报告里那条路写得出来（哪一条、去哪儿、为什么），但树上一个文件都还没有。
         assert "发版前先跑一遍 make e2e" in plan.report
-        assert "team/run-e2e-before-release.md" in plan.report
+        assert "project/run-e2e-before-release.md" in plan.report
         assert "因为它在这儿" in plan.report
-        assert await _team_files(session, project.id) == {}
+        assert await _project_files(session, project.id) == {}
         assert await _old_rows(session, project.id) == ["发版前先跑一遍 make e2e"]
         # 旧记忆原样存着：apply 之前拿它算一次指纹。
         assert plan.sources_digest
@@ -180,7 +180,7 @@ async def test_what_the_migration_asks_is_the_platforms_spend(business_db_factor
             [
                 _decision(
                     f"entry:{entry.id}",
-                    "team",
+                    "project",
                     path="run-e2e-before-release",
                     type="project",
                     description="发版前跑 make e2e",
@@ -225,7 +225,7 @@ async def test_without_a_model_there_is_no_report(business_db_factory):
 async def test_a_plan_that_breaks_the_hard_rules_is_refused_whole(
     business_db_factory,
 ):
-    """「关于某人的」池子里的东西，模型说要进 team —— 整份计划不成立。
+    """「关于某人的」池子里的东西，模型说要进 project —— 整份计划不成立。
 
     不是跳过那一条、剩下的照搬：那会让「每一条都有去处」变成「大多数有去处」，
     而漏掉的那一条没人看得见。
@@ -237,7 +237,7 @@ async def test_a_plan_that_breaks_the_hard_rules_is_refused_whole(
             [
                 _decision(
                     f"entry:{entry.id}",
-                    "team",
+                    "project",
                     path="prefers-vim",
                     type="user",
                     description="他习惯用 vim",
@@ -251,7 +251,7 @@ async def test_a_plan_that_breaks_the_hard_rules_is_refused_whole(
             )
         await session.commit()
 
-        assert await _team_files(session, project.id) == {}
+        assert await _project_files(session, project.id) == {}
         assert (
             await session.scalars(select(MemoryMigrationPlan.source_ids))
         ).all() == []
@@ -293,7 +293,7 @@ async def test_nothing_lands_before_the_yes(business_db_factory):
                 [
                     _decision(
                         f"entry:{entry.id}",
-                        "team",
+                        "project",
                         path="run-e2e-before-release",
                         type="project",
                         description="发版前跑 make e2e",
@@ -309,7 +309,7 @@ async def test_nothing_lands_before_the_yes(business_db_factory):
         service = MemoryMigrationService(session)
         with pytest.raises(ForbiddenError):
             await service.apply(plan_id, by=settings.memory_migration_reviewer)
-        assert await _team_files(session, project.id) == {}
+        assert await _project_files(session, project.id) == {}
 
 
 # --- 点头之后：新树变了，旧表没动 -------------------------------------------
@@ -324,7 +324,7 @@ async def test_the_approved_plan_lands_and_the_old_table_stays_put(
         store = MemoryFileStore(session)
         await store.write(
             project_id=project.id,
-            scope=MemoryFileScope.team,
+            scope=MemoryFileScope.project,
             owner_handle=None,
             path="pagination.md",
             content="# pagination\n\n分页那一套。\n",
@@ -333,7 +333,7 @@ async def test_the_approved_plan_lands_and_the_old_table_stays_put(
         )
         await store.write(
             project_id=project.id,
-            scope=MemoryFileScope.team,
+            scope=MemoryFileScope.project,
             owner_handle=None,
             path="MEMORY.md",
             content="- [pagination](pagination.md) — 分页那一套\n",
@@ -350,7 +350,7 @@ async def test_the_approved_plan_lands_and_the_old_table_stays_put(
             [
                 _decision(
                     f"entry:{agent.id}",
-                    "team",
+                    "project",
                     path="run-e2e-before-release",
                     type="project",
                     description="发版前跑 make e2e",
@@ -401,17 +401,18 @@ async def test_the_approved_plan_lands_and_the_old_table_stays_put(
         assert "4 条旧记忆 → 3 个文件" in row.summary
         assert "suggest 1" in row.summary
 
-        team = await _team_files(session, project_id)
+        project = await _project_files(session, project_id)
         # 新开的那一条在，带 frontmatter。
-        assert "name: run-e2e-before-release" in team["run-e2e-before-release.md"]
-        assert "发版前先跑一遍 make e2e。" in team["run-e2e-before-release.md"]
+        assert "name: run-e2e-before-release" in project["run-e2e-before-release.md"]
+        assert "发版前先跑一遍 make e2e。" in project["run-e2e-before-release.md"]
         # 并进去的那一条：原文件的 frontmatter 一个字不动，正文接在后面。
-        assert team["pagination.md"].startswith("# pagination")
-        assert "游标是 cursor，不是 offset。" in team["pagination.md"]
+        assert project["pagination.md"].startswith("# pagination")
+        assert "游标是 cursor，不是 offset。" in project["pagination.md"]
         # 索引里多了新文件那一行，已经有的一行不重复。
-        assert team["MEMORY.md"].count("pagination.md") == 1
+        assert project["MEMORY.md"].count("pagination.md") == 1
         assert (
-            "[run-e2e-before-release](run-e2e-before-release.md)" in team["MEMORY.md"]
+            "[run-e2e-before-release](run-e2e-before-release.md)"
+            in project["MEMORY.md"]
         )
 
         private = await _private_files(session, project_id, "alice")
@@ -462,7 +463,7 @@ async def test_a_second_report_does_not_move_what_already_moved(business_db_fact
             [
                 _decision(
                     f"entry:{first.id}",
-                    "team",
+                    "project",
                     path="the-first",
                     type="project",
                     description="第一条",
@@ -470,7 +471,7 @@ async def test_a_second_report_does_not_move_what_already_moved(business_db_fact
                 ),
                 _decision(
                     f"entry:{second.id}",
-                    "team",
+                    "project",
                     path="the-second",
                     type="project",
                     description="第二条",
@@ -497,8 +498,8 @@ async def test_a_second_report_does_not_move_what_already_moved(business_db_fact
                 project.id, by="alice"
             )
         # 树还是那两份，没长出第二份同名的东西。
-        team = await _team_files(session, project.id)
-        assert sorted(team) == ["MEMORY.md", "the-first.md", "the-second.md"]
+        project = await _project_files(session, project.id)
+        assert sorted(project) == ["MEMORY.md", "the-first.md", "the-second.md"]
 
 
 # --- 报告和现实对不上：整次都不写 -------------------------------------------
@@ -514,7 +515,7 @@ async def _one_file_plan(business_db_factory, *, handle: str = "alice"):
                 [
                     _decision(
                         f"entry:{entry.id}",
-                        "team",
+                        "project",
                         path="run-e2e-before-release",
                         type="project",
                         description="发版前跑 make e2e",
@@ -561,9 +562,9 @@ async def test_a_change_to_the_tree_between_yes_and_write_stops_the_whole_thing(
         row = await MemoryMigrationService(session).get_or_404(plan_id)
         assert row.status == MemoryMigrationStatus.failed.value
         assert "复核之后有人改过这棵树" in row.summary
-        team = await _team_files(session, project_id)
+        project = await _project_files(session, project_id)
         # 只有 bob 那一版；搬迁那一份一个字都没进去，索引也没动。
-        assert team == {
+        assert project == {
             planned["path"]: "# run-e2e-before-release\n\n另一个人写的一版。\n"
         }
 
@@ -595,7 +596,7 @@ async def test_a_change_to_the_old_memories_between_yes_and_write_stops_it(
         row = await MemoryMigrationService(session).get_or_404(plan_id)
         assert row.status == MemoryMigrationStatus.failed.value
         assert "重跑 dry-run" in row.summary
-        assert await _team_files(session, project_id) == {}
+        assert await _project_files(session, project_id) == {}
 
 
 async def test_the_reviewer_reads_the_plan_back_before_apply(business_db_factory):
@@ -616,4 +617,4 @@ async def test_the_reviewer_reads_the_plan_back_before_apply(business_db_factory
         assert row.created_by == "dave"
         assert row.approved_by == settings.memory_migration_reviewer
         # 作用域和前缀是同一件事的两种写法，读的人不该在两处之间猜。
-        assert f"{prefix_of(MemoryFileScope.team, None)}/" in row.report
+        assert f"{prefix_of(MemoryFileScope.project, None)}/" in row.report

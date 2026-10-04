@@ -28,7 +28,7 @@ from tests.integration.test_routines import (
     _weekly,
 )
 
-TEAM_HOOK = "- [团队那条](team.md) — 项目那一份的钩子"
+PROJECT_HOOK = "- [项目那条](project.md) — 项目那一份的钩子"
 OWNER_HOOK = "- [他要结论在最前面](conclusion-first.md) — 规则主人那一份的钩子"
 BOB_HOOK = "- [别人的](elsewhere.md) — 没交代这件事的那个人那一份的钩子"
 BOB = "user-2"
@@ -70,7 +70,7 @@ def _lay_indexes(client, project_id: str) -> None:
                 expected_version=None,
             )
 
-        await put(MemoryFileScope.team, None, TEAM_HOOK)
+        await put(MemoryFileScope.project, None, PROJECT_HOOK)
         await put(MemoryFileScope.private, OWNER, OWNER_HOOK)
         await put(MemoryFileScope.private, BOB, BOB_HOOK)
 
@@ -143,7 +143,7 @@ def test_a_routine_runs_with_the_owners_private_memory(client, tmp_path):
     assert submitted["content"] == payload["content"]
 
     prompt = _prompt_of_the_routine_turn(client, tmp_path, room, submitted)
-    assert TEAM_HOOK in prompt
+    assert PROJECT_HOOK in prompt
     assert OWNER_HOOK in prompt, "规则主人那一份没有被读进来"
     assert BOB_HOOK not in prompt, "读到了没交代这件事的人的私有偏好"
 
@@ -177,6 +177,6 @@ def test_another_rooms_turn_does_not_carry_the_routine_owner(client, tmp_path):
 
     client.portal.call(run)
     assert screen.last_system_prompt is not None
-    assert TEAM_HOOK in screen.told
+    assert PROJECT_HOOK in screen.told
     assert BOB_HOOK in screen.told
     assert OWNER_HOOK not in screen.told

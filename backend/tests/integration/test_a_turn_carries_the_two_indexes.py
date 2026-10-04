@@ -1,7 +1,7 @@
 """一轮只带两个索引：项目共看的那个，和这一轮说话那个人的（结论 8、54）。
 
 从前进提示词的是「池」：关于某个人的那份是跨项目的，只有私聊读得到，而私聊里芝士
-自己那个池反而不见了。条目池撤下来之后，注入的东西缩成两个文件——`team/MEMORY.md`
+自己那个池反而不见了。条目池撤下来之后，注入的东西缩成两个文件——`project/MEMORY.md`
 和 `private/<说话的那个人>/MEMORY.md`。所以「哪一间房」不再改变任何事：普通房间和
 私聊拿到的是同样两个索引，换一个项目就是另一份。
 
@@ -29,10 +29,10 @@ from tests.integration.conftest import registered
 pytestmark = pytest.mark.anyio
 
 # 索引行。注入带的就是它们，指向的正文不进来。
-TEAM_HOOK = "- [回答先给结论](answer-first.md) — 项目那一份的钩子"
+PROJECT_HOOK = "- [回答先给结论](answer-first.md) — 项目那一份的钩子"
 MINE_HOOK = "- [他要结论在最前面](conclusion-first.md) — 说话这个人那一份的钩子"
 SOMEONE_ELSE_HOOK = "- [别人](elsewhere.md) — 没说话那个人那一份的钩子"
-OTHER_TEAM_HOOK = "- [另一个项目的](other.md) — 另一个项目那一份的钩子"
+OTHER_PROJECT_HOOK = "- [另一个项目的](other.md) — 另一个项目那一份的钩子"
 
 
 class Screen(StubChannel):
@@ -53,13 +53,13 @@ async def _turn_on(
     tmp_path,
     *,
     dm: bool,
-    team: str | None = None,
+    project_index: str | None = None,
     private: dict[str, str] | None = None,
     keeps_memory: bool = True,
 ) -> str:
     """开一个项目、铺下索引、跑一轮，交回这一轮的 system prompt。
 
-    ``team`` 是项目共看那个索引的内容；``private`` 是 {人: 内容}——这一轮说话的
+    ``project_index`` 是项目共看那个索引的内容；``private`` 是 {人: 内容}——这一轮说话的
     人是 ``u``，所以真正该读到的是 ``private["u"]``。``dm`` 说的是这一轮落在私聊
     里还是普通房间里。``keeps_memory`` 是这一轮跑的骨架会不会把记忆文件对账回平
     台——不会的时候，记忆那两段一个字都不该进去。
@@ -106,8 +106,8 @@ async def _turn_on(
                 expected_version=None,
             )
 
-        if team is not None:
-            await put(MemoryFileScope.team, None, team)
+        if project_index is not None:
+            await put(MemoryFileScope.project, None, project_index)
         for owner, content in (private or {}).items():
             await put(MemoryFileScope.private, owner, content)
         await session.commit()
@@ -132,11 +132,11 @@ async def test_a_room_carries_the_projects_index_and_the_speakers(client, tmp_pa
             client.test_request_factory,
             tmp_path,
             dm=False,
-            team=TEAM_HOOK,
+            project_index=PROJECT_HOOK,
             private={"u": MINE_HOOK, "bob": SOMEONE_ELSE_HOOK},
         )
     )
-    assert TEAM_HOOK in prompt
+    assert PROJECT_HOOK in prompt
     assert MINE_HOOK in prompt
     assert SOMEONE_ELSE_HOOK not in prompt
 
@@ -152,11 +152,11 @@ async def test_a_dm_carries_the_same_two(client, tmp_path):
             client.test_request_factory,
             tmp_path,
             dm=True,
-            team=TEAM_HOOK,
+            project_index=PROJECT_HOOK,
             private={"u": MINE_HOOK},
         )
     )
-    assert TEAM_HOOK in prompt
+    assert PROJECT_HOOK in prompt
     assert MINE_HOOK in prompt
 
 
@@ -171,11 +171,11 @@ async def test_a_harness_that_keeps_no_memory_is_not_given_the_index(client, tmp
             client.test_request_factory,
             tmp_path,
             dm=False,
-            team=TEAM_HOOK,
+            project_index=PROJECT_HOOK,
             keeps_memory=False,
         )
     )
-    assert TEAM_HOOK not in prompt
+    assert PROJECT_HOOK not in prompt
     assert "## 记忆（memory）" not in prompt
     assert "## 你的记忆（索引" not in prompt
 
@@ -188,18 +188,18 @@ async def test_another_projects_index_does_not_come_along(client, tmp_path):
             client.test_request_factory,
             tmp_path,
             dm=False,
-            team=TEAM_HOOK,
+            project_index=PROJECT_HOOK,
         )
     )
-    assert TEAM_HOOK in here
+    assert PROJECT_HOOK in here
 
     elsewhere = client.portal.call(
         lambda: _turn_in(
             client.test_request_factory,
             tmp_path,
             dm=False,
-            team=OTHER_TEAM_HOOK,
+            project_index=OTHER_PROJECT_HOOK,
         )
     )
-    assert OTHER_TEAM_HOOK in elsewhere
-    assert TEAM_HOOK not in elsewhere
+    assert OTHER_PROJECT_HOOK in elsewhere
+    assert PROJECT_HOOK not in elsewhere

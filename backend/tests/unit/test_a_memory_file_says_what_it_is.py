@@ -101,13 +101,19 @@ def test_the_index_itself_is_a_legal_path_even_though_it_is_not_a_slug():
 
 
 def test_a_scoped_path_says_which_tree_it_is_in():
-    assert check_scoped_path("team/a.md") == ("team", "a.md")
+    assert check_scoped_path("project/a.md") == ("project", "a.md")
     assert check_scoped_path("private/alice/a.md") == ("private/alice", "a.md")
 
 
 @pytest.mark.parametrize(
     "path",
-    ["a.md", "/team/a.md", "private/a.md", "private/alice/bob/a.md", "team/sub/a.md"],
+    [
+        "a.md",
+        "/project/a.md",
+        "private/a.md",
+        "private/alice/bob/a.md",
+        "project/sub/a.md",
+    ],
 )
 def test_a_scoped_path_with_the_wrong_number_of_parts_is_refused(path):
     with pytest.raises(MemoryFileError):
@@ -115,7 +121,7 @@ def test_a_scoped_path_with_the_wrong_number_of_parts_is_refused(path):
 
 
 def test_a_prefix_is_per_scope_and_private_needs_an_owner():
-    assert scoped_prefix(MemoryFileScope.team, None) == "team"
+    assert scoped_prefix(MemoryFileScope.project, None) == "project"
     assert scoped_prefix(MemoryFileScope.private, "alice") == "private/alice"
     with pytest.raises(MemoryFileError):
         scoped_prefix(MemoryFileScope.private, None)

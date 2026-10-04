@@ -6,12 +6,12 @@ CC 的原文里，「记忆」不是一句话的授权，是一份完整的规�
 另一块待办看板——那正是这份规矩里最长的一段在防的事。
 
 三处按芝士的实情改：
-1. 目录名与作用域：这里是 `team/` 与 `private/<handle>/`，作用域跟着项目走
+1. 目录名与作用域：这里是 `project/` 与 `private/<handle>/`，作用域跟着项目走
    （一个项目一份），不是跟着一个仓库走。
 2. 「不该存」多了一段：芝士平台上进度、成员、任务状态、话题实况文档
    都已经是结构化的记录，写进记忆只会造出一份会过期的副本。
 3. 多人房间里的纠正怎么分流：个人偏好进**说话那个人的** private，项目规矩进
-   team。CC 面对一个人，这里的每间房都可能坐着好几个人。
+   project。CC 面对一个人，这里的每间房都可能坐着好几个人。
 """
 
 #: 会话里那份记忆副本的根，按 agent 在文件工具里该写的那个样子写：`~` 是会话
@@ -32,14 +32,14 @@ MEMORY_INSTRUCTIONS = f"""## 记忆（memory）
 
 记忆分两级作用域，各是一份：
 
-- `team/`：**这个项目**所有人和所有芝士共看、共写的一份。它在每次会话开场同步，
+- `project/`：**这个项目**所有人和所有芝士共看、共写的一份。它在每次会话开场同步，
   别人改了什么你下一轮就读得到。
 - `private/<handle>/`：**你和某一个人之间**的那一份，只有本人和项目管理员看得见。
   它按「人 × 项目」分开：换一个人、换一个项目都读不到。
 
 索引 `MEMORY.md` 是每一步都要动的东西：一条记忆一行，`- [标题](文件.md) — 一句钩子`。
 它没有 frontmatter，**永远不要把记忆正文写进索引**。会话开场注入的就是这两个索引
-（`team/MEMORY.md` 和本轮说话那个人的 `private/<handle>/MEMORY.md`）；正文要自己
+（`project/MEMORY.md` 和本轮说话那个人的 `private/<handle>/MEMORY.md`）；正文要自己
 去读那个文件。
 
 ### 四种类型
@@ -66,12 +66,12 @@ MEMORY_INSTRUCTIONS = f"""## 记忆（memory）
 </type>
 <type>
     <name>feedback</name>
-    <scope>默认 private。只有「全项目都该遵守的约定」才进 team（比如测试策略、
+    <scope>默认 private。只有「全项目都该遵守的约定」才进 project（比如测试策略、
     构建上的硬规矩）——个人的表达习惯不是项目规矩。</scope>
     <description>这个人给你的、关于「活该怎么干」的指引：不要做什么，以及**继续
     做什么**。这类记忆极重要，因为它让你和这个项目对「怎么做才对」保持一致。**成
     功和失败都要记**：只记纠正，你会绕开踩过的坑，但也会慢慢偏离已经验证过的做法，
-    变得过分保守。在写 private 的 feedback 之前，先看它和 team 里的 feedback 冲不
+    变得过分保守。在写 private 的 feedback 之前，先看它和 project 里的 feedback 冲不
     冲突——冲突就别写，或者写明它是这里的例外。</description>
     <when_to_save>这个人纠正你的做法（「不是这样」「别」「不要再 X 了」）**或**认可
     了一个不那么显然的做法（「对，就是这样」「很好，继续」，或者对你的非常规选择
@@ -85,8 +85,8 @@ MEMORY_INSTRUCTIONS = f"""## 记忆（memory）
     为什么，你才判得了边界情况，而不是盲目照做。</body_structure>
     <examples>
     user: 这些测试别 mock 数据库——上个季度吃过亏，mock 的测试全过，生产的迁移炸了
-    assistant: [写 team feedback 记忆：集成测试必须打真数据库，不许 mock。理由：
-    出过一次 mock 与生产分叉、把坏掉的迁移盖过去的事故。作用域 team：这是项目的
+    assistant: [写 project feedback 记忆：集成测试必须打真数据库，不许 mock。理由：
+    出过一次 mock 与生产分叉、把坏掉的迁移盖过去的事故。作用域 project：这是项目的
     测试策略，不是个人偏好]
 
     user: 每次回答末尾别总结你刚做了什么，diff 我自己会看
@@ -100,7 +100,7 @@ MEMORY_INSTRUCTIONS = f"""## 记忆（memory）
 </type>
 <type>
     <name>project</name>
-    <scope>private 或 team，但强烈偏向 team</scope>
+    <scope>private 或 project，但强烈偏向 project</scope>
     <description>你了解到的、关于项目里正在进行的工作、目标、倡议、缺陷或事故
     的信息，**且从代码或 git 历史里读不出来**。它让你理解这个人为什么在做这件
     事。</description>
@@ -114,18 +114,18 @@ MEMORY_INSTRUCTIONS = f"""## 记忆（memory）
     记忆衰减得快，所以「为什么」正是以后的你判断它还成不成立的东西。</body_structure>
     <examples>
     user: 周四以后所有非关键的合并都冻结——移动端要切发布分支
-    assistant: [写 team project 记忆：2026-03-05 起为移动端发版冻结合并，之后排期的
+    assistant: [写 project 作用域的记忆：2026-03-05 起为移动端发版冻结合并，之后排期的
     非关键 PR 工作都要标出来]
 
     user: 我们拆掉旧的鉴权中间件，是因为合规那边指出它存 session token 的方式不
     满足新要求
-    assistant: [写 team project 记忆：鉴权重写是合规驱动的（session token 的存法），
+    assistant: [写 project 作用域的记忆：鉴权重写是合规驱动的（session token 的存法），
     不是清技术债——取舍时合规优先于顺手]
     </examples>
 </type>
 <type>
     <name>reference</name>
-    <scope>通常是 team</scope>
+    <scope>通常是 project</scope>
     <description>外部系统里的信息入口。它让你记得「要去哪里找」项目目录之外的
     最新信息。</description>
     <when_to_save>知道外部系统里有什么资源、它是干什么的时候。比如缺陷都记在
@@ -133,11 +133,11 @@ MEMORY_INSTRUCTIONS = f"""## 记忆（memory）
     <how_to_use>当这个人提到一个外部系统，或者要找的信息可能在外部系统里时。</how_to_use>
     <examples>
     user: 想看这些工单的背景，去看看板里的「INGEST」，流水线的缺陷都记在那儿
-    assistant: [写 team reference 记忆：流水线缺陷记在「INGEST」看板里]
+    assistant: [写 project reference 记忆：流水线缺陷记在「INGEST」看板里]
 
     user: 值班盯的是 grafana.internal/d/api-latency，你要是动请求这条链路上的
     代码，就是它会把值班的人叫醒
-    assistant: [写 team reference 记忆：grafana.internal/d/api-latency 是值班用的
+    assistant: [写 project reference 记忆：grafana.internal/d/api-latency 是值班用的
     延迟看板——改请求路径的代码时要看它]
     </examples>
 </type>
@@ -189,7 +189,7 @@ MEMORY_INSTRUCTIONS = f"""## 记忆（memory）
 
 写一条记忆是两步：
 
-**第一步** —— 在选定的目录（private 还是 team，按上面每一类的 scope）里新建它
+**第一步** —— 在选定的目录（private 还是 project，按上面每一类的 scope）里新建它
 自己的文件：
 
 ```
@@ -227,8 +227,8 @@ type: user | feedback | project | reference
 一间房可以坐着好几个人，所以「这是一条 feedback」还差一句：**是对谁成立的**。
 
 - 表达习惯、个人偏好、对某个人的工作方式的确认 → 说话那个人的 `private/<他的 handle>/`。
-- 项目规矩、全项目都该遵守的做法（测试策略、发布流程、构建上的硬约束）→ `team/`。
-- switch 不准：不要因为「反正是表扬」就把个人偏好写进 team。team 是所有人共写共
+- 项目规矩、全项目都该遵守的做法（测试策略、发布流程、构建上的硬约束）→ `project/`。
+- switch 不准：不要因为「反正是表扬」就把个人偏好写进 project。project 是所有人共写共
   看的，写错地方等于替整个项目定了规矩。
 
 ### 什么时候读记忆

@@ -232,7 +232,7 @@ def refused_scopes(
 ) -> dict[str, tuple[str, ...]]:
     """按作用域判这次整理要删的那些量。返回 ``{作用域前缀: 要删的路径}``。
 
-    ``before`` / ``after`` 都是路径 → 正文，路径带作用域前缀（`team/x.md`）。
+    ``before`` / ``after`` 都是路径 → 正文，路径带作用域前缀（`project/x.md`）。
     只算点过名的那些：整理之后没有了、而整理之前还在的，才是这次要删的。
     """
     prefixes: dict[str, list[str]] = {}

@@ -112,7 +112,7 @@ steps:
   - label: 记忆索引
     check: 你的记忆
     cat: memory
-    desc: 只有索引：`team/MEMORY.md` 加本轮说话那个人的 `private/<handle>/MEMORY.md`。正文在会话目录的文件里，芝士要用时自己读。
+    desc: 只有索引：`project/MEMORY.md` 加本轮说话那个人的 `private/<handle>/MEMORY.md`。正文在会话目录的文件里，芝士要用时自己读。
     tip: 索引 200 行 / 25KB 是注入预算，超了照样写，注入时截断并带一句警告。
     link: /dev/memory#scopes
   - label: 运行环境

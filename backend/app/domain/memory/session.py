@@ -62,7 +62,7 @@ class MemoryChange:
     #: 会话写的、超了单条上限没收的（路径 → 原因）。
     rejected: dict[str, str] = field(default_factory=dict)
     #: 路径 → 那一条的统一 diff。按条存而不是拼成一份：说给谁听是按作用域分的
-    #: （team 的说进项目总览，某个人的 private 只说进他的私聊），而一件事说给谁
+    #: （project 的说进项目总览，某个人的 private 只说进他的私聊），而一件事说给谁
     #: 听决定了哪几行能跟着一起出去。
     diffs: dict[str, str] = field(default_factory=dict)
 
@@ -70,7 +70,7 @@ class MemoryChange:
         return not (self.added or self.updated or self.removed or self.conflicted)
 
     def scoped(self, prefix: str) -> "MemoryChange":
-        """只留 ``prefix`` 这一棵树里的改动（team / private/<handle>）。"""
+        """只留 ``prefix`` 这一棵树里的改动（project / private/<handle>）。"""
 
         def within(paths: tuple[str, ...]) -> tuple[str, ...]:
             return tuple(p for p in paths if p.startswith(f"{prefix}/"))
@@ -116,8 +116,8 @@ class MemoryChange:
 
 def _split(path: str) -> tuple[str, str]:
     parts = path.split("/")
-    if parts[0] == "team":
-        return "team", parts[1]
+    if parts[0] == "project":
+        return "project", parts[1]
     return f"private/{parts[1]}", parts[2]
 
 
@@ -253,7 +253,7 @@ def _diffs(before: dict[str, str], files: dict[str, str]) -> dict[str, str]:
 
     一段一段地算：一条记忆一个文件，改动落在哪一条上比「整棵树差在哪」有用——
     人扫一眼要知道的是哪条记忆变了，不是文件树变了几行。分开存还让「这一件事
-    说给谁听」有得选：某个人的 private 那一段不能跟着 team 的那一段一起发出去。
+    说给谁听」有得选：某个人的 private 那一段不能跟着 project 的那一段一起发出去。
     """
     out: dict[str, str] = {}
     for path in sorted(before):

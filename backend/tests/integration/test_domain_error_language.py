@@ -44,7 +44,7 @@ def test_a_new_memory_under_a_taken_name_is_refused_in_english(client):
     project = post_project(client, json={"name": "记忆"}, headers=alice)
     body = {
         "project_id": project.json()["data"]["id"],
-        "scope": "team",
+        "scope": "project",
         "path": "answer-first.md",
         "content": _MEMORY,
     }

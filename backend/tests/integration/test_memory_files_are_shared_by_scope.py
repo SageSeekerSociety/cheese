@@ -1,6 +1,6 @@
 """记忆的两个作用域各守各的门，写入带版本号。
 
-team 是项目里所有人共看的一份；private 是「这个人 × 这个项目」——本人和项目管理员
+project 是项目里所有人共看的一份；private 是「这个人 × 这个项目」——本人和项目管理员
 看得见，别人问起答 403 而不是 404（private 的存在本身不是秘密，里面的内容才是）。
 **读得到不等于写得动**：private 那一侧的写和删只认本人，管理员也不行。写入对号入座
 的那个版本号对不上就是 409 并把当前那一版还回去：冲突是拒绝，不是把两段散文悄悄合
@@ -14,7 +14,7 @@ from tests.integration.conftest import (
     session_auth_headers,
 )
 
-_TEAM_FILE = """---
+_PROJECT_FILE = """---
 name: answer-first
 description: 回答先给结论
 type: feedback
@@ -47,7 +47,7 @@ def _put(
     project_id: str,
     handle: str,
     *,
-    scope: str = "team",
+    scope: str = "project",
     owner: str | None = None,
     path: str,
     content: str,
@@ -71,7 +71,7 @@ def _delete(
     project_id: str,
     handle: str,
     *,
-    scope: str = "team",
+    scope: str = "project",
     owner: str | None = None,
     path: str,
     version: int | None = None,
@@ -86,15 +86,15 @@ def _delete(
     )
 
 
-def _get(client, project_id: str, handle: str, *, scope: str = "team", owner=None):
+def _get(client, project_id: str, handle: str, *, scope: str = "project", owner=None):
     query = f"/memory/files?project_id={project_id}&scope={scope}"
     if owner is not None:
         query += f"&owner_handle={owner}"
     return client.get(query, headers=session_auth_headers(handle))
 
 
-def test_a_team_memory_is_written_by_one_member_and_read_by_another(client):
-    """team 是共看共写的一份：谁写的都一样读得到，版本号跟着写入往前走。"""
+def test_a_project_memory_is_written_by_one_member_and_read_by_another(client):
+    """project 是共看共写的一份：谁写的都一样读得到，版本号跟着写入往前走。"""
     project_id = _project(client)
 
     written = _put(
@@ -102,7 +102,7 @@ def test_a_team_memory_is_written_by_one_member_and_read_by_another(client):
         project_id,
         "alice",
         path="answer-first.md",
-        content=_TEAM_FILE,
+        content=_PROJECT_FILE,
     )
     assert written.status_code == 200, written.text
     assert written.json()["data"]["file"]["version"] == 1
@@ -110,14 +110,14 @@ def test_a_team_memory_is_written_by_one_member_and_read_by_another(client):
     seen = _get(client, project_id, "bob")
     assert seen.status_code == 200, seen.text
     files = {row["path"]: row for row in seen.json()["data"]["data"]}
-    assert files["answer-first.md"]["content"] == _TEAM_FILE
+    assert files["answer-first.md"]["content"] == _PROJECT_FILE
 
     again = _put(
         client,
         project_id,
         "bob",
         path="answer-first.md",
-        content=_TEAM_FILE + "\n改了主意。\n",
+        content=_PROJECT_FILE + "\n改了主意。\n",
         version=1,
     )
     assert again.status_code == 200, again.text
@@ -167,7 +167,7 @@ def test_a_members_private_memory_is_not_everyones(client):
         ).status_code
         == 403
     )
-    # 而 team 那一份里没有它。
+    # 而 project 那一份里没有它。
     listed = _get(client, project_id, "bob")
     assert [row["path"] for row in listed.json()["data"]["data"]] == []
 
@@ -262,10 +262,14 @@ def test_a_path_longer_than_the_column_is_a_422_not_a_500(client):
     at_the_limit = "a" * 197 + ".md"
     assert len(at_the_limit) == 200
 
-    written = _put(client, project_id, "alice", path=at_the_limit, content=_TEAM_FILE)
+    written = _put(
+        client, project_id, "alice", path=at_the_limit, content=_PROJECT_FILE
+    )
     assert written.status_code == 200, written.text
 
-    over = _put(client, project_id, "alice", path="a" * 198 + ".md", content=_TEAM_FILE)
+    over = _put(
+        client, project_id, "alice", path="a" * 198 + ".md", content=_PROJECT_FILE
+    )
     assert over.status_code == 422, over.text
     assert "200" in over.json()["error"]["message"]
 
@@ -279,7 +283,7 @@ def test_two_writers_of_the_same_new_path_end_in_a_409_not_a_500(client, monkeyp
     """
     project_id = _project(client)
     first = _put(
-        client, project_id, "alice", path="answer-first.md", content=_TEAM_FILE
+        client, project_id, "alice", path="answer-first.md", content=_PROJECT_FILE
     )
     assert first.status_code == 200, first.text
 
@@ -295,7 +299,7 @@ def test_two_writers_of_the_same_new_path_end_in_a_409_not_a_500(client, monkeyp
     monkeypatch.setattr(MemoryFileStore, "get", blind_once)
 
     raced = _put(
-        client, project_id, "alice", path="answer-first.md", content=_TEAM_FILE
+        client, project_id, "alice", path="answer-first.md", content=_PROJECT_FILE
     )
     assert raced.status_code == 409, raced.text
     assert raced.json()["error"]["data"] == {
@@ -307,14 +311,14 @@ def test_two_writers_of_the_same_new_path_end_in_a_409_not_a_500(client, monkeyp
 
 def test_a_stale_version_is_refused_with_the_current_one(client):
     project_id = _project(client)
-    _put(client, project_id, "alice", path="answer-first.md", content=_TEAM_FILE)
+    _put(client, project_id, "alice", path="answer-first.md", content=_PROJECT_FILE)
 
     stale = _put(
         client,
         project_id,
         "alice",
         path="answer-first.md",
-        content=_TEAM_FILE + "\n半路改的。\n",
+        content=_PROJECT_FILE + "\n半路改的。\n",
         version=7,
     )
     assert stale.status_code == 409, stale.text
@@ -329,11 +333,11 @@ def test_a_stale_version_is_refused_with_the_current_one(client):
 def test_a_new_memory_under_an_existing_name_is_a_conflict(client):
     """「先查重，再新建」是写记忆的规矩，而一个重名的空文件正是它最容易被绕过的地方。"""
     project_id = _project(client)
-    _put(client, project_id, "alice", path="answer-first.md", content=_TEAM_FILE)
+    _put(client, project_id, "alice", path="answer-first.md", content=_PROJECT_FILE)
 
     assert (
         _put(
-            client, project_id, "alice", path="answer-first.md", content=_TEAM_FILE
+            client, project_id, "alice", path="answer-first.md", content=_PROJECT_FILE
         ).status_code
         == 409
     )
@@ -363,7 +367,7 @@ def test_a_bad_scope_is_a_422_not_a_500(client):
         client,
         project_id,
         "alice",
-        scope="team; private",
+        scope="project; private",
         path="a.md",
         content="x",
     )
@@ -371,7 +375,7 @@ def test_a_bad_scope_is_a_422_not_a_500(client):
 
 
 def _long_note() -> str:
-    return _TEAM_FILE.replace("有结论就先说结论，理由跟在后面。", "字" * 1001)
+    return _PROJECT_FILE.replace("有结论就先说结论，理由跟在后面。", "字" * 1001)
 
 
 def test_a_memory_over_the_length_limit_is_refused_and_nothing_is_written(client):
@@ -383,7 +387,9 @@ def test_a_memory_over_the_length_limit_is_refused_and_nothing_is_written(client
     )
     assert created.status_code == 422, created.text
 
-    kept = _put(client, project_id, "alice", path="answer-first.md", content=_TEAM_FILE)
+    kept = _put(
+        client, project_id, "alice", path="answer-first.md", content=_PROJECT_FILE
+    )
     assert kept.status_code == 200, kept.text
     longer = _put(
         client,
@@ -400,7 +406,7 @@ def test_a_memory_over_the_length_limit_is_refused_and_nothing_is_written(client
         for row in _get(client, project_id, "alice").json()["data"]["data"]
     }
     assert "too-long.md" not in files
-    assert files["answer-first.md"]["content"] == _TEAM_FILE
+    assert files["answer-first.md"]["content"] == _PROJECT_FILE
     assert files["answer-first.md"]["version"] == 1
 
 
@@ -413,10 +419,10 @@ def test_a_session_that_skips_the_check_is_still_refused_by_the_platform(client)
 
     project_id = _project(client)
     written = _put(
-        client, project_id, "alice", path="answer-first.md", content=_TEAM_FILE
+        client, project_id, "alice", path="answer-first.md", content=_PROJECT_FILE
     )
     assert written.status_code == 200, written.text
-    scopes = [(MemoryFileScope.team, None)]
+    scopes = [(MemoryFileScope.project, None)]
 
     async def run():
         async with client.test_request_factory() as session:
@@ -426,7 +432,7 @@ def test_a_session_that_skips_the_check_is_still_refused_by_the_platform(client)
                 session,
                 project,
                 stored,
-                {"files": {"team/answer-first.md": _long_note()}, "refused": {}},
+                {"files": {"project/answer-first.md": _long_note()}, "refused": {}},
                 scopes=scopes,
                 updated_by="cheese",
             )
@@ -434,9 +440,9 @@ def test_a_session_that_skips_the_check_is_still_refused_by_the_platform(client)
             return change
 
     change = client.portal.call(run)
-    assert "team/answer-first.md" in change.rejected
+    assert "project/answer-first.md" in change.rejected
     files = {
         row["path"]: row
         for row in _get(client, project_id, "alice").json()["data"]["data"]
     }
-    assert files["answer-first.md"]["content"] == _TEAM_FILE
+    assert files["answer-first.md"]["content"] == _PROJECT_FILE

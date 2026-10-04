@@ -231,7 +231,7 @@ def test_at_the_limit_a_teammate_stops_proposing_but_a_person_does_not(client):
     assert by_person.status_code == 200, "a person was held to the teammate's limit"
 
 
-def test_saving_a_proposal_removes_the_team_memories_it_absorbed(client):
+def test_saving_a_proposal_removes_the_project_memories_it_absorbed(client):
     project = _project(client)
     room = _room(client, project)
     rule = "---\nname: weekly-order\ndescription: 周报先写坏消息\ntype: feedback\n---\n"
@@ -242,7 +242,7 @@ def test_saving_a_proposal_removes_the_team_memories_it_absorbed(client):
             "/memory/files",
             json={
                 "project_id": project,
-                "scope": "team",
+                "scope": "project",
                 "path": path,
                 "content": content,
             },
@@ -255,7 +255,7 @@ def test_saving_a_proposal_removes_the_team_memories_it_absorbed(client):
         "/memory/files",
         json={
             "project_id": project,
-            "scope": "team",
+            "scope": "project",
             "path": "MEMORY.md",
             "content": index,
         },
@@ -264,30 +264,32 @@ def test_saving_a_proposal_removes_the_team_memories_it_absorbed(client):
 
     skill = client.post(
         f"/topics/{room}/skills",
-        json=_proposal(absorbs=["team/weekly-order.md"]),
+        json=_proposal(absorbs=["project/weekly-order.md"]),
     ).json()["data"]
-    team = {
+    memories = {
         f["path"]: f["content"]
         for f in client.get(
-            f"/memory/files?project_id={project}&scope=team", headers=PERSON
+            f"/memory/files?project_id={project}&scope=project", headers=PERSON
         ).json()["data"]["data"]
     }
-    assert "weekly-order.md" in team, "a proposal removed memories before it was saved"
+    assert "weekly-order.md" in memories, (
+        "a proposal removed memories before it was saved"
+    )
     # The person deciding sees which memory goes by its title, not its file.
     assert skill["proposal"]["absorbs"] == [
-        {"path": "team/weekly-order.md", "title": "周报顺序"}
+        {"path": "project/weekly-order.md", "title": "周报顺序"}
     ]
 
     client.post(f"/skills/{skill['id']}/confirm", headers=PERSON)
-    team = {
+    memories = {
         f["path"]: f["content"]
         for f in client.get(
-            f"/memory/files?project_id={project}&scope=team", headers=PERSON
+            f"/memory/files?project_id={project}&scope=project", headers=PERSON
         ).json()["data"]["data"]
     }
-    assert "weekly-order.md" not in team
-    assert "weekly-order.md" not in team["MEMORY.md"]
-    assert "style.md" in team and "style.md" in team["MEMORY.md"]
+    assert "weekly-order.md" not in memories
+    assert "weekly-order.md" not in memories["MEMORY.md"]
+    assert "style.md" in memories and "style.md" in memories["MEMORY.md"]
 
 
 def test_a_proposal_cannot_absorb_someones_private_memory(client):

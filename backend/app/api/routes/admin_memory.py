@@ -42,7 +42,7 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 def _file_path(item: dict) -> str:
-    """计划里那个文件的完整路径（`team/x.md` / `private/alice/y.md`）。"""
+    """计划里那个文件的完整路径（`project/x.md` / `private/alice/y.md`）。"""
     owner = item["owner"]
     return f"{item['scope']}/{owner + '/' if owner else ''}{item['path']}"
 

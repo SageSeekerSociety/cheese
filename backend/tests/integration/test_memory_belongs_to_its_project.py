@@ -89,7 +89,7 @@ def _id_of(client, project_id: str, handle: str, content: str, **params) -> str:
 
 
 def _project_with_memory(client) -> str:
-    """alice owns it, bob is on its team; its 芝士 remembered one thing about
+    """alice owns it, bob is on its project; its 芝士 remembered one thing about
     the project and one about each of them."""
     project_id = new_project(client, owner="alice")["id"]
     join_project_team(client, project_id, "bob")

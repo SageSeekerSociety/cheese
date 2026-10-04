@@ -4,7 +4,7 @@
 
 1. **读三处来源**：旧表 `memory_entries` 的两个池、总览文档里那两节、以及新树现
    在的样子（`memory_files`）。读到什么决定了报告上有什么。
-2. **问一次模型**：去处是模型判的（一条旧记忆该进 team 还是某个人的 private，靠
+2. **问一次模型**：去处是模型判的（一条旧记忆该进 project 还是某个人的 private，靠
    读正文），分批问（`MIGRATION_CHUNK`），问完把报告和计划**存下来**——人复核的
    是这一份，所以 apply 重放它，不再问第二次。
 3. **落笔**：`apply` 只写 `memory_files`，一次事务，一条冲突就整次不写（冲突是
@@ -100,7 +100,7 @@ class Gathered:
     root_topic_id: uuid.UUID | None
     entries: list[OldEntry]
     owners: list[str]
-    #: 路径（`team/x.md`）→ 正文。
+    #: 路径（`project/x.md`）→ 正文。
     existing: dict[str, str]
     #: `(作用域, 主人, 文件名, 版本)`——包括每个作用域的 `MEMORY.md`。
     files: list[tuple[MemoryFileScope, str, str, int]]
@@ -217,7 +217,7 @@ class MemoryMigrationService:
         files: list[tuple[MemoryFileScope, str, str, int]] = []
         existing: dict[str, str] = {}
         scopes: list[tuple[MemoryFileScope, str | None]] = [
-            (MemoryFileScope.team, None),
+            (MemoryFileScope.project, None),
             *[(MemoryFileScope.private, owner) for owner in owners],
         ]
         for scope, owner in scopes:
@@ -480,22 +480,26 @@ class MemoryMigrationService:
     def _summary_of(self, row: MemoryMigrationPlan) -> str:
         """一句话交代这次搬了多少、各去哪儿了。给人看的，所以按去处数。"""
         tally = Counter(str(item.get("destination") or "?") for item in row.decisions)
-        teams = sum(
-            1 for item in row.files if item["scope"] == MemoryFileScope.team.value
+        projects = sum(
+            1 for item in row.files if item["scope"] == MemoryFileScope.project.value
         )
-        team_lines = next(
+        project_lines = next(
             (
                 len([line for line in item["content"].splitlines() if line.strip()])
                 for item in row.indexes
-                if item["scope"] == MemoryFileScope.team.value
+                if item["scope"] == MemoryFileScope.project.value
             ),
             None,
         )
         return (
             f"{len(row.source_ids)} 条旧记忆 → {len(row.files)} 个文件"
-            f"（team {teams}、private {len(row.files) - teams}），"
+            f"（project {projects}、private {len(row.files) - projects}），"
             + "、".join(f"{name} {count}" for name, count in sorted(tally.items()))
-            + (f"；team 索引 {team_lines} 行" if team_lines is not None else "")
+            + (
+                f"；project 索引 {project_lines} 行"
+                if project_lines is not None
+                else ""
+            )
         )
 
     # --- 房间里那两句话 -------------------------------------------------
