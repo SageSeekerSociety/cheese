@@ -76,6 +76,42 @@ export function useRoomSocket(options: {
   // it: stop retrying and keep the reason on screen until they act.
   const connectRefused = ref(false)
 
+  // A drop the first reconnect heals is not news. A release reloads the app
+  // router, and a reload cuts every room socket once its old workers retire —
+  // several drops per release, each healed about a second later. Announced
+  // on every one of them, a room that never stopped working read as 断联
+  // several times an hour. So the banner waits until the link has been down
+  // this long without coming back: past the 1 s retry, the history refetch and
+  // the handshake over a slow path, short of a wait anyone would sit through
+  // without wanting to be told.
+  const OUTAGE_ANNOUNCE_MS = 8_000
+  let downSince: number | null = null
+  let announceTimer: ReturnType<typeof setTimeout> | null = null
+
+  function announceOutage() {
+    if (!connectRefused.value) options.errorMsg.value = t('work.room.socket.reconnecting')
+  }
+
+  function noteLinkDown() {
+    if (downSince === null) {
+      downSince = Date.now()
+      announceTimer = setTimeout(() => {
+        announceTimer = null
+        if (!connected.value) announceOutage()
+      }, OUTAGE_ANNOUNCE_MS)
+    } else if (Date.now() - downSince >= OUTAGE_ANNOUNCE_MS) {
+      // Already announced once and since wiped by a retry's history refetch
+      // (loadTopic clears the banner): still down, so say so again at once.
+      announceOutage()
+    }
+  }
+
+  function noteLinkUp() {
+    downSince = null
+    if (announceTimer) clearTimeout(announceTimer)
+    announceTimer = null
+  }
+
   function scheduleReconnect(topicId: string) {
     if (retryTimer || connectRefused.value) return
     const delay = retryDelayMs
@@ -161,6 +197,7 @@ export function useRoomSocket(options: {
 
     ws.onopen = () => {
       connected.value = true
+      noteLinkUp()
       retryDelayMs = 1000 // healthy again → next outage starts backoff fresh
       options.errorMsg.value = null
       startHeartbeat(ws)
@@ -176,8 +213,9 @@ export function useRoomSocket(options: {
       }
     }
     ws.onerror = () => {
-      // The close handler owns retry; the banner just explains the grey dot.
-      if (!connectRefused.value) options.errorMsg.value = t('work.room.socket.reconnecting')
+      // The close handler owns retry; the banner explains the grey dot once the
+      // drop has lasted long enough to be one (see OUTAGE_ANNOUNCE_MS).
+      noteLinkDown()
     }
     ws.onmessage = (ev: MessageEvent) => {
       // Guard against frames from a stale socket after topic switch.
@@ -213,7 +251,10 @@ export function useRoomSocket(options: {
     options.reconnect(topicId)
   }
   useEventListener(window, 'online', reconnectOnOnline)
-  onScopeDispose(closeSocket)
+  onScopeDispose(() => {
+    closeSocket()
+    noteLinkUp()
+  })
 
   return {
     connected,
