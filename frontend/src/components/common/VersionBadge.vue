@@ -48,8 +48,10 @@ async function copySha() {
 <style scoped>
 .version-badge {
   position: fixed;
-  top: 6px;
-  right: 8px;
+  /* 钉在右上角：iPhone 上正好落进刘海 / 状态栏那一条，字被压住。让出顶部与右侧安全区
+     （横屏时圆角 / 刘海在侧边）。桌面和没有安全区的设备上 `env()` 是 0，位置不变。 */
+  top: calc(6px + env(safe-area-inset-top, 0px));
+  right: calc(8px + env(safe-area-inset-right, 0px));
   z-index: var(--z-banner);
   display: inline-flex;
   align-items: center;

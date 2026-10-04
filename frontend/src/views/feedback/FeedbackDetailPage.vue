@@ -718,6 +718,12 @@ async function share() {
   padding: 8px 0 16px;
   background: var(--surface);
 }
+/* 操作栏不在的页面（私密 / 安全那条），评论框自己就是最底下那件东西，`bottom: 0`
+   贴在视口底 —— 让出 `safe-area-inset-bottom`，否则手机上是压着 Home 横杠的。操作
+   栏在的时候它已经抬到 64px 上去了，安全区由那条栏自己出，这里不再叠一次。 */
+.fb-composer:not(.fb-composer--raised) {
+  padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+}
 /* 底下那条操作栏在的时候，评论框抬到它上面一栏高（64px，和 `.fb-actionbar` 的
    height 是同一个数，改一处必须改两处）。两条都黏在底边的话会叠在一起 ——
    评论框属于评论区，操作栏属于整页，上下有先后。 */

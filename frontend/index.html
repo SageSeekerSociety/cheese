@@ -7,8 +7,16 @@
     <!-- `interactive-widget=resizes-content`: 软键盘弹出来时把布局视口一起缩掉,
          于是 100% / dvh / 底部的输入框全都自己让开。不写这一条的默认行为是只缩
          "看得见的那块"(visual viewport),页面自己毫不知情,输入框留在键盘底下。
-         不认这个键的浏览器(Safari)照旧走 lib/keyboardInset.ts 那条 JS 路。 -->
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content" />
+         不认这个键的浏览器(Safari)照旧走 lib/keyboardInset.ts 那条 JS 路。
+
+         `viewport-fit=cover`: 不写这一条,Safari 会把整页缩进安全区里画(刘海、
+         Home 横杠那两圈都空出来),`env(safe-area-inset-*)` 于是恒为 0 —— 全仓那
+         些输入区/底栏/弹窗的让位规则全都成了死代码。写了它,页面铺满整屏,
+         `env()` 才报出真正的数值,由各个贴边的元素自己让开。 -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content, viewport-fit=cover"
+    />
     <!-- Updated at runtime by src/theme.ts when the theme changes; this value
          is the light one, matching META_THEME_COLOR in that file. -->
     <meta name="theme-color" content="#F57F17" />
