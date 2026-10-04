@@ -103,7 +103,9 @@ def test_serve_declares_only_the_port_and_registers_the_app(monkeypatch):
     cli = _load()
     monkeypatch.setenv("CHEESE_PREVIEW_UP", "/preview-up")
     monkeypatch.setattr(cli, "TOPIC", "room")
-    monkeypatch.setattr(cli.sys, "argv", ["cheese", "serve", "5173", "Vue dev server"])
+    monkeypatch.setattr(
+        cli.sys, "argv", ["cheese", "serve", "5173", "Vue dev server", "--no-wait"]
+    )
     calls = []
     api_calls = []
     monkeypatch.setattr(cli.subprocess, "call", lambda args: calls.append(args) or 0)
@@ -113,6 +115,105 @@ def test_serve_declares_only_the_port_and_registers_the_app(monkeypatch):
     assert api_calls == [
         ("POST", "/topics/room/shown", {"path": "Vue dev server", "as": "app"})
     ]
+
+
+def test_serve_waits_for_the_app_before_declaring(monkeypatch):
+    """默认先探通:应用还没起来时,报端口之前先等到它应答。"""
+    cli = _load()
+    monkeypatch.setenv("CHEESE_PREVIEW_UP", "/preview-up")
+    monkeypatch.setattr(cli, "TOPIC", "room")
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "serve", "5173", "Vue dev server"])
+    waited = []
+    monkeypatch.setattr(
+        cli,
+        "_wait_for_app",
+        lambda port, timeout: waited.append((port, timeout)) or 200,
+    )
+    calls = []
+    monkeypatch.setattr(cli.subprocess, "call", lambda args: calls.append(args) or 0)
+    monkeypatch.setattr(cli, "_call", lambda *args, **_: {})
+
+    cli.main()
+
+    assert waited == [(5173, cli._SERVE_WAIT_DEFAULT_S)]
+    assert calls == [["sh", "/preview-up", "5173"]]
+
+
+def test_serve_no_wait_skips_the_probe(monkeypatch):
+    """--no-wait(和 --wait 0)不探,报完就走,给不想等的调用方留一条路。"""
+    cli = _load()
+    monkeypatch.setenv("CHEESE_PREVIEW_UP", "/preview-up")
+    monkeypatch.setattr(cli, "TOPIC", "room")
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "serve", "5173", "--wait", "0"])
+
+    def _boom(*_a, **_k):
+        raise AssertionError("--wait 0 不该探")
+
+    monkeypatch.setattr(cli, "_wait_for_app", _boom)
+    monkeypatch.setattr(cli.subprocess, "call", lambda args: 0)
+    monkeypatch.setattr(cli, "_call", lambda *args, **_: {})
+
+    cli.main()
+
+
+def test_serve_warns_but_still_declares_when_nothing_answers(monkeypatch, capsys):
+    """等超了照样报:提醒一句就够,平台那一敲仍是权威,不该把 agent 卡在这。"""
+    cli = _load()
+    monkeypatch.setenv("CHEESE_PREVIEW_UP", "/preview-up")
+    monkeypatch.setattr(cli, "TOPIC", "room")
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "serve", "5173"])
+    monkeypatch.setattr(cli, "_wait_for_app", lambda port, timeout: None)
+    calls = []
+    monkeypatch.setattr(cli.subprocess, "call", lambda args: calls.append(args) or 0)
+    monkeypatch.setattr(cli, "_call", lambda *args, **_: {})
+
+    cli.main()
+
+    assert calls == [["sh", "/preview-up", "5173"]]
+    err = capsys.readouterr().err
+    assert "5173" in err and "没有应答" in err
+
+
+def test_wait_for_app_probes_a_real_server_and_a_dead_port():
+    """_wait_for_app 走真网络:有人在听返回状态码,没人听就等满超时返回 None。"""
+    import http.server
+    import socket
+    import threading
+
+    cli = _load()
+
+    class _Handler(http.server.BaseHTTPRequestHandler):
+        seen: list[str] = []
+
+        def do_GET(self):  # noqa: N802 — http.server's own spelling
+            type(self).seen.append(self.headers.get("Accept", ""))
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"<html></html>")
+
+        def log_message(self, *_a):  # 安静点,测试输出不掺日志
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        assert cli._wait_for_app(port, 5.0) == 200
+        # 探的是浏览器式的请求:Accept 里带 text/html。
+        assert any("text/html" in value for value in _Handler.seen)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+    # 一个没人听的端口:拿到连接被拒,不该瞎等满整段时间。
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        dead_port = probe.getsockname()[1]
+    start = cli.monotonic()
+    assert cli._wait_for_app(dead_port, 0.6) is None
+    assert cli.monotonic() - start < 5.0
 
 
 def test_raw_request_sends_cheese_token(monkeypatch):
