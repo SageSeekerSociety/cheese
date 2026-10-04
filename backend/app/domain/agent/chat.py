@@ -30,7 +30,6 @@ from app.core.sentences import say
 from app.domain.agent import death_evidence
 from app.domain.agent.announce import announce, settle_questions_answered_by
 from app.domain.agent.compute import ComputePool
-from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 
 # 兼容门面：现场事件行的渲染搬去了 `event_lines.py`（那里有直接的单测）。
 # 这里重新导出，`app.domain.agent.chat` 仍是既有调用点与测试的导入路径；下面
@@ -63,7 +62,7 @@ from app.domain.agent.gateway_usage import (
     charge_turn_spend,
     project_gateway_key,
 )
-from app.domain.agent.harness import SessionRef, harness_for
+from app.domain.agent.harness import harness_for
 from app.domain.agent.harness.prompt import (
     live_input_lines,
     platform_prompt,
@@ -135,6 +134,7 @@ from app.domain.agent.platform_notices import (
     delivery_fallback_notice,
     notice,
 )
+from app.domain.agent.prewarm import SeatPrewarm
 from app.domain.agent.profiles import ProfileRegistry
 
 # 兼容门面：提示词/上下文渲染搬去了 `prompt.py`（那里有直接的单测）。这里重新
@@ -408,10 +408,13 @@ class ChatService(SessionRecovery, RoomTurns):
             base_prompt=base_system_prompt,
             host=self,
         )
+        #: Brings a seat that went quiet up to date (`agent.prewarm`).
+        self.prewarm = SeatPrewarm(self)
         self._compute.report_to(
             room_reads.reader(self),
             unread=self.oldest_unread_at,
             memory=self._memory.sync,
+            quiet=self.prewarm.nudge,
         )
         # Keep the publication contract present before native skills are invoked.
         self._skills = NATIVE_CHAT_GUIDANCE
@@ -1455,42 +1458,6 @@ class ChatService(SessionRecovery, RoomTurns):
             replay.cancel()
         await asyncio.gather(*replays, return_exceptions=True)
         await self._compute.stop_listening()
-
-    async def _replay_room(
-        self, seats: list[SessionRef], *, after: asyncio.Task | None
-    ) -> None:
-        if after is not None:
-            await asyncio.gather(after, return_exceptions=True)
-        async with self._replay_slots:
-            for session in seats:
-                try:
-                    await self._compute.replay(session)
-                except DeviceOffline:
-                    # The machine holding this session is not there. Nothing to
-                    # recover and nothing to fix; its next connection runs this.
-                    logger.warning(
-                        "session not recovered for topic %s: device offline",
-                        session.topic_id,
-                    )
-                except DeviceCallError as exc:
-                    # The machine is there and said no — its runner's socket is
-                    # not up yet (a cold one takes about a minute), or the room's
-                    # home is gone. Same standing as the machine being away: the
-                    # next connection recovers this session, and the machine's
-                    # own words are what somebody reading this would act on.
-                    logger.warning(
-                        "session not recovered for topic %s: %s",
-                        session.topic_id,
-                        exc,
-                    )
-                except Exception:  # noqa: BLE001 — one topic cannot block startup
-                    logger.exception(
-                        "session recovery failed for topic %s", session.topic_id
-                    )
-                else:
-                    from app.domain.agent.pending_messages import nudge_messages
-
-                    nudge_messages(self, session.topic_id)
 
     async def _save_session_pointer(
         self,

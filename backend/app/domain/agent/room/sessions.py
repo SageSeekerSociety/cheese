@@ -110,6 +110,11 @@ MemoryConsumer = Callable[[uuid.UUID], Awaitable[None]]
 # on the other end of it.
 UnreadProbe = Callable[[uuid.UUID], float | None]
 
+# A seat whose session went quiet while it may not be what the backend would
+# start today (``prewarm_due``): the room brings it up to date then, so the
+# restart is not paid by the next person's message.
+QuietListener = Callable[[SessionRef], None]
+
 # How long a session's runner may go unanswered while work is owed before the
 # work is called dead. Longer than the connection owner takes to come back after
 # a release, and than a device takes to reconnect after a network blip: those
@@ -236,6 +241,11 @@ class RoomSessions:
         self.reader: RoomReader | None = None
         self.unread: UnreadProbe | None = None
         self._memory: MemoryConsumer | None = None
+        self._quiet: QuietListener | None = None
+        # Seats this process took over and has not yet brought up to date with
+        # what it would start today: a release changes what a session is
+        # launched with, and no turn here has compared it yet.
+        self.unchecked: set[Seat] = set()
 
     # --- the machine pool ----------------------------------------------------
 
@@ -267,10 +277,40 @@ class RoomSessions:
         *,
         unread: "UnreadProbe",
         memory: "MemoryConsumer",
+        quiet: "QuietListener | None" = None,
     ) -> None:
         """The room's books: where it hears its sessions, where it says what
-        it sent that is still unread, and where its memory is reconciled."""
+        it sent that is still unread, where its memory is reconciled, and who
+        brings a seat that went quiet up to date (``prewarm_due``)."""
         self.reader, self.unread, self._memory = reader, unread, memory
+        self._quiet = quiet
+
+    def prewarm_due(self, session: SessionRef) -> "Live | None":
+        """The seat's live session, when it may be launched from something the
+        backend would no longer start and nothing is running on it; else None.
+
+        Owed after this process took the seat over, until a start compares it
+        (``unchecked``), and whenever the channel put a relaunch off because the
+        session was working (``owes``). Only the process that owns the
+        running work answers yes: the one handing it over must not start what
+        the next one is about to read."""
+        seat = self._seat_of(session)
+        live = self.live.get(seat)
+        if live is None or not live.takes_inputs or seat in self.work:
+            return None
+        provider = self._owns_sessions_provider
+        if provider is not None and not provider().owns_sessions():
+            return None
+        ledger = getattr(self.channel, "screen_ledger", None)
+        if seat in self.unchecked or (
+            ledger is not None and ledger.owes((seat[0], live.acting))
+        ):
+            return live
+        return None
+
+    def _went_quiet(self, session: SessionRef) -> None:
+        if self._quiet is not None and self.prewarm_due(session) is not None:
+            self._quiet(session)
 
     def bind_owns_sessions(self, provider) -> None:
         """Who answers ``owns_sessions`` at attach time (FB-56)."""
@@ -596,6 +636,7 @@ class RoomSessions:
                 # 一轮结束时问一次记忆：agent 该写的记忆按规矩写在回复之前，所
                 # 以一轮读完就是它写完的时刻。
                 await self.reconcile_memory(topic)
+                self._went_quiet(live.session)
         elif isinstance(event, Moved):
             self.pulse(seat, event.marks)
         elif isinstance(event, Received):
@@ -627,6 +668,9 @@ class RoomSessions:
             caught.set()
         elif isinstance(event, ControlsMoved):
             await self.announce(topic)
+            # A background task finishing is what lets a relaunch put off for
+            # it happen; the controls moving is how that is heard.
+            self._went_quiet(live.session)
         else:
             assert work is not None, "a session's events belong to work"
             if hasattr(event, "attachment"):
@@ -796,7 +840,7 @@ class RoomSessions:
                 ),
             )
             status = await self.host.start(ref, spec, access)
-        return await self._attach(
+        attached = await self._attach(
             Live(
                 session,
                 ref,
@@ -805,6 +849,10 @@ class RoomSessions:
                 status.takes_inputs,
             )
         )
+        # Compared with what it would be started with now: up to date, or a
+        # relaunch the channel owes (``prewarm_due``).
+        self.unchecked.discard(seat)
+        return attached
 
     async def send(
         self,
@@ -1316,6 +1364,7 @@ class RoomSessions:
                 self.work[seat] = uuid.UUID(status.work_id)
                 now = time.monotonic()
                 self.clocks[seat] = Clock(opened=now, progressed=now)
+            self.unchecked.add(seat)
             recovered.append(session)
         # Chat restores room bookkeeping before replay starts reading.
         return recovered

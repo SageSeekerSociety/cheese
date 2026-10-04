@@ -505,9 +505,7 @@ class DeviceChannel(Channel):
         # resolver is used lazily (keeps this module importable without a DB).
         self._device_resolver = device_resolver
         self._public_base = (public_base or settings.connector_public_base).rstrip("/")
-        # sid → what a turn here brought that screen up to date with
-        # (``settled_with``), and when the credential it wrote expires.
-        self._settled: dict[str, tuple[str, int]] = {}
+        self.screen_ledger = screen_identity.ScreenLedger()
 
     def available(self) -> bool:
         """Whether any device is currently connected (online). Project-level checks
@@ -696,7 +694,7 @@ class DeviceChannel(Channel):
             screen.sid,
             reason,
         )
-        self._settled.pop(screen.sid, None)
+        self.screen_ledger.forget(screen.sid)
         await self._hub.close_screen(screen.device_id, screen.sid)
 
     def _existing_screen(
@@ -1306,9 +1304,11 @@ class DeviceChannel(Channel):
         if (
             runner_alive
             and existing is not None
-            and self._settled.get(existing.sid, ("", 0))[0] == settled_with
-            and self._settled[existing.sid][1]
-            > int(time.time()) + _CREDENTIAL_EXPIRY_MARGIN_S
+            and self.screen_ledger.current(
+                existing.sid,
+                settled_with,
+                valid_after=int(time.time()) + _CREDENTIAL_EXPIRY_MARGIN_S,
+            )
             and not await self._tunnel_helper_is_down(existing, home_dir)
         ):
             mark("screen_settled")
@@ -1339,7 +1339,7 @@ class DeviceChannel(Channel):
         screen_env["CHEESE_AGENT_CONFIG"] = configuration
         # Whether this turn leaves the screen running what it would be started
         # with today, so the next send to it may skip all of this
-        # (``_settled``). A relaunch or a release put off for running work
+        # (``screen_ledger``). A relaunch or a release put off for running work
         # leaves it behind.
         settled = True
         if existing is not None and existing.agent_configuration != configuration:
@@ -1478,8 +1478,10 @@ class DeviceChannel(Channel):
             )
             if inspect.isawaitable(updated):
                 existing = await updated
-            if settled:
-                self._settle(existing.sid, settled_with, token)
+            seat = (topic_id, agent_handle)
+            self.screen_ledger.record(
+                existing.sid, seat, settled_with, token, settled=settled
+            )
             return existing
         screen = await self._hub.open_screen(
             device_id,
@@ -1507,12 +1509,10 @@ class DeviceChannel(Channel):
         )
         if inspect.isawaitable(updated):
             screen = await updated
-        self._settle(screen.sid, settled_with, token)
+        self.screen_ledger.record(
+            screen.sid, (topic_id, agent_handle), settled_with, token
+        )
         return screen
-
-    def _settle(self, sid: str, settled_with: str, token: str) -> None:
-        claims = scoped_token_claims(token) or {}
-        self._settled[sid] = (settled_with, int(claims.get("exp") or 0))
 
     # --- turn --------------------------------------------------------------
 
