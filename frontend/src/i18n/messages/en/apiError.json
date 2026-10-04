@@ -350,8 +350,6 @@
   "launcherNotWritten": "Couldn't write the launch script to the device: {detail}",
   "sessionFilesNotSent": "Couldn't refresh the session files on the device: {detail}",
   "screenSessionMachineNotReady": "This session's machine isn't set up or isn't connected",
-  "screenSessionExitedAfterSetup": "The environment is ready, but the session exited after starting. See the room terminal for why",
-  "screenExecutorNotStarted": "The environment executor didn't start. Check the room terminal",
   "handoffSessionFilesIncomplete": "The original machine is missing the full session file to continue from, so the session hasn't moved to the central machine",
   "handoffSessionStillChanging": "The original session record is still changing, so the session hasn't moved to the central machine",
   "handoffHistoryMigrationFailed": "Moving the full session history failed",

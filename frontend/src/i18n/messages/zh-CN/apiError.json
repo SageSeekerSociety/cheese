@@ -350,8 +350,6 @@
   "launcherNotWritten": "无法把启动脚本写到设备上：{detail}",
   "sessionFilesNotSent": "无法刷新设备上的会话文件：{detail}",
   "screenSessionMachineNotReady": "这条会话的机器尚未配置或未连接",
-  "screenSessionExitedAfterSetup": "环境已准备完成，但会话启动后退出，可以在房间终端查看原因",
-  "screenExecutorNotStarted": "环境执行器未启动，请查看房间终端",
   "handoffSessionFilesIncomplete": "原机器缺少要继续的完整会话文件，尚未切换到中心",
   "handoffSessionStillChanging": "原会话记录仍在变化，尚未切换到中心",
   "handoffHistoryMigrationFailed": "完整会话历史迁移失败",

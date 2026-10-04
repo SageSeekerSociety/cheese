@@ -196,11 +196,9 @@ INSTALLED = {
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("central_execution", [False])
 async def test_commits_use_the_authenticated_teammate_not_the_room_identity(
-    client, room, monkeypatch, tmp_path, central_execution
+    client, room, monkeypatch, tmp_path
 ):
-    from app.domain.agent.harness.claude_code.remote_execution import launch
     from app.domain.identity.services import IdentityService
 
     project, topic = room
@@ -209,21 +207,9 @@ async def test_commits_use_the_authenticated_teammate_not_the_room_identity(
         actor_id = actor.id
         await db.commit()
     central = channel(client, monkeypatch)
-    captured = {}
-    central._hub.all_online_screens = lambda: []
-
-    def bootstrap(project, resource, env):
-        captured.update(env)
-        return "fixture-bootstrap"
-
-    monkeypatch.setattr(launch, "script", bootstrap)
-    selected = central if central_execution else central.executor
-    selected._ensure_screen = AsyncMock(
-        return_value=SimpleNamespace(device_id="center", sid="s1")
-    )
 
     async def exercise():
-        await selected.ensure_ready(
+        async with central.prepare_session(
             session=ref(project, topic),
             token=mint_scoped_token(
                 project_id=str(project),
@@ -231,16 +217,10 @@ async def test_commits_use_the_authenticated_teammate_not_the_room_identity(
                 agent_handle="other-teammate",
             ),
             env={},
-            memory_scope=None,
-            owner=None,
-            turn_id=None,
-            launch=ClaudeLaunch("System"),
             precheck=Placement("executor", 1, "room-stand-in", rented=True),
-        )
-        screen = selected._ensure_screen.await_args.kwargs
-        assert screen["agent_handle"] == "other-teammate"
-        assert screen["agent_user_id"] == actor_id
-        if not central_execution:
+        ) as prepared:
+            assert prepared.agent_handle == "other-teammate"
+            assert prepared.agent_user_id == actor_id
             captured = machine_launcher.screen_env(
                 MachinePlace(
                     home=str(tmp_path),
@@ -250,9 +230,9 @@ async def test_commits_use_the_authenticated_teammate_not_the_room_identity(
                     api_base="http://fixture",
                     project_id=str(project),
                     topic_id=str(topic),
-                    agent_handle=screen["agent_handle"],
+                    agent_handle=prepared.agent_handle,
                 ),
-                token=screen["token"],
+                token=prepared.token,
             )
         assert captured["CHEESE_AUTHOR"] == "other-teammate"
         env = {
