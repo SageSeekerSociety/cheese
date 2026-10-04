@@ -4,10 +4,10 @@
 // 里标着。
 import type { AgentPhase } from '../../../composables/useDocAgent'
 
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 
-import { renderMarkdown } from '../../../lib/renderMessage'
 import CheeseAvatar from '../../CheeseAvatar.vue'
+import MarkdownView from '../../common/MarkdownView.vue'
 
 import DocEditButton from './DocEditButton.vue'
 
@@ -43,7 +43,7 @@ function onKey(e: KeyboardEvent) {
   more.value = ''
 }
 /** 回答按 Markdown 读：列表、加粗、代码照样排出来，点名读成名字。 */
-const rendered = (text: string) => renderMarkdown(text, { mentionNames: props.mentionNames, topicTitles: {} })
+const names = computed(() => ({ mentionNames: props.mentionNames, topicTitles: {} }))
 </script>
 
 <template>
@@ -64,11 +64,13 @@ const rendered = (text: string) => renderMarkdown(text, { mentionNames: props.me
           {{ phase === 'queued' ? t('work.room.docAgent.cancel') : t('work.room.docAgent.stop') }}
         </DocEditButton>
       </div>
-      <div
+      <MarkdownView
         v-if="kind === 'ask' && answer"
         class="doc-agent-result__answer doc-agent-result__answer--streaming md-content"
         dir="auto"
-        v-html="rendered(answer)"
+        :source="answer"
+        as="chat"
+        :names="names"
       />
     </template>
 
@@ -97,7 +99,14 @@ const rendered = (text: string) => renderMarkdown(text, { mentionNames: props.me
     <template v-else-if="phase === 'answered'">
       <div class="doc-agent-result__row doc-agent-result__row--top">
         <CheeseAvatar :size="20" :name="agentName" />
-        <div v-if="answer" class="doc-agent-result__answer md-content" dir="auto" v-html="rendered(answer)" />
+        <MarkdownView
+          v-if="answer"
+          class="doc-agent-result__answer md-content"
+          dir="auto"
+          :source="answer"
+          as="chat"
+          :names="names"
+        />
         <div v-else class="doc-agent-result__answer" dir="auto">
           {{ kind === 'edit' ? t('work.room.docAgent.noChange') : t('work.room.docAgent.noIssue') }}
         </div>

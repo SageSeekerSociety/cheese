@@ -9,7 +9,7 @@ import type { DocVersion, DocVersionPage } from '../../../lib/docHistory'
 import { computed, ref, watch } from 'vue'
 
 import { relTime } from '../../../lib/relTime'
-import { renderMarkdown } from '../../../lib/renderMessage'
+import MarkdownView from '../../common/MarkdownView.vue'
 
 import DocEditButton from './DocEditButton.vue'
 
@@ -91,9 +91,7 @@ const entries = computed(() => {
 
 const current = computed(() => versions.value.find((v) => v.version === selected.value) ?? null)
 const latest = computed(() => versions.value[0] ?? null)
-const preview = computed(() =>
-  current.value ? renderMarkdown(current.value.content, { mentionNames: props.mentionNames, topicTitles: {} }) : ''
-)
+const names = computed(() => ({ mentionNames: props.mentionNames, topicTitles: {} }))
 
 function who(version: DocVersion): string {
   const name = props.nameOf(version.actor)
@@ -155,7 +153,7 @@ async function restoreSelected() {
       <div v-if="error" class="doc-history__error" role="alert">{{ error }}</div>
       <div class="doc-history__body">
         <div class="doc-history__preview">
-          <div v-if="current" class="md-content" v-html="preview" />
+          <MarkdownView v-if="current" class="md-content" :source="current.content" :names="names" />
           <div v-else-if="!loading" class="doc-history__empty">{{ t('work.room.doc.historyEmpty') }}</div>
         </div>
         <ol class="doc-history__list" :aria-label="t('work.room.doc.history')">

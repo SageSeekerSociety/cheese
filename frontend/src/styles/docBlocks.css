@@ -5,14 +5,15 @@
    blocks (the document, a task description, a knowledge entry), and the node
    views' popovers sit on <body>. Selectors are the blocks' own data attributes,
    so nothing else on the page matches them. Controls a block carries only
-   show while the text can be edited. */
+   show while the text can be edited; `.doc-reading` marks a page that is
+   read (the editor while it cannot be edited, and the reader). */
 
-.ProseMirror[contenteditable='false']
+.doc-reading
   :is(.doc-callout__kind, .doc-tl__dot, .doc-stat__remove, .doc-stats__add, .doc-column__menu) {
   pointer-events: none;
 }
 
-.ProseMirror[contenteditable='false'] :is(.doc-stat__remove, .doc-stats__add, .doc-column__menu) {
+.doc-reading :is(.doc-stat__remove, .doc-stats__add, .doc-column__menu) {
   display: none;
 }
 
@@ -480,10 +481,61 @@ div[data-footnote]::before {
 
 /* A reader sees the note where it is referenced, so the list at the end is
    only for whoever edits it. */
-.ProseMirror[contenteditable='false'] div[data-footnote] {
+.doc-reading div[data-footnote] {
   display: none;
 }
 
+/* ---- Code: lowlight's token colours ------------------------------------
+   The --code-* palette from style.css, which is also what CodeEditor's
+   Monaco theme reads back out, so code in a document, a message and the file
+   editor looks alike in BOTH themes. Never inline a literal here: the
+   consumers have to move together or the same snippet looks different in each. */
+.hljs-comment,
+.hljs-quote {
+  color: var(--code-comment);
+  font-style: italic;
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-doctag,
+.hljs-meta {
+  color: var(--code-keyword);
+}
+.hljs-string,
+.hljs-regexp,
+.hljs-addition {
+  color: var(--code-string);
+}
+.hljs-number,
+.hljs-symbol,
+.hljs-bullet {
+  color: var(--code-number);
+}
+.hljs-title,
+.hljs-section,
+.hljs-name,
+.hljs-function {
+  color: var(--code-function);
+}
+.hljs-type,
+.hljs-class,
+.hljs-built_in,
+.hljs-attr,
+.hljs-attribute,
+.hljs-variable,
+.hljs-template-variable {
+  color: var(--code-type);
+}
+.hljs-deletion {
+  color: var(--code-deletion);
+}
+.hljs-emphasis {
+  font-style: italic;
+}
+.hljs-strong {
+  font-weight: 600;
+}
 /* ---- Popovers the blocks open ------------------------------------------- */
 
 .doc-pop {
@@ -568,36 +620,64 @@ div[data-footnote]::before {
   background: var(--fill-2);
 }
 
+/* ---- Tables --------------------------------------------------------------
+   The editor's (.doc-prose) and every reader's. Browsers give a table no
+   borders, so without this it reads as loose words. */
+
+:is(.doc-prose, .doc-reading) .tableWrapper {
+  margin: 12px 0;
+  overflow-x: auto;
+}
+
+:is(.doc-prose, .doc-reading) table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+:is(.doc-prose, .doc-reading) :is(th, td) {
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+:is(.doc-prose, .doc-reading) th {
+  font-weight: 600;
+  background: var(--canvas);
+}
+
 /* ---- A reader's table on a phone ---------------------------------------- */
 
 @media (max-width: 600px) {
-  .ProseMirror[contenteditable='false'] .tableWrapper[data-shape='cards'] {
+  .doc-reading .tableWrapper[data-shape='cards'] {
     overflow: visible;
   }
 
-  .ProseMirror[contenteditable='false'] .tableWrapper[data-shape='cards'] :is(table, tbody, tr, td) {
+  .doc-reading .tableWrapper[data-shape='cards'] :is(table, tbody, tr, td) {
     display: block;
     width: auto !important;
     border: 0;
   }
 
-  .ProseMirror[contenteditable='false'] .tableWrapper[data-shape='cards'] colgroup,
-  .ProseMirror[contenteditable='false'] .tableWrapper[data-shape='cards'] tr:first-child {
+  .doc-reading .tableWrapper[data-shape='cards'] colgroup,
+  .doc-reading .tableWrapper[data-shape='cards'] tr:first-child {
     display: none;
   }
 
-  .ProseMirror[contenteditable='false'] .tableWrapper[data-shape='cards'] tr {
+  .doc-reading .tableWrapper[data-shape='cards'] tr {
     margin: 8px 0;
     padding: 8px 12px;
     border: 1px solid var(--line);
     border-radius: var(--radius-md);
   }
 
-  .ProseMirror[contenteditable='false'] .tableWrapper[data-shape='cards'] td {
+  .doc-reading .tableWrapper[data-shape='cards'] td {
     padding: 2px 0;
   }
 
-  .ProseMirror[contenteditable='false'] .tableWrapper[data-shape='cards'] td::before {
+  .doc-reading .tableWrapper[data-shape='cards'] td::before {
     display: block;
     font-size: 12px;
     line-height: var(--lh-12);
@@ -605,20 +685,20 @@ div[data-footnote]::before {
     content: attr(data-label);
   }
 
-  .ProseMirror[contenteditable='false'] .tableWrapper[data-shape='cards'] td:first-child {
+  .doc-reading .tableWrapper[data-shape='cards'] td:first-child {
     font-weight: 600;
     color: var(--ink);
   }
 
-  .ProseMirror[contenteditable='false'] .tableWrapper[data-shape='cards'] td:first-child::before {
+  .doc-reading .tableWrapper[data-shape='cards'] td:first-child::before {
     display: none;
   }
 
-  .ProseMirror[contenteditable='false'] .tableWrapper[data-shape='numbers'] {
+  .doc-reading .tableWrapper[data-shape='numbers'] {
     overflow-x: auto;
   }
 
-  .ProseMirror[contenteditable='false'] .tableWrapper[data-shape='numbers'] :is(th, td):first-child {
+  .doc-reading .tableWrapper[data-shape='numbers'] :is(th, td):first-child {
     position: sticky;
     left: 0;
     z-index: var(--z-raised);
@@ -690,7 +770,7 @@ div[data-footnote]::before {
 
 /* The table shows while editing unless folded, and stays folded while
    reading unless opened. */
-.ProseMirror[contenteditable='false'] [data-block='chart']:not(.doc-chart--open) .doc-chart__data,
+.doc-reading [data-block='chart']:not(.doc-chart--open) .doc-chart__data,
 .ProseMirror[contenteditable='true'] [data-block='chart'].doc-chart--closed .doc-chart__data {
   display: none;
 }
@@ -700,11 +780,11 @@ div[data-footnote]::before {
   transform: rotate(90deg);
 }
 
-.ProseMirror[contenteditable='false'] .doc-chart__kind {
+.doc-reading .doc-chart__kind {
   pointer-events: none;
 }
 
-.ProseMirror[contenteditable='false'] .doc-chart__kind::after {
+.doc-reading .doc-chart__kind::after {
   content: none;
 }
 
@@ -729,7 +809,7 @@ div[data-footnote]::before {
   min-height: 24px;
 }
 
-.ProseMirror[contenteditable='false'] .doc-mermaid__bar {
+.doc-reading .doc-mermaid__bar {
   display: none;
 }
 
@@ -765,7 +845,7 @@ div[data-footnote]::before {
 /* The source shows while the caret is in it, and while the diagram cannot be
    drawn or has nothing to draw. */
 [data-block='mermaid']:not(.doc-mermaid--source, .doc-mermaid--error, .doc-mermaid--empty) > pre,
-.ProseMirror[contenteditable='false'] [data-block='mermaid'] > pre {
+.doc-reading [data-block='mermaid'] > pre {
   display: none;
 }
 
