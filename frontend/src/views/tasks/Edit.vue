@@ -41,9 +41,6 @@
           </div>
         </template>
       </TaskForm>
-
-      <!-- 提交审核成功提示 -->
-      <v-snackbar v-model="showResubmitSuccess" :timeout="3000">{{ t('tasks.edit.resubmitted') }}</v-snackbar>
     </v-card>
   </v-container>
 </template>
@@ -52,6 +49,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
+import { toast } from 'vuetify-sonner'
 import { storeToRefs } from 'pinia'
 
 import { useSpaceData } from '@/composables/useSpaceData'
@@ -85,7 +83,6 @@ const { domainGroups } = storeToRefs(spaceStore)
 
 // 状态
 const isResubmitting = ref(false)
-const showResubmitSuccess = ref(false)
 const taskFormRef = ref<InstanceType<typeof TaskForm> | null>(null)
 
 // 显示重新提交审核按钮的条件
@@ -115,7 +112,7 @@ const handleSubmitWithReapproval = async (formData: any) => {
   try {
     await submitEditTask(formData)
     await TasksApi.resubmitTask(taskId)
-    showResubmitSuccess.value = true
+    toast.success(t('tasks.edit.resubmitted'))
 
     setTimeout(() => {
       navigateToDetail()

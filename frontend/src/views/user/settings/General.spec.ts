@@ -64,7 +64,9 @@ describe('General settings', () => {
     await waitFor(() => expect(control.disabled).toBe(false))
     // Vuetify's switch reads the input event, as a person's click produces it.
     await fireEvent.input(control, { target: { checked: true } })
-    await waitFor(() => expect(toast.error).toHaveBeenCalled())
+    // 这一块留在屏幕上，失败就地说一声（§3.11），不再弹一条几秒就走的 toast。
+    await waitFor(() => expect(view.getByText('保存失败')).toBeTruthy())
     expect(control.checked).toBe(false)
+    expect(toast.error).not.toHaveBeenCalled()
   })
 })
