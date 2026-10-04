@@ -40,6 +40,10 @@ function previous(version: ArtifactVersion): ArtifactVersion | undefined {
 
 <template>
   <div class="versions">
+    <!-- Deliberately not an AppPage: this is a section inside ProjectArtifactView,
+         which already owns the page frame (AppPage width="full"). It renders in
+         that page's history pane (desktop) or bottom sheet (phone), so a page
+         frame here would nest a second header and re-centre the column. -->
     <ul v-if="shown.length" class="versions__list">
       <li v-for="version in shown" :key="version.card_id" class="version">
         <span class="version__no t-meta">{{ t('tasks.artifactComparison.version', { number: version.number }) }}</span>
