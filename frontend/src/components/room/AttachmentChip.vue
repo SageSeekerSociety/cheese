@@ -2,8 +2,8 @@
 // 输入框里待发的一个附件。
 //
 // 左边那个记号说它是什么（图片的缩略图、文档的首页、其余类型的图标、还在上传时
-// 的转圈、上传失败时的警示），右边写着文件名：名字必须一直在，否则上传中那一格
-// 只是一个转圈，说不出是哪个文件。五种状态占同一个记号格，上传完成那一刻标签不跳。
+// 的进度环、上传失败时的警示），右边写着文件名：名字必须一直在，否则上传中那一格
+// 只是一个圈，说不出是哪个文件。五种状态占同一个记号格，上传完成那一刻标签不跳。
 import type { PendingAttachment } from '../../lib/attachments'
 
 import { computed } from 'vue'
@@ -30,6 +30,11 @@ const isDocument = computed(() => hasPagePreview(name.value))
 // 上传失败：这一枚留在待发条里，记号换成警示、多一颗重试。File 还在手里（见
 // PendingAttachment），按重试就是把同一份再传一次。
 const failed = computed(() => !!props.attachment.error)
+// 上传进度，整数百分比。服务器还没给总量（或还没来第一个事件）时是 null：那时
+// 只能转圈，报一个数反而是在编。
+const percent = computed(() =>
+  typeof props.attachment.progress === 'number' ? Math.round(props.attachment.progress * 100) : null
+)
 </script>
 
 <template>
@@ -66,7 +71,14 @@ const failed = computed(() => !!props.attachment.error)
           :class="{ 'att-face--error': failed }"
         >
           <v-icon v-if="failed" size="14">mdi-alert-circle-outline</v-icon>
-          <v-progress-circular v-else-if="attachment.uploading" indeterminate size="12" width="1.5" />
+          <!-- Determinate once the server told us a total; a spinner until then. -->
+          <v-progress-circular
+            v-else-if="attachment.uploading"
+            :indeterminate="percent === null"
+            :model-value="percent ?? 0"
+            size="12"
+            width="1.5"
+          />
           <v-icon v-else size="14">{{ fileIcon(name) }}</v-icon>
         </span>
       </Transition>

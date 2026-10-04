@@ -22,6 +22,7 @@ import { useDisplay } from 'vuetify'
 import { useOutsideMentionPrompt } from '@/composables/useOutsideMentionPrompt'
 import { useRoomMentionPicker } from '@/composables/useRoomMentionPicker'
 
+import { pastedTextName } from '../../lib/attachments'
 import {
   expandComposerMentions,
   mentionsAgent as containsAgentMention,
@@ -36,6 +37,7 @@ import MentionMenu from './MentionMenu.vue'
 import OutsideMentionNotice from './OutsideMentionNotice.vue'
 import ReminderDialog from './ReminderDialog.vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import i18n, { t } from '@/i18n'
 
 const props = defineProps<{
@@ -96,6 +98,65 @@ function onDragLeaveFiles(e: DragEvent) {
 function onDropFiles(e: DragEvent) {
   dragOver.value = false
   emit('drop-files', e)
+}
+
+// ---- 贴一大段纯文字 ----
+//
+// 一条消息装不下一份日志/一整段代码；贴进来之后输入框被它占满，人还得自己想法子
+// 删回去。超过阈值就**就地**问一句要不要转成附件（不是弹窗）：忽略它，正文原样
+// 留着——当前的粘贴行为不变，这只是多给一条路。
+const LONG_PASTE_CHARS = 4000
+const LONG_PASTE_LINES = 80
+/** 刚贴进来、还没被选走的那一段：起点 + 原文，用来在转成附件时精确地把它拿掉。 */
+const longPaste = ref<{ start: number; text: string } | null>(null)
+
+function isLongPaste(text: string): boolean {
+  return text.length > LONG_PASTE_CHARS || text.split('\n').length > LONG_PASTE_LINES
+}
+
+// 粘贴：先交给房间看有没有文件（贴进来的截图走上传那条路），再看得不是一段长文字。
+// 文件优先——一张截图里没有正文，一件事只该有一个去处。房间认领了文件会
+// preventDefault，这里就不再插手。
+function onPaste(e: ClipboardEvent) {
+  emit('paste', e)
+  if (e.defaultPrevented) return
+  const raw = e.clipboardData?.getData('text/plain') ?? ''
+  if (!isLongPaste(raw)) return
+  e.preventDefault()
+  // 和原生粘贴一样：\r\n 归一成 \n（Windows 上复制来的文本带 \r）。
+  const text = raw.replace(/\r\n?/g, '\n')
+  const at = e.target as HTMLTextAreaElement | null
+  const start = at?.selectionStart ?? draft.value.length
+  const end = at?.selectionEnd ?? start
+  draft.value = draft.value.slice(0, start) + text + draft.value.slice(end)
+  longPaste.value = { start, text }
+  // 光标落在刚贴进来的那一段之后，和原生粘贴的手感一致。
+  void nextTick(() => {
+    at?.setSelectionRange?.(start + text.length, start + text.length)
+  })
+}
+
+/** 忽略这条提议：正文一个字不动地留着。 */
+function keepLongPaste() {
+  longPaste.value = null
+}
+
+/** 把那一段从正文里拿掉，换成一份 .txt / .md 附件。 */
+function pasteAsAttachment(ext: 'txt' | 'md') {
+  const pasted = longPaste.value
+  if (!pasted) return
+  const { start, text } = pasted
+  if (draft.value.slice(start, start + text.length) === text) {
+    draft.value = draft.value.slice(0, start) + draft.value.slice(start + text.length)
+  } else {
+    // 人在这中间又打过字，偏移对不上了：退一步按内容找第一处。
+    const idx = draft.value.indexOf(text)
+    if (idx >= 0) draft.value = draft.value.slice(0, idx) + draft.value.slice(idx + text.length)
+  }
+  longPaste.value = null
+  // 走的是挑文件/拖文件同一条路：上传、待发条、发送都由房间那一侧接手。
+  emit('files', [new File([text], pastedTextName(ext), { type: ext === 'md' ? 'text/markdown' : 'text/plain' })])
+  void nextTick(() => composerInput.value?.focus?.())
 }
 
 const composerInput = ref<{ focus?: () => void } | null>(null)
@@ -354,6 +415,29 @@ defineExpose({
       @add="outsidePrompt.add"
       @dismiss="outsidePrompt.dismiss"
     />
+    <!-- A very long plain-text paste: offer to carry it as a file instead of
+         flooding the box. Inline and non-modal — ignoring it keeps the text
+         exactly as pasted, which is the behavior that was here before. -->
+    <div v-if="longPaste" class="long-paste">
+      <span class="long-paste__text">
+        {{ t('work.room.composer.longPaste.offer', { count: longPaste.text.length }) }}
+      </span>
+      <BaseButton kind="ghost" size="sm" @click="pasteAsAttachment('txt')">
+        {{ t('work.room.composer.longPaste.txt') }}
+      </BaseButton>
+      <BaseButton kind="ghost" size="sm" @click="pasteAsAttachment('md')">
+        {{ t('work.room.composer.longPaste.md') }}
+      </BaseButton>
+      <button
+        type="button"
+        class="long-paste__x"
+        :aria-label="t('work.room.composer.longPaste.keep')"
+        :title="t('work.room.composer.longPaste.keep')"
+        @click="keepLongPaste"
+      >
+        <v-icon size="14">mdi-close</v-icon>
+      </button>
+    </div>
     <!-- 输入区是一个控件，不是浮在页面上的几个零件：一个圆角描边的盒子把
              「待发的图片 + 输入框 + 动作」框成一块。盒子自己就是和时间线之间的
              分隔，所以上面那条 divider 没了。 -->
@@ -383,7 +467,7 @@ defineExpose({
         :placeholder="hint"
         :title="enterSends ? t('work.room.composer.keysHint', { name: agentName }) : t('work.room.composer.pasteHint')"
         @keydown="onComposerKey"
-        @paste="emit('paste', $event)"
+        @paste="onPaste"
         @compositionstart="onCompositionStart"
         @compositionend="onCompositionEnd"
       />
@@ -426,6 +510,46 @@ defineExpose({
      12px 就是那两个类本来给的值。
      手机底部那一条圆角/横杠区（安全区）会压在输入框上。桌面上这个值是 0。 */
   padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
+}
+/* 长文字粘贴的那条提议：贴着输入框的一行，安静的底，两个按钮。忽略它就是不管，
+   所以它不抢颜色、不遮住输入框。 */
+.long-paste {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  margin-bottom: 6px;
+  background: var(--fill);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-lg);
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--muted);
+}
+.long-paste__text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.long-paste__x {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: none;
+  border-radius: var(--radius-sm);
+  color: var(--faint);
+  cursor: pointer;
+  transition:
+    background-color var(--dur-quick) var(--ease-standard),
+    color var(--dur-quick) var(--ease-standard);
+}
+.long-paste__x:hover {
+  background: var(--line-2);
+  color: var(--ink);
 }
 /* 输入区是一个控件。原来输入框和几颗按钮各自浮在页面上，读起来是几个零件而不是
    一件东西——一个圆角描边就把它们收成一块，顺带替掉了上面那条 divider。 */
