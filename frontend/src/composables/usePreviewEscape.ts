@@ -7,18 +7,23 @@
 // 交回宿主，不是关掉整格。
 import type { Ref } from 'vue'
 
+/** 圈选开着时 ESC 先关它（开关在 usePreviewPick）。 */
+interface PickSwitch {
+  on: Ref<boolean>
+  set: (on: boolean) => void
+}
+
 export function usePreviewEscape(
   panel: Ref<HTMLElement | null>,
   fullscreen: Ref<boolean>,
   exitFullscreen: () => void,
   closeLocator: () => void,
   locatorOpen: () => boolean,
-  pickActive: () => boolean = () => false,
-  stopPick: () => void = () => {}
+  pick?: PickSwitch
 ): () => void {
   return () => {
-    if (pickActive()) {
-      stopPick()
+    if (pick?.on.value) {
+      pick.set(false)
       return
     }
     if (locatorOpen()) {

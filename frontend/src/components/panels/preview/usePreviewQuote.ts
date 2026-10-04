@@ -1,7 +1,14 @@
 import type { FramePick } from '@/composables/usePreviewFrames'
 import type { DocumentIdentity } from '@/lib/documentBytes'
 import type { SubmitPreviewQuestion } from '@/lib/previewQuestion'
-import type { SheetCellQuote, TextRangeQuote, WebElementQuote, WebTextQuote } from '@/lib/quotedContext'
+import type {
+  SheetCellQuote,
+  TextRangeQuote,
+  WebElementQuote,
+  WebRect,
+  WebTextQuote,
+  WebViewport,
+} from '@/lib/quotedContext'
 import type { MarkdownQuote } from './markdownQuote'
 import type { SlidePageContext } from './slidesContext'
 
@@ -12,6 +19,7 @@ import { isQuotedContext } from '@/lib/quotedContext'
 interface QuoteProps {
   submitQuestion?: SubmitPreviewQuestion
   docIdentity?: DocumentIdentity | null
+  topicId?: string | null
 }
 
 type Identity = 'path' | 'source' | 'version' | 'task_id'
@@ -31,10 +39,17 @@ type FilePick =
 export function usePreviewQuote(props: QuoteProps, canUse: (context: SlidePageContext['context']) => boolean) {
   const page = ref<SlidePageContext | null>(null)
   const pick = ref<FilePick | null>(null)
+  /** 应用上圈的一块：页面在别的源上，只有地址和几何，没有文件身份。 */
+  const area = ref<{ url: string; rect: WebRect; viewport: WebViewport } | null>(null)
 
   function clear() {
     page.value = null
     pick.value = null
+    area.value = null
+  }
+
+  function region(payload: { url: string; rect: WebRect; viewport: WebViewport }) {
+    area.value = payload
   }
 
   function cell(payload: { address: string; value: string; sheet: string }) {
@@ -75,6 +90,12 @@ export function usePreviewQuote(props: QuoteProps, canUse: (context: SlidePageCo
 
   /** 发出去了答 true；幻灯片那一页已不可信答 false；该退回拼一句话时答 null。 */
   function send(note: string): boolean | null {
+    if (area.value) {
+      const topicId = props.topicId
+      const quotedContext = { kind: 'web-region' as const, ...area.value }
+      if (!topicId || !props.submitQuestion || !isQuotedContext(quotedContext)) return null
+      return props.submitQuestion({ intent: 'ask-agent', topicId, content: note, quotedContext }) ? true : null
+    }
     if (page.value) {
       const payload = page.value
       if (!canUse(payload.context)) return false
@@ -109,5 +130,5 @@ export function usePreviewQuote(props: QuoteProps, canUse: (context: SlidePageCo
     return props.submitQuestion({ intent: 'ask-agent', topicId, content: note, quotedContext }) ? true : null
   }
 
-  return { page, pick, clear, cell, range, web, send }
+  return { page, pick, clear, cell, range, web, region, send }
 }

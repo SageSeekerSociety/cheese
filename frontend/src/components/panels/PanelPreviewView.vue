@@ -11,35 +11,35 @@
 // 指哪里说哪句话的那个输入框、在线编辑器和草稿历史那两个对话框的状态。这些没有一件
 // 需要问后端。
 import type { AnnotateDraft, UploadAnnotation } from '../../composables/usePanelPreview'
-import type { FramePick, PreviewFrame, PreviewNavigation } from '../../composables/usePreviewFrames'
+import type { PreviewFrame, PreviewNavigation } from '../../composables/usePreviewFrames'
 import type { ChatAttachment, FileContent } from '../../cx_types'
 import type { DocumentIdentity, DocumentSnapshot } from '../../lib/documentBytes'
 import type { FileKind } from '../../lib/fileKind'
 import type { PreviewLocate, SubmitPreviewQuestion } from '../../lib/previewQuestion'
-import type { WebRect, WebViewport } from '../../lib/quotedContext'
 import type { RasterSelection } from './preview/designRegion'
 import type { MarkdownQuote, QuoteContext } from './preview/markdownQuote'
 import type { SlidePageContext, SlideSource } from './preview/slidesContext'
 
-import { computed, defineAsyncComponent, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, ref, watch } from 'vue'
 import { useFullscreen } from '@vueuse/core'
 
 import { usePreviewEscape } from '../../composables/usePreviewEscape'
 import { t } from '../../i18n'
-import { isWebPage } from '../../lib/fileKind'
 import { roomFileDestination } from '../../lib/previewSession'
-import { isQuotedContext } from '../../lib/quotedContext'
 
 import DesignImage from './preview/DesignImage.vue'
 import DesignRegionNote from './preview/DesignRegionNote.vue'
 import PreviewLocator from './preview/PreviewLocator.vue'
 import PreviewMarkdown from './preview/PreviewMarkdown.vue'
 import PreviewPages from './preview/PreviewPages.vue'
+import PreviewPickToggle from './preview/PreviewPickToggle.vue'
+import PreviewRegionPick from './preview/PreviewRegionPick.vue'
 import PreviewSheet from './preview/PreviewSheet.vue'
 import PreviewSlides from './preview/PreviewSlides.vue'
 import RevisionList from './preview/RevisionList.vue'
 import { usePreviewImageRegion } from './preview/usePreviewImageRegion'
 import { usePreviewPagePin } from './preview/usePreviewPagePin'
+import { usePreviewPick } from './preview/usePreviewPick'
 import { usePreviewQuote } from './preview/usePreviewQuote'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -212,30 +212,18 @@ const pageLocator = usePreviewPagePin(props, {
 })
 const quoted = usePreviewQuote(props, (context) => pageLocator.canUse(context))
 
-// ---- 圈选 ----
-// 网页预览里「指着这一处说一句话」。房间的 HTML 文件被注入了桥：帧自己描边、收鼠标，报回
-// 选择器和文字；没有桥的应用（`cheese serve`）读不到它的 DOM，宿主在 iframe 上盖一层透明
-// 遮罩，读者拖出一个矩形。两者交出去的都是结构化引用。
-const pickMode = ref(false)
-/** 盖遮罩要贴住 iframe 的那块地方：矩形坐标就是相对它的。 */
-const framesEl = ref<HTMLElement | null>(null)
-const regionRect = ref<WebRect | null>(null)
-const regionPick = ref<{ url: string; rect: WebRect; viewport: WebViewport } | null>(null)
-let regionStart: { x: number; y: number } | null = null
-
-/** 这一帧能不能圈选、靠什么圈：有桥的网页靠帧报，应用靠宿主盖一层。图片、PDF 这些走
- *  别的查看器，没有可圈的 DOM（桥也不会注进它们）。 */
-const pickTarget = computed<'runtime' | 'region' | null>(() => {
-  const frame = props.displayedFrame
-  if (!frame) return null
-  if (frame.live) return 'region'
-  return isWebPage(frame.label) ? 'runtime' : null
+// 网页预览里的圈选（判据和开关在 usePreviewPick）：有桥的网页由帧报回一处，应用由遮罩报回一块。
+const pick = usePreviewPick({
+  frame: () => props.displayedFrame,
+  previewUrl: () => props.previewUrl,
+  onRuntime: (on) => emit('pick-mode', on),
+  open: (label, quote, address) => openLocator(label, quote, address),
+  quote: quoted,
 })
 
 function openLocator(label: string, quote: string, address: string, context?: QuoteContext) {
   imageRegion.clear()
   quoted.clear()
-  regionPick.value = null
   pageLocator.pin.value = null
   locator.value = { label, quote, address, context }
   locatorNote.value = ''
@@ -245,22 +233,13 @@ function clearLocator() {
   imageRegion.clear()
   locator.value = null
   quoted.clear()
-  regionPick.value = null
   pageLocator.pin.value = null
   pagesRef.value?.clearMark()
   locatorNote.value = ''
 }
 // 帧里的 ESC 交给宿主：先退圈选，再收标注条，再退全屏，最后把焦点收回面板（判据在 usePreviewEscape）。
-const handleEscape = usePreviewEscape(
-  panelElement,
-  previewFull,
-  fullscreen,
-  clearLocator,
-  () => !!locator.value,
-  () => pickMode.value,
-  () => setPickMode(false)
-)
-defineExpose({ handleEscape, handlePick })
+const handleEscape = usePreviewEscape(panelElement, previewFull, fullscreen, clearLocator, () => !!locator.value, pick)
+defineExpose({ handleEscape, handlePick: pick.fromFrame })
 function onImageRegion(selection: RasterSelection) {
   const captured = imageRegion.capture(selection)
   if (!captured) return
@@ -273,122 +252,6 @@ function onPageContext(payload: SlidePageContext) {
   openLocator(page, payload.scope === 'page' ? t('slides.wholePage') : payload.text.slice(0, 200), page)
   quoted.page.value = { ...payload, context: { ...payload.context } }
 }
-
-// ---- 圈选的动作 ----
-function setPickMode(on: boolean) {
-  pickMode.value = on
-  regionStart = null
-  regionRect.value = null
-  if (!on) regionPick.value = null
-  // 应用那一档没有桥，宿主自己盖一层；有桥的那一档把开关递进帧（取数那一层送消息）。
-  if (pickTarget.value === 'runtime') emit('pick-mode', on)
-}
-function togglePick() {
-  if (!pickTarget.value) return
-  setPickMode(!pickMode.value)
-}
-
-/** 帧的桥报回来的一处：开标注条，把结构化引用留下来等发送。 */
-function handlePick(pick: FramePick) {
-  // 帧那边报完已经自己关掉了，宿主这一侧的开关也收回来。
-  setPickMode(false)
-  const fallback = pick.tag ? `<${pick.tag}>` : ''
-  openLocator(pick.selector, pick.text || fallback, pick.selector)
-  quoted.web(pick)
-}
-
-/** 遮罩上的一点，换算成相对 iframe 的像素。 */
-function regionPoint(event: PointerEvent): { x: number; y: number } | null {
-  const box = framesEl.value?.getBoundingClientRect()
-  if (!box) return null
-  return { x: event.clientX - box.left, y: event.clientY - box.top }
-}
-const regionBoxStyle = computed<Record<string, string>>(() => {
-  const rect = regionRect.value
-  if (!rect) return {}
-  return {
-    left: `${rect.x}px`,
-    top: `${rect.y}px`,
-    width: `${rect.w}px`,
-    height: `${rect.h}px`,
-  }
-})
-function regionBegin(event: PointerEvent) {
-  event.preventDefault()
-  const start = regionPoint(event)
-  if (!start) return
-  regionStart = start
-  regionRect.value = { x: start.x, y: start.y, w: 0, h: 0 }
-  ;(event.currentTarget as HTMLElement | null)?.setPointerCapture?.(event.pointerId)
-}
-function regionGrow(event: PointerEvent) {
-  if (!regionStart) return
-  const here = regionPoint(event)
-  if (!here) return
-  regionRect.value = {
-    x: Math.min(regionStart.x, here.x),
-    y: Math.min(regionStart.y, here.y),
-    w: Math.abs(here.x - regionStart.x),
-    h: Math.abs(here.y - regionStart.y),
-  }
-}
-function regionReset() {
-  regionStart = null
-  regionRect.value = null
-}
-function regionEnd(event: PointerEvent) {
-  const start = regionStart
-  const here = regionPoint(event)
-  regionReset()
-  if (!start || !here) return
-  const rect = {
-    x: Math.min(start.x, here.x),
-    y: Math.min(start.y, here.y),
-    w: Math.abs(here.x - start.x),
-    h: Math.abs(here.y - start.y),
-  }
-  // 太小的一块不叫「圈了一块」，多半是点了一下。
-  if (rect.w < 4 || rect.h < 4) return
-  const frame = props.displayedFrame
-  const url = frame?.url ?? props.previewUrl ?? ''
-  if (!url) return
-  const box = framesEl.value?.getBoundingClientRect()
-  // 先收圈选、再开标注条（这两步都会把 regionPick 清空），最后才把这一块留下来：
-  // sendLocator 靠它决定发结构化引用还是退回拼一句话。
-  setPickMode(false)
-  openLocator(
-    t('work.room.preview.webRegion'),
-    `${Math.round(rect.w)} × ${Math.round(rect.h)}`,
-    t('work.room.preview.webRegion')
-  )
-  regionPick.value = {
-    url,
-    rect,
-    viewport: { w: Math.round(box?.width ?? 0), h: Math.round(box?.height ?? 0) },
-  }
-}
-
-/** 没有桥的应用上的那一块：页面在别的源上，我们只知道地址和这块几何。发不出去时退回
- *  拼一句话那条老路（答 null），别让读者写的那句话无声无息地没了。 */
-function sendRegion(note: string): boolean | null {
-  const region = regionPick.value
-  const submit = props.submitQuestion
-  const topicId = props.topicId
-  if (!region || !submit || !topicId) return null
-  const quotedContext = { kind: 'web-region' as const, url: region.url, rect: region.rect, viewport: region.viewport }
-  if (!isQuotedContext(quotedContext)) return null
-  return submit({ intent: 'ask-agent', topicId, content: note, quotedContext }) ? true : null
-}
-
-// 圈选期间 ESC 退出：应用那一档遮罩在宿主这边收键盘；有桥的那一档由帧把 ESC 交回来
-// （见 usePreviewEscape），这里再兜一道，两边都按得下。
-function onPickKeydown(event: KeyboardEvent) {
-  if (event.key !== 'Escape' || !pickMode.value) return
-  event.preventDefault()
-  setPickMode(false)
-}
-window.addEventListener('keydown', onPickKeydown, true)
-onBeforeUnmount(() => window.removeEventListener('keydown', onPickKeydown, true))
 
 watch(
   [
@@ -410,14 +273,6 @@ watch(
   ],
   clearLocator,
   { flush: 'sync' }
-)
-
-// 换了一帧（新导航、切到别的文件）时把圈选收掉：上一个文档的圈选不该落在新文档上。
-watch(
-  () => props.displayedFrame?.id,
-  () => {
-    if (pickMode.value) setPickMode(false)
-  }
 )
 
 function onQuote(payload: { text: string; page: number }) {
@@ -465,14 +320,6 @@ function sendLocator() {
     emit('locate', { message })
     clearLocator()
     return
-  }
-  // 应用上圈的一块区域：交出去的是地址 + 几何，回复里没有页面内容。
-  if (regionPick.value) {
-    const sentRegion = sendRegion(note)
-    if (sentRegion !== null) {
-      if (sentRegion) clearLocator()
-      return
-    }
   }
   // 结构化引用发得出去就走它；没有可发的（null）才退回下面拼一句话那条老路。
   const sent = quoted.send(note)
@@ -611,21 +458,7 @@ async function onAnnotate(payload: AnnotateDraft) {
             @click="emit('download')"
           />
         </template>
-        <!-- 圈选：只在网页预览上给这一颗。图片、PDF 这些走别的查看器，没有可圈的东西。 -->
-        <BaseButton
-          v-if="pickTarget"
-          kind="ghost"
-          :icon="pickMode ? 'mdi-cursor-default-click' : 'mdi-vector-square'"
-          size="sm"
-          class="pick-toggle"
-          :class="{ 'pick-toggle--on': pickMode }"
-          data-testid="preview-pick"
-          :aria-pressed="pickMode"
-          :title="t('work.room.preview.pick')"
-          @click="togglePick"
-        >
-          {{ t('work.room.preview.pick') }}
-        </BaseButton>
+        <PreviewPickToggle v-if="pick.target.value" :on="pick.on.value" @toggle="pick.toggle" />
       </div>
       <div v-if="displayedFrame" role="status" class="preview-runtime-status px-3 py-2 text-caption">
         <span v-if="displayedFrame.resourceId" :title="displayedFrame.resourceId">{{
@@ -676,7 +509,7 @@ async function onAnnotate(payload: AnnotateDraft) {
         t('work.room.preview.refresh')
       }}</BaseButton>
       <!-- Authorization still POSTs only to named sandboxed content-domain frames. -->
-      <div ref="framesEl" class="preview-frames">
+      <div class="preview-frames">
         <template v-if="frames">
           <iframe
             v-for="frame in frames"
@@ -701,17 +534,7 @@ async function onAnnotate(payload: AnnotateDraft) {
           sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-popups-to-escape-sandbox"
         />
         <!-- 应用那一档：没有桥，读不到页面，宿主在 iframe 上盖一层透明遮罩拖矩形。 -->
-        <div
-          v-if="pickTarget === 'region' && pickMode"
-          class="pick-region"
-          data-testid="preview-region-pick"
-          @pointerdown="regionBegin"
-          @pointermove="regionGrow"
-          @pointerup="regionEnd"
-          @pointercancel="regionReset"
-        >
-          <div v-if="regionRect" class="pick-region__box" :style="regionBoxStyle" />
-        </div>
+        <PreviewRegionPick v-if="pick.target.value === 'region' && pick.on.value" @pick="pick.fromRegion" />
       </div>
     </div>
     <div v-else-if="previewError || navigationError" role="alert" class="text-center text-medium-emphasis py-8">
@@ -1006,26 +829,6 @@ async function onAnnotate(payload: AnnotateDraft) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-/* 圈选开关贴着预览条右边（应用那一档右边还有别的按钮，所以靠 margin 推而不是 spacer）。 */
-.pick-toggle {
-  margin-left: auto;
-}
-.pick-toggle--on {
-  color: var(--accent);
-}
-/* 应用那一档的透明遮罩：盖住 iframe，拖出矩形。有桥的网页不用它（帧自己描边）。 */
-.pick-region {
-  position: absolute;
-  inset: 0;
-  z-index: 3;
-  cursor: crosshair;
-  touch-action: none;
-}
-.pick-region__box {
-  position: absolute;
-  border: 1px solid var(--accent);
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
 .preview-frame {
   flex: 1 1 auto;

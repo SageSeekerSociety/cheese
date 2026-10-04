@@ -210,8 +210,8 @@ it('an app without the bridge gets an overlay and quotes the boxed region by url
   })
   await fireEvent.click(ui.getByTestId('preview-pick'))
   const overlay = ui.getByTestId('preview-region-pick')
-  const frames = ui.container.querySelector('.preview-frames') as HTMLElement
-  frames.getBoundingClientRect = () =>
+  // 遮罩贴满 iframe 那块地方，坐标和视口都按它自己量。
+  overlay.getBoundingClientRect = () =>
     ({ left: 10, top: 20, width: 300, height: 200, right: 310, bottom: 220 }) as DOMRect
   overlay.setPointerCapture = vi.fn()
   // 拖出一个 100×100 的框，落在 iframe 里的 (40, 30) 处。
