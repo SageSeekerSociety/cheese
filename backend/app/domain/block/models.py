@@ -35,10 +35,6 @@ from app.domain.common import Timestamps, UuidPk
 
 class BlockKind(enum.StrEnum):
     message = "message"
-    # A comment on the room's document: a thread's first comment carries the
-    # words it was made on (``anchor_quote``); a reply has ``reply_to``. Shown in
-    # the document margin, not the conversation timeline.
-    comment = "comment"
     attachment = "attachment"
     event = "event"
     # A renderable product 芝士 explicitly points at (spec §9.1): content = the
@@ -284,10 +280,6 @@ class Block(UuidPk, Timestamps, Base):
     reply_to: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("blocks.id", ondelete="SET NULL"), nullable=True, index=True
     )
-    # B4 段落评论: the exact text a comment was selected on (Feishu-style),
-    # kept for display next to it. Only set on kind=comment blocks.
-    anchor_quote: Mapped[str | None] = mapped_column(Text, nullable=True)
-
     # Render-by-type (spec §9.1): the mimeType of an artifact block — the host
     # picks a renderer from this, never from parsing the AI's text. Only set on
     # kind=artifact blocks (e.g. text/html, image/svg+xml).

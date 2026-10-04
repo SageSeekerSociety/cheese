@@ -175,10 +175,11 @@ async def main() -> None:
         if m["agent"]
     )
 
-    doc = api("GET", f"/topics/{form}/doc", alice) or {}
+    form_doc = api("GET", f"/topics/{form}/document", alice)["id"]
+    doc = api("GET", f"/documents/{form_doc}", alice) or {}
     api(
         "PUT",
-        f"/topics/{form}/doc",
+        f"/documents/{form_doc}",
         alice,
         json={
             "content": (

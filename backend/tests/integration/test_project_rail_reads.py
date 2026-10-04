@@ -125,7 +125,6 @@ def test_weeklies_come_back_newest_first_and_carry_their_window(client):
         "author": "alice",
         "content": "这一周：产物页上线。",
         "reply_to": None,
-        "anchor_quote": None,
         "mime_type": None,
         "refs": [room],
         "upgraded_to_topic_id": None,

@@ -1,9 +1,9 @@
 """A document conversation's session on the session host: one pi session per
 comment thread, or per selection box.
 
-Its tools read and edit the room's document and look things up in the project
-as the person asking. When the room's machine is there, the session reads the
-room's work on it besides (`document/machine.py`): pi's own read, ls, find and
+Its tools read and edit the document and look things up in the project as the
+person asking. For a room's document whose machine is there, the session reads
+the room's work on it besides (`document/machine.py`): pi's own read, ls, find and
 grep, with their hands on the room's checkout, and nothing that writes or runs
 a command. It never takes a machine of its own.
 
@@ -13,9 +13,9 @@ project's sessions are counted together: starting one more than
 session sits idle for ``IDLE_EXIT_S`` and exits; the conversation's next
 question starts it again on the same conversation.
 
-It runs on the room's agent's model, called with a credential naming the room,
-the agent and the conversation, so what it spends is the project's like any
-call of that agent (`llm_proxy`).
+It runs on the agent's model, called with a credential naming the document's
+room (its project, for a document in none), the agent and the conversation, so
+what it spends is the project's like any call of that agent (`llm_proxy`).
 """
 
 import uuid
@@ -24,6 +24,7 @@ from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.document.question import (
     HOST_WAIT_S,
     TOKEN_TTL_S,
+    Asked,
     Bound,
     Surroundings,
     system_prompt,
@@ -65,15 +66,20 @@ def ref(project_id: uuid.UUID, key: uuid.UUID) -> SessionRef:
 
 def session_for(
     *,
-    project_id: uuid.UUID,
-    room_id: uuid.UUID,
+    asked: Asked,
     key: uuid.UUID,
     bound: Bound,
     around: Surroundings,
     where: str,
 ) -> tuple[SessionRef, SessionSpec, Access]:
-    """Conversation ``key``'s session, on the agent's model, with the room's
-    credential for that conversation; its tools act in the room."""
+    """Conversation ``key``'s session, on the agent's model, with a credential
+    for that conversation; its tools act on the document."""
+    env = {
+        "CHEESE_PROJECT": str(asked.project_id),
+        "CHEESE_DOCUMENT": str(asked.document_id),
+    }
+    if asked.room_id is not None:
+        env["CHEESE_TOPIC"] = str(asked.room_id)
     spec = SessionSpec(
         system_prompt=system_prompt(
             bound.agent_name,
@@ -89,16 +95,16 @@ def session_for(
         gone_after_s=GONE_AFTER_S,
         host_wait_s=HOST_WAIT_S,
         resume_token=str(key),
-        env={"CHEESE_PROJECT": str(project_id), "CHEESE_TOPIC": str(room_id)},
+        env=env,
     )
     access = Access(
         mint_scoped_token(
-            project_id=str(project_id),
-            topic_id=str(room_id),
+            project_id=str(asked.project_id),
+            topic_id=str(asked.room_id) if asked.room_id is not None else None,
             agent_handle=bound.agent_handle,
             resource_id=str(key),
             ttl_s=TOKEN_TTL_S,
         ),
         around.machine,
     )
-    return ref(project_id, key), spec, access
+    return ref(asked.project_id, key), spec, access

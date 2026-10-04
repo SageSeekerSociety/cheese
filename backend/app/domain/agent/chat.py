@@ -2938,7 +2938,7 @@ class ChatService(SessionRecovery, RoomTurns):
         )
 
     async def charge_turn_spend(
-        self, project_id: uuid.UUID, topic_id: uuid.UUID, turn_id: uuid.UUID
+        self, project_id: uuid.UUID, topic_id: uuid.UUID | None, turn_id: uuid.UUID
     ) -> list[AgentUsage] | None:
         """What this turn spent on the project's key, charged, one entry per
         model (gateway_usage.py)."""
