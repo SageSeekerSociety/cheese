@@ -454,6 +454,8 @@ def test_a_sandboxed_rooms_teardown_stops_no_other_rooms_executor(neighbour):
     cleanup.stop_executor(room, room.name)
 
     assert runtime.request(state, "ping")
+    # Nor does it keep the room open behind it: its teardown goes on.
+    cleanup.check_no_writers([room])
 
 
 def test_a_sandboxed_rooms_reset_stops_no_other_rooms_executor(neighbour):

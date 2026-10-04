@@ -738,12 +738,17 @@ def stop_sandboxed_executor(home: Path) -> None:
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
     try:
         descriptor = os.open(home, flags)
-        for part in (FOOTPRINT_ROOT, "executor"):
-            following = os.open(part, flags, dir_fd=descriptor)
-            os.close(descriptor)
-            descriptor = following
     except OSError:
         return
+    for part in (FOOTPRINT_ROOT, "executor"):
+        try:
+            following = os.open(part, flags, dir_fd=descriptor)
+        except OSError:
+            # Held open, the room's own home would keep its teardown waiting.
+            os.close(descriptor)
+            return
+        os.close(descriptor)
+        descriptor = following
     try:
         state = Path(f"/proc/self/fd/{descriptor}")
         runtime = platform_program(home, "remote-execution/runtime.py")
