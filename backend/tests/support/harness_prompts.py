@@ -13,26 +13,16 @@ from app.domain.agent.harness.prompt import (
     thread_relay_prompt,
 )
 from app.domain.block.models import BlockKind
-from app.domain.memory.files_store import IndexSection, MemoryIndex
 
 
 def system_prompt() -> str:
-    # 全参数在场的一份 prompt，所以记忆那两段也要在（`keeps_memory`）——它们由
-    # 调用方按 runtime 的能力传，而这个夹具要的是「每一段都有一份」。
+    # 全参数在场的一份 prompt，所以记忆说明也要在（`keeps_memory`）——它由调用方
+    # 按 runtime 的能力传，而这个夹具要的是「每一段都有一份」。项目现状不在系统
+    # 提示词里，它跟着新会话的第一条消息走。
     return build_system_prompt(
         "PLATFORM_FIXTURE",
         "SKILL_FIXTURE",
-        "DOCUMENT_FIXTURE",
-        MemoryIndex(
-            sections=[
-                IndexSection(
-                    label="项目",
-                    prefix="team",
-                    text="- [fixture](fixture.md) — MEMORY_FIXTURE",
-                )
-            ],
-            warnings=[],
-        ),
+        has_doc=True,
         role="ROLE_FIXTURE",
         keeps_memory=True,
     )

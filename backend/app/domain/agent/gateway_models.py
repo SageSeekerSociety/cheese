@@ -930,6 +930,9 @@ def _config_yaml(model: AdminModel) -> str:
     for capability, enabled in model.capabilities.items():
         if enabled:
             lines.append(f"    supports_{capability}: true")
+        elif capability == "mid_conversation_system":
+            # 别的能力缺省就是没有；这一项缺省是照常发，只有写明 false 才算数。
+            lines.append(f"    supports_{capability}: false")
     return "\n".join(lines) + "\n"
 
 

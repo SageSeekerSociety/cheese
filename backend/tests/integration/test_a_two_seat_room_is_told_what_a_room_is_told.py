@@ -1,18 +1,8 @@
 """私聊是名册两席的房间，所以它听到的和普通房间听到的是同一套（结论 19）。
 
 判据②（ARCH §9.1「私聊」行）：``is_private`` 只剩「名册两席」和「草稿区」两类读
-点。三处最容易各自再问一遍那个布尔的地方——实况文档、验收卡、阶段——在这里逐字对
-过：同一份文档、同一张等采纳的卡，私聊和普通两席房间拿到的 system prompt 在这三处
-一模一样。
-
-它们从前各问一次 ``topic.is_private``：私聊拿不到实况文档、验收卡查都不查、阶段是
-None。于是一间递了卡在等人采纳的私聊，提示词里一个字都不提这件事。
-
-**那张卡是手工种下去的，产品路径今天到不了私聊。**建卡要求活的分支上有可交付的提交
-（``review/services.py`` 的 ``create_card``），而私聊这一轮不租地点（``needs_place``
-为假），没有工作目录也就没有提交。种它是为了把 ``resolve_stage`` 推到 ``awaiting``，
-好让「验收卡」和「阶段」这两处有东西可比 —— 比的是轮次组装读不读这张卡，不是私聊今
-天怎么拿到一张卡。真要让私聊也能递卡，得先给它一个地点，那是另一件事。
+点。实况文档最容易被各自再问一遍那个布尔：它从前问过 ``topic.is_private``，私聊于是
+拿不到实况文档。这里逐字对过：同一份文档，私聊和普通两席房间开场时听到的一模一样。
 """
 
 import uuid
@@ -21,11 +11,9 @@ import pytest
 
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
-from app.domain.agent.skills import load_scenario
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.project.services import ProjectService
-from app.domain.review.repositories import AcceptCardRepository
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 from tests.conftest import StubChannel, settle_turn
@@ -44,7 +32,7 @@ class Screen(StubChannel):
 
 
 async def _prompt_of(factory, tmp_path, *, private: bool) -> tuple[str, int]:
-    """跑一轮，交回这一轮的 system prompt 和这间房名册上的席位数。"""
+    """跑一轮，交回会话开场时听到的全部（系统提示词和第一条消息）和席位数。"""
     screen = Screen()
     svc = ChatService(
         session_factory=factory,
@@ -72,11 +60,6 @@ async def _prompt_of(factory, tmp_path, *, private: bool) -> tuple[str, int]:
             content=DOC,
             kind=BlockKind.doc,
         )
-        # 一张等人采纳的卡：阶段由它推出来（stages.resolve_stage）。手工种下去
-        # 的，为什么见模块 docstring。
-        await AcceptCardRepository(session).add(
-            topic_id=topic_id, reviewer_handle="u", routing_reason="最懂"
-        )
         await session.commit()
     async with factory() as session:
         _, seats = await TopicMemberService(session).list_for_topic(topic_id)
@@ -86,11 +69,11 @@ async def _prompt_of(factory, tmp_path, *, private: bool) -> tuple[str, int]:
         pass
     await settle_turn(svc, topic_id)
     assert screen.last_system_prompt is not None
-    return screen.last_system_prompt, seats
+    return f"{screen.last_system_prompt}\n\n{screen.last_prompt}", seats
 
 
-async def test_a_dm_is_told_the_doc_the_card_and_the_stage(client, tmp_path):
-    """合同：实况文档、验收卡、阶段，两席的私聊和两席的普通房间一模一样。"""
+async def test_a_dm_is_told_the_living_doc_a_room_is_told(client, tmp_path):
+    """合同：实况文档，两席的私聊和两席的普通房间一模一样。"""
     private_prompt, private_seats = client.portal.call(
         lambda: _prompt_of(client.test_request_factory, tmp_path, private=True)
     )
@@ -102,11 +85,6 @@ async def test_a_dm_is_told_the_doc_the_card_and_the_stage(client, tmp_path):
     assert private_seats == 2
     assert room_seats == 2
 
-    awaiting = load_scenario("stage:awaiting")
-    assert awaiting, "stage:awaiting 这一段得有内容，否则下面的断言证明不了什么"
     for prompt in (private_prompt, room_prompt):
-        # 实况文档
         assert "## 当前话题的实况文档" in prompt
         assert DOC in prompt
-        # 验收卡 → 阶段：卡在等人采纳，提示词里给的就是那一段
-        assert awaiting in prompt

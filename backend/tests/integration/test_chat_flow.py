@@ -236,8 +236,8 @@ def test_the_index_is_carried_and_the_bodies_are_not(client, stub_hooks):
         post_message(client, topic_id, "user-1", {"content": "@芝士 技术栈是什么"})
         _drain_until_done(ws)
 
-    prompt = stub_hooks.last_system_prompt
-    assert prompt is not None
+    assert stub_hooks.last_system_prompt is not None
+    prompt = stub_hooks.told
     assert "索引里那句钩子" in prompt
     assert "正文里才有的那句话" not in prompt
     assert "说话这个人的索引钩子" in prompt

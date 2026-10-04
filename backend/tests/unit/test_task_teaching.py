@@ -8,7 +8,7 @@
 所以「同语义」是断言出来的，不是注释里说的（`shell` 那一行同理，它随 #1292 进来）。
 
 **非课程项目一个字都不多。** 下半段盯住这条：空配置既不渲染标题，也不因为传了
-一个空的 `TeachingContext` 就让 prompt 变样——`build_system_prompt` 的输出与这
+一个空的 `TeachingContext` 就让开场快照变样——`build_session_opening` 的输出与这
 个键存在之前逐字节相同。取数那一半（一次查询都不发）在
 `tests/integration/test_teaching_context.py`。
 """
@@ -17,7 +17,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.domain.agent.harness.prompt import build_system_prompt, teaching_section
+from app.domain.agent.harness.prompt import build_session_opening, teaching_section
 from app.domain.memory.files_store import IndexSection, MemoryIndex
 from app.domain.task.protocol import Protocol, Teaching, resolve
 from app.domain.task.teaching import TeachingContext
@@ -59,14 +59,13 @@ def _project(settings=None) -> SimpleNamespace:
 
 
 def _prompt(**kw) -> str:
-    return build_system_prompt(
-        "BASE",
-        "SKILLS",
-        "DOC",
-        _index("- [记忆](memory.md) — MEMORY"),
-        role="ROLE",
+    """一条新会话开场听到的项目现状（教学范围是现状，在开场快照里）。"""
+    return build_session_opening(
+        doc="DOC",
+        memory=_index("- [记忆](memory.md) — MEMORY"),
+        keeps_memory=True,
         **kw,
-    )
+    ).text
 
 
 #: One row per overridable key: the category value, the 赛题 override, the 项目
@@ -315,15 +314,13 @@ def test_the_prompt_of_a_non_course_project_is_byte_identical() -> None:
     )
 
 
-def test_the_teaching_section_sits_after_the_role_and_before_the_skills() -> None:
-    """It constrains what this week is about, so it has to be readable before
-    the skills explain how to do it — and it is not a persona, so it does not
-    belong above the role."""
+def test_a_new_session_of_a_course_project_is_told_this_weeks_scope() -> None:
+    """It constrains what this week is about, so a session has to hear it before
+    it starts on anything."""
     prompt = _prompt(
         teaching=TeachingContext(
             course="创研课 2026 秋", teaching=Teaching.from_json({"current_week": 3})
         )
     )
 
-    assert prompt.index("## 你的专家角色") < prompt.index("## 本周教学范围")
-    assert prompt.index("## 本周教学范围") < prompt.index("SKILLS")
+    assert "## 本周教学范围" in prompt

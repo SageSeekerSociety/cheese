@@ -107,8 +107,7 @@ def temporary_beside(destination):
 
 
 PROJECT_SKILLS_MANIFEST = "skills/.cheese-project-skills.json"
-#: The platform's own skill folders; a project skill never takes these names.
-PLATFORM_SKILLS = frozenset({"documents", "cheese", "cheese-docs", "chat-detail"})
+PLATFORM_SKILLS_MANIFEST = "skills/.cheese-platform-skills.json"
 
 
 def beneath(root, relative, create=False):
@@ -175,38 +174,56 @@ def write_beneath(root, relative, text):
         os.close(directory)
 
 
-def prune_project_skills(home, names):
-    """Remove the project skills planted last time that are no longer shipped
-    from the room's Claude config directory."""
-    manifest = Path(CONFIG_DIR) / PROJECT_SKILLS_MANIFEST
+def _remove_skill(home, name):
+    """Remove one skill folder from the room's Claude config directory."""
+    if not isinstance(name, str) or not name or "/" in name or name in (".", ".."):
+        return
     try:
-        previous = json.loads(read_beneath(home, manifest))
-    except (OSError, ValueError):
-        previous = []
-    for name in set(previous) - set(names):
-        if (
-            not isinstance(name, str)
-            or not name
-            or "/" in name
-            or name in (".", "..")
-            or name in PLATFORM_SKILLS
-        ):
-            continue
-        try:
-            skills = beneath(home, Path(CONFIG_DIR) / "skills")
-        except OSError:
-            continue
-        if skills is None or sys.version_info < (3, 11):
-            # Before 3.11 rmtree cannot work under an open directory. Such a
-            # Python is macOS's own, and no room is sandboxed there.
-            if skills is not None:
-                os.close(skills)
-            shutil.rmtree(Path(home) / CONFIG_DIR / "skills" / name, ignore_errors=True)
-            continue
-        try:
-            shutil.rmtree(name, dir_fd=skills, ignore_errors=True)
-        finally:
+        skills = beneath(home, Path(CONFIG_DIR) / "skills")
+    except OSError:
+        return
+    if skills is None or sys.version_info < (3, 11):
+        # Before 3.11 rmtree cannot work under an open directory. Such a
+        # Python is macOS's own, and no room is sandboxed there.
+        if skills is not None:
             os.close(skills)
+        shutil.rmtree(Path(home) / CONFIG_DIR / "skills" / name, ignore_errors=True)
+        return
+    try:
+        shutil.rmtree(name, dir_fd=skills, ignore_errors=True)
+    finally:
+        os.close(skills)
+
+
+def _shipped_last_time(home, manifest, otherwise):
+    try:
+        return json.loads(read_beneath(home, manifest))
+    except (OSError, ValueError):
+        return list(otherwise)
+
+
+def prune_project_skills(home, names, platform):
+    """Remove the project skills planted last time that are no longer shipped
+    from the room's Claude config directory. The platform's own folders are
+    never touched here."""
+    manifest = Path(CONFIG_DIR) / PROJECT_SKILLS_MANIFEST
+    for name in (
+        set(_shipped_last_time(home, manifest, [])) - set(names) - set(platform)
+    ):
+        _remove_skill(home, name)
+    write_beneath(home, manifest, json.dumps(sorted(names)))
+
+
+def prune_platform_skills(home, names, project, before_the_list):
+    """Remove the platform skills planted last time that are no longer shipped.
+
+    Files are only ever written here, so a retired skill would otherwise stay
+    for good. A machine with no list yet is taken to have been shipped
+    ``before_the_list``. A project skill of the same name stays."""
+    manifest = Path(CONFIG_DIR) / PLATFORM_SKILLS_MANIFEST
+    previous = _shipped_last_time(home, manifest, before_the_list)
+    for name in set(previous) - set(names) - set(project):
+        _remove_skill(home, name)
     write_beneath(home, manifest, json.dumps(sorted(names)))
 
 
@@ -903,7 +920,12 @@ def prepared(
         # Under the lock like everything else this writes: the temporary file
         # each copy goes through is one name, and two prepares of one room
         # would otherwise be renaming the same `.next` file.
-        prune_project_skills(home, payload.get("project_skills") or [])
+        platform = payload.get("platform_skills") or []
+        project = payload.get("project_skills") or []
+        prune_platform_skills(
+            home, platform, project, payload.get("skills_before_list") or []
+        )
+        prune_project_skills(home, project, platform)
         plant_native_skills(home, payload.get("skills") or {})
         release, contents = stage_release(release_store(owner), platform_dir, payload)
         stop_previous_root(home, release)

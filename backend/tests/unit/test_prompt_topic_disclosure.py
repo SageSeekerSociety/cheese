@@ -11,7 +11,7 @@ from app.domain.agent.chat import (
     _expand_mention_names,
     _topic_ref_lists,
 )
-from app.domain.agent.harness.prompt import build_system_prompt
+from app.domain.agent.harness.prompt import build_session_opening
 from app.domain.topic.models import TitleSource, Topic, TopicKind, TopicStatus
 
 ARCHIVED_ID = uuid.uuid4()
@@ -96,7 +96,7 @@ def test_prompt_section_lists_only_active_and_says_how_to_find_archived():
     归档话题不存在/不可访问。"""
     _, for_prompt = _topic_ref_lists(_project_topics(), exclude_id=CURRENT_ID)
 
-    prompt = build_system_prompt("base", "", None, None, topics=for_prompt)
+    prompt = build_session_opening(topics=for_prompt).text
 
     assert "- 搭建推荐算法原型" in prompt
     assert "两阶段采纳闭环" not in prompt
