@@ -14,6 +14,10 @@ import type {
 
 import { request } from '../api'
 
+export function listPlanModels(): Promise<{ models: { id: string; label: string; tier: ModelTier }[] }> {
+  return request('/admin/plans/models')
+}
+
 export function listPlans(): Promise<{ plans: Plan[] }> {
   return request<{ plans: Plan[] }>('/admin/plans')
 }
