@@ -1810,7 +1810,21 @@
     "restore": "恢复到这一版",
     "close": "关闭",
     "deleteTitle": "删除「{title}」",
-    "deleteHint": "删除后之后的房间不再带着它，历史版本也一起删除"
+    "deleteHint": "删除后之后的房间不再带着它，历史版本也一起删除",
+    "proposal": {
+      "byline": "{name} 提议把这套做法存成工作方法，保存后这个项目以后的会话都照它做",
+      "bylineEdit": "{name} 提议修改这份工作方法，确认之前大家继续用原来那一版",
+      "reason": "为什么改",
+      "taught": "你们为这类事教过的地方",
+      "accepted": "这次怎么算做成的",
+      "related": "和已有方法的关系",
+      "absorbs": "保存后会删掉这几条记忆，它们已经并进这份方法：{files}",
+      "expand": "查看全文",
+      "collapse": "收起全文",
+      "dismiss": "不用",
+      "saved": "已保存「{title}」，这个项目以后的会话会照它做",
+      "open": "去工作方法页"
+    }
   },
   "nodeBoard": {
     "loadFailed": "加载机器状态失败",

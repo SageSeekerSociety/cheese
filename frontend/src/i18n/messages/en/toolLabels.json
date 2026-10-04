@@ -98,5 +98,7 @@
   "bashRead": "Read task output",
   "bashWrite": "Send input to the task",
   "bashKill": "Stop the background task",
-  "bashList": "List background tasks"
+  "bashList": "List background tasks",
+  "cheeseMethodDraft": "Draft a work method",
+  "cheeseMethodUpdate": "Propose a change to a work method"
 }

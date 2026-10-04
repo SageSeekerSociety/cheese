@@ -1810,7 +1810,21 @@
     "restore": "Restore this version",
     "close": "Close",
     "deleteTitle": "Delete \"{title}\"",
-    "deleteHint": "Later rooms will no longer get it, and its version history is deleted too"
+    "deleteHint": "Later rooms will no longer get it, and its version history is deleted too",
+    "proposal": {
+      "byline": "{name} proposes saving this as a work method. Once saved, later sessions in this project follow it",
+      "bylineEdit": "{name} proposes a change to this work method. Until it is confirmed, everyone keeps using the current version",
+      "reason": "Why the change",
+      "taught": "What you taught for this kind of work",
+      "accepted": "How this time counted as done",
+      "related": "How it relates to existing methods",
+      "absorbs": "Saving deletes these memories, now folded into this method: {files}",
+      "expand": "Show full text",
+      "collapse": "Hide full text",
+      "dismiss": "No thanks",
+      "saved": "Saved \"{title}\". Later sessions in this project will follow it",
+      "open": "Open work methods"
+    }
   },
   "nodeBoard": {
     "loadFailed": "Couldn't load machine status",

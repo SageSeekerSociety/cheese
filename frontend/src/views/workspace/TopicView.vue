@@ -210,6 +210,7 @@ const chatColumn = ref<{
   connected: boolean
   reloadAccept: (silent?: boolean) => void
   reloadFeedback: () => void
+  reloadMethods: () => void
   say: (content: string, attachments?: ChatAttachment[]) => boolean
   submitQuestion: SubmitPreviewQuestion
 } | null>(null)
@@ -318,6 +319,8 @@ function handleStateChanged(resource: string) {
   else if (resource === 'accept') chatColumn.value?.reloadAccept(true)
   // 提案卡落下、被发出去、被「不用」：卡片跟着变，不等刷新。
   else if (resource === 'feedback') chatColumn.value?.reloadFeedback()
+  // 工作方法的提议落下、被保存或被拒：那张卡跟着变。
+  else if (resource === 'methods') chatColumn.value?.reloadMethods()
   else activityTick.value += 1 // doc / notify → reload
 }
 
