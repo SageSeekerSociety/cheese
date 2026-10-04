@@ -71,7 +71,7 @@ class FakeHub:
         self.asked: list[tuple[str, dict]] = []  # (method, params) to the runner
         self.ping: dict | BaseException = {"alive": True, "working": False}
         self.tunnel = ("up", 0)
-        self.probed_homes: list[str] = []
+        self.probed_dirs: list[str] = []
         self.release = {"stage": {"changed": True}, "acknowledge": {}}
         # The release the machine's helpers are on, as its marker names it.
         self.marker = ""
@@ -138,8 +138,8 @@ class FakeHub:
         self, device_id, argv, *, cwd=None, env=None, timeout=60, stdin=None
     ) -> dict:
         self.execs.append((argv, stdin))
-        if env and "CHEESE_TUNNEL_PROBE_HOME" in env:
-            self.probed_homes.append(env["CHEESE_TUNNEL_PROBE_HOME"])
+        if env and "CHEESE_TUNNEL_PROBE_DIR" in env:
+            self.probed_dirs.append(env["CHEESE_TUNNEL_PROBE_DIR"])
             verdict, code = self.tunnel
             return {"stdout": verdict, "stderr": "", "exit": code}
         if argv[:2] == ["sh", "-c"] and "release-ready" in argv[2]:
@@ -191,7 +191,7 @@ class ShellHub(FakeHub):
         self.home = home
 
     async def exec(self, device_id, argv, *, env=None, stdin=None, **kwargs):
-        if argv[:2] != ["sh", "-c"] or (env or {}).get("CHEESE_TUNNEL_PROBE_HOME"):
+        if argv[:2] != ["sh", "-c"] or (env or {}).get("CHEESE_TUNNEL_PROBE_DIR"):
             return await super().exec(device_id, argv, env=env, stdin=stdin, **kwargs)
         self.execs.append((argv, stdin))
         result = subprocess.run(
@@ -606,10 +606,14 @@ async def test_a_reused_screen_whose_tunnel_helper_died_is_relaunched(
     assert [s.sid for s in hub.opened] == [second.sid]  # … and relaunched fresh
     (line,) = _retired(caplog)
     assert "reason=tunnel_helper_down" in line
-    # The probe reads the port from the room's own home, so concurrent rooms on
-    # one machine are judged independently rather than sharing one verdict.
-    assert hub.probed_homes == [
-        device_home_dir(room.arguments["project_id"], room.arguments["topic_id"])
+    # The probe reads the port from THIS SEAT's own directory, so concurrent
+    # seats (and rooms) on one machine are judged independently rather than
+    # sharing one verdict.
+    assert hub.probed_dirs == [
+        seat_dir(
+            device_home_dir(room.arguments["project_id"], room.arguments["topic_id"]),
+            room.arguments["agent_handle"],
+        )
     ]
 
 
@@ -646,7 +650,7 @@ async def test_no_tunnel_deployment_pays_nothing_for_the_gate(monkeypatch):
     await room.ensure()
     await room.ensure()
 
-    assert hub.probed_homes == []  # never asked
+    assert hub.probed_dirs == []  # never asked
     assert hub.closed == []  # and nothing retired on a verdict it never got
 
 
@@ -704,10 +708,10 @@ def _seat_dir(machine_home: Path, seat: str = _TUNNEL_PROBE_SEAT) -> Path:
 
 
 def _tunnel_probe(machine_home: Path, seat: str = _TUNNEL_PROBE_SEAT) -> str:
-    """The probe as the backend runs it: the room's home named with the literal
-    `$HOME` placeholder, resolved against the machine's own HOME, and the seat
-    whose helper is being asked after — per seat, because a room may seat
-    several agents and each has a helper of its own."""
+    """The probe as the backend runs it: the seat's directory named with the
+    literal `$HOME` placeholder the backend leaves in it, resolved against the
+    machine's own HOME. Per seat, because a room may seat several agents and
+    each has a helper of its own."""
     return subprocess.run(
         ["sh", "-c", DEVICE_TUNNEL_PROBE],
         capture_output=True,
@@ -715,8 +719,7 @@ def _tunnel_probe(machine_home: Path, seat: str = _TUNNEL_PROBE_SEAT) -> str:
         env={
             **os.environ,
             "HOME": str(machine_home),
-            "CHEESE_TUNNEL_PROBE_HOME": "$HOME/room",
-            "CHEESE_TUNNEL_PROBE_SEAT": seat,
+            "CHEESE_TUNNEL_PROBE_DIR": f"$HOME/room/.cheese/seats/{seat}",
         },
         timeout=30,
     ).stdout.strip()

@@ -90,24 +90,21 @@ NO_LOGIN_PLACEHOLDER = "sk-ant-oat01-cheese-no-claude-login-on-this-host"
 # silent share a derived port used to cause. A lingering helper that has lost its
 # upstream still holds its own port and is NOT this failure.
 #
-# The port is read from the SEAT's own `cheese-tunnel.port`, where the helper
-# recorded what the kernel gave it; nothing else knows it.
-# CHEESE_TUNNEL_PROBE_HOME is the room's home as the backend names it, with the
-# literal `$HOME` placeholder only this machine can resolve, and
-# CHEESE_TUNNEL_PROBE_SEAT is the seat whose helper is being asked after — a
-# room may seat several agents, each with its own helper and its own port.
+# The port is read from the SEAT's own `cheese-tunnel.port`, where that seat's
+# helper recorded what the kernel gave it; nothing else knows it. Per seat,
+# because a room may seat several agents, each with its own helper and its own
+# port. CHEESE_TUNNEL_PROBE_DIR is that directory as the backend names it, with
+# the literal `$HOME` placeholder only this machine can resolve.
 #
 # Prints exactly one of `up` / `down` / `unknown`: only an explicit `down` is
 # actionable, so a missing /proc, an
 # absent awk, a port file that is missing or unreadable, or any hiccup leaves a
 # working screen alone.
-DEVICE_TUNNEL_PROBE = r"""home="${CHEESE_TUNNEL_PROBE_HOME:-}"
-seat="${CHEESE_TUNNEL_PROBE_SEAT:-shared}"
-case "$home" in
+DEVICE_TUNNEL_PROBE = r"""dir="${CHEESE_TUNNEL_PROBE_DIR:-}"
+case "$dir" in
   '') echo unknown; exit 0 ;;
-  '$HOME'*) home="$HOME${home#'$HOME'}" ;;
+  '$HOME'*) dir="$HOME${dir#'$HOME'}" ;;
 esac
-dir="$home/.cheese/seats/$seat"
 port=$(cat "$dir/cheese-tunnel.port" 2>/dev/null) || { echo unknown; exit 0; }
 case "$port" in ''|*[!0-9]*) echo unknown; exit 0 ;; esac
 pid=$(cat "$dir/cheese-tunnel.pid" 2>/dev/null) || { echo unknown; exit 0; }
