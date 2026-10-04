@@ -850,6 +850,7 @@ const DOC_BASE = {
     resolve: noopAsync,
     reopen: noopAsync,
     recover: async () => undefined,
+    stopAgent: noopAsync,
   } as DocThreadActions,
   liveRefIndex: new Map<number, string>(),
   fetchDocNodes: async () => [],

@@ -480,6 +480,7 @@ void openPlace()
             :submit-question="submitQuestion"
             :agent-name="store.agentName"
             :agent-handle="store.agentHandle"
+            :members="store.members"
             :activity="activity"
             :topic="selectedTopic"
             :activity-tick="activityTick"

@@ -30,6 +30,8 @@ defineProps<{
   level: 'root' | 'library'
   /** 触摸屏上回车是换行，那条「Enter 挑这一项」的提示就不该出现。 */
   enterSends: boolean
+  /** 贴在这个位置（文档里的光标处），而不是浮在输入框上方。 */
+  at?: { top: number; left: number; width?: number } | null
 }>()
 
 const emit = defineEmits<{
@@ -56,7 +58,15 @@ defineExpose({ scrollActiveIntoView })
 
 <template>
   <Transition name="menu-rise">
-    <div v-if="open" ref="menuEl" class="mention-menu">
+    <div
+      v-if="open"
+      ref="menuEl"
+      class="mention-menu"
+      :class="{ 'mention-menu--at': at }"
+      :style="
+        at ? { top: `${at.top}px`, left: `${at.left}px`, width: at.width ? `${at.width}px` : undefined } : undefined
+      "
+    >
       <!-- 进资料库是往里走一层：这一层往左让开，下一层从右边进来；退回来反过来。 -->
       <Transition :name="level === 'library' ? 'level-in' : 'level-out'" mode="out-in">
         <div :key="level" class="mention-menu-level">
@@ -159,6 +169,13 @@ defineExpose({ scrollActiveIntoView })
   max-height: calc((var(--app-height, 100dvh) - var(--keyboard-inset, 0px)) * 0.4);
   background: var(--surface);
   box-shadow: var(--shadow-2);
+}
+.mention-menu--at {
+  right: auto;
+  bottom: auto;
+  width: 280px;
+  margin-bottom: 0;
+  max-height: 264px;
 }
 .mention-menu-item {
   display: flex;

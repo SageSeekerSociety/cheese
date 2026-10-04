@@ -467,6 +467,7 @@ routes:
   - {protocol: "http", method: "POST", path: "/assistant/tasks/{taskId}/conversations", auth: "assistant.task", owner: "assistant"}
   - {protocol: "http", method: "GET", path: "/assistant/conversations/{conversationId}", auth: "assistant.task", owner: "assistant"}
   - {protocol: "http", method: "POST", path: "/assistant/conversations/{conversationId}/ask", auth: "assistant.task", owner: "assistant"}
+  - {protocol: "http", method: "POST", path: "/assistant/conversations/{conversationId}/stop", auth: "assistant.task", owner: "assistant"}
   # app.api.routes.attachments
   - {protocol: "http", method: "POST", path: "/attachments", auth: "legacy.answers.list_answers", owner: "attachment"}
   - {protocol: "http", method: "GET", path: "/attachments/limits", auth: "legacy.answers.list_answers", owner: "attachment"}
@@ -1045,6 +1046,7 @@ routes:
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/comments/{comment_id}/replies", auth: "document.member", owner: "block"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/comments/{comment_id}/resolve", auth: "document.member", owner: "block"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/comments/{comment_id}/reopen", auth: "document.member", owner: "block"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/comments/{comment_id}/agent/stop", auth: "document.member", owner: "block"}
   # app.api.routes.topics_comments
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/docs", auth: "actor.topic", owner: "block"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/comments", auth: "actor.topic", owner: "block"}

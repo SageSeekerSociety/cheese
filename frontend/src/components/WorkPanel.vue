@@ -23,7 +23,7 @@
 // 消失」。单击打开的那一格是临时的，下一次打开会换掉它；双击就固定下来。不这样的
 // 话，聊一小时能攒出二十个页签。
 import type { OpenFileTab } from '../composables/useTopicMemory'
-import type { AgentControlState, Block, PreviewInfo, Topic } from '../cx_types'
+import type { AgentControlState, Block, PreviewInfo, ProjectMemberRow, Topic } from '../cx_types'
 import type { DocReviewRequest } from '../lib/docReview'
 import type { MemberActivityLine } from '../lib/memberActivity'
 import type { PreviewLocate, SubmitPreviewQuestion } from '../lib/previewQuestion'
@@ -35,6 +35,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { getPreview, getTopicWorkSummary, listRoomTasks, readPreviewFile } from '../api'
 import { useTopicMemory } from '../composables/useTopicMemory'
 import { previewCanShowInRoom } from '../lib/fileKind'
+import { whenIdle } from '../lib/idle'
 
 import ErrorBoundary from './common/ErrorBoundary.vue'
 import PanelChanges from './panels/PanelChanges.vue'
@@ -95,6 +96,8 @@ const props = withDefaults(
     agentName?: string
     /** 项目 AI 队友的 handle：文档评论里「问…」点的是它。 */
     agentHandle?: string | null
+    /** 项目名册：文档里 @ 得到的人。 */
+    members?: ProjectMemberRow[]
     // 此刻谁在这个房间里忙（对话栏从 socket 上学来）。现场那一格画其中在干活的队友。
     activity?: MemberActivityLine[]
   }>(),
@@ -113,6 +116,7 @@ const props = withDefaults(
     compact: false,
     agentName: () => t('work.room.defaultAgentName'),
     agentHandle: null,
+    members: () => [],
     activity: () => [],
   }
 )
@@ -457,7 +461,13 @@ const panelTabs = computed<PanelTab[]>(() =>
   markPreviewSeen(null)
   if (id) {
     void pollPreviewPointer({ seen: true })
-    void pollWorkSummary({ seen: true })
+    // 这一条要等服务端算（几秒），而它只决定「改动」那一格的深浅、以及该开在哪一格。
+    // 推到首屏画完、浏览器空下来再问：它不该和真正要把内容画出来的那些请求抢同一条
+    // 网络和主线程。角标随后补上，逻辑不受影响（`summaryLoaded` 那只看的是有没有回过）。
+    const openedId = id
+    whenIdle(() => {
+      if (props.topic?.id === openedId) void pollWorkSummary({ seen: true })
+    })
     void pollThreads()
   }
 }
@@ -648,6 +658,7 @@ defineExpose({ pulse, highlightTurn, reviewDoc, openFile, siteBlock, activeTab: 
             :class="enterClass('overview')"
             :agent-name="agentName"
             :agent-handle="agentHandle"
+            :members="members"
             :topic="topic"
             :activity-tick="activityTick"
             :topic-list="topicList"

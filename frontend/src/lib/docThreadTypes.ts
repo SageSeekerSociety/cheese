@@ -29,6 +29,8 @@ export interface DocThreadActions {
   reopen: (id: string) => Promise<void>
   /** Send again the write whose outcome is unknown, or read the threads again. */
   recover: (id: string) => Promise<{ reply: string } | undefined>
+  /** Stop the agent answering the thread; its reply keeps what it wrote. */
+  stopAgent: (id: string) => Promise<void>
 }
 export interface DocThreadState {
   /** Every thread on the document, oldest first. */

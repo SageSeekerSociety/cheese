@@ -22,6 +22,7 @@ import { t } from '../i18n'
 import { memberName } from '../lib/agentNames'
 import { choiceKey, choiceName } from '../lib/computeConfig'
 import { externalHandles } from '../lib/externalMembers'
+import { whenIdle } from '../lib/idle'
 import { avatarColor, avatarInitial } from '../utils/avatar'
 import { getAvatarUrl } from '../utils/materials'
 
@@ -81,11 +82,21 @@ async function loadMachines() {
     machinesError.value = e instanceof Error ? e.message : t('work.roomMachine.loadFailed')
   }
 }
+let cancelIdleLoad: (() => void) | null = null
 onMounted(() => {
-  void loadMachines()
+  // 工作电脑这一项只喂两处：名册展开后的那一行，和页头那个「能访问整台机器」的标记。
+  // 名册一展开（下面的 watch）会立刻读一次，所以进房间这一下没必要挤在首屏前 —— 推到
+  // 浏览器空下来再问，标记晚一点补上，读到的仍是同一份。
+  const tid = props.topicId
+  cancelIdleLoad = whenIdle(() => {
+    if (props.topicId === tid) void loadMachines()
+  })
   window.addEventListener('project-compute-updated', loadMachines)
 })
-onBeforeUnmount(() => window.removeEventListener('project-compute-updated', loadMachines))
+onBeforeUnmount(() => {
+  cancelIdleLoad?.()
+  window.removeEventListener('project-compute-updated', loadMachines)
+})
 watch(open, (value) => {
   if (value) void loadMachines()
 })

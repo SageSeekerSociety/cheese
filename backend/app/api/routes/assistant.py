@@ -16,6 +16,7 @@ that cannot start one is a refusal rather than a broken stream.
 import logging
 import time
 import uuid
+from dataclasses import replace
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path
@@ -43,8 +44,6 @@ from app.domain.agent.personal.prompt import task_brief
 from app.domain.agent.personal.session import session as conversation_session
 from app.domain.agent.session_host.contract import (
     Access,
-    HostFull,
-    SessionError,
     SessionRef,
     SessionSpec,
 )
@@ -149,6 +148,7 @@ async def read_conversation(
                 {
                     "role": m.role,
                     "text": m.text,
+                    "stopped": m.stopped,
                     "at": m.created_at.isoformat(),
                 }
                 for m in messages
@@ -160,8 +160,10 @@ async def read_conversation(
 async def _prestart(
     people: SessionHost, started: tuple[SessionRef, SessionSpec, Access]
 ) -> None:
+    ref, spec, access = started
     try:
-        await people.start(*started)
+        # Only when the host has room now: a question waits for it, and says so.
+        await people.start(ref, replace(spec, host_wait_s=0), access)
     except Exception:  # noqa: BLE001 — the question starts it, or says why not
         logger.info("pre-starting a person's session failed", exc_info=True)
 
@@ -204,8 +206,9 @@ async def ask(
     auth: AuthUser,
     people: People,
 ):
-    """Answer one question, streamed as server-sent events: ``delta`` (text),
-    ``tool`` (what 芝士 is looking at), ``error``, ``done``."""
+    """Answer one question, streamed as server-sent events: ``queued``,
+    ``delta`` (text), ``tool`` (what 芝士 is looking at), ``error``, ``done``
+    (``stopped``)."""
     row = await _owned(db, auth.user_id, conversation_id)
     place = await _place(db, row, auth)
 
@@ -224,33 +227,39 @@ async def ask(
         if redis is None
         else await assistant.take_conversation(redis, conversation_id)
     )
-    if slot is None:
+    if redis is None or slot is None:
         return _refuse(429, say("assistantStillAnswering"), 5)
     held_at = time.monotonic()
-    release = slot.release
-
-    started = conversation_session(auth.user_id, conversation_id, place)
-    try:
-        await people.start(*started)
-    except HostFull:
-        await release()
-        return _refuse(503, say("assistantBusy"), 10)
-    except SessionError as exc:
-        logger.warning("a person's session did not start: %s", exc)
-        await release()
-        return _refuse(503, assistant.FAILED, 10)
 
     return StreamingResponse(
         assistant.ask(
             sessions=async_session_factory,
+            redis=redis,
             people=people,
             user_id=auth.user_id,
             conversation_id=conversation_id,
-            started=started,
+            started=conversation_session(auth.user_id, conversation_id, place),
             question=body.question,
             held_at=held_at,
-            on_done=release,
+            on_done=slot.release,
         ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
     )
+
+
+@router.post("/conversations/{conversationId}/stop")
+async def stop(
+    conversation_id: Annotated[uuid.UUID, Path(alias="conversationId")],
+    db: DbSession,
+    auth: AuthUser,
+    people: People,
+) -> dict:
+    """Stop the question being answered: its wait for the session host, or the
+    answer being written. What was written is kept, marked as stopped."""
+    row = await _owned(db, auth.user_id, conversation_id)
+    await db.commit()
+    redis = get_redis_client()
+    if redis is not None:
+        await assistant.stop(redis, people, auth.user_id, row.id)
+    return ok({})

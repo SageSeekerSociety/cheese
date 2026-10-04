@@ -16,3 +16,7 @@ export function writeDocThread(
 ): Promise<DocThread> {
   return request(`${root(topic)}/${encodeURIComponent(id)}/${action}`, { method: 'POST', body: JSON.stringify(body) })
 }
+/** Stop the agent answering the thread: its wait, or the reply being written. */
+export function stopDocThreadAgent(topic: string, id: string): Promise<unknown> {
+  return request(`${root(topic)}/${encodeURIComponent(id)}/agent/stop`, { method: 'POST' })
+}

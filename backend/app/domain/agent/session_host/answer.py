@@ -12,7 +12,7 @@ record the journal keeps of the work's result (``Answer``).
 import asyncio
 import time
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, replace
 
 from app.domain.agent.nonce import new_nonce
@@ -46,6 +46,11 @@ class Tool:
 
 
 @dataclass(frozen=True)
+class Waiting:
+    """The session is waiting for the host to have room for it."""
+
+
+@dataclass(frozen=True)
 class Answer:
     """The whole answer, or what failed to arrive."""
 
@@ -58,20 +63,46 @@ async def ask(
     ref: SessionRef,
     spec: SessionSpec,
     access: Access,
-    prompt: Prompt,
+    prompt: Prompt | Callable[[], Awaitable[Prompt]],
     *,
     work_id: uuid.UUID,
     ceiling_s: float,
-) -> AsyncIterator[Words | Tool | Answer]:
+    stopped: Callable[[], Awaitable[bool]] | None = None,
+) -> AsyncIterator[Words | Tool | Waiting | Answer]:
     """Say ``prompt`` and hand on the answer as it is written; ends with one
-    ``Answer``. Past ``ceiling_s`` the work is stopped and the answer is what
-    failed to arrive."""
+    ``Answer``. ``prompt`` may be what makes it once the session has started,
+    for a prompt whose credential should count from then rather than from
+    before a wait for the host. ``Waiting`` comes first when the session has
+    to wait for the host to have room for it, a wait ``stopped`` ends
+    (``StartAbandoned``).
+    Past ``ceiling_s`` from when it is said, the work is stopped and the
+    answer is what failed to arrive."""
+    waiting: asyncio.Queue[Waiting] = asyncio.Queue()
+
+    async def wait() -> None:
+        waiting.put_nowait(Waiting())
+
+    starting = asyncio.ensure_future(
+        host.start(ref, spec, access, on_wait=wait, give_up=stopped)
+    )
+    try:
+        while not starting.done():
+            told = asyncio.ensure_future(waiting.get())
+            await asyncio.wait({starting, told}, return_when=asyncio.FIRST_COMPLETED)
+            if told.done():
+                yield told.result()
+            else:
+                told.cancel()
+        starting.result()
+    finally:
+        starting.cancel()
+    # The ceiling is the answer's: a wait for the host is not part of it.
     deadline = time.monotonic() + ceiling_s
+    said = prompt if isinstance(prompt, Prompt) else await prompt()
     # The marker is how the runner knows which prompt the entries after it
     # answer (`runner.refresh`).
-    prompt = replace(prompt, text=f"{prompt.text}\n{new_nonce()}")
-    await host.start(ref, spec, access)
-    await host.send(ref, prompt, work_id=work_id)
+    said = replace(said, text=f"{said.text}\n{new_nonce()}")
+    await host.send(ref, said, work_id=work_id)
     work = str(work_id)
     text = _Text()
     reading = host.read(ref)

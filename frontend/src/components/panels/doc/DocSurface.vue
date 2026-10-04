@@ -13,9 +13,11 @@
 import type { PluginKey } from '@tiptap/pm/state'
 import type { SuggestionProps } from '@tiptap/suggestion'
 import type { DocSession } from '../../../composables/useDocCollab'
+import type { MentionPoolEntry } from '../../../composables/useRoomMentionPicker'
 import type { Block, Topic } from '../../../cx_types'
 import type { CommentSpot } from '../../../lib/docCommentSpots'
 import type { DocLinkTarget } from '../../../lib/docLinks'
+import type { RefItem } from '../../../lib/docMentionMenu'
 import type { SlashItem } from '../../../lib/docSlashMenu'
 import type { ThreadPlace } from '../../../lib/docThreadTypes'
 
@@ -26,6 +28,7 @@ import { EditorContent } from '@tiptap/vue-3'
 
 import { scrollBehavior } from '@/utils/motion'
 
+import { caretMenuPos, useDocRefMenu } from '../../../composables/useDocRefMenu'
 import { BUBBLE_META } from '../../../lib/docBubble'
 import { renderCaret } from '../../../lib/docCaret'
 import { placeOf, spotAt } from '../../../lib/docCommentSpots'
@@ -37,12 +40,14 @@ import {
   createTitleEcho,
   createTokenChips,
   liveRefKey,
+  tokenChipsKey,
 } from '../../../lib/docDecorations'
 import { createEditMarks } from '../../../lib/docEditMarks'
 import { captureDocLink, safeDocHref } from '../../../lib/docLinks'
 import { commentAnchors, docExtensions, serializeDoc } from '../../../lib/docSchema'
 import { createSlashCommands } from '../../../lib/docSlashMenu'
 import LoadingSkeleton from '../../common/LoadingSkeleton.vue'
+import MentionMenu from '../../room/MentionMenu.vue'
 
 import { editorBlocks, newStatusAt } from './blocks'
 import { alignedDocBlocks } from './docBlocks'
@@ -67,6 +72,8 @@ const props = withDefaults(
     topicList?: Topic[]
     /** handle → 名字：`<@handle>` chip 上写的字。 */
     mentionNames?: Record<string, string>
+    /** 打 @ 时列出来的人。 */
+    mentionPeople?: MentionPoolEntry[]
     /** 段落 index → 支线 id（装饰的原料，取数那一半算好的）。 */
     liveRefIndex?: Map<number, string>
     /** 能写评论（归档话题的文档不能）。 */
@@ -90,6 +97,7 @@ const props = withDefaults(
   {
     topicList: () => [],
     mentionNames: () => ({}),
+    mentionPeople: () => [],
     liveRefIndex: () => new Map<number, string>(),
     canComment: true,
     openThreads: () => new Set<string>(),
@@ -253,28 +261,9 @@ let slashProps: SuggestionProps<SlashItem, SlashItem> | null = null
 // exactly this — the slash was UI scaffolding, not user content).
 let plusSlashPending = false
 
-// Anchor the floating menu to the caret rect (suggestion's clientRect),
-// wrap-relative like every other doc overlay. Flips above the caret when the
-// menu would run past the viewport bottom.
-function slashMenuPos(
-  clientRect: (() => DOMRect | null) | null | undefined,
-  itemCount: number
-): { top: number; left: number } | null {
-  const wrap = document.querySelector('.doc-editor-wrap') as HTMLElement | null
-  const rect = clientRect?.()
-  if (!wrap || !rect) return null
-  const wr = wrap.getBoundingClientRect()
-  const est = Math.min(itemCount, 8) * 33 + 10 // menu height estimate (capped)
-  const fitsBelow = rect.bottom + 6 + est <= window.innerHeight
-  return {
-    top: fitsBelow ? rect.bottom - wr.top + 6 : rect.top - wr.top - est - 6,
-    left: rect.left - wr.left,
-  }
-}
-
 function showSlashMenu(p: SuggestionProps<SlashItem, SlashItem>) {
   slashProps = p
-  const pos = slashMenuPos(p.clientRect, p.items.length)
+  const pos = caretMenuPos(p.clientRect, Math.min(p.items.length, 8) * 33 + 10)
   if (!pos || p.items.length === 0) {
     slashMenu.value = null // no matches → menu hides, "/query" stays as text
     return
@@ -337,6 +326,9 @@ function onHover(e: MouseEvent) {
 
 const displayTick = ref(0)
 
+// 打 @ 挑人、打 # 挑话题（composables/useDocRefMenu.ts）。
+const refMenu = useDocRefMenu({ people: () => props.mentionPeople, topics: () => props.topicList })
+
 // 编辑器绑在这一份协同文档上：文档换了（换房间、重连拿到的是另一份）就整个重建，
 // 因为 Collaboration 扩展只在建编辑器时认一次文档。
 const editor = shallowRef<DocEditor | undefined>()
@@ -375,6 +367,7 @@ function buildEditor(session: DocSession): DocEditor {
         onKeyDown: onSlashKeyDown,
         onAction: (_action, ed) => newStatusAt(ed),
       }),
+      refMenu.extension,
     ],
     editable: props.editable,
     editorProps: {
@@ -410,6 +403,11 @@ watch(
 watch(
   () => [props.openThreads, props.activeThread],
   () => poke(commentHighlightKey)
+)
+// 名册比正文晚到：到了之后标签上的账号换成名字。
+watch(
+  () => [props.mentionNames, props.topicList],
+  () => poke(tokenChipsKey)
 )
 function poke(key: PluginKey) {
   const view = editor.value?.view
@@ -452,6 +450,16 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
     <LoadingSkeleton v-if="loading" variant="doc" class="doc-skel" />
     <EditorContent v-if="editor" v-show="!loading" :editor="editor" class="doc-editor" />
     <DocLinkCallout v-if="linkTarget" :target="linkTarget" @close="linkTarget = null" />
+    <MentionMenu
+      :open="!!refMenu.menu.value"
+      :matches="refMenu.menu.value?.items ?? []"
+      :active-index="refMenu.menu.value?.index ?? 0"
+      level="root"
+      :enter-sends="true"
+      :at="refMenu.menu.value"
+      @pick="refMenu.pick($event as RefItem)"
+      @hover="refMenu.hover"
+    />
     <!-- 压在正文上的那几块：评论 CTA、slash 菜单、代码块工具条、块手柄。 -->
     <DocOverlays
       ref="overlaysRef"

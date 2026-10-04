@@ -23,6 +23,7 @@
     "success": "Question posted"
   },
   "detail": {
+    "loadFailed": "Couldn't load this question",
     "createdAt": "Posted {time}",
     "updatedAt": "Edited {time}",
     "viewCount": "No views | 1 view | {count} views",
