@@ -303,7 +303,7 @@ class LlmGateway:
         try:
             day = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=UTC)
             # Every row of the day, page by page. /spend/logs answers in one
-            # response but LiteLLM (1.103) cuts it to the newest 10,000 rows,
+            # response but LiteLLM 1.103.3 cuts it to the newest 10,000 rows,
             # and a busy key logs more than that in a day; a short sum would
             # read as spend going backwards. Oldest first, so a row logged while
             # the pages are read lands after them instead of shifting rows
