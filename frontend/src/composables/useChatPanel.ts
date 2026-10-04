@@ -754,12 +754,10 @@ export function useChatPanel(opts: ChatPanelOptions) {
   watch(
     () => topic()?.id,
     async (id) => {
-      // 切回来过的房间先用上次那份画标记，背后再重取（lib/topicPanelCache.ts）。
-      roomTasks.value = id ? cachedTopicPanel('roomTasks', id)?.data ?? [] : []
+      roomTasks.value = id ? cachedTopicPanel('roomTasks', id)?.data ?? [] : [] // 先画上次那份，背后再重取
       if (!id) return
       try {
-        const rows = (await fetchRoomTasks(id)).data
-        if (topic()?.id === id) roomTasks.value = rows
+        roomTasks.value = (await fetchRoomTasks(id)).data
       } catch {
         // 标记是派生出来的装饰，不是内容。拉不到就少几行标记，不该让整个时间线红掉。
       }
