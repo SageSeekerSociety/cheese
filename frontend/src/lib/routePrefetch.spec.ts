@@ -323,7 +323,7 @@ describe('按下去就预取', () => {
     vi.useRealTimers()
   })
 
-  it('不等停住，触屏上也做', async () => {
+  it('不等停住，也不问是不是精确指针', async () => {
     pointer('(hover: none)')
     Reflect.deleteProperty(navigator, 'connection')
     const { prefetchNow } = await fresh()

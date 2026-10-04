@@ -129,7 +129,7 @@ function onMenuToggle(open: boolean) {
     @mouseleave="emit('leave')"
     @focusin="emit('hover', row.topic.id)"
     @focusout="emit('leave')"
-    @pointerdown="emit('press', row.topic.id)"
+    @pointerdown="$event.pointerType === 'mouse' && $event.button === 0 && emit('press', row.topic.id)"
     @contextmenu="openMenuAt"
   >
     <!-- 干净行：左边只有一个 16px 槽（状态，或顶替它的折叠开关），身份靠标题本身，

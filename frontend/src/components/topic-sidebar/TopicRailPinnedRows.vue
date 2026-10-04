@@ -61,7 +61,7 @@ const emit = defineEmits<{
       @mouseleave="emit('leave-topic')"
       @focusin="emit('hover-topic', rootTopic.id)"
       @focusout="emit('leave-topic')"
-      @pointerdown="emit('press-topic', rootTopic.id)"
+      @pointerdown="$event.pointerType === 'mouse' && $event.button === 0 && emit('press-topic', rootTopic.id)"
     >
       <template #prepend>
         <!-- 置顶行的槽住的是它自己的图标：# / 看板 / 资料库 各不相同，

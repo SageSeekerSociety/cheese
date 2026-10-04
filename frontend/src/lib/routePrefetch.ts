@@ -122,8 +122,9 @@ export function prefetchOnHover(target: HoverTarget): void {
 }
 
 /**
- * 已经按下去了：意图确定，不再等停住，也不再问是不是精确指针——触屏上这是唯一的
- * 提前量。省流量和慢网照旧让开。
+ * 鼠标左键已经按下去了：意图确定，不再等停住。快手点下去的那一下常常不到 150ms，
+ * hover 预取还没来得及起头。只给鼠标用——触屏上每一次手指滑动列表都从一次 pointerdown
+ * 开始，那不是意图（调用处按 `pointerType` 过滤）。省流量和慢网照旧让开。
  */
 export function prefetchNow(target: HoverTarget): void {
   cancelPrefetch()

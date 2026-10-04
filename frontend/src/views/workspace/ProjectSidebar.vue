@@ -59,8 +59,8 @@ function onHoverTopic(topicId: string) {
   })
 }
 
-// 按下去到松开、路由真的跳过去之间还有几十到一百多毫秒；触屏上没有「停住」这回事，
-// 这是唯一的提前量。
+// 鼠标按下去到松开、路由真的跳过去之间还有几十到一百多毫秒；手快的人停不满 150ms，
+// hover 预取还没起头。
 function onPressTopic(topicId: string) {
   prefetchNow({
     router,

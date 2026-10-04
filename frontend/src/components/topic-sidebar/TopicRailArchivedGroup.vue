@@ -97,7 +97,7 @@ const keepMounted = computed<readonly number[] | undefined>(() => {
             @mouseleave="emit('leave-topic')"
             @focusin="emit('hover-topic', item.id)"
             @focusout="emit('leave-topic')"
-            @pointerdown="emit('press-topic', item.id)"
+            @pointerdown="$event.pointerType === 'mouse' && $event.button === 0 && emit('press-topic', item.id)"
           >
             <template #prepend>
               <v-icon size="16" class="me-1 c-faint" icon="mdi-archive-outline" />
