@@ -7,6 +7,10 @@
     "message": "This part couldn't be displayed",
     "retry": "Retry"
   },
+  "loadError": {
+    "title": "Couldn't load",
+    "retry": "Try again"
+  },
   "cheese": "Cheese",
   "copyright": "© {year} Cheese",
   "transportReadFailure": "Service temporarily unavailable. Please try again later. (HTTP {status})",

@@ -52,7 +52,9 @@
       </div>
     </div>
 
-    <div class="an-table">
+    <LoadErrorNotice v-if="failed" :title="t('spaces.analytics.tasks.loadFailed')" :error="errorDetail" @retry="load" />
+
+    <div v-else class="an-table">
       <v-data-table :headers="headers" :items="tasks" :loading="loading" density="compact" items-per-page="10">
         <template #[`item.publisher`]="{ item }">{{ item.publisher?.name || '-' }}</template>
         <template #[`item.category`]="{ item }">{{ item.category?.name || '-' }}</template>
@@ -82,7 +84,6 @@ import type { SpaceAnalyticsTask } from '@/network/api/spaces/types'
 
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { toast } from 'vuetify-sonner'
 
 import AnalyticsExportButton from './components/AnalyticsExportButton.vue'
 import AnalyticsPublisherSelect from './components/AnalyticsPublisherSelect.vue'
@@ -91,6 +92,7 @@ import { useSpaceAnalyticsFilters } from './composables/useSpaceAnalyticsFilters
 import { formatCount, formatDate, formatPercent } from './helpers'
 import { buildAnalyticsApiParams } from './utils'
 
+import LoadErrorNotice from '@/components/common/LoadErrorNotice.vue'
 import { SpacesApi } from '@/network/api/spaces'
 
 const { t } = useI18n()
@@ -98,6 +100,9 @@ const options = useAnalyticsOptions()
 const { filters, replaceFilters, spaceId } = useSpaceAnalyticsFilters()
 
 const loading = ref(false)
+// 读失败和「还没有题目」是两件事：失败替换掉表格，空状态才交给表格自己说。
+const failed = ref(false)
+const errorDetail = ref<string | null>(null)
 const tasks = ref<SpaceAnalyticsTask[]>([])
 const publisherIdModel = ref<number | null>(filters.value.publisherId ?? null)
 const sortByModel = ref(filters.value.sortBy || 'createdAt')
@@ -137,12 +142,15 @@ const togglePendingReview = async () => {
 
 const load = async () => {
   loading.value = true
+  failed.value = false
+  errorDetail.value = null
   try {
     const { data } = await SpacesApi.getAnalyticsTasks(spaceId.value, buildAnalyticsApiParams('tasks', filters.value))
     tasks.value = data.tasks
   } catch (error) {
     console.error('load analytics tasks failed', error)
-    toast.error(t('spaces.analytics.tasks.loadFailed'))
+    failed.value = true
+    errorDetail.value = error instanceof Error && error.message ? error.message : null
   } finally {
     loading.value = false
   }

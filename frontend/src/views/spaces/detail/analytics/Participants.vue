@@ -90,6 +90,13 @@
       </div>
     </template>
 
+    <LoadErrorNotice
+      v-else-if="failed"
+      :title="t('spaces.analytics.participants.loadFailed')"
+      :error="errorDetail"
+      @retry="load"
+    />
+
     <p v-else-if="!loading" class="an-note">{{ t('spaces.analytics.participants.empty') }}</p>
   </div>
 </template>
@@ -100,7 +107,6 @@ import type { AnalyticsGroupBy, AnalyticsRealNameFilter } from './utils'
 
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { toast } from 'vuetify-sonner'
 
 import AnalyticsDistributionCard from './components/AnalyticsDistributionCard.vue'
 import AnalyticsExportButton from './components/AnalyticsExportButton.vue'
@@ -113,6 +119,7 @@ import { useSpaceAnalyticsFilters } from './composables/useSpaceAnalyticsFilters
 import { formatCount, labelDistributionCodes, withDistributionPercent } from './helpers'
 import { buildAnalyticsApiParams } from './utils'
 
+import LoadErrorNotice from '@/components/common/LoadErrorNotice.vue'
 import { SpacesApi } from '@/network/api/spaces'
 
 const { t, te } = useI18n()
@@ -120,6 +127,9 @@ const options = useAnalyticsOptions()
 const { filters, replaceFilters, spaceId } = useSpaceAnalyticsFilters()
 
 const loading = ref(false)
+// 读失败和「还没有参与者」是两件事：失败留在页面上，空状态才说「暂无」。
+const failed = ref(false)
+const errorDetail = ref<string | null>(null)
 const participants = ref<SpaceAnalyticsParticipants | null>(null)
 const publisherIdModel = ref<number | null>(filters.value.publisherId ?? null)
 const participationApprovedModel = ref(filters.value.participationApproved ?? null)
@@ -147,6 +157,8 @@ watch([publisherIdModel, participationApprovedModel, completionStatusModel, real
 
 const load = async () => {
   loading.value = true
+  failed.value = false
+  errorDetail.value = null
   try {
     const { data } = await SpacesApi.getAnalyticsParticipants(
       spaceId.value,
@@ -155,7 +167,8 @@ const load = async () => {
     participants.value = data
   } catch (error) {
     console.error('load analytics participants failed', error)
-    toast.error(t('spaces.analytics.participants.loadFailed'))
+    failed.value = true
+    errorDetail.value = error instanceof Error && error.message ? error.message : null
   } finally {
     loading.value = false
   }

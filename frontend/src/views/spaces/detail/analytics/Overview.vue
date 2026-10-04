@@ -59,6 +59,13 @@
       </section>
     </template>
 
+    <LoadErrorNotice
+      v-else-if="failed"
+      :title="t('spaces.analytics.overview.loadFailed')"
+      :error="errorDetail"
+      @retry="load"
+    />
+
     <p v-else-if="!loading" class="an-note">{{ t('spaces.analytics.overview.empty') }}</p>
   </div>
 </template>
@@ -69,7 +76,6 @@ import type { AnalyticsGroupBy, SpaceAnalyticsQueryState } from './utils'
 
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { toast } from 'vuetify-sonner'
 
 import AnalyticsAlertGrid from './components/AnalyticsAlertGrid.vue'
 import AnalyticsDistributionCard from './components/AnalyticsDistributionCard.vue'
@@ -82,6 +88,7 @@ import { useSpaceAnalyticsFilters } from './composables/useSpaceAnalyticsFilters
 import { formatCount, formatPercent, labelDistributionCodes, withDistributionPercent } from './helpers'
 import { buildAnalyticsApiParams } from './utils'
 
+import LoadErrorNotice from '@/components/common/LoadErrorNotice.vue'
 import { ANALYTICS_ROUTE_NAMES } from '@/lib/spaceRouteNames'
 import { SpacesApi } from '@/network/api/spaces'
 
@@ -92,6 +99,9 @@ const { t, te } = useI18n()
 const options = useAnalyticsOptions()
 
 const loading = ref(false)
+// 读失败和「还没有数据」是两件事：失败留在页面上（`failed`），空状态才交给「暂无」。
+const failed = ref(false)
+const errorDetail = ref<string | null>(null)
 const overview = ref<SpaceAnalyticsOverview | null>(null)
 const alerts = ref<SpaceAnalyticsAlerts | null>(null)
 const publisherIdModel = ref<number | null>(filters.value.publisherId ?? null)
@@ -115,6 +125,8 @@ watch([publisherIdModel, groupByModel], async () => {
 
 const load = async () => {
   loading.value = true
+  failed.value = false
+  errorDetail.value = null
   try {
     const [overviewResponse, alertsResponse] = await Promise.all([
       SpacesApi.getAnalyticsOverview(spaceId.value, buildAnalyticsApiParams('overview', filters.value)),
@@ -125,7 +137,8 @@ const load = async () => {
     alerts.value = alertsResponse.data
   } catch (error) {
     console.error('load overview analytics failed', error)
-    toast.error(t('spaces.analytics.overview.loadFailed'))
+    failed.value = true
+    errorDetail.value = error instanceof Error && error.message ? error.message : null
   } finally {
     loading.value = false
   }
