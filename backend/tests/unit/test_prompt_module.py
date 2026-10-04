@@ -167,7 +167,6 @@ def test_a_platform_event_is_not_an_input_to_read():
 def test_only_what_a_participant_said_counts_as_pending_input():
     assert prompt._is_pending_input(_block(kind=BlockKind.message))
     assert prompt._is_pending_input(_block(kind=BlockKind.attachment))
-    assert not prompt._is_pending_input(_block(kind=BlockKind.doc))
     assert not prompt._is_pending_input(_block(kind=BlockKind.weekly))
     assert not prompt._is_pending_input(
         _block(author_type=AuthorType.platform, kind=BlockKind.message)

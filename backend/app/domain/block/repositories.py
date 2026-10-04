@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal, overload
 
-from sqlalchemy import Text, and_, cast, func, or_, select, tuple_, update
+from sqlalchemy import Text, and_, cast, func, or_, select, tuple_
 from sqlalchemy.dialects.postgresql import JSONB, array
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -53,10 +53,7 @@ class BlockRepository:
         content: str,
         kind: BlockKind = BlockKind.message,
         reply_to: uuid.UUID | None = None,
-        struct_parent: uuid.UUID | None = None,
         refs: list[str] | None = None,
-        node_type: str | None = None,
-        struct_order: float | None = None,
         turn_id: uuid.UUID | None = None,
         anchor_quote: str | None = None,
         mime_type: str | None = None,
@@ -118,10 +115,7 @@ class BlockRepository:
             content=content,
             kind=kind,
             reply_to=reply_to,
-            struct_parent=struct_parent,
             refs=refs or [],
-            node_type=node_type,
-            struct_order=struct_order,
             turn_id=turn_id,
             anchor_quote=anchor_quote,
             mime_type=mime_type,
@@ -276,34 +270,6 @@ class BlockRepository:
         block.upgraded_to_task_id = task_id
         await self._session.flush()
 
-    async def set_doc_content(
-        self, doc: Block, content: str, *, expected_version: int
-    ) -> Block | None:
-        """Overwrite the living doc, but only if it is still at
-        ``expected_version``. Returns the updated block, or ``None`` when
-        somebody else wrote it first.
-
-        The check is the WHERE clause, not an `if` above the write. Reading the
-        version in Python and comparing it there leaves the two writers that
-        read the same number both passing the comparison and both writing —
-        which is the bug, restated one layer up.
-        """
-        stmt = (
-            update(Block)
-            .where(Block.id == doc.id, Block.doc_version == expected_version)
-            .values(content=content, doc_version=Block.doc_version + 1)
-            # The row is re-read below; letting the ORM guess how to sync it
-            # against an expression it cannot evaluate in Python buys nothing.
-            .execution_options(synchronize_session=False)
-        )
-        # UPDATE returns a CursorResult, which has rowcount at runtime.
-        won = (await self._session.execute(stmt)).rowcount == 1  # type: ignore[attr-defined]
-        # Either way the in-memory block is now behind the row: it either just
-        # gained a version, or somebody else's write is what our WHERE missed.
-        # The caller reports the current version, so it has to be the real one.
-        await self._session.refresh(doc)
-        return doc if won else None
-
     async def mark_consumed(
         self, block_ids: list[uuid.UUID], turn_id: uuid.UUID
     ) -> None:
@@ -457,72 +423,12 @@ class BlockRepository:
         )
         return (await self._session.scalars(stmt)).first()
 
-    async def update_node(
-        self, block: Block, *, node_type: str, struct_order: float
-    ) -> Block:
-        """Reposition / retype a doc-tree node (B1)."""
-        block.node_type = node_type
-        block.struct_order = struct_order
-        await self._session.flush()
-        return block
-
-    async def doc_root(
-        self, topic_id: uuid.UUID, *, task_id: uuid.UUID | None = None
-    ) -> Block | None:
-        """This PLACE's canonical living-doc block (markdown blob, spec §2.2).
-
-        The `task_id` half is load-bearing, not decoration: a room and every
-        thread in it now carry `topic_id` of the room, so without it the room's
-        document resolves to whichever doc block happens to be oldest — which
-        after the first split is a thread's task brief.
-        """
-        stmt = (
-            select(Block)
-            .where(*self._in_place(topic_id, task_id), Block.kind == BlockKind.doc)
-            .order_by(Block.created_at)
-        )
-        return (await self._session.scalars(stmt)).first()
-
-    async def doc_roots(self, topic_ids: list[uuid.UUID]) -> dict[uuid.UUID, Block]:
-        """Several rooms' living docs at once, keyed by room id.
-
-        总览要列每个活跃话题的「现状」：一间房一次往返，而这是每一轮都要拼
-        的东西，170 间房就是 170 次。只取房间自己那一份（``task_id`` 为空）——
-        线程的文档是那张卡的东西，不是房间的状态。
-        """
-        if not topic_ids:
-            return {}
-        stmt = (
-            select(Block)
-            .where(
-                Block.topic_id.in_(topic_ids),
-                Block.task_id.is_(None),
-                Block.kind == BlockKind.doc,
-            )
-            .order_by(Block.created_at)
-        )
-        roots: dict[uuid.UUID, Block] = {}
-        for block in (await self._session.scalars(stmt)).all():
-            # Oldest first, so the first one seen is the room's canonical doc.
-            roots.setdefault(block.topic_id, block)
-        return roots
-
-    async def list_doc_nodes(
-        self, topic_id: uuid.UUID, *, task_id: uuid.UUID | None = None
-    ) -> list[Block]:
-        """The living doc's structured node tree (B1), in document order."""
-        stmt = (
-            select(Block)
-            .where(*self._in_place(topic_id, task_id), Block.kind == BlockKind.doc_node)
-            .order_by(Block.struct_order)
-        )
-        return list((await self._session.scalars(stmt)).all())
-
-    # Document-view kinds — never part of the conversation timeline. An artifact
-    # (`cheese show`) IS: 芝士 putting something in front of the room is something
-    # it said, and the chat renders it as a card the reader can open. Left out, it
-    # reached people only as the preview tab, which shows the last one alone.
-    NON_TIMELINE = (BlockKind.doc_node, BlockKind.comment)
+    # Never part of the conversation timeline: comments live in the document's
+    # margin. An artifact (`cheese show`) IS: 芝士 putting something in front of
+    # the room is something it said, and the chat renders it as a card the
+    # reader can open. Left out, it reached people only as the preview tab,
+    # which shows the last one alone.
+    NON_TIMELINE = (BlockKind.comment,)
 
     async def ai_turn_ids(self, turn_ids: list[uuid.UUID]) -> set[uuid.UUID]:
         """Which of these turns produced at least one block signed by 芝士.
