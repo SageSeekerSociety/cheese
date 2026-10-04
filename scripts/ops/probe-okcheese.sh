@@ -6,20 +6,19 @@
 # Each check exists because that failure has happened here or is one nothing else
 # would catch:
 #
-#   reachable      the site is served through a reverse SSH tunnel from the dev
-#                  box to a Hong Kong box, which forwards the TLS stream by SNI
-#                  without decrypting it. Either end going away takes the domain
-#                  with it and nothing else reports that.
+#   reachable      the site is served from the dev box through reverse SSH
+#                  tunnels to a Hong Kong box, which terminates TLS and proxies
+#                  into them. Either end going away takes the domain with it
+#                  and nothing else reports that.
 #   redirect       a browser sends you to http first. When Caddy did not own :80
 #                  that landed on a different, months-old deployment whose login
 #                  page had no providers, and it read as a broken site.
 #   providers      the tunnel can be up while what is behind it is broken. An
 #                  empty provider list means nobody can log in, which a 200 on
 #                  the front page does not reveal.
-#   certificate    the certificate lives on the dev box and is renewed by the
-#                  daily cheese-front-tls-renew.timer through Cloudflare DNS
-#                  (deploy/llm-tunnel/tls-renew.sh). Renewal starts 30 days before
-#                  expiry, so under 25 days left means it has failed for days.
+#   certificate    the certificate lives in the Hong Kong box's Caddy, which
+#                  renews it about 30 days before expiry, so under 25 days left
+#                  means renewal has failed for days.
 #
 # Exit 0 = all good. Exit 1 = a check failed, with the reason on stdout.
 set -uo pipefail
@@ -65,7 +64,7 @@ if [ -n "$not_after" ]; then
     if [ "$days" -ge "$CERT_MIN_DAYS" ]; then
       say "OK   certificate expires in $days days ($not_after)"
     else
-      fails+=("the certificate expires in $days days ($not_after) — the dev box's daily renewal (cheese-front-tls-renew.service) has been failing, check its journal")
+      fails+=("the certificate expires in $days days ($not_after) — Caddy on the Hong Kong box has been failing to renew it, check \`journalctl -u caddy\` there")
     fi
   else
     fails+=("could not parse the certificate expiry '$not_after'")

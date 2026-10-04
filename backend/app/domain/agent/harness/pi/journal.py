@@ -46,6 +46,13 @@ THREAD = "subagent"
 class Journal(journal.Journal):
     table = "entries"
     column = "entry"
+    # Every assistant message, not only the final one: which stop reasons end
+    # a turn is the subscription's to say, and over-including only stops the
+    # step early.
+    turn_end = (
+        f"json_extract(entry, '$.type') = '{GAVE_UP}' "
+        "OR json_extract(entry, '$.message.role') = 'assistant'"
+    )
     schema = """
         CREATE TABLE IF NOT EXISTS entries (
             sequence INTEGER PRIMARY KEY AUTOINCREMENT,
