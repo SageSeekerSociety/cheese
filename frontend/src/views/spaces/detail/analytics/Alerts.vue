@@ -2,7 +2,7 @@
   <div class="an-section">
     <v-progress-linear v-if="loading && !alerts" indeterminate color="primary" />
     <AnalyticsAlertGrid v-if="alerts" :alerts="alerts" @open="openTasks" />
-    <LoadErrorNotice
+    <BaseLoadError
       v-else-if="failed"
       :title="t('spaces.analytics.alerts.loadFailed')"
       :error="errorDetail"
@@ -22,7 +22,7 @@ import { useI18n } from 'vue-i18n'
 import AnalyticsAlertGrid from './components/AnalyticsAlertGrid.vue'
 import { useSpaceAnalyticsFilters } from './composables/useSpaceAnalyticsFilters'
 
-import LoadErrorNotice from '@/components/common/LoadErrorNotice.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import { ANALYTICS_ROUTE_NAMES } from '@/lib/spaceRouteNames'
 import { SpacesApi } from '@/network/api/spaces'
 

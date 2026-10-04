@@ -52,7 +52,7 @@
       </div>
     </div>
 
-    <LoadErrorNotice v-if="failed" :title="t('spaces.analytics.tasks.loadFailed')" :error="errorDetail" @retry="load" />
+    <BaseLoadError v-if="failed" :title="t('spaces.analytics.tasks.loadFailed')" :error="errorDetail" @retry="load" />
 
     <div v-else class="an-table">
       <v-data-table :headers="headers" :items="tasks" :loading="loading" density="compact" items-per-page="10">
@@ -92,7 +92,7 @@ import { useSpaceAnalyticsFilters } from './composables/useSpaceAnalyticsFilters
 import { formatCount, formatDate, formatPercent } from './helpers'
 import { buildAnalyticsApiParams } from './utils'
 
-import LoadErrorNotice from '@/components/common/LoadErrorNotice.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import { SpacesApi } from '@/network/api/spaces'
 
 const { t } = useI18n()

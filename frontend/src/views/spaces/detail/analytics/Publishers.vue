@@ -41,7 +41,7 @@
       />
     </AnalyticsStatStrip>
 
-    <LoadErrorNotice
+    <BaseLoadError
       v-if="failed"
       :title="t('spaces.analytics.publishers.loadFailed')"
       :error="errorDetail"
@@ -79,7 +79,7 @@ import { useSpaceAnalyticsFilters } from './composables/useSpaceAnalyticsFilters
 import { formatCount, formatDate, formatPercent } from './helpers'
 import { buildAnalyticsApiParams } from './utils'
 
-import LoadErrorNotice from '@/components/common/LoadErrorNotice.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import { SpacesApi } from '@/network/api/spaces'
 
 const { t } = useI18n()

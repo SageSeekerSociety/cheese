@@ -90,7 +90,7 @@
       </div>
     </template>
 
-    <LoadErrorNotice
+    <BaseLoadError
       v-else-if="failed"
       :title="t('spaces.analytics.participants.loadFailed')"
       :error="errorDetail"
@@ -119,7 +119,7 @@ import { useSpaceAnalyticsFilters } from './composables/useSpaceAnalyticsFilters
 import { formatCount, labelDistributionCodes, withDistributionPercent } from './helpers'
 import { buildAnalyticsApiParams } from './utils'
 
-import LoadErrorNotice from '@/components/common/LoadErrorNotice.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import { SpacesApi } from '@/network/api/spaces'
 
 const { t, te } = useI18n()

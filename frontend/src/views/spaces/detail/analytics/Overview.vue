@@ -59,7 +59,7 @@
       </section>
     </template>
 
-    <LoadErrorNotice
+    <BaseLoadError
       v-else-if="failed"
       :title="t('spaces.analytics.overview.loadFailed')"
       :error="errorDetail"
@@ -88,7 +88,7 @@ import { useSpaceAnalyticsFilters } from './composables/useSpaceAnalyticsFilters
 import { formatCount, formatPercent, labelDistributionCodes, withDistributionPercent } from './helpers'
 import { buildAnalyticsApiParams } from './utils'
 
-import LoadErrorNotice from '@/components/common/LoadErrorNotice.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import { ANALYTICS_ROUTE_NAMES } from '@/lib/spaceRouteNames'
 import { SpacesApi } from '@/network/api/spaces'
 

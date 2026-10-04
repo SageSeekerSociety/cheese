@@ -470,6 +470,24 @@ AI 队友的头像（`CheeseAvatar`）有自己的一组颜色：五档暖色的
 - **容器窄于 672px 时标签换到控件上面**，控件占满整行。判据是这一行有多宽，不是窗口有多宽（设置浮层的内容列、拖动的侧栏都会让窗口宽度答错），所以用容器查询：根元素声明 `container-type: inline-size`，并按 AppPage 的注释补 `width: 100%`——行内尺寸包含之后宽度推不出来。
 - 控件不是表单字段（一串读数加一颗按钮）时不传 `for`，标签就是一行字；是表单字段就传控件的 `id`，标签变成 `<label for>`。
 
+### 3.10 加载失败：错误留在它读的那块地方
+
+原则 7。**读一整块内容失败时，不要让失败退化成一个空状态。** 空状态说的是「这里本来就没有」（§8.1「暂无 X」），读失败说的是「这里本该有、没读到」；两者用同一种样子，人错过那一条几秒的红条，就再也分不出「没有」和「坏了」。失败要**替换掉它读的那块内容**，就地给出服务端那句真实原因和一条重试的路。
+
+一个组件：`BaseLoadError`（`src/components/base/BaseLoadError.vue`）。给三样：这一块读失败的那句话（`title`，如「加载总览失败」）、服务端的原因（`error`，取 `ApiError.message`，没有就不显示那一行）、以及 `@retry` 上重新调那个取数函数的入口。`title` 不给就用全局的「加载失败」。
+
+```vue
+<BaseLoadError
+  v-else-if="failed"
+  :title="t('spaces.analytics.overview.loadFailed')"
+  :error="errorDetail"
+  @retry="load"
+/>
+```
+
+- 写法照 `views/spaces/detail/analytics/*`：`load` 开头清掉 `failed` 与 `errorDetail`，`catch` 里 `failed = true`、`errorDetail = error instanceof Error ? error.message : null`，**不再** `toast.error`——同一件事不说两遍。
+- 只有「一整块内容没读到」才替换内容。列表里某一行、某一次操作（保存、删除）失败仍用 toast：那一行的内容没有消失，也没有整块可替。
+
 ---
 
 ## 4. 深色模式
