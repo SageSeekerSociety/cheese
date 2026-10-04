@@ -843,3 +843,47 @@ test("pane resize recovery leaves external focus and unmounted messages alone", 
   await expect(page.locator(".hover-bar")).toHaveCount(0);
   await expect(external).toBeFocused();
 });
+
+// Keyboard parity for the very same bar. A message row is a real tab stop, the
+// bar comes up for it like a hover, Tab steps from the row into the bar's
+// buttons, and Escape puts the bar away again without the row losing its place.
+test("message actions are reachable from the row by keyboard", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 820 });
+  await page.route("**/__chat-file-keyboard-fixture__", (route) =>
+    route.fulfill({ contentType: "text/html", body: fixture }),
+  );
+  await page.goto("/__chat-file-keyboard-fixture__", { waitUntil: "commit" });
+  const row = page.locator('[data-mid="file"]');
+  await expect(row).toBeVisible({ timeout: 30_000 });
+  // The row itself is the tab stop that carries the actions.
+  await expect(row).toHaveAttribute("tabindex", "0");
+  const before = await row.boundingBox();
+
+  await row.focus();
+  const bar = page.locator(".hover-bar");
+  await expect
+    .poll(() => bar.evaluate((el) => getComputedStyle(el).opacity))
+    .toBe("1");
+  await expect(bar).toHaveAttribute("aria-hidden", "false");
+  // Floating the bar over the row must not push the timeline around.
+  const after = await row.boundingBox();
+  expect(after?.y).toBe(before?.y);
+
+  // Tab reaches the row, then the row hands focus to its actions.
+  const react = page.locator(".hover-bar .rx-toggle");
+  await page.keyboard.press("Tab");
+  await expect(react).toBeFocused();
+  // Shift+Tab hands it back to the row it belongs to.
+  await page.keyboard.press("Shift+Tab");
+  await expect(row).toBeFocused();
+
+  // Escape hides the bar; the row stays focused and in place.
+  await page.keyboard.press("Tab");
+  await expect(react).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(bar).toHaveAttribute("aria-hidden", "true");
+  await expect(row).toBeFocused();
+  expect((await row.boundingBox())?.y).toBe(before?.y);
+});
