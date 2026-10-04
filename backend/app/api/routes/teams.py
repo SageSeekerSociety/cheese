@@ -796,7 +796,10 @@ async def delete_team(
     await service.delete_team(
         team_id=team_id,
         actor_user_id=auth_user.user_id,
-        has_projects=bool(await ProjectService(db).list_for_team(team_id)),
+        has_live_projects=any(
+            p.archived_at is None
+            for p in await ProjectService(db).list_for_team(team_id)
+        ),
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

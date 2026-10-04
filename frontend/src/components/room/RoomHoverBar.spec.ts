@@ -141,8 +141,11 @@ describe('右键一条消息', () => {
       removeEventListener() {},
     })
     vi.stubGlobal('devicePixelRatio', 1)
+    // 菜单定位时 Vuetify 要问指针下是谁，happy-dom 没有这个 API。
+    const elementFromPoint = document.elementFromPoint
+    document.elementFromPoint = () => null
     ;(window as unknown as { innerWidth: number }).innerWidth = 1280
-    const { rerender } = renderBar(block('m1'))
+    const { rerender, unmount } = renderBar(block('m1'))
     await rerender({ menuAt: { x: 30, y: 60 } })
     await flush()
     const items = Array.from(document.querySelectorAll('.v-overlay .v-list-item-title')).map((el) =>
@@ -150,5 +153,9 @@ describe('右键一条消息', () => {
     )
     expect(items).toContain('回复')
     expect(items).toContain('复制')
+    unmount()
+    await flush()
+    document.elementFromPoint = elementFromPoint
+    vi.unstubAllGlobals()
   })
 })

@@ -482,7 +482,7 @@ class TestTeamServiceDeleteTeam:
         members = [_make_relation(user_id=1), _make_relation(user_id=2)]
         repo.list_members_of_team.return_value = members
 
-        await svc.delete_team(team_id=1, actor_user_id=42, has_projects=False)
+        await svc.delete_team(team_id=1, actor_user_id=42, has_live_projects=False)
 
         # Members should have been soft-deleted
         for m in members:
@@ -500,7 +500,7 @@ class TestTeamServiceDeleteTeam:
         )
 
         with pytest.raises(ForbiddenError, match="Only the team owner"):
-            await svc.delete_team(team_id=1, actor_user_id=42, has_projects=False)
+            await svc.delete_team(team_id=1, actor_user_id=42, has_live_projects=False)
 
     @pytest.mark.anyio
     async def test_non_member_cannot_delete(self):
@@ -509,7 +509,7 @@ class TestTeamServiceDeleteTeam:
         repo.get_member_relation.return_value = None
 
         with pytest.raises(ForbiddenError):
-            await svc.delete_team(team_id=1, actor_user_id=42, has_projects=False)
+            await svc.delete_team(team_id=1, actor_user_id=42, has_live_projects=False)
 
     @pytest.mark.anyio
     async def test_raises_not_found_for_missing_team(self):
@@ -517,7 +517,9 @@ class TestTeamServiceDeleteTeam:
         repo.get_by_id.return_value = None
 
         with pytest.raises(NotFoundError):
-            await svc.delete_team(team_id=999, actor_user_id=42, has_projects=False)
+            await svc.delete_team(
+                team_id=999, actor_user_id=42, has_live_projects=False
+            )
 
 
 class TestTeamServiceRemoveMember:
