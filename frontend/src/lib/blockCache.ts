@@ -33,6 +33,17 @@ export function cachedWindow(topicId: string): { blocks: Block[]; hasMore: boole
   return { blocks, hasMore: blockHasMore.get(topicId) ?? false }
 }
 
+// 清空一次 +1：那一刻还在飞的后台刷新回来后认得出自己属于上一个身份，不写回来。
+let generation = 0
+
+/** 退出登录、换人登录时调用：消息是上一个人的房间内容，不能留给下一个人。 */
+export function clearBlockCache(): void {
+  generation += 1
+  blockCache.clear()
+  blockHasMore.clear()
+  inFlight.clear()
+}
+
 export function setCachedWindow(topicId: string, window: { blocks: Block[]; hasMore: boolean }): void {
   blockCache.set(topicId, window.blocks)
   blockHasMore.set(topicId, window.hasMore)
@@ -74,17 +85,21 @@ export function pendingBlockRefresh(topicId: string): Promise<Block[] | null> | 
 export function refreshBlockCache(topicId: string): Promise<Block[] | null> {
   const running = inFlight.get(topicId)
   if (running) return running
-  const started = fetchNewestPage(topicId).finally(() => inFlight.delete(topicId))
+  const started: Promise<Block[] | null> = fetchNewestPage(topicId).finally(() => {
+    if (inFlight.get(topicId) === started) inFlight.delete(topicId)
+  })
   inFlight.set(topicId, started)
   return started
 }
 
 async function fetchNewestPage(topicId: string): Promise<Block[] | null> {
+  const startedAt = generation
   await acquireLane()
   try {
     // Only the newest page — this runs for every topic whose unread count grew,
     // and refetching 2.1 MB per topic in the background is what we are fixing.
     const payload = await listBlocks(topicId, { limit: PAGE_SIZE })
+    if (startedAt !== generation) return null
     const fresh = { blocks: payload.data, hasMore: payload.has_more }
     const cached = cachedWindow(topicId)
     // Merge, don't overwrite: the user may have paged back through this topic
