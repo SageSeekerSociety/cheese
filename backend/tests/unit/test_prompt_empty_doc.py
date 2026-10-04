@@ -25,7 +25,8 @@ def test_an_empty_room_doc_asks_for_the_first_version():
 def test_an_existing_doc_keeps_the_maintain_section_and_the_same_form():
     prompt = _prompt("## 目标\n\n做一件事。\n")
 
-    assert "请按它继续工作，并在状态变化时用 `cheese_doc_set` 更新它" in prompt
+    # 改已有文档用 doc_edit：doc_set 整份覆盖，会盖掉别人的段落和正在打的字。
+    assert "`cheese_doc_edit`" in prompt
     assert "（还没有）" not in prompt
     assert "- **现状**" in prompt
     assert "做一件事。" in prompt
