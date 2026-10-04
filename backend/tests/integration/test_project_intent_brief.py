@@ -11,7 +11,6 @@
 from anyio.from_thread import BlockingPortal
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.block.models import AuthorType
 from tests.integration.conftest import post_project, registered
 
 
@@ -30,8 +29,8 @@ def test_intent_becomes_the_newborn_rooms_brief(
     db_session: AsyncSession, _portal: BlockingPortal, stub_project_forge
 ):
     async def _run() -> None:
-        from app.domain.block.repositories import BlockRepository
         from app.domain.project.services import ProjectService
+        from app.domain.topic.services import TopicService
 
         said = "帮我把这学期的课程材料整理成一份大纲"
         project = await ProjectService(db_session).create(
@@ -40,11 +39,9 @@ def test_intent_becomes_the_newborn_rooms_brief(
 
         assert project.intent == said, "原话要存下来，下次打开项目还看得到"
         assert project.root_topic_id is not None
-        doc = await BlockRepository(db_session).doc_root(project.root_topic_id)
+        doc = await TopicService(db_session).get_doc(project.root_topic_id)
         assert doc is not None, "说了要做什么的项目，房间该带着这句话开门"
-        # 署名两层都要对：档位说它是平台产的（主分支把这个值从 `system` 改叫
-        # `platform`），handle 说具体是「system」——不是芝士，也不是某个人。
-        assert doc.author_type == AuthorType.platform
+        # 署名是「system」：平台产的，不是芝士，也不是某个人。
         assert doc.author == "system"
         assert said in doc.content
         assert "下一步" in doc.content, "光有那句话，人还是不知道接下来该做什么"
@@ -58,8 +55,8 @@ def test_no_intent_leaves_the_room_without_a_document(
     """不答这一问是允许的：空房间照常，没有半份空简报。"""
 
     async def _run() -> None:
-        from app.domain.block.repositories import BlockRepository
         from app.domain.project.services import ProjectService
+        from app.domain.topic.services import TopicService
 
         project = await ProjectService(db_session).create(
             name="没说要做什么", owner_handle=await _owner(db_session)
@@ -67,7 +64,7 @@ def test_no_intent_leaves_the_room_without_a_document(
 
         assert project.intent == ""
         assert project.root_topic_id is not None
-        assert await BlockRepository(db_session).doc_root(project.root_topic_id) is None
+        assert await TopicService(db_session).get_doc(project.root_topic_id) is None
 
     _portal.call(_run)
 
@@ -82,15 +79,15 @@ def test_whitespace_only_intent_is_not_an_intent(
     """
 
     async def _run() -> None:
-        from app.domain.block.repositories import BlockRepository
         from app.domain.project.services import ProjectService
+        from app.domain.topic.services import TopicService
 
         project = await ProjectService(db_session).create(
             name="空白", intent="   \n\t ", owner_handle=await _owner(db_session)
         )
 
         assert project.root_topic_id is not None
-        assert await BlockRepository(db_session).doc_root(project.root_topic_id) is None
+        assert await TopicService(db_session).get_doc(project.root_topic_id) is None
 
     _portal.call(_run)
 

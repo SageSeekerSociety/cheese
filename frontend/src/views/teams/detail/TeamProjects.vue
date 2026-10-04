@@ -13,6 +13,7 @@ import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
 
 import { listProjects } from '@/api'
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import i18n, { t } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
 
@@ -77,14 +78,16 @@ watch(teamId, load)
       {{ error }}
     </v-alert>
 
-    <div v-else-if="projects.length === 0" class="text-center py-12">
-      <v-icon icon="mdi-rocket-launch-outline" size="56" class="mb-3 empty-state-icon" />
-      <h3 class="text-subtitle-1 font-weight-medium mb-1">{{ t('teams.projects.emptyTitle') }}</h3>
-      <p class="text-body-2 text-medium-emphasis mb-4">{{ t('teams.projects.emptyHint') }}</p>
-      <BaseButton kind="secondary" prepend-icon="mdi-plus" @click="newProject">{{
+    <BaseEmptyState
+      v-else-if="projects.length === 0"
+      icon="mdi-rocket-launch-outline"
+      :title="t('teams.projects.emptyTitle')"
+      :desc="t('teams.projects.emptyHint')"
+    >
+      <BaseButton kind="secondary" size="sm" prepend-icon="mdi-plus" class="mt-4" @click="newProject">{{
         t('teams.projects.newProject')
       }}</BaseButton>
-    </div>
+    </BaseEmptyState>
 
     <v-row v-else>
       <v-col v-for="p in projects" :key="p.id" cols="12" sm="6" lg="4">
@@ -103,11 +106,6 @@ watch(teamId, load)
 </template>
 
 <style scoped>
-/* 空状态插图：元信息级别的装饰，--line-2 在浅色下 ≈ 原来的 grey-lighten-2，
-   深色下是 #3A3E45，仍看得出形状。 */
-.empty-state-icon {
-  color: var(--line-2);
-}
 .project-card {
   cursor: pointer;
   transition:

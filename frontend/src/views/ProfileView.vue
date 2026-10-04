@@ -34,6 +34,7 @@ import { usePageTitle } from '@/composables/usePageTitle'
 
 import { deleteUnderstanding, getMemberSummary, getUserProfile, getUserTopics } from '@/api'
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import ExternalTag from '@/components/common/ExternalTag.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
@@ -370,9 +371,13 @@ const roleInProject = computed(() => inProject.value?.source ?? null)
               <span v-if="profile.projects.length" class="t-meta-read t-num">{{ profile.projects.length }}</span>
             </header>
             <div class="profile__card">
-              <p v-if="!profile.projects.length" class="profile__empty t-body">
-                {{ isSelf ? t('users.profile.projects.emptyMine') : t('users.profile.projects.emptyShared') }}
-              </p>
+              <BaseEmptyState
+                v-if="!profile.projects.length"
+                size="inline"
+                align="center"
+                class="profile__empty"
+                :title="isSelf ? t('users.profile.projects.emptyMine') : t('users.profile.projects.emptyShared')"
+              />
               <router-link
                 v-for="p in profile.projects"
                 :key="p.project_id"
@@ -410,9 +415,13 @@ const roleInProject = computed(() => inProject.value?.source ?? null)
               </span>
             </header>
             <div class="profile__card">
-              <p v-if="!profile.understanding.length" class="profile__empty t-body">
-                {{ t('users.profile.notes.empty') }}
-              </p>
+              <BaseEmptyState
+                v-if="!profile.understanding.length"
+                size="inline"
+                align="center"
+                class="profile__empty"
+                :title="t('users.profile.notes.empty')"
+              />
               <TransitionGroup tag="ul" name="note" class="profile__notes">
                 <li v-for="note in profile.understanding" :key="note.id" class="profile__row profile__row--note">
                   <span class="profile__row-text">
@@ -451,9 +460,13 @@ const roleInProject = computed(() => inProject.value?.source ?? null)
             </header>
             <div class="profile__card" :aria-busy="weekPending" :class="{ 'profile__card--pending': weekPending }">
               <p v-if="topicsFailed" class="profile__empty t-body">{{ t('users.profile.topics.loadFailed') }}</p>
-              <p v-else-if="topicsEmpty" class="profile__empty t-body">
-                {{ selectedWeek ? t('users.profile.topics.emptyWeek') : t('users.profile.topics.empty') }}
-              </p>
+              <BaseEmptyState
+                v-else-if="topicsEmpty"
+                size="inline"
+                align="center"
+                class="profile__empty"
+                :title="selectedWeek ? t('users.profile.topics.emptyWeek') : t('users.profile.topics.empty')"
+              />
               <template v-else>
                 <router-link
                   v-for="topic in topics"

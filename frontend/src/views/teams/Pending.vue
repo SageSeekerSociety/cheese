@@ -82,14 +82,13 @@
       @retry="fetchMyInvitations"
     />
 
-    <!-- 收到的邀请 - 空状态 -->
-    <div v-else-if="!myInvitations.length" class="d-flex flex-column align-center py-4">
-      <v-avatar size="48" class="bg-surface-light mb-3">
-        <v-icon icon="mdi-email-outline" size="large" color="on-surface-variant"></v-icon>
-      </v-avatar>
-      <p class="text-subtitle-2 font-weight-medium text-center mb-1">{{ t('teams.pending.noInvitations') }}</p>
-      <p class="text-caption text-center text-medium-emphasis">{{ t('teams.pending.noInvitationsHint') }}</p>
-    </div>
+    <BaseEmptyState
+      v-else-if="!myInvitations.length"
+      size="compact"
+      icon="mdi-email-outline"
+      :title="t('teams.pending.noInvitations')"
+      :desc="t('teams.pending.noInvitationsHint')"
+    />
 
     <!-- 收到的邀请列表 -->
     <v-list-item
@@ -219,6 +218,7 @@ import { getAvatarUrl } from '@/utils/materials'
 
 import { listMyInvitations, respondToInvitation } from '@/api'
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import i18n, { t } from '@/i18n'

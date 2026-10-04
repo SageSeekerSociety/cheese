@@ -619,9 +619,7 @@ async def read_chat_history(
         query=q,
         reply_to=reply_to,
         author=author,
-        # Document nodes have their own tree. Comments and preview pointers
-        # remain discoverable here; --kind doc_node reads the nodes explicitly.
-        kinds=[kind] if kind else [k for k in BlockKind if k != BlockKind.doc_node],
+        kinds=[kind] if kind else list(BlockKind),
     )
     included = [*result.items, *([parent] if parent else [])]
     reactions = await repo.reactions_for_blocks([b.id for b in included])

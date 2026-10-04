@@ -6,7 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 
 from app.api.auth import ActorResolverDep
-from app.api.deps import get_chat_service, get_session_host
+from app.api.deps import get_chat_service, get_consumptions, get_session_host
 from app.api.doc_identity import operation_actor
 from app.api.response import ok, page
 from app.api.routes.living_docs import _frozen
@@ -19,6 +19,7 @@ from app.domain.agent.document import thread
 from app.domain.agent.document.question import answering
 from app.domain.agent.document.thread import hand_to_agent, mentioned_seat
 from app.domain.agent.runtime import announce_stale
+from app.domain.agent.session_host.consumptions import Consumptions
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.block.comment_schemas import ReplyIn, ThreadMutation
 from app.domain.block.comment_threads import CommentThreads
@@ -38,6 +39,12 @@ async def member_in_room(db, resolver, topic_id):
     return place, actor, identity
 
 
+async def _lock_doc(db, place) -> None:
+    """Comment threads are read and written under the document's lock."""
+    doc = await TopicService(db).room_doc(place.room_id, place.project_id)
+    await DocumentJournal(db).lock(doc.id)
+
+
 @router.get("/{topic_id}/comments/threads")
 async def list_threads(
     topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
@@ -46,7 +53,7 @@ async def list_threads(
     whether the room's agent is answering it now (``queued`` while it waits
     for a free session, ``working`` while it answers)."""
     place, _, _ = await member_in_room(db, resolver, topic_id)
-    await DocumentJournal(db).lock(place.room_id)
+    await _lock_doc(db, place)
     service = CommentThreads(db)
     items = [await service.describe(c) for c in await service.roots(place.room_id)]
     await db.commit()
@@ -66,7 +73,7 @@ async def read_thread(
     resolver: ActorResolverDep,
 ) -> dict:
     place, _, _ = await member_in_room(db, resolver, topic_id)
-    await DocumentJournal(db).lock(place.room_id)
+    await _lock_doc(db, place)
     service = CommentThreads(db)
     result = await service.describe(await service.root(place.room_id, comment_id))
     await db.commit()
@@ -77,9 +84,10 @@ async def mutate(db, resolver, topic_id, comment_id, body, action, hand_off=None
     """Apply one thread mutation once per operation id. ``hand_off(place,
     actor)`` runs after a first application commits, never on a replay."""
     place, actor, identity = await member_in_room(db, resolver, topic_id)
+    doc = await TopicService(db).room_doc(place.room_id, place.project_id)
     journal = DocumentJournal(db)
     operation = await journal.claim(
-        room_id=place.room_id,
+        document_id=doc.id,
         actor=identity,
         action="comment-thread",
         operation_id=body.operation_id,
@@ -120,7 +128,7 @@ async def reply(
     db: DbSession,
     resolver: ActorResolverDep,
     chat: Annotated[ChatService, Depends(get_chat_service)],
-    sessions: Annotated[SessionHost, Depends(get_session_host)],
+    questions: Annotated[Consumptions, Depends(get_consumptions)],
 ) -> dict:
     """A reply that @-mentions the room's agent hands the thread to it
     (``app.domain.agent.document.thread``)."""
@@ -131,7 +139,7 @@ async def reply(
             return None
         return lambda: hand_to_agent(
             chat,
-            sessions,
+            questions,
             place=place,
             actor=actor,
             seat=seat,

@@ -1,11 +1,10 @@
-"""Living doc ⇄ block tree (spec §5 / design B1, Phase 1).
+"""A document's Markdown ⇄ its top-level blocks.
 
-The living document is stored as an ordered tree of `kind=doc` blocks
-(`struct_parent` + `struct_order`) instead of one markdown blob, so individual
-nodes get stable ids that comments / cross-view highlights / live refs can anchor
-to later (B1 Phase 2/3). This module is the pure, deterministic bridge between a
-markdown string and a flat list of document nodes — NO natural-language semantics
-are inferred, only structure (allowed by CLAUDE.md).
+Besides its Markdown, a document keeps its top-level blocks as rows
+(`app.domain.living_doc.models.DocumentNode`), so each has an id a search hit
+can point at and an author. This module is the pure, deterministic bridge
+between a markdown string and a flat list of document nodes — NO
+natural-language semantics are inferred, only structure (allowed by CLAUDE.md).
 
 Phase 1 granularity: a node is a top-level markdown block separated by blank
 lines (a paragraph, a heading, a whole list, a fenced code block, a blockquote).
@@ -20,7 +19,7 @@ counting the editor's blocks against these nodes.
 import re
 from dataclasses import dataclass
 
-# Document node types (stored in Block.node_type). Coarse, structure-only.
+# Document node types (`DocumentNode.node_type`). Coarse, structure-only.
 HEADING = "heading"
 CODE = "code"
 QUOTE = "quote"

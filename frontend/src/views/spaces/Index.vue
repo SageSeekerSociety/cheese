@@ -97,13 +97,7 @@
               @load-more="loadMore"
             >
               <template #empty>
-                <div class="empty-state-container py-6">
-                  <v-empty-state
-                    :title="t('spaces.index.noSpaces')"
-                    icon="mdi-google-maps"
-                    class="custom-empty-state"
-                  />
-                </div>
+                <BaseEmptyState icon="mdi-google-maps" :title="t('spaces.index.noSpaces')" />
               </template>
               <v-row>
                 <!-- Three cards across a wide screen stretches each one far too wide:
@@ -242,6 +236,7 @@ import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
 import { listProjects } from '@/api'
 import { copyText } from '@/commands/copy'
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import { DIALOG_WIDTH } from '@/components/base/dialogSize'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AvatarUploader from '@/components/common/AvatarUploader.vue'
@@ -485,16 +480,5 @@ onMounted(async () => {
   background-color: rgba(var(--v-theme-primary), 0.04);
   border-color: rgba(var(--v-theme-primary), 0.1);
   transform: translateY(-2px);
-}
-
-.empty-state-container {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-}
-
-.custom-empty-state:deep(.v-empty-state__icon) {
-  color: var(--v-theme-primary);
-  opacity: 0.9;
 }
 </style>

@@ -24,6 +24,7 @@ import {
 import { useCommands } from '@/commands'
 import { copyText } from '@/commands/copy'
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import { t } from '@/i18n'
 import accountService from '@/services/account'
@@ -252,7 +253,7 @@ useCommands(() =>
       </div>
     </header>
 
-    <p v-if="!isLoggedIn" class="settings-empty">{{ t('account.devices.signInFirst') }}</p>
+    <BaseEmptyState v-if="!isLoggedIn" size="inline" class="settings-empty" :title="t('account.devices.signInFirst')" />
 
     <template v-else>
       <v-alert v-if="error" type="error" density="comfortable" closable @click:close="error = null">
@@ -268,8 +269,12 @@ useCommands(() =>
           <v-progress-circular indeterminate size="24" />
         </div>
 
-        <div v-else-if="devices.length === 0" class="settings-empty devices__empty">
-          <span>{{ t('account.devices.empty') }}</span>
+        <BaseEmptyState
+          v-else-if="devices.length === 0"
+          size="inline"
+          class="settings-empty devices__empty"
+          :title="t('account.devices.empty')"
+        >
           <!-- 在桌面 app 里，最直接的是把这台电脑接进来。 -->
           <template v-if="desktop">
             <BaseButton kind="secondary" :loading="thisComputer.connecting" @click="connectThisMachine">
@@ -278,7 +283,7 @@ useCommands(() =>
             <span v-if="thisComputer.connecting">{{ thisComputer.step }}</span>
             <span v-if="thisComputer.error" class="c-danger">{{ thisComputer.error }}</span>
           </template>
-        </div>
+        </BaseEmptyState>
 
         <div v-for="d in devices" :key="d.device_id" class="device">
           <div class="device__line">

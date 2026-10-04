@@ -24,6 +24,7 @@ import AnnouncementCard from './AnnouncementCard.vue'
 import { useSpaceAnnouncements } from './useSpaceAnnouncements'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import { SpacesApi } from '@/network/api/spaces'
@@ -187,9 +188,11 @@ async function remove(a: SpaceAnnouncement) {
       />
     </template>
 
-    <p v-if="loaded && !current.length && !expired.length" class="ann__empty t-body">
-      {{ t('spaces.announcements.empty') }}
-    </p>
+    <BaseEmptyState
+      v-if="loaded && !current.length && !expired.length"
+      size="inline"
+      :title="t('spaces.announcements.empty')"
+    />
 
     <AdaptiveDialog
       v-model="editing"
@@ -247,11 +250,6 @@ async function remove(a: SpaceAnnouncement) {
   max-width: 880px;
   margin-inline: auto;
   padding: 16px;
-}
-
-.ann__empty {
-  margin: 0;
-  color: var(--muted);
 }
 
 .ann__fold {

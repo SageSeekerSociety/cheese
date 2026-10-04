@@ -96,10 +96,10 @@ describe('我的反馈', () => {
 
     const { queryByText, baseElement } = mountPage()
 
-    // 钉页面里**这一处**（`.aes`，共用的那块空态），不是「树上某处有这句话」：要验的
+    // 钉页面里**这一处**（`.bes`，共用的那块空态），不是「树上某处有这句话」：要验的
     // 正是失败画在空态里，而不是被谁吸收了。
     await waitFor(() => {
-      expect(baseElement.querySelector('.fb-page__inner .aes')?.textContent).toContain('「我的反馈」加载失败')
+      expect(baseElement.querySelector('.fb-page__inner .bes')?.textContent).toContain('「我的反馈」加载失败')
     })
     expect(queryByText('你还没有提过反馈，也没有指派给你的')).toBeNull()
   })
