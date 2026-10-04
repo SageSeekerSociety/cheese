@@ -179,4 +179,17 @@ describe('不露面的块不占窗口', () => {
     expect(ids(timeline.messages.value)).toContain('v0')
     expect(ids(timeline.messages.value).at(-1)).toBe('v0')
   })
+
+  it('整页都不露面时，游标仍指向读过的最老那条（窗口里没有可见的也跟着走）', () => {
+    const timeline = useTimeline({ renders: inRoom })
+    timeline.show({ blocks: [hidden('h0'), hidden('h1')], hasMore: true })
+
+    expect(ids(timeline.messages.value), '一条都画不出来').toEqual([])
+    expect(timeline.oldestLoaded(), '游标是读到哪了，不是画得出什么').toBe('h0')
+
+    timeline.prepend([hidden('x0'), b('v0')], true)
+
+    expect(ids(timeline.messages.value)).toEqual(['v0'])
+    expect(timeline.oldestLoaded(), '翻过一页，游标跟着往前挪').toBe('x0')
+  })
 })

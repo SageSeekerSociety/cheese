@@ -47,6 +47,14 @@ export function useTimeline(options: TimelineOptions = {}) {
   const hasNewer = ref(false)
   /** 停在中间时，背后那段最新的。平常是 null：显示的就是它。 */
   let newestHeld: BlockWindow | null = null
+  /**
+   * 窗口装进来过的最老那一块（**原始的**，不露面的也算）——往上翻时的游标。
+   *
+   * 不能拿 `messages[0]` 当游标：不露面的块不进窗口（见 renders），最新那一页整页不
+   * 露面时窗口里一条都没有，游标也跟着消失，往上翻第一步就迈不出去（房间开出来是空的）。
+   * 游标认的是「读到哪了」，和「画得出来什么」是两件事，所以单独记。
+   */
+  let oldestId: string | null = null
 
   /** 整个换成这一段最新的。 */
   function show(window: BlockWindow) {
@@ -54,6 +62,7 @@ export function useTimeline(options: TimelineOptions = {}) {
     hasNewer.value = false
     messages.value = window.blocks.filter(renders)
     hasMore.value = window.hasMore
+    oldestId = window.blocks[0]?.id ?? null
   }
 
   /** 此刻显示的这一段。 */
@@ -85,6 +94,8 @@ export function useTimeline(options: TimelineOptions = {}) {
     // 平常新来的都比末尾那块新：原地接上，不换掉整个数组。
     if (!last || Date.parse(block.created_at) >= Date.parse(last.created_at)) {
       messages.value.push(block)
+      // 整页不露面、窗口空着那阵子来了条新消息：它就成了窗口里最老的一条。
+      if (oldestId === null) oldestId = block.id
       return 'shown'
     }
     const placed = placeBlock(current(), block)
@@ -111,6 +122,9 @@ export function useTimeline(options: TimelineOptions = {}) {
     const next = prependOlder(current(), older.filter(renders), more)
     messages.value = next.blocks
     hasMore.value = next.hasMore
+    // 游标记这一页（原始的）最老那条：不露面的块进了窗口的只有前面那几个，但更早
+    // 的块是在它们上面。拿窗口里最老的那条当游标会把不露面那一段反复问一遍。
+    if (older.length) oldestId = older[0].id
   }
 
   /**
@@ -153,6 +167,7 @@ export function useTimeline(options: TimelineOptions = {}) {
     messages.value = fresh.blocks
     hasMore.value = fresh.hasMore
     hasNewer.value = true
+    oldestId = middle.blocks[0]?.id ?? null
   }
 
   /** 往下翻到的那一页接到显示的这一段末尾；接上最新的一段就合成一段。 */
@@ -173,10 +188,16 @@ export function useTimeline(options: TimelineOptions = {}) {
     if (newestHeld) show(newestHeld)
   }
 
+  /** 窗口读到哪了：往上翻时拿它当 `before` 游标（原始的，不是画得出来的最老那条）。 */
+  function oldestLoaded(): string | null {
+    return oldestId
+  }
+
   return {
     messages,
     hasMore,
     hasNewer,
+    oldestLoaded,
     show,
     current,
     newest,
