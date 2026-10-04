@@ -1144,6 +1144,138 @@ async def test_calls_on_held_hands_are_answered_while_they_are_rechecked(
     assert during.json() == {"ran": "control"}
 
 
+async def test_a_recheck_that_outlasts_its_request_leaves_the_session_startable(
+    client, monkeypatch
+):
+    """A re-check of held hands can take longer than the request asking for
+    it, which then answers "still preparing". Only one preparation runs at a
+    time, and once it is over a session starting with no wait at all — how a
+    session takes its leased machine at start — gets the hands, instead of
+    being refused as "being prepared" until the claim runs out by the clock."""
+    import asyncio
+    import hashlib
+    import threading
+    import time
+
+    from app.domain.agent.harness.claude_code import executor_launch
+    from app.domain.agent.harness.claude_code.remote_execution import runtime
+
+    project = post_project(
+        client, json={"name": "Session hands"}, owner="alice"
+    ).json()["data"]
+    room = client.post(
+        "/topics",
+        json={"project_id": project["id"], "title": "Room"},
+        headers=session_auth_headers("alice"),
+    ).json()["data"]
+    project_id, topic_id = uuid.UUID(project["id"]), uuid.UUID(room["id"])
+    async with client.test_factory() as db:
+        devices = sql_device_service(db)
+        owner = await db.scalar(select(User).where(User.username == "alice"))
+        agent = await IdentityService(db).ensure_room_agent_user(topic_id)
+        topic = await db.get(Topic, topic_id)
+        resource = str(topic.resource_id or topic_id)
+        device = await devices.approve(
+            await devices.start("ada"),
+            owner_user_id=owner.id,
+            supply=Supply.self_hosted,
+        )
+        await devices.assign_to_project(
+            device.device_id, project_id, actor_user_id=owner.id
+        )
+        topic.compute_config = {
+            "name": "ada",
+            "profile": "device",
+            "device_id": device.device_id,
+        }
+        session = await AgentSessionService(db).ensure(
+            topic_id, "cheese", harness="claude-code"
+        )
+        session.runtime_location = {
+            "device_id": "center",
+            "resource_id": resource,
+            "channel": "device",
+        }
+        token = bind_resource_token(
+            mint_scoped_token(
+                project_id=str(project_id),
+                topic_id=str(topic_id),
+                agent_handle=agent.username,
+            ),
+            resource,
+            session_id=str(session.id),
+        )
+        session_id = session.id
+        await db.commit()
+
+    info = {"state": "/executor/state", "workspace": "/work", "mcp_servers": []}
+    # One request waits this long; the slow preparation below outlasts it.
+    monkeypatch.setattr(work_lease, "PREPARING_WAIT_S", 0.5)
+    slow, release = threading.Event(), threading.Event()
+    preparing = {"now": 0, "most": 0}
+
+    async def held(answer):
+        # A preparation of the executor, in place or by installing it again:
+        # slow while `slow` is set, and counted while it runs.
+        preparing["now"] += 1
+        preparing["most"] = max(preparing["most"], preparing["now"])
+        try:
+            while slow.is_set() and not release.is_set():
+                await asyncio.sleep(0.01)
+        finally:
+            preparing["now"] -= 1
+        return answer
+
+    async def install(*_args, **_kwargs):
+        return await held({"exit": 0, "stdout": json.dumps(info)})
+
+    hub = SimpleNamespace(
+        target=lambda _device: "linux-amd64",
+        is_online=lambda _: True,
+        exec=AsyncMock(side_effect=install),
+    )
+    monkeypatch.setattr(work_lease, "device_hub", hub)
+
+    async def execute(target, method, params, **kwargs):
+        if method == "ping":
+            return {
+                "capabilities": ["prepare"],
+                "protocol_version": runtime.PROTOCOL_VERSION,
+                "files": {
+                    name: hashlib.sha256(value.encode()).hexdigest()
+                    for name, value in executor_launch.file_sources().items()
+                },
+            }
+        if method == "prepare":
+            return await held(info)
+        return {"ran": method}
+
+    monkeypatch.setattr(execution, "call", AsyncMock(side_effect=execute))
+    lease_path = f"/topics/{topic_id}/sessions/{session_id}/work-lease"
+
+    def ask(**body):
+        response = client.post(lease_path, headers={"X-Cheese-Token": token}, json=body)
+        assert response.status_code == 200, response.text
+        return response.json()["data"]
+
+    assert "target" in ask()
+    slow.set()
+    assert ask(timeout=0.001).get("preparing") is True
+    # Still being prepared: a second request does not prepare alongside it.
+    assert ask(timeout=0.001).get("preparing") is True
+    release.set()
+
+    started = None
+    give_up = time.monotonic() + 10
+    while started is None and time.monotonic() < give_up:
+        answer = ask(timeout=0.001)
+        started = answer if "target" in answer else None
+        if started is None:
+            await asyncio.sleep(0.1)
+    assert started is not None, answer
+    assert preparing["most"] == 1
+
+
 async def test_an_own_machine_that_just_dropped_is_called_not_refused(
     client, monkeypatch
 ):
