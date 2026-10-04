@@ -62,10 +62,13 @@ const online = useOnline()
   transform: translate(-50%, -100%);
 }
 /* 手机上顶栏的 ← 和头像就在屏幕最上面那一条里，贴顶居中的横幅会盖住它们，一句话
-   也挤不进 360 宽。所以挪到顶栏下面，左右各留 16，字放不下就换行。 */
+   也挤不进 360 宽。所以挪到顶栏下面，左右各留 16，字放不下就换行。
+
+   这 64px 是「顶栏 56 + 8」——顶栏自己还让了 `safe-area-inset-top`（style.css），
+   所以这里得跟着补上那一截，否则刘海机上横幅会缩回顶栏底下被压住。 */
 @media (width < 960px) {
   .offline-banner {
-    top: 64px;
+    top: calc(64px + env(safe-area-inset-top, 0px));
     right: 16px;
     left: 16px;
     white-space: normal;
