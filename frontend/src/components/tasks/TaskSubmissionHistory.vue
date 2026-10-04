@@ -92,7 +92,7 @@
         @load-more="loadMore"
       >
         <template #empty>
-          <BaseEmptyState size="compact" :title="emptyText || t('tasks.submissionHistory.empty')" />
+          <BaseEmptyState size="compact" icon="" :title="emptyText || t('tasks.submissionHistory.empty')" />
         </template>
         <v-expansion-panels>
           <template v-for="submission in submissions.slice(1)" :key="submission.id">

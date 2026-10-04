@@ -494,11 +494,11 @@ AI 队友的头像（`CheeseAvatar`）有自己的一组颜色：五档暖色的
 
 | `size` | 用在哪 | 长相 |
 |---|---|---|
-| `page` | 整页或整块区域就是空的 | 图标 + 标题 + 说明 + 动作，居中，上下 64px |
-| `compact` | 卡片、表格、抽屉里 | 同上，上下 32px |
+| `page` | 整页或整块区域就是空的 | 40px 图标 + 标题 + 说明 + 动作，居中，上下 64px |
+| `compact` | 卡片、表格、抽屉里 | 同上，图标 28px，上下 32px |
 | `inline` | 设置卡片里、列表下面、筛选后的一句话 | 一行 13px `--muted` 灰字，无图标，默认靠左 |
 
-- 属性：`title`、`desc`、`icon`、`action`（一颗 `secondary` 小按钮，点了发 `@action`）、`tone`（`error` 只换图标色）、`align`（`center` / `start`）。动作要别的角色或带图标，放默认插槽。
+- 属性：`title`、`desc`、`icon`（给空字符串不画图标）、`action`（一颗 `secondary` 小按钮，点了发 `@action`）、`tone`（`error` 只换图标色）、`align`（`center` / `start`）。动作要别的角色或带图标，放默认插槽。
 - `inline` 不带外边距，由所在那块决定：设置卡片里加 `class="settings-empty"`（只管 16px 24px 内距）。
 - 读失败不是空状态，用 §3.10 的 `BaseLoadError`。
 - `AdminEmptyState` 是它的别名（`compact` 布尔值映射成 `size="compact"`），新代码直接用 `BaseEmptyState`。

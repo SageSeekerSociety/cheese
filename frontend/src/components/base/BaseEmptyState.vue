@@ -26,6 +26,7 @@ const props = withDefaults(
   defineProps<{
     title?: string
     desc?: string
+    /** mdi 图标名；给空字符串就不画图标。 */
     icon?: string
     action?: string
     tone?: 'neutral' | 'error'
@@ -47,12 +48,20 @@ const props = withDefaults(
 const emit = defineEmits<{ action: [] }>()
 
 const resolvedAlign = computed(() => props.align ?? (props.size === 'inline' ? 'start' : 'center'))
-const showIcon = computed(() => props.size !== 'inline')
+// `icon=""` 不画图标；error 总要画那个提示图标。
+const showIcon = computed(() => props.size !== 'inline' && (!!props.icon || props.tone === 'error'))
+// 整块区域空着时图标大一档，不然 64px 的留白里只有一个小点。
+const iconSize = computed(() => (props.size === 'page' ? 40 : 28))
 </script>
 
 <template>
   <div class="bes" :class="[`bes--${size}`, `bes--${resolvedAlign}`, { 'bes--error': tone === 'error' }]" role="status">
-    <v-icon v-if="showIcon" class="bes__icon" :icon="tone === 'error' ? 'mdi-alert-circle-outline' : icon" size="28" />
+    <v-icon
+      v-if="showIcon"
+      class="bes__icon"
+      :icon="tone === 'error' ? 'mdi-alert-circle-outline' : icon"
+      :size="iconSize"
+    />
     <p v-if="title" class="bes__title">{{ title }}</p>
     <p v-if="desc" class="bes__desc">{{ desc }}</p>
     <BaseButton v-if="action" kind="secondary" size="sm" class="bes__btn" @click="emit('action')">
