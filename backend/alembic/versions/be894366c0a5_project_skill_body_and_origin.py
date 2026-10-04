@@ -16,7 +16,7 @@ Files leave the row: their bytes go to the platform's file storage under
 the handle that proposed them carries an agent-binding.
 
 Revision ID: be894366c0a5
-Revises: 7c3e5a9d1f20
+Revises: cffd329c35e3
 """
 
 import hashlib
@@ -29,7 +29,7 @@ from sqlalchemy.util import await_only
 from alembic import op
 
 revision = "be894366c0a5"
-down_revision = "7c3e5a9d1f20"
+down_revision = "cffd329c35e3"
 branch_labels = None
 depends_on = None
 
