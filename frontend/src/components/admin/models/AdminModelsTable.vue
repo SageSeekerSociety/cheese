@@ -233,6 +233,14 @@ function rateTitle(row: ModelRow): string {
   white-space: nowrap;
 }
 
+/* 这一格里的三颗图标按钮（编辑 / 封禁 / 删除）28px 一颗。触屏上每颗把能点的范围
+   撑到 44×44（BaseButton 的 ::before），挨着排的话靠右那两颗的撑开部分会盖住中间
+   那颗的右半边 —— 相邻中心要隔开 42px 才互不打架，28 + 16 = 44，所以留 16px（和
+   房间输入框那一行同一个数）。 */
+.amd__cell--actions :deep(.base-btn + .base-btn) {
+  margin-left: 16px;
+}
+
 /* 名字是按钮：清掉按钮外观，让它读起来像一行标题而不是一个控件 —— 但它在 Tab 顺序里，
    键盘用户到得了（`.amd__name` 的 hover 只变色，不移位）。 */
 .amd__name {

@@ -130,4 +130,24 @@ if (import.meta.env.DEV && props.icon && !attrs['aria-label'] && !attrs.title) {
 .base-btn--danger:not(.v-btn--variant-flat) {
   color: var(--danger-ink);
 }
+
+/* 手指点得中：触屏上一个控件能点的范围至少 44×44（docs/design-system.md 的手机
+   一节）。sm/md 画出来只有 28/36px，够不到这个下限 —— 这里把能点的范围往四周撑
+   到 44×44，画出来的样子不变。用 ::before 是因为 v-btn 的 ::after 是它自己的键盘
+   焦点环（同一套路见 style.css 里的 `.tap-target`；区别是那个要每个调用处自己记着
+   加，漏一颗就少一颗，这里每颗 BaseButton 自带）。
+
+   只在触屏（pointer: coarse）撑：鼠标本来就点得准，而撑开的范围会盖住并排的邻居。
+   并排的图标按钮之间因此仍要留缝，见 AdminModelsTable 的 actions 一格。 */
+@media (pointer: coarse) {
+  .base-btn::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+    transform: translate(-50%, -50%);
+  }
+}
 </style>
