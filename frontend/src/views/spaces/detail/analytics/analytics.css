@@ -77,34 +77,21 @@
 }
 
 /* 表：表头不折行，列放不下时整张表横着滚，而不是把「提交转化率」挤成三行。 */
-.an-table {
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-}
-
-.an-table :deep(.v-table__wrapper) {
-  overflow-x: auto;
-}
-
-.an-table :deep(th) {
-  color: var(--muted) !important;
-  font-size: 12px;
-  font-weight: 600 !important;
-  line-height: var(--lh-12);
-  white-space: nowrap;
-}
-
+/* 数据表（BaseTable）：数字列居中、等宽数字；第一列是名字（题目、出题人），可以换行。 */
 .an-table :deep(td) {
+  overflow: hidden;
   font-size: 13px;
   font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* 第一列是名字（题目、出题人），可以换行，但给它留够宽度。 */
 .an-table :deep(td:first-child) {
-  min-width: 200px;
   white-space: normal;
+}
+
+.an-c {
+  text-align: center;
 }
 
 .an-card {

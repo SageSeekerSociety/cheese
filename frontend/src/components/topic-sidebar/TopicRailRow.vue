@@ -55,6 +55,8 @@ const emit = defineEmits<{
   (e: 'select', id: string): void
   (e: 'hover', id: string): void
   (e: 'leave'): void
+  /** 按下去了（还没松开）：不必再等「停住」，直接预取。 */
+  (e: 'press', id: string): void
   (e: 'toggle-collapse', id: string): void
   /** 改名提交（回车或失焦）：值没变就不落盘，由父级比对原名字决定。 */
   (e: 'commit-rename', draft: string): void
@@ -125,6 +127,9 @@ function onMenuToggle(open: boolean) {
     @click="emit('select', row.topic.id)"
     @mouseenter="emit('hover', row.topic.id)"
     @mouseleave="emit('leave')"
+    @focusin="emit('hover', row.topic.id)"
+    @focusout="emit('leave')"
+    @pointerdown="$event.pointerType === 'mouse' && $event.button === 0 && emit('press', row.topic.id)"
     @contextmenu="openMenuAt"
   >
     <!-- 干净行：左边只有一个 16px 槽（状态，或顶替它的折叠开关），身份靠标题本身，

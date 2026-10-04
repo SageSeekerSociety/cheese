@@ -414,6 +414,7 @@ function taskRowKey(row: unknown): string {
                         aria-hidden="true"
                       />
                       <img
+                        decoding="async"
                         v-else-if="avatarSrc(row.owner_handle)"
                         class="board-card__avatar"
                         :src="avatarSrc(row.owner_handle)!"
