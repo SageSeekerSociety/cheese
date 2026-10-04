@@ -14,6 +14,7 @@ from app.domain.agent.harness.driven import journal
 class Journal(journal.Journal):
     table = "events"
     column = "record"
+    turn_end = "json_extract(record, '$.method') = 'turn/completed'"
     schema = """
         CREATE TABLE IF NOT EXISTS events (
             sequence INTEGER PRIMARY KEY AUTOINCREMENT,

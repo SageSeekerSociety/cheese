@@ -613,7 +613,11 @@ async def _start_executor(
             return await execution.call(
                 lease,
                 "prepare",
-                launch.payload_for(
+                # Built in a thread: it reads the project's skills off disk and
+                # encodes them, on every tool call, and the event loop it would
+                # otherwise hold is the one answering every other request.
+                await asyncio.to_thread(
+                    launch.payload_for,
                     project_id,
                     uuid.UUID(work_resource),
                     setup,
@@ -626,7 +630,8 @@ async def _start_executor(
     installed = await hub.exec(
         device_id,
         ["python3", "-"],
-        stdin=launch.script(
+        stdin=await asyncio.to_thread(
+            launch.script,
             project_id,
             uuid.UUID(work_resource),
             setup,

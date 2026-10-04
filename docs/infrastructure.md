@@ -672,13 +672,45 @@ creating a database without naming the encoding, which is the rule above.
 ## Public edge: okcheese.com through Hong Kong, hand-managed
 
 `okcheese.com`, `www.okcheese.com` and `hk.okcheese.com` resolve to the etrip
-box (8.217.1.152). Its Caddy owns public :443 with a layer4 router
-([`scripts/ops/Caddyfile`](../scripts/ops/Caddyfile)) that forwards those names,
-still encrypted, to `127.0.0.1:18443` or `127.0.0.1:18444`. Each port is the
-far end of a reverse SSH tunnel opened by the dev box; both land on
-api-front's TLS listener `127.0.0.1:18443` on the dev box (set up by
-`deploy/llm-tunnel/configure-frontend.sh`). The dev box has no public
-inbound, so the site is up while at least one tunnel is up.
+box (8.217.1.152), and TLS for them ends there. Its Caddy owns public :443
+with a layer4 router ([`scripts/ops/Caddyfile`](../scripts/ops/Caddyfile))
+that hands those names to Caddy's own HTTPS site, which holds their
+certificate (ACME, renewed by Caddy) and redirects `www` and `hk` to the
+apex. The site proxies plain HTTP to `127.0.0.1:18453` or `127.0.0.1:18454`
+here. Each is the far end of a reverse SSH tunnel opened by the dev box, and
+both land on api-front's plain listener `127.0.0.1:18080` there (set up by
+`deploy/llm-tunnel/configure-frontend.sh`). The SSH tunnel encrypts that leg.
+The dev box has no public inbound, so the site is up while at least one
+tunnel is up.
+
+Caddy keeps those upstream connections open and shares them between
+visitors, so a new visitor's connection pays only its TLS handshake with
+etrip, not tunnel round trips. Measured from etrip on 2026-10-04, a new
+connection plus one request took 128 ms (p50 of 12) against 231-261 ms when
+TLS ended on the dev box. Requests on an open connection cost the same either
+way, one tunnel round trip.
+
+The client address travels in `X-Forwarded-For`. Caddy drops whatever the
+visitor sent there and writes the address the layer4 router's PROXY header
+gave it; the dev box's front door appends its own and the backend resolves the
+client through `FORWARDED_ALLOW_IPS`. The upstream is not TLS with PROXY
+protocol to the dev box's `:18443`: with PROXY on, Caddy pools upstream
+connections per client address, so every new visitor would open its own and
+the round trips would come back.
+
+Caddy spreads requests over both ports with `least_conn`. Neither line is
+reliably the faster: on 2026-10-04 tunnel A (18453, over a dorm Unicom line)
+answered in 47 ms one minute and 0.3-1.5 s the next, while tunnel B (18454,
+over the campus line) held at 90-170 ms. A line that slows down
+collects requests in flight, so new ones go to the other. Its active health
+check asks each port for `/_internal/edge-health`, which the dev front door
+answers with 404 itself, so the check covers the tunnel and the front door
+without depending on an application rollout.
+
+Each tunnel also still forwards `127.0.0.1:18443` (tunnel B: `18444`) to
+api-front's TLS listener `127.0.0.1:18443`, which terminates TLS on the dev
+box. No public traffic uses it. The watchdog below probes through it, and
+the rollback at the end of this section sends the public names back to it.
 
 None of it is deployed by CI. The units below were installed by hand; change
 them by hand, keep a timestamped copy of every file you edit next to it, and
@@ -686,7 +718,8 @@ note the rollback command before you start.
 
 Each tunnel travels inside TLS on :443, not as SSH on :22:
 
-    dev box: ssh -R 127.0.0.1:18443:127.0.0.1:18443   (second tunnel: 18444)
+    dev box: ssh -R 127.0.0.1:18443:127.0.0.1:18443 -R 127.0.0.1:18453:127.0.0.1:18080
+             (tunnel B: 18444 and 18454)
       -> tls-proxy.py (TLS, SNI relay.okcheese.com, pinned certificate)
       -> etrip :443, Caddy layer4 route for SNI relay.okcheese.com
       -> socat on 127.0.0.1:2222 (terminates that TLS)
@@ -702,10 +735,10 @@ but not all: on 09-30 and 10-01 that egress passed no data to etrip :443 for
 
 So the two tunnels leave the dev box by different lines:
 
-- The 18443 tunnel takes the default route: router-2 (192.168.16.2, Clash) hands
+- Tunnel A (18443 and 18453) takes the default route: router-2 (192.168.16.2, Clash) hands
   it to the dorm OpenWrt's proxy (192.168.200.1:7891), which exits through a
   Beijing Unicom line.
-- The 18444 tunnel binds source ports 41000-41099 (`TLS_PROXY_SOURCE_PORTS` in
+- Tunnel B (18444 and 18454) binds source ports 41000-41099 (`TLS_PROXY_SOURCE_PORTS` in
   its unit), and a policy route on the dev box (`route-b.sh`, run before every
   start) sends those connections to 192.168.16.1, the 119pve host, which
   masquerades them out its campus uplink (seen outside as 211.71.28.46).
@@ -719,11 +752,11 @@ Unicom line up rather than replacing it.
 
 | Box | Path | What it is |
 |---|---|---|
-| dev | `/etc/systemd/system/cheese-hk-relay-tls443.service` | tunnel on 18443 (enabled) |
-| dev | `/etc/systemd/system/cheese-hk-relay-tls443-b.service` | second tunnel on 18444, out the campus line (enabled) |
+| dev | `/etc/systemd/system/cheese-hk-relay-tls443.service` | tunnel A, 18443 and 18453 (enabled) |
+| dev | `/etc/systemd/system/cheese-hk-relay-tls443-b.service` | tunnel B, 18444 and 18454, out the campus line (enabled) |
 | 119pve | `/etc/network/interfaces`, `vmbr0` post-up | raw-table conntrack zone rules for source ports 41000-41099 |
 | dev | `/usr/local/libexec/cheese-hk-relay/tls-proxy.py` | the tunnels' `ProxyCommand`; binds a source port from `TLS_PROXY_SOURCE_PORTS` when set |
-| dev | `/usr/local/libexec/cheese-hk-relay/route-b.sh` | policy route for the 18444 tunnel: table 18443, rule priority 18443 |
+| dev | `/usr/local/libexec/cheese-hk-relay/route-b.sh` | policy route for tunnel B: table 18443, rule priority 18443 |
 | dev | `/home/nictheboy/.ssh/id_hkrelay`, `relay-okcheese.crt` | login key; the certificate `tls-proxy.py` pins etrip to |
 | dev | `/etc/systemd/system/cheese-hk-relay-tls.service` | previous tunnel, bare SSH on :22; installed but disabled |
 | dev | `/etc/systemd/system/cheese-hk-relay.service` | plain relay to `127.0.0.1:18080`; nothing routes there; installed but disabled |
@@ -731,7 +764,7 @@ Unicom line up rather than replacing it.
 | etrip | `/etc/systemd/system/cheese-relay-watchdog.service`, `/usr/local/libexec/cheese-hk-relay/relay-watchdog.sh` | frees a port held by a dead tunnel session; pages when both are down |
 | etrip | `/etc/cheese-hk-relay/alert.env` | `FEISHU_ALERT_WEBHOOK`, the same webhook the backend alerts use |
 | etrip | `/etc/ssl/relay/relay.pem` | certificate and key for `relay.okcheese.com` |
-| etrip | `~hkrelay/.ssh/authorized_keys` | the key may only open `127.0.0.1:18080`, `:18443` and `:18444` |
+| etrip | `~hkrelay/.ssh/authorized_keys` | the key may only open `127.0.0.1:18080`, `:18443`, `:18444`, `:18453` and `:18454` |
 | etrip | `/etc/ssh/sshd_config`, last block | `Match User hkrelay`: forwarding only, 10 s × 2 keepalive |
 
 The TLS client is `tls-proxy.py` rather than `openssl s_client`. Used as a
@@ -748,14 +781,15 @@ finally errors. Until then the port still accepts connections, which hang, so
 a dial-based health check calls it healthy, and the dev box's tunnel cannot
 bind it again (`remote port forwarding failed for listen port 18443`).
 
-- Caddy spreads connections over both ports with `least_conn`, so new
-  connections move off a held port as the stuck ones pile up. A port that
-  refuses the dial is marked down for 10 s, and `lb_try_duration` retries the
-  other one.
-- The watchdog sends an HTTPS request through each port every 3 s. After three
-  in a row get no HTTP answer, it kills the `sshd: hkrelay` process holding
-  that port. The port closes, Caddy stops choosing it, and the dev box binds it
-  again on its next attempt, about 25 s after the path died.
+- Caddy's active health check gives each port 2 s to answer and stops
+  choosing a port that does not, and `least_conn` moves requests off a port
+  where they pile up. A port that refuses the dial is marked down for 10 s,
+  and `lb_try_duration` retries the other one.
+- The watchdog sends an HTTPS request through 18443 and 18444 every 3 s. After
+  three in a row get no HTTP answer, it kills the `sshd: hkrelay` process
+  holding that port. That is the whole tunnel's session, so the tunnel's other
+  port (18453 or 18454) closes with it; Caddy stops choosing it, and the dev
+  box binds both again on its next attempt, about 25 s after the path died.
 - When neither port has carried a request for 30 s, the site is down for
   everyone, and the watchdog posts to the Feishu alert group; it posts again
   with the duration when a port comes back.
@@ -776,9 +810,17 @@ Back to one tunnel:
 
     sudo systemctl disable --now cheese-hk-relay-tls443-b
 
-Back to bare SSH on :22 (Caddy then sends everything to 18443):
+Back to bare SSH on :22. That unit forwards 18443 only, so first put the
+public names back on the TLS passthrough (below), then on the dev box:
 
     sudo systemctl disable --now cheese-hk-relay-tls443 cheese-hk-relay-tls443-b && sudo systemctl enable --now cheese-hk-relay-tls cheese-hk-relay
+
+TLS back on the dev box, on etrip: install the `scripts/ops/Caddyfile` from
+before the commit that moved TLS to etrip (its layer4 block routes SNI
+`okcheese.com`, `www.okcheese.com` and `hk.okcheese.com` encrypted to
+`127.0.0.1:18443` and `:18444` with `proxy_protocol v1`), keeping a dated copy
+of the current one, then `sudo systemctl reload caddy`. The dev box's
+certificate is still renewed daily, so that listener is ready.
 
 The watchdog frees 18443 for the :22 tunnel as well, since it acts on whatever
 `sshd: hkrelay` process holds the port. By hand: `sudo ss -ltnp | grep 18443`

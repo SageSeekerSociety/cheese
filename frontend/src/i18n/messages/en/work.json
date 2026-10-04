@@ -949,7 +949,16 @@
           "diagram": "Diagram",
           "image": "Image"
         }
-      }
+      },
+      "historyView": "Show",
+      "historyDiff": "Compare with previous",
+      "historyFull": "Full text",
+      "diffSummary": "{added} added · {removed} removed · {changed} changed",
+      "diffNone": "No changes from the previous version",
+      "diffSkipped": "{count} unchanged",
+      "diffAdded": "Added: ",
+      "diffRemoved": "Removed: ",
+      "diffLoading": "Loading the previous version"
     },
     "comments": {
       "comment": "Comment",
@@ -1446,7 +1455,20 @@
     "backToList": "Back to library",
     "previewLoading": "Loading the file",
     "previewError": "Could not preview this file",
-    "downloadOnly": "This format cannot be previewed yet; download it to view"
+    "downloadOnly": "This format cannot be previewed yet; download it to view",
+    "versions": "Versions…",
+    "versionsTitle": "Versions of “{name}”",
+    "versionsClose": "Close",
+    "versionsLoading": "Loading versions",
+    "versionsEmpty": "No versions",
+    "versionsFailed": "Couldn't load the versions",
+    "versionNumber": "Version {n}",
+    "versionCurrent": "Current",
+    "restoreVersion": "Restore as current",
+    "restoreTitle": "Restore version {n} as current?",
+    "restoreBody": "This copies it as a new version; every earlier version stays. Messages that reference this file will read it from then on.",
+    "restoreFailed": "Couldn't restore this version",
+    "restoredDone": "Version {n} is current again"
   },
   "projectSettings": {
     "title": "Project settings",
@@ -1459,7 +1481,8 @@
     "groups": {
       "ai": "AI",
       "run": "Running",
-      "code": "Code"
+      "code": "Code",
+      "data": "Data"
     },
     "sections": {
       "agents": "AI teammates",
@@ -1469,6 +1492,7 @@
       "merge": "Merge rules",
       "repository": "Repository and credit",
       "mcp": "MCP servers",
+      "export": "Export project",
       "archive": "Archive project"
     },
     "archive": {
@@ -1482,6 +1506,12 @@
         "body": "The project leaves every member's project list, can no longer be changed, and its running tasks stop. Everything in it is kept, and you can unarchive it from Archived projects",
         "confirmLabel": "Type the project name \"{name}\" to confirm"
       }
+    },
+    "export": {
+      "title": "Export project",
+      "hint": "Package the whole project: the code repository, library files, each room's files and artifacts, and every document. Bigger projects take longer",
+      "action": "Export project",
+      "failed": "Couldn't export the project"
     },
     "forge": {
       "title": "Code repository",

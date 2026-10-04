@@ -189,6 +189,36 @@ def test_a_stop_signals_no_process_but_the_rooms_own_service(tmp_path):
             child.kill()
 
 
+def test_a_stop_reaches_a_service_named_through_a_state_descriptor(tmp_path):
+    """A sandboxed room reaches its executor's state through an open directory
+    descriptor (`bootstrap.executor_state`), so `stop` is told `/proc/self/fd/N`
+    while the service's own command line carries the path it resolved to in
+    `start`. The fallback that runs when a service refuses `shutdown` has to
+    recognize both spellings, or such a room can never stop an executor from an
+    earlier release."""
+    state, process = _previous_executor(tmp_path)
+    descriptor = os.open(state, os.O_RDONLY)
+    try:
+        stopped = subprocess.run(
+            [
+                sys.executable,
+                str(RUNTIME),
+                "stop",
+                "--state",
+                f"/proc/self/fd/{descriptor}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            pass_fds=(descriptor,),
+        )
+        assert stopped.returncode == 0, stopped.stderr
+        assert process.wait(timeout=10) == 0
+    finally:
+        os.close(descriptor)
+        process.kill()
+
+
 @pytest.mark.parametrize("sandbox", [True, False])
 def test_the_teardown_runs_a_sandboxed_rooms_programs_from_its_release(
     tmp_path, monkeypatch, sandbox

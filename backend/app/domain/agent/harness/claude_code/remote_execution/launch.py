@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import functools
 import hashlib
 import json
 import time
@@ -61,9 +62,8 @@ def can_prepare(info, sandbox=None):
         and not info.get("upgrading")
         and info.get("protocol_version") == runtime.PROTOCOL_VERSION
         and all(
-            info.get("files", {}).get(name)
-            == hashlib.sha256(content.encode()).hexdigest()
-            for name, content in file_sources().items()
+            info.get("files", {}).get(name) == digest
+            for name, digest in _file_digests().items()
         )
     )
 
@@ -72,6 +72,14 @@ BACKEND = Path(__file__).resolve().parents[6]
 
 
 def file_sources():
+    return dict(_file_sources())
+
+
+# Read and hashed once per process: these are the image's own files, fixed for
+# as long as it runs, and every tool call a session makes compares against them
+# (`machine.session_work`), each time on the event loop every request shares.
+@functools.cache
+def _file_sources():
     return {
         "remote-execution/bootstrap.py": Path(bootstrap.__file__).read_text(),
         "remote-execution/bin/cheese": Path(cli_client.__file__).read_text(),
@@ -89,6 +97,14 @@ def file_sources():
             name: (BACKEND / source).read_text()
             for name, source in runtime.RELEASE_FILES.items()
         },
+    }
+
+
+@functools.cache
+def _file_digests():
+    return {
+        name: hashlib.sha256(content.encode()).hexdigest()
+        for name, content in _file_sources().items()
     }
 
 
@@ -152,8 +168,7 @@ def payload_for(
         "files": {
             name: base64.b64encode(content.encode()).decode()
             for name, content in files.items()
-            if (known_files or {}).get(name)
-            != hashlib.sha256(content.encode()).hexdigest()
+            if (known_files or {}).get(name) != _file_digests()[name]
         },
     }
 
@@ -167,7 +182,7 @@ def script(project_id, resource_id, env, *, sandbox, platform_machine):
         platform_machine=platform_machine,
     )
     return (
-        Path(bootstrap.__file__).read_text()
+        _file_sources()["remote-execution/bootstrap.py"]
         + "\nconfigure(json.loads("
         + repr(json.dumps(payload))
         + "))\n"

@@ -722,7 +722,7 @@ async def _consume_hook_event(
         )
         if payload is not None:
             frame = {"type": "event_block", "block": payload}
-    elif isinstance(event, AgentResult) and event.taken_into is None:
+    elif isinstance(event, AgentResult) and event.taken_into is None and not event.late:
         error_line, error_code = "", None
         if event.session_id:
             await service._save_session_pointer(
@@ -856,7 +856,7 @@ async def _consume_hook_event(
                 turn_id,
                 event,
             )
-        if event.is_error:
+        if event.is_error and not event.late:
             frame_out = error_frame(
                 error_line or event.text, type="error", persisted=True
             )

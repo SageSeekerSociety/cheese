@@ -2036,10 +2036,9 @@ def bridge(state, server, *, call=None):
 
 def terminate_unrequested(state, named):
     """Stop an executor that refused `shutdown`: one started before stopping was
-    a request. Those only ever ran unsandboxed, so the pid one reports is a pid
-    this side can signal, but only once it is seen running this state's service:
-    whatever answers on a room's socket is not proof of who is behind it. `named`
-    is the state as the caller spelled it, as the service was started with it."""
+    a request. Signal the pid it reports once it is seen running this state's
+    service: whatever answers on a room's socket is not proof of who is behind
+    it, and a sandboxed room names the state `/proc/self/fd/N`, resolved here."""
     try:
         pid = request(state, "ping")["pid"]
     except (OSError, RuntimeError):
@@ -2050,7 +2049,8 @@ def terminate_unrequested(state, named):
         text=True,
         check=False,
     ).stdout.rstrip()
-    if any(running.endswith(f"serve --state {path}") for path in (named, state)):
+    spellings = {str(named), str(state), str(Path(state).resolve())}
+    if any(running.endswith(f"serve --state {path}") for path in spellings):
         os.kill(pid, signal.SIGTERM)
 
 
