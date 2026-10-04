@@ -40,18 +40,25 @@ async def library_file_raw(
     resolver: ActorResolverDep,
     topic: str = "",
     preview_pdf: bool = False,
+    version: uuid.UUID | None = None,
 ) -> Response:
     """一份资料的字节。给下载，也给 `cheese library get`——芝士 要读一份没有被这条
     消息带上的资料时，只能自己来取（那时带着它干活的那个话题，见 `authorized_place`）。
 
     `preview_pdf`：Office 文档转成 PDF，给资料库页预览。
 
+    `version`：版本列表里那一版的 id，下载被替换下来的旧版用；不给就是现在这一版。
+
     不让浏览器凭缓存直接用：一份资料可以被「替换为新版本」，同一个地址下的字节会
     变。"""
     await ProjectService(db).get_or_404(project_id)
     await project_reader(db, resolver, project_id, topic)
     name = _library_path(path)
-    data = library.read_library_file(project_id, name)
+    data = (
+        await library_records.version_bytes(db, project_id, name, version)
+        if version is not None
+        else library.read_library_file(project_id, name)
+    )
     if preview_pdf:
         data = await office.preview_pdf(data, name)
     filename = quote(name.rsplit("/", 1)[-1], safe="")
@@ -73,6 +80,39 @@ def _library_path(raw: str) -> str:
     if not name or name.startswith("/") or ".." in name.split("/"):
         raise ValidationError(say("libraryPathRelative"))
     return name
+
+
+@router.get("/{project_id}/library/versions")
+async def list_library_versions(
+    project_id: uuid.UUID,
+    path: str,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    topic: str = "",
+) -> dict:
+    """一份资料的每一版（新的在前）：版本号、什么时候、谁放进来的、多大。"""
+    await ProjectService(db).get_or_404(project_id)
+    await project_reader(db, resolver, project_id, topic)
+    versions = await library_records.versions(db, project_id, _library_path(path))
+    return ok({"versions": versions})
+
+
+@router.post("/{project_id}/library/restore")
+async def restore_library_version(
+    project_id: uuid.UUID,
+    path: str,
+    version: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """把旧的一版恢复成现在这一份：复制成新的一版，历史只增不减。只有人能做。"""
+    actor = await _library_keeper(project_id, db, resolver)
+    name = _library_path(path)
+    await library_records.restore(
+        db, project_id=project_id, name=name, version_id=version, by=actor.handle
+    )
+    await db.commit()
+    return ok({"path": name})
 
 
 @router.get("/{project_id}/library")
