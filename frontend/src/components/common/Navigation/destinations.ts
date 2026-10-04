@@ -174,6 +174,17 @@ export function railItems(src: NavSources, shell: Shell): NavGenericItem[] {
 }
 
 /**
+ * 第 N 格的快捷键，按「在哪儿跑」分两种（App.vue 登记、RailItem 浮层显示，同一个出处）：
+ *
+ * - 浏览器里是序列键 `G` 然后 `N`。⌘1–9 是浏览器切标签页的键，抢过来会让人切不回自己
+ *   的第 N 个标签页；后台的 `G Q / G D` 是同一个约定。
+ * - 桌面 app 没有浏览器标签页，⌘N 不抢任何人的，照旧用它。
+ */
+export function railShortcut(n: number, desktop: boolean): { shortcut: string; keys: string[] } {
+  return desktop ? { shortcut: `mod+${n}`, keys: ['⌘', String(n)] } : { shortcut: `g ${n}`, keys: ['G', String(n)] }
+}
+
+/**
  * 按下 ⌘N 该去哪儿，没有对应的格子就是 null。
  *
  * rail 的悬停浮层一直在显示这个键（`shortcut`），而在此之前没有任何地方绑它——

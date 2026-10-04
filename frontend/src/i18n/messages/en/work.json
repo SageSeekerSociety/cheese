@@ -974,7 +974,8 @@
       "waitingConnection": "Waiting for connection",
       "today": "Today",
       "yesterday": "Yesterday",
-      "topicFallback": "Topic"
+      "topicFallback": "Topic",
+      "timelineLabel": "Conversation"
     },
     "header": {
       "disconnected": "Disconnected",

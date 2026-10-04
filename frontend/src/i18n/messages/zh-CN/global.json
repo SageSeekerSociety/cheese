@@ -50,5 +50,27 @@
     "promptTitle": "输入"
   },
   "unknownError": "未知错误",
-  "listItemQuoted": "「{item}」"
+  "listItemQuoted": "「{item}」",
+  "shortcuts": {
+    "then": "然后",
+    "title": "键盘快捷键",
+    "open": "键盘快捷键（?）",
+    "scope": {
+      "global": "全局",
+      "timeline": "对话",
+      "composer": "输入框"
+    },
+    "palette": "打开命令面板",
+    "railSwitch": "切到侧栏第 N 格",
+    "openSheet": "打开这张表",
+    "notInInputs": "输入框里不认",
+    "within1s": "一秒内按第二下",
+    "scrollTimeline": "上下翻动对话",
+    "timelineFocus": "先按 Tab 把焦点移到对话区",
+    "send": "发送",
+    "newline": "换行",
+    "summon": "发送并交给{name}",
+    "mentionPick": "在 @ 名单里选人",
+    "mentionClose": "收起 @ 名单"
+  }
 }

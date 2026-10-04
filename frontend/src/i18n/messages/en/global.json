@@ -50,5 +50,27 @@
   },
   "unknownError": "Unknown error",
   "listItemQuoted": "“{item}”",
-  "confirm": "Confirm"
+  "confirm": "Confirm",
+  "shortcuts": {
+    "then": "then",
+    "title": "Keyboard shortcuts",
+    "open": "Keyboard shortcuts (?)",
+    "scope": {
+      "global": "Everywhere",
+      "timeline": "Conversation",
+      "composer": "Message box"
+    },
+    "palette": "Open the command palette",
+    "railSwitch": "Go to sidebar item N",
+    "openSheet": "Open this sheet",
+    "notInInputs": "Not while typing",
+    "within1s": "Second key within 1s",
+    "scrollTimeline": "Scroll the conversation",
+    "timelineFocus": "Tab to the conversation first",
+    "send": "Send",
+    "newline": "New line",
+    "summon": "Send and hand to {name}",
+    "mentionPick": "Pick from the @ list",
+    "mentionClose": "Close the @ list"
+  }
 }

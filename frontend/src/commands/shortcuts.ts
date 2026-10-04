@@ -17,13 +17,42 @@ interface Chord {
   code: string
 }
 
+// 一个键名对应的物理键 code：数字和字母两种就够了。
+function codeOf(key: string): string | null {
+  return /^[0-9]$/.test(key) ? `Digit${key}` : /^[a-z]$/.test(key) ? `Key${key.toUpperCase()}` : null
+}
+
 function parse(shortcut: string): Chord | null {
+  if (shortcut.includes(' ')) return null // 序列键（`g 1`）不是组合键，见 parseSequence
   const parts = shortcut.toLowerCase().split('+')
   const key = parts.pop()
   if (!key) return null
-  const code = /^[0-9]$/.test(key) ? `Digit${key}` : /^[a-z]$/.test(key) ? `Key${key.toUpperCase()}` : null
+  const code = codeOf(key)
   if (!code) return null
   return { mod: parts.includes('mod'), shift: parts.includes('shift'), alt: parts.includes('alt'), code }
+}
+
+/**
+ * 序列键：先按一个字母、松开、一秒内再按第二个（`g 1` = 先 G 再 1）。不带修饰键，
+ * 所以不和浏览器抢任何东西（⌘1–9 本来是切标签页）；也正因为不带修饰键，焦点在输入框
+ * 里时一律不认——那时按 g 是在打字。后台 `G Q` 那一套是同一个约定。
+ */
+function parseSequence(shortcut: string): [string, string] | null {
+  const parts = shortcut.toLowerCase().split(' ')
+  if (parts.length !== 2) return null
+  const first = codeOf(parts[0])
+  const second = codeOf(parts[1])
+  return first && second ? [first, second] : null
+}
+
+/** 序列键第二下要在第一下之后这么久之内。 */
+export const SEQUENCE_MS = 1000
+
+/** 焦点在能打字的地方：输入框、文本域、下拉、可编辑区域。 */
+export function isTypingTarget(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null
+  if (!el || typeof el.tagName !== 'string') return false
+  return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable
 }
 
 function matches(chord: Chord, event: KeyboardEvent): boolean {
@@ -81,8 +110,33 @@ export function runFrameKey(id: string): boolean {
 /** 挂在 window 上的那一个监听；返回撤掉它的函数。 */
 export function installShortcuts(router: Router): () => void {
   shortcutsRouter = router
+  // 序列键按了第一下：记下是哪个键、什么时候按的。
+  let pending: { code: string; at: number } | null = null
+  const onSequence = (event: KeyboardEvent): boolean => {
+    if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey || isTypingTarget(event.target)) {
+      pending = null
+      return false
+    }
+    const sequences = activeCommands.value.flatMap((candidate) => {
+      const seq = candidate.shortcut ? parseSequence(candidate.shortcut) : null
+      return seq && !candidate.disabled ? [{ command: candidate, seq }] : []
+    })
+    if (pending && event.timeStamp - pending.at <= SEQUENCE_MS) {
+      const first = pending.code
+      pending = null
+      const hit = sequences.find(({ seq }) => seq[0] === first && seq[1] === event.code)
+      if (hit) {
+        event.preventDefault()
+        runCommand(hit.command, router)
+        return true
+      }
+    }
+    pending = sequences.some(({ seq }) => seq[0] === event.code) ? { code: event.code, at: event.timeStamp } : null
+    return false
+  }
   const onKeydown = (event: KeyboardEvent) => {
     if (event.defaultPrevented || event.repeat) return
+    if (onSequence(event)) return
     const command = activeCommands.value.find((candidate) => {
       const chord = candidate.shortcut ? parse(candidate.shortcut) : null
       return chord !== null && matches(chord, event)

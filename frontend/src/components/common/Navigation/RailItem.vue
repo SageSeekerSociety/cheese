@@ -37,14 +37,15 @@
     <AdaptiveMenu v-if="menu.length" v-model="menuOpen" :actions="menu" :point="menuPoint" :title="item.title">
       <template #activator />
     </AdaptiveMenu>
-    <!-- Discord-style hover flyout: name + ⌘N quick-switch key -->
+    <!-- Discord-style hover flyout: name + quick-switch key (G N in a browser, Cmd N in the desktop app) -->
     <!-- 右键菜单开着时让开：两个浮层都贴在这一格右边，提示会压住菜单的上沿。 -->
     <v-tooltip v-model="flyoutOpen" activator="parent" location="end" content-class="rail-flyout" :disabled="menuOpen">
       <div class="rail-flyout__inner">
         <span class="rail-flyout__name">{{ item.title }}</span>
         <template v-if="item.shortcut">
-          <kbd class="rail-flyout__kbd">⌘</kbd>
-          <kbd class="rail-flyout__kbd">{{ item.shortcut }}</kbd>
+          <kbd v-for="key in railShortcut(item.shortcut, inDesktopApp()).keys" :key="key" class="rail-flyout__kbd">{{
+            key
+          }}</kbd>
         </template>
       </div>
     </v-tooltip>
@@ -81,7 +82,9 @@ import { useRouter } from 'vue-router'
 import { useEventListener } from '@vueuse/core'
 
 import { useNavigation } from '@/composables/useNavigation'
+import { inDesktopApp } from '@/lib/desktopApp'
 
+import { railShortcut } from './destinations'
 import { NavGenericItem } from './types'
 
 import CheeseLogo from '@/assets/logo-plain.svg?component'
