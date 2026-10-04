@@ -556,9 +556,11 @@ function read(file: LibraryFile) {
   outline-offset: -8px;
   transition: outline-color var(--dur-quick) var(--ease-standard);
 }
+
 .library--dragging {
   outline-color: var(--accent);
 }
+
 .library__list {
   display: flex;
   flex: 1 1 auto;
@@ -568,19 +570,23 @@ function read(file: LibraryFile) {
   padding: 20px 24px 32px;
   overflow-y: auto;
 }
+
 .library__intro {
   margin: 0;
 }
+
 .library__tools {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 12px;
 }
+
 .library__search {
   flex: 1 1 240px;
   min-width: 0;
 }
+
 /* 一行排不下就换行，不横着滑：手机上六个筛选横滑时右边那几个被切在屏幕外，又没
    有滚动条告诉你还有，看上去像少了两个筛选。折成两行多占一行列表的高度，但六个
    都在。 */
@@ -590,35 +596,40 @@ function read(file: LibraryFile) {
   gap: 8px;
   max-width: 100%;
 }
+
 .library__kind {
-  flex: none;
   height: 28px;
   padding: 0 12px;
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-pill);
-  background: none;
   color: var(--muted);
   cursor: pointer;
+  background: none;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-pill);
+  flex: none;
   transition:
     background-color var(--dur-quick) var(--ease-standard),
     color var(--dur-quick) var(--ease-standard);
 }
+
 .library__kind:hover {
   background: var(--fill);
 }
+
 .library__kind[aria-pressed='true'] {
-  border-color: var(--ink);
-  background: var(--ink);
   color: var(--surface);
+  background: var(--ink);
+  border-color: var(--ink);
 }
+
 .library__rows {
   display: flex;
+  padding: 0;
+  margin: 0;
+  list-style: none;
   flex-direction: column;
   gap: 2px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
 }
+
 .library-row {
   display: flex;
   align-items: center;
@@ -627,44 +638,52 @@ function read(file: LibraryFile) {
   border-radius: var(--radius-md);
   transition: background-color var(--dur-quick) var(--ease-standard);
 }
+
 .library-row:hover {
   background: var(--fill);
 }
+
 .library-row--on {
   background: var(--line-2);
 }
+
 .library-row__open {
   display: flex;
-  flex: 1 1 auto;
-  align-items: center;
-  gap: 12px;
   min-width: 0;
   min-height: 56px;
   padding: 8px 12px;
-  border: 0;
-  background: none;
   color: inherit;
   text-align: left;
   cursor: pointer;
+  background: none;
+  border: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 12px;
 }
+
 .library-row__icon {
   flex: none;
   color: var(--muted);
 }
+
 .library-row__id {
   display: flex;
   flex-direction: column;
   gap: 2px;
   min-width: 0;
 }
+
 .library-row__name {
   color: var(--ink);
   overflow-wrap: anywhere;
 }
+
 .library__empty {
   padding: 32px 0;
   text-align: center;
 }
+
 .library__detail {
   display: flex;
   flex: none;
@@ -674,11 +693,13 @@ function read(file: LibraryFile) {
   min-height: 0;
   border-left: 1px solid var(--line);
 }
+
 .library__detail--phone {
   flex: 1 1 auto;
   width: auto;
   border-left: 0;
 }
+
 .library__detail-head {
   display: flex;
   flex: none;
@@ -687,36 +708,70 @@ function read(file: LibraryFile) {
   padding: 16px 20px 12px;
   border-bottom: 1px solid var(--line);
 }
+
 .library__detail--phone .library__detail-head {
   padding: 10px 16px;
 }
+
 .library__detail-name {
   margin: 0;
   overflow-wrap: anywhere;
 }
+
 .library__detail-meta {
   margin: 0;
   overflow-wrap: anywhere;
 }
+
 .library__detail-meta a {
   color: var(--accent-ink);
   text-decoration: none;
 }
+
 .library__detail-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
   margin: 4px 0 0 -8px;
 }
+
 .library__preview {
   flex: 1 1 auto;
   min-height: 0;
   background: var(--canvas);
 }
+
 .library__bar {
   flex: none;
   padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
   border-top: 1px solid var(--line);
   background: var(--surface);
+}
+
+/* 手指点得中（设计系统 §10.1）。筛选是一排 28px 的小药丸、搜索框只有 40px 高，
+   触屏上都够不到 44。撑开能点的范围、把搜索框抬到 44 高；药丸之间因此先拉开，
+   撑开的部分互不盖住，一次点中一个筛选。 */
+@media (pointer: coarse) {
+  .library__kinds {
+    gap: 16px;
+  }
+
+  .library__kind {
+    position: relative;
+  }
+
+  .library__kind::before {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+    content: '';
+    transform: translate(-50%, -50%);
+  }
+
+  .library__search :deep(.v-field) {
+    min-height: 44px;
+  }
 }
 </style>
