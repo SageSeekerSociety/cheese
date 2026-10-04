@@ -45,7 +45,7 @@ async function routerStoppedOnTopic() {
   return router
 }
 
-function renderBar(b: Block, router?: ReturnType<typeof createRouter>) {
+function renderBar(b: Block, router?: ReturnType<typeof createRouter>, extra: Record<string, unknown> = {}) {
   const vuetify = createVuetify({ components, directives })
   const plugins = router ? [vuetify, router] : [vuetify]
   return render(RoomHoverBar, {
@@ -57,6 +57,7 @@ function renderBar(b: Block, router?: ReturnType<typeof createRouter>) {
       isAgent: false,
       pickerOpen: false,
       editable: false,
+      ...extra,
     },
     global: { plugins },
   })
@@ -124,5 +125,30 @@ describe('消息的悬停条：复制链接', () => {
     expect(linkButton(container)).toBeNull()
     // 其余的按钮照旧在（复制的正文那颗还在）。
     expect(container.querySelector('button[title="复制"]')).toBeTruthy()
+  })
+})
+
+// 右键一条消息：时间线把鼠标位置交给悬停条，悬停条在那一点打开这一条的 ⋯。
+describe('右键一条消息', () => {
+  it('在鼠标那一点打开这一条的操作', async () => {
+    vi.stubGlobal('visualViewport', {
+      width: 1280,
+      height: 800,
+      offsetLeft: 0,
+      offsetTop: 0,
+      scale: 1,
+      addEventListener() {},
+      removeEventListener() {},
+    })
+    vi.stubGlobal('devicePixelRatio', 1)
+    ;(window as unknown as { innerWidth: number }).innerWidth = 1280
+    const { rerender } = renderBar(block('m1'))
+    await rerender({ menuAt: { x: 30, y: 60 } })
+    await flush()
+    const items = Array.from(document.querySelectorAll('.v-overlay .v-list-item-title')).map((el) =>
+      el.textContent?.trim()
+    )
+    expect(items).toContain('回复')
+    expect(items).toContain('复制')
   })
 })

@@ -1053,7 +1053,8 @@
       "add": "加入",
       "readOnly": "只有拥有者和管理员能修改成员",
       "listSeparator": "、",
-      "mentionLoadFailed": "成员名单加载失败，{'@'} 补全可能不全"
+      "mentionLoadFailed": "成员名单加载失败，{'@'} 补全可能不全",
+      "setRole": "设为{role}"
     },
     "mail": {
       "noSubject": "（无主题）",

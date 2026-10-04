@@ -4,23 +4,50 @@
 // 和 `KnowledgeGrid` 是同一份数据的另一种画法，区别只在这两处：这里多一栏
 // 「操作」（看 / 打开 / 删），标签折到两个；卡上那颗删除键没有，这里按
 // `canEditKnowledge` 给 —— 也就是「是不是自己放上去的」。
+import type { MenuAction } from '@/components/common/menuAction'
 import type { Knowledge } from '@/types'
 
 import { getAvatarUrl } from '@/utils/materials'
 
+import { useRowMenu } from '@/composables/useRowMenu'
+
 import BaseButton from '@/components/base/BaseButton.vue'
+import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import { t } from '@/i18n'
 import { canEditKnowledge, formatDay, resourceTypeIcon, resourceTypeName } from '@/lib/knowledgeFormat'
 
 defineOptions({ name: 'KnowledgeTable' })
 
-defineProps<{ items: Knowledge[]; ownerId?: number }>()
+const props = defineProps<{ items: Knowledge[]; ownerId?: number }>()
 
 const emit = defineEmits<{
   open: [resource: Knowledge]
   openLink: [resource: Knowledge]
   delete: [resource: Knowledge]
 }>()
+
+// 右键一行：「操作」那一栏的三颗（看、新标签打开、删），弹在鼠标那一点上。
+const rowMenu = useRowMenu<number>()
+function resourceActions(resource: Knowledge): MenuAction[] {
+  const actions: MenuAction[] = [
+    { key: 'open', label: t('teams.knowledge.openResource'), icon: 'mdi-eye', onSelect: () => emit('open', resource) },
+    {
+      key: 'openLink',
+      label: t('navigation.palette.newTab'),
+      icon: 'mdi-open-in-new',
+      onSelect: () => emit('openLink', resource),
+    },
+  ]
+  if (canEditKnowledge(resource, props.ownerId))
+    actions.push({
+      key: 'delete',
+      label: t('teams.knowledge.deleteResource'),
+      icon: 'mdi-delete',
+      danger: true,
+      onSelect: () => emit('delete', resource),
+    })
+  return actions
+}
 </script>
 
 <template>
@@ -36,7 +63,13 @@ const emit = defineEmits<{
       </tr>
     </thead>
     <tbody>
-      <tr v-for="resource in items" :key="resource.id" class="resource-row" @click="emit('open', resource)">
+      <tr
+        v-for="resource in items"
+        :key="resource.id"
+        class="resource-row"
+        @click="emit('open', resource)"
+        @contextmenu="rowMenu.open(resource.id, $event)"
+      >
         <td>
           <div class="d-flex align-center">
             <v-icon
@@ -82,6 +115,9 @@ const emit = defineEmits<{
           <!-- ga-4: three icon buttons side by side. On a coarse pointer each
                one widens its hit area to 44x44, so they need 16px between them
                or they cover each other (see the ::before in BaseButton). -->
+          <AdaptiveMenu v-bind="rowMenu.bind(resource.id)" :actions="resourceActions(resource)" :title="resource.name">
+            <template #activator />
+          </AdaptiveMenu>
           <div class="d-flex ga-4">
             <BaseButton
               kind="ghost"

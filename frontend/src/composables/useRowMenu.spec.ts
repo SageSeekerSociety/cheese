@@ -48,6 +48,7 @@ function mount(onSelect: (row: string) => void) {
         <ul>
           <li v-for="row in rows" :key="row" @contextmenu="rowMenu.open(row, $event)">
             <span>{{ row }}</span>
+            <a :href="'/rows/' + row">{{ row }} 的链接</a>
             <AdaptiveMenu v-bind="rowMenu.bind(row)" :actions="actions(row)">
               <template #activator="{ props }">
                 <button type="button" v-bind="props">{{ row }} 的操作</button>
@@ -68,6 +69,24 @@ describe('useRowMenu', () => {
     await fireEvent.click(await screen.findByText('打开 乙'))
     expect(onSelect).toHaveBeenCalledWith('乙')
     expect(screen.queryByText('打开 甲')).toBeNull()
+  })
+
+  it('右键在链接上、或者正选着字：留给浏览器自己的菜单', async () => {
+    mount(vi.fn())
+    const onLink = new MouseEvent('contextmenu', { bubbles: true, cancelable: true })
+    screen.getByText('乙 的链接').dispatchEvent(onLink)
+    expect(onLink.defaultPrevented).toBe(false)
+
+    const range = document.createRange()
+    range.selectNodeContents(screen.getByText('乙'))
+    window.getSelection()!.removeAllRanges()
+    window.getSelection()!.addRange(range)
+    const withSelection = new MouseEvent('contextmenu', { bubbles: true, cancelable: true })
+    screen.getByText('乙').dispatchEvent(withSelection)
+    expect(withSelection.defaultPrevented).toBe(false)
+    window.getSelection()!.removeAllRanges()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(screen.queryByText('打开 乙')).toBeNull()
   })
 
   it('⋯ 照旧点得开', async () => {

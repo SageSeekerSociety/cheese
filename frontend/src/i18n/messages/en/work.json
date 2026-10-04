@@ -1053,7 +1053,8 @@
       "add": "Add",
       "readOnly": "Only owners and admins can change members",
       "listSeparator": ", ",
-      "mentionLoadFailed": "Couldn't load the member list, so {'@'} suggestions may be incomplete"
+      "mentionLoadFailed": "Couldn't load the member list, so {'@'} suggestions may be incomplete",
+      "setRole": "Make {role}"
     },
     "mail": {
       "noSubject": "(No subject)",

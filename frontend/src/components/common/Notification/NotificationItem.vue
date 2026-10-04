@@ -4,8 +4,12 @@
     :active="!notification.read"
     :class="{ 'unread-notification': !notification.read }"
     class="notification-item py-2 px-4 transition-fast-in-fast-out"
+    @contextmenu="rowMenu.open('item', $event)"
     @click="navigateToTarget"
   >
+    <AdaptiveMenu v-bind="rowMenu.bind('item')" :actions="itemActions">
+      <template #activator />
+    </AdaptiveMenu>
     <div class="d-flex align-start w-100">
       <notification-avatar :notification="notification" class="me-3 mt-1" />
 
@@ -66,7 +70,11 @@
     :active="!notification.read"
     :class="{ 'unread-notification': !notification.read }"
     class="notification-item py-2 px-4 transition-fast-in-fast-out"
+    @contextmenu="rowMenu.open('item', $event)"
   >
+    <AdaptiveMenu v-bind="rowMenu.bind('item')" :actions="itemActions">
+      <template #activator />
+    </AdaptiveMenu>
     <div class="d-flex align-start w-100">
       <notification-avatar :notification="notification" class="me-3 mt-1" />
 
@@ -137,6 +145,7 @@
 
 <script setup lang="ts">
 import type { Component } from 'vue'
+import type { MenuAction } from '@/components/common/menuAction'
 import type { Notification } from '@/network/api/notifications/types'
 import type { RenderedNotificationContent } from './renders/NotificationRenderUtils'
 
@@ -147,10 +156,13 @@ import { toast } from 'vuetify-sonner'
 
 import { useFormattedTime } from '@/utils/dateTime'
 
+import { useRowMenu } from '@/composables/useRowMenu'
+
 import NotificationAvatar from './NotificationAvatar.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
+import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import { getNotificationRenderer } from '@/services/notification/registry'
 
 const props = defineProps<{
@@ -178,6 +190,35 @@ const updateContentCache = () => {
 }
 
 const renderedActions = computed(() => contentCache.value?.actions || [])
+
+// 右键一条通知：行里那几颗（这一类自己的，或标为已读、删除）收成一份，弹在鼠标那一点上。
+const rowMenu = useRowMenu<'item'>()
+const itemActions = computed<MenuAction[]>(() => {
+  if (renderedActions.value.length > 0)
+    return renderedActions.value.map((action, index) => ({
+      key: `action.${index}`,
+      label: action.text,
+      icon: action.color === 'error' ? 'mdi-close' : 'mdi-check',
+      danger: action.color === 'error',
+      onSelect: () => void action.handler(),
+    }))
+  const actions: MenuAction[] = []
+  if (!props.notification.read)
+    actions.push({
+      key: 'read',
+      label: t('notifications.common.markAsRead'),
+      icon: 'mdi-check-all',
+      onSelect: () => props.onMarkAsRead(props.notification.id),
+    })
+  actions.push({
+    key: 'delete',
+    label: t('notifications.common.delete'),
+    icon: 'mdi-delete-outline',
+    danger: true,
+    onSelect: () => (confirmingDelete.value = true),
+  })
+  return actions
+})
 
 const hasRouterLink = computed(() => {
   return !!contentCache.value?.routerLink
