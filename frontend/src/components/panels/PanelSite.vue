@@ -9,7 +9,7 @@ import { getTranscript, SITE_PAGE_SIZE } from '../../api'
 import { useSiteClamp } from '../../composables/useSiteClamp'
 import { useStickToBottom } from '../../composables/useStickToBottom'
 import { isAgentBlock, isAgentHandle } from '../../lib/authorship'
-import { scrollTopAfterPrepend, shouldLoadOlder } from '../../lib/blockPaging'
+import { capWindow, scrollTopAfterPrepend, shouldLoadNewer, shouldLoadOlder } from '../../lib/blockPaging'
 import {
   argDisplay,
   countLines,
@@ -83,6 +83,11 @@ const errorMsg = ref<string | null>(null)
 const transcript = ref<Block[]>([])
 // 更早的现场还在库里没拉。和对话栏一样，只在读的人自己往上翻时才拉。
 const hasOlder = ref(false)
+// 手上这一窗涨过上限以后，**最新**的那一截被裁在了窗口下方（见 capSite）。对话栏
+// 把裁下来的那一截收在 `newestHeld` 里、靠按游标取回来的下一页接上去；现场没有
+// 「取更新的」那一路，所以这里只记一个事实：窗口下面还有、而且中间是断的。读的人
+// 回到末尾时重读一页最新的，窗口就重新连上了。
+const hasNewer = ref(false)
 const loadingOlder = ref(false)
 // 每一轮从什么时候开始（毫秒），读到的每一页都带着它那几轮的。组头的用时从这里算起。
 const turnStarts = ref<Record<string, number>>({})
@@ -123,6 +128,11 @@ async function loadOlder() {
     await nextTick()
     const sc = scrollRef.value
     if (sc && before) sc.scrollTop = scrollTopAfterPrepend(before, sc.scrollHeight)
+    // Trim AFTER the compensation, never before: the rows this drops are below the
+    // viewport, so removing them moves nothing on screen, but they shrink
+    // scrollHeight and compensating with a scrollHeight that already excludes them
+    // pulls the reader up by their height on every page. See capWindow.
+    capSite()
   } catch (e) {
     errorMsg.value = e instanceof Error ? e.message : t('work.room.site.loadFailed')
   } finally {
@@ -130,11 +140,36 @@ async function loadOlder() {
   }
 }
 
+/**
+ * 手上这一窗涨过上限时，把**最新**的那一截从屏上挪走（`capWindow` 保留最旧的
+ * `MAX_WINDOW` 条，和对话栏同一个数、同一段理由）。挪走而不是删数据：读的人正往上
+ * 翻，这一截本来就在视口下方；而且他是往上翻的，能继续往前翻的前提恰恰是**最旧的
+ * 那一头不动**——从那一头裁，就等于把他刚拉上来的页当场删掉，翻到哪儿删到哪儿。见
+ * components/room/composables/useTimeline 的 `capNewest`。
+ *
+ * 裁过之后窗口最尾就不再是最新的一条：下面还有，中间还是断的。`hasNewer` 记下这件
+ * 事——现场没有「取更新的」那一路，不能像对话栏那样按游标把它接回来，只能在读的人
+ * 回到末尾时重读一页最新的。
+ */
+function capSite(): void {
+  const capped = capWindow(transcript.value)
+  if (!capped) return
+  transcript.value = capped.keep
+  hasNewer.value = true
+}
+
 // 和对话栏同一个判据：离顶还有一屏就开始拉上一页，已经有的人不用等。
 function onSiteScroll() {
   const el = scrollRef.value
-  if (el && shouldLoadOlder(el.scrollTop, { hasMore: hasOlder.value, loading: loadingOlder.value })) {
+  if (!el) return
+  if (shouldLoadOlder(el.scrollTop, { hasMore: hasOlder.value, loading: loadingOlder.value })) {
     void loadOlder()
+  }
+  // 窗口被裁过、读的人又滚回了末尾：重读一页最新的把它接上（`load` 见 hasNewer 时
+  // 会就地换成最新的一页，而不是往旧窗口上拼）。
+  const fromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+  if (shouldLoadNewer(fromBottom, { hasNewer: hasNewer.value, loading: loading.value })) {
+    void load()
   }
 }
 // The scroll container, so the timeline can open on its newest entry the way a
@@ -222,8 +257,13 @@ async function load() {
     loadedFor = author
     noteAgents(tx.data)
     noteStarts(tx.turn_starts)
-    transcript.value = mergeSite(tx.data, transcript.value, switched)
-    if (switched || !quiet) hasOlder.value = tx.has_more === true
+    // 窗口下面被裁过、读的人还在历史中间：把最新的一页拼上去，会在两段之间留一个
+    // 从没取过的洞。这时什么也别动——他回到末尾时，那次 load 会重新接上。
+    if (!(hasNewer.value && !follow)) {
+      transcript.value = mergeSite(tx.data, transcript.value, switched)
+      hasNewer.value = false
+      if (switched || !quiet) hasOlder.value = tx.has_more === true
+    }
     // Follow the tail on every open of a topic's 现场 — that is what "open on
     // the newest" means. 换视角也是「打开这个人的现场」，同样停在最新的那一条。
     if (follow) scrollSiteToTail()
@@ -246,6 +286,14 @@ function mergeSite(page: Block[], held: Block[], switched = false): Block[] {
   const ids = new Set(page.map((b) => b.id))
   const first = Date.parse(page[0].created_at)
   const last = Date.parse(page[page.length - 1].created_at)
+  // 窗口被裁过：手上这窗最尾的一条已经远远老于这一页最头的一条，两边也没有一条共
+  // 用。说明它们之间那几页是被裁掉的、不是取过的——拼起来会在中间留一个洞。这时只
+  // 留新读的这一页（同 blockPaging 的 mergeRefreshedTail：两段接不上就丢掉旧的那一
+  // 半）。`switched` 那一路本来就不留旧的一半，不必再判。
+  const overlaps = held.some((b) => ids.has(b.id))
+  if (!switched && held.length > 0 && !overlaps && Date.parse(held[held.length - 1].created_at) < first) {
+    return [...page, ...held.filter((b) => !ids.has(b.id) && Date.parse(b.created_at) >= last)]
+  }
   const older = switched ? [] : held.filter((b) => !ids.has(b.id) && Date.parse(b.created_at) < first)
   const newer = held.filter((b) => !ids.has(b.id) && Date.parse(b.created_at) >= last)
   return [...older, ...page, ...newer]
@@ -266,6 +314,12 @@ function receive(block: Block): void {
     const next = transcript.value.slice()
     next[at] = block
     transcript.value = next
+    return
+  }
+  // 窗口被裁过：这一行落在窗口下面那一段里，接上去中间就是断的。读的人已经回到末尾
+  // 的话，重读一页最新的把窗口接上；否则放着，等他回来。
+  if (hasNewer.value) {
+    if (atTail()) void load()
     return
   }
   const follow = atTail()
