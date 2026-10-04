@@ -63,7 +63,7 @@ def _room(client, project_id: str, title: str = "做一个东西") -> str:
         async with client.test_factory() as session:
             room = await session.get(Topic, uuid.UUID(room_id))
             await AgentSessionService(session).remember_place(
-                topic_id=room.id,
+                conversation_id=room.id,
                 agent_handle="cheese",
                 work_lease={"kind": "device"},
                 runtime_location={

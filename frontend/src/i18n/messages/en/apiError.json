@@ -915,7 +915,6 @@
   "fileOverLimit": "The file is larger than {mb} MB and can't be processed",
   "artifactKindUnsupported": "Unsupported type {kind} (available: {allowed})",
   "artifactTooLarge": "The artifact is too large (limit {mb} MB)",
-  "noteTooLong": "The note is too long ({length} characters, limit {limit}). Put longer material in the living doc, where it can be read.",
   "askCheeseDocsUnreadable": "Ask Cheese can't read the docs right now. Try again later.",
   "askCheeseNotOpen": "Ask Cheese isn't open yet. Try again later.",
   "askCheeseBusy": "A lot of people are asking right now. Try again later.",

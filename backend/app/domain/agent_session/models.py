@@ -48,6 +48,10 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.core.db import Base
 from app.domain.common import Timestamps, UuidPk
 
+# The registry `conversation_id` points at: mapped wherever a session is, so the
+# foreign key resolves in a process that never imports `app.models`.
+from app.domain.conversation.models import Conversation  # noqa: F401
+
 
 @dataclass(frozen=True, slots=True)
 class SessionPlace:

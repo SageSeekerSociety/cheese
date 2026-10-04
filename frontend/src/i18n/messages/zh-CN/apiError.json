@@ -915,7 +915,6 @@
   "fileOverLimit": "文件超过 {mb}MB，处理不了",
   "artifactKindUnsupported": "暂不支持的类型 {kind}（可选：{allowed}）",
   "artifactTooLarge": "产物太大（上限 {mb}MB）",
-  "noteTooLong": "留话内容太长（{length} 字符，上限 {limit}）。长的东西写进实况文档，那边读得到。",
   "askCheeseDocsUnreadable": "问芝士暂时读不到文档，稍后再试。",
   "askCheeseNotOpen": "问芝士暂未开放，稍后再试。",
   "askCheeseBusy": "现在问的人有点多，稍后再试。",

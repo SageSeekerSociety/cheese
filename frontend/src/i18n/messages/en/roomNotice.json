@@ -329,7 +329,6 @@
   "taskDispatched": "Sent out a task: {title}",
   "taskCreated": "{actor} created the task “{title}”, owned by {owner}",
   "taskStarted": "{actor} started the task “{title}”",
-  "taskProposed": "{actor} proposes a task: “{title}”",
   "taskCompleted": "The task “{title}” is done: {conclusion}",
   "taskClosed": "The task “{title}” was closed",
   "threadArchivedWithRoom": "Archived along with its parent “{room}”",

@@ -71,7 +71,7 @@ def ref(project, topic, agent=AGENT):
 async def place_session(db, topic, resource, target, *, agent=AGENT, machine="center"):
     """Put one session of this room on a machine, hands and process both."""
     await AgentSessionService(db).remember_place(
-        topic_id=topic,
+        conversation_id=topic,
         agent_handle=agent,
         work_lease=target,
         runtime_location={
@@ -669,7 +669,7 @@ async def test_a_teammate_that_rented_no_hands_is_not_an_executor(
         stored = await db.get(Topic, topic)
         resource = stored.resource_id or topic
         await AgentSessionService(db).remember_place(
-            topic_id=topic,
+            conversation_id=topic,
             agent_handle="pi-teammate",
             harness="pi",
             work_lease=None,
