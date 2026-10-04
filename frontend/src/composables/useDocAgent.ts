@@ -22,6 +22,7 @@ import type { DocEdit } from '../lib/docEdits'
 
 import { computed, onScopeDispose, ref, shallowRef } from 'vue'
 
+import { StreamCut } from '../api/eventStream'
 import { isChinese } from '../lib/docAgent'
 import { anchorComment } from '../lib/docCommentSpots'
 import { editMarks, nearestText, setEditMarks } from '../lib/docEditMarks'
@@ -57,6 +58,8 @@ export function useDocAgent(options: DocAgentOptions) {
   /** 这一次是要它改，还是只问。 */
   const kind = ref<'edit' | 'ask'>('ask')
   const answer = ref('')
+  /** 回答被人停下了：`answer` 是停下时写出的部分。 */
+  const stopped = ref(false)
   const edits = shallowRef<DocEdit[]>([])
   const busy = ref(false)
   /** 输入框里给哪些常用的说法。 */
@@ -125,6 +128,7 @@ export function useDocAgent(options: DocAgentOptions) {
     abort = null
     phase.value = 'idle'
     answer.value = ''
+    stopped.value = false
     edits.value = []
     busy.value = false
     conversation = null
@@ -182,6 +186,7 @@ export function useDocAgent(options: DocAgentOptions) {
     kind.value = asked
     question = label
     answer.value = ''
+    stopped.value = false
     phase.value = 'working'
     const range = target()
     if (range && asked === 'edit')
@@ -193,17 +198,18 @@ export function useDocAgent(options: DocAgentOptions) {
       conversation: (value) => mine() && (conversation = value),
       queued: () => mine() && (phase.value = 'queued'),
       working: () => mine() && (phase.value = 'working'),
-      delta: (text) => mine() && (answer.value += text),
+      delta: (text, at) => mine() && (answer.value = answer.value.slice(0, at ?? answer.value.length) + text),
       done: (result) => {
         if (!mine()) return
         edits.value = result.edits
         if (result.edits.length) {
           phase.value = 'done'
           arrive(id, result.edits)
-        } else if (result.stopped) {
+        } else if (result.stopped && !result.answer) {
           backToBox()
         } else {
           answer.value = result.answer
+          stopped.value = result.stopped
           phase.value = 'answered'
           const now = target()
           if (now) paint({ target: { ...now, mode: 'select', label: '' } })
@@ -222,10 +228,12 @@ export function useDocAgent(options: DocAgentOptions) {
       await ask({ ...request, ...followUp }, listener)
     } catch (error) {
       if (!mine() || controller.signal.aborted) return
-      options.onError(editFailure(error))
+      options.onError(
+        error instanceof StreamCut ? t('work.room.docAgent.failed', { agent: options.agentName() }) : editFailure(error)
+      )
       backToBox()
     } finally {
-      // 流断了却没有结果：多半是连接断了。改了什么，正文会自己到。
+      // 读不到结果就回到输入框。改了什么，正文会自己到。
       if (mine() && editing.value) backToBox()
     }
   }
@@ -311,6 +319,7 @@ export function useDocAgent(options: DocAgentOptions) {
     run,
     say,
     stop,
+    stopped,
     undo,
     redo,
     toComment,

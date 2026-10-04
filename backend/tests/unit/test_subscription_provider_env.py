@@ -104,7 +104,11 @@ def test_no_credential_file_is_ever_planted_in_the_box(tmp_path):
 
     holes = launch_holes(state="$HOME/.cheese/harness/p/r/claude-code/x")
     subprocess.run(
-        ["sh", "-c", "set -e\n" + holes.configure],
+        ["sh"],
+        # On stdin, the way the device gets it (`_ship_launcher` writes a file):
+        # the skills alone are past what one argv string may hold.
+        input="set -e\n" + holes.configure,
+        text=True,
         env={"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"},
         check=True,
         capture_output=True,

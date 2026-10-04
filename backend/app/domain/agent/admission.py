@@ -222,6 +222,14 @@ if redis.call('GET', KEYS[1]) == ARGV[1] then
 end
 return 0
 """
+# KEYS: holders. ARGV: ticket, lease ms. A place a turn already had, taken back
+# whether or not it lapsed meanwhile.
+_TAKE_BACK = """
+local t = redis.call('TIME')
+local now = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
+redis.call('ZADD', KEYS[1], now + tonumber(ARGV[2]), ARGV[1])
+return 1
+"""
 _DROP_HOLD = """
 if redis.call('GET', KEYS[1]) == ARGV[1] then
   return redis.call('DEL', KEYS[1])
@@ -320,6 +328,52 @@ class Slot:
                 await redis.eval(_DROP_HOLD, 1, *self._hold)  # type: ignore[misc]
         except Exception:  # noqa: BLE001 — what is not released lapses by itself
             logger.warning("releasing slot %s failed", self._ticket, exc_info=True)
+
+    def leave(self) -> None:
+        """Stop renewing the slot without letting it go: another process is
+        taking the turn over and holds it from here (``adopt``)."""
+        if self._renewing is not None:
+            self._renewing.cancel()
+            self._renewing = None
+        self._redis = None
+
+    def held(self) -> "Held":
+        """The slot as it is written down, for a process that takes the turn
+        over (``adopt``)."""
+        return Held(
+            self._ticket,
+            self._pool.key if self._pool is not None else None,
+            self._hold[0] if self._hold is not None else None,
+            self._hold[1] if self._hold is not None else None,
+        )
+
+
+@dataclass(frozen=True)
+class Held:
+    """A slot as another process finds it: its ticket, its place in a pool and
+    its hold, by key."""
+
+    ticket: str
+    pool: str | None = None
+    hold_key: str | None = None
+    hold_value: str | None = None
+
+
+async def adopt(redis: Redis, held: Held) -> Slot | None:
+    """Go on holding a slot another process took for a turn that is still
+    running; None when its hold went to another turn meanwhile. A place in the
+    pool that lapsed is taken back: the turn was running all along."""
+    hold = None
+    if held.hold_key is not None and held.hold_value is not None:
+        hold = (held.hold_key, held.hold_value)
+        kept = await redis.eval(_RENEW_HOLD, 1, *hold, _ms(LEASE_S))  # type: ignore[misc]
+        if not kept and not await redis.set(*hold, nx=True, px=_ms(LEASE_S)):
+            return None
+    pool = None
+    if held.pool is not None:
+        pool = Pool(held.pool, 0)
+        await redis.eval(_TAKE_BACK, 1, pool.keys()[0], held.ticket, _ms(LEASE_S))  # type: ignore[misc]
+    return Slot(redis, held.ticket, pool, hold)
 
 
 async def enter(

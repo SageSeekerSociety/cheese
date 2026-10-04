@@ -213,8 +213,6 @@ async def acquire_session_work_lease(
     claims = scoped_token_claims(token)
     if claims is None:
         raise AuthenticationRequiredError("A session execution credential is required")
-    from app.core.errors import GatewayTimeoutError
-
     try:
         # body.timeout caps how long the caller waits for a machine being
         # prepared (wait_s). It is not the time to answer: a session that will
@@ -233,8 +231,13 @@ async def acquire_session_work_lease(
                     gone=request.is_disconnected,
                 )
             )
-    except TimeoutError as exc:
-        raise GatewayTimeoutError(say("workComputerPreparing")) from exc
+    except TimeoutError:
+        # One step of preparing the machine outlasted this request. That is
+        # still a machine being prepared, so it answers as one: the session's
+        # client asks again until its own deadline (`executor_transport.acquire`).
+        # A 504 here reached the agent as a failed tool call it read as final,
+        # and it slept instead of letting the next call wait.
+        return ok({"unavailable": str(say("workComputerPreparing")), "preparing": True})
 
 
 @router.put("/{topic_id}/compute-profile")

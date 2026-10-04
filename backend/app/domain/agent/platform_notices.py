@@ -51,6 +51,8 @@ WHO_CHEESE: Final = "cheese"
 WHO_HUMAN: Final = "human"
 
 # --- event_type: 类别码 ------------------------------------------------------
+#: 一条答案等不到它提问的那段对话：那段对话已经结束，平台不再重试。
+EVENT_ASK_ANSWER_UNDELIVERED: Final = "ask_answer_undelivered"
 #: PR 的 CI 没过。
 EVENT_CI_FAILED: Final = "ci_failed"
 #: 质量闸门跑了，没通过 —— 芝士要去改代码。
@@ -154,7 +156,7 @@ EVENT_DEPENDENCY_REJECTED: Final = "dependency_rejected"
 EVENT_POLICY_PROPOSAL: Final = "policy_proposal"
 #: 到点了 —— 这一轮是这条线程自己当初请平台在这个时刻递给它的（结论 17）。
 EVENT_TIMED_DELIVERY: Final = "timed_delivery"
-#: 芝士把一次做法整理成了项目工作方法（skill），等人确认后才保存、才下发。
+#: 芝士把一次做法整理成了项目技能，等人确认后才保存、才下发。
 EVENT_SKILL_PROPOSED: Final = "skill_proposed"
 #: 芝士在某人的邮箱里写好了一封草稿；发不发由邮箱主人确认。
 EVENT_MAIL_DRAFTED: Final = "mail_drafted"
@@ -195,6 +197,7 @@ EVENT_MENTION_FUSED: Final = "mention_fused"
 #: / `host_failure` / `action` 是别处已有的，不在这里重复登记。
 EVENT_TYPES: Final = frozenset(
     {
+        EVENT_ASK_ANSWER_UNDELIVERED,
         EVENT_CI_FAILED,
         EVENT_GATE_FAILED,
         EVENT_GATE_BLOCKED,
@@ -291,6 +294,29 @@ def notice(
         **({"retryable": True} if retryable else {}),
         **notice_keys(detail=detail, detail_label=detail_label),
     }
+
+
+def ask_answer_undelivered_notice() -> tuple[str, dict]:
+    """一条答案等不到它提问的那段对话，平台不再重试了：说给房间。
+
+    ``ask_session_wait`` 等满一天就放弃投递。这句话必须说出来：答的人只会看到
+    自己的答案躺在那里没人理，而芝士的 prompt 里从来就没有它（它被挡在轮次
+    之外，正是为了让这一座的其余消息还能跑）。
+    """
+    meta = notice(
+        EVENT_ASK_ANSWER_UNDELIVERED,
+        severity=SEVERITY_WARN,
+        # 平台到头了：那段对话不会再回来，只能由人把答案重说一遍。
+        who=WHO_HUMAN,
+        detail=say("askAnswerUndeliveredDetail"),
+        detail_label=say("labelDetails"),
+    )
+    # 灰字事件 agent 一个字的 prompt 都读不到，所以这一句单独挂给它：
+    # 它需要知道那个人答过、而它从没收到。
+    meta[AGENT_NOTICE_META_KEY] = (
+        "房间里有一条答案没能送进提问时的那段对话（那段对话已经结束，不会再\n回来），平台已经停止投递：这条答案不会出现在你的任何一轮里。需要这个回答\n的话，把问题重新问一次。"
+    )
+    return say("askAnswerUndelivered"), meta
 
 
 def delivery_fallback_notice() -> tuple[str, dict]:

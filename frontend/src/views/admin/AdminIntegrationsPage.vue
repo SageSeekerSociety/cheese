@@ -4,10 +4,13 @@ import type { PlatformFeishuApp } from '@/api/feishu'
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
+import { useSaveState } from '@/composables/useSaveState'
+
 import { getPlatformFeishuApp, savePlatformFeishuApp } from '@/api/feishu'
 import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminPage from '@/components/admin/AdminPage.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
+import SaveStatus from '@/components/base/SaveStatus.vue'
 import { relTime } from '@/lib/relTime'
 
 // 管理后台的「飞书应用」（`/admin/integrations`）：平台**唯一**一处飞书应用凭据。
@@ -38,10 +41,18 @@ const loading = ref(false)
  *  它说的是「这一页没读到」，和保存失败是两件事。失败与否和原话是两件事，也得分开存：
  *  原话为空时仍要给出错态，不能因为取不到原因就当成没读到、落进正常表单。 */
 const loadError = ref<string | null>(null)
-/** 保存失败。留在页顶那条错误里，表单里的东西一个字不动。 */
-const saveError = ref('')
-const saved = ref(false)
-const saving = ref(false)
+/** 表单没填全（App ID 为空）—— 这是填写本身的问题，还没发请求。 */
+const validationError = ref('')
+/** 保存失败。就地回执，表单里的东西一个字不动。 */
+const {
+  saving,
+  saved,
+  error: saveError,
+  run,
+} = useSaveState({
+  feedback: 'inline',
+  messages: { failed: t('integrations.admin.saveFailed') },
+})
 const app = ref<PlatformFeishuApp | null>(null)
 
 const form = reactive({ app_id: '', app_secret: '', domain: 'feishu' })
@@ -81,26 +92,19 @@ async function load() {
 }
 
 async function save() {
-  saveError.value = ''
-  saved.value = false
+  validationError.value = ''
   if (!form.app_id.trim()) {
-    saveError.value = t('integrations.admin.appIdRequired')
+    validationError.value = t('integrations.admin.appIdRequired')
     return
   }
-  saving.value = true
-  try {
+  await run(async () => {
     app.value = await savePlatformFeishuApp({
       app_id: form.app_id.trim(),
       app_secret: form.app_secret,
       domain: form.domain,
     })
     form.app_secret = ''
-    saved.value = true
-  } catch (e) {
-    saveError.value = e instanceof Error ? e.message : t('integrations.admin.saveFailed')
-  } finally {
-    saving.value = false
-  }
+  })
 }
 
 onMounted(load)
@@ -145,9 +149,14 @@ onMounted(load)
             persistent-hint
           />
           <v-select v-model="form.domain" autocomplete="off" :items="domains" :label="t('integrations.admin.domain')" />
-          <p v-if="saveError" role="alert" class="afi__error t-body">{{ saveError }}</p>
+          <p v-if="validationError" role="alert" class="afi__error t-body">{{ validationError }}</p>
           <div class="afi__actions">
-            <span v-if="saved" role="status" class="t-meta c-faint">{{ t('integrations.admin.saved') }}</span>
+            <SaveStatus
+              :saving="saving"
+              :saved="saved"
+              :error="saveError"
+              :saved-text="t('integrations.admin.saved')"
+            />
             <BaseButton kind="primary" :loading="saving" :disabled="loading" @click="save">
               {{ t('integrations.admin.save') }}
             </BaseButton>

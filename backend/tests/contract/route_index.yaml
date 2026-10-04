@@ -467,6 +467,8 @@ routes:
   - {protocol: "http", method: "POST", path: "/assistant/tasks/{taskId}/conversations", auth: "assistant.task", owner: "assistant"}
   - {protocol: "http", method: "GET", path: "/assistant/conversations/{conversationId}", auth: "assistant.task", owner: "assistant"}
   - {protocol: "http", method: "POST", path: "/assistant/conversations/{conversationId}/ask", auth: "assistant.task", owner: "assistant"}
+  - {protocol: "http", method: "POST", path: "/assistant/conversations/{conversationId}/stop", auth: "assistant.task", owner: "assistant"}
+  - {protocol: "http", method: "GET", path: "/assistant/conversations/{conversationId}/answers/{work}", auth: "assistant.task", owner: "assistant"}
   # app.api.routes.attachments
   - {protocol: "http", method: "POST", path: "/attachments", auth: "legacy.answers.list_answers", owner: "attachment"}
   - {protocol: "http", method: "GET", path: "/attachments/limits", auth: "legacy.answers.list_answers", owner: "attachment"}
@@ -742,9 +744,12 @@ routes:
   # app.api.routes.project_skills
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/skills", auth: "skill.project", owner: "project.skills"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/skills", auth: "skill.project", owner: "project.skills"}
+  - {protocol: "http", method: "POST", path: "/projects/{project_id}/skills", auth: "skill.project", owner: "project.skills"}
+  - {protocol: "http", method: "POST", path: "/projects/{project_id}/skills/import-preview", auth: "skill.project", owner: "project.skills"}
   - {protocol: "http", method: "GET", path: "/skills/{skill_id}", auth: "skill.project", owner: "project.skills"}
   - {protocol: "http", method: "PATCH", path: "/skills/{skill_id}", auth: "skill.project", owner: "project.skills"}
   - {protocol: "http", method: "POST", path: "/skills/{skill_id}/confirm", auth: "skill.project", owner: "project.skills"}
+  - {protocol: "http", method: "POST", path: "/skills/{skill_id}/decline", auth: "skill.project", owner: "project.skills"}
   - {protocol: "http", method: "POST", path: "/skills/{skill_id}/revisions/{revision}/restore", auth: "skill.project", owner: "project.skills"}
   - {protocol: "http", method: "DELETE", path: "/skills/{skill_id}", auth: "skill.project", owner: "project.skills"}
   # app.api.routes.projects
@@ -1027,6 +1032,7 @@ routes:
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/webhook-token", auth: "cheese.room.gate", owner: "webhook"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/weekly", auth: "actor.topic", owner: "topic"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/read", auth: "actor.topic", owner: "topic"}
+  - {protocol: "http", method: "PUT", path: "/topics/{topic_id}/notify-level", auth: "actor.topic", owner: "topic"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/archive", auth: "topic.archive", owner: "topic"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/cleanup", auth: "actor.topic.enforced", owner: "topic"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/unarchive", auth: "topic.archive", owner: "topic"}
@@ -1045,6 +1051,7 @@ routes:
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/comments/{comment_id}/replies", auth: "document.member", owner: "block"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/comments/{comment_id}/resolve", auth: "document.member", owner: "block"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/comments/{comment_id}/reopen", auth: "document.member", owner: "block"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/comments/{comment_id}/agent/stop", auth: "document.member", owner: "block"}
   # app.api.routes.topics_comments
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/docs", auth: "actor.topic", owner: "block"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/comments", auth: "actor.topic", owner: "block"}
@@ -1057,6 +1064,7 @@ routes:
   # app.api.routes.topics_doc_agent
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/doc/agent", auth: "document.human", owner: "doc_agent"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/doc/agent/{conversation}/stop", auth: "document.human", owner: "doc_agent"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/doc/agent/{conversation}/answers/{work}", auth: "document.human", owner: "doc_agent"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/doc/agent/{conversation}/reply/{thread_id}", auth: "document.human", owner: "doc_agent"}
   # app.api.routes.topics_documents
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/documents/recalc", auth: "actor.topic", owner: "documents"}
@@ -1080,6 +1088,8 @@ routes:
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/shown/save", auth: "library.save.shown", owner: "library"}
   # app.api.routes.topics_side_routes
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/topic-unread", auth: "actor.project", owner: "topic"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/topic-notify-levels", auth: "actor.project", owner: "topic"}
+  - {protocol: "http", method: "POST", path: "/projects/{project_id}/read-all", auth: "actor.project", owner: "topic"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/private-unread", auth: "actor.project", owner: "topic"}
   - {protocol: "http", method: "POST", path: "/blocks/{block_id}/upgrade", auth: "actor.topic", owner: "room_task"}
   # app.api.routes.topics_tasks

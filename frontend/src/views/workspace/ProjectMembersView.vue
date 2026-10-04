@@ -401,7 +401,7 @@ useCommands(() => [
               <router-link
                 v-if="s.key === 'team' && m.team_handle"
                 :to="{ name: 'TeamsDetail', params: { handle: m.team_handle } }"
-                class="t-meta-read"
+                class="t-meta-read member-team-link"
                 @click.stop
                 >{{ t('work.members.fromTeam', { handle: m.team_handle }) }}</router-link
               >
@@ -577,41 +577,65 @@ useCommands(() => [
 .member-row {
   cursor: pointer;
 }
+
 .member-row:hover {
   border-color: var(--line-2);
 }
+
 .min-w-0 {
   min-width: 0;
 }
+
 /* 查到的那个人：一行头像 + 名字，压在输入框下面，两边都留了呼吸。 */
 .found-user {
   display: flex;
-  align-items: center;
   padding: 8px 10px;
+  background: var(--fill);
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
-  background: var(--fill);
+  align-items: center;
 }
+
 .found-user__name {
   font-weight: 500;
   color: var(--ink);
 }
+
 /* 私聊按钮 + 它右上角那颗未读。按钮本身是 icon 按钮，徽标压在图标的右上角——
    不是按钮框的：small 按钮比图标大一圈，贴框角会浮在图标上方。这个槽是定位参照系。 */
 .dm-slot {
-  position: relative;
   display: inline-flex;
+  position: relative;
 }
+
 /* 未读 = 裸的琥珀数字，没有底色：侧栏那颗徽标同款，同一个产品里未读只能有一种读法。 */
 .dm-unread {
   position: absolute;
   top: 4px;
-  inset-inline-end: 4px;
-  color: var(--accent);
   font-size: 12px;
   font-weight: 700;
-  font-variant-numeric: tabular-nums;
   line-height: 1;
+  color: var(--accent);
   pointer-events: none;
+  inset-inline-end: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 「来自团队 @x」是一行 14px 高的链接，触屏上够不到 44。撑开能点的那块（设计系统
+   §10.1），画出来的样子不变——它上面那行 @handle 是文字不是控件，压上去没有歧义。 */
+@media (pointer: coarse) {
+  .member-team-link {
+    position: relative;
+  }
+
+  .member-team-link::before {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+    content: '';
+    transform: translate(-50%, -50%);
+  }
 }
 </style>

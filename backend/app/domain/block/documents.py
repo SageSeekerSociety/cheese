@@ -11,7 +11,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import ConflictError
 from app.core.sentences import NoticeList, listing, say
 from app.domain.block.about import EventAbout, landing
-from app.domain.block.doc_tree import PARAGRAPH, markdown_to_nodes
 from app.domain.block.models import (
     AGENT_NOTICE_META_KEY,
     AuthorType,
@@ -22,7 +21,9 @@ from app.domain.block.models import (
 )
 from app.domain.block.repositories import BlockRepository
 from app.domain.identity.handles import looks_like_agent_handle
-from app.domain.living_doc.services import DocumentJournal
+from app.domain.living_doc.doc_tree import PARAGRAPH, markdown_to_nodes
+from app.domain.living_doc.models import Document
+from app.domain.living_doc.services import DocumentJournal, Documents
 
 
 def _doc_edit_lines(content: str) -> list[str]:
@@ -89,31 +90,25 @@ class DocumentWriter:
     def __init__(self, session: AsyncSession, summarize: Callable[[str, str], str]):
         self._session = session
         self._blocks = BlockRepository(session)
+        self._docs = Documents(session)
         self._summarize = summarize
         #: Whether the last record extended an earlier notice instead of
         #: adding one (the caller announces an update, not a new line).
         self.notice_merged = False
 
-    async def seed(
-        self, *, room_id: uuid.UUID, project_id: uuid.UUID, content: str
-    ) -> None:
-        journal = DocumentJournal(self._session)
-        await journal.lock(room_id)
-        if await self._blocks.doc_root(room_id) is not None:
-            raise _doc_conflict(1)
-        doc = await self._blocks.add(
-            project_id=project_id,
-            topic_id=room_id,
-            author="system",
-            author_type=AuthorType.platform,
-            content=content,
-            kind=BlockKind.doc,
+    async def seed(self, doc: Document, content: str) -> None:
+        """The first version of a room's document, written by the platform
+        (a newborn room's brief). The caller holds the document's lock."""
+        if doc.version != 0:
+            raise _doc_conflict(doc.version)
+        written = await self._docs.write(
+            doc, content, author="system", expected_version=0
         )
-        await self._sync_doc_nodes(doc, content)
-        await journal.append(
-            room_id=room_id,
+        if written is None:
+            raise _doc_conflict(doc.version)
+        await DocumentJournal(self._session).append(
             document_id=doc.id,
-            version=doc.doc_version,
+            version=doc.version,
             content=content,
             actor="system",
             base_version=0,
@@ -121,30 +116,29 @@ class DocumentWriter:
 
     async def record(
         self,
+        doc: Document,
         *,
-        room_id: uuid.UUID,
-        project_id: uuid.UUID,
         content: str,
         actors: list[str],
         operation_id: uuid.UUID | None = None,
         quiet: bool = False,
         requested_by: str | None = None,
         edits: list[dict] | None = None,
-    ) -> tuple[Block | None, Block | None]:
-        """改文档即指令 (eval B2): record a new version of the room's living doc
+    ) -> tuple[Document | None, Block | None]:
+        """改文档即指令 (eval B2): record a new version of a room's living doc
         and drop a '编辑了文档' event into the conversation. The agent reads the
         latest doc on its next turn, so the edit acts as an instruction.
 
         ``content`` is what the collaboration service exported from the live
         document, and ``actors`` are the handles whose changes it holds, the
-        one with the most changes first. The caller holds the room's journal
-        lock: the live document is the only writer, so there is no base version
-        to compare here — whatever the service stores is the document.
+        one with the most changes first. The caller holds the document's
+        journal lock: the live document is the only writer, so there is no
+        base version to compare here — whatever the service stores is the
+        document.
 
         Returns ``(None, None)`` when there is nothing to record: the text did
-        not change, or a room with no document stored an empty one. A
-        ``quiet`` version gets no conversation event, like a brief seed, and
-        leaves the document's author as it was.
+        not change. A ``quiet`` version gets no conversation event, like a
+        brief seed, and leaves the document's author as it was.
 
         ``requested_by`` is the person an edit was made for (the agent edited
         at their request), and ``edits`` the passages it changed: the line
@@ -153,60 +147,37 @@ class DocumentWriter:
         """
         if not actors:
             raise ValueError("a document version needs the actor who wrote it")
+        assert doc.room_id is not None, "only a room's document is recorded here"
+        room_id = doc.room_id
+        project_id = doc.project_id
         self.notice_merged = False
         author = actors[0]
         journal = DocumentJournal(self._session)
-        doc = await self._blocks.doc_root(room_id)
-        previous_content = ""
-        if doc is not None:
-            await self._session.refresh(doc)
-            previous_content = doc.content
-            if previous_content == content:
-                return None, None
-            base_version = doc.doc_version
-            await journal.seed_existing(
-                room_id=room_id,
-                document_id=doc.id,
-                version=doc.doc_version,
-                content=doc.content,
-                actor=doc.author,
-            )
-            updated = await self._blocks.set_doc_content(
-                doc, content, expected_version=base_version
-            )
-            if updated is None:
-                raise _doc_conflict(doc.doc_version)
-            doc = updated
-        else:
-            if not content.strip():
-                return None, None
-            base_version = 0
-            doc = await self._blocks.add(
-                project_id=project_id,
-                topic_id=room_id,
-                author=author,
-                author_type=AuthorType.participant,
-                content=content,
-                kind=BlockKind.doc,
-            )
-        # The root records the latest editor; unchanged nodes keep their author,
-        # and _sync_doc_nodes attributes only newly written nodes to this editor.
+        await self._session.refresh(doc)
+        previous_content = doc.content
+        if previous_content == content:
+            return None, None
+        base_version = doc.version
         # A quiet version only respells the text and is nobody's edit: the
-        # document stays its last editor's, respelled nodes included.
-        if not quiet:
-            doc.author = author
-            doc.author_type = AuthorType.participant
-        # B1: also sync the structured node tree (struct_parent children) so the
-        # doc's blocks get stable ids for cross-view highlight / comments later.
-        await self._sync_doc_nodes(doc, content)
+        # document stays its last editor's, respelled nodes included. Unchanged
+        # nodes keep their author either way.
+        updated = await self._docs.write(
+            doc,
+            content,
+            author=doc.author if quiet else author,
+            expected_version=base_version,
+            keep_author=quiet,
+        )
+        if updated is None:
+            raise _doc_conflict(doc.version)
+        doc = updated
         # Append-only conversation event (spec H1): the doc edit is visible.
         before_lines = _doc_edit_lines(previous_content)
         after_lines = _doc_edit_lines(content)
         if quiet or before_lines == after_lines:
             await journal.append(
-                room_id=room_id,
                 document_id=doc.id,
-                version=doc.doc_version,
+                version=doc.version,
                 content=doc.content,
                 actor=author,
                 base_version=base_version,
@@ -240,7 +211,7 @@ class DocumentWriter:
             changed = [*meta.get(DOC_EDITS_KEY, []), *changed]
             from_version = int(meta[_DOC_FROM_VERSION_KEY])
             from_content = (
-                await journal.version_content(room_id, from_version)
+                await journal.version_content(doc.id, from_version)
                 if from_version
                 else ""
             ) or ""
@@ -260,7 +231,7 @@ class DocumentWriter:
             None
             if all(looks_like_agent_handle(handle) for handle in actors)
             else (
-                f"实况文档已被 {editors} 更新至第 {doc.doc_version} 版，"
+                f"实况文档已被 {editors} 更新至第 {doc.version} 版，"
                 f"{self._summarize(previous_content, content)}。"
                 "你此前读到的内容可能已经过期。继续依据它工作或写回之前，"
                 "先用 cheese_doc_get 重新读取；基于旧版本的写回会被拒绝。"
@@ -273,7 +244,7 @@ class DocumentWriter:
         meta = {
             "platform": True,
             "action": "doc",
-            "doc_version": doc.doc_version,
+            "doc_version": doc.version,
             _DOC_FROM_VERSION_KEY: from_version,
             _DOC_ACTORS_KEY: everyone,
             AGENT_NOTICE_META_KEY: for_agent,
@@ -315,9 +286,8 @@ class DocumentWriter:
                 meta=meta,
             )
         await journal.append(
-            room_id=room_id,
             document_id=doc.id,
-            version=doc.doc_version,
+            version=doc.version,
             content=doc.content,
             actor=author,
             base_version=base_version,
@@ -330,9 +300,8 @@ class DocumentWriter:
 
     async def suggest(
         self,
+        doc: Document,
         *,
-        room_id: uuid.UUID,
-        project_id: uuid.UUID,
         actor: str,
         suggestion_ids: list[str],
         reason: str | None = None,
@@ -344,10 +313,11 @@ class DocumentWriter:
         when it is the same writer's suggestions within the window.
         """
         self.notice_merged = False
-        doc = await self._blocks.doc_root(room_id)
-        if doc is None or not suggestion_ids:
+        if doc.room_id is None or not suggestion_ids:
             return None
-        landed = landing(EventAbout.room, project_id=project_id, room_id=room_id)
+        landed = landing(
+            EventAbout.room, project_id=doc.project_id, room_id=doc.room_id
+        )
         earlier = await self._mergeable_notice(landed, doc.id, kind="suggested")
         if earlier is not None and (earlier.meta or {}).get(_DOC_ACTORS_KEY) != [actor]:
             earlier = None
@@ -357,8 +327,8 @@ class DocumentWriter:
         meta = {
             "platform": True,
             "action": "doc",
-            "doc_version": doc.doc_version,
-            _DOC_FROM_VERSION_KEY: doc.doc_version,
+            "doc_version": doc.version,
+            _DOC_FROM_VERSION_KEY: doc.version,
             _DOC_ACTORS_KEY: [actor],
             DOC_SUGGESTED_KEY: True,
             DOC_SUGGESTIONS_KEY: ids,
@@ -404,45 +374,3 @@ class DocumentWriter:
         if datetime.now(UTC) - last.created_at > DOC_NOTICE_MERGE_WINDOW:
             return None
         return last
-
-    async def _sync_doc_nodes(self, root: Block, content: str) -> None:
-        """Reconcile the living doc's node tree (B1) with `content` via a
-        block-level diff so unchanged nodes keep their ids (anchors survive an
-        edit). Re-setting the same markdown is a no-op."""
-        new_nodes = markdown_to_nodes(content)
-        existing = await self._blocks.list_doc_nodes(root.topic_id)
-        matcher = difflib.SequenceMatcher(
-            a=[b.content for b in existing],
-            b=[n.content for n in new_nodes],
-            autojunk=False,
-        )
-        # Reuse existing block ids wherever content is unchanged (equal runs).
-        reuse: dict[int, Block] = {}
-        for tag, i1, i2, j1, _j2 in matcher.get_opcodes():
-            if tag == "equal":
-                for off in range(i2 - i1):
-                    reuse[j1 + off] = existing[i1 + off]
-        kept_ids = {b.id for b in reuse.values()}
-        for b in existing:
-            if b.id not in kept_ids:
-                await self._blocks.delete(b)
-        for idx, node in enumerate(new_nodes):
-            order = float(idx)
-            block = reuse.get(idx)
-            if block is not None:
-                if block.struct_order != order or block.node_type != node.node_type:
-                    await self._blocks.update_node(
-                        block, node_type=node.node_type, struct_order=order
-                    )
-            else:
-                await self._blocks.add(
-                    project_id=root.project_id,
-                    topic_id=root.topic_id,
-                    author=root.author,
-                    author_type=root.author_type,
-                    content=node.content,
-                    kind=BlockKind.doc_node,
-                    struct_parent=root.id,
-                    node_type=node.node_type,
-                    struct_order=order,
-                )

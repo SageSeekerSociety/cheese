@@ -13,6 +13,7 @@ import type { AskGroupAction } from '../lib/askGroupState'
 import { computed } from 'vue'
 
 import { type ChatPanelEmit, useChatPanel } from '../composables/useChatPanel'
+import { useGettingStarted } from '../composables/useGettingStarted'
 import { createQuestionSubmit } from '../lib/previewQuestion'
 
 import AskGroupFlow from './ask/AskGroupFlow.vue'
@@ -21,6 +22,7 @@ import ChatNewMessagesPill from './chat/ChatNewMessagesPill.vue'
 import ChatPanelHeader from './chat/ChatPanelHeader.vue'
 import ChatTimeline from './chat/ChatTimeline.vue'
 import ErrorBoundary from './common/ErrorBoundary.vue'
+import GettingStartedCard from './room/GettingStartedCard.vue'
 import MemberActivity from './room/MemberActivity.vue'
 import MessageQuote from './room/MessageQuote.vue'
 import RoomComposer from './room/RoomComposer.vue'
@@ -108,6 +110,7 @@ const {
   prState,
   composerHint,
   rows,
+  hiddenRows,
   refMaps,
   hasMore,
   hasNewer,
@@ -163,6 +166,9 @@ const {
   composerRef,
   starterPrompts,
   showStarters,
+  // 「开始清单」的两条房间内判据（其余两条问服务端和名册）。
+  agentHasSpoken,
+  roomHasAttachment,
   startDraft,
   pendingAtts,
   attsUploading,
@@ -209,6 +215,20 @@ const {
 // themselves — a template binding would unwrap them into elements. Passing them
 // inside a plain object keeps them intact: props are shallow, not deep.
 const timelineRefs = { scrollRef, contentRef }
+
+// 「开始清单」：只画在项目本体（root 话题）上。判据和退休规则都在这个 composable
+// 里，这里只把手的四个来源交给它。
+const {
+  visible: showGettingStarted,
+  steps: gettingStartedSteps,
+  dismiss: dismissGettingStarted,
+} = useGettingStarted({
+  projectId: () => props.topic?.project_id ?? null,
+  on: () => props.topic?.kind === 'root' && props.topic.status !== 'archived',
+  agentHasSpoken: () => agentHasSpoken.value,
+  roomHasAttachment: () => roomHasAttachment.value,
+  members: () => props.members,
+})
 
 // Per-row questions the view asks. The panel hands over data; these are read
 // off it once for the one row that needs them, not once per render.
@@ -269,6 +289,7 @@ defineExpose({ send, connected, submitQuestion })
         <ChatTimeline
           :topic="topic"
           :rows="rows"
+          :hidden-rows="hiddenRows"
           :day-labels="dayLabels"
           :unread-anchor-id="unreadAnchorId"
           :split-markers="splitMarkers"
@@ -362,6 +383,15 @@ defineExpose({ send, connected, submitQuestion })
 
       <ChatErrorToast :message="errorMsg" @close="errorMsg = null" />
 
+      <!-- 开始清单：和验收卡同一格，理由也一样——它是一串等人做的下一步，贴在这里
+           才一直看得见。四步做掉两步（说上话、放进材料）它就自己退场，不用人收。 -->
+      <GettingStartedCard
+        v-if="showGettingStarted && topic.project_id"
+        :steps="gettingStartedSteps"
+        :project-id="topic.project_id"
+        @dismiss="dismissGettingStarted"
+      />
+
       <!-- 贴在输入框上方的那一条（验收卡）。它不随对话滚：等人做的决定要一直看得见，
            又不该每来一条消息就被推走、或者反过来把对话挤到只剩几行。 -->
       <slot name="above-composer" />
@@ -453,6 +483,17 @@ defineExpose({ send, connected, submitQuestion })
   flex-direction: column;
   height: 100%;
   background: var(--surface);
+}
+/* 这一列最后一行永远是「谁在工作」那一行（MemberActivity，showComposer 时一直画着，
+   用 reserve 占住高度）。手机底部的安全区（Home 横杠 / 圆角）由它一个人出：它上面
+   那两块 —— 输入区，以及接管输入框的提问面板 —— 都把自己那份让掉。两边各留一份的话，
+   横杠上方会叠出两倍的空。 */
+.chat .composer,
+.chat :deep(.ask-group--composer) {
+  padding-bottom: 8px;
+}
+.chat .composer-activity {
+  padding-bottom: calc(4px + env(safe-area-inset-bottom));
 }
 /* 输入框和它下面那行状态收成和对话同一栏（时间线那一份在 ChatTimeline）：桌面上
    是读的一栏 --page-w-read，手机外壳里是 --page-w。三块（时间线、输入框、贴在上

@@ -308,7 +308,11 @@ async function remove() {
   const userId = currentUserId.value
   if (!userId) return
   const confirmed = await dialogs
-    .confirm(t('account.realName.deleteBody'), { title: t('account.realName.delete') })
+    .confirm(t('account.realName.deleteBody'), {
+      title: t('account.realName.delete'),
+      confirmLabel: t('account.realName.delete'),
+      danger: true,
+    })
     .wait()
     .catch(() => false)
   if (!confirmed) return
@@ -594,7 +598,9 @@ onMounted(() => {
   color: var(--ink);
 }
 
-@media (max-width: 599.98px) {
+/* 断点对齐共享 token（`styles/breakpoints.scss`）：599.98 → 767.98，和这一页
+   一起加载的 `settings-card.css` 同一条线。 */
+@media (max-width: 767.98px) {
   .srow--pair {
     grid-template-columns: minmax(0, 1fr);
     gap: 4px;

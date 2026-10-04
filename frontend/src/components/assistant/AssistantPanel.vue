@@ -64,8 +64,11 @@
         <p v-if="m.role === 'user'" class="ap__q">{{ m.text }}</p>
         <div v-else class="ap__a">
           <span class="ap__avatar" aria-hidden="true"><CheeseAvatar :size="26" /></span>
-          <!-- eslint-disable-next-line vue/no-v-html -- sanitized by MarkdownRenderer (DOMPurify) -->
-          <div class="ap__text ap__md" v-html="render(m.text)" />
+          <div class="ap__text">
+            <!-- eslint-disable-next-line vue/no-v-html -- sanitized by MarkdownRenderer (DOMPurify) -->
+            <div v-if="m.text" class="ap__md" v-html="render(m.text)" />
+            <p v-if="m.stopped" class="ap__stopped">{{ t('tasks.assistant.stopped') }}</p>
+          </div>
         </div>
       </template>
 
@@ -74,7 +77,7 @@
           ><CheeseAvatar :size="26" :state="streaming ? null : 'think'"
         /></span>
         <div class="ap__text">
-          <p v-if="!streaming" class="ap__looking">{{ toolLabel }}</p>
+          <p v-if="!streaming" class="ap__looking">{{ queued ? t('tasks.assistant.queued') : toolLabel }}</p>
           <!-- eslint-disable-next-line vue/no-v-html -- sanitized by MarkdownRenderer (DOMPurify) -->
           <div v-else class="ap__md" v-html="render(streaming)" />
         </div>
@@ -103,6 +106,16 @@
         />
         <div class="ap__acts">
           <BaseButton
+            v-if="busy"
+            class="ap__send"
+            icon="mdi-stop"
+            size="sm"
+            :title="t('tasks.assistant.stop')"
+            :aria-label="t('tasks.assistant.stop')"
+            @click="emit('stop')"
+          />
+          <BaseButton
+            v-else
             class="ap__send"
             icon="mdi-send"
             size="sm"
@@ -141,6 +154,8 @@ export interface PanelConversation {
 export interface PanelMessage {
   role: 'user' | 'assistant'
   text: string
+  /** 回答被停下了，`text` 是停下时写出的部分。 */
+  stopped?: boolean
   at: string
 }
 
@@ -153,6 +168,8 @@ const props = defineProps<{
   streaming: string | null
   /** 芝士此刻在用的工具。 */
   tool: string | null
+  /** 在等会话机空出来，还没开始答。 */
+  queued?: boolean
   notice: string | null
   /** 被拒是因为额度不够：提示旁给「查看用量」。 */
   creditRefused?: boolean
@@ -163,6 +180,7 @@ const emit = defineEmits<{
   send: [text: string]
   new: []
   select: [id: string]
+  stop: []
   close: []
 }>()
 
@@ -353,6 +371,13 @@ watch(
 .ap__looking {
   margin: 0;
   color: var(--faint);
+}
+
+.ap__stopped {
+  margin: 4px 0 0;
+  color: var(--faint);
+  font-size: 13px;
+  line-height: var(--lh-13);
 }
 
 .ap__starters {

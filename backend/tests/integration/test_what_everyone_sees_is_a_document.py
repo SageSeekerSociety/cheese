@@ -7,41 +7,18 @@
 写记忆的那个旧入口已经整个停用（话题「记忆机制照搬CC」）：先是 `cheese_remember
 everyone` 往这份文档里追加的那一路——它把总览写成了只增不减的观察清单——接着是
 `cheese_remember` 本身，它写的条目池已经不再注入任何地方。这一组守的是还成立的那
-几头：停用要明说、并且说清该去哪写；别的房间跑一轮时，总览文档在它的提示词里；
-迁移把旧项目池落进这份文档。
+几头：停用要明说、并且说清该去哪写；别的房间跑一轮时，总览文档在它的提示词里。
 
 文档本身现在分三块，只有「项目是什么」是写的（#1889 第 1 条）：总览房间的一轮拿
 得到 ②③（从话题、结论现拼），别的房间只拿到 ①。手抄进正文的副本谁都
 读不到——写在别块的字一个字都不该进提示词。
 """
 
-import importlib.util
-import uuid
-from pathlib import Path
-from typing import TYPE_CHECKING
-
-import sqlalchemy as sa
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.domain.project.services import ProjectService
-from app.domain.topic.services import TopicService
 from tests.integration.conftest import (
     chat_ws_url,
     post_message,
     post_project,
-    registered,
     session_auth_headers,
-)
-from tests.support.living_doc import write_doc
-
-if TYPE_CHECKING:
-    from anyio.from_thread import BlockingPortal
-
-_MIGRATION = (
-    Path(__file__).resolve().parents[2]
-    / "alembic"
-    / "versions"
-    / "a1c4e8f30b26_project_memory_becomes_the_overview_document.py"
 )
 
 FACT = "中期答辩定在 11 月 15 日，要现场演示一个能跑的 demo"
@@ -114,129 +91,9 @@ def test_another_room_reads_the_overview_document_on_its_next_turn(client, stub_
 
     _say(client, topic_id)
 
-    prompt = stub_hooks.last_system_prompt
-    assert prompt is not None
+    assert stub_hooks.last_system_prompt is not None
+    prompt = stub_hooks.told
     assert FACT in prompt
-
-
-def _move_statements() -> tuple[str, ...]:
-    """迁移真正会跑的那两句，从迁移模块里取，不照抄一份。"""
-    spec = importlib.util.spec_from_file_location("_p36_move", _MIGRATION)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return (module.SEED_OVERVIEW_DOC, module.APPEND_PROJECT_MEMORY_TO_OVERVIEW)
-
-
-async def _run_migration(db_session: AsyncSession) -> None:
-    for statement in _move_statements():
-        await db_session.execute(sa.text(statement))
-    await db_session.flush()
-
-
-async def _legacy_memory(db_session, project_id, content):
-    await db_session.execute(
-        sa.text(
-            "INSERT INTO memory_entries "
-            "(id, scope, scope_id, content, layer, created_at, updated_at) "
-            "VALUES (:id, 'project', :pool, :content, 'fact', now(), now())"
-        ),
-        {"id": uuid.uuid4(), "pool": str(project_id), "content": content},
-    )
-
-
-async def _legacy_contents(db_session, project_id):
-    return list(
-        (
-            await db_session.execute(
-                sa.text(
-                    "SELECT content FROM memory_entries "
-                    "WHERE scope = 'project' AND scope_id = :pool"
-                ),
-                {"pool": str(project_id)},
-            )
-        ).scalars()
-    )
-
-
-def test_the_migration_lands_every_project_pool_row_in_that_document(
-    db_session: AsyncSession, _portal: "BlockingPortal"
-) -> None:
-    """存量：``scope='project'`` 的每一条，迁移跑完都在目标文档里找得到同一份内容。
-
-    连跑两遍——dev 先跑迁移后换容器，窗口里旧镜像还在往这个池写，这一条要由 P36b
-    原样再跑一遍，所以第二遍不能把同一条再追加一次。行只搬不删：这批行不可再生
-    （结论 61），文档写错了没有第二份可对照。
-    """
-
-    async def run() -> None:
-        await registered(db_session, "andyl")
-        project = await ProjectService(db_session).create(
-            name="有总览文档的项目", owner_handle="andyl", forge_kind="github_app"
-        )
-        assert project.root_topic_id is not None
-        await write_doc(
-            db_session, project.root_topic_id, "## 目标\n做课程推荐系统", "andyl"
-        )
-        facts = ["数据来源是教务处脱敏数据", FACT]
-        for fact in facts:
-            await _legacy_memory(db_session, project.id, fact)
-        await db_session.flush()
-
-        for _ in range(2):
-            await _run_migration(db_session)
-
-            doc = await TopicService(db_session).get_doc(project.root_topic_id)
-            assert doc is not None
-            for fact in facts:
-                assert doc.content.count(fact) == 1
-            # 人自己写的那一段还在，被搬进来的那几条排在它后面。
-            assert "做课程推荐系统" in doc.content
-            # 只搬不删：窗口里旧镜像还在写这个池，删了就是孤儿。
-            assert sorted(await _legacy_contents(db_session, project.id)) == sorted(
-                facts
-            )
-
-    _portal.call(run)
-
-
-def test_the_migration_builds_the_first_document_for_a_project_that_has_none(
-    db_session: AsyncSession, _portal: "BlockingPortal"
-) -> None:
-    """总览房间还没有文档的项目，这一步给它建一份，行落在里面。
-
-    新建的项目都没有 doc 块，所以这是默认状态而不是边角情况。不搬，这些行就既不
-    在文档里、也不在任何一个读点上——谁都读不到；而 P36b 要逐行核对全部对上才
-    DELETE，漏一个项目那一档就永远删不掉。
-    """
-
-    async def run() -> None:
-        await registered(db_session, "andyl")
-        project = await ProjectService(db_session).create(
-            name="没有总览文档的项目", owner_handle="andyl", forge_kind="github_app"
-        )
-        assert project.root_topic_id is not None
-        assert await TopicService(db_session).get_doc(project.root_topic_id) is None
-        await _legacy_memory(db_session, project.id, FACT)
-        await db_session.flush()
-
-        await _run_migration(db_session)
-
-        doc = await TopicService(db_session).get_doc(project.root_topic_id)
-        assert doc is not None
-        assert doc.content.count(FACT) == 1
-        # 建出来的第一版从标题开始，前面不带空行。
-        assert doc.content.startswith("## ")
-        # 只搬不删，和有文档的那一条一样。
-        assert await _legacy_contents(db_session, project.id) == [FACT]
-
-        # 窗口里原样再跑一遍：不再建第二份文档，也不再追加同一条。
-        await _run_migration(db_session)
-        again = await TopicService(db_session).get_doc(project.root_topic_id)
-        assert again is not None and again.id == doc.id
-        assert again.content.count(FACT) == 1
-
-    _portal.call(run)
 
 
 def test_the_overview_room_does_not_read_its_own_document_twice(client, stub_hooks):
@@ -254,8 +111,8 @@ def test_the_overview_room_does_not_read_its_own_document_twice(client, stub_hoo
 
     _say(client, overview)
 
-    prompt = stub_hooks.last_system_prompt
-    assert prompt is not None
+    assert stub_hooks.last_system_prompt is not None
+    prompt = stub_hooks.told
     assert prompt.count(FACT) == 1
 
 
@@ -279,8 +136,8 @@ def test_the_overview_room_reads_the_other_blocks_from_the_data(client, stub_hoo
 
     _say(client, overview)
 
-    prompt = stub_hooks.last_system_prompt
-    assert prompt is not None
+    assert stub_hooks.last_system_prompt is not None
+    prompt = stub_hooks.told
     assert "给高中生做算法课" in prompt
     assert "## 现在在做什么" in prompt
     assert "干活的房间" in prompt
@@ -303,8 +160,8 @@ def test_another_room_gets_only_what_the_project_is(client, stub_hooks):
 
     _say(client, topic_id)
 
-    prompt = stub_hooks.last_system_prompt
-    assert prompt is not None
+    assert stub_hooks.last_system_prompt is not None
+    prompt = stub_hooks.told
     assert "给高中生做算法课" in prompt
     assert "## 现在在做什么" not in prompt
 

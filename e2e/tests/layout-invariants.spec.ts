@@ -1,6 +1,11 @@
 import { test, expect, type Locator, type Page } from '@playwright/test';
 import { api, apiLogin, openFirstProject } from './helpers';
 
+// Parallel so CI shards split this file by test rather than handing one shard
+// all of it: no test depends on another, and one CI worker still runs them one
+// at a time.
+test.describe.configure({ mode: 'parallel' });
+
 // 表单字段的几何不变量。
 //
 // 起因是一类会静悄悄发出去的缺陷：outlined 字段的浮动 label 用 translateY(-50%)
@@ -370,6 +375,59 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
     await dialog.waitFor();
     await expect(dialog.getByLabel('模型名')).toBeVisible();
     expect(await fieldDefects(dialog)).toEqual([]);
+  });
+
+  test('技能页：新建表单、导入的两步、打开一份的详情，桌面与手机', async ({ page }) => {
+    await apiLogin(page);
+    await openFirstProject(page);
+    const projectId = page.url().match(/\/projects\/([^/?#]+)/)![1];
+    const skillMd = Buffer.from(
+      '---\nname: layout-check\ndescription: 量一量布局时\n---\n\n# 布局检查\n\n## 步骤与规则\n\n逐个打开\n'
+    );
+
+    for (const size of [
+      { width: 1440, height: 900 },
+      { width: 390, height: 844 },
+    ]) {
+      await page.setViewportSize(size);
+      await page.goto(`/projects/${projectId}/skills`);
+      const at = `${size.width}px`;
+
+      // 新建：手机上「新建」是顶栏那一颗图标，桌面上是页头按钮，两处的可访问名字一样。
+      await page.getByRole('button', { name: '新建', exact: true }).last().click();
+      const form = page.locator('.v-overlay__content, .adaptive-dialog').filter({ hasText: '新建技能' }).last();
+      await expect(form.getByLabel('名称')).toBeVisible();
+      expect(await fieldDefects(form), `${at} · 新建`).toEqual([]);
+      const title = `布局检查 ${size.width}-${Date.now()}`;
+      await form.getByLabel('名称').fill(title);
+      await form.getByLabel('用途').fill('量一量布局时');
+      await form.getByRole('button', { name: '保存' }).click();
+
+      // 保存后详情从右边滑出来（手机上占满整屏）。
+      const drawer = page.locator('[data-skill-detail]');
+      await expect(drawer).toBeVisible();
+      await expect(drawer).toContainText(title);
+      expect(await textOverlaps(drawer), `${at} · 详情`).toEqual([]);
+      await drawer.getByRole('tab', { name: '历史版本' }).click();
+      await expect(drawer.locator('[data-revision]').first()).toBeVisible();
+      expect(await textOverlaps(drawer), `${at} · 历史版本`).toEqual([]);
+      await drawer.getByRole('button', { name: '关闭' }).click();
+      await expect(drawer).toBeHidden();
+
+      // 导入：项目所有者能导入。手机上它在顶栏的 ⋯ 里。
+      if (size.width < 600) await page.getByRole('button', { name: '更多' }).last().click();
+      await page.getByRole('button', { name: '导入', exact: true }).or(page.getByRole('menuitem', { name: '导入' })).last().click();
+      const importing = page.locator('.v-overlay__content, .adaptive-dialog').filter({ hasText: '上传文件' }).last();
+      await expect(importing.locator('input[type=file]')).toBeAttached();
+      expect(await fieldDefects(importing), `${at} · 导入`).toEqual([]);
+      await importing.locator('input[type=file]').setInputFiles({ name: 'SKILL.md', mimeType: 'text/markdown', buffer: skillMd });
+      await importing.getByRole('button', { name: '读取' }).click();
+      const preview = page.locator('.v-overlay__content, .adaptive-dialog').filter({ hasText: '添加「布局检查」' }).last();
+      await expect(preview.getByLabel('调用名')).toHaveValue('layout-check');
+      expect(await fieldDefects(preview), `${at} · 导入预览`).toEqual([]);
+      expect(await textOverlaps(preview), `${at} · 导入预览`).toEqual([]);
+      await page.keyboard.press('Escape');
+    }
   });
 
   test('看板：三个分类里，没有两处文字画在同一个坐标上', async ({ page }) => {

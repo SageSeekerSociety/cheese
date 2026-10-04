@@ -243,6 +243,7 @@ useCommands(() => {
           :activity-tick="0"
           :agent-name="workspace?.agentName"
           :agent-handle="workspace?.agentHandle"
+          :members="workspace?.members ?? []"
           :topic-list="workspace?.topics ?? []"
           @open-topic="(id: string) => router.push(topicTo(id))"
         />
@@ -334,13 +335,30 @@ useCommands(() => {
 .weekly-card {
   /* 正文里的长表格/代码块不许冲出 12px 圆角。 */
   overflow: hidden;
+  /* 离屏的卡片不渲染（正文、表格、代码块都省下），但留在 DOM 里 —— Ctrl+F、
+     读屏、选中都还找得到它，这是「不虚拟化」。`auto 120px` 是「窗口 + 标题 + 一段
+     正文」的估计高度，只在这张卡**从未渲染过**时用来占位；`auto` 让渲染过的卡
+     记住真实高度，于是常态滚动不因估计值漂。见 lib/contentVisibility。 */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 120px;
 }
 </style>
 
 <style scoped>
+/* 记忆和正文一样是一篇读的长文：一条记忆是一块。离屏的那一块不渲染，但留在
+   DOM 里（Ctrl+F、读屏、选中都还找得到它）。`auto` 让渲染过的卡记住真实高度，
+   只对从未渲染过的那几张用估计值占位。这一页没有测量（没有翻页、没有 scrollIntoView），
+   但把测量帧的关掉一并写上：`.cv-measure` 挂在滚动容器上时（AppPage 的 body），
+   这一页的块按真实高度铺开 —— 见 lib/contentVisibility。 */
 .memory-card {
   border: 1px solid var(--line-2);
   border-radius: var(--radius-lg);
+  content-visibility: auto;
+  contain-intrinsic-size: auto 72px;
+}
+.cv-measure .memory-card,
+.cv-measure .weekly-card {
+  content-visibility: visible;
 }
 .memory-card__content {
   font-size: 0.9rem;

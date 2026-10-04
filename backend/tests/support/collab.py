@@ -135,13 +135,34 @@ class FakeCollab:
         return httpx.Response(200, json={"stored": stored.json(), "edits": applied})
 
     async def type_in(self, room_id: uuid.UUID, content: str, *actors: str) -> dict:
+        name = await self._room_document(room_id)
         async with self._client() as backend:
-            return await self._store(
-                backend, collab.document_name(room_id), content, *actors
-            )
+            return await self._store(backend, name, content, *actors)
 
-    def type_unsaved(self, room_id: uuid.UUID, content: str, actor: str) -> None:
-        self._unsaved[collab.document_name(room_id)] = (content, actor)
+    async def type_unsaved(self, room_id: uuid.UUID, content: str, actor: str) -> None:
+        self._unsaved[await self._room_document(room_id)] = (content, actor)
+
+    async def _room_document(self, room_id: uuid.UUID) -> str:
+        """The service name of the room's document. An editor holds a ticket
+        before it types, and signing one is what makes the document exist."""
+        from app.core.db import get_db
+        from app.domain.living_doc.services import Documents
+        from app.domain.topic.models import Topic
+
+        # The database the app is answering from, which a test may override.
+        sessions = self._app.dependency_overrides.get(get_db, get_db)()
+        session = await anext(sessions)
+        try:
+            room = await session.get(Topic, room_id)
+            assert room is not None
+            doc = await Documents(session).ensure_for_room(
+                room_id=room_id, project_id=room.project_id
+            )
+            name = collab.document_name(doc.id)
+            await session.commit()
+        finally:
+            await sessions.aclose()
+        return name
 
     async def _store(
         self, backend: httpx.AsyncClient, name: str, content: str, *actors: str

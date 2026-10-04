@@ -6,9 +6,6 @@
     "subagent": "默认分身模型",
     "subagentHint": "分身执行任务时使用的模型",
     "inheritMain": "跟随项目主模型",
-    "assign": "为这个队友指定模型",
-    "agent": "队友模型",
-    "inheritHint": "不指定时使用项目主模型",
     "chooseAvailable": "选择当前项目可用的模型",
     "loadError": "加载模型列表失败",
     "requiresPlan": "需要 {plan} 方案",
@@ -42,6 +39,24 @@
   "joinLabel": "邀请码",
   "joinSubmit": "加入",
   "joinTitle": "加入空间",
+  "startPaths": {
+    "lede": "三条路都行，从哪条开始都可以：",
+    "project": {
+      "title": "开一个自己的{project}",
+      "body": "进去就能和芝士开工，材料和成果都留在里面。"
+    },
+    "invite": {
+      "title": "用邀请码加入",
+      "body": "学校或团队给了你邀请码，从这里进。",
+      "action": "填邀请码"
+    },
+    "teams": {
+      "title": "看看有哪些团队",
+      "body": "加入一个团队，和它的成员共用一个工作台。",
+      "action": "去团队"
+    },
+    "settingsNote": "AI 队友和代码仓库都在项目里配：进项目后打开「项目设置」，第一节是 AI 队友，仓库在「仓库与署名」那一栏。"
+  },
   "sessionMachine": {
     "machine": "换到",
     "confirm": "推送并更换",
@@ -216,7 +231,8 @@
     "noTasks": "暂无任务",
     "site": {
       "agents": {
-        "all": "全部"
+        "all": "全部",
+        "label": "按队友查看"
       },
       "output": {
         "show": "输出（{size}）",
@@ -298,7 +314,13 @@
       "wholeProject": "全项目",
       "usageLine": "{turns} 次运行 · {tokens} token · {cost}",
       "usageSplit": "输入 {input} · 输出 {output}",
-      "noUsage": "暂无数据"
+      "noUsage": "暂无数据",
+      "mute": "静音",
+      "unmute": "取消静音",
+      "muted": "已静音",
+      "muteFailed": "静音设置没保存",
+      "markAllRead": "全部标为已读",
+      "markAllReadFailed": "全部标为已读没成功"
     },
     "archiveNotice": {
       "done": "已归档",
@@ -412,6 +434,8 @@
     "message": {
       "copy": "复制",
       "copied": "已复制",
+      "copyLink": "复制链接",
+      "linkCopied": "已复制链接",
       "selectText": "选择文字",
       "edit": "编辑",
       "edited": "已编辑",
@@ -424,7 +448,11 @@
       "downloadFile": "下载 {name}",
       "openFile": "打开 {name}",
       "upgradedToTask": "已转为任务",
-      "upgradedToTopic": "已转为话题"
+      "upgradedToTopic": "已转为话题",
+      "showMore": "展开",
+      "showLess": "收起",
+      "wrapCode": "自动换行",
+      "unwrapCode": "不换行"
     },
     "outbox": {
       "failed": "发送失败：{reason}",
@@ -448,7 +476,14 @@
       "attachFiles": "上传文件（每个最大 10MB）",
       "sendPhotos": "发送照片",
       "more": "更多操作",
-      "send": "发送"
+      "send": "发送",
+      "sendUploading": "附件上传中，传完再发",
+      "longPaste": {
+        "offer": "这段文字有 {count} 字，作为附件发送？",
+        "txt": "存为 .txt",
+        "md": "存为 .md",
+        "keep": "保留为文字"
+      }
     },
     "dispatched": {
       "created": "新建任务",
@@ -548,7 +583,9 @@
       "site": "现场",
       "changes": "改动",
       "preview": "预览",
-      "routines": "定时与触发"
+      "routines": "定时与触发",
+      "scrollLeft": "向左滚动页签",
+      "scrollRight": "向右滚动页签"
     },
     "preview": {
       "fullscreenFailed": "无法进入全屏，请在新标签页打开",
@@ -583,6 +620,8 @@
       "autoReloaded": "应用已重启，已自动重新载入",
       "runningApp": "运行中的应用",
       "download": "下载",
+      "pick": "圈选",
+      "webRegion": "框选了一块区域",
       "frameTitle": "话题预览",
       "authorizing": "正在获取预览授权…",
       "navigating": "正在加载新页面…",
@@ -817,6 +856,14 @@
       "emptyLineHint": "输入 / 插入内容",
       "undo": "撤销",
       "redo": "重做",
+      "outline": "大纲",
+      "outlineEmpty": "这篇文档还没有标题",
+      "find": "在文档中查找",
+      "findPlaceholder": "在文档中查找",
+      "findNoResults": "没有找到",
+      "findPrev": "上一处",
+      "findNext": "下一处",
+      "findClose": "关闭查找",
       "blocks": {
         "calloutKind": "提示框类型",
         "kinds": {
@@ -943,6 +990,19 @@
       "readingAttachment": "{agent}正在读附件…",
       "quoteChanged": "原文已改动"
     },
+    "gettingStarted": {
+      "title": "开始清单",
+      "dismiss": "不再提示",
+      "talk": "跟芝士说第一句话",
+      "talkHint": "就在下面那个输入框里",
+      "materials": "把要用的材料放进来",
+      "materialsAction": "打开资料库",
+      "repo": "让成果进代码仓库",
+      "repoAction": "连接仓库",
+      "people": "把同事请进来",
+      "peopleAction": "去名册",
+      "note": "AI 队友和代码仓库都在项目设置里改：第一节是 AI 队友，仓库在「仓库与署名」那一栏。"
+    },
     "chat": {
       "pickTopic": "选择一个话题开始对话",
       "starter": {
@@ -967,7 +1027,9 @@
       "waitingConnection": "等待连接",
       "today": "今天",
       "yesterday": "昨天",
-      "topicFallback": "话题"
+      "topicFallback": "话题",
+      "timelineLabel": "对话记录",
+      "liveNew": "{name}：{text}"
     },
     "header": {
       "disconnected": "未连接",
@@ -1048,7 +1110,9 @@
       "tooLarge": "{name} 超过 10MB，无法上传",
       "retry": "重试上传 {name}",
       "sendBlocked": "有附件上传失败，重试或移除后再发送",
-      "addFailed": "添加文件失败"
+      "addFailed": "添加文件失败",
+      "pastedName": "粘贴的图片-{time}",
+      "pastedTextName": "粘贴的文字-{time}"
     },
     "defaultAgentName": "芝士",
     "reminder": {
@@ -1101,6 +1165,7 @@
       "answering": "{agent}正在回答…",
       "stop": "停止",
       "cancel": "取消",
+      "stopped": "已停止",
       "changed": "已修改 {n} 处",
       "undone": "已撤销",
       "undo": "撤销",
@@ -1172,7 +1237,10 @@
     "noAssignee": "暂无负责人",
     "queued": "排队中",
     "running": "正在运行",
-    "made": "做出了什么"
+    "made": "做出了什么",
+    "findPlaceholder": "按标题找（/）",
+    "findLabel": "在看板上按标题找",
+    "findNone": "这一列没有标题含「{text}」的任务"
   },
   "publishedSite": {
     "revisionChanged": "项目已采纳的版本变了，确认之后再发布",
@@ -1501,7 +1569,7 @@
       "deactivateFailed": "停用失败",
       "refresh": "刷新",
       "create": "新建队友",
-      "intro": "每个队友有自己的角色设定和记忆。新话题默认交给标着「默认」的队友，也可以在话题里另选",
+      "intro": "每个队友有自己的角色设定、模型和思考强度。新话题默认交给标着「默认」的队友，也可以在话题里另选",
       "unsupported": "暂不支持管理 AI 队友",
       "empty": "暂无 AI 队友",
       "default": "默认",
@@ -1509,10 +1577,8 @@
       "setDefault": "设为默认",
       "edit": "编辑",
       "deactivate": "停用",
-      "memories": "{n} 条记忆",
-      "noMemories": "暂无记忆",
       "deactivateTitle": "停用「{name}」",
-      "deactivateHint": "停用后新话题选不到它，已在用它的话题照常工作，记忆全部保留",
+      "deactivateHint": "停用后新话题选不到它，已在用它的话题照常工作",
       "typeGeneral": "通用",
       "editor": {
         "presetCustom": "自行填写",
@@ -1525,11 +1591,37 @@
         "handleReadonly": "标识 · {handle}",
         "preset": "从内置配置开始",
         "body": "角色设定（可留空）",
-        "editHint": "修改只影响这个队友，下次运行时生效，已有记忆保留",
+        "editHint": "修改只影响这个队友，下次运行时生效",
         "handleInvalid": "只能用小写字母、数字和 . _ -，且以字母或数字开头",
         "nameRequired": "填写名字",
-        "nameTooLong": "名字最长 {max} 个字"
-      }
+        "nameTooLong": "名字最长 {max} 个字",
+        "model": "模型",
+        "modelInherit": "跟随项目主模型（{model}）",
+        "modelInheritPlain": "跟随项目主模型",
+        "effort": "思考强度",
+        "effortAuto": "自动",
+        "effortLow": "低",
+        "effortMedium": "中",
+        "effortHigh": "高",
+        "effortMax": "极高",
+        "effortHintAuto": "自动＝不指定，用模型自己的默认。",
+        "effortNone": "这个模型不支持调思考强度，按模型默认运行。",
+        "effortUnsupported": "当前模型不支持「{effort}」，运行时按模型默认。",
+        "effortLevelUnsupported": "这个模型不支持这一档",
+        "advanced": "高级设置",
+        "advancedReadOnly": "只有项目所有者或团队管理员能改高级设置",
+        "allowMax": "允许「极高」：更慢、更贵",
+        "compact": "自动整理上下文",
+        "compactCustom": "自己设定何时整理（不勾＝跟随默认）",
+        "compactValue": "上下文用到 {percent}% 时整理",
+        "compactHint": "调低：整理更勤、每轮更省，但更早丢掉细节。默认在上下文快满时才整理。",
+        "skills": "技能",
+        "skillsHint": "随这个队友带进每个会话的技能，输入名字后回车添加"
+      },
+      "rowModel": "模型：{model}",
+      "rowInherit": "跟随项目（{model}）",
+      "rowInheritPlain": "跟随项目主模型",
+      "rowEffort": "思考：{effort}"
     },
     "merge": {
       "title": "分支保护",
@@ -1716,67 +1808,94 @@
     "movingOut": "转让会把项目整个搬到 {'@'}{handle} 名下。转完你就不再是项目成员，也看不到它的任何话题。"
   },
   "skills": {
-    "edit": "修改",
-    "discard": "放弃改动",
-    "discardTitle": "放弃对「{title}」的改动？",
-    "discardHint": "改动作废，回到正在用的那一版；这一版改动找不回来。",
-    "drop": "不要了",
-    "history": "历史版本",
-    "delete": "删除",
-    "loadFailed": "未能读取工作方法",
-    "confirmFailed": "没有确认成功",
-    "discardFailed": "没有放弃成功",
-    "historyFailed": "未能读取历史版本",
-    "restoreFailed": "没有恢复成功",
-    "deleteFailed": "未能删除",
-    "newTitle": "新建工作方法",
-    "editTitle": "修改「{title}」",
-    "roomRequired": "先选一个房间：工作方法记在它名下，整个项目都能用",
-    "saveFailed": "没有保存成功",
-    "refresh": "刷新",
+    "awaiting": "待确认",
+    "close": "关闭",
+    "collapse": "收起",
+    "confirmFailed": "保存失败",
     "create": "新建",
-    "intro": "一次做得满意的工作，可以让芝士整理成工作方法：要什么输入、按什么步骤和规则做、交出什么。确认过的版本会带进这个项目之后的每个房间，在房间里说「按周报方法做一份」就能用",
-    "loading": "读取工作方法",
-    "awaiting": "等你确认",
-    "proposedBy": "{name} · 由 {user} 整理",
-    "changeOf": "· 正在用的是第 {revision} 版，这是改动",
-    "pending": "待确认",
-    "more": "更多操作",
+    "crowded": "技能越多，越难选对合适的一项",
+    "delete": "删除",
+    "deleteFailed": "删除失败",
+    "deleteHint": "删除后之后的房间不再带着它，历史版本也一起删除",
+    "deleteTitle": "删除「{title}」",
+    "detail": {
+      "callName": "调用名 {name}",
+      "content": "内容",
+      "size": "{kb} KB"
+    },
+    "discard": "放弃改动",
+    "discardFailed": "放弃改动失败",
+    "discardHint": "改动作废，回到正在用的那一版；这一版改动找不回来。",
+    "discardTitle": "放弃对「{title}」的改动？",
+    "edit": "修改",
+    "editTitle": "修改「{title}」",
+    "empty": "暂无技能",
     "fields": {
-      "description": "用途",
-      "inputs": "需要的输入",
-      "steps": "步骤与规则",
-      "outputs": "输出要求",
+      "body": "正文",
       "files": "配套文件"
     },
-    "listSeparator": "、",
-    "confirm": "确认保存",
-    "confirmedBy": "{name} · 第 {revision} 版 · {user} 确认于 {time}",
-    "empty": "还没有存下来的工作方法",
-    "emptyHint": "做完一次满意的工作后，在房间里说「把这次的做法存成工作方法」",
-    "save": "保存",
     "form": {
-      "room": "记在哪个房间名下",
-      "name": "英文名（小写、连字符）",
-      "namePlaceholder": "例如 weekly-report",
-      "title": "名称",
-      "titlePlaceholder": "例如：项目周报",
-      "description": "用途：什么时候用它",
-      "files": "配套文件（脚本、模板说明等文本文件）",
-      "path": "路径",
+      "addFile": "添加文件",
+      "bodyTemplate": "## 需要的输入\n\n\n\n## 步骤与规则\n\n\n\n## 输出要求\n\n",
       "content": "内容",
+      "description": "用途",
+      "name": "调用名",
+      "path": "路径",
       "removeFile": "移除",
-      "addFile": "添加文件"
+      "title": "名称",
+      "titlePlaceholder": "例如：项目周报"
     },
-    "historyTitle": "「{title}」的历史版本",
-    "revisionLine": "第 {revision} 版 · {note} · {user} · {time}",
+    "history": "历史版本",
+    "import": {
+      "add": "添加",
+      "addFailed": "添加失败",
+      "addTitle": "添加「{title}」",
+      "back": "返回",
+      "file": "SKILL.md 或技能文件夹的 .zip",
+      "read": "读取",
+      "readFailed": "读取失败",
+      "scripts": "含 {n} 个脚本，会在工作电脑上运行。添加前先看一遍",
+      "skipped": "以下文件不是文本或超过 200 KB，不会添加：{files}",
+      "title": "导入",
+      "upload": "上传文件",
+      "url": "GitHub 地址",
+      "urlLabel": "技能文件夹的地址"
+    },
     "inUse": "正在用",
-    "collapse": "收起",
-    "view": "查看",
+    "list": {
+      "draftEdit": "{name} 提议修改",
+      "draftNew": "{name} 提议新增",
+      "originCheese": "{name} 整理",
+      "originImport": "导入",
+      "originPerson": "手写",
+      "revision": "第 {revision} 版 · {date}"
+    },
+    "listSeparator": "、",
+    "loadFailed": "读取失败",
+    "loading": "读取技能",
+    "mine": "本项目",
+    "newTitle": "新建技能",
+    "proposal": {
+      "absorbs": "保存后删除以下记忆：{memories}",
+      "accepted": "本次结果",
+      "byline": "{name} 提议新增技能",
+      "bylineEdit": "{name} 提议修改技能",
+      "collapse": "收起全文",
+      "decline": "不保存",
+      "expand": "展开全文",
+      "open": "查看",
+      "reason": "修改原因",
+      "related": "与现有技能的区别",
+      "saved": "已保存「{title}」",
+      "taught": "依据"
+    },
+    "refresh": "刷新",
     "restore": "恢复到这一版",
-    "close": "关闭",
-    "deleteTitle": "删除「{title}」",
-    "deleteHint": "删除后之后的房间不再带着它，历史版本也一起删除"
+    "restoreFailed": "恢复失败",
+    "revisionLine": "第 {revision} 版 · {note} · {user} · {time}",
+    "save": "保存",
+    "saveFailed": "保存失败",
+    "view": "查看"
   },
   "nodeBoard": {
     "loadFailed": "加载机器状态失败",

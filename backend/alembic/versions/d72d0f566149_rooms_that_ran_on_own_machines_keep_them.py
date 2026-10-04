@@ -23,14 +23,14 @@ The downgrade leaves the rows: the code before this treated every binding to
 an enrolled machine as `host` whatever it said, so they change nothing there.
 
 Revision ID: d72d0f566149
-Revises: c455bd47d0ac
+Revises: be894366c0a5
 Create Date: 2026-10-04
 """
 
 from alembic import op
 
 revision = "d72d0f566149"
-down_revision = "c455bd47d0ac"
+down_revision = "be894366c0a5"
 branch_labels = None
 depends_on = None
 

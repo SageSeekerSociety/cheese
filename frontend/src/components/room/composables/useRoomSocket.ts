@@ -26,8 +26,9 @@ export function useRoomSocket(options: {
   url?: (topicId: string) => string
   /** 收到一帧（`pong` 已经在这里吃掉了）。 */
   onFrame: (frame: WsServerFrame) => void
-  /** 刚连上：链路又通了，断线期间没送出去的消息可以再走一次。 */
-  onOpen: () => void
+  /** 刚连上：链路又通了，断线期间没送出去的消息可以再走一次。`reconnect` 为真表示这
+   * 是同一间房断了又连回来的重连，而不是进这间房的第一次连接。 */
+  onOpen: (reconnect: boolean) => void
   /** 重连：重新拉一遍历史再开一条新的——断线期间漏掉的消息要补回来。 */
   reconnect: (topicId: string) => void
   /** 房间那条错误横幅。连上要清掉它，断了要在上面写原因。 */
@@ -43,6 +44,9 @@ export function useRoomSocket(options: {
   let socket: WebSocket | null = null
   let retryTimer: ReturnType<typeof setTimeout> | null = null
   let retryDelayMs = 1000
+  // 上一次成功连上的是哪一间房：把「重连」和「进这间房的第一次连接」分开。切到别的
+  // 话题就把这里换成新的话题，所以回到旧话题仍算第一次连接（那一刻该重新载入）。
+  let openedTopic: string | null = null
 
   function cancelRetry() {
     if (retryTimer) {
@@ -160,7 +164,9 @@ export function useRoomSocket(options: {
       retryDelayMs = 1000 // healthy again → next outage starts backoff fresh
       options.errorMsg.value = null
       startHeartbeat(ws)
-      options.onOpen()
+      const reconnect = openedTopic === topicId
+      openedTopic = topicId
+      options.onOpen(reconnect)
     }
     ws.onclose = () => {
       if (socket === ws) {

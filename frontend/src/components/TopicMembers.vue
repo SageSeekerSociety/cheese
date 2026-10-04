@@ -11,17 +11,13 @@ import type { ProjectMemberRow, TopicComputeProfile, TopicMemberRow } from '../c
 
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
-import {
-  addTopicMember,
-  getTopicComputeProfile,
-  listTopicMembers,
-  removeTopicMember,
-  updateTopicMemberRole,
-} from '../api'
+import { addTopicMember, getTopicComputeProfile, removeTopicMember, updateTopicMemberRole } from '../api'
 import { t } from '../i18n'
 import { memberName } from '../lib/agentNames'
 import { choiceKey, choiceName } from '../lib/computeConfig'
 import { externalHandles } from '../lib/externalMembers'
+import { whenIdle } from '../lib/idle'
+import { cachedTopicPanel, fetchTopicMembers } from '../lib/topicPanelCache'
 import { avatarColor, avatarInitial } from '../utils/avatar'
 import { getAvatarUrl } from '../utils/materials'
 
@@ -44,7 +40,8 @@ const emit = defineEmits<{
   (e: 'machine-access', notice: string | null): void
 }>()
 
-const members = ref<TopicMemberRow[]>([])
+// 切回来过的房间先画上次那份名册，背后再重取（lib/topicPanelCache.ts）。
+const members = ref<TopicMemberRow[]>(cachedTopicPanel('members', props.topicId)?.data ?? [])
 const loading = ref(false)
 const busy = ref(false)
 const error = ref('')
@@ -58,7 +55,7 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const payload = await listTopicMembers(props.topicId)
+    const payload = await fetchTopicMembers(props.topicId)
     members.value = payload.data
   } catch (e) {
     error.value = e instanceof Error ? e.message : t('work.room.roster.loadFailed')
@@ -81,11 +78,21 @@ async function loadMachines() {
     machinesError.value = e instanceof Error ? e.message : t('work.roomMachine.loadFailed')
   }
 }
+let cancelIdleLoad: (() => void) | null = null
 onMounted(() => {
-  void loadMachines()
+  // 工作电脑这一项只喂两处：名册展开后的那一行，和页头那个「能访问整台机器」的标记。
+  // 名册一展开（下面的 watch）会立刻读一次，所以进房间这一下没必要挤在首屏前 —— 推到
+  // 浏览器空下来再问，标记晚一点补上，读到的仍是同一份。
+  const tid = props.topicId
+  cancelIdleLoad = whenIdle(() => {
+    if (props.topicId === tid) void loadMachines()
+  })
   window.addEventListener('project-compute-updated', loadMachines)
 })
-onBeforeUnmount(() => window.removeEventListener('project-compute-updated', loadMachines))
+onBeforeUnmount(() => {
+  cancelIdleLoad?.()
+  window.removeEventListener('project-compute-updated', loadMachines)
+})
 watch(open, (value) => {
   if (value) void loadMachines()
 })
@@ -210,6 +217,7 @@ async function onSetRole(handle: string, role: string) {
               :style="{ zIndex: MAX_FACES - i }"
             />
             <img
+              decoding="async"
               v-else-if="faceSrc(m)"
               class="members-mini__face members-mini__face--photo"
               :src="faceSrc(m)!"
@@ -241,6 +249,7 @@ async function onSetRole(handle: string, role: string) {
         <li v-for="m in members" :key="m.id" class="roster__item">
           <CheeseAvatar v-if="m.agent" :size="26" :name="memberName(m) || m.member_handle" :handle="m.member_handle" />
           <img
+            decoding="async"
             v-else-if="faceSrc(m)"
             class="roster__avatar roster__avatar--photo"
             :src="faceSrc(m)!"
@@ -336,6 +345,7 @@ async function onSetRole(handle: string, role: string) {
               <template #prepend>
                 <CheeseAvatar v-if="item.raw.agent" :size="26" :name="item.raw.title" :handle="item.raw.value" />
                 <img
+                  decoding="async"
                   v-else-if="item.raw.face"
                   class="roster__avatar roster__avatar--photo"
                   :src="item.raw.face"

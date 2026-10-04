@@ -10,6 +10,8 @@ export interface AgentFieldChoice {
   allowed: boolean
   /** 允许这个模型的最便宜方案的名字；方案已允许或没有方案可选时为 null */
   requires_plan: string | null
+  /** 这个模型认的思考强度，按低到高；空＝只能用模型默认 */
+  efforts?: string[]
 }
 
 // A saved model the catalog no longer offers. Turns refuse it rather than fall

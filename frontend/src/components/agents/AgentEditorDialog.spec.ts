@@ -12,17 +12,33 @@ const updateProjectAgent = vi.fn()
 const updateAgentType = vi.fn()
 const createAgentType = vi.fn()
 const setProjectDefaultAgent = vi.fn()
+const getProjectDefaultModel = vi.fn()
+
+const CHOICES = [
+  { id: 'glm-5.2', label: 'GLM-5.2', default: true, allowed: true, requires_plan: null, efforts: [] },
+  {
+    id: 'deepseek-flash',
+    label: 'DeepSeek',
+    default: false,
+    allowed: true,
+    requires_plan: null,
+    efforts: ['low', 'high'],
+  },
+  {
+    id: 'sonnet',
+    label: 'Claude Sonnet 5',
+    default: false,
+    allowed: false,
+    requires_plan: 'Reserve',
+    efforts: ['low', 'medium', 'high', 'max'],
+  },
+]
 
 vi.mock('../../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../api')>()
   return {
     ...actual,
-    getProjectDefaultModel: vi.fn().mockResolvedValue({
-      choices: [
-        { id: 'deepseek-flash', label: 'DeepSeek', allowed: true, requires_plan: null },
-        { id: 'sonnet', label: 'Claude Sonnet 5', allowed: false, requires_plan: 'Reserve' },
-      ],
-    }),
+    getProjectDefaultModel: (...a: unknown[]) => getProjectDefaultModel(...a),
     createProjectAgent: (...a: unknown[]) => createProjectAgent(...a),
     updateProjectAgent: (...a: unknown[]) => updateProjectAgent(...a),
     updateAgentType: (...a: unknown[]) => updateAgentType(...a),
@@ -96,6 +112,8 @@ const CONFIG = {
   model: null,
   body: 'Review code',
   skills: [],
+  effort: null,
+  compact_percent: null,
 }
 
 beforeEach(() => {
@@ -105,7 +123,18 @@ beforeEach(() => {
   updateAgentType.mockReset().mockResolvedValue(CUSTOM_TYPE)
   createAgentType.mockReset()
   setProjectDefaultAgent.mockReset().mockResolvedValue({})
+  getProjectDefaultModel.mockReset().mockResolvedValue({ choices: CHOICES, can_manage: true })
 })
+
+async function chooseModel(name: string) {
+  const boxes = await screen.findAllByRole('combobox')
+  await fireEvent.mouseDown(boxes[boxes.length - 1]!)
+  await fireEvent.click(await screen.findByRole('option', { name: new RegExp(name) }))
+}
+
+function effortButton(name: string): HTMLButtonElement {
+  return screen.getByRole('radio', { name }) as HTMLButtonElement
+}
 
 afterEach(() => cleanup())
 
@@ -160,50 +189,83 @@ describe('新建时的校验', () => {
     })
   })
 
-  it('inherits the main model until the user opts into an override', async () => {
+  it('follows the project main model until another is chosen', async () => {
     mountDialog(null)
-    expect(screen.queryByLabelText('模型')).toBeNull()
-    expect(screen.queryByLabelText('运行方式')).toBeNull()
     await fireEvent.update(field('名字'), '代码评审')
+    expect(await screen.findByText('跟随项目主模型（GLM-5.2）')).toBeTruthy()
     await clickSave()
     await waitFor(() => expect(createProjectAgent).toHaveBeenCalled())
     const [, payload] = createProjectAgent.mock.calls[0] as [string, { configuration: object }]
-    expect(payload.configuration).toMatchObject({ model: null })
+    expect(payload.configuration).toMatchObject({ model: null, effort: null })
   })
 
-  it('saves an available model after opting in', async () => {
+  it('saves an available model and an effort it honours', async () => {
     mountDialog(null)
     await fireEvent.update(field('名字'), 'Spark')
-    await fireEvent.input(await screen.findByRole('checkbox', { name: '为这个队友指定模型' }), {
-      target: { checked: true },
-    })
-    await waitFor(() => expect(screen.getAllByRole('combobox')).toHaveLength(2))
-    await fireEvent.mouseDown((await screen.findAllByRole('combobox'))[1]!)
-    await fireEvent.click(await screen.findByRole('option', { name: 'DeepSeek' }))
+    await chooseModel('DeepSeek')
+    await waitFor(() => expect(effortButton('高').disabled).toBe(false))
+    expect(effortButton('中').disabled).toBe(true)
+    await fireEvent.click(effortButton('高'))
     await clickSave()
     await waitFor(() =>
       expect(createProjectAgent).toHaveBeenCalledWith(
         PROJECT,
         expect.objectContaining({
-          configuration: expect.objectContaining({ model: 'deepseek-flash' }),
+          configuration: expect.objectContaining({ model: 'deepseek-flash', effort: 'high' }),
         })
       )
     )
   })
 
+  it('offers no effort on a model that takes none', async () => {
+    mountDialog(null)
+    await waitFor(() => expect(screen.getByText(/这个模型不支持调思考强度/)).toBeTruthy())
+    expect(effortButton('低').disabled).toBe(true)
+    expect(effortButton('高').disabled).toBe(true)
+  })
+
   it('does not let a model the plan leaves out be chosen', async () => {
     mountDialog(null)
     await fireEvent.update(field('名字'), 'Spark')
-    await fireEvent.input(await screen.findByRole('checkbox', { name: '为这个队友指定模型' }), {
-      target: { checked: true },
-    })
-    await waitFor(() => expect(screen.getAllByRole('combobox')).toHaveLength(2))
-    await fireEvent.mouseDown((await screen.findAllByRole('combobox'))[1]!)
+    const boxes = await screen.findAllByRole('combobox')
+    await fireEvent.mouseDown(boxes[boxes.length - 1]!)
     const option = await screen.findByRole('option', { name: /Claude Sonnet 5/ })
     expect(option.textContent).toContain('Reserve')
     await fireEvent.click(option)
     await clickSave()
-    expect(createProjectAgent).not.toHaveBeenCalled()
+    await waitFor(() => expect(createProjectAgent).toHaveBeenCalled())
+    const [, payload] = createProjectAgent.mock.calls[0] as [string, { configuration: { model: unknown } }]
+    expect(payload.configuration.model).not.toBe('sonnet')
+  })
+})
+
+describe('高级设置', () => {
+  async function openAdvanced() {
+    await fireEvent.click(await screen.findByRole('button', { name: /高级设置/ }))
+  }
+
+  it('收在折叠里，展开后可以设整理阈值', async () => {
+    mountDialog(null)
+    await fireEvent.update(field('名字'), 'Spark')
+    expect(screen.queryByText('自动整理上下文')).toBeNull()
+    await openAdvanced()
+    await fireEvent.input(await screen.findByLabelText(/自己设定何时整理/), { target: { checked: true } })
+    expect(await screen.findByText(/上下文用到 80% 时整理/)).toBeTruthy()
+    await clickSave()
+    await waitFor(() =>
+      expect(createProjectAgent).toHaveBeenCalledWith(
+        PROJECT,
+        expect.objectContaining({ configuration: expect.objectContaining({ compact_percent: 80 }) })
+      )
+    )
+  })
+
+  it('不是负责人时只读，并说明谁能改', async () => {
+    getProjectDefaultModel.mockResolvedValue({ choices: CHOICES, can_manage: false })
+    mountDialog(null)
+    await openAdvanced()
+    expect(await screen.findByText('只有项目所有者或团队管理员能改高级设置')).toBeTruthy()
+    expect((screen.getByLabelText(/自己设定何时整理/) as HTMLInputElement).disabled).toBe(true)
   })
 })
 

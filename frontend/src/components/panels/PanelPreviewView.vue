@@ -32,11 +32,14 @@ import DesignRegionNote from './preview/DesignRegionNote.vue'
 import PreviewLocator from './preview/PreviewLocator.vue'
 import PreviewMarkdown from './preview/PreviewMarkdown.vue'
 import PreviewPages from './preview/PreviewPages.vue'
+import PreviewPickToggle from './preview/PreviewPickToggle.vue'
+import PreviewRegionPick from './preview/PreviewRegionPick.vue'
 import PreviewSheet from './preview/PreviewSheet.vue'
 import PreviewSlides from './preview/PreviewSlides.vue'
 import RevisionList from './preview/RevisionList.vue'
 import { usePreviewImageRegion } from './preview/usePreviewImageRegion'
 import { usePreviewPagePin } from './preview/usePreviewPagePin'
+import { usePreviewPick } from './preview/usePreviewPick'
 import { usePreviewQuote } from './preview/usePreviewQuote'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -123,6 +126,8 @@ const emit = defineEmits<{
   (e: 'locate', payload: PreviewLocate): void
   /** 编辑器打开了一份文件：开成自由区的一个页签。 */
   (e: 'open-file', path: string): void
+  /** 圈选开关变了：有桥的网页要把它递进帧（取数那一层把消息送过去）。 */
+  (e: 'pick-mode', on: boolean): void
 }>()
 
 const panelElement = ref<HTMLElement | null>(null)
@@ -207,6 +212,15 @@ const pageLocator = usePreviewPagePin(props, {
 })
 const quoted = usePreviewQuote(props, (context) => pageLocator.canUse(context))
 
+// 网页预览里的圈选（判据和开关在 usePreviewPick）：有桥的网页由帧报回一处，应用由遮罩报回一块。
+const pick = usePreviewPick({
+  frame: () => props.displayedFrame,
+  previewUrl: () => props.previewUrl,
+  onRuntime: (on) => emit('pick-mode', on),
+  open: (label, quote, address) => openLocator(label, quote, address),
+  quote: quoted,
+})
+
 function openLocator(label: string, quote: string, address: string, context?: QuoteContext) {
   imageRegion.clear()
   quoted.clear()
@@ -223,9 +237,9 @@ function clearLocator() {
   pagesRef.value?.clearMark()
   locatorNote.value = ''
 }
-// 帧里的 ESC 交给宿主：先收标注条，再退全屏，最后把焦点收回面板（判据在 usePreviewEscape）。
-const handleEscape = usePreviewEscape(panelElement, previewFull, fullscreen, clearLocator, () => !!locator.value)
-defineExpose({ handleEscape })
+// 帧里的 ESC 交给宿主：先退圈选，再收标注条，再退全屏，最后把焦点收回面板（判据在 usePreviewEscape）。
+const handleEscape = usePreviewEscape(panelElement, previewFull, fullscreen, clearLocator, () => !!locator.value, pick)
+defineExpose({ handleEscape, handlePick: pick.fromFrame })
 function onImageRegion(selection: RasterSelection) {
   const captured = imageRegion.capture(selection)
   if (!captured) return
@@ -238,6 +252,7 @@ function onPageContext(payload: SlidePageContext) {
   openLocator(page, payload.scope === 'page' ? t('slides.wholePage') : payload.text.slice(0, 200), page)
   quoted.page.value = { ...payload, context: { ...payload.context } }
 }
+
 watch(
   [
     // markdown 没有下面那套文档身份，屏幕上换了一份文件时没人撤掉上一份的指认——
@@ -443,6 +458,7 @@ async function onAnnotate(payload: AnnotateDraft) {
             @click="emit('download')"
           />
         </template>
+        <PreviewPickToggle v-if="pick.target.value" :on="pick.on.value" @toggle="pick.toggle" />
       </div>
       <div v-if="displayedFrame" role="status" class="preview-runtime-status px-3 py-2 text-caption">
         <span v-if="displayedFrame.resourceId" :title="displayedFrame.resourceId">{{
@@ -517,6 +533,8 @@ async function onAnnotate(payload: AnnotateDraft) {
           :title="t('work.room.preview.frameTitle')"
           sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-popups-to-escape-sandbox"
         />
+        <!-- 应用那一档：没有桥，读不到页面，宿主在 iframe 上盖一层透明遮罩拖矩形。 -->
+        <PreviewRegionPick v-if="pick.target.value === 'region' && pick.on.value" @pick="pick.fromRegion" />
       </div>
     </div>
     <div v-else-if="previewError || navigationError" role="alert" class="text-center text-medium-emphasis py-8">

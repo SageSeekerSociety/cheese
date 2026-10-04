@@ -27,6 +27,13 @@ vi.mock('../../api', async () => {
     ...actual,
     getAgentControl: vi.fn().mockResolvedValue({ id: null, connected: false }),
     listProjectLibrary: vi.fn().mockResolvedValue({ data: [], total: 0 }),
+    // 项目本体上那张「开始清单」的仓库判据。
+    getForgeConnection: vi.fn().mockResolvedValue({
+      kind: 'forgejo',
+      connected: false,
+      repo: null,
+      url: null,
+    }),
     listBlocks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listRoomTasks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     // 芝士的座位在**话题**名册上，一个话题一个分身。项目名册上没有它——这正是

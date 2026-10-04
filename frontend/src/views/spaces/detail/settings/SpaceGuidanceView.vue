@@ -81,7 +81,9 @@ function submit() {
   padding: 16px 24px 20px;
 }
 
-@media (max-width: 599.98px) {
+/* 断点对齐共享 token（`styles/breakpoints.scss`）：599.98 → 767.98，和这一页
+   一起加载的 `settings-card.css` 同一条线。 */
+@media (max-width: 767.98px) {
   .guidance__body {
     padding: 16px;
   }

@@ -5,12 +5,14 @@ import { toast } from 'vuetify-sonner'
 
 import { t } from '@/i18n'
 
-export async function copyText(text: string, done: string): Promise<void> {
+export async function copyText(text: string, done: string): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(text)
     toast(done)
+    return true
   } catch {
     toast.error(t('navigation.copy.failed'))
+    return false
   }
 }
 
@@ -19,6 +21,6 @@ export function linkOf(router: Router, to: RouteLocationRaw): string {
   return new URL(router.resolve(to).href, window.location.origin).href
 }
 
-export function copyLink(link: string): Promise<void> {
+export function copyLink(link: string): Promise<boolean> {
   return copyText(link, t('navigation.copy.linkCopied'))
 }

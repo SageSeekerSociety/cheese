@@ -136,7 +136,7 @@ Cloud 能开机 → 默认是 Cloud；开不了 → 默认是自托管设备
 
 `build_compute_pool` 拿的就是这个值。**这两个答案必须是一个函数**：分开写就会分家，而分家之后看不出来——界面上写着一台机器，话题跑在另一台上，两边各自都是自洽的。
 
-一轮活的落点按这个顺序定（`chat.py` 的 `_resolve_compute_id`）：
+一轮活的落点按这个顺序定（`agent/work_policy.py` 的 `resolve_compute_id`，轮次组装 `room/turn.py` 里问它）：
 
 1. 话题自己选的（第一轮跑完就钉住）
 2. 项目记住的上一次选择

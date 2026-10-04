@@ -36,13 +36,24 @@ class ProjectSkill(UuidPk, Timestamps, Base):
     title: Mapped[str] = mapped_column(String(200))
     #: 用途 — also the native skill's description, which decides when it is used.
     description: Mapped[str] = mapped_column(Text)
-    inputs: Mapped[str] = mapped_column(Text, default="", server_default="")
-    steps: Mapped[str] = mapped_column(Text)
-    outputs: Mapped[str] = mapped_column(Text, default="", server_default="")
-    #: {relative path: text} shipped beside SKILL.md (scripts, templates, notes).
+    #: 正文 — the method itself, in markdown, as an imported SKILL.md's body is.
+    body: Mapped[str] = mapped_column(Text, default="", server_default="")
+    #: The files shipped beside SKILL.md, as a manifest
+    #: {relative path: {"sha256", "size"}}; the bytes are in file storage
+    #: (``blobs.py``).
     files: Mapped[dict] = mapped_column(JSONB, default=dict)
-    #: draft (proposed or edited by an AI teammate, not shipped) | active.
+    #: draft (proposed or edited by an AI teammate, not shipped) | active |
+    #: declined (a teammate's proposal a person turned down; kept so the same
+    #: method is not proposed again).
     state: Mapped[str] = mapped_column(String(16), default="draft")
+    #: What a teammate's pending draft or edit rests on (taught, accepted,
+    #: related, absorbs, reason), shown on the card that asks a person to save
+    #: it. None once a person wrote or saved it.
+    proposal: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    #: Who wrote it first: cheese (an AI teammate) | person | import.
+    origin: Mapped[str] = mapped_column(
+        String(16), default="person", server_default="person"
+    )
     source_topic_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("topics.id", ondelete="SET NULL"), nullable=True
     )
@@ -67,7 +78,7 @@ class ProjectSkillRevision(UuidPk, Base):
         ForeignKey("project_skills.id", ondelete="CASCADE"), index=True
     )
     revision: Mapped[int] = mapped_column(BigInteger)
-    #: title, description, inputs, steps, outputs, files as confirmed.
+    #: title, description, body, files (a manifest) as confirmed.
     content: Mapped[dict] = mapped_column(JSONB)
     confirmed_by: Mapped[str] = mapped_column(String(64))
     note: Mapped[str] = mapped_column(Text, default="", server_default="")

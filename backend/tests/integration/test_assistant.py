@@ -31,7 +31,12 @@ import pytest
 from redis.asyncio import from_url
 from sqlalchemy import select, text, update
 
-from app.api.deps import get_session_host
+from app.api.deps import (
+    consumptions_for,
+    get_chat_service,
+    get_consumptions,
+    get_session_host,
+)
 from app.api.routes import assistant as route
 from app.api.routes import llm_proxy
 from app.core.config import settings
@@ -59,9 +64,15 @@ RATES = (1e-3, 2e-3, 1e-5)  # input, output, cached input — USD per token
 CALL_USD = 100 * RATES[0] + 200 * RATES[2] + 20 * RATES[1]
 
 
+def _chat():
+    """The chat service the app is serving this test with."""
+    return app.dependency_overrides.get(get_chat_service, get_chat_service)()
+
+
 class Gateway:
     """The script: each model request takes the next step; a step is
-    ``("tool", name, args)`` or ``("text", answer)``."""
+    ``("tool", name, args)``, ``("text", answer)``, or ``("held", first,
+    rest)``: ``first`` is streamed, then nothing until ``release`` is set."""
 
     def __init__(self) -> None:
         self.script: list[tuple] = []
@@ -73,6 +84,9 @@ class Gateway:
         self.revoked: list[str] = []
         #: Every model call fails, as a gateway that is down answers.
         self.failing = False
+        #: A held step: set once its first part is out, and what lets it go on.
+        self.holding = threading.Event()
+        self.release = threading.Event()
         outer = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -133,7 +147,43 @@ class Gateway:
                     self._json({"error": {"message": "upstream fell over"}}, 500)
                     return
                 step = outer.script.pop(0) if outer.script else ("text", "好的。")
+                if step[0] == "held":
+                    self._held(step[1], step[2])
+                    return
                 self._stream(step)
+
+            def _held(self, first: str, rest: str) -> None:
+                # No length: the body ends when the connection does.
+                self.send_response(200)
+                self.send_header("content-type", "text/event-stream")
+                self.end_headers()
+                chunk = self._chunk
+                self.wfile.write(chunk({"role": "assistant", "content": ""}))
+                self.wfile.write(chunk({"content": first}))
+                self.wfile.flush()
+                outer.holding.set()
+                outer.release.wait(30)
+                try:
+                    self.wfile.write(chunk({"content": rest}))
+                    self.wfile.write(chunk({}, finish="stop"))
+                    self.wfile.write(chunk(None, usage=USAGE) + b"data: [DONE]\n\n")
+                except OSError:
+                    pass  # the caller stopped listening
+
+            @staticmethod
+            def _chunk(delta: dict | None, finish=None, usage=None) -> bytes:
+                c = {
+                    "id": "x",
+                    "object": "chat.completion.chunk",
+                    "created": 0,
+                    "model": settings.assistant_model,
+                    "choices": []
+                    if delta is None
+                    else [{"index": 0, "delta": delta, "finish_reason": finish}],
+                }
+                if usage:
+                    c["usage"] = usage
+                return f"data: {json.dumps(c)}\n\n".encode()
 
             def _json(self, body, status: int = 200) -> None:
                 data = json.dumps(body).encode()
@@ -193,6 +243,7 @@ class Gateway:
         threading.Thread(target=self._httpd.serve_forever, daemon=True).start()
 
     def close(self) -> None:
+        self.release.set()
         self._httpd.shutdown()
 
 
@@ -247,11 +298,9 @@ def gateway(client, monkeypatch: pytest.MonkeyPatch, tmp_path):
         monkeypatch.setattr(
             module, "async_session_factory", client.test_request_factory
         )
-        # TestClient runs each request on its own loop; a cached client cannot
-        # follow.
-        monkeypatch.setattr(
-            module, "get_redis_client", lambda: from_url(settings.redis_url)
-        )
+    # TestClient runs each request on its own loop; a cached client cannot
+    # follow.
+    monkeypatch.setattr(route, "get_redis_client", lambda: from_url(settings.redis_url))
     import redis
 
     r = redis.Redis.from_url(settings.redis_url)
@@ -264,13 +313,14 @@ def gateway(client, monkeypatch: pytest.MonkeyPatch, tmp_path):
     home = tmp_path / "host"
     install_pi(home)
     host = Host(home)
-    people = SessionHost(host)
-    app.dependency_overrides[get_session_host] = lambda: people
     gw.host = host  # type: ignore[attr-defined]
+    gw.sessions = client.test_request_factory  # type: ignore[attr-defined]
+    _people(gw)
     try:
         yield gw
     finally:
         app.dependency_overrides.pop(get_session_host, None)
+        app.dependency_overrides.pop(get_consumptions, None)
         stop_all(home)
         relay.close()
         gw.close()
@@ -317,10 +367,13 @@ def _ask(client, conversation: str, question: str, headers: dict):
 
 
 def _events(text: str) -> list[tuple[str, dict]]:
+    """What the answer said, in order; the question's own id (``answering``),
+    which only a reader reconnecting needs, is left out."""
     out = []
     for block in text.strip().split("\n\n"):
         lines = dict(line.split(": ", 1) for line in block.splitlines())
-        out.append((lines["event"], json.loads(lines["data"])))
+        if lines["event"] != "answering":
+            out.append((lines["event"], json.loads(lines["data"])))
     return out
 
 
@@ -392,7 +445,7 @@ def test_a_question_is_answered_from_the_task_kept_and_paid_for(client, gateway)
     events = _events(r.text)
     deltas = [d["text"] for e, d in events if e == "delta"]
     assert "".join(deltas) == "要先会 PyTorch。"
-    assert events[-1] == ("done", {})
+    assert events[-1] == ("done", {"stopped": False})
     # The model is asked without thinking, for a bounded answer.
     sent = gateway.requests[0]
     assert sent["thinking"] == {"type": "disabled"}
@@ -641,3 +694,186 @@ def test_a_change_of_model_reissues_the_persons_key(client, gateway, monkeypatch
     assert old in gateway.revoked
     # Both questions are paid for: the old key's spend before it went.
     _charged(client, "asker", 2)
+
+
+class FullHost:
+    """The session host's memory, full for the first ``full`` looks."""
+
+    def __init__(self, full: float) -> None:
+        self.full = full
+
+    async def can_start(self, mb: int) -> bool:
+        self.full -= 1
+        return self.full < 0
+
+
+def _people(gateway, memory=None) -> None:
+    """The session host the routes reach, and the questions read on it."""
+    people = SessionHost(gateway.host, memory=memory)
+    questions = consumptions_for(
+        people,
+        _chat(),
+        redis=lambda: from_url(settings.redis_url),
+        sessions=gateway.sessions,
+    )
+    app.dependency_overrides[get_session_host] = lambda: people
+    app.dependency_overrides[get_consumptions] = lambda: questions
+
+
+def test_a_question_waits_for_a_full_host_and_is_then_answered(client, gateway):
+    me = _auth(client, "asker")
+    conversation = _start(client, _task(client), me)
+    _people(gateway, FullHost(2))
+    gateway.script = [("text", "要先会 PyTorch。")]
+
+    events = _events(_ask(client, conversation, "做这道题要先会什么？", me).text)
+
+    assert events[0] == ("queued", {})
+    assert "".join(d["text"] for e, d in events if e == "delta") == "要先会 PyTorch。"
+    assert events[-1] == ("done", {"stopped": False})
+
+
+def test_a_host_full_for_too_long_says_so(client, gateway, monkeypatch):
+    from app.domain.agent.personal import session as personal
+
+    monkeypatch.setattr(personal, "HOST_WAIT_S", 1.5)
+    me = _auth(client, "asker")
+    conversation = _start(client, _task(client), me)
+    _people(gateway, FullHost(float("inf")))
+
+    events = _events(_ask(client, conversation, "做这道题要先会什么？", me).text)
+
+    assert events[0] == ("queued", {})
+    [(_, refused)] = [(e, d) for e, d in events if e == "error"]
+    assert refused["i18n"]["key"] == "assistantBusy"
+    assert gateway.requests == []
+
+
+def test_a_question_stopped_while_waiting_is_not_answered(client, gateway):
+    me = _auth(client, "asker")
+    conversation = _start(client, _task(client), me)
+    _people(gateway, FullHost(float("inf")))
+    answered: list = []
+    asking = threading.Thread(
+        target=lambda: answered.append(_ask(client, conversation, "在吗？", me))
+    )
+    asking.start()
+    deadline = time.monotonic() + 30
+    while not _answering(conversation):
+        assert time.monotonic() < deadline
+        time.sleep(0.05)
+
+    stopped = client.post(f"/assistant/conversations/{conversation}/stop", headers=me)
+
+    assert stopped.status_code == 200, stopped.text
+    asking.join(30)
+    events = _events(answered[0].text)
+    assert events[-1] == ("done", {"stopped": True})
+    assert gateway.requests == []
+    got = client.get(f"/assistant/conversations/{conversation}", headers=me).json()
+    assert [(m["role"], m["text"], m["stopped"]) for m in got["data"]["messages"]] == [
+        ("user", "在吗？", False),
+        ("assistant", "", True),
+    ]
+
+
+def test_a_stopped_answer_keeps_what_was_written(client, gateway):
+    me = _auth(client, "asker")
+    conversation = _start(client, _task(client), me)
+    gateway.script = [("held", "先要会 PyTorch，", "然后再看论文。")]
+    answered: list = []
+    asking = threading.Thread(
+        target=lambda: answered.append(_ask(client, conversation, "先会什么？", me))
+    )
+    asking.start()
+    assert gateway.holding.wait(60)
+
+    stopped = client.post(f"/assistant/conversations/{conversation}/stop", headers=me)
+
+    assert stopped.status_code == 200, stopped.text
+    asking.join(60)
+    gateway.release.set()
+    events = _events(answered[0].text)
+    written = "".join(d["text"] for e, d in events if e == "delta")
+    assert "然后再看论文" not in written
+    assert events[-1] == ("done", {"stopped": True})
+    got = client.get(f"/assistant/conversations/{conversation}", headers=me).json()
+    [*_, answer] = got["data"]["messages"]
+    assert (answer["role"], answer["text"], answer["stopped"]) == (
+        "assistant",
+        written.strip(),
+        True,
+    )
+
+
+def _entries(text: str) -> list[tuple[str | None, str, dict]]:
+    """Every event of a stream, with its place in it."""
+    out = []
+    for block in text.strip().split("\n\n"):
+        lines = dict(line.split(": ", 1) for line in block.splitlines())
+        out.append((lines.get("id"), lines["event"], json.loads(lines["data"])))
+    return out
+
+
+def test_an_answer_is_read_on_from_where_its_reader_left_it(client, gateway):
+    """A reader that lost the stream — a closed tab, a backend restarted under
+    it — finds the question still being answered when it opens the
+    conversation, and reads the rest of it from where it was: only the rest,
+    and only it."""
+    me = _auth(client, "asker")
+    other = _auth(client, "other")
+    conversation = _start(client, _task(client), me)
+    gateway.script = [("held", "先要会 PyTorch，", "然后再看论文。")]
+    answered: list = []
+    asking = threading.Thread(
+        target=lambda: answered.append(_ask(client, conversation, "先会什么？", me))
+    )
+    asking.start()
+    assert gateway.holding.wait(60)
+
+    opened = client.get(f"/assistant/conversations/{conversation}", headers=me)
+    work = opened.json()["data"]["answering"]
+    assert work
+    elsewhere = client.get(
+        f"/assistant/conversations/{conversation}/answers/{work}", headers=other
+    )
+    assert elsewhere.status_code == 404
+
+    gateway.release.set()
+    asking.join(60)
+    whole = _entries(answered[0].text)
+    assert whole[0] == (None, "answering", {"id": work})
+    first, *rest = whole[1:]
+    again = client.get(
+        f"/assistant/conversations/{conversation}/answers/{work}",
+        params={"after": first[0]},
+        headers=me,
+    )
+
+    assert again.status_code == 200, again.text
+    assert _entries(again.text) == rest
+    assert rest[-1][1:] == ("done", {"stopped": False})
+    reopened = client.get(f"/assistant/conversations/{conversation}", headers=me)
+    assert reopened.json()["data"]["answering"] is None
+
+
+def test_someone_else_cannot_stop_my_question(client, gateway):
+    me = _auth(client, "asker")
+    conversation = _start(client, _task(client), me)
+
+    r = client.post(
+        f"/assistant/conversations/{conversation}/stop",
+        headers=_auth(client, "stranger"),
+    )
+
+    assert r.status_code == 404
+
+
+def _answering(conversation: str) -> bool:
+    import redis
+
+    return bool(
+        redis.Redis.from_url(settings.redis_url).exists(
+            f"assistant:busy:{conversation}"
+        )
+    )

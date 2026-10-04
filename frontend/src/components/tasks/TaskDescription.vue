@@ -3,12 +3,13 @@
        审核的人看到的就是领题的人将来看到的。 -->
   <TipTapViewer v-if="tipTap" class="td" :value="tipTap" data-user-content />
   <div v-else-if="markdown" class="markdown-body td t-reading" data-user-content v-html="markdown" />
-  <p v-else class="td__empty">{{ empty }}</p>
+  <BaseEmptyState v-else size="inline" class="td__empty" :title="empty" />
 </template>
 
 <script setup lang="ts">
 import { computed, defineAsyncComponent } from 'vue'
 
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import { MarkdownRenderer } from '@/components/chat/services/markdownRenderer'
 
 const TipTapViewer = defineAsyncComponent(() => import('@/components/common/Editor/TipTapViewer.vue'))
@@ -62,7 +63,5 @@ const markdown = computed(() => {
 
 .td__empty {
   margin: 0 0 6px;
-  color: var(--muted);
-  font-size: 13px;
 }
 </style>

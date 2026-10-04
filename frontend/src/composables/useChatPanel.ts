@@ -31,8 +31,6 @@ import {
   ensureFreshToken,
   isRetryableGetFailure,
   listBlocks,
-  listRoomTasks,
-  toggleReaction as apiToggleReaction,
   undoTopicTitle,
 } from '../api'
 import { postChatMessage } from '../api/messages'
@@ -46,6 +44,7 @@ import { useRoomActivity } from '../components/room/composables/useRoomActivity'
 import { useRoomRoster } from '../components/room/composables/useRoomRoster'
 import { useRoomSocket } from '../components/room/composables/useRoomSocket'
 import { useRoomTurns } from '../components/room/composables/useRoomTurns'
+import { useRowBatch } from '../components/room/composables/useRowBatch'
 import { useTimeline } from '../components/room/composables/useTimeline'
 import { useTypingPreview } from '../components/room/composables/useTypingPreview'
 import { isAgentBlock, isAgentHandle, isPersonBlock } from '../lib/authorship'
@@ -55,9 +54,10 @@ import { dayLabelsFor, outboxEdgeAfter, type RunEdge, runEdgeBetween, unreadAnch
 import { announceComments } from '../lib/docCommentSignals'
 import { renderNoticeMessage } from '../lib/noticeText'
 import { outgoingMessageBody, pendingMessageBlock } from '../lib/outgoingMessage'
-import { AGENT_STATUS_EVENTS, collapseNotices, type PlatformNotice } from '../lib/platformNotice'
+import { AGENT_STATUS_EVENTS, collapseNotices, type PlatformNotice, rendersInRoom } from '../lib/platformNotice'
 import { coalesceSplitFencedCodeBlocks } from '../lib/renderMessage'
 import { placeSplitMarkers } from '../lib/splitMarkers'
+import { cachedTopicPanel, fetchRoomTasks } from '../lib/topicPanelCache'
 import { taskTitle, topicShortId, topicStateBadge, topicTitle } from '../lib/topicState'
 import { myHandle } from '../me'
 
@@ -66,6 +66,7 @@ import { useAskGroups } from './useAskGroups'
 import { useAskTakeover } from './useAskTakeover'
 import { useChatComposer } from './useChatComposer'
 import { useChatPaging } from './useChatPaging'
+import { useMessageReactions } from './useMessageReactions'
 import { useOwnChecklist } from './useOwnChecklist'
 
 import { t } from '@/i18n'
@@ -138,8 +139,8 @@ export function useChatPanel(opts: ChatPanelOptions) {
     { immediate: true, deep: true }
   )
 
-  // 此刻显示时间线的哪一段 —— 见 room/composables/useTimeline。
-  const timeline = useTimeline()
+  // 此刻显示时间线的哪一段 —— 见 room/composables/useTimeline；rendersInRoom 只放画得出来的块进窗口，不露面的块不占额度。
+  const timeline = useTimeline({ renders: rendersInRoom })
   const { messages, hasMore, hasNewer } = timeline
   const loadingHistory = ref(false)
 
@@ -186,28 +187,13 @@ export function useChatPanel(opts: ChatPanelOptions) {
     fail: (e) => (errorMsg.value = e instanceof Error ? e.message : t('work.room.checklist.saveFailed')),
   })
 
-  // ---- Emoji reactions (Slack semantics, 协作平台的消息表情) ----
-  // MVP picker: a fixed strip of the 8 most common reactions.
-  // Which message's picker is open (one at a time).
-  const reactionPickerFor = ref<string | null>(null)
-
-  function applyReactions(blockId: string, reactions: ReactionAgg[]) {
-    historyReactions?.set(blockId, reactions)
-    const m = timeline.find(blockId)
-    if (m) m.reactions = reactions
-  }
-
-  async function onReact(m: Block, emoji: string) {
-    reactionPickerFor.value = null
-    try {
-      // The response carries the fresh aggregate; the `reaction` WS frame the
-      // backend broadcasts is idempotent with this local apply.
-      const out = await apiToggleReaction(m.id, emoji)
-      applyReactions(m.id, out.reactions)
-    } catch (e) {
-      errorMsg.value = e instanceof Error ? e.message : t('work.room.chat.reactionFailed')
-    }
-  }
+  // ---- Emoji reactions —— 见 composables/useMessageReactions ----
+  const { reactionPickerFor, applyReactions, onReact, togglePicker } = useMessageReactions({
+    find: (id) => timeline.find(id),
+    errorMsg,
+    pendingHistory: () => historyReactions,
+    me: AUTHOR,
+  })
 
   // 「这条事件长什么样」的判断全在 lib/platformNotice.ts —— 包括动作卡认哪些块
   // (refs=["action:<resource>"] / meta.action)。这里只剩按钮文案和 emit 接线。
@@ -250,7 +236,17 @@ export function useChatPanel(opts: ChatPanelOptions) {
     noteFrame,
     rememberScroll,
     restoreScroll,
+    restoresToBottom,
   } = useChatScroll({ showingNewest: () => !hasNewer.value })
+
+  // 打开话题时分批挂行 —— 见 room/composables/useRowBatch（`rows`、`paging` 在下面，晚读）。
+  const rowBatch = useRowBatch({
+    scrollRef,
+    atBottom,
+    restoresToBottom,
+    rowIds: () => rows.value.map((r) => r.block.id),
+    onDone: () => void paging.fillViewportIfNeeded(),
+  })
 
   // 这条房间 socket 的连接、重连退避、心跳、换掉假活的那条 —— 见
   // room/composables/useRoomSocket。它不认识帧的含义：帧交给下面的 handleFrame。
@@ -268,10 +264,10 @@ export function useChatPanel(opts: ChatPanelOptions) {
       handleFrame(frame)
       noteFrame()
     },
-    onOpen: () => {
-      // State frames are transient. A doc saved while disconnected may have no
-      // remaining turn to replay it; refresh through the panel's conflict guard.
-      emit('state-changed', 'doc')
+    onOpen: (reconnect) => {
+      // State frames are transient, so a re-connect rather than the first open:
+      // a doc saved while we were away has no remaining turn left to replay it.
+      if (reconnect) emit('state-changed', 'doc')
       void flushOutbox() // 断线期间没送出去的，连上就自己走
     },
     reconnect: (topicId) => {
@@ -329,6 +325,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     historyChanges?.set(b.id, b)
     const landing = timeline.append(b)
     if (landing === 'known' || landing === 'above' || historyChanges !== null || b.author === AUTHOR) return
+    if (b.kind === 'artifact') emit('preview-shown') // 新摆出一份东西：面板立刻去问预览指针，不等轮询
     if (landing === 'shown') arrived.add(b.id)
     if ((landing === 'held' || !atBottom.value) && b.kind !== 'event') unseen.value.push(b.id)
   }
@@ -472,9 +469,11 @@ export function useChatPanel(opts: ChatPanelOptions) {
     composer.clearPendingAtts() // pending images belong to the topic they were typed in
     closeSocket()
     paging.loadingOlder.value = false
+    rowBatch.revealAll()
     const cached = cachedWindow(room.id)
     if (cached) {
       timeline.show(cached)
+      rowBatch.startFor(room.id, focus)
       if (!focus) restoreScroll(room.id)
     } else {
       timeline.show({ blocks: [], hasMore: false })
@@ -503,6 +502,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
         if (!warmed) return
         shownEarly = warmed
         timeline.show(warmed)
+        rowBatch.startFor(room.id, focus)
         loadingHistory.value = false
         if (!focus) restoreScroll(room.id)
       })
@@ -536,6 +536,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
       for (const block of merged.blocks) settleOutbox(block)
       setCachedWindow(room.id, merged)
       placeUnreadAnchor() // 冻在这一刻：之后来的新消息不再移动这条线
+      if (!shown) rowBatch.startFor(room.id, focus)
       if (focus) void paging.openAt(focus)
       else if (!shown) restoreScroll(room.id)
       else if (grew && atBottom.value) autoScroll()
@@ -587,6 +588,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     }
   }
   function scrollToMessage(id: string, behavior: ScrollBehavior = scrollBehavior()) {
+    if (rowBatch.deferUntilRevealed(() => scrollToMessage(id, behavior))) return
     const el = scrollRef.value?.querySelector(`[data-mid="${id}"]`)
     if (!el) return
     el.scrollIntoView({ behavior, block: 'center' })
@@ -662,10 +664,6 @@ export function useChatPanel(opts: ChatPanelOptions) {
   // accidental merge.
   const rows = computed(() => collapseNotices(coalesceSplitFencedCodeBlocks(messages.value)))
   const visible = computed<Block[]>(() => rows.value.map((r) => r.block))
-  /** 表情选择条：点同一条收起，点另一条移过去。 */
-  function togglePicker(blockId: string) {
-    reactionPickerFor.value = reactionPickerFor.value === blockId ? null : blockId
-  }
 
   // ---- the pieces this panel is made of --------------------------------
   // Each block below owns one job, so no single file has to hold the whole
@@ -682,6 +680,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     rememberScroll,
     scrollToMessage,
     scrollToBottom,
+    rowsPending: () => rowBatch.pending.value,
   })
   const { loadingOlder, loadingNewer, openAt, onTimelineScroll } = paging
 
@@ -753,10 +752,10 @@ export function useChatPanel(opts: ChatPanelOptions) {
   watch(
     () => topic()?.id,
     async (id) => {
-      roomTasks.value = []
+      roomTasks.value = id ? cachedTopicPanel('roomTasks', id)?.data ?? [] : [] // 先画上次那份，背后再重取
       if (!id) return
       try {
-        roomTasks.value = (await listRoomTasks(id, { limit: 1 })).data
+        roomTasks.value = (await fetchRoomTasks(id)).data
       } catch {
         // 标记是派生出来的装饰，不是内容。拉不到就少几行标记，不该让整个时间线红掉。
       }
@@ -911,6 +910,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     composerHint,
     // timeline
     rows,
+    hiddenRows: rowBatch.hidden,
     refMaps,
     awaitingReply,
     agentFaces: turns.faces,

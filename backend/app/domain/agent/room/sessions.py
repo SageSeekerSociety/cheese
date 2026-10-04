@@ -212,6 +212,8 @@ class RoomSessions:
         self.closed: set[uuid.UUID] = set()
         # The open work each seat was last told is waiting on its machine.
         self.told_waiting: dict[Seat, uuid.UUID] = {}
+        # The conversation each seat was last handed its opening state in.
+        self.opened: dict[Seat, str] = {}
         # (seat, conversation) pairs this process saw die (`_died` / a
         # verdict): the only thing that makes "no live session" a fact rather
         # than an unanswered question (FB-56 legacy③). A turn on the same seat
@@ -227,11 +229,6 @@ class RoomSessions:
         self.tasks: dict[Seat, asyncio.Task] = {}
         # Each seat's reading caught up with what its session had written.
         self.caught: dict[Seat, asyncio.Event] = {}
-        # Messages sent while another turn held their seat, until the session
-        # says which turn read them; and, once it has, the messages each
-        # running turn took in. Those end when the turn that read them ends.
-        self.riding: dict[Seat, set[uuid.UUID]] = {}
-        self.taken: dict[uuid.UUID, list[tuple[Seat, uuid.UUID]]] = {}
         # The platform's own work (``reading``) reads its events here rather
         # than the room hearing them.
         self.queues: dict[uuid.UUID, asyncio.Queue[AgentEvent]] = {}
@@ -457,52 +454,11 @@ class RoomSessions:
                 ),
                 required=True,
             )
-        if isinstance(event, AgentResult) and event.thread_label is None:
-            await self._end_taken(project, topic, work, event)
-
-    def _took(self, seat: Seat, input_id: str, work: uuid.UUID) -> None:
-        """The session read an input inside the turn ``work`` was running."""
-        riding = self.riding.get(seat, set())
-        taken = next((sent for sent in riding if str(sent) == input_id), None)
-        if taken is None or taken == work:
-            return
-        riding.discard(taken)
-        self.taken.setdefault(work, []).append((seat, taken))
-
-    async def _end_taken(self, project, topic, work, result: AgentResult) -> None:
-        """End the messages ``work`` took in, the way ``work`` itself ended.
-
-        Nothing the session writes ever names them again: they were answered
-        inside this turn, and without an ending of their own the room would go
-        on treating them as running — reminding the agent about a person it
-        already answered, and leaving their turns open for good.
-        """
-        for seat, taken in self.taken.pop(work, ()):
-            await self._consume(
-                project,
-                topic,
-                taken,
-                AgentResult(
-                    text="",
-                    session_id=result.session_id,
-                    is_error=result.is_error,
-                    failure_code=result.failure_code,
-                    agent_handle=result.agent_handle,
-                    harness=result.harness,
-                    taken_into=work,
-                ),
-                f"{self.harness}:taken:{taken}",
-                False,
-                False,
-            )
-            await self._activity(project, seat, taken, False)
 
     async def _activity(self, project, seat: Seat, work, active):
         if work in self.closed:
             return
         if active:
-            # Read only after the turn it was sent into ended: a turn of its own.
-            self.riding.get(seat, set()).discard(work)
             self.work[seat] = work
             now = time.monotonic()
             self.clocks[seat] = Clock(opened=now, progressed=now)
@@ -642,8 +598,6 @@ class RoomSessions:
                 await self.reconcile_memory(topic)
         elif isinstance(event, Moved):
             self.pulse(seat, event.marks)
-            if event.took is not None and work is not None:
-                self._took(seat, event.took, work)
         elif isinstance(event, Received):
             await self._hear_receipt(event.receipt)
         elif isinstance(event, Completed):
@@ -869,9 +823,15 @@ class RoomSessions:
         needs_place: bool = True,
         images: list[dict] | None = None,
         owes_reply: bool = False,
+        session_opening: str = "",
+        opening_changes: str = "",
     ) -> bool:
         """Put a message into the seat's session, as work ``work_id``, starting
         the session if it has to be. True = the session's runner took it.
+
+        ``session_opening`` is the project state a new conversation is handed in
+        front of its first message; ``opening_changes`` the part of it that
+        changed since a conversation that goes on last heard (`_with_project_state`).
 
         An ack, not an answer: what the agent does about it arrives through the
         seat's reading — possibly minutes later, possibly to a different process
@@ -899,6 +859,9 @@ class RoomSessions:
                 env=env,
                 acting=acting,
                 needs_place=needs_place,
+            )
+            message = self._with_project_state(
+                seat, live, resume_token, session_opening, opening_changes, message
             )
         if not live.takes_inputs:
             raise InputProtocolUnavailable()
@@ -928,8 +891,6 @@ class RoomSessions:
         # away is the only one it can get.
         if seat not in self.clocks or work_id in self.queues:
             self.work[seat] = work_id
-        else:
-            self.riding.setdefault(seat, set()).add(work_id)
         # 记忆先落到会话目录里，输入后写进去：agent 这一轮一睁眼读到的应当是平台
         # 现在这一份（别人刚改的也在里面），而不是它上一次看见的那一份。
         await self.reconcile_memory(session.topic_id)
@@ -954,6 +915,30 @@ class RoomSessions:
             # A lost acknowledgement does not mean the session stopped working.
             self._listen(seat)
         return True
+
+    def _with_project_state(
+        self,
+        seat: Seat,
+        live: Live,
+        resume_token: str | None,
+        session_opening: str,
+        opening_changes: str,
+        message: str,
+    ) -> str:
+        """The message with the project state this conversation has not heard.
+
+        A conversation is new when it is not the one the caller asked to resume:
+        no token, or a resume that failed and started afresh. A new one gets the
+        whole opening; one that goes on gets what changed since it last heard.
+        A second message before the new conversation's token is recorded must
+        not hand it the opening again, so each seat remembers the conversation
+        it opened. After a backend restart that is gone, and the most a lost
+        entry costs is an opening handed twice."""
+        conversation = live.conversation
+        fresh = conversation != resume_token and self.opened.get(seat) != conversation
+        self.opened[seat] = conversation
+        state = session_opening if fresh else opening_changes
+        return f"{state}\n\n{message}" if state else message
 
     async def steer(
         self,
@@ -1152,6 +1137,19 @@ class RoomSessions:
             conversation for pair_seat, conversation in self.dead if pair_seat == seat
         }
 
+    def holds_conversation(self, topic_id, harness, conversation) -> bool:
+        """Is that exact conversation still attached somewhere in this room?
+
+        A seat outlives its conversations, and an Ask answer may enter only the
+        one that asked it: ``send`` refuses to start another for it. The
+        conversation id is the harness's own, and a room holds it at most once,
+        so the room is enough to identify it."""
+        return self.harness == harness and any(
+            live.conversation == conversation
+            for seat, live in self.live.items()
+            if seat[0] == topic_id
+        )
+
     def holds(self, topic_id, agent_handle=None) -> bool:
         """Is there a session here this process can still reach — for this
         agent's seat in the room, when one is named?
@@ -1187,7 +1185,6 @@ class RoomSessions:
             if self.live.pop(seat, None) is not None:
                 attachments.note(seat, None)
         self.work.pop(seat, None)
-        self.riding.pop(seat, None)
         self.clocks.pop(seat, None)
         self.told_waiting.pop(seat, None)
         self.caught.pop(seat, None)

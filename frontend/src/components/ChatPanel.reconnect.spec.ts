@@ -124,6 +124,24 @@ describe('chat recovery after history errors', () => {
     expect(sockets).toHaveLength(2)
   })
 
+  it('a topic’s first connect does not resync the doc; a reconnect does', async () => {
+    // The connect-time doc resync exists for a doc saved while DISCONNECTED. On a
+    // topic's first connect the doc panel is already loading the room fresh, so
+    // emitting it would only make the panel re-read /docs + /doc/history that it
+    // just fetched. Only a re-connect (same topic, socket dropped and back) needs it.
+    const view = mountPanel()
+    await flushPromises()
+    sockets[0].onopen?.()
+    await flushPromises()
+    expect(view.emitted('state-changed'), 'first connect must not resync the doc').toBeUndefined()
+
+    sockets[0].onclose?.()
+    await vi.advanceTimersByTimeAsync(1000)
+    sockets[1].onopen?.()
+    await flushPromises()
+    expect(view.emitted('state-changed'), 'a reconnect catches up the doc').toEqual([['doc']])
+  })
+
   it('does not retry a forbidden history response', async () => {
     vi.mocked(listBlocks).mockRejectedValue(new ApiError(403, 'Forbidden'))
     mountPanel()
@@ -208,7 +226,9 @@ describe('chat recovery after history errors', () => {
     sockets[0].onmessage?.({ data: JSON.stringify({ type: 'user_block', block }) })
     answer(block)
     await flushPromises()
-    expect(view.container.textContent?.split('echo first')).toHaveLength(2)
+    // Count the rendered rows, not the screen-reader live line that repeats the newest message.
+    const rowsText = Array.from(view.container.querySelectorAll('[data-mid]'), (row) => row.textContent).join('')
+    expect(rowsText.split('echo first')).toHaveLength(2)
     expect(view.container.querySelector('.im-row--pending')).toBeNull()
   })
 

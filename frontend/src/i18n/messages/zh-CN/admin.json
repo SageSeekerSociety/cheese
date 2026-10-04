@@ -10,7 +10,6 @@
   },
   "shortcuts": {
     "title": "键盘快捷键",
-    "then": "然后",
     "scope": {
       "global": "全局",
       "list": "列表",

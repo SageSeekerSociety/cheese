@@ -346,7 +346,9 @@ function shortcutLabel(shortcut: string | undefined): string | undefined {
   if (!shortcut) return undefined
   return shortcut
     .split('+')
-    .map((part) => (part === 'mod' ? (isMac ? '⌘' : 'Ctrl') : part === 'shift' ? '⇧' : part.toUpperCase()))
+    .map((part) =>
+      part === 'mod' ? (isMac ? '⌘' : 'Ctrl') : part === 'shift' ? '⇧' : part === 'escape' ? 'Esc' : part.toUpperCase()
+    )
     .join(isMac ? '' : ' ')
 }
 
@@ -757,6 +759,13 @@ const enterKey = isMac ? '⌘' : 'Ctrl'
 }
 .palette-layer--page .palette__row {
   min-height: 48px;
+}
+/* 手机上这一页自己铺到底：最后几行结果落在 iPhone 那条 Home 横杠上点不中，给列表
+   末尾让出安全区，叠在 `.palette__list` 本来的 8px 底距上（`padding: 4px 6px 8px`）。
+   只写 `env()` 会把那 8px 一起抹掉——没有安全区的设备（安卓等）上 env 是 0，最后
+   一行就会贴着屏幕底。桌面同理，长度不变。 */
+.palette-layer--page .palette__list {
+  padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
 }
 
 .palette-enter-active {

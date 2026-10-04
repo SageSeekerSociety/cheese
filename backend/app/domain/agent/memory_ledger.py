@@ -34,7 +34,7 @@ from app.domain.agent.compute import ComputePool
 from app.domain.agent.dream_usage import drain_dream_spend, record_dream_usage
 from app.domain.agent.gateway import LlmGateway
 from app.domain.agent.harness import SessionRef
-from app.domain.agent.harness.prompt import build_system_prompt
+from app.domain.agent.harness.prompt import build_session_opening, build_system_prompt
 from app.domain.agent.platform_notices import (
     EVENT_MEMORY_CHANGED,
     SEVERITY_INFO,
@@ -52,8 +52,8 @@ from app.domain.agent.service import AgentResult, AgentUsage
 from app.domain.agent.session_host.host import keeps_memory
 from app.domain.agent.work_policy import resolve_compute_id
 from app.domain.block.models import Block, BlockKind
-from app.domain.block.repositories import BlockRepository
 from app.domain.delivery.input_identity import InputEffects, InputRegistrar
+from app.domain.living_doc.services import Documents
 from app.domain.memory import dream
 from app.domain.memory.dream_prompt import dream_prompt
 from app.domain.memory.files import MemoryFileScope
@@ -334,13 +334,17 @@ class MemoryLedger:
         runtime = self._compute.platform_work(compute_id)
         system_prompt = build_system_prompt(
             self._base_prompt,
-            "",  # 场景技能不带：整理这件事的规矩在 prompt 里，不在某个场景里。
-            None,
-            index,
+            "",  # 聊天说明不带：整理这件事的规矩在 prompt 里。
             # 记忆那一段照常注入：整理就是在这个会话里写记忆文件，而「一条记忆写
             # 成什么样」只有那一段说得全（文件名、frontmatter、索引行）。
             keeps_memory=keeps_memory(runtime.harness),
         )
+        # 每次整理都是一条新会话，索引直接放在这一轮的消息前面。
+        opening = build_session_opening(
+            memory=index, keeps_memory=keeps_memory(runtime.harness)
+        )
+        if opening.text:
+            prompt = f"{opening.text}\n\n{prompt}"
         final_text = ""
         usage: AgentUsage | None = None
         failed = False
@@ -563,14 +567,13 @@ async def _dream_rooms(
             .limit(dream.ROOMS_LIMIT)
         )
     ).all()
-    blocks = BlockRepository(session)
     out: list[str] = []
     for topic_id, _newest in rows:
         topic = await TopicRepository(session).get(topic_id)
         if topic is None:
             continue
         lines = [f"### <#{topic_id}> {topic.title}"]
-        doc = await blocks.doc_root(topic_id)
+        doc = await Documents(session).of_room(topic_id)
         if doc is not None and doc.content.strip():
             lines.append("实况文档：\n" + dream.clip(doc.content, dream.ROOM_DOC_MAX))
         spoken = list(

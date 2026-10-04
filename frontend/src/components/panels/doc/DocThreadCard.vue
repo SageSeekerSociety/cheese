@@ -42,6 +42,7 @@ const emit = defineEmits<{
   (e: 'resolve'): void
   (e: 'reopen'): void
   (e: 'resend'): void
+  (e: 'stopAgent'): void
 }>()
 
 /** 回复超过这么多条，中间的先收起来。 */
@@ -190,6 +191,9 @@ function onCard(e: MouseEvent) {
     <div v-if="step" class="doc-thread-card__row doc-thread-card__step" role="status">
       <CheeseAvatar :size="22" :name="agentName" state="think" />
       <span>{{ step }}</span>
+      <button type="button" class="doc-thread-card__action" @click="emit('stopAgent')">
+        {{ t('work.room.docAgent.stop') }}
+      </button>
     </div>
 
     <p v-if="error" class="doc-thread-card__error" role="alert">{{ error }}</p>
@@ -360,6 +364,9 @@ function onCard(e: MouseEvent) {
   color: var(--muted);
   font-size: 13px;
   line-height: var(--lh-13);
+}
+.doc-thread-card__step .doc-thread-card__action {
+  margin-left: auto;
 }
 .doc-thread-card__step span {
   animation: docThreadBreathe 1.4s ease-in-out infinite;

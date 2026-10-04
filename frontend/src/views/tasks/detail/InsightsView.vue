@@ -6,6 +6,7 @@ import type { Task, TaskMembership, TaskSubmissionReview } from '@/types'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BarList from '@/components/spaces/BarList.vue'
 import MetricCard from '@/components/spaces/MetricCard.vue'
 import PanelCard from '@/components/spaces/PanelCard.vue'
@@ -151,11 +152,12 @@ const claimTrend = computed(() => {
           :series="[{ name: t('tasks.insights.trendSeries'), values: claimTrend }]"
           :height="200"
         />
-        <v-empty-state
+        <BaseEmptyState
           v-else
+          size="compact"
           icon="mdi-chart-timeline-variant"
           :title="t('tasks.insights.trendEmptyTitle')"
-          :text="t('tasks.insights.trendEmptyText')"
+          :desc="t('tasks.insights.trendEmptyText')"
         />
       </PanelCard>
 
@@ -177,10 +179,12 @@ const claimTrend = computed(() => {
     </v-alert>
   </div>
 
-  <v-empty-state v-else-if="!loading" icon="mdi-help-circle-outline" :title="t('tasks.insights.notFound')" />
+  <BaseEmptyState v-else-if="!loading" icon="mdi-help-circle-outline" :title="t('tasks.insights.notFound')" />
 </template>
 
 <style scoped lang="scss">
+@use '../../../styles/breakpoints.scss' as bp;
+
 .ins__kpis {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
@@ -195,7 +199,8 @@ const claimTrend = computed(() => {
   align-items: start;
 }
 
-@media (max-width: 900px) {
+// 断点收进共享 token（`styles/breakpoints.scss`）：900 → 960（`$bp-mobile`）。
+@include bp.below(bp.$bp-mobile) {
   .ins__grid {
     grid-template-columns: 1fr;
   }
@@ -205,7 +210,8 @@ const claimTrend = computed(() => {
   grid-column: span 2;
 }
 
-@media (max-width: 900px) {
+// 断点收进共享 token（`styles/breakpoints.scss`）：900 → 960（`$bp-mobile`）。
+@include bp.below(bp.$bp-mobile) {
   .ins__span2 {
     grid-column: span 1;
   }

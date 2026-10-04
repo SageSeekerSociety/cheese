@@ -21,9 +21,6 @@
   它是这条路的收件人，本模块只声明自己会问什么，pyright 在调用点核对
   ``ChatService`` 答不答得上来。
 
-``_model_policy_call`` 也跟着搬来了：它只被这一族和轮次组装问，而后者照旧从
-``app.domain.agent.chat`` 这个门面上拿得到这个名字。
-
 ``app.api`` 一步都不碰（``LlmGateway`` 来自 ``app.domain.agent.gateway``），
 事务边界也一格没动 —— sessionmaker 本身是入参，所以每一处
 ``async with self._sessions()`` 都变成了同一处的 ``async with sessions()``。
@@ -42,10 +39,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.background import hold
 from app.core.config import settings
 from app.core.errors import GatewayUnavailableError, NotFoundError
+from app.domain.agent import gateway_catalog
 from app.domain.agent.gateway import LlmGateway
 from app.domain.agent.gateway_spend import Charge, settle
 from app.domain.agent.profiles import ProfileRegistry
-from app.domain.agent.queries import _Proposed
+from app.domain.agent.queries import _model_policy_call, _Proposed
 from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.service import AgentUsage
 from app.domain.agent.supply import SUBSCRIPTION
@@ -101,30 +99,40 @@ class _GatewayUsage(Protocol):
     ) -> float | None: ...
 
 
-def _model_policy_call(project, agent=None) -> gate.Call:
-    """这一轮要用的模型，写成闸门认得的那一次调用（结论 3 后半）。
+def model_capabilities(*models: str | None) -> str:
+    """``CLAUDE_CODE_MODEL_CAPABILITIES`` for a launch on these models.
 
-    两处问它：轮次组装（在这一轮占用任何东西之前）和 `_model_kwargs`（平台自己发
-    起的那几轮不经过组装）。构造写在这里一处，所以两处问的确实是同一次调用。
+    Claude Code puts the skill listing, the environment and the date in
+    system-role messages in the middle of the conversation. A route the
+    gateway marks as losing them (``GatewayModel.mid_conversation_system``)
+    drops them or refuses the whole request, so on those models Claude Code is
+    told to put them in the first user message instead. Every other model keeps
+    its default. Empty when no model needs it."""
+    unsupported = {
+        m.id for m in gateway_catalog.snapshot() if not m.mid_conversation_system
+    }
+    return ";".join(
+        f"{model}=-mid_conv_system"
+        for model in sorted({m for m in models if m} & unsupported)
+    )
 
-    模型花的是项目的额度，所以点头的是项目的主人。空 handle（建库早期留下的项目）
-    在寻址那一层被丢掉：房间里照样有这条提议，只是没有人被单独通知 —— 好过把它投
-    给一个猜出来的人。
+
+def launch_env(configuration: dict, efforts: list[str] | tuple[str, ...]) -> dict:
+    """The environment that carries a teammate's thinking effort and compaction
+    share into its Claude Code session.
+
+    ``efforts`` are the ones the turn's model honours. An effort it does not is
+    left out rather than sent: Claude Code would pass it to a model that either
+    ignores it or refuses the request.
     """
-    choices = binding.catalog(project.settings)
-    bound = binding.resolve(
-        None,
-        choices,
-        agent_model=agent.configuration.get("model") if agent else None,
-        default_model=(project.settings or {}).get("default_model"),
-    )
-    return gate.Call(
-        resource=gate.Resource.model,
-        subject=bound.model,
-        label=choices[bound.model]["label"],
-        tier=choices[bound.model]["tier"],
-        approver=project.owner_handle or "",
-    )
+    env: dict[str, str] = {}
+    effort = configuration.get("effort")
+    if isinstance(effort, str) and effort in efforts:
+        env["CLAUDE_CODE_EFFORT_LEVEL"] = effort
+    percent = configuration.get("compact_percent")
+    if isinstance(percent, int) and not isinstance(percent, bool):
+        env["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] = str(percent)
+    return env
 
 
 async def _model_kwargs(
@@ -185,9 +193,10 @@ async def _model_kwargs(
                 else await agents.for_project(project)
             )
     # A saved teammate may override the project main model.
+    choices = binding.catalog(project.settings)
     bound = binding.resolve(
         None,
-        binding.catalog(project.settings),
+        choices,
         agent_model=agent.configuration.get("model"),
         default_model=(project.settings or {}).get("default_model"),
     )
@@ -225,6 +234,7 @@ async def _model_kwargs(
         child_model = binding.resolve(
             None, child_choices, default_model=child_default
         ).wire_model
+    capabilities = model_capabilities(model, child_model)
     config_hash = hashlib.sha256(
         # Author identity, chat skills, and native RC arguments are installed
         # at process birth; refresh them together at the next task boundary.
@@ -250,6 +260,7 @@ async def _model_kwargs(
                     "subagent_model": (project.settings or {}).get(
                         "default_subagent_model"
                     ),
+                    "capabilities": capabilities,
                 },
                 sort_keys=True,
             )
@@ -266,6 +277,13 @@ async def _model_kwargs(
             # self-description for the model the turn actually runs on.
             "ANTHROPIC_MODEL": model,
             "CLAUDE_CODE_SUBAGENT_MODEL": child_model,
+            # The teammate's thinking effort and compaction share. Both are in
+            # `agent.configuration`, and so in the hash above: changing either
+            # restarts the session at the next task boundary, which is when
+            # Claude Code reads its environment.
+            **launch_env(
+                agent.configuration, choices.get(bound.model, {}).get("efforts", [])
+            ),
         },
         # Which conversation the turn belongs to, and so which session's
         # machines it runs on. Separate from `agent_handle` below, which is
@@ -273,6 +291,8 @@ async def _model_kwargs(
         # and the place is recorded under this one.
         "session_agent": agent.handle,
     }
+    if capabilities:
+        kwargs["env"]["CLAUDE_CODE_MODEL_CAPABILITIES"] = capabilities
     if acting_agent is not None:
         kwargs["agent_handle"] = acting_agent
     if environment is not None:

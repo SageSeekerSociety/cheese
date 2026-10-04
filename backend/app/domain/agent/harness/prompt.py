@@ -6,7 +6,7 @@
 1. **新建的项目**：建出来就带最新配置。建项目那一轮本来就要组装一次 prompt，
    读到的就是当时项目集里的那一份，没有缓存层要等。
 2. **已有项目的新会话**：启动时读到最新配置。prompt 每一轮都从库里重新组装
-   （`chat._assemble_turn` 每次都重新 resolve），所以新开的会话拿到的一定是
+   （`room/turn.py` 的 `_assemble_turn` 每次都重新 resolve），所以新开的会话拿到的一定是
    此刻的配置。
 3. **运行中的会话**：**保持它启动时的那一份，直到下一次冷启动。** 这不是本模块
    的选择，是 Claude Code 的事实：harness 用 `--append-system-prompt-file` 把
@@ -22,9 +22,12 @@
 它只走 system prompt 这一条路，没有第二条路能让它在会话中途变脸。
 """
 
+import hashlib
 import re
 import uuid
+from dataclasses import dataclass
 
+from app.domain.agent.skills import load_skills
 from app.domain.block.models import BlockKind
 from app.domain.block.quoted_context import quoted_context_prompt
 from app.domain.memory.files_store import MemoryIndex
@@ -228,12 +231,14 @@ WRITING = (
     "3. 不写自己是怎么想到的。猜过什么、推翻过什么、先查了哪里，都不写，"
     "只写最后成立的。\n"
     "4. 不写强调和修辞：「真正的」「本质上」「说白了」「换句话说」「值得注意的是」"
-    "「一句话：」、每段开头加粗、破折号插话、排比。删掉后意思不变，就是本来不该写。\n"
+    "「一句话：」、每段开头加粗、破折号插话、排比；也不写铺垫、过渡和收尾总结"
+    "（「下面介绍」「综上所述」）。删掉后意思不变，就是本来不该写。\n"
     "5. 写具体的：数字、人名、日期、文件，不写「若干」「相关方」「近期」。\n"
     "6. 用读者认识的词。不用自己起的叫法；代码里的名字只在读者要照着操作时才写；"
-    "缩写第一次出现时解释。\n"
+    "缩写第一次出现时解释。同一个东西始终用同一个词。\n"
     "7. 指代要清楚。「这条」「那次」只能指向一个东西；编号只在同一个列表里引用。\n"
-    "8. 写短。说明句不超过 45 字，步骤句不超过 35 字；一段不超过 4 行，只讲一件事。\n"
+    "8. 写短。说明句不超过 45 字，步骤句不超过 35 字；一段不超过 4 行，只讲一件事。"
+    "步骤写成祈使句：「打开设置」，不写「用户需要打开设置」。\n"
     "9. 只写有根据的事。数字、人名、日期要在材料里找得到；"
     "没说谁做、何时做就写「未定」，不替人补原因、效果和保证。"
     "直接下判断，不逐句免责，同一个结论只写一次。\n"
@@ -241,82 +246,203 @@ WRITING = (
 )
 
 
-#: 实况文档的五块模板：有文档时和文档还空着时说的是同一套，所以只写一份。
-DOC_FORM = (
-    "它是一页状态页，写给没看过聊天的人和下一轮的你。按这五块组织：\n"
-    "- **目标** —— 为什么做、做到什么程度算完，≤3 句。\n"
-    "- **现状** —— 一句话：到哪了、卡在哪。项目总览取的就是这一句。\n"
-    "- **需要谁做什么** —— 每条是 @谁、做什么、怎么做。要人做的排在前面。\n"
-    "- **已确定** —— 查清的事实和做出的决定，只收会影响后续做法的；"
-    "每条一句结论加一句理由或依据。\n"
-    "- **待决** —— 问题、可选做法、你的建议、由谁定。\n"
-    "- **相关**（平台自动）—— 任务卡、PR、子话题，不用手写。\n"
-    "变了就替换，做完的删掉，过程和证据细节留在聊天、任务卡和 PR 里。"
-    "全文不超过 1500 字。\n"
+#: 实况文档怎么写、怎么改：每个房间都有一份，几乎每轮都可能动它，所以每轮都在。
+#: 它只写在 `doc_form.md`，有文档时和文档还空着时说的是同一份。
+DOC_FORM = load_skills(["doc-form"])
+
+#: 每个托管仓库、每一轮都成立的平台规矩。按需的流程（交付、产物、邮件、定时）在
+#: cheese 技能里；这里只放芝士在任何一轮都可能撞上、撞上之前就得知道的几条。
+#: 三种骨架加载技能的办法不同：Claude Code 有 Skill 工具，Codex 和 pi 只在技能
+#: 列表里给出文件位置，所以「怎么加载」在这里说一次，别处只说加载哪个。
+PLATFORM_RULES = (
+    "## 平台规矩\n"
+    "- 房间里的人是产品用户，不是平台运维。诊断和恢复是你的事：不要让他去看日志、"
+    "跑命令、修鉴权或机器，也不要让他替你决定一次失败之后怎么重试。只有要他做产品"
+    "决定，或者要只有他能给的东西（凭据、批准、付款、要人动手的操作）时才找他，"
+    "而且只说那一件事。\n"
+    "- 平台工具、命令行、沙箱、文件路径是你干活的方式，用户看不到也用不了。回复里"
+    "不让用户去调工具、不提工具名、不讲内部机制。平台动作做完会自动出卡片，不用再说"
+    "「已记录」「已更新」，直接说实质内容。\n"
+    "- 每调一次工具，界面上的「施工现场」就多一行，显示你填的说明字段（Bash 和 "
+    "Agent 的 description）。这些字段用中文写这一步在做什么，不复述命令本身。\n"
+    "- 平台数据用平台工具、`cheese` 命令行或 `platform_request` 取，不确定接口时先"
+    "只传 `find`。不要自己提取凭据拼 curl 或裸 HTTP 请求，不翻 home、会话文件、"
+    "`.git` 内部和系统目录。参数拿不准就看工具的定义或 `--help`，不要瞎试。\n"
+    "- 不用 `git stash`：整个仓库共用一个 stash 栈，你 pop 出来的可能是别的任务的"
+    "改动。要把改动放一边就提交。也不写 `.git/hooks`、不改共享的 git 配置。\n"
+    "- 改项目仓库里的文件、要交出任何东西之前，先开一条任务。怎么开、怎么交，在 "
+    "`cheese` 技能里，开任务前先加载它。\n"
+    "- 用户问这个平台怎么用，先用 `cheese_docs_search` 查官方说明书再答，不凭印象。\n"
+    "- 会话可能是新开的：不记得之前聊过什么时，用 `cheese_chat_list`、"
+    "`cheese_chat_search` 读记录，不要猜，也不要问人「之前说到哪了」。\n"
+    "- 加载一个技能：有 Skill 工具就用它，没有就读技能列表里它的那个文件，不要自己"
+    "拼路径去找。"
+)
+
+#: 给人读的长文档（包括实况文档的细则和块的写法）在 cheese-docs 技能里，用到才
+#: 加载。文档芝士不拼这一段：它的指南是整份内联的（`document/question.py`）。
+DOC_SKILL = (
+    "## 写给人读的文档\n"
+    "写方案、对比选型、周报、纪要、操作说明、分析报告这类给人读的文档之前，先加载 "
+    "`cheese-docs` 技能。要做的是给人看的页面、看板、报告页、方案对比或图表这类能看的"
+    "成品，先加载 `showcase` 技能。"
+)
+
+
+#: 话题还没名字、平台自己又起不了名时，这一轮的第一件事。它跟着这一轮的消息走，
+#: 不进系统提示词：起完名下一轮就不该再说，而系统提示词在会话里是不变的。
+UNTITLED_FIRST = (
+    "本话题还叫「新话题」（未命名）。本轮的第一个动作，在说开场白、回复任何内容、"
+    "调用任何其他工具之前，先根据用户的需求执行 `cheese_title` 起个不超过 12 字的"
+    "简短标题，然后再照常回应、干活。起标题只是一次工具调用，几乎不花时间。只起一次，"
+    "定了别反复改。"
+)
+
+#: 实况文档那一节里，和文档现在写了什么无关的那几句。文档的内容在会话的开场快照里。
+DOC_SECTION = (
+    "## 当前话题的实况文档\n"
+    + DOC_FORM
+    + "\n\n文档现在的内容在会话开头「本话题现在的情况」里；之后被人改过时平台会"
+    "提醒你，改之前先用 `cheese_doc_get` 读最新一版。还没有文档时，由在这个话题里"
+    "干活的 AI 队友来建，不论你是哪个队友：等话题的目标或第一条结论清楚了（通常就在"
+    "当轮），先 `cheese_doc_get`，再用 `cheese_doc_set` 建第一版。只是寒暄或一句话"
+    "就答完的问题不用建。"
+)
+
+
+#: 什么时候提议存一项项目技能。和记忆说明讲的是同一个时刻（被纠正、摸索出一套做法），
+#: 所以都在系统提示词里：该存的时刻出现在哪一轮都可能，芝士得先认出来。怎么起草写在
+#: 工具说明里。不跟着 ``keeps_memory`` 走：项目技能存在平台上，哪个骨架都提得了。
+PROJECT_SKILLS = (
+    "## 项目技能\n"
+    "用户教你的做法有两种去处。一条规则（「汇报先说结论」）写进记忆就够了。同一类会再"
+    "来的事（周报、批改作业），用户已经教过你好几处，记忆里攒着几条相关的规则，这一次"
+    "又做完了、用户接受了结果，就用 `cheese_skill_draft` 提议把这一整套存成项目技能，"
+    "把那几条记忆写进 `absorbs`。用户明说「存下来」「以后都这样」时，直接起草。用户"
+    "说的「技能」就是它。\n"
+    "一个会话最多提一次，在一件事做完时提，不在中途打断。房间里会出一张卡，用户点"
+    "「保存」才生效，所以起草后用一两句话告诉他为什么值得存，别说成已经存好了。照一项"
+    "项目技能做时被纠正了，用 `cheese_skill_update` 提议修改那一项。"
 )
 
 
 def build_system_prompt(
     base: str,
     skills: str,
-    doc: str | None,
-    memory: MemoryIndex | None,
+    *,
+    has_doc: bool = False,
     role: str | None = None,
-    roster: list[dict] | None = None,
-    topics: list[dict] | None = None,
-    untitled: bool = False,
-    artifacts: list[dict] | None = None,
-    overview_doc: str | None = None,
-    session_opening: list[str] | None = None,
-    stage_guide: str | None = None,
-    teaching: TeachingContext | None = None,
     keeps_memory: bool = False,
 ) -> str:
-    """拼这一轮的 system prompt。
+    """拼一个会话的系统提示词：只有规矩，没有项目现状。
+
+    骨架在进程启动时读它，进程空闲退出后用 ``--resume`` 接着原来的对话重新拉起时
+    再读一次。所以它在一个会话里必须一字不变：变了，从变的那个字往后、连同整段
+    对话历史，前缀缓存全部作废。会变的现状在 :func:`build_session_opening` 里，作为
+    新会话的第一条消息送进去；之后变了什么，用平台提醒补（:func:`opening_changes`）。
 
     ``keeps_memory`` 说的是**这一轮跑的 harness 会不会把记忆文件对账回平台**
     （``Harness.keeps_memory``，调用方按当前骨架传入）。默认不注：记忆
-    那一段（说明书 + L1 索引）讲的是「写进 `~/.cheese/memory/`，下一轮平台的
-    那一份里有它」，而 codex、pi 没有这条回路——照说明书写下的文件永远同步不回
-    来，agent 却以为自己在写项目记忆。索引同理：正文铺不下去，注入的也就只是一
-    串指向不存在的文件的指针。
+    那一段讲的是「写进 `~/.cheese/memory/`，下一轮平台的那一份里有它」，而 codex、
+    pi 没有这条回路——照说明书写下的文件永远同步不回来，agent 却以为自己在写项目
+    记忆。
     """
-    parts = [base]
-    if untitled:
-        # First in the prompt on purpose: naming the topic is the FIRST action
-        # of the session — before the opening reply, before any other tool —
-        # so the rail never shows a working-but-unnamed 「新话题」.
-        parts.append(
-            "## 本轮第一件事：先给本话题起名（先于一切）\n"
-            "本话题还叫「新话题」（未命名）。**本轮的第一个动作**——在说开场白、"
-            "回复任何内容、调用任何其他工具之前——先根据用户的需求执行 "
-            "`cheese_title` 起个 ≤12 字简短标题，"
-            "然后再照常回应、干活。"
-            "这条优先于「先回应，再干活」：起标题只是一次工具调用，几乎不花时间。"
-            "（只起一次，定了别反复改。）"
-        )
-    parts.append(ALWAYS_PUSH)
-    parts.append(TODO_WRITE)
-    parts.append(ASK_ONLY_CHEESE_ASK)
-    parts.append(WRITING)
-    if role:
-        parts.append(f"## 你的专家角色\n{role}")
-    if teaching is not None and (section := teaching_section(teaching)):
-        parts.append(section)
+    parts = [
+        base,
+        PLATFORM_RULES,
+        ALWAYS_PUSH,
+        TODO_WRITE,
+        ASK_ONLY_CHEESE_ASK,
+        WRITING,
+        DOC_SKILL,
+    ]
     if skills:
         parts.append(skills)
-    if stage_guide:
-        # 按阶段渐进式披露: the flow knowledge for THIS point in the topic's
-        # lifecycle only. Statically injected (like every other skill) — the
-        # model never gets to decide whether to load it, which is the whole
-        # reason this isn't a lazily-read Agent Skill (see stages.py).
-        parts.append(
-            "## 当前阶段的操作说明（平台按本话题所处的流程阶段自动选出，"
-            "只给你这一段）\n" + stage_guide
+    if has_doc:
+        parts.append(DOC_SECTION)
+    if keeps_memory:
+        # 记忆这一段是有意整份在场的（照搬 CC）：四类记忆是什么、什么不该写、写前
+        # 查重、用前核对——它是这个机制的说明书，而 agent 只有读了它才知道第一条
+        # 记忆该写成什么样，什么时候该记又可能出现在任何一轮。
+        parts.append(MEMORY_INSTRUCTIONS)
+    parts.append(PROJECT_SKILLS)
+    if role:
+        parts.append(f"## 你的专家角色\n{role}")
+    return "\n\n".join(parts)
+
+
+#: 开场快照里，会话期间变了要再告诉一次的那几段。实况文档不在里面：它被人改过时
+#: 平台已经发一条「请重读」的提醒（`block/documents.py`）。教学配置也不在：一个会话
+#: 有意保持开场那一份到下一次新会话（见模块说明）。运行环境只在开场时有意义。
+TRACKED_SECTIONS = ("topics", "artifacts", "roster", "overview", "memory")
+
+
+@dataclass(frozen=True)
+class SessionOpening:
+    """一个新会话开场时项目的样子，按段存着，好在之后比对哪一段变了。"""
+
+    sections: dict[str, str]
+
+    @property
+    def text(self) -> str:
+        if not self.sections:
+            return ""
+        return platform_prompt(
+            "## 本话题现在的情况\n"
+            "下面是这个会话开始时本话题和项目的情况，是平台给的，不是谁说的话。"
+            "之后变了的部分，平台会在后面的消息里再告诉你。\n\n"
+            + "\n\n".join(self.sections.values())
         )
+
+    def digests(self) -> dict[str, str]:
+        return {
+            key: hashlib.sha256(self.sections[key].encode()).hexdigest()
+            for key in TRACKED_SECTIONS
+            if key in self.sections
+        }
+
+
+def opening_changes(opening: SessionOpening, told: dict[str, str] | None) -> str:
+    """一条接着跑的对话在这一轮要补听的现状；什么都没变就是空字符串。
+
+    ``told`` 是上次告诉它时每一段的摘要（:meth:`SessionOpening.digests`），只补
+    和它不一样的那几段。没有记录（``None``）时整份都说：那是一条在系统提示词还
+    带着现状时开的老对话，或者记录丢了，它手上的现状不知道是哪一刻的。一条新开的
+    对话用不上这一段，它的第一条消息带着整份快照（``Opening.session_opening``）。"""
+    if told is None:
+        return opening.text
+    changed = [
+        text
+        for key, text in opening.sections.items()
+        if key in TRACKED_SECTIONS
+        and told.get(key) != hashlib.sha256(text.encode()).hexdigest()
+    ]
+    if not changed:
+        return ""
+    return platform_prompt(
+        "这个会话开始以后，下面这几项变了，以这里为准：\n\n" + "\n\n".join(changed)
+    )
+
+
+def build_session_opening(
+    *,
+    doc: str | None = None,
+    memory: MemoryIndex | None = None,
+    roster: list[dict] | None = None,
+    topics: list[dict] | None = None,
+    artifacts: list[dict] | None = None,
+    overview_doc: str | None = None,
+    environment: list[str] | None = None,
+    teaching: TeachingContext | None = None,
+    keeps_memory: bool = False,
+) -> SessionOpening:
+    """新会话第一条消息前面的那份现状：话题、产物、成员、总览、文档、记忆索引。"""
+    sections: dict[str, str] = {}
+    if teaching is not None and (section := teaching_section(teaching)):
+        sections["teaching"] = section
     if topics:
         lines = "\n".join(f"- {t['title']}" for t in topics)
-        parts.append(
+        sections["topics"] = (
             "## 项目话题（交叉引用某个话题/它的文档时，在标题前加 @，如 "
             "`@搭建推荐算法原型`——会渲染成可点的「#标题」链接）\n"
             "下面**只列当前活跃的话题**。项目里还有已归档的话题，它们照常存在、"
@@ -330,44 +456,10 @@ def build_system_prompt(
             "`topic=<本话题 id>` 点名你所在的位置，不带会 403——那不是没权限。\n" + lines
         )
     if artifacts is not None:
-        # 产物清单进每一轮的开场 (#1085 结论三)。它在这里是为了让下一次交付点得准
-        # 名字 —— 而先说清哪一次交付根本不用点名：交出去这次合并本身的，交的是这
-        # 个项目的仓库，平台自己认得出是哪一项。那条路上没有名字可写错，也就没有
-        # 什么可嘱咐的。
-        #
-        # 剩下交一份文件、交一个地址的，才真的有得选（一个项目可以既交一份报告又
-        # 交一个网站），所以下面那几行是说给它们听的。
-        #
-        # **清单空着的时候这一段以短指针出现。** 那是必须说话的那一次：一个交文件
-        # 的项目，第一次交付只能新建，而它起的那个名字会留在清单上。指针只留三件
-        # 不能少的——怎么新建、合并不用声明、细则去 cheese_accept_request 的说明看；
-        # 整套说明跟着清单走，不跟着每一轮走（#1535：空清单也全量注入是指令:信息
-        # 约 8:1 的那一处）。
+        # 产物清单进开场，是为了让下一次交付点得准名字。怎么点名、about 怎么写，
+        # 规则在 `cheese_accept_request` 的工具说明里（与代码同源），这里只给清单
+        # 和一句指路；交合并的那条路上没有名字可写错，所以也不用嘱咐。
         head = "## 这个项目的产物清单（交出去的东西，一项一行）\n"
-        # 这一版交出去的是什么，也在递卡时说 (#1085 结论五)。它排在最前面，因为它
-        # 的答案决定了后面那两段要不要读。
-        hands_over = (
-            "**先说这一版交出去的是什么**，因为它决定了后面还要不要说别的：\n"
-            "- 两个都不给 = 交出去这次**合并**本身（代码仓库这类项目交的就是它）。"
-            "这种交付**不用声明产物** —— 交出去的是这个项目的仓库，一个项目只有一"
-            "个，平台认得出是清单上哪一项。传了 `artifact` / `new_artifact` 反而会"
-            "被打回。\n"
-            "- `deliver=<工作目录里的路径>` = 交出去一份文件（平台在递卡这一刻留一"
-            "份快照，所以**先把它构建出来再递卡** —— 过了这一轮那份文件就没了）。\n"
-            "- `deliver_url=<网址>` = 交出去一个地址。\n"
-            "后两种要接着说清动的是清单上哪一项："
-        )
-        # 那一句话怎么写 —— 规则加检验方法。规则会忘，检验方法当场能自查，所以两
-        # 者一起给。同一条检验对名字也成立，因此这里说一次，管名字也管那句话。
-        about_rule = (
-            "\n\n`about` 那一句话说的是**这样东西本身**（是什么、给谁的），不是这"
-            "一版做了什么 —— 这一版做了什么在 `subject` 上，已经有了。三条检验，起"
-            "名字用的是同一条第 1 条：\n"
-            "1. 这句话（这个名字）在**第 1 版和第 20 版都成立**。一交新版就得改的，"
-            "就是写错了。正因为写对了，它不必每版重写。\n"
-            "2. 换到清单上另一项头上**也说得通，就是白写**，重写。\n"
-            "3. 别把改动标题抄进来 —— 那条路的尽头是清单长成一份改动列表。"
-        )
         if artifacts:
             lines = "\n".join(
                 f"- 《{a['name']}》"
@@ -376,29 +468,24 @@ def build_system_prompt(
                 + f"　id={a['id']}"
                 for a in artifacts
             )
-            parts.append(
-                head + hands_over + "交付下面某一项的新一版，用 `artifact=<id>` 点名"
-                "它（**照抄下面那一行的 id，不要写名字**——名字写错不会报错，只会在清"
-                "单上多一项看着像重复的东西）；确实做出了一样下面没有的东西，用 "
-                "`new_artifact=<真名>` 加 `about=<一句话>` 声明它，返回里带着新的 id。"
-                "两个都不给、或者两个都给，递卡会被打回。" + about_rule + "\n\n" + lines
+            sections["artifacts"] = (
+                head + "交出文件或地址时，交的是下面某一项的新一版就用 "
+                "`artifact=<那一行的 id>`，是一样新东西就用 `new_artifact` 加 "
+                "`about`；交合并的不用声明产物，交的是项目那个仓库。细则看 "
+                "`cheese_accept_request` 的说明。"
+                "\n\n" + lines
             )
         else:
-            # 短指针的三个不能丢：新建要带 about、合并不用声明、细则的权威文本
-            # 是 cheese_accept_request 的工具说明（与代码同源，不会过期）。
-            parts.append(
-                head
-                + "清单还空着，这个项目一样东西都还没交出去过。第一次交出文件或地址，"
-                "用 `new_artifact=<真名>` 加 `about=<一句话>`（说的是这东西本身，"
-                "不是这一版做了什么）声明它；交出这次合并的**不用声明产物**——交的"
-                "是项目那个仓库，平台自己认得出。写法细则看 "
-                "`cheese_accept_request` 工具的说明。"
+            sections["artifacts"] = (
+                head + "清单还空着。第一次交出文件或地址时，用 `new_artifact=<真名>` "
+                "加 `about=<一句话>` 声明它；交合并的不用声明产物，交的是项目那个"
+                "仓库。细则看 `cheese_accept_request` 的说明。"
             )
     if roster:
         lines = "\n".join(
             f"- {m['name']}（{_standing(m)}，handle: {m['handle']}）" for m in roster
         )
-        parts.append(
+        sections["roster"] = (
             "## 项目成员 & 怎么点名\n"
             "要让某人去做事/通知到他，**在他名字前加 @**（如 `@张衡`，名字用下表"
             "准确值）——平台会把它变成可点的「@张衡」链接并给他**强提醒**。"
@@ -416,12 +503,12 @@ def build_system_prompt(
         # 传进来的那一段已经按这个结构拼好了（`chat._project_overview`）：① 从总览
         # 文档里取，②③ 只在总览房间拼。帽子仍然戴在整段上，防的是一份还没按新
         # 结构写过的老总览——那时 ① 取不到，注入的就是全文。
-        parts.append(
+        sections["overview"] = (
             "## 项目总览（全项目共看的那一份，不是本话题的）\n"
             "项目所有人和所有芝士共同看的就是它：项目是什么、现在在做什么、定了"
             "什么、谁在负责。它分三块，**只有第一块是写的**：\n"
             "- **① 项目是什么** —— 你和人写，正文只有这一块（到总览房间用 "
-            "`cheese_doc_set` 整份更新根话题的实况文档）：目标、范围（做 / 不做）、"
+            "`cheese_doc_edit` 改根话题的实况文档）：目标、范围（做 / 不做）、"
             "对外口径，≤1500 字。它很少变，变了才改。\n"
             "- **② 现在在做什么 / ③ 已结束的话题** —— "
             "**平台从结构化数据现拼，不在文档正文里**。要改就改源头：话题本身、"
@@ -434,56 +521,26 @@ def build_system_prompt(
             )
         )
     if doc:
-        # 话题文档的模板（#1889 第 2 条）。这五块不是格式洁癖：读者是**没参与过
-        # 讨论的人**和下一轮的自己，「现在是什么情况」得一眼看得到。流水账、追加
-        # 的「更正」、粘贴的原文，都要后来的人自己推断哪一版有效——那不叫文档，
-        # 叫过程。
-        #
-        # 写入时的检查（`doc_checks`）只提醒不拦，所以这里说一次就够；两处说的是
-        # 同一套要求，不另立一份声明。
-        parts.append(
-            "## 当前话题的实况文档（这是最新状态；用户可能编辑了它，"
-            "请按它继续工作，并在状态变化时用 `cheese_doc_set` 更新它）\n"
-            + DOC_FORM
-            + fit_doc_to_budget(
-                doc,
-                TOPIC_DOC_CHAR_BUDGET,
-                full_read_hint="用 `cheese_doc_get` 读全文",
-            )
+        sections["doc"] = "## 实况文档现在的内容\n\n" + fit_doc_to_budget(
+            doc,
+            TOPIC_DOC_CHAR_BUDGET,
+            full_read_hint="用 `cheese_doc_get` 读全文",
         )
     elif doc is not None:
-        # 房间有文档位、只是还空着（`""`，区别于没有文档这回事的 None）。只在
-        # 上面那一支里说「维护它」，等于把第一版留给模型自己悟：Claude 会悟，
-        # Kimi / MiMo 近 30 天在本项目里一篇都没建过——文档谁来维护就取决于
-        # 坐进房间的是哪个模型。所以空的时候也说，而且说清「什么时候」。
-        parts.append(
-            "## 当前话题的实况文档（还没有）\n"
-            "本话题还没有实况文档。它是给没参与讨论的人和下一轮的你看的，"
-            "由在这个话题里干活的 AI 队友维护——不论你是哪个队友。"
-            "等话题的目标或第一条结论清楚了（通常就在本轮），先 `cheese_doc_get`、"
-            "再用 `cheese_doc_set` 建第一版；之后状态变化时更新它。"
-            "只是寒暄或一句话就答完的问题不用建。\n" + DOC_FORM
+        sections["doc"] = "## 实况文档现在的内容\n\n本话题还没有实况文档。"
+    if keeps_memory and memory is not None and not memory.is_empty():
+        index_text = "\n\n".join(
+            f"### {section.label}（`{section.prefix}/`）\n{section.text}"
+            for section in memory.sections
         )
-    if keeps_memory:
-        # 记忆这一段是有意整份在场的（照搬 CC）：四类记忆是什么、什么不该写、写前
-        # 查重、用前核对——它是这个机制的说明书，而 agent 只有读了它才知道第一条
-        # 记忆该写成什么样。索引（L1）跟着它走，正文留在会话目录里让它自己读。
-        parts.append(MEMORY_INSTRUCTIONS)
-        if memory is not None and not memory.is_empty():
-            index_text = "\n\n".join(
-                f"### {section.label}（`{section.prefix}/`）\n{section.text}"
-                for section in memory.sections
-            )
-            parts.append(memory_block(index_text, memory.warnings))
-    if session_opening:
-        # 会话开场，不是本轮：这两条一次写对就一直对（机器多大不会变；上次的清单
-        # 是给「不在场的那一轮」看的，会话活着的时候它自己的历史就是答案）。会变的
-        # 东西不在这里 —— 它们在变的那一刻写成平台提醒，跟着下一轮的消息进来。
-        parts.append(
-            "## 这个会话开场时的运行环境（平台元信息，非用户输入）\n"
-            + "\n".join(session_opening)
+        sections["memory"] = memory_block(index_text, memory.warnings)
+    if environment:
+        # 会话开场，不是本轮：机器多大不会变；上次的清单是给「不在场的那一轮」看
+        # 的，会话活着的时候它自己的历史就是答案。
+        sections["environment"] = "## 这个会话开场时的运行环境\n" + "\n".join(
+            environment
         )
-    return "\n\n".join(parts)
+    return SessionOpening(sections)
 
 
 def thread_relay_prompt(

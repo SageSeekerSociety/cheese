@@ -38,6 +38,7 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -51,6 +52,7 @@ import urllib.request
 import uuid
 from datetime import UTC, datetime, time
 from pathlib import Path
+from time import monotonic, sleep
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 if sys.platform != "win32":
@@ -382,7 +384,8 @@ PLATFORM_TOOLS = ToolTable(
             "一次）和改后的 new，按顺序生效；有一处用不上就一处都不改。改已有文档"
             "用它，不用 cheese_doc_set 整份覆盖。没人让你改文档时（平台提醒、"
             "做完一件事顺手整理）设 suggest=true，只提建议，等人接受或拒绝；"
-            "改别人写的段落时平台也会把它转成建议。别重复提已经在待处理的建议。",
+            "这样的一轮里改了人写的段落，平台也会把它转成建议。"
+            "别重复提已经在待处理的建议。",
             {
                 "edits": {
                     "type": "array",
@@ -436,8 +439,11 @@ PLATFORM_TOOLS = ToolTable(
             "递卡前先让机器把这条任务的提交推上去，所以机器要够得着。"
             "交出去的是什么三选一：deliver（任务目录里的一份文件，当场留快照，"
             "≤80MB）、deliver_url（一个地址）、都不给（这次合并本身）。"
-            "交文件或地址时 artifact（清单上那一项的 id）与 new_artifact"
-            "（新名字，配 about）必给其一；交合并时两个都不给。",
+            "交文件或地址时 artifact（清单上那一项的 id，照抄，不写名字）与 "
+            "new_artifact（新名字，配 about）必给其一；交合并时两个都不给，"
+            "交的是项目那个仓库，平台自己认得出。about 说这样东西本身是什么、给谁的："
+            "第 1 版和第 20 版都要成立；换到清单上另一项头上也说得通就是白写；"
+            "不抄 subject，抄了会被打回。",
             {
                 "task": _TASK,
                 "subject": _text("英文 Conventional Commits 标题，≤72 字符，无句号"),
@@ -690,6 +696,12 @@ PLATFORM_TOOLS = ToolTable(
             ["profile"],
         ),
         _tool(
+            "cheese_wait_machine",
+            "工作电脑还在准备时，等它就绪再返回（最多约 11 分钟），返回时说等了多久。"
+            "要等机器就用它，别用 sleep：预热好的机器常常几秒就好，sleep 只会白等。"
+            "文件和命令工具本身也会等，所以只在你想先等好再做别的时候调它。",
+        ),
+        _tool(
             "cheese_note",
             "给同一个 handle 的另一条线程留一张便条。它直接进那条线程正在跑的"
             "那一轮，不进时间线。收件人只能是你自己在这个项目里的另一条线程——"
@@ -783,6 +795,70 @@ PLATFORM_TOOLS = ToolTable(
                 },
             },
             ["run", "status"],
+        ),
+        _tool(
+            "cheese_skill_draft",
+            "提议把一套做法存成**项目技能**：确认后，这个项目以后每个会话都带着它，"
+            "用户说到这类事时照着做。房间里会出一张卡，人点「保存」才生效。\n"
+            "五条都满足才起草：①是一类会再来的事，一句话叫得出（周报、批改作业），不是"
+            "这一次的经过；②用户为这类事教过你不止一处：记忆里已有的相关规则加上这次的"
+            "纠正（用户明说「存下来」「以后都这样」时这条算满足）；③这一次做完了，用户接受"
+            "了结果，没找到可行办法时不提；④技能清单里没有已经管这类事的技能，有就改用 "
+            "cheese_skill_update 提议修改那一份；⑤它不是一条事实或偏好（写进记忆）、"
+            "不是代码库本身的知识（写进仓库文档）、不是某个人的习惯（写进他的个人记忆），"
+            "机械的必做步骤写成 files 里的脚本。\n"
+            "一个会话最多提一次。写成做法，不抄聊天记录：先写判断点和理由、踩过的坑、"
+            "产出格式，通用步骤少写；这次的具体文件名、数字、人名写成「用户给的某某」。",
+            {
+                "name": _text("文件夹名，小写字母、数字、连字符，如 weekly-report"),
+                "title": _text("名称"),
+                "description": _text(
+                    "什么情况下用它，一句话。决定以后会不会被想起来，写用户会怎么说"
+                ),
+                "body": _text(
+                    "正文，markdown。分三个小标题写：## 需要的输入（每次要用户给什么）、"
+                    "## 步骤与规则（判断点、规则、坑和理由；必要的步骤）、"
+                    "## 输出要求（交什么、什么格式、放哪）"
+                ),
+                "files": {
+                    "type": "object",
+                    "description": "要一起存的文本文件 {相对路径: 内容}，如脚本、模板",
+                },
+                "taught": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "用户为这类事教过你的地方，一处一条，尽量用原话",
+                },
+                "accepted": _text("这一次怎么算做成了：用户怎么接受的结果"),
+                "related": _text("最接近的已有技能和为什么不并进去；没有就写「没有」"),
+                "absorbs": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "这项技能吸收掉的 team 记忆，如 team/weekly-report-order.md；"
+                        "保存后它们会被删掉，免得同一条规则存两份"
+                    ),
+                },
+            },
+            ["name", "title", "description", "body", "taught", "accepted"],
+        ),
+        _tool(
+            "cheese_skill_update",
+            "提议修改一项已有的项目技能：用的时候被用户纠正了、发现它哪里不对，或者一套"
+            "新做法该并进它。只发要改的那几项，每项是改后的全文。确认之前大家继续用原来"
+            "那一版。项目技能的 id 写在那份技能的末尾。",
+            {
+                "skill": _text("项目技能 id"),
+                "title": _text("改后的名称"),
+                "description": _text("改后的用途"),
+                "body": _text("改后的正文"),
+                "files": {
+                    "type": "object",
+                    "description": "改后的全部配套文件 {相对路径: 内容}",
+                },
+                "reason": _text("为什么改：用户纠正的原话，或者哪里不对"),
+            },
+            ["skill", "reason"],
         ),
         _tool(
             "platform_request",
@@ -1339,6 +1415,29 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
                 "outputs": args.get("outputs") or [],
             },
         }
+    if tool == "cheese_skill_draft":
+        body = {
+            "name": args["name"],
+            "title": args["title"],
+            "description": args["description"],
+            "body": args["body"],
+            "taught": args.get("taught") or [],
+            "accepted": args.get("accepted") or "",
+            **_given(args, "files", "related", "absorbs"),
+        }
+        return {"method": "POST", "path": f"/topics/{topic}/skills", "body": body}
+    if tool == "cheese_skill_update":
+        where = urllib.parse.quote(topic)
+        skill = urllib.parse.quote(args["skill"], safe="")
+        body = {
+            "reason": args["reason"],
+            **_given(args, "title", "description", "body", "files"),
+        }
+        return {
+            "method": "PATCH",
+            "path": f"/skills/{skill}?topic={where}",
+            "body": body,
+        }
     if tool == "cheese_members":
         return {"method": "GET", "path": f"/topics/{topic}/members"}
     if tool == "cheese_status":
@@ -1688,6 +1787,11 @@ def _accept_request(args: dict, host) -> str:
         lines.append(f"这一版交出去的是 {args['deliver']}，已留存。")
     elif args.get("deliver_url"):
         lines.append(f"这一版交出去的是 {args['deliver_url']}。")
+    # 递卡之后的那一段（等采纳、PR 红了怎么修）在这一刻最有用，所以跟着返回说。
+    lines.append(
+        "接下来等验收人采纳。PR 的检查失败或和目标分支冲突时平台会叫你：在这条任务"
+        "的目录里修好、提交，用 cheese push-fix 更新原来的 PR，不要为这条任务再递一张卡。"
+    )
     return "\n".join(lines)
 
 
@@ -2070,6 +2174,16 @@ def _feedback_release(args: dict, host) -> str:
     return f"{item.get('display_id') or args['feedback']} 现在没人领着，别人可以领了。"
 
 
+def _wait_machine(args: dict, host) -> str:
+    """Hands, once the room's machine is ready: one command that does nothing,
+    sent the way every file and command tool's is, so it waits exactly as they
+    do (`executor_transport.acquire`) and fails as they would."""
+    started = datetime.now(UTC)
+    host.wait_machine()
+    waited = round((datetime.now(UTC) - started).total_seconds())
+    return f"工作电脑已就绪（等了 {waited} 秒）。" if waited else "工作电脑已就绪。"
+
+
 _STEPS = {
     "cheese_chat_get": _chat_get,
     "cheese_chat_list": _chat_page("cheese_chat_list"),
@@ -2085,6 +2199,7 @@ _STEPS = {
     "cheese_feedback_get": _feedback_get,
     "cheese_feedback_claim": _feedback_claim,
     "cheese_feedback_release": _feedback_release,
+    "cheese_wait_machine": _wait_machine,
 }
 
 
@@ -2370,6 +2485,15 @@ _SAY = {
     "cheese_routine_update": _say_routine_update,
     "cheese_routine_pause": _say_routine_pause,
     "cheese_routine_report": _say_routine_report,
+    # 卡片由平台渲染：起草完只用一两句话告诉用户，别把整份再贴一遍。
+    "cheese_skill_draft": lambda a, d, e: (
+        f"已起草项目技能「{(d or {}).get('title')}」，房间里出了一张卡。用一两句话"
+        "告诉用户它管哪类事、为什么值得存，请他在卡上点「保存」；保存之前它不生效。"
+    ),
+    "cheese_skill_update": lambda a, d, e: (
+        f"已提议修改「{(d or {}).get('title')}」，等人在卡上确认；确认之前大家"
+        "继续用原来那一版。"
+    ),
 }
 
 
@@ -2412,6 +2536,9 @@ class LocalHost:
     def read_file(self, path: str) -> bytes:
         with open(os.path.join(self.cwd, path), "rb") as stream:
             return stream.read()
+
+    def wait_machine(self) -> None:
+        """This session runs on its machine: it is there."""
 
     def sync_task(self, task_id: str) -> None:
         result = subprocess.run(
@@ -3363,6 +3490,74 @@ def _format_status(d: dict) -> str:
     return "\n".join(lines)
 
 
+# `cheese serve` 报端口之前先敲一次应用,敲通了才算「起来了」。
+#
+# 为什么:agent 习惯 `nohup vite &` 把 dev server 丢到后台,紧跟着就 `cheese serve`——
+# 这时 vite 常常还没开始监听。平台那边敲端口敲不通会当场拒绝,用户看到的是一闪而过
+# 的白框,agent 却以为报上去了。探一下就不会:应用已经在听的(常见情况)立刻返回;
+# 还在起的,等它应答再报,最多等这么久。
+_SERVE_WAIT_DEFAULT_S = 30.0
+# 单次探测的超时和两次探测的间隔。前者要短:每个探测都得在超时前自己结束,不然一个
+# 挂着不回的 socket 会把整段等待吃掉;后者别太密,免得对着还在启动的进程打满。
+_SERVE_PROBE_TIMEOUT_S = 2.0
+_SERVE_PROBE_INTERVAL_S = 0.5
+# 浏览器式的请求头。有的服务器对 curl 和浏览器的应答不一样(vite dev 给浏览器发 SPA
+# 外壳),探「应用起没起来」就得像浏览器那样问一次。
+_SERVE_PROBE_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (cheese serve readiness probe)",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+}
+
+
+def _probe_app(port: int) -> int | None:
+    """对 127.0.0.1:port 敲一次。
+
+    通了就返回 HTTP 状态码(4xx/5xx 也算「在应答」,只是这个路径不对);连不上、
+    超时、收了半截,或端口上坐的是个不讲 HTTP 的服务(SSH/数据库这类先打招呼
+    的非 HTTP 监听)都返回 None。
+    """
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{port}/", headers=_SERVE_PROBE_HEADERS, method="GET"
+    )
+    try:
+        with urllib.request.urlopen(
+            request, timeout=_SERVE_PROBE_TIMEOUT_S
+        ) as response:
+            return response.status
+    except urllib.error.HTTPError as exc:
+        # 收到应答了,只是不是 2xx/3xx——应用在跑,但这个路径不是它的家。
+        return exc.code
+    except (
+        urllib.error.URLError,
+        OSError,
+        ValueError,
+        # 端口上是个非 HTTP 的监听:首行不是状态行,http.client 抛 BadStatusLine
+        # (HTTPException,不是 OSError)。这类端口也是「敲不通」,不该把它抛给 caller
+        # 炸掉整个 serve。
+        http.client.HTTPException,
+    ):
+        return None
+
+
+def _wait_for_app(port: int, timeout_s: float) -> int | None:
+    """等应用应答,最多等 timeout_s 秒。
+
+    任何 HTTP 应答(2xx/3xx/4xx/5xx 都算)就立刻返回——端口有人在听、能应答,
+    平台那一敲就通,4xx/5xx 也只是根路径不对,再等下去纯属空等。返回最后看到的
+    状态码;返回 None 表示这段时间里一直没人应答(端口没人听)。
+    """
+    deadline = monotonic() + timeout_s
+    while True:
+        status = _probe_app(port)
+        if status is not None:
+            return status
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            return None
+        sleep(min(_SERVE_PROBE_INTERVAL_S, remaining))
+
+
 def source_fingerprint() -> str:
     """A short digest of THIS file's bytes.
 
@@ -3452,17 +3647,24 @@ def build_parser() -> argparse.ArgumentParser:
 
     psv = sub.add_parser(
         "serve",
-        help="把这台机器上跑起来的应用设为当前预览(先起服务,再报端口)",
+        help="把这台机器上跑起来的应用设为当前预览(先起服务,报端口前先探通)",
         description=(
             "把**已经跑起来的**应用设为当前预览。跑之前:\n"
-            "  1. 把 dev server 起在 127.0.0.1 上,后台跑(nohup ... &)\n"
+            "  1. 把应用起在 127.0.0.1 上,后台跑(nohup ... &)。前端项目优先\n"
+            "     「先 build、再按静态文件起服务」,别报 dev server——几百个模块\n"
+            "     请求会挤过预览隧道,首屏能拖到几十秒\n"
             "  2. 端口你自己挑,固定住(vite 要 --strictPort,否则端口被占时它会\n"
             "     静默跳到下一个,你以为起好了,报上来的那个却没人应答)\n"
             "  3. 把那个端口报给这条命令\n"
             "\n"
             "每个话题使用独立的预览地址，应用可直接从根路径运行，\n"
             "无需为了预览修改资源路径。例如:\n"
-            "  vite --strictPort --port <端口>\n"
+            "  vite build --outDir dist\n"
+            "  BACKEND_URL=<后端地址> vite preview --strictPort --port <端口>\n"
+            "\n"
+            "报之前,这条命令自己先敲一次 127.0.0.1:<端口>(浏览器式的 GET):应用已经\n"
+            "在听就立刻过;还在起的等它应答,最多 --wait 秒(默认 30,--no-wait 跳过)。\n"
+            "等超了也照样报,只是提醒你一声——平台那边那一敲仍是权威。\n"
             "\n"
             "平台会当场从自己这边敲一次那个端口;敲不通就直接拒绝,不会给用户留一个\n"
             "白框。这台机器不是平台的,预览走的是这台机器主动拨出去的一条隧道——所以\n"
@@ -3473,6 +3675,24 @@ def build_parser() -> argparse.ArgumentParser:
     psv.add_argument("port", type=int, help="应用监听的端口,如 5173")
     psv.add_argument(
         "note", nargs="?", default="app", help="一句话说明在跑什么,如 'Vue dev server'"
+    )
+    psv.add_argument(
+        "--wait",
+        type=float,
+        default=_SERVE_WAIT_DEFAULT_S,
+        metavar="秒",
+        help=(
+            "报端口前先探到应用应答(浏览器式的 GET,任何 HTTP 状态码都算)再报,"
+            "最多等这么久;"
+            f"默认 {_SERVE_WAIT_DEFAULT_S:g} 秒,0 表示探都不探。"
+        ),
+    )
+    psv.add_argument(
+        "--no-wait",
+        dest="wait",
+        action="store_const",
+        const=0.0,
+        help="不探,报完就走(和 --wait 0 一样)。",
     )
 
     plib = sub.add_parser(
@@ -3814,6 +4034,25 @@ def main() -> None:
                 file=sys.stderr,
             )
             sys.exit(2)
+        # 报之前先敲门:应用已经在听(常见情况)就立刻过;还在起的,等它应答再报——
+        # 不然平台那边敲不通会当场拒绝,用户看到的是一闪而过的白框。等超了仍然照报,
+        # 只是提醒一声,平台那一敲是权威。
+        if a.wait and a.wait > 0:
+            status = _wait_for_app(a.port, a.wait)
+            if status is None:
+                print(
+                    f"[cheese] 等了 {a.wait:g} 秒,127.0.0.1:{a.port} 还是没有应答。"
+                    "应用可能没起来、没监听这个端口,或者起来的是另一个端口"
+                    "(vite 没加 --strictPort 时会静默换端口)。仍然照报,"
+                    "平台那边敲不通还会退回来。",
+                    file=sys.stderr,
+                )
+            elif not 200 <= status < 400:
+                print(
+                    f"[cheese] 127.0.0.1:{a.port} 在应答,但返回 {status},不是 2xx/3xx。"
+                    "应用大概起来了,只是根路径 / 不是它的入口。仍然照报。",
+                    file=sys.stderr,
+                )
         # Declare the port and bring the tunnel up in one step. The port is
         # written on THIS machine and read from disk by the helper — it never
         # travels on the wire, which is what keeps the platform unable to point

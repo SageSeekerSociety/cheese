@@ -122,7 +122,7 @@ def _prompt_of_the_routine_turn(client, tmp_path, room: str, submitted: dict):
 
     client.portal.call(run)
     assert screen.last_system_prompt is not None
-    return screen.last_system_prompt
+    return screen.told
 
 
 def test_a_routine_runs_with_the_owners_private_memory(client, tmp_path):
@@ -177,6 +177,6 @@ def test_another_rooms_turn_does_not_carry_the_routine_owner(client, tmp_path):
 
     client.portal.call(run)
     assert screen.last_system_prompt is not None
-    assert TEAM_HOOK in screen.last_system_prompt
-    assert BOB_HOOK in screen.last_system_prompt
-    assert OWNER_HOOK not in screen.last_system_prompt
+    assert TEAM_HOOK in screen.told
+    assert BOB_HOOK in screen.told
+    assert OWNER_HOOK not in screen.told

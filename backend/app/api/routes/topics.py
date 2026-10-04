@@ -6,11 +6,12 @@ from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Header, Query, Response
 from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
+from app.api.conditional import etag_for_json, if_none_match_hits
 from app.api.deps import (
     get_broker,
     get_chat_service,
@@ -257,18 +258,27 @@ def _topic_out(
     return data
 
 
-@router.get("")
+#: 侧栏每 30 秒轮询一次整份话题清单。它是**登录用户**的私有视图（每一行都带「与我的
+#: 相关性」），所以只能是 `private`；`no-cache` 要求每次带 `If-None-Match` 回来问一句，
+#: 命中 ETag 就回 304、空 body —— 没有变化的那些轮询不再把一个几百 KB 的清单重传一遍。
+#: 和 `admin_members` 那份名单同一个形状。
+TOPICS_LIST_CACHE_CONTROL = "private, no-cache"
+
+
+@router.get("", response_model=None)
 async def list_topics(
     project_id: uuid.UUID,
     db: DbSession,
     runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
     broker: Annotated[InProcessBroker, Depends(get_broker)],
     resolver: ActorResolverDep,
+    response: Response,
     sort: TopicSortField | None = None,
     order: SortOrder = "asc",
     active_since: datetime | None = None,
     topic: str = "",
-) -> dict:
+    if_none_match: Annotated[str | None, Header()] = None,
+) -> dict | Response:
     """The project's topics.
 
     `sort=last_activity_at` orders by when something last HAPPENED in each topic
@@ -278,6 +288,12 @@ async def list_topics(
 
     Every row also carries 与我的相关性 (`i_participate`/`awaits_me`) for the
     caller — this is the endpoint the sidebar groups from.
+
+    条件请求：`ETag` 由整份信封的规范化 JSON 算出（`etag_for_json`），`If-None-Match`
+    命中就回 304、空 body。清单里每一行都是「数据库 + 在跑的会话」推出来的：一个房间的
+    徽章会因为成员刚被拉进来、一张验收卡刚落地、某个队友刚开始干活而变，而这些都不动
+    `updated_at`，所以「有没有变」只能靠整份 body 的指纹来判，不能靠某一列的时间戳。
+    没命中那条路仍然走 `ok()` 的信封，前端 `request()` 靠 `{code,message,data}` 解包。
     """
     actor = await project_reader(db, resolver, project_id, topic)
     service = TopicService(db)
@@ -320,7 +336,16 @@ async def list_topics(
         )
         for t in topics
     ]
-    return ok(page(items, total))
+    payload = ok(page(items, total))
+    etag = etag_for_json(payload)
+    cache_headers = {
+        "Cache-Control": TOPICS_LIST_CACHE_CONTROL,
+        "ETag": f'"{etag}"',
+    }
+    if if_none_match and if_none_match_hits(if_none_match, etag):
+        return Response(status_code=304, headers=cache_headers)
+    response.headers.update(cache_headers)
+    return payload
 
 
 @router.get("/names")
@@ -594,9 +619,7 @@ async def read_chat_history(
         query=q,
         reply_to=reply_to,
         author=author,
-        # Document nodes have their own tree. Comments and preview pointers
-        # remain discoverable here; --kind doc_node reads the nodes explicitly.
-        kinds=[kind] if kind else [k for k in BlockKind if k != BlockKind.doc_node],
+        kinds=[kind] if kind else list(BlockKind),
     )
     included = [*result.items, *([parent] if parent else [])]
     reactions = await repo.reactions_for_blocks([b.id for b in included])
@@ -1127,6 +1150,25 @@ async def mark_topic_read(
     )
     await TopicService(db).mark_read(topic_id, handle)
     return ok({"topic_id": str(topic_id), "handle": handle})
+
+
+@router.put("/{topic_id}/notify-level")
+async def set_topic_notify_level(
+    topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """这间房对我的通知级别：`all` 或 `mute`。和已读位一样按人记，人是谁取自
+    已验证的凭据。"""
+    topic = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
+    handle = await resolver.resolve_recipient(
+        requested=None, project_id=topic.project_id, allow_anonymous=False
+    )
+    level = str(body.get("level") or "")
+    await TopicService(db).set_notify_level(topic_id, handle, level)
+    return ok({"topic_id": str(topic_id), "level": level})
 
 
 @router.post("/{topic_id}/archive")

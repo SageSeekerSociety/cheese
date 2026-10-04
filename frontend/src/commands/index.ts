@@ -24,7 +24,8 @@ interface CommandBase {
   title: string
   /** mdi 图标名。 */
   icon?: string
-  /** `mod+1`、`mod+shift+f`。mod 在 Mac 上是 ⌘，别处是 Ctrl。按物理键认，不跟键盘布局走。 */
+  /** `mod+1`、`mod+shift+f`。mod 在 Mac 上是 ⌘，别处是 Ctrl。按物理键认，不跟键盘布局走。
+   *  中间是空格的是序列键：`g 1` = 先按 G、一秒内再按 1（输入框里不认）。 */
   shortcut?: string
   /** 退出、删除这类：菜单里那一行用 --danger-ink。 */
   danger?: boolean

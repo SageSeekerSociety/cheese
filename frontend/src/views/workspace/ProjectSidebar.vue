@@ -8,7 +8,7 @@ import { showsTopicList, useWorkspaceLayout } from '@/composables/useWorkspaceLa
 import { useCommands } from '@/commands'
 import TopicSidebar from '@/components/TopicSidebar.vue'
 import { t } from '@/i18n'
-import { cancelPrefetch, prefetchOnHover } from '@/lib/routePrefetch'
+import { cancelPrefetch, prefetchNow, prefetchOnHover } from '@/lib/routePrefetch'
 import { useWorkspaceStore } from '@/stores/workspace'
 import BoardSummary from '@/views/workspace/BoardSummary.vue'
 import SplitListColumn from '@/views/workspace/SplitListColumn.vue'
@@ -59,6 +59,16 @@ function onHoverTopic(topicId: string) {
   })
 }
 
+// 鼠标按下去到松开、路由真的跳过去之间还有几十到一百多毫秒；手快的人停不满 150ms，
+// hover 预取还没起头。
+function onPressTopic(topicId: string) {
+  prefetchNow({
+    router,
+    to: { name: 'workspace-topic', params: { projectId: props.projectId, topicId } },
+    topicId,
+  })
+}
+
 const creatingTopic = ref(false)
 async function onCreateTopic(title: string) {
   if (creatingTopic.value) return
@@ -83,6 +93,19 @@ useCommands(() => [
     disabled: creatingTopic.value,
     run: () => void onCreateTopic(''),
   },
+  // 全部标为已读（同 Slack 的 Shift+Esc）：只在真有未读时登记，没有时 Shift+Esc 照旧归
+  // 别人（比如关掉一个浮层）。
+  ...(Object.keys(store.unreadMap).length
+    ? [
+        {
+          id: 'topics.markAllRead',
+          title: t('work.room.menu.markAllRead'),
+          icon: 'mdi-check-all',
+          shortcut: 'shift+escape',
+          run: () => void store.markAllRead(),
+        },
+      ]
+    : []),
 ])
 </script>
 
@@ -105,10 +128,12 @@ useCommands(() => [
       :loading-topics="store.loadingTopics"
       :creating-topic="creatingTopic"
       :active-docs="activeDocs"
-      :unread-map="store.unreadMap"
+      :unread-map="store.badgeUnreadMap"
+      :muted-of="store.isMuted"
       :private-unread-map="store.privateUnreadMap"
       @select-topic="openTopic"
       @hover-topic="onHoverTopic"
+      @press-topic="onPressTopic"
       @leave-topic="cancelPrefetch"
       @select-docs="openDocs"
       @unarchive-topic="store.unarchive"

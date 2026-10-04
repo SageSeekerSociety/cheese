@@ -23,18 +23,22 @@
 // 消失」。单击打开的那一格是临时的，下一次打开会换掉它；双击就固定下来。不这样的
 // 话，聊一小时能攒出二十个页签。
 import type { OpenFileTab } from '../composables/useTopicMemory'
-import type { AgentControlState, Block, PreviewInfo, Topic } from '../cx_types'
+import type { AgentControlState, Block, PreviewInfo, ProjectMemberRow, Topic } from '../cx_types'
 import type { DocReviewRequest } from '../lib/docReview'
 import type { MemberActivityLine } from '../lib/memberActivity'
 import type { PreviewLocate, SubmitPreviewQuestion } from '../lib/previewQuestion'
 import type { CardPhase } from '../lib/topicState'
 import type { TabDef, TabKey } from './panels/panelTabList'
 
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, useId, watch } from 'vue'
 
-import { getPreview, getTopicWorkSummary, listRoomTasks, readPreviewFile } from '../api'
+import { getTopicWorkSummary, readPreviewFile } from '../api'
 import { useTopicMemory } from '../composables/useTopicMemory'
 import { previewCanShowInRoom } from '../lib/fileKind'
+import { whenIdle } from '../lib/idle'
+import { cachedPreviewPointer, refreshPreviewPointer } from '../lib/previewPointer'
+import { cachedTopicPanel, fetchRoomTasks } from '../lib/topicPanelCache'
+import { withViewTransition } from '../lib/viewTransition'
 
 import ErrorBoundary from './common/ErrorBoundary.vue'
 import PanelChanges from './panels/PanelChanges.vue'
@@ -79,6 +83,11 @@ const props = withDefaults(
     // 手机上对话不是左边那一栏，是这条 tab 栏的第一格——一屏放不下两栏，而这两
     // 样东西本来就是平级的。开着它的时候 `chat` 插槽就是这一格的内容。
     withChat?: boolean
+    // 平板横放（960–1180）：这一档里房间只画对话，面板是一只按需拉起的浮层。进房间时
+    // 自动挑中的那一格（芝士在干活 → 现场，卡等你验收 → 改动）留在面板里当「你打开时
+    // 看哪一格」，但不写地址、也不把浮层拉起来——那是「你打开它」，不是「有人打开了
+    // 这一格」。宽档里面板常驻、手机上又是另一套（`withChat`），都不经过这里。
+    compact?: boolean
     // 地址里的 `?card=` —— 非空就是总览那一格正看着一张卡。
     openCardId?: string | null
     // 地址里的 `?block=`，而且开着一张卡：卡打开时停在它里面的这一条。
@@ -90,6 +99,8 @@ const props = withDefaults(
     agentName?: string
     /** 项目 AI 队友的 handle：文档评论里「问…」点的是它。 */
     agentHandle?: string | null
+    /** 项目名册：文档里 @ 得到的人。 */
+    members?: ProjectMemberRow[]
     // 此刻谁在这个房间里忙（对话栏从 socket 上学来）。现场那一格画其中在干活的队友。
     activity?: MemberActivityLine[]
   }>(),
@@ -105,8 +116,10 @@ const props = withDefaults(
     tab: undefined,
     cardPhase: undefined,
     withChat: false,
+    compact: false,
     agentName: () => t('work.room.defaultAgentName'),
     agentHandle: null,
+    members: () => [],
     activity: () => [],
   }
 )
@@ -175,13 +188,25 @@ function ensureFileFromUrl(key: string | null) {
 //
 // 返回「到底切没切」：调用方要接着在目标那一格上做事（开文件）时，被拦下就得当场
 // 放弃，不能拿着旧的引用假装做过了。
-async function setTab(key: string, opts: { guard?: boolean } = {}): Promise<boolean> {
+//
+// `announce: false` 是「换这一格，但别告诉地址」：平板横放里进房间时自动挑中的那一格
+// 就是这样——它只是「你打开面板时看哪一格」，写进地址等于把浮层也拉起来了，而那一刻
+// 并没有人打开它。（宽档、手机上都用默认的 announce —— 那里地址本来就该跟着走。）
+async function setTab(key: string, opts: { guard?: boolean; announce?: boolean } = {}): Promise<boolean> {
   if (key !== active.value && opts.guard !== false && !(await confirmAnnotationDiscard())) return false
   settled.value = true
   active.value = key
   if (key === 'changes') markChangesSeen()
-  emit('update:tab', key)
+  if (opts.announce !== false) emit('update:tab', key)
   return true
+}
+
+// 人点了一格页签：宽屏上内容区淡入淡出一下（lib/viewTransition.ts；窄屏走上面的
+// tabpane-in）。确认「放弃没发的批注」要在过渡之前问完，过渡里不能等人。
+async function selectTab(key: string) {
+  if (key === active.value) return
+  if (!(await confirmAnnotationDiscard())) return
+  withViewTransition(() => setTab(key, { guard: false }))
 }
 
 // ---- 开在哪个 tab 上 (规则 3) ----
@@ -262,7 +287,7 @@ watch(
     void pollPreviewPointer()
     void pollWorkSummary()
     // 一轮里派出去的活，收工那一刻就该出现在 任务 那一格上。
-    void pollThreads()
+    void pollThreads({ fresh: true })
   }
 )
 
@@ -285,17 +310,23 @@ function markPreviewSeen(id?: string | null) {
 }
 
 // Fetch the POINTER only (no file read, no cookie priming) so the dot can appear
-// while 预览 is not the open tab. Cheap enough to run on every turn boundary.
-async function pollPreviewPointer(opts: { seen?: boolean } = {}) {
+// while 预览 is not the open tab. Goes through lib/previewPointer, so a request the
+// router guard already started for this topic is reused rather than repeated — and
+// the answer here feeds that cache for the next time the room is opened.
+//
+// 返回的是「这次问到的产物 id」：`null` 是「这个房间没有预览」（一个真看到过的
+// 状态），`undefined` 是「这一问没成」（没话题 id，或者网络断了）——两者不能混，兜
+// 底轮询要拿它分「变了」和「没问成、下次再比」。
+async function pollPreviewPointer(opts: { seen?: boolean } = {}): Promise<string | null | undefined> {
   const tid = props.topic?.id
-  if (!tid) return
+  if (!tid) return undefined
   let art: PreviewInfo | null = null
   try {
-    art = await getPreview(tid)
+    art = await refreshPreviewPointer(tid)
   } catch {
     // A failed poll is not a state — leave the dot as it was. The real load
     // reports errors; this one only ever adds a hint.
-    return
+    return undefined
   }
   previewPath.value = art?.path ?? null
   const id = art?.artifact_id ?? null
@@ -304,6 +335,82 @@ async function pollPreviewPointer(opts: { seen?: boolean } = {}) {
   // at it.
   if (opts.seen || active.value === 'preview') markPreviewSeen(id)
   else previewLatest.value = id
+  return id
+}
+
+// ---- 预览指针的兜底轮询 ----
+// 芝士摆出新东西时那条 WS 帧会立刻叫我们来看一眼（`previewShown`）。这条定时是兜底：
+// 帧可能在断线那一小段里丢了，而「预览」这一格开着的时候，屏幕上等的正是它。所以这
+// 一格开着、页面又在前台时每 5 秒问一次指针；指针真换了才 `refreshTick` 一下，让预览
+// 那一格重取（没换就不打扰任何一格）。切回窗口 / 回到前台立刻补一次。
+const PREVIEW_POINTER_POLL_MS = 5_000
+let previewPollTimer: ReturnType<typeof setInterval> | null = null
+// 上一次看到的产物 id。`undefined` = 还没看过；`null` 是「这个房间没有预览」，是一
+// 个真看到过的值，和「还没看过」不是一回事——问失败不能把它擦回「还没看过」，不然
+// 断线后第一个看到的就又被当成基线放过去了。
+let lastPolledPointerId: string | null | undefined = undefined
+
+async function tickPreviewPointer() {
+  if (document.hidden) return
+  // 「面板里此刻展示的是哪一份」在问之前先记下来：第一次兜底轮询拿它当基线。不这么
+  // 做的话，开格头 5 秒里换的那一份（那条 WS 帧可能正好丢在断线里——这正是这条兜底
+  // 要接住的时刻）会被当成「第一次看到的」悄悄放过去，屏幕上还是旧的，直到 20 秒那
+  // 一档才追上。
+  const shown = previewSeen.value
+  const id = await pollPreviewPointer()
+  // 这一问没成：什么都不动，下一次再比（别把上一次看到的当成没看过）。
+  if (id === undefined) return
+  if (lastPolledPointerId === undefined) lastPolledPointerId = shown
+  if (lastPolledPointerId !== id) {
+    lastPolledPointerId = id
+    refreshTick.value += 1
+  }
+}
+
+function stopPreviewPoll() {
+  if (previewPollTimer) clearInterval(previewPollTimer)
+  previewPollTimer = null
+}
+function syncPreviewPoll() {
+  stopPreviewPoll()
+  if (active.value !== 'preview' || document.hidden) return
+  previewPollTimer = setInterval(() => void tickPreviewPointer(), PREVIEW_POINTER_POLL_MS)
+}
+// 回到前台 / 窗口重新拿到焦点：别等下一个 5 秒，立刻补一次（在预览这一格上时）。
+function refetchPreviewOnReturn() {
+  if (!document.hidden && active.value === 'preview') void tickPreviewPointer()
+}
+onMounted(() => {
+  window.addEventListener('focus', refetchPreviewOnReturn)
+  document.addEventListener('visibilitychange', onVisibilityChange)
+  syncPreviewPoll()
+})
+onUnmounted(() => {
+  window.removeEventListener('focus', refetchPreviewOnReturn)
+  document.removeEventListener('visibilitychange', onVisibilityChange)
+  stopPreviewPoll()
+})
+function onVisibilityChange() {
+  syncPreviewPoll()
+  refetchPreviewOnReturn()
+}
+// 开上 / 离开预览这一格：这格开着才轮询它（见上）。开的那一下也顺手重排一次定时。
+watch(active, () => syncPreviewPoll())
+
+// 芝士在房间里摆出来一份东西（对话栏听完 socket 往上报的那一声）：立刻问一次指针，
+// 别等下一次轮询——「预览」那一格开着就顺手重取，没开就只是让那颗「有新内容」的点
+// 冒出来。指针真换了才 `refreshTick`：那一格全房间共用，总览会跟着重取房间产物，同一
+// 份东西被重复摆一次不该惊动它们。
+function previewShown() {
+  const before = previewSeen.value
+  void pollPreviewPointer().then((id) => {
+    if (id === undefined) return
+    lastPolledPointerId = id
+    // 只有「预览」这一格开着、而且指针真的换了，才需要一个 `refreshTick` 把重取读出
+    // 去。没开那一格时，那颗「有新内容」的点（previewLatest）已经把话说完了，别的格
+    // （总览会跟着重取房间产物）不该陪着白跑一趟。
+    if (active.value === 'preview' && id !== before) refreshTick.value += 1
+  })
 }
 
 // ---- 这一格此刻有没有东西 ----
@@ -352,14 +459,21 @@ function markChangesSeen() {
 // of a room that never dispatched anything.
 const threads = ref<{ total: number; open: number }>({ total: 0, open: 0 })
 
-async function pollThreads() {
+function countThreads(rows: { status: string }[]) {
+  threads.value = { total: rows.length, open: rows.filter((r) => r.status === 'open').length }
+}
+
+async function pollThreads(opts: { fresh?: boolean } = {}) {
   const roomId = props.topic?.id
   if (!roomId) return
+  // Show the count from last time (e.g. switching back to a room) while the fresh one loads.
+  const cached = cachedTopicPanel('roomTasks', roomId)
+  if (cached) countThreads(cached.data)
   try {
     // limit: 1 — see TaskProgress. Without it this asks for every card's whole
-    // history just to count them.
-    const rows = (await listRoomTasks(roomId, { limit: 1 })).data
-    threads.value = { total: rows.length, open: rows.filter((r) => r.status === 'open').length }
+    // history just to count them. Shared with TaskProgress and the chat panel.
+    const rows = (await fetchRoomTasks(roomId, opts)).data
+    if (props.topic?.id === roomId) countThreads(rows)
   } catch {
     // A failed poll is not a state — same rule as the two polls above.
   }
@@ -420,6 +534,16 @@ function signalFor(key: TabKey): PanelTab['signal'] {
 }
 
 /** 交给 `PanelTabs` 的那几格：文案、图标、有没有东西、信号。 */
+// 页签和它切换的内容区（role="tabpanel"）靠这个 id 连起来：读屏在页签上念得出它管哪一块。
+const tabPanelId = `wp-panel-${useId()}`
+// 内容区在错误边界里面：某一格渲染出错时它会被换成兜底提示，那时页签不再指向它。
+const tabBodyRef = ref<HTMLElement | null>(null)
+const activeTabLabel = computed(() =>
+  active.value.startsWith('file:')
+    ? active.value.slice('file:'.length).split('/').pop()
+    : panelTabs.value.find((tab) => tab.key === active.value)?.label
+)
+
 const panelTabs = computed<PanelTab[]>(() =>
   tabs.value.map((tab) => ({
     key: tab.key,
@@ -446,8 +570,22 @@ const panelTabs = computed<PanelTab[]>(() =>
   settled.value = !!asked
   markPreviewSeen(null)
   if (id) {
-    void pollPreviewPointer({ seen: true })
-    void pollWorkSummary({ seen: true })
+    // 这个房间的当前预览，路由守卫通常已经先问过了（lib/previewPointer.ts）：命中就
+    // 直接用——面板挂上来时那份答案就在手边，不必再等一轮网络。没命中才自己问。
+    const warm = cachedPreviewPointer(id)
+    if (warm !== undefined) {
+      previewPath.value = warm?.path ?? null
+      markPreviewSeen(warm?.artifact_id ?? null)
+    } else {
+      void pollPreviewPointer({ seen: true })
+    }
+    // 这一条要等服务端算（几秒），而它只决定「改动」那一格的深浅、以及该开在哪一格。
+    // 推到首屏画完、浏览器空下来再问：它不该和真正要把内容画出来的那些请求抢同一条
+    // 网络和主线程。角标随后补上，逻辑不受影响（`summaryLoaded` 那只看的是有没有回过）。
+    const openedId = id
+    whenIdle(() => {
+      if (props.topic?.id === openedId) void pollWorkSummary({ seen: true })
+    })
     void pollThreads()
   }
 }
@@ -470,7 +608,8 @@ watch(
     if (!props.working && card && !loaded) return
     const want = openingTab(card)
     if (want === active.value) settled.value = true
-    else setTab(want)
+    // 平板横放：挑中的那一格留着当「打开时看哪一格」，但不写地址（于是也不拉开浮层）。
+    else setTab(want, { announce: !props.compact })
   },
   { immediate: true }
 )
@@ -593,7 +732,9 @@ function siteBlock(block: Block) {
   siteRef.value?.receive(block)
 }
 
-defineExpose({ pulse, highlightTurn, reviewDoc, openFile, siteBlock })
+// 面板此刻在画哪一格。地址不一定写得出来——平板横放里自动挑中的那一格就没写进地址，
+// 而收起浮层再打开要回到它，所以这里是那份记忆的出处（TopicView 打开浮层时来问）。
+defineExpose({ pulse, highlightTurn, reviewDoc, openFile, siteBlock, previewShown, activeTab: () => active.value })
 </script>
 
 <template>
@@ -614,7 +755,8 @@ defineExpose({ pulse, highlightTurn, reviewDoc, openFile, siteBlock })
         :active="active"
         :files="openFiles"
         :phone="withChat"
-        @select="setTab"
+        :panel-id="tabBodyRef ? tabPanelId : undefined"
+        @select="selectTab"
         @close-file="closeFile"
         @pin-file="pinFile"
       />
@@ -623,7 +765,14 @@ defineExpose({ pulse, highlightTurn, reviewDoc, openFile, siteBlock })
            throws shows the fallback here while the strip stays usable.
            resetKey = topic id, so switching topics recovers on its own. -->
       <ErrorBoundary variant="compact" :reset-key="topic.id">
-        <div class="tabbody" :class="{ 'tabbody--phone': withChat }">
+        <div
+          :id="tabPanelId"
+          ref="tabBodyRef"
+          class="tabbody"
+          :class="{ 'tabbody--phone': withChat }"
+          role="tabpanel"
+          :aria-label="activeTabLabel"
+        >
           <!-- 对话这一格由 TopicView 填（它拿着 ChatPanel 的那一堆接线）。一直挂着
                而不是切走就卸载：卸掉会断掉连接、丢掉滚动位置。 -->
           <div v-if="withChat" v-show="active === 'chat'" class="tabpane-chat" :class="enterClass('chat')">
@@ -635,6 +784,7 @@ defineExpose({ pulse, highlightTurn, reviewDoc, openFile, siteBlock })
             :class="enterClass('overview')"
             :agent-name="agentName"
             :agent-handle="agentHandle"
+            :members="members"
             :topic="topic"
             :activity-tick="activityTick"
             :topic-list="topicList"
@@ -767,6 +917,8 @@ defineExpose({ pulse, highlightTurn, reviewDoc, openFile, siteBlock })
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
+  /* Panel tab switches cross-fade this block only (lib/viewTransition.ts). */
+  view-transition-name: wp-tabbody;
 }
 /* 挪进来的那 20px 不该撑出一条横向滚动。 */
 .tabbody--phone {

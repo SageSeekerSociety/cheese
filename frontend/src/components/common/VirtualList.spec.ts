@@ -7,9 +7,9 @@
 // props 记下来，槽里的行原样画出来，别的什么都不做。
 import type { Component } from 'vue'
 
-import { defineComponent, h } from 'vue'
+import { defineComponent, h, nextTick } from 'vue'
 import { fireEvent, render } from '@testing-library/vue'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import VirtualList, { type VirtualListHandle } from './VirtualList.vue'
 
@@ -25,7 +25,7 @@ vi.mock('virtua/vue', async () => {
   const make = (which: 'VList' | 'Virtualizer') =>
     define({
       name: which,
-      props: ['data', 'itemSize', 'bufferSize', 'keepMounted', 'itemProps', 'scrollRef', 'item', 'as'],
+      props: ['data', 'itemSize', 'bufferSize', 'keepMounted', 'itemProps', 'scrollRef', 'item', 'as', 'startMargin'],
       setup(props, { attrs, slots, expose }) {
         virtua.seen.push({ which, props: props as unknown as Record<string, unknown> })
         expose({ scrollToIndex: virtua.scrollToIndex })
@@ -144,6 +144,74 @@ describe('递给 virtua 的那几个数', () => {
     expect(container.querySelectorAll('[data-vlist-index]')).toHaveLength(150)
     expect(container.querySelector('[data-vlist-index="0"]')).not.toBeNull()
     expect(container.querySelector('[data-vlist-index="149"]')).not.toBeNull()
+  })
+})
+
+describe('列表离滚动内容起点有多远（startMargin）', () => {
+  // happy-dom 不排版，位置和 scrollTop 都得自己摆。virtua 手上只有滚动容器的 `scrollTop`，
+  // 不知道这份列表长在离内容起点多远的地方——话题栏里这一列上面还有置顶行、组头、上面
+  // 几组。不把这段距离告诉它，它就把「滚动容器滚了多深」当成「这份列表滚了多深」，窗口
+  // 一路算偏、行被画到视口下面，屏幕上从某个位置往下全是空白。这一段钉的就是：这个距离
+  // 量出来了、它跟的是**内容里的位置**（滚到哪儿都不变）、上面那截一变它也跟着变。
+  //
+  // 摆法照真实布局来：`contentOffset` 是列表离滚动内容起点的距离，`scroll` 是滚动容器
+  // 已经滚了多远；那份容器在视口里的顶就是 `contentOffset - scroll`。
+  let contentOffset = 1000
+  let scroll = 210
+  let restore: (() => void) | undefined
+
+  function boxRect(top: number): DOMRect {
+    return { top, left: 0, right: 0, bottom: top, width: 0, height: 0, x: 0, y: top } as DOMRect
+  }
+  const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+
+  beforeEach(() => {
+    contentOffset = 1000
+    scroll = 210
+    const parentRect = SCROLL_PARENT.getBoundingClientRect
+    SCROLL_PARENT.getBoundingClientRect = () => boxRect(0)
+    Object.defineProperty(SCROLL_PARENT, 'scrollTop', { get: () => scroll, configurable: true })
+    const protoRect = Element.prototype.getBoundingClientRect
+    Element.prototype.getBoundingClientRect = function (this: Element) {
+      return this.hasAttribute('data-virtua') ? boxRect(contentOffset - scroll) : protoRect.call(this)
+    }
+    restore = () => {
+      SCROLL_PARENT.getBoundingClientRect = parentRect
+      Element.prototype.getBoundingClientRect = protoRect
+    }
+  })
+
+  afterEach(() => restore?.())
+
+  it('把列表离滚动内容起点的距离量出来递过去（不是 0，也不是滚动位置本身）', async () => {
+    draw({ itemKey, scrollParent: SCROLL_PARENT }, itemsOf(150))
+    await nextTick()
+    // 容器在视口里离滚动容器顶 1000-210=790px，加上已经滚掉的 210px，离内容起点 1000px。
+    expect(virtua.seen[0].props.startMargin).toBe(1000)
+  })
+
+  it('滚到哪儿都不影响这个值 —— 量的是内容里的位置，不是 scrollTop', async () => {
+    draw({ itemKey, scrollParent: SCROLL_PARENT }, itemsOf(150))
+    await nextTick()
+    expect(virtua.seen[0].props.startMargin).toBe(1000)
+    scroll = 8000
+    document.dispatchEvent(new Event('scroll'))
+    await nextFrame()
+    await nextTick()
+    expect(virtua.seen[0].props.startMargin).toBe(1000)
+  })
+
+  it('上面那截一变（组头开合、增删），量出来的值跟着变', async () => {
+    draw({ itemKey, scrollParent: SCROLL_PARENT }, itemsOf(150))
+    await nextTick()
+    expect(virtua.seen[0].props.startMargin).toBe(1000)
+    // 「其他话题」展开：这一列被顶上去了 500px。滚动本身没动，靠的是滚动/结构信号重算。
+    contentOffset = 1500
+    SCROLL_PARENT.appendChild(document.createElement('div'))
+    document.dispatchEvent(new Event('scroll'))
+    await nextFrame()
+    await nextTick()
+    expect(virtua.seen[0].props.startMargin).toBe(1500)
   })
 })
 

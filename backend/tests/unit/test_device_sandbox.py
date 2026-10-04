@@ -369,7 +369,7 @@ def test_pruning_a_skill_removes_the_links_in_it_and_nothing_they_name(tmp_path)
         json.dumps(["stale", "kept", "linked-skill"])
     )
 
-    bootstrap.prune_project_skills(home, ["kept"])
+    bootstrap.prune_project_skills(home, ["kept"], [])
 
     assert not stale.exists() and not stale.is_symlink()
     assert not (skills / "linked-skill").is_symlink()

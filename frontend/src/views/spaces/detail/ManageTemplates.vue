@@ -35,7 +35,12 @@
       </v-list-item>
     </v-list>
 
-    <p v-else class="settings-empty">{{ t('spaces.detail.manageTemplates.noTemplates') }}</p>
+    <BaseEmptyState
+      v-else
+      size="inline"
+      class="settings-empty"
+      :title="t('spaces.detail.manageTemplates.noTemplates')"
+    />
   </div>
 </template>
 
@@ -47,6 +52,7 @@ import { storeToRefs } from 'pinia'
 import { useSpaceData } from '@/composables/useSpaceData'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import SettingsToolbar from '@/components/spaces/SettingsToolbar.vue'
 import { useDialog } from '@/plugins/dialog'
 import { useSpaceStore } from '@/stores/space'
@@ -92,7 +98,10 @@ const facts = (template: (typeof templates.value)[number]) => {
 }
 
 const deleteTemplate = async (index: number) => {
-  const result = await confirm(t('spaces.detail.manageTemplates.deleteConfirm')).wait()
+  const result = await confirm(t('spaces.detail.manageTemplates.deleteConfirm'), {
+    confirmLabel: t('spaces.detail.manageTemplates.delete'),
+    danger: true,
+  }).wait()
   if (!result) return
 
   await spaceData.deleteTemplate(index)

@@ -16,7 +16,9 @@ import { useDisplay } from 'vuetify'
 
 import { useFocusReturn } from '@/composables/useFocusReturn'
 
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import NavLink from '@/components/common/NavLink.vue'
+import { t } from '@/i18n'
 
 export interface SettingsItem {
   key: string
@@ -65,6 +67,23 @@ const activeItem = computed(() => {
   return null
 })
 
+// 目录里按名字找（同 VS Code 设置的搜索框）：只筛这一层的目录，组里一项都不剩就整组不画。
+const search = ref('')
+const shownGroups = computed<SettingsGroup[]>(() => {
+  const needle = search.value.trim().toLocaleLowerCase()
+  if (!needle) return props.groups
+  return props.groups
+    .map((group) => ({ ...group, items: group.items.filter((i) => i.label.toLocaleLowerCase().includes(needle)) }))
+    .filter((group) => group.items.length)
+})
+
+/** 搜索框里有字时 Esc 先清掉字，不关掉整层（这一层的 Esc 看 defaultPrevented）。 */
+function clearSearch(event: KeyboardEvent) {
+  if (!search.value) return
+  event.preventDefault()
+  search.value = ''
+}
+
 /** 手机上没选中哪一项就是停在目录。 */
 const showIndex = computed(() => !mdAndUp.value && !activeItem.value)
 
@@ -73,6 +92,11 @@ const layer = ref<HTMLElement | null>(null)
 function onKeydown(event: KeyboardEvent) {
   if (event.key !== 'Escape' || event.defaultPrevented) return
   if (document.querySelector('.v-overlay--active')) return
+  // 目录搜索还有字：这一下先清字（焦点不在搜索框里也一样，比如已经 Tab 到了某一项上）。
+  if (search.value) {
+    search.value = ''
+    return
+  }
   emit('close')
 }
 
@@ -101,7 +125,25 @@ useFocusReturn(ref(true))
         <div class="so__side">
           <nav class="so__nav" :aria-label="label">
             <slot name="head" />
-            <div v-for="group in groups" :key="group.key" class="so__group">
+            <!-- Search the settings index by item name (like VS Code settings); groups with no match hide. -->
+            <label class="so__search">
+              <v-icon icon="mdi-magnify" size="16" aria-hidden="true" />
+              <input
+                v-model="search"
+                type="search"
+                autocomplete="off"
+                :placeholder="t('global.settingsSearch.placeholder')"
+                :aria-label="t('global.settingsSearch.label')"
+                @keydown.esc="clearSearch"
+              />
+            </label>
+            <BaseEmptyState
+              v-if="!shownGroups.length"
+              size="inline"
+              class="so__search-none"
+              :title="t('global.settingsSearch.none', { text: search.trim() })"
+            />
+            <div v-for="group in shownGroups" :key="group.key" class="so__group">
               <div v-if="group.title" class="so__group-title">{{ group.title }}</div>
               <NavLink
                 v-for="item in group.items"
@@ -143,7 +185,25 @@ useFocusReturn(ref(true))
         <div class="so__phone">
           <nav v-if="showIndex" class="so__index" :aria-label="label">
             <slot name="head" />
-            <div v-for="group in groups" :key="group.key" class="so__group">
+            <!-- Search the settings index by item name (like VS Code settings); groups with no match hide. -->
+            <label class="so__search">
+              <v-icon icon="mdi-magnify" size="16" aria-hidden="true" />
+              <input
+                v-model="search"
+                type="search"
+                autocomplete="off"
+                :placeholder="t('global.settingsSearch.placeholder')"
+                :aria-label="t('global.settingsSearch.label')"
+                @keydown.esc="clearSearch"
+              />
+            </label>
+            <BaseEmptyState
+              v-if="!shownGroups.length"
+              size="inline"
+              class="so__search-none"
+              :title="t('global.settingsSearch.none', { text: search.trim() })"
+            />
+            <div v-for="group in shownGroups" :key="group.key" class="so__group">
               <div v-if="group.title" class="so__group-title">{{ group.title }}</div>
               <div class="so__index-card">
                 <NavLink
@@ -347,8 +407,10 @@ useFocusReturn(ref(true))
   display: flex;
   gap: 4px;
   align-items: center;
-  height: 52px;
-  padding: 0 8px;
+  /* 手机上这层整屏铺开：这条栏钻进刘海，← 和标题会被状态栏压住。让出顶部安全区，
+     栏自己长高那一截（`.so__phone` 跟着往下让同一截）。桌面上 `env()` 是 0。 */
+  height: calc(52px + env(safe-area-inset-top, 0px));
+  padding: env(safe-area-inset-top, 0px) 8px 0;
   border-bottom: 1px solid var(--line);
   background: var(--canvas);
 }
@@ -376,7 +438,7 @@ useFocusReturn(ref(true))
 
 .so__phone {
   position: absolute;
-  inset: 52px 0 0;
+  inset: calc(52px + env(safe-area-inset-top, 0px)) 0 0;
   overflow-y: auto;
 }
 
@@ -385,7 +447,8 @@ useFocusReturn(ref(true))
   flex-direction: column;
   gap: 20px;
   min-height: 100%;
-  padding: 16px;
+  /* 目录页自己铺到底：末尾几条不会被 Home 横杠压住。 */
+  padding: 16px 16px calc(16px + env(safe-area-inset-bottom, 0px));
   box-sizing: border-box;
   background: var(--canvas);
 }
@@ -426,7 +489,8 @@ useFocusReturn(ref(true))
    居中沿用上面那条 margin-inline:auto，这里只改水平内距。 */
 @media (max-width: 959.98px) {
   .so__content {
-    padding: 0 16px;
+    /* 底部让出安全区，最后一行设置不会被 Home 横杠压住。 */
+    padding: 0 16px env(safe-area-inset-bottom, 0px);
   }
 }
 
@@ -441,5 +505,35 @@ useFocusReturn(ref(true))
     width: 44px;
     height: 44px;
   }
+}
+
+.so__search {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin: 0 8px 12px;
+  padding: 6px 10px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-md);
+  color: var(--muted);
+}
+
+.so__search:focus-within {
+  border-color: var(--focus-ring);
+}
+
+.so__search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+}
+
+.so__search-none {
+  padding: 4px 12px;
 }
 </style>

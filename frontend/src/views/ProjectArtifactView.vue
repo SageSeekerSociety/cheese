@@ -29,6 +29,7 @@ import ArtifactVersionList from './artifact/ArtifactVersionList.vue'
 import { useCommands } from '@/commands'
 import { copyLink, linkOf } from '@/commands/copy'
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import MobileActionSheet from '@/components/common/MobileActionSheet.vue'
 import { usePageTitleStore } from '@/stores/title'
@@ -264,7 +265,13 @@ const facts = computed(() => {
 
         <!-- 这一版本身 -->
         <div class="artifact__view">
-          <p v-if="!current" class="t-body c-muted artifact__empty">{{ t('tasks.artifact.noVersions') }}</p>
+          <BaseEmptyState
+            v-if="!current"
+            size="inline"
+            align="center"
+            class="artifact__empty"
+            :title="t('tasks.artifact.noVersions')"
+          />
           <ArtifactVersionPreview
             v-else-if="current.kind === 'file'"
             bare
@@ -284,7 +291,13 @@ const facts = computed(() => {
             <p v-else-if="!changes" class="t-meta c-faint" role="status">{{ t('tasks.artifactComparison.loading') }}</p>
             <ArtifactChanges v-else :files="changes.files" />
           </div>
-          <p v-else class="t-body c-muted artifact__empty">{{ t('tasks.artifact.notRetained') }}</p>
+          <BaseEmptyState
+            v-else
+            size="inline"
+            align="center"
+            class="artifact__empty"
+            :title="t('tasks.artifact.notRetained')"
+          />
         </div>
 
         <!-- 手机上：版本历史从底下升起来，拿走这一版的那颗按钮贴着底边。 -->

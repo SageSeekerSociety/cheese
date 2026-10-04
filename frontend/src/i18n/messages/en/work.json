@@ -6,9 +6,6 @@
     "subagent": "Default subagent model",
     "subagentHint": "Used by temporary subagents spawned by Claude Code during a task",
     "inheritMain": "Use project main model",
-    "assign": "Assign a model to this teammate",
-    "agent": "Teammate model",
-    "inheritHint": "Uses the project main model when no model is assigned",
     "chooseAvailable": "Choose a model available to this project",
     "loadError": "Could not load models",
     "requiresPlan": "Requires the {plan} plan",
@@ -42,6 +39,24 @@
   "joinLabel": "Invite code",
   "joinSubmit": "Join",
   "joinTitle": "Join a space",
+  "startPaths": {
+    "lede": "Any of these three works. Start wherever you like:",
+    "project": {
+      "title": "Start your own {project}",
+      "body": "Get to work with your AI teammate right away. Materials and results stay inside."
+    },
+    "invite": {
+      "title": "Join with an invite code",
+      "body": "If a school or team gave you a code, come in this way.",
+      "action": "Enter code"
+    },
+    "teams": {
+      "title": "See what teams exist",
+      "body": "Join a team and share a workspace with its members.",
+      "action": "Go to teams"
+    },
+    "settingsNote": "AI teammates and code repositories are set up inside a project: open Project settings — the first section is AI teammates, and the repository is under “Repository and credit”."
+  },
   "sessionMachine": {
     "machine": "Change to",
     "confirm": "Push and change",
@@ -216,7 +231,8 @@
     "noTasks": "No tasks",
     "site": {
       "agents": {
-        "all": "All"
+        "all": "All",
+        "label": "View by teammate"
       },
       "output": {
         "show": "Output ({size})",
@@ -298,7 +314,13 @@
       "wholeProject": "Whole project",
       "usageLine": "{turns} runs · {tokens} tokens · {cost}",
       "usageSplit": "Input {input} · Output {output}",
-      "noUsage": "No data"
+      "noUsage": "No data",
+      "mute": "Mute",
+      "unmute": "Unmute",
+      "muted": "Muted",
+      "muteFailed": "Couldn't save the mute setting",
+      "markAllRead": "Mark all as read",
+      "markAllReadFailed": "Couldn't mark everything as read"
     },
     "archiveNotice": {
       "done": "Archived",
@@ -412,6 +434,8 @@
     "message": {
       "copy": "Copy",
       "copied": "Copied",
+      "copyLink": "Copy link",
+      "linkCopied": "Link copied",
       "selectText": "Select text",
       "edit": "Edit",
       "edited": "Edited",
@@ -424,7 +448,11 @@
       "downloadFile": "Download {name}",
       "openFile": "Open {name}",
       "upgradedToTask": "Moved to a task",
-      "upgradedToTopic": "Moved to a topic"
+      "upgradedToTopic": "Moved to a topic",
+      "showMore": "Show more",
+      "showLess": "Show less",
+      "wrapCode": "Wrap lines",
+      "unwrapCode": "No wrap"
     },
     "outbox": {
       "failed": "Not sent: {reason}",
@@ -448,7 +476,14 @@
       "attachFiles": "Upload files (up to 10 MB each)",
       "sendPhotos": "Send photos",
       "more": "More actions",
-      "send": "Send"
+      "send": "Send",
+      "sendUploading": "Uploading attachments — send once they finish",
+      "longPaste": {
+        "offer": "This paste is {count} characters. Send it as a file instead?",
+        "txt": "Save as .txt",
+        "md": "Save as .md",
+        "keep": "Keep as text"
+      }
     },
     "dispatched": {
       "created": "New task",
@@ -548,7 +583,9 @@
       "site": "Activity",
       "changes": "Changes",
       "preview": "Preview",
-      "routines": "Routines"
+      "routines": "Routines",
+      "scrollLeft": "Scroll tabs left",
+      "scrollRight": "Scroll tabs right"
     },
     "preview": {
       "fullscreenFailed": "Couldn't go full screen. Open it in a new tab",
@@ -583,6 +620,8 @@
       "autoReloaded": "The app restarted; reloaded automatically",
       "runningApp": "Running app",
       "download": "Download",
+      "pick": "Pick",
+      "webRegion": "Boxed a region",
       "frameTitle": "Topic preview",
       "authorizing": "Authorizing the preview…",
       "navigating": "Loading the new page…",
@@ -817,6 +856,14 @@
       "emptyLineHint": "Type, or / to insert",
       "undo": "Undo",
       "redo": "Redo",
+      "outline": "Outline",
+      "outlineEmpty": "No headings in this document",
+      "find": "Find in document",
+      "findPlaceholder": "Find in document",
+      "findNoResults": "No results",
+      "findPrev": "Previous match",
+      "findNext": "Next match",
+      "findClose": "Close find",
       "blocks": {
         "calloutKind": "Callout type",
         "kinds": {
@@ -943,6 +990,19 @@
       "readingAttachment": "{agent} is reading an attachment…",
       "quoteChanged": "The quoted text has changed"
     },
+    "gettingStarted": {
+      "title": "Getting started",
+      "dismiss": "Don't show again",
+      "talk": "Say the first word to your teammate",
+      "talkHint": "In the box below",
+      "materials": "Bring your material in",
+      "materialsAction": "Open library",
+      "repo": "Get results into the repository",
+      "repoAction": "Connect repository",
+      "people": "Bring a colleague in",
+      "peopleAction": "Go to members",
+      "note": "AI teammates and the code repository are both changed in Project settings: the first section is AI teammates, and the repository is under “Repository and credit”."
+    },
     "chat": {
       "pickTopic": "Select a topic to start chatting",
       "starter": {
@@ -967,7 +1027,9 @@
       "waitingConnection": "Waiting for connection",
       "today": "Today",
       "yesterday": "Yesterday",
-      "topicFallback": "Topic"
+      "topicFallback": "Topic",
+      "timelineLabel": "Conversation",
+      "liveNew": "{name}: {text}"
     },
     "header": {
       "disconnected": "Disconnected",
@@ -1048,7 +1110,9 @@
       "tooLarge": "{name} is over 10MB and can't be uploaded",
       "retry": "Retry uploading {name}",
       "sendBlocked": "Retry or remove the failed attachments before sending",
-      "addFailed": "Couldn't add the file"
+      "addFailed": "Couldn't add the file",
+      "pastedName": "pasted-image-{time}",
+      "pastedTextName": "pasted-text-{time}"
     },
     "defaultAgentName": "Cheese",
     "reminder": {
@@ -1101,6 +1165,7 @@
       "answering": "{agent} is answering…",
       "stop": "Stop",
       "cancel": "Cancel",
+      "stopped": "Stopped",
       "changed": "Changed {n} places",
       "undone": "Undone",
       "undo": "Undo",
@@ -1172,7 +1237,10 @@
     "noAssignee": "No assignee",
     "queued": "Queued",
     "running": "Running",
-    "made": "What was made"
+    "made": "What was made",
+    "findPlaceholder": "Find by title (/)",
+    "findLabel": "Find tasks on the board by title",
+    "findNone": "No task titles in this column contain “{text}”"
   },
   "publishedSite": {
     "revisionChanged": "The project's accepted version changed. Check it, then publish",
@@ -1501,7 +1569,7 @@
       "deactivateFailed": "Couldn't deactivate",
       "refresh": "Refresh",
       "create": "New teammate",
-      "intro": "Each teammate has its own role and memory. New topics go to the one marked Default, and a topic can pick another",
+      "intro": "Each teammate has its own role, model and thinking effort. New topics go to the one marked Default, and a topic can pick another",
       "unsupported": "Managing AI teammates isn't supported yet",
       "empty": "No AI teammates",
       "default": "Default",
@@ -1509,10 +1577,8 @@
       "setDefault": "Make default",
       "edit": "Edit",
       "deactivate": "Deactivate",
-      "memories": "{n} memories",
-      "noMemories": "No memories",
       "deactivateTitle": "Deactivate \"{name}\"",
-      "deactivateHint": "New topics can't choose it after this. Topics already using it carry on, and its memory is kept",
+      "deactivateHint": "New topics can't choose it after this. Topics already using it carry on",
       "typeGeneral": "General",
       "editor": {
         "presetCustom": "Write your own",
@@ -1525,11 +1591,37 @@
         "handleReadonly": "ID · {handle}",
         "preset": "Start from a built-in setup",
         "body": "Role (optional)",
-        "editHint": "Changes apply only to this teammate, from its next run. Its memory is kept",
+        "editHint": "Changes apply only to this teammate, from its next run",
         "handleInvalid": "Use lowercase letters, digits and . _ -, starting with a letter or digit",
         "nameRequired": "Enter a name",
-        "nameTooLong": "Names can be up to {max} characters"
-      }
+        "nameTooLong": "Names can be up to {max} characters",
+        "model": "Model",
+        "modelInherit": "Use project main model ({model})",
+        "modelInheritPlain": "Use project main model",
+        "effort": "Thinking effort",
+        "effortAuto": "Auto",
+        "effortLow": "Low",
+        "effortMedium": "Medium",
+        "effortHigh": "High",
+        "effortMax": "Max",
+        "effortHintAuto": "Auto leaves it to the model's own default.",
+        "effortNone": "This model doesn't take a thinking effort; it runs at its own default.",
+        "effortUnsupported": "This model doesn't support \"{effort}\"; it runs at its own default.",
+        "effortLevelUnsupported": "This model doesn't support this level",
+        "advanced": "Advanced settings",
+        "advancedReadOnly": "Only the project owner or a team admin can change advanced settings",
+        "allowMax": "Allow \"Max\": slower and more expensive",
+        "compact": "Context compaction",
+        "compactCustom": "Choose when to compact (unchecked: the default)",
+        "compactValue": "Compact when the context is {percent}% full",
+        "compactHint": "Lower compacts more often and costs less per turn, but drops detail sooner. By default it compacts when the context is nearly full.",
+        "skills": "Skills",
+        "skillsHint": "Skills this teammate brings into every session. Type a name and press Enter"
+      },
+      "rowModel": "Model: {model}",
+      "rowInherit": "Project's ({model})",
+      "rowInheritPlain": "Project main model",
+      "rowEffort": "Thinking: {effort}"
     },
     "merge": {
       "title": "Branch protection",
@@ -1716,67 +1808,94 @@
     "movingOut": "The whole project moves to {'@'}{handle}. Afterwards you are no longer a member and can't see any of its topics."
   },
   "skills": {
-    "edit": "Edit",
-    "discard": "Discard changes",
-    "discardTitle": "Discard the changes to \"{title}\"?",
-    "discardHint": "The changes are dropped and the shipped version comes back. They can't be recovered.",
-    "drop": "Discard",
-    "history": "Version history",
-    "delete": "Delete",
-    "loadFailed": "Couldn't load methods",
-    "confirmFailed": "Couldn't confirm",
-    "discardFailed": "Couldn't discard the changes",
-    "historyFailed": "Couldn't load the version history",
-    "restoreFailed": "Couldn't restore",
-    "deleteFailed": "Couldn't delete",
-    "newTitle": "New method",
-    "editTitle": "Edit \"{title}\"",
-    "roomRequired": "Choose a room first. The method is filed under it and the whole project can use it",
-    "saveFailed": "Couldn't save",
-    "refresh": "Refresh",
+    "awaiting": "Waiting for you",
+    "close": "Close",
+    "collapse": "Hide",
+    "confirmFailed": "Couldn't save",
     "create": "New",
-    "intro": "When a piece of work turns out well, Cheese can write it up as a method: what inputs it needs, which steps and rules to follow, and what to deliver. The confirmed version goes into every later room in this project, and you can use it by saying \"do one with the weekly report method\" in a room",
-    "loading": "Loading methods",
-    "awaiting": "Awaiting your confirmation",
-    "proposedBy": "{name} · Written up by {user}",
-    "changeOf": "· Changes to version {revision}, which is in use",
-    "pending": "To confirm",
-    "more": "More actions",
+    "crowded": "The more skills there are, the harder it is to pick the right one",
+    "delete": "Delete",
+    "deleteFailed": "Couldn't delete",
+    "deleteHint": "Later rooms will no longer get it, and its version history is deleted too",
+    "deleteTitle": "Delete \"{title}\"",
+    "detail": {
+      "callName": "Invoked as {name}",
+      "content": "Content",
+      "size": "{kb} KB"
+    },
+    "discard": "Discard changes",
+    "discardFailed": "Couldn't discard the changes",
+    "discardHint": "The changes are dropped and the shipped version comes back. They can't be recovered.",
+    "discardTitle": "Discard the changes to \"{title}\"?",
+    "edit": "Edit",
+    "editTitle": "Edit \"{title}\"",
+    "empty": "No skills",
     "fields": {
-      "description": "Purpose",
-      "inputs": "Inputs needed",
-      "steps": "Steps and rules",
-      "outputs": "Output requirements",
+      "body": "Body",
       "files": "Supporting files"
     },
-    "listSeparator": ", ",
-    "confirm": "Confirm and save",
-    "confirmedBy": "{name} · Version {revision} · Confirmed by {user} on {time}",
-    "empty": "No saved methods yet",
-    "emptyHint": "After a piece of work goes well, say \"save how we did this as a method\" in the room",
-    "save": "Save",
     "form": {
-      "room": "Room to file it under",
-      "name": "Name (lowercase, hyphens)",
-      "namePlaceholder": "e.g. weekly-report",
-      "title": "Title",
-      "titlePlaceholder": "e.g. Weekly project report",
-      "description": "Purpose: when to use it",
-      "files": "Supporting files (scripts, template notes and other text files)",
-      "path": "Path",
+      "addFile": "Add file",
+      "bodyTemplate": "## Inputs\n\n\n\n## Steps and rules\n\n\n\n## Output\n\n",
       "content": "Content",
+      "description": "Purpose",
+      "name": "Invocation name",
+      "path": "Path",
       "removeFile": "Remove",
-      "addFile": "Add file"
+      "title": "Name",
+      "titlePlaceholder": "e.g. Weekly project report"
     },
-    "historyTitle": "Version history of \"{title}\"",
-    "revisionLine": "Version {revision} · {note} · {user} · {time}",
+    "history": "Version history",
+    "import": {
+      "add": "Add",
+      "addFailed": "Couldn't add the skill",
+      "addTitle": "Add “{title}”",
+      "back": "Back",
+      "file": "SKILL.md or a skill folder as .zip",
+      "read": "Read",
+      "readFailed": "Couldn't read the skill",
+      "scripts": "Includes {n} script(s) that will run on the work computer. Look them over before adding",
+      "skipped": "These files aren't text or are over 200 KB and won't be added: {files}",
+      "title": "Import",
+      "upload": "Upload",
+      "url": "GitHub address",
+      "urlLabel": "Address of the skill folder"
+    },
     "inUse": "In use",
-    "collapse": "Hide",
-    "view": "View",
+    "list": {
+      "draftEdit": "{name} proposes a change",
+      "draftNew": "{name} proposes a new skill",
+      "originCheese": "Written up by {name}",
+      "originImport": "Imported",
+      "originPerson": "Written by hand",
+      "revision": "Version {revision} · {date}"
+    },
+    "listSeparator": ", ",
+    "loadFailed": "Couldn't load",
+    "loading": "Loading skills",
+    "mine": "This project",
+    "newTitle": "New skill",
+    "proposal": {
+      "absorbs": "Saving deletes these memories: {memories}",
+      "accepted": "This time",
+      "byline": "{name} proposes a new skill",
+      "bylineEdit": "{name} proposes a change to a skill",
+      "collapse": "Hide full text",
+      "decline": "Don't save",
+      "expand": "Show full text",
+      "open": "View",
+      "reason": "Reason for the change",
+      "related": "How it differs from existing skills",
+      "saved": "Saved \"{title}\"",
+      "taught": "Based on"
+    },
+    "refresh": "Refresh",
     "restore": "Restore this version",
-    "close": "Close",
-    "deleteTitle": "Delete \"{title}\"",
-    "deleteHint": "Later rooms will no longer get it, and its version history is deleted too"
+    "restoreFailed": "Couldn't restore",
+    "revisionLine": "Version {revision} · {note} · {user} · {time}",
+    "save": "Save",
+    "saveFailed": "Couldn't save",
+    "view": "View"
   },
   "nodeBoard": {
     "loadFailed": "Couldn't load machine status",

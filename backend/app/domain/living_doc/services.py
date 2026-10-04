@@ -1,10 +1,13 @@
-"""Journal primitives. The caller owns commit, including document/node/event effects.
+"""Documents as other domains reach them (`Documents`), and the journal
+primitives (`DocumentJournal`). The caller owns commit, including
+document/node/event effects.
 
 No block or topic repositories are imported here. Ordinary writes acquire the
-same durable room lock before reading their base; operation claims and replay
-are serialized by that lock too, including the first creation of a document.
+same durable document lock before reading their base; operation claims and
+replay are serialized by that lock too.
 """
 
+import difflib
 import hashlib
 import json
 import uuid
@@ -16,12 +19,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError
 from app.core.sentences import say
+from app.domain.living_doc.doc_tree import markdown_to_nodes
 from app.domain.living_doc.models import (
+    Document,
     DocumentLock,
+    DocumentNode,
     DocumentOperation,
     DocumentState,
     DocumentVersion,
 )
+from app.domain.living_doc.repositories import DocumentRepository
 
 
 def content_hash(content: str) -> str:
@@ -32,36 +39,120 @@ def payload_fingerprint(payload: dict) -> str:
     return content_hash(json.dumps(payload, ensure_ascii=False, sort_keys=True))
 
 
+class Documents:
+    """Reading and writing documents."""
+
+    def __init__(self, session: AsyncSession):
+        self._session = session
+        self._repo = DocumentRepository(session)
+
+    async def get(self, document_id: uuid.UUID) -> Document | None:
+        return await self._repo.get(document_id)
+
+    async def of_room(self, room_id: uuid.UUID) -> Document | None:
+        """The room's living document, if anyone has opened or written it."""
+        return await self._repo.of_room(room_id)
+
+    async def of_rooms(self, room_ids: list[uuid.UUID]) -> dict[uuid.UUID, Document]:
+        """Several rooms' living documents at once, keyed by room id."""
+        return await self._repo.of_rooms(room_ids)
+
+    async def ensure_for_room(
+        self, *, room_id: uuid.UUID, project_id: uuid.UUID
+    ) -> Document:
+        """The room's living document, created empty (version 0) the first time
+        anyone needs to address it."""
+        return await self._repo.ensure_for_room(room_id=room_id, project_id=project_id)
+
+    async def nodes(self, doc: Document) -> list[DocumentNode]:
+        """The document's top-level blocks, in order."""
+        return await self._repo.nodes(doc.id)
+
+    async def write(
+        self,
+        doc: Document,
+        content: str,
+        *,
+        author: str,
+        expected_version: int,
+        keep_author: bool = False,
+    ) -> Document | None:
+        """Make ``content`` the document's next version, if it is still at
+        ``expected_version`` (None when somebody wrote it first).
+
+        The node tree follows with a block-level diff: a node whose text did
+        not change keeps its id and its author; a new one is ``author``'s.
+        ``keep_author`` leaves the document's own author as it was.
+        """
+        written = await self._repo.set_content(
+            doc,
+            content,
+            author=None if keep_author else author,
+            expected_version=expected_version,
+        )
+        if written is None:
+            return None
+        new_nodes = markdown_to_nodes(content)
+        existing = await self._repo.nodes(doc.id)
+        matcher = difflib.SequenceMatcher(
+            a=[n.content for n in existing],
+            b=[n.content for n in new_nodes],
+            autojunk=False,
+        )
+        reuse: dict[int, DocumentNode] = {}
+        for tag, i1, i2, j1, _j2 in matcher.get_opcodes():
+            if tag == "equal":
+                for off in range(i2 - i1):
+                    reuse[j1 + off] = existing[i1 + off]
+        kept = {n.id for n in reuse.values()}
+        await self._repo.delete_nodes([n.id for n in existing if n.id not in kept])
+        for index, node in enumerate(new_nodes):
+            same = reuse.get(index)
+            if same is not None:
+                same.position = float(index)
+                same.node_type = node.node_type
+            else:
+                self._repo.add_node(
+                    document_id=doc.id,
+                    node_type=node.node_type,
+                    content=node.content,
+                    position=float(index),
+                    author=author,
+                )
+        await self._session.flush()
+        return written
+
+
 class DocumentJournal:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def lock(self, room_id: uuid.UUID) -> None:
+    async def lock(self, document_id: uuid.UUID) -> None:
         await self.session.execute(
             insert(DocumentLock)
-            .values(room_id=room_id)
-            .on_conflict_do_nothing(index_elements=[DocumentLock.room_id])
+            .values(document_id=document_id)
+            .on_conflict_do_nothing(index_elements=[DocumentLock.document_id])
         )
         await self.session.execute(
             select(DocumentLock)
-            .where(DocumentLock.room_id == room_id)
+            .where(DocumentLock.document_id == document_id)
             .with_for_update()
         )
 
     async def claim(
         self,
         *,
-        room_id: uuid.UUID,
+        document_id: uuid.UUID,
         actor: str,
         action: str,
         operation_id: uuid.UUID,
         payload: dict,
     ) -> DocumentOperation:
-        await self.lock(room_id)
+        await self.lock(document_id)
         fingerprint = payload_fingerprint(payload)
         row = await self.session.scalar(
             select(DocumentOperation).where(
-                DocumentOperation.room_id == room_id,
+                DocumentOperation.document_id == document_id,
                 DocumentOperation.actor == actor,
                 DocumentOperation.action == action,
                 DocumentOperation.operation_id == operation_id,
@@ -74,7 +165,7 @@ class DocumentJournal:
                 raise ConflictError(say("docOperationNoReceipt"))
             return row
         row = DocumentOperation(
-            room_id=room_id,
+            document_id=document_id,
             actor=actor,
             action=action,
             operation_id=operation_id,
@@ -87,13 +178,13 @@ class DocumentJournal:
     async def replay(
         self,
         *,
-        room_id: uuid.UUID,
+        document_id: uuid.UUID,
         actor: str,
         action: str,
         operation_id: uuid.UUID,
         payload: dict,
     ) -> dict | None:
-        """A completed operation's receipt, read without the room lock.
+        """A completed operation's receipt, read without the document lock.
 
         For the write paths that go through the collaboration service: they
         must not hold the lock across that call (its store takes it), so they
@@ -101,7 +192,7 @@ class DocumentJournal:
         """
         row = await self.session.scalar(
             select(DocumentOperation).where(
-                DocumentOperation.room_id == room_id,
+                DocumentOperation.document_id == document_id,
                 DocumentOperation.actor == actor,
                 DocumentOperation.action == action,
                 DocumentOperation.operation_id == operation_id,
@@ -116,7 +207,6 @@ class DocumentJournal:
     async def append(
         self,
         *,
-        room_id: uuid.UUID,
         document_id: uuid.UUID,
         version: int,
         content: str,
@@ -128,7 +218,6 @@ class DocumentJournal:
     ) -> None:
         self.session.add(
             DocumentVersion(
-                room_id=room_id,
                 document_id=document_id,
                 version=version,
                 content=content,
@@ -146,7 +235,6 @@ class DocumentJournal:
     async def seed_existing(
         self,
         *,
-        room_id: uuid.UUID,
         document_id: uuid.UUID,
         version: int,
         content: str,
@@ -161,7 +249,6 @@ class DocumentJournal:
         )
         if existing is None:
             await self.append(
-                room_id=room_id,
                 document_id=document_id,
                 version=version,
                 content=content,
@@ -174,11 +261,16 @@ class DocumentJournal:
         await self.session.flush()
 
     async def receipt(
-        self, *, room_id: uuid.UUID, actor: str, action: str, operation_id: uuid.UUID
+        self,
+        *,
+        document_id: uuid.UUID,
+        actor: str,
+        action: str,
+        operation_id: uuid.UUID,
     ) -> dict | None:
         row = await self.session.scalar(
             select(DocumentOperation).where(
-                DocumentOperation.room_id == room_id,
+                DocumentOperation.document_id == document_id,
                 DocumentOperation.actor == actor,
                 DocumentOperation.action == action,
                 DocumentOperation.operation_id == operation_id,
@@ -186,28 +278,33 @@ class DocumentJournal:
         )
         return row.receipt if row else None
 
-    async def version_content(self, room_id: uuid.UUID, version: int) -> str | None:
+    async def version_content(self, document_id: uuid.UUID, version: int) -> str | None:
         return await self.session.scalar(
             select(DocumentVersion.content).where(
-                DocumentVersion.room_id == room_id,
+                DocumentVersion.document_id == document_id,
                 DocumentVersion.version == version,
             )
         )
 
-    async def history(self, room_id: uuid.UUID, *, after: int = 0) -> list[dict]:
+    async def history(self, document_id: uuid.UUID, *, after: int = 0) -> list[dict]:
         rows = await self.session.scalars(
             select(DocumentVersion)
-            .where(DocumentVersion.room_id == room_id, DocumentVersion.version > after)
+            .where(
+                DocumentVersion.document_id == document_id,
+                DocumentVersion.version > after,
+            )
             .order_by(DocumentVersion.version)
             .limit(100)
         )
         return [_version_row(row) for row in rows]
 
     async def recent(
-        self, room_id: uuid.UUID, *, before: int | None = None, limit: int = 30
+        self, document_id: uuid.UUID, *, before: int | None = None, limit: int = 30
     ) -> list[dict]:
         """The newest versions first, those below ``before`` when it is given."""
-        query = select(DocumentVersion).where(DocumentVersion.room_id == room_id)
+        query = select(DocumentVersion).where(
+            DocumentVersion.document_id == document_id
+        )
         if before is not None:
             query = query.where(DocumentVersion.version < before)
         rows = await self.session.scalars(
@@ -215,14 +312,14 @@ class DocumentJournal:
         )
         return [_version_row(row) for row in rows]
 
-    async def state(self, room_id: uuid.UUID) -> bytes | None:
+    async def state(self, document_id: uuid.UUID) -> bytes | None:
         return await self.session.scalar(
-            select(DocumentState.state).where(DocumentState.room_id == room_id)
+            select(DocumentState.state).where(DocumentState.document_id == document_id)
         )
 
     async def put_state(
         self,
-        room_id: uuid.UUID,
+        document_id: uuid.UUID,
         state: bytes,
         suggestions: list[dict] | None = None,
         reasons: dict[str, str] | None = None,
@@ -234,7 +331,7 @@ class DocumentJournal:
         """
         kept = {
             item.get("id"): item.get("reason")
-            for item in await self.suggestions(room_id)
+            for item in await self.suggestions(document_id)
             if item.get("reason")
         }
         pending = [
@@ -250,13 +347,13 @@ class DocumentJournal:
         await self.session.execute(
             insert(DocumentState)
             .values(
-                room_id=room_id,
+                document_id=document_id,
                 state=state,
                 suggestions=pending,
                 updated_at=datetime.now(UTC),
             )
             .on_conflict_do_update(
-                index_elements=[DocumentState.room_id],
+                index_elements=[DocumentState.document_id],
                 set_={
                     "state": state,
                     "suggestions": pending,
@@ -265,10 +362,12 @@ class DocumentJournal:
             )
         )
 
-    async def suggestions(self, room_id: uuid.UUID) -> list[dict]:
+    async def suggestions(self, document_id: uuid.UUID) -> list[dict]:
         """The suggestions pending in the live document at its last store."""
         found = await self.session.scalar(
-            select(DocumentState.suggestions).where(DocumentState.room_id == room_id)
+            select(DocumentState.suggestions).where(
+                DocumentState.document_id == document_id
+            )
         )
         return list(found or [])
 

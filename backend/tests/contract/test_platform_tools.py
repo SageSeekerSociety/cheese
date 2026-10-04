@@ -166,6 +166,23 @@ CALLS = {
         "POST",
         "/routine-runs/run-1/report",
     ),
+    "cheese_skill_draft": (
+        {
+            "name": "weekly-report",
+            "title": "周报",
+            "description": "用户要这周的周报时",
+            "body": "先写变坏的指标",
+            "taught": ["先说坏消息"],
+            "accepted": "用户说就这样",
+        },
+        "POST",
+        "/topics/fixture/skills",
+    ),
+    "cheese_skill_update": (
+        {"skill": "m-1", "body": "先写变坏的指标", "reason": "顺序反了"},
+        "PATCH",
+        "/skills/m-1",
+    ),
     "platform_request": (
         {
             "method": "PUT",
@@ -186,6 +203,9 @@ NEEDS_THE_MACHINE = {
         f"/topics/fixture/tasks/{TASK}/accept-card",
     ),
 }
+
+#: 只等那台机器、什么也不写到平台上的那一样。
+WAITS_FOR_THE_MACHINE = {"cheese_wait_machine"}
 
 #: 这条传输自己的四个口子，不是产品动作。
 TRANSPORT = {
@@ -316,7 +336,7 @@ def machine_is_here(tmp_path):
 
     def executor(payload):
         command = payload["params"]["args"]["command"]
-        if command == "cheese sync --task " + shlex.quote(TASK):
+        if command in ("cheese sync --task " + shlex.quote(TASK), "true"):
             stdout = ""
         elif re.search(r"/\S*/notes/doc\.md", command):
             local = re.sub(r"/\S*/notes/doc\.md", str(doc), command)
@@ -373,7 +393,12 @@ def test_the_tool_table_is_complete_while_the_machine_is_offline(machine_is_gone
     刻最需要的那句话。
     """
     process, _, executor_calls = machine_is_gone
-    assert set(_listing(process)) == {*CALLS, *NEEDS_THE_MACHINE, *TRANSPORT}
+    assert set(_listing(process)) == {
+        *CALLS,
+        *NEEDS_THE_MACHINE,
+        *WAITS_FOR_THE_MACHINE,
+        *TRANSPORT,
+    }
     assert executor_calls == [], "列一份工具表不该去问那台机器"
 
 
@@ -455,6 +480,27 @@ def test_a_tool_that_needs_a_file_from_the_machine_says_it_is_out_of_reach(
 
     assert outcome == {"deny": MACHINE_OUT_OF_REACH}
     assert (method, path) not in [(m, p) for m, p, _ in platform_calls]
+
+
+def test_waiting_for_a_machine_that_is_gone_says_so_at_once(machine_is_gone):
+    """等一台够不着的机器，当场说够不着，不把 agent 晾到超时。"""
+    process, platform_calls, _ = machine_is_gone
+
+    outcome = _call(process, "cheese_wait_machine", {})
+
+    assert outcome == {"deny": MACHINE_OUT_OF_REACH}
+    assert platform_calls == []
+
+
+def test_waiting_for_a_machine_that_is_here_returns_ready(machine_is_here):
+    """机器在：等它就是在它上面跑一条什么也不做的命令，跑通就是就绪。"""
+    process, _, executor_calls = machine_is_here
+
+    outcome = _call(process, "cheese_wait_machine", {})
+
+    assert "deny" not in outcome, outcome
+    assert "工作电脑已就绪" in json.dumps(outcome, ensure_ascii=False)
+    assert [c["params"]["args"]["command"] for c in executor_calls] == ["true"]
 
 
 def test_the_living_doc_is_read_off_the_machine(machine_is_here):

@@ -57,3 +57,31 @@ describe('a waiting attachment', () => {
     expect(onRemove).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('an uploading attachment', () => {
+  it('spins while the server has not told us a total', () => {
+    const { container } = mount({
+      path: 'uploading:1:big.bin',
+      mime: 'application/octet-stream',
+      name: 'big.bin',
+      uploading: true,
+    })
+    const ring = container.querySelector('.v-progress-circular')!
+    // 还不知道总量，只能转圈——报一个数就是在编。
+    expect(ring.classList.contains('v-progress-circular--indeterminate')).toBe(true)
+  })
+
+  it('draws a determinate ring once progress comes in', () => {
+    const { container } = mount({
+      path: 'uploading:1:big.bin',
+      mime: 'application/octet-stream',
+      name: 'big.bin',
+      uploading: true,
+      progress: 0.42,
+    })
+    const ring = container.querySelector('.v-progress-circular')!
+    // 有总量就是确定的圈：一个 9MB 的文件现在能说出自己走了多少。
+    expect(ring.classList.contains('v-progress-circular--indeterminate')).toBe(false)
+    expect(ring.getAttribute('aria-valuenow')).toBe('42')
+  })
+})

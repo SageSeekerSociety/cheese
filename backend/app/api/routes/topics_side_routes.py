@@ -97,6 +97,36 @@ async def project_topic_unread(
     return ok({str(topic_id): count for topic_id, count in counts.items()})
 
 
+@project_router.get("/{project_id}/topic-notify-levels")
+async def project_topic_notify_levels(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """我在这个项目里改过通知级别的房间：{topic_id: level}，默认（`all`）的不列。
+    侧栏拿它把静音房间的未读排除出总数。同 ``topic-unread`` 的项目门和本人规则。"""
+    actor = await resolver.resolve(project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+    recipient = await resolver.resolve_recipient(
+        requested=None, project_id=project_id, allow_anonymous=False
+    )
+    levels = await TopicService(db).notify_levels(project_id, recipient)
+    return ok({str(topic_id): level for topic_id, level in levels.items()})
+
+
+@project_router.post("/{project_id}/read-all")
+async def project_mark_all_read(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """全部标为已读：把我在这个项目里每一间有未读的房间的已读位推到现在。动的就是
+    ``topic-unread`` 列出来的那些房间，看不见的房间一间都不碰。"""
+    actor = await resolver.resolve(project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+    recipient = await resolver.resolve_recipient(
+        requested=None, project_id=project_id, allow_anonymous=False
+    )
+    marked = await TopicService(db).mark_all_read(project_id, recipient)
+    return ok({"topic_ids": [str(topic_id) for topic_id in marked]})
+
+
 @project_router.get("/{project_id}/private-unread")
 async def project_private_unread(
     project_id: uuid.UUID,

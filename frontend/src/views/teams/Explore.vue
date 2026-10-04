@@ -78,15 +78,12 @@
               </div>
             </v-fade-transition>
 
-            <!-- 搜索空状态 -->
-            <div v-if="hasSearched && !searchTeamsData.length" class="empty-state-container py-6">
-              <v-empty-state
-                :title="t('teams.explore.noResults')"
-                :text="t('teams.explore.noResultsHint')"
-                icon="mdi-account-search-outline"
-                class="custom-empty-state"
-              />
-            </div>
+            <BaseEmptyState
+              v-if="hasSearched && !searchTeamsData.length"
+              icon="mdi-account-search-outline"
+              :title="t('teams.explore.noResults')"
+              :desc="t('teams.explore.noResultsHint')"
+            />
 
             <!-- 默认内容 - 招募广场 -->
             <div v-if="!hasSearched && !searchTeamsData.length" class="default-content">
@@ -125,6 +122,7 @@ import { toast } from 'vuetify-sonner'
 import { getAvatarUrl } from '@/utils/materials'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import { t } from '@/i18n'
 import { TeamsApi } from '@/network/api/teams'
 
@@ -205,17 +203,6 @@ const fetchSearchResults = async (query: string) => {
   min-height: 150px;
   border: 1px solid rgba(var(--v-theme-on-surface), 0.12);
   border-radius: 8px;
-}
-
-.empty-state-container {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-}
-
-.custom-empty-state:deep(.v-empty-state__icon) {
-  color: var(--v-theme-primary);
-  opacity: 0.9;
 }
 
 .create-team-dialog:deep(.v-card-text) {

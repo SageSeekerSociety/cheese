@@ -28,12 +28,13 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.errors import ForbiddenError, ValidationError
+from app.core.redis import get_redis_client
 from app.core.sentences import error_frame, exception_text, say
 from app.domain.agent.chat import ChatService
 from app.domain.agent.document import question, session
-from app.domain.agent.session_host.answer import Answer, Tool, Words
-from app.domain.agent.session_host.answer import ask as ask_session
-from app.domain.agent.session_host.contract import HostFull, Prompt
+from app.domain.agent.session_host.answer import Answer, Tool, Waiting, Words
+from app.domain.agent.session_host.consumptions import Consumption, Consumptions
+from app.domain.agent.session_host.contract import HostFull, Prompt, StartAbandoned
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.living_doc import work_edits
 
@@ -149,10 +150,6 @@ def _box_key(conversation: uuid.UUID | str) -> str:
     return f"doc-agent:box:{conversation}"
 
 
-def _stop_key(conversation: uuid.UUID | str) -> str:
-    return f"doc-agent:stop:{conversation}"
-
-
 @dataclass(frozen=True)
 class Box:
     """Whose a box's conversation is, and what it last answered."""
@@ -199,10 +196,11 @@ async def stop(
     project_id: uuid.UUID,
     conversation: uuid.UUID,
 ) -> None:
-    """Stop what the box is waiting on: its turn, or the answer being written."""
-    await redis.set(_stop_key(conversation), "1", ex=int(question.WAIT_S))
-    if await question.asked(redis, conversation):
-        await sessions.stop(session.ref(project_id, conversation))
+    """Stop what the box is waiting on: its turn, the session host, or the
+    answer being written. What was written stays, marked as stopped."""
+    await question.stop(
+        redis, sessions, conversation, session.ref(project_id, conversation)
+    )
 
 
 # --- one question --------------------------------------------------------------
@@ -239,7 +237,7 @@ def _question(
 
 async def ask(
     chat: ChatService,
-    sessions: SessionHost,
+    consumptions: Consumptions,
     redis: Redis,
     emit: Callable[[str, dict], Awaitable[None]],
     *,
@@ -252,24 +250,24 @@ async def ask(
     selection: Selection | None,
     may_edit: bool,
     factory: async_sessionmaker[AsyncSession] | None = None,
-) -> None:
-    """Answer one question of the box's conversation, telling ``emit`` as it
-    goes: ``queued`` (waiting for a turn), ``working``, ``delta`` (text),
-    ``tool``, then ``done`` (the answer and what was changed) or ``error``."""
+) -> Consumption | None:
+    """Ask one question of the box's conversation. Until it is asked, ``emit``
+    is told how it goes: ``queued`` (waiting for a turn), ``working``, or the
+    end of a question refused or stopped before it was asked (``done``,
+    ``error``). Once asked it is a question the platform reads to its end
+    (``Answers``), and the one returned."""
     factory = factory or chat.session_factory
     chosen = PRESETS.get(preset or "")
     allowed = may_edit and (chosen is None or chosen.kind == "edit")
     async with factory() as db:
         bound = await question.bind(db, room_id)
     await _keep(redis, conversation, Box(asker, room_id))
-    await redis.delete(_stop_key(conversation))
     work = uuid.uuid4()
 
     async def queued() -> None:
         await emit("queued", {})
 
-    async def stopped() -> bool:
-        return bool(await redis.exists(_stop_key(conversation)))
+    stopped = question.stopped(redis, conversation)
 
     slot = await question.take_turn(
         redis,
@@ -280,19 +278,37 @@ async def ask(
     )
     if slot is None:
         if await stopped():
+            # A stop is for the question it reached: the next one starts
+            # unstopped.
+            await question.unstop(redis, conversation)
             await emit("done", {"answer": "", "edits": [], "stopped": True})
         else:
             busy = say("docAgentBoxBusy", agent=bound.agent_name)
             await emit("error", error_frame(busy))
-        return
+        return None
     await emit("working", {})
-    answer, refused, spent = "", None, False
     try:
         async with factory() as db:
             await question.admit(db, project_id, bound)
             around = await question.surroundings(
                 db, project_id=project_id, room_id=room_id, seat=bound.agent_handle
             )
+    except ValidationError as exc:
+        # Refused before anything was asked: the refusal is what the box says.
+        await slot.release()
+        await question.unstop(redis, conversation)
+        await emit("error", error_frame(exception_text(exc)))
+        return None
+    except BaseException:
+        await slot.release()
+        raise
+    prompt = _question(
+        around, preset=chosen, text=text, selection=selection, may_edit=allowed
+    )
+
+    async def said() -> Prompt:
+        # Minted once the session is there: its lifetime is the answer's.
+        async with factory() as db:
             acting = await question.credential(
                 db,
                 project_id=project_id,
@@ -302,59 +318,110 @@ async def ask(
                 work=work,
                 may_edit=allowed,
             )
-        prompt = _question(
-            around, preset=chosen, text=text, selection=selection, may_edit=allowed
-        )
-        started = session.session_for(
+        return Prompt(work, prompt, acting=acting)
+
+    return await consumptions.begin(
+        kind=KIND,
+        key=str(conversation),
+        data={
+            "project": str(project_id),
+            "room": str(room_id),
+            "asker": asker,
+            "agent": bound.agent_name,
+        },
+        work_id=work,
+        session=session.session_for(
             project_id=project_id,
             room_id=room_id,
             key=conversation,
             bound=bound,
             around=around,
             where="box",
+        ),
+        prompt=said,
+        ceiling_s=question.ANSWER_S,
+        slots=[slot],
+    )
+
+
+#: A document box's question, to the questions the platform reads to the end
+#: (``session_host.consumptions``); its key is the box's conversation.
+KIND = "doc-box"
+
+
+class Answers:
+    """What becomes of a box's answer: shown as it is written, kept as the
+    box's last answer with what it changed, and paid for by the project."""
+
+    def __init__(self, chat: ChatService, consumptions: Consumptions) -> None:
+        self._chat = chat
+        self._consumptions = consumptions
+
+    async def stopped(self, consumption: Consumption) -> bool:
+        redis = get_redis_client()
+        return (
+            redis is not None
+            and await question.stopped(redis, uuid.UUID(consumption.key))()
         )
-        spent = True
-        async for event in ask_session(
-            sessions,
-            *started,
-            Prompt(work, prompt, acting=acting),
-            work_id=work,
-            ceiling_s=question.ANSWER_S,
-        ):
-            if isinstance(event, Words):
-                await emit("delta", {"text": event.text})
-            elif isinstance(event, Tool):
-                await emit("tool", {"name": event.name})
-            elif isinstance(event, Answer):
-                answer = event.text.strip()
-                if event.error:
-                    logger.warning(
-                        "doc agent box answer failed conversation=%s: %s",
-                        conversation,
-                        event.error,
-                    )
-                    refused = say("docAgentBoxFailed", agent=bound.agent_name)
-    except ValidationError as exc:
-        # Refused before anything was asked: the refusal is what the box says.
-        refused = exception_text(exc)
-    except HostFull:
-        refused = say("docAgentBoxBusy", agent=bound.agent_name)
-    except Exception:  # noqa: BLE001 — the box is told; the log keeps why
-        logger.warning(
-            "doc agent box failed conversation=%s", conversation, exc_info=True
+
+    async def took(
+        self, consumption: Consumption, item: Waiting | Words | Tool
+    ) -> None:
+        if isinstance(item, Waiting):
+            await self._consumptions.publish(consumption, "queued", {})
+        elif isinstance(item, Words):
+            await self._consumptions.publish(
+                consumption, "delta", {"text": item.text, "at": item.at}
+            )
+        else:
+            await self._consumptions.publish(consumption, "tool", {"name": item.name})
+
+    async def ended(
+        self,
+        consumption: Consumption,
+        answer: Answer,
+        *,
+        written: str,
+        stopped: bool,
+        failure: BaseException | None,
+    ) -> list[tuple[str, dict]]:
+        project_id = uuid.UUID(consumption.data["project"])
+        room_id = uuid.UUID(consumption.data["room"])
+        conversation = uuid.UUID(consumption.key)
+        agent = consumption.data["agent"]
+        text, refused = answer.text.strip(), None
+        if isinstance(failure, HostFull):
+            refused = say("docAgentBoxBusy", agent=agent)
+        elif isinstance(failure, StartAbandoned):
+            pass
+        elif failure is not None or answer.error:
+            logger.warning(
+                "doc agent box answer failed conversation=%s: %s",
+                conversation,
+                failure or answer.error,
+            )
+            refused = say("docAgentBoxFailed", agent=agent)
+        redis = get_redis_client()
+        edits = (
+            await work_edits.take(redis, consumption.work_id)
+            if redis is not None
+            else []
         )
-        refused = say("docAgentBoxFailed", agent=bound.agent_name)
-    finally:
-        await slot.release()
-        edits = await work_edits.take(redis, str(work))
-    was_stopped = await stopped()
-    if refused is None or edits or was_stopped:
+        if redis is not None:
+            await question.unstop(redis, conversation)
+        if stopped:
+            # What it had written when it was stopped stays, marked as stopped.
+            text, refused = written.strip(), None
+        await self._chat.charge_turn_spend(project_id, room_id, consumption.work)
+        if refused is not None and not edits:
+            return [("error", error_frame(refused))]
         # What was changed was changed, answer or not: the box shows it and can
         # undo it.
-        answer = answer if refused is None else ""
-        await emit("done", {"answer": answer, "edits": edits, "stopped": was_stopped})
-        await _keep(redis, conversation, Box(asker, room_id, answer))
-    else:
-        await emit("error", error_frame(refused))
-    if spent:
-        await chat.charge_turn_spend(project_id, room_id, work)
+        text = text if refused is None else ""
+        if redis is not None:
+            await _keep(
+                redis,
+                conversation,
+                Box(consumption.data["asker"], room_id, text),
+            )
+        return [("done", {"answer": text, "edits": edits, "stopped": stopped})]

@@ -41,6 +41,8 @@ from app.domain.identity.handles import (
     looks_like_agent_handle,
     names_a_person,
 )
+from app.domain.living_doc.models import Document, DocumentNode
+from app.domain.living_doc.services import DocumentJournal, Documents
 from app.domain.membership.roster import roster_rows
 from app.domain.notification.services import ProjectNotificationService
 from app.domain.project.repositories import ProjectRepository
@@ -602,6 +604,33 @@ class TopicService:
         await self.get_or_404(topic_id)
         await self._repo.mark_read(topic_id, user_handle)
 
+    async def mark_all_read(
+        self, project_id: uuid.UUID, user_handle: str
+    ) -> list[uuid.UUID]:
+        """「全部标为已读」: bump the cursor on every room of the project that has
+        unread messages for this user — the same rooms the badge map lists, so
+        nothing the user cannot see is touched. Returns those room ids."""
+        counts = await self.unread_counts(project_id, user_handle)
+        await self._repo.mark_read_many(list(counts), user_handle)
+        return list(counts)
+
+    NOTIFY_LEVELS = ("all", "mute")
+
+    async def notify_levels(
+        self, project_id: uuid.UUID, user_handle: str
+    ) -> dict[uuid.UUID, str]:
+        if await self._projects.get(project_id) is None:
+            raise NotFoundError("Project not found")
+        return await self._repo.notify_levels(project_id, user_handle)
+
+    async def set_notify_level(
+        self, topic_id: uuid.UUID, user_handle: str, level: str
+    ) -> None:
+        if level not in self.NOTIFY_LEVELS:
+            raise ValidationError(say("topicNotifyLevelInvalid"))
+        await self.get_or_404(topic_id)
+        await self._repo.set_notify_level(topic_id, user_handle, level)
+
     # ---- 手动归档 / 取消归档 (归档去向, spec §6.3 extension) -------------
 
     async def archive(self, topic_id: uuid.UUID, *, by: str) -> Topic:
@@ -950,9 +979,9 @@ class TopicService:
         dispatch and stayed there while the work moved on. A brief belongs on
         the card (`Task.brief`), where being unchangeable is the point.
         """
-        await DocumentWriter(self._session, summarize_doc_change).seed(
-            room_id=topic.id, project_id=topic.project_id, content=content
-        )
+        doc = await self.room_doc(topic.id, topic.project_id)
+        await DocumentJournal(self._session).lock(doc.id)
+        await DocumentWriter(self._session, summarize_doc_change).seed(doc, content)
 
     async def _card_block(self, room: Topic, task: Task) -> Block:
         """那张卡 —— the room's timeline says a piece of work went out from here.
@@ -1158,19 +1187,29 @@ class TopicService:
             raise NotFoundError("Topic not found")
         return place
 
-    async def doc_of_room(self, room_id: uuid.UUID) -> Block | None:
-        """这间房自己那份实况文档 —— 线程的简报不是它（`doc_root` 把房间那条
-        主线分开）。
+    async def doc_of_room(self, room_id: uuid.UUID) -> Document | None:
+        """这间房自己那份实况文档；还没有人打开或写过它时没有。
 
         和 `get_doc` 读的是同一处，差别只在手上是什么：路由手上是个可能不存在的
         place，所以先 404；轮末那种「房间行已经读出来了」的地方手上就是房间 id，
         不必再绕一圈（`topic/doc_nudge.py`）。
         """
-        return await self._blocks.doc_root(room_id)
+        return await Documents(self._session).of_room(room_id)
 
-    async def get_doc(self, topic_id: uuid.UUID) -> Block | None:
+    async def get_doc(self, topic_id: uuid.UUID) -> Document | None:
         place = await self.place_or_404(topic_id)
         return await self.doc_of_room(place.room_id)
+
+    async def doc_nodes(self, doc: Document) -> list[DocumentNode]:
+        """文档的顶层块（标题、段落、列表……），按顺序。"""
+        return await Documents(self._session).nodes(doc)
+
+    async def room_doc(self, room_id: uuid.UUID, project_id: uuid.UUID) -> Document:
+        """这间房的实况文档，没有就建一份空的（第 0 版）：要给它签票、写它、在它
+        上面评论的人，手上得先有它的编号。"""
+        return await Documents(self._session).ensure_for_room(
+            room_id=room_id, project_id=project_id
+        )
 
     async def overview_auto(self, topic_id: uuid.UUID) -> list[dict]:
         """总览房间（项目根话题）的 ②③，结构化（#1889）。
@@ -1240,7 +1279,7 @@ class TopicService:
             reverse=True,
         )[:CLOSED_TOPICS_LIMIT]
         # 只取要渲染的那几间房的文档：一屏之外的结论没人读，问了也是白问。
-        docs = await self._blocks.doc_roots([t.id for t in (*live, *closed)])
+        docs = await Documents(self._session).of_rooms([t.id for t in (*live, *closed)])
 
         def conclusion(topic: Topic, *, prefer_card: bool) -> str | None:
             """话题现在的一句话结论：卡上那句优先，没有就看它自己的实况文档。"""
@@ -1291,11 +1330,6 @@ class TopicService:
         if row is None:
             return [], None
         return [dict(item) for item in row.items], row.updated_at
-
-    async def _sync_doc_nodes(self, root: Block, content: str) -> None:
-        await DocumentWriter(self._session, summarize_doc_change)._sync_doc_nodes(
-            root, content
-        )
 
     def require_doc_writable(self, place: Place) -> None:
         """归档后工作面冻结 (spec §6.3): an archived room's document takes no

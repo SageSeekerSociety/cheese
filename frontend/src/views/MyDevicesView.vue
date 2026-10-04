@@ -22,7 +22,9 @@ import {
 } from '../lib/desktop'
 
 import { useCommands } from '@/commands'
+import { copyText } from '@/commands/copy'
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import { t } from '@/i18n'
 import accountService from '@/services/account'
@@ -76,17 +78,11 @@ const installCommands = computed(() => [
   { os: t('account.devices.os.unix'), command: `curl -fsSL ${window.location.origin}/connector/install.sh | sh` },
   { os: t('account.devices.os.windows'), command: `irm ${window.location.origin}/connector/install.ps1 | iex` },
 ])
-const copied = ref<string | null>(null)
 
+// 复制成的说法交给共享的复制助手（一条 toast），按钮不再自己换成「已复制」——
+// 全站复制只有这一种反馈（docs/design-system.md §3.11）。
 async function copyInstall(command: string) {
-  try {
-    await navigator.clipboard.writeText(command)
-    copied.value = command
-    setTimeout(() => (copied.value = null), 1600)
-  } catch {
-    // Clipboard blocked (insecure context / permissions) — leave the command
-    // visible so the user can still select and copy it by hand.
-  }
+  await copyText(command, t('account.devices.copied'))
 }
 
 // Inside the desktop app (desktop/) this computer connects on its own at sign-in
@@ -257,7 +253,7 @@ useCommands(() =>
       </div>
     </header>
 
-    <p v-if="!isLoggedIn" class="settings-empty">{{ t('account.devices.signInFirst') }}</p>
+    <BaseEmptyState v-if="!isLoggedIn" size="inline" class="settings-empty" :title="t('account.devices.signInFirst')" />
 
     <template v-else>
       <v-alert v-if="error" type="error" density="comfortable" closable @click:close="error = null">
@@ -273,8 +269,12 @@ useCommands(() =>
           <v-progress-circular indeterminate size="24" />
         </div>
 
-        <div v-else-if="devices.length === 0" class="settings-empty devices__empty">
-          <span>{{ t('account.devices.empty') }}</span>
+        <BaseEmptyState
+          v-else-if="devices.length === 0"
+          size="inline"
+          class="settings-empty devices__empty"
+          :title="t('account.devices.empty')"
+        >
           <!-- 在桌面 app 里，最直接的是把这台电脑接进来。 -->
           <template v-if="desktop">
             <BaseButton kind="secondary" :loading="thisComputer.connecting" @click="connectThisMachine">
@@ -283,7 +283,7 @@ useCommands(() =>
             <span v-if="thisComputer.connecting">{{ thisComputer.step }}</span>
             <span v-if="thisComputer.error" class="c-danger">{{ thisComputer.error }}</span>
           </template>
-        </div>
+        </BaseEmptyState>
 
         <div v-for="d in devices" :key="d.device_id" class="device">
           <div class="device__line">
@@ -367,13 +367,8 @@ useCommands(() =>
           <span class="srow__k">{{ c.os }}</span>
           <div class="install-cmd">
             <code class="install-cmd__code">{{ c.command }}</code>
-            <BaseButton
-              kind="ghost"
-              size="sm"
-              :prepend-icon="copied === c.command ? 'mdi-check' : 'mdi-content-copy'"
-              @click="copyInstall(c.command)"
-            >
-              {{ copied === c.command ? t('account.devices.copied') : t('account.devices.copy') }}
+            <BaseButton kind="ghost" size="sm" prepend-icon="mdi-content-copy" @click="copyInstall(c.command)">
+              {{ t('account.devices.copy') }}
             </BaseButton>
           </div>
         </div>
@@ -422,13 +417,8 @@ useCommands(() =>
         <div class="t-caption c-muted mb-1">{{ c.os }}</div>
         <div class="install-cmd">
           <code class="install-cmd__code">{{ c.command }}</code>
-          <BaseButton
-            kind="ghost"
-            size="sm"
-            :prepend-icon="copied === c.command ? 'mdi-check' : 'mdi-content-copy'"
-            @click="copyInstall(c.command)"
-          >
-            {{ copied === c.command ? t('account.devices.copied') : t('account.devices.copy') }}
+          <BaseButton kind="ghost" size="sm" prepend-icon="mdi-content-copy" @click="copyInstall(c.command)">
+            {{ t('account.devices.copy') }}
           </BaseButton>
         </div>
       </div>
@@ -604,7 +594,9 @@ useCommands(() =>
   line-height: var(--lh-14);
 }
 
-@media (max-width: 599.98px) {
+/* 断点对齐共享 token（`styles/breakpoints.scss`）：599.98 → 767.98，和这一页
+   一起加载的 `settings-card.css` 同一条线。 */
+@media (max-width: 767.98px) {
   .device {
     padding: 12px 16px 14px;
   }

@@ -72,7 +72,6 @@ os.environ.setdefault("ANTHROPIC_AUTH_TOKEN", "test-anthropic-token")
 # engine is built from settings.database_url at import time). -------------------
 from app.core.config import settings  # noqa: E402
 from tests import isolation  # noqa: E402
-from tests.support.collab import install as install_collab  # noqa: E402
 from tests.support.hang import HANG_S  # noqa: E402
 
 _XDIST_WORKER = os.environ.get("PYTEST_XDIST_WORKER", "")  # "gw0"… or "" (serial)
@@ -123,6 +122,7 @@ from app.domain.agent.harness.claude_code.journal import (  # noqa: E402
 from app.domain.agent.harness.claude_code.protocol import INPUT_PROTOCOL  # noqa: E402
 from app.domain.agent.harness.claude_code.runner import Runner  # noqa: E402
 from app.main import app  # noqa: E402
+from tests.support.collab import install as install_collab  # noqa: E402
 from tests.support.seat_channel import SeatChannel  # noqa: E402
 
 # Tests exercise the real authz enforcement regardless of the dev .env (which
@@ -400,6 +400,13 @@ class StubChannel(SeatChannel):
         self.on_start: Callable[[], None] | None = None
         self.calls: dict[str, str] = {}
         _CHANNELS.add(self)
+
+    @property
+    def told(self) -> str:
+        """What the session last heard: its system prompt and the message it was
+        sent. Project state rides the message (a new conversation's first one
+        carries it whole), so the system prompt alone is not what it knows."""
+        return f"{self.last_system_prompt or ''}\n\n{self.last_prompt or ''}"
 
     @property
     def alive(self) -> bool:

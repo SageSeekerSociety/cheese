@@ -52,28 +52,54 @@
       </div>
     </div>
 
-    <div class="an-table">
-      <v-data-table :headers="headers" :items="tasks" :loading="loading" density="compact" items-per-page="10">
-        <template #[`item.publisher`]="{ item }">{{ item.publisher?.name || '-' }}</template>
-        <template #[`item.category`]="{ item }">{{ item.category?.name || '-' }}</template>
-        <template #[`item.approved`]="{ item }">
+    <BaseLoadError v-if="failed" :title="t('spaces.analytics.tasks.loadFailed')" :error="errorDetail" @retry="load" />
+
+    <BaseTable
+      v-else
+      class="an-table"
+      :cols="COLUMN_WIDTHS"
+      :label="t('spaces.analytics.tasks.tableLabel')"
+      :loading="loading && !tasks.length"
+      :busy="loading && !!tasks.length"
+      :empty="!loading && !tasks.length ? t('spaces.analytics.tasks.empty') : null"
+      :sort-key="table.sortKey.value"
+      :sort-dir="table.sortDir.value"
+      min-width="1180px"
+      @sort="table.onSort"
+    >
+      <template #head>
+        <tr>
+          <BaseTableTh
+            v-for="(key, index) in COLUMNS"
+            :key="key"
+            :sort-key="key"
+            :align="index === 0 ? 'start' : 'center'"
+          >
+            {{ t(`spaces.analytics.tasks.col.${key}`) }}
+          </BaseTableTh>
+        </tr>
+      </template>
+      <tr v-for="item in table.pageRows.value" :key="item.taskId">
+        <td>{{ item.taskName }}</td>
+        <td class="an-c">{{ item.publisher?.name || '-' }}</td>
+        <td class="an-c">{{ item.category?.name || '-' }}</td>
+        <td class="an-c">
           <span class="an-state" :class="approvalTone(item.approved)">{{
             t(`spaces.analytics.distribution.${item.approved}`)
           }}</span>
-        </template>
-        <template #[`item.createdAt`]="{ item }">{{ formatDate(item.createdAt) }}</template>
-        <template #[`item.deadline`]="{ item }">{{ item.deadline ? formatDate(item.deadline) : '-' }}</template>
-        <template #[`item.participantCount`]="{ item }">{{ formatCount(item.participantCount) }}</template>
-        <template #[`item.pendingParticipantApprovalCount`]="{ item }">{{
-          formatCount(item.pendingParticipantApprovalCount)
-        }}</template>
-        <template #[`item.pendingReviewCount`]="{ item }">{{ formatCount(item.pendingReviewCount) }}</template>
-        <template #[`item.submissionConversionRate`]="{ item }">{{
-          formatPercent(item.submissionConversionRate)
-        }}</template>
-        <template #[`item.successRate`]="{ item }">{{ formatPercent(item.successRate) }}</template>
-      </v-data-table>
-    </div>
+        </td>
+        <td class="an-c">{{ formatDate(item.createdAt) }}</td>
+        <td class="an-c">{{ item.deadline ? formatDate(item.deadline) : '-' }}</td>
+        <td class="an-c">{{ formatCount(item.participantCount) }}</td>
+        <td class="an-c">{{ formatCount(item.pendingParticipantApprovalCount) }}</td>
+        <td class="an-c">{{ formatCount(item.pendingReviewCount) }}</td>
+        <td class="an-c">{{ formatPercent(item.submissionConversionRate) }}</td>
+        <td class="an-c">{{ formatPercent(item.successRate) }}</td>
+      </tr>
+      <template #foot>
+        <TablePager v-model:page="table.page.value" :total="tasks.length" :per-page="table.perPage" />
+      </template>
+    </BaseTable>
   </div>
 </template>
 
@@ -82,7 +108,6 @@ import type { SpaceAnalyticsTask } from '@/network/api/spaces/types'
 
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { toast } from 'vuetify-sonner'
 
 import AnalyticsExportButton from './components/AnalyticsExportButton.vue'
 import AnalyticsPublisherSelect from './components/AnalyticsPublisherSelect.vue'
@@ -91,6 +116,11 @@ import { useSpaceAnalyticsFilters } from './composables/useSpaceAnalyticsFilters
 import { formatCount, formatDate, formatPercent } from './helpers'
 import { buildAnalyticsApiParams } from './utils'
 
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
+import BaseTable from '@/components/base/BaseTable.vue'
+import BaseTableTh from '@/components/base/BaseTableTh.vue'
+import TablePager from '@/components/base/TablePager.vue'
+import { useClientTable } from '@/components/base/tableSort'
 import { SpacesApi } from '@/network/api/spaces'
 
 const { t } = useI18n()
@@ -98,6 +128,9 @@ const options = useAnalyticsOptions()
 const { filters, replaceFilters, spaceId } = useSpaceAnalyticsFilters()
 
 const loading = ref(false)
+// 读失败和「还没有题目」是两件事：失败替换掉表格，空状态才交给表格自己说。
+const failed = ref(false)
+const errorDetail = ref<string | null>(null)
 const tasks = ref<SpaceAnalyticsTask[]>([])
 const publisherIdModel = ref<number | null>(filters.value.publisherId ?? null)
 const sortByModel = ref(filters.value.sortBy || 'createdAt')
@@ -137,12 +170,15 @@ const togglePendingReview = async () => {
 
 const load = async () => {
   loading.value = true
+  failed.value = false
+  errorDetail.value = null
   try {
     const { data } = await SpacesApi.getAnalyticsTasks(spaceId.value, buildAnalyticsApiParams('tasks', filters.value))
     tasks.value = data.tasks
   } catch (error) {
     console.error('load analytics tasks failed', error)
-    toast.error(t('spaces.analytics.tasks.loadFailed'))
+    failed.value = true
+    errorDetail.value = error instanceof Error && error.message ? error.message : null
   } finally {
     loading.value = false
   }
@@ -177,14 +213,14 @@ const COLUMNS = [
   'successRate',
 ] as const
 
-const headers = computed(() =>
-  COLUMNS.map((key, index) => ({
-    title: t(`spaces.analytics.tasks.col.${key}`),
-    key,
-    value: key,
-    align: index === 0 ? ('start' as const) : ('center' as const),
-  }))
-)
+// 第一列是题目名，吃剩下的宽度；其余是短值。
+const COLUMN_WIDTHS = [null, '120px', '100px', '96px', '108px', '108px', '88px', '96px', '80px', '96px', '80px']
+
+// 和原来 v-data-table 一样：每一列都能点表头排序，每页 10 条。出题人、分类按名字排。
+const table = useClientTable(tasks, {
+  pick: (row, key) =>
+    key === 'publisher' ? row.publisher?.name : key === 'category' ? row.category?.name : row[key as keyof typeof row],
+})
 
 const approvalTone = (value: string) =>
   value === 'APPROVED' ? 'an-state--ok' : value === 'DISAPPROVED' ? 'an-state--danger' : ''

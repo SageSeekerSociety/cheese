@@ -35,7 +35,11 @@ def _configure(home, system_prompt: str) -> None:
     session's home by then."""
     holes = device_launch.launch_holes(state=STATE, system_prompt=system_prompt)
     subprocess.run(
-        ["sh", "-c", "set -e\n" + holes.configure],
+        ["sh"],
+        # On stdin, the way the device gets it (`_ship_launcher` writes a file):
+        # the skills alone are past what one argv string may hold.
+        input="set -e\n" + holes.configure,
+        text=True,
         env={"HOME": str(home), "PATH": "/usr/bin:/bin"},
         check=True,
         capture_output=True,
@@ -61,6 +65,9 @@ def test_the_launch_writes_the_files_claude_reads_before_it_starts(tmp_path):
     assert planted == {
         "webfetch_transport.cjs",
         *native_skill_files(),
+        # What this seat was shipped, which the next launch removes the
+        # retired ones against. Claude never reads it.
+        "skills/.cheese-platform-skills",
     }
     assert (_seat(tmp_path) / "remote-session/base-settings.json").is_file()
     assert (config / "projects").resolve() == (tmp_path / ".claude/projects").resolve()

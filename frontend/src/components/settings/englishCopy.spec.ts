@@ -15,21 +15,6 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
-  const skill = {
-    project_id: 'p1',
-    title: 'Weekly report',
-    description: 'Summarise the week',
-    inputs: 'Date range',
-    steps: 'Cite every number',
-    outputs: 'One page',
-    files: { 'scripts/check.py': 'print(1)', 'README.txt': 'notes' },
-    proposed_by: 'cheese-x',
-    confirmed_by: 'u1',
-    confirmed_at: '2026-09-25T00:00:00Z',
-    source_topic_id: 'room-1',
-    created_at: '2026-09-25T00:00:00Z',
-    updated_at: '2026-09-25T00:00:00Z',
-  }
   return {
     ...actual,
     getProjectDefaultModel: vi.fn().mockResolvedValue({ choices: [{ id: 'm1', label: 'Model one' }] }),
@@ -38,9 +23,36 @@ vi.mock('@/api', async () => {
     listProjectMembers: vi.fn().mockResolvedValue({ data: [] }),
     lookupUser: vi.fn().mockResolvedValue({ handle: 'bob', name: 'Bob', avatar_id: null }),
     listTopics: vi.fn().mockResolvedValue({ data: [{ id: 'room-1', title: 'Report room', status: 'active' }] }),
+    getProject: vi.fn().mockResolvedValue({ id: 'p1', can_manage_members: true }),
+  }
+})
+vi.mock('@/api/projectSkills', () => {
+  const skill = {
+    project_id: 'p1',
+    title: 'Weekly report',
+    description: 'Summarise the week',
+    body: '## Steps\n\nCite every number',
+    files: { 'scripts/check.py': { sha256: 'a', size: 8 }, 'README.txt': { sha256: 'b', size: 5 } },
+    origin: 'cheese',
+    proposed_by: 'cheese-x',
+    confirmed_by: 'u1',
+    confirmed_at: '2026-09-25T00:00:00Z',
+    source_topic_id: 'room-1',
+    proposal: null,
+    created_at: '2026-09-25T00:00:00Z',
+    updated_at: '2026-09-25T00:00:00Z',
+  }
+  return {
     listProjectSkills: vi.fn().mockResolvedValue({
       data: [
-        { ...skill, id: 'draft-1', name: 'summary', state: 'draft', shipped_revision: 2 },
+        {
+          ...skill,
+          id: 'draft-1',
+          name: 'summary',
+          state: 'draft',
+          shipped_revision: 2,
+          proposal: { reason: 'Wrong order', taught: ['Bad news first'] },
+        },
         { ...skill, id: 'live-1', name: 'weekly', state: 'active', shipped_revision: 1 },
       ],
     }),
@@ -50,6 +62,7 @@ vi.mock('@/api', async () => {
       name: 'weekly',
       state: 'active',
       shipped_revision: 1,
+      contents: { 'scripts/check.py': 'print(1)', 'README.txt': 'notes' },
       revisions: [
         { revision: 1, note: 'first', confirmed_by: 'u1', created_at: '2026-09-25T00:00:00Z', content: skill },
         { revision: 2, note: 'second', confirmed_by: 'u1', created_at: '2026-09-26T00:00:00Z', content: skill },
@@ -188,13 +201,16 @@ describe('English settings copy', () => {
     expectNoChinese()
   })
 
-  it('the methods page, its history and its delete prompt', async () => {
-    render(ProjectSkillsView, { props: { projectId: 'p1' }, ...mountOpts() })
-    await screen.findByText('Awaiting your confirmation')
+  it('the skills page, a skill and its history', async () => {
+    const Page = { components: { ProjectSkillsView }, template: '<v-app><ProjectSkillsView project-id="p1" /></v-app>' }
+    render(Page as unknown as Component, mountOpts())
+    await screen.findByText('Waiting for you')
     expectNoChinese()
-    await fireEvent.click(screen.getAllByRole('button', { name: 'Version history' })[0]!)
-    await screen.findByText('Version history of "Weekly report"')
-    await fireEvent.click(screen.getAllByRole('button', { name: 'View' })[0]!)
+    await fireEvent.click(screen.getAllByRole('button', { name: 'Weekly report' })[0]!)
+    await screen.findByText('Invoked as summary')
+    expectNoChinese()
+    await fireEvent.click(screen.getByRole('tab', { name: 'Version history' }))
+    await fireEvent.click((await screen.findAllByRole('button', { name: 'View' }))[0]!)
     expectNoChinese()
   })
 })

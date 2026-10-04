@@ -28,6 +28,7 @@ from app.core.errors import (
 from app.domain.block.models import Block, BlockKind
 from app.domain.identity.services import IdentityService
 from app.domain.library.service import artifact_snapshot_path
+from app.domain.living_doc.services import Documents
 from app.domain.project import artifacts, forge
 from app.domain.review.models import AcceptCard
 from app.domain.topic.models import Topic
@@ -197,39 +198,61 @@ async def create_archive(
         if binding
         else None
     )
-    documents = list(
+    weeklies = list(
         await db.scalars(
             select(Block)
             .where(
                 Block.project_id == project_id,
                 Block.topic_id.in_(visible),
-                Block.kind.in_(
-                    [
-                        BlockKind.doc,
-                        BlockKind.doc_node,
-                        BlockKind.weekly,
-                    ]
-                ),
+                Block.kind == BlockKind.weekly,
             )
             .order_by(Block.created_at)
         )
     )
-    docs = [
+    # The rooms' living documents and their node trees, in the shape the
+    # archive has always listed them in: a document is `doc`, its blocks are
+    # `doc_node` under it.
+    living = Documents(db)
+    docs: list[dict] = []
+    for doc in (await living.of_rooms(visible)).values():
+        docs.append(
+            {
+                "id": doc.id,
+                "topic_id": doc.room_id,
+                "task_id": None,
+                "kind": "doc",
+                "content": doc.content,
+                "doc_version": doc.version,
+                "struct_parent": None,
+                "struct_order": None,
+            }
+        )
+        docs.extend(
+            {
+                "id": node.id,
+                "topic_id": doc.room_id,
+                "task_id": None,
+                "kind": "doc_node",
+                "content": node.content,
+                "doc_version": None,
+                "struct_parent": doc.id,
+                "struct_order": node.position,
+            }
+            for node in await living.nodes(doc)
+        )
+    docs.extend(
         {
-            key: getattr(row, key)
-            for key in (
-                "id",
-                "topic_id",
-                "task_id",
-                "kind",
-                "content",
-                "doc_version",
-                "struct_parent",
-                "struct_order",
-            )
+            "id": row.id,
+            "topic_id": row.topic_id,
+            "task_id": row.task_id,
+            "kind": "weekly",
+            "content": row.content,
+            "doc_version": None,
+            "struct_parent": None,
+            "struct_order": None,
         }
-        for row in documents
-    ]
+        for row in weeklies
+    )
     allowed_cards = set(
         await db.scalars(select(AcceptCard.id).where(AcceptCard.topic_id.in_(visible)))
     )
@@ -308,7 +331,7 @@ async def create_archive(
             )
         _json(output / "documents.json", docs)
         for doc in docs:
-            if doc["kind"] != BlockKind.doc_node:
+            if doc["kind"] != "doc_node":
                 path = output / "documents" / f"{doc['id']}.md"
                 path.parent.mkdir(exist_ok=True)
                 path.write_text(doc["content"] or "")
