@@ -710,7 +710,9 @@
       "newContent": "new content",
       "fileCount": "no files | 1 file | {count} files",
       "newChanges": "new changes",
-      "pickTopic": "Select a topic to see its document"
+      "pickTopic": "Select a topic to see its document",
+      "open": "Show work panel",
+      "close": "Hide work panel"
     },
     "taskProgress": {
       "loadFailed": "Couldn't load the tasks",
