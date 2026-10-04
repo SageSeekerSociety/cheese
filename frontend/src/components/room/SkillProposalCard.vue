@@ -105,16 +105,8 @@ function toggle(id: string) {
       <div class="method-card__fold" :class="{ 'is-open': expanded.has(s.id) }">
         <div class="method-card__fold-inner" :inert="!expanded.has(s.id) || undefined">
           <dl class="method-card__body">
-            <template v-if="s.inputs">
-              <dt class="t-eyebrow">{{ t('work.skills.fields.inputs') }}</dt>
-              <dd class="t-body method-card__text">{{ s.inputs }}</dd>
-            </template>
-            <dt class="t-eyebrow">{{ t('work.skills.fields.steps') }}</dt>
-            <dd class="t-body method-card__text">{{ s.steps }}</dd>
-            <template v-if="s.outputs">
-              <dt class="t-eyebrow">{{ t('work.skills.fields.outputs') }}</dt>
-              <dd class="t-body method-card__text">{{ s.outputs }}</dd>
-            </template>
+            <dt class="t-eyebrow">{{ t('work.skills.fields.body') }}</dt>
+            <dd class="t-body method-card__text">{{ s.body }}</dd>
             <template v-if="Object.keys(s.files).length">
               <dt class="t-eyebrow">{{ t('work.skills.fields.files') }}</dt>
               <dd class="t-body">{{ Object.keys(s.files).join(t('work.skills.listSeparator')) }}</dd>

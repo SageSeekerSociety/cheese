@@ -43,14 +43,16 @@ covers:
 
 ## 项目技能 {#project}
 
-项目自己的技能（界面上就叫「技能」，提示词里叫「项目技能」，和平台自带的区分开）是原生技能：一个 `ProjectSkill` 行是可编辑的源，每一版确认过的内容留一条 `ProjectSkillRevision`。字段是 `title` / `description` / `inputs` / `steps` / `outputs` / `files`（`FIELDS`）。
+项目自己的技能（界面上就叫「技能」，提示词里叫「项目技能」，和平台自带的区分开）是原生技能：一个 `ProjectSkill` 行是可编辑的源，每一版确认过的内容留一条 `ProjectSkillRevision`。字段是 `title` / `description` / `body` / `files`（`FIELDS`）：名称、用途、一份 markdown 正文和配套文件，和一份 SKILL.md 本来的样子一致，所以手写的、芝士起草的、导入的是同一种格式。`origin` 记下是谁先写的：`cheese`（AI 队友）、`person`（人手写）、`import`（导入）。
+
+配套文件不放在行里：内容按 sha256 存进平台的文件存储（`project-skills/<sha256>`，`blobs.py`），技能和每一版里的 `files` 只是一张清单 `{路径: {sha256, size}}`。同样的内容不管被几项技能、几版引用都只存一份；列表接口只给清单，打开一份（`GET /skills/{id}`）才带上 `contents`。文件先写进存储、再提交行，所以回滚最多留下没人引用的文件，不会出现清单指向不存在的内容；没人引用的文件目前不清理。发到会话时 `publish()` 按清单取出内容写进镜像目录，之后各条路读的仍是这个目录。
 
 - **只有确认过的版本会发出去。** AI 队友起草或修改（`by_agent=True`）只是把行改成 `draft` 并记下是谁提的，行上的 `shipped_revision` 仍指上一次确认；`publish()` 按 `shipped_revision` 连 `ProjectSkillRevision` 取内容，所以等人确认的这段时间里，发出去的还是上一版。全新的一份 AI 草案 `shipped_revision` 是 0，连不上任何一版，于是它一份都不发。
 - **人改的就是当场确认。** `create` / `update` 里 `by_agent=False` 直接走 `confirm()`：内容与最新一版一样就沿用那个版本号，否则加一版并记下 `confirmed_by`、`note`。`restore(revision)` 把旧版内容搬回来再确认一次，也就是「恢复」也留痕。
-- **限制**（`service.py` 顶上）：名字要匹配 `^[a-z0-9][a-z0-9-]{1,47}$`；配套文件最多 `MAX_FILES = 30` 个、每个不超过 `MAX_FILE_BYTES = 200_000` 字节、后缀在白名单里、路径不许绝对、不许 `..`、不许叫 `SKILL.md`；`title`、`description`、`steps` 一个都不能空。
+- **限制**（`service.py` 顶上）：名字要匹配 `^[a-z0-9][a-z0-9-]{1,47}$`；配套文件最多 `MAX_FILES = 30` 个、每个不超过 `MAX_FILE_BYTES = 200_000` 字节、后缀在白名单里（都是文本：代码、标记、配置、数据），路径不许绝对、不许 `..`、不许有反斜杠和控制字符、不许叫 `SKILL.md`，一个路径也不能同时是另一个路径的上级文件夹（否则写镜像时文件和文件夹撞名，整个项目之后的发布都会失败）；`title`、`description`、`body` 一个都不能空。
 - **每次改动都重建镜像。** `publish()` 在 `{workspace_root}/.project-skills/<项目 id>/` 下搭一份新目录、写 `render_skill()` 的结果和配套文件，再把旧的换掉（先改名、再 `rename`、最后删），换的动作是整目录替换。接口层 `backend/app/api/routes/project_skills.py` 在 create / update / confirm / decline / restore / delete 每一处之后都调 `publish()`，并对这项技能来自的房间发 `announce_stale(…, "skills")`，房间里那张提议卡跟着重读。
 
-`render_skill()` 产出的 `SKILL.md` 是一份做法，不是一份记录：它写上「第 N 版，由谁确认」，要求「每次使用都以这一次用户给的输入为准，不沿用以前某一次的具体材料；缺少必需的输入就先问用户」，末尾的「用的时候」一节带着这项技能的 id，告诉芝士照着做时被纠正就用 `cheese_skill_update` 提议修改这一份。
+`render_skill()` 产出的 `SKILL.md` 是一份做法，不是一份记录：正文原样放进去，前面写上「第 N 版，由谁确认」，要求「每次使用都以这一次用户给的输入为准，不沿用以前某一次的具体材料；缺少必需的输入就先问用户」，末尾的「用的时候」一节带着这项技能的 id，告诉芝士照着做时被纠正就用 `cheese_skill_update` 提议修改这一份。
 
 ### 芝士怎么提议 {#proposals}
 
@@ -58,8 +60,14 @@ covers:
 
 - **依据跟着草稿走。** 起草时带上 `taught`（用户为这类事教过哪几处）、`accepted`（这次怎么算做成的）、`related`（和最接近的已有技能比过没有）、`absorbs`（这项技能吸收掉的 team 记忆）；改的时候带 `reason`。它们存在行上的 `proposal` 里，房间聊天栏底部的提议卡（`SkillProposalCard`，数据在 `useSkillProposals`）把它们摆给人看，人在卡上点「保存」或「不保存」。保存或人改过之后 `proposal` 清空。
 - **门槛只管芝士，不管人**（`_admit_proposal`）：人拒绝过的同名技能不再提；一个房间同时只有一份提议在等人；项目里的技能到了 `PROPOSAL_LIMIT = 20` 项，芝士不再新建，改为提议合并或修改。人自己新建不受这几条限制。
-- **拒绝留痕。** `decline()` 把从没保存过的新提议记成 `declined`（列表里不出现，名字仍被它占着，人自己写同名的一份时把它替掉）；对已保存技能的改动退回保存的那一版。技能页上对芝士草稿点「不要了」走的也是这一步。
+- **拒绝留痕。** `decline()` 把从没保存过的新提议记成 `declined`（列表里不出现，名字仍被它占着，人自己写同名的一份时把它替掉）；对已保存技能的改动退回保存的那一版。技能页上对芝士草稿点「不保存」走的也是这一步。
 - **保存时吸收记忆。** `confirm` 时，`proposal.absorbs` 列出的 team 记忆连同 `MEMORY.md` 里指向它们的那几行一起删掉（`MemoryFileStore.forget`），同一条规则不留两份。只收 team 下的记忆：项目技能是全项目共用的，个人偏好不并进去。
+
+### 人在技能页上加 {#page}
+
+技能页只列这个项目自己的技能，平台自带的不列：那是平台写给芝士的说明。人新建一份走 `POST /projects/{id}/skills`，不用挑房间，当场确认。
+
+导入只给项目管理员（`MemberService.require_manager`），因为外来的技能会带进之后每个会话，里面的脚本会在工作电脑上运行。分两步：`POST /projects/{id}/skills/import-preview` 只读不存，`importer.py` 从上传的 SKILL.md 或 zip（找最浅的那个 SKILL.md，它所在的文件夹就是这项技能）、或 GitHub 上的文件夹（一次树列表加逐个从 raw 主机取）读出名称、用途、正文和配套文件，不是文本或超过 `MAX_FILE_BYTES` 的列进 `skipped`；人看过再用同一个新建接口带 `imported: true` 加进来。frontmatter 里的 `name` 当调用名，正文开头的一级标题当名称。
 
 ## 会话里怎么落地 {#deploy}
 

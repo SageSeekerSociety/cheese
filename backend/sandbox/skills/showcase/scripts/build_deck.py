@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+# ruff: noqa: E501  (usage docstrings show JSON and command lines that read worse wrapped)
 """build_deck.py — 把一份 JSON 幻灯片稿渲染成 16:9 的 .pptx。
 
 用法:
@@ -36,41 +36,74 @@ JSON 结构（字段都可缺省，缺了就不画）:
 是全页唯一的强调。closing 的某行写成 {"text","accent"} 就把琥珀落在那行上。
 单元格里可以放字符串，也可以放 {"text":"已改","tone":"ok|warn|danger|neutral"} 画状态标记。
 """
+
 import json
 import math
 import sys
 
 from pptx import Presentation
-from pptx.util import Inches, Pt
-from pptx.dml.color import RGBColor
-from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
-from pptx.enum.shapes import MSO_SHAPE, MSO_CONNECTOR
 from pptx.chart.data import CategoryChartData
-from pptx.enum.chart import (XL_CHART_TYPE, XL_LEGEND_POSITION,
-                                 XL_LABEL_POSITION)
+from pptx.dml.color import RGBColor
+from pptx.enum.chart import XL_CHART_TYPE, XL_LABEL_POSITION, XL_LEGEND_POSITION
+from pptx.enum.shapes import MSO_CONNECTOR, MSO_SHAPE
+from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.oxml.ns import qn
+from pptx.util import Inches, Pt
 
 # --------------------------------------------------------------------------
 # 设计 token —— 与 references/design-system.md §2 一致
 # --------------------------------------------------------------------------
 C = {
-    "canvas": "F7F8FA", "surface": "FFFFFF", "raised": "FFFFFF",
-    "ink": "191A1C", "text": "36383C", "muted": "5A5E66", "faint": "747A82",
-    "line": "ECEDEF", "line2": "E2E3E6", "fill": "F4F5F7", "fill2": "EEEEF1",
-    "accent": "F57F17", "accent_press": "D96E0A", "accent_ink": "9A5413",
-    "accent_wash": "FDF1E2", "on_accent": "FFFFFF",
-    "ok": "1F9D55", "ok_ink": "12703A", "ok_wash": "E8F6EE",
-    "warn": "E8901C", "warn_ink": "8F5406", "warn_wash": "FAF0DC",
-    "danger": "DC2626", "danger_ink": "B91C1C", "danger_wash": "FDECEC",
-    "chart1": "3D6BB3", "chart2": "2A9D8F", "chart3": "D9822B",
-    "chart4": "8A63C2", "chart5": "C9506F", "chart6": "6B7B8C",
+    "canvas": "F7F8FA",
+    "surface": "FFFFFF",
+    "raised": "FFFFFF",
+    "ink": "191A1C",
+    "text": "36383C",
+    "muted": "5A5E66",
+    "faint": "747A82",
+    "line": "ECEDEF",
+    "line2": "E2E3E6",
+    "fill": "F4F5F7",
+    "fill2": "EEEEF1",
+    "accent": "F57F17",
+    "accent_press": "D96E0A",
+    "accent_ink": "9A5413",
+    "accent_wash": "FDF1E2",
+    "on_accent": "FFFFFF",
+    "ok": "1F9D55",
+    "ok_ink": "12703A",
+    "ok_wash": "E8F6EE",
+    "warn": "E8901C",
+    "warn_ink": "8F5406",
+    "warn_wash": "FAF0DC",
+    "danger": "DC2626",
+    "danger_ink": "B91C1C",
+    "danger_wash": "FDECEC",
+    "chart1": "3D6BB3",
+    "chart2": "2A9D8F",
+    "chart3": "D9822B",
+    "chart4": "8A63C2",
+    "chart5": "C9506F",
+    "chart6": "6B7B8C",
 }
-TONE_INK = {"ok": C["ok_ink"], "warn": C["warn_ink"],
-            "danger": C["danger_ink"], "neutral": C["muted"]}
-TONE_MARK = {"ok": C["ok"], "warn": C["warn"],
-             "danger": C["danger"], "neutral": C["faint"]}
-TONE_WASH = {"ok": C["ok_wash"], "warn": C["warn_wash"],
-             "danger": C["danger_wash"], "note": C["fill"]}
+TONE_INK = {
+    "ok": C["ok_ink"],
+    "warn": C["warn_ink"],
+    "danger": C["danger_ink"],
+    "neutral": C["muted"],
+}
+TONE_MARK = {
+    "ok": C["ok"],
+    "warn": C["warn"],
+    "danger": C["danger"],
+    "neutral": C["faint"],
+}
+TONE_WASH = {
+    "ok": C["ok_wash"],
+    "warn": C["warn_wash"],
+    "danger": C["danger_wash"],
+    "note": C["fill"],
+}
 
 # 字号阶梯（pt）—— 正文 ≥ 18pt，与页面版的 13/16/22/34 等价放大
 F_EYEBROW, F_TITLE, F_BODY = 13, 27, 18
@@ -79,12 +112,14 @@ LATIN, EA = "Segoe UI", "Microsoft YaHei"
 
 # 16:9 栅格（英寸）
 SW, SH = 13.333, 7.5
-MX = 0.75                 # 左右边距
-CW = SW - 2 * MX          # 内容宽 11.833
-TOP = 0.62                # 内容起点
-CHARTS = {"column": XL_CHART_TYPE.COLUMN_CLUSTERED,
-          "bar": XL_CHART_TYPE.BAR_CLUSTERED,
-          "line": XL_CHART_TYPE.LINE_MARKERS}
+MX = 0.75  # 左右边距
+CW = SW - 2 * MX  # 内容宽 11.833
+TOP = 0.62  # 内容起点
+CHARTS = {
+    "column": XL_CHART_TYPE.COLUMN_CLUSTERED,
+    "bar": XL_CHART_TYPE.BAR_CLUSTERED,
+    "line": XL_CHART_TYPE.LINE_MARKERS,
+}
 
 
 def rgb(name_or_hex):
@@ -111,7 +146,7 @@ def _style_run(run, size, color, bold=False, italic=False):
     f.color.rgb = color
     f.name = LATIN
     rPr = run._r.get_or_add_rPr()
-    _set_face(rPr, "a:ea", EA)     # 关键：python-pptx 不会写 a:ea
+    _set_face(rPr, "a:ea", EA)  # 关键：python-pptx 不会写 a:ea
     _set_face(rPr, "a:cs", LATIN)
 
 
@@ -122,8 +157,18 @@ def _run(p, text, size, color, bold=False):
     return r
 
 
-def para(tf, text, size, color, bold=False, align=PP_ALIGN.LEFT,
-         line=None, space_before=None, space_after=None, first=False):
+def para(
+    tf,
+    text,
+    size,
+    color,
+    bold=False,
+    align=PP_ALIGN.LEFT,
+    line=None,
+    space_before=None,
+    space_after=None,
+    first=False,
+):
     p = tf.paragraphs[0] if first else tf.add_paragraph()
     p.alignment = align
     if line is not None:
@@ -181,7 +226,8 @@ def oval(slide, cx, cy, d, fill):
 
 def hline(slide, x, y, w, color, line_w=1.0):
     ln = slide.shapes.add_connector(
-        MSO_CONNECTOR.STRAIGHT, Inches(x), Inches(y), Inches(x + w), Inches(y))
+        MSO_CONNECTOR.STRAIGHT, Inches(x), Inches(y), Inches(x + w), Inches(y)
+    )
     ln.line.color.rgb = color
     ln.line.width = Pt(line_w)
     ln.shadow.inherit = False
@@ -202,7 +248,7 @@ def new_deck():
 
 
 def add_slide(prs):
-    s = prs.slides.add_slide(prs.slide_layouts[6])   # 空白版式
+    s = prs.slides.add_slide(prs.slide_layouts[6])  # 空白版式
     s.background.fill.solid()
     s.background.fill.fore_color.rgb = rgb("canvas")
     return s
@@ -218,8 +264,15 @@ def footer(slide, idx, total, name):
     tf = tb(slide, MX, 7.02, CW * 0.72, 0.3)
     para(tf, name, F_FOOT, rgb("faint"), first=True, line=1.0)
     tf = tb(slide, MX + CW - 1.2, 7.02, 1.2, 0.3)
-    para(tf, "%d / %d" % (idx, total), F_FOOT, rgb("faint"),
-         align=PP_ALIGN.RIGHT, first=True, line=1.0)
+    para(
+        tf,
+        f"{idx} / {total}",
+        F_FOOT,
+        rgb("faint"),
+        align=PP_ALIGN.RIGHT,
+        first=True,
+        line=1.0,
+    )
 
 
 def header(slide, eyebrow, title):
@@ -244,8 +297,7 @@ def _set_strike(run):
 
 def lv_cover(slide, d, ctx):
     tf = tb(slide, MX, 2.05, CW, 0.4)
-    para(tf, d.get("eyebrow", ""), 15, rgb("muted"), bold=True,
-         first=True, line=1.0)
+    para(tf, d.get("eyebrow", ""), 15, rgb("muted"), bold=True, first=True, line=1.0)
     tf = tb(slide, MX, 2.5, CW, 1.6)
     para(tf, d["title"], 44, rgb("ink"), bold=True, first=True, line=1.04)
     if d.get("subtitle"):
@@ -270,8 +322,15 @@ def lv_cover(slide, d, ctx):
 
 def lv_section(slide, d, ctx):
     tf = tb(slide, MX, 2.85, CW, 0.4)
-    para(tf, d.get("eyebrow", ""), F_EYEBROW, rgb("accent_ink"), bold=True,
-         first=True, line=1.0)
+    para(
+        tf,
+        d.get("eyebrow", ""),
+        F_EYEBROW,
+        rgb("accent_ink"),
+        bold=True,
+        first=True,
+        line=1.0,
+    )
     tf = tb(slide, MX, 3.25, CW, 1.1)
     para(tf, d["title"], 38, rgb("ink"), bold=True, first=True, line=1.05)
     if d.get("subtitle"):
@@ -282,8 +341,7 @@ def lv_section(slide, d, ctx):
 def lv_statement(slide, d, ctx):
     if d.get("eyebrow"):
         tf = tb(slide, MX, 1.95, CW, 0.4)
-        para(tf, d["eyebrow"], F_EYEBROW, rgb("muted"), bold=True,
-             first=True, line=1.0)
+        para(tf, d["eyebrow"], F_EYEBROW, rgb("muted"), bold=True, first=True, line=1.0)
     text, acc = d["text"], d.get("accent")
     tf = tb(slide, MX, 2.55, CW * 0.94, 2.4)
     p = tf.paragraphs[0]
@@ -323,15 +381,30 @@ def lv_bullets(slide, d, ctx):
         note = aside.get("note") or ""
         cpl = max(8, int((aw - 0.68) / 0.20))
         nl = int(math.ceil(len(note) / float(cpl))) if note else 0
-        card_h = 1.62 + 0.28 * max(1, nl) + 0.28   # 卡片贴着内容长，别拉满整页
-        shape(slide, MSO_SHAPE.ROUNDED_RECTANGLE, ax, y + 0.15, aw, card_h,
-              fill=rgb("surface"), line=rgb("line"), radius=0.05)
+        card_h = 1.62 + 0.28 * max(1, nl) + 0.28  # 卡片贴着内容长，别拉满整页
+        shape(
+            slide,
+            MSO_SHAPE.ROUNDED_RECTANGLE,
+            ax,
+            y + 0.15,
+            aw,
+            card_h,
+            fill=rgb("surface"),
+            line=rgb("line"),
+            radius=0.05,
+        )
         tf = tb(slide, ax + 0.34, y + 0.56, aw - 0.68, 0.4)
-        para(tf, aside.get("label", ""), F_EYEBROW, rgb("muted"), bold=True,
-             first=True, line=1.0)
+        para(
+            tf,
+            aside.get("label", ""),
+            F_EYEBROW,
+            rgb("muted"),
+            bold=True,
+            first=True,
+            line=1.0,
+        )
         tf = tb(slide, ax + 0.34, y + 0.92, aw - 0.68, 0.9)
-        para(tf, aside["value"], 40, rgb("accent_ink"), bold=True,
-             first=True, line=1.0)
+        para(tf, aside["value"], 40, rgb("accent_ink"), bold=True, first=True, line=1.0)
         if note:
             tf = tb(slide, ax + 0.34, y + 1.62, aw - 0.68, card_h - 1.7)
             para(tf, note, 14, rgb("muted"), first=True, line=1.4)
@@ -343,21 +416,44 @@ def lv_two_col(slide, d, ctx):
     gap = 0.42
     w = (CW - gap) / 2.0
     cpl = max(8, int((w - 0.64) / 0.22))
-    per = [max(1, sum(max(1, int(math.ceil(len(it) / float(cpl))))
-                      for it in col.get("items", []))) for col in cols]
-    h = 1.10 + 0.44 * max(per + [1]) + 0.30   # 两卡同高，按更高的一列贴内容
+    per = [
+        max(
+            1,
+            sum(
+                max(1, int(math.ceil(len(it) / float(cpl))))
+                for it in col.get("items", [])
+            ),
+        )
+        for col in cols
+    ]
+    h = 1.10 + 0.44 * max(per + [1]) + 0.30  # 两卡同高，按更高的一列贴内容
     for j, col in enumerate(cols):
         x = MX + j * (w + gap)
         tone = col.get("tone", "note")
-        shape(slide, MSO_SHAPE.ROUNDED_RECTANGLE, x, y + 0.10, w, h,
-              fill=rgb(TONE_WASH.get(tone, C["fill"])), line=None, radius=0.045)
+        shape(
+            slide,
+            MSO_SHAPE.ROUNDED_RECTANGLE,
+            x,
+            y + 0.10,
+            w,
+            h,
+            fill=rgb(TONE_WASH.get(tone, C["fill"])),
+            line=None,
+            radius=0.045,
+        )
         tf = tb(slide, x + 0.32, y + 0.44, w - 0.64, 0.5)
-        para(tf, col["title"], 19, rgb(TONE_INK.get(tone, C["muted"])),
-             bold=True, first=True, line=1.1)
+        para(
+            tf,
+            col["title"],
+            19,
+            rgb(TONE_INK.get(tone, C["muted"])),
+            bold=True,
+            first=True,
+            line=1.1,
+        )
         tf = tb(slide, x + 0.32, y + 1.10, w - 0.64, h - 1.35)
         for k, line in enumerate(col.get("items", [])):
-            para(tf, line, 16, rgb("text"), first=(k == 0),
-                 line=1.45, space_after=8)
+            para(tf, line, 16, rgb("text"), first=(k == 0), line=1.45, space_after=8)
 
 
 def _patch_txpr(root, size, color):
@@ -391,8 +487,9 @@ def lv_chart(slide, d, ctx):
         cd.add_series(s["name"], tuple(s["values"]))
     ctype = CHARTS.get(spec.get("type", "column"), XL_CHART_TYPE.COLUMN_CLUSTERED)
     ch_w = CW * 0.63
-    gf = slide.shapes.add_chart(ctype, Inches(MX), Inches(y + 0.12),
-                                Inches(ch_w), Inches(4.15), cd)
+    gf = slide.shapes.add_chart(
+        ctype, Inches(MX), Inches(y + 0.12), Inches(ch_w), Inches(4.15), cd
+    )
     ch = gf.chart
     ch.has_title = False
     ch.has_legend = True
@@ -444,8 +541,17 @@ def lv_chart(slide, d, ctx):
     cpl = max(8, int((tw - 0.60) / 0.22))
     tl = max(1, int(math.ceil(len(takeaway) / float(cpl)))) if takeaway else 0
     card_h = 0.56 + 0.34 * max(1, tl) + 0.28
-    shape(slide, MSO_SHAPE.ROUNDED_RECTANGLE, tx, y + 0.25, tw, card_h,
-          fill=rgb("fill"), line=rgb("line"), radius=0.05)
+    shape(
+        slide,
+        MSO_SHAPE.ROUNDED_RECTANGLE,
+        tx,
+        y + 0.25,
+        tw,
+        card_h,
+        fill=rgb("fill"),
+        line=rgb("line"),
+        radius=0.05,
+    )
     tf = tb(slide, tx + 0.30, y + 0.56, tw - 0.60, card_h - 0.5)
     para(tf, takeaway, 16, rgb("text"), first=True, line=1.5)
     if d.get("caption"):
@@ -458,15 +564,23 @@ def _cell_border(cell, edge, color_hex, w_pt=0.75):
     tag = {"L": "a:lnL", "R": "a:lnR", "T": "a:lnT", "B": "a:lnB"}[edge]
     for e in tcPr.findall(qn(tag)):
         tcPr.remove(e)
-    ln = tcPr.makeelement(qn(tag), {"w": str(int(w_pt * 12700)),
-                                    "cap": "flat", "cmpd": "sng", "algn": "ctr"})
+    ln = tcPr.makeelement(
+        qn(tag),
+        {"w": str(int(w_pt * 12700)), "cap": "flat", "cmpd": "sng", "algn": "ctr"},
+    )
     sf = ln.makeelement(qn("a:solidFill"), {})
     clr = sf.makeelement(qn("a:srgbClr"), {"val": color_hex})
     sf.append(clr)
     ln.append(sf)
     fill = None
-    for t in ("a:noFill", "a:solidFill", "a:gradFill", "a:blipFill",
-              "a:pattFill", "a:grpFill"):
+    for t in (
+        "a:noFill",
+        "a:solidFill",
+        "a:gradFill",
+        "a:blipFill",
+        "a:pattFill",
+        "a:grpFill",
+    ):
         el = tcPr.find(qn(t))
         if el is not None:
             fill = el
@@ -484,8 +598,9 @@ def lv_table(slide, d, ctx):
     nrow, ncol = len(rows) + 1, len(cols)
     tw = CW
     th = min(0.52 + 0.56 * len(rows), 4.35)
-    gf = slide.shapes.add_table(nrow, ncol, Inches(MX), Inches(y + 0.14),
-                                Inches(tw), Inches(th))
+    gf = slide.shapes.add_table(
+        nrow, ncol, Inches(MX), Inches(y + 0.14), Inches(tw), Inches(th)
+    )
     table = gf.table
     # 关掉默认的主题表格样式，表格线自己画
     tblPr = table._tbl.find(qn("a:tblPr"))
@@ -495,7 +610,7 @@ def lv_table(slide, d, ctx):
     if sid is None:
         sid = tblPr.makeelement(qn("a:tableStyleId"), {})
         tblPr.append(sid)
-    sid.text = "{2D5ABB26-0587-4C30-8999-92F81FD0307C}"   # No Style, No Grid
+    sid.text = "{2D5ABB26-0587-4C30-8999-92F81FD0307C}"  # No Style, No Grid
 
     # 列宽：首列更宽，其余等分
     first_w = tw * 0.34
@@ -517,9 +632,16 @@ def lv_table(slide, d, ctx):
         cell.margin_right = Inches(0.14)
         tf = cell.text_frame
         tf.word_wrap = True
-        para(tf, name, F_EYEBROW, rgb("muted"), bold=True, first=True,
-             align=amap.get(aligns[j] if j < len(aligns) else "l", PP_ALIGN.LEFT),
-             line=1.0)
+        para(
+            tf,
+            name,
+            F_EYEBROW,
+            rgb("muted"),
+            bold=True,
+            first=True,
+            align=amap.get(aligns[j] if j < len(aligns) else "l", PP_ALIGN.LEFT),
+            line=1.0,
+        )
         _cell_border(cell, "B", C["line2"], 0.75)
 
     for i, row in enumerate(rows):
@@ -539,7 +661,9 @@ def lv_table(slide, d, ctx):
             if isinstance(val, dict):
                 tone = val.get("tone", "neutral")
                 _run(p, "●  ", 12, rgb(TONE_MARK.get(tone, C["faint"])))
-                _run(p, val.get("text", ""), 14, rgb(TONE_INK.get(tone, C["text"])), True)
+                _run(
+                    p, val.get("text", ""), 14, rgb(TONE_INK.get(tone, C["text"])), True
+                )
             else:
                 _run(p, str(val), 14, rgb("text"), j == 0)
             _cell_border(cell, "B", C["line"], 0.75)
@@ -550,7 +674,7 @@ def lv_table(slide, d, ctx):
 
 
 def lv_timeline(slide, d, ctx):
-    y = header(slide, d.get("eyebrow"), d.get("title"))
+    header(slide, d.get("eyebrow"), d.get("title"))
     steps = d.get("steps", [])
     n = len(steps)
     ly = 3.7
@@ -563,21 +687,42 @@ def lv_timeline(slide, d, ctx):
         col = "accent" if i == 0 else "ink"
         oval(slide, cx, ly, 0.26, rgb(col))
         tf = tb(slide, cx - 1.75, ly - 1.7, 3.5, 1.3)
-        para(tf, st["label"], 20, rgb("ink"), bold=True,
-             align=PP_ALIGN.CENTER, first=True, line=1.15)
+        para(
+            tf,
+            st["label"],
+            20,
+            rgb("ink"),
+            bold=True,
+            align=PP_ALIGN.CENTER,
+            first=True,
+            line=1.15,
+        )
         if st.get("desc"):
-            para(tf, st["desc"], 14, rgb("muted"), align=PP_ALIGN.CENTER,
-                 line=1.3, space_before=4)
+            para(
+                tf,
+                st["desc"],
+                14,
+                rgb("muted"),
+                align=PP_ALIGN.CENTER,
+                line=1.3,
+                space_before=4,
+            )
     if d.get("axis_note"):
         tf = tb(slide, MX, ly + 1.5, CW, 0.5)
-        para(tf, d["axis_note"], F_CAPTION, rgb("faint"),
-             align=PP_ALIGN.CENTER, first=True, line=1.3)
+        para(
+            tf,
+            d["axis_note"],
+            F_CAPTION,
+            rgb("faint"),
+            align=PP_ALIGN.CENTER,
+            first=True,
+            line=1.3,
+        )
 
 
 def lv_closing(slide, d, ctx):
     tf = tb(slide, MX, 2.55, CW, 0.4)
-    para(tf, d.get("eyebrow", ""), 15, rgb("muted"), bold=True,
-         first=True, line=1.0)
+    para(tf, d.get("eyebrow", ""), 15, rgb("muted"), bold=True, first=True, line=1.0)
     tf = tb(slide, MX, 3.0, CW, 1.1)
     para(tf, d["title"], 40, rgb("ink"), bold=True, first=True, line=1.05)
     if d.get("lines"):
@@ -590,20 +735,32 @@ def lv_closing(slide, d, ctx):
                 acc = bool(ln.get("accent"))
             else:
                 text, acc = ln, False
-            para(tf, text, F_BODY,
-                 rgb("accent_ink") if acc else rgb("muted"),
-                 bold=acc, first=(i == 0), line=1.5, space_after=4)
+            para(
+                tf,
+                text,
+                F_BODY,
+                rgb("accent_ink") if acc else rgb("muted"),
+                bold=acc,
+                first=(i == 0),
+                line=1.5,
+                space_after=4,
+            )
     hline(slide, MX, 6.18, CW, rgb("line"), 1.0)
 
 
 LAYOUTS = {
-    "cover": lv_cover, "section": lv_section, "statement": lv_statement,
-    "bullets": lv_bullets, "two-col": lv_two_col, "chart": lv_chart,
-    "table": lv_table, "timeline": lv_timeline, "closing": lv_closing,
+    "cover": lv_cover,
+    "section": lv_section,
+    "statement": lv_statement,
+    "bullets": lv_bullets,
+    "two-col": lv_two_col,
+    "chart": lv_chart,
+    "table": lv_table,
+    "timeline": lv_timeline,
+    "closing": lv_closing,
 }
 # 有底栏的版式（封面 / 结尾留白，不加页码）
-FOOTERED = {"statement", "bullets", "two-col", "chart", "table",
-            "timeline", "section"}
+FOOTERED = {"statement", "bullets", "two-col", "chart", "table", "timeline", "section"}
 
 
 def build(spec, out_path):
@@ -628,7 +785,7 @@ def main():
         return 2
     spec = json.load(open(sys.argv[1], encoding="utf-8"))
     n = build(spec, sys.argv[2])
-    print("built %d slides -> %s" % (n, sys.argv[2]))
+    print(f"built {n} slides -> {sys.argv[2]}")
     return 0
 
 

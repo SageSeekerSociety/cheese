@@ -815,9 +815,11 @@ PLATFORM_TOOLS = ToolTable(
                 "description": _text(
                     "什么情况下用它，一句话。决定以后会不会被想起来，写用户会怎么说"
                 ),
-                "inputs": _text("每次要用户给什么"),
-                "steps": _text("判断点、规则、坑和理由；必要的步骤"),
-                "outputs": _text("交什么、什么格式、放哪"),
+                "body": _text(
+                    "正文，markdown。分三个小标题写：## 需要的输入（每次要用户给什么）、"
+                    "## 步骤与规则（判断点、规则、坑和理由；必要的步骤）、"
+                    "## 输出要求（交什么、什么格式、放哪）"
+                ),
                 "files": {
                     "type": "object",
                     "description": "要一起存的文本文件 {相对路径: 内容}，如脚本、模板",
@@ -838,7 +840,7 @@ PLATFORM_TOOLS = ToolTable(
                     ),
                 },
             },
-            ["name", "title", "description", "steps", "taught", "accepted"],
+            ["name", "title", "description", "body", "taught", "accepted"],
         ),
         _tool(
             "cheese_skill_update",
@@ -849,9 +851,7 @@ PLATFORM_TOOLS = ToolTable(
                 "skill": _text("项目技能 id"),
                 "title": _text("改后的名称"),
                 "description": _text("改后的用途"),
-                "inputs": _text("改后的输入"),
-                "steps": _text("改后的判断点、规则和步骤"),
-                "outputs": _text("改后的产出要求"),
+                "body": _text("改后的正文"),
                 "files": {
                     "type": "object",
                     "description": "改后的全部配套文件 {相对路径: 内容}",
@@ -1420,10 +1420,10 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "name": args["name"],
             "title": args["title"],
             "description": args["description"],
-            "steps": args["steps"],
+            "body": args["body"],
             "taught": args.get("taught") or [],
             "accepted": args.get("accepted") or "",
-            **_given(args, "inputs", "outputs", "files", "related", "absorbs"),
+            **_given(args, "files", "related", "absorbs"),
         }
         return {"method": "POST", "path": f"/topics/{topic}/skills", "body": body}
     if tool == "cheese_skill_update":
@@ -1431,9 +1431,7 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         skill = urllib.parse.quote(args["skill"], safe="")
         body = {
             "reason": args["reason"],
-            **_given(
-                args, "title", "description", "inputs", "steps", "outputs", "files"
-            ),
+            **_given(args, "title", "description", "body", "files"),
         }
         return {
             "method": "PATCH",

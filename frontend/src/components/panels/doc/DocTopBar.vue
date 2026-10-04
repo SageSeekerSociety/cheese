@@ -6,6 +6,7 @@
 // 格式不在这里：选中文字时浮条上有，块的样式在「/」和左边的 ＋ 里。
 import type { DocAgentController } from '../../../composables/useDocAgent'
 import type { DocConnection, DocPeer } from '../../../composables/useDocCollab'
+import type { OutlineHeading } from '../../../lib/docOutline'
 
 import { ref, watch } from 'vue'
 
@@ -14,6 +15,7 @@ import CheeseAvatar from '../../CheeseAvatar.vue'
 
 import DocAgentBox from './DocAgentBox.vue'
 import DocAgentResult from './DocAgentResult.vue'
+import DocOutline from './DocOutline.vue'
 import DocPresence from './DocPresence.vue'
 
 import { t } from '@/i18n'
@@ -37,6 +39,10 @@ const props = defineProps<{
   /** 对整篇找 AI 队友；认不出它时是 undefined，不给这个按钮。 */
   agent?: DocAgentController
   mentionNames: Record<string, string>
+  /** 大纲：正文里的标题（h1–h3）；还没有标题时是空数组。 */
+  headings: OutlineHeading[]
+  /** 查找条开着没有，按钮据此发亮。 */
+  findOpen: boolean
 }>()
 const emit = defineEmits<{
   (e: 'toggle-suggestions'): void
@@ -45,6 +51,8 @@ const emit = defineEmits<{
   (e: 'history'): void
   (e: 'export'): void
   (e: 'open-thread', id: string): void
+  (e: 'toggle-find'): void
+  (e: 'outline-select', pos: number): void
 }>()
 
 // 对整篇：菜单里先是输入框，交出去以后是那张卡。菜单关上就收起这一次（正在做的不收）。
@@ -57,6 +65,13 @@ async function toComment() {
   const thread = await props.agent?.toComment()
   agentOpen.value = false
   if (thread) emit('open-thread', thread)
+}
+
+// 大纲下拉：点了某一节，先收起菜单再往上发（滚到那一节是面板的事）。
+const outlineOpen = ref(false)
+function pickHeading(pos: number) {
+  outlineOpen.value = false
+  emit('outline-select', pos)
 }
 </script>
 
@@ -93,6 +108,31 @@ async function toComment() {
     </div>
     <div class="doc-top-bar__actions">
       <DocPresence v-if="connection === 'connected'" :peers="peers" class="me-1" />
+      <v-menu v-if="!loading" v-model="outlineOpen" location="bottom end" offset="6">
+        <template #activator="{ props: menuProps }">
+          <button
+            v-bind="menuProps"
+            type="button"
+            class="doc-top-bar__btn"
+            :aria-label="t('work.room.doc.outline')"
+            :title="t('work.room.doc.outline')"
+          >
+            <v-icon size="17">mdi-format-list-bulleted</v-icon>
+          </button>
+        </template>
+        <DocOutline :headings="headings" @select="pickHeading" />
+      </v-menu>
+      <button
+        v-if="!loading"
+        type="button"
+        class="doc-top-bar__btn"
+        :aria-pressed="findOpen"
+        :aria-label="t('work.room.doc.find')"
+        :title="t('work.room.doc.find')"
+        @click="emit('toggle-find')"
+      >
+        <v-icon size="17">mdi-magnify</v-icon>
+      </button>
       <button
         v-if="suggestionCount > 0"
         type="button"
@@ -180,12 +220,13 @@ async function toComment() {
 <style scoped>
 .doc-top-bar {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  min-width: 0;
   min-height: 44px;
   padding: 0 8px 0 16px;
-  min-width: 0;
+  align-items: center;
+  gap: 8px;
 }
+
 .doc-top-bar__state {
   display: flex;
   flex: 1 1 auto;
@@ -193,60 +234,68 @@ async function toComment() {
   gap: 8px;
   min-width: 0;
 }
+
 .doc-top-bar__actions {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
   gap: 2px;
 }
+
 .doc-top-bar__note {
   display: inline-flex;
-  align-items: center;
-  gap: 6px;
   overflow: hidden;
-  color: var(--muted);
   font-size: 13px;
   line-height: var(--lh-13);
-  white-space: nowrap;
+  color: var(--muted);
   text-overflow: ellipsis;
+  white-space: nowrap;
+  align-items: center;
+  gap: 6px;
 }
+
 .doc-top-bar__note--warn {
   color: var(--warn-ink);
 }
+
 .doc-top-bar__btn {
   display: inline-flex;
+  height: 30px;
+  min-width: 30px;
+  padding: 0 8px;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+  white-space: nowrap;
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
   flex: 0 0 auto;
   align-items: center;
   gap: 6px;
-  height: 30px;
-  min-width: 30px;
   justify-content: center;
-  padding: 0 8px;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--muted);
-  font-size: 13px;
-  line-height: var(--lh-13);
-  white-space: nowrap;
-  cursor: pointer;
   transition:
     background var(--dur-quick) var(--ease-standard),
     color var(--dur-quick) var(--ease-standard);
 }
+
 .doc-top-bar__btn:hover:not(:disabled),
 .doc-top-bar__btn[aria-pressed='true'],
 .doc-top-bar__btn[aria-expanded='true'] {
-  background: var(--fill);
   color: var(--ink);
+  background: var(--fill);
 }
+
 .doc-top-bar__btn:disabled {
   cursor: default;
 }
+
 .doc-top-bar__btn:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
+
 /* 最近编辑那一行：是一句状态，点得开，所以只在悬停时像按钮；字和正文的左边对齐。 */
 .doc-top-bar__btn--quiet {
   flex: 0 1 auto;
@@ -256,15 +305,45 @@ async function toComment() {
   color: var(--faint);
   text-overflow: ellipsis;
 }
+
 .doc-top-bar__btn--chip {
-  background: var(--fill);
   color: var(--text);
+  background: var(--fill);
 }
+
 .doc-top-bar__btn--agent {
-  color: var(--ink);
   font-weight: 600;
+  color: var(--ink);
 }
+
 .doc-top-bar__agent {
   width: min(420px, calc(100vw - 32px));
+}
+
+/* 手指点得中（设计系统 §10.1）：这几颗只有 30px 高，触屏上把能点的范围撑到 44×44，
+   画出来的样子不变。撑开的部分会互相盖住，所以并排的几颗之间先拉开——一次只点中
+   一颗。 */
+@media (pointer: coarse) {
+  .doc-top-bar__state {
+    gap: 14px;
+  }
+
+  .doc-top-bar__actions {
+    gap: 14px;
+  }
+
+  .doc-top-bar__btn {
+    position: relative;
+  }
+
+  .doc-top-bar__btn::before {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+    content: '';
+    transform: translate(-50%, -50%);
+  }
 }
 </style>
