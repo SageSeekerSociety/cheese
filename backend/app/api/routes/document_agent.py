@@ -1,9 +1,10 @@
-"""Asking the room's AI teammate from the document (``app.domain.agent.document.box``).
+"""Asking the AI teammate from a document (``app.domain.agent.document.box``).
 
 A person who may comment on the document may ask; whether the answer may change
-the document is the document's to say (an archived room or project is read-only),
-not the browser's. The answer streams back as server-sent events. Once asked, it
-is read to its end by whichever backend is up (``session_host.consumptions``):
+the document is the document's to say (an archived room or project is
+read-only), not the browser's. The answer streams back as server-sent events.
+Once asked, it is read to its end by whichever backend is up
+(``session_host.consumptions``):
 a reader who loses the stream reads the rest of it from where it was, and what
 the teammate changed stays changed.
 """
@@ -19,10 +20,11 @@ from fastapi.responses import StreamingResponse
 
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service, get_consumptions, get_session_host
+from app.api.doc_access import frozen, reach
 from app.api.doc_identity import human_operation_actor
 from app.api.response import ok
-from app.api.routes.living_docs import _frozen
-from app.api.routes.topics import DbSession, _actor_in_place
+from app.api.routes.document_comments import asked_of
+from app.api.routes.topics import DbSession
 from app.core.background import spawn
 from app.core.errors import (
     ForbiddenError,
@@ -36,12 +38,11 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.document import box, question, thread
 from app.domain.agent.session_host.consumptions import Consumptions
 from app.domain.agent.session_host.host import SessionHost
-from app.domain.block.comment_threads import CommentThreads
+from app.domain.living_doc.comments import CommentThreads
 from app.domain.living_doc.schemas import AgentAskIn
-from app.domain.topic.services import TopicService
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/topics", tags=["doc-agent"])
+router = APIRouter(prefix="/documents", tags=["doc-agent"])
 
 Chat = Annotated[ChatService, Depends(get_chat_service)]
 Sessions = Annotated[SessionHost, Depends(get_session_host)]
@@ -54,22 +55,18 @@ def _sse(event: str, data: dict, position: str | None = None) -> bytes:
     return f"{head}event: {event}\ndata: {body}\n\n".encode()
 
 
-async def _asker(db, resolver, topic_id: uuid.UUID):
-    place = await TopicService(db).place_or_404(topic_id)
-    actor = await _actor_in_place(resolver, place)
-    await human_operation_actor(db, actor)
-    await resolver.authorize_topic(
-        actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
-    )
+async def _asker(db, resolver, document_id: uuid.UUID):
+    reached = await reach(db, resolver, document_id, enforce=True)
+    await human_operation_actor(db, reached.actor)
     redis = get_redis_client()
     if redis is None:
         raise SystemBusyError(say("docAgentAskUnavailable"))
-    return place, actor, redis
+    return reached, reached.actor, redis
 
 
-@router.post("/{topic_id}/doc/agent")
+@router.post("/{document_id}/agent")
 async def ask_agent(
-    topic_id: uuid.UUID,
+    document_id: uuid.UUID,
     body: AgentAskIn,
     db: DbSession,
     resolver: ActorResolverDep,
@@ -81,7 +78,7 @@ async def ask_agent(
     to read on from elsewhere), ``delta``, ``tool``, then ``done`` (``answer``,
     ``edits``, ``stopped``) or ``error``. Each event from ``answering`` on
     carries its place in the question's stream (``id``)."""
-    place, actor, redis = await _asker(db, resolver, topic_id)
+    reached, actor, redis = await _asker(db, resolver, document_id)
     preset = box.PRESETS.get(body.preset or "") if body.preset else None
     if body.preset and preset is None:
         raise ValidationError(say("docAgentPresetNotFound"))
@@ -91,10 +88,10 @@ async def ask_agent(
         raise ValidationError(say("docAgentPresetNeedsSelection"))
     if body.conversation is not None:
         await box.owned(
-            redis, body.conversation, asker=actor.handle, room_id=place.room_id
+            redis, body.conversation, asker=actor.handle, document_id=document_id
         )
     conversation = body.conversation or uuid.uuid4()
-    may_edit = not await _frozen(db, place)
+    may_edit = not await frozen(db, reached)
     selection = (
         box.Selection(body.selection.block, body.selection.start, body.selection.end)
         if body.selection is not None
@@ -115,8 +112,7 @@ async def ask_agent(
                 questions,
                 redis,
                 emit,
-                project_id=place.project_id,
-                room_id=place.room_id,
+                asked=asked_of(reached),
                 asker=actor.handle,
                 conversation=conversation,
                 preset=body.preset,
@@ -146,9 +142,9 @@ async def ask_agent(
     )
 
 
-@router.get("/{topic_id}/doc/agent/{conversation}/answers/{work}")
+@router.get("/{document_id}/agent/{conversation}/answers/{work}")
 async def read_answer(
-    topic_id: uuid.UUID,
+    document_id: uuid.UUID,
     conversation: uuid.UUID,
     work: uuid.UUID,
     db: DbSession,
@@ -159,8 +155,8 @@ async def read_answer(
     """The stream of a question asked in the box's conversation, from ``after``
     (the ``id`` of the last event read) to its end, as ``ask_agent`` streams
     it."""
-    place, actor, redis = await _asker(db, resolver, topic_id)
-    await box.owned(redis, conversation, asker=actor.handle, room_id=place.room_id)
+    _, actor, redis = await _asker(db, resolver, document_id)
+    await box.owned(redis, conversation, asker=actor.handle, document_id=document_id)
     await db.commit()
     asked = await questions.get(str(work))
     if asked is None or asked.kind != box.KIND or asked.key != str(conversation):
@@ -179,9 +175,9 @@ async def _answer(questions: Consumptions, work: str, after: str = "0"):
         yield _sse(event, data, position)
 
 
-@router.post("/{topic_id}/doc/agent/{conversation}/stop")
+@router.post("/{document_id}/agent/{conversation}/stop")
 async def stop_agent(
-    topic_id: uuid.UUID,
+    document_id: uuid.UUID,
     conversation: uuid.UUID,
     db: DbSession,
     resolver: ActorResolverDep,
@@ -189,18 +185,18 @@ async def stop_agent(
 ) -> dict:
     """Stop the box's question: its wait for a turn, or the answer being
     written. What was already changed stays, for the box to undo."""
-    place, actor, redis = await _asker(db, resolver, topic_id)
-    await box.owned(redis, conversation, asker=actor.handle, room_id=place.room_id)
+    reached, actor, redis = await _asker(db, resolver, document_id)
+    await box.owned(redis, conversation, asker=actor.handle, document_id=document_id)
     await db.commit()
     await box.stop(
-        redis, sessions, project_id=place.project_id, conversation=conversation
+        redis, sessions, project_id=reached.doc.project_id, conversation=conversation
     )
     return ok({})
 
 
-@router.post("/{topic_id}/doc/agent/{conversation}/reply/{thread_id}")
+@router.post("/{document_id}/agent/{conversation}/reply/{thread_id}")
 async def reply_in_thread(
-    topic_id: uuid.UUID,
+    document_id: uuid.UUID,
     conversation: uuid.UUID,
     thread_id: uuid.UUID,
     db: DbSession,
@@ -209,23 +205,17 @@ async def reply_in_thread(
 ) -> dict:
     """Put the box's last answer into a comment thread the person started for
     it (「转成评论」), as the teammate's reply."""
-    place, actor, redis = await _asker(db, resolver, topic_id)
+    reached, actor, redis = await _asker(db, resolver, document_id)
     held = await box.owned(
-        redis, conversation, asker=actor.handle, room_id=place.room_id
+        redis, conversation, asker=actor.handle, document_id=document_id
     )
-    root = await CommentThreads(db).root(place.room_id, thread_id)
+    root = await CommentThreads(db).root(document_id, thread_id)
     if root.author != actor.handle:
         raise ForbiddenError("Only the thread you started takes this answer")
     if not held.answer:
         raise ValidationError(say("docAgentNoAnswerToComment"))
-    bound = await question.bind(db, place.room_id)
+    asked = asked_of(reached)
+    bound = await question.bind(db, asked)
     await db.commit()
-    await thread.reply(
-        chat.session_factory,
-        place.room_id,
-        place.project_id,
-        thread_id,
-        bound,
-        held.answer,
-    )
+    await thread.reply(chat.session_factory, asked, thread_id, bound, held.answer)
     return ok({})

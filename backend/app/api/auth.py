@@ -61,7 +61,7 @@ _log = get_logger("cheesex.auth")
 #: a 芝士 answering for someone acts through these and nothing else, so a new
 #: tool for it is a new line here, read by whoever reviews it.
 DELEGATED_ROUTES: dict[str, bool] = {
-    "app.api.routes.living_docs.get_topic_doc": False,
+    "app.api.routes.living_docs.get_document": False,
     "app.api.routes.living_docs.edit_doc_passages": True,
     "app.api.routes.project_context.search_project_context": False,
     "app.api.routes.topics_preview.preview_file": False,

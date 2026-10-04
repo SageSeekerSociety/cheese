@@ -38,6 +38,12 @@ from tests.integration.conftest import (
     room_agent_seat,
     session_auth_headers,
 )
+from tests.support.living_doc import document_of
+
+
+def _doc(client, room) -> str:
+    """The room's document, as its routes address it."""
+    return f"/documents/{document_of(client, room)}"
 
 
 def _sandbox(project_id: str, topic_id: str) -> dict[str, str]:
@@ -151,7 +157,7 @@ def _restore_chat_service():
 
 def _put(client, topic_id, content, version, author="alice", headers=None):
     return client.put(
-        f"/topics/{topic_id}/doc",
+        _doc(client, topic_id),
         json={"content": content, "expected_version": version},
         headers=headers or session_auth_headers(author),
     )
@@ -306,7 +312,7 @@ def test_the_version_it_was_told_is_the_one_it_must_write_against(client):
         headers=sandbox,
     )
     assert rebased.status_code == 200
-    doc = client.get(f"/topics/{tid}/doc").json()["data"]
+    doc = client.get(_doc(client, tid)).json()["data"]
     assert "人补的：先做召回" in doc["content"]
     assert "芝士写的：召回做完了" in doc["content"]
 

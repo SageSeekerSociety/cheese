@@ -48,7 +48,7 @@ def test_a_cards_id_is_not_a_topic_address(client):
 
     assert client.get(f"/topics/{card['id']}").status_code == 404
     assert client.get(f"/topics/{card['id']}/blocks").status_code == 404
-    assert client.get(f"/topics/{card['id']}/doc").status_code == 404
+    assert client.get(f"/topics/{card['id']}/document").status_code == 404
     assert (
         client.post(f"/topics/{card['id']}/title", json={"title": "换个名"}).status_code
         == 404

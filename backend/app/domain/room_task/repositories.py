@@ -12,10 +12,9 @@ from app.domain.room_task.models import Task, TaskTitleSource
 
 
 class TaskRepository:
-    # Comments belong to the document view. Artifacts are in the room's
-    # timeline, but a card's timeline has no way to show one yet, so it leaves
-    # them out rather than send rows nothing renders.
-    _NON_TIMELINE = (BlockKind.comment, BlockKind.artifact)
+    # Artifacts are in the room's timeline, but a card's timeline has no way to
+    # show one yet, so it leaves them out rather than send rows nothing renders.
+    _NON_TIMELINE = (BlockKind.artifact,)
 
     def __init__(self, session: AsyncSession):
         self._session = session

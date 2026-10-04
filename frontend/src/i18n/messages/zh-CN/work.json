@@ -823,14 +823,6 @@
         "diagram": "流程图",
         "status": "状态标签"
       },
-      "status": {
-        "inProgress": "进行中",
-        "draft": "草稿",
-        "done": "已完成"
-      },
-      "liveRefTitle": "「{title}」· {status} — 点击打开",
-      "thisTask": "这件任务",
-      "subtopic": "子话题",
       "selectionToolbar": "选区操作",
       "copy": "复制",
       "blockType": "段落格式",

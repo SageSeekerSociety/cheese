@@ -1,14 +1,22 @@
-import type { Block } from '../cx_types'
-
 /** The room's agent answering a thread now: waiting for a free session, or answering. */
 export type DocThreadAnswering = 'queued' | 'working'
 
+/** A comment on a document: one that opens a thread, or a reply in one. */
+export interface DocComment {
+  id: string
+  author: string
+  content: string
+  /** The words an opening comment is about, as they read when it was written. */
+  anchor_quote: string | null
+  created_at: string
+}
+
 export interface DocThread {
   /** The thread's first comment; `anchor_quote` is the words it is about. */
-  comment: Block
+  comment: DocComment
   revision: number
   state: 'open' | 'resolved'
-  replies: { sequence: number; comment: Block }[]
+  replies: { sequence: number; comment: DocComment }[]
   /** Only in the thread list. */
   answering?: DocThreadAnswering | null
 }

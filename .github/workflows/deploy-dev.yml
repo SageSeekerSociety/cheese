@@ -302,6 +302,13 @@ jobs:
       # no endpoint, no credential. Convention: app/domain/feedback/shipping.py.
       - name: Mark the feedback this release fixes as deployed
         if: steps.release.outputs.skip != 'true' && steps.previous.outputs.tag != ''
+        # The release is already live by now; this only moves feedback reports
+        # along. One `gh api` call per shipped commit, none of which time out on
+        # their own: a connection the runner lost hung this step for 13 minutes
+        # until the next deploy cancelled the run. Bounded, and not the deploy's
+        # failure when it runs out.
+        timeout-minutes: 3
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           PREVIOUS: ${{ steps.previous.outputs.tag }}

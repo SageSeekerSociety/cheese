@@ -65,6 +65,7 @@ import type {
   WaitingItem,
   WorkspaceFile,
 } from './cx_types'
+import type { DocComment } from './lib/docThreadTypes'
 import type { AgentFieldChoice } from './lib/modelChoices'
 import type { SitePage } from './types/site'
 
@@ -1445,22 +1446,15 @@ export function getProgress(topicId: string, taskId?: string): Promise<TopicProg
   return request<TopicProgress>(`/topics/${encodeURIComponent(topicId)}/progress${q}`)
 }
 
-// B1: the living doc's structured node tree (heading/paragraph/list/…), in order.
-// Each node has a stable id + the turn_id that produced it — used for cross-view
-// highlight (B1 P2) and comment anchoring (B4).
-export function getDocNodes(topicId: string): Promise<{ data: Block[]; total: number }> {
-  // 打开一个话题时两条路几乎同时要这份节点树 —— 支线徽章（usePanelDoc.loadNodes）
-  // 和段落评论对齐（DocSurface → fetchDocNodes）。它们要的是同一份东西，第二条跟着
-  // 在飞的那条走：见 lib/inflight。
-  return shareInFlight(`docNodes:${topicId}`, () =>
-    request<{ data: Block[]; total: number }>(`/topics/${encodeURIComponent(topicId)}/docs`)
-  )
+// A document's top-level blocks (heading/paragraph/list/…), in order: which
+// passage each comment is aligned to.
+export function getDocNodes(documentId: string): Promise<{ data: Block[]; total: number }> {
+  return request<{ data: Block[]; total: number }>(`/documents/${encodeURIComponent(documentId)}/nodes`)
 }
 
-// 段落评论 (eval B4): inline comments, each anchored to a doc node via reply_to.
 /** Start a comment thread on the words `quote` (or on the whole document without them). */
-export function addComment(topicId: string, content: string, quote?: string): Promise<Block> {
-  return request<Block>(`/topics/${encodeURIComponent(topicId)}/comments`, {
+export function addComment(documentId: string, content: string, quote?: string): Promise<DocComment> {
+  return request<DocComment>(`/documents/${encodeURIComponent(documentId)}/comments`, {
     method: 'POST',
     body: JSON.stringify({ content, quote: quote || undefined }),
   })

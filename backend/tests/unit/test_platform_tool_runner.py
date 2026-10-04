@@ -18,6 +18,7 @@ import pytest
 _CHEESE = Path(__file__).resolve().parents[2] / "sandbox" / "cheese"
 _ROOM = "11111111-1111-4111-8111-111111111111"
 _TASK = "33333333-3333-4333-8333-333333333333"
+_DOC = "44444444-4444-4444-8444-444444444444"
 
 
 def _load():
@@ -235,19 +236,24 @@ def test_invalid_read_arguments_fail_before_any_request(tool, args):
 # The living doc is replaced whole, so a write based on a version somebody has
 # already moved past destroys their edit outright. The version is a fact about
 # what the agent READ, never something it can state.
+#
+# A turn in a room knows the room, not its document: the tools ask the room
+# which document is its own, then act on that.
 
 
-def _doc_host(files=None, envelope=None):
+def _doc_host(files=None, envelope=None, environ=None):
     return Host(
         {
-            ("GET", f"/topics/{_ROOM}/doc"): {
+            ("GET", f"/topics/{_ROOM}/document"): {"id": _DOC},
+            ("GET", f"/documents/{_DOC}"): {
                 "content": "# 现在的文档",
                 "doc_version": 7,
             },
-            ("PUT", f"/topics/{_ROOM}/doc"): {"doc_version": 8},
+            ("PUT", f"/documents/{_DOC}"): {"doc_version": 8},
         },
         files={"notes/d.md": "# 我写的"} if files is None else files,
         envelope=envelope,
+        environ=environ,
     )
 
 
@@ -285,7 +291,7 @@ def test_a_refused_set_says_how_to_recover():
     """Retrying the same file is refused identically, forever — the way out is
     re-reading."""
     host = _doc_host()
-    host.answers[("PUT", f"/topics/{_ROOM}/doc")] = cheese.PlatformHTTPError(
+    host.answers[("PUT", f"/documents/{_DOC}")] = cheese.PlatformHTTPError(
         409, json.dumps({"error": {"data": {"doc_version": 9}}})
     )
     with pytest.raises(cheese.PlatformToolError) as refused:
@@ -302,7 +308,7 @@ def test_a_set_that_would_lose_text_shows_the_platforms_reason():
         "第 3 行是脚注定义（[^1]: 注），实况文档不支持脚注。"
         "请把脚注内容改成正文里的括注。"
     )
-    host.answers[("PUT", f"/topics/{_ROOM}/doc")] = cheese.PlatformHTTPError(
+    host.answers[("PUT", f"/documents/{_DOC}")] = cheese.PlatformHTTPError(
         422, json.dumps({"error": {"message": reason, "data": {"line": 3}}})
     )
     with pytest.raises(cheese.PlatformToolError) as refused:
@@ -312,8 +318,38 @@ def test_a_set_that_would_lose_text_shows_the_platforms_reason():
 
 
 def test_an_empty_doc_says_so_instead_of_answering_nothing():
-    host = Host({("GET", f"/topics/{_ROOM}/doc"): None})
-    assert "还没有实况文档" in run("cheese_doc_get", {}, host)
+    host = Host(
+        {
+            ("GET", f"/topics/{_ROOM}/document"): {"id": _DOC},
+            ("GET", f"/documents/{_DOC}"): None,
+        }
+    )
+    assert "还是空的" in run("cheese_doc_get", {}, host)
+
+
+def test_a_turn_in_a_room_reads_and_writes_the_rooms_document():
+    host = _doc_host()
+    run("cheese_doc_get", {}, host)
+    run("cheese_doc_set", {"path": "notes/d.md"}, host)
+    assert [(p["method"], p["path"]) for p in host.requests] == [
+        ("GET", f"/topics/{_ROOM}/document"),
+        ("GET", f"/documents/{_DOC}"),
+        ("GET", f"/topics/{_ROOM}/document"),
+        ("PUT", f"/documents/{_DOC}"),
+    ]
+
+
+def test_a_session_opened_on_a_document_needs_no_room():
+    """A question asked in a document of the project's own runs with that
+    document and no room at all."""
+    host = _doc_host(environ={"CHEESE_DOCUMENT": _DOC, "CHEESE_TOPIC": ""})
+    assert "# 现在的文档" in run("cheese_doc_get", {}, host)
+    run("cheese_doc_set", {"path": "notes/d.md"}, host)
+    assert [(p["method"], p["path"]) for p in host.requests] == [
+        ("GET", f"/documents/{_DOC}"),
+        ("PUT", f"/documents/{_DOC}"),
+    ]
+    assert _puts(host)[-1]["expected_version"] == 7
 
 
 def test_a_write_back_says_what_does_not_read_like_state():

@@ -22,6 +22,7 @@ from app.domain.topic.doc_change import summarize_doc_change
 from app.domain.topic.services import TopicService
 from tests.integration.conftest import registered, session_auth_headers
 from tests.integration.test_docs import _topic
+from tests.support.living_doc import document_of
 
 
 async def seed(factory):
@@ -56,6 +57,11 @@ async def stored(factory, room, content, *actors, operation=None):
         )
         await session.commit()
         return result.answer
+
+
+def _doc(client, room) -> str:
+    """The room's document, as its routes address it."""
+    return f"/documents/{document_of(client, room)}"
 
 
 @pytest.mark.anyio
@@ -124,27 +130,28 @@ def test_lost_response_replays_original_receipt_without_second_effect(client):
         "expected_version": 0,
         "operation_id": operation,
     }
-    first = client.put(f"/topics/{room}/doc", json=body)
+    first = client.put(_doc(client, room), json=body)
     assert first.status_code == 200
     # Treat the response as lost: recover it after another writer has advanced.
     later = client.put(
-        f"/topics/{room}/doc", json={"content": "后来", "expected_version": 1}
+        _doc(client, room),
+        json={"content": "后来", "expected_version": 1},
     )
     assert later.status_code == 200
-    replay = client.put(f"/topics/{room}/doc", json=body)
+    replay = client.put(_doc(client, room), json=body)
     assert replay.status_code == 200
     assert replay.json() == first.json()
-    queried = client.get(f"/topics/{room}/doc/operations/{operation}")
+    queried = client.get(f"{_doc(client, room)}/operations/{operation}")
     assert queried.json() == first.json()
-    assert client.get(f"/topics/{room}/doc").json()["data"]["doc_version"] == 2
-    history = client.get(f"/topics/{room}/doc/history").json()["data"]["versions"]
+    assert client.get(_doc(client, room)).json()["data"]["doc_version"] == 2
+    history = client.get(f"{_doc(client, room)}/history").json()["data"]["versions"]
     assert len(history) == 2
     assert history[0]["content"] == body["content"]
     assert history[0]["content_hash"] == content_hash(body["content"])
-    different = client.put(f"/topics/{room}/doc", json={**body, "content": "别的"})
+    different = client.put(_doc(client, room), json={**body, "content": "别的"})
     assert different.status_code == 409
     assert (
-        len(client.get(f"/topics/{room}/doc/history").json()["data"]["versions"]) == 2
+        len(client.get(f"{_doc(client, room)}/history").json()["data"]["versions"]) == 2
     )
 
 
@@ -154,19 +161,22 @@ def test_history_lists_the_latest_versions_first_and_pages_back(client):
     for base, content in enumerate(["一", "二", "三"]):
         assert (
             client.put(
-                f"/topics/{room}/doc",
+                _doc(client, room),
                 json={"content": content, "expected_version": base},
             ).status_code
             == 200
         )
-    latest = client.get(f"/topics/{room}/doc/history?newest=true").json()["data"]
+    latest = client.get(f"{_doc(client, room)}/history?newest=true").json()["data"]
     assert [row["content"] for row in latest["versions"]] == ["三", "二", "一"]
+    before = latest["versions"][0]["version"]
     older = client.get(
-        f"/topics/{room}/doc/history?newest=true&before={latest['versions'][0]['version']}"
+        f"{_doc(client, room)}/history?newest=true&before={before}"
     ).json()["data"]
     assert [row["content"] for row in older["versions"]] == ["二", "一"]
     assert older["versions"][0]["actor"] == "owner"
-    last = client.get(f"/topics/{room}/doc/history?newest=true&limit=1").json()["data"]
+    last = client.get(f"{_doc(client, room)}/history?newest=true&limit=1").json()[
+        "data"
+    ]
     assert [row["content"] for row in last["versions"]] == ["三"]
 
 
@@ -177,24 +187,24 @@ def test_restore_adds_new_version_and_replays_without_rewriting_raw(client):
     for base, content in enumerate([raw, "后来"]):
         assert (
             client.put(
-                f"/topics/{room}/doc",
+                _doc(client, room),
                 json={"content": content, "expected_version": base},
             ).status_code
             == 200
         )
     operation = str(uuid.uuid4())
     payload = {"version": 1, "expected_version": 2, "operation_id": operation}
-    response = client.post(f"/topics/{room}/doc/restore", json=payload)
+    response = client.post(f"{_doc(client, room)}/restore", json=payload)
     assert response.status_code == 200
     assert response.json()["data"]["doc_version"] == 3
     assert response.json()["data"]["content"] == raw
     assert (
-        client.post(f"/topics/{room}/doc/restore", json=payload).json()
+        client.post(f"{_doc(client, room)}/restore", json=payload).json()
         == response.json()
     )
-    receipt = client.get(f"/topics/{room}/doc/operations/{operation}?action=restore")
+    receipt = client.get(f"{_doc(client, room)}/operations/{operation}?action=restore")
     assert receipt.json() == response.json()
-    versions = client.get(f"/topics/{room}/doc/history").json()["data"]["versions"]
+    versions = client.get(f"{_doc(client, room)}/history").json()["data"]["versions"]
     assert [row["version"] for row in versions] == [1, 2, 3]
     assert versions[0]["content"] == versions[2]["content"] == raw
     assert versions[2]["previous_version"] == versions[2]["base_version"] == 2
@@ -408,30 +418,36 @@ def test_operation_requires_real_owner_and_ignores_claimed_author(client, monkey
         "operation_id": operation,
         "author": "owner",
     }
-    assert client.put(f"/topics/{room}/doc", json=payload).status_code == 401
+    assert client.put(_doc(client, room), json=payload).status_code == 401
     outsider = session_auth_headers("outsider")
     assert (
-        client.put(f"/topics/{room}/doc", json=payload, headers=outsider).status_code
+        client.put(_doc(client, room), json=payload, headers=outsider).status_code
         == 403
     )
     owner = session_auth_headers("owner")
     saved = client.put(
-        f"/topics/{room}/doc", json={**payload, "author": "outsider"}, headers=owner
+        _doc(client, room),
+        json={**payload, "author": "outsider"},
+        headers=owner,
     )
     assert saved.status_code == 200
     assert saved.json()["data"]["author"] == "owner"
     assert (
         client.get(
-            f"/topics/{room}/doc/operations/{operation}", headers=outsider
+            f"{_doc(client, room)}/operations/{operation}",
+            headers=outsider,
         ).status_code
         == 403
     )
     assert (
-        client.get(f"/topics/{room}/doc/operations/{operation}", headers=owner).json()
+        client.get(
+            f"{_doc(client, room)}/operations/{operation}",
+            headers=owner,
+        ).json()
         == saved.json()
     )
     assert (
-        client.get(f"/topics/{room}/doc/history", headers=outsider).status_code == 403
+        client.get(f"{_doc(client, room)}/history", headers=outsider).status_code == 403
     )
 
 
@@ -453,14 +469,14 @@ def test_committed_response_failure_replays_one_persisted_effect(client, monkeyp
 
     # The store committed; telling the room failed, so the writer never heard.
     monkeypatch.setattr(doc_store.get_broker(), "publish", failed_publish)
-    assert client.put(f"/topics/{room}/doc", json=payload).status_code != 200
+    assert client.put(_doc(client, room), json=payload).status_code != 200
     monkeypatch.setattr(doc_store.get_broker(), "publish", original)
-    queried = client.get(f"/topics/{room}/doc/operations/{operation}")
+    queried = client.get(f"{_doc(client, room)}/operations/{operation}")
     assert queried.status_code == 200
-    replay = client.put(f"/topics/{room}/doc", json=payload)
+    replay = client.put(_doc(client, room), json=payload)
     assert replay.status_code == 200
     assert queried.json() == replay.json()
-    assert client.get(f"/topics/{room}/doc").json()["data"]["doc_version"] == 1
+    assert client.get(_doc(client, room)).json()["data"]["doc_version"] == 1
     assert (
-        len(client.get(f"/topics/{room}/doc/history").json()["data"]["versions"]) == 1
+        len(client.get(f"{_doc(client, room)}/history").json()["data"]["versions"]) == 1
     )

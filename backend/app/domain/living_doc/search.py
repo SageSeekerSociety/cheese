@@ -1,10 +1,10 @@
 """Finding words in documents, for the project search
 (`GET /projects/{id}/context/search`).
 
-Two kinds of hit, as the search names them: ``doc`` (a whole document) and
+Three kinds of hit, as the search names them: ``doc`` (a whole document),
 ``doc_node`` (one of its top-level blocks, which is the paragraph a hit can
-point at). Both are ranked by the same BM25 query the search runs on
-messages (`app.domain.search.bm25`).
+point at) and ``comment`` (a comment written on it). All are ranked by the same
+BM25 query the search runs on messages (`app.domain.search.bm25`).
 """
 
 import uuid
@@ -14,10 +14,11 @@ from datetime import datetime
 from sqlalchemy import ColumnElement, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.living_doc.models import Document, DocumentNode
+from app.domain.living_doc.models import Document, DocumentComment, DocumentNode
 from app.domain.search import bm25
 
-KINDS = ("doc", "doc_node")
+KINDS = ("doc", "doc_node", "comment")
+_MODELS = {"doc": Document, "doc_node": DocumentNode, "comment": DocumentComment}
 
 
 @dataclass
@@ -49,7 +50,7 @@ def _matching(kind: str, terms: list[str], ids: list[uuid.UUID]) -> ColumnElemen
             Document.id, terms, {"content": 1}, filters=[bm25.any_of("id", ids)]
         )
     return bm25.match_all_words(
-        DocumentNode.id,
+        _MODELS[kind].id,
         terms,
         {"content": 1},
         filters=[bm25.any_of("document_id", ids)],
@@ -68,7 +69,7 @@ async def find(
     """The best ``limit`` hits of ``kind`` after ``offset``, best first."""
     if not docs:
         return []
-    model = Document if kind == "doc" else DocumentNode
+    model = _MODELS[kind]
     score = func.paradedb.score(model.id)
     rows = await session.execute(
         select(model, score)
@@ -99,7 +100,7 @@ async def count(
 ) -> int:
     if not docs:
         return 0
-    model = Document if kind == "doc" else DocumentNode
+    model = _MODELS[kind]
     return (
         await session.scalar(
             select(func.count())
