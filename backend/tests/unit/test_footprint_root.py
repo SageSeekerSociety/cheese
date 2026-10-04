@@ -28,6 +28,7 @@ from app.domain.agent import (
 )
 from app.domain.agent.harness.claude_code.remote_execution import (
     bootstrap,
+    sandbox_host,
     session_transfer,
 )
 from app.domain.agent.place import (
@@ -65,6 +66,18 @@ def test_the_teardown_reads_the_sandboxes_the_bootstrap_records():
     room wrote into its own home outside the sandbox."""
     assert bootstrap.SANDBOXES == SANDBOXES_DIR
     assert resource_cleanup.SANDBOXES == SANDBOXES_DIR
+
+
+def test_every_side_of_a_sandbox_names_the_same_helper_cgroup_and_resolvers():
+    """The bootstrap installs the sandbox helper and the teardown takes a
+    sandbox down with it; the environment reset signals only processes in the
+    helper's cgroup; the bootstrap shows a sandbox the resolver list the
+    helper lets it reach. Each carries its own copy. Drift is silent: a
+    teardown that leaves the sandbox running, a reset that signals nothing, a
+    sandbox whose names never resolve."""
+    assert resource_cleanup.SANDBOX_HOST == bootstrap.SANDBOX_HOST
+    assert environment_runner.SANDBOX_CGROUP == sandbox_host.CGROUP.name
+    assert bootstrap.RESOLV_CONFS == sandbox_host.RESOLV_CONFS
 
 
 def test_the_shipped_programs_carry_the_checkout_name_that_place_chose():

@@ -43,6 +43,9 @@ CHECKOUT_DIR = "room"
 # installation, and not git's config, hooks and attributes in its checkouts,
 # which name programs git runs.
 SANDBOXES = "sandboxes"
+# What gives a sandboxed room its network and limits, and takes them down — a
+# copy of `bootstrap.SANDBOX_HOST`, held to it by test_footprint_root.py.
+SANDBOX_HOST = "/usr/local/libexec/cheese-sandbox"
 
 # Where an archived room's session transcripts wait under FOOTPRINT_ROOT until
 # the cleanup that retained them deletes them (topic/retire.py sets how long).
@@ -463,7 +466,12 @@ def remove_tree(path: Path) -> None:
 
 def request_exit(home: Path, work: Path, lock_fd: int) -> None:
     marker = home / ".cheese/environment-session.json"
-    if not marker.exists():
+    # A sandboxed room has no terminal of the platform's on this machine, and
+    # wrote this marker itself if it is there: it would name a terminal server
+    # the room started, whose pane pids are numbered in the room's own pid
+    # namespace and name other processes out here. Its processes end with its
+    # sandbox (`stop_executor`).
+    if sandbox_release(home) is not None or not marker.exists():
         return
     socket, name, *_ = json.loads(marker.read_text())
     # cksum consumes stdin below; do not trust a session name from an arbitrary file.
@@ -722,6 +730,7 @@ def stop_windows_helper(home: Path, pid: int, expected: str) -> None:
 
 
 def stop_executor(home: Path, resource: str) -> None:
+    sandboxed = sandbox_release(home) is not None
     installed = platform_dir(home)
     marker = installed / "execution-owner.json"
     if marker.exists():
@@ -738,6 +747,17 @@ def stop_executor(home: Path, resource: str) -> None:
                 raise RuntimeError("executor has not stopped: " + result.stderr)
             if sys.platform == "win32":
                 wait_for_launcher(home, state)
+    if sandboxed:
+        # Everything the room started is in its sandbox, the preview and
+        # tunnel helpers too, and goes with it; the pid files below are the
+        # room's to write and number processes in its own namespace. A machine
+        # without the helper never gave a sandbox a network or a cgroup, and
+        # its sandboxes end with their executor.
+        if Path(SANDBOX_HOST).exists():
+            result = run_command(["sudo", "-n", SANDBOX_HOST, "down", home.name])
+            if result.returncode:
+                raise RuntimeError("sandbox has not stopped: " + result.stderr)
+        return
     # Both helpers can outlive the agent, including launches without an executor.
     for name in ("cheese-preview", "cheese-tunnel"):
         marker = home / ".cheese" / (name + ".pid")
