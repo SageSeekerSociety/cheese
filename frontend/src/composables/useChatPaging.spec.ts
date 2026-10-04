@@ -185,6 +185,25 @@ describe('useChatPaging 向上翻页的补偿', () => {
     expect(mocks.listBlocks.mock.calls.length).toBeLessThanOrEqual(24)
   })
 
+  it('翻页在飞的时候这一段被整段换过（游标变了），这一页丢掉不接', async () => {
+    // 开场那条请求（或是 `?block=` 的跳转）在翻页请求还没回来时把整段换掉了：拿旧游标
+    // 读回来的这一页接到新一段上，中间会缺一段——看着就是「跳了一下、中间空一格」。
+    const scroller = makeScroller()
+    let cursor = 'cursor'
+    const timeline = makeTimeline(scroller)
+    timeline.oldestLoaded = () => cursor
+    mocks.listBlocks.mockImplementation(async () => {
+      cursor = 'reset' // 换过一段了，游标不作数
+      return { data: [{ id: 'older' }], has_more: true }
+    })
+    const paging = setUp(scroller, timeline)
+
+    await paging.loadOlder()
+
+    expect(timeline.prepend).not.toHaveBeenCalled()
+    expect(scroller.scrollTop).toBe(120)
+  })
+
   it('开场骨架占着一屏时不算铺满：先补历史，补满了才露出来', async () => {
     // 骨架（.skel）高 200、这一窗历史高 400：scrollHeight 读到 600，比容器 500 还高——
     // 按它判「铺满」就会在只画得出 400px 历史时撤掉骨架，最新那条飘在半空。骨架不算历史。

@@ -471,6 +471,10 @@ export function useChatPanel(opts: ChatPanelOptions) {
       timeline.show(cached)
       rowBatch.startFor(room.id, focus)
       if (!focus) restoreScroll(room.id)
+      // 缓存里只有一页，而最新那一段几乎全是 `in_room:false` 的回合事件——一页常常画
+      // 不满一屏（一条消息飘在半空、下面空一片）。不等上面那条请求回来，现在就按真实
+      // 行往回补：补的时候滚动补偿把最新那条钉在底部，历史往上长。见 useChatPaging。
+      void paging.fillViewportIfNeeded()
     } else {
       timeline.show({ blocks: [], hasMore: false })
       loadingHistory.value = true
@@ -492,15 +496,20 @@ export function useChatPanel(opts: ChatPanelOptions) {
       // 都和一开始就有缓存时一样。
       let shownEarly: typeof cached = null
       const warming = cached ? undefined : pendingBlockRefresh(room.id)
-      void warming?.then(() => {
+      void warming?.then(async () => {
         if (!stillHere() || !loadingHistory.value) return
         const warmed = cachedWindow(room.id)
         if (!warmed) return
         shownEarly = warmed
         timeline.show(warmed)
         rowBatch.startFor(room.id, focus)
-        loadingHistory.value = false
         if (!focus) restoreScroll(room.id)
+        // 预热回来的是同样的一页，而最新那一段几乎全是 `in_room:false` 的回合事件，
+        // 一页只画得出一两行——这时候撤骨架露出来还是「一条消息飘在半空」。先按真实行
+        // 补满一屏再撤，和下面正式那一页补法一致。见 useChatPaging.fillViewportIfNeeded。
+        await paging.fillViewportIfNeeded()
+        if (!stillHere()) return
+        loadingHistory.value = false
       })
       // One screenful, not the whole timeline — older blocks arrive when the
       // user scrolls up to them (loadOlder).
@@ -513,6 +522,11 @@ export function useChatPanel(opts: ChatPanelOptions) {
       // cached window and this page can be different sizes (the user may have
       // paged back), so a length comparison says nothing about the tail.
       const shown = cached ?? shownEarly
+      // 开场补窗（上面那次 fillViewportIfNeeded）可能已经把更早的几页读进来了。游标是
+      // 「窗口读到哪了」，比缓存窗口的更老就说明窗口被往上撑开过——这时候下面这一份
+      // 「最新一页」只是它的尾巴，`timeline.show` 整段换会把刚读回来的历史丢掉、屏幕跳
+      // 回最新那条。改成把它当缓存窗口，按它去合并。
+      const extended = shown !== null && timeline.oldestLoaded() !== (shown.blocks[0]?.id ?? null)
       const grew = shown !== null && shown.blocks.at(-1)?.id !== payload.data.at(-1)?.id
       // Merge rather than replace, so scrollback the user already loaded (and
       // that restoreScroll's saved offset refers to) does not vanish under them.
@@ -525,12 +539,22 @@ export function useChatPanel(opts: ChatPanelOptions) {
       // Live frames can arrive while the HTTP snapshot is pending. Apply them
       // last, including retractions, so that snapshot cannot erase newer events.
       merged.blocks = applyLiveChanges(merged, changes, reactions)
-      timeline.show(merged)
+      if (extended) {
+        // 窗口已经被补开了：不整段换，逐条接——变了的原地替换，新来的接到末尾。更早
+        // 那段历史原样留着，滚动位置也就不动。
+        for (const block of merged.blocks) {
+          if (timeline.find(block.id)) timeline.replace(block)
+          else timeline.append(block)
+        }
+      } else {
+        timeline.show(merged)
+      }
       // A reconnect starts with durable history. Settle sends that landed while
       // their echo was lost before opening the new socket; only absent client ids
       // remain queued for an idempotent resend.
       for (const block of merged.blocks) settleOutbox(block)
-      setCachedWindow(room.id, merged)
+      // 补过窗的话缓存那一页由翻页自己维护（pullOlderPage 会写），这里别用这一页盖回去。
+      if (!extended) setCachedWindow(room.id, merged)
       placeUnreadAnchor() // 冻在这一刻：之后来的新消息不再移动这条线
       if (!shown) rowBatch.startFor(room.id, focus)
       if (focus) void paging.openAt(focus)

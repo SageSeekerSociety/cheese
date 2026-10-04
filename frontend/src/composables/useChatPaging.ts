@@ -118,6 +118,9 @@ export function useChatPaging(deps: ChatPagingDeps) {
     const payload = await listBlocks(tid, { limit: PAGE_SIZE, before: cursor })
     // The user may have switched topics while this was in flight.
     if (topic()?.id !== tid) return null
+    // 或者这一段被整段换过（开场那条请求回来了、点了 `?block=` 跳过去）：游标已经不作
+    // 数，这一页接上去会在中间留一道缝。丢掉这次结果，让新的一段自己重新翻。
+    if (timeline.oldestLoaded() !== cursor) return null
     // Measure right before the rows go in: prepending grows the content above
     // the viewport, so scrollTop has to be pushed down by exactly that much or
     // the timeline jumps out from under the reader (and re-triggers this
