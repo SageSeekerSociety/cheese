@@ -758,6 +758,11 @@ const enterKey = isMac ? '⌘' : 'Ctrl'
 .palette-layer--page .palette__row {
   min-height: 48px;
 }
+/* 手机上这一页自己铺到底：最后几行结果落在 iPhone 那条 Home 横杠上点不中，给列表
+   末尾让出安全区。桌面和没有安全区的设备上 `env()` 是 0，长度不变。 */
+.palette-layer--page .palette__list {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
 
 .palette-enter-active {
   transition: opacity var(--dur-base) var(--ease-out);

@@ -869,8 +869,10 @@ function projectAvatar(name: string): string {
 
 .skip-link {
   position: fixed;
-  top: 10px;
-  left: 16px;
+  /* 出现在左上角：让出顶部与左侧安全区，刘海机上聚焦时不压进状态栏 / 圆角。桌面上
+     `env()` 是 0，位置不变。 */
+  top: calc(10px + env(safe-area-inset-top, 0px));
+  left: calc(16px + env(safe-area-inset-left, 0px));
   z-index: var(--z-banner); /* 压在顶栏和抽屉之上，和 OfflineBanner 同一档 */
   padding: 8px 14px;
   font-size: 14px;
