@@ -246,6 +246,9 @@ class AgentResult:
     # of its own: it ends with that turn, which this names. The room heard
     # that turn end; this ending only settles the message's own work.
     taken_into: uuid.UUID | None = None
+    # Read only once it was too old to land (``STALE_S``): it still ends its
+    # turn and what was read inside it, and the room hears nothing of it.
+    late: bool = False
 
 
 @dataclass
