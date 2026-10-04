@@ -267,10 +267,10 @@ class GapRepository:
             }
 
     async def _machine_census(self) -> dict[str, Any]:
-        """温机/项目机按状态的存量普查。**没有容器清单** —— 别写「沙箱容器数」。
+        """温机/项目机按状态的存量普查。**没有沙箱清单** —— 别写「沙箱数」。
 
-        `Visibility.isolated`（一房一容器）**还没有 transport**（`device/supply.py` 的
-        `has_runnable_transport` 只认 host），所以今天根本不存在一份可以数的容器清单。
+        云机上每条会话的执行器各跑在一个沙箱里（`Visibility.isolated`），但沙箱只是
+        机器上的一个进程，平台没有记它的台账，所以今天不存在一份可以数的沙箱清单。
         这里数的是四张台账里的**行**与状态分布。
         """
 

@@ -607,7 +607,10 @@ def test_executor_bootstrap_starts_in_room_without_a_git_checkout(
     state = home / ".cheese/executor"
     # Use the installation payload shipped to devices, including its CLI.
     program = script(
-        project, resource, {"CHEESE_API": "http://unused", "CHEESE_TOKEN": "test"}
+        project,
+        resource,
+        {"CHEESE_API": "http://unused", "CHEESE_TOKEN": "test"},
+        sandbox=False,
     )
     call = ast.parse(program).body[-1].value
     payload = json.loads(ast.literal_eval(call.args[0].args[0]))
@@ -737,6 +740,7 @@ def test_executor_rooms_share_installed_tools(
                     "CHEESE_TOKEN": "test",
                     "CHEESE_ENVIRONMENT": json.dumps(environment),
                 },
+                sandbox=False,
             )
             bootstrap.configure(payload)
             capsys.readouterr()
@@ -819,7 +823,10 @@ def _room_prepared_under_the_previous_root(tmp_path, monkeypatch):
     work = home / "room"
     work.mkdir(parents=True)
     program = script(
-        project, resource, {"CHEESE_API": "http://unused", "CHEESE_TOKEN": "test"}
+        project,
+        resource,
+        {"CHEESE_API": "http://unused", "CHEESE_TOKEN": "test"},
+        sandbox=False,
     )
     call = ast.parse(program).body[-1].value
     payload = json.loads(ast.literal_eval(call.args[0].args[0]))
@@ -938,7 +945,10 @@ def test_executor_upgrade_retries_after_installer_failure(
     monkeypatch.setattr(bootstrap, "binary", lambda *_: claude_binary())
     project, resource = uuid.uuid4(), uuid.uuid4()
     payload = payload_for(
-        project, resource, {"CHEESE_API": "http://unused", "CHEESE_TOKEN": "test"}
+        project,
+        resource,
+        {"CHEESE_API": "http://unused", "CHEESE_TOKEN": "test"},
+        sandbox=False,
     )
     home = tmp_path / ".cheese/home" / str(project) / str(resource)
     state = home / ".cheese/executor"
@@ -1015,8 +1025,11 @@ def observe_flock(lock, operation):
 
 runtime.fcntl.flock = observe_flock
 if socket_gone == "False":
-    runtime.request = lambda *_: {"pid": 123}
-    runtime.os.kill = lambda *_: pathlib.Path(signalled).touch()
+    def request(_state, method, *_):
+        pathlib.Path(signalled).write_text(method)
+        return {}
+
+    runtime.request = request
 sys.argv = [source, "stop", "--state", state]
 runtime.main()
 """
@@ -1046,7 +1059,7 @@ runtime.main()
                 time.sleep(0.01)
             assert stop.poll() is None
             if not socket_gone:
-                assert signalled.exists()
+                assert signalled.read_text() == "shutdown"
         finally:
             fcntl.flock(lock, fcntl.LOCK_UN)
             try:
@@ -1112,7 +1125,10 @@ def test_executor_release_waits_for_commands_and_preserves_results(
     monkeypatch.setattr(bootstrap, "binary", lambda *_: claude_binary())
     project, resource = uuid.uuid4(), uuid.uuid4()
     payload = payload_for(
-        project, resource, {"CHEESE_API": "http://unused", "CHEESE_TOKEN": "test"}
+        project,
+        resource,
+        {"CHEESE_API": "http://unused", "CHEESE_TOKEN": "test"},
+        sandbox=False,
     )
     home = tmp_path / ".cheese/home" / str(project) / str(resource)
     state = home / ".cheese/executor"
@@ -1263,6 +1279,7 @@ def test_running_executor_prepares_updated_room_without_restart(
                     "CHEESE_API": "http://unused",
                     "CHEESE_TOKEN": "first",
                 },
+                sandbox=False,
             )
         )
         .body[-1]
@@ -1293,7 +1310,9 @@ def test_running_executor_prepares_updated_room_without_restart(
             payload_for,
         )
 
-        delta = payload_for(project, resource, payload["env"], original["files"])
+        delta = payload_for(
+            project, resource, payload["env"], original["files"], sandbox=False
+        )
         # The fixture replaces the CLI; all other installed helpers are unchanged.
         assert set(delta["files"]) == {"cheese"}
         payload["env"]["CHEESE_TOKEN"] = "refreshed"

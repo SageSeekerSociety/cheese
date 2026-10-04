@@ -26,10 +26,16 @@ class ExecutorLaunch(Protocol):
     def can_prepare(self, info: dict) -> bool: ...
 
     def payload_for(
-        self, project_id, resource_id, env: dict, known_files: dict | None = None
+        self,
+        project_id,
+        resource_id,
+        env: dict,
+        known_files: dict | None = None,
+        *,
+        sandbox: bool,
     ) -> dict: ...
 
-    def script(self, project_id, resource_id, env: dict) -> str: ...
+    def script(self, project_id, resource_id, env: dict, *, sandbox: bool) -> str: ...
 
     def private_script(self, target: dict, env: dict) -> str: ...
 

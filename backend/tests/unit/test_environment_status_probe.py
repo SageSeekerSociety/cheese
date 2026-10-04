@@ -115,6 +115,25 @@ async def test_probe_finds_the_runner_the_launchers_write_today(tmp_path):
     assert await _probe(place) == {"state": "ready"}
 
 
+async def test_a_sandboxed_room_is_read_with_its_release_and_not_its_own_copy(
+    tmp_path,
+):
+    """A sandboxed room can write all of its home, and this runs outside the
+    sandbox: the runner is the one in the release the room was started from,
+    whatever the room left where its own copy goes."""
+    place = _place(tmp_path, shipped_by=(".cheese",), state='{"state": "forged"}')
+    release = tmp_path / ".cheese/executor-releases" / ("0" * 64)
+    release.mkdir(parents=True)
+    (release / "cheese-environment.py").write_text('print(\'{"state": "ready"}\')\n')
+    marker = (
+        tmp_path / ".cheese/sandboxes" / str(place.project_id) / str(place.topic_id)
+    )
+    marker.parent.mkdir(parents=True)
+    marker.write_text(str(release))
+
+    assert await _probe(place) == {"state": "ready"}
+
+
 async def test_the_current_root_wins_when_both_are_on_disk(tmp_path):
     place = _place(tmp_path, shipped_by=(".cheese",))
     other = place.home / ".claude"
@@ -225,7 +244,7 @@ def test_every_launcher_writes_the_runner_where_the_probe_looks():
     )
     assert written, "the machine launcher stopped writing the runner"
     # The executor's payload names the file; its bootstrap picks the directory.
-    payload = payload_for(uuid.uuid4(), uuid.uuid4(), {})
+    payload = payload_for(uuid.uuid4(), uuid.uuid4(), {}, sandbox=False)
     assert "cheese-environment.py" in payload["file_names"]
     written.add(bootstrap.PLATFORM_DIR)
 

@@ -116,8 +116,9 @@ class DeviceService:
             sweep says ``cloud`` (入口决定待遇: never derived from what the machine
             looks like).
           * visibility — the human connector writes the safe ``isolated`` legacy
-            value; MicroCloud keeps writing ``host``. Hosted resolution no longer
-            reads either value: access now belongs to ``device_topic.visibility``.
+            value; MicroCloud writes what its bindings get, ``isolated`` too.
+            Hosted resolution reads neither: access belongs to
+            ``device_topic.visibility``.
         A third entry point that forgets either is a pyright error, not a machine
         someone deletes by surprise a year later nor one silently exposed to the
         room."""

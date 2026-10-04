@@ -68,7 +68,10 @@ def file_sources():
     }
 
 
-def payload_for(project_id, resource_id, env, known_files=None):
+def payload_for(project_id, resource_id, env, known_files=None, *, sandbox):
+    """What the executor is installed or prepared from. ``sandbox`` says
+    whether it runs in a sandbox of its own (`bootstrap.sandbox_argv`) or over
+    the whole machine, as the device's visibility does."""
     files = file_sources()
     values = {
         name: value
@@ -83,6 +86,7 @@ def payload_for(project_id, resource_id, env, known_files=None):
     return {
         "protocol_version": runtime.PROTOCOL_VERSION,
         "toolchain_fonts": toolchain.fonts_pin(),
+        "sandbox": sandbox,
         "project": str(project_id),
         "resource": str(resource_id),
         "env": values,
@@ -108,8 +112,8 @@ def payload_for(project_id, resource_id, env, known_files=None):
     }
 
 
-def script(project_id, resource_id, env):
-    payload = payload_for(project_id, resource_id, env)
+def script(project_id, resource_id, env, *, sandbox):
+    payload = payload_for(project_id, resource_id, env, sandbox=sandbox)
     return (
         Path(bootstrap.__file__).read_text()
         + "\nconfigure(json.loads("

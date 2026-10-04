@@ -56,6 +56,7 @@ from app.domain.agent.harness.claude_code import (
 from app.domain.agent.harness.launch import ExecutorPlan, MachinePlace, MachinePlan
 from app.domain.agent.place import (
     CHECKOUT_DIR,
+    SANDBOXES_DIR,
     footprint_root,
     seat_dir,
     session_platform_dirs,
@@ -134,9 +135,9 @@ async def resolve_pinned_device(
         is never moved — not here, not anywhere (``agent.host_failure``).
 
     The #358 visibility gate lives entirely here (the one resolution point every
-    production turn passes through), so an `isolated` device — whose per-room
-    container transport is #358 step 2 — is never pinned to a topic nor launched
-    bare-on-host in its place: silently degrading `isolated` to bare is exactly the
+    production turn passes through), so an `isolated` binding on a machine with no
+    sandbox for it (self-hosted, until #2320 step 2) is never launched bare-on-host
+    in its place: silently degrading `isolated` to bare is exactly the
     whole-machine exposure the gate exists to prevent.
 
     Returns the device id, or ``None`` when no runnable bound device is online at all
@@ -149,7 +150,7 @@ async def resolve_pinned_device(
         device_id = chosen.device_id
         if not await service.serves_project(device_id, project_id):
             raise ScreenSetupError(say("screenDeviceRemoved"))
-        if await service.get_hosted_device(device_id) is None:
+        if (hosted := await service.get_hosted_device(device_id)) is None:
             raise ScreenSetupError(DEVICE_NOT_HOSTED_MESSAGE)
         if not is_online(device_id):
             raise ScreenSetupError(
@@ -157,7 +158,7 @@ async def resolve_pinned_device(
             )
         # An isolated binding must refuse rather than run bare — the pin does not
         # move, but the turn will not silently expose the whole machine either.
-        if not has_runnable_transport(chosen.visibility):
+        if not has_runnable_transport(chosen.visibility, hosted.supply):
             raise ScreenSetupError(DEVICE_ISOLATED_UNSUPPORTED_MESSAGE)
         return device_id
     # 「系统挑一台」 on the first turn: pick from machines that are online AND not
@@ -173,8 +174,8 @@ async def resolve_pinned_device(
         return None
     # The same fact the market catalogue publishes as `default=True`, read from
     # one place so the picker can never advertise a 档 the resolver does not
-    # bind. Today that resolves to `host`, because `isolated` has no transport;
-    # when #358 step 2 supplies one, this and the catalogue move together.
+    # bind. On a self-hosted machine that is `host` until #2320 step 2 gives
+    # `isolated` a transport there; then this and the catalogue move together.
     await service.bind_topic_device(
         topic_id,
         device.device_id,
@@ -398,17 +399,14 @@ def launcher_path(topic_id: uuid.UUID, agent_handle: str = "") -> str:
 
 
 # Where a place's environment runner may have been left, relative to that
-# place's home, in precedence order. Every root the platform has ever installed
-# into belongs here, because a place prepared under an earlier one keeps the
-# runner where that launcher put it until something relaunches it — and the
-# status it prepared is real the whole time. Each copy is byte-identical and all
-# of them keep their state in the same `$HOME/.cheese-environment/status.json`,
-# so whichever one we find answers for the place. Probing only the current root
-# is what made a place prepared by another launcher read as `pending` forever:
-# the ready status was on disk, one directory over. Which directories those are
-# is `place.session_platform_dirs()`, so one the platform adds or drops reaches
-# the probe by itself — see test_environment_status_probe.py. The `$HOME` below
-# is the place's own: the command that reads these exports it first.
+# place's home, in precedence order: every root the platform has installed into
+# (`place.session_platform_dirs()`), since a place keeps the runner where its
+# launcher put it until something relaunches it. All copies keep their state in
+# the same `$HOME/.cheese-environment/status.json`, so whichever one is found
+# answers; probing only the current root left a place prepared by another
+# launcher `pending` forever. A sandboxed place is the exception: it can write
+# its home, so its runner is the release's it was started from
+# (`bootstrap.record_sandbox`). The `$HOME` below is the place's own.
 ENVIRONMENT_RUNNER_PATHS = tuple(
     f"$HOME/{directory}/cheese-environment.py" for directory in session_platform_dirs()
 )
@@ -437,12 +435,13 @@ async def environment_status(
         else ""
     )
     candidates = " ".join(f'"{path}"' for path in ENVIRONMENT_RUNNER_PATHS)
+    sandbox = f"{DEVICE_ROOT}/{SANDBOXES_DIR}/{project_id}/{topic_id}"
     result = await hub.exec(
         device_id,
         [
             "sh",
             "-c",
-            f'export HOME="{home}"; '
+            f'release="$(cat "{sandbox}" 2>/dev/null)"; export HOME="{home}"; '
             # The runner finds the room's status under `Path.home()`, which on
             # Windows is USERPROFILE and not HOME. Exported as HOME alone, a
             # Windows room read the device owner's own profile and stayed
@@ -451,7 +450,8 @@ async def environment_status(
             # it; elsewhere nothing reads USERPROFILE.
             'USERPROFILE="$(cygpath -w "$HOME" 2>/dev/null || '
             'printf %s "$HOME")"; export USERPROFILE; '
-            f"for candidate in {candidates}; do "
+            'if [ -n "$release" ]; then set -- "$release/cheese-environment.py"; '
+            f'else set -- {candidates}; fi; for candidate in "$@"; do '
             'if [ -f "$candidate" ]; then '
             f"CHEESE_STATUS_WAIT={int(wait_ready)} "
             f'python3 "$candidate" {action} || exit $?; '

@@ -47,23 +47,26 @@ class Visibility(enum.StrEnum):
     the owner (see agent.device_launch), so it can read and write every other
     room's worktree on that machine and exec into their containers.
 
-    `isolated` has NO transport behind it yet (every device screen today is
-    `host`). It is stored so a future per-room-container device backend is a new
-    value, not a new column — but nothing may hand it out until that lands.
+    `isolated` runs each session's executor in a sandbox of its own
+    (`remote_execution/bootstrap.sandbox_argv`). Only Cloud machines have that
+    transport today; on a self-hosted one it has none, and nothing may hand it
+    out there until #2320 step 2 lands (`has_runnable_transport`).
     """
 
-    isolated = "isolated"  # one container per room — blast radius is the room
+    isolated = "isolated"  # one sandbox per session — blast radius is the session
     # The whole machine, as its owner. 申请制 by intent — but it IS the default
-    # today, because `isolated` has no transport and there is nothing else to
-    # default to. `default_visibility()` says so out loud rather than leaving the
-    # comment and the code disagreeing; it stops being the default the moment
-    # #358 step 2 lands.
+    # on self-hosted machines today, because `isolated` has no transport there
+    # and there is nothing else to default to. `default_visibility()` says so
+    # out loud rather than leaving the comment and the code disagreeing; it
+    # stops being the default the moment #2320 step 2 lands.
     host = "host"
 
 
-def has_runnable_transport(visibility: Visibility) -> bool:
-    """Whether the device backend has a transport for this visibility today."""
-    return visibility is Visibility.host
+def has_runnable_transport(visibility: Visibility, supply: Supply) -> bool:
+    """Whether the device backend can run a turn at this visibility on a
+    machine of this supply today: `host` anywhere, `isolated` only on Cloud
+    machines, the ones that sandbox each session."""
+    return visibility is Visibility.host or supply is Supply.cloud
 
 
 # Most conservative first: the default is the first entry that can actually run.
@@ -71,18 +74,18 @@ _VISIBILITY_PREFERENCE = (Visibility.isolated, Visibility.host)
 
 
 def default_visibility() -> Visibility:
-    """The 档 a topic gets when nobody picked one.
+    """The 档 a topic on a self-hosted machine gets when nobody picked one.
 
     DERIVED from what has a transport, never declared, because the two used to be
     declared separately and disagreed: the market catalogue advertised `isolated`
     as the default while `resolve_pinned_device` bound `host` unconditionally. A
     person opening the picker was told their topic was boxed; every topic in fact
-    had whole-machine access. Both surfaces now read this, so when step 2 (#358)
-    gives `isolated` a transport, the default moves in both places at once and
-    nobody has to remember the second one.
+    had whole-machine access. Both surfaces now read this, so when step 2 (#2320)
+    gives `isolated` a transport on self-hosted machines, the default moves in
+    both places at once and nobody has to remember the second one.
     """
     for visibility in _VISIBILITY_PREFERENCE:
-        if has_runnable_transport(visibility):
+        if has_runnable_transport(visibility, Supply.self_hosted):
             return visibility
     raise RuntimeError("no visibility has a runnable transport")
 
@@ -96,13 +99,12 @@ def binding_visibility(supply: Supply) -> Visibility:
 
     档由供给决定，不由调用点决定：
 
-    * 平台开的机器，一个房间一台、开完就为这个房间存在，它**本身就是那个盒子**
-      ——「看得见整台机器」在那上面不多给任何能力，这根轴在这一档塌掉了，所以是
-      `host`，不是连接器那个 `isolated` 默认值（#358 那道拒绝 `isolated` 的闸门也
-      因此永远不该对 Cloud 开火）。
+    * 平台开的机器上，每条会话的执行器跑在自己的沙箱里（#2320），所以是
+      `isolated`：会话只看得见自己的目录和本项目的包缓存，看不见机器的主人目录
+      （连接器的凭据在那里）和别的会话。
     * 人接入的机器上，答案是 `default_visibility()`：从「哪个档今天真有传输层」推
-      出来。#358 第二步给 `isolated` 接上传输层的那天，它和市场目录一起移动。
+      出来。#2320 第二步给那里的 `isolated` 接上传输层的那天，它和市场目录一起移动。
     """
     if supply is Supply.cloud:
-        return Visibility.host
+        return Visibility.isolated
     return default_visibility()
