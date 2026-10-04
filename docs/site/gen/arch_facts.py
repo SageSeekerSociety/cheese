@@ -30,7 +30,7 @@ ROOT = Path(__file__).resolve().parents[3]
 
 LLM_PROXY = "backend/app/api/routes/llm_proxy.py"
 LLM_TUNNEL = "backend/app/api/routes/llm_tunnel.py"
-CODEX_CHANNEL = "backend/app/domain/agent/harness/codex/channel.py"
+CODEX_CHANNEL = "backend/app/domain/agent/session_host/codex.py"
 PI_LAUNCH = "backend/app/domain/agent/harness/pi/launch.py"
 ADDON = "deploy/metering-proxy/billing_addon.py"
 COMPOSE = "deploy/metering-proxy/compose.yml"

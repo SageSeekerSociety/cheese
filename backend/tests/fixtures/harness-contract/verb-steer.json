@@ -1,0 +1,12 @@
+{
+  "verb": "steer",
+  "why": "Words for a session that is already working, with no work opened and nothing started. False means nothing is working here — and it has to be false rather than a started one, because the caller is on the hot path with a person waiting and a steer that started a session would open work nobody asked for.",
+  "readers": ["python"],
+  "drive": [
+    { "call": "steer", "text": "文档变了", "returns": false },
+    { "call": "ensure", "opened": true },
+    { "call": "steer", "text": "文档变了", "returns": true },
+    { "call": "close" },
+    { "call": "steer", "text": "文档又变了", "returns": false }
+  ]
+}

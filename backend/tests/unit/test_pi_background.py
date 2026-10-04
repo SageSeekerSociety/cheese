@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from app.domain.agent.harness import Opening
+from app.domain.agent.harness.driven.runner import SessionStart
 from app.domain.agent.harness.pi.jobs import Jobs
 from app.domain.agent.harness.pi.machine import Machine
 from app.domain.agent.harness.pi.runner import Runner
@@ -54,7 +54,7 @@ def alive(pid: int) -> bool:
 async def started(tmp_path: Path, target: dict, **options) -> Runner:
     runner = Runner(tmp_path / "state", **options)
     await runner.start(
-        Opening("system prompt", None, agent_handle="teammate"),
+        SessionStart("system prompt", None, agent_handle="teammate"),
         binary=shim(tmp_path),
         cwd=str(tmp_path),
         env={"PATH": os.environ["PATH"]},

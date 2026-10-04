@@ -91,7 +91,7 @@ class _Screen:
         self.inputs: list[InputIdentity] = []
         self.pushed: list[str] = []
 
-    async def deliver(
+    async def steer(
         self,
         topic_id,
         text,
@@ -141,7 +141,7 @@ def _running_turn(client, topic_id: str) -> _Screen:
     work_id = uuid.uuid4()
     screen = _Screen(session, work_id, service.confirm_prompt_receipt)
     service._active_turn_ids[uuid.UUID(topic_id)] = {work_id}
-    service._compute.deliver = screen.deliver  # type: ignore[method-assign]
+    service._compute.steer = screen.steer  # type: ignore[method-assign]
     app.dependency_overrides[get_chat_service] = lambda: service
     return screen
 
@@ -216,7 +216,7 @@ def test_a_doc_edit_between_turns_is_pushed_at_nobody(client):
         workspace_root="/tmp/doc-notice-ws",
         compute=stub_compute(),
     )
-    service._compute.deliver = screen.deliver  # type: ignore[method-assign]
+    service._compute.steer = screen.steer  # type: ignore[method-assign]
     app.dependency_overrides[get_chat_service] = lambda: service
 
     assert _put(client, tid, DOC + "\n再补一段\n", 1).status_code == 200

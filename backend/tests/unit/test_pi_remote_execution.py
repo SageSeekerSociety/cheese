@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 
 from app.domain.agent.executor_transport import DEFERRED_WORKSPACE
-from app.domain.agent.harness import Opening
+from app.domain.agent.harness.driven.runner import SessionStart
 from app.domain.agent.harness.pi.launch import arguments, extension, provider
 from app.domain.agent.harness.pi.runner import Runner
 from app.domain.agent.harness.prompt import PLATFORM_NOTICE
@@ -97,7 +97,7 @@ async def pi(tmp_path: Path, target: dict, route, *, api: str = "http://unused")
     runner = Runner(tmp_path / "state")
     try:
         await runner.start(
-            Opening(system_prompt="FIXTURE", model=MODEL, agent_handle="cheese"),
+            SessionStart(system_prompt="FIXTURE", model=MODEL, agent_handle="cheese"),
             binary=pi_binary(),
             cwd=str(here),
             env=env,

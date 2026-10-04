@@ -129,7 +129,7 @@ steps:
 
 ### 会话按座位分开 {#seats-session}
 
-会话记录按（话题, 队友, 骨架）存（`agent_sessions`），每位队友续跑自己的会话。内存里的运行时状态和算力池的归属按座位（话题, 队友）记（`DrivenRuntime`、`ComputePool._owners`）：`activate` 只停同一座位上换下来的旧骨架，不碰同一房间里别的队友。后端重启后，每个座位的会话都会被接回来（`placed_everywhere`）。
+会话记录按（话题, 队友, 骨架）存（`agent_sessions`），每位队友续跑自己的会话。内存里的运行时状态和算力池的归属按座位（话题, 队友）记（`RoomSessions`、`ComputePool._owners`）：`activate` 只停同一座位上换下来的旧骨架，不碰同一房间里别的队友。后端重启后，每个座位的会话都会被接回来（`placed_everywhere`）。
 
 机器上的文件也照这个分。**属于一位队友的，写进这个座位的目录**（`place.seat_dir`，`$HOME/.cheese/seats/<sha256(队友名) 前 12 位>`）：执行目标 `remote-target.json`、每轮配置 `remote-session/`、系统提示 `cheese-system-prompt.md`、执行凭据 `remote-session/execution.token`、Claude 设置与技能（座位下的 `.claude/`），以及 `remote-execution/` 辅助程序。第二位队友开屏不会改写第一位的 hook 或辅助程序。
 

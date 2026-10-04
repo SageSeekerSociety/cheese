@@ -33,9 +33,8 @@ class PiBacklog(JournalBacklog[Journal]):
         session_id: str | None = None,
         *,
         harness: str,
-        attachment: str | None = None,
     ):
-        self.assembler = Assembler(session_id, harness=harness, attachment=attachment)
+        self.assembler = Assembler(session_id, harness=harness)
         super().__init__(path)
 
     def prepare(self, journal: Journal) -> None:

@@ -266,32 +266,13 @@ async def test_screen_inventory_failure_does_not_skip_the_next_device():
 async def test_central_recovery_restores_actual_screen_and_close_reaches_device(
     monkeypatch,
 ):
-    from unittest.mock import AsyncMock, patch
+    from unittest.mock import AsyncMock
 
-    from app.domain.agent.central_provider import CentralChannel
     from app.domain.agent.device_hub import DeviceHub
-    from app.domain.agent_session.models import SessionPlace
-    from app.domain.agent_session.services import AgentSessionService
     from app.domain.identity.services import IdentityService
 
     project_id, topic_id, resource_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     room = SimpleNamespace(id=topic_id, project_id=project_id, resource_id=resource_id)
-    placed = [
-        (
-            project_id,
-            topic_id,
-            "agent",
-            "claude-code",
-            None,
-            SessionPlace(
-                machine="center",
-                channel="device",
-                resource_id=str(resource_id),
-                runtime={},
-                lease=None,
-            ),
-        )
-    ]
     metadata = {
         "sid": "survivor",
         "screen": "birth-token",
@@ -347,9 +328,10 @@ async def test_central_recovery_restores_actual_screen_and_close_reaches_device(
         "app.domain.topic.services.TopicService.get", AsyncMock(return_value=room)
     )
     await hub.attach_device("center", Transport())
-    central = CentralChannel(DeviceChannel(hub=hub, session_factory=Session))
-    with patch.object(AgentSessionService, "placed_sessions", return_value=placed):
-        await central.restore("center")
+    # The screens the session core adopts after a restart (its Claude Code
+    # driver), for each place a session was found at.
+    channel = DeviceChannel(hub=hub, session_factory=Session)
+    await channel.restore_screens([(project_id, topic_id, "center")])
     screen = hub.screen("survivor")
     assert screen is not None
     assert screen.resource_id == resource_id
@@ -1892,32 +1874,13 @@ async def test_a_teammate_reuses_its_own_screen_and_not_the_room_mates():
 async def test_recovery_adopts_each_seat_s_screen_as_its_own(monkeypatch):
     """后端重启后每个座位接回自己那个会话（#seats-session）：机器上活着的两块屏幕
     各按自己的座位认领——认成同一个座位，两位队友就会去抢对方那块。"""
-    from unittest.mock import AsyncMock, patch
+    from unittest.mock import AsyncMock
 
-    from app.domain.agent.central_provider import CentralChannel
     from app.domain.agent.device_hub import DeviceHub
-    from app.domain.agent_session.services import AgentSessionService
     from app.domain.identity.services import IdentityService
 
     project_id, topic_id, resource_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     room = SimpleNamespace(id=topic_id, project_id=project_id, resource_id=resource_id)
-    placed = [
-        (
-            project_id,
-            topic_id,
-            seat,
-            "claude-code",
-            None,
-            SimpleNamespace(
-                machine="center",
-                channel="device",
-                resource_id=str(resource_id),
-                runtime={},
-                lease=None,
-            ),
-        )
-        for seat in ("cheese-a", "cheese-b")
-    ]
     metadata = {
         "sid": "seat-a",
         "screen": "token-a",
@@ -1976,9 +1939,7 @@ async def test_recovery_adopts_each_seat_s_screen_as_its_own(monkeypatch):
     )
     await hub.attach_device("center", Transport())
     channel = DeviceChannel(hub=hub, session_factory=Session)
-    central = CentralChannel(channel)
-    with patch.object(AgentSessionService, "placed_sessions", return_value=placed):
-        await central.restore("center")
+    await channel.restore_screens([(project_id, topic_id, "center")])
 
     adopted = {screen.sid: screen for screen in hub.all_online_screens()}
     assert set(adopted) == {"seat-a", "seat-b"}

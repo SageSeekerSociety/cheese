@@ -31,7 +31,6 @@ from pathlib import Path
 
 import pytest
 
-from app.domain.agent.harness import Opening
 from app.domain.agent.harness.claude_code.bundle import build as claude_archive
 from app.domain.agent.harness.claude_code.cli import LAUNCH_ARGS
 from app.domain.agent.harness.claude_code.remote_execution import client as central
@@ -41,6 +40,7 @@ from app.domain.agent.harness.codex.host import configure as start_codex
 from app.domain.agent.harness.driven.runner import (
     REPLY_INSIST,
     REPLY_OWED,
+    SessionStart,
     socket_path,
 )
 from app.domain.agent.harness.pi.launch import arguments, extension, provider
@@ -518,7 +518,7 @@ async def pi(tmp_path: Path, steps: list):
     ) as target:
         try:
             await runner.start(
-                Opening(
+                SessionStart(
                     system_prompt="FIXTURE",
                     model="fixture-model",
                     agent_handle="cheese",

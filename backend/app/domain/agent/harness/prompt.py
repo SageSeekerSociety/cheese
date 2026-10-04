@@ -275,7 +275,7 @@ def build_system_prompt(
     """拼这一轮的 system prompt。
 
     ``keeps_memory`` 说的是**这一轮跑的 harness 会不会把记忆文件对账回平台**
-    （``AgentRuntime.keeps_memory``，调用方按当前 runtime 传入）。默认不注：记忆
+    （``Harness.keeps_memory``，调用方按当前骨架传入）。默认不注：记忆
     那一段（说明书 + L1 索引）讲的是「写进 `~/.cheese/memory/`，下一轮平台的
     那一份里有它」，而 codex、pi 没有这条回路——照说明书写下的文件永远同步不回
     来，agent 却以为自己在写项目记忆。索引同理：正文铺不下去，注入的也就只是一

@@ -133,17 +133,18 @@ def get_llm_gateway() -> LlmGateway | None:
 
 @lru_cache
 def get_session_host() -> SessionHost:
-    """The sessions on the session host this process talks to — a person's
-    芝士, a document thread's. One per process, like the chat service: it
-    remembers which sessions are running and where each one was read to."""
+    """The sessions on the session host this process talks to — a room's, a
+    person's 芝士, a document thread's. One per process, like the chat
+    service: it remembers which sessions are running and where each is read."""
     return SessionHost(device_hub)
 
 
 @lru_cache
 def get_compute_pool() -> ComputePool:
-    """The harness runtimes this process reads sessions with: the chat service's,
-    and the one a runner's ring wakes. Every runtime's attach checks the work
-    runner's ``owns_sessions`` flag inside its seat lock first (FB-56)."""
+    """The rooms' sessions this process reads, on every machine pool and
+    harness: the chat service's, and the ones a runner's ring wakes. Every
+    seat's attach checks the work runner's ``owns_sessions`` flag inside its
+    seat lock first (FB-56)."""
     cloud = CloudChannel(
         configured=bool(
             settings.microcloud_base_url and settings.microcloud_tenant_secret
@@ -151,14 +152,10 @@ def get_compute_pool() -> ComputePool:
         ensure_topic_cloud=_ensure_topic_cloud,
         read_topic_cloud=_read_topic_cloud,
     )
-    pool = build_compute_pool(cloud_channel=cloud)
+    pool = build_compute_pool(cloud_channel=cloud, host=get_session_host())
     runner = get_work_runner()
     for runtime in pool._runtimes():
-        # Structural, like the pool's own probes: a runtime without the
-        # binder has no attach gate to arm (FB-56).
-        bind = getattr(runtime, "bind_owns_sessions", None)
-        if bind is not None:
-            bind(lambda: runner)
+        runtime.bind_owns_sessions(lambda: runner)
     return pool
 
 

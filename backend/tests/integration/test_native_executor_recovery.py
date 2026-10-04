@@ -14,9 +14,7 @@ from sqlalchemy import select
 
 from app.api.deps import get_chat_service
 from app.domain.agent.chat import ChatService
-from app.domain.agent.harness.claude_code.protocol import INPUT_PROTOCOL
 from app.domain.agent.harness.claude_code.runner import Runner
-from app.domain.agent.harness.claude_code.runtime import Handle
 from app.domain.agent.models import AgentTurn
 from app.domain.block.models import Block, consumed_turn
 from app.domain.delivery.models import NativeInput
@@ -26,6 +24,7 @@ from tests.conftest import settle_turn
 from tests.integration.conftest import chat_ws_url, post_message, post_project
 from tests.integration.test_claude_session_records import _until
 from tests.integration.test_native_batch_ownership import _blocks
+from tests.support.seat_channel import SeatChannel
 from tests.unit.test_claude_runner import Machine
 
 
@@ -42,62 +41,30 @@ def test_native_original_executor_survives_full_service_recovery_and_busy_input(
     ).json()["data"]
     project_id, topic = uuid.UUID(project["id"]), uuid.UUID(project["root_topic_id"])
     runner = None
-    handle = None
     operations = []
 
-    class Channel:
+    class Channel(SeatChannel):
         name = "native-recovery-fixture"
-        provisions_machine = False
-        deferred_work = False
-        builds_model_env = False
+        device = "isolated-device"
 
-        def available(self):
-            return True
-
-        async def prepare_topic(self, **kwargs):
-            return True, ""
-
-        async def ensure(self, session, opening, live=None):
-            nonlocal runner, handle
-            if live is not None:
-                return live
+        async def open(self, session, agent, launch):
+            nonlocal runner
             if runner is None:
                 runner = Runner(machine.state)
-                native = await runner.start(
+                await runner.start(
                     command=machine.command,
                     env=machine.env,
                     resume=None,
-                    agent_handle=opening.agent_handle or session.agent_handle,
+                    agent_handle=agent,
                 )
-                handle = Handle(
-                    session,
-                    "isolated-device",
-                    str(machine.state),
-                    native,
-                    opening.agent_handle or session.agent_handle,
-                    tmp_path / "mirror.sqlite",
-                    INPUT_PROTOCOL,
-                    frozenset(runner.capabilities),
-                )
-            return handle
 
         async def call(self, held, method, params):
-            assert held is handle
             operations.append(method)
             return await runner.dispatch(method, params)
 
-        async def discover(self, device_id):
-            return [handle] if handle is not None else []
-
-        async def images(self, held, images):
-            assert not images
-            return []
-
     def service(channel):
         from app.domain.agent.compute import ComputePool
-        from app.domain.agent.harness.claude_code.runtime import ClaudeCodeRuntime
 
-        channel.runtime = ClaudeCodeRuntime(channel)
         return ChatService(
             session_factory=client.test_request_factory,
             base_system_prompt="你是芝士。",
@@ -136,7 +103,10 @@ def test_native_original_executor_survives_full_service_recovery_and_busy_input(
         )
         sent = operations.count("send")
         client.portal.call(before.runtime.stop_listening)
+        # The next process: what was placed is the same, and it lands into the
+        # same mirror; it has started and read nothing.
         after = Channel()
+        after.seats, after.root = before.seats, before.root
         recovered = service(after)
         app.dependency_overrides[get_chat_service] = lambda: recovered
         assert client.portal.call(recovered.recover_sessions) == 1

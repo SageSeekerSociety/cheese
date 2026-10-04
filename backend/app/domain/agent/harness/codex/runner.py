@@ -9,11 +9,11 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Protocol
 
-from app.domain.agent.harness import Opening
 from app.domain.agent.harness.codex.app_server import AppServer
 from app.domain.agent.harness.codex.journal import Journal
 from app.domain.agent.harness.codex.session import Session
 from app.domain.agent.harness.driven import runner
+from app.domain.agent.harness.driven.runner import SessionStart
 
 # How long a new turn waits to see the project's skills as they are now before
 # it starts on what the session already has.
@@ -121,7 +121,7 @@ class Runner(runner.Runner[Journal]):
 
     async def start(
         self,
-        opening: Opening,
+        opening: SessionStart,
         *,
         binary: str,
         cwd: str,
