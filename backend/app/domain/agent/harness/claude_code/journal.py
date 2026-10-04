@@ -18,6 +18,10 @@ from app.domain.agent.harness.driven import journal
 class Journal(journal.Journal):
     table = "records"
     column = "record"
+    turn_end = (
+        "json_extract(record, '$.type') = 'result' "
+        "AND json_extract(record, '$.cheese.work_id') IS NOT NULL"
+    )
     schema = """
         CREATE TABLE IF NOT EXISTS records (
             sequence INTEGER PRIMARY KEY AUTOINCREMENT,
