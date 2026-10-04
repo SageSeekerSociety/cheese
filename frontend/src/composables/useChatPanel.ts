@@ -39,6 +39,7 @@ import { postChatMessage } from '../api/messages'
 import { useChatRowActions } from '../components/chat/composables/useChatRowActions'
 import { useTimelineMotion } from '../components/chat/composables/useTimelineMotion'
 import { useChatScroll } from '../components/room/composables/useChatScroll'
+import { useLiveSteps } from '../components/room/composables/useLiveSteps'
 import { SendRefused, useOutbox } from '../components/room/composables/useOutbox'
 import { useRoomActivity } from '../components/room/composables/useRoomActivity'
 import { useRoomRoster } from '../components/room/composables/useRoomRoster'
@@ -282,8 +283,10 @@ export function useChatPanel(opts: ChatPanelOptions) {
   })
 
   // 此刻谁在这个房间里忙（打字的人、干活的队友）—— 见 room/composables/useRoomActivity。
-  // 名字从名册来，干活的那一步从它在动的头像来，和现场顶上说的是同一句。
+  // 名字从名册来，干活的相从它在动的头像来，更细的当前一步从 socket 上的 live 帧来
+  // （room/composables/useLiveSteps），和现场顶上说的是同一句。
   const activity = useRoomActivity({ me: AUTHOR, send: sendOnSocket })
+  const liveSteps = useLiveSteps()
   const activityLines = computed(() =>
     memberActivityLines(
       activity.others.value,
@@ -293,7 +296,9 @@ export function useChatPanel(opts: ChatPanelOptions) {
       (handle) => {
         const status = turns.faces.value[handle]?.status
         return status ? siteStatusLabel(status) : null
-      }
+      },
+      (handle) => liveSteps.states.value[handle]?.step ?? null,
+      (handle) => liveSteps.states.value[handle]?.at ?? null
     )
   )
   watch(activityLines, (v) => emit('activity', v))
@@ -428,6 +433,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
         break
       }
     }
+    liveSteps.follow(frame)
     typing.follow(frame, !awaitingReply.value)
   }
 
@@ -461,6 +467,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     turns.reset()
     typing.clear()
     activity.reset()
+    liveSteps.reset()
     reactionPickerFor.value = null
     rowActions.resetBar()
     unreadAnchorId.value = null

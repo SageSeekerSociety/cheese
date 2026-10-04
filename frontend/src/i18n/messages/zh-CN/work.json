@@ -1046,7 +1046,8 @@
       "typingOne": "{name}正在输入…",
       "typingTwo": "{first}和{second}正在输入…",
       "typingMany": "多人正在输入…",
-      "separator": " · "
+      "separator": " · ",
+      "stalled": "已 {span}无新输出"
     },
     "docEdit": {
       "failed": "修改失败：{reason}",

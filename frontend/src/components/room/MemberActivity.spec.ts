@@ -50,6 +50,81 @@ describe('who is busy in the room, under the composer', () => {
     expect(people).toBe('Alice is typing…')
   })
 
+  it('shows the step the agent is on, in place of the phase label', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(Date.parse('2026-10-01T10:02:05Z'))
+    const since = Date.parse('2026-10-01T10:00:00Z') / 1000
+    const { container } = render(MemberActivity, {
+      props: {
+        lines: [
+          {
+            handle: 'cheese-a1',
+            name: 'Cedar',
+            kind: 'working',
+            since,
+            detail: 'Thinking',
+            step: 'Running a command pnpm test',
+          },
+        ],
+      },
+    })
+    expect(lines(container)[0]).toMatch(/^Cedar is working… · Running a command pnpm test · 2.*05/)
+  })
+
+  it('says how long there has been no new output, once it passes a minute', () => {
+    vi.useFakeTimers()
+    const now = Date.parse('2026-10-01T10:02:00Z')
+    vi.setSystemTime(now)
+    const since = Date.parse('2026-10-01T10:00:00Z') / 1000
+    const { container } = render(MemberActivity, {
+      props: {
+        lines: [
+          { handle: 'cheese-a1', name: 'Cedar', kind: 'working', since, detail: 'Thinking', lastFrameAt: now - 80_000 },
+        ],
+      },
+    })
+    const [line] = lines(container)
+    expect(line).toContain('No new output for 1m 20s')
+    expect(line).toContain('2m') // alongside the total time, not instead of it
+  })
+
+  it('says nothing about stalls while output is still arriving', () => {
+    vi.useFakeTimers()
+    const now = Date.parse('2026-10-01T10:02:00Z')
+    vi.setSystemTime(now)
+    const since = Date.parse('2026-10-01T10:00:00Z') / 1000
+    const { container } = render(MemberActivity, {
+      props: {
+        lines: [
+          { handle: 'cheese-a1', name: 'Cedar', kind: 'working', since, detail: 'Thinking', lastFrameAt: now - 5_000 },
+        ],
+      },
+    })
+    expect(lines(container)[0]).not.toContain('No new output')
+  })
+
+  it('tells a screen reader who is working and which phase, without the seconds churning', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(Date.parse('2026-10-01T10:02:05Z'))
+    const since = Date.parse('2026-10-01T10:00:00Z') / 1000
+    const { container } = render(MemberActivity, {
+      props: {
+        lines: [
+          {
+            handle: 'cheese-a1',
+            name: 'Cedar',
+            kind: 'working',
+            since,
+            detail: 'Thinking',
+            step: 'Running a command pnpm test',
+          },
+        ],
+      },
+    })
+    const announced = container.querySelector('.visually-hidden')?.textContent?.trim()
+    expect(announced).toBe('Cedar is working… · Thinking')
+  })
+
   it('nobody busy: nothing is said, unless the line keeps its place', () => {
     const empty = render(MemberActivity, { props: { lines: [] } })
     expect(empty.container.querySelector('[data-testid="member-activity"]')).toBeNull()
