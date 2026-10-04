@@ -14,6 +14,7 @@ import {
   refreshPreviewPointer,
   resetPreviewPointerCache,
   setPreviewPointer,
+  warmPreviewPointer,
 } from './previewPointer'
 
 function deferred<T>() {
@@ -77,5 +78,30 @@ describe('房间当前预览的指针缓存', () => {
   it('面板自己取回来的那一份也能写回来', () => {
     setPreviewPointer('t1', { path: 'b.html', artifact_id: 'b1' })
     expect(cachedPreviewPointer('t1')).toEqual({ path: 'b.html', artifact_id: 'b1' })
+  })
+
+  // 首屏那一步要的是「已经在手边的答案」，不是「最新」：取过的直接给，正在飞的复用，
+  // 都没有就什么都不发。没有这一条，面板挂上来还是自己发一条 /preview——那正是守卫先
+  // 起头想省掉的那一轮网络。
+  it('首屏拿答案：取过的直接给、正在飞的复用，手边没有就不发', async () => {
+    setPreviewPointer('t1', { path: 'a.html', artifact_id: 'a1' })
+    await expect(warmPreviewPointer('t1')).resolves.toEqual({ path: 'a.html', artifact_id: 'a1' })
+    expect(getPreview).not.toHaveBeenCalled()
+
+    // 守卫刚起头、还没落定：面板这一问复用同一条，不必自己再发。
+    const gate = deferred<{ path: string; artifact_id: string }>()
+    getPreview.mockReturnValue(gate.promise)
+    const started = refreshPreviewPointer('t2')
+    const warm = warmPreviewPointer('t2')!
+    expect(getPreview).toHaveBeenCalledTimes(1)
+    gate.settle({ path: 'b.html', artifact_id: 'b1' })
+    await expect(warm).resolves.toEqual({ path: 'b.html', artifact_id: 'b1' })
+    await expect(started).resolves.toEqual({ path: 'b.html', artifact_id: 'b1' })
+    expect(getPreview).toHaveBeenCalledTimes(1)
+
+    // 手边什么都没有：不发（由调用方自己决定现问），也不把这次读当成「记下来」。
+    expect(warmPreviewPointer('t3')).toBeUndefined()
+    expect(getPreview).toHaveBeenCalledTimes(1)
+    expect(cachedPreviewPointer('t3')).toBeUndefined()
   })
 })

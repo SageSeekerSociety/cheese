@@ -334,4 +334,35 @@ describe('预览面板：芝士摆出来时立刻跟上', () => {
     // 有预览在，但它是「来之前就有的」——开场不该顶着提示。
     expect(previewButton(container).getAttribute('title')).toBe('预览')
   })
+
+  it('守卫先问过的那一份，开预览时直接拿来渲染——不再等一轮网络', async () => {
+    // 路由守卫已经替这个房间把指针取回来了（lib/previewPointer.ts）：答案在手边。
+    setPreviewPointer('topic-A', { path: 'report.html', mime: 'text/html', artifact_id: 'a1' })
+    readFile.mockResolvedValue({ path: 'report.html', content: '<p>cached</p>' })
+    const { container } = mountPanel()
+    await flush()
+    await openPreview(container)
+
+    // 渲染用的是那份现成的答案——没有为它再发一条 /preview（否则那轮网络又压回挂载
+    // 之后，守卫先起头就白起了）。
+    expect(getPreview).not.toHaveBeenCalled()
+    // 而且它真按缓存里那份指针去读了内容，不是空态。
+    expect(readFile).toHaveBeenCalledWith('topic-A')
+  })
+
+  it('同一份东西被重复摆一次：指针没换就不多取一次预览、不惊动别的格', async () => {
+    getPreview.mockResolvedValue({ path: 'report.html', mime: 'text/html', artifact_id: 'a1' })
+    const { container } = mountPanel(true)
+    await flush()
+    await openPreview(container)
+
+    const previewCalls = getPreview.mock.calls.length
+    // 指针还是 a1（同一份被又摆了一次）：再报一声。previewShown 只问一次才可能知道
+    // 它没换。
+    panelApi(container).previewShown?.()
+    await flush()
+
+    // 就多那一次「问一下指针」——指针没换，预览那一格不该被 refreshTick 叫去重取。
+    expect(getPreview.mock.calls.length).toBe(previewCalls + 1)
+  })
 })

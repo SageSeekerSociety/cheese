@@ -289,16 +289,20 @@ function markPreviewSeen(id?: string | null) {
 // while 预览 is not the open tab. Goes through lib/previewPointer, so a request the
 // router guard already started for this topic is reused rather than repeated — and
 // the answer here feeds that cache for the next time the room is opened.
-async function pollPreviewPointer(opts: { seen?: boolean } = {}): Promise<string | null> {
+//
+// 返回的是「这次问到的产物 id」：`null` 是「这个房间没有预览」（一个真看到过的
+// 状态），`undefined` 是「这一问没成」（没话题 id，或者网络断了）——两者不能混，兜
+// 底轮询要拿它分「变了」和「没问成、下次再比」。
+async function pollPreviewPointer(opts: { seen?: boolean } = {}): Promise<string | null | undefined> {
   const tid = props.topic?.id
-  if (!tid) return null
+  if (!tid) return undefined
   let art: PreviewInfo | null = null
   try {
     art = await refreshPreviewPointer(tid)
   } catch {
     // A failed poll is not a state — leave the dot as it was. The real load
     // reports errors; this one only ever adds a hint.
-    return null
+    return undefined
   }
   previewPath.value = art?.path ?? null
   const id = art?.artifact_id ?? null
@@ -317,15 +321,26 @@ async function pollPreviewPointer(opts: { seen?: boolean } = {}): Promise<string
 // 那一格重取（没换就不打扰任何一格）。切回窗口 / 回到前台立刻补一次。
 const PREVIEW_POINTER_POLL_MS = 5_000
 let previewPollTimer: ReturnType<typeof setInterval> | null = null
-// 上一次兜底轮询看到的产物 id。`null` = 还没看过，那时不把「第一个看到的」当成变化。
-let lastPolledPointerId: string | null = null
+// 上一次看到的产物 id。`undefined` = 还没看过；`null` 是「这个房间没有预览」，是一
+// 个真看到过的值，和「还没看过」不是一回事——问失败不能把它擦回「还没看过」，不然
+// 断线后第一个看到的就又被当成基线放过去了。
+let lastPolledPointerId: string | null | undefined = undefined
 
 async function tickPreviewPointer() {
   if (document.hidden) return
-  const before = lastPolledPointerId
+  // 「面板里此刻展示的是哪一份」在问之前先记下来：第一次兜底轮询拿它当基线。不这么
+  // 做的话，开格头 5 秒里换的那一份（那条 WS 帧可能正好丢在断线里——这正是这条兜底
+  // 要接住的时刻）会被当成「第一次看到的」悄悄放过去，屏幕上还是旧的，直到 20 秒那
+  // 一档才追上。
+  const shown = previewSeen.value
   const id = await pollPreviewPointer()
-  lastPolledPointerId = id
-  if (before !== null && id !== before) refreshTick.value += 1
+  // 这一问没成：什么都不动，下一次再比（别把上一次看到的当成没看过）。
+  if (id === undefined) return
+  if (lastPolledPointerId === undefined) lastPolledPointerId = shown
+  if (lastPolledPointerId !== id) {
+    lastPolledPointerId = id
+    refreshTick.value += 1
+  }
 }
 
 function stopPreviewPoll() {
@@ -360,10 +375,18 @@ watch(active, () => syncPreviewPoll())
 
 // 芝士在房间里摆出来一份东西（对话栏听完 socket 往上报的那一声）：立刻问一次指针，
 // 别等下一次轮询——「预览」那一格开着就顺手重取，没开就只是让那颗「有新内容」的点
-// 冒出来。
+// 冒出来。指针真换了才 `refreshTick`：那一格全房间共用，总览会跟着重取房间产物，同一
+// 份东西被重复摆一次不该惊动它们。
 function previewShown() {
-  void pollPreviewPointer()
-  refreshTick.value += 1
+  const before = previewSeen.value
+  void pollPreviewPointer().then((id) => {
+    if (id === undefined) return
+    lastPolledPointerId = id
+    // 只有「预览」这一格开着、而且指针真的换了，才需要一个 `refreshTick` 把重取读出
+    // 去。没开那一格时，那颗「有新内容」的点（previewLatest）已经把话说完了，别的格
+    // （总览会跟着重取房间产物）不该陪着白跑一趟。
+    if (active.value === 'preview' && id !== before) refreshTick.value += 1
+  })
 }
 
 // ---- 这一格此刻有没有东西 ----

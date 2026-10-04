@@ -46,6 +46,21 @@ export function refreshPreviewPointer(topicId: string): Promise<PreviewInfo | nu
   return started
 }
 
+/**
+ * 首屏要的那一份答案，如果它已经在手边：正在飞的那一条（守卫可能刚起头），或者取过
+ * 留着的那一份。都没有就是 `undefined`，由调用方自己决定要不要现问。
+ *
+ * 它只读、不写：这里要的是「别再压一轮网络在渲染前面」，不是「把这次的结果记下来」
+ * ——要记下来的（守卫、轮询、收工重取）走 `refreshPreviewPointer`。面板首屏那份答案
+ * 于是不会反过来喂大这份缓存；缓存里留着的一直是「问过它的那几处」留下的。
+ */
+export function warmPreviewPointer(topicId: string): Promise<PreviewInfo | null> | undefined {
+  const running = inFlight.get(topicId)
+  if (running) return running
+  if (cache.has(topicId)) return Promise.resolve(cache.get(topicId) ?? null)
+  return undefined
+}
+
 /** 测完一个用例把这份记忆擦干净：同一个进程里两段测试之间它不该带过去。 */
 export function resetPreviewPointerCache(): void {
   cache.clear()
