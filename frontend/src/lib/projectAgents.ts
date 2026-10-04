@@ -1,6 +1,6 @@
 // 「AI 队友」设置页上不放进组件里的那几样：随机名字、名字和标识的校验、类型的显示名、
 // 思考强度的档位与叫法。单独成文件，由测试直接盯着，而不是埋在组件里靠渲染结果间接验证。
-import type { AgentEffort, AgentType } from '../cx_types'
+import type { AgentConfiguration, AgentType } from '../cx_types'
 
 import { t } from '../i18n'
 
@@ -47,6 +47,8 @@ export function displayNameError(name: string): string | null {
   if (trimmed.length > 64) return t('work.projectSettings.agents.editor.nameTooLong', { max: 64 })
   return null
 }
+
+export type AgentEffort = NonNullable<AgentConfiguration['effort']>
 
 // 思考强度，从低到高；和后端 `AgentConfiguration.effort`、网关 `cheese_efforts` 同一套词。
 export const EFFORT_LEVELS: AgentEffort[] = ['low', 'medium', 'high', 'max']

@@ -88,6 +88,7 @@ from app.domain.agent_instance.schemas import (
 from app.domain.agent_instance.services import (
     AgentInstanceService,
     ResolvedAgent,
+    initial_configuration,
 )
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.membership.services import MemberService
@@ -180,11 +181,12 @@ async def create_project_agent(
     await resolver.authorize_project(actor, project_id=project_id)
     await ProjectService(db).get_or_404(project_id)
     chosen = body.configuration
-    if chosen is not None and (
-        chosen.effort == "max" or chosen.compact_percent is not None
+    if chosen is not None and _changes_an_advanced_setting(
+        initial_configuration(body.type_name).model_dump(), chosen
     ):
-        # A new teammate's skills come from the preset it starts from, so only
-        # the two settings a preset never carries ask for a manager here.
+        # Measured against the preset it starts from: its skills come with it,
+        # so only skills of somebody's own choosing, the highest effort or a
+        # compaction share ask for a manager.
         await MemberService(db).require_manager(project_id, actor)
     service = AgentInstanceService(db)
     instance = await service.create(

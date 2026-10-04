@@ -173,6 +173,20 @@ def test_only_a_manager_changes_a_teammates_advanced_settings(client):
         refused = client.put(url, json={"configuration": advanced}, headers=bob)
         assert refused.status_code == 403, (advanced, refused.text)
 
+    for advanced in ({"skills": ["documents"]}, {"compact_percent": 60}):
+        made = client.post(
+            f"/projects/{pid}/agents",
+            json={"display_name": "x", "configuration": advanced},
+            headers=bob,
+        )
+        assert made.status_code == 403, (advanced, made.text)
+    preset = client.post(
+        f"/projects/{pid}/agents",
+        json={"display_name": "y", "type_name": "fullstack-engineer"},
+        headers=bob,
+    )
+    assert preset.status_code == 200, preset.text
+
     basic = client.put(
         url,
         json={"configuration": {"body": "Review", "effort": "high"}},

@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import type { AgentConfiguration, AgentEffort, AgentType, ProjectAgent } from '../../cx_types'
+import type { AgentConfiguration, AgentType, ProjectAgent } from '../../cx_types'
 import type { AgentFieldChoice } from '../../lib/modelChoices'
+import type { AgentEffort } from '../../lib/projectAgents'
 
 import { computed, ref, toRaw, watch } from 'vue'
 
