@@ -844,9 +844,10 @@ test("pane resize recovery leaves external focus and unmounted messages alone", 
   await expect(external).toBeFocused();
 });
 
-// Keyboard parity for the very same bar. A message row is a real tab stop, the
-// bar comes up for it like a hover, Tab steps from the row into the bar's
-// buttons, and Escape puts the bar away again without the row losing its place.
+// Keyboard parity for the very same bar. A message row is a real tab stop, Tab
+// reaches it, the bar comes up for it like a hover, Tab steps from the row into
+// the bar's buttons, and Escape puts the bar away again without the row losing
+// its place.
 test("message actions are reachable from the row by keyboard", async ({
   page,
 }) => {
@@ -861,21 +862,27 @@ test("message actions are reachable from the row by keyboard", async ({
   await expect(row).toHaveAttribute("tabindex", "0");
   const before = await row.boundingBox();
 
-  await row.focus();
+  // Plain Tab, from the top of the page, really lands on the row.
+  await page.evaluate(() => (document.activeElement as HTMLElement)?.blur?.());
+  let reached = false;
+  for (let press = 0; press < 20 && !reached; press += 1) {
+    await page.keyboard.press("Tab");
+    reached = await row.evaluate((el) => el === document.activeElement);
+  }
+  expect(reached).toBe(true);
+
   const bar = page.locator(".hover-bar");
   await expect
     .poll(() => bar.evaluate((el) => getComputedStyle(el).opacity))
     .toBe("1");
   await expect(bar).toHaveAttribute("aria-hidden", "false");
   // Floating the bar over the row must not push the timeline around.
-  const after = await row.boundingBox();
-  expect(after?.y).toBe(before?.y);
+  expect((await row.boundingBox())?.y).toBe(before?.y);
 
-  // Tab reaches the row, then the row hands focus to its actions.
+  // Tab hands focus from the row to its actions; Shift+Tab hands it back.
   const react = page.locator(".hover-bar .rx-toggle");
   await page.keyboard.press("Tab");
   await expect(react).toBeFocused();
-  // Shift+Tab hands it back to the row it belongs to.
   await page.keyboard.press("Shift+Tab");
   await expect(row).toBeFocused();
 

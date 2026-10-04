@@ -231,8 +231,11 @@ export function useChatRowActions(deps: ChatRowActionsDeps) {
     if (!inBar && !bar.shown) return
     dismissedFor = bar.id
     bar.shown = false
+    // 焦点是键盘送进条里的才交回给这条消息；指针点开的菜单自己会把焦点还给
+    // 那颗按钮（见 room/RoomHoverBar 的焦点恢复），不抢。
+    const fromKeyboard = keyboardInBar
     keyboardInBar = false
-    if (inBar && bar.id) rowEl(bar.id)?.focus({ preventScroll: true })
+    if (inBar && fromKeyboard && bar.id) rowEl(bar.id)?.focus({ preventScroll: true })
   }
   // Tab 在时间线里自己排：焦点停在一条消息的行上，送进这条消息的动作条；走到了条的
   // 头尾，再交回这一条消息。中间几颗按钮照旧交给浏览器，不动。
