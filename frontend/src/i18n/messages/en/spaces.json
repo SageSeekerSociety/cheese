@@ -456,12 +456,23 @@
     "confirmTransfer": "Transfer ownership to {name}? You will become an admin.",
     "empty": "No members",
     "loadMembersFailed": "Couldn't load members",
+    "invite": "Invite members",
+    "inviteCodes": "Invite codes",
+    "inviteDomainGroups": "Email domain groups",
     "role": {
       "owner": "Owner",
       "admin": "Admin",
-      "member": "Member"
+      "member": "Member",
+      "ownerHint": "Full control, including member roles",
+      "adminHint": "Review challenges, data, categories and invites",
+      "memberHint": "Take part: challenges and announcements"
     },
     "count": "{n} people"
+  },
+  "manageDenied": {
+    "title": "You can't manage this space",
+    "body": "Members, data and settings are only open to this space's owner and admins.",
+    "backToTasks": "Back to challenges"
   },
   "settings": {
     "title": "Settings",

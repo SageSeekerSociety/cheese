@@ -159,6 +159,15 @@ describe('成员名册', () => {
     expect(agentRow.textContent).toContain('AI 队友')
     expect(agentRow.querySelector('.roster__role')).toBeNull()
   })
+
+  it('每个人名旁的角色都带着一句这个角色能做什么', async () => {
+    await openRoster()
+    const rowOf = (handle: string) =>
+      Array.from(document.querySelectorAll('.roster__item')).find((r) => r.textContent?.includes(handle))!
+    // 名单只两行高，说明落在角色的 title 上，悬停可读。
+    expect(rowOf('alice').querySelector('.roster__role--btn')?.getAttribute('title')).toBe('管理房间与成员')
+    expect(rowOf('bob').querySelector('.roster__role--btn')?.getAttribute('title')).toBe('参与房间讨论')
+  })
 })
 
 it('按钮上是一份名册：人数含 AI 队友，头像堆里没有单挂的那一颗', async () => {

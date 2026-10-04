@@ -456,12 +456,23 @@
     "confirmTransfer": "把所有者转让给 {name}？转让后你会成为管理员。",
     "empty": "暂无成员",
     "loadMembersFailed": "加载成员失败",
+    "invite": "邀请成员",
+    "inviteCodes": "邀请码",
+    "inviteDomainGroups": "邮箱域名组",
     "role": {
       "owner": "所有者",
       "admin": "管理员",
-      "member": "成员"
+      "member": "成员",
+      "ownerHint": "全部权限，含成员角色",
+      "adminHint": "审核题目、看数据、管分类与邀请",
+      "memberHint": "做题目、看公告"
     },
     "count": "共 {n} 人"
+  },
+  "manageDenied": {
+    "title": "你没有管理权限",
+    "body": "成员、数据与设置只有这个空间的所有者和管理员能打开。",
+    "backToTasks": "回到题目列表"
   },
   "settings": {
     "title": "设置",

@@ -145,6 +145,17 @@ describe('moving someone out', () => {
   })
 })
 
+describe('角色说明', () => {
+  const qinmo = { user: { id: 9, nickname: 'qinmo', username: 'qinmo' }, role: 'MEMBER' }
+
+  it('成员表里每个人的角色旁写着一句这个角色能做什么', async () => {
+    vi.mocked(TeamsApi.getMembers).mockResolvedValue({ data: { members: [qinmo] } } as never)
+    mount({ role: 'ADMIN' })
+    // 普通成员没有角色小标，那句话里连角色名一起写出来。
+    await screen.findByText('普通成员 · 参与团队的项目')
+  })
+})
+
 describe('answering a join request', () => {
   it('an approval the server answers with no body counts, and a second click sends nothing', async () => {
     const request = {
