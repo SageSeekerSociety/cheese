@@ -9,7 +9,7 @@
       <div v-if="loading" class="py-12 text-center">
         <v-progress-circular indeterminate color="primary" />
       </div>
-      <!-- 读失败就把这块表单换成错误（docs/design-system.md §3.10）。 -->
+      <!-- A failed read trades the form for the error (docs/design-system.md §3.10). -->
       <BaseLoadError v-else-if="error" :title="t('tasks.loadError.title')" :error="error" @retry="loadTaskData" />
       <TaskForm
         v-else-if="taskData"

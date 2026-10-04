@@ -27,7 +27,7 @@
       <slot v-if="manualMode && hasMore && !loading" name="manual-load">
         <div class="manual-load-button">
           <BaseButton kind="secondary" size="sm" @click="manualLoadMore">{{ t('shell.list.loadMore') }}</BaseButton>
-          <!-- 和反馈列表那张计数一样：手上几条 / 服务端一共几条。接口不给总数就不画。 -->
+          <!-- Same counter as the feedback list: how many are in hand out of the server's total. Hidden when the API reports no total. -->
           <span v-if="total > 0" class="t-meta-read t-num">{{ t('shell.list.showing', { shown, total }) }}</span>
         </div>
       </slot>

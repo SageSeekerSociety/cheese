@@ -303,7 +303,7 @@ onMounted(() => {
     <v-progress-circular indeterminate color="primary" />
   </div>
 
-  <!-- 读失败就把这一块换成错误（docs/design-system.md §3.10），不再退化成一个空态。 -->
+  <!-- A failed read trades this block for the error (docs/design-system.md §3.10) instead of degrading to an empty state. -->
   <BaseLoadError v-else-if="error" :title="t('tasks.loadError.title')" :error="error" @retry="load" />
 
   <div v-else-if="taskData" class="td">
