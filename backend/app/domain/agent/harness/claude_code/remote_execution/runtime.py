@@ -1753,7 +1753,13 @@ class Executor:
         if home / ".cheese/executor" != self.state:
             raise ValueError("Executor preparation belongs to another room")
         bootstrap = runpy.run_path(str(self.programs / "remote-execution/bootstrap.py"))
-        with bootstrap["prepared"](payload, owner, self.verified_binaries) as (
+        with bootstrap["prepared"](
+            payload,
+            owner,
+            self.verified_binaries,
+            # Read-only in a sandbox: only the install, outside it, fetches it.
+            fetch_toolchain=not self.config.get("sandbox"),
+        ) as (
             _,
             config,
             _,
@@ -2028,12 +2034,13 @@ def bridge(state, server, *, call=None):
         thread.join()
 
 
-def terminate_unrequested(state):
+def terminate_unrequested(state, named):
     """Stop an executor that refused `shutdown`: one started before stopping
     was a request. Those only ever ran unsandboxed, so the pid one reports is a
     pid this side can signal — but only once that pid is seen running this
     state's service, because whatever answers on a room's socket is not proof
-    of who is behind it."""
+    of who is behind it. `named` is the state as the caller spelled it, which
+    is how the service was started: resolving a link in it would miss."""
     try:
         pid = request(state, "ping")["pid"]
     except (OSError, RuntimeError):
@@ -2044,9 +2051,7 @@ def terminate_unrequested(state):
         text=True,
         check=False,
     ).stdout.rstrip()
-    if any(
-        running.endswith(f"serve --state {path}") for path in (state, state.resolve())
-    ):
+    if any(running.endswith(f"serve --state {path}") for path in (named, state)):
         os.kill(pid, signal.SIGTERM)
 
 
@@ -2073,7 +2078,7 @@ def main():
             if not state.exists():
                 return
         except RuntimeError:
-            terminate_unrequested(state)
+            terminate_unrequested(state, args.state)
         with (state / "service.lock").open("a") as lock_file:
             for _ in range(100):
                 try:
