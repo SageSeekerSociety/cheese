@@ -3,7 +3,7 @@
 import type { AgentControlState, Block, Topic } from '../../cx_types'
 import type { MemberActivityLine } from '../../lib/memberActivity'
 
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUpdated, ref, watch } from 'vue'
 
 import { getTranscript, SITE_PAGE_SIZE } from '../../api'
 import { useStickToBottom } from '../../composables/useStickToBottom'
@@ -19,6 +19,8 @@ import {
   groupByTurn,
   isLongSiteEntry,
   isNarration,
+  middleTruncate,
+  overflowsClamp,
   shouldKeepPinning,
   SITE_CLAMP_LINES,
 } from '../../lib/siteLog'
@@ -150,6 +152,62 @@ function toggleSiteEntry(id: string): void {
   if (next.has(id)) next.delete(id)
   else next.add(id)
   expandedSite.value = next
+}
+
+// Which rendered entries actually overflow the 12-line clamp. Measured from the
+// DOM rather than guessed from the text: `isLongSiteEntry` cannot know how wide
+// this panel is, so at a wide width it calls a 900-character paragraph long and
+// clamps nothing (展开 then opens nothing), and at a narrow width a modest
+// paragraph can overflow with no button to open it. `scrollHeight` on an
+// `overflow: hidden` box is still the full content height, so this reads the
+// true height whether or not the clamp is applied.
+const overflowing = ref<Set<string>>(new Set())
+// Once a real measurement has happened, its answer replaces the content
+// heuristic. In a unit test there is no layout, so this stays false and the
+// heuristic keeps the template deterministic.
+const measured = ref(false)
+
+function measureBodies(): void {
+  const root = scrollRef.value
+  // A hidden panel (a tab that is not on screen) has no height to measure.
+  // Measuring it would read every scrollHeight as 0 and wrongly clear every
+  // clamp; leaving `measured` false keeps the heuristic until it is shown.
+  if (!root || root.clientHeight === 0) return
+  const next = new Set<string>()
+  let sawLayout = false
+  for (const el of root.querySelectorAll<HTMLElement>('.site-msg__body[data-site-body]')) {
+    const id = el.dataset.siteBody
+    if (!id) continue
+    const lineHeight = Number.parseFloat(getComputedStyle(el).lineHeight)
+    if (!Number.isFinite(lineHeight) || lineHeight <= 0) continue
+    sawLayout = true
+    if (overflowsClamp(el.scrollHeight, lineHeight)) next.add(id)
+  }
+  if (!sawLayout) return
+  measured.value = true
+  // Replace only when the membership changed, so the measurement cannot drive
+  // its own re-render (`onUpdated`) forever.
+  if (next.size !== overflowing.value.size || [...next].some((id) => !overflowing.value.has(id))) {
+    overflowing.value = next
+  }
+}
+
+onMounted(measureBodies)
+onUpdated(measureBodies)
+
+// Long enough to be clamped: the measured answer once we have it, the content
+// heuristic until then. Both answer the same question, so the 展开 button and
+// the clamp never disagree about which entries are long.
+function isLong(b: Block): boolean {
+  return measured.value ? overflowing.value.has(b.id) : isLongSiteEntry(b.content)
+}
+
+// 参数收起时显示的这一份：路径和命令从中间省——两头才是认得出它的那半截，从尾部
+// 省正好把文件名剪掉；散文仍从尾部省（css 的 ellipsis），中间的省略号会把它拦腰
+// 截断。摊开时模板走 eventDetail，不经过这里。
+function argDisplay(b: Block): string {
+  const arg = eventArg(b)
+  return argIsProse(b) ? arg : middleTruncate(arg)
 }
 
 // A single `scrollTop = scrollHeight` at nextTick does NOT work here, which is
@@ -507,10 +565,11 @@ function isLive(index: number): boolean {
                   'site-act__argtext--prose': argIsProse(b),
                 }"
                 data-testid="site-act-arg"
+                :aria-expanded="expandedSite.has(b.id)"
                 :title="eventArg(b)"
                 @click="toggleSiteEntry(b.id)"
               >
-                {{ expandedSite.has(b.id) ? eventDetail(b) : eventArg(b) }}
+                {{ expandedSite.has(b.id) ? eventDetail(b) : argDisplay(b) }}
               </button>
               <span v-else class="site-act__argtext"></span>
               <span class="site-act__time">{{ fmtTime(b.created_at) }}</span>
@@ -547,20 +606,32 @@ function isLive(index: number): boolean {
                 </div>
                 <!-- 渲染成正文，不摆原文：现场读的也是人说的话，粗体、列表、代码块
                    和对话栏一个样子（走同一个 renderMarkdown）。 -->
+                <!-- Clamp = max-height + a fade, NOT -webkit-line-clamp: that one
+                    is ignored the moment the markdown holds a block-level <pre>,
+                    so a 128-line code block rendered at full height and the
+                    展开 button opened nothing. The fade sits on the wrapper,
+                    because the body's own overflow:hidden would clip it. -->
                 <div
-                  class="site-msg__body md-content"
-                  :class="{ 'site-msg__body--clamped': isLongSiteEntry(b.content) && !expandedSite.has(b.id) }"
-                  :style="{ '--site-clamp-lines': SITE_CLAMP_LINES }"
-                  @click="onSayClick($event, b)"
-                  v-html="renderSay(b.content)"
-                />
+                  class="site-msg__clip"
+                  :class="{ 'site-msg__clip--clamped': isLong(b) && !expandedSite.has(b.id) }"
+                >
+                  <div
+                    class="site-msg__body md-content"
+                    :class="{ 'site-msg__body--clamped': isLong(b) && !expandedSite.has(b.id) }"
+                    :style="{ '--site-clamp-lines': SITE_CLAMP_LINES }"
+                    :data-site-body="b.id"
+                    @click="onSayClick($event, b)"
+                    v-html="renderSay(b.content)"
+                  />
+                </div>
                 <!-- 过长时不直接摊开：一条几千字的输出会把它前后的所有东西挤出
                    屏幕，而 现场 的价值恰恰是「一眼看完发生了什么」。折叠到 12
                    行，想看全的自己点开。 -->
                 <button
-                  v-if="isLongSiteEntry(b.content)"
+                  v-if="isLong(b)"
                   type="button"
                   class="site-msg__more"
+                  :aria-expanded="expandedSite.has(b.id)"
                   @click="toggleSiteEntry(b.id)"
                 >
                   {{
@@ -763,6 +834,7 @@ function isLive(index: number): boolean {
 .site-act__error {
   display: -webkit-box;
   flex: 0 0 100%;
+  order: 2;
   min-width: 0;
   margin: 2px 0 0;
   padding: 0 0 0 calc(5px + 8px + 4em + 8px);
@@ -876,9 +948,21 @@ function isLive(index: number): boolean {
   outline-offset: 2px;
   border-radius: var(--radius-sm);
 }
+/* 摊开时参数换到动词下面另起一行，动词和时间留在第一行——整行被参数原文顶掉的
+   话，读的人就看不见「这一步是什么、什么时候做的」了。缩进和错误行同一个算法：
+   圆点 + 间隙 + 动词列 + 间隙。order 把它排到最后，time 用 margin-left 顶到最右。 */
 .site-act__argtext--full {
+  flex: 0 0 100%;
+  order: 1;
+  padding-left: calc(5px + 8px + 4em + 8px);
   white-space: pre-wrap;
   word-break: break-word;
+}
+.site-act__argtext--full ~ .site-act__time {
+  margin-left: auto;
+  /* 摊开时时间不再等悬停：参数原文拉到下面去了，这一行只剩动词和它，是「什么时候
+     做的」唯一的落点。 */
+  opacity: 1;
 }
 .site-act--platform .site-act__argtext {
   color: var(--ink);
@@ -901,19 +985,37 @@ function isLive(index: number): boolean {
    这里只定这一栏自己的字号 —— 现场比对话栏密，13px 和旁边那些工具行对得上。 */
 .site-msg__body {
   font-size: 13px;
-  line-height: 1.6;
+  /* 行高按 token 取 13px 那一档：折叠的 max-height 正好是它的 12 倍，两处都写死
+     数字的话，改一处另一处就跟着错位。 */
+  line-height: var(--lh-13);
   word-break: break-word;
   color: var(--text);
 }
-/* Collapsed long entry. The height comes from SITE_CLAMP_LINES via a bound
+/* 底部渐隐要盖在正文上面，所以它在正文外面那一层：放进正文里会被正文自己的
+   overflow: hidden 一起剪掉。 */
+.site-msg__clip {
+  position: relative;
+}
+.site-msg__clip--clamped::after {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 28px;
+  pointer-events: none;
+  background: linear-gradient(to bottom, transparent, var(--surface));
+  content: '';
+}
+/* Collapsed long entry: an explicit max-height, NOT -webkit-line-clamp. The
+   clamp version is ignored the moment the markdown holds a block-level <pre>,
+   so a 128-line code block rendered at its full height (measured 2615px) while
+   the button still said 展开全部. max-height clips the real height, block
+   children included. The line count comes from SITE_CLAMP_LINES via a bound
    custom property rather than a literal here: the template asks that same
    module whether to render the 展开 button, so if the two drift an entry gets
    clamped with no way out of the clamp. */
 .site-msg__body--clamped {
-  display: -webkit-box;
-  -webkit-line-clamp: var(--site-clamp-lines);
-  line-clamp: var(--site-clamp-lines);
-  -webkit-box-orient: vertical;
+  max-height: calc(var(--site-clamp-lines) * var(--lh-13));
   overflow: hidden;
 }
 .site-msg__more {

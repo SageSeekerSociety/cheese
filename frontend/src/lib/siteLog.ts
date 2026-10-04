@@ -40,6 +40,25 @@ export function countLines(content: string): number {
 }
 
 /**
+ * Whether a rendered body overflows the 12-line clamp budget.
+ *
+ * The clamp is `max-height`, so it clips whatever is actually tall — including
+ * a block-level `<pre>`, which `-webkit-line-clamp` silently let through. The
+ * template needs the same answer to decide whether to offer 展开 at all, and a
+ * character count cannot give it: 900 characters fit in twelve lines of a wide
+ * panel and overflow a narrow one. Measuring the rendered element is the only
+ * answer that agrees with what the style does, at every width.
+ *
+ * `lineHeight` is the body's computed line height in px; a non-positive value
+ * (no layout, as in a unit test) means "cannot tell", and the caller falls back
+ * to the content heuristic.
+ */
+export function overflowsClamp(scrollHeight: number, lineHeight: number, lines = SITE_CLAMP_LINES): boolean {
+  const budget = lines * lineHeight
+  return budget > 0 && scrollHeight > budget + 1
+}
+
+/**
  * How many frames the tail-pin may keep re-pinning while the panel is still
  * growing. ~30 frames ≈ 500ms at 60fps, and it stops the moment the height
  * holds steady for one frame — measured, the panel settles in about 120ms.
@@ -189,4 +208,31 @@ export function eventArg(b: Block): string {
 // 这一步挂了没有。后端只在挂了的时候写这个字段，所以「没有」就是「没挂」。
 export function eventFailed(b: Block): boolean {
   return b.meta?.failed === true
+}
+
+// ---- 参数那一列的省略 ----
+
+/**
+ * Beyond this many characters a non-prose argument (a path or a command) is
+ * shown with its middle elided. The panel is a narrow side column; at 1280px
+ * its argument column fits roughly this many monospace characters. It is a
+ * guess about width, which is why the full text stays on `title` and 展开
+ * still shows every character.
+ */
+export const SITE_ARG_MID_CHARS = 36
+
+/**
+ * Keep the head and the tail, drop the middle.
+ *
+ * A path's two ends are what identify it — `backend/app/…/callback.py` — and a
+ * command's are the program and its target. An end-ellipsis throws away exactly
+ * the half that says *which* file, which is the whole point of the column. The
+ * budget is split the way the label asks: 40% head, 40% tail, an ellipsis
+ * between them; short enough to stay on one line, long enough to keep both
+ * identifying ends.
+ */
+export function middleTruncate(text: string, max = SITE_ARG_MID_CHARS): string {
+  if (text.length <= max) return text
+  const keep = Math.max(1, Math.floor(max * 0.4))
+  return `${text.slice(0, keep)}…${text.slice(text.length - keep)}`
 }
