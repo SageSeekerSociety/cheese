@@ -17,11 +17,13 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { setLocale } from '@/i18n'
 
 const leaveProject = vi.fn()
+const listProjectMembers = vi.fn()
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
   return {
     ...actual,
     leaveProject: (...a: unknown[]) => leaveProject(...a),
+    listProjectMembers: (...a: unknown[]) => listProjectMembers(...a),
   }
 })
 
@@ -34,7 +36,7 @@ const refreshProjects = vi.fn()
 // 名册上「我」这一行是怎么进来的：随团队进来（team），还是被邀请进来的外部成员（external）。
 const members: { user_handle: string; source: string }[] = []
 vi.mock('@/stores/workspace', () => ({
-  useWorkspaceStore: () => ({ refreshMembers, refreshProjects, members }),
+  useWorkspaceStore: () => ({ refreshMembers, refreshProjects, members, projectId: 'p1' }),
 }))
 
 import LeaveProjectDialog from './LeaveProjectDialog.vue'
@@ -74,6 +76,7 @@ beforeEach(() => {
   localStorage.setItem('user', JSON.stringify({ id: 1, username: 'linxia' }))
   members.splice(0, members.length, { user_handle: 'linxia', source: 'team' })
   leaveProject.mockReset().mockResolvedValue({ deleted: true })
+  listProjectMembers.mockReset().mockResolvedValue({ data: [], total: 0 })
   refreshMembers.mockReset().mockResolvedValue(undefined)
   refreshProjects.mockReset().mockResolvedValue(undefined)
   replace.mockReset()
@@ -141,6 +144,16 @@ describe('LeaveProjectDialog 的被拒语义', () => {
     mount()
     expect(screen.getByText(/你将无法查看这个项目/)).toBeTruthy()
     expect(screen.queryByText(/团队/)).toBeNull()
+  })
+
+  // 从 rail 右键退的可能是另一个项目：措辞按那个项目里「我」是怎么进来的说，不按正开着
+  // 的这个。
+  it('退的不是正开着的项目时，按那个项目的名册说', async () => {
+    members.splice(0, members.length, { user_handle: 'linxia', source: 'external' })
+    listProjectMembers.mockResolvedValue({ data: [{ user_handle: 'linxia', source: 'team' }], total: 1 })
+    mount('p-other')
+    expect(await screen.findByText(/退出的是这个项目，不是团队/)).toBeTruthy()
+    expect(listProjectMembers).toHaveBeenCalledWith('p-other')
   })
 
   it('确认之后退出、刷新、回首页；刷新失败也照样走', async () => {

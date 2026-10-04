@@ -608,7 +608,8 @@ class TopicMemberService:
         唯一的例外是**最后一个 owner、而房里还坐着别人**：撤掉他，那几个人就留在一间
         没人管得了的房里（``_require_manager`` 那个逃逸口正是为修这种房间存在的）。
         所以既不静默放行，也不替房间指定继任者：拒绝，并点名是哪间房，让人先把房间
-        交出去再走。房里除了他只有 agent 的，不拦 —— 没有人会被留下。
+        交出去再走。房里除了他只有 agent 的，或另有一位 admin 的，不拦 —— 前者没
+        有人会被留下，后者房间仍有人管。
 
         「最后一个 owner」这个判断要读得**准**：两个人同时退同一个项目，各自读到
         「这间房有两个 owner」就各自把自己删掉，房间照样落进无主状态。所以读 owner
@@ -635,21 +636,27 @@ class TopicMemberService:
             for topic_id in seats
             if member_handle in owners.get(topic_id, []) and len(owners[topic_id]) <= 1
         ]
-        # 只剩他一个人（加上芝士）的房间不拦：没有谁会被留在一间没人管的房里，而
-        # 项目成员身份照样进得来它，管项目的人也能从 ``_require_manager`` 那个逃逸口
-        # 接手。拦的只是还坐着别的人的房间。
-        seated = await self._repo.handles_by_topic(sole)
+        # 只有房里还坐着别的人、而他一走就没人管得了这间房时才拦。只剩他一个人（加上
+        # 芝士）的不拦：没有谁会被留下，项目成员身份照样进得来它，管项目的人也能从
+        # ``_require_manager`` 那个逃逸口接手。房里另有一位 admin 的也不拦：admin 管得
+        # 了名册，房间不会没人管。
+        seated = await self._repo.seats_by_topic(sole)
         others = {
-            topic_id: [h for h in seated.get(topic_id, []) if h != member_handle]
+            topic_id: {
+                h: role
+                for h, role in seated.get(topic_id, {}).items()
+                if h != member_handle
+            }
             for topic_id in sole
         }
         agents = await IdentityService(self._session).agents_among(
-            sorted({h for handles in others.values() for h in handles})
+            sorted({h for chairs in others.values() for h in chairs})
         )
         orphaned = sorted(
             titles[topic_id]
             for topic_id in sole
             if any(h not in agents for h in others[topic_id])
+            and not any(role in _MANAGER_ROLES for role in others[topic_id].values())
         )
         if orphaned:
             raise ValidationError(
