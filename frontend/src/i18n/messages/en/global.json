@@ -50,5 +50,10 @@
   },
   "unknownError": "Unknown error",
   "listItemQuoted": "“{item}”",
-  "confirm": "Confirm"
+  "confirm": "Confirm",
+  "settingsSearch": {
+    "placeholder": "Search settings",
+    "label": "Search settings by name",
+    "none": "No settings named “{text}”"
+  }
 }

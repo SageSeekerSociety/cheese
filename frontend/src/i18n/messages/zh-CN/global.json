@@ -50,5 +50,10 @@
     "promptTitle": "输入"
   },
   "unknownError": "未知错误",
-  "listItemQuoted": "「{item}」"
+  "listItemQuoted": "「{item}」",
+  "settingsSearch": {
+    "placeholder": "搜索设置",
+    "label": "按名字搜索设置",
+    "none": "没有名字含「{text}」的设置"
+  }
 }

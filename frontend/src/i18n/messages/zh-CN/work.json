@@ -1182,7 +1182,10 @@
     "noAssignee": "暂无负责人",
     "queued": "排队中",
     "running": "正在运行",
-    "made": "做出了什么"
+    "made": "做出了什么",
+    "findPlaceholder": "按标题找（/）",
+    "findLabel": "在看板上按标题找",
+    "findNone": "没有标题含「{text}」的任务"
   },
   "publishedSite": {
     "revisionChanged": "项目已采纳的版本变了，确认之后再发布",
