@@ -208,6 +208,7 @@ function renderPlain(text: string): string {
     }"
     :data-mid="block.id"
     :data-actions="outgoing ? undefined : ''"
+    :tabindex="outgoing ? undefined : 0"
   >
     <!-- avatar gutter: only on the first of a run -->
     <div class="im-gutter">
@@ -409,6 +410,12 @@ function renderPlain(text: string): string {
 <style scoped src="./room-row.css"></style>
 
 <style scoped>
+/* 键盘走到一条消息时，焦点环画在行内（offset 取负）。行是整宽的，而且滚动区在
+   水平方向会裁掉溢出的部分：正 offset 的环在手机上会被左右两边切掉，看不出光标
+   停在哪一条。见 docs/design-system.md 的焦点圈一节。 */
+.im-row:focus-visible {
+  outline-offset: -2px;
+}
 /* B3: the "回复 X：…" cue above a reply. */
 .im-replied {
   display: inline-flex;
