@@ -51,6 +51,10 @@ vi.mock('@/api', () => ({
 vi.mock('@/network/api/teams', () => ({
   TeamsApi: { getComputeProfile: vi.fn(async () => ({ data: { current: 'cloud', profiles: [] } })) },
 }))
+// 确认框一律说「是」，这样点主操作就直接往下走。
+vi.mock('@/plugins/dialog', () => ({
+  useDialog: () => ({ confirm: () => ({ wait: async () => true }), custom: vi.fn() }),
+}))
 
 beforeAll(() => {
   setLocale('zh-CN')
@@ -235,11 +239,6 @@ it('suspends and resumes the same machine through its project', async () => {
     ai_status: 'ready',
     device_id: 'device-one',
   } as ProjectMachine
-  // The test DOM has no confirm(); the person says yes.
-  vi.stubGlobal(
-    'confirm',
-    vi.fn(() => true)
-  )
   vi.mocked(listProjectMachines).mockImplementation(
     async (projectId) =>
       ({

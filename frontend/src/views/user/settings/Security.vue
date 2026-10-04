@@ -497,7 +497,11 @@ function closeTotp() {
 
 const handleDisableTOTP = async () => {
   const confirmed = await dialogs
-    .confirm(t('account.security.turnOffBody'), { title: t('account.security.turnOffTitle') })
+    .confirm(t('account.security.turnOffBody'), {
+      title: t('account.security.turnOffTitle'),
+      confirmLabel: t('account.security.turnOff'),
+      danger: true,
+    })
     .wait()
   if (confirmed) await disableTOTP()
 }
@@ -521,7 +525,11 @@ const disableTOTP = async () => {
 
 const handleGenerateBackupCodes = async () => {
   const confirmed = await dialogs
-    .confirm(t('account.security.regenerateBody'), { title: t('account.security.regenerateTitle') })
+    .confirm(t('account.security.regenerateBody'), {
+      title: t('account.security.regenerateTitle'),
+      confirmLabel: t('account.security.regenerate'),
+      danger: true,
+    })
     .wait()
   if (confirmed) await generateBackupCodes()
 }

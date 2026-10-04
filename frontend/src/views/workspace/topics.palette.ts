@@ -19,6 +19,17 @@ import { topicTitle } from '@/lib/topicState'
 import { normalizeTopicTitle, TOPIC_TITLE_MAX_LENGTH } from '@/lib/topicTitle'
 import { useWorkspaceStore } from '@/stores/workspace'
 
+// 这个话题此刻是不是在等这个人动手。
+//
+// 后端的 `awaits_me` 只数「还挂着没结的卡、没答的决策请求」，它不看归档状态：一个
+// 归档的房间，里面那张卡也没人再去结，于是 `awaits_me` 仍然为真。可房间已经收了尾，
+// 屏幕上不该再把它列进「等你处理」——那张卡不是要人现在去点它，只是没人去收尾。所以
+// 归档在这里盖过 `awaits_me`。看板的 `presentation` 早就这么判了（归档的房间落
+// `archived` 那一列），只是它和 `awaits_me` 是两条独立的计算，这一处把它们对齐。
+function awaitsYou(topic: Topic): boolean {
+  return topic.awaits_me === true && topic.status !== 'archived'
+}
+
 // 行尾写这个话题此刻走到哪：和看板同一个词，后端算好的，这里不推。只有要人动手的
 // 那一列着暖色，已完成的着绿色。
 function badgeOf(topic: Topic): PaletteItem['badge'] {
@@ -28,7 +39,7 @@ function badgeOf(topic: Topic): PaletteItem['badge'] {
       text: phraseLabel(shown.phrase),
       tone: shown.column === 'needs_you' ? 'warn' : shown.column === 'done' ? 'ok' : undefined,
     }
-  if (topic.awaits_me) return { text: t('navigation.palette.awaiting'), tone: 'warn' }
+  if (awaitsYou(topic)) return { text: t('navigation.palette.awaiting'), tone: 'warn' }
   if (topic.status === 'archived') return { text: t('navigation.palette.archived') }
   return undefined
 }
@@ -53,7 +64,7 @@ function itemOf(topic: Topic, projectId: string, router: Router): PaletteItem {
     title: topicTitle(topic),
     icon: archived ? 'mdi-archive-outline' : 'mdi-pound',
     badge: badgeOf(topic),
-    awaiting: !!topic.awaits_me,
+    awaiting: awaitsYou(topic),
     to: { name: 'workspace-topic', params: { projectId, topicId: topic.id } },
     actions: () => topicActions(topic, router, { rename: () => renameInPalette(topic) }),
   }

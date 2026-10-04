@@ -88,6 +88,8 @@
         :loading="loadingMore"
         :initial-loading="refreshing"
         :is-empty="submissions.length <= 1"
+        :shown="submissions.length"
+        :total="total"
         force-manual
         @load-more="loadMore"
       >
@@ -195,6 +197,7 @@ const {
   hasMore,
   refreshing,
   loadingMore,
+  total,
 } = usePaging(async (pageStart) => {
   const { data } = await TasksApi.listSubmissions(props.taskId, props.participantId, {
     allVersions: true,

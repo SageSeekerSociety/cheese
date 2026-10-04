@@ -20,6 +20,10 @@ let listening = false
 
 function onKeydown(event: KeyboardEvent) {
   if (event.key !== 'Escape') return
+  // 这一下 Esc 已经被更靠里的东西吃掉了（输入框里 @ 菜单或回答面板先收起了自己，
+  // `preventDefault` 过）：它不算浮层栈的，别连浮层一起关。window 的监听排在事件冒泡
+  // 的最后，里面的 @keydown 先跑，所以到这儿 defaultPrevented 已经写好了。
+  if (event.defaultPrevented) return
   const top = stack[stack.length - 1]
   if (!top) return
   event.preventDefault()

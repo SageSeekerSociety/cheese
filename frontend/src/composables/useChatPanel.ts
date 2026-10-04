@@ -192,6 +192,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     find: (id) => timeline.find(id),
     errorMsg,
     pendingHistory: () => historyReactions,
+    me: AUTHOR,
   })
 
   // 「这条事件长什么样」的判断全在 lib/platformNotice.ts —— 包括动作卡认哪些块

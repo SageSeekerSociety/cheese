@@ -351,8 +351,7 @@
     "resubmitted": "重新提交审核成功，等待管理员审核"
   },
   "loadError": {
-    "title": "加载失败",
-    "retry": "重试"
+    "title": "加载失败"
   },
   "loadFailed": "加载题目信息失败",
   "teamStatus": {

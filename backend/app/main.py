@@ -274,6 +274,16 @@ async def lifespan(_: FastAPI):
 
     taking_over = asyncio.create_task(take_over(), name="take over running work")
 
+    # Questions asked of sessions are read by whichever process holds each
+    # one's lease, not by the one that owns the running work: this process
+    # takes up the ones nobody reads from its start, and on its way out gives
+    # its own up first, for the next process to take at once.
+    from app.api.deps import get_consumptions
+
+    reading_questions = asyncio.create_task(
+        get_consumptions().run(), name="questions nobody reads"
+    )
+
     from app.core.loop_lag import watch_loop_lag
     from app.core.net_io import watch_api_io, watch_net_io
 
@@ -309,6 +319,9 @@ async def lifespan(_: FastAPI):
         try:
             yield
         finally:
+            reading_questions.cancel()
+            await asyncio.gather(reading_questions, return_exceptions=True)
+            await get_consumptions().let_go()
             # Hand the running work to the next process, in the order that lets
             # it pick every turn up where it stands: no new turn starts here;
             # the prompts on their way out arrive; the sessions stop being read

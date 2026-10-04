@@ -468,6 +468,7 @@ routes:
   - {protocol: "http", method: "GET", path: "/assistant/conversations/{conversationId}", auth: "assistant.task", owner: "assistant"}
   - {protocol: "http", method: "POST", path: "/assistant/conversations/{conversationId}/ask", auth: "assistant.task", owner: "assistant"}
   - {protocol: "http", method: "POST", path: "/assistant/conversations/{conversationId}/stop", auth: "assistant.task", owner: "assistant"}
+  - {protocol: "http", method: "GET", path: "/assistant/conversations/{conversationId}/answers/{work}", auth: "assistant.task", owner: "assistant"}
   # app.api.routes.attachments
   - {protocol: "http", method: "POST", path: "/attachments", auth: "legacy.answers.list_answers", owner: "attachment"}
   - {protocol: "http", method: "GET", path: "/attachments/limits", auth: "legacy.answers.list_answers", owner: "attachment"}
@@ -1059,6 +1060,7 @@ routes:
   # app.api.routes.topics_doc_agent
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/doc/agent", auth: "document.human", owner: "doc_agent"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/doc/agent/{conversation}/stop", auth: "document.human", owner: "doc_agent"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/doc/agent/{conversation}/answers/{work}", auth: "document.human", owner: "doc_agent"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/doc/agent/{conversation}/reply/{thread_id}", auth: "document.human", owner: "doc_agent"}
   # app.api.routes.topics_documents
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/documents/recalc", auth: "actor.topic", owner: "documents"}

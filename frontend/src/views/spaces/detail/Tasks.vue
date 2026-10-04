@@ -66,6 +66,8 @@
         :has-more="hasMore"
         :initial-loading="refreshing"
         :is-empty="tasks.length === 0"
+        :shown="tasks.length"
+        :total="total"
         @load-more="loadMore"
       >
         <template #empty>
@@ -224,6 +226,7 @@ const {
   hasMore,
   refreshing,
   loadingMore,
+  total,
 } = usePaging<Task, QueryOptions, string>(
   async (pageStart, queryOptions) => {
     if (!queryOptions || !queryOptions.space) return createEmptyResult<Task, string>()
