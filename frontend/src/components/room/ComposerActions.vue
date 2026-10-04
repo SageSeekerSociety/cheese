@@ -110,9 +110,19 @@ const summonText = computed(() => ({
     <!-- 这两个 input 是藏起来的，但**不能**用 display:none / visibility:hidden：
              iOS Safari 拒绝用脚本打开一个被隐藏掉的文件选择框，按钮点下去
              毫无反应。所以按 .visually-hidden 的老办法藏——留在布局里、只是
-             看不见。旁边 components/common/FileSelect.vue 里也是这么藏的。 -->
-    <input ref="fileInput" type="file" multiple class="visually-hidden" @change="onFilePicked" />
-    <input ref="imageInput" type="file" accept="image/*" multiple class="visually-hidden" @change="onFilePicked" />
+             看不见。旁边 components/common/FileSelect.vue 里也是这么藏的。
+             They are opened only by script from the visible buttons below, so
+             keep them out of the Tab order. -->
+    <input ref="fileInput" type="file" multiple class="visually-hidden" tabindex="-1" @change="onFilePicked" />
+    <input
+      ref="imageInput"
+      type="file"
+      accept="image/*"
+      multiple
+      class="visually-hidden"
+      tabindex="-1"
+      @change="onFilePicked"
+    />
     <!-- 附件上传走的是 HTTP，和聊天那条 socket 是两回事：socket 断着的
            时候图片照样传得上去，所以这里不跟着 `connected` 一起禁用。 -->
     <BaseButton

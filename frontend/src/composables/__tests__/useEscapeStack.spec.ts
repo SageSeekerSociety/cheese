@@ -44,6 +44,7 @@ function mountLayers() {
     sidebarOpen,
     panelOpen,
     closed,
+    container,
     openSidebar: () => fireEvent.click(container.querySelector('[data-open-sidebar]') as HTMLElement),
     openPanel: () => fireEvent.click(container.querySelector('[data-open-panel]') as HTMLElement),
     escape: () => fireEvent.keyDown(window, { key: 'Escape' }),
@@ -92,5 +93,21 @@ describe('useEscapeLayer', () => {
     const { closed, escape } = mountLayers()
     await escape()
     expect(closed).toEqual([])
+  })
+
+  it('里层已经 preventDefault 的 Esc 不再弹栈', async () => {
+    const { closed, container, openPanel, escape } = mountLayers()
+    await openPanel()
+
+    // 正文里的 @ 菜单 / 回答面板先吃掉这一下：它 preventDefault，事件冒到 window 时
+    // 栈得让过去，不能连浮层一起关。
+    const inner = container.querySelector('[data-open-panel]') as HTMLElement
+    inner.addEventListener('keydown', (e) => e.preventDefault())
+    await fireEvent.keyDown(inner, { key: 'Escape' })
+    expect(closed).toEqual([])
+
+    // 没被吃掉的那一下照旧关掉栈顶。
+    await escape()
+    expect(closed).toEqual(['panel'])
   })
 })

@@ -88,6 +88,42 @@ test.describe('房间里派出去的活', () => {
     // 否则一块空板读起来就是「这个项目没活」——而项目里可能有几百条。
     await expect(view).toContainText(/施工中|交付中|待处理|暂无任务/);
   });
+
+  test('板上计数在活到货之前不写 0', async ({ page }) => {
+    const projectId = projectIdOf(page);
+    const stamp = Date.now();
+    const roomId = await freshRoom(page, `计数 ${stamp}`);
+    await dispatch(page, roomId, `计数的活 ${stamp}`);
+
+    // 把这一页读活的那次请求按住，等断言完再放行：冷加载那一秒正是这一条要看的
+    // 窗口，而按住了才不靠时序去赌。列表一格都没有的时候列头写 0，一秒后再跳到真
+    // 值 —— 那个 0 会被读成「我的活没了」。
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    await page.route(`**/projects/${projectId}/tasks`, async (route) => {
+      await gate;
+      await route.continue();
+    });
+
+    try {
+      await page.goto(`/projects/${projectId}/running`);
+      const view = page.locator('.board');
+      await expect(view).toBeVisible();
+      // 三条任务列的计数槽都已经就位，而这一帧活还在路上（列里是骨架）。
+      const counts = page.locator('.board-col[data-column] .board-col__count');
+      await expect(counts).toHaveCount(3);
+      await expect(page.locator('.board-col__skel').first()).toBeVisible();
+      for (const slot of await counts.all()) {
+        await expect(slot).not.toHaveText(/\d/);
+      }
+    } finally {
+      release();
+    }
+
+    // 放行之后，真实的数才出现 —— 出现了就说明上面那一帧确实还没有数。
+    await expect(page.locator('[data-column="building"] .board-col__count')).toHaveText(/\d/);
+    await expect(page.locator('.board-col__skel')).toHaveCount(0);
+  });
 });
 
 

@@ -7,7 +7,8 @@ import { nextTick, onBeforeUnmount, watch } from 'vue'
  *
  * 打开的那一刻记下当时拿着焦点的元素（`document.activeElement`），关掉时如果它还
  * 在文档里（`isConnected`）就把它重新聚焦。参照 commands/palette/CommandPalette.vue
- * 里手写的那一套，抽成一个组合式函数。
+ * 里手写的那一套，抽成一个组合式函数。焦点本来就在 `body` 上（打开它的那一下没把
+ * 焦点交给任何元素）时不算「有那一处」，直接走下面的兜底。
  *
  * 适用于「打开/关闭由自己说了算」的浮层，比如自己画的对话框、没有 activator 的
  * v-bottom-sheet。Vuetify 的 v-dialog / v-overlay 只在**有 activator** 时才在关掉
@@ -15,17 +16,32 @@ import { nextTick, onBeforeUnmount, watch } from 'vue'
  * 菜单时才还。这些地方交给它自己，别用这个组合式函数去抢。
  *
  * @param open 浮层是否开着。挂载即开着（关掉就把整个组件卸载）的浮层传 `ref(true)`。
+ * @param fallback 打开它的那一处已经不在文档里时的兜底：一个返回可聚焦容器的函数。
+ *   省略就不还（焦点掉到 body 上）。只在「打开它的东西随这次操作一起没了」时才用
+ *   得到，比如弹窗是从某个列表行里的按钮开的、而那一行在弹窗关掉前已经被删掉。
  */
-export function useFocusReturn(open: Ref<boolean>): void {
+export function useFocusReturn(open: Ref<boolean>, fallback?: () => HTMLElement | null): void {
   let returnFocus: HTMLElement | null = null
+  // 有没有经历过一次「打开」——只有打开过才有要收的尾。挂载时就关着的浮层（收到
+  // `immediate` 那一下 `restore`）和从没打开就卸载的浮层，不能因为 `returnFocus`
+  // 是空的就拿兜底容器去抓焦点：那会在挂载/卸载时把用户正拿着的焦点挪走。
+  let opened = false
 
   function restore(): void {
+    if (!opened) return
+    opened = false
     const el = returnFocus
     returnFocus = null
     // 等这一轮渲染跑完再还：Vuetify 的对话框在 isActive 变假的那一瞬间才摘掉自己的
     // 焦点陷阱（retainFocus），早一步还回去会被它一把抢回对话框里。
     nextTick(() => {
-      if (el?.isConnected) el.focus?.()
+      if (el?.isConnected) {
+        el.focus?.()
+        return
+      }
+      // 打开它的那一处没了：退到调用方给的兜底容器，别让焦点掉到 body 上。
+      const container = fallback?.()
+      if (container?.isConnected) container.focus?.()
     })
   }
 
@@ -33,7 +49,12 @@ export function useFocusReturn(open: Ref<boolean>): void {
     open,
     (isOpen) => {
       if (isOpen) {
-        returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
+        opened = true
+        // 不认 `body`：焦点已经在 body 上时「还给它」是个空动作，还会盖掉别处的收尾
+        // （有页面自己在关掉时把焦点送回触发它的按钮）。没得还就当没有打开它的那一处，
+        // 走兜底。
+        const active = document.activeElement
+        returnFocus = active instanceof HTMLElement && active !== document.body ? active : null
       } else {
         restore()
       }
