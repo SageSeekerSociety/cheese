@@ -4,10 +4,13 @@
 // 这个组件只画：有哪几步、各自做没做、去哪一步。判据全在
 // `composables/useGettingStarted.ts` 里，从房间里和项目里已有的状态推出来，
 // 不落字段、不加迁移。
-import type { RouteLocationRaw } from 'vue-router'
+//
+// 跳转走 `useNavigation()`，不 import vue-router：宿主没装路由时它是 `null`，
+// 那时按钮点了也不动，但卡片照旧画得出来。
 import type { GettingStartedStep, GettingStartedStepKey } from '@/composables/useGettingStarted'
+import type { NavTarget } from '@/lib/navTarget'
 
-import { useRouter } from 'vue-router'
+import { useNavigation } from '@/composables/useNavigation'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
@@ -18,11 +21,11 @@ defineProps<{
 }>()
 const emit = defineEmits<{ (e: 'dismiss'): void }>()
 
-const router = useRouter()
+const nav = useNavigation()
 
 // 每一步做掉它要打开的那一页。第一步不在别处做——它就在下面那个输入框里——所以
 // 它没有去处，右边给一句提示。
-const DESTINATIONS: Partial<Record<GettingStartedStepKey, (projectId: string) => RouteLocationRaw>> = {
+const DESTINATIONS: Partial<Record<GettingStartedStepKey, (projectId: string) => NavTarget>> = {
   materials: (projectId) => ({ name: 'project-library', params: { projectId } }),
   repo: (projectId) => ({ name: 'project-settings', params: { projectId, section: 'repository' } }),
   people: (projectId) => ({ name: 'project-members', params: { projectId } }),
@@ -30,7 +33,7 @@ const DESTINATIONS: Partial<Record<GettingStartedStepKey, (projectId: string) =>
 
 function go(key: GettingStartedStepKey, projectId: string) {
   const destination = DESTINATIONS[key]
-  if (destination) void router.push(destination(projectId))
+  if (destination) nav?.navigate(destination(projectId))
 }
 </script>
 
