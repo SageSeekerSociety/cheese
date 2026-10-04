@@ -11,7 +11,7 @@ what it last learned.
 
 import enum
 import uuid
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import (
     BigInteger,
@@ -194,14 +194,17 @@ class CloudHost(UuidPk, Timestamps, Base):
     )
 
     # --- the pool ---
-    # A host that keeps the sessions already on it and is given no new ones.
-    # Hosts that each session or room rented for itself, before the pool, were
-    # adopted this way: they were enrolled without the session sandbox.
+    # A host that keeps the sessions already on it and is given no new ones,
+    # and is released once no home is left on it. A host idle long enough is
+    # set draining while its sleeping homes are archived. Hosts that each
+    # session or room rented for itself, before the pool, were adopted this
+    # way: they were enrolled without the session sandbox.
     draining: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=text("false")
     )
-    # Since when the host has held no session home; NULL while it holds one.
-    # Released once this is older than ``cloud_host_idle_hold_s``.
+    # Since when the host has run no sandbox; NULL while it runs one. Once this
+    # is older than ``cloud_host_idle_hold_s`` its sleeping homes are archived
+    # (it is set draining for that) and, with none left, it is released.
     idle_since: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -218,14 +221,18 @@ class CloudHost(UuidPk, Timestamps, Base):
 
 
 class CloudHostHome(UuidPk, Timestamps, Base):
-    """One session's home on a host: what holds a slot, and what keeps the host.
+    """One session's home: its sandbox's directory, on a host or archived.
 
     Written when the session is placed, before anything is on the disk, so a
-    session waiting for its host keeps its place. Deleted when the session's
-    work there has been pushed and it moved on, or when its room's cleanup has
-    removed the directory. A session that left without pushing keeps its home
-    (``left_at``): its work is only there, and the host is not released while
-    any home is on it.
+    session waiting for its host keeps its place. While its sandbox runs it
+    holds one of the host's slots; asleep (``stopped_at``) it holds only the
+    host's disk. Archived (``host_id`` NULL, ``archive_key`` set) it is on no
+    host at all: the session's next tool call places it again and restores it.
+
+    Deleted when the session's work there has been pushed and it moved on, or
+    when its room's cleanup has removed the directory (or the archive). A
+    session that left without pushing keeps its home (``left_at``): its work is
+    only there, and the home is not deleted until the room's cleanup.
     """
 
     __tablename__ = "cloud_host_homes"
@@ -238,8 +245,9 @@ class CloudHostHome(UuidPk, Timestamps, Base):
         ),
     )
 
-    host_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("cloud_hosts.id", ondelete="CASCADE"), index=True
+    # NULL while the home is archived and on no host.
+    host_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("cloud_hosts.id", ondelete="CASCADE"), index=True, nullable=True
     )
     project_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE")
@@ -263,8 +271,42 @@ class CloudHostHome(UuidPk, Timestamps, Base):
     waiting_since: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # The session's last tool call here (moved at most once a minute); with the
+    # room's turns, what says whether the sandbox is idle.
+    active_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    # The sandbox was stopped; its home is on disk (or archived) and the next
+    # tool call starts it. NULL while it runs, or may run.
+    stopped_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Something is stopping, archiving or restoring the home until then; nothing
+    # else may start or move it meanwhile. A sweep that dies lets it lapse.
+    busy_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # The archive in the private bucket, as verified when it was written: the
+    # object's key, its size and its bytes' MD5. Set while the home is archived
+    # and until it has been restored.
+    archive_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    archive_size: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    archive_md5: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # The last archive of this home failed, and why; it is not tried again
+    # until ``lifecycle.ARCHIVE_RETRY`` has passed. Cleared by one that works.
+    archive_failed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    archive_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 def capacity(host: CloudHost) -> int:
-    """The sandbox slots a host has: per core, by the deployment's setting."""
+    """The sandboxes a host runs at once: per core, by the deployment's
+    setting."""
     return max(1, int(host.cores)) * settings.cloud_host_slots_per_core
+
+
+def disk_capacity(host: CloudHost) -> int:
+    """The homes a host keeps on its disk, running or asleep: its disk at
+    ``cloud_sandbox_disk_gb`` each, and never fewer than it runs at once."""
+    return max(capacity(host), int(host.disk_gb) // settings.cloud_sandbox_disk_gb)

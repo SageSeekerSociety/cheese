@@ -156,7 +156,7 @@ Cloud 能开机 → 默认是 Cloud；开不了 → 默认是自托管设备
 
 这条话进房间，是一条明确的失败，不是一次静默的降级。市场页的算力选择器同时是空的——`available` 两条都是假，没有东西可选。两边说的是同一件事。
 
-配了 Cloud 的部署则相反：默认是 Cloud。一条会话第一次要动手时，平台把它的沙箱放到池里一台还有空位的宿主机上；都满了就从预热池领一台，预热池也空了才现开一台，这时房间里先收到「正在准备沙箱」，就绪后工具调用自动接着跑。池子到了平台的容量上限时，这条会话被告知云端资源紧张、稍后再试。
+配了 Cloud 的部署则相反：默认是 Cloud。一条会话第一次要动手时，平台把它的沙箱放到池里一台还有空位的宿主机上；都满了就从预热池领一台，预热池也空了才现开一台，这时房间里先收到「正在准备沙箱」，就绪后工具调用自动接着跑。池子到了平台的容量上限时，这条会话被告知云端资源紧张、稍后再试。沙箱空闲一段时间后休眠，文件留在宿主机上，下一次工具调用把它唤醒；休眠很久的沙箱归档到对象存储，下次用时在任意一台宿主机上恢复（见 `docs/microcloud.md`）。
 
 ## 四、可见性：云机器上是沙箱，自托管设备上是整机
 
@@ -225,8 +225,9 @@ that it must finish confirmation first. Once deletion is claimed, reopening allo
 a new resource UUID and drops only obsolete session-resume pointers. Published Git
 branches, platform memory, room messages and task records remain. Old cleanup commands
 keep their original UUID and parked backend worktree path; they cannot target the
-replacement. On a cloud host, cleanup removes the room's directories; the host
-itself is the pool's, and the pool releases it once no session's home is left on it.
+replacement. On a cloud host, cleanup removes the room's directories; a session
+home archived to the bucket is deleted from there. The host itself is the pool's,
+and the pool releases it once it runs no sandbox and no home is left on it.
 Reopening restores no transcripts: the new generation starts new sessions, and a
 retained archive of the old one still expires on schedule.
 

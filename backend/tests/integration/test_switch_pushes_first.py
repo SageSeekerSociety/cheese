@@ -365,6 +365,44 @@ async def test_a_cloud_sandbox_left_after_a_push_gives_its_home_back(
         assert session.execution_request["retained_leases"] == [room.lease]
 
 
+async def test_a_cloud_session_whose_home_is_archived_switches_and_keeps_it(
+    client, monkeypatch
+):
+    """Its home is in the bucket and on no machine, so there is nothing to push
+    from and nobody has to agree to leave it: the archive stays, with whatever
+    it holds, until the room's cleanup."""
+    room = await _room(client, on_cloud=True)
+    async with client.test_factory() as db:
+        db.add(
+            CloudHostHome(
+                host_id=None,
+                project_id=room.project_id,
+                topic_id=room.topic_id,
+                room_resource_id=room.lease["room_resource_id"],
+                resource_id=room.lease["resource_id"],
+                session_id=room.session_id,
+                archive_key="sandbox-archives/home.tar.gz",
+                archive_size=1,
+                archive_md5="0" * 32,
+            )
+        )
+        await db.commit()
+    remote = _machines(monkeypatch, online=False)
+
+    switched = client.put(room.path, headers=room.person, json=_to_new(room))
+
+    assert switched.status_code == 200, switched.text
+    remote.assert_not_awaited()
+    async with client.test_factory() as db:
+        home = await db.scalar(
+            select(CloudHostHome).where(CloudHostHome.session_id == room.session_id)
+        )
+        session = await AgentSessionService(db).by_id(room.session_id)
+    assert home.left_at is not None
+    assert home.archive_key == "sandbox-archives/home.tar.gz"
+    assert session.execution_request["retained_leases"] == [room.lease]
+
+
 class _IdleMachine:
     """An online machine on which the session's executor has exited: a call
     to it finds no socket until the installation starts it again."""

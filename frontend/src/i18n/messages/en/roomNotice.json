@@ -338,6 +338,10 @@
   "sandboxPreparing": "Preparing the sandbox",
   "sandboxReady": "The sandbox is ready",
   "sandboxReplaced": "Preparing the sandbox failed; preparing it again",
+  "sandboxWaking": "Waking the sandbox",
+  "sandboxRestoring": "Restoring the sandbox from its archive",
+  "sandboxAsleep": "The sandbox went to sleep after {minutes} minutes without activity. Its files are kept, and the next message wakes it.",
+  "sandboxArchiveLost": "The sandbox's archive is gone, so it starts again from what is pushed to the repository",
   "sandboxFailing": "The cloud sandbox keeps failing",
   "sandboxFailingNext": "The topic stays where it is and won't move elsewhere on its own. Someone needs to check the connector and the session in this sandbox; retry once it is fixed.",
   "computeCloud": "Cloud sandbox"

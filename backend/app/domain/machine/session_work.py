@@ -42,14 +42,21 @@ from app.domain.device.supply import (
 )
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
+from app.domain.machine.lifecycle import SandboxBusy, SandboxHomeError, SandboxLifecycle
 from app.domain.machine.models import (
     GONE,
     MAX_ENROLL_ATTEMPTS,
     CloudHost,
+    CloudHostHome,
     MachineStatus,
 )
 from app.domain.machine.progress import publish_line
-from app.domain.machine.services import CloudKeepsFailing, CloudPoolFull, HostPool
+from app.domain.machine.services import (
+    CloudKeepsFailing,
+    CloudPoolFull,
+    HostPool,
+    SandboxMustMove,
+)
 from app.domain.policy import gate
 from app.domain.project.environment import EnvironmentConfig, pin_environment
 from app.domain.project.services import ProjectService
@@ -784,10 +791,10 @@ async def _move_session(
     Only a person may switch without it, and only when that machine could not
     be reached (``abandon_unpushed``). A session leaving its cloud sandbox
     after a push gives its home on the host back to the pool; one that leaves
-    without pushing keeps the home, and the host with it, until the room's
-    cleanup removes it. With ``if_idle`` a session whose room is mid-turn is
-    left alone (``SessionWorking``). Returns the push's warnings
-    (``push_before_switch``).
+    without pushing keeps the home until the room's cleanup removes it. A home
+    already archived is not pushed from anywhere: it is kept the same way. With
+    ``if_idle`` a session whose room is mid-turn is left alone
+    (``SessionWorking``). Returns the push's warnings (``push_before_switch``).
     """
     # 房间那一把锁：这一条会话的租约和房间的算力选择在同一行上改，拿着它读、拿着
     # 它写，别的请求看到的是「搬之前」或者「搬之后」，没有中间态。
@@ -816,7 +823,11 @@ async def _move_session(
         old = None
     pushed = False
     warnings: list[str] = []
-    if old:
+    # An archived home's work is in the bucket, on no machine that could push
+    # it — including one it was placed on and not yet restored to: it is kept
+    # as it is, archive and all, for the room's cleanup.
+    archived = await HostPool(db).archived(session_id)
+    if old and not archived:
         generation = request.get("generation")
         start = await _restart_executor(db, row, old)
         await db.commit()
@@ -844,9 +855,11 @@ async def _move_session(
     on_cloud = (request.get("choice") or {}).get("profile") == "cloud"
     if on_cloud:
         # Whatever was in the sandbox is on its branches now, or it never held a
-        # lease: its home goes. Work it could not push keeps the home, and the
-        # host, for the room's cleanup.
-        await HostPool(db).leave(session_id, kept_work=bool(old) and not pushed)
+        # lease: its home goes. Work it could not push keeps the home for the
+        # room's cleanup.
+        await HostPool(db).leave(
+            session_id, kept_work=archived or (bool(old) and not pushed)
+        )
     kept = [] if old is None or (on_cloud and pushed) else [old]
     row.execution_request = {
         "generation": str(uuid.uuid4()),
@@ -861,7 +874,9 @@ async def _move_session(
 
 # What a tool waiting on its cloud sandbox is told.
 SANDBOX_PREPARING = "沙箱正在准备；对话和平台工具仍可用。"
+SANDBOX_WAKING = "沙箱正在唤醒；对话和平台工具仍可用。"
 SANDBOX_ERROR = "云端沙箱出错：供应方报告错误。对话和平台工具仍可用。"
+SANDBOX_RESTORE_FAILED = "沙箱没能从归档恢复，稍后会再试；对话和平台工具仍可用。"
 
 # The room names a machine whose owner has since unbound it. It cannot come back
 # under that id (a re-bind enrols a new one), so the room needs another choice.
@@ -1068,6 +1083,7 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
     if isinstance(verdict, gate.Proposal):
         raise ForbiddenError(say("machineTierNotAllowed"))
     work_resource = (lease or {}).get("resource_id") or generation
+    restoring = None
     if choice.profile == "cloud":
         allocation_actor = (
             Actor(**authorized)
@@ -1075,6 +1091,18 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
             else Actor(handle=claims.get("a", ""), user_id=None, via="cheese")
         )
         pool = HostPool(db, hub=hub)
+        before = await pool.current_home(session_id)
+        # What the room is told while the sandbox gets ready: a sandbox asleep
+        # is woken, an archived one restored; a new one is prepared (below).
+        waking = (
+            None
+            if before is None
+            else "sandboxRestoring"
+            if before.host_id is None
+            else "sandboxWaking"
+            if before.stopped_at is not None
+            else None
+        )
         try:
             cloud_host = await pool.place(
                 session_id, actor=allocation_actor, resource_id=work_resource
@@ -1082,6 +1110,23 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
         except (CloudKeepsFailing, CloudPoolFull) as refused:
             await db.commit()
             return {"unavailable": str(refused)}
+        except SandboxBusy:
+            await db.commit()
+            return _Preparing(SANDBOX_WAKING, partial(_home_settled, db, session_id))
+        except SandboxMustMove:
+            # Asleep on a host with no slot for it: the sandbox sweep archives
+            # it from there, which it does first for a home someone waits on,
+            # and the next attempt restores it on a host with room.
+            line = await pool.tell_waiting(session_id, "sandboxWaking")
+            await db.commit()
+            await publish_line(topic_id, line)
+            return _Preparing(SANDBOX_WAKING, partial(_home_moved, db, session_id))
+        if waking is not None:
+            line = await pool.tell_waiting(session_id, waking)
+            await db.commit()
+            await publish_line(topic_id, line)
+        placed = await pool.current_home(session_id)
+        restoring = placed.id if placed and placed.archive_key else None
         if not cloud_host.device_id or not hub.is_online(cloud_host.device_id):
             line = await pool.tell_waiting(session_id)
             await db.commit()
@@ -1161,6 +1206,9 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
         work_resource=work_resource,
     )
     try:
+        if choice.profile == "cloud" and restoring is not None:
+            restored = await SandboxLifecycle(db, hub=hub).restore(restoring, device_id)
+            await publish_line(topic_id, restored)
         info = await _start_executor(
             hub,
             lease,
@@ -1200,6 +1248,12 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
         if row and (row.work_lease or {}).get("claim") == claim:
             row.work_lease = {**holding, "claim_until": now.isoformat()}
         await db.commit()
+        if isinstance(exc, SandboxHomeError):
+            # The archive is still there; the next tool call tries again.
+            return {"unavailable": SANDBOX_RESTORE_FAILED}
+        if isinstance(exc, SandboxBusy):
+            # Another call of the session is restoring it: wait for that one.
+            return _Preparing(SANDBOX_WAKING, partial(_home_settled, db, session_id))
         if isinstance(exc, DeviceOffline):
             # The machine went away while its executor was being set up: the
             # same answer as when it is away before setup starts (above).
@@ -1253,6 +1307,29 @@ async def _claim_moved(db, session_id, claim) -> bool:
         return True
     until = lease.get("claim_until")
     return not until or datetime.fromisoformat(until) <= datetime.now(UTC)
+
+
+async def _home_settled(db, session_id) -> bool:
+    """Whatever was moving the session's home has finished, or given up."""
+    busy = await db.scalar(
+        select(CloudHostHome.busy_until).where(
+            CloudHostHome.session_id == session_id, CloudHostHome.left_at.is_(None)
+        )
+    )
+    return busy is None or busy <= datetime.now(UTC)
+
+
+async def _home_moved(db, session_id) -> bool:
+    """The sleeping home has left the host that had no slot for it, or was
+    woken there after all."""
+    home = (
+        await db.execute(
+            select(CloudHostHome.host_id, CloudHostHome.stopped_at).where(
+                CloudHostHome.session_id == session_id, CloudHostHome.left_at.is_(None)
+            )
+        )
+    ).one_or_none()
+    return home is None or home.host_id is None or home.stopped_at is None
 
 
 async def _cloud_progress(db, hub, host_id) -> str | bool:

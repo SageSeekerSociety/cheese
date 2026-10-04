@@ -95,6 +95,9 @@ async def _inventory(session, operation: RoomCleanup, inventory: dict) -> list[d
             select(AgentSession).where(AgentSession.topic_id == operation.topic_id)
         )
     )
+    # A cloud session's home in the bucket is on no machine; the archive goes
+    # when the room's homes are forgotten, at the end.
+    archived = await HostPool(session).archived_resources(operation.topic_id)
     for conversation in sessions:
         leases = [
             *(conversation.execution_request or {}).get("retained_leases", []),
@@ -106,6 +109,8 @@ async def _inventory(session, operation: RoomCleanup, inventory: dict) -> list[d
             if not resource_id or not device_id:
                 raise RuntimeError("session work lease has incomplete ownership")
             resource_ids.add(resource_id)
+            if resource_id in archived:
+                continue
             if not device_hub.is_online(device_id) or device_id not in inventory:
                 raise RuntimeError(
                     "session work device is offline or its inventory failed"
@@ -542,7 +547,8 @@ async def _advance(session, cleanup_id: uuid.UUID, inventory: dict) -> None:
         ]
         await session.commit()
     # Homes of this generation that never held a directory (a session placed
-    # on a host that was still coming up) go with the rest.
+    # on a host that was still coming up) go with the rest, and so do the
+    # archives of the ones that were archived.
     await HostPool(session).forget_room_homes(
         operation.topic_id, str(operation.resource_id)
     )
