@@ -203,6 +203,7 @@ const panelRef = ref<{
   openFile?: (path: string, taskId?: string | null) => void
   siteBlock?: (block: Block) => void
   reviewDoc?: (request: DocReviewRequest) => void
+  previewShown?: () => void
 } | null>(null)
 const chatColumn = ref<{
   connected: boolean
@@ -256,6 +257,9 @@ const chatEvents = {
   'site-block': (block: Block) => panelRef.value?.siteBlock?.(block),
   'site-turns': (turns: Record<string, number>) => (siteTurns.value = turns),
   'state-changed': handleStateChanged,
+  // 芝士摆出来一份东西：面板立刻看一眼当前预览，不等轮询。
+  'preview-shown': () => panelRef.value?.previewShown?.(),
+
   'mention-click': handleMentionClick,
   'open-file': (path: string, taskId?: string | null) => panelRef.value?.openFile?.(path, taskId),
   'open-resource': handleOpenResource,

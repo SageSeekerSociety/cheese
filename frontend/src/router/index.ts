@@ -17,6 +17,7 @@ import { workspaceRoutes } from './workspaceRoutes'
 
 import { cachedWindow, refreshBlockCache } from '@/lib/blockCache'
 import { preloadPdfViewer } from '@/lib/pdfPreload'
+import { refreshPreviewPointer } from '@/lib/previewPointer'
 import { rememberPageBeforeSettings } from '@/lib/settingsReturn'
 import { myId } from '@/me'
 import { reloadForNewBuild } from '@/services/staleBuild'
@@ -160,6 +161,11 @@ router.beforeEach((to) => {
   if (to.name !== 'workspace-topic' || !myId()) return
   const topicId = String(to.params.topicId)
   if (!cachedWindow(topicId)) void refreshBlockCache(topicId)
+  // 「这个房间当前预览是哪一份」也同时去问。它和消息一样不依赖话题页的代码：等那
+  // 一串 chunk 下完、话题数据回来，面板才挂得上，而它一挂上就要这份答案。这里先让
+  // 它出发，面板到手时通常已经在缓存里了（见 lib/previewPointer.ts）。失败没有人
+  // 看得见——它是顺手做的事。
+  refreshPreviewPointer(topicId).catch(() => {})
   // 房间里会点开文档预览：趁浏览器空闲把 pdf.js 先取下来（只取一次）。
   preloadPdfViewer()
 })

@@ -73,6 +73,7 @@ vi.mock('../../api', async () => {
   }
 })
 
+import { resetPreviewPointerCache, setPreviewPointer } from '../../lib/previewPointer'
 import WorkPanel from '../WorkPanel.vue'
 
 function topic(id: string): Topic {
@@ -85,6 +86,16 @@ function mountPanel(working = false) {
     props: { topic: topic('topic-A'), activityTick: 0, working },
     global: { plugins: [vuetify, i18n] },
   })
+}
+
+/** 拿到面板暴露出去的那几个方法（`defineExpose`）。根元素上就挂着它的实例。 */
+function panelApi(container: Element): { previewShown?: () => void } {
+  const inst = (
+    container.firstElementChild as HTMLElement & {
+      __vueParentComponent?: { exposed: { previewShown?: () => void } }
+    }
+  ).__vueParentComponent
+  return inst?.exposed ?? {}
 }
 
 async function flush() {
@@ -116,6 +127,8 @@ beforeAll(() => {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // 指针缓存是模块级的：一个用例取过的答案不该流到下一个用例（下一个该自己问）。
+  resetPreviewPointerCache()
   getPreview.mockResolvedValue(null)
   readFile.mockResolvedValue({ path: 'report.html', content: '<p>hi</p>' })
   requestPreviewSession.mockResolvedValue({
@@ -294,5 +307,31 @@ describe('预览面板：有新内容', () => {
     await flush()
 
     expect(previewButton(container).getAttribute('title')).toContain('有新内容')
+  })
+})
+
+describe('预览面板：芝士摆出来时立刻跟上', () => {
+  it('对话栏报了一声 → 不等轮询，马上重看一眼当前预览，提示就冒出来', async () => {
+    getPreview.mockResolvedValue({ path: 'report.html', mime: 'text/html', artifact_id: 'a1' })
+    const { container } = mountPanel(true)
+    await flush()
+    expect(previewButton(container).getAttribute('title')).toBe('预览')
+
+    // 芝士 `cheese show` 了一份新的：对话栏从 socket 上收到那块卡，往上报这一声。
+    getPreview.mockResolvedValue({ path: 'report.html', mime: 'text/html', artifact_id: 'a2' })
+    panelApi(container).previewShown?.()
+    await flush()
+    expect(previewButton(container).getAttribute('title')).toContain('有新内容')
+  })
+
+  it('路由守卫已经问过的那一份，挂上来时先读它——不再多发一条请求', async () => {
+    // 守卫先起头的效果：面板挂上来时，答案已经在缓存里。
+    setPreviewPointer('topic-A', { path: 'report.html', mime: 'text/html', artifact_id: 'a1' })
+    const { container } = mountPanel()
+    await flush()
+    // 面板读到了缓存里那一份：没有为它再问一次。
+    expect(getPreview).not.toHaveBeenCalled()
+    // 有预览在，但它是「来之前就有的」——开场不该顶着提示。
+    expect(previewButton(container).getAttribute('title')).toBe('预览')
   })
 })

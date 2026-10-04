@@ -333,6 +333,14 @@ export function useChatPanel(opts: ChatPanelOptions) {
     if ((landing === 'held' || !atBottom.value) && b.kind !== 'event') unseen.value.push(b.id)
   }
 
+  // 芝士摆出来一份东西：一块 kind=artifact 的卡（`cheese show` / `serve`，以及房间里
+  // 复制、按模板新建那几件，后端都发 assistant_block）。当前预览跟着它换，而「预览」
+  // 那一格可能不在屏幕上——它自己听不到这条 socket，所以往上报一声，让面板立刻去问
+  // 指针，而不是等下一次轮询或下一轮收工（那要十几秒）。
+  function notePreviewShown(block: Block) {
+    if (block.kind === 'artifact') emit('preview-shown')
+  }
+
   // 往上翻着的时候别人又说了话：底部浮出一颗提示，写着来了几条。点它回到最新，并让
   // 来的第一条闪一下——人要找的是「新的从哪开始」，不只是「到底了」。回到底部（不管
   // 是点它还是自己滚下去）它就收起。停在历史中间时它一直在，写「回到最新」：那时底部
@@ -344,6 +352,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
       case 'user_block':
         if (settleOutbox(frame.block)) delivered.add(frame.block.id)
         pushBlock(frame.block)
+        notePreviewShown(frame.block)
         autoScroll()
         break
       case 'reaction':
@@ -359,6 +368,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
       case 'event_block':
         // A persisted, clickable action card (doc/topics/...) for this turn.
         pushBlock(frame.block)
+        notePreviewShown(frame.block)
         toSite(frame.block)
         autoScroll()
         break
@@ -372,6 +382,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
       case 'assistant_block':
         // One complete 芝士 message (Slack-style) — a turn may land several.
         pushBlock(frame.block)
+        notePreviewShown(frame.block)
         // Compatibility with an older backend that has no lifecycle markers.
         turns.settleIfIdle()
         autoScroll()

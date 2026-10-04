@@ -30,11 +30,12 @@ import type { PreviewLocate, SubmitPreviewQuestion } from '../lib/previewQuestio
 import type { CardPhase } from '../lib/topicState'
 import type { TabDef, TabKey } from './panels/panelTabList'
 
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 
-import { getPreview, getTopicWorkSummary, listRoomTasks, readPreviewFile } from '../api'
+import { getTopicWorkSummary, listRoomTasks, readPreviewFile } from '../api'
 import { useTopicMemory } from '../composables/useTopicMemory'
 import { previewCanShowInRoom } from '../lib/fileKind'
+import { cachedPreviewPointer, refreshPreviewPointer } from '../lib/previewPointer'
 
 import ErrorBoundary from './common/ErrorBoundary.vue'
 import PanelChanges from './panels/PanelChanges.vue'
@@ -285,17 +286,19 @@ function markPreviewSeen(id?: string | null) {
 }
 
 // Fetch the POINTER only (no file read, no cookie priming) so the dot can appear
-// while 预览 is not the open tab. Cheap enough to run on every turn boundary.
-async function pollPreviewPointer(opts: { seen?: boolean } = {}) {
+// while 预览 is not the open tab. Goes through lib/previewPointer, so a request the
+// router guard already started for this topic is reused rather than repeated — and
+// the answer here feeds that cache for the next time the room is opened.
+async function pollPreviewPointer(opts: { seen?: boolean } = {}): Promise<string | null> {
   const tid = props.topic?.id
-  if (!tid) return
+  if (!tid) return null
   let art: PreviewInfo | null = null
   try {
-    art = await getPreview(tid)
+    art = await refreshPreviewPointer(tid)
   } catch {
     // A failed poll is not a state — leave the dot as it was. The real load
     // reports errors; this one only ever adds a hint.
-    return
+    return null
   }
   previewPath.value = art?.path ?? null
   const id = art?.artifact_id ?? null
@@ -304,6 +307,63 @@ async function pollPreviewPointer(opts: { seen?: boolean } = {}) {
   // at it.
   if (opts.seen || active.value === 'preview') markPreviewSeen(id)
   else previewLatest.value = id
+  return id
+}
+
+// ---- 预览指针的兜底轮询 ----
+// 芝士摆出新东西时那条 WS 帧会立刻叫我们来看一眼（`previewShown`）。这条定时是兜底：
+// 帧可能在断线那一小段里丢了，而「预览」这一格开着的时候，屏幕上等的正是它。所以这
+// 一格开着、页面又在前台时每 5 秒问一次指针；指针真换了才 `refreshTick` 一下，让预览
+// 那一格重取（没换就不打扰任何一格）。切回窗口 / 回到前台立刻补一次。
+const PREVIEW_POINTER_POLL_MS = 5_000
+let previewPollTimer: ReturnType<typeof setInterval> | null = null
+// 上一次兜底轮询看到的产物 id。`null` = 还没看过，那时不把「第一个看到的」当成变化。
+let lastPolledPointerId: string | null = null
+
+async function tickPreviewPointer() {
+  if (document.hidden) return
+  const before = lastPolledPointerId
+  const id = await pollPreviewPointer()
+  lastPolledPointerId = id
+  if (before !== null && id !== before) refreshTick.value += 1
+}
+
+function stopPreviewPoll() {
+  if (previewPollTimer) clearInterval(previewPollTimer)
+  previewPollTimer = null
+}
+function syncPreviewPoll() {
+  stopPreviewPoll()
+  if (active.value !== 'preview' || document.hidden) return
+  previewPollTimer = setInterval(() => void tickPreviewPointer(), PREVIEW_POINTER_POLL_MS)
+}
+// 回到前台 / 窗口重新拿到焦点：别等下一个 5 秒，立刻补一次（在预览这一格上时）。
+function refetchPreviewOnReturn() {
+  if (!document.hidden && active.value === 'preview') void tickPreviewPointer()
+}
+onMounted(() => {
+  window.addEventListener('focus', refetchPreviewOnReturn)
+  document.addEventListener('visibilitychange', onVisibilityChange)
+  syncPreviewPoll()
+})
+onUnmounted(() => {
+  window.removeEventListener('focus', refetchPreviewOnReturn)
+  document.removeEventListener('visibilitychange', onVisibilityChange)
+  stopPreviewPoll()
+})
+function onVisibilityChange() {
+  syncPreviewPoll()
+  refetchPreviewOnReturn()
+}
+// 开上 / 离开预览这一格：这格开着才轮询它（见上）。开的那一下也顺手重排一次定时。
+watch(active, () => syncPreviewPoll())
+
+// 芝士在房间里摆出来一份东西（对话栏听完 socket 往上报的那一声）：立刻问一次指针，
+// 别等下一次轮询——「预览」那一格开着就顺手重取，没开就只是让那颗「有新内容」的点
+// 冒出来。
+function previewShown() {
+  void pollPreviewPointer()
+  refreshTick.value += 1
 }
 
 // ---- 这一格此刻有没有东西 ----
@@ -446,7 +506,15 @@ const panelTabs = computed<PanelTab[]>(() =>
   settled.value = !!asked
   markPreviewSeen(null)
   if (id) {
-    void pollPreviewPointer({ seen: true })
+    // 这个房间的当前预览，路由守卫通常已经先问过了（lib/previewPointer.ts）：命中就
+    // 直接用——面板挂上来时那份答案就在手边，不必再等一轮网络。没命中才自己问。
+    const warm = cachedPreviewPointer(id)
+    if (warm !== undefined) {
+      previewPath.value = warm?.path ?? null
+      markPreviewSeen(warm?.artifact_id ?? null)
+    } else {
+      void pollPreviewPointer({ seen: true })
+    }
     void pollWorkSummary({ seen: true })
     void pollThreads()
   }
@@ -593,7 +661,7 @@ function siteBlock(block: Block) {
   siteRef.value?.receive(block)
 }
 
-defineExpose({ pulse, highlightTurn, reviewDoc, openFile, siteBlock })
+defineExpose({ pulse, highlightTurn, reviewDoc, openFile, siteBlock, previewShown })
 </script>
 
 <template>
