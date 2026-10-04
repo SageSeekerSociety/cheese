@@ -311,9 +311,9 @@ test("workspace: inbox, board, room, accept card, library, project settings", as
     {
       name: "room with platform notices",
       path: `${project}/topics/${roomId}`,
-      // The platform's line for the dispatch (roomNotice `taskDispatched`).
+      // The platform's line for the new task (roomNotice `taskCreated`).
       ready: (page) =>
-        page.getByText("Sent out a task").first().waitFor({ timeout: 45_000 }),
+        page.getByText("created the task").first().waitFor({ timeout: 45_000 }),
     },
     {
       name: "room's members and work computer",
