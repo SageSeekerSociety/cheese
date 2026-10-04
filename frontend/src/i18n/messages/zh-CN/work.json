@@ -1100,6 +1100,7 @@
       "answering": "{agent}正在回答…",
       "stop": "停止",
       "cancel": "取消",
+      "stopped": "已停止",
       "changed": "已修改 {n} 处",
       "undone": "已撤销",
       "undo": "撤销",

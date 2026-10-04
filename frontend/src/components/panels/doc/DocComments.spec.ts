@@ -67,6 +67,7 @@ function mount(
     resolve: vi.fn(async () => {}),
     reopen: vi.fn(async () => {}),
     recover: vi.fn(async () => undefined),
+    stopAgent: vi.fn(async () => {}),
     ...options.actions,
   }
   const located: string[] = []

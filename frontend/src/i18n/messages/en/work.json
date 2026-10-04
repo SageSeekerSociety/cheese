@@ -1100,6 +1100,7 @@
       "answering": "{agent} is answering…",
       "stop": "Stop",
       "cancel": "Cancel",
+      "stopped": "Stopped",
       "changed": "Changed {n} places",
       "undone": "Undone",
       "undo": "Undo",

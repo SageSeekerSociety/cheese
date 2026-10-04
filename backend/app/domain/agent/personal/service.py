@@ -38,14 +38,17 @@ from app.core.sentences import error_frame, say
 from app.domain.agent.admission import Hold, Slot, enter
 from app.domain.agent.personal import billing
 from app.domain.agent.personal.prompt import earlier
-from app.domain.agent.session_host.answer import Answer, Tool, Words
+from app.domain.agent.personal.session import HOST_WAIT_S, ref
+from app.domain.agent.session_host.answer import Answer, Tool, Waiting, Words
 from app.domain.agent.session_host.answer import ask as ask_session
 from app.domain.agent.session_host.contract import (
     Access,
+    HostFull,
     Prompt,
     SessionError,
     SessionRef,
     SessionSpec,
+    StartAbandoned,
 )
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.assistant.models import AssistantConversation, AssistantMessage
@@ -57,6 +60,8 @@ TITLE_CHARS = 40
 
 #: Said when the model could not be reached or failed mid-answer.
 FAILED = say("assistantFailed")
+#: Said when the session host stayed full for as long as a question waits.
+BUSY = say("assistantBusy")
 #: How long one question may take, from when it took its conversation.
 ANSWER_S = 170.0
 #: How much longer than that a question's credential lasts.
@@ -71,15 +76,37 @@ async def take_conversation(redis: Redis, conversation_id: uuid.UUID) -> Slot | 
     """Take the conversation for one question; None while another holds it.
     The hold is also what lets the conversation's 芝士 reach the model at all
     (``api/routes/llm_proxy.py``): a model call is charged to the person, and
-    only a question they asked may be charged to them."""
-    return await enter(
+    only a question they asked may be charged to them. A stop said to an
+    earlier question does not carry over to this one."""
+    slot = await enter(
         redis, str(uuid.uuid4()), hold=Hold(busy_key(conversation_id)), wait_s=0
     )
+    if slot is not None:
+        await redis.delete(_stop_key(conversation_id))
+    return slot
 
 
 async def answering(redis: Redis, conversation_id: uuid.UUID | str) -> bool:
     """Is a question of this conversation being answered right now?"""
     return bool(await redis.exists(busy_key(conversation_id)))
+
+
+def _stop_key(conversation_id: uuid.UUID | str) -> str:
+    return f"assistant:stop:{conversation_id}"
+
+
+async def stop(
+    redis: Redis, people: SessionHost, user_id: int, conversation_id: uuid.UUID
+) -> None:
+    """Stop the conversation's question: its wait for the session host, or the
+    answer being written. What was written is kept, marked as stopped."""
+    await redis.set(
+        _stop_key(conversation_id),
+        "1",
+        ex=int(HOST_WAIT_S + ANSWER_S) + CREDENTIAL_MARGIN_S,
+    )
+    if await answering(redis, conversation_id):
+        await people.stop(ref(user_id, conversation_id))
 
 
 @dataclass(frozen=True)
@@ -160,7 +187,12 @@ class AssistantConversations:
         return list((await self._s.execute(stmt)).scalars())
 
     async def append(
-        self, conversation: AssistantConversation, role: str, text: str
+        self,
+        conversation: AssistantConversation,
+        role: str,
+        text: str,
+        *,
+        stopped: bool = False,
     ) -> AssistantMessage:
         seq = (
             await self._s.scalar(
@@ -170,7 +202,11 @@ class AssistantConversations:
             )
         ) or 0
         row = AssistantMessage(
-            conversation_id=conversation.id, seq=seq + 1, role=role, text=text
+            conversation_id=conversation.id,
+            seq=seq + 1,
+            role=role,
+            text=text,
+            stopped=stopped,
         )
         self._s.add(row)
         conversation.last_active_at = datetime.now(UTC)
@@ -187,6 +223,7 @@ def sse(event: str, data: dict) -> bytes:
 async def ask(
     *,
     sessions: async_sessionmaker[AsyncSession],
+    redis: Redis,
     people: SessionHost,
     user_id: int,
     conversation_id: uuid.UUID,
@@ -196,12 +233,18 @@ async def ask(
     on_done: Callable[[], Awaitable[None]] | None = None,
 ) -> AsyncIterator[bytes]:
     """Answer ``question`` in the conversation, streamed as server-sent events:
-    ``delta`` (text), ``tool`` (what 芝士 is looking at), ``error``, ``done``.
+    ``queued`` (waiting for the session host), ``delta`` (text), ``tool`` (what
+    芝士 is looking at), ``error``, ``done`` (``stopped``: the person stopped
+    it, and what was written is kept).
 
     The caller has already checked that the conversation is the person's, that
-    they may see its place and have credits left, and has started the session
-    (``started``, `personal.session`) and taken the conversation's hold at
-    ``held_at``."""
+    they may see its place and have credits left, and has taken the
+    conversation's hold at ``held_at`` (``take_conversation``). The session is
+    ``started`` (`personal.session`)."""
+
+    async def stopped() -> bool:
+        return bool(await redis.exists(_stop_key(conversation_id)))
+
     work = uuid.uuid4()
     async with sessions() as session:
         store = AssistantConversations(session)
@@ -210,28 +253,36 @@ async def ask(
         await store.append(conversation, "user", question)
         handle = (await usernames_by_ids(session, [user_id])).get(user_id)
         await session.commit()
-    # What its tools read with while answering: this person's own view, for no
-    # longer than the answer may take, and nothing it could change.
-    acting = mint_delegated_credential(
-        user_id=user_id,
-        handle=handle or str(user_id),
-        work=str(work),
-        ttl_s=int(ANSWER_S) + CREDENTIAL_MARGIN_S,
-    )
+
+    async def said() -> Prompt:
+        # What its tools read with while answering: this person's own view, for
+        # no longer than the answer may take from when the session is there,
+        # and nothing it could change.
+        acting = mint_delegated_credential(
+            user_id=user_id,
+            handle=handle or str(user_id),
+            work=str(work),
+            ttl_s=int(ANSWER_S) + CREDENTIAL_MARGIN_S,
+        )
+        return Prompt(work, question, acting=acting, preface=earlier(before))
 
     queue: asyncio.Queue[bytes | None] = asyncio.Queue()
 
     async def run() -> None:
-        answer, failure = "", None
+        answer, written, failure, refusal = "", "", None, FAILED
         try:
             async for event in ask_session(
                 people,
                 *started,
-                Prompt(work, question, acting=acting, preface=earlier(before)),
+                said,
                 work_id=work,
                 ceiling_s=ANSWER_S - (time.monotonic() - held_at),
+                stopped=stopped,
             ):
-                if isinstance(event, Words):
+                if isinstance(event, Waiting):
+                    queue.put_nowait(sse("queued", {}))
+                elif isinstance(event, Words):
+                    written += event.text
                     queue.put_nowait(sse("delta", {"text": event.text}))
                 elif isinstance(event, Tool):
                     queue.put_nowait(sse("tool", {"name": event.name}))
@@ -243,6 +294,10 @@ async def ask(
                             conversation_id,
                             failure,
                         )
+        except HostFull:
+            failure, refusal = "the session host stayed full", BUSY
+        except StartAbandoned:
+            pass
         except SessionError as exc:
             logger.warning("assistant session failed: %s", exc)
             failure = str(exc)
@@ -250,24 +305,30 @@ async def ask(
             logger.warning("assistant answer failed", exc_info=True)
             failure = FAILED
         finally:
+            was_stopped = await stopped()
+            if was_stopped:
+                # What it had written when it was stopped stays, marked as such.
+                answer, failure = written.strip(), None
             try:
-                if answer and not failure:
+                if (answer and not failure) or was_stopped:
                     async with sessions() as session:
                         store = AssistantConversations(session)
                         conversation = await store.owned(user_id, conversation_id)
-                        await store.append(conversation, "assistant", answer)
+                        await store.append(
+                            conversation, "assistant", answer, stopped=was_stopped
+                        )
                         await session.commit()
             except Exception:  # noqa: BLE001
                 logger.warning("saving an assistant answer failed", exc_info=True)
             if failure:
-                queue.put_nowait(sse("error", error_frame(FAILED)))
+                queue.put_nowait(sse("error", error_frame(refusal)))
             if on_done is not None:
                 await on_done()
             spawn(
                 billing.settle(sessions, user_id),
                 name=f"assistant-charge-{conversation_id}",
             )
-            queue.put_nowait(sse("done", {}))
+            queue.put_nowait(sse("done", {"stopped": was_stopped}))
             queue.put_nowait(None)
 
     spawn(run(), name=f"assistant-answer-{conversation_id}")
