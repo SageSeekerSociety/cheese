@@ -716,6 +716,9 @@ routes:
   - {protocol: "http", method: "GET", path: "/memory/files", auth: "memory.files.read", owner: "memory"}
   - {protocol: "http", method: "PUT", path: "/memory/files", auth: "memory.files.write", owner: "memory"}
   - {protocol: "http", method: "POST", path: "/memory/files/delete", auth: "memory.files.write", owner: "memory"}
+  # app.api.routes.notification_preferences
+  - {protocol: "http", method: "GET", path: "/notifications/preferences", auth: "user.session", owner: "notification"}
+  - {protocol: "http", method: "PUT", path: "/notifications/preferences", auth: "user.session", owner: "notification"}
   # app.api.routes.notifications_flat
   - {protocol: "http", method: "GET", path: "/notifications/unread-count", auth: "user.session", owner: "notification"}
   - {protocol: "http", method: "GET", path: "/notifications", auth: "user.session", owner: "notification"}
