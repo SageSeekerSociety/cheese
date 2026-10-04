@@ -890,11 +890,23 @@ async def _end_inputs_answered_inside(
     Which inputs those were is the delivery ledger's, written when the session
     echoed them: dev replaces its backend on every merge, and the one that
     hears this turn end is often not the one that saw them read.
+
+    One is still to end if its interval is open, or if this process still
+    counts it as running. The two come apart: the call that sent it returns as
+    soon as the session takes it over and closes its interval then, while the
+    room's running marks for it stay until something ends it.
     """
     async with sessions() as session:
-        taken = await AgentTurnRepository(session).still_open(
-            topic_id, await inputs_answered_inside(session, topic_id, turn_id)
+        read_inside = await inputs_answered_inside(session, topic_id, turn_id)
+        open_turns = set(
+            await AgentTurnRepository(session).still_open(topic_id, read_inside)
         )
+    running = active_turn_ids.get(topic_id, set())
+    taken = [
+        work
+        for work in read_inside
+        if work in open_turns or work in running or (topic_id, work) in hook_work
+    ]
     for input_turn in taken:
         await _consume_hook_event(
             service,

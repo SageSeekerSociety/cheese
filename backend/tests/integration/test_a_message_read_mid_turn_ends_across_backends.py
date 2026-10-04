@@ -12,8 +12,9 @@ its room stays busy for good.
 import asyncio
 import time
 import uuid
+from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.api.deps import get_chat_service, get_work_runner
 from app.domain.agent.chat import ChatService
@@ -173,3 +174,106 @@ def test_a_check_in_read_before_the_backend_changed_ends_with_that_work(client):
         ]
 
     assert _wait_for(client, room, lambda: not still_running()), still_running()
+
+
+def test_a_check_in_read_inside_the_sessions_work_leaves_nothing_running(client):
+    """On one backend too. The call that sent the check-in returns once the
+    session has taken it over, closing the check-in's interval before the work
+    that read it ends. It still ends with that work: its input settled, and
+    nothing of it is left counted as running in the room."""
+    project = post_project(client, {"name": "Mid"}, owner="alice").json()["data"]
+    room = client.post(
+        "/topics",
+        json={"project_id": project["id"], "title": "中途"},
+        headers=session_auth_headers("alice"),
+    ).json()["data"]["id"]
+    topic = uuid.UUID(room)
+    channel = FirstPromptOnly()
+    chat = ChatService(
+        session_factory=client.test_request_factory,
+        base_system_prompt="你是芝士。",
+        workspace_root="/tmp/taken-same-backend-ws",
+        compute=stub_compute(channel),
+    )
+    app.dependency_overrides[get_chat_service] = lambda: chat
+    with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
+        post_message(client, room, "alice", {"content": "@芝士 看一眼 CI"})
+        assert _wait_for(
+            client, room, lambda: channel.sessions and _written(channel, room)
+        )
+        channel.says(topic, "CI 是绿的")
+        channel.stops(topic, "CI 是绿的")
+        _until(ws, lambda f: f["type"] == "done")
+
+        channel.starts(topic)
+        channel.uses(topic, "Bash", command="sleep 600")
+        _until(
+            ws,
+            lambda f: f["type"] == "event_block" and "sleep 600" in str(f["block"]),
+        )
+        seat = next(
+            turn.agent_handle
+            for turn in _rows(client, AgentTurn, topic)
+            if turn.agent_handle
+        )
+        sent = len(_written(channel, room))
+
+        async def check_in():
+            return get_work_runner().submit(
+                chat,
+                topic,
+                author="system",
+                content="巡检：看一眼进度",
+                addressed=addressed_to_agent(seat),
+            )
+
+        check = client.portal.call(check_in)
+        assert _wait_for(client, room, lambda: len(_written(channel, room)) > sent)
+        channel.acknowledges(topic, _written(channel, room)[-1]["message"]["content"])
+        assert _wait_for(
+            client,
+            room,
+            lambda: _rows(
+                client,
+                NativeInput,
+                topic,
+                NativeInput.work_id == check,
+                NativeInput.echoed_at.is_not(None),
+            ),
+        )
+
+        async def call_returned():
+            async with client.test_request_factory() as session:
+                await session.execute(
+                    update(AgentTurn)
+                    .where(AgentTurn.id == check)
+                    .values(stopped_at=datetime.now(UTC))
+                )
+                await session.commit()
+
+        client.portal.call(call_returned)
+        channel.returns(topic, "Bash", "done", call=channel.calls["Bash"])
+        channel.says(topic, "进度正常")
+        channel.stops(topic, "进度正常")
+    client.portal.call(settle_turn, chat, topic)
+
+    def left() -> list:
+        return [
+            *(
+                ("turn", turn.content)
+                for turn in _rows(
+                    client, AgentTurn, topic, AgentTurn.stopped_at.is_(None)
+                )
+            ),
+            *(
+                ("input", str(row.work_id))
+                for row in _rows(
+                    client, NativeInput, topic, NativeInput.work_id == check
+                )
+                if not row.completed_at
+            ),
+            *(("running", str(key[1])) for key in chat._hook_work if key[0] == topic),
+            *(("active", str(work)) for work in chat._active_turn_ids.get(topic, ())),
+        ]
+
+    assert _wait_for(client, room, lambda: not left()), left()
