@@ -790,7 +790,6 @@
       "liveRefTitle": "「{title}」· {status} — 点击打开",
       "thisTask": "这件任务",
       "subtopic": "子话题",
-      "topic": "话题",
       "selectionToolbar": "选区操作",
       "copy": "复制",
       "blockType": "段落格式",
@@ -898,7 +897,12 @@
         "columnLeft": "在左边插入一列",
         "columnRight": "在右边插入一列",
         "columnDelete": "删除这一列",
-        "diagramTooLong": "图太大，只显示源码"
+        "diagramTooLong": "图太大，只显示源码",
+        "plain": {
+          "chart": "图表",
+          "diagram": "流程图",
+          "image": "图片"
+        }
       }
     },
     "comments": {
@@ -1055,7 +1059,8 @@
       "typingOne": "{name}正在输入…",
       "typingTwo": "{first}和{second}正在输入…",
       "typingMany": "多人正在输入…",
-      "separator": " · "
+      "separator": " · ",
+      "stalled": "已 {span}无新输出"
     },
     "docEdit": {
       "failed": "修改失败：{reason}",

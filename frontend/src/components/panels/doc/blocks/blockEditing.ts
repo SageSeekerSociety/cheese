@@ -19,6 +19,8 @@ import { emptyItem } from '../../../../lib/docSchema/blocks'
 import { slashPluginKey } from '../../../../lib/docSlashMenu'
 import { setStatus } from '../../../../lib/docStatus'
 
+import { trendOf } from './shapes'
+
 import { t } from '@/i18n'
 
 interface FieldInfo {
@@ -136,9 +138,6 @@ function summaryEnter(editor: Editor): boolean {
   return true
 }
 
-const SIGN_UP = /^[+＋↑▲]/
-const SIGN_DOWN = /^[-−－↓▼]/
-
 /** Which item the caret is in: an empty optional field stays visible there. */
 function editingItem(selection: { $from: ResolvedPos }): number {
   const { $from } = selection
@@ -167,8 +166,7 @@ function fieldDecorations(doc: PMNode, selection: { $from: ResolvedPos }): Decor
         )
       }
       if (node.type.name === 'statDelta' && !empty) {
-        const sign = node.textContent.trim()
-        const trend = SIGN_UP.test(sign) ? 'up' : SIGN_DOWN.test(sign) ? 'down' : ''
+        const trend = trendOf(node.textContent)
         if (trend) out.push(Decoration.node(pos, pos + node.nodeSize, { 'data-trend': trend }))
       }
       return false

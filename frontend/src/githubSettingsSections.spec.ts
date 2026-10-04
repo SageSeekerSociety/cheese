@@ -1,3 +1,4 @@
+/// <reference types="node" />
 // 连接 GitHub 账号 / 连接 GitHub 仓库 are two independent flows with two
 // buttons, and each one's outcome comes back as a query param on the SAME
 // page. They shared one notice ref, and that ref was only rendered inside the

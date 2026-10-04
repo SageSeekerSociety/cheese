@@ -19,7 +19,7 @@ from app.common.auth import create_access_token
 from app.core.sandbox_auth import bind_resource_token, mint_scoped_token
 from app.domain.agent import execution
 from app.domain.agent_session.services import AgentSessionService
-from app.domain.device.supply import Supply, Visibility
+from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
 from app.domain.machine import session_work as work_lease
@@ -64,7 +64,6 @@ async def _room_on_a_device(client, owner_handle, *, attached_to="team"):
             await devices.start("workstation"),
             owner_user_id=owner_id,
             supply=Supply.self_hosted,
-            visibility=Visibility.host,
         )
         if attached_to == "team":
             await devices.assign_to_team(
@@ -241,7 +240,6 @@ async def test_a_device_attached_to_another_teams_project_is_not_listed(client):
             await devices.start("laptop"),
             owner_user_id=room.owner_id,
             supply=Supply.self_hosted,
-            visibility=Visibility.isolated,
         )
         await devices.assign_to_project(
             other.device_id, uuid.UUID(elsewhere["id"]), actor_user_id=room.owner_id

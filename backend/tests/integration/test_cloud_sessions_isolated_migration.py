@@ -19,26 +19,29 @@ from app.domain.device.wiring import sql_device_service
 from app.domain.user.models import User
 from tests.conftest import seed_user
 
-_MIGRATION = next(
-    (Path(__file__).resolve().parents[2] / "alembic" / "versions").glob(
-        "*_cloud_sessions_are_isolated.py"
-    )
-)
+_VERSIONS = Path(__file__).resolve().parents[2] / "alembic" / "versions"
 
 
-def _load():
-    spec = importlib.util.spec_from_file_location("_mig_cloud_isolated", _MIGRATION)
+def _load(pattern: str):
+    path = next(_VERSIONS.glob(pattern))
+    spec = importlib.util.spec_from_file_location(f"_mig_{path.stem}", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
+_ISOLATED = "*_cloud_sessions_are_isolated.py"
+# The next revision drops the device column this migration also writes; stepping
+# back over it puts the schema where this migration runs.
+_NEXT = "*_drop_device_visibility.py"
+
+
 def test_cloud_bindings_become_isolated_and_self_hosted_ones_stay(client):
     seed_user(client, "isolated_owner")
     cloud_topic, own_topic = uuid.uuid4(), uuid.uuid4()
 
-    async def seed() -> tuple[str, str]:
+    async def seed() -> None:
         async with client.test_factory() as db:
             devices = sql_device_service(db)
             user = await db.scalar(
@@ -48,23 +51,20 @@ def test_cloud_bindings_become_isolated_and_self_hosted_ones_stay(client):
             ids = []
             for name, supply in (("cloud", Supply.cloud), ("own", Supply.self_hosted)):
                 device = await devices.approve(
-                    await devices.start(name),
-                    owner_user_id=user.id,
-                    supply=supply,
-                    visibility=Visibility.host,
+                    await devices.start(name), owner_user_id=user.id, supply=supply
                 )
                 ids.append(device.device_id)
             await devices.bind_topic_device(cloud_topic, ids[0], Visibility.host)
             await devices.bind_topic_device(own_topic, ids[1], Visibility.host)
             await db.commit()
-            return ids[0], ids[1]
 
-    cloud, own = asyncio.run(seed())
+    asyncio.run(seed())
 
-    def run(step: str):
+    def run(*steps: tuple[str, str]):
         def apply(conn) -> None:
             with Operations.context(MigrationContext.configure(conn)):
-                getattr(_load(), step)()
+                for pattern, step in steps:
+                    getattr(_load(pattern), step)()
 
         async def go():
             async with client.test_factory() as db:
@@ -75,16 +75,13 @@ def test_cloud_bindings_become_isolated_and_self_hosted_ones_stay(client):
                 return (
                     (await devices.topic_binding(cloud_topic)).visibility,
                     (await devices.topic_binding(own_topic)).visibility,
-                    (await devices.get_device(cloud)).visibility,
-                    (await devices.get_device(own)).visibility,
                 )
 
         return asyncio.run(go())
 
-    assert run("upgrade") == (
-        Visibility.isolated,
-        Visibility.host,
-        Visibility.isolated,
-        Visibility.host,
-    )
-    assert run("downgrade") == (Visibility.host,) * 4
+    upgraded = run((_NEXT, "downgrade"), (_ISOLATED, "upgrade"))
+    try:
+        assert upgraded == (Visibility.isolated, Visibility.host)
+        assert run((_ISOLATED, "downgrade")) == (Visibility.host, Visibility.host)
+    finally:
+        run((_NEXT, "upgrade"))

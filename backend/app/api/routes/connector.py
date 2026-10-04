@@ -58,7 +58,7 @@ from app.domain.device import owner_reads
 from app.domain.device.repository import Device
 from app.domain.device.service import DeviceService
 from app.domain.device.sql_repository import SqlDeviceRepository
-from app.domain.device.supply import Supply, Visibility
+from app.domain.device.supply import Supply
 from app.domain.team.repositories import TeamRepository
 
 router = APIRouter(prefix="/connector", tags=["connector"])
@@ -241,9 +241,6 @@ async def device_connect(
         # only stop using it. A CONSTANT here, the mirror of the MicroCloud
         # enrolment sweep's `Supply.cloud`.
         supply=Supply.self_hosted,
-        # Additive dual-read window: keep writing the old column's safe value, but
-        # hosted access is now chosen per topic in device_topic.visibility.
-        visibility=Visibility.isolated,
         name=body.device_name,
     )
     if body.project_id is not None:

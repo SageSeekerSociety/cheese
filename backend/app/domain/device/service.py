@@ -97,7 +97,6 @@ class DeviceService:
         *,
         owner_user_id: int,
         supply: Supply,
-        visibility: Visibility,
         name: str | None = None,
     ) -> Device:
         """Approve a pending flow on behalf of the logged-in ``owner_user_id``, binding
@@ -109,19 +108,13 @@ class DeviceService:
         keeps the name the cli proposed at start (avoids an "unnamed" node).
         Idempotent: approving an already-approved code returns the same device.
 
-        ``supply`` and the legacy ``device.visibility`` have no default. This is
-        the one place a connector identity is minted, so both enrolment entry
-        points still name their legacy values during the additive dual-read window:
-          * supply — the human device flow says ``self_hosted``, the MicroCloud
-            sweep says ``cloud`` (入口决定待遇: never derived from what the machine
-            looks like).
-          * visibility — the human connector writes the safe ``isolated`` legacy
-            value; MicroCloud writes what its bindings get, ``isolated`` too.
-            Hosted resolution reads neither: access belongs to
-            ``device_topic.visibility``.
-        A third entry point that forgets either is a pyright error, not a machine
-        someone deletes by surprise a year later nor one silently exposed to the
-        room."""
+        ``supply`` has no default. This is the one place a connector identity is
+        minted, so each enrolment entry point names it: the human device flow says
+        ``self_hosted``, the MicroCloud sweep says ``cloud`` (入口决定待遇: never
+        derived from what the machine looks like). A third entry point that forgets
+        it is a pyright error, not a machine someone deletes by surprise a year
+        later. Access is not decided here: it belongs to each topic binding
+        (``device_topic.visibility``)."""
         entry = await self._live_code(code_value)
         if entry.status == DeviceStatus.APPROVED and entry.device_id is not None:
             existing = await self._repo.get_device(entry.device_id)
@@ -135,7 +128,6 @@ class DeviceService:
             owner_user_id=owner_user_id,
             created_at=self._now(),
             supply=supply,
-            visibility=visibility,
         )
         await self._repo.save_device(device)
         entry.status = DeviceStatus.APPROVED

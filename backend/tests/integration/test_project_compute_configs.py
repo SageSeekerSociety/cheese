@@ -11,7 +11,7 @@ from app.core.db import engine as app_engine
 from app.domain.agent.compute_configs import ComputeChoice, bind_room_device_choice
 from app.domain.agent.device_provider import resolve_pinned_device
 from app.domain.agent.harness.channel import ScreenSetupError
-from app.domain.device.supply import Supply, Visibility
+from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
 from app.domain.machine.services import MachineService
@@ -98,7 +98,6 @@ def test_team_device_can_be_project_default_without_project_assignment(
                 code,
                 owner_user_id=owner.id,
                 supply=Supply.self_hosted,
-                visibility=Visibility.host,
             )
             await devices.assign_to_team(
                 device.device_id, project.team_id, actor_user_id=owner.id
@@ -256,7 +255,6 @@ def test_the_project_shows_where_its_started_agents_work(client, monkeypatch):
                 code,
                 owner_user_id=owner.id,
                 supply=Supply.self_hosted,
-                visibility=Visibility.host,
             )
             await devices.assign_to_team(
                 device.device_id, project.team_id, actor_user_id=owner.id

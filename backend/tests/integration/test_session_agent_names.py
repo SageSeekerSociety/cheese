@@ -19,7 +19,7 @@ from app.core.sandbox_auth import bind_resource_token, mint_scoped_token
 from app.domain.agent import execution
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.agent_session.services import AgentSessionService
-from app.domain.device.supply import Supply, Visibility
+from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
 from app.domain.machine import session_work as work_lease
@@ -88,7 +88,6 @@ async def _teammates_on_bobs_device(client):
             await devices.start("workstation"),
             owner_user_id=bob,
             supply=Supply.self_hosted,
-            visibility=Visibility.host,
         )
         await devices.assign_to_project(device.device_id, project_id, actor_user_id=bob)
         topic = await db.get(Topic, topic_id)

@@ -99,7 +99,6 @@ def test_device_auth_survives_unrelated_column_drops(db_session, _portal):
         project = await _project(db_session)
         await _seed_device(db_session, "allowed", project_id=project)
         await _without_column(db_session, "device", "cloud_control_private")
-        await _without_column(db_session, "device", "visibility")
         await _without_column(db_session, "hosted_device", "owner_user_id")
         identity = await owner_reads.device_for_token(db_session, "tok-allowed")
         assert identity == owner_reads.DeviceIdentity("allowed", "allowed")
