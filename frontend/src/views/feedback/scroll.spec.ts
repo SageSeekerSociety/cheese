@@ -1,3 +1,4 @@
+/// <reference types="node" />
 /** 反馈页面必须自己领滚动（三个；原先还有第四个 /design/feedback，已删）。
  *
  * 全站约定：`styles/common.scss` 把 `html / body / #app` 定成固定高度加

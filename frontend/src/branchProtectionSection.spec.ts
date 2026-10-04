@@ -1,3 +1,4 @@
+/// <reference types="node" />
 // 分支保护 (#718) 设置区的结构断言。和 githubSettingsSections.spec.ts 一个路子：
 // 断言的对象是「哪个规则在哪个位置、跟着哪个状态灰掉」——这是模板里的事实，
 // 源码扫描直接读它；mount 这个视图要拖上 Vuetify 和十几个 API 调用，反而绕远。
