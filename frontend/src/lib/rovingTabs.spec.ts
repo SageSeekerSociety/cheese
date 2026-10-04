@@ -1,6 +1,6 @@
 /** 页签的键盘语义：只有选中那一格在 Tab 序列里；←/→/Home/End 移动并选中。 */
-import { fireEvent, render } from '@testing-library/vue'
 import { defineComponent, h, ref, withDirectives } from 'vue'
+import { fireEvent, render } from '@testing-library/vue'
 import { describe, expect, it } from 'vitest'
 
 import { vRovingTabs } from './rovingTabs'
