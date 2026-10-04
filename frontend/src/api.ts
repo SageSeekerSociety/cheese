@@ -2758,11 +2758,9 @@ export interface GatewayPrices {
   cache_creation?: number | null
 }
 
-export interface GatewayCapabilities {
-  reasoning?: boolean
-  vision?: boolean
-  adaptive_thinking?: boolean
-}
+export type GatewayCapabilities = Partial<
+  Record<'reasoning' | 'vision' | 'adaptive_thinking' | 'mid_conversation_system', boolean>
+>
 
 export interface GatewayUpstream {
   model: string

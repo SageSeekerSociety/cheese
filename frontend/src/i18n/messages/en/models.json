@@ -88,7 +88,9 @@
   "capability": {
     "reasoning": "Reasoning",
     "vision": "Vision",
-    "adaptiveThinking": "Adaptive thinking"
+    "adaptiveThinking": "Adaptive thinking",
+    "midConversationSystem": "Mid-conversation system messages",
+    "noMidConversationSystem": "No mid-conversation system messages"
   },
   "detail": {
     "title": "Model details",

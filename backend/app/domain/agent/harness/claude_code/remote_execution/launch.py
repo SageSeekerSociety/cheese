@@ -26,6 +26,7 @@ from app.domain.agent.harness.claude_code.remote_execution import (
     session_transfer,
 )
 from app.domain.agent.machine_launcher import CHEESE_PREVIEW_UP, toolchain_fetcher
+from app.domain.agent.skills import SKILLS_SHIPPED_BEFORE_THE_LIST, shipped_skill_names
 from app.domain.project_skill.service import project_skill_names, session_skill_files
 
 # What the session's Stop checkpoint runs on the executor (`runtime.control`):
@@ -113,6 +114,9 @@ def payload_for(project_id, resource_id, env, known_files=None, *, sandbox):
         # The project's own skills, by folder: one deleted since the last
         # prepare is removed from the machine instead of lingering there.
         "project_skills": project_skill_names(project_id),
+        # The platform's own, so a skill it stopped shipping is removed here.
+        "platform_skills": shipped_skill_names(),
+        "skills_before_list": list(SKILLS_SHIPPED_BEFORE_THE_LIST),
         "file_names": list(files),
         "files": {
             name: base64.b64encode(content.encode()).decode()

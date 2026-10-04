@@ -12,11 +12,11 @@
 `build_system_prompt` 的返回值里才算数，放在哪个常量里、拼在第几段都不是它。
 """
 
-from app.domain.agent.harness.prompt import build_system_prompt
+from app.domain.agent.harness.prompt import UNTITLED_FIRST, build_system_prompt
 
 
 def _assembled(**kwargs) -> str:
-    return build_system_prompt("你是芝士。", "", None, None, **kwargs)
+    return build_system_prompt("你是芝士。", "", **kwargs)
 
 
 def test_the_assembled_prompt_tells_the_agent_to_push():
@@ -24,25 +24,15 @@ def test_the_assembled_prompt_tells_the_agent_to_push():
 
 
 def test_it_is_there_for_a_room_that_has_nothing_else_in_its_prompt():
-    """一个刚建出来、没名字没文档没记忆没名册的房间照样带着它。
+    """一个没文档没记忆没角色的会话照样带着它。
 
     这一条是上面那条的另一半：提示词的每一段都是有条件的，一条无条件的规则最容易
     被拼进某个 `if` 里，而那个 `if` 假的时候没有任何地方会响。
     """
-    assert "随时 push" in _assembled(untitled=True)
-    assert "随时 push" in _assembled(role="后端", untitled=False)
+    assert "随时 push" in _assembled(has_doc=False, keeps_memory=False)
+    assert "随时 push" in _assembled(has_doc=True, role="后端", keeps_memory=True)
 
 
-def test_the_naming_block_is_only_here_while_the_topic_is_unnamed():
-    named = _assembled(untitled=False)
-    unnamed = _assembled(untitled=True)
-
-    assert "本轮第一件事：先给本话题起名" not in named
-    assert "本轮第一件事：先给本话题起名" in unnamed
-
-
-def test_naming_comes_before_the_push_rule():
-    """起名块自己写着「先于一切」——排不到前面，那段话就是空头支票。"""
-    unnamed = _assembled(untitled=True)
-
-    assert unnamed.index("先给本话题起名") < unnamed.index("随时 push")
+def test_the_naming_ask_is_not_part_of_the_system_prompt():
+    """起名是这一轮的事，起完就不该再说；系统提示词在会话里一字不变，所以它不在这里。"""
+    assert UNTITLED_FIRST not in _assembled(has_doc=True, keeps_memory=True)
