@@ -954,5 +954,6 @@
   "serverInternalError": "Something went wrong on the server",
   "clientDisconnected": "The client disconnected",
   "deviceOffline": "Device {device} is offline",
-  "deviceLinkInterrupted": "The connection to device {device} dropped mid-operation, so whether it went through is unknown"
+  "deviceLinkInterrupted": "The connection to device {device} dropped mid-operation, so whether it went through is unknown",
+  "topicNotifyLevelInvalid": "The notification level must be “all” or “mute”"
 }

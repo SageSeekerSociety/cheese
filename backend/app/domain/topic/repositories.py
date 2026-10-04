@@ -496,6 +496,47 @@ class TopicRepository:
             counts[key] = counts.get(key, 0) + int(count)
         return counts
 
+    async def notify_levels(
+        self, project_id: uuid.UUID, user_handle: str
+    ) -> dict[uuid.UUID, str]:
+        """The user's non-default notification levels in a project:
+        {topic_id: level}. Rooms at the default (`all`) are omitted."""
+        stmt = (
+            select(TopicReadState.topic_id, TopicReadState.notify_level)
+            .join(Topic, Topic.id == TopicReadState.topic_id)
+            .where(
+                Topic.project_id == project_id,
+                TopicReadState.user_handle == user_handle,
+                TopicReadState.notify_level != "all",
+            )
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return {topic_id: level for topic_id, level in rows}
+
+    async def set_notify_level(
+        self, topic_id: uuid.UUID, user_handle: str, level: str
+    ) -> None:
+        """Set the user's notification level on a topic (upsert). A room the
+        user never opened gets a cursor at the epoch — the same as no cursor,
+        so muting a room does not mark it read."""
+        stmt = select(TopicReadState).where(
+            TopicReadState.topic_id == topic_id,
+            TopicReadState.user_handle == user_handle,
+        )
+        state = (await self._session.scalars(stmt)).first()
+        if state is None:
+            self._session.add(
+                TopicReadState(
+                    topic_id=topic_id,
+                    user_handle=user_handle,
+                    last_read_at=datetime(1970, 1, 1, tzinfo=UTC),
+                    notify_level=level,
+                )
+            )
+        else:
+            state.notify_level = level
+        await self._session.flush()
+
     async def mark_read(self, topic_id: uuid.UUID, user_handle: str) -> None:
         """Bump the user's read cursor on a topic to now (upsert)."""
         stmt = select(TopicReadState).where(

@@ -604,6 +604,34 @@ class TopicService:
         await self.get_or_404(topic_id)
         await self._repo.mark_read(topic_id, user_handle)
 
+    async def mark_all_read(
+        self, project_id: uuid.UUID, user_handle: str
+    ) -> list[uuid.UUID]:
+        """「全部标为已读」: bump the cursor on every room of the project that has
+        unread messages for this user — the same rooms the badge map lists, so
+        nothing the user cannot see is touched. Returns those room ids."""
+        counts = await self.unread_counts(project_id, user_handle)
+        for topic_id in counts:
+            await self._repo.mark_read(topic_id, user_handle)
+        return list(counts)
+
+    NOTIFY_LEVELS = ("all", "mute")
+
+    async def notify_levels(
+        self, project_id: uuid.UUID, user_handle: str
+    ) -> dict[uuid.UUID, str]:
+        if await self._projects.get(project_id) is None:
+            raise NotFoundError("Project not found")
+        return await self._repo.notify_levels(project_id, user_handle)
+
+    async def set_notify_level(
+        self, topic_id: uuid.UUID, user_handle: str, level: str
+    ) -> None:
+        if level not in self.NOTIFY_LEVELS:
+            raise ValidationError(say("topicNotifyLevelInvalid"))
+        await self.get_or_404(topic_id)
+        await self._repo.set_notify_level(topic_id, user_handle, level)
+
     # ---- 手动归档 / 取消归档 (归档去向, spec §6.3 extension) -------------
 
     async def archive(self, topic_id: uuid.UUID, *, by: str) -> Topic:
