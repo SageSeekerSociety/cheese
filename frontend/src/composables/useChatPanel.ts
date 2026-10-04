@@ -243,7 +243,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     scrollRef,
     atBottom,
     restoresToBottom,
-    rowCount: () => rows.value.length,
+    rowIds: () => rows.value.map((r) => r.block.id),
     onDone: () => void paging.fillViewportIfNeeded(),
   })
 

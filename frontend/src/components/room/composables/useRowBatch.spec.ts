@@ -8,17 +8,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { BATCH_ROWS, INITIAL_ROWS, useRowBatch } from './useRowBatch'
 
+const ids = (n: number, prefix = 'b') => Array.from({ length: n }, (_, i) => `${prefix}${i}`)
+
 function setup(rows: number, opts: { bottom?: boolean; restoresToBottom?: boolean } = {}) {
   const el = document.createElement('div')
   const onDone = vi.fn()
+  const list = ref(ids(rows))
+  const atBottom = ref(opts.bottom ?? true)
   const batch = useRowBatch({
     scrollRef: ref(el),
-    atBottom: ref(opts.bottom ?? true),
+    atBottom,
     restoresToBottom: () => opts.restoresToBottom ?? true,
-    rowCount: () => rows,
+    rowIds: () => list.value,
     onDone,
   })
-  return { batch, onDone }
+  return { batch, onDone, list, atBottom, el }
 }
 
 beforeEach(() => vi.useFakeTimers())
@@ -58,7 +62,7 @@ describe('首屏分批挂行', () => {
       scrollRef: ref(el),
       atBottom: ref(false),
       restoresToBottom: () => true,
-      rowCount: () => 150,
+      rowIds: () => ids(150),
     })
     // 每挂上一行，内容高 20px。
     Object.defineProperty(el, 'scrollHeight', { get: () => (150 - batch.hidden.value) * 20 })
@@ -89,5 +93,33 @@ describe('首屏分批挂行', () => {
     await vi.advanceTimersByTimeAsync(1000)
     expect(batch.hidden.value).toBe(0)
     expect(onDone).not.toHaveBeenCalled()
+  })
+
+  it('分批期间窗口被整个换掉（刷新回来的那一页接不上）：不会一行都不画', async () => {
+    const { batch, list } = setup(200)
+    batch.startFor('t1', null)
+    expect(batch.hidden.value).toBe(170)
+    list.value = ids(50, 'n')
+    expect(batch.hidden.value).toBe(0)
+  })
+
+  it('末尾来了新消息，已经挂上的行不会被顶回去', () => {
+    const { batch, list } = setup(100)
+    batch.startFor('t1', null)
+    const before = batch.hidden.value
+    list.value = [...list.value, 'new1', 'new2']
+    expect(batch.hidden.value).toBe(before)
+  })
+
+  it('补完之前人往上翻了：一口气全部挂上，位置照补', async () => {
+    const { batch, atBottom, el } = setup(150)
+    Object.defineProperty(el, 'scrollHeight', { get: () => (150 - batch.hidden.value) * 20 })
+    batch.startFor('t1', null)
+    el.scrollTop = 100
+    atBottom.value = false
+    await nextTick()
+    await nextTick()
+    expect(batch.hidden.value).toBe(0)
+    expect(el.scrollTop).toBe(100 + (150 - INITIAL_ROWS) * 20)
   })
 })

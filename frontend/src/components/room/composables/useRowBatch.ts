@@ -17,7 +17,7 @@
 // 更早一页」也先等补完——顶上还有没挂的行，那不是真的顶。
 import type { Ref } from 'vue'
 
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 
 import { scrollTopAfterPrepend } from '../../../lib/blockPaging'
 import { whenIdle } from '../../../lib/idle'
@@ -39,47 +39,71 @@ export interface RowBatchDeps {
   atBottom: Ref<boolean>
   /** useChatScroll 的同名函数：这个话题再打开时会不会停在底部。 */
   restoresToBottom: (topicId: string) => boolean
-  /** 时间线现在一共多少行（ChatTimeline 拿到的 rows）。 */
-  rowCount: () => number
+  /** 时间线现在每一行的 id，按顺序（ChatTimeline 拿到的 rows）。 */
+  rowIds: () => string[]
   /** 全部挂上之后：比如行太少撑不满一屏时，这时候再去要更早一页。 */
   onDone?: () => void
 }
 
 export function useRowBatch(deps: RowBatchDeps) {
+  // 记的是「第一条已经挂上的行」的 id，不是一个行数：分批期间时间线还会变——新消息接在
+  // 末尾、刷新回来的那一页整个换掉窗口。按 id 算，末尾长出来的行不会把上面挂好的行顶回
+  // 去；这一行不在窗口里了（窗口被换掉），就当全部挂上，绝不会出现一行都不画。
+  const firstShown = ref<string | null>(null)
   /** 开头还没挂上的行数。ChatTimeline 跳过前这么多行。 */
-  const hidden = ref(0)
+  const hidden = computed(() => {
+    if (firstShown.value === null) return 0
+    return Math.max(0, deps.rowIds().indexOf(firstShown.value))
+  })
   const pending = computed(() => hidden.value > 0)
   // 每次开始、每次揭开全部 +1：上一轮还在路上的那一步认得出自己过期了。
   let generation = 0
+
+  /** 往上补到只剩 `keep` 行没挂（0 = 全部挂上），屏幕上的内容不动。 */
+  async function revealTo(keep: number, gen: number) {
+    const el = deps.scrollRef.value
+    const before = el ? { scrollTop: el.scrollTop, scrollHeight: el.scrollHeight } : null
+    const stayBottom = deps.atBottom.value
+    firstShown.value = keep > 0 ? deps.rowIds()[keep] ?? null : null
+    await nextTick()
+    if (gen !== generation) return
+    const sc = deps.scrollRef.value
+    if (sc && before) sc.scrollTop = stayBottom ? sc.scrollHeight : scrollTopAfterPrepend(before, sc.scrollHeight)
+  }
 
   async function run(gen: number) {
     while (hidden.value > 0) {
       await yieldToMain()
       if (gen !== generation) return
-      const el = deps.scrollRef.value
-      const before = el ? { scrollTop: el.scrollTop, scrollHeight: el.scrollHeight } : null
-      const stayBottom = deps.atBottom.value
-      hidden.value = Math.max(0, hidden.value - BATCH_ROWS)
-      await nextTick()
+      await revealTo(Math.max(0, hidden.value - BATCH_ROWS), gen)
       if (gen !== generation) return
-      const sc = deps.scrollRef.value
-      if (sc && before) sc.scrollTop = stayBottom ? sc.scrollHeight : scrollTopAfterPrepend(before, sc.scrollHeight)
     }
+    firstShown.value = null
     deps.onDone?.()
   }
 
   /** 这一屏要停在底部：先只挂最后一截，其余的分批补上。 */
   function start() {
     generation += 1
-    hidden.value = Math.max(0, deps.rowCount() - INITIAL_ROWS)
-    if (hidden.value > 0) void run(generation)
+    const ids = deps.rowIds()
+    const cut = ids.length - INITIAL_ROWS
+    firstShown.value = cut > 0 ? ids[cut] : null
+    if (cut > 0) void run(generation)
   }
 
   /** 马上全部挂上（换话题、要跳到某一条之前）。 */
   function revealAll() {
     generation += 1
-    hidden.value = 0
+    firstShown.value = null
   }
+
+  // 人在补完之前往上翻了：一口气全部挂上（位置照补），之后记下的滚动位置才是相对整条
+  // 时间线的。否则这时离开再回来，useChatScroll 记的偏移量少算了没挂的那一截。
+  watch(deps.atBottom, (bottom) => {
+    if (bottom || !pending.value) return
+    generation += 1
+    void revealTo(0, generation)
+  })
 
   /** 打开一个话题：要停在底部才分批；停在中间或要跳到某一条，就一次挂完。 */
   function startFor(topicId: string, focus: string | null) {
