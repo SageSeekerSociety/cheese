@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from app.domain.agent.harness import Opening
+from app.domain.agent.harness.driven.runner import SessionStart
 from app.domain.agent.harness.pi.journal import Journal
 from app.domain.agent.harness.pi.runner import Runner, socket_path
 from tests.support.room_machine import NO_MACHINE
@@ -85,7 +85,7 @@ async def _send(state: Path, text: str, work_id: str) -> None:
 async def _start(tmp_path: Path, shim: str) -> Runner:
     runner = Runner(tmp_path / "state")
     await runner.start(
-        Opening("system prompt", None, agent_handle="teammate"),
+        SessionStart("system prompt", None, agent_handle="teammate"),
         binary=shim,
         cwd=str(tmp_path),
         env={"PATH": "/usr/bin:/bin"},

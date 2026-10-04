@@ -152,7 +152,7 @@ async def offer_answer(chat, topic_id, delivery_id, attempt_id, content):
     register = chat._input_registrar(effects, probe_unread=True, fence_delivery=True)
 
     try:
-        delivered = await chat._compute.deliver(
+        delivered = await chat._compute.steer(
             topic_id,
             content,
             register_input=register,

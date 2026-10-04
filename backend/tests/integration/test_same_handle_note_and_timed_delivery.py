@@ -12,8 +12,8 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import select
 
-from app.domain.agent import room_reads
 from app.domain.agent.chat import ChatService
+from app.domain.agent.room import reads as room_reads
 from app.domain.delivery.models import Delivery, TimedDelivery
 from app.domain.delivery.note import NOT_YOUR_OWN_THREAD
 from app.domain.delivery.timer import DELIVERED_AS_ASKED, deliver_due
@@ -479,8 +479,10 @@ def test_nondefault_timer_reaches_the_named_agent_through_real_turn_assembly(
             await original_receipt(receipt)
             receipt_committed.set()
 
-        chat._compute.bind_reader(
-            room_reader(receipts=observe_receipt, rest=room_reads.reader(chat))
+        chat._compute.report_to(
+            room_reader(receipts=observe_receipt, rest=room_reads.reader(chat)),
+            unread=chat.oldest_unread_at,
+            memory=chat._memory.sync,
         )
         runner = AgentWorkRunner(InProcessBroker())
         try:

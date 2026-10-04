@@ -13,6 +13,19 @@
     @drop="onRailDrop"
   >
     <template #prepend>
+      <!-- 平板横放那一档（960–1180）：二级侧栏默认收起，rail 顶上这颗开关管它。
+           宽档里那栏常驻、手机上它又是另一套抽屉，这颗都不出现。 -->
+      <BaseButton
+        v-if="compact"
+        data-sidebar-toggle
+        icon="mdi-page-layout-sidebar-left"
+        size="sm"
+        :aria-expanded="open ? 'true' : 'false'"
+        :aria-controls="SIDEBAR_DRAWER_ID"
+        :aria-label="open ? t('navigation.sidebar.collapse') : t('navigation.sidebar.expand')"
+        :title="open ? t('navigation.sidebar.collapse') : t('navigation.sidebar.expand')"
+        @click="toggle"
+      />
       <!-- 首页钉在顶上：项目多到滚动时它不能跟着滚出视野——待办的件数画在它身上。 -->
       <RailItem v-if="homeItem" :item="homeItem" />
       <RailItem v-if="homeDivider" :item="homeDivider" />
@@ -94,12 +107,14 @@
 import { computed, ref, toRefs } from 'vue'
 import { useEventListener } from '@vueuse/core'
 
+import { SIDEBAR_DRAWER_ID, useSidebarCollapse } from '@/composables/useSidebarCollapse'
 import { useUserMenu } from '@/composables/useUserMenu'
 
 import RailItem from './RailItem.vue'
 import { NavBarProps, NavGenericItem } from './types'
 import UserMenuCard from './UserMenuCard.vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { type DropEdge, dropTargetAt } from '@/lib/projectOrder'
 
@@ -108,6 +123,9 @@ const navBarProps = withDefaults(defineProps<NavBarProps>(), {
 })
 
 const { items } = toRefs(navBarProps)
+// 二级侧栏的收 / 开。rail 是那个开关住的地方，但状态归 useSidebarCollapse 一家保管
+// （侧栏自己也读它），这里只读 `compact` 决定这颗开关露不露面。
+const { compact, open, toggle } = useSidebarCollapse()
 const homeItem = computed(() => items.value.find((item) => item.key === 'Home'))
 const homeDivider = computed(() => items.value.find((item) => item.type === 'divider'))
 const PINNED = ['Home']

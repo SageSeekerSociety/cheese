@@ -18,6 +18,7 @@
           (currentSpace?.defaultCategoryId === category.id ? ' ' + t('spaces.detail.manageCategories.isDefault') : '')
         "
         :subtitle="category.description || undefined"
+        @contextmenu="rowMenu.open(category.id, $event)"
       >
         <template #prepend>
           <v-icon size="18" class="c-faint">{{
@@ -48,7 +49,7 @@
             @click="openEditDialog(category)"
           />
 
-          <AdaptiveMenu :actions="categoryActions(category)" :title="category.name">
+          <AdaptiveMenu v-bind="rowMenu.bind(category.id)" :actions="categoryActions(category)" :title="category.name">
             <template #activator="{ props }">
               <BaseButton
                 v-bind="props"
@@ -120,6 +121,7 @@ import { z } from 'zod'
 
 import { vuetifyConfig } from '@/utils/form'
 
+import { useRowMenu } from '@/composables/useRowMenu'
 import { useSpaceData } from '@/composables/useSpaceData'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -135,6 +137,7 @@ const spaceData = useSpaceData()
 const { currentSpace, categories, loadingCategories } = storeToRefs(spaceStore)
 const { t } = useI18n()
 const { confirm } = useDialog()
+const rowMenu = useRowMenu<number>()
 
 // 表单相关
 const dialogOpen = ref(false)

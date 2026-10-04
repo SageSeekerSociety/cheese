@@ -10,11 +10,15 @@
 """
 
 import uuid
+from contextlib import ExitStack
+from dataclasses import replace
+from unittest.mock import patch
 
 import pytest
 
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
+from app.domain.agent.harness import HARNESSES
 from app.domain.memory.files import INDEX_NAME, MemoryFileScope
 from app.domain.memory.files_store import MemoryFileStore
 from app.domain.project.services import ProjectService
@@ -38,7 +42,13 @@ class Screen(StubChannel):
         return True
 
 
-async def _turn_in(
+async def _turn_in(factory, tmp_path, **kwargs) -> str:
+    with ExitStack() as stack:
+        return await _turn_on(stack, factory, tmp_path, **kwargs)
+
+
+async def _turn_on(
+    stack: ExitStack,
     factory,
     tmp_path,
     *,
@@ -55,7 +65,16 @@ async def _turn_in(
     台——不会的时候，记忆那两段一个字都不该进去。
     """
     screen = Screen()
-    screen.runtime.keeps_memory = keeps_memory
+    if not keeps_memory:
+        # The room's harness, as the registry says it: one that does not
+        # reconcile the memory files back.
+        entry = HARNESSES[screen.runtime.harness]
+        stack.enter_context(
+            patch.dict(
+                HARNESSES,
+                {screen.runtime.harness: replace(entry, keeps_memory=False)},
+            )
+        )
     svc = ChatService(
         session_factory=factory,
         compute=ComputePool([screen.runtime], screen.name),

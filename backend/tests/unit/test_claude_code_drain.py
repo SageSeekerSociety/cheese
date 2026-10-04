@@ -129,6 +129,9 @@ async def test_a_refused_command_does_not_stop_the_room_reading_the_turn(tmp_pat
     async def announce():
         pass
 
+    async def moved(work_id, marks, taken):
+        pulses.append(marks)
+
     reading = Subscription(
         SessionRef(uuid.uuid4(), uuid.uuid4(), "cheese-a", harness="claude-code"),
         tmp_path / "records.sqlite",
@@ -139,7 +142,7 @@ async def test_a_refused_command_does_not_stop_the_room_reading_the_turn(tmp_pat
         recipient_handle="cheese-a",
         announce=announce,
         receipts=_settle_receipt,
-        pulse=lambda seat, marks: pulses.append(marks),
+        moved=moved,
     )
     try:
         await reading.drain()

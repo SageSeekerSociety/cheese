@@ -1,10 +1,10 @@
-"""What is read from a session: one item at a time, each with the cursor to read
-on from and the work it belongs to (``Read``).
+"""What is read from a session: one item at a time, each with the work it
+belongs to (``Read``).
 
-The vocabulary every reader shares, whoever drives the session: the session
-core (`session_host`) reading a question's answer, and a room hearing its
-sessions through its runtime (``harness.RoomReader``). It sits below both, so
-neither has to know the other.
+The vocabulary of the session core (`session_host`): what its ``read`` yields,
+to a question reading its answer and to a room hearing its seats alike. It sits
+below the core and below the harness packages it reads with, so neither has to
+know the other.
 """
 
 from dataclasses import dataclass
@@ -15,9 +15,6 @@ from app.domain.delivery.input_identity import (
     WorkCompletion,
     WorkTermination,
 )
-
-#: A position in a session's journal, as the runner names its entries.
-Cursor = str
 
 
 @dataclass(frozen=True)
@@ -78,10 +75,30 @@ class Reachable:
 
 
 @dataclass(frozen=True)
-class Read:
-    """One thing read from a session, and the cursor to read on from."""
+class Moved:
+    """What one of the session's records says about how its work is going, in
+    the liveness vocabulary (``subscription.marks_of``): it said something, a
+    tool started or came back. ``took`` is an input the session read inside
+    the work already running, rather than in work of its own."""
 
-    cursor: Cursor | None
+    marks: frozenset[str]
+    took: str | None = None
+
+
+@dataclass(frozen=True)
+class CaughtUp:
+    """Everything the session had written when the reading began is read."""
+
+
+@dataclass(frozen=True)
+class ControlsMoved:
+    """What the session's controls show changed (Claude Code's)."""
+
+
+@dataclass(frozen=True)
+class Read:
+    """One thing read from a session."""
+
     #: The work it belongs to, when the session says.
     work_id: str | None
     event: (
@@ -93,6 +110,9 @@ class Read:
         | Completed
         | Terminated
         | Reachable
+        | Moved
+        | CaughtUp
+        | ControlsMoved
     )
     #: The harness's own id for an ``AgentEvent``: what makes landing it twice
     #: harmless.

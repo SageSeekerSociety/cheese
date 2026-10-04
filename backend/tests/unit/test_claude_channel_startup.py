@@ -4,7 +4,7 @@ The session host here is this machine: a HOME on disk, the runner archive
 started the way the launcher starts it (its stderr appended to ``runner.log``),
 and a connector that relays one JSON line to the runner's socket and fails the
 way the real one does when nothing is listening. What is checked is how long a
-room waits and what it is told, through the channel's own ``ensure``.
+room waits and what it is told, through the room's own ``ensure``.
 """
 
 import asyncio
@@ -17,18 +17,21 @@ import subprocess
 import sys
 import time
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from app.domain.agent.harness import CLAUDE_CODE, Opening, SessionRef
-from app.domain.agent.harness.channel import Placement, ScreenSetupError
-from app.domain.agent.harness.claude_code import ClaudeCodeChannel
-from app.domain.agent.harness.claude_code import channel as claude_channel
+from app.domain.agent.harness import CLAUDE_CODE, SessionRef
+from app.domain.agent.harness.channel import Placement
 from app.domain.agent.harness.claude_code.bundle import build
 from app.domain.agent.harness.driven.runner import socket_path
 from app.domain.agent.harness.launch import MachinePlace
+from app.domain.agent.room.sessions import RoomSessions
+from app.domain.agent.session_host import claude_code as claude_driver
+from app.domain.agent.session_host.contract import StartRefused
+from app.domain.agent.session_host.host import SessionHost
 
 PROJECT, TOPIC = uuid.uuid4(), uuid.uuid4()
 AGENT = "cheese-agent"
@@ -36,7 +39,7 @@ DEVICE = "dev1"
 
 
 class Host:
-    """The central channel's surface the Claude Code channel uses, on this disk."""
+    """The room's placement and the session host's screens, on this disk."""
 
     name = "central"
     provisions_machine = False
@@ -45,7 +48,7 @@ class Host:
     # What the room was told when the session did not come up, and the
     # refusal itself (its `log` is what 现场 shows).
     refusal = ""
-    refused: ScreenSetupError | None = None
+    refused: StartRefused | None = None
 
     def __init__(self, root: Path, command: str | None, *, before=None):
         self.home = root / "home"
@@ -56,10 +59,13 @@ class Host:
         self.command = command
         self.before = before
         self.runners: list[subprocess.Popen] = []
-        self._hub = self
+        self.placed = ""
 
     def available(self) -> bool:
         return True
+
+    def is_online(self, device_id: str) -> bool:
+        return device_id == DEVICE
 
     def place(self, state: str) -> MachinePlace:
         return MachinePlace(
@@ -79,8 +85,23 @@ class Host:
     async def precheck(self, session, *, needs_place):
         return Placement(DEVICE, 1, AGENT, rented=False)
 
-    async def ensure_ready(self, *, env, runtime_factory, launch, **_):
-        placed = runtime_factory(TOPIC)["state"]
+    @asynccontextmanager
+    async def prepare_session(self, *, session, token, env, precheck, runtime_factory):
+        self.placed = runtime_factory(TOPIC)["state"]
+        yield SimpleNamespace(
+            device_id=DEVICE,
+            agent_user_id=1,
+            agent_handle=AGENT,
+            token=token,
+            env={
+                **(env or {}),
+                "CHEESE_RESOURCE_ID": str(TOPIC),
+                "CHEESE_EXECUTION_TARGET": json.dumps({"kind": "deferred"}),
+            },
+        )
+
+    async def _ensure_screen(self, *, env, launch, **_):
+        placed = self.placed
         state = self.expand(placed)
         state.mkdir(parents=True, exist_ok=True)
         if self.before is not None:
@@ -111,7 +132,7 @@ class Host:
                         stderr=log,
                     )
                 )
-        return SimpleNamespace(device_id=DEVICE)
+        return SimpleNamespace(device_id=DEVICE, sid="s1")
 
     async def exec(self, device_id, argv, *, timeout=60, **_):
         done = await asyncio.to_thread(
@@ -160,12 +181,16 @@ def _dies(reason: str) -> str:
 
 
 async def _start(host: Host) -> float:
-    channel = ClaudeCodeChannel(host)  # type: ignore[arg-type]
+    room = RoomSessions(
+        host,  # type: ignore[arg-type]
+        CLAUDE_CODE,
+        SessionHost(host, screens=host),  # type: ignore[arg-type]
+    )
     session = SessionRef(PROJECT, TOPIC, AGENT, harness=CLAUDE_CODE)
     started = time.monotonic()
     try:
-        with pytest.raises(ScreenSetupError) as refused:
-            await channel.ensure(session, Opening(system_prompt=""))
+        with pytest.raises(StartRefused) as refused:
+            await room.ensure(session, system_prompt="")
     finally:
         host.stop()
     host.refused = refused.value
@@ -249,7 +274,7 @@ async def test_a_runner_that_fails_itself_is_reported_at_once(tmp_path):
 
 @pytest.mark.anyio
 async def test_an_earlier_launch_ending_does_not_end_this_wait(tmp_path, monkeypatch):
-    monkeypatch.setattr(claude_channel, "STARTUP_WAIT_S", 3.0)
+    monkeypatch.setattr(claude_driver, "STARTUP_WAIT_S", 3.0)
 
     def ended_before(state: Path) -> None:
         (state / "runner.log").write_text(

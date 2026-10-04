@@ -7,7 +7,6 @@
       "title": "Files in this room",
       "expand": "Expand",
       "collapse": "Collapse",
-      "expandAll": "Show all {count}",
       "openFile": "Open {path}",
       "newFromTemplate": "New from template",
       "readingTemplates": "Reading templates…",

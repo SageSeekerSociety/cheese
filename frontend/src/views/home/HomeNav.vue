@@ -11,11 +11,13 @@ import type { MenuAction } from '@/components/common/menuAction'
 import type { Team } from '@/types'
 
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
+import { toast } from 'vuetify-sonner'
 
 import { getAvatarUrl } from '@/utils/materials'
 
 import { awaitingCount } from '@/composables/useAwaitingCount'
+import { useRowMenu } from '@/composables/useRowMenu'
 
 import JoinSpaceDialog from './JoinSpaceDialog.vue'
 
@@ -24,6 +26,10 @@ import { t } from '@/i18n'
 import { spaceEntryRoute } from '@/lib/spaceEntry'
 import { SpacesApi } from '@/network/api/spaces'
 import { TeamsApi } from '@/network/api/teams'
+import { useDialog } from '@/plugins/dialog'
+import AccountService from '@/services/account'
+import errorHandler from '@/services/ErrorHandler'
+import { useWorkspaceStore } from '@/stores/workspace'
 import TeamProfileEditDialog from '@/views/teams/TeamProfileEditDialog.vue'
 
 defineProps<{
@@ -32,6 +38,8 @@ defineProps<{
 }>()
 
 const route = useRoute()
+const router = useRouter()
+const dialog = useDialog()
 const awaiting = awaitingCount()
 
 const teams = ref<Team[]>([])
@@ -120,22 +128,63 @@ const isAdmin = (team: Team) => team.role === 'OWNER' || team.role === 'ADMIN'
 
 const editing = ref<Team | null>(null)
 
-/** 管理员在一个团队那一行的 ⋯ 里能做的事。 */
+/** 一个团队那一行的 ⋯（和右键）里能做的事：管理员邀请、改资料；不是所有者的能退出。 */
 function teamActions(team: Team): MenuAction[] {
-  return [
-    {
-      key: 'invite',
-      label: t('home.nav.inviteMembers'),
-      icon: 'mdi-account-plus-outline',
-      to: { name: 'TeamsDetailMembers', params: { handle: team.handle }, query: { invite: '1' } },
-    },
-    {
-      key: 'edit',
-      label: t('work.teamProfile.edit'),
-      icon: 'mdi-pencil-outline',
-      onSelect: () => (editing.value = team),
-    },
-  ]
+  if (team.personal) return []
+  const actions: MenuAction[] = []
+  if (isAdmin(team))
+    actions.push(
+      {
+        key: 'invite',
+        label: t('home.nav.inviteMembers'),
+        icon: 'mdi-account-plus-outline',
+        to: { name: 'TeamsDetailMembers', params: { handle: team.handle }, query: { invite: '1' } },
+      },
+      {
+        key: 'edit',
+        label: t('work.teamProfile.edit'),
+        icon: 'mdi-pencil-outline',
+        onSelect: () => (editing.value = team),
+      }
+    )
+  // 所有者退不掉（后端拒：先转让或解散），不给他一个必然被拒的按钮。
+  if (team.role !== 'OWNER')
+    actions.push({
+      key: 'leave',
+      label: t('home.nav.leaveTeam'),
+      icon: 'mdi-exit-to-app',
+      danger: true,
+      onSelect: () => void leaveTeam(team),
+    })
+  return actions
+}
+
+// 右键一行，弹的就是 ⋯ 那一份，弹在鼠标那一点上。
+const rowMenu = useRowMenu<number>()
+
+// 退出团队：退掉的是整个团队，它的项目也一起看不到了，所以先确认。退出这一下成功了
+// 就算成功，后面的刷新失败不改口。
+async function leaveTeam(team: Team) {
+  const userId = AccountService.user?.id
+  if (typeof userId !== 'number') return
+  const confirmed = await dialog
+    .confirm(t('home.nav.leaveTeamBody'), {
+      title: t('home.nav.leaveTeamTitle', { name: team.name }),
+      confirmLabel: t('home.nav.leaveTeam'),
+      danger: true,
+    })
+    .wait()
+    .catch(() => false)
+  if (!confirmed) return
+  const result = await errorHandler.withErrorHandling(() => TeamsApi.removeMember(team.id, userId), {
+    defaultMessage: t('home.nav.leaveTeamFailed'),
+  })
+  if (result === undefined) return
+  toast.success(t('home.nav.leaveTeamDone', { name: team.name }))
+  teams.value = teams.value.filter((row) => row.id !== team.id)
+  // 这个团队的项目也不再是我的：rail 上那几格跟着这份清单走。
+  void useWorkspaceStore().refreshProjects()
+  if (currentHandle.value?.toLowerCase() === team.handle.toLowerCase()) void router.replace({ name: 'inbox' })
 }
 const editOpen = computed({
   get: () => editing.value !== null,
@@ -174,6 +223,7 @@ const joinOpen = ref(false)
           :aria-expanded="isOpen(team)"
           :aria-label="t(isOpen(team) ? 'home.nav.collapse' : 'home.nav.expand', { name: team.name })"
           @click="toggle(team.handle)"
+          @contextmenu="teamActions(team).length && rowMenu.open(team.id, $event)"
         >
           <template #prepend>
             <v-icon size="16" class="home-nav__caret">{{
@@ -195,7 +245,12 @@ const joinOpen = ref(false)
           </template>
           <v-list-item-title class="home-nav__name" data-user-content>{{ team.name }}</v-list-item-title>
           <template #append>
-            <AdaptiveMenu v-if="!team.personal && isAdmin(team)" :actions="teamActions(team)" :title="team.name">
+            <AdaptiveMenu
+              v-if="teamActions(team).length"
+              v-bind="rowMenu.bind(team.id)"
+              :actions="teamActions(team)"
+              :title="team.name"
+            >
               <template #activator="{ props }">
                 <!-- eslint-disable-next-line vue/no-restricted-syntax -- nav bar button whose look this component styles exactly (design-system §3.6 exception) -->
                 <v-btn

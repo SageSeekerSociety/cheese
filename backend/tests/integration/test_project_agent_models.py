@@ -9,7 +9,9 @@ from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import gateway_catalog
 from app.domain.agent.chat import ChatService
 from app.domain.agent.device_provider import DeviceChannel
-from app.domain.agent.harness.claude_code import ClaudeCodeRuntime
+from app.domain.agent.harness import CLAUDE_CODE
+from app.domain.agent.room.sessions import RoomSessions
+from app.domain.agent.session_host.host import SessionHost
 from tests.conftest import stub_compute
 from tests.integration.conftest import (
     post_project,
@@ -82,7 +84,7 @@ async def test_project_name_defaults_and_teammate_model_reach_execution(
     kwargs, _ = client.portal.call(
         lambda: chat._model_kwargs(
             uuid.UUID(pid),
-            ClaudeCodeRuntime(DeviceChannel()),
+            RoomSessions(DeviceChannel(), CLAUDE_CODE, SessionHost()),
             uuid.UUID(project["root_topic_id"]),
         )
     )
@@ -205,7 +207,7 @@ async def test_removed_main_is_refused_but_unused_defaults_do_not_block_override
     with pytest.raises(ValidationError, match="opus"):
         await chat._model_kwargs(
             uuid.UUID(pid),
-            ClaudeCodeRuntime(DeviceChannel()),
+            RoomSessions(DeviceChannel(), CLAUDE_CODE, SessionHost()),
             uuid.UUID(project["root_topic_id"]),
         )
     assert (
@@ -220,7 +222,7 @@ async def test_removed_main_is_refused_but_unused_defaults_do_not_block_override
     assert "sonnet" in main["supply"]["model"]
     kwargs, _ = await chat._model_kwargs(
         uuid.UUID(pid),
-        ClaudeCodeRuntime(DeviceChannel()),
+        RoomSessions(DeviceChannel(), CLAUDE_CODE, SessionHost()),
         uuid.UUID(project["root_topic_id"]),
     )
     assert "sonnet" in kwargs["model"]
