@@ -224,8 +224,8 @@ class DrivenRuntime[H: Handle]:
         # Work a verdict already ended. What the session goes on saying still
         # lands; a second ending for it does not.
         self.closed: set[uuid.UUID] = set()
-        # Conversations this process has already handed their opening state.
-        self.opened: set[str] = set()
+        # The conversation each seat was last handed its opening state in.
+        self.opened: dict[Seat, str] = {}
         self.unreachable: dict[Seat, float] = {}
         # The open work each seat was last told is waiting on its machine.
         self.told_waiting: dict[Seat, uuid.UUID] = {}
@@ -926,7 +926,7 @@ class DrivenRuntime[H: Handle]:
                 )
         else:
             handle = await self.ensure(session, opening, work_id=work_id)
-            message = self._with_project_state(handle, opening, message)
+            message = self._with_project_state(session, handle, opening, message)
         await self.check_input_protocol(handle)
         payload = await self.channel.images(handle, images or [])
         on_mark(work_id)
@@ -989,17 +989,25 @@ class DrivenRuntime[H: Handle]:
             self._listen(self._seat_of(session))
         return True
 
-    def _with_project_state(self, handle: H, opening: Opening, message: str) -> str:
+    def _with_project_state(
+        self, session: SessionRef, handle: H, opening: Opening, message: str
+    ) -> str:
         """The message with the project state this conversation has not heard.
 
         A conversation is new when it is not the one the caller asked to resume:
         no token, or a resume that failed and started afresh. A new one gets the
         whole opening; one that goes on gets what changed since it last heard.
-        A conversation is opened once per process: a second message before its
-        token is recorded must not hand it the opening again."""
+        A second message before the new conversation's token is recorded must
+        not hand it the opening again, so each seat remembers the conversation
+        it opened. After a backend restart that is gone, and the most a lost
+        entry costs is an opening handed twice."""
         conversation = self.conversation(handle)
-        fresh = conversation != opening.resume_token and conversation not in self.opened
-        self.opened.add(conversation)
+        seat = self._seat_of(session)
+        fresh = (
+            conversation != opening.resume_token
+            and self.opened.get(seat) != conversation
+        )
+        self.opened[seat] = conversation
         state = opening.session_opening if fresh else opening.opening_changes
         return f"{state}\n\n{message}" if state else message
 
