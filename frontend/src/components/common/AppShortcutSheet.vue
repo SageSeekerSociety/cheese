@@ -16,6 +16,10 @@ import ShortcutSheet from './ShortcutSheet.vue'
 import { t } from '@/i18n'
 import { inDesktopApp } from '@/lib/desktopApp'
 
+function setOpen(open: boolean) {
+  appShortcutSheetOpen.value = open
+}
+
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform)
 const mod = isMac ? '⌘' : 'Ctrl'
 
@@ -64,6 +68,6 @@ const groups = computed<ShortcutGroup[]>(() => {
     :model-value="appShortcutSheetOpen"
     :title="t('global.shortcuts.title')"
     :groups="groups"
-    @update:model-value="appShortcutSheetOpen = $event"
+    @update:model-value="setOpen"
   />
 </template>

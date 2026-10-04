@@ -82,7 +82,6 @@ import { useRouter } from 'vue-router'
 import { useEventListener } from '@vueuse/core'
 
 import { useNavigation } from '@/composables/useNavigation'
-import { inDesktopApp } from '@/lib/desktopApp'
 
 import { railShortcut } from './destinations'
 import { NavGenericItem } from './types'
@@ -90,6 +89,7 @@ import { NavGenericItem } from './types'
 import CheeseLogo from '@/assets/logo-plain.svg?component'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import { t } from '@/i18n'
+import { inDesktopApp } from '@/lib/desktopApp'
 import { cancelPrefetch, prefetchOnHover } from '@/lib/routePrefetch'
 
 // 自定义的拖拽类型，不是 text/plain：rail 只接自己格子拖过来的东西，从桌面拖一个

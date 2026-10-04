@@ -70,7 +70,7 @@
     "send": "Send",
     "newline": "New line",
     "summon": "Send and hand to {name}",
-    "mentionPick": "Pick from the @ list",
-    "mentionClose": "Close the @ list"
+    "mentionPick": "Pick from the {'@'} list",
+    "mentionClose": "Close the {'@'} list"
   }
 }

@@ -163,8 +163,8 @@ export function railItems(src: NavSources, shell: Shell): NavGenericItem[] {
   // ⌘N 是**画出来的位置**，不是某一格固有的属性：壳把项目排到第一格时，⌘1 就该是
   // 那个项目。所以编号发生在排完之后，而不是在建格子的地方写死。
   //
-  // 只编到 9：App 只登记 mod+1..9，第 10 格往后拿到的数字没有任何键能触发，浮层上
-  // 那句「⌘10」是一句谎话。项目多到 9 个以上时，多出来的格子没有快捷方式。
+  // 只编到 9：App 只登记 1..9（railShortcut），第 10 格往后拿到的数字没有任何键能触发，浮层上
+  // 那句「G 10」是一句谎话。项目多到 9 个以上时，多出来的格子没有快捷方式。
   let n = 0
   return items.map((item) => {
     if (item.type !== 'item' || !item.to || n >= MAX_SHORTCUT) return item

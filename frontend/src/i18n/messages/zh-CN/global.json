@@ -70,7 +70,7 @@
     "send": "发送",
     "newline": "换行",
     "summon": "发送并交给{name}",
-    "mentionPick": "在 @ 名单里选人",
-    "mentionClose": "收起 @ 名单"
+    "mentionPick": "在 {'@'} 名单里选人",
+    "mentionClose": "收起 {'@'} 名单"
   }
 }

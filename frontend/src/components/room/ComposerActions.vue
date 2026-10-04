@@ -17,6 +17,7 @@ import { computed, ref } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
+import { openShortcutSheet } from '@/components/common/shortcutSheet'
 import { t } from '@/i18n'
 
 const props = defineProps<{
@@ -169,6 +170,17 @@ const summonText = computed(() => ({
       :title="t('work.room.reminder.open')"
       :aria-label="t('work.room.reminder.open')"
       @click="emit('remind')"
+    />
+    <!-- The visible way into the shortcut sheet: Enter / Shift+Enter / Cmd+Enter used to live only in a title tooltip. -->
+    <BaseButton
+      v-if="!extrasCollapsed"
+      kind="ghost"
+      class="composer-icon"
+      icon="mdi-keyboard-outline"
+      size="sm"
+      :title="t('global.shortcuts.open')"
+      :aria-label="t('global.shortcuts.open')"
+      @click="openShortcutSheet"
     />
     <v-spacer />
     <!-- 算力说的是「这条消息会在哪儿跑」，属于发送这一侧，不和左边那两个

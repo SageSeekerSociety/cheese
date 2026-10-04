@@ -16,3 +16,7 @@ export interface ShortcutGroup {
 
 /** 主应用的快捷键表开着没有。 */
 export const appShortcutSheetOpen = ref(false)
+
+export function openShortcutSheet(): void {
+  appShortcutSheetOpen.value = true
+}

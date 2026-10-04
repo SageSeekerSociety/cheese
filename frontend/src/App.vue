@@ -256,6 +256,7 @@ import { useRoute } from 'vue-router'
 import { useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 import { toast } from 'vuetify-sonner'
+import { useEventListener } from '@vueuse/core'
 
 import { avatarColor } from '@/utils/avatar'
 import { scrollBehavior } from '@/utils/motion'
@@ -270,7 +271,13 @@ import { useWorkspaceLayout } from '@/composables/useWorkspaceLayout'
 import ConsentGate from './components/account/ConsentGate.vue'
 import MyApp from './components/common/MyApp.vue'
 import BottomAppBar from './components/common/Navigation/BottomAppBar.vue'
-import { railItems, railShortcut, shortcutTarget, tabItems, workspaceProject } from './components/common/Navigation/destinations'
+import {
+  railItems,
+  railShortcut,
+  shortcutTarget,
+  tabItems,
+  workspaceProject,
+} from './components/common/Navigation/destinations'
 import LeftAppRail from './components/common/Navigation/LeftAppRail.vue'
 import { DEFAULT_SHELL, shellFor, termParams } from './lib/shell'
 import { usePageTitleStore } from './stores/title'
@@ -283,10 +290,10 @@ import { installShortcuts, isTypingTarget } from '@/commands/shortcuts'
 import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AppShortcutSheet from '@/components/common/AppShortcutSheet.vue'
-import { appShortcutSheetOpen } from '@/components/common/shortcutSheet'
 import AppBar from '@/components/common/Navigation/AppBar.vue'
 import MobileAppBar from '@/components/common/Navigation/MobileAppBar.vue'
 import OfflineBanner from '@/components/common/OfflineBanner.vue'
+import { appShortcutSheetOpen } from '@/components/common/shortcutSheet'
 import VersionBadge from '@/components/common/VersionBadge.vue'
 import LeaveProjectDialog from '@/components/LeaveProjectDialog.vue'
 import ResourceLimitsNotice from '@/components/ResourceLimitsNotice.vue'
@@ -626,7 +633,15 @@ defineCommands(() =>
     const item = rail.value.find((it) => it.type === 'item' && it.to === to)
     const title = item?.type === 'item' ? item.title : to
     return to
-      ? [{ id: `rail.${digit}`, title: title ?? to, shortcut: railShortcut(digit, inApp).shortcut, to, palette: false as const }]
+      ? [
+          {
+            id: `rail.${digit}`,
+            title: title ?? to,
+            shortcut: railShortcut(digit, inApp).shortcut,
+            to,
+            palette: false as const,
+          },
+        ]
       : []
   })
 )
