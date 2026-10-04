@@ -50,14 +50,11 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-async function mountDoc() {
+async function mountDoc(markdown = MARKDOWN, editable = true) {
   const view = render(
     defineComponent({
       setup: () => () =>
-        h(
-          PanelDocView,
-          docPanelProps({ topic: DOC_TOPIC, session: docSession(MARKDOWN), editable: true, loading: false })
-        ),
+        h(PanelDocView, docPanelProps({ topic: DOC_TOPIC, session: docSession(markdown), editable, loading: false })),
     }),
     { global: { plugins: [createVuetify({ components, directives })] } }
   )
@@ -66,16 +63,20 @@ async function mountDoc() {
   return view
 }
 
+async function openOutline() {
+  await fireEvent.click(screen.getByRole('button', { name: '大纲' }))
+  // 标题文字在正文里也在大纲里，所以按大纲容器取，别让 screen 撞上多份。
+  return waitFor(() => {
+    const el = document.querySelector('.doc-outline') as HTMLElement | null
+    expect(el).toBeTruthy()
+    return el as HTMLElement
+  })
+}
+
 describe('文档大纲', () => {
   it('顶栏打开大纲，把正文里的标题列出来', async () => {
     await mountDoc()
-    await fireEvent.click(screen.getByRole('button', { name: '大纲' }))
-    // 标题文字在正文里也在大纲里，所以按大纲容器取，别让 screen 撞上多份。
-    const menu = await waitFor(() => {
-      const el = document.querySelector('.doc-outline') as HTMLElement | null
-      expect(el).toBeTruthy()
-      return el as HTMLElement
-    })
+    const menu = await openOutline()
     const text = menu.textContent ?? ''
     expect(text).toContain('章程')
     expect(text).toContain('部署')
@@ -83,16 +84,18 @@ describe('文档大纲', () => {
     expect(menu.querySelectorAll('.v-list-item')).toHaveLength(3)
   })
 
+  it('只读文档里大纲照样列得出来', async () => {
+    await mountDoc(MARKDOWN, false)
+    const menu = await openOutline()
+    const text = menu.textContent ?? ''
+    expect(text).toContain('章程')
+    expect(text).toContain('收尾')
+    expect(menu.querySelectorAll('.v-list-item')).toHaveLength(3)
+  })
+
   it('没有标题的文档给一句空态', async () => {
-    const view = render(
-      defineComponent({
-        setup: () => () =>
-          h(PanelDocView, docPanelProps({ topic: DOC_TOPIC, session: docSession('只有一段普通的话。') })),
-      }),
-      { global: { plugins: [createVuetify({ components, directives })] } }
-    )
-    await waitFor(() => expect(document.querySelector('.doc-prose')).toBeTruthy())
-    await fireEvent.click(view.getByRole('button', { name: '大纲' }))
+    await mountDoc('只有一段普通的话。')
+    await fireEvent.click(screen.getByRole('button', { name: '大纲' }))
     expect(await screen.findByText('这篇文档还没有标题')).toBeTruthy()
   })
 })
