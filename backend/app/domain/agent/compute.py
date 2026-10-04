@@ -303,6 +303,14 @@ class ComputePool:
             if runtime.holds(topic_id, agent_handle)
         ]
         if len(candidates) != 1:
+            from app.domain.agent.ask_origin import refused
+
+            refused(
+                "runtimes holding the seat",
+                topic_id,
+                agent_handle,
+                count=len(candidates),
+            )
             return None
         return await candidates[0].ask_origin(project_id, topic_id, agent_handle)
 

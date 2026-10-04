@@ -35,6 +35,10 @@ class SessionRecovery:
         _hook_work: dict
         _replays: dict[uuid.UUID, asyncio.Task]
 
+        def _mark_turn_inactive(
+            self, topic_id: uuid.UUID, work_id: uuid.UUID
+        ) -> None: ...
+
         async def _begin_self_started_turn(
             self,
             project_id: uuid.UUID,
@@ -158,6 +162,16 @@ class SessionRecovery:
                     # Taken over, read up: now compare it with what this
                     # release would start, while nobody is waiting on it.
                     self.prewarm.nudge(session)
+
+    def retire_unheard(self, turn_ids: set[uuid.UUID]) -> None:
+        """Let go of the live state of turns the orphan sweep closed because
+        their prompt reached nobody. Their message goes out again in a new turn
+        (or to a person), and no session will ever end them; kept, each one is
+        a second live turn on its seat, which refuses that seat's questions as
+        ambiguous and keeps reminding a turn nobody runs to speak."""
+        for key in [key for key in self._hook_work if key[1] in turn_ids]:
+            del self._hook_work[key]
+            self._mark_turn_inactive(*key)
 
     def _replayed(self, replay: asyncio.Task) -> None:
         for topic_id, current in list(self._replays.items()):

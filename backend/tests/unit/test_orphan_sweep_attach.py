@@ -67,6 +67,9 @@ class _Chat(WorkChat):
     def has_live_screen(self, topic_id, agent_handle=None):
         return self._live_screen
 
+    def retire_unheard(self, turn_ids):
+        pass
+
     async def turns_that_produced_something(self, turn_ids):
         if self._probe_error:
             raise RuntimeError("probe blew up")

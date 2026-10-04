@@ -1110,19 +1110,34 @@ class RoomSessions:
     async def ask_origin(self, project_id, topic_id, agent_handle) -> dict | None:
         """The seat's exact live native identity, starting and sending nothing:
         the work its session is doing is the work this process has open."""
+        from app.domain.agent.ask_origin import refused
+
         seat = (topic_id, agent_handle)
         live = self.live.get(seat)
         work = self.work.get(seat)
         if live is None or work is None or live.session.project_id != project_id:
+            refused(
+                "no live session work",
+                topic_id,
+                agent_handle,
+                live=live is not None,
+                work=work,
+            )
             return None
         status = await self.host.status(live.ref)
-        if (
-            status is None
-            or not status.working
-            or status.work_id != str(work)
-            or self.live.get(seat) is not live
-            or self.work.get(seat) != work
-        ):
+        if status is None or not status.working or status.work_id != str(work):
+            refused(
+                "session not working on it",
+                topic_id,
+                agent_handle,
+                work=work,
+                reachable=status is not None,
+                working=status.working if status is not None else None,
+                session_work=status.work_id if status is not None else None,
+            )
+            return None
+        if self.live.get(seat) is not live or self.work.get(seat) != work:
+            refused("session changed while reading", topic_id, agent_handle, work=work)
             return None
         return {
             "harness": self.harness,
