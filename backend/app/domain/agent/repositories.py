@@ -293,6 +293,22 @@ class AgentTurnRepository:
             .values(stopped_at=at)
         )
 
+    async def still_open(
+        self, topic_id: uuid.UUID, turn_ids: list[uuid.UUID]
+    ) -> list[uuid.UUID]:
+        """Which of ``turn_ids`` have no end yet."""
+        if not turn_ids:
+            return []
+        return list(
+            await self._session.scalars(
+                select(AgentTurn.id).where(
+                    AgentTurn.topic_id == topic_id,
+                    AgentTurn.id.in_(turn_ids),
+                    AgentTurn.stopped_at.is_(None),
+                )
+            )
+        )
+
     async def close_one(
         self, topic_id: uuid.UUID, turn_id: uuid.UUID, at: datetime
     ) -> int:
