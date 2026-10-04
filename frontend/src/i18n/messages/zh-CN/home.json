@@ -37,6 +37,7 @@
     "disbandTeamTitle": "解散「{name}」？",
     "disbandTeamBody": "解散后所有成员都会离开这个团队，无法撤销。团队里的项目要先全部归档；归档的项目解散后只有项目所有者和外部成员还看得到。",
     "disbandTeamDone": "已解散「{name}」",
-    "disbandTeamFailed": "解散团队失败"
+    "disbandTeamFailed": "解散团队失败",
+    "disbandTeamTypeName": "输入团队名「{name}」确认"
   }
 }
