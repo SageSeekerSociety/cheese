@@ -14,8 +14,9 @@ import time
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select, text
 
+from app.domain.block.models import Block
 from app.domain.block.waits import MemberWaits
 from app.domain.project.models import Project
 from app.domain.topic.models import Topic, TopicKind
@@ -91,19 +92,33 @@ def _all_failed(found, room_ids):
 async def test_a_project_with_many_failed_turns_is_read_without_holding_the_loop(
     db_factory,
 ):
+    """Measured against reading the failed turns themselves, which any answer
+    has to do, so the bound holds on a slow machine as on a fast one. Going
+    through each of them once more in Python is the rest of the allowance."""
     async with db_factory() as session:
         room_ids = await _project_with_failed_turns(session, 12000)
         waits = MemberWaits(session)
         # The first read prepares what later ones reuse; a page polls this.
         await waits.for_rooms(room_ids, now=datetime.now(UTC))
 
+        async def the_rows():
+            rows = select(Block.topic_id, Block.turn_id, Block.created_at).where(
+                Block.topic_id.in_(room_ids)
+            )
+            return (await session.execute(rows)).all()
+
+        await the_rows()
+        _, reading = await _worst_stall_during(the_rows())
         found, worst = await _worst_stall_during(
             waits.for_rooms(room_ids, now=datetime.now(UTC))
         )
         await session.rollback()
 
     _all_failed(found, room_ids)
-    assert worst < 0.03, f"the loop was held {worst * 1000:.0f} ms"
+    assert worst < 4 * reading, (
+        f"the loop was held {worst * 1000:.0f} ms; "
+        f"reading the failed turns held it {reading * 1000:.0f} ms"
+    )
 
 
 async def test_more_failed_turns_than_a_query_can_bind_are_still_read(db_factory):
