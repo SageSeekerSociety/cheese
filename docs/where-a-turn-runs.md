@@ -168,7 +168,7 @@ Cloud 能开机 → 默认是 Cloud；开不了 → 默认是自托管设备
 
 档记在房间和机器的绑定上（`device_topic.visibility`），按房间、不按机器：同一台设备上有的房间在沙箱里，有的看得见整台机器。没人选时是 `isolated`（`device/supply.py` 的 `default_visibility`），每个绑定点都问这一句。`host` 只有机主本人以人的身份登录时能给（`PUT /topics/{id}/compute-profile` 的 `visibility`），会话凭据给不了——那是沙箱里的房间自己把自己放出来；改回 `isolated` 谁都可以。房间换到另一台机器，在那台上从 `isolated` 开始。档变了，执行器在下一次工具调用时重装（`launch.can_prepare` 比对它跑在不在沙箱里）。
 
-没有数据迁移：沙箱出现之前写下的自托管绑定都是 `host`，保持不变；没有绑定的「系统挑一台」房间，下一次开工按默认进沙箱。
+沙箱出现之前就在自托管设备上跑过的房间保持整台机器：点名过机器的房间当时就绑成了 `host`；「系统挑一台」的房间没有绑定，由迁移 `d72d0f566149` 绑成 `host`，绑在它最近一条会话租着的那台自托管设备上（下一条会话回到的就是那台）。用过几台的房间只绑那一台，回到别的那几台算一次新的选择，从 `isolated` 开始；最近一次落在云机器上、或者房间选的已经是云的，不绑。从没在自托管设备上跑过的房间，按默认进沙箱。
 
 macOS 和 Windows 还没有沙箱（`device/supply.py` 的 `sandbox_unavailable`，按连接器 `hello` 报的 `<系统>-<架构>`）：那里 `isolated` 的房间开工时拿到一句话，说清楚是什么情况、可以怎么办（macOS：请机主给整台机器；Windows：装 WSL，把 WSL 接成一台设备），**不会退成整机去跑**。Linux 上缺 bubblewrap 或不许建用户命名空间时，安装程序在动房间之前就拒绝，同样带一句话。macOS 的沙箱（`sandbox-exec`）以后接在 `bootstrap.sandbox_tools` / `sandbox_argv` 上，同时把 macOS 从 `sandbox_unavailable` 的表里拿掉。沙箱怎么搭见 `docs/remote-execution.md`。
 
