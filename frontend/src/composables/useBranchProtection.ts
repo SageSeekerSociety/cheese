@@ -6,8 +6,9 @@
 //
 // 三条规矩跟着这段代码走了一遍：
 //
-//   1. **每个控件一次 PUT**。失败时 `bp` 一个字节都不动，于是所有绑定 `bp` 的控件
-//      （从不绑本地副本）自己弹回原值 —— 不需要一处一处回滚。
+//   1. **每个控件一次 PUT，且先乐观改 `bp`**。所有控件都绑 `bp`（从不绑本地副本），
+//      所以开关点下去先翻到人点的那一面、别等一次往返；PUT 回来用服务器那一份收
+//      口，失败整份退回改动前 —— 回滚只有这一处，控件跟着自己弹回。
 //   2. **`approvals_required` 走草稿字符串**。非法输入就地被拒、草稿弹回，坏值
 //      永远写不进 `bp`。
 //   3. **两个草稿（新检查的名字与路径范围）留在这一层**：添加成功后要清空、失败要
@@ -75,18 +76,23 @@ export function useBranchProtection(projectId: () => string) {
     }
   }
 
-  // One PUT per control change. On failure bp stays untouched, so every control
-  // (all bound to bp, never to local copies) snaps back by itself.
+  // One PUT per control change, applied to `bp` optimistically first (a boolean
+  // switch flips on the click, not after the round-trip). The PUT's answer is the
+  // server's truth and refines it; on failure `bp` goes back to the snapshot — so
+  // every control (all bound to bp, never to local copies) snaps back by itself.
   async function saveBranchProtection(patch: BranchProtectionPatch, key: string): Promise<boolean> {
     if (!bp.value) return false
+    const before = bp.value
     bpError.value = null
     bpSaving.value = key
+    bp.value = { ...before, ...patch }
     try {
       const rules = await setBranchProtection(projectId(), patch)
       bp.value = { ...bp.value, ...rules }
       approvalsDraft.value = String(rules.approvals_required)
       return true
     } catch (e) {
+      bp.value = before
       bpError.value = e instanceof Error ? e.message : t('work.projectSettings.merge.saveFailed')
       return false
     } finally {

@@ -515,33 +515,52 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     }
   }
 
+  // 归档 / 取消归档是就地发生的一件事：点下去这一行立刻挪进（或挪出）「已归档」，
+  // 不等一次往返。服务器回来再落实；失败把这一行放回原样，并照旧报错。
   async function archive(topicId: string) {
+    const topic = topics.value.find((row) => row.id === topicId)
+    const before = topic?.status
+    let forgot = false
+    if (topic) {
+      topicRevision += 1
+      topic.status = 'archived'
+      // 刚归档的正是记着的那一个：rail 那一格不该再把项目落在它身上（归档的话题还
+      // 在清单里，`forgetMissingTopic` 找不到它），直接忘掉——失败再记回来。
+      if (lastTopicByProject.value[topic.project_id] === topicId) {
+        forgetRememberedTopic(topic.project_id)
+        forgot = true
+      }
+    }
     try {
       const updated = await archiveTopic(topicId)
-      const topic = topics.value.find((row) => row.id === topicId)
-      if (topic) {
-        topicRevision += 1
-        Object.assign(topic, updated)
-      }
-      // 刚归档的正是记着的那一个：rail 那一格不该再把项目落在它身上（归档的话题还
-      // 在清单里，`forgetMissingTopic` 找不到它），直接忘掉。
-      if (topic && lastTopicByProject.value[topic.project_id] === topicId) forgetRememberedTopic(topic.project_id)
+      if (topic) Object.assign(topic, updated)
       void refreshTopics()
     } catch (e) {
+      if (topic) {
+        topicRevision += 1
+        if (before !== undefined) topic.status = before
+        if (forgot) rememberTopic(topic.project_id, topic.id)
+      }
       reportError(e, t('shell.workspaceErrors.archive'))
     }
   }
 
   async function unarchive(topicId: string) {
+    const topic = topics.value.find((row) => row.id === topicId)
+    const before = topic?.status
+    if (topic) {
+      topicRevision += 1
+      topic.status = 'active'
+    }
     try {
       const updated = await unarchiveTopic(topicId)
-      const topic = topics.value.find((row) => row.id === topicId)
-      if (topic) {
-        topicRevision += 1
-        Object.assign(topic, updated)
-      }
+      if (topic) Object.assign(topic, updated)
       void refreshTopics()
     } catch (e) {
+      if (topic && before !== undefined) {
+        topicRevision += 1
+        topic.status = before
+      }
       reportError(e, t('shell.workspaceErrors.unarchive'))
     }
   }

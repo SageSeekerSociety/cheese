@@ -54,6 +54,7 @@ import { applyLiveChanges, mergeRefreshedTail, PAGE_SIZE } from '../lib/blockPag
 import { dayLabelsFor, outboxEdgeAfter, type RunEdge, runEdgeBetween, unreadAnchorBlock } from '../lib/chatGrouping'
 import { announceComments } from '../lib/docCommentSignals'
 import { renderNoticeMessage } from '../lib/noticeText'
+import { runReactionToggle } from '../lib/optimisticReactions'
 import { outgoingMessageBody, pendingMessageBlock } from '../lib/outgoingMessage'
 import { AGENT_STATUS_EVENTS, collapseNotices, type PlatformNotice, rendersInRoom } from '../lib/platformNotice'
 import { coalesceSplitFencedCodeBlocks } from '../lib/renderMessage'
@@ -197,16 +198,15 @@ export function useChatPanel(opts: ChatPanelOptions) {
     if (m) m.reactions = reactions
   }
 
-  async function onReact(m: Block, emoji: string) {
+  function onReact(m: Block, emoji: string) {
     reactionPickerFor.value = null
-    try {
-      // The response carries the fresh aggregate; the `reaction` WS frame the
-      // backend broadcasts is idempotent with this local apply.
-      const out = await apiToggleReaction(m.id, emoji)
-      applyReactions(m.id, out.reactions)
-    } catch (e) {
-      errorMsg.value = e instanceof Error ? e.message : t('work.room.chat.reactionFailed')
-    }
+    if (!AUTHOR) return
+    void runReactionToggle(emoji, AUTHOR, {
+      current: () => timeline.find(m.id)?.reactions ?? m.reactions,
+      apply: (next) => applyReactions(m.id, next),
+      toggle: async (e) => (await apiToggleReaction(m.id, e)).reactions,
+      fail: (e) => (errorMsg.value = e instanceof Error ? e.message : t('work.room.chat.reactionFailed')),
+    })
   }
 
   // 「这条事件长什么样」的判断全在 lib/platformNotice.ts —— 包括动作卡认哪些块
