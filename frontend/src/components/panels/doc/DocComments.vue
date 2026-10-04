@@ -140,6 +140,13 @@ async function act(id: string, action: 'resolve' | 'reopen') {
     // 同上。
   }
 }
+async function stopAgent(id: string) {
+  try {
+    await props.threadActions.stopAgent(id)
+  } catch {
+    // 同上。
+  }
+}
 async function resend(id: string) {
   try {
     const sent = await props.threadActions.recover(id)
@@ -209,6 +216,7 @@ defineExpose({ open, locate })
         @resolve="act(thread.comment.id, 'resolve')"
         @reopen="act(thread.comment.id, 'reopen')"
         @resend="resend(thread.comment.id)"
+        @stop-agent="stopAgent(thread.comment.id)"
       />
     </TransitionGroup>
     <p v-if="!threads.length && !draft" class="doc-comments__empty">

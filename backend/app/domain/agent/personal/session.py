@@ -29,6 +29,10 @@ from app.domain.agent.session_host.contract import (
 
 #: How long a person's session may sit idle before it exits.
 IDLE_EXIT_S = 180.0
+#: How long a question waits for the session host to have memory for its
+#: session. Sessions that finish answering exit within a few minutes, which
+#: is what frees the memory; a host still full after that is overloaded.
+HOST_WAIT_S = 180.0
 #: How many of one person's sessions may run at once.
 SESSIONS_PER_PERSON = 2
 #: The memory each may use, pi and runner together.
@@ -71,6 +75,7 @@ def session(
         footprint=Footprint(memory_mb=MEMORY_MB, group_limit=SESSIONS_PER_PERSON),
         idle_exit_s=IDLE_EXIT_S,
         gone_after_s=GONE_AFTER_S,
+        host_wait_s=HOST_WAIT_S,
         model_settings=ModelSettings(
             thinking=False,
             max_tokens=MAX_TOKENS,

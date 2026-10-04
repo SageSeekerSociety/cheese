@@ -243,6 +243,7 @@ useCommands(() => {
           :activity-tick="0"
           :agent-name="workspace?.agentName"
           :agent-handle="workspace?.agentHandle"
+          :members="workspace?.members ?? []"
           :topic-list="workspace?.topics ?? []"
           @open-topic="(id: string) => router.push(topicTo(id))"
         />

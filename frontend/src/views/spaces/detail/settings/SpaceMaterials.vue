@@ -1,5 +1,7 @@
 <template>
+  <BaseLoadError v-if="failed" :title="t('spaces.materials.toast.loadFailed')" :error="errorDetail" @retry="refresh" />
   <SpaceMaterialsView
+    v-else
     v-model:upload-open="uploadOpen"
     :materials="items"
     :can-manage="canManage"
@@ -31,6 +33,7 @@ import { toast } from 'vuetify-sonner'
 
 import SpaceMaterialsView from './SpaceMaterialsView.vue'
 
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import { SpacesApi } from '@/network/api/spaces'
 
 const route = useRoute()
@@ -43,18 +46,24 @@ const items = ref<SpaceMaterial[]>([])
 const canManage = ref(false)
 const loading = ref(false)
 const busy = ref(false)
+// 读失败和「资料库是空的」是两件事：失败替换掉整块，空状态才交给它自己说。
+const failed = ref(false)
+const errorDetail = ref<string | null>(null)
 
 /** 上传表单开着没有。表单里的文件和可见范围在视图那边。 */
 const uploadOpen = ref(false)
 
 async function refresh() {
   loading.value = true
+  failed.value = false
+  errorDetail.value = null
   try {
     const res = await SpacesApi.listMaterials(spaceId)
     items.value = res.data.materials ?? []
     canManage.value = res.data.canManage === true
-  } catch {
-    toast.error(t('spaces.materials.toast.loadFailed'))
+  } catch (error) {
+    failed.value = true
+    errorDetail.value = error instanceof Error && error.message ? error.message : null
   } finally {
     loading.value = false
   }

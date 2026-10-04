@@ -39,7 +39,11 @@
       id="main-content"
       ref="mainRef"
       class="bg-background h-100"
-      :class="{ 'app-main--pending': firstRoutePending, 'app-main--phone': !$vuetify.display.mdAndUp }"
+      :class="{
+        'app-main--pending': firstRoutePending,
+        'app-main--phone': !$vuetify.display.mdAndUp,
+        'app-main--tabs': !hideAppBar && !hideTabs,
+      }"
       tabindex="-1"
     >
       <!-- 内容区是一整块 surface，外框（一级导航、侧栏、顶栏）是 canvas：设计规范 §1.4。
@@ -806,6 +810,20 @@ function projectAvatar(name: string): string {
    不在了，内容还在往下挪。这一下跟着换页一起完成，不单独演。 */
 .app-main--phone {
   transition: none;
+  /* 刘海 / 状态栏：顶栏自己让了 `safe-area-inset-top`（style.css），但 Vuetify 量
+     `--v-layout-top` 用的是它标称的 56px，内容区因此照旧停在 56——多出来的那一截
+     被顶栏压住。补上同一截就对上了；没有顶栏的页面（账号那几页 hideAppBar）这边
+     `--v-layout-top` 是 0，补的就是裸的安全区，内容也不会钻进刘海底下。
+
+     底边不在这里无条件补：顶栏是每页都在的，底栏不是——没有底栏的页面（话题页）
+     最底下那件东西是输入区，安全区由它自己出（见 ChatPanel.vue 那段注释），这里
+     再补一次会叠出两倍的空。所以底边只在底栏真挂着的页面上补（`--tabs`）。
+
+     `env()` 在桌面和无安全区的设备上是 0，整条在那里是空操作。 */
+  padding-top: calc(var(--v-layout-top, 0px) + env(safe-area-inset-top, 0px));
+}
+.app-main--phone.app-main--tabs {
+  padding-bottom: calc(var(--v-layout-bottom, 0px) + env(safe-area-inset-bottom, 0px));
 }
 .page-enter--forward {
   animation: page-enter-forward var(--dur-base) var(--ease-standard) backwards;
@@ -851,8 +869,10 @@ function projectAvatar(name: string): string {
 
 .skip-link {
   position: fixed;
-  top: 10px;
-  left: 16px;
+  /* 出现在左上角：让出顶部与左侧安全区，刘海机上聚焦时不压进状态栏 / 圆角。桌面上
+     `env()` 是 0，位置不变。 */
+  top: calc(10px + env(safe-area-inset-top, 0px));
+  left: calc(16px + env(safe-area-inset-left, 0px));
   z-index: var(--z-banner); /* 压在顶栏和抽屉之上，和 OfflineBanner 同一档 */
   padding: 8px 14px;
   font-size: 14px;

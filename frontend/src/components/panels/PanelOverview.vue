@@ -9,7 +9,7 @@
 // 点开看板上的一张卡就在这一格里往下钻一层：整段换成那张卡（`PanelCard`），左上角
 // 一个「看板」退回来。地址里的 `?card=` 说的就是这一层，所以它是一条能发给别人的
 // 链接 —— 而不是「跳到一个新地点」：一件活不是地点。
-import type { Topic } from '../../cx_types'
+import type { ProjectMemberRow, Topic } from '../../cx_types'
 import type { DocReviewRequest } from '../../lib/docReview'
 
 import { defineAsyncComponent, ref, watch } from 'vue'
@@ -41,6 +41,8 @@ const props = withDefaults(
     agentName?: string
     /** 项目 AI 队友的 handle，传给文档那一格。 */
     agentHandle?: string | null
+    /** 项目名册，传给文档那一格。 */
+    members?: ProjectMemberRow[]
     /** handle → 名字，给钻进去的那张卡换点名和说话人。 */
     memberNames?: Record<string, string>
   }>(),
@@ -52,6 +54,7 @@ const props = withDefaults(
     cardFocusBlock: null,
     agentName: () => t('work.room.defaultAgentName'),
     agentHandle: null,
+    members: () => [],
     memberNames: () => ({}),
   }
 )
@@ -133,6 +136,7 @@ defineExpose({
           ref="docRef"
           :agent-name="props.agentName"
           :agent-handle="props.agentHandle"
+          :members="props.members"
           class="panel-overview__doc"
           :topic="props.topic"
           :activity-tick="props.activityTick"

@@ -9,12 +9,24 @@ import type { DiffLine } from '../../lib/diff'
 import { computed, ref, watch } from 'vue'
 
 import { DIFF_WINDOW, numberDiffLines } from '../../lib/diff'
+import { VIRTUAL_LIST_CONTENT_THRESHOLD } from '../../lib/virtualList'
+import VirtualList from '../common/VirtualList.vue'
 
 import { t } from '@/i18n'
 
 const props = defineProps<{ lines: DiffLine[] }>()
 
 const expanded = ref(false)
+
+// 这一格自己滚（`.diff-view` 上写着 overflow: auto），所以虚拟化时它就是那份滚动容
+// 器。模板 ref 要等挂完才落地，见 VirtualList 文件头那段。
+const viewport = ref<HTMLElement | null>(null)
+
+// 行是按序号认的：这里的行只会整份换掉、或者从前面拉长（点开「显示剩余」），从不在
+// 中间重排。`item-key` 收的是「给你一样东西」，具体是什么自己认（同话题栏那一根）。
+function diffRowKey(_row: unknown, index: number): number {
+  return index
+}
 
 // 一份 diff 最多铺 DIFF_WINDOW 行，超出的先收着给一个按钮。整份铺出来正是这一格
 // 卡死的原因，而验收要看的是「改了什么」，不是「一滴不漏地读完几万行」。
@@ -44,12 +56,28 @@ watch(
 </script>
 
 <template>
-  <div class="diff-view" :style="{ '--diff-gutter': `${gutterCh}ch` }">
-    <div v-for="(row, i) in visible" :key="i" class="diff-line" :class="`diff-line--${row.kind}`">
-      <span class="diff-line__num" aria-hidden="true">{{ row.oldNumber ?? '' }}</span>
-      <span class="diff-line__num" aria-hidden="true">{{ row.newNumber ?? '' }}</span>
-      <span class="diff-line__text">{{ row.text }}</span>
-    </div>
+  <div ref="viewport" class="diff-view" :style="{ '--diff-gutter': `${gutterCh}ch` }">
+    <!-- Wrapped lines make row heights variable, so this goes through VirtualList's
+         measuring (virtua `Virtualizer`) mode, not a fixed height. The switch is the
+         row count: a normal-sized diff (the folded DIFF_WINDOW slice, a small file)
+         stays a plain list, so Ctrl+F and the screen reader still reach every row;
+         only past VIRTUAL_LIST_CONTENT_THRESHOLD (lib/virtualList.ts) — which is
+         what "show more" on a long file lands on — does it virtualize. -->
+    <VirtualList
+      :items="visible"
+      :item-key="diffRowKey"
+      :scroll-parent="viewport"
+      :threshold="VIRTUAL_LIST_CONTENT_THRESHOLD"
+      :estimated-size="19"
+    >
+      <template #item="{ item }">
+        <div class="diff-line" :class="`diff-line--${item.kind}`">
+          <span class="diff-line__num" aria-hidden="true">{{ item.oldNumber ?? '' }}</span>
+          <span class="diff-line__num" aria-hidden="true">{{ item.newNumber ?? '' }}</span>
+          <span class="diff-line__text">{{ item.text }}</span>
+        </div>
+      </template>
+    </VirtualList>
     <!-- A very long diff stops here and offers the rest; the numbers feed the
          window, not the review. -->
     <button v-if="hiddenCount" type="button" class="diff-more" @click="expanded = true">

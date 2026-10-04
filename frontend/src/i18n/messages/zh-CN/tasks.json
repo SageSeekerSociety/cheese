@@ -620,6 +620,9 @@
     "readingDocs": "正在查文档…",
     "readingTasks": "正在看你参与的题…",
     "today": "今天",
+    "queued": "正在排队，资源空出后自动开始",
+    "stop": "停止",
+    "stopped": "已停止",
     "failed": "芝士暂时答不上来，稍后再试。",
     "starters": {
       "basics": "做这道题要先会什么？",
