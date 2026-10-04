@@ -166,4 +166,17 @@ describe('参数那一列的中间省略', () => {
     expect(out.endsWith('callback.py')).toBe(true)
     expect(out.length).toBeLessThan(path.length)
   })
+
+  // 按码元切会把代理对劈开：一个 emoji 或 𠮷 这样的字回来变成半个，画面上是替换
+  // 方块。切之前先按码点拆开。
+  it('不把代理对劈成半个字', () => {
+    const text = `📁${'测'.repeat(40)}𠮷.ts`
+    const out = middleTruncate(text, SITE_ARG_MID_CHARS)
+    expect(out).toContain('📁')
+    expect(out.endsWith('𠮷.ts')).toBe(true)
+    // 每个码点都是完整的一个字符：拆开再合回来长度不变。
+    expect(Array.from(out).join('')).toBe(out)
+    // 没有落单的代理码元。
+    expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(out)).toBe(false)
+  })
 })

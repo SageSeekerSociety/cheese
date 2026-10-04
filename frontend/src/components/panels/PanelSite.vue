@@ -3,14 +3,16 @@
 import type { AgentControlState, Block, Topic } from '../../cx_types'
 import type { MemberActivityLine } from '../../lib/memberActivity'
 
-import { computed, nextTick, onMounted, onUpdated, ref, watch } from 'vue'
+import { computed, nextTick, onUpdated, ref, watch } from 'vue'
 
 import { getTranscript, SITE_PAGE_SIZE } from '../../api'
+import { useSiteClamp } from '../../composables/useSiteClamp'
 import { useStickToBottom } from '../../composables/useStickToBottom'
 import { isAgentBlock, isAgentHandle } from '../../lib/authorship'
 import { scrollTopAfterPrepend, shouldLoadOlder } from '../../lib/blockPaging'
 import { renderMarkdown } from '../../lib/renderMessage'
 import {
+  argDisplay,
   countLines,
   eventArg,
   eventFailed,
@@ -19,8 +21,7 @@ import {
   groupByTurn,
   isLongSiteEntry,
   isNarration,
-  middleTruncate,
-  overflowsClamp,
+  isProseArg,
   shouldKeepPinning,
   SITE_CLAMP_LINES,
 } from '../../lib/siteLog'
@@ -154,60 +155,17 @@ function toggleSiteEntry(id: string): void {
   expandedSite.value = next
 }
 
-// Which rendered entries actually overflow the 12-line clamp. Measured from the
-// DOM rather than guessed from the text: `isLongSiteEntry` cannot know how wide
-// this panel is, so at a wide width it calls a 900-character paragraph long and
-// clamps nothing (展开 then opens nothing), and at a narrow width a modest
-// paragraph can overflow with no button to open it. `scrollHeight` on an
-// `overflow: hidden` box is still the full content height, so this reads the
-// true height whether or not the clamp is applied.
-const overflowing = ref<Set<string>>(new Set())
-// Once a real measurement has happened, its answer replaces the content
-// heuristic. In a unit test there is no layout, so this stays false and the
-// heuristic keeps the template deterministic.
-const measured = ref(false)
-
-function measureBodies(): void {
-  const root = scrollRef.value
-  // A hidden panel (a tab that is not on screen) has no height to measure.
-  // Measuring it would read every scrollHeight as 0 and wrongly clear every
-  // clamp; leaving `measured` false keeps the heuristic until it is shown.
-  if (!root || root.clientHeight === 0) return
-  const next = new Set<string>()
-  let sawLayout = false
-  for (const el of root.querySelectorAll<HTMLElement>('.site-msg__body[data-site-body]')) {
-    const id = el.dataset.siteBody
-    if (!id) continue
-    const lineHeight = Number.parseFloat(getComputedStyle(el).lineHeight)
-    if (!Number.isFinite(lineHeight) || lineHeight <= 0) continue
-    sawLayout = true
-    if (overflowsClamp(el.scrollHeight, lineHeight)) next.add(id)
-  }
-  if (!sawLayout) return
-  measured.value = true
-  // Replace only when the membership changed, so the measurement cannot drive
-  // its own re-render (`onUpdated`) forever.
-  if (next.size !== overflowing.value.size || [...next].some((id) => !overflowing.value.has(id))) {
-    overflowing.value = next
-  }
-}
-
-onMounted(measureBodies)
-onUpdated(measureBodies)
+// Which entries are long enough to clamp. The measurement — together with the
+// ResizeObserver that re-reads it when the panel's own width changes — lives in
+// useSiteClamp. A fresh read follows every render, coalesced to one per frame.
+const { overflowing, measured, schedule: measureClamp } = useSiteClamp(scrollRef)
+onUpdated(measureClamp)
 
 // Long enough to be clamped: the measured answer once we have it, the content
 // heuristic until then. Both answer the same question, so the 展开 button and
 // the clamp never disagree about which entries are long.
 function isLong(b: Block): boolean {
   return measured.value ? overflowing.value.has(b.id) : isLongSiteEntry(b.content)
-}
-
-// 参数收起时显示的这一份：路径和命令从中间省——两头才是认得出它的那半截，从尾部
-// 省正好把文件名剪掉；散文仍从尾部省（css 的 ellipsis），中间的省略号会把它拦腰
-// 截断。摊开时模板走 eventDetail，不经过这里。
-function argDisplay(b: Block): string {
-  const arg = eventArg(b)
-  return argIsProse(b) ? arg : middleTruncate(arg)
 }
 
 // A single `scrollTop = scrollHeight` at nextTick does NOT work here, which is
@@ -413,10 +371,7 @@ function fmtTime(iso: string): string {
 
 // 参数里有中文的（文档标题、验收卡标题、一句说明）不走等宽：中文没有等宽字形，
 // 落在等宽字体上会掉到别的字体、字距被拉开。路径和命令照旧等宽。
-const CJK = /[\u3400-\u9fff\uf900-\ufaff]/
-function argIsProse(b: Block): boolean {
-  return CJK.test(eventArg(b))
-}
+// 省略同住 lib/siteLog.ts（isProseArg / argDisplay），模板直接用那两个。
 
 // 摊开这一行之后显示的那一份：参数原文，一个字都没剪。没有第二份时摊开的仍是
 // 这一行本身 —— 面板窄到把它省略掉时，展开是唯一能看全的办法。
@@ -562,7 +517,7 @@ function isLive(index: number): boolean {
                 class="site-act__argtext"
                 :class="{
                   'site-act__argtext--full': expandedSite.has(b.id),
-                  'site-act__argtext--prose': argIsProse(b),
+                  'site-act__argtext--prose': isProseArg(b),
                 }"
                 data-testid="site-act-arg"
                 :aria-expanded="expandedSite.has(b.id)"

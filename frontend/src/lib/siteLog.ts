@@ -230,9 +230,34 @@ export const SITE_ARG_MID_CHARS = 36
  * budget is split the way the label asks: 40% head, 40% tail, an ellipsis
  * between them; short enough to stay on one line, long enough to keep both
  * identifying ends.
+ *
+ * Counted in code points, not UTF-16 units: `slice` cuts between the two halves
+ * of a surrogate pair, so a path with an emoji or a rare CJK glyph (𠮷) came
+ * back with a lone half that renders as a replacement box.
  */
 export function middleTruncate(text: string, max = SITE_ARG_MID_CHARS): string {
-  if (text.length <= max) return text
+  const points = Array.from(text)
+  if (points.length <= max) return text
   const keep = Math.max(1, Math.floor(max * 0.4))
-  return `${text.slice(0, keep)}…${text.slice(text.length - keep)}`
+  return `${points.slice(0, keep).join('')}…${points.slice(points.length - keep).join('')}`
+}
+
+/** 参数里有中文的（文档标题、验收卡标题、一句说明）不走等宽：中文没有等宽字形，
+ * 落在等宽字体上会掉到别的字体、字距被拉开。路径和命令照旧等宽。 */
+const CJK = /[㐀-鿿豈-﫿]/
+
+/** Whether this step's argument reads as prose (a title, a sentence) rather than
+ * a path or a command. The 现场 argument column drops the monospace font for
+ * prose (see the template), and elides it from the end rather than the middle. */
+export function isProseArg(b: Block): boolean {
+  return CJK.test(eventArg(b))
+}
+
+/** The collapsed argument column's text. A path or command loses its middle —
+ * its two ends are what identify it — while prose is left whole for the CSS
+ * end-ellipsis, which cuts a sentence cleanly where a middle ellipsis would cut
+ * it in half. 摊开 goes through its own reader, not this. */
+export function argDisplay(b: Block): string {
+  const arg = eventArg(b)
+  return isProseArg(b) ? arg : middleTruncate(arg)
 }
