@@ -22,6 +22,7 @@ import type { DocEdit } from '../lib/docEdits'
 
 import { computed, onScopeDispose, ref, shallowRef } from 'vue'
 
+import { StreamCut } from '../api/eventStream'
 import { isChinese } from '../lib/docAgent'
 import { anchorComment } from '../lib/docCommentSpots'
 import { editMarks, nearestText, setEditMarks } from '../lib/docEditMarks'
@@ -197,7 +198,7 @@ export function useDocAgent(options: DocAgentOptions) {
       conversation: (value) => mine() && (conversation = value),
       queued: () => mine() && (phase.value = 'queued'),
       working: () => mine() && (phase.value = 'working'),
-      delta: (text) => mine() && (answer.value += text),
+      delta: (text, at) => mine() && (answer.value = answer.value.slice(0, at ?? answer.value.length) + text),
       done: (result) => {
         if (!mine()) return
         edits.value = result.edits
@@ -227,10 +228,12 @@ export function useDocAgent(options: DocAgentOptions) {
       await ask({ ...request, ...followUp }, listener)
     } catch (error) {
       if (!mine() || controller.signal.aborted) return
-      options.onError(editFailure(error))
+      options.onError(
+        error instanceof StreamCut ? t('work.room.docAgent.failed', { agent: options.agentName() }) : editFailure(error)
+      )
       backToBox()
     } finally {
-      // 流断了却没有结果：多半是连接断了。改了什么，正文会自己到。
+      // 读不到结果就回到输入框。改了什么，正文会自己到。
       if (mine() && editing.value) backToBox()
     }
   }
