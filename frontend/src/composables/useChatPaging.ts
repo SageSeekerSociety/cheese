@@ -61,57 +61,108 @@ export function useChatPaging(deps: ChatPagingDeps) {
   // browser choked on all three of transfer, JSON parse, and 2226 live DOM nodes.
   const loadingOlder = ref(false)
 
-  // A page of very short messages can be shorter than the pane. Then there is
-  // nothing to scroll, no scroll event fires, and the remaining history would be
-  // unreachable — so top up until the pane actually scrolls.
-  async function fillViewportIfNeeded() {
-    await nextTick()
-    const el = scrollRef.value
-    if (!el || !hasMore.value || loadingOlder.value || rowsPending()) return
-    if (el.scrollHeight > el.clientHeight) return
-    await loadOlder()
+  // A page of very short messages, or a stretch of blocks that do not surface in
+  // the room at all (`in_room:false` turn events — 295 of the newest 300 blocks
+  // in a real topic), can leave the pane with less on it than fills the
+  // viewport. Then there is nothing to scroll, no scroll event fires, and the
+  // rest of the history is unreachable — so top up until the pane actually
+  // scrolls.
+  //
+  // Bound on how many pages one fill may read: opening a room sweeps back past
+  // the hidden tail until the pane is full (usually ~5-6 pages in a live topic),
+  // and this stops it dead if a room really has nothing to show for pages on end.
+  const MAX_OPENING_PULLS = 24
+
+  // Bound on pulling consecutive pages that render NOTHING (a whole page of
+  // hidden events). Every "load older" keeps going until a page adds a visible
+  // row, so a page that draws nothing cannot strand the reader at the top of a
+  // pane that will not move — but not forever, either.
+  const MAX_EMPTY_PULLS = 12
+
+  /**
+   * The pane holds more than a screenful of history. While the opening skeleton
+   * is up it stands in for the pane, so subtract it: called on `scrollHeight`
+   * alone we would call the pane "full" on the skeleton's own height and reveal
+   * a window that is short the moment the skeleton leaves — the newest message
+   * left floating above empty space.
+   */
+  function paneFilled(el: HTMLElement): boolean {
+    const skel = loadingHistory.value
+      ? [...el.querySelectorAll<HTMLElement>('.skel')].reduce((h, node) => h + node.offsetHeight, 0)
+      : 0
+    return el.scrollHeight - skel > el.clientHeight
   }
 
-  async function loadOlder() {
+  // `budget` is the pages this fill chain may still read; a fill that recurses
+  // passes what is left down, so one opening can never read without end.
+  async function fillViewportIfNeeded(budget = MAX_OPENING_PULLS) {
+    await nextTick()
     const el = scrollRef.value
-    const tid = topic()?.id
-    if (!el || !tid || loadingOlder.value || !hasMore.value) return
+    if (!el || !hasMore.value || loadingOlder.value || rowsPending() || budget <= 0) return
+    if (paneFilled(el)) return
+    await loadOlder(budget)
+  }
+
+  /**
+   * One `before` page, prepended to the window. Returns how many ROWS the page
+   * added (`0` if it drew nothing), or null if the topic switched or there is no
+   * cursor any more.
+   */
+  async function pullOlderPage(tid: string): Promise<{ added: number } | null> {
     // 游标是「窗口读到哪了」，不是「窗口里画得出来的最老那条」：最新那一页整页不露面
     //（事件远多于消息的房间里很常见）时窗口里一条都没有，拿 `messages[0]` 当游标就
     // 一步都翻不动——房间开出来是空的。见 useTimeline.oldestLoaded。
     const cursor = timeline.oldestLoaded()
-    if (!cursor) return
+    if (!cursor) return null
+    const el = scrollRef.value
+    const payload = await listBlocks(tid, { limit: PAGE_SIZE, before: cursor })
+    // The user may have switched topics while this was in flight.
+    if (topic()?.id !== tid) return null
+    // Measure right before the rows go in: prepending grows the content above
+    // the viewport, so scrollTop has to be pushed down by exactly that much or
+    // the timeline jumps out from under the reader (and re-triggers this
+    // loader). Not when the request left: a flick keeps scrolling while it is
+    // in flight, and the position from back then would pull the reader back.
+    //
+    // The rows carry content-visibility (room-row.css), so an off-screen row
+    // reports its ESTIMATED height, not its real one — measuring in that state
+    // would compensate by the wrong amount and the timeline would jump. The
+    // measure frame lays the window out at real heights (including the page we
+    // are about to add) for exactly this read-and-compensate; see
+    // lib/contentVisibility.
+    beginMeasuredLayout(el)
+    const before = el ? { scrollTop: el.scrollTop, scrollHeight: el.scrollHeight } : null
+    const added = timeline.prepend(payload.data, payload.has_more)
+    await nextTick()
+    const sc = scrollRef.value
+    if (sc && before) sc.scrollTop = scrollTopAfterPrepend(before, sc.scrollHeight)
+    endMeasuredLayout(el)
+    // Trim AFTER the compensation, never before: the rows this drops are below
+    // the viewport, so removing them moves nothing on screen — but they shrink
+    // scrollHeight, and compensating with a scrollHeight that already excludes
+    // them pulls the reader up by their height on every page. See capWindow.
+    timeline.capNewest()
+    if (!hasNewer.value) setCachedWindow(tid, timeline.newest())
+    return { added }
+  }
+
+  async function loadOlder(budget = MAX_OPENING_PULLS) {
+    const tid = topic()?.id
+    if (!scrollRef.value || !tid || loadingOlder.value || !hasMore.value) return
     loadingOlder.value = true
     let failed = false
+    let pulls = 0
     try {
-      const payload = await listBlocks(tid, { limit: PAGE_SIZE, before: cursor })
-      // The user may have switched topics while this was in flight.
-      if (topic()?.id !== tid) return
-      // Measure right before the rows go in: prepending grows the content above
-      // the viewport, so scrollTop has to be pushed down by exactly that much or
-      // the timeline jumps out from under the reader (and re-triggers this
-      // loader). Not when the request left: a flick keeps scrolling while it is
-      // in flight, and the position from back then would pull the reader back.
-      //
-      // The rows carry content-visibility (room-row.css), so an off-screen row
-      // reports its ESTIMATED height, not its real one — measuring in that state
-      // would compensate by the wrong amount and the timeline would jump. The
-      // measure frame lays the window out at real heights (including the page we
-      // are about to add) for exactly this read-and-compensate; see
-      // lib/contentVisibility.
-      beginMeasuredLayout(el)
-      const before = { scrollTop: el.scrollTop, scrollHeight: el.scrollHeight }
-      timeline.prepend(payload.data, payload.has_more)
-      await nextTick()
-      const sc = scrollRef.value
-      if (sc) sc.scrollTop = scrollTopAfterPrepend(before, sc.scrollHeight)
-      endMeasuredLayout(el)
-      // Trim AFTER the compensation, never before: the rows this drops are below
-      // the viewport, so removing them moves nothing on screen — but they shrink
-      // scrollHeight, and compensating with a scrollHeight that already excludes
-      // them pulls the reader up by their height on every page. See capWindow.
-      timeline.capNewest()
-      if (!hasNewer.value) setCachedWindow(tid, timeline.newest())
+      // 一页画不出行就再翻一页，直到这一页真的接上了看得见的历史（画出来的行 > 0）或者
+      // 历史到头。整页不露面的那一带（最新那一段多是 in_room:false 的回合事件）翻一页
+      // 长一分，没有滚动事件，只翻一页就停会把上面那些消息永远卡住。
+      let added = 0
+      do {
+        const page = await pullOlderPage(tid)
+        if (page === null) return
+        added = page.added
+        pulls++
+      } while (added === 0 && hasMore.value && pulls < MAX_EMPTY_PULLS && pulls < budget)
     } catch (e) {
       failed = true
       errorMsg.value = e instanceof Error ? e.message : t('work.room.loadFailed')
@@ -123,7 +174,7 @@ export function useChatPaging(deps: ChatPagingDeps) {
     // Only now that the flag is clear can another page be pulled, if the pane
     // still isn't tall enough to scroll. Not after a failure — that would retry
     // a broken request in a tight loop.
-    if (!failed) await fillViewportIfNeeded()
+    if (!failed) await fillViewportIfNeeded(budget - pulls)
   }
 
   // --- a window opened in the middle of the history ---------------------------
