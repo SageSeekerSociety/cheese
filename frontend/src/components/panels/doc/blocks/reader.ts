@@ -64,13 +64,32 @@ function hastToDom(nodes: Hast[], into: Node): void {
 
 const COPIED_MS = 1500
 
-/** A code block with a 复制 button in its corner. */
+/** A code block with its corner controls: a line-wrap toggle and a 复制 button.
+ *
+ *  Long lines scroll sideways by default (the `pre` carries `overflow-x: auto`),
+ *  so a wide command or a long URL stays on one line and stays readable. A reply
+ *  that is really prose in code clothes reads better wrapped, so the toggle
+ *  switches the `pre` between the two. Both buttons carry `md-code-btn` so the
+ *  row's own "copy the message" strips them together with the text they sit on
+ *  (messageActions.ts). */
 function withCopy(pre: HTMLElement): HTMLElement {
   const box = document.createElement('div')
   box.className = 'md-pre'
+  const bar = document.createElement('div')
+  bar.className = 'md-pre-bar'
+  const wrap = document.createElement('button')
+  wrap.type = 'button'
+  wrap.className = 'md-code-btn md-wrap-btn'
+  wrap.textContent = t('work.room.message.wrapCode')
+  wrap.setAttribute('aria-pressed', 'false')
+  wrap.addEventListener('click', () => {
+    const on = pre.classList.toggle('md-wrap')
+    wrap.setAttribute('aria-pressed', String(on))
+    wrap.textContent = on ? t('work.room.message.unwrapCode') : t('work.room.message.wrapCode')
+  })
   const copy = document.createElement('button')
   copy.type = 'button'
-  copy.className = 'md-copy'
+  copy.className = 'md-code-btn'
   copy.textContent = t('work.room.message.copy')
   copy.addEventListener('click', () => {
     navigator.clipboard.writeText(pre.textContent ?? '').then(
@@ -81,7 +100,8 @@ function withCopy(pre: HTMLElement): HTMLElement {
       () => {}
     )
   })
-  box.append(copy, pre)
+  bar.append(wrap, copy)
+  box.append(bar, pre)
   return box
 }
 

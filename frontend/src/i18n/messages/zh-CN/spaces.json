@@ -455,6 +455,7 @@
     "confirmRevoke": "取消 {name} 的管理员身份？",
     "confirmTransfer": "把所有者转让给 {name}？转让后你会成为管理员。",
     "empty": "暂无成员",
+    "loadMembersFailed": "加载成员失败",
     "role": {
       "owner": "所有者",
       "admin": "管理员",
@@ -856,6 +857,7 @@
       "allKnowledgePoints": "全部",
       "summary": "可查看的成员项目 {projects} 个 · 成员 {students} 人 · 发言 {questions} 条 · 共性卡点 {stuck} 个",
       "noProjects": "暂无可查看的成员项目",
+      "loadFailed": "加载学习数据失败",
       "queue": {
         "title": "待处理队列",
         "hint": "共性卡点按有多少个成员撞上排序",
@@ -875,8 +877,6 @@
       "outlineHint": "讲次按勾选顺序排列",
       "toast": {
         "filtersFailed": "加载学习筛选条件失败",
-        "queuesFailed": "加载待处理队列失败",
-        "questionsFailed": "加载成员发言失败",
         "outlineFailed": "生成讲解提纲失败"
       },
       "unclassified": "未归类",

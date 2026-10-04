@@ -416,10 +416,13 @@ export default defineConfig({
             // offline reader got `precacheFallback: index.html` — the
             // application, rendered under a documentation URL, with nothing
             // saying so. A plain browser error is the honest answer there.
+            // `downloads` (desktop installers) must reach the network directly:
+            // Safari mishandles downloads a service worker answers (WebKit bug
+            // 245249 and relatives); here it rendered the .dmg bytes as text.
             urlPattern: ({ url, request, sameOrigin }) =>
               sameOrigin &&
               request.mode === 'navigate' &&
-              !/^\/(?:api|connector|users|docs)(?:\/|$)/.test(url.pathname),
+              !/^\/(?:api|connector|users|docs|downloads)(?:\/|$)/.test(url.pathname),
             handler: 'NetworkOnly',
             options: {
               fetchOptions: { cache: 'no-cache' },

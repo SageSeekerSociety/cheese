@@ -85,7 +85,14 @@
     <v-window v-model="activeTab">
       <!-- 成员列表 -->
       <v-window-item value="members">
-        <v-card flat rounded="lg">
+        <BaseLoadError
+          v-if="failedMembers"
+          :title="t('teams.members.loadMembersFailed')"
+          :error="membersError"
+          @retry="retryMembers"
+        />
+
+        <v-card v-if="!failedMembers" flat rounded="lg">
           <v-list>
             <v-list-item v-for="member in teamMembers" :key="member.user.id" class="member-item">
               <template #prepend>
@@ -153,7 +160,7 @@
         </v-card>
 
         <!-- 无成员时的提示 -->
-        <div v-if="teamMembers.length === 0" class="text-center py-12">
+        <div v-if="!failedMembers && teamMembers.length === 0" class="text-center py-12">
           <v-icon icon="mdi-account-group" size="64" class="mb-4 empty-state-icon"></v-icon>
           <h3 class="text-h6 font-weight-medium mb-2">{{ t('teams.members.emptyMembers') }}</h3>
           <p class="text-body-2 text-medium-emphasis mb-6">{{ t('teams.members.emptyMembersHint') }}</p>
@@ -165,6 +172,13 @@
         <v-card v-if="loadingRequests" flat class="d-flex justify-center align-center pa-6">
           <v-progress-circular indeterminate color="primary"></v-progress-circular>
         </v-card>
+
+        <BaseLoadError
+          v-else-if="failedRequests"
+          :title="t('teams.members.loadRequestsFailed')"
+          :error="requestsError"
+          @retry="retryRequests"
+        />
 
         <v-card v-else-if="joinRequests.length === 0" flat class="text-center py-12">
           <v-icon icon="mdi-account-arrow-right" size="64" class="mb-4 empty-state-icon"></v-icon>
@@ -253,6 +267,13 @@
           <v-progress-circular indeterminate color="primary"></v-progress-circular>
         </v-card>
 
+        <BaseLoadError
+          v-else-if="failedInvitations"
+          :title="t('teams.members.loadInvitationsFailed')"
+          :error="invitationsError"
+          @retry="retryInvitations"
+        />
+
         <v-card v-else-if="teamInvitations.length === 0" flat class="text-center py-12">
           <v-icon icon="mdi-email-outline" size="64" class="mb-4 empty-state-icon"></v-icon>
           <h3 class="text-h6 font-weight-medium mb-2">{{ t('teams.members.emptyInvitations') }}</h3>
@@ -315,6 +336,7 @@ import { getAvatarUrl } from '@/utils/materials'
 import TeamJoinLinkCard from './TeamJoinLinkCard.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import i18n, { t } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
@@ -327,6 +349,9 @@ const { locale } = i18n.global
 const route = useRoute()
 const isInviteDialogActive = ref(false)
 const teamMembers = ref<TeamMember[]>([])
+// 读失败和「还没有成员」是两件事：失败替换掉这一格的内容，空状态才说「暂无」。
+const failedMembers = ref(false)
+const membersError = ref<string | null>(null)
 const teamData = inject(teamDataInjectionKey, ref())
 const dialog = useDialog()
 
@@ -412,9 +437,13 @@ const joinRequests = ref<TeamMembershipApplication[]>([])
 // 正在批准或拒绝的那条申请：回话之前两个按钮都按不动，连点只发一次。
 const answering = ref<number>()
 const loadingRequests = ref(false)
+const failedRequests = ref(false)
+const requestsError = ref<string | null>(null)
 
 const teamInvitations = ref<TeamMembershipApplication[]>([])
 const loadingInvitations = ref(false)
+const failedInvitations = ref(false)
+const invitationsError = ref<string | null>(null)
 
 const roleOptions = computed(() => [
   { title: t('teams.members.roleMember'), value: 'MEMBER' },
@@ -422,36 +451,63 @@ const roleOptions = computed(() => [
 ])
 
 const fetchTeamMembers = async (teamId: number) => {
-  const {
-    data: { members },
-  } = await TeamsApi.getMembers(teamId)
-  teamMembers.value = members
+  failedMembers.value = false
+  membersError.value = null
+  try {
+    const {
+      data: { members },
+    } = await TeamsApi.getMembers(teamId)
+    teamMembers.value = members
+  } catch (error) {
+    console.error('Failed to load team members', error)
+    failedMembers.value = true
+    membersError.value = error instanceof Error && error.message ? error.message : null
+  }
+}
+
+// 重试时重新拿这一格：团队 id 从注入的 teamData 来。
+const retryMembers = () => {
+  if (teamData.value) fetchTeamMembers(teamData.value.id)
 }
 
 const fetchJoinRequests = async (teamId: number) => {
   loadingRequests.value = true
+  failedRequests.value = false
+  requestsError.value = null
   try {
     const response = await TeamsApi.listTeamJoinRequests(teamId)
     joinRequests.value = response.data.applications
   } catch (error) {
     console.error('Failed to load join requests', error)
-    toast.error(t('teams.members.loadRequestsFailed'))
+    failedRequests.value = true
+    requestsError.value = error instanceof Error && error.message ? error.message : null
   } finally {
     loadingRequests.value = false
   }
 }
 
+const retryRequests = () => {
+  if (teamData.value) fetchJoinRequests(teamData.value.id)
+}
+
 const fetchTeamInvitations = async (teamId: number) => {
   loadingInvitations.value = true
+  failedInvitations.value = false
+  invitationsError.value = null
   try {
     const response = await TeamsApi.listTeamInvitations(teamId)
     teamInvitations.value = response.data.invitations
   } catch (error) {
     console.error('Failed to load sent invitations', error)
-    toast.error(t('teams.members.loadInvitationsFailed'))
+    failedInvitations.value = true
+    invitationsError.value = error instanceof Error && error.message ? error.message : null
   } finally {
     loadingInvitations.value = false
   }
+}
+
+const retryInvitations = () => {
+  if (teamData.value) fetchTeamInvitations(teamData.value.id)
 }
 
 const pendingRequests = computed(() => {

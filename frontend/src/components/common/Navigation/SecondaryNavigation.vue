@@ -17,10 +17,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, watch } from 'vue'
+import { computed, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 import { storeToRefs } from 'pinia'
 
+import { useEscapeLayer } from '@/composables/useEscapeStack'
 import { focusSidebarToggle, SIDEBAR_DRAWER_ID, useSidebarCollapse } from '@/composables/useSidebarCollapse'
 import { useSidebarWidth } from '@/composables/useSidebarWidth'
 
@@ -107,18 +108,21 @@ const drawerModel = computed({
   },
 })
 
-// Esc 关掉这只浮层，焦点回到 rail 上打开它的那颗开关。Vuetify 的抽屉自己不管键盘，
-// 而「按 Esc 关掉浮层」这条对键盘和读屏用户是必须的（宽档常驻、手机上另一套，都不
-// 在这里处理）。
-function onSidebarKeydown(event: KeyboardEvent) {
-  if (event.key !== 'Escape') return
-  if (!isDesktop.value || !compactSidebar.value || !sidebarOpen.value) return
-  event.preventDefault()
+// 窄档里这一栏是一只可收起的浮层：它开着的时候，按 Esc 关掉它、焦点回到 rail 上打开
+// 它的那颗开关。Vuetify 的抽屉自己不管键盘，而「按 Esc 关掉浮层」这条对键盘和读屏
+// 用户是必须的（宽档常驻、手机上另一套，都不在这里处理）。
+//
+// Esc 走全局的栈（`useEscapeStack`），不是这里自己一颗 window 监听：这一档里话题的
+// 工作面板浮层也可能同时开着，一下 Esc 只该打发最上面那层——各关各的会把两层一起收，
+// 人分不清刚才关掉的是哪一层。栈顶是谁，由打开顺序定。
+function dismissSidebarOverlay() {
   closeSidebar()
   focusSidebarToggle()
 }
-onMounted(() => window.addEventListener('keydown', onSidebarKeydown))
-onBeforeUnmount(() => window.removeEventListener('keydown', onSidebarKeydown))
+useEscapeLayer(
+  computed(() => isDesktop.value && compactSidebar.value && sidebarOpen.value),
+  dismissSidebarOverlay
+)
 
 // 计算抽屉的 CSS 类
 const drawerClass = computed(() => {
@@ -141,6 +145,10 @@ watch(
   () => {
     if (!isDesktop.value) {
       closeSecondaryDrawer()
+    } else if (compactSidebar.value && sidebarOpen.value) {
+      // 平板横放：从浮层里点进一个房间（或别的层）就把它收起来。收起的是这一次，不是
+      // 人的选择——`closeSidebar` 不写 localStorage，别把这一下记成「我平时要它收着」。
+      closeSidebar()
     }
   }
 )

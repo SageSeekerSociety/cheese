@@ -65,6 +65,82 @@ test.describe('平板横放（960–1180）', () => {
     await expect(sidebarToggle).toBeFocused();
   });
 
+  test('1024：从侧栏浮层点进一个房间就收起它，而且不把这次收起记成人的选择', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await apiLogin(page);
+    await openFirstProject(page);
+
+    // 落到平板横放那一档：侧栏默认收起，rail 顶上那颗开关在，话题列表在浮层里。
+    await page.setViewportSize({ width: 1024, height: 900 });
+    const sidebarToggle = page.locator('[data-sidebar-toggle]');
+    await expect(sidebarToggle).toBeVisible();
+
+    // 打开浮层，从里面点进一个房间——「进房间」这是一次导航。
+    await sidebarToggle.click();
+    await expect(sidebarToggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(page.locator('#secondary-sidebar')).toHaveClass(/v-navigation-drawer--active/);
+
+    await page.locator('.topic-row').first().click();
+    await page.waitForURL(/\/topics\//);
+
+    // 导航之后浮层自己收起。
+    await expect(sidebarToggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(page.locator('#secondary-sidebar')).not.toHaveClass(/v-navigation-drawer--active/);
+
+    // 收起的是这一次，不是人的选择：开过一次这件事还记着，刷新回来浮层仍是开的。
+    await page.reload();
+    await expect(page.locator('[data-sidebar-toggle]')).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  test('1024：两层浮层都开着时，Esc 只关最后打开的那层，第二下才关另一层', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await apiLogin(page);
+    const rows = await openFirstProject(page);
+    await rows.first().click();
+    await page.waitForURL(/\/topics\//);
+    await page.setViewportSize({ width: 1024, height: 900 });
+
+    const panelToggle = page.locator('[data-panel-toggle]');
+    const sidebarToggle = page.locator('[data-sidebar-toggle]');
+
+    // 先打开面板浮层，再打开侧栏浮层：两层同时开着，侧栏是后打开的那层。
+    await panelToggle.click();
+    await expect(page.locator('#topic-panel')).toBeVisible();
+    await sidebarToggle.click();
+    await expect(sidebarToggle).toHaveAttribute('aria-expanded', 'true');
+
+    // 一下 Esc 只关最上面那层（侧栏），面板还开着。
+    await page.keyboard.press('Escape');
+    await expect(sidebarToggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(page.locator('#secondary-sidebar')).not.toHaveClass(/v-navigation-drawer--active/);
+    await expect(page.locator('#topic-panel')).toBeVisible();
+    await expect(panelToggle).toHaveAttribute('aria-expanded', 'true');
+
+    // 第二下 Esc 才轮到压在下面的面板那层，焦点回到它的开关。
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#topic-panel')).toBeHidden();
+    await expect(panelToggle).toBeFocused();
+  });
+
+  test('1024：地址里点名的 tab 仍然把面板浮层拉起来', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await apiLogin(page);
+    const rows = await openFirstProject(page);
+    await rows.first().click();
+    await page.waitForURL(/\/topics\//);
+    const topicUrl = page.url().split('?')[0];
+
+    // 落到平板横放：地址里没有 ?tab= / ?card=，浮层收着。
+    await page.setViewportSize({ width: 1024, height: 900 });
+    await expect(page.locator('#topic-panel')).toBeHidden();
+    await expect(page.locator('[data-panel-toggle]')).toHaveAttribute('aria-expanded', 'false');
+
+    // 别人发来的链接（?tab=）是「有人打开了这一格」，浮层得跟着开。
+    await page.goto(`${topicUrl}?tab=changes`);
+    await expect(page.locator('#topic-panel')).toBeVisible();
+    await expect(page.locator('[data-panel-toggle]')).toHaveAttribute('aria-expanded', 'true');
+  });
+
   test('1181 及以上回到今天的样子：侧栏常驻、两栏可拖', async ({ page }) => {
     await page.setViewportSize({ width: 1181, height: 900 });
     await apiLogin(page);

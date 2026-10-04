@@ -23,7 +23,7 @@
 // 消失」。单击打开的那一格是临时的，下一次打开会换掉它；双击就固定下来。不这样的
 // 话，聊一小时能攒出二十个页签。
 import type { OpenFileTab } from '../composables/useTopicMemory'
-import type { AgentControlState, Block, PreviewInfo, Topic } from '../cx_types'
+import type { AgentControlState, Block, PreviewInfo, ProjectMemberRow, Topic } from '../cx_types'
 import type { DocReviewRequest } from '../lib/docReview'
 import type { MemberActivityLine } from '../lib/memberActivity'
 import type { PreviewLocate, SubmitPreviewQuestion } from '../lib/previewQuestion'
@@ -80,6 +80,11 @@ const props = withDefaults(
     // 手机上对话不是左边那一栏，是这条 tab 栏的第一格——一屏放不下两栏，而这两
     // 样东西本来就是平级的。开着它的时候 `chat` 插槽就是这一格的内容。
     withChat?: boolean
+    // 平板横放（960–1180）：这一档里房间只画对话，面板是一只按需拉起的浮层。进房间时
+    // 自动挑中的那一格（芝士在干活 → 现场，卡等你验收 → 改动）留在面板里当「你打开时
+    // 看哪一格」，但不写地址、也不把浮层拉起来——那是「你打开它」，不是「有人打开了
+    // 这一格」。宽档里面板常驻、手机上又是另一套（`withChat`），都不经过这里。
+    compact?: boolean
     // 地址里的 `?card=` —— 非空就是总览那一格正看着一张卡。
     openCardId?: string | null
     // 地址里的 `?block=`，而且开着一张卡：卡打开时停在它里面的这一条。
@@ -91,6 +96,8 @@ const props = withDefaults(
     agentName?: string
     /** 项目 AI 队友的 handle：文档评论里「问…」点的是它。 */
     agentHandle?: string | null
+    /** 项目名册：文档里 @ 得到的人。 */
+    members?: ProjectMemberRow[]
     // 此刻谁在这个房间里忙（对话栏从 socket 上学来）。现场那一格画其中在干活的队友。
     activity?: MemberActivityLine[]
   }>(),
@@ -106,8 +113,10 @@ const props = withDefaults(
     tab: undefined,
     cardPhase: undefined,
     withChat: false,
+    compact: false,
     agentName: () => t('work.room.defaultAgentName'),
     agentHandle: null,
+    members: () => [],
     activity: () => [],
   }
 )
@@ -176,12 +185,16 @@ function ensureFileFromUrl(key: string | null) {
 //
 // 返回「到底切没切」：调用方要接着在目标那一格上做事（开文件）时，被拦下就得当场
 // 放弃，不能拿着旧的引用假装做过了。
-async function setTab(key: string, opts: { guard?: boolean } = {}): Promise<boolean> {
+//
+// `announce: false` 是「换这一格，但别告诉地址」：平板横放里进房间时自动挑中的那一格
+// 就是这样——它只是「你打开面板时看哪一格」，写进地址等于把浮层也拉起来了，而那一刻
+// 并没有人打开它。（宽档、手机上都用默认的 announce —— 那里地址本来就该跟着走。）
+async function setTab(key: string, opts: { guard?: boolean; announce?: boolean } = {}): Promise<boolean> {
   if (key !== active.value && opts.guard !== false && !(await confirmAnnotationDiscard())) return false
   settled.value = true
   active.value = key
   if (key === 'changes') markChangesSeen()
-  emit('update:tab', key)
+  if (opts.announce !== false) emit('update:tab', key)
   return true
 }
 
@@ -561,7 +574,8 @@ watch(
     if (!props.working && card && !loaded) return
     const want = openingTab(card)
     if (want === active.value) settled.value = true
-    else setTab(want)
+    // 平板横放：挑中的那一格留着当「打开时看哪一格」，但不写地址（于是也不拉开浮层）。
+    else setTab(want, { announce: !props.compact })
   },
   { immediate: true }
 )
@@ -684,7 +698,9 @@ function siteBlock(block: Block) {
   siteRef.value?.receive(block)
 }
 
-defineExpose({ pulse, highlightTurn, reviewDoc, openFile, siteBlock, previewShown })
+// 面板此刻在画哪一格。地址不一定写得出来——平板横放里自动挑中的那一格就没写进地址，
+// 而收起浮层再打开要回到它，所以这里是那份记忆的出处（TopicView 打开浮层时来问）。
+defineExpose({ pulse, highlightTurn, reviewDoc, openFile, siteBlock, previewShown, activeTab: () => active.value })
 </script>
 
 <template>
@@ -726,6 +742,7 @@ defineExpose({ pulse, highlightTurn, reviewDoc, openFile, siteBlock, previewShow
             :class="enterClass('overview')"
             :agent-name="agentName"
             :agent-handle="agentHandle"
+            :members="members"
             :topic="topic"
             :activity-tick="activityTick"
             :topic-list="topicList"

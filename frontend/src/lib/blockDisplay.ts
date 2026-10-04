@@ -11,7 +11,7 @@ import type { Block } from '@/cx_types'
 import type { RefNames } from './refChip'
 
 import { isAgentBlock } from './authorship'
-import { plainText } from './docRead'
+import { docReadNow } from './docReadLoad'
 import { fileLabel } from './fileKind'
 import { plainRefs } from './refChip'
 
@@ -26,13 +26,15 @@ export function isImageBlock(block: Block): boolean {
  * 引用一句话时显示的摘要。附件没有正文可引，就说它是什么。
  *
  * 芝士的话是 markdown，引用条里是一行纯文本：不先读成字，引到的就是
- * `**A / B / C**`、一对反引号和 `:::chart`。按文档的读法读成字（lib/docRead.ts）。人说的话原样显示，所以也原样引用。@ 人、提话题、
+ * `**A / B / C**`、一对反引号和 `:::chart`。按文档的读法读成字（lib/docRead.ts）；读法第一次用到才加载，
+ * 加载完之前先引原文，加载完自己换掉。人说的话原样显示，所以也原样引用。@ 人、提话题、
  * 指文件的 token 两边都一样读成名字，和正文里 chip 上写的字一致。
  */
 export function replySnippet(block: Block, maps: RefNames): string {
   if (block.kind === 'attachment')
     return isImageBlock(block) ? t('work.room.attachments.imageSnippet') : t('work.room.attachments.fileSnippet')
-  const source = isAgentBlock(block) ? plainText(block.content, 'chat') : block.content
+  const read = isAgentBlock(block) ? docReadNow() : null
+  const source = read ? read.plainText(block.content, 'chat') : block.content
   const text = plainRefs(source, maps).replace(/\s+/g, ' ').trim()
   return text.length > 24 ? text.slice(0, 24) + '…' : text
 }

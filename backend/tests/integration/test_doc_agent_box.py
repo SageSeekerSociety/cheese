@@ -13,6 +13,7 @@ The session is faked at its boundary, as in test_doc_agent.
 """
 
 import json
+import threading
 import uuid
 
 from app.domain.topic.models import Topic, TopicStatus
@@ -166,3 +167,53 @@ def test_the_answer_goes_into_the_askers_own_thread_only(client, sessions):
     assert [(r["comment"]["author"], r["comment"]["content"]) for r in replies] == [
         (seat, "第二段的范围和第一段的目标对得上。")
     ]
+
+
+def test_a_stopped_answer_keeps_what_was_written(client, sessions):
+    room, _ = _document(client)
+    sessions.held = "这一段讲的是"
+    answered: list = []
+    asking = threading.Thread(
+        target=lambda: answered.append(
+            _ask(client, room, preset="explain", selection=_selection("范围"))
+        )
+    )
+    asking.start()
+    assert sessions.waiting.wait(20)
+    # The box's conversation, as its session is named (`document/session.py`).
+    [(ref, _)] = sessions.asked
+    conversation = ref.home.rsplit("/", 1)[-1]
+
+    stopped = client.post(
+        f"/topics/{room}/doc/agent/{conversation}/stop",
+        headers=session_auth_headers("alice"),
+    )
+
+    assert stopped.status_code == 200, stopped.text
+    asking.join(20)
+    status, events = answered[0]
+    assert status == 200
+    assert _done(events) == {"answer": "这一段讲的是", "edits": [], "stopped": True}
+
+
+def test_a_question_waits_for_a_full_host_and_is_then_answered(client, sessions):
+    room, _ = _document(client)
+    sessions.room.clear()
+    answered: list = []
+    asking = threading.Thread(
+        target=lambda: answered.append(
+            _ask(client, room, preset="explain", selection=_selection("范围"))
+        )
+    )
+    asking.start()
+    assert sessions.waiting.wait(20)
+    assert sessions.asked == []
+
+    sessions.room.set()
+
+    asking.join(20)
+    status, events = answered[0]
+    assert status == 200
+    names = [name for name, _ in events]
+    assert names.index("queued") < names.index("done")
+    assert _done(events)["answer"] == "好的。"

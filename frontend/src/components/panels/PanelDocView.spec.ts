@@ -51,6 +51,7 @@ async function openThread() {
     resolve: vi.fn(async () => {}),
     reopen: vi.fn(async () => {}),
     recover: vi.fn(async () => undefined),
+    stopAgent: vi.fn(async () => {}),
   }
   const { rerender } = render(PanelDocView, {
     props: {

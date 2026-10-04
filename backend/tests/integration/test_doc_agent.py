@@ -15,8 +15,10 @@ tool plans (`sandbox/cheese`), with the question's credential. The
 collaboration service is tests/support/collab.py.
 """
 
+import asyncio
 import base64
 import json
+import threading
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -29,7 +31,7 @@ from app.domain.agent.document import question as doc_question
 from app.domain.agent.harness.pi import catalog
 from app.domain.agent.reads import Read
 from app.domain.agent.service import AgentMessage, AgentResult
-from app.domain.agent.session_host.contract import SessionRef
+from app.domain.agent.session_host.contract import SessionRef, StartAbandoned
 from app.domain.memory.files import MemoryFileScope
 from app.domain.memory.files_store import MemoryFileStore
 from app.main import app
@@ -46,12 +48,28 @@ class FakeSessions:
         self.asked: list[tuple[SessionRef, str]] = []
         self.script: Callable[..., Awaitable[tuple[str, str | None]]] | None = None
         self._answers: dict[SessionRef, tuple[str, str, str | None]] = {}
+        #: The host has no memory for a session until this is set.
+        self.room = threading.Event()
+        self.room.set()
+        #: Set while a start waits for the host, and while an answer is held.
+        self.waiting = threading.Event()
+        #: An answer that writes this much and then goes on until stopped.
+        self.held: str | None = None
+        self.stopped = threading.Event()
 
     def available(self) -> bool:
         return True
 
-    async def start(self, ref, spec, access) -> None:
-        pass
+    async def start(self, ref, spec, access, *, on_wait=None, give_up=None):
+        if self.room.is_set():
+            return
+        if on_wait is not None:
+            await on_wait()
+        self.waiting.set()
+        while not self.room.is_set():
+            if give_up is not None and await give_up():
+                raise StartAbandoned("stopped waiting")
+            await asyncio.sleep(0.05)
 
     async def send(self, ref, prompt, *, work_id):
         self.asked.append((ref, prompt.text))
@@ -62,6 +80,13 @@ class FakeSessions:
 
     async def read(self, ref):
         work, answer, error = self._answers.pop(ref)
+        if self.held is not None:
+            yield Read(work, AgentMessage(self.held))
+            self.waiting.set()
+            while not self.stopped.is_set():
+                await asyncio.sleep(0.05)
+            yield Read(work, AgentResult("aborted", None, is_error=True))
+            return
         if answer:
             yield Read(work, AgentMessage(answer))
         yield Read(work, AgentResult(error or "", None, is_error=bool(error)))
@@ -70,6 +95,7 @@ class FakeSessions:
         return None
 
     async def stop(self, ref) -> bool:
+        self.stopped.set()
         return False
 
 
@@ -334,3 +360,59 @@ def test_the_team_memory_is_read_in_full(client, sessions):
 
     assert _answers(client, room, root, seat) == ["记得。"]
     assert read["text"] == "部署走 CI，周五不发版。"
+
+
+def _stop(client, room: str, root: str, *, by: str = "alice"):
+    return client.post(
+        f"/topics/{room}/comments/{root}/agent/stop", headers=session_auth_headers(by)
+    )
+
+
+def test_a_stopped_answer_keeps_what_was_written_and_says_it_stopped(client, sessions):
+    room, seat = _document(client)
+    sessions.held = "范围指第二节列出的三个模块。"
+    root = _comment(client, room, f"<@{seat}> 这里的范围指什么？")
+    assert sessions.waiting.wait(20)
+
+    stopped = _stop(client, room, root)
+
+    assert stopped.status_code == 200, stopped.text
+    assert _answers(client, room, root, seat) == [
+        "范围指第二节列出的三个模块。\n\n已停止"
+    ]
+
+
+def test_a_question_waiting_for_a_full_host_can_be_stopped(client, sessions):
+    room, seat = _document(client)
+    sessions.room.clear()
+    root = _comment(client, room, f"<@{seat}> 这里的范围指什么？")
+    assert sessions.waiting.wait(20)
+
+    assert _stop(client, room, root).status_code == 200
+
+    assert _answers(client, room, root, seat) == ["已停止"]
+    assert sessions.asked == []
+
+
+def test_a_question_waits_for_a_full_host_and_is_then_answered(client, sessions):
+    room, seat = _document(client)
+    sessions.room.clear()
+    root = _comment(client, room, f"<@{seat}> 这里的范围指什么？")
+    assert sessions.waiting.wait(20)
+    assert sessions.asked == []
+
+    sessions.room.set()
+
+    assert _answers(client, room, root, seat) == ["好的。"]
+
+
+def test_only_someone_in_the_room_can_stop_its_answer(client, sessions):
+    room, seat = _document(client)
+    sessions.held = "范围指"
+    root = _comment(client, room, f"<@{seat}> 这里的范围指什么？")
+    assert sessions.waiting.wait(20)
+
+    refused = _stop(client, room, root, by="mallory")
+
+    assert refused.status_code in (403, 404)
+    sessions.stopped.set()
