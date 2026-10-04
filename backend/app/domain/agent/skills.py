@@ -96,7 +96,7 @@ NATIVE_CHAT_GUIDANCE = load_skills(["chat"])
 #: container and stale on a device is exactly the kind of split nobody notices,
 #: because both machines run and only one of them is right.
 _NATIVE_SKILL_SRC = Path(__file__).resolve().parents[3] / "sandbox" / "skills"
-_SHIPPED_NATIVE_SKILLS = ("documents", "wolfram")
+_SHIPPED_NATIVE_SKILLS = ("cheese", "documents", "wolfram")
 
 #: What can travel. A skill is not one markdown file: `documents` ships the
 #: scripts that do the editing and the reference files they are explained in,
