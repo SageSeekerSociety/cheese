@@ -24,6 +24,7 @@ import dayjs from 'dayjs'
 import { currentInviteCode, inviteCodeStatus } from '../model'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import SettingsToolbar from '@/components/spaces/SettingsToolbar.vue'
@@ -397,7 +398,7 @@ async function submitCreate() {
         </v-list-item>
       </v-list>
 
-      <p v-else class="settings-empty">{{ t('spaces.inviteCodes.empty') }}</p>
+      <BaseEmptyState v-else size="inline" class="settings-empty" :title="t('spaces.inviteCodes.empty')" />
     </div>
   </div>
 </template>

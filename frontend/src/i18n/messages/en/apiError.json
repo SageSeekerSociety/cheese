@@ -368,7 +368,6 @@
   "commentThreadUpdated": "The comment thread has been updated. Load it again",
   "commentResolvedReopenFirst": "The comment is resolved. Reopen it first",
   "commentAlreadyInState": "The comment is already in that state",
-  "docSelectionUnprovable": "This document's structure can't pin down the position in the original text. Select again",
   "liveDocStale": "The live document has been changed since. The copy you have is out of date",
   "deliveryNoteEmpty": "The note can't be empty",
   "deliveryTimeNeedsZone": "The delivery time needs a time zone",

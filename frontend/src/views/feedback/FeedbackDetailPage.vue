@@ -3,6 +3,7 @@ import type { FeedbackDetail } from '@/cx_types'
 
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { toast } from 'vuetify-sonner'
 
 import { ApiError, getFeedback } from '@/api'
 import { claimFeedback, type FeedbackClaimFlags, releaseFeedback } from '@/api/feedbackClaim'
@@ -52,7 +53,6 @@ const supportable = computed(() => !!item.value && !isClosed(item.value.status))
 
 const commentDraft = ref('')
 const posting = ref(false)
-const showCopied = ref(false)
 
 /** 底部的评论框收起时只有一行，点开才变成多行框。收起不是图省事：这个框是
  *  `position: sticky` 挂在评论区底部的（理由写在 `.fb-composer` 那条注释里），
@@ -235,9 +235,9 @@ async function changeClaim(take: boolean) {
 async function share() {
   try {
     await navigator.clipboard.writeText(window.location.href)
-    showCopied.value = true
+    toast.success(t('feedback.detail.copied'))
   } catch {
-    showCopied.value = false
+    // 复制失败不弹 toast：剪贴板被拒是环境问题，右侧「已定位」的地址依然可见。
   }
 }
 </script>
@@ -529,8 +529,6 @@ async function share() {
       </div>
     </template>
   </FeedbackPageShell>
-
-  <v-snackbar v-model="showCopied" :timeout="2500">{{ t('feedback.detail.copied') }}</v-snackbar>
 </template>
 
 <style scoped>

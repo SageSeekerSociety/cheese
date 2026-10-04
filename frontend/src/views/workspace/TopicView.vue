@@ -5,7 +5,7 @@ import type { MemberActivityLine } from '@/lib/memberActivity'
 import type { CardPhase } from '@/lib/topicState'
 import type { PreviewLocate, SubmitPreviewQuestion } from '../../lib/previewQuestion'
 
-import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
@@ -15,7 +15,6 @@ import { useRoomTabHistory } from '@/composables/useRoomTabHistory'
 import { useTopicMemory } from '@/composables/useTopicMemory'
 import { useCompactDesktop } from '@/composables/useWorkspaceLayout'
 
-import { listTopicMembers } from '@/api'
 import { useCommands } from '@/commands'
 import { useTopBarBack } from '@/components/common/topBarBack'
 import PushPermissionPrompt from '@/components/PushPermissionPrompt.vue'
@@ -24,6 +23,8 @@ import WorkPanel from '@/components/WorkPanel.vue'
 import { t } from '@/i18n'
 import { agentNames, memberName } from '@/lib/agentNames'
 import { announceComments } from '@/lib/docCommentSignals'
+import { warmRoutesWhenIdle } from '@/lib/routePrefetch'
+import { cachedTopicPanel, fetchTopicMembers } from '@/lib/topicPanelCache'
 import { onTopicRosterChange } from '@/lib/topicRosterChanges'
 import { topicTitle } from '@/lib/topicState'
 import { userRefRoute } from '@/lib/userRef'
@@ -146,6 +147,20 @@ watch(
   { immediate: true }
 )
 onUnmounted(() => clearDynamicTitle('workspace-topic'))
+
+// 话题画出来之后，趁浏览器空着把从这里最常去的几页的代码先下下来：看板、资料库、
+// 项目文档、搜索。点过去时就只剩取数据那一段等待（lib/routePrefetch.ts）。
+let cancelRouteWarm: (() => void) | null = null
+onMounted(() => {
+  const params = { projectId: props.projectId }
+  cancelRouteWarm = warmRoutesWhenIdle(router, [
+    { name: 'workspace-running', params },
+    { name: 'project-library', params },
+    { name: 'project-docs', params: { ...params, kind: 'charter' } },
+    { name: 'project-search', params },
+  ])
+})
+onUnmounted(() => cancelRouteWarm?.())
 // The list is still on its way, so "not found" is not yet a fact. Neither is it
 // one while this id is being asked about directly — the path a deep link takes.
 const resolving = computed(
@@ -373,14 +388,14 @@ const unreadOnOpen = store.unreadMap[props.topicId] ?? 0
 // 友一个规矩：署作者，不署「这个房间的那位」——一个房间可以先后交给两个队友。
 // 那一格自己不拉名册，所以在这里拉一次传下去。AI 队友的名字和对话栏同一个出处
 // （`agentNames`）：已经不在这间房里的队友，项目名册上还叫得出。
-const roomMembers = ref<TopicMemberRow[]>([])
+const roomMembers = ref<TopicMemberRow[]>(cachedTopicPanel('members', props.topicId)?.data ?? [])
 const memberNames = computed<Record<string, string>>(() => ({
   ...Object.fromEntries(roomMembers.value.map((m) => [m.member_handle, memberName(m) || m.member_handle])),
   ...Object.fromEntries(agentNames(roomMembers.value, store.members)),
 }))
 async function loadMemberNames() {
   try {
-    roomMembers.value = (await listTopicMembers(props.topicId)).data
+    roomMembers.value = (await fetchTopicMembers(props.topicId)).data
   } catch {
     // 名册拉不到，现场那一格就按 handle 署名——比空白好，也比报错好。
   }

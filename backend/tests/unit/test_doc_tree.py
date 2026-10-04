@@ -1,6 +1,6 @@
 """B1 Phase 1: markdown ⇄ doc-node bridge (pure, no DB)."""
 
-from app.domain.block.doc_tree import (
+from app.domain.living_doc.doc_tree import (
     CODE,
     HEADING,
     LIST,

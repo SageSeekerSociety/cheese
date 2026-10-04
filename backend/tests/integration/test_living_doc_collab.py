@@ -20,11 +20,14 @@ def _ticket(client, room, headers):
 
 def test_a_member_gets_a_ticket_for_this_room_document_only(client):
     room = _topic(client)
-    data = _ticket(client, room, session_auth_headers("owner"))
-    assert data["document"] == f"room:{room}"
+    owner = session_auth_headers("owner")
+    data = _ticket(client, room, owner)
+    # Every ticket for the room opens the same document, and no other room's.
+    assert _ticket(client, room, owner)["document"] == data["document"]
+    assert _ticket(client, _topic(client), owner)["document"] != data["document"]
     assert data["read_only"] is False
     claims = jwt.decode(data["ticket"], collab._key("ticket"), algorithms=["HS256"])
-    assert claims["doc"] == f"room:{room}"
+    assert claims["doc"] == data["document"]
     assert claims["sub"] == "owner"
     assert claims["ro"] is False
     # Nothing else opens with it: not the service's own bearer.
@@ -52,8 +55,8 @@ def test_a_caller_without_a_credential_can_only_read(client, monkeypatch):
 
 def test_the_service_routes_refuse_anyone_but_the_service(client):
     room = _topic(client)
-    name = f"room:{room}"
     owner = session_auth_headers("owner")
+    name = _ticket(client, room, owner)["document"]
     assert (
         client.get(f"/internal/collab/documents/{name}", headers=owner).status_code
         == 403
@@ -81,7 +84,7 @@ def test_converting_a_markdown_document_is_recorded_quietly(client):
     owner = session_auth_headers("owner")
     original = "# 原稿\r\n\r\n* 一\r\n* 二\r\n"
     client.portal.call(client.collab.type_in, uuid.UUID(room), original, "owner")
-    name = f"room:{room}"
+    name = _ticket(client, room, owner)["document"]
     events = len(_doc_events(client, room, owner))
     # The service converts it on first open and stores the text it exports.
     exported = "# 原稿\n\n- 一\n- 二"
@@ -110,8 +113,9 @@ def test_converting_a_markdown_document_keeps_its_author(client):
     room = _topic(client)
     original = "# 原稿\r\n\r\n* 一\r\n* 二\r\n"
     client.portal.call(client.collab.type_in, uuid.UUID(room), original, "owner")
+    name = _ticket(client, room, session_auth_headers("owner"))["document"]
     client.put(
-        f"/internal/collab/documents/room:{room}",
+        f"/internal/collab/documents/{name}",
         json={
             "state": base64.b64encode(b"converted").decode(),
             "content": "# 原稿\n\n- 一\n- 二",
@@ -170,7 +174,9 @@ def test_a_writer_that_reads_again_after_a_conflict_gets_its_retry_in(client):
     # Somebody keeps typing: one store lands, and more is typed after it that
     # the service holds but has not stored yet.
     client.portal.call(client.collab.type_in, uuid.UUID(room), "人又改了", "owner")
-    client.collab.type_unsaved(uuid.UUID(room), "人又改了，还在写", "owner")
+    client.portal.call(
+        client.collab.type_unsaved, uuid.UUID(room), "人又改了，还在写", "owner"
+    )
     stale = client.put(
         f"/topics/{room}/doc",
         json={"content": "按旧版写的", "expected_version": read["doc_version"]},

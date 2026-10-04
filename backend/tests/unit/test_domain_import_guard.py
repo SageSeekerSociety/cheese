@@ -126,7 +126,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # block 领域没有 service 层，`platform_stats.pipeline` 那条注释讲的是同
         # 一件事）。拆模块没有新增跨包的边，只是发起方从 chat.py 换成了
         # memory_ledger.py，所以按同一笔债入账。
-        ("app.domain.agent.memory_ledger", "app.domain.block.repositories"),
         ("app.domain.agent.memory_ledger", "app.domain.project.repositories"),
         ("app.domain.agent.memory_ledger", "app.domain.topic.repositories"),
         # agent.document.question 是文档里的芝士从 api/ 挪进来的那一块（每个问题

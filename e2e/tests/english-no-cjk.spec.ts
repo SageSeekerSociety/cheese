@@ -32,7 +32,10 @@ import { expect, test, type Page } from "@playwright/test";
 import { acceptPendingConsents, api, apiLogin, DEMO_PASSWORD } from "./helpers";
 
 test.use({ locale: "en-US" });
-test.describe.configure({ timeout: 240_000 });
+// Parallel so CI shards split this file by test rather than handing one shard
+// all of it: each test seeds what it needs, and one CI worker still runs them
+// one at a time.
+test.describe.configure({ mode: "parallel", timeout: 240_000 });
 
 type Screen = {
   /** What a reader would call the screen; the failure names it. */

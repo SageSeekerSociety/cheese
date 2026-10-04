@@ -18,6 +18,7 @@ import type { ChatAttachment, Topic } from '../../cx_types'
 
 import { computed, nextTick, ref } from 'vue'
 import { useDisplay } from 'vuetify'
+import { toast } from 'vuetify-sonner'
 
 import { useOutsideMentionPrompt } from '@/composables/useOutsideMentionPrompt'
 import { useRoomMentionPicker } from '@/composables/useRoomMentionPicker'
@@ -363,7 +364,6 @@ function sendDraft(opts?: { summon?: boolean }) {
 
 // 「提醒我」：对话框管填和发，这里只开它，和设好之后说一声几点会提醒。
 const reminderOpen = ref(false)
-const reminderSetFor = ref<string | null>(null)
 function onReminderSet(at: Date) {
   const when = new Intl.DateTimeFormat(i18n.global.locale.value, {
     month: 'numeric',
@@ -371,7 +371,7 @@ function onReminderSet(at: Date) {
     hour: '2-digit',
     minute: '2-digit',
   }).format(at)
-  reminderSetFor.value = t('work.room.reminder.set', { when })
+  toast.success(t('work.room.reminder.set', { when }))
 }
 
 // 发送键亮不亮：有字，或者有东西跟着走。
@@ -494,9 +494,6 @@ defineExpose({
       <ComposerChecklistDialog v-if="postChecklist" v-model="checklistOpen" :post="postChecklist" />
     </div>
     <ReminderDialog v-if="topic" v-model="reminderOpen" :topic-id="topic.id" @set="onReminderSet" />
-    <v-snackbar :model-value="reminderSetFor !== null" :timeout="4000" @update:model-value="reminderSetFor = null">
-      {{ reminderSetFor }}
-    </v-snackbar>
   </div>
 </template>
 

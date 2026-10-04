@@ -18,7 +18,7 @@ from app.domain.block.comment_models import DocCommentReply, DocCommentThread
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
-from app.domain.living_doc.services import DocumentJournal
+from app.domain.living_doc.services import DocumentJournal, Documents
 
 
 def block_out(block: Block) -> dict:
@@ -96,7 +96,10 @@ class CommentThreads:
         action: str,
         content: str | None = None,
     ) -> dict:
-        await DocumentJournal(self.session).lock(room_id)
+        doc = await Documents(self.session).ensure_for_room(
+            room_id=room_id, project_id=project_id
+        )
+        await DocumentJournal(self.session).lock(doc.id)
         comment = await self.root(room_id, comment_id)
         thread = await self.capture(comment)
         await self.session.refresh(thread)

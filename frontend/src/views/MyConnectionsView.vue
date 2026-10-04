@@ -7,6 +7,7 @@ import type { Project } from '../cx_types'
 
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
+import { toast } from 'vuetify-sonner'
 
 import {
   checkIntegration,
@@ -24,6 +25,7 @@ import ConfirmDialog from '../components/base/ConfirmDialog.vue'
 import AdaptiveDialog from '../components/common/AdaptiveDialog.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
 import { goAuthorize } from '@/lib/desktopApp'
@@ -63,7 +65,6 @@ const FEISHU_OUTCOMES: Record<string, string> = {
   deleted: 'deleted',
   exchange_failed: 'failed',
 }
-const notice = ref(feishuOutcome())
 const busy = ref('')
 const confirming = ref<MailDraft | null>(null)
 const removing = ref<Integration | null>(null)
@@ -154,13 +155,14 @@ function replace(row: Integration) {
   integrations.value = integrations.value.map((x) => (x.id === row.id ? row : x))
 }
 
+// 发信、连接、改授权范围这些都是一次性动作：结果跟这一次点击走，用全局 toast
+// 说一声（§3.11）。读整页失败仍留在页顶上那条里（error）。
 async function act<T>(key: string, fn: () => Promise<T>): Promise<T | undefined> {
   busy.value = key
-  error.value = ''
   try {
     return await fn()
   } catch (e) {
-    error.value = e instanceof Error ? e.message : t('account.connections.actionFailed')
+    toast.error(e instanceof Error ? e.message : t('account.connections.actionFailed'))
     return undefined
   } finally {
     busy.value = ''
@@ -210,7 +212,7 @@ async function send(draft: MailDraft) {
     drafts.value = drafts.value.filter((d) => d.id !== draft.id)
     const refused = out.refused.length ? t('account.connections.refused', { list: out.refused.join('、') }) : ''
     const notes = out.notes.length ? t('account.connections.notes', { list: out.notes.join('，') }) : ''
-    notice.value = t('account.connections.sent', { subject: draft.subject }) + refused + notes
+    toast.success(t('account.connections.sent', { subject: draft.subject }) + refused + notes)
   } else {
     await load()
   }
@@ -269,7 +271,15 @@ async function save() {
   }
 }
 
-onMounted(load)
+onMounted(async () => {
+  // 从飞书授权回来时地址栏里的结果（`?feishu=`）是这一次跳转的回执，弹一次就够。
+  const outcome = feishuOutcome()
+  await load()
+  if (outcome) {
+    if (route.query.feishu === 'ok') toast.success(outcome)
+    else toast.error(outcome)
+  }
+})
 </script>
 
 <template>
@@ -289,14 +299,16 @@ onMounted(load)
       />
     </header>
 
-    <p v-if="notice" role="status" class="conn__notice">
-      {{ notice }}
-    </p>
     <p v-if="error" role="alert" class="conn__notice c-danger">{{ error }}</p>
 
     <section class="settings-card" :aria-label="t('account.connections.pendingTitle')">
       <div class="settings-card__title">{{ t('account.connections.pendingTitle') }}</div>
-      <p v-if="!pending.length" class="settings-empty">{{ t('account.connections.pendingEmpty') }}</p>
+      <BaseEmptyState
+        v-if="!pending.length"
+        size="inline"
+        class="settings-empty"
+        :title="t('account.connections.pendingEmpty')"
+      />
       <div v-for="d in pending" :key="d.id" class="conn-row" :data-draft="d.id">
         <dl class="conn-spec">
           <dt>{{ t('account.connections.to') }}</dt>
@@ -345,7 +357,12 @@ onMounted(load)
         </div>
       </div>
       <p v-if="feishuMissing" class="settings-card__desc">{{ t('integrations.member.notConfigured') }}</p>
-      <p v-if="!integrations.length && !loading" class="settings-empty">{{ t('account.connections.accountsEmpty') }}</p>
+      <BaseEmptyState
+        v-if="!integrations.length && !loading"
+        size="inline"
+        class="settings-empty"
+        :title="t('account.connections.accountsEmpty')"
+      />
       <div v-for="row in integrations" :key="row.id" class="conn-row" :data-integration="row.id">
         <div class="conn-row__head">
           <div class="conn-row__id">

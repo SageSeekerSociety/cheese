@@ -7,7 +7,7 @@ answers. The card that asks a person to save it shows this. NULL for a method a
 person wrote.
 
 Revision ID: a7d3e91c5b20
-Revises: 08b4bcff4ad2
+Revises: 41a261d02e9e
 """
 
 import sqlalchemy as sa
@@ -16,7 +16,7 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 revision = "a7d3e91c5b20"
-down_revision = "08b4bcff4ad2"
+down_revision = "41a261d02e9e"
 branch_labels = None
 depends_on = None
 

@@ -13,6 +13,7 @@ import { useDisplay } from 'vuetify'
 
 import { searchProject, searchProjectCounted } from '@/api'
 import { firstWord } from '@/commands/palette/results'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import { t } from '@/i18n'
 import { docs } from '@/views/workspace/search/docs.palette'
@@ -193,9 +194,13 @@ function segments(item: PaletteItem): { text: string; hit: boolean }[] {
       </v-tabs>
 
       <p v-if="failed" role="alert" class="t-body c-danger">{{ t('navigation.search.failed') }}</p>
-      <p v-else-if="query && !loading && !items.length && !preview.length" class="t-body c-muted search-page__empty">
-        {{ t('navigation.palette.empty') }}
-      </p>
+      <BaseEmptyState
+        v-else-if="query && !loading && !items.length && !preview.length"
+        size="inline"
+        align="center"
+        class="search-page__empty"
+        :title="t('navigation.palette.empty')"
+      />
 
       <!-- 「全部」每类一段，段头带「查看全部」；某一栏就是一段，没有段头。 -->
       <section v-for="group in sections" :key="group.kind.id" class="search-group">
