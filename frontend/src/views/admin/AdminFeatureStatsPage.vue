@@ -5,8 +5,9 @@ import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink } from 'vue-router'
 
-import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminPage from '@/components/admin/AdminPage.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import { getFeatureCatalogue } from '@/views/admin/features/featureApi'
 import { findFeatureView } from '@/views/admin/features/registry'
 
@@ -72,16 +73,15 @@ onMounted(load)
         <span v-for="n in 3" :key="n" class="afs__bone" />
       </div>
 
-      <AdminEmptyState
+      <BaseLoadError
         v-else-if="loadError !== null"
         :title="t('featureStats.page.loadFailed')"
-        :desc="loadError || undefined"
-        :action="t('featureStats.page.retry')"
-        tone="error"
-        @action="load"
+        :error="loadError || undefined"
+        :retry-label="t('featureStats.page.retry')"
+        @retry="load"
       />
 
-      <AdminEmptyState v-else-if="rows.length === 0" :title="t('featureStats.page.empty')" />
+      <BaseEmptyState v-else-if="rows.length === 0" :title="t('featureStats.page.empty')" />
 
       <ul v-else class="afs__list">
         <li v-for="row in rows" :key="row.id" class="afs__item">

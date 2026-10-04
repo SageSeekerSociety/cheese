@@ -6,11 +6,12 @@ import { useI18n } from 'vue-i18n'
 
 import { getAvatarUrl } from '@/utils/materials'
 
-import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminFlash from '@/components/admin/AdminFlash.vue'
 import AdminPage from '@/components/admin/AdminPage.vue'
 import AdminTabs from '@/components/admin/AdminTabs.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
@@ -30,7 +31,7 @@ import { SpacesApi } from '@/network/api/spaces'
 //   2. 从 `v-card` 一卡一条改成**紧凑列表**：一页十几条时，卡与卡之间的空隙比正文还高。
 //   3. `intro` 与 `description` 一起画时常常是同一句话（建版时同一次填的），所以
 //      `blurb()` 只画一遍，两句不一样时才两句都画。
-//   4. 空 / 读失败改用 `AdminEmptyState`（原来是一句裸文字），读失败还带重试。
+//   4. 空 / 读失败改用 `BaseEmptyState`（原来是一句裸文字），读失败还带重试。
 //   5. 分页的「还有没有下一页」改成**多要一条**：后台这条路由既不给总数也不给
 //      `has_more`（`{"items": [...]}` 就是全部），所以每次要 51 条，回来超过 50 条
 //      就说明后面还有。原来那句 `items.length < 50` 在「正好五十条」时会把下一页
@@ -175,14 +176,12 @@ onMounted(load)
           <!-- 读失败：中性标题说清是哪一页，服务端原话作说明行，重试就在旁边；**不**画成
                「暂无申请」。判据是 `!== null` 而不是真值：原话取不到时 `loadError` 是空串，
                仍要给出错态。 -->
-          <AdminEmptyState
+          <BaseLoadError
             v-if="loadError !== null"
-            compact
-            tone="error"
             :title="t('spaces.review.loadFailed')"
-            :desc="loadError || undefined"
-            :action="t('spaces.review.retry')"
-            @action="load"
+            :error="loadError || undefined"
+            :retry-label="t('spaces.review.retry')"
+            @retry="load"
           />
           <!-- 首屏（手上一条都没有）画骨架：列表矮、刷新快，一行一行的骨头够了。 -->
           <ul v-else-if="loading && !items.length" class="asp__list" aria-hidden="true">
@@ -190,7 +189,7 @@ onMounted(load)
               <span class="asp__bone" />
             </li>
           </ul>
-          <AdminEmptyState v-else-if="!items.length" compact :title="t('spaces.review.empty')" />
+          <BaseEmptyState v-else-if="!items.length" size="compact" :title="t('spaces.review.empty')" />
           <ul v-else class="asp__list">
             <li v-for="item in items" :key="item.id" class="asp__row">
               <div class="asp__main">

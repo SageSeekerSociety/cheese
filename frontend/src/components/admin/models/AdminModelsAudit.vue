@@ -4,7 +4,7 @@ import type { AuditItem } from '@/lib/adminModels'
 import { useI18n } from 'vue-i18n'
 
 import AdminAuditDiff from '@/components/admin/AdminAuditDiff.vue'
-import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { relTime } from '@/lib/relTime'
 
@@ -57,14 +57,12 @@ function auditActionLabel(action: string): string {
      「没读到」说成「没有」）。它说在这一段自己的卡里，而不是页顶那条横条上。
      `!== null`：`error` 是 `null` 才算没失败，空串是「失败了但服务端没给话」——
      用真值判会把这种失败落进「暂无操作」。 -->
-    <AdminEmptyState
+    <BaseLoadError
       v-if="props.error !== null"
-      compact
-      tone="error"
       :title="t('models.audit.loadFailed')"
-      :desc="props.error || undefined"
-      :action="t('models.page.retry')"
-      @action="emit('retry')"
+      :error="props.error || undefined"
+      :retry-label="t('models.page.retry')"
+      @retry="emit('retry')"
     />
     <div v-else-if="props.loading && !props.items.length" class="amd__auditSkeleton">
       <v-skeleton-loader v-for="i in 4" :key="i" type="text" />

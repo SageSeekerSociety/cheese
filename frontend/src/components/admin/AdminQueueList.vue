@@ -328,7 +328,7 @@ function onKeydown(e: KeyboardEvent) {
 
 /* 空态。形状和总表的空态一样（宽 320px 居中、主副两行），两处说的是同一件事 ——
    「还没有人提交反馈」在两个视图里长得不一样的话，人就得分别去认。
-   顶距 32 + `AdminEmptyState` 自己的 64 = 96，和换组件之前一样（§9.2 那个数）。 */
+   顶距 32 + `BaseEmptyState` 自己的 64 = 96，和换组件之前一样（§9.2 那个数）。 */
 .qlist__none {
   flex: 0 0 auto;
   padding-top: 32px;
