@@ -89,7 +89,7 @@ order: 10
 隔离环境对设备的要求：
 
 - **Linux**：要装 bubblewrap（Debian、Ubuntu：`sudo apt install bubblewrap`；Fedora：`sudo dnf install bubblewrap`；Arch：`sudo pacman -S bubblewrap`），并允许普通用户创建用户命名空间。Ubuntu 23.10 起 AppArmor 默认禁止这件事，可以给 bubblewrap 加一份允许它的 AppArmor 配置，或者运行 `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`（写进 `/etc/sysctl.d/` 下的文件才能重启后保留）。缺了哪一样，AI 队友开工时会收到说明，写明要装什么、改什么。
-- **macOS**：还没有隔离环境，正在做。现在要在 Mac 上用，设备主人给房间选「整台机器」。
+- **macOS**：不用装任何东西，用的是系统自带的 `sandbox-exec`。和 Linux 一样看不到用户目录里装的工具；另外，隔离环境里的程序只能写自己的目录，`/tmp` 换成了房间自己的临时目录，也连不上这台 Mac 上其他程序开的本地 socket（比如你自己的 tmux）。
 - **Windows**：没有隔离环境。在 Windows 上装 WSL，把 WSL 里的 Linux 按上面的「接入服务器或其他机器」接入，用它；或者设备主人给房间选「整台机器」。
 
 隔离环境出现之前就在自有设备上运行过的房间，保持原来的整台机器：名册那一行和房间顶部照旧写着「能访问整台机器」，设备主人在「改」里看到选中的是「整台机器」，可以改成「隔离环境」。用过几台自有设备的房间，只在最近用的那台上保持；回到别的那台，从隔离环境开始。

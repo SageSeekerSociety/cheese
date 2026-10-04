@@ -170,7 +170,7 @@ Cloud 能开机 → 默认是 Cloud；开不了 → 默认是自托管设备
 
 沙箱出现之前就在自托管设备上跑过的房间保持整台机器：点名过机器的房间当时就绑成了 `host`；「系统挑一台」的房间没有绑定，由迁移 `d72d0f566149` 绑成 `host`，绑在它最近一条会话租着的那台自托管设备上（下一条会话回到的就是那台）。用过几台的房间只绑那一台，回到别的那几台算一次新的选择，从 `isolated` 开始；最近一次落在云机器上、或者房间选的已经是云的，不绑。从没在自托管设备上跑过的房间，按默认进沙箱。
 
-macOS 和 Windows 还没有沙箱（`device/supply.py` 的 `sandbox_unavailable`，按连接器 `hello` 报的 `<系统>-<架构>`）：那里 `isolated` 的房间开工时拿到一句话，说清楚是什么情况、可以怎么办（macOS：请机主给整台机器；Windows：装 WSL，把 WSL 接成一台设备），**不会退成整机去跑**。Linux 上缺 bubblewrap 或不许建用户命名空间时，安装程序在动房间之前就拒绝，同样带一句话。macOS 的沙箱（`sandbox-exec`）以后接在 `bootstrap.sandbox_tools` / `sandbox_argv` 上，同时把 macOS 从 `sandbox_unavailable` 的表里拿掉。沙箱怎么搭见 `docs/remote-execution.md`。
+macOS 的沙箱是系统自带的 `sandbox-exec`（`bootstrap.seatbelt_profile`）：规则跟着命令行传进去，不落在房间能改的文件里。它没有 pid 命名空间，所以信号只能发给同一个沙箱里的进程，Unix socket 只能连房间自己的目录，LaunchServices 和剪贴板也不给用，这几样都会替沙箱在外面办事。Windows 没有沙箱（`device/supply.py` 的 `sandbox_unavailable`，按连接器 `hello` 报的 `<系统>-<架构>`）：那里 `isolated` 的房间开工时拿到一句话，说清楚可以怎么办（装 WSL，把 WSL 接成一台设备，或者请机主给整台机器），**不会退成整机去跑**。Linux 上缺 bubblewrap 或不许建用户命名空间时，安装程序在动房间之前就拒绝，同样带一句话。沙箱怎么搭见 `docs/remote-execution.md`。
 
 ## 五、能从这些机器上拿回来什么
 

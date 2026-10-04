@@ -246,11 +246,11 @@ describe('what the room sees of its machine', () => {
   })
   it('says why a machine has no isolated environment, in the reader language', async () => {
     setLocale('en')
-    mountPicker(onLab({ owned: true, sandbox_unavailable: { key: 'sandboxUnavailableMacos' } }, 'isolated'))
+    mountPicker(onLab({ owned: true, sandbox_unavailable: { key: 'sandboxUnavailableWindows' } }, 'isolated'))
     await fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
     const isolated = screen.getByTestId('room-machine-isolated') as HTMLButtonElement
     expect(isolated.disabled).toBe(true)
-    expect(isolated.textContent).toContain('which macOS machines do not have yet')
+    expect(isolated.textContent).toContain('which Windows machines do not have')
     expect((screen.getByTestId('room-machine-host') as HTMLButtonElement).disabled).toBe(false)
   })
   it('names the machine an automatic room is on when access is chosen for it', async () => {

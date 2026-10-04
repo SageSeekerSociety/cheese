@@ -114,8 +114,8 @@ def test_a_room_nobody_chose_for_runs_isolated():
 @pytest.mark.parametrize(
     ("target", "key"),
     [
-        ("darwin-arm64", "sandboxUnavailableMacos"),
-        ("darwin-amd64", "sandboxUnavailableMacos"),
+        ("darwin-arm64", None),
+        ("darwin-amd64", None),
         ("windows-amd64", "sandboxUnavailableWindows"),
         ("linux-amd64", None),
         ("linux-arm64", None),
