@@ -164,11 +164,19 @@ class CloudHostRepository:
         return [(home, host) for home, host in rows.all()]
 
     async def waiting_homes(self) -> list[tuple[CloudHostHome, CloudHost]]:
-        """Homes whose room was told their sandbox is being prepared."""
+        """Homes whose room was told their sandbox is being prepared, and that
+        only wait for their host to come up. One asleep waits to be moved to a
+        host with a free slot, and one with an archive to be restored: their
+        host being up says nothing about them, and their waiting is what moves
+        the first up the sweep's queue."""
         rows = await self._session.execute(
             select(CloudHostHome, CloudHost)
             .join(CloudHost, CloudHost.id == CloudHostHome.host_id)
-            .where(CloudHostHome.waiting_since.is_not(None))
+            .where(
+                CloudHostHome.waiting_since.is_not(None),
+                CloudHostHome.stopped_at.is_(None),
+                CloudHostHome.archive_key.is_(None),
+            )
         )
         return [(home, host) for home, host in rows.all()]
 
@@ -189,8 +197,9 @@ class CloudHostRepository:
     async def room_archives(
         self, topic_id: uuid.UUID, room_resource_id: str | None = None
     ) -> list[CloudHostHome]:
-        """The room's homes that have an archive in the bucket, of one
-        generation or of every one."""
+        """The room's homes whose work is in an archive in the bucket — not
+        yet restored, wherever they are placed — of one generation or of
+        every one."""
         query = select(CloudHostHome).where(
             CloudHostHome.topic_id == topic_id,
             CloudHostHome.archive_key.is_not(None),

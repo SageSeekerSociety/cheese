@@ -42,7 +42,7 @@ from app.domain.device.supply import (
 )
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
-from app.domain.machine.lifecycle import SandboxHomeError, SandboxLifecycle
+from app.domain.machine.lifecycle import SandboxBusy, SandboxHomeError, SandboxLifecycle
 from app.domain.machine.models import (
     GONE,
     MAX_ENROLL_ATTEMPTS,
@@ -55,7 +55,6 @@ from app.domain.machine.services import (
     CloudKeepsFailing,
     CloudPoolFull,
     HostPool,
-    SandboxBusy,
     SandboxMustMove,
 )
 from app.domain.policy import gate
@@ -824,9 +823,11 @@ async def _move_session(
         old = None
     pushed = False
     warnings: list[str] = []
-    # An archived home is in the bucket, on no machine that could push it: it
-    # is kept as it is, archive and all, for the room's cleanup.
-    if old and not await HostPool(db).archived(session_id):
+    # An archived home's work is in the bucket, on no machine that could push
+    # it — including one it was placed on and not yet restored to: it is kept
+    # as it is, archive and all, for the room's cleanup.
+    archived = await HostPool(db).archived(session_id)
+    if old and not archived:
         generation = request.get("generation")
         start = await _restart_executor(db, row, old)
         await db.commit()
@@ -856,7 +857,9 @@ async def _move_session(
         # Whatever was in the sandbox is on its branches now, or it never held a
         # lease: its home goes. Work it could not push keeps the home for the
         # room's cleanup.
-        await HostPool(db).leave(session_id, kept_work=bool(old) and not pushed)
+        await HostPool(db).leave(
+            session_id, kept_work=archived or (bool(old) and not pushed)
+        )
     kept = [] if old is None or (on_cloud and pushed) else [old]
     row.execution_request = {
         "generation": str(uuid.uuid4()),
@@ -1248,6 +1251,9 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
         if isinstance(exc, SandboxHomeError):
             # The archive is still there; the next tool call tries again.
             return {"unavailable": SANDBOX_RESTORE_FAILED}
+        if isinstance(exc, SandboxBusy):
+            # Another call of the session is restoring it: wait for that one.
+            return _Preparing(SANDBOX_WAKING, partial(_home_settled, db, session_id))
         if isinstance(exc, DeviceOffline):
             # The machine went away while its executor was being set up: the
             # same answer as when it is away before setup starts (above).

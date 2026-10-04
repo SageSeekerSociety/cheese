@@ -42,6 +42,7 @@ from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
 from app.domain.machine import enrollment
+from app.domain.machine.lifecycle import SandboxBusy
 from app.domain.machine.microcloud import MicroCloudClient, MicroCloudError
 from app.domain.machine.models import (
     AI_TRANSITIONAL,
@@ -95,11 +96,6 @@ class CloudPoolFull(Exception):
 
     def __init__(self) -> None:
         super().__init__(say("cloudBusy"))
-
-
-class SandboxBusy(Exception):
-    """The session's home is being stopped, archived or restored by someone
-    else; the tool call waits for that to finish."""
 
 
 class SandboxMustMove(Exception):
@@ -270,9 +266,13 @@ class HostPool:
             assert host is not None
             await self._session.refresh(host)
             if host.status in GONE:
-                # Gone upstream: what was there is gone with it.
+                # Gone upstream: what was there is gone with it — except a home
+                # it was only to be restored on, whose work is in its archive
+                # and which is placed again from there.
                 await self.forget(host)
-                home = None
+                home = await self._repo.current_home(session_id)
+                if home is not None:
+                    home = await self._repo.lock_home(home.id)
             elif _keeps(host):
                 await self._wake(home, host)
                 return host
@@ -509,9 +509,11 @@ class HostPool:
             await delete_archive(key)
 
     async def archived(self, session_id: uuid.UUID) -> bool:
-        """Whether the session's home is archived and on no host."""
+        """Whether the session's work is in its archive: archived, or placed
+        on a host and not restored there yet. Whatever that host has of it is
+        not the work, so nothing there is to be pushed."""
         home = await self._repo.current_home(session_id)
-        return home is not None and home.host_id is None
+        return home is not None and home.archive_key is not None
 
     async def tell_waiting(
         self, session_id: uuid.UUID, sentence: str = "sandboxPreparing"
@@ -575,13 +577,11 @@ class HostPool:
         await self._repo.delete_room_homes(topic_id, room_resource_id)
 
     async def archived_resources(self, topic_id: uuid.UUID) -> set[str]:
-        """The room's session directories that are in the bucket, on no host:
-        a room's cleanup has nothing to ask a machine about them."""
-        return {
-            home.resource_id
-            for home in await self._repo.room_archives(topic_id)
-            if home.host_id is None
-        }
+        """The room's session directories whose work is in the bucket: a
+        room's cleanup has nothing to ask the machine their lease names about
+        them. A copy half restored on a host is found by that host's
+        inventory, like any directory there."""
+        return {home.resource_id for home in await self._repo.room_archives(topic_id)}
 
     # --- the sweep -----------------------------------------------------------
 

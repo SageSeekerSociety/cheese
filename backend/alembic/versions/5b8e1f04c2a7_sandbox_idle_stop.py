@@ -1,7 +1,8 @@
 """A cloud sandbox stops when idle, and its home can be archived off its host.
 
 ``cloud_host_homes`` learns when its session was last active, when its sandbox
-was stopped, who is moving it, and where its archive is. An archived home is on
+was stopped, who is moving it, where its archive is, and why its last archive
+failed. An archived home is on
 no host, so ``host_id`` may be NULL.
 """
 
@@ -26,7 +27,7 @@ def upgrade() -> None:
             server_default=sa.text("now()"),
         ),
     )
-    for name in ("stopped_at", "busy_until"):
+    for name in ("stopped_at", "busy_until", "archive_failed_at"):
         op.add_column(
             "cloud_host_homes",
             sa.Column(name, sa.DateTime(timezone=True), nullable=True),
@@ -34,6 +35,7 @@ def upgrade() -> None:
     op.add_column("cloud_host_homes", sa.Column("archive_key", sa.Text()))
     op.add_column("cloud_host_homes", sa.Column("archive_size", sa.BigInteger()))
     op.add_column("cloud_host_homes", sa.Column("archive_md5", sa.String(32)))
+    op.add_column("cloud_host_homes", sa.Column("archive_error", sa.Text()))
 
 
 def downgrade() -> None:
@@ -44,6 +46,8 @@ def downgrade() -> None:
     ):
         raise RuntimeError("Restore or clean up every archived home before downgrading")
     for name in (
+        "archive_error",
+        "archive_failed_at",
         "archive_md5",
         "archive_size",
         "archive_key",
