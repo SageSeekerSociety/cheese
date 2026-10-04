@@ -149,6 +149,77 @@ export interface TopicNamingReport {
   trend: TopicNamingTrendPoint[]
 }
 
+/** 记忆那一页的形状（`/admin/feature-stats/memory`）。
+ *
+ *  它回答的是「一个项目的记忆树长成了什么样」——写了多少条、索引撑没撑破注入预算、有
+ *  没有 orphan / dangling / 超长正文、整理跑到哪了、正文被读过几次。
+ *
+ *  **只数数，不读内容**：`name` 是项目名（不是记忆），其余全是计数。私人记忆按人聚合成
+ *  `{entries, owners}`，报告里没有文件名、没有正文——这一列的口径见后端
+ *  `feature_stats/features/memory.py` 的文件头。 */
+export interface MemoryIndexShape {
+  /** 索引行数/字节数。**没有索引文件时是 `null` 而不是 0**——「没有索引」和「索引是
+   *  空的」是两句话。`over_*` 是撑破注入预算（200 行 / 25KB）的那两个布尔位。 */
+  lines: number | null
+  bytes: number | null
+  over_lines: boolean
+  over_bytes: boolean
+}
+
+export interface MemoryDreamShape {
+  /** 上一次**成功结束**的时刻；从没成功过是 `null`。 */
+  last_completed_at: string | null
+  completed: number
+  failed: number
+  refused: number
+  running: number
+  /** `running` 里跑着还没回音、已经超过一小时的那些（可能机器没了）。 */
+  stuck: number
+  /** 离下一次整理还差多少输出 token：`value` 是上次成功后的累计，`threshold` 是阈值。 */
+  tokens: { value: number; threshold: number }
+}
+
+export interface MemoryProjectRow {
+  project_id: string
+  name: string
+  /** 项目级（共享）记忆条数：非空文件，不含索引、不含被拒的那一版。 */
+  entries: number
+  /** 私人记忆：只给条数和涉及的人数，没有内容。 */
+  personal: { entries: number; owners: number }
+  index: MemoryIndexShape
+  /** 有文件没进索引。 */
+  orphan: number
+  /** 索引指着一个不存在的文件。 */
+  dangling: number
+  /** 正文超过 `BODY_MAX` 的条目数。 */
+  over_body: number
+  reads: number
+  dream: MemoryDreamShape
+}
+
+export interface MemoryNumbers {
+  projects: { value: number }
+  entries: { value: number }
+  personal: { value: number; owners: number }
+  /** `over` 是撑破预算的项目数（按项目去重）；行数、字节两组分开数。 */
+  index: { over: number; over_lines: number; over_bytes: number }
+  hygiene: { orphan: number; dangling: number; over_body: number }
+  reads: { value: number }
+  dream: Omit<MemoryDreamShape, 'tokens'>
+}
+
+export interface MemoryReport {
+  id: string
+  title: string
+  summary: string
+  days: number
+  start: string
+  end: string
+  numbers: MemoryNumbers
+  projects: MemoryProjectRow[]
+  trend: { date: string; reads: number }[]
+}
+
 export type FeatureDays = 7 | 30 | 90
 
 export function getFeatureCatalogue(): Promise<{ features: FeatureCatalogueEntry[] }> {
@@ -167,4 +238,8 @@ export function getDocsAssistantReport(days: FeatureDays): Promise<DocsAssistant
 
 export function getTopicNamingReport(days: FeatureDays): Promise<TopicNamingReport> {
   return getFeatureReport<TopicNamingReport>('topic-naming', days)
+}
+
+export function getMemoryReport(days: FeatureDays): Promise<MemoryReport> {
+  return getFeatureReport<MemoryReport>('memory', days)
 }

@@ -16,7 +16,7 @@ full procedure, including why the two lists have to be kept in step.
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from app.domain.feature_stats.features import docs_assistant, topic_naming
+from app.domain.feature_stats.features import docs_assistant, memory, topic_naming
 
 # ``load`` is the feature's own report for one window; its return shape is the
 # feature's business (see ``features/docs_assistant``).
@@ -43,6 +43,12 @@ FEATURES: tuple[Feature, ...] = (
         title=topic_naming.TITLE,
         summary=topic_naming.SUMMARY,
         load=topic_naming.load,
+    ),
+    Feature(
+        id=memory.FEATURE_ID,
+        title=memory.TITLE,
+        summary=memory.SUMMARY,
+        load=memory.load,
     ),
 )
 

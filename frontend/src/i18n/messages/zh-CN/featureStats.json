@@ -9,7 +9,8 @@
     "unknown": "还没有这个功能的数据页",
     "unknownDesc": "地址里的 {id} 不在后台的功能清单里：可能是地址打错了，也可能是这一页还没做。",
     "window": "统计窗口：{start} 至 {end}（含两端，按 UTC 的天算）",
-    "windowAria": "统计窗口"
+    "windowAria": "统计窗口",
+    "loading": "正在加载"
   },
   "days": {
     "7": "近 7 天",
@@ -24,6 +25,10 @@
     "topicNaming": {
       "title": "智能命名",
       "summary": "话题标题的自动命名：花了多少、几个阶段在动、人后来改掉了多少"
+    },
+    "memory": {
+      "title": "记忆",
+      "summary": "文件式记忆：一个项目写了多少、索引撑没撑破、整理跑到哪了"
     }
   },
   "unit": {
@@ -143,6 +148,65 @@
       "caption": "共 {n} 次改名或撤销",
       "rename": "改标题",
       "undo": "撤销"
+    }
+  },
+  "memory": {
+    "kpi": {
+      "projects": "有记忆的项目",
+      "projectsNote": "写过记忆、整理过、或者有人读过正文的项目数。",
+      "entries": "项目记忆条数",
+      "entriesNote": "项目共看的那一份里，非空的记忆文件数。索引（MEMORY.md）和被拒的那一版（*.rejected.md）都不算。",
+      "personal": "个人记忆条数",
+      "personalNote": "私人记忆按人聚合，只有条数——这一页不读内容，也不出现私人记忆的文件名。",
+      "personalOf": "涉及 {owners} 人",
+      "index": "索引超预算",
+      "projectsUnit": "个项目",
+      "indexNote": "索引行数超过 200 行、或字节超过 25KB 的项目数。超出的部分注入时读不到，由整理决定留哪几条。",
+      "indexOf": "行超 {lines} · 字节超 {bytes}",
+      "hygiene": "待收拾",
+      "hygieneNote": "有文件没进索引（孤儿）、索引指着不存在的文件（悬空）、正文超过 1000 字（超长）三样加起来。",
+      "hygieneOf": "孤儿 {orphan} · 悬空 {dangling} · 超长 {over}",
+      "reads": "正文读取",
+      "readsNote": "这一段时间里，agent 有多少次真的翻开了记忆正文（读 MEMORY.md 不算，那是指针）。和 GET /admin/memory/reads 同一个口径。",
+      "dream": "整理完成",
+      "dreamNote": "最近十次整理（dream）里成功结束的次数。失败、被防删护栏拦下、跑着没回音都算没成功。",
+      "dreamOf": "被拦 {refused} · 卡住 {stuck}"
+    },
+    "trend": {
+      "title": "每天读了多少次正文",
+      "note": "全平台每天读了多少次记忆正文。没有数据的那天画 0，不是断线——断线会把安静的一天读成「没统计」。",
+      "reads": "正文读取"
+    },
+    "hygiene": {
+      "title": "待收拾的东西",
+      "note": "孤儿是写了却没进索引的文件；悬空是索引指着、但文件不在的那几行；超长是正文超过上限、写进去也读不全的条目。",
+      "orphan": "孤儿文件",
+      "dangling": "悬空索引行",
+      "overBody": "超长正文"
+    },
+    "dream": {
+      "title": "整理最近十次跑了什么结局",
+      "note": "整理每隔一段时间把项目记忆梳一遍。完成是跑完了；失败是那轮出错了；被拦是防删护栏判了「这次删得太多」、一个字都没动；卡住是跑着、超过一小时还没回音。",
+      "caption": "最近一次成功：{at}",
+      "completed": "完成",
+      "failed": "失败",
+      "refused": "被拦下",
+      "stuck": "卡住"
+    },
+    "never": "还没有过",
+    "table": {
+      "title": "按项目看",
+      "note": "每个项目一行。条数、个人、索引、待收拾、读取都是这一页数出来的；私人记忆只出数、不出名字。",
+      "project": "项目",
+      "entries": "条数",
+      "personal": "个人",
+      "index": "索引",
+      "pending": "待收拾",
+      "pendingTitle": "孤儿 {orphan} · 悬空 {dangling} · 超长 {over}",
+      "reads": "读取",
+      "dream": "最近整理",
+      "stuck": "卡住",
+      "empty": "这个窗口里还没有项目写过记忆。"
     }
   }
 }
