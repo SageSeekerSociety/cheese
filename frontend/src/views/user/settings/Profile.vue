@@ -88,21 +88,18 @@
         />
       </div>
 
-      <Transition name="foot">
-        <div v-if="dirty" class="foot-reveal">
-          <div class="foot-reveal__clip">
-            <div class="profile__foot">
-              <span class="profile__foot-note">{{ t('account.profile.unsaved') }}</span>
-              <BaseButton :disabled="saving" @click="revert">
-                {{ t('account.profile.revert') }}
-              </BaseButton>
-              <BaseButton type="submit" kind="primary" :disabled="!valid" :loading="saving">
-                {{ t('account.profile.save') }}
-              </BaseButton>
-            </div>
-          </div>
-        </div>
-      </Transition>
+      <SaveBar
+        :dirty="dirty"
+        :saving="saving"
+        :saved="saved"
+        :error="error"
+        :disabled="!valid"
+        :note="t('account.profile.unsaved')"
+        :revert-label="t('account.profile.revert')"
+        :save-label="t('account.profile.save')"
+        @revert="revert"
+        @save="save"
+      />
     </form>
   </div>
 </template>
@@ -116,8 +113,10 @@ import { toast } from 'vuetify-sonner'
 import { getAvatarUrl } from '@/utils/materials'
 
 import { ensureDefaultAvatarId, globalDefaultAvatarId, isChosenAvatar } from '@/composables/useChosenAvatar'
+import { useSaveState } from '@/composables/useSaveState'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import SaveBar from '@/components/base/SaveBar.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import { t } from '@/i18n'
 import { AvatarsApi } from '@/network/api/avatars'
@@ -154,7 +153,6 @@ const savedNickname = computed(() => user.value?.nickname ?? '')
 const savedIntro = computed(() => user.value?.intro ?? '')
 const nickname = ref(savedNickname.value)
 const intro = ref(savedIntro.value)
-const saving = ref(false)
 
 // The record can arrive or change after the page opens. A field follows it
 // only while nobody has edited that field.
@@ -182,25 +180,28 @@ const introError = computed(() =>
 const dirty = computed(() => nickname.value !== savedNickname.value || intro.value !== savedIntro.value)
 const valid = computed(() => !nicknameError.value && !introError.value)
 
+// 保存结果就地回执（§3.11）：这一块一直在屏幕上，一条几秒就走掉的 toast
+// 不够用。成功写进旁边那行 SaveStatus，失败同样是。
+const { saving, saved, error, run } = useSaveState({
+  feedback: 'inline',
+  dirty: () => dirty.value,
+  messages: { saved: t('account.profile.saved'), failed: t('account.profile.saveFailed') },
+})
+
 function revert() {
   nickname.value = savedNickname.value
   intro.value = savedIntro.value
 }
 
 async function save() {
-  if (!user.value || !dirty.value || !valid.value || saving.value) return
-  saving.value = true
-  const change = { nickname: nickname.value.trim(), intro: intro.value }
-  try {
-    await UserApi.updateUserInfo(user.value.id, change)
+  const current = user.value
+  if (!current || !dirty.value || !valid.value) return
+  await run(async () => {
+    const change = { nickname: nickname.value.trim(), intro: intro.value }
+    await UserApi.updateUserInfo(current.id, change)
     remember(change)
     nickname.value = change.nickname
-    toast.success(t('account.profile.saved'))
-  } catch (error) {
-    fail(error, t('account.profile.saveFailed'))
-  } finally {
-    saving.value = false
-  }
+  })
 }
 
 // ---- Avatar: takes effect as soon as it is chosen ----
@@ -351,52 +352,6 @@ onMounted(ensureDefaultAvatarId)
   display: none;
 }
 
-/* The footer opens out of the card's bottom edge when there is something to
-   save, and folds back into it when there is not. */
-.foot-reveal {
-  display: grid;
-  grid-template-rows: 1fr;
-}
-
-.foot-reveal__clip {
-  min-height: 0;
-  overflow: hidden;
-}
-
-.foot-enter-active {
-  transition:
-    grid-template-rows var(--dur-base) var(--ease-out),
-    opacity var(--dur-base) var(--ease-out);
-}
-
-.foot-leave-active {
-  transition:
-    grid-template-rows var(--dur-quick) var(--ease-in),
-    opacity var(--dur-quick) var(--ease-in);
-}
-
-.foot-enter-from,
-.foot-leave-to {
-  grid-template-rows: 0fr;
-  opacity: 0;
-}
-
-.profile__foot {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  padding: 16px 24px;
-  background: var(--canvas);
-  border-top: 1px solid var(--line);
-}
-
-.profile__foot-note {
-  flex-grow: 1;
-  font-size: 13px;
-  line-height: var(--lh-13);
-  color: var(--muted);
-}
-
 @media (max-width: 599.98px) {
   .profile__head {
     flex-direction: column;
@@ -413,10 +368,6 @@ onMounted(ensureDefaultAvatarId)
   .srow--field > .srow__k,
   .srow__stack {
     padding-top: 0;
-  }
-
-  .profile__foot {
-    padding: 12px 16px;
   }
 }
 </style>
