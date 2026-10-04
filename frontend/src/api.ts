@@ -3,7 +3,6 @@
 import type {
   AcceptCard,
   AgentConfiguration,
-  AgentControlState,
   AgentType,
   ApiEnvelope,
   Block,
@@ -1517,32 +1516,10 @@ export function getStepOutput(topicId: string, blockId: string): Promise<{ outpu
   )
 }
 
+export type { AgentControlResult, AgentControlState } from './api/agentControl'
+export { getAgentControl, sendAgentControl } from './api/agentControl'
 export { requestPreviewSession } from './api/preview'
 export type { PreviewSelection, PreviewSession } from './types/preview'
-
-export interface AgentControlResult {
-  request_id: string
-  status: string
-  result: { response: { subtype: string; error?: string; response?: Record<string, unknown> } } | null
-}
-
-export type { AgentControlState }
-
-export function getAgentControl(topicId: string) {
-  return request<AgentControlState>(`/topics/${encodeURIComponent(topicId)}/agent/control`)
-}
-
-export function sendAgentControl(
-  topicId: string,
-  sessionId: string,
-  control: Record<string, unknown>,
-  requestId = crypto.randomUUID()
-) {
-  return request<AgentControlResult>(`/topics/${encodeURIComponent(topicId)}/agent/control`, {
-    method: 'POST',
-    body: JSON.stringify({ session_id: sessionId, request_id: requestId, request: control }),
-  })
-}
 
 export function getGitLog(
   projectId: string,

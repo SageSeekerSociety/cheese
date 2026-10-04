@@ -255,6 +255,8 @@
         "label": "会话详情",
         "connected": "会话已连接",
         "none": "没有在运行的会话",
+        "several": "房间里有 {count} 个会话在运行，选一位队友查看",
+        "teammate": "队友",
         "expand": "查看详情",
         "collapse": "收起详情",
         "view": "查看",
