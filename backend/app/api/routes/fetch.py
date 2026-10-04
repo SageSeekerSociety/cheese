@@ -96,6 +96,8 @@ class PageCheckIn(BaseModel):
     html: str = Field(min_length=1, max_length=5_000_000)
     widths: list[int] = Field(default=[400, 1280], min_length=1, max_length=3)
     color_scheme: str = Field(default="light", pattern="^(light|dark)$")
+    #: Also print an A4 PDF with these margins; see browser-render's `/inspect`.
+    pdf_margin: str | None = Field(default=None, max_length=40)
     topic: uuid.UUID | None = None
     project: uuid.UUID | None = None
 
@@ -125,10 +127,13 @@ async def check_page(body: PageCheckIn, actor: ActorResolverDep) -> dict:
                     "html": body.html,
                     "widths": body.widths,
                     "color_scheme": body.color_scheme,
+                    "pdf_margin": body.pdf_margin,
                 },
             )
     except httpx.HTTPError as exc:
-        raise SystemBusyError(f"Page renderer unreachable: {type(exc).__name__}") from exc
+        raise SystemBusyError(
+            f"Page renderer unreachable: {type(exc).__name__}"
+        ) from exc
     if r.status_code != 200:
         raise SystemBusyError(f"Page renderer answered HTTP {r.status_code}")
     return ok(r.json())

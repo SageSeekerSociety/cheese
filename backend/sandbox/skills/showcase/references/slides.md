@@ -41,11 +41,6 @@ cheese show out.html
 
 ## 看一次
 
-摆之前渲染一次：每页截一张，确认没有文字溢出/被裁。
-```bash
-source /var/tmp/pw/env.sh
-uv run --quiet --with playwright --python 3.13 python 看.py   # 视口 1280×720，page.goto(URL+"#id") 逐页截
-```
-量每页 `slide.scrollHeight - slide.clientHeight`，>0 就是溢出了盒子（舞台上 `overflow:hidden`，会被悄悄裁掉）。**看一次、改一轮就摆，不搭反复截图循环**——没有浏览器时别装，改成通读 HTML 确认。
+摆之前跑一次 `cheese check deck.html`。手机宽那张截图是全部幻灯片竖排的阅读视图，用来通读每一页。报告里的「内容被裁掉」最要紧：舞台是 `overflow:hidden`，字放不下会被悄悄裁掉。按报告改一轮就摆，不搭反复截图的循环。
 
 窄屏（≤720px）模板会自动从缩放舞台切成纵向堆叠的阅读视图（每页一块、正文 ≥15px），不用你写媒体查询。

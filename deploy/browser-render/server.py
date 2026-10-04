@@ -122,7 +122,11 @@ async def render(body: RenderIn) -> dict:
         )
     if not result.success:
         return {"ok": False, "error": result.error_message or "render failed"}
-    return {"ok": True, "markdown": str(result.markdown or ""), "html": result.html or ""}
+    return {
+        "ok": True,
+        "markdown": str(result.markdown or ""),
+        "html": result.html or "",
+    }
 
 
 #: Our own measurement, never the caller's: the service still runs no
@@ -162,12 +166,35 @@ MEASURE_JS = r"""
     .filter((img) => img.complete && img.naturalWidth === 0)
     .map((img) => (img.getAttribute("src") || "").slice(0, 200))
     .slice(0, 10);
+  // A box that hides its overflow and holds more than it shows: a slide whose
+  // text ran past the stage is cut off silently, which no width check sees.
+  const clipped = [];
+  for (const el of document.body.querySelectorAll("*")) {
+    const st = getComputedStyle(el);
+    if (st.display === "none" || st.visibility === "hidden") continue;
+    if (!/hidden|clip/.test(st.overflowY + st.overflowX)) continue;
+    // A screen-reader-only label is a 1px box on purpose.
+    if (el.clientWidth <= 2 || el.clientHeight <= 2) continue;
+    const lost = Math.max(
+      el.scrollHeight - el.clientHeight,
+      el.scrollWidth - el.clientWidth,
+    );
+    if (lost <= 4 || !(el.innerText || "").trim()) continue;
+    if (clipped.some((c) => c.el.contains(el))) continue;
+    clipped.push({ el, lost });
+    if (clipped.length >= 8) break;
+  }
   return {
     viewport_width: vw,
     broken_images: broken,
+    clipped: clipped.map((c) => ({ element: name(c.el), hidden_px: c.lost })),
     page_width: document.scrollingElement.scrollWidth,
     page_height: document.scrollingElement.scrollHeight,
-    overflowing: wide.map((w) => ({ element: name(w.el), right: w.right, width: w.width })),
+    overflowing: wide.map((w) => ({
+      element: name(w.el),
+      right: w.right,
+      width: w.width,
+    })),
   };
 }
 """
@@ -183,6 +210,36 @@ class InspectIn(BaseModel):
     widths: list[int] = Field(default=[400, 1280], min_length=1, max_length=3)
     settle_seconds: float = Field(default=0.8, ge=0, le=10)
     color_scheme: str = Field(default="light", pattern="^(light|dark)$")
+    #: Also print it to an A4 PDF with these margins (CSS lengths: one for all
+    #: sides, or vertical then horizontal). The page is the layout: printed
+    #: here it matches what the room shows, fonts included.
+    pdf_margin: str | None = Field(
+        default=None, pattern=r"^[0-9.]+(mm|cm|in|px)?( [0-9.]+(mm|cm|in|px)?)?$"
+    )
+
+
+async def _print_pdf(browser, body: InspectIn) -> str:
+    parts = (body.pdf_margin or "0").split()
+    vertical, horizontal = parts[0], parts[-1]
+    context = await browser.new_context(color_scheme="light")
+    try:
+        page = await context.new_page()
+        await page.set_content(body.html, wait_until="load", timeout=INSPECT_TIMEOUT_MS)
+        await page.emulate_media(media="print")
+        await page.wait_for_timeout(int(body.settle_seconds * 1000))
+        pdf = await page.pdf(
+            format="A4",
+            print_background=True,
+            margin={
+                "top": vertical,
+                "bottom": vertical,
+                "left": horizontal,
+                "right": horizontal,
+            },
+        )
+    finally:
+        await context.close()
+    return base64.b64encode(pdf).decode("ascii")
 
 
 async def _browser():
@@ -254,10 +311,12 @@ async def inspect(body: InspectIn) -> dict:
         try:
             browser = await _browser()
             views = [await _inspect_at(browser, body, w) for w in body.widths]
+            pdf = await _print_pdf(browser, body) if body.pdf_margin else None
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": f"{type(exc).__name__}: {exc}"[:500]}
     return {
         "ok": True,
         "seconds": round(time.monotonic() - started, 2),
         "views": views,
+        "pdf_b64": pdf,
     }
