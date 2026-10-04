@@ -25,7 +25,7 @@
              have no hover, so they are always shown there. Type-specific actions
              (accept / decline) do not carry this class and stay visible. -->
         <div
-          class="d-flex justify-end align-center mt-2"
+          class="d-flex justify-end align-center mt-3"
           :class="{ 'notification-item__actions': !(renderedActions && renderedActions.length > 0) }"
         >
           <template v-if="renderedActions && renderedActions.length > 0">
@@ -52,7 +52,7 @@
             >
               {{ t('notifications.common.markAsRead') }}
             </BaseButton>
-            <BaseButton kind="ghost" size="sm" density="comfortable" class="px-2 ms-2" @click.stop="deleteNotification">
+            <BaseButton kind="ghost" size="sm" density="comfortable" class="px-2 ms-4" @click.stop="askDelete">
               {{ t('notifications.common.delete') }}
             </BaseButton>
           </template>
@@ -86,7 +86,7 @@
              have no hover, so they are always shown there. Type-specific actions
              (accept / decline) do not carry this class and stay visible. -->
         <div
-          class="d-flex justify-end align-center mt-2"
+          class="d-flex justify-end align-center mt-3"
           :class="{ 'notification-item__actions': !(renderedActions && renderedActions.length > 0) }"
         >
           <template v-if="renderedActions && renderedActions.length > 0">
@@ -113,7 +113,7 @@
             >
               {{ t('notifications.common.markAsRead') }}
             </BaseButton>
-            <BaseButton kind="ghost" size="sm" density="comfortable" class="px-2 ms-2" @click.stop="deleteNotification">
+            <BaseButton kind="ghost" size="sm" density="comfortable" class="px-2 ms-4" @click.stop="askDelete">
               {{ t('notifications.common.delete') }}
             </BaseButton>
           </template>
@@ -121,6 +121,18 @@
       </div>
     </div>
   </v-list-item>
+
+  <!-- 删除是一条不可撤销的动，所以先问一句（设计系统 §3.7）：确认键写动作本身、
+     实心红，且不在悬停里出现。点遮罩或按 Esc 都不关。 -->
+  <ConfirmDialog
+    v-model="confirmingDelete"
+    :title="t('notifications.common.deleteTitle')"
+    :confirm-label="t('notifications.common.delete')"
+    danger
+    @confirm="doDelete"
+  >
+    {{ t('notifications.common.deleteHint') }}
+  </ConfirmDialog>
 </template>
 
 <script setup lang="ts">
@@ -138,6 +150,7 @@ import { useFormattedTime } from '@/utils/dateTime'
 import NotificationAvatar from './NotificationAvatar.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import { getNotificationRenderer } from '@/services/notification/registry'
 
 const props = defineProps<{
@@ -206,8 +219,15 @@ const markAsRead = (event: Event) => {
   props.onMarkAsRead(props.notification.id)
 }
 
-const deleteNotification = (event: Event) => {
+// 删除不可撤销，点一下先弹确认框：这颗按钮就在正文旁边，条条都常驻，误触的代价是
+// 一条再也回不来的通知。确认之后再真的删。
+const confirmingDelete = ref(false)
+const askDelete = (event: Event) => {
   event.stopPropagation()
+  confirmingDelete.value = true
+}
+const doDelete = () => {
+  confirmingDelete.value = false
   props.onDelete(props.notification.id)
 }
 

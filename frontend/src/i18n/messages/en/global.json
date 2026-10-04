@@ -62,6 +62,30 @@
     "label": "Search settings by name",
     "none": "No settings named “{text}”"
   },
+  "shortcuts": {
+    "then": "then",
+    "title": "Keyboard shortcuts",
+    "open": "Keyboard shortcuts (?)",
+    "scope": {
+      "global": "Everywhere",
+      "timeline": "Conversation",
+      "composer": "Message box"
+    },
+    "palette": "Open the command palette",
+    "railSwitch": "Go to sidebar item N",
+    "openSheet": "Open this sheet",
+    "notInInputs": "Not while typing",
+    "within1s": "Second key within 1s",
+    "scrollTimeline": "Scroll the conversation",
+    "timelineFocus": "Tab to the conversation first",
+    "send": "Send",
+    "newline": "New line",
+    "summon": "Send and hand to {name}",
+    "mentionPick": "Pick from the {'@'} list",
+    "mentionClose": "Close the {'@'} list",
+    "touchNewline": "On touch screens Enter adds a new line",
+    "markAllRead": "Mark all rooms read"
+  },
   "firstHint": {
     "ok": "Got it",
     "acceptCard": "The agent has delivered and is waiting for you. Review the result, then Accept to mark the work as delivered, or Send back with a reason and it will keep working.",

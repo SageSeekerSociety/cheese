@@ -62,6 +62,30 @@
     "label": "按名字搜索设置",
     "none": "没有名字含「{text}」的设置"
   },
+  "shortcuts": {
+    "then": "然后",
+    "title": "键盘快捷键",
+    "open": "键盘快捷键（?）",
+    "scope": {
+      "global": "全局",
+      "timeline": "对话",
+      "composer": "输入框"
+    },
+    "palette": "打开命令面板",
+    "railSwitch": "切到侧栏第 N 格",
+    "openSheet": "打开这张表",
+    "notInInputs": "输入框里不认",
+    "within1s": "一秒内按第二下",
+    "scrollTimeline": "上下翻动对话",
+    "timelineFocus": "先按 Tab 把焦点移到对话区",
+    "send": "发送",
+    "newline": "换行",
+    "summon": "发送并交给{name}",
+    "mentionPick": "在 {'@'} 名单里选人",
+    "mentionClose": "收起 {'@'} 名单",
+    "touchNewline": "触屏上回车是换行",
+    "markAllRead": "全部标为已读"
+  },
   "firstHint": {
     "ok": "知道了",
     "acceptCard": "芝士交完了，在等你验收。先「审阅」看结果，没问题点「采纳」，这件事才算交付；不满意点「退回」写一句原因，它会接着改。",

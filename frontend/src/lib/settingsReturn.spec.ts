@@ -28,3 +28,23 @@ describe('关掉设置去哪', () => {
     expect(pageBeforeSettings('/home')).toBe('/inbox')
   })
 })
+
+// 从设置里点出去的一页（设置里那颗「市场」就是）不算「离开设置」：它是从设置这一层
+// 点开的下一层，关掉设置该回最初打开它的那一页，而不是刚点开的那一页。
+describe('从设置里点出去的一页', () => {
+  const settings = (path = '/projects/1/settings/agents') => page(path, { settingsOverlay: true })
+
+  it('不算离开设置：关掉设置回最初那一页，不回刚点开的市场', () => {
+    rememberPageBeforeSettings(page('/projects/1/topics'))
+    rememberPageBeforeSettings(settings())
+    rememberPageBeforeSettings(page('/market'), settings())
+    expect(pageBeforeSettings('/home')).toBe('/projects/1/topics')
+  })
+
+  it('从普通页面走到市场，再开设置关掉，回的是市场', () => {
+    rememberPageBeforeSettings(page('/projects/1/topics'))
+    rememberPageBeforeSettings(page('/market'), page('/projects/1/topics'))
+    rememberPageBeforeSettings(settings())
+    expect(pageBeforeSettings('/home')).toBe('/market')
+  })
+})

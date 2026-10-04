@@ -323,48 +323,59 @@ const joinOpen = ref(false)
 <style scoped>
 /* 行高、悬停、选中、图标大小都是全站那套侧栏行（common.scss 的 .side-nav）。这里只
    管首页这份目录自己多出来的东西：团队行的箭头和头像、展开出来的四样。 */
+
 /* 每一行的前缀占同样宽：团队行是「箭头 + 头像」，其余行把图标或首字放在头像那一格，
    所以所有名字从同一条竖线开始，展开出来的四样东西也和团队名对齐。 */
 .home-nav :deep(.v-list-item__prepend) {
   display: flex;
   justify-content: flex-end;
   gap: 6px;
+
   /* 箭头 16 + 6 + 头像 22 + 6：团队行最宽，这一格按它定，别的行只是左边空着。 */
   width: 50px;
 }
+
 /* Vuetify 在图标后面的 spacer 留 8px、头像后面留 0，于是图标行的图标比团队头像往左
    错出 8px。统一成 0，前缀里只剩上面那个 6px 的间隔。 */
 .home-nav :deep(.v-list-item__prepend > .v-list-item__spacer) {
   width: 0 !important;
 }
+
 /* 图标占头像那一格（22px 宽）居中，名字才和团队名、空间名从同一条竖线开始。 */
 .home-nav :deep(.v-list-item__prepend > .v-icon) {
   width: 22px;
 }
+
 .home-nav__mark {
-  flex: none;
-  /* 形状照 GitHub：人是圆的，团队、空间是圆角方块。 */
-  border-radius: var(--radius-md) !important;
   font-size: 12px;
   font-weight: 600;
   color: var(--muted);
   background: var(--fill-2);
+
+  /* 形状照 GitHub：人是圆的，团队、空间是圆角方块。 */
+  border-radius: var(--radius-md) !important;
+  flex: none;
 }
+
 /* 头像读不到（没传过、或头像服务不在）时退回首字，和空间那一格同一个样子。 */
+
 /* 自己名下那一行是本人：用人的圆形。 */
 .home-nav__mark--person {
   border-radius: var(--radius-pill) !important;
 }
+
 .home-nav__mark :deep(.v-img__error) {
   display: flex;
   align-items: center;
   justify-content: center;
   height: 100%;
 }
+
 .home-nav__more {
   width: 24px;
   height: 24px;
 }
+
 .home-nav__mark--letter {
   display: inline-flex;
   align-items: center;
@@ -373,30 +384,51 @@ const joinOpen = ref(false)
   height: 22px;
   border-radius: var(--radius-md);
 }
+
 .home-nav__caret {
   color: var(--faint);
 }
+
 .home-nav__name {
-  color: var(--ink);
   font-size: 14px;
+  color: var(--ink);
 }
+
 .home-nav__leaf {
   padding-inline-start: 58px !important;
 }
+
 .home-nav__leaf :deep(.v-list-item-title) {
-  color: var(--muted);
   font-size: 13px;
+  color: var(--muted);
 }
+
 .home-nav__action :deep(.v-list-item-title) {
-  color: var(--muted);
   font-size: 13px;
+  color: var(--muted);
 }
+
 .home-nav__meta {
-  color: var(--faint);
   font-size: 12px;
+  color: var(--faint);
 }
+
 .home-nav__more {
   margin-inline-start: 4px;
   color: var(--muted);
+}
+
+/* 手指点得中（设计系统 §10.1）：这颗只有 24px，触屏上把能点的范围撑到 44×44，画出来
+   的样子不变。 */
+@media (pointer: coarse) {
+  .home-nav__more::before {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+    content: '';
+    transform: translate(-50%, -50%);
+  }
 }
 </style>
