@@ -138,9 +138,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     { immediate: true, deep: true }
   )
 
-  // 此刻显示时间线的哪一段 —— 见 room/composables/useTimeline。
-  // 只装画得出来的块：房间里事件常比消息多，不露面的块要是也占窗口额度，封顶时会
-  // 挤满「最新的一截」，让「回到最新」换上一屏空的。见 rendersInRoom。
+  // 此刻显示时间线的哪一段 —— 见 room/composables/useTimeline；rendersInRoom 只放画得出来的块进窗口，不露面的块不占额度。
   const timeline = useTimeline({ renders: rendersInRoom })
   const { messages, hasMore, hasNewer } = timeline
   const loadingHistory = ref(false)
