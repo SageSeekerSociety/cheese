@@ -61,6 +61,9 @@ def test_the_launch_writes_the_files_claude_reads_before_it_starts(tmp_path):
     assert planted == {
         "webfetch_transport.cjs",
         *native_skill_files(),
+        # What this seat was shipped, which the next launch removes the
+        # retired ones against. Claude never reads it.
+        "skills/.cheese-platform-skills",
     }
     assert (_seat(tmp_path) / "remote-session/base-settings.json").is_file()
     assert (config / "projects").resolve() == (tmp_path / ".claude/projects").resolve()

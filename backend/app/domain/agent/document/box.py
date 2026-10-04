@@ -31,9 +31,9 @@ from app.core.errors import ForbiddenError, ValidationError
 from app.core.sentences import error_frame, exception_text, say
 from app.domain.agent.chat import ChatService
 from app.domain.agent.document import question, session
-from app.domain.agent.session_host.answer import Answer, Tool, Words
+from app.domain.agent.session_host.answer import Answer, Tool, Waiting, Words
 from app.domain.agent.session_host.answer import ask as ask_session
-from app.domain.agent.session_host.contract import HostFull, Prompt
+from app.domain.agent.session_host.contract import HostFull, Prompt, StartAbandoned
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.living_doc import work_edits
 
@@ -149,10 +149,6 @@ def _box_key(conversation: uuid.UUID | str) -> str:
     return f"doc-agent:box:{conversation}"
 
 
-def _stop_key(conversation: uuid.UUID | str) -> str:
-    return f"doc-agent:stop:{conversation}"
-
-
 @dataclass(frozen=True)
 class Box:
     """Whose a box's conversation is, and what it last answered."""
@@ -199,10 +195,11 @@ async def stop(
     project_id: uuid.UUID,
     conversation: uuid.UUID,
 ) -> None:
-    """Stop what the box is waiting on: its turn, or the answer being written."""
-    await redis.set(_stop_key(conversation), "1", ex=int(question.WAIT_S))
-    if await question.asked(redis, conversation):
-        await sessions.stop(session.ref(project_id, conversation))
+    """Stop what the box is waiting on: its turn, the session host, or the
+    answer being written. What was written stays, marked as stopped."""
+    await question.stop(
+        redis, sessions, conversation, session.ref(project_id, conversation)
+    )
 
 
 # --- one question --------------------------------------------------------------
@@ -262,14 +259,12 @@ async def ask(
     async with factory() as db:
         bound = await question.bind(db, room_id)
     await _keep(redis, conversation, Box(asker, room_id))
-    await redis.delete(_stop_key(conversation))
     work = uuid.uuid4()
 
     async def queued() -> None:
         await emit("queued", {})
 
-    async def stopped() -> bool:
-        return bool(await redis.exists(_stop_key(conversation)))
+    stopped = question.stopped(redis, conversation)
 
     slot = await question.take_turn(
         redis,
@@ -280,31 +275,40 @@ async def ask(
     )
     if slot is None:
         if await stopped():
+            # A stop is for the question it reached: the next one starts
+            # unstopped.
+            await question.unstop(redis, conversation)
             await emit("done", {"answer": "", "edits": [], "stopped": True})
         else:
             busy = say("docAgentBoxBusy", agent=bound.agent_name)
             await emit("error", error_frame(busy))
         return
     await emit("working", {})
-    answer, refused, spent = "", None, False
+    answer, written, refused, spent = "", "", None, False
     try:
         async with factory() as db:
             await question.admit(db, project_id, bound)
             around = await question.surroundings(
                 db, project_id=project_id, room_id=room_id, seat=bound.agent_handle
             )
-            acting = await question.credential(
-                db,
-                project_id=project_id,
-                room_id=room_id,
-                agent=bound.agent_handle,
-                asker=asker,
-                work=work,
-                may_edit=allowed,
-            )
         prompt = _question(
             around, preset=chosen, text=text, selection=selection, may_edit=allowed
         )
+
+        async def said() -> Prompt:
+            # Minted once the session is there: its lifetime is the answer's.
+            async with factory() as db:
+                acting = await question.credential(
+                    db,
+                    project_id=project_id,
+                    room_id=room_id,
+                    agent=bound.agent_handle,
+                    asker=asker,
+                    work=work,
+                    may_edit=allowed,
+                )
+            return Prompt(work, prompt, acting=acting)
+
         started = session.session_for(
             project_id=project_id,
             room_id=room_id,
@@ -317,11 +321,15 @@ async def ask(
         async for event in ask_session(
             sessions,
             *started,
-            Prompt(work, prompt, acting=acting),
+            said,
             work_id=work,
             ceiling_s=question.ANSWER_S,
+            stopped=stopped,
         ):
-            if isinstance(event, Words):
+            if isinstance(event, Waiting):
+                await emit("queued", {})
+            elif isinstance(event, Words):
+                written += event.text
                 await emit("delta", {"text": event.text})
             elif isinstance(event, Tool):
                 await emit("tool", {"name": event.name})
@@ -339,6 +347,8 @@ async def ask(
         refused = exception_text(exc)
     except HostFull:
         refused = say("docAgentBoxBusy", agent=bound.agent_name)
+    except StartAbandoned:
+        pass
     except Exception:  # noqa: BLE001 — the box is told; the log keeps why
         logger.warning(
             "doc agent box failed conversation=%s", conversation, exc_info=True
@@ -348,7 +358,11 @@ async def ask(
         await slot.release()
         edits = await work_edits.take(redis, str(work))
     was_stopped = await stopped()
-    if refused is None or edits or was_stopped:
+    await question.unstop(redis, conversation)
+    if was_stopped:
+        # What it had written when it was stopped stays, marked as stopped.
+        answer, refused = written.strip(), None
+    if refused is None or edits:
         # What was changed was changed, answer or not: the box shows it and can
         # undo it.
         answer = answer if refused is None else ""

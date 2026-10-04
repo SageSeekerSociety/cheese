@@ -100,6 +100,8 @@ Dockerfile 从上游镜像的 digest 派生，打补丁前先核对被改文件�
 - **写 `config.yaml`**：加一条路由和价格，在 `model_info` 下写 `cheese_selectable: true`；`cheese_tier` 写这个模型的档位（included / premium / frontier，缺省 included），方案按它限定可用的模型。这是随镜像发布的基线，改它要发布网关。标记是 opt-in 的，因为网关也路由不上菜单的模型——`glm-4.5` 是分身别名指向的地方。
 - **管理页**：管理员增删改停运行时模型（`STORE_MODEL_IN_DB` 打开），不用发布；每次写都记审计（谁做的），写成功后刷新目录，模型立刻可选。`config.yaml` 里声明的模型在页面上是只读的，网关不许写它们。
 
+还有一项要按模型手动标：**`supports_mid_conversation_system: false`**。Claude Code 会把技能清单、运行环境和日期放在对话中间的 system 消息里；有的线路收不了它，有的是网关转换时丢掉，有的是上游丢掉或整条请求拒绝。标了 `false` 的模型，平台启动 Claude Code 时设 `CLAUDE_CODE_MODEL_CAPABILITIES`，让它把这些内容并进第一条用户消息（`gateway_usage.model_capabilities`）。没标的照 Claude Code 的默认。这一项只在量过之后手动标，不按上游推断：线路以后支持了，把标记去掉就行。量法是从后端经网关发一条对话中间带暗号的 system 消息，问模型暗号是什么。`config.yaml` 里的模型写在条目里，运行时模型在管理页的能力开关里关掉。
+
 两条路欠同一个不变式，服务层与 `check_config.py` 各守一边：**没价的可选模型等于不上架**。它的 token 会按零计费，项目的 `max_budget` 永远不会跳，第一个征兆是发票——模型从选单里消失会被发现，一个悄悄失灵的刹车不会。改完清单跑：
 
 ```sh

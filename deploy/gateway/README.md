@@ -63,6 +63,11 @@ with the metering proxy, where the proxy's ChatGPT accounts answer at
 `http://metering-proxy:8445/chatgpt/<name>` (deploy/metering-proxy/README.md).
 The release creates the network if the proxy's release has not.
 
+A request to a model routed there carries the caller's Claude Code session as
+the `session_id` header (`chatgpt_session.py`, registered under
+`litellm_settings.callbacks`). The Codex backend keeps a conversation on one
+machine by that header, and without it the conversation's prompt cache misses.
+
 The box's `backend/.env` must contain:
 
 ```
@@ -88,6 +93,12 @@ with the image, so a deployment's always-on models belong here; changing it
 means releasing the gateway. The marker is opt-in because the
 gateway also routes models that are not menu items — `glm-4.5` is where the
 subagent alias points.
+
+A model whose route loses the system-role messages Claude Code puts in the
+middle of a conversation is marked `supports_mid_conversation_system: false`
+under `model_info` (or with the switch on the admin page). Mark it only after
+measuring it; cheese then launches Claude Code to put that content in the first
+user message. See `docs/manual/dev/gateway.md`.
 
 **On the admin models page** — administrators add, edit, disable, and delete
 runtime models (`STORE_MODEL_IN_DB` is on) without a release. Every write is

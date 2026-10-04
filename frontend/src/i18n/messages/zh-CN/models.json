@@ -88,7 +88,9 @@
   "capability": {
     "reasoning": "推理",
     "vision": "视觉",
-    "adaptiveThinking": "自适应思考"
+    "adaptiveThinking": "自适应思考",
+    "midConversationSystem": "支持对话中途的系统消息",
+    "noMidConversationSystem": "不支持对话中途的系统消息"
   },
   "detail": {
     "title": "模型详情",

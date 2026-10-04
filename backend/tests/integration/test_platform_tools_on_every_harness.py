@@ -296,6 +296,7 @@ def test_a_message_through_any_harness_silences_the_reminder(
     the same way from every harness — or one harness is reminded forever, or
     never."""
     from app.domain.agent import chat as chat_module
+    from app.domain.agent.room import turn as turn_module
 
     _, topic = room
     chat = client.app.dependency_overrides[get_chat_service]()
@@ -307,6 +308,7 @@ def test_a_message_through_any_harness_silences_the_reminder(
             return clock
 
     monkeypatch.setattr(chat_module, "datetime", Clock)
+    monkeypatch.setattr(turn_module, "datetime", Clock)
     threshold = settings.chat_progress_reminder_after_s
     notices: list[str] = []
 

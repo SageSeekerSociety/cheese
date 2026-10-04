@@ -17,7 +17,7 @@
 四条都成立，就点名刚才在这里干活的那个队友（名册上的 agent 席位里最近一个动过手
 的；找不到就回落到房间的默认席位），用一条平台事件起一轮让它补第一版。
 
-**「是不是工作房间」不由这里回答。** 提醒要跟提示词说同一句话：`agent/chat.py`
+**「是不是工作房间」不由这里回答。** 提醒要跟提示词说同一句话：`agent/room/turn.py`
 给不给「本话题还没有实况文档」那一段，问的是 `_assemble_turn` 的 `needs_place`，
 而那是 `_is_dm`（`is_private` 全仓唯一的读点）推出来的两个答案之一。本模块再问一遍
 那个布尔，就是同一件事多一份会漂移的声明（结论 19、ARCH §9.1 判据②），所以答案
@@ -56,7 +56,7 @@ SessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 #: (room_id, 点名的 agent 席位, 给 agent 的提示词, 房间里那一行, 事件 meta)
 Submit = Callable[[uuid.UUID, str, str, str, dict], Awaitable[None] | None]
 #: 这间房按不按房间的规矩来（实况文档、租地点）。由调用方从 `is_private` 唯一的
-#: 读点（`agent/chat.py` 的 `_is_dm`）推出来带进来，见模块开头。
+#: 读点（`agent/room/turn.py` 的 `_is_dm`）推出来带进来，见模块开头。
 WorkRoom = Callable[[Topic], bool]
 
 #: 「干过活」的门槛：agent 在这间房里调过的工具次数。一次寒暄通常是零到两次。
@@ -145,7 +145,7 @@ async def check(
     """看一眼 ``room_id``；该提醒就提醒，返回是否提醒了。
 
     ``is_a_work_room`` 由调用方带进来：全仓只有一个地方读 ``is_private``
-    （``agent/chat.py`` 的 ``_is_dm``），这里要的正是它推出来的那个答案。
+    （``agent/room/turn.py`` 的 ``_is_dm``），这里要的正是它推出来的那个答案。
     """
     redis = get_redis_client()
     lock = f"doc-nudge:lock:{room_id}"

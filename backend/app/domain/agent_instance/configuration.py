@@ -1,6 +1,7 @@
 """Saved teammate configuration and the models available to a project."""
 
 from dataclasses import asdict
+from typing import Literal, get_args
 
 from pydantic import BaseModel, Field
 
@@ -14,6 +15,10 @@ from app.domain.agent.market import (
 )
 from app.domain.agent.supply import GATEWAY, SUBSCRIPTION, resolve_pool
 
+#: The thinking efforts a teammate can ask for, lowest first; the same words
+#: as the gateway's ``cheese_efforts`` (``gateway.EFFORTS``).
+Effort = Literal["low", "medium", "high", "max"]
+
 
 class AgentConfiguration(BaseModel):
     """A saved role and optional model; None inherits the project main model.
@@ -25,6 +30,20 @@ class AgentConfiguration(BaseModel):
     body: str = ""
     skills: list[str] = Field(default_factory=list)
     model: str | None = None
+    # How hard the model thinks (`gateway.EFFORTS`). None leaves it to the
+    # model. Kept when the model changes: a model that does not honour it runs
+    # at its own default (`launch_env`), and the choice is back when one does.
+    effort: Effort | None = None
+    # At what share of the context window the conversation is compacted.
+    # None leaves it to the harness, which waits until the window is nearly
+    # full; a lower share compacts sooner. Claude Code only lowers its
+    # threshold with it, never raises it.
+    compact_percent: int | None = Field(default=None, ge=50, le=90)
+
+
+#: What each subscription model honours: Claude Code reads Claude's own
+#: capabilities, so every effort the platform offers reaches the model.
+SUBSCRIPTION_EFFORTS = list(get_args(Effort))
 
 
 def project_pool(project_settings: dict | None) -> str:
@@ -51,6 +70,7 @@ def model_choices(project_settings: dict | None) -> list[dict]:
             asdict(item),
             default=item.default and subscription_default,
             supply=SUBSCRIPTION,
+            efforts=SUBSCRIPTION_EFFORTS,
         )
         for item in subscription_model_listings()
     ]
@@ -67,6 +87,8 @@ def model_choices(project_settings: dict | None) -> list[dict]:
             # The tier an administrator set on the gateway (`cheese_tier`):
             # which plans may use it.
             "tier": item.tier,
+            # The thinking efforts it honours (`cheese_efforts`).
+            "efforts": list(item.efforts),
         }
         for item in gateway_catalog.offerable()
     )
@@ -90,6 +112,7 @@ def model_choices(project_settings: dict | None) -> list[dict]:
                 "default": False,
                 "supply": GATEWAY,
                 "tier": TIER_INCLUDED,
+                "efforts": [],
             }
         )
     # 按这个项目真会跑的骨架筛。跑哪个骨架是部署设置加项目设置答的（结论 28），
@@ -97,7 +120,7 @@ def model_choices(project_settings: dict | None) -> list[dict]:
     # 这个项目里根本不是一个能用的模型，列出来只会让绑上它的那条活在派出去的那
     # 一刻才失败。
     #
-    # 问 ``harness_for``：轮次组装（``chat.py`` 的 ``_assemble_turn``）和克隆
+    # 问 ``harness_for``：轮次组装（``room/turn.py`` 的 ``_assemble_turn``）和克隆
     # （``topic/services.py`` 的 ``clone_from``）都按项目答，这里只按部署答就是同
     # 一个问题的第二个答法。一套部署列了 claude-code 和 pi、某个项目指定了 pi 时，轮次真
     # 跑在 pi 上，而目录会按 claude-code 的能力位筛——订阅别名是最直接的一类——于

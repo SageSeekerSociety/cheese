@@ -18,6 +18,10 @@ export interface ChatPanelEmit {
   // A cheese command changed a platform resource (doc/topics/...) —
   // the parent refreshes that panel live, mid-turn.
   (e: 'state-changed', resource: string): void
+  // 芝士摆出来一份东西（`cheese show` / `cheese serve`）：房间里多了一块 kind=artifact
+  // 的卡，当前预览跟着它换。对话栏是这条 socket 的家，面板自己听不到，所以往上报一
+  // 声，面板据此立刻去问一次指针——而不是等下一次轮询（那要十几秒）。
+  (e: 'preview-shown'): void
   (e: 'turn-done'): void
   // 芝士 是不是正在这个话题里干活。跟着轮次生命周期走（summon / turn_started /
   // turn_active 开，turn_finished / done / error 关），不是跟着它第一次动手

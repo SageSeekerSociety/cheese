@@ -52,7 +52,6 @@ StubAgent 不打真模型，所以**关键 AI 行为另外用 smoke 脚本对真
 ```bash
 cd backend
 PYTHONPATH=. uv run python scripts/smoke_agent.py   # 流式 + 记忆 + 会话恢复
-PYTHONPATH=. uv run python scripts/smoke_tools.py    # 芝士真的调工具改平台状态
 ```
 新增 🤖 行为（工具等）时，写/扩 smoke 脚本，对真模型跑一遍再说"通了"。
 

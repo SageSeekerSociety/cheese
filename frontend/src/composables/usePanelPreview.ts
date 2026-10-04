@@ -12,6 +12,7 @@
 // 的事（判据都在递下去的 props 里）。
 import type { ChatAttachment, FileContent, PreviewInfo } from '../cx_types'
 import type { DocumentIdentity } from '../lib/documentBytes'
+import type { FramePick } from './usePreviewFrames'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
@@ -25,6 +26,7 @@ import {
 } from '../api'
 import { sameDocumentIdentity, useDocumentBytes } from '../lib/documentBytes'
 import { DOCUMENT_TYPES, IMAGE_SUFFIXES, isWebPage, suffixOf, webMimeOf } from '../lib/fileKind'
+import { warmPreviewPointer } from '../lib/previewPointer'
 import { roomFileDestination } from '../lib/previewSession'
 
 import { APP_NAVIGATION_BUDGET_MS, usePreviewFrames } from './usePreviewFrames'
@@ -59,6 +61,8 @@ export interface PanelPreviewOptions {
   onLoaded?: (artifactId: string | null) => void
   /** 帧里按了 ESC：怎么处理是画的那一半的事，这一层只往上递。 */
   onEscape?: () => void
+  /** 帧里圈选了一处：画不画标注条、发不发引用是画的那一半的事，这一层只往上递。 */
+  onPick?: (pick: FramePick) => void
 }
 
 /** 一张要进房间的图。上传真正要的只有这两样。 */
@@ -82,7 +86,7 @@ export type UploadAnnotation = (topicId: string, image: ImageUpload) => Promise<
 
 /** 「预览」这一格的全部取数：状态进、动作出，一个组件都不碰。 */
 export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewOptions) {
-  const host = usePreviewFrames(options.frameName, { onEscape: options.onEscape })
+  const host = usePreviewFrames(options.frameName, { onEscape: options.onEscape, onPick: options.onPick })
   const loading = ref(false)
   const refreshing = ref(false)
   const previewFile = ref<FileContent | null>(null)
@@ -218,7 +222,12 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     try {
       let art: PreviewInfo | null
       try {
-        art = await getPreview(tid)
+        // 首屏这一次（非 silent）先要那份「已经在手边的答案」：路由守卫可能已经替这个
+        // 房间先问过指针（lib/previewPointer.ts），或者那一条还在飞——别把又一轮网络
+        // 压在「面板挂载之后」的临界路径上。手边没有才自己问。轮询 / 收工重取
+        // （silent）要的是最新，一律现问。
+        const warm = opts.silent ? undefined : warmPreviewPointer(tid)
+        art = warm ? await warm : await getPreview(tid)
       } catch (e) {
         if (!stillCurrent()) return
         previewUrl.value = null
@@ -602,5 +611,8 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     downloadArtifact,
     refreshDocument,
     uploadAnnotation,
+    // 圈选：画的那一半按帧的类型选「递进帧」还是「宿主自己盖一层」，取数这一层只管把
+    // 开关送到当前那一帧的桥。
+    setPickMode: host.setPickMode,
   }
 }

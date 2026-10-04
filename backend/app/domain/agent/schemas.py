@@ -40,7 +40,7 @@ class ModelPrices(BaseModel):
 
 
 class ModelCapabilities(BaseModel):
-    """能勾的能力。页面认这三项；网关那套 `supports_*` 字段名不出这个包。
+    """能勾的能力。页面认这几项；网关那套 `supports_*` 字段名不出这个包。
 
     `adaptive_thinking` 必须**声明在这里**，不能指望 pydantic 把它顺手留下：网关侧
     的 `supports_adaptive_thinking` 读写都认它（`gateway_admin` 的读路径会把它读回来
@@ -51,6 +51,9 @@ class ModelCapabilities(BaseModel):
     reasoning: bool = False
     vision: bool = False
     adaptive_thinking: bool = False
+    # 能不能收 Claude Code 插在对话中间的 system 消息。没传就不写：没人量过的模型
+    # 不该被一次保存记成「不支持」。
+    mid_conversation_system: bool | None = None
 
 
 # 计量代理的 ChatGPT 入口：唯一允许走明文 http 的上游地址，路径是 `/chatgpt/<账号名>`

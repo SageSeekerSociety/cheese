@@ -23,6 +23,7 @@ import { useRowMenu } from '@/composables/useRowMenu'
 
 import { deleteLibraryFile, downloadFile, libraryFileRawUrl, listProjectLibrary } from '../api'
 import { libraryFileBytes, replaceLibraryFile, uploadLibraryFile } from '../lib/libraryApi'
+import { VIRTUAL_LIST_CONTENT_THRESHOLD } from '../lib/virtualList'
 
 import { useCommands } from '@/commands'
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -31,6 +32,7 @@ import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import FileBytesPreview from '@/components/common/FileBytesPreview.vue'
 import { useTopBarBack } from '@/components/common/topBarBack'
+import VirtualList from '@/components/common/VirtualList.vue'
 import { t } from '@/i18n'
 import { closeOverlay } from '@/lib/backOut'
 import { relTime } from '@/lib/relTime'
@@ -54,6 +56,9 @@ const confirming = ref<LibraryFile | null>(null)
 const replacing = ref<{ target: LibraryFile; file: File } | null>(null)
 // 同一个名字被替换以后，预览要重新读：换一次，这个数加一。
 const revision = ref(0)
+// 文件那一列自己的滚动容器（`.library__list` 上写着 overflow-y: auto）。行数过门槛
+// 时交给 VirtualList，得把这份容器递给它——见 lib/virtualList.ts 的门槛那段。
+const listEl = ref<HTMLElement | null>(null)
 
 // ---- 读 --------------------------------------------------------------------
 
@@ -337,6 +342,12 @@ function rowMeta(file: LibraryFile): string {
   return [file.added_by ?? t('work.library.unknownSource'), when(file), fmtBytes(file.bytes)].join(' · ')
 }
 
+// 行的身份（和 v-for 的 key 同义）：路径。同名不覆盖，所以路径唯一。写成具名函数而
+// 不是模板里的箭头：模板里那个箭头参数没有类型来源，strict 下会报隐式 any。
+function fileRowKey(row: unknown): string {
+  return (row as LibraryFile).path
+}
+
 function read(file: LibraryFile) {
   return (asPdf: boolean) => libraryFileBytes(props.projectId, file.path, asPdf)
 }
@@ -355,7 +366,7 @@ function read(file: LibraryFile) {
       <input ref="replacePicker" type="file" hidden @change="onReplacementPicked" />
 
       <!-- 列表：手机上看着一份文件时让出整页。 -->
-      <section v-if="mdAndUp || !selected" class="library__list">
+      <section v-if="mdAndUp || !selected" ref="listEl" class="library__list">
         <p class="t-body c-muted library__intro" :title="t('work.library.dropHint')">{{ t('work.library.intro') }}</p>
         <p v-if="loadError" role="alert" class="t-body c-danger">{{ loadError }}</p>
         <p v-if="actionError" role="alert" class="t-body c-danger">{{ actionError }}</p>
@@ -397,33 +408,50 @@ function read(file: LibraryFile) {
         </div>
 
         <ul v-else-if="shown.length" class="library__rows">
-          <li
-            v-for="file in shown"
-            :key="file.path"
-            class="library-row"
-            :class="{ 'library-row--on': file.path === selectedPath }"
-            @contextmenu="rowMenu.open(file.path, $event)"
+          <!-- Long libraries go through VirtualList: past VIRTUAL_LIST_CONTENT_THRESHOLD
+               (lib/virtualList.ts) only the rows in view stay mounted, below it this is
+               the plain list it always was. `item-as="li"` keeps the ul > li structure
+               in both paths — virtua only wraps each row; the row itself carries the
+               flex layout, the buttons and the actions menu, so keyboard focus and the
+               ⋯ menu work exactly as before. virtua owns the li, so the right-click
+               handler sits on the row div it wraps. -->
+          <VirtualList
+            :items="shown"
+            :item-key="fileRowKey"
+            :scroll-parent="listEl"
+            :threshold="VIRTUAL_LIST_CONTENT_THRESHOLD"
+            :estimated-size="58"
+            item-as="li"
+            item-role="listitem"
           >
-            <button type="button" class="library-row__open" @click="open(file)">
-              <v-icon :icon="KIND_ICONS[kindOf(file.path)]" size="20" class="library-row__icon" />
-              <span class="library-row__id">
-                <span class="library-row__name t-body">{{ file.path }}</span>
-                <span class="t-meta c-faint">{{ rowMeta(file) }}</span>
-              </span>
-            </button>
-            <AdaptiveMenu v-bind="rowMenu.bind(file.path)" :actions="fileActions(file)" :title="file.path">
-              <template #activator="{ props: menuProps }">
-                <BaseButton
-                  v-bind="menuProps"
-                  icon="mdi-dots-horizontal"
-                  size="sm"
-                  class="tap-target"
-                  :loading="busy === file.path"
-                  :aria-label="t('work.library.actionsOf', { name: file.path })"
-                />
-              </template>
-            </AdaptiveMenu>
-          </li>
+            <template #item="{ item: file }">
+              <div
+                class="library-row"
+                :class="{ 'library-row--on': file.path === selectedPath }"
+                @contextmenu="rowMenu.open(file.path, $event)"
+              >
+                <button type="button" class="library-row__open" @click="open(file)">
+                  <v-icon :icon="KIND_ICONS[kindOf(file.path)]" size="20" class="library-row__icon" />
+                  <span class="library-row__id">
+                    <span class="library-row__name t-body">{{ file.path }}</span>
+                    <span class="t-meta c-faint">{{ rowMeta(file) }}</span>
+                  </span>
+                </button>
+                <AdaptiveMenu v-bind="rowMenu.bind(file.path)" :actions="fileActions(file)" :title="file.path">
+                  <template #activator="{ props: menuProps }">
+                    <BaseButton
+                      v-bind="menuProps"
+                      icon="mdi-dots-horizontal"
+                      size="sm"
+                      class="tap-target"
+                      :loading="busy === file.path"
+                      :aria-label="t('work.library.actionsOf', { name: file.path })"
+                    />
+                  </template>
+                </AdaptiveMenu>
+              </div>
+            </template>
+          </VirtualList>
         </ul>
 
         <p v-else-if="files.length" class="t-body c-muted library__empty">{{ t('work.library.noMatch') }}</p>

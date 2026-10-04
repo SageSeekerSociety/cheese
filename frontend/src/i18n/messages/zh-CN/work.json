@@ -419,7 +419,11 @@
       "downloadFile": "下载 {name}",
       "openFile": "打开 {name}",
       "upgradedToTask": "已转为任务",
-      "upgradedToTopic": "已转为话题"
+      "upgradedToTopic": "已转为话题",
+      "showMore": "展开",
+      "showLess": "收起",
+      "wrapCode": "自动换行",
+      "unwrapCode": "不换行"
     },
     "outbox": {
       "failed": "发送失败：{reason}",
@@ -578,6 +582,8 @@
       "autoReloaded": "应用已重启，已自动重新载入",
       "runningApp": "运行中的应用",
       "download": "下载",
+      "pick": "圈选",
+      "webRegion": "框选了一块区域",
       "frameTitle": "话题预览",
       "authorizing": "正在获取预览授权…",
       "navigating": "正在加载新页面…",
@@ -1096,6 +1102,7 @@
       "answering": "{agent}正在回答…",
       "stop": "停止",
       "cancel": "取消",
+      "stopped": "已停止",
       "changed": "已修改 {n} 处",
       "undone": "已撤销",
       "undo": "撤销",

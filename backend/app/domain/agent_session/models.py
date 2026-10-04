@@ -137,6 +137,10 @@ class AgentSession(UuidPk, Timestamps, Base):
     placed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # 这条对话最近一次被告知的项目现状，每一段一个摘要
+    # （`harness.prompt.SessionOpening.digests`）。下一轮只把和它不一样的那几段再
+    # 说一次，好让系统提示词在会话里保持不变。NULL 是还没告诉过：那一轮整份都说。
+    told: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), nullable=True)
 
     def place(self) -> SessionPlace | None:
         """这条会话在哪——它自己那一半地点的唯一入口。
