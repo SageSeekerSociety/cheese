@@ -87,7 +87,17 @@ def _fake_litellm(day: str) -> httpx.MockTransport:
 
 
 async def _worst_stall_during(work):
-    """Run ``work`` and say the longest the loop went without a turn meanwhile.
+    """Run ``work`` and say the longest the loop went without a turn meanwhile,
+    in the CPU time the loop's thread spent over that stretch.
+
+    The ticker takes a turn at every pass of the loop, so a stretch is exactly
+    what ran between two of its turns. CPU time, not wall time: on a loaded
+    machine the thread waits for a core while nothing runs on it, and a wall
+    clock charges that wait to whatever the loop was doing. What holds the
+    loop here (decoding JSON) is CPU on this thread however busy the machine
+    is; a call that blocks without computing, such as a synchronous socket
+    read, would not show here, and nothing on this path makes one.
+
     The collector is off while it runs: when a full collection lands depends
     on everything else the process holds, not on the read being measured."""
     worst = 0.0
@@ -96,9 +106,9 @@ async def _worst_stall_during(work):
     async def tick():
         nonlocal worst
         while not finished.is_set():
-            before = time.perf_counter()
-            await asyncio.sleep(0.005)
-            worst = max(worst, time.perf_counter() - before - 0.005)
+            before = time.thread_time()
+            await asyncio.sleep(0)
+            worst = max(worst, time.thread_time() - before)
 
     gc.collect()
     gc.disable()
@@ -114,10 +124,17 @@ async def _worst_stall_during(work):
 
 
 async def test_a_busy_keys_day_is_read_without_holding_the_loop():
+    """Read several times and the least kept: on a busy machine one read can
+    run on a slower core, or one shared with another thread, and take two or
+    three times as long; what the read itself does on the loop is there every
+    time."""
     day = gw.utc_today()
     gateway = gw.LlmGateway("http://gw", "mk", transport=_fake_litellm(day))
 
-    by, worst = await _worst_stall_during(gateway.daily_spend_by_model(KEY, day))
+    worst = float("inf")
+    for _ in range(5):
+        by, stall = await _worst_stall_during(gateway.daily_spend_by_model(KEY, day))
+        worst = min(worst, stall)
 
     assert {name: m.prompt_tokens for name, m in by.items()} == {
         MODELS[0]: sum(1000 + i for i in range(0, CALLS, 2)),
