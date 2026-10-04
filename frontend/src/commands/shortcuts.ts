@@ -21,7 +21,14 @@ function parse(shortcut: string): Chord | null {
   const parts = shortcut.toLowerCase().split('+')
   const key = parts.pop()
   if (!key) return null
-  const code = /^[0-9]$/.test(key) ? `Digit${key}` : /^[a-z]$/.test(key) ? `Key${key.toUpperCase()}` : null
+  const code =
+    key === 'escape'
+      ? 'Escape'
+      : /^[0-9]$/.test(key)
+        ? `Digit${key}`
+        : /^[a-z]$/.test(key)
+          ? `Key${key.toUpperCase()}`
+          : null
   if (!code) return null
   return { mod: parts.includes('mod'), shift: parts.includes('shift'), alt: parts.includes('alt'), code }
 }

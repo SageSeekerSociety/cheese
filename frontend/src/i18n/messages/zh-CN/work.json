@@ -291,7 +291,13 @@
       "wholeProject": "全项目",
       "usageLine": "{turns} 次运行 · {tokens} token · {cost}",
       "usageSplit": "输入 {input} · 输出 {output}",
-      "noUsage": "暂无数据"
+      "noUsage": "暂无数据",
+      "mute": "静音",
+      "unmute": "取消静音",
+      "muted": "已静音",
+      "muteFailed": "静音设置没保存",
+      "markAllRead": "全部标为已读",
+      "markAllReadFailed": "全部标为已读没成功"
     },
     "archiveNotice": {
       "done": "已归档",

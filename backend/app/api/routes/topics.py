@@ -1152,6 +1152,25 @@ async def mark_topic_read(
     return ok({"topic_id": str(topic_id), "handle": handle})
 
 
+@router.put("/{topic_id}/notify-level")
+async def set_topic_notify_level(
+    topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """这间房对我的通知级别：`all` 或 `mute`。和已读位一样按人记，人是谁取自
+    已验证的凭据。"""
+    topic = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
+    handle = await resolver.resolve_recipient(
+        requested=None, project_id=topic.project_id, allow_anonymous=False
+    )
+    level = str(body.get("level") or "")
+    await TopicService(db).set_notify_level(topic_id, handle, level)
+    return ok({"topic_id": str(topic_id), "level": level})
+
+
 @router.post("/{topic_id}/archive")
 async def archive_topic(
     topic_id: uuid.UUID,

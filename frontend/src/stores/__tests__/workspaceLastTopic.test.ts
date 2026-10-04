@@ -19,6 +19,7 @@ vi.mock('@/api', () => ({
   getPrivateUnread: vi.fn().mockResolvedValue({}),
   getProject: vi.fn(),
   getTopic: vi.fn(),
+  getTopicNotifyLevels: vi.fn().mockResolvedValue({}),
   getTopicUnread: vi.fn().mockResolvedValue({}),
   isProjectArchivedError: () => false,
   listProjectMembers: vi.fn().mockResolvedValue({ data: [], total: 0 }),

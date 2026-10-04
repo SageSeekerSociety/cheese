@@ -30,6 +30,8 @@ const props = defineProps<{
   unread: boolean
   /** 按 id 问某一行有几条未读。 */
   unreadOf: (id: string) => number
+  /** 我静音了的房间：行尾画一个静音标记（未读已经不计了）。 */
+  mutedOf?: (id: string) => boolean
 }>()
 
 const emit = defineEmits<{
@@ -107,6 +109,14 @@ const keepMounted = computed<readonly number[] | undefined>(() => {
               <span class="kind-text">{{ kindLabel(item) }}</span>
             </v-list-item-title>
             <template #append>
+              <v-icon
+                v-if="mutedOf?.(item.id)"
+                size="14"
+                class="row-muted me-1"
+                icon="mdi-bell-off-outline"
+                :aria-label="t('work.room.menu.muted')"
+                :title="t('work.room.menu.muted')"
+              />
               <TopicRailBadge v-if="unreadOf(item.id) > 0" class="me-1" :count="unreadOf(item.id)" />
               <!-- eslint-disable-next-line vue/no-restricted-syntax -- nav bar button whose look this component styles exactly (design-system §3.6 exception) -->
               <v-btn
@@ -183,5 +193,9 @@ const keepMounted = computed<readonly number[] | undefined>(() => {
 /* 整页形态：手指点的地方至少 44px 高。 */
 .topic-rail--page .topic-row {
   min-height: 44px;
+}
+
+.row-muted {
+  color: var(--faint);
 }
 </style>
