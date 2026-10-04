@@ -156,23 +156,70 @@
   gap: 32px;
 }
 
+/* The title is a sentence whose end keeps changing: a plain lead, then the job
+   in display type. */
 .hero-title {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
   font-family: var(--font-display);
-  /* 72px is the floor at which four characters still fit one line on a 390px phone. */
-  font-size: clamp(72px, 13vw, 208px);
+  /* 64px is the floor at which a five-character job still fits one line on a 390px phone. */
+  font-size: clamp(64px, 11.5vw, 184px);
   font-weight: 700;
   line-height: 1;
   letter-spacing: 0.02em;
   color: var(--ink);
 }
 
-.hero-position {
-  max-width: 24em;
+.hero-lead {
   font-size: clamp(23px, 2.8vw, 44px);
   font-weight: 500;
   line-height: 1.3;
-  color: var(--ink);
+  letter-spacing: 0;
+}
+
+.hero-jobs {
+  display: grid;
+}
+
+.hero-job-size,
+.hero-job-word {
+  grid-area: 1 / 1;
+}
+
+.hero-job-size {
+  visibility: hidden;
+}
+
+.hero-job-word {
+  color: var(--accent-press);
+}
+
+.hero-job-enter-active,
+.hero-job-leave-active {
+  transition:
+    opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
+}
+
+.hero-job-enter-from {
+  opacity: 0;
+  transform: translateY(0.25em);
+}
+
+.hero-job-leave-to {
+  opacity: 0;
+  transform: translateY(-0.25em);
+}
+
+.hero-position {
+  max-width: 32em;
+  font-size: clamp(18px, 1.6vw, 24px);
+  line-height: 1.5;
+  color: var(--text);
   text-wrap: balance;
+  /* Break Chinese only at its punctuation, so a clause never splits mid-phrase. */
+  word-break: keep-all;
 }
 
 /* English display type. The sizes above are tuned for four to six Chinese
@@ -188,11 +235,26 @@
   text-wrap: balance;
 }
 
+.landing:lang(en) .hero-lead {
+  letter-spacing: -0.01em;
+}
+
+/* The jobs share one box sized to the longest, so one that wraps would leave a
+   blank line under all the others: on a desktop they get the full width and a
+   size at which the longest still fits on one line. */
+.landing:lang(en) .hero-jobs {
+  font-size: clamp(40px, 5.6vw, 88px);
+}
+
+@media (width > 900px) {
+  .landing:lang(en) .hero-title {
+    max-width: none;
+  }
+}
+
 .landing:lang(en) .hero-position {
   max-width: 44ch;
-  font-size: clamp(18px, 1.8vw, 26px);
   line-height: 1.4;
-  text-wrap: balance;
 }
 
 .landing:lang(en) .people-title,
@@ -928,7 +990,9 @@
   }
 
   .solution-swap-enter-active,
-  .solution-swap-leave-active {
+  .solution-swap-leave-active,
+  .hero-job-enter-active,
+  .hero-job-leave-active {
     transition: none;
   }
 }

@@ -7,7 +7,7 @@ import LandingShell from './LandingShell.vue'
 
 import BrandScene from '@/components/account/brandScene/BrandScene.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
-import { t } from '@/i18n'
+import i18n, { t } from '@/i18n'
 
 // The manifesto lights up clause by clause as it scrolls through the viewport.
 const manifesto = computed(() => [t('publicSite.manifesto1'), t('publicSite.manifesto2'), t('publicSite.manifesto3')])
@@ -27,6 +27,21 @@ const resources = computed(() => [
 
 // The visitor's own system first; the files are served by this site (lib/desktop.ts).
 
+// The hero finishes its sentence with one concrete job after another, so a
+// visitor sees what the product is for before scrolling. It holds still under
+// reduced motion and in a background tab.
+const jobs = computed(() => [
+  t('publicSite.heroJob1'),
+  t('publicSite.heroJob2'),
+  t('publicSite.heroJob3'),
+  t('publicSite.heroJob4'),
+  t('publicSite.heroJob5'),
+  t('publicSite.heroJob6'),
+])
+const job = ref(0)
+const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+let jobTimer: ReturnType<typeof setInterval> | undefined
+
 // Which step of the story is in the middle of the screen drives the room.
 const step = ref(0)
 const stepEls = ref<HTMLElement[]>([])
@@ -42,9 +57,17 @@ onMounted(() => {
     { rootMargin: '-45% 0px -45% 0px' }
   )
   for (const el of stepEls.value) observer.observe(el)
+  if (!reducedMotion) {
+    jobTimer = setInterval(() => {
+      if (!document.hidden) job.value = (job.value + 1) % jobs.value.length
+    }, 2400)
+  }
 })
 
-onBeforeUnmount(() => observer?.disconnect())
+onBeforeUnmount(() => {
+  observer?.disconnect()
+  clearInterval(jobTimer)
+})
 </script>
 
 <template>
@@ -54,7 +77,18 @@ onBeforeUnmount(() => observer?.disconnect())
         <BrandScene scene="neuro" />
       </div>
       <div class="hero-copy">
-        <h1 class="hero-title">{{ t('publicSite.slogan') }}</h1>
+        <h1 class="hero-title">
+          <span class="hero-lead">{{ t('publicSite.heroLead') }}</span>
+          <span class="visually-hidden">{{ jobs.join(' / ') }}</span>
+          <!-- Every job sits in the same grid cell, the hidden copies included, so
+               the line is as wide and tall as its longest job and never jumps. -->
+          <span class="hero-jobs" aria-hidden="true">
+            <span v-for="item in jobs" :key="item" class="hero-job-size">{{ item }}</span>
+            <Transition name="hero-job">
+              <span :key="job" class="hero-job-word">{{ jobs[job] }}</span>
+            </Transition>
+          </span>
+        </h1>
         <p class="hero-position">{{ t('publicSite.positioning') }}</p>
         <div class="hero-actions">
           <BaseButton :to="entryHref" kind="primary" size="lg" append-icon="mdi-arrow-top-right">
@@ -68,7 +102,8 @@ onBeforeUnmount(() => observer?.disconnect())
       </div>
     </section>
 
-    <LandingFilm />
+    <!-- The film is in Chinese, with no subtitles yet. -->
+    <LandingFilm v-if="i18n.global.locale.value === 'zh-CN'" />
 
     <section class="manifesto" :aria-label="t('publicSite.manifestoLabel')">
       <p class="manifesto-text">

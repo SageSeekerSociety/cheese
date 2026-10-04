@@ -131,17 +131,41 @@ describe('公开首页', () => {
     expect(solutions.getByRole('link', { name: '方案' }).getAttribute('aria-current')).toBe('page')
   })
 
-  it('shows the film silently, and plays it from the start with sound when asked', async () => {
+  it('finishes the headline with one job after another, and reads every job out at once', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    try {
+      const home = await mount()
+      const title = home.getByRole('heading', { level: 1 })
+      expect(title.textContent).toContain('和队友、AI 一起')
+      for (const job of ['做课程项目', '写一份周报', '修一个 bug', '做网页原型', '整理文献', '批改作业']) {
+        expect(title.textContent).toContain(job)
+      }
+      const shown = () => title.querySelector('.hero-job-word')!.textContent
+      expect(shown()).toBe('做课程项目')
+      await vi.advanceTimersByTimeAsync(2400)
+      expect(shown()).toBe('写一份周报')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('shows the film on its poster, and plays it from the start with sound when asked', async () => {
     const home = await mount()
     const video = home.getByRole('region', { name: '影片：众智成事' }).querySelector('video')!
-    expect(video.muted).toBe(true)
+    expect(video.paused).toBe(true)
     expect(video.controls).toBe(false)
     video.currentTime = 12
-    await fireEvent.click(home.getByRole('button', { name: /有声观看/ }))
+    await fireEvent.click(home.getByRole('button', { name: /播放影片/ }))
     expect(video.muted).toBe(false)
     expect(video.currentTime).toBe(0)
     expect(video.controls).toBe(true)
-    expect(home.queryByRole('button', { name: /有声观看/ })).toBeNull()
+    expect(home.queryByRole('button', { name: /播放影片/ })).toBeNull()
+  })
+
+  it('leaves the Chinese-only film off the English page', async () => {
+    setLocale('en')
+    const home = await mount()
+    expect(home.queryByRole('region', { name: /Film/ })).toBeNull()
   })
 
   it('leads to the download page, which offers every build from this site, not from GitHub', async () => {
