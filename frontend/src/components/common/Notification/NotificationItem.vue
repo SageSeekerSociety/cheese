@@ -20,7 +20,14 @@
           <span class="notification-item__time text-caption text-medium-emphasis">{{ formattedTime }}</span>
         </div>
 
-        <div class="d-flex justify-end align-center mt-2">
+        <!-- Generic row actions (mark read / delete) stay out of the way until the
+             pointer hovers the row or keyboard focus lands inside it; touch devices
+             have no hover, so they are always shown there. Type-specific actions
+             (accept / decline) do not carry this class and stay visible. -->
+        <div
+          class="d-flex justify-end align-center mt-2"
+          :class="{ 'notification-item__actions': !(renderedActions && renderedActions.length > 0) }"
+        >
           <template v-if="renderedActions && renderedActions.length > 0">
             <BaseButton
               v-for="(action, index) in renderedActions"
@@ -80,7 +87,14 @@
           <span class="notification-item__time text-caption text-medium-emphasis">{{ formattedTime }}</span>
         </div>
 
-        <div class="d-flex justify-end align-center mt-2">
+        <!-- Generic row actions (mark read / delete) stay out of the way until the
+             pointer hovers the row or keyboard focus lands inside it; touch devices
+             have no hover, so they are always shown there. Type-specific actions
+             (accept / decline) do not carry this class and stay visible. -->
+        <div
+          class="d-flex justify-end align-center mt-2"
+          :class="{ 'notification-item__actions': !(renderedActions && renderedActions.length > 0) }"
+        >
           <template v-if="renderedActions && renderedActions.length > 0">
             <BaseButton
               v-for="(action, index) in renderedActions"
@@ -242,6 +256,20 @@ const onUpdateNotification = (notificationId: number) => {
 
 .unread-notification {
   background-color: var(--accent-wash);
+}
+
+/* 通用的「标记为已读 / 删除」是辅助动作：不占常驻的一行，悬停或键盘焦点落进来
+   时才现身。只在真有指针的设备上这么做——触屏没有 hover，藏了就再也点不到。 */
+@media (hover: hover) {
+  .notification-item__actions {
+    opacity: 0;
+    transition: opacity var(--dur-quick) var(--ease-standard);
+  }
+
+  .notification-item:hover .notification-item__actions,
+  .notification-item:focus-within .notification-item__actions {
+    opacity: 1;
+  }
 }
 
 /* 时间戳不许被挤：内容那一列可以收窄换行，它按原样待着。不这么写时，窄屏上
