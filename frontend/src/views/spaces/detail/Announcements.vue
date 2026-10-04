@@ -126,7 +126,12 @@ async function togglePin(a: SpaceAnnouncement) {
 }
 
 async function remove(a: SpaceAnnouncement) {
-  const ok = await dialog.confirm(t('spaces.announcements.confirmDelete')).wait()
+  const ok = await dialog
+    .confirm(t('spaces.announcements.confirmDelete'), {
+      confirmLabel: t('spaces.announcements.delete'),
+      danger: true,
+    })
+    .wait()
   if (!ok) return
   try {
     await SpacesApi.deleteAnnouncement(spaceId(), a.id)

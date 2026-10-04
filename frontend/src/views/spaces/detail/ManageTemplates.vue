@@ -92,7 +92,10 @@ const facts = (template: (typeof templates.value)[number]) => {
 }
 
 const deleteTemplate = async (index: number) => {
-  const result = await confirm(t('spaces.detail.manageTemplates.deleteConfirm')).wait()
+  const result = await confirm(t('spaces.detail.manageTemplates.deleteConfirm'), {
+    confirmLabel: t('spaces.detail.manageTemplates.delete'),
+    danger: true,
+  }).wait()
   if (!result) return
 
   await spaceData.deleteTemplate(index)

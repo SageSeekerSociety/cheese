@@ -308,7 +308,11 @@ async function remove() {
   const userId = currentUserId.value
   if (!userId) return
   const confirmed = await dialogs
-    .confirm(t('account.realName.deleteBody'), { title: t('account.realName.delete') })
+    .confirm(t('account.realName.deleteBody'), {
+      title: t('account.realName.delete'),
+      confirmLabel: t('account.realName.delete'),
+      danger: true,
+    })
     .wait()
     .catch(() => false)
   if (!confirmed) return
