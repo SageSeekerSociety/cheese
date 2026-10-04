@@ -21,9 +21,6 @@
   它是这条路的收件人，本模块只声明自己会问什么，pyright 在调用点核对
   ``ChatService`` 答不答得上来。
 
-``_model_policy_call`` 也跟着搬来了：它只被这一族和轮次组装问，而后者照旧从
-``app.domain.agent.chat`` 这个门面上拿得到这个名字。
-
 ``app.api`` 一步都不碰（``LlmGateway`` 来自 ``app.domain.agent.gateway``），
 事务边界也一格没动 —— sessionmaker 本身是入参，所以每一处
 ``async with self._sessions()`` 都变成了同一处的 ``async with sessions()``。
@@ -46,7 +43,7 @@ from app.domain.agent import gateway_catalog
 from app.domain.agent.gateway import LlmGateway
 from app.domain.agent.gateway_spend import Charge, settle
 from app.domain.agent.profiles import ProfileRegistry
-from app.domain.agent.queries import _Proposed
+from app.domain.agent.queries import _model_policy_call, _Proposed
 from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.service import AgentUsage
 from app.domain.agent.supply import SUBSCRIPTION
@@ -100,32 +97,6 @@ class _GatewayUsage(Protocol):
     async def _gateway_budget_target(
         self, session: AsyncSession, project_id: uuid.UUID
     ) -> float | None: ...
-
-
-def _model_policy_call(project, agent=None) -> gate.Call:
-    """这一轮要用的模型，写成闸门认得的那一次调用（结论 3 后半）。
-
-    两处问它：轮次组装（在这一轮占用任何东西之前）和 `_model_kwargs`（平台自己发
-    起的那几轮不经过组装）。构造写在这里一处，所以两处问的确实是同一次调用。
-
-    模型花的是项目的额度，所以点头的是项目的主人。空 handle（建库早期留下的项目）
-    在寻址那一层被丢掉：房间里照样有这条提议，只是没有人被单独通知 —— 好过把它投
-    给一个猜出来的人。
-    """
-    choices = binding.catalog(project.settings)
-    bound = binding.resolve(
-        None,
-        choices,
-        agent_model=agent.configuration.get("model") if agent else None,
-        default_model=(project.settings or {}).get("default_model"),
-    )
-    return gate.Call(
-        resource=gate.Resource.model,
-        subject=bound.model,
-        label=choices[bound.model]["label"],
-        tier=choices[bound.model]["tier"],
-        approver=project.owner_handle or "",
-    )
 
 
 def model_capabilities(*models: str | None) -> str:

@@ -6,7 +6,7 @@
 1. **新建的项目**：建出来就带最新配置。建项目那一轮本来就要组装一次 prompt，
    读到的就是当时项目集里的那一份，没有缓存层要等。
 2. **已有项目的新会话**：启动时读到最新配置。prompt 每一轮都从库里重新组装
-   （`chat._assemble_turn` 每次都重新 resolve），所以新开的会话拿到的一定是
+   （`room/turn.py` 的 `_assemble_turn` 每次都重新 resolve），所以新开的会话拿到的一定是
    此刻的配置。
 3. **运行中的会话**：**保持它启动时的那一份，直到下一次冷启动。** 这不是本模块
    的选择，是 Claude Code 的事实：harness 用 `--append-system-prompt-file` 把

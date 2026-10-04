@@ -19,13 +19,10 @@ import pytest
 
 from app.api.deps import get_chat_service
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.agent.chat import (
-    ChatService,
-    _pending_platform_notices,
-    _platform_preamble,
-)
+from app.domain.agent.chat import ChatService
 from app.domain.agent.harness import CLAUDE_CODE, SessionRef
 from app.domain.agent.harness.prompt import PLATFORM_NOTICE
+from app.domain.agent.prompt import _pending_platform_notices, _platform_preamble
 from app.domain.block.models import AGENT_NOTICE_META_KEY, Block, agent_notice
 from app.domain.block.repositories import BlockRepository
 from app.domain.delivery.input_identity import (

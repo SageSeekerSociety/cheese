@@ -97,7 +97,7 @@ def model_choices(project_settings: dict | None) -> list[dict]:
     # 这个项目里根本不是一个能用的模型，列出来只会让绑上它的那条活在派出去的那
     # 一刻才失败。
     #
-    # 问 ``harness_for``：轮次组装（``chat.py`` 的 ``_assemble_turn``）和克隆
+    # 问 ``harness_for``：轮次组装（``room/turn.py`` 的 ``_assemble_turn``）和克隆
     # （``topic/services.py`` 的 ``clone_from``）都按项目答，这里只按部署答就是同
     # 一个问题的第二个答法。一套部署列了 claude-code 和 pi、某个项目指定了 pi 时，轮次真
     # 跑在 pi 上，而目录会按 claude-code 的能力位筛——订阅别名是最直接的一类——于

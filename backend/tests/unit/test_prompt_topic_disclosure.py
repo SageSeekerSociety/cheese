@@ -6,12 +6,9 @@
 
 import uuid
 
-from app.domain.agent.chat import (
-    PLACEHOLDER_TITLE,
-    _expand_mention_names,
-    _topic_ref_lists,
-)
+from app.domain.agent.chat import PLACEHOLDER_TITLE, _expand_mention_names
 from app.domain.agent.harness.prompt import build_session_opening
+from app.domain.agent.prompt import _topic_ref_lists
 from app.domain.topic.models import TitleSource, Topic, TopicKind, TopicStatus
 
 ARCHIVED_ID = uuid.uuid4()
