@@ -2677,7 +2677,11 @@ def _task_id(explicit: str | None = None) -> str:
 
 
 def _git_task(
-    cwd: Path, *args: str, extra_env: dict | None = None, input_text: str | None = None
+    cwd: Path,
+    *args: str,
+    extra_env: dict | None = None,
+    input_text: str | None = None,
+    raw: bool = False,
 ) -> str:
     env = {
         key: value for key, value in os.environ.items() if not key.startswith("GIT_")
@@ -2695,7 +2699,8 @@ def _git_task(
     )
     if result.returncode:
         raise RuntimeError(result.stderr.strip())
-    return result.stdout.strip()
+    # Raw for NUL-separated paths: a file name may begin with a space.
+    return result.stdout if raw else result.stdout.strip()
 
 
 def _git_credential(operation: str) -> None:
@@ -2962,6 +2967,16 @@ def _report_sync_failure(
             "队列里，排队的分支不能再改。提交留在那台机器上并已备份；PR 合并后"
             "在新任务里交付它们，或由验收人退回这张卡、PR 撤出队列后再推。"
         )
+    if not _tell_room(content):
+        print(
+            f"[cheese] 同步失败的通知未送达，任务 {task_id} 的 "
+            "cheese-sync.log 保留了结果",
+            file=sys.stderr,
+        )
+
+
+def _tell_room(content: str) -> bool:
+    """Post `content` to the room this machine works for; whether it arrived."""
     body = {
         "content": content,
         "request_id": str(uuid.uuid4()),
@@ -2976,15 +2991,149 @@ def _report_sync_failure(
     try:
         with urllib.request.urlopen(req, timeout=30):
             pass
-    except Exception:  # noqa: BLE001 — the sync's own failure is what matters
+    except Exception:  # noqa: BLE001 — the sync's own outcome is what matters
+        return False
+    return True
+
+
+# Directories only a tool writes, from something else the repository holds
+# (dependency installs, interpreter and tool caches). Untracked, they are never
+# work: a fresh install regenerates them, and one node_modules is more files
+# than everything else a task backs up.
+_GENERATED_DIRS = frozenset(
+    {
+        "node_modules",
+        "__pycache__",
+        ".venv",
+        "venv",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".tox",
+        ".nox",
+        ".gradle",
+        ".next",
+        ".nuxt",
+        ".svelte-kit",
+        ".turbo",
+        ".parcel-cache",
+    }
+)
+# How much of a task's untracked files one backup carries. Build output that
+# the repository does not ignore (dist/, build/, target/, an exported model)
+# lands here: those names are also used for hand-written files, so they are
+# not dropped by name, only by size, largest first. Tracked files are never
+# counted or dropped — an edit to one is always work.
+_UNTRACKED_BACKUP_BUDGET = 64 * 1024 * 1024
+
+
+def _snapshot_index(
+    worktree: Path, env: dict
+) -> tuple[list[str], list[tuple[str, int]]]:
+    """Stage into `env`'s index what a backup of `worktree` carries.
+
+    Every tracked file as it is now — committed or only staged, an edit to one
+    is always work — and the untracked files git does not ignore, except those
+    in a generated directory and the largest ones until the rest fit
+    `_UNTRACKED_BACKUP_BUDGET`. Returns what is left out: the generated
+    directories, and each dropped file with its size.
+    """
+
+    def paths(*args: str) -> set[str]:
+        return set(filter(None, _git_task(worktree, *args, raw=True).split("\0")))
+
+    # Both read from the checkout's own index: a file the agent staged is
+    # tracked, even though the commit it would be in does not exist yet.
+    untracked = paths("ls-files", "-z", "--others", "--exclude-standard")
+    staged = paths(
+        "diff-index", "--cached", "--name-only", "--diff-filter=A", "-z", "HEAD"
+    )
+    _git_task(worktree, "read-tree", "HEAD", extra_env=env)
+    _git_task(worktree, "add", "-u", extra_env=env)
+    keep = {path for path in staged if os.path.lexists(worktree / path)}
+    generated, sized = set(), []
+    for path in untracked:
+        parts = path.rstrip("/").split("/")
+        hit = next((i for i, part in enumerate(parts) if part in _GENERATED_DIRS), None)
+        if hit is not None:
+            generated.add("/".join(parts[: hit + 1]) + "/")
+            continue
+        try:
+            sized.append((os.lstat(worktree / path).st_size, path))
+        except FileNotFoundError:
+            continue  # Gone since it was listed; there is nothing to keep.
+    sized.sort(key=lambda item: (-item[0], item[1]))
+    total = sum(size for size, _ in sized)
+    dropped = []
+    while sized and total > _UNTRACKED_BACKUP_BUDGET:
+        size, path = sized.pop(0)
+        total -= size
+        dropped.append((path, size))
+    keep |= {path for _, path in sized}
+    if keep:
+        _git_task(
+            worktree,
+            "add",
+            # Forced for a file staged past .gitignore; the others are not ignored.
+            "--force",
+            "--pathspec-from-file=-",
+            "--pathspec-file-nul",
+            extra_env={**env, "GIT_LITERAL_PATHSPECS": "1"},
+            input_text="\0".join(sorted(keep)),
+        )
+    return sorted(generated), dropped
+
+
+_LEFT_OUT_HEADER = "Left out of this backup (untracked, still only on that machine):"
+
+
+def _left_out_lines(generated: list[str], dropped: list[tuple[str, int]]) -> list[str]:
+    return [f"{path}  (generated)" for path in generated] + [
+        f"{path}  ({size / 1024 / 1024:.1f} MiB, over the backup budget)"
+        for path, size in dropped
+    ]
+
+
+def _print_left_out(task_id: str, left_out: list[str]) -> None:
+    """For the agent that synced one task, often through the post-commit hook.
+
+    Never from `sync --all`: the platform reads that one's output as nothing
+    but failures, each reason starting at the first line after the last.
+    """
+    if left_out:
         print(
-            f"[cheese] 同步失败的通知未送达，任务 {task_id} 的 "
-            "cheese-sync.log 保留了结果",
+            f"[cheese] 任务 {task_id} 的备份没有带上这些未跟踪的文件：\n  "
+            + "\n  ".join(left_out),
             file=sys.stderr,
         )
 
 
-def _sync_task(task_id: str) -> None:
+def _tell_room_left_out(
+    admin: Path, data: dict, dropped: list[tuple[str, int]]
+) -> None:
+    """Tell the room of untracked files the backup left behind for their size.
+
+    Each file once, and never a generated directory: that comes back with an
+    install, while a large file nobody committed may be hours of work, and it
+    goes with the machine.
+    """
+    told_file = admin / "cheese-backup-left-out"
+    told = set(told_file.read_text().splitlines()) if told_file.exists() else set()
+    new = [path for path, _ in dropped if path not in told]
+    if not (new and API and TOPIC and TOKEN):
+        return
+    budget = _UNTRACKED_BACKUP_BUDGET // 1024 // 1024
+    if _tell_room(
+        f"⚠️ {data['branch']} 的备份没有带上这些没提交的大文件（每次备份里未跟踪"
+        f"的文件合计最多 {budget} MiB，超出时从最大的开始略过）：\n- "
+        + "\n- ".join(new)
+        + "\n它们只在这台机器上，机器回收后就没有了。要留下的请提交，或移进附件存储。"
+    ):
+        told_file.write_text("".join(f"{path}\n" for path in sorted(told | set(new))))
+
+
+def _sync_task(task_id: str) -> list[str]:
+    """Back up and deliver one task; return what its backup left out."""
     task_id = str(uuid.UUID(task_id))
     worktree = _task_root() / task_id
     if not (worktree / ".git").exists():
@@ -3024,9 +3173,14 @@ def _sync_task(task_id: str) -> None:
             # Keep unfinished work off the PR. An alternate index preserves the
             # worker's staging choices while backing up its files at turn end.
             snapshot_env = {"GIT_INDEX_FILE": str(admin / "cheese-snapshot-index")}
-            _git_task(worktree, "read-tree", "HEAD", extra_env=snapshot_env)
-            _git_task(worktree, "add", "-A", extra_env=snapshot_env)
+            generated, dropped = _snapshot_index(worktree, snapshot_env)
             tree = _git_task(worktree, "write-tree", extra_env=snapshot_env)
+            message = f"Work in progress for task {task_id}\n"
+            if left_out := _left_out_lines(generated, dropped):
+                # The list travels with the backup, for `cheese recover`.
+                message += f"\n{_LEFT_OUT_HEADER}\n" + "".join(
+                    f"{line}\n" for line in left_out
+                )
             snapshot = (
                 head
                 if tree == _git_task(worktree, "rev-parse", "HEAD^{tree}")
@@ -3036,9 +3190,10 @@ def _sync_task(task_id: str) -> None:
                     tree,
                     "-p",
                     head,
-                    input_text=f"Work in progress for task {task_id}\n",
+                    input_text=message,
                 )
             )
+            _tell_room_left_out(admin, data, dropped)
             _once_more_if_transient(
                 lambda: _backup_task_snapshot(worktree, admin, data, head, snapshot)
             )
@@ -3049,7 +3204,7 @@ def _sync_task(task_id: str) -> None:
                     f"{datetime.now(UTC).isoformat()} archived snapshot={snapshot}; "
                     "delivery is closed\n"
                 )
-                return
+                return left_out
             branch = data["branch"]
             found = _git_task(worktree, "symbolic-ref", "--short", "HEAD")
             if found != branch:
@@ -3063,6 +3218,7 @@ def _sync_task(task_id: str) -> None:
                 f"{datetime.now(UTC).isoformat()} success head={head} "
                 f"snapshot={snapshot}\n"
             )
+            return left_out
         except BaseException as exc:
             record.write(
                 f"{datetime.now(UTC).isoformat()} failed {type(exc).__name__}: {exc}\n"
@@ -3337,6 +3493,10 @@ def _recover_task(task_id):
             staging.rename(recovered)
     bundle.unlink()
     print(f"已恢复到独立目录：{recovered}\n原工作目录和评审分支均未覆盖。")
+    message = _git_task(recovered, "log", "-1", "--format=%B", data["snapshot_sha"])
+    if _LEFT_OUT_HEADER in message:
+        left_out = message.split(_LEFT_OUT_HEADER, 1)[1].strip()
+        print(f"备份时没有带上这些未跟踪的文件，恢复出来的目录里没有它们：\n{left_out}")
 
 
 def _has_work_to_sync(worktree: Path) -> bool:
@@ -4122,11 +4282,12 @@ def main() -> None:
         if a.all:
             _sync_all_tasks()
         else:
-            _sync_task(_task_id(a.task))
+            task = _task_id(a.task)
+            _print_left_out(task, _sync_task(task))
     elif a.cmd == "push-fix":
         topic = _need("CHEESE_TOPIC", TOPIC)
         task = _task_id(a.task)
-        _sync_task(task)
+        _print_left_out(task, _sync_task(task))
         path = f"/topics/{topic}/tasks/{task}/push-fix"
         if a.drop_dependency:
             path += "?drop_dependency=true"
