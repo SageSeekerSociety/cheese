@@ -7,6 +7,7 @@ import json
 import time
 from pathlib import Path
 
+from app.core.config import settings
 from app.core.sentences import say
 from app.domain.agent import (
     environment_runner,
@@ -21,6 +22,7 @@ from app.domain.agent.harness.claude_code.remote_execution import (
     cli_client,
     private,
     runtime,
+    sandbox_host,
     session_transfer,
 )
 from app.domain.agent.machine_launcher import CHEESE_PREVIEW_UP, toolchain_fetcher
@@ -62,6 +64,7 @@ def file_sources():
         "cheese-preview.py": Path(preview_tunnel.__file__).read_text(),
         "cheese-preview-up": CHEESE_PREVIEW_UP,
         "cheese-sync": CHEESE_SYNC_SCRIPT,
+        "remote-execution/sandbox_host.py": Path(sandbox_host.__file__).read_text(),
         **{
             name: (BACKEND / source).read_text()
             for name, source in runtime.RELEASE_FILES.items()
@@ -72,7 +75,8 @@ def file_sources():
 def payload_for(project_id, resource_id, env, known_files=None, *, sandbox):
     """What the executor is installed or prepared from. ``sandbox`` says
     whether it runs in a sandbox of its own (`bootstrap.sandbox_argv`) or over
-    the whole machine, as the device's visibility does."""
+    the whole machine, as the session's visibility on that machine decides; a
+    sandbox is sent with the limits it runs under."""
     files = file_sources()
     values = {
         name: value
@@ -87,7 +91,14 @@ def payload_for(project_id, resource_id, env, known_files=None, *, sandbox):
     return {
         "protocol_version": runtime.PROTOCOL_VERSION,
         "toolchain_fonts": toolchain.fonts_pin(),
-        "sandbox": sandbox,
+        "sandbox": {
+            "memory_mb": settings.cloud_sandbox_memory_mb,
+            "swap_mb": settings.cloud_sandbox_swap_mb,
+            "cpus": settings.cloud_sandbox_cpus,
+            "pids": settings.cloud_sandbox_pids,
+        }
+        if sandbox
+        else None,
         "project": str(project_id),
         "resource": str(resource_id),
         "env": values,

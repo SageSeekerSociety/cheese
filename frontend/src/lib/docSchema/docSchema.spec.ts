@@ -115,6 +115,11 @@ describe('round-trip corpus', () => {
     expectClean('```\nplain text block\n  with indentation kept\n```')
   })
 
+  it('keeps the code of a fence indented by up to three spaces', () => {
+    const rt = roundTrip('  ```python\n  # 第一行\n  # 第二行\n  ```')
+    expect(rt).toContain('# 第一行\n# 第二行')
+  })
+
   it('unordered list', () => {
     expectClean('- 第一项\n- 第二项 with English\n- 第三项')
   })

@@ -157,18 +157,23 @@ esac
 #     every agent start, whose exit code it propagates (`agent/device_provider`).
 #     The connector is Go and comes up fine without python3, so the machine
 #     reports healthy and every room on it dies at environment preparation.
-#   bwrap   — every session's executor on a Cloud machine runs in a
-#     bubblewrap sandbox (`remote_execution/bootstrap.sandbox_argv`), and a
-#     session that cannot have one does not start.
+#   bwrap, ip, iptables-restore — every session's executor on a Cloud
+#     machine runs in a bubblewrap sandbox (`remote_execution/bootstrap.
+#     sandbox_argv`) with a network of its own that the machine connects and
+#     filters (`remote_execution/sandbox_host.py`), and a session that cannot
+#     have one does not start. The two network tools are root's, in sbin.
 # None of them is guaranteed by the image: MicroCloud's LXC template lists git
 # but not tmux, and the VM template installs neither (it adds only curl + Docker
 # on top of a stock Debian cloud image). Depending on which offering a machine
 # came from is exactly the kind of assumption that fails quietly.
 echo CHEESE_STARTUP:tools
-for tool in tmux git python3 bwrap; do
+PATH="$PATH:/usr/sbin:/sbin"
+for tool in tmux git python3 bwrap ip iptables-restore; do
   command -v "$tool" >/dev/null 2>&1 && continue
   case "$tool" in
     bwrap) package=bubblewrap ;;
+    ip) package=iproute2 ;;
+    iptables-restore) package=iptables ;;
     *) package="$tool" ;;
   esac
   sudo -n apt-get install -y -q "$package" >/dev/null 2>&1 \

@@ -4,6 +4,11 @@
 //
 // 和 Slack 一样贴在输入框正下方，小字一行；打字的人合成一句（一位 / 两位 / 好几
 // 位），在干活的队友各占一句，带上它此刻在做的那一步和干了多久。只凭 props 画。
+//
+// 读屏那一句和眼睛看的那一句分开：眼睛看的那截带着「执行命令 pnpm test」这样从
+// live 帧来的当前一步、还有每秒往前走的用时 —— 帧一来就变、秒一秒地变，全塞进
+// aria-live 会把读屏的人淹掉。所以屏幕上那截 aria-hidden，另外留一句只有谁、在
+// 哪一相（思考中/在干活），它才变。
 import type { MemberActivityLine } from '@/lib/memberActivity'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
@@ -19,6 +24,9 @@ const props = withDefaults(
   }>(),
   { reserve: false }
 )
+
+/** 多久没有新输出就算卡住，另说一句「已 N 无新输出」。纯提示，不做任何事。 */
+const STALL_MS = 60_000
 
 const working = computed(() => props.lines.filter((l) => l.kind === 'working'))
 const typing = computed(() => props.lines.filter((l) => l.kind === 'typing'))
@@ -45,12 +53,43 @@ watch(
 )
 onBeforeUnmount(() => clearInterval(ticker))
 
-function workingText(line: MemberActivityLine): string {
+const separator = computed(() => t('work.room.activity.separator'))
+
+/** 谁、此刻那一步 —— 会变长的那一截，用省略号收在它自己身上。 */
+function workingHead(line: MemberActivityLine): string {
   const parts = [t('work.room.activity.working', { name: line.name })]
-  if (line.detail) parts.push(line.detail)
-  if (line.since) parts.push(formatSpan(Math.max(0, Math.floor((now.value - line.since * 1000) / 1000))))
-  return parts.join(t('work.room.activity.separator'))
+  // 有从 live 帧读来的当前一步，就用它顶掉时间线上那一个相（「思考中」）—— 它更
+  // 具体，而且一次长工具调用期间时间线上根本不长新行，那个相早就是旧的了。
+  const step = line.step ?? line.detail
+  if (step) parts.push(step)
+  return parts.join(separator.value)
 }
+
+/** 干了多久。单独一格，长的那一截被省略号截掉时它还在。 */
+function workingTotal(line: MemberActivityLine): string | null {
+  if (!line.since) return null
+  return formatSpan(Math.max(0, Math.floor((now.value - line.since * 1000) / 1000)))
+}
+
+/** 多久没有新输出；还没到、或从没收过帧就不说。 */
+function stallText(line: MemberActivityLine): string | null {
+  if (!line.lastFrameAt) return null
+  const quiet = Math.floor((now.value - line.lastFrameAt) / 1000)
+  if (quiet * 1000 < STALL_MS) return null
+  return t('work.room.activity.stalled', { span: formatSpan(quiet) })
+}
+
+// 读屏听到的那一句：只有谁、在哪一相，不带当前一步、不带秒数 —— 帧和秒都不进
+// 这一句，它才只在相变时变。和 ChatTimeline 的 faceStatus 是同一个道理。
+const workingAria = computed(() =>
+  working.value
+    .map((line) => {
+      const parts = [t('work.room.activity.working', { name: line.name })]
+      if (line.detail) parts.push(line.detail)
+      return parts.join(separator.value)
+    })
+    .join(separator.value)
+)
 </script>
 
 <template>
@@ -62,8 +101,18 @@ function workingText(line: MemberActivityLine): string {
     aria-live="polite"
   >
     <div v-for="line in working" :key="line.handle" class="member-activity__line" data-kind="working">
-      <span class="status-dot status-dot--ok member-activity__dot" aria-hidden="true" />{{ workingText(line) }}
+      <span class="status-dot status-dot--ok member-activity__dot" aria-hidden="true" />
+      <!-- The step and the elapsed seconds churn on their own; keep both out of the live region. -->
+      <span class="member-activity__text" aria-hidden="true">{{ workingHead(line) }}</span>
+      <span v-if="workingTotal(line)" class="member-activity__meta" aria-hidden="true"
+        >{{ separator }}{{ workingTotal(line) }}</span
+      >
+      <span v-if="stallText(line)" class="member-activity__stall" aria-hidden="true"
+        >{{ separator }}{{ stallText(line) }}</span
+      >
     </div>
+    <!-- What a screen reader hears: who and which phase only, so it changes on the phase, not per frame. -->
+    <p v-if="workingAria" class="visually-hidden">{{ workingAria }}</p>
     <div v-if="typingText" class="member-activity__line" data-kind="typing">{{ typingText }}</div>
   </div>
 </template>
@@ -93,5 +142,21 @@ function workingText(line: MemberActivityLine): string {
 }
 .member-activity__dot {
   flex: none;
+}
+/* 当前一步可能很长：截断在它自己身上，右边的「无新输出」才不会被挤下去。 */
+.member-activity__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 用时和「无新输出」都不参与截断：上面那截再长，这两个数也还在。 */
+.member-activity__meta,
+.member-activity__stall {
+  flex: none;
+}
+/* 比这一行的其余部分再淡一档：它是元信息（多久没有新输出），不是又一件在做的事。 */
+.member-activity__stall {
+  color: var(--faint);
 }
 </style>

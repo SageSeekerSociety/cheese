@@ -86,6 +86,9 @@ describe('组件预览站', () => {
         disconnect() {}
       }
     )
+    // The app's page has a doctype (standards mode); happy-dom reports quirks
+    // mode, and KaTeX warns about it on its first formula.
+    Object.defineProperty(document, 'compatMode', { value: 'CSS1Compat', configurable: true })
   })
 
   afterEach(() => {

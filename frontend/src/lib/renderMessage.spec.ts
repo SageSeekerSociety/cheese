@@ -1,18 +1,29 @@
 // @vitest-environment jsdom
-// renderMessage: chat/notification rendering — reference-token chips stay
-// clickable, human newlines survive, HTML stays escaped.
+// How a message reads: reference-token chips stay clickable, human newlines
+// survive, HTML stays escaped. 芝士's Markdown goes through the reader that
+// MarkdownView mounts; a person's words through renderPlain.
 import type { Block } from '../cx_types'
+import type { RefNames } from './refChip'
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { coalesceSplitFencedCodeBlocks, plainTokens, renderMarkdown, renderPlain } from './renderMessage'
+import { plainRefs } from './refChip'
+import { coalesceSplitFencedCodeBlocks, renderPlain } from './renderMessage'
 
+import { mountMarkdown } from '@/components/panels/doc/blocks/reader'
 import { setLocale } from '@/i18n'
 
 // These assertions read the Chinese copy.
 beforeEach(() => {
   setLocale('zh-CN')
 })
+
+/** 芝士's message as the room draws it. */
+function renderMarkdown(text: string, maps: RefNames): string {
+  const host = document.createElement('div')
+  mountMarkdown(host, text, { as: 'chat', names: maps })
+  return host.innerHTML
+}
 
 const MAPS = {
   // `all`/`here` are the reserved 群播 tokens seeded by ChatPanel.
@@ -25,7 +36,7 @@ const MAPS = {
   topicTitles: { 'abc12345-0000-0000-0000-000000000000': '搭建推荐算法原型' },
 }
 
-describe('renderMarkdown (芝士 replies)', () => {
+describe('芝士 replies', () => {
   it('renders a <@handle> token as a clickable mention chip', () => {
     const html = renderMarkdown('<@andyl> 都办好了', MAPS)
     expect(html).toContain('class="mention"')
@@ -94,7 +105,7 @@ describe('renderMarkdown (芝士 replies)', () => {
     expect(html).toContain('<br')
   })
 
-  it('sanitizes script injection', () => {
+  it('never turns written markup into a script', () => {
     const html = renderMarkdown('<script>alert(1)</script>hi', MAPS)
     expect(html).not.toContain('<script')
   })
@@ -163,7 +174,7 @@ describe('plain file-reference labels', () => {
     ['<&src/page(backup).ts:7>', 'page(backup).ts:7'],
     ['<&src/page(2).ts:12-30>', 'page(2).ts:12-30'],
   ])('keeps the filename and optional line suffix for %s', (token, label) => {
-    expect(plainTokens(`见 ${token}：这一份`, MAPS)).toBe(`见 ${label}：这一份`)
+    expect(plainRefs(`见 ${token}：这一份`, MAPS)).toBe(`见 ${label}：这一份`)
   })
 })
 
@@ -193,10 +204,12 @@ describe('historical fragmented Markdown compatibility', () => {
     expect(repaired).toHaveLength(1)
     expect(repaired[0].id).toBe('open')
 
-    const html = renderMarkdown(repaired[0].content, MAPS)
-    expect(html).toContain('<pre><code class="language-python">')
-    expect(html).toContain('# dogfood loop: accepted on cheesex')
-    expect(html).toContain('# self-update on dev: written via the platform')
+    const host = document.createElement('div')
+    host.innerHTML = renderMarkdown(repaired[0].content, MAPS)
+    const code = host.querySelectorAll('pre code')
+    expect(code).toHaveLength(1)
+    expect(code[0].textContent).toContain('# dogfood loop: accepted on cheesex')
+    expect(code[0].textContent).toContain('# self-update on dev: written via the platform')
   })
 
   it('leaves ordinary consecutive AI messages independent', () => {

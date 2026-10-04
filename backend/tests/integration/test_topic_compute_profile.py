@@ -73,7 +73,6 @@ def _project_devices(client, pid: str, *names: str) -> list[str]:
                     code,
                     owner_user_id=1,
                     supply=Supply.self_hosted,
-                    visibility=Visibility.isolated,
                 )
                 await service.assign_to_project(
                     device.device_id, uuid.UUID(pid), actor_user_id=1
@@ -531,9 +530,7 @@ def test_sessions_on_cloud_machines_show_no_badge(client):
         async with client.test_factory() as session:
             service = sql_device_service(session)
             code = await service.start("cloud-box")
-            device = await service.approve(
-                code, owner_user_id=1, supply=Supply.cloud, visibility=Visibility.host
-            )
+            device = await service.approve(code, owner_user_id=1, supply=Supply.cloud)
             await session.commit()
             return device.device_id
 

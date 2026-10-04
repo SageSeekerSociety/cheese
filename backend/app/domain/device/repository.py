@@ -33,11 +33,9 @@ class Device:
     # Teams this device is bound to (为团队注册设备, v4): every project of these
     # teams may run on it. Empty = personal (usable only via explicit project assign).
     team_ids: list[int] = field(default_factory=list)
-    # Supply remains the stored lifecycle fact. Visibility is the legacy device
-    # column retained for the additive #442 dual-read window; hosted resolution uses
-    # TopicDevice.visibility instead.
+    # Supply is the stored lifecycle fact. Access is chosen per topic binding
+    # (TopicDevice.visibility), never per machine.
     supply: Supply = Supply.self_hosted
-    visibility: Visibility = Visibility.isolated
 
 
 @dataclass

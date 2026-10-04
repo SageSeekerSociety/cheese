@@ -7,7 +7,7 @@ only the sections that changed since. NULL means nothing recorded yet, and the
 next turn tells the whole state.
 
 Revision ID: c4e8a17b2d90
-Revises: 761d32f96d84
+Revises: c455bd47d0ac
 """
 
 import sqlalchemy as sa
@@ -15,7 +15,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "c4e8a17b2d90"
-down_revision = "761d32f96d84"
+down_revision = "c455bd47d0ac"
 branch_labels = None
 depends_on = None
 

@@ -72,11 +72,12 @@ def test_a_retired_name_the_project_now_uses_stays(tmp_path):
 def test_an_executor_drops_the_skills_it_is_no_longer_shipped(tmp_path):
     """The executor's copy follows the same lists (`remote_execution/bootstrap`)."""
     from app.domain.agent.harness.claude_code.remote_execution.bootstrap import (
+        CONFIG_DIR,
         prune_platform_skills,
         prune_project_skills,
     )
 
-    skills = tmp_path / "skills"
+    skills = tmp_path / CONFIG_DIR / "skills"
     for name in ("cheese", "chat-detail", "summary", "weekly-report"):
         (skills / name).mkdir(parents=True)
     prune_project_skills(tmp_path, ["summary", "weekly-report"], PLATFORM)

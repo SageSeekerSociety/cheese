@@ -29,7 +29,7 @@ from app.domain.agent.device_hub import DeviceCallError
 from app.domain.agent.harness.claude_code.remote_execution import launch
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.models import Block, BlockKind
-from app.domain.device.supply import Supply, Visibility
+from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
 from app.domain.machine import session_work as work_lease
@@ -70,7 +70,6 @@ async def _room(client, *, on_cloud=False):
                 await devices.start(name),
                 owner_user_id=owner.id,
                 supply=Supply.self_hosted,
-                visibility=Visibility.host,
             )
             await devices.assign_to_project(
                 device.device_id, project_id, actor_user_id=owner.id
