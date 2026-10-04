@@ -19,6 +19,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 import { toast } from 'vuetify-sonner'
 
+import { useRowMenu } from '@/composables/useRowMenu'
+
 import { deleteLibraryFile, downloadFile, libraryFileRawUrl, listProjectLibrary } from '../api'
 import { libraryFileBytes, replaceLibraryFile, uploadLibraryFile } from '../lib/libraryApi'
 
@@ -40,6 +42,7 @@ const props = defineProps<{ projectId: string }>()
 const route = useRoute()
 const router = useRouter()
 const { mdAndUp } = useDisplay()
+const rowMenu = useRowMenu<string>()
 
 const files = ref<LibraryFile[]>([])
 const loading = ref(false)
@@ -399,6 +402,7 @@ function read(file: LibraryFile) {
             :key="file.path"
             class="library-row"
             :class="{ 'library-row--on': file.path === selectedPath }"
+            @contextmenu="rowMenu.open(file.path, $event)"
           >
             <button type="button" class="library-row__open" @click="open(file)">
               <v-icon :icon="KIND_ICONS[kindOf(file.path)]" size="20" class="library-row__icon" />
@@ -407,7 +411,7 @@ function read(file: LibraryFile) {
                 <span class="t-meta c-faint">{{ rowMeta(file) }}</span>
               </span>
             </button>
-            <AdaptiveMenu :actions="fileActions(file)" :title="file.path">
+            <AdaptiveMenu v-bind="rowMenu.bind(file.path)" :actions="fileActions(file)" :title="file.path">
               <template #activator="{ props: menuProps }">
                 <BaseButton
                   v-bind="menuProps"
