@@ -21,7 +21,9 @@ B = "22222222-2222-2222-2222-222222222222"
 
 
 def _token(project: str) -> str:
-    return mint_scoped_token(project_id=project, topic_id="33333333-3333-3333-3333-333333333333")
+    return mint_scoped_token(
+        project_id=project, topic_id="33333333-3333-3333-3333-333333333333"
+    )
 
 
 def _digest(project: str) -> str:
@@ -38,9 +40,7 @@ def _a_project_of_its_own(tmp_path, project: str, name: str):
 
 
 def test_the_bundle_is_served_by_its_own_digest(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        service, "mirror_root", lambda pid: tmp_path / str(pid)
-    )
+    monkeypatch.setattr(service, "mirror_root", lambda pid: tmp_path / str(pid))
     bundle = session_skill_bundle(A)
     digest = hashlib.sha256(bundle).hexdigest()
 
@@ -99,3 +99,35 @@ def test_a_malformed_digest_is_a_bad_request():
         "/connector/skill-bundles/not-a-digest", headers={"x-cheese-token": _token(A)}
     )
     assert got.status_code == 400
+
+
+def test_a_launch_gets_the_bundle_it_was_built_with_after_the_skills_change(
+    tmp_path, monkeypatch
+):
+    """The launcher names a digest when it is built and the machine asks later.
+    Skills edited in between must not turn that fetch into a miss: the copy
+    frozen at launch is served, and only to its own project."""
+    roots = {}
+    monkeypatch.setattr(service, "mirror_root", lambda pid: roots[str(pid)])
+    monkeypatch.setattr(service.settings, "workspace_root", str(tmp_path / "ws"))
+    roots[A] = _a_project_of_its_own(tmp_path, A, "a-skill")
+    roots[B] = _a_project_of_its_own(tmp_path, B, "b-skill")
+    frozen = session_skill_bundle(A)
+    digest = service.publish_session_skill_bundle(A)
+    assert digest == hashlib.sha256(frozen).hexdigest()
+
+    (roots[A] / "a-skill" / "SKILL.md").write_text("# edited\n", encoding="utf-8")
+    assert _digest(A) != digest
+    client = TestClient(app)
+
+    got = client.get(
+        f"/connector/skill-bundles/{digest}", headers={"x-cheese-token": _token(A)}
+    )
+    assert got.status_code == 200
+    assert got.content == frozen
+    assert got.headers["Cache-Control"].startswith("private")
+
+    other = client.get(
+        f"/connector/skill-bundles/{digest}", headers={"x-cheese-token": _token(B)}
+    )
+    assert other.status_code == 404

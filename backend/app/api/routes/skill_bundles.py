@@ -29,7 +29,10 @@ from app.core.errors import (
     NotFoundError,
 )
 from app.core.sandbox_auth import scoped_token_claims
-from app.domain.project_skill.service import session_skill_bundle
+from app.domain.project_skill.service import (
+    session_skill_bundle,
+    stored_session_skill_bundle,
+)
 
 router = APIRouter(prefix="/connector", tags=["connector"])
 
@@ -54,7 +57,11 @@ async def download_skill_bundle(digest: str, request: Request) -> Response:
         raise AuthenticationRequiredError("A project-scoped credential is required")
     if not _DIGEST_RE.fullmatch(digest):
         raise BadRequestError("digest must be a lowercase sha256 in hex")
-    bundle = session_skill_bundle(project_id)
+    # The copy frozen when the launcher was built first; the skills may have
+    # changed since. Recomputing is the fallback for a launch built elsewhere.
+    bundle = stored_session_skill_bundle(project_id, digest)
+    if bundle is None:
+        bundle = session_skill_bundle(project_id)
     if hashlib.sha256(bundle).hexdigest() != digest:
         raise NotFoundError("no skill bundle with that digest for this project")
     return Response(
@@ -63,7 +70,8 @@ async def download_skill_bundle(digest: str, request: Request) -> Response:
         headers={
             "X-Checksum-SHA256": digest,
             # The digest IS the content address, so these bytes never change for
-            # a digest: a machine may keep and reuse them without revalidation.
-            "Cache-Control": "public, max-age=31536000, immutable",
+            # a digest. Private: they are one project's, behind its credential,
+            # and a shared cache must not replay them to anyone holding a digest.
+            "Cache-Control": "private, max-age=31536000, immutable",
         },
     )
