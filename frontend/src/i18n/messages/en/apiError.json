@@ -975,5 +975,7 @@
   "skillAdd": "add a skill",
   "skillImport": "import a skill",
   "skillImportUnreadable": "This file can't be read",
-  "topicNotifyLevelInvalid": "The notification level must be “all” or “mute”"
+  "topicNotifyLevelInvalid": "The notification level must be “all” or “mute”",
+  "libraryVersionNotFound": "That version could not be found",
+  "libraryVersionIsCurrent": "That version is already the current one"
 }

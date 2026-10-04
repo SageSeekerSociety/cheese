@@ -179,6 +179,120 @@ describe('AccountService.init()', () => {
   })
 })
 
+// 弱网冷打开时界面要看的那个处境（见 services/account.ts 的 RestorePhase，以及
+// components/common/SessionRestoreGate.vue）。网上复现下来的现象：确认不了会话时
+// 界面除了空白什么都没有，恢复失败更是直接把人当生人送进推广页——会话其实还好好的。
+describe('AccountService 冷打开时的恢复处境', () => {
+  // 一次算一个，测试里前后引用的是同一个字符串（exp 带小数，重算就变了）。
+  let staleToken = ''
+
+  beforeEach(() => {
+    staleToken = jwtWithExp(Date.now() / 1000 - 60)
+  })
+
+  it('网络错误：记成 unreachable，本地会话原样留着，界面可以重试', async () => {
+    localStorage.setItem('accessToken', staleToken)
+    localStorage.setItem('user', JSON.stringify(USER))
+    refresh.mockRejectedValue(new TypeError('Failed to fetch'))
+
+    const account = await freshService()
+    await account.init()
+
+    expect(account.loggedIn).toBe(false)
+    expect(account.restorePhase).toBe('unreachable')
+    // 没有活令牌，但也没被否掉：别把网络抖动当登出。
+    expect(localStorage.getItem('accessToken')).toBe(staleToken)
+    expect(localStorage.getItem('user')).not.toBeNull()
+  })
+
+  it('网络恢复后重试成功：登上，处境回到 idle', async () => {
+    localStorage.setItem('accessToken', staleToken)
+    localStorage.setItem('user', JSON.stringify(USER))
+    refresh.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+
+    const account = await freshService()
+    await account.init()
+    expect(account.restorePhase).toBe('unreachable')
+
+    const fresh = jwtWithExp(Date.now() / 1000 + 900)
+    refresh.mockResolvedValue(answer(200, { data: { accessToken: fresh, user: USER } }))
+    expect(await account.retryRestore()).toBe(true)
+
+    expect(account.loggedIn).toBe(true)
+    expect(account.accessToken).toBe(fresh)
+    expect(account.restorePhase).toBe('idle')
+  })
+
+  it('重试时服务端说会话没了（401）：这才真的登出', async () => {
+    localStorage.setItem('accessToken', staleToken)
+    localStorage.setItem('user', JSON.stringify(USER))
+    refresh.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+
+    const account = await freshService()
+    await account.init()
+    expect(account.restorePhase).toBe('unreachable')
+
+    refresh.mockResolvedValue(answer(401))
+    expect(await account.retryRestore()).toBe(false)
+
+    expect(account.loggedIn).toBe(false)
+    expect(account.accessToken).toBeNull()
+    expect(localStorage.getItem('accessToken')).toBeNull()
+    expect(account.restorePhase).toBe('idle')
+  })
+
+  it('重试仍然连不上：还是 unreachable，会话继续留着', async () => {
+    localStorage.setItem('accessToken', staleToken)
+    localStorage.setItem('user', JSON.stringify(USER))
+    refresh.mockRejectedValue(new TypeError('Failed to fetch'))
+
+    const account = await freshService()
+    await account.init()
+    expect(await account.retryRestore()).toBe(false)
+
+    expect(account.restorePhase).toBe('unreachable')
+    expect(localStorage.getItem('accessToken')).toBe(staleToken)
+  })
+
+  it('冷打开就是 401：直接清会话，不停在 unreachable', async () => {
+    localStorage.setItem('accessToken', staleToken)
+    localStorage.setItem('user', JSON.stringify(USER))
+    refresh.mockResolvedValue(answer(401))
+
+    const account = await freshService()
+    await account.init()
+
+    expect(account.loggedIn).toBe(false)
+    expect(account.restorePhase).toBe('idle')
+    expect(localStorage.getItem('accessToken')).toBeNull()
+  })
+
+  it('令牌还新鲜：根本不进恢复处境', async () => {
+    localStorage.setItem('accessToken', jwtWithExp(Date.now() / 1000 + 600))
+    localStorage.setItem('user', JSON.stringify(USER))
+
+    const account = await freshService()
+    await account.init()
+
+    expect(account.restorePhase).toBe('idle')
+    expect(account.loggedIn).toBe(true)
+  })
+
+  it('以访客身份继续：收起那层，但不动本地会话', async () => {
+    localStorage.setItem('accessToken', staleToken)
+    localStorage.setItem('user', JSON.stringify(USER))
+    refresh.mockRejectedValue(new TypeError('Failed to fetch'))
+
+    const account = await freshService()
+    await account.init()
+    account.dismissRestore()
+
+    expect(account.restorePhase).toBe('idle')
+    expect(account.loggedIn).toBe(false)
+    expect(localStorage.getItem('accessToken')).toBe(staleToken)
+  })
+})
+
 describe('another tab', () => {
   it('signing out signs this tab out too', async () => {
     localStorage.setItem('accessToken', jwtWithExp(Date.now() / 1000 + 600))

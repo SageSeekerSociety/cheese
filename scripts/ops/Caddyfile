@@ -12,6 +12,10 @@
 	# prepends a PROXY header; without this every visitor would look like
 	# 127.0.0.1.
 	servers 127.0.0.1:8443 {
+		# No HTTP/3: these sites listen on loopback :8443 behind the layer4
+		# router, which carries TCP only, so an advertised h3=":8443" pointed
+		# browsers at a UDP port nobody can reach.
+		protocols h1 h2
 		listener_wrappers {
 			proxy_protocol {
 				allow 127.0.0.1/32
@@ -22,33 +26,8 @@
 
 	layer4 {
 		172.26.10.144:443 {
-			# okcheese names are NOT decrypted here: the encrypted stream goes as-is
-			# through the reverse SSH tunnel to the dev box, whose front door holds
-			# the certificate and terminates TLS in the mainland. This box never
-			# sees those requests in plaintext.
-			@okcheese tls sni okcheese.com www.okcheese.com hk.okcheese.com
-			route @okcheese {
-				# Two identical tunnels, one per port, so a port still held by a
-				# dead SSH session never takes the site down. A held port keeps
-				# accepting connections, so a dial check cannot see it; least_conn
-				# moves new connections off it as the stuck ones pile up, and
-				# cheese-relay-watchdog closes it within ~20 s. A closed port
-				# fails the dial, and lb_try_duration retries the other one.
-				proxy {
-					proxy_protocol v1
-					upstream 127.0.0.1:18443
-					upstream 127.0.0.1:18444
-					lb_policy least_conn
-					lb_try_duration 5s
-					lb_try_interval 250ms
-					fail_duration 10s
-					max_fails 1
-					health_interval 5s
-					health_timeout 2s
-				}
-			}
-			# The dev box's reverse SSH tunnel for the route above arrives wrapped
-			# in TLS under this name; socat on 127.0.0.1:2222 unwraps it for sshd.
+			# The dev box's reverse SSH tunnels to this box arrive wrapped in TLS
+			# under this name; socat on 127.0.0.1:2222 unwraps it for sshd.
 			# Bare SSH on :22 from the dev box's egress stalls for minutes at a
 			# time (docs/infrastructure.md, "Public edge").
 			@relay tls sni relay.okcheese.com
@@ -57,8 +36,8 @@
 					upstream 127.0.0.1:2222
 				}
 			}
-			# Everything else (ruc-etrip.cn, including its TLS-ALPN challenge) is
-			# handed unchanged to this Caddy's own HTTPS sites.
+			# Everything else (okcheese.com and its aliases, ruc-etrip.cn and its
+			# TLS-ALPN challenge) is handed unchanged to this Caddy's own HTTPS sites.
 			route {
 				proxy {
 					proxy_protocol v1
@@ -71,13 +50,13 @@
 
 # The etrip box's edge (deployed at /etc/caddy/Caddyfile).
 #
-#   :443 (layer4)          -> by SNI: okcheese.com, www, hk go encrypted to
-#                             127.0.0.1:18443 or :18444, two reverse SSH tunnels
-#                             to the dev box (cheese-dev-env1-app), which
-#                             terminates TLS;
-#                             relay.okcheese.com goes to socat on 127.0.0.1:2222,
-#                             the TLS-wrapped way that tunnel logs in;
-#                             every other name goes to this Caddy on 127.0.0.1:8443.
+#   :443 (layer4)          -> by SNI: relay.okcheese.com goes to socat on
+#                             127.0.0.1:2222, the TLS-wrapped way the dev box's
+#                             reverse SSH tunnels log in; every other name goes
+#                             to this Caddy's HTTPS sites on 127.0.0.1:8443.
+#   okcheese.com, www, hk  -> TLS ends here; plain HTTP through the dev box's
+#                             tunnels (127.0.0.1:18453, else :18454) to its front
+#                             door on 127.0.0.1:18080.
 #   ruc-etrip.cn           -> 127.0.0.1:80, the etrip deployment's frontend
 #                             container (cheese_prod_frontend), loopback only.
 #   any other Host on :80  -> the same container, so visiting the bare IP still
@@ -106,6 +85,57 @@
 	handle {
 		try_files {path} /index.html
 		file_server
+	}
+}
+
+# okcheese.com — TLS ends here, on the Hong Kong box. Requests go on as plain
+# HTTP inside the dev box's reverse SSH tunnels (which encrypt them) to the dev
+# box's front door on its 127.0.0.1:18080: tunnel A holds 18453 here, tunnel B
+# 18454. Caddy keeps those upstream connections open and shares them between
+# visitors, so a new visitor's connection no longer pays tunnel round trips for
+# its TLS handshake. Sharing is why this is not TLS + PROXY protocol to the dev
+# box's :18443: with PROXY on, Caddy pools upstream connections per client
+# address (reverseproxy.go, "add client address to the host"), so each new
+# visitor would still open its own. The client address travels in
+# X-Forwarded-For instead: Caddy drops whatever the visitor sent and writes the
+# address the layer4 router's PROXY header gave it.
+okcheese.com, www.okcheese.com, hk.okcheese.com {
+	bind 127.0.0.1
+	header Strict-Transport-Security "max-age=31536000"
+
+	# www and hk are aliases. Send them to the name sign-in callbacks and CORS
+	# are registered for.
+	@alias host www.okcheese.com hk.okcheese.com
+	redir @alias https://okcheese.com{uri} permanent
+
+	reverse_proxy 127.0.0.1:18453 127.0.0.1:18454 {
+		# Neither line is reliably the faster one: tunnel A (dorm Unicom line)
+		# answered in 47 ms one minute and 0.3-1.5 s the next, while tunnel B
+		# (campus line) held at 90-170 ms (2026-10-04). least_conn counts
+		# requests in flight, so a line that slows down collects them and new
+		# requests go to the other. Pinning to one line with "first" would
+		# stay on A while it is slow but alive; dropping a slow line through
+		# a short health timeout would take the site down when both are slow.
+		lb_policy least_conn
+		lb_try_duration 5s
+		lb_try_interval 250ms
+		fail_duration 10s
+		max_fails 1
+		# The dev front door answers /_internal/ with 404 itself, so this
+		# checks the tunnel and the front door without depending on a
+		# backend or frontend rollout.
+		health_uri /_internal/edge-health
+		health_status 404
+		health_interval 3s
+		health_timeout 2s
+		flush_interval -1
+		transport http {
+			# Under nginx's 75 s keepalive_timeout, so Caddy never reuses a
+			# connection the front door has just closed.
+			keepalive 60s
+			keepalive_idle_conns 64
+			keepalive_idle_conns_per_host 32
+		}
 	}
 }
 
@@ -146,8 +176,6 @@ http://okcheese.com, http://ruc-etrip.cn {
 }
 
 # www and hk are aliases: they go straight to the canonical name in one hop.
-# Their https side is redirected by the dev box's front door, since this box
-# never decrypts okcheese traffic.
 http://www.okcheese.com, http://hk.okcheese.com {
 	bind 172.26.10.144
 	redir https://okcheese.com{uri} permanent

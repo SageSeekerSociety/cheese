@@ -5,6 +5,7 @@ exec, which hooks still act on a session the runner observes from its stdout,
 which tool no user here can answer — and none is about a transport.
 """
 
+import hashlib
 import os
 import subprocess
 from pathlib import Path
@@ -17,6 +18,7 @@ from app.domain.agent.harness.claude_code.session_launch import (
 from app.domain.agent.harness.launch import MachinePlace
 from app.domain.agent.place import seat_dir
 from app.domain.agent.skills import native_skill_files
+from app.domain.project_skill.service import session_skill_bundle
 
 STATE = "$HOME/.cheese/harness/p/r/claude-code/deadbeef"
 
@@ -30,9 +32,30 @@ def _seat(home) -> Path:
     return Path(seat_dir(str(home)))
 
 
+def _seed_bundle_cache(real_home) -> None:
+    """Put this project's skill bundle where a machine that has already fetched
+    it keeps it, so configure installs the skills without a platform to ask.
+
+    Configure no longer carries the skills inline: it looks them up by digest in
+    the machine cache and fetches only on a miss (device_launch). Seeding the
+    cache is how a test stands in for the fetch — the bytes are the very ones
+    the digest names, so the sha256 check the launcher runs passes."""
+    bundle = session_skill_bundle(None)
+    digest = hashlib.sha256(bundle).hexdigest()
+    cache = Path(real_home) / ".cheese/skill-bundles" / f"{digest}.json.gz"
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    cache.write_bytes(bundle)
+
+
 def _configure(home, system_prompt: str) -> None:
     """The configure hole, run the way the launcher runs it: HOME is the
-    session's home by then."""
+    session's home by then.
+
+    ``REAL_HOME`` is the machine owner's home, which the skeleton sets — the
+    skill cache lives there, keyed by content digest (device_launch). The tests
+    use one directory for both; what matters is that configure finds a machine
+    cache to unpack from."""
+    _seed_bundle_cache(home)
     holes = device_launch.launch_holes(state=STATE, system_prompt=system_prompt)
     subprocess.run(
         ["sh"],
@@ -40,7 +63,11 @@ def _configure(home, system_prompt: str) -> None:
         # the skills alone are past what one argv string may hold.
         input="set -e\n" + holes.configure,
         text=True,
-        env={"HOME": str(home), "PATH": "/usr/bin:/bin"},
+        env={
+            "HOME": str(home),
+            "REAL_HOME": str(home),
+            "PATH": "/usr/bin:/bin",
+        },
         check=True,
         capture_output=True,
     )
