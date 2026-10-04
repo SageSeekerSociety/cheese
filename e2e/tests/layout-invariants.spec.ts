@@ -893,7 +893,7 @@ test.describe('房间输入框：下面那一行放得下，手指点得中', ()
 });
 
 // 设置浮层（`SettingsOverlay`）的外壳几何：目录灰栏钉窗口左缘、定宽 264，内容列最宽 720，
-// 在「窗口减目录」剩下的地方居中，关闭按钮右缘贴内容列右缘。这几条以前都不成立 —— 最早灰栏
+// 在「窗口减目录」剩下的地方居中，关闭按钮落在灰栏顶上那一条空当里。这几条以前都不成立 —— 最早灰栏
 // 随窗口长到 440、内容列贴着灰栏靠左，右边空出一大片；改了一版又变成「目录 + 内容列」一组
 // 居中，目录和内容之间隔出 500 多 px。四类设置页（个人、资料、项目、空间）各写各的宽度，
 // 同一条内容列里对不齐。量的都是渲染出来的盒子：这种错 vitest、typecheck、stylelint 全看不见。
@@ -921,7 +921,7 @@ test.describe('设置浮层：目录钉左缘、内容列在剩余空间居中�
     });
   }
 
-  test('桌面三档：目录定宽 264 贴左缘、内容列 720 居中、关闭按钮贴内容右缘且不压页头', async ({ page }) => {
+  test('桌面三档：目录定宽 264 贴左缘、内容列 720 居中、关闭按钮在灰栏顶上且不压目录', async ({ page }) => {
     await apiLogin(page);
     for (const width of [1280, 1440, 1920]) {
       await page.setViewportSize({ width, height: 900 });
@@ -943,15 +943,16 @@ test.describe('设置浮层：目录钉左缘、内容列在剩余空间居中�
       expect(g.gaps, `${label}：量不到主区`).not.toBeNull();
       expect(Math.abs(g.gaps!.left - g.gaps!.right), `${label}：内容列没在剩余空间里居中`).toBeLessThanOrEqual(8);
 
-      // 关闭按钮右缘贴内容列右缘，并且整颗落在内容上方的内距里，不压页头的按钮。
+      // 关闭按钮落在灰栏顶上那一条空当里（灰栏的 padding-top 48，正好是 app 壳顶栏那一条）：
+      // 左缘对着灰栏的内容内距 24，整颗不越出灰栏，也不压下面的目录。
       expect(g.close, `${label}：没有关闭按钮`).not.toBeNull();
-      expect(Math.abs(g.close!.right - g.content!.right), `${label}：关闭按钮没贴内容右缘`).toBeLessThanOrEqual(3);
-      const headTop = await page.evaluate(() => {
-        const first = document.querySelector('.so__content > *');
-        const kids = first ? [...first.querySelectorAll('h1, h2, button, a')] : [];
-        return kids.length ? Math.min(...kids.map((k) => k.getBoundingClientRect().top)) : Infinity;
+      expect(Math.abs(g.close!.left - g.side!.left - 24), `${label}：关闭按钮没落在灰栏的内容内距上`).toBeLessThanOrEqual(3);
+      expect(g.close!.right, `${label}：关闭按钮伸出了灰栏`).toBeLessThanOrEqual(g.side!.right);
+      const navTop = await page.evaluate(() => {
+        const first = document.querySelector('.so__nav > *');
+        return first ? first.getBoundingClientRect().top : Infinity;
       });
-      expect(g.close!.top + g.close!.height, `${label}：关闭按钮压到了页头`).toBeLessThanOrEqual(headTop + 1);
+      expect(g.close!.top + g.close!.height, `${label}：关闭按钮压到了目录`).toBeLessThanOrEqual(navTop + 1);
     }
   });
 
