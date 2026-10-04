@@ -7,6 +7,10 @@ import pytest
 
 from app.domain.agent.harness import CLAUDE_CODE, SessionRef
 from app.domain.agent.harness.claude_code.journal import Journal
+from app.domain.agent.harness.claude_code.legacy import (
+    WORK_RECORDS,
+    completion_inputs,
+)
 from app.domain.agent.harness.claude_code.subscription import Subscription
 
 
@@ -103,3 +107,61 @@ async def test_retained_completion_requires_complete_exact_evidence(
             journal.close()
     finally:
         await reading.release()
+
+
+def test_a_work_is_found_by_index_among_many_records(tmp_path):
+    """A recovery looks up every retained result's work, so a lookup that read
+    the whole mirror cost a busy room minutes on every deploy. The answer is
+    the same either way; only the plan shows a lookup that scans."""
+    work, input_id = str(uuid.uuid4()), str(uuid.uuid4())
+    stamp = {"work_id": work, "agent_handle": "cheese-a"}
+    echo = {
+        "type": "user",
+        "uuid": input_id,
+        "isReplay": True,
+        "session_id": "native-session",
+        "cheese": {
+            **stamp,
+            "turn_start": True,
+            "receipt": True,
+            "receipt_work_id": work,
+            "receipt_session_id": "native-session",
+        },
+    }
+    result = {
+        "type": "result",
+        "session_id": "native-session",
+        "is_error": False,
+        "cheese": dict(stamp),
+    }
+    others = [
+        {"type": "system", "cheese": {"work_id": str(uuid.uuid4())}} for _ in range(500)
+    ]
+    at = datetime.now(UTC).isoformat()
+    records = [*others, echo, result]
+    entries = [
+        {"sequence": n, "at": at, "record": record}
+        for n, record in enumerate(records, start=1)
+    ]
+    path = tmp_path / "records.sqlite"
+    journal = Journal(path)
+    journal.import_records(entries, {})
+    journal.close()
+
+    echoes = completion_inputs(
+        path,
+        work_id=work,
+        session_id="native-session",
+        recipient_handle="cheese-a",
+        result=result,
+    )
+
+    assert [e["uuid"] for e in echoes] == [input_id]
+    journal = Journal(path)
+    try:
+        plan = journal.connection.execute(
+            "EXPLAIN QUERY PLAN " + WORK_RECORDS, (work,)
+        ).fetchall()
+    finally:
+        journal.close()
+    assert any("USING INDEX" in row[-1] for row in plan), plan
