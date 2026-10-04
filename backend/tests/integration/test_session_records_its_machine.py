@@ -27,7 +27,7 @@ from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.machine import session_work
-from app.domain.topic.models import Topic
+from app.domain.topic.models import Topic, TopicMembership, TopicRole
 from app.domain.user.models import User
 from tests.integration.conftest import post_project, session_auth_headers
 from tests.integration.test_central_room_sessions import screen_for, sessions
@@ -54,6 +54,15 @@ async def room(client):
         made = client.post(f"/projects/{project_id}/agents", json={"handle": handle})
         assert made.status_code == 200, made.text
     async with client.test_factory() as db:
+        # Both sit in the room: a session runs only for a teammate seated there.
+        for handle in ("ada", "linus"):
+            db.add(
+                TopicMembership(
+                    topic_id=uuid.UUID(topic["id"]),
+                    member_handle=handle,
+                    role=TopicRole.member,
+                )
+            )
         owner = await db.scalar(select(User).where(User.username == "alice"))
         if owner is None:
             owner = User(
