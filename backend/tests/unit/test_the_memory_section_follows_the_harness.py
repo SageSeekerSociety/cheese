@@ -14,7 +14,9 @@ from app.domain.memory.files_store import IndexSection, MemoryIndex
 from app.domain.memory.instructions import MEMORY_INSTRUCTIONS
 
 INDEX = MemoryIndex(
-    sections=[IndexSection(label="项目", prefix="team", text="- [甲](a.md) — 记忆甲")],
+    sections=[
+        IndexSection(label="项目", prefix="project", text="- [甲](a.md) — 记忆甲")
+    ],
     warnings=[],
 )
 #: 说明书的第一行，和索引那一块的开头。整份说明书不在这里比对（它是文案，会

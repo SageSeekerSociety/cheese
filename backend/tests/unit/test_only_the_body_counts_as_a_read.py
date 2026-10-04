@@ -17,14 +17,14 @@ _HOME = "/home/cheese"
 
 
 def test_a_read_of_a_body_file_counts():
-    assert is_body_read("Read", f"{_HOME}/.cheese/memory/team/release-steps.md")
+    assert is_body_read("Read", f"{_HOME}/.cheese/memory/project/release-steps.md")
     assert is_body_read("Read", f"{_HOME}/.cheese/memory/private/alice/vim.md")
 
 
 @pytest.mark.parametrize("tool", ["Bash", "Write", "Edit", "Grep", "read", ""])
 def test_only_the_read_tool_counts(tool):
     """写进去的不算读：这条数回答的是「有没有人翻开」，不是「有没有人碰过」。"""
-    path = f"{_HOME}/.cheese/memory/team/release-steps.md"
+    path = f"{_HOME}/.cheese/memory/project/release-steps.md"
     assert not is_body_read(tool, path)
 
 
@@ -35,7 +35,7 @@ def test_reading_something_else_does_not_count():
 
 def test_the_index_is_not_a_body_file():
     """索引每轮注入，读它不算翻正文。少了这一条，这个数永远不会是 0。"""
-    assert not is_body_read("Read", f"{_HOME}/.cheese/memory/team/MEMORY.md")
+    assert not is_body_read("Read", f"{_HOME}/.cheese/memory/project/MEMORY.md")
     assert not is_body_read("Read", f"{_HOME}/.cheese/memory/private/alice/MEMORY.md")
 
 
@@ -44,31 +44,31 @@ def test_a_name_that_merely_ends_like_the_index_still_counts():
 
     `MEMORY.md.bak` 是备份，`MEMORY.md` 才是索引。
     """
-    assert is_body_read("Read", f"{_HOME}/.cheese/memory/team/MEMORY.md.bak")
-    assert is_body_read("Read", f"{_HOME}/.cheese/memory/team/MEMORY.mdnotes.md")
+    assert is_body_read("Read", f"{_HOME}/.cheese/memory/project/MEMORY.md.bak")
+    assert is_body_read("Read", f"{_HOME}/.cheese/memory/project/MEMORY.mdnotes.md")
 
 
 def test_a_directory_that_merely_starts_like_the_memory_dir_does_not_count():
     """判据是那一段路径，不是前缀：`memory-notes` 不是记忆目录。"""
-    assert not is_body_read("Read", f"{_HOME}/.cheese/memory-notes/team/x.md")
+    assert not is_body_read("Read", f"{_HOME}/.cheese/memory-notes/project/x.md")
     assert not is_body_read("Read", f"{_HOME}/.cheese/memory")
 
 
 def test_the_agent_directory_is_part_of_the_path_too():
     """会话机上的家目录不一样，所以判据是「含有那一段」而不是「以它开头」。"""
-    assert is_body_read("Read", "/root/.cheese/memory/team/a.md")
+    assert is_body_read("Read", "/root/.cheese/memory/project/a.md")
     assert is_body_read("Read", "/srv/x/.cheese/memory/private/bob/b.md")
 
 
 def test_a_windows_style_separator_still_finds_the_directory():
-    assert is_body_read("Read", r"C:\Users\cheese\.cheese\memory\team\a.md")
-    assert not is_body_read("Read", r"C:\Users\cheese\.cheese\memory\team\MEMORY.md")
+    assert is_body_read("Read", r"C:\Users\cheese\.cheese\memory\project\a.md")
+    assert not is_body_read("Read", r"C:\Users\cheese\.cheese\memory\project\MEMORY.md")
 
 
 @pytest.mark.parametrize(
     ("tool", "detail"),
     [
-        (None, f"{_HOME}/.cheese/memory/team/a.md"),
+        (None, f"{_HOME}/.cheese/memory/project/a.md"),
         ("Read", None),
         ("Read", 42),
         (None, None),

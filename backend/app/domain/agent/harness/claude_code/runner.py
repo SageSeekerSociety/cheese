@@ -44,6 +44,7 @@ from app.domain.agent.harness.driven import runner
 from app.domain.memory.files import (
     INDEX_NAME,
     MEMORY_ROOT,
+    PROJECT_PREFIX,
     check_scoped_path,
     rejected_path,
 )
@@ -193,9 +194,14 @@ def transcript(config_dir: Path, session_id: str) -> Path | None:
 #: 着树走，因为「上次铺下去的是什么」只有和「铺下去的那些文件」在一起才是真的。
 #: 放在别处（journal 里）出过一次真的会丢记忆的事：会话的家被重建（`resource_cleanup`
 #: 会把它整个删掉），树没了而那张表活了下来，于是每一条平台上的记忆都看起来像是
-#: 会话刚刚删掉的，一次对账就把 team 和发言人的 private 整棵删光——删除没有历史
+#: 会话刚刚删掉的，一次对账就把 project 和发言人的 private 整棵删光——删除没有历史
 #: 可以恢复。放在这里，家一没这张表跟着没，下一次对账就是一次全新的铺。
 MEMORY_BASELINE = ".baseline.json"
+
+#: 记忆作用域改名前的那一层目录：`team/` → `project/`（见 `files.PROJECT_PREFIX`）。
+#: 会话机上可能还留着 `~/.cheese/memory/team/` 和一份以 `team/…` 为键的基线，改名
+#: 那一轮必须先把它们搬到 `project/` 那一边（`_migrate_legacy_scope`）。
+LEGACY_SCOPE_DIR = "team"
 
 
 def memory_root() -> Path:
@@ -814,6 +820,61 @@ class Runner(runner.Runner[Journal]):
 
     # --- memory: the tree the agent and the platform both write --------------
 
+    @staticmethod
+    def _migrate_legacy_scope(root: Path) -> None:
+        """把改名前的 `team/` 目录和基线搬到 `project/` 那一边（一次，幂等）。
+
+        作用域从 team 改叫 project 之后，平台铺下来的是 `project/<name>.md`，而会话
+        机上还躺着一棵 `team/`。不搬会出两件事，两件都当真会丢记忆：
+
+        - 三方合并认不出这两条是同一份：磁盘上只有 `team/a.md`、平台带来的是
+          `project/a.md`，于是「会话删了 team 那一整棵」成立——批量删除的保险
+          （`BULK_DELETE_*`）挡得住大半棵，挡不住一小棵；
+        - 就算没被拦下，磁盘上会一直留着同名不同前缀的两份，其中 `team/` 那一份
+          再也回不到平台。
+
+        搬法是「先搬树、再改基线」：`team/` 下每个文件挪到 `project/` 的同名文件
+        ——**目标已经存在就不覆盖**（那一定是平台刚铺下来的、更新的那一版），搬完
+        把空掉的 `team/` 删掉；最后把基线键里的 `team/` 前缀改成 `project/`。基线
+        必须一起改：它是三方合并里「上次铺下去的是什么」那一方，前缀不改就还是对
+        不上号。
+
+        幂等：搬完 `team/` 就不在了，下一次进来什么都不做。会话机上要是还跑着改名
+        前的旧归档，它认的仍是 `team`，平台的 `project` 那一份照常铺下去、残留的
+        `team/` 由 `BULK_DELETE_*` 兜着，下一轮起这段代码把它收尾。
+        """
+        legacy = root / LEGACY_SCOPE_DIR
+        if legacy.is_dir():
+            current = root / PROJECT_PREFIX
+            for entry in sorted(legacy.iterdir()):
+                if not entry.is_file():
+                    continue
+                target = current / entry.name
+                if target.exists():
+                    # 平台这一轮已经铺了更新的这一版，旧副本没有用了。
+                    with contextlib.suppress(OSError):
+                        entry.unlink()
+                    continue
+                try:
+                    current.mkdir(parents=True, exist_ok=True)
+                    os.replace(entry, target)
+                except OSError:
+                    continue
+            with contextlib.suppress(OSError):
+                legacy.rmdir()
+        baseline = _recall_baseline(root)
+        if not any(path.startswith(f"{LEGACY_SCOPE_DIR}/") for path in baseline):
+            return
+        moved = {
+            (
+                f"{PROJECT_PREFIX}/{path[len(LEGACY_SCOPE_DIR) + 1 :]}"
+                if path.startswith(f"{LEGACY_SCOPE_DIR}/")
+                else path
+            ): fingerprint
+            for path, fingerprint in baseline.items()
+        }
+        _write_memory(root, MEMORY_BASELINE, json.dumps(moved))
+
     def read_memory(self, managed: set[str]) -> tuple[dict[str, str], set[str]]:
         """受管作用域里现在有哪些文件、正文各是什么，和被写空了的那几条。
 
@@ -861,6 +922,8 @@ class Runner(runner.Runner[Journal]):
         """
         scopes = memory_scopes(params)
         root = memory_root()
+        # 改名那一轮：先把会话机上的 `team/` 搬成 `project/`，基线一起改，再对账。
+        self._migrate_legacy_scope(root)
         baseline = _recall_baseline(root)
         managed = prefixes_of(scopes, baseline)
         disk, emptied = self.read_memory(managed)
@@ -919,7 +982,7 @@ class Runner(runner.Runner[Journal]):
         for path, content in refused.items():
             if not content:
                 continue
-            # `team/a.md` → `team/a.conflict.md`：和 `memory_conflict_notice` 说给
+            # `project/a.md` → `project/a.conflict.md`：和 `memory_conflict_notice` 说给
             # agent 的那条路径一模一样，它照着那句话就能 Read 到。
             _write_memory(root, f"{path[:-3]}.conflict.md", content)
 

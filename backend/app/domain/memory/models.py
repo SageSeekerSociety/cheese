@@ -217,11 +217,11 @@ class MemoryFileRecord(UuidPk, Timestamps, Base):
     每次成功都 `version + 1`——「文件在会话里被改过、库里那一份已经不是它了」
     这件事必须有地方能看出来，否则两边同时改就是后写的那个静默赢。
 
-    ``owner_handle`` 对 team 记忆是**空串**，不是 NULL。设计上写的是「可空」，
+    ``owner_handle`` 对 project 记忆是**空串**，不是 NULL。设计上写的是「可空」，
     但可空在这里会真的坏事：唯一约束在 SQL 里是 NULL != NULL，同一个项目里
-    `MEMORY.md` 于是可以插进去任意多行不带 owner 的 team 记忆，而那正是
+    `MEMORY.md` 于是可以插进去任意多行不带 owner 的 project 记忆，而那正是
     「先查重再新建」要挡的东西——约束不生效的地方，查重就只剩一次竞态。空串
-    让这一列在任何情况下都参与唯一约束，而「空串 = team」由 `prefix_of` 一手
+    让这一列在任何情况下都参与唯一约束，而「空串 = project」由 `prefix_of` 一手
     决定，没有第二个地方可以读错。
     """
 
@@ -247,7 +247,7 @@ class MemoryFileRecord(UuidPk, Timestamps, Base):
     scope: Mapped[MemoryFileScope] = mapped_column(
         Enum(MemoryFileScope, native_enum=False, length=8), index=True
     )
-    # 空串 = team（见类注释）；private 时是这个人的 handle。
+    # 空串 = project（见类注释）；private 时是这个人的 handle。
     owner_handle: Mapped[str] = mapped_column(String(64), default="", server_default="")
     # 本作用域目录内的相对路径：`MEMORY.md` 或 `<slug>.md`。
     path: Mapped[str] = mapped_column(String(200))
@@ -325,7 +325,7 @@ class MemoryDreamRun(UuidPk, Timestamps, Base):
     )
     #: 芝士自己写的交代（那一轮的最后一段），或失败/被拦下来的原因。
     summary: Mapped[str] = mapped_column(Text, default="")
-    #: 这一轮动过的文件（`team/x.md`、`private/alice/y.md`），给人一眼扫。
+    #: 这一轮动过的文件（`project/x.md`、`private/alice/y.md`），给人一眼扫。
     files_changed: Mapped[list] = mapped_column(JSON, default=list)
 
 

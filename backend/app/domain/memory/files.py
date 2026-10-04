@@ -29,8 +29,8 @@ INDEX_NAME = "MEMORY.md"
 #: 里往下数，所以「写哪儿」在两端只有这一个答案。
 MEMORY_ROOT = ".cheese/memory"
 
-#: 作用域前缀：team 没有主人，private 的主人在路径里。
-TEAM_PREFIX = "team"
+#: 作用域前缀：project 没有主人，private 的主人在路径里。
+PROJECT_PREFIX = "project"
 PRIVATE_PREFIX = "private"
 
 #: 注入预算：超过就截断，并明说截断了。
@@ -78,11 +78,11 @@ class MemoryType(StrEnum):
 class MemoryFileScope(StrEnum):
     """两级作用域。
 
-    `team` 是这个项目所有人和所有芝士共看的一份；`private` 是「这个人 × 这个
+    `project` 是这个项目所有人和所有芝士共看的一份；`private` 是「这个人 × 这个
     项目」——同一个人换一个项目读不到，同一个项目换一个人也读不到。
     """
 
-    team = "team"
+    project = "project"
     private = "private"
 
 
@@ -282,9 +282,9 @@ def rejected_path(path: str) -> str:
 
 
 def prefix_of(scope: MemoryFileScope, owner_handle: str | None) -> str:
-    """会话目录里，这个作用域的前缀（`team` 或 `private/<handle>`）。"""
-    if scope is MemoryFileScope.team:
-        return "team"
+    """会话目录里，这个作用域的前缀（`project` 或 `private/<handle>`）。"""
+    if scope is MemoryFileScope.project:
+        return PROJECT_PREFIX
     return f"private/{owner_handle or ''}"
 
 
@@ -335,8 +335,8 @@ def scoped_prefix(scope: MemoryFileScope, owner_handle: str | None) -> str:
     """一个作用域在会话目录里的前缀。空 handle 的 private 是拼不出路径的，所以
     它在这里就被拒——`private/` 后面什么都没有，读起来像一个作用域，其实是一层
     空目录，谁都对不上。"""
-    if scope is MemoryFileScope.team:
-        return TEAM_PREFIX
+    if scope is MemoryFileScope.project:
+        return PROJECT_PREFIX
     if not owner_handle:
         # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
         raise MemoryFileError("private 记忆必须带 owner_handle")
@@ -350,14 +350,14 @@ def check_scoped_path(path: str) -> tuple[str, str]:
     ——两层主人意味着这条路径对不上任何一个作用域。
     """
     parts = path.split("/")
-    if parts and parts[0] == TEAM_PREFIX:
-        prefix, rest = TEAM_PREFIX, parts[1:]
+    if parts and parts[0] == PROJECT_PREFIX:
+        prefix, rest = PROJECT_PREFIX, parts[1:]
     elif len(parts) >= 2 and parts[0] == PRIVATE_PREFIX:
         prefix, rest = f"{PRIVATE_PREFIX}/{parts[1]}", parts[2:]
     else:
         # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
         raise MemoryFileError(
-            f"记忆文件的路径必须以 team/ 或 private/<handle>/ 开头：{path!r}"
+            f"记忆文件的路径必须以 project/ 或 private/<handle>/ 开头：{path!r}"
         )
     if len(rest) != 1:
         # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog

@@ -291,12 +291,12 @@ async def _memory_room(
 ) -> uuid.UUID | None:
     """这一棵树改动了，说进哪间房。
 
-    team 说进项目总览 —— 全项目共看的那一间。private 说进这个人和芝士的私聊
+    project 说进项目总览 —— 全项目共看的那一间。private 说进这个人和芝士的私聊
     （`get_or_create_private` 先找后建，同一个人打开的是同一间）。私聊不在话题
     树里，所以这条事件也不会在总览上多出一个角标：它是一条 kind=event 的灰
     字，不是一条消息。
     """
-    if scope is MemoryFileScope.team:
+    if scope is MemoryFileScope.project:
         project = await ProjectRepository(session).get(project_id)
         return project.root_topic_id if project is not None else None
     if not owner:
@@ -315,7 +315,7 @@ async def _say_memory_change(
     change: MemoryChange,
     scopes: list[tuple[MemoryFileScope, str | None]],
 ) -> None:
-    """改动的折叠事件：team 的说进项目总览，private 的说进那个人的私聊。
+    """改动的折叠事件：project 的说进项目总览，private 的说进那个人的私聊。
 
     带 diff，谁的名都不点：一条记忆是 agent 写下的一份观察，房间里没有人在等
     它。两棵树分开说，因为读它们的人不是一批：把某个人 private 的 diff 说进
@@ -334,8 +334,8 @@ async def _say_memory_change(
             continue
         content, meta = memory_changed_notice(
             where=(
-                say("memoryScopeTeam")
-                if scope is MemoryFileScope.team
+                say("memoryScopeProject")
+                if scope is MemoryFileScope.project
                 else say("memoryScopePrivate")
             ),
             summary=part.summary(),

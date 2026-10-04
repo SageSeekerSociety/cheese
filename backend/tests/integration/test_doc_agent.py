@@ -354,7 +354,7 @@ def test_a_search_reaches_only_the_rooms_the_asker_may_read(client, sessions):
     assert "七号" not in found["text"]
 
 
-def test_the_team_memory_is_read_in_full(client, sessions):
+def test_the_project_memory_is_read_in_full(client, sessions):
     room, seat = _document(client)
     project = uuid.UUID(client.get(f"/topics/{room}").json()["data"]["project_id"])
 
@@ -362,7 +362,7 @@ def test_the_team_memory_is_read_in_full(client, sessions):
         async with client.test_factory() as db:
             await MemoryFileStore(db).write(
                 project_id=project,
-                scope=MemoryFileScope.team,
+                scope=MemoryFileScope.project,
                 owner_handle=None,
                 path="deploy.md",
                 content="部署走 CI，周五不发版。",

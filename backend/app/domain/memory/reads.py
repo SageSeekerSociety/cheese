@@ -16,7 +16,7 @@ agent 自己去读一个文件。整件事成立的前提就是**它会去读**�
 1. 工具是 `Read`（`meta.tool`，见 `agent/tool_preview.py` 与
    `chat._persist_tool_event`）；
 2. 参数里那个路径在 `.cheese/memory/` 下面（`meta.detail`，**未经剪裁的原文**——
-   `meta.arg` 是给人看的预览，长路径会被剪成 `…/team/x.md`，拿它判目录是不准的）；
+   `meta.arg` 是给人看的预览，长路径会被剪成 `…/project/x.md`，拿它判目录是不准的）；
 3. 那个文件不是 `MEMORY.md`：索引每轮注入，读它不算「翻正文」。
 
 **这是工具调用，不是「记住了什么」。** agent 读了正文又没读懂，这里照样 +1：这个数
@@ -39,7 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.block.models import Block, BlockKind
 from app.domain.platform_stats.windows import utc_day
 
-#: 会话机上的记忆目录。`Read` 的参数是**绝对路径**（`$HOME/.cheese/memory/team/x.md`
+#: 会话机上的记忆目录。`Read` 的参数是**绝对路径**（`$HOME/.cheese/memory/project/x.md`
 #: 展开之后），所以判据是「含有这一段」而不是「以它开头」：不同机器的家目录不一样。
 MEMORY_DIR_MARKER = ".cheese/memory/"
 

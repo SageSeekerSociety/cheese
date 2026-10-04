@@ -229,8 +229,8 @@ class _Index:
 #: the index being short.
 INDEX_SECTIONS = [
     {
-        "label": "项目共享（team）",
-        "prefix": "team",
+        "label": "项目共享（project）",
+        "prefix": "project",
         "text": "- [构建用 npm ci](build.md) — 不要用 npm install\n"
         "- [移动端发版前冻结合并](freeze.md) — 非关键 PR 排到发版之后",
     },
@@ -248,7 +248,7 @@ MEMORY = _Index(INDEX_SECTIONS)
 MEMORY_OVER_CAP = _Index(
     INDEX_SECTIONS,
     warnings=[
-        "team/MEMORY.md：索引超出上限（200 行 / 25KB）：现在 260 行 / 31KB，"
+        "project/MEMORY.md：索引超出上限（200 行 / 25KB）：现在 260 行 / 31KB，"
         "超出的部分**读不到**，请把长条目搬进它指的那个文件、或合并重复的"
         "一条，把索引压回上限以内。"
     ],

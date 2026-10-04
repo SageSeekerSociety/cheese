@@ -210,13 +210,13 @@ def test_the_index_is_carried_and_the_bodies_are_not(client, stub_hooks):
                 )
 
             await put(
-                MemoryFileScope.team,
+                MemoryFileScope.project,
                 None,
                 INDEX_NAME,
                 "- [回答先给结论](answer-first.md) — 索引里那句钩子\n",
             )
             await put(
-                MemoryFileScope.team,
+                MemoryFileScope.project,
                 None,
                 "answer-first.md",
                 "---\nname: answer-first\ndescription: 回答先给结论\ntype: feedback\n"

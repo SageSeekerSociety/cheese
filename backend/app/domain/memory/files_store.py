@@ -91,7 +91,7 @@ class MemoryIndex:
 
 
 def _owner(scope: MemoryFileScope, handle: str | None) -> str:
-    return "" if scope is MemoryFileScope.team else (handle or "")
+    return "" if scope is MemoryFileScope.project else (handle or "")
 
 
 class MemoryFileStore:
@@ -317,7 +317,7 @@ async def memory_index(
     *,
     speaker_handles: list[str],
 ) -> MemoryIndex:
-    """这一轮注入的 L1 索引：team 一份，本轮发言人一人一份。
+    """这一轮注入的 L1 索引：project 一份，本轮发言人一人一份。
 
     **只读在场的这几个人。** 项目里的人可以很多，而每一轮要用的只是同席这几位
     ——这不是权限（private 记忆只有本人和管理员看得见，另有一道闸），是预算：
@@ -330,7 +330,7 @@ async def memory_index(
     sections: list[IndexSection] = []
     warnings: list[str] = []
     wanted: list[tuple[MemoryFileScope, str | None, str]] = [
-        (MemoryFileScope.team, None, "项目共享（team）")
+        (MemoryFileScope.project, None, "项目共享（project）")
     ]
     for handle in dict.fromkeys(speaker_handles):
         if handle:

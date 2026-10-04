@@ -7,7 +7,7 @@
   改的，改坏一个字段不该静默地让一个项目的记忆再也没人整理。
 - **删得太多就当没删**：`removal_refused` 的两个条件（比例和条数）都要过。
 - **prompt 里那三段必须都在**：它们是照搬 CC 来的，掉一段不会报错，只会让整理
-  少做一件事——而少做的那件事（不许把 private 升进 team、不和 CLAUDE.md 抢着改）
+  少做一件事——而少做的那件事（不许把 private 升进 project、不和 CLAUDE.md 抢着改）
   是错的写法里最难发现的一类。
 """
 
@@ -132,28 +132,35 @@ def _tree(prefix: str, count: int) -> dict[str, str]:
 
 
 def test_refused_scopes_counts_each_scope_on_its_own():
-    """team 和某个人的 private 是两棵树：一个人清空自己那棵，不该拿团队那棵作数。
+    """project 和某个人的 private 是两棵树：一个人清空自己那棵，不该拿团队那棵作数。
 
-    分开数而不是合起来数，是因为这两种删除说的不是一件事：team 少掉一大半更像是
+    分开数而不是合起来数，是因为这两种删除说的不是一件事：project 少掉一大半更像是
     那棵树出了事，而一个人的 private 少掉一大半可能只是他自己清了一遍——拿一个去
     替另一个作数，就成了「谁都别删」。
     """
-    before = {**_tree("team", 5), **_tree("private/bob", 5)}
+    before = {**_tree("project", 5), **_tree("private/bob", 5)}
     # 各少一条：两条都不算「删多了」。
-    assert refused_scopes(before, {**_tree("team", 4), **_tree("private/bob", 4)}) == {}
-    # bob 那棵被清光，team 一条没动：只拦 bob 那一棵。
-    refused = refused_scopes(before, _tree("team", 5))
+    assert (
+        refused_scopes(before, {**_tree("project", 4), **_tree("private/bob", 4)}) == {}
+    )
+    # bob 那棵被清光，project 一条没动：只拦 bob 那一棵。
+    refused = refused_scopes(before, _tree("project", 5))
     assert set(refused) == {"private/bob"}
     assert len(refused["private/bob"]) == 5
     # 两棵各自少掉一大半：两棵都拦，各报各的那几条。
-    refused = refused_scopes(before, {**_tree("team", 1), **_tree("private/bob", 1)})
-    assert set(refused) == {"team", "private/bob"}
-    assert refused["team"] == ("team/b.md", "team/c.md", "team/d.md", "team/e.md")
+    refused = refused_scopes(before, {**_tree("project", 1), **_tree("private/bob", 1)})
+    assert set(refused) == {"project", "private/bob"}
+    assert refused["project"] == (
+        "project/b.md",
+        "project/c.md",
+        "project/d.md",
+        "project/e.md",
+    )
     assert refused["private/bob"][0] == "private/bob/b.md"
 
 
 def test_a_scope_that_lost_nothing_is_not_reported():
-    assert refused_scopes({"team/a.md": "a"}, {"team/a.md": "a"}) == {}
+    assert refused_scopes({"project/a.md": "a"}, {"project/a.md": "a"}) == {}
 
 
 # --- 提示词预算：索引永远在 -------------------------------------------------
@@ -169,20 +176,20 @@ def test_the_index_always_makes_it_into_the_prompt():
         "MEMORY.md": "## 记忆\n- [a](a.md) — 讲 a",
         "a.md": "x" * 30_000,
     }
-    kept = trim_scopes({"team": files})["team"]
+    kept = trim_scopes({"project": files})["project"]
     assert "MEMORY.md" in kept
     assert "a.md" not in kept
 
 
 def test_a_small_tree_goes_in_whole():
     files = {"MEMORY.md": "- a", "a.md": "正文"}
-    assert trim_scopes({"team": files})["team"] == files
+    assert trim_scopes({"project": files})["project"] == files
 
 
 def test_a_briefing_keeps_every_scope_it_was_given():
-    scopes = {"team": {"MEMORY.md": "- a"}, "private/bob": {"MEMORY.md": "- b"}}
+    scopes = {"project": {"MEMORY.md": "- a"}, "private/bob": {"MEMORY.md": "- b"}}
     out = briefing(scopes, ["### <#1> 房间"], code_project=True)
-    assert set(out.scopes) == {"team", "private/bob"}
+    assert set(out.scopes) == {"project", "private/bob"}
     assert out.code_project
 
 
@@ -202,13 +209,13 @@ def test_the_dream_prompt_has_all_four_phases_in_order():
 
 
 def test_the_dream_prompt_keeps_the_two_hard_rules():
-    """两条规矩必须原样在：private 不许升进 team、和 CLAUDE.md 冲突只标注。
+    """两条规矩必须原样在：private 不许升进 project、和 CLAUDE.md 冲突只标注。
 
     它们不影响「整理跑没跑起来」，只影响跑偏的那一次有没有人拦住——而跑偏一次就
     是某个人的私人偏好被写进了全项目共看的那棵树，事后无从分辨哪一条本来是私人的。
     """
     prompt = dream_prompt(DreamBriefing(scopes={}, rooms=[], code_project=False))
-    assert "不许把 private 的内容升级进 team" in prompt
+    assert "不许把 private 的内容升级进 project" in prompt
     assert "不要改 CLAUDE.md" in prompt
     assert "拿不准就留着" in prompt
 
@@ -230,7 +237,7 @@ def test_a_code_project_is_told_about_its_repository_and_a_doc_project_is_not():
 def test_the_briefing_carries_the_rooms_into_the_prompt():
     prompt = dream_prompt(
         DreamBriefing(
-            scopes={"team": {"MEMORY.md": "- a"}},
+            scopes={"project": {"MEMORY.md": "- a"}},
             rooms=["### <#7> 房间\n实况文档：\n在做 X"],
             code_project=False,
         )

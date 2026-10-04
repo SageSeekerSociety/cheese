@@ -36,7 +36,7 @@ type: feedback
 他要简短的回答，不要末尾总结。
 """
 
-_TEAM = """---
+_PROJECT = """---
 name: answer-first
 description: 先给结论
 type: feedback
@@ -177,7 +177,7 @@ def test_a_memory_written_as_the_prompt_names_it_is_collected(tmp_path, monkeypa
             },
         ],
     )
-    files = _reconciled(home, monkeypatch, {"team": {}, "private/alice": {}})
+    files = _reconciled(home, monkeypatch, {"project": {}, "private/alice": {}})
     assert files == {
         "private/alice/prefers-short.md": _PRIVATE.replace(
             "不要末尾总结", "不要在末尾总结"
@@ -194,14 +194,14 @@ def test_a_memory_written_under_the_shells_home_is_collected(tmp_path, monkeypat
             {
                 "name": "Write",
                 "input": {
-                    "file_path": "/home/cheese/.cheese/memory/team/answer-first.md",
-                    "content": _TEAM,
+                    "file_path": "/home/cheese/.cheese/memory/project/answer-first.md",
+                    "content": _PROJECT,
                 },
             },
         ],
     )
-    files = _reconciled(home, monkeypatch, {"team": {}})
-    assert files == {"team/answer-first.md": _TEAM}
+    files = _reconciled(home, monkeypatch, {"project": {}})
+    assert files == {"project/answer-first.md": _PROJECT}
 
 
 def test_what_the_platform_lays_down_is_what_the_agent_reads(tmp_path, monkeypatch):
@@ -218,14 +218,14 @@ def test_what_the_platform_lays_down_is_what_the_agent_reads(tmp_path, monkeypat
     monkeypatch.setenv("HOME", str(home))
     runner = object.__new__(Runner)
     runner.launch = "test"
-    runner.sync_memory({"scopes": {"team": {"answer-first.md": _TEAM}}})
+    runner.sync_memory({"scopes": {"project": {"answer-first.md": _PROJECT}}})
     _session_writes(
         tmp_path,
         monkeypatch,
         [
             {
                 "name": "Read",
-                "input": {"file_path": "~/.cheese/memory/team/answer-first.md"},
+                "input": {"file_path": "~/.cheese/memory/project/answer-first.md"},
             },
             read_back,
         ],
@@ -240,11 +240,11 @@ def test_a_memory_written_empty_is_deleted_and_an_empty_index_is_kept(
     writing a memory empty is how it deletes one. The index is different — an
     empty index is an empty index, not a deleted one."""
     index = "- [先给结论](answer-first.md) — 有结论就先说结论\n"
-    scopes = {"team": {"answer-first.md": _TEAM, "MEMORY.md": index}}
+    scopes = {"project": {"answer-first.md": _PROJECT, "MEMORY.md": index}}
     home = tmp_path / "owner/.cheese/home/project/room"
     assert _reconciled(home, monkeypatch, scopes) == {
-        "team/answer-first.md": _TEAM,
-        "team/MEMORY.md": index,
+        "project/answer-first.md": _PROJECT,
+        "project/MEMORY.md": index,
     }
     _session_writes(
         tmp_path,
@@ -253,24 +253,24 @@ def test_a_memory_written_empty_is_deleted_and_an_empty_index_is_kept(
             {
                 "name": "Write",
                 "input": {
-                    "file_path": "~/.cheese/memory/team/answer-first.md",
+                    "file_path": "~/.cheese/memory/project/answer-first.md",
                     "content": "",
                 },
             },
             {
                 "name": "Write",
                 "input": {
-                    "file_path": "~/.cheese/memory/team/MEMORY.md",
+                    "file_path": "~/.cheese/memory/project/MEMORY.md",
                     "content": "",
                 },
             },
         ],
     )
-    assert _reconciled(home, monkeypatch, scopes) == {"team/MEMORY.md": ""}
-    assert not (home / ".cheese/memory/team/answer-first.md").exists()
+    assert _reconciled(home, monkeypatch, scopes) == {"project/MEMORY.md": ""}
+    assert not (home / ".cheese/memory/project/answer-first.md").exists()
     # The platform, answered with that tree, deletes the memory; the next
     # reconciliation has nothing to lay back down.
-    assert _reconciled(home, monkeypatch, {"team": {"MEMORY.md": ""}}) == {
-        "team/MEMORY.md": ""
+    assert _reconciled(home, monkeypatch, {"project": {"MEMORY.md": ""}}) == {
+        "project/MEMORY.md": ""
     }
-    assert not (home / ".cheese/memory/team/answer-first.md").exists()
+    assert not (home / ".cheese/memory/project/answer-first.md").exists()

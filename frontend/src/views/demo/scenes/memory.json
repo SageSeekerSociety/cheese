@@ -18,15 +18,15 @@
   "backstage": "memory",
   "files": [
     {
-      "path": "team/MEMORY.md",
+      "path": "project/MEMORY.md",
       "lines": ["- 集成测试连真库，不 mock", "- 周报按项目分节，结尾列待办"]
     },
     {
-      "path": "team/integration-tests-real-db.md",
+      "path": "project/integration-tests-real-db.md",
       "lines": ["type: feedback"]
     },
     {
-      "path": "team/weekly-report-shape.md",
+      "path": "project/weekly-report-shape.md",
       "lines": ["type: project"]
     },
     {
@@ -46,7 +46,7 @@
     {
       "label": "输入之前：铺好、注入索引",
       "focus": "backstage",
-      "tag": "只注入 team 和说话那个人的索引，正文不注入",
+      "tag": "只注入 project 和说话那个人的索引，正文不注入",
       "events": [
         {
           "at": 300,
@@ -57,7 +57,7 @@
         {
           "at": 1000,
           "do": "inject",
-          "paths": ["team/MEMORY.md", "private/wang/MEMORY.md"]
+          "paths": ["project/MEMORY.md", "private/wang/MEMORY.md"]
         },
         {
           "at": 1100,
@@ -78,7 +78,7 @@
           "who": "cheese",
           "turn": "t1",
           "tool": "Read",
-          "arg": "~/.cheese/memory/team/weekly-report-shape.md"
+          "arg": "~/.cheese/memory/project/weekly-report-shape.md"
         }
       ]
     },
@@ -178,7 +178,7 @@
           "who": "cheese",
           "turn": "t1",
           "tool": "Edit",
-          "arg": "~/.cheese/memory/team/weekly-report-shape.md"
+          "arg": "~/.cheese/memory/project/weekly-report-shape.md"
         },
         {
           "at": 1800,
@@ -206,19 +206,19 @@
         {
           "at": 900,
           "do": "file",
-          "path": "team/MEMORY.md",
+          "path": "project/MEMORY.md",
           "remove": "- 周报按项目分节，结尾列待办"
         },
         {
           "at": 950,
           "do": "file",
-          "path": "team/MEMORY.md",
+          "path": "project/MEMORY.md",
           "add": "- 周报按项目分节，每条待办写负责人"
         },
         {
           "at": 1600,
           "do": "file",
-          "path": "team/weekly-report-shape.conflict.md",
+          "path": "project/weekly-report-shape.conflict.md",
           "lines": ["会话这一版没收：李甘刚改过这一条", "重读平台那一版再写"]
         }
       ]
@@ -236,7 +236,7 @@
         {
           "at": 1300,
           "do": "mark",
-          "text": "总览房间：team 有 1 条被盖回，芝士那一版在 .conflict.md"
+          "text": "总览房间：project 有 1 条被盖回，芝士那一版在 .conflict.md"
         }
       ]
     },
@@ -248,7 +248,7 @@
         {
           "at": 300,
           "do": "file",
-          "path": "team/weekly-report-shape.conflict.md",
+          "path": "project/weekly-report-shape.conflict.md",
           "gone": true
         },
         {
@@ -260,7 +260,7 @@
         {
           "at": 1300,
           "do": "inject",
-          "paths": ["team/MEMORY.md", "private/li/MEMORY.md"]
+          "paths": ["project/MEMORY.md", "private/li/MEMORY.md"]
         },
         {
           "at": 1400,
@@ -273,7 +273,7 @@
           "do": "note",
           "who": "cheese",
           "turn": "t2",
-          "text": "这轮是李甘在说话：读到的是 team 和李甘的索引，王长鑫的偏好不在里面。"
+          "text": "这轮是李甘在说话：读到的是 project 和李甘的索引，王长鑫的偏好不在里面。"
         },
         {
           "at": 2900,

@@ -836,7 +836,7 @@ PLATFORM_TOOLS = ToolTable(
                     "type": "array",
                     "items": {"type": "string"},
                     "description": (
-                        "这项技能吸收掉的 team 记忆，如 team/weekly-report-order.md；"
+                        "这项技能吸收掉的 project 记忆，如 project/weekly-report-order.md；"
                         "保存后它们会被删掉，免得同一条规则存两份"
                     ),
                 },
@@ -1244,7 +1244,7 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         query = urllib.parse.urlencode({"q": args["query"], "limit": 8})
         return {"method": "GET", "path": f"/projects/{project}/context/search?{query}"}
     if tool == "cheese_memory_read":
-        query = urllib.parse.urlencode({"project_id": project, "scope": "team"})
+        query = urllib.parse.urlencode({"project_id": project, "scope": "project"})
         return {"method": "GET", "path": f"/memory/files?{query}"}
     if tool == "cheese_attachment_read":
         query = urllib.parse.urlencode({"path": args["path"].strip()})
@@ -2291,7 +2291,7 @@ def _say_project_search(args, data, env) -> str:
 
 def _say_memory_read(args, data, env) -> str:
     rows = (data or {}).get("data") if isinstance(data, dict) else data
-    name = args["name"].strip().removeprefix("team/")
+    name = args["name"].strip().removeprefix("project/")
     for row in rows or []:
         if row.get("path") == name and name != "index.md":
             return row.get("content") or ""

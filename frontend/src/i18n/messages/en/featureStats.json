@@ -9,7 +9,8 @@
     "unknown": "This feature has no data page yet",
     "unknownDesc": "{id} is not in the admin feature list: the address may be wrong, or the page may not be built yet.",
     "window": "Window: {start} to {end} (both ends included, counted by UTC days)",
-    "windowAria": "Window"
+    "windowAria": "Window",
+    "loading": "Loading"
   },
   "days": {
     "7": "Last 7 days",
@@ -24,6 +25,10 @@
     "topicNaming": {
       "title": "Smart naming",
       "summary": "Naming topic titles automatically: what it spends, which stages it runs at, and how often people rename what it wrote"
+    },
+    "memory": {
+      "title": "Memory",
+      "summary": "File-based memory: how much a project wrote, whether its index fits, and where the tidying stands"
     }
   },
   "unit": {
@@ -143,6 +148,65 @@
       "caption": "{n} renames or undos by people",
       "rename": "Renamed",
       "undo": "Undone"
+    }
+  },
+  "memory": {
+    "kpi": {
+      "projects": "Projects with memory",
+      "projectsNote": "Projects that wrote memory, ran a tidy-up, or had a memory body read.",
+      "entries": "Project memories",
+      "entriesNote": "Non-empty memory files in the shared project scope. The index (MEMORY.md) and rejected drafts (*.rejected.md) are not counted.",
+      "personal": "Personal memories",
+      "personalNote": "Personal memories aggregated per person — counts only. This page never reads content and never shows a personal memory's filename.",
+      "personalOf": "{owners} people",
+      "index": "Over the index budget",
+      "projectsUnit": "projects",
+      "indexNote": "Projects whose index exceeds 200 lines or 25KB. The overflow is not injected; the tidy-up decides what to keep.",
+      "indexOf": "{lines} over lines · {bytes} over bytes",
+      "hygiene": "Needs tidying",
+      "hygieneNote": "Files not in the index (orphans), index rows pointing at missing files (dangling), and bodies over 1,000 characters (too long), added together.",
+      "hygieneOf": "orphans {orphan} · dangling {dangling} · too long {over}",
+      "reads": "Body reads",
+      "readsNote": "How many times an agent actually opened a memory body this window (reading MEMORY.md does not count — that is the pointer index). Same reading as GET /admin/memory/reads.",
+      "dream": "Tidy-ups completed",
+      "dreamNote": "Successful endings among the last ten tidy-up (dream) runs. A failure, a run the delete guard stopped, and one that never came back all count as not succeeded.",
+      "dreamOf": "stopped {refused} · stuck {stuck}"
+    },
+    "trend": {
+      "title": "Body reads per day",
+      "note": "Memory bodies read per day across the platform. A day with nothing draws 0, not a gap — a gap reads as 「not measured」.",
+      "reads": "Body reads"
+    },
+    "hygiene": {
+      "title": "What needs tidying",
+      "note": "Orphans are files written but not listed in the index; dangling are index rows pointing at a file that is not there; too long are entries whose body exceeds the cap and cannot be read in full.",
+      "orphan": "Orphan files",
+      "dangling": "Dangling index rows",
+      "overBody": "Over-long bodies"
+    },
+    "dream": {
+      "title": "How the last ten tidy-ups ended",
+      "note": "The tidy-up (dream) walks a project's memory now and then. Completed means it finished; failed means that run errored; stopped means the delete guard judged it removed too much and nothing changed; stuck means it is running with no word back for over an hour.",
+      "caption": "Last success: {at}",
+      "completed": "Completed",
+      "failed": "Failed",
+      "refused": "Stopped",
+      "stuck": "Stuck"
+    },
+    "never": "never",
+    "table": {
+      "title": "By project",
+      "note": "One row per project. Entries, personal, index, needs-tidying and reads are all counted by this page; personal memories appear as counts only.",
+      "project": "Project",
+      "entries": "Entries",
+      "personal": "Personal",
+      "index": "Index",
+      "pending": "To tidy",
+      "pendingTitle": "orphans {orphan} · dangling {dangling} · too long {over}",
+      "reads": "Reads",
+      "dream": "Last tidy",
+      "stuck": "stuck",
+      "empty": "No project wrote memory in this window."
     }
   }
 }

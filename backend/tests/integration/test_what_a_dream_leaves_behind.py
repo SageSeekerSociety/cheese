@@ -1,6 +1,6 @@
-"""整理跑完：记下它改了哪些，总览房间里只说 team 的那几条。
+"""整理跑完：记下它改了哪些，总览房间里只说 project 的那几条。
 
-总览全项目都看得见，而一次整理读的是 team 加每个人的 private。某个人 private 里的
+总览全项目都看得见，而一次整理读的是 project 加每个人的 private。某个人 private 里的
 文件名、整理的人看着所有人的 private 写下的那段交代，都是那个人的内容，不能出现在
 总览里。
 """
@@ -29,7 +29,7 @@ def _note(name: str, body: str) -> str:
 
 
 class DreamingScreen(StubChannel):
-    """整理那一轮：会话同时改了 team 的一条和 bob 的一条，最后交代一句。"""
+    """整理那一轮：会话同时改了 project 的一条和 bob 的一条，最后交代一句。"""
 
     def __init__(self, home: Path):
         super().__init__()
@@ -39,7 +39,7 @@ class DreamingScreen(StubChannel):
         self, topic_id: uuid.UUID, prompt: str, reply: str, *, agent: str | None = None
     ) -> None:
         root = self.home / MEMORY_ROOT
-        (root / "team" / "shared-rule.md").write_text(
+        (root / "project" / "shared-rule.md").write_text(
             _note("shared-rule", "改过的项目约定"), encoding="utf-8"
         )
         (root / "private" / "bob" / f"{SECRET}.md").write_text(
@@ -48,12 +48,12 @@ class DreamingScreen(StubChannel):
         super().emit_turn(topic_id, prompt, SUMMARY, agent=agent)
 
 
-def test_the_overview_hears_about_team_files_and_nothing_private(
+def test_the_overview_hears_about_project_files_and_nothing_private(
     client, tmp_path, monkeypatch
 ):
     monkeypatch.setenv("HOME", str(tmp_path))
     _, said = client.portal.call(lambda: _dream_and_listen(client, tmp_path))
-    assert any("team/shared-rule.md" in text for text in said), said
+    assert any("project/shared-rule.md" in text for text in said), said
     assert not any(SECRET in text for text in said), said
 
 
@@ -66,7 +66,7 @@ def test_the_run_record_lists_every_file_the_dream_changed(
     assert result["status"] == "completed", result
     assert sorted(result["files"]) == [
         f"private/bob/{SECRET}.md",
-        "team/shared-rule.md",
+        "project/shared-rule.md",
     ]
 
 
@@ -90,7 +90,7 @@ async def _dream_and_listen(client, tmp_path) -> tuple[dict, list[str]]:
         }
         store = MemoryFileStore(session)
         for scope, owner, name in (
-            (MemoryFileScope.team, None, "shared-rule"),
+            (MemoryFileScope.project, None, "shared-rule"),
             (MemoryFileScope.private, "bob", SECRET),
         ):
             await store.write(

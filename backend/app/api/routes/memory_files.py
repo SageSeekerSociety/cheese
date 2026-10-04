@@ -3,7 +3,7 @@
 真相在 `memory_files`（见 `app/domain/memory/files_store.py`），这里只是把它露
 出来。两条规矩，都是产品决定，不是实现细节：
 
-- **team 是项目里所有人共读共写共删的。** 项目集体的一份状态，谁都得能修；每次
+- **project 是项目里所有人共读共写共删的。** 项目集体的一份状态，谁都得能修；每次
   改动在总览房间留一条带 diff 的记录（回写那条路发），所以「谁删的」追得回来。
 - **private 是「本人 + 项目管理员」，而且只有本人写得动。** 一个人的偏好是他自己
   的；管理员看得见是为了在出事时能查（比如说有人把密钥写进去了），但**改不了**
@@ -73,7 +73,7 @@ async def _readable(
 ) -> str:
     """谁在读，读不读得到，一起答完；返回读的人自己的 handle。
 
-    team：项目里读得到它的人就读得到。private：本人，或者这个项目的管理员。
+    project：项目里读得到它的人就读得到。private：本人，或者这个项目的管理员。
     别人问起一个 private 作用域时答 403 而不是 404——private 的存在本身不是
     秘密，里面的内容才是，而 404 会让本人也以为自己的记忆不见了。
 
@@ -101,7 +101,7 @@ async def _writable(
     主人，而「这是谁的判断」正是 private 这一层唯一要保住的东西——查得到就够了。
     越权答 403，和读的那一道同一个码：读得到而写不动，不是「这里没有这条记忆」。
 
-    team 没有这一道：项目集体的一份状态，读得到的人就写得动，改动在总览房间留
+    project 没有这一道：项目集体的一份状态，读得到的人就写得动，改动在总览房间留
     一条带 diff 的记录（回写那条路发），所以「谁删的」追得回来。
     """
     actor = await _readable(db, resolver, project_id, owner)
@@ -125,8 +125,8 @@ def _checked_path(raw: str) -> str:
 
 
 def _owner_of(scope: MemoryFileScope, owner: str | None) -> str | None:
-    """private 必须点名是谁的；team 没有 owner（传了也不看）。"""
-    if scope is MemoryFileScope.team:
+    """private 必须点名是谁的；project 没有 owner（传了也不看）。"""
+    if scope is MemoryFileScope.project:
         return None
     if not owner:
         raise ValidationError(say("privateMemoryNeedsOwner"))
@@ -138,7 +138,7 @@ async def list_memory_files(
     db: DbSession,
     resolver: ActorResolverDep,
     project_id: uuid.UUID,
-    scope: str = Query("team"),
+    scope: str = Query("project"),
     owner_handle: str | None = None,
 ) -> dict:
     """一个作用域下的全部文件（含索引），带内容和版本号。
@@ -163,13 +163,13 @@ async def write_memory_file(
     frontmatter、索引行和路径——三样里错一样就一个字都存不下。**超了单条上限拒绝**
     （422，`MemoryFileStore.write`）：写的人手上就有这一条，当场就改得短。
 
-    谁写得动由 `_writable` 答：team 读得到就写得动，private 只认本人。
+    谁写得动由 `_writable` 答：project 读得到就写得动，private 只认本人。
     """
     try:
         project_id = uuid.UUID(str(body.get("project_id") or ""))
     except ValueError as exc:
         raise ValidationError(say("projectIdInvalid")) from exc
-    which = _scope_of(str(body.get("scope") or "team"))
+    which = _scope_of(str(body.get("scope") or "project"))
     owner = _owner_of(which, (body.get("owner_handle") or "").strip() or None)
     actor = await _writable(db, resolver, project_id, owner)
     path = _checked_path(str(body.get("path") or ""))
@@ -233,13 +233,13 @@ async def delete_memory_file(
     路径是索引时必须一起点出被它指着的那一条也删了没有 —— 平台不替写入方推：
     索引里留着一条指向不存在文件的指针，读起来像「这条记忆在」，而它不在。
 
-    删除和写入同一道闸：team 读得到就删得动，private 只认本人（`_writable`）。
+    删除和写入同一道闸：project 读得到就删得动，private 只认本人（`_writable`）。
     """
     try:
         project_id = uuid.UUID(str(body.get("project_id") or ""))
     except ValueError as exc:
         raise ValidationError(say("projectIdInvalid")) from exc
-    which = _scope_of(str(body.get("scope") or "team"))
+    which = _scope_of(str(body.get("scope") or "project"))
     owner = _owner_of(which, (body.get("owner_handle") or "").strip() or None)
     actor = await _writable(db, resolver, project_id, owner)
     raw_path = str(body.get("path") or "").strip()

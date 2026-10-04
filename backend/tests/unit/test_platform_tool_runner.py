@@ -778,7 +778,9 @@ def test_a_memory_is_read_by_its_name_and_the_index_is_not_one():
     host = Host({("GET", "/memory/files"): files})
 
     assert run("cheese_memory_read", {"name": "deploy.md"}, host) == "部署走 CI。"
-    assert run("cheese_memory_read", {"name": "team/deploy.md"}, host) == "部署走 CI。"
+    assert (
+        run("cheese_memory_read", {"name": "project/deploy.md"}, host) == "部署走 CI。"
+    )
     assert run("cheese_memory_read", {"name": "index.md"}, host) == "没有这一条记忆。"
     assert run("cheese_memory_read", {"name": "gone.md"}, host) == "没有这一条记忆。"
 

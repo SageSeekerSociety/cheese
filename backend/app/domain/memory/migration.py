@@ -8,7 +8,7 @@
 
 1. **去处不是一个表，是一棵有主人的树。** 旧的一条进哪儿，取决于它是「关于某个人
    的」还是「关于这个项目的」——同一个池子里两种都有。猜错了的代价不对称：把私人
-   的话写进 team，是替整个项目定了规矩，而且再也收不回来（team 是所有人共读的）。
+   的话写进 project，是替整个项目定了规矩，而且再也收不回来（project 是所有人共读的）。
 2. **搬迁要一次看全。** 一条一条搬的脚本只能做「原样挪过去」，而旧表里同一件事往
    往躺着五六个说法不同的版本。搬进文件树时把它们合成一条，才是这次搬家真正省的
    东西——不然新树一开始就背着旧表的重复。
@@ -17,7 +17,7 @@
    `apply` 才落笔。
 
 这个模块是纯的：没有数据库、没有 LLM，只有「旧记忆长什么样」「决定合不合法」「新
-树会写成什么样」。所以「每一条都有去处」「private 不许升级进 team」这两条可以在
+树会写成什么样」。所以「每一条都有去处」「private 不许升级进 project」这两条可以在
 单测里直接问，不用先跑一次模型。
 
 **旧表不删。** 这次只搬，删表是另一个迁移，要等搬完看一阵（30 天）再说。
@@ -50,10 +50,10 @@ from app.domain.memory.files import (
 #: 只会把分叉的那一版静默丢掉。
 OVERVIEW_SECTIONS = ("大家都该知道的", "项目记忆（由记忆整理迁入）")
 
-#: 迁移后 team 的 L1 索引目标行数。**是目标，不是闸**：超了照样出报告，但报告上
+#: 迁移后 project 的 L1 索引目标行数。**是目标，不是闸**：超了照样出报告，但报告上
 #: 要红着写出来——这次迁移的意义之一就是把索引压回去，压不回去得让人看见。
 #: 上限本身是 200 行（`files.INDEX_MAX_LINES`），那是「读不读得到」的线。
-TEAM_INDEX_GOAL_LINES = 120
+PROJECT_INDEX_GOAL_LINES = 120
 
 #: 报告里一条旧记忆最多摘多少字。报告是给人扫的，不是把整张表倒出来。
 EXCERPT_MAX = 160
@@ -65,12 +65,12 @@ REASON_MAX = 200
 class Destination(StrEnum):
     """一条旧记忆的五种去处。**每一条都要有一个**，没有第六种「先放着」。
 
-    ``merge`` 和 ``team`` / ``private`` 分开，是因为它们写的动作不一样：前者是
+    ``merge`` 和 ``project`` / ``private`` 分开，是因为它们写的动作不一样：前者是
     往一条已经存在的记忆上补，后者是新开一条。报告要让人看出「这一版新开了 40
     个文件」和「这一版把 40 条并进了 12 个已有的」是两件事。
     """
 
-    team = "team"
+    project = "project"
     private = "private"
     merge = "merge"
     #: 只建议写进 `CLAUDE.md` / `SKILL.md`，**一个字都不自动改**：那不是记忆的地
@@ -80,10 +80,10 @@ class Destination(StrEnum):
 
 
 #: 每个去处允许的 `type`。`user` 永远 private（「这个人是谁」不是项目共识），
-#: team 里也不该出现它——那正是「private 不许升级进 team」在类型上的样子。`merge`
+#: project 里也不该出现它——那正是「private 不许升级进 project」在类型上的样子。`merge`
 #: 不在这张表里：并进去的那一段跟着目标文件自己的 type，不从这一条上取。
 _ALLOWED_TYPES: dict[Destination, tuple[MemoryType, ...]] = {
-    Destination.team: (
+    Destination.project: (
         MemoryType.project,
         MemoryType.reference,
         MemoryType.feedback,
@@ -110,7 +110,7 @@ class Source(StrEnum):
 
     #: `scope=agent_project`：某个 agent 在这个项目里学到的。
     agent = "agent"
-    #: `scope=user`：某个 agent 对某个人的认识。**不许进 team。**
+    #: `scope=user`：某个 agent 对某个人的认识。**不许进 project。**
     person = "person"
     #: 总览文档里的那一节。
     overview = "overview"
@@ -141,12 +141,12 @@ class Decision:
     source_id: str
     destination: Destination
     reason: str
-    #: 新文件的 slug（`team/<path>.md` / `private/<owner>/<path>.md`），或 `merge`
+    #: 新文件的 slug（`project/<path>.md` / `private/<owner>/<path>.md`），或 `merge`
     #: 的目标文件名。空的时候是它自己的 slug 都没给——`_check` 会拒。
     path: str = ""
     #: `private` / `merge` 的主人。
     owner: str = ""
-    #: `merge` 的目标作用域：空串 = team。
+    #: `merge` 的目标作用域：空串 = project。
     scope: MemoryFileScope | None = None
     type: MemoryType | None = None
     description: str = ""
@@ -157,10 +157,10 @@ class Decision:
     def target_file(self) -> tuple[MemoryFileScope, str, str]:
         """这条决定要写进哪个文件：`(作用域, 主人, 文件名)`。"""
         owner = self.owner if self.scope is MemoryFileScope.private else None
-        return (self.scope or MemoryFileScope.team), (owner or ""), f"{self.path}.md"
+        return (self.scope or MemoryFileScope.project), (owner or ""), f"{self.path}.md"
 
     def target_prefix(self) -> str:
-        """这条决定动的是哪棵树：`team` 或 `private/<handle>`。"""
+        """这条决定动的是哪棵树：`project` 或 `private/<handle>`。"""
         return prefix_of(self.target_file()[0], self.target_file()[1])
 
     def target_path(self) -> str:
@@ -201,7 +201,7 @@ class PlannedFile:
 
     @property
     def prefixed(self) -> str:
-        """报告和 diff 里用的完整路径（`team/x.md`）。"""
+        """报告和 diff 里用的完整路径（`project/x.md`）。"""
         return f"{prefix_of(self.scope, self.owner)}/{self.path}"
 
 
@@ -243,15 +243,15 @@ class MigrationPlan:
     #: 每条旧记忆的原样（模型的输入）。重建计划要用它，报告不用。
     raw_decisions: tuple[dict, ...] = field(default=())
 
-    def team_index_lines(self) -> int:
-        """迁移后 team 索引有多少行。"""
+    def project_index_lines(self) -> int:
+        """迁移后 project 索引有多少行。"""
         for index in self.indexes:
-            if index.scope is MemoryFileScope.team:
+            if index.scope is MemoryFileScope.project:
                 return _line_count(index.content)
         return 0
 
     def over_goal(self) -> bool:
-        return self.team_index_lines() > TEAM_INDEX_GOAL_LINES
+        return self.project_index_lines() > PROJECT_INDEX_GOAL_LINES
 
     def counts(self) -> dict[str, int]:
         """每个去处各几条。报告开头那一行。"""
@@ -383,7 +383,7 @@ def build_plan(
 ) -> MigrationPlan:
     """决定 → 完整计划（要写什么 + 报告）。
 
-    `existing` 是路径（`team/x.md`）→ 正文，`files` 是每个作用域现有哪些文件
+    `existing` 是路径（`project/x.md`）→ 正文，`files` 是每个作用域现有哪些文件
     （作用域, 主人, 文件名, 版本）——包括那份 `MEMORY.md`。两者都由调用方从
     `memory_files` 读出来，这里只看不读。`owners` 是**可以收 private 记忆的人**：
     一棵还没写过的 `private/<handle>` 树是可以现建的，一个不在名单上的人不是
@@ -417,11 +417,11 @@ def _decisions(
 ) -> list[Decision]:
     """一串原始决定 → 校验过的决定，**一条旧记忆都不许漏**。
 
-    `keep` 是「能写的地方」：`team` 永远可以（一个项目的 team 树是它本来就有的
+    `keep` 是「能写的地方」：`project` 永远可以（一个项目的 project 树是它本来就有的
     那一棵，还没写过就是空的），`private/<handle>` 要么这个人已经在名单上、要么
     他已经有一棵树。别的一律拒——写给一个不存在的人，和写错地方是同一种错。
     """
-    keep = {"team"} | {f"private/{owner}" for owner in owners}
+    keep = {"project"} | {f"private/{owner}" for owner in owners}
     keep |= {prefix_of(scope, owner) for scope, owner, _, _ in files}
     known_files = {
         f"{prefix_of(scope, owner)}/{name}" for scope, owner, name, _ in files
@@ -445,7 +445,7 @@ def _decisions(
                 )
             )
         if (
-            decision.destination in (Destination.team, Destination.private)
+            decision.destination in (Destination.project, Destination.private)
             and target in known_files
         ):
             # 新建一条撞上已经存在的文件，落笔就是**整份覆盖**——把那条记忆连同
@@ -500,7 +500,7 @@ def _one(
         scope = (
             MemoryFileScope.private
             if str(item.get("scope") or "").strip().lower() == "private"
-            else MemoryFileScope.team
+            else MemoryFileScope.project
         )
     owner = str(item.get("owner") or "").strip()
     if scope is MemoryFileScope.private and owner not in owners:
@@ -548,7 +548,7 @@ def _slug(item: dict, *, destination: Destination, source_id: str) -> str:
             say("migrationNameNotKebab", source=source_id, name=repr(raw))
         )
     if not raw and destination in (
-        Destination.team,
+        Destination.project,
         Destination.private,
         Destination.merge,
     ):
@@ -559,12 +559,12 @@ def _slug(item: dict, *, destination: Destination, source_id: str) -> str:
 def _check(decision: Decision, *, entry: OldEntry, keep: set[str]) -> None:
     """一条决定的硬规矩。三条，每条都对应一次真出过的错。"""
     if entry.origin is Source.person and decision.destination in (
-        Destination.team,
+        Destination.project,
         Destination.merge,
     ):
-        if decision.target_prefix() == "team":
+        if decision.target_prefix() == "project":
             raise MigrationError(
-                say("migrationPersonalIntoTeam", source=decision.source_id)
+                say("migrationPersonalIntoProject", source=decision.source_id)
             )
     if decision.destination is Destination.suggest and not decision.target:
         raise MigrationError(say("migrationSuggestNoTarget", source=decision.source_id))
@@ -633,7 +633,7 @@ def _lay_out(
     merges: dict[str, list[Decision]] = {}
     suggestions: list[Suggestion] = []
     for decision in decisions:
-        if decision.destination in (Destination.team, Destination.private):
+        if decision.destination in (Destination.project, Destination.private):
             scope, owner, name = decision.target_file()
             _check_path(name)
             where = f"{prefix_of(scope, owner)}/{name}"
@@ -683,7 +683,7 @@ def _lay_out(
     for scope, owner in added:
         index_path = f"{prefix_of(scope, owner)}/{INDEX_NAME}"
         # 一棵还没写过的树也有它的索引：版本是 None（新建），作用域和主人来自这
-        # 棵树本身——退给 team 会把某个人的索引写成项目的索引。
+        # 棵树本身——退给 project 会把某个人的索引写成项目的索引。
         version = versions.get(index_path, (scope, owner, INDEX_NAME, None))[3]
         lines = added[(scope, owner)]
         current = existing.get(index_path, "")
@@ -772,9 +772,10 @@ def render_report(plan: MigrationPlan) -> str:
         f"索引加 {sum(index.added_lines for index in plan.indexes)} 行",
         f"- 只建议、不自动改：{len(plan.suggestions)} 条",
         "",
-        "## team 的索引 {#index}",
+        "## project 的索引 {#index}",
         "",
-        f"迁移后 **{plan.team_index_lines()} 行**（目标 ≤ {TEAM_INDEX_GOAL_LINES} 行）"
+        f"迁移后 **{plan.project_index_lines()} 行**"
+        f"（目标 ≤ {PROJECT_INDEX_GOAL_LINES} 行）"
         + (" —— **没达标，还要再合并一批。**" if plan.over_goal() else " —— 达标。"),
         "",
         "## 一条一条的去处 {#each}",
@@ -863,7 +864,7 @@ MIGRATION_SYSTEM = """你在把一批旧记忆搬进一套基于文件的记忆�
 
 ## 五个去处（五选一，每条都必须选一个）
 
-- `team`：新建一条**整个项目共读**的记忆。新的正文写进 `body`，`description` 写
+- `project`：新建一条**整个项目共读**的记忆。新的正文写进 `body`，`description` 写
   一句能让索引读得懂的钩子。`type` 只能是 `project`（项目里正在进行的事，代码和
   git 里读不出来的）、`reference`（外部系统的入口）或 `feedback`（全项目都该遵守
   的做法）。
@@ -878,9 +879,9 @@ MIGRATION_SYSTEM = """你在把一批旧记忆搬进一套基于文件的记忆�
 
 ## 规矩
 
-1. **关于某个人的东西永远不能进 team。** 从「关于某个人」的池子来的条目，去处只
+1. **关于某个人的东西永远不能进 project。** 从「关于某个人」的池子来的条目，去处只
    能是 `private` / `merge`（并进那个人的文件）/ `suggest` / `discard`。
-2. **项目规矩进 team，个人偏好进 private。** 这是同一条规矩的另一面：不要因为
+2. **项目规矩进 project，个人偏好进 private。** 这是同一条规矩的另一面：不要因为
    「反正是表扬」就把某个人的偏好写成全项目的做法。
 3. **相对日期换成绝对日期**再写（「上周」→ 具体日期）。写不清的就别写。
 4. `body` 是可以独立读懂的正文：把 `**Why:**`（为什么）和 `**How to apply:**`
@@ -894,10 +895,10 @@ MIGRATION_SYSTEM = """你在把一批旧记忆搬进一套基于文件的记忆�
 ```json
 {"decisions": [
   {"source": "<旧记忆的 id，原样抄>",
-   "destination": "team | private | merge | suggest | discard",
+   "destination": "project | private | merge | suggest | discard",
    "owner": "<private 的主人，别的时候空着>",
    "path": "<文件名，kebab-case，不带 .md>",
-   "scope": "team | private",
+   "scope": "project | private",
    "type": "project | reference | feedback | user",
    "description": "<索引那行的钩子，一句话>",
    "body": "<正文>",
@@ -971,7 +972,7 @@ __all__ = [
     "REPORT_TITLE",
     "Source",
     "Suggestion",
-    "TEAM_INDEX_GOAL_LINES",
+    "PROJECT_INDEX_GOAL_LINES",
     "MIGRATION_CHUNK",
     "MIGRATION_SYSTEM",
     "build_plan",

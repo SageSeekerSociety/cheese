@@ -32,7 +32,7 @@ from app.domain.identity.actor import Actor
 from app.domain.membership.services import MemberService
 from app.domain.memory.files import (
     MEMORY_ROOT,
-    TEAM_PREFIX,
+    PROJECT_PREFIX,
     MemoryFileError,
     MemoryFileScope,
     check_scoped_path,
@@ -80,10 +80,10 @@ _PROPOSAL_FIELDS = {"taught", "accepted", "related", "absorbs", "reason"}
 async def _absorbed(
     db: AsyncSession, project_id: uuid.UUID, paths: list[str]
 ) -> list[dict[str, str]]:
-    """The team memories a proposal folds in, each with the title a person reads
+    """The project memories a proposal folds in, each with the title a person reads
     on the card (its index line's title, else its description)."""
     store = MemoryFileStore(db)
-    index = await store.index_text(project_id, MemoryFileScope.team) or ""
+    index = await store.index_text(project_id, MemoryFileScope.project) or ""
     titles = {entry.path: entry.title for entry in parse_index(index)}
     out: list[dict[str, str]] = []
     for raw in paths:
@@ -92,9 +92,9 @@ async def _absorbed(
             prefix, name = check_scoped_path(path)
         except MemoryFileError as exc:
             raise ValidationError(str(exc)) from exc
-        if prefix != TEAM_PREFIX:
-            raise ValidationError(say("skillAbsorbsTeamOnly", path=raw))
-        row = await store.get(project_id, MemoryFileScope.team, None, name)
+        if prefix != PROJECT_PREFIX:
+            raise ValidationError(say("skillAbsorbsProjectOnly", path=raw))
+        row = await store.get(project_id, MemoryFileScope.project, None, name)
         if row is None:
             raise ValidationError(say("skillAbsorbsMissing", path=raw))
         title = titles.get(name) or parse_memory_file(row.content).description or name
@@ -399,7 +399,7 @@ async def confirm_skill(
     row, actor = await _load(db, resolver, skill_id, None)
     _person(actor, say("skillConfirmSave"))
     service = ProjectSkillService(db)
-    # The team memories the method folds in go once it is saved, so the same
+    # The project memories the method folds in go once it is saved, so the same
     # rules are not kept in two places. Only the name part is a memory path.
     absorbed = [
         check_scoped_path(item["path"])[1]
@@ -409,7 +409,7 @@ async def confirm_skill(
     if absorbed:
         await MemoryFileStore(db).forget(
             project_id=row.project_id,
-            scope=MemoryFileScope.team,
+            scope=MemoryFileScope.project,
             owner_handle=None,
             paths=absorbed,
             updated_by=actor.handle,

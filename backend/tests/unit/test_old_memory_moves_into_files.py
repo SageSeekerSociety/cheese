@@ -1,4 +1,4 @@
-"""迁移的规矩：每条旧记忆都有去处，private 不上 team，先报告后写入。
+"""迁移的规矩：每条旧记忆都有去处，private 不上 project，先报告后写入。
 
 纯模块（`app/domain/memory/migration.py`）的那一半：旧表长什么样、模型说了什么、
 新树会写成什么样、报告上写着什么。写下去以后会发生什么（版本冲突、事务）在
@@ -49,12 +49,12 @@ def _entry(
     return OldEntry(source_id=source_id, origin=origin, where=where, content=content)
 
 
-def _team_file(name: str, version: int = 3) -> tuple[MemoryFileScope, str, str, int]:
-    return (MemoryFileScope.team, "", f"{name}.md", version)
+def _project_file(name: str, version: int = 3) -> tuple[MemoryFileScope, str, str, int]:
+    return (MemoryFileScope.project, "", f"{name}.md", version)
 
 
 def _index_scope() -> tuple[MemoryFileScope, str, str, int]:
-    return (MemoryFileScope.team, "", "MEMORY.md", 7)
+    return (MemoryFileScope.project, "", "MEMORY.md", 7)
 
 
 def _decision(source: str, destination: str, **fields) -> dict:
@@ -133,7 +133,7 @@ def _plan(entries, raw, *, existing=None, owners=None, files=None):
     )
 
 
-def test_a_new_team_memory_and_a_new_private_one_are_both_planned():
+def test_a_new_project_memory_and_a_new_private_one_are_both_planned():
     entries = [
         _entry("e1", "分页用 cursor"),
         _entry("e2", "他偏好小 PR", origin=Source.person),
@@ -143,7 +143,7 @@ def test_a_new_team_memory_and_a_new_private_one_are_both_planned():
         [
             _decision(
                 "e1",
-                "team",
+                "project",
                 path="pagination-uses-cursor",
                 type="project",
                 description="分页接口用 cursor",
@@ -164,21 +164,21 @@ def test_a_new_team_memory_and_a_new_private_one_are_both_planned():
     paths = sorted(planned.prefixed for planned in plan.files)
     assert paths == [
         "private/alice/prefers-small-prs.md",
-        "team/pagination-uses-cursor.md",
+        "project/pagination-uses-cursor.md",
     ]
-    team = next(f for f in plan.files if f.prefixed.startswith("team/"))
-    assert team.is_new and team.version is None
-    assert team.content.startswith(
+    project = next(f for f in plan.files if f.prefixed.startswith("project/"))
+    assert project.is_new and project.version is None
+    assert project.content.startswith(
         "---\nname: pagination-uses-cursor\ndescription: 分页接口用 cursor\n"
         "type: project\n---\n"
     )
     # 索引跟着涨：两个新文件两条指针，而且是整份新内容（旧行留着）。
-    index = next(item for item in plan.indexes if item.scope is MemoryFileScope.team)
+    index = next(item for item in plan.indexes if item.scope is MemoryFileScope.project)
     assert index.version == 7
     assert index.added_lines == 1  # 私人的那一条进的是 alice 自己的索引
     assert "旧行" not in index.content
-    assert "索引" in plan.report() and "team 的索引" in plan.report()
-    assert "team/pagination-uses-cursor.md" in plan.report()
+    assert "索引" in plan.report() and "project 的索引" in plan.report()
+    assert "project/pagination-uses-cursor.md" in plan.report()
 
 
 def test_an_entry_without_a_destination_stops_the_whole_plan():
@@ -219,7 +219,7 @@ def test_every_destination_needs_a_reason():
 
 
 def test_what_is_about_a_person_never_becomes_a_project_rule():
-    """「不许把 private 的内容升级进 team」在代码里长这样。"""
+    """「不许把 private 的内容升级进 project」在代码里长这样。"""
     entry = _entry("e1", "他不喜欢末尾总结", origin=Source.person)
 
     with pytest.raises(MigrationError) as refused:
@@ -228,7 +228,7 @@ def test_what_is_about_a_person_never_becomes_a_project_rule():
             [
                 _decision(
                     "e1",
-                    "team",
+                    "project",
                     path="no-closing-summary",
                     type="feedback",
                     description="不要末尾总结",
@@ -237,7 +237,7 @@ def test_what_is_about_a_person_never_becomes_a_project_rule():
             ],
         )
 
-    assert "不能进 team" in str(refused.value)
+    assert "不能进 project" in str(refused.value)
 
 
 def test_the_same_entry_can_go_to_that_persons_private_tree():
@@ -259,14 +259,14 @@ def test_the_same_entry_can_go_to_that_persons_private_tree():
     assert plan.files[0].prefixed == "private/alice/no-closing-summary.md"
 
 
-def test_a_user_type_memory_cannot_land_in_team():
+def test_a_user_type_memory_cannot_land_in_project():
     with pytest.raises(MigrationError) as refused:
         _plan(
             [_entry("e1", "他写了十年 Go")],
             [
                 _decision(
                     "e1",
-                    "team",
+                    "project",
                     path="alice-go",
                     type="user",
                     description="他写 Go",
@@ -320,13 +320,13 @@ def test_a_merge_appends_to_the_body_and_leaves_the_frontmatter_alone():
             )
         ],
         existing={
-            "team/integration-tests-hit-a-real-db.md": _SHELF,
-            "team/MEMORY.md": (
+            "project/integration-tests-hit-a-real-db.md": _SHELF,
+            "project/MEMORY.md": (
                 "- [integration-tests-hit-a-real-db]"
                 "(integration-tests-hit-a-real-db.md) — 打真库\n"
             ),
         },
-        files=[_team_file("integration-tests-hit-a-real-db"), _index_scope()],
+        files=[_project_file("integration-tests-hit-a-real-db"), _index_scope()],
     )
 
     merged = plan.files[0]
@@ -357,15 +357,15 @@ def test_a_new_file_may_not_land_on_top_of_an_existing_one():
             [
                 _decision(
                     "e1",
-                    "team",
+                    "project",
                     path="integration-tests-hit-a-real-db",
                     type="feedback",
                     description="打真库",
                     body="正文",
                 )
             ],
-            existing={"team/integration-tests-hit-a-real-db.md": _SHELF},
-            files=[_team_file("integration-tests-hit-a-real-db"), _index_scope()],
+            existing={"project/integration-tests-hit-a-real-db.md": _SHELF},
+            files=[_project_file("integration-tests-hit-a-real-db"), _index_scope()],
         )
 
     assert "已经存在" in str(refused.value)
@@ -378,7 +378,7 @@ def test_nothing_may_be_written_into_the_index_itself():
             [
                 _decision(
                     "e1",
-                    "team",
+                    "project",
                     path="MEMORY",
                     type="project",
                     description="正文",
@@ -395,8 +395,8 @@ def test_nothing_may_be_written_into_the_index_itself():
 
 def test_a_line_that_is_already_in_the_index_is_not_added_twice():
     index = {
-        "team/MEMORY.md": "- [no-closing-summary](no-closing-summary.md) — 别总结\n",
-        "team/no-closing-summary.md": _SHELF,
+        "project/MEMORY.md": "- [no-closing-summary](no-closing-summary.md) — 别总结\n",
+        "project/no-closing-summary.md": _SHELF,
     }
     plan = _plan(
         [_entry("e1", "一")],
@@ -409,7 +409,7 @@ def test_a_line_that_is_already_in_the_index_is_not_added_twice():
             )
         ],
         existing=index,
-        files=[_team_file("no-closing-summary"), _index_scope()],
+        files=[_project_file("no-closing-summary"), _index_scope()],
     )
 
     assert plan.indexes == ()
@@ -425,7 +425,7 @@ def test_a_new_memory_gets_one_line_in_the_index_of_its_own_tree():
         [
             _decision(
                 "e1",
-                "team",
+                "project",
                 path="pagination-uses-cursor",
                 type="project",
                 description="分页用 cursor",
@@ -452,36 +452,38 @@ def test_a_new_memory_gets_one_line_in_the_index_of_its_own_tree():
         ],
     )
 
-    # 两棵树各有一份索引：team 一份，alice 一份。私人的那两条不进 team 的索引。
+    # 两棵树各有一份索引：project 一份，alice 一份。私人的那两条不进 project 的索引。
     assert len(plan.indexes) == 2
-    team = next(index for index in plan.indexes if index.scope is MemoryFileScope.team)
-    assert team.content.count("- [") == 1
+    project = next(
+        index for index in plan.indexes if index.scope is MemoryFileScope.project
+    )
+    assert project.content.count("- [") == 1
     alice = next(index for index in plan.indexes if index.owner == "alice")
     assert alice.added_lines == 2
     assert alice.content.count("- [") == 2
     # 索引没有标题行：一行一条指针，行数就是条数。
-    assert plan.team_index_lines() == 1
+    assert plan.project_index_lines() == 1
 
 
-def test_the_report_says_whether_the_team_index_made_the_goal():
+def test_the_report_says_whether_the_project_index_made_the_goal():
     before = "- [a](a.md) — 一行\n" * 119
     plan = _plan(
         [_entry("e1", "一")],
         [
             _decision(
                 "e1",
-                "team",
+                "project",
                 path="b",
                 type="project",
                 description="b",
                 body="正文。",
             )
         ],
-        existing={"team/MEMORY.md": before},
+        existing={"project/MEMORY.md": before},
         files=[_index_scope()],
     )
 
-    assert plan.team_index_lines() == 120
+    assert plan.project_index_lines() == 120
     assert plan.over_goal() is False
     assert "达标" in plan.report()
 
@@ -493,14 +495,14 @@ def test_the_report_says_it_loudly_when_the_index_is_still_too_long():
         [
             _decision(
                 "e1",
-                "team",
+                "project",
                 path="b",
                 type="project",
                 description="b",
                 body="正文。",
             )
         ],
-        existing={"team/MEMORY.md": before},
+        existing={"project/MEMORY.md": before},
         files=[_index_scope()],
     )
 
@@ -565,7 +567,7 @@ def test_the_counts_add_up():
 
     assert plan.counts()["discard"] == 1
     assert plan.counts()["suggest"] == 1
-    assert plan.counts()["team"] == 0
+    assert plan.counts()["project"] == 0
 
 
 # --- 问模型的那一段 --------------------------------------------------------
@@ -578,12 +580,12 @@ def test_the_prompt_carries_the_sources_the_people_and_the_existing_tree():
         entries=[_entry("e1", "分页用 cursor")],
         owners=["alice"],
         existing={
-            "team/MEMORY.md": "- [a](a.md) — 钩子一句\n",
-            "team/a.md": "正文",
+            "project/MEMORY.md": "- [a](a.md) — 钩子一句\n",
+            "project/a.md": "正文",
         },
     )
 
     assert "cheese 自建" in prompt and "p-1" in prompt
     assert "alice" in prompt
-    assert "`team/a.md` — 钩子一句" in prompt
+    assert "`project/a.md` — 钩子一句" in prompt
     assert "`e1`" in prompt and "分页用 cursor" in prompt

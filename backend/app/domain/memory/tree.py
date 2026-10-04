@@ -93,8 +93,8 @@ def prefixes_of(
 
 def _split(path: str) -> tuple[str, str]:
     parts = path.split("/")
-    if parts and parts[0] == "team":
-        prefix, rest = "team", parts[1:]
+    if parts and parts[0] == "project":
+        prefix, rest = "project", parts[1:]
     elif len(parts) >= 2 and parts[0] == "private":
         prefix, rest = f"private/{parts[1]}", parts[2:]
     else:
@@ -184,7 +184,7 @@ def sync_tree(
 def _too_many_to_delete(requested: dict[str, str], dropped: list[str]) -> list[str]:
     """这次要删的是不是多到不像人干的（`BULK_DELETE_RATIO` / `BULK_DELETE_MIN`）。
 
-    按作用域分开数：team 和某个人的 private 是两棵树，一个人把它那棵清空是一回事，
+    按作用域分开数：project 和某个人的 private 是两棵树，一个人把它那棵清空是一回事，
     拿它去替项目那一棵作数就成了「谁都别删」。命中就返回那个作用域里全部要被删掉
     的路径——只拦一半更糟，剩下的照样删，而人看到的是一棵被啃过的树。
     """

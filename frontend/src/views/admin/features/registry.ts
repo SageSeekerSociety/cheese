@@ -43,6 +43,12 @@ const VIEWS: Record<string, FeatureView> = {
     summaryKey: 'featureStats.features.topicNaming.summary',
     view: defineAsyncComponent(() => import('./TopicNamingPage.vue')),
   },
+  memory: {
+    id: 'memory',
+    titleKey: 'featureStats.features.memory.title',
+    summaryKey: 'featureStats.features.memory.summary',
+    view: defineAsyncComponent(() => import('./MemoryPage.vue')),
+  },
 }
 
 export function findFeatureView(id: string): FeatureView | undefined {

@@ -83,20 +83,20 @@ async def test_only_reads_of_body_files_are_counted(business_db_factory):
         session.add_all(
             [
                 # 算：读了一条正文。
-                _call(project, detail=f"{_MEMORY}/team/release-steps.md"),
+                _call(project, detail=f"{_MEMORY}/project/release-steps.md"),
                 # 不算：索引每轮注入，读它不算翻正文。
-                _call(project, detail=f"{_MEMORY}/team/MEMORY.md"),
+                _call(project, detail=f"{_MEMORY}/project/MEMORY.md"),
                 # 不算：工具不是 Read。
-                _call(project, tool="Write", detail=f"{_MEMORY}/team/x.md"),
+                _call(project, tool="Write", detail=f"{_MEMORY}/project/x.md"),
                 # 不算：别的文件。
                 _call(project, detail="/home/cheese/work/wt-dream/CLAUDE.md"),
-                # 不算：`meta.arg` 是给人看的预览（长路径被剪成 `…/team/x.md`），
+                # 不算：`meta.arg` 是给人看的预览（长路径被剪成 `…/project/x.md`），
                 # 拿它判目录是不准的 —— 判据必须是未剪裁的 `detail`。
-                _call(project, arg="…/team/x.md"),
+                _call(project, arg="…/project/x.md"),
                 # 不算：只有事件块才进这个数。
                 _call(
                     project,
-                    detail=f"{_MEMORY}/team/x.md",
+                    detail=f"{_MEMORY}/project/x.md",
                     kind=BlockKind.message,
                 ),
             ]
@@ -122,21 +122,21 @@ async def test_the_pure_predicate_and_the_query_agree(business_db_factory):
     的时间点，然后按一分钟的窗口单独数它 —— 这样每条候选的答案都是独立的一次查询。
     """
     candidates: list[tuple[object, object]] = [
-        ("Read", f"{_MEMORY}/team/a.md"),
+        ("Read", f"{_MEMORY}/project/a.md"),
         ("Read", f"{_MEMORY}/private/alice/a.md"),
-        ("Read", f"{_MEMORY}/team/MEMORY.md"),
+        ("Read", f"{_MEMORY}/project/MEMORY.md"),
         ("Read", f"{_MEMORY}/private/alice/MEMORY.md"),
-        ("Read", f"{_MEMORY}/team/MEMORY.md.bak"),
-        ("Read", f"{_MEMORY}/team/MEMORY.mdnotes.md"),
-        ("Read", f"{_HOME}/.cheese/memory-notes/team/a.md"),
+        ("Read", f"{_MEMORY}/project/MEMORY.md.bak"),
+        ("Read", f"{_MEMORY}/project/MEMORY.mdnotes.md"),
+        ("Read", f"{_HOME}/.cheese/memory-notes/project/a.md"),
         ("Read", f"{_HOME}/.cheese/memory"),
         ("Read", "/home/cheese/work/CLAUDE.md"),
         ("Read", None),
-        ("Write", f"{_MEMORY}/team/a.md"),
-        ("Bash", f"{_MEMORY}/team/a.md"),
-        (None, f"{_MEMORY}/team/a.md"),
-        ("Read", r"C:\Users\cheese\.cheese\memory\team\a.md"),
-        ("Read", r"C:\Users\cheese\.cheese\memory\team\MEMORY.md"),
+        ("Write", f"{_MEMORY}/project/a.md"),
+        ("Bash", f"{_MEMORY}/project/a.md"),
+        (None, f"{_MEMORY}/project/a.md"),
+        ("Read", r"C:\Users\cheese\.cheese\memory\project\a.md"),
+        ("Read", r"C:\Users\cheese\.cheese\memory\project\MEMORY.md"),
     ]
     async with business_db_factory() as session:
         project = await _project(session)
@@ -168,14 +168,18 @@ async def test_the_count_is_per_project_and_per_day(business_db_factory):
         quiet = await _project(session, "carol")
         session.add_all(
             [
-                _call(one, detail=f"{_MEMORY}/team/a.md", at=_NOW),
-                _call(one, detail=f"{_MEMORY}/team/b.md", at=_NOW + timedelta(hours=1)),
+                _call(one, detail=f"{_MEMORY}/project/a.md", at=_NOW),
+                _call(
+                    one, detail=f"{_MEMORY}/project/b.md", at=_NOW + timedelta(hours=1)
+                ),
                 _call(
                     one,
                     detail=f"{_MEMORY}/private/alice/a.md",
                     at=_NOW + timedelta(days=2),
                 ),
-                _call(two, detail=f"{_MEMORY}/team/a.md", at=_NOW + timedelta(days=1)),
+                _call(
+                    two, detail=f"{_MEMORY}/project/a.md", at=_NOW + timedelta(days=1)
+                ),
             ]
         )
         await session.commit()
@@ -203,8 +207,8 @@ async def test_one_project_can_be_asked_for_alone(business_db_factory):
         two = await _project(session, "bob")
         session.add_all(
             [
-                _call(one, detail=f"{_MEMORY}/team/a.md"),
-                _call(two, detail=f"{_MEMORY}/team/a.md"),
+                _call(one, detail=f"{_MEMORY}/project/a.md"),
+                _call(two, detail=f"{_MEMORY}/project/a.md"),
             ]
         )
         await session.commit()
@@ -226,9 +230,11 @@ async def test_the_window_is_half_open(business_db_factory):
         project = await _project(session)
         session.add_all(
             [
-                _call(project, detail=f"{_MEMORY}/team/a.md", at=_NOW),
+                _call(project, detail=f"{_MEMORY}/project/a.md", at=_NOW),
                 _call(
-                    project, detail=f"{_MEMORY}/team/b.md", at=_NOW + timedelta(days=1)
+                    project,
+                    detail=f"{_MEMORY}/project/b.md",
+                    at=_NOW + timedelta(days=1),
                 ),
             ]
         )
@@ -262,11 +268,13 @@ def test_the_admin_endpoint_answers_per_project_per_day(client, as_admin):
             )
             await session.flush()
             session.add(
-                _call(project, detail=f"{_MEMORY}/team/a.md", at=datetime.now(UTC))
+                _call(project, detail=f"{_MEMORY}/project/a.md", at=datetime.now(UTC))
             )
             # 这一条不该进任何一天：读的是索引。
             session.add(
-                _call(project, detail=f"{_MEMORY}/team/MEMORY.md", at=datetime.now(UTC))
+                _call(
+                    project, detail=f"{_MEMORY}/project/MEMORY.md", at=datetime.now(UTC)
+                )
             )
             await session.commit()
             return str(project.id)

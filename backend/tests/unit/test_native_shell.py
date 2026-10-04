@@ -1110,22 +1110,25 @@ def test_the_guard_admits_file_tools_on_the_sessions_memory_and_nothing_past_it(
     the build its path spelled out, and the guard lets exactly that through."""
     session = Session(tmp_path / "guarded", machine)
     memory = session.root / "home/.cheese/memory"
-    (memory / "team").mkdir(parents=True)
-    (memory / "team/link").symlink_to(tmp_path)
+    (memory / "project").mkdir(parents=True)
+    (memory / "project/link").symlink_to(tmp_path)
     target = json.loads(session.target.read_text())
     session.target.write_text(json.dumps({**target, "central_memory": str(memory)}))
     for tool in ("Read", "Write", "Edit"):
-        call = {"tool_name": tool, "tool_input": {"file_path": f"{memory}/team/a.md"}}
+        call = {
+            "tool_name": tool,
+            "tool_input": {"file_path": f"{memory}/project/a.md"},
+        }
         assert _guard(session.target, call) == "allow", tool
     for path in (
         f"{memory}/../execution.json",
-        f"{memory}/team/link/elsewhere",
+        f"{memory}/project/link/elsewhere",
         session.central / "a.txt",
     ):
         call = {"tool_name": "Write", "tool_input": {"file_path": str(path)}}
         assert _guard(session.target, call) == "deny", path
     for tool in ("Glob", "Grep"):
-        call = {"tool_name": tool, "tool_input": {"path": f"{memory}/team"}}
+        call = {"tool_name": tool, "tool_input": {"path": f"{memory}/project"}}
         assert _guard(session.target, call) == "deny", tool
 
 
