@@ -70,6 +70,7 @@
     "all": "All",
     "viewAll": "View all {n}",
     "failed": "Search failed. Try again later.",
+    "clear": "Clear",
     "loading": "Searching"
   },
   "palette": {

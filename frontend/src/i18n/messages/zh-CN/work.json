@@ -1233,7 +1233,6 @@
     "noneMine": "暂无分配给你的任务",
     "emptyColumn": "暂无{column}的任务",
     "mineOnly": "只看我的",
-    "retry": "重试",
     "openChat": "进入对话",
     "noAssignee": "暂无负责人",
     "queued": "排队中",
@@ -1241,7 +1240,8 @@
     "made": "做出了什么",
     "findPlaceholder": "按标题找（/）",
     "findLabel": "在看板上按标题找",
-    "findNone": "这一列没有标题含「{text}」的任务"
+    "findNone": "这一列没有标题含「{text}」的任务",
+    "clearFilter": "清除筛选"
   },
   "publishedSite": {
     "revisionChanged": "项目已采纳的版本变了，确认之后再发布",
@@ -1432,6 +1432,7 @@
     },
     "empty": "暂无资料",
     "noMatch": "暂无匹配的资料",
+    "clearFilters": "清除筛选",
     "loading": "读取资料库",
     "loadError": "无法读取资料库",
     "unknownSource": "来源未知",

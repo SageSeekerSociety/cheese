@@ -16,7 +16,20 @@
         </BaseButton>
       </div>
     </header>
-    <div v-if="notifications.length > 0" class="notification-feed__list">
+    <!-- Activity failed to load: replace this block in place with an error and a
+         retry (docs/design-system.md §3.10). It used to only console.error and
+         leave a blank, indistinguishable from "no notifications". -->
+    <BaseLoadError
+      v-if="failed"
+      class="notification-feed__load-error"
+      :title="t('notifications.common.loadFailed')"
+      :error="errorReason || null"
+      @retry="reload"
+    />
+    <!-- First load still in flight: the row shape is predictable, so draw a row
+         skeleton instead of leaving a blank. -->
+    <LoadingSkeleton v-else-if="loading && !notifications.length" variant="list" class="notification-feed__skel" />
+    <div v-else-if="notifications.length > 0" class="notification-feed__list">
       <v-list density="compact" lines="three" class="py-0" bg-color="transparent">
         <notification-item
           v-for="notification in notifications"
@@ -26,7 +39,16 @@
           :on-delete="deleteNotification"
         />
       </v-list>
-      <div v-if="hasMore" class="notification-feed__more">
+      <!-- Loading the next page failed: keep the pages we already have, append the
+           error and a retry under them, and do not blank the feed. -->
+      <BaseLoadError
+        v-if="moreFailed"
+        class="notification-feed__load-error"
+        :title="t('notifications.common.loadFailed')"
+        :error="errorReason || null"
+        @retry="loadMore"
+      />
+      <div v-else-if="hasMore" class="notification-feed__more">
         <BaseButton size="sm" :loading="loading" @click="loadMore">
           {{ t('notifications.common.loadMore') }}
         </BaseButton>
@@ -47,6 +69,8 @@ import { useI18n } from 'vue-i18n'
 import { useUnreadNotifications } from '@/composables/useUnreadNotifications'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
+import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
 import NotificationItem from '@/components/common/Notification/NotificationItem.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import { NotificationsApi } from '@/network/api/notifications'
@@ -73,6 +97,12 @@ const filterOptions = computed<ReadonlyArray<{ value: FeedFilter; label: string 
 
 const notifications = ref<Notification[]>([])
 const loading = ref(false)
+// 动态没读出来：就地显示错误 + 重试，而不是留一片空白装作「暂无通知」。
+const failed = ref(false)
+// 翻页（「加载更多」）失败：已经到手的那几页不能扔，只在列表下面就地接错误 + 重试
+// ——整块换成失败会把看得好好的那几页一起弄没（同搜索页，docs/design-system.md §3.10）。
+const moreFailed = ref(false)
+const errorReason = ref('')
 const cursorStart = ref<string | undefined>(undefined)
 const pageSize = ref(10)
 const hasMore = ref(false)
@@ -83,11 +113,15 @@ const hasUnread = computed(() => notifications.value.some((notification) => !not
 // 获取通知列表。每换一次筛选 generation 加一：换之前发出、换之后才回来的那一页
 // 属于上一种筛选，丢掉，不然「未读」那一栏会混进已读的。
 let generation = 0
-const fetchNotifications = async () => {
+const fetchNotifications = async (isMore = false) => {
   if (loading.value) return
 
   const mine = generation
   loading.value = true
+  // 只是接着往下翻：不动上面那一段的失败态，这一次失败也不让整块换掉。
+  moreFailed.value = false
+  if (!isMore) failed.value = false
+  errorReason.value = ''
   try {
     const { data } = await NotificationsApi.list({
       // 未读筛选只问服务端要没读的；「全部」不传这一位，行为和从前一样。
@@ -102,6 +136,11 @@ const fetchNotifications = async () => {
     cursorStart.value = data.page.nextStart
   } catch (error) {
     console.error('获取通知失败:', error)
+    if (mine === generation) {
+      if (isMore) moreFailed.value = true
+      else failed.value = true
+      errorReason.value = error instanceof Error ? error.message : ''
+    }
   } finally {
     if (mine === generation) loading.value = false
   }
@@ -114,6 +153,7 @@ function reload() {
   cursorStart.value = undefined
   notifications.value = []
   hasMore.value = false
+  moreFailed.value = false
   void fetchNotifications()
 }
 
@@ -128,7 +168,7 @@ watch(filter, (value) => {
 
 // 加载更多通知
 const loadMore = () => {
-  fetchNotifications()
+  void fetchNotifications(true)
 }
 
 // 标记单个通知为已读
@@ -220,6 +260,17 @@ onMounted(() => {
   border-radius: var(--radius-lg);
   background: var(--surface);
   overflow: hidden;
+}
+/* 首次加载的骨架坐在和真实列表同一张卡里，行到齐时这一块不换高度。 */
+.notification-feed__skel {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  overflow: hidden;
+  padding: 8px 12px;
+}
+.notification-feed__load-error {
+  padding: 8px 0;
 }
 .notification-feed__more {
   display: flex;

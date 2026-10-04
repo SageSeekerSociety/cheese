@@ -70,6 +70,7 @@
     "all": "全部",
     "viewAll": "查看全部 {n} 条",
     "failed": "搜索失败，稍后重试",
+    "clear": "清空",
     "loading": "正在搜索"
   },
   "palette": {

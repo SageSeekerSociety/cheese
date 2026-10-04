@@ -10,7 +10,7 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { render, screen } from '@testing-library/vue'
+import { fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const listAwaitingMe = vi.fn()
@@ -101,5 +101,35 @@ describe('待办页零项目时的第一屏', () => {
     store.projects = [{ id: 'p1' }]
     await mount()
     expect(screen.queryByText(t('work.startPaths.teams.title'))).toBeNull()
+  })
+})
+
+/** 「等你处理」这一列读不到时，就地换成错误 + 重试（docs/design-system.md §3.10），
+ *  而不是留一片空白装作「暂无等你处理的事项」。
+ */
+describe('待办页读不到待处理事项时', () => {
+  it('就地显示原因和重试，而不是装作「暂无」', async () => {
+    store.projects = [{ id: 'p1' }]
+    listAwaitingMe.mockReset().mockRejectedValueOnce(new Error('服务器错误'))
+    await mount()
+
+    expect(await screen.findByText(t('home.inbox.loadFailed'))).toBeTruthy()
+    expect(screen.getByText('服务器错误')).toBeTruthy()
+    expect(screen.getByRole('button', { name: t('global.loadError.retry') })).toBeTruthy()
+    expect(screen.queryByText(t('home.inbox.waitingEmpty'))).toBeNull()
+  })
+
+  it('点重试真的再问一遍服务端', async () => {
+    store.projects = [{ id: 'p1' }]
+    listAwaitingMe.mockReset().mockRejectedValueOnce(new Error('服务器错误'))
+    await mount()
+    await screen.findByText(t('home.inbox.loadFailed'))
+    expect(listAwaitingMe).toHaveBeenCalledTimes(1)
+
+    listAwaitingMe.mockResolvedValueOnce({ data: [], total: 0 })
+    await fireEvent.click(screen.getByRole('button', { name: t('global.loadError.retry') }))
+
+    await waitFor(() => expect(listAwaitingMe).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.queryByText(t('home.inbox.loadFailed'))).toBeNull())
   })
 })

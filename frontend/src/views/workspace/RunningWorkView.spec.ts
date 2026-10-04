@@ -365,3 +365,31 @@ describe('板自己钉在视口高度上', () => {
     expect(listRule).toContain('position: relative')
   })
 })
+
+describe('读不到板的时候', () => {
+  it('就地换成 BaseLoadError：一句「加载失败」＋服务端原因＋重试，而不是一条裸灰字', async () => {
+    listProjectTasks.mockRejectedValue(new Error('服务器错误'))
+    const { container } = mount()
+    const alert = await waitFor(() => {
+      const el = container.querySelector('.base-load-error[role="alert"]')
+      expect(el, '读失败时应当就地画出错误块').not.toBeNull()
+      return el as HTMLElement
+    })
+    expect(alert.textContent).toContain('加载失败')
+    expect(alert.textContent).toContain('服务器错误')
+    expect(alert.querySelector('button')?.textContent?.trim()).toBe('重试')
+    // 失败不许退化成「暂无」：这一段摘要一个字都不该写。
+    expect(container.textContent).not.toContain('暂无任务')
+  })
+
+  it('重试再读一次；读到了就把错误收掉、板回来了', async () => {
+    listProjectTasks.mockRejectedValueOnce(new Error('服务器错误'))
+    const { container } = mount()
+    await waitFor(() => expect(container.querySelector('.base-load-error')).not.toBeNull())
+
+    listProjectTasks.mockResolvedValue({ data: [task()], total: 1 })
+    await fireEvent.click(container.querySelector('.base-load-error button')!)
+    await waitFor(() => expect(container.querySelector('.base-load-error')).toBeNull())
+    expect(titlesInColumn(container, 'building')).toEqual(['查一下分页接口'])
+  })
+})

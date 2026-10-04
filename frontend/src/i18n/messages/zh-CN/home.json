@@ -3,7 +3,6 @@
     "waiting": "等你处理",
     "waitingEmpty": "暂无等你处理的事项",
     "loadFailed": "无法读取待处理事项",
-    "retry": "重试",
     "feed": "动态",
     "reason": {
       "reviewer": "待你审阅",
