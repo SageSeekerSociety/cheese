@@ -105,6 +105,175 @@
         }, 15000)
       }
     </script>
+    <!--
+      Cold-start skeleton shell. The served HTML paints this before the bundle
+      arrives, so a slow link shows the app taking shape instead of a ~20s pure
+      white screen (measured 400 kbit/s). Entirely inline — no extra request, no
+      external font, small markup — so it never delays the first paint.
+      `src/main.ts` removes the node the moment Vue mounts.
+
+      The colours are literals copied from the design tokens in `src/style.css`
+      (--canvas / --surface / --line / --line-2 / --fill-2 / --fill / --accent).
+      They have to be literals: that sheet ships inside the bundle and is not
+      here yet. Dark follows `html[data-theme]`, which the boot script above has
+      already resolved from the stored preference AND prefers-color-scheme before
+      the first paint, so an explicit "light" on a dark machine stays light. The
+      prefers-color-scheme block is the scripting-off fallback and carries the
+      same values; keep the two in step.
+    -->
+    <style>
+      #sx-boot-skeleton,
+      #sx-boot-skeleton * {
+        box-sizing: border-box;
+      }
+      #sx-boot-skeleton {
+        --sx-canvas: #f7f8fa;
+        --sx-surface: #ffffff;
+        --sx-line: #ecedef;
+        --sx-bone: #eeeff1;
+        --sx-bone-rail: #e2e3e6;
+        --sx-sheen: #f4f5f7;
+        --sx-accent: #f57f17;
+        position: fixed;
+        inset: 0;
+        z-index: 2147483000; /* one below the desktop boot splash */
+        display: flex;
+        overflow: hidden;
+        background: var(--sx-canvas);
+      }
+      html[data-theme='dark'] #sx-boot-skeleton {
+        --sx-canvas: #141517;
+        --sx-surface: #1b1d20;
+        --sx-line: #2b2e33;
+        --sx-bone: #282c31;
+        --sx-bone-rail: #3a3e45;
+        --sx-sheen: #212429;
+        --sx-accent: #ffa733;
+      }
+      /* No script has run, so <html> carries no data-theme yet: follow the OS. */
+      @media (prefers-color-scheme: dark) {
+        html:not([data-theme]) #sx-boot-skeleton {
+          --sx-canvas: #141517;
+          --sx-surface: #1b1d20;
+          --sx-line: #2b2e33;
+          --sx-bone: #282c31;
+          --sx-bone-rail: #3a3e45;
+          --sx-sheen: #212429;
+          --sx-accent: #ffa733;
+        }
+      }
+      /* Left rail: a 56px column of rounded tile placeholders; the top one is the
+         brand mark, so it carries the amber. */
+      #sx-boot-skeleton .sx-rail {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 10px;
+        flex: none;
+        width: 56px;
+        padding: 12px 0;
+        border-right: 1px solid var(--sx-line);
+      }
+      #sx-boot-skeleton .sx-icon {
+        display: block;
+        width: 22px;
+        height: 22px;
+        border-radius: 6px;
+        background: var(--sx-bone-rail);
+      }
+      #sx-boot-skeleton .sx-icon--brand {
+        background: var(--sx-accent);
+        opacity: 0.85;
+      }
+      /* Secondary sidebar: the app's default width, rows of running text. */
+      #sx-boot-skeleton .sx-side {
+        flex: none;
+        width: 210px;
+        padding: 14px 12px;
+        border-right: 1px solid var(--sx-line);
+      }
+      #sx-boot-skeleton .sx-side .sx-bone {
+        height: 12px;
+        margin-bottom: 12px;
+        background: var(--sx-bone-rail);
+      }
+      /* Content pane: a title bar and two card blocks, on --surface. */
+      #sx-boot-skeleton .sx-main {
+        flex: 1 1 auto;
+        min-width: 0;
+        padding: 16px 20px;
+        background: var(--sx-surface);
+      }
+      #sx-boot-skeleton .sx-title {
+        height: 18px;
+        width: 40%;
+        margin-bottom: 8px;
+      }
+      #sx-boot-skeleton .sx-sub {
+        height: 12px;
+        width: 24%;
+        margin-bottom: 18px;
+      }
+      #sx-boot-skeleton .sx-card {
+        border: 1px solid var(--sx-line);
+        border-radius: 8px;
+        padding: 14px;
+        margin-bottom: 12px;
+      }
+      #sx-boot-skeleton .sx-card .sx-bone {
+        height: 11px;
+        margin-bottom: 10px;
+      }
+      #sx-boot-skeleton .sx-card .sx-bone:last-child {
+        margin-bottom: 0;
+      }
+      #sx-boot-skeleton .sx-w50 {
+        width: 50%;
+      }
+      #sx-boot-skeleton .sx-w60 {
+        width: 60%;
+      }
+      #sx-boot-skeleton .sx-w70 {
+        width: 70%;
+      }
+      #sx-boot-skeleton .sx-w75 {
+        width: 75%;
+      }
+      #sx-boot-skeleton .sx-w85 {
+        width: 85%;
+      }
+      #sx-boot-skeleton .sx-w90 {
+        width: 90%;
+      }
+      /* The bones, and the "still coming" sign: a light sweep across each one,
+         1.4s a cycle, the same motion the in-app LoadingSkeleton uses. */
+      #sx-boot-skeleton .sx-bone {
+        position: relative;
+        overflow: hidden;
+        display: block;
+        border-radius: 6px;
+        background: var(--sx-bone);
+      }
+      #sx-boot-skeleton .sx-bone::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        transform: translateX(-100%);
+        background: linear-gradient(90deg, transparent, var(--sx-sheen), transparent);
+        animation: sx-shimmer 1.4s ease-in-out infinite;
+      }
+      @keyframes sx-shimmer {
+        to {
+          transform: translateX(100%);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #sx-boot-skeleton .sx-bone::after {
+          animation: none;
+          background: none;
+        }
+      }
+    </style>
   </head>
 
   <body>
@@ -125,6 +294,40 @@
             <circle cx="399" cy="618" r="14.1" />
           </g>
         </svg>
+      </div>
+    </div>
+    <!-- The skeleton shell itself: left rail, sidebar column, content column.
+         Decorative only (aria-hidden) — it is replaced by the real app on mount,
+         and a screen reader that arrives that early is told nothing rather than
+         a shape it cannot use. Removed in src/main.ts. -->
+    <div id="sx-boot-skeleton" aria-hidden="true">
+      <div class="sx-rail">
+        <span class="sx-icon sx-icon--brand"></span>
+        <span class="sx-icon"></span>
+        <span class="sx-icon"></span>
+        <span class="sx-icon"></span>
+        <span class="sx-icon"></span>
+      </div>
+      <div class="sx-side">
+        <span class="sx-bone sx-w70"></span>
+        <span class="sx-bone sx-w85"></span>
+        <span class="sx-bone sx-w50"></span>
+        <span class="sx-bone sx-w85"></span>
+        <span class="sx-bone sx-w70"></span>
+        <span class="sx-bone sx-w85"></span>
+      </div>
+      <div class="sx-main">
+        <span class="sx-bone sx-title"></span>
+        <span class="sx-bone sx-sub"></span>
+        <div class="sx-card">
+          <span class="sx-bone sx-w60"></span>
+          <span class="sx-bone sx-w90"></span>
+          <span class="sx-bone sx-w75"></span>
+        </div>
+        <div class="sx-card">
+          <span class="sx-bone sx-w60"></span>
+          <span class="sx-bone sx-w90"></span>
+        </div>
       </div>
     </div>
     <div id="app"></div>

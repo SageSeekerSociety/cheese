@@ -73,6 +73,12 @@ watch(
 registerPlugins(app)
 app.mount('#app')
 
+// The cold-start skeleton shell lives in index.html and is only there to cover
+// the gap before this line. Mounting has just painted the real shell, so drop
+// it now — a fresh node with fresh token values arriving in the same frame
+// means no flash even on a fast connection. See index.html for the markup.
+document.getElementById('sx-boot-skeleton')?.remove()
+
 // Mounting is the proof that a reload recovered the tab, so the one-shot
 // guard reopens for the next release.
 clearStaleBuildGuard()
