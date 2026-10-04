@@ -123,6 +123,18 @@ export function prefetchOnHover(target: HoverTarget): void {
 }
 
 /**
+ * 鼠标左键已经按下去了：意图确定，不再等停住。快手点下去的那一下常常不到 150ms，
+ * hover 预取还没来得及起头。只给鼠标用——触屏上每一次手指滑动列表都从一次 pointerdown
+ * 开始，那不是意图（调用处按 `pointerType` 过滤）。省流量和慢网照旧让开。
+ */
+export function prefetchNow(target: HoverTarget): void {
+  cancelPrefetch()
+  if (!connectionAllows()) return
+  if (target.router && target.to !== undefined) warmRoute(target.router, target.to)
+  if (target.topicId) void warmTopic(target.topicId)
+}
+
+/**
  * 首屏画完之后，趁浏览器空着把「下一步多半会去的那几页」的 chunk 先下下来。
  *
  * 和 hover 预取同一个纪律：慢网和省流量不做；一次空闲只热一个目标，不在一帧里连发

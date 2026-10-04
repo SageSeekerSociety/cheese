@@ -104,7 +104,7 @@ const showRetry = computed(
       (props.notice.mode === 'fold' && props.notice.retryable))
 )
 
-// 芝士起草的规则 / 工作方法：这一行直接通到要确认的那一条。
+// 芝士起草的规则 / 技能：这一行直接通到要确认的那一条。
 const confirmAt = computed(() => confirmTarget(props.block, props.projectId))
 
 function renderPlain(text: string): string {

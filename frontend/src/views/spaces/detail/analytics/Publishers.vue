@@ -48,20 +48,47 @@
       @retry="load"
     />
 
-    <div v-else class="an-table">
-      <v-data-table :headers="headers" :items="publishers" :loading="loading" density="compact" items-per-page="10">
-        <template #[`item.taskCount`]="{ item }">{{ formatCount(item.taskCount) }}</template>
-        <template #[`item.participantCount`]="{ item }">{{ formatCount(item.participantCount) }}</template>
-        <template #[`item.avgParticipantsPerTask`]="{ item }">{{ item.avgParticipantsPerTask.toFixed(1) }}</template>
-        <template #[`item.submissionConversionRate`]="{ item }">{{
-          formatPercent(item.submissionConversionRate)
-        }}</template>
-        <template #[`item.successRate`]="{ item }">{{ formatPercent(item.successRate) }}</template>
-        <template #[`item.lastTaskCreatedAt`]="{ item }">
-          {{ item.lastTaskCreatedAt ? formatDate(item.lastTaskCreatedAt) : '-' }}
-        </template>
-      </v-data-table>
-    </div>
+    <BaseTable
+      v-else
+      class="an-table"
+      :cols="COLUMN_WIDTHS"
+      :label="t('spaces.analytics.publishers.tableLabel')"
+      :loading="loading && !publishers.length"
+      :busy="loading && !!publishers.length"
+      :empty="!loading && !publishers.length ? t('spaces.analytics.publishers.empty') : null"
+      :sort-key="table.sortKey.value"
+      :sort-dir="table.sortDir.value"
+      min-width="1080px"
+      @sort="table.onSort"
+    >
+      <template #head>
+        <tr>
+          <BaseTableTh
+            v-for="(key, index) in COLUMNS"
+            :key="key"
+            :sort-key="key"
+            :align="index === 0 ? 'start' : 'center'"
+          >
+            {{ t(`spaces.analytics.publishers.col.${key}`) }}
+          </BaseTableTh>
+        </tr>
+      </template>
+      <tr v-for="item in table.pageRows.value" :key="item.publisherId">
+        <td>{{ item.publisherName }}</td>
+        <td class="an-c">{{ formatCount(item.taskCount) }}</td>
+        <td class="an-c">{{ formatCount(item.participantCount) }}</td>
+        <td class="an-c">{{ item.approvedParticipantCount }}</td>
+        <td class="an-c">{{ item.submittedParticipantCount }}</td>
+        <td class="an-c">{{ item.successfulParticipantCount }}</td>
+        <td class="an-c">{{ item.avgParticipantsPerTask.toFixed(1) }}</td>
+        <td class="an-c">{{ formatPercent(item.submissionConversionRate) }}</td>
+        <td class="an-c">{{ formatPercent(item.successRate) }}</td>
+        <td class="an-c">{{ item.lastTaskCreatedAt ? formatDate(item.lastTaskCreatedAt) : '-' }}</td>
+      </tr>
+      <template #foot>
+        <TablePager v-model:page="table.page.value" :total="publishers.length" :per-page="table.perPage" />
+      </template>
+    </BaseTable>
   </div>
 </template>
 
@@ -80,6 +107,10 @@ import { formatCount, formatDate, formatPercent } from './helpers'
 import { buildAnalyticsApiParams } from './utils'
 
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
+import BaseTable from '@/components/base/BaseTable.vue'
+import BaseTableTh from '@/components/base/BaseTableTh.vue'
+import TablePager from '@/components/base/TablePager.vue'
+import { useClientTable } from '@/components/base/tableSort'
 import { SpacesApi } from '@/network/api/spaces'
 
 const { t } = useI18n()
@@ -146,14 +177,11 @@ const COLUMNS = [
   'lastTaskCreatedAt',
 ] as const
 
-const headers = computed(() =>
-  COLUMNS.map((key, index) => ({
-    title: t(`spaces.analytics.publishers.col.${key}`),
-    key,
-    value: key,
-    align: index === 0 ? ('start' as const) : ('center' as const),
-  }))
-)
+// 第一列是出题人名字，吃剩下的宽度；其余是短值。
+const COLUMN_WIDTHS = [null, '88px', '88px', '104px', '88px', '88px', '104px', '96px', '80px', '108px']
+
+// 和原来 v-data-table 一样：每一列都能点表头排序，每页 10 条。
+const table = useClientTable(publishers)
 
 const sortByItems = computed(() =>
   (['taskCount', 'participantCount', 'successRate', 'lastTaskCreatedAt'] as const).map((value) => ({

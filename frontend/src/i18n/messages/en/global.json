@@ -51,6 +51,12 @@
   "unknownError": "Unknown error",
   "listItemQuoted": "“{item}”",
   "confirm": "Confirm",
+  "table": {
+    "pager": "Pagination",
+    "range": "{from}–{to} of {total}",
+    "prev": "Previous page",
+    "next": "Next page"
+  },
   "shortcuts": {
     "then": "then",
     "title": "Keyboard shortcuts",

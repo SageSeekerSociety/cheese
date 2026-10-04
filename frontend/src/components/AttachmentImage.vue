@@ -66,11 +66,11 @@ onBeforeUnmount(() => {
   <!-- 缩略图：盒子先占住位置，成败都一样大——待发条不会因为一张图慢半拍而跳动。
        名字不挂在这儿：外面那张卡片已经写着它，并且负责弹出全名。 -->
   <span v-if="thumb" class="att-face">
-    <img v-if="url" class="im-thumb__img" :src="url" :alt="altText" />
+    <img v-if="url" class="im-thumb__img" :src="url" :alt="altText" decoding="async" />
     <v-icon v-else-if="failed" size="16" class="im-thumb__failed">mdi-image-broken-variant</v-icon>
   </span>
   <a v-else-if="url" class="im-image-link" :href="url" target="_blank" rel="noopener">
-    <img class="im-image" :src="url" :alt="altText" loading="lazy" />
+    <img class="im-image" :src="url" :alt="altText" loading="lazy" decoding="async" />
   </a>
   <!-- 失败说一句，别留一块空白：空白和「这条消息本来就没图」长得一样。 -->
   <span v-else-if="failed" class="im-image-failed">{{ t('work.image.failed') }}</span>

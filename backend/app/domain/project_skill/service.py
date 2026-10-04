@@ -31,6 +31,11 @@ from app.domain.project_skill.models import ProjectSkill, ProjectSkillRevision
 NAME = re.compile(r"^[a-z0-9][a-z0-9-]{1,47}$")
 MAX_FILE_BYTES = 200_000
 MAX_FILES = 30
+#: How many methods a project may hold before an AI teammate stops proposing new
+#: ones and proposes merging or editing instead. It bounds the teammate's own
+#: initiative, not people: past about twenty skills a model picks the right one
+#: noticeably less often, and a person adding one more has weighed that.
+PROPOSAL_LIMIT = 20
 FIELDS = ("title", "description", "inputs", "steps", "outputs", "files")
 
 
@@ -74,7 +79,14 @@ def _content(row: ProjectSkill) -> dict:
     return {key: getattr(row, key) for key in FIELDS}
 
 
-def render_skill(name: str, content: dict, *, revision: int, confirmed_by: str) -> str:
+def render_skill(
+    name: str,
+    content: dict,
+    *,
+    skill_id: uuid.UUID | str,
+    revision: int,
+    confirmed_by: str,
+) -> str:
     """The SKILL.md a session reads: a method, with this run's inputs left open."""
     files = sorted(content.get("files") or {})
     lines = [
@@ -82,7 +94,7 @@ def render_skill(name: str, content: dict, *, revision: int, confirmed_by: str) 
         f"name: {name}",
         "description: "
         + json.dumps(
-            f"{content['description']}（项目工作方法「{content['title']}」）",
+            f"{content['description']}（项目技能「{content['title']}」）",
             ensure_ascii=False,
         ),
         "---",
@@ -91,7 +103,7 @@ def render_skill(name: str, content: dict, *, revision: int, confirmed_by: str) 
         "",
         content["description"],
         "",
-        f"项目成员保存的工作方法，第 {revision} 版，由 {confirmed_by} 确认。"
+        f"项目成员保存的技能，第 {revision} 版，由 {confirmed_by} 确认。"
         "每次使用都以这一次用户给的输入为准，不沿用以前某一次的具体材料；"
         "缺少必需的输入就先问用户。",
         "",
@@ -110,6 +122,14 @@ def render_skill(name: str, content: dict, *, revision: int, confirmed_by: str) 
     if files:
         lines += ["", "## 配套文件", ""]
         lines += [f"- `$CLAUDE_CONFIG_DIR/skills/{name}/{path}`" for path in files]
+    lines += [
+        "",
+        "## 用的时候",
+        "",
+        "照这份做时被用户纠正了、或者发现它哪里不对，就用 "
+        f'`cheese_skill_update(method="{skill_id}", …)` 提议修改这一份，'
+        "`reason` 写用户纠正的原话或者哪里不对。确认之前大家继续用这一版。",
+    ]
     return "\n".join(lines) + "\n"
 
 
@@ -124,13 +144,46 @@ class ProjectSkillService:
         return row
 
     async def list(self, project_id: uuid.UUID) -> list[ProjectSkill]:
+        """The project's methods; a declined proposal is not one of them."""
         return list(
             await self._session.scalars(
                 select(ProjectSkill)
-                .where(ProjectSkill.project_id == project_id)
+                .where(
+                    ProjectSkill.project_id == project_id,
+                    ProjectSkill.state != "declined",
+                )
                 .order_by(ProjectSkill.created_at)
             )
         )
+
+    async def _admit_proposal(
+        self, project_id: uuid.UUID, topic_id: uuid.UUID | None, name: str
+    ) -> None:
+        """The bounds on a teammate proposing a new method.
+
+        It may not propose a method a person already declined, may not have two
+        proposals waiting in one room (a person answers one before the next),
+        and stops at ``PROPOSAL_LIMIT``, where merging or editing is the move.
+        """
+        rows = await self.list(project_id)
+        declined = await self._session.scalar(
+            select(ProjectSkill.id).where(
+                ProjectSkill.project_id == project_id,
+                ProjectSkill.name == name,
+                ProjectSkill.state == "declined",
+            )
+        )
+        if declined is not None:
+            raise ValidationError(say("skillProposalDeclined", name=name))
+        if topic_id is not None and any(
+            r.source_topic_id == topic_id
+            and r.state == "draft"
+            and r.shipped_revision == 0
+            for r in rows
+        ):
+            raise ValidationError(say("skillProposalWaiting"))
+        if len(rows) >= PROPOSAL_LIMIT:
+            raise ValidationError(say("skillProposalLimit", limit=PROPOSAL_LIMIT))
 
     async def revisions(self, skill_id: uuid.UUID) -> list[ProjectSkillRevision]:
         return list(
@@ -159,18 +212,25 @@ class ProjectSkillService:
         by_agent: bool,
         name: str,
         fields: dict,
+        proposal: dict | None = None,
     ) -> ProjectSkill:
         name = (name or "").strip().lower()
         if not NAME.match(name):
             raise ValidationError(say("skillNameInvalid"))
         if name in RESERVED_SKILL_NAMES:
-            raise ValidationError(say("skillNameReserved", name=name))
+            raise ValidationError(say("skillNameReserved"))
+        if by_agent:
+            await self._admit_proposal(project_id, topic_id, name)
         taken = await self._session.scalar(
-            select(ProjectSkill.id).where(
+            select(ProjectSkill).where(
                 ProjectSkill.project_id == project_id, ProjectSkill.name == name
             )
         )
-        if taken is not None:
+        if taken is not None and taken.state == "declined":
+            # A person may write a method a teammate's proposal was declined for.
+            await self._session.delete(taken)
+            await self._session.flush()
+        elif taken is not None:
             raise ValidationError(say("skillNameTaken", name=name))
         row = ProjectSkill(
             id=uuid.uuid4(),
@@ -183,6 +243,7 @@ class ProjectSkillService:
             state="draft",
             source_topic_id=topic_id,
             proposed_by=by,
+            proposal=proposal if by_agent else None,
         )
         self._apply(row, fields)
         self._session.add(row)
@@ -192,12 +253,19 @@ class ProjectSkillService:
         return row
 
     async def update(
-        self, row: ProjectSkill, *, by: str, by_agent: bool, changes: dict
+        self,
+        row: ProjectSkill,
+        *,
+        by: str,
+        by_agent: bool,
+        changes: dict,
+        proposal: dict | None = None,
     ):
         self._apply(row, changes)
         if by_agent:
             row.state = "draft"
             row.proposed_by = by
+            row.proposal = proposal
             await self._session.flush()
         else:
             await self.confirm(row, by=by, note="修改")
@@ -232,6 +300,23 @@ class ProjectSkillService:
         row.shipped_revision = revision
         row.confirmed_by = by
         row.confirmed_at = _now()
+        row.proposal = None
+        await self._session.flush()
+        return row
+
+    async def decline(self, row: ProjectSkill, *, by: str) -> ProjectSkill:
+        """A person turns a teammate's pending proposal down.
+
+        A new method is kept as declined, so the teammate does not propose it
+        again; a person can still write one by that name. An edit of a saved
+        method goes back to the saved version.
+        """
+        if row.state != "draft":
+            raise ValidationError(say("skillNothingToDecline"))
+        if row.shipped_revision:
+            return await self.restore(row, row.shipped_revision, by=by)
+        row.state = "declined"
+        row.proposal = None
         await self._session.flush()
         return row
 
@@ -275,6 +360,7 @@ class ProjectSkillService:
                 render_skill(
                     skill.name,
                     revision.content,
+                    skill_id=skill.id,
                     revision=revision.revision,
                     confirmed_by=revision.confirmed_by,
                 ),

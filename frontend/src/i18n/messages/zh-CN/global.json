@@ -51,6 +51,12 @@
   },
   "unknownError": "未知错误",
   "listItemQuoted": "「{item}」",
+  "table": {
+    "pager": "分页",
+    "range": "{from}–{to} / {total}",
+    "prev": "上一页",
+    "next": "下一页"
+  },
   "shortcuts": {
     "then": "然后",
     "title": "键盘快捷键",

@@ -41,8 +41,14 @@ class ProjectSkill(UuidPk, Timestamps, Base):
     outputs: Mapped[str] = mapped_column(Text, default="", server_default="")
     #: {relative path: text} shipped beside SKILL.md (scripts, templates, notes).
     files: Mapped[dict] = mapped_column(JSONB, default=dict)
-    #: draft (proposed or edited by an AI teammate, not shipped) | active.
+    #: draft (proposed or edited by an AI teammate, not shipped) | active |
+    #: declined (a teammate's proposal a person turned down; kept so the same
+    #: method is not proposed again).
     state: Mapped[str] = mapped_column(String(16), default="draft")
+    #: What a teammate's pending draft or edit rests on (taught, accepted,
+    #: related, absorbs, reason), shown on the card that asks a person to save
+    #: it. None once a person wrote or saved it.
+    proposal: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     source_topic_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("topics.id", ondelete="SET NULL"), nullable=True
     )

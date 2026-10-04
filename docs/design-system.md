@@ -524,6 +524,16 @@ const { saving, saved, dirty, error, run } = useSaveState({
 - 读失败不是空状态，用 §3.10 的 `BaseLoadError`。
 - `AdminEmptyState` 是它的别名（`compact` 布尔值映射成 `size="compact"`），新代码直接用 `BaseEmptyState`。
 
+### 3.13 数据表格：BaseTable
+
+一张有表头、多列的数据表只用 `BaseTable`（`src/components/base/BaseTable.vue`，原来叫 `AdminGrid`，旧名字仍是它的别名），不再用 `v-data-table`，也不再手写 `<table>`。
+
+- 列宽写在 `cols` 上（每列一个宽度，只给吃剩下宽度的那一列传 `null`）；`minWidth` 是窄屏横滚的下限，默认 1080px，列少的表传小一点。
+- 表头写进 `#head` 槽，格子用 `BaseTableTh`。给了 `sortKey` 就是可排序的一列：表发 `@sort(key, dir)`，页面自己排；当前列带箭头和 `aria-sort`。
+- 整张表都在手上时用 `useClientTable`（`src/components/base/tableSort.ts`）做排序和分页：每页 10 条，换排序回第一页，空值永远排在最后。
+- 分页条 `TablePager` 放进 `#foot` 槽，只有一页时不画。
+- 加载、空、读失败三态由表壳保证互斥：`loading`（只在一条都没有时）、`busy`（有旧内容时重取）、`empty` / `#empty`、`state="error"` / `#error`。
+
 ---
 
 ## 4. 深色模式

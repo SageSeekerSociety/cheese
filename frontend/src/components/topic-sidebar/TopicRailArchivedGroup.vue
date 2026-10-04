@@ -35,6 +35,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'select-topic', id: string): void
   (e: 'hover-topic', id: string): void
+  (e: 'press-topic', id: string): void
   (e: 'leave-topic'): void
   (e: 'unarchive-topic', id: string): void
 }>()
@@ -94,6 +95,9 @@ const keepMounted = computed<readonly number[] | undefined>(() => {
             @click="emit('select-topic', item.id)"
             @mouseenter="emit('hover-topic', item.id)"
             @mouseleave="emit('leave-topic')"
+            @focusin="emit('hover-topic', item.id)"
+            @focusout="emit('leave-topic')"
+            @pointerdown="$event.pointerType === 'mouse' && $event.button === 0 && emit('press-topic', item.id)"
           >
             <template #prepend>
               <v-icon size="16" class="me-1 c-faint" icon="mdi-archive-outline" />

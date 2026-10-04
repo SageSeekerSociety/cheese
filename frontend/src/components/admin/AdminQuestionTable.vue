@@ -3,6 +3,8 @@ import { useI18n } from 'vue-i18n'
 
 import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminNoteTip from '@/components/admin/AdminNoteTip.vue'
+import BaseTable from '@/components/base/BaseTable.vue'
+import BaseTableTh from '@/components/base/BaseTableTh.vue'
 import { fmtNum } from '@/lib/usageFormat'
 
 // 「答不上来的问题」那张表 —— 它是一份**给写文档的人**的清单，不是一份用户报表。
@@ -50,22 +52,21 @@ const shown = (page: string | null) => page || '—'
 
     <AdminEmptyState v-else-if="rows.length === 0" :title="empty" compact />
 
-    <table v-else class="aqt__table">
-      <thead>
+    <!-- Loading and empty keep their own shapes above; only real rows go into the shared table. -->
+    <BaseTable v-else class="aqt__grid" :cols="[null, '140px', '64px']" :label="title" min-width="0">
+      <template #head>
         <tr>
-          <th scope="col" class="aqt__th aqt__th--q">{{ t('featureStats.unanswered.column.question') }}</th>
-          <th scope="col" class="aqt__th aqt__th--page">{{ t('featureStats.unanswered.column.page') }}</th>
-          <th scope="col" class="aqt__th aqt__th--n">{{ t('featureStats.unanswered.column.count') }}</th>
+          <BaseTableTh class="aqt__th">{{ t('featureStats.unanswered.column.question') }}</BaseTableTh>
+          <BaseTableTh class="aqt__th">{{ t('featureStats.unanswered.column.page') }}</BaseTableTh>
+          <BaseTableTh class="aqt__th" align="end">{{ t('featureStats.unanswered.column.count') }}</BaseTableTh>
         </tr>
-      </thead>
-      <tbody>
-        <tr v-for="(row, index) in rows" :key="`${row.question}\u0000${index}`" class="aqt__row">
-          <td class="aqt__cell aqt__cell--q">{{ row.question }}</td>
-          <td class="aqt__cell aqt__cell--page t-num">{{ shown(row.page) }}</td>
-          <td class="aqt__cell aqt__cell--n t-num">{{ fmtNum(row.count) }}</td>
-        </tr>
-      </tbody>
-    </table>
+      </template>
+      <tr v-for="(row, index) in rows" :key="`${row.question}\u0000${index}`">
+        <td class="aqt__cell aqt__cell--q">{{ row.question }}</td>
+        <td class="aqt__cell aqt__cell--page t-num">{{ shown(row.page) }}</td>
+        <td class="aqt__cell aqt__cell--n t-num">{{ fmtNum(row.count) }}</td>
+      </tr>
+    </BaseTable>
   </section>
 </template>
 
@@ -95,47 +96,19 @@ const shown = (page: string | null) => page || '—'
   line-height: var(--lh-13);
 }
 
-.aqt__table {
-  width: 100%;
-  border-collapse: collapse;
-  table-layout: fixed;
+/* 卡片里已经有一圈边框了，表格自己那一圈去掉。 */
+.aqt .aqt__grid {
+  border: 0;
 }
 
-.aqt__th {
-  padding: 0 8px 6px;
-  border-bottom: 1px solid var(--line);
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 600;
-  line-height: var(--lh-12);
-  text-align: left;
-}
-
-/* 问题那一列吃掉剩下的宽度（`table-layout: fixed` 下由这里定分配），右边两列定宽：
-   页面 slug 最长也就十几个字符，次数最多五位数。 */
-.aqt__th--q,
-.aqt__cell--q {
-  width: auto;
-}
-
-.aqt__th--page,
-.aqt__cell--page {
-  width: 140px;
-}
-
-.aqt__th--n,
 .aqt__cell--n {
-  width: 64px;
   text-align: right;
-}
-
-.aqt__row {
-  border-top: 1px solid var(--line-2);
 }
 
 /* 问题原文**不截断**：它是这一行的全部内容，截成省略号之后这张表就只剩「有 50 条」
    这一个信息了。长问题换行，行高跟着长。 */
-.aqt__cell {
+/* Three classes deep so it beats BaseTable's `.agrid__body :deep(td)` geometry. */
+.aqt .aqt__cell {
   padding: 8px;
   color: var(--text);
   font-size: 13px;
