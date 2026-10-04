@@ -24,7 +24,7 @@ from app.api.routes.topics import (
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.agent.announce import notify_question
-from app.domain.agent.ask_origin import ask_origin
+from app.domain.agent.ask_origin import ask_origin, waited_for_takeover
 from app.domain.agent.chat import ChatService
 from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.block.answer_submission import add_answer_wake, submit_answer
@@ -91,6 +91,7 @@ async def create_ask_group(
     db: DbSession,
     resolver: ActorResolverDep,
     chat: Annotated[ChatService, Depends(get_chat_service)],
+    runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
 ):
     place = await TopicService(db).place_or_404(topic_id)
     actor = await authorize_group(resolver, place)
@@ -100,6 +101,8 @@ async def create_ask_group(
         raise ForbiddenError(say("askNativeSessionOnly"))
     questions = parse_questions(body)
     origin = await ask_origin(chat, place.project_id, place.room_id, actor.handle)
+    if origin is None and await waited_for_takeover(runner):
+        origin = await ask_origin(chat, place.project_id, place.room_id, actor.handle)
     if origin is None:
         raise ForbiddenError(say("askOriginUnknown"))
     group_id = body.get("ask_group")
