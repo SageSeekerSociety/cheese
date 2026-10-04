@@ -3,6 +3,8 @@
     "justNow": "刚刚",
     "markAsRead": "标记为已读",
     "delete": "删除",
+    "deleteTitle": "删除这条动态？",
+    "deleteHint": "删掉之后它不再出现在这里，也没法恢复。",
     "noNotifications": "暂无通知",
     "noUnread": "暂无未读通知",
     "markAllAsRead": "标记全部已读",

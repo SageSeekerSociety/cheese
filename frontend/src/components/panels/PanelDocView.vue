@@ -21,6 +21,8 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { scrollBehavior } from '@/utils/motion'
 
 import { useDocAgent } from '../../composables/useDocAgent'
+import { useDocFind } from '../../composables/useDocFind'
+import { useDocOutline } from '../../composables/useDocOutline'
 import { useDocReview } from '../../composables/useDocReview'
 import { useDocSuggestions } from '../../composables/useDocSuggestions'
 import { anchorComment } from '../../lib/docCommentSpots'
@@ -29,6 +31,7 @@ import { topicTitle } from '../../lib/topicState'
 
 import DocCommentPanel from './doc/DocCommentPanel.vue'
 import DocEditLayer from './doc/DocEditLayer.vue'
+import DocFindBar from './doc/DocFindBar.vue'
 import DocHistory from './doc/DocHistory.vue'
 import DocReviewStrip from './doc/DocReviewStrip.vue'
 import DocSuggestionStrip from './doc/DocSuggestionStrip.vue'
@@ -208,6 +211,22 @@ function revealThread(id: string) {
   surfaceRef.value?.revealThread(id)
 }
 
+// 大纲与文档内查找：都只读正文那一半的编辑器（正文编辑器住在 DocSurface 里），这一
+// 层拿着它算出标题、匹配，并把点击 / 上下跳落成滚动。逻辑本身在各自的 composable 与
+// lib 里，这里只有接线。
+const editorOf = () => surfaceRef.value?.editor ?? null
+const { headings: outlineHeadings, go: goHeading } = useDocOutline(editorOf)
+const {
+  query: findQuery,
+  open: findOpen,
+  total: findTotal,
+  current: findCurrent,
+  setQuery: setFindQuery,
+  step: stepFind,
+  setOpen: setFindOpen,
+  toggle: toggleFind,
+} = useDocFind(editorOf)
+
 // 点名（`<@handle>`）读成名字：外面给了名册就用名册，没给至少认得 AI 队友。
 const mentionNames = computed<Record<string, string>>(
   () => props.mentionNames ?? (props.agentHandle ? { [props.agentHandle]: props.agentName } : {})
@@ -276,6 +295,7 @@ watch([() => props.topic?.id, () => props.commentAuthor], () => {
   docAgent.close()
   suggestionsOpen.value = false
   historyOpen.value = false
+  setFindOpen(false)
 })
 
 // 编辑器里现在这一版正文（开发时的探针读它），只有这里知道编辑器在哪。
@@ -327,14 +347,28 @@ defineExpose({
             :agent-handle="agentHandle"
             :agent="canAskDocument ? docAgent : undefined"
             :mention-names="mentionNames"
+            :headings="outlineHeadings"
+            :find-open="findOpen"
             @toggle-suggestions="toggleSuggestions"
             @toggle-comments="commentsRef?.toggle()"
             @toggle-editable="toggleEditable"
             @history="historyOpen = true"
             @export="exportDoc"
             @open-thread="locateComment"
+            @toggle-find="toggleFind"
+            @outline-select="goHeading"
           />
         </Teleport>
+        <DocFindBar
+          :open="findOpen"
+          :query="findQuery"
+          :total="findTotal"
+          :current="findCurrent"
+          @update:query="setFindQuery"
+          @next="stepFind(1)"
+          @prev="stepFind(-1)"
+          @close="setFindOpen(false)"
+        />
         <DocReviewStrip
           v-if="review.request.value"
           :agent-name="agentName"

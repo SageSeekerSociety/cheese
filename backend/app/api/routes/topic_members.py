@@ -8,9 +8,11 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
+from app.api.deps import get_chat_service
 from app.api.response import ok, page
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError
+from app.domain.agent.chat import ChatService
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.topic.services import TopicService
@@ -131,6 +133,7 @@ async def remove_topic_member(
     handle: str,
     db: DbSession,
     resolver: ActorResolverDep,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
     who = await resolver.resolve(topic_id=topic_id)
     if not who.authenticated:
@@ -139,4 +142,5 @@ async def remove_topic_member(
         topic_id=topic_id, handle=handle, actor=who.handle
     )
     await db.commit()
+    await chat.dismiss(topic_id, handle)
     return ok({"deleted": True})

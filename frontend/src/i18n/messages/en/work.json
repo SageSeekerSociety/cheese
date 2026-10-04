@@ -39,6 +39,24 @@
   "joinLabel": "Invite code",
   "joinSubmit": "Join",
   "joinTitle": "Join a space",
+  "startPaths": {
+    "lede": "Any of these three works. Start wherever you like:",
+    "project": {
+      "title": "Start your own {project}",
+      "body": "Get to work with your AI teammate right away. Materials and results stay inside."
+    },
+    "invite": {
+      "title": "Join with an invite code",
+      "body": "If a school or team gave you a code, come in this way.",
+      "action": "Enter code"
+    },
+    "teams": {
+      "title": "See what teams exist",
+      "body": "Join a team and share a workspace with its members.",
+      "action": "Go to teams"
+    },
+    "settingsNote": "AI teammates and code repositories are set up inside a project: open Project settings — the first section is AI teammates, and the repository is under “Repository and credit”."
+  },
   "sessionMachine": {
     "machine": "Change to",
     "confirm": "Push and change",
@@ -560,7 +578,9 @@
       "site": "Activity",
       "changes": "Changes",
       "preview": "Preview",
-      "routines": "Routines"
+      "routines": "Routines",
+      "scrollLeft": "Scroll tabs left",
+      "scrollRight": "Scroll tabs right"
     },
     "preview": {
       "fullscreenFailed": "Couldn't go full screen. Open it in a new tab",
@@ -831,6 +851,14 @@
       "emptyLineHint": "Type, or / to insert",
       "undo": "Undo",
       "redo": "Redo",
+      "outline": "Outline",
+      "outlineEmpty": "No headings in this document",
+      "find": "Find in document",
+      "findPlaceholder": "Find in document",
+      "findNoResults": "No results",
+      "findPrev": "Previous match",
+      "findNext": "Next match",
+      "findClose": "Close find",
       "blocks": {
         "calloutKind": "Callout type",
         "kinds": {
@@ -957,6 +985,19 @@
       "readingAttachment": "{agent} is reading an attachment…",
       "quoteChanged": "The quoted text has changed"
     },
+    "gettingStarted": {
+      "title": "Getting started",
+      "dismiss": "Don't show again",
+      "talk": "Say the first word to your teammate",
+      "talkHint": "In the box below",
+      "materials": "Bring your material in",
+      "materialsAction": "Open library",
+      "repo": "Get results into the repository",
+      "repoAction": "Connect repository",
+      "people": "Bring a colleague in",
+      "peopleAction": "Go to members",
+      "note": "AI teammates and the code repository are both changed in Project settings: the first section is AI teammates, and the repository is under “Repository and credit”."
+    },
     "chat": {
       "pickTopic": "Select a topic to start chatting",
       "starter": {
@@ -982,6 +1023,7 @@
       "today": "Today",
       "yesterday": "Yesterday",
       "topicFallback": "Topic",
+      "timelineLabel": "Conversation",
       "liveNew": "{name}: {text}"
     },
     "header": {

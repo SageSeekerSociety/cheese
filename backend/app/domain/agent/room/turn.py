@@ -231,6 +231,8 @@ class _Machines(Protocol):
 
     async def activate(self, session: SessionRef, runtime: RoomSessions) -> None: ...
 
+    async def dismiss(self, topic_id: uuid.UUID, agent_handle: str) -> None: ...
+
 
 class _MemoryBooks(Protocol):
     """What a turn tells the service's memory ledger (``agent.memory_ledger``)."""
@@ -354,6 +356,19 @@ class RoomTurns:
             all_topics: list[Topic],
             roster: list[dict],
         ) -> str: ...
+
+    async def dismiss(self, topic_id: uuid.UUID, seat: str) -> None:
+        """Stop the work the teammate on rosters as ``seat`` still has running
+        in this room: one taken off the room, whose every call there is now
+        refused. What it wrote so far stays."""
+        async with self._sessions() as session:
+            topic = await TopicRepository(session).get(topic_id)
+            project = topic and await ProjectRepository(session).get(topic.project_id)
+            agent = project and await AgentInstanceService(session).for_seat_handle(
+                project, seat
+            )
+        if agent is not None:
+            await self._compute.dismiss(topic_id, agent.handle)
 
     async def _assemble_turn(
         self,

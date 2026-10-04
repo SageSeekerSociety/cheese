@@ -94,6 +94,9 @@
     <!-- 敏感操作前确认身份；withSudo 打开它 -->
     <SudoDialog v-if="sudoWanted" />
 
+    <!-- The main app's keyboard shortcut sheet (? or the keyboard button by the message box). -->
+    <AppShortcutSheet />
+
     <!-- 新建项目 (opened by the rail's "+" affordance)。要填好几项，手机上是整页：
          下一步 / 创建在页头右边，键盘弹起来也够得着。 -->
     <AdaptiveDialog
@@ -264,6 +267,7 @@ import { useRoute } from 'vue-router'
 import { useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 import { toast } from 'vuetify-sonner'
+import { useEventListener } from '@vueuse/core'
 
 import { avatarColor } from '@/utils/avatar'
 import { scrollBehavior } from '@/utils/motion'
@@ -279,7 +283,13 @@ import { useWorkspaceLayout } from '@/composables/useWorkspaceLayout'
 import ConsentGate from './components/account/ConsentGate.vue'
 import MyApp from './components/common/MyApp.vue'
 import BottomAppBar from './components/common/Navigation/BottomAppBar.vue'
-import { railItems, shortcutTarget, tabItems, workspaceProject } from './components/common/Navigation/destinations'
+import {
+  railItems,
+  railShortcut,
+  shortcutTarget,
+  tabItems,
+  workspaceProject,
+} from './components/common/Navigation/destinations'
 import LeftAppRail from './components/common/Navigation/LeftAppRail.vue'
 import { DEFAULT_SHELL, shellFor, termParams } from './lib/shell'
 import { usePageTitleStore } from './stores/title'
@@ -288,13 +298,15 @@ import { createProject, listProjects } from '@/api'
 import { defineCommands } from '@/commands'
 import { copyLink, linkOf } from '@/commands/copy'
 import CommandPalette from '@/commands/palette/CommandPalette.vue'
-import { installShortcuts } from '@/commands/shortcuts'
+import { installShortcuts, isTypingTarget } from '@/commands/shortcuts'
 import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
+import AppShortcutSheet from '@/components/common/AppShortcutSheet.vue'
 import AppBar from '@/components/common/Navigation/AppBar.vue'
 import MobileAppBar from '@/components/common/Navigation/MobileAppBar.vue'
 import OfflineBanner from '@/components/common/OfflineBanner.vue'
 import SessionRestoreGate from '@/components/common/SessionRestoreGate.vue'
+import { appShortcutSheetOpen } from '@/components/common/shortcutSheet'
 import VersionBadge from '@/components/common/VersionBadge.vue'
 import LeaveProjectDialog from '@/components/LeaveProjectDialog.vue'
 import ResourceLimitsNotice from '@/components/ResourceLimitsNotice.vue'
@@ -637,22 +649,38 @@ const navShell = computed(() => shellFor(railProjects.value, openProjectId.value
 
 const rail = computed(() => railItems(navSources.value, navShell.value))
 
-// rail 的悬停浮层一直在说 ⌘N 能切过去；这里是它真正被绑上的地方。只有真的对上
-// 某一格的数字才登记，对不上的照旧归浏览器——项目只有三个的时候 ⌘7 仍然切你的第
-// 七个标签页。
+// rail 的悬停浮层写着第 N 格的快捷键；这里是它真正被绑上的地方。浏览器里是 G 然后 N，
+// 桌面 app 里是 ⌘N（railShortcut 说了为什么）。只有真的对上某一格的数字才登记。
 defineCommands(() =>
   [1, 2, 3, 4, 5, 6, 7, 8, 9].flatMap((digit) => {
     const to = shortcutTarget(rail.value, digit)
     const item = rail.value.find((it) => it.type === 'item' && it.to === to)
     const title = item?.type === 'item' ? item.title : to
     return to
-      ? [{ id: `rail.${digit}`, title: title ?? to, shortcut: `mod+${digit}`, to, palette: false as const }]
+      ? [
+          {
+            id: `rail.${digit}`,
+            title: title ?? to,
+            shortcut: railShortcut(digit, inApp).shortcut,
+            to,
+            palette: false as const,
+          },
+        ]
       : []
   })
 )
 let stopShortcuts: (() => void) | undefined
 onMounted(() => (stopShortcuts = installShortcuts(router)))
 onBeforeUnmount(() => stopShortcuts?.())
+// `?` 打开快捷键表：焦点不在输入框里、不带修饰键（Shift 本身是打出 ? 的那一下）。后台
+// 有自己那张表（AdminLayout），那里不开这一张。
+useEventListener(window, 'keydown', (event: KeyboardEvent) => {
+  if (event.key !== '?' || event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return
+  // 门口页面（官网）上没有应用外壳，这张表不在 DOM 里；后台有自己那张。
+  if (isTypingTarget(event.target) || currentRoute.meta.publicLanding || currentRoute.path.startsWith('/admin')) return
+  event.preventDefault()
+  appShortcutSheetOpen.value = true
+})
 const tabs = computed(() => tabItems(navSources.value, navShell.value))
 // The "+" rail affordance opens an in-app dialog (no native prompt). On confirm
 // we create the project owned by the current user, refresh the rail so the new
