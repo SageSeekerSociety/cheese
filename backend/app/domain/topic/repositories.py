@@ -80,6 +80,20 @@ def _order_by(sort: TopicSortField | None, order: SortOrder) -> UnaryExpression:
     return column.desc() if order == "desc" else column.asc()
 
 
+def _readable_by(user_handle: str):
+    """Rooms a person's badge maps may name: every non-private room, and the
+    private rooms they still hold a seat in. One clause for both the unread map
+    and the notify-level map, so the two can never disagree about a room."""
+    return or_(
+        Topic.is_private.is_(False),
+        Topic.id.in_(
+            select(TopicMembership.topic_id).where(
+                TopicMembership.member_handle == user_handle
+            )
+        ),
+    )
+
+
 class TopicRepository:
     def __init__(self, session: AsyncSession):
         self._session = session
@@ -376,14 +390,7 @@ class TopicRepository:
             )
             .where(
                 Topic.project_id == project_id,
-                or_(
-                    Topic.is_private.is_(False),
-                    Topic.id.in_(
-                        select(TopicMembership.topic_id).where(
-                            TopicMembership.member_handle == user_handle
-                        )
-                    ),
-                ),
+                _readable_by(user_handle),
                 Block.kind == BlockKind.message,
                 Block.task_id.is_(None),
                 Block.author != user_handle,
@@ -507,16 +514,9 @@ class TopicRepository:
             .join(Topic, Topic.id == TopicReadState.topic_id)
             .where(
                 Topic.project_id == project_id,
-                # 同 unread_counts 的读权限：私密房间只列我还坐在里面的那几间。
-                # 被请出去的私密房间，我当年的静音记录还在，但它的 id 不能再告诉我。
-                or_(
-                    Topic.is_private.is_(False),
-                    Topic.id.in_(
-                        select(TopicMembership.topic_id).where(
-                            TopicMembership.member_handle == user_handle
-                        )
-                    ),
-                ),
+                # 同 unread_counts 的读权限：被请出去的私密房间，我当年的静音记录
+                # 还在，但它的 id 不能再告诉我。
+                _readable_by(user_handle),
                 TopicReadState.user_handle == user_handle,
                 TopicReadState.notify_level != "all",
             )
