@@ -83,6 +83,32 @@ function page(ids: string[], older: boolean): BlockPage {
 const NEWEST = () => page(['n1', 'n2', 'n3'], true)
 const OLDER = (ids: string[], more = false) => page(ids, more)
 
+/** 一条不露面的事件（`in_room:false`）：占一行块，聊天区画不出任何东西。 */
+function hiddenEvent(id: string): Block {
+  return {
+    id,
+    topic_id: TOPIC.id,
+    kind: 'event',
+    author_type: 'system',
+    author: 'platform',
+    content: `hidden ${id}`,
+    created_at: '2026-09-01T10:00:00Z',
+    meta: { in_room: false, event_type: 'cloud_provisioning' },
+  } as unknown as Block
+}
+
+/** 一整页都不露面的事件。 */
+function hiddenPage(ids: string[], older: boolean): BlockPage {
+  return {
+    data: ids.map((id) => hiddenEvent(id)),
+    total: 100,
+    has_more: older,
+    oldest_id: ids[0] ?? null,
+    has_newer: false,
+    newest_id: ids.at(-1) ?? null,
+  }
+}
+
 function deferred<T>() {
   let resolve!: (v: T) => void
   let reject!: (e: unknown) => void
@@ -345,6 +371,21 @@ describe('往回翻历史', () => {
     await waitFor(() => expect(beforeCalls()).toEqual(['n1', 'm1']))
     expect(shown(container)).toEqual(['z1', 'm1', 'm2', 'n1', 'n2', 'n3'])
     expect(olderLoader(container), '读不到更早的了，那一行就收起').toBeNull()
+  })
+
+  it('最近一页整页都不露面：窗口里一条可见的都没有，也照样接着往上拉', async () => {
+    // 事件远多于消息的房间里（「cheese 前端架构改造调研」21685 块，尾巴连着几十条
+    // in_room:false 的事件），最新那一页可以整页都画不出东西。窗口里一条可见的都没有
+    // 时游标不能不认——游标是「读到哪了」，不是「画得出什么」，否则连着拉都发不出去，
+    // 房间开出来一片空白。
+    listBlocks.mockReset().mockImplementation(async (_topicId, opts: { before?: string } = {}) => {
+      if (opts.before === 'h1') return OLDER(['o1', 'o2'], false)
+      return hiddenPage(['h1', 'h2', 'h3'], true)
+    })
+    const { container } = await mount({ scrollHeight: 100, clientHeight: 500, scrollTop: 100 })
+
+    await waitFor(() => expect(beforeCalls()).toEqual(['h1']))
+    expect(shown(container)).toEqual(['o1', 'o2'])
   })
 
   it('更早的一页拉失败：说一句，并且不接着往下拉', async () => {
