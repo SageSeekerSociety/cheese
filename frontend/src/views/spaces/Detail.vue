@@ -13,10 +13,10 @@ import { onMounted, watch } from 'vue'
 import { onBeforeRouteUpdate, useRoute } from 'vue-router'
 import { storeToRefs } from 'pinia'
 
-import ErrorBoundary from '@/components/common/ErrorBoundary.vue'
 import { usePageTitle } from '@/composables/usePageTitle'
 import { useSpaceData } from '@/composables/useSpaceData'
 
+import ErrorBoundary from '@/components/common/ErrorBoundary.vue'
 import { useSpaceStore } from '@/stores/space'
 
 const route = useRoute()
