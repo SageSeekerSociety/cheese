@@ -1,6 +1,8 @@
 """Authenticated Ask creation's exact active-work provenance."""
 
+import asyncio
 import logging
+import time
 
 from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.identity.handles import names_a_person
@@ -15,6 +17,29 @@ def refused(reason: str, topic_id, seat, **facts) -> None:
     logger.info(
         "ask origin refused: %s topic=%s seat=%s %s", reason, topic_id, seat, detail
     )
+
+
+# A takeover took under a minute on dev; the agent's tool call waits 240 s.
+TAKEOVER_WAIT_S = 120.0
+
+
+async def waited_for_takeover(runner, wait_s=TAKEOVER_WAIT_S) -> bool:
+    """True when this process had not yet taken the running work over and now has.
+
+    During a rollout the incoming backend serves requests before it has taken
+    the running work over (`app.core.ownership`): until then the turn asking is
+    known only to the outgoing one, and `ask_origin` finds nothing. A question
+    waits for the takeover, like a turn asked for meanwhile, and is read again,
+    instead of being refused as asked outside any turn.
+    """
+    if runner.accepting_turns:
+        return False
+    deadline = time.monotonic() + wait_s
+    while not runner.accepting_turns:
+        if time.monotonic() >= deadline:
+            return False
+        await asyncio.sleep(0.2)
+    return True
 
 
 async def ask_origin(chat, project_id, topic_id, author):

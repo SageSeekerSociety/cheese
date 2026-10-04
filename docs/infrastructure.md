@@ -211,9 +211,10 @@ Each backend switch is also a handover of the running work. One backend at a
 time owns it (the sessions it listens to, the turns it watches, the periodic
 jobs), and a Postgres advisory lock says which (`app/core/ownership.py`). A
 successor serves requests at once but holds the turns asked of it until the lock
-reaches it. The outgoing backend, on SIGTERM, lets the prompts it is still
-sending arrive, stops reading its sessions, lets go of its turns without ending
-them and releases the lock. The successor then picks every running turn up
+reaches it, and so does a question (`cheese_ask`) that a running turn asks it:
+only the owner knows which turn is running. The outgoing backend, on SIGTERM,
+lets the prompts it is still sending arrive, stops reading its sessions, lets go
+of its turns without ending them and releases the lock. The successor then picks every running turn up
 where it stands and starts any turn a message was left waiting for. The whole
 of that fits in the backend's 60-second `stop_grace_period`, which is why the
 successor is stopped before it is removed: `docker rm -f` alone is a SIGKILL.
