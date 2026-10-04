@@ -1228,7 +1228,6 @@
     "noneMine": "No tasks assigned to you",
     "emptyColumn": "No tasks in {column}",
     "mineOnly": "Only mine",
-    "retry": "Retry",
     "openChat": "Open the chat",
     "noAssignee": "No assignee",
     "queued": "Queued",

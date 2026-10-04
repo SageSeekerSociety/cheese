@@ -3,7 +3,6 @@
     "waiting": "Waiting on you",
     "waitingEmpty": "Nothing is waiting on you",
     "loadFailed": "Couldn't load what's waiting on you",
-    "retry": "Retry",
     "feed": "Activity",
     "reason": {
       "reviewer": "Waiting for your review",

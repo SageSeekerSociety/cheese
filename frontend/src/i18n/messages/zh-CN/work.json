@@ -1228,7 +1228,6 @@
     "noneMine": "暂无分配给你的任务",
     "emptyColumn": "暂无{column}的任务",
     "mineOnly": "只看我的",
-    "retry": "重试",
     "openChat": "进入对话",
     "noAssignee": "暂无负责人",
     "queued": "排队中",
