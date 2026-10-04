@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E501  (usage docstrings show JSON and command lines that read worse wrapped)
 """把一段内容片段拼进模板，直接产出可以 `cheese show` 的完整 HTML。
 
 为什么要有它：一份页面模板里，`<head>`（全部 CSS 与 `--cx-*` token）和末尾的脚本
@@ -114,10 +115,10 @@ def _read(path: Path) -> str:
 
 
 def _set_title(html: str, title: str) -> str:
-    escaped = (
-        title.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    escaped = title.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    new, n = re.subn(
+        r"<title>.*?</title>", f"<title>{escaped}</title>", html, count=1, flags=re.S
     )
-    new, n = re.subn(r"<title>.*?</title>", f"<title>{escaped}</title>", html, count=1, flags=re.S)
     if n == 0:
         raise ComposeError("模板里没有 <title> 标签")
     return new
@@ -167,14 +168,22 @@ def _rebuild_deck_index(html: str, fragment: str, title: str) -> str:
     slides: list[dict[str, str]] = []
     for i, hit in enumerate(hits):
         end = hits[i + 1].start() if i + 1 < len(hits) else len(src)
-        block = src[hit.start():end]
+        block = src[hit.start() : end]
         idm = re.search(r'id="([^"]+)"', hit.group(0))
         sid = idm.group(1) if idm else f"s{i + 1}"
         slides.append({"id": sid, "title": _slide_title(block, sid)})
     if not slides:
         return html
     payload = json.dumps({"title": title, "slides": slides}, ensure_ascii=False)
-    return html[: m.start()] + m.group(1) + "\n" + payload + "\n" + m.group(3) + html[m.end():]
+    return (
+        html[: m.start()]
+        + m.group(1)
+        + "\n"
+        + payload
+        + "\n"
+        + m.group(3)
+        + html[m.end() :]
+    )
 
 
 def compose(type_: str, content: str, template: str, title: str | None) -> str:
@@ -243,9 +252,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if args.type not in TYPES:
-            raise ComposeError(
-                f"未知类型“{args.type}”，可选：{' / '.join(TYPES)}"
-            )
+            raise ComposeError(f"未知类型“{args.type}”，可选：{' / '.join(TYPES)}")
         template_path = TEMPLATES / f"{args.type}.html"
         template = _read(template_path)
         content = _read(Path(args.content))
