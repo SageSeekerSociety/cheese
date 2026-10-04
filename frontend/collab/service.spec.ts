@@ -167,6 +167,14 @@ function replace(http: string, body: { content: string; base: string | null; act
   })
 }
 
+function tell(http: string, frame: Record<string, unknown>, key = deriveKey(SECRET, 'internal')) {
+  return fetch(`${http}/internal/documents/${encodeURIComponent(DOC)}/tell`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(frame),
+  })
+}
+
 const SEED = [
   '# 题目说明',
   '',
@@ -361,6 +369,35 @@ interface EditBody {
   mode: 'direct' | 'suggest'
   reason?: string | null
 }
+
+describe('what the backend tells a document’s editors', () => {
+  it('reaches everyone who has the document open, as it was said', async () => {
+    const { url, http } = await setup('第一段')
+    const a = client(url, ticket('xiaowang'))
+    const b = client(url, ticket('xiaoli'))
+    const heard: unknown[] = []
+    a.provider.on('stateless', ({ payload }: { payload: string }) => heard.push(['a', JSON.parse(payload)]))
+    b.provider.on('stateless', ({ payload }: { payload: string }) => heard.push(['b', JSON.parse(payload)]))
+    await until(() => a.provider.isSynced && b.provider.isSynced)
+    const frame = { type: 'state', resource: 'comments' }
+    expect((await tell(http, frame)).status).toBe(200)
+    await until(() => heard.length === 2)
+    expect(heard).toEqual(
+      expect.arrayContaining([
+        ['a', frame],
+        ['b', frame],
+      ])
+    )
+  })
+
+  it('is said only by the backend, and to a document nobody has open is said to nobody', async () => {
+    const { backend, http } = await setup('第一段')
+    expect((await tell(http, { type: 'state' }, 'not-the-key')).status).toBe(403)
+    expect((await tell(http, { type: 'state', resource: 'doc' })).status).toBe(200)
+    // Telling opened nothing: no document was loaded to have it said to.
+    expect(backend.state).toBeNull()
+  })
+})
 
 function edit(http: string, body: EditBody) {
   return fetch(`${http}/internal/documents/${encodeURIComponent(DOC)}/edit`, {

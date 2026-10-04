@@ -1,5 +1,6 @@
-// The document's comment threads: read whole (every reply), kept current by the
-// room's signals, and written one operation at a time.
+// A document's comment threads: read whole (every reply), kept current by what
+// its live connection hears (lib/docCommentSignals), and written one operation
+// at a time.
 //
 // A write is remembered (localStorage) until its receipt comes back. A page
 // that loses the connection or reloads mid-write therefore knows that thread's
@@ -21,17 +22,17 @@ import { listenToComments } from '../lib/docCommentSignals'
 import { myId } from '../me'
 
 type Operation = { id: string; action: 'replies' | 'resolve' | 'reopen'; body: DocThreadWrite }
-export function useDocThreads(topic: () => string | null) {
+export function useDocThreads(document: () => string | null) {
   const state = reactive<DocThreadState>({ threads: [], activity: {}, errors: {}, busy: false, unknown: null })
-  let room = topic()
+  let doc = document()
   let actor = myId()
   let epoch = 0
   let reads = 0
   let disposed = false
   let operation: Operation | null = null
   let stopListening: (() => void) | null = null
-  const key = () => `cheese.doc-thread.operation.v1:${actor}:${room}`
-  const active = (generation: number) => !disposed && generation === epoch && room === topic() && actor === myId()
+  const key = () => `cheese.doc-thread.operation.v1:${actor}:${doc}`
+  const active = (generation: number) => !disposed && generation === epoch && doc === document() && actor === myId()
 
   function install(thread: DocThread) {
     const at = state.threads.findIndex((t) => t.comment.id === thread.comment.id)
@@ -42,9 +43,9 @@ export function useDocThreads(topic: () => string | null) {
   async function refresh() {
     const generation = epoch
     const sequence = ++reads
-    if (!room || !active(generation)) return
+    if (!doc || !active(generation)) return
     try {
-      const { data } = await listDocThreads(room)
+      const { data } = await listDocThreads(doc)
       if (!active(generation) || sequence !== reads) return
       state.threads = data
       const next: Record<string, DocThreadActivity> = {}
@@ -66,13 +67,13 @@ export function useDocThreads(topic: () => string | null) {
   }
   async function execute(value: Operation) {
     const generation = epoch
-    const topicId = room
-    if (!topicId || state.busy || !active(generation)) throw new Error('Thread context changed')
+    const documentId = doc
+    if (!documentId || state.busy || !active(generation)) throw new Error('Thread context changed')
     const replayingUnknown = operation !== null
     state.busy = true
     try {
       persist(value)
-      const receipt = await writeDocThread(topicId, value.id, value.action, value.body)
+      const receipt = await writeDocThread(documentId, value.id, value.action, value.body)
       if (!active(generation)) throw new Error('Thread context changed')
       install(receipt)
       persist(null)
@@ -122,12 +123,12 @@ export function useDocThreads(topic: () => string | null) {
       return undefined
     },
     stopAgent: async (id) => {
-      if (room) await stopDocThreadAgent(room, id)
+      if (doc) await stopDocThreadAgent(doc, id)
     },
   }
   function reset() {
     epoch++
-    room = topic()
+    doc = document()
     actor = myId()
     state.threads = []
     state.activity = {}
@@ -145,15 +146,15 @@ export function useDocThreads(topic: () => string | null) {
       /* No writes are sent until persistence succeeds. */
     }
     stopListening?.()
-    stopListening = room
-      ? listenToComments(room, (signal) => {
+    stopListening = doc
+      ? listenToComments(doc, (signal) => {
           if (signal.kind === 'changed') void refresh()
           else state.activity[signal.thread] = { state: signal.state, ...(signal.tool ? { tool: signal.tool } : {}) }
         })
       : null
     void refresh()
   }
-  watch(topic, reset, { immediate: true, flush: 'sync' })
+  watch(document, reset, { immediate: true, flush: 'sync' })
   const timer = setInterval(() => {
     if (actor !== myId()) reset()
   }, 500)

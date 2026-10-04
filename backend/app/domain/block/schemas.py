@@ -35,8 +35,6 @@ class BlockOut(BaseModel):
     # reply_to = 对话树, refs[] = 引用(决策/PR/现场); upgraded_to_topic_id makes an
     # upgraded block a live link.
     reply_to: uuid.UUID | None
-    # B4 段落评论: the quoted text a comment was selected on (set on comment blocks).
-    anchor_quote: str | None = None
     # Render-by-type: mimeType of an artifact block (set on artifact blocks).
     mime_type: str | None = None
     refs: list[str] = []

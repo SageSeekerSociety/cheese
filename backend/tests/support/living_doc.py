@@ -29,3 +29,11 @@ async def write_doc(
     return await DocumentWriter(session, summarize_doc_change).record(
         doc, content=content, actors=[actor], quiet=quiet
     )
+
+
+def document_of(client, room_id, **kwargs) -> str:
+    """The id of the room's living document, as a page finds it out
+    (``GET /topics/{id}/document``); ``kwargs`` go with the request (headers)."""
+    response = client.get(f"/topics/{room_id}/document", **kwargs)
+    assert response.status_code == 200, response.text
+    return response.json()["data"]["id"]

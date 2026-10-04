@@ -103,7 +103,8 @@ class EvalApi:
         return (await self.get(f"/api/topics/{topic_id}/blocks"))["data"]
 
     async def get_doc(self, topic_id: str) -> dict | None:
-        return await self.get(f"/api/topics/{topic_id}/doc")
+        document = (await self.get(f"/api/topics/{topic_id}/document"))["id"]
+        return await self.get(f"/api/documents/{document}")
 
     async def upgrade_block(self, block_id: str) -> dict:
         return await self.post(f"/api/blocks/{block_id}/upgrade", {})

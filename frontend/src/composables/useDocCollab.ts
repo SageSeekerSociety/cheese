@@ -1,11 +1,16 @@
-// One room's living document, live: the Yjs document an editor binds to, the
-// connection that keeps it in step with everyone else's, and who else is in it.
+// One document, live: the Yjs document an editor binds to, the connection that
+// keeps it in step with everyone else's, and who else is in it.
 //
 // The document is edited in the collaboration service (frontend/collab). This
 // opens it with a ticket from the backend — asked again on every reconnect,
 // because a ticket only opens a connection for a couple of minutes — and closes
-// it when the room changes or the page goes away. Changes typed while the
+// it when the document changes or the page goes away. Changes typed while the
 // connection is down stay in the local document and merge in when it comes back.
+//
+// The same connection carries what the backend says about the document that is
+// not its text (stateless messages from the service): a stored version moved on
+// (`stores` counts them), its comments changed, an agent is answering a thread
+// (both passed on through lib/docCommentSignals).
 //
 // Nothing here saves anything: the service stores the document a few seconds
 // after the typing stops.
@@ -26,6 +31,7 @@ import { avatarColor } from '@/utils/avatar'
 import { getAvatarUrl } from '@/utils/materials'
 
 import { collabWsUrl, getDocTicket } from '../api/docCollab'
+import { announceComments } from '../lib/docCommentSignals'
 import { DOC_SCHEMA_MISMATCH } from '../lib/docSchema/version'
 import { myAccount } from '../me'
 
@@ -42,7 +48,7 @@ export interface DocPeer {
 }
 
 export interface DocSession {
-  room: string
+  document: string
   doc: Y.Doc
   provider: HocuspocusProvider
   /** The local person, as their caret is labelled for everyone else. */
@@ -70,7 +76,24 @@ function connectToService(ticket: () => Promise<DocTicket>, first: DocTicket) {
   return { doc, provider, destroy: () => (provider.destroy(), socket.destroy()) }
 }
 
-export function useDocCollab(room: () => string | null) {
+/** What the backend tells a document's open editors, as the service relays it. */
+function heard(document: string, payload: string, stored: () => void) {
+  let frame: Record<string, unknown>
+  try {
+    frame = JSON.parse(payload)
+  } catch {
+    return
+  }
+  if (frame.type === 'state' && frame.resource === 'doc') stored()
+  else if (frame.type === 'state' && frame.resource === 'comments') announceComments(document, { kind: 'changed' })
+  else if (frame.type === 'comment_activity' && typeof frame.thread === 'string') {
+    const state = frame.state === 'working' ? 'working' : 'queued'
+    const tool = typeof frame.tool === 'string' ? frame.tool : undefined
+    announceComments(document, { kind: 'activity', thread: frame.thread, state, tool })
+  }
+}
+
+export function useDocCollab(document: () => string | null) {
   const session = shallowRef<DocSession | null>(null)
   const connection = ref<DocConnection>('connecting')
   /** True once the document has arrived from the service at least once. */
@@ -81,6 +104,8 @@ export function useDocCollab(room: () => string | null) {
   const error = ref<string | null>(null)
   /** The service speaks another document schema: this page has to be reloaded. */
   const outdated = ref(false)
+  /** How many times a version of this document was stored while it was open. */
+  const stores = ref(0)
   let close: (() => void) | null = null
   let generation = 0
 
@@ -126,7 +151,10 @@ export function useDocCollab(room: () => string | null) {
       if (state) synced.value = true
     })
     provider.on('authenticated', () => {
-      if (mine === generation && !session.value) session.value = { room: id, doc, provider, user }
+      if (mine === generation && !session.value) session.value = { document: id, doc, provider, user }
+    })
+    provider.on('stateless', ({ payload }: { payload: string }) => {
+      if (mine === generation) heard(id, payload, () => stores.value++)
     })
     provider.on('authenticationFailed', ({ reason }: { reason: string }) => {
       if (mine !== generation) return
@@ -163,7 +191,7 @@ export function useDocCollab(room: () => string | null) {
   }
 
   watch(
-    room,
+    document,
     (id) => {
       if (id) void open(id)
       else {
@@ -179,5 +207,5 @@ export function useDocCollab(room: () => string | null) {
     teardown()
   })
 
-  return { session, connection, synced, readOnly, peers, error, outdated }
+  return { session, connection, synced, readOnly, peers, error, outdated, stores }
 }

@@ -69,7 +69,7 @@ const props = withDefaults(
     agentControl?: AgentControlState | null
     // 正在跑的轮次各自的开始时间（毫秒），一路透传给现场那格：哪一组还在进行。
     siteTurns?: Record<string, number>
-    // Project topics (A2): 文档 resolves live-ref badges and <#id> chips with it.
+    // Project topics: 文档 resolves <#id> chips with it.
     topicList?: Topic[]
     // Which tab the URL asks for (`?tab=`). The address is the page's business,
     // so TopicView owns it and this component only reports its own moves — that

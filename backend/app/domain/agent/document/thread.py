@@ -1,9 +1,10 @@
-"""A document comment that names the room's agent is answered by the comment
-thread's own session.
+"""A document comment that names the document's agent is answered by the
+comment thread's own session.
 
 Comments are passive: recording one starts nothing. A comment, or a reply in a
-comment thread, that @-mentions an agent seated in the room is a question to
-that agent. It is answered in the background, after the comment is committed:
+comment thread, that @-mentions an agent the document can ask (one seated in
+its room; the project's own, for a document in none) is a question to that
+agent. It is answered in the background, after the comment is committed:
 
 1. **Its turn.** One question of a thread is answered at a time, and at most
    ``question.ANSWERING_PER_PROJECT`` of a project's conversations are being
@@ -12,14 +13,14 @@ that agent. It is answered in the background, after the comment is committed:
    agent would be admitted (``question.admit``).
 3. **The question**, assembled fresh: the thread so far, the passage it is
    anchored to and the section around it, the whole document, the room's recent
-   messages (``thread_question``).
+   messages for a room's document (``thread_question``).
 4. **The answer** becomes the agent's reply in the thread (``Replies``). Once
    asked, it is read to its end by whichever backend is up
    (``session_host.consumptions``), so a restart mid-answer still replies.
 
-The room hears how far a thread's question has got as it goes
-(``comment_activity`` frames: waiting for a session, answering, which tool it
-used), and the thread list says it again for a page that opens meanwhile
+Whoever has the document open hears how far a thread's question has got as it
+goes (``comment_activity`` frames: waiting for a session, answering, which tool
+it used), and the thread list says it again for a page that opens meanwhile
 (``question.answering``).
 
 What the answer spent is drained into the project's usage once it is done,
@@ -38,9 +39,8 @@ from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.redis import get_redis_client
 from app.domain.agent.chat import ChatService
 from app.domain.agent.document import question
-from app.domain.agent.document.question import Bound, Surroundings
+from app.domain.agent.document.question import Asked, Bound, Surroundings
 from app.domain.agent.document.session import ref, session_for
-from app.domain.agent.runtime import announce_stale, get_broker
 from app.domain.agent.session_host.answer import Answer, Tool, Waiting, Words
 from app.domain.agent.session_host.consumptions import Consumption, Consumptions
 from app.domain.agent.session_host.contract import (
@@ -49,13 +49,12 @@ from app.domain.agent.session_host.contract import (
     StartAbandoned,
 )
 from app.domain.agent.session_host.host import SessionHost
-from app.domain.block.comment_threads import CommentThreads
 from app.domain.delivery.mention import mentioned_handles
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
-from app.domain.living_doc import work_edits
-from app.domain.room_task.place import Place
-from app.domain.topic_membership.services import TopicMemberService
+from app.domain.living_doc import collab, work_edits
+from app.domain.living_doc.comments import CommentThreads
+from app.domain.living_doc.services import Documents
 
 logger = logging.getLogger(__name__)
 
@@ -67,23 +66,24 @@ STOPPED = "已停止"
 
 
 async def _tell(
-    room_id: uuid.UUID, thread_id: uuid.UUID, state: str, tool: str | None = None
+    document_id: uuid.UUID, thread_id: uuid.UUID, state: str, tool: str | None = None
 ) -> None:
-    """How far the thread's question has got, for the room's open pages."""
+    """How far the thread's question has got, for whoever has the document
+    open."""
     frame = {"type": "comment_activity", "thread": str(thread_id), "state": state}
     if tool:
         frame["tool"] = tool
-    await get_broker().publish(str(room_id), frame)
+    await collab.tell(document_id, frame)
 
 
 # --- who is asked --------------------------------------------------------------
 
 
 async def mentioned_seat(
-    db: AsyncSession, place: Place, actor: Actor, content: str
+    db: AsyncSession, asked: Asked, actor: Actor, content: str
 ) -> str | None:
-    """The room's agent this comment names, when a person wrote it."""
-    seats = await TopicMemberService(db).agent_handles(place.room_id)
+    """The document's agent this comment names, when a person wrote it."""
+    seats = await question.seats(db, asked)
     named = [handle for handle in mentioned_handles(content) if handle in seats]
     if not named or await IdentityService(db).is_agent(actor.handle):
         return None
@@ -94,7 +94,7 @@ def hand_to_agent(
     chat: ChatService,
     consumptions: Consumptions,
     *,
-    place: Place,
+    asked: Asked,
     actor: Actor,
     seat: str,
     thread_id: uuid.UUID,
@@ -105,8 +105,7 @@ def hand_to_agent(
         answer(
             chat,
             consumptions,
-            project_id=place.project_id,
-            room_id=place.room_id,
+            asked=asked,
             asker=actor.handle,
             seat=seat,
             thread_id=thread_id,
@@ -116,12 +115,16 @@ def hand_to_agent(
 
 
 async def thread_question(
-    db: AsyncSession, around: Surroundings, *, room_id: uuid.UUID, thread_id: uuid.UUID
+    db: AsyncSession,
+    around: Surroundings,
+    *,
+    document_id: uuid.UUID,
+    thread_id: uuid.UUID,
 ) -> str:
     """A thread's question: the thread so far, what it points at, the document
-    and the room's latest messages."""
+    and, for a room's document, the room's latest messages."""
     threads = CommentThreads(db)
-    thread = await threads.describe(await threads.root(room_id, thread_id))
+    thread = await threads.describe(await threads.root(document_id, thread_id))
     comments = [thread["comment"], *(r["comment"] for r in thread["replies"])]
     said = "\n".join(f"<@{c['author']}>：{c['content']}" for c in comments)
     quote = thread["comment"].get("anchor_quote") or ""
@@ -142,8 +145,7 @@ async def answer(
     chat: ChatService,
     consumptions: Consumptions,
     *,
-    project_id: uuid.UUID,
-    room_id: uuid.UUID,
+    asked: Asked,
     asker: str,
     seat: str,
     thread_id: uuid.UUID,
@@ -155,40 +157,38 @@ async def answer(
     factory = factory or chat.session_factory
     redis = get_redis_client()
     async with factory() as db:
-        bound = await question.bind(db, room_id, seat)
+        bound = await question.bind(db, asked, seat)
     if redis is None:
-        await reply(factory, room_id, project_id, thread_id, bound, FAILED)
+        await reply(factory, asked, thread_id, bound, FAILED)
         return
     work = uuid.uuid4()
     stopped = question.stopped(redis, thread_id)
     slot = await question.take_turn(
         redis,
-        project_id,
+        asked.project_id,
         thread_id,
-        on_wait=lambda: _tell(room_id, thread_id, "queued"),
+        on_wait=lambda: _tell(asked.document_id, thread_id, "queued"),
         stopped=stopped,
     )
     if slot is None:
         said = STOPPED if await stopped() else BUSY
         # A stop is for the question it reached: the next one starts unstopped.
         await question.unstop(redis, thread_id)
-        await reply(factory, room_id, project_id, thread_id, bound, said)
+        await reply(factory, asked, thread_id, bound, said)
         return
-    await _tell(room_id, thread_id, "working")
+    await _tell(asked.document_id, thread_id, "working")
     try:
         async with factory() as db:
-            await question.admit(db, project_id, bound)
-            around = await question.surroundings(
-                db, project_id=project_id, room_id=room_id, seat=bound.agent_handle
-            )
+            await question.admit(db, asked.project_id, bound)
+            around = await question.surroundings(db, asked, seat=bound.agent_handle)
             prompt = await thread_question(
-                db, around, room_id=room_id, thread_id=thread_id
+                db, around, document_id=asked.document_id, thread_id=thread_id
             )
     except ValidationError as exc:
         # Refused before anything was asked: the refusal is the answer.
         await slot.release()
         await question.unstop(redis, thread_id)
-        await reply(factory, room_id, project_id, thread_id, bound, str(exc))
+        await reply(factory, asked, thread_id, bound, str(exc))
         return
     except BaseException:
         await slot.release()
@@ -199,8 +199,7 @@ async def answer(
         async with factory() as db:
             acting = await question.credential(
                 db,
-                project_id=project_id,
-                room_id=room_id,
+                asked=asked,
                 agent=bound.agent_handle,
                 asker=asker,
                 work=work,
@@ -211,15 +210,10 @@ async def answer(
     await consumptions.begin(
         kind=KIND,
         key=str(thread_id),
-        data={
-            "project": str(project_id),
-            "room": str(room_id),
-            "bound": asdict(bound),
-        },
+        data={**asked.data(), "bound": asdict(bound)},
         work_id=work,
         session=session_for(
-            project_id=project_id,
-            room_id=room_id,
+            asked=asked,
             key=thread_id,
             bound=bound,
             around=around,
@@ -237,8 +231,9 @@ KIND = "doc-thread"
 
 
 class Replies:
-    """What becomes of a thread's answer: the room hears how far it has got,
-    the thread gets it as the agent's reply, and the project pays for it."""
+    """What becomes of a thread's answer: the document's readers hear how far
+    it has got, the thread gets it as the agent's reply, and the project pays
+    for it."""
 
     def __init__(self, chat: ChatService, factory: async_sessionmaker[AsyncSession]):
         self._chat = chat
@@ -254,14 +249,12 @@ class Replies:
     async def took(
         self, consumption: Consumption, item: Waiting | Words | Tool
     ) -> None:
-        room_id, thread_id = (
-            uuid.UUID(consumption.data["room"]),
-            uuid.UUID(consumption.key),
-        )
+        document_id = Asked.of(consumption.data).document_id
+        thread_id = uuid.UUID(consumption.key)
         if isinstance(item, Waiting):
-            await _tell(room_id, thread_id, "queued")
+            await _tell(document_id, thread_id, "queued")
         elif isinstance(item, Tool):
-            await _tell(room_id, thread_id, "working", item.name)
+            await _tell(document_id, thread_id, "working", item.name)
 
     async def ended(
         self,
@@ -272,8 +265,7 @@ class Replies:
         stopped: bool,
         failure: BaseException | None,
     ) -> list[tuple[str, dict]]:
-        project_id = uuid.UUID(consumption.data["project"])
-        room_id = uuid.UUID(consumption.data["room"])
+        asked = Asked.of(consumption.data)
         thread_id = uuid.UUID(consumption.key)
         bound = Bound(**consumption.data["bound"])
         text = answer.text.strip()
@@ -298,8 +290,10 @@ class Replies:
             said = "\n\n".join(part for part in (written.strip(), STOPPED) if part)
         if redis is not None:
             await question.unstop(redis, thread_id)
-        await reply(self._factory, room_id, project_id, thread_id, bound, said)
-        await self._chat.charge_turn_spend(project_id, room_id, consumption.work)
+        await reply(self._factory, asked, thread_id, bound, said)
+        await self._chat.charge_turn_spend(
+            asked.project_id, asked.room_id, consumption.work
+        )
         return []
 
 
@@ -313,8 +307,7 @@ async def stop(
 
 async def reply(
     factory: async_sessionmaker[AsyncSession],
-    room_id: uuid.UUID,
-    project_id: uuid.UUID,
+    asked: Asked,
     thread_id: uuid.UUID,
     bound: Bound,
     text: str,
@@ -327,10 +320,12 @@ async def reply(
         async with factory() as db:
             threads = CommentThreads(db)
             try:
-                current = await threads.describe(await threads.root(room_id, thread_id))
+                doc = await Documents(db).get(asked.document_id)
+                if doc is None:
+                    raise NotFoundError("document gone")
+                current = await threads.describe(await threads.root(doc.id, thread_id))
                 await threads.mutate(
-                    room_id=room_id,
-                    project_id=project_id,
+                    doc,
                     comment_id=thread_id,
                     author=bound.agent_handle,
                     expected_revision=current["revision"],
@@ -338,7 +333,9 @@ async def reply(
                     content=text,
                 )
                 await db.commit()
-                await announce_stale(room_id, "comments")
+                await collab.tell(
+                    asked.document_id, {"type": "state", "resource": "comments"}
+                )
                 return
             except NotFoundError:
                 logger.info("doc agent reply dropped thread=%s: gone", thread_id)

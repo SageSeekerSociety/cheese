@@ -26,7 +26,7 @@ class PassageEdit(BaseModel):
 
 
 class PassageEditsIn(BaseModel):
-    """Change passages of the living document (``POST /topics/{id}/doc/edits``)."""
+    """Change passages of the living document (``POST /documents/{id}/edits``)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -59,7 +59,7 @@ class SelectionIn(BaseModel):
 
 class AgentAskIn(BaseModel):
     """Ask the room's AI teammate from the document
-    (``POST /topics/{id}/doc/agent``): a shortcut by its id, or what the person
+    (``POST /documents/{id}/agent``): a shortcut by its id, or what the person
     wrote, about a selection or the whole document."""
 
     model_config = ConfigDict(extra="forbid")

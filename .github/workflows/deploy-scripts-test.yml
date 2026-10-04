@@ -115,6 +115,9 @@ jobs:
       - name: Dev-box cache reclaim
         run: bash deploy/tests/test-dev-box-disk-cleanup.sh
 
+      - name: Deploy runner watchdog
+        run: bash deploy/tests/test-runner-watchdog.sh
+
       - name: CI action archive cache
         run: python3 deploy/tests/test_action_archive_cache.py
 

@@ -46,6 +46,11 @@ const rows = computed(() =>
 
 <template>
   <ul class="changes">
+    <!-- Deliberately not an AppPage: this is a section inside ProjectArtifactView,
+         which already owns the page frame (AppPage width="full"). It renders in
+         that page's column; a page frame here would nest a second header and
+         re-centre the column. -->
+
     <li v-for="row in rows" :key="row.file.path" class="changes__file">
       <button
         type="button"

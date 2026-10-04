@@ -36,10 +36,8 @@ import {
   commentHighlightKey,
   createCommentHighlights,
   createEmptyLineHint,
-  createLiveRefBadges,
   createTitleEcho,
   createTokenChips,
-  liveRefKey,
   tokenChipsKey,
 } from '../../../lib/docDecorations'
 import { createEditMarks } from '../../../lib/docEditMarks'
@@ -68,14 +66,12 @@ const props = withDefaults(
     topicId: string | null
     /** 话题标题：文档第一行若是同样的一级标题就不再画一遍。 */
     title?: string
-    /** 项目话题表：支线徽章的标题与状态、`<#id>` 话题 chip 的标题都从这里查。 */
+    /** 项目话题表：`<#id>` 话题 chip 的标题从这里查。 */
     topicList?: Topic[]
     /** handle → 名字：`<@handle>` chip 上写的字。 */
     mentionNames?: Record<string, string>
     /** 打 @ 时列出来的人。 */
     mentionPeople?: MentionPoolEntry[]
-    /** 段落 index → 支线 id（装饰的原料，取数那一半算好的）。 */
-    liveRefIndex?: Map<number, string>
     /** 能写评论（归档话题的文档不能）。 */
     canComment?: boolean
     /** 没解决的评论串：它们评的那几个字标出来。 */
@@ -98,7 +94,6 @@ const props = withDefaults(
     topicList: () => [],
     mentionNames: () => ({}),
     mentionPeople: () => [],
-    liveRefIndex: () => new Map<number, string>(),
     canComment: true,
     openThreads: () => new Set<string>(),
     activeThread: null,
@@ -206,12 +201,6 @@ watch(
 // Chip clicks in the doc (delegated — decorations are plain spans).
 function onDocClick(e: MouseEvent) {
   const target = e.target as HTMLElement | null
-  // Live-ref badge widget → open its subtopic.
-  const lr = target?.closest('.doc-liveref') as HTMLElement | null
-  if (lr?.dataset.topic) {
-    emit('open-topic', lr.dataset.topic)
-    return
-  }
   // A commented passage → its thread in the comment panel.
   const ca = target?.closest('.doc-comment-mark') as HTMLElement | null
   if (ca?.dataset.comment) {
@@ -350,13 +339,6 @@ function buildEditor(session: DocSession): DocEditor {
           topicTitles: Object.fromEntries(props.topicList.map((t) => [t.id, t.title])),
         }),
       }),
-      createLiveRefBadges({
-        index: () => props.liveRefIndex,
-        factsOf: (topicId) => {
-          const sub = props.topicList.find((t) => t.id === topicId)
-          return { title: sub?.title ?? null, status: sub?.status ?? '' }
-        },
-      }),
       createCommentHighlights({ open: () => props.openThreads, active: () => props.activeThread ?? null }),
       createEditMarks(),
       createEmptyLineHint(),
@@ -394,12 +376,6 @@ watch(
 )
 onBeforeUnmount(() => editor.value?.destroy())
 
-// 取数那一半把最新的索引递下来时，装饰要立刻照着重建 —— 它算不出 DOM 在哪儿，编辑器
-// 在哪儿只有这一层知道。watch 让这一步和索引的更新同一拍发生。
-watch(
-  () => props.liveRefIndex,
-  () => poke(liveRefKey)
-)
 watch(
   () => [props.openThreads, props.activeThread],
   () => poke(commentHighlightKey)

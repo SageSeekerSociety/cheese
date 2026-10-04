@@ -1,4 +1,4 @@
-"""Thread mutations have no caller-supplied authorship or anchor authority."""
+"""Comment writes carry no caller-supplied authorship or anchor authority."""
 
 import uuid
 from typing import Annotated
@@ -32,3 +32,11 @@ class ReplyIn(ThreadMutation):
         if not value.strip():
             raise ValueError(say("commentContentRequired"))
         return value
+
+
+class CommentIn(BaseModel):
+    """A new thread: what it says, and the words it is about (none: the whole
+    document). A blank comment is refused by the route, with its reason."""
+
+    content: str = Field(default="", max_length=16000)
+    quote: str | None = None

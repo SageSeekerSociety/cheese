@@ -7,6 +7,7 @@ from app.domain.block.models import AuthorType, Block, BlockKind
 from tests.conftest import seed_user
 from tests.conftest import wait_work_idle as _wait_work_idle
 from tests.integration.conftest import post_project, session_auth_headers
+from tests.support.living_doc import document_of
 
 
 def _project(client, owner: str = "owner", **kw) -> dict:
@@ -250,7 +251,7 @@ def test_archived_topic_is_frozen(client):
     assert r.status_code == 422
     # Editing the frozen topic's doc is rejected.
     r = client.put(
-        f"/topics/{topic['id']}/doc",
+        f"/documents/{document_of(client, topic['id'])}",
         json={"content": "改一下", "expected_version": 0},
     )
     assert r.status_code == 422
@@ -298,7 +299,7 @@ def test_upgrade_from_private_chat_lands_under_root(client):
     assert topic["parent_id"] == p["root_topic_id"]
     assert topic["kind"] == "topic"
     # Privacy: the private chat's doc is never copied into the public topic.
-    doc = client.get(f"/topics/{topic['id']}/doc").json()["data"]
+    doc = client.get(f"/documents/{document_of(client, topic['id'])}").json()["data"]
     assert doc is not None
     assert "我们其实该单独做个数据清洗模块" in doc["content"]  # source block
     assert "父话题当时还没有实况文档" in doc["content"]
@@ -315,7 +316,7 @@ def test_split_records_the_brief_on_the_card_and_starts_nobody(client):
         "/topics", json={"project_id": p["id"], "title": "推荐系统"}
     ).json()["data"]
     client.put(
-        f"/topics/{topic['id']}/doc",
+        f"/documents/{document_of(client, topic['id'])}",
         json={
             "content": "## 目标\n\n给校园二手书平台做推荐",
             "expected_version": 0,
@@ -340,7 +341,7 @@ def test_split_records_the_brief_on_the_card_and_starts_nobody(client):
     assert sub["brief"] == "把 10 万条借阅日志去重、去空值，产出干净数据集"
     assert sub["conclusion"] is None
     # 活没有文档地址可言 —— 它不是地点。
-    assert client.get(f"/topics/{sub['id']}/doc").status_code == 404
+    assert client.get(f"/topics/{sub['id']}/document").status_code == 404
 
     # 那张卡: the ROOM's main line says a piece of work left, and names which.
     room_blocks = client.get(f"/topics/{topic['id']}/blocks").json()["data"]["data"]
@@ -369,7 +370,7 @@ def test_split_without_a_brief_leaves_the_brief_empty(client):
     ).json()["data"]
     _wait_work_idle()
     assert sub["brief"] == ""
-    assert client.get(f"/topics/{sub['id']}/doc").status_code == 404
+    assert client.get(f"/topics/{sub['id']}/document").status_code == 404
 
 
 def test_split_and_conclude(client):
@@ -410,7 +411,7 @@ def test_split_and_conclude(client):
 
     # 结论住在卡上, so the room's own living doc is not rewritten behind its back
     # — the room keeps its doc, the way every other place does.
-    doc = client.get(f"/topics/{topic['id']}/doc").json()["data"]
+    doc = client.get(f"/documents/{document_of(client, topic['id'])}").json()["data"]
     assert doc is None or "数据清洗完成" not in doc["content"]
 
 

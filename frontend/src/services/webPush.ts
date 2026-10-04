@@ -97,11 +97,27 @@ export async function enablePush(): Promise<boolean> {
   }
 }
 
+// `navigator.serviceWorker.ready` 是「等到有一个 worker 处于 active」。浏览器里从
+// 没注册过 worker 时它永远不 settle —— 于是等它的调用者永远卡住。dev server 正是
+// 这样（vite.config.ts `devOptions.enabled: false`），第一次打开线上站的浏览器也是
+// 这样。而这两个调用者（退出登录的 `forget()`、冷打开恢复会话的 `restoreSession()`）
+// 都卡不得：前者的后果是登出后本地会话还在，后者是「正在恢复登录状态」那一层再也
+// 收不起来。装好的 worker 变 active 用不了这么久，等不到就当没有。
+const READY_BUDGET_MS = 3_000
+
+function readyOrNull(): Promise<ServiceWorkerRegistration | null> {
+  return Promise.race([
+    navigator.serviceWorker.ready,
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), READY_BUDGET_MS)),
+  ])
+}
+
 /** 退订这个浏览器：本地取消，并告诉后端别再往这个地址发。 */
 export async function disablePush(): Promise<void> {
   if (!pushSupported()) return
   try {
-    const registration = await navigator.serviceWorker.ready
+    const registration = await readyOrNull()
+    if (!registration) return
     const subscription = await registration.pushManager.getSubscription()
     if (!subscription) return
     await dropPushSubscription(subscription.endpoint)
