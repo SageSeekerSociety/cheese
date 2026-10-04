@@ -312,6 +312,8 @@ BACKEND_URL=<后端真实地址> nohup npx vite preview --outDir dist --port 417
 cheese serve 4173 "预览"        # 默认先探到应答才报,最多 30 秒;--no-wait 关掉
 ```
 
+- **构建被 OOM 杀了就退回 dev server,别卡在那里**:大前端的生产构建峰值可能比机器内存还大(实测 1.5 GB 的机器上必被杀)。退回时 `BACKEND_URL=<后端> nohup npx vite --host 127.0.0.1 --port 4173 --strictPort &`,再 `cheese serve 4173`;首屏会慢到几十秒,摆出来时跟用户说一声。
+
 - 端口**自己挑一个固定的**并加 `--strictPort`:被占时 vite 会静默换端口,你以为起好了,报上来的那个却没人应答。
 - 探活要**浏览器式的 GET**(带 `Accept: text/html`);`curl -I` 的 HEAD 常被拒。`cheese serve` 默认就是这么探的。
 - `/api` 这类请求走 Vite 的 proxy:`preview` 继承 `server.proxy`,用 `BACKEND_URL` 指到后端真实地址(后端在本机就用 `127.0.0.1`)。
