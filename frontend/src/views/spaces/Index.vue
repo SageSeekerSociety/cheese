@@ -92,6 +92,8 @@
               :loading="loadingMore"
               :initial-loading="refreshing"
               :is-empty="spaces.length === 0"
+              :shown="spaces.length"
+              :total="total"
               @load-more="loadMore"
             >
               <template #empty>
@@ -366,6 +368,7 @@ const {
   refresh,
   refreshing,
   loadingMore,
+  total,
 } = usePaging(async (pageStart) => {
   const { data } = await SpacesApi.list({
     sort_by: 'createdAt',

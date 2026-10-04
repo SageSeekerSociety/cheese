@@ -6,6 +6,8 @@
       :has-more="hasMore"
       :initial-loading="refreshing"
       :is-empty="tasks.length === 0"
+      :shown="tasks.length"
+      :total="total"
       @load-more="loadMore"
     >
       <template #empty>
@@ -60,6 +62,7 @@ const {
   hasMore,
   refreshing,
   loadingMore,
+  total,
 } = usePaging<Task, void, string>(async (pageStart) => {
   if (!currentSpaceId.value) {
     return createEmptyResult<Task, string>()
