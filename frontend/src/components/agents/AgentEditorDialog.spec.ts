@@ -112,13 +112,13 @@ afterEach(() => cleanup())
 describe('新建时的校验', () => {
   it('一进来不先骂人', async () => {
     mountDialog(null)
-    expect(screen.queryByText('请填写名字')).toBeNull()
+    expect(screen.queryByText('填写名字')).toBeNull()
   })
 
   it('名字空着就不发请求，并当场说明', async () => {
     mountDialog(null)
     await clickSave()
-    expect(await screen.findByText('请填写名字')).toBeTruthy()
+    expect(await screen.findByText('填写名字')).toBeTruthy()
     expect(createProjectAgent).not.toHaveBeenCalled()
   })
 

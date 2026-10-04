@@ -15,6 +15,7 @@ const grantTeamCredits = vi.fn()
 const createPlan = vi.fn()
 const updatePlan = vi.fn()
 const deletePlan = vi.fn()
+const listPlanModels = vi.fn()
 
 vi.mock('@/api/adminCredits', () => ({
   listPlans: (...a: unknown[]) => listPlans(...a),
@@ -26,6 +27,7 @@ vi.mock('@/api/adminCredits', () => ({
   createPlan: (...a: unknown[]) => createPlan(...a),
   updatePlan: (...a: unknown[]) => updatePlan(...a),
   deletePlan: (...a: unknown[]) => deletePlan(...a),
+  listPlanModels: (...a: unknown[]) => listPlanModels(...a),
 }))
 
 vi.mock('@/api', async (importOriginal) => {
@@ -36,7 +38,13 @@ vi.mock('@/api', async (importOriginal) => {
 // 键名透传：这一组问的是「调了什么、屏幕上剩下什么」，不是哪一句中文。
 vi.mock('vue-i18n', async (importOriginal) => {
   const actual = await importOriginal<typeof import('vue-i18n')>()
-  return { ...actual, useI18n: () => ({ t: (key: string) => key, locale: { value: 'zh-CN' } }) }
+  return {
+    ...actual,
+    useI18n: () => ({
+      t: (key: string, params?: { names?: string }) => params?.names ?? key,
+      locale: { value: 'zh-CN' },
+    }),
+  }
 })
 
 import AdminCreditsPage from './AdminCreditsPage.vue'
@@ -133,6 +141,14 @@ beforeAll(() => {
 })
 
 beforeEach(() => {
+  listPlanModels.mockReset().mockResolvedValue({
+    models: [
+      { id: 'standard', label: 'Standard Model', tier: 'included' },
+      { id: 'sonnet', label: 'Claude Sonnet', tier: 'premium' },
+      { id: 'premium', label: 'Premium Model', tier: 'premium' },
+      { id: 'fable', label: 'Claude Fable', tier: 'frontier' },
+    ],
+  })
   listPlans.mockReset().mockResolvedValue({ plans: [FREE, RESERVE] })
   listCreditTeams.mockReset().mockResolvedValue({ items: [ROW], total: 1, page: 1, page_size: 20 })
   getCreditTeam.mockReset().mockResolvedValue(detail())
@@ -158,6 +174,37 @@ async function editPlan(page: ReturnType<typeof mountPage>, name: string) {
 }
 
 describe('plans and credits', () => {
+  it('the editor describes subscription and gateway models under their tiers without changing plan permissions', async () => {
+    const dialog = await editPlan(mountPage(), 'Free')
+    expect(await dialog.findByRole('checkbox', { name: /credits.tier.included.*Standard Model/ })).toBeTruthy()
+    expect(dialog.getByRole('checkbox', { name: /credits.tier.premium.*Claude Sonnet、Premium Model/ })).toBeTruthy()
+    expect(dialog.getByRole('checkbox', { name: /credits.tier.frontier.*Claude Fable/ })).toBeTruthy()
+    expect(dialog.queryByText('credits.planDialog.tierModelsNone')).toBeNull()
+    await fireEvent.click(dialog.getByRole('button', { name: 'credits.planDialog.save' }))
+    await waitFor(() =>
+      expect(updatePlan).toHaveBeenCalledWith('free', expect.objectContaining({ model_tiers: ['included'] }))
+    )
+  })
+
+  it('a catalog read failure is not reported as empty model tiers', async () => {
+    listPlanModels.mockRejectedValue(new Error('offline'))
+    const dialog = await editPlan(mountPage(), 'Free')
+    await dialog.findByRole('checkbox', { name: 'credits.tier.premium' })
+    expect(dialog.queryByText('credits.planDialog.tierModelsNone')).toBeNull()
+  })
+
+  it('a successfully read empty tier is reported as having no models', async () => {
+    listPlanModels.mockResolvedValue({ models: [{ id: 'sonnet', label: 'Claude Sonnet', tier: 'premium' }] })
+    const dialog = await editPlan(mountPage(), 'Free')
+    expect(await dialog.findByRole('checkbox', { name: /credits.tier.premium.*Claude Sonnet/ })).toBeTruthy()
+    expect(
+      dialog.getByRole('checkbox', { name: /credits.tier.included.*credits.planDialog.tierModelsNone/ })
+    ).toBeTruthy()
+    expect(
+      dialog.getByRole('checkbox', { name: /credits.tier.frontier.*credits.planDialog.tierModelsNone/ })
+    ).toBeTruthy()
+  })
+
   it('a plan switched to time windows is saved without a monthly amount', async () => {
     const dialog = await editPlan(mountPage(), 'Free')
 

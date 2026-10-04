@@ -26,7 +26,7 @@ from app.domain.agent.harness import SessionRef, harness_for
 from app.domain.agent.harness.claude_code import ClaudeCodeChannel, ClaudeCodeRuntime
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.agent_session.services import AgentSessionService
-from app.domain.device.supply import Supply, Visibility
+from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.machine import session_work
 from app.domain.topic.models import Topic
@@ -73,7 +73,6 @@ async def room(client):
                 code,
                 owner_user_id=owner.id,
                 supply=Supply.self_hosted,
-                visibility=Visibility.host,
             )
             await devices.assign_to_project(
                 device.device_id, project_id, actor_user_id=owner.id

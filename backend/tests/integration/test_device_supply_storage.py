@@ -1,4 +1,4 @@
-"""供给形式落到存储 (#282 决定 2): the two new `device` columns survive a real
+"""供给形式落到存储 (#282 决定 2): `device.supply` survives a real
 round-trip through Postgres, and the platform's reclaim door reads the stored
 value rather than any join.
 
@@ -21,7 +21,7 @@ from app.core.errors import ForbiddenError
 from app.domain.device.models import DeviceRow, DeviceTopicRow
 from app.domain.device.service import DeviceService
 from app.domain.device.sql_repository import SqlDeviceRepository
-from app.domain.device.supply import Supply, Visibility
+from app.domain.device.supply import Supply
 from app.domain.user.models import User
 
 if TYPE_CHECKING:
@@ -49,21 +49,17 @@ def test_both_supplies_round_trip_and_only_cloud_is_reclaimable(
     async def _run() -> None:
         service = DeviceService(SqlDeviceRepository(db_session))
 
-        # 入口决定待遇 on BOTH axes (#282 决定 2 / #358): a MicroCloud VM is
-        # platform-provisioned (cloud) AND whole-machine (host — a fresh disposable
-        # box is its own empty room); a human's enrolled desktop is self_hosted AND
-        # boxed by default (isolated) until they opt into whole-machine.
+        # 入口决定待遇 (#282 决定 2): a MicroCloud VM is platform-provisioned
+        # (cloud); a human's enrolled desktop is self_hosted.
         cloud = await service.approve(
             await service.start("microcloud-box"),
             owner_user_id=1,
             supply=Supply.cloud,
-            visibility=Visibility.host,
         )
         mine = await service.approve(
             await service.start("my-desktop"),
             owner_user_id=1,
             supply=Supply.self_hosted,
-            visibility=Visibility.isolated,
         )
         await db_session.flush()
         db_session.expunge_all()  # force a genuine read, not the identity map
@@ -73,9 +69,6 @@ def test_both_supplies_round_trip_and_only_cloud_is_reclaimable(
         assert stored_cloud is not None and stored_mine is not None
         assert stored_cloud.supply is Supply.cloud
         assert stored_mine.supply is Supply.self_hosted
-        # Both visibility values survive the round-trip through Postgres.
-        assert stored_cloud.visibility is Visibility.host
-        assert stored_mine.visibility is Visibility.isolated
 
         # The invariant, against real storage: the platform disposes of what it
         # opened and refuses what it did not.
@@ -89,15 +82,12 @@ def test_both_supplies_round_trip_and_only_cloud_is_reclaimable(
     _portal.call(_run)
 
 
-def test_visibility_defaults_to_isolated_when_omitted(
+def test_supply_defaults_to_self_hosted_when_omitted(
     db_session: AsyncSession, _portal: "BlockingPortal"
 ):
-    """A device written WITHOUT a visibility value lands on `isolated`, not `host`
-    — the access-safe reading (#358 #364). Locks both inner defaults #361 missed:
-    the ORM `default=` (an ORM insert that omits the field) and the DDL
-    `server_default` (any raw INSERT that bypasses the ORM entirely). `host` is
-    whole-machine access and 申请制; it must never be reached by omission, and this
-    is the test that reddens if either inner default drifts back."""
+    """A device written WITHOUT a supply value lands on `self_hosted`, the reading
+    under which the platform destroys nothing — through the ORM `default=` and
+    through the DDL `server_default` (a raw INSERT that bypasses the ORM)."""
 
     async def _run() -> None:
         # A fresh name: this database keeps the demo seed's users.
@@ -125,13 +115,11 @@ def test_visibility_defaults_to_isolated_when_omitted(
         db_session.expunge_all()  # force a real read, not the identity map
         reloaded = await db_session.get(DeviceRow, "devdefault01")
         assert reloaded is not None
-        assert reloaded.visibility is Visibility.isolated
-        # The supply axis is untouched: its safe reading is self_hosted.
         assert reloaded.supply is Supply.self_hosted
 
-        # DDL path: a raw INSERT naming neither column relies purely on the DB
-        # server_default set by the migration — the layer that catches an INSERT
-        # that never goes through the repository or the ORM.
+        # DDL path: a raw INSERT that omits the column relies purely on the DB
+        # server_default — the layer that catches an INSERT that never goes
+        # through the repository or the ORM.
         await db_session.execute(
             text(
                 "INSERT INTO device (device_id, name, token, owner_user_id, "
@@ -147,11 +135,10 @@ def test_visibility_defaults_to_isolated_when_omitted(
         )
         row = (
             await db_session.execute(
-                text("SELECT visibility, supply FROM device WHERE device_id = :id"),
+                text("SELECT supply FROM device WHERE device_id = :id"),
                 {"id": "devdefault02"},
             )
         ).one()
-        assert row.visibility == "isolated"
         assert row.supply == "self_hosted"
 
     _portal.call(_run)
@@ -164,6 +151,14 @@ def test_hosted_subtype_migration_backfills_devices_and_topic_visibility(
     hosted_topic, cloud_topic = uuid.uuid4(), uuid.uuid4()
 
     async def _run() -> None:
+        # The backfill ran against the schema of its own revision, where a device
+        # still carried a visibility of its own; this transaction is rolled back.
+        await db_session.execute(
+            text(
+                "ALTER TABLE device ADD COLUMN visibility VARCHAR(16)"
+                " NOT NULL DEFAULT 'host'"
+            )
+        )
         for device_id, supply in (
             ("legacy-hosted", Supply.self_hosted),
             ("legacy-cloud", Supply.cloud),
@@ -176,7 +171,6 @@ def test_hosted_subtype_migration_backfills_devices_and_topic_visibility(
                     owner_user_id=1,
                     created_at=datetime.now(UTC),
                     supply=supply,
-                    visibility=Visibility.host,
                 )
             )
         await db_session.flush()

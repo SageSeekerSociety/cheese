@@ -3,17 +3,17 @@
 //
 // 为什么不交给 iframe：内容域按 artifact 自己的 mime 原样发字节，而 text/markdown
 // 对浏览器来说不是网页——挂上去读者看到的是星号和竖线（这就是它一直以来的样子）。
-// 解析器和聊天、文档面板是同一个实例（lib/markdown.ts），所以 CJK 的
+// 按文档的读法读（common/MarkdownView）：块、图表、公式和文档里长得一样，CJK 的
 // `**这句。**下一句` 在哪儿都不断行，链接也统一新开一页。
 //
-// 不传 breaks：文件里的单个换行是软换行，中文写作者在 .md 里不会为了断行敲回车。
-// 聊天那边反过来（breaks: true），那里的换行就是作者敲的那个换行。
+// 按文档读，不按聊天读：文件里的单个换行是软换行，中文写作者在 .md 里不会为了
+// 断行敲回车。聊天那边反过来，那里的换行就是作者敲的那个换行。
 //
 // 指的位置由 `markdownQuote` 算：渲染成什么样和选中的是哪一段文字，只有这块 DOM
 // 知道，外面拿到的是一句话（原文 + 标题路径 + 前后各 32 字）。
-import { computed, ref } from 'vue'
+import { ref } from 'vue'
 
-import { markdown, sanitizeRendered } from '../../../lib/markdown'
+import MarkdownView from '../../common/MarkdownView.vue'
 
 import { type MarkdownQuote, quoteFromSelection } from './markdownQuote'
 
@@ -27,21 +27,20 @@ const emit = defineEmits<{
   (e: 'quote', payload: MarkdownQuote): void
 }>()
 
-const root = ref<HTMLElement | null>(null)
-
-const html = computed(() => {
-  const source = props.source
-  if (!source) return ''
-  return sanitizeRendered(markdown.parse(source, { async: false, gfm: true }) as string)
-})
+const view = ref<InstanceType<typeof MarkdownView> | null>(null)
 
 function onSelect() {
-  const quote = quoteFromSelection(root.value, window.getSelection())
+  const quote = quoteFromSelection(view.value?.el ?? null, window.getSelection())
   if (quote) emit('quote', quote)
 }
 </script>
 
 <template>
-  <!-- eslint-disable-next-line vue/no-v-html -- html 是 sanitizeRendered 的输出，不是文件原文。 -->
-  <div ref="root" class="doc__md md-content" data-testid="markdown" @mouseup="onSelect" v-html="html" />
+  <MarkdownView
+    ref="view"
+    class="doc__md md-content"
+    data-testid="markdown"
+    :source="source ?? ''"
+    @mouseup="onSelect"
+  />
 </template>

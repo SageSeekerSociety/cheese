@@ -161,7 +161,7 @@ def machine(tmp_path):
     project(work)
     # Where a room's launch plants the platform's skills on the machine, and
     # the config dir its executor runs with.
-    bootstrap.plant_native_skills(home / ".claude", PLATFORM)
+    bootstrap.plant_native_skills(home, PLATFORM)
     subprocess.run(
         [sys.executable, str(helper), "start", "--state", str(state)],
         input=json.dumps(

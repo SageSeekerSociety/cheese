@@ -84,6 +84,31 @@ def visible_pid(data):
     return None
 
 
+# Where a sandboxed room's processes are, under the machine's cgroup root —
+# a copy of `sandbox_host.CGROUP`'s name, held to it by test_footprint_root.py.
+SANDBOX_CGROUP = "cheese-sandboxes"
+
+
+def ours_to_signal(pid):
+    """Whether the reset or cancel may signal `pid`, a status file's.
+
+    A sandboxed room writes its status itself (`CHEESE_SANDBOXED`, set by
+    `device_provider.environment_status`), so the pid it names could be any
+    process of the machine's connector user; only one in the room's own
+    sandbox, by its cgroup (`sandbox_host.py`), is the room's to signal."""
+    if os.environ.get("CHEESE_SANDBOXED") != "1":
+        return True
+    try:
+        lines = Path(f"/proc/{pid}/cgroup").read_text().splitlines()
+    except OSError:
+        return False
+    own = f"/{SANDBOX_CGROUP}/{Path.home().name}"
+    return any(
+        line.startswith("0::") and (line[3:] == own or line[3:].startswith(own + "/"))
+        for line in lines
+    )
+
+
 def process_identity(pid, *, reference=None):
     # Keep recognizing status files written by older helpers, including during
     # reset. New Linux records avoid spawning ps on every readiness poll.
@@ -164,11 +189,33 @@ def platform_dir(home):
     return home / PLATFORM_DIRS[0]
 
 
+def read_beneath(directory, name, offset=None):
+    """The bytes of `directory / name`, opening neither through a link; from
+    `offset` bytes before its end when given. A sandboxed room writes its
+    environment directory and this reads it from outside the sandbox too,
+    where a link would reach the owner's files or another room's."""
+    if sys.platform == "win32":
+        with (directory / name).open("rb") as stream:
+            if offset is not None:
+                stream.seek(0, os.SEEK_END)
+                stream.seek(max(0, stream.tell() - offset))
+            return stream.read()
+    folder = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        file = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=folder)
+    finally:
+        os.close(folder)
+    with os.fdopen(file, "rb") as stream:
+        if offset is not None:
+            stream.seek(max(0, os.fstat(file).st_size - offset))
+        return stream.read()
+
+
 def read_status(directory: Path) -> dict:
-    path = directory / "status.json"
-    if not path.exists():
+    try:
+        data = json.loads(read_beneath(directory, "status.json"))
+    except FileNotFoundError:
         return {"state": "pending"}
-    data = json.loads(path.read_text())
     if data["state"] in ("preparing", "ready"):
         pid = visible_pid(data)
         if pid is not None and pid != data["pid"]:
@@ -186,13 +233,15 @@ def read_status(directory: Path) -> dict:
                     "state": "failed",
                     "error": "preparation process exited",
                 }
-    if "log_file" not in data:
+    name = data.get("log_file")
+    if not isinstance(name, str) or Path(name).name != name or name in ("", ".", ".."):
         return data
-    log_path = directory / data["log_file"]
-    if log_path.exists():
-        with log_path.open("rb") as stream:
-            stream.seek(max(0, log_path.stat().st_size - 32768))
-            data["log"] = stream.read().decode(errors="replace")
+    try:
+        data["log"] = read_beneath(directory, name, offset=32768).decode(
+            errors="replace"
+        )
+    except OSError:
+        pass
     return data
 
 
@@ -462,8 +511,26 @@ if __name__ == "__main__":
             raise SystemExit("environment is still preparing")
         installed = platform_dir(Path.home())
         executor = installed / "execution-owner.json"
-        if executor.exists():
-            if json.loads(executor.read_text())["resource"] != Path.home().name:
+        state, kept = installed / "executor", ()
+        if os.environ.get("CHEESE_SANDBOXED") == "1":
+            # The room writes its home: its state is reached through a
+            # directory opened without following a link, so a link to another
+            # room's state cannot have that room's executor stopped
+            # (`bootstrap.executor_state`).
+            flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+            try:
+                kept = (os.open(Path.home(), flags),)
+                for part in (".cheese", "executor"):
+                    following = os.open(part, flags, dir_fd=kept[0])
+                    os.close(kept[0])
+                    kept = (following,)
+            except OSError:
+                raise SystemExit("executor state is not a directory") from None
+            state = Path(f"/proc/self/fd/{kept[0]}")
+        if kept or executor.exists():
+            if not kept and (
+                json.loads(executor.read_text())["resource"] != Path.home().name
+            ):
                 raise SystemExit("executor belongs to another room resource")
             # The runtime of the release this runner came from, which is the
             # one a sandboxed room cannot write (`device_provider.
@@ -476,14 +543,17 @@ if __name__ == "__main__":
                     ),
                     "stop",
                     "--state",
-                    str(installed / "executor"),
+                    str(state),
                 ],
                 check=True,
                 timeout=30,
+                pass_fds=kept,
             )
             status = read_status(root)
         session_file = Path.home() / ".cheese/environment-session.json"
-        if session_file.exists():
+        # A sandboxed room wrote this file itself if it is there; it has no
+        # terminal of the platform's (`resource_cleanup.request_exit`).
+        if os.environ.get("CHEESE_SANDBOXED") != "1" and session_file.exists():
             socket, session, _ = json.loads(session_file.read_text())
             probe = subprocess.run(
                 ["tmux", "-S", socket, "has-session", "-t", session],
@@ -495,39 +565,41 @@ if __name__ == "__main__":
                     check=True,
                 )
                 status = read_status(root)
-        if status["state"] == "ready" and sys.platform == "win32":
-            # There is no SIGTERM to send; the executor it waits on was asked
-            # to stop above, and what is left is ended with its children.
-            terminate(status["pid"])
-        elif status["state"] == "ready":
-            try:
-                os.kill(status["pid"], signal.SIGTERM)
-            except ProcessLookupError:
-                # Closing its terminal can finish after the status read.
-                pass
-            # Confirm termination before another revision can touch this HOME.
-            import time
-
-            for _ in range(50):
-                if (
-                    process_identity(
-                        status["pid"], reference=status["process_identity"]
-                    )
-                    != status["process_identity"]
-                ):
-                    break
-                time.sleep(0.1)
+        if status["state"] == "ready" and ours_to_signal(status["pid"]):
+            if sys.platform == "win32":
+                # There is no SIGTERM to send; the executor it waits on was asked
+                # to stop above, and what is left is ended with its children.
+                terminate(status["pid"])
             else:
-                raise SystemExit("agent did not stop; environment was not reset")
+                try:
+                    os.kill(status["pid"], signal.SIGTERM)
+                except ProcessLookupError:
+                    # Closing its terminal can finish after the status read.
+                    pass
+                # Confirm termination before another revision can touch this HOME.
+                import time
+
+                for _ in range(50):
+                    if (
+                        process_identity(
+                            status["pid"], reference=status["process_identity"]
+                        )
+                        != status["process_identity"]
+                    ):
+                        break
+                    time.sleep(0.1)
+                else:
+                    raise SystemExit("agent did not stop; environment was not reset")
         if root.exists():
             write_json(root / "status.json", {"state": "pending"})
         print(json.dumps({"state": "pending"}))
     elif sys.argv[1:] == ["cancel"]:
         status = read_status(root)
-        if status["state"] == "preparing" and sys.platform == "win32":
-            terminate(status["pid"])
-        elif status["state"] == "preparing":
-            os.kill(status["pid"], signal.SIGTERM)
+        if status["state"] == "preparing" and ours_to_signal(status["pid"]):
+            if sys.platform == "win32":
+                terminate(status["pid"])
+            else:
+                os.kill(status["pid"], signal.SIGTERM)
         print(json.dumps(status))
     elif sys.argv[1:] == ["status"]:
         # Old shipped helpers ignore this opt-in and retain ordinary status reads.

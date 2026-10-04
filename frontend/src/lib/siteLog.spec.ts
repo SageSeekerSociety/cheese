@@ -13,7 +13,10 @@ import {
   eventArg,
   eventVerb,
   isLongSiteEntry,
+  middleTruncate,
+  overflowsClamp,
   shouldKeepPinning,
+  SITE_ARG_MID_CHARS,
   SITE_CLAMP_LINES,
   SITE_TAIL_PIN_FRAMES,
 } from './siteLog'
@@ -129,5 +132,51 @@ describe('前端报错那一行', () => {
   it('没有堆栈时参数是出错的页面', () => {
     const bare = { ...block, meta: { event_type: 'frontend_error', page: '/projects/p1' } } as unknown as Block
     expect(eventArg(bare)).toBe('/projects/p1')
+  })
+})
+
+describe('折叠到底剪的是什么', () => {
+  // 折叠用 max-height 的量法：正文比 12 行高就算被剪了。这一条正是 #2604 的病根
+  // —— 正文里有块级 <pre> 时 -webkit-line-clamp 整个失效，量出来的高度就是全文
+  // 高度（2615px），而按钮还在。所以判据必须是「实际高度 > 预算」，不是「字符数」。
+  it('超出 12 行的预算才算被剪，不多一行也不少一行', () => {
+    const line = 19
+    expect(overflowsClamp(12 * line, line)).toBe(false)
+    expect(overflowsClamp(13 * line, line)).toBe(true)
+  })
+
+  it('没有布局（行高读不到）时不判被剪', () => {
+    expect(overflowsClamp(4000, 0)).toBe(false)
+    expect(overflowsClamp(4000, Number.NaN)).toBe(false)
+  })
+})
+
+describe('参数那一列的中间省略', () => {
+  it('短参数一字不动', () => {
+    expect(middleTruncate('report.md')).toBe('report.md')
+    expect(middleTruncate('x'.repeat(SITE_ARG_MID_CHARS))).toBe('x'.repeat(SITE_ARG_MID_CHARS))
+  })
+
+  // 路径的两头才是认出它的那半截：从尾部省正好把文件名剪掉，从中间省两头都在。
+  it('长路径留头留尾，剪掉的是中间', () => {
+    const path = 'backend/app/pay/handlers/payment_callback.py'
+    const out = middleTruncate(path)
+    expect(out).toContain('…')
+    expect(out.startsWith('backend')).toBe(true)
+    expect(out.endsWith('callback.py')).toBe(true)
+    expect(out.length).toBeLessThan(path.length)
+  })
+
+  // 按码元切会把代理对劈开：一个 emoji 或 𠮷 这样的字回来变成半个，画面上是替换
+  // 方块。切之前先按码点拆开。
+  it('不把代理对劈成半个字', () => {
+    const text = `📁${'测'.repeat(40)}𠮷.ts`
+    const out = middleTruncate(text, SITE_ARG_MID_CHARS)
+    expect(out).toContain('📁')
+    expect(out.endsWith('𠮷.ts')).toBe(true)
+    // 每个码点都是完整的一个字符：拆开再合回来长度不变。
+    expect(Array.from(out).join('')).toBe(out)
+    // 没有落单的代理码元。
+    expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(out)).toBe(false)
   })
 })

@@ -27,12 +27,18 @@ export interface MemberActivityLine {
   since: number
   /** 干活的队友此刻在做的那一步（「思考中」「正在读文件」）；没有就不说。 */
   detail?: string | null
+  /** 更细的一步（「执行命令 pnpm test」），从 live 帧读的；有它就顶掉 `detail`。 */
+  step?: string | null
+  /** 最后一次收到这位成员一帧的时刻（epoch 毫秒）；不知道就是 null，不说卡住。 */
+  lastFrameAt?: number | null
 }
 
 export function activityLines(
   entries: MemberActivity[],
   nameOf: (handle: string) => string,
-  detailOf: (handle: string) => string | null = () => null
+  detailOf: (handle: string) => string | null = () => null,
+  stepOf: (handle: string) => string | null = () => null,
+  lastFrameOf: (handle: string) => number | null = () => null
 ): MemberActivityLine[] {
   return [...entries]
     .sort((a, b) => a.since - b.since)
@@ -42,6 +48,8 @@ export function activityLines(
       kind: e.kind,
       since: e.since,
       detail: e.kind === 'working' ? detailOf(e.member) : null,
+      step: e.kind === 'working' ? stepOf(e.member) : null,
+      lastFrameAt: e.kind === 'working' ? lastFrameOf(e.member) : null,
     }))
 }
 

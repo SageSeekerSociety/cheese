@@ -171,6 +171,7 @@ const {
   onComposerPaste,
   onComposerDrop,
   removePendingAtt,
+  retryPendingAtt,
   replyLabel,
   editingId,
   editSaving,
@@ -408,6 +409,7 @@ defineExpose({ send, connected, submitQuestion })
         @drop-files="onComposerDrop"
         @paste="onComposerPaste"
         @remove-att="removePendingAtt"
+        @retry-att="(i: number) => void retryPendingAtt(i)"
         @add-library-file="(path) => void addLibraryFile(path)"
       >
         <template #composer-chips><slot name="composer-chips" /></template>

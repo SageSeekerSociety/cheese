@@ -66,8 +66,11 @@ const teamLockingPolicyItems = computed(() => [
           autocomplete="off"
           :label="t('tasks.form.taskName')"
           required
+          aria-required="true"
           v-bind="nameControl"
-        ></v-text-field>
+        >
+          <template #label="{ label }"> {{ label }}<span class="tf-req" aria-hidden="true"></span> </template>
+        </v-text-field>
       </v-col>
 
       <v-col cols="12" md="6">
@@ -75,11 +78,13 @@ const teamLockingPolicyItems = computed(() => [
           v-model="submitterType"
           :label="t('tasks.form.participantType')"
           required
+          aria-required="true"
           inline
           :disabled="isEditing"
           v-bind="submitterTypeControl"
           class="mt-0"
         >
+          <template #label="{ label }"> {{ label }}<span class="tf-req" aria-hidden="true"></span> </template>
           <v-radio :label="t('tasks.form.individual')" value="USER"></v-radio>
           <v-radio :label="t('tasks.form.team')" value="TEAM"></v-radio>
         </v-radio-group>
@@ -90,10 +95,12 @@ const teamLockingPolicyItems = computed(() => [
           v-model="rank"
           :label="t('tasks.form.taskLevel')"
           required
+          aria-required="true"
           inline
           v-bind="rankControl"
           class="mt-0"
         >
+          <template #label="{ label }"> {{ label }}<span class="tf-req" aria-hidden="true"></span> </template>
           <v-radio :label="t('tasks.form.beginner')" :value="1"></v-radio>
           <v-radio :label="t('tasks.form.intermediate')" :value="2"></v-radio>
           <v-radio :label="t('tasks.form.advanced')" :value="3"></v-radio>
@@ -137,12 +144,14 @@ const teamLockingPolicyItems = computed(() => [
             autocomplete="off"
             :label="t('tasks.form.teamLockingPolicy')"
             required
+            aria-required="true"
             v-bind="teamLockingPolicyControl"
             density="comfortable"
             :items="teamLockingPolicyItems"
             item-title="title"
             item-value="value"
           >
+            <template #label="{ label }"> {{ label }}<span class="tf-req" aria-hidden="true"></span> </template>
             <template #prepend-inner>
               <v-icon size="small" color="primary">mdi-lock-outline</v-icon>
             </template>
@@ -169,9 +178,11 @@ const teamLockingPolicyItems = computed(() => [
             :label="t('tasks.form.minTeamSize')"
             type="number"
             required
+            aria-required="true"
             min="1"
             v-bind="minTeamSizeControl"
           >
+            <template #label="{ label }"> {{ label }}<span class="tf-req" aria-hidden="true"></span> </template>
             <template #append-inner>
               <v-icon size="small" color="primary">mdi-account-multiple-outline</v-icon>
             </template>
@@ -183,9 +194,11 @@ const teamLockingPolicyItems = computed(() => [
             :label="t('tasks.form.maxTeamSize')"
             type="number"
             required
+            aria-required="true"
             min="1"
             v-bind="maxTeamSizeControl"
           >
+            <template #label="{ label }"> {{ label }}<span class="tf-req" aria-hidden="true"></span> </template>
             <template #append-inner>
               <v-icon size="small" color="primary">mdi-account-group</v-icon>
             </template>

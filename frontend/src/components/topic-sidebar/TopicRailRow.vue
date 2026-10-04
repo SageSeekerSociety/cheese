@@ -164,9 +164,9 @@ function onMenuToggle(open: boolean) {
         autocomplete="off"
         density="compact"
         variant="outlined"
-        hide-details
         autofocus
         :maxlength="TOPIC_TITLE_MAX_LENGTH"
+        :counter="TOPIC_TITLE_MAX_LENGTH"
         class="rename-field"
         @click.stop
         @keyup.enter="emit('commit-rename', draftTitle)"

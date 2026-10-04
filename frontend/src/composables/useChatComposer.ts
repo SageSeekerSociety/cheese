@@ -208,6 +208,7 @@ export function useChatComposer(deps: ChatComposerDeps) {
     onPaste: onComposerPaste,
     onDrop: onComposerDrop,
     removeAt: removePendingAtt,
+    retry: retryPendingAtt,
     clear: clearPendingAtts,
   } = usePendingAttachments(
     () => topic()?.id,
@@ -243,7 +244,15 @@ export function useChatComposer(deps: ChatComposerDeps) {
   }
 
   // 输入区只知道正文和「这条叫不叫它」。待发附件在这一层，因为它要跟着话题走。
+  //
+  // 有一枚没传上去就整条挡住：`uploaded()` 会把它跳过，发出去的话那一段话自带一个
+  // 说得出口的理由（「带了 3 个附件」）却只带上去 2 个，而人不会知道少了哪个。挡住
+  // 并说清怎么办，比悄悄少发一个安全。
   function onComposerSend({ content, summon }: { content: string; summon: boolean }) {
+    if (pendingAtts.value.some((a) => a.error)) {
+      errorMsg.value = t('work.room.attachments.sendBlocked')
+      return
+    }
     if (send(content, summon, uploaded(pendingAtts.value), draftQuote.value)) {
       draft.value = ''
       clearDraftQuote()
@@ -362,6 +371,7 @@ export function useChatComposer(deps: ChatComposerDeps) {
     onComposerPaste,
     onComposerDrop,
     removePendingAtt,
+    retryPendingAtt,
     clearPendingAtts,
     replyTarget,
     setReply,

@@ -149,7 +149,7 @@
     "nameLabel": "团队名称",
     "introLabel": "团队介绍",
     "introHint": "显示在侧栏团队名字下面，最多 250 字",
-    "nameRequired": "请输入团队名称",
+    "nameRequired": "填写团队名称",
     "nameTaken": "这个名称已被占用，换一个试试",
     "forbidden": "只有团队所有者和管理员能修改资料",
     "saved": "已保存",
@@ -488,6 +488,7 @@
       "noFileOpen": "未打开文件",
       "unsaved": "未保存",
       "diffView": "差异",
+      "diffMore": "显示剩余 {count} 行",
       "fullText": "全文",
       "edit": "编辑",
       "save": "保存",
@@ -789,7 +790,6 @@
       "liveRefTitle": "「{title}」· {status} — 点击打开",
       "thisTask": "这件任务",
       "subtopic": "子话题",
-      "topic": "话题",
       "selectionToolbar": "选区操作",
       "copy": "复制",
       "blockType": "段落格式",
@@ -897,7 +897,12 @@
         "columnLeft": "在左边插入一列",
         "columnRight": "在右边插入一列",
         "columnDelete": "删除这一列",
-        "diagramTooLong": "图太大，只显示源码"
+        "diagramTooLong": "图太大，只显示源码",
+        "plain": {
+          "chart": "图表",
+          "diagram": "流程图",
+          "image": "图片"
+        }
       }
     },
     "comments": {
@@ -1006,6 +1011,7 @@
       "nameJoiner": "、",
       "library": "资料库",
       "noFiles": "暂无匹配的文件",
+      "noMatch": "暂无匹配",
       "all": "所有人",
       "allSub": "{'@'}all · 通知话题全体成员",
       "here": "在线成员",
@@ -1033,7 +1039,8 @@
       "fileSnippet": "[文件]",
       "tooMany": "每条消息最多添加 9 个附件",
       "tooLarge": "{name} 超过 10MB，无法上传",
-      "uploadFailed": "文件上传失败",
+      "retry": "重试上传 {name}",
+      "sendBlocked": "有附件上传失败，重试或移除后再发送",
       "addFailed": "添加文件失败"
     },
     "defaultAgentName": "芝士",
@@ -1052,7 +1059,8 @@
       "typingOne": "{name}正在输入…",
       "typingTwo": "{first}和{second}正在输入…",
       "typingMany": "多人正在输入…",
-      "separator": " · "
+      "separator": " · ",
+      "stalled": "已 {span}无新输出"
     },
     "docEdit": {
       "failed": "修改失败：{reason}",
@@ -1512,7 +1520,7 @@
         "body": "角色设定（可留空）",
         "editHint": "修改只影响这个队友，下次运行时生效，已有记忆保留",
         "handleInvalid": "只能用小写字母、数字和 . _ -，且以字母或数字开头",
-        "nameRequired": "请填写名字",
+        "nameRequired": "填写名字",
         "nameTooLong": "名字最长 {max} 个字"
       }
     },

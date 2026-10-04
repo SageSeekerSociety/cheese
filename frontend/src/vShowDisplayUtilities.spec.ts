@@ -1,3 +1,4 @@
+/// <reference types="node" />
 // `v-show` 和 Vuetify 的 display 工具类不能同时用在一个元素上。
 //
 // v-show 的做法是往元素的 inline style 里写 `display: none`。而 Vuetify 的

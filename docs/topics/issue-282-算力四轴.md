@@ -156,8 +156,7 @@ issue 说共用机器上的隔离理由是防串扰不是防偷看，「都是�
 **加在 `device` 表上，不是 `ProjectMachine` 上。**
 
 ```
-ALTER TABLE device ADD COLUMN supply     VARCHAR(16) NOT NULL DEFAULT 'self_hosted';
-ALTER TABLE device ADD COLUMN visibility VARCHAR(16) NOT NULL DEFAULT 'host';
+ALTER TABLE device ADD COLUMN supply VARCHAR(16) NOT NULL DEFAULT 'self_hosted';
 -- 一次性回填
 UPDATE device SET supply='cloud'
  WHERE device_id IN (SELECT device_id FROM project_machines WHERE device_id IS NOT NULL);
@@ -211,7 +210,7 @@ UPDATE device SET supply='cloud'
 
 ## 五、边界与相邻
 
-- **#186**：本 issue 给它第五节补上前置——「判废之后能不能换」取决于房间的 supply/visibility。好消息是 **#186 的方案已经把判定做成 quarantine（隔离 + 冷却）而不是 destroy，天然兼容**：对 `self_hosted` 或 `visibility=host` 的房间，**隔离照做**（不再往这台机器派新房间），**但已绑定的房间不迁移，只报人**。理由用 issue 的：芝士被搬到看不见那个服务的机器上、然后不知道自己为什么找不到东西，比不换更难诊断。落到代码就是给迁移动作加一个判据，判据正是决定 2 加的那两个字段。
+- **#186**：本 issue 给它第五节补上前置——「判废之后能不能换」取决于房间的 supply/visibility。好消息是 **#186 的方案已经把判定做成 quarantine（隔离 + 冷却）而不是 destroy，天然兼容**：对 `self_hosted` 或 `visibility=host` 的房间，**隔离照做**（不再往这台机器派新房间），**但已绑定的房间不迁移，只报人**。理由用 issue 的：芝士被搬到看不见那个服务的机器上、然后不知道自己为什么找不到东西，比不换更难诊断。落到代码就是给迁移动作加一个判据，判据正是 `device.supply` 与话题绑定上的 `device_topic.visibility`。
 - **#188**：平台不代管别人的运维 → `self_hosted` 的健康问题只报人，不代修、不代清。
 - **`credits设计`**：billing 轴的**单价**本轮不定，但 2.1 之后它不再是「以后再说」——**回收时限的量级由计费粒度决定，所以每一档必须先说清它是按秒/按小时/包月**，否则决定 1 的 N/M 填不出来。已在那个话题里 @ 过一条：它整篇是 LLM token → credit 的折算，**没有机器小时这一类消耗**；`(cloud, host)` 一旦落地，一台常驻 VM 的钱不走 credit 体系就没人管。
 - **隔离技术选型（Docker vs Firecracker）**：同意 issue 判成可推迟，本轮不扩。
@@ -226,8 +225,8 @@ UPDATE device SET supply='cloud'
 
 | 改动 | 位置 |
 |---|---|
-| `Supply` / `Visibility` 两个枚举 | <&backend/app/domain/device/supply.py>（`Device` 的两个字段在 <&backend/app/domain/device/repository.py>） |
-| `device.supply` / `device.visibility` 两列（保守 server_default）+ 一次性回填 | <&backend/app/domain/device/models.py>、`alembic/versions/c4a71e5d9b30_device_supply_and_visibility.py` |
+| `Supply` / `Visibility` 两个枚举 | <&backend/app/domain/device/supply.py>（`Device.supply` 在 <&backend/app/domain/device/repository.py>） |
+| `device.supply` 列（保守 server_default）+ 一次性回填 | <&backend/app/domain/device/models.py>、`alembic/versions/c4a71e5d9b30_device_supply_and_visibility.py` |
 | `approve(supply=...)` **无默认值**，两个入口各写死一个常量 | <&backend/app/domain/device/service.py>、<&backend/app/api/routes/connector.py>（`self_hosted`）、<&backend/app/domain/machine/services.py>（`cloud`） |
 | 不变量：`delete_platform_provisioned` 对 self-hosted **抛错**；`delete_owned`（人自己删）不受影响 | <&backend/app/domain/device/service.py> |
 | 守卫 + `--self-test` | <&.claude/scripts/check-repo-rules.sh> 规则 5 |
@@ -290,4 +289,3 @@ UPDATE device SET supply='cloud'
 1. 决定 1 阻塞在两条前置上：**补 owner**（前置 A）与**推送重试上界**（前置 B）；N/M 还阻塞在 billing 轴的计费粒度上。
 2. **工作树回收**（归档话题的可重建目录）可以独立于以上全部先做——它不依赖 supply、不依赖 billing、不需要任何新字段，只需要「归档 + 只删可重建物」这一条判据，是本 issue 里唯一现在就能落地且能立刻还出 150G+ 的一格。
 3. 决定 3 的落地切分（配额两层），以及和 #186 那张卡的先后顺序。
-4. `visibility` 目前只有 `host` 一个真实取值——`isolated` 要等「每房间一个容器的 device 传输」才有意义，本轮只落列不开值。

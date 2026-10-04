@@ -26,7 +26,7 @@ from app.domain.agent import execution
 from app.domain.agent.compute_configs import standard_choice
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_session.services import AgentSessionService
-from app.domain.device.supply import Supply, Visibility
+from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
 from app.domain.machine import session_work as work_lease
@@ -230,7 +230,6 @@ def test_each_session_on_a_cloud_machine_has_its_executor_sandboxed(cloud_room):
                 await devices.start("rooms-cloud"),
                 owner_user_id=case.owner_id,
                 supply=Supply.cloud,
-                visibility=Visibility.isolated,
             )
             await devices.assign_to_project(
                 device.device_id, case.project_id, actor_user_id=case.owner_id
@@ -250,7 +249,13 @@ def test_each_session_on_a_cloud_machine_has_its_executor_sandboxed(cloud_room):
     ]
     configure = ast.parse(installed).body[-1].value
     payload = json.loads(ast.literal_eval(configure.args[0].args[0]))
-    assert payload["sandbox"] is True
+    # With the limits it runs under, the backend's own.
+    assert payload["sandbox"] == {
+        "memory_mb": settings.cloud_sandbox_memory_mb,
+        "swap_mb": settings.cloud_sandbox_swap_mb,
+        "cpus": settings.cloud_sandbox_cpus,
+        "pids": settings.cloud_sandbox_pids,
+    }
 
 
 def test_a_second_agent_waits_for_the_machine_the_room_is_renting(cloud_room):
@@ -278,7 +283,6 @@ async def _seat_both_on(client, case):
             await devices.start("rooms-cloud"),
             owner_user_id=case.owner_id,
             supply=Supply.cloud,
-            visibility=Visibility.host,
         )
         await devices.assign_to_project(
             rooms.device_id, case.project_id, actor_user_id=case.owner_id
@@ -288,7 +292,6 @@ async def _seat_both_on(client, case):
             await devices.start("new"),
             owner_user_id=case.owner_id,
             supply=Supply.self_hosted,
-            visibility=Visibility.host,
         )
         await devices.assign_to_project(
             new.device_id, case.project_id, actor_user_id=case.owner_id

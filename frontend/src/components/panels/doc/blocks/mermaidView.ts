@@ -160,21 +160,16 @@ function plainView({ node }: NodeViewRendererProps): NodeView {
   }
 }
 
-function mermaidView({ node, editor, getPos }: NodeViewRendererProps, agent: AgentHook): NodeView {
-  let source = node.textContent
+/** A diagram drawn from `read()` into `dom`: the figure (a tap opens it full
+ *  screen) and the line that says why it cannot be drawn. It redraws when the
+ *  theme changes, when the width crosses the narrow line, and on `redraw`. */
+export function diagramFigure(
+  dom: HTMLElement,
+  read: () => string
+): { figure: HTMLElement; error: HTMLElement; redraw: () => void; destroy: () => void } {
   let svg = ''
   let timer = 0
   let alive = true
-
-  const dom = document.createElement('div')
-  dom.dataset.block = 'mermaid'
-  const bar = document.createElement('div')
-  bar.className = 'doc-mermaid__bar'
-  bar.contentEditable = 'false'
-  const edit = controlButton('doc-mermaid__edit', t('work.room.doc.blocks.diagramSource'))
-  edit.textContent = t('work.room.doc.blocks.diagramSource')
-  const ask = controlButton('doc-mermaid__ask', '')
-  bar.append(edit, ask)
   const figure = document.createElement('div')
   figure.className = 'doc-mermaid__figure'
   figure.contentEditable = 'false'
@@ -183,22 +178,9 @@ function mermaidView({ node, editor, getPos }: NodeViewRendererProps, agent: Age
   const error = document.createElement('div')
   error.className = 'doc-mermaid__error'
   error.contentEditable = 'false'
-  const pre = document.createElement('pre')
-  pre.dataset.language = 'mermaid'
-  const code = document.createElement('code')
-  code.className = 'language-mermaid'
-  pre.append(code)
-  dom.append(bar, figure, error, pre)
-
-  const paintAsk = () => {
-    const hook = agent()
-    ask.hidden = !hook
-    if (hook) ask.textContent = t('work.room.doc.blocks.askAgent', { name: hook.name })
-  }
-  paintAsk()
 
   const draw = async () => {
-    const text = source.trim()
+    const text = read().trim()
     error.textContent = ''
     dom.classList.toggle('doc-mermaid--empty', !text)
     if (!text) {
@@ -232,6 +214,59 @@ function mermaidView({ node, editor, getPos }: NodeViewRendererProps, agent: Age
     timer = window.setTimeout(() => void draw(), 300)
   }
   requestAnimationFrame(() => void draw())
+  figure.addEventListener('click', () => {
+    if (svg) fullScreen(svg)
+  })
+
+  let width = 0
+  const resize = new ResizeObserver(() => {
+    const now = dom.clientWidth
+    // Crossing the narrow line changes how a flowchart is drawn.
+    if (width && now < NARROW !== width < NARROW) later()
+    else fit(figure)
+    width = now
+  })
+  resize.observe(dom)
+  const stopTheme = onThemeChange(() => void draw())
+  return {
+    figure,
+    error,
+    redraw: later,
+    destroy() {
+      alive = false
+      clearTimeout(timer)
+      resize.disconnect()
+      stopTheme()
+    },
+  }
+}
+
+function mermaidView({ node, editor, getPos }: NodeViewRendererProps, agent: AgentHook): NodeView {
+  let source = node.textContent
+
+  const dom = document.createElement('div')
+  dom.dataset.block = 'mermaid'
+  const bar = document.createElement('div')
+  bar.className = 'doc-mermaid__bar'
+  bar.contentEditable = 'false'
+  const edit = controlButton('doc-mermaid__edit', t('work.room.doc.blocks.diagramSource'))
+  edit.textContent = t('work.room.doc.blocks.diagramSource')
+  const ask = controlButton('doc-mermaid__ask', '')
+  bar.append(edit, ask)
+  const { figure, error, redraw, destroy } = diagramFigure(dom, () => source)
+  const pre = document.createElement('pre')
+  pre.dataset.language = 'mermaid'
+  const code = document.createElement('code')
+  code.className = 'language-mermaid'
+  pre.append(code)
+  dom.append(bar, figure, error, pre)
+
+  const paintAsk = () => {
+    const hook = agent()
+    ask.hidden = !hook
+    if (hook) ask.textContent = t('work.room.doc.blocks.askAgent', { name: hook.name })
+  }
+  paintAsk()
 
   // The source is open while the caret is in it.
   const track = () => {
@@ -261,20 +296,6 @@ function mermaidView({ node, editor, getPos }: NodeViewRendererProps, agent: Age
     const range = hook ? openSource() : null
     if (hook && range && range.to > range.from) hook.run(editor, range.from, range.to)
   })
-  figure.addEventListener('click', () => {
-    if (svg) fullScreen(svg)
-  })
-
-  let width = 0
-  const resize = new ResizeObserver(() => {
-    const now = dom.clientWidth
-    // Crossing the narrow line changes how a flowchart is drawn.
-    if (width && now < NARROW !== width < NARROW) later()
-    else fit(figure)
-    width = now
-  })
-  resize.observe(dom)
-  const stopTheme = onThemeChange(() => void draw())
 
   return {
     dom,
@@ -284,17 +305,14 @@ function mermaidView({ node, editor, getPos }: NodeViewRendererProps, agent: Age
       paintAsk()
       if (next.textContent !== source) {
         source = next.textContent
-        later()
+        redraw()
       }
       return true
     },
     ignoreMutation: (m) => (m.type === 'attributes' && m.target === dom) || !pre.contains(m.target),
     stopEvent: (e) => figure.contains(e.target as Node),
     destroy() {
-      alive = false
-      clearTimeout(timer)
-      resize.disconnect()
-      stopTheme()
+      destroy()
       editor.off('selectionUpdate', track)
       editor.off('focus', track)
     },

@@ -32,14 +32,12 @@ async def _device_on_project(
     name: str,
     *,
     supply: Supply = Supply.cloud,
-    visibility: Visibility = Visibility.host,
 ) -> str:
     code = await service.start(name)
     device = await service.approve(
         code,
         owner_user_id=OWNER,
         supply=supply,
-        visibility=visibility,
     )
     await service.assign_to_project(device.device_id, project_id, actor_user_id=OWNER)
     return device.device_id

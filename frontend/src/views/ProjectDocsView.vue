@@ -15,8 +15,8 @@ import { myHandle } from '../me'
 import { useCommands } from '@/commands'
 import BaseButton from '@/components/base/BaseButton.vue'
 import AppPage from '@/components/common/AppPage.vue'
+import MarkdownView from '@/components/common/MarkdownView.vue'
 import i18n, { t } from '@/i18n'
-import { markdown, sanitizeRendered } from '@/lib/markdown'
 import { useDialog } from '@/plugins/dialog'
 import { useWorkspaceStore } from '@/stores/workspace'
 
@@ -88,10 +88,6 @@ const memoryEntries = computed<MemoryEntryOut[]>(() => data.value?.memoryEntries
 const errorMessage = computed<string | null>(() =>
   error.value ? error.value.message || t('project.docs.loadFailed') : null
 )
-
-function renderMarkdown(text: string): string {
-  return sanitizeRendered(markdown.parse(text, { async: false }) as string)
-}
 
 // ---- 章程: the root topic's living doc (改了就等于给芝士下指令). It is that
 // room's own doc panel, drawn on a page: the same live document, toolbar,
@@ -289,7 +285,7 @@ useCommands(() => {
                   {{ t('project.docs.fromTopic') }}
                 </BaseButton>
               </div>
-              <div class="md-content text-body-2" v-html="renderMarkdown(w.content)" />
+              <MarkdownView class="md-content text-body-2" :source="w.content" />
             </div>
           </v-card>
         </div>

@@ -1,3 +1,6 @@
+// editorjs-latex 的公式预览靠 KaTeX 的样式排版，它自己的 CSS 不带这份。
+import 'katex/dist/katex.min.css'
+
 import type { EditorConfig } from '@editorjs/editorjs'
 
 import Codecup from '@calumk/editorjs-codecup'

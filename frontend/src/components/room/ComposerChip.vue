@@ -11,17 +11,34 @@ defineProps<{
   removeLabel: string
   /** 回复那一枚：字淡一档，它说的是上下文，不是这条消息带着的东西。 */
   quiet?: boolean
+  /** 这一枚没成（附件上传失败）：名字改成错误墨色，并多一颗重试。
+   *  它不是「带走的东西」，是「还没成的东西」，所以和回复/正常附件区分开。 */
+  failed?: boolean
+  /** 重试那颗的读屏标签；给了才画。 */
+  retryLabel?: string
 }>()
-const emit = defineEmits<{ (e: 'remove'): void }>()
+const emit = defineEmits<{ (e: 'remove'): void; (e: 'retry'): void }>()
 </script>
 
 <template>
-  <span class="chip" :class="{ 'chip--quiet': quiet }">
+  <span class="chip" :class="{ 'chip--quiet': quiet, 'chip--failed': failed }">
     <span class="chip__face"><slot name="face" /></span>
     <span class="chip__label">{{ label }}</span>
     <!-- 名字在标签边缘就截断了，全名得有地方看。不用 title：系统原生气泡要停约
          一秒才弹，又是屏幕上唯一不跟随主题的东西。 -->
     <v-tooltip activator="parent" location="top" :text="label" />
+    <!-- The failed chip's retry: the upload did not go through, the File is
+         still in hand, one press sends the same bytes again. -->
+    <button
+      v-if="retryLabel"
+      type="button"
+      class="chip__retry"
+      :aria-label="retryLabel"
+      :title="retryLabel"
+      @click="emit('retry')"
+    >
+      <v-icon size="13">mdi-refresh</v-icon>
+    </button>
     <button type="button" class="chip__x" :aria-label="removeLabel" @click="emit('remove')">
       <v-icon size="12">mdi-close</v-icon>
     </button>
@@ -47,6 +64,11 @@ const emit = defineEmits<{ (e: 'remove'): void }>()
 .chip--quiet {
   max-width: 320px;
   color: var(--muted);
+}
+/* 上传失败：名字用危险墨色（不是危险记号色——那是描边/圆点的），一眼看出哪一枚
+   没成。 */
+.chip--failed .chip__label {
+  color: var(--danger-ink);
 }
 /* 记号占 20px 见方，在 28px 高的标签里上下各留 4px。 */
 .chip__face {
@@ -87,12 +109,33 @@ const emit = defineEmits<{ (e: 'remove'): void }>()
   background: var(--line-2);
   color: var(--ink);
 }
-/* 触屏上手指点得中：✕ 画出来还是 22px，能点的范围撑到 44×44。 */
+/* 重试那颗：和 ✕ 同一副骨架，但它是这一枚要做的下一件事，用危险记号色认出来。 */
+.chip__retry {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  color: var(--danger);
+  cursor: pointer;
+  transition:
+    background-color var(--dur-quick) var(--ease-standard),
+    color var(--dur-quick) var(--ease-standard);
+}
+.chip__retry:hover {
+  background: var(--line-2);
+  color: var(--danger-ink);
+}
+/* 触屏上手指点得中：✕、重试画出来还是 22px，能点的范围撑到 44×44。 */
 @media (pointer: coarse) {
-  .chip__x {
+  .chip__x,
+  .chip__retry {
     position: relative;
   }
-  .chip__x::before {
+  .chip__x::before,
+  .chip__retry::before {
     content: '';
     position: absolute;
     top: 50%;

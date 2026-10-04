@@ -15,12 +15,13 @@ import { computed } from 'vue'
 
 import { artifactKind, artifactName, askOptions, isImageBlock, replySnippet } from '../../lib/blockDisplay'
 import { fileIcon } from '../../lib/fileKind'
-import { renderMarkdown as renderMarkdownWith, renderPlain as renderPlainWith } from '../../lib/renderMessage'
+import { renderPlain as renderPlainWith } from '../../lib/renderMessage'
 import { avatarColor, avatarInitial } from '../../utils/avatar'
 import AskQuestionForm from '../ask/AskQuestionForm.vue'
 import AttachmentImage from '../AttachmentImage.vue'
 import CheeseAvatar from '../CheeseAvatar.vue'
 import ExternalTag from '../common/ExternalTag.vue'
+import MarkdownView from '../common/MarkdownView.vue'
 
 import ChecklistMessage from './ChecklistMessage.vue'
 import MessageEditor from './MessageEditor.vue'
@@ -114,44 +115,8 @@ const checklist = computed(() => {
   return value && typeof value === 'object' ? value : null
 })
 
-function renderMarkdown(text: string): string {
-  return renderMarkdownWith(text, props.refs)
-}
-
 function renderPlain(text: string): string {
   return renderPlainWith(text, props.refs)
-}
-
-// 芝士的回复里每个代码块右上角一颗「复制」。按钮是渲染之后加上去的，文字取自
-// 这一处自己的文案，不来自消息内容，所以不必再过一遍净化。还没落库的那条（正在写、
-// 正在送）不带：它的代码块还在长。
-const agentHtml = computed(() =>
-  props.outgoing
-    ? renderMarkdown(props.block.content)
-    : renderMarkdown(props.block.content)
-        .replaceAll(
-          '<pre>',
-          `<div class="md-pre"><button type="button" class="md-copy">${t('work.room.message.copy')}</button><pre>`
-        )
-        .replaceAll('</pre>', '</pre></div>')
-)
-
-const COPIED_MS = 1500
-async function copyText(text: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(text)
-    return true
-  } catch {
-    return false
-  }
-}
-
-async function onAgentTextClick(e: MouseEvent) {
-  const btn = (e.target as HTMLElement | null)?.closest('.md-copy') as HTMLButtonElement | null
-  const code = btn?.parentElement?.querySelector('pre')
-  if (!btn || !code || !(await copyText(code.textContent ?? ''))) return
-  btn.textContent = t('work.room.message.copied')
-  setTimeout(() => (btn.textContent = t('work.room.message.copy')), COPIED_MS)
 }
 </script>
 
@@ -274,7 +239,14 @@ async function onAgentTextClick(e: MouseEvent) {
         @change="emit('checklist', block, $event)"
       />
       <template v-else-if="isAgent">
-        <div class="im-text md-content" @click="onAgentTextClick" v-html="agentHtml" />
+        <!-- 还没落库的那条（正在写、正在送）不带「复制」：它的代码块还在长。 -->
+        <MarkdownView
+          class="im-text md-content"
+          :source="block.content"
+          as="chat"
+          :names="refs"
+          :copy-code="!outgoing"
+        />
         <div v-if="edited" class="im-edited">{{ t('work.room.message.edited') }}</div>
       </template>
       <!-- 现场尊重原文: human text renders verbatim — newlines and
@@ -613,12 +585,6 @@ async function onAgentTextClick(e: MouseEvent) {
   max-width: 100%;
   height: auto;
   border-radius: var(--radius-md);
-}
-.md-content :deep(table) {
-  display: block;
-  width: max-content;
-  max-width: 100%;
-  overflow-x: auto;
 }
 /* 行内代码压一层 --fill 再描一道浅线：行本身就是 --surface，只描线的话它在
    悬停刷成 --fill 的那一行上会消失。 */
