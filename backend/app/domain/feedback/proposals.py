@@ -206,9 +206,16 @@ class ProposalService:
         kept — the card that shows is the one a person can still act on.
         """
         dismissed = await self._dismissed(topic_id)
+        # Only blocks that carry a card. Every tool call a room's agent makes
+        # also lands a block with meta, so "has meta" was nearly the whole
+        # room: on dev on 2026-10-04 one room had 37,068 such blocks and 2
+        # cards, all loaded as entities on the event loop each time it opened.
         stmt = (
             select(Block)
-            .where(Block.topic_id == topic_id, Block.meta.is_not(None))
+            .where(
+                Block.topic_id == topic_id,
+                Block.meta["feedback_proposal"].is_not(None),
+            )
             .order_by(Block.created_at.desc())
         )
         rows = (await self._session.execute(stmt)).scalars().all()
