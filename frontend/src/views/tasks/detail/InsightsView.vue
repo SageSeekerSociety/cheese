@@ -181,7 +181,7 @@ const claimTrend = computed(() => {
 </template>
 
 <style scoped lang="scss">
-@use '../../styles/breakpoints.scss' as bp;
+@use '../../../styles/breakpoints.scss' as bp;
 
 .ins__kpis {
   display: grid;

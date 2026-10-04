@@ -583,7 +583,7 @@ async function confirmQuickFromPdf(taskData: TaskFormSubmitData, id: number) {
 </template>
 
 <style scoped lang="scss">
-@use '../../styles/breakpoints.scss' as bp;
+@use '../../../styles/breakpoints.scss' as bp;
 
 .pub__mode {
   flex: 0 0 auto;
