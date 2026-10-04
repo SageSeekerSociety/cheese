@@ -235,20 +235,19 @@ export interface TodoItem {
 export interface RoomTask {
   id: string
   project_id: string
-  // 它挂在哪个房间里。永远是房间——活不嵌套。
-  room_id: string
+  room_id: string // 它挂在哪个房间里；任务不嵌套
   title: string
   title_source?: 'placeholder' | 'auto' | 'human'
   status: string
   owner_handle?: string | null
-  // 谁来验收这条活 —— 派活那一刻定下的（显式指定，否则项目的默认验收人）。递卡
-  // 沿用它。null 只可能来自历史记录。
-  reviewer_handle?: string | null
+  reviewer_handle?: string | null // 谁审阅它的改动，开始时定下
   created_by?: string | null
   branch_name?: string | null
-  // 派它出去时说的那份要求，和分身交回来的那句话，都住在卡上：做活的分身拿的是房间的
-  // token，够不着「活自己的实况文档」，那份文档从播种起就再没人改过。
-  brief?: string
+  agent_handle?: string | null // 做它的 AI 队友；空的时候是项目的
+  document_id?: string | null // 实况文档；第一次打开任务时才建
+  started_at?: string | null // 开始的时刻、人和文档版本：审阅时与它相比
+  started_by?: string | null
+  started_doc_version?: number | null
   conclusion?: string | null
   base_branch?: string | null
   base_task_id?: string | null
@@ -282,12 +281,13 @@ export interface RoomTask {
  *    done       已完成 —— 已采纳，或已关闭且没交付
  *    archived   已归档 —— 房间才有；活不归档
  */
-export type BoardColumn = 'building' | 'delivering' | 'needs_you' | 'done' | 'archived'
+export type BoardColumn = 'not_started' | 'building' | 'delivering' | 'needs_you' | 'done' | 'archived'
 
-type BuildingPhrase = 'running' | 'started' | 'not_started' | 'returned' | 'idle' | 'draft' | 'lost'
+type BuildingPhrase = 'running' | 'started' | 'idle' | 'draft'
 type DeliveringPhrase = 'gate_running' | 'awaiting_checks' | 'fixing_checks' | 'resolving_conflict' | 'updating_branch'
 type NeedsYouPhrase = 'checks_failed' | 'awaiting_review' | 'bounced' | 'awaiting_answer'
-export type BoardPhrase = BuildingPhrase | DeliveringPhrase | NeedsYouPhrase | 'accepted' | 'closed' | 'archived'
+type DonePhrase = 'accepted' | 'completed' | 'closed' | 'archived'
+export type BoardPhrase = 'discussing' | BuildingPhrase | DeliveringPhrase | NeedsYouPhrase | DonePhrase
 
 /** 后端算好的呈现（`room_task/presentation.py`），前端不推状态。`phrase` 是码，由 `lib/board.ts` 按读者的语言画。 */
 export interface Presentation {

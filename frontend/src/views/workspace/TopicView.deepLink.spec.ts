@@ -1,9 +1,6 @@
-/** 「你来看一眼这条活」是一条发得出去的链接。
- *
- * 交付出去的提交里那条 `Cheese-Task:` 带的就是这个地址（`backend` 的
- * `pr_text.task_trailer`）。所以这份用例问的是：**照着那个地址打开这一页，工作面板
- * 是不是真的停在总览那一格、并且下钻到了地址点名的那条活**。拼出字符串不算数——一
- * 个查询串名字写错、或者少了 `tab`，链接照样"看起来像个链接"，点开却落在别处。
+/** 已经交付出去的提交里，`Cheese-Task:` 带的是房间页加 `?card=<任务>` 的旧地址。
+ * 提交历史改不了，所以这份用例问的是：**照着那个旧地址打开房间页，读的人是不是被
+ * 送到了地址点名的那个任务的页面**。
  */
 import type { Component } from 'vue'
 
@@ -65,8 +62,8 @@ vi.mock('@/views/workspace/TopicChatColumn.vue', () => ({
 vi.mock('@/components/WorkPanel.vue', () => ({
   default: {
     name: 'WorkPanel',
-    props: ['tab', 'openCardId'],
-    template: '<div data-testid="panel" :data-tab="tab ?? \'\'" :data-open-card="openCardId ?? \'\'" />',
+    props: ['tab'],
+    template: '<div data-testid="panel" :data-tab="tab ?? \'\'" />',
   },
 }))
 
@@ -100,38 +97,26 @@ describe('Cheese-Task 那条地址', () => {
     expect(container.textContent).not.toContain('正在准备工作电脑')
   })
 
-  it('打开后停在总览那一格，并且下钻到地址点名的那条活', async () => {
+  it.each([
+    ['带 tab 的', '?tab=overview&card='],
+    ['只有 card 的', '?card='],
+  ])('%s旧地址把人送到那个任务的页面', async (_label, prefix) => {
     const task = '2caa58e3-77d8-4129-b20b-055a8e521828'
 
-    const { getByTestId } = openTheLinkFromTheCommit(
-      `https://cheese.example/projects/p1/topics/t1?tab=overview&card=${task}`
+    openTheLinkFromTheCommit(`https://cheese.example/projects/p1/topics/t1${prefix}${task}`)
+
+    await waitFor(() =>
+      expect(replace).toHaveBeenCalledWith({
+        name: 'workspace-task',
+        params: { projectId: 'p1', topicId: 't1', taskId: task },
+      })
     )
-
-    await waitFor(() => {
-      expect(getByTestId('panel').getAttribute('data-open-card')).toBe(task)
-      expect(getByTestId('panel').getAttribute('data-tab')).toBe('overview')
-    })
   })
 
-  it('只有 card 没有 tab 时，读的人停在他上次待着的那一格', async () => {
-    // 这就是 `tab=overview` 必须一起写进链接的原因：`card` 只说打开哪条活，说不了
-    // 停在哪一格，而工作面板的格子是这一页从地址里读的。
-    const task = '2caa58e3-77d8-4129-b20b-055a8e521828'
-
-    const { getByTestId } = openTheLinkFromTheCommit(`https://cheese.example/projects/p1/topics/t1?card=${task}`)
-
-    await waitFor(() => {
-      expect(getByTestId('panel').getAttribute('data-open-card')).toBe(task)
-      expect(getByTestId('panel').getAttribute('data-tab')).toBe('')
-    })
-  })
-
-  it('地址里没有这两个查询串时，什么也不下钻', async () => {
+  it('地址里没有 card 时，留在房间', async () => {
     const { getByTestId } = openTheLinkFromTheCommit('https://cheese.example/projects/p1/topics/t1')
 
-    await waitFor(() => {
-      expect(getByTestId('panel').getAttribute('data-open-card')).toBe('')
-      expect(getByTestId('panel').getAttribute('data-tab')).toBe('')
-    })
+    await waitFor(() => expect(getByTestId('panel').getAttribute('data-tab')).toBe(''))
+    expect(replace).not.toHaveBeenCalled()
   })
 })

@@ -10,11 +10,14 @@ import { useRouter } from 'vue-router'
 
 import { useSkillProposals } from './useSkillProposals'
 
+import { acceptTaskProposal, dismissTaskProposal, listTaskProposals, type TaskProposal } from '@/api/tasks'
 import ChatPanel from '@/components/ChatPanel.vue'
 import AgentFeedbackCard from '@/components/feedback/AgentFeedbackCard.vue'
 import SkillProposalCard from '@/components/room/SkillProposalCard.vue'
+import TaskProposalCard from '@/components/room/TaskProposalCard.vue'
 import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
 import { t } from '@/i18n'
+import { useWorkspaceStore } from '@/stores/workspace'
 
 // 话题的对话那一半：时间线 + 输入框 + 末尾的采纳框 + 输入框旁边的 chips。
 //
@@ -90,6 +93,44 @@ function openSkill(skill: { id: string }) {
   })
 }
 
+// AI 队友提议的任务：列的是这个房间里还在等人决定的那些，接在对话后面。点「创建
+// 任务」的人就是负责人，创建好就去任务页。
+const store = useWorkspaceStore()
+const proposals = ref<TaskProposal[]>([])
+const deciding = ref<string | null>(null)
+async function loadProposals() {
+  const room = props.topic.id
+  try {
+    const rows = await listTaskProposals(room)
+    if (props.topic.id === room) proposals.value = Array.isArray(rows) ? rows : []
+  } catch {
+    // 拉不到就先不画，下一次房间有动静时再读。
+  }
+}
+onMounted(loadProposals)
+watch(() => props.topic.id, loadProposals)
+function proposerName(handle: string): string {
+  return props.members.find((m) => m.user_handle === handle)?.name || store.agentName
+}
+async function decideProposal(proposal: TaskProposal, decision: 'accept' | 'dismiss') {
+  if (deciding.value) return
+  deciding.value = proposal.id
+  try {
+    if (decision === 'accept') {
+      const task = await acceptTaskProposal(props.topic.id, proposal.id)
+      emit('open-card', task.id)
+    } else {
+      await dismissTaskProposal(props.topic.id, proposal.id)
+    }
+    proposals.value = proposals.value.filter((p) => p.id !== proposal.id)
+  } catch (e) {
+    store.reportError(e, t('work.task.proposal.failed'))
+    void loadProposals()
+  } finally {
+    deciding.value = null
+  }
+}
+
 const connected = computed(() => !!chatRef.value?.connected)
 const submitQuestion: SubmitPreviewQuestion = (request) => chatRef.value?.submitQuestion(request) ?? false
 
@@ -98,6 +139,7 @@ defineExpose({
   reloadAccept: (silent?: boolean) => acceptRef.value?.reload(silent),
   reloadFeedback: () => feedbackRef.value?.reload(),
   reloadSkills: () => skills.load(),
+  reloadProposals: () => loadProposals(),
   // 普通定位沿用聊天提交；图上画过东西时随行带那张合成图。明确的整页 AI 提问由
   // submitQuestion 在正文点名。
   say: (content: string, attachments?: ChatAttachment[]) => chatRef.value?.send(content, true, attachments) ?? false,
@@ -165,6 +207,14 @@ defineExpose({
           @save="skills.save"
           @decline="skills.decline"
           @open="openSkill"
+        />
+        <TaskProposalCard
+          v-for="proposal in proposals"
+          :key="proposal.id"
+          :proposal="proposal"
+          :proposer="proposerName(proposal.proposed_by)"
+          :busy="deciding === proposal.id"
+          @decide="decideProposal(proposal, $event)"
         />
       </template>
       <!-- 输入区那一行只放**这条消息**的动作，所以这里只剩话题的状态。谁在跑

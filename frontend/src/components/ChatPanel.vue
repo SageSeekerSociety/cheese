@@ -33,6 +33,8 @@ import { t } from '@/i18n'
 const props = withDefaults(
   defineProps<{
     topic: Topic | null
+    /** 私聊里一条消息转出去的是一个新话题，不是任务（私聊不在话题树里）。 */
+    upgradeToTopic?: boolean
     // 这一栏里每条消息都是说给芝士听的：1:1 私聊那种只有它一个对话方的地方。
     // 别处叫它靠 @ 它（和 @ 人同一套），见 sendDraft。
     alwaysSummon?: boolean
@@ -288,6 +290,7 @@ defineExpose({ send, connected, submitQuestion })
       <ErrorBoundary :reset-key="topic.id">
         <ChatTimeline
           :topic="topic"
+          :upgrade-to-topic="upgradeToTopic"
           :rows="rows"
           :hidden-rows="hiddenRows"
           :day-labels="dayLabels"
@@ -374,6 +377,7 @@ defineExpose({ send, connected, submitQuestion })
         :block="sheetBlock"
         :is-agent="!!sheetBlock && isAgentBlock(sheetBlock)"
         :editable="!!sheetBlock && canEdit(sheetBlock)"
+        :upgrade-to-topic="upgradeToTopic"
         @react="onReact"
         @reply="setReply"
         @upgrade="emit('upgrade-message', $event)"

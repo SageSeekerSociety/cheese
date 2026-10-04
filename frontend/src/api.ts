@@ -604,11 +604,9 @@ export function unarchiveTopic(topicId: string): Promise<Topic> {
   })
 }
 
-// 把一条消息升级成它自己的地点 (eval A1)。`blockId` 是那条消息的 block id。
-// 房间里的消息升级出来的是一条**支线**；私聊里的升级出来的是一个真房间——私聊
-// 不在话题树里，支线在那儿没人打得开。所以回答有两种形状。
-/** 升级一条消息。房间里的消息变成这个房间的一张**卡**（回来的是 RoomTask），
- *  私聊里的变成一个新房间（回来的是 Topic）。升级的人由会话认，不由请求体说。 */
+/** 把一条消息转为任务。房间里的消息变成这个房间的一个任务（回来的是 RoomTask，
+ *  点的人是负责人）；私聊里的变成一个新房间（回来的是 Topic）——私聊不在话题树
+ *  里，任务挂在那儿没人打得开。升级的人由会话认，不由请求体说。 */
 export function upgradeBlock(blockId: string): Promise<Topic | RoomTask> {
   return request<Topic | RoomTask>(`/blocks/${encodeURIComponent(blockId)}/upgrade`, {
     method: 'POST',
@@ -1863,34 +1861,10 @@ export function listTopicMembers(topicId: string): Promise<ListPayload<TopicMemb
 // 加人、改角色、移出在 `api/topicMembers.ts`：它们写成功要通知手上有名册副本的地方。
 export { addTopicMember, removeTopicMember, updateTopicMemberRole } from './api/topicMembers'
 
-// 一个 id 指向一个房间。**卡不是地点**：拿卡的 id 问这条接口是 404，卡走
-// `getRoomTask`（房间的地址 + 卡的 id）。
+// 一个 id 指向一个房间。任务的 id 问这条接口是 404，任务走 `api/tasks.ts`
+// 的 `getRoomTask`（房间的地址 + 任务的 id）。
 export function getTopic(topicId: string): Promise<Topic> {
   return request<Topic>(`/topics/${encodeURIComponent(topicId)}`)
-}
-
-/** 一张卡，连着它自己的对话。`limit` 只截对话，卡本身照常整份回来。 */
-export function getRoomTask(
-  roomId: string,
-  taskId: string,
-  opts?: { limit?: number; through?: string }
-): Promise<RoomTask & { blocks: Block[] }> {
-  const q = new URLSearchParams()
-  if (opts?.limit != null) q.set('limit', String(opts.limit))
-  if (opts?.through) q.set('through', opts.through)
-  const query = q.toString() ? `?${q.toString()}` : ''
-  return request<RoomTask & { blocks: Block[] }>(
-    `/topics/${encodeURIComponent(roomId)}/tasks/${encodeURIComponent(taskId)}${query}`
-  )
-}
-
-/** 在一张卡下面说话。落在这条活的时间线上，房间被叫来转达 —— 做这条活的分身住在
- *  房间的会话里，只有房间的芝士递得到话。 */
-export function sayOnRoomTask(roomId: string, taskId: string, content: string): Promise<Block> {
-  return request<Block>(`/topics/${encodeURIComponent(roomId)}/tasks/${encodeURIComponent(taskId)}/messages`, {
-    method: 'POST',
-    body: JSON.stringify({ content }),
-  })
 }
 
 // ---- 反馈 (feedback) ----

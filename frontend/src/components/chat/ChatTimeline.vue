@@ -37,6 +37,8 @@ import { t } from '@/i18n'
 
 const props = defineProps<{
   topic: Topic | null
+  /** 私聊里「转为话题」，别处「转为任务」。 */
+  upgradeToTopic?: boolean
   rows: NoticeRow[]
   /** 开头还没挂上的行数（首屏分批挂行，room/composables/useRowBatch）。 */
   hiddenRows?: number
@@ -283,6 +285,7 @@ function emitOutboxLeave(el: Element, done: () => void) {
         :is-agent="!!barBlock && isAgentBlock(barBlock)"
         :picker-open="!!barBlock && reactionPickerFor === barBlock.id"
         :editable="barEditable"
+        :upgrade-to-topic="upgradeToTopic"
         @react="emitReact"
         @toggle-picker="emit('toggle-picker', $event)"
         @reply="emit('reply', $event)"

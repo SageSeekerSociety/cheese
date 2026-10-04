@@ -31,6 +31,8 @@ import { t } from '@/i18n'
 const props = withDefaults(
   defineProps<{
     topic: Topic | null
+    /** 打开的是这个房间里某个任务的实况文档。 */
+    taskId?: string | null
     // Bumped by the parent on AI activity (turn-done / update_doc tool) so the
     // panel reloads the doc 芝士 just wrote. See TopicView activityTick.
     activityTick: number
@@ -48,6 +50,7 @@ const props = withDefaults(
     barTo?: string
   }>(),
   {
+    taskId: null,
     topicList: () => [],
     agentName: () => t('work.room.defaultAgentName'),
     agentHandle: null,

@@ -690,17 +690,17 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     }
   }
 
-  /** 升级出来的东西：房间里的消息变成这个房间的一张**卡**，私聊里的变成一个新
-   *  房间。调用方要据此决定去哪儿——钻进那张卡，还是跳进那个房间。 */
+  /** 转出来的东西：房间里的消息变成这个房间的一个任务，私聊里的变成一个新房间。
+   *  调用方要据此决定去哪儿——打开那个任务，还是跳进那个房间。 */
   async function upgradeMessage(messageId: string): Promise<{ kind: 'card' | 'room'; id: string } | null> {
     try {
       const made = await upgradeBlock(messageId)
       await refreshTopics()
-      // 卡带着「我挂在哪个房间」，房间没有这个问题——这就是分辨它们的那一位。
+      // 任务带着「我挂在哪个房间」，房间没有这个问题——这就是分辨它们的那一位。
       const kind = 'room_id' in made ? 'card' : 'room'
       return { kind, id: made.id }
     } catch (e) {
-      reportError(e, t('shell.workspaceErrors.convertToTopic'))
+      reportError(e, t('shell.workspaceErrors.convertMessage'))
       return null
     }
   }

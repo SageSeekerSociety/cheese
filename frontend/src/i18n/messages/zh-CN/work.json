@@ -4,7 +4,7 @@
     "description": "AI 队友默认使用项目主模型，也可以为每位队友单独指定",
     "main": "项目主模型",
     "subagent": "默认分身模型",
-    "subagentHint": "分身执行任务时使用的模型",
+    "subagentHint": "Claude Code 在一轮里派出分身时使用的模型",
     "inheritMain": "跟随项目主模型",
     "chooseAvailable": "选择当前项目可用的模型",
     "loadError": "加载模型列表失败",
@@ -302,6 +302,8 @@
       "more": "更多",
       "focus": "专注模式",
       "exitFocus": "退出专注模式",
+      "newTask": "新建任务",
+      "newTaskFailed": "未能新建任务，稍后重试",
       "rename": "重命名",
       "copyLink": "复制链接",
       "markRead": "标为已读",
@@ -444,7 +446,8 @@
       "saveFailed": "保存失败",
       "reply": "回复",
       "react": "添加表情",
-      "upgrade": "转为话题",
+      "upgrade": "转为任务",
+      "upgradeToTopic": "转为话题",
       "downloadFile": "下载 {name}",
       "openFile": "打开 {name}",
       "upgradedToTask": "已转为任务",
@@ -767,18 +770,8 @@
       "row": "第 {n} 件：{title}"
     },
     "card": {
-      "loadFailed": "无法加载这个任务",
-      "sendFailed": "留言未发送，稍后重试",
-      "notFound": "这个房间里没有这个任务",
-      "retry": "重试",
-      "brief": "简报",
-      "conclusion": "结论",
-      "noMessages": "暂无消息",
-      "subagent": "分身",
       "steps": "{count} 步操作",
-      "stepFailed": "有步骤失败",
-      "sayPlaceholder": "给分身留言",
-      "send": "发送"
+      "stepFailed": "有步骤失败"
     },
     "doc": {
       "pickTopic": "选择一个话题查看文档",
@@ -1201,20 +1194,19 @@
   },
   "board": {
     "column": {
-      "building": "施工中",
-      "delivering": "交付中",
+      "not_started": "未开始",
+      "building": "进行中",
+      "delivering": "检查中",
       "needs_you": "待处理",
       "done": "已完成",
       "archived": "已归档"
     },
     "phrase": {
+      "discussing": "讨论中",
       "running": "运行中",
-      "started": "已动工",
-      "not_started": "待开工",
-      "returned": "已交回",
+      "started": "已开始",
       "idle": "空闲",
       "draft": "草稿",
-      "lost": "失联",
       "gate_running": "检查运行中",
       "awaiting_checks": "等待检查",
       "fixing_checks": "修复检查",
@@ -1226,7 +1218,8 @@
       "awaiting_answer": "待回答",
       "accepted": "已采纳",
       "closed": "已关闭",
-      "archived": "已归档"
+      "archived": "已归档",
+      "completed": "已完成"
     },
     "loadFailed": "加载失败",
     "unknownRoom": "未知房间",
@@ -1330,7 +1323,9 @@
     "empty": "暂无话题",
     "workingTip": "{name}正在这里工作",
     "expandWorking": "展开：里面有队友在工作",
-    "moreMembers": "+{count}"
+    "moreMembers": "+{count}",
+    "taskNeedsYou": "需要你处理",
+    "taskRunning": "运行中"
   },
   "members": {
     "leave": "退出项目",
@@ -1970,5 +1965,45 @@
       "archived": "已归档",
       "draft": "草稿"
     }
+  },
+  "task": {
+    "noMessages": "暂无消息",
+    "sayPlaceholder": "和{name}说",
+    "send": "发送",
+    "sendFailed": "消息未发送，稍后重试",
+    "ownerOnlyNotice": "只有负责人可以在这里和{name}对话",
+    "closedNotice": "任务已关闭",
+    "backToRoom": "回到 # {room}",
+    "notFound": "这个房间里没有这个任务",
+    "loadFailed": "无法加载这个任务",
+    "retry": "重试",
+    "owner": "负责人",
+    "start": "开始",
+    "startFailed": "未能开始，稍后重试",
+    "reviewer": "审阅人",
+    "reviewerNone": "选择审阅人",
+    "startedLine": "{who} {when}开始",
+    "compare": "与开始时相比",
+    "compareBack": "返回文档",
+    "compareFailed": "无法读取开始时的文档",
+    "compareSame": "开始后文档没有改动",
+    "conclusion": "结论",
+    "tabChat": "对话",
+    "tabOverview": "总览",
+    "tabChanges": "改动",
+    "proposal": {
+      "byline": "{name} 提议了一个任务",
+      "accept": "创建任务",
+      "dismiss": "不用",
+      "failed": "操作失败，稍后重试"
+    },
+    "more": "更多操作",
+    "close": "关闭任务",
+    "closeTitle": "关闭这个任务？",
+    "closeBody": "写下结论表示已经做完；不写表示不再做。",
+    "handOver": "转交",
+    "handOverTitle": "转交给谁？",
+    "handOverTo": "选择新的负责人",
+    "actionFailed": "操作失败，稍后重试"
   }
 }

@@ -391,9 +391,8 @@ function renderPlain(text: string): string {
         :state="askState"
         @action="emit('ask-action', block, $event)"
       />
-      <!-- 活引用 (eval A1): 升级出去的块指向它变成的那个地点。房间里
-         升级出来的是一条支线，私聊里升级出来的才是房间——两个字段各指
-         一张表，同时只会有一个非空。 -->
+      <!-- 转出去的块指向它变成的东西。房间里转出来的是一个任务，私聊里转出来的
+         才是房间——两个字段各指一张表，同时只会有一个非空。 -->
       <button
         v-if="block.upgraded_to_task_id || block.upgraded_to_topic_id"
         type="button"

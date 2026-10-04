@@ -301,13 +301,11 @@ const tally = computed(() => {
   ].filter((item) => item.n > 0)
 })
 
-// 打开一张卡 = 打开**它所在的房间**，然后在总览那一格钻进这张卡。一件活不是
-// 地点：做它的分身住在房间的会话里，没有自己的地址。
+// 打开一个任务 = 去那个任务自己的页面。
 function openTask(task: RoomTask) {
   void router.push({
-    name: 'workspace-topic',
-    params: { projectId: props.projectId, topicId: task.room_id },
-    query: { tab: 'overview', card: task.id },
+    name: 'workspace-task',
+    params: { projectId: props.projectId, topicId: task.room_id, taskId: task.id },
   })
 }
 

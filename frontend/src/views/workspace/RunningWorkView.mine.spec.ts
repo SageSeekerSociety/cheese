@@ -79,7 +79,7 @@ function task(over: Partial<RoomTask> = {}): RoomTask {
   }
 }
 
-/** 三件「待处理」，其中一件是我的；外加一件别人的「施工中」。 */
+/** 三件「待处理」，其中一件是我的；外加一件别人的「进行中」。 */
 const MIXED = [
   task({ id: 'a', title: '我的那件', owner_handle: 'n1ctheboy' }),
   task({ id: 'b', title: '别人的一', owner_handle: 'ligan' }),
@@ -172,7 +172,7 @@ describe('筛完之后板还是一块板', () => {
     query = { mine: '1' }
     const { container } = mount()
     await waitFor(() => expect(titlesInColumn(container, 'needs_you')).toEqual(['我的那件']))
-    // 「施工中」那一件是别人的，筛没了——但那一列还在原地。位置本身是信息。
+    // 「进行中」那一件是别人的，筛没了——但那一列还在原地。位置本身是信息。
     expect(container.querySelector('[data-column="building"]')).not.toBeNull()
     expect(container.querySelector('[data-column="delivering"]')).not.toBeNull()
     expect(countOf(container, 'building')).toBe('0 / 1')
@@ -185,13 +185,13 @@ describe('筛完之后板还是一块板', () => {
   })
 
   it('筛到一件不剩的时候，每一列自己说「暂无分配给你的任务」', async () => {
-    // 「暂无施工中的任务」在这一刻是句错话：那一列有活，只是不归你。
+    // 「暂无进行中的任务」在这一刻是句错话：那一列有活，只是不归你。
     query = { mine: '1' }
     listProjectTasks.mockResolvedValue({ data: [task({ owner_handle: 'ligan' })], total: 1 })
     const { container, getAllByText, queryByText } = mount()
     await waitFor(() => expect(countOf(container, 'needs_you')).toBe('0 / 1'))
-    expect(getAllByText('暂无分配给你的任务').length).toBe(3)
-    expect(queryByText('暂无施工中的任务')).toBeNull()
+    expect(getAllByText('暂无分配给你的任务').length).toBe(4)
+    expect(queryByText('暂无进行中的任务')).toBeNull()
     // 顶上那行数的仍然是整块板：它说的是这个项目有多少活，和取景无关。
     expect(container.querySelector('.board__tally')?.textContent?.replace(/\s+/g, '')).toBe('待处理1')
   })
@@ -206,7 +206,7 @@ describe('筛完之后板还是一块板', () => {
           id: 'mine',
           title: '我的',
           owner_handle: 'n1ctheboy',
-          presentation: { column: 'building', phrase: 'not_started' },
+          presentation: { column: 'building', phrase: 'started' },
         }),
         ...['w', 'x', 'y', 'z'].map((id) => task({ id, owner_handle: 'ligan', presentation: { ...running } })),
       ],

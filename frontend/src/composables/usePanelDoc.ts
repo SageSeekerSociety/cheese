@@ -21,6 +21,7 @@ import { getRoomDocument } from '../api/docCollab'
 import { applyDocEdits, getPendingSuggestions } from '../api/docEdits'
 import { getDocVersions, restoreDocVersion } from '../api/docHistory'
 import { StreamRefused } from '../api/eventStream'
+import { getTaskDocumentId } from '../api/tasks'
 import { isAgentHandle } from '../lib/authorship'
 import { dispatch } from '../lib/docAgent'
 import { expandMentions } from '../lib/expandMentions'
@@ -33,6 +34,8 @@ import { t } from '@/i18n'
 
 export interface PanelDocProps {
   topic: Topic | null
+  /** 打开的是这个房间里某个任务的实况文档，而不是房间自己的。 */
+  taskId?: string | null
   /** 父层在 AI 动过之后加一：已存的那一版据此重读。 */
   activityTick: number
   /** 项目 AI 队友的名字。 */
@@ -155,10 +158,10 @@ export function usePanelDoc(props: PanelDocProps) {
     return workspaceFileRawUrl(pid, src.replace(/^\.\//, ''), props.topic?.id)
   }
 
-  async function resolveDocument(tid: string) {
+  async function resolveDocument(tid: string, taskId: string | null) {
     const sequence = ++documentSequence
     try {
-      const { id } = await getRoomDocument(tid)
+      const id = taskId ? await getTaskDocumentId(tid, taskId) : (await getRoomDocument(tid)).id
       if (disposed || props.topic?.id !== tid || sequence !== documentSequence) return
       documentId.value = id
     } catch (cause) {
@@ -168,12 +171,12 @@ export function usePanelDoc(props: PanelDocProps) {
   }
 
   watch(
-    () => props.topic?.id ?? null,
-    (id) => {
+    () => [props.topic?.id ?? null, props.taskId ?? null] as const,
+    ([id, taskId]) => {
       documentSequence++
       documentId.value = null
       resolveError.value = null
-      if (id) void resolveDocument(id)
+      if (id) void resolveDocument(id, taskId)
     },
     { immediate: true }
   )

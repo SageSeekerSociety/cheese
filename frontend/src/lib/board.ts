@@ -48,6 +48,7 @@ export function columnDotClass(column: BoardColumn): string {
  *  只有 `needs_you` 是暖色且实心：整块板上唯一需要人动手的那一列，应该是唯一抓眼
  *  睛的。其余靠形状分（空心 / 虚线 / 实心），所以把颜色关掉也还读得出来。 */
 export function columnDotStyle(column: BoardColumn): Record<string, string> {
+  if (column === 'not_started') return { borderColor: 'var(--faint)', borderStyle: 'dashed' }
   if (column === 'building') return { borderColor: 'var(--ok)' }
   if (column === 'delivering') return { borderColor: 'var(--ok)', borderStyle: 'dashed' }
   if (column === 'needs_you') return { borderColor: 'var(--warn)', background: 'var(--warn)' }
@@ -58,14 +59,16 @@ export function columnDotStyle(column: BoardColumn): Record<string, string> {
 /** 板上并排的那几列。
  *
  *  `done` 不在里面：它收进页面底部那条折叠行，板面留给还需要人看的东西。`archived`
- *  也不在：活不归档（只有房间会），一条活永远落不到那一列。 */
-export const BOARD_COLUMNS: BoardColumnSpec[] = (['building', 'delivering', 'needs_you'] as const).map((key) => ({
-  key,
-  get label() {
-    return columnLabel(key)
-  },
-  cls: columnDotClass(key),
-}))
+ *  也不在：任务不归档（只有房间会），一个任务永远落不到那一列。 */
+export const BOARD_COLUMNS: BoardColumnSpec[] = (['not_started', 'building', 'delivering', 'needs_you'] as const).map(
+  (key) => ({
+    key,
+    get label() {
+      return columnLabel(key)
+    },
+    cls: columnDotClass(key),
+  })
+)
 
 /** 同一列里的先后。
  *
@@ -112,7 +115,7 @@ export function boardColumnCounts(
   for (const task of liveBoardTasks(tasks, archivedRoomIds)) {
     counts.set(task.presentation.column, (counts.get(task.presentation.column) ?? 0) + 1)
   }
-  return (['needs_you', 'building', 'delivering'] as const)
+  return (['needs_you', 'not_started', 'building', 'delivering'] as const)
     .map((key) => ({ key, label: columnLabel(key), count: counts.get(key) ?? 0 }))
     .filter((column) => column.count > 0)
 }

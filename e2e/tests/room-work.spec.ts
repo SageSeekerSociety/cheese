@@ -1,5 +1,5 @@
-/** Dispatch through the API, then verify that people can find and open each
- * independent task in the room overview and project board. */
+/** Create tasks through the API, then verify that people can find and open each
+ * task in the room overview and project board. */
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { closeSync, openSync } from 'node:fs';
@@ -20,22 +20,21 @@ async function freshRoom(page: Page, title: string) {
   return room.id;
 }
 
+/** 一个任务：alice 建的，她负责，并且已经开始（审阅人也是她）。 */
 async function dispatch(page: Page, roomId: string, title: string) {
-  return (await api(page, 'post', `/topics/${roomId}/split`, {
-    title, created_by: 'alice', reviewer_handle: 'alice',
-  })) as {
-    id: string;
-    queued?: boolean;
-  };
+  const task = (await api(page, 'post', `/topics/${roomId}/tasks`, { title })) as { id: string };
+  return (await api(page, 'post', `/topics/${roomId}/tasks/${task.id}/start`, {
+    reviewer_handle: 'alice',
+  })) as { id: string; branch_name?: string };
 }
 
-test.describe('房间里派出去的活', () => {
+test.describe('房间里的任务', () => {
   test.beforeEach(async ({ page }) => {
     await apiLogin(page);
     await openFirstProject(page);
   });
 
-  test('派出去的活出现在房间总览里，点一下就进它自己的页面', async ({ page }) => {
+  test('任务出现在房间总览里，点一下就进它自己的页面', async ({ page }) => {
     const projectId = projectIdOf(page);
     const stamp = Date.now();
     const roomId = await freshRoom(page, `派活 ${stamp}`);
@@ -56,11 +55,10 @@ test.describe('房间里派出去的活', () => {
     // 具体哪个状态由 lib/board.spec.ts 逐条钉。
     await expect(progress.locator('.task-row .board-dot')).toHaveCount(2);
 
-    // 点条目就地展开这张卡 —— 总览里的一行必须是个入口，不然它只是一张表。
-    // 卡不是地点：地址留在房间上，卡的 id 进 query（T6 起）。
+    // 点条目就去这个任务的页面 —— 总览里的一行必须是个入口，不然它只是一张表。
     await progress.getByText(`第一件事 ${stamp}`).click();
-    await expect(page).toHaveURL(new RegExp(`/topics/${roomId}\\?.*card=${first.id}`));
-    await expect(page.locator('.panel-card')).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`/topics/${roomId}/tasks/${first.id}`));
+    await expect(page.locator('.task-pane')).toBeVisible();
   });
 
   test('侧栏上的项目名就是回看板的入口，进去是整个项目的视角', async ({ page }) => {
@@ -86,7 +84,7 @@ test.describe('房间里派出去的活', () => {
     await expect(view.locator('.board-col--made')).toContainText('做出了什么');
     // 板要答的是「该谁动」，所以它得说出各列各有几件；一件都没有的时候要明说，
     // 否则一块空板读起来就是「这个项目没活」——而项目里可能有几百条。
-    await expect(view).toContainText(/施工中|交付中|待处理|暂无任务/);
+    await expect(view).toContainText(/未开始|进行中|检查中|待处理|暂无任务/);
   });
 
   test('板上计数在活到货之前不写 0', async ({ page }) => {
@@ -109,9 +107,9 @@ test.describe('房间里派出去的活', () => {
       await page.goto(`/projects/${projectId}/running`);
       const view = page.locator('.board');
       await expect(view).toBeVisible();
-      // 三条任务列的计数槽都已经就位，而这一帧活还在路上（列里是骨架）。
+      // 四条任务列的计数槽都已经就位，而这一帧任务还在路上（列里是骨架）。
       const counts = page.locator('.board-col[data-column] .board-col__count');
-      await expect(counts).toHaveCount(3);
+      await expect(counts).toHaveCount(4);
       await expect(page.locator('.board-col__skel').first()).toBeVisible();
       for (const slot of await counts.all()) {
         await expect(slot).not.toHaveText(/\d/);

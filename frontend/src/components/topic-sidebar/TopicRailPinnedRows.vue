@@ -92,6 +92,8 @@ const emit = defineEmits<{
         <TopicRailBadge v-if="unreadOf(rootTopic.id) > 0" :count="unreadOf(rootTopic.id)" />
       </template>
     </v-list-item>
+    <!-- 挂在这个房间下面的任务。 -->
+    <slot name="root-tasks" />
 
     <!-- 手机上这几行收进了项目菜单（项目名旁边那颗 ⌄），列表只留话题。 -->
     <v-list-item
