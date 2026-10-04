@@ -1,4 +1,4 @@
-"""A project's saved ways of working (工作方法), shipped to its sessions as skills.
+"""A project's own skills (项目技能), shipped to its sessions.
 
 An AI teammate may draft or edit one; a person confirms, restores or deletes,
 because what is confirmed is what every later session in the project follows.
@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.response import ok, page
 from app.core.db import get_db
-from app.core.errors import ForbiddenError, NotFoundError
+from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say, with_keys
 from app.domain.agent.platform_notices import (
     EVENT_SKILL_PROPOSED,
@@ -23,9 +23,20 @@ from app.domain.agent.platform_notices import (
     WHO_CHEESE,
     notice,
 )
+from app.domain.agent.runtime import announce_stale
 from app.domain.block.authorship import AuthorType
 from app.domain.block.models import Block, BlockKind
 from app.domain.identity.actor import Actor
+from app.domain.memory.files import (
+    MEMORY_ROOT,
+    TEAM_PREFIX,
+    MemoryFileError,
+    MemoryFileScope,
+    check_scoped_path,
+    parse_index,
+    parse_memory_file,
+)
+from app.domain.memory.files_store import MemoryFileStore
 from app.domain.project_skill.models import ProjectSkill, ProjectSkillRevision
 from app.domain.project_skill.service import ProjectSkillService
 from app.domain.topic.services import TopicService
@@ -44,6 +55,12 @@ class SkillIn(BaseModel):
     steps: str = Field(min_length=1)
     outputs: str = ""
     files: dict[str, str] = Field(default_factory=dict)
+    # What a teammate's proposal rests on; shown on the card a person saves it
+    # from. Ignored when a person writes the method.
+    taught: list[str] = Field(default_factory=list)
+    accepted: str = ""
+    related: str = ""
+    absorbs: list[str] = Field(default_factory=list)
 
 
 class SkillPatch(BaseModel):
@@ -53,6 +70,36 @@ class SkillPatch(BaseModel):
     steps: str | None = None
     outputs: str | None = None
     files: dict[str, str] | None = None
+    # A teammate's edit: the correction it answers.
+    reason: str = ""
+
+
+_PROPOSAL_FIELDS = {"taught", "accepted", "related", "absorbs", "reason"}
+
+
+async def _absorbed(
+    db: AsyncSession, project_id: uuid.UUID, paths: list[str]
+) -> list[dict[str, str]]:
+    """The team memories a proposal folds in, each with the title a person reads
+    on the card (its index line's title, else its description)."""
+    store = MemoryFileStore(db)
+    index = await store.index_text(project_id, MemoryFileScope.team) or ""
+    titles = {entry.path: entry.title for entry in parse_index(index)}
+    out: list[dict[str, str]] = []
+    for raw in paths:
+        path = raw.strip().removeprefix("~/").removeprefix(f"{MEMORY_ROOT}/")
+        try:
+            prefix, name = check_scoped_path(path)
+        except MemoryFileError as exc:
+            raise ValidationError(str(exc)) from exc
+        if prefix != TEAM_PREFIX:
+            raise ValidationError(say("skillAbsorbsTeamOnly", path=raw))
+        row = await store.get(project_id, MemoryFileScope.team, None, name)
+        if row is None:
+            raise ValidationError(say("skillAbsorbsMissing", path=raw))
+        title = titles.get(name) or parse_memory_file(row.content).description or name
+        out.append({"path": path, "title": title})
+    return out
 
 
 def _iso(value: datetime | None) -> str | None:
@@ -76,6 +123,7 @@ def _skill(row: ProjectSkill) -> dict:
         "confirmed_by": row.confirmed_by,
         "confirmed_at": _iso(row.confirmed_at),
         "source_topic_id": str(row.source_topic_id) if row.source_topic_id else None,
+        "proposal": row.proposal,
         "created_at": _iso(row.created_at),
         "updated_at": _iso(row.updated_at),
     }
@@ -149,13 +197,22 @@ async def create_skill(
     by_agent = not _is_person(actor)
     by = await _speaker(db, actor, topic_id)
     service = ProjectSkillService(db)
+    proposal = None
+    if by_agent:
+        proposal = {
+            "taught": [t.strip() for t in body.taught if t.strip()],
+            "accepted": body.accepted.strip(),
+            "related": body.related.strip(),
+            "absorbs": await _absorbed(db, place.project_id, body.absorbs),
+        }
     row = await service.create(
         project_id=place.project_id,
         topic_id=place.room_id,
         by=by,
         by_agent=by_agent,
         name=body.name,
-        fields=body.model_dump(exclude={"name"}),
+        fields=body.model_dump(exclude={"name", *_PROPOSAL_FIELDS}),
+        proposal=proposal,
     )
     if by_agent:
         line = say("skillProposed", title=row.title)
@@ -191,7 +248,14 @@ async def create_skill(
         )
     await db.commit()
     await service.publish(place.project_id)
+    await announce_stale(place.room_id, "skills")
     return ok(_skill(row))
+
+
+async def _changed(row: ProjectSkill) -> None:
+    """Tell the room a method came from that its cards changed."""
+    if row.source_topic_id is not None:
+        await announce_stale(row.source_topic_id, "skills")
 
 
 async def _load(
@@ -227,14 +291,17 @@ async def update_skill(
 ) -> dict:
     row, actor = await _load(db, resolver, skill_id, topic)
     service = ProjectSkillService(db)
+    by_agent = not _is_person(actor)
     row = await service.update(
         row,
         by=await _speaker(db, actor, topic),
-        by_agent=not _is_person(actor),
-        changes=body.model_dump(exclude_unset=True),
+        by_agent=by_agent,
+        changes=body.model_dump(exclude_unset=True, exclude={"reason"}),
+        proposal={"reason": body.reason.strip()} if by_agent else None,
     )
     await db.commit()
     await service.publish(row.project_id)
+    await _changed(row)
     return ok(_skill(row))
 
 
@@ -245,9 +312,39 @@ async def confirm_skill(
     row, actor = await _load(db, resolver, skill_id, None)
     _person(actor, say("skillConfirmSave"))
     service = ProjectSkillService(db)
+    # The team memories the method folds in go once it is saved, so the same
+    # rules are not kept in two places. Only the name part is a memory path.
+    absorbed = [
+        check_scoped_path(item["path"])[1]
+        for item in (row.proposal or {}).get("absorbs") or []
+    ]
     row = await service.confirm(row, by=actor.handle)
+    if absorbed:
+        await MemoryFileStore(db).forget(
+            project_id=row.project_id,
+            scope=MemoryFileScope.team,
+            owner_handle=None,
+            paths=absorbed,
+            updated_by=actor.handle,
+        )
     await db.commit()
     await service.publish(row.project_id)
+    await _changed(row)
+    return ok(_skill(row))
+
+
+@router.post("/skills/{skill_id}/decline")
+async def decline_skill(
+    skill_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """A person turns a teammate's pending proposal down."""
+    row, actor = await _load(db, resolver, skill_id, None)
+    _person(actor, say("skillDecline"))
+    service = ProjectSkillService(db)
+    row = await service.decline(row, by=actor.handle)
+    await db.commit()
+    await service.publish(row.project_id)
+    await _changed(row)
     return ok(_skill(row))
 
 
@@ -261,6 +358,7 @@ async def restore_skill(
     row = await service.restore(row, revision, by=actor.handle)
     await db.commit()
     await service.publish(row.project_id)
+    await _changed(row)
     return ok(_skill(row))
 
 
@@ -275,4 +373,5 @@ async def delete_skill(
     await service.delete(row)
     await db.commit()
     await service.publish(project_id)
+    await _changed(row)
     return ok({"deleted": str(skill_id)})

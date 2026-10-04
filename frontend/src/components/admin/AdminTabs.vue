@@ -4,6 +4,8 @@
 // 看板的分类页签、看板与模型页的时间窗口、队列的状态页签、反馈中心的状态筛选，之前
 // 分别是自写下划线、`v-btn-toggle`、裸药丸三种样子。统一成这一种。放不下时整排横向
 // 滚动（不折行、不裁字），右缘给一道渐隐提示「后面还有」。
+import { vRovingTabs } from '@/lib/rovingTabs'
+
 defineOptions({ name: 'AdminTabs' })
 
 defineProps<{
@@ -12,6 +14,8 @@ defineProps<{
   label: string
   /** `sm` 用在一行里挤着别的控件的地方（时间窗口）。 */
   size?: 'md' | 'sm'
+  /** 这排页签切换的那块内容（`role="tabpanel"`）的 id；给了就写进每一格的 `aria-controls`。 */
+  controls?: string
 }>()
 
 const emit = defineEmits<{ 'update:modelValue': [value: T] }>()
@@ -19,7 +23,7 @@ const emit = defineEmits<{ 'update:modelValue': [value: T] }>()
 
 <template>
   <div class="atabs" :class="size === 'sm' ? 'atabs--sm' : ''">
-    <div class="atabs__track" role="tablist" :aria-label="label">
+    <div v-roving-tabs class="atabs__track" role="tablist" :aria-label="label">
       <button
         v-for="o in options"
         :key="o.value"
@@ -28,6 +32,7 @@ const emit = defineEmits<{ 'update:modelValue': [value: T] }>()
         class="atabs__tab"
         :class="{ 'atabs__tab--on': o.value === modelValue }"
         :aria-selected="o.value === modelValue"
+        :aria-controls="controls"
         @click="emit('update:modelValue', o.value)"
       >
         {{ o.label }}

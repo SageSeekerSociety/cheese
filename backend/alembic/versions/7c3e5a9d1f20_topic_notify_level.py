@@ -11,7 +11,7 @@ A string, not a boolean, so a later "mentions only" is a new value rather than
 a second column.
 
 Revision ID: 7c3e5a9d1f20
-Revises: 41a261d02e9e
+Revises: a7d3e91c5b20
 Create Date: 2026-10-04
 """
 
@@ -22,7 +22,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "7c3e5a9d1f20"
-down_revision: str | None = "41a261d02e9e"
+down_revision: str | None = "a7d3e91c5b20"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

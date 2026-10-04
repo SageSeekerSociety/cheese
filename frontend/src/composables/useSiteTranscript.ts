@@ -9,6 +9,7 @@ import { nextTick, ref } from 'vue'
 
 import { getTranscript, SITE_PAGE_SIZE } from '../api'
 import { capWindow, scrollTopAfterPrepend, shouldLoadNewer, shouldLoadOlder } from '../lib/blockPaging'
+import { beginMeasuredLayout, endMeasuredLayout } from '../lib/contentVisibility'
 import { shouldKeepPinning } from '../lib/siteLog'
 
 import { t } from '@/i18n'
@@ -84,8 +85,6 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
     if (!tid || !oldest || loadingOlder.value || !hasOlder.value) return
     const author = hooks.viewing()
     loadingOlder.value = true
-    const el = hooks.scrollRef.value
-    const before = el ? { scrollTop: el.scrollTop, scrollHeight: el.scrollHeight } : null
     try {
       const page = await getTranscript(tid, {
         limit: SITE_PAGE_SIZE,
@@ -97,6 +96,13 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
       if (hooks.topicId() !== tid || hooks.viewing() !== author) return
       hooks.noteAgents(page.data)
       hooks.noteStarts(page.turn_starts)
+      // 量在行进去之前：这一窗里的离屏行带着 content-visibility（PanelSite 的
+      // .site-act），报的是估计高度，量出来的差补进去就会跳。测量帧让这一窗按真实高度
+      // 铺开，量完再撤——见 lib/contentVisibility。位置在请求回来之后再取（和对话栏的
+      // 分页器同一条理由：请求在飞的时候读的人可能还在滚，飞出前的位置会把他拉回去）。
+      const el = hooks.scrollRef.value
+      beginMeasuredLayout(el)
+      const before = el ? { scrollTop: el.scrollTop, scrollHeight: el.scrollHeight } : null
       transcript.value = [...page.data, ...transcript.value]
       hasOlder.value = page.has_more === true
       // Prepending grows the content ABOVE the viewport; without this the reader
@@ -104,6 +110,7 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
       await nextTick()
       const sc = hooks.scrollRef.value
       if (sc && before) sc.scrollTop = scrollTopAfterPrepend(before, sc.scrollHeight)
+      endMeasuredLayout(el)
       // Trim AFTER the compensation, never before: the rows this drops are below the
       // viewport, so removing them moves nothing on screen, but they shrink
       // scrollHeight and compensating with a scrollHeight that already excludes them

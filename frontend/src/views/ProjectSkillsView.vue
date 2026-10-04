@@ -1,24 +1,25 @@
 <script setup lang="ts">
-// 工作方法：这个项目存下来的做法。确认过的那一版会带进之后每个房间的 AI 队友，所以
+// 技能：这个项目存下来的做法。确认过的那一版会带进之后每个房间的 AI 队友，所以
 // 芝士整理出来、或者改过的，都要人在这里读一遍、点确认才算数。
 import type { MenuAction } from '@/components/common/menuAction'
-import type { ProjectSkill, ProjectSkillContent, ProjectSkillRevision } from '../api'
+import type { ProjectSkill, ProjectSkillContent, ProjectSkillRevision } from '../api/projectSkills'
 import type { Topic } from '../cx_types'
 
 import { computed, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
+import { listTopics } from '../api'
 import {
   confirmProjectSkill,
   createProjectSkill,
+  declineProjectSkill,
   deleteProjectSkill,
   getProjectSkill,
   listProjectSkills,
-  listTopics,
   restoreProjectSkill,
   updateProjectSkill,
-} from '../api'
+} from '../api/projectSkills'
 
 import { useCommands } from '@/commands'
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -202,7 +203,9 @@ async function remove(s: ProjectSkill | null) {
   busy.value = `${s.id}:delete`
   actionError.value = ''
   try {
-    await deleteProjectSkill(s.id)
+    // 芝士提议的新草稿记成「拒绝过」而不是删掉：删了它下一次还会再提同一份。
+    if (s.proposal && !s.shipped_revision) await declineProjectSkill(s.id)
+    else await deleteProjectSkill(s.id)
     skills.value = skills.value.filter((x) => x.id !== s.id)
   } catch (e) {
     actionError.value = e instanceof Error ? e.message : t('work.skills.deleteFailed')

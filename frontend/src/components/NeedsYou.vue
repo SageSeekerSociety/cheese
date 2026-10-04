@@ -29,6 +29,7 @@ import { getInbox, markRead, resolveAlert, sendFeedback } from '@/api'
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { label, NOTIF_KIND } from '@/labels'
+import { markAllAlertsRead } from '@/lib/alerts'
 import { myHandle } from '@/me'
 
 const props = defineProps<{ projectId: string }>()
@@ -38,6 +39,8 @@ const router = useRouter()
 const rows = ref<InboxItem[]>([])
 const actionError = ref('')
 const busy = ref<number | null>(null)
+/** 整队收起那次请求还没回来：一队一百条，那一下不是瞬时的。 */
+const busyAll = ref(false)
 
 /** 这一叠最多摆几张。第三张已经只剩一道边，再多一张看不出区别，只是多一层渲染。 */
 const DEPTH = 3
@@ -150,6 +153,25 @@ async function dismiss(row: InboxItem) {
   await act(row, () => markRead(row.id), t('work.needsYou.dismissFailed'))
 }
 
+/** 整队收起：一队一百条不该要一百下「收起」。走项目级的已读接口（和收件箱的
+ *  「标记全部已读」同一条路）——它只标自己的，而且留着没拍板的决策请求，所以这一下
+ *  清掉的是变更提醒和读过就走的验收卡，不是还没答的问题。 */
+async function dismissAll() {
+  const projectId = props.projectId
+  const me = myHandle()
+  if (!me) return
+  busyAll.value = true
+  actionError.value = ''
+  try {
+    await markAllAlertsRead(projectId, me)
+    await load()
+  } catch (e) {
+    actionError.value = e instanceof Error ? e.message : t('work.needsYou.dismissFailed')
+  } finally {
+    busyAll.value = false
+  }
+}
+
 async function rate(row: InboxItem, feedback: 'up' | 'down') {
   await act(row, () => sendFeedback(row.id, feedback), t('work.needsYou.feedbackFailed'))
 }
@@ -178,10 +200,18 @@ watch(
           <!-- 「1/3」：一叠摆出来的是一条，所以件数得连着位置一起说，光写 3 会读成
                「这张卡有三个选项」。只有一条的时候不写——那时候位置不是信息。 -->
           <span v-if="rows.length > 1" class="asked__count t-meta c-faint">{{ cursor + 1 }}/{{ rows.length }}</span>
-          <button v-if="rows.length > 1" type="button" class="asked__next t-meta" @click="next">
-            {{ t('work.needsYou.next') }}
-            <v-icon size="14" aria-hidden="true">mdi-chevron-right</v-icon>
-          </button>
+          <!-- When a second item is waiting, a hundred-strong queue should not still cost
+               a hundred dismiss clicks: the batch action sits here, on the same route as
+               the inbox's mark-all-as-read (the same word, the same key). -->
+          <div v-if="rows.length > 1" class="asked__actions">
+            <BaseButton kind="ghost" size="sm" :loading="busyAll" @click="dismissAll">
+              {{ t('notifications.common.markAllAsRead') }}
+            </BaseButton>
+            <button type="button" class="asked__next t-meta" @click="next">
+              {{ t('work.needsYou.next') }}
+              <v-icon size="14" aria-hidden="true">mdi-chevron-right</v-icon>
+            </button>
+          </div>
         </header>
         <p v-if="actionError" role="alert" class="asked__error t-meta">{{ actionError }}</p>
         <!-- 一叠卡：三张都落在同一个网格格子里，所以这一叠的高度是最高那张的高度，
@@ -285,11 +315,18 @@ watch(
 .asked__count {
   font-variant-numeric: tabular-nums;
 }
+/* 这一队次要动作（整队收起 / 下一条）靠右排；它们比标题矮一档，按中线对齐标题那一行。 */
+.asked__actions {
+  display: flex;
+  align-items: center;
+  align-self: center;
+  gap: 8px;
+  margin-left: auto;
+}
 /* 悬停只改颜色，不改位置。 */
 .asked__next {
   display: flex;
   align-items: center;
-  margin-left: auto;
   color: var(--muted);
   cursor: pointer;
 }

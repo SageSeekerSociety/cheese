@@ -19,6 +19,7 @@ import { cachedWindow, refreshBlockCache } from '@/lib/blockCache'
 import { preloadPdfViewer } from '@/lib/pdfPreload'
 import { refreshPreviewPointer } from '@/lib/previewPointer'
 import { rememberPageBeforeSettings } from '@/lib/settingsReturn'
+import { installTopicTransitions } from '@/lib/viewTransition'
 import { myId } from '@/me'
 import { reloadForNewBuild } from '@/services/staleBuild'
 import { usePageTitleStore } from '@/stores/title'
@@ -176,5 +177,8 @@ router.beforeEach((to) => {
 router.onError((error) => {
   reloadForNewBuild(error)
 })
+
+// 宽屏上话题之间切换的淡入淡出（lib/viewTransition.ts）。
+installTopicTransitions(router)
 
 export default router

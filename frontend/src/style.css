@@ -1430,3 +1430,16 @@ html {
 :is(pre, code, kbd, samp, .t-meta, .t-meta-read) {
   text-autospace: normal;
 }
+
+/* View transitions (lib/viewTransition.ts): the page as a whole swaps without animating; only
+   the named blocks (topic view, work-panel body) cross-fade, briefly. Reduced motion never
+   starts a transition at all. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+}
+
+::view-transition-group(*) {
+  animation-duration: 160ms;
+  animation-timing-function: var(--ease-standard);
+}

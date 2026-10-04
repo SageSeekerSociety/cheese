@@ -166,6 +166,23 @@ CALLS = {
         "POST",
         "/routine-runs/run-1/report",
     ),
+    "cheese_skill_draft": (
+        {
+            "name": "weekly-report",
+            "title": "周报",
+            "description": "用户要这周的周报时",
+            "steps": "先写变坏的指标",
+            "taught": ["先说坏消息"],
+            "accepted": "用户说就这样",
+        },
+        "POST",
+        "/topics/fixture/skills",
+    ),
+    "cheese_skill_update": (
+        {"skill": "m-1", "steps": "先写变坏的指标", "reason": "顺序反了"},
+        "PATCH",
+        "/skills/m-1",
+    ),
     "platform_request": (
         {
             "method": "PUT",

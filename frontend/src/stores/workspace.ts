@@ -585,32 +585,51 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   }
 
   async function archive(topicId: string) {
+    const topic = topics.value.find((row) => row.id === topicId)
+    const prevStatus = topic?.status
+    // 归档的正是 rail 记着的那一个：就地忘掉（归档的话题还在清单里，
+    // `forgetMissingTopic` 找不到它）。失败时这一步要退回去。
+    const wasRemembered = !!topic && lastTopicByProject.value[topic.project_id] === topicId
+    // 乐观：本地这一行立刻变成已归档——菜单、列表、rail 当场就是归档后的样子，省掉的
+    // 是「点一下到界面动」之间那一次往返。服务端那份回来覆盖它；失败时还原并说一声。
+    if (topic) {
+      topicRevision += 1
+      topic.status = 'archived'
+      if (wasRemembered) forgetRememberedTopic(topic.project_id)
+    }
     try {
       const updated = await archiveTopic(topicId)
-      const topic = topics.value.find((row) => row.id === topicId)
-      if (topic) {
-        topicRevision += 1
-        Object.assign(topic, updated)
-      }
-      // 刚归档的正是记着的那一个：rail 那一格不该再把项目落在它身上（归档的话题还
-      // 在清单里，`forgetMissingTopic` 找不到它），直接忘掉。
-      if (topic && lastTopicByProject.value[topic.project_id] === topicId) forgetRememberedTopic(topic.project_id)
+      const row = topics.value.find((r) => r.id === topicId)
+      if (row) Object.assign(row, updated)
       void refreshTopics()
     } catch (e) {
+      if (topic && prevStatus !== undefined) {
+        topicRevision += 1
+        topic.status = prevStatus
+        if (wasRemembered) rememberTopic(topic.project_id, topicId)
+      }
       reportError(e, t('shell.workspaceErrors.archive'))
     }
   }
 
   async function unarchive(topicId: string) {
+    const topic = topics.value.find((row) => row.id === topicId)
+    const prevStatus = topic?.status
+    // 乐观：同上，先把这一行翻回在用。
+    if (topic) {
+      topicRevision += 1
+      topic.status = 'active'
+    }
     try {
       const updated = await unarchiveTopic(topicId)
-      const topic = topics.value.find((row) => row.id === topicId)
-      if (topic) {
-        topicRevision += 1
-        Object.assign(topic, updated)
-      }
+      const row = topics.value.find((r) => r.id === topicId)
+      if (row) Object.assign(row, updated)
       void refreshTopics()
     } catch (e) {
+      if (topic && prevStatus !== undefined) {
+        topicRevision += 1
+        topic.status = prevStatus
+      }
       reportError(e, t('shell.workspaceErrors.unarchive'))
     }
   }
