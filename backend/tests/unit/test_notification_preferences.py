@@ -13,6 +13,7 @@ import pytest
 from app.domain.notification.models import NotificationType
 from app.domain.notification.preferences import (
     CATEGORY_ORDER,
+    CATEGORY_TYPES,
     ChannelChoice,
     DigestCadence,
     EmailMode,
@@ -37,17 +38,8 @@ MOCK_MATRIX: dict[PreferenceCategory, tuple[bool, bool, bool]] = {
     PreferenceCategory.BILLING: (True, False, True),
 }
 
-#: 每一行矩阵拿一个真实存在的通知类别码来试。
-A_TYPE_OF = {
-    PreferenceCategory.MENTION: NotificationType.MENTION,
-    PreferenceCategory.REPLY: NotificationType.REPLY,
-    PreferenceCategory.REACTION: NotificationType.REACTION,
-    PreferenceCategory.WAITS_ON_ME: NotificationType.DECISION_REQUEST,
-    PreferenceCategory.DEVICE_IN_USE: NotificationType.DEVICE_IN_USE,
-    PreferenceCategory.INVITATION: NotificationType.TEAM_INVITATION,
-    PreferenceCategory.ANNOUNCEMENT: NotificationType.SPACE_ANNOUNCEMENT,
-    PreferenceCategory.BILLING: NotificationType.CHEESE_QUESTION,  # 只借个类型
-}
+#: 有今天的生产者的那几行；`额度与计费` 还没有码落到它上面，`resolve` 试不到它。
+PRODUCED = [c for c in CATEGORY_ORDER if CATEGORY_TYPES[c]]
 
 NOON = datetime(2025, 6, 1, 12, 0, tzinfo=UTC)  # 不在默认安静时段里
 NIGHT = datetime(2025, 6, 1, 23, 0, tzinfo=UTC)  # 落在默认安静时段里
@@ -76,25 +68,28 @@ class TestMockDefaults:
 
 
 class TestResolveDefaults:
-    @pytest.mark.parametrize("category", list(CATEGORY_ORDER))
+    @pytest.mark.parametrize("category", PRODUCED)
     def test_a_row_keeps_its_in_app_and_push_columns(self, category):
-        pref = default_preferences()
-        if category is PreferenceCategory.BILLING:
-            pytest.skip("额度与计费今天还没有生产者（见 CATEGORY_TYPES）")
-        intent = resolve(pref, A_TYPE_OF[category], now=NOON)
+        type_ = next(iter(CATEGORY_TYPES[category]))
+        intent = resolve(default_preferences(), type_, now=NOON)
         in_app, push, _email = MOCK_MATRIX[category]
         assert intent.in_app is in_app
         assert intent.push is push
 
-    @pytest.mark.parametrize("category", list(CATEGORY_ORDER))
+    @pytest.mark.parametrize("category", PRODUCED)
     def test_the_email_column_is_what_folds_into_the_digest(self, category):
         """默认邮件在 `摘要`：一封信里合，而不是每条立即发。"""
-        if category is PreferenceCategory.BILLING:
-            pytest.skip("额度与计费今天还没有生产者（见 CATEGORY_TYPES）")
-        intent = resolve(default_preferences(), A_TYPE_OF[category], now=NOON)
+        type_ = next(iter(CATEGORY_TYPES[category]))
+        intent = resolve(default_preferences(), type_, now=NOON)
         _in_app, _push, email = MOCK_MATRIX[category]
         assert intent.email is False
         assert intent.digest is email
+
+    def test_a_row_without_a_producer_keeps_its_columns(self):
+        """额度与计费还没有码落到它上面：矩阵那一行仍是设计稿的一格一格。"""
+        choice = default_preferences().channel(PreferenceCategory.BILLING)
+        in_app, push, email = MOCK_MATRIX[PreferenceCategory.BILLING]
+        assert (choice.in_app, choice.push, choice.email) == (in_app, push, email)
 
 
 class TestEmailModes:

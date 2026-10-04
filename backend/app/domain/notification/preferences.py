@@ -180,11 +180,17 @@ def in_quiet_hours(pref: Preferences, now: datetime) -> bool:
     start, end = pref.quiet_hours_start, pref.quiet_hours_end
     if start == end:
         return False
-    current = now.timetz().replace(tzinfo=None)
-    if start < end:
-        return start <= current < end
+    # 比到分钟：`start`/`end` 是墙上钟点，`now` 的时区说了算，不下沉成 naive
+    # datetime（仓库门口那条规矩，每个 DB 列都是 TIMESTAMPTZ）。
+    current = now.hour * 60 + now.minute
+    start_min = start.hour * 60 + start.minute
+    end_min = end.hour * 60 + end.minute
+    if start_min == end_min:
+        return False
+    if start_min < end_min:
+        return start_min <= current < end_min
     # 跨零点：过了 start 算夜里，没过 end 还算夜里。
-    return current >= start or current < end
+    return current >= start_min or current < end_min
 
 
 def _email_wanted(pref: Preferences, type_: NotificationType) -> bool:
