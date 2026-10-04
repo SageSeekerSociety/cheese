@@ -37,6 +37,7 @@
     "disbandTeamTitle": "解散「{name}」？",
     "disbandTeamBody": "解散后所有成员都会离开这个团队，无法撤销。团队里还有项目时不能解散。",
     "disbandTeamDone": "已解散「{name}」",
-    "disbandTeamFailed": "解散团队失败"
+    "disbandTeamFailed": "解散团队失败",
+    "disbandTeamTypeName": "输入团队名「{name}」确认"
   }
 }

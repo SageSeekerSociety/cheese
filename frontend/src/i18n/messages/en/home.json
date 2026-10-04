@@ -37,6 +37,7 @@
     "disbandTeamTitle": "Disband “{name}”?",
     "disbandTeamBody": "Every member leaves the team and this can't be undone. A team that still has projects can't be disbanded.",
     "disbandTeamDone": "Disbanded “{name}”",
-    "disbandTeamFailed": "Couldn't disband the team"
+    "disbandTeamFailed": "Couldn't disband the team",
+    "disbandTeamTypeName": "Type the team name “{name}” to confirm"
   }
 }

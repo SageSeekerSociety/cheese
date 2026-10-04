@@ -176,15 +176,37 @@ describe('首页目录', () => {
     expect(refreshProjects).toHaveBeenCalled()
   })
 
-  it('所有者解散团队：确认后这一行消失', async () => {
+  it('所有者解散团队：要把团队名打一遍才按得下去，解散后这一行消失', async () => {
     getMyTeams.mockResolvedValue({ data: { teams: [team('crew', '知是开发组', 'OWNER')] } })
-    confirm.mockResolvedValue(true)
     del.mockResolvedValue({})
     await mount('/inbox')
     await fireEvent.contextMenu(await screen.findByLabelText('展开 知是开发组'))
     await fireEvent.click(await screen.findByText('解散团队'))
+    const confirmButton = await screen.findByRole('button', { name: '解散团队' })
+    const input = screen.getByLabelText('输入团队名「知是开发组」确认')
+
+    await fireEvent.update(input, '知是')
+    expect(confirmButton.hasAttribute('disabled')).toBe(true)
+    await fireEvent.click(confirmButton)
+    expect(del).not.toHaveBeenCalled()
+
+    await fireEvent.update(input, '知是开发组')
+    await waitFor(() => expect(confirmButton.hasAttribute('disabled')).toBe(false))
+    await fireEvent.click(confirmButton)
     await waitFor(() => expect(del).toHaveBeenCalledWith(team('crew', '').id))
     await waitFor(() => expect(screen.queryByText('知是开发组')).toBeNull())
+  })
+
+  it('解散被拒（还有没归档的项目）：理由留在弹窗里，团队还在', async () => {
+    getMyTeams.mockResolvedValue({ data: { teams: [team('crew', '知是开发组', 'OWNER')] } })
+    del.mockRejectedValue(new Error('团队里还有没归档的项目，把它们都归档后才能解散'))
+    await mount('/inbox')
+    await fireEvent.contextMenu(await screen.findByLabelText('展开 知是开发组'))
+    await fireEvent.click(await screen.findByText('解散团队'))
+    await fireEvent.update(await screen.findByLabelText('输入团队名「知是开发组」确认'), '知是开发组')
+    await fireEvent.click(await screen.findByRole('button', { name: '解散团队' }))
+    expect(await screen.findByText('团队里还有没归档的项目，把它们都归档后才能解散')).toBeTruthy()
+    expect(screen.getAllByText('知是开发组').length).toBeGreaterThan(0)
   })
 
   it('所有者把团队交给一位成员，之后自己就能退出了', async () => {

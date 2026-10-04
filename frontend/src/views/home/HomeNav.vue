@@ -30,6 +30,7 @@ import { useDialog } from '@/plugins/dialog'
 import AccountService from '@/services/account'
 import errorHandler from '@/services/ErrorHandler'
 import { useWorkspaceStore } from '@/stores/workspace'
+import DisbandTeamDialog from '@/views/teams/DisbandTeamDialog.vue'
 import TeamProfileEditDialog from '@/views/teams/TeamProfileEditDialog.vue'
 import TransferTeamDialog from '@/views/teams/TransferTeamDialog.vue'
 
@@ -162,7 +163,7 @@ function teamActions(team: Team): MenuAction[] {
         label: t('home.nav.disbandTeam'),
         icon: 'mdi-delete-outline',
         danger: true,
-        onSelect: () => void disbandTeam(team),
+        onSelect: () => (disbanding.value = team),
       }
     )
   else
@@ -191,22 +192,16 @@ function onTransferred(updated: Team) {
   teams.value = teams.value.map((team) => (team.id === updated.id ? { ...team, ...updated, role: 'ADMIN' } : team))
 }
 
-// 解散团队：后端只在团队里已经没有项目时才答应（项目归团队，团队没了它们就没处挂），
-// 拒绝的那句话会说清楚要先做什么。
-async function disbandTeam(team: Team) {
-  const confirmed = await dialog
-    .confirm(t('home.nav.disbandTeamBody'), {
-      title: t('home.nav.disbandTeamTitle', { name: team.name }),
-      confirmLabel: t('home.nav.disbandTeam'),
-      danger: true,
-    })
-    .wait()
-    .catch(() => false)
-  if (!confirmed) return
-  const result = await errorHandler.withErrorHandling(() => TeamsApi.del(team.id), {
-    defaultMessage: t('home.nav.disbandTeamFailed'),
-  })
-  if (result === undefined) return
+// 解散团队：撤不回，所以要把团队名打一遍才按得下去（DisbandTeamDialog）。后端拒绝时
+// 理由留在弹窗里；成了就和退出一样，这一行和它的项目从侧栏上下去。
+const disbanding = ref<Team | null>(null)
+const disbandOpen = computed({
+  get: () => disbanding.value !== null,
+  set: (value: boolean) => {
+    if (!value) disbanding.value = null
+  },
+})
+function onDisbanded(team: Team) {
   toast.success(t('home.nav.disbandTeamDone', { name: team.name }))
   forgetTeam(team)
 }
@@ -372,6 +367,7 @@ const joinOpen = ref(false)
 
   <JoinSpaceDialog v-model="joinOpen" @joined="loadSpaces" />
   <TeamProfileEditDialog v-if="editing" v-model="editOpen" :team="editing" @updated="onTeamUpdated" />
+  <DisbandTeamDialog v-if="disbanding" v-model="disbandOpen" :team="disbanding" @disbanded="onDisbanded" />
   <TransferTeamDialog v-if="transferring" v-model="transferOpen" :team="transferring" @transferred="onTransferred" />
 </template>
 
