@@ -10,6 +10,11 @@ from app.domain.delivery.answer_ownership import (
     reconcile_answer,
     seat_has_unfinished_input,
 )
+from app.domain.delivery.ask_session_wait import (
+    hold_for_conversation,
+    pinned_conversation,
+    release_conversation_wait,
+)
 from app.domain.delivery.input_identity import (
     InputEffects,
     InputOutcomeUnconfirmed,
@@ -33,10 +38,26 @@ async def run_with_answer_offer(
                 if delivery is not None and is_answer
                 else None
             )
+            pinned = pinned_conversation(delivery) if is_answer else None
         if is_answer:
             seat = await chat._turn_seat_handle(
                 topic_id, recipient_instance_id=instance_id
             )
+            if pinned is not None:
+                # An answer may enter only the conversation that asked it. While
+                # that one is gone there is no turn to run: this attempt is a
+                # liveness question, the answer is held out of this seat's
+                # prompts, and the row waits instead of retrying every 30 s
+                # (``ask_session_wait``).
+                harness, conversation = pinned
+                if not chat._compute.holds_conversation(
+                    topic_id, harness, conversation
+                ):
+                    await hold_for_conversation(
+                        chat.session_factory, delivery_id, conversation
+                    )
+                    return
+                await release_conversation_wait(chat.session_factory, delivery_id)
             # Same lock as prompt preparation. Recheck only after an earlier
             # prompt has installed its work/identity; never send from stale idle.
             async with seat_admission(chat._seat_lock_for(topic_id, seat)):
