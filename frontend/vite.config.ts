@@ -60,7 +60,12 @@ function mdiFont(): Plugin {
       if (!code.includes('@font-face') || !code.includes('Material Design Icons')) return
       // 将来 @mdi 自己带上 font-display 就不再动它。
       if (code.includes('font-display')) return
-      return code.replace(/@font-face\s*\{[^}]*\}/g, (block) => block.replace(/\}\s*$/, '  font-display: swap;\n}'))
+      // 字体 URL 原本带 `?v=7.x` 版本串，Vite 打包后会原样留着；下面 preload 的地址
+      // 来自 bundle 的文件名、不带它，两边对不上浏览器就会把同一个字体下两遍。
+      // 文件名里已经有内容哈希，版本串多余，这里一并去掉。
+      return code
+        .replace(/(materialdesignicons-webfont\.(?:woff2|woff|ttf))\?v=[^"')]*/g, '$1')
+        .replace(/@font-face\s*\{[^}]*\}/g, (block) => block.replace(/\}\s*$/, '  font-display: swap;\n}'))
     },
     transformIndexHtml: {
       order: 'post',
