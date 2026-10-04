@@ -26,7 +26,12 @@ from collections.abc import Awaitable, Callable
 import httpx
 import pytest
 
-from app.api.deps import get_session_host
+from app.api.deps import (
+    consumptions_for,
+    get_chat_service,
+    get_consumptions,
+    get_session_host,
+)
 from app.domain.agent.document import question as doc_question
 from app.domain.agent.harness.pi import catalog
 from app.domain.agent.reads import Read
@@ -37,6 +42,11 @@ from app.domain.memory.files_store import MemoryFileStore
 from app.main import app
 from tests.integration.conftest import post_message, session_auth_headers
 from tests.integration.test_doc_edits import ALICE_PARAGRAPH, _doc, _document
+
+
+def _chat():
+    """The chat service the app is serving this test with."""
+    return app.dependency_overrides.get(get_chat_service, get_chat_service)()
 
 
 class FakeSessions:
@@ -78,7 +88,7 @@ class FakeSessions:
             answer, error = await self.script(prompt.acting, prompt.text)
         self._answers[ref] = (str(work_id), answer, error)
 
-    async def read(self, ref):
+    async def read(self, ref, *, recovered=False):
         work, answer, error = self._answers.pop(ref)
         if self.held is not None:
             yield Read(work, AgentMessage(self.held))
@@ -102,9 +112,12 @@ class FakeSessions:
 @pytest.fixture
 def sessions():
     fake = FakeSessions()
+    questions = consumptions_for(fake, _chat())  # type: ignore[arg-type]
     app.dependency_overrides[get_session_host] = lambda: fake
+    app.dependency_overrides[get_consumptions] = lambda: questions
     yield fake
     app.dependency_overrides.pop(get_session_host, None)
+    app.dependency_overrides.pop(get_consumptions, None)
 
 
 async def _tool(credential: str, name: str, args: dict) -> httpx.Response:

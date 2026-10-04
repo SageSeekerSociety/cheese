@@ -15,6 +15,7 @@ import { useDocCommentDraft } from '../../../composables/useDocCommentDraft'
 
 import DocThreadCard from './DocThreadCard.vue'
 
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import { t } from '@/i18n'
 
 const props = defineProps<{
@@ -219,9 +220,13 @@ defineExpose({ open, locate })
         @stop-agent="stopAgent(thread.comment.id)"
       />
     </TransitionGroup>
-    <p v-if="!threads.length && !draft" class="doc-comments__empty">
-      {{ filter === 'open' ? t('work.room.comments.emptyOpen') : t('work.room.comments.emptyResolved') }}
-    </p>
+    <BaseEmptyState
+      v-if="!threads.length && !draft"
+      size="inline"
+      align="center"
+      class="doc-comments__empty"
+      :title="filter === 'open' ? t('work.room.comments.emptyOpen') : t('work.room.comments.emptyResolved')"
+    />
   </div>
 </template>
 
@@ -316,11 +321,8 @@ defineExpose({ open, locate })
 }
 .doc-comments__empty {
   margin: 24px 0;
-  color: var(--faint);
-  font-size: 13px;
-  line-height: var(--lh-13);
-  text-align: center;
 }
+
 /* 输入框自己没有框：外面那张卡就是它的框。 */
 .doc-comments button:focus-visible {
   outline: 2px solid var(--accent);

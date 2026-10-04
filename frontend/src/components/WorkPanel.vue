@@ -32,11 +32,12 @@ import type { TabDef, TabKey } from './panels/panelTabList'
 
 import { computed, nextTick, onMounted, onUnmounted, ref, useId, watch } from 'vue'
 
-import { getTopicWorkSummary, listRoomTasks, readPreviewFile } from '../api'
+import { getTopicWorkSummary, readPreviewFile } from '../api'
 import { useTopicMemory } from '../composables/useTopicMemory'
 import { previewCanShowInRoom } from '../lib/fileKind'
 import { whenIdle } from '../lib/idle'
 import { cachedPreviewPointer, refreshPreviewPointer } from '../lib/previewPointer'
+import { cachedTopicPanel, fetchRoomTasks } from '../lib/topicPanelCache'
 import { withViewTransition } from '../lib/viewTransition'
 
 import ErrorBoundary from './common/ErrorBoundary.vue'
@@ -286,7 +287,7 @@ watch(
     void pollPreviewPointer()
     void pollWorkSummary()
     // 一轮里派出去的活，收工那一刻就该出现在 任务 那一格上。
-    void pollThreads()
+    void pollThreads({ fresh: true })
   }
 )
 
@@ -458,14 +459,21 @@ function markChangesSeen() {
 // of a room that never dispatched anything.
 const threads = ref<{ total: number; open: number }>({ total: 0, open: 0 })
 
-async function pollThreads() {
+function countThreads(rows: { status: string }[]) {
+  threads.value = { total: rows.length, open: rows.filter((r) => r.status === 'open').length }
+}
+
+async function pollThreads(opts: { fresh?: boolean } = {}) {
   const roomId = props.topic?.id
   if (!roomId) return
+  // Show the count from last time (e.g. switching back to a room) while the fresh one loads.
+  const cached = cachedTopicPanel('roomTasks', roomId)
+  if (cached) countThreads(cached.data)
   try {
     // limit: 1 — see TaskProgress. Without it this asks for every card's whole
-    // history just to count them.
-    const rows = (await listRoomTasks(roomId, { limit: 1 })).data
-    threads.value = { total: rows.length, open: rows.filter((r) => r.status === 'open').length }
+    // history just to count them. Shared with TaskProgress and the chat panel.
+    const rows = (await fetchRoomTasks(roomId, opts)).data
+    if (props.topic?.id === roomId) countThreads(rows)
   } catch {
     // A failed poll is not a state — same rule as the two polls above.
   }

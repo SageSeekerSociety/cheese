@@ -92,7 +92,7 @@
         @load-more="loadMore"
       >
         <template #empty>
-          <v-empty-state :title="emptyText || t('tasks.submissionHistory.empty')" />
+          <BaseEmptyState size="compact" icon="" :title="emptyText || t('tasks.submissionHistory.empty')" />
         </template>
         <v-expansion-panels>
           <template v-for="submission in submissions.slice(1)" :key="submission.id">
@@ -154,6 +154,7 @@ import SubmissionContentCard from './SubmissionContentCard.vue'
 import SubmissionReviewStatus from './SubmissionReviewStatus.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
 import { TasksApi } from '@/network/api/tasks'
 

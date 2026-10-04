@@ -14,11 +14,11 @@ import type { Block, ProjectMemberRow, Topic, TopicMemberRow } from '../../../cx
 import { computed, ref, watch } from 'vue'
 import { tryOnScopeDispose } from '@vueuse/core'
 
-import { listTopicMembers } from '../../../api'
 import { t } from '../../../i18n'
 import { agentNames, memberName } from '../../../lib/agentNames'
 import { isAgentBlock } from '../../../lib/authorship'
 import { isExternalMember } from '../../../lib/externalMembers'
+import { cachedTopicPanel, fetchTopicMembers } from '../../../lib/topicPanelCache'
 import { onTopicRosterChange } from '../../../lib/topicRosterChanges'
 import { getAvatarUrl } from '../../../utils/materials'
 
@@ -58,8 +58,14 @@ export function useRoomRoster(options: {
       return
     }
     const id = place.id
+    // 切回来过的房间：上次那份名单先顶上，@ 补全和署名不必等这一轮网络。
+    const cached = cachedTopicPanel('members', id)
+    if (cached && rosterFor.value !== id) {
+      roomMembers.value = cached.data
+      rosterFor.value = id
+    }
     try {
-      const payload = await listTopicMembers(id)
+      const payload = await fetchTopicMembers(id)
       if (options.topic()?.id === id) {
         roomMembers.value = payload.data
         rosterFor.value = id

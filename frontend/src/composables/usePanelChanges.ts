@@ -21,7 +21,6 @@ import {
   getGitDiff,
   getGitLog,
   listFiles,
-  listRoomTasks,
   readFile,
   workspaceFileRawUrl,
   writeFile,
@@ -30,6 +29,7 @@ import { phraseLabel } from '../lib/board'
 import { parseDiffLines, splitDiffByFile } from '../lib/diff'
 import { useDocumentBytes } from '../lib/documentBytes'
 import { DOCUMENT_TYPES, needsDocumentView, suffixOf } from '../lib/fileKind'
+import { fetchRoomTasks } from '../lib/topicPanelCache'
 
 import { useTopicMemory } from './useTopicMemory'
 
@@ -115,13 +115,13 @@ export function usePanelChanges(props: PanelChangesProps) {
     )
   }
 
-  async function loadTasks() {
+  async function loadTasks(opts: { fresh?: boolean } = {}) {
     const room = props.topicId
     const request = ++taskRequest
     if (!room) return
     taskLoadError.value = null
     try {
-      const tasks = await listRoomTasks(room, { limit: 1 })
+      const tasks = await fetchRoomTasks(room, opts)
       if (request !== taskRequest) return
       taskOptions.value = tasks.data.filter((task) => !!task.branch_name)
       if (!tasksLoaded.value) {
@@ -587,8 +587,8 @@ export function usePanelChanges(props: PanelChangesProps) {
   // ---- Loading policy: the surface loads when it comes on screen, the same rule
   // the drawer used ("opening the tool loads it"). One surface now, so both halves
   // load together — the tree cannot mark what the diff has not told it yet. ----
-  async function loadAll(opts: { silent?: boolean } = {}) {
-    await loadTasks()
+  async function loadAll(opts: { silent?: boolean; fresh?: boolean } = {}) {
+    await loadTasks({ fresh: opts.fresh })
     if (overview.value || taskLoadError.value) return
     void checkRepo()
     if (noRepo.value) return
@@ -625,7 +625,7 @@ export function usePanelChanges(props: PanelChangesProps) {
   watch(
     () => props.refreshTick,
     () => {
-      if (props.active) loadAll({ silent: true })
+      if (props.active) loadAll({ silent: true, fresh: true })
     }
   )
 

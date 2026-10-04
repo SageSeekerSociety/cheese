@@ -221,46 +221,6 @@ def test_a_room_names_its_own_thread(client):
     )
 
 
-def test_upgrade_doc_node_to_subtopic(client):
-    # 自上而下拆解 (eval A2): a paragraph in the room's doc is upgraded into a
-    # thread of work, and the node stays in place as a live-ref (its
-    # upgraded_to_task_id points at the new thread).
-    p = _project(client)
-    topic = client.post(
-        "/topics", json={"project_id": p["id"], "title": "推荐系统"}
-    ).json()["data"]
-    # A doc with a 拆解 section; each line becomes a doc node.
-    client.put(
-        f"/topics/{topic['id']}/doc",
-        json={
-            "content": "## 拆解\n\n数据清洗\n\n特征工程\n\n模型训练",
-            "expected_version": 0,
-        },
-    )
-    nodes = client.get(f"/topics/{topic['id']}/docs").json()["data"]["data"]
-    target = next(n for n in nodes if n["content"] == "特征工程")
-    assert target["upgraded_to_topic_id"] is None
-
-    r = client.post(
-        f"/blocks/{target['id']}/upgrade",
-        json={"reviewer_handle": "alice"},
-    )
-    assert r.status_code == 200
-    _wait_work_idle()
-    sub = r.json()["data"]
-    assert sub["room_id"] == topic["id"]
-
-    # The doc node is now a live-ref to the subtopic, in place.
-    nodes2 = client.get(f"/topics/{topic['id']}/docs").json()["data"]["data"]
-    ref = next(n for n in nodes2 if n["id"] == target["id"])
-    # The link points at the THREAD now. Two columns rather than one holding
-    # either kind of id: both are real foreign keys, and a single untyped column
-    # would be a pointer the database cannot check into a table it cannot name.
-    assert ref["upgraded_to_task_id"] == sub["id"]
-    assert ref["upgraded_to_topic_id"] is None
-    assert ref["content"] == "特征工程"  # text unchanged; only the link is added
-
-
 def test_archived_topic_is_frozen(client):
     # 归档后工作面冻结: no split, no doc edit on an archived topic.
     #

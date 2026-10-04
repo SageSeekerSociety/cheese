@@ -157,3 +157,92 @@ describe('题目页上问芝士', () => {
     expect(a.creditRefused.value).toBe(false)
   })
 })
+
+/** Events with their place in the question's stream, as the server sends them
+ *  once the question has an id. */
+function placed(...frames: [string, object, string?][]): Response {
+  const body = frames
+    .map(([event, data, id]) => `${id ? `id: ${id}\n` : ''}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+    .join('')
+  return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } })
+}
+
+describe('题目页上问芝士：连接断了，回答接着读', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('a stream cut before the end is read on from where it broke, and the whole answer is kept', async () => {
+    const readOn: string[] = []
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      const method = (init?.method ?? 'GET').toUpperCase()
+      if (url.endsWith('/assistant/tasks/7/conversations') && method === 'GET')
+        return envelope({ conversations: [CONVERSATION] })
+      if (url.endsWith('/assistant/conversations/c1') && method === 'GET')
+        return envelope({ ...CONVERSATION, messages: [], answering: null })
+      if (url.endsWith('/assistant/conversations/c1/ask'))
+        return placed(['answering', { id: 'q1' }], ['delta', { text: '先会', at: 0 }, '1-0'])
+      if (url.includes('/assistant/conversations/c1/answers/q1')) {
+        readOn.push(new URL(url, 'http://x').searchParams.get('after') ?? '')
+        return placed(['delta', { text: '会 gdb。', at: 1 }, '2-0'], ['done', { stopped: false }, '3-0'])
+      }
+      return new Response('not found', { status: 404 })
+    })
+    const a = useAssistant(() => 7)
+    await a.load()
+
+    await a.ask('要先会什么？', '答不上来')
+
+    expect(readOn).toEqual(['1-0'])
+    expect(a.messages.value.map((m) => [m.role, m.text])).toEqual([
+      ['user', '要先会什么？'],
+      ['assistant', '先会 gdb。'],
+    ])
+    expect(a.notice.value).toBeNull()
+  })
+
+  it('a stream cut that cannot be read on keeps no half answer and says it failed', async () => {
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      const method = (init?.method ?? 'GET').toUpperCase()
+      if (url.endsWith('/assistant/tasks/7/conversations') && method === 'GET')
+        return envelope({ conversations: [CONVERSATION] })
+      if (url.endsWith('/assistant/conversations/c1') && method === 'GET')
+        return envelope({ ...CONVERSATION, messages: [], answering: null })
+      if (url.endsWith('/assistant/conversations/c1/ask'))
+        return placed(['answering', { id: 'q1' }], ['delta', { text: '先会', at: 0 }, '1-0'])
+      return new Response('not found', { status: 404 })
+    })
+    const a = useAssistant(() => 7)
+    await a.load()
+
+    await a.ask('要先会什么？', '答不上来')
+
+    expect(a.messages.value.map((m) => m.role)).toEqual(['user'])
+    expect(a.notice.value).toBe('答不上来')
+    expect(a.busy.value).toBe(false)
+  })
+
+  it('opening a conversation still being answered shows the answer as it goes on', async () => {
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      const method = (init?.method ?? 'GET').toUpperCase()
+      if (url.endsWith('/assistant/tasks/7/conversations') && method === 'GET')
+        return envelope({ conversations: [CONVERSATION] })
+      if (url.endsWith('/assistant/conversations/c1') && method === 'GET')
+        return envelope({
+          ...CONVERSATION,
+          messages: [{ role: 'user', text: '要先会什么？', at: '2026-10-01T08:00:00Z' }],
+          answering: 'q1',
+        })
+      if (url.includes('/assistant/conversations/c1/answers/q1'))
+        return placed(['delta', { text: '先会 gdb。', at: 0 }, '1-0'], ['done', { stopped: false }, '2-0'])
+      return new Response('not found', { status: 404 })
+    })
+    const a = useAssistant(() => 7)
+
+    await a.load()
+    await vi.waitFor(() => expect(a.busy.value).toBe(false))
+
+    expect(a.messages.value.map((m) => [m.role, m.text])).toEqual([
+      ['user', '要先会什么？'],
+      ['assistant', '先会 gdb。'],
+    ])
+  })
+})

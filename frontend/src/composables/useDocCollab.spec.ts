@@ -44,7 +44,7 @@ vi.mock('@hocuspocus/provider', () => ({
 }))
 vi.mock('../api/docCollab', () => ({
   collabWsUrl: () => 'ws://collab.test/',
-  getDocTicket: async () => ({ document: 'room:r1', ticket: 'ticket', read_only: false }),
+  getDocTicket: async () => ({ document: 'doc:r1', ticket: 'ticket', read_only: false }),
 }))
 vi.mock('../me', () => ({ myAccount: () => null }))
 

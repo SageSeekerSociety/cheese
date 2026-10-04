@@ -25,6 +25,7 @@ import ConfirmDialog from '../components/base/ConfirmDialog.vue'
 import AdaptiveDialog from '../components/common/AdaptiveDialog.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
 import { goAuthorize } from '@/lib/desktopApp'
@@ -302,7 +303,12 @@ onMounted(async () => {
 
     <section class="settings-card" :aria-label="t('account.connections.pendingTitle')">
       <div class="settings-card__title">{{ t('account.connections.pendingTitle') }}</div>
-      <p v-if="!pending.length" class="settings-empty">{{ t('account.connections.pendingEmpty') }}</p>
+      <BaseEmptyState
+        v-if="!pending.length"
+        size="inline"
+        class="settings-empty"
+        :title="t('account.connections.pendingEmpty')"
+      />
       <div v-for="d in pending" :key="d.id" class="conn-row" :data-draft="d.id">
         <dl class="conn-spec">
           <dt>{{ t('account.connections.to') }}</dt>
@@ -351,7 +357,12 @@ onMounted(async () => {
         </div>
       </div>
       <p v-if="feishuMissing" class="settings-card__desc">{{ t('integrations.member.notConfigured') }}</p>
-      <p v-if="!integrations.length && !loading" class="settings-empty">{{ t('account.connections.accountsEmpty') }}</p>
+      <BaseEmptyState
+        v-if="!integrations.length && !loading"
+        size="inline"
+        class="settings-empty"
+        :title="t('account.connections.accountsEmpty')"
+      />
       <div v-for="row in integrations" :key="row.id" class="conn-row" :data-integration="row.id">
         <div class="conn-row__head">
           <div class="conn-row__id">

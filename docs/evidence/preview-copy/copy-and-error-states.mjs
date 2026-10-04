@@ -6,9 +6,9 @@
 // 标题 / 说明行 / 按钮，证明文案真的接进了产品，而不是只在预览页里画着好看。
 //
 // 判据只认 DOM 读回，不认像素：
-//   1. 对照页每一行都有两个 `.cp__stage`，各自的 `.aes__title` / `.aes__desc` / `.aes__btn`
+//   1. 对照页每一行都有两个 `.cp__stage`，各自的 `.bes__title` / `.bes__desc` / `.bes__btn`
 //      文本读回来，等于脚本里写的期望值；
-//   2. 七页实机上，`.aes` 块的 title 是中性句式、desc 是服务端原话、按钮是「重试」——
+//   2. 七页实机上，`.bes` 块的 title 是中性句式、desc 是服务端原话、按钮是「重试」——
 //      三条都要成立，缺一条都算没接上（只改 i18n 不传 `desc` 会在这里现形）；
 //   3. 「原话是否可见」看 `document.body.innerText` 里有没有那句原话；
 //   4. 队列那层壳的 `title` 属性读回来必须是空的：产品不再把原话挂在那里（对照页那两行
@@ -101,9 +101,9 @@ async function openPage() {
       id: row.querySelector('.cp__where')?.textContent?.trim().split(/\s+/)[0] ?? '',
       badge: row.querySelector('.cp__badge')?.textContent?.trim() ?? '',
       stages: [...row.querySelectorAll('.cp__stage')].map((st) => ({
-        title: st.querySelector('.aes__title')?.textContent?.trim() ?? '',
-        desc: st.querySelector('.aes__desc')?.textContent?.trim() ?? '',
-        action: st.querySelector('.aes__btn')?.textContent?.trim() ?? '',
+        title: st.querySelector('.bes__title')?.textContent?.trim() ?? '',
+        desc: st.querySelector('.bes__desc')?.textContent?.trim() ?? '',
+        action: st.querySelector('.bes__btn')?.textContent?.trim() ?? '',
       })),
     })),
     writeRows: [...document.querySelectorAll('.cp__table tbody tr')].map((tr) =>
@@ -165,17 +165,17 @@ for (const r of ROUTES) {
   await page.waitForTimeout(4000)
 
   const dom = await page.evaluate((raw) => {
-    const blocks = [...document.querySelectorAll('.aes')].map((b) => ({
-      title: b.querySelector('.aes__title')?.textContent?.trim() ?? '',
-      desc: b.querySelector('.aes__desc')?.textContent?.trim() ?? '',
-      action: b.querySelector('.aes__btn')?.textContent?.trim() ?? '',
+    const blocks = [...document.querySelectorAll('.bes')].map((b) => ({
+      title: b.querySelector('.bes__title')?.textContent?.trim() ?? '',
+      desc: b.querySelector('.bes__desc')?.textContent?.trim() ?? '',
+      action: b.querySelector('.bes__btn')?.textContent?.trim() ?? '',
       // 队列那层 `AdminQueueEmpty` 把原话挂在外层 `title` 上（悬停才看得到）。
       shellTitle: b.parentElement?.getAttribute('title') ?? '',
     }))
     return {
       blocks,
       rawVisible: document.body.innerText.includes(raw),
-      hasRetryButton: !!document.querySelector('.aes__btn'),
+      hasRetryButton: !!document.querySelector('.bes__btn'),
       hScroll: document.documentElement.scrollWidth > document.documentElement.clientWidth,
     }
   }, RAW)

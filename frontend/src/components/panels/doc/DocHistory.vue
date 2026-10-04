@@ -13,6 +13,7 @@ import MarkdownView from '../../common/MarkdownView.vue'
 
 import DocEditButton from './DocEditButton.vue'
 
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import { t } from '@/i18n'
 
 const props = defineProps<{
@@ -154,7 +155,7 @@ async function restoreSelected() {
       <div class="doc-history__body">
         <div class="doc-history__preview">
           <MarkdownView v-if="current" class="md-content" :source="current.content" :names="names" />
-          <div v-else-if="!loading" class="doc-history__empty">{{ t('work.room.doc.historyEmpty') }}</div>
+          <BaseEmptyState v-else-if="!loading" size="inline" :title="t('work.room.doc.historyEmpty')" />
         </div>
         <ol class="doc-history__list" :aria-label="t('work.room.doc.history')">
           <li v-for="(v, i) in entries" :key="v.version">
@@ -228,11 +229,6 @@ async function restoreSelected() {
   padding: 24px 32px;
   overflow-y: auto;
   color: var(--text);
-}
-.doc-history__empty {
-  color: var(--muted);
-  font-size: 14px;
-  line-height: var(--lh-14);
 }
 .doc-history__list {
   flex: 0 0 260px;
