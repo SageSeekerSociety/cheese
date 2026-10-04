@@ -195,7 +195,9 @@ const emit = defineEmits<{
 .privacy-usage-card {
   border: 1px solid rgba(var(--v-border-color), 0.12);
   background-color: var(--surface);
-  transition: all 0.2s ease;
+  transition:
+    border-color 0.2s ease,
+    background-color 0.2s ease;
 }
 
 .privacy-usage-card:hover {

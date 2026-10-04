@@ -263,7 +263,7 @@ watch(() => props.projectId, load)
               >
                 {{ t('work.mcp.action.save') }}
               </BaseButton>
-              <BaseButton v-if="variable.set" kind="danger" size="sm" @click="clear(variable.name)">
+              <BaseButton v-if="variable.set" kind="ghost" size="sm" @click="clear(variable.name)">
                 {{ t('work.mcp.action.clear') }}
               </BaseButton>
               <span v-if="variable.set && variable.updated_by" class="t-meta">

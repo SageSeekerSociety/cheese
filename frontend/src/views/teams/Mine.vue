@@ -102,7 +102,6 @@ onMounted(async () => {
 
 <style scoped>
 .my-teams-card {
-  transition: all 0.3s ease;
   overflow: hidden;
 }
 
@@ -111,7 +110,9 @@ onMounted(async () => {
 }
 
 .my-team-item {
-  transition: all 0.2s ease;
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease;
   border: 1px solid transparent;
 }
 

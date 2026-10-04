@@ -73,7 +73,7 @@ const contentDivStyles = computed(() => ({
     padding-top: 64px;
     background: linear-gradient(rgba(var(--v-theme-background), 0), rgba(var(--v-theme-background), 1));
     opacity: 0.75;
-    transition: all 0.3s;
+    transition: opacity 0.3s;
     cursor: pointer;
     text-align: center;
 

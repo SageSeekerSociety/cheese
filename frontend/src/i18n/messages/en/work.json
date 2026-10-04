@@ -47,7 +47,8 @@
     "confirm": "Push and change",
     "unavailable": "{name} · Unavailable",
     "abandonWarning": "Changing without pushing leaves the unpushed changes on the old computer. They will not reach the new one.",
-    "abandon": "Change without pushing"
+    "abandon": "Change without pushing",
+    "abandonTitle": "Change without pushing?"
   },
   "roomMachine": {
     "edit": "Edit",
@@ -1697,6 +1698,8 @@
   "skills": {
     "edit": "Edit",
     "discard": "Discard changes",
+    "discardTitle": "Discard the changes to \"{title}\"?",
+    "discardHint": "The changes are dropped and the shipped version comes back. They can't be recovered.",
     "drop": "Discard",
     "history": "Version history",
     "delete": "Delete",
