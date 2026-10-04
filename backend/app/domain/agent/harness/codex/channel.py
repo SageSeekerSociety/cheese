@@ -42,14 +42,10 @@ class CodexChannel:
         self.channel = channel
         self.executor = executor
         self.name = channel.name
-        self.provisions_machine = channel.provisions_machine
         self.deferred_work = channel.deferred_work
 
     def available(self):
         return self.channel.available()
-
-    async def prepare_topic(self, **kwargs):
-        return await self.channel.prepare_topic(**kwargs)
 
     def _mirror(self, session: SessionRef, agent: str) -> Path:
         return (

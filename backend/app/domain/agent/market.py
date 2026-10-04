@@ -105,11 +105,10 @@ def ai_listings(
 def cloud_provisionable(
     settings,  # type: ignore[no-untyped-def]
 ) -> bool:
-    """Can cheese PROVISION a Cloud machine on this deployment?
+    """Can cheese place sessions in cloud sandboxes on this deployment?
 
-    Connector presence belongs to an individual topic machine's later
-    boot/enrolment state; using it here would make a configured empty pool
-    impossible to select."""
+    Whether a host of the pool is up right now is the pool's business; using it
+    here would make a configured empty pool impossible to select."""
     return bool(settings.microcloud_base_url and settings.microcloud_tenant_secret)
 
 
@@ -155,10 +154,10 @@ def compute_listings(
         PoolListing(
             kind="compute",
             id=COMPUTE_CLOUD,
-            label="云端",
+            label="云端沙箱",
             tier=COMPUTE_TIERS[COMPUTE_CLOUD],
             price="按量计费",
-            description="为房间创建一台云端工作电脑；首次启动需要几分钟。",
+            description="每条会话在平台的云端沙箱里执行；云端资源紧张时需要等几分钟。",
             available=cloud_ready,
             default=fallback == COMPUTE_CLOUD,
         ),

@@ -9,7 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.response import ok
-from app.api.routes.machines import _require_project_access
 from app.api.routes.spaces import get_space_service
 from app.auth.project_access import may_read_project
 from app.core.db import get_db
@@ -25,6 +24,7 @@ from app.domain.dashboard.services import DashboardService
 from app.domain.memory.store import forget_fact_about
 from app.domain.project.repositories import ProjectRepository
 from app.domain.space.services import SpaceService
+from app.domain.team.services import team_service
 from app.domain.usage.repositories import UsageRepository
 from app.domain.usage.services import UsageService
 
@@ -125,12 +125,31 @@ async def project_usage(
     return ok(await UsageRepository(db).for_project(project_id))
 
 
+async def _require_team_member(
+    project_id: uuid.UUID, db: AsyncSession, resolver: ActorResolver
+) -> None:
+    """A signed-in member of the project's team; anyone else is told the
+    project does not exist."""
+    actor = await resolver.resolve(project_id=project_id)
+    if not actor.authenticated:
+        raise AuthenticationRequiredError("Login required to read project credits")
+    project = await ProjectRepository(db).get(project_id)
+    if project is None:
+        raise NotFoundError("Project not found")
+    if actor.user_id is None:
+        raise AuthenticationRequiredError(
+            "A current user credential is required to read project credits"
+        )
+    if not await team_service(db).is_team_member(project.team_id, actor.user_id):
+        raise NotFoundError("Project not found")
+
+
 @router.get("/projects/{project_id}/credits")
 async def project_credits(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     """Credits this project can spend from its team's pool and restricted grants."""
-    await _require_project_access(project_id, db, resolver)
+    await _require_team_member(project_id, db, resolver)
     summary = await UsageService(db).project_credits(project_id)
     return ok(
         {

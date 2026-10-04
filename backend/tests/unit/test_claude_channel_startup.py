@@ -39,7 +39,6 @@ class Host:
     """The central channel's surface the Claude Code channel uses, on this disk."""
 
     name = "central"
-    provisions_machine = False
     deferred_work = False
     _session_factory = None
     # What the room was told when the session did not come up, and the

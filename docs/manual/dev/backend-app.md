@@ -146,7 +146,7 @@ covers:
 | orphan sweep | `orphan_sweep_interval_s` | 扫死了没带进程一起死的轮 |
 | chat progress reminder | `chat_progress_check_interval_s` | 提醒沉默的轮 |
 | gate sweep | `gate_sweep_interval_s` | 收超龄的闸门孤儿卡 |
-| machine enrollment sweep / cloud warm pool | `machine_enroll_interval_seconds` | 入网预置机器、维护云机器热身池 |
+| cloud host pool sweep / cloud warm pool | `machine_enroll_interval_seconds` | 云主机池：同步宿主机状态、入网、按需扩容和释放空闲宿主机；维护预热池 |
 | subscription usage ingest | `subscription_ingest_interval_s`，未设 `SUBSCRIPTION_USAGE_LOG` 时为 0 | 把计量代理的账本吃进 `resource_usage` |
 | backend error flush | `backend_error_flush_interval_s` | 把后端报错按窗口收口后发回房间 |
 | notification email drain / push drain | `notification_email_drain_interval_s` / `notification_push_drain_interval_s` | 那两条 Redis 队列的唯一消费者，不跑就一封邮件、一条推送都不发 |

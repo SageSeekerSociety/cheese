@@ -30,7 +30,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.domain.device.models import DeviceRow, HostedDeviceRow
-from app.domain.machine.models import ProjectMachine, WarmMachine
+from app.domain.machine.models import (
+    CloudHost,
+    CloudHostHome,
+    WarmMachine,
+    capacity,
+)
 from app.domain.platform_stats.windows import utc_day_window
 from app.domain.project.models import Project
 from app.domain.usage import ledger
@@ -267,11 +272,11 @@ class GapRepository:
             }
 
     async def _machine_census(self) -> dict[str, Any]:
-        """温机/项目机按状态的存量普查。**没有沙箱清单** —— 别写「沙箱数」。
+        """温机/云端宿主机按状态的存量普查，和宿主机上的沙箱槽位。
 
-        云机上每条会话的执行器各跑在一个沙箱里（`Visibility.isolated`），但沙箱只是
-        机器上的一个进程，平台没有记它的台账，所以今天不存在一份可以数的沙箱清单。
-        这里数的是四张台账里的**行**与状态分布。
+        槽位是 ``cloud_host_homes`` 里的行数（每条会话在宿主机上的家占一格）对
+        ``capacity``（核数 × ``cloud_host_slots_per_core``）；只数还在池子里的宿主
+        机。这里数的是台账里的**行**与状态分布，不是在线进程。
         """
 
         async def _count(model: Any, *where: Any) -> int:
@@ -285,13 +290,16 @@ class GapRepository:
                 select(WarmMachine.state, func.count()).group_by(WarmMachine.state)
             )
         ).all()
-        project_rows = (
+        host_rows = (
             await self._session.execute(
-                select(ProjectMachine.status, func.count()).group_by(
-                    ProjectMachine.status
-                )
+                select(CloudHost.status, func.count()).group_by(CloudHost.status)
             )
         ).all()
+        live = list(
+            await self._session.scalars(
+                select(CloudHost).where(CloudHost.released_at.is_(None))
+            )
+        )
         return {
             "devices": await _count(DeviceRow),
             "hosted_devices": await _count(HostedDeviceRow),
@@ -300,15 +308,18 @@ class GapRepository:
             "warm_error": await _count(
                 WarmMachine, WarmMachine.error.is_not(None), WarmMachine.error != ""
             ),
-            "project_total": await _count(ProjectMachine),
-            "project_by_status": {str(s): int(n) for s, n in project_rows},
-            "project_leased": await _count(
-                ProjectMachine, ProjectMachine.released_at.is_(None)
+            "host_total": await _count(CloudHost),
+            "host_by_status": {str(s): int(n) for s, n in host_rows},
+            "host_active": len(live),
+            "host_enroll_error": await _count(
+                CloudHost,
+                CloudHost.enroll_error.is_not(None),
+                CloudHost.enroll_error != "",
             ),
-            "project_enroll_error": await _count(
-                ProjectMachine,
-                ProjectMachine.enroll_error.is_not(None),
-                ProjectMachine.enroll_error != "",
+            "host_slots_used": await _count(
+                CloudHostHome,
+                CloudHostHome.host_id.in_([host.id for host in live]),
             ),
+            "host_slots_total": sum(capacity(host) for host in live),
             "note_key": "platform.machinesNote",
         }

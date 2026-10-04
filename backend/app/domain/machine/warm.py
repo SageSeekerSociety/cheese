@@ -1,4 +1,4 @@
-"""Prepare unused machines and hand each to one room, with durable claim intent."""
+"""Prepare unused machines and hand each to the host pool, with durable claim intent."""
 
 import asyncio
 import logging
@@ -21,14 +21,14 @@ from app.domain.identity.services import IdentityService
 from app.domain.machine import enrollment
 from app.domain.machine.microcloud import MicroCloudClient, MicroCloudError
 from app.domain.machine.models import (
+    HOST_OWNER,
     AiStatus,
+    CloudHost,
     MachineStatus,
-    ProjectMachine,
     WarmMachine,
 )
-from app.domain.machine.repositories import ProjectMachineRepository
+from app.domain.machine.repositories import CloudHostRepository
 from app.domain.machine.supply import pick_offering
-from app.domain.project.services import ProjectService
 
 logger = logging.getLogger("cheese.machine.warm")
 POOL_LOCK = 728104913
@@ -113,17 +113,10 @@ class WarmPoolService:
         self.client = client or MicroCloudClient()
         self.devices = sql_device_service(session)
 
-    async def reserve(
-        self,
-        *,
-        body: dict,
-        project_id: uuid.UUID,
-        topic_id: uuid.UUID,
-        session_id: uuid.UUID | None = None,
-        requested_by: str | None,
-        owner_user_id: int,
-    ) -> ProjectMachine | None:
-        """Persist admission while the caller holds topic and team quota locks."""
+    async def reserve(self, *, body: dict, home: dict | None) -> CloudHost | None:
+        """Turn a ready warm machine into a host of the pool, with ``home`` on
+        it if given. Called holding the pool lock; the claim at the provider
+        runs after this commits."""
         candidates = (
             await self.session.scalars(
                 select(WarmMachine)
@@ -159,12 +152,8 @@ class WarmPoolService:
             if warm is None:
                 continue
             assert warm.machine_id is not None
-            machine = await ProjectMachineRepository(self.session).add(
-                project_id=project_id,
-                topic_id=topic_id,
-                session_id=session_id,
-                requested_by=requested_by,
-                owner_user_id=owner_user_id,
+            repo = CloudHostRepository(self.session)
+            host = await repo.add(
                 machine_id=warm.machine_id,
                 customer_id=body["customerId"],
                 account_id=body["accountId"],
@@ -178,23 +167,25 @@ class WarmPoolService:
                 ip=warm.ip,
                 ai_mode=body.get("aiMode", "none"),
                 ai_status=AiStatus.provisioning,
+                warm_claim_pending=True,
             )
+            if home is not None:
+                await repo.add_home(host_id=host.id, **home)
             warm.state = "reserved"
             warm.attempts = 0
-            machine.warm_claim_pending = True
-            warm.claimed_machine_id = machine.id
+            warm.claimed_host_id = host.id
             await self.session.commit()
-            await self.finish_claim(machine)
-            return machine
-        logger.info("warm pool miss topic=%s", topic_id)
+            await self.finish_claim(host)
+            return host
+        logger.info("warm pool miss")
         return None
 
-    async def _claimable(self, machine: ProjectMachine) -> WarmMachine | None:
-        """The reservation this machine still has to finish, locked."""
+    async def _claimable(self, host: CloudHost) -> WarmMachine | None:
+        """The reservation this host still has to finish, locked."""
         return await self.session.scalar(
             select(WarmMachine)
             .where(
-                WarmMachine.claimed_machine_id == machine.id,
+                WarmMachine.claimed_host_id == host.id,
                 WarmMachine.state.in_(["reserved", "claim_failed"]),
             )
             .with_for_update()
@@ -203,41 +194,37 @@ class WarmPoolService:
             .execution_options(populate_existing=True)
         )
 
-    async def finish_claim(self, machine: ProjectMachine) -> bool:
-        """Claim the reserved machine at the provider and bind it to the room.
+    async def finish_claim(self, host: CloudHost) -> bool:
+        """Claim the reserved machine at the provider for the platform's pool.
 
         The reservation row is the durable intent, so the provider call runs
         with no transaction open: this commits the session before the call and
-        locks the rows again to record the answer. A lock held across the call
-        would queue every other admission of this room behind it with a pool
-        connection each (dev outage of 2026-09-18). Callers that held locks
-        take them again after this returns. A second claimer of the same
-        machine in this process waits for the first; the provider's claim is
-        idempotent by claimKey, so one in another process gets the same answer
-        and the locked re-read records it once.
+        locks the pool again to record the answer. A lock held across the call
+        would queue every other admission behind it with a pool connection
+        each (dev outage of 2026-09-18). Callers that held locks take them
+        again after this returns. A second claimer of the same machine in this
+        process waits for the first; the provider's claim is idempotent by
+        claimKey, so one in another process gets the same answer and the
+        locked re-read records it once.
         """
-        if machine.topic_id is None or not machine.warm_claim_pending:
+        if not host.warm_claim_pending:
             return False
         # Let go of the caller's locks before waiting for another claimer: it
-        # will need the same topic lock to record its result, and a claimer
-        # that waits here while holding it would deadlock with it.
+        # needs the pool lock to record its result.
         await self.session.commit()
-        async with _claim_locks.setdefault(machine.id, asyncio.Lock()):
-            return await self._finish_claim(machine)
+        async with _claim_locks.setdefault(host.id, asyncio.Lock()):
+            return await self._finish_claim(host)
 
-    async def _finish_claim(self, machine: ProjectMachine) -> bool:
-        repo = ProjectMachineRepository(self.session)
-        assert machine.topic_id is not None
-        await repo.lock_topic(machine.topic_id)
-        await self.session.refresh(machine)
-        warm = await self._claimable(machine)
+    async def _finish_claim(self, host: CloudHost) -> bool:
+        repo = CloudHostRepository(self.session)
+        await repo.lock_pool()
+        await self.session.refresh(host)
+        warm = await self._claimable(host)
         if warm is None:
             await self.session.commit()
             return False
         assert warm.machine_id is not None
-        owner_user_id = machine.owner_user_id
-        assert owner_user_id is not None  # A reservation is created for a room agent.
-        if machine.released_at is not None or machine.status in {
+        if host.released_at is not None or host.status in {
             MachineStatus.deleted,
             MachineStatus.deleting,
         }:
@@ -250,51 +237,46 @@ class WarmPoolService:
             warm.attempts = 0
         warm_machine_id = warm.machine_id
         claim = {
-            # New allocations can coexist in a room and be replaced after
-            # migration. Legacy pending claims retain their original key.
-            "claimKey": str(machine.id if machine.session_id else machine.topic_id),
-            "customerId": machine.customer_id,
-            "accountId": machine.account_id,
+            "claimKey": str(host.id),
+            "customerId": host.customer_id,
+            "accountId": host.account_id,
         }
         await self.session.commit()
         started = time.monotonic()
-        # The room lease already counts against quota. Keep it reserved on timeout, and
-        # retry this exact recipient; allocating a second machine would leak the first.
+        # The host already counts in the pool. Keep it reserved on timeout and
+        # retry this exact claim; claiming a second machine would leak the first.
         try:
             upstream = await self.client.claim_warm_machine(warm_machine_id, claim)
         except MicroCloudError as exc:
-            await repo.lock_topic(machine.topic_id)
-            await self.session.refresh(machine)
-            warm = await self._claimable(machine)
+            await repo.lock_pool()
+            await self.session.refresh(host)
+            warm = await self._claimable(host)
             if warm is None:
                 await self.session.commit()
                 return False
             warm.attempts += 1
             warm.error = f"claim HTTP {exc.status}" if exc.status else "claim timeout"
             if warm.attempts >= 5 or exc.status in {400, 401, 403, 404}:
+                # The host is then failed before enrollment, which the pool
+                # gives up on and places its sessions again.
                 warm.state = "claim_failed"
-                machine.status = MachineStatus.error
-                machine.enroll_error = (
-                    "云端资源分配失败，请重试；也可以释放机器后重新创建。"
-                )
+                host.status = MachineStatus.error
+                host.enroll_error = warm.error
             await self.session.commit()
-            logger.warning(
-                "warm claim pending topic=%s status=%s", machine.topic_id, exc.status
-            )
+            logger.warning("warm claim pending host=%s status=%s", host.id, exc.status)
             return False
-        await repo.lock_topic(machine.topic_id)
-        await self.session.refresh(machine)
-        warm = await self._claimable(machine)
+        await repo.lock_pool()
+        await self.session.refresh(host)
+        warm = await self._claimable(host)
         if warm is None:
             # Recorded by another claimer, or retired meanwhile.
             await self.session.commit()
             return False
-        if machine.released_at is not None or machine.status in {
+        if host.released_at is not None or host.status in {
             MachineStatus.deleted,
             MachineStatus.deleting,
         }:
-            # Released during the call: the provider now bills the room's
-            # account for it, and the sweep deletes it like any other.
+            # Released during the call: the sweep deletes it like any other.
             warm.state = "deleting"
             warm.attempts = 0
             await self.session.commit()
@@ -302,32 +284,21 @@ class WarmPoolService:
         device = await self.session.get(DeviceRow, warm.device_id)
         if device is None or device.supply != Supply.cloud:
             raise ValidationError(say("warmMachineLinkExpired"))
-        device.owner_user_id = owner_user_id
-        project = await ProjectService(self.session).get(machine.project_id)
-        if project is None:
-            raise ValidationError(say("projectNotFound"))
-        await self.session.flush()
-        if project.team_id is not None:
-            await self.devices.assign_to_team(
-                device.device_id, project.team_id, actor_user_id=owner_user_id
-            )
-        else:
-            await self.devices.assign_to_project(
-                device.device_id, project.id, actor_user_id=owner_user_id
-            )
-        machine.device_id = warm.device_id
-        machine.warm_claim_pending = False
-        machine.enroll_error = None
-        machine.enrolled_at = warm.enrolled_at
-        machine.status = MachineStatus(upstream["status"])
-        machine.ai_status = AiStatus(upstream["aiStatus"])
-        machine.last_seen_at = datetime.now(UTC)
+        owner = await IdentityService(self.session).ensure_agent_user(handle=HOST_OWNER)
+        device.owner_user_id = owner.id
+        host.device_id = warm.device_id
+        host.warm_claim_pending = False
+        host.enroll_error = None
+        host.enrolled_at = warm.enrolled_at
+        host.status = MachineStatus(upstream["status"])
+        host.ai_status = AiStatus(upstream["aiStatus"])
+        host.last_seen_at = datetime.now(UTC)
         warm.state = "claimed"
         warm.error = None
         await self.session.commit()
         logger.info(
-            "warm claim complete topic=%s duration_ms=%d",
-            machine.topic_id,
+            "warm claim complete host=%s duration_ms=%d",
+            host.id,
             (time.monotonic() - started) * 1000,
         )
         return True
@@ -357,14 +328,11 @@ class WarmPoolService:
         abandoned = (
             await self.session.scalars(
                 select(WarmMachine)
-                .outerjoin(
-                    ProjectMachine, WarmMachine.claimed_machine_id == ProjectMachine.id
-                )
                 .where(
                     WarmMachine.state.in_(["reserved", "claim_failed"]),
-                    or_(ProjectMachine.id.is_(None), ProjectMachine.topic_id.is_(None)),
+                    WarmMachine.claimed_host_id.is_(None),
                 )
-                .with_for_update(of=WarmMachine)
+                .with_for_update()
             )
         ).all()
         for row in abandoned:
@@ -373,21 +341,21 @@ class WarmPoolService:
         await self.session.commit()
         pending = (
             await self.session.scalars(
-                select(ProjectMachine)
-                .join(WarmMachine, WarmMachine.claimed_machine_id == ProjectMachine.id)
+                select(CloudHost)
+                .join(WarmMachine, WarmMachine.claimed_host_id == CloudHost.id)
                 .where(
                     or_(
                         WarmMachine.state == "reserved",
                         and_(
                             WarmMachine.state == "claim_failed",
-                            ProjectMachine.released_at.is_not(None),
+                            CloudHost.released_at.is_not(None),
                         ),
                     )
                 )
             )
         ).all()
-        for machine in pending:
-            await self.finish_claim(machine)
+        for host in pending:
+            await self.finish_claim(host)
         rows = (
             await self.session.scalars(
                 select(WarmMachine)

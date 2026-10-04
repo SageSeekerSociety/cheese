@@ -45,14 +45,11 @@ from app.domain.identity.actor import Actor
 from app.domain.machine.models import (
     GONE,
     MAX_ENROLL_ATTEMPTS,
+    CloudHost,
     MachineStatus,
-    ProjectMachine,
 )
-from app.domain.machine.services import (
-    CloudKeepsFailing,
-    MachineService,
-    left_unpushed_on,
-)
+from app.domain.machine.progress import publish_line
+from app.domain.machine.services import CloudKeepsFailing, CloudPoolFull, HostPool
 from app.domain.policy import gate
 from app.domain.project.environment import EnvironmentConfig, pin_environment
 from app.domain.project.services import ProjectService
@@ -63,17 +60,24 @@ from app.domain.user.services import user_by_handle
 
 def presentation(row):
     request = row.execution_request or {}
+    lease = row.work_lease
+    shown = None
+    if lease:
+        online = device_hub.is_online(lease["device_id"])
+        # A cloud session's sandbox is on one of the platform's hosts. Which one,
+        # and where on it, is the platform's scheduling and nobody's to read.
+        on_cloud = (request.get("choice") or {}).get("profile") == "cloud"
+        shown = (
+            {"status": lease.get("status", "ready"), "online": online}
+            if on_cloud
+            else {**lease, "online": online}
+        )
     return {
         "id": str(row.id),
         "agent_handle": row.agent_handle,
         "harness": row.harness,
         "choice": request.get("choice"),
-        "lease": {
-            **row.work_lease,
-            "online": device_hub.is_online(row.work_lease["device_id"]),
-        }
-        if row.work_lease
-        else None,
+        "lease": shown,
     }
 
 
@@ -93,12 +97,13 @@ async def _visibility_of(devices, device_id: str | None) -> Visibility | None:
 
 
 async def session_machines(db, topic) -> list[dict]:
-    """Each agent session in the room, with the machine it works on.
+    """Each agent session in the room, with what it works on.
 
-    一个话题一个容器（2026-09-28 决定，推翻结论 60）：一个房间里的所有会话都在房间
-    那一项算出来的那台机器上，所以这里每一行答的都是那**一台**——会话手上有租约就
-    是租约那台，还没开工就是房间那一项将租的那台。``choice`` 只有「这条会话还没
-    开工、还没租到手」时才可能是 ``None``。
+    一个话题一个容器（2026-09-28 决定，推翻结论 60）：房间那一项就是房间里每条会话
+    的选择。选自托管设备的房间，每一行答的都是那**一台**——会话手上有租约就是租约
+    那台，还没开工就是房间那一项将租的那台；选云端的房间，每条会话各有自己的沙箱，
+    在平台的哪台宿主机上不对外说。``choice`` 只有「这条会话还没开工、还没租到手」
+    时才可能是 ``None``。
     """
     devices = sql_device_service(db)
     rows = await db.scalars(
@@ -469,8 +474,8 @@ async def push_before_switch(
     one, left as it is): a closed task is never pushed, only backed up, and
     its checkout stays on that machine after the switch, so a backup it could
     not make loses nothing. Those come back as warnings, one line per task,
-    and the switch goes on. A Cloud machine is deleted after the switch, so
-    there they refuse it like any other failure.
+    and the switch goes on. A cloud sandbox's directory is not kept for the
+    session once it left, so there they refuse it like any other failure.
 
     The session's executor runs only while the session is in use, so on a
     machine that is online an idle session usually has none. ``start`` brings
@@ -672,18 +677,6 @@ async def _restart_executor(db, row, lease):
     )
 
 
-async def lock_room(db, topic_id):
-    """Lock the room, then its machine slot — the order every path taking both
-    keeps. A room change that took the slot first and then waited for the room
-    deadlocked with an agent getting its machine, which holds the room and waits
-    for the slot; Postgres killed one of the two and it answered 500."""
-    from app.domain.machine.repositories import ProjectMachineRepository
-
-    topic = await TopicService(db).lock_for_execution(topic_id)
-    await ProjectMachineRepository(db).lock_topic(topic_id)
-    return topic
-
-
 async def request_choice(
     db,
     *,
@@ -789,10 +782,12 @@ async def _move_session(
 
     The push runs on the machine the session leaves, with no transaction open.
     Only a person may switch without it, and only when that machine could not
-    be reached (``abandon_unpushed``). A Cloud machine left after a push is
-    deleted, so it stops counting against the team's quota. With ``if_idle``
-    a session whose room is mid-turn is left alone (``SessionWorking``).
-    Returns the push's warnings (``push_before_switch``).
+    be reached (``abandon_unpushed``). A session leaving its cloud sandbox
+    after a push gives its home on the host back to the pool; one that leaves
+    without pushing keeps the home, and the host with it, until the room's
+    cleanup removes it. With ``if_idle`` a session whose room is mid-turn is
+    left alone (``SessionWorking``). Returns the push's warnings
+    (``push_before_switch``).
     """
     # 房间那一把锁：这一条会话的租约和房间的算力选择在同一行上改，拿着它读、拿着
     # 它写，别的请求看到的是「搬之前」或者「搬之后」，没有中间态。
@@ -826,7 +821,8 @@ async def _move_session(
         start = await _restart_executor(db, row, old)
         await db.commit()
         try:
-            # A Cloud machine is deleted once left; any other keeps its files.
+            # A cloud sandbox's home goes once left; any other machine keeps its
+            # files.
             leaving_cloud = (request.get("choice") or {}).get("profile") == "cloud"
             warnings = await push_before_switch(
                 old, start, keeps_files=not leaving_cloud
@@ -846,16 +842,11 @@ async def _move_session(
         if _still_preparing(old):
             raise ConflictError(say("machineAllocationInProgress"))
     on_cloud = (request.get("choice") or {}).get("profile") == "cloud"
-    left = None
     if on_cloud:
-        # The room's machine: detached only when no other session is on it.
-        left = await MachineService(db).supersede_session_machine(
-            session_id, actor=actor
-        )
-    # Whatever was on a Cloud machine is on its branches now (or it never held
-    # a lease), so the machine goes once the room's last session has left it.
-    # Anything else stays for the room's cleanup.
-    release = left if left is not None and (pushed or not old) else None
+        # Whatever was in the sandbox is on its branches now, or it never held a
+        # lease: its home goes. Work it could not push keeps the home, and the
+        # host, for the room's cleanup.
+        await HostPool(db).leave(session_id, kept_work=bool(old) and not pushed)
     kept = [] if old is None or (on_cloud and pushed) else [old]
     row.execution_request = {
         "generation": str(uuid.uuid4()),
@@ -865,12 +856,12 @@ async def _move_session(
     }
     row.work_lease = None
     await db.commit()
-    if release is not None and not await left_unpushed_on(
-        db, topic_id, release.device_id
-    ):
-        await MachineService(db).release_left_machine(release.id)
     return warnings
 
+
+# What a tool waiting on its cloud sandbox is told.
+SANDBOX_PREPARING = "沙箱正在准备；对话和平台工具仍可用。"
+SANDBOX_ERROR = "云端沙箱出错：供应方报告错误。对话和平台工具仍可用。"
 
 # The room names a machine whose owner has since unbound it. It cannot come back
 # under that id (a re-bind enrols a new one), so the room needs another choice.
@@ -1076,28 +1067,29 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
     authorized = request.get("authorized_by")
     if isinstance(verdict, gate.Proposal):
         raise ForbiddenError(say("machineTierNotAllowed"))
+    work_resource = (lease or {}).get("resource_id") or generation
     if choice.profile == "cloud":
         allocation_actor = (
             Actor(**authorized)
             if isinstance(authorized, dict)
             else Actor(handle=claims.get("a", ""), user_id=None, via="cheese")
         )
+        pool = HostPool(db, hub=hub)
         try:
-            machine = await MachineService(db).ensure_session_machine(
-                session_id,
-                actor=allocation_actor,
-                choice=choice,
+            cloud_host = await pool.place(
+                session_id, actor=allocation_actor, resource_id=work_resource
             )
-        except CloudKeepsFailing as failing:
+        except (CloudKeepsFailing, CloudPoolFull) as refused:
             await db.commit()
-            return {"unavailable": str(failing)}
-        if not machine.device_id or not hub.is_online(machine.device_id):
+            return {"unavailable": str(refused)}
+        if not cloud_host.device_id or not hub.is_online(cloud_host.device_id):
+            line = await pool.tell_waiting(session_id)
             await db.commit()
+            await publish_line(topic_id, line)
             return _Preparing(
-                "云端工作电脑正在准备；对话和平台工具仍可用。",
-                partial(_cloud_progress, db, hub, machine.id),
+                SANDBOX_PREPARING, partial(_cloud_progress, db, hub, cloud_host.id)
             )
-        device_id = machine.device_id
+        device_id = cloud_host.device_id
         # Provisioning releases its transaction around external calls.
         topic = await TopicService(db).lock_for_execution(topic_id)
         row = await sessions.by_id(session_id, lock=True)
@@ -1122,7 +1114,6 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
             **lease,
             "url": f"{host_api}/topics/{topic_id}/execution/session-{resource}",
         }
-    work_resource = (lease or {}).get("resource_id") or generation
     claim = str(uuid.uuid4())
     reservation = {
         "kind": "device",
@@ -1214,8 +1205,8 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
             # same answer as when it is away before setup starts (above).
             if choice.profile == "cloud":
                 return _Preparing(
-                    "云端工作电脑正在准备；对话和平台工具仍可用。",
-                    partial(_cloud_progress, db, hub, machine.id),
+                    SANDBOX_PREPARING,
+                    partial(_cloud_progress, db, hub, cloud_host.id),
                 )
             return {"unavailable": "工作电脑未连接；对话和平台工具仍可用。"}
         raise
@@ -1232,7 +1223,11 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
         await tell_device_owner(
             db, topic=current, row=row, device=selected, lease=target
         )
+    ready_line = None
+    if choice.profile == "cloud" and target["status"] == "ready":
+        ready_line = await HostPool(db, hub=hub).tell_ready(session_id)
     await db.commit()
+    await publish_line(topic_id, ready_line)
     if target["status"] != "ready":
         message = "项目环境尚未就绪；对话和平台工具仍可用。"
         detail = {"environment_status": target.get("environment_status")}
@@ -1260,37 +1255,33 @@ async def _claim_moved(db, session_id, claim) -> bool:
     return not until or datetime.fromisoformat(until) <= datetime.now(UTC)
 
 
-async def _cloud_progress(db, hub, machine_id) -> str | bool:
-    """Where the session's Cloud machine is on its way to being usable."""
-    machine = (
+async def _cloud_progress(db, hub, host_id) -> str | bool:
+    """Where the host of the session's sandbox is on its way to being usable."""
+    host = (
         await db.execute(
             select(
-                ProjectMachine.status,
-                ProjectMachine.device_id,
-                ProjectMachine.enroll_attempts,
-                ProjectMachine.released_at,
-                ProjectMachine.superseded_at,
-            ).where(ProjectMachine.id == machine_id)
+                CloudHost.status,
+                CloudHost.device_id,
+                CloudHost.enroll_attempts,
+                CloudHost.released_at,
+            ).where(CloudHost.id == host_id)
         )
     ).one_or_none()
-    if machine is None or machine.released_at or machine.superseded_at:
-        # The allocation changed under us; the next attempt says how.
+    if host is None or host.released_at:
+        # The pool let go of it; the next attempt places the session again.
         return True
-    if machine.status == MachineStatus.error:
-        if machine.device_id is None:
-            # Failed while being built: the next attempt replaces it, within
-            # the room's limit (``MachineService.ensure_session_machine``).
+    if host.device_id is None:
+        if host.status == MachineStatus.error or (
+            (host.enroll_attempts or 0) >= MAX_ENROLL_ATTEMPTS
+        ):
+            # Failed while being built: the next attempt places the session on
+            # another host.
             return True
-        # Enrolled, so the room's work may be on it: it is not replaced.
-        return "云端工作电脑出错：供应方报告错误。对话和平台工具仍可用。"
-    if machine.status in GONE:
-        # Gone upstream: the next attempt forgets it and asks for another.
-        return True
-    if machine.device_id is None:
-        if (machine.enroll_attempts or 0) >= MAX_ENROLL_ATTEMPTS:
-            return (
-                f"云端工作电脑接入失败：已尝试 {MAX_ENROLL_ATTEMPTS} 次。"
-                "对话和平台工具仍可用。"
-            )
         return False
-    return hub.is_online(machine.device_id)
+    if host.status == MachineStatus.error:
+        # Enrolled, so the session's work may be on it: it is not replaced.
+        return SANDBOX_ERROR
+    if host.status in GONE:
+        # Gone upstream: the next attempt forgets it and places the session.
+        return True
+    return hub.is_online(host.device_id)

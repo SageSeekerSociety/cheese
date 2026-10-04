@@ -126,12 +126,6 @@ class Channel:
     # this says which machine, that says what runs on it.
     name: str = "channel"
 
-    # Does a turn here have to wait for a machine to be created first? The turn
-    # path branches on it (``ChatService`` shows 「机器正在创建」 and holds the
-    # prompt) rather than on the channel's class, so a second leased-machine
-    # transport gets the same waiting room without the platform learning its
-    # name.
-    provisions_machine: bool = False
     deferred_work: bool = False
 
     # Does this channel assemble the machine's model environment itself? True
@@ -174,22 +168,6 @@ class Channel:
 
     def available(self) -> bool:
         return True
-
-    async def prepare_topic(
-        self,
-        *,
-        project_id: uuid.UUID,
-        topic_id: uuid.UUID,
-        actor: object | None,
-    ) -> tuple[bool, str]:
-        """Get the machine ready before the turn counts a delivery attempt.
-
-        Only asked of a channel that declares ``provisions_machine``. The
-        default is the answer for every transport whose machine is already
-        there: ready, nothing to say about it.
-        """
-        del project_id, topic_id, actor
-        return True, ""
 
     async def precheck(self, session: SessionRef, *, needs_place: bool) -> object:
         """Cheap fail-fast checks that run BEFORE the token is minted — a turn

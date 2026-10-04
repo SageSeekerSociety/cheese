@@ -976,7 +976,7 @@ async def test_first_turn_materializes_inherited_compute_before_running(
         workspace_root=str(tmp_path / "ws"),
     )
 
-    started_on = ComputeChoice(name="Eight cores", profile="cloud", cores=8)
+    started_on = ComputeChoice(profile="device")
     async with factory() as session:
         await registered(session, "u")
         project = await ProjectService(session).create(name="P", owner_handle="u")
@@ -1021,10 +1021,10 @@ class DeferredScreen(InstantScreen):
 @pytest.mark.parametrize(
     "default",
     [
-        ComputeChoice(name="Eight cores", profile="cloud", cores=8, memory_mb=16384),
+        ComputeChoice(profile="cloud"),
         ComputeChoice(name="Lab workstation", profile="device", device_id="lab-box"),
     ],
-    ids=["cloud-spec", "named-device"],
+    ids=["cloud", "named-device"],
 )
 async def test_a_teammate_joining_later_starts_on_the_rooms_choice(
     business_db_factory, tmp_path, default

@@ -47,15 +47,11 @@ def test_native_original_executor_survives_full_service_recovery_and_busy_input(
 
     class Channel:
         name = "native-recovery-fixture"
-        provisions_machine = False
         deferred_work = False
         builds_model_env = False
 
         def available(self):
             return True
-
-        async def prepare_topic(self, **kwargs):
-            return True, ""
 
         async def ensure(self, session, opening, live=None):
             nonlocal runner, handle

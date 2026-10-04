@@ -54,8 +54,6 @@ def _leases_a_machine() -> ClaudeCodeRuntime:
     return ClaudeCodeRuntime(
         CloudChannel(
             configured=True,
-            ensure_topic_cloud=AsyncMock(),
-            read_topic_cloud=AsyncMock(),
         )
     )
 

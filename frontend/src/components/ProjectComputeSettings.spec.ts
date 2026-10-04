@@ -21,9 +21,6 @@ const cloud: ComputeChoice = {
   name: null,
   profile: 'cloud',
   device_id: null,
-  cores: null,
-  memory_mb: null,
-  disk_gb: null,
 }
 
 function configs(overrides: Partial<ProjectComputeConfigs> = {}): ProjectComputeConfigs {
@@ -88,11 +85,11 @@ describe('project work computer settings', () => {
     const row = await mount()
 
     expect(row.textContent).toContain('新 AI 队友默认使用')
-    expect(row.textContent).toContain('云端 · 标准配置')
+    expect(row.textContent).toContain('云端沙箱')
     expect(screen.getByText('只影响尚未开始运行的 AI 队友，已在运行的继续用原来的工作电脑')).toBeTruthy()
     const distribution = within(screen.getByTestId('project-distribution'))
     expect(distribution.getByText('当前分布')).toBeTruthy()
-    expect(distribution.getByText(/云端 · 3 个 AI 队友/)).toBeTruthy()
+    expect(distribution.getByText(/云端沙箱 · 3 个 AI 队友/)).toBeTruthy()
     expect(distribution.getByText(/实验室工作站 · 2 个 AI 队友 · 能访问整台机器/)).toBeTruthy()
     expect(screen.queryByText(/常用/)).toBeNull()
   })
@@ -113,7 +110,7 @@ describe('project work computer settings', () => {
     await mount()
 
     const distribution = within(screen.getByTestId('project-distribution'))
-    expect(distribution.getByText('Cloud · 1 agent')).toBeTruthy()
+    expect(distribution.getByText('Cloud sandbox · 1 agent')).toBeTruthy()
     expect(distribution.getByText('Lab · 1 agent')).toBeTruthy()
     expect(distribution.getByText('Rig · 2 agents')).toBeTruthy()
   })
@@ -135,7 +132,7 @@ describe('project work computer settings', () => {
     )
     const row = await mount()
 
-    expect(row.textContent).toContain('Cloud · Standard configuration')
+    expect(row.textContent).toContain('Cloud sandbox')
     const distribution = within(screen.getByTestId('project-distribution'))
     expect(distribution.getByText('实验室工作站 · 2 agents')).toBeTruthy()
     expect(distribution.getByText('Own device · Picked automatically · 1 agent')).toBeTruthy()
@@ -154,18 +151,10 @@ describe('project work computer settings', () => {
     )
     const row = await mount()
 
-    expect(row.textContent).toContain('Cloud · Standard configuration')
+    expect(row.textContent).toContain('Cloud sandbox')
     expect(row.textContent).not.toContain('云端')
     const distribution = within(screen.getByTestId('project-distribution'))
     expect(distribution.getByText('Own device · Picked automatically · 1 agent')).toBeTruthy()
-  })
-
-  it('names a cloud choice with its own specs as custom', async () => {
-    setLocale('en')
-    api.getProjectComputeConfigs.mockResolvedValue(configs({ default: { ...cloud, cores: 8, memory_mb: 16384 } }))
-    const row = await mount()
-
-    expect(row.textContent).toContain('Cloud · Custom configuration')
   })
 
   it('saves the cloud without a name, so no language is stored for everyone', async () => {

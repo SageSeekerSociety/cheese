@@ -51,7 +51,6 @@ class CentralChannel(DeviceChannel):
         super().__init__(hub=executor._hub, session_factory=executor._session_factory)
         self.executor = executor
         self.name = executor.name
-        self.provisions_machine = False
         self.deferred_work = True
         # 手是执行机的，所以这条通道的供给就是被它包住的那条通道的供给：一台机器
         # 归哪条通道认领，说的是那台机器，不是中心会话机。
@@ -62,9 +61,6 @@ class CentralChannel(DeviceChannel):
             settings.agent_session_device_id
             and self._hub.is_online(settings.agent_session_device_id)
         )
-
-    async def prepare_topic(self, **kwargs):
-        return True, ""
 
     async def precheck(self, session: SessionRef, *, needs_place: bool) -> Placement:
         own = await self._session_host_agent(session)

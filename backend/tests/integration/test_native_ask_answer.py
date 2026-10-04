@@ -74,15 +74,11 @@ def test_http_answer_continues_original_native_executor(
 
     class Channel:
         name = "native-ask-fixture"
-        provisions_machine = False
         deferred_work = False
         builds_model_env = False
 
         def available(self):
             return True
-
-        async def prepare_topic(self, **kwargs):
-            return True, ""
 
         async def ensure(self, session, opening, live=None):
             nonlocal native_runner, handle

@@ -28,9 +28,6 @@ DEFAULT = {
     "name": "Lab",
     "profile": "device",
     "device_id": "lab",
-    "cores": None,
-    "memory_mb": None,
-    "disk_gb": None,
 }
 FAVORITE = {**DEFAULT, "name": "Big cloud", "profile": "cloud", "device_id": None}
 

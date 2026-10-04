@@ -100,9 +100,6 @@ const CLOUD: ComputeChoice = {
   name: null,
   profile: 'cloud',
   device_id: null,
-  cores: null,
-  memory_mb: null,
-  disk_gb: null,
 }
 const LAB: ComputeChoice = { ...CLOUD, profile: 'device', device_id: null }
 
@@ -253,7 +250,7 @@ describe('名册上这个话题的工作电脑', () => {
   it('房间那一行跟着项目默认时标出来', async () => {
     await openRoster()
     const room = document.querySelector('[data-testid="future-machine"]')!
-    expect(room.textContent).toContain('本话题运行在：云端 · 标准配置')
+    expect(room.textContent).toContain('本话题运行在：云端沙箱')
     expect(room.textContent).toContain('项目默认')
   })
 

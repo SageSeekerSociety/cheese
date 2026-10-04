@@ -157,24 +157,24 @@ check_duplicate_topic_docs() {
 # Rule 5 — #282 决定 2: a device's SUPPLY FORM (platform-provisioned vs
 # human-enrolled) decides whether the platform may destroy that machine, so it is
 # stored on `device.supply` and read from there. It must never be re-derived by
-# asking whether some row in `project_machines` happens to point at the device.
+# asking whether some row in `cloud_hosts` happens to point at the device.
 #
 # This is not hypothetical tidiness: that reverse lookup was real, load-bearing
 # code (`ProjectMachineRepository.is_provisioned_device`, read by the device
 # provider to decide co-location) right up to the commit that added this rule.
 # The failure mode it invites is silent — a `cloud` device created by some future
-# provisioning path that writes no `project_machines` row reads as self-hosted,
+# provisioning path that writes no `cloud_hosts` row reads as self-hosted,
 # and the platform then treats a machine it opened as untouchable (or, on the
 # co-location path, opens a turn in an empty directory).
 #
 # Scoped to where the answer is CONSUMED — the device + agent layers. The machine
-# layer legitimately owns `project_machines` rows and joins them freely.
+# layer legitimately owns `cloud_hosts` rows and joins them freely.
 check_supply_reverse_lookup() {
   local hits=""
   local dirs="$ROOT/backend/app/domain/device $ROOT/backend/app/domain/agent"
   # (a) the device/agent layers must not reach into the machine table at all.
   hits="$(grep -rn --include='*.py' \
-    -e 'ProjectMachineRepository' -e 'from app.domain.machine' \
+    -e 'CloudHostRepository' -e 'from app.domain.machine' \
     $dirs 2>/dev/null || true)"
   # (b) and nowhere in app/ may a function be DEFINED that infers the answer.
   hits="$hits

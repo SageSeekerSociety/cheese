@@ -2,12 +2,8 @@
   "choice": {
     "device": "Own device",
     "deviceOnFirstRun": "An online device, picked on the first run",
-    "standard": "Platform standard · prepared on the first run",
-    "cores": "{n}-core CPU",
-    "memory": "{n} GB memory",
-    "disk": "{n} GB disk",
-    "cloudStandard": "Cloud · Standard configuration",
-    "cloudCustom": "Cloud · Custom configuration",
+    "sandbox": "A sandbox of its own for each session · prepared on the first run",
+    "cloud": "Cloud sandbox",
     "anyDevice": "Own device · Picked automatically"
   },
   "startup": {

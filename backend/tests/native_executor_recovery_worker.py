@@ -26,7 +26,6 @@ from app.domain.delivery.receipts import held_blocks
 
 class SocketChannel:
     name = "isolated-native-socket"
-    provisions_machine = False
     deferred_work = False
     builds_model_env = False
 
@@ -53,9 +52,6 @@ class SocketChannel:
 
     def available(self):
         return True
-
-    async def prepare_topic(self, **kwargs):
-        return True, ""
 
     async def ensure(self, session, opening, live=None):
         assert session == self.handle.session

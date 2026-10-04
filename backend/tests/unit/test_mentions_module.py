@@ -42,7 +42,6 @@ MOVED = (
     "_resolve_mentions",
     "_topic_refs",
     "announce_mentions",
-    "cloud_waiting_topics",
     "person_mentions",
     "project_refs_text",
 )

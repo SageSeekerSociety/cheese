@@ -89,7 +89,7 @@
     "collapse": "收起",
     "hint": "只影响尚未开始运行的 AI 队友，已在运行的继续用原来的工作电脑",
     "distribution": "当前分布",
-    "onCloud": "云端 · {agents}",
+    "onCloud": "云端沙箱 · {agents}",
     "onDevice": "{name} · {agents}",
     "agents": "{count} 个 AI 队友",
     "noneStarted": "暂无运行中的 AI 队友",
@@ -184,8 +184,6 @@
     "projects": "项目数量：当前未设置上限",
     "concurrent": "新项目默认最多同时运行 {count} 个 AI 任务，超出后排队",
     "detail": "资源限制",
-    "machines": "云端机器：团队默认共享 {count} 台名额，额度与用量见团队的「工作电脑」页",
-    "machinesOwn": "云端机器：你名下的项目默认共享 {count} 台名额，额度与用量见你名下的「工作电脑」页",
     "failed": "资源限制加载失败",
     "retry": "重试",
     "loading": "正在加载资源限制…"
@@ -379,8 +377,8 @@
         "human": "需要手动处理"
       },
       "working": "{name}正在处理",
-      "machineReady": "工作电脑已就绪",
-      "machinePreparing": "正在准备工作电脑",
+      "sandboxReady": "沙箱已就绪",
+      "sandboxPreparing": "正在准备沙箱",
       "incident": {
         "title": "工作电脑暂时不可用",
         "cleaning": "正在自动清理",
@@ -1665,30 +1663,14 @@
     }
   },
   "computeChoice": {
-    "cloud": "云端",
+    "cloud": "云端沙箱",
     "deviceOnline": "{name} · 在线",
     "deviceOffline": "{name} · 离线",
     "computer": "工作电脑",
     "none": "暂无可用的工作电脑",
-    "custom": "自定义 CPU、内存和磁盘",
-    "cores": "CPU 核",
-    "memory": "内存 GB",
-    "disk": "磁盘 GB",
-    "coresUnit": "核",
-    "memoryLabel": "内存",
-    "diskLabel": "磁盘",
-    "noValue": "当前没有可选值",
-    "outOfRange": "超出可选范围",
-    "noRangeFor": "{label}暂无可选值",
-    "supplyLoading": "正在查询云端当前可选范围…",
-    "supplyRange": "可选范围：{range}",
-    "supplyUnknown": "暂时查不到云端可选范围（{reason}）。可以先保存，开机时由云端校验。",
-    "cloudHint": "首次运行时分配，计入云端额度。云端不报告剩余容量，范围内的配置开机时仍可能创建失败。",
+    "cloudHint": "每个会话在自己的云端沙箱里工作，首次运行时自动准备",
     "deviceHint": "这个项目已经可以用这台设备，无需再次授权；离线时需要等待设备上线",
     "submit": "使用此配置"
-  },
-  "cloudSupply": {
-    "requestFailed": "请求失败"
   },
   "projectTransfer": {
     "lookupFailed": "没有找到这个账号",
@@ -1777,7 +1759,7 @@
     "online": "在线",
     "offline": "离线",
     "device": "自有设备",
-    "cloud": "云端",
+    "cloud": "云端沙箱",
     "current": "没有选择时落在这里"
   },
   "needsYou": {

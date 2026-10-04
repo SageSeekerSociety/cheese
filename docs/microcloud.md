@@ -1,21 +1,55 @@
-# MicroCloud: where a Cloud machine comes from, what cheese asks of it, and how to ship a change there
+# MicroCloud: where a cloud host comes from, what cheese asks of it, and how to ship a change there
 
-Cheese's **Cloud** compute (see `where-a-turn-runs.md`) is one machine per topic, opened
-on [MicroCloud](https://github.com/micro-teams/micro-cloud) and released when the topic is
-archived. MicroCloud is Lg's team's project; cheese is one tenant of it. This file is the
-cheese-side view: what we ask it for, what its answers mean, and the procedure for getting a
-change into it when cheese needs one. MicroCloud's own architecture (Proxmox, LXC vs VM,
-its built-in AI channels) is in its README and is not repeated here.
+Cheese's **Cloud** compute (see `where-a-turn-runs.md`) is a sandbox per agent session,
+on a pool of hosts the platform opens on [MicroCloud](https://github.com/micro-teams/micro-cloud).
+MicroCloud is Lg's team's project; cheese is one tenant of it. This file is the
+cheese-side view: what we ask it for, what its answers mean, how the pool is kept, and the
+procedure for getting a change into MicroCloud when cheese needs one. MicroCloud's own
+architecture (Proxmox, LXC vs VM, its built-in AI channels) is in its README and is not
+repeated here.
+
+## The host pool
+
+A host belongs to the platform, never to a project, room or session
+(`backend/app/domain/machine/services.py`, `HostPool`). A session that needs hands on cloud
+is given a home — its sandbox's directory — on any host with a free slot, whichever project
+it is from: hosts that can run it now first, and among those the fullest, so the others can
+empty and go. Only when no host has room does the pool take a ready warm machine, and only
+when the warm pool is empty too does it create a host, and the session waits for it. Users
+see their sandbox, never the host: the room hears 「正在准备沙箱」 and 「沙箱已就绪」, and no
+user-facing route lists hosts. The admin dashboard counts them.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `CLOUD_HOST_SLOTS_PER_CORE` | 2 | Sandbox slots per host core. A home holds its slot from placement until its work is pushed away or its room's cleanup removes it, idle or not. |
+| `CLOUD_POOL_MIN_FREE_SLOTS` | 2 | When the free slots of the live hosts fall below this, the pool sweep adds a host ahead of demand. An idle host is not released if that would take the free slots below it. |
+| `CLOUD_HOST_IDLE_HOLD_S` | 1800 | How long a host with no home is kept before it is released. |
+| `CLOUD_POOL_MAX_HOSTS` | 20 | The platform's cap on hosts, protecting the cluster. Draining hosts do not count. A session that finds the pool full and every host full is told capacity is tight and to try later. |
+
+Hosts are created at `MICROCLOUD_DEFAULT_CORES` / `_MEMORY_MB` / `_DISK_GB` (clamped into the
+offering), so a host has `cores × CLOUD_HOST_SLOTS_PER_CORE` slots. There is no team or
+project quota on cloud. Compute is not billed in credits yet.
+
+A host is released only when it holds no home. A session that switches away after pushing
+gives its home back; one that leaves without pushing (`abandon_unpushed`) keeps its home,
+and so the host, until its room's cleanup has removed the directory. A host the provider
+fails before it is enrolled holds nothing of anyone's: the pool gives it up, deletes it, and
+places its sessions again; after three such failures within an hour it stops creating hosts
+for the rest of the hour. An enrolled host in `error` keeps its sessions.
+
+Machines that a room or a session rented for itself before the pool were adopted as
+*draining* hosts by the migration that introduced it: they keep the sessions on them, take
+no new one, and are released like any other host once no home is left on them.
 
 ## What cheese asks for
 
-`backend/app/domain/machine/` holds the whole exchange. One create call
-(`MicroCloudClient.create_machine`, built in `MachineService.provision`) carries:
+One create call (`MicroCloudClient.create_machine`, built in `HostPool._create`) carries:
 
-- the project's MicroCloud customer and fund account (`customerId`, `accountId`);
+- the platform's own MicroCloud customer (`cheese-platform-host-pool`) and its fund account
+  (`MICROCLOUD_ACCOUNT_NAME`, topped up to `MICROCLOUD_INITIAL_FUNDS`);
 - the offering (machine type + zone + template; `MICROCLOUD_OFFERING_ID`, or the first
-  active one), and cores / memory / disk clamped into that offering's range;
-- `aiMode: none`. The machine only executes tools; the models its sessions use come from
+  active one), and the host size above clamped into that offering's range;
+- `aiMode: none`. The host only executes tools; the models its sessions use come from
   the session host, so it needs no AI channel of MicroCloud's. Without the field MicroCloud
   would wire its default channel onto the machine;
 - `sshPubkey`: two keys on separate lines. A one-shot bootstrap key the platform uses
@@ -23,17 +57,13 @@ its built-in AI channels) is in its README and is not repeated here.
   `MICROCLOUD_OPERATOR_SSH_PUBKEY` so an operator can still log in afterwards. On dev the
   operator key is the dev box's own, so `ssh cheese@<machine ip>` from the dev box works.
 
-After create, the enrolment sweep (`MachineEnrollmentSweeper`, every
-`MACHINE_ENROLL_INTERVAL_SECONDS` = 10 s) does the rest with no human: refresh machines
-still changing, re-check settled ones every `MICROCLOUD_RECONCILE_INTERVAL_S` (120 s; reads of a
-project's machines report what this sweep last saw and never call MicroCloud; a team's
-compute page hears which projects' machines changed on `/api/teams/{id}/live` and
-reads those, instead of polling), and
-enrol every machine that is `running`: mint a device credential, ssh in with
-the bootstrap key, install the connector as a service. Ready leases
-then go to `CloudWakeup`, which delivers the message the room has been holding. The
-connector route also wakes the topic the moment the device attaches, so the room does not
-wait for the next tick.
+After create, the pool sweep (`CloudPoolSweeper`, every
+`MACHINE_ENROLL_INTERVAL_SECONDS` = 10 s) does the rest with no human: refresh hosts still
+changing, re-check settled ones every `MICROCLOUD_RECONCILE_INTERVAL_S` (120 s), enrol every
+host that is `running` (mint a device credential owned by the platform's pool identity, ssh
+in with the bootstrap key, install the connector as a service), then size the pool: release
+idle hosts, give up on failed ones, add one ahead of demand, and tell every room still
+waiting on a sandbox whose host is up.
 
 Timings on dev, MicroCloud main after micro-cloud#82, #83 and #84 (2026-09-03): an LXC
 machine is `running` 25 s after the create call (event log of machine 752: `pct create`
@@ -51,14 +81,9 @@ instead of extracting the template per machine.
 MicroCloud reports `status` (provisioning / starting / running / stopping / stopped /
 error) and, separately, `aiStatus` (disabled / provisioning / ready / error). A machine
 created with `aiMode: none` reports `aiStatus: disabled` from the moment it exists.
-Enrolment waits only for `status: running`. A room's lease counts a machine as ready
-when it is `running`, enrolled, and its `aiStatus` is `ready` or `disabled`; an `error`
-in either field is handed to the room as a failed lease, with one exception. A session's
-machine that reports `status: error` before it was enrolled holds none of the room's work,
-so the room's next request for it deletes it and asks for another. Quota, offering and spec
-problems are refused at create time, so this `error` means building the machine failed.
-After three such failures within an hour the room stops asking and the session is told
-that retries were made. The count is the room's own 「正在删除创建失败的机器」 lines.
+Enrolment waits only for `status: running`. A host that reports `status: error` before
+it was enrolled is given up as described above. Quota, offering and spec problems are
+refused at create time, so this `error` means building the machine failed.
 
 Since micro-cloud#84 every machine has an event log at `GET /machine/{id}/events` (tenant
 secret, page parameters, optional `since`): every Proxmox task with its UPID and duration,
@@ -71,10 +96,12 @@ lease is read there first, before anyone asks for a log.
 
 `MICROCLOUD_WARM_POOL_SIZE` sets the number of unused default CPU machines prepared by
 this deployment (0 disables replenishment; maximum 5). These machines use a platform
-account and have no team binding. The room's existing permission and quota checks run
-before a durable reservation is written. The reservation counts against team quota
-while MicroCloud confirms the claim. Only then does Cheese bind the connected device
-to the room's team.
+account and have no team binding. When the host pool needs another host it takes one: a
+durable reservation of the host is written first, then MicroCloud is asked to claim the
+machine into the platform's host account under the host's id as `claimKey`, and only
+then is the connected device handed to the pool's identity. A claim whose answer was lost
+is retried as the same claim; one refused five times leaves the host failed, which the
+pool gives up.
 
 The pool worker runs separately from ordinary machine enrollment. It resumes
 interrupted creation and claims, retires unused machines after
@@ -88,9 +115,8 @@ no longer has the machine, so removing it at the provider is all a person has to
 A record whose error starts with `Quarantined` was set aside by a person and is never
 closed on its own.
 
-This first version prepares the deployment's default offering with `aiMode: none`.
-It does not prepare every cloud specification. Configure a small pool only after the
-provider claim endpoint is deployed. Measure command readiness separately from project
+It prepares the deployment's default offering at the host size, with `aiMode: none`.
+Measure command readiness separately from project
 setup and model response; no startup latency has been established by the functional tests.
 
 ## Shipping a change to MicroCloud

@@ -1,55 +1,24 @@
-import type { MyDevice, ProjectMachine } from '@/cx_types'
+import type { MyDevice } from '@/cx_types'
 
 import { ref } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { cleanup, fireEvent, render } from '@testing-library/vue'
+import { cleanup, render } from '@testing-library/vue'
 import { afterEach, beforeAll, expect, it, vi } from 'vitest'
 
 import Compute from './Compute.vue'
 
-import { changeProjectMachinePower, listMyDevices, listProjectMachines, listTeamDevices } from '@/api'
+import { listMyDevices, listTeamDevices } from '@/api'
 import i18n, { setLocale } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
 
 vi.mock('vue-router', () => ({ useRoute: () => ({ params: { handle: 'crew' } }) }))
 vi.mock('@/api', () => ({
-  ApiError: class extends Error {
-    constructor(
-      readonly status: number,
-      message: string
-    ) {
-      super(message)
-    }
-  },
-  authToken: () => 'tok',
-  BASE: '/api',
-  chatWsUrl: vi.fn(),
-  changeProjectMachinePower: vi.fn(),
-  deleteProjectMachine: vi.fn(),
   listMyDevices: vi.fn(async () => ({ devices: [] })),
   listTeamDevices: vi.fn(async () => ({ devices: [] })),
-  listProjects: vi.fn(async () => ({
-    data: [
-      { id: 'p1', name: 'Full' },
-      { id: 'p2', name: 'Available' },
-    ],
-  })),
-  listProjectMachines: vi.fn(async () => ({ data: [] })),
-  getTeamResourceQuotas: vi.fn(async () => ({
-    team_id: 1,
-    machines: { used: 50, limit: 50 },
-    projects: [
-      { id: 'p1', name: 'Full', machines_used: 49 },
-      { id: 'p2', name: 'Available', machines_used: 1 },
-    ],
-  })),
   registerDeviceForTeam: vi.fn(),
   unregisterDeviceFromTeam: vi.fn(),
-}))
-vi.mock('@/network/api/teams', () => ({
-  TeamsApi: { getComputeProfile: vi.fn(async () => ({ data: { current: 'cloud', profiles: [] } })) },
 }))
 
 beforeAll(() => {
@@ -74,71 +43,25 @@ beforeAll(() => {
 })
 afterEach(cleanup)
 
-// Stands in for the browser socket: records what the page opened and lets a test
-// deliver the frames the team's live feed would send.
-class FakeSocket {
-  static OPEN = 1
-  static opened: FakeSocket[] = []
-  readyState = 1
-  onopen: (() => void) | null = null
-  onmessage: ((event: { data: string }) => void) | null = null
-  onclose: (() => void) | null = null
-  onerror: (() => void) | null = null
-  constructor(readonly url: string) {
-    FakeSocket.opened.push(this)
-    queueMicrotask(() => this.onopen?.())
-  }
-  // The server answers every ping; a socket that never did would be replaced.
-  send(data: string) {
-    if (JSON.parse(data).type === 'ping') queueMicrotask(() => this.deliver({ type: 'pong' }))
-  }
-  close() {
-    this.readyState = 3
-  }
-  deliver(frame: object) {
-    this.onmessage?.({ data: JSON.stringify(frame) })
-  }
-}
-beforeAll(() => vi.stubGlobal('WebSocket', FakeSocket))
-afterEach(() => {
-  FakeSocket.opened = []
-})
-
-it('lists the machines projects already have and offers no way to open one', async () => {
-  const machine = {
-    id: 'm0',
-    project_id: 'p2',
-    hostname: 'kept-one',
-    status: 'running',
-    cores: 8,
-    memory_mb: 20480,
-    disk_gb: 128,
-    ai_status: 'ready',
-    device_id: 'device-zero',
-  } as ProjectMachine
-  vi.mocked(listProjectMachines).mockImplementation(
-    async (projectId) =>
-      ({ data: projectId === 'p2' ? [machine] : [] }) as Awaited<ReturnType<typeof listProjectMachines>>
-  )
+it('shows only self-hosted devices: no cloud machines, no machine quota, no live feed', async () => {
+  const opened = vi.fn()
+  vi.stubGlobal('WebSocket', opened)
+  vi.mocked(listTeamDevices).mockResolvedValueOnce({
+    devices: [{ device_id: 'lab', name: 'lab', online: true, project_ids: [], team_ids: [1], screens: [] }],
+  })
   const view = render(Compute, {
     global: {
       plugins: [createVuetify({ components, directives }), i18n],
       provide: { [teamDataInjectionKey as symbol]: ref({ id: 1, handle: 'crew', role: 'OWNER' }) },
     },
   })
-  expect(await view.findByText('kept-one')).toBeTruthy()
-  expect(view.getByText('费用归属：Available')).toBeTruthy()
-  expect(view.getByText('8 核')).toBeTruthy()
-  expect(view.getByText('团队云端机器')).toBeTruthy()
-  expect(view.getByText('50 / 50 台')).toBeTruthy()
-  expect(view.queryByRole('button', { name: /开通/ })).toBeNull()
-  expect(view.queryByText(/开通云端机器/)).toBeNull()
+  expect(await view.findByText('1 台机器 · 1 台在线')).toBeTruthy()
+  expect(view.queryByText(/云端|额度|名额/)).toBeNull()
+  expect(opened).not.toHaveBeenCalled()
+  vi.unstubAllGlobals()
 })
 
 it('shows the owner who is on each of their machines, and nobody else', async () => {
-  vi.mocked(listProjectMachines).mockImplementation(
-    async () => ({ data: [] as ProjectMachine[] }) as Awaited<ReturnType<typeof listProjectMachines>>
-  )
   const device = (id: string, inUse: MyDevice['in_use']): MyDevice => ({
     device_id: id,
     name: id,
@@ -177,9 +100,6 @@ it('shows the owner who is on each of their machines, and nobody else', async ()
 })
 
 it("lists a device attached only to a project, with the project and its owner's in-use line", async () => {
-  vi.mocked(listProjectMachines).mockImplementation(
-    async () => ({ data: [] as ProjectMachine[] }) as Awaited<ReturnType<typeof listProjectMachines>>
-  )
   vi.mocked(listMyDevices).mockResolvedValueOnce({
     devices: [{ device_id: 'dev-box', name: 'dev-box', online: true, project_ids: ['p1'], team_ids: [], screens: [] }],
   })
@@ -221,182 +141,4 @@ it("lists a device attached only to a project, with the project and its owner's 
   expect(view.container.textContent).toMatch(/正在用：Orchard · Pricing · \s*@Cedar/)
   // It was never added to the team, so there is nothing to take it out of.
   expect(view.queryByRole('button', { name: '移出团队' })).toBeNull()
-})
-
-it('suspends and resumes the same machine through its project', async () => {
-  const machine = {
-    id: 'm1',
-    project_id: 'p1',
-    hostname: 'cloud-one',
-    status: 'running',
-    cores: 2,
-    memory_mb: 4096,
-    disk_gb: 20,
-    ai_status: 'ready',
-    device_id: 'device-one',
-  } as ProjectMachine
-  // The test DOM has no confirm(); the person says yes.
-  vi.stubGlobal(
-    'confirm',
-    vi.fn(() => true)
-  )
-  vi.mocked(listProjectMachines).mockImplementation(
-    async (projectId) =>
-      ({
-        data: projectId === 'p1' ? [machine] : [],
-      }) as Awaited<ReturnType<typeof listProjectMachines>>
-  )
-  vi.mocked(changeProjectMachinePower).mockImplementation(async (_project, _id, operation) => {
-    machine.status = operation === 'suspend' ? 'suspended' : 'running'
-    return machine
-  })
-  const view = render(Compute, {
-    global: {
-      plugins: [createVuetify({ components, directives }), i18n],
-      provide: { [teamDataInjectionKey as symbol]: ref({ id: 1, handle: 'crew', role: 'OWNER' }) },
-    },
-  })
-  await fireEvent.click(await view.findByRole('button', { name: '休眠' }))
-  expect(changeProjectMachinePower).toHaveBeenCalledWith('p1', 'm1', 'suspend')
-  await fireEvent.click(await view.findByRole('button', { name: '恢复' }))
-  expect(changeProjectMachinePower).toHaveBeenCalledWith('p1', 'm1', 'resume')
-  expect(await view.findByRole('button', { name: '休眠' })).toBeTruthy()
-  vi.restoreAllMocks()
-})
-
-function mountWith(machines: Record<string, ProjectMachine[]>) {
-  vi.mocked(listProjectMachines).mockImplementation(
-    async (projectId) => ({ data: machines[projectId] ?? [] }) as Awaited<ReturnType<typeof listProjectMachines>>
-  )
-  return render(Compute, {
-    global: {
-      plugins: [createVuetify({ components, directives }), i18n],
-      provide: { [teamDataInjectionKey as symbol]: ref({ id: 1, handle: 'crew', role: 'OWNER' }) },
-    },
-  })
-}
-
-const settled = {
-  id: 'm-settled',
-  project_id: 'p2',
-  hostname: 'settled',
-  status: 'running',
-  ai_status: 'ready',
-  device_id: 'device-two',
-} as ProjectMachine
-const starting = {
-  id: 'm-starting',
-  project_id: 'p1',
-  hostname: 'starting',
-  status: 'starting',
-  ai_status: 'provisioning',
-} as ProjectMachine
-
-function latestSocket(): FakeSocket {
-  const socket = FakeSocket.opened.at(-1)
-  if (!socket) throw new Error('the page opened no socket')
-  return socket
-}
-
-it("listens on the team's live feed and asks nothing until it hears of a change", async () => {
-  vi.useFakeTimers({ shouldAdvanceTime: true })
-  try {
-    const view = mountWith({ p1: [starting], p2: [settled] })
-    expect(await view.findByText('starting')).toBeTruthy()
-    expect(latestSocket().url).toBe(`ws://${window.location.host}/api/teams/1/live?token=tok`)
-    vi.mocked(listProjectMachines).mockClear()
-
-    await vi.advanceTimersByTimeAsync(60_000)
-    expect(listProjectMachines).not.toHaveBeenCalled()
-
-    latestSocket().deliver({ type: 'state', resource: 'machines', project_ids: ['p1'] })
-    await vi.waitFor(() => expect(listProjectMachines).toHaveBeenCalled())
-    expect(vi.mocked(listProjectMachines).mock.calls.map(([id]) => id)).toEqual(['p1'])
-    expect(view.getByText('settled')).toBeTruthy()
-  } finally {
-    vi.useRealTimers()
-  }
-})
-
-it('reads every project again after the feed reconnects', async () => {
-  vi.useFakeTimers({ shouldAdvanceTime: true })
-  try {
-    const view = mountWith({ p1: [starting], p2: [settled] })
-    expect(await view.findByText('starting')).toBeTruthy()
-    vi.mocked(listProjectMachines).mockClear()
-
-    latestSocket().onclose?.()
-    await vi.advanceTimersByTimeAsync(2000)
-
-    expect(FakeSocket.opened).toHaveLength(2)
-    await vi.waitFor(() =>
-      expect(
-        vi
-          .mocked(listProjectMachines)
-          .mock.calls.map(([id]) => id)
-          .sort()
-      ).toEqual(['p1', 'p2'])
-    )
-  } finally {
-    vi.useRealTimers()
-  }
-})
-
-it('a refused feed says why and stops asking, instead of retrying into the refusal', async () => {
-  vi.useFakeTimers({ shouldAdvanceTime: true })
-  try {
-    const view = mountWith({ p1: [starting] })
-    expect(await view.findByText('starting')).toBeTruthy()
-    vi.mocked(listProjectMachines).mockClear()
-
-    latestSocket().deliver({ type: 'error', code: 'auth_expired', message: '登录状态已失效，请重新登录' })
-    latestSocket().onclose?.()
-    expect(await view.findByText('登录状态已失效，请重新登录')).toBeTruthy()
-
-    await vi.advanceTimersByTimeAsync(10 * 60_000)
-    expect(FakeSocket.opened).toHaveLength(1)
-    expect(listProjectMachines).not.toHaveBeenCalled()
-  } finally {
-    vi.useRealTimers()
-  }
-})
-
-it('in English a refused feed says why in English', async () => {
-  setLocale('en')
-  try {
-    const view = mountWith({ p1: [starting] })
-    expect(await view.findByText('starting')).toBeTruthy()
-
-    latestSocket().deliver({
-      type: 'error',
-      code: 'auth_expired',
-      message: '登录状态已失效，请重新登录',
-      i18n: { key: 'signInAgain', params: {} },
-    })
-    latestSocket().onclose?.()
-    expect(await view.findByText('Your sign-in has expired. Sign in again')).toBeTruthy()
-  } finally {
-    setLocale('zh-CN')
-  }
-})
-
-it('re-reads every project on the resync while the page is shown', async () => {
-  vi.useFakeTimers({ shouldAdvanceTime: true })
-  try {
-    const view = mountWith({ p1: [starting], p2: [settled] })
-    expect(await view.findByText('starting')).toBeTruthy()
-    vi.mocked(listProjectMachines).mockClear()
-
-    await vi.advanceTimersByTimeAsync(5 * 60_000)
-    await vi.waitFor(() =>
-      expect(
-        vi
-          .mocked(listProjectMachines)
-          .mock.calls.map(([id]) => id)
-          .sort()
-      ).toEqual(['p1', 'p2'])
-    )
-  } finally {
-    vi.useRealTimers()
-  }
 })

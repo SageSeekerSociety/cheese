@@ -119,7 +119,6 @@ from app.domain.agent.mentions import (
     _resolve_mentions,  # noqa: F401
     _topic_refs,  # noqa: F401
     announce_mentions,
-    cloud_waiting_topics,
     person_mentions,
     project_refs_text,
 )
@@ -136,7 +135,6 @@ from app.domain.agent.platform_notices import (
     EVENT_PROMPT_REPLAYED,
     EVENT_TURN_FAILED,
     SEVERITY_ERROR,
-    SEVERITY_INFO,
     SEVERITY_WARN,
     WHO_HUMAN,
     WHO_PLATFORM,
@@ -1500,11 +1498,6 @@ class ChatService(SessionRecovery):
             turn_id,
             meta=meta,
         )
-
-    async def cloud_waiting_topics(self, topic_ids: list[uuid.UUID]) -> list[uuid.UUID]:
-        """Topics whose latest durable Cloud lifecycle event is still waiting."""
-        async with self._sessions() as session:
-            return await cloud_waiting_topics(session, topic_ids)
 
     async def work_policy(self, topic_id: uuid.UUID) -> dict | None:
         """Admission facts the AgentWorkRunner gates on BEFORE running a turn."""
@@ -3569,65 +3562,6 @@ class ChatService(SessionRecovery):
                 await bind_room_device_choice(
                     session, topic, project.settings if project else None
                 )
-            # 开一台机器是租手的一部分，所以不租手的一轮也不等它开完。
-            if needs_place and provider.provisions_machine:
-                ready, waiting_text = await provider.prepare_topic(
-                    project_id=project_id,
-                    topic_id=topic_id,
-                    actor=provision_actor,
-                )
-                if topic.compute_config is None:
-                    from app.domain.agent.compute_configs import room_choice
-
-                    topic.compute_config = room_choice(
-                        topic, project.settings if project else None
-                    ).model_dump()
-                if not ready:
-                    cloud_events = [
-                        block
-                        for block in history
-                        if (block.meta or {}).get("event_type") == "cloud_provisioning"
-                    ]
-                    waiting_payload = None
-                    if (
-                        not cloud_events
-                        or (cloud_events[-1].meta or {}).get("state") != "waiting"
-                    ):
-                        landed = landing(
-                            EventAbout.room,
-                            project_id=project_id,
-                            room_id=topic_id,
-                        )
-                        waiting_block = await blocks.add(
-                            project_id=landed.project_id,
-                            topic_id=landed.topic_id,
-                            task_id=landed.task_id,
-                            author="system",
-                            author_type=AuthorType.platform,
-                            content=waiting_text,
-                            kind=BlockKind.event,
-                            turn_id=turn_id,
-                            meta={
-                                # 这条已有自己的 event_type / state，前端按它渲染；
-                                # 补上轻重和「谁在管」，等待就不必再靠一个 ⏳ 说话。
-                                "severity": SEVERITY_INFO,
-                                "who": WHO_PLATFORM,
-                                "detail": say("cloudProvisioningDetail"),
-                                "detail_label": say("labelWhatHappensNext"),
-                                "event_type": "cloud_provisioning",
-                                "state": "waiting",
-                            },
-                        )
-                        waiting_payload = _block_payload(
-                            BlockOut.model_validate(waiting_block)
-                        )
-                    await session.commit()
-                    frames: list[dict] = []
-                    if waiting_payload is not None:
-                        frames.append({"type": "event_block", "block": waiting_payload})
-                    frames.append({"type": "waiting", "state": "cloud_provisioning"})
-                    frames.append({"type": "done"})
-                    return _TurnBail(frames)
             phases_ms["provider"] = (time.monotonic() - started) * 1000
             # The prompt is built HERE, not where `pending` was computed: an
             # attachment line has to describe how the image reaches 芝士 on THIS

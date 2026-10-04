@@ -76,15 +76,11 @@ def test_new_full_service_process_reuses_original_native_executor(
 
     class Channel:
         name = "native-socket-fixture"
-        provisions_machine = False
         deferred_work = False
         builds_model_env = False
 
         def available(self):
             return True
-
-        async def prepare_topic(self, **kwargs):
-            return True, ""
 
         async def ensure(self, session, opening, live=None):
             nonlocal screen, handle

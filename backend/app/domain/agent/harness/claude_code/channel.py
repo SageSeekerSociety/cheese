@@ -59,14 +59,10 @@ class ClaudeCodeChannel:
     def __init__(self, channel: "CentralChannel"):
         self.channel = channel
         self.name = channel.name
-        self.provisions_machine = channel.provisions_machine
         self.deferred_work = channel.deferred_work
 
     def available(self) -> bool:
         return self.channel.available()
-
-    async def prepare_topic(self, **kwargs):
-        return await self.channel.prepare_topic(**kwargs)
 
     def _mirror(self, session: SessionRef, key: str) -> Path:
         return (

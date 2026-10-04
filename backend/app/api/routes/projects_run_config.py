@@ -34,7 +34,7 @@ is a repository the handlers that stay also read -- and the one the guard in
 `tests/unit/test_domain_import_guard.py` freezes under projects.py -- so it is
 taken from there the way `topics_compute.py` takes its own pair from topics.py.
 The imports the block alone used (`ProjectDefaultModelUpdate`, the
-`compute_configs` triple, the `market` triple, `MachineService`, `gate` and
+`compute_configs` triple, the `market` triple, `HostPool`, `gate` and
 `model_choices`) left projects.py with it; ruff's F401 is what found the
 complete list.
 
@@ -82,7 +82,7 @@ from app.domain.agent.market import (
     compute_selectable,
 )
 from app.domain.agent_instance.configuration import model_choices
-from app.domain.machine.services import MachineService
+from app.domain.machine.services import HostPool
 from app.domain.membership.services import MemberService
 from app.domain.policy import gate
 from app.domain.project.schemas import ProjectDefaultModelUpdate
@@ -272,7 +272,7 @@ async def save_compute_configs(
         raise NotFoundError("Project not found")
     await MemberService(db).require_manager(project_id, actor)
     await validate_choice(db, project_id, body.default)
-    await MachineService(db).admit_choice(project_id, actor, body.default)
+    await HostPool(db).admit_choice(project_id, actor, body.default)
     values = dict(project.settings or {})
     values.pop("compute_profile", None)
     values["compute_configs"] = body.model_dump()

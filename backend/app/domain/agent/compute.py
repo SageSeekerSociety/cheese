@@ -70,13 +70,6 @@ class ComputeProvider(Protocol):
     @property
     def embeds_images(self) -> bool: ...
 
-    # Does a turn here have to wait for a machine to be created first? The turn
-    # path branches on it — 「机器正在创建」 with the prompt held — instead of on
-    # the backend's class, which is what lets a second leased-machine backend
-    # get the same waiting room without the platform learning its name.
-    @property
-    def provisions_machine(self) -> bool: ...
-
     @property
     def deferred_work(self) -> bool: ...
 
@@ -90,14 +83,6 @@ class ComputeProvider(Protocol):
     def builds_model_env(self) -> bool: ...
 
     def available(self) -> bool: ...
-
-    async def prepare_topic(
-        self, *, project_id: uuid.UUID, topic_id: uuid.UUID, actor: object | None
-    ) -> tuple[bool, str]:
-        """Get the machine ready, and say whether it is. Only asked of a backend
-        that declares ``provisions_machine``; everyone else's machine is already
-        there."""
-        ...
 
     async def deliver(
         self,

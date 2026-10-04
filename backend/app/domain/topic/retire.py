@@ -18,7 +18,7 @@ from app.domain.agent.device_provider import list_device_storage
 from app.domain.agent.models import AgentTurn
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.wiring import sql_device_service
-from app.domain.machine.services import MachineService
+from app.domain.machine.services import HostPool
 from app.domain.repository import service as ws
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import RoomCleanup, Topic, TopicStatus
@@ -155,54 +155,6 @@ async def _inventory(session, operation: RoomCleanup, inventory: dict) -> list[d
                     "resource_id": resource,
                 }
     result = list(entries.values())
-    machines = await MachineService(session).list_active_for_topic(operation.topic_id)
-    other_sessions = list(
-        await session.scalars(
-            select(AgentSession).where(AgentSession.topic_id != operation.topic_id)
-        )
-    )
-    for machine in machines:
-        if machine.device_id is not None:
-            if any(
-                lease.get("device_id") == machine.device_id
-                for conversation in other_sessions
-                for lease in [
-                    *(conversation.execution_request or {}).get("retained_leases", []),
-                    *([conversation.work_lease] if conversation.work_lease else []),
-                ]
-            ):
-                raise RuntimeError("Cloud machine has another room's session lease")
-            if (
-                not device_hub.is_online(machine.device_id)
-                or machine.device_id not in inventory
-            ):
-                raise RuntimeError("Cloud device is offline or its inventory failed")
-            if not any(entry.get("device_id") == machine.device_id for entry in result):
-                result.append(
-                    {
-                        "kind": "device",
-                        "device_id": machine.device_id,
-                        "resource_id": str(operation.resource_id),
-                    }
-                )
-            shared = await sql_device_service(session).list_topic_bindings(
-                machine.device_id
-            )
-            if any(pin.topic_id != operation.topic_id for pin in shared):
-                raise RuntimeError("Cloud machine has another room's binding")
-            covered = {
-                (str(operation.project_id), entry["resource_id"])
-                for entry in result
-                if entry.get("device_id") == machine.device_id
-            }
-            if any(
-                (project, resource) not in covered
-                for _kind, project, resource in inventory[machine.device_id]
-            ):
-                raise RuntimeError(
-                    "Cloud machine contains unrecognized room directories"
-                )
-        result.append({"kind": "machine", "id": str(machine.id)})
     trees = await TaskService(session).list_in_project(operation.project_id)
     own = {
         operation.topic_id,
@@ -563,6 +515,11 @@ async def _advance(session, cleanup_id: uuid.UUID, inventory: dict) -> None:
                 operation.id,
                 operation.topic_id if _keeps_transcripts(entry) else None,
             )
+            # A session home on a cloud host is gone with its directory, and no
+            # longer keeps the host.
+            await HostPool(session).forget_device_homes(
+                entry["device_id"], entry["resource_id"]
+            )
         elif entry["kind"] == "worktree":
             target = Path(entry["retired"])
             # Never return to the old path: reopening may already own it.
@@ -575,10 +532,6 @@ async def _advance(session, cleanup_id: uuid.UUID, inventory: dict) -> None:
                     ws.remove_worktree, operation.project_id, target
                 ):
                     raise RuntimeError("backend checkout removal failed")
-        elif entry["kind"] == "machine":
-            await MachineService(session).release_archived_machine(
-                uuid.UUID(entry["id"])
-            )
         # Whether transcripts were kept is recorded with the removal, so their
         # expiry follows what was kept even if the session host changes.
         done = {"removed": True}
@@ -588,6 +541,11 @@ async def _advance(session, cleanup_id: uuid.UUID, inventory: dict) -> None:
             {**item, **done} if item == entry else item for item in operation.resources
         ]
         await session.commit()
+    # Homes of this generation that never held a directory (a session placed
+    # on a host that was still coming up) go with the rest.
+    await HostPool(session).forget_room_homes(
+        operation.topic_id, str(operation.resource_id)
+    )
     if any(entry.get("retained") for entry in operation.resources):
         operation.state = "retained"
         operation.due_at = datetime.now(UTC) + TRANSCRIPT_RETENTION

@@ -118,7 +118,6 @@
         <ResourceLimitsNotice
           v-if="newProjectDialog"
           class="mt-3 mb-6"
-          :own="newProjectTeams.find((team) => team.id === newProjectTeamId)?.personal"
         />
         <v-text-field
           v-model="newProjectName"

@@ -366,7 +366,6 @@ class StubChannel:
     """
 
     name = "stub-session"
-    provisions_machine = False
     deferred_work = False
     builds_model_env = False
     #: The id a new session's runner is started with (``--session-id``): known
@@ -419,9 +418,6 @@ class StubChannel:
 
     def available(self) -> bool:
         return True
-
-    async def prepare_topic(self, **_: object) -> tuple[bool, str]:
-        return True, ""
 
     async def ensure(
         self, session: SessionRef, opening: Opening, live: Handle | None = None

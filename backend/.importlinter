@@ -292,7 +292,6 @@ ignore_imports =
     app.domain.feedback.repositories -> app.domain.platform_stats.windows
     app.domain.feedback.repositories -> app.domain.topic.models
     app.domain.identity.services -> app.domain.topic_membership.services
-    app.domain.machine.warm -> app.domain.machine.services
     app.domain.memory.migration_service -> app.domain.agent.announce
     app.domain.memory.migration_service -> app.domain.agent.platform_notices
     app.domain.memory.migration_service -> app.domain.membership.roster
@@ -401,7 +400,6 @@ ignore_imports =
     app.domain.topic.retire -> app.domain.machine.services
     app.domain.topic.services -> app.domain.agent.clone
     app.domain.topic.services -> app.domain.agent.harness
-    app.domain.topic.services -> app.domain.machine.services
     app.domain.topic.services -> app.domain.review.archive
     app.domain.topic.services -> app.domain.review.services
     app.domain.topic_membership.repositories -> app.domain.topic.models

@@ -152,13 +152,10 @@ class Handle(Protocol):
 
 class SessionChannel[H: Handle](Protocol):
     name: str
-    provisions_machine: bool
     deferred_work: bool
     builds_model_env: bool
 
     def available(self) -> bool: ...
-
-    async def prepare_topic(self, **kwargs) -> tuple[bool, str]: ...
 
     async def ensure(
         self, session: SessionRef, opening: Opening, live: H | None = None
@@ -293,10 +290,6 @@ class DrivenRuntime[H: Handle]:
         return self.channel.name
 
     @property
-    def provisions_machine(self) -> bool:
-        return self.channel.provisions_machine
-
-    @property
     def deferred_work(self) -> bool:
         return self.channel.deferred_work
 
@@ -306,9 +299,6 @@ class DrivenRuntime[H: Handle]:
 
     def available(self) -> bool:
         return self.channel.available()
-
-    async def prepare_topic(self, **kwargs) -> tuple[bool, str]:
-        return await self.channel.prepare_topic(**kwargs)
 
     def bind_reader(self, reader: RoomReader) -> None:
         self.reader = reader

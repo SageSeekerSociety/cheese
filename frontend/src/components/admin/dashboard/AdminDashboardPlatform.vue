@@ -103,9 +103,9 @@ const machines = computed(() => [
   },
   { key: 'warm', label: t('feedback.dashboard.machines.warm'), value: num(platform.value?.machines.warm_machines) },
   {
-    key: 'project',
-    label: t('feedback.dashboard.machines.project'),
-    value: num(platform.value?.machines.project_machines),
+    key: 'hosts',
+    label: t('feedback.dashboard.machines.hosts'),
+    value: num(platform.value?.machines.cloud_hosts),
   },
 ])
 
@@ -134,6 +134,17 @@ const extrasRows = computed(() => {
       note: t('feedback.dashboard.extras.disk.note'),
     })
   }
+  if (x.machines.host_slots_total > 0) {
+    rows.push({
+      label: t('feedback.dashboard.extras.hostSlots.title'),
+      valueText: `${num(x.machines.host_slots_used)} / ${num(x.machines.host_slots_total)}`,
+      limit: x.machines.host_slots_total,
+      ratio: x.machines.host_slots_used / x.machines.host_slots_total,
+      tone: 'ink',
+      hint: '',
+      note: t('feedback.dashboard.extras.hostSlots.note'),
+    })
+  }
   if (x.preview.available) {
     rows.push({
       label: t('feedback.dashboard.extras.preview.title'),
@@ -148,7 +159,7 @@ const extrasRows = computed(() => {
   return rows
 })
 
-/** 常驻机器/项目机器的状态名 → 词条键。**字面量键表 + 原名兜底**（同 `HEALTH_KEY` 的
+/** 常驻机器/云端宿主机的状态名 → 词条键。**字面量键表 + 原名兜底**（同 `HEALTH_KEY` 的
  *  模式）：拼出来的键 `catalog.spec.ts` 会判死键；台账里冒出表里没有的新状态时，
  *  原样显示状态名，不静默吞掉。 */
 const MACHINE_STATE_KEY: Record<string, string> = {
@@ -158,10 +169,14 @@ const MACHINE_STATE_KEY: Record<string, string> = {
   error: 'feedback.dashboard.extras.machineState.error',
 }
 
-const PROJECT_STATUS_KEY: Record<string, string> = {
-  leased: 'feedback.dashboard.extras.projectStatus.leased',
-  released: 'feedback.dashboard.extras.projectStatus.released',
-  error: 'feedback.dashboard.extras.projectStatus.error',
+const HOST_STATUS_KEY: Record<string, string> = {
+  provisioning: 'feedback.dashboard.extras.hostStatus.provisioning',
+  starting: 'feedback.dashboard.extras.hostStatus.starting',
+  running: 'feedback.dashboard.extras.hostStatus.running',
+  deleting: 'feedback.dashboard.extras.hostStatus.deleting',
+  deleted: 'feedback.dashboard.extras.hostStatus.deleted',
+  error: 'feedback.dashboard.extras.hostStatus.error',
+  unknown: 'feedback.dashboard.extras.hostStatus.unknown',
 }
 
 /** 状态分布 → ShareBar 的段。按值降序，明度按 `ink → muted → faint` 顺次发
@@ -181,9 +196,7 @@ function stateSegments(byState: Record<string, number> | undefined, keys: Record
 }
 
 const warmSegments = computed(() => stateSegments(extras.value?.machines.warm_by_state, MACHINE_STATE_KEY))
-const projectMachineSegments = computed(() =>
-  stateSegments(extras.value?.machines.project_by_status, PROJECT_STATUS_KEY)
-)
+const hostSegments = computed(() => stateSegments(extras.value?.machines.host_by_status, HOST_STATUS_KEY))
 
 /** 平台的健康度。三格并排，**状态色只在这里用**（up / stalling / down）—— 全页别处
  *  都是中性阶，这一行是唯一需要「一眼看出好坏」的地方。 */
@@ -291,9 +304,9 @@ const xLabels = computed(() => (platform.value?.people.series ?? []).map((row) =
         :loading="loading"
       />
       <AdminShareBar
-        v-if="projectMachineSegments.length"
-        :title="t('feedback.dashboard.extras.projectStates')"
-        :segments="projectMachineSegments"
+        v-if="hostSegments.length"
+        :title="t('feedback.dashboard.extras.hostStates')"
+        :segments="hostSegments"
         :note="t('feedback.dashboard.extras.machines.note')"
         :loading="loading"
       />

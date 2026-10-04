@@ -1766,7 +1766,7 @@ const MACHINE_STOCK = {
   devices: 7,
   hosted_devices: 5,
   warm_machines: 3,
-  project_machines: 2,
+  cloud_hosts: 2,
 }
 
 /** 存量里 agent 账号的个数（真人 = `ACCOUNT_TOTAL` 减去它）。判据是 `agent_bindings`
@@ -2352,12 +2352,12 @@ export function routes(url: URL, method: string, body: unknown): MockReply {
           warm_total: 3,
           warm_by_state: { ready: 2, preparing: 1 },
           warm_error: 0,
-          project_total: 2,
-          // 状态分布的两格：样例走 `PROJECT_STATUS_KEY` 键表里的词（表外的新状态
-          // 在页面上兜底显示原名 —— 和 `HEALTH_KEY` 同一模式）。
-          project_by_status: { leased: 1, released: 1 },
-          project_leased: 1,
-          project_enroll_error: 0,
+          host_total: 2,
+          host_by_status: { running: 1, deleted: 1 },
+          host_active: 1,
+          host_enroll_error: 0,
+          host_slots_used: 3,
+          host_slots_total: 8,
           note_key: 'platform.machinesNote',
         },
       }

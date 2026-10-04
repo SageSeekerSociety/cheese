@@ -29,7 +29,7 @@ The remaining sections describe ordinary work topics and their selected compute 
 | 路 | 机器是什么 | 谁的 |
 |---|---|---|
 | **自托管设备** | 用户自己接进来的机器（笔记本、常驻服务器） | 别人的 |
-| **Cloud** | 按话题现开的一台云主机，用完释放 | 我们开的，一次性 |
+| **Cloud** | 平台云主机池里的一个沙箱，每条会话一个；宿主机由平台调度，多个项目的沙箱共用一台 | 我们开的，随时可以销毁重建 |
 
 设备那条总是装上；Cloud 只在这个部署配了云平台的地址和密钥时才装。
 
@@ -156,7 +156,7 @@ Cloud 能开机 → 默认是 Cloud；开不了 → 默认是自托管设备
 
 这条话进房间，是一条明确的失败，不是一次静默的降级。市场页的算力选择器同时是空的——`available` 两条都是假，没有东西可选。两边说的是同一件事。
 
-配了 Cloud 的部署则相反：默认是 Cloud，第一轮会为这个话题开一台机器，房间里先收到「机器正在创建」，开好了自动接着跑。
+配了 Cloud 的部署则相反：默认是 Cloud。一条会话第一次要动手时，平台把它的沙箱放到池里一台还有空位的宿主机上；都满了就从预热池领一台，预热池也空了才现开一台，这时房间里先收到「正在准备沙箱」，就绪后工具调用自动接着跑。池子到了平台的容量上限时，这条会话被告知云端资源紧张、稍后再试。
 
 ## 四、可见性：云机器上是沙箱，自托管设备上是整机
 
@@ -225,7 +225,8 @@ that it must finish confirmation first. Once deletion is claimed, reopening allo
 a new resource UUID and drops only obsolete session-resume pointers. Published Git
 branches, platform memory, room messages and task records remain. Old cleanup commands
 keep their original UUID and parked backend worktree path; they cannot target the
-replacement. Cloud machines are deleted by their recorded allocation ID.
+replacement. On a cloud host, cleanup removes the room's directories; the host
+itself is the pool's, and the pool releases it once no session's home is left on it.
 Reopening restores no transcripts: the new generation starts new sessions, and a
 retained archive of the old one still expires on schedule.
 

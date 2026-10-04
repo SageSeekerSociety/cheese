@@ -244,7 +244,7 @@
       "devices": "Devices",
       "hosted": "Hosted devices",
       "warm": "Warm machines",
-      "project": "Project machines",
+      "hosts": "Cloud hosts",
       "note": "These four are stock counts from four ledgers, not live online counts — online state lives in process memory and has no column in the database."
     },
     "column": {
@@ -421,17 +421,21 @@
     "extras": {
       "title": "Quotas and gaps",
       "warmStates": "Warm machines by state",
-      "projectStates": "Project machines by status",
+      "hostStates": "Cloud hosts by status",
       "machineState": {
         "preparing": "Preparing",
         "ready": "Ready",
         "claimed": "Claimed",
         "error": "Error"
       },
-      "projectStatus": {
-        "leased": "Leased",
-        "released": "Released",
-        "error": "Error"
+      "hostStatus": {
+        "provisioning": "Provisioning",
+        "starting": "Starting",
+        "running": "Running",
+        "deleting": "Releasing",
+        "deleted": "Released",
+        "error": "Error",
+        "unknown": "Unknown"
       },
       "disk": {
         "title": "Disk (this backend)",
@@ -443,6 +447,10 @@
       },
       "machines": {
         "note": "Rows and state distribution across four ledgers, not a container count — one-container-per-room has no transport yet."
+      },
+      "hostSlots": {
+        "title": "Sandbox slots",
+        "note": "Slots held by sessions / all slots across the host pool."
       }
     },
     "reliability": {

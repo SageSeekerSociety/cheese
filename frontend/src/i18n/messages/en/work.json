@@ -89,7 +89,7 @@
     "collapse": "Collapse",
     "hint": "Only affects agents that have not started; agents already working keep their own computer",
     "distribution": "Where agents are now",
-    "onCloud": "Cloud · {agents}",
+    "onCloud": "Cloud sandbox · {agents}",
     "onDevice": "{name} · {agents}",
     "agents": "1 agent | {count} agents",
     "noneStarted": "No agents have started",
@@ -184,8 +184,6 @@
     "projects": "Projects: no limit is set",
     "concurrent": "A new project runs at most {count} AI tasks at a time by default; the rest wait in a queue",
     "detail": "Resource limits",
-    "machines": "Cloud machines: a team shares {count} by default. See the team's Work computers page for quota and usage.",
-    "machinesOwn": "Cloud machines: projects under your name share {count} by default; see Work computers under your name for credits and usage",
     "failed": "Could not load resource limits",
     "retry": "Retry",
     "loading": "Loading resource limits…"
@@ -379,8 +377,8 @@
         "human": "Needs a person"
       },
       "working": "{name} is on it",
-      "machineReady": "Work computer ready",
-      "machinePreparing": "Preparing the work computer",
+      "sandboxReady": "Sandbox ready",
+      "sandboxPreparing": "Preparing the sandbox",
       "incident": {
         "title": "Work computer temporarily unavailable",
         "cleaning": "Cleaning up automatically",
@@ -1665,30 +1663,14 @@
     }
   },
   "computeChoice": {
-    "cloud": "Cloud",
+    "cloud": "Cloud sandbox",
     "deviceOnline": "{name} · Online",
     "deviceOffline": "{name} · Offline",
     "computer": "Work computer",
     "none": "No work computers available",
-    "custom": "Custom CPU, memory and disk",
-    "cores": "CPU cores",
-    "memory": "Memory (GB)",
-    "disk": "Disk (GB)",
-    "coresUnit": "cores",
-    "memoryLabel": "Memory",
-    "diskLabel": "Disk",
-    "noValue": "No selectable values right now",
-    "outOfRange": "Outside the available range",
-    "noRangeFor": "{label}: no selectable values",
-    "supplyLoading": "Checking what the cloud can offer right now…",
-    "supplyRange": "Available range: {range}",
-    "supplyUnknown": "The cloud's available range can't be read right now ({reason}). You can save anyway and it is checked again when the machine starts",
-    "cloudHint": "Allocated on the first run and counted against the cloud quota. The cloud does not report remaining capacity, so a configuration inside the range can still fail to start",
+    "cloudHint": "Each session works in a cloud sandbox of its own, prepared on the first run",
     "deviceHint": "This project can already use this device, so no further authorization is needed. If it is offline, work waits until it comes online",
     "submit": "Use this configuration"
-  },
-  "cloudSupply": {
-    "requestFailed": "Request failed"
   },
   "projectTransfer": {
     "lookupFailed": "No account found",
@@ -1777,7 +1759,7 @@
     "online": "Online",
     "offline": "Offline",
     "device": "Own device",
-    "cloud": "Cloud",
+    "cloud": "Cloud sandbox",
     "current": "Used when nothing is chosen"
   },
   "needsYou": {

@@ -438,10 +438,10 @@ def periodic_jobs(
             settings.gate_sweep_interval_s,
             lambda: sweep_abandoned_gates(chat),
         ),
-        # Enrolling provisioned machines is platform plumbing, so it runs on its
+        # Keeping the cloud host pool is platform plumbing, so it runs on its
         # own interval — see machine/runner.py.
         PeriodicRunner(
-            "machine enrollment sweep",
+            "cloud host pool sweep",
             settings.machine_enroll_interval_seconds,
             machines.sweep,
         ),

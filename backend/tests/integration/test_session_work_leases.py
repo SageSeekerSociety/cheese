@@ -818,59 +818,36 @@ async def test_the_rooms_agent_may_choose_cloud(client, monkeypatch):
         assert row.execution_request["authorized_by"]["via"] == "cheese"
         assert row.execution_request["authorized_by"]["handle"] == actor_handle
 
-    # Cloud provisioning may already own a VM while work_lease is still empty.
-    # Changing its specification must retire that allocation rather than reuse it.
-    from app.domain.machine.models import MachineStatus
-    from app.domain.machine.repositories import ProjectMachineRepository
+    # The session was placed on a host still being created: it holds a home
+    # there but no lease yet. Switching away gives that slot back to the pool.
+    from app.domain.machine.models import CloudHost, CloudHostHome, MachineStatus
 
     async with client.test_factory() as db:
-        repo = ProjectMachineRepository(db)
-        old_machine = await repo.add(
-            project_id=project_id,
-            topic_id=topic_id,
-            session_id=session_id,
-            machine_id=71,
-            customer_id=7,
-            account_id=9,
-            offering_id=1,
-            hostname="first-cloud",
-            login_user="cheese",
-            cores=2,
-            memory_mb=4096,
-            disk_gb=20,
-            status=MachineStatus.running,
-            ip=None,
-            requested_by=actor_handle,
-        )
-        old_machine_id = old_machine.id
-        await db.commit()
-    changed = client.put(
-        path,
-        headers=headers,
-        json={"choice": {"name": "Larger cloud", "profile": "cloud", "cores": 4}},
-    )
-    assert changed.status_code == 200, changed.text
-    async with client.test_factory() as db:
-        repo = ProjectMachineRepository(db)
-        assert (await repo.get(old_machine_id)).superseded_at is not None
-        pending = await repo.add(
-            project_id=project_id,
-            topic_id=topic_id,
-            session_id=session_id,
+        host = CloudHost(
             machine_id=None,
             customer_id=7,
             account_id=9,
             offering_id=1,
-            hostname="pending-cloud",
+            hostname="host-coming-up",
             login_user="cheese",
-            cores=4,
+            cores=2,
             memory_mb=4096,
             disk_gb=20,
-            status=MachineStatus.running,
-            ip=None,
-            requested_by=actor_handle,
+            status=MachineStatus.provisioning,
         )
-        pending_id = pending.id
+        db.add(host)
+        await db.flush()
+        db.add(
+            CloudHostHome(
+                host_id=host.id,
+                project_id=project_id,
+                topic_id=topic_id,
+                room_resource_id=str(topic_id),
+                resource_id=str(uuid.uuid4()),
+                session_id=session_id,
+            )
+        )
+        host_id = host.id
         devices = sql_device_service(db)
         code = await devices.start("Available work computer")
         device = await devices.approve(
@@ -892,22 +869,18 @@ async def test_the_rooms_agent_may_choose_cloud(client, monkeypatch):
             "device_id": device_id,
         }
     }
-    blocked = client.put(path, headers=headers, json=replacement)
-    assert blocked.status_code == 409, blocked.text
-    async with client.test_factory() as db:
-        repo = ProjectMachineRepository(db)
-        pending = await repo.get(pending_id)
-        assert pending.superseded_at is None
-        pending.machine_id = 72
-        await db.commit()
     switched = client.put(path, headers=headers, json=replacement)
     assert switched.status_code == 200, switched.text
     async with client.test_factory() as db:
-        repo = ProjectMachineRepository(db)
-        assert (await repo.get(pending_id)).superseded_at is not None
+        homes = list(
+            await db.scalars(
+                select(CloudHostHome).where(CloudHostHome.host_id == host_id)
+            )
+        )
         row = await AgentSessionService(db).by_id(session_id)
-        assert row.work_lease is None
-        assert row.execution_request["choice"]["device_id"] == device_id
+    assert homes == []
+    assert row.work_lease is None
+    assert row.execution_request["choice"]["device_id"] == device_id
 
 
 async def test_each_dialer_gets_its_configured_base_not_the_request_host(

@@ -58,15 +58,11 @@ def test_http_group_answer_resumes_asking_session_while_other_native_session_is_
 
     class Channel:
         name = "native-ask-two-sessions"
-        provisions_machine = False
         deferred_work = False
         builds_model_env = False
 
         def available(self):
             return True
-
-        async def prepare_topic(self, **kwargs):
-            return True, ""
 
         async def ensure(self, session, opening, live=None):
             seat = opening.agent_handle or session.agent_handle

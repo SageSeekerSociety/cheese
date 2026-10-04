@@ -7,9 +7,6 @@ import { getResourceLimits } from '@/api'
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
-// own：项目要建在自己名下（只有自己的那个团队），名额和「工作电脑」页就不说成团队的。
-defineProps<{ own?: boolean }>()
-
 const limits = ref<ResourceLimits | null>(null)
 const failed = ref(false)
 // The one line that changes what the person can expect (tasks queue once the
@@ -51,13 +48,6 @@ onMounted(load)
       </div>
       <div v-if="expanded" id="resource-limits-detail" class="resource-limits__detail">
         <div>{{ t('work.resourceLimits.projects') }}</div>
-        <div>
-          {{
-            t(own ? 'work.resourceLimits.machinesOwn' : 'work.resourceLimits.machines', {
-              count: limits.max_machines_per_team,
-            })
-          }}
-        </div>
       </div>
     </template>
     <template v-else-if="failed">

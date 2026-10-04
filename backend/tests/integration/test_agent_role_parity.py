@@ -209,7 +209,6 @@ def test_team_standing_controls_management_for_both_identities(client, is_agent)
 def _promote(client, pid: str, handle: str) -> None:
     """Make ``handle`` an admin of the project's team."""
     import asyncio
-    import uuid
 
     from sqlalchemy import update
 
@@ -376,21 +375,6 @@ def test_manager_agent_can_issue_credentials_and_revocation_retires_them_all(cli
         )
 
 
-def test_cloud_management_requires_team_standing_even_with_an_agent_credential(
-    client,
-):
-    project, origin, _ = _rooms(client)
-    auth = _agent(client, project, origin)
-    endpoint = f"/projects/{project['id']}/machines/{uuid.uuid4()}"
-    handle = _seated_agent(client, origin)
-    join_project_team(client, project["id"], handle)
-    assert client.delete(endpoint, headers=auth).status_code == 403
-    _promote(client, project["id"], handle)
-    # No provider is configured in this harness. Reaching that check proves the
-    # management grant passed without making an external provider request.
-    assert client.delete(endpoint, headers=auth).status_code == 422
-
-
 def test_room_only_credential_cannot_use_project_management_roles(client):
     project, origin, _ = _rooms(client)
     join_project_team(client, project["id"], _seated_agent(client, origin), admin=True)
@@ -407,8 +391,6 @@ def test_room_only_credential_cannot_use_project_management_roles(client):
             ).status_code
             == 403
         )
-    machine = f"/projects/{project['id']}/machines/{uuid.uuid4()}"
-    assert client.delete(machine, headers=auth).status_code == 403
 
 
 def test_people_and_agents_record_weeklies_but_only_live_agents_create_questions(

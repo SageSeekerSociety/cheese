@@ -59,7 +59,6 @@ async def _place(db_factory, topic, agent, state, sid, machine=DEVICE) -> None:
 def _channel(hub: _Hub, db_factory) -> PiChannel:
     inner = SimpleNamespace(
         name=CHANNEL,
-        provisions_machine=False,
         deferred_work=None,
         builds_model_env=False,
         _session_factory=db_factory,
