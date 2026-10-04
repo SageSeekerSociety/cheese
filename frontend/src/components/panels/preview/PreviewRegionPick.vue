@@ -23,9 +23,10 @@ function point(event: PointerEvent): { x: number; y: number } | null {
 function span(a: { x: number; y: number }, b: { x: number; y: number }): WebRect {
   return { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w: Math.abs(b.x - a.x), h: Math.abs(b.y - a.y) }
 }
-const boxStyle = computed<Record<string, string>>(() => {
+const boxStyle = computed((): Record<string, string> => {
   const r = rect.value
-  return r ? { left: `${r.x}px`, top: `${r.y}px`, width: `${r.w}px`, height: `${r.h}px` } : {}
+  if (!r) return {}
+  return { left: `${r.x}px`, top: `${r.y}px`, width: `${r.w}px`, height: `${r.h}px` }
 })
 
 function begin(event: PointerEvent) {

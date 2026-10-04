@@ -144,7 +144,7 @@ it('冻结之后改不动：这一份说的是当时那一版', () => {
   expect(() => {
     ;(frozen as { version: string }).version = 'v8'
   }).toThrow()
-  expect(frozen.version).toBe('v7')
+  expect((frozen as { version: string }).version).toBe('v7')
 })
 
 const webElement: WebElementQuote = {
