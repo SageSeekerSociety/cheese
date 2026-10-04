@@ -108,7 +108,7 @@ const routes: RouteRecordRaw[] = [
 ]
 
 const router = createRouter({
-  history: createWebHistory(process.env.BASE_URL),
+  history: createWebHistory(import.meta.env.BASE_URL),
   routes,
   // Only the public pages scroll the document; the workspace locks it and scrolls
   // its own panes, which this leaves alone. Moving to another public page starts

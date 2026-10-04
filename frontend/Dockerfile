@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM node:21-slim as base
+FROM node:22-slim as base
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
 WORKDIR /app
@@ -29,15 +29,10 @@ ENV VITE_CONNECTOR_WS_BASE=__VITE_CONNECTOR_WS_BASE__
 # The commit this build is made from, shown in the desktop app's 关于 dialog.
 ARG GIT_SHA=
 ENV VITE_WEB_BUILD=$GIT_SHA
-# The fusion bundle outgrew Node's default ~2 GB heap — `vite build` OOM-killed
-# the CI runner (exit 134, "Reached heap limit"). Raise the old-space cap.
-#
-# 4096 也不够了：2026-10-03 起前端镜像构建连续失败（Deploy 里
-# build-did-not-produce-images → 线上一直不更新），日志是同一个
-# "Ineffective mark-compacts near heap limit"。触发点是当天合进来的文档块
-# （echarts / mermaid 两个重依赖）。这是 V8 的堆上限，不是容器被 OOM-kill，
-# 所以提高它有效；6144 在同样 8 GB 的机器上实测能过。
-ENV NODE_OPTIONS=--max-old-space-size=6144
+# The build needs under 2 GB of Node heap (Vite 8: Rolldown bundles, Oxc
+# minifies). Node's own limit depends on the machine's memory and can land
+# just under that, so the cap is set, with room to grow.
+ENV NODE_OPTIONS=--max-old-space-size=4096
 RUN pnpm build
 
 FROM nginx:1.25.4 as prod

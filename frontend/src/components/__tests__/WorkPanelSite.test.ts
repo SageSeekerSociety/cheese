@@ -24,6 +24,15 @@ vi.mock('../../api/docThreads', () => ({
   listDocThreads: async () => ({ data: [], total: 0 }),
   writeDocThread: async () => ({}),
 }))
+// The overview's document panel loads on its own and opens the room's
+// document; these suites are about the site panel, so it gets an empty one.
+vi.mock('../../composables/useDocCollab', async () => ({
+  useDocCollab: (await import('../../test/fakeDocCollab')).useFakeDocCollab,
+}))
+vi.mock('../../api/docHistory', () => ({
+  getDocVersions: async () => ({ versions: [], cursor: null }),
+  restoreDocVersion: async () => ({}),
+}))
 vi.mock('../CodeEditor.vue', () => ({
   default: {
     name: 'CodeEditor',

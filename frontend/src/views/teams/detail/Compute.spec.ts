@@ -235,7 +235,11 @@ it('suspends and resumes the same machine through its project', async () => {
     ai_status: 'ready',
     device_id: 'device-one',
   } as ProjectMachine
-  vi.spyOn(window, 'confirm').mockReturnValue(true)
+  // The test DOM has no confirm(); the person says yes.
+  vi.stubGlobal(
+    'confirm',
+    vi.fn(() => true)
+  )
   vi.mocked(listProjectMachines).mockImplementation(
     async (projectId) =>
       ({

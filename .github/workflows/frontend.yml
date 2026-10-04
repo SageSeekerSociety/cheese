@@ -22,12 +22,7 @@ name: Frontend Test
 # pool as test.yml/e2e.yml — separate capacity from the dev box's single deploy
 # slot, so a multi-minute frontend check here never queues behind a deploy.
 # node/pnpm come from the setup actions below, exactly as e2e.yml gets them.
-#
-# DELIBERATE DEVIATION from frontend/Dockerfile, which builds on node:21-slim:
-# this job runs node 22 (21 is end-of-life and gets no security updates). The
-# difference is safe HERE because this job only lints and type-checks — it never
-# produces the bundle that ships. If a job that builds the deployable artifact is
-# ever added, it must match the Dockerfile instead.
+
 on:
   workflow_call:
 # No step here comments, pushes or reads another workflow's runs — checkout is
