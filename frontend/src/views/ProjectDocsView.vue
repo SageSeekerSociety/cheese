@@ -341,6 +341,18 @@ useCommands(() => {
 .memory-card:hover .memory-card__del {
   opacity: 1;
 }
+/* 窄屏这一行放不下：三个 tab 加上右边的状态和动作，状态那句「没连上」被裁成
+   半截、最后一个 tab 被挤出可视区。让状态栏整条换到 tab 下面去 —— 它在那一行
+   上有全宽可用，tab 也不用再让位。 */
+@media (max-width: 599.98px) {
+  .docs-tabs {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+  .docs-tabs__bar {
+    flex: 0 0 100%;
+  }
+}
 /* 没有 hover 的设备上（手机、平板）等不到它出现，所以常驻。按输入方式判断，不按
    视口宽度，和话题侧栏的行操作同一个判断。 */
 @media (hover: none) {

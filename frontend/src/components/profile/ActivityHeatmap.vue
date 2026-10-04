@@ -32,13 +32,19 @@ const locale = computed(() => i18n.global.locale.value)
 
 const months = computed(() => {
   const marks = monthStarts(weeks.value)
-  return marks.map((mark, i) => ({
-    ...mark,
-    span: (marks[i + 1]?.column ?? weeks.value.length) - mark.column,
-    label: new Intl.DateTimeFormat(locale.value, { month: 'short', timeZone: 'UTC' }).format(
-      Date.UTC(2000, mark.month - 1, 1)
-    ),
-  }))
+  return (
+    marks
+      .map((mark, i) => ({
+        ...mark,
+        span: (marks[i + 1]?.column ?? weeks.value.length) - mark.column,
+        label: new Intl.DateTimeFormat(locale.value, { month: 'short', timeZone: 'UTC' }).format(
+          Date.UTC(2000, mark.month - 1, 1)
+        ),
+      }))
+      // 最后一个月刚开始、只占一两栏（约 12~26px）时放不下月份名：裁成「10」看不懂，
+      // 往左撑开又会压到上个月的名字上。这时干脆不标，和 GitHub 的贡献图一样。
+      .filter((m, i, all) => i < all.length - 1 || m.span > 2)
+  )
 })
 
 function dayLabel(date: string): string {

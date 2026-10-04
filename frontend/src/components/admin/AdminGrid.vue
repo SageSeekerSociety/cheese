@@ -153,7 +153,10 @@ const bone = (column: number): string => props.boneWidths?.[column] ?? BONE_FALL
 
 .agrid__table {
   width: 100%;
-  min-width: 1080px;
+  /* 表格的宽度下限：再窄就排不下那些定宽列，宁可横着滚。默认 1080 是反馈队列表
+     那一组列量出来的。列少的表可以在自己的作用域里改 `--agrid-min` —— 成员表六列
+     定宽合计 770，1440 下后台容器只有约 1051，1080 会把最后一列裁掉 29px。 */
+  min-width: var(--agrid-min, 1080px);
   /* 列宽只认 `<colgroup>`：固定布局下单元格里长出来的内容（长标题、长 handle）
      不会把列撑开，溢出由 `text-overflow: ellipsis` 收掉。 */
   table-layout: fixed;
