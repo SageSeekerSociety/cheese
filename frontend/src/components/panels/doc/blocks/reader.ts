@@ -221,6 +221,37 @@ function serializer(doc: PMNode, later: Later, opts: ReadOptions): DOMSerializer
   return new DOMSerializer(nodes, base.marks)
 }
 
+const BLOCK_TAGS = new Set([
+  'P',
+  'H1',
+  'H2',
+  'H3',
+  'H4',
+  'H5',
+  'H6',
+  'UL',
+  'OL',
+  'LI',
+  'PRE',
+  'BLOCKQUOTE',
+  'TABLE',
+  'HR',
+  'DIV',
+])
+
+/** A newline between two blocks, where the source has its line break: text
+ *  read off the page (a quote's context, a copy) then keeps its paragraphs
+ *  apart instead of running them together. */
+function separateBlocks(root: Element): void {
+  if (root.tagName === 'PRE') return
+  const children = Array.from(root.children)
+  children.forEach((child, i) => {
+    const next = children[i + 1]
+    if (next && BLOCK_TAGS.has(child.tagName) && BLOCK_TAGS.has(next.tagName)) child.after('\n')
+    separateBlocks(child)
+  })
+}
+
 /** Each value under its column's name, for when a table's rows become cards. */
 function labelCards(root: HTMLElement): void {
   for (const body of Array.from(root.querySelectorAll('.tableWrapper[data-shape="cards"] tbody'))) {
@@ -275,6 +306,7 @@ export function mountMarkdown(host: HTMLElement, md: string, opts: ReadOptions =
   const fragment = serializer(doc, (el, start) => pending.push({ el, start }), opts).serializeFragment(doc.content)
   host.classList.add(READING)
   host.replaceChildren(fragment)
+  separateBlocks(host)
   labelCards(host)
   chips(host, opts.names ?? NO_NAMES)
 

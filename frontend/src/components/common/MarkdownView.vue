@@ -31,26 +31,11 @@ function draw() {
   stop = host.value
     ? mountMarkdown(host.value, props.source, { as: props.as, names: props.names, copyCode: props.copyCode })
     : null
-  drawnAt = Date.now()
-}
-
-// 正在一个字一个字长出来的回答：每 200ms 最多重画一次，否则图表每来一个字就重建一次。
-const STREAM_MS = 200
-let drawnAt = 0
-let timer = 0
-function redraw() {
-  clearTimeout(timer)
-  const wait = drawnAt + STREAM_MS - Date.now()
-  if (wait <= 0) draw()
-  else timer = window.setTimeout(draw, wait)
 }
 
 onMounted(draw)
-watch([() => props.source, () => props.as, () => props.names, () => props.copyCode], redraw, { deep: true })
-onBeforeUnmount(() => {
-  clearTimeout(timer)
-  stop?.()
-})
+watch([() => props.source, () => props.as, () => props.names, () => props.copyCode], draw, { deep: true })
+onBeforeUnmount(() => stop?.())
 
 /** 画出来的那块 DOM：要从读者的选区算出原文的地方（文件预览的引用）用它。 */
 defineExpose({ el: host })
