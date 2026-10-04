@@ -29,6 +29,7 @@ import MobileActionSheet from '../common/MobileActionSheet.vue'
 import PreviewPages from './preview/PreviewPages.vue'
 import PreviewSheet from './preview/PreviewSheet.vue'
 import RevisionList from './preview/RevisionList.vue'
+import ChangesDiff from './ChangesDiff.vue'
 import ChangesFileTree from './ChangesFileTree.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -532,12 +533,9 @@ function revisionReadOnly(): boolean {
               </div>
             </div>
             <!-- 逐文件 diff: 一个文件一段，增删各自着色。整块裸 diff 读不动，也没法
-               定位到文件，所以验收动线以前根本立不起来。 -->
-            <div v-else-if="props.openPath && props.effectiveView === 'diff'" class="diff-view">
-              <div v-for="(l, i) in props.openDiffLines" :key="i" class="diff-line" :class="`diff-line--${l.kind}`">
-                {{ l.text }}
-              </div>
-            </div>
+               定位到文件，所以验收动线以前根本立不起来。行号、折行、窗口化都在
+               ChangesDiff 里。 -->
+            <ChangesDiff v-else-if="props.openPath && props.effectiveView === 'diff'" :lines="props.openDiffLines" />
             <div v-else-if="props.openPath && props.openIsImage" class="file-image-view">
               <img :src="props.openRawUrl" :alt="props.openPath" />
             </div>
@@ -839,40 +837,8 @@ function revisionReadOnly(): boolean {
   background: var(--danger-wash);
 }
 
-/* 逐文件 diff。一行一个 div 而不是一整块 <pre>：每一行要自己带底色，而增删两色
-   正是「读得动」和「读不动」的全部差别。 */
-.diff-view {
-  flex: 1 1 auto;
-  min-width: 0;
-  min-height: 0;
-  overflow: auto;
-  padding: 6px 0;
-  background: var(--surface);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 1.55;
-}
-.diff-line {
-  padding: 0 12px;
-  white-space: pre;
-  color: var(--text);
-}
-.diff-line--add {
-  background: var(--ok-wash);
-  color: var(--ok-ink);
-}
-.diff-line--del {
-  background: var(--danger-wash);
-  color: var(--danger-ink);
-}
-.diff-line--hunk {
-  margin-top: 4px;
-  background: var(--fill);
-  color: var(--muted);
-}
-.diff-line--meta {
-  color: var(--faint);
-}
+/* 逐文件 diff 的样式在 ChangesDiff.vue：渲染那一列的逻辑和它的长相都搬进了那个
+   子组件（父组件的 scoped 选择器本来也落不到它内部）。 */
 
 /* 文件: a two-pane browser — list + Monaco editor. Light, to match the app.
    Fills the tab height so the editor scrolls internally. */

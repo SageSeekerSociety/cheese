@@ -482,6 +482,7 @@
       "noFileOpen": "No file open",
       "unsaved": "Unsaved",
       "diffView": "Diff",
+      "diffMore": "Show {count} more lines",
       "fullText": "Full text",
       "edit": "Edit",
       "save": "Save",

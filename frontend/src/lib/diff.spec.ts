@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { parseDiffLines, splitDiffByFile } from './diff'
+import { DIFF_WINDOW, numberDiffLines, parseDiffLines, splitDiffByFile } from './diff'
 
 const DIFF = `diff --git a/src/a.py b/src/a.py
 index 1111111..2222222 100644
@@ -93,5 +93,45 @@ describe('diff 行的定性', () => {
   it('文件头的 --- / +++ 不算增删', () => {
     const lines = parseDiffLines('--- a/x\n+++ b/x\n-真的删了\n+真的加了')
     expect(lines.map((l) => l.kind)).toEqual(['meta', 'meta', 'del', 'add'])
+  })
+})
+
+describe('diff 行号', () => {
+  // 行号不是从行本身读出来的，是从 hunk 头起算一步步走下来的：走错一步，后面
+  // 每一个号码都跟着错，而画面上照样有数字，看不出错。
+  it('从 hunk 头起算，删除只走旧号、新增只走新号', () => {
+    const rows = numberDiffLines(parseDiffLines(splitDiffByFile(DIFF)[0].body))
+    expect(rows.slice(4).map((r) => [r.kind, r.oldNumber, r.newNumber])).toEqual([
+      ['hunk', null, null],
+      ['context', 1, 1],
+      ['del', 2, null],
+      ['add', null, 2],
+      ['add', null, 3],
+    ])
+  })
+
+  it('文件头（diff/index/---/+++）没有行号', () => {
+    const rows = numberDiffLines(parseDiffLines(splitDiffByFile(DIFF)[0].body))
+    expect(rows.slice(0, 4).map((r) => [r.oldNumber, r.newNumber])).toEqual([
+      [null, null],
+      [null, null],
+      [null, null],
+      [null, null],
+    ])
+  })
+
+  // 新文件的旧号是 0，第一个 + 行是新号 1。这一条正好检验旧号到底从 hunk 头走、
+  // 不是从 1 硬起。
+  it('新增的第一个文件从新的第 1 行开始', () => {
+    const body = splitDiffByFile(DIFF)[1].body
+    const adds = numberDiffLines(parseDiffLines(body)).filter((r) => r.kind === 'add')
+    expect(adds.map((r) => r.newNumber)).toEqual([1, 2])
+    expect(adds.every((r) => r.oldNumber === null)).toBe(true)
+  })
+})
+
+describe('大文件的窗口', () => {
+  it('窗口是个正数，一次画不完的那一份才有「显示剩余」', () => {
+    expect(DIFF_WINDOW).toBeGreaterThan(0)
   })
 })
