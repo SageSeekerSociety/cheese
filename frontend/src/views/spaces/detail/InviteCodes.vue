@@ -24,6 +24,7 @@ import dayjs from 'dayjs'
 import { currentInviteCode, inviteCodeStatus } from '../model'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import SettingsToolbar from '@/components/spaces/SettingsToolbar.vue'
 import { SpacesApi } from '@/network/api/spaces'
@@ -34,6 +35,9 @@ const spaceId = Number(route.params.spaceId)
 
 const codes = ref<SpaceInviteCode[]>([])
 const loading = ref(false)
+// 读失败和「还没有邀请码」是两件事：失败留在页面上，空列表才交给列表自己说。
+const failed = ref(false)
+const errorDetail = ref<string | null>(null)
 const busy = ref(false)
 const copiedId = ref<number | null>(null)
 
@@ -69,11 +73,14 @@ function noteFrom(value: string): string | null {
 
 async function refresh() {
   loading.value = true
+  failed.value = false
+  errorDetail.value = null
   try {
     const res = await SpacesApi.listInviteCodes(spaceId)
     codes.value = res.data.inviteCodes ?? []
-  } catch {
-    toast.error(t('spaces.inviteCodes.toast.loadFailed'))
+  } catch (error) {
+    failed.value = true
+    errorDetail.value = error instanceof Error && error.message ? error.message : null
   } finally {
     loading.value = false
     editingId.value = null
@@ -280,6 +287,13 @@ async function submitCreate() {
     <div v-if="loading" class="pa-4 text-center">
       <v-progress-circular indeterminate color="primary" />
     </div>
+
+    <BaseLoadError
+      v-else-if="failed"
+      :title="t('spaces.inviteCodes.toast.loadFailed')"
+      :error="errorDetail"
+      @retry="refresh"
+    />
 
     <div v-else class="settings-card">
       <v-list v-if="codes.length > 0" class="settings-list" bg-color="transparent">
