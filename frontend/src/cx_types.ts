@@ -1,6 +1,8 @@
 // Shared types matching the backend API contract (CheeseX Phase 0).
 
+import type { AgentControlState } from './types/agentControl'
 import type { AskBlockMeta } from './types/ask'
+export type { AgentControlState } from './types/agentControl'
 export type { AskAnswerEntry, AskOption } from './types/ask'
 export type { WaitingItem } from './types/waiting'
 
@@ -345,24 +347,6 @@ export type WsServerFrame =
   // The same shape `GET /topics/{id}/agent/control` answers.
   | { type: 'agent_control'; state: AgentControlState }
   | import('./types/live').LiveFrame
-
-export interface AgentControlState {
-  id: string | null
-  connected: boolean
-  controls?: string[]
-  tasks?: Record<
-    string,
-    {
-      task_id: string
-      description?: string
-      status?: string
-      subtype?: string
-      tool_use_id?: string
-      task_type?: string
-    }
-  >
-  state?: Record<string, Record<string, unknown>>
-}
 
 // An uploaded worktree file the message carries. `path` comes from
 // POST /topics/{id}/attachments; the WS frame only references it (no binary).

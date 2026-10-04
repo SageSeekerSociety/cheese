@@ -260,6 +260,8 @@
         "label": "Session details",
         "connected": "Session connected",
         "none": "No session running",
+        "several": "{count} sessions are running in this room; pick a teammate to view one",
+        "teammate": "Teammate",
         "expand": "Show details",
         "collapse": "Hide details",
         "view": "View",

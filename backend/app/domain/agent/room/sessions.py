@@ -1100,21 +1100,38 @@ class RoomSessions:
             {"type": "agent_control", "state": await self.control_state(topic)},
         )
 
-    async def control_state(self, topic: uuid.UUID) -> dict:
-        """What the room's controls show, from the session's mirror alone."""
-        seat = self._room_seat(topic)
+    def _control_seat(self, topic: uuid.UUID, agent: str | None) -> Seat | None:
+        """The seat a control names, or the room's only live one when it names
+        none. Several live and none named is no seat: the caller picks from
+        ``seats`` rather than this picking a teammate at random."""
+        return (topic, agent) if agent else self._room_seat(topic)
+
+    async def control_state(self, topic: uuid.UUID, agent: str | None = None) -> dict:
+        """What the room's controls show, from the session's mirror alone.
+
+        ``seats`` lists every live seat in the room with its session, so a room
+        with two teammates working says so instead of showing no session."""
+        seat = self._control_seat(topic, agent)
         live = self.live.get(seat) if seat is not None else None
         shown = await self.host.control_state(live.ref) if live is not None else {}
         return {
             "id": live.conversation if live else None,
             "connected": live is not None,
+            "agent": seat[1] if live is not None and seat is not None else None,
+            "seats": [
+                {"agent": handle, "id": held.conversation}
+                for (room, handle), held in sorted(self.live.items())
+                if room == topic
+            ],
             "controls": list(self.controls),
             **shown,
         }
 
-    async def control(self, topic: uuid.UUID, request: dict) -> dict:
+    async def control(
+        self, topic: uuid.UUID, request: dict, agent: str | None = None
+    ) -> dict:
         """One control request to the room's session, to its response."""
-        seat = self._room_seat(topic)
+        seat = self._control_seat(topic, agent)
         live = self.live.get(seat) if seat is not None else None
         if live is None:
             raise LookupError("No session is running in this room")
