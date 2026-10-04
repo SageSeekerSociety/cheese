@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
+import LandingFilm from './LandingFilm.vue'
 import LandingRoom from './LandingRoom.vue'
 import LandingShell from './LandingShell.vue'
 
@@ -66,6 +67,8 @@ onBeforeUnmount(() => observer?.disconnect())
         </div>
       </div>
     </section>
+
+    <LandingFilm />
 
     <section class="manifesto" :aria-label="t('publicSite.manifestoLabel')">
       <p class="manifesto-text">
