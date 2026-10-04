@@ -2,6 +2,27 @@
 
 团队都在**同一个飞书 org**（租户域名 `acnxgqu0961c.feishu.cn`）。所有飞书自动化——云文档、云空间、知识库 Wiki、多维表格——都经 `lark-cli` 完成。
 
+## 飞书知识库
+
+产品方向、服务对象、合作关系、公司信息和团队的决定都记在团队飞书的知识库“知是平台”里，仓库里只有代码和开发文档。知识库首页是“知是知识库”，它下面的两篇愿景《愿景：让好奇心拥有改变世界的力量》和《众智成事：我们为什么做 AI+教育》是产品定位和官网文案的出处；现行材料在“工作资料”和“新人入门”下；“过往方向与旧版本”下是已被替代的方向和旧版本，不作为现行依据。
+
+```bash
+lark-cli wiki +space-list --profile cheese                                    # 找到「知是平台」的 space_id
+lark-cli wiki +node-list  --profile cheese --space-id <space_id>              # 首页
+lark-cli wiki +node-list  --profile cheese --space-id <space_id> --parent-node-token <首页 node_token>
+lark-cli docs +fetch      --profile cheese --doc <页面链接>
+```
+
+`lark-cli docs +search` 按标题找页面，中文查询用完整标题更容易命中。
+
+## 首次接入
+
+```bash
+task lark:setup
+```
+
+脚本先安装 `lark-cli`（npm 包 `@larksuite/cli`），再注册共用的 `cheese` app，最后用你自己的飞书账号在浏览器里登录。注册时要粘贴 app secret，它不在 git 里，向团队成员私下要这个 secret。已经能通过 `--profile cheese` 访问飞书的机器，脚本检查后直接退出。飞书 skill 随仓库提供，不需要另外安装。
+
 ## 铁律：飞书操作一律走 `cheese` profile
 
 ```bash

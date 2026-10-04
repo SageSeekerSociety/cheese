@@ -26,6 +26,10 @@ dev and production are separate deployments; a change reaching one does not reac
 - SSH diagnosis is allowed. Pre-merge experiments belong in separate test environments, which this rule does not cover, and must not touch the production deployment or its data.
 - Services maintained outside this repository (MicroCloud, the metering proxy) follow their own deployment and authorisation rules; do not impose this one on them. All other safety and authorisation rules still apply.
 
+## The company's knowledge is in Feishu
+
+What the product is for, who it serves, the partnerships behind it, facts about the company and the team's decisions are kept in the team's Feishu wiki, not in this repository: the code shows what was built, not why or for whom. Before deciding anything a user or partner will see, such as product copy, scenarios or positioning, read the relevant Feishu pages through `lark-cli` and work from them, and name the pages you relied on in the PR. Setting up access is in `docs/feishu-lark.md`.
+
 ## Read the issues before the docs, and clean the docs when a design lands
 
 A design still being argued lives in issues. Whatever `docs/` says about it predates the conclusion, and nothing in the file will tell you.
