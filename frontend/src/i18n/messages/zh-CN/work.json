@@ -1448,7 +1448,6 @@
     "close": "关闭",
     "actionsOf": "{name} 的操作",
     "backToList": "返回资料库",
-    "previewLoading": "正在读取文件",
     "previewError": "无法预览这份文件",
     "downloadOnly": "此格式暂不支持预览，可下载查看",
     "versions": "版本…",
