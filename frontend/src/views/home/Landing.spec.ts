@@ -131,6 +131,19 @@ describe('公开首页', () => {
     expect(solutions.getByRole('link', { name: '方案' }).getAttribute('aria-current')).toBe('page')
   })
 
+  it('shows the film silently, and plays it from the start with sound when asked', async () => {
+    const home = await mount()
+    const video = home.getByRole('region', { name: '影片：众智成事' }).querySelector('video')!
+    expect(video.muted).toBe(true)
+    expect(video.controls).toBe(false)
+    video.currentTime = 12
+    await fireEvent.click(home.getByRole('button', { name: /有声观看/ }))
+    expect(video.muted).toBe(false)
+    expect(video.currentTime).toBe(0)
+    expect(video.controls).toBe(true)
+    expect(home.queryByRole('button', { name: /有声观看/ })).toBeNull()
+  })
+
   it('leads to the download page, which offers every build from this site, not from GitHub', async () => {
     const home = await mount()
     expect(home.getByRole('link', { name: '下载' }).getAttribute('href')).toBe('/download')
