@@ -16,6 +16,7 @@
                  经公共网关用 https://example.com/api
   CHEESE_PROJECT 当前项目 id
   CHEESE_TOPIC   当前话题 id
+  CHEESE_DOCUMENT 当前文档 id（对着一份文档开的会话才有；没有时用话题的实况文档）
   CHEESE_AUTHOR  当前作者 handle（默认 cheese）
   CHEESE_TOKEN   房间凭据，每个请求都带上（X-Cheese-Token）；后端凭它认出是谁
   CHEESE_TURN    当前这一轮的 id，带回去让这一轮写出的块归在一起
@@ -921,7 +922,12 @@ _NEEDS_TOPIC = frozenset(PLATFORM_TOOLS.names()) - {
     "platform_request",
     "cheese_docs_search",
     "cheese_docs_read",
+    # 文档自己有编号（CHEESE_DOCUMENT）；只有话题时，从话题查出它的文档。
+    "cheese_doc_get",
+    "cheese_doc_set",
+    "cheese_doc_edit",
 } | {"cheese_attachment_read"}
+_NEEDS_DOCUMENT = frozenset({"cheese_doc_get", "cheese_doc_edit"})
 _NEEDS_PROJECT = frozenset(
     {
         "cheese_project_search",
@@ -1080,6 +1086,9 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
     env = os.environ if environ is None else environ
     topic = env.get("CHEESE_TOPIC", "")
     project = env.get("CHEESE_PROJECT", "")
+    document = env.get("CHEESE_DOCUMENT", "")
+    if tool in _NEEDS_DOCUMENT and not document:
+        raise ValueError("Missing CHEESE_DOCUMENT")
     if tool in _NEEDS_TOPIC and not topic:
         raise ValueError("Missing CHEESE_TOPIC")
     if tool in _NEEDS_PROJECT and not project:
@@ -1132,11 +1141,11 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             },
         }
     if tool == "cheese_doc_get":
-        return {"method": "GET", "path": f"/topics/{topic}/doc"}
+        return {"method": "GET", "path": f"/documents/{document}"}
     if tool == "cheese_doc_edit":
         return {
             "method": "POST",
-            "path": f"/topics/{topic}/doc/edits",
+            "path": f"/documents/{document}/edits",
             "body": {
                 "edits": [
                     {"old": str(e["old"]), "new": str(e.get("new") or "")}
@@ -1643,12 +1652,13 @@ def _doc_get(args: dict, host) -> str:
     content over it claiming to be based on it, which is the exact overwrite the
     version exists to stop. So the version this read returned is kept by the
     host, and the write reads it back from there."""
-    plan = request_plan("cheese_doc_get", args, host.environ)
+    document = _document(host)
+    plan = request_plan("cheese_doc_get", args, {**host.environ, **document})
     doc = host.request(plan).get("data") or {}
     version = doc.get("doc_version", 0)
-    host.doc_versions[host.environ.get("CHEESE_TOPIC", "")] = version
+    host.doc_versions[document["CHEESE_DOCUMENT"]] = version
     if not doc.get("content"):
-        return "本话题还没有实况文档；cheese_doc_set 会新建它。"
+        return "这份文档还是空的；cheese_doc_set 会写下第一版。"
     pending = doc.get("pending_suggestions") or []
     if not pending:
         return doc["content"]
@@ -1664,8 +1674,21 @@ def _doc_get(args: dict, host) -> str:
     return "\n".join(lines)
 
 
+def _document(host) -> dict:
+    """本次要读写的文档：会话本来就是对着某份文档开的（CHEESE_DOCUMENT），
+    或者是话题里的会话，用话题的实况文档。"""
+    document = host.environ.get("CHEESE_DOCUMENT", "")
+    if document:
+        return {"CHEESE_DOCUMENT": document}
+    topic = host.environ.get("CHEESE_TOPIC", "")
+    if not topic:
+        raise PlatformToolError("Missing CHEESE_DOCUMENT or CHEESE_TOPIC")
+    found = host.request({"method": "GET", "path": f"/topics/{topic}/document"})
+    return {"CHEESE_DOCUMENT": (found.get("data") or {})["id"]}
+
+
 def _doc_edit(args: dict, host) -> str:
-    plan = request_plan("cheese_doc_edit", args, host.environ)
+    plan = request_plan("cheese_doc_edit", args, {**host.environ, **_document(host)})
     try:
         answer = host.request(plan)
     except Exception as exc:
@@ -1696,9 +1719,7 @@ def _doc_edit(args: dict, host) -> str:
 
 
 def _doc_set(args: dict, host) -> str:
-    topic = host.environ.get("CHEESE_TOPIC", "")
-    if not topic:
-        raise PlatformToolError("Missing CHEESE_TOPIC")
+    document = _document(host)["CHEESE_DOCUMENT"]
     raw = host.read_file(args["path"])
     try:
         content = raw.decode("utf-8")
@@ -1706,12 +1727,12 @@ def _doc_set(args: dict, host) -> str:
         raise PlatformToolError(f"{args['path']} 不是 UTF-8 文本: {exc}") from exc
     # 0 —— 「我没读过」—— 是没有读过时的值，也是唯一允许**新建**文档的版本：
     # 没读过一份已经存在的文档，正是写入必须被拒的时候。
-    based_on = host.doc_versions.get(topic, 0)
+    based_on = host.doc_versions.get(document, 0)
     try:
         result = host.request(
             {
                 "method": "PUT",
-                "path": f"/topics/{topic}/doc",
+                "path": f"/documents/{document}",
                 "body": {
                     "content": content,
                     "expected_version": based_on,
@@ -1745,7 +1766,7 @@ def _doc_set(args: dict, host) -> str:
             "cheese_doc_set。直接重试会原样被拒。"
         ) from exc
     version = (result.get("data") or {}).get("doc_version", 0)
-    host.doc_versions[topic] = version
+    host.doc_versions[document] = version
     lines = [f"已更新实况文档（第 {version} 版）。"]
     # 格式警告（#1889 第 3 条）：写入照样成功，但「哪里不像状态」要当场改。
     # 它跟着这次写入回来，不另发一条通知——改的机会就是现在，而此刻在写字的人

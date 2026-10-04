@@ -34,8 +34,7 @@ const props = withDefaults(
     // Bumped by the parent on AI activity (turn-done / update_doc tool) so the
     // panel reloads the doc 芝士 just wrote. See TopicView activityTick.
     activityTick: number
-    // Project topics (A2): resolve a doc node's upgraded_to_topic_id to the
-    // subtopic's title + live status for the in-place live-ref badge.
+    // Project topics: the titles `<#id>` chips in the document show.
     topicList?: Topic[]
     /** 项目 AI 队友的名字：文档被它改过时，提示里说的是它，不写死「芝士」。 */
     agentName?: string
@@ -58,8 +57,8 @@ const props = withDefaults(
   }
 )
 
-// open-topic (A2): a doc live-ref chip was clicked — the parent navigates to the
-// subtopic. open-file: a <&path> chip was clicked — WorkPanel switches to the
+// open-topic: a `<#id>` chip was clicked — the parent navigates to that topic.
+// open-file: a <&path> chip was clicked — WorkPanel switches to the
 // 改动 tab and opens it there (the ONE cross-tab wire, and the only one).
 const emit = defineEmits<{
   (e: 'open-topic', topicId: string): void
@@ -71,7 +70,7 @@ const viewRef = ref<InstanceType<typeof PanelDocView> | null>(null)
 
 const doc = usePanelDoc(props)
 
-const docThreads = useDocThreads(() => props.topic?.id ?? null)
+const docThreads = useDocThreads(() => doc.documentId.value)
 const people = useDocPeople({
   members: () => props.members,
   agentHandle: () => props.agentHandle,
@@ -133,7 +132,6 @@ defineExpose({ pulse, highlightTurn, reviewEdits })
     :refresh-threads="docThreads.refresh"
     :thread-state="threads.state"
     :thread-actions="threads.actions"
-    :live-ref-index="doc.liveRefIndex.value"
     :suggestion-reasons="doc.suggestionReasons.value"
     :fetch-suggestion-reasons="doc.fetchSuggestionReasons"
     :fetch-doc-nodes="doc.fetchDocNodes"

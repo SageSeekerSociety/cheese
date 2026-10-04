@@ -14,7 +14,6 @@ A person calling here (restoring one change, undoing a rewrite) edits directly,
 as themselves.
 """
 
-import uuid
 from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -82,20 +81,23 @@ async def _touches_someone_elses_text(
 async def decide(
     db: AsyncSession,
     *,
-    room_id: uuid.UUID,
     doc: Document,
     actor: str,
     content: str,
     edits: list[dict],
     asked: str | None,
 ) -> Decision:
-    """How ``actor``'s edits are applied to the room's document ``doc``.
-    ``asked`` is the mode the caller asked for, if any; ``content`` the
-    document as stored."""
+    """How ``actor``'s edits are applied to ``doc``. ``asked`` is the mode the
+    caller asked for, if any; ``content`` the document as stored. An agent
+    editing a room's document in a turn somebody started edits for them."""
     if not await IdentityService(db).is_agent(actor):
         return Decision(mode="direct", requested_by=None)
-    author = await AgentTurnRepository(db).open_turn_author_for_topic(
-        room_id, agent_handle=actor
+    author = (
+        await AgentTurnRepository(db).open_turn_author_for_topic(
+            doc.room_id, agent_handle=actor
+        )
+        if doc.room_id is not None
+        else None
     )
     if author and author != "system" and not await IdentityService(db).is_agent(author):
         return Decision(mode=asked or "direct", requested_by=author)

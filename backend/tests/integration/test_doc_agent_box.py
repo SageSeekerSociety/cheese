@@ -21,6 +21,7 @@ from tests.integration.conftest import session_auth_headers
 from tests.integration.test_doc_agent import _tool
 from tests.integration.test_doc_agent import sessions as sessions  # noqa: F401
 from tests.integration.test_doc_edits import ALICE_PARAGRAPH, _doc, _document
+from tests.support.living_doc import document_of
 
 
 def _selection(selected: str) -> dict:
@@ -28,10 +29,15 @@ def _selection(selected: str) -> dict:
     return {"block": ALICE_PARAGRAPH, "start": start, "end": start + len(selected)}
 
 
+def _agent(client, room: str) -> str:
+    """Where the room's document is asked (``/documents/{id}/agent``)."""
+    return f"/documents/{document_of(client, room)}/agent"
+
+
 def _ask(client, room: str, by: str = "alice", **body) -> tuple[int, list]:
     """The box's events, in order: (name, data)."""
     response = client.post(
-        f"/topics/{room}/doc/agent", json=body, headers=session_auth_headers(by)
+        _agent(client, room), json=body, headers=session_auth_headers(by)
     )
     if response.status_code != 200:
         return response.status_code, []
@@ -70,7 +76,8 @@ def test_a_shortcut_changes_the_selection_and_the_box_gets_the_change(client, se
     assert _done(events)["edits"] == [{"old": "讲范围", "new": "讲边界"}]
     assert "李老师写的第二段，讲边界。" in _doc(client, room)["content"]
     latest = client.get(
-        f"/topics/{room}/doc/history", headers=session_auth_headers("alice")
+        f"/documents/{document_of(client, room)}/history",
+        headers=session_auth_headers("alice"),
     ).json()["data"]["versions"][-1]
     assert latest["actor"] == seat and latest["requested_by"] == "bob"
     [(_, question)] = sessions.asked
@@ -148,13 +155,13 @@ def test_the_answer_goes_into_the_askers_own_thread_only(client, sessions):
 
     def thread(by: str) -> str:
         return client.post(
-            f"/topics/{room}/comments",
+            f"/documents/{document_of(client, room)}/comments",
             json={"content": "检查", "quote": "范围"},
             headers=session_auth_headers(by),
         ).json()["data"]["id"]
 
     mine, theirs = thread("alice"), thread("bob")
-    into = f"/topics/{room}/doc/agent/{conversation}/reply"
+    into = f"{_agent(client, room)}/{conversation}/reply"
 
     refused = client.post(f"{into}/{theirs}", headers=session_auth_headers("alice"))
     taken = client.post(f"{into}/{mine}", headers=session_auth_headers("alice"))
@@ -162,7 +169,8 @@ def test_the_answer_goes_into_the_askers_own_thread_only(client, sessions):
     assert refused.status_code == 403
     assert taken.status_code == 200, taken.text
     replies = client.get(
-        f"/topics/{room}/comments/{mine}/thread", headers=session_auth_headers("alice")
+        f"/documents/{document_of(client, room)}/comments/{mine}/thread",
+        headers=session_auth_headers("alice"),
     ).json()["data"]["replies"]
     assert [(r["comment"]["author"], r["comment"]["content"]) for r in replies] == [
         (seat, "第二段的范围和第一段的目标对得上。")
@@ -185,7 +193,7 @@ def test_a_stopped_answer_keeps_what_was_written(client, sessions):
     conversation = ref.home.rsplit("/", 1)[-1]
 
     stopped = client.post(
-        f"/topics/{room}/doc/agent/{conversation}/stop",
+        f"{_agent(client, room)}/{conversation}/stop",
         headers=session_auth_headers("alice"),
     )
 

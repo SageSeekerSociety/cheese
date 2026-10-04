@@ -25,6 +25,7 @@ import { answer } from './demoBackend'
 
 /** 演示房间的那个话题，和 DemoRoom 里那句 `{ id: DEMO_TOPIC }` 是同一个。 */
 export const DEMO_TOPIC = 'demo'
+export const DEMO_DOCUMENT = 'demo-doc'
 /** 它挂在的那个项目。改动那一格按项目取 diff，所以要有一个。 */
 export const DEMO_PROJECT = 'demo'
 
@@ -77,21 +78,6 @@ export function progressOf(overview: OverviewScene | null): TopicProgress {
     status: it.status,
   }))
   return { items, updated_at: items.length ? since(3 * MINUTE) : null }
-}
-
-/** 实况文档：产品里它是这个房间的一条 `kind: doc` 的块。 */
-export function docBlock(markdown: string): Block | null {
-  if (!markdown) return null
-  return {
-    id: 'demo-doc',
-    topic_id: DEMO_TOPIC,
-    kind: 'doc',
-    author_type: 'participant',
-    author: 'cheese',
-    content: markdown,
-    doc_version: 1,
-    created_at: since(10 * MINUTE),
-  }
 }
 
 // ---- 改动 ----
@@ -183,9 +169,9 @@ export function installPanelAnswers(frame: Frame): void {
       ]
     : []
 
-  answer(`/topics/${DEMO_TOPIC}/doc`, () => docBlock(overview?.doc ?? ''))
-  answer(`/topics/${DEMO_TOPIC}/docs`, () => ({ data: [], total: 0 }))
-  answer(`/topics/${DEMO_TOPIC}/comments`, () => ({ data: [], total: 0 }))
+  answer(`/topics/${DEMO_TOPIC}/document`, () => ({ id: DEMO_DOCUMENT }))
+  answer(`/documents/${DEMO_DOCUMENT}/nodes`, () => ({ data: [], total: 0 }))
+  answer(`/documents/${DEMO_DOCUMENT}/comments/threads`, () => ({ data: [], total: 0 }))
   answer(`/topics/${DEMO_TOPIC}/progress`, () => progressOf(overview))
   answer(`/topics/${DEMO_TOPIC}/tasks`, () => ({ data: tasks, total: tasks.length }))
 

@@ -26,6 +26,11 @@ vi.mock('../../api/docThreads', () => ({
 }))
 // The overview's document panel loads on its own and opens the room's
 // document; these suites are about the site panel, so it gets an empty one.
+vi.mock('../../api/docCollab', async () => ({
+  ...(await vi.importActual<typeof import('../../api/docCollab')>('../../api/docCollab')),
+  // 测试里房间的文档就用房间的 id 来认：fakeDocCollab 按它预置文档。
+  getRoomDocument: async (topicId: string) => ({ id: topicId }),
+}))
 vi.mock('../../composables/useDocCollab', async () => ({
   useDocCollab: (await import('../../test/fakeDocCollab')).useFakeDocCollab,
 }))
