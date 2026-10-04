@@ -1,4 +1,10 @@
-"""Harness and effort stay outside teammate configuration; presets carry roles only."""
+"""The harness stays outside teammate configuration; presets carry roles only.
+
+A teammate's thinking effort came back to its configuration with #2530: the
+model had come back first (#2415), and an effort is chosen for a model. It is
+read where a session is launched (`configuration.launch_env`), so it is not the
+unread second declaration b2f4d81a3c07 cleared out. A type still has neither.
+"""
 
 import ast
 import re
@@ -14,7 +20,9 @@ BACKEND = Path(__file__).resolve().parents[2]
 APP = BACKEND / "app"
 FRONTEND_SRC = BACKEND.parent / "frontend/src"
 
-RETIRED = ("harness", "effort")
+RETIRED = ("harness",)
+#: What a type must not carry: how it runs is a teammate's or the deployment's.
+TYPE_RETIRED = ("harness", "effort")
 
 
 def _holds_a_configuration(expr: ast.expr, aliases: set[str]) -> bool:
@@ -99,7 +107,7 @@ def test_no_backend_code_reads_the_three_keys_off_a_saved_configuration() -> Non
     )
 
 
-# ``draft.value.harness``、``agent.configuration.model``、``preset?.effort``、
+# ``draft.value.harness``、``agent.configuration.model``、``preset?.harness``、
 # ``cfg['model']``——界面读它们是属性访问或者下标，而持有它们的要么是下面这几个
 # 名字，要么是一个当场起的局部名（``const cfg = a.configuration``）。
 _HOLDERS = ("configuration", "draft", "preset", "config", "agent")
@@ -120,10 +128,10 @@ def _frontend_reads(text: str) -> list[str]:
     named = "|".join(sorted(holders))
     reads = re.compile(
         r"\b(" + named + r")(\.value)?\??"
-        r"(\.(harness|effort)\b|\[['\"](harness|effort)['\"]\])"
+        r"(\.(harness)\b|\[['\"](harness)['\"]\])"
     )
     destructured = re.compile(
-        r"(?:const|let|var)\s*\{[^}]*\b(?:harness|effort)\b[^}]*\}\s*="
+        r"(?:const|let|var)\s*\{[^}]*\bharness\b[^}]*\}\s*="
         r"[^=]*\b(" + named + r")\b"
     )
     return [
@@ -161,9 +169,9 @@ _BACKEND_MUST_CATCH = {
     "subscript": "agent.configuration['harness']\n",
     "get": "agent.configuration.get('harness')\n",
     "through-the-schema": (
-        "AgentConfiguration.model_validate(agent.configuration).effort\n"
+        "AgentConfiguration.model_validate(agent.configuration).harness\n"
     ),
-    "renamed-first": "cfg = agent.configuration\nx = cfg.get('effort')\n",
+    "renamed-first": "cfg = agent.configuration\nx = cfg.get('harness')\n",
 }
 
 _BACKEND_MUST_PASS = {
@@ -194,7 +202,7 @@ _FRONTEND_MUST_CATCH = {
     "attribute": "const name = agent.configuration.harness\n",
     "subscript": "const name = agent.configuration['harness']\n",
     "destructured": "const { harness } = agent.configuration\n",
-    "destructured-several": "const { body, effort } = draft.value\n",
+    "destructured-several": "const { body, harness } = draft.value\n",
     "renamed-first": "const cfg = a.configuration\nconst h = cfg.harness\n",
 }
 
@@ -242,10 +250,14 @@ _A_TYPE = {
 } | _A_ROLE
 
 
-def test_a_saved_configuration_carries_a_role_and_optional_model() -> None:
-    assert set(AgentConfiguration.model_fields) == _A_ROLE | {"model"}, (
-        "A teammate stores its role and optional model override, not harness, "
-        "effort or MCP servers."
+def test_a_saved_configuration_carries_a_role_and_how_its_model_runs() -> None:
+    assert set(AgentConfiguration.model_fields) == _A_ROLE | {
+        "model",
+        "effort",
+        "compact_percent",
+    }, (
+        "A teammate stores its role, an optional model override, and how that "
+        "model thinks and compacts; not the harness or MCP servers."
     )
 
 
@@ -256,7 +268,7 @@ def test_a_type_carries_a_role_and_nothing_else() -> None:
     )
 
 
-@pytest.mark.parametrize("field", RETIRED)
+@pytest.mark.parametrize("field", TYPE_RETIRED)
 def test_a_type_has_no_field_for_how_it_runs(field: str) -> None:
     """类型那一侧连字段都没有了：一个类型说的是角色。"""
     assert field not in AgentTypeDef.__dataclass_fields__
