@@ -419,7 +419,11 @@
       "downloadFile": "Download {name}",
       "openFile": "Open {name}",
       "upgradedToTask": "Moved to a task",
-      "upgradedToTopic": "Moved to a topic"
+      "upgradedToTopic": "Moved to a topic",
+      "showMore": "Show more",
+      "showLess": "Show less",
+      "wrapCode": "Wrap lines",
+      "unwrapCode": "No wrap"
     },
     "outbox": {
       "failed": "Not sent: {reason}",
