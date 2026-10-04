@@ -32,6 +32,8 @@ defineProps<{
   /** 整页形态（手机）：这几行收进了项目菜单，列表只留话题。 */
   page: boolean
   unreadOf: (id: string) => number
+  /** 我静音了的房间：行尾画一个静音标记（未读已经不计了）。 */
+  mutedOf?: (id: string) => boolean
 }>()
 
 const emit = defineEmits<{
@@ -79,6 +81,14 @@ const emit = defineEmits<{
         topicTitle(rootTopic)
       }}</v-list-item-title>
       <template #append>
+        <v-icon
+          v-if="mutedOf?.(rootTopic.id)"
+          size="14"
+          class="row-muted"
+          icon="mdi-bell-off-outline"
+          :aria-label="t('work.room.menu.muted')"
+          :title="t('work.room.menu.muted')"
+        />
         <TopicRailBadge v-if="unreadOf(rootTopic.id) > 0" :count="unreadOf(rootTopic.id)" />
       </template>
     </v-list-item>
@@ -213,5 +223,9 @@ const emit = defineEmits<{
 /* 整页形态：手指点的地方至少 44px 高。 */
 .topic-rail--page .nav-row {
   min-height: 44px;
+}
+
+.row-muted {
+  color: var(--faint);
 }
 </style>

@@ -57,6 +57,11 @@
     "prev": "Previous page",
     "next": "Next page"
   },
+  "settingsSearch": {
+    "placeholder": "Search settings",
+    "label": "Search settings by name",
+    "none": "No settings named “{text}”"
+  },
   "shortcuts": {
     "then": "then",
     "title": "Keyboard shortcuts",
@@ -78,6 +83,7 @@
     "summon": "Send and hand to {name}",
     "mentionPick": "Pick from the {'@'} list",
     "mentionClose": "Close the {'@'} list",
-    "touchNewline": "On touch screens Enter adds a new line"
+    "touchNewline": "On touch screens Enter adds a new line",
+    "markAllRead": "Mark all rooms read"
   }
 }

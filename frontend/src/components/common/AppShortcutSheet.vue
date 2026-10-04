@@ -44,6 +44,7 @@ const groups = computed<ShortcutGroup[]>(() => {
               note: t('global.shortcuts.within1s'),
             },
         { keys: ['?'], action: t('global.shortcuts.openSheet'), note: t('global.shortcuts.notInInputs') },
+        { keys: ['Shift+Esc'], action: t('global.shortcuts.markAllRead') },
       ],
     },
     {

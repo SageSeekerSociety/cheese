@@ -1030,6 +1030,7 @@ routes:
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/webhook-token", auth: "cheese.room.gate", owner: "webhook"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/weekly", auth: "actor.topic", owner: "topic"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/read", auth: "actor.topic", owner: "topic"}
+  - {protocol: "http", method: "PUT", path: "/topics/{topic_id}/notify-level", auth: "actor.topic", owner: "topic"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/archive", auth: "topic.archive", owner: "topic"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/cleanup", auth: "actor.topic.enforced", owner: "topic"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/unarchive", auth: "topic.archive", owner: "topic"}
@@ -1085,6 +1086,8 @@ routes:
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/shown/save", auth: "library.save.shown", owner: "library"}
   # app.api.routes.topics_side_routes
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/topic-unread", auth: "actor.project", owner: "topic"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/topic-notify-levels", auth: "actor.project", owner: "topic"}
+  - {protocol: "http", method: "POST", path: "/projects/{project_id}/read-all", auth: "actor.project", owner: "topic"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/private-unread", auth: "actor.project", owner: "topic"}
   - {protocol: "http", method: "POST", path: "/blocks/{block_id}/upgrade", auth: "actor.topic", owner: "room_task"}
   # app.api.routes.topics_tasks

@@ -961,5 +961,6 @@
   "skillNothingToDecline": "This skill has no change waiting to be confirmed",
   "skillAbsorbsTeamOnly": "Only team memories can be absorbed (like team/xxx.md): a project skill is shared by the whole project, so personal preferences stay out: {path}",
   "skillDecline": "decline a skill a teammate proposed",
-  "skillAbsorbsMissing": "There is no team memory {path}. List only team memories that exist in absorbs"
+  "skillAbsorbsMissing": "There is no team memory {path}. List only team memories that exist in absorbs",
+  "topicNotifyLevelInvalid": "The notification level must be “all” or “mute”"
 }

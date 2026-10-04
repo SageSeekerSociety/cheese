@@ -291,7 +291,13 @@
       "wholeProject": "全项目",
       "usageLine": "{turns} 次运行 · {tokens} token · {cost}",
       "usageSplit": "输入 {input} · 输出 {output}",
-      "noUsage": "暂无数据"
+      "noUsage": "暂无数据",
+      "mute": "静音",
+      "unmute": "取消静音",
+      "muted": "已静音",
+      "muteFailed": "静音设置没保存",
+      "markAllRead": "全部标为已读",
+      "markAllReadFailed": "全部标为已读没成功"
     },
     "archiveNotice": {
       "done": "已归档",
@@ -1185,7 +1191,10 @@
     "noAssignee": "暂无负责人",
     "queued": "排队中",
     "running": "正在运行",
-    "made": "做出了什么"
+    "made": "做出了什么",
+    "findPlaceholder": "按标题找（/）",
+    "findLabel": "在看板上按标题找",
+    "findNone": "这一列没有标题含「{text}」的任务"
   },
   "publishedSite": {
     "revisionChanged": "项目已采纳的版本变了，确认之后再发布",

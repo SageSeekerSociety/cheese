@@ -1,4 +1,37 @@
-import type { RouteRecordRaw } from 'vue-router'
+import type { RouteLocationNormalized, RouteLocationRaw, RouteRecordRaw } from 'vue-router'
+
+import {
+  adminSectionForRouteName,
+  canEnterAdmin,
+  firstVisibleAdminSectionTo,
+  isAdminSectionVisible,
+} from '@/lib/adminSections'
+import { useFeedbackStore } from '@/stores/feedback'
+
+/**
+ * `/admin` 父路由的守卫：进了后台却落在一块自己**进不去**的分区上时（例如平台管理员
+ * 点开 `/admin/queue`，而队列只归反馈管理员），把人领到第一块进得去的分区。
+ *
+ * 拎成一个具名函数是为了让 `AdminLayout.spec`（或将来的守卫测试）用**同一份**实现 ——
+ * 把这段判据在测试里再抄一遍，测的就是抄本，不是产品走的那条路。
+ *
+ * 为什么在这里 `await loadMeta()`：改道要有答案才能决定，而答案（两份名单）是服务端给的
+ * （`GET /feedback/meta`）。第一次冷打开后台时它还没到，就得等 —— 否则会先按「名单为空」
+ * 放行、把一块进不去的分区画出来。`metaChecked` 为真时这一句是零成本的。
+ *
+ * 不是管理员（两份名单都没有）时返回 `true`：**不**在这里处理，交给 `AdminLayout` 画那扇
+ * 「你不在名单里」的门 —— 后台是不是「什么都没有」和「你没在名单里」是两回事。
+ */
+export async function adminSectionGuard(to: RouteLocationNormalized): Promise<RouteLocationRaw | true> {
+  const store = useFeedbackStore()
+  if (!store.metaChecked) await store.loadMeta()
+  const meta = store.meta
+  if (!canEnterAdmin(meta)) return true
+  const section = adminSectionForRouteName(to.name as string | undefined)
+  if (!section || isAdminSectionVisible(section, meta)) return true
+  const landing = firstVisibleAdminSectionTo(meta)
+  return landing && landing !== to.path ? landing : true
+}
 
 /**
  * 反馈与管理后台的路由。都在这里，预览入口（`src/proto-feedback.ts`）也直接用它。
@@ -79,6 +112,12 @@ export default [
     meta: { drawer: true },
     // 只写地址不写组件：`/admin` 本身没有内容，直接落进队列 —— 后台里用得最多的那一块。
     redirect: '/admin/queue',
+    // 进了后台却落在一块自己**进不去**的分区上时（例如平台管理员点开 `/admin/queue`，
+    // 而队列只归反馈管理员），在这里把人领到第一块进得去的分区。原先这事藏在
+    // `AdminLayout` 的 `watch` 里静悄悄 `router.replace`，地址栏自己变了、看不出是
+    // 「按权限改道」；挪成一条声明式的重定向之后，改道这件事在路由表里读得到。
+    // 判据见 `adminSectionGuard` 的注释。
+    beforeEnter: adminSectionGuard,
     children: [
       {
         path: 'queue',

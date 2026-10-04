@@ -17,8 +17,9 @@ interface Chord {
   code: string
 }
 
-// 一个键名对应的物理键 code：数字和字母两种就够了。
+// 一个键名对应的物理键 code：数字、字母，和 Esc。
 function codeOf(key: string): string | null {
+  if (key === 'escape') return 'Escape'
   return /^[0-9]$/.test(key) ? `Digit${key}` : /^[a-z]$/.test(key) ? `Key${key.toUpperCase()}` : null
 }
 

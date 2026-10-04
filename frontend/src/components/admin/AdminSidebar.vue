@@ -31,7 +31,10 @@
         </v-list-item>
       </template>
 
-      <v-list-item rounded="lg" prepend-icon="mdi-arrow-left" to="/feedback" :title="t('admin.layout.leave')" />
+      <!-- 回工作区，不是回反馈中心：`/` 那一格才是「工作区」的家（HomeDefault），
+           `admin.layout.leave` 那句「返回工作区」说的是它。指到 `/feedback` 的话，
+           话和去处对不上 —— 从后台回去会落在反馈中心，而不是刚才那个工作台。 -->
+      <v-list-item rounded="lg" prepend-icon="mdi-arrow-left" to="/" :title="t('admin.layout.leave')" />
     </v-list>
   </SecondaryNavigation>
 </template>
