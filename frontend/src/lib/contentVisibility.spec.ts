@@ -46,4 +46,43 @@ describe('contentVisibility 测量帧', () => {
     expect(() => beginMeasuredLayout(null)).not.toThrow()
     expect(() => endMeasuredLayout(null)).not.toThrow()
   })
+
+  /** 「用了测量帧的页面量到的是真实高度，不是估计值」。
+   *
+   *  一页里离屏跳过的内容（时间线的 .notice-row、文档视图的 .memory-card……
+   *  content-visibility: auto + contain-intrinsic-size: auto <h>）没挂测量帧时只报
+   *  那个估计高度；要按真实高度算落点的地方（向上翻页补偿、scrollIntoView）必须在
+   *  测量帧里量。这里用一个假页面把这条锁住：行在帧里报真实高度、帧外报估计；测量帧
+   *  量到真实、且两个 rAF 之后才撤（先让这一帧按真实高度画一次）。 */
+  it('页面在测量帧里量到的是真实高度，不是估计值', () => {
+    const classes = new Set<string>()
+    const scroller = {
+      classList: {
+        add: (c: string) => void classes.add(c),
+        remove: (c: string) => void classes.delete(c),
+        contains: (c: string) => classes.has(c),
+      },
+    } as unknown as HTMLElement
+
+    // 两行：离屏报 contain-intrinsic-size 里的估计，测量帧里按真实高度铺开。
+    const rows = [
+      { est: 28, real: 96 },
+      { est: 20, real: 140 },
+    ]
+    // 某一行的落点 = 它前面那些行的高度之和（scrollIntoView 算的就是这个）。
+    const offsetOfRow = (i: number) =>
+      rows.slice(0, i).reduce((sum, r) => sum + (classes.has(MEASURE_CLASS) ? r.real : r.est), 0)
+
+    // 帧外量到的是估计值 —— 落点会算错。
+    expect(offsetOfRow(1)).toBe(28)
+
+    beginMeasuredLayout(scroller)
+    const landOnRow1 = offsetOfRow(1)
+    endMeasuredLayout(scroller)
+
+    // 帧里量到的是真实高度。
+    expect(landOnRow1).toBe(96)
+    // 量完还在测量帧里：撤销排在两个 rAF 之后，先让这一帧按真实高度画一次。
+    expect(classes.has(MEASURE_CLASS)).toBe(true)
+  })
 })
