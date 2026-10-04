@@ -35,7 +35,6 @@ import {
 } from '../api'
 import { postChatMessage } from '../api/messages'
 import { useChatRowActions } from '../components/chat/composables/useChatRowActions'
-import { useMessageReactions } from '../components/chat/composables/useMessageReactions'
 import { useTimelineMotion } from '../components/chat/composables/useTimelineMotion'
 import { useActivityLines } from '../components/room/composables/useActivityLines'
 import { useChatScroll } from '../components/room/composables/useChatScroll'
@@ -67,6 +66,7 @@ import { useAskGroups } from './useAskGroups'
 import { useAskTakeover } from './useAskTakeover'
 import { useChatComposer } from './useChatComposer'
 import { useChatPaging } from './useChatPaging'
+import { useMessageReactions } from './useMessageReactions'
 import { useOwnChecklist } from './useOwnChecklist'
 
 import { t } from '@/i18n'
@@ -187,7 +187,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     fail: (e) => (errorMsg.value = e instanceof Error ? e.message : t('work.room.checklist.saveFailed')),
   })
 
-  // ---- Emoji reactions —— 见 chat/composables/useMessageReactions ----
+  // ---- Emoji reactions —— 见 composables/useMessageReactions ----
   const { reactionPickerFor, applyReactions, onReact, togglePicker } = useMessageReactions({
     find: (id) => timeline.find(id),
     errorMsg,

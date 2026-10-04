@@ -2,12 +2,12 @@
 // 自己那一票，用接口返回的那份汇总直接写回这一条。后端随后广播的 `reaction` 帧
 // 和这次本地写回是幂等的。
 import type { Ref } from 'vue'
-import type { Block, ReactionAgg } from '../../../cx_types'
+import type { Block, ReactionAgg } from '../cx_types'
 
 import { ref } from 'vue'
 
-import { toggleReaction as apiToggleReaction } from '../../../api'
-import { t } from '../../../i18n'
+import { toggleReaction as apiToggleReaction } from '../api'
+import { t } from '../i18n'
 
 export interface MessageReactionsDeps {
   find: (blockId: string) => Block | undefined
