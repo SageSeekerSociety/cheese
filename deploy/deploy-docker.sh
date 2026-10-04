@@ -1269,6 +1269,16 @@ else
   log "no systemd host: schedule deploy/trigger-room-cleanup.sh externally every minute"
 fi
 
+# The runner running this deploy can hang "active" with no way for systemd to
+# notice (deploy/runner-watchdog.sh). Install its watchdog while we are on it.
+# A failure here only warns: the release itself is already healthy, and the
+# next deploy retries the install.
+runner_root="${RUNNER_TEMP:-}"; runner_root="${runner_root%/_work/*}"
+if [ -d /run/systemd/system ] && [ -n "${RUNNER_TEMP:-}" ] && [ -f "$runner_root/.service" ]; then
+  bash "$HERE/install-runner-watchdog.sh" "$runner_root" \
+    || log "warning: runner watchdog installation failed; the release is unaffected"
+fi
+
 promote_image_retainer() {
   local kind="$1"
   local current="${PROJECT}-${kind}-image-retainer"

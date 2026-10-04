@@ -59,11 +59,12 @@ CALLS = {
         "GET",
         "/topics/fixture/history",
     ),
-    "cheese_doc_get": ({}, "GET", "/topics/fixture/doc"),
+    # The room's document: the fixture platform names every id "fixture-id".
+    "cheese_doc_get": ({}, "GET", "/documents/fixture-id"),
     "cheese_doc_edit": (
         {"edits": [{"old": "第一段", "new": "第一段，改过"}]},
         "POST",
-        "/topics/fixture/doc/edits",
+        "/documents/fixture-id/edits",
     ),
     "cheese_task": ({"title": "数据清洗"}, "POST", "/topics/fixture/split"),
     "cheese_close_task": (
@@ -196,7 +197,7 @@ CALLS = {
 
 #: 要机器上一份东西的那两样：读一个文件、推一条任务分支。
 NEEDS_THE_MACHINE = {
-    "cheese_doc_set": ({"path": "notes/doc.md"}, "PUT", "/topics/fixture/doc"),
+    "cheese_doc_set": ({"path": "notes/doc.md"}, "PUT", "/documents/fixture-id"),
     "cheese_accept_request": (
         {"task": TASK, "subject": "fix(x): y"},
         "POST",
@@ -512,7 +513,7 @@ def test_the_living_doc_is_read_off_the_machine(machine_is_here):
     [put] = [
         body
         for m, p, body in platform_calls
-        if (m, p) == ("PUT", "/topics/fixture/doc")
+        if (m, p) == ("PUT", "/documents/fixture-id")
     ]
     assert put["content"] == DOC
     # 没读过就写，出示的是 0 —— 只有还没有文档时平台才收。

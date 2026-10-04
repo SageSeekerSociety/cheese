@@ -823,14 +823,6 @@
         "diagram": "Diagram",
         "status": "Status tag"
       },
-      "status": {
-        "inProgress": "In progress",
-        "draft": "Draft",
-        "done": "Done"
-      },
-      "liveRefTitle": "“{title}” · {status}. Click to open",
-      "thisTask": "This task",
-      "subtopic": "Subtopic",
       "selectionToolbar": "Selection actions",
       "copy": "Copy",
       "blockType": "Paragraph style",

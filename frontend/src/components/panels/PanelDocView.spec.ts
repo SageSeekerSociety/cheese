@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
-import type { Block } from '../../cx_types'
-import type { DocThreadActions, DocThreadState } from '../../lib/docThreadTypes'
+import type { DocComment, DocThreadActions, DocThreadState } from '../../lib/docThreadTypes'
 
 import { reactive } from 'vue'
 import { createVuetify } from 'vuetify'
@@ -31,14 +30,13 @@ afterEach(() => {
 
 async function openThread() {
   const topic = { ...DOC_TOPIC, id: `thread-context-${++serial}` }
-  const comment = {
+  const comment: DocComment = {
     id: 'comment-a',
-    topic_id: topic.id,
-    kind: 'comment',
     content: '当前段落的评论',
     author: 'reader',
+    anchor_quote: null,
     created_at: '2026-10-02T00:00:00Z',
-  } as Block
+  }
   const state = reactive<DocThreadState>({
     threads: [{ comment, revision: 1, state: 'open', replies: [] }],
     activity: {},
@@ -83,7 +81,7 @@ describe('document comment thread context', () => {
     if (identity === 'topic') await f.rerender({ topic: { ...f.topic, id: `${f.topic.id}-other` } })
     else await f.rerender({ commentAuthor: 'another-reader' })
     expect(screen.queryByRole('textbox', { name: /^回复$/ })).toBeNull()
-    expect(localStorage.getItem(`cheese.doc-thread.draft.v1:reader:${f.comment.topic_id}:${f.comment.id}`)).toBe(
+    expect(localStorage.getItem(`cheese.doc-thread.draft.v1:reader:${f.topic.id}:${f.comment.id}`)).toBe(
       '保留正在输入的回复'
     )
   })

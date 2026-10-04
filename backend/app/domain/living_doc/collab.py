@@ -18,6 +18,7 @@ else. A ticket cannot double as the bearer.
 
 import hashlib
 import hmac
+import logging
 import time
 import uuid
 
@@ -42,6 +43,7 @@ _REPLACE_TIMEOUT_S = 30
 #: How requests reach the service. None is the network; a test puts a stand-in
 #: for the service here (tests/support/collab.py).
 transport: httpx.AsyncBaseTransport | None = None
+_log = logging.getLogger(__name__)
 
 
 class CollabRefused(Exception):
@@ -236,3 +238,38 @@ async def edit(
     if response.status_code != 200:
         raise SystemBusyError(say("collabEditIncomplete"))
     return body
+
+
+#: How long telling the document's readers something may hold up the request
+#: that has it to tell.
+_TELL_TIMEOUT_S = 3.0
+
+
+async def tell(document_id: uuid.UUID, frame: dict) -> None:
+    """Pass ``frame`` to everyone who has the document open: its comments were
+    written, a stored version moved on, an agent is answering a thread. Not a
+    record: whoever opens the document later reads the state itself, so a
+    frame the service never got is lost to nobody but the readers who missed a
+    refresh, and is not worth failing the change it announces."""
+    url = (
+        settings.collab_internal_url.rstrip("/")
+        + f"/internal/documents/{document_name(document_id)}/tell"
+    )
+    try:
+        async with httpx.AsyncClient(
+            timeout=_TELL_TIMEOUT_S, transport=transport
+        ) as client:
+            response = await client.post(
+                url,
+                json=frame,
+                headers={"Authorization": f"Bearer {_key('internal')}"},
+            )
+    except httpx.HTTPError:
+        _log.warning("could not tell document %s's readers", document_id)
+        return
+    if response.status_code != 200:
+        _log.warning(
+            "the collaboration service refused to tell document %s's readers: %s",
+            document_id,
+            response.status_code,
+        )

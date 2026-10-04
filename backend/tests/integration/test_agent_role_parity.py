@@ -12,6 +12,7 @@ from tests.integration.conftest import (
     post_project,
     session_auth_headers,
 )
+from tests.support.living_doc import document_of
 
 
 def _rooms(client):
@@ -101,8 +102,9 @@ def test_cross_room_access_requires_membership_and_preserves_identity(
     )
     _join(client, other, handle)
     assert client.get(f"/topics/{other}/blocks", headers=auth).status_code == 200
+    doc = document_of(client, other, headers=session_auth_headers("alice"))
     written = client.post(
-        f"/topics/{other}/comments",
+        f"/documents/{doc}/comments",
         json={"content": "A participant in both rooms"},
         headers=auth,
     )
@@ -274,8 +276,9 @@ def test_project_credential_has_one_identity_and_needs_a_grant(client):
     )
     assert client.get(f"/topics/{other}/blocks", headers=auth).status_code == 403
     _join(client, other, handle)
+    doc = document_of(client, other, headers=owner)
     written = client.post(
-        f"/topics/{other}/comments", json={"content": "Fixed identity"}, headers=auth
+        f"/documents/{doc}/comments", json={"content": "Fixed identity"}, headers=auth
     )
     assert written.status_code == 200, written.text
     assert written.json()["data"]["author"] == handle

@@ -42,7 +42,8 @@ async function openDoc(page: Page, content: string) {
     project_id: projectId,
     title: `大纲查找 ${Date.now()}`,
   })) as { id: string };
-  await api(page, 'put', `/topics/${room.id}/doc`, {
+  const roomDoc = (await api(page, 'get', `/topics/${room.id}/document`)) as { id: string };
+  await api(page, 'put', `/documents/${roomDoc.id}`, {
     content,
     expected_version: 0,
   });

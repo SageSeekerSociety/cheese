@@ -7,7 +7,7 @@ Rules held here:
   is touched;
 * the model is reached with the room's credential for the thread, so what it
   spends is the project's; the tools act with the credential minted for the
-  question, at the platform's own routes for the room;
+  question, at the platform's own routes for the document;
 * a thread's next question finds the session's conversation, and two threads
   are two sessions.
 """
@@ -21,7 +21,7 @@ import pytest
 from app.core.config import settings
 from app.core.sandbox_auth import mint_delegated_credential
 from app.domain.agent.document import session as doc_session
-from app.domain.agent.document.question import Bound, Surroundings
+from app.domain.agent.document.question import Asked, Bound, Surroundings
 from app.domain.agent.session_host.answer import Answer, Tool, ask
 from app.domain.agent.session_host.contract import Prompt
 from app.domain.agent.session_host.host import SessionHost
@@ -30,6 +30,7 @@ from tests.unit.test_personal_sessions import Platform
 
 PROJECT = uuid.uuid4()
 ROOM = uuid.uuid4()
+DOCUMENT = uuid.uuid4()
 AGENT = Bound(
     agent_handle="agent-seat",
     agent_name="芝士",
@@ -71,8 +72,7 @@ def _session(thread: uuid.UUID | None = None, *, machine: dict | None = None):
     """A thread's session as the document's 芝士 starts it, with the room's
     machine lent to it when there is one."""
     return doc_session.session_for(
-        project_id=PROJECT,
-        room_id=ROOM,
+        asked=Asked(project_id=PROJECT, document_id=DOCUMENT, room_id=ROOM),
         key=thread or uuid.uuid4(),
         bound=AGENT,
         around=dataclasses.replace(AROUND, machine=machine),
@@ -133,7 +133,7 @@ async def test_a_thread_has_the_documents_tools_and_acts_for_the_asker(host, pla
     assert "本项目做存储选型。" in system
     _, _, access = started
     assert set(fake.model_auth) == {f"Bearer {access.credential}"}
-    assert fake.tool_calls == [(f"GET /topics/{ROOM}/doc", acting)]
+    assert fake.tool_calls == [(f"GET /documents/{DOCUMENT}", acting)]
     ran = [argv for argv in hub.execs if argv != ["cat", "/proc/meminfo"]]
     assert ran and all(argv == ["python3", "-"] for argv in ran)
 
