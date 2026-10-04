@@ -39,7 +39,16 @@
           :on-delete="deleteNotification"
         />
       </v-list>
-      <div v-if="hasMore" class="notification-feed__more">
+      <!-- Loading the next page failed: keep the pages we already have, append the
+           error and a retry under them, and do not blank the feed. -->
+      <BaseLoadError
+        v-if="moreFailed"
+        class="notification-feed__load-error"
+        :title="t('notifications.common.loadFailed')"
+        :error="errorReason || null"
+        @retry="loadMore"
+      />
+      <div v-else-if="hasMore" class="notification-feed__more">
         <BaseButton size="sm" :loading="loading" @click="loadMore">
           {{ t('notifications.common.loadMore') }}
         </BaseButton>
@@ -90,6 +99,9 @@ const notifications = ref<Notification[]>([])
 const loading = ref(false)
 // 动态没读出来：就地显示错误 + 重试，而不是留一片空白装作「暂无通知」。
 const failed = ref(false)
+// 翻页（「加载更多」）失败：已经到手的那几页不能扔，只在列表下面就地接错误 + 重试
+// ——整块换成失败会把看得好好的那几页一起弄没（同搜索页，docs/design-system.md §3.10）。
+const moreFailed = ref(false)
 const errorReason = ref('')
 const cursorStart = ref<string | undefined>(undefined)
 const pageSize = ref(10)
@@ -101,12 +113,14 @@ const hasUnread = computed(() => notifications.value.some((notification) => !not
 // 获取通知列表。每换一次筛选 generation 加一：换之前发出、换之后才回来的那一页
 // 属于上一种筛选，丢掉，不然「未读」那一栏会混进已读的。
 let generation = 0
-const fetchNotifications = async () => {
+const fetchNotifications = async (isMore = false) => {
   if (loading.value) return
 
   const mine = generation
   loading.value = true
-  failed.value = false
+  // 只是接着往下翻：不动上面那一段的失败态，这一次失败也不让整块换掉。
+  moreFailed.value = false
+  if (!isMore) failed.value = false
   errorReason.value = ''
   try {
     const { data } = await NotificationsApi.list({
@@ -123,7 +137,8 @@ const fetchNotifications = async () => {
   } catch (error) {
     console.error('获取通知失败:', error)
     if (mine === generation) {
-      failed.value = true
+      if (isMore) moreFailed.value = true
+      else failed.value = true
       errorReason.value = error instanceof Error ? error.message : ''
     }
   } finally {
@@ -138,6 +153,7 @@ function reload() {
   cursorStart.value = undefined
   notifications.value = []
   hasMore.value = false
+  moreFailed.value = false
   void fetchNotifications()
 }
 
@@ -152,7 +168,7 @@ watch(filter, (value) => {
 
 // 加载更多通知
 const loadMore = () => {
-  fetchNotifications()
+  void fetchNotifications(true)
 }
 
 // 标记单个通知为已读

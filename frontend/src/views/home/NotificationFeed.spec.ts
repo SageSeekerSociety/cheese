@@ -116,4 +116,36 @@ describe('待办页「动态」这一块', () => {
     expect(await screen.findByText(t('notifications.common.noNotifications'))).toBeTruthy()
     expect(screen.queryByRole('alert')).toBeNull()
   })
+
+  // 「加载更多」失败：已经到手的那几页不能扔——整块换成失败会把看得好好的通知一起弄没。
+  // 错误只接在列表下面，重试接着翻，不把整块换掉（同搜索页 §3.10）。
+  it('加载更多失败：到手的那几页留着，错误接在下面，重试接着翻', async () => {
+    list.mockResolvedValueOnce({
+      data: {
+        notifications: [
+          { id: 1, read: false },
+          { id: 2, read: false },
+        ],
+        page: { hasMore: true, nextStart: 'c1' },
+      },
+    })
+    const { container } = await mount()
+    await waitFor(() => expect(container.querySelectorAll('notification-item-stub').length).toBe(2))
+
+    list.mockRejectedValueOnce(new Error('翻页失败'))
+    await fireEvent.click(screen.getByRole('button', { name: t('notifications.common.loadMore') }))
+
+    expect(await screen.findByText('翻页失败')).toBeTruthy()
+    // 到手的两条还在，失败没有把整块换掉。
+    expect(container.querySelectorAll('notification-item-stub').length).toBe(2)
+    expect(screen.getByRole('button', { name: t('global.loadError.retry') })).toBeTruthy()
+
+    list.mockResolvedValueOnce({
+      data: { notifications: [{ id: 3, read: false }], page: { hasMore: false, nextStart: undefined } },
+    })
+    await fireEvent.click(screen.getByRole('button', { name: t('global.loadError.retry') }))
+
+    await waitFor(() => expect(container.querySelectorAll('notification-item-stub').length).toBe(3))
+    await waitFor(() => expect(screen.queryByText('翻页失败')).toBeNull())
+  })
 })
