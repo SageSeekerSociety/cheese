@@ -833,6 +833,14 @@
       "emptyLineHint": "输入 / 插入内容",
       "undo": "撤销",
       "redo": "重做",
+      "outline": "大纲",
+      "outlineEmpty": "这篇文档还没有标题",
+      "find": "在文档中查找",
+      "findPlaceholder": "在文档中查找",
+      "findNoResults": "没有找到",
+      "findPrev": "上一处",
+      "findNext": "下一处",
+      "findClose": "关闭查找",
       "blocks": {
         "calloutKind": "提示框类型",
         "kinds": {

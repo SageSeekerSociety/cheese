@@ -969,3 +969,16 @@ div[data-footnote]::before {
     border-color: var(--line);
   }
 }
+
+/* ---- 文档内查找：命中高亮 ------------------------------------------------
+   装饰（Decoration.inline）落在文字上的是这两个类，见 lib/docFind.ts。所有命中是
+   一层淡黄，当前那一处换成琥珀、更重一些 —— 一眼看得出「现在在第几处」。正文的
+   `content-visibility: auto`（见上）只跳渲染，DOM 还在，所以离屏的命中一样标得到。 */
+.doc-prose .doc-find-hit {
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--signal-yellow) 42%, transparent);
+}
+
+.doc-prose .doc-find-hit.is-active {
+  background: color-mix(in srgb, var(--accent) 42%, transparent);
+}
