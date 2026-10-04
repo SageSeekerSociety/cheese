@@ -56,7 +56,21 @@ async def _project_with_failed_turns(session, count):
 
 
 async def _worst_stall_during(work):
-    """Run ``work`` and say the longest the loop went without a turn meanwhile.
+    """Run ``work`` and say the longest the loop went without a turn meanwhile,
+    in the CPU time the loop's thread spent over that stretch.
+
+    The ticker takes a turn at every pass of the loop, so a stretch is exactly
+    what ran between two of its turns. A ticker that slept 5 ms would count
+    whatever ran during its sleep as well, up to 5 ms more per stretch, which
+    is about what the read it is compared with holds the loop for.
+
+    CPU time, not wall time: on a loaded machine the thread waits for a core
+    while nothing runs on it, and a wall clock charges that wait to whatever
+    the loop was doing. CI's runners share their cores between the test
+    workers and Postgres. What holds the loop in these reads (compiling SQL,
+    decoding rows) is CPU on this thread however busy the machine is; a call
+    that blocks without computing, such as a synchronous socket read, would
+    not show here, and nothing on this path makes one.
 
     The collector is off while it runs: a full collection can land inside any
     stretch that allocates, and how long it takes depends on everything else
@@ -67,9 +81,9 @@ async def _worst_stall_during(work):
     async def tick():
         nonlocal worst
         while not finished.is_set():
-            before = time.perf_counter()
-            await asyncio.sleep(0.005)
-            worst = max(worst, time.perf_counter() - before - 0.005)
+            before = time.thread_time()
+            await asyncio.sleep(0)
+            worst = max(worst, time.thread_time() - before)
 
     gc.collect()
     gc.disable()
@@ -94,7 +108,12 @@ async def test_a_project_with_many_failed_turns_is_read_without_holding_the_loop
 ):
     """Measured against reading the failed turns themselves, which any answer
     has to do, so the bound holds on a slow machine as on a fast one. Going
-    through each of them once more in Python is the rest of the allowance."""
+    through each of them once more in Python is the rest of the allowance.
+
+    Each is measured several times, in turn, and its least kept. On a busy
+    machine one measurement can run on a slower core, or one shared with
+    another thread, and take two or three times as long; that only ever
+    adds, while what the code itself does on the loop is there every time."""
     async with db_factory() as session:
         room_ids = await _project_with_failed_turns(session, 12000)
         waits = MemberWaits(session)
@@ -108,10 +127,14 @@ async def test_a_project_with_many_failed_turns_is_read_without_holding_the_loop
             return (await session.execute(rows)).all()
 
         await the_rows()
-        _, reading = await _worst_stall_during(the_rows())
-        found, worst = await _worst_stall_during(
-            waits.for_rooms(room_ids, now=datetime.now(UTC))
-        )
+        reading = worst = float("inf")
+        for _ in range(5):
+            _, stall = await _worst_stall_during(the_rows())
+            reading = min(reading, stall)
+            found, stall = await _worst_stall_during(
+                waits.for_rooms(room_ids, now=datetime.now(UTC))
+            )
+            worst = min(worst, stall)
         await session.rollback()
 
     _all_failed(found, room_ids)
