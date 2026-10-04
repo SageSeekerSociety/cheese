@@ -120,7 +120,7 @@
             size="sm"
             icon="mdi-check"
             :title="t('teams.pending.accept')"
-            class="mr-1"
+            class="mr-4"
             @click="acceptInvitation(invitation.id)"
           />
           <BaseButton
@@ -190,7 +190,7 @@
             size="sm"
             icon="mdi-check"
             :title="t('teams.pending.accept')"
-            class="mr-1"
+            class="mr-4"
             :disabled="answering === invitation.id"
             @click="answerProjectInvitation(invitation, true)"
           />

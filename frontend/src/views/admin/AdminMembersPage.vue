@@ -741,8 +741,10 @@ onMounted(load)
   text-align: right;
 }
 
-/* 窄屏：上下内边距收一档，左右仍是 16，和页头标题同一条左沿。 */
-@media (max-width: 700px) {
+/* 窄容器：上下内边距收一档，左右仍是 16，和页头标题同一条左沿。后台页的断点挂在
+   内容列上（§3.5），不用视口媒体查询。容器是 `.app-page__column--admin`（名字
+   `admin`）—— 指名查询，免得 `.am__grouplabel` 落在更近的 `agrid` 容器上。 */
+@container admin (max-width: 719.98px) {
   .am__body {
     padding: 12px 16px 16px;
   }

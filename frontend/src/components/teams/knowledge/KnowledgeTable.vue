@@ -79,7 +79,10 @@ const emit = defineEmits<{
           </div>
         </td>
         <td>
-          <div class="d-flex">
+          <!-- ga-4: three icon buttons side by side. On a coarse pointer each
+               one widens its hit area to 44x44, so they need 16px between them
+               or they cover each other (see the ::before in BaseButton). -->
+          <div class="d-flex ga-4">
             <BaseButton
               kind="ghost"
               size="sm"

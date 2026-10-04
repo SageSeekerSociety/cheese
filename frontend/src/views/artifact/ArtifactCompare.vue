@@ -194,7 +194,9 @@ const modes = computed(() => [
   </div>
 </template>
 
-<style scoped>
+<style scoped lang="scss">
+@use '../../styles/breakpoints.scss' as bp;
+
 .compare {
   display: flex;
   flex-direction: column;
@@ -300,7 +302,8 @@ const modes = computed(() => [
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
 }
-@media (max-width: 700px) {
+// 断点收进共享 token（`styles/breakpoints.scss`）：700 → 768（`$bp-phone`）。
+@include bp.below(bp.$bp-phone) {
   .compare__side {
     grid-template-columns: minmax(0, 1fr);
   }

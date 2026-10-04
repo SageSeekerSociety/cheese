@@ -468,6 +468,8 @@ onMounted(() => {
 </template>
 
 <style scoped lang="scss">
+@use '../../styles/breakpoints.scss' as bp;
+
 .td__crumb {
   display: flex;
   gap: 6px;
@@ -665,7 +667,8 @@ onMounted(() => {
   align-items: start;
 }
 
-@media (max-width: 1000px) {
+// 断点收进共享 token（`styles/breakpoints.scss`）：1000 → 960（`$bp-mobile`）。
+@include bp.below(bp.$bp-mobile) {
   .td__body--split {
     grid-template-columns: minmax(0, 1fr);
     gap: 32px;
