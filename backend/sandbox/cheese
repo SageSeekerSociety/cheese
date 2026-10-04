@@ -38,6 +38,7 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -3388,7 +3389,8 @@ def _probe_app(port: int) -> int | None:
     """对 127.0.0.1:port 敲一次。
 
     通了就返回 HTTP 状态码(4xx/5xx 也算「在应答」,只是这个路径不对);连不上、
-    超时或收了半截都返回 None。只有 2xx/3xx 才算「起来了」。
+    超时、收了半截,或端口上坐的是个不讲 HTTP 的服务(SSH/数据库这类先打招呼
+    的非 HTTP 监听)都返回 None。
     """
     request = urllib.request.Request(
         f"http://127.0.0.1:{port}/", headers=_SERVE_PROBE_HEADERS, method="GET"
@@ -3401,23 +3403,33 @@ def _probe_app(port: int) -> int | None:
     except urllib.error.HTTPError as exc:
         # 收到应答了,只是不是 2xx/3xx——应用在跑,但这个路径不是它的家。
         return exc.code
-    except (urllib.error.URLError, OSError, ValueError):
+    except (
+        urllib.error.URLError,
+        OSError,
+        ValueError,
+        # 端口上是个非 HTTP 的监听:首行不是状态行,http.client 抛 BadStatusLine
+        # (HTTPException,不是 OSError)。这类端口也是「敲不通」,不该把它抛给 caller
+        # 炸掉整个 serve。
+        http.client.HTTPException,
+    ):
         return None
 
 
 def _wait_for_app(port: int, timeout_s: float) -> int | None:
-    """等应用应答 2xx/3xx,最多等 timeout_s 秒。
+    """等应用应答,最多等 timeout_s 秒。
 
-    返回最后看到的状态码;返回 None 表示这段时间里一直没人应答(端口没人听)。
+    任何 HTTP 应答(2xx/3xx/4xx/5xx 都算)就立刻返回——端口有人在听、能应答,
+    平台那一敲就通,4xx/5xx 也只是根路径不对,再等下去纯属空等。返回最后看到的
+    状态码;返回 None 表示这段时间里一直没人应答(端口没人听)。
     """
     deadline = monotonic() + timeout_s
     while True:
         status = _probe_app(port)
-        if status is not None and 200 <= status < 400:
+        if status is not None:
             return status
         remaining = deadline - monotonic()
         if remaining <= 0:
-            return status
+            return None
         sleep(min(_SERVE_PROBE_INTERVAL_S, remaining))
 
 
@@ -3545,7 +3557,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=_SERVE_WAIT_DEFAULT_S,
         metavar="秒",
         help=(
-            "报端口前先探到应用应答(浏览器式的 GET,2xx/3xx)再报,最多等这么久;"
+            "报端口前先探到应用应答(浏览器式的 GET,任何 HTTP 状态码都算)再报,"
+            "最多等这么久;"
             f"默认 {_SERVE_WAIT_DEFAULT_S:g} 秒,0 表示探都不探。"
         ),
     )

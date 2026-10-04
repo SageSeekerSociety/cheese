@@ -216,6 +216,85 @@ def test_wait_for_app_probes_a_real_server_and_a_dead_port():
     assert cli.monotonic() - start < 5.0
 
 
+def test_wait_for_app_returns_at_once_when_the_app_answers_non_2xx():
+    """应答了就算到了:4xx/5xx 也是「在听、能应答」,不该把整段等待熬完再报。
+
+    404 的根路径(auth 门、SPA 挂子路径、纯 API 服务)是最常见的一种「起来了但
+    根路径不对」——caller 收到 4xx 就当场照报,探活这里再接着敲就纯属空等。"""
+    import http.server
+    import threading
+
+    cli = _load()
+
+    class _Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802 — http.server's own spelling
+            self.send_response(404)
+            self.end_headers()
+            self.wfile.write(b"not found")
+
+        def log_message(self, *_a):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        start = cli.monotonic()
+        assert cli._wait_for_app(port, 30.0) == 404
+        # 立刻返回:远远小于 30 秒的预算,而不是熬满。
+        assert cli.monotonic() - start < 5.0
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+def test_probe_app_survives_a_non_http_listener_on_the_port():
+    """端口上坐的是不讲 HTTP 的服务(SSH 先打招呼这种):探活返回 None,不抛。
+
+    http.client 对非状态行的首行抛 BadStatusLine(HTTPException,不是 OSError),
+    漏掉它会让 `cheese serve` 在一个被占的端口上直接崩掉。"""
+    import socket
+    import threading
+
+    cli = _load()
+
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(("127.0.0.1", 0))
+    port = server.getsockname()[1]
+    server.listen(5)
+    stop = threading.Event()
+
+    def _greet_banner():
+        # 连上就发一串非 HTTP 的 banner,像 SSH/Postgres 那样先开口。
+        server.settimeout(0.2)
+        while not stop.is_set():
+            try:
+                conn, _ = server.accept()
+            except TimeoutError:
+                continue
+            except OSError:
+                break
+            try:
+                conn.sendall(b"SSH-2.0-OpenSSH_9.0\r\n")
+            except OSError:
+                pass
+            conn.close()
+
+    thread = threading.Thread(target=_greet_banner, daemon=True)
+    thread.start()
+    try:
+        # 不抛异常,如实返回「敲不通」。
+        assert cli._probe_app(port) is None
+        assert cli._wait_for_app(port, 0.6) is None
+    finally:
+        stop.set()
+        server.close()
+        thread.join()
+
+
 def test_raw_request_sends_cheese_token(monkeypatch):
     """The escape hatch carries the container's auth — NOT a no-auth backdoor."""
     cli = _load()
