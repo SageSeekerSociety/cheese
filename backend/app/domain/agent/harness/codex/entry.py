@@ -7,10 +7,9 @@ import os
 import signal
 from pathlib import Path
 
-from app.domain.agent.harness import Opening
 from app.domain.agent.harness.codex.runner import Runner
 from app.domain.agent.harness.codex.tools import RemoteTools
-from app.domain.agent.harness.driven.runner import reply_owed_path
+from app.domain.agent.harness.driven.runner import SessionStart, reply_owed_path
 
 
 async def serve(state: Path, config: dict) -> None:
@@ -32,7 +31,7 @@ async def serve(state: Path, config: dict) -> None:
     try:
         schemas = await tools.discover()
         tools.main_thread = await runner.start(
-            Opening(**config["opening"]),
+            SessionStart(**config["opening"]),
             binary=config["binary"],
             cwd=config["cwd"],
             env=dict(os.environ),

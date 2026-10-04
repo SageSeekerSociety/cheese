@@ -7,7 +7,6 @@
       "title": "这个房间里的东西",
       "expand": "展开",
       "collapse": "收起",
-      "expandAll": "展开全部 {count} 项",
       "openFile": "打开 {path}",
       "newFromTemplate": "从模板新建",
       "readingTemplates": "正在读取模板…",

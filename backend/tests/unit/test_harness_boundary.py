@@ -22,10 +22,10 @@
 - **channels**（device）：拿走的是还没搬过缝的 Claude Code 知识——隧道探针
   ``DEVICE_TUNNEL_PROBE``，和常驻执行机换版时要做的 ``resident_release``。「跑什么」
   不在这张表里：那是 ``harness.launch`` 的 ``LaunchPlan``，通道只说「在哪」。
-- **平台侧（chat.py）：一行也没有。** 它只通过 ``AgentRuntime`` 的 ``backlog`` 拿到
-  已经拼好的 ``AgentEvent``，落库发帧是它的活，翻译不是。**这一行别再长回来。**
-- **装配**（``compute``）：``build_compute_pool`` 在这里把 runtime 和 channel 拼起来，
-  所以它认得这几个名字。装配处见得到零件是应该的——但也只有这里见得到。
+- **平台侧（chat.py）：一行也没有。** 它只从房间读会话的那一路拿到已经拼好的
+  ``AgentEvent``，落库发帧是它的活，翻译不是。**这一行别再长回来。**
+- **会话核心**（``session_host`` 的驱动）：每个骨架怎么起、记录怎么读，写在它自己
+  的驱动里，所以驱动认得这几个名字。见得到零件的只有驱动。
 - **边缘**（``session_work`` 装执行机、``private_chat`` 找私聊的执行目标、功能矩阵
   取 ``declaration``、``machine/enrollment`` 检查版本）：适配器有对外的边，边总得有
   人站着；第二个 harness 自己带一条，而不是从这条挤进去。
@@ -52,12 +52,17 @@ _LEDGER: dict[str, tuple[str, ...]] = {
     "app.domain.agent.capability.matrix": ("declaration",),
     # Enrollment places the pinned build and checks it against the floor.
     "app.domain.machine.enrollment": ("CLAUDE_MIN_VERSION", "CLAUDE_PINNED_VERSION"),
-    # --- 装配：池子在这里把 runtime 和 channel 拼起来，也只在这里 ---
-    "app.domain.agent.compute": (
-        "ClaudeCodeChannel",
-        "ClaudeCodeRuntime",
-        "executor_launch",
+    # --- 会话核心：每个骨架的驱动在这里，驱动认得骨架的零件，也只在这里 ---
+    "app.domain.agent.session_host.claude_code": (
+        "ClaudeLaunch",
+        "Subscription",
+        "accepts_inputs",
+        "control_state",
+        "ended",
     ),
+    # 私有执行环境按需先起：pi 和 Codex 的会话起之前，执行器由它启动。
+    "app.domain.agent.session_host.codex": ("executor_launch",),
+    "app.domain.agent.session_host.pi": ("executor_launch",),
     # --- channels：还没搬过缝的 Claude Code 知识 ---
     "app.domain.agent.device_provider": ("DEVICE_TUNNEL_PROBE", "resident_release"),
 }
@@ -153,12 +158,9 @@ _HARNESS_NAMES = ("claude-code", "codex", "pi")
 #: 谁」而不是「这一轮跑谁」——它们的门口还没有像 claude_code 那样从注册表 import
 #: 自己那个常量。清单外的任何一处新字面量都红，这才是 I5 要守的那条线。
 _SPELLED_OUT: dict[str, tuple[str, ...]] = {
-    "app/domain/agent/harness/codex/channel.py": ("codex",),
     "app/domain/agent/harness/codex/host.py": ("codex",),
     "app/domain/agent/harness/codex/runner.py": ("codex",),
-    "app/domain/agent/harness/codex/runtime.py": ("codex",),
     "app/domain/agent/harness/pi/runner.py": ("pi",),
-    "app/domain/agent/harness/pi/runtime.py": ("pi",),
 }
 
 

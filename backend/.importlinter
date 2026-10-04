@@ -257,11 +257,7 @@ ignore_imports =
     app.domain.agent.capability.matrix -> app.domain.agent.harness.codex
     app.domain.agent.capability.matrix -> app.domain.agent.harness.pi
     app.domain.agent.device_hub_rpc -> app.domain.agent.device_hub
-    app.domain.agent.harness -> app.domain.agent.compute
-    app.domain.agent.harness.claude_code.channel -> app.domain.agent.central_provider
     app.domain.agent.harness.claude_code.session_launch -> app.domain.agent.harness.claude_code.device_launch
-    app.domain.agent.harness.codex.channel -> app.domain.agent.central_provider
-    app.domain.agent.harness.pi.channel -> app.domain.agent.central_provider
     app.domain.agent.machine_launcher -> app.domain.agent.harness.launch
     app.domain.agent.private_chat -> app.domain.agent.device_provider
     app.domain.agent.private_chat -> app.domain.agent.harness.claude_code

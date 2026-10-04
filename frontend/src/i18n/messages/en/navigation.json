@@ -112,7 +112,9 @@
     "weekly": "Weekly report"
   },
   "sidebar": {
-    "resize": "Drag to resize"
+    "resize": "Drag to resize",
+    "expand": "Expand sidebar",
+    "collapse": "Collapse sidebar"
   },
   "backTo": {
     "own": "your projects"

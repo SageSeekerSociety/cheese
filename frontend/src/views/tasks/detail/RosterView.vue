@@ -45,7 +45,11 @@
         </thead>
         <tbody>
           <template v-for="row in visible" :key="row.id">
-            <tr class="rs__row" :data-status="row.status">
+            <tr
+              class="rs__row"
+              :data-status="row.status"
+              @contextmenu="row.approved === 'APPROVED' && rowMenu.open(row.id, $event)"
+            >
               <td>
                 <button
                   type="button"
@@ -105,7 +109,11 @@
                   >
                     {{ t('tasks.roster.view') }}
                   </BaseButton>
-                  <AdaptiveMenu v-if="row.approved === 'APPROVED'" :actions="rowActions(row)">
+                  <AdaptiveMenu
+                    v-if="row.approved === 'APPROVED'"
+                    v-bind="rowMenu.bind(row.id)"
+                    :actions="rowActions(row)"
+                  >
                     <template #activator="{ props: menu }">
                       <BaseButton
                         v-bind="menu"
@@ -222,6 +230,8 @@ import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import dayjs from 'dayjs'
 
+import { useRowMenu } from '@/composables/useRowMenu'
+
 import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
@@ -273,6 +283,7 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+const rowMenu = useRowMenu<number>()
 
 function displayName(m: TaskMembership): string {
   if (props.taskData?.requireRealName && m.realNameInfo?.realName) return m.realNameInfo.realName

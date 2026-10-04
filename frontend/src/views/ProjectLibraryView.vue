@@ -19,6 +19,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 import { toast } from 'vuetify-sonner'
 
+import { useRowMenu } from '@/composables/useRowMenu'
+
 import { deleteLibraryFile, downloadFile, libraryFileRawUrl, listProjectLibrary } from '../api'
 import { libraryFileBytes, replaceLibraryFile, uploadLibraryFile } from '../lib/libraryApi'
 import { VIRTUAL_LIST_CONTENT_THRESHOLD } from '../lib/virtualList'
@@ -42,6 +44,7 @@ const props = defineProps<{ projectId: string }>()
 const route = useRoute()
 const router = useRouter()
 const { mdAndUp } = useDisplay()
+const rowMenu = useRowMenu<string>()
 
 const files = ref<LibraryFile[]>([])
 const loading = ref(false)
@@ -410,7 +413,8 @@ function read(file: LibraryFile) {
                the plain list it always was. `item-as="li"` keeps the ul > li structure
                in both paths — virtua only wraps each row; the row itself carries the
                flex layout, the buttons and the actions menu, so keyboard focus and the
-               ⋯ menu work exactly as before. -->
+               ⋯ menu work exactly as before. virtua owns the li, so the right-click
+               handler sits on the row div it wraps. -->
           <VirtualList
             :items="shown"
             :item-key="fileRowKey"
@@ -421,7 +425,11 @@ function read(file: LibraryFile) {
             item-role="listitem"
           >
             <template #item="{ item: file }">
-              <div class="library-row" :class="{ 'library-row--on': file.path === selectedPath }">
+              <div
+                class="library-row"
+                :class="{ 'library-row--on': file.path === selectedPath }"
+                @contextmenu="rowMenu.open(file.path, $event)"
+              >
                 <button type="button" class="library-row__open" @click="open(file)">
                   <v-icon :icon="KIND_ICONS[kindOf(file.path)]" size="20" class="library-row__icon" />
                   <span class="library-row__id">
@@ -429,7 +437,7 @@ function read(file: LibraryFile) {
                     <span class="t-meta c-faint">{{ rowMeta(file) }}</span>
                   </span>
                 </button>
-                <AdaptiveMenu :actions="fileActions(file)" :title="file.path">
+                <AdaptiveMenu v-bind="rowMenu.bind(file.path)" :actions="fileActions(file)" :title="file.path">
                   <template #activator="{ props: menuProps }">
                     <BaseButton
                       v-bind="menuProps"

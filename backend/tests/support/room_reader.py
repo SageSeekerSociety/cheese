@@ -1,20 +1,19 @@
-"""A room's ear for tests that listen to a runtime by kind: each kind of item a
-runtime hands the room (``harness.RoomReader``) goes to the callable given for
-it, called with what that kind carries; any other kind goes to ``rest``, when
-there is one, and is dropped otherwise."""
+"""A room's ear for tests that listen to its sessions by kind: each kind of item
+a room's sessions hand the room (``room.reads.RoomReader``) goes to the
+callable given for it, called with what that kind carries; any other kind goes
+to ``rest``, when there is one, and is dropped otherwise."""
 
 import uuid
 
-from app.domain.agent.harness import RoomReader
 from app.domain.agent.reads import (
     Completed,
-    Ended,
     Reachable,
     Received,
     Terminated,
     Working,
     Writing,
 )
+from app.domain.agent.room.reads import RoomReader
 
 
 def room_reader(
@@ -63,8 +62,6 @@ def room_reader(
                 event.author or session.agent_handle,
                 list(event.blocks),
             )
-        elif isinstance(event, Ended):
-            heard = None
         else:
             heard = events and events(
                 session.project_id,

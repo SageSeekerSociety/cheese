@@ -2,8 +2,8 @@
 
 import asyncio
 
-from app.domain.agent.harness import Opening
 from app.domain.agent.harness.codex.app_server import AppServer
+from app.domain.agent.harness.driven.runner import SessionStart
 
 
 class Session:
@@ -17,7 +17,7 @@ class Session:
 
     async def open(
         self,
-        opening: Opening,
+        opening: SessionStart,
         *,
         cwd: str,
         tools: list[dict],

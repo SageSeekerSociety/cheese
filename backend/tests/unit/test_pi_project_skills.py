@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from app.domain.agent.harness import Opening
+from app.domain.agent.harness.driven.runner import SessionStart
 from app.domain.agent.harness.pi.runner import Runner
 from tests.support.room_machine import room_machine
 
@@ -94,7 +94,7 @@ async def started(tmp_path: Path, cwd: Path) -> dict[str, str]:
     with room_machine(tmp_path / "machine", checkout=cwd) as target:
         try:
             await runner.start(
-                Opening("system prompt", None, agent_handle="teammate"),
+                SessionStart("system prompt", None, agent_handle="teammate"),
                 binary=str(binary),
                 cwd=str(here),
                 env={"PATH": "/usr/bin:/bin", "PI_FAKE_ARGV": str(recorded)},

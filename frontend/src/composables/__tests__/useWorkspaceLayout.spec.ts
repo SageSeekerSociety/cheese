@@ -2,7 +2,7 @@
 // 桌面上是常驻侧栏。两栏只在列表和房间那两层：看板、文档、设置在平板上仍是一整页。
 import { describe, expect, it } from 'vitest'
 
-import { showsTopicList, workspaceLayout } from '../useWorkspaceLayout'
+import { COMPACT_DESKTOP_MAX_WIDTH, compactDesktop, showsTopicList, workspaceLayout } from '../useWorkspaceLayout'
 
 // 桌面由 Vuetify 的 mdAndUp 说了算（≥ 960），这里按同一条线传进去。
 const at = (width: number) => workspaceLayout(width, width >= 960)
@@ -23,6 +23,35 @@ describe('workspaceLayout', () => {
   it('桌面宽度不变', () => {
     expect(at(960)).toBe('desktop')
     expect(at(1280)).toBe('desktop')
+  })
+})
+
+describe('compactDesktop', () => {
+  // 「桌面窄档」= 960（mdAndUp 那条线）到这个宽度为止（含）。这一档里常驻侧栏挤得
+  // 正文只剩一条，所以它改成可收起的浮层，话题页也只画对话。
+  const desktop = (width: number) => compactDesktop(width, true)
+
+  it('960 到 1180 是桌面窄档', () => {
+    expect(desktop(960)).toBe(true)
+    expect(desktop(1024)).toBe(true)
+    expect(desktop(1180)).toBe(true)
+    expect(desktop(COMPACT_DESKTOP_MAX_WIDTH)).toBe(true)
+  })
+
+  it('比 1180 宽就回到今天的样子', () => {
+    expect(desktop(1181)).toBe(false)
+    expect(desktop(1280)).toBe(false)
+    expect(desktop(1920)).toBe(false)
+  })
+
+  it('不是桌面（手机 / 平板竖屏）就不是窄档', () => {
+    expect(compactDesktop(1024, false)).toBe(false)
+    expect(compactDesktop(390, false)).toBe(false)
+  })
+
+  it('宽度量不出来时按宽档算，不额外加一层', () => {
+    // 只给了 mdAndUp 的替身（不少用例这样模拟 vuetify）量不出 width。
+    expect(compactDesktop(0, true)).toBe(false)
   })
 })
 
