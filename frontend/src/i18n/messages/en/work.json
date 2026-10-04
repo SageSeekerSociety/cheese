@@ -1458,7 +1458,20 @@
     "backToList": "Back to library",
     "previewLoading": "Loading the file",
     "previewError": "Could not preview this file",
-    "downloadOnly": "This format cannot be previewed yet; download it to view"
+    "downloadOnly": "This format cannot be previewed yet; download it to view",
+    "versions": "Versions…",
+    "versionsTitle": "Versions of “{name}”",
+    "versionsClose": "Close",
+    "versionsLoading": "Loading versions",
+    "versionsEmpty": "No versions",
+    "versionsFailed": "Couldn't load the versions",
+    "versionNumber": "Version {n}",
+    "versionCurrent": "Current",
+    "restoreVersion": "Restore as current",
+    "restoreTitle": "Restore version {n} as current?",
+    "restoreBody": "This copies it as a new version; every earlier version stays. Messages that reference this file will read it from then on.",
+    "restoreFailed": "Couldn't restore this version",
+    "restoredDone": "Version {n} is current again"
   },
   "projectSettings": {
     "title": "Project settings",
