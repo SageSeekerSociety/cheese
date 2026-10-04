@@ -1,5 +1,5 @@
 // 首页那一格的目录：团队在原地展开成四样东西，正在看的那个团队一定是展开的；
-// 团队操作只给这个团队的管理员。
+// 团队行的 ⋯ 和右键：管理员邀请、改资料，不是所有者的能退出团队。
 import type { Component } from 'vue'
 import type { Team } from '@/types'
 
@@ -11,7 +11,21 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vu
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const getMyTeams = vi.fn()
-vi.mock('@/network/api/teams', () => ({ TeamsApi: { getMyTeams: () => getMyTeams() } }))
+const removeMember = vi.fn()
+vi.mock('@/network/api/teams', () => ({
+  TeamsApi: { getMyTeams: () => getMyTeams(), removeMember: (...args: unknown[]) => removeMember(...args) },
+}))
+const confirm = vi.fn()
+vi.mock('@/plugins/dialog', () => ({
+  useDialog: () => ({ confirm: (...a: unknown[]) => ({ wait: () => confirm(...a) }) }),
+}))
+vi.mock('@/services/account', () => ({ default: { user: { id: 42 } } }))
+const refreshProjects = vi.fn()
+vi.mock('@/stores/workspace', () => ({ useWorkspaceStore: () => ({ refreshProjects }) }))
+vi.mock('@/services/ErrorHandler', () => ({
+  default: { withErrorHandling: async (fn: () => Promise<unknown>) => fn().catch(() => undefined) },
+}))
+vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn() } }))
 vi.mock('@/network/api/spaces', () => ({
   SpacesApi: { list: async () => ({ data: { spaces: [{ id: 3, name: '数据分析课' }] } }) },
 }))
@@ -24,7 +38,7 @@ const blank = { template: '<div />' }
 
 function team(handle: string, name: string, role: Team['role'] = 'MEMBER'): Team {
   return {
-    id: handle.length,
+    id: [...handle].reduce((n, c) => n + c.charCodeAt(0), 0),
     handle,
     name,
     intro: '',
@@ -92,6 +106,9 @@ beforeAll(() => {
 beforeEach(() => {
   setLocale('zh-CN')
   localStorage.clear()
+  removeMember.mockReset()
+  confirm.mockReset()
+  refreshProjects.mockReset()
   getMyTeams
     .mockReset()
     .mockResolvedValue({ data: { teams: [team('crew', '知是开发组'), team('lab', '数据课第三组')] } })
@@ -120,13 +137,41 @@ describe('首页目录', () => {
     await waitFor(() => expect(hrefs()).not.toContain('/teams/lab/members'))
   })
 
-  it('团队操作只给这个团队的管理员', async () => {
-    getMyTeams.mockResolvedValue({
-      data: { teams: [team('crew', '知是开发组', 'ADMIN'), team('lab', '数据课第三组')] },
-    })
+  it.each([
+    ['ADMIN', ['邀请成员', '编辑团队资料', '退出团队']],
+    ['MEMBER', ['退出团队']],
+    ['OWNER', ['邀请成员', '编辑团队资料']],
+  ] as const)('%s 在团队那一行的 ⋯ 里看到的操作', async (role, labels) => {
+    getMyTeams.mockResolvedValue({ data: { teams: [team('crew', '知是开发组', role)] } })
     await mount('/inbox')
-    await screen.findByText('数据课第三组')
-    expect(screen.getAllByLabelText('团队操作')).toHaveLength(1)
+    await fireEvent.click(await screen.findByLabelText('团队操作'))
+    await screen.findByText(labels[0])
+    const shown = Array.from(document.querySelectorAll('.v-overlay .v-list-item-title')).map((el) =>
+      el.textContent?.trim()
+    )
+    expect(shown).toEqual(labels)
+  })
+
+  it('右键一个团队弹出同一份操作，确认后退出团队、这一行消失', async () => {
+    confirm.mockResolvedValue(true)
+    removeMember.mockResolvedValue({})
+    await mount('/teams/lab')
+    await fireEvent.contextMenu(await screen.findByLabelText('收起 数据课第三组'), { clientX: 40, clientY: 80 })
+    await fireEvent.click(await screen.findByText('退出团队'))
+
+    await waitFor(() => expect(removeMember).toHaveBeenCalledWith(team('lab', '').id, 42))
+    await waitFor(() => expect(screen.queryByText('数据课第三组')).toBeNull())
+    expect(refreshProjects).toHaveBeenCalled()
+  })
+
+  it('取消确认就什么都不做', async () => {
+    confirm.mockResolvedValue(false)
+    await mount('/inbox')
+    await fireEvent.contextMenu(await screen.findByLabelText('展开 数据课第三组'))
+    await fireEvent.click(await screen.findByText('退出团队'))
+    await waitFor(() => expect(confirm).toHaveBeenCalled())
+    expect(removeMember).not.toHaveBeenCalled()
+    expect(screen.getByText('数据课第三组')).toBeTruthy()
   })
 
   // 自己名下的项目不是一个团队：以自己的昵称单独一行，在「团队」小标题之上；
