@@ -375,7 +375,7 @@ describe('confirming with a code mailed to the account', () => {
     await fireEvent.click(await screen.findByRole('button', { name: '发送邮箱验证码' }))
     await fireEvent.paste(await codeField(), { clipboardData: { getData: () => '135790' } })
 
-    expect(await screen.findByText('此账号已开启两步验证，请使用其他方式')).toBeTruthy()
+    expect(await screen.findByText('此账号已开启两步验证，使用其他方式')).toBeTruthy()
     expect(outcome.settled).toBe(false)
   })
 

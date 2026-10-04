@@ -111,8 +111,13 @@
           :inheritance="sourceInheritance"
           :loading="sourceInheritanceLoading"
         />
+        <!-- Three lines of quota detail sat right under the floating label of the
+             field below. The one line that changes what a project can expect
+             stays; the rest moves behind the notice's own disclosure, and the
+             gap below clears the label. -->
         <ResourceLimitsNotice
           v-if="newProjectDialog"
+          class="mt-3 mb-6"
           :own="newProjectTeams.find((team) => team.id === newProjectTeamId)?.personal"
         />
         <v-text-field

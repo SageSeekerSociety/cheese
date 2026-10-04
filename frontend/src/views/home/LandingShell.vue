@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import BrandLockup from '@/components/common/BrandLockup.vue'
@@ -19,18 +19,33 @@ const loggedIn = computed(() => AccountService.loggedIn)
 const homeHref = computed(() => (loggedIn.value ? '/about' : '/'))
 const entryHref = computed(() => (loggedIn.value ? '/' : '/account/signin'))
 const entryLabel = computed(() => (loggedIn.value ? t('publicSite.openWorkspace') : t('publicSite.getStarted')))
+
+// On a phone the four nav links do not fit beside the lockup, so the same links
+// live behind a disclosure button instead: without it /download and /docs/ are
+// unreachable from the homepage. `Esc` closes it and hands focus back to the
+// button that opened it.
+const menuOpen = ref(false)
+const menuToggle = ref<HTMLButtonElement | null>(null)
+
+function closeMenu() {
+  if (!menuOpen.value) return
+  menuOpen.value = false
+  menuToggle.value?.focus()
+}
 </script>
 
 <template>
-  <main id="top" class="landing" :lang="i18n.global.locale.value">
-    <header class="site-bar">
+  <main id="top" class="landing" :class="{ 'menu-open': menuOpen }" :lang="i18n.global.locale.value">
+    <header class="site-bar" @keydown.esc="closeMenu">
       <router-link class="brand" :to="homeHref" :aria-label="t('publicSite.cheeseHome')">
         <BrandLockup />
       </router-link>
       <!-- Router links, so moving between the public pages does not reload the app;
            the router's scrollBehavior lands each one at its top. The docs are a
-           separate site under /docs/, so that one is a real navigation. -->
-      <nav class="site-nav" :aria-label="t('publicSite.mainNavigation')">
+           separate site under /docs/, so that one is a real navigation. The same
+           element is the phone disclosure panel; a click closes it so the panel
+           does not stay over the page the router just opened. -->
+      <nav id="site-menu" class="site-nav" :aria-label="t('publicSite.mainNavigation')" @click="menuOpen = false">
         <router-link
           :to="page === 'home' ? { hash: '#story' } : homeHref"
           :aria-current="page === 'home' ? 'page' : undefined"
@@ -48,6 +63,25 @@ const entryLabel = computed(() => (loggedIn.value ? t('publicSite.openWorkspace'
       <div class="site-actions">
         <LanguageToggle />
         <BaseButton :to="entryHref" kind="secondary" append-icon="mdi-arrow-top-right">{{ entryLabel }}</BaseButton>
+        <button
+          ref="menuToggle"
+          type="button"
+          class="site-menu-toggle"
+          :aria-expanded="menuOpen"
+          aria-controls="site-menu"
+          @click="menuOpen = !menuOpen"
+        >
+          <span class="visually-hidden">{{ t('publicSite.menu') }}</span>
+          <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+            <path
+              d="M3 5.5h14M3 10h14M3 14.5h14"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.6"
+              stroke-linecap="round"
+            />
+          </svg>
+        </button>
       </div>
     </header>
 
