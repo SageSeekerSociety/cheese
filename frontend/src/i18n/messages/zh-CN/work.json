@@ -293,6 +293,10 @@
       "usageSplit": "输入 {input} · 输出 {output}",
       "noUsage": "暂无数据"
     },
+    "archiveNotice": {
+      "done": "已归档",
+      "undo": "撤销"
+    },
     "progress": {
       "title": "进度",
       "tally": "完成 {done}/{total}"
