@@ -23,6 +23,14 @@
     "windows": "Windows"
   },
   "save": "Save",
+  "saveState": {
+    "saved": "Saved",
+    "failed": "Save failed",
+    "failedWith": "Save failed: {reason}",
+    "saving": "Saving…",
+    "unsaved": "Unsaved changes",
+    "revert": "Revert"
+  },
   "request": {
     "timeout": "The request timed out. Please try again",
     "canceled": "Request canceled",
@@ -42,5 +50,11 @@
   },
   "unknownError": "Unknown error",
   "listItemQuoted": "“{item}”",
-  "confirm": "Confirm"
+  "confirm": "Confirm",
+  "table": {
+    "pager": "Pagination",
+    "range": "{from}–{to} of {total}",
+    "prev": "Previous page",
+    "next": "Next page"
+  }
 }

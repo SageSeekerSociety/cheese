@@ -488,6 +488,37 @@ AI 队友的头像（`CheeseAvatar`）有自己的一组颜色：五档暖色的
 - 写法照 `views/spaces/detail/analytics/*`：`load` 开头清掉 `failed` 与 `errorDetail`，`catch` 里 `failed = true`、`errorDetail = error instanceof Error ? error.message : null`，**不再** `toast.error`——同一件事不说两遍。
 - 只有「一整块内容没读到」才替换内容。列表里某一行、某一次操作（保存、删除）失败仍用 toast：那一行的内容没有消失，也没有整块可替。
 
+### 3.11 保存反馈：设置就地留痕，临时动作弹条
+
+原则 7。保存有两种，反馈也就两种，别混：**改的是一块留得住的设置，就地把结果留在那一块**；**做的是一次过去就没了的动作，结果用全局 toast 说一声**。判据是「保存完以后，这页还立着同一块东西等下一次改吗」——是，就地留；不是，弹条。
+
+- **持久设置区块**（设置页里的一栏、一张表单）：改了没存要能看见，存好了也要能看见「刚存好的是这块」。用 `SaveBar`（`src/components/base/SaveBar.vue`）——脏了才浮出来的那条栏，右边「还原 / 保存」，左端跟一个 `SaveStatus` 和一句「未保存」；`SaveBar` 自己会推 `revert` / `save`。只有一颗按钮、没有脏状态的行（拨一下开关就提交那种），把 `SaveStatus`（`src/components/base/SaveStatus.vue`）摆在按钮旁边。
+- **一次性动作**（复制到剪贴板、设了个提醒、立刻生效的一次调用）：没有「这一块」可留痕，成功和失败都走全局 toast（`vuetify-sonner` 的 `toast`）。别再各写 `v-snackbar`。
+
+状态只从 `useSaveState`（`src/composables/useSaveState.ts`）来，一次写用 `run(async () => …)` 包住：
+
+```ts
+const { saving, saved, dirty, error, run } = useSaveState({
+  feedback: 'inline',            // 持久设置；一次性动作写 'toast'
+  dirty: () => dirty.value,      // 有脏状态才传
+  messages: { saved: t('…saved'), failed: t('…saveFailed') },
+})
+```
+
+- `feedback: 'inline'`：失败时 `error` 有值，交给 `SaveStatus` 就地显示，几秒后淡掉；成功同理。`feedback: 'toast'`：成功失败都由 `useSaveState` 弹 toast，不再需要额外的提示状态。
+- 一次保存只出现一种样子，且都**在原地淡入淡出**（§9.3 的时长 token），不弹窗、不挤动布局：保存中 `保存中…`（`--muted`）；已保存 `已保存`（`--ok-ink`，`role=status`）；失败 `保存失败`（`--danger-ink`，`role=alert`，按 §8.9 用冒号接服务端原因）。
+- **不要再自己写 `saving = ref(false)`**，也不要给一次性动作硬套 `SaveStatus`：那会把「保存失败」的前缀安到「发送失败」上面。一个说法只配一种动作。
+
+### 3.13 数据表格：BaseTable
+
+一张有表头、多列的数据表只用 `BaseTable`（`src/components/base/BaseTable.vue`，原来叫 `AdminGrid`，旧名字仍是它的别名），不再用 `v-data-table`，也不再手写 `<table>`。
+
+- 列宽写在 `cols` 上（每列一个宽度，只给吃剩下宽度的那一列传 `null`）；`minWidth` 是窄屏横滚的下限，默认 1080px，列少的表传小一点。
+- 表头写进 `#head` 槽，格子用 `BaseTableTh`。给了 `sortKey` 就是可排序的一列：表发 `@sort(key, dir)`，页面自己排；当前列带箭头和 `aria-sort`。
+- 整张表都在手上时用 `useClientTable`（`src/components/base/tableSort.ts`）做排序和分页：每页 10 条，换排序回第一页，空值永远排在最后。
+- 分页条 `TablePager` 放进 `#foot` 槽，只有一页时不画。
+- 加载、空、读失败三态由表壳保证互斥：`loading`（只在一条都没有时）、`busy`（有旧内容时重取）、`empty` / `#empty`、`state="error"` / `#error`。
+
 ---
 
 ## 4. 深色模式

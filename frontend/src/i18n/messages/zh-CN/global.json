@@ -16,6 +16,14 @@
   "copyright": "© {year} 知是",
   "confirm": "确认",
   "save": "保存",
+  "saveState": {
+    "saved": "已保存",
+    "failed": "保存失败",
+    "failedWith": "保存失败：{reason}",
+    "saving": "保存中…",
+    "unsaved": "有未保存的改动",
+    "revert": "撤销"
+  },
   "transportReadFailure": "服务暂时不可达，请稍后重试（HTTP {status}）",
   "transportWriteFailure": "服务暂时不可达，无法确认操作是否完成，请刷新查看后再重试（HTTP {status}）",
   "updateFailed": "更新失败",
@@ -42,5 +50,11 @@
     "promptTitle": "输入"
   },
   "unknownError": "未知错误",
-  "listItemQuoted": "「{item}」"
+  "listItemQuoted": "「{item}」",
+  "table": {
+    "pager": "分页",
+    "range": "{from}–{to} / {total}",
+    "prev": "上一页",
+    "next": "下一页"
+  }
 }

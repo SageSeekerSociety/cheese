@@ -734,7 +734,9 @@
         "pendingReviewCount": "待评审",
         "submissionConversionRate": "提交转化率",
         "successRate": "成功率"
-      }
+      },
+      "empty": "暂无题目",
+      "tableLabel": "题目列表"
     },
     "publishers": {
       "export": "导出出题人数据",
@@ -763,7 +765,9 @@
         "bestRate": "成功率最高",
         "mostClaims": "报名最多",
         "claims": "{n} 个报名主体"
-      }
+      },
+      "empty": "暂无出题人",
+      "tableLabel": "出题人列表"
     },
     "participants": {
       "approval": "报名审核",
