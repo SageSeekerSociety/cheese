@@ -869,3 +869,52 @@ async def test_zero_usage_report_lands_as_unmetered_not_metered_zero(
     assert rows and all(r.kind == "chat:unmetered" for r in rows)
     assert all(r.total_tokens == 0 for r in rows)
     assert {r.model for r in rows} == {ran_on}
+
+
+@pytest.mark.anyio
+async def test_a_route_marked_without_mid_conversation_system_launches_without_it(
+    business_db_factory, tmp_path, monkeypatch
+):
+    """A gateway model marked ``supports_mid_conversation_system: false`` loses
+    the system messages Claude Code puts mid-conversation (the skill listing
+    among them), so a launch on it asks for them in the first user message. A
+    model nobody marked keeps Claude Code's default."""
+    from app.domain.agent import gateway_catalog
+    from app.domain.agent.gateway import GatewayModel
+
+    monkeypatch.setattr(settings, "agent_model", "keeps-it")
+
+    class Catalog:
+        async def models(self):
+            return [
+                GatewayModel("keeps-it", "Keeps it", True, True),
+                GatewayModel(
+                    "loses-it", "Loses it", True, True, mid_conversation_system=False
+                ),
+            ]
+
+    gateway_catalog.reset()
+    await gateway_catalog.refresh(Catalog())
+    try:
+        svc, factory, pid, _tid = await _mk_service(
+            business_db_factory, tmp_path, FakeGateway()
+        )
+        unmarked, _ = await svc._model_kwargs(pid, _in_this_process())
+
+        async with factory() as session:
+            project = await ProjectRepository(session).get(pid)
+            assert project is not None
+            project.settings = {**(project.settings or {}), "default_model": "loses-it"}
+            await session.commit()
+        marked, _ = await svc._model_kwargs(pid, _in_this_process())
+    finally:
+        gateway_catalog.reset()
+
+    assert "CLAUDE_CODE_MODEL_CAPABILITIES" not in unmarked["env"]
+    assert (
+        marked["env"]["CLAUDE_CODE_MODEL_CAPABILITIES"] == "loses-it=-mid_conv_system"
+    )
+    # A screen launched before the mark is reopened with it.
+    assert (
+        marked["env"]["CHEESE_AGENT_CONFIG"] != unmarked["env"]["CHEESE_AGENT_CONFIG"]
+    )

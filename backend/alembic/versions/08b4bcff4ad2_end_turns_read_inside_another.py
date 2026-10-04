@@ -1,7 +1,7 @@
 """End the turns whose input was read inside another turn that has ended
 
 Revision ID: 08b4bcff4ad2
-Revises: cbf982a4af16
+Revises: c4e8a17b2d90
 Create Date: 2026-10-04
 
 A message that reaches a session while it is in the middle of a turn is read at
@@ -33,7 +33,7 @@ from collections.abc import Sequence
 from alembic import op
 
 revision: str = "08b4bcff4ad2"
-down_revision: str | Sequence[str] | None = "cbf982a4af16"
+down_revision: str | Sequence[str] | None = "c4e8a17b2d90"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

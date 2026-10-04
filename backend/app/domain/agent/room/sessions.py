@@ -212,6 +212,8 @@ class RoomSessions:
         self.closed: set[uuid.UUID] = set()
         # The open work each seat was last told is waiting on its machine.
         self.told_waiting: dict[Seat, uuid.UUID] = {}
+        # The conversation each seat was last handed its opening state in.
+        self.opened: dict[Seat, str] = {}
         # (seat, conversation) pairs this process saw die (`_died` / a
         # verdict): the only thing that makes "no live session" a fact rather
         # than an unanswered question (FB-56 legacy③). A turn on the same seat
@@ -821,9 +823,15 @@ class RoomSessions:
         needs_place: bool = True,
         images: list[dict] | None = None,
         owes_reply: bool = False,
+        session_opening: str = "",
+        opening_changes: str = "",
     ) -> bool:
         """Put a message into the seat's session, as work ``work_id``, starting
         the session if it has to be. True = the session's runner took it.
+
+        ``session_opening`` is the project state a new conversation is handed in
+        front of its first message; ``opening_changes`` the part of it that
+        changed since a conversation that goes on last heard (`_with_project_state`).
 
         An ack, not an answer: what the agent does about it arrives through the
         seat's reading — possibly minutes later, possibly to a different process
@@ -851,6 +859,9 @@ class RoomSessions:
                 env=env,
                 acting=acting,
                 needs_place=needs_place,
+            )
+            message = self._with_project_state(
+                seat, live, resume_token, session_opening, opening_changes, message
             )
         if not live.takes_inputs:
             raise InputProtocolUnavailable()
@@ -904,6 +915,30 @@ class RoomSessions:
             # A lost acknowledgement does not mean the session stopped working.
             self._listen(seat)
         return True
+
+    def _with_project_state(
+        self,
+        seat: Seat,
+        live: Live,
+        resume_token: str | None,
+        session_opening: str,
+        opening_changes: str,
+        message: str,
+    ) -> str:
+        """The message with the project state this conversation has not heard.
+
+        A conversation is new when it is not the one the caller asked to resume:
+        no token, or a resume that failed and started afresh. A new one gets the
+        whole opening; one that goes on gets what changed since it last heard.
+        A second message before the new conversation's token is recorded must
+        not hand it the opening again, so each seat remembers the conversation
+        it opened. After a backend restart that is gone, and the most a lost
+        entry costs is an opening handed twice."""
+        conversation = live.conversation
+        fresh = conversation != resume_token and self.opened.get(seat) != conversation
+        self.opened[seat] = conversation
+        state = session_opening if fresh else opening_changes
+        return f"{state}\n\n{message}" if state else message
 
     async def steer(
         self,

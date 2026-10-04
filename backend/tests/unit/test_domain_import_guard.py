@@ -65,7 +65,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.agent.announce", "app.domain.block.repositories"),
         ("app.domain.agent.chat", "app.domain.block.repositories"),
         ("app.domain.agent.chat", "app.domain.project.repositories"),
-        ("app.domain.agent.chat", "app.domain.review.repositories"),
         ("app.domain.agent.chat", "app.domain.topic.repositories"),
         ("app.domain.agent.github_app", "app.domain.project.repositories"),
         # agent.mentions 是从 agent.chat 里拆出来的那一块（点名解析、通知与

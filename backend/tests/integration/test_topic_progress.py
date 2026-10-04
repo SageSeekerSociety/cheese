@@ -186,6 +186,27 @@ def test_text_written_over_a_checklist_is_no_longer_one(client):
     assert again["posted"] is True and again["message_id"] != first
 
 
+def _progress_section(told: str) -> str:
+    """The checklist the session is handed back as its own, from its opening."""
+    start = told.index("上次的任务清单")
+    end = told.find("清单会整份覆盖", start)
+    return told[start:end]
+
+
+def _new_conversation(client, topic: str) -> None:
+    """The room's conversation is gone: the next turn opens a new one."""
+    import uuid
+
+    from app.domain.agent_session.services import AgentSessionService
+
+    async def forget() -> None:
+        async with client.test_factory() as session:
+            await AgentSessionService(session).forget_room(uuid.UUID(topic))
+            await session.commit()
+
+    client.portal.call(forget)
+
+
 def test_each_write_replaces_the_whole_list(client):
     topic, headers = _room(client)
     _write(client, topic, headers, PLAN)
@@ -193,15 +214,18 @@ def test_each_write_replaces_the_whole_list(client):
     assert _progress(client, topic) == [("只剩这一项", "pending")]
 
 
-def test_next_turn_is_told_where_the_work_got_to(client, stub_hooks):
+def test_a_new_session_is_told_where_the_work_got_to(client, stub_hooks):
+    """The list is for the session that was not there: one that goes on holds
+    its own history, a new one (a deploy, a recycled machine) is handed it."""
     topic, headers = _room(client)
     _chat(client, topic)
-    assert "上次的任务清单" not in (stub_hooks.last_system_prompt or "")
+    assert "上次的任务清单" not in stub_hooks.told
 
     _write(client, topic, headers, PLAN)
+    _new_conversation(client, topic)
     _chat(client, topic)
 
-    prompt = stub_hooks.last_system_prompt or ""
+    prompt = stub_hooks.told
     # Status is carried as a mark, not just the text: "已完成" vs "在做" is the
     # whole reason to hand the list over rather than re-plan from scratch.
     assert "- [x] 核实 issue 论断" in prompt
@@ -238,7 +262,7 @@ def test_a_workers_checklist_stays_on_its_card(client, stub_hooks, monkeypatch):
 
     monkeypatch.setattr(broker, "publish", publish)
     _chat(client, topic)
-    prompt = stub_hooks.last_system_prompt or ""
+    prompt = stub_hooks.told
     assert "- [~] 写实现" in prompt
     assert "改卡片上的接口" not in prompt
 
@@ -416,9 +440,11 @@ def test_a_persons_checklist_is_not_the_agents_plan(client, stub_hooks):
 
     assert _progress(client, topic) == [(t["content"], t["status"]) for t in PLAN]
     _chat(client, topic)
-    prompt = stub_hooks.last_system_prompt or ""
-    assert "- [~] 写实现" in prompt
-    assert "我自己的待办" not in prompt
+    # The person's list still reaches the agent as what they said; it must not
+    # be handed back as the agent's own progress.
+    progress = _progress_section(stub_hooks.told)
+    assert "- [~] 写实现" in progress
+    assert "我自己的待办" not in progress
     # And the agent's own message is left alone.
     (agent_list,) = _checklists(client, topic)
     assert agent_list["content"] == CHECKLIST

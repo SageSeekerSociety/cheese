@@ -311,7 +311,8 @@ class Harness:
     # 反引号里写的是**本仓库的东西**：带 `/` 的（或者以 `.py`、`.md` 结尾的）是路
     # 径，从 `app/domain/` 起算；其余的是符号名，每个都要在同一句引的某个文件里找
     # 得到。规矩不限于代码文件——一条要求的做法写在哪儿就引哪儿，
-    # `agent/skill_library/` 下那几份发给 agent 的说明也算数。
+    # `agent/skill_library/` 下和 `../../sandbox/skills/` 里那几份发给 agent 的
+    # 说明也算数。
     # ``test_subagent_requirements.py`` 两样都核，而且核符号那一样要求它**参与了代
     # 码**：被定义、被赋值、被读。只核「文件里有这串字」是不够的——一张
     # ``merged.pop`` 的删除名单里也有这串字，而一张删除名单证明的恰好是这句话的反
@@ -398,7 +399,7 @@ HARNESSES: dict[str, Harness] = {
             ),
             SubagentRequirement.PARENT_RETASKS_IT: (
                 "改指令的是起它的父线程，做法写在 "
-                "`agent/skill_library/stage_delegating.md`：还在跑的，父线程直接给"
+                "`../../sandbox/skills/cheese/SKILL.md`：还在跑的，父线程直接给"
                 "这条子线程发消息；已经停了的，在房间会话里用同一个线程标识重新派"
                 "一条——所以换了要求还是那条活、还归那张卡。平台这一侧只有 "
                 "`agent/room/sessions.py` 上的 `RoomSessions.steer`，它把人对"
@@ -407,7 +408,7 @@ HARNESSES: dict[str, Harness] = {
             ),
             SubagentRequirement.PARENT_STOPS_IT: (
                 "停的是**一条**子线程，做法和改指令写在同一处 "
-                "`agent/skill_library/stage_delegating.md`：父线程调 TaskStop，按起"
+                "`../../sandbox/skills/cheese/SKILL.md`：父线程调 TaskStop，按起"
                 "它时给的那个名字停那一条，同一条会话里的其他分身照跑。平台这一侧"
                 "的 `agent/room/sessions.py` 上 `RoomSessions.interrupt` 与 "
                 "`RoomSessions.close` 停的都是整条会话——那是结论 43 的另一句「子 "
@@ -474,7 +475,7 @@ HARNESSES: dict[str, Harness] = {
             ),
             SubagentRequirement.PARENT_RETASKS_IT: (
                 "改指令的是起它的父线程，做法写在 "
-                "`agent/skill_library/stage_delegating.md`：还在跑的，父线程调 "
+                "`../../sandbox/skills/cheese/SKILL.md`：还在跑的，父线程调 "
                 "SendMessage，`agent/harness/pi/subagents.py` 的 `Subagent.send` "
                 "把消息 steer 进那条子会话；已经收工或停了的不再接指令，照原来的简报"
                 "用同一个线程标识重派。平台这一侧只有 `agent/room/sessions.py` 上"
