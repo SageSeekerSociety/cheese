@@ -2,8 +2,9 @@
 that outlived it, hand their unread tails to the rooms, and fold the round's
 per-conversation death evidence into the durable set (FB-56 legacy③).
 
-The mixin holds the orchestration; ChatService keeps the room-side pieces it
-calls (`_replay_room`, `_begin_self_started_turn`, the hook-work registry).
+The mixin holds the orchestration, a room's replay included; ChatService keeps
+the room-side pieces it calls (`_begin_self_started_turn`, the hook-work
+registry).
 """
 
 import asyncio
@@ -12,18 +13,20 @@ import uuid
 from typing import TYPE_CHECKING
 
 from app.domain.agent import death_evidence
+from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.harness import SessionRef
 
 if TYPE_CHECKING:
     from app.domain.agent.compute import ComputePool
     from app.domain.agent.hook_stream import _HookWorkState
+    from app.domain.agent.prewarm import SeatPrewarm
 
 logger = logging.getLogger(__name__)
 
 
 class SessionRecovery:
     """The recovery/replay orchestration half of ChatService. The attributes
-    and the two room-side methods are the service's; declared here so the
+    and the room-side method are the service's; declared here so the
     type checker sees the mixin's own contract."""
 
     if TYPE_CHECKING:
@@ -43,9 +46,8 @@ class SessionRecovery:
             session_id: str | None = None,
         ) -> _HookWorkState | None: ...
 
-        async def _replay_room(
-            self, seats: list[SessionRef], *, after: asyncio.Task | None
-        ) -> None: ...
+        _replay_slots: asyncio.Semaphore
+        prewarm: SeatPrewarm
 
     async def recover_sessions(self, device_id: str | None = None) -> int:
         """Listen again to sessions that outlived this process, and start
@@ -117,6 +119,45 @@ class SessionRecovery:
             self._replays[topic_id] = replay
             replay.add_done_callback(self._replayed)
         return len(unique)
+
+    async def _replay_room(
+        self, seats: list[SessionRef], *, after: asyncio.Task | None
+    ) -> None:
+        if after is not None:
+            await asyncio.gather(after, return_exceptions=True)
+        async with self._replay_slots:
+            for session in seats:
+                try:
+                    await self._compute.replay(session)
+                except DeviceOffline:
+                    # The machine holding this session is not there. Nothing to
+                    # recover and nothing to fix; its next connection runs this.
+                    logger.warning(
+                        "session not recovered for topic %s: device offline",
+                        session.topic_id,
+                    )
+                except DeviceCallError as exc:
+                    # The machine is there and said no — its runner's socket is
+                    # not up yet (a cold one takes about a minute), or the room's
+                    # home is gone. Same standing as the machine being away: the
+                    # next connection recovers this session, and the machine's
+                    # own words are what somebody reading this would act on.
+                    logger.warning(
+                        "session not recovered for topic %s: %s",
+                        session.topic_id,
+                        exc,
+                    )
+                except Exception:  # noqa: BLE001 — one topic cannot block startup
+                    logger.exception(
+                        "session recovery failed for topic %s", session.topic_id
+                    )
+                else:
+                    from app.domain.agent.pending_messages import nudge_messages
+
+                    nudge_messages(self, session.topic_id)
+                    # Taken over, read up: now compare it with what this
+                    # release would start, while nobody is waiting on it.
+                    self.prewarm.nudge(session)
 
     def _replayed(self, replay: asyncio.Task) -> None:
         for topic_id, current in list(self._replays.items()):
