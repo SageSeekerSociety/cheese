@@ -90,11 +90,21 @@ function mdiFont(): Plugin {
   }
 }
 
+// The browsers the bundle runs in: Vite 6's default list. Vite 7 raised its
+// default to newer browsers (Safari 16, Chrome 107); moving the floor is a
+// product decision, not part of changing the build tool.
+const TARGET = ['es2020', 'edge88', 'firefox78', 'chrome87', 'safari14']
+
 // Oxc minifies (Vite's default). It is what keeps the build small enough to
 // run: terser needed a 6 GB heap and 2½ minutes on four cores, Oxc needs under
-// 2 GB and a quarter of a minute for the same bundle size. The web workers
-// (Monaco's) are bundled on their own and take the same setting.
-const MINIFY = { compress: { dropConsole: true, dropDebugger: true }, mangle: true, codegen: true }
+// 2 GB and a quarter of a minute for the same bundle size. Its own target
+// defaults to the newest syntax, so it is held to the same floor. The web
+// workers (Monaco's) are bundled on their own and take the same setting.
+const MINIFY = {
+  compress: { target: 'es2020', dropConsole: true, dropDebugger: true },
+  mangle: true,
+  codegen: true,
+}
 
 export default defineConfig({
   plugins: [
@@ -450,6 +460,7 @@ export default defineConfig({
   },
   worker: { rolldownOptions: { output: { minify: MINIFY } } },
   build: {
+    target: TARGET,
     sourcemap: false,
     rolldownOptions: {
       // 两个页面：应用本体，和文档里嵌的动态演示（demo.html，见 src/demo-main.ts）。
