@@ -66,7 +66,7 @@ steps:
 
 ## 4. 启动或续跑骨架 {#harness}
 
-骨架是 Claude Code、Codex、Pi 三种之一。会话 id 存在话题上，下一轮续跑同一个会话。本次跑哪个由部署和项目设置决定，怎么把协议翻译成统一的事件见[骨架](/dev/harness)。按话题所处阶段注入哪一段操作说明，见[技能](/dev/skills#stage)和[提示词注入与上下文管理](/dev/context)。
+骨架是 Claude Code、Codex、Pi 三种之一。会话 id 存在话题上，下一轮续跑同一个会话。本次跑哪个由部署和项目设置决定，怎么把协议翻译成统一的事件见[骨架](/dev/harness)。会话开场时芝士读到什么、接着跑时怎么补上变化，见[提示词注入与上下文管理](/dev/context)。
 
 ## 5. 芝士怎么说话 {#publish}
 
@@ -192,4 +192,4 @@ AI 发起的点名有熔断：同一话题一小时最多叫起 `AGENT_MENTIONS_
 - 自动改名按 `title_version` 比较后写入：生成期间有人改了名，这次结果作废。
 - 每次改名记进 `topic_titles`；非首次改名会在房间里发一条带撤销按钮的事件，并推送 `state: topics` 让侧栏刷新。
 - 项目设置 `topic_naming = manual` 时平台不起名，主 agent 也不会被要求起名。
-- 平台起不了名（没配网关）时，退回旧办法：系统提示词要求主 agent 在第一轮先用 `cheese_title` 起名。
+- 平台起不了名（没配网关）时，退回旧办法：这一轮消息的最前面要求主 agent 先用 `cheese_title` 起名。

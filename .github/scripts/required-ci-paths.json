@@ -13,7 +13,9 @@
   "frontend": [
     "frontend/**",
     ".github/workflows/frontend.yml",
-    "backend/app/domain/agent/skill_library/doc_writing.md"
+    "backend/app/domain/agent/skill_library/doc_writing.md",
+    "backend/app/domain/agent/skill_library/doc_blocks.md",
+    "backend/app/domain/agent/skill_library/doc_form.md"
   ],
   "e2e": [
     "backend/**",

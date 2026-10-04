@@ -89,6 +89,12 @@ means releasing the gateway. The marker is opt-in because the
 gateway also routes models that are not menu items — `glm-4.5` is where the
 subagent alias points.
 
+A model whose route loses the system-role messages Claude Code puts in the
+middle of a conversation is marked `supports_mid_conversation_system: false`
+under `model_info` (or with the switch on the admin page). Mark it only after
+measuring it; cheese then launches Claude Code to put that content in the first
+user message. See `docs/manual/dev/gateway.md`.
+
 **On the admin models page** — administrators add, edit, disable, and delete
 runtime models (`STORE_MODEL_IN_DB` is on) without a release. Every write is
 audited with the acting handle, and a successful write refreshes the catalogue

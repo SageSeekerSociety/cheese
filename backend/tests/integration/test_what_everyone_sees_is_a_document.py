@@ -114,8 +114,8 @@ def test_another_room_reads_the_overview_document_on_its_next_turn(client, stub_
 
     _say(client, topic_id)
 
-    prompt = stub_hooks.last_system_prompt
-    assert prompt is not None
+    assert stub_hooks.last_system_prompt is not None
+    prompt = stub_hooks.told
     assert FACT in prompt
 
 
@@ -254,8 +254,8 @@ def test_the_overview_room_does_not_read_its_own_document_twice(client, stub_hoo
 
     _say(client, overview)
 
-    prompt = stub_hooks.last_system_prompt
-    assert prompt is not None
+    assert stub_hooks.last_system_prompt is not None
+    prompt = stub_hooks.told
     assert prompt.count(FACT) == 1
 
 
@@ -279,8 +279,8 @@ def test_the_overview_room_reads_the_other_blocks_from_the_data(client, stub_hoo
 
     _say(client, overview)
 
-    prompt = stub_hooks.last_system_prompt
-    assert prompt is not None
+    assert stub_hooks.last_system_prompt is not None
+    prompt = stub_hooks.told
     assert "给高中生做算法课" in prompt
     assert "## 现在在做什么" in prompt
     assert "干活的房间" in prompt
@@ -303,8 +303,8 @@ def test_another_room_gets_only_what_the_project_is(client, stub_hooks):
 
     _say(client, topic_id)
 
-    prompt = stub_hooks.last_system_prompt
-    assert prompt is not None
+    assert stub_hooks.last_system_prompt is not None
+    prompt = stub_hooks.told
     assert "给高中生做算法课" in prompt
     assert "## 现在在做什么" not in prompt
 

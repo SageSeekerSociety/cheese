@@ -122,6 +122,8 @@ const caps = computed(() => {
   if (c.reasoning) rows.push({ key: 'reasoning', label: t('models.capability.reasoning') })
   if (c.vision) rows.push({ key: 'vision', label: t('models.capability.vision') })
   if (c.adaptive_thinking) rows.push({ key: 'adaptive', label: t('models.capability.adaptiveThinking') })
+  if (c.mid_conversation_system === false)
+    rows.push({ key: 'no-mid-system', label: t('models.capability.noMidConversationSystem') })
   return rows
 })
 
