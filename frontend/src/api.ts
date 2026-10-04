@@ -1368,29 +1368,48 @@ export async function attachLibraryFile(topicId: string, libraryPath: string): P
   return envelope.data
 }
 
-// Upload a file into the project's 资料库, with a copy in this room. NOTE: raw
-// fetch, not request() — multipart needs the browser to set the boundary itself.
+// Upload a file into the project's 资料库, with a copy in this room.
+//
+// XHR, not fetch, and not request(): multipart needs the browser to set the
+// boundary itself, and only XHR reports request-body progress — fetch has no
+// upload-progress event at all. The composer draws a determinate bar from it.
 //
 // `origin: 'clipboard'` 的那一份只留在这个房间：贴进来的截图没有名字（`image.png`
-// 是浏览器编的），而资料库是按名字寻址的。
-export async function uploadAttachment(
+// 是浏览器编的），而资料库是按名字寻址的 —— 见 attachments.ts 里给它现起的名字。
+export function uploadAttachment(
   topicId: string,
   file: File,
-  origin: 'file' | 'clipboard' = 'file'
+  origin: 'file' | 'clipboard' = 'file',
+  onProgress?: (fraction: number) => void
 ): Promise<ChatAttachment> {
   const form = new FormData()
   form.append('file', file)
   form.append('origin', origin)
-  const res = await fetch(`${BASE}/topics/${encodeURIComponent(topicId)}/attachments`, {
-    method: 'POST',
-    body: form,
-    headers: authHeaders(),
+  return new Promise<ChatAttachment>((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', `${BASE}/topics/${encodeURIComponent(topicId)}/attachments`)
+    for (const [key, value] of Object.entries(authHeaders())) xhr.setRequestHeader(key, value)
+    xhr.upload?.addEventListener('progress', (e) => {
+      // `lengthComputable` is false when the server cannot give a total; a bar
+      // built from that would be measuring nothing.
+      if (onProgress && e.lengthComputable && e.total > 0) onProgress(e.loaded / e.total)
+    })
+    xhr.addEventListener('load', () => {
+      let envelope: ApiEnvelope<ChatAttachment> | null = null
+      try {
+        envelope = JSON.parse(xhr.responseText) as ApiEnvelope<ChatAttachment>
+      } catch {
+        envelope = null
+      }
+      if (xhr.status < 200 || xhr.status >= 300 || !envelope || envelope.code !== 200) {
+        reject(new Error(refusalWords(envelope) || t('global.request.uploadFailed', { status: xhr.status })))
+        return
+      }
+      resolve(envelope.data)
+    })
+    xhr.addEventListener('error', () => reject(new Error(t('global.request.uploadFailed', { status: 0 }))))
+    xhr.send(form)
   })
-  const envelope = (await res.json().catch(() => null)) as ApiEnvelope<ChatAttachment> | null
-  if (!res.ok || !envelope || envelope.code !== 200) {
-    throw new Error(refusalWords(envelope) || t('global.request.uploadFailed', { status: res.status }))
-  }
-  return envelope.data
 }
 
 // <img src=…> URL for an uploaded attachment (binary raw endpoint).

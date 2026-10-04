@@ -25,6 +25,11 @@ const MAX_PENDING = 9
  *  never be sent — `uploaded` is the filter for that. */
 export interface PendingAttachment extends ChatAttachment {
   uploading?: boolean
+  /** Upload so far, 0…1. Set from XHR's upload-progress events; absent until the
+   *  first one lands (and for a worktree copy, which never had a body to send).
+   *  The strip draws a determinate ring from this instead of a spinner that
+   *  cannot say whether a 9 MB file is 5% or 95% of the way up. */
+  progress?: number
   /** 上传失败: the slot stays with its name and File until 重试 or remove. */
   error?: boolean
   /** Placeholders have no worktree path to take a name from. */
@@ -33,6 +38,52 @@ export interface PendingAttachment extends ChatAttachment {
   file?: File
   /** Where it came from, so a retried clipboard paste stays a clipboard paste. */
   origin?: 'file' | 'clipboard'
+}
+
+/** What `File.type` alone cannot give back: the extension to write on a name we
+ *  are inventing for a pasted image. */
+const IMAGE_EXT: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/gif': 'gif',
+  'image/webp': 'webp',
+  'image/bmp': 'bmp',
+  'image/svg+xml': 'svg',
+}
+
+/** The names a browser makes up for a clipboard image. `image.png` is Chromium's
+ *  guess on every platform; `blob` is what a canvas/toBlob paste carries. A real
+ *  name (a screenshot tool's, a file manager's) is none of these and is kept. */
+const GENERIC_PASTED = /^(image|blob|clipboard)(\.(png|jpe?g|gif|webp|bmp|svg))?$/i
+
+/** `yyyyMMdd-HHmmss`, local time: sorts, and is a legal filename everywhere. */
+function stamp(at: Date): string {
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${at.getFullYear()}${p(at.getMonth() + 1)}${p(at.getDate())}-${p(at.getHours())}${p(at.getMinutes())}${p(at.getSeconds())}`
+}
+
+/** A screenshot pasted from the clipboard arrives called `image.png`, so the
+ *  strip and the room's copy of it carry nothing to tell two pastes apart (and a
+ *  name that only means "a picture"). Give it one that says when it was taken. */
+export function pastedImageName(file: File, at: Date = new Date()): string {
+  const ext = IMAGE_EXT[file.type] ?? file.name.split('.').pop() ?? 'png'
+  return `${t('work.room.attachments.pastedName', { time: stamp(at) })}.${ext}`
+}
+
+/** The name for a long plain-text paste turned into a file. Same shape as a
+ *  pasted image: what it is, and when. */
+export function pastedTextName(ext: 'txt' | 'md', at: Date = new Date()): string {
+  return `${t('work.room.attachments.pastedTextName', { time: stamp(at) })}.${ext}`
+}
+
+/** Whether a pasted File needs an invented name: an image the browser named. */
+function needsPastedName(file: File): boolean {
+  return file.type.startsWith('image/') && (!file.name || GENERIC_PASTED.test(file.name))
+}
+
+/** A copy of `file` under a different name — the bytes and type are untouched. */
+function renamed(file: File, name: string): File {
+  return new File([file], name, { type: file.type, lastModified: file.lastModified })
 }
 
 /** The entries that really exist in the worktree. Every way an attachment
@@ -69,9 +120,14 @@ export function usePendingAttachments(
     }
     slot.error = false
     slot.uploading = true
+    slot.progress = 0
     let attachment: ChatAttachment
     try {
-      attachment = await uploadAttachment(topicId, file, origin)
+      attachment = await uploadAttachment(topicId, file, origin, (fraction) => {
+        // Only while the slot is still on its way: once it lands it is replaced
+        // by the finished attachment, and a late event must not resurrect it.
+        if (slot.uploading) slot.progress = fraction
+      })
     } catch {
       // The slot keeps its place: 重试 repeats this same upload, and until it
       // does the strip itself says why this file is not going anywhere.
@@ -176,7 +232,8 @@ export function usePendingAttachments(
 
   // Composer paste handler: pasted image data (e.g. a screenshot) uploads
   // instead of landing as garbled text; plain-text pastes pass through. 贴进来
-  // 的那一份不进资料库——见 uploadAttachment。
+  // 的那一份不进资料库——见 uploadAttachment。浏览器给截图起的名（`image.png`）
+  // 换成带时间的名字，两次粘贴才分得开。
   function onPaste(e: ClipboardEvent) {
     const items = e.clipboardData?.items
     if (!items) return
@@ -184,7 +241,7 @@ export function usePendingAttachments(
     for (const item of Array.from(items)) {
       if (item.kind === 'file') {
         const f = item.getAsFile()
-        if (f) files.push(f)
+        if (f) files.push(needsPastedName(f) ? renamed(f, pastedImageName(f)) : f)
       }
     }
     if (files.length) {
