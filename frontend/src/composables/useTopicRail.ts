@@ -13,7 +13,7 @@ import type { FlatRow, VisibleRow } from '../lib/topicTree'
 
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 
-import { agentNames } from '../lib/agentNames'
+import { agentIdentities, agentNames } from '../lib/agentNames'
 import { isAgentHandle } from '../lib/authorship'
 import { waitStalled, waitText } from '../lib/replyWait'
 import {
@@ -64,6 +64,14 @@ export interface RailSection {
   unread: number
   open: boolean
   rows: VisibleRow<Topic>[]
+}
+
+/** 一位成员此刻是谁：`handle` 用来画（头像底色认它），`identity` 用来认人。 */
+interface RailMemberWho {
+  handle: string
+  name: string
+  agent: boolean
+  identity: string
 }
 
 export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollTarget) {
@@ -191,27 +199,37 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
   // 说不出是谁的那一笔（null）记在项目默认的队友头上，handle 也得是它的：同一行里
   // 按 handle 去重、头像按 handle 取底色，给个空 handle 就成了另一位、另一种颜色。
   const agentNameMap = computed(() => agentNames([], store.members))
-  function memberOf(handle: string | null): { handle: string; name: string; agent: boolean } {
-    if (!handle) return { handle: store.agentHandle ?? '', name: agentName.value, agent: true }
+  const agentIdentityMap = computed(() => agentIdentities([], store.members))
+  function memberOf(handle: string | null): RailMemberWho {
+    if (!handle) {
+      const fallback = store.agentHandle ?? ''
+      return { handle: fallback, name: agentName.value, agent: true, identity: fallback }
+    }
     const agent = agentNameMap.value.get(handle)
-    if (agent) return { handle, name: agent, agent: true }
-    if (isAgentHandle(handle)) return { handle, name: agentName.value, agent: true }
+    if (agent) {
+      return { handle, name: agent, agent: true, identity: agentIdentityMap.value.get(handle) ?? handle }
+    }
+    if (isAgentHandle(handle)) return { handle, name: agentName.value, agent: true, identity: handle }
     const person = store.members.find((m) => m.user_handle === handle)
-    return { handle, name: person?.name || handle, agent: false }
+    return { handle, name: person?.name || handle, agent: false, identity: handle }
   }
 
   /** 这一行上画的那几位成员：卡住了的在前（红），在干活的在后（绿）。同一位只画一次。 */
   function memberMarks(topic: Topic): RailMemberMark[] {
     const marks: RailMemberMark[] = []
+    const drawn = new Set<string>()
+    const add = (who: RailMemberWho, state: RailMemberMark['state'], title: string) => {
+      if (drawn.has(who.identity)) return
+      drawn.add(who.identity)
+      marks.push({ handle: who.handle, name: who.name, agent: who.agent, state, title })
+    }
     for (const wait of stalledWaits(topic)) {
       const who = memberOf(wait.member)
-      if (marks.some((m) => m.handle === who.handle)) continue
-      marks.push({ ...who, state: 'stalled', title: waitText(wait, who.name, clock.value) })
+      add(who, 'stalled', waitText(wait, who.name, clock.value))
     }
     for (const work of workersOf(topic)) {
-      if (marks.some((m) => m.handle === work.member)) continue
       const who = memberOf(work.member)
-      marks.push({ ...who, state: 'working', title: t('work.sidebar.workingTip', { name: who.name }) })
+      add(who, 'working', t('work.sidebar.workingTip', { name: who.name }))
     }
     return marks
   }
