@@ -961,5 +961,6 @@
   "skillProposalLimit": "This project already has {limit} methods. Do not add another; fold this into the closest one and propose the change with cheese_method_update",
   "skillNothingToDecline": "This method has no change waiting to be confirmed",
   "skillAbsorbsTeamOnly": "Only team memories can be absorbed (like team/xxx.md): a method is shared by the whole project, so personal preferences stay out: {path}",
-  "skillDecline": "decline a skill a teammate proposed"
+  "skillDecline": "decline a skill a teammate proposed",
+  "skillAbsorbsMissing": "There is no team memory {path}. List only team memories that exist in absorbs"
 }

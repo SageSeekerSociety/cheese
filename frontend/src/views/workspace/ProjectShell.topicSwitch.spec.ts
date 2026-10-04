@@ -50,6 +50,12 @@ const pendingB = vi.hoisted(() => ({
   proposals: null as null | { promise: Promise<unknown>; resolve: (v: unknown) => void },
 }))
 
+// 聊天栏底部的工作方法提议卡也会读一次；这里没有提议。
+vi.mock('@/api/projectSkills', () => ({
+  listProjectSkills: vi.fn(() => Promise.resolve({ data: [], total: 0 })),
+  confirmProjectSkill: vi.fn(),
+  declineProjectSkill: vi.fn(),
+}))
 vi.mock('@/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api')>()),
   // The roster's work computers: a neighbour of what this test is about.

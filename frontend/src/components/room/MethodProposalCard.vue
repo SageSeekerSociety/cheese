@@ -94,7 +94,11 @@ function toggle(id: string) {
         </template>
       </div>
       <div v-if="s.proposal?.absorbs?.length" class="t-meta mb-3">
-        {{ t('work.skills.proposal.absorbs', { files: s.proposal.absorbs.join(t('work.skills.listSeparator')) }) }}
+        {{
+          t('work.skills.proposal.absorbs', {
+            memories: s.proposal.absorbs.map((m) => m.title).join(t('work.skills.listSeparator')),
+          })
+        }}
       </div>
 
       <!-- `|| undefined`：inert 只看属性在不在，`inert="false"` 照样让整块读不到。 -->
@@ -130,7 +134,7 @@ function toggle(id: string) {
           {{ expanded.has(s.id) ? t('work.skills.proposal.collapse') : t('work.skills.proposal.expand') }}
         </BaseButton>
         <BaseButton kind="ghost" size="sm" :disabled="busy === s.id" @click="emit('decline', s)">
-          {{ t('work.skills.proposal.dismiss') }}
+          {{ t('work.skills.proposal.decline') }}
         </BaseButton>
         <v-spacer />
         <BaseButton kind="primary" size="sm" :loading="busy === s.id" @click="emit('save', s)">

@@ -33,6 +33,8 @@ from app.domain.memory.files import (
     MemoryFileError,
     MemoryFileScope,
     check_scoped_path,
+    parse_index,
+    parse_memory_file,
 )
 from app.domain.memory.files_store import MemoryFileStore
 from app.domain.project_skill.models import ProjectSkill, ProjectSkillRevision
@@ -75,18 +77,28 @@ class SkillPatch(BaseModel):
 _PROPOSAL_FIELDS = {"taught", "accepted", "related", "absorbs", "reason"}
 
 
-def _absorbed(paths: list[str]) -> list[str]:
-    """The team memories a proposal folds in, as `team/<file>.md` paths."""
-    out: list[str] = []
+async def _absorbed(
+    db: AsyncSession, project_id: uuid.UUID, paths: list[str]
+) -> list[dict[str, str]]:
+    """The team memories a proposal folds in, each with the title a person reads
+    on the card (its index line's title, else its description)."""
+    store = MemoryFileStore(db)
+    index = await store.index_text(project_id, MemoryFileScope.team) or ""
+    titles = {entry.path: entry.title for entry in parse_index(index)}
+    out: list[dict[str, str]] = []
     for raw in paths:
         path = raw.strip().removeprefix("~/").removeprefix(f"{MEMORY_ROOT}/")
         try:
-            prefix, _ = check_scoped_path(path)
+            prefix, name = check_scoped_path(path)
         except MemoryFileError as exc:
             raise ValidationError(str(exc)) from exc
         if prefix != TEAM_PREFIX:
             raise ValidationError(say("skillAbsorbsTeamOnly", path=raw))
-        out.append(path)
+        row = await store.get(project_id, MemoryFileScope.team, None, name)
+        if row is None:
+            raise ValidationError(say("skillAbsorbsMissing", path=raw))
+        title = titles.get(name) or parse_memory_file(row.content).description or name
+        out.append({"path": path, "title": title})
     return out
 
 
@@ -191,7 +203,7 @@ async def create_skill(
             "taught": [t.strip() for t in body.taught if t.strip()],
             "accepted": body.accepted.strip(),
             "related": body.related.strip(),
-            "absorbs": _absorbed(body.absorbs),
+            "absorbs": await _absorbed(db, place.project_id, body.absorbs),
         }
     row = await service.create(
         project_id=place.project_id,
@@ -303,7 +315,8 @@ async def confirm_skill(
     # The team memories the method folds in go once it is saved, so the same
     # rules are not kept in two places. Only the name part is a memory path.
     absorbed = [
-        check_scoped_path(p)[1] for p in (row.proposal or {}).get("absorbs") or []
+        check_scoped_path(item["path"])[1]
+        for item in (row.proposal or {}).get("absorbs") or []
     ]
     row = await service.confirm(row, by=actor.handle)
     if absorbed:

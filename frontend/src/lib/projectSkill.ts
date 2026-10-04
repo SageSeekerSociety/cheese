@@ -9,7 +9,7 @@ export interface SkillProposal {
   /** 最接近的已有方法和为什么不并进去。 */
   related?: string
   /** 保存后会删掉的 team 记忆。 */
-  absorbs?: string[]
+  absorbs?: { path: string; title: string }[]
   /** 改一份已有方法时：用户的纠正，或者哪里不对。 */
   reason?: string
 }

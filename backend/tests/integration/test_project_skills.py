@@ -271,6 +271,10 @@ def test_saving_a_proposal_removes_the_team_memories_it_absorbed(client):
         ).json()["data"]["data"]
     }
     assert "weekly-order.md" in team, "a proposal removed memories before it was saved"
+    # The person deciding sees which memory goes by its title, not its file.
+    assert skill["proposal"]["absorbs"] == [
+        {"path": "team/weekly-order.md", "title": "周报顺序"}
+    ]
 
     client.post(f"/skills/{skill['id']}/confirm", headers=PERSON)
     team = {
