@@ -13,6 +13,7 @@ means to fetch anything itself.
 """
 
 import uuid
+from typing import Annotated
 
 import httpx
 from fastapi import APIRouter
@@ -94,10 +95,15 @@ class PageCheckIn(BaseModel):
     #: The page itself, not a path: the agent checks what it is about to show,
     #: before it is shown, and the file is on its machine rather than ours.
     html: str = Field(min_length=1, max_length=5_000_000)
-    widths: list[int] = Field(default=[400, 1280], min_length=1, max_length=3)
+    widths: list[Annotated[int, Field(ge=200, le=2000)]] = Field(
+        default=[400, 1280], min_length=1, max_length=3
+    )
     color_scheme: str = Field(default="light", pattern="^(light|dark)$")
     #: Also print an A4 PDF with these margins; see browser-render's `/inspect`.
-    pdf_margin: str | None = Field(default=None, max_length=40)
+    pdf_margin: str | None = Field(
+        default=None,
+        pattern=r"^[0-9.]+(mm|cm|in|px)?( [0-9.]+(mm|cm|in|px)?)?$",
+    )
     topic: uuid.UUID | None = None
     project: uuid.UUID | None = None
 
@@ -111,9 +117,10 @@ async def check_page(body: PageCheckIn, actor: ActorResolverDep) -> dict:
     """The platform's browser looks at a page so the agent does not need one.
 
     Full-page screenshots at each width, how wide the page really is, what
-    pushes it wider than the screen, and what failed to load or run. The same
-    shared browser as `/fetch`, under the same public-only egress, so the page's
-    own requests cannot reach into this network either.
+    pushes it wider than the screen, and what failed to load or run. Rendered
+    by the browser-render service that also serves `/fetch` (its own browser
+    there, under the same public-only egress), so the page's own requests
+    cannot reach into this network either.
     """
     await actor.require_verified_caller(topic_id=body.topic, project_id=body.project)
     endpoint = settings.fetch_browser_endpoint

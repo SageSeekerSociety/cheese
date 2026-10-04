@@ -3355,9 +3355,18 @@ def _check_page(a: argparse.Namespace) -> None:
     except (OSError, UnicodeDecodeError) as exc:
         print(f"[cheese] 无法读取 {a.path}: {exc}", file=sys.stderr)
         sys.exit(1)
+    widths = (a.widths or [400, 1280])[:3]
+    if any(not 200 <= w <= 2000 for w in widths):
+        print("[cheese] --width 要在 200 到 2000 之间", file=sys.stderr)
+        sys.exit(2)
+    if a.pdf and not re.fullmatch(
+        r"[0-9.]+(mm|cm|in|px)?( [0-9.]+(mm|cm|in|px)?)?", a.margin
+    ):
+        print('[cheese] --margin 写一个或两个长度,如 "0" 或 "16mm 18mm"', file=sys.stderr)
+        sys.exit(2)
     body = {
         "html": html,
-        "widths": (a.widths or [400, 1280])[:3],
+        "widths": widths,
         "color_scheme": "dark" if a.dark else "light",
         "pdf_margin": a.margin if a.pdf else None,
         "topic": TOPIC or None,

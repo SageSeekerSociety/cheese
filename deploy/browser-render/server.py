@@ -16,9 +16,13 @@ before any credential is ever attached to it: a page can carry instructions
 aimed at whoever is reading it, and a browser that can only read cannot be
 talked into acting.
 
-It reaches the public internet only: every connection goes through the proxy in
-``egress.py``, so a page cannot redirect or navigate the browser into the
-network this service runs in.
+It reaches the public internet only: every HTTP(S) and WebSocket connection
+goes through the proxy in ``egress.py``, and WebRTC's unproxied UDP and QUIC
+are switched off, so a page cannot reach the network this service runs in.
+
+``/inspect`` (for ``cheese check``) launches a second browser of its own on
+first use: it needs the page itself to set a viewport and take a screenshot,
+which crawl4ai does not hand out.
 """
 
 from __future__ import annotations
@@ -28,6 +32,7 @@ import base64
 import os
 import time
 from contextlib import asynccontextmanager
+from typing import Annotated
 
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
@@ -55,6 +60,20 @@ _gate_port: int | None = None
 _playwright = None
 _inspector = None
 _inspector_lock = asyncio.Lock()
+#: Inspections get their own few slots instead of sharing `_slots`: one check
+#: holds a page for several seconds per width, and a burst of agents checking
+#: pages must not starve `/render`, which `/fetch` waits on with a deadline.
+_inspect_slots = asyncio.Semaphore(int(os.environ.get("INSPECT_MAX_CONCURRENT", "2")))
+#: A check that cannot start this soon answers busy rather than queueing past
+#: the backend's own timeout and rendering for nobody.
+INSPECT_QUEUE_SECONDS = 30.0
+#: Chrome's proxy covers HTTP(S) and WebSocket only. WebRTC's UDP and QUIC would
+#: leave around `egress`, and a page under `/inspect` runs its own scripts.
+NO_UNPROXIED_TRAFFIC = [
+    "--webrtc-ip-handling-policy=disable_non_proxied_udp",
+    "--force-webrtc-ip-handling-policy",
+    "--disable-quic",
+]
 
 
 @asynccontextmanager
@@ -76,6 +95,7 @@ async def lifespan(app: FastAPI):
             extra_args=[
                 "--ignore-certificate-errors",
                 "--disable-gpu",
+                *NO_UNPROXIED_TRAFFIC,
                 "--no-sandbox",
             ],
         )
@@ -207,7 +227,11 @@ INSPECT_TIMEOUT_MS = 20_000
 
 class InspectIn(BaseModel):
     html: str = Field(min_length=1, max_length=5_000_000)
-    widths: list[int] = Field(default=[400, 1280], min_length=1, max_length=3)
+    #: Bounded per width, not just in number: the screenshot is width x up to
+    #: `MAX_SHOT_HEIGHT` pixels, and an unbounded width is a gigabyte bitmap.
+    widths: list[Annotated[int, Field(ge=200, le=2000)]] = Field(
+        default=[400, 1280], min_length=1, max_length=3
+    )
     settle_seconds: float = Field(default=0.8, ge=0, le=10)
     color_scheme: str = Field(default="light", pattern="^(light|dark)$")
     #: Also print it to an A4 PDF with these margins (CSS lengths: one for all
@@ -253,7 +277,12 @@ async def _browser():
             _inspector = await _playwright.chromium.launch(
                 headless=True,
                 proxy={"server": f"http://127.0.0.1:{_gate_port}"},
-                args=["--ignore-certificate-errors", "--disable-gpu", "--no-sandbox"],
+                args=[
+                    "--ignore-certificate-errors",
+                    "--disable-gpu",
+                    "--no-sandbox",
+                    *NO_UNPROXIED_TRAFFIC,
+                ],
             )
         return _inspector
 
@@ -305,15 +334,19 @@ async def inspect(body: InspectIn) -> dict:
     screenshot per width, how wide the page really is, which elements push it
     wider than the screen, and what the console and the network complained of.
     """
-    assert _slots is not None
     started = time.monotonic()
-    async with _slots:
-        try:
-            browser = await _browser()
-            views = [await _inspect_at(browser, body, w) for w in body.widths]
-            pdf = await _print_pdf(browser, body) if body.pdf_margin else None
-        except Exception as exc:  # noqa: BLE001
-            return {"ok": False, "error": f"{type(exc).__name__}: {exc}"[:500]}
+    try:
+        await asyncio.wait_for(_inspect_slots.acquire(), INSPECT_QUEUE_SECONDS)
+    except TimeoutError:
+        return {"ok": False, "error": "busy: every inspection slot is taken"}
+    try:
+        browser = await _browser()
+        views = [await _inspect_at(browser, body, w) for w in body.widths]
+        pdf = await _print_pdf(browser, body) if body.pdf_margin else None
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"[:500]}
+    finally:
+        _inspect_slots.release()
     return {
         "ok": True,
         "seconds": round(time.monotonic() - started, 2),
