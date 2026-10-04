@@ -106,6 +106,31 @@ const MINIFY = {
   codegen: true,
 }
 
+// What Prism highlights (see the prismjsPlugin call for why these). The plugin
+// adds their imports while transforming, which the dev server's dependency scan
+// cannot see; optimizeDeps.include lists them for the reason it lists
+// Vuetify's components.
+const PRISM_LANGUAGES = [
+  'markup',
+  'css',
+  'javascript',
+  'typescript',
+  'jsx',
+  'tsx',
+  'python',
+  'go',
+  'rust',
+  'bash',
+  'json',
+  'yaml',
+  'toml',
+  'sql',
+  'markdown',
+  'diff',
+  'docker',
+]
+const PRISM_PLUGINS = ['line-numbers', 'copy-to-clipboard']
+
 export default defineConfig({
   plugins: [
     demoPages(),
@@ -136,27 +161,9 @@ export default defineConfig({
       // covers html/xml/svg, `bash` covers sh/shell, `typescript` covers ts.
       // `vue` is not a Prism grammar at all — a ```vue block degrades to plain
       // text and there is nothing to add for it.
-      languages: [
-        'markup',
-        'css',
-        'javascript',
-        'typescript',
-        'jsx',
-        'tsx',
-        'python',
-        'go',
-        'rust',
-        'bash',
-        'json',
-        'yaml',
-        'toml',
-        'sql',
-        'markdown',
-        'diff',
-        'docker',
-      ],
+      languages: PRISM_LANGUAGES,
       // 配置行号插件
-      plugins: ['line-numbers', 'copy-to-clipboard'],
+      plugins: PRISM_PLUGINS,
       // 主题名
       theme: 'solarizedlight',
       css: true,
@@ -666,6 +673,13 @@ export default defineConfig({
       'vuetify/iconsets/mdi',
       'vuetify/labs/VDateInput',
       'vuetify/locale',
+      // vite-plugin-prismjs 加的那几行 import，同样只在 transform 之后才看得见。漏了会在
+      // 冷启动时整体重新预打包，正在加载的依赖全部 504。
+      'prismjs/components/prism-core',
+      'prismjs/components/prism-clike',
+      ...PRISM_LANGUAGES.map((name) => `prismjs/components/prism-${name}`),
+      'prismjs/plugins/toolbar/prism-toolbar',
+      ...PRISM_PLUGINS.map((name) => `prismjs/plugins/${name}/prism-${name}`),
     ],
   },
 })
