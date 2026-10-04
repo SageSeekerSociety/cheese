@@ -61,5 +61,14 @@
     "placeholder": "搜索设置",
     "label": "按名字搜索设置",
     "none": "没有名字含「{text}」的设置"
+  },
+  "firstHint": {
+    "ok": "知道了",
+    "acceptCard": "芝士交完了，在等你验收。先「审阅」看结果，没问题点「采纳」，这件事才算交付；不满意点「退回」写一句原因，它会接着改。",
+    "routineDraft": "这条规则是芝士起草的，点「确认启用」之前它不会跑。",
+    "skillProposal": "点「保存」后，这个项目以后的每个会话都会照这套做法做；不合适就点「不保存」。",
+    "ownDevice": "想让 AI 队友用你自己的电脑：先在{devices}里接入它，再到团队的{teamCompute}页把它加进来，回到这里就能选。",
+    "ownDeviceDevices": "「设备」",
+    "ownDeviceTeamCompute": "「工作电脑」"
   }
 }

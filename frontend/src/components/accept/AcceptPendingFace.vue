@@ -13,6 +13,7 @@ import AcceptNoteLine from './AcceptNoteLine.vue'
 import AcceptPrChecks from './AcceptPrChecks.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import FirstTimeHint from '@/components/common/FirstTimeHint.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
 import { columnDotStyle } from '@/lib/board'
@@ -66,6 +67,10 @@ const forceMergeReason = defineModel<string>('forceMergeReason', { required: tru
 <template>
   <v-card variant="outlined" class="merge-box">
     <div class="pa-3">
+      <!-- 第一张等他验收的卡：说清这张卡在等谁、点哪一下才算交付。冲突卡在等芝士，不说。 -->
+      <FirstTimeHint v-if="card.reviewer_handle === myHandle && card.status !== 'conflict'" id="accept-card">
+        {{ t('global.firstHint.acceptCard') }}
+      </FirstTimeHint>
       <div v-if="card.status === 'conflict'" class="text-caption text-medium-emphasis mb-2">
         {{ card.note || t('work.room.accept.conflictFallback') }}
         <i18n-t scope="global" keypath="work.room.accept.conflictWorking" tag="span">

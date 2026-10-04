@@ -61,5 +61,14 @@
     "placeholder": "Search settings",
     "label": "Search settings by name",
     "none": "No settings named “{text}”"
+  },
+  "firstHint": {
+    "ok": "Got it",
+    "acceptCard": "The agent has delivered and is waiting for you. Review the result, then Accept to mark the work as delivered, or Send back with a reason and it will keep working.",
+    "routineDraft": "The agent drafted this rule. It will not run until you confirm it.",
+    "skillProposal": "Once saved, every future session in this project will follow this method. Choose Don't save if it doesn't fit.",
+    "ownDevice": "To let agents work on your own computer, connect it under {devices}, add it on your team's {teamCompute} page, then pick it here.",
+    "ownDeviceDevices": "Devices",
+    "ownDeviceTeamCompute": "Computers"
   }
 }

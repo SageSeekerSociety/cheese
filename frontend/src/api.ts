@@ -1021,6 +1021,11 @@ export function listProjectLibrary(projectId: string): Promise<ListPayload<Libra
 
 /** 一份资料的字节。这条端点一律按下载发，所以 `downloadFile` 补在末尾的
  *  `download=true` 在这里没有对应的参数，后端不看它。 */
+/** 整个项目的离线存档（tar）：文档、成果、对话，不含凭据和记忆。项目里能读的人都能下。 */
+export function projectExportUrl(projectId: string): string {
+  return `${BASE}/projects/${encodeURIComponent(projectId)}/export`
+}
+
 export function libraryFileRawUrl(projectId: string, path: string): string {
   return `${BASE}/projects/${encodeURIComponent(projectId)}/library/raw?path=${encodeURIComponent(path)}`
 }

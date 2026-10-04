@@ -3,7 +3,7 @@
 // 改默认不搬它们；它们现在在哪，写在「现在的分布」里。
 import type { ComputeChoice, ProjectComputeConfigs } from '../cx_types'
 
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 
 import { holdRevealGate } from '@/composables/useRevealGate'
 
@@ -17,8 +17,14 @@ import DeviceSessionsSwitch from './DeviceSessionsSwitch.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import SettingsRow from '@/components/base/SettingsRow.vue'
+import FirstTimeHint from '@/components/common/FirstTimeHint.vue'
+import { useWorkspaceStore } from '@/stores/workspace'
 
 const props = defineProps<{ projectId: string }>()
+const workspace = useWorkspaceStore()
+// 「用自己的电脑」要走三处：个人设置里接入、团队工作电脑页加进来、回这里选。项目
+// 还一台设备都没有的时候，把前两处的路指出来。
+const teamHandle = computed(() => workspace.projects.find((p) => p.id === props.projectId)?.team_handle ?? null)
 const { supply: cloudSupply, loading: supplyLoading, load: loadSupply } = useCloudSupply(() => props.projectId)
 const state = ref<ProjectComputeConfigs | null>(null)
 const error = ref('')
@@ -82,6 +88,19 @@ watch(editing, (open) => {
         </div>
       </SettingsRow>
       <p class="t-body c-muted mt-1 mb-2">{{ t('work.projectMachine.hint') }}</p>
+      <FirstTimeHint v-if="state.can_manage && !state.devices.length" id="own-device">
+        <i18n-t keypath="global.firstHint.ownDevice" scope="global" tag="span">
+          <template #devices>
+            <router-link :to="{ name: 'UserSettingsDevices' }">{{ t('global.firstHint.ownDeviceDevices') }}</router-link>
+          </template>
+          <template #teamCompute>
+            <router-link v-if="teamHandle" :to="{ name: 'TeamsDetailCompute', params: { handle: teamHandle } }">{{
+              t('global.firstHint.ownDeviceTeamCompute')
+            }}</router-link>
+            <template v-else>{{ t('global.firstHint.ownDeviceTeamCompute') }}</template>
+          </template>
+        </i18n-t>
+      </FirstTimeHint>
       <ComputeChoiceForm
         v-if="editing && state.can_manage"
         :devices="state.devices"

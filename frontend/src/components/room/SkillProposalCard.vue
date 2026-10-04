@@ -4,6 +4,7 @@ import type { ProjectSkill } from '@/lib/projectSkill'
 import { ref } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import FirstTimeHint from '@/components/common/FirstTimeHint.vue'
 import { t } from '@/i18n'
 import { useWorkspaceStore } from '@/stores/workspace'
 
@@ -123,6 +124,7 @@ function toggle(id: string) {
         </div>
       </div>
 
+      <FirstTimeHint id="skill-proposal">{{ t('global.firstHint.skillProposal') }}</FirstTimeHint>
       <div v-if="error" class="t-meta method-card__error mb-2" role="alert">{{ error }}</div>
       <div class="d-flex align-center flex-wrap ga-2">
         <BaseButton

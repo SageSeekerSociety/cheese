@@ -20,6 +20,7 @@ import { useTopicRailRoutes } from '@/composables/useTopicRailRoutes'
 import { DEFAULT_SHELL, projectPagePlan, shellFor, termParams } from '../lib/shell'
 import { loadRevealedPages, withRevealedPage } from '../lib/shellPrefs'
 import { topicTitle } from '../lib/topicState'
+import { downloadFile, projectExportUrl } from '../api'
 import { normalizeTopicTitle } from '../lib/topicTitle'
 import { countLabel } from '../lib/topicTree'
 import { myHandle } from '../me'
@@ -41,6 +42,7 @@ import { menuActionOf } from '@/commands'
 import { openPalette } from '@/commands/palette/state'
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
+import { useWorkspaceStore } from '@/stores/workspace'
 
 const props = defineProps<{
   projects: Project[]
@@ -264,6 +266,12 @@ const projectSheetActions = computed<MenuAction[]>(() => {
       icon: 'mdi-cog-outline',
       onSelect: () => openProjectPage('project-settings'),
     },
+    {
+      key: 'export',
+      label: t('navigation.project.export'),
+      icon: 'mdi-download-outline',
+      onSelect: () => void exportProject(),
+    },
   ]
   if (canTransfer.value)
     actions.push({
@@ -282,6 +290,18 @@ const projectSheetActions = computed<MenuAction[]>(() => {
     })
   return actions
 })
+
+// 下载整个项目。存档在服务端现打，大项目要几秒；失败走工作区那条红条。
+const workspaceStore = useWorkspaceStore()
+async function exportProject() {
+  const pid = props.selectedProjectId
+  if (!pid) return
+  try {
+    await downloadFile(projectExportUrl(pid), `${currentProject.value?.name || 'project'}.tar`)
+  } catch (e) {
+    workspaceStore.reportError(e, t('global.unknownError'))
+  }
+}
 
 function switchProjectFromSheet(projectId: string) {
   projectSheetOpen.value = false
@@ -415,6 +435,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
         @open-sheet="projectSheetOpen = true"
         @open-transfer="transferOpen = true"
         @open-leave="leaveOpen = true"
+        @export="exportProject"
       />
 
       <TransferProjectDialog v-model="transferOpen" :project-id="selectedProjectId ?? ''" />
