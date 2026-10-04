@@ -94,7 +94,7 @@ def render_skill(
         f"name: {name}",
         "description: "
         + json.dumps(
-            f"{content['description']}（项目工作方法「{content['title']}」）",
+            f"{content['description']}（项目技能「{content['title']}」）",
             ensure_ascii=False,
         ),
         "---",
@@ -103,7 +103,7 @@ def render_skill(
         "",
         content["description"],
         "",
-        f"项目成员保存的工作方法，第 {revision} 版，由 {confirmed_by} 确认。"
+        f"项目成员保存的技能，第 {revision} 版，由 {confirmed_by} 确认。"
         "每次使用都以这一次用户给的输入为准，不沿用以前某一次的具体材料；"
         "缺少必需的输入就先问用户。",
         "",
@@ -127,7 +127,7 @@ def render_skill(
         "## 用的时候",
         "",
         "照这份做时被用户纠正了、或者发现它哪里不对，就用 "
-        f'`cheese_method_update(method="{skill_id}", …)` 提议修改这一份，'
+        f'`cheese_skill_update(method="{skill_id}", …)` 提议修改这一份，'
         "`reason` 写用户纠正的原话或者哪里不对。确认之前大家继续用这一版。",
     ]
     return "\n".join(lines) + "\n"
@@ -218,7 +218,7 @@ class ProjectSkillService:
         if not NAME.match(name):
             raise ValidationError(say("skillNameInvalid"))
         if name in RESERVED_SKILL_NAMES:
-            raise ValidationError(say("skillNameReserved", name=name))
+            raise ValidationError(say("skillNameReserved"))
         if by_agent:
             await self._admit_proposal(project_id, topic_id, name)
         taken = await self._session.scalar(

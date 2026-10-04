@@ -1,4 +1,4 @@
-// 房间里那张工作方法提议卡的数据：芝士在这个房间提议、还在等人的那些，以及保存和拒绝。
+// 房间里那张技能提议卡的数据：芝士在这个房间提议、还在等人的那些，以及保存和拒绝。
 //
 // 卡片组件只管画（components 下不许取数），取数放在这里，由聊天栏调用。
 import type { Ref } from 'vue'
@@ -9,7 +9,7 @@ import { ref } from 'vue'
 import { confirmProjectSkill, declineProjectSkill, listProjectSkills } from '@/api/projectSkills'
 import { t } from '@/i18n'
 
-export function useMethodProposals(projectId: Ref<string>, roomId: Ref<string>) {
+export function useSkillProposals(projectId: Ref<string>, roomId: Ref<string>) {
   /** 这个房间里芝士提议、还在等人的那些。 */
   const proposals = ref<ProjectSkill[]>([])
   /** 这一轮里刚保存的：卡就地变成一句「已保存」，直到人离开这个页面。 */

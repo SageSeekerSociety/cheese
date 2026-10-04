@@ -1,5 +1,5 @@
 /**
- * 工作方法：芝士整理或改过的要人确认；芝士的改动可以整个放弃，回到正在用的那一版；
+ * 技能：芝士整理或改过的要人确认；芝士的改动可以整个放弃，回到正在用的那一版；
  * 旧版本能恢复。
  */
 import { createVuetify } from 'vuetify'
@@ -110,7 +110,7 @@ function buttonIn(scope: Element, label: string): HTMLElement | undefined {
 
 const row = (c: Element, id: string) => c.querySelector(`[data-skill="${id}"]`)!
 
-describe('工作方法', () => {
+describe('技能', () => {
   it('从房间的「去确认」点进来，那一条被指出来', async () => {
     routeQuery.skill = 'new-1'
     const { container } = mount()

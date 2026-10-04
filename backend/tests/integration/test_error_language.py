@@ -112,4 +112,4 @@ def test_a_refusal_with_parameters_carries_them(client, bearer, tmp_path, monkey
         "key": "skillNameTaken",
         "params": {"name": "weekly-report"},
     }
-    assert error["message"] == "这个项目里已经有叫「weekly-report」的工作方法"
+    assert error["message"] == "这个项目里已经有叫「weekly-report」的技能"

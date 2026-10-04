@@ -166,7 +166,7 @@ CALLS = {
         "POST",
         "/routine-runs/run-1/report",
     ),
-    "cheese_method_draft": (
+    "cheese_skill_draft": (
         {
             "name": "weekly-report",
             "title": "周报",
@@ -178,8 +178,8 @@ CALLS = {
         "POST",
         "/topics/fixture/skills",
     ),
-    "cheese_method_update": (
-        {"method": "m-1", "steps": "先写变坏的指标", "reason": "顺序反了"},
+    "cheese_skill_update": (
+        {"skill": "m-1", "steps": "先写变坏的指标", "reason": "顺序反了"},
         "PATCH",
         "/skills/m-1",
     ),

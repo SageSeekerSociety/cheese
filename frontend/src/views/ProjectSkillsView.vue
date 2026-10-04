@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 工作方法：这个项目存下来的做法。确认过的那一版会带进之后每个房间的 AI 队友，所以
+// 技能：这个项目存下来的做法。确认过的那一版会带进之后每个房间的 AI 队友，所以
 // 芝士整理出来、或者改过的，都要人在这里读一遍、点确认才算数。
 import type { MenuAction } from '@/components/common/menuAction'
 import type { ProjectSkill, ProjectSkillContent, ProjectSkillRevision } from '../api/projectSkills'

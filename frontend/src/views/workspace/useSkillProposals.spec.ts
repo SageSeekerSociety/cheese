@@ -1,11 +1,11 @@
-// 房间里的工作方法提议：只请人决定这个房间里芝士提的、还在等人的那些；保存和拒绝各走
+// 房间里的技能提议：只请人决定这个房间里芝士提的、还在等人的那些；保存和拒绝各走
 // 各的，没成就原样留着让人再点。
 import type { ProjectSkill } from '@/lib/projectSkill'
 
 import { ref } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { useMethodProposals } from './useMethodProposals'
+import { useSkillProposals } from './useSkillProposals'
 
 vi.mock('@/api/projectSkills', () => ({
   listProjectSkills: vi.fn(),
@@ -55,12 +55,12 @@ beforeEach(() => {
 })
 
 async function loaded() {
-  const methods = useMethodProposals(ref('p1'), ref('room-1'))
+  const methods = useSkillProposals(ref('p1'), ref('room-1'))
   await methods.load()
   return methods
 }
 
-describe('useMethodProposals', () => {
+describe('useSkillProposals', () => {
   it('asks only about the teammate proposals waiting in this room', async () => {
     const methods = await loaded()
     expect(methods.proposals.value.map((s) => s.id)).toEqual(['mine'])

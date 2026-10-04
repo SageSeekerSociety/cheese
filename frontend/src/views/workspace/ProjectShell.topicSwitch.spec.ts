@@ -50,7 +50,7 @@ const pendingB = vi.hoisted(() => ({
   proposals: null as null | { promise: Promise<unknown>; resolve: (v: unknown) => void },
 }))
 
-// 聊天栏底部的工作方法提议卡也会读一次；这里没有提议。
+// 聊天栏底部的技能提议卡也会读一次；这里没有提议。
 vi.mock('@/api/projectSkills', () => ({
   listProjectSkills: vi.fn(() => Promise.resolve({ data: [], total: 0 })),
   confirmProjectSkill: vi.fn(),

@@ -1,6 +1,6 @@
-// 工作方法：项目存下来的做法，确认过的那一版带进这个项目之后的每个会话。
+// 技能：项目存下来的做法，确认过的那一版带进这个项目之后的每个会话。
 //
-// 从 `api.ts` 拆出来：那个文件在上限之上，只能变短；工作方法自己是一个整体（页面和
+// 从 `api.ts` 拆出来：那个文件在上限之上，只能变短；技能自己是一个整体（页面和
 // 房间里那张提议卡都读它）。
 import type { ListPayload } from '../cx_types'
 import type { ProjectSkill, ProjectSkillContent, ProjectSkillRevision } from '../lib/projectSkill'

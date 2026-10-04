@@ -1,4 +1,4 @@
-// 工作方法的形状。组件要吃这个形状又碰不得接口层（`api/projectSkills.ts`），所以放这里。
+// 技能的形状。组件要吃这个形状又碰不得接口层（`api/projectSkills.ts`），所以放这里。
 
 /** 芝士提议时交代的依据，摆在请人保存的那张卡上。 */
 export interface SkillProposal {

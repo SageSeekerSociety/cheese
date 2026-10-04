@@ -797,17 +797,17 @@ PLATFORM_TOOLS = ToolTable(
             ["run", "status"],
         ),
         _tool(
-            "cheese_method_draft",
-            "提议把一套做法存成项目的**工作方法**：确认后，这个项目以后每个会话都带着它，"
+            "cheese_skill_draft",
+            "提议把一套做法存成**项目技能**：确认后，这个项目以后每个会话都带着它，"
             "用户说到这类事时照着做。房间里会出一张卡，人点「保存」才生效。\n"
             "五条都满足才起草：①是一类会再来的事，一句话叫得出（周报、批改作业），不是"
             "这一次的经过；②用户为这类事教过你不止一处：记忆里已有的相关规则加上这次的"
             "纠正（用户明说「存下来」「以后都这样」时这条算满足）；③这一次做完了，用户接受"
-            "了结果，没找到可行办法时不提；④技能清单里没有已经管这类事的方法，有就改用 "
-            "cheese_method_update 提议修改那一份；⑤它不是一条事实或偏好（写进记忆）、"
+            "了结果，没找到可行办法时不提；④技能清单里没有已经管这类事的技能，有就改用 "
+            "cheese_skill_update 提议修改那一份；⑤它不是一条事实或偏好（写进记忆）、"
             "不是代码库本身的知识（写进仓库文档）、不是某个人的习惯（写进他的个人记忆），"
             "机械的必做步骤写成 files 里的脚本。\n"
-            "一个会话最多提一次。写成方法，不抄聊天记录：先写判断点和理由、踩过的坑、"
+            "一个会话最多提一次。写成做法，不抄聊天记录：先写判断点和理由、踩过的坑、"
             "产出格式，通用步骤少写；这次的具体文件名、数字、人名写成「用户给的某某」。",
             {
                 "name": _text("文件夹名，小写字母、数字、连字符，如 weekly-report"),
@@ -828,12 +828,12 @@ PLATFORM_TOOLS = ToolTable(
                     "description": "用户为这类事教过你的地方，一处一条，尽量用原话",
                 },
                 "accepted": _text("这一次怎么算做成了：用户怎么接受的结果"),
-                "related": _text("最接近的已有方法和为什么不并进去；没有就写「没有」"),
+                "related": _text("最接近的已有技能和为什么不并进去；没有就写「没有」"),
                 "absorbs": {
                     "type": "array",
                     "items": {"type": "string"},
                     "description": (
-                        "这份方法吸收掉的 team 记忆，如 team/weekly-report-order.md；"
+                        "这项技能吸收掉的 team 记忆，如 team/weekly-report-order.md；"
                         "保存后它们会被删掉，免得同一条规则存两份"
                     ),
                 },
@@ -841,12 +841,12 @@ PLATFORM_TOOLS = ToolTable(
             ["name", "title", "description", "steps", "taught", "accepted"],
         ),
         _tool(
-            "cheese_method_update",
-            "提议修改一份已有的工作方法：用的时候被用户纠正了、发现它哪里不对，或者一套"
+            "cheese_skill_update",
+            "提议修改一项已有的项目技能：用的时候被用户纠正了、发现它哪里不对，或者一套"
             "新做法该并进它。只发要改的那几项，每项是改后的全文。确认之前大家继续用原来"
-            "那一版。工作方法的 id 写在那份技能的末尾。",
+            "那一版。项目技能的 id 写在那份技能的末尾。",
             {
-                "method": _text("工作方法 id"),
+                "skill": _text("项目技能 id"),
                 "title": _text("改后的名称"),
                 "description": _text("改后的用途"),
                 "inputs": _text("改后的输入"),
@@ -858,7 +858,7 @@ PLATFORM_TOOLS = ToolTable(
                 },
                 "reason": _text("为什么改：用户纠正的原话，或者哪里不对"),
             },
-            ["method", "reason"],
+            ["skill", "reason"],
         ),
         _tool(
             "platform_request",
@@ -1415,7 +1415,7 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
                 "outputs": args.get("outputs") or [],
             },
         }
-    if tool == "cheese_method_draft":
+    if tool == "cheese_skill_draft":
         body = {
             "name": args["name"],
             "title": args["title"],
@@ -1426,9 +1426,9 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             **_given(args, "inputs", "outputs", "files", "related", "absorbs"),
         }
         return {"method": "POST", "path": f"/topics/{topic}/skills", "body": body}
-    if tool == "cheese_method_update":
+    if tool == "cheese_skill_update":
         where = urllib.parse.quote(topic)
-        method = urllib.parse.quote(args["method"], safe="")
+        skill = urllib.parse.quote(args["skill"], safe="")
         body = {
             "reason": args["reason"],
             **_given(
@@ -1437,7 +1437,7 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         }
         return {
             "method": "PATCH",
-            "path": f"/skills/{method}?topic={where}",
+            "path": f"/skills/{skill}?topic={where}",
             "body": body,
         }
     if tool == "cheese_members":
@@ -2488,11 +2488,11 @@ _SAY = {
     "cheese_routine_pause": _say_routine_pause,
     "cheese_routine_report": _say_routine_report,
     # 卡片由平台渲染：起草完只用一两句话告诉用户，别把整份再贴一遍。
-    "cheese_method_draft": lambda a, d, e: (
-        f"已起草工作方法「{(d or {}).get('title')}」，房间里出了一张卡。用一两句话"
+    "cheese_skill_draft": lambda a, d, e: (
+        f"已起草项目技能「{(d or {}).get('title')}」，房间里出了一张卡。用一两句话"
         "告诉用户它管哪类事、为什么值得存，请他在卡上点「保存」；保存之前它不生效。"
     ),
-    "cheese_method_update": lambda a, d, e: (
+    "cheese_skill_update": lambda a, d, e: (
         f"已提议修改「{(d or {}).get('title')}」，等人在卡上确认；确认之前大家"
         "继续用原来那一版。"
     ),

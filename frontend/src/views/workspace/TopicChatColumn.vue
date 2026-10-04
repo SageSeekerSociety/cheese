@@ -8,11 +8,11 @@ import type { SubmitPreviewQuestion } from '../../lib/previewQuestion'
 import { computed, onMounted, ref, toRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
-import { useMethodProposals } from './useMethodProposals'
+import { useSkillProposals } from './useSkillProposals'
 
 import ChatPanel from '@/components/ChatPanel.vue'
 import AgentFeedbackCard from '@/components/feedback/AgentFeedbackCard.vue'
-import MethodProposalCard from '@/components/room/MethodProposalCard.vue'
+import SkillProposalCard from '@/components/room/SkillProposalCard.vue'
 import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
 import { t } from '@/i18n'
 
@@ -75,14 +75,14 @@ const acceptRef = ref<{ reload: (silent?: boolean) => Promise<void> } | null>(nu
 const feedbackRef = ref<{ reload: () => Promise<void> } | null>(null)
 
 const router = useRouter()
-// 工作方法的提议卡：取数在这里（组件下不许取数），卡片只画。换房间就重读。
-const methods = useMethodProposals(
+// 技能的提议卡：取数在这里（组件下不许取数），卡片只画。换房间就重读。
+const skills = useSkillProposals(
   toRef(() => props.topic.project_id),
   toRef(() => props.topic.id)
 )
-onMounted(methods.load)
-watch(() => props.topic.id, methods.load)
-function openMethod(skill: { id: string }) {
+onMounted(skills.load)
+watch(() => props.topic.id, skills.load)
+function openSkill(skill: { id: string }) {
   void router.push({
     name: 'project-skills',
     params: { projectId: props.topic.project_id },
@@ -97,7 +97,7 @@ defineExpose({
   connected,
   reloadAccept: (silent?: boolean) => acceptRef.value?.reload(silent),
   reloadFeedback: () => feedbackRef.value?.reload(),
-  reloadMethods: () => methods.load(),
+  reloadSkills: () => skills.load(),
   // 普通定位沿用聊天提交；图上画过东西时随行带那张合成图。明确的整页 AI 提问由
   // submitQuestion 在正文点名。
   say: (content: string, attachments?: ChatAttachment[]) => chatRef.value?.send(content, true, attachments) ?? false,
@@ -155,16 +155,16 @@ defineExpose({
              「不用」记在服务端（按指纹），所以拒绝过一次的问题不会因为刷新又回来；
              换个说法重提的会回来 —— 那是另一次提问，值得再问一遍。 -->
         <AgentFeedbackCard ref="feedbackRef" :topic-id="topic.id" />
-        <!-- 工作方法提议卡：芝士把一套做法整理好了，请人就地决定存不存。同样由服务端
+        <!-- 技能提议卡：芝士把一套做法整理好了，请人就地决定存不存。同样由服务端
              说了算：列的是这个房间里还在等人的提议，没有就什么都不画。 -->
-        <MethodProposalCard
-          :proposals="methods.proposals.value"
-          :saved="methods.saved.value"
-          :busy="methods.busy.value"
-          :error="methods.error.value"
-          @save="methods.save"
-          @decline="methods.decline"
-          @open="openMethod"
+        <SkillProposalCard
+          :proposals="skills.proposals.value"
+          :saved="skills.saved.value"
+          :busy="skills.busy.value"
+          :error="skills.error.value"
+          @save="skills.save"
+          @decline="skills.decline"
+          @open="openSkill"
         />
       </template>
       <!-- 输入区那一行只放**这条消息**的动作，所以这里只剩话题的状态。谁在跑

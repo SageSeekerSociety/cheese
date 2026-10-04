@@ -1,4 +1,4 @@
-"""A project's saved ways of working (工作方法), shipped to its sessions as skills.
+"""A project's own skills (项目技能), shipped to its sessions.
 
 An AI teammate may draft or edit one; a person confirms, restores or deletes,
 because what is confirmed is what every later session in the project follows.
@@ -248,14 +248,14 @@ async def create_skill(
         )
     await db.commit()
     await service.publish(place.project_id)
-    await announce_stale(place.room_id, "methods")
+    await announce_stale(place.room_id, "skills")
     return ok(_skill(row))
 
 
 async def _changed(row: ProjectSkill) -> None:
     """Tell the room a method came from that its cards changed."""
     if row.source_topic_id is not None:
-        await announce_stale(row.source_topic_id, "methods")
+        await announce_stale(row.source_topic_id, "skills")
 
 
 async def _load(

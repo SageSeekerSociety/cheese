@@ -99,6 +99,6 @@
   "bashWrite": "向任务输入",
   "bashKill": "终止后台任务",
   "bashList": "列出后台任务",
-  "cheeseMethodDraft": "起草工作方法",
-  "cheeseMethodUpdate": "提议修改工作方法"
+  "cheeseSkillDraft": "起草技能",
+  "cheeseSkillUpdate": "提议修改技能"
 }
