@@ -488,6 +488,21 @@ AI 队友的头像（`CheeseAvatar`）有自己的一组颜色：五档暖色的
 - 写法照 `views/spaces/detail/analytics/*`：`load` 开头清掉 `failed` 与 `errorDetail`，`catch` 里 `failed = true`、`errorDetail = error instanceof Error ? error.message : null`，**不再** `toast.error`——同一件事不说两遍。
 - 只有「一整块内容没读到」才替换内容。列表里某一行、某一次操作（保存、删除）失败仍用 toast：那一行的内容没有消失，也没有整块可替。
 
+### 3.11 空状态：一个组件、三档大小
+
+「这里本来就没有」只用 `BaseEmptyState`（`src/components/base/BaseEmptyState.vue`），不再手写 `<p class="xxx__empty">`、不用 Vuetify 的 `v-empty-state`。文案照 §8.1。
+
+| `size` | 用在哪 | 长相 |
+|---|---|---|
+| `page` | 整页或整块区域就是空的 | 图标 + 标题 + 说明 + 动作，居中，上下 64px |
+| `compact` | 卡片、表格、抽屉里 | 同上，上下 32px |
+| `inline` | 设置卡片里、列表下面、筛选后的一句话 | 一行 13px `--muted` 灰字，无图标，默认靠左 |
+
+- 属性：`title`、`desc`、`icon`、`action`（一颗 `secondary` 小按钮，点了发 `@action`）、`tone`（`error` 只换图标色）、`align`（`center` / `start`）。动作要别的角色或带图标，放默认插槽。
+- `inline` 不带外边距，由所在那块决定：设置卡片里加 `class="settings-empty"`（只管 16px 24px 内距）。
+- 读失败不是空状态，用 §3.10 的 `BaseLoadError`。
+- `AdminEmptyState` 是它的别名（`compact` 布尔值映射成 `size="compact"`），新代码直接用 `BaseEmptyState`。
+
 ---
 
 ## 4. 深色模式

@@ -18,7 +18,7 @@
       </div>
     </div>
 
-    <p v-else class="chart-empty">{{ t('spaces.analytics.chart.noDistribution') }}</p>
+    <BaseEmptyState v-else size="inline" :title="t('spaces.analytics.chart.noDistribution')" />
   </v-card>
 </template>
 
@@ -27,6 +27,8 @@ import type { AnalyticsDistribution } from '@/network/api/spaces/types'
 
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 
 const props = defineProps<{
   title: string
@@ -114,12 +116,5 @@ h3 {
   height: 100%;
   border-radius: inherit;
   background: var(--muted);
-}
-
-.chart-empty {
-  margin: 0;
-  color: var(--muted);
-  font-size: 13px;
-  line-height: var(--lh-13);
 }
 </style>

@@ -27,6 +27,7 @@ import {
 } from '@/api'
 import AgentEditorDialog from '@/components/agents/AgentEditorDialog.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import { t } from '@/i18n'
@@ -224,13 +225,16 @@ async function confirmDeactivate() {
         <v-progress-circular indeterminate color="primary" />
       </div>
 
-      <div v-else-if="!backendMissing && agents.length === 0" class="empty-state text-center py-10">
-        <v-icon size="34" class="mb-3 c-muted">mdi-robot-outline</v-icon>
-        <div class="t-body c-muted mb-4">{{ t('work.projectSettings.agents.empty') }}</div>
-        <BaseButton kind="primary" prepend-icon="mdi-plus" @click="openCreate">
+      <BaseEmptyState
+        v-else-if="!backendMissing && agents.length === 0"
+        size="compact"
+        icon="mdi-robot-outline"
+        :title="t('work.projectSettings.agents.empty')"
+      >
+        <BaseButton kind="primary" prepend-icon="mdi-plus" class="mt-4" @click="openCreate">
           {{ t('work.projectSettings.agents.create') }}
         </BaseButton>
-      </div>
+      </BaseEmptyState>
 
       <v-card v-for="a in agents" :key="a.id" class="mb-3 pa-4" variant="outlined">
         <div class="agent-head">
