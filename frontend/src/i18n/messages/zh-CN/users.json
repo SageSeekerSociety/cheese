@@ -21,7 +21,6 @@
       "shared": "共同的项目",
       "mine": "我的项目",
       "stats": "发起 {topics} 个话题 · {count} 条贡献",
-      "contributions": "{count} 条贡献",
       "active": "{when}活动",
       "trend": "近 12 周每周贡献：{counts}",
       "emptyShared": "暂无共同的项目",

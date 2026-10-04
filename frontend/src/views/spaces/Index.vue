@@ -434,7 +434,6 @@ onMounted(async () => {
 }
 
 .search-card {
-  transition: all 0.3s ease;
   overflow: hidden;
 }
 
@@ -443,7 +442,7 @@ onMounted(async () => {
 }
 
 .search-field {
-  transition: all 0.3s ease;
+  transition: opacity 0.3s ease;
 }
 
 .search-field:deep(.v-field__outline) {
@@ -465,7 +464,10 @@ onMounted(async () => {
 }
 
 .space-card {
-  transition: all 0.2s ease;
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease,
+    transform 0.2s ease;
   height: 100%;
   border: 1px solid transparent;
 }

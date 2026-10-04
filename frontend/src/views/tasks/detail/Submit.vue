@@ -479,12 +479,8 @@ const submitTask = async () => {
 </script>
 
 <style scoped>
-.submission-entry {
-  transition: all 0.3s ease;
-}
-
 .submission-input {
-  transition: all 0.2s ease;
+  transition: transform 0.2s ease;
 }
 
 .submission-input:focus-within {

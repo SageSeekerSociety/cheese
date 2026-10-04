@@ -16,6 +16,7 @@ import { topicTitle } from '../lib/topicState'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
+import { useDialog } from '@/plugins/dialog'
 
 const props = defineProps<{
   projectId: string
@@ -40,6 +41,7 @@ const target = ref('')
 const running = ref(false)
 const outcomes = ref<Record<string, Outcome>>({})
 const moved = ref(false)
+const dialog = useDialog()
 
 const choices = computed(() => {
   const cloud: ComputeChoice = {
@@ -139,9 +141,20 @@ async function run() {
 
 // The one override, per session, after that session's machine could not be
 // reached: the person decides for this agent that its unpushed work stays behind.
+// The unpushed changes are gone for good, so the row's gray entry asks once more
+// before it happens (red only on that confirming button, §3.7).
 async function abandon(session: DeviceSession) {
   const choice = picked.value
   if (!choice) return
+  const confirmed = await dialog
+    .confirm(t('work.sessionMachine.abandonWarning'), {
+      title: t('work.sessionMachine.abandonTitle'),
+      confirmLabel: t('work.sessionMachine.abandon'),
+      danger: true,
+    })
+    .wait()
+    .catch(() => false)
+  if (!confirmed) return
   running.value = true
   await switchOne(session, choice, true)
   running.value = false
@@ -212,7 +225,7 @@ watch(open, (value) => {
                   </p>
                   <template v-if="outcomes[session.id]?.state === 'unreachable'">
                     <p class="bs-error">{{ t('work.sessionMachine.abandonWarning') }}</p>
-                    <BaseButton kind="danger" size="sm" :disabled="running" @click="abandon(session)">{{
+                    <BaseButton kind="ghost" size="sm" :disabled="running" @click="abandon(session)">{{
                       t('work.sessionMachine.abandon')
                     }}</BaseButton>
                   </template>

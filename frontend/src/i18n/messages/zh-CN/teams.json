@@ -91,6 +91,8 @@
     "promote": "提升为管理员",
     "demote": "降级为成员",
     "remove": "移除成员",
+    "removeTitle": "把「{name}」移出团队？",
+    "removeBody": "移出后他不再是团队成员，也不再能访问团队的项目。",
     "emptyMembers": "暂无成员",
     "emptyMembersHint": "邀请成员加入团队，开始协作",
     "emptyRequests": "暂无加入申请",

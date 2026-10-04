@@ -124,9 +124,10 @@ function roleLabel(role: ProfileProjectRole): string {
 }
 
 function projectStats(p: ProfileProject): string {
-  const parts = compact.value
-    ? [t('users.profile.projects.contributions', { count: p.contributions })]
-    : [t('users.profile.projects.stats', { topics: p.topics_started, count: p.contributions })]
+  // 手机上也写「发起 N 个话题」这一截：它是这个项目干了多少事的一半，窄屏没有
+  // 理由把它省掉 —— 少了它，同一张卡片在两个宽度下说的不是同一件事。这一行放
+  // 不下时自己折行（`.profile__row-text` 是 flex 列，里面的字没有不折行的规矩）。
+  const parts = [t('users.profile.projects.stats', { topics: p.topics_started, count: p.contributions })]
   if (p.last_active_at) parts.push(t('users.profile.projects.active', { when: relTime(p.last_active_at) }))
   return parts.join(' · ')
 }
@@ -429,7 +430,7 @@ const roleInProject = computed(() => inProject.value?.source ?? null)
                   </span>
                   <BaseButton
                     icon="mdi-close"
-                    kind="danger"
+                    kind="ghost"
                     size="sm"
                     :aria-label="t('users.profile.notes.delete')"
                     :title="t('users.profile.notes.delete')"

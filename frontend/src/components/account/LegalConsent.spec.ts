@@ -74,7 +74,7 @@ describe('LegalConsent', () => {
     await fireEvent.input(screen.getByRole('checkbox'), { target: { checked: true } })
     await fireEvent.click(screen.getByText('提交'))
     await waitFor(() => expect(result()).toEqual({ documents: { terms: '1.0', privacy: '1.2' }, method: 'checkbox' }))
-    expect(screen.queryByText('请阅读并同意以下条款')).toBeNull()
+    expect(screen.queryByText('阅读并同意以下条款')).toBeNull()
   })
 
   it('submitting unticked asks once; agreeing ticks the box and continues', async () => {
@@ -99,6 +99,6 @@ describe('LegalConsent', () => {
     await fireEvent.input(screen.getByRole('checkbox'), { target: { checked: true } })
     await fireEvent.click(screen.getByText('提交'))
     await waitFor(() => expect(result()).toBeNull())
-    expect(screen.getByText('暂时无法获取协议，请刷新页面重试')).toBeTruthy()
+    expect(screen.getByText('暂时无法获取协议，刷新页面重试')).toBeTruthy()
   })
 })

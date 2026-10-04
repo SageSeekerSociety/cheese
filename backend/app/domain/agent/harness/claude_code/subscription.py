@@ -7,6 +7,7 @@ back (``--replay-user-messages``), which for words said mid-turn is the next
 tool boundary: that echo, not the write, is the receipt.
 """
 
+import logging
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
@@ -39,6 +40,8 @@ from app.domain.delivery.input_identity import (
     WorkCompletion,
     WorkTermination,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
@@ -192,14 +195,30 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
         )
         if not legacy:
             return await super().settle_completion(record)
-        echoes = await self.on_disk(
-            completion_inputs,
-            self.path,
-            work_id=stamp["work_id"],
-            session_id=self.session_id,
-            recipient_handle=self.recipient_handle,
-            result=record,
-        )
+        try:
+            echoes = await self.on_disk(
+                completion_inputs,
+                self.path,
+                work_id=stamp["work_id"],
+                session_id=self.session_id,
+                recipient_handle=self.recipient_handle,
+                result=record,
+            )
+        except LegacyEvidenceIncomplete:
+            # The journal will never hold more than it holds now, so a retry
+            # proves nothing new. Raising here stopped the drain at this result
+            # on every poll: the Stop never landed, the turn's interval stayed
+            # open, and nothing the session said afterwards reached the room.
+            # Settle nothing, as `reconcile_history` does; its inputs stay
+            # quarantined by durable admission.
+            logger.warning(
+                "legacy completion left unsettled, retained evidence incomplete "
+                "topic=%s agent=%s work=%s",
+                self.session.topic_id,
+                self.recipient_handle,
+                stamp["work_id"],
+            )
+            return None
         if not echoes:
             return None
         assert self.session_id is not None

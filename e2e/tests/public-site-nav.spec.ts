@@ -69,3 +69,26 @@ test('文档 leaves the app for the docs site', async ({ page }) => {
   // A new document: the docs are their own site, not a route of this app.
   await expect.poll(() => sameDocument(page)).toBe(false);
 });
+
+// On a phone the bar cannot hold the links beside the lockup, but /download and
+// /docs/ still have to be reachable from the homepage. They live behind a
+// disclosure button instead.
+test('a phone reaches the nav links through the menu button, which Esc closes', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/about');
+  const menu = page.locator('#site-menu');
+  const toggle = page.getByRole('button', { name: '菜单' });
+  await expect(toggle).toBeVisible();
+  await expect(menu).toBeHidden();
+
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(menu).toBeVisible();
+  await expect(menu.getByRole('link', { name: '下载' })).toBeVisible();
+
+  await page.keyboard.press('Escape');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(menu).toBeHidden();
+  // The focus goes back to the button that opened the panel.
+  await expect(toggle).toBeFocused();
+});

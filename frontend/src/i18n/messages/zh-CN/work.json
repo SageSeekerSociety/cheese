@@ -47,7 +47,8 @@
     "confirm": "推送并更换",
     "unavailable": "{name} · 不可用",
     "abandonWarning": "不推送直接更换的话，原来那台上没推送的改动会留在那台电脑上，不会跟到新电脑。",
-    "abandon": "不推送，直接更换"
+    "abandon": "不推送，直接更换",
+    "abandonTitle": "不推送直接更换？"
   },
   "roomMachine": {
     "edit": "改",
@@ -181,7 +182,8 @@
   },
   "resourceLimits": {
     "projects": "项目数量：当前未设置上限",
-    "concurrent": "工作电脑按需创建；新项目默认最多同时运行 {count} 个 AI 任务，超出后排队",
+    "concurrent": "新项目默认最多同时运行 {count} 个 AI 任务，超出后排队",
+    "detail": "资源限制",
     "machines": "云端机器：团队默认共享 {count} 台名额，额度与用量见团队的「工作电脑」页",
     "machinesOwn": "云端机器：你名下的项目默认共享 {count} 台名额，额度与用量见你名下的「工作电脑」页",
     "failed": "资源限制加载失败",
@@ -1697,6 +1699,8 @@
   "skills": {
     "edit": "修改",
     "discard": "放弃改动",
+    "discardTitle": "放弃对「{title}」的改动？",
+    "discardHint": "改动作废，回到正在用的那一版；这一版改动找不回来。",
     "drop": "不要了",
     "history": "历史版本",
     "delete": "删除",
