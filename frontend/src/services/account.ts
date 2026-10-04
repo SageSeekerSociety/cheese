@@ -75,9 +75,17 @@ function storedUserId(): number | undefined {
  * 认不出新身份时（OAuth 回调只给令牌，用户信息随后才拉）当作换了人：那条路径只在
  * 一次全新的登录里走到，宁可多清一次。
  */
+/** 话题里的几份内存缓存：消息窗口、工作面板的进度/成员/派出的活、预览指针，都是这个人的房间内容。 */
+function clearRoomCaches(): void {
+  clearBlockCache()
+  clearTopicPanelCache()
+  resetPreviewPointerCache()
+}
+
 export function dropCachesIfSomeoneElseLogsIn(previous: number | undefined, next: number | undefined): boolean {
   if (previous !== undefined && next !== undefined && previous === next) return false
   clearPageCache()
+  clearRoomCaches()
   // 反馈那三份：不按人分，而且其中两份装的就是「按人」的东西。
   resetFeedbackCaches()
   // 输入框草稿也带着上一个人的话（lib/composerDrafts.ts），而且它的键里只有话题
@@ -310,11 +318,8 @@ export class AccountService {
     // 同理，页面缓存住在内存里，退出登录不清就还在：下一个人打开总览会先看到上
     // 一个人的项目名，然后才被后台刷新盖掉——那一眼已经泄露了。
     clearPageCache()
-    // 话题里那几份同理：消息窗口、工作面板的进度/成员/派出的活、预览指针，都是上一
-    // 个人的房间内容。
-    clearBlockCache()
-    clearTopicPanelCache()
-    resetPreviewPointerCache()
+    // 话题里那几份同理。
+    clearRoomCaches()
     // 反馈那三份同理，而且它们更直接：「我的反馈」和详情装的就是这个人自己那几条。
     resetFeedbackCaches()
     // 输入框草稿同样：它是 localStorage 里的一句半句话，属于上一个人。

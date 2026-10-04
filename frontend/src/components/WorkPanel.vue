@@ -278,7 +278,7 @@ watch(
     void pollPreviewPointer()
     void pollWorkSummary()
     // 一轮里派出去的活，收工那一刻就该出现在 任务 那一格上。
-    void pollThreads()
+    void pollThreads({ fresh: true })
   }
 )
 
@@ -454,16 +454,16 @@ function countThreads(rows: { status: string }[]) {
   threads.value = { total: rows.length, open: rows.filter((r) => r.status === 'open').length }
 }
 
-async function pollThreads() {
+async function pollThreads(opts: { fresh?: boolean } = {}) {
   const roomId = props.topic?.id
   if (!roomId) return
-  // Switching back to a room: show the count from last time while the fresh one loads.
+  // Show the count from last time (e.g. switching back to a room) while the fresh one loads.
   const cached = cachedTopicPanel('roomTasks', roomId)
   if (cached) countThreads(cached.data)
   try {
     // limit: 1 — see TaskProgress. Without it this asks for every card's whole
     // history just to count them. Shared with TaskProgress and the chat panel.
-    const rows = (await fetchRoomTasks(roomId)).data
+    const rows = (await fetchRoomTasks(roomId, opts)).data
     if (props.topic?.id === roomId) countThreads(rows)
   } catch {
     // A failed poll is not a state — same rule as the two polls above.

@@ -47,13 +47,16 @@ export function refreshPreviewPointer(topicId: string): Promise<PreviewInfo | nu
   const running = inFlight.get(topicId)
   if (running) return running
   const startedAt = generation
-  const started = getPreview(topicId)
+  const started: Promise<PreviewInfo | null> = getPreview(topicId)
     .then((art) => {
       const value = art ?? null
       if (startedAt === generation) setPreviewPointer(topicId, value)
       return value
     })
-    .finally(() => inFlight.delete(topicId))
+    .finally(() => {
+      // 清空过之后可能已经有新的一条排在这个话题上，只删自己那条。
+      if (inFlight.get(topicId) === started) inFlight.delete(topicId)
+    })
   inFlight.set(topicId, started)
   return started
 }

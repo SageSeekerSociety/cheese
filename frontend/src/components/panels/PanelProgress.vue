@@ -29,14 +29,14 @@ const props = withDefaults(
 const items = ref<TodoItem[]>((props.topic?.id && cachedTopicPanel('progress', props.topic.id)?.items) || [])
 const open = ref(false)
 
-async function load() {
+async function load(opts: { fresh?: boolean } = {}) {
   const tid = props.topic?.id
   if (!tid) {
     items.value = []
     return
   }
   try {
-    const progress = await fetchTopicProgress(tid)
+    const progress = await fetchTopicProgress(tid, opts)
     if (props.topic?.id === tid) items.value = progress.items ?? []
   } catch {
     // 进度是背景信息，拿不到就不画，不为它报错。
@@ -46,7 +46,7 @@ async function load() {
 void load()
 watch(
   () => props.refreshTick,
-  () => void load()
+  () => void load({ fresh: true })
 )
 
 const done = computed(() => items.value.filter((i) => i.status === 'completed').length)

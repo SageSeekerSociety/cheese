@@ -54,7 +54,7 @@ const showDone = ref(false)
 // 手上这份 rows 是哪个房间的：切到另一个房间时，缓存里那份才该顶上来。
 let rowsFor: string | null = null
 
-async function load() {
+async function load(opts: { fresh?: boolean } = {}) {
   const place = props.topic
   if (!place) {
     rows.value = []
@@ -74,7 +74,7 @@ async function load() {
     // limit: 1 是必须的，不是优化。不传的话后端会把房间里**每一条**支线的完整
     // 历史都吐回来，而一个跑久了的房间有近两百条活。这里只要每条最新的那一块，
     // 用来说「最后活动」。
-    const payload = await fetchRoomTasks(roomId)
+    const payload = await fetchRoomTasks(roomId, opts)
     if (props.topic?.id !== roomId) return
     rows.value = payload.data
     rowsFor = roomId
@@ -88,8 +88,9 @@ async function load() {
 
 watch(
   () => [props.active, props.refreshTick] as const,
-  ([isActive]) => {
-    if (isActive) void load()
+  ([isActive, tick], before) => {
+    // 一轮刚结束（tick 变了）：不跟着那之前发出去的请求走。
+    if (isActive) void load({ fresh: !!before && tick !== before[1] })
   },
   { immediate: true }
 )

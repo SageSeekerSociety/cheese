@@ -101,4 +101,25 @@ describe('话题面板缓存', () => {
     await p
     expect(cachedTopicPanel('progress', 't1')).toBeUndefined()
   })
+
+  it('一轮刚结束的重取（fresh）不跟着那之前发出去的请求走，同一刻的几块共用一条', async () => {
+    vi.useFakeTimers()
+    try {
+      const before = deferred<ReturnType<typeof page>>()
+      listRoomTasks.mockReturnValueOnce(before.promise)
+      void fetchRoomTasks('t1')
+      await vi.advanceTimersByTimeAsync(500)
+      listRoomTasks.mockResolvedValue(page(2))
+      const a = fetchRoomTasks('t1', { fresh: true })
+      const b = fetchRoomTasks('t1', { fresh: true })
+      expect(listRoomTasks).toHaveBeenCalledTimes(2)
+      expect(await a).toBe(await b)
+      before.settle(page(1))
+      await vi.advanceTimersByTimeAsync(0)
+      // 旧的那条后回来，也不覆盖新的。
+      expect(cachedTopicPanel('roomTasks', 't1')?.data).toHaveLength(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

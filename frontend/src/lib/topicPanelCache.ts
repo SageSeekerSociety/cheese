@@ -28,7 +28,10 @@ export type TopicPanelKind = keyof TopicPanelData
 const MAX_TOPICS = 20
 
 const entries = new Map<string, Partial<TopicPanelData>>()
-const inflight = new Map<string, Promise<unknown>>()
+const inflight = new Map<string, { at: number; promise: Promise<unknown> }>()
+// `fresh` 的调用只跟着这么近之内发出去的那条走：一轮刚结束时几块面板在同一刻都要重取，
+// 它们共用一条；但不跟着这一轮结束之前就发出去的那条走——那条拿回来的是改之前的样子。
+const FRESH_JOIN_MS = 100
 // 清空一次 +1：那一刻还在飞的请求回来后认得出自己属于上一个身份，不写回来。
 let generation = 0
 
@@ -50,31 +53,39 @@ export function cachedTopicPanel<K extends TopicPanelKind>(kind: K, topicId: str
   return entries.get(topicId)?.[kind]
 }
 
+export interface FetchOpts {
+  /** 刚发生过会改变这份数据的事（一轮结束）：不跟着那之前发出去的请求走。 */
+  fresh?: boolean
+}
+
 /** 取一次并写进缓存；同一个话题同一种数据复用正在飞的那一条。 */
 export function fetchTopicPanel<K extends TopicPanelKind>(
   kind: K,
   topicId: string,
-  fetcher: () => Promise<TopicPanelData[K]>
+  fetcher: () => Promise<TopicPanelData[K]>,
+  opts: FetchOpts = {}
 ): Promise<TopicPanelData[K]> {
   const key = `${kind}:${topicId}`
-  const running = inflight.get(key) as Promise<TopicPanelData[K]> | undefined
-  if (running) return running
+  const running = inflight.get(key)
+  const now = Date.now()
+  if (running && (!opts.fresh || now - running.at <= FRESH_JOIN_MS))
+    return running.promise as Promise<TopicPanelData[K]>
   const startedAt = generation
   const tracked: Promise<TopicPanelData[K]> = fetcher()
     .then((value) => {
       // 已经被作废（名册刚改过、或者退出登录）就不写：后发的那条才是现在的样子。
-      if (startedAt === generation && inflight.get(key) === tracked) touch(topicId)[kind] = value
+      if (startedAt === generation && inflight.get(key)?.promise === tracked) touch(topicId)[kind] = value
       return value
     })
     .finally(() => {
-      if (inflight.get(key) === tracked) inflight.delete(key)
+      if (inflight.get(key)?.promise === tracked) inflight.delete(key)
     })
-  inflight.set(key, tracked)
+  inflight.set(key, { at: now, promise: tracked })
   return tracked
 }
 
-export function fetchTopicProgress(topicId: string): Promise<TopicProgress> {
-  return fetchTopicPanel('progress', topicId, () => getProgress(topicId))
+export function fetchTopicProgress(topicId: string, opts: FetchOpts = {}): Promise<TopicProgress> {
+  return fetchTopicPanel('progress', topicId, () => getProgress(topicId), opts)
 }
 
 export function fetchTopicMembers(topicId: string): Promise<ListPayload<TopicMemberRow>> {
@@ -88,8 +99,8 @@ onTopicRosterChange((topicId) => {
   inflight.delete(`members:${topicId}`)
 })
 
-export function fetchRoomTasks(topicId: string): Promise<TopicPanelData['roomTasks']> {
-  return fetchTopicPanel('roomTasks', topicId, () => listRoomTasks(topicId, { limit: 1 }))
+export function fetchRoomTasks(topicId: string, opts: FetchOpts = {}): Promise<TopicPanelData['roomTasks']> {
+  return fetchTopicPanel('roomTasks', topicId, () => listRoomTasks(topicId, { limit: 1 }), opts)
 }
 
 /** 退出登录时调用：上一个人的房间数据不能留给下一个人。测试之间也用它擦干净。 */
