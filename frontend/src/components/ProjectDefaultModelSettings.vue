@@ -4,12 +4,14 @@ import type { ProjectDefaultModel } from '../api'
 import { computed, onMounted, ref, watch } from 'vue'
 
 import { holdRevealGate } from '@/composables/useRevealGate'
+import { useSaveState } from '@/composables/useSaveState'
 
 import { getProjectDefaultModel, setProjectDefaultModel } from '../api'
 import { t } from '../i18n'
 import { modelChoiceProps, withSaved } from '../lib/modelChoices'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import SaveStatus from '@/components/base/SaveStatus.vue'
 
 // 项目默认模型：#1365 之后主线（房间聊天）读 binding.resolve(None, …)，它拿
 // catalog 里 default=True 的那条；catalog 由 model_choices 算，项目 settings 里
@@ -18,8 +20,7 @@ import BaseButton from '@/components/base/BaseButton.vue'
 const props = defineProps<{ projectId: string }>()
 
 const state = ref<ProjectDefaultModel | null>(null)
-const error = ref('')
-const busy = ref(false)
+const loadError = ref('')
 
 // 本地编辑态：用户在下拉里选了一个值但还没保存。null = 清掉显式设置（回落部署默认）。
 const draft = ref<string | null | undefined>(undefined)
@@ -50,30 +51,36 @@ const dirty = computed(() => {
   return now !== server || subagentDraft.value !== (state.value.subagent_model ?? null)
 })
 
+// 保存结果就地回执（§3.11）：下拉旁边那一行，不再只靠按钮转圈。
+const {
+  saving: busy,
+  saved,
+  error: saveError,
+  run,
+} = useSaveState({
+  feedback: 'inline',
+  dirty: () => dirty.value,
+  messages: { failed: t('work.projectSettings.defaultModelBlock.saveFailed') },
+})
+
 async function load() {
-  error.value = ''
+  loadError.value = ''
   try {
     state.value = await getProjectDefaultModel(props.projectId)
     subagentDraft.value = state.value.subagent_model ?? null
     draft.value = undefined
   } catch (e) {
-    error.value = e instanceof Error ? e.message : t('work.projectSettings.defaultModelBlock.loadFailed')
+    loadError.value = e instanceof Error ? e.message : t('work.projectSettings.defaultModelBlock.loadFailed')
   }
 }
 
 async function save() {
   if (!state.value?.can_manage) return
-  busy.value = true
-  error.value = ''
-  try {
-    const target = draft.value !== undefined ? draft.value : state.value.model
+  const target = draft.value !== undefined ? draft.value : state.value.model
+  await run(async () => {
     state.value = await setProjectDefaultModel(props.projectId, target, subagentDraft.value)
     draft.value = undefined
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : t('work.projectSettings.defaultModelBlock.saveFailed')
-  } finally {
-    busy.value = false
-  }
+  })
 }
 
 async function resetToDeploymentDefault() {
@@ -90,7 +97,7 @@ watch(() => props.projectId, load)
 <template>
   <div>
     <p class="t-body c-muted mb-4">{{ t('work.models.description') }}</p>
-    <v-alert v-if="error" type="error" variant="tonal" class="mb-3">{{ error }}</v-alert>
+    <v-alert v-if="loadError" type="error" variant="tonal" class="mb-3">{{ loadError }}</v-alert>
     <template v-if="state">
       <div class="d-flex flex-column" style="gap: 24px; max-width: 480px">
         <v-select
@@ -133,6 +140,7 @@ watch(() => props.projectId, load)
           >
             {{ t('work.projectSettings.defaultModelBlock.reset') }}
           </BaseButton>
+          <SaveStatus :saving="busy" :saved="saved" :error="saveError" />
         </div>
       </div>
       <p v-if="!state.can_manage" class="text-body-2 text-medium-emphasis mt-3">

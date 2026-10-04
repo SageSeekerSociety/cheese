@@ -268,10 +268,10 @@ export function useChatPanel(opts: ChatPanelOptions) {
       handleFrame(frame)
       noteFrame()
     },
-    onOpen: () => {
-      // State frames are transient. A doc saved while disconnected may have no
-      // remaining turn to replay it; refresh through the panel's conflict guard.
-      emit('state-changed', 'doc')
+    onOpen: (reconnect) => {
+      // State frames are transient, so a re-connect rather than the first open:
+      // a doc saved while we were away has no remaining turn left to replay it.
+      if (reconnect) emit('state-changed', 'doc')
       void flushOutbox() // 断线期间没送出去的，连上就自己走
     },
     reconnect: (topicId) => {

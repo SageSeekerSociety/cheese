@@ -8,19 +8,12 @@ name: Frontend Test
 # the bundler survived it. One had been: `} catch {` referencing `error` in
 # AuditTask.vue, a guaranteed ReferenceError on the reject path.
 #
-# The frontend's own unit tests were unrun for the same reason: `frontend/src`
-# holds 29 vitest files / 299 tests (measured on this tree) — including the
-# ones added by #244, #246 and #249 — and build.yml only runs on pushes to
-# main anyway. So a
+# The frontend's own unit tests were unrun for the same reason, and build.yml
+# only runs on pushes to main anyway. So a
 # frontend PR could go green with its own new tests failing, and did. That is
 # what the `Unit tests` step below exists for; it is a separate gap from the
 # type/lint one and neither covers the other.
 #
-# On the cheese-ci pool, not a hosted runner: this is pnpm + eslint + vue-tsc,
-# and the org's Actions billing lapsed on 2026-08-13 (every ubuntu-latest job
-# is refused before it starts). It runs on the same three-machine cheese-ci
-# pool as test.yml/e2e.yml — separate capacity from the dev box's single deploy
-# slot, so a multi-minute frontend check here never queues behind a deploy.
 # node/pnpm come from the setup actions below, exactly as e2e.yml gets them.
 
 on:
@@ -47,8 +40,8 @@ defaults:
 jobs:
   check:
     runs-on: ubuntu-latest
-    # Measured locally: install ~40s, eslint ~90s, vitest ~56s. The margin
-    # covers a cold pnpm store without letting a wedged run bill for an hour.
+    # The margin covers a cold pnpm store without letting a wedged run bill
+    # for an hour.
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -201,7 +194,7 @@ jobs:
 
       # The application's own vitest suite — the gap the header describes.
       # `pnpm run test` is the watch-mode `vitest`, which never exits, so CI
-      # needs the one-shot form. Measured on this tree: 29 files, 299 tests.
+      # needs the one-shot form.
       #
       # `--dir src` says what this step actually means: the application suite.
       # The ratchet's tests have their own step above, under the runner they

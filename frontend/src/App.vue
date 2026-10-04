@@ -225,13 +225,6 @@
       </template>
     </AdaptiveDialog>
 
-    <v-snackbar v-model="showProjectListWarning" :timeout="8000">
-      {{ projectListWarning }}
-      <template #actions>
-        <BaseButton kind="secondary" @click="loadCxProjects">{{ t('work.newProject.retry') }}</BaseButton>
-      </template>
-    </v-snackbar>
-
     <!-- 内测: running-build badge, self-hides unless the box opted in. -->
     <VersionBadge />
 
@@ -259,6 +252,7 @@ import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, r
 import { useRoute } from 'vue-router'
 import { useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
+import { toast } from 'vuetify-sonner'
 
 import { avatarColor } from '@/utils/avatar'
 import { scrollBehavior } from '@/utils/motion'
@@ -425,23 +419,22 @@ function reorderRail(movedId: string, targetId: string, edge: DropEdge) {
   saveProjectOrder(myHandle(), next)
 }
 
-const projectListWarning = ref('')
-const showProjectListWarning = ref(false)
-
 async function loadCxProjects() {
   // Public visitors have no project list; a 401 here would interrupt the landing page.
   if (!AccountService.loggedIn) {
     cxProjects.value = []
-    showProjectListWarning.value = false
     return
   }
   try {
     cxProjects.value = (await listProjects()).data
     saveCachedProjects(myHandle(), cxProjects.value)
-    showProjectListWarning.value = false
   } catch {
-    projectListWarning.value = cxProjects.value.length ? t('work.projectList.stale') : t('work.projectList.unavailable')
-    showProjectListWarning.value = true
+    // 一次性提示：之前是一条常驻的 snackbar，现在并进全局 toast（§3.11）。
+    const message = cxProjects.value.length ? t('work.projectList.stale') : t('work.projectList.unavailable')
+    toast.warning(message, {
+      duration: 8000,
+      action: { label: t('work.newProject.retry'), onClick: () => void loadCxProjects() },
+    })
   }
 }
 onMounted(loadCxProjects)

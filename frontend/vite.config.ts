@@ -12,9 +12,14 @@ import vuetify, { transformAssetUrls } from 'vite-plugin-vuetify'
 import svgLoader from 'vite-svg-loader'
 import { configDefaults } from 'vitest/config'
 
-// 每个 fork 常驻约 3–5 GB（happy-dom 加上各自编一遍 Vuetify/SCSS），所以按内存算上限：每 6 GB 一个、封顶 16，VITEST_MAX_FORKS 可覆盖。
+// fork 数取「核数 - 1」和「每 3 GB 内存一个」中较小的那个，封顶 16，VITEST_MAX_FORKS 可覆盖。
+// 一个 fork 的内存峰值实测约 1.7–2.1 GB（happy-dom 加上各自编一遍 Vuetify/SCSS）。
+// CI 的 4 核 16 GB 机器上算出来是 3：fork 数和核数相同时，对时序敏感的组件测试会偶发失败。
 const envMaxForks = Number.parseInt(process.env.VITEST_MAX_FORKS ?? '', 10)
-const maxForks = envMaxForks > 0 ? envMaxForks : Math.max(1, Math.min(16, Math.floor(os.totalmem() / 6 / 1024 ** 3)))
+const maxForks =
+  envMaxForks > 0
+    ? envMaxForks
+    : Math.max(1, Math.min(16, os.availableParallelism() - 1, Math.floor(os.totalmem() / 3 / 1024 ** 3)))
 
 // https://vitejs.dev/config/
 // /demo/<名字> 是演示页（demo.html），不是应用。线上由 nginx.conf 那条 location 分开，
@@ -134,6 +139,13 @@ const PRISM_PLUGINS = ['line-numbers', 'copy-to-clipboard']
 // The named chunks, a library before the ones built on it (see codeSplitting).
 const CHUNKS = [
   'preload-helper',
+  // The transpiler's own helpers (~1 KB), claimed before any library that uses
+  // them. Without this group the `marked` group takes them with it as imports
+  // (see codeSplitting), and because the eager app code — class fields in
+  // `services/account.ts` and the axios layer — needs `_defineProperty`, the
+  // entry ended up importing the `marked` chunk and pulling 88 KB of Markdown
+  // parser onto first paint for a helper one twentieth its size.
+  'runtime-helpers',
   'vue',
   'dayjs',
   'lodash',
@@ -157,6 +169,15 @@ function chunkName(id: string): string | null {
   // chunk with an `import()` shares, in a chunk of its own.
   if (id.includes('vite/preload-helper')) {
     return 'preload-helper'
+  }
+  // The OXc/Babel helper shims (`@oxc-project/runtime/helpers/esm/*`) that the
+  // transpiled libraries and app code share. Their id is the virtual
+  // `\0@oxc-project+runtime@…/helpers/esm/*` — a `\0` prefix, the pnpm
+  // directory's `+`, and no `node_modules` segment — so this test sits before
+  // that guard and matches on the package name alone. Their own chunk keeps
+  // them out of whichever library would otherwise claim them as an import.
+  if (id.includes('oxc-project')) {
+    return 'runtime-helpers'
   }
   if (id.includes('node_modules')) {
     // Monaco is the largest package in node_modules and only the code
