@@ -8,7 +8,7 @@ cannot get locally:
 
 - **L1 attribution + metering**: mint a per-project VIRTUAL key (the sandbox
   gets that instead of the master key — a sandbox never holds admin credentials)
-  and read real token usage back from ``/spend/logs``.
+  and read real token usage back from ``/spend/logs/v2``.
 - **L2 budget brake**: set the key's ``max_budget`` from the project's compute
   grants so the gateway refuses further calls once the budget is spent.
 
@@ -40,11 +40,14 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-# /spend/logs has no useful index and full-scans LiteLLM's spend table —
-# measured 24-102 s on 2026-09-23. The old 8 s timed out every drain, which
-# silently billed zeros (a caught exception returns None, and the caller
-# writes an unmetered row).
+# A spend-log page is served from the (api_key, startTime) index that
+# deploy/release-gateway.sh builds. Without it every page full-scans LiteLLM's
+# spend table — measured 24-102 s on 2026-09-23. The old 8 s timed out every
+# drain, which silently billed zeros (a caught exception returns None, and the
+# caller writes an unmetered row).
 _TIMEOUT = 60.0
+# The most rows /spend/logs/v2 serves in one page.
+_SPEND_PAGE_SIZE = 1000
 
 
 @dataclass(frozen=True)
@@ -299,34 +302,47 @@ class LlmGateway:
         by: dict[str, ModelSpend] = {}
         try:
             day = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=UTC)
+            # Every row of the day, page by page. /spend/logs answers in one
+            # response but LiteLLM 1.103.3 cuts it to the newest 10,000 rows,
+            # and a busy key logs more than that in a day; a short sum would
+            # read as spend going backwards. Oldest first, so a row logged while
+            # the pages are read lands after them instead of shifting rows
+            # already read out of reach; a row a shift repeats is dropped by
+            # its request_id.
+            seen: set[str] = set()
             async with self._client() as client:
-                r = await client.get(
-                    f"{self._base}/spend/logs",
-                    headers=self._headers,
-                    params={
-                        "api_key": hashlib.sha256(key.encode()).hexdigest(),
-                        "start_date": date,
-                        "end_date": (day + timedelta(days=1)).strftime("%Y-%m-%d"),
-                        "summarize": "false",
-                    },
-                )
-                r.raise_for_status()
-                rows = r.json()
-                if not isinstance(rows, list):
-                    raise ValueError("gateway spend response is not a list")
-                for row in rows:
-                    if not isinstance(row, dict):
-                        continue
-                    name = str(row.get("model") or "")
-                    prev = by.get(name) or ModelSpend(name, 0, 0, 0.0)
-                    by[name] = ModelSpend(
-                        model=name,
-                        prompt_tokens=prev.prompt_tokens
-                        + int(row.get("prompt_tokens") or 0),
-                        completion_tokens=prev.completion_tokens
-                        + int(row.get("completion_tokens") or 0),
-                        spend_usd=prev.spend_usd + float(row.get("spend") or 0.0),
+                page = 1
+                while True:
+                    r = await client.get(
+                        f"{self._base}/spend/logs/v2",
+                        headers=self._headers,
+                        params={
+                            "api_key": hashlib.sha256(key.encode()).hexdigest(),
+                            "start_date": date,
+                            "end_date": (day + timedelta(days=1)).strftime("%Y-%m-%d"),
+                            "sort_by": "startTime",
+                            "sort_order": "asc",
+                            "page": page,
+                            "page_size": _SPEND_PAGE_SIZE,
+                        },
                     )
+                    r.raise_for_status()
+                    body = r.json()
+                    rows = body.get("data") if isinstance(body, dict) else None
+                    if not isinstance(rows, list):
+                        raise ValueError("gateway spend response has no data list")
+                    for row in rows:
+                        if not isinstance(row, dict):
+                            continue
+                        request_id = row.get("request_id")
+                        if isinstance(request_id, str):
+                            if request_id in seen:
+                                continue
+                            seen.add(request_id)
+                        _add_row(by, row)
+                    if len(rows) < _SPEND_PAGE_SIZE:
+                        break
+                    page += 1
         except Exception:  # noqa: BLE001
             logger.warning("gateway daily_spend_by_model failed", exc_info=True)
             return None
@@ -360,6 +376,19 @@ class ModelSpend:
     prompt_tokens: int
     completion_tokens: int
     spend_usd: float
+
+
+def _add_row(by: dict[str, ModelSpend], row: dict) -> None:
+    """Add one spend-log row to its model's running total."""
+    name = str(row.get("model") or "")
+    prev = by.get(name) or ModelSpend(name, 0, 0, 0.0)
+    by[name] = ModelSpend(
+        model=name,
+        prompt_tokens=prev.prompt_tokens + int(row.get("prompt_tokens") or 0),
+        completion_tokens=prev.completion_tokens
+        + int(row.get("completion_tokens") or 0),
+        spend_usd=prev.spend_usd + float(row.get("spend") or 0.0),
+    )
 
 
 def utc_today() -> str:

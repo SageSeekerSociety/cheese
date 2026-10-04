@@ -1,4 +1,4 @@
-FROM ghcr.io/berriai/litellm@sha256:d1fc1c122e2c1a0cec2b00540b220ff0d2682842758eb8bc64e373a1aedfec7e
+FROM ghcr.io/berriai/litellm@sha256:e6e1c46cec92ab58b7ff95c790420aba9f05269b662a66c0dd11714171b9c64b
 
 LABEL org.opencontainers.image.title="Cheese LLM gateway"
 

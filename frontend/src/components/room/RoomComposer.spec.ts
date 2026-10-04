@@ -378,6 +378,78 @@ describe('@ 候选：不在话题里的人', () => {
   })
 })
 
+describe('@ 候选：按 handle 搜，和搜不到时的那句话', () => {
+  it('记不住名字、记得住 handle 时，打 handle 也找得到那个人', async () => {
+    const { container, box } = mount()
+
+    // 芝士的 label 是「芝士」，一个字都不含 topica；handle 是 cheese-topica。只按
+    // 名字搜的话，人默写一遍自己的 handle 也一个候选都搜不出来。
+    await fireEvent.update(box(), '@topica')
+    await flush()
+
+    expect(labels(container)).toContain('芝士')
+  })
+
+  it('大小写不影响：handle 是 cheese-topica，打 Cheese 也命中', async () => {
+    const { container, box } = mount()
+
+    await fireEvent.update(box(), '@Cheese-')
+    await flush()
+
+    expect(labels(container)).toContain('芝士')
+  })
+
+  it('一个候选都没有时菜单不消失，说的是「暂无匹配」', async () => {
+    const { container, box } = mount()
+
+    await fireEvent.update(box(), '@zzz')
+    await flush()
+
+    // 整块收起来看起来像那个 @ 没生效，人会以为自己打错了。
+    expect(container.querySelector('.mention-menu')).toBeTruthy()
+    expect(container.querySelector('.mention-menu-item')).toBeNull()
+    expect(container.querySelector('.mention-menu')!.textContent).toContain('暂无匹配')
+  })
+
+  it('空态里回车不被菜单吃掉：`@` 那半截字原样发出去', async () => {
+    const { box, onSend } = mount()
+
+    await fireEvent.update(box(), '@zzz')
+    await flush()
+    focusIn(box())
+    await fireEvent.keyDown(box(), { key: 'Enter' })
+
+    expect(onSend).toHaveBeenCalledWith({ content: '@zzz', summon: false })
+  })
+
+  it('空态里 ↑/↓ 不拦：那时候它们该去挪光标', async () => {
+    const { box } = mount()
+
+    await fireEvent.update(box(), '@zzz')
+    await flush()
+    focusIn(box())
+
+    const ev = new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })
+    box().dispatchEvent(ev)
+    await flush()
+    expect(ev.defaultPrevented).toBe(false)
+  })
+
+  it('空态里 Esc 把它收起来，再打字又打开', async () => {
+    const { container, box } = mount()
+
+    await fireEvent.update(box(), '@zzz')
+    await flush()
+    await fireEvent.keyDown(box(), { key: 'Escape' })
+    await flush()
+    expect(container.querySelector('.mention-menu')).toBeNull()
+
+    await fireEvent.update(box(), '@zz')
+    await flush()
+    expect(container.querySelector('.mention-menu')).toBeTruthy()
+  })
+})
+
 describe('发出去的消息 @ 了不在话题里的人', () => {
   /** 自己是这个话题的 `role`；Carol 在项目里、不在这个话题里。 */
   function pool(role: string): MentionPoolEntry[] {

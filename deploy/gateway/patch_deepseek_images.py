@@ -1,4 +1,9 @@
-"""Retain image content for vision models in the pinned DeepSeek adapter."""
+"""Retain image content in tool results for vision models in the pinned DeepSeek adapter.
+
+Upstream forwards image_url blocks only in user messages. An image Claude Code
+reads from disk arrives inside a tool_result, which the Anthropic adapter turns
+into a tool message, so upstream collapses it to text and drops the picture.
+"""
 
 import hashlib
 from pathlib import Path
@@ -8,14 +13,9 @@ path = Path(
 )
 source = path.read_bytes()
 assert hashlib.sha256(source).hexdigest() == (
-    "b9603258b0aecd7657fc83181f8221036beab3527fb0363cb7d13ef4684144a9"
+    "5c6de1e9ca6da5ce28a272aae0de9218c997e8478cf83ec9787c44ebf90c800a"
 ), "Review the upstream DeepSeek adapter before updating this patch"
-old = (
-    b"        messages = handle_messages_with_content_list_to_str_conversion(messages)"
-)
-new = (
-    b'        if not litellm.supports_vision(model=model, custom_llm_provider="deepseek"):\n'
-    b"    " + old
-)
+old = b'        if message.get("role") != "user":\n            return False\n'
+new = b'        if message.get("role") not in ("user", "tool"):\n            return False\n'
 assert source.count(old) == 1
 path.write_bytes(source.replace(old, new))
