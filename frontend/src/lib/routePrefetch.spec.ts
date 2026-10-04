@@ -311,3 +311,53 @@ describe('hover 预取', () => {
     expect(store.unreadMap).toEqual({ t1: 3 }) // 红点还在
   })
 })
+
+describe('首屏之后空闲预取路由', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.clearAllMocks()
+    setActivePinia(createPinia())
+    desktop()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('首屏之后不立刻下，空闲时把目标都下完', async () => {
+    const { warmRoutesWhenIdle } = await fresh()
+    const { router, load } = lazyRouter()
+
+    warmRoutesWhenIdle(router, [
+      { name: 'topic', params: { id: 't1' } },
+      { name: 'project', params: { id: 'p1' } },
+    ])
+    expect(load).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(load).toHaveBeenCalledTimes(2)
+  })
+
+  it('省流量时一个都不下', async () => {
+    connection({ saveData: true })
+    const { warmRoutesWhenIdle } = await fresh()
+    const { router, load } = lazyRouter()
+
+    warmRoutesWhenIdle(router, [{ name: 'topic', params: { id: 't1' } }])
+    await vi.advanceTimersByTimeAsync(100)
+    expect(load).not.toHaveBeenCalled()
+  })
+
+  it('人在这期间离开了：取消之后剩下的不再下', async () => {
+    const { warmRoutesWhenIdle } = await fresh()
+    const { router, load } = lazyRouter()
+
+    const cancel = warmRoutesWhenIdle(router, [
+      { name: 'topic', params: { id: 't1' } },
+      { name: 'project', params: { id: 'p1' } },
+    ])
+    await vi.advanceTimersByTimeAsync(0)
+    cancel()
+    await vi.advanceTimersByTimeAsync(100)
+    expect(load).toHaveBeenCalledTimes(1)
+  })
+})

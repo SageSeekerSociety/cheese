@@ -5,7 +5,7 @@ import type { MemberActivityLine } from '@/lib/memberActivity'
 import type { CardPhase } from '@/lib/topicState'
 import type { PreviewLocate, SubmitPreviewQuestion } from '../../lib/previewQuestion'
 
-import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
@@ -23,6 +23,7 @@ import WorkPanel from '@/components/WorkPanel.vue'
 import { t } from '@/i18n'
 import { agentNames, memberName } from '@/lib/agentNames'
 import { announceComments } from '@/lib/docCommentSignals'
+import { warmRoutesWhenIdle } from '@/lib/routePrefetch'
 import { cachedTopicPanel, fetchTopicMembers } from '@/lib/topicPanelCache'
 import { onTopicRosterChange } from '@/lib/topicRosterChanges'
 import { topicTitle } from '@/lib/topicState'
@@ -146,6 +147,20 @@ watch(
   { immediate: true }
 )
 onUnmounted(() => clearDynamicTitle('workspace-topic'))
+
+// 话题画出来之后，趁浏览器空着把从这里最常去的几页的代码先下下来：看板、资料库、
+// 项目文档、搜索。点过去时就只剩取数据那一段等待（lib/routePrefetch.ts）。
+let cancelRouteWarm: (() => void) | null = null
+onMounted(() => {
+  const params = { projectId: props.projectId }
+  cancelRouteWarm = warmRoutesWhenIdle(router, [
+    { name: 'workspace-running', params },
+    { name: 'project-library', params },
+    { name: 'project-docs', params: { ...params, kind: 'charter' } },
+    { name: 'project-search', params },
+  ])
+})
+onUnmounted(() => cancelRouteWarm?.())
 // The list is still on its way, so "not found" is not yet a fact. Neither is it
 // one while this id is being asked about directly — the path a deep link takes.
 const resolving = computed(
