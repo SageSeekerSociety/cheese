@@ -39,6 +39,24 @@
   "joinLabel": "邀请码",
   "joinSubmit": "加入",
   "joinTitle": "加入空间",
+  "startPaths": {
+    "lede": "三条路都行，从哪条开始都可以：",
+    "project": {
+      "title": "开一个自己的{project}",
+      "body": "进去就能和芝士开工，材料和成果都留在里面。"
+    },
+    "invite": {
+      "title": "用邀请码加入",
+      "body": "学校或团队给了你邀请码，从这里进。",
+      "action": "填邀请码"
+    },
+    "teams": {
+      "title": "看看有哪些团队",
+      "body": "加入一个团队，和它的成员共用一个工作台。",
+      "action": "去团队"
+    },
+    "settingsNote": "AI 队友和代码仓库都在项目里配：进项目后打开「项目设置」，第一节是 AI 队友，仓库在「仓库与署名」那一栏。"
+  },
   "sessionMachine": {
     "machine": "换到",
     "confirm": "推送并更换",
@@ -950,6 +968,19 @@
       "readingMemory": "{agent}正在读项目记忆…",
       "readingAttachment": "{agent}正在读附件…",
       "quoteChanged": "原文已改动"
+    },
+    "gettingStarted": {
+      "title": "开始清单",
+      "dismiss": "不再提示",
+      "talk": "跟芝士说第一句话",
+      "talkHint": "就在下面那个输入框里",
+      "materials": "把要用的材料放进来",
+      "materialsAction": "打开资料库",
+      "repo": "让成果进代码仓库",
+      "repoAction": "连接仓库",
+      "people": "把同事请进来",
+      "peopleAction": "去名册",
+      "note": "AI 队友和代码仓库都在项目设置里改：第一节是 AI 队友，仓库在「仓库与署名」那一栏。"
     },
     "chat": {
       "pickTopic": "选择一个话题开始对话",
