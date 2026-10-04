@@ -20,7 +20,7 @@ vi.mock('@/api', async () => {
     listProjectMembers: vi.fn().mockResolvedValue({ data: [] }),
     listProjects: vi.fn().mockResolvedValue({ data: [] }),
     getTopicNotifyLevels: vi.fn().mockResolvedValue({}),
-  getTopicUnread: vi.fn().mockResolvedValue({}),
+    getTopicUnread: vi.fn().mockResolvedValue({}),
     getPrivateUnread: vi.fn().mockResolvedValue({}),
   }
 })
