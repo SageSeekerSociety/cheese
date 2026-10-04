@@ -112,7 +112,9 @@
     "weekly": "周报"
   },
   "sidebar": {
-    "resize": "拖动调整宽度"
+    "resize": "拖动调整宽度",
+    "expand": "展开侧栏",
+    "collapse": "收起侧栏"
   },
   "backTo": {
     "own": "你名下的项目"

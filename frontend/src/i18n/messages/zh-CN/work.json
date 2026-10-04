@@ -710,7 +710,9 @@
       "newContent": "有新内容",
       "fileCount": "{count} 个文件",
       "newChanges": "有新改动",
-      "pickTopic": "选择一个话题查看文档"
+      "pickTopic": "选择一个话题查看文档",
+      "open": "展开工作面板",
+      "close": "收起工作面板"
     },
     "taskProgress": {
       "loadFailed": "任务列表加载失败",
