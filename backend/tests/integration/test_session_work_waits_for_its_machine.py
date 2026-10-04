@@ -432,4 +432,9 @@ def test_each_session_on_a_cloud_host_has_its_executor_sandboxed(cloud_rooms):
     ]
     configure = ast.parse(installed).body[-1].value
     payload = json.loads(ast.literal_eval(configure.args[0].args[0]))
-    assert payload["sandbox"] is True
+    assert payload["sandbox"] == {
+        "memory_mb": settings.cloud_sandbox_memory_mb,
+        "swap_mb": settings.cloud_sandbox_swap_mb,
+        "cpus": settings.cloud_sandbox_cpus,
+        "pids": settings.cloud_sandbox_pids,
+    }
