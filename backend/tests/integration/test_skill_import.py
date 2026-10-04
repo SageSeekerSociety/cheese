@@ -2,6 +2,7 @@
 one made elsewhere: read first, nothing saved until it is added, and what is
 added reaches the project's sessions as it was read."""
 
+import base64
 import io
 import uuid
 import zipfile
@@ -61,7 +62,7 @@ def _shipped(project_id: str) -> dict[str, str]:
 def _preview(client, project: str, filename: str, data: bytes, who: str = OWNER):
     return client.post(
         f"/projects/{project}/skills/import-preview",
-        files={"file": (filename, data)},
+        json={"filename": filename, "content": base64.b64encode(data).decode()},
         headers=session_auth_headers(who),
     )
 

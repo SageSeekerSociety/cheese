@@ -23,6 +23,7 @@ vi.mock('@/api', async () => {
     listProjectMembers: vi.fn().mockResolvedValue({ data: [] }),
     lookupUser: vi.fn().mockResolvedValue({ handle: 'bob', name: 'Bob', avatar_id: null }),
     listTopics: vi.fn().mockResolvedValue({ data: [{ id: 'room-1', title: 'Report room', status: 'active' }] }),
+    getProject: vi.fn().mockResolvedValue({ id: 'p1', can_manage_members: true }),
   }
 })
 vi.mock('@/api/projectSkills', () => {
@@ -30,10 +31,9 @@ vi.mock('@/api/projectSkills', () => {
     project_id: 'p1',
     title: 'Weekly report',
     description: 'Summarise the week',
-    inputs: 'Date range',
-    steps: 'Cite every number',
-    outputs: 'One page',
+    body: '## Steps\n\nCite every number',
     files: { 'scripts/check.py': 'print(1)', 'README.txt': 'notes' },
+    origin: 'cheese',
     proposed_by: 'cheese-x',
     confirmed_by: 'u1',
     confirmed_at: '2026-09-25T00:00:00Z',
@@ -45,7 +45,14 @@ vi.mock('@/api/projectSkills', () => {
   return {
     listProjectSkills: vi.fn().mockResolvedValue({
       data: [
-        { ...skill, id: 'draft-1', name: 'summary', state: 'draft', shipped_revision: 2 },
+        {
+          ...skill,
+          id: 'draft-1',
+          name: 'summary',
+          state: 'draft',
+          shipped_revision: 2,
+          proposal: { reason: 'Wrong order', taught: ['Bad news first'] },
+        },
         { ...skill, id: 'live-1', name: 'weekly', state: 'active', shipped_revision: 1 },
       ],
     }),
@@ -193,13 +200,16 @@ describe('English settings copy', () => {
     expectNoChinese()
   })
 
-  it('the methods page, its history and its delete prompt', async () => {
-    render(ProjectSkillsView, { props: { projectId: 'p1' }, ...mountOpts() })
-    await screen.findByText('Awaiting your confirmation')
+  it('the skills page, a skill and its history', async () => {
+    const Page = { components: { ProjectSkillsView }, template: '<v-app><ProjectSkillsView project-id="p1" /></v-app>' }
+    render(Page as unknown as Component, mountOpts())
+    await screen.findByText('Waiting for you')
     expectNoChinese()
-    await fireEvent.click(screen.getAllByRole('button', { name: 'Version history' })[0]!)
-    await screen.findByText('Version history of "Weekly report"')
-    await fireEvent.click(screen.getAllByRole('button', { name: 'View' })[0]!)
+    await fireEvent.click(screen.getAllByRole('button', { name: 'Weekly report' })[0]!)
+    await screen.findByText('Invoked as summary')
+    expectNoChinese()
+    await fireEvent.click(screen.getByRole('tab', { name: 'Version history' }))
+    await fireEvent.click((await screen.findAllByRole('button', { name: 'View' }))[0]!)
     expectNoChinese()
   })
 })

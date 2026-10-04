@@ -744,6 +744,8 @@ routes:
   # app.api.routes.project_skills
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/skills", auth: "skill.project", owner: "project.skills"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/skills", auth: "skill.project", owner: "project.skills"}
+  - {protocol: "http", method: "POST", path: "/projects/{project_id}/skills", auth: "skill.project", owner: "project.skills"}
+  - {protocol: "http", method: "POST", path: "/projects/{project_id}/skills/import-preview", auth: "skill.project", owner: "project.skills"}
   - {protocol: "http", method: "GET", path: "/skills/{skill_id}", auth: "skill.project", owner: "project.skills"}
   - {protocol: "http", method: "PATCH", path: "/skills/{skill_id}", auth: "skill.project", owner: "project.skills"}
   - {protocol: "http", method: "POST", path: "/skills/{skill_id}/confirm", auth: "skill.project", owner: "project.skills"}

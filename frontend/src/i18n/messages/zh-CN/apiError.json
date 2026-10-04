@@ -973,5 +973,6 @@
   "skillImportGithubFailed": "从 GitHub 读取失败，稍后重试",
   "skillImportNothing": "上传文件或填写地址",
   "skillAdd": "添加技能",
-  "skillImport": "导入技能"
+  "skillImport": "导入技能",
+  "skillImportUnreadable": "无法读取这个文件"
 }

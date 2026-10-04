@@ -17,10 +17,21 @@ export interface SkillProposal {
 export interface ProjectSkillContent {
   title: string
   description: string
-  inputs: string
-  steps: string
-  outputs: string
+  /** 正文，markdown。 */
+  body: string
   files: Record<string, string>
+}
+
+/** 谁先写的：芝士整理、人手写、从别处导入。 */
+export type SkillOrigin = 'cheese' | 'person' | 'import'
+
+/** 导入时读出来、还没添加的一份。 */
+export interface SkillImportPreview extends ProjectSkillContent {
+  name: string
+  /** 不是文本或太大、不会一起添加的文件。 */
+  skipped: string[]
+  /** 配套文件里脚本的个数；芝士会在工作电脑上运行它们。 */
+  scripts: number
 }
 
 export interface ProjectSkill extends ProjectSkillContent {
@@ -28,6 +39,7 @@ export interface ProjectSkill extends ProjectSkillContent {
   project_id: string
   name: string
   state: 'draft' | 'active'
+  origin: SkillOrigin
   shipped_revision: number
   proposed_by: string
   confirmed_by: string | null
@@ -45,4 +57,26 @@ export interface ProjectSkillRevision {
   confirmed_by: string
   note: string
   created_at: string
+}
+
+const NAME = /^[a-z0-9][a-z0-9-]{1,47}$/
+
+/**
+ * 新建时按名称给出的调用名：名称里有英文就照它拼，没有就取 `skill-<n>` 里第一个没被
+ * 占用的。人可以改；给出来的一定合后端的格式。
+ */
+export function suggestSkillName(title: string, taken: Iterable<string>): string {
+  const used = new Set(taken)
+  const slug = title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48)
+    .replace(/-+$/, '')
+  if (NAME.test(slug) && !used.has(slug)) return slug
+  const base = NAME.test(slug) ? slug.slice(0, 40) : 'skill'
+  for (let n = 1; ; n += 1) {
+    const name = `${base}-${n}`
+    if (!used.has(name)) return name
+  }
 }

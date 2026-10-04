@@ -4,11 +4,13 @@ An AI teammate may draft or edit one; a person confirms, restores or deletes,
 because what is confirmed is what every later session in the project follows.
 """
 
+import base64
+import binascii
 import uuid
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -295,25 +297,34 @@ async def add_skill(
     return ok(_skill(row))
 
 
+class ImportSource(BaseModel):
+    # An uploaded SKILL.md or zip, base64-encoded, or a GitHub folder's address.
+    filename: str = ""
+    content: str = ""
+    url: str = ""
+
+
 @router.post("/projects/{project_id}/skills/import-preview")
 async def preview_import(
     project_id: uuid.UUID,
+    body: ImportSource,
     db: DbSession,
     resolver: ActorResolverDep,
-    file: UploadFile | None = File(None),
-    url: str = Form(""),
 ) -> dict:
     """Read a skill from an uploaded SKILL.md or zip, or a GitHub folder, and
     lay it out for a manager to look over. Nothing is saved."""
     actor = await _person_in_project(db, resolver, project_id, say("skillImport"))
     await MemberService(db).require_manager(project_id, actor)
-    if file is not None:
-        data = await file.read(importer.MAX_TOTAL_BYTES + 1)
-        if len(data) > importer.MAX_TOTAL_BYTES:
+    if body.content:
+        if len(body.content) > importer.MAX_TOTAL_BYTES * 4 // 3 + 4:
             raise ValidationError(say("skillImportTooLarge"))
-        read = importer.read_upload(file.filename or "", data)
-    elif url.strip():
-        read = await importer.read_github(url)
+        try:
+            data = base64.b64decode(body.content, validate=True)
+        except binascii.Error as exc:
+            raise ValidationError(say("skillImportUnreadable")) from exc
+        read = importer.read_upload(body.filename, data)
+    elif body.url.strip():
+        read = await importer.read_github(body.url)
     else:
         raise ValidationError(say("skillImportNothing"))
     return ok(read.to_json())
