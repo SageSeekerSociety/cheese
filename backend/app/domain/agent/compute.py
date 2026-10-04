@@ -304,6 +304,19 @@ class ComputePool:
             runtime.holds(topic_id, agent_handle) for runtime in self._runtimes()
         )
 
+    def holds_conversation(
+        self, topic_id: uuid.UUID, harness: str, conversation: str
+    ) -> bool:
+        """Is that exact conversation still attached somewhere in this room?
+
+        ``holds`` answers for a seat, and a seat outlives its conversations: an
+        Ask answer may enter only the conversation that asked it, never
+        whichever replaced it (``room/sessions.py``)."""
+        return any(
+            runtime.holds_conversation(topic_id, harness, conversation)
+            for runtime in self._runtimes()
+        )
+
     async def recover_sessions(
         self, device_id: str | None = None
     ) -> list["SessionRef"]:

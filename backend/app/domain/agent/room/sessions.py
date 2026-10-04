@@ -1137,6 +1137,19 @@ class RoomSessions:
             conversation for pair_seat, conversation in self.dead if pair_seat == seat
         }
 
+    def holds_conversation(self, topic_id, harness, conversation) -> bool:
+        """Is that exact conversation still attached somewhere in this room?
+
+        A seat outlives its conversations, and an Ask answer may enter only the
+        one that asked it: ``send`` refuses to start another for it. The
+        conversation id is the harness's own, and a room holds it at most once,
+        so the room is enough to identify it."""
+        return self.harness == harness and any(
+            live.conversation == conversation
+            for seat, live in self.live.items()
+            if seat[0] == topic_id
+        )
+
     def holds(self, topic_id, agent_handle=None) -> bool:
         """Is there a session here this process can still reach — for this
         agent's seat in the room, when one is named?

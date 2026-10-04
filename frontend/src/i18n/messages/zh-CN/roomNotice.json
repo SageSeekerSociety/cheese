@@ -33,6 +33,8 @@
   "artifactDeclared": "这次交付新建了产物《{name}》，此前项目里没有这一项",
   "artifactUndelivered": "《{name}》 尚未交付",
   "artifactVersion": "《{name}》 第 {version} 版",
+  "askAnswerUndelivered": "一条答案没能送达，提问的那段对话已经结束",
+  "askAnswerUndeliveredDetail": "答案只能送进当初提问的那一段对话，而那段对话已经结束、不会再回来。这条答案没有被读到，平台也不再重试。要接着说的话，把答案当普通消息再发一次就行。",
   "backendError": "后端报错：{headline}",
   "backendErrorAt": "后端报错（{where}）：{headline}",
   "backendErrorBurst": "后端报错刷屏：{headline} —— {minutes} 分钟内 {count} 次",

@@ -70,6 +70,7 @@ from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
+from app.domain.delivery.ask_session_wait import waiting_ask_blocks
 from app.domain.delivery.ask_wake import expected_ask_session
 from app.domain.delivery.input_identity import InputEffects, InputOutcomeUnconfirmed
 from app.domain.delivery.receipts import held_blocks
@@ -450,6 +451,14 @@ class RoomTurns:
             held = await held_blocks(
                 session,
                 project_id=topic.project_id,
+                topic_id=place.room_id,
+                recipient_handle=acting_agent,
+            )
+            # An answer whose Ask conversation is gone belongs to no prompt:
+            # carrying it would fail this turn on the fence that refuses it
+            # (`ask_session_wait`).
+            held |= await waiting_ask_blocks(
+                session,
                 topic_id=place.room_id,
                 recipient_handle=acting_agent,
             )

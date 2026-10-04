@@ -33,6 +33,8 @@
   "artifactDeclared": "This delivery created a new artifact, “{name}”, which the project did not have before",
   "artifactUndelivered": "“{name}” not delivered yet",
   "artifactVersion": "“{name}” version {version}",
+  "askAnswerUndelivered": "An answer could not be delivered: the conversation that asked is gone",
+  "askAnswerUndeliveredDetail": "An answer can only enter the conversation that asked the question, and that conversation is over — it will not come back. The answer was never read, and the platform has stopped retrying. To get it through, say it again as an ordinary message.",
   "backendError": "Backend error: {headline}",
   "backendErrorAt": "Backend error ({where}): {headline}",
   "backendErrorBurst": "Repeated backend error: {headline} — {count} times in {minutes} min",
