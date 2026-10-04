@@ -962,5 +962,7 @@
   "skillAbsorbsTeamOnly": "只能吸收 team 下的记忆（形如 team/xxx.md）：项目技能是全项目共用的，个人的偏好不并进去：{path}",
   "skillDecline": "拒绝芝士提议的技能",
   "skillAbsorbsMissing": "team 下没有这条记忆：{path}。absorbs 只写已经存在的 team 记忆",
-  "topicNotifyLevelInvalid": "通知级别只能是「全部」或「静音」"
+  "topicNotifyLevelInvalid": "通知级别只能是「全部」或「静音」",
+  "libraryVersionNotFound": "找不到这一版",
+  "libraryVersionIsCurrent": "这一版已经是现在这一份"
 }
