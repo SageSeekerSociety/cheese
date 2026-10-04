@@ -147,11 +147,13 @@ def upgrade() -> None:
     # The backend this deploy replaces is still serving while this runs. Taken
     # one at a time below, each table's lock would be asked for while this
     # transaction already holds rows a live write is waiting on: a deadlock,
-    # which Postgres settles by killing the migration. Taking them all first,
-    # in the order a document write takes them, makes a live write wait for
-    # the migration instead.
+    # which Postgres settles by killing the migration. Taking them all first
+    # makes a live write wait for the migration instead. That includes the
+    # tables the foreign keys below point at, since adding or dropping one
+    # locks its target too; topics and projects come first because nearly
+    # every request reads them before it writes anything else.
     op.execute(
-        "LOCK TABLE living_doc_locks, blocks, living_doc_versions,"
+        "LOCK TABLE topics, projects, living_doc_locks, blocks, living_doc_versions,"
         " living_doc_operations, living_doc_states, tasks IN ACCESS EXCLUSIVE MODE"
     )
     # The triggers would refuse the backfills below; they come back at the end,
