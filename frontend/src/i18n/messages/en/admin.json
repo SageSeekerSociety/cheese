@@ -10,7 +10,6 @@
   },
   "shortcuts": {
     "title": "Keyboard shortcuts",
-    "then": "then",
     "scope": {
       "global": "Everywhere",
       "list": "List",

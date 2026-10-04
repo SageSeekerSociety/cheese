@@ -70,6 +70,7 @@ from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
+from app.domain.delivery.ask_session_wait import waiting_ask_blocks
 from app.domain.delivery.ask_wake import expected_ask_session
 from app.domain.delivery.input_identity import InputEffects, InputOutcomeUnconfirmed
 from app.domain.delivery.receipts import held_blocks
@@ -231,6 +232,8 @@ class _Machines(Protocol):
 
     async def activate(self, session: SessionRef, runtime: RoomSessions) -> None: ...
 
+    async def dismiss(self, topic_id: uuid.UUID, agent_handle: str) -> None: ...
+
 
 class _MemoryBooks(Protocol):
     """What a turn tells the service's memory ledger (``agent.memory_ledger``)."""
@@ -355,6 +358,19 @@ class RoomTurns:
             roster: list[dict],
         ) -> str: ...
 
+    async def dismiss(self, topic_id: uuid.UUID, seat: str) -> None:
+        """Stop the work the teammate on rosters as ``seat`` still has running
+        in this room: one taken off the room, whose every call there is now
+        refused. What it wrote so far stays."""
+        async with self._sessions() as session:
+            topic = await TopicRepository(session).get(topic_id)
+            project = topic and await ProjectRepository(session).get(topic.project_id)
+            agent = project and await AgentInstanceService(session).for_seat_handle(
+                project, seat
+            )
+        if agent is not None:
+            await self._compute.dismiss(topic_id, agent.handle)
+
     async def _assemble_turn(
         self,
         *,
@@ -435,6 +451,14 @@ class RoomTurns:
             held = await held_blocks(
                 session,
                 project_id=topic.project_id,
+                topic_id=place.room_id,
+                recipient_handle=acting_agent,
+            )
+            # An answer whose Ask conversation is gone belongs to no prompt:
+            # carrying it would fail this turn on the fence that refuses it
+            # (`ask_session_wait`).
+            held |= await waiting_ask_blocks(
+                session,
                 topic_id=place.room_id,
                 recipient_handle=acting_agent,
             )

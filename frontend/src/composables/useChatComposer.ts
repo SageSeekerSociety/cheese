@@ -174,6 +174,13 @@ export function useChatComposer(deps: ChatComposerDeps) {
   const startersRetired = computed(() =>
     blocks.value.some((b) => isAgentBlock(b) && (b.kind === 'message' || b.kind === 'attachment'))
   )
+
+  // 这个人往房间里放过东西没有——「开始清单」里「把材料放进来」那一步的判据之一
+  // （另一条是项目资料库非空，得问服务端）。
+  //
+  // 只数**人**放的：芝士干活时往房间里贴的文件不算这个人交过材料，否则他一进
+  // 来这一步就自己亮起来，而他要做的恰恰是把手上那份给它。
+  const roomHasAttachment = computed(() => blocks.value.some((b) => b.kind === 'attachment' && !isAgentBlock(b)))
   const showStarters = computed(
     () =>
       topic()?.kind === 'root' &&
@@ -363,6 +370,9 @@ export function useChatComposer(deps: ChatComposerDeps) {
     composerRef,
     starterPrompts,
     showStarters,
+    // 「开始清单」读的两条房间内判据：芝士开过口没有、这个人放过材料没有。
+    agentHasSpoken: startersRetired,
+    roomHasAttachment,
     startDraft,
     pendingAtts,
     attsUploading,
