@@ -454,13 +454,19 @@ defineExpose({ send, connected, submitQuestion })
   height: 100%;
   background: var(--surface);
 }
-/* 手机外壳里输入框收成和对话同一栏（时间线那一份在 ChatTimeline）。 */
+/* 输入框和它下面那行状态收成和对话同一栏（时间线那一份在 ChatTimeline）：桌面上
+   是读的一栏 --page-w-read，手机外壳里是 --page-w。三块（时间线、输入框、贴在上
+   面的那一条）用同一个值，栏才对齐。 */
+.composer,
+.composer-activity {
+  width: 100%;
+  max-width: var(--page-w-read);
+  margin-inline: auto;
+}
 @media (max-width: 959.98px) {
   .composer,
   .composer-activity {
-    width: 100%;
     max-width: var(--page-w);
-    margin-inline: auto;
   }
 }
 </style>

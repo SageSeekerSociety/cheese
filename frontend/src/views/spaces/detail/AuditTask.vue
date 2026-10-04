@@ -138,7 +138,9 @@ watch(
 
 <style scoped>
 .audit {
+  /* 宽屏下封顶居中（和项目里的页面一样），不再左贴、右边空一条。 */
   max-width: 960px;
+  margin-inline: auto;
   padding: 8px 16px 48px;
 }
 
