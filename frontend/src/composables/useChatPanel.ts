@@ -56,6 +56,7 @@ import { announceComments } from '../lib/docCommentSignals'
 import { renderNoticeMessage } from '../lib/noticeText'
 import { outgoingMessageBody, pendingMessageBlock } from '../lib/outgoingMessage'
 import { AGENT_STATUS_EVENTS, collapseNotices, type PlatformNotice, rendersInRoom } from '../lib/platformNotice'
+import { reactOptimistically } from '../lib/reactions'
 import { coalesceSplitFencedCodeBlocks } from '../lib/renderMessage'
 import { placeSplitMarkers } from '../lib/splitMarkers'
 import { taskTitle, topicShortId, topicStateBadge, topicTitle } from '../lib/topicState'
@@ -197,16 +198,14 @@ export function useChatPanel(opts: ChatPanelOptions) {
     if (m) m.reactions = reactions
   }
 
-  async function onReact(m: Block, emoji: string) {
+  function onReact(m: Block, emoji: string) {
     reactionPickerFor.value = null
-    try {
-      // The response carries the fresh aggregate; the `reaction` WS frame the
-      // backend broadcasts is idempotent with this local apply.
-      const out = await apiToggleReaction(m.id, emoji)
-      applyReactions(m.id, out.reactions)
-    } catch (e) {
-      errorMsg.value = e instanceof Error ? e.message : t('work.room.chat.reactionFailed')
-    }
+    void reactOptimistically(m.id, emoji, AUTHOR, {
+      before: () => timeline.find(m.id)?.reactions,
+      apply: applyReactions,
+      send: apiToggleReaction,
+      fail: (e) => (errorMsg.value = e instanceof Error ? e.message : t('work.room.chat.reactionFailed')),
+    })
   }
 
   // 「这条事件长什么样」的判断全在 lib/platformNotice.ts —— 包括动作卡认哪些块
