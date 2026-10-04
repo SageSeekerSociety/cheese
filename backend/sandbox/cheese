@@ -2653,9 +2653,8 @@ def _environment_runner() -> Path | None:
     return None
 
 
-def _task_id(explicit: str | None = None) -> str:
-    if explicit:
-        return str(uuid.UUID(explicit))
+def _marked_task() -> str | None:
+    """The task whose worktree this is, or None in any other checkout."""
     result = subprocess.run(
         ["git", "rev-parse", "--git-path", "cheese-task.json"],
         capture_output=True,
@@ -2665,7 +2664,16 @@ def _task_id(explicit: str | None = None) -> str:
         marker = Path(result.stdout.strip())
         if marker.is_file():
             return str(uuid.UUID(json.loads(marker.read_text())["task_id"]))
-    raise SystemExit("[cheese] 请在任务工作目录内执行，或指定 --task <id>")
+    return None
+
+
+def _task_id(explicit: str | None = None) -> str:
+    if explicit:
+        return str(uuid.UUID(explicit))
+    task_id = _marked_task()
+    if task_id is None:
+        raise SystemExit("[cheese] 请在任务工作目录内执行，或指定 --task <id>")
+    return task_id
 
 
 def _git_task(
@@ -2747,7 +2755,12 @@ def _configure_git_transport(repo: Path, data: dict) -> None:
 
 
 def _git_attribution(message_file: str) -> None:
-    task_id = _task_id()
+    # The hook belongs to the shared repository, so every worktree of it runs
+    # it, including one made with `git worktree add` beside a task's. Only a
+    # task's own worktree has someone to credit; any other commits as itself.
+    task_id = _marked_task()
+    if task_id is None:
+        return
     project = _need("CHEESE_PROJECT", PROJECT)
     data = _call("GET", f"/projects/{project}/git/tasks/{task_id}")["data"]
     if data["room_id"] != TOPIC:
@@ -2889,7 +2902,13 @@ def _task_worktree(task_id: str) -> Path:
         prepare.write_text('#!/bin/sh\nexec cheese git-attribution "$1"\n')
         prepare.chmod(0o755)
         hook = hooks / "post-commit"
-        hook.write_text("#!/bin/sh\nexec cheese sync\n")
+        # Delivers the task whose worktree committed; another worktree of this
+        # repository has no task to deliver, and `cheese sync` there would fail.
+        hook.write_text(
+            "#!/bin/sh\n"
+            '[ -f "$(git rev-parse --git-path cheese-task.json)" ] || exit 0\n'
+            "exec cheese sync\n"
+        )
         hook.chmod(0o755)
     # The room has no checkout. Branch dependencies belong to this task and
     # must be prepared on every open, including after local branch changes.
