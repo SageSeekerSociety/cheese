@@ -560,7 +560,9 @@
       "site": "Activity",
       "changes": "Changes",
       "preview": "Preview",
-      "routines": "Routines"
+      "routines": "Routines",
+      "scrollLeft": "Scroll tabs left",
+      "scrollRight": "Scroll tabs right"
     },
     "preview": {
       "fullscreenFailed": "Couldn't go full screen. Open it in a new tab",
