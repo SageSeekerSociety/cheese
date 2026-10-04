@@ -10,9 +10,9 @@ import * as directives from 'vuetify/directives'
 import { fireEvent, render } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import i18n, { setLocale } from '@/i18n'
-
 import PanelTabs, { type PanelTab } from './PanelTabs.vue'
+
+import i18n, { setLocale } from '@/i18n'
 
 beforeEach(() => setLocale('zh-CN'))
 
