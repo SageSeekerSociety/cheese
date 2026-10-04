@@ -154,7 +154,7 @@ EVENT_DEPENDENCY_REJECTED: Final = "dependency_rejected"
 EVENT_POLICY_PROPOSAL: Final = "policy_proposal"
 #: 到点了 —— 这一轮是这条线程自己当初请平台在这个时刻递给它的（结论 17）。
 EVENT_TIMED_DELIVERY: Final = "timed_delivery"
-#: 芝士把一次做法整理成了项目工作方法（skill），等人确认后才保存、才下发。
+#: 芝士把一次做法整理成了项目技能，等人确认后才保存、才下发。
 EVENT_SKILL_PROPOSED: Final = "skill_proposed"
 #: 芝士在某人的邮箱里写好了一封草稿；发不发由邮箱主人确认。
 EVENT_MAIL_DRAFTED: Final = "mail_drafted"

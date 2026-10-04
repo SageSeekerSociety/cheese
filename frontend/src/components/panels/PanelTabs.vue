@@ -14,6 +14,7 @@ import type { OpenFileTab } from '../../composables/useTopicMemory'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 import { fileIcon } from '../../lib/fileKind'
+import { vRovingTabs } from '../../lib/rovingTabs'
 
 import { t } from '@/i18n'
 
@@ -37,8 +38,10 @@ const props = withDefaults(
     files?: OpenFileTab[]
     /** 窄屏（手机上这一格是「对话」时）的加高与横滚。 */
     phone?: boolean
+    /** 页签切换的那块内容区（`role="tabpanel"`）的 id，给每一格的 `aria-controls`。 */
+    panelId?: string
   }>(),
-  { files: () => [], phone: false }
+  { files: () => [], phone: false, panelId: undefined }
 )
 
 const emit = defineEmits<{
@@ -108,7 +111,7 @@ const inkStyle = computed(() =>
 </script>
 
 <template>
-  <div ref="tabbarRef" class="tabbar" :class="{ 'tabbar--phone': phone }" role="tablist">
+  <div ref="tabbarRef" v-roving-tabs class="tabbar" :class="{ 'tabbar--phone': phone }" role="tablist">
     <button
       v-for="tab in tabs"
       :key="tab.key"
@@ -117,6 +120,7 @@ const inkStyle = computed(() =>
       class="tabbar__tab"
       :class="{ 'tabbar__tab--on': active === tab.key, 'tabbar__tab--empty': tab.empty }"
       :aria-selected="active === tab.key"
+      :aria-controls="panelId"
       :title="tab.title ?? tab.label"
       @click="emit('select', tab.key)"
     >
@@ -149,6 +153,7 @@ const inkStyle = computed(() =>
         class="tabbar__tab"
         :class="{ 'tabbar__tab--on': active === fileKey(f.path) }"
         :aria-selected="active === fileKey(f.path)"
+        :aria-controls="panelId"
         :title="f.pinned ? f.path : t('work.room.tabs.pinHint', { path: f.path })"
         @click="emit('select', fileKey(f.path))"
         @dblclick="emit('pin-file', f.path)"
