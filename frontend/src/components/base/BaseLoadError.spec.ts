@@ -39,4 +39,18 @@ describe('BaseLoadError', () => {
     await fireEvent.click(await screen.findByRole('button', { name: 'Try again' }))
     expect(view.emitted('retry')).toHaveLength(1)
   })
+
+  it('says no access and offers no retry when forbidden', async () => {
+    // 401/403：说没权限，不给重试——重试一次还是同一个 401。
+    mount({ title: "Couldn't load overview", forbidden: true })
+    expect(await screen.findByText("You don't have access to this")).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+    expect(screen.queryByText("Couldn't load overview")).toBeNull()
+  })
+
+  it('still shows the server reason under the no-access title', async () => {
+    mount({ forbidden: true, error: 'HTTP 403 for /library' })
+    expect(await screen.findByText("You don't have access to this")).toBeTruthy()
+    expect(screen.getByText('HTTP 403 for /library')).toBeTruthy()
+  })
 })

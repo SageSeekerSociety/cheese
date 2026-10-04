@@ -18,6 +18,7 @@ vi.mock('@/api', async (original) => ({ ...(await original<object>()), searchPro
 
 import ProjectSearchView from './ProjectSearchView.vue'
 
+import { ApiError } from '@/api'
 import { t } from '@/i18n'
 
 const Blank = defineComponent({ render: () => h('div') })
@@ -116,5 +117,39 @@ describe('搜索结果页', () => {
     await fireEvent.update(screen.getByRole('searchbox'), '浅色')
     await waitFor(() => expect(router.currentRoute.value.query.q).toBe('浅色'), { timeout: 2000 })
     await waitFor(() => expect(searchProjectCounted).toHaveBeenLastCalledWith('p1', '浅色', expect.anything()))
+  })
+})
+
+// 读失败留在结果那块地方：整块换成失败块（§3.10），给服务端原话和一条重试；绝不退
+// 回「暂无结果」。401/403 说没权限、不给重试。
+describe('搜索结果读失败', () => {
+  it('整块换成失败块：服务端原话 + 重试，不显示「暂无结果」', async () => {
+    searchProjectCounted.mockRejectedValue(new Error('HTTP 500 for /search'))
+    await mount('/projects/p1/search?q=深色')
+    expect(await screen.findByText(t('navigation.search.failed'))).toBeTruthy()
+    expect(screen.getByText('HTTP 500 for /search')).toBeTruthy()
+    expect(screen.queryByText(t('navigation.palette.empty')), '失败不能显示成「暂无结果」').toBeNull()
+    expect(screen.getByRole('button', { name: t('global.loadError.retry') })).toBeTruthy()
+  })
+
+  it('点重试，重新读一次：失败块收掉', async () => {
+    searchProjectCounted.mockRejectedValueOnce(new Error('boom'))
+    await mount('/projects/p1/search?q=深色')
+    const retry = await screen.findByRole('button', { name: t('global.loadError.retry') })
+    searchProjectCounted.mockImplementation(
+      async (_project: string, _q: string, limit: number, paging?: { only: string[]; offset: number }) => ({
+        hits: page({ records: ALL.slice(paging?.offset ?? 0, (paging?.offset ?? 0) + limit) }),
+        counts: { message: ALL.length, weekly: 0, tasks: 0, library: 0 },
+      })
+    )
+    await fireEvent.click(retry)
+    await waitFor(() => expect(screen.queryByText(t('navigation.search.failed'))).toBeNull())
+  })
+
+  it('401/403：说没权限，不给重试', async () => {
+    searchProjectCounted.mockRejectedValue(new ApiError(403, 'forbidden'))
+    await mount('/projects/p1/search?q=深色')
+    expect(await screen.findByText(t('global.loadError.forbidden'))).toBeTruthy()
+    expect(screen.queryByRole('button', { name: t('global.loadError.retry') }), '没权限不该给重试').toBeNull()
   })
 })

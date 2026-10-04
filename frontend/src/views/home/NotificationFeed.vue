@@ -32,6 +32,16 @@
         </BaseButton>
       </div>
     </div>
+    <!-- First-screen read failure used to fall through to the "no notifications"
+         line, i.e. "nothing is wrong, there is simply none". Replace it with the
+         server's own words and one retry (§3.10); 401/403 says no access instead. -->
+    <BaseLoadError
+      v-else-if="failed"
+      :title="t('notifications.common.loadFailed')"
+      :error="errorDetail"
+      :forbidden="errorForbidden"
+      @retry="reload"
+    />
     <p v-else-if="!loading" class="notification-feed__quiet t-body">
       {{ filter === 'unread' ? t('notifications.common.noUnread') : t('notifications.common.noNotifications') }}
     </p>
@@ -46,7 +56,9 @@ import { useI18n } from 'vue-i18n'
 
 import { useUnreadNotifications } from '@/composables/useUnreadNotifications'
 
+import { ApiError } from '@/api'
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import NotificationItem from '@/components/common/Notification/NotificationItem.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import { NotificationsApi } from '@/network/api/notifications'
@@ -76,6 +88,12 @@ const loading = ref(false)
 const cursorStart = ref<string | undefined>(undefined)
 const pageSize = ref(10)
 const hasMore = ref(false)
+// 第一页读失败：整块换成失败块（§3.10）。以前这里只剩 console.error，人看到的
+// 是「暂无通知」——和「本来就没有」一模一样。服务端原话 + 一条重试。
+const failed = ref(false)
+const errorDetail = ref<string | null>(null)
+// 401/403 是「不给你看」：无权限形态、不给重试。
+const errorForbidden = ref(false)
 
 // 判断是否有未读通知
 const hasUnread = computed(() => notifications.value.some((notification) => !notification.read))
@@ -83,11 +101,18 @@ const hasUnread = computed(() => notifications.value.some((notification) => !not
 // 获取通知列表。每换一次筛选 generation 加一：换之前发出、换之后才回来的那一页
 // 属于上一种筛选，丢掉，不然「未读」那一栏会混进已读的。
 let generation = 0
-const fetchNotifications = async () => {
+// `append` 的这一次是「加载更多」：它失败时列表还在，别把整块换成失败块；只有
+// 第一页（不 append）失败才整块替换。
+const fetchNotifications = async (append = false) => {
   if (loading.value) return
 
   const mine = generation
   loading.value = true
+  if (!append) {
+    failed.value = false
+    errorDetail.value = null
+    errorForbidden.value = false
+  }
   try {
     const { data } = await NotificationsApi.list({
       // 未读筛选只问服务端要没读的；「全部」不传这一位，行为和从前一样。
@@ -101,7 +126,14 @@ const fetchNotifications = async () => {
     hasMore.value = data.page.hasMore
     cursorStart.value = data.page.nextStart
   } catch (error) {
-    console.error('获取通知失败:', error)
+    if (mine !== generation) return
+    if (append) {
+      console.error('获取通知失败:', error)
+      return
+    }
+    failed.value = true
+    errorDetail.value = error instanceof Error ? error.message : null
+    errorForbidden.value = error instanceof ApiError && (error.status === 401 || error.status === 403)
   } finally {
     if (mine === generation) loading.value = false
   }
@@ -114,6 +146,9 @@ function reload() {
   cursorStart.value = undefined
   notifications.value = []
   hasMore.value = false
+  failed.value = false
+  errorDetail.value = null
+  errorForbidden.value = false
   void fetchNotifications()
 }
 
@@ -128,7 +163,7 @@ watch(filter, (value) => {
 
 // 加载更多通知
 const loadMore = () => {
-  fetchNotifications()
+  fetchNotifications(true)
 }
 
 // 标记单个通知为已读

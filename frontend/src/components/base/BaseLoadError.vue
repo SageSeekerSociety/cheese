@@ -9,6 +9,11 @@
  * 服务端那句真实原因（`error`，来自 `ApiError.message`）有就照原样显示，没有就
  * 只显示这一块的标题。标题由调用方给（「加载总览失败」这类），默认是全局的
  * 「加载失败」。
+ *
+ * `forbidden` 是 401/403 的那一种：不是「这次没读到」，是「你没资格读」。它直接
+ * 说没权限、**不给重试**——重试一次仍然是 401/403，摆一颗按了没用的按钮只会让人
+ * 以为是自己点得不对。别把它退回「暂无」：那是「本来就没有」，和「不给你看」是
+ * 两回事。
  */
 import BaseButton from './BaseButton.vue'
 
@@ -20,23 +25,27 @@ const props = withDefaults(
     error?: string | null
     /** 这一块读失败的那句话；不给就用全局的「加载失败」。 */
     title?: string
+    /** 401/403：直接说没权限、不给重试。 */
+    forbidden?: boolean
   }>(),
-  { error: null, title: undefined }
+  { error: null, title: undefined, forbidden: false }
 )
 
 defineEmits<{ retry: [] }>()
+
+// forbidden 时标题就说没权限，不摆调用方那句「读取失败」——那颗重试按钮已经不在了，
+// 「再试一次」的说法也就没有了落点。
+function resolvedTitle(): string {
+  return props.forbidden ? t('global.loadError.forbidden') : props.title ?? t('global.loadError.title')
+}
 </script>
 
 <template>
   <!-- role="alert" so a reader is told this block is empty because it failed, not because nothing is there. -->
   <div class="base-load-error" role="alert">
-    <v-alert
-      type="error"
-      variant="tonal"
-      :title="props.title ?? t('global.loadError.title')"
-      :text="props.error?.trim() || undefined"
-    />
-    <BaseButton kind="secondary" class="mt-3" @click="$emit('retry')">
+    <v-alert type="error" variant="tonal" :title="resolvedTitle()" :text="props.error?.trim() || undefined" />
+    <!-- 401/403 不给重试：重试一次还是同一个 401，摆一颗按了没用的按钮只会误导。 -->
+    <BaseButton v-if="!props.forbidden" kind="secondary" class="mt-3" @click="$emit('retry')">
       {{ t('global.loadError.retry') }}
     </BaseButton>
   </div>

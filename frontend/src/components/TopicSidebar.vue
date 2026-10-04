@@ -40,6 +40,7 @@ import TransferProjectDialog from './TransferProjectDialog.vue'
 import { menuActionOf } from '@/commands'
 import { openPalette } from '@/commands/palette/state'
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import { t } from '@/i18n'
 
 const props = defineProps<{
@@ -48,6 +49,9 @@ const props = defineProps<{
   topics: Topic[]
   selectedTopicId: string | null
   loadingTopics: boolean
+  // 话题列表**整块**没读到时服务端那句原话（§3.10）；null 是没失败，空串是失败了
+  // 但服务端没给原话。401/403 不走这里——那是「进不来」，整个侧栏不渲染。
+  topicsError?: string | null
   creatingTopic?: boolean
   // Which 项目文档 is open in the main area ('charter'|'weeklies'|'memory'),
   // or null when none — the rail shows ONE 项目文档 row, active for
@@ -77,6 +81,8 @@ const emit = defineEmits<{
   (e: 'press-topic', id: string): void
   (e: 'leave-topic'): void
   (e: 'create-topic', title: string): void
+  // 失败块上那颗重试：重新读一遍这份话题清单。
+  (e: 'retry-topics'): void
   // 已归档那一组里行尾的「取消归档」。
   (e: 'unarchive-topic', id: string): void
   // Rename a topic's title from the row's ⋯ actions. A name a person chose is
@@ -500,6 +506,16 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
 
           <LoadingSkeleton v-if="loadingTopics" variant="list" class="rail-skel" />
 
+          <!-- Whole list failed to read: replace it in place with the common
+               failure block (§3.10). Never fall back to "no topics". -->
+          <BaseLoadError
+            v-else-if="topicsError != null"
+            :title="t('shell.workspaceErrors.loadTopics')"
+            :error="topicsError"
+            class="rail-load-error"
+            @retry="emit('retry-topics')"
+          />
+
           <template v-else>
             <!-- 一组都不相关的时候（刚进项目、还没参与任何话题），上组是空的。
                  说清楚「空的是这一组，不是这个项目」，否则下面那个折叠组会像个谜。 -->
@@ -635,6 +651,11 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
    这条 rail 上「再离底一档」的那个值（选中行用的也是它），在两个主题下都看得见。 */
 .rail-skel {
   --skel-bone: var(--line-2);
+}
+
+/* 话题列表读失败时整块换成的失败块：给它一点外边距，别贴着上面那条分隔线。 */
+.rail-load-error {
+  margin: 8px 12px;
 }
 
 /* 行换位置、进出（见模板里 TransitionGroup 那段）。走掉的那一行脱离文档流，否则

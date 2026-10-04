@@ -21,13 +21,14 @@ import { toast } from 'vuetify-sonner'
 
 import { useRowMenu } from '@/composables/useRowMenu'
 
-import { deleteLibraryFile, downloadFile, libraryFileRawUrl, listProjectLibrary } from '../api'
+import { ApiError, deleteLibraryFile, downloadFile, libraryFileRawUrl, listProjectLibrary } from '../api'
 import { libraryFileBytes, replaceLibraryFile, uploadLibraryFile } from '../lib/libraryApi'
 import { VIRTUAL_LIST_CONTENT_THRESHOLD } from '../lib/virtualList'
 
 import { useCommands } from '@/commands'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import AppPage from '@/components/common/AppPage.vue'
@@ -50,7 +51,11 @@ const rowMenu = useRowMenu<string>()
 
 const files = ref<LibraryFile[]>([])
 const loading = ref(false)
-const loadError = ref('')
+// 读整份清单失败：整块换成失败块（§3.10），失败块自己拿服务端那句原话和重试。
+const loadError = ref(false)
+const loadErrorDetail = ref<string | null>(null)
+// 401/403 是「不给你看」，不是「这次没读到」：失败块换成无权限形态、不给重试。
+const loadForbidden = ref(false)
 const actionError = ref('')
 const busy = ref('')
 const uploading = ref(false)
@@ -67,14 +72,18 @@ const listEl = ref<HTMLElement | null>(null)
 async function load() {
   const projectId = props.projectId
   loading.value = true
-  loadError.value = ''
+  loadError.value = false
+  loadErrorDetail.value = null
+  loadForbidden.value = false
   try {
     const listed = await listProjectLibrary(projectId)
     if (props.projectId !== projectId) return
     files.value = listed.data
   } catch (e) {
     if (props.projectId !== projectId) return
-    loadError.value = e instanceof Error ? e.message : t('work.library.loadError')
+    loadError.value = true
+    loadErrorDetail.value = e instanceof Error ? e.message : null
+    loadForbidden.value = e instanceof ApiError && (e.status === 401 || e.status === 403)
   } finally {
     if (props.projectId === projectId) loading.value = false
   }
@@ -478,6 +487,15 @@ function read(file: LibraryFile) {
           </VirtualList>
         </ul>
 
+        <!-- Read failure replaces the list: the server's own words plus one retry
+             (401/403 switches to the no-access form, no retry). §3.10. -->
+        <BaseLoadError
+          v-else-if="loadError"
+          :title="t('work.library.loadError')"
+          :error="loadErrorDetail"
+          :forbidden="loadForbidden"
+          @retry="load"
+        />
         <BaseEmptyState
           v-else-if="files.length"
           size="inline"
@@ -485,13 +503,7 @@ function read(file: LibraryFile) {
           class="library__empty"
           :title="t('work.library.noMatch')"
         />
-        <BaseEmptyState
-          v-else-if="!loadError && !loading"
-          size="inline"
-          align="center"
-          class="library__empty"
-          :title="t('work.library.empty')"
-        />
+        <BaseEmptyState v-else size="inline" align="center" class="library__empty" :title="t('work.library.empty')" />
       </section>
 
       <!-- 这一份：桌面上在右边一栏，手机上是整一页。 -->

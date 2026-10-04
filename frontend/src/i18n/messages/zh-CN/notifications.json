@@ -7,6 +7,7 @@
     "deleteHint": "删掉之后它不再出现在这里，也没法恢复。",
     "noNotifications": "暂无通知",
     "noUnread": "暂无未读通知",
+    "loadFailed": "加载通知失败",
     "markAllAsRead": "标记全部已读",
     "loadMore": "加载更多",
     "filterAll": "全部",

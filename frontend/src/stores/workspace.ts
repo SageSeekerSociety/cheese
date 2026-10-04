@@ -95,6 +95,10 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   // 同一位的 handle：句子里提到它时画成可点的 @chip（UserRef），点了去它的成员页。
   const agentHandle = computed(() => members.value.find((m) => m.agent && m.project_default)?.user_handle ?? null)
   const loadingTopics = ref(false)
+  // 话题列表**整块**没读到时的服务端原话（§3.10）。它不是那条几秒就消失的红条：
+  // 侧栏把那块地方换成失败块，重试按钮重新读这一份。401/403 不写这里——那是「进不
+  // 来」，走 `accessDenied` 的一屏说明，不是「这一次没取到」。
+  const topicsError = ref<string | null>(null)
   let projectEpoch = 0
   let topicRevision = 0
   const pendingReads = new Map<string, Promise<unknown>>()
@@ -344,16 +348,53 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
         if (topics.value !== payload.data) topics.value = payload.data
         forgetMissingTopic(pid, payload.data)
         noteArchived(payload.data)
+        // 后台这一次读成功了：上一次前台失败留下的失败块收掉，人不用自己点重试。
+        topicsError.value = null
       }
     } catch {
       // Best-effort background refresh; ignore.
     }
   }
 
+  // 读这份话题清单（前台那一次，会亮失败块）。落地前确认 epoch / 项目没换；失败按
+  // 三种去处分开：401/403 是「进不来」的一屏说明，归档是项目换了状态，其余是
+  // 「这一次没取到」——写进 `topicsError`，侧栏就地换成失败块（§3.10）。
+  async function readTopics(id: string, epoch: number) {
+    const revision = topicRevision
+    try {
+      const payload = await readLatest(`topics:${id}:${revision}`, () => listTopics(id, TOPIC_SORT))
+      if (epoch !== projectEpoch || projectId.value !== id) return
+      if (revision === topicRevision) topics.value = payload.data
+      forgetMissingTopic(id, payload.data)
+      noteArchived(payload.data)
+    } catch (e) {
+      if (epoch !== projectEpoch || projectId.value !== id || noteAccess(e)) return
+      if (isProjectArchivedError(e)) {
+        accessDenied.value = 'archived'
+        return
+      }
+      // 空串是「失败了但服务端没给原话」：侧栏照样换失败块，只是不画原因那一行。
+      topicsError.value = e instanceof Error ? e.message : ''
+    }
+  }
+
+  /** 失败块上那颗「重试」：重新读一遍这份话题清单，读完把失败块收掉。 */
+  async function reloadTopics() {
+    const id = projectId.value
+    const epoch = projectEpoch
+    if (!id) return
+    topicsError.value = null
+    loadingTopics.value = true
+    try {
+      await readTopics(id, epoch)
+    } finally {
+      if (epoch === projectEpoch && projectId.value === id) loadingTopics.value = false
+    }
+  }
+
   // Enter a project: everything project-scoped is reloaded, and anything left
   // over from the previous project is dropped rather than shown as this one's.
   async function openProject(id: string) {
-    const revision = topicRevision
     // Re-entering the project you were already in (back from 首页, a rail click):
     // the tree is still here and blanking it would flash the whole sidebar, but
     // it is as old as the time you spent away, so bring it up to date. Unless
@@ -370,6 +411,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     projectId.value = id
     resolvingPlaces.value = {}
     error.value = null
+    topicsError.value = null
     persistLayout()
     topics.value = []
     members.value = []
@@ -382,16 +424,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     void refreshMembers()
     if (projects.value.length === 0) void refreshProjects()
     try {
-      const payload = await readLatest(`topics:${id}:${revision}`, () => listTopics(id, TOPIC_SORT))
-      if (epoch !== projectEpoch || projectId.value !== id) return
-      if (revision === topicRevision) topics.value = payload.data
-      forgetMissingTopic(id, payload.data)
-      noteArchived(payload.data)
-    } catch (e) {
-      // 「进不来」和「进来了但这一次没取到」是两件事：前者要一屏说明，后者是那条
-      // 红条。分不开的话，一次网络抖动会被写成「你没有权限」。
-      if (epoch !== projectEpoch || projectId.value !== id || noteAccess(e)) return
-      reportError(e, t('shell.workspaceErrors.loadTopics'))
+      await readTopics(id, epoch)
     } finally {
       if (epoch === projectEpoch && projectId.value === id) loadingTopics.value = false
     }
@@ -684,6 +717,8 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     agentHandle,
     isExternal,
     loadingTopics,
+    topicsError,
+    reloadTopics,
     unreadMap,
     badgeUnreadMap,
     notifyLevels,

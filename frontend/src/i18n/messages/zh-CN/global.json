@@ -9,7 +9,8 @@
   },
   "loadError": {
     "title": "加载失败",
-    "retry": "重试"
+    "retry": "重试",
+    "forbidden": "没有权限查看"
   },
   "cancel": "取消",
   "cheese": "知是",

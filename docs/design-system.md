@@ -500,6 +500,7 @@ AI 队友的头像（`CheeseAvatar`）有自己的一组颜色：五档暖色的
 
 - 写法照 `views/spaces/detail/analytics/*`：`load` 开头清掉 `failed` 与 `errorDetail`，`catch` 里 `failed = true`、`errorDetail = error instanceof Error ? error.message : null`，**不再** `toast.error`——同一件事不说两遍。
 - 只有「一整块内容没读到」才替换内容。列表里某一行、某一次操作（保存、删除）失败仍用 toast：那一行的内容没有消失，也没有整块可替。
+- **401/403 是「不给你看」，不是「这次没读到」**：传 `:forbidden="error instanceof ApiError && (error.status === 401 || error.status === 403)"`。块换成「没有权限查看」这句标题，并且**不给重试**——重试一次还是同一个 401，摆一颗按了没用的按钮只会误导人。服务端那句原话照旧显示在标题下面。
 
 ### 3.11 保存反馈：设置就地留痕，临时动作弹条
 

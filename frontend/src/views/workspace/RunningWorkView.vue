@@ -23,6 +23,7 @@ import { getAvatarUrl } from '@/utils/materials'
 
 import ArtifactManifest from '@/components/ArtifactManifest.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
@@ -53,7 +54,8 @@ const rows = ref<RoomTask[]>([])
  *  项目什么都没交出去」。和 `countsPending` 是同一条规矩。 */
 const madeCount = ref<number | null>(null)
 const loading = ref(false)
-const errorMsg = ref<string | null>(null)
+// 前台那一次读失败：整块板换成失败块（§3.10）。null 是没失败，空串是失败但没原话。
+const errorDetail = ref<string | null>(null)
 // 已完成折起来。板面留给还需要人看的东西，但要说得出有多少件——悄悄不显示会让人
 // 以为这个项目从来没交付过什么。
 const showDone = ref(false)
@@ -71,7 +73,7 @@ const REFRESH_MS = 15_000
 
 /** 重拉。
  *
- *  `silent` 的一次不碰 `loading`、不清 `rows`、失败也不写 `errorMsg` —— 正在看的
+ *  `silent` 的一次不碰 `loading`、不清 `rows`、失败也不亮失败块 —— 正在看的
  *  那几列因此不会闪回骨架，也不会因为一次网络抖动整块变成「加载失败」。同
  *  `TopicAcceptCard.vue` 的 `loadAcceptCard(silent)`，那里的注释解释了为什么这两
  *  种加载必须分开。 */
@@ -83,7 +85,7 @@ async function load(silent = false) {
   inFlight = true
   if (!silent) {
     loading.value = true
-    errorMsg.value = null
+    errorDetail.value = null
   }
   try {
     // 每次都真读（板是进项目的第一屏），只是和同一刻别处发出的那一次合并。
@@ -91,10 +93,10 @@ async function load(silent = false) {
     if (props.projectId === pid) {
       rows.value = payload.data
       // 上一次前台加载失败过、这一次悄悄成功了：把错误收掉，人不用自己点重试。
-      errorMsg.value = null
+      errorDetail.value = null
     }
-  } catch {
-    if (!silent && props.projectId === pid) errorMsg.value = t('work.board.loadFailed')
+  } catch (e) {
+    if (!silent && props.projectId === pid) errorDetail.value = e instanceof Error ? e.message : ''
   } finally {
     inFlight = false
     if (!silent && props.projectId === pid) loading.value = false
@@ -347,7 +349,7 @@ function taskRowKey(row: unknown): string {
     <!-- 「只看我的」：一个项目上百个房间，「待处理」那一列里大部分不是等你。
          登录身份取不到时不画这个开关——按空 handle 筛只会把整块板清空。 -->
     <template #controls>
-      <BoardFind v-if="!nothingYet && !errorMsg" v-model="find" />
+      <BoardFind v-if="!nothingYet && errorDetail === null" v-model="find" />
       <button
         v-if="mineHandle"
         type="button"
@@ -369,10 +371,12 @@ function taskRowKey(row: unknown): string {
       <!-- 等你决定：芝士 问了你一句话，在等你回答。 -->
       <NeedsYou :project-id="projectId" />
 
-      <div v-if="errorMsg" class="pa-6 t-body c-muted">
-        {{ errorMsg }}
-        <BaseButton kind="secondary" class="ms-2" size="sm" @click="load()">{{ t('work.board.retry') }}</BaseButton>
-      </div>
+      <BaseLoadError
+        v-if="errorDetail !== null"
+        :title="t('work.board.loadFailed')"
+        :error="errorDetail"
+        @retry="load()"
+      />
 
       <template v-else-if="nothingYet">
         <!-- 刚建出来的项目落在这儿时，几列空格子是它的整个第一屏。把那一屏换成

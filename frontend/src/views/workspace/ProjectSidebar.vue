@@ -126,6 +126,7 @@ useCommands(() => [
       :topics="store.topics"
       :selected-topic-id="activeTopicId"
       :loading-topics="store.loadingTopics"
+      :topics-error="store.topicsError"
       :creating-topic="creatingTopic"
       :active-docs="activeDocs"
       :unread-map="store.badgeUnreadMap"
@@ -139,6 +140,7 @@ useCommands(() => [
       @unarchive-topic="store.unarchive"
       @rename-topic="(p) => store.renameTopic(p.id, p.title)"
       @create-topic="onCreateTopic"
+      @retry-topics="store.reloadTopics()"
     >
       <!-- 手机上进项目落在话题列表上而不是看板上，所以看板的一句话摘要放在列表最顶上，
            点下去是看板。桌面上项目名那一行就是看板的入口。 -->

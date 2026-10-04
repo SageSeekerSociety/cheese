@@ -11,9 +11,10 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
-import { searchProject, searchProjectCounted } from '@/api'
+import { ApiError, searchProject, searchProjectCounted } from '@/api'
 import { firstWord } from '@/commands/palette/results'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import { t } from '@/i18n'
 import { docs } from '@/views/workspace/search/docs.palette'
@@ -72,9 +73,20 @@ const preview = ref<{ kind: ContentKind; items: PaletteItem[] }[]>([])
 const items = ref<PaletteItem[]>([])
 const loading = ref(false)
 const failed = ref(false)
+// 失败块摆在结果那一块地方（§3.10）：服务端那句原话 + 一条重试的路。
+const errorDetail = ref<string | null>(null)
+// 401/403 是「不给你看」，不是「这次没读到」：失败块换成无权限形态、不给重试。
+const errorForbidden = ref(false)
 const exhausted = ref(false)
 // 词或栏换了，还在路上的那一次回来时不认。
 let asked = 0
+
+/** 把这一次失败记进结果那块地方：服务端原话 + 401/403 的无权限判据。 */
+function noteFailure(e: unknown) {
+  failed.value = true
+  errorDetail.value = e instanceof Error ? e.message : null
+  errorForbidden.value = e instanceof ApiError && (e.status === 401 || e.status === 403)
+}
 
 async function load() {
   const ask = ++asked
@@ -82,6 +94,8 @@ async function load() {
   items.value = []
   exhausted.value = false
   failed.value = false
+  errorDetail.value = null
+  errorForbidden.value = false
   counts.value = null
   if (!query.value) return
   loading.value = true
@@ -100,8 +114,8 @@ async function load() {
         (group) => group.items.length
       )
     }
-  } catch {
-    if (ask === asked) failed.value = true
+  } catch (e) {
+    if (ask === asked) noteFailure(e)
   } finally {
     if (ask === asked) loading.value = false
   }
@@ -121,8 +135,8 @@ async function loadMore() {
     const more = current.itemsOf(hits, props.projectId, router)
     items.value = [...items.value, ...more]
     exhausted.value = more.length < PAGE
-  } catch {
-    if (ask === asked) failed.value = true
+  } catch (e) {
+    if (ask === asked) noteFailure(e)
   } finally {
     if (ask === asked) loading.value = false
   }
@@ -193,7 +207,15 @@ function segments(item: PaletteItem): { text: string; hit: boolean }[] {
         </v-tab>
       </v-tabs>
 
-      <p v-if="failed" role="alert" class="t-body c-danger">{{ t('navigation.search.failed') }}</p>
+      <!-- Read failure replaces the results area: the server's own words plus one
+           retry (401/403 switches to the no-access form, no retry). §3.10. -->
+      <BaseLoadError
+        v-if="failed"
+        :title="t('navigation.search.failed')"
+        :error="errorDetail"
+        :forbidden="errorForbidden"
+        @retry="load()"
+      />
       <BaseEmptyState
         v-else-if="query && !loading && !items.length && !preview.length"
         size="inline"
