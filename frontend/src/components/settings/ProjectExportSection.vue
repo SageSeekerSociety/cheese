@@ -1,31 +1,15 @@
 <script setup lang="ts">
-// 项目设置里的「导出项目」。后端早就有一条把整个项目打包成 tar 的端点
-// （docs/project-export.md），界面一直没有入口；这一块就是那个入口。
+// 项目设置里的「导出项目」。后端有一条把整个项目打包成 tar 的端点
+// （docs/project-export.md），界面一直没入口；这一块就是那个入口。
 //
-// 打包在服务端按调用者当前能看的范围现算，大项目要等一会儿，所以按下去之后按钮
-// 进 loading、并禁用，避免连点发两遍；失败了就把那句话原样摆在这一块里，不动整页。
-import { ref } from 'vue'
-
-import { downloadFile, projectExportUrl } from '@/api'
+// 这一块是哑的：只从 props 画「打包中 / 失败」，点下去往外 emit `export`。发请求与
+// 状态在 `composables/useProjectExport.ts`，由设置页面接线（`src/components` 下的
+// 组件不许碰 API 层，见 guards 的 import-boundary）。
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
-const props = defineProps<{ projectId: string; projectName: string }>()
-
-const busy = ref(false)
-const error = ref('')
-
-async function exportProject() {
-  error.value = ''
-  busy.value = true
-  try {
-    await downloadFile(projectExportUrl(props.projectId), `${props.projectName || props.projectId}.tar`)
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : t('work.projectSettings.export.failed')
-  } finally {
-    busy.value = false
-  }
-}
+defineProps<{ busy: boolean; error: string }>()
+defineEmits<{ (e: 'export'): void }>()
 </script>
 
 <template>
@@ -43,7 +27,7 @@ async function exportProject() {
           prepend-icon="mdi-download-outline"
           :loading="busy"
           :disabled="busy"
-          @click="exportProject"
+          @click="$emit('export')"
         >
           {{ t('work.projectSettings.export.action') }}
         </BaseButton>

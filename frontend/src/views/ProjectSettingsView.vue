@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
 import { useBranchProtection } from '@/composables/useBranchProtection'
+import { useProjectExport } from '@/composables/useProjectExport'
 import { useProjectSettings } from '@/composables/useProjectSettings'
 import { provideRevealGate } from '@/composables/useRevealGate'
 
@@ -100,6 +101,11 @@ const {
   saveApprovals,
   saveOverrideHandles,
 } = useBranchProtection(() => props.projectId)
+
+const { exporting, exportError, exportProject } = useProjectExport(
+  () => props.projectId,
+  () => projectName.value
+)
 
 const gate = provideRevealGate()
 const { revealed } = gate
@@ -318,7 +324,12 @@ function close() {
 
         <!-- Exporting is for everyone who can read the project; the archive follows the
              caller's current room permissions (docs/project-export.md). -->
-        <ProjectExportSection v-else-if="section === 'export'" :project-id="projectId" :project-name="projectName" />
+        <ProjectExportSection
+          v-else-if="section === 'export'"
+          :busy="exporting"
+          :error="exportError"
+          @export="exportProject"
+        />
 
         <!-- 归档只给所有者：归档是他一个人的决定（后端也只认他）。 -->
         <ArchiveProjectSection

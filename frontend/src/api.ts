@@ -1026,15 +1026,6 @@ export function libraryFileRawUrl(projectId: string, path: string): string {
   return `${BASE}/projects/${encodeURIComponent(projectId)}/library/raw?path=${encodeURIComponent(path)}`
 }
 
-/** 整个项目的一份 tar 存档（docs/project-export.md）：仓库的 Git bundle、资料库
- *  文件、各房间能看的产物与文件、每份文档的 Markdown，以及一份 manifest.json。取的是
- *  调用者当前能看的范围，超大项目要等一会儿才产出。走 `downloadFile` 那一套（
- *  `download=true` 后端不看它），因为它和别的下载一样要带上这次请求自己的
- *  Authorization —— 直链会绕过那一道门。 */
-export function projectExportUrl(projectId: string): string {
-  return `${BASE}/projects/${encodeURIComponent(projectId)}/export`
-}
-
 /** 题目附件清单里那份材料的字节。清单本身走 `TasksApi.listAttachments`，但那条
  *  接口故意不带 url（存储给的是直链，发出来就绕过了下载那道门），所以取文件只能
  *  从这个端点走 —— 门在服务端，带的是这次请求自己的 Authorization。
