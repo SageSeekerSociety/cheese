@@ -288,6 +288,13 @@ const chatEvents = {
 
 // 有没有队友正在这个话题里跑一轮 —— 工作面板的「现场」那一格和推送提示读它。
 const working = ref(false)
+
+// 页头那颗点说的是「这个房间跟不跟得上」——它和工作条必须同源。对话栏报上来的
+// `composerReady` 是 socket 的那一帧，而 socket 会在连接打嗝时闪断：那一瞬它说
+// 未连接，可这一轮还在跑（工作条写着「正在工作 · 重试中」，因为重试就是靠它自己
+// 接着干）。一轮没跑完，这个房间就是连着的 —— 断了它没法把这一轮干完。所以两个
+// 一起看：只要工作条在说「正在工作」，页头就不能同时说「未连接」。
+const roomConnected = computed(() => composerReady.value || working.value)
 // 此刻谁在这个房间里忙，对话栏从 socket 上学来：现场那一格画其中在干活的队友。
 const activity = ref<MemberActivityLine[]>([])
 // 会话状态的最近一帧，对话栏从 socket 上收到，现场那格的会话详情读它。
@@ -437,7 +444,7 @@ void openPlace()
         :topic="selectedTopic"
         :members="store.members"
         :me="AUTHOR"
-        :connected="composerReady"
+        :connected="roomConnected"
         :focus="focusMode"
         :panel-open="panelOpen"
         @toggle-focus="focusMode = !focusMode"
