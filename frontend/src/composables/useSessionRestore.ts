@@ -27,20 +27,27 @@ export function useSessionRestore() {
   const retrying = ref(false)
   const navigationFailed = ref(false)
 
+  // 这一层什么时候该在：恢复中 / 连不上 / 正在重试 / 恢复成功但没能落回上次的地方。
+  //
+  // `retrying` 也算在内，答案才诚实：重试成功时 phase 立刻回到 idle，而那时导航还
+  // 没走完——只看 phase 的话，那一层会在导航有结果之前就收起来，`navigationFailed`
+  // 那段说明（路由那一下失败了）也就永远没机会露面。
+  const active = computed(() => phase.value !== 'idle' || retrying.value || navigationFailed.value)
+
   const visible = ref(false)
   let showTimer: ReturnType<typeof setTimeout> | undefined
 
   watch(
-    phase,
-    (current) => {
+    active,
+    (on) => {
       clearTimeout(showTimer)
-      if (current === 'idle') {
+      if (!on) {
         visible.value = false
         return
       }
       if (visible.value) return
       showTimer = setTimeout(() => {
-        visible.value = phase.value !== 'idle'
+        visible.value = active.value
       }, SHOW_DELAY_MS)
     },
     { immediate: true }
@@ -70,6 +77,8 @@ export function useSessionRestore() {
   }
 
   function continueAsGuest() {
+    // 收起这一层：清掉「路由失败」那句话，也让 idle 的处境真的把门关掉。
+    navigationFailed.value = false
     AccountService.dismissRestore()
   }
 

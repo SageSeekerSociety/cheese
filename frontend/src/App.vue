@@ -1,7 +1,8 @@
 <template>
-  <!-- 冷打开时「正在恢复登录状态 / 连不上、可以重试」那一层。放在最前面，因为它要
-       同时盖住外壳和公开页两条分支——弱网下恢复失败的人，以前就被送到公开页上，
-       会话明明还好好的。见 services/account.ts 的 RestorePhase。 -->
+  <!-- The "restoring your session / unreachable, retry" layer for a cold open. It
+       comes first because it has to cover both branches — the shell and the public
+       page: on a weak network, someone whose session was still good used to be
+       sent to the marketing page. See RestorePhase in services/account.ts. -->
   <SessionRestoreGate
     :visible="restoreVisible"
     :phase="restorePhase"

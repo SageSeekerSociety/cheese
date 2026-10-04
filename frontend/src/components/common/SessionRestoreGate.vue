@@ -5,10 +5,12 @@
 // 不允许 src/components 下的文件碰 services/router）。文案见 shell.restore.*。
 import type { RestorePhase } from '@/composables/useSessionRestore'
 
+import { computed } from 'vue'
+
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
-defineProps<{
+const props = defineProps<{
   visible: boolean
   phase: RestorePhase
   retrying: boolean
@@ -16,22 +18,33 @@ defineProps<{
 }>()
 
 defineEmits<{ retry: []; continue: [] }>()
+
+// 门里画什么由处境决定，不由「可不可见」决定：
+//   busy   —— 正在确认（冷打开那一次，或人点了重试）。
+//   stuck  —— 确认不了，等人重试，或选择先以访客身份进去。
+//   failed —— 恢复成功了，只是路由那一下没走成（人已经登上了，页面还停在旧的那一页）。
+//
+// 两种「没好」分开写标题：已经登上的人不该再读到「确认不了登录状态」。
+const busy = computed(() => props.phase === 'restoring' || props.retrying)
+const stuck = computed(() => props.phase === 'unreachable' && !props.retrying)
+const title = computed(() =>
+  props.navigationFailed
+    ? t('shell.restore.navigationFailed')
+    : busy.value
+      ? t('shell.restore.restoring')
+      : t('shell.restore.unreachable')
+)
 </script>
 
 <template>
   <Transition name="restore-gate">
     <div v-if="visible" class="restore-gate" role="status" aria-live="polite">
       <div class="restore-gate__card">
-        <v-progress-circular v-if="phase === 'restoring'" indeterminate size="28" width="3" color="primary" />
+        <v-progress-circular v-if="busy" indeterminate size="28" width="3" color="primary" />
         <v-icon v-else size="28" color="primary">mdi-wifi-alert</v-icon>
-        <p class="restore-gate__title">
-          {{ phase === 'restoring' ? t('shell.restore.restoring') : t('shell.restore.unreachable') }}
-        </p>
-        <p v-if="phase === 'unreachable'" class="restore-gate__hint c-muted">
-          {{ t('shell.restore.unreachableHint') }}
-        </p>
-        <p v-if="navigationFailed" class="restore-gate__hint c-muted">{{ t('shell.restore.navigationFailed') }}</p>
-        <div v-if="phase === 'unreachable'" class="restore-gate__actions">
+        <p class="restore-gate__title">{{ title }}</p>
+        <p v-if="stuck" class="restore-gate__hint c-muted">{{ t('shell.restore.unreachableHint') }}</p>
+        <div v-if="stuck || navigationFailed" class="restore-gate__actions">
           <BaseButton kind="primary" :loading="retrying" @click="$emit('retry')">{{
             t('shell.restore.retry')
           }}</BaseButton>
