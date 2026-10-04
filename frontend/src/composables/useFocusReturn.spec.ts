@@ -138,6 +138,30 @@ describe('useFocusReturn', () => {
     expect(document.activeElement).toBe(trigger)
   })
 
+  it('打开时焦点本来就在 body 上：不算有「打开它的那一处」，走兜底', async () => {
+    // 打开浮层的那一下没把焦点交给任何元素（比如程序化地改 open，或者点的那处没聚焦）：
+    // activeElement 是 body。「还焦点给 body」是空动作，还会盖掉别处在关掉时的收尾，
+    // 所以这里当没有可还的那一处，直接退到兜底容器。
+    const open = ref(false)
+    makeTrigger()
+    const fallback = document.createElement('main')
+    fallback.id = 'fallback'
+    fallback.tabIndex = -1
+    document.body.appendChild(fallback)
+    mountOverlay(open, () => document.getElementById('fallback'))
+
+    expect(document.activeElement).toBe(document.body)
+
+    open.value = true
+    await nextTick()
+    panel()?.focus()
+
+    open.value = false
+    await settle()
+
+    expect(document.activeElement).toBe(fallback)
+  })
+
   it('一直挂到关掉为止的浮层（open 一开始就是 true）在卸载时还焦点', async () => {
     // 设置浮层那种：按路由挂上，open 恒为 true，`onBeforeUnmount` 是唯一的「关上」。
     const trigger = makeTrigger()

@@ -7,7 +7,8 @@ import { nextTick, onBeforeUnmount, watch } from 'vue'
  *
  * 打开的那一刻记下当时拿着焦点的元素（`document.activeElement`），关掉时如果它还
  * 在文档里（`isConnected`）就把它重新聚焦。参照 commands/palette/CommandPalette.vue
- * 里手写的那一套，抽成一个组合式函数。
+ * 里手写的那一套，抽成一个组合式函数。焦点本来就在 `body` 上（打开它的那一下没把
+ * 焦点交给任何元素）时不算「有那一处」，直接走下面的兜底。
  *
  * 适用于「打开/关闭由自己说了算」的浮层，比如自己画的对话框、没有 activator 的
  * v-bottom-sheet。Vuetify 的 v-dialog / v-overlay 只在**有 activator** 时才在关掉
@@ -42,7 +43,11 @@ export function useFocusReturn(open: Ref<boolean>, fallback?: () => HTMLElement 
     open,
     (isOpen) => {
       if (isOpen) {
-        returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
+        // 不认 `body`：焦点已经在 body 上时「还给它」是个空动作，还会盖掉别处的收尾
+        // （有页面自己在关掉时把焦点送回触发它的按钮）。没得还就当没有打开它的那一处，
+        // 走兜底。
+        const active = document.activeElement
+        returnFocus = active instanceof HTMLElement && active !== document.body ? active : null
       } else {
         restore()
       }
