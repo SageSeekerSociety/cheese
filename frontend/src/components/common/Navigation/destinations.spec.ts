@@ -69,6 +69,19 @@ describe('一级导航的两份清单', () => {
       expect(add, '清单里没有那个只有动作的格子，这条用例失去了对象').toBeTruthy()
       expect(add?.shortcut, '「新建项目」被分到了一个数字键').toBeUndefined()
     })
+
+    // 浮层上那个数字一直在说「按这个键」。App 只登记 mod+1..9，所以第 10 格往后分到
+    // 的数字没有任何键能触发——那两句「⌘10」「⌘11」是一句谎话。
+    it('编号到 9 为止，再多也没有键', () => {
+      const rail = items(railItems(sources(11, 'p1'), DEFAULT_SHELL))
+      const numbered = rail.filter((i) => i.shortcut !== undefined)
+      expect(numbered.map((i) => i.shortcut)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9])
+      // 数到 9 落在第 9 格头上（首页 + 前 8 个项目），第 9 个项目往后再没有数字。
+      expect(rail.find((i) => i.to === '/projects/p7')?.shortcut).toBe(9)
+      expect(rail.find((i) => i.to === '/projects/p8')?.shortcut).toBeUndefined()
+      expect(rail.find((i) => i.to === '/projects/p10')?.shortcut).toBeUndefined()
+      expect(shortcutTarget(rail, 9)).toBe('/projects/p7')
+    })
   })
 
   it('新建项目在两端都到得着', () => {
@@ -122,6 +135,35 @@ describe('工作区那一格落到哪个项目', () => {
 
   it('一个项目都没有时没有落点', () => {
     expect(workspaceProject([], null, 'a')).toBeNull()
+  })
+})
+
+describe('项目格子自己带信号', () => {
+  // 「待我处理」那件事在项目里，人在 rail 上就该看出来是哪个项目在等他——不然
+  // 一天几十次进出，只能一个个点进去猜。和首页那一格同一种记号：有件数画件数。
+  it('项目里有待我处理的，那一格画件数', () => {
+    const rail = railItems({ ...sources(3, 'p1'), projectAwaitingCount: (id) => (id === 'p1' ? 2 : 0) }, DEFAULT_SHELL)
+    expect(items(rail).find((i) => i.to === '/projects/p1')?.badge).toBe(2)
+    // 没有件数的项目格子不画 0。
+    expect(items(rail).find((i) => i.to === '/projects/p0')?.badge).toBeUndefined()
+  })
+
+  // 每天的主路径是「回到昨天那个房间」：从 rail 点回项目，直接落回上次开的话题，
+  // 而不是先落在项目首页再多点一跳。
+  it('上次打开的话题还在，项目格子直接落到那个话题', () => {
+    const rail = items(
+      railItems({ ...sources(2, 'p0'), projectLastTopic: (id) => (id === 'p1' ? 't9' : null) }, DEFAULT_SHELL)
+    )
+    expect(rail.find((i) => i.projectId === 'p1')?.to).toBe('/projects/p1/topics/t9')
+    // 没记过（或记着的不在了，宿主交回 null）的落回项目首页。
+    expect(rail.find((i) => i.projectId === 'p0')?.to).toBe('/projects/p0')
+  })
+
+  // ⌘N 和点这一格走的是同一个地址：两处落点不一样的话，快捷键会把人带去别处。
+  it('⌘N 跟着落到同一个话题', () => {
+    const rail = railItems({ ...sources(2, 'p0'), projectLastTopic: () => 't9' }, DEFAULT_SHELL)
+    expect(shortcutTarget(rail, 2)).toBe('/projects/p0/topics/t9')
+    expect(shortcutTarget(rail, 3)).toBe('/projects/p1/topics/t9')
   })
 })
 
