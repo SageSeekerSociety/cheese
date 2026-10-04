@@ -46,6 +46,7 @@ const emit = defineEmits<{
   (e: 'open-sheet'): void
   (e: 'open-transfer'): void
   (e: 'open-leave'): void
+  (e: 'export'): void
 }>()
 </script>
 
@@ -130,6 +131,13 @@ const emit = defineEmits<{
             :active="routeName === 'project-settings'"
             :disabled="!projectSelected"
             @click="emit('open-page', 'project-settings')"
+          />
+          <!-- 把整个项目带走：成果、文档、对话打成一个包。 -->
+          <v-list-item
+            prepend-icon="mdi-download-outline"
+            :title="t('navigation.project.export')"
+            :disabled="!projectSelected"
+            @click="emit('export')"
           />
           <!-- 只有转得动的人看得见：必然被拒的按钮比不给更糟。 -->
           <v-list-item

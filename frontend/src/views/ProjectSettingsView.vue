@@ -238,7 +238,7 @@ function close() {
               <span class="page-section-title">{{ t('work.projectSettings.defaultComputer') }}</span>
             </div>
             <div class="page-section-body">
-              <ProjectComputeSettings :project-id="projectId" />
+              <ProjectComputeSettings :project-id="projectId" :team-handle="project?.team_handle ?? null" />
             </div>
           </section>
           <CreditsPanel :project-id="projectId" />

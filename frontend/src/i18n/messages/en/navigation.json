@@ -10,7 +10,8 @@
     "settings": "Project settings",
     "general": "General",
     "routines": "Routines",
-    "skills": "Skills"
+    "skills": "Skills",
+    "export": "Download project archive"
   },
   "spaces": "Spaces",
   "teams": "Teams",

@@ -17,8 +17,13 @@ import DeviceSessionsSwitch from './DeviceSessionsSwitch.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import SettingsRow from '@/components/base/SettingsRow.vue'
+import FirstTimeHint from '@/components/common/FirstTimeHint.vue'
 
-const props = defineProps<{ projectId: string }>()
+const props = defineProps<{
+  projectId: string
+  /** 项目所属团队，指路去团队「工作电脑」页用；不知道时那半句只写名字不给链接。 */
+  teamHandle?: string | null
+}>()
 const { supply: cloudSupply, loading: supplyLoading, load: loadSupply } = useCloudSupply(() => props.projectId)
 const state = ref<ProjectComputeConfigs | null>(null)
 const error = ref('')
@@ -82,6 +87,25 @@ watch(editing, (open) => {
         </div>
       </SettingsRow>
       <p class="t-body c-muted mt-1 mb-2">{{ t('work.projectMachine.hint') }}</p>
+      <!-- 「用自己的电脑」要走三处：个人设置里接入、团队工作电脑页加进来、回这里选。
+           项目还一台设备都没有时，把前两处的路指出来。 -->
+      <FirstTimeHint v-if="state.can_manage && !state.devices.length" id="own-device">
+        <i18n-t keypath="global.firstHint.ownDevice" scope="global" tag="span">
+          <template #devices>
+            <router-link :to="{ name: 'UserSettingsDevices' }">{{
+              t('global.firstHint.ownDeviceDevices')
+            }}</router-link>
+          </template>
+          <template #teamCompute>
+            <router-link
+              v-if="props.teamHandle"
+              :to="{ name: 'TeamsDetailCompute', params: { handle: props.teamHandle } }"
+              >{{ t('global.firstHint.ownDeviceTeamCompute') }}</router-link
+            >
+            <template v-else>{{ t('global.firstHint.ownDeviceTeamCompute') }}</template>
+          </template>
+        </i18n-t>
+      </FirstTimeHint>
       <ComputeChoiceForm
         v-if="editing && state.can_manage"
         :devices="state.devices"

@@ -21,6 +21,7 @@ import NavLink from '../common/NavLink.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
+import FirstTimeHint from '@/components/common/FirstTimeHint.vue'
 import UserRef from '@/components/common/UserRef.vue'
 import { t } from '@/i18n'
 import { formatRoutineTime, routineRunLabel, routineStateLabel } from '@/lib/routine'
@@ -188,6 +189,10 @@ const inMenu = computed(() => (mdAndUp.value ? [] : rowActions()))
       </i18n-t>
     </dl>
 
+    <!-- 能确认的人第一次看到草稿：草稿不会自己跑。 -->
+    <FirstTimeHint v-if="draft && routine.can_manage" id="routine-draft" class="mt-2">
+      {{ t('global.firstHint.routineDraft') }}
+    </FirstTimeHint>
     <div v-if="routine.can_manage" class="routine-row__actions">
       <template v-if="draft">
         <BaseButton kind="primary" size="sm" :loading="busyOn('confirm')" @click="emit('confirm')">

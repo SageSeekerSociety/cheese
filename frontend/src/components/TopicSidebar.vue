@@ -77,6 +77,8 @@ const emit = defineEmits<{
   (e: 'press-topic', id: string): void
   (e: 'leave-topic'): void
   (e: 'create-topic', title: string): void
+  /** 下载整个项目的存档：取数在上面的视图里做，这里只报意图。 */
+  (e: 'export-project'): void
   // 已归档那一组里行尾的「取消归档」。
   (e: 'unarchive-topic', id: string): void
   // Rename a topic's title from the row's ⋯ actions. A name a person chose is
@@ -264,6 +266,12 @@ const projectSheetActions = computed<MenuAction[]>(() => {
       icon: 'mdi-cog-outline',
       onSelect: () => openProjectPage('project-settings'),
     },
+    {
+      key: 'export',
+      label: t('navigation.project.export'),
+      icon: 'mdi-download-outline',
+      onSelect: () => emit('export-project'),
+    },
   ]
   if (canTransfer.value)
     actions.push({
@@ -415,6 +423,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
         @open-sheet="projectSheetOpen = true"
         @open-transfer="transferOpen = true"
         @open-leave="leaveOpen = true"
+        @export="emit('export-project')"
       />
 
       <TransferProjectDialog v-model="transferOpen" :project-id="selectedProjectId ?? ''" />
