@@ -68,7 +68,11 @@ export function useRowBatch(deps: RowBatchDeps) {
     await nextTick()
     if (gen !== generation) return
     const sc = deps.scrollRef.value
-    if (sc && before) sc.scrollTop = stayBottom ? sc.scrollHeight : scrollTopAfterPrepend(before, sc.scrollHeight)
+    if (!sc || !before) return
+    if (stayBottom) sc.scrollTop = sc.scrollHeight
+    // 这期间已经有人动过滚动位置（跳到某一条的 scrollIntoView、浏览器自己的滚动锚定），
+    // 那一下才是对的，不拿挂行之前量的数去盖掉它。
+    else if (sc.scrollTop === before.scrollTop) sc.scrollTop = scrollTopAfterPrepend(before, sc.scrollHeight)
   }
 
   async function run(gen: number) {

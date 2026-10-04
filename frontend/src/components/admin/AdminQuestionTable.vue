@@ -56,9 +56,9 @@ const shown = (page: string | null) => page || '—'
     <BaseTable v-else class="aqt__grid" :cols="[null, '140px', '64px']" :label="title" min-width="0">
       <template #head>
         <tr>
-          <BaseTableTh>{{ t('featureStats.unanswered.column.question') }}</BaseTableTh>
-          <BaseTableTh>{{ t('featureStats.unanswered.column.page') }}</BaseTableTh>
-          <BaseTableTh align="end">{{ t('featureStats.unanswered.column.count') }}</BaseTableTh>
+          <BaseTableTh class="aqt__th">{{ t('featureStats.unanswered.column.question') }}</BaseTableTh>
+          <BaseTableTh class="aqt__th">{{ t('featureStats.unanswered.column.page') }}</BaseTableTh>
+          <BaseTableTh class="aqt__th" align="end">{{ t('featureStats.unanswered.column.count') }}</BaseTableTh>
         </tr>
       </template>
       <tr v-for="(row, index) in rows" :key="`${row.question}\u0000${index}`">
@@ -107,7 +107,8 @@ const shown = (page: string | null) => page || '—'
 
 /* 问题原文**不截断**：它是这一行的全部内容，截成省略号之后这张表就只剩「有 50 条」
    这一个信息了。长问题换行，行高跟着长。 */
-.aqt__cell {
+/* Three classes deep so it beats BaseTable's `.agrid__body :deep(td)` geometry. */
+.aqt .aqt__cell {
   padding: 8px;
   color: var(--text);
   font-size: 13px;

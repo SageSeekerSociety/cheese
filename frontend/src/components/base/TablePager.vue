@@ -41,6 +41,8 @@ const to = computed(() => Math.min(props.total, page.value * props.perPage))
 <style scoped>
 .tpager {
   display: flex;
+  /* The only child of the table foot: push the whole bar to the end, like the pager it replaced. */
+  margin-inline-start: auto;
   gap: 4px;
   align-items: center;
   justify-content: flex-end;
