@@ -14,13 +14,15 @@ vi.mock('@/me', () => ({ myId: () => signedIn.id, myHandle: () => (signedIn.id ?
 vi.mock('@/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api')>()),
   listBlocks: vi.fn().mockResolvedValue({ data: [], has_more: false }),
+  getPreview: vi.fn().mockResolvedValue(null),
 }))
 vi.mock('@/views/workspace/ProjectShell.vue', never)
 vi.mock('@/views/workspace/ProjectSidebar.vue', never)
 vi.mock('@/views/workspace/TopicView.vue', never)
 
-import { listBlocks } from '@/api'
+import { getPreview, listBlocks } from '@/api'
 import { blockCache, setCachedWindow } from '@/lib/blockCache'
+import { resetPreviewPointerCache } from '@/lib/previewPointer'
 import router from '@/router'
 
 const PROJECT = '3f1a7c62-9d4e-4b8a-8f21-0c5d6e7a9b10'
@@ -28,7 +30,9 @@ const PROJECT = '3f1a7c62-9d4e-4b8a-8f21-0c5d6e7a9b10'
 beforeEach(() => {
   setActivePinia(createPinia())
   vi.mocked(listBlocks).mockClear()
+  vi.mocked(getPreview).mockClear()
   blockCache.clear()
+  resetPreviewPointerCache()
   signedIn.id = '7'
 })
 
@@ -56,5 +60,22 @@ describe('opening a topic', () => {
     void router.push(`/projects/${PROJECT}/topics/${topic}`)
     await new Promise((r) => setTimeout(r, 20))
     expect(listBlocks).not.toHaveBeenCalled()
+  })
+
+  // 「这个房间当前预览是哪一份」和消息是同一件事：面板要等话题数据 + 一串 chunk 才
+  // 挂得上，而它一挂上就要这份答案。所以守卫也替它先出发——那份请求不该等到面板
+  // 挂上来（实测冷开一个房间要 9 秒）。
+  it('asks for the topic preview while the page code is still loading', async () => {
+    const topic = '9b81c0de-1f22-4a33-9c44-5d6e7f8a9b04'
+    void router.push(`/projects/${PROJECT}/topics/${topic}`)
+    await vi.waitFor(() => expect(getPreview).toHaveBeenCalledWith(topic), { timeout: 20_000 })
+  }, 30_000)
+
+  it('asks for no preview when nobody is signed in', async () => {
+    signedIn.id = ''
+    const topic = '9b81c0de-1f22-4a33-9c44-5d6e7f8a9b05'
+    void router.push(`/projects/${PROJECT}/topics/${topic}`)
+    await new Promise((r) => setTimeout(r, 20))
+    expect(getPreview).not.toHaveBeenCalled()
   })
 })

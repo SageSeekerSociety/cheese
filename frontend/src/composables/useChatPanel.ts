@@ -329,6 +329,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     historyChanges?.set(b.id, b)
     const landing = timeline.append(b)
     if (landing === 'known' || landing === 'above' || historyChanges !== null || b.author === AUTHOR) return
+    if (b.kind === 'artifact') emit('preview-shown') // 新摆出一份东西：面板立刻去问预览指针，不等轮询
     if (landing === 'shown') arrived.add(b.id)
     if ((landing === 'held' || !atBottom.value) && b.kind !== 'event') unseen.value.push(b.id)
   }
