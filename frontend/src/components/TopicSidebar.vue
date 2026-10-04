@@ -54,7 +54,10 @@ const props = defineProps<{
   // any of them, because which document is open is the page's business now.
   activeDocs?: string | null
   // 话题级未读 (Feishu-style): {topicId: count}; missing key = no unread.
+  // 静音的房间已经被调用处去掉了（store.badgeUnreadMap）。
   unreadMap?: Record<string, number>
+  /** 这间房我静音了没有：行上画一个静音标记。 */
+  mutedOf?: (topicId: string) => boolean
   // 私聊未读: {peerHandle: count}, `cheese` = 和芝士那一间。侧栏只用它的**总数**，
   // 挂在「成员」那一行上；是谁找你在成员页里说（每个人的私聊按钮上各带各的）。
   // 和 unreadMap 分开是因为私聊是按对方 handle 编址的，没有话题 id。
@@ -557,6 +560,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                       :renaming="renamingTopicId === item.topic.id"
                       :menu-open="actionsMenuFor === item.topic.id"
                       :stalled="stalledOf(item.topic.id)"
+                      :muted="mutedOf?.(item.topic.id) ?? false"
                       :marks="memberMarks(item.topic)"
                       :toggle-title="toggleTitle(item)"
                       :actions="actionsFor"

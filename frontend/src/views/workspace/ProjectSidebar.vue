@@ -83,6 +83,19 @@ useCommands(() => [
     disabled: creatingTopic.value,
     run: () => void onCreateTopic(''),
   },
+  // 全部标为已读（同 Slack 的 Shift+Esc）：只在真有未读时登记，没有时 Shift+Esc 照旧归
+  // 别人（比如关掉一个浮层）。
+  ...(Object.keys(store.unreadMap).length
+    ? [
+        {
+          id: 'topics.markAllRead',
+          title: t('work.room.menu.markAllRead'),
+          icon: 'mdi-check-all',
+          shortcut: 'shift+escape',
+          run: () => void store.markAllRead(),
+        },
+      ]
+    : []),
 ])
 </script>
 
@@ -105,7 +118,8 @@ useCommands(() => [
       :loading-topics="store.loadingTopics"
       :creating-topic="creatingTopic"
       :active-docs="activeDocs"
-      :unread-map="store.unreadMap"
+      :unread-map="store.badgeUnreadMap"
+      :muted-of="store.isMuted"
       :private-unread-map="store.privateUnreadMap"
       @select-topic="openTopic"
       @hover-topic="onHoverTopic"

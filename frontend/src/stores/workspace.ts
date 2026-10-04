@@ -1,3 +1,4 @@
+import type { TopicNotifyLevel } from '@/api'
 import type { Project, ProjectMemberRow, Topic } from '@/cx_types'
 
 import { computed, ref } from 'vue'
@@ -9,11 +10,14 @@ import {
   getPrivateUnread,
   getProject,
   getTopic,
+  getTopicNotifyLevels,
   getTopicUnread,
   listProjectMembers,
   listProjects,
   listTopics,
+  markAllTopicsRead,
   markTopicRead,
+  setTopicNotifyLevel,
   setTopicTitle,
   unarchiveProject,
   unarchiveTopic,
@@ -136,6 +140,18 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   // ('cheese' = the 芝士 DM) — DM rows come from the roster and carry no topic id.
   const unreadMap = ref<Record<string, number>>({})
   const privateUnreadMap = ref<Record<string, number>>({})
+  // 我静音了哪些房间（{topic_id: 'mute'}，默认的不在里面）。静音的房间未读照样记在
+  // unreadMap 里——打开它时「新消息从哪开始」那条线要用——但不进任何角标与总数：
+  // 侧栏用的是下面的 badgeUnreadMap。
+  const notifyLevels = ref<Record<string, TopicNotifyLevel>>({})
+  const badgeUnreadMap = computed<Record<string, number>>(() => {
+    const muted = notifyLevels.value
+    if (!Object.keys(muted).length) return unreadMap.value
+    return Object.fromEntries(Object.entries(unreadMap.value).filter(([id]) => muted[id] !== 'mute'))
+  })
+  function isMuted(topicId: string): boolean {
+    return notifyLevels.value[topicId] === 'mute'
+  }
 
   // What the URL says is open. Set by the shell from the route, read here so a
   // background unread refresh never lights a badge on the thing you're reading.
@@ -355,6 +371,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     members.value = []
     unreadMap.value = {}
     privateUnreadMap.value = {}
+    notifyLevels.value = {}
     loadingTopics.value = true
     accessDenied.value = null
     openedProject.value = null
@@ -413,6 +430,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     const epoch = projectEpoch
     if (!pid || !me) return
     void refreshPrivateUnread(pid, me)
+    void refreshNotifyLevels(pid)
     try {
       const map = await readLatest(`unread:${pid}:${me}`, () => getTopicUnread(pid, me))
       if (epoch !== projectEpoch || projectId.value !== pid) return
@@ -433,6 +451,46 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
       unreadMap.value = map
     } catch {
       // Best-effort; badges just stay as they were.
+    }
+  }
+
+  async function refreshNotifyLevels(pid: string) {
+    const epoch = projectEpoch
+    try {
+      const levels = await readLatest(`notify-levels:${pid}`, () => getTopicNotifyLevels(pid))
+      if (epoch !== projectEpoch || projectId.value !== pid) return
+      notifyLevels.value = levels
+    } catch {
+      // Best-effort: without it every room simply counts, as before.
+    }
+  }
+
+  /** 静音 / 取消静音一间房。先改本地，失败了改回去并说一声。 */
+  async function setMuted(topicId: string, muted: boolean) {
+    const before = notifyLevels.value
+    const next = { ...before }
+    if (muted) next[topicId] = 'mute'
+    else delete next[topicId]
+    notifyLevels.value = next
+    try {
+      await setTopicNotifyLevel(topicId, muted ? 'mute' : 'all')
+    } catch (e) {
+      notifyLevels.value = before
+      reportError(e, t('work.room.menu.muteFailed'))
+    }
+  }
+
+  /** 全部标为已读：先清掉本地角标，再让服务器把每一间的已读位推到现在。 */
+  async function markAllRead() {
+    const pid = projectId.value
+    if (!pid) return
+    const before = unreadMap.value
+    unreadMap.value = {}
+    try {
+      await markAllTopicsRead(pid)
+    } catch (e) {
+      unreadMap.value = before
+      reportError(e, t('work.room.menu.markAllReadFailed'))
     }
   }
 
@@ -597,6 +655,11 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     isExternal,
     loadingTopics,
     unreadMap,
+    badgeUnreadMap,
+    notifyLevels,
+    isMuted,
+    setMuted,
+    markAllRead,
     privateUnreadMap,
     activeTopicId,
     activeDmPeer,

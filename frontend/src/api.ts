@@ -577,6 +577,26 @@ export function markTopicRead(topicId: string, handle: string): Promise<Record<s
   })
 }
 
+/** 我对一间房的通知级别：`all`（默认）或 `mute`（静音：未读不计入任何总数）。 */
+export type TopicNotifyLevel = 'all' | 'mute'
+
+/** 我在这个项目里改过通知级别的房间；默认的不列。 */
+export function getTopicNotifyLevels(projectId: string): Promise<Record<string, TopicNotifyLevel>> {
+  return request<Record<string, TopicNotifyLevel>>(`/projects/${encodeURIComponent(projectId)}/topic-notify-levels`)
+}
+
+export function setTopicNotifyLevel(topicId: string, level: TopicNotifyLevel): Promise<unknown> {
+  return request(`/topics/${encodeURIComponent(topicId)}/notify-level`, {
+    method: 'PUT',
+    body: JSON.stringify({ level }),
+  })
+}
+
+/** 全部标为已读：项目里我每一间有未读的房间。返回动了哪些房间。 */
+export function markAllTopicsRead(projectId: string): Promise<{ topic_ids: string[] }> {
+  return request<{ topic_ids: string[] }>(`/projects/${encodeURIComponent(projectId)}/read-all`, { method: 'POST' })
+}
+
 /** A person names the room. The platform stops renaming it on its own from then on. */
 export function setTopicTitle(topicId: string, title: string): Promise<Topic> {
   return request<Topic>(`/topics/${encodeURIComponent(topicId)}/title`, {
