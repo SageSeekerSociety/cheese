@@ -39,6 +39,7 @@ import { closeOverlay } from '@/lib/backOut'
 import { relTime } from '@/lib/relTime'
 import { topicTitle } from '@/lib/topicState'
 import { usePageTitleStore } from '@/stores/title'
+import LibraryVersionsDialog from '@/views/library/LibraryVersionsDialog.vue'
 
 const props = defineProps<{ projectId: string }>()
 
@@ -235,6 +236,14 @@ async function replace() {
   }
 }
 
+// 「版本…」开着的是哪一份（null = 关着）。恢复了一版：预览换新、清单重读。
+const versionsOf = ref<string | null>(null)
+function onRestored(_path: string, version: number) {
+  revision.value++
+  toast(t('work.library.restoredDone', { n: version }))
+  void load()
+}
+
 async function download(file: LibraryFile) {
   actionError.value = ''
   try {
@@ -280,6 +289,12 @@ function fileActions(file: LibraryFile): MenuAction[] {
       onSelect: () => pickReplacement(file),
     },
     {
+      key: 'versions',
+      label: t('work.library.versions'),
+      icon: 'mdi-history',
+      onSelect: () => (versionsOf.value = file.path),
+    },
+    {
       key: 'delete',
       label: t('work.library.delete'),
       icon: 'mdi-delete-outline',
@@ -302,6 +317,14 @@ useCommands(() => {
         palette: false as const,
         header: {},
         run: () => pickReplacement(open),
+      },
+      {
+        id: 'library.versions',
+        title: t('work.library.versions'),
+        icon: 'mdi-history',
+        palette: false as const,
+        header: {},
+        run: () => (versionsOf.value = open.path),
       },
       {
         id: 'library.delete',
@@ -520,6 +543,15 @@ function read(file: LibraryFile) {
         </div>
       </section>
     </div>
+
+    <LibraryVersionsDialog
+      :project-id="projectId"
+      :path="versionsOf"
+      :can-restore="true"
+      :fmt-bytes="fmtBytes"
+      @close="versionsOf = null"
+      @restored="onRestored"
+    />
 
     <!-- Replace changes what every message referencing this file reads, so say it before acting. -->
     <ConfirmDialog

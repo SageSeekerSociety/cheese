@@ -976,6 +976,8 @@
   "skillImport": "导入技能",
   "skillImportUnreadable": "无法读取这个文件",
   "topicNotifyLevelInvalid": "通知级别只能是「全部」或「静音」",
+  "libraryVersionNotFound": "找不到这一版",
+  "libraryVersionIsCurrent": "这一版已经是现在这一份",
   "personalTeamCannotDisband": "个人团队跟着你的账号，不能解散",
   "personalTeamCannotTransfer": "个人团队跟着你的账号，不能转让",
   "teamTransferToSelf": "你已经是这个团队的所有者了",
