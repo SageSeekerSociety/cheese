@@ -51,13 +51,17 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
-from datetime import UTC, datetime, time
+from datetime import datetime, time, timezone
 from pathlib import Path
 from time import monotonic, sleep
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 if sys.platform != "win32":
     import fcntl
+
+# Not `datetime.UTC`: that name is 3.11+, and this script also runs on a Mac
+# whose only python3 is the command line tools' 3.9.
+UTC = timezone.utc  # noqa: UP017
 
 API = os.environ.get("CHEESE_API", "http://host.docker.internal:8099").rstrip("/")
 PROJECT = os.environ.get("CHEESE_PROJECT", "")
