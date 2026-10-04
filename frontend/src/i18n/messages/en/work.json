@@ -1453,7 +1453,6 @@
     "close": "Close",
     "actionsOf": "Actions for {name}",
     "backToList": "Back to library",
-    "previewLoading": "Loading the file",
     "previewError": "Could not preview this file",
     "downloadOnly": "This format cannot be previewed yet; download it to view",
     "versions": "Versions…",
