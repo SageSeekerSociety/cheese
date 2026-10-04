@@ -6,11 +6,12 @@ with the conversation's id, lets go when idle, and picks the conversation up
 again when the next question starts it. ``AssistantMessage`` rows are what the
 person said and was told, in order, and are what the panel shows.
 
-Asking runs in a task of its own that feeds the response through a queue. The
-reader can leave mid-answer — close the panel, lose the connection — and the
-answer still finishes, is still saved for the next time they open the
-conversation, and what it spent is still charged (``billing.settle``): it was
-spent either way.
+A question is read to its end by whichever backend process is up when it ends
+(``session_host.consumptions``), not by the request that asked it. The reader
+can leave mid-answer — close the panel, lose the connection, have the backend
+restart under it — and the answer still finishes, is still saved, and what it
+spent is still charged (``billing.settle``): it was spent either way. A reader
+that comes back reads the rest of the question's stream from where it left.
 
 A conversation older than its session — one asked before 芝士 ran there — has
 its earlier questions and answers given to the session with the first question
@@ -19,12 +20,11 @@ it hears (``prompt.earlier``), so it goes on from where it was.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import time
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -40,12 +40,11 @@ from app.domain.agent.personal import billing
 from app.domain.agent.personal.prompt import earlier
 from app.domain.agent.personal.session import HOST_WAIT_S, ref
 from app.domain.agent.session_host.answer import Answer, Tool, Waiting, Words
-from app.domain.agent.session_host.answer import ask as ask_session
+from app.domain.agent.session_host.consumptions import Consumption, Consumptions
 from app.domain.agent.session_host.contract import (
     Access,
     HostFull,
     Prompt,
-    SessionError,
     SessionRef,
     SessionSpec,
     StartAbandoned,
@@ -112,6 +111,14 @@ class Place:
 
     kind: str
     id: str
+
+
+def sse(event: str, data: dict, position: str | None = None) -> bytes:
+    """One server-sent event; ``position`` is its place in the question's
+    stream, for reading on from it."""
+    head = f"id: {position}\n" if position is not None else ""
+    body = json.dumps(data, ensure_ascii=False)
+    return f"{head}event: {event}\ndata: {body}\n\n".encode()
 
 
 class ConversationNotFound(Exception):
@@ -213,35 +220,104 @@ class AssistantConversations:
         return row
 
 
-def sse(event: str, data: dict) -> bytes:
-    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n".encode()
+#: What a question to a person's 芝士 is, to the questions the platform reads
+#: to the end (``session_host.consumptions``); its key is the conversation.
+KIND = "personal"
+
+
+class Answers:
+    """What becomes of a question's answer: shown as it is written, kept in the
+    conversation, and charged to the person."""
+
+    def __init__(
+        self,
+        sessions: async_sessionmaker[AsyncSession],
+        consumptions: Consumptions,
+        redis: Callable[[], Redis | None],
+    ) -> None:
+        self._sessions = sessions
+        self._consumptions = consumptions
+        self._redis = redis
+
+    async def stopped(self, consumption: Consumption) -> bool:
+        redis = self._redis()
+        return redis is not None and bool(
+            await redis.exists(_stop_key(consumption.key))
+        )
+
+    async def took(
+        self, consumption: Consumption, item: Waiting | Words | Tool
+    ) -> None:
+        if isinstance(item, Waiting):
+            await self._consumptions.publish(consumption, "queued", {})
+        elif isinstance(item, Words):
+            await self._consumptions.publish(
+                consumption, "delta", {"text": item.text, "at": item.at}
+            )
+        else:
+            await self._consumptions.publish(consumption, "tool", {"name": item.name})
+
+    async def ended(
+        self,
+        consumption: Consumption,
+        answer: Answer,
+        *,
+        written: str,
+        stopped: bool,
+        failure: BaseException | None,
+    ) -> list[tuple[str, dict]]:
+        user_id = int(consumption.data["user"])
+        conversation_id = uuid.UUID(consumption.key)
+        text, refusal = answer.text, FAILED
+        failed: str | None = answer.error
+        if isinstance(failure, HostFull):
+            failed, refusal = "the session host stayed full", BUSY
+        elif isinstance(failure, StartAbandoned):
+            failed = None
+        elif failure is not None:
+            logger.warning("assistant answer failed", exc_info=failure)
+        elif failed:
+            logger.warning(
+                "assistant answer failed conversation=%s: %s", conversation_id, failed
+            )
+        if stopped:
+            # What it had written when it was stopped stays, marked as such.
+            text, failed = written.strip(), None
+        if (text and not failed) or stopped:
+            async with self._sessions() as session:
+                store = AssistantConversations(session)
+                conversation = await store.owned(user_id, conversation_id)
+                await store.append(conversation, "assistant", text, stopped=stopped)
+                await session.commit()
+        spawn(
+            billing.settle(self._sessions, user_id),
+            name=f"assistant-charge-{conversation_id}",
+        )
+        closing = [("error", error_frame(refusal))] if failed else []
+        return [*closing, ("done", {"stopped": stopped})]
 
 
 async def ask(
     *,
     sessions: async_sessionmaker[AsyncSession],
-    redis: Redis,
-    people: SessionHost,
+    consumptions: Consumptions,
     user_id: int,
     conversation_id: uuid.UUID,
     started: tuple[SessionRef, SessionSpec, Access],
     question: str,
     held_at: float,
-    on_done: Callable[[], Awaitable[None]] | None = None,
-) -> AsyncIterator[bytes]:
-    """Answer ``question`` in the conversation, streamed as server-sent events:
-    ``queued`` (waiting for the session host), ``delta`` (text), ``tool`` (what
-    芝士 is looking at), ``error``, ``done`` (``stopped``: the person stopped
-    it, and what was written is kept).
+    slot: Slot,
+) -> Consumption:
+    """Ask ``question`` in the conversation; the answer is read to its end in
+    the background (``Answers``), and what its readers see of it is the
+    question's stream: ``queued`` (waiting for the session host), ``delta``
+    (text), ``tool`` (what 芝士 is looking at), ``error``, ``done``
+    (``stopped``: the person stopped it, and what was written is kept).
 
     The caller has already checked that the conversation is the person's, that
     they may see its place and have credits left, and has taken the
     conversation's hold at ``held_at`` (``take_conversation``). The session is
     ``started`` (`personal.session`)."""
-
-    async def stopped() -> bool:
-        return bool(await redis.exists(_stop_key(conversation_id)))
-
     work = uuid.uuid4()
     async with sessions() as session:
         store = AssistantConversations(session)
@@ -263,71 +339,13 @@ async def ask(
         )
         return Prompt(work, question, acting=acting, preface=earlier(before))
 
-    queue: asyncio.Queue[bytes | None] = asyncio.Queue()
-
-    async def run() -> None:
-        answer, written, failure, refusal = "", "", None, FAILED
-        try:
-            async for event in ask_session(
-                people,
-                *started,
-                said,
-                work_id=work,
-                ceiling_s=ANSWER_S - (time.monotonic() - held_at),
-                stopped=stopped,
-            ):
-                if isinstance(event, Waiting):
-                    queue.put_nowait(sse("queued", {}))
-                elif isinstance(event, Words):
-                    written += event.text
-                    queue.put_nowait(sse("delta", {"text": event.text}))
-                elif isinstance(event, Tool):
-                    queue.put_nowait(sse("tool", {"name": event.name}))
-                elif isinstance(event, Answer):
-                    answer, failure = event.text, event.error
-                    if failure:
-                        logger.warning(
-                            "assistant answer failed conversation=%s: %s",
-                            conversation_id,
-                            failure,
-                        )
-        except HostFull:
-            failure, refusal = "the session host stayed full", BUSY
-        except StartAbandoned:
-            pass
-        except SessionError as exc:
-            logger.warning("assistant session failed: %s", exc)
-            failure = str(exc)
-        except Exception:  # noqa: BLE001 — the reader is told; the log keeps why
-            logger.warning("assistant answer failed", exc_info=True)
-            failure = FAILED
-        finally:
-            was_stopped = await stopped()
-            if was_stopped:
-                # What it had written when it was stopped stays, marked as such.
-                answer, failure = written.strip(), None
-            try:
-                if (answer and not failure) or was_stopped:
-                    async with sessions() as session:
-                        store = AssistantConversations(session)
-                        conversation = await store.owned(user_id, conversation_id)
-                        await store.append(
-                            conversation, "assistant", answer, stopped=was_stopped
-                        )
-                        await session.commit()
-            except Exception:  # noqa: BLE001
-                logger.warning("saving an assistant answer failed", exc_info=True)
-            if failure:
-                queue.put_nowait(sse("error", error_frame(refusal)))
-            if on_done is not None:
-                await on_done()
-            spawn(
-                billing.settle(sessions, user_id),
-                name=f"assistant-charge-{conversation_id}",
-            )
-            queue.put_nowait(sse("done", {"stopped": was_stopped}))
-            queue.put_nowait(None)
-
-    spawn(run(), name=f"assistant-answer-{conversation_id}")
-    while (chunk := await queue.get()) is not None:
-        yield chunk
+    return await consumptions.begin(
+        kind=KIND,
+        key=str(conversation_id),
+        data={"user": user_id},
+        work_id=work,
+        session=started,
+        prompt=said,
+        ceiling_s=lambda: ANSWER_S - (time.monotonic() - held_at),
+        slots=[slot],
+    )
