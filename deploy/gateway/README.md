@@ -63,6 +63,11 @@ with the metering proxy, where the proxy's ChatGPT accounts answer at
 `http://metering-proxy:8445/chatgpt/<name>` (deploy/metering-proxy/README.md).
 The release creates the network if the proxy's release has not.
 
+A request to a model routed there carries the caller's Claude Code session as
+the `session_id` header (`chatgpt_session.py`, registered under
+`litellm_settings.callbacks`). The Codex backend keeps a conversation on one
+machine by that header, and without it the conversation's prompt cache misses.
+
 The box's `backend/.env` must contain:
 
 ```

@@ -256,5 +256,9 @@ litellm_settings:
   # route traffic and still tell us nothing.
   success_callback: ["postgres"]
   failure_callback: ["postgres"]
+  # Requests routed to ChatGPT carry the Claude Code session as `session_id`,
+  # which is what keeps a conversation on one Codex machine and its prompt
+  # cache hitting (#2597, `chatgpt_session.py`).
+  callbacks: ["cheese_chatgpt_session.handler"]
   # Keep a failed upstream from looking like a gateway bug in the logs.
   drop_params: true
