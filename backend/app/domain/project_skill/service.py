@@ -21,11 +21,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import listing, say
+from app.core.storage import StorageBackend, get_storage_backend
 from app.domain.agent.skills import (
     RESERVED_SKILL_NAMES,
     SKILL_FILE_SUFFIXES,
     native_skill_files,
 )
+from app.domain.project_skill import blobs
 from app.domain.project_skill.models import ProjectSkill, ProjectSkillRevision
 
 NAME = re.compile(r"^[a-z0-9][a-z0-9-]{1,47}$")
@@ -47,6 +49,12 @@ def mirror_root(project_id: uuid.UUID | str) -> Path:
     return Path(settings.workspace_root) / ".project-skills" / str(project_id)
 
 
+def _plain(raw: str) -> bool:
+    """No character a path on some machine reads differently: a backslash is a
+    separator on Windows, a control character is not a name anywhere."""
+    return "\\" not in raw and not any(ord(c) < 0x20 or ord(c) == 0x7F for c in raw)
+
+
 def _validate_files(files: dict) -> dict[str, str]:
     if not isinstance(files, dict):
         raise ValidationError(say("skillFilesShape"))
@@ -56,7 +64,8 @@ def _validate_files(files: dict) -> dict[str, str]:
     for raw, content in files.items():
         path = PurePosixPath(str(raw))
         if (
-            path.is_absolute()
+            not _plain(str(raw))
+            or path.is_absolute()
             or ".." in path.parts
             or not path.parts
             or path.name == "SKILL.md"
@@ -72,6 +81,12 @@ def _validate_files(files: dict) -> dict[str, str]:
                 say("skillFileTooLarge", path=raw, kb=MAX_FILE_BYTES // 1000)
             )
         out[path.as_posix()] = content
+    # A file and a folder of one name cannot both be written out; the folder
+    # would fail every publish after the save, for every skill in the project.
+    for path in out:
+        for parent in PurePosixPath(path).parents:
+            if parent.as_posix() in out:
+                raise ValidationError(say("skillFilePathInvalid", path=path))
     return out
 
 
@@ -124,8 +139,9 @@ def render_skill(
 
 
 class ProjectSkillService:
-    def __init__(self, session: AsyncSession):
+    def __init__(self, session: AsyncSession, storage: StorageBackend | None = None):
         self._session = session
+        self._storage = storage or get_storage_backend()
 
     async def get(self, skill_id: uuid.UUID) -> ProjectSkill:
         row = await self._session.get(ProjectSkill, skill_id)
@@ -184,12 +200,18 @@ class ProjectSkillService:
             )
         )
 
-    def _apply(self, row: ProjectSkill, changes: dict) -> None:
+    async def contents(self, row: ProjectSkill) -> dict[str, str]:
+        """The skill's files as text, for a person to read or edit."""
+        return await blobs.read(self._storage, row.files or {})
+
+    async def _apply(self, row: ProjectSkill, changes: dict) -> None:
         for key in ("title", "description", "body"):
             if changes.get(key) is not None:
                 setattr(row, key, str(changes[key]).strip())
         if changes.get("files") is not None:
-            row.files = _validate_files(changes["files"])
+            row.files = await blobs.store(
+                self._storage, _validate_files(changes["files"])
+            )
         if not row.title or not row.description or not row.body:
             raise ValidationError(say("skillFieldsRequired"))
 
@@ -237,7 +259,7 @@ class ProjectSkillService:
             proposal=proposal if by_agent else None,
             origin="cheese" if by_agent else "import" if imported else "person",
         )
-        self._apply(row, fields)
+        await self._apply(row, fields)
         self._session.add(row)
         await self._session.flush()
         if not by_agent:
@@ -253,7 +275,7 @@ class ProjectSkillService:
         changes: dict,
         proposal: dict | None = None,
     ):
-        self._apply(row, changes)
+        await self._apply(row, changes)
         if by_agent:
             row.state = "draft"
             row.proposed_by = by
@@ -358,7 +380,8 @@ class ProjectSkillService:
                 ),
                 encoding="utf-8",
             )
-            for path, text in (revision.content.get("files") or {}).items():
+            manifest = revision.content.get("files") or {}
+            for path, text in (await blobs.read(self._storage, manifest)).items():
                 target = folder / path
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text(text, encoding="utf-8")

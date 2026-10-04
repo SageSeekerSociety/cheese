@@ -9,6 +9,7 @@ import zipfile
 
 import pytest
 
+from app.core import storage as storage_module
 from app.core.config import settings
 from app.domain.agent.harness.claude_code.remote_execution.launch import payload_for
 from tests.integration.conftest import (
@@ -36,6 +37,9 @@ description: 需要读取、合并、拆分或填写 PDF 时
 @pytest.fixture(autouse=True)
 def _isolated_store(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
+    # The storage backend is a module-level singleton fixed at first use.
+    monkeypatch.setattr(settings, "storage_local_path", str(tmp_path / "files"))
+    monkeypatch.setattr(storage_module, "_storage_backend", None)
 
 
 def _project(client) -> str:
@@ -199,3 +203,63 @@ def test_an_upload_without_a_skill_md_is_refused(client):
     read = _preview(client, project, "x.zip", _zip({"notes/readme.md": "# hi\n"}))
     assert read.status_code == 422
     assert read.json()["error"]["i18n"]["key"] == "skillImportNoSkillMd"
+
+
+def _write(client, project: str, name: str, files: dict[str, str]):
+    return client.post(
+        f"/projects/{project}/skills",
+        json={
+            "name": name,
+            "title": name,
+            "description": "用的时候",
+            "body": "照着做",
+            "files": files,
+        },
+        headers=session_auth_headers(OWNER),
+    )
+
+
+@pytest.mark.parametrize(
+    "files",
+    [
+        {"notes.md": "a", "notes.md/more.md": "b"},
+        {"..\\..\\evil.py": "x"},
+        {"bad\x00name.md": "x"},
+    ],
+)
+def test_a_path_no_machine_can_write_is_refused_at_save(client, files):
+    project = _project(client)
+    assert _write(client, project, "fine", {"ok.md": "ok"}).status_code == 200
+
+    refused = _write(client, project, "broken", files)
+
+    assert refused.status_code == 422, refused.text
+    # The project's other skills still ship.
+    assert _shipped(project)["skills/fine/ok.md"] == "ok"
+
+
+def test_a_file_two_skills_share_is_stored_once(client, tmp_path):
+    project = _project(client)
+    shared = "同一份参考\n" * 100
+    assert _write(client, project, "one", {"ref.md": shared}).status_code == 200
+    assert _write(client, project, "two", {"docs/ref.md": shared}).status_code == 200
+
+    stored = [p for p in (tmp_path / "files").rglob("*") if p.is_file()]
+    assert len(stored) == 1
+    shipped = _shipped(project)
+    assert shipped["skills/one/ref.md"] == shipped["skills/two/docs/ref.md"] == shared
+
+
+def test_files_are_read_on_the_skill_not_in_the_list(client):
+    project = _project(client)
+    skill = _write(client, project, "one", {"scripts/a.py": "print(1)\n"}).json()[
+        "data"
+    ]
+
+    listed = _skills(client, project)[0]
+    detail = client.get(
+        f"/skills/{skill['id']}", headers=session_auth_headers(OWNER)
+    ).json()["data"]
+
+    assert "print(1)" not in str(listed)
+    assert detail["contents"] == {"scripts/a.py": "print(1)\n"}

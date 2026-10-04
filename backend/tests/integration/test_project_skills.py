@@ -6,6 +6,7 @@ import uuid
 
 import pytest
 
+from app.core import storage as storage_module
 from app.core.config import settings
 from app.domain.agent.harness.claude_code.remote_execution import bootstrap
 from app.domain.agent.harness.claude_code.remote_execution.launch import payload_for
@@ -18,6 +19,9 @@ PERSON = session_auth_headers(OWNER)
 @pytest.fixture(autouse=True)
 def _isolated_store(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
+    # The storage backend is a module-level singleton fixed at first use.
+    monkeypatch.setattr(settings, "storage_local_path", str(tmp_path / "files"))
+    monkeypatch.setattr(storage_module, "_storage_backend", None)
 
 
 def _project(client) -> str:

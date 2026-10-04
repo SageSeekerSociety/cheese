@@ -14,6 +14,8 @@ import { suggestSkillName } from '@/lib/projectSkill'
 const props = defineProps<{
   /** `'new'` 是新建；一份技能是修改它；null 是关着。 */
   editing: ProjectSkill | 'new' | null
+  /** 修改时那一份配套文件的内容。 */
+  contents: Record<string, string> | null
   /** 项目里已经用掉的调用名，自动给的不和它们撞。 */
   taken: string[]
   saving: boolean
@@ -58,7 +60,7 @@ watch(
         title: value.title,
         description: value.description,
         body: value.body,
-        files: Object.entries(value.files).map(([path, content]) => ({ path, content })),
+        files: Object.entries(props.contents ?? {}).map(([path, content]) => ({ path, content })),
       })
     }
   },

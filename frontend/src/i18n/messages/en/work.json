@@ -1790,7 +1790,6 @@
       "titlePlaceholder": "e.g. Weekly project report"
     },
     "history": "Version history",
-    "historyFailed": "Couldn't load the version history",
     "import": {
       "add": "Add",
       "addFailed": "Couldn't add the skill",

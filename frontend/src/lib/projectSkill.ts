@@ -14,12 +14,19 @@ export interface SkillProposal {
   reason?: string
 }
 
+/** 新建、修改时交上去的内容：配套文件是「路径 → 文本」。 */
 export interface ProjectSkillContent {
   title: string
   description: string
   /** 正文，markdown。 */
   body: string
   files: Record<string, string>
+}
+
+/** 一个配套文件在清单里的样子；内容要打开那一份才读。 */
+export interface SkillFileEntry {
+  sha256: string
+  size: number
 }
 
 /** 谁先写的：芝士整理、人手写、从别处导入。 */
@@ -34,7 +41,9 @@ export interface SkillImportPreview extends ProjectSkillContent {
   scripts: number
 }
 
-export interface ProjectSkill extends ProjectSkillContent {
+export interface ProjectSkill extends Omit<ProjectSkillContent, 'files'> {
+  /** 配套文件清单（路径 → 大小等），不带内容。 */
+  files: Record<string, SkillFileEntry>
   id: string
   project_id: string
   name: string
@@ -51,9 +60,15 @@ export interface ProjectSkill extends ProjectSkillContent {
   updated_at: string
 }
 
+/** 打开一份时读到的：配套文件的内容和历史版本。 */
+export interface ProjectSkillDetail extends ProjectSkill {
+  contents: Record<string, string>
+  revisions: ProjectSkillRevision[]
+}
+
 export interface ProjectSkillRevision {
   revision: number
-  content: ProjectSkillContent
+  content: Omit<ProjectSkillContent, 'files'> & { files: Record<string, SkillFileEntry> }
   confirmed_by: string
   note: string
   created_at: string

@@ -355,8 +355,17 @@ async def get_skill(
     topic: uuid.UUID | None = None,
 ) -> dict:
     row, _ = await _load(db, resolver, skill_id, topic)
-    revisions = await ProjectSkillService(db).revisions(row.id)
-    return ok({**_skill(row), "revisions": [_revision(r) for r in revisions]})
+    service = ProjectSkillService(db)
+    revisions = await service.revisions(row.id)
+    return ok(
+        {
+            **_skill(row),
+            # The files' text, which the list leaves out: a person reads or
+            # edits them here.
+            "contents": await service.contents(row),
+            "revisions": [_revision(r) for r in revisions],
+        }
+    )
 
 
 @router.patch("/skills/{skill_id}")

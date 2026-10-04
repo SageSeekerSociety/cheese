@@ -8,6 +8,7 @@ parameters. An error said in words the catalog does not have carries no key.
 
 import json
 
+from app.core import storage as storage_module
 from app.core.config import settings
 from tests.integration.conftest import new_project, session_auth_headers
 
@@ -86,6 +87,8 @@ def test_an_error_said_in_plain_words_carries_no_key(client, bearer):
 
 def test_a_refusal_with_parameters_carries_them(client, bearer, tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
+    monkeypatch.setattr(settings, "storage_local_path", str(tmp_path / "files"))
+    monkeypatch.setattr(storage_module, "_storage_backend", None)
     project_id = new_project(client, name="Demo", owner=OWNER)["id"]
     room = client.post(
         "/topics",

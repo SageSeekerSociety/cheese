@@ -14,7 +14,9 @@ import i18n, { t } from '@/i18n'
 
 const props = defineProps<{
   skill: ProjectSkill | null
-  /** 历史版本；还没读过是 null。 */
+  /** 配套文件的内容；还没读到是 null。 */
+  contents: Record<string, string> | null
+  /** 历史版本；还没读到是 null。 */
   revisions: ProjectSkillRevision[] | null
   /** 正在做的那件事：`save` / `decline` / `discard` / `restore:<n>`。 */
   busy: string
@@ -28,7 +30,6 @@ const emit = defineEmits<{
   discard: []
   edit: []
   delete: []
-  history: []
   restore: [revision: number]
 }>()
 
@@ -46,23 +47,24 @@ watch(
     viewing.value = null
   }
 )
-watch(tab, (value) => {
-  if (value === 'history' && props.revisions === null) emit('history')
-})
 
 const s = computed(() => props.skill)
 const isDraft = computed(() => s.value?.state === 'draft')
 const isEdit = computed(() => isDraft.value && !!s.value?.shipped_revision)
 const proposal = computed(() => (isDraft.value ? s.value?.proposal : null))
 const body = computed(() => (s.value ? markdown.render(s.value.body) : ''))
-const files = computed(() => Object.entries(s.value?.files ?? {}).sort(([a], [b]) => a.localeCompare(b)))
+const files = computed(() =>
+  Object.entries(s.value?.files ?? {})
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([path, entry]) => ({ path, size: kb(entry.size), text: props.contents?.[path] ?? null }))
+)
 
 function render(text: string): string {
   return markdown.render(text)
 }
 
-function kb(text: string): string {
-  return t('work.skills.detail.size', { kb: Math.max(1, Math.round(new Blob([text]).size / 1024)) })
+function kb(bytes: number): string {
+  return t('work.skills.detail.size', { kb: Math.max(1, Math.round(bytes / 1024)) })
 }
 
 function fmt(iso: string | null): string {
@@ -131,12 +133,12 @@ function fmt(iso: string | null): string {
 
           <section v-if="files.length" class="sdd__files">
             <h3 class="t-eyebrow c-muted">{{ t('work.skills.fields.files') }}</h3>
-            <details v-for="[path, text] in files" :key="path" class="sdd__file">
+            <details v-for="f in files" :key="f.path" class="sdd__file">
               <summary class="t-body">
-                <span class="sdd__path">{{ path }}</span>
-                <span class="t-meta c-faint">{{ kb(text) }}</span>
+                <span class="sdd__path">{{ f.path }}</span>
+                <span class="t-meta c-faint">{{ f.size }}</span>
               </summary>
-              <pre class="sdd__pre">{{ text }}</pre>
+              <pre v-if="f.text !== null" class="sdd__pre">{{ f.text }}</pre>
             </details>
           </section>
 
@@ -201,7 +203,9 @@ function fmt(iso: string | null): string {
             {{ t('work.skills.proposal.decline') }}
           </BaseButton>
           <v-spacer />
-          <BaseButton kind="secondary" data-action="edit" @click="emit('edit')">{{ t('work.skills.edit') }}</BaseButton>
+          <BaseButton kind="secondary" :disabled="contents === null" data-action="edit" @click="emit('edit')">{{
+            t('work.skills.edit')
+          }}</BaseButton>
           <BaseButton kind="primary" :loading="busy === 'save'" data-action="save" @click="emit('save')">
             {{ t('work.skills.save') }}
           </BaseButton>
@@ -211,7 +215,9 @@ function fmt(iso: string | null): string {
             {{ t('work.skills.delete') }}
           </BaseButton>
           <v-spacer />
-          <BaseButton kind="secondary" data-action="edit" @click="emit('edit')">{{ t('work.skills.edit') }}</BaseButton>
+          <BaseButton kind="secondary" :disabled="contents === null" data-action="edit" @click="emit('edit')">{{
+            t('work.skills.edit')
+          }}</BaseButton>
         </template>
       </footer>
     </div>

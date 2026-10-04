@@ -32,7 +32,7 @@ vi.mock('@/api/projectSkills', () => {
     title: 'Weekly report',
     description: 'Summarise the week',
     body: '## Steps\n\nCite every number',
-    files: { 'scripts/check.py': 'print(1)', 'README.txt': 'notes' },
+    files: { 'scripts/check.py': { sha256: 'a', size: 8 }, 'README.txt': { sha256: 'b', size: 5 } },
     origin: 'cheese',
     proposed_by: 'cheese-x',
     confirmed_by: 'u1',
@@ -62,6 +62,7 @@ vi.mock('@/api/projectSkills', () => {
       name: 'weekly',
       state: 'active',
       shipped_revision: 1,
+      contents: { 'scripts/check.py': 'print(1)', 'README.txt': 'notes' },
       revisions: [
         { revision: 1, note: 'first', confirmed_by: 'u1', created_at: '2026-09-25T00:00:00Z', content: skill },
         { revision: 2, note: 'second', confirmed_by: 'u1', created_at: '2026-09-26T00:00:00Z', content: skill },

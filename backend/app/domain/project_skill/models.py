@@ -38,7 +38,9 @@ class ProjectSkill(UuidPk, Timestamps, Base):
     description: Mapped[str] = mapped_column(Text)
     #: 正文 — the method itself, in markdown, as an imported SKILL.md's body is.
     body: Mapped[str] = mapped_column(Text, default="", server_default="")
-    #: {relative path: text} shipped beside SKILL.md (scripts, templates, notes).
+    #: The files shipped beside SKILL.md, as a manifest
+    #: {relative path: {"sha256", "size"}}; the bytes are in file storage
+    #: (``blobs.py``).
     files: Mapped[dict] = mapped_column(JSONB, default=dict)
     #: draft (proposed or edited by an AI teammate, not shipped) | active |
     #: declined (a teammate's proposal a person turned down; kept so the same
@@ -76,7 +78,7 @@ class ProjectSkillRevision(UuidPk, Base):
         ForeignKey("project_skills.id", ondelete="CASCADE"), index=True
     )
     revision: Mapped[int] = mapped_column(BigInteger)
-    #: title, description, body, files as confirmed.
+    #: title, description, body, files (a manifest) as confirmed.
     content: Mapped[dict] = mapped_column(JSONB)
     confirmed_by: Mapped[str] = mapped_column(String(64))
     note: Mapped[str] = mapped_column(Text, default="", server_default="")

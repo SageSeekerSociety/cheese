@@ -1790,7 +1790,6 @@
       "titlePlaceholder": "例如：项目周报"
     },
     "history": "历史版本",
-    "historyFailed": "未能读取历史版本",
     "import": {
       "add": "添加",
       "addFailed": "添加失败",

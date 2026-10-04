@@ -3,6 +3,7 @@
  * 旧版本能恢复；新建不用选房间；导入只给项目管理员，读出来先看，添加才算数。
  */
 import type { Component } from 'vue'
+import type { ProjectSkill } from '@/lib/projectSkill'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -48,6 +49,7 @@ const {
   listProjectSkills,
   previewSkillImport,
   restoreProjectSkill,
+  updateProjectSkill,
 } = await import('../api/projectSkills')
 
 afterEach(cleanup)
@@ -106,22 +108,26 @@ beforeEach(() => {
   dialog.confirm.mockImplementation(() => ({ wait: async () => true }))
   for (const k of Object.keys(routeQuery)) delete routeQuery[k]
   manager(false)
-  vi.mocked(listProjectSkills).mockResolvedValue({
-    data: [
-      {
-        ...base,
-        id: 'new-1',
-        name: 'summary',
-        title: '芝士刚整理的摘要方法',
-        state: 'draft',
-        shipped_revision: 0,
-        proposal: { taught: ['先说结论'] },
-      },
-      { ...base, id: 'edit-1', title: '被芝士改过的周报', state: 'draft', shipped_revision: 2 },
-      { ...base, id: 'live-1', name: 'standup', title: '站会纪要', state: 'active', shipped_revision: 1 },
-    ],
-    total: 3,
-  })
+  const rows: ProjectSkill[] = [
+    {
+      ...base,
+      id: 'new-1',
+      name: 'summary',
+      title: '芝士刚整理的摘要方法',
+      state: 'draft',
+      shipped_revision: 0,
+      proposal: { taught: ['先说结论'] },
+    },
+    { ...base, id: 'edit-1', title: '被芝士改过的周报', state: 'draft', shipped_revision: 2 },
+    { ...base, id: 'live-1', name: 'standup', title: '站会纪要', state: 'active', shipped_revision: 1 },
+  ]
+  vi.mocked(listProjectSkills).mockResolvedValue({ data: rows.map((r) => ({ ...r })), total: rows.length })
+  // 打开一份时读它的配套文件内容和历史版本。
+  vi.mocked(getProjectSkill).mockImplementation(async (id) => ({
+    ...rows.find((r) => r.id === id)!,
+    contents: {},
+    revisions: [],
+  }))
 })
 
 // 包一层 `<v-app>`：详情是 `VNavigationDrawer`，它要读 Vuetify 注入的 layout。
@@ -231,6 +237,7 @@ describe('技能', () => {
         },
         { revision: 1, content, confirmed_by: 'u1', note: '创建', created_at: '2026-09-25T00:00:00Z' },
       ],
+      contents: {},
     })
     vi.mocked(restoreProjectSkill).mockResolvedValue({ ...base, id: 'live-1', state: 'active', shipped_revision: 3 })
     const { container } = mount()
@@ -241,6 +248,30 @@ describe('技能', () => {
     await fireEvent.click(buttonIn(document.body.querySelector('[data-revision="1"]')!, '恢复到这一版')!)
 
     expect(restoreProjectSkill).toHaveBeenCalledWith('live-1', 1)
+  })
+
+  it('修改一份技能再保存，配套文件原样留着', async () => {
+    const live = {
+      ...base,
+      id: 'live-1',
+      name: 'standup',
+      title: '站会纪要',
+      state: 'active' as const,
+      shipped_revision: 1,
+      files: { 'scripts/a.py': { sha256: 'x', size: 9 } },
+    }
+    vi.mocked(getProjectSkill).mockResolvedValue({ ...live, contents: { 'scripts/a.py': 'print(1)\n' }, revisions: [] })
+    vi.mocked(updateProjectSkill).mockResolvedValue({ ...live, shipped_revision: 2 })
+    const { container } = mount()
+    await openRow(container, 'live-1', '站会纪要')
+    await waitFor(() => expect(action('edit')?.hasAttribute('disabled')).toBe(false))
+
+    await fireEvent.click(action('edit')!)
+    await waitFor(() => expect(document.body.querySelector('.v-dialog')).toBeTruthy())
+    await fireEvent.click(buttonIn(document.body.querySelector('.v-dialog')!, '保存')!)
+
+    await waitFor(() => expect(updateProjectSkill).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(updateProjectSkill).mock.calls[0][1].files).toEqual({ 'scripts/a.py': 'print(1)\n' })
   })
 
   it('不是项目管理员，页头上没有导入', async () => {

@@ -83,14 +83,18 @@ function replace(row: ProjectSkill) {
 // ── 详情 ───────────────────────────────────────────────────────────────────
 const selectedId = ref<string | null>(null)
 const selected = computed(() => skills.value.find((s) => s.id === selectedId.value) ?? null)
+// 打开那一份时读：配套文件的内容和历史版本，列表里不带。
+const contents = ref<Record<string, string> | null>(null)
 const revisions = ref<ProjectSkillRevision[] | null>(null)
 const busy = ref('')
 const detailError = ref('')
 
 function open(id: string) {
   selectedId.value = id
+  contents.value = null
   revisions.value = null
   detailError.value = ''
+  void loadDetail()
 }
 
 function close() {
@@ -109,18 +113,18 @@ async function act(what: string, run: () => Promise<void>, failed: string) {
   }
 }
 
-async function loadHistory() {
-  const s = selected.value
-  if (!s) return
-  await act(
-    'history',
-    async () => {
-      const { revisions: listed, ...fresh } = await getProjectSkill(s.id)
-      replace(fresh)
-      if (selectedId.value === s.id) revisions.value = listed
-    },
-    t('work.skills.historyFailed')
-  )
+async function loadDetail() {
+  const id = selectedId.value
+  if (!id) return
+  try {
+    const { revisions: listed, contents: files, ...fresh } = await getProjectSkill(id)
+    if (selectedId.value !== id) return
+    replace(fresh)
+    contents.value = files
+    revisions.value = listed
+  } catch (e) {
+    if (selectedId.value === id) detailError.value = e instanceof Error ? e.message : t('work.skills.loadFailed')
+  }
 }
 
 function save() {
@@ -159,7 +163,10 @@ async function discard() {
   if (!confirmed) return
   await act(
     'discard',
-    async () => replace(await restoreProjectSkill(s.id, s.shipped_revision)),
+    async () => {
+      replace(await restoreProjectSkill(s.id, s.shipped_revision))
+      await loadDetail()
+    },
     t('work.skills.discardFailed')
   )
 }
@@ -170,10 +177,8 @@ function restore(revision: number) {
   void act(
     `restore:${revision}`,
     async () => {
-      await restoreProjectSkill(s.id, revision)
-      const { revisions: listed, ...fresh } = await getProjectSkill(s.id)
-      replace(fresh)
-      revisions.value = listed
+      replace(await restoreProjectSkill(s.id, revision))
+      await loadDetail()
     },
     t('work.skills.restoreFailed')
   )
@@ -216,8 +221,9 @@ function startNew() {
   editing.value = 'new'
 }
 
+// 配套文件的内容还没读到时不能改：表单里文件是空的，一保存就把它们全删了。
 function startEdit() {
-  if (!selected.value) return
+  if (!selected.value || contents.value === null) return
   formError.value = ''
   editing.value = selected.value
 }
@@ -235,7 +241,7 @@ async function saveForm(value: ProjectSkillContent & { name: string }) {
     } else {
       const { name: _name, ...content } = value
       replace(await updateProjectSkill(target.id, content))
-      revisions.value = null
+      await loadDetail()
     }
     editing.value = null
   } catch (e) {
@@ -407,6 +413,7 @@ useCommands(() => [
 
     <SkillDetailDrawer
       :skill="selected"
+      :contents="contents"
       :revisions="revisions"
       :busy="busy"
       :error="detailError"
@@ -416,12 +423,12 @@ useCommands(() => [
       @discard="discard"
       @edit="startEdit"
       @delete="confirmingDelete = selected"
-      @history="loadHistory"
       @restore="restore"
     />
 
     <SkillEditDialog
       :editing="editing"
+      :contents="contents"
       :taken="taken"
       :saving="saving"
       :error="formError"

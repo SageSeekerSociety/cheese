@@ -3,14 +3,16 @@
 // 从 `api.ts` 拆出来：那个文件在上限之上，只能变短；技能自己是一个整体（页面和
 // 房间里那张提议卡都读它）。
 import type { ListPayload } from '../cx_types'
-import type { ProjectSkill, ProjectSkillContent, ProjectSkillRevision, SkillImportPreview } from '../lib/projectSkill'
+import type { ProjectSkill, ProjectSkillContent, ProjectSkillDetail, SkillImportPreview } from '../lib/projectSkill'
 
 import { request } from './http'
 
 export type {
   ProjectSkill,
   ProjectSkillContent,
+  ProjectSkillDetail,
   ProjectSkillRevision,
+  SkillFileEntry,
   SkillImportPreview,
   SkillOrigin,
   SkillProposal,
@@ -20,8 +22,9 @@ export function listProjectSkills(projectId: string): Promise<ListPayload<Projec
   return request<ListPayload<ProjectSkill>>(`/projects/${encodeURIComponent(projectId)}/skills`)
 }
 
-export function getProjectSkill(id: string): Promise<ProjectSkill & { revisions: ProjectSkillRevision[] }> {
-  return request<ProjectSkill & { revisions: ProjectSkillRevision[] }>(`/skills/${encodeURIComponent(id)}`)
+/** 一份技能，连同配套文件的内容和历史版本。 */
+export function getProjectSkill(id: string): Promise<ProjectSkillDetail> {
+  return request<ProjectSkillDetail>(`/skills/${encodeURIComponent(id)}`)
 }
 
 /** 人在技能页上新建一份；`imported` 是从导入预览添加的，只有项目管理员能加。 */
