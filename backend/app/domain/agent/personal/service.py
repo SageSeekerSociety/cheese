@@ -74,10 +74,7 @@ def busy_key(conversation_id: uuid.UUID | str) -> str:
 
 async def take_conversation(redis: Redis, conversation_id: uuid.UUID) -> Slot | None:
     """Take the conversation for one question; None while another holds it.
-    The hold is also what lets the conversation's 芝士 reach the model at all
-    (``api/routes/llm_proxy.py``): a model call is charged to the person, and
-    only a question they asked may be charged to them. A stop said to an
-    earlier question does not carry over to this one."""
+    A stop said to an earlier question does not carry over to this one."""
     slot = await enter(
         redis, str(uuid.uuid4()), hold=Hold(busy_key(conversation_id)), wait_s=0
     )
