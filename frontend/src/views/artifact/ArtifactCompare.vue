@@ -95,6 +95,10 @@ const modes = computed(() => [
 
 <template>
   <div class="compare">
+    <!-- Deliberately not an AppPage: this is a section inside ProjectArtifactView,
+         which already owns the page frame (AppPage width="full"). It is the
+         two-pane comparison view that page swaps its column to, so a page frame
+         here would nest a second header and re-centre the column. -->
     <div class="compare__bar">
       <label class="compare__pick t-meta">
         {{ t('tasks.artifact.compareTo') }}
