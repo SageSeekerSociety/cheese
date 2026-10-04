@@ -283,7 +283,8 @@ async def test_a_resend_does_not_duplicate_external_channel_intents(
         await session.commit()
         assert len(await _inbox(session, alice)) == 1
         channels = list(await session.scalars(select(ChannelDelivery)))
-        assert sorted(row.channel for row in channels) == ["email", "push"]
+        # 默认「邮件 = 摘要」，所以 ROOM_NOTICE 落的是 digest 那一行，不是 email。
+        assert sorted(row.channel for row in channels) == ["digest", "push"]
         assert all(row.delivery_key == f"{event.id}:alice" for row in channels)
 
 

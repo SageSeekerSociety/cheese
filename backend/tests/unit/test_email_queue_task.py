@@ -6,6 +6,7 @@ provider is substituted; no email or browser push leaves this suite.
 
 import asyncio
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -18,6 +19,8 @@ from app.domain.notification import maintenance, push_delivery
 from app.domain.notification.handlers import NotificationDelivery
 from app.domain.notification.models import NotificationType
 from app.domain.notification.outbox import ChannelIntentHandler, drain_channel
+from app.domain.notification.preferences import EmailMode, default_preferences
+from app.domain.notification.preferences_models import PreferencesRepository
 from app.domain.user.repositories import UserRepository
 from tests.support.hang import HANG_S
 
@@ -40,6 +43,12 @@ async def _enqueue(db_factory, *, push=False, rollback=False):
     async with db_factory() as session:
         user = await UserRepository(session).create_user(
             username="outbox-user", email="outbox@example.com"
+        )
+        # 这些用例试的是邮件渠道的认领与重试，所以把这个人钉在「立即」上：设计稿的
+        # 默认是「摘要」，那样 ROOM_NOTICE 只会写一行 digest，drain_email_queue 就
+        # 没有信可发了。
+        await PreferencesRepository(session).save(
+            user.id, replace(default_preferences(), email_mode=EmailMode.instant)
         )
         await session.commit()
         item = NotificationDelivery(
@@ -197,7 +206,12 @@ async def test_an_inflight_send_releases_database_and_excludes_another_consumer(
         await worker
 
 
-async def test_only_participant_action_notifications_create_push_intent(db_factory):
+async def test_push_intent_follows_the_pushable_rules(db_factory):
+    """推送给谁，按偏好矩阵与旧的 `PUSHABLE` 一起算。
+
+    ROOM_NOTICE（旧 `PUSHABLE`）与 MENTION（矩阵里推送开）都该有一条推送；
+    DEADLINE_REMIND 两边都不在，就不该有。
+    """
     async with db_factory() as session:
         handler = ChannelIntentHandler(session, push_enabled=True)
         await handler.send_batch(
@@ -211,12 +225,18 @@ async def test_only_participant_action_notifications_create_push_intent(db_facto
                 NotificationDelivery(
                     10, NotificationType.MENTION, {"content": "Mention"}, "mention:10"
                 ),
+                NotificationDelivery(
+                    10,
+                    NotificationType.DEADLINE_REMIND,
+                    {"content": "Soon"},
+                    "deadline:10",
+                ),
             ]
         )
         await session.commit()
     rows = await _rows(db_factory)
-    pushes = [row for row in rows if row.channel == "push"]
-    assert len(pushes) == 1 and pushes[0].payload["title"] == "Please review"
+    pushed_keys = {row.delivery_key for row in rows if row.channel == "push"}
+    assert pushed_keys == {"notice:10", "mention:10"}
 
 
 def test_the_email_escapes_user_text_and_preserves_the_destination():
