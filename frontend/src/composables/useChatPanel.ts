@@ -252,12 +252,6 @@ export function useChatPanel(opts: ChatPanelOptions) {
     restoreScroll,
   } = useChatScroll({ showingNewest: () => !hasNewer.value })
 
-  // 上一次连上的是哪一间房。只有**重连**（同一间房、socket 断了又连回来）才需要下面
-  // 那次「文档可能在我们离开时被存回去了」的重读；进一间房的第一次连接不需要 —— 那
-  // 一刻文档那一格正拿新的一份在载入，重读只是把刚取回来的同一份再问一遍（实测每次切
-  // 话题多两条：/docs + /doc/history）。
-  let connectedTopic: string | null = null
-
   // 这条房间 socket 的连接、重连退避、心跳、换掉假活的那条 —— 见
   // room/composables/useRoomSocket。它不认识帧的含义：帧交给下面的 handleFrame。
   const {
@@ -274,16 +268,10 @@ export function useChatPanel(opts: ChatPanelOptions) {
       handleFrame(frame)
       noteFrame()
     },
-    onOpen: () => {
-      // State frames are transient. A doc saved while disconnected may have no
-      // remaining turn to replay it; refresh through the panel's conflict guard.
-      // Only a re-connect needs that catch-up: the first connect to a topic
-      // happens while the doc panel is already loading it fresh, so re-reading
-      // would just duplicate the mount fetch. A real save still arrives as its
-      // own `state/doc` frame and reloads through handleFrame.
-      const current = topic()?.id ?? null
-      if (current && current === connectedTopic) emit('state-changed', 'doc')
-      connectedTopic = current
+    onOpen: (reconnect) => {
+      // State frames are transient, so a re-connect rather than the first open:
+      // a doc saved while we were away has no remaining turn left to replay it.
+      if (reconnect) emit('state-changed', 'doc')
       void flushOutbox() // 断线期间没送出去的，连上就自己走
     },
     reconnect: (topicId) => {
