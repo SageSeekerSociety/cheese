@@ -107,9 +107,16 @@ const previous = computed<DocVersion | null | undefined>(() => {
   // 它是已经读回来的最后一条：后面还有就再读一页，没有了就是第一版。
   return cursor.value !== null ? undefined : null
 })
-watch(previous, (prev) => {
-  if (prev === undefined && current.value && cursor.value !== null && !loading.value) void more()
-})
+// 上一条还没读回来就再读一页。看的是「读完了没有」而不是 previous 本身：同一个人连着
+// 存了一整页时，读回第一页前后 previous 都是 undefined，只看它的变化就永远不会去读。
+// 读失败（error）就停下，不反复重试。
+watch(
+  [previous, loading],
+  ([prev, busy]) => {
+    if (prev === undefined && !busy && !error.value && current.value && cursor.value !== null) void more()
+  },
+  { immediate: true }
+)
 const diff = computed(() =>
   current.value && previous.value !== undefined
     ? versionDiff(previous.value?.content ?? null, current.value.content)

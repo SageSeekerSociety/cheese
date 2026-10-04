@@ -126,7 +126,9 @@ function collapse(rows: DiffRow[]): DiffRow[] {
 
 /** `before` → `after` 改了什么。`before` 为 null 时（第一版）整篇算新加的。 */
 export function versionDiff(before: string | null, after: string): VersionDiff {
-  const lines = (text: string) => (text === '' ? [] : text.split('\n'))
+  // 一段一行；段与段之间的空行不算一段（同 paragraphDiff），否则「加了一段」会数成两段，
+  // 还多出一行空的绿底。
+  const lines = (text: string) => text.split('\n').filter((line) => line.trim() !== '')
   const rows = pairChanges(lineOps(before === null ? [] : lines(before), lines(after)))
   return {
     rows: collapse(rows),

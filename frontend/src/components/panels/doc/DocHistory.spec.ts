@@ -104,4 +104,18 @@ describe('修改记录', () => {
       expect(container.ownerDocument.querySelector('.vdiff__row--add')?.textContent).toContain('只有一段')
     )
   })
+
+  it('最新一页全是同一个人连着存的：自动再读一页找上一条', async () => {
+    const page1 = [version(30, 'bob', 1, '新'), version(29, 'bob', 2, '中')]
+    const page2 = [version(28, 'alice', 60, '旧')]
+    const load = vi.fn(async (before?: number) =>
+      before === undefined ? { versions: page1, cursor: 29 } : { versions: page2, cursor: null }
+    )
+    const { container } = render(DocHistory, {
+      props: { open: true, load, editable: true, nameOf: (h: string) => h, mentionNames: {} },
+      global: { plugins: [createVuetify({ components, directives })] },
+    })
+    await waitFor(() => expect(load).toHaveBeenCalledWith(29))
+    await waitFor(() => expect(container.ownerDocument.querySelector('.vdiff')).not.toBeNull())
+  })
 })

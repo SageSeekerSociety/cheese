@@ -37,4 +37,10 @@ describe('文档两版逐段对比', () => {
     const d = versionDiff('a\nb', 'a\nb')
     expect(d.added + d.removed + d.changed).toBe(0)
   })
+
+  it('段与段之间的空行不算一段', () => {
+    const d = versionDiff('a\n\nb', 'a\n\nb\n\nc')
+    expect(d.added).toBe(1)
+    expect(versionDiff(null, 'a\n\nb').added).toBe(2)
+  })
 })

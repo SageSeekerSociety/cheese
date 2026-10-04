@@ -34,7 +34,8 @@ const loading = ref(false)
 const failed = ref<string | null>(null)
 const actionError = ref('')
 const confirming = ref<LibraryVersion | null>(null)
-const restoring = ref(false)
+/** 正在恢复的是哪一版（null = 没有在恢复）：只让那一行转圈。 */
+const restoring = ref<string | null>(null)
 let session = 0
 
 async function load() {
@@ -77,7 +78,7 @@ async function restore() {
   const path = props.path
   confirming.value = null
   if (!target?.id || !path) return
-  restoring.value = true
+  restoring.value = target.id
   actionError.value = ''
   try {
     await restoreLibraryVersion(props.projectId, path, target.id)
@@ -86,7 +87,7 @@ async function restore() {
   } catch (e) {
     actionError.value = e instanceof Error ? e.message : t('work.library.restoreFailed')
   } finally {
-    restoring.value = false
+    restoring.value = null
   }
 }
 </script>
@@ -126,8 +127,8 @@ async function restore() {
           v-if="canRestore && !v.current && v.id"
           size="sm"
           kind="secondary"
-          :loading="restoring && confirming === null"
-          :disabled="restoring"
+          :loading="restoring === v.id"
+          :disabled="restoring !== null"
           @click="confirming = v"
         >
           {{ t('work.library.restoreVersion') }}
