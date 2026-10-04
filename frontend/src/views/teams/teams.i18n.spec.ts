@@ -17,34 +17,8 @@ vi.mock('@/api', () => ({
   authToken: () => '',
   BASE: '/api',
   chatWsUrl: vi.fn(),
-  changeProjectMachinePower: vi.fn(),
-  deleteProjectMachine: vi.fn(),
-  getTeamResourceQuotas: vi.fn(async () => ({
-    team_id: 1,
-    machines: { used: 1, limit: 5 },
-    projects: [{ id: 'p1', name: 'Alpha', machines_used: 1 }],
-  })),
   listMyDevices: vi.fn(async () => ({ devices: [] })),
   listProjects: vi.fn(async () => ({ data: [{ id: 'p1', name: 'Alpha' }] })),
-  listProjectMachines: vi.fn(async () => ({
-    data: [
-      {
-        id: 'm1',
-        project_id: 'p1',
-        hostname: 'box-1',
-        status: 'running',
-        cores: 4,
-        memory_mb: 8192,
-        disk_gb: 64,
-        ai_status: 'ready',
-        device_id: null,
-        enroll_error: 'timeout',
-        enroll_attempts: 1,
-        enroll_max_attempts: 3,
-        ip: '10.0.0.1',
-      },
-    ],
-  })),
   listTeamDevices: vi.fn(async () => ({
     devices: [
       {
@@ -160,10 +134,8 @@ function expectNoChinese() {
 
 it('renders the team compute page in English', async () => {
   mount(Compute)
-  await screen.findByText('box-1')
-  expect(screen.getByText('Team cloud machines')).toBeTruthy()
-  expect(screen.getByText("Couldn't connect (1/3)")).toBeTruthy()
-  expect(screen.getByText('4 cores')).toBeTruthy()
+  await screen.findByText('Running · @helper')
+  expect(screen.getByText('Self-hosted devices')).toBeTruthy()
   expectNoChinese()
 })
 

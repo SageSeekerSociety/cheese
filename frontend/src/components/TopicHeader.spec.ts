@@ -49,9 +49,6 @@ const cloud = {
   name: null,
   profile: 'cloud',
   device_id: null,
-  cores: null,
-  memory_mb: null,
-  disk_gb: null,
 }
 
 function profile(machineAccess: boolean): TopicComputeProfile {
@@ -139,7 +136,7 @@ describe('话题头', () => {
     await fireEvent.click(screen.getByRole('button', { name: '更多' }))
     await screen.findByRole('button', { name: '专注模式' })
     expect(document.body.textContent).not.toContain('工作电脑')
-    expect(bar().textContent).not.toContain('云端 · 标准配置')
+    expect(bar().textContent).not.toContain('云端沙箱')
   })
 
   it('专注模式从 ⋯ 里进', async () => {

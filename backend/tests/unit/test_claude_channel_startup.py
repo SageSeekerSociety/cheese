@@ -42,7 +42,6 @@ class Host:
     """The room's placement and the session host's screens, on this disk."""
 
     name = "central"
-    provisions_machine = False
     deferred_work = False
     _session_factory = None
     # What the room was told when the session did not come up, and the

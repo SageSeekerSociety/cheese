@@ -334,17 +334,13 @@ async def test_remote_online_callback_runs_full_business_recovery(monkeypatch) -
             order.append(f"recover:{device_id}")
             return 0
 
-    class Wakeup:
-        async def wake_device(self, device_id: str) -> None:
-            order.append(f"wake:{device_id}")
-            recovered.set()
-
     def spawn(coro, *, name: str):
         order.append(name)
         coro.close()
+        if name == "closed task checkouts device reconnect":
+            recovered.set()
 
     monkeypatch.setattr("app.api.deps.get_chat_service", lambda: Chat())
-    monkeypatch.setattr("app.api.deps.get_cloud_wakeup", lambda: Wakeup())
     monkeypatch.setattr("app.core.background.spawn", spawn)
     transport = httpx.ASGITransport(app=device_connection_app.app)
     backend = RemoteDeviceHub("http://owner", "test-owner-secret", transport=transport)
@@ -359,7 +355,6 @@ async def test_remote_online_callback_runs_full_business_recovery(monkeypatch) -
         "recover:new-cloud-machine",
         "cleanup device reconnect",
         "closed task checkouts device reconnect",
-        "wake:new-cloud-machine",
     ]
     await backend.close()
     await device_hub.detach_device("new-cloud-machine", connector)

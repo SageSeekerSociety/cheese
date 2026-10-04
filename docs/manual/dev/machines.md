@@ -25,7 +25,7 @@ note: 右下角「幕后」是设备卡和连接器的输出
 embed: machines
 steps:
   - label: 几种机器
-    desc: 本机沙盒容器、用户接入的自托管设备、每个话题一台的云机器，以及会话在中心、工具调用落到租用机器上的执行机。
+    desc: 本机沙盒容器、用户接入的自托管设备、平台云主机池里的沙箱，以及会话在中心、工具调用落到租用机器上的执行机。
     link: /dev/machines#kinds
   - label: 连接器登录，保持一条长连接
     desc: 连接器登录后和机器连接服务保持一条长连接。机器连接服务单独常驻，主 API 发版时设备链接不断。
@@ -50,7 +50,7 @@ steps:
 |---|---|---|
 | 本机沙盒容器 | 平台主机上的兄弟容器 | `compute.py` |
 | 自托管设备 | 用户用连接器接入的电脑 | `device_provider.py` |
-| 云机器 | 每个话题一台 MicroCloud 机器 | `cloud_provider.py` |
+| 云端沙箱 | 平台云主机池里的一个沙箱，每条会话一个；宿主机是平台的 MicroCloud 机器，多个项目共用 | `cloud_provider.py`、`machine/services.py` |
 | 中心会话 + 执行机 | 会话在中心主机，工具调用落到租用的机器上 | `central_provider.py` |
 
 ## 连接 {#link}

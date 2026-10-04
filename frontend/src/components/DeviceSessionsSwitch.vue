@@ -48,9 +48,6 @@ const choices = computed(() => {
     name: null,
     profile: 'cloud',
     device_id: null,
-    cores: null,
-    memory_mb: null,
-    disk_gb: null,
   }
   const devices = props.devices
     .filter((device) => device.device_id !== props.device.device_id)

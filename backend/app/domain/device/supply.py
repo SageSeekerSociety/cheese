@@ -28,7 +28,7 @@ class Supply(enum.StrEnum):
     is a container or a VM. The platform opened it on demand → it may destroy it;
     a human enrolled a machine they already had → it may not. Every disposal rule
     is a consequence of this one field, which is why it is stored rather than
-    inferred: `ProjectMachine.device_id` can reverse-look-up the same fact today,
+    inferred: `CloudHost.device_id` can reverse-look-up the same fact today,
     and a semantics that exists only by reverse lookup is the bug #282 is about.
 
     Consequence: the SAME physical VM is `cloud` when the platform provisions it

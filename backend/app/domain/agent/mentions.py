@@ -30,12 +30,8 @@
 （`test_is_private_read_points.py`）—— 连名字也不带过来，因为它按文件统计读点，
 连形参与关键字实参都数。
 
-`cloud_waiting_topics` 不是点名，是这次搬家顺手带过来的尾巴：它读的是同一份
-时间线（同一批块），和上面几件一样是「这间房现在是什么状态」的只读判断，不该
-在 chat.py 里再孤零零留一个 async 函数。
-
 调用它们的是 chat.py 自己（`post_user_message`、`_persist_assistant_message`、
-`post_system_event`、`ChatService.cloud_waiting_topics`）与 `block/editing.py`；
+`post_system_event`）与 `block/editing.py`；
 `ChatService` 上那些不读实例状态的方法留一行同名委托，调用点与测试都不用改。
 """
 
@@ -319,20 +315,3 @@ async def announce_mentions(
             turn_id=block.turn_id,
             meta={"in_room": False},
         )
-
-
-async def cloud_waiting_topics(
-    session: AsyncSession, topic_ids: list[uuid.UUID]
-) -> list[uuid.UUID]:
-    waiting: list[uuid.UUID] = []
-    blocks = BlockRepository(session)
-    for topic_id in topic_ids:
-        history = await blocks.list_for_topic(topic_id)
-        events = [
-            b
-            for b in history
-            if (b.meta or {}).get("event_type") == "cloud_provisioning"
-        ]
-        if events and (events[-1].meta or {}).get("state") == "waiting":
-            waiting.append(topic_id)
-    return waiting

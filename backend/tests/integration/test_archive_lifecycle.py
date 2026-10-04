@@ -11,9 +11,11 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.errors import ConflictError
+from app.domain.machine.models import AiStatus, CloudHost, CloudHostHome, MachineStatus
 from app.domain.project.services import ProjectService
 from app.domain.topic import retire
 from app.domain.topic.models import RoomCleanup
@@ -177,38 +179,6 @@ async def test_unpublished_backend_source_can_be_reopened_before_parking(
         await session.commit()
     assert not target.exists()
     assert (work / "unfinished.py").read_text() == "unpublished source"
-
-
-async def test_cloud_inventory_cannot_discard_unrecognized_directories(
-    client, monkeypatch
-):
-    room_id, cleanup_id = await archived_room(client, monkeypatch)
-
-    machine = SimpleNamespace(id=uuid.uuid4(), device_id="cloud")
-    monkeypatch.setattr(
-        retire.MachineService,
-        "list_active_for_topic",
-        AsyncMock(return_value=[machine]),
-    )
-    monkeypatch.setattr(
-        retire,
-        "sql_device_service",
-        lambda _: SimpleNamespace(
-            topic_binding=AsyncMock(return_value=None),
-            list_topic_bindings=AsyncMock(return_value=[]),
-        ),
-    )
-    monkeypatch.setattr(retire.device_hub, "is_online", lambda _: True)
-    async with client.test_factory() as session:
-        operation = await session.get(RoomCleanup, cleanup_id)
-        inventory = {
-            "cloud": [
-                ("home", str(operation.project_id), str(room_id)),
-                ("home", str(operation.project_id), str(uuid.uuid4())),
-            ]
-        }
-        with pytest.raises(RuntimeError, match="unrecognized"):
-            await retire._inventory(session, operation, inventory)
 
 
 @pytest.mark.parametrize("pointer", ["absolute", "relative", "moved-relative"])
@@ -627,3 +597,138 @@ async def test_a_process_still_in_a_claimed_room_is_waited_out_and_named(
         holder.wait()
     assert _sweep(client) == {"completed": 1, "pending": 0}
     assert not room.home.exists()
+
+
+async def test_a_rooms_cleanup_gives_back_its_homes_on_a_shared_cloud_host(
+    client, monkeypatch, tmp_path
+):
+    """A cloud host carries other projects' sandboxes too. The room's cleanup
+    removes the room's own directory there and the home that held the host
+    for it; the host and everyone else's homes stay."""
+    room_id, cleanup_id = await archived_room(client, monkeypatch)
+    async with client.test_factory() as session:
+        operation = await session.get(RoomCleanup, cleanup_id)
+        project_id, resource_id = operation.project_id, str(operation.resource_id)
+        other_project = await ProjectService(session).create(
+            name="Other", owner_handle="owner"
+        )
+        other_room = await TopicService(session).create(
+            project_id=other_project.id, title="Other room", created_by="owner"
+        )
+        host = CloudHost(
+            machine_id=1,
+            customer_id=7,
+            account_id=9,
+            offering_id=1,
+            hostname="host-shared",
+            login_user="cheese",
+            cores=2,
+            memory_mb=4096,
+            disk_gb=20,
+            status=MachineStatus.running,
+            ai_status=AiStatus.disabled,
+            device_id="host-dev",
+        )
+        session.add(host)
+        await session.flush()
+        for project, topic, resource in (
+            (project_id, room_id, resource_id),
+            (other_project.id, other_room.id, str(uuid.uuid4())),
+        ):
+            session.add(
+                CloudHostHome(
+                    host_id=host.id,
+                    project_id=project,
+                    topic_id=topic,
+                    room_resource_id=resource,
+                    resource_id=resource,
+                    session_id=uuid.uuid4(),
+                )
+            )
+        await session.commit()
+        host_id = host.id
+    machine = tmp_path / "host"
+    home = machine / ".cheese/home" / str(project_id) / resource_id
+    home.mkdir(parents=True)
+    (home / "notes.txt").write_text("the room's own")
+    monkeypatch.setattr(retire.device_hub, "exec", LocalDevice(machine).exec)
+    monkeypatch.setattr(
+        retire,
+        "_inventory",
+        AsyncMock(
+            return_value=[
+                {"kind": "device", "device_id": "host-dev", "resource_id": resource_id}
+            ]
+        ),
+    )
+
+    assert _sweep(client) == {"completed": 1, "pending": 0}
+
+    assert not home.exists()
+    async with client.test_factory() as session:
+        homes = list(
+            await session.scalars(
+                select(CloudHostHome.topic_id).where(CloudHostHome.host_id == host_id)
+            )
+        )
+        assert homes == [other_room.id]
+        assert (await session.get(CloudHost, host_id)).released_at is None
+
+
+async def test_a_rooms_cleanup_deletes_an_archived_sandbox_home_from_the_bucket(
+    client, monkeypatch
+):
+    """A session whose home was archived holds no directory on any machine:
+    its host may be gone. The room's cleanup does not wait for that host, and
+    the archive goes with the room."""
+    from app.domain.agent_session.services import AgentSessionService
+    from app.domain.machine import lifecycle
+
+    class Bucket:
+        def __init__(self):
+            self.objects = {"sandbox-archives/home.tar.gz": b"archived home"}
+
+        async def delete(self, key):
+            return self.objects.pop(key, None) is not None
+
+    bucket = Bucket()
+    monkeypatch.setattr(lifecycle, "private_storage", lambda: bucket)
+    room_id, cleanup_id = await archived_room(client, monkeypatch)
+    async with client.test_factory() as session:
+        operation = await session.get(RoomCleanup, cleanup_id)
+        project_id, generation = operation.project_id, str(operation.resource_id)
+        resource = str(uuid.uuid4())
+        conversation = await AgentSessionService(session).ensure(
+            room_id, "worker", harness="claude-code"
+        )
+        # The lease still names the host the home was archived from.
+        conversation.work_lease = {
+            "device_id": "released-host",
+            "resource_id": resource,
+            "kind": "device",
+        }
+        session.add(
+            CloudHostHome(
+                host_id=None,
+                project_id=project_id,
+                topic_id=room_id,
+                room_resource_id=generation,
+                resource_id=resource,
+                session_id=conversation.id,
+                stopped_at=datetime.now(UTC),
+                archive_key="sandbox-archives/home.tar.gz",
+                archive_size=13,
+                archive_md5="0" * 32,
+            )
+        )
+        await session.commit()
+
+    assert _sweep(client) == {"completed": 1, "pending": 0}
+
+    assert bucket.objects == {}
+    async with client.test_factory() as session:
+        assert (
+            await session.scalar(
+                select(CloudHostHome.id).where(CloudHostHome.topic_id == room_id)
+            )
+        ) is None

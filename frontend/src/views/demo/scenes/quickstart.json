@@ -2,7 +2,7 @@
   "title": "交一件事给芝士，再验收它",
   "project": "我的第一个项目",
   "topic": "欢迎说明",
-  "machine": "本话题运行在：云机器 cm-2b81",
+  "machine": "本话题运行在：云端沙箱",
   "people": {
     "wang": { "name": "王长鑫" },
     "cheese": { "name": "芝士", "agent": true }

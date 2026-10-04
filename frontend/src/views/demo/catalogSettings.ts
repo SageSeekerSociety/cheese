@@ -24,7 +24,7 @@
  */
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
-import { CLOUD_SUPPLY, CLOUD_SUPPLY_UNKNOWN, COMPUTE_DEVICES } from './catalogFixtures'
+import { COMPUTE_DEVICES } from './catalogFixtures'
 import {
   accountConn,
   accountProps,
@@ -258,28 +258,16 @@ export const SETTINGS_ENTRIES: CatalogEntry[] = [
   {
     id: 'compute-choice-form',
     title: 'ComputeChoiceForm',
-    about: '选一台工作电脑：云端或自有设备；云端可自定义规格，先看云端此刻能开的范围。',
+    about: '选一台工作电脑：云端沙箱或自有设备。云端沙箱没有规格可选，每个会话一个。',
     file: 'src/components/ComputeChoiceForm.vue',
     component: ComputeChoiceForm,
     needs: UI,
     states: [
       {
-        name: '查到了范围',
-        note: '勾「自定义」后显示可选范围（云端供应与平台允许值的交集）；填超的那一格标红，按钮变灰。数字是示例。',
-        props: { devices: COMPUTE_DEVICES, cloudAvailable: true, supply: CLOUD_SUPPLY },
-        expect: '自定义 CPU、内存和磁盘',
-      },
-      {
-        name: '查不到范围',
-        note: '云端没应答时照实说查不到、说原因，不显示任何范围数字，仍可保存，开机时由云端校验。',
-        props: { devices: COMPUTE_DEVICES, cloudAvailable: true, supply: CLOUD_SUPPLY_UNKNOWN },
-        expect: '自定义 CPU、内存和磁盘',
-      },
-      {
-        name: '正在查',
-        note: '范围还在路上时按钮不可点，不拿旧数或默认数先顶上。',
-        props: { devices: COMPUTE_DEVICES, cloudAvailable: true, supply: null, supplyLoading: true },
-        expect: '自定义 CPU、内存和磁盘',
+        name: '云端可用',
+        note: '默认选中云端沙箱，下面说明每个会话在自己的沙箱里工作；另有两台自有设备（一台离线）。',
+        props: { devices: COMPUTE_DEVICES, cloudAvailable: true },
+        expect: '每个会话在自己的云端沙箱里工作，首次运行时自动准备',
       },
     ],
   },

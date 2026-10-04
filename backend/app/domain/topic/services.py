@@ -782,9 +782,6 @@ class TopicService:
             elif operation.state in {"claimed", "retained", "complete"}:
                 topic.resource_id = uuid.uuid4()
                 await AgentSessionService(self._session).forget_room(topic.id)
-                from app.domain.machine.services import MachineService
-
-                await MachineService(self._session).detach_archived_machine(topic.id)
         topic.status = TopicStatus.active
         topic.archived_at = None
         topic.cleanup_due_at = None

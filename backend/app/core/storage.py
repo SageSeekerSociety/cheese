@@ -257,6 +257,30 @@ class S3StorageBackend(StorageBackend):
                 raise
             return True
 
+    async def presign(self, key: str, operation: str, expires_s: int) -> str:
+        """A URL that lets whoever holds it do one thing to one object for a
+        while (``get_object`` or ``put_object``), with no credential of ours:
+        a machine that moves a large file to or from the bucket is handed this
+        rather than the key, and the bytes do not pass through the backend."""
+        async with self._get_client() as client:
+            return await client.generate_presigned_url(
+                operation,
+                Params={"Bucket": self._bucket, "Key": key},
+                ExpiresIn=expires_s,
+            )
+
+    async def stat(self, key: str) -> tuple[int, str] | None:
+        """The object's size and ETag, or None for an object that is not there.
+        An object written in one PUT has its bytes' MD5 as ETag."""
+        async with self._get_client() as client:
+            try:
+                head = await client.head_object(Bucket=self._bucket, Key=key)
+            except Exception as exc:
+                if _object_is_absent(exc):
+                    return None
+                raise
+        return int(head["ContentLength"]), str(head["ETag"]).strip('"')
+
     def get_url(self, key: str) -> str:
         if self._public_url:
             return f"{self._public_url.rstrip('/')}/{key}"
@@ -279,6 +303,26 @@ def compute_file_hash(file: BinaryIO) -> str:
         hasher.update(chunk)
     file.seek(0)
     return hasher.hexdigest()
+
+
+def private_storage() -> S3StorageBackend:
+    """The private bucket, for what holds working files: task bundles and
+    archived sandbox homes. With no private bucket configured this refuses
+    rather than use the public one."""
+    if (
+        not settings.s3_endpoint_url
+        or not settings.s3_access_key
+        or not settings.s3_secret_key
+        or not settings.transcript_s3_bucket
+    ):
+        raise RuntimeError("Private object storage is not configured")
+    return S3StorageBackend(
+        bucket=settings.transcript_s3_bucket,
+        endpoint_url=settings.s3_endpoint_url,
+        access_key=settings.s3_access_key,
+        secret_key=settings.s3_secret_key,
+        region=settings.s3_region,
+    )
 
 
 _storage_backend: StorageBackend | None = None

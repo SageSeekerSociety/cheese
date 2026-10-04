@@ -910,47 +910,6 @@ export interface ProjectCredits {
 
 // ---- 题目匹配市场 (spec §13 阶段 6: Space 发布题目, 团队应征) ----
 
-// A selectable AI execution profile (GET /projects/{id}/execution-profiles).
-export type ProjectMachineStatus =
-  | 'provisioning'
-  | 'starting'
-  | 'running'
-  | 'suspending'
-  | 'suspended'
-  | 'resuming'
-  | 'stopping'
-  | 'stopped'
-  | 'deleting'
-  | 'deleted'
-  | 'error'
-  | 'unknown'
-
-export type ProjectMachineAiStatus = 'disabled' | 'provisioning' | 'ready' | 'error' | 'unknown'
-
-// A MicroCloud machine billed/audited through a project. Once enrolled, its device
-// belongs to the project's team pool and is available to every project on that team.
-export interface ProjectMachine {
-  id: string
-  project_id: string
-  machine_id: number | null
-  hostname: string
-  login_user: string
-  cores: number
-  memory_mb: number
-  disk_gb: number
-  status: ProjectMachineStatus
-  ip: string | null
-  ai_mode: string
-  ai_status: ProjectMachineAiStatus
-  device_id: string | null
-  enrolled_at: string | null
-  enroll_error: string | null
-  enroll_attempts: number
-  enroll_max_attempts: number
-  requested_by: string | null
-  created_at: string
-}
-
 // #282 §四 · whether an agent in this room can see a whole enrolled machine. `effective`: 'host' | 'isolated' | null
 // (no agent on one); `machine_access` is the flag the room's 「能访问整台机器」 notice keys on (tooltip:
 // `work.roomMachine.wholeMachineNotice`). `options`: the two 档 (isolated = default, host = the owner gives it).
@@ -1018,9 +977,6 @@ export interface ComputeChoice {
   name: string | null
   profile: 'cloud' | 'device'
   device_id: string | null
-  cores: number | null
-  memory_mb: number | null
-  disk_gb: number | null
 }
 
 export interface SessionWorkLease {
@@ -1028,7 +984,9 @@ export interface SessionWorkLease {
   agent_handle: string
   harness: string
   choice: ComputeChoice | null
-  lease: { device_id: string; generation: number; status: string; online: boolean } | null
+  // A cloud session's lease is only its status: the host its sandbox runs on is
+  // the platform's, and is never named to users.
+  lease: { device_id?: string; generation?: number; status: string; online: boolean } | null
 }
 
 // GET /projects/{id}/compute-configs — the machine new agents start on, and where

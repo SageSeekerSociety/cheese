@@ -436,9 +436,9 @@ export function platformNotice(block: Block, run: Block[] = [block]): PlatformNo
       mode: 'agent-status',
       line:
         state === 'ready'
-          ? t('work.room.notice.machineReady')
+          ? t('work.room.notice.sandboxReady')
           : state === 'waiting'
-            ? t('work.room.notice.machinePreparing')
+            ? t('work.room.notice.sandboxPreparing')
             : noticeText(latest),
       updatedAt: latest.created_at,
       occurrences: run.map((item) => ({

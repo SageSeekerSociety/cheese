@@ -20,9 +20,9 @@ cd "$task_root/backend"
 uv sync --frozen --group dev
 uv run alembic heads
 uv run pytest -q -n 0 tests/integration/test_cloud_warm_pool.py \
-  tests/integration/test_project_machines.py tests/unit/test_machine_service.py \
+  tests/integration/test_cloud_host_pool.py \
+  tests/integration/test_cloud_host_pool_migration.py \
   tests/unit/test_machine_enrollment.py tests/unit/test_machine_reconcile.py \
-  tests/unit/test_cloud_provider.py tests/unit/test_cloud_wakeup.py \
   tests/unit/test_domain_import_guard.py tests/unit/test_periodic_jobs.py \
   tests/unit/test_cloud_claude_transfer.py tests/unit/test_enrollment_installs_claude.py
 printf '%s backend tests complete\n' "$(date -u +%FT%TZ)"

@@ -19,24 +19,17 @@ from app.domain.device.wiring import sql_device_service
 from app.domain.policy import gate
 from app.domain.user.models import User as UserRow
 
-# What a platform choice may hold at all, provider aside. The cloud supply
-# range a form offers is the provider's offering met with these
-# (`domain/machine/supply.py`), so both read the same numbers.
-PLATFORM_BOUNDS: dict[str, tuple[int, int]] = {
-    "cores": (1, 256),
-    "memory_mb": (512, 1048576),
-    "disk_gb": (1, 16384),
-}
-
 
 class ComputeChoice(BaseModel):
-    """Which machine a room works on: the profile, the device, the specs.
+    """Which machine a room works on: a cloud sandbox, or a self-hosted device.
 
-    ``name`` is only ever a device's own name, a proper noun that reads the same
-    in every language. A choice the platform describes — the cloud, standard or
-    with specs, and 「any online device」 — carries no name: it is identified by
-    its fields, and each reader's screen renders its own label for it. A stored
-    name would be one language's words shown to every member of the project.
+    A cloud sandbox has no spec to choose: every sandbox gets the same fixed
+    share of a platform host. ``name`` is only ever a device's own name, a proper
+    noun that reads the same in every language. A choice the platform describes
+    — the cloud, and 「any online device」 — carries no name: it is identified
+    by its fields, and each reader's screen renders its own label for it. A
+    stored name would be one language's words shown to every member of the
+    project.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -44,19 +37,6 @@ class ComputeChoice(BaseModel):
     name: str | None = Field(default=None, max_length=60)
     profile: Literal["cloud", "device"]
     device_id: str | None = None
-    cores: int | None = Field(
-        default=None, ge=PLATFORM_BOUNDS["cores"][0], le=PLATFORM_BOUNDS["cores"][1]
-    )
-    memory_mb: int | None = Field(
-        default=None,
-        ge=PLATFORM_BOUNDS["memory_mb"][0],
-        le=PLATFORM_BOUNDS["memory_mb"][1],
-    )
-    disk_gb: int | None = Field(
-        default=None,
-        ge=PLATFORM_BOUNDS["disk_gb"][0],
-        le=PLATFORM_BOUNDS["disk_gb"][1],
-    )
 
     @model_validator(mode="after")
     def resource_kind(self):
@@ -65,10 +45,6 @@ class ComputeChoice(BaseModel):
         self.name = ((self.name or "").strip() or None) if named_device else None
         if self.profile == "cloud" and self.device_id:
             raise ValueError(say("computeCloudCannotNameDevice"))
-        if self.profile == "device" and any(
-            v is not None for v in (self.cores, self.memory_mb, self.disk_gb)
-        ):
-            raise ValueError(say("computeDeviceUsesOwnSpec"))
         return self
 
 
@@ -91,9 +67,7 @@ def choice_label(choice: ComputeChoice) -> str:
         return choice.name
     if choice.profile == "device":
         return say("computeAnyDevice" if choice.device_id is None else "computeDevice")
-    if choice.cores or choice.memory_mb or choice.disk_gb:
-        return say("computeCloudCustom")
-    return say("computeCloudStandard")
+    return say("computeCloud")
 
 
 def project_configs(project_settings: dict | None) -> ProjectComputeConfigs:

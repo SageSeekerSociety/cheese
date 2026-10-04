@@ -953,24 +953,8 @@ export function chatTimelineProps(over: Record<string, unknown> = {}): Record<st
   }
 }
 
-/** 工作电脑表单：两台自有设备（一台离线），以及云端此刻的供应（示例数字，取自 2026-09-30 的 dev）。 */
+/** 工作电脑表单：两台自有设备（一台离线）。 */
 export const COMPUTE_DEVICES = [
   { device_id: 'lab', name: '实验室工作站', online: true },
   { device_id: 'home', name: '家里那台', online: false },
 ]
-export const CLOUD_SUPPLY = {
-  available: true as const,
-  offering: 'standard-lxc',
-  selectable: {
-    cores: { min: 1, max: 32 },
-    memory_mb: { min: 512, max: 131072 },
-    disk_gb: { min: 2, max: 128 },
-  },
-  provider: {
-    cores: { min: 1, max: 32 },
-    memory_mb: { min: 128, max: 131072 },
-    disk_gb: { min: 2, max: 128 },
-  },
-  capacity_known: false,
-}
-export const CLOUD_SUPPLY_UNKNOWN = { available: false as const, reason: 'MicroCloud unreachable' }

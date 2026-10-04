@@ -1838,8 +1838,7 @@ class Executor:
             files = {}
             if manifest.exists():
                 for name in json.loads(manifest.read_text()):
-                    path = self.programs / name
-                    if path.is_file():
+                    if (path := self.programs / name).is_file():
                         files[name] = hashlib.sha256(path.read_bytes()).hexdigest()
             return {
                 "pid": os.getpid(),
@@ -1852,6 +1851,7 @@ class Executor:
                 "release": self.config.get("release"),
                 "sandbox": bool(self.config.get("sandbox")),  # launch.can_prepare
                 "upgrading": self.upgrading,
+                "running_commands": len(self.running),
                 "capabilities": [
                     "prepare",
                     "idle_upgrade",

@@ -72,7 +72,6 @@ async def test_discovery_releases_database_and_skips_a_dead_runner(failure):
 
     source = Mock(spec=CentralChannel)
     source.name = "central"
-    source.provisions_machine = True
     source._session_factory = factory
     source.placed = CentralChannel.placed.__get__(source)
     hub = Mock(

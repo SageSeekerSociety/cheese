@@ -38,9 +38,6 @@ const cloud: ComputeChoice = {
   name: null,
   profile: 'cloud',
   device_id: null,
-  cores: null,
-  memory_mb: null,
-  disk_gb: null,
 }
 const leaving: ComputeChoice = { ...cloud, name: '旧工作站', profile: 'device', device_id: 'old' }
 function row(id: string, room: string, working = false): DeviceSession {
@@ -198,7 +195,7 @@ it('offers every other work computer but the one being left', async () => {
 
   await fireEvent.mouseDown(screen.getByLabelText('换到'))
 
-  expect(await screen.findByRole('option', { name: '云端 · 标准配置' })).toBeTruthy()
+  expect(await screen.findByRole('option', { name: '云端沙箱' })).toBeTruthy()
   expect(screen.getByRole('option', { name: '备用机 · 不可用' })).toBeTruthy()
   expect(screen.queryByRole('option', { name: /旧工作站/ })).toBeNull()
 })

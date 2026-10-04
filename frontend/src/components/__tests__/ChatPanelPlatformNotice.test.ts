@@ -378,7 +378,7 @@ describe('平台提示：连着来的同类事件折成一条', () => {
 
     const rows = container.querySelectorAll('[data-testid="platform-notice"]')
     expect(rows).toHaveLength(1)
-    expect(visibleText(rows[0])).toContain('工作电脑已就绪')
+    expect(visibleText(rows[0])).toContain('沙箱已就绪')
     expect(rows[0].closest('.agent-status')?.querySelector('[role="img"]')?.getAttribute('aria-label')).toBe('芝士')
     expect(visibleText(rows[0])).not.toContain('正在创建')
     expect(visibleText(rows[0])).not.toContain('平台已处理')
@@ -400,7 +400,7 @@ describe('平台提示：连着来的同类事件折成一条', () => {
     ])
     await flush()
     const shown = visibleText(container.querySelector('[data-testid="platform-notice"]')!)
-    expect(shown).toContain('正在准备工作电脑')
+    expect(shown).toContain('正在准备沙箱')
     expect(shown).not.toContain('已处理')
   })
 

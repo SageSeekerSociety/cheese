@@ -10,7 +10,7 @@ import logging
 from app.core.config import settings
 from app.domain.machine import warm
 from app.domain.machine.microcloud import MicroCloudError
-from tests.unit.test_machine_service import FakeMicroCloud
+from tests.microcloud import FakeMicroCloud
 
 
 class FlakyCloud(FakeMicroCloud):

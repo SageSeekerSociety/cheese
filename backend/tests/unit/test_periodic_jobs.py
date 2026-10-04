@@ -185,6 +185,7 @@ def _jobs():
             session_factory=lambda: None,
         ),
         machines=SimpleNamespace(sweep=_noop),
+        sandboxes=SimpleNamespace(sweep=_noop),
         sessions=lambda: None,
     )
 
@@ -228,6 +229,12 @@ def test_the_timed_delivery_alarm_is_scheduled():
     报错可看，只有缺席。它的间隔写死在列表里，不是一个设置，所以这里只问它在不在。
     """
     assert any(job.name == "timed deliveries" for job in _jobs())
+
+
+def test_idle_cloud_sandboxes_are_put_to_sleep_on_a_clock():
+    """Nothing else stops an idle sandbox or archives a home: without this
+    job the pool's slots stay taken and its hosts are never released."""
+    assert any(job.name == "cloud sandbox lifecycle" for job in _jobs())
 
 
 def test_forge_accounts_left_by_failed_creations_are_swept():

@@ -105,8 +105,9 @@ async def judge_host_failure(
         return HostVerdict(
             quarantined=True,
             device_id=device_id,
-            message=say("cloudMachineFailing", name=name),
-            event_meta=_failure_meta(failure, verdict, say("cloudMachineFailingNext")),
+            # A cloud host is the platform's; the room hears about its sandbox.
+            message=say("sandboxFailing"),
+            event_meta=_failure_meta(failure, verdict, say("sandboxFailingNext")),
         )
     return HostVerdict(
         quarantined=True,

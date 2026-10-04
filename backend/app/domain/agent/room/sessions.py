@@ -254,10 +254,6 @@ class RoomSessions:
         return self.channel.name
 
     @property
-    def provisions_machine(self) -> bool:
-        return self.channel.provisions_machine
-
-    @property
     def deferred_work(self) -> bool:
         return self.channel.deferred_work
 
@@ -267,9 +263,6 @@ class RoomSessions:
 
     def available(self) -> bool:
         return self.channel.available()
-
-    async def prepare_topic(self, **kwargs) -> tuple[bool, str]:
-        return await self.channel.prepare_topic(**kwargs)
 
     def report_to(
         self,
