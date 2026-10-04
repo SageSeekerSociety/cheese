@@ -508,6 +508,16 @@
   min-height: calc(var(--app-height, 100dvh) - var(--keyboard-inset, 0px));
 }
 
+/* 刘海 / 状态栏：手机顶栏（`v-app-bar`）钉在视口最上沿，`viewport-fit=cover`
+   之后会钻进安全区里——左边那颗 ← / 汉堡、右边那颗头像都点到点不动。把整条
+   往下顶 `safe-area-inset-top`，栏自己长高那一截；内容区（`.v-main`）在 App.vue
+   里同步让出同一截，两边对得上。
+
+   `env()` 在桌面、没有安全区的设备上都是 0，所以这一条在那儿是空操作。 */
+.v-app-bar.v-toolbar {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
 /* ---------------------------------------------------------------------------
    Type hierarchy — utility classes referenced across views. Enforces the spec:
    tight headings in --ink, lighter body in --text, metadata always --faint mono.
