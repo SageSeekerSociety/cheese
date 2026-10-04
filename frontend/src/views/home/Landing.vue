@@ -27,9 +27,10 @@ const resources = computed(() => [
 
 // The visitor's own system first; the files are served by this site (lib/desktop.ts).
 
-// The hero finishes its sentence with one concrete job after another, so a
-// visitor sees what the product is for before scrolling. It holds still under
-// reduced motion and in a background tab.
+// The hero finishes its sentence with one concrete job after another, typed out
+// and erased a character at a time the way dot.net's hero did, so a visitor sees
+// what the product is for before scrolling. It holds still on the first job under
+// reduced motion, and waits out a background tab.
 const jobs = computed(() => [
   t('publicSite.heroJob1'),
   t('publicSite.heroJob2'),
@@ -38,9 +39,39 @@ const jobs = computed(() => [
   t('publicSite.heroJob5'),
   t('publicSite.heroJob6'),
 ])
-const job = ref(0)
+const TYPE_MS = 90
+const ERASE_MS = 50
+const HOLD_MS = 1600
+const typed = ref(jobs.value[0])
+// A caret blinks only while it waits; while it types or erases it stays lit.
+const idle = ref(true)
 const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
-let jobTimer: ReturnType<typeof setInterval> | undefined
+let typingTimer: ReturnType<typeof setTimeout> | undefined
+
+function after(ms: number, next: () => void) {
+  typingTimer = setTimeout(next, ms)
+}
+
+function erase(index: number) {
+  if (document.hidden) return after(HOLD_MS, () => erase(index))
+  idle.value = false
+  if (typed.value) {
+    typed.value = typed.value.slice(0, -1)
+    after(ERASE_MS, () => erase(index))
+  } else {
+    type((index + 1) % jobs.value.length, 1)
+  }
+}
+
+function type(index: number, length: number) {
+  const job = jobs.value[index]
+  typed.value = job.slice(0, length)
+  if (length < job.length) after(TYPE_MS, () => type(index, length + 1))
+  else {
+    idle.value = true
+    after(HOLD_MS, () => erase(index))
+  }
+}
 
 // Which step of the story is in the middle of the screen drives the room.
 const step = ref(0)
@@ -57,16 +88,12 @@ onMounted(() => {
     { rootMargin: '-45% 0px -45% 0px' }
   )
   for (const el of stepEls.value) observer.observe(el)
-  if (!reducedMotion) {
-    jobTimer = setInterval(() => {
-      if (!document.hidden) job.value = (job.value + 1) % jobs.value.length
-    }, 2400)
-  }
+  if (!reducedMotion) after(HOLD_MS, () => erase(0))
 })
 
 onBeforeUnmount(() => {
   observer?.disconnect()
-  clearInterval(jobTimer)
+  clearTimeout(typingTimer)
 })
 </script>
 
@@ -84,9 +111,9 @@ onBeforeUnmount(() => {
                the line is as wide and tall as its longest job and never jumps. -->
           <span class="hero-jobs" aria-hidden="true">
             <span v-for="item in jobs" :key="item" class="hero-job-size">{{ item }}</span>
-            <Transition name="hero-job">
-              <span :key="job" class="hero-job-word">{{ jobs[job] }}</span>
-            </Transition>
+            <span class="hero-job-word"
+              >{{ typed }}<span v-if="!reducedMotion" class="hero-job-caret" :class="{ 'hero-job-caret-idle': idle }"
+            /></span>
           </span>
         </h1>
         <p class="hero-position">{{ t('publicSite.positioning') }}</p>

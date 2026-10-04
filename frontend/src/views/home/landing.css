@@ -185,6 +185,7 @@
 .hero-job-size,
 .hero-job-word {
   grid-area: 1 / 1;
+  justify-self: start;
 }
 
 .hero-job-size {
@@ -192,24 +193,33 @@
 }
 
 .hero-job-word {
-  color: var(--accent-press);
+  /* The one gradient in the hero, from the deeper amber to amber text ink. It
+     starts at --accent-press, not --accent: the bright amber is under 3:1 on the
+     light canvas, short of what even display type needs. */
+  background: linear-gradient(90deg, var(--accent-press), var(--accent-ink));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
-.hero-job-enter-active,
-.hero-job-leave-active {
-  transition:
-    opacity var(--dur-base) var(--ease-out),
-    transform var(--dur-base) var(--ease-out);
+.hero-job-caret {
+  display: inline-block;
+  width: 0.06em;
+  height: 1em;
+  margin-left: 0.04em;
+  /* Down to where Chinese glyphs end, a little below the Latin baseline. */
+  vertical-align: -0.12em;
+  background: var(--accent-press);
 }
 
-.hero-job-enter-from {
-  opacity: 0;
-  transform: translateY(0.25em);
+.hero-job-caret-idle {
+  animation: hero-caret 1s steps(1) infinite;
 }
 
-.hero-job-leave-to {
-  opacity: 0;
-  transform: translateY(-0.25em);
+@keyframes hero-caret {
+  50% {
+    opacity: 0;
+  }
 }
 
 .hero-position {
@@ -990,9 +1000,7 @@
   }
 
   .solution-swap-enter-active,
-  .solution-swap-leave-active,
-  .hero-job-enter-active,
-  .hero-job-leave-active {
+  .solution-swap-leave-active {
     transition: none;
   }
 }

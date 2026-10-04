@@ -131,19 +131,23 @@ describe('公开首页', () => {
     expect(solutions.getByRole('link', { name: '方案' }).getAttribute('aria-current')).toBe('page')
   })
 
-  it('finishes the headline with one job after another, and reads every job out at once', async () => {
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+  it('types out one job after another after the lead, and reads every job out at once', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     try {
       const home = await mount()
       const title = home.getByRole('heading', { level: 1 })
       expect(title.textContent).toContain('和队友、AI 一起')
-      for (const job of ['做课程项目', '写一份周报', '修一个 bug', '做网页原型', '整理文献', '批改作业']) {
+      for (const job of ['读文献', '写代码', '跑实验', '做产品原型', '写调研报告', '准备答辩']) {
         expect(title.textContent).toContain(job)
       }
+      expect(home.getByText('做真项目，学真本事。')).toBeTruthy()
       const shown = () => title.querySelector('.hero-job-word')!.textContent
-      expect(shown()).toBe('做课程项目')
-      await vi.advanceTimersByTimeAsync(2400)
-      expect(shown()).toBe('写一份周报')
+      expect(shown()).toBe('读文献')
+      await vi.advanceTimersByTimeAsync(1700)
+      expect('读文献'.startsWith(shown()!)).toBe(true)
+      expect(shown()!.length).toBeLessThan(3)
+      await vi.advanceTimersByTimeAsync(1300)
+      expect(shown()).toBe('写代码')
     } finally {
       vi.useRealTimers()
     }
