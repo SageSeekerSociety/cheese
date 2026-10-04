@@ -8,7 +8,6 @@
  *   2. scrollTop 落在 before.scrollTop + (after − before)；
  *   3. 测量帧是异步撤的（两个 rAF），不是量完立刻撤，好让这一帧先被画一次。 */
 import type { Ref } from 'vue'
-
 import type { useTimeline } from '../components/room/composables/useTimeline'
 import type { Topic } from '../cx_types'
 
@@ -23,6 +22,7 @@ vi.mock('../api', () => ({
 vi.mock('../lib/blockCache', () => ({ setCachedWindow: vi.fn() }))
 
 import { MEASURE_CLASS } from '../lib/contentVisibility'
+
 import { useChatPaging } from './useChatPaging'
 
 /** 假滚动容器：读出 scrollHeight 时记一笔「这一刻测量帧在不在」。 */

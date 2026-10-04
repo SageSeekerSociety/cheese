@@ -14,8 +14,8 @@ import pytest
 from sqlalchemy import select
 
 from app.core.config import settings
-from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.library.service import artifact_snapshot_path, write_library_file
+from app.domain.living_doc.models import Document
 from app.domain.project.models import ProjectArtifact, ProjectForge
 from app.domain.review.models import AcceptCard, AcceptStatus, DeliverableKind
 from app.domain.topic.repositories import TopicRepository
@@ -68,23 +68,21 @@ def exported_project(client, monkeypatch, tmp_path):
             binding.api_url = "https://forge.invalid"
             binding.repo = "fixture/project"
             binding.default_branch = "main"
-            doc = Block(
+            doc = Document(
                 project_id=pid,
-                topic_id=room.id,
-                kind=BlockKind.doc,
-                author_type=AuthorType.participant,
+                room_id=room.id,
                 author="export-owner",
                 content="# Offline document\n",
+                version=1,
             )
             db.add(doc)
             db.add(
-                Block(
+                Document(
                     project_id=pid,
-                    topic_id=private.id,
-                    kind=BlockKind.doc,
-                    author_type=AuthorType.participant,
+                    room_id=private.id,
                     author="other",
                     content="PRIVATE-SECRET",
+                    version=1,
                 )
             )
             artifact = ProjectArtifact(

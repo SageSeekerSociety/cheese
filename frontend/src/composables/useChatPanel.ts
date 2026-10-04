@@ -31,7 +31,6 @@ import {
   ensureFreshToken,
   isRetryableGetFailure,
   listBlocks,
-  listRoomTasks,
   toggleReaction as apiToggleReaction,
   undoTopicTitle,
 } from '../api'
@@ -59,6 +58,7 @@ import { AGENT_STATUS_EVENTS, collapseNotices, type PlatformNotice, rendersInRoo
 import { reactOptimistically } from '../lib/reactions'
 import { coalesceSplitFencedCodeBlocks } from '../lib/renderMessage'
 import { placeSplitMarkers } from '../lib/splitMarkers'
+import { cachedTopicPanel, fetchRoomTasks } from '../lib/topicPanelCache'
 import { taskTitle, topicShortId, topicStateBadge, topicTitle } from '../lib/topicState'
 import { myHandle } from '../me'
 
@@ -753,10 +753,10 @@ export function useChatPanel(opts: ChatPanelOptions) {
   watch(
     () => topic()?.id,
     async (id) => {
-      roomTasks.value = []
+      roomTasks.value = id ? cachedTopicPanel('roomTasks', id)?.data ?? [] : [] // 先画上次那份，背后再重取
       if (!id) return
       try {
-        roomTasks.value = (await listRoomTasks(id, { limit: 1 })).data
+        roomTasks.value = (await fetchRoomTasks(id)).data
       } catch {
         // 标记是派生出来的装饰，不是内容。拉不到就少几行标记，不该让整个时间线红掉。
       }

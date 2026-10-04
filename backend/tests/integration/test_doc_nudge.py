@@ -150,23 +150,9 @@ def test_a_room_with_a_doc_is_left_alone(client, alice):
     _work(client, room, agent, tools=doc_nudge.MIN_TOOL_EVENTS + 3)
 
     async def write_doc(s):
-        from app.domain.block.repositories import BlockRepository
+        from tests.support.living_doc import write_doc as record
 
-        root = await BlockRepository(s).doc_root(room)
-        if root is not None:
-            root.content = "## 目标\n\n做一件事。\n"
-            return
-        r = await s.get(Topic, room)
-        s.add(
-            Block(
-                project_id=r.project_id,
-                topic_id=room,
-                kind=BlockKind.doc,
-                author_type=AuthorType.participant,
-                author=agent,
-                content="## 目标\n\n做一件事。\n",
-            )
-        )
+        await record(s, room, "## 目标\n\n做一件事。\n", agent)
 
     _run(client, write_doc)
     sent: list = []

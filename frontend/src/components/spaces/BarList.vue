@@ -5,6 +5,8 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
+
 const props = defineProps<{
   rows: { label: string; value: number; hint?: string }[]
   /** 把数值写成带单位的一句，如 `(n) => t('tasks.insights.people', n)`；不给就只显示数。
@@ -35,7 +37,7 @@ const max = computed(() => Math.max(1, ...props.rows.map((r) => r.value)))
       }}</span>
     </p>
   </div>
-  <v-empty-state v-else icon="mdi-chart-bar" :title="empty ?? t('spaces.barList.empty')" />
+  <BaseEmptyState v-else size="compact" icon="mdi-chart-bar" :title="empty ?? t('spaces.barList.empty')" />
 </template>
 
 <style scoped lang="scss">

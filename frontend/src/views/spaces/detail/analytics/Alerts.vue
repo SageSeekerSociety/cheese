@@ -4,7 +4,7 @@
     <!-- A failed reload must replace the block, not leave the previous filter's alerts standing (docs/design-system.md §3.10). -->
     <BaseLoadError v-if="failed" :title="t('spaces.analytics.alerts.loadFailed')" :error="errorDetail" @retry="load" />
     <AnalyticsAlertGrid v-else-if="alerts" :alerts="alerts" @open="openTasks" />
-    <p v-else-if="!loading" class="an-note">{{ t('spaces.analytics.alerts.empty') }}</p>
+    <BaseEmptyState v-else-if="!loading" size="inline" :title="t('spaces.analytics.alerts.empty')" />
   </div>
 </template>
 
@@ -18,6 +18,7 @@ import { useI18n } from 'vue-i18n'
 import AnalyticsAlertGrid from './components/AnalyticsAlertGrid.vue'
 import { useSpaceAnalyticsFilters } from './composables/useSpaceAnalyticsFilters'
 
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import { ANALYTICS_ROUTE_NAMES } from '@/lib/spaceRouteNames'
 import { SpacesApi } from '@/network/api/spaces'

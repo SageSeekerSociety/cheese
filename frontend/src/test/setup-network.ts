@@ -13,3 +13,12 @@ afterEach(() => {
   const requests = unexpectedRequests.splice(0)
   expect(requests, 'Mock every HTTP request used by this test').toEqual([])
 })
+
+// 话题面板缓存（lib/topicPanelCache.ts）是模块级的：同一个测试文件里上一个用例取到
+// 的进度、名册、派出的活会在下一个用例里被「先画上次那份」画出来。每个用例结束擦掉。
+// 动态 import 放在 afterEach 里：此时测试文件的 vi.mock 已经登记，拿到的是同一个模块
+// 实例，也不会抢在 mock 之前把真的 api 加载进来。
+afterEach(async () => {
+  const { clearTopicPanelCache } = await import('@/lib/topicPanelCache')
+  clearTopicPanelCache()
+})

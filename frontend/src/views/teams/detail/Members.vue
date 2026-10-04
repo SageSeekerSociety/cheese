@@ -159,12 +159,12 @@
           </v-list>
         </v-card>
 
-        <!-- 无成员时的提示 -->
-        <div v-if="!failedMembers && teamMembers.length === 0" class="text-center py-12">
-          <v-icon icon="mdi-account-group" size="64" class="mb-4 empty-state-icon"></v-icon>
-          <h3 class="text-h6 font-weight-medium mb-2">{{ t('teams.members.emptyMembers') }}</h3>
-          <p class="text-body-2 text-medium-emphasis mb-6">{{ t('teams.members.emptyMembersHint') }}</p>
-        </div>
+        <BaseEmptyState
+          v-if="!failedMembers && teamMembers.length === 0"
+          icon="mdi-account-group"
+          :title="t('teams.members.emptyMembers')"
+          :desc="t('teams.members.emptyMembersHint')"
+        />
       </v-window-item>
 
       <!-- 加入申请 -->
@@ -180,11 +180,12 @@
           @retry="retryRequests"
         />
 
-        <v-card v-else-if="joinRequests.length === 0" flat class="text-center py-12">
-          <v-icon icon="mdi-account-arrow-right" size="64" class="mb-4 empty-state-icon"></v-icon>
-          <h3 class="text-h6 font-weight-medium mb-2">{{ t('teams.members.emptyRequests') }}</h3>
-          <p class="text-body-2 text-medium-emphasis">{{ t('teams.members.emptyRequestsHint') }}</p>
-        </v-card>
+        <BaseEmptyState
+          v-else-if="joinRequests.length === 0"
+          icon="mdi-account-arrow-right"
+          :title="t('teams.members.emptyRequests')"
+          :desc="t('teams.members.emptyRequestsHint')"
+        />
 
         <v-card v-else flat rounded="lg">
           <v-list>
@@ -274,11 +275,12 @@
           @retry="retryInvitations"
         />
 
-        <v-card v-else-if="teamInvitations.length === 0" flat class="text-center py-12">
-          <v-icon icon="mdi-email-outline" size="64" class="mb-4 empty-state-icon"></v-icon>
-          <h3 class="text-h6 font-weight-medium mb-2">{{ t('teams.members.emptyInvitations') }}</h3>
-          <p class="text-body-2 text-medium-emphasis">{{ t('teams.members.emptyInvitationsHint') }}</p>
-        </v-card>
+        <BaseEmptyState
+          v-else-if="teamInvitations.length === 0"
+          icon="mdi-email-outline"
+          :title="t('teams.members.emptyInvitations')"
+          :desc="t('teams.members.emptyInvitationsHint')"
+        />
 
         <v-card v-else flat rounded="lg">
           <v-list>
@@ -336,6 +338,7 @@ import { getAvatarUrl } from '@/utils/materials'
 import TeamJoinLinkCard from './TeamJoinLinkCard.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import i18n, { t } from '@/i18n'
@@ -709,12 +712,6 @@ const getStatusText = (status: string) => {
 </script>
 
 <style scoped lang="scss">
-/* 空状态插图：元信息级别的装饰。--line-2 浅色 #E2E3E6（和原来的
-   grey-lighten-2 #E0E0E0 几乎同值），深色 #3A3E45（在深色页面上仍看得出形状）。 */
-.empty-state-icon {
-  color: var(--line-2);
-}
-
 .member-item {
   transition: background-color 0.2s ease;
   border-radius: 8px;

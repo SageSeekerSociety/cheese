@@ -7,6 +7,8 @@ from datetime import UTC, datetime, timedelta
 
 from app.domain.block.authorship import AuthorType
 from app.domain.block.models import Block, BlockKind
+from app.domain.living_doc.models import DocumentNode
+from app.domain.living_doc.services import Documents
 from app.domain.project.models import ProjectArtifact
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.repositories import TopicRepository
@@ -52,6 +54,27 @@ def _say(project: str, room: str, text: str, kind=BlockKind.message):
                 author_type=AuthorType.participant,
                 author=OWNER,
                 content=text,
+            )
+        )
+
+    return go
+
+
+def _paragraph(project: str, room: str, text: str):
+    """A paragraph of the room's document."""
+
+    async def go(db):
+        doc = await Documents(db).ensure_for_room(
+            room_id=uuid.UUID(room), project_id=uuid.UUID(project)
+        )
+        doc.version = max(doc.version, 1)
+        db.add(
+            DocumentNode(
+                document_id=doc.id,
+                node_type="paragraph",
+                content=text,
+                position=0,
+                author=OWNER,
             )
         )
 
@@ -261,7 +284,7 @@ def test_a_busy_conversation_does_not_crowd_out_the_documents(client):
     )
     _seed(
         client,
-        _say(project, room, long + "上线日期以周报为准", kind=BlockKind.doc_node),
+        _paragraph(project, room, long + "上线日期以周报为准"),
     )
 
     r = client.get(
@@ -312,7 +335,7 @@ def test_paging_through_one_kind_gives_every_hit_once(client):
 def test_one_page_can_hold_several_kinds(client):
     project = _project(client)
     room = _room(client, project, "文档")
-    _seed(client, _say(project, room, "接口约定写在这里", kind=BlockKind.doc_node))
+    _seed(client, _paragraph(project, room, "接口约定写在这里"))
     _seed(client, _say(project, room, "接口约定第二段要改", kind=BlockKind.comment))
     _seed(client, _say(project, room, "接口约定聊过了"))
 
