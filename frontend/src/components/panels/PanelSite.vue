@@ -3,7 +3,7 @@
 import type { AgentControlState, Block, Topic } from '../../cx_types'
 import type { MemberActivityLine } from '../../lib/memberActivity'
 
-import { computed, onUpdated, ref, watch } from 'vue'
+import { computed, onUpdated, ref, useId, watch } from 'vue'
 
 import { useSiteClamp } from '../../composables/useSiteClamp'
 import { useSiteTranscript } from '../../composables/useSiteTranscript'
@@ -32,6 +32,7 @@ import SessionInspector from '../SessionInspector.vue'
 import SiteStepOutput from './SiteStepOutput.vue'
 
 import { t } from '@/i18n'
+import { vRovingTabs } from '@/lib/rovingTabs'
 
 const props = withDefaults(
   defineProps<{
@@ -65,6 +66,9 @@ const props = withDefaults(
     activity: () => [],
   }
 )
+
+// 按队友筛的那排页签切换的就是下面这条记录。
+const logId = `site-log-${useId()}`
 
 const emit = defineEmits<{
   (e: 'open-file', path: string, taskId: string | null): void
@@ -289,13 +293,20 @@ function isLive(index: number): boolean {
     <!-- read-only transcript timeline (芝士 messages + tool events) -->
     <template v-else>
       <SessionInspector v-if="topic" :topic-id="topic.id" :active="active" :pushed="agentControl" />
-      <div v-if="agents.length > 1" class="site-agents" role="tablist">
+      <div
+        v-if="agents.length > 1"
+        v-roving-tabs
+        class="site-agents"
+        role="tablist"
+        :aria-label="t('work.room.site.agents.label')"
+      >
         <button
           type="button"
           role="tab"
           class="site-agents__tab"
           :class="{ 'site-agents__tab--on': viewing === null }"
           :aria-selected="viewing === null"
+          :aria-controls="logId"
           @click="selectAgent(null)"
         >
           {{ t('work.room.site.agents.all') }}
@@ -308,16 +319,22 @@ function isLive(index: number): boolean {
           class="site-agents__tab"
           :class="{ 'site-agents__tab--on': viewing === a }"
           :aria-selected="viewing === a"
+          :aria-controls="logId"
           @click="selectAgent(a)"
         >
           {{ agentLabel(a) }}
         </button>
       </div>
       <MemberActivity :lines="workingLines" class="site-activity" />
-      <div v-if="transcript.length === 0" class="text-center text-medium-emphasis py-6">
+      <div
+        v-if="transcript.length === 0"
+        :id="logId"
+        class="text-center text-medium-emphasis py-6"
+        :role="agents.length > 1 ? 'tabpanel' : undefined"
+      >
         {{ t('work.room.site.empty') }}
       </div>
-      <div v-else class="site-log pa-3">
+      <div v-else :id="logId" class="site-log pa-3" :role="agents.length > 1 ? 'tabpanel' : undefined">
         <div v-if="hasOlder" class="site-older">
           {{ loadingOlder ? t('work.room.site.loadingOlder') : t('work.room.site.older') }}
         </div>

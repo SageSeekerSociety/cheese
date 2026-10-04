@@ -536,6 +536,8 @@ void openPlace()
      这条视图以前不画底、直接透出 body 的 --canvas，于是侧栏和正文同色，两者
      之间只剩一条边线在撑。 */
   background: var(--surface);
+  /* Switching topics on a wide screen cross-fades this view only (lib/viewTransition.ts). */
+  view-transition-name: topic-view;
 }
 .col {
   min-width: 0;

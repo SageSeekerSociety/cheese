@@ -3,7 +3,7 @@
        取数和写操作在 `Roster.vue`，这里只报「对谁做什么」。 -->
   <div class="rs">
     <div class="rs__bar">
-      <div class="rs__seg" role="tablist" :aria-label="t('tasks.roster.filterLabel')">
+      <div v-roving-tabs class="rs__seg" role="tablist" :aria-label="t('tasks.roster.filterLabel')">
         <button
           v-for="f in filters"
           :key="f.key"
@@ -235,6 +235,7 @@ import { useRowMenu } from '@/composables/useRowMenu'
 import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
+import { vRovingTabs } from '@/lib/rovingTabs'
 
 /** 一行的状态：先看领取申请批没批，批了再看最新那一版提交判没判。 */
 type Status = 'CLAIM_PENDING' | 'CLAIM_REJECTED' | 'IN_PROGRESS' | 'REVIEW_PENDING' | 'PASSED' | 'FAILED'
