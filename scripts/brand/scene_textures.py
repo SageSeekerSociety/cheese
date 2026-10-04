@@ -1,8 +1,7 @@
-"""Make the two sign-in scene textures that Paper Shaders preprocesses.
+"""Make the sign-in scene texture that Paper Shaders preprocesses.
 
-The liquid-metal and heat scenes read a logo that the library's own
-`toProcessedLiquidMetal` / `toProcessedHeatmap` has already worked over. Those
-run in a browser, so this serves the mark and the installed library on
+The heat scene reads a logo that the library's own `toProcessedHeatmap` has
+already worked over. That runs in a browser, so this serves the mark and the installed library on
 localhost and runs them in headless Chromium. Run after build_brand.py:
 
     uv run --with fonttools --with skia-pathops --with uharfbuzz \
@@ -30,11 +29,10 @@ OUT = os.path.join(B.ASSETS, 'brand-scene')
 
 PAGE = """<!doctype html><meta charset="utf-8"><body>
 <script type="module">
-import { toProcessedLiquidMetal, toProcessedHeatmap } from './shaders/index.js'
+import { toProcessedHeatmap } from './shaders/index.js'
 const url = (b) => new Promise((r) => { const f = new FileReader(); f.onload = () => r(f.result); f.readAsDataURL(b) })
 const put = (id, v) => { const p = document.createElement('pre'); p.id = id; p.textContent = v; document.body.append(p) }
 try {
-  put('metal', await url((await toProcessedLiquidMetal('./metal-in.png')).pngBlob))
   put('heat', await url((await toProcessedHeatmap('./heat-in.png')).blob))
 } catch (e) { put('error', String(e)) }
 </script>
@@ -53,7 +51,6 @@ def mark_png(size, colour, pad):
 def main():
     with tempfile.TemporaryDirectory(dir=os.path.expanduser('~')) as tmp:
         os.symlink(SHADERS, os.path.join(tmp, 'shaders'))
-        mark_png(640, B.BRAND, 20).save(os.path.join(tmp, 'metal-in.png'))
         # the heatmap processor paints onto white, so it is fed a dark mark
         mark_png(1000, B.TILE, 0).save(os.path.join(tmp, 'heat-in.png'))
         open(os.path.join(tmp, 'index.html'), 'w').write(PAGE)
@@ -69,14 +66,13 @@ def main():
         finally:
             server.shutdown()
     found = dict(re.findall(r'<pre id="(\w+)">([^<]*)</pre>', dom))
-    if 'error' in found or not {'metal', 'heat'} <= found.keys():
+    if 'error' in found or 'heat' not in found:
         raise SystemExit(f"processing failed: {found.get('error', 'no output')}")
     # the heat output is a soft glow 1750px across; 1024 keeps the file small
-    for key, name, size in (('metal', 'logo-metal.png', None), ('heat', 'logo-heat.png', 1024)):
-        path = os.path.join(OUT, name)
-        img = Image.open(io.BytesIO(base64.b64decode(found[key].split(',', 1)[1])))
-        (img.resize((size, size), Image.LANCZOS) if size else img).save(path, optimize=True)
-        print(os.path.relpath(path, B.ROOT), img.size if not size else (size, size))
+    path = os.path.join(OUT, 'logo-heat.png')
+    img = Image.open(io.BytesIO(base64.b64decode(found['heat'].split(',', 1)[1])))
+    img.resize((1024, 1024), Image.LANCZOS).save(path, optimize=True)
+    print(os.path.relpath(path, B.ROOT), (1024, 1024))
 
 
 if __name__ == '__main__':

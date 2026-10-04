@@ -182,7 +182,8 @@
   },
   "resourceLimits": {
     "projects": "项目数量：当前未设置上限",
-    "concurrent": "工作电脑按需创建；新项目默认最多同时运行 {count} 个 AI 任务，超出后排队",
+    "concurrent": "新项目默认最多同时运行 {count} 个 AI 任务，超出后排队",
+    "detail": "资源限制",
     "machines": "云端机器：团队默认共享 {count} 台名额，额度与用量见团队的「工作电脑」页",
     "machinesOwn": "云端机器：你名下的项目默认共享 {count} 台名额，额度与用量见你名下的「工作电脑」页",
     "failed": "资源限制加载失败",

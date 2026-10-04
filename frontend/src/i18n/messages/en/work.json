@@ -182,7 +182,8 @@
   },
   "resourceLimits": {
     "projects": "Projects: no limit is set",
-    "concurrent": "Work computers are created on demand. A new project runs at most {count} AI tasks at a time by default; the rest wait in a queue.",
+    "concurrent": "A new project runs at most {count} AI tasks at a time by default; the rest wait in a queue",
+    "detail": "Resource limits",
     "machines": "Cloud machines: a team shares {count} by default. See the team's Work computers page for quota and usage.",
     "machinesOwn": "Cloud machines: projects under your name share {count} by default; see Work computers under your name for credits and usage",
     "failed": "Could not load resource limits",
