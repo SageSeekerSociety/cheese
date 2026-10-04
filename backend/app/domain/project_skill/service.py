@@ -8,7 +8,10 @@ from the confirmed revisions; each session launch reads that folder.
 
 from __future__ import annotations
 
+import gzip
+import hashlib
 import json
+import os
 import re
 import shutil
 import uuid
@@ -414,3 +417,63 @@ def project_skill_names(project_id: uuid.UUID | str | None) -> list[str]:
 def session_skill_files(project_id: uuid.UUID | str | None) -> dict[str, str]:
     """Everything a session in this project gets: the platform's, then its own."""
     return {**native_skill_files(), **project_skill_files(project_id)}
+
+
+def session_skill_bundle(project_id: uuid.UUID | str | None) -> bytes:
+    """``session_skill_files`` as the bytes a session downloads and sha256s.
+
+    The launcher no longer carries the skills inline: the platform skill set
+    alone is ~250KB compressed, and it rode inside every launch script for every
+    session (device_launch). A session instead carries the digest of these bytes
+    and fetches them from the platform only when its machine has never seen that
+    digest. Both sides compute the digest from THIS function, so a change in the
+    files or in the serialization moves the digest and the launch contract with
+    it; the gzip carries no timestamp (``mtime=0``) and the JSON is key-sorted
+    so the same skills always hash to the same address."""
+    payload = json.dumps(
+        session_skill_files(project_id), sort_keys=True, ensure_ascii=False
+    ).encode("utf-8")
+    return gzip.compress(payload, mtime=0)
+
+
+def _stored_bundle_path(project_id: uuid.UUID | str | None, digest: str) -> Path:
+    owner = str(project_id) if project_id else "_platform"
+    return (
+        Path(settings.workspace_root) / ".skill-bundles" / owner / f"{digest}.json.gz"
+    )
+
+
+def publish_session_skill_bundle(project_id: uuid.UUID | str | None) -> str:
+    """Freeze this project's bundle under its digest and return the digest.
+
+    The launcher names the digest when it is built and the machine fetches it
+    later; recomputing at fetch time 404'd any launch whose project skills were
+    edited (or mid-``publish``) in between, and the launch failed with it. The
+    bytes are kept here, beside the published skills, so the fetch serves what
+    the launcher was built from. One file per distinct skill set; nothing prunes
+    them yet, and each is a few hundred KB.
+    """
+    bundle = session_skill_bundle(project_id)
+    digest = hashlib.sha256(bundle).hexdigest()
+    path = _stored_bundle_path(project_id, digest)
+    if not path.exists():
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            partial = path.with_name(f"{path.name}.{os.getpid()}.part")
+            partial.write_bytes(bundle)
+            os.replace(partial, path)
+        except OSError:
+            # The fetch still recomputes when no frozen copy is there.
+            pass
+    return digest
+
+
+def stored_session_skill_bundle(
+    project_id: uuid.UUID | str | None, digest: str
+) -> bytes | None:
+    """The bundle a launcher was built with, if it was frozen and is intact."""
+    try:
+        bundle = _stored_bundle_path(project_id, digest).read_bytes()
+    except OSError:
+        return None
+    return bundle if hashlib.sha256(bundle).hexdigest() == digest else None
