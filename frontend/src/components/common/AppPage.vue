@@ -255,7 +255,9 @@ const { mdAndUp } = useDisplay()
   max-width: calc(var(--page-w-read) + 32px);
 }
 /* 后台那一档也自己管内边距（表格、卡片各有各的内缩）。断点都是容器查询，所以这一列
-   是查询容器；`container-type` 做了行内尺寸包含，宽度推不出来，必须写 `width: 100%`。
+   是查询容器，取个名字 `admin`：匿名查询匹配最近的那个，页面里再挂一层容器
+   （AdminGrid 的 `agrid`）就会把这一层带歪，后台页按内容列分档要指名道姓。
+   `container-type` 做了行内尺寸包含，宽度推不出来，必须写 `width: 100%`。
    列至少和正文一样高：队列那张表要撑到底。 */
 .app-page__column--admin {
   display: flex;
@@ -265,7 +267,7 @@ const { mdAndUp } = useDisplay()
   max-width: var(--page-w-admin);
   min-height: 100%;
   padding: 0;
-  container-type: inline-size;
+  container: admin / inline-size;
 }
 /* 满宽的那种自己管内边距：看板那几列各自滚动，得把高度一路钉到底。 */
 .app-page__column--full {

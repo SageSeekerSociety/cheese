@@ -87,11 +87,14 @@ const {
   downloadArtifact,
   refreshDocument,
   uploadAnnotation,
+  setPickMode,
 } = usePanelPreview(props, {
   frameName,
   // 元数据回来一次就报一次：房间拿它标「预览有新内容」。
   onLoaded: (artifactId) => emit('loaded', artifactId),
   onEscape: () => previewView.value?.handleEscape(),
+  // 帧里圈选了一处：标注条和引用都在展示组件里，取数这一层只把这一处递下去。
+  onPick: (pick) => previewView.value?.handlePick(pick),
 })
 
 // ⋯ 里的刷新和首屏那次加载走同一条路，只是不转圈：按了刷新就是要重取，不再比对
@@ -143,6 +146,7 @@ function refresh() {
     :doc-renderer-missing="docRendererMissing"
     @frame-load="frameLoaded"
     @frame-error="frameFailed"
+    @pick-mode="setPickMode"
     @refresh="refresh"
     @download="downloadArtifact"
     @document-changed="refreshDocument"

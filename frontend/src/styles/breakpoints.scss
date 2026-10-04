@@ -1,0 +1,27 @@
+// 全站共享的**视口**断点，只有这一份。
+// 别的 token 都是 CSS 变量，写在 `style.css` 的 `:root` 里；只有视口断点不行 ——
+// `@media` 里用不了 `var()`。所以它们只能以预处理器常量的形式存在，这就是那一处。
+// 数值对齐 `composables/useWorkspaceLayout.ts` 里的 JS 常量和 Vuetify 自己的栅格：
+//   $bp-phone   767.98px  SPLIT_MIN_WIDTH (768) —— 比它窄，工作区一层一页（§10.9）
+//   $bp-mobile  959.98px  Vuetify 的 mdAndUp (960) —— 比它窄是手机外壳（§10）
+//   $bp-compact 1179.98px COMPACT_DESKTOP_MAX_WIDTH (1180) —— 桌面窄档的上界（§10.10）
+//   $bp-wide    1279.98px Vuetify 的 lg (1280)
+// 后台页的断点**不用**这里 —— 那是挂在内容列上的容器查询（§3.5），见
+// `.app-page__column--admin` 的 `container: admin / inline-size`。
+
+$bp-phone: 767.98px;
+$bp-mobile: 959.98px;
+$bp-compact: 1179.98px;
+$bp-wide: 1279.98px;
+
+@mixin below($width) {
+  @media (max-width: $width) {
+    @content;
+  }
+}
+
+@mixin at-least($width) {
+  @media (min-width: $width) {
+    @content;
+  }
+}

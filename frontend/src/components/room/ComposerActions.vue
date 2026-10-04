@@ -194,13 +194,15 @@ const summonText = computed(() => ({
       <span class="summon-btn-short" aria-hidden="true">{{ summonText.short }}</span>
     </button>
     <!-- 断线时照样能发：消息进发件箱、立刻显示，连上就自己走 (§14.1)。
-           按 `connected` 禁用会把「打字」和「后端此刻在不在」绑在一起。 -->
+           按 `connected` 禁用会把「打字」和「后端此刻在不在」绑在一起。
+           附件还在传时是例外：这一刻发出去会少带附件，所以要等，并在 title 里说清
+           为什么按不动（灰着不解释，看起来像是它坏了）。 -->
     <BaseButton
       class="composer-send"
       kind="primary"
       icon="mdi-send"
       size="sm"
-      :title="t('work.room.composer.send')"
+      :title="uploading ? t('work.room.composer.sendUploading') : t('work.room.composer.send')"
       :disabled="uploading || !canSend"
       @click="emit('send')"
     />

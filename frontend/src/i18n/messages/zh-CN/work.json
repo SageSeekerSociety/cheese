@@ -407,6 +407,8 @@
     "message": {
       "copy": "复制",
       "copied": "已复制",
+      "copyLink": "复制链接",
+      "linkCopied": "已复制链接",
       "selectText": "选择文字",
       "edit": "编辑",
       "edited": "已编辑",
@@ -447,7 +449,14 @@
       "attachFiles": "上传文件（每个最大 10MB）",
       "sendPhotos": "发送照片",
       "more": "更多操作",
-      "send": "发送"
+      "send": "发送",
+      "sendUploading": "附件上传中，传完再发",
+      "longPaste": {
+        "offer": "这段文字有 {count} 字，作为附件发送？",
+        "txt": "存为 .txt",
+        "md": "存为 .md",
+        "keep": "保留为文字"
+      }
     },
     "dispatched": {
       "created": "新建任务",
@@ -582,6 +591,8 @@
       "autoReloaded": "应用已重启，已自动重新载入",
       "runningApp": "运行中的应用",
       "download": "下载",
+      "pick": "圈选",
+      "webRegion": "框选了一块区域",
       "frameTitle": "话题预览",
       "authorizing": "正在获取预览授权…",
       "navigating": "正在加载新页面…",
@@ -1047,7 +1058,9 @@
       "tooLarge": "{name} 超过 10MB，无法上传",
       "retry": "重试上传 {name}",
       "sendBlocked": "有附件上传失败，重试或移除后再发送",
-      "addFailed": "添加文件失败"
+      "addFailed": "添加文件失败",
+      "pastedName": "粘贴的图片-{time}",
+      "pastedTextName": "粘贴的文字-{time}"
     },
     "defaultAgentName": "芝士",
     "reminder": {

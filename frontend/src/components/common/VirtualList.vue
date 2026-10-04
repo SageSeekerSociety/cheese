@@ -29,13 +29,36 @@
 // max-height 和 overflow）就虚拟化，没有就照旧整列画。不替外面猜一个（自己起一个滚动
 // 盒子的话，滚的就不是外面那层了，置顶行和组头会留在原地不动）。
 //
+// 共享外面的滚动容器，就得告诉 virtua 这份列表**离滚动内容起点有多远**（virtua 的
+// `startMargin`）：virtua 手上只有滚动容器的 `scrollTop`，它默认列表是从 0 开始的；
+// 话题栏里这一列长在置顶行、组头、上面几组后面，离起点好几千像素——不告诉它，就会
+// 把「滚动容器已经滚了这么深」当成「这份列表已经滚了这么深」，窗口一路算偏，行被画到
+// 视口**下面**去，屏幕上从某个位置往下全是空白（owner 报的「长度不对、上面一片空白」）。
+// 这个距离是量出来的（`measureStartMargin`），不是传进来的常量：置顶行几条、上面几组
+// 开着还是收着，都会让它变。看板那一列自己就是滚动容器、diff 顶上只有一点 padding、
+// 资料库顶上还有搜索框——量出来各是各的对。
+//
 // 滚动容器是个 DOM 元素，而模板 ref 要等挂完才落地，所以一份**刚出现的长列表**第一帧
 // 会整列画一遍、下一帧才交给 virtua。同一轮 flush 里就换完，屏幕上只看得到后一帧（不
 // 闪）；代价是那一列 DOM 白建一次。话题列表的数据是异步来的，碰不到这一帧；看板上展开
 // 「已完成」时会碰上，那一帧整列画出来也正好是「展开就看到全部」。
 import type { Component, PropType, VNode } from 'vue'
 
-import { cloneVNode, Comment, computed, defineComponent, h, isVNode, ref, Text, TransitionGroup } from 'vue'
+import {
+  cloneVNode,
+  Comment,
+  computed,
+  defineComponent,
+  h,
+  isVNode,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  Text,
+  TransitionGroup,
+  watch,
+} from 'vue'
 import { Virtualizer } from 'virtua/vue'
 
 import { VIRTUAL_LIST_THRESHOLD } from '@/lib/virtualList'
@@ -89,11 +112,18 @@ export default defineComponent({
     itemRole: { type: String, default: '' },
   },
   setup(props, { slots, expose }) {
-    const list = ref<VirtualListHandle | null>(null)
+    // 组件实例上的那只手，外加 `$el`：virtua 的根就是它那层列表容器，量 `startMargin`
+    // 量的是它。`$el` 是 Vue 公共实例属性（`publicPropertiesMap`），从 expose 代理上读
+    // 不会报警告，所以不必为了量偏移再套一层自己的壳（套了反而多一层没用的节点）。
+    const list = ref<(VirtualListHandle & { $el?: HTMLElement | null }) | null>(null)
     // 光标所在的那一行（按 itemKey 记）。见文件头「光标停在某一行上」那段。
     const focusedKey = ref<string | number | null>(null)
     // 两个条件都要：行数过门槛，且知道谁在滚（见文件头）。
     const virtualized = computed(() => props.items.length > props.threshold && props.scrollParent != null)
+
+    // 这份列表离滚动内容起点有多远（px）——交给 virtua 当 `startMargin`。默认 0 直到量到
+    // 真的值；量法和为什么必须量见文件头那段。
+    const startMargin = ref(0)
 
     /** 递给 virtua 的常驻行：外面点名要留的（选中的、开着菜单的……）加上光标所在的那一行。 */
     const keptIndices = computed<readonly number[] | undefined>(() => {
@@ -130,6 +160,74 @@ export default defineComponent({
       if (next?.closest?.('[data-vlist-index]')) return
       focusedKey.value = null
     }
+
+    // 量这份列表离滚动内容起点有多远（见文件头「共享外面的滚动容器」那段）。量的是
+    // 「容器盒子的顶」减「滚动容器内容盒的顶（= 边框盒顶 + 上边框）」再加 `scrollTop`
+    // ——与当前滚到哪儿无关，所以滚动中反复量也永远是同一个数，不会把状态搅动起来。
+    // 变了才写回（一行行高、上面一组的开合都会让它变），拿整数像素：亚像素抖动不值得重算。
+    function measureStartMargin() {
+      const parent = props.scrollParent
+      const element = list.value?.$el
+      if (!parent || !element) return
+      const value = Math.max(
+        0,
+        Math.round(
+          element.getBoundingClientRect().top - parent.getBoundingClientRect().top - parent.clientTop + parent.scrollTop
+        )
+      )
+      if (value !== startMargin.value) startMargin.value = value
+    }
+
+    // 滚动、改尺寸、结构变化都只攒一帧量一次：这些都是「上面那截可能变了」的信号，量本身
+    // 只是两次 `getBoundingClientRect`，但不必每个事件都量。
+    let marginFrame = 0
+    function scheduleMeasure() {
+      if (marginFrame) return
+      marginFrame = requestAnimationFrame(() => {
+        marginFrame = 0
+        measureStartMargin()
+      })
+    }
+
+    let marginResize: ResizeObserver | undefined
+    let marginMutations: MutationObserver | undefined
+    function startMeasuring() {
+      stopMeasuring()
+      const parent = props.scrollParent
+      if (!virtualized.value || !parent) return
+      if (typeof ResizeObserver !== 'undefined') {
+        marginResize = new ResizeObserver(scheduleMeasure)
+        marginResize.observe(parent)
+      }
+      if (typeof MutationObserver !== 'undefined') {
+        // 只看滚动容器的**直接子元素**：组头开合、上面几组的增删都落在这层（`v-list` 是
+        // 直接子元素），所以这份列表的位置一变就被叫醒。virtua 自己挂/摘行发生在列表
+        // 容器**里面**，不在这一层——不会每滚一下就把我们叫醒一次。
+        marginMutations = new MutationObserver(scheduleMeasure)
+        marginMutations.observe(parent, { childList: true })
+      }
+      document.addEventListener('scroll', scheduleMeasure, true)
+      window.addEventListener('resize', scheduleMeasure)
+      measureStartMargin()
+    }
+    function stopMeasuring() {
+      marginResize?.disconnect()
+      marginResize = undefined
+      marginMutations?.disconnect()
+      marginMutations = undefined
+      document.removeEventListener('scroll', scheduleMeasure, true)
+      window.removeEventListener('resize', scheduleMeasure)
+      if (marginFrame) {
+        cancelAnimationFrame(marginFrame)
+        marginFrame = 0
+      }
+    }
+
+    // 挂完先量一次（那时候上面的置顶行、组头都已经在 DOM 里了）。滚动容器是模板 ref，
+    // 挂完那一帧才落地（见文件头），所以真正开始虚拟化（`virtualized` 翻真）时再量一次。
+    onMounted(startMeasuring)
+    watch(virtualized, () => void nextTick(startMeasuring), { flush: 'post' })
+    onBeforeUnmount(stopMeasuring)
 
     /** 整列渲染：和没接虚拟列表时画的一模一样——同一层 TransitionGroup、同一批 key。 */
     function plainRows(): VNode[] {
@@ -168,6 +266,9 @@ export default defineComponent({
           scrollRef: props.scrollParent,
           data: props.items,
           itemSize: props.estimatedSize,
+          // 这份列表离滚动内容起点有多远（见文件头「共享外面的滚动容器」那段）：置顶行、
+          // 组头、上面几组都算在里面。virtua 的容器驱动自己不量这个，只能我们告诉它。
+          startMargin: startMargin.value,
           bufferSize: props.bufferSize,
           keepMounted: keptIndices.value,
           item: props.itemAs || undefined,

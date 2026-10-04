@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { uploaded, usePendingAttachments } from './attachments'
+import { pastedImageName, pastedTextName, uploaded, usePendingAttachments } from './attachments'
 
 import { setLocale } from '@/i18n'
 
@@ -8,61 +8,95 @@ function file(name: string, type: string): File {
   return new File(['x'], name, { type })
 }
 
+/** The upload API talks XHR — the only transport that reports upload progress —
+ *  so the tests drive a fake one instead of `fetch`. `handleUpload` decides what
+ *  each `send()` does; the default echoes the file back as a finished
+ *  attachment, and `sent` records the request bodies the way the old
+ *  `fetch.mock.calls` did. */
+class FakeXhr {
+  method = ''
+  url = ''
+  status = 0
+  responseText = ''
+  upload = new EventTarget()
+  headers: Record<string, string> = {}
+  private listeners: Record<string, ((e?: unknown) => void)[]> = {}
+
+  open(method: string, url: string) {
+    this.method = method
+    this.url = url
+  }
+  setRequestHeader(key: string, value: string) {
+    this.headers[key] = value
+  }
+  addEventListener(type: string, cb: (e?: unknown) => void) {
+    ;(this.listeners[type] ??= []).push(cb)
+  }
+  send(form: FormData) {
+    handleUpload(form, this)
+  }
+  /** One upload-progress event, the way the browser fires them. */
+  progress(loaded: number, total: number) {
+    this.upload.dispatchEvent(Object.assign(new Event('progress'), { lengthComputable: true, loaded, total }))
+  }
+  respond(status: number, body: unknown) {
+    this.status = status
+    this.responseText = typeof body === 'string' ? body : JSON.stringify(body)
+    for (const cb of this.listeners.load ?? []) cb()
+  }
+  fail() {
+    this.status = 0
+    for (const cb of this.listeners.error ?? []) cb()
+  }
+}
+
+let handleUpload: (form: FormData, xhr: FakeXhr) => void
+const sent: FormData[] = []
+
+/** Read the picked file out of the form and finish the upload. */
+function echoUpload(form: FormData, xhr: FakeXhr) {
+  sent.push(form)
+  const picked = form.get('file') as File
+  xhr.progress(picked.size, picked.size)
+  xhr.respond(200, { code: 200, data: { path: `uploads/id/${picked.name}`, mime: picked.type } })
+}
+
+function pasteImage(name = 'image.png', type = 'image/png'): ClipboardEvent {
+  return {
+    clipboardData: { items: [{ kind: 'file', getAsFile: () => file(name, type) }] },
+    preventDefault: () => {},
+  } as unknown as ClipboardEvent
+}
+
 beforeEach(() => {
   // These assertions read the Chinese copy.
   setLocale('zh-CN')
-  vi.stubGlobal(
-    'fetch',
-    vi.fn(async (_url, options) => {
-      const picked = options.body.get('file') as File
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({
-          code: 200,
-          data: { path: `uploads/id/${picked.name}`, mime: picked.type },
-        }),
-      }
-    })
-  )
+  sent.length = 0
+  handleUpload = echoUpload
+  vi.stubGlobal('XMLHttpRequest', FakeXhr)
 })
 afterEach(() => vi.unstubAllGlobals())
 
 describe('chat attachments', () => {
   it('does not attach an upload to a different topic after navigation', async () => {
     let topic = 'first'
-    let finish!: (value: unknown) => void
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(
-        () =>
-          new Promise((resolve) => {
-            finish = resolve
-          })
-      )
-    )
+    let xhr!: FakeXhr
+    handleUpload = (_form, x) => {
+      xhr = x
+    }
     const { addFiles, pending } = usePendingAttachments(() => topic)
     const uploading = addFiles([file('paper.pdf', 'application/pdf')])
     topic = 'second'
-    finish({
-      ok: true,
-      json: async () => ({ code: 200, data: { path: 'uploads/paper.pdf', mime: 'application/pdf' } }),
-    })
+    xhr.respond(200, { code: 200, data: { path: 'uploads/paper.pdf', mime: 'application/pdf' } })
     await uploading
     expect(pending.value).toHaveLength(0)
   })
 
   it('holds the file a place in the strip while it is still going up', async () => {
-    let finish!: (value: unknown) => void
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(
-        () =>
-          new Promise((resolve) => {
-            finish = resolve
-          })
-      )
-    )
+    let xhr!: FakeXhr
+    handleUpload = (_form, x) => {
+      xhr = x
+    }
     const { addFiles, pending } = usePendingAttachments(() => 't1')
     const done = addFiles([file('paper.pdf', 'application/pdf')])
 
@@ -71,33 +105,43 @@ describe('chat attachments', () => {
     // 占位那一格的 path 不在工作区里，发不出去。
     expect(uploaded(pending.value)).toEqual([])
 
-    finish({
-      ok: true,
-      json: async () => ({ code: 200, data: { path: 'uploads/id/paper.pdf', mime: 'application/pdf' } }),
-    })
+    xhr.respond(200, { code: 200, data: { path: 'uploads/id/paper.pdf', mime: 'application/pdf' } })
     await done
     expect(pending.value).toHaveLength(1)
     expect(uploaded(pending.value)).toEqual([{ path: 'uploads/id/paper.pdf', mime: 'application/pdf' }])
   })
 
+  // 上传不再只是一转到底的圈：XHR 报的进度喂进这一格，条上画的是确定的百分比。
+  it('tracks determinate upload progress on the slot', async () => {
+    let xhr!: FakeXhr
+    handleUpload = (_form, x) => {
+      xhr = x
+    }
+    const { addFiles, pending } = usePendingAttachments(() => 't1')
+    const done = addFiles([file('big.bin', 'application/octet-stream')])
+
+    expect(pending.value[0]).toMatchObject({ uploading: true, progress: 0 })
+
+    xhr.progress(3, 10)
+    expect(pending.value[0].progress).toBeCloseTo(0.3)
+    xhr.progress(10, 10)
+    expect(pending.value[0].progress).toBe(1)
+
+    xhr.respond(200, { code: 200, data: { path: 'uploads/id/big.bin', mime: 'application/octet-stream' } })
+    await done
+    // 传完那一格换成真的附件，进度不再挂着。
+    expect(pending.value).toEqual([{ path: 'uploads/id/big.bin', mime: 'application/octet-stream' }])
+  })
+
   it('drops an upload removed from the strip while it was going up', async () => {
-    let finish!: (value: unknown) => void
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(
-        () =>
-          new Promise((resolve) => {
-            finish = resolve
-          })
-      )
-    )
+    let xhr!: FakeXhr
+    handleUpload = (_form, x) => {
+      xhr = x
+    }
     const { addFiles, pending, removeAt } = usePendingAttachments(() => 't1')
     const done = addFiles([file('paper.pdf', 'application/pdf')])
     removeAt(0)
-    finish({
-      ok: true,
-      json: async () => ({ code: 200, data: { path: 'uploads/id/paper.pdf', mime: 'application/pdf' } }),
-    })
+    xhr.respond(200, { code: 200, data: { path: 'uploads/id/paper.pdf', mime: 'application/pdf' } })
     await done
     expect(pending.value).toHaveLength(0)
   })
@@ -138,22 +182,27 @@ describe('chat attachments', () => {
     expect(onError).toHaveBeenCalledWith('每条消息最多添加 9 个附件')
   })
 
-  // 贴进来的那一份不进资料库：资料库按名字寻址，而剪贴板里的截图没有名字。
-  // 这一格只证明「来路」跟着请求走——不进库那一步在后端。
+  // 贴进来的那一份不进资料库：资料库按名字寻址，而剪贴板里的截图没有名字——
+  // 浏览器编的那个（`image.png`）换成带时间的。这一格证明「来路」跟着请求走、
+  // 名字也换了；挑进来的一份用原名，也不改名。
   it('says a pasted file came off the clipboard, and a picked one did not', async () => {
     const { addFiles, onPaste } = usePendingAttachments(() => 't1')
-    const pasted = file('image.png', 'image/png')
-    onPaste({
-      clipboardData: { items: [{ kind: 'file', getAsFile: () => pasted }] },
-      preventDefault: () => {},
-    } as unknown as ClipboardEvent)
+    onPaste(pasteImage())
     await new Promise((r) => setTimeout(r, 0))
     await addFiles([file('预算表.xlsx', 'application/octet-stream')])
 
-    const origins = (fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls.map((c) =>
-      (c[1] as { body: FormData }).body.get('origin')
-    )
+    const origins = sent.map((form) => form.get('origin'))
     expect(origins).toEqual(['clipboard', 'file'])
+    expect((sent[0].get('file') as File).name).toMatch(/^粘贴的图片-\d{8}-\d{6}\.png$/)
+    expect((sent[1].get('file') as File).name).toBe('预算表.xlsx')
+  })
+
+  // 有真名字的图不动它：文件管理器里拖出来的一张图，名字是它的。
+  it('keeps a pasted image that came with a real name', async () => {
+    const { onPaste } = usePendingAttachments(() => 't1')
+    onPaste(pasteImage('screenshot-2026.png', 'image/png'))
+    await new Promise((r) => setTimeout(r, 0))
+    expect((sent[0].get('file') as File).name).toBe('screenshot-2026.png')
   })
 
   it('reports an oversized file and uploads the next one', async () => {
@@ -172,19 +221,15 @@ describe('chat attachments', () => {
   // 文件，也没有再试一次的路。
   it('keeps a failed upload in the strip, with its File, and retry sends it again', async () => {
     let attempts = 0
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (_url, options) => {
-        attempts += 1
-        if (attempts === 1) throw new Error('offline')
-        const picked = options.body.get('file') as File
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({ code: 200, data: { path: `uploads/id/${picked.name}`, mime: picked.type } }),
-        }
-      })
-    )
+    handleUpload = (form, xhr) => {
+      attempts += 1
+      if (attempts === 1) {
+        xhr.fail()
+        return
+      }
+      const picked = form.get('file') as File
+      xhr.respond(200, { code: 200, data: { path: `uploads/id/${picked.name}`, mime: picked.type } })
+    }
     const { addFiles, pending, retry } = usePendingAttachments(() => 't1')
     await addFiles([file('paper.pdf', 'application/pdf')])
 
@@ -203,12 +248,7 @@ describe('chat attachments', () => {
   })
 
   it('a failed upload is removed like any other, and retry does nothing after that', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => {
-        throw new Error('offline')
-      })
-    )
+    handleUpload = (_form, xhr) => xhr.fail()
     const { addFiles, pending, removeAt, retry } = usePendingAttachments(() => 't1')
     await addFiles([file('paper.pdf', 'application/pdf')])
     expect(pending.value).toHaveLength(1)
@@ -218,5 +258,20 @@ describe('chat attachments', () => {
 
     await retry(0)
     expect(pending.value).toHaveLength(0)
+  })
+})
+
+describe('pasted attachment names', () => {
+  it('names a pasted screenshot after what it is and when', () => {
+    const at = new Date(2026, 9, 4, 15, 30, 12)
+    expect(pastedImageName(file('image.png', 'image/png'), at)).toBe('粘贴的图片-20261004-153012.png')
+    // 扩展名跟着 mime，不跟着那个编出来的名字。
+    expect(pastedImageName(file('image.png', 'image/jpeg'), at)).toBe('粘贴的图片-20261004-153012.jpg')
+  })
+
+  it('names a long pasted text turned into a file', () => {
+    const at = new Date(2026, 9, 4, 15, 30, 12)
+    expect(pastedTextName('txt', at)).toBe('粘贴的文字-20261004-153012.txt')
+    expect(pastedTextName('md', at)).toBe('粘贴的文字-20261004-153012.md')
   })
 })

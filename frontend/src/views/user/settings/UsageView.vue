@@ -97,7 +97,9 @@ const teamLink = (team: UsageTeam) => ({ name: 'TeamsDetailCredits', params: { h
   padding: 20px 24px;
 }
 
-@media (max-width: 700px) {
+/* 断点对齐共享 token（`styles/breakpoints.scss`）：700 → 767.98，和设置页一起
+   加载的 `settings-card.css` 同一条线。 */
+@media (max-width: 767.98px) {
   .usv__card {
     padding: 16px;
   }

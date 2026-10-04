@@ -12,6 +12,7 @@
 // 的事（判据都在递下去的 props 里）。
 import type { ChatAttachment, FileContent, PreviewInfo } from '../cx_types'
 import type { DocumentIdentity } from '../lib/documentBytes'
+import type { FramePick } from './usePreviewFrames'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
@@ -60,6 +61,8 @@ export interface PanelPreviewOptions {
   onLoaded?: (artifactId: string | null) => void
   /** 帧里按了 ESC：怎么处理是画的那一半的事，这一层只往上递。 */
   onEscape?: () => void
+  /** 帧里圈选了一处：画不画标注条、发不发引用是画的那一半的事，这一层只往上递。 */
+  onPick?: (pick: FramePick) => void
 }
 
 /** 一张要进房间的图。上传真正要的只有这两样。 */
@@ -83,7 +86,7 @@ export type UploadAnnotation = (topicId: string, image: ImageUpload) => Promise<
 
 /** 「预览」这一格的全部取数：状态进、动作出，一个组件都不碰。 */
 export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewOptions) {
-  const host = usePreviewFrames(options.frameName, { onEscape: options.onEscape })
+  const host = usePreviewFrames(options.frameName, { onEscape: options.onEscape, onPick: options.onPick })
   const loading = ref(false)
   const refreshing = ref(false)
   const previewFile = ref<FileContent | null>(null)
@@ -608,5 +611,8 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     downloadArtifact,
     refreshDocument,
     uploadAnnotation,
+    // 圈选：画的那一半按帧的类型选「递进帧」还是「宿主自己盖一层」，取数这一层只管把
+    // 开关送到当前那一帧的桥。
+    setPickMode: host.setPickMode,
   }
 }

@@ -315,6 +315,108 @@ class QuotedContextTest(unittest.TestCase):
         self.assertEqual(quote, QUOTE)
         self.assertEqual(images, [])
 
+    def test_a_web_pick_carries_its_selector_text_and_place(self):
+        """网页圈选：网页没有页码，能指认的是选择器、文字和位置。
+
+        元素、选中一段、以及读不到页面内容的框选（只有网址）各自一种形状。位置是
+        像素加视口大小——网页没有稳定的「页面」可以归一，两者一起才还原得出指在
+        哪儿。框选来自没有运行时的应用预览，本就没有版本，所以它不带文件身份。
+        """
+        import uuid
+
+        element = {
+            "kind": "web-element",
+            "path": "room/report.html",
+            "source": "live",
+            "version": "version-e",
+            "task_id": None,
+            "selector": "body:nth-of-type(1) > main > p:nth-of-type(2)",
+            "tag": "p",
+            "text": "这一句说错了",
+            "rect": {"x": 12.5, "y": 40, "w": 300, "h": 24},
+            "viewport": {"w": 1024, "h": 768},
+        }
+        body = {
+            "content": "@芝士 看这里",
+            "request_id": str(uuid.uuid4()),
+            "quoted_context": element,
+        }
+        parsed = ChatMessageIn.model_validate(body)
+        self.assertEqual(parsed.quoted_context.model_dump(mode="json"), element)
+        # 左上角可以是负的：被滚到视口左上角之外的元素就是这么报的，这是它有部分在
+        # 视口外的事实，不是坏数据。运行时和前端都原样带着它。
+        rolled = {**element, "rect": {"x": -8, "y": -8, "w": 10, "h": 10}}
+        parsed = ChatMessageIn.model_validate({**body, "quoted_context": rolled})
+        self.assertEqual(parsed.quoted_context.model_dump(mode="json"), rolled)
+        for quote in (
+            {k: v for k, v in element.items() if k != "selector"},
+            {**element, "selector": ""},
+            {**element, "selector": "甲" * 257},
+            {k: v for k, v in element.items() if k != "rect"},
+            # 宽高才是非负的：负的宽高不是一处位置。
+            {**element, "rect": {"x": 0, "y": 0, "w": -1, "h": 1}},
+            {**element, "rect": {"x": 0, "y": 0, "w": 1, "h": 1, "z": 2}},
+            {**element, "viewport": {"w": 0, "h": 768}},
+            # 网页引用没有页码；extra="forbid" 也不许夹带别的形状的字段。
+            {**element, "page": 1},
+            {**element, "kind": "web-section"},
+            {**element, "prefix": "多出来的"},
+        ):
+            with self.subTest(quote=quote), self.assertRaises(ValidationError):
+                ChatMessageIn.model_validate({**body, "quoted_context": quote})
+
+        text = {
+            **element,
+            "kind": "web-text",
+            "text": "只选中这一句",
+            "prefix": "退避",
+            "suffix": "，超过就报错",
+        }
+        parsed = ChatMessageIn.model_validate({**body, "quoted_context": text})
+        self.assertEqual(parsed.quoted_context.model_dump(mode="json"), text)
+        # 选中的一段必须有字；两侧前后文上限之外的一律拒掉。
+        for quote in (
+            {**text, "text": ""},
+            {**text, "prefix": "甲" * 65},
+            {**text, "suffix": "乙" * 65},
+        ):
+            with self.subTest(quote=quote), self.assertRaises(ValidationError):
+                ChatMessageIn.model_validate({**body, "quoted_context": quote})
+
+        region = {
+            "kind": "web-region",
+            "url": "https://127-0-0-1.tunnel.example:8443/app/",
+            "rect": {"x": 0, "y": 0, "w": 200, "h": 100},
+            "viewport": {"w": 800, "h": 600},
+        }
+        parsed = ChatMessageIn.model_validate({**body, "quoted_context": region})
+        self.assertEqual(parsed.quoted_context.model_dump(mode="json"), region)
+        for quote in (
+            {k: v for k, v in region.items() if k != "url"},
+            {**region, "url": ""},
+            # 应用预览没有版本：多塞一份文件身份就是另一种形状，拒掉。
+            {**region, "path": "room/app"},
+            {**region, "version": "v"},
+        ):
+            with self.subTest(quote=quote), self.assertRaises(ValidationError):
+                ChatMessageIn.model_validate({**body, "quoted_context": quote})
+
+        # 三种都原样进提示词：受话人读到的就是 file / selector / text / 位置这份数据。
+        for quote in (element, text, region):
+            with self.subTest(reach=quote["kind"]):
+                block = SimpleNamespace(
+                    kind=BlockKind.message,
+                    author="alice",
+                    content="<@cheese-current> 看一下",
+                    meta={"quoted_context": quote},
+                )
+                prompt = prompt_line(block, embeds_images=False)
+                self.assertIn("{", prompt, "the model must receive the quoted source")
+                delivered, _ = json.JSONDecoder().raw_decode(
+                    prompt[prompt.index("{") :]
+                )
+                self.assertEqual(delivered, quote)
+
 
 if __name__ == "__main__":
     unittest.main()

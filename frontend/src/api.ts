@@ -74,6 +74,7 @@ import { refusalWords } from './lib/noticeText'
 import { createPreviewPdfReader } from './lib/previewPdf'
 import { TOPIC_TITLE_MAX_LENGTH } from './lib/topicTitle'
 import { isTransportFailure, readJson, transportFailureMessage } from './lib/transportFailure'
+import { postFormWithProgress } from './lib/xhrUpload'
 import { t } from './i18n'
 
 export { TOPIC_TITLE_MAX_LENGTH }
@@ -1368,29 +1369,27 @@ export async function attachLibraryFile(topicId: string, libraryPath: string): P
   return envelope.data
 }
 
-// Upload a file into the project's 资料库, with a copy in this room. NOTE: raw
-// fetch, not request() — multipart needs the browser to set the boundary itself.
+// Upload a file into the project's 资料库, with a copy in this room.
+//
+// The body goes up over XHR so the composer can draw a determinate bar from its
+// progress — `fetch` has no upload-progress event (see lib/xhrUpload.ts).
 //
 // `origin: 'clipboard'` 的那一份只留在这个房间：贴进来的截图没有名字（`image.png`
-// 是浏览器编的），而资料库是按名字寻址的。
+// 是浏览器编的），而资料库是按名字寻址的 —— 见 attachments.ts 里给它现起的名字。
 export async function uploadAttachment(
   topicId: string,
   file: File,
-  origin: 'file' | 'clipboard' = 'file'
+  origin: 'file' | 'clipboard' = 'file',
+  onProgress?: (fraction: number) => void
 ): Promise<ChatAttachment> {
   const form = new FormData()
   form.append('file', file)
   form.append('origin', origin)
-  const res = await fetch(`${BASE}/topics/${encodeURIComponent(topicId)}/attachments`, {
-    method: 'POST',
-    body: form,
-    headers: authHeaders(),
-  })
-  const envelope = (await res.json().catch(() => null)) as ApiEnvelope<ChatAttachment> | null
-  if (!res.ok || !envelope || envelope.code !== 200) {
-    throw new Error(refusalWords(envelope) || t('global.request.uploadFailed', { status: res.status }))
-  }
-  return envelope.data
+  const url = `${BASE}/topics/${encodeURIComponent(topicId)}/attachments`
+  const { status, body } = await postFormWithProgress<ApiEnvelope<ChatAttachment>>(url, form, authHeaders(), onProgress)
+  if (status < 200 || status >= 300 || !body || body.code !== 200)
+    throw new Error(refusalWords(body) || t('global.request.uploadFailed', { status }))
+  return body.data
 }
 
 // <img src=…> URL for an uploaded attachment (binary raw endpoint).

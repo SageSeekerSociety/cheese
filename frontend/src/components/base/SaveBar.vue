@@ -133,7 +133,8 @@ const showButtons = () => props.dirty
   flex-grow: 1;
 }
 
-@media (max-width: 599.98px) {
+/* 手机外壳（窄于 768 —— 共享 token，见 `styles/breakpoints.scss`、`settings-card.css`）。 */
+@media (max-width: 767.98px) {
   .save-bar__rail {
     padding: 12px 16px;
   }

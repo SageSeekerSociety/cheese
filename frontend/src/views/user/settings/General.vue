@@ -14,7 +14,7 @@
         <label class="srow__k" for="general-open-at-login">{{ t('account.general.openAtLogin') }}</label>
         <span class="srow__v">{{ t('account.general.openAtLoginHint') }}</span>
         <div class="general__action">
-          <SaveStatus :saving="saving" :saved="saved" :error="error" />
+          <SaveStatus :saving="saving" :saved="saved" :error="error" :failed-text="t('account.general.saveFailed')" />
           <v-switch
             id="general-open-at-login"
             :model-value="opensAtLogin"

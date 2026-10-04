@@ -407,6 +407,8 @@
     "message": {
       "copy": "Copy",
       "copied": "Copied",
+      "copyLink": "Copy link",
+      "linkCopied": "Link copied",
       "selectText": "Select text",
       "edit": "Edit",
       "edited": "Edited",
@@ -447,7 +449,14 @@
       "attachFiles": "Upload files (up to 10 MB each)",
       "sendPhotos": "Send photos",
       "more": "More actions",
-      "send": "Send"
+      "send": "Send",
+      "sendUploading": "Uploading attachments — send once they finish",
+      "longPaste": {
+        "offer": "This paste is {count} characters. Send it as a file instead?",
+        "txt": "Save as .txt",
+        "md": "Save as .md",
+        "keep": "Keep as text"
+      }
     },
     "dispatched": {
       "created": "New task",
@@ -582,6 +591,8 @@
       "autoReloaded": "The app restarted; reloaded automatically",
       "runningApp": "Running app",
       "download": "Download",
+      "pick": "Pick",
+      "webRegion": "Boxed a region",
       "frameTitle": "Topic preview",
       "authorizing": "Authorizing the preview…",
       "navigating": "Loading the new page…",
@@ -1047,7 +1058,9 @@
       "tooLarge": "{name} is over 10MB and can't be uploaded",
       "retry": "Retry uploading {name}",
       "sendBlocked": "Retry or remove the failed attachments before sending",
-      "addFailed": "Couldn't add the file"
+      "addFailed": "Couldn't add the file",
+      "pastedName": "pasted-image-{time}",
+      "pastedTextName": "pasted-text-{time}"
     },
     "defaultAgentName": "Cheese",
     "reminder": {

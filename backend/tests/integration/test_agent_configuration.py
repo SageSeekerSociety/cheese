@@ -57,8 +57,8 @@ def test_agents_own_independent_configuration(db_session, _portal, monkeypatch):
 
 
 def test_a_saved_agent_can_override_model_but_not_harness(client):
-    """A teammate can select a model while execution settings remain project-owned."""
-    retired = {"harness", "effort"}
+    """A teammate can select a model while the harness remains project-owned."""
+    retired = {"harness"}
     project = post_project(client, json={"name": "Models"}).json()["data"]
     pid = project["id"]
 
@@ -116,3 +116,26 @@ def test_room_switch_preserves_the_selected_agents_role(client):
     assert updated["id"] == agent["id"]
     assert updated["handle"] == agent["handle"]
     assert updated["configuration"]["body"] == "Review security only"
+
+
+def test_a_teammate_saves_how_hard_it_thinks_and_when_it_compacts(client):
+    """Effort and compaction share are a teammate's, saved with its role."""
+    project = post_project(client, json={"name": "Effort"}).json()["data"]
+    pid = project["id"]
+    default = client.get(f"/projects/{pid}/agents").json()["data"]["data"][0]
+
+    saved = client.put(
+        f"/projects/{pid}/agents/{default['id']}",
+        json={"configuration": {"effort": "high", "compact_percent": 70}},
+    )
+    assert saved.status_code == 200, saved.text
+    after = client.get(f"/projects/{pid}/agents").json()["data"]["data"][0]
+    assert after["configuration"]["effort"] == "high"
+    assert after["configuration"]["compact_percent"] == 70
+
+    for refused in ({"effort": "turbo"}, {"compact_percent": 95}):
+        answer = client.put(
+            f"/projects/{pid}/agents/{default['id']}",
+            json={"configuration": refused},
+        )
+        assert answer.status_code == 400, answer.text
