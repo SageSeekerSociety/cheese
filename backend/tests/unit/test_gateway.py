@@ -232,6 +232,59 @@ async def test_drain_splits_by_model_so_no_model_is_absorbed_by_another():
 
 
 @pytest.mark.anyio
+async def test_spend_equal_but_for_float_rounding_is_not_a_regression():
+    """A checkpoint summed in one order and a total summed in another differ in
+    the last bits. The numbers are dev's on 2026-10-04: the model with no new
+    calls read 9.4626364 against 9.462636400000003, and that held back the
+    other model's growth."""
+    today = gw.utc_today()
+    g = _StubGateway(
+        {
+            today: {
+                "deepseek/deepseek-flash": (2559588896, 18788389, 46.47105885600008),
+                "openai/gpt-6.1-sol": (4940059, 9032, 9.4626364),
+            }
+        }
+    )
+    checkpoint = {
+        "date": today,
+        "models": {
+            "deepseek/deepseek-flash": {
+                "prompt": 2557850177,
+                "completion": 18781348,
+                "spend_usd": 46.444698275999684,
+            },
+            "openai/gpt-6.1-sol": {
+                "prompt": 4940059,
+                "completion": 9032,
+                "spend_usd": 9.462636400000003,
+            },
+        },
+    }
+
+    drained = await gw.drain_new_usage(g, "k", checkpoint)
+
+    assert drained is not None
+    rows, next_checkpoint = drained
+    assert [(r.model, r.prompt_tokens, r.completion_tokens) for r in rows] == [
+        ("deepseek/deepseek-flash", 1738719, 7041)
+    ]
+    assert rows[0].spend_usd == pytest.approx(0.026360580000396)
+    assert next_checkpoint["models"]["openai/gpt-6.1-sol"]["spend_usd"] == 9.4626364
+
+
+@pytest.mark.anyio
+async def test_spend_that_really_went_down_is_still_held_back():
+    today = gw.utc_today()
+    g = _StubGateway({today: {"m": (100, 30, 0.0099)}})
+    checkpoint = {
+        "date": today,
+        "models": {"m": {"prompt": 100, "completion": 30, "spend_usd": 0.01}},
+    }
+    assert await gw.drain_new_usage(g, "k", checkpoint) is None
+
+
+@pytest.mark.anyio
 async def test_drain_same_day_delta_is_exactly_once():
     today = gw.utc_today()
     g = _StubGateway({today: {"m": (100, 30, 0.01)}})
