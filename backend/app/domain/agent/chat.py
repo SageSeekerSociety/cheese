@@ -217,8 +217,7 @@ from app.domain.agent.service import (
     AgentToolResult,
     AgentUsage,
 )
-from app.domain.agent.skills import NATIVE_CHAT_GUIDANCE, load_scenario, load_skills
-from app.domain.agent.stages import TopicStage, resolve_stage, stage_scenario
+from app.domain.agent.skills import NATIVE_CHAT_GUIDANCE, load_skills
 from app.domain.agent.turn_speakers import turn_speakers
 from app.domain.agent.work_policy import resolve_compute_id, work_policy
 from app.domain.agent_instance.services import (
@@ -266,8 +265,6 @@ from app.domain.policy import gate
 from app.domain.project import artifacts as project_artifacts
 from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository
-from app.domain.review.models import AcceptStatus
-from app.domain.review.repositories import AcceptCardRepository
 from app.domain.room_task.place import Place, PlaceResolver
 from app.domain.task import teaching as teaching_context
 from app.domain.task.teaching import TeachingContext
@@ -342,7 +339,6 @@ class _TurnContext:
     prior_progress: list[dict]
     # Chat messages already in the room, apart from the ones this turn delivers.
     earlier_messages: int
-    topic_stage: TopicStage
     topic_refs: list[dict]
     topic_refs_for_prompt: list[dict]
     # 这个项目交出去过的东西 —— 下一次交付要从这几个名字里挑一个。空着是「还没交出
@@ -482,18 +478,6 @@ def _parse_uuid(raw: str | None) -> uuid.UUID | None:
         return uuid.UUID(raw)
     except ValueError:
         return None
-
-
-# Open (non-final) accept-card statuses, worth telling the agent about at turn
-# start — a card in one of these states usually implies "there is follow-up
-# work or a wait the agent should know it's in".
-_OPEN_CARD_STATUSES = (
-    AcceptStatus.pending,
-    AcceptStatus.pending_gate,
-    AcceptStatus.gate_failed,
-    AcceptStatus.gate_blocked,
-    AcceptStatus.conflict,
-)
 
 
 def _is_dm(topic: Topic) -> bool:
@@ -3448,21 +3432,6 @@ class ChatService(SessionRecovery):
             earlier_messages = await blocks.count_messages(
                 place.room_id, excluding=prompt_pending_ids
             )
-            # Read for the stage derivation below, and for nothing else: what
-            # the cards SAY is `cheese_status`'s answer, and restating it in a
-            # prompt only froze one turn's copy of it into the whole session.
-            open_cards = [
-                c
-                for c in await AcceptCardRepository(session).list_for_topic(topic_id)
-                if c.status in _OPEN_CARD_STATUSES
-            ]
-            # 按阶段渐进式披露: which段 of the flow this topic is in. Derived
-            # entirely from facts already in hand (kind/status + the open cards
-            # just queried above for 盲飞防护) — no extra query.
-            topic_stage = resolve_stage(
-                finished=topic.status == TopicStatus.archived,
-                card_statuses=[c.status for c in open_cards],
-            )
             # Resolve the room choice, then the explicit project default.
             phases_ms["metadata"] = (time.monotonic() - started) * 1000
             # 先问这台机器上有没有可用的骨架，再过档位策略：策略那一步要解析模型，
@@ -3755,7 +3724,6 @@ class ChatService(SessionRecovery):
             topic_refs_for_prompt=topic_refs_for_prompt,
             artifacts=artifact_refs,
             teaching=teaching,
-            topic_stage=topic_stage,
             turn_images=turn_images,
             untitled=untitled,
         )
@@ -3829,7 +3797,6 @@ class ChatService(SessionRecovery):
         topic_refs_for_prompt = prepared.topic_refs_for_prompt
         artifact_refs = prepared.artifacts
         teaching = prepared.teaching
-        topic_stage = prepared.topic_stage
         turn_images = prepared.turn_images
         untitled = prepared.untitled
 
@@ -3879,7 +3846,6 @@ class ChatService(SessionRecovery):
                     prepared.earlier_messages if resume_session_id is None else 0
                 ),
             ),
-            stage_guide=load_scenario(stage_scenario(topic_stage)),
             # 记忆那一段跟着这一轮跑的骨架走：写下来的文件同步不回平台的骨架，
             # 读到它只会以为自己在写项目记忆（`build_system_prompt` 那段注释）。
             keeps_memory=runtime.keeps_memory,

@@ -1691,6 +1691,11 @@ def _accept_request(args: dict, host) -> str:
         lines.append(f"这一版交出去的是 {args['deliver']}，已留存。")
     elif args.get("deliver_url"):
         lines.append(f"这一版交出去的是 {args['deliver_url']}。")
+    # 递卡之后的那一段（等采纳、PR 红了怎么修）在这一刻最有用，所以跟着返回说。
+    lines.append(
+        "接下来等验收人采纳。PR 的检查失败或和目标分支冲突时平台会叫你：在这条任务"
+        "的目录里修好、提交，用 cheese push-fix 更新原来的 PR，不要为这条任务再递一张卡。"
+    )
     return "\n".join(lines)
 
 

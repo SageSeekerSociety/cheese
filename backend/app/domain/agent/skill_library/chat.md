@@ -1,7 +1,6 @@
 ---
 name: chat
 title: 协作聊天
-scenarios: [chat]
 description: 房间里怎么和人说话：什么时候发消息、怎么写、怎么发，以及聊天和实况文档各管什么。
 ---
 

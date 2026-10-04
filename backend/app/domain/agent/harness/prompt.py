@@ -298,7 +298,6 @@ def build_system_prompt(
     artifacts: list[dict] | None = None,
     overview_doc: str | None = None,
     session_opening: list[str] | None = None,
-    stage_guide: str | None = None,
     teaching: TeachingContext | None = None,
     keeps_memory: bool = False,
 ) -> str:
@@ -337,15 +336,6 @@ def build_system_prompt(
         parts.append(section)
     if skills:
         parts.append(skills)
-    if stage_guide:
-        # 按阶段渐进式披露: the flow knowledge for THIS point in the topic's
-        # lifecycle only. Statically injected (like every other skill) — the
-        # model never gets to decide whether to load it, which is the whole
-        # reason this isn't a lazily-read Agent Skill (see stages.py).
-        parts.append(
-            "## 当前阶段的操作说明（平台按本话题所处的流程阶段自动选出，"
-            "只给你这一段）\n" + stage_guide
-        )
     if topics:
         lines = "\n".join(f"- {t['title']}" for t in topics)
         parts.append(
