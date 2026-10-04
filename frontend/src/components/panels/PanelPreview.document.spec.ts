@@ -241,7 +241,8 @@ it('turns a selected markdown sentence into a message naming its section', async
 
   // markdown 没有页也没有单元格，位置只能说是哪一节：标题来自这段之前最近的那个标题。
   const md = await screen.findByTestId('markdown')
-  const node = md.querySelector('p')!.firstChild!
+  // 正文的读法第一次用到才加载，画出来要等一下。
+  const node = await waitFor(() => md.querySelector('p')!.firstChild!)
   const range = document.createRange()
   range.setStart(node, 4)
   range.setEnd(node, 10)
@@ -276,7 +277,8 @@ it('writes only the near side when the quote runs to the end of the document', a
 
   // 拖满整段：它前面是标题，后面什么都没有。后面那一侧写「下文「」」是没话找话。
   const md = await screen.findByTestId('markdown')
-  const node = md.querySelector('p')!.firstChild!
+  // 正文的读法第一次用到才加载，画出来要等一下。
+  const node = await waitFor(() => md.querySelector('p')!.firstChild!)
   const range = document.createRange()
   range.setStart(node, 0)
   range.setEnd(node, node.textContent!.length)
@@ -308,7 +310,8 @@ it('says the quote is at the top of the file when nothing precedes it', async ()
   const { emitted } = mount()
 
   const md = await screen.findByTestId('markdown')
-  const node = md.querySelector('p')!.firstChild!
+  // 正文的读法第一次用到才加载，画出来要等一下。
+  const node = await waitFor(() => md.querySelector('p')!.firstChild!)
   const range = document.createRange()
   range.setStart(node, 0)
   range.setEnd(node, 2)

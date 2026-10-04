@@ -4,12 +4,21 @@
 // 它和文档用同一套解析和同一套块（panels/doc/blocks/reader.ts），所以同一段字在
 // 消息里和在文档里长得一样。点名、话题、文件的 chip 只画不接：点击由外层按 data
 // 属性委派，和原来一样。
+//
+// 读法连着 tiptap、ProseMirror 和整套块，首屏不等它：第一次画的时候才加载，
+// 加载好之前这块是空的。
 import type { ReadAs } from '@/lib/docRead'
 import type { RefNames } from '@/lib/refChip'
 
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
-import { mountMarkdown } from '@/components/panels/doc/blocks/reader'
+type Reader = typeof import('@/components/panels/doc/blocks/reader')
+let reader: Reader | null = null
+let readerLoading: Promise<Reader> | null = null
+function loadReader(): Promise<Reader> {
+  readerLoading ??= import('@/components/panels/doc/blocks/reader').then((m) => (reader = m))
+  return readerLoading
+}
 
 const props = withDefaults(
   defineProps<{
@@ -25,17 +34,25 @@ const props = withDefaults(
 
 const host = ref<HTMLElement | null>(null)
 let stop: (() => void) | null = null
+let gone = false
 
 function draw() {
+  if (!reader) {
+    void loadReader().then(() => gone || draw())
+    return
+  }
   stop?.()
   stop = host.value
-    ? mountMarkdown(host.value, props.source, { as: props.as, names: props.names, copyCode: props.copyCode })
+    ? reader.mountMarkdown(host.value, props.source, { as: props.as, names: props.names, copyCode: props.copyCode })
     : null
 }
 
 onMounted(draw)
 watch([() => props.source, () => props.as, () => props.names, () => props.copyCode], draw, { deep: true })
-onBeforeUnmount(() => stop?.())
+onBeforeUnmount(() => {
+  gone = true
+  stop?.()
+})
 
 /** 画出来的那块 DOM：要从读者的选区算出原文的地方（文件预览的引用）用它。 */
 defineExpose({ el: host })
