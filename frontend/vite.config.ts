@@ -31,9 +31,64 @@ function demoPages(): Plugin {
   }
 }
 
+// MDI 图标字体（@mdi/font/css/materialdesignicons.css）的两处补丁：
+//
+// 1. 它的 @font-face 没写 font-display，默认等价于 block——浏览器判定「这段文字要
+//    用这个字体」之后最多 3 秒不画字（FOIT）。这里在它的 @font-face 里补一行
+//    `font-display: swap`。图标字体用 swap 通常会露出一串连字/乱码，但 mdi 用的是
+//    私用区码位（PUA），回退字体里根本没有对应字形，swap 期间只会是空白或豆腐块，
+//    不会渲染出别的字符，所以 swap 在这里是安全的。之所以在源码里改而不是自己再写
+//    一份 @font-face：那份要重指字体文件，地址解析和 CSS 层叠顺序都不好保证；直接
+//    往它自己那一份里补一行，最稳。按内容匹配而不是按路径——pnpm 的 node_modules
+//    路径形状（.pnpm/@mdi+font@…）认不牢。
+//
+// 2. woff2 有 403 KB，而 @font-face 要等 CSS 解析完才被发现；把 woff2 预加载能让它
+//    在 HTML 解析阶段就开下，和关键 CSS/JS 并行。带哈希的地址只存在于构建产物里，
+//    所以用 transformIndexHtml 往 <head> 里注入 preload。不在 main.ts 里 import
+//    '?url' 再运行时插：模块脚本要等 CSS 解析完才执行，那时字体请求早发出去了，
+//    预加载白做。dev（无产物）不注入。
+function mdiFont(): Plugin {
+  let base = '/'
+  return {
+    name: 'cheese-mdi-font',
+    enforce: 'pre',
+    configResolved(config) {
+      base = config.base
+    },
+    transform(code, id) {
+      if (!id.includes('.css')) return
+      if (!code.includes('@font-face') || !code.includes('Material Design Icons')) return
+      // 将来 @mdi 自己带上 font-display 就不再动它。
+      if (code.includes('font-display')) return
+      return code.replace(/@font-face\s*\{[^}]*\}/g, (block) => block.replace(/\}\s*$/, '  font-display: swap;\n}'))
+    },
+    transformIndexHtml: {
+      order: 'post',
+      handler(html, ctx) {
+        try {
+          // 只给应用本体注入：demo.html 是另一条入口，不见得用图标，别替它下 403 KB。
+          if (!ctx.filename?.endsWith('index.html')) return html
+          if (!ctx.bundle) return html
+          const font = Object.values(ctx.bundle).find(
+            (out) => out.type === 'asset' && /materialdesignicons-webfont[^/]*\.woff2$/.test(out.fileName)
+          )
+          if (!font || font.type !== 'asset') return html
+          const href = (base.endsWith('/') ? base : `${base}/`) + font.fileName
+          const tag = `<link rel="preload" as="font" type="font/woff2" crossorigin href="${href}">`
+          return html.replace('</head>', `  ${tag}\n  </head>`)
+        } catch {
+          // 注入失败不该弄挂构建：没有 preload，字体照旧在首次用到时下载。
+          return html
+        }
+      },
+    },
+  }
+}
+
 export default defineConfig({
   plugins: [
     demoPages(),
+    mdiFont(),
     vue({
       template: { transformAssetUrls },
     }),
