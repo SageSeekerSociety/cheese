@@ -343,6 +343,10 @@ onMounted(async () => {
 <style scoped lang="scss">
 .task-container {
   border: none;
+  /* 一栏题目列表：1920/2560 上铺满整屏会把每行的两头拉得很远，视线横穿整行才
+     找得到右边的状态。封顶居中，和上面的筛选条同一栏。 */
+  max-width: 1100px;
+  margin-inline: auto;
 }
 
 .category-nav-mobile {

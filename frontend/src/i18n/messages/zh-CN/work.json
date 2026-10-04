@@ -790,7 +790,6 @@
       "liveRefTitle": "「{title}」· {status} — 点击打开",
       "thisTask": "这件任务",
       "subtopic": "子话题",
-      "topic": "话题",
       "selectionToolbar": "选区操作",
       "copy": "复制",
       "blockType": "段落格式",
@@ -898,7 +897,12 @@
         "columnLeft": "在左边插入一列",
         "columnRight": "在右边插入一列",
         "columnDelete": "删除这一列",
-        "diagramTooLong": "图太大，只显示源码"
+        "diagramTooLong": "图太大，只显示源码",
+        "plain": {
+          "chart": "图表",
+          "diagram": "流程图",
+          "image": "图片"
+        }
       }
     },
     "comments": {
@@ -1007,6 +1011,7 @@
       "nameJoiner": "、",
       "library": "资料库",
       "noFiles": "暂无匹配的文件",
+      "noMatch": "暂无匹配",
       "all": "所有人",
       "allSub": "{'@'}all · 通知话题全体成员",
       "here": "在线成员",
@@ -1034,7 +1039,8 @@
       "fileSnippet": "[文件]",
       "tooMany": "每条消息最多添加 9 个附件",
       "tooLarge": "{name} 超过 10MB，无法上传",
-      "uploadFailed": "文件上传失败",
+      "retry": "重试上传 {name}",
+      "sendBlocked": "有附件上传失败，重试或移除后再发送",
       "addFailed": "添加文件失败"
     },
     "defaultAgentName": "芝士",

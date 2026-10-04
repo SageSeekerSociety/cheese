@@ -11,8 +11,9 @@ SCRIPT = Path(__file__).resolve().parents[1] / "release-gateway.sh"
 FAKE = """#!/usr/bin/env python3
 import json, os, pathlib, sys
 args = sys.argv[1:]
+stdin = sys.stdin.read() if "exec" in args else ""
 with open(os.environ["CALLS"], "a") as f:
-    f.write(json.dumps({"args":args,"image":os.environ.get("GATEWAY_IMAGE"),"config":os.environ.get("GATEWAY_CONFIG")}) + "\\n")
+    f.write(json.dumps({"args":args,"image":os.environ.get("GATEWAY_IMAGE"),"config":os.environ.get("GATEWAY_CONFIG"),"stdin":stdin}) + "\\n")
 if args[:2] == ["network", "inspect"] and os.environ.get("NO_NETWORK"): sys.exit(1)
 if args[0] == "inspect": print("sha256:previous")
 elif args[:2] == ["image", "inspect"]: print("a" * 40)
@@ -70,7 +71,7 @@ class GatewayReleaseTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         actions = [c["args"][0] for c in calls]
         self.assertLess(actions.index("cp"), actions.index("compose"))
-        rollout = [c for c in calls if c["args"][0] == "compose"]
+        rollout = [c for c in calls if c["args"][0] == "compose" and "up" in c["args"]]
         self.assertEqual(len(rollout), 1)
         self.assertEqual(
             rollout[0]["args"][-9:],
@@ -91,12 +92,30 @@ class GatewayReleaseTest(unittest.TestCase):
     def test_unhealthy_release_restores_old_image_and_config(self):
         result, calls = self.run_release(FAIL_RELEASE="1")
         self.assertNotEqual(result.returncode, 0)
-        rollout = [c for c in calls if c["args"][0] == "compose"]
+        rollout = [c for c in calls if c["args"][0] == "compose" and "up" in c["args"]]
         self.assertEqual(len(rollout), 2)
         self.assertEqual(rollout[-1]["image"], "sha256:previous")
         # The rollback also drops containers of services no longer in the file.
         self.assertIn("--remove-orphans", rollout[-1]["args"])
         self.assertTrue(rollout[-1]["config"].endswith("/previous.yaml"))
+
+    def test_a_healthy_release_builds_the_spend_log_index_without_blocking_inserts(self):
+        result, calls = self.run_release()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        compose = [c for c in calls if c["args"][0] == "compose"]
+        self.assertIn("up", compose[0]["args"])
+        build = compose[-1]
+        self.assertIn("exec", build["args"])
+        self.assertIn("litellm-db", build["args"])
+        self.assertIn(
+            'CREATE INDEX CONCURRENTLY IF NOT EXISTS "LiteLLM_SpendLogs_api_key_startTime_idx"',
+            build["stdin"],
+        )
+
+    def test_a_failed_release_builds_no_index(self):
+        result, calls = self.run_release(FAIL_RELEASE="1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(any("exec" in c["args"] for c in calls))
 
     def test_the_network_shared_with_the_metering_proxy_exists_before_rollout(self):
         for missing in ("", "1"):

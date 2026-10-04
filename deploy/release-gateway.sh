@@ -49,3 +49,19 @@ else
   "${compose[@]}" up -d --no-deps --remove-orphans --wait --wait-timeout 150 litellm
   exit 1
 fi
+
+# Spend reads page through one key's day by (api_key, startTime) (the backend's
+# gateway.py). LiteLLM's schema declares that index but leaves building it to
+# operators, because a plain CREATE INDEX blocks spend-log inserts for the whole
+# build; without it every page full-scans the spend table. CONCURRENTLY does not
+# block inserts. A CONCURRENTLY build that failed leaves an invalid index, which
+# IF NOT EXISTS would then skip forever, so that one is dropped first.
+"${compose[@]}" exec -T litellm-db psql -U litellm -d litellm -v ON_ERROR_STOP=1 -q <<'SQL'
+SELECT 'DROP INDEX CONCURRENTLY "LiteLLM_SpendLogs_api_key_startTime_idx"'
+FROM pg_index JOIN pg_class ON pg_class.oid = pg_index.indexrelid
+WHERE pg_class.relname = 'LiteLLM_SpendLogs_api_key_startTime_idx' AND NOT pg_index.indisvalid
+\gexec
+CREATE INDEX CONCURRENTLY IF NOT EXISTS "LiteLLM_SpendLogs_api_key_startTime_idx"
+ON "LiteLLM_SpendLogs" ("api_key", "startTime");
+SQL
+echo "Spend-log index in place."

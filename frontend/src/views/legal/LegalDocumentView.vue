@@ -8,8 +8,7 @@
           {{ t('account.legalEffectiveDate', { date: doc.effectiveDate }) }}
         </p>
         <!-- 正文来自后端（backend/app/domain/legal/texts），和同意记录里的哈希是同一份 -->
-        <!-- eslint-disable-next-line vue/no-v-html -->
-        <div class="legal-body t-reading" v-html="html" />
+        <MarkdownView class="legal-body t-reading" :source="doc.content" />
       </template>
     </article>
   </main>
@@ -22,11 +21,11 @@
  */
 import type { LegalDocumentFull, LegalDocumentKey } from '@/network/api/legal/types'
 
-import { computed, ref, watch } from 'vue'
+import { ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
+import MarkdownView from '@/components/common/MarkdownView.vue'
 import { t } from '@/i18n'
-import { markdown, sanitizeRendered } from '@/lib/markdown'
 import { LegalApi } from '@/network/api/legal'
 
 const props = defineProps<{ document: LegalDocumentKey }>()
@@ -34,8 +33,6 @@ const route = useRoute()
 
 const doc = ref<LegalDocumentFull | null>(null)
 const error = ref('')
-
-const html = computed(() => (doc.value ? sanitizeRendered(markdown.parse(doc.value.content) as string) : ''))
 
 watch(
   () => [props.document, route.query.version] as const,

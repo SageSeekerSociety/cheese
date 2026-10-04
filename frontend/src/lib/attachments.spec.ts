@@ -166,4 +166,57 @@ describe('chat attachments', () => {
     expect(pending.value).toHaveLength(1)
     expect(pending.value[0].path).toContain('small.pdf')
   })
+
+  // 失败的那一枚留在待发条里：它带着名字和 File，重试就是拿着同一份再传一次。
+  // 原来它被删掉、错误只在一条会自己走掉的提示里，人回头看时既不知道少了哪个
+  // 文件，也没有再试一次的路。
+  it('keeps a failed upload in the strip, with its File, and retry sends it again', async () => {
+    let attempts = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url, options) => {
+        attempts += 1
+        if (attempts === 1) throw new Error('offline')
+        const picked = options.body.get('file') as File
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ code: 200, data: { path: `uploads/id/${picked.name}`, mime: picked.type } }),
+        }
+      })
+    )
+    const { addFiles, pending, retry } = usePendingAttachments(() => 't1')
+    await addFiles([file('paper.pdf', 'application/pdf')])
+
+    expect(pending.value).toHaveLength(1)
+    expect(pending.value[0]).toMatchObject({ error: true, uploading: false, name: 'paper.pdf' })
+    expect(pending.value[0].file?.name).toBe('paper.pdf')
+    // 没传上去的那一枚不能进这条消息。
+    expect(uploaded(pending.value)).toEqual([])
+
+    await retry(0)
+
+    expect(attempts).toBe(2)
+    expect(pending.value).toHaveLength(1)
+    expect(pending.value[0].error).toBeFalsy()
+    expect(uploaded(pending.value)).toEqual([{ path: 'uploads/id/paper.pdf', mime: 'application/pdf' }])
+  })
+
+  it('a failed upload is removed like any other, and retry does nothing after that', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('offline')
+      })
+    )
+    const { addFiles, pending, removeAt, retry } = usePendingAttachments(() => 't1')
+    await addFiles([file('paper.pdf', 'application/pdf')])
+    expect(pending.value).toHaveLength(1)
+
+    removeAt(0)
+    expect(pending.value).toHaveLength(0)
+
+    await retry(0)
+    expect(pending.value).toHaveLength(0)
+  })
 })
