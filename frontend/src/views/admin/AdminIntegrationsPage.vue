@@ -7,9 +7,9 @@ import { useI18n } from 'vue-i18n'
 import { useSaveState } from '@/composables/useSaveState'
 
 import { getPlatformFeishuApp, savePlatformFeishuApp } from '@/api/feishu'
-import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminPage from '@/components/admin/AdminPage.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import SaveStatus from '@/components/base/SaveStatus.vue'
 import { relTime } from '@/lib/relTime'
 
@@ -116,13 +116,12 @@ onMounted(load)
       <!-- 读失败：标题说清是哪一页没读到，服务端原话作说明行，重试就在旁边。
            **不**接着画「还没配置」和那张表单 —— 见文件开头第 4 条。
            判据是 `!== null` 而不是真值：原话取不到时 `loadError` 是空串，仍要给出错态。 -->
-      <AdminEmptyState
+      <BaseLoadError
         v-if="loadError !== null"
-        tone="error"
         :title="t('integrations.admin.loadFailed')"
-        :desc="loadError || undefined"
-        :action="t('integrations.admin.retry')"
-        @action="load"
+        :error="loadError || undefined"
+        :retry-label="t('integrations.admin.retry')"
+        @retry="load"
       />
 
       <template v-else>

@@ -8,6 +8,14 @@ if [[ "$*" == *"scripts.forge_event_public_key"* ]]; then
 fi
 tag="${APP_TIER_MAIN_SHA:-testsha}"
 
+# The rollout's probe for whether a backend catches the handover signal: by
+# default it does; APP_TIER_NO_HANDOVER_SIGNAL=1 is a backend built before it.
+if [ "${1:-}" = exec ] && [[ "$*" == *SigCgt* ]]; then
+  [ -n "${APP_TIER_DOCKER_LOG:-}" ] && printf '%s\n' "$1 $2 handover-signal-probe" >> "$APP_TIER_DOCKER_LOG"
+  [ "${APP_TIER_NO_HANDOVER_SIGNAL:-}" = 1 ] && exit 1
+  exit 0
+fi
+
 if [ "${1:-}" = exec ] && [ -n "${APP_TIER_CLOUD_DEVICES:-}" ]; then
   printf '%s\n' "$APP_TIER_CLOUD_DEVICES"
   exit 0
@@ -147,6 +155,9 @@ if [ "${1:-}" = "compose" ]; then
       if [ "${2:-}" = -q ] && [ "$scenario" = stable_owner ] && \
         [ "${3:-}" = preview-connection ]; then
         printf 'preview-connection-container\n'
+      fi
+      if [ "${2:-}" = -q ] && [ "${3:-}" = backend ] &&         [ -n "${APP_TIER_BACKEND_CONTAINER:-}" ]; then
+        printf '%s\n' "$APP_TIER_BACKEND_CONTAINER"
       fi
       if [ "${2:-}" = -q ] && [ "$scenario" = rollback ]; then
         case "${3:-}" in

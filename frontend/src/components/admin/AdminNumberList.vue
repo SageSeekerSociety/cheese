@@ -5,7 +5,7 @@ import type { NavTarget } from '@/lib/navTarget'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import NavLink from '@/components/common/NavLink.vue'
 import { statusMeta } from '@/lib/feedbackMeta'
 import { relTime } from '@/lib/relTime'
@@ -71,9 +71,9 @@ const shown = computed(() =>
       </div>
     </template>
 
-    <AdminEmptyState
+    <BaseEmptyState
       v-else-if="shown.length === 0"
-      compact
+      size="compact"
       :title="t('feedback.dashboard.empty.title')"
       :desc="t('feedback.dashboard.empty.desc')"
     />

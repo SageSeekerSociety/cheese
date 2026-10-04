@@ -160,6 +160,14 @@ export namespace TeamsApi {
       method: 'DELETE',
     })
 
+  /** 把团队交给另一位成员：他成为所有者，我降为管理员。 */
+  export const transferOwner = (teamId: number, userId: number) =>
+    NewApiInstance.request<{ team: Team }>({
+      url: `/teams/${teamId}/owner`,
+      method: 'PUT',
+      data: { userId },
+    })
+
   export const getMembers = (teamId: number) =>
     NewApiInstance.request<{ members: TeamMember[] }>({
       url: `/teams/${teamId}/members`,

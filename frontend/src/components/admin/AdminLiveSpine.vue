@@ -181,7 +181,8 @@ function dwellDetail(stage: { p90Seconds?: number | null; maxSeconds?: number | 
   height: 120px;
 }
 
-@media (max-width: 700px) {
+/* 内容列窄于 700（容器查询挂在后台内容列上，§3.5，不是视口）。 */
+@container admin (max-width: 700px) {
   .als__rail {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }

@@ -5,8 +5,11 @@
 他的偏好广播给整个项目。空改动一个字都不说。
 """
 
+import re
+
 from app.domain.agent.platform_notices import memory_changed_notice
 from app.domain.block.models import AGENT_NOTICE_META_KEY
+from app.domain.memory.reads import MEMORY_DIR_MARKER
 from app.domain.memory.session import DIFF_MAX_LINES, MemoryChange
 
 
@@ -77,7 +80,7 @@ def test_a_huge_diff_is_clamped_to_the_room_event_budget():
 # --- 被平台盖回去的那一版，也要说给 agent 听 ------------------------------
 
 
-def _notice(refused: tuple[str, ...]):
+def _notice(refused: dict[str, str]):
     return memory_changed_notice(
         where="项目共享",
         summary="新增 1 条、1 条被别人抢先改了",
@@ -86,21 +89,54 @@ def _notice(refused: tuple[str, ...]):
     )
 
 
+def _named(told: str) -> list[str]:
+    """那句话里按条点名的路径（列表里反引号包着的那些）。"""
+    return [
+        path
+        for line in told.splitlines()
+        if line.startswith("- ")
+        for path in re.findall(r"`([^`]+)`", line)
+    ]
+
+
 def test_a_refused_version_is_said_to_the_agent_and_not_only_to_the_room():
     """那条灰字是给人看的，而写记忆的 agent 在会话机上——它下一轮带进 prompt 的
     只有 `agent_notice`。不说，它会以为写成功了，下一轮再写一遍同一版。"""
-    _, meta = _notice(("team/a.md",))
+    _, meta = _notice({"team/a.md": "会话那一版\n"})
 
     told = meta[AGENT_NOTICE_META_KEY]
-    assert "team/a.md" in told
+    assert "~/.cheese/memory/team/a.md" in told
     # 它写的那一版还在旁边：说出路径，下一步才是 Read 它、把内容取回来。
-    assert "team/a.conflict.md" in told
+    assert "~/.cheese/memory/team/a.conflict.md" in told
     assert "重读" in told
+
+
+def test_the_paths_it_hands_over_are_ones_the_memory_tree_answers():
+    """它下一步要拿这些路径去 Read。agent 的文件工具只把带 `.cheese/memory/`
+    的路径发给会话机（`remote_execution/proxy.js` 的 `memoryPath`），其余的在
+    **工作机**上找相对路径——那里没有记忆树，读回来是「文件不存在」。"""
+    _, meta = _notice({"team/a.md": "会话那一版\n"})
+
+    named = _named(meta[AGENT_NOTICE_META_KEY])
+    assert named
+    for path in named:
+        assert MEMORY_DIR_MARKER in path, path
+
+
+def test_a_refused_deletion_does_not_name_a_copy_that_was_never_written():
+    """会话把这条删了、平台那之后也动过，平台这一版赢。会话那一版没有正文，会话
+    机上不落这个旁路文件（`runner._keep_refused` 跳过空内容），所以那句话不能指
+    一个副本给它——读到的永远是「文件不存在」。"""
+    _, meta = _notice({"team/a.md": ""})
+
+    told = meta[AGENT_NOTICE_META_KEY]
+    assert _named(told) == ["~/.cheese/memory/team/a.md"]
+    assert "没有副本" in told
 
 
 def test_an_ordinary_change_carries_nothing_for_the_agent():
     """别的改动不需要它做任何事：一条 agent_notice 会跟着下一轮的 prompt 进去，
     白说的那句是每一轮都要付的。"""
-    _, meta = _notice(())
+    _, meta = _notice({})
 
     assert AGENT_NOTICE_META_KEY not in meta

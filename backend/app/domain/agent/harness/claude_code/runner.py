@@ -45,6 +45,7 @@ from app.domain.memory.files import (
     INDEX_NAME,
     MEMORY_ROOT,
     check_scoped_path,
+    conflict_path,
     rejected_path,
 )
 from app.domain.memory.tree import (
@@ -910,7 +911,7 @@ class Runner(runner.Runner[Journal]):
         房间里那句话只说得出「有改动被盖回来了」，而那句话要落到 agent 手里它才能
         重读再写——它读到的是什么，取决于它还能不能看到自己刚写的那一版。留在同一
         个目录里，它下一步就是 Read 那个文件。删除（`REMOVED`，空串）不留：没有正
-        文可以留，那句话本身已经把「你删的那条被平台留下了」说完。
+        文可以留，那句通知自己说了「你那一版是删掉它，没有副本」。
 
         这一类文件**不是记忆**：名字不是 kebab-case，所以 `read_memory` 不收它、
         回写时也带不回数据库；索引里当然也不会有它——索引是 agent 写的，平台只
@@ -919,9 +920,9 @@ class Runner(runner.Runner[Journal]):
         for path, content in refused.items():
             if not content:
                 continue
-            # `team/a.md` → `team/a.conflict.md`：和 `memory_conflict_notice` 说给
-            # agent 的那条路径一模一样，它照着那句话就能 Read 到。
-            _write_memory(root, f"{path[:-3]}.conflict.md", content)
+            # 名字取自 `files.conflict_path`：`memory_conflict_notice` 叫
+            # agent 去读的那份副本，就是这里落下的这一份。
+            _write_memory(root, conflict_path(path), content)
 
     async def _expire(self) -> None:
         while True:

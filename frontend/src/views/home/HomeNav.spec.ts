@@ -12,8 +12,17 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 const getMyTeams = vi.fn()
 const removeMember = vi.fn()
+const del = vi.fn()
+const getMembers = vi.fn()
+const transferOwner = vi.fn()
 vi.mock('@/network/api/teams', () => ({
-  TeamsApi: { getMyTeams: () => getMyTeams(), removeMember: (...args: unknown[]) => removeMember(...args) },
+  TeamsApi: {
+    getMyTeams: () => getMyTeams(),
+    removeMember: (...args: unknown[]) => removeMember(...args),
+    del: (...args: unknown[]) => del(...args),
+    getMembers: (...args: unknown[]) => getMembers(...args),
+    transferOwner: (...args: unknown[]) => transferOwner(...args),
+  },
 }))
 const confirm = vi.fn()
 vi.mock('@/plugins/dialog', () => ({
@@ -107,6 +116,9 @@ beforeEach(() => {
   setLocale('zh-CN')
   localStorage.clear()
   removeMember.mockReset()
+  del.mockReset()
+  getMembers.mockReset()
+  transferOwner.mockReset()
   confirm.mockReset()
   refreshProjects.mockReset()
   getMyTeams
@@ -140,7 +152,7 @@ describe('首页目录', () => {
   it.each([
     ['ADMIN', ['邀请成员', '编辑团队资料', '退出团队']],
     ['MEMBER', ['退出团队']],
-    ['OWNER', ['邀请成员', '编辑团队资料']],
+    ['OWNER', ['邀请成员', '编辑团队资料', '转让团队', '解散团队']],
   ] as const)('%s 在团队那一行的 ⋯ 里看到的操作', async (role, labels) => {
     getMyTeams.mockResolvedValue({ data: { teams: [team('crew', '知是开发组', role)] } })
     await mount('/inbox')
@@ -162,6 +174,40 @@ describe('首页目录', () => {
     await waitFor(() => expect(removeMember).toHaveBeenCalledWith(team('lab', '').id, 42))
     await waitFor(() => expect(screen.queryByText('数据课第三组')).toBeNull())
     expect(refreshProjects).toHaveBeenCalled()
+  })
+
+  it('所有者解散团队：确认后这一行消失', async () => {
+    getMyTeams.mockResolvedValue({ data: { teams: [team('crew', '知是开发组', 'OWNER')] } })
+    confirm.mockResolvedValue(true)
+    del.mockResolvedValue({})
+    await mount('/inbox')
+    await fireEvent.contextMenu(await screen.findByLabelText('展开 知是开发组'))
+    await fireEvent.click(await screen.findByText('解散团队'))
+    await waitFor(() => expect(del).toHaveBeenCalledWith(team('crew', '').id))
+    await waitFor(() => expect(screen.queryByText('知是开发组')).toBeNull())
+  })
+
+  it('所有者把团队交给一位成员，之后自己就能退出了', async () => {
+    getMyTeams.mockResolvedValue({ data: { teams: [team('crew', '知是开发组', 'OWNER')] } })
+    getMembers.mockResolvedValue({
+      data: {
+        members: [
+          { role: 'OWNER', user: { id: 42, username: 'me', nickname: '我', avatarId: 0 } },
+          { role: 'MEMBER', user: { id: 7, username: 'mate', nickname: '小王', avatarId: 0 } },
+        ],
+      },
+    })
+    transferOwner.mockResolvedValue({ data: { team: team('crew', '知是开发组', 'OWNER') } })
+    await mount('/inbox')
+    await fireEvent.click(await screen.findByLabelText('团队操作'))
+    await fireEvent.click(await screen.findByText('转让团队'))
+    await fireEvent.click(await screen.findByText('小王'))
+    expect(screen.queryByText('我')).toBeNull()
+    await fireEvent.click(screen.getByRole('button', { name: '转让团队' }))
+    await waitFor(() => expect(transferOwner).toHaveBeenCalledWith(team('crew', '').id, 7))
+
+    await fireEvent.contextMenu(await screen.findByLabelText('展开 知是开发组'))
+    expect(await screen.findByText('退出团队')).toBeTruthy()
   })
 
   it('取消确认就什么都不做', async () => {

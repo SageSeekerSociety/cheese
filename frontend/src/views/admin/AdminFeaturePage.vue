@@ -3,8 +3,8 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 
-import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminPage from '@/components/admin/AdminPage.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import { findFeatureView } from '@/views/admin/features/registry'
 
 // 功能数据页的**入口壳**（`/admin/feature-stats/:id`）。
@@ -33,7 +33,7 @@ const feature = computed(() => findFeatureView(id.value))
   <!-- 认不出的 id：页头写这一块的名字（和侧栏那一项一致），正文一句「还没有这一页」。 -->
   <AdminPage v-else :title="t('navigation.admin.featureStats')">
     <div class="admin-page__body">
-      <AdminEmptyState
+      <BaseEmptyState
         :title="t('featureStats.page.unknown')"
         :desc="t('featureStats.page.unknownDesc', { id })"
         tone="error"

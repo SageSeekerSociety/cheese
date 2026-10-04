@@ -373,6 +373,23 @@ def test_a_room_with_only_its_owner_in_it_does_not_hold_them_back(client, bearer
     assert room.status_code == 200, room.text
 
 
+def test_a_room_with_an_admin_in_it_does_not_hold_its_owner_back(client, bearer):
+    """房里另有一位 admin：他管得了名册，owner 走了房间也不会没人管，所以不拦。"""
+    pid = _project(client)
+    _add(client, pid, "alice")
+    _add(client, pid, "bob")
+    _add(client, pid, "carol")
+    tid = _topic(client, pid, "alice", title="有人管的房")
+    _seat(client, tid, "bob", by="alice", role="admin")
+    _seat(client, tid, "carol", by="alice")
+
+    r = _leave(client, pid, "alice")
+
+    assert r.status_code == 200, r.text
+    assert set(_topic_handles(client, tid)) >= {"bob", "carol"}
+    assert "alice" not in _topic_handles(client, tid)
+
+
 def test_a_previous_owner_leaves_the_project_and_stays_on_its_team(client, bearer):
     """把项目交给队友之后，原所有者在名册上按小队读出来 —— 他现在退得掉这个项目，
     而且退的是**这个项目**：小队那一行不动。

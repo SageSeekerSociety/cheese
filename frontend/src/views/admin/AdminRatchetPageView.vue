@@ -35,11 +35,12 @@ import type { RatchetBoard } from '@/views/admin/ratchetApi'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminFlash from '@/components/admin/AdminFlash.vue'
 import AdminPage from '@/components/admin/AdminPage.vue'
 import AdminRatchetArea from '@/components/admin/ratchet/AdminRatchetArea.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 
 defineOptions({ name: 'AdminRatchetPageView' })
 
@@ -124,16 +125,15 @@ const collectionFailedLine = computed(() => {
       </div>
 
       <!-- 读失败**不是**「还没有采集」：两句话，两个画面。board 拿到过就不再走这一支。 -->
-      <AdminEmptyState
+      <BaseLoadError
         v-else-if="failed && !board"
         :title="t('ratchet.state.loadFailed')"
-        :desc="t('ratchet.state.loadFailedDesc')"
-        :action="t('ratchet.state.retry')"
-        tone="error"
-        @action="emit('retry')"
+        :error="t('ratchet.state.loadFailedDesc')"
+        :retry-label="t('ratchet.state.retry')"
+        @retry="emit('retry')"
       />
 
-      <AdminEmptyState
+      <BaseEmptyState
         v-else-if="!board || !collections"
         :title="t('ratchet.state.empty')"
         :desc="t('ratchet.state.emptyDesc')"
@@ -175,7 +175,7 @@ const collectionFailedLine = computed(() => {
         <!-- 只有一个点的时候不画走势：这一句解释为什么下面是空的，也解释了什么时候会有。 -->
         <p v-if="collections < 2" class="arc__note t-meta-read">{{ t('ratchet.note.singlePoint') }}</p>
 
-        <AdminEmptyState
+        <BaseEmptyState
           v-if="!checks"
           :title="t('ratchet.state.noMeasurements')"
           :desc="noMeasurementsDesc"

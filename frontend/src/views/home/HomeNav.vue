@@ -31,6 +31,7 @@ import AccountService from '@/services/account'
 import errorHandler from '@/services/ErrorHandler'
 import { useWorkspaceStore } from '@/stores/workspace'
 import TeamProfileEditDialog from '@/views/teams/TeamProfileEditDialog.vue'
+import TransferTeamDialog from '@/views/teams/TransferTeamDialog.vue'
 
 defineProps<{
   /** 手机上「待办」是底栏的一格，这里就不再列一次。 */
@@ -147,8 +148,24 @@ function teamActions(team: Team): MenuAction[] {
         onSelect: () => (editing.value = team),
       }
     )
-  // 所有者退不掉（后端拒：先转让或解散），不给他一个必然被拒的按钮。
-  if (team.role !== 'OWNER')
+  // 所有者退不掉（后端拒：先转让或解散），所以他看到的是那两条出路。
+  if (team.role === 'OWNER')
+    actions.push(
+      {
+        key: 'transfer',
+        label: t('home.nav.transferTeam'),
+        icon: 'mdi-account-arrow-right-outline',
+        onSelect: () => (transferring.value = team),
+      },
+      {
+        key: 'disband',
+        label: t('home.nav.disbandTeam'),
+        icon: 'mdi-delete-outline',
+        danger: true,
+        onSelect: () => void disbandTeam(team),
+      }
+    )
+  else
     actions.push({
       key: 'leave',
       label: t('home.nav.leaveTeam'),
@@ -161,6 +178,38 @@ function teamActions(team: Team): MenuAction[] {
 
 // 右键一行，弹的就是 ⋯ 那一份，弹在鼠标那一点上。
 const rowMenu = useRowMenu<number>()
+
+// 转让团队：交出去之后我是管理员，这一行的菜单跟着新角色长（这时才有「退出团队」）。
+const transferring = ref<Team | null>(null)
+const transferOpen = computed({
+  get: () => transferring.value !== null,
+  set: (value: boolean) => {
+    if (!value) transferring.value = null
+  },
+})
+function onTransferred(updated: Team) {
+  teams.value = teams.value.map((team) => (team.id === updated.id ? { ...team, ...updated, role: 'ADMIN' } : team))
+}
+
+// 解散团队：后端只在团队里已经没有项目时才答应（项目归团队，团队没了它们就没处挂），
+// 拒绝的那句话会说清楚要先做什么。
+async function disbandTeam(team: Team) {
+  const confirmed = await dialog
+    .confirm(t('home.nav.disbandTeamBody'), {
+      title: t('home.nav.disbandTeamTitle', { name: team.name }),
+      confirmLabel: t('home.nav.disbandTeam'),
+      danger: true,
+    })
+    .wait()
+    .catch(() => false)
+  if (!confirmed) return
+  const result = await errorHandler.withErrorHandling(() => TeamsApi.del(team.id), {
+    defaultMessage: t('home.nav.disbandTeamFailed'),
+  })
+  if (result === undefined) return
+  toast.success(t('home.nav.disbandTeamDone', { name: team.name }))
+  forgetTeam(team)
+}
 
 // 退出团队：退掉的是整个团队，它的项目也一起看不到了，所以先确认。退出这一下成功了
 // 就算成功，后面的刷新失败不改口。
@@ -181,8 +230,13 @@ async function leaveTeam(team: Team) {
   })
   if (result === undefined) return
   toast.success(t('home.nav.leaveTeamDone', { name: team.name }))
+  forgetTeam(team)
+}
+
+// 这个团队不再是我的了：这一行消失；它的项目也不再是我的，rail 上那几格跟着项目清单走；
+// 正看着它的某一页的话回待办。
+function forgetTeam(team: Team) {
   teams.value = teams.value.filter((row) => row.id !== team.id)
-  // 这个团队的项目也不再是我的：rail 上那几格跟着这份清单走。
   void useWorkspaceStore().refreshProjects()
   if (currentHandle.value?.toLowerCase() === team.handle.toLowerCase()) void router.replace({ name: 'inbox' })
 }
@@ -318,6 +372,7 @@ const joinOpen = ref(false)
 
   <JoinSpaceDialog v-model="joinOpen" @joined="loadSpaces" />
   <TeamProfileEditDialog v-if="editing" v-model="editOpen" :team="editing" @updated="onTeamUpdated" />
+  <TransferTeamDialog v-if="transferring" v-model="transferOpen" :team="transferring" @transferred="onTransferred" />
 </template>
 
 <style scoped>
