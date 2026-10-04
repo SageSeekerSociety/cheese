@@ -299,7 +299,7 @@ class RoomSessions:
         if live is None or not live.takes_inputs or seat in self.work:
             return None
         provider = self._owns_sessions_provider
-        if provider is not None and not provider().owns_sessions():
+        if provider is not None and not provider().owns_sessions:
             return None
         ledger = getattr(self.channel, "screen_ledger", None)
         if seat in self.unchecked or (
