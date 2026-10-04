@@ -135,6 +135,7 @@ async function toComment() {
             :phase="agent.phase.value"
             :kind="agent.kind.value"
             :answer="agent.answer.value"
+            :stopped="agent.stopped.value"
             :changed="agent.edits.value.length"
             :busy="agent.busy.value"
             commentable

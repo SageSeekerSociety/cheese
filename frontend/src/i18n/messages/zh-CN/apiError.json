@@ -195,7 +195,7 @@
   "chatSignInFirst": "请先登录再进入话题",
   "assistantNotOpen": "芝士暂未开放，稍后再试。",
   "assistantStillAnswering": "上一个问题还在回答，等它答完再问。",
-  "assistantBusy": "芝士这会儿太忙，稍后再试。",
+  "assistantBusy": "芝士当前繁忙，稍后重试",
   "assistantFailed": "芝士暂时答不上来，稍后再试。",
   "turnForceStopped": "本轮已被强制停止",
   "agentDeliveryFailed": "消息没能交给 AI 队友",

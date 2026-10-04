@@ -40,6 +40,11 @@ class HostFull(SessionError):
     """The session host has no memory for one more session right now."""
 
 
+class StartAbandoned(SessionError):
+    """Whoever asked for the session stopped waiting for the host to have room
+    for it."""
+
+
 class InputProtocolUnavailable(SessionError):
     """The session's runner predates the receipt protocol, so nothing can be
     said to it whose reading would be known. Nothing was said; the session,
@@ -119,6 +124,9 @@ class SessionSpec:
     #: How long its runner may be out of reach while something said to it is
     #: unanswered before the reading gives it up (``Ended``).
     gone_after_s: float = 120.0
+    #: How long a start waits for the host to have memory for it before it
+    #: gives up (``HostFull``); 0 gives up at once.
+    host_wait_s: float = 0.0
     model_settings: ModelSettings = ModelSettings()
     #: The conversation it resumes.
     resume_token: str | None = None

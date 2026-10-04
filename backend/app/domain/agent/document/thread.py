@@ -27,6 +27,7 @@ answered or not: it was spent either way.
 import logging
 import uuid
 
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.background import spawn
@@ -35,10 +36,15 @@ from app.core.redis import get_redis_client
 from app.domain.agent.chat import ChatService
 from app.domain.agent.document import question
 from app.domain.agent.document.question import Bound, Surroundings
-from app.domain.agent.document.session import session_for
+from app.domain.agent.document.session import ref, session_for
 from app.domain.agent.runtime import announce_stale, get_broker
-from app.domain.agent.session_host.answer import Answer, Tool, ask
-from app.domain.agent.session_host.contract import HostFull, Prompt, SessionError
+from app.domain.agent.session_host.answer import Answer, Tool, Waiting, Words, ask
+from app.domain.agent.session_host.contract import (
+    HostFull,
+    Prompt,
+    SessionError,
+    StartAbandoned,
+)
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.block.comment_threads import CommentThreads
 from app.domain.delivery.mention import mentioned_handles
@@ -53,6 +59,8 @@ logger = logging.getLogger(__name__)
 #: Replies written for the agent when it has no answer of its own.
 BUSY = "{agent}正忙，暂时无法回复，稍后重试"
 FAILED = "{agent}暂时无法回复，稍后重试"
+#: What ends the reply of an answer someone stopped.
+STOPPED = "已停止"
 
 
 async def _tell(
@@ -147,14 +155,19 @@ async def answer(
         await reply(factory, room_id, project_id, thread_id, bound, FAILED)
         return
     work = uuid.uuid4()
+    stopped = question.stopped(redis, thread_id)
     slot = await question.take_turn(
         redis,
         project_id,
         thread_id,
         on_wait=lambda: _tell(room_id, thread_id, "queued"),
+        stopped=stopped,
     )
     if slot is None:
-        await reply(factory, room_id, project_id, thread_id, bound, BUSY)
+        said = STOPPED if await stopped() else BUSY
+        # A stop is for the question it reached: the next one starts unstopped.
+        await question.unstop(redis, thread_id)
+        await reply(factory, room_id, project_id, thread_id, bound, said)
         return
     await _tell(room_id, thread_id, "working")
     spent = False
@@ -167,15 +180,21 @@ async def answer(
             prompt = await thread_question(
                 db, around, room_id=room_id, thread_id=thread_id
             )
-            acting = await question.credential(
-                db,
-                project_id=project_id,
-                room_id=room_id,
-                agent=bound.agent_handle,
-                asker=asker,
-                work=work,
-                may_edit=True,
-            )
+
+        async def prompted() -> Prompt:
+            # Minted once the session is there: its lifetime is the answer's.
+            async with factory() as db:
+                acting = await question.credential(
+                    db,
+                    project_id=project_id,
+                    room_id=room_id,
+                    agent=bound.agent_handle,
+                    asker=asker,
+                    work=work,
+                    may_edit=True,
+                )
+            return Prompt(work, prompt, acting=acting)
+
         started = session_for(
             project_id=project_id,
             room_id=room_id,
@@ -184,16 +203,21 @@ async def answer(
             around=around,
             where="thread",
         )
-        text, failure = "", None
+        text, written, failure = "", "", None
         spent = True
         async for event in ask(
             sessions,
             *started,
-            Prompt(work, prompt, acting=acting),
+            prompted,
             work_id=work,
             ceiling_s=question.ANSWER_S,
+            stopped=stopped,
         ):
-            if isinstance(event, Tool):
+            if isinstance(event, Waiting):
+                await _tell(room_id, thread_id, "queued")
+            elif isinstance(event, Words):
+                written += event.text
+            elif isinstance(event, Tool):
                 await _tell(room_id, thread_id, "working", event.name)
             elif isinstance(event, Answer):
                 text, failure = event.text, event.error
@@ -205,6 +229,8 @@ async def answer(
         said = str(exc)
     except HostFull:
         said = BUSY
+    except StartAbandoned:
+        said = ""
     except SessionError as exc:
         logger.warning("doc agent session failed thread=%s: %s", thread_id, exc)
         said = FAILED
@@ -214,9 +240,21 @@ async def answer(
     finally:
         await slot.release()
         await work_edits.take(redis, str(work))
+    if await stopped():
+        # What it had written when it was stopped stays, marked as stopped.
+        said = "\n\n".join(part for part in (written.strip(), STOPPED) if part)
+    await question.unstop(redis, thread_id)
     await reply(factory, room_id, project_id, thread_id, bound, said)
     if spent:
         await chat.charge_turn_spend(project_id, room_id, work)
+
+
+async def stop(
+    redis: Redis, sessions: SessionHost, *, project_id: uuid.UUID, thread_id: uuid.UUID
+) -> None:
+    """Stop the thread's question: its wait, or the answer being written. The
+    reply keeps what was written, marked as stopped."""
+    await question.stop(redis, sessions, thread_id, ref(project_id, thread_id))
 
 
 async def reply(

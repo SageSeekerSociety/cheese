@@ -195,7 +195,7 @@
   "chatSignInFirst": "Sign in to enter the topic",
   "assistantNotOpen": "Cheese isn't available yet. Try again later.",
   "assistantStillAnswering": "The last question is still being answered. Ask again when it's done.",
-  "assistantBusy": "Cheese is too busy right now. Try again later.",
+  "assistantBusy": "Cheese is busy right now. Try again later.",
   "assistantFailed": "Cheese can't answer right now. Try again later.",
   "turnForceStopped": "This turn was force-stopped",
   "agentDeliveryFailed": "The message couldn't be delivered to the AI teammate",

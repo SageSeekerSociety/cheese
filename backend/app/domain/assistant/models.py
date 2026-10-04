@@ -13,12 +13,14 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    Boolean,
     DateTime,
     ForeignKey,
     Index,
     Integer,
     String,
     Text,
+    false,
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -87,3 +89,8 @@ class AssistantMessage(UuidPk, Timestamps, Base):
     seq: Mapped[int] = mapped_column(Integer, nullable=False)
     role: Mapped[str] = mapped_column(String(16), nullable=False)  # user | assistant
     text: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    #: The answer was stopped by the person before it was done; ``text`` is
+    #: what had been written.
+    stopped: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )

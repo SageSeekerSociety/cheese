@@ -1,5 +1,5 @@
 /** 题目页的芝士面板：说出去的话交给外面去问；芝士还在答的时候不能再问，也不能换
- * 对话或开新对话；一段对话都没有时，起步问题点一下就是一个问题；列表里点哪段就换到哪段。 */
+ * 对话或开新对话，但能停下；停下的回答留着写出的部分；一段对话都没有时，起步问题点一下就是一个问题；列表里点哪段就换到哪段。 */
 import type { PanelConversation, PanelMessage } from './AssistantPanel.vue'
 
 import { createVuetify } from 'vuetify'
@@ -56,6 +56,26 @@ describe('AssistantPanel', () => {
 
     expect(view.emitted('send')).toBeUndefined()
     expect(view.emitted('new')).toBeUndefined()
+  })
+
+  it('stops the answer being written, and asks nothing new', async () => {
+    const view = mount({ busy: true, streaming: '常见起点是' })
+    await fireEvent.click(view.getByRole('button', { name: '停止' }))
+
+    expect(view.emitted('stop')).toHaveLength(1)
+    expect(view.emitted('send')).toBeUndefined()
+  })
+
+  it('keeps a stopped answer and says it was stopped', () => {
+    const view = mount({
+      messages: [
+        { role: 'user', text: '学习率设多少？', at: '2026-10-04T08:00:00Z' },
+        { role: 'assistant', text: '常见起点是 0.1', stopped: true, at: '2026-10-04T08:00:05Z' },
+      ],
+    })
+
+    expect(view.getByText('常见起点是 0.1')).toBeTruthy()
+    expect(view.getByText('已停止')).toBeTruthy()
   })
 
   it('asks a starter question in one click when the conversation is empty', async () => {
