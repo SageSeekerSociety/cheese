@@ -5,10 +5,11 @@ import type { MemberActivityLine } from '@/lib/memberActivity'
 import type { CardPhase } from '@/lib/topicState'
 import type { PreviewLocate, SubmitPreviewQuestion } from '../../lib/previewQuestion'
 
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
+import { useEscapeLayer } from '@/composables/useEscapeStack'
 import { usePageTitle } from '@/composables/usePageTitle'
 import { useRoomTabHistory } from '@/composables/useRoomTabHistory'
 import { useTopicMemory } from '@/composables/useTopicMemory'
@@ -101,13 +102,12 @@ function onOpenCard(taskId: string | null) {
 // 在改地址）。宽档里面板一直开着（就在对话旁边），手机上是 tab 栏的第一格，两处都不
 // 经过这里。
 const panelOpen = computed(() => !compact.value || !!panelTab.value || !!openCardId.value)
-// 收起之后从页头那颗开关再打开时回到哪一格：地址里没写 tab 就用上一次看的那一格。
-const lastPanelTab = ref<string | undefined>(panelTab.value)
-watch(panelTab, (tab) => {
-  if (tab) lastPanelTab.value = tab
-})
+// 收起之后从页头那颗开关再打开时回到哪一格：面板此刻在画哪一格。这一格未必来自地址
+// ——平板横放里进房间时自动选中的那一格（芝士在干活就是「现场」、卡等你验收就是「改
+// 动」）只留在面板里、没写进地址，收起再打开要回到它。量不到就落在总览。
 function openPanel() {
-  void router.replace({ query: { ...route.query, tab: lastPanelTab.value ?? 'overview' } })
+  const want = panelRef.value?.activeTab() ?? panelTab.value ?? 'overview'
+  void router.replace({ query: { ...route.query, tab: want } })
 }
 function closePanel() {
   if (!compact.value) return
@@ -121,14 +121,13 @@ function togglePanel() {
   if (panelOpen.value) closePanel()
   else openPanel()
 }
-function onPanelKeydown(event: KeyboardEvent) {
-  if (event.key !== 'Escape') return
-  if (!compact.value || !panelOpen.value) return
-  event.preventDefault()
-  closePanel()
-}
-onMounted(() => window.addEventListener('keydown', onPanelKeydown))
-onUnmounted(() => window.removeEventListener('keydown', onPanelKeydown))
+// 平板横放：面板浮层按 Esc 收起，焦点回到页头那颗开关。这一档里二级侧栏浮层也可能
+// 同时开着，两层共用一个 Esc 栈：一下 Esc 只关最上面那层（后打开的那层），第二下才
+// 轮到另一层。见 useEscapeStack。
+useEscapeLayer(
+  computed(() => compact.value && panelOpen.value),
+  closePanel
+)
 
 const AUTHOR = myHandle()
 
@@ -203,6 +202,8 @@ const panelRef = ref<{
   openFile?: (path: string, taskId?: string | null) => void
   siteBlock?: (block: Block) => void
   reviewDoc?: (request: DocReviewRequest) => void
+  // 面板此刻在画哪一格。收起再打开要回到它——自动选中的那一格不在地址里，只能问它。
+  activeTab: () => string
 } | null>(null)
 const chatColumn = ref<{
   connected: boolean
@@ -431,11 +432,7 @@ void openPlace()
          画。放在这里而不是首屏：见组件自己的说明。 -->
       <PushPermissionPrompt :working="working" />
 
-      <div
-        class="panes d-flex flex-grow-1"
-        :class="{ 'panes--compact': compact }"
-        style="min-width: 0; min-height: 0; position: relative"
-      >
+      <div class="panes d-flex flex-grow-1" style="min-width: 0; min-height: 0; position: relative">
         <!-- 桌面：对话是左边那一栏，和工作面板之间有一条可拖的分隔。
            专注模式开关时这一栏像抽屉一样收起 / 拉开，而不是一下消失、面板一下跳宽：
            人要看得出面板是从哪儿长过来的。平板横放那一档里这一栏占满整宽，面板是浮在
@@ -493,6 +490,7 @@ void openPlace()
             :tab="panelTab"
             :card-phase="cardPhase"
             :with-chat="!mdAndUp"
+            :compact="compact"
             :open-card-id="openCardId"
             :card-focus-block="cardFocusBlock"
             :member-names="memberNames"
