@@ -94,6 +94,11 @@ const extras = computed<MenuAction[]>(() => {
   return list
 })
 const extrasCollapsed = computed(() => !!props.collapseExtras && extras.value.length > 1)
+// 收进 ⋯ 时，键盘快捷键那颗也跟进去（平板接了键盘照样用得上），但不算进「要不要收」。
+const menuExtras = computed<MenuAction[]>(() => [
+  ...extras.value,
+  { key: 'shortcuts', label: t('global.shortcuts.open'), icon: 'mdi-keyboard-outline', onSelect: openShortcutSheet },
+])
 
 // 那颗按钮上的字。窄屏收掉名字，只留「交给」；读屏读的一直是全名。
 const summonText = computed(() => ({
@@ -135,7 +140,7 @@ const summonText = computed(() => ({
       :title="t('work.room.composer.sendPhotos')"
       @click="pickImages"
     />
-    <AdaptiveMenu v-if="extrasCollapsed" :actions="extras" location="top start">
+    <AdaptiveMenu v-if="extrasCollapsed" :actions="menuExtras" location="top start">
       <template #activator="{ props: menu }">
         <BaseButton
           v-bind="menu"

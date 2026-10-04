@@ -652,7 +652,8 @@ onBeforeUnmount(() => stopShortcuts?.())
 // 有自己那张表（AdminLayout），那里不开这一张。
 useEventListener(window, 'keydown', (event: KeyboardEvent) => {
   if (event.key !== '?' || event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return
-  if (isTypingTarget(event.target) || currentRoute.path.startsWith('/admin')) return
+  // 门口页面（官网）上没有应用外壳，这张表不在 DOM 里；后台有自己那张。
+  if (isTypingTarget(event.target) || currentRoute.meta.publicLanding || currentRoute.path.startsWith('/admin')) return
   event.preventDefault()
   appShortcutSheetOpen.value = true
 })

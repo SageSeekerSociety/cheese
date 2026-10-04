@@ -71,6 +71,7 @@
     "newline": "New line",
     "summon": "Send and hand to {name}",
     "mentionPick": "Pick from the {'@'} list",
-    "mentionClose": "Close the {'@'} list"
+    "mentionClose": "Close the {'@'} list",
+    "touchNewline": "On touch screens Enter adds a new line"
   }
 }

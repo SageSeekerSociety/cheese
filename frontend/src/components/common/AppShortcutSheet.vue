@@ -15,6 +15,10 @@ import ShortcutSheet from './ShortcutSheet.vue'
 
 import { t } from '@/i18n'
 import { inDesktopApp } from '@/lib/desktopApp'
+import { useWorkspaceStore } from '@/stores/workspace'
+
+// 「交给谁」用这个项目给队友起的名字，不写死「芝士」。
+const store = useWorkspaceStore()
 
 function setOpen(open: boolean) {
   appShortcutSheetOpen.value = open
@@ -52,9 +56,9 @@ const groups = computed<ShortcutGroup[]>(() => {
     {
       scope: t('global.shortcuts.scope.composer'),
       rows: [
-        { keys: ['Enter'], action: t('global.shortcuts.send') },
+        { keys: ['Enter'], action: t('global.shortcuts.send'), note: t('global.shortcuts.touchNewline') },
         { keys: ['Shift+Enter'], action: t('global.shortcuts.newline') },
-        { keys: [`${mod}+Enter`], action: t('global.shortcuts.summon', { name: t('work.room.defaultAgentName') }) },
+        { keys: [`${mod}+Enter`], action: t('global.shortcuts.summon', { name: store.agentName }) },
         { keys: ['↑', '↓'], action: t('global.shortcuts.mentionPick') },
         { keys: ['Esc'], action: t('global.shortcuts.mentionClose') },
       ],

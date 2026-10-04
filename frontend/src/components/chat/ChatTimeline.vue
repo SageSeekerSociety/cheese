@@ -245,6 +245,7 @@ function emitOutboxLeave(el: Element, done: () => void) {
     class="messages flex-grow-1 overflow-y-auto py-2"
     data-testid="chat-scroll"
     tabindex="0"
+    role="region"
     :aria-label="t('work.room.chat.timelineLabel')"
   >
     <!-- Single wrapper so a ResizeObserver can watch the timeline's total

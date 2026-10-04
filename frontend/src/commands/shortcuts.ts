@@ -113,7 +113,8 @@ export function installShortcuts(router: Router): () => void {
   // 序列键按了第一下：记下是哪个键、什么时候按的。
   let pending: { code: string; at: number } | null = null
   const onSequence = (event: KeyboardEvent): boolean => {
-    if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey || isTypingTarget(event.target)) {
+    // Shift 不算：表上写的是大写的 G，有人会按 Shift+G。
+    if (event.metaKey || event.ctrlKey || event.altKey || isTypingTarget(event.target)) {
       pending = null
       return false
     }
@@ -135,7 +136,12 @@ export function installShortcuts(router: Router): () => void {
     return false
   }
   const onKeydown = (event: KeyboardEvent) => {
-    if (event.defaultPrevented || event.repeat) return
+    if (event.repeat) return
+    // 别处已经处理了这一下（比如 `?` 打开了快捷键表）：序列也就断了。
+    if (event.defaultPrevented) {
+      pending = null
+      return
+    }
     if (onSequence(event)) return
     const command = activeCommands.value.find((candidate) => {
       const chord = candidate.shortcut ? parse(candidate.shortcut) : null

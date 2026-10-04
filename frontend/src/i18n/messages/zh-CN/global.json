@@ -71,6 +71,7 @@
     "newline": "换行",
     "summon": "发送并交给{name}",
     "mentionPick": "在 {'@'} 名单里选人",
-    "mentionClose": "收起 {'@'} 名单"
+    "mentionClose": "收起 {'@'} 名单",
+    "touchNewline": "触屏上回车是换行"
   }
 }

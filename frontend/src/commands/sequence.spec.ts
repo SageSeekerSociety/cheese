@@ -52,4 +52,21 @@ describe('序列键', () => {
     press('Digit1', { metaKey: true })
     expect(run).not.toHaveBeenCalled()
   })
+
+  it('按 Shift+G（表上写的大写 G）也算第一下', () => {
+    const run = setup()
+    press('KeyG', { shiftKey: true })
+    press('Digit1')
+    expect(run).toHaveBeenCalledTimes(1)
+  })
+
+  it('中间那一下被别处处理掉了，序列就断了', () => {
+    const run = setup()
+    press('KeyG')
+    const other = new KeyboardEvent('keydown', { code: 'Slash', bubbles: true, cancelable: true })
+    other.preventDefault()
+    window.dispatchEvent(other)
+    press('Digit1')
+    expect(run).not.toHaveBeenCalled()
+  })
 })
