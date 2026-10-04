@@ -7,6 +7,8 @@
 //   2. 支线改了标题（或跑完收了工），文档正文里那颗徽章得跟着改字。原来它永远不
 //      更新：装饰的 key 只有 topicId，prosemirror-view 的 `WidgetType.eq` 一看
 //      见 key 相等就短路，DOM 于是停在第一次渲染的样子。
+//      改字只要重建成新索引 —— 节点树（哪一段升级成谁）不随话题表变，所以这条路
+//      上也不该再拉一次 /docs（下面第三条钉住）。
 //
 // 「只重写变了的那一段」那条不在这里：它管的是位置（光标 / 装饰）而不是 DOM 重建，
 // 测在 lib/docReplaceRange.spec.ts。
@@ -125,7 +127,7 @@ describe('侧栏话题列表变化时', () => {
     expect(getDocNodes.mock.calls.length, '内容没变就不该再问一次服务端').toBe(calls)
   })
 
-  it('支线换了标题就重新读，徽章跟着改字', async () => {
+  it('支线换了标题，徽章跟着改字（节点树没变就不再重拉）', async () => {
     seedRoom(topic.id, '第一段\n')
     getDocNodes.mockResolvedValue({
       data: [{ id: 'n1', kind: 'doc_node', content: '第一段', upgraded_to_topic_id: 's1' } as unknown as Block],
@@ -136,9 +138,36 @@ describe('侧栏话题列表变化时', () => {
       global: { plugins: [vuetify] },
     })
     await waitFor(() => expect(container.querySelector('.doc-liveref__label')?.textContent).toBe('旧名字'))
+    const calls = getDocNodes.mock.calls.length
 
     await rerender({ topic, activityTick: 0, topicList: [sub('s1', '新名字', 'active')] })
 
     await waitFor(() => expect(container.querySelector('.doc-liveref__label')?.textContent).toBe('新名字'))
+    // 徽章文案从话题表现取，重建成新索引就够了 —— 节点树不随话题表变，不必再问一次。
+    expect(getDocNodes.mock.calls.length, '标题变了徽章改字即可，不该重拉节点树').toBe(calls)
+  })
+
+  it('侧栏里与正文无关的话题变了，不重拉文档节点', async () => {
+    seedRoom(topic.id, '第一段\n')
+    getDocNodes.mockResolvedValue({
+      data: [{ id: 'n1', kind: 'doc_node', content: '第一段', upgraded_to_topic_id: 's1' } as unknown as Block],
+      total: 1,
+    })
+    const { container, rerender } = render(Doc, {
+      props: { topic, activityTick: 0, topicList: [sub('s1', '支线', 'active'), sub('s2', '别的活', 'active')] },
+      global: { plugins: [vuetify] },
+    })
+    await waitFor(() => expect(container.querySelector('.doc-liveref__label')?.textContent).toBe('支线'))
+    const calls = getDocNodes.mock.calls.length
+
+    // s2 不在正文里：整张表的内容变了（指纹变了），但徽章用不到它。
+    await rerender({
+      topic,
+      activityTick: 0,
+      topicList: [sub('s1', '支线', 'active'), sub('s2', '别的活改了名', 'active')],
+    })
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(getDocNodes.mock.calls.length, '无关话题变了不该重拉文档节点').toBe(calls)
   })
 })
