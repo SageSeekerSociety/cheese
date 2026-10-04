@@ -628,7 +628,8 @@ async def mail_draft(
             **draft_view(draft),
             "stored_in": row.config.get("drafts_folder"),
             "next": (
-                f"已存进邮箱草稿箱；发送要等 {row.owner_handle} 在「我的连接」里确认"
+                f"已存进邮箱草稿箱；发送要等 {row.owner_handle} "
+                "在房间里的卡片上核对后点「确认发送」"
             ),
         }
     )
