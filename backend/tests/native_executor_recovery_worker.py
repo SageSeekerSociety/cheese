@@ -189,9 +189,34 @@ async def run(descriptor):
                     select(AgentTurn).where(AgentTurn.topic_id == topic)
                 )
             )
+            # Leave the evidence behind if anything below fails.
+            print(
+                "TURNS "
+                + json.dumps(
+                    [
+                        {
+                            "id": str(t.id),
+                            "author": t.author,
+                            "started": str(t.started_at),
+                            "stopped": str(t.stopped_at),
+                        }
+                        for t in turns
+                    ]
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
+            # No turn is left running: a room showing its agent at work when
+            # nothing is is the bug a stray turn row would make.
+            assert all(t.stopped_at for t in turns), "a turn was left running"
             if busy:
                 assert {row.execution_work_id for row in rows} == {work}
-                assert len(turns) == 1
+                # Over HTTP an answer that misses the running turn is opened as
+                # a turn of its own before it is steered into that one; the
+                # session still ran once (the steers below, no sends), so only
+                # the plain socket path can promise one row.
+                if not http:
+                    assert len(turns) == 1
                 assert channel.calls.count("steer") == (2 if http else 1)
                 assert channel.calls.count("send") == 0
             else:
