@@ -308,6 +308,11 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
 
   // Silent refresh of the topic list (no spinner), so sub-topics 芝士 splits off
   // show up on their own.
+  //
+  // 这是 ProjectShell 那条 30 秒轮询走的路。`listTopics` 内部带条件请求：清单没变服务
+  // 端回 304，我们拿回的还是上一次那同一个 payload 对象（见 api.listTopics）。这时候
+  // `topics.value === payload.data` 已经成立，整段就跳过去 —— 不换数组，不为一份逐字节
+  // 一样的数据把侧栏重画一遍。真的变了才落新的一份。
   async function refreshTopics() {
     const revision = topicRevision
     const pid = projectId.value
@@ -316,7 +321,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     try {
       const payload = await readLatest(`topics:${pid}:${revision}`, () => listTopics(pid, TOPIC_SORT))
       if (epoch === projectEpoch && projectId.value === pid && revision === topicRevision) {
-        topics.value = payload.data
+        if (topics.value !== payload.data) topics.value = payload.data
         forgetMissingTopic(pid, payload.data)
         noteArchived(payload.data)
       }

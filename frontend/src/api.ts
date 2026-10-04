@@ -69,6 +69,7 @@ import type { AgentFieldChoice } from './lib/modelChoices'
 import type { SitePage } from './types/site'
 
 import { desktopAppHeaders } from './lib/desktopApp'
+import { shareInFlight } from './lib/inflight'
 import { refusalText, refusalWords } from './lib/noticeText'
 import { createPreviewPdfReader } from './lib/previewPdf'
 import { rateLimitedText, rateLimitRetryMs } from './lib/rateLimit'
@@ -267,7 +268,23 @@ export function request<T>(path: string, init?: RequestInit): Promise<T> {
   return withinBudget((signal) => performRequest<T>(path, { ...init, signal }), READ_BUDGET_MS, init?.signal)
 }
 
-async function performRequest<T>(path: string, init?: RequestInit): Promise<T> {
+/** A conditional GET came back 304: the representation the caller holds is still
+ *  current, and the response carried no body to read. Thrown, not returned, so the
+ *  ordinary `request<T>` path never has to know about it. */
+export class NotModified extends Error {
+  constructor(readonly etag: string | null) {
+    super('not modified')
+    this.name = 'NotModified'
+  }
+}
+
+function performRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  return performRequestFull<T>(path, init).then((res) => res.data)
+}
+
+/** The full shape of a request: the unwrapped `data`, plus the response's `ETag`
+ *  (null when the server did not send one). `request<T>` throws the tag away. */
+async function performRequestFull<T>(path: string, init?: RequestInit): Promise<{ data: T; etag: string | null }> {
   const method = (init?.method ?? 'GET').toUpperCase()
   if (method !== 'GET') pendingRoomReads.clear()
   await ensureFreshToken()
@@ -296,6 +313,12 @@ async function performRequest<T>(path: string, init?: RequestInit): Promise<T> {
       }
       await wait(GET_RETRY_DELAYS_MS[attempt])
       continue
+    }
+    if (res.status === 304) {
+      // Only reachable for a caller that sent `If-None-Match` (see
+      // `requestConditional`). A 304 has no body, so this must come before
+      // `readJson`, which would choke on the empty stream.
+      throw new NotModified(res.headers?.get?.('ETag') ?? null)
     }
     if (res.status === 401 && !authRetried) {
       authRetried = true
@@ -357,8 +380,43 @@ async function performRequest<T>(path: string, init?: RequestInit): Promise<T> {
       throw new Error(envelope.message || `API error code ${envelope.code}`)
     }
     if (method !== 'GET') pendingRoomReads.clear()
-    return envelope.data
+    return { data: envelope.data, etag: res.headers?.get?.('ETag') ?? null }
   }
+}
+
+/** The result of a conditional GET: either a fresh `data` (with the `etag` to ask
+ *  with next time), or `notModified` for a 304 — the caller's copy is current, so
+ *  there is nothing to parse, assign, or re-render. */
+export interface ConditionalResult<T> {
+  notModified: boolean
+  data: T | null
+  etag: string | null
+}
+
+/** A GET that asks the server "has this changed since `etag`?".
+ *
+ *  Sends `If-None-Match` and turns a 304 into `{ notModified: true }` instead of an
+ *  error. `cache: 'no-store'` keeps the decision in THIS code rather than in the
+ *  browser's HTTP cache, which would answer the 304 transparently with a stored copy
+ *  and make "nothing changed" indistinguishable from "here is the body again" — the
+ *  whole point is to skip the parse and the store write on an unchanged poll. */
+export function requestConditional<T>(path: string, etag: string | null): Promise<ConditionalResult<T>> {
+  const headers: Record<string, string> = etag ? { 'If-None-Match': etag } : {}
+  return withinBudget(async (signal) => {
+    try {
+      const { data, etag: next } = await performRequestFull<T>(path, {
+        headers,
+        cache: 'no-store',
+        signal,
+      })
+      return { notModified: false, data, etag: next }
+    } catch (error) {
+      if (error instanceof NotModified) {
+        return { notModified: true, data: null, etag: error.etag ?? etag }
+      }
+      throw error
+    }
+  }, READ_BUDGET_MS)
 }
 
 // The connector lives at the origin root (`/connector/*`), not under `/api`, and its
@@ -686,6 +744,12 @@ export function deleteUnderstanding(id: string): Promise<{ deleted: string }> {
 export type TopicSortField = 'last_activity_at' | 'updated_at' | 'title'
 export type TopicSortOrder = 'asc' | 'desc'
 
+// 上一次读到的话题清单和它的 ETag，按请求路径记着。侧栏每 30s 轮询一次，一份 448
+// 个话题的清单有近 300KB：服务端答「没变」（304）时把手里这同一个 payload 原样交回，
+// 调用方的 `topics.value = payload.data` 就是一次同引用的赋值 —— Vue 的 ref setter
+// 见到同一个对象会跳过触发（不解析、不换数组、不重画）。变了才落新的一份。
+const topicListCache = new Map<string, { etag: string | null; payload: ListPayload<Topic> }>()
+
 export function listTopics(
   projectId: string,
   opts?: { sort?: TopicSortField; order?: TopicSortOrder }
@@ -693,7 +757,19 @@ export function listTopics(
   const q = new URLSearchParams({ project_id: projectId })
   if (opts?.sort) q.set('sort', opts.sort)
   if (opts?.order) q.set('order', opts.order)
-  return request<ListPayload<Topic>>(`/topics?${q.toString()}`)
+  const path = `/topics?${q.toString()}`
+  const cached = topicListCache.get(path)
+  // 带上上一次那版 ETag 去问。服务端算出的一模一样就回 304（见后端 list_topics）。
+  return requestConditional<ListPayload<Topic>>(path, cached?.etag ?? null).then((result) => {
+    if (result.notModified) {
+      if (cached) return cached.payload
+      // 304 但手里没留底（比如刚重启、缓存已清）：退回一次无条件读，别把空手当没变。
+      return request<ListPayload<Topic>>(path)
+    }
+    if (!result.data) throw new Error('empty topic list response')
+    topicListCache.set(path, { etag: result.etag, payload: result.data })
+    return result.data
+  })
 }
 
 /** 一个话题的名字，和它在哪个项目里。跨项目找话题只要这几样。 */
@@ -1243,7 +1319,15 @@ export function listBlocks(
   if (opts?.around) q.set('around', opts.around)
   const qs = q.toString()
   const query = qs ? `?${qs}` : ''
-  return request<BlockPage>(`/topics/${encodeURIComponent(topicId)}/blocks${query}`)
+  const path = `/topics/${encodeURIComponent(topicId)}/blocks${query}`
+  // 最新那一页会被两条路同时要：切话题的预取（lib/blockCache 的 refreshBlockCache，
+  // 由 router 起头）和对话面板自己那一条（useChatPanel 一进房间就拉）。第二条跟着在
+  // 飞的那条走，省下一次重复的 GET。
+  //
+  // 只合并最新页（不带游标）：带 before/after/around 的那些是用户翻页翻出来的、每一次
+  // 都对应当下那一段窗口，合并它们没有好处，还会让两个调用方共享同一份数组。
+  const newestPage = !opts?.before && !opts?.after && !opts?.around
+  return newestPage ? shareInFlight(`blocks:${path}`, () => request<BlockPage>(path)) : request<BlockPage>(path)
 }
 
 // Emoji reactions (Slack semantics): toggles (emoji, caller) on a block and
@@ -1768,7 +1852,12 @@ export function getProgress(topicId: string, taskId?: string): Promise<TopicProg
 // Each node has a stable id + the turn_id that produced it — used for cross-view
 // highlight (B1 P2) and comment anchoring (B4).
 export function getDocNodes(topicId: string): Promise<{ data: Block[]; total: number }> {
-  return request(`/topics/${encodeURIComponent(topicId)}/docs`)
+  // 打开一个话题时两条路几乎同时要这份节点树 —— 支线徽章（usePanelDoc.loadNodes）
+  // 和段落评论对齐（DocSurface → fetchDocNodes）。它们要的是同一份东西，第二条跟着
+  // 在飞的那条走：见 lib/inflight。
+  return shareInFlight(`docNodes:${topicId}`, () =>
+    request<{ data: Block[]; total: number }>(`/topics/${encodeURIComponent(topicId)}/docs`)
+  )
 }
 
 // 段落评论 (eval B4): inline comments, each anchored to a doc node via reply_to.
