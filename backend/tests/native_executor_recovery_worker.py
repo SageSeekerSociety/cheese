@@ -211,10 +211,13 @@ async def run(descriptor):
             assert all(t.stopped_at for t in turns), "a turn was left running"
             if busy:
                 assert {row.execution_work_id for row in rows} == {work}
-                # Over HTTP an answer that misses the running turn is opened as
-                # a turn of its own before it is steered into that one; the
-                # session still ran once (the steers below, no sends), so only
-                # the plain socket path can promise one row.
+                # Both HTTP answers are steered into the running work (two
+                # steers, no sends). They owe a reply, so the runner moves the
+                # gate-waiting Bash to the background; when that task's
+                # notification lands after the work's result, the session runs
+                # one more turn of its own, recorded as a second row. That turn
+                # is real model work, so only the socket path, which never
+                # backgrounds, can promise one row.
                 if not http:
                     assert len(turns) == 1
                 assert channel.calls.count("steer") == (2 if http else 1)
