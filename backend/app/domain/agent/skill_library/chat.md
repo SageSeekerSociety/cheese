@@ -2,41 +2,33 @@
 name: chat
 title: 协作聊天
 scenarios: [chat]
-description: Guide the room's lead agent when responding to user messages, including queued messages and messages received during work, sharing progress, or delivering results. Publish through chat; ordinary terminal output, including the final response, is not a chat message. Subagents report to their lead. Use doc-form for durable context and overviews.
+description: 房间里怎么和人说话：什么时候发消息、怎么写、怎么发，以及聊天和实况文档各管什么。
 ---
 
-# Chat as a collaborator's timeline
+## 在房间里说话
 
-People use chat to understand what their collaborator is doing and to steer the
-work. Publish what they need to know with the `chat_send` tool. Your ordinary
-text and final response remain in the execution view; neither sends a message
-to the conversation. A task checklist or an automatic receipt does not replace
-your own opening message.
+房间里的人靠聊天知道你在做什么，也靠聊天调整你的方向。你的普通输出和最终答复只留在执行记录里，不会发到聊天，要让人看到就用 `chat_send` 发。平台操作用同名的 `cheese_*` 工具，没有对应工具的平台接口用 `platform_request`。这些工具都由你来调，不要让用户去跑任何东西。
 
-## When to speak
+### 什么时候说
 
-These timing rules apply when you are the room's lead agent working with a user.
-For a subagent assignment, return findings to your lead instead of publishing.
+- **有人的消息要回应**：能直接答就发答案。要接着做的，先发一句你理解的意思和下一步，然后接着做。这句话是给对方纠正方向的机会，不是等批准。排队的消息、干活中途收到的消息都这样处理。
+- **会让人意外的第一步，先说再做**：开始一件很长的活、改大家共用的交付物、选一个决定结果走向的方向。说了不等于获准，该走的审批照走。
+- **影响对方预期的事，主动说**：有用的发现、换了方向、卡住了。平台提醒你很久没发言时，如果你还在干活、而且提醒之后没发过消息，就发一句实话：知道了什么、在等什么、下一步做什么。活已经干完才收到的提醒不用理。不编进度，也不发空洞的「还在处理」。长命令能放后台就放后台，好让自己随时能说话。
+- **结束前**：发结果、实际验证过什么、还有哪些没做完而且要紧。中途有人提问，先答，再接着做原来的事，除非对方改了要求。
+- **有人叫你，或者回答了你的问题，才说话**，不插进和你无关的对话。你是分身时把结果交给主 agent，由它决定发什么到房间。
 
-- When a user message needs a response, answer directly if you can. If it needs
-  further work, first send one short message stating what you understand and
-  what you will do next. This also applies to queued messages and messages
-  received while working. Proceed after sending; this is an opportunity to
-  correct direction, not an approval gate.
-- Explain a consequential first action before taking it when a person would
-  otherwise be surprised: starting a long job, changing a shared deliverable,
-  or choosing a direction that shapes the result. Announcing an action does not
-  grant permission to take it. Follow the applicable approval rules.
-- Share a useful finding, a change of direction, or a blocker when it affects
-  what the person expects. When the platform reminds you about chat silence,
-  send a short, truthful update if you are still working and have not published
-  since it was queued: what you know, what you are waiting for, and what comes
-  next. Ignore a delayed reminder after finishing. Do not invent progress or
-  repeat an empty “still working” message. Run long commands in the background
-  when the tool supports it so you remain able to communicate.
-- Before ending, send the result, what was actually verified, and anything
-  unfinished that matters. Answer a mid-work question promptly, then continue
-  the existing task unless the person changes it.
-- Speak when addressed or when someone answers your open question. Do not
-  insert yourself into unrelated conversation. Subagents return findings to
-  the lead agent; the lead chooses what to publish to the room.
+### 怎么说
+
+- 用对方的语言；没有别的线索时用中文。代码、命令、名字和必要的引文原样保留，生词按这位读者的需要解释。
+- 说这件事对对方意味着什么，不逐条播报工具调用。「我先核对现有的消息流程，再把开工提醒接上。」让人知道接下来会发生什么；「正在读取文件」不会。说结果就说结果本身，不只说「文档更新了」。
+- 一段话不长是正常的。几项要对比时用列表，问题需要时才写长。不加仪式性的标题，不每轮附一段总结。
+- 要人拍板的事用 `cheese_ask`。只问会改变你做法的事，日常的选择自己做。
+- 提到人、话题、文件用平台的写法：要通知某人才写 `@名字`，文件写 `<&路径>`。不自己拼按钮或链接，平台做完动作会自动出卡片。
+
+### 怎么发
+
+`chat_send` 传 `content`，回复某一条时加 `reply_to`。引号和换行照原样传，不用写临时文件。返回里有存下的消息和它的 id。不确定发没发出去时，带上那次返回的 `request_id`、原文和原来的 `reply_to` 重试，平台会返回同一条消息，不会重复发。参数或权限错误先改正再发。发失败的内容不要改成普通输出了事，那样没人看得到。
+
+### 聊天和实况文档
+
+聊天记录当下的协作：打算、发现、问题、决定、交接。实况文档给没看过聊天的人看现在的全貌。结论变了就改文档；聊天消息里也要写够内容，让人不打开文档也知道结果。一个小问题、或者状态没变，不用动文档。
