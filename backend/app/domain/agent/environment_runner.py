@@ -511,8 +511,26 @@ if __name__ == "__main__":
             raise SystemExit("environment is still preparing")
         installed = platform_dir(Path.home())
         executor = installed / "execution-owner.json"
-        if executor.exists():
-            if json.loads(executor.read_text())["resource"] != Path.home().name:
+        state, kept = installed / "executor", ()
+        if os.environ.get("CHEESE_SANDBOXED") == "1":
+            # The room writes its home: its state is reached through a
+            # directory opened without following a link, so a link to another
+            # room's state cannot have that room's executor stopped
+            # (`bootstrap.executor_state`).
+            flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+            try:
+                kept = (os.open(Path.home(), flags),)
+                for part in (".cheese", "executor"):
+                    following = os.open(part, flags, dir_fd=kept[0])
+                    os.close(kept[0])
+                    kept = (following,)
+            except OSError:
+                raise SystemExit("executor state is not a directory") from None
+            state = Path(f"/proc/self/fd/{kept[0]}")
+        if kept or executor.exists():
+            if not kept and (
+                json.loads(executor.read_text())["resource"] != Path.home().name
+            ):
                 raise SystemExit("executor belongs to another room resource")
             # The runtime of the release this runner came from, which is the
             # one a sandboxed room cannot write (`device_provider.
@@ -525,10 +543,11 @@ if __name__ == "__main__":
                     ),
                     "stop",
                     "--state",
-                    str(installed / "executor"),
+                    str(state),
                 ],
                 check=True,
                 timeout=30,
+                pass_fds=kept,
             )
             status = read_status(root)
         session_file = Path.home() / ".cheese/environment-session.json"

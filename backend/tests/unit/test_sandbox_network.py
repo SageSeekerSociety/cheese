@@ -263,9 +263,11 @@ def _sandboxed_home(owner: Path) -> Path:
     return home
 
 
-def _run_runner(home: Path, action: str) -> subprocess.CompletedProcess:
+def _run_runner(
+    home: Path, action: str, runner: Path = RUNNER
+) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [sys.executable, str(RUNNER), action],
+        [sys.executable, str(runner), action],
         env={**os.environ, "HOME": str(home), "CHEESE_SANDBOXED": "1"},
         capture_output=True,
         text=True,
@@ -384,6 +386,83 @@ def test_the_install_writes_the_preview_token_into_the_room_not_through_a_link(
             timeout=60,
         )
     assert stopped.returncode == 0, stopped.stderr
+
+
+@pytest.mark.parametrize(
+    "linked", [".cheese/executor", ".cheese/remote-execution", ".cheese-environment"]
+)
+def test_the_install_writes_no_executor_state_through_a_link_in_the_room(
+    tmp_path, monkeypatch, linked
+):
+    """The install writes the executor's config and environment, the marker
+    naming the room's executor, the release entrypoints and the environment
+    config into the room's home from outside its sandbox. A directory the room
+    replaced with a link to another room's gets none of it, and no executor
+    starts."""
+    home, outside, _ = _unsandboxed_install(tmp_path, monkeypatch)
+    environment = {
+        "revision": "linked",
+        "variables": {},
+        "setup_script": "true",
+        "startup_script": "",
+    }
+    payload = payload_for(
+        uuid.UUID(home.parent.name),
+        uuid.UUID(home.name),
+        {
+            "CHEESE_API": "http://127.0.0.1:1",
+            "CHEESE_TOKEN": "test",
+            "CHEESE_ENVIRONMENT": json.dumps(environment),
+        },
+        sandbox=False,
+    )
+    (outside / "config.json").write_text("another room's")
+    (home / linked).symlink_to(outside)
+
+    with pytest.raises(OSError):
+        bootstrap.configure(payload)
+
+    assert sorted(path.name for path in outside.iterdir()) == ["config.json"]
+    assert (outside / "config.json").read_text() == "another room's"
+
+
+@pytest.fixture
+def neighbour(tmp_path, monkeypatch, capsys):
+    """Another room's executor running on the machine, and a sandboxed room
+    whose executor state is a link to it."""
+    home, _, payload = _unsandboxed_install(tmp_path, monkeypatch)
+    bootstrap.configure(payload)
+    started = json.loads(capsys.readouterr().out)
+    state, release = Path(started["state"]), Path(started["release"])
+    room = _sandboxed_home(tmp_path / "owner")
+    (room / ".cheese/executor").symlink_to(state)
+    # As the room's own install wrote it, naming the room: the room can.
+    (room / ".cheese/execution-owner.json").write_text(
+        json.dumps({"resource": room.name})
+    )
+    yield room, state, release
+    subprocess.run(
+        [sys.executable, str(runtime.__file__), "stop", "--state", str(state)],
+        capture_output=True,
+        timeout=60,
+    )
+
+
+def test_a_sandboxed_rooms_teardown_stops_no_other_rooms_executor(neighbour):
+    room, state, _ = neighbour
+
+    cleanup.stop_executor(room, room.name)
+
+    assert runtime.request(state, "ping")
+
+
+def test_a_sandboxed_rooms_reset_stops_no_other_rooms_executor(neighbour):
+    room, state, release = neighbour
+
+    # The runner as the machine runs it, beside the runtime it stops with.
+    _run_runner(room, "reset", release / "cheese-environment.py")
+
+    assert runtime.request(state, "ping")
 
 
 def test_a_sandboxed_rooms_terminal_marker_ends_no_terminal(tmp_path, monkeypatch):

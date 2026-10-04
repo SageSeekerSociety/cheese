@@ -729,11 +729,43 @@ def stop_windows_helper(home: Path, pid: int, expected: str) -> None:
     raise RuntimeError(Path(expected).stem + " helper has not stopped")
 
 
+def stop_sandboxed_executor(home: Path) -> None:
+    """Ask a sandboxed room's executor to stop, reached through its state
+    directory opened without following a link (`bootstrap.executor_state`):
+    the room writes its home, and a state that is a link to another room's
+    would have this stop that room's executor. A room whose state is not a
+    plain directory gets no request; its sandbox is taken down regardless."""
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    try:
+        descriptor = os.open(home, flags)
+        for part in (FOOTPRINT_ROOT, "executor"):
+            following = os.open(part, flags, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = following
+    except OSError:
+        return
+    try:
+        state = Path(f"/proc/self/fd/{descriptor}")
+        runtime = platform_program(home, "remote-execution/runtime.py")
+        helper = runpy.run_path(str(runtime))
+        if Path(helper["socket_path"](state)).exists():
+            # Whatever it answers, the sandbox goes next and everything in it.
+            run_command(
+                [sys.executable, str(runtime), "stop", "--state", str(state)],
+                pass_fds=(descriptor,),
+            )
+    finally:
+        os.close(descriptor)
+
+
 def stop_executor(home: Path, resource: str) -> None:
     sandboxed = sandbox_release(home) is not None
     installed = platform_dir(home)
     marker = installed / "execution-owner.json"
-    if marker.exists():
+    if sandboxed:
+        # The room wrote the marker and the state, so neither decides anything.
+        stop_sandboxed_executor(home)
+    elif marker.exists():
         if json.loads(marker.read_text())["resource"] != str(uuid.UUID(resource)):
             raise RuntimeError("execution marker names another resource generation")
         runtime = platform_program(home, "remote-execution/runtime.py")

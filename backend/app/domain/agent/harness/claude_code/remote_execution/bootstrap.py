@@ -292,18 +292,65 @@ def stage_release(store, platform_dir, payload):
 
 
 def activate_release(platform_dir, release, names):
-    # Stable entrypoints select a release; running executors use the recorded path.
+    """Point the stable entrypoints in `platform_dir` at `release`; a running
+    executor uses the path its config records. Each link is made beside its
+    entrypoint and renamed over it, under directories reached as `beneath`
+    reaches them: a sandboxed room writes its own platform directory, and a
+    link it left there would otherwise carry these into another room."""
     for name in [*names, "executor-files.json"]:
-        destination = platform_dir / name
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        temporary = destination.with_name(destination.name + ".next")
-        temporary.unlink(missing_ok=True)
+        relative = Path(name)
         if sys.platform == "win32":
+            destination = platform_dir / name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            temporary = destination.with_name(destination.name + ".next")
+            temporary.unlink(missing_ok=True)
             # A symlink needs Developer Mode or an administrator there.
             shutil.copyfile(release / name, temporary)
-        else:
-            temporary.symlink_to(release / name)
-        temporary.replace(destination)
+            temporary.replace(destination)
+            continue
+        directory = beneath(platform_dir, relative.parent, create=True)
+        temporary = relative.name + ".next"
+        try:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(temporary, dir_fd=directory)
+            os.symlink(release / name, temporary, dir_fd=directory)
+            os.replace(
+                temporary, relative.name, src_dir_fd=directory, dst_dir_fd=directory
+            )
+        finally:
+            os.close(directory)
+
+
+def executor_state(home, stack, sandboxed):
+    """The room's executor state directory, as the path to reach its executor
+    by. For a sandboxed room it is made and opened as `beneath` does and named
+    through that descriptor (`/proc/self/fd`), which `stack` closes: the
+    socket an executor is reached on is derived from its state's resolved
+    path (`runtime.socket_directory`), and a room that swapped its state for
+    a link to another room's would otherwise have this install configure,
+    upgrade or stop that room's executor with this room's credential."""
+    state = home / PLATFORM_DIR / "executor"
+    if not sandboxed:
+        state.mkdir(parents=True, exist_ok=True, mode=0o700)
+        return state
+    descriptor = beneath(home, Path(PLATFORM_DIR) / "executor", create=True)
+    stack.callback(os.close, descriptor)
+    return Path(f"/proc/self/fd/{descriptor}")
+
+
+def held(state):
+    """The descriptor an `executor_state` path names, for a child to keep."""
+    if str(state).startswith("/proc/self/fd/"):
+        return (int(Path(state).name),)
+    return ()
+
+
+def read_json_beneath(root, relative):
+    """The JSON at `root / relative` as `read_beneath` reads it, or None."""
+    try:
+        return json.loads(read_beneath(root, relative))
+    except FileNotFoundError:
+        return None
 
 
 def binary(owner, api, verified=None):
@@ -848,7 +895,10 @@ def prepared(
     platform_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     config_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     work.mkdir(parents=True, exist_ok=True)
-    with platform_file(platform_dir, "executor-bootstrap.lock") as bootstrap_lock:
+    with (
+        contextlib.ExitStack() as anchors,
+        platform_file(platform_dir, "executor-bootstrap.lock") as bootstrap_lock,
+    ):
         lock(bootstrap_lock)
         # Under the lock like everything else this writes: the temporary file
         # each copy goes through is one name, and two prepares of one room
@@ -922,16 +972,16 @@ def prepared(
             "release": str(release),
             "sandbox": payload.get("sandbox") or False,
         }
-        mcp = work / ".mcp.json"
-        if mcp.exists():
-            config["mcp_servers"] = json.loads(mcp.read_text()).get("mcpServers", {})
-        state = platform_dir / "executor"
-        state.mkdir(exist_ok=True, mode=0o700)
+        mcp = read_json_beneath(home, Path(CHECKOUT_DIR) / ".mcp.json")
+        if mcp is not None:
+            config["mcp_servers"] = mcp.get("mcpServers", {})
+        recorded = platform_dir / "executor"
+        state = executor_state(home, anchors, bool(payload.get("sandbox")))
         write_beneath(
             home, Path(PLATFORM_DIR) / "cheese-preview.token", env["CHEESE_TOKEN"]
         )
-        if (state / "config.json").exists():
-            previous = json.loads((state / "config.json").read_text())
+        previous = read_json_beneath(home, Path(PLATFORM_DIR) / "executor/config.json")
+        if previous is not None:
             # The running executor is reached with the release staged above,
             # never with the one its config names: a sandboxed room writes its
             # own config, and this runs outside the sandbox. What is asked of it
@@ -951,10 +1001,12 @@ def prepared(
                     raise RuntimeError(
                         "Executor configuration changed; restart the room environment"
                     )
-                environment_file = state / "environment.json"
-                if environment_file.exists() and json.loads(
-                    environment_file.read_text()
-                ) != payload.get("environment"):
+                environment = read_json_beneath(
+                    home, Path(PLATFORM_DIR) / "executor/environment.json"
+                )
+                if environment is not None and environment != payload.get(
+                    "environment"
+                ):
                     raise RuntimeError(
                         "Environment dependencies changed; "
                         "create a new execution environment"
@@ -993,7 +1045,7 @@ def prepared(
                         refreshed = {**previous.get("env", {}), **payload["env"]}
                         runtime["request"](state, "configure", {"env": refreshed})
                         info.update(
-                            state=str(state),
+                            state=str(recorded),
                             mcp_servers=process_servers(
                                 {"mcp_servers": previous.get("mcp_servers", {})}
                             ),
@@ -1012,6 +1064,7 @@ def prepared(
                         [sys.executable, str(source), "stop", "--state", str(state)],
                         check=True,
                         timeout=30,
+                        pass_fds=held(state),
                     )
         activate_release(platform_dir, release, contents)
         toolchain_options = {
@@ -1033,10 +1086,11 @@ def prepared(
                 **toolchain_options,
             )
         if payload.get("environment"):
-            directory = home / ".cheese-environment"
-            directory.mkdir(exist_ok=True, mode=0o700)
-            runner = runpy.run_path(str(release / "cheese-environment.py"))
-            runner["write_json"](directory / "config.json", payload["environment"])
+            write_beneath(
+                home,
+                Path(".cheese-environment/config.json"),
+                json.dumps(payload["environment"]),
+            )
         yield home, config, state, env
 
 
@@ -1055,12 +1109,15 @@ def configure_idle(payload):
         env,
     ):
         platform_dir = home / PLATFORM_DIR
+        # Where the backend and the sandbox find the state; `state` is the
+        # path this process reaches it by (`executor_state`).
+        recorded = platform_dir / "executor"
         work = Path(config["workspace"])
         scoped_env = config["env"]
         release = Path(config["release"])
         runtime = runpy.run_path(str(release / "remote-execution/runtime.py"))
 
-        if (state / "config.json").exists():
+        if read_json_beneath(home, Path(PLATFORM_DIR) / "executor/config.json"):
             try:
                 info = runtime["request"](state, "ping")
             except (ConnectionError, FileNotFoundError):
@@ -1077,21 +1134,22 @@ def configure_idle(payload):
                         {
                             **info,
                             "mcp_servers": process_servers(config),
-                            "state": str(state),
+                            "state": str(recorded),
                         }
                     )
                 )
                 return
-        runtime["write_json"](state / "config.json", config)
-        runtime["write_json"](state / "environment.json", payload.get("environment"))
-        runtime["write_json"](
-            platform_dir / "execution-owner.json", {"resource": home.name}
-        )
+        for name, value in (
+            ("executor/config.json", config),
+            ("executor/environment.json", payload.get("environment")),
+            ("execution-owner.json", {"resource": home.name}),
+        ):
+            write_beneath(home, Path(PLATFORM_DIR) / name, json.dumps(value))
         with platform_file(platform_dir, "executor-bootstrap.log") as output:
             argv = [
                 sys.executable,
                 str(release / "remote-execution/bootstrap.py"),
-                str(state),
+                str(recorded),
             ]
             options = {
                 "cwd": work,
@@ -1161,7 +1219,7 @@ def configure_idle(payload):
                     **info,
                     "workspace": str(work),
                     "mcp_servers": process_servers(config),
-                    "state": str(state),
+                    "state": str(recorded),
                 }
             )
         )
