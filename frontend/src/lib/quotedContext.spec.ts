@@ -4,7 +4,15 @@
  * 这一条守两件事：形状不对的引用不许进对话（房间那头按这份结构读「他指的是哪儿」），
  * 以及冻结之后谁都改不动——它描述的是「当时那一版」，被改过就不再是同一件事了。
  */
-import type { PagePinQuote, SheetCellQuote, SlidePageQuote, TextRangeQuote } from './quotedContext'
+import type {
+  PagePinQuote,
+  SheetCellQuote,
+  SlidePageQuote,
+  TextRangeQuote,
+  WebElementQuote,
+  WebRegionQuote,
+  WebTextQuote,
+} from './quotedContext'
 
 import { frozenQuote, isQuotedContext } from './quotedContext'
 
@@ -136,5 +144,90 @@ it('冻结之后改不动：这一份说的是当时那一版', () => {
   expect(() => {
     ;(frozen as { version: string }).version = 'v8'
   }).toThrow()
-  expect(frozen.version).toBe('v7')
+  expect((frozen as { version: string }).version).toBe('v7')
+})
+
+const webElement: WebElementQuote = {
+  kind: 'web-element',
+  path: 'report.html',
+  source: 'live',
+  version: 'v7',
+  task_id: null,
+  selector: 'body > main > p:nth-of-type(2)',
+  tag: 'p',
+  text: '这一句说错了',
+  rect: { x: 12.5, y: 40, w: 300, h: 24 },
+  viewport: { w: 1024, h: 768 },
+}
+
+const webText: WebTextQuote = {
+  ...webElement,
+  kind: 'web-text',
+  text: '只选中这一句',
+  prefix: '退避',
+  suffix: '，超过就报错',
+}
+
+const webRegion: WebRegionQuote = {
+  kind: 'web-region',
+  url: 'https://app.tunnel.example:8443/dashboard',
+  rect: { x: 0, y: 0, w: 200, h: 100 },
+  viewport: { w: 800, h: 600 },
+}
+
+it('网页预览的三形状都收：点一个元素、选一段文字、圈一块区域', () => {
+  expect(isQuotedContext(webElement)).toBe(true)
+  expect(isQuotedContext(webText)).toBe(true)
+  expect(isQuotedContext(webRegion)).toBe(true)
+})
+
+it('网页元素：选择器不能空，标签可空，位置和视口必须在', () => {
+  // 元素本身的文字可以是空（图、按钮、占位），但选择器是指回那一处的唯一凭据。
+  expect(isQuotedContext({ ...webElement, text: '' })).toBe(true)
+  expect(isQuotedContext({ ...webElement, tag: '' })).toBe(true)
+  expect(isQuotedContext({ ...webElement, selector: '' })).toBe(false)
+  expect(isQuotedContext({ ...webElement, selector: undefined })).toBe(false)
+  expect(isQuotedContext({ ...webElement, selector: '甲'.repeat(257) })).toBe(false)
+  expect(isQuotedContext({ ...webElement, text: '甲'.repeat(501) })).toBe(false)
+  expect(isQuotedContext({ ...webElement, rect: undefined })).toBe(false)
+  expect(isQuotedContext({ ...webElement, rect: { x: 0, y: 0, w: -1, h: 1 } })).toBe(false)
+  // 像素可以是负的（元素滚到了视口左边、上边），但不能不是数；后端 WebRectIn 同样收
+  // 得下负的 x/y，两边一致，不会自己放过一个后端要拒的值。
+  expect(isQuotedContext({ ...webElement, rect: { x: -5, y: -5, w: 10, h: 10 } })).toBe(true)
+  expect(isQuotedContext({ ...webElement, rect: { x: Number.NaN, y: 0, w: 1, h: 1 } })).toBe(false)
+  expect(isQuotedContext({ ...webElement, viewport: { w: 800 } })).toBe(false)
+  expect(isQuotedContext({ ...webElement, viewport: { w: 800, h: -1 } })).toBe(false)
+  // 视口必须是正的（后端 gt=0）：量出 0 说明这一处还原不出版面，拦下让它落回普通那句话。
+  expect(isQuotedContext({ ...webElement, viewport: { w: 800, h: 0 } })).toBe(false)
+  expect(isQuotedContext({ ...webElement, viewport: { w: 0, h: 600 } })).toBe(false)
+})
+
+it('网页选段：原文不能空，两侧前后文可空但带上了得是字符串', () => {
+  expect(isQuotedContext({ ...webText, prefix: '', suffix: '' })).toBe(true)
+  expect(isQuotedContext({ ...webText, text: '' })).toBe(false)
+  expect(isQuotedContext({ ...webText, text: undefined })).toBe(false)
+  expect(isQuotedContext({ ...webText, prefix: undefined })).toBe(false)
+  expect(isQuotedContext({ ...webText, suffix: 3 })).toBe(false)
+  expect(isQuotedContext({ ...webText, suffix: '乙'.repeat(65) })).toBe(false)
+})
+
+it('网页圈选一块区域：只有地址和位置，没有文件身份', () => {
+  // 应用没有版本：网址就是它唯一的身份，多塞一份文件身份反而该拦下。
+  expect(isQuotedContext({ ...webRegion, url: '' })).toBe(false)
+  expect(isQuotedContext({ ...webRegion, url: undefined })).toBe(false)
+  expect(isQuotedContext({ ...webRegion, rect: undefined })).toBe(false)
+  // 视口量出 0 不是一处能还原的位置，两边都拦（后端 gt=0）。
+  expect(isQuotedContext({ ...webRegion, viewport: { w: 0, h: 0 } })).toBe(false)
+  expect(isQuotedContext({ ...webRegion, viewport: { w: 0 } })).toBe(false)
+  expect(isQuotedContext({ ...webRegion, kind: 'web-page' })).toBe(false)
+})
+
+it('网页那两种也走文件身份那一半：路径和版本缺一样就不收', () => {
+  for (const quote of [webElement, webText]) {
+    expect(isQuotedContext({ ...quote, path: '' })).toBe(false)
+    expect(isQuotedContext({ ...quote, path: undefined })).toBe(false)
+    expect(isQuotedContext({ ...quote, version: '' })).toBe(false)
+    expect(isQuotedContext({ ...quote, source: 'working' })).toBe(false)
+    expect(isQuotedContext({ ...quote, task_id: 3 })).toBe(false)
+  }
 })
