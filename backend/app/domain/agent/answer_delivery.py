@@ -1,9 +1,11 @@
 """Offer a durable Ask answer to its executor's currently running work."""
 
+import logging
 from contextlib import asynccontextmanager
 
 from sqlalchemy import select
 
+from app.domain.agent.platform_notices import ask_answer_undelivered_notice
 from app.domain.agent.seat_admission import seat_admission
 from app.domain.block.models import Block
 from app.domain.delivery.answer_ownership import (
@@ -11,9 +13,11 @@ from app.domain.delivery.answer_ownership import (
     seat_has_unfinished_input,
 )
 from app.domain.delivery.ask_session_wait import (
+    abandon_conversation_wait,
     hold_for_conversation,
     pinned_conversation,
     release_conversation_wait,
+    wait_expired,
 )
 from app.domain.delivery.input_identity import (
     InputEffects,
@@ -21,6 +25,8 @@ from app.domain.delivery.input_identity import (
     InputReconciliationPending,
 )
 from app.domain.delivery.models import Delivery
+
+logger = logging.getLogger(__name__)
 
 
 async def run_with_answer_offer(
@@ -53,6 +59,15 @@ async def run_with_answer_offer(
                 if not chat._compute.holds_conversation(
                     topic_id, harness, conversation
                 ):
+                    # A wait that outlived its day ends here: the answer
+                    # is failed and the room is told to say it again.
+                    if wait_expired(delivery) and (
+                        await abandon_conversation_wait(
+                            chat.session_factory, delivery_id
+                        )
+                    ):
+                        await _say_answer_undelivered(chat, topic_id)
+                        return
                     await hold_for_conversation(
                         chat.session_factory, delivery_id, conversation
                     )
@@ -71,6 +86,22 @@ async def run_with_answer_offer(
     finally:
         if not entered:
             work.close()
+
+
+async def _say_answer_undelivered(chat, topic_id) -> None:
+    """Tell the room that an answer never reached the conversation that asked.
+
+    Best effort: a notice that fails must not take the attempt with it — the
+    row is already where this module wanted it. The line is written to the
+    room, where the agent's next prompt reads it back through its
+    ``agent_notice`` meta. It goes out as no live frame: only the runtime
+    holds the broker, and this module is imported by it.
+    """
+    line, meta = ask_answer_undelivered_notice()
+    try:
+        await chat.post_system_event(topic_id, line, meta=meta)
+    except Exception:  # noqa: BLE001 — the answer's fate is already settled
+        logger.exception("answer-undelivered notice failed for %s", topic_id)
 
 
 @asynccontextmanager

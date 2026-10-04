@@ -10,19 +10,24 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
+from sqlalchemy import select
+
 from app.domain.agent.answer_delivery import run_with_answer_offer
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
 from app.domain.agent.harness import CLAUDE_CODE, SessionRef
+from app.domain.agent.platform_notices import EVENT_ASK_ANSWER_UNDELIVERED
 from app.domain.agent.room.sessions import Live, RoomSessions
 from app.domain.agent.session_host.contract import SessionRef as CoreRef
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.block.ask_groups import AskGroups, parse_questions
-from app.domain.block.models import AuthorType
+from app.domain.block.models import AuthorType, Block
 from app.domain.block.repositories import BlockRepository
 from app.domain.delivery.agent import run_attempt
 from app.domain.delivery.ask_session_wait import (
+    ASK_SESSION_GIVEN_UP_REASON,
     ASK_SESSION_WAIT,
+    ASK_SESSION_WAIT_GIVE_UP_SECONDS,
     ASK_SESSION_WAIT_REASON,
     release_conversation_wait,
     waiting_ask_blocks,
@@ -158,7 +163,11 @@ def test_a_gone_ask_conversation_leaves_the_answer_waiting(client):
             row = await session.get(Delivery, delivery)
             assert row.state == "pending"
             assert row.sent_at is None
-            assert row.payload[ASK_SESSION_WAIT] == initial.native_session_id
+            assert (
+                row.payload[ASK_SESSION_WAIT]["conversation"]
+                == initial.native_session_id
+            )
+            assert row.payload[ASK_SESSION_WAIT]["since"]
             assert row.last_error == ASK_SESSION_WAIT_REASON
             # The retry is a liveness question, not a 30 s dispatch: the row
             # waits longer than the dispatcher's own retry interval.
@@ -224,3 +233,106 @@ def test_a_live_ask_conversation_dispatches_the_answer_as_before(client):
             assert row.last_error != ASK_SESSION_WAIT_REASON
 
     client.portal.call(run)
+
+
+def test_a_conversation_that_never_returns_gives_up_and_says_so(client):
+    """Wait a day, then fail it: no more attempts, still out of prompts, told once."""
+    project, topic, seat = _fixture(client, "Ask answer gives up")
+
+    async def run():
+        chat, initial, wake, delivery, attempt = await _answer(
+            client, project, topic, seat, attach=False
+        )
+        factory = client.test_request_factory
+
+        async def deliver() -> list:
+            """One dispatch, claim and all, exactly as the sweep would run it."""
+            async with factory() as session:
+                row = await session.get(Delivery, delivery)
+                row.state = "claimed"
+                row.attempt_id = uuid.uuid4()
+                row.attempts += 1
+                row.retry_at = None
+                row.lease_until = None
+                await session.commit()
+                attempt_id = row.attempt_id
+            started = []
+
+            async def turn():
+                started.append(True)
+
+            answer = turn()
+            await run_attempt(
+                factory,
+                delivery,
+                attempt_id,
+                run_with_answer_offer(
+                    _DispatcherRunner(), chat, topic, delivery, attempt_id, "A", answer
+                ),
+                chat=chat,
+            )
+            assert answer.cr_frame is None, "the turn was left unclosed"
+            return started
+
+        # The first attempt stamps when the wait began.
+        assert await deliver() == []
+        async with factory() as session:
+            row = await session.get(Delivery, delivery)
+            assert row.state == "pending"
+            assert row.payload[ASK_SESSION_WAIT]["since"]
+
+        # A day passes with the conversation still gone: the next look ends it.
+        async with factory() as session:
+            row = await session.get(Delivery, delivery)
+            row.payload = {
+                **row.payload,
+                ASK_SESSION_WAIT: {
+                    "conversation": initial.native_session_id,
+                    "since": (
+                        datetime.now(UTC)
+                        - timedelta(seconds=ASK_SESSION_WAIT_GIVE_UP_SECONDS + 60)
+                    ).isoformat(),
+                },
+            }
+            await session.commit()
+
+        assert await deliver() == []
+        async with factory() as session:
+            row = await session.get(Delivery, delivery)
+            assert row.state == "failed"
+            assert row.sent_at is None
+            assert row.last_error == ASK_SESSION_GIVEN_UP_REASON
+            assert row.retry_at is None
+            # Abandoned, and still held out of this seat's prompts.
+            assert await waiting_ask_blocks(
+                session, topic_id=topic, recipient_handle=seat
+            ) == {wake}
+            told = await _told(session, topic)
+        assert len(told) == 1, "the room was not told exactly once"
+        assert told[0].meta["who"] == "human"
+        assert told[0].meta["agent_notice"], "芝士 was never told it never arrived"
+
+        # Said once: the same attempt run again does not say it again.
+        again = []
+
+        async def turn_again():
+            again.append(True)
+
+        answer = turn_again()
+        await run_with_answer_offer(
+            _DispatcherRunner(), chat, topic, delivery, attempt, "A", answer
+        )
+        assert answer.cr_frame is None
+        async with factory() as session:
+            assert len(await _told(session, topic)) == 1
+
+    client.portal.call(run)
+
+
+async def _told(session, topic):
+    """The room's own copy of "your answer never arrived"."""
+    return [
+        block
+        for block in await session.scalars(select(Block).where(Block.topic_id == topic))
+        if (block.meta or {}).get("event_type") == EVENT_ASK_ANSWER_UNDELIVERED
+    ]
