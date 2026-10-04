@@ -16,6 +16,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { artifactKind, artifactName, askOptions, isImageBlock, replySnippet } from '../../lib/blockDisplay'
 import { foldHeight, overflowsFold } from '../../lib/chatFold'
 import { fileIcon } from '../../lib/fileKind'
+import { cancelMeasure, observeSize, queueMeasure } from '../../lib/foldMeasure'
 import { renderPlain as renderPlainWith } from '../../lib/renderMessage'
 import { avatarColor, avatarInitial } from '../../utils/avatar'
 import AskQuestionForm from '../ask/AskQuestionForm.vue'
@@ -124,7 +125,9 @@ const foldEl = ref<HTMLElement | null>(null)
 const foldable = ref(false)
 const expanded = ref(false)
 const foldPx = ref(0)
-let foldObserver: ResizeObserver | null = null
+let unobserveFold: (() => void) | null = null
+// 这一行在批次里的身份（lib/foldMeasure）。
+const foldOwner = {}
 
 const canFold = computed(() => !props.outgoing && !props.editing)
 const clamped = computed(() => canFold.value && foldable.value && !expanded.value)
@@ -136,21 +139,33 @@ function foldTarget(): HTMLElement | null {
   return (foldEl.value?.firstElementChild as HTMLElement | null) ?? null
 }
 
+// 读和写分开排进同一帧的批次（lib/foldMeasure）：首屏几十行一起挂上来时，先全部读
+// 完布局再全部写，不在每一行之间逼浏览器重算一次布局。
 function measureFold() {
-  const el = foldTarget()
-  if (!el || !canFold.value) {
-    foldable.value = false
-    return
-  }
-  const lineHeight = Number.parseFloat(getComputedStyle(el).lineHeight)
-  foldPx.value = foldHeight(lineHeight)
-  foldable.value = overflowsFold(el.scrollHeight, foldPx.value)
+  queueMeasure(
+    foldOwner,
+    () => {
+      const el = foldTarget()
+      if (!el || !canFold.value) return null
+      const px = foldHeight(Number.parseFloat(getComputedStyle(el).lineHeight))
+      return { px, overflows: overflowsFold(el.scrollHeight, px) }
+    },
+    (m) => {
+      if (!m) {
+        foldable.value = false
+        return
+      }
+      foldPx.value = m.px
+      foldable.value = m.overflows
+    }
+  )
 }
 
 function observeFold() {
-  foldObserver?.disconnect()
+  unobserveFold?.()
+  unobserveFold = null
   const el = foldTarget()
-  if (foldObserver && el && canFold.value) foldObserver.observe(el)
+  if (el && canFold.value) unobserveFold = observeSize(el, measureFold)
   measureFold()
 }
 
@@ -184,12 +199,14 @@ function toggleFold() {
 }
 
 onMounted(() => {
-  if (typeof ResizeObserver !== 'undefined') foldObserver = new ResizeObserver(() => measureFold())
   observeFold()
   void nextTick(observeFold)
 })
 watch([() => props.block.content, () => props.editing, canFold], () => void nextTick(observeFold))
-onBeforeUnmount(() => foldObserver?.disconnect())
+onBeforeUnmount(() => {
+  unobserveFold?.()
+  cancelMeasure(foldOwner)
+})
 
 function renderPlain(text: string): string {
   return renderPlainWith(text, props.refs)
