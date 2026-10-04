@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""The public names' TLS ends at the box's front door, behind PROXY protocol.
+"""The front door's TLS listener for the public names, behind PROXY protocol.
 
-A request that arrives the way the Hong Kong relay forwards it — a PROXY
+A request that arrives as an SNI passthrough relay forwards it — a PROXY
 protocol header, then TLS — reaches the application with the client address
 from that header, a request for an alias name is sent to the canonical one,
 and a box without a certificate gets no TLS listener at all.

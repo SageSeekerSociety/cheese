@@ -68,6 +68,7 @@ auth_entries:
   routines.manage: "routines._routine_actor -> enforced room access, then _require_manage / _person according to operation: ownership or project manager and person-only confirmation/run/pause decisions. Agent draft/update limits remain in those helpers. Source: app/api/routes/routines.py onward."
   routines.create: "routines.create_routine uses _viewer(enforced room access); owner/speaker and draft-vs-confirmed state are decided by _speaker and _is_person. Source: app/api/routes/routines.py."
   skill.project: "project_skills._in_project / _load bind skill actual project, use enforced room access when topic is supplied, otherwise authorize_project. Source: app/api/routes/project_skills.py,127."
+  skill.bundle: "skill_bundles.download_skill_bundle reads scoped_token_claims from X-Cheese-Token (the session's project token) and derives the project from claim p; the URL carries no project id, so the credential itself is the only scope. A global sandbox token is not a project claim and is refused. Source: app/api/routes/skill_bundles.py and app/core/sandbox_auth.py."
   environment.user: "project_environment.User -> require_auth_user; access resolves user handle and checks roster for reads / MemberService.manages for writes, plus archive-write guard. room/apply operations bind the room and idle requirement. Source: app/api/routes/project_environment.py,54,79."
   environment.overview: "project_environment.overview_access requires scoped claims p=URL project and t=project.root_topic_id; recovery repair additionally requires idle and matching incident. Source: app/api/routes/project_environment.py."
   export.human: "domain/project/export.create_archive requires token user_id, rejects IdentityService agent binding, checks may_read_project and filters readable_topic_ids. This is the route delegated authorization seam. Source: app/domain/project/export.py."
@@ -274,6 +275,7 @@ owners:
   project.environment: "Project/room execution environment and recovery; domain/project/environment.py and environment_recovery.py, composed with machine/device state."
   project.export: "Caller-visible offline project export; domain/project/export.create_archive owns archive construction and delegated auth."
   project.skills: "Project-owned reusable skills/revisions; domain/project_skill/ProjectSkillService."
+  skill.bundle: "Content-addressed delivery of a session's shipped platform skills plus this project's own skills to the launching machine; domain/project_skill/service.session_skill_bundle and the device launcher cache. Derived content, not new business state."
   project.context: "Project context search assembly; project_context route composes filtered room/block/library/task queries using domain/search bm25. No new cross-domain service is invented."
   project.run_config: "Project default model/compute choices and tier policy; project route composes existing agent compute configs, policy and machine/device services."
   membership: "Project members and invitations; domain/membership/MemberService, InvitationService and roster."
@@ -881,6 +883,8 @@ routes:
   - {protocol: "http", method: "GET", path: "/sandbox/cli/cheese", auth: "capability.cli", owner: "installer"}
   # app.api.routes.site_sessions
   - {protocol: "http", method: "POST", path: "/projects/{project_id}/site-session", auth: "site.access", owner: "site"}
+  # app.api.routes.skill_bundles
+  - {protocol: "http", method: "GET", path: "/connector/skill-bundles/{digest}", auth: "skill.bundle", owner: "skill.bundle"}
   # app.api.routes.space_announcements
   - {protocol: "http", method: "GET", path: "/spaces/{spaceId}/announcements", auth: "legacy.space_announcements.list_announcements", owner: "space.announcements"}
   - {protocol: "http", method: "POST", path: "/spaces/{spaceId}/announcements", auth: "legacy.space_announcements.publish_announcement", owner: "space.announcements"}
