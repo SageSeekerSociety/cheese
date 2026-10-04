@@ -24,15 +24,7 @@ import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 
 import { scrollBehavior } from '@/utils/motion'
 
-import {
-  ApiError,
-  attachmentRawUrl,
-  downloadFile,
-  ensureFreshToken,
-  isRetryableGetFailure,
-  listBlocks,
-  undoTopicTitle,
-} from '../api'
+import { ApiError, attachmentRawUrl, downloadFile, ensureFreshToken, isRetryableGetFailure, listBlocks } from '../api'
 import { postChatMessage } from '../api/messages'
 import { useChatRowActions } from '../components/chat/composables/useChatRowActions'
 import { useTimelineMotion } from '../components/chat/composables/useTimelineMotion'
@@ -64,9 +56,11 @@ import { useAskAnswers } from './useAskAnswers'
 import { useAskGroups } from './useAskGroups'
 import { useAskTakeover } from './useAskTakeover'
 import { useChatComposer } from './useChatComposer'
+import { useChatMessageClicks } from './useChatMessageClicks'
 import { useChatPaging } from './useChatPaging'
 import { useMessageReactions } from './useMessageReactions'
 import { useOwnChecklist } from './useOwnChecklist'
+import { useTopicTitleUndo } from './useTopicTitleUndo'
 
 import { t } from '@/i18n'
 
@@ -193,35 +187,6 @@ export function useChatPanel(opts: ChatPanelOptions) {
     pendingHistory: () => historyReactions,
     me: AUTHOR,
   })
-
-  // 「这条事件长什么样」的判断全在 lib/platformNotice.ts —— 包括动作卡认哪些块
-  // (refs=["action:<resource>"] / meta.action)。这里只剩按钮文案和 emit 接线。
-
-  // @mention chips are rendered via v-html; delegate clicks so the parent can
-  // resolve the name (person → member page, topic/doc → open it). A message's
-  // avatar and name (.im-person) go the same way as a chip for its author.
-  function onMessagesClick(e: MouseEvent) {
-    const target = e.target as HTMLElement | null
-    // Click-away closes the emoji picker (clicks inside it are handled there).
-    if (reactionPickerFor.value && !target?.closest('.rx-picker, .rx-toggle')) {
-      reactionPickerFor.value = null
-    }
-    if (touchOnly.value && target) rowActions.toggleTime(target)
-    const el = target?.closest('.mention, .im-person') as HTMLElement | null
-    if (!el) return
-    // 在动的那个头像：它此刻在干的事在「现场」，点它就去那里。
-    if (el.dataset.site !== undefined) emit('open-resource', 'site')
-    else if (el.dataset.handle) emit('mention-click', el.dataset.handle)
-    else if (el.dataset.topic) {
-      const id = el.dataset.topic
-      if (roomTasks.value.some((task) => task.id === id)) emit('open-card', id)
-      else emit('open-topic', id)
-    } else if (el.dataset.file) {
-      const row = el.closest('[data-mid]') as HTMLElement | null
-      const task = rows.value.find(({ block }) => block.id === row?.dataset.mid)?.block.task_id
-      emit('open-file', el.dataset.file, task ?? null)
-    }
-  }
 
   // 滚动位置、跟不跟新消息、重放期间不抖 —— 见 room/composables/useChatScroll。
   // 往回翻历史留在这里：它碰 messages / 缓存 / 错误横幅，不是滚动的事。
@@ -425,18 +390,8 @@ export function useChatPanel(opts: ChatPanelOptions) {
   // 卸载之后还在飞的那几个请求回来时，不该再往一个已经没了的面板上写东西。
   let disposed = false
 
-  // 撤销一次自动改名（RoomNotice 那一行的按钮）。后端改完会发 `state: topics`，
-  // 侧栏据此重读；这里再主动报一次，按下去就能看到名字回来。
-  async function undoTitle(blockId: string) {
-    const room = topic()
-    if (!room) return
-    try {
-      await undoTopicTitle(room.id, blockId)
-      emit('state-changed', 'topics')
-    } catch (e) {
-      errorMsg.value = e instanceof Error ? e.message : t('work.room.chat.undoFailed')
-    }
-  }
+  // 撤销一次自动改名（RoomNotice 那一行的按钮）—— 见 composables/useTopicTitleUndo。
+  const { undoTitle } = useTopicTitleUndo({ topic, emit, errorMsg })
 
   async function loadTopic(room: Topic, entering = false) {
     const generation = ++historyGeneration
@@ -751,6 +706,16 @@ export function useChatPanel(opts: ChatPanelOptions) {
     editingId: composer.editingId,
   })
   const { sheet, sheetBlock, touchOnly, timeShownId, bar, barBlock, onTimelinePointer, hideBar } = rowActions
+
+  // 消息区里点到的 chip / 头像落到哪个事件 —— 见 composables/useChatMessageClicks。
+  const onMessagesClick = useChatMessageClicks({
+    reactionPickerFor,
+    touchOnly,
+    toggleTime: rowActions.toggleTime,
+    rows: () => rows.value,
+    roomTasks: () => roomTasks.value,
+    emit,
+  })
 
   // ---- 时间刻度 ----
   // 哪一条属于哪一天、日期线画在它上面：规则和判据在 lib/chatGrouping.ts（纯函数，
