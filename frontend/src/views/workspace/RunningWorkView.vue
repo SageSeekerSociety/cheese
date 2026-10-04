@@ -194,6 +194,11 @@ const boardRows = computed(() => liveBoardTasks(rows.value, archivedRooms.value)
 /** 本视图内按标题找（同 Linear 的 find in view）：只筛这块板上的活，不发请求、不进地
  *  址——它是「我在这一屏上找一条」，换一屏就不该还留着。按 `/` 聚焦。 */
 const find = ref('')
+// 换了项目（同一个组件实例被复用）就不再按上一个项目的词筛。
+watch(
+  () => props.projectId,
+  () => (find.value = '')
+)
 const findNeedle = computed(() => find.value.trim().toLocaleLowerCase())
 const filtered = computed(() => mine.value || !!findNeedle.value)
 
@@ -342,7 +347,7 @@ function taskRowKey(row: unknown): string {
     <!-- 「只看我的」：一个项目上百个房间，「待处理」那一列里大部分不是等你。
          登录身份取不到时不画这个开关——按空 handle 筛只会把整块板清空。 -->
     <template #controls>
-      <BoardFind v-model="find" />
+      <BoardFind v-if="!nothingYet && !errorMsg" v-model="find" />
       <button
         v-if="mineHandle"
         type="button"

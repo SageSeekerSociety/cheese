@@ -92,6 +92,11 @@ const layer = ref<HTMLElement | null>(null)
 function onKeydown(event: KeyboardEvent) {
   if (event.key !== 'Escape' || event.defaultPrevented) return
   if (document.querySelector('.v-overlay--active')) return
+  // 目录搜索还有字：这一下先清字（焦点不在搜索框里也一样，比如已经 Tab 到了某一项上）。
+  if (search.value) {
+    search.value = ''
+    return
+  }
   emit('close')
 }
 
@@ -514,7 +519,7 @@ useFocusReturn(ref(true))
 }
 
 .so__search:focus-within {
-  border-color: var(--faint);
+  border-color: var(--focus-ring);
 }
 
 .so__search input {

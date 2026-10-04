@@ -18,6 +18,14 @@ function onKey(event: KeyboardEvent) {
   event.preventDefault()
   input.value?.focus()
 }
+// 有字时 Esc 只清字，并把这一下吃掉：窄窗口里侧栏浮层也听 Esc（useEscapeStack），
+// 不吃掉的话清字的同时把侧栏也收了。
+function clear(event: KeyboardEvent) {
+  if (!text.value) return
+  event.preventDefault()
+  text.value = ''
+}
+
 onMounted(() => window.addEventListener('keydown', onKey))
 onUnmounted(() => window.removeEventListener('keydown', onKey))
 </script>
@@ -32,7 +40,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
       autocomplete="off"
       :placeholder="t('work.board.findPlaceholder')"
       :aria-label="t('work.board.findLabel')"
-      @keydown.esc="text = ''"
+      @keydown.esc="clear"
     />
   </label>
 </template>
@@ -52,7 +60,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
 }
 
 .board-find:focus-within {
-  border-color: var(--faint);
+  border-color: var(--focus-ring);
 }
 
 .board-find input {
