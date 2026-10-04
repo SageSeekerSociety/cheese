@@ -24,6 +24,7 @@ from tests.integration.conftest import (
     post_project,
     session_auth_headers,
 )
+from tests.support.living_doc import document_of
 
 
 def _project(client, name: str = "Agents") -> str:
@@ -439,8 +440,9 @@ def test_a_project_credential_is_refused_where_its_agent_has_no_seat(client):
     )
     assert dropped.status_code == 200, dropped.text
 
+    doc = document_of(client, room, headers=session_auth_headers("u"))
     r = client.post(
-        f"/topics/{room}/comments",
+        f"/documents/{doc}/comments",
         json={"content": "从项目级凭据发出的"},
         headers={
             "X-Cheese-Token": mint_project_agent_credential(project_id=pid, epoch=0)

@@ -84,7 +84,7 @@ def test_search_covers_old_messages_and_treats_sql_wildcards_literally(client):
     assert data["has_more"] is False
 
 
-def test_search_finds_special_payloads_and_quoted_comments(client):
+def test_search_finds_special_payloads(client):
     project, room = _room(client)
     ids = _seed(
         client,
@@ -96,15 +96,9 @@ def test_search_finds_special_payloads_and_quoted_comments(client):
                 "content": "Build failed",
                 "meta": {"detail": "配置文件缺失", "event_type": "ci_failed"},
             },
-            {
-                "kind": BlockKind.comment,
-                "anchor_quote": "quoted contract",
-                "content": "Revise this",
-            },
         ],
     )
     assert _history(client, room, q="配置文件缺失")["data"][0]["id"] == ids[0]
-    assert _history(client, room, q="quoted contract")["data"][0]["id"] == ids[1]
 
 
 def test_replies_include_parent_reactions_and_nested_reply_links(client):
@@ -159,7 +153,6 @@ def test_every_block_kind_can_be_read_with_its_complete_fields(client, kind):
                 "kind": kind,
                 "content": "uploads/report.pdf",
                 "mime_type": "application/pdf",
-                "anchor_quote": "paragraph",
                 "meta": {
                     "filename": "report.pdf",
                     "size": 12345,
@@ -175,7 +168,6 @@ def test_every_block_kind_can_be_read_with_its_complete_fields(client, kind):
     assert block["kind"] == kind.value
     assert block["content"] == "uploads/report.pdf"
     assert block["mime_type"] == "application/pdf"
-    assert block["anchor_quote"] == "paragraph"
     assert block["meta"]["future"] == {"payload": ["x"]}
     assert block["refs"] == ["reference"]
     assert _history(client, room, kind=kind.value)["data"][0] == block

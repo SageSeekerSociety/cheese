@@ -55,7 +55,6 @@ class BlockRepository:
         reply_to: uuid.UUID | None = None,
         refs: list[str] | None = None,
         turn_id: uuid.UUID | None = None,
-        anchor_quote: str | None = None,
         mime_type: str | None = None,
         meta: dict | None = None,
         created_at: datetime | None = None,
@@ -117,7 +116,6 @@ class BlockRepository:
             reply_to=reply_to,
             refs=refs or [],
             turn_id=turn_id,
-            anchor_quote=anchor_quote,
             mime_type=mime_type,
             meta=meta,
         )
@@ -422,13 +420,6 @@ class BlockRepository:
             .limit(1)
         )
         return (await self._session.scalars(stmt)).first()
-
-    # Never part of the conversation timeline: comments live in the document's
-    # margin. An artifact (`cheese show`) IS: 芝士 putting something in front of
-    # the room is something it said, and the chat renders it as a card the
-    # reader can open. Left out, it reached people only as the preview tab,
-    # which shows the last one alone.
-    NON_TIMELINE = (BlockKind.comment,)
 
     async def ai_turn_ids(self, turn_ids: list[uuid.UUID]) -> set[uuid.UUID]:
         """Which of these turns produced at least one block signed by 芝士.
@@ -783,7 +774,6 @@ class BlockRepository:
             select(Block)
             .where(
                 *self._in_place(topic_id, task_id),
-                Block.kind.not_in(self.NON_TIMELINE),
             )
             .order_by(Block.created_at, Block.id)
         )
@@ -814,7 +804,6 @@ class BlockRepository:
             select(Block.id)
             .where(
                 *place,
-                Block.kind.not_in(self.NON_TIMELINE),
                 CLOUD_PROVISIONING_ROWS,
             )
             .order_by(Block.created_at.desc(), Block.id.desc())
@@ -868,7 +857,6 @@ class BlockRepository:
             select(Block)
             .where(
                 *self._in_place(topic_id, task_id),
-                Block.kind.not_in(self.NON_TIMELINE),
             )
             .order_by(Block.created_at.desc(), Block.id.desc())
             .limit(1)
@@ -910,8 +898,6 @@ class BlockRepository:
         # has_more against the wrong set.
         if kinds is not None:
             stmt = stmt.where(Block.kind.in_(list(kinds)))
-        else:
-            stmt = stmt.where(Block.kind.not_in(self.NON_TIMELINE))
         if query:
             # Literal matching: a pasted log containing % or _ is not SQL syntax.
             pattern = (
@@ -924,7 +910,6 @@ class BlockRepository:
                     Block.content.ilike(pattern, escape="\\"),
                     # JSONB renders stored Unicode escapes as searchable text.
                     cast(cast(Block.meta, JSONB), Text).ilike(pattern, escape="\\"),
-                    Block.anchor_quote.ilike(pattern, escape="\\"),
                 )
             )
         if reply_to is not None:
@@ -967,7 +952,6 @@ class BlockRepository:
             .select_from(Block)
             .where(
                 *self._in_place(topic_id, task_id),
-                Block.kind.not_in(self.NON_TIMELINE),
             )
         )
         return int((await self._session.scalar(stmt)) or 0)
@@ -984,18 +968,6 @@ class BlockRepository:
         if excluding:
             stmt = stmt.where(Block.id.not_in(list(excluding)))
         return int((await self._session.scalar(stmt)) or 0)
-
-    async def list_comments_for_topic(
-        self, topic_id: uuid.UUID, *, task_id: uuid.UUID | None = None
-    ) -> list[Block]:
-        """Inline comments (B4), oldest first; each anchors to a doc node via
-        reply_to."""
-        stmt = (
-            select(Block)
-            .where(*self._in_place(topic_id, task_id), Block.kind == BlockKind.comment)
-            .order_by(Block.created_at)
-        )
-        return list((await self._session.scalars(stmt)).all())
 
     async def latest_artifact(
         self, topic_id: uuid.UUID, *, task_id: uuid.UUID | None = None

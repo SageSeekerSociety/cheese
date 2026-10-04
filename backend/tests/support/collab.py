@@ -15,6 +15,9 @@ as plain string replacement: each ``old`` must occur exactly once. A
 suggestion leaves the text alone and is kept here as pending, and every store
 reports what is pending, as the service does.
 
+``told`` keeps what the backend told each document's open editors (``tell``),
+in order, so a test can read what an editor would have heard.
+
 ``type_in`` is somebody typing in an editor: a store carrying their handle.
 ``type_unsaved`` is typing the service holds but has not stored yet; like the
 service, this one stores it before refusing a writer that did not see it.
@@ -41,6 +44,8 @@ class FakeCollab:
         self.pending: dict[str, list[dict]] = {}
         #: Per document: (text, handle) typed since the last store.
         self._unsaved: dict[str, tuple[str, str]] = {}
+        #: Per document: the frames told to whoever has it open.
+        self.told: dict[str, list[dict]] = {}
 
     def _client(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(
@@ -53,6 +58,9 @@ class FakeCollab:
     async def handle(self, request: httpx.Request) -> httpx.Response:
         name = request.url.path.split("/")[3]
         body = _json(request)
+        if request.url.path.endswith("/tell"):
+            self.told.setdefault(name, []).append(body)
+            return httpx.Response(200, json={})
         if request.url.path.endswith("/edit"):
             return await self._edit(name, body)
         if body.get("check") and self.refuse_writes is not None:
