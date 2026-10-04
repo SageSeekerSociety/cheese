@@ -54,11 +54,6 @@ vi.mock('@/views/tasks/components', async () => {
       props: ['taskData', 'availableTeams', 'loadingTeams', 'joinedTeams', 'selectedLeaveTeamId', 'participationInfo'],
       setup: () => () => hh('div'),
     }),
-    LoadingErrorContainer: dc({
-      name: 'LoadingErrorContainerStub',
-      props: ['loading', 'error'],
-      setup: () => () => hh('div'),
-    }),
   }
 })
 
