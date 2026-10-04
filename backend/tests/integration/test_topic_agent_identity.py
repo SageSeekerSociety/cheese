@@ -21,6 +21,7 @@ from tests.integration.conftest import (
     post_project,
     session_auth_headers,
 )
+from tests.support.living_doc import document_of
 
 
 def _project_topic(client, owner: str = "alice") -> tuple[str, str]:
@@ -98,8 +99,10 @@ def test_a_sandbox_token_acts_as_the_agent_it_names(client):
     holds it — previously every such write said plain ``cheese``."""
     pid, tid = _project_topic(client)
     seat = _seat(client, tid)
+    # As the agent's own tools do: find the room's document, then write it.
+    doc = document_of(client, tid, headers=_sandbox(pid, tid, seat))
     r = client.put(
-        f"/topics/{tid}/doc",
+        f"/documents/{doc}",
         json={"content": "# 分身写的", "expected_version": 0},
         headers=_sandbox(pid, tid, seat),
     )
@@ -126,8 +129,9 @@ def test_two_agents_writing_in_one_room_are_told_apart(client):
 
     authors = []
     for version, seat in enumerate((default_seat, ops["seat_handle"])):
+        doc = document_of(client, tid, headers=_sandbox(pid, tid, seat))
         r = client.put(
-            f"/topics/{tid}/doc",
+            f"/documents/{doc}",
             json={"content": f"# {seat}", "expected_version": version},
             headers=_sandbox(pid, tid, seat),
         )
@@ -140,8 +144,9 @@ def test_a_forged_author_in_the_body_is_still_ignored(client):
     """The identity comes from the signed token, never the payload."""
     pid, tid = _project_topic(client)
     seat = _seat(client, tid)
+    doc = document_of(client, tid, headers=_sandbox(pid, tid, seat))
     r = client.put(
-        f"/topics/{tid}/doc",
+        f"/documents/{doc}",
         json={"content": "# hi", "expected_version": 0},
         headers=_sandbox(pid, tid, seat),
     )

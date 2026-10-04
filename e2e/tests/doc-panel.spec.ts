@@ -37,7 +37,8 @@ test('文档里的宽表格在自己那格里横向滚动，不把整栏顶出�
     project_id: projectId,
     title: `宽表格 ${Date.now()}`,
   })) as { id: string };
-  await api(page, 'put', `/topics/${room.id}/doc`, {
+  const roomDoc = (await api(page, 'get', `/topics/${room.id}/document`)) as { id: string };
+  await api(page, 'put', `/documents/${roomDoc.id}`, {
     content: WIDE_TABLE_DOC,
     expected_version: 0,
   });
@@ -81,7 +82,8 @@ test('键盘焦点落在正文上时，编辑器盒子画出焦点环', async ({
     project_id: projectId,
     title: `焦点环 ${Date.now()}`,
   })) as { id: string };
-  await api(page, 'put', `/topics/${room.id}/doc`, {
+  const roomDoc = (await api(page, 'get', `/topics/${room.id}/document`)) as { id: string };
+  await api(page, 'put', `/documents/${roomDoc.id}`, {
     content: '# 焦点环\n\n正文。',
     expected_version: 0,
   });

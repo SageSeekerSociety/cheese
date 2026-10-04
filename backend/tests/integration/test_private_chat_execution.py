@@ -22,6 +22,7 @@ from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from tests.conftest import StubChannel, settle_turn
 from tests.integration.conftest import registered
+from tests.support.living_doc import document_of
 
 pytestmark = pytest.mark.anyio
 
@@ -144,8 +145,9 @@ async def test_chat_runs_through_a_session(client, tmp_path, private):
         # Exercise the same scoped credential given to Cheese CLI, against the
         # real document API and database rather than the shell HTTP fixture.
         headers = {"X-Cheese-Token": screen.openings[0]["token"]}
+        doc = document_of(client, topic_id, headers=headers)
         saved = client.put(
-            f"/topics/{topic_id}/doc",
+            f"/documents/{doc}",
             headers=headers,
             json={
                 "content": "# Private draft",
@@ -153,6 +155,6 @@ async def test_chat_runs_through_a_session(client, tmp_path, private):
             },
         )
         assert saved.status_code == 200, saved.text
-        loaded = client.get(f"/topics/{topic_id}/doc", headers=headers)
+        loaded = client.get(f"/documents/{doc}", headers=headers)
         assert loaded.status_code == 200, loaded.text
         assert loaded.json()["data"]["content"] == "# Private draft"

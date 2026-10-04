@@ -222,7 +222,7 @@ def test_a_platform_receipt_never_becomes_an_empty_text_block():
           })},
         };
         const call = {tool: 'mcp__native__platform_request', tool_use_id: 'req',
-                      method: 'GET', path: '/topics/x/doc'};
+                      method: 'GET', path: '/documents/x'};
         assert.deepEqual(await handlers['tool.call'](api, call), {
           result: [{type: 'text', text: '{"code":200,"message":"ok","data":null}'}],
         });

@@ -20,8 +20,14 @@ from tests.integration.conftest import (
     post_project,
     session_auth_headers,
 )
+from tests.support.living_doc import document_of
 
 FACT = "中期答辩定在 11 月 15 日，要现场演示一个能跑的 demo"
+
+
+def _doc(client, room) -> str:
+    """The room's document, as its routes address it."""
+    return f"/documents/{document_of(client, room)}"
 
 
 def _project_and_room(client) -> tuple[str, str]:
@@ -50,7 +56,7 @@ def _say(client, topic_id: str, text: str = "@芝士 现在什么状态") -> Non
 
 
 def _doc_text(client, topic_id: str) -> str:
-    doc = client.get(f"/topics/{topic_id}/doc").json()["data"]
+    doc = client.get(_doc(client, topic_id)).json()["data"]
     return (doc or {}).get("content", "")
 
 
@@ -84,7 +90,7 @@ def test_another_room_reads_the_overview_document_on_its_next_turn(client, stub_
     project_id, topic_id = _project_and_room(client)
     overview = _overview_room(client, project_id)
     client.put(
-        f"/topics/{overview}/doc",
+        _doc(client, overview),
         json={"content": FACT, "expected_version": 0},
         headers=session_auth_headers("user-1"),
     )
@@ -104,7 +110,7 @@ def test_the_overview_room_does_not_read_its_own_document_twice(client, stub_hoo
     project_id, _ = _project_and_room(client)
     overview = _overview_room(client, project_id)
     client.put(
-        f"/topics/{overview}/doc",
+        _doc(client, overview),
         json={"content": FACT, "expected_version": 0},
         headers=session_auth_headers("user-1"),
     )
@@ -125,7 +131,7 @@ def test_the_overview_room_reads_the_other_blocks_from_the_data(client, stub_hoo
     project_id, topic_id = _project_and_room(client)
     overview = _overview_room(client, project_id)
     client.put(
-        f"/topics/{overview}/doc",
+        _doc(client, overview),
         json={
             "content": "## 项目是什么\n\n给高中生做算法课。\n\n"
             "## 现在在做什么\n\n- 这一条是手抄的，不算数。\n",
@@ -150,7 +156,7 @@ def test_another_room_gets_only_what_the_project_is(client, stub_hooks):
     project_id, topic_id = _project_and_room(client)
     overview = _overview_room(client, project_id)
     client.put(
-        f"/topics/{overview}/doc",
+        _doc(client, overview),
         json={
             "content": "## 项目是什么\n\n给高中生做算法课。\n",
             "expected_version": 0,

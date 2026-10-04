@@ -34,7 +34,7 @@ describe('文档里问 AI 队友', () => {
     await askDocAgent('room1', { text: '范围指什么？' }, (event) => heard.push(event))
 
     expect(readOn).toHaveLength(1)
-    expect(readOn[0]).toContain('/topics/room1/doc/agent/box1/answers/q1?after=1-0')
+    expect(readOn[0]).toContain('/documents/room1/agent/box1/answers/q1?after=1-0')
     expect(heard.at(-1)).toBe('done')
   })
 })

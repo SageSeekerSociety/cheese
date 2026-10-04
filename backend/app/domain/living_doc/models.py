@@ -1,5 +1,5 @@
-"""Documents: what they say now, their collaborative state, their history and
-their write receipts.
+"""Documents: what they say now, their collaborative state, their history,
+their write receipts and the comments written on them.
 
 A document belongs to a project. A room's living document is one with
 ``room_id`` set: each room has at most one, and it goes when the room goes.
@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import (
     JSON,
+    CheckConstraint,
     DateTime,
     Float,
     ForeignKey,
@@ -158,3 +159,61 @@ class DocumentOperation(UuidPk, Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
+
+
+class DocumentComment(UuidPk, Base):
+    """A comment on a document: one that opens a thread (``thread_id`` None),
+    or a reply in one. Which words a thread is about is marked in the shared
+    document itself (``commentAnchor``, carrying the opening comment's id); the
+    opening comment keeps the quoted words for display."""
+
+    __tablename__ = "document_comments"
+    __table_args__ = (
+        UniqueConstraint("thread_id", "sequence", name="uq_document_comment_sequence"),
+        CheckConstraint(
+            "(thread_id IS NULL) = (sequence IS NULL)",
+            name="ck_document_comment_reply_sequence",
+        ),
+    )
+
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), index=True
+    )
+    #: The comment that opened the thread this one replies in.
+    thread_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("document_comments.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    #: A reply's place in its thread, from 1.
+    sequence: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    author: Mapped[str] = mapped_column(String(128))
+    content: Mapped[str] = mapped_column(Text)
+    #: The words an opening comment is about, as they read when it was written.
+    anchor_quote: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
+class DocumentThread(Base):
+    """The state of the thread a comment opened. ``revision`` moves with every
+    reply, resolve and reopen, so a writer that read an older one is refused."""
+
+    __tablename__ = "document_threads"
+    __table_args__ = (
+        CheckConstraint("revision >= 1", name="ck_document_thread_revision"),
+        CheckConstraint("reply_count >= 0", name="ck_document_thread_reply_count"),
+        CheckConstraint(
+            "state IN ('open', 'resolved')", name="ck_document_thread_state"
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("document_comments.id", ondelete="CASCADE"), primary_key=True
+    )
+    revision: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    state: Mapped[str] = mapped_column(
+        String(16), default="open", server_default="open"
+    )
+    reply_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")

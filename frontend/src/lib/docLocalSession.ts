@@ -10,10 +10,10 @@ import * as Y from 'yjs'
 
 import { writeMarkdown } from './docSchema'
 
-export function localDocSession(markdown = '', room = 'local', doc = new Y.Doc()): DocSession {
+export function localDocSession(markdown = '', document = 'local', doc = new Y.Doc()): DocSession {
   if (markdown) writeMarkdown(doc, markdown)
   // The carets need an awareness to read and write; nothing else of a provider
   // is touched by the editor.
   const provider = { awareness: new Awareness(doc) } as unknown as HocuspocusProvider
-  return { room, doc, provider, user: { name: '', color: '', avatar: '' } }
+  return { document, doc, provider, user: { name: '', color: '', avatar: '' } }
 }
