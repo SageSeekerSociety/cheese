@@ -96,6 +96,7 @@ async function pick(choice: ComputeChoice, abandonUnpushed = false) {
         v-if="more"
         :devices="profile.devices"
         :cloud-available="cloudAvailable"
+        :cloud-vm-available="profile.cloud_vm_available"
         :busy="saving"
         @select="pick"
       />

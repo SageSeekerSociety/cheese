@@ -3,7 +3,7 @@ import type { ComputeChoice } from '../cx_types'
 import { t } from '@/i18n'
 
 export function choiceKey(c: ComputeChoice): string {
-  return JSON.stringify([c.profile, c.device_id ?? null])
+  return JSON.stringify([c.profile, c.device_id ?? null, c.whole_machine === true])
 }
 
 // The choices in order, each configuration once.
@@ -23,7 +23,7 @@ export function compactChoices(...choices: (ComputeChoice | null | undefined)[])
 // one of those is another reader's label and is not shown.
 export function choiceName(c: ComputeChoice): string {
   if (c.profile === 'device') return deviceName(c.name, c.device_id)
-  return t('compute.choice.cloud')
+  return t(c.whole_machine ? 'compute.choice.cloudVm' : 'compute.choice.cloud')
 }
 
 // A self-hosted device by its own name, or — with none known — as the platform's
@@ -36,5 +36,5 @@ export function deviceName(name: string | null, deviceId: string | null): string
 
 export function choiceDetail(c: ComputeChoice): string {
   if (c.profile === 'device') return c.device_id ? t('compute.choice.device') : t('compute.choice.deviceOnFirstRun')
-  return t('compute.choice.sandbox')
+  return t(c.whole_machine ? 'compute.choice.vm' : 'compute.choice.sandbox')
 }

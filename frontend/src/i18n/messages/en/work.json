@@ -90,6 +90,7 @@
     "hint": "Only affects agents that have not started; agents already working keep their own computer",
     "distribution": "Where agents are now",
     "onCloud": "Cloud sandbox · {agents}",
+    "onCloudVm": "Whole cloud VM · {agents}",
     "onDevice": "{name} · {agents}",
     "agents": "1 agent | {count} agents",
     "noneStarted": "No agents have started",
@@ -379,6 +380,8 @@
       "working": "{name} is on it",
       "sandboxReady": "Sandbox ready",
       "sandboxPreparing": "Preparing the sandbox",
+      "cloudVmReady": "Cloud VM ready",
+      "cloudVmPreparing": "Preparing the cloud VM",
       "incident": {
         "title": "Work computer temporarily unavailable",
         "cleaning": "Cleaning up automatically",
@@ -1664,11 +1667,13 @@
   },
   "computeChoice": {
     "cloud": "Cloud sandbox",
+    "cloudVm": "Whole cloud VM",
     "deviceOnline": "{name} · Online",
     "deviceOffline": "{name} · Offline",
     "computer": "Work computer",
     "none": "No work computers available",
     "cloudHint": "Each session works in a cloud sandbox of its own, prepared on the first run",
+    "cloudVmHint": "Each session gets a virtual machine of its own, with sudo, Docker, KVM and kernel modules. Preparing one takes a few minutes; once the session is idle, its changes are pushed to their branches and the VM is released",
     "deviceHint": "This project can already use this device, so no further authorization is needed. If it is offline, work waits until it comes online",
     "submit": "Use this configuration"
   },

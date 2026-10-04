@@ -60,6 +60,7 @@ function profile(machineAccess: boolean): TopicComputeProfile {
     devices: [],
     sessions: [],
     profiles: [],
+    cloud_vm_available: false,
     visibility: {
       options: [],
       effective: 'host',

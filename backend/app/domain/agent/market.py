@@ -112,6 +112,14 @@ def cloud_provisionable(
     return bool(settings.microcloud_base_url and settings.microcloud_tenant_secret)
 
 
+def cloud_vm_provisionable(
+    settings,  # type: ignore[no-untyped-def]
+) -> bool:
+    """Can a session on this deployment have a whole cloud VM of its own? Only
+    where cloud is configured and an operator named the VM offering."""
+    return cloud_provisionable(settings) and bool(settings.microcloud_vm_offering_id)
+
+
 def compute_listings(
     settings,  # type: ignore[no-untyped-def]
     *,

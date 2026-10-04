@@ -30,8 +30,11 @@ The remaining sections describe ordinary work topics and their selected compute 
 |---|---|---|
 | **自托管设备** | 用户自己接进来的机器（笔记本、常驻服务器） | 别人的 |
 | **Cloud** | 平台云主机池里的一个沙箱，每条会话一个；宿主机由平台调度，多个项目的沙箱共用一台 | 我们开的，随时可以销毁重建 |
+| **Cloud · 整台云虚拟机** | 每条会话一整台云虚拟机，有 sudo，能跑 Docker、要 KVM 的任务和内核模块；房间选 Cloud 时打开 `whole_machine` | 我们开的，会话用完就删 |
 
-设备那条总是装上；Cloud 只在这个部署配了云平台的地址和密钥时才装。
+设备那条总是装上；Cloud 只在这个部署配了云平台的地址和密钥时才装；整台云虚拟机还要运维配了虚拟机的规格（`MICROCLOUD_VM_OFFERING_ID`），没配时选不到。
+
+整台云虚拟机走的还是 Cloud 那条执行路（`cloud_provider.py`），区别在落点：`HostPool.place` 不往宿主机上放沙箱，而是为这条会话开一台虚拟机（`CloudHost.whole_machine`），不从预热池领，不放别的会话。它和宿主机一起算进平台的容量上限（`CLOUD_POOL_MAX_HOSTS`）。规格只有一种（`CLOUD_VM_CORES` / `CLOUD_VM_MEMORY_MB` / `CLOUD_VM_DISK_GB`，默认 4 核、8 GB、40 GB），记在虚拟机那一行上，连同为哪个项目开的；按「规格 × 时长」收费时从释放那一处（`services._vm_released`）读。虚拟机在三种时候删：房间换走并且推送成功、房间清理删掉了会话目录、会话闲置 `CLOUD_VM_IDLE_RELEASE_S`（默认 30 分钟，闲置的定义和沙箱相同：房间没在跑任务，会话最后一次工具调用和房间最后一轮结束都在这之前）。闲置释放前先像换机器一样推送（`machine/cloud_vm.py`），推不上去就留着，十分钟后再试；会话下一次要用时再开一台新的，要等几分钟。
 
 These choices select the ordinary room's execution machine. Claude Code runs on the separately recorded central session host, which does not appear as a project execution choice. The two locations are described in `remote-execution.md`.
 
@@ -156,7 +159,7 @@ Cloud 能开机 → 默认是 Cloud；开不了 → 默认是自托管设备
 
 这条话进房间，是一条明确的失败，不是一次静默的降级。市场页的算力选择器同时是空的——`available` 两条都是假，没有东西可选。两边说的是同一件事。
 
-配了 Cloud 的部署则相反：默认是 Cloud。一条会话第一次要动手时，平台把它的沙箱放到池里一台还有空位的宿主机上；都满了就从预热池领一台，预热池也空了才现开一台，这时房间里先收到「正在准备沙箱」，就绪后工具调用自动接着跑。池子到了平台的容量上限时，这条会话被告知云端资源紧张、稍后再试。
+配了 Cloud 的部署则相反：默认是 Cloud。一条会话第一次要动手时，平台把它的沙箱放到池里一台还有空位的宿主机上；都满了就从预热池领一台，预热池也空了才现开一台，这时房间里先收到「正在准备沙箱」，就绪后工具调用自动接着跑。选了整台云虚拟机的房间，每条会话第一次要动手时都现开一台，房间里收到的是「正在准备云虚拟机」。池子到了平台的容量上限时，这条会话被告知云端资源紧张、稍后再试。
 
 ## 四、可见性：云机器上是沙箱，自托管设备上是整机
 
@@ -167,7 +170,9 @@ Cloud 能开机 → 默认是 Cloud；开不了 → 默认是自托管设备
 | `host` | 看得见整台机器，能操作上面的服务、进得去其他房间的目录 | 任何机器；自托管设备上只有这一档 |
 | `isolated` | 每条会话的执行器在自己的沙箱里，只写得到自己的会话目录和本项目的包缓存，看不到别的会话、别的项目和机器主人自己的文件；连得上公网，连不上内网、机器本身和别的沙箱；内存、CPU、进程数有上限 | 只有云机器 |
 
-档由机器的供给决定（`device/supply.py` 的 `binding_visibility`）：云机器上的会话一律是 `isolated`；自托管设备的默认档从「那里哪档真能跑」推导出来（`default_visibility`），所以今天**自托管设备上的每个话题都是整机可见**。自托管设备上的沙箱是 #2320 的第二步。沙箱怎么搭见 `docs/remote-execution.md`。
+整台云虚拟机上的会话是 `host`：虚拟机就是这条会话自己的，执行器不进沙箱，有 sudo 和 Docker（`session_work._sandboxed`）。那台机器上没有别的会话、别的房间可看。沙箱的网络规则也不在那里，虚拟机里有 root 的人可以改掉机器内的任何规则，所以它能连到的内网只能由云平台那一侧限制，而云平台今天没有这一层：2026-10-04 在 dev 的 MicroCloud 上实测，虚拟机 offering 开出的虚拟机连得上所在私网里的 MicroCloud 接口和部署的服务器。云平台给虚拟机隔开网络之前，部署不打开这一档（`MICROCLOUD_VM_OFFERING_ID` 留 0）。
+
+档由机器的供给决定（`device/supply.py` 的 `binding_visibility`）：云机器上的会话除整台云虚拟机外一律是 `isolated`；自托管设备的默认档从「那里哪档真能跑」推导出来（`default_visibility`），所以今天**自托管设备上的每个话题都是整机可见**。自托管设备上的沙箱是 #2320 的第二步。沙箱怎么搭见 `docs/remote-execution.md`。
 
 ## 五、能从这些机器上拿回来什么
 
@@ -227,6 +232,8 @@ branches, platform memory, room messages and task records remain. Old cleanup co
 keep their original UUID and parked backend worktree path; they cannot target the
 replacement. On a cloud host, cleanup removes the room's directories; the host
 itself is the pool's, and the pool releases it once no session's home is left on it.
+A session's whole cloud VM is released by the next pool sweep once cleanup has removed
+its directory.
 Reopening restores no transcripts: the new generation starts new sessions, and a
 retained archive of the old one still expires on schedule.
 

@@ -90,6 +90,7 @@
     "hint": "只影响尚未开始运行的 AI 队友，已在运行的继续用原来的工作电脑",
     "distribution": "当前分布",
     "onCloud": "云端沙箱 · {agents}",
+    "onCloudVm": "整台云虚拟机 · {agents}",
     "onDevice": "{name} · {agents}",
     "agents": "{count} 个 AI 队友",
     "noneStarted": "暂无运行中的 AI 队友",
@@ -379,6 +380,8 @@
       "working": "{name}正在处理",
       "sandboxReady": "沙箱已就绪",
       "sandboxPreparing": "正在准备沙箱",
+      "cloudVmReady": "云虚拟机已就绪",
+      "cloudVmPreparing": "正在准备云虚拟机",
       "incident": {
         "title": "工作电脑暂时不可用",
         "cleaning": "正在自动清理",
@@ -1664,11 +1667,13 @@
   },
   "computeChoice": {
     "cloud": "云端沙箱",
+    "cloudVm": "整台云虚拟机",
     "deviceOnline": "{name} · 在线",
     "deviceOffline": "{name} · 离线",
     "computer": "工作电脑",
     "none": "暂无可用的工作电脑",
     "cloudHint": "每个会话在自己的云端沙箱里工作，首次运行时自动准备",
+    "cloudVmHint": "每个会话一台独立的云虚拟机，有 sudo，能跑 Docker、要 KVM 的任务和内核模块。准备要几分钟；会话闲置后先把改动推送到分支，再释放虚拟机",
     "deviceHint": "这个项目已经可以用这台设备，无需再次授权；离线时需要等待设备上线",
     "submit": "使用此配置"
   },

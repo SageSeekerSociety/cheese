@@ -51,6 +51,7 @@ steps:
 | 本机沙盒容器 | 平台主机上的兄弟容器 | `compute.py` |
 | 自托管设备 | 用户用连接器接入的电脑 | `device_provider.py` |
 | 云端沙箱 | 平台云主机池里的一个沙箱，每条会话一个；宿主机是平台的 MicroCloud 机器，多个项目共用 | `cloud_provider.py`、`machine/services.py` |
+| 整台云虚拟机 | 每条会话一台 MicroCloud 虚拟机，不进沙箱，有 sudo 和 Docker；会话用完、闲置或房间清理后删掉 | `cloud_provider.py`、`machine/services.py`、`machine/cloud_vm.py` |
 | 中心会话 + 执行机 | 会话在中心主机，工具调用落到租用的机器上 | `central_provider.py` |
 
 ## 连接 {#link}
@@ -76,7 +77,7 @@ blocks: tool/probe, tool/quarantine, tool/unknown
 
 平台在别人机器上装的一切：执行器、CLI、环境脚本、启动脚本、会话目录、共享包缓存，都在机器主人 `$HOME` 下的同一个目录里（`place.footprint_root()`），卸载就是删这一个目录。
 
-云机器上，每条会话的执行器跑在自己的 bubblewrap 沙箱里：只写得到自己的会话目录和本项目的包缓存，看不到别的会话、别的项目的缓存和机器主人自己的文件（连接器的凭据就在那里），也用不了 sudo 和 Docker。沙箱有自己的网络：公网全放行，内网地址段、机器本身和别的沙箱都连不上；内存、CPU、进程数各有上限，超了只杀这一条会话的进程。
+云机器上，每条会话的执行器跑在自己的 bubblewrap 沙箱里：只写得到自己的会话目录和本项目的包缓存，看不到别的会话、别的项目的缓存和机器主人自己的文件（连接器的凭据就在那里），也用不了 sudo 和 Docker。沙箱有自己的网络：公网全放行，内网地址段、机器本身和别的沙箱都连不上；内存、CPU、进程数各有上限，超了只杀这一条会话的进程。要 sudo、Docker、KVM 或内核模块的活，房间换成整台云虚拟机：那里每条会话一台虚拟机，执行器直接跑在虚拟机上。
 
 ## 模型流量 {#llm}
 

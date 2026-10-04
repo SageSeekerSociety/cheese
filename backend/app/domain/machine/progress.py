@@ -1,9 +1,10 @@
 """What a room is told about its sessions' sandboxes on cloud.
 
-A room hears about the sandbox, never the host under it: which machine a
-session landed on, and how that machine was opened, is the platform's own
-scheduling. Each line is written in the caller's transaction and returned as
-the payload to publish once that transaction has committed.
+A room hears about the sandbox (or the session's whole cloud VM), never the
+host under it: which machine a session landed on, and how that machine was
+opened, is the platform's own scheduling. Each line is written in the
+caller's transaction and returned as the payload to publish once that
+transaction has committed.
 """
 
 import uuid
@@ -30,31 +31,59 @@ async def _line(
     return BlockOut.model_validate(block).model_dump(mode="json")
 
 
-async def tell_preparing(session: AsyncSession, home: CloudHostHome) -> dict | None:
+async def tell_preparing(
+    session: AsyncSession, home: CloudHostHome, whole_machine: bool = False
+) -> dict | None:
     return await _line(
         session,
         home,
-        say("sandboxPreparing"),
-        {"event_type": "cloud_startup", "severity": "info"},
+        say("cloudVmPreparing" if whole_machine else "sandboxPreparing"),
+        {"event_type": "cloud_startup", "severity": "info", **_vm(whole_machine)},
     )
 
 
-async def tell_ready(session: AsyncSession, home: CloudHostHome) -> dict | None:
+async def tell_ready(
+    session: AsyncSession, home: CloudHostHome, whole_machine: bool = False
+) -> dict | None:
     return await _line(
         session,
         home,
-        say("sandboxReady"),
-        {"event_type": "cloud_provisioning", "state": "ready", "severity": "info"},
+        say("cloudVmReady" if whole_machine else "sandboxReady"),
+        {
+            "event_type": "cloud_provisioning",
+            "state": "ready",
+            "severity": "info",
+            **_vm(whole_machine),
+        },
     )
 
 
-async def tell_replaced(session: AsyncSession, home: CloudHostHome) -> dict | None:
+async def tell_replaced(
+    session: AsyncSession, home: CloudHostHome, whole_machine: bool = False
+) -> dict | None:
     return await _line(
         session,
         home,
-        say("sandboxReplaced"),
-        {"event_type": "cloud_startup", "severity": "info"},
+        say("cloudVmReplaced" if whole_machine else "sandboxReplaced"),
+        {"event_type": "cloud_startup", "severity": "info", **_vm(whole_machine)},
     )
+
+
+async def tell_vm_released(
+    session: AsyncSession, home: CloudHostHome, minutes: int
+) -> dict | None:
+    return await _line(
+        session,
+        home,
+        say("cloudVmReleasedIdle", minutes=minutes),
+        {"event_type": "cloud_startup", "severity": "info", **_vm(True)},
+    )
+
+
+def _vm(whole_machine: bool) -> dict:
+    """Lines about a whole cloud VM say so, for the screen that shows a room's
+    startup lines by their state rather than their sentence."""
+    return {"environment": "vm"} if whole_machine else {}
 
 
 async def publish_line(topic_id: uuid.UUID, payload: dict | None) -> None:

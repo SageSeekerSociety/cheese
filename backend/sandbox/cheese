@@ -214,9 +214,9 @@ _FEEDBACK_STATUS = {
 # compute catalog differ.
 MACHINE_PROFILES = ("cloud", "device")
 MACHINE_PROFILE_DESCRIPTION = (
-    "只有两个值：cloud 是为这个会话开一台平台的云端机器；"
-    "device 是项目已授权的自有设备，配合 device_id 指定哪一台，"
-    "不填 device_id 就自动选一台在线的。"
+    "只有两个值：cloud 是平台的云端，每个会话一个沙箱，配合 whole_machine "
+    "换成每个会话一整台云虚拟机；device 是项目已授权的自有设备，配合 device_id "
+    "指定哪一台，不填 device_id 就自动选一台在线的。"
 )
 
 _TASK = _text("任务 id")
@@ -686,6 +686,12 @@ PLATFORM_TOOLS = ToolTable(
                     "description": MACHINE_PROFILE_DESCRIPTION,
                 },
                 "device_id": _text("自有设备的 id，只有 device 能指定"),
+                "whole_machine": {
+                    "type": "boolean",
+                    "description": "只配 cloud：每个会话一整台云虚拟机，有 sudo，"
+                    "能跑 Docker、要 KVM 的任务和内核模块，沙箱里做不了的活用它；"
+                    "准备要几分钟",
+                },
             },
             ["profile"],
         ),
@@ -1254,7 +1260,10 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "path": f"/feedback/{ref}/claim?topic={topic}",
         }
     if tool == "cheese_machine":
-        body = {"profile": args["profile"], **_given(args, "device_id")}
+        body = {
+            "profile": args["profile"],
+            **_given(args, "device_id", "whole_machine"),
+        }
         return {
             "method": "PUT",
             "path": f"/topics/{topic}/compute-profile",

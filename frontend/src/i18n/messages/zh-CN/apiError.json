@@ -116,6 +116,7 @@
   "computeKindUnavailable": "这类工作电脑尚未接入，暂不可选：{name}",
   "deviceNotInProject": "设备不属于当前项目",
   "cloudNotAvailable": "云端尚未接入，暂不可用",
+  "cloudVmNotAvailable": "这个部署没有提供整台云虚拟机",
   "deviceNotInProjectOrTeam": "设备不属于当前项目或团队",
   "teamHasNoDevices": "团队暂无自有设备",
   "switchPushFailed": "推送失败，没有更换：{error}",
@@ -335,6 +336,7 @@
   "roomBusyFinishBeforeEnvironment": "房间正在工作，请结束当前工作后再应用环境配置",
   "roomBusyRetryLater": "房间正在工作，请稍后重试",
   "computeCloudCannotNameDevice": "云配置不能指定自有设备",
+  "computeWholeMachineIsCloud": "整台云虚拟机是云端的选项，不能配自有设备",
   "screenBillingCaPathUnset": "未设置 SUBSCRIPTION_CA_BACKEND_PATH——device 屏幕需要后端能读到计费代理的 CA（部署侧把代理的 mitmproxy-ca-cert.pem 只读挂载进后端并指向它）",
   "screenBillingCaEmpty": "计费代理 CA 为空（SUBSCRIPTION_CA_BACKEND_PATH={path}）",
   "screenSetupStateUnreadable": "无法读取机器上的环境准备状态",
@@ -697,6 +699,7 @@
   "environmentPreparationFailed": "环境准备失败，这条消息还没有开始处理。",
   "boundDeviceOffline": "绑定的设备不在线，本轮无法运行",
   "cloudKeepsFailing": "沙箱准备失败：云端在 {minutes} 分钟内连续 {failures} 次没能开出资源，暂停自动重试。对话和平台工具仍可用。",
+  "cloudVmKeepsFailing": "云虚拟机准备失败：云端在 {minutes} 分钟内连续 {failures} 次没能开出资源，暂停自动重试。对话和平台工具仍可用。",
   "memoryFileVersionConflict": "{path} 的这一版已经改不动了：{detail}。重读一次，把改动并进去，再写。",
   "memoryFileNotWritten": "{path} 没有写入：{reason}",
   "memoryFileDeleted": "它已经被删掉了",
@@ -944,6 +947,7 @@
   "deviceOffline": "设备 {device} 离线",
   "deviceLinkInterrupted": "与设备 {device} 的连接在执行中断开，这次操作的结果未知",
   "cloudBusy": "云端资源紧张，暂时无法准备沙箱，请稍后再试。对话和平台工具仍可用。",
+  "cloudVmBusy": "云端资源紧张，暂时无法准备云虚拟机，请稍后再试。对话和平台工具仍可用。",
   "cloudMembersOnly": "只有项目成员可以使用云端沙箱",
   "envSandboxFailed": "云端沙箱准备失败，尚未就绪。"
 }

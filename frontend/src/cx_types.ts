@@ -959,6 +959,8 @@ export interface TopicComputeProfile {
   devices: TopicComputeDevice[]
   sessions: RoomSessionMachine[]
   profiles: PoolListing[]
+  // Whether cloud also offers a whole VM per session (`whole_machine`).
+  cloud_vm_available: boolean
   visibility: TopicComputeVisibility
 }
 
@@ -995,6 +997,8 @@ export interface ComputeChoice {
   name: string | null
   profile: 'cloud' | 'device'
   device_id: string | null
+  // Cloud only: a whole virtual machine for each session instead of a sandbox.
+  whole_machine?: boolean
 }
 
 export interface SessionWorkLease {
@@ -1014,11 +1018,13 @@ export interface ProjectComputeConfigs {
   can_manage: boolean
   devices: TopicComputeDevice[]
   cloud_available: boolean
+  cloud_vm_available: boolean
   distribution: ComputeDistribution
 }
 
 export interface ComputeDistribution {
   cloud: number
+  cloud_vm: number
   devices: { device_id: string | null; name: string | null; agents: number; machine_access: boolean }[]
 }
 

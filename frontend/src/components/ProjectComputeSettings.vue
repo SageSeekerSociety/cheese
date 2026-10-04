@@ -79,19 +79,28 @@ watch(() => props.projectId, load)
         v-if="editing && state.can_manage"
         :devices="state.devices"
         :cloud-available="state.cloud_available"
+        :cloud-vm-available="state.cloud_vm_available"
         :busy="busy"
         @select="save"
       />
 
       <div class="distribution" data-testid="project-distribution">
         <div class="distribution-title">{{ t('work.projectMachine.distribution') }}</div>
-        <p v-if="!state.distribution.cloud && !state.distribution.devices.length" class="c-muted mb-0">
+        <p
+          v-if="!state.distribution.cloud && !state.distribution.cloud_vm && !state.distribution.devices.length"
+          class="c-muted mb-0"
+        >
           {{ t('work.projectMachine.noneStarted') }}
         </p>
         <ul v-else class="distribution-list">
           <li v-if="state.distribution.cloud">
             <span class="status-dot" />{{
               t('work.projectMachine.onCloud', { agents: agents(state.distribution.cloud) })
+            }}
+          </li>
+          <li v-if="state.distribution.cloud_vm">
+            <span class="status-dot" />{{
+              t('work.projectMachine.onCloudVm', { agents: agents(state.distribution.cloud_vm) })
             }}
           </li>
           <li v-for="device in state.distribution.devices" :key="device.device_id ?? ''">

@@ -337,6 +337,7 @@ def periodic_jobs(
     *,
     chat: "ChatService",
     machines: Sweeper,
+    vms: Sweeper,
     sessions: SessionFactory,
 ) -> list[PeriodicRunner]:
     """Every periodic job the platform runs, in one list.
@@ -444,6 +445,13 @@ def periodic_jobs(
             "cloud host pool sweep",
             settings.machine_enroll_interval_seconds,
             machines.sweep,
+        ),
+        # Idle whole cloud VMs are pushed and released, in a loop of its own
+        # because a push can take minutes (machine/cloud_vm.py).
+        PeriodicRunner(
+            "cloud vm idle release",
+            settings.machine_enroll_interval_seconds,
+            vms.sweep,
         ),
         PeriodicRunner(
             "cloud warm pool",

@@ -338,7 +338,12 @@
   "sandboxPreparing": "Preparing the sandbox",
   "sandboxReady": "The sandbox is ready",
   "sandboxReplaced": "Preparing the sandbox failed; preparing it again",
+  "cloudVmPreparing": "Preparing the cloud VM",
+  "cloudVmReady": "The cloud VM is ready",
+  "cloudVmReplaced": "Preparing the cloud VM failed; preparing it again",
+  "cloudVmReleasedIdle": "The cloud VM was idle for {minutes} minutes. Its changes were pushed to their branches and it was released; the next message prepares a new one.",
   "sandboxFailing": "The cloud sandbox keeps failing",
   "sandboxFailingNext": "The topic stays where it is and won't move elsewhere on its own. Someone needs to check the connector and the session in this sandbox; retry once it is fixed.",
-  "computeCloud": "Cloud sandbox"
+  "computeCloud": "Cloud sandbox",
+  "computeCloudVm": "Whole cloud VM"
 }
