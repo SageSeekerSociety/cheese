@@ -6,7 +6,7 @@
 什么都不在，而它一个字都不知道为什么。
 
 所以这一段不由 `build_system_prompt` 自己猜，由调用方按 runtime 的能力传进来
-（`AgentRuntime.keeps_memory`，见 `harness/__init__.py`）。
+（`session_host/host.py` 的 `keeps_memory`，读的是骨架注册表）。
 """
 
 from app.domain.agent.harness.prompt import build_system_prompt

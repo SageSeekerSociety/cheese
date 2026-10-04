@@ -18,12 +18,10 @@ import pytest
 from sqlalchemy import select
 
 from app.core.config import settings
-from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import execution
 from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness import SessionRef, harness_for
-from app.domain.agent.harness.claude_code import ClaudeCodeChannel, ClaudeCodeRuntime
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.supply import Supply
@@ -32,6 +30,7 @@ from app.domain.machine import session_work
 from app.domain.topic.models import Topic
 from app.domain.user.models import User
 from tests.integration.conftest import post_project, session_auth_headers
+from tests.integration.test_central_room_sessions import screen_for, sessions
 
 INSTALLED = {
     "workspace": "/project",
@@ -150,18 +149,7 @@ def _open(central, project, topic, agent, *, resume=None):
 
     async def prepare():
         ref = SessionRef(project, topic, agent, harness="claude-code")
-        precheck = await central.precheck(ref, needs_place=True)
-        await central.ensure_ready(
-            session=ref,
-            token=mint_scoped_token(
-                project_id=str(project),
-                topic_id=str(topic),
-                agent_handle=precheck.agent_handle,
-            ),
-            env={},
-            launch=ClaudeLaunch("System", resume_session_id=resume),
-            precheck=precheck,
-        )
+        await screen_for(central, ref, ClaudeLaunch("System", resume_session_id=resume))
         return central._ensure_screen.await_args.kwargs
 
     opening = client.portal.call(prepare)
@@ -378,14 +366,13 @@ async def test_a_room_that_switched_harness_is_claimed_by_one_channel(
     会话行按 (房间, agent, 骨架) 各占一行，而换骨架的时候没有任何地方去把旧那行
     的位置清空，所以这样的房间带着两行非空的 ``runtime_location``。收养清单把同
     一座位的两行都交出来（多 agent 的房间每个座位都要被接回来），防认错靠两层：
-    屏只有一块，``CentralChannel.restore`` 按 (房间, 机器) 去重后只认回一次；
+    屏只有一块，Claude Code 的驱动按 (房间, 机器) 去重后只认回一次；
     会话归谁由各骨架按自己 harness 的行认，旧骨架那行的 runner 早已随换骨架被
     关掉，ping 不应答（这里的桩不报 alive），认不回来。
 
-    认领的判据在 runtime 那一侧，是它自己的骨架——通道答不出这个，一条
-    ``CentralChannel`` 同时被几个骨架的 runtime 包着（``build_compute_pool``）。
-    所以通道只把落在自己这儿的屏原样认回来（``CentralChannel.restore``），
-    哪条会话归谁由各骨架按会话行自己认。
+    认领的判据在房间的会话那一侧，是它自己的骨架——一条 ``CentralChannel``
+    同时为几个骨架放会话（``build_compute_pool``），通道只答「放在我这儿的有哪
+    些」（``CentralChannel.placed``），哪条会话归谁由各骨架按会话行自己认。
     """
     project, topic = room
     for harness in ("claude-code", "pi"):
@@ -415,8 +402,7 @@ async def test_a_room_that_switched_harness_is_claimed_by_one_channel(
     central = channel(client, monkeypatch)
     central.restore_screens = AsyncMock()
 
-    client.portal.call(central.restore)
-    central.restore_screens.assert_awaited_once_with([(project, topic, "center")])
     # 这块屏是 pi 开的，所以 Claude Code 那一侧一条都不认领。
-    runtime = ClaudeCodeRuntime(ClaudeCodeChannel(central))
+    runtime = sessions(central)
     assert client.portal.call(runtime.recover) == []
+    central.restore_screens.assert_awaited_once_with([(project, topic, "center")])

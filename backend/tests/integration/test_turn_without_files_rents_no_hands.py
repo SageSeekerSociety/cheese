@@ -27,7 +27,6 @@ import pytest
 from sqlalchemy import text as sql
 
 from app.core.config import settings
-from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
@@ -50,6 +49,7 @@ from tests.integration.conftest import (
     registered,
     session_auth_headers,
 )
+from tests.integration.test_central_room_sessions import screen_for
 
 pytestmark = pytest.mark.anyio
 
@@ -77,7 +77,6 @@ def central_over_offline_hands(client, monkeypatch):
     """中心会话机在线，而每一台工作机都不在——I2 说的就是这个局面。"""
     monkeypatch.setattr(settings, "agent_session_device_id", "center")
     hub: Any = SimpleNamespace(
-        target=lambda _device: "linux-amd64",
         is_online=lambda device: device == "center",
         call_executor=AsyncMock(return_value={"generation": "fixture", "entries": {}}),
         exec=AsyncMock(return_value={"exit": 0, "stdout": json.dumps(INSTALLED)}),
@@ -130,10 +129,7 @@ async def test_a_channel_nobody_wraps_answers_the_question_too(
     """
     project, topic = room
     monkeypatch.setattr(settings, "agent_session_device_id", "center")
-    hub: Any = SimpleNamespace(
-        target=lambda _device: "linux-amd64",
-        is_online=lambda device: device == "center",
-    )
+    hub: Any = SimpleNamespace(is_online=lambda device: device == "center")
     channel = DeviceChannel(hub=hub, session_factory=business_db_factory)
     session = SessionRef(project, topic, "cheese", harness="pi")
 
@@ -155,12 +151,11 @@ async def test_a_session_with_no_hands_runs_in_its_own_scratch_area(
     central = central_over_offline_hands(client, monkeypatch)
 
     client.portal.call(
-        lambda: central.ensure_ready(
-            session=SessionRef(project, topic, "cheese", harness="claude-code"),
-            token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
-            env={},
-            launch=ClaudeLaunch("System"),
-            precheck=Placement("center", 1, "cheese-x", rented=False),
+        lambda: screen_for(
+            central,
+            SessionRef(project, topic, "cheese", harness="claude-code"),
+            ClaudeLaunch("System"),
+            Placement("center", 1, "cheese-x", rented=False),
         )
     )
 
@@ -181,13 +176,7 @@ async def test_ordinary_room_opens_without_executing_on_the_session_host(
     ref = SessionRef(project, topic, "cheese", harness="claude-code")
 
     async def open_room():
-        await central.ensure_ready(
-            session=ref,
-            token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
-            env={},
-            launch=ClaudeLaunch("System"),
-            precheck=await central.precheck(ref, needs_place=True),
-        )
+        await screen_for(central, ref, ClaudeLaunch("System"))
 
     client.portal.call(open_room)
     opened = central._ensure_screen.await_args.kwargs
@@ -195,65 +184,6 @@ async def test_ordinary_room_opens_without_executing_on_the_session_host(
     assert opened["device_id"] == "center"
     assert target["kind"] == "deferred"
     central._hub.exec.assert_not_awaited()
-
-
-async def test_the_hands_decide_the_workspace_not_the_memory_scope(
-    business_db_factory, room, monkeypatch
-):
-    """开在草稿区还是项目工作区，由「租到手没有」决定；记忆算谁的只管记忆。
-
-    今天「不租手」与「记忆算个人的」恰好是同一个比特，所以拿后者挑工作区还看不
-    出问题。第二种不租手的轮次一出现（平台自己起的那几轮就是），拿记忆范围去挑
-    的那条路就会在会话机上打开项目工作区——一个事实只该声明一次。
-    """
-    project, topic = room
-    hub: Any = SimpleNamespace(
-        target=lambda _device: "linux-amd64", is_online=lambda device: True
-    )
-    channel = DeviceChannel(hub=hub, session_factory=business_db_factory)
-    channel._existing_screen = lambda *args: None
-    channel._ensure_screen = AsyncMock(
-        return_value=SimpleNamespace(device_id="center", sid="s1")
-    )
-    session = SessionRef(project, topic, "cheese", harness="pi")
-    token = mint_scoped_token(project_id=str(project), topic_id=str(topic))
-
-    await channel.ensure_ready(
-        session=session,
-        token=token,
-        env={},
-        memory_scope=None,
-        owner=None,
-        turn_id=None,
-        launch=None,
-        precheck=Placement("center", 1, "cheese-x", rented=False),
-    )
-
-    opened = channel._ensure_screen.await_args.kwargs
-    target = json.loads(opened["env"]["CHEESE_EXECUTION_TARGET"])
-    assert target["kind"] == "private"
-    assert target["device_id"] == "center"
-
-    # 反过来也要立得住：租到手的一轮，记忆算个人的也照样开在项目工作区里。
-    channel._ensure_screen.reset_mock()
-    await channel.ensure_ready(
-        session=session,
-        token=token,
-        env={},
-        memory_scope="personal",
-        owner="u",
-        turn_id=None,
-        launch=None,
-        precheck=Placement("worker", 1, "cheese-x", rented=True),
-    )
-
-    opened = channel._ensure_screen.await_args.kwargs
-    assert "CHEESE_EXECUTION_TARGET" not in opened["env"]
-    # 记忆算个人的这件事（`memory_scope`）不再往 env 里塞东西：`CHEESE_MEMORY_SCOPE`
-    # /`CHEESE_OWNER` 是给 `cheese remember` 用的，那个工具撤了，两个变量也没有读
-    # 取方了。它到这一层就为止——上面那两个断言正是「它没顺手改工作区」。
-    assert "CHEESE_MEMORY_SCOPE" not in opened["env"]
-    assert "CHEESE_OWNER" not in opened["env"]
 
 
 class CountsConnections:
@@ -295,9 +225,7 @@ async def test_session_host_check_releases_connection_without_acquiring_hands(
     project, topic = room
     monkeypatch.setattr(settings, "agent_session_device_id", "center")
     counter = CountsConnections(business_db_factory)
-    hub: Any = SimpleNamespace(
-        target=lambda _device: "linux-amd64", is_online=lambda device: True
-    )
+    hub: Any = SimpleNamespace(is_online=lambda device: True)
     executor = DeviceChannel(hub=hub, session_factory=counter)
     central: Any = CentralChannel(executor)
     held_when_asked: list[int] = []
@@ -329,13 +257,13 @@ class HandsRefused(StubChannel):
         super().__init__()
         self.asked: list[bool] = []
 
-    async def ensure(self, session, opening, live=None):
-        # The turn says whether it needs hands (`Opening.needs_place`); a
-        # channel with no machine to give refuses only the turn that does.
-        self.asked.append(opening.needs_place)
-        if opening.needs_place:
+    async def precheck(self, session, *, needs_place):
+        # The turn says whether it needs hands; a channel with no machine to
+        # give refuses only the turn that does.
+        self.asked.append(needs_place)
+        if needs_place:
             raise ScreenSetupError("没有在线的绑定设备可运行本轮")
-        return await super().ensure(session, opening, live)
+        return await super().precheck(session, needs_place=needs_place)
 
 
 async def test_a_private_chat_answers_while_every_work_machine_is_offline(

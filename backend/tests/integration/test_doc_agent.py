@@ -53,19 +53,18 @@ class FakeSessions:
     async def start(self, ref, spec, access) -> None:
         pass
 
-    async def send(self, ref, spec, access, prompt, *, work_id):
+    async def send(self, ref, prompt, *, work_id):
         self.asked.append((ref, prompt.text))
         answer, error = "好的。", None
         if self.script is not None:
             answer, error = await self.script(prompt.acting, prompt.text)
         self._answers[ref] = (str(work_id), answer, error)
-        return None
 
-    async def read(self, ref, after):
+    async def read(self, ref):
         work, answer, error = self._answers.pop(ref)
         if answer:
-            yield Read(None, work, AgentMessage(answer))
-        yield Read(None, work, AgentResult(error or "", None, is_error=bool(error)))
+            yield Read(work, AgentMessage(answer))
+        yield Read(work, AgentResult(error or "", None, is_error=bool(error)))
 
     async def status(self, ref):
         return None

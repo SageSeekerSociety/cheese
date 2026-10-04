@@ -29,16 +29,26 @@ from app.domain.agent import execution, machine_launcher
 from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_provider import DeviceChannel
-from app.domain.agent.harness import Opening, SessionRef, harness_for
-from app.domain.agent.harness.channel import Placement, ScreenSetupError
-from app.domain.agent.harness.claude_code import ClaudeCodeChannel, ClaudeCodeRuntime
+from app.domain.agent.harness import (
+    CLAUDE_CODE,
+    CODEX,
+    HARNESSES,
+    PI,
+    SessionRef,
+    harness_for,
+)
+from app.domain.agent.harness.channel import (
+    Placement,
+    ScreenSetupError,
+    mint_session_token,
+)
 from app.domain.agent.harness.claude_code.bundle import build
 from app.domain.agent.harness.claude_code.cli import LAUNCH_ARGS
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
-from app.domain.agent.harness.codex import CodexChannel
-from app.domain.agent.harness.driven.runner import socket_path
+from app.domain.agent.harness.driven.runner import LONG_POLL, socket_path
 from app.domain.agent.harness.launch import MachinePlace
-from app.domain.agent.harness.pi.channel import PiChannel
+from app.domain.agent.room.sessions import RoomSessions
+from app.domain.agent.session_host.host import SessionHost
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
@@ -135,10 +145,17 @@ async def room(client):
 
 def channel(client, monkeypatch):
     monkeypatch.setattr(settings, "agent_session_device_id", "center")
+
+    async def runner(device, state, method, params, **_):
+        if method == "ping":
+            # A runner that is up: its session, and that it holds a read.
+            return {"alive": True, "session_id": "s1", "capabilities": [LONG_POLL]}
+        return {"generation": "fixture", "entries": {}}
+
     hub: Any = SimpleNamespace(
         target=lambda _device: "linux-amd64",
         is_online=lambda device: device in {"center", "executor"},
-        call_executor=AsyncMock(return_value={"generation": "fixture", "entries": {}}),
+        call_executor=AsyncMock(side_effect=runner),
         exec=AsyncMock(
             return_value={
                 "exit": 0,
@@ -159,43 +176,13 @@ def channel(client, monkeypatch):
     return central
 
 
-@pytest.mark.anyio
-async def test_a_harness_without_an_executor_is_refused_by_name(
-    client, room, monkeypatch
-):
-    """这条路要另指派一台执行机，所以计划得会装执行器、会把对话搬过去。
-
-    A harness that runs where the files already are answers neither, and the
-    room has to be told which one it was rather than watch a screen fail to
-    open. Codex hands this same route a plan with ONLY those two answers and
-    no screen at all, so the check cannot be spelled as "a whole launch plan"
-    and cannot live where Codex passes through.
-    """
-    project, topic = room
-    central = channel(client, monkeypatch)
-
-    class OnlyAMachine:
-        """A launch for a machine and nothing else: no executor to install."""
-
-        harness = "only-a-machine"
-        system_prompt = "System"
-        model = "glm-5.2"
-        resume_session_id = None
-
-        def on(self, place):
-            raise AssertionError("never asked where")
-
-    async def exercise():
-        with pytest.raises(ScreenSetupError, match="only-a-machine"):
-            await central.ensure_ready(
-                session=ref(project, topic),
-                token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
-                env={},
-                launch=OnlyAMachine(),
-                precheck=await central.precheck(ref(project, topic), needs_place=True),
-            )
-
-    client.portal.call(exercise)
+def sessions(central, harness=CLAUDE_CODE) -> RoomSessions:
+    """A room's sessions of ``harness`` over ``central``, on a session core
+    whose screens are the channel's own."""
+    host = SessionHost(
+        central._hub, screens=central, session_factory=central._session_factory
+    )
+    return RoomSessions(central, harness, host)
 
 
 # What the executor installation reports about itself. ``state`` is where it put
@@ -210,11 +197,9 @@ INSTALLED = {
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("central_execution", [False])
 async def test_commits_use_the_authenticated_teammate_not_the_room_identity(
-    client, room, monkeypatch, tmp_path, central_execution
+    client, room, monkeypatch, tmp_path
 ):
-    from app.domain.agent.harness.claude_code.remote_execution import launch
     from app.domain.identity.services import IdentityService
 
     project, topic = room
@@ -223,21 +208,9 @@ async def test_commits_use_the_authenticated_teammate_not_the_room_identity(
         actor_id = actor.id
         await db.commit()
     central = channel(client, monkeypatch)
-    captured = {}
-    central._hub.all_online_screens = lambda: []
-
-    def bootstrap(project, resource, env):
-        captured.update(env)
-        return "fixture-bootstrap"
-
-    monkeypatch.setattr(launch, "script", bootstrap)
-    selected = central if central_execution else central.executor
-    selected._ensure_screen = AsyncMock(
-        return_value=SimpleNamespace(device_id="center", sid="s1")
-    )
 
     async def exercise():
-        await selected.ensure_ready(
+        async with central.prepare_session(
             session=ref(project, topic),
             token=mint_scoped_token(
                 project_id=str(project),
@@ -245,16 +218,10 @@ async def test_commits_use_the_authenticated_teammate_not_the_room_identity(
                 agent_handle="other-teammate",
             ),
             env={},
-            memory_scope=None,
-            owner=None,
-            turn_id=None,
-            launch=ClaudeLaunch("System"),
             precheck=Placement("executor", 1, "room-stand-in", rented=True),
-        )
-        screen = selected._ensure_screen.await_args.kwargs
-        assert screen["agent_handle"] == "other-teammate"
-        assert screen["agent_user_id"] == actor_id
-        if not central_execution:
+        ) as prepared:
+            assert prepared.agent_handle == "other-teammate"
+            assert prepared.agent_user_id == actor_id
             captured = machine_launcher.screen_env(
                 MachinePlace(
                     home=str(tmp_path),
@@ -264,9 +231,9 @@ async def test_commits_use_the_authenticated_teammate_not_the_room_identity(
                     api_base="http://fixture",
                     project_id=str(project),
                     topic_id=str(topic),
-                    agent_handle=screen["agent_handle"],
+                    agent_handle=prepared.agent_handle,
                 ),
-                token=screen["token"],
+                token=prepared.token,
             )
         assert captured["CHEESE_AUTHOR"] == "other-teammate"
         env = {
@@ -317,39 +284,40 @@ async def test_codex_placement_recovers_only_as_codex(client, room, monkeypatch)
         central._hub.exec.side_effect = [
             {
                 "exit": 0,
-                "stdout": json.dumps({"thread_id": "codex-thread", "alive": True}),
+                "stdout": json.dumps(
+                    {
+                        "thread_id": "codex-thread",
+                        "alive": True,
+                        "capabilities": [LONG_POLL],
+                    }
+                ),
             },
         ]
-        codex = CodexChannel(central, ClaudeLaunch("system").execution)
-        session = SessionRef(project, topic, AGENT, harness="codex")
+        codex = sessions(central, CODEX)
+        session = SessionRef(project, topic, AGENT, harness=CODEX)
         actual_agent = (await central.precheck(session, needs_place=True)).agent_handle
-        handle = await codex.ensure(
-            session,
-            Opening("shared system", model="fixture", agent_handle=actual_agent),
+        live = await codex.ensure(
+            session, system_prompt="shared system", model="fixture", acting=actual_agent
         )
-        assert handle.thread_id == "codex-thread"
-        place = await session_place(client.test_request_factory, topic, AGENT, "codex")
+        assert live.conversation == "codex-thread"
+        place = await session_place(client.test_request_factory, topic, AGENT, CODEX)
         assert place is not None
         assert place.runtime == {
-            "harness": "codex",
+            "harness": CODEX,
             "agent_handle": actual_agent,
-            "state": handle.state,
+            "state": f"$HOME/.cheese/{live.ref.home}",
         }
         assert place.lease is None
+        central._hub.call_executor.side_effect = None
         central._hub.call_executor.return_value = {
             "thread_id": "codex-thread",
             "alive": True,
+            "capabilities": [LONG_POLL],
         }
-        assert await codex.discover("center") == [handle]
-        # 中心通道同时被几个骨架的 runtime 包着（``build_compute_pool``），
-        # 所以它答不出哪一条会话是谁的，也不该答：它只把落在自己这儿的屏认回来。
-        central.restore_screens = AsyncMock()
-        await central.restore("center")
-        central.restore_screens.assert_awaited_once_with([(project, topic, "center")])
-        # 认领在 runtime 这一侧，判据是它自己的骨架——所以 Claude Code 一条也认不到，
-        # 不靠平台层写一个 "claude-code" 把别人的会话挡在外面。
-        claude = ClaudeCodeRuntime(ClaudeCodeChannel(central))
-        assert await claude.recover("center") == []
+        # A backend that comes back finds the session as Codex's, and the
+        # harness that reads it is told by its own row: Claude Code finds none.
+        assert await sessions(central, CODEX).recover("center") == [session]
+        assert await sessions(central, CLAUDE_CODE).recover("center") == []
 
     client.portal.call(exercise)
 
@@ -369,46 +337,45 @@ async def test_pi_starts_on_the_session_host_and_recovers_only_as_pi(
             {
                 "exit": 0,
                 "stdout": json.dumps(
-                    {"session_id": "pi-session", "alive": True, "pid": 1}
+                    {
+                        "session_id": "pi-session",
+                        "alive": True,
+                        "pid": 1,
+                        "capabilities": [LONG_POLL],
+                    }
                 ),
             },
         ]
-        pi = PiChannel(central, ClaudeLaunch("system").execution)
-        session = SessionRef(project, topic, AGENT, harness="pi")
+        pi = sessions(central, PI)
+        session = SessionRef(project, topic, AGENT, harness=PI)
         actual_agent = (await central.precheck(session, needs_place=True)).agent_handle
-        handle = await pi.ensure(
-            session,
-            Opening(
-                "shared system",
-                model="fixture",
-                agent_handle=actual_agent,
-                needs_place=True,
-            ),
+        live = await pi.ensure(
+            session, system_prompt="shared system", model="fixture", acting=actual_agent
         )
-        assert handle.session_id == "pi-session"
+        assert live.conversation == "pi-session"
         # Launched on the session host, as one program over its stdin.
         ((device, argv), _), *_ = [
             (call.args, call.kwargs) for call in central._hub.exec.await_args_list
         ]
         assert (device, argv) == ("center", ["python3", "-"])
-        place = await session_place(client.test_request_factory, topic, AGENT, "pi")
+        place = await session_place(client.test_request_factory, topic, AGENT, PI)
         assert place is not None
         assert place.machine == "center"
         assert place.runtime == {
-            "harness": "pi",
+            "harness": PI,
             "agent_handle": actual_agent,
-            "state": handle.state,
+            "state": f"$HOME/.cheese/{live.ref.home}",
         }
         # Nothing was taken for it: the session's hands come with its work.
         assert place.lease is None
+        central._hub.call_executor.side_effect = None
         central._hub.call_executor.return_value = {
             "session_id": "pi-session",
             "alive": True,
+            "capabilities": [LONG_POLL],
         }
-        assert await pi.discover("center") == [handle]
-        central.restore_screens = AsyncMock()
-        claude = ClaudeCodeRuntime(ClaudeCodeChannel(central))
-        assert await claude.recover("center") == []
+        assert await sessions(central, PI).recover("center") == [session]
+        assert await sessions(central, CLAUDE_CODE).recover("center") == []
 
     client.portal.call(exercise)
 
@@ -455,13 +422,7 @@ async def test_a_room_stays_writable_while_its_agent_is_starting(
         central._ensure_screen = AsyncMock(side_effect=slow_screen)
 
         setup = asyncio.create_task(
-            central.ensure_ready(
-                session=ref(project, topic),
-                token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
-                env={},
-                launch=ClaudeLaunch("System"),
-                precheck=await central.precheck(ref(project, topic), needs_place=True),
-            )
+            sessions(central).ensure(ref(project, topic), system_prompt="System")
         )
         try:
             await free_while(opening)
@@ -483,15 +444,12 @@ async def test_room_starts_centrally_and_keeps_recorded_placement(
 
     async def exercise():
         precheck = await central.precheck(ref(project, topic), needs_place=True)
-        screen = await central.ensure_ready(
-            session=ref(project, topic),
-            token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
+        await sessions(central).ensure(
+            ref(project, topic),
+            system_prompt="System",
             env={"CHEESE_ENVIRONMENT": '{"revision":"one"}'},
-            launch=ClaudeLaunch("System"),
-            precheck=precheck,
-            turn_id=uuid.uuid4(),
         )
-        assert screen.device_id == "center"
+        assert central._ensure_screen.await_args.kwargs["device_id"] == "center"
         central._hub.exec.assert_not_awaited()
         opening = central._ensure_screen.await_args.kwargs
         assert "CHEESE_ENVIRONMENT" not in opening["env"]
@@ -871,8 +829,8 @@ async def test_the_room_looks_at_its_session_and_never_steers_it(client, room):
         return {"subtype": "success", "response": {"totalTokens": 1}}
 
     session = SimpleNamespace(
-        controls=ClaudeCodeRuntime.controls,
-        executor_controls=ClaudeCodeRuntime.executor_controls,
+        controls=HARNESSES[CLAUDE_CODE].controls,
+        executor_controls=HARNESSES[CLAUDE_CODE].executor_controls,
         control_state=control_state,
         control=control,
     )
@@ -946,16 +904,36 @@ def center_room(client, monkeypatch):
     central._device_api_base = AsyncMock(return_value="http://central-api")
 
     async def turn(project, topic):
-        session = ref(project, topic)
-        return await central.ensure_ready(
-            session=session,
-            token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
-            env={},
-            launch=ClaudeLaunch("System", resume_session_id="conversation"),
-            precheck=await central.precheck(session, needs_place=True),
+        return await screen_for(
+            central,
+            ref(project, topic),
+            ClaudeLaunch("System", resume_session_id="conversation"),
         )
 
     return hub, turn
+
+
+async def screen_for(central, session, launch, precheck=None):
+    """The screen a room's turn opens or keeps for its Claude Code session:
+    the room's placement, and the screen the session is started in there."""
+    precheck = precheck or await central.precheck(session, needs_place=True)
+    token = mint_session_token(
+        session.project_id, session.topic_id, precheck.agent_handle
+    )
+    async with central.prepare_session(
+        session=session, token=token, env={}, precheck=precheck
+    ) as prepared:
+        return await central._ensure_screen(
+            device_id=prepared.device_id,
+            agent_user_id=prepared.agent_user_id,
+            agent_handle=prepared.agent_handle,
+            project_id=session.project_id,
+            topic_id=session.topic_id,
+            token=prepared.token,
+            env=prepared.env,
+            launch=launch,
+            environment_before={},
+        )
 
 
 async def lease_machine(factory, topic, workspace):
@@ -1042,12 +1020,11 @@ async def test_a_room_without_a_machine_keeps_its_session_from_turn_to_turn(
         DeviceChannel(hub=hub, session_factory=client.test_request_factory)
     )
     central._device_api_base = AsyncMock(return_value="http://central-api")
-    claude = ClaudeCodeChannel(central)
 
     async def exercise():
         session = ref(project, topic)
         for _ in range(3):
-            await claude.ensure(session, Opening("System", resume_token="s"))
+            await screen_for(central, session, ClaudeLaunch("System", "s"))
         assert len(hub.envs) == 1 and hub.closed == []
         target = json.loads(hub.envs[0]["CHEESE_EXECUTION_TARGET"])
         assert target["workspace"] == "/unavailable-project"
@@ -1272,33 +1249,37 @@ async def test_a_room_session_is_the_runner_its_screen_started(
     central = channel(client, monkeypatch)
     central._hub.call_executor = call_executor
     central._ensure_screen = open_screen
-    claude = ClaudeCodeChannel(central)
+    central.restore_screens = AsyncMock()
 
     async def exercise():
         session = ref(project, topic)
-        handle = await claude.ensure(session, Opening("System"))
+        live = await sessions(central).ensure(session, system_prompt="System")
         place = await session_place(client.test_request_factory, topic)
-        assert place.runtime["state"] == handle.state
-        assert handle.session_id
+        assert place.runtime["state"] == f"$HOME/.cheese/{live.ref.home}"
+        assert live.conversation
+        state = place.runtime["state"]
 
         sent = {"input_id": "message-1", "text": "hello", "work_id": str(uuid.uuid4())}
-        assert await claude.call(handle, "send", sent) == {"input_id": "message-1"}
+        assert await call_executor("center", state, "send", sent) == {
+            "input_id": "message-1"
+        }
         async with asyncio.timeout(60):
             while True:
                 records = [
                     entry["record"]
-                    for entry in (await claude.call(handle, "events", {}))["events"]
+                    for entry in (await call_executor("center", state, "events", {}))[
+                        "events"
+                    ]
                 ]
                 if any(record.get("type") == "result" for record in records):
                     break
                 await asyncio.sleep(0.2)
         result = next(record for record in records if record.get("type") == "result")
         assert result["is_error"] is False, result
-        assert result["session_id"] == handle.session_id
+        assert result["session_id"] == live.conversation
 
         # A backend that restarted knows the session only by its row.
-        central.restore_screens = AsyncMock()
-        assert await ClaudeCodeChannel(central).discover("center") == [handle]
+        assert await sessions(central).recover("center") == [session]
 
     try:
         client.portal.call(exercise)

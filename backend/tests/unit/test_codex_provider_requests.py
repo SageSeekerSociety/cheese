@@ -11,11 +11,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
 
 from app.domain.agent.capability import BuiltIn, Missing
-from app.domain.agent.harness import Opening
 from app.domain.agent.harness.codex import declaration as codex_declaration
 from app.domain.agent.harness.codex.events import Assembler
 from app.domain.agent.harness.codex.runner import Runner
-from app.domain.agent.harness.driven.runner import socket_path
+from app.domain.agent.harness.driven.runner import SessionStart, socket_path
 from app.domain.agent.service import AgentMessage, AgentResult, AgentToolUse
 from tests.pinned_claude import codex_binary
 from tests.support.harness_prompts import event_prompts, system_prompt
@@ -217,7 +216,7 @@ async def _drive(tmp_path, model) -> list[dict]:
         nonlocal runner
         runner = Runner(state, on_request)
         return await runner.start(
-            Opening(system_prompt=prompt, resume_token=resume),
+            SessionStart(system_prompt=prompt, resume_token=resume),
             binary=codex_binary(),
             cwd=str(workspace),
             env={
@@ -249,7 +248,7 @@ async def _drive(tmp_path, model) -> list[dict]:
             try:
                 with pytest.raises(BlockingIOError):
                     await contender.start(
-                        Opening("unused"),
+                        SessionStart("unused"),
                         binary="must-not-start",
                         cwd=str(workspace),
                         env={},

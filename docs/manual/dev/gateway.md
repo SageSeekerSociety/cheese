@@ -67,7 +67,7 @@ Dockerfile 从上游镜像的 digest 派生，打补丁前先核对被改文件�
 | --- | --- |
 | `patch_stream_timing.py` | 上游流式 logger 从包装器创建时才起表，漏掉前面的请求时间；补丁保留日志对象原本的请求开始时间，并让流拿到一个由自己持有的 HTTP 客户端 |
 | `retry_stream.py` | `ClientOwnedStream` 让客户端活到流关闭，避免重试期间连接被提前回收 |
-| `patch_deepseek_images.py` | 只在不支持视觉的模型上把 content 列表压成字符串 |
+| `patch_deepseek_images.py` | 上游只保留 user 消息里的图片；工具结果（Claude Code 读本地图片）在适配后是 tool 消息，补丁让它也保留图片 |
 | `patch_empty_anthropic_text.py` | 丢掉空的 system 文本块、剥掉嵌套 tool_result 里的空文本 |
 | `provider_http_timing.py` | 打 `provider_http_timing` 记录：DNS/TLS/超时/401·403/429/1113 配额/其它 HTTP 错误分类，未知的 500 不会被说成网络原因 |
 | `check_config.py` | 用 config.yaml 建一个 Router，断言 thinking 与 effort 的转换行为 |

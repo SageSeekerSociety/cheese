@@ -18,10 +18,9 @@ from pathlib import Path
 
 import pytest
 
-from app.domain.agent.harness import Opening
 from app.domain.agent.harness.codex.runner import Runner as CodexRunner
 from app.domain.agent.harness.codex.tools import RemoteTools
-from app.domain.agent.harness.driven.runner import reply_owed_path
+from app.domain.agent.harness.driven.runner import SessionStart, reply_owed_path
 from app.domain.agent.harness.pi.launch import arguments, extension, provider
 from app.domain.agent.harness.pi.runner import Runner as PiRunner
 from app.domain.agent.harness.prompt import PLATFORM_NOTICE
@@ -97,7 +96,7 @@ async def _pi_machine(tmp_path: Path):
     async def start(**options) -> PiRunner:
         runner = PiRunner(tmp_path / "state", **options)
         await runner.start(
-            Opening(
+            SessionStart(
                 system_prompt="FIXTURE", model="fixture-model", agent_handle="cheese"
             ),
             binary=pi_binary(),
@@ -210,7 +209,7 @@ async def _codex_machine(tmp_path: Path):
         runner = CodexRunner(state, tools, skills=tools, **options)
         schemas = await tools.discover()
         tools.main_thread = await runner.start(
-            Opening(system_prompt="FIXTURE"),
+            SessionStart(system_prompt="FIXTURE"),
             binary=codex_binary(),
             cwd=str(workspace),
             env=env,

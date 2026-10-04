@@ -13,8 +13,9 @@ import asyncio
 import time
 import uuid
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
+from app.domain.agent.nonce import new_nonce
 from app.domain.agent.reads import Ended, Writing
 from app.domain.agent.service import AgentMessage, AgentResult, AgentToolUse
 from app.domain.agent.session_host.contract import (
@@ -66,10 +67,14 @@ async def ask(
     ``Answer``. Past ``ceiling_s`` the work is stopped and the answer is what
     failed to arrive."""
     deadline = time.monotonic() + ceiling_s
-    cursor = await host.send(ref, spec, access, prompt, work_id=work_id)
+    # The marker is how the runner knows which prompt the entries after it
+    # answer (`runner.refresh`).
+    prompt = replace(prompt, text=f"{prompt.text}\n{new_nonce()}")
+    await host.start(ref, spec, access)
+    await host.send(ref, prompt, work_id=work_id)
     work = str(work_id)
     text = _Text()
-    reading = host.read(ref, cursor)
+    reading = host.read(ref)
     try:
         while True:
             left = deadline - time.monotonic()

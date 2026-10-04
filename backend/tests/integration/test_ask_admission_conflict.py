@@ -16,7 +16,9 @@ from app.core.errors import ValidationError
 from app.domain.agent.answer_delivery import offer_answer
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
-from app.domain.agent.harness.claude_code.runtime import ClaudeCodeRuntime
+from app.domain.agent.harness import CLAUDE_CODE
+from app.domain.agent.room.sessions import RoomSessions
+from app.domain.agent.session_host.host import SessionHost
 from app.domain.block.models import Block
 from app.domain.delivery.input_identity import InputEffects, InputReceipt
 from app.domain.delivery.models import Delivery, NativeInput
@@ -58,7 +60,12 @@ def test_prompt_hold_rolls_back_answer_fence_before_external_io(client, monkeypa
             base_system_prompt="fixture",
             workspace_root="/unused",
             compute=ComputePool(
-                [ClaudeCodeRuntime(SimpleNamespace(name="unused"))], "unused"
+                [
+                    RoomSessions(
+                        SimpleNamespace(name="unused"), CLAUDE_CODE, SessionHost()
+                    )
+                ],
+                "unused",
             ),
         )
         registrar = chat._input_registrar(

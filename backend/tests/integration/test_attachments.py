@@ -5,6 +5,7 @@ POST /attachments 把字节收进项目的资料库，并在这个房间的文�
 里的 Read 能看图）。资料库本身见 test_library.py。
 """
 
+import base64
 import threading
 import uuid
 from urllib.parse import quote
@@ -407,7 +408,10 @@ def test_mixed_files_only_embed_the_image(client, tmp_path, midturn):
     session = screen._session_for(uuid.UUID(topic_id))
     handed = [m for m in session.written if m.get("type") == "user"][-1]["message"]
     image_blocks = [b for b in handed["content"] if b.get("type") == "image"]
-    assert [b["source"]["path"] for b in image_blocks] == [image["path"]]
+    assert [
+        (b["source"]["media_type"], base64.b64decode(b["source"]["data"]))
+        for b in image_blocks
+    ] == [("image/png", PNG_1PX)]
     prompt = screen.inputs[-1]
     assert "已附在本条消息里" in prompt
     for file in files:

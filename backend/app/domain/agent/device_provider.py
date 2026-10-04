@@ -31,7 +31,6 @@ from app.core.config import settings
 from app.core.sandbox_auth import (
     mint_scoped_token,
     scoped_token_claims,
-    token_agent_handle,
 )
 from app.core.sentences import NoticeText, say
 from app.domain.agent import machine_launcher, provider_env, screen_identity
@@ -1595,15 +1594,11 @@ class DeviceChannel(Channel):
 
     async def precheck(self, session: SessionRef, *, needs_place: bool) -> Placement:
         """Resolve the topic's pinned/online device + its agent identity before
-        anything is started on it. The resolved tuple is handed back to
-        ``ensure_ready`` via ``precheck``. Raises ``ScreenSetupError`` (offline
-        pinned device, or none online).
+        anything is started on it. Raises ``ScreenSetupError`` (offline pinned
+        device, or none online).
 
-        一轮不租手时解析的是这条会话自己的机器，不是项目钉住的工作机。pi 直接用
-        这条通道 (它是唯一没有包在 ``CentralChannel`` 外面的 backend)，所以「要不
-        要一双手」这一问在这里也必须答得出来——答不出来，一间私聊就会因为项目没
-        有在线工作机而整轮开不起来，正是 I2 要禁止的那件事。答案随 ``Placement``
-        交给 ``ensure_ready``，由它决定这一轮开在草稿区还是项目工作区。"""
+        一轮不租手时解析的是这条会话自己的机器，不是项目钉住的工作机：答不出来，
+        一间私聊就会因为项目没有在线工作机而整轮开不起来，正是 I2 要禁止的那件事。"""
         if not needs_place:
             return await self._session_host_agent(session)
         resolved = await self._resolve_device_agent(
@@ -1617,159 +1612,6 @@ class DeviceChannel(Channel):
             agent = await self._session_agent(db, session)
             await db.commit()
             return Placement(resolved[0], agent.id, agent.username, rented=True)
-
-    async def ensure_ready(
-        self,
-        *,
-        session: SessionRef,
-        token: str,
-        env: dict[str, str] | None,
-        memory_scope: str | None,
-        owner: str | None,
-        turn_id: uuid.UUID | None,
-        launch: MachinePlan,
-        precheck: object,
-    ) -> HubScreen:
-        """Reuse/open the topic's screen on the device resolved by ``precheck``;
-        return the screen (ctx). Raises ScreenSetupError when the screen fails.
-
-        What runs in that screen is the plan's answer, not this file's: a device
-        launch is a shell script, and the platform half of it is the same for
-        every harness (``machine_launcher``) while the harness fills the rest.
-        This channel says where — the home, the workdir, the state directory the
-        connector will resolve — and merges the two environments."""
-        assert isinstance(precheck, Placement)  # from our precheck
-        project_id, topic_id = session.project_id, session.topic_id
-        device_id = precheck.machine
-        agent_user_id, agent_handle = precheck.agent_user_id, precheck.agent_handle
-        rented = precheck.rented
-        # 记忆算谁的（``memory_scope`` / ``owner``）到这一层就为止了。它曾经从这里
-        # 塞进 ``CHEESE_MEMORY_SCOPE``/``CHEESE_OWNER`` 给 ``cheese remember`` 用，
-        # 而那个工具已经撤掉（记忆现在直接写文件），两个变量没有读取方了。这一轮开
-        # 在哪个工作区是 ``rented`` 的事，下面那一句说。
-        prepares_environment = (
-            bool((env or {}).get("CHEESE_ENVIRONMENT"))
-            and rented
-            and not (env or {}).get("CHEESE_EXECUTION_TARGET")
-        )
-        try:
-            from app.core.db import async_session_factory
-
-            factory = self._session_factory or async_session_factory
-            # Read which generation of the room this is, then let the connection
-            # go: nothing below writes, and every path into `ensure_ready` runs
-            # under ChatService's per-topic lock (`_prompt_lock`), so the row
-            # lock serialized nothing this process was not serializing already.
-            # Held across the device work it cost a pool connection, and the
-            # room's own row, for as long as starting an agent on a remote
-            # machine takes — which queued every writer of that row (a title, an
-            # archive, a read mark) behind it, each holding a connection of its
-            # own until the start finished.
-            async with factory() as room_session:
-                room = await TopicService(room_session).lock_for_execution(topic_id)
-                resource_id = room.resource_id or room.id
-                # Use the same actor for the repository and for tools, including
-                # a non-default teammate whose identity differs from the machine
-                # precheck. A token that names nobody keeps the precheck identity.
-                actor = token_agent_handle(token)
-                if actor and actor != agent_handle:
-                    user = await user_by_handle(room_session, actor)
-                    if user is None:
-                        raise ScreenSetupError(say("screenAgentIdentityMissing"))
-                    agent_user_id, agent_handle = user.id, user.username
-            env = {**(env or {}), "CHEESE_RESOURCE_ID": str(resource_id)}
-            # 这一轮没租手，所以它跑在这条会话自己的草稿区里：一个有界的一次
-            # 性容器，开在会话自己的机器上，不是一个地点 (结论 19)。做这个选
-            # 择的是「租到手没有」，不是「这间房是不是私聊」。
-            if not rented:
-                from app.domain.agent.private_chat import scratch_target
-
-                env["CHEESE_EXECUTION_TARGET"] = json.dumps(
-                    scratch_target(project_id, resource_id, device_id=device_id)
-                )
-            before = (
-                await environment_status(self._hub, device_id, project_id, resource_id)
-                if prepares_environment
-                else {}
-            )
-            prior_screen = self._existing_screen(
-                device_id, topic_id, resource_id, agent_handle
-            )
-            screen = await self._ensure_screen(
-                device_id=device_id,
-                agent_user_id=agent_user_id,
-                agent_handle=agent_handle,
-                project_id=project_id,
-                topic_id=topic_id,
-                token=token,
-                env=env,
-                launch=launch,
-                environment_before=before,
-            )
-            if prepares_environment:
-                # A process started before this feature keeps its environment
-                # until its next restart; it has no preparation receipt yet.
-                # Reasserting a live screen does not rerun its environment. A new
-                # screen must still wait for its own preparation attempt below.
-                if (
-                    before.get("state") in {"pending", "ready"}
-                    and screen is prior_screen
-                ):
-                    return screen
-                try:
-                    polling_started = time.monotonic()
-                    start_deadline = polling_started + 60
-                    async with asyncio.timeout(3660):
-                        while True:
-                            status = await environment_status(
-                                self._hub,
-                                device_id,
-                                project_id,
-                                resource_id,
-                                wait_ready=time.monotonic() - polling_started < 10,
-                            )
-                            if status["state"] == "ready":
-                                break
-                            if status["state"] == "stopped" and status.get(
-                                "attempt"
-                            ) != before.get("attempt"):
-                                raise ScreenSetupError(
-                                    say("screenSessionExitedAfterSetup")
-                                )
-                            if (
-                                status["state"] == "pending"
-                                or status.get("attempt") == before.get("attempt")
-                                and before.get("state") != "preparing"
-                            ) and time.monotonic() >= start_deadline:
-                                raise ScreenSetupError(say("screenExecutorNotStarted"))
-                            if status["state"] == "failed" and (
-                                before.get("state") == "preparing"
-                                or status.get("attempt") != before.get("attempt")
-                            ):
-                                raise EnvironmentPreparationError(status)
-                            # Fast launches should not sit behind a two-second
-                            # poll; long installers keep the low-frequency checks.
-                            await asyncio.sleep(
-                                0.2 if time.monotonic() - polling_started < 10 else 2
-                            )
-                except asyncio.CancelledError:
-                    await asyncio.shield(
-                        environment_status(
-                            self._hub, device_id, project_id, topic_id, action="cancel"
-                        )
-                    )
-                    raise
-            return screen
-        except EnvironmentPreparationError:
-            raise
-        except Exception as exc:  # noqa: BLE001 — any setup failure ends the turn
-            # str(exc) is EMPTY for a bare TimeoutError — the failure that used to
-            # reach the room as 「device 后端启动失败：」 with nothing after the
-            # colon. Fall back to the exception type so the message always says
-            # *something* about what went wrong.
-            raise ScreenSetupError(
-                say("deviceBackendFailed", detail=str(exc) or exc.__class__.__name__)
-            ) from exc
 
     def _credential_is_stale(self, screen: HubScreen) -> bool:
         """Whether the credential this screen's `claude` was LAUNCHED with has

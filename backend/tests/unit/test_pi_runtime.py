@@ -10,22 +10,21 @@ import logging
 import threading
 import uuid
 from pathlib import Path
-from typing import cast
 from unittest.mock import AsyncMock
 
 import anyio
 import pytest
 
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
-from app.domain.agent.harness import AgentRuntime, Opening, SessionRef
-from app.domain.agent.harness.driven import runtime as driven_runtime
+from app.domain.agent.harness import PI, SessionRef
 from app.domain.agent.harness.driven.runner import LONG_POLL
 from app.domain.agent.harness.pi.journal import Journal
-from app.domain.agent.harness.pi.runtime import Handle, PiRuntime
 from app.domain.agent.service import AgentResult, AgentSessionInfo, AgentToolUse
+from app.domain.agent.session_host import host as session_host
 from app.domain.delivery.input_identity import InputIdentity, InputReceipt
 from tests.support.hang import HANG_S
 from tests.support.room_reader import room_reader
+from tests.support.seat_channel import SeatChannel
 
 ENTRIES = json.loads((Path(__file__).parent / "fixtures/pi-entries.json").read_text())[
     "entries"
@@ -65,7 +64,13 @@ class Runner:
                 await asyncio.sleep(0.01)
             return {"entries": self.produced[after:]}
         if method == "ping":
-            return {"alive": True, "working": self.working, "work_id": self.work_id}
+            return {
+                "alive": True,
+                "session_id": "pi-session",
+                "capabilities": [LONG_POLL],
+                "working": self.working,
+                "work_id": self.work_id,
+            }
         if method == "abort":
             self.working = False
             return {"aborted": True}
@@ -82,26 +87,37 @@ class Runner:
         return {"ok": True}
 
 
-def wire(tmp_path):
-    session = SessionRef(uuid.uuid4(), uuid.uuid4(), "teammate", harness="pi")
-    handle = Handle(
+class Seats(SeatChannel):
+    """The session host, whose one runner is ``runner``."""
+
+    def __init__(self, runner: Runner):
+        super().__init__(harness=PI)
+        self.runner = runner
+
+    async def open(self, session, agent, launch):
+        pass
+
+    async def call(self, handle, method, params):
+        return await self.runner.call(handle, method, params)
+
+
+def place(channel: SeatChannel, session: SessionRef, agent: str = "teammate") -> None:
+    """A seat the previous backend placed: what a restarted one finds."""
+    channel.seats[(session.topic_id, agent)] = (
         session,
-        "device",
-        "/state",
-        "pi-session",
-        "teammate",
-        tmp_path / "mirror" / "entries.sqlite",
-        frozenset({LONG_POLL}),
+        f"$HOME/.cheese/harness/{session.topic_id}/{agent}",
     )
+
+
+def wire(tmp_path):
+    session = SessionRef(uuid.uuid4(), uuid.uuid4(), "teammate", harness=PI)
     runner = Runner()
-    channel = AsyncMock()
-    channel.ensure.return_value = handle
-    channel.images.return_value = []
-    channel.call.side_effect = runner.call
-    channel.discover.return_value = [handle]
-    runtime = PiRuntime(channel)
-    assert isinstance(runtime, AgentRuntime)
-    return session, runtime, runner
+    channel = Seats(runner)
+    return session, channel.runtime, runner
+
+
+def hear(runtime, reader) -> None:
+    runtime.report_to(reader, unread=lambda _topic: None, memory=AsyncMock())
 
 
 @pytest.mark.anyio
@@ -109,15 +125,16 @@ async def test_a_turn_lands_under_one_owner_and_ends_once(tmp_path):
     session, runtime, runner = wire(tmp_path)
     consumer, receipts, activity = AsyncMock(), AsyncMock(), AsyncMock()
     register_input = AsyncMock()
-    runtime.bind_reader(
-        room_reader(events=consumer, receipts=receipts, activity=activity)
+    hear(
+        runtime,
+        room_reader(events=consumer, receipts=receipts, activity=activity),
     )
     work = uuid.uuid4()
 
     assert await runtime.send(
         session,
         "改一下 greet",
-        Opening("system"),
+        system_prompt="system",
         work_id=work,
         on_mark=lambda _: None,
         register_input=register_input,
@@ -165,12 +182,13 @@ async def test_a_session_that_outlived_the_backend_is_read_not_restarted(tmp_pat
     runner.working, runner.work_id = True, work
 
     consumer = AsyncMock()
-    runtime.bind_reader(room_reader(events=consumer, activity=AsyncMock()))
+    hear(runtime, room_reader(events=consumer, activity=AsyncMock()))
+    place(runtime.channel, session)
     recovered = await runtime.recover("device")
     assert recovered == [session]
     assert runtime.holds(session.topic_id)
 
-    await runtime.replay(session, known_texts=set())
+    await runtime.replay(session)
     await runtime.close(session)
 
     events = [call.args[3] for call in consumer.await_args_list]
@@ -191,28 +209,20 @@ async def test_recovery_continues_when_a_discovered_runner_disappears(
     tmp_path, failure
 ):
     session, runtime, runner = wire(tmp_path)
-    channel = cast(AsyncMock, runtime.channel)
-    retained = channel.discover.return_value[0]
-    dead = Handle(
-        SessionRef(session.project_id, uuid.uuid4(), harness="pi"),
-        "device",
-        "/dead",
-        "dead",
-        "other",
-        tmp_path / "dead" / "entries.sqlite",
-        frozenset({LONG_POLL}),
-    )
-    channel.discover.return_value = [dead, retained]
+    channel = runtime.channel
+    dead = SessionRef(session.project_id, uuid.uuid4(), "other", harness=PI)
+    place(channel, dead, "other")
+    place(channel, session)
 
     async def call(handle, method, params):
-        if handle == dead:
+        if handle.session == dead:
             raise failure("device")
         return await runner.call(handle, method, params)
 
-    channel.call.side_effect = call
+    channel.call = call
     assert await runtime.recover("device") == [session]
     assert runtime.holds(session.topic_id)
-    assert not runtime.holds(dead.session.topic_id)
+    assert not runtime.holds(dead.topic_id)
     assert runner.inputs == []
     await runtime.close(session)
 
@@ -220,28 +230,27 @@ async def test_recovery_continues_when_a_discovered_runner_disappears(
 @pytest.mark.anyio
 async def test_a_person_talking_mid_turn_steers_rather_than_starting_a_turn(tmp_path):
     session, runtime, runner = wire(tmp_path)
-    runtime.bind_reader(
-        room_reader(events=AsyncMock(), activity=AsyncMock(), receipts=AsyncMock())
+    hear(
+        runtime,
+        room_reader(events=AsyncMock(), activity=AsyncMock(), receipts=AsyncMock()),
     )
     register_input = AsyncMock()
     work = uuid.uuid4()
 
     assert (
-        await runtime.deliver(session.topic_id, "等一下", register_input=register_input)
+        await runtime.steer(session.topic_id, "等一下", register_input=register_input)
         is False
     ), "there is no session here yet"
     await runtime.send(
         session,
         "开始",
-        Opening("system"),
+        system_prompt="system",
         work_id=work,
         on_mark=lambda _: None,
         register_input=register_input,
     )
     assert (
-        await runtime.deliver(
-            session.topic_id, "换个名字", register_input=register_input
-        )
+        await runtime.steer(session.topic_id, "换个名字", register_input=register_input)
         is True
     )
     assert [call["text"] for call in runner.steers] == ["换个名字"]
@@ -252,13 +261,14 @@ async def test_a_person_talking_mid_turn_steers_rather_than_starting_a_turn(tmp_
 @pytest.mark.anyio
 async def test_interrupt_takes_the_work_without_taking_the_session(tmp_path):
     session, runtime, runner = wire(tmp_path)
-    runtime.bind_reader(
-        room_reader(events=AsyncMock(), activity=AsyncMock(), receipts=AsyncMock())
+    hear(
+        runtime,
+        room_reader(events=AsyncMock(), activity=AsyncMock(), receipts=AsyncMock()),
     )
     await runtime.send(
         session,
         "开始",
-        Opening("system"),
+        system_prompt="system",
         work_id=uuid.uuid4(),
         on_mark=lambda _: None,
         register_input=AsyncMock(),
@@ -278,12 +288,14 @@ async def test_a_quiet_room_reads_slower(tmp_path):
     calls a second per room for nothing, so a quiet log has to cost less.
     """
     session, runtime, runner = wire(tmp_path)
-    runtime.bind_reader(
-        room_reader(events=AsyncMock(), activity=AsyncMock(), receipts=AsyncMock())
+    hear(
+        runtime,
+        room_reader(events=AsyncMock(), activity=AsyncMock(), receipts=AsyncMock()),
     )
 
+    place(runtime.channel, session)
     await runtime.recover("device")
-    await runtime.replay(session, known_texts=set())
+    await runtime.replay(session)
 
     await asyncio.sleep(2.5)
     quiet = runner.reads
@@ -302,15 +314,17 @@ async def test_a_new_turn_is_read_at_once_in_a_quiet_room(tmp_path, monkeypatch)
     deadline shorter than the hold would measure how fast the machine running
     the suite is instead.
     """
-    monkeypatch.setattr(driven_runtime, "READ_WAIT_S", 3600.0)
+    monkeypatch.setattr(session_host, "READ_WAIT_S", 3600.0)
     session, runtime, runner = wire(tmp_path)
     consumer = AsyncMock()
-    runtime.bind_reader(
-        room_reader(events=consumer, activity=AsyncMock(), receipts=AsyncMock())
+    hear(
+        runtime,
+        room_reader(events=consumer, activity=AsyncMock(), receipts=AsyncMock()),
     )
 
+    place(runtime.channel, session)
     await runtime.recover("device")
-    await runtime.replay(session, known_texts=set())
+    await runtime.replay(session)
     # The reader has read the empty log once and is now waiting out its interval.
     with anyio.fail_after(HANG_S):
         while runner.reads == 0:
@@ -319,7 +333,7 @@ async def test_a_new_turn_is_read_at_once_in_a_quiet_room(tmp_path, monkeypatch)
     assert await runtime.send(
         session,
         "开始",
-        Opening("system"),
+        system_prompt="system",
         work_id=uuid.uuid4(),
         on_mark=lambda _: None,
         register_input=AsyncMock(),
@@ -340,7 +354,7 @@ async def test_a_send_that_lands_as_the_reader_starts_to_wait_is_read_at_once(
     """The moment between the reader taking its turn and asking the runner to
     hold the read is still a quiet room: a send landing there is read at once,
     not after the hold."""
-    monkeypatch.setattr(driven_runtime, "READ_WAIT_S", 3600.0)
+    monkeypatch.setattr(session_host, "READ_WAIT_S", 3600.0)
     # Once armed, the reader stops on its way to the held read until the send
     # is in. Before that the runner answers at once, so the reader keeps
     # coming back past that point.
@@ -361,14 +375,16 @@ async def test_a_send_that_lands_as_the_reader_starts_to_wait_is_read_at_once(
             params = {**params, "wait": 0}
         return await runner.call(handle, method, params)
 
-    cast(AsyncMock, runtime.channel.call).side_effect = call
+    runtime.channel.call = call
     consumer = AsyncMock()
-    runtime.bind_reader(
-        room_reader(events=consumer, activity=AsyncMock(), receipts=AsyncMock())
+    hear(
+        runtime,
+        room_reader(events=consumer, activity=AsyncMock(), receipts=AsyncMock()),
     )
 
+    place(runtime.channel, session)
     await runtime.recover("device")
-    await runtime.replay(session, known_texts=set())
+    await runtime.replay(session)
     armed.set()
     with anyio.fail_after(HANG_S):
         while not on_its_way.is_set():
@@ -378,7 +394,7 @@ async def test_a_send_that_lands_as_the_reader_starts_to_wait_is_read_at_once(
         runtime.send(
             session,
             "开始",
-            Opening("system"),
+            system_prompt="system",
             work_id=uuid.uuid4(),
             on_mark=lambda _: None,
             register_input=AsyncMock(),
@@ -409,20 +425,21 @@ async def test_a_device_that_went_offline_is_not_reported_as_a_read_failure(
     device.
     """
     session, runtime, runner = wire(tmp_path)
-    runtime.bind_reader(
-        room_reader(events=AsyncMock(), receipts=AsyncMock(), activity=AsyncMock())
+    hear(
+        runtime,
+        room_reader(events=AsyncMock(), receipts=AsyncMock(), activity=AsyncMock()),
     )
 
     assert await runtime.send(
         session,
         "改一下 greet",
-        Opening("system"),
+        system_prompt="system",
         work_id=uuid.uuid4(),
         on_mark=lambda _: None,
         register_input=AsyncMock(),
     )
 
-    with caplog.at_level(logging.DEBUG, logger="app.domain.agent.harness.pi.runtime"):
+    with caplog.at_level(logging.DEBUG, logger=session_host.logger.name):
         caplog.clear()
         runner.offline = True
         # The poller has come round to the absent device a second time, which

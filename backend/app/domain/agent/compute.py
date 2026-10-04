@@ -1,10 +1,11 @@
 """ComputePool: the compute side of the two-pool model (design v2 R2 / v3).
 
-Symmetric to AIPool (profiles.py). A ComputeProvider answers WHERE a turn runs:
-it builds the machine (container + worktree + session + cheese env) and
-checkpoints the workspace afterwards. What runs there is an ``AgentRuntime``.
+Symmetric to AIPool (profiles.py). The pool answers WHERE a turn runs — which
+machine pool — and WHAT runs there — which harness. Each backend it holds is a
+room's sessions of one harness over one machine pool (`room/sessions.py`),
+started, spoken to and read on the session core.
 
-Every provider in the pool keeps a live session. There used to be a second
+Every backend in the pool keeps a live session. There used to be a second
 shape — start a subprocess, stream what it says, exit — and every piece of
 salvage machinery in the platform came from its one property: whoever held the
 iterator owned the turn, so the turn died when that process did. The rooms it
@@ -14,116 +15,23 @@ ran are gone; what remains is the shape that can be reconnected to.
 import contextlib
 import uuid
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any
 
 from app.core.config import settings
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
-from app.domain.agent.harness import (
-    CLAUDE_CODE,
-    CODEX,
-    HARNESSES,
-    PI,
-    AgentRuntime,
-    Capability,
-    runtime_for,
-)
+from app.domain.agent.harness import HARNESSES, Capability
 
 if TYPE_CHECKING:
     from app.domain.agent.device_provider import DeviceChannel
-    from app.domain.agent.harness import (
-        InputRegistrar,
+    from app.domain.agent.harness import SessionRef
+    from app.domain.agent.room.reads import RoomReader
+    from app.domain.agent.room.sessions import (
         MemoryConsumer,
-        RoomReader,
-        SessionControls,
-        SessionRef,
+        RoomSessions,
         UnreadProbe,
     )
-
-
-class ComputeProvider(Protocol):
-    """Where a turn runs: a machine with a workspace on it.
-
-    NOT how a turn runs — that is an ``AgentRuntime``. Which machine and what
-    runs on it were one switch for as long as the only harness we drive was also
-    the only thing that knew how to reach its own machine; separating the
-    questions is what lets a second harness run on the machines the first one
-    uses.
-
-    What the pool holds is a runtime WRAPPING a channel, and the runtime answers
-    this protocol by forwarding to the channel it is driving. So the two halves
-    are separate objects now, not just separate contracts. That forwarding is
-    why the three facts below are read-only: a backend is ASKED which machine it
-    is and what reaches it, and the answer comes from somewhere else.
-    """
-
-    @property
-    def name(self) -> str: ...
-
-    # 图片输入: whether the turn's user message actually carries `images=`. It is
-    # a capability, not a preference — the prompt wording branches on it
-    # (chat.prompt_line). Before this existed, `images=` was accepted by every
-    # provider and silently dropped by some, while the prompt kept telling 芝士
-    # "图片内容已附在本条消息里" on all of them. An agent that reads that promise
-    # and sees nothing does not error — it invents what the image said, which is
-    # worse than saying "我没收到图". A backend that drops images MUST say False
-    # here rather than leave the prompt lying for it.
-    @property
-    def embeds_images(self) -> bool: ...
-
-    # Does a turn here have to wait for a machine to be created first? The turn
-    # path branches on it — 「机器正在创建」 with the prompt held — instead of on
-    # the backend's class, which is what lets a second leased-machine backend
-    # get the same waiting room without the platform learning its name.
-    @property
-    def provisions_machine(self) -> bool: ...
-
-    @property
-    def deferred_work(self) -> bool: ...
-
-    # Does this backend assemble its machine's model environment itself? The
-    # platform then sends the model CHOICE and nothing else, and the turn's
-    # supply route is the deployment's rather than the profile's. Asked instead
-    # of the backend's NAME because the answer is a property of the transport,
-    # and a name is only ever the list of transports that had it on the day it
-    # was written — see ``Channel.builds_model_env``.
-    @property
-    def builds_model_env(self) -> bool: ...
-
-    def available(self) -> bool: ...
-
-    async def prepare_topic(
-        self, *, project_id: uuid.UUID, topic_id: uuid.UUID, actor: object | None
-    ) -> tuple[bool, str]:
-        """Get the machine ready, and say whether it is. Only asked of a backend
-        that declares ``provisions_machine``; everyone else's machine is already
-        there."""
-        ...
-
-    async def deliver(
-        self,
-        topic_id: uuid.UUID,
-        text: str,
-        images: list[dict] | None = None,
-        *,
-        register_input: "InputRegistrar",
-        expected_work_id: uuid.UUID | None = None,
-        agent_handle: str | None = None,
-        owes_reply: bool = False,
-    ) -> bool:
-        """Inject text into the session already running on this topic, if this
-        backend has one. False = "nothing live here" — the caller queues instead.
-
-        A RUNTIME operation, declared here too because what the pool holds is a
-        runtime wrapping a channel and the hot path asks the pool. Spelled out
-        rather than duck-typed so a backend that cannot take an injection has to
-        say so, which is what stops the pool from silently skipping one that
-        could.
-
-        ``agent_handle`` names the seat the words belong to; a room seats one
-        session per agent, and without it only an unambiguous room may be
-        delivered to.
-        """
-        ...
+    from app.domain.agent.session_host.host import SessionHost
+    from app.domain.delivery.input_identity import InputRegistrar
 
 
 class ComputePool:
@@ -140,23 +48,13 @@ class ComputePool:
     one backend per pair; today the pair is looked up directly.
     """
 
-    def __init__(self, backends: list[ComputeProvider], default_name: str):
+    def __init__(self, backends: "list[RoomSessions]", default_name: str):
         from app.domain.agent.harness import deployment_harnesses
 
-        # Every backend runs a harness. Checked HERE, once, at wiring time: the
-        # turn path then reads `runtime_for` as an answer rather than as a
-        # question, and a backend that forgot half the contract is a startup
-        # failure instead of a turn that silently does nothing.
         self._backends = {
-            (backend.name, runtime_for(backend).harness): backend
-            for backend in backends
+            (backend.name, backend.harness): backend for backend in backends
         }
-        # The same objects again, typed as what they are to every call below.
-        # Resolved once because `runtime_for` is an `isinstance` against a
-        # runtime-checkable Protocol of some twenty members, and `holds` runs
-        # it per backend per call — once per row of a board, which made it a
-        # quarter of a second of pure CPU on the event loop.
-        self._harnesses = [runtime_for(backend) for backend in self._backends.values()]
+        self._harnesses: list[RoomSessions] = list(self._backends.values())  # type: ignore[arg-type]
         # 部署列的骨架，在装配时解析一次：一个配错名字的部署在这里就起不来，而
         # 不是等到某一轮才发现自己跑的是另一个东西（结论 28）。偏好的第一个得挂在
         # 默认机器上：没说骨架的平台工作落在这一对上。
@@ -166,9 +64,9 @@ class ComputePool:
         # 归属按座位记（topic, agent_handle）：一间房坐着几个 agent，各有各的
         # 会话和它的属主 runtime。按房间记的那个版本里，B 的轮次一 activate 就
         # 把 A 的会话 interrupt+close 掉——多 agent 同房间在这一层就不可能。
-        self._owners: dict[tuple[uuid.UUID, str], AgentRuntime] = {}
+        self._owners: dict[tuple[uuid.UUID, str], RoomSessions] = {}
 
-    async def activate(self, session: "SessionRef", runtime: AgentRuntime) -> None:
+    async def activate(self, session: "SessionRef", runtime: "RoomSessions") -> None:
         """Park other harnesses before giving this seat to the selected one.
 
         Only THIS seat's previous tenants are parked: another agent's session
@@ -187,24 +85,18 @@ class ComputePool:
                 await previous.close(session)
         self._owners[(session.topic_id, session.agent_handle)] = runtime
 
-    def default(self) -> ComputeProvider:
+    def default(self) -> "RoomSessions":
         return self._backends[self._default]
 
-    def _runtimes(self) -> list[AgentRuntime]:
-        """Every harness in the pool.
-
-        The pool is keyed by machine and holds objects that answer both
-        questions; the calls below are addressed to the harness half. This is
-        where the guarantee bought at wiring time — every backend runs one — is
-        spent, so the callers read as statements rather than as questions.
-        """
+    def _runtimes(self) -> "list[RoomSessions]":
+        """Every harness's sessions in the pool, on every machine pool."""
         return self._harnesses
 
     def machines(self) -> set[str]:
         """Which machine pools this deployment offers, whatever runs on them."""
         return {name for name, _ in self._backends}
 
-    async def deliver(
+    async def steer(
         self,
         topic_id: uuid.UUID,
         text: str,
@@ -215,12 +107,13 @@ class ComputePool:
         agent_handle: str | None = None,
         owes_reply: bool = False,
     ) -> bool:
-        """Deliver to the owner selected when starting or recovering the work.
+        """Words for the seat whose owner was selected when its work started
+        or was recovered.
 
-        ``agent_handle`` aims the delivery at one seat. Without it the seats
-        of the room are tried one by one and the runtime answers only for the
-        seat whose open work matches — a seat that is not working, or whose
-        work is not the expected one, says False and the next seat is asked.
+        ``agent_handle`` aims the words at one seat. Without it the seats of
+        the room are tried one by one and each answers only for the seat whose
+        open work matches — a seat that is not working, or whose work is not
+        the expected one, says False and the next seat is asked.
         """
         candidates = [
             runtime
@@ -232,7 +125,7 @@ class ComputePool:
             if runtime.holds(topic_id, agent_handle)
         ]
         for backend in candidates:
-            delivered = await backend.deliver(
+            delivered = await backend.steer(
                 topic_id,
                 text,
                 images=images,
@@ -259,7 +152,7 @@ class ComputePool:
             recover = getattr(backend, "recover_native_tools", None)
             if recover is None:
                 continue
-            runtime = runtime_for(backend)
+            runtime = backend
             if self._owners.get(seat) is runtime or runtime.holds(
                 topic_id, agent_handle
             ):
@@ -323,27 +216,20 @@ class ComputePool:
             )
         return found
 
-    def bind_reader(self, reader: "RoomReader") -> None:
-        """Give every runtime the room's ear: what its sessions say and do,
-        one item at a time (``RoomReader``)."""
+    def report_to(
+        self,
+        reader: "RoomReader",
+        *,
+        unread: "UnreadProbe",
+        memory: "MemoryConsumer",
+    ) -> None:
+        """Hand every harness's sessions the room's books: where the room hears
+        what its sessions say and do (``RoomReader``), where it says what it
+        sent that is still unread, and where 「记忆该对账了」 goes — before an
+        input and after a turn, for every harness: one whose sessions keep no
+        memory files answers ``memory`` with None."""
         for runtime in self._runtimes():
-            runtime.bind_reader(reader)
-
-    def bind_unread_probe(self, probe: "UnreadProbe") -> None:
-        """Give every runtime a way to ask whether anything it was handed is
-        still unread — the other half of the same bookkeeping."""
-        for runtime in self._runtimes():
-            runtime.bind_unread_probe(probe)
-
-    def bind_memory(self, consumer: "MemoryConsumer") -> None:
-        """Give every runtime the owner of 「记忆该对账了」.
-
-        Every runtime, not only the ones that keep memory files: a runtime that
-        does not answers `memory` with None, and the callback is asked on a
-        moment (an input going in, a turn ending) that every harness has.
-        """
-        for runtime in self._runtimes():
-            runtime.bind_memory(consumer)
+            runtime.report_to(reader, unread=unread, memory=memory)
 
     async def memory(self, topic_id: uuid.UUID, request: dict) -> dict | None:
         """Relay a memory reconciliation to whichever runtime owns this room.
@@ -361,15 +247,16 @@ class ComputePool:
                 return answer
         return None
 
-    def session_controls(self, topic_id: uuid.UUID) -> "SessionControls | None":
-        """The runtime whose live session in this room takes controls, if any."""
-        from app.domain.agent.harness import SessionControls
+    def session_controls(self, topic_id: uuid.UUID) -> "RoomSessions | None":
+        """The sessions whose live session in this room takes controls, if any.
 
+        A harness with no control channel is still a harness: the room then
+        simply shows less of it."""
         candidates = [
             runtime for (topic, _), runtime in self._owners.items() if topic == topic_id
         ] or self._runtimes()
         for runtime in candidates:
-            if isinstance(runtime, SessionControls) and runtime.holds(topic_id):
+            if runtime.controls and runtime.holds(topic_id):
                 return runtime
         return None
 
@@ -398,8 +285,7 @@ class ComputePool:
         ]
         if len(candidates) != 1:
             return None
-        reader = getattr(candidates[0], "ask_origin", None)
-        return await reader(project_id, topic_id, agent_handle) if reader else None
+        return await candidates[0].ask_origin(project_id, topic_id, agent_handle)
 
     def holds(self, topic_id: uuid.UUID, agent_handle: str | None = None) -> bool:
         """Does any backend still hold a live session for this topic — for
@@ -426,12 +312,12 @@ class ComputePool:
             await runtime.stop_listening()
         self._owners.clear()
 
-    async def replay(self, session: "SessionRef", *, known_texts: set[str]) -> None:
+    async def replay(self, session: "SessionRef") -> None:
         """Land what a recovered session produced while nobody listened."""
         for runtime in self._runtimes():
-            await runtime.replay(session, known_texts=known_texts)
+            await runtime.replay(session)
 
-    def platform_work(self, provider_id: str | None = None) -> ComputeProvider:
+    def platform_work(self, provider_id: str | None = None) -> "RoomSessions":
         """The backend for work the PLATFORM starts — the memory
         consolidation (dream).
 
@@ -448,7 +334,7 @@ class ComputePool:
 
     def choose(
         self, project_settings: Mapping[str, Any] | None, provider_id: str | None
-    ) -> tuple[str, ComputeProvider | None]:
+    ) -> "tuple[str, RoomSessions | None]":
         """The harness a room's turn runs on this machine, and its backend.
 
         ``harness_on`` walks the project's order over what this machine runs.
@@ -471,7 +357,7 @@ class ComputePool:
         provider_id: str | None = None,
         harness: str | None = None,
         env_spec: dict | None = None,
-    ) -> ComputeProvider | None:
+    ) -> "RoomSessions | None":
         """Pick the backend for this turn (execution-architecture v4 会话级选择).
 
         ``provider_id`` is the machine a topic/project chose (resolved upstream
@@ -492,7 +378,10 @@ class ComputePool:
         return self._backends.get((machine, harness_name(harness)))
 
 
-def build_compute_pool(cloud_channel: "DeviceChannel | None" = None) -> ComputePool:
+def build_compute_pool(
+    cloud_channel: "DeviceChannel | None" = None,
+    host: "SessionHost | None" = None,
+) -> ComputePool:
     """Build the ComputePool from settings.
 
     Every machine here belongs to someone a person can name: the device
@@ -510,18 +399,12 @@ def build_compute_pool(cloud_channel: "DeviceChannel | None" = None) -> ComputeP
     """
     from app.domain.agent.central_provider import CentralChannel
     from app.domain.agent.device_provider import DeviceChannel
-    from app.domain.agent.harness.claude_code import (
-        ClaudeCodeChannel,
-        ClaudeCodeRuntime,
-        executor_launch,
-    )
-    from app.domain.agent.harness.codex import CodexChannel, CodexRuntime
-    from app.domain.agent.harness.pi.channel import PiChannel
-    from app.domain.agent.harness.pi.runtime import PiRuntime
     from app.domain.agent.market import compute_default_name
+    from app.domain.agent.room.sessions import RoomSessions
+    from app.domain.agent.session_host.host import SessionHost
 
     # One liveness policy for every harness (``docs/agent-liveness.md``): the
-    # driven runtime ends a turn on its evidence, whichever runner produced it.
+    # room ends a turn on its evidence, whichever runner produced it.
     policy = {
         "hard_ceiling_s": settings.agent_turn_hard_ceiling_s,
         "no_progress_s": settings.agent_no_progress_s,
@@ -553,26 +436,17 @@ def build_compute_pool(cloud_channel: "DeviceChannel | None" = None) -> ComputeP
             Capability.REMOTE_EXECUTION in HARNESSES[name].capabilities
         )
 
-    backends: list[ComputeProvider] = []
-    if forwards(CLAUDE_CODE):
-        backends.extend(
-            ClaudeCodeRuntime(ClaudeCodeChannel(CentralChannel(c)), **policy)
-            for c in channels
-        )
     # 挂谁，由注册表说（结论 43）。一个骨架答不出四条硬性要求就不在 `HARNESSES`
     # 里，而「不在注册表里」如果只是矩阵上少一列，它照样是个活调用点：
     # `recover_sessions` 进程重启后会把它的旧会话恢复回来并写进 `_owners`，
-    # `bind_reader` 照样把房间的耳朵交给它，`deliver` 在没有 owner 的时候照样
-    # 按 `holds()` 找到它。所以判据落在装配这一步：注册表是唯一的那一处，什么时候
+    # `report_to` 照样把房间的耳朵交给它，`steer` 在没有 owner 的时候照样按
+    # `holds()` 找到它。所以判据落在装配这一步：注册表是唯一的那一处，什么时候
     # 答得出四条、什么时候写回 `HARNESSES`，这里不用跟着改。
-    if forwards(CODEX):
-        backends.extend(
-            CodexRuntime(CodexChannel(CentralChannel(c), executor_launch), **policy)
-            for c in channels
-        )
-    if forwards(PI):
-        backends.extend(
-            PiRuntime(PiChannel(CentralChannel(c), executor_launch), **policy)
-            for c in channels
-        )
+    host = host or SessionHost()
+    backends: list[RoomSessions] = [
+        RoomSessions(CentralChannel(channel), harness, host, **policy)
+        for harness in HARNESSES
+        if forwards(harness)
+        for channel in channels
+    ]
     return ComputePool(backends, default_name)

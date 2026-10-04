@@ -715,7 +715,9 @@
       "newContent": "new content",
       "fileCount": "no files | 1 file | {count} files",
       "newChanges": "new changes",
-      "pickTopic": "Select a topic to see its document"
+      "pickTopic": "Select a topic to see its document",
+      "open": "Show work panel",
+      "close": "Hide work panel"
     },
     "taskProgress": {
       "loadFailed": "Couldn't load the tasks",
@@ -1016,6 +1018,7 @@
       "nameJoiner": ", ",
       "library": "Library",
       "noFiles": "No matching files",
+      "noMatch": "No matches",
       "all": "Everyone",
       "allSub": "{'@'}all · notifies everyone in the topic",
       "here": "Online members",
@@ -1043,7 +1046,8 @@
       "fileSnippet": "[File]",
       "tooMany": "A message can have at most 9 attachments",
       "tooLarge": "{name} is over 10MB and can't be uploaded",
-      "uploadFailed": "Couldn't upload the file",
+      "retry": "Retry uploading {name}",
+      "sendBlocked": "Retry or remove the failed attachments before sending",
       "addFailed": "Couldn't add the file"
     },
     "defaultAgentName": "Cheese",

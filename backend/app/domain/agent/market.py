@@ -4,7 +4,7 @@ A single catalog that backs both the 市场 (browse everything on offer) and a
 project's settings (pick which pool this project runs on). Two kinds of pool:
 
   - ``ai``      — which model/provider a turn runs on (ExecutionProfile / AIPool)
-  - ``compute`` — which machine runs the sandbox (ComputeProvider / ComputePool)
+  - ``compute`` — which machine runs the sandbox (ComputePool)
 
 `available` is the honest flag: a listing that isn't deployed/credentialed can't
 be selected, so a project never silently runs on something that isn't there.
@@ -22,7 +22,7 @@ from app.core.sentences import say
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.device.supply import Visibility, default_visibility
 
-# Compute provider names (match ComputeProvider.name in compute.py).
+# Compute provider names (match the machine pools' names in compute.py).
 COMPUTE_DEVICE = "device"
 COMPUTE_CLOUD = "cloud"
 

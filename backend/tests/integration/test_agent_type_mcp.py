@@ -17,7 +17,6 @@ import pytest
 
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.harness import SessionRef
-from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.agent_instance import services as agent_instances
 from app.domain.agent_type.library import load_type_library
 from app.domain.remote_mcp import service
@@ -227,15 +226,8 @@ def _central_target(client, monkeypatch, pid, tid, handle, seat) -> dict:
     ref = SessionRef(pid, tid, handle, harness="claude-code")
 
     async def open_session():
-        await central.ensure_ready(
-            session=ref,
-            token=mint_scoped_token(
-                project_id=str(pid), topic_id=str(tid), agent_handle=seat
-            ),
-            env={},
-            launch=ClaudeLaunch("System"),
-            precheck=await central.precheck(ref, needs_place=True),
-            turn_id=uuid.uuid4(),
+        await central_sessions.sessions(central).ensure(
+            ref, system_prompt="System", acting=seat
         )
         opening = central._ensure_screen.await_args.kwargs
         return json.loads(opening["env"]["CHEESE_EXECUTION_TARGET"])
@@ -263,15 +255,8 @@ def _private_target(client, monkeypatch, pid, tid, handle, seat) -> dict:
     ref = SessionRef(pid, tid, handle, harness="claude-code")
 
     async def open_session():
-        await central.ensure_ready(
-            session=ref,
-            token=mint_scoped_token(
-                project_id=str(pid), topic_id=str(tid), agent_handle=seat
-            ),
-            env={},
-            launch=ClaudeLaunch("System"),
-            precheck=await central.precheck(ref, needs_place=False),
-            turn_id=uuid.uuid4(),
+        await central_sessions.sessions(central).ensure(
+            ref, system_prompt="System", acting=seat, needs_place=False
         )
         opening = central._ensure_screen.await_args.kwargs
         return json.loads(opening["env"]["CHEESE_EXECUTION_TARGET"])

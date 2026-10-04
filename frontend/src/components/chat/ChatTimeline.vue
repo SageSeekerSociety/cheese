@@ -471,15 +471,20 @@ function emitOutboxLeave(el: Element, done: () => void) {
   position: relative;
   /* 动作按这一列的可用宽度收起，桌面分栏也能比手机视口窄。 */
   container: chat-timeline / inline-size;
+  /* 对话是连续阅读，收成读的一栏（--page-w-read）居中。桌面上房间常只占 80% 的
+     宽，2560 上铺满会排到 1700 一行，回行时眼睛找不到下一行的开头。代码块和表格
+     本来就 max-width:100% + 横向滚动（RoomMessage 的 .md-content），这一栏收窄
+     后照旧读得动。滚动的仍是整块（.messages），两边的空白手指照样拖得动。 */
+  width: 100%;
+  max-width: var(--page-w-read);
+  margin-inline: auto;
 }
-/* 手机外壳里对话不铺满整屏：平板竖屏上一行会排到六十多个字。时间线和输入框收成同
-   一栏居中（贴在输入框上的那一条由放它进来的那一栏收，见 TopicChatColumn）；滚动的
-   还是整块，手指在两边空白处照样滚得动。 */
+/* 手机外壳里那三块（时间线、输入框、贴在输入框上的那一条）收成同一栏 --page-w
+   （720，比阅读栏松一点，平板竖屏上才不至于一宽一窄）；输入框和那一条的收法见
+   ChatPanel / TopicChatColumn。桌面上三块一起用上面的 --page-w-read。 */
 @media (max-width: 959.98px) {
   .tl-content {
-    width: 100%;
     max-width: var(--page-w);
-    margin-inline: auto;
   }
 }
 .tl-skel-leave-active {
