@@ -129,9 +129,9 @@ describe('反馈中心的筛选', () => {
     })
     useFeedbackStore().setFilter({ kind: 'other' })
 
-    await waitFor(() => expect(baseElement.querySelector('.aes__title')?.textContent).toBe('No feedback matches'))
+    await waitFor(() => expect(baseElement.querySelector('.bes__title')?.textContent).toBe('No feedback matches'))
     // 空块里那颗按钮说的也是筛选 —— 否则「清除筛选」只挂在工具栏上。
-    await waitFor(() => expect(baseElement.querySelector('.aes__btn')?.textContent?.trim()).toBe('Clear filters'))
+    await waitFor(() => expect(baseElement.querySelector('.bes__btn')?.textContent?.trim()).toBe('Clear filters'))
   })
 
   it('什么筛都没加、列表真的空时，仍然说「暂无反馈」', async () => {
@@ -145,6 +145,6 @@ describe('反馈中心的筛选', () => {
     // 挂载时用的 i18n 是**测试环境默认那一档**（英文），所以这里比的是英文文案 ——
     // 两个语言里这一对都得是**两句不同的话**，而这条与上一条合起来钉的正是「选对了
     // 哪一句」。
-    await waitFor(() => expect(baseElement.querySelector('.aes__title')?.textContent).toBe('No feedback yet'))
+    await waitFor(() => expect(baseElement.querySelector('.bes__title')?.textContent).toBe('No feedback yet'))
   })
 })

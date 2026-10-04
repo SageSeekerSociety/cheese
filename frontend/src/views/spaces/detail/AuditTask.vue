@@ -9,7 +9,7 @@
       @load-more="loadMore"
     >
       <template #empty>
-        <p class="audit__empty">{{ t('spaces.detail.auditTasks.noTasks') }}</p>
+        <BaseEmptyState size="inline" class="audit__empty" :title="t('spaces.detail.auditTasks.noTasks')" />
       </template>
       <AuditTaskRow
         v-for="task in tasks"
@@ -38,6 +38,7 @@ import { useSpaceData } from '@/composables/useSpaceData'
 
 import AuditTaskRow from './AuditTaskRow.vue'
 
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import { TasksApi } from '@/network/api/tasks'
@@ -145,10 +146,6 @@ watch(
 }
 
 .audit__empty {
-  margin: 0;
   padding: 32px 8px;
-  color: var(--muted);
-  font-size: 14px;
-  line-height: var(--lh-14);
 }
 </style>

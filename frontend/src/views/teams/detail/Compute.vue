@@ -23,6 +23,7 @@ import {
   unregisterDeviceFromTeam,
 } from '@/api'
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { useRoomSocket } from '@/components/room/composables/useRoomSocket'
 import { t } from '@/i18n'
@@ -344,10 +345,7 @@ onBeforeUnmount(stopResync)
           {{ t('teams.compute.cloudNotConfigured') }}
         </v-alert>
         <div v-else-if="!cloudMachines.length" class="empty-panel">
-          <v-icon size="38" class="empty-panel-icon">mdi-cloud-outline</v-icon>
-          <div>
-            <div class="text-body-2 font-weight-medium">{{ t('teams.compute.cloudEmpty') }}</div>
-          </div>
+          <BaseEmptyState size="compact" icon="mdi-cloud-outline" :title="t('teams.compute.cloudEmpty')" />
         </div>
         <v-row v-else>
           <v-col v-for="machine in cloudMachines" :key="machine.id" cols="12" md="6" xl="4">
@@ -465,11 +463,12 @@ onBeforeUnmount(stopResync)
         </div>
 
         <div v-if="!selfHostedDevices.length" class="empty-panel">
-          <v-icon size="38" class="empty-panel-icon">mdi-laptop-off</v-icon>
-          <div>
-            <div class="text-body-2 font-weight-medium">{{ t('teams.compute.selfHostedEmptyTitle') }}</div>
-            <div class="text-caption text-medium-emphasis">{{ t(`teams.compute.${scope}.selfHostedEmptyHint`) }}</div>
-          </div>
+          <BaseEmptyState
+            size="compact"
+            icon="mdi-laptop-off"
+            :title="t('teams.compute.selfHostedEmptyTitle')"
+            :desc="t(`teams.compute.${scope}.selfHostedEmptyHint`)"
+          />
         </div>
         <template v-else>
           <div class="text-caption text-medium-emphasis mb-3">
@@ -604,17 +603,8 @@ onBeforeUnmount(stopResync)
   line-height: 1.4;
 }
 .empty-panel {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  min-height: 94px;
-  padding: 18px;
   border: 1px dashed rgba(var(--v-border-color), 0.24);
   border-radius: var(--radius-lg);
-}
-/* 空面板里陪着文字的图标属于元信息一档（§1.3），不是插图 */
-.empty-panel-icon {
-  color: var(--faint);
 }
 .machine-meta {
   display: flex;

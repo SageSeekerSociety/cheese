@@ -98,7 +98,7 @@
       </div>
     </template>
 
-    <p v-else-if="!loading" class="an-note">{{ t('spaces.analytics.participants.empty') }}</p>
+    <BaseEmptyState v-else-if="!loading" size="inline" :title="t('spaces.analytics.participants.empty')" />
   </div>
 </template>
 
@@ -120,6 +120,7 @@ import { useSpaceAnalyticsFilters } from './composables/useSpaceAnalyticsFilters
 import { formatCount, labelDistributionCodes, withDistributionPercent } from './helpers'
 import { buildAnalyticsApiParams } from './utils'
 
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import { SpacesApi } from '@/network/api/spaces'
 

@@ -38,7 +38,7 @@
       </v-list-item>
     </v-list>
 
-    <p v-else class="settings-empty">{{ t('spaces.domainGroups.noGroups') }}</p>
+    <BaseEmptyState v-else size="inline" class="settings-empty" :title="t('spaces.domainGroups.noGroups')" />
 
     <!-- Create / edit dialog -->
     <AdaptiveDialog
@@ -116,6 +116,7 @@ import { vuetifyConfig } from '@/utils/form'
 import { useSpaceData } from '@/composables/useSpaceData'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import SettingsToolbar from '@/components/spaces/SettingsToolbar.vue'
 import { SpacesApi } from '@/network/api/spaces'
