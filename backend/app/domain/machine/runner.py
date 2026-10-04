@@ -6,6 +6,10 @@ plumbing with no judgment in it, and a host that came up while nobody was
 looking must still become a device — so it must not share a switch with
 anything a deployment might want off. See ``app.core.background.PeriodicRunner``
 for the clock.
+
+Putting idle sandboxes to sleep and archiving homes (``SandboxSweeper``) is
+the same plumbing on the same switch, in a loop of its own: an archive takes
+minutes, and a host that came up must not wait that long to be enrolled.
 """
 
 import logging
@@ -40,3 +44,17 @@ class CloudPoolSweeper:
             await pool.maintain()
             await session.commit()
         return result
+
+
+class SandboxSweeper:
+    def __init__(self, session_factory: SessionFactory) -> None:
+        self._sessions = session_factory
+
+    async def sweep(self) -> dict[str, int]:
+        from app.domain.machine.lifecycle import SandboxLifecycle
+        from app.domain.machine.microcloud import MicroCloudClient
+
+        if not MicroCloudClient().configured:
+            return {"asleep": 0, "archived": 0}
+        async with self._sessions() as session:
+            return await SandboxLifecycle(session).sweep()

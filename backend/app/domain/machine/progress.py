@@ -30,11 +30,15 @@ async def _line(
     return BlockOut.model_validate(block).model_dump(mode="json")
 
 
-async def tell_preparing(session: AsyncSession, home: CloudHostHome) -> dict | None:
+async def tell_preparing(
+    session: AsyncSession, home: CloudHostHome, sentence: str = "sandboxPreparing"
+) -> dict | None:
+    """The first line of a sandbox getting ready: being prepared, woken
+    (``sandboxWaking``) or restored from its archive (``sandboxRestoring``)."""
     return await _line(
         session,
         home,
-        say("sandboxPreparing"),
+        say(sentence),
         {"event_type": "cloud_startup", "severity": "info"},
     )
 
@@ -54,6 +58,26 @@ async def tell_replaced(session: AsyncSession, home: CloudHostHome) -> dict | No
         home,
         say("sandboxReplaced"),
         {"event_type": "cloud_startup", "severity": "info"},
+    )
+
+
+async def tell_asleep(
+    session: AsyncSession, home: CloudHostHome, minutes: int
+) -> dict | None:
+    return await _line(
+        session,
+        home,
+        say("sandboxAsleep", minutes=minutes),
+        {"event_type": "sandbox_asleep", "severity": "info"},
+    )
+
+
+async def tell_archive_lost(session: AsyncSession, home: CloudHostHome) -> dict | None:
+    return await _line(
+        session,
+        home,
+        say("sandboxArchiveLost"),
+        {"event_type": "cloud_startup", "severity": "warn"},
     )
 
 

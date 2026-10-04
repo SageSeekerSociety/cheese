@@ -673,3 +673,62 @@ async def test_a_rooms_cleanup_gives_back_its_homes_on_a_shared_cloud_host(
         )
         assert homes == [other_room.id]
         assert (await session.get(CloudHost, host_id)).released_at is None
+
+
+async def test_a_rooms_cleanup_deletes_an_archived_sandbox_home_from_the_bucket(
+    client, monkeypatch
+):
+    """A session whose home was archived holds no directory on any machine:
+    its host may be gone. The room's cleanup does not wait for that host, and
+    the archive goes with the room."""
+    from app.domain.agent_session.services import AgentSessionService
+    from app.domain.machine import lifecycle
+
+    class Bucket:
+        def __init__(self):
+            self.objects = {"sandbox-archives/home.tar.gz": b"archived home"}
+
+        async def delete(self, key):
+            return self.objects.pop(key, None) is not None
+
+    bucket = Bucket()
+    monkeypatch.setattr(lifecycle, "private_storage", lambda: bucket)
+    room_id, cleanup_id = await archived_room(client, monkeypatch)
+    async with client.test_factory() as session:
+        operation = await session.get(RoomCleanup, cleanup_id)
+        project_id, generation = operation.project_id, str(operation.resource_id)
+        resource = str(uuid.uuid4())
+        conversation = await AgentSessionService(session).ensure(
+            room_id, "worker", harness="claude-code"
+        )
+        # The lease still names the host the home was archived from.
+        conversation.work_lease = {
+            "device_id": "released-host",
+            "resource_id": resource,
+            "kind": "device",
+        }
+        session.add(
+            CloudHostHome(
+                host_id=None,
+                project_id=project_id,
+                topic_id=room_id,
+                room_resource_id=generation,
+                resource_id=resource,
+                session_id=conversation.id,
+                stopped_at=datetime.now(UTC),
+                archive_key="sandbox-archives/home.tar.gz",
+                archive_size=13,
+                archive_md5="0" * 32,
+            )
+        )
+        await session.commit()
+
+    assert _sweep(client) == {"completed": 1, "pending": 0}
+
+    assert bucket.objects == {}
+    async with client.test_factory() as session:
+        assert (
+            await session.scalar(
+                select(CloudHostHome.id).where(CloudHostHome.topic_id == room_id)
+            )
+        ) is None

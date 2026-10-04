@@ -2,8 +2,9 @@
 
 import uuid
 from datetime import datetime
+from typing import NamedTuple
 
-from sqlalchemy import delete, func, or_, select, text
+from sqlalchemy import delete, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.machine.models import (
@@ -16,6 +17,14 @@ from app.domain.machine.models import (
     CloudHostHome,
     MachineStatus,
 )
+
+
+class Load(NamedTuple):
+    """What one host carries: the sandboxes that run (or may, being placed),
+    and every home on its disk, the asleep ones included."""
+
+    running: int
+    stored: int
 
 
 class CloudHostRepository:
@@ -57,15 +66,22 @@ class CloudHostRepository:
             )
         )
 
-    async def occupancy(self) -> dict[uuid.UUID, int]:
-        """How many homes each live host carries (hosts with none are absent)."""
+    async def occupancy(self) -> dict[uuid.UUID, Load]:
+        """What each live host carries (hosts with no home are absent)."""
         rows = await self._session.execute(
-            select(CloudHostHome.host_id, func.count())
+            select(
+                CloudHostHome.host_id,
+                func.count().filter(CloudHostHome.stopped_at.is_(None)),
+                func.count(),
+            )
             .join(CloudHost, CloudHost.id == CloudHostHome.host_id)
             .where(CloudHost.released_at.is_(None))
             .group_by(CloudHostHome.host_id)
         )
-        return {host_id: int(count) for host_id, count in rows.all()}
+        return {
+            host_id: Load(int(running), int(stored))
+            for host_id, running, stored in rows.all()
+        }
 
     async def failures_since(self, since: datetime) -> int:
         return int(
@@ -79,19 +95,51 @@ class CloudHostRepository:
 
     # --- homes ---------------------------------------------------------------
 
-    async def add_home(self, **fields) -> CloudHostHome:
-        home = CloudHostHome(**fields)
-        self._session.add(home)
+    async def put_home(
+        self, host_id: uuid.UUID, home: dict | CloudHostHome
+    ) -> CloudHostHome:
+        """Place a home on a host: a new one from its fields, or an archived
+        one, which keeps its row (and its archive, to restore from)."""
+        if isinstance(home, CloudHostHome):
+            home.host_id = host_id
+        else:
+            home = CloudHostHome(host_id=host_id, **home)
+            self._session.add(home)
         await self._session.flush()
         return home
 
-    async def current_home(self, session_id: uuid.UUID) -> CloudHostHome | None:
-        """The home of the session's current placement (not one it left)."""
+    async def unplace_archived(self, host_id: uuid.UUID) -> None:
+        """Homes placed on this host whose archive was never restored there go
+        back to being archived: the host is going, and their work is only in
+        the bucket."""
+        await self._session.execute(
+            update(CloudHostHome)
+            .where(
+                CloudHostHome.host_id == host_id,
+                CloudHostHome.archive_key.is_not(None),
+            )
+            .values(host_id=None)
+        )
+
+    async def lock_home(self, home_id: uuid.UUID) -> CloudHostHome | None:
         return await self._session.scalar(
-            select(CloudHostHome).where(
+            select(CloudHostHome)
+            .where(CloudHostHome.id == home_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+
+    async def current_home(self, session_id: uuid.UUID) -> CloudHostHome | None:
+        """The home of the session's current placement (not one it left), as
+        the database has it now: a sweep may have put it to sleep or archived
+        it since this session last read it."""
+        return await self._session.scalar(
+            select(CloudHostHome)
+            .where(
                 CloudHostHome.session_id == session_id,
                 CloudHostHome.left_at.is_(None),
             )
+            .execution_options(populate_existing=True)
         )
 
     async def homes_on(self, host_id: uuid.UUID) -> list[CloudHostHome]:
@@ -137,6 +185,19 @@ class CloudHostRepository:
                 CloudHostHome.resource_id == resource_id,
             )
         )
+
+    async def room_archives(
+        self, topic_id: uuid.UUID, room_resource_id: str | None = None
+    ) -> list[CloudHostHome]:
+        """The room's homes that have an archive in the bucket, of one
+        generation or of every one."""
+        query = select(CloudHostHome).where(
+            CloudHostHome.topic_id == topic_id,
+            CloudHostHome.archive_key.is_not(None),
+        )
+        if room_resource_id is not None:
+            query = query.where(CloudHostHome.room_resource_id == room_resource_id)
+        return list(await self._session.scalars(query))
 
     async def delete_room_homes(
         self, topic_id: uuid.UUID, room_resource_id: str
@@ -186,6 +247,7 @@ class CloudHostRepository:
         return host
 
     async def delete(self, host: CloudHost) -> None:
+        await self.unplace_archived(host.id)
         await self._session.delete(host)
         await self._session.flush()
 

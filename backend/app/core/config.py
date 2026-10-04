@@ -691,14 +691,30 @@ class Settings(BaseSettings):
     # it by hand).
     microcloud_account_name: str = "compute"
     microcloud_initial_funds: float = 1000.0
-    # Sandbox slots per host core: how many sessions' homes one host carries. A
-    # home occupies its slot from placement until its work is pushed away or its
-    # room's cleanup removes it, idle or not.
+    # Sandbox slots per host core: how many sessions' sandboxes one host runs at
+    # once. A sandbox holds its slot while it runs; one asleep holds only disk.
     cloud_host_slots_per_core: int = Field(default=2, ge=1, le=16)
+    # The disk a session's home is budgeted on its host. A host keeps at most
+    # `disk_gb // this` homes, running or asleep (never fewer than its slots).
+    cloud_sandbox_disk_gb: int = Field(default=5, ge=1, le=1024)
+    # A cloud sandbox is stopped once its room has run no turn and the session
+    # has asked for no tool for this long; its home stays on the host's disk and
+    # the next tool call starts it again.
+    cloud_sandbox_idle_stop_s: int = Field(default=600, ge=60, le=86400)
+    # A command the executor still runs for the session (a Bash call sent to the
+    # background) keeps an otherwise idle sandbox up, but no longer than this
+    # after the session's last activity.
+    cloud_sandbox_background_cap_s: int = Field(default=3600, ge=0, le=7 * 86400)
+    # A home asleep this long is archived to the private bucket and deleted
+    # from its host; the session's next tool call restores it on any host.
+    cloud_sandbox_archive_after_s: int = Field(
+        default=7 * 86400, ge=3600, le=365 * 86400
+    )
     # Pre-scale: when the free slots of the pool's live hosts fall below this,
     # the pool sweep claims (or creates) the next host before anyone waits on it.
     cloud_pool_min_free_slots: int = Field(default=2, ge=0, le=64)
-    # How long a host with no session homes is kept before it is released.
+    # How long a host that runs no sandbox is kept. Then its sleeping homes are
+    # archived and it is released.
     cloud_host_idle_hold_s: int = Field(default=1800, ge=0, le=86400)
     # The most hosts the pool holds at once, legacy hosts draining excluded. It
     # protects the MicroCloud cluster; a session that finds the pool full is told
@@ -975,9 +991,10 @@ class Settings(BaseSettings):
 
     # --- S3 storage (used when storage_type == "s3") ---
     s3_bucket: str = "cheese"
-    # The private bucket, for task snapshot bundles (room_task/snapshots.py);
-    # the public upload bucket is never used for them. The name is the bucket's
-    # first use: it also holds the transcript objects `raw_transcripts` indexes.
+    # The private bucket, for task snapshot bundles (room_task/snapshots.py)
+    # and archived cloud sandbox homes (machine/lifecycle.py); the public upload
+    # bucket is never used for them. The name is the bucket's first use: it also
+    # holds the transcript objects `raw_transcripts` indexes.
     transcript_s3_bucket: str = ""
     s3_endpoint_url: str | None = None
     s3_access_key: str | None = None
