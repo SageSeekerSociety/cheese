@@ -301,8 +301,37 @@ def test_http_answer_continues_original_native_executor(
                 finally:
                     monkeypatch.setattr(room_sessions.uuid, "uuid4", real_uuid4)
                 gate.touch()
+
+                async def settled() -> list[NativeInput]:
+                    async with client.test_request_factory() as session:
+                        return list(
+                            await session.scalars(
+                                select(NativeInput).where(
+                                    NativeInput.topic_id == topic,
+                                    NativeInput.execution_work_id == high,
+                                    NativeInput.completed_at.is_not(None),
+                                )
+                            )
+                        )
+
+                # Both inputs were read by the one execution and settled with
+                # it: what the first process saw before it let go.
                 async with asyncio.timeout(90):
-                    while native_runner.working:
+                    while {row.input_id for row in await settled()} != {high, low}:
+                        await asyncio.sleep(0.05)
+
+                def landed_all() -> bool:
+                    mirror = Journal(handle.mirror)
+                    try:
+                        landed = int(mirror.recall("landed") or 0)
+                    finally:
+                        mirror.close()
+                    return landed >= native_runner.journal.last()
+
+                # And everything the runner wrote after it is landed too, so
+                # the next process has nothing of its own left to land.
+                async with asyncio.timeout(90):
+                    while not landed_all():
                         await asyncio.sleep(0.05)
                 await settle_turn(chat, topic)
                 await runtime.stop_listening()
@@ -316,7 +345,6 @@ def test_http_answer_continues_original_native_executor(
                         )
                     )
                     assert {row.input_id for row in rows} == {high, low}
-                    assert all(row.completed_at for row in rows)
                     for row in rows:
                         row.completed_at = None
                     await session.commit()
