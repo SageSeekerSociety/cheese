@@ -115,6 +115,12 @@ const CHAT_SAMPLE = [
   '```',
 ].join('\n')
 
+const DOC_PEOPLE = [
+  { handle: 'lixue', label: '李雪', agent: false },
+  { handle: 'wangyu', label: '王宇', agent: false, external: true },
+  { handle: 'cheese', label: '芝士', agent: true },
+]
+
 export const DOC_BLOCK_ENTRIES: CatalogEntry[] = [
   {
     id: 'doc-blocks',
@@ -126,12 +132,14 @@ export const DOC_BLOCK_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '能改',
-        note: '点提示框的类型换一种；时间线圆点上有上移、下移、加一项、删除；光标进指标卡时末尾出现「＋」；图表点类型换一种，下面的表格就是数据；表格的行列把手加减行列；流程图点「源码」改，点「让芝士改」开出问芝士的框；选中字时浮条上有 ✓ ✗ !；行首或空格后打「/」插入块。',
+        note: '点提示框的类型换一种；时间线圆点上有上移、下移、加一项、删除；光标进指标卡时末尾出现「＋」；图表点类型换一种，下面的表格就是数据；表格的行列把手加减行列；流程图点「源码」改，点「让芝士改」开出问芝士的框；选中字时浮条上有 ✓ ✗ !；行首或空格后打「/」插入块；打「@」挑人、打「#」挑话题，写进去的是引用，画出来是名字。',
         // 问芝士只开出输入框：预览站不连模型，发出去的请求一直等着。
         props: docPanelProps({
           session: docSession(SAMPLE),
           agentHandle: 'cheese',
           askAgent: () => new Promise(() => {}),
+          mentionPeople: DOC_PEOPLE,
+          mentionNames: Object.fromEntries(DOC_PEOPLE.map((p) => [p.handle, p.label])),
         }),
         expect: '上线过程',
       },

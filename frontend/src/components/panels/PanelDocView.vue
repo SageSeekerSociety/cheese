@@ -7,6 +7,7 @@
 // 在协同文档（`session`）上，没有一个「保存」要这一层去管。
 import type { DocConnection, DocPeer, DocSession } from '../../composables/useDocCollab'
 import type { SendDocComment } from '../../composables/useDocCommentDraft'
+import type { MentionPoolEntry } from '../../composables/useRoomMentionPicker'
 import type { Block, Topic } from '../../cx_types'
 import type { DocAgentListener, DocAgentRequest } from '../../lib/docAgent'
 import type { CommentSpot } from '../../lib/docCommentSpots'
@@ -47,6 +48,10 @@ const props = withDefaults(
     agentName?: string
     /** 项目 AI 队友的 handle：评论里点它的名写成它的名字。 */
     agentHandle?: string | null
+    /** 账号 → 名字：正文和评论里的 `<@账号>` 标签上写的字。 */
+    mentionNames?: Record<string, string>
+    /** 正文里打 @ 时列出来的人。 */
+    mentionPeople?: MentionPoolEntry[]
     /** 项目话题表：正文里的支线徽章、`<#id>` chip 都靠它认名字与状态。 */
     topicList?: Topic[]
     /** 画在一整页里（项目文档的章程）：页头已经说了这是什么，不再画大标题和总览自动区。 */
@@ -108,6 +113,8 @@ const props = withDefaults(
   {
     agentName: () => t('work.room.defaultAgentName'),
     agentHandle: null,
+    mentionNames: undefined,
+    mentionPeople: () => [],
     topicList: () => [],
     bare: false,
     barTo: undefined,
@@ -201,9 +208,9 @@ function revealThread(id: string) {
   surfaceRef.value?.revealThread(id)
 }
 
-// 评论里的点名（`<@handle>`）读成名字。
-const mentionNames = computed<Record<string, string>>(() =>
-  props.agentHandle ? { [props.agentHandle]: props.agentName } : {}
+// 点名（`<@handle>`）读成名字：外面给了名册就用名册，没给至少认得 AI 队友。
+const mentionNames = computed<Record<string, string>>(
+  () => props.mentionNames ?? (props.agentHandle ? { [props.agentHandle]: props.agentName } : {})
 )
 
 const agentOptions = {
@@ -382,6 +389,7 @@ defineExpose({
                 :topic-id="topic?.id ?? null"
                 :topic-list="topicList"
                 :mention-names="mentionNames"
+                :mention-people="mentionPeople"
                 :live-ref-index="liveRefIndex"
                 :can-comment="!readOnly"
                 :open-threads="openThreads"

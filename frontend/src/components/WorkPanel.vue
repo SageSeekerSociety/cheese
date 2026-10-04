@@ -23,7 +23,7 @@
 // 消失」。单击打开的那一格是临时的，下一次打开会换掉它；双击就固定下来。不这样的
 // 话，聊一小时能攒出二十个页签。
 import type { OpenFileTab } from '../composables/useTopicMemory'
-import type { AgentControlState, Block, PreviewInfo, Topic } from '../cx_types'
+import type { AgentControlState, Block, PreviewInfo, ProjectMemberRow, Topic } from '../cx_types'
 import type { DocReviewRequest } from '../lib/docReview'
 import type { MemberActivityLine } from '../lib/memberActivity'
 import type { PreviewLocate, SubmitPreviewQuestion } from '../lib/previewQuestion'
@@ -90,6 +90,8 @@ const props = withDefaults(
     agentName?: string
     /** 项目 AI 队友的 handle：文档评论里「问…」点的是它。 */
     agentHandle?: string | null
+    /** 项目名册：文档里 @ 得到的人。 */
+    members?: ProjectMemberRow[]
     // 此刻谁在这个房间里忙（对话栏从 socket 上学来）。现场那一格画其中在干活的队友。
     activity?: MemberActivityLine[]
   }>(),
@@ -107,6 +109,7 @@ const props = withDefaults(
     withChat: false,
     agentName: () => t('work.room.defaultAgentName'),
     agentHandle: null,
+    members: () => [],
     activity: () => [],
   }
 )
@@ -635,6 +638,7 @@ defineExpose({ pulse, highlightTurn, reviewDoc, openFile, siteBlock })
             :class="enterClass('overview')"
             :agent-name="agentName"
             :agent-handle="agentHandle"
+            :members="members"
             :topic="topic"
             :activity-tick="activityTick"
             :topic-list="topicList"
