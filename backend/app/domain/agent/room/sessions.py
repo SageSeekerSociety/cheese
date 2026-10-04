@@ -286,14 +286,15 @@ class RoomSessions:
         self._quiet = quiet
 
     def prewarm_due(self, session: SessionRef) -> "Live | None":
-        """The seat's live session, when it may be launched from something the
-        backend would no longer start and nothing is running on it; else None.
+        """The seat's live session, when the next message would have to start
+        it again and nothing is running on it; else None.
 
         Owed after this process took the seat over, until a start compares it
-        (``unchecked``), and whenever the channel put a relaunch off because the
-        session was working (``owes``). Only the process that owns the
-        running work answers yes: the one handing it over must not start what
-        the next one is about to read."""
+        (``unchecked``); whenever the channel put a relaunch off because the
+        session was working (``owes``); and once its runner stopped answering,
+        which is what letting an idle session go looks like from here. Only the
+        process that owns the running work answers yes: the one handing it over
+        must not start what the next one is about to read."""
         seat = self._seat_of(session)
         live = self.live.get(seat)
         if live is None or not live.takes_inputs or seat in self.work:
@@ -302,8 +303,10 @@ class RoomSessions:
         if provider is not None and not provider().owns_sessions:
             return None
         ledger = getattr(self.channel, "screen_ledger", None)
-        if seat in self.unchecked or (
-            ledger is not None and ledger.owes((seat[0], live.acting))
+        if (
+            seat in self.unchecked
+            or (ledger is not None and ledger.owes((seat[0], live.acting)))
+            or self.host.answers(live.ref) is False
         ):
             return live
         return None

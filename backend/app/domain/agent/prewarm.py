@@ -9,6 +9,10 @@ the new session to come up — a cold resume with its tools reconnecting, about
 after the process that took the room over has read it up, and whenever a
 session whose relaunch was put off stops working.
 
+A session whose runner let it go after sitting idle is started again the same
+way when somebody opens its room or starts typing there (`room_active`): a
+message is likely on its way, and the session can be up before it arrives.
+
 The start goes through the same `RoomSessions.ensure` a turn uses, from the
 same inputs (`RoomTurns._launch_inputs`) and under the same seat lock, so a turn
 arriving meanwhile waits for it rather than racing it, and the session it
@@ -38,6 +42,10 @@ logger = logging.getLogger(__name__)
 #: seats are due together, and restarting them all at the same moment is a
 #: burst of new sessions on the one host they share.
 AT_ONCE = 1
+#: A room opened or typed in again within this long is not looked at again:
+#: typing is reported on every burst of keys, and one look per minute is
+#: enough to have the session up before the message is sent.
+ROOM_AGAIN_AFTER_S = 60.0
 
 
 class _Rooms(Protocol):
@@ -55,6 +63,8 @@ class _Rooms(Protocol):
         self, topic_id: uuid.UUID, agent_handle: str, *, acting: str
     ) -> "_Launch | None": ...
 
+    async def _turn_seat_handle(self, topic_id: uuid.UUID) -> str: ...
+
 
 class SeatPrewarm:
     def __init__(self, chat: _Rooms) -> None:
@@ -62,6 +72,35 @@ class SeatPrewarm:
         self._slots = asyncio.Semaphore(AT_ONCE)
         self._running: dict[tuple[uuid.UUID, str], asyncio.Task] = {}
         self._memory = HostMemory()
+        self._room_seen: dict[uuid.UUID, float] = {}
+        self._looking: set[asyncio.Task] = set()
+
+    def room_active(self, topic_id: uuid.UUID) -> None:
+        """Somebody opened this room or is typing in it: have the session the
+        next message goes to up before it is sent, at most once a minute."""
+        now = time.monotonic()
+        if now - self._room_seen.get(topic_id, float("-inf")) < ROOM_AGAIN_AFTER_S:
+            return
+        self._room_seen = {
+            room: seen
+            for room, seen in self._room_seen.items()
+            if now - seen < ROOM_AGAIN_AFTER_S
+        }
+        self._room_seen[topic_id] = now
+        task = asyncio.create_task(self._room_active(topic_id))
+        self._looking.add(task)
+        task.add_done_callback(self._looking.discard)
+
+    async def _room_active(self, topic_id: uuid.UUID) -> None:
+        try:
+            seat = await self._chat._turn_seat_handle(topic_id)
+        except Exception:  # noqa: BLE001 — a room it cannot read is the turn's to report
+            logger.warning("session_prewarm_seat_unknown topic=%s", topic_id)
+            return
+        runtime = self._chat._compute.seat_runtime(topic_id, seat)
+        live = runtime.live.get((topic_id, seat)) if runtime is not None else None
+        if live is not None:
+            self.nudge(live.session)
 
     def nudge(self, session: SessionRef) -> None:
         """Bring this seat's session up to date in the background, once."""
