@@ -81,15 +81,8 @@ async function load(silent = false) {
   }
 }
 
-watch(
-  () => props.taskId,
-  () => {
-    task.value = null
-    comparing.value = false
-    void load()
-  },
-  { immediate: true }
-)
+// 房间页按 taskId 给这一块换新实例，所以这里只管第一次读。
+void load()
 
 const isOwner = computed(() => !!task.value && task.value.owner_handle === ME)
 const isOpen = computed(() => task.value?.status === 'open')

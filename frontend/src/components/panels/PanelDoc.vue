@@ -121,6 +121,7 @@ defineExpose({ pulse, highlightTurn, reviewEdits })
     :mention-names="people.names.value"
     :mention-people="people.people.value"
     :bare="props.bare"
+    :untitled="!!props.taskId"
     :bar-to="props.barTo"
     :session="doc.session.value"
     :editable="doc.editable.value"
