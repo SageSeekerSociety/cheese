@@ -5,7 +5,7 @@ import { useDisplay } from 'vuetify'
 
 import { showsTopicList, useWorkspaceLayout } from '@/composables/useWorkspaceLayout'
 
-import { downloadFile, projectExportUrl } from '@/api'
+import { BASE, downloadFile } from '@/api'
 import { useCommands } from '@/commands'
 import TopicSidebar from '@/components/TopicSidebar.vue'
 import { t } from '@/i18n'
@@ -76,7 +76,7 @@ async function onExportProject() {
   const pid = props.projectId
   const name = store.projects.find((p) => p.id === pid)?.name || 'project'
   try {
-    await downloadFile(projectExportUrl(pid), `${name}.tar`)
+    await downloadFile(`${BASE}/projects/${encodeURIComponent(pid)}/export`, `${name}.tar`)
   } catch (e) {
     store.reportError(e, t('global.unknownError'))
   }
