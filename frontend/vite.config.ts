@@ -134,6 +134,13 @@ const PRISM_PLUGINS = ['line-numbers', 'copy-to-clipboard']
 // The named chunks, a library before the ones built on it (see codeSplitting).
 const CHUNKS = [
   'preload-helper',
+  // The transpiler's own helpers (~1 KB), claimed before any library that uses
+  // them. Without this group the `marked` group takes them with it as imports
+  // (see codeSplitting), and because the eager app code — class fields in
+  // `services/account.ts` and the axios layer — needs `_defineProperty`, the
+  // entry ended up importing the `marked` chunk and pulling 88 KB of Markdown
+  // parser onto first paint for a helper one twentieth its size.
+  'runtime-helpers',
   'vue',
   'dayjs',
   'lodash',
@@ -157,6 +164,15 @@ function chunkName(id: string): string | null {
   // chunk with an `import()` shares, in a chunk of its own.
   if (id.includes('vite/preload-helper')) {
     return 'preload-helper'
+  }
+  // The OXc/Babel helper shims (`@oxc-project/runtime/helpers/esm/*`) that the
+  // transpiled libraries and app code share. Their id is the virtual
+  // `\0@oxc-project+runtime@…/helpers/esm/*` — a `\0` prefix, the pnpm
+  // directory's `+`, and no `node_modules` segment — so this test sits before
+  // that guard and matches on the package name alone. Their own chunk keeps
+  // them out of whichever library would otherwise claim them as an import.
+  if (id.includes('oxc-project')) {
+    return 'runtime-helpers'
   }
   if (id.includes('node_modules')) {
     // Monaco is the largest package in node_modules and only the code

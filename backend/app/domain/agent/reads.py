@@ -78,11 +78,9 @@ class Reachable:
 class Moved:
     """What one of the session's records says about how its work is going, in
     the liveness vocabulary (``subscription.marks_of``): it said something, a
-    tool started or came back. ``took`` is an input the session read inside
-    the work already running, rather than in work of its own."""
+    tool started or came back."""
 
     marks: frozenset[str]
-    took: str | None = None
 
 
 @dataclass(frozen=True)

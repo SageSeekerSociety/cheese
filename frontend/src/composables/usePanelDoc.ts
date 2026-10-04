@@ -78,7 +78,9 @@ export function usePanelDoc(props: PanelDocProps) {
   const liveRefIndex = computed(() => {
     const next = new Map<number, string>()
     // 徽章上写的是一个**话题**的标题与状态，那两样在 topicList 上：支线改了标题，索引
-    // 本身没变，可装饰要重建成新文案 —— 读一遍指纹，输入变过，索引就是新的一份。
+    // 本身没变，可装饰要重建成新文案 —— 读一遍指纹，输入变过，索引就是新的一份（正文
+    // 那一半 watch 到这个新对象就重建装饰，标签从 topicList 现取）。这也意味着标题/状态
+    // 变了**不必重拉节点**：节点树（哪一段升级成谁）只随文档本身变，不随话题表变。
     void liveRefFingerprint.value
     anchorNodes.value.forEach((n, i) => {
       // 房间里的文档节点升级出来的是一条支线；私聊里的才是房间。
@@ -233,12 +235,10 @@ export function usePanelDoc(props: PanelDocProps) {
     }
   )
 
-  // 支线的标题或状态变了：重拉节点，徽章文案跟着走。侧栏每 30 秒换一批话题对象，
-  // 盯的是徽章真正用到的字段，而不是数组本身。
-  watch(liveRefFingerprint, () => {
-    const tid = props.topic?.id
-    if (tid) void loadNodes(tid).catch(() => {})
-  })
+  // 支线的标题或状态变了，徽章要跟着改字 —— 这一步由 liveRefIndex 出新的那份索引、
+  // 正文那一半据此重建装饰来完成（见上面的 liveRefIndex）。不在这里再拉一次节点：侧
+  // 栏每 30 秒换一批话题对象、每半分钟真正的变更也就几条，而节点树并不随话题表变，
+  // 重拉只会拿回同一份数据（实测每次切话题多一条 /docs）。
 
   onBeforeUnmount(() => {
     disposed = true
