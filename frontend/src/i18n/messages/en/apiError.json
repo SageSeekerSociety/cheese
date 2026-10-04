@@ -977,5 +977,9 @@
   "skillImportUnreadable": "This file can't be read",
   "topicNotifyLevelInvalid": "The notification level must be “all” or “mute”",
   "libraryVersionNotFound": "That version could not be found",
-  "libraryVersionIsCurrent": "That version is already the current one"
+  "libraryVersionIsCurrent": "That version is already the current one",
+  "personalTeamCannotDisband": "Your personal team belongs to your account and can't be disbanded",
+  "personalTeamCannotTransfer": "Your personal team belongs to your account and can't be transferred",
+  "teamTransferToSelf": "You already own this team",
+  "teamHasProjects": "This team still has projects. Move or delete them before disbanding it"
 }

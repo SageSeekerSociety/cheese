@@ -150,7 +150,7 @@ limits: INDEX_MAX_LINES, INDEX_MAX_BYTES, INDEX_LINE_MAX, BODY_MAX
 
 一条记忆是 agent 写下的一份观察，没有人欠它一个动作，所以它是一条灰字事件，事件本身收进 `meta.detail`（统一 diff，按路径分段、每段上限 200 行）。两棵树分开说，因为读它们的人不是一批：把某个人的 private diff 说进总览，等于把一个人的偏好广播给整个项目。
 
-写记忆的那个 agent 读不到这条灰字事件——它在会话机上，它看到的世界就是那棵树。所以**有被平台盖回去的版本时，那条通知还带一句 `agent_notice`**（`platform_notices.memory_conflict_notice`）：点名哪几条被盖了、它写的那一版在哪个 `.conflict.md` 里、请重读再写。不说，它下一轮写的还是同一版，而每一轮都会被盖回去。超了单条上限没收的那几条同理，`agent_notice` 里点名哪几条、为什么、没收的那一版在哪个 `.rejected.md` 里（`platform_notices.memory_rejected_notice`）。
+写记忆的那个 agent 读不到这条灰字事件——它在会话机上，它看到的世界就是那棵树。所以**有被平台盖回去的版本时，那条通知还带一句 `agent_notice`**（`platform_notices.memory_conflict_notice`）：点名哪几条被盖了、它写的那一版在哪个 `.conflict.md` 里、请重读再写。不说，它下一轮写的还是同一版，而每一轮都会被盖回去。超了单条上限没收的那几条同理，`agent_notice` 里点名哪几条、为什么、没收的那一版在哪个 `.rejected.md` 里（`platform_notices.memory_rejected_notice`）。**这两句里的路径按 agent 那一侧的写法写全**（`~/.cheese/memory/<作用域>/<名字>`，`files.prompt_path`）：只写 `team/x.md`，它的文件工具会把这次读写发去工作机，那里没有记忆树，读回来是「文件不存在」。被盖回去的那一版是删除时没有正文可留（`runner._keep_refused` 跳过空内容），那种情况那句话只说「没有副本」，不指一个文件名。
 
 ## 为什么不是「条目池 + 关键词召回」 {#why}
 

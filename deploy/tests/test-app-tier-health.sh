@@ -883,6 +883,51 @@ test_rollout_keeps_a_backend_serving() {
   echo "PASS: rollout keeps a healthy backend behind api-front throughout"
 }
 
+# The running work moves with the traffic. A backend traffic has just left is
+# told to hand it over (SIGUSR1) and keeps answering through the drain; the
+# backend traffic moved to holds every new turn until then, so waiting for the
+# old one to stop made each switch a drain-long wait for anyone who spoke.
+test_rollout_moves_running_work_with_the_traffic() {
+  local run_dir docker_log flip_to_next blue_told first_drain blue_up flip_back next_told second_drain next_stopped
+  run_dir="$(new_rollout_run_dir)"
+  docker_log="$run_dir/docker.log"
+  rollout_run "$run_dir" env APP_TIER_BACKEND_CONTAINER=blue-container >"$run_dir/release.log" 2>&1 \
+    || { cat "$run_dir/release.log"; fail "rollout deploy did not succeed"; }
+  flip_to_next="$(nth_log_line "$docker_log" 'exec cheese-app-router nginx -s reload' 1)"
+  blue_told="$(log_line "$docker_log" 'kill --signal USR1 blue-container')"
+  first_drain="$(nth_log_line "$docker_log" 'sleep 31' 1)"
+  blue_up="$(log_line "$docker_log" 'up -d --no-deps backend')"
+  flip_back="$(nth_log_line "$docker_log" 'exec cheese-app-router nginx -s reload' 2)"
+  next_told="$(log_line "$docker_log" 'kill --signal USR1 cheese-backend-next')"
+  second_drain="$(nth_log_line "$docker_log" 'sleep 31' 2)"
+  next_stopped="$(last_log_line "$docker_log" 'stop --time 60 cheese-backend-next')"
+  [ -n "$blue_told" ] || fail "the backend traffic left first was never told to hand its work over"
+  [ "$flip_to_next" -lt "$blue_told" ] && [ "$blue_told" -lt "$first_drain" ] \
+    || fail "the compose backend was told to hand over before traffic left it, or only after the drain"
+  [ "$first_drain" -lt "$blue_up" ] || fail "the compose backend was replaced before it finished its drain"
+  [ -n "$next_told" ] || fail "the successor was never told to hand its work over"
+  [ "$flip_back" -lt "$next_told" ] && [ "$next_told" -lt "$second_drain" ] \
+    || fail "the successor was told to hand over before traffic left it, or only after the drain"
+  [ "$second_drain" -lt "$next_stopped" ] || fail "the successor was stopped before it finished its drain"
+  rm -rf "$run_dir"
+  echo "PASS: each backend hands its running work over as traffic leaves it"
+}
+
+# SIGUSR1's default action ends a process. A backend from before the handler —
+# the one running when the first release carrying it goes out — must not get it.
+test_rollout_never_signals_a_backend_without_the_handler() {
+  local run_dir
+  run_dir="$(new_rollout_run_dir)"
+  rollout_run "$run_dir" env APP_TIER_BACKEND_CONTAINER=blue-container APP_TIER_NO_HANDOVER_SIGNAL=1 \
+    >"$run_dir/release.log" 2>&1 || { cat "$run_dir/release.log"; fail "rollout deploy did not succeed"; }
+  grep -q 'handover-signal-probe' "$run_dir/docker.log" || fail "the rollout never asked whether the backend takes the signal"
+  ! grep -q 'kill --signal USR1' "$run_dir/docker.log" \
+    || fail "a backend that does not catch SIGUSR1 was sent it, which kills it"
+  grep -q 'stop --time 60 cheese-backend-next' "$run_dir/docker.log" || fail "the successor was not stopped"
+  rm -rf "$run_dir"
+  echo "PASS: a backend without the handover handler is left to hand over at stop"
+}
+
 test_rollout_preserves_a_successor_still_serving_after_failure() {
   local run_dir
   run_dir="$(new_rollout_run_dir)"
@@ -1529,6 +1574,8 @@ case "$CASE" in
   frontend-rollout) test_frontend_rollout_keeps_serving ;;
   frontend-rollout-unhealthy) test_frontend_rollout_rejects_unhealthy_next ;;
   rollout-unhealthy-next) test_rollout_leaves_the_running_backend_alone_when_next_never_comes_up ;;
+  rollout-handover) test_rollout_moves_running_work_with_the_traffic ;;
+  rollout-handover-old-backend) test_rollout_never_signals_a_backend_without_the_handler ;;
   preview-owner-ordering) test_deploy_starts_preview_owner_before_routes_and_backends ;;
   preview-owner-unhealthy) test_deploy_fails_before_routing_when_preview_owner_unhealthy ;;
   preview-owner-stable) test_deploy_keeps_preview_owner_running ;;
@@ -1570,6 +1617,8 @@ case "$CASE" in
     test_workflow_rejects_stale_frontend
     test_healthy_current_pair_passes
     test_rollout_keeps_a_backend_serving
+    test_rollout_moves_running_work_with_the_traffic
+    test_rollout_never_signals_a_backend_without_the_handler
     test_rollout_recovers_after_forge_stops_backend
     test_rollout_preserves_a_successor_still_serving_after_failure
     test_frontend_rollout_keeps_serving

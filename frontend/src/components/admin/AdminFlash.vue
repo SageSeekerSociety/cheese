@@ -33,7 +33,13 @@ const emit = defineEmits<{ dismiss: [] }>()
       aria-hidden="true"
     />
     <span class="afl__text">{{ text }}</span>
-    <button v-if="dismissAria" type="button" class="afl__close" :aria-label="dismissAria" @click="emit('dismiss')">
+    <button
+      v-if="dismissAria"
+      type="button"
+      class="afl__close tap-target"
+      :aria-label="dismissAria"
+      @click="emit('dismiss')"
+    >
       <v-icon icon="mdi-close" size="14" aria-hidden="true" />
     </button>
   </div>
@@ -77,6 +83,8 @@ const emit = defineEmits<{ dismiss: [] }>()
 }
 
 .afl__close {
+  /* 相对定位给 .tap-target：这一颗只有 ~18px，手指要点得中（§3.6）。 */
+  position: relative;
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;

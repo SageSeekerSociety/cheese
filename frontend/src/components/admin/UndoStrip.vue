@@ -73,7 +73,12 @@ onBeforeUnmount(clearTimers)
       <span class="ustrip__msg">{{ props.message }}</span>
       <button type="button" class="ustrip__undo" @click="emit('undo')">{{ t('feedback.undo.action') }}</button>
       <!-- 关闭是纯图标，名字只能挂在 aria-label 上。 -->
-      <button type="button" class="ustrip__close" :aria-label="t('navigation.shell.close')" @click="emit('dismiss')">
+      <button
+        type="button"
+        class="ustrip__close tap-target"
+        :aria-label="t('navigation.shell.close')"
+        @click="emit('dismiss')"
+      >
         <v-icon icon="mdi-close" size="16" />
       </button>
     </div>
@@ -144,6 +149,8 @@ onBeforeUnmount(clearTimers)
 }
 
 .ustrip__close {
+  /* 相对定位给 .tap-target：20px 的关闭，手指要点得中（§3.6）。 */
+  position: relative;
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;

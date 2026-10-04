@@ -24,14 +24,24 @@ const { t } = useI18n()
   <div v-if="props.error" class="amd__flash amd__flash--bad" role="alert">
     <v-icon icon="mdi-alert-circle-outline" size="16" class="amd__flashIcon" />
     <span class="amd__flashText">{{ props.error }}</span>
-    <button type="button" class="amd__flashClose" :aria-label="t('models.notice.dismiss')" @click="emit('dismiss')">
+    <button
+      type="button"
+      class="amd__flashClose tap-target"
+      :aria-label="t('models.notice.dismiss')"
+      @click="emit('dismiss')"
+    >
       <v-icon icon="mdi-close" size="14" />
     </button>
   </div>
   <div v-else-if="props.notice" class="amd__flash amd__flash--ok" role="status">
     <v-icon icon="mdi-check-circle-outline" size="16" class="amd__flashIcon" />
     <span class="amd__flashText">{{ props.notice }}</span>
-    <button type="button" class="amd__flashClose" :aria-label="t('models.notice.dismiss')" @click="emit('dismiss')">
+    <button
+      type="button"
+      class="amd__flashClose tap-target"
+      :aria-label="t('models.notice.dismiss')"
+      @click="emit('dismiss')"
+    >
       <v-icon icon="mdi-close" size="14" />
     </button>
   </div>
@@ -79,6 +89,8 @@ const { t } = useI18n()
 }
 
 .amd__flashClose {
+  /* 相对定位给 .tap-target：这一颗只有 ~18px，手指要点得中（§3.6）。 */
+  position: relative;
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
