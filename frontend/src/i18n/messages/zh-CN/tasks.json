@@ -342,7 +342,8 @@
     "deadlineFailed": "截止时间设置失败",
     "unknownUser": "未知用户",
     "unknownTeam": "未知团队",
-    "memberWithId": "{name}（{id}）"
+    "memberWithId": "{name}（{id}）",
+    "tableLabel": "报名名单"
   },
   "edit": {
     "saveChanges": "保存更改",

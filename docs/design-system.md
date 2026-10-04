@@ -509,6 +509,16 @@ const { saving, saved, dirty, error, run } = useSaveState({
 - 一次保存只出现一种样子，且都**在原地淡入淡出**（§9.3 的时长 token），不弹窗、不挤动布局：保存中 `保存中…`（`--muted`）；已保存 `已保存`（`--ok-ink`，`role=status`）；失败 `保存失败`（`--danger-ink`，`role=alert`，按 §8.9 用冒号接服务端原因）。
 - **不要再自己写 `saving = ref(false)`**，也不要给一次性动作硬套 `SaveStatus`：那会把「保存失败」的前缀安到「发送失败」上面。一个说法只配一种动作。
 
+### 3.13 数据表格：BaseTable
+
+一张有表头、多列的数据表只用 `BaseTable`（`src/components/base/BaseTable.vue`，原来叫 `AdminGrid`，旧名字仍是它的别名），不再用 `v-data-table`，也不再手写 `<table>`。
+
+- 列宽写在 `cols` 上（每列一个宽度，只给吃剩下宽度的那一列传 `null`）；`minWidth` 是窄屏横滚的下限，默认 1080px，列少的表传小一点。
+- 表头写进 `#head` 槽，格子用 `BaseTableTh`。给了 `sortKey` 就是可排序的一列：表发 `@sort(key, dir)`，页面自己排；当前列带箭头和 `aria-sort`。
+- 整张表都在手上时用 `useClientTable`（`src/components/base/tableSort.ts`）做排序和分页：每页 10 条，换排序回第一页，空值永远排在最后。
+- 分页条 `TablePager` 放进 `#foot` 槽，只有一页时不画。
+- 加载、空、读失败三态由表壳保证互斥：`loading`（只在一条都没有时）、`busy`（有旧内容时重取）、`empty` / `#empty`、`state="error"` / `#error`。
+
 ---
 
 ## 4. 深色模式

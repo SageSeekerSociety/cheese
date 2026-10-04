@@ -338,7 +338,8 @@
     "deadlineFailed": "Couldn't set the deadline",
     "unknownUser": "Unknown user",
     "unknownTeam": "Unknown team",
-    "memberWithId": "{name} ({id})"
+    "memberWithId": "{name} ({id})",
+    "tableLabel": "Roster"
   },
   "edit": {
     "saveChanges": "Save changes",
