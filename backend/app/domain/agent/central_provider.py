@@ -20,7 +20,6 @@ from app.domain.agent.device_provider import (
 from app.domain.agent.executor_transport import DEFERRED_WORKSPACE
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import Placement, ScreenSetupError
-from app.domain.agent.harness.launch import LaunchPlan
 from app.domain.agent_instance.services import agent_stdio_servers
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.remote_mcp import service as remote_mcp
@@ -44,6 +43,23 @@ class PreparedSession:
     topic_id: uuid.UUID
     token: str
     env: dict[str, str]
+
+
+@dataclass(frozen=True, slots=True)
+class Placed:
+    """A session this channel placed, as its row records where it runs."""
+
+    #: The conversation's key in its room.
+    session: SessionRef
+    #: The session host it runs on, and its state directory there.
+    machine: str
+    state: str
+    #: What the room's machine is kept under, and the agent acting there.
+    resource_id: str
+    agent_handle: str
+    #: The conversation the row resumes: what a terminal answer has to name
+    #: before it may close anything (FB-56).
+    resume_token: str | None
 
 
 class CentralChannel(DeviceChannel):
@@ -104,78 +120,31 @@ class CentralChannel(DeviceChannel):
             return False
         return True
 
-    async def restore(self, device_id: str | None = None) -> None:
-        """Adopt the screens of this channel's sessions that outlived the backend.
-
-        The hub forgets every screen when the backend restarts, and a screen it
-        does not know is one the next turn opens a second copy of. Which harness
-        runs in each is not this channel's to say; the runtime that recovers them
-        claims its own by the session row.
-        """
+    async def placed(self, harness: str, device_id: str | None = None) -> list[Placed]:
+        """This channel's placed sessions of ``harness`` — on ``device_id``,
+        when it is named: what a restarted backend reads again."""
         factory = self._session_factory or async_session_factory
         async with factory() as db:
             sessions = await AgentSessionService(db).placed_sessions()
-        # One scope per (room, machine): the session list is per seat, so a room
-        # that seats two agents on one machine appears twice — and that is one
-        # recovery of one machine's inventory, not one screen. The seats are
-        # told apart by the adoption itself: `restore_screens` adopts every
-        # screen the machine still runs for the room, each under its own seat.
-        scopes = list(
-            dict.fromkeys(
-                (project_id, room_id, place.machine)
-                for project_id, room_id, _handle, _harness, _token, place in sessions
-                if place.channel == self.name
-                and (device_id is None or place.machine == device_id)
-                and self._hub.is_online(place.machine)
+        return [
+            Placed(
+                SessionRef(project_id, room_id, handle, harness=row_harness),
+                place.machine,
+                place.runtime["state"],
+                place.resource_id,
+                # A row written before it recorded who acts there acts as its
+                # own seat.
+                place.runtime.get("agent_handle") or handle,
+                resume_token,
             )
-        )
-        await self.restore_screens(scopes)
-
-    async def ensure_ready(
-        self,
-        *,
-        session: SessionRef,
-        token,
-        env,
-        launch,
-        precheck=None,
-        memory_scope=None,
-        owner=None,
-        turn_id=None,
-        runtime_factory=None,
-        runner_alive=False,
-    ):
-        # Central screens require a launch plan supporting remote execution.
-        # Their independent hands are acquired later by the first project tool.
-        if not isinstance(launch, LaunchPlan):
-            # `harness` is read through getattr because this branch is exactly
-            # the one where the object did not satisfy the protocol that
-            # guarantees it — a message that crashes reports nothing.
-            named = getattr(launch, "harness", type(launch).__name__)
-            raise ScreenSetupError(say("screenNoExecutorOnStandalone", harness=named))
-        async with self.prepare_session(
-            session=session,
-            token=token,
-            env=env,
-            launch=launch,
-            precheck=precheck,
-            memory_scope=memory_scope,
-            owner=owner,
-            turn_id=turn_id,
-            runtime_factory=runtime_factory,
-        ) as prepared:
-            return await self._ensure_screen(
-                device_id=prepared.device_id,
-                agent_user_id=prepared.agent_user_id,
-                agent_handle=prepared.agent_handle,
-                project_id=prepared.project_id,
-                topic_id=prepared.topic_id,
-                token=prepared.token,
-                env=prepared.env,
-                launch=launch,
-                environment_before={},
-                runner_alive=runner_alive,
+            for project_id, room_id, handle, row_harness, resume_token, place in (
+                sessions
             )
+            if row_harness == harness
+            and place.channel == self.name
+            and "state" in (place.runtime or {})
+            and (device_id is None or place.machine == device_id)
+        ]
 
     @asynccontextmanager
     async def prepare_session(
@@ -184,11 +153,7 @@ class CentralChannel(DeviceChannel):
         session: SessionRef,
         token,
         env,
-        launch,
         precheck=None,
-        memory_scope=None,
-        owner=None,
-        turn_id=None,
         runtime_factory=None,
     ) -> AsyncIterator[PreparedSession]:
         assert isinstance(precheck, Placement)
@@ -270,10 +235,6 @@ class CentralChannel(DeviceChannel):
             session_id=str(session_id),
             lease_generation=(leased or {}).get("generation"),
         )
-        # 记忆算谁的（``memory_scope`` / ``owner``）到这一层就为止了：它曾经从这
-        # 里塞进 ``CHEESE_MEMORY_SCOPE``/``CHEESE_OWNER`` 两个环境变量给 ``cheese
-        # remember`` 用，而那个工具已经撤掉（记忆现在直接写文件），两个变量最后
-        # 一个读取方也没了。
         # 这一轮没有租手 (``precheck`` 说的)，所以它跑在这条会话自己的草稿区里：
         # 一个有界的一次性容器，开在会话机上，不是一个地点 (结论 19)。
         if precheck.deferred:

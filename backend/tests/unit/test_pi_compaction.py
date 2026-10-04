@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from app.domain.agent.harness import Opening
+from app.domain.agent.harness.driven.runner import SessionStart
 from app.domain.agent.harness.pi.events import Assembler
 from app.domain.agent.harness.pi.runner import Runner, socket_path
 from app.domain.agent.harness.pi.subscription import Subscription
@@ -69,7 +69,7 @@ async def replay(tmp_path: Path, recording: dict, turns: int) -> list[dict]:
     shim.chmod(0o700)
     runner = Runner(tmp_path / "state")
     await runner.start(
-        Opening("system prompt", None, agent_handle="teammate"),
+        SessionStart("system prompt", None, agent_handle="teammate"),
         binary=str(shim),
         cwd=str(tmp_path),
         env={"PATH": "/usr/bin:/bin"},

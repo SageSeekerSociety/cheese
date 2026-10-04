@@ -1,22 +1,23 @@
 """What a room does with what its sessions say and do.
 
-Every harness hands the room one stream of items (``harness.RoomReader``):
-what the session said and did, when it started and stopped working, which
-inputs it took in, how its work ended, whether the machine under it is
-reachable, and what it is in the middle of writing. Each is routed here to the
-room's books for it, in the order it was read: the event log and the room's
-timeline (``hook_stream``), the realtime 「谁在干活」 frames, the input ledger
+A room's sessions (`room/sessions.py`) hand the room one stream of items
+(``RoomReader``) once their own books have taken each: what the session
+said and did, when it started and stopped working, which inputs it took in,
+how its work ended, whether the machine under it is reachable, and what it is
+in the middle of writing. Each is routed here to the room's books for it, in
+the order it was read: the event log and the room's timeline
+(``hook_stream``), the realtime 「谁在干活」 frames, the input ledger
 (``turn_inputs``), the waiting-for-the-machine notes, and the live frames.
 """
 
 import uuid
+from collections.abc import Awaitable, Callable
 from typing import Protocol
 
-from app.domain.agent.harness import RoomReader, SessionRef
+from app.domain.agent.harness import SessionRef
 from app.domain.agent.live_frames import publish_live
 from app.domain.agent.reads import (
     Completed,
-    Ended,
     Reachable,
     Read,
     Received,
@@ -30,6 +31,14 @@ from app.domain.delivery.input_identity import (
     WorkCompletion,
     WorkTermination,
 )
+
+# Where the room hears its sessions: one item at a time, each for the session
+# that produced it, in the order its sessions were read. What the session said
+# and did, when it started and stopped working, which inputs it took in, how
+# its work ended, whether the machine under it is reachable, and what it is in
+# the middle of writing all arrive here (``reads.Read``); the
+# room decides what each one means for it.
+RoomReader = Callable[[SessionRef, Read], Awaitable[None]]
 
 
 class RoomBooks(Protocol):
@@ -91,10 +100,6 @@ def reader(chat: RoomBooks) -> RoomReader:
                 event.author or session.agent_handle,
                 list(event.blocks),
             )
-        elif isinstance(event, Ended):
-            # A room's work ends by its own result or a verdict, never by the
-            # session going away under the reader.
-            return
         else:
             assert work is not None, "a room's session says nothing outside work"
             if isinstance(event, Working):
@@ -109,7 +114,7 @@ def reader(chat: RoomBooks) -> RoomReader:
                 await chat._note_reachability(
                     session.project_id, session.topic_id, work, event.yes, event.reason
                 )
-            else:
+            elif isinstance(event, AgentEvent):
                 await chat._consume_hook_event(
                     session.project_id,
                     session.topic_id,

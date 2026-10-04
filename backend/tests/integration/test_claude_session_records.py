@@ -15,10 +15,10 @@ from sqlalchemy import select
 
 from app.api.deps import get_chat_service
 from app.core.config import settings
-from app.domain.agent import room_reads
 from app.domain.agent.chat import ChatService
 from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.models import AgentTurn
+from app.domain.agent.room import reads as room_reads
 from app.domain.block.models import Block
 from app.domain.delivery.input_identity import InputIdentity, InputReceipt
 from app.domain.delivery.models import NativeInput
@@ -148,8 +148,10 @@ def test_an_input_counts_as_received_only_once_the_session_echoes_it(
             assert receipt.execution_work_id == uuid.UUID(session.work)
             receipts.append(receipt)
 
-    chat._compute.bind_reader(
-        room_reader(receipts=observe, rest=room_reads.reader(chat))
+    chat._compute.report_to(
+        room_reader(receipts=observe, rest=room_reads.reader(chat)),
+        unread=chat.oldest_unread_at,
+        memory=chat._memory.sync,
     )
     taken: list[str] = []
 

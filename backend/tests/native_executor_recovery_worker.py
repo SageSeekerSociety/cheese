@@ -9,6 +9,7 @@ import json
 import sys
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -16,62 +17,49 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
 from app.domain.agent.harness import CLAUDE_CODE, SessionRef
-from app.domain.agent.harness.claude_code.runtime import ClaudeCodeRuntime, Handle
 from app.domain.agent.harness.driven.runner import socket_path
 from app.domain.agent.models import AgentTurn
 from app.domain.block.models import Block, consumed_turn
 from app.domain.delivery.models import NativeInput
 from app.domain.delivery.receipts import held_blocks
+from tests.support.seat_channel import SeatChannel
 
 
-class SocketChannel:
+class SocketChannel(SeatChannel):
     name = "isolated-native-socket"
-    provisions_machine = False
-    deferred_work = False
-    builds_model_env = False
+    device = "isolated-device"
 
     def __init__(self, descriptor):
+        super().__init__()
         self.descriptor = descriptor
-        self.handle = Handle(
-            SessionRef(
-                uuid.UUID(descriptor["project"]),
-                uuid.UUID(descriptor["topic"]),
-                descriptor["session_agent"],
-                harness=CLAUDE_CODE,
-            ),
-            "isolated-device",
-            descriptor["state"],
-            descriptor["native"],
-            descriptor["agent"],
-            Path(descriptor["mirror"]),
-            descriptor["protocol"],
-            frozenset(descriptor.get("capabilities") or ()),
+        # The same mirrors the process before this one landed into.
+        self.root = Path(descriptor["root"])
+        session = SessionRef(
+            uuid.UUID(descriptor["project"]),
+            uuid.UUID(descriptor["topic"]),
+            descriptor["session_agent"],
+            harness=CLAUDE_CODE,
+        )
+        self.seats[(session.topic_id, descriptor["agent"])] = (
+            session,
+            descriptor["placed_state"],
+        )
+        self.handle = SimpleNamespace(
+            session=session,
+            agent_handle=descriptor["agent"],
+            state=descriptor["state"],
+            session_id=descriptor["native"],
         )
         self.calls = []
         self.input_states = []
-        self.runtime = ClaudeCodeRuntime(self)
 
-    def available(self):
-        return True
-
-    async def prepare_topic(self, **kwargs):
-        return True, ""
-
-    async def ensure(self, session, opening, live=None):
-        assert session == self.handle.session
-        return live if live is not None else self.handle
-
-    async def discover(self, device_id):
-        status = await self.call(self.handle, "ping", {})
-        assert status["alive"] and status["session_id"] == self.handle.session_id
-        return [self.handle]
-
-    async def images(self, handle, images):
-        assert not images
-        return []
+    async def open(self, session, agent, launch):
+        # The runner outlived the process before this one: it is reused as it
+        # is, never started again.
+        assert session == self.handle.session and agent == self.handle.agent_handle
 
     async def call(self, handle, method, params):
-        assert handle == self.handle
+        assert handle.agent_handle == self.handle.agent_handle
         assert method not in ("interrupt", "close"), (
             "Recovery may not stop its executor"
         )
@@ -90,7 +78,7 @@ class SocketChannel:
             assert (method == "steer") == status["working"], status
         self.calls.append(method)
         reader, writer = await asyncio.open_unix_connection(
-            socket_path(Path(handle.state))
+            socket_path(Path(self.handle.state))
         )
         try:
             writer.write(
@@ -159,8 +147,6 @@ async def run(descriptor):
                     await asyncio.sleep(0.05)
         async with asyncio.timeout(90):
             while True:
-                for subscription in channel.runtime.subscriptions.values():
-                    await subscription.drain()
                 status = await channel.call(channel.handle, "ping", {})
                 if not status["working"] and not chat._hook_work:
                     break

@@ -104,7 +104,10 @@
                 </div>
               </template>
               <v-row>
-                <v-col v-for="space in spaces" :key="space.id" cols="12" sm="6" md="4">
+                <!-- Three cards across a wide screen stretches each one far too wide:
+                     four per row from `lg`, six from `xl`, so a card stays at a
+                     readable size instead of growing with the window. -->
+                <v-col v-for="space in spaces" :key="space.id" cols="12" sm="6" md="4" lg="3" xl="2">
                   <v-card flat rounded="lg" class="space-card elevation-0 border" :to="spaceEntryRoute(space)">
                     <v-card-item>
                       <!-- 首字母走 text-surface 而不是 text-white：底色是琥珀，深色主题下

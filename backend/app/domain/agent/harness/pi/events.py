@@ -115,11 +115,9 @@ class Assembler:
         session_id: str | None = None,
         *,
         harness: str,
-        attachment: str | None = None,
     ):
         self.session_id = session_id
         self.harness = harness
-        self.attachment = attachment
         self.spent = AgentUsage()
         self.generation = ""
         self._positions: dict[str, int] = {}
@@ -206,7 +204,6 @@ class Assembler:
                         generation=self.generation,
                         session_id=self.session_id,
                         harness=self.harness,
-                        attachment=self.attachment,
                         eid=f"pi:user:{entry_id}",
                     )
                 ],

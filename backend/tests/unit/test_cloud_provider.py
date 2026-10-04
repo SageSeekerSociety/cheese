@@ -110,7 +110,7 @@ async def test_a_ready_cloud_machine_gets_through_precheck(monkeypatch):
     """机器接上了就要真的走完 precheck——那是每一轮 cloud 对话的第一步。
 
     `prepare_topic` 在「机器还在创建」就停了，从没走到这里；而这里是
-    `CentralChannel` 与 `PiChannel` 每一轮都要调的那一个入口。签名对不上就是每
+    房间每一轮起会话都要调的那一个入口（`RoomSessions.ensure`）。签名对不上就是每
     一轮都在第一步炸掉，而且因为没有一条用例等到机器 ready，CI 会全绿地放它出去。
     """
     topic_id, project_id = uuid.uuid4(), uuid.uuid4()

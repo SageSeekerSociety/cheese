@@ -76,11 +76,6 @@ NATIVE_TOOLS = (
     "Write",
     "NotebookEdit",
 )
-REMOTE_CONTROLS = {
-    "read_file",
-    "file_suggestions",
-    "get_workspace_diff",
-}
 # What the build adds to its shell children's environment, forwarded to a
 # command on the executor because a native session there would set the same.
 # Nothing else of this host's environment leaves it — its credentials are in

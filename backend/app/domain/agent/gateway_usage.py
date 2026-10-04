@@ -43,11 +43,11 @@ from app.core.background import hold
 from app.core.config import settings
 from app.core.errors import GatewayUnavailableError, NotFoundError
 from app.domain.agent import gateway_catalog
-from app.domain.agent.compute import ComputeProvider
 from app.domain.agent.gateway import LlmGateway
 from app.domain.agent.gateway_spend import Charge, settle
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent.queries import _Proposed
+from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.service import AgentUsage
 from app.domain.agent.supply import SUBSCRIPTION
 from app.domain.agent_instance.services import AgentInstanceService, ResolvedAgent
@@ -153,7 +153,7 @@ async def _model_kwargs(
     profiles: ProfileRegistry | None,
     gateway_lock: asyncio.Lock,
     project_id: uuid.UUID,
-    provider: ComputeProvider | None,
+    provider: RoomSessions | None,
     topic_id: uuid.UUID | None = None,
     *,
     agent: ResolvedAgent | None = None,

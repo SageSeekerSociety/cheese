@@ -24,8 +24,10 @@ from app.core.config import settings
 from app.domain.agent import gateway_catalog
 from app.domain.agent.chat import ChatService
 from app.domain.agent.device_provider import DeviceChannel
-from app.domain.agent.harness.claude_code import ClaudeCodeRuntime
+from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
+from app.domain.agent.room.sessions import RoomSessions
+from app.domain.agent.session_host.host import SessionHost
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.project.models import Project
 from app.domain.project.services import ProjectService
@@ -45,9 +47,9 @@ def configured_default(monkeypatch):
     gateway_catalog.reset()
 
 
-def _on_a_machine() -> ClaudeCodeRuntime:
+def _on_a_machine() -> RoomSessions:
     """机器在别处，所以启动环境在机器那边组 —— 这一支只答「用哪个模型」。"""
-    return ClaudeCodeRuntime(DeviceChannel())
+    return RoomSessions(DeviceChannel(), CLAUDE_CODE, SessionHost())
 
 
 async def _room(factory) -> dict[str, uuid.UUID]:

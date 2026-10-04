@@ -29,6 +29,7 @@ import { useRouter } from 'vue-router'
 import { getAvatarUrl } from '@/utils/materials'
 
 import { provideRevealGate } from '@/composables/useRevealGate'
+import { useRowMenu } from '@/composables/useRowMenu'
 
 import {
   ApiError,
@@ -64,6 +65,7 @@ defineOptions({ name: 'ProjectMembersView' })
 const props = defineProps<{ projectId: string }>()
 const router = useRouter()
 const store = useWorkspaceStore()
+const rowMenu = useRowMenu<string>()
 const gate = provideRevealGate()
 const { revealed } = gate
 
@@ -380,7 +382,13 @@ useCommands(() => [
       <div v-for="s in sections" :key="s.key" class="mb-6" :data-section="s.key">
         <div class="t-eyebrow mb-2">{{ s.title }} · {{ s.rows.length }}</div>
         <p v-if="s.key === 'team'" class="t-meta-read mb-2">{{ t('work.members.teamHint') }}</p>
-        <v-card v-for="m in s.rows" :key="m.user_handle" class="mb-2 member-row" variant="outlined">
+        <v-card
+          v-for="m in s.rows"
+          :key="m.user_handle"
+          class="mb-2 member-row"
+          variant="outlined"
+          @contextmenu="removable(m) && rowMenu.open(m.user_handle, $event)"
+        >
           <div class="d-flex align-center pa-3" @click="openProfile(m)">
             <UserAvatar :name="memberName(m) || m.user_handle" :avatar="faceUrl(m)" :size="36" class="mr-3" />
             <div class="min-w-0">
@@ -412,7 +420,12 @@ useCommands(() => [
               </span>
             </span>
             <!-- 桌面是下拉菜单，手机是底部面板（AdaptiveMenu）。 -->
-            <AdaptiveMenu v-if="removable(m)" :actions="memberActions(m)" :title="memberName(m) || m.user_handle">
+            <AdaptiveMenu
+              v-if="removable(m)"
+              v-bind="rowMenu.bind(m.user_handle)"
+              :actions="memberActions(m)"
+              :title="memberName(m) || m.user_handle"
+            >
               <template #activator="{ props: menuProps }">
                 <BaseButton
                   v-bind="menuProps"

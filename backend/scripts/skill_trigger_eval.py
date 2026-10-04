@@ -291,7 +291,7 @@ def build() -> None:
         system, state = room(empty)
         said = platform_prompt(text) if who == "platform" else f"[{who}]: {text}"
         # A new session's first message: the project state, then the turn
-        # (`DrivenRuntime._with_project_state`).
+        # (`RoomSessions._with_project_state`).
         turn = "\n\n".join(filter(None, [state, publication_prompt(said)]))
         print(
             json.dumps(

@@ -834,12 +834,12 @@ test.describe('房间输入框：下面那一行放得下，手指点得中', ()
   });
 });
 
-// 设置浮层（`SettingsOverlay`）的外壳几何：「目录 + 内容列」一组居中（灰栏宽 max(264, (窗口−720)/2)），内容列最宽 720，
-// 关闭按钮右缘贴内容列右缘。这几条以前全都不成立 —— 灰栏随窗口长到 440，内容列贴着灰栏
-// 靠左、右边空出一大片，关闭按钮钉在窗口最右边（1280 宽时离内容右缘 64px，1920 宽时
-// 700 余 px）。四类设置页（个人、资料、项目、空间）各写各的宽度，同一条内容列里对不齐。
-// 量的都是渲染出来的盒子：这种错 vitest、typecheck、stylelint 全看不见。
-test.describe('设置浮层：目录和内容一组居中、关闭按钮不随内容滚走', () => {
+// 设置浮层（`SettingsOverlay`）的外壳几何：目录灰栏钉窗口左缘、定宽 264，内容列最宽 720，
+// 在「窗口减目录」剩下的地方居中，关闭按钮右缘贴内容列右缘。这几条以前都不成立 —— 最早灰栏
+// 随窗口长到 440、内容列贴着灰栏靠左，右边空出一大片；改了一版又变成「目录 + 内容列」一组
+// 居中，目录和内容之间隔出 500 多 px。四类设置页（个人、资料、项目、空间）各写各的宽度，
+// 同一条内容列里对不齐。量的都是渲染出来的盒子：这种错 vitest、typecheck、stylelint 全看不见。
+test.describe('设置浮层：目录钉左缘、内容列在剩余空间居中、关闭按钮不随内容滚走', () => {
   // 量当前打开的设置页：灰栏、内容列、关闭按钮三个盒子，外加内容列在主滚动区里两侧的
   // 留白。留白用 `clientWidth`（滚动条槽算在里面），居中的基准才是同一个宽度 —— 和
   // 「管理后台 · 队列页宽档」那条一个量法。
@@ -863,7 +863,7 @@ test.describe('设置浮层：目录和内容一组居中、关闭按钮不随�
     });
   }
 
-  test('桌面三档：目录和内容列一组居中、内容列 720、关闭按钮贴内容右缘且不压页头', async ({ page }) => {
+  test('桌面三档：目录定宽 264 贴左缘、内容列 720 居中、关闭按钮贴内容右缘且不压页头', async ({ page }) => {
     await apiLogin(page);
     for (const width of [1280, 1440, 1920]) {
       await page.setViewportSize({ width, height: 900 });
@@ -872,23 +872,18 @@ test.describe('设置浮层：目录和内容一组居中、关闭按钮不随�
       const g = await overlayGeometry(page);
       const label = `${width}px`;
 
-      // 灰栏宽 max(264, (窗口 − 720) / 2)：够宽时「目录 + 内容列」一组居中，窄时守住 264。
+      // 目录灰栏定宽 264，钉在窗口左缘 —— 不再随窗口变宽。
       expect(g.side, `${label}：没落在桌面外壳里`).not.toBeNull();
-      const sideWant = Math.max(264, (width - 720) / 2);
-      expect(Math.abs(g.side!.width - sideWant), `${label}：灰栏宽`).toBeLessThanOrEqual(3);
+      expect(Math.abs(g.side!.width - 264), `${label}：目录灰栏宽`).toBeLessThanOrEqual(3);
+      expect(g.side!.left, `${label}：灰栏没贴窗口左缘`).toBeLessThanOrEqual(1);
 
       // 内容列最宽 720 —— 四类设置页共用同一条。
       expect(g.content, `${label}：没有内容列`).not.toBeNull();
       expect(Math.round(g.content!.width), `${label}：内容列宽`).toBe(720);
 
-      // 内容列贴着分界线，不再漂到主区中间和目录隔开一大段。
-      expect(Math.abs(g.content!.left - g.side!.right), `${label}：内容列没贴着分界线`).toBeLessThanOrEqual(3);
-
-      // 够宽时左边灰栏和右边留白一样宽（右边扣掉滚动条槽，容差放到 16）。
-      if (width >= 1440) {
-        expect(g.gaps, `${label}：量不到主区`).not.toBeNull();
-        expect(Math.abs(g.side!.width - g.gaps!.right), `${label}：目录和内容这一组没居中`).toBeLessThanOrEqual(16);
-      }
+      // 内容列在「窗口减目录」剩下的地方居中：两侧留白相等（右边扣掉滚动条槽，容差放到 8）。
+      expect(g.gaps, `${label}：量不到主区`).not.toBeNull();
+      expect(Math.abs(g.gaps!.left - g.gaps!.right), `${label}：内容列没在剩余空间里居中`).toBeLessThanOrEqual(8);
 
       // 关闭按钮右缘贴内容列右缘，并且整颗落在内容上方的内距里，不压页头的按钮。
       expect(g.close, `${label}：没有关闭按钮`).not.toBeNull();

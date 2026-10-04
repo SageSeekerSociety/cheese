@@ -13,8 +13,7 @@ import os
 import signal
 from pathlib import Path
 
-from app.domain.agent.harness import Opening
-from app.domain.agent.harness.driven.runner import IDLE_EXIT_S
+from app.domain.agent.harness.driven.runner import IDLE_EXIT_S, SessionStart
 from app.domain.agent.harness.pi.runner import Runner
 
 
@@ -29,7 +28,7 @@ async def serve(state: Path, config: dict, *, binary: str, cwd: str) -> None:
     waits: list[asyncio.Task] = []
     try:
         await runner.start(
-            Opening(**config["opening"]),
+            SessionStart(**config["opening"]),
             binary=binary,
             cwd=cwd,
             env=dict(os.environ),

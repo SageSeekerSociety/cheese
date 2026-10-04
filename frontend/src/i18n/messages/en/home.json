@@ -22,6 +22,11 @@
     "expand": "Expand {name}",
     "collapse": "Collapse {name}",
     "unreadActivity": "new activity",
-    "teamCredits": "Credits"
+    "teamCredits": "Credits",
+    "leaveTeam": "Leave team",
+    "leaveTeamTitle": "Leave “{name}”?",
+    "leaveTeamBody": "You will no longer be a member of this team or see its projects. To come back you have to join again.",
+    "leaveTeamDone": "Left “{name}”",
+    "leaveTeamFailed": "Couldn't leave the team"
   }
 }

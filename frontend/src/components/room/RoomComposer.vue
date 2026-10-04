@@ -69,6 +69,8 @@ const emit = defineEmits<{
   (e: 'drop-files', event: DragEvent): void
   (e: 'paste', event: ClipboardEvent): void
   (e: 'remove-att', index: number): void
+  /** 上传失败的那一枚按了重试：房间拿着 File 再传一次。 */
+  (e: 'retry-att', index: number): void
   (e: 'clear-reply'): void
   (e: 'add-library-file', path: string): void
 }>()
@@ -116,6 +118,7 @@ const picker = useRoomMentionPicker({
 const {
   matches: mentionMatches,
   level: mentionLevel,
+  menuVisible: mentionMenuVisible,
   menuOpen: mentionMenuOpen,
   activeIndex: mentionActiveIndex,
 } = picker
@@ -240,16 +243,18 @@ function onComposerKey(e: KeyboardEvent) {
     picker.backToRoot()
     return
   }
-  // 菜单开着时上下键换高亮。输入法正在选字时这两个键是给输入法的（翻候选词），
-  // 所以那会儿让过去。菜单收起了就不拦——上下键该去挪光标，而不是隔着一个看不见
-  // 的菜单选人。
+  // 菜单里有东西可挑时上下键换高亮。输入法正在选字时这两个键是给输入法的（翻候选
+  // 词），所以那会儿让过去。空态（一个候选都没有）和菜单收起时不拦——那时上下键该
+  // 去挪光标，而不是隔着一块看不见的名单选人。
   const arrow = e.key === 'ArrowDown' || e.key === 'ArrowUp'
   if (arrow && mentionMenuOpen.value && !isImeKey(e)) {
     e.preventDefault()
     picker.move(e.key === 'ArrowDown' ? 1 : -1)
     return
   }
-  if (e.key === 'Escape' && mentionMenuOpen.value) {
+  // Esc 收起菜单：有候选时收起候选，空态时把那句「暂无匹配」也收起来——都是「这次
+  // @ 先不挑了」，`@` 半截字留在正文里。
+  if (e.key === 'Escape' && mentionMenuVisible.value) {
     e.preventDefault()
     picker.close()
     return
@@ -331,7 +336,7 @@ defineExpose({
     <!-- @-autocomplete: 没打字是「人 / 群播 / 资料库」这一级，打了字就是搜索。 -->
     <MentionMenu
       ref="mentionMenu"
-      :open="mentionMenuOpen"
+      :open="mentionMenuVisible"
       :matches="mentionMatches"
       :active-index="mentionActiveIndex"
       :level="mentionLevel"
@@ -359,6 +364,7 @@ defineExpose({
         :atts="atts"
         :topic-id="topic?.id ?? null"
         @remove-att="(i: number) => emit('remove-att', i)"
+        @retry-att="(i: number) => emit('retry-att', i)"
         @clear-reply="emit('clear-reply')"
       />
       <!-- 输入框独占一整行。它旁边并排放按钮时，真正能打字的那块在手机上只剩

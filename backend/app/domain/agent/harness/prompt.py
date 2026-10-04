@@ -325,7 +325,7 @@ def build_system_prompt(
     新会话的第一条消息送进去；之后变了什么，用平台提醒补（:func:`opening_changes`）。
 
     ``keeps_memory`` 说的是**这一轮跑的 harness 会不会把记忆文件对账回平台**
-    （``AgentRuntime.keeps_memory``，调用方按当前 runtime 传入）。默认不注：记忆
+    （``Harness.keeps_memory``，调用方按当前骨架传入）。默认不注：记忆
     那一段讲的是「写进 `~/.cheese/memory/`，下一轮平台的那一份里有它」，而 codex、
     pi 没有这条回路——照说明书写下的文件永远同步不回来，agent 却以为自己在写项目
     记忆。

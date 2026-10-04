@@ -168,9 +168,12 @@ useCommands(() => {
 
 <template>
   <!-- 章程是一整篇文档，自己带工具条、自己滚、评论栏停在它旁边：这一页不滚，把高度让给它。 -->
+  <!-- The weekly report and the memory log are prose the person reads through, so
+       they take the reading column (`--page-w-read`), not the wider form / card-list
+       width. Lists and forms elsewhere stay on `--page-w`. -->
   <AppPage
     :title="t('navigation.project.docs')"
-    :width="kind === 'charter' ? 'full' : 'read'"
+    :width="kind === 'charter' ? 'full' : 'prose'"
     :fill="kind === 'charter'"
   >
     <div :class="kind === 'charter' ? 'docs-head docs-head--page' : 'mb-6'">
@@ -312,11 +315,12 @@ useCommands(() => {
 }
 
 /* 章程：编辑器整页宽、占满剩下的高度、自己滚；页签那一行仍摆在阅读宽度的那一栏里，
-   切到周报集、记忆时不跳。 */
+   切到周报集、记忆时不跳。周报集、记忆那一档走 --page-w-read（AppPage 的 prose），
+   所以这里也跟着用 --page-w-read——两处对不上，切页签时那一行就会横跳一下。 */
 .docs-head--page {
   box-sizing: border-box;
   width: 100%;
-  max-width: calc(var(--page-w) + 32px);
+  max-width: calc(var(--page-w-read) + 32px);
   margin-inline: auto;
   padding: 24px 16px 8px;
 }

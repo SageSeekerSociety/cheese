@@ -25,9 +25,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.config import settings
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import exception_text, say
-from app.domain.agent import death_evidence, room_reads, turn_inputs
+from app.domain.agent import death_evidence, turn_inputs
 from app.domain.agent.announce import announce, settle_questions_answered_by
-from app.domain.agent.compute import ComputePool, ComputeProvider
+from app.domain.agent.compute import ComputePool
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 
 # 兼容门面：现场事件行的渲染搬去了 `event_lines.py`（那里有直接的单测）。
@@ -62,12 +62,7 @@ from app.domain.agent.gateway_usage import (
     charge_turn_spend,
     project_gateway_key,
 )
-from app.domain.agent.harness import (
-    Opening,
-    SessionRef,
-    harness_for,
-    runtime_for,
-)
+from app.domain.agent.harness import SessionRef, harness_for
 from app.domain.agent.harness.prompt import (
     UNTITLED_FIRST,
     build_session_opening,
@@ -190,6 +185,8 @@ from app.domain.agent.queries import (
     require_pinned_seat,
 )
 from app.domain.agent.recovery import SessionRecovery
+from app.domain.agent.room import reads as room_reads
+from app.domain.agent.room.sessions import RoomSessions
 
 # 兼容门面：这一轮往房间里落下的那些行（事件块、步骤的判决、变更汇总）搬去了
 # `room_events.py`（那里有它们各自的文档）。这里重新导出，`app.domain.agent.chat`
@@ -220,6 +217,7 @@ from app.domain.agent.service import (
     AgentToolResult,
     AgentUsage,
 )
+from app.domain.agent.session_host.host import keeps_memory
 from app.domain.agent.skills import NATIVE_CHAT_GUIDANCE, load_skills
 from app.domain.agent.turn_speakers import turn_speakers
 from app.domain.agent.work_policy import resolve_compute_id, work_policy
@@ -307,7 +305,6 @@ class _TurnContext:
     agent_pool: tuple[MemoryScope, str] | None
     role: str | None
     roster: list[dict]
-    private_owner: str | None
     untitled: bool
     # 本周教学范围 (#8d772257). None for every project that is not a course —
     # and None is what keeps the prompt byte-identical to what it was before
@@ -350,7 +347,7 @@ class _TurnContext:
 
     # Which machine, and whether it reports its own liveness (which decides who
     # owns this turn's clock; see the `turn_ceiling` frame).
-    provider: ComputeProvider
+    provider: RoomSessions
     # 这一轮跑在哪个骨架上，解析过一次的那个答案（结论 28）。会话行的键里有它，
     # 所以执行那一半必须读这里，不能自己再解析一次。
     harness: str
@@ -532,8 +529,6 @@ class ChatService(SessionRecovery):
         # Seats a reachable machine said are gone (recover_sessions),
         # until a session answers on them again (FB-56 legacy③).
         self._dead_sessions: set[tuple] = set()
-        self._compute.bind_reader(room_reads.reader(self))
-        self._compute.bind_unread_probe(self.oldest_unread_at)
         # Liveness only, keyed by durable input UUID. Settlement never depends
         # on this process cache; cold-start inputs are not mid-turn unread probes.
         self._unread_inputs: dict[uuid.UUID, dict[uuid.UUID, float]] = {}
@@ -559,7 +554,11 @@ class ChatService(SessionRecovery):
             base_prompt=base_system_prompt,
             host=self,
         )
-        self._compute.bind_memory(self._memory.sync)
+        self._compute.report_to(
+            room_reads.reader(self),
+            unread=self.oldest_unread_at,
+            memory=self._memory.sync,
+        )
         # Keep the publication contract present before native skills are invoked.
         self._skills = NATIVE_CHAT_GUIDANCE
         # Prompt construction is serialized per (topic, agent) seat: two agents
@@ -1074,25 +1073,14 @@ class ChatService(SessionRecovery):
                     if state
                     else None
                 )
-                delivered = (
-                    await self._compute.deliver(
-                        topic_id,
-                        line,
-                        images=images,
-                        register_input=registrar,
-                        expected_work_id=consuming_turn_id,
-                        agent_handle=seat_agent,
-                        owes_reply=owes_reply,
-                    )
-                    if images
-                    else await self._compute.deliver(
-                        topic_id,
-                        line,
-                        register_input=registrar,
-                        expected_work_id=consuming_turn_id,
-                        agent_handle=seat_agent,
-                        owes_reply=owes_reply,
-                    )
+                delivered = await self._compute.steer(
+                    topic_id,
+                    line,
+                    images=images or None,
+                    register_input=registrar,
+                    expected_work_id=consuming_turn_id,
+                    agent_handle=seat_agent,
+                    owes_reply=owes_reply,
                 )
         except InputOutcomeUnconfirmed as exc:
             # The registered input may already be in the native session. Leave
@@ -1235,7 +1223,7 @@ class ChatService(SessionRecovery):
         )
         try:
             return bool(
-                await self._compute.deliver(
+                await self._compute.steer(
                     topic_id,
                     line,
                     register_input=registrar,
@@ -1622,13 +1610,7 @@ class ChatService(SessionRecovery):
         async with self._replay_slots:
             for session in seats:
                 try:
-                    # What the room already shows, so a message the live path
-                    # DID persist before this process died is not landed twice.
-                    # The room is ours; which of the harness's own records are
-                    # still unlanded is the harness's.
-                    await self._compute.replay(
-                        session, known_texts=await self._said(session)
-                    )
+                    await self._compute.replay(session)
                 except DeviceOffline:
                     # The machine holding this session is not there. Nothing to
                     # recover and nothing to fix; its next connection runs this.
@@ -1655,17 +1637,6 @@ class ChatService(SessionRecovery):
                     from app.domain.agent.pending_messages import nudge_messages
 
                     nudge_messages(self, session.topic_id)
-
-    async def _said(self, session: SessionRef) -> set[str]:
-        """What 芝士 has already said in this topic, as the room stores it."""
-        async with self._sessions() as db:
-            blocks = await BlockRepository(db).list_for_topic(session.topic_id)
-        return {
-            (block.content or "").strip()
-            for block in blocks
-            if looks_like_agent_handle(block.author)
-            and (block.kind == BlockKind.message or (block.meta or {}).get("progress"))
-        }
 
     async def _save_session_pointer(
         self,
@@ -3056,7 +3027,7 @@ class ChatService(SessionRecovery):
     async def _model_kwargs(
         self,
         project_id: uuid.UUID,
-        provider: ComputeProvider | None,
+        provider: RoomSessions | None,
         topic_id: uuid.UUID | None = None,
         *,
         agent: ResolvedAgent | None = None,
@@ -3713,7 +3684,6 @@ class ChatService(SessionRecovery):
             notice_ids=[b.id for b in notices],
             prior_progress=prior_progress,
             earlier_messages=earlier_messages,
-            private_owner=private_owner,
             project_id=project_id,
             prompt_text=prompt_text,
             provider=provider,
@@ -3788,7 +3758,6 @@ class ChatService(SessionRecovery):
         pending_ids = prepared.pending_ids
         consumed_ids = pending_ids + prepared.notice_ids
         prior_progress = prepared.prior_progress
-        private_owner = prepared.private_owner
         project_id = prepared.project_id
         prompt_text = prepared.prompt_text
         provider = prepared.provider
@@ -3808,7 +3777,7 @@ class ChatService(SessionRecovery):
         # `agent_turn_timeout_s` (turn 活跃度检测). It is the HARNESS's number:
         # how long a silence may last before it means something is wrong depends
         # on what is producing the output, not on the machine underneath it.
-        runtime = runtime_for(provider)
+        runtime = provider
         yield {"type": "turn_ceiling", "seconds": runtime.hard_ceiling_s}
         # 私聊是名册两席的房间（结论 19），所以它先拿房间那份发布契约，
         # private-chat 只补私聊独有的那几条。替换会让私聊成为全仓唯一一间
@@ -3829,7 +3798,7 @@ class ChatService(SessionRecovery):
             role=role,
             # 记忆那一段跟着这一轮跑的骨架走：写下来的文件同步不回平台的骨架，
             # 读到它只会以为自己在写项目记忆（`build_system_prompt` 那段注释）。
-            keeps_memory=runtime.keeps_memory,
+            keeps_memory=keeps_memory(runtime.harness),
         )
         opening = build_session_opening(
             doc=doc_text,
@@ -3856,7 +3825,7 @@ class ChatService(SessionRecovery):
                     prepared.earlier_messages if resume_session_id is None else 0
                 ),
             ),
-            keeps_memory=runtime.keeps_memory,
+            keeps_memory=keeps_memory(runtime.harness),
         )
         async with self._sessions() as session:
             told = await AgentSessionService(session).told(
@@ -4037,19 +4006,15 @@ class ChatService(SessionRecovery):
             ready = await runtime.send(
                 session_ref,
                 prompt_text,
-                Opening(
-                    system_prompt=system_prompt,
-                    resume_token=resume_session_id,
-                    session_opening=opening.text,
-                    opening_changes=opening_changes(opening, told),
-                    expected_native_session=expected_session,
-                    memory_scope="personal" if private_owner else None,
-                    owner=private_owner,
-                    model=model_kwargs.get("model"),
-                    env=model_kwargs.get("env"),
-                    agent_handle=acting_agent,
-                    needs_place=needs_place,
-                ),
+                system_prompt=system_prompt,
+                resume_token=resume_session_id,
+                session_opening=opening.text,
+                opening_changes=opening_changes(opening, told),
+                expected_native_session=expected_session,
+                model=model_kwargs.get("model"),
+                env=model_kwargs.get("env"),
+                acting=acting_agent,
+                needs_place=needs_place,
                 work_id=turn_id,
                 images=turn_images or None,
                 on_mark=_register_work,
@@ -4061,7 +4026,7 @@ class ChatService(SessionRecovery):
                 owes_reply=summoned,
             )
             # 这一轮把现状说到了：下一轮只补在这之后变了的。回答一道 Ask 的那一轮
-            # 接着原来的对话，runtime 不往里放现状（`DrivenRuntime.send`），所以不算。
+            # 接着原来的对话，runtime 不往里放现状（`RoomSessions.send`），所以不算。
             if expected_session is None:
                 async with self._sessions() as session:
                     await AgentSessionService(session).remember_told(

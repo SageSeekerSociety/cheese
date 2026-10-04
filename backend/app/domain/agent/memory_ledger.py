@@ -12,7 +12,7 @@
 `_refusals`（对账时挡下来的删除）、`_syncs`（每间房的对账锁）。谁在读它们，只由
 这一簇自己回答，所以它们跟着这一簇走。
 
-对账走的是会话那条通道（`ComputePool.bind_memory`），所以这个对象由 `ChatService`
+对账走的是会话那条通道（`ComputePool.report_to`），所以这个对象由 `ChatService`
 自己装上去，不是外面传进来的。库里要用的几件协作者（会话工厂、算力池、网关、网关
 锁、基础提示词）走构造入参，房间锁、模型配置与原生输入登记仍由
 `ChatService` 提供——见 `_MemoryHost`。
@@ -30,10 +30,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.errors import NotFoundError
 from app.core.sentences import say
 from app.domain.agent.announce import announce
-from app.domain.agent.compute import ComputePool, ComputeProvider
+from app.domain.agent.compute import ComputePool
 from app.domain.agent.dream_usage import drain_dream_spend, record_dream_usage
 from app.domain.agent.gateway import LlmGateway
-from app.domain.agent.harness import runtime_for
+from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.prompt import build_session_opening, build_system_prompt
 from app.domain.agent.platform_notices import (
     EVENT_MEMORY_CHANGED,
@@ -47,7 +47,9 @@ from app.domain.agent.queries import (
     _dream_refusal_phrase,
     _say_memory_change,
 )
+from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.service import AgentResult, AgentUsage
+from app.domain.agent.session_host.host import keeps_memory
 from app.domain.agent.work_policy import resolve_compute_id
 from app.domain.block.models import Block, BlockKind
 from app.domain.block.repositories import BlockRepository
@@ -75,10 +77,11 @@ MEMORY_TURNS_KEPT = 512
 class _MemoryHost(Protocol):
     """这条路的收件人：``ChatService`` 上留在原地的协作者。
 
-    跑整理是**一轮真会话**（`runtime.run_turn`），会话那套机件里有两件跟着这一簇
-    走不了：``_lock_for`` 是每个房间一把、换环境也在用的那把锁，``_model_kwargs``
-    内部还要问项目的档位与队友配置。它们各自还有别的调用方，方法在 ``ChatService``
-    上原样留着。原生输入登记也由 host 提供，空效果仍须登记输入身份。
+    跑整理是**一轮真会话**（`runtime.send` 后读 `runtime.reading`），会话那套机件
+    里有两件跟着这一簇走不了：``_lock_for`` 是每个房间一把、换环境也在用的那把
+    锁，``_model_kwargs`` 内部还要问项目的档位与队友配置。它们各自还有别的调用
+    方，方法在 ``ChatService`` 上原样留着。原生输入登记也由 host 提供，空效果仍
+    须登记输入身份。
     本模块声明自己会问哪些，类型在调用点核对；这里只列签名，不写实现。
 
     库里其余几件（会话工厂、算力池、网关、网关锁、基础提示词）不在这里：它们是
@@ -92,7 +95,7 @@ class _MemoryHost(Protocol):
     async def _model_kwargs(
         self,
         project_id: uuid.UUID,
-        provider: ComputeProvider | None,
+        provider: RoomSessions | None,
         topic_id: uuid.UUID | None = None,
         *,
         platform: bool = False,
@@ -262,7 +265,7 @@ class MemoryLedger:
         做的是它做不了的那一半：读这个项目的花销和房间记录、把这一轮派到项目默认
         芝士的会话上、把结果收回来。
 
-        **派法**是 `platform_work` + `run_turn`（结论 28）：整理是平台自己起的活，
+        **派法**是 `platform_work` + `send`（结论 28）：整理是平台自己起的活，
         跑在这个项目默认芝士的会话上，用它自己的模型。
         """
         now = datetime.now(UTC)
@@ -328,17 +331,18 @@ class MemoryLedger:
         # 那时才落到会话的磁盘上），一轮结束时又按它收回来。
         self.remember_turn(root_topic_id, acting=agent_handle, speakers=tuple(owners))
         self._dreams.add(root_topic_id)
-        provider = self._compute.platform_work(compute_id)
-        runtime = runtime_for(provider)
+        runtime = self._compute.platform_work(compute_id)
         system_prompt = build_system_prompt(
             self._base_prompt,
             "",  # 聊天说明不带：整理这件事的规矩在 prompt 里。
             # 记忆那一段照常注入：整理就是在这个会话里写记忆文件，而「一条记忆写
             # 成什么样」只有那一段说得全（文件名、frontmatter、索引行）。
-            keeps_memory=runtime.keeps_memory,
+            keeps_memory=keeps_memory(runtime.harness),
         )
         # 每次整理都是一条新会话，索引直接放在这一轮的消息前面。
-        opening = build_session_opening(memory=index, keeps_memory=runtime.keeps_memory)
+        opening = build_session_opening(
+            memory=index, keeps_memory=keeps_memory(runtime.harness)
+        )
         if opening.text:
             prompt = f"{opening.text}\n\n{prompt}"
         final_text = ""
@@ -348,28 +352,39 @@ class MemoryLedger:
             async with self._host._lock_for(root_topic_id):
                 model_kwargs = (
                     await self._host._model_kwargs(
-                        project_id, provider, root_topic_id, platform=True
+                        project_id, runtime, root_topic_id, platform=True
                     )
                 )[0]
-                async for event in runtime.run_turn(
-                    project_id=project_id,
-                    topic_id=root_topic_id,
-                    prompt=prompt,
-                    system_prompt=system_prompt,
-                    resume_session_id=None,
-                    # A platform dream holds no blocks, but its native receipt
-                    # still needs a registered identity.
-                    register_input=self._host._input_registrar(InputEffects()),
-                    turn_id=run_id,
-                    **model_kwargs,
-                ):
-                    if isinstance(event, AgentUsage):
-                        usage = event
-                    elif isinstance(event, AgentResult):
-                        final_text = event.text
-                        failed = event.is_error
-                        if event.usage is not None:
-                            usage = event.usage
+                # Read here rather than heard by the room: nobody waits on it
+                # in a timeline, and the run is worth exactly as much as this
+                # reading of it.
+                async with runtime.reading(run_id) as events:
+                    await runtime.send(
+                        SessionRef(
+                            project_id,
+                            root_topic_id,
+                            model_kwargs["session_agent"],
+                            harness=runtime.harness,
+                        ),
+                        prompt,
+                        system_prompt=system_prompt,
+                        model=model_kwargs.get("model"),
+                        env=model_kwargs.get("env"),
+                        acting=model_kwargs.get("agent_handle"),
+                        work_id=run_id,
+                        on_mark=lambda _: None,
+                        # A platform dream holds no blocks, but its native
+                        # receipt still needs a registered identity.
+                        register_input=self._host._input_registrar(InputEffects()),
+                    )
+                    async for event in events:
+                        if isinstance(event, AgentUsage):
+                            usage = event
+                        elif isinstance(event, AgentResult):
+                            final_text = event.text
+                            failed = event.is_error
+                            if event.usage is not None:
+                                usage = event.usage
                 # 收回来。自己再对一次账，不等那一侧的回调：这一轮的结果就在眼前，
                 # 而「整理到底成了没有」要一个当场的答案（对账幂等，回调先跑过也
                 # 只会是一次空账）。
