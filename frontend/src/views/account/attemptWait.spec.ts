@@ -30,10 +30,10 @@ describe('the wait a refused attempt states', () => {
   it('is written in the interface language, not the server’s', () => {
     setLocale('zh-CN')
     expect(attemptMessage(refusal({ reason: 'too_many_attempts', retryAfterSeconds: 45 }))).toBe(
-      '尝试次数过多，请在 45 秒后重试'
+      '尝试次数过多，45 秒后重试'
     )
     expect(attemptMessage(refusal({ reason: 'invalid_credentials', retryAfterSeconds: 120 }, 401))).toBe(
-      '用户名或密码错误，请在 2 分钟后重试'
+      '用户名或密码错误，2 分钟后重试'
     )
     expect(attemptMessage(refusal({ reason: 'invalid_credentials' }, 401))).toBe('用户名或密码错误')
   })
@@ -42,7 +42,7 @@ describe('the wait a refused attempt states', () => {
     setLocale('zh-CN')
     expect(attemptMessage(refusal({ reason: 'invalid_email_code' }, 401))).toBe('验证码不正确或已过期')
     expect(attemptMessage(refusal({ reason: 'email_code_too_soon', retryAfterSeconds: 42 }, 400))).toBe(
-      '请在 42 秒后重新获取验证码'
+      '42 秒后可重新获取验证码'
     )
     setLocale('en')
     expect(attemptMessage(refusal({ reason: 'email_code_too_soon', retryAfterSeconds: 600 }, 400))).toBe(
@@ -52,7 +52,7 @@ describe('the wait a refused attempt states', () => {
 
   it('words the whole site running out of mail for the hour', () => {
     setLocale('zh-CN')
-    expect(attemptMessage(refusal({ reason: 'mail_limit_reached' }, 503))).toBe('暂时无法发送邮件，请稍后重试')
+    expect(attemptMessage(refusal({ reason: 'mail_limit_reached' }, 503))).toBe('暂时无法发送邮件，稍后重试')
   })
 
   it('leaves any other error to the screen', () => {

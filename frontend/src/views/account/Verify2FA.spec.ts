@@ -133,7 +133,7 @@ describe('尝试次数过多', () => {
     await submitCode(view)
 
     await settle(router, '/account/signin')
-    expect(toast.error).toHaveBeenCalledWith('尝试次数过多，请在 42 秒后重试')
+    expect(toast.error).toHaveBeenCalledWith('尝试次数过多，42 秒后重试')
   })
 })
 

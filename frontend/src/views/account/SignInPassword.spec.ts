@@ -114,7 +114,7 @@ describe('a wrong password', () => {
 
     await signIn(view, { username: '用户名', password: '密码' })
 
-    expect(await view.findByText('用户名或密码错误，请在 30 秒后重试')).toBeTruthy()
+    expect(await view.findByText('用户名或密码错误，30 秒后重试')).toBeTruthy()
     const submit = view.getByRole('button', { name: '登录' })
     expect(submit.hasAttribute('disabled')).toBe(true)
     await fireEvent.submit(view.container.querySelector('form')!)

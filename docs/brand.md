@@ -84,7 +84,7 @@ Nunito 781，按字体自带的字偶间距排，再整体收紧 10/1000 em。�
 | PWA 可裁切图标 | `pwa-maskable-512x512.png` | 同上，图形标只占五成，留在系统的安全圆里 |
 | 下载页 | [`app-icon.png`](../frontend/src/assets/app-icon.png) | 白色圆角方块，自带圆角和细边 |
 | 桌面客户端 | `desktop/src-tauri/icons/` | 由 `desktop/icon-source.png` 生成，见 §8。macOS 不替应用裁形状，所以源图就是苹果模板的形状：1024 的透明方块里居中一块 824 的白色圆角方块，带细边 |
-| 登录页动效 | `brand-scene/logo-*.png` | 彩色贴图是图形标本身；金属和热成像两张是 Paper Shaders 处理过的，见 §8 |
+| 登录页动效 | `brand-scene/logo-*.png` | 彩色贴图是图形标本身；热成像那张是 Paper Shaders 处理过的，见 §8 |
 
 **首页方块**是侧栏首页那一格（悬停和选中时）、主页面在桌面客户端里的启动画面、桌面客户端的启动页：品牌色平涂的方块，上面压深色 `#23242a` 的图形标，两个主题下一样。两张启动页必须像素一致，里面的图形标都由脚本写入。
 
@@ -119,7 +119,7 @@ uv run --with fonttools --with skia-pathops --with uharfbuzz \
 # 仓库只留 tauri.conf.json 列出的六个，其余用 git clean 删掉
 pnpm --dir desktop icons
 git clean -fdq -- desktop/src-tauri/icons
-# 登录页金属和热成像两张贴图：需要装好 frontend/node_modules，PATH 上有 Chromium
+# 登录页热成像贴图：需要装好 frontend/node_modules，PATH 上有 Chromium
 uv run --with fonttools --with skia-pathops --with uharfbuzz \
     --with py7zr --with pillow python scripts/brand/scene_textures.py
 ```

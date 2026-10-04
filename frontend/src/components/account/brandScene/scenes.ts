@@ -2,25 +2,29 @@ import type { ShaderMountUniforms, ShaderSizingParams } from '@paper-design/shad
 
 import colorLogoUrl from '@/assets/brand-scene/logo-color.png?url'
 import heatLogoUrl from '@/assets/brand-scene/logo-heat.png?url'
-import metalLogoUrl from '@/assets/brand-scene/logo-metal.png?url'
 
 // The brand scenes on the sign-in pages (design-system §9.9), built on Paper
 // Shaders. One is drawn at random each time the page is opened.
 //
-// The logo textures for liquid metal and heat are the library's own
-// `toProcessedLiquidMetal` / `toProcessedHeatmap` output, generated once and
-// committed, so a phone does not redo that work on every visit. The heatmap
-// processor paints onto white, which is why it was fed a dark logo.
+// The heat logo texture is the library's own `toProcessedHeatmap` output,
+// generated once and committed, so a phone does not redo that work on every
+// visit. The heatmap processor paints onto white, which is why it was fed a
+// dark logo.
 //
-// Sizes are set so the six scenes with a centered subject carry about the same
-// weight: the logo scenes are the reference, and the filled moon, the ring and
-// the glowing heat logo are drawn smaller because their mass reads larger.
+// Sizes are set so the scenes with a centered subject carry about the same
+// weight: the logo scenes are the reference, and the filled moon, the ring, the
+// grainy sphere and the glowing heat logo are drawn smaller because their mass
+// reads larger.
+//
+// A liquid-metal scene was dropped: chrome spans near-black to near-white, which
+// is the black-on-white clash §9.9 forbids, and no uniform brings it back into
+// the amber family.
 
 type Paper = typeof import('@paper-design/shaders')
 
-export type SceneId = 'metal' | 'dither' | 'grain' | 'glass' | 'heat' | 'water' | 'halo' | 'neuro'
+export type SceneId = 'dither' | 'grain' | 'glass' | 'heat' | 'water' | 'halo' | 'neuro'
 
-export const SCENE_IDS: readonly SceneId[] = ['metal', 'dither', 'grain', 'glass', 'heat', 'water', 'halo', 'neuro']
+export const SCENE_IDS: readonly SceneId[] = ['dither', 'grain', 'glass', 'heat', 'water', 'halo', 'neuro']
 
 /** What a scene is painted against. */
 export interface SceneGround {
@@ -93,29 +97,6 @@ function noise(P: Paper): Promise<HTMLImageElement> {
 const colors = (P: Paper, list: string[]) => list.map((c) => P.getShaderColorFromString(c))
 
 export const SCENES: Record<SceneId, (P: Paper, g: SceneGround) => Promise<Scene>> = {
-  // The logo as slow liquid metal; the pointer turns the light.
-  metal: async (P, g) => ({
-    fragment: P.liquidMetalFragmentShader,
-    speed: 0.4,
-    mipmaps: ['u_image'],
-    uniforms: {
-      u_colorBack: P.getShaderColorFromString(g.back),
-      u_colorTint: P.getShaderColorFromString(g.dark ? '#FFB547' : '#FFD08A'),
-      u_image: await loadImage(metalLogoUrl),
-      u_contour: 0.3,
-      u_distortion: 0.05,
-      u_softness: 0.35,
-      u_repetition: 1.5,
-      u_shiftRed: 0.06,
-      u_shiftBlue: 0.06,
-      u_angle: 70,
-      u_isImage: true,
-      u_shape: P.LiquidMetalShapes.none,
-      ...sizing(P, { scale: 0.62 }),
-    },
-    pointer: (x, y) => ({ u_angle: 70 + x * 30, u_distortion: 0.05 + Math.abs(y) * 0.03 }),
-  }),
-
   // A dithered moon turning slowly; the pointer shifts it for parallax.
   dither: async (P, g) => ({
     fragment: P.ditheringFragmentShader,
@@ -131,7 +112,7 @@ export const SCENES: Record<SceneId, (P: Paper, g: SceneGround) => Promise<Scene
     pointer: (x, y) => ({ u_offsetX: x * 0.04, u_offsetY: y * 0.04 }),
   }),
 
-  // A grainy warm gradient, no figure.
+  // A grainy warm sphere, the same size as the moon; the pointer tilts it.
   grain: async (P, g) => ({
     fragment: P.grainGradientFragmentShader,
     speed: 0.5,
@@ -141,12 +122,12 @@ export const SCENES: Record<SceneId, (P: Paper, g: SceneGround) => Promise<Scene
       u_colorsCount: 3,
       u_softness: 0.7,
       u_intensity: 0.15,
-      u_noise: 0.5,
-      u_shape: P.GrainGradientShapes.wave,
+      u_noise: 0.3,
+      u_shape: P.GrainGradientShapes.sphere,
       u_noiseTexture: await noise(P),
-      // The wave is drawn for a tall pane; in the short band it is scaled down
-      // and tilted so a crest still crosses it.
-      ...sizing(P, g.narrow ? { fit: 'none', scale: 0.45, rotation: -8 } : { fit: 'none' }),
+      // A centered sphere like the moon, so it reads the same weight instead of
+      // filling the whole pane. In the short band it shrinks a little more.
+      ...sizing(P, g.narrow ? { fit: 'none', scale: 0.42, rotation: -8 } : { fit: 'none', scale: 0.5 }),
     },
     pointer: (x) => ({ u_rotation: x * 12 }),
   }),
