@@ -361,10 +361,15 @@ useFocusReturn(ref(true))
 /* 关掉这一颗落在灰栏顶上那条空当里：灰栏的内距上是 48（`.so__side` 的 padding-top），
    正好是 app 壳顶栏那一条，按钮在这里竖向居中、左缘对着灰栏的内容内距 24。长什么样交给
    `BaseButton`（ghost + sm），和顶栏那颗返回同一款。它绝对定位在 `.so` 上（这一层整屏不
-   动），所以右边的目录和内容怎么滚它都不动；抬一层 z-index，免得被后面画的兄弟盖住。 */
+   动），所以右边的目录和内容怎么滚它都不动；抬一层 z-index，免得被后面画的兄弟盖住。
+
+   竖向居中要算渲染出来的盒子，不是 `sm` 名义上的 28：图标按钮的尺寸是
+   `--v-btn-height + 12`（vuetify 的 VBtn.css），sm 的 28 落到这里是 40 高。所以
+   (48 - 40) / 2 = 4，按钮占 4..44，正好待在 48 那条空当里、碰不到下面的目录。
+   `e2e/tests/layout-invariants.spec.ts` 量的就是这件事（底边 <= 目录顶 + 1）。 */
 .so__close {
   position: absolute;
-  top: 10px;
+  top: calc((48px - 40px) / 2);
   left: 24px;
   z-index: var(--z-raised);
 }
