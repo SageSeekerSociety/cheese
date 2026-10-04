@@ -13,7 +13,8 @@ const api = vi.hoisted(() => ({
 }))
 vi.mock('../api', () => api)
 
-import { setLocale } from '../i18n'
+import { resetFirstTimeHints } from '../composables/useFirstTimeHint'
+import i18n, { setLocale } from '../i18n'
 
 import ProjectComputeSettings from './ProjectComputeSettings.vue'
 
@@ -238,5 +239,44 @@ describe('project work computer settings', () => {
     expect(within(rows[1]).getByRole('button', { name: '查看并更换…' })).toBeTruthy()
     expect(within(rows[0]).queryByRole('button', { name: '查看并更换…' })).toBeNull()
     expect(within(rows[2]).queryByRole('button', { name: '查看并更换…' })).toBeNull()
+  })
+
+  describe('还没有一台自己的电脑', () => {
+    const LinkStub = { props: ['to'], template: '<a :data-to="JSON.stringify(to)"><slot /></a>' }
+    function mountWith(props: Record<string, unknown>) {
+      render(ProjectComputeSettings, {
+        props: { projectId: 'p1', ...props },
+        global: { plugins: [createVuetify({ components, directives }), i18n], stubs: { 'router-link': LinkStub } },
+      })
+      return screen.findByTestId('project-default')
+    }
+    beforeEach(() => {
+      localStorage.clear()
+      resetFirstTimeHints()
+    })
+
+    it('指出要走的两处：个人设置里接入、团队工作电脑页加进来', async () => {
+      api.getProjectComputeConfigs.mockResolvedValue(configs({ devices: [], distribution: { cloud: 0, devices: [] } }))
+      await mountWith({ teamHandle: 'lab-team' })
+      const hint = document.querySelector('[data-hint="own-device"]') as HTMLElement
+      expect(hint.textContent).toContain('先在「设备」里接入它')
+      const targets = Array.from(hint.querySelectorAll('a')).map((a) => a.getAttribute('data-to'))
+      expect(targets).toEqual([
+        JSON.stringify({ name: 'UserSettingsDevices' }),
+        JSON.stringify({ name: 'TeamsDetailCompute', params: { handle: 'lab-team' } }),
+      ])
+    })
+
+    it('已经有设备可选，或者改不了默认的人：不说这句', async () => {
+      api.getProjectComputeConfigs.mockResolvedValue(configs())
+      await mountWith({ teamHandle: 'lab-team' })
+      expect(document.querySelector('[data-hint="own-device"]')).toBeNull()
+      cleanup()
+      api.getProjectComputeConfigs.mockResolvedValue(
+        configs({ devices: [], can_manage: false, distribution: { cloud: 0, devices: [] } })
+      )
+      await mountWith({})
+      expect(document.querySelector('[data-hint="own-device"]')).toBeNull()
+    })
   })
 })
