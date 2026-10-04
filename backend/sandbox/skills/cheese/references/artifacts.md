@@ -35,7 +35,24 @@
 
 摆出来不等于交付：摆出来的东西属于这个房间，用户看完就完了。他想留一份以后用，自己点那一行上的「保存到资料库」。这不上产物清单：清单上的每一项是要交出去的东西，只由交付长出来。
 
-跑起来的应用（比如开发服务器）用 `cheese serve <端口>` 设为预览：先在 `127.0.0.1` 上起服务、放到后台，端口固定住，再报端口。怎么跑这个项目由你看 README、package.json、pyproject 判断。只有你报上来的这一个端口会被带出去。
+跑起来的应用用 `cheese serve <端口>` 设为预览：先在 `127.0.0.1` 上起服务、放到后台，端口固定住，再报端口。它默认先用浏览器式的 GET 探到应用应答（任何 HTTP 状态码都算）才报，最多等 30 秒，`--wait <秒>` 调、`--no-wait` 关。怎么跑这个项目由你看 README、package.json、pyproject 判断。只有你报上来的这一个端口会被带出去。
+
+按要看的东西挑最省的路：
+
+- 线上现状、已部署的站：直接在消息里发网址，约 4 秒，不占预览。
+- 房间里的文件（网页、图、PDF、文档）：`cheese show`，约 1 秒出现在预览里。
+- 要跑起来、要点的应用：前端项目先构建、再按静态文件起服务。开发服务器给每个模块发一个请求，全挤过预览隧道，首屏要几十秒；构建后只有几个打包文件。
+
+```bash
+npx vite build --outDir dist
+BACKEND_URL=<后端地址> nohup npx vite preview --outDir dist --port 4173 --strictPort >/tmp/preview.log 2>&1 &
+cheese serve 4173 "预览"
+```
+
+- 端口加 `--strictPort`：端口被占时 vite 会静默换一个，报上来的那个没人应答。
+- `/api` 走 vite 的 proxy，`preview` 继承 `server.proxy`，用 `BACKEND_URL` 指到后端。
+- 构建被系统杀掉（大前端峰值可能超过 3 GB）就退回开发服务器：`BACKEND_URL=<后端> nohup npx vite --host 127.0.0.1 --port 4173 --strictPort &`，再 `cheese serve 4173`，并跟用户说首屏会慢。别清 `node_modules/.vite`，那是依赖预打包缓存，清了下次更慢。
+- 收工用 `pkill -f '[v]ite/bin/vite.js'`，按脚本路径匹配，别误杀别的 node 进程。
 
 ## 用户给这个项目的文件
 

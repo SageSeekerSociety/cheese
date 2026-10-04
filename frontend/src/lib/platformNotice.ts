@@ -580,6 +580,19 @@ export function collapseNotices(blocks: Block[]): NoticeRow[] {
   return foldTurnSummary(rows)
 }
 
+/**
+ * 这一块在房间里画得出来吗——和 `collapseNotices` 同一套判据（不露面的、前端错误、
+ * 不在白名单里的都画不出任何一行）。
+ *
+ * 时间线窗口（`useTimeline`）用它只装画得出来的块。装进去却不画的块白占窗口额度：
+ * 上限一满，`capNewest` 会把「最新的一截」收进背后供「回到最新」换上来，而一串不画
+ * 的块正好塞满这一截时，换上来就是一屏空的，最新那条看得见的消息反被挤丢。数的对象
+ * 换成画得出来的那些，这个问题就没有了。
+ */
+export function rendersInRoom(block: Block): boolean {
+  return collapseNotices([block]).length > 0
+}
+
 /** 这一行是不是「本轮里平台顺手做的事」——够格被折进本轮摘要。 */
 function summaryPart(row: NoticeRow): boolean {
   if (row.notice?.mode === 'action' && row.notice.detail) return false

@@ -72,12 +72,15 @@ export function useChatPaging(deps: ChatPagingDeps) {
     const el = scrollRef.value
     const tid = topic()?.id
     if (!el || !tid || loadingOlder.value || !hasMore.value) return
-    const oldest = messages.value[0]
-    if (!oldest) return
+    // 游标是「窗口读到哪了」，不是「窗口里画得出来的最老那条」：最新那一页整页不露面
+    //（事件远多于消息的房间里很常见）时窗口里一条都没有，拿 `messages[0]` 当游标就
+    // 一步都翻不动——房间开出来是空的。见 useTimeline.oldestLoaded。
+    const cursor = timeline.oldestLoaded()
+    if (!cursor) return
     loadingOlder.value = true
     let failed = false
     try {
-      const payload = await listBlocks(tid, { limit: PAGE_SIZE, before: oldest.id })
+      const payload = await listBlocks(tid, { limit: PAGE_SIZE, before: cursor })
       // The user may have switched topics while this was in flight.
       if (topic()?.id !== tid) return
       // Measure right before the rows go in: prepending grows the content above
