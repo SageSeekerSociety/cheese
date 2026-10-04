@@ -1,10 +1,12 @@
-"""Dump the blocks of the agent system prompt as JSON — as it is assembled.
+"""Dump the blocks a new agent session opens with as JSON — as they are assembled.
 
-The page this feeds (``docs/manual/dev/ref-prompt.md``) has to say what the
-system prompt is made of without anyone reading the code, so nothing here is a
-hand-written list of blocks: the generator **runs** ``build_system_prompt`` over
-a matrix of sample arguments and splits every result at the line-start ``## ``
-that marks a block. A block that is added, renamed or reordered shows up on the
+A session opens with two things: the system prompt (``build_system_prompt``,
+rules only, unchanged for the whole session) and the project state in front of
+its first message (``build_session_opening``). The page this feeds
+(``docs/manual/dev/ref-prompt.md``) has to say what both are made of without
+anyone reading the code, so nothing here is a hand-written list of blocks: the
+generator **runs** both over a matrix of sample arguments, joins them, and
+splits every result at the line-start ``## `` that marks a block. A block that is added, renamed or reordered shows up on the
 page by itself, and a parameter that is added — even one this file has never
 heard of — gets its own sample, so the block it opens is not missing either.
 That sample failing (a parameter that wants a real object, not a string) costs
@@ -24,8 +26,7 @@ report the same shape, so the page renders either way.
 
 Known limitation: a block is split at *any* line that starts with ``## ``,
 including one inside injected content (a skill body, a living doc). The sample
-arguments avoid it — sample values are one-liners — and a stage guide that
-would split is skipped in favour of one that does not.
+arguments avoid it — sample values are one-liners.
 """
 
 import ast
@@ -43,13 +44,12 @@ ROOT = Path(__file__).resolve().parents[3]
 AGENT = ROOT / "backend" / "app" / "domain" / "agent"
 MEMORY_PKG = ROOT / "backend" / "app" / "domain" / "memory"
 PROMPT_PY = AGENT / "harness" / "prompt.py"
-STAGES_PY = AGENT / "stages.py"
 SKILLS_PY = AGENT / "skills.py"
 SKILL_DIR = AGENT / "skill_library"
 INSTRUCTIONS_PY = MEMORY_PKG / "instructions.py"
 
-#: ``build_system_prompt``'s first three arguments are positional; the samples
-#: below give the rest by keyword.
+#: ``build_system_prompt``'s first two arguments are positional; the samples
+#: below give the rest by keyword, and ``assemble`` hands each function its own.
 BASE = "（底稿：`settings.agent_system_prompt`，部署时配置的那一段开头）"
 
 
@@ -130,10 +130,15 @@ def load_module(path: Path, name: str):
 def load_prompt_module():
     finder = _StubFinder()
     sys.meta_path.insert(0, finder)
+    # ``skills.py`` is stdlib-only and ``prompt.py`` reads its text at import
+    # (the living-document section), so the real one is put where that import
+    # looks before the stub would answer it.
+    sys.modules["app.domain.agent.skills"] = load_skills_module()
     try:
         module = load_module(PROMPT_PY, "cheese_prompt_reference")
     finally:
         sys.meta_path.remove(finder)
+        sys.modules.pop("app.domain.agent.skills", None)
     # ``instructions.py`` is stdlib-only like ``skills.py``, so it loads for real
     # and its two names are put back on ``prompt.py``: that import goes through
     # the stub, and the memory block is the *text* of this module — left as a
@@ -145,8 +150,8 @@ def load_prompt_module():
 
 
 def load_skills_module():
-    """``skills.py`` is stdlib-only, so it loads for real — the sample stage
-    guide is then the very text ``build_system_prompt`` receives."""
+    """``skills.py`` is stdlib-only, so it loads for real — the chat guide the
+    samples pass is then the very text a room's session receives."""
     return load_module(SKILLS_PY, "cheese_skill_reference")
 
 
@@ -249,7 +254,7 @@ MEMORY_OVER_CAP = _Index(
     ],
 )
 
-SESSION_OPENING = [
+ENVIRONMENT = [
     "- 这台机器：内存 4GB、2 核。吃内存的命令（前端 build/typecheck、大型编译）可能被内核 OOM 杀掉。",
     "- 你不在场时这个话题又说了 12 条，用 `cheese_chat_list` 读。",
 ]
@@ -271,12 +276,6 @@ OVERSIZE = "\n\n".join(
 #: (id, kwargs, what the reader should read the switch as, parameter spellings)
 TOGGLES = [
     {
-        "id": "untitled",
-        "kwargs": {"untitled": True},
-        "label": "`untitled=True`：话题还没有名字，本轮第一个动作是先起名",
-        "params": ["untitled=True"],
-    },
-    {
         "id": "role",
         "kwargs": {"role": "你是一位资深的全栈工程师，负责把这个项目的界面做出来。"},
         "label": "`role` 非空：项目给了这个 AI 队友一个专家角色",
@@ -291,14 +290,8 @@ TOGGLES = [
     {
         "id": "skills",
         "kwargs": {},  # filled from the skill library
-        "label": "`skills` 非空：本场景选出了技能",
+        "label": "`skills` 非空：房间的聊天说明（私聊再补几条）",
         "params": ["skills=…"],
-    },
-    {
-        "id": "stage_guide",
-        "kwargs": {"stage_guide": None},  # filled in from the skill library
-        "label": "`stage_guide` 非空：当前阶段有一段说明",
-        "params": ["stage_guide=…"],
     },
     {
         "id": "topics",
@@ -325,9 +318,15 @@ TOGGLES = [
         "params": ["overview_doc=…"],
     },
     {
+        "id": "has_doc",
+        "kwargs": {"has_doc": True},
+        "label": "`has_doc=True`：这是一间有实况文档位的房间（私聊没有）",
+        "params": ["has_doc=True"],
+    },
+    {
         "id": "topic_doc",
         "kwargs": {"doc": DOC},
-        "label": "`doc` 非空：本话题的实况文档有正文",
+        "label": "`doc` 非空：本话题的实况文档有正文（`doc=\"\"` 是还没有）",
         "params": ["doc=…"],
     },
     {
@@ -350,10 +349,10 @@ TOGGLES = [
         "params": ["memory=…（超上限的那一份）", "keeps_memory=True"],
     },
     {
-        "id": "session_opening",
-        "kwargs": {"session_opening": SESSION_OPENING},
-        "label": "`session_opening` 非空：会话开场的那两条运行环境",
-        "params": ["session_opening=…"],
+        "id": "environment",
+        "kwargs": {"environment": ENVIRONMENT},
+        "label": "`environment` 非空：会话开场的那两条运行环境",
+        "params": ["environment=…"],
     },
 ]
 
@@ -369,7 +368,7 @@ GROUPS = [
 #: Parameters the samples above speak for. Anything else the signature asks for
 #: is filled from its annotation, so a new parameter degrades the page instead
 #: of breaking the build.
-SPOKEN_FOR = {"base", "skills", "doc", "memory"} | {
+SPOKEN_FOR = {"base", "skills", "doc", "memory", "has_doc"} | {
     key for toggle in TOGGLES for key in toggle["kwargs"]
 }
 
@@ -404,19 +403,19 @@ def fill_unknown(signature) -> tuple[dict, list[str]]:
     return filled, names
 
 
-def samples_for(module, stage_guide: str, skills_text: str) -> list[dict]:
+def samples_for(module, skills_text: str) -> list[dict]:
     toggles = []
     for toggle in TOGGLES:
         kwargs = dict(toggle["kwargs"])
         if toggle["id"] == "skills":
             kwargs["skills"] = skills_text
-        if kwargs.get("stage_guide", "missing") is None:
-            kwargs["stage_guide"] = stage_guide
         toggles.append({**toggle, "kwargs": kwargs})
 
     import inspect
 
     extra, unknown = fill_unknown(inspect.signature(module.build_system_prompt))
+    more, more_unknown = fill_unknown(inspect.signature(module.build_session_opening))
+    extra, unknown = {**extra, **more}, unknown + more_unknown
     full = {"skills": skills_text, "doc": DOC, "memory": MEMORY, **extra}
     for toggle in toggles:
         full.update(toggle["kwargs"])
@@ -563,6 +562,25 @@ def comment_above(lines: list[str], lineno: int) -> str:
     return " ".join(reversed(out)).strip()
 
 
+def assemble(module, kwargs: dict) -> str:
+    """What a new session opens with: the system prompt, then the project state
+    in front of its first message. Each function gets the arguments it takes."""
+    import inspect
+
+    rules = set(inspect.signature(module.build_system_prompt).parameters) - {"base", "skills"}
+    state = set(inspect.signature(module.build_session_opening).parameters)
+    system = module.build_system_prompt(
+        BASE,
+        kwargs.get("skills", ""),
+        **{key: value for key, value in kwargs.items() if key in rules},
+    )
+    opening = module.build_session_opening(**{key: value for key, value in kwargs.items() if key in state}).text
+    # The marker line says to the agent that the platform is speaking; on the
+    # page it would only glue itself to the block in front of it.
+    opening = opening.replace(module.PLATFORM_NOTICE + "\n", "", 1)
+    return f"{system}\n\n{opening}" if opening else system
+
+
 def run_exec(module, samples) -> dict:
     results, failed = {}, []
     for sample in samples:
@@ -576,7 +594,7 @@ def run_exec(module, samples) -> dict:
 
         module.fit_doc_to_budget = spy
         try:
-            text = module.build_system_prompt(BASE, **sample["kwargs"])
+            text = assemble(module, sample["kwargs"])
         except Exception as exc:  # noqa: BLE001 — one sample failing costs that sample
             failed.append({"name": sample["name"], "error": f"{type(exc).__name__}: {exc}"})
             continue
@@ -695,10 +713,8 @@ def sample_params(kwargs: dict) -> list[str]:
             shown = '""'
         elif key == "teaching":
             shown = "（一个解析好的 TeachingContext）"
-        elif key == "stage_guide":
-            shown = "（当前阶段的说明原文，见「阶段的操作说明」）"
         elif key == "skills":
-            shown = "（技能库里 chat 场景的原文，见「技能库」）"
+            shown = "（`chat.md` 的正文，见「平台说明库」）"
         elif key == "memory":
             shown = "（一份 L1 索引：项目共享一段、本轮发言人一段）"
         else:
@@ -871,49 +887,15 @@ def run_ast(reason: str) -> dict:
 
 
 # --------------------------------------------------------------------------
-# stages.py and the skill library: static, so both paths have them
+# the skill library: static, so both paths have them
 # --------------------------------------------------------------------------
-def read_stages() -> dict:
-    source = STAGES_PY.read_text(encoding="utf-8")
-    lines = source.splitlines()
-    tree = ast.parse(source)
-    members, card_map, precedence = [], [], []
-    for node in tree.body:
-        if isinstance(node, ast.ClassDef) and node.name == "TopicStage":
-            for statement in node.body:
-                if isinstance(statement, ast.Assign) and isinstance(statement.value, ast.Constant):
-                    members.append(
-                        {
-                            "name": statement.targets[0].id,
-                            "value": statement.value.value,
-                            "note": comment_above(lines, statement.targets[0].lineno),
-                            "line": statement.targets[0].lineno,
-                        }
-                    )
-        if isinstance(node, ast.Assign) and any(getattr(t, "id", "") == "_CARD_STAGE" for t in node.targets):
-            for key, value in zip(node.value.keys, node.value.values):
-                card_map.append([_qualified(key), _qualified(value)])
-        if isinstance(node, ast.Assign) and any(getattr(t, "id", "") == "_CARD_PRECEDENCE" for t in node.targets):
-            precedence = [_qualified(element) for element in node.value.elts]
-    return {"members": members, "card_map": card_map, "precedence": precedence}
-
-
-def _qualified(node) -> str:
-    """`AcceptStatus.conflict` rather than `conflict` — the page has to say who
-    owns the name."""
-    if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
-        return f"{node.value.id}.{node.attr}"
-    return ast.unparse(node)
-
-
 def read_library() -> dict:
-    """Every skill file: frontmatter and body, parsed the way `skills.py` parses
-    them (same tag splitting, so the library and the loader cannot disagree)."""
+    """Every file in the library: frontmatter and body, parsed the way
+    `skills.py` parses them, so the library and the loader cannot disagree."""
     try:
-        skills = load_skills_module()
-        parse, parse_tags = skills._parse, skills._parse_tags
+        parse = load_skills_module()._parse
     except Exception:
-        parse, parse_tags = _fallback_parse, _fallback_tags
+        parse = _fallback_parse
 
     files = []
     for path in sorted(SKILL_DIR.glob("*.md")):
@@ -923,7 +905,6 @@ def read_library() -> dict:
                 "file": f"backend/app/domain/agent/skill_library/{path.name}",
                 "name": meta.get("name", path.stem),
                 "title": meta.get("title", path.stem),
-                "scenarios": parse_tags(meta.get("scenarios", "")),
                 "description": meta.get("description", ""),
                 "body": body,
                 "chars": len(body),
@@ -932,10 +913,9 @@ def read_library() -> dict:
     return {"dir": "backend/app/domain/agent/skill_library", "files": files}
 
 
-def scenario_skills(library: dict, scenario: str = "chat") -> str:
-    """What the `skills` argument holds for one scenario — the same
-    concatenation `skills.load_scenario` builds, from the same files."""
-    return "\n\n---\n\n".join(file["body"] for file in library["files"] if scenario in file["scenarios"])
+def chat_guide(library: dict) -> str:
+    """What the `skills` argument holds for a room: the chat guide's body."""
+    return next((file["body"] for file in library["files"] if file["name"] == "chat"), "")
 
 
 def _fallback_parse(path: Path):
@@ -949,42 +929,14 @@ def _fallback_parse(path: Path):
     return meta, body.strip()
 
 
-def _fallback_tags(value: str) -> list[str]:
-    return [t.strip() for t in value.strip().strip("[]").split(",") if t.strip()]
-
-
-def stage_sample_guide(library: dict, stages: dict, stage_guide: str) -> str:
-    """The stage guide the samples use — a real one, from the library.
-
-    A guide whose body has a ``\n## `` in it is skipped: it would split the
-    block the sample is there to demonstrate."""
-    order = [stage_guide, *[member["value"] for member in stages["members"]]]
-    for stage in order:
-        if not stage:
-            continue
-        for file in library["files"]:
-            if f"stage:{stage}" in file["scenarios"] and "\n## " not in file["body"]:
-                return file["body"]
-    return "（当前阶段的操作说明原文：见「阶段的操作说明」一节）"
-
-
 def main() -> None:
-    stages = read_stages()
     library = read_library()
-    # The sample guide: the first stage that has one and would not split a block.
-    sample_stage = stages["members"][0]["value"] if stages["members"] else ""
-    if sample_stage:
-        for member in stages["members"]:
-            if any(f"stage:{member['value']}" in file["scenarios"] for file in library["files"]):
-                sample_stage = member["value"]
-                break
-    guide = stage_sample_guide(library, stages, sample_stage)
 
     try:
         if os.environ.get("CHEESE_PROMPT_STATIC"):
             raise _Fallback("CHEESE_PROMPT_STATIC 设了：这次专门走静态解析那条退路")
         module = load_prompt_module()
-        samples, unknown = samples_for(module, guide, scenario_skills(library))
+        samples, unknown = samples_for(module, chat_guide(library))
         result = run_exec(module, samples)
         result["unknown_params"] = unknown
     except _Fallback as exc:
@@ -999,21 +951,6 @@ def main() -> None:
         print(f"prompt.py: 静态解析（{result['note']}）", file=sys.stderr)
 
     result["source"] = "backend/app/domain/agent/harness/prompt.py"
-    result["stages_source"] = "backend/app/domain/agent/stages.py"
-    result["stages"] = {
-        **stages,
-        "members": [
-            {
-                **member,
-                "skills": [
-                    {"name": file["name"], "title": file["title"], "file": file["file"], "body": file["body"], "description": file["description"]}
-                    for file in library["files"]
-                    if f"stage:{member['value']}" in file["scenarios"]
-                ],
-            }
-            for member in stages["members"]
-        ],
-    }
     result["library"] = library
     json.dump(result, sys.stdout, ensure_ascii=False)
 

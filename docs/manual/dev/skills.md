@@ -1,10 +1,9 @@
 ---
 title: 技能
 kind: 参考
-summary: 平台技能库、阶段说明、项目自定义技能、沙盒技能和分身定义怎么选、怎么装进会话。
+summary: 平台技能库、项目自定义技能、沙盒技能和分身定义各是什么、怎么装进会话。
 covers:
   - backend/app/domain/agent/skills.py
-  - backend/app/domain/agent/stages.py
   - backend/app/domain/agent/skill_library/
   - backend/app/domain/project_skill/
   - backend/sandbox/skills/
@@ -14,46 +13,33 @@ covers:
 
 # 技能 {#skills}
 
-技能是给芝士的一份操作说明：这一轮该怎么做，写在 markdown 里，和这一轮一起进系统提示词。有平台自带的、有项目自己攒的，都装在会话的 `skills/` 目录下。
+技能是给芝士的一份操作说明，写在 markdown 里。会话里技能列表只列每个技能的名字和一句描述，芝士用到时才读正文：Claude Code 用 Skill 工具，Codex 和 pi 读技能列表里给出的那个文件。有平台自带的、有项目自己攒的，都装在会话的 `skills/` 目录下。几乎每轮都用得上的规矩不做成技能，直接写在系统提示词里，见[提示词注入与上下文管理](/dev/context)。
 
-> 讲：技能库怎么选、阶段说明怎么算、项目自定义技能怎么确认与落地、分身定义怎么生成。不讲：系统提示词整段由什么组成，见[提示词注入与上下文管理](/dev/context)。
+> 讲：平台的说明放在哪、哪些随会话发出去、项目自定义技能怎么确认与落地、分身定义怎么生成。不讲：系统提示词整段由什么组成，见[提示词注入与上下文管理](/dev/context)。
 
-## 库：一个标签选一份 {#library}
+## 库：平台自己的几份说明 {#library}
 
-`backend/app/domain/agent/skill_library/` 下 9 个 markdown，每份的 frontmatter 有一个 `scenarios:`，选择器就是它：
+`backend/app/domain/agent/skill_library/` 下的 markdown，各有各的用处：
 
-| 文件 | `scenarios:` |
+| 文件 | 用在哪 |
 | --- | --- |
-| `chat.md`、`chat_detail.md` | `chat` |
-| `doc_form.md` | `chat`、`doc` |
-| `private_chat.md` | `private` |
-| `stage_delegating.md` / `stage_gate.md` / `stage_awaiting.md` / `stage_conflict.md` / `stage_archived.md` | `stage:<阶段>` |
+| `chat.md` | 房间里怎么说话，整份进每个房间会话的系统提示词（`NATIVE_CHAT_GUIDANCE`） |
+| `private_chat.md` | 私聊补的那几条，跟在 `chat.md` 后面（`PRIVATE_SKILLS`） |
+| `doc_form.md` | 实况文档写哪几块、怎么改，进系统提示词里实况文档那一节（`prompt.DOC_FORM`） |
+| `doc_writing.md` | 芝士文档的写作指南，作为 `cheese-docs` 技能发出 |
+| `doc_blocks.md` | 每种块的写法，作为 `cheese-docs` 的 `references/blocks.md` 发出 |
 
-`skills_for_scenario(scenario)` 按标签选、按文件名排序；`load_scenario(scenario)` 把这些正文拼起来（`\n\n---\n\n` 相连）。`load_scenario` 每一轮都跑，所以它一遍读完整个目录，而不是先解析名字再回头重读文件取正文。
-
-`load_skills(names)` 是另一条路：按显式名字取，认不出的名字跳过。今天走这条的有房间那一份 `NATIVE_CHAT_GUIDANCE`（`["chat"]`）、私聊（`PRIVATE_SKILLS = ["private-chat"]`）。
-
-`scenarios:` 这个字段从库写出来那天就在，但一直到 `skills_for_scenario` 出现之前没人读过它——`load_skills` 只认显式名字，一个技能想服务两个场景只能被抄进两张名单。现在它是真的选择器。
-
-## 阶段：注入哪一段是平台算的 {#stage}
-
-一个话题在任一时刻处在流程的某一段，而每段该知道的东西不一样。`stages.py` 把它算成一个 `TopicStage`：`delegating`（还没递卡，派活和干活是同一段）、`gate`（闸门在跑或刚红）、`awaiting`（等人采纳）、`conflict`（采纳时撞了冲突）、`archived`。
-
-`resolve_stage(finished=…, card_statuses=…)` 只用**已经在手**的事实——话题的 kind/status，以及 `chat.py` 早就为「盲飞防护」查出来的 open 卡列表——不额外打一次库。多张活卡同时在时按 `_CARD_PRECEDENCE` 选：冲突、红闸门排在等人的前面，因为前者在等芝士动手、后者只是在等人。`gate_failed`、`gate_blocked`、`pending_gate` 合成一段：闸门红了要做的事和它正在跑时该知道的事是同一段知识。
-
-`stage_scenario(stage)` 把阶段翻成 `stage:<值>` 这个标签——带前缀是为了和 `chat`/`doc` 这些场景分开命名空间，一个技能想同时服务多个阶段只要多写一个标签。注入点在 `chat.py`：`load_scenario(stage_scenario(topic_stage))` 进 `build_system_prompt(..., stage_guide=…)`。
-
-**渐进的是「平台注入哪一段」，不是「模型决定读哪一段」。** 算出来的那一段静态拼进系统提示词，模型没有「要不要读」的选择权——懒加载在弱模型上不成立。
+`load_skills(names)` 按 frontmatter 里的 `name` 取正文，认不出的名字跳过。文档芝士（`document/question.py`）每次都在写文档，所以它不加载技能，而是把「写作」规则、`doc_writing.md` 和 `doc_blocks.md` 整份内联进提示词。
 
 ## 平台技能和仓库自己的规矩 {#platform}
 
-`backend/sandbox/skills/cheese/SKILL.md` 是平台自己的那份说明：平台的动作是哪些工具、`cheese` CLI 干什么、房间里的那个人是产品用户不是运维。它对**所有托管仓库**都成立，托管仓库不需要为平台做任何改动。
+`backend/sandbox/skills/cheese/` 是平台自己的那份说明，讲在知是里交付工作的流程：开任务、提交推送、递卡修订、合并冲突，以及 `cheese` 命令行每个子命令的用途；产物与预览、工作方法、邮箱和飞书、定时与触发、读 CI 各放一份 `references/`。平台工具不在里面列：每个工具带着自己的说明进会话。它对**所有托管仓库**都成立，托管仓库不需要为平台做任何改动。每轮都用得上的那几条平台规矩（房间里的人是产品用户、回复里不提内部机制、不用 `git stash`、改仓库前先开任务）在系统提示词的「平台规矩」一节。
 
 仓库自己的 `CLAUDE.md` 是另一回事，它讲这个仓库本身的结构与约定，跟着仓库走。两者的分工与注入场合见[提示词注入与上下文管理](/dev/context)的「不同场景」一节。
 
-`skills.py` 里 `_SHIPPED_NATIVE_SKILLS = ("documents",)` 是平台随会话发的那几份原生技能；`native_skill_files()` 把它们（连同 `doc_form.md` → `cheese-docs`、`chat_detail.md` → `chat-detail` 两份顺手改名的）摊成 `{"skills/<name>/<路径>": 正文}`。技能不是一份 markdown：`documents` 还带着脚本和它们的参考文件，缺了就成「读了一条命令、跑起来说没有这个文件」，所以整个目录一起走；能走的后缀白名单是 `SKILL_FILE_SUFFIXES`，多出来的东西由 `backend/tests/unit/test_native_skill_files.py` 在构建时拦，而不是安静地不发。
+`skills.py` 里 `_SHIPPED_NATIVE_SKILLS = ("cheese", "documents", "wolfram")` 是平台随会话发的原生技能；`native_skill_files()` 把它们连同 `cheese-docs`（由 `doc_writing.md` 和 `doc_blocks.md` 生成）摊成 `{"skills/<name>/<路径>": 正文}`。技能不是一份 markdown：`documents` 还带着脚本和它们的参考文件，缺了就成「读了一条命令、跑起来说没有这个文件」，所以整个目录一起走；能走的后缀白名单是 `SKILL_FILE_SUFFIXES`，多出来的东西由 `backend/tests/unit/test_native_skill_files.py` 在构建时拦，而不是安静地不发。
 
-`RESERVED_SKILL_NAMES` 是项目自己的技能不许占的名字：平台发的那些，加上 `cheese`、`cheese-docs`、`chat-detail`、`cheese-chat`。
+`RESERVED_SKILL_NAMES` 是项目自己的技能不许占的名字：平台发的那些，加上 `cheese-docs`。平台不再发的技能，每台机器按自己记下的清单（`.cheese-platform-skills`）删掉。
 
 ## 项目自己的工作方法 {#project}
 
