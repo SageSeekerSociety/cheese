@@ -37,11 +37,12 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.domain.agent import service
-from app.domain.agent.harness import HARNESSES, AgentRuntime, Opening, SessionRef
+from app.domain.agent.harness import HARNESSES, PI, Backlog, SessionRef
 from app.domain.agent.harness.claude_code.events import Assembler as ClaudeAssembler
 from app.domain.agent.harness.codex.events import Assembler as CodexAssembler
 from app.domain.agent.harness.pi.events import Assembler as PiAssembler
-from app.domain.agent.harness.pi.runtime import PI
+from app.domain.agent.room.sessions import RoomSessions
+from app.domain.agent.session_host.host import SessionHost
 from tests.support.contract_harness import ContractHarness, fixtures, vocabulary
 
 VOCABULARY = vocabulary()
@@ -55,7 +56,6 @@ SESSION = SessionRef(
     topic_id=uuid.UUID("00000000-0000-4000-8000-000000000002"),
     harness="claude-code",
 )
-OPENING = Opening(system_prompt="CONTRACT")
 
 #: What the room calls each event. The word in a fixture, the class in the code.
 KIND_OF = {name: entry["class"] for name, entry in VOCABULARY["events"].items()}
@@ -150,15 +150,18 @@ def test_a_word_lists_the_fields_that_event_cannot_do_without(word: str) -> None
 
 
 def test_the_six_verbs_are_all_there_and_a_runtime_can_keep_them() -> None:
-    """Six, not the five the docstring lists — ``deliver`` is the sixth, and its
-    own docstring says it and ``send`` will be one call some day. Until they
-    are, a harness has to answer both."""
+    """Five a room says to its sessions, and the reading under them: ``backlog``
+    is what the session core reads a session's journal with."""
     assert len(VOCABULARY["verbs"]) == 6
     for verb in VOCABULARY["verbs"]:
-        assert hasattr(AgentRuntime, verb), verb
-    # A runtime that declares no capability at all is still a runtime: that is
-    # what makes the matrix's difference codes possible rather than a fiction.
-    assert isinstance(ContractHarness(), AgentRuntime)
+        if verb == "backlog":
+            assert hasattr(Backlog, "unread") and hasattr(Backlog, "landed")
+        else:
+            assert hasattr(RoomSessions, verb), verb
+            # A harness that declares no capability at all keeps them too:
+            # that is what makes the matrix's difference codes possible
+            # rather than a fiction.
+            assert hasattr(ContractHarness, verb), verb
 
 
 # --- is the set well formed -------------------------------------------------
@@ -277,7 +280,7 @@ async def _play(runtime, steps: list[dict]) -> None:
         call = step["call"]
         if call == "ensure":
             before = runtime.holds(SESSION.topic_id)
-            held = await runtime.ensure(SESSION, OPENING)
+            held = await runtime.ensure(SESSION)
             assert (not before) == step["opened"], where
             if before:
                 # 「在不在；不在就起」: the one that was already there, not a
@@ -288,7 +291,6 @@ async def _play(runtime, steps: list[dict]) -> None:
             answer = await runtime.send(
                 SESSION,
                 step["message"],
-                OPENING,
                 work_id=uuid.uuid4(),
                 on_mark=lambda _: None,
                 register_input=register_input,
@@ -296,8 +298,8 @@ async def _play(runtime, steps: list[dict]) -> None:
             # An ack, not an answer: a runtime handing back what the agent said
             # would make whoever holds the return value the owner of the turn.
             assert answer is step["returns"], where
-        elif call == "deliver":
-            landed = await runtime.deliver(
+        elif call == "steer":
+            landed = await runtime.steer(
                 SESSION.topic_id, step["text"], register_input=register_input
             )
             assert landed is step["returns"], where
@@ -358,4 +360,5 @@ def test_recovery_still_reads_the_machine_and_not_the_platforms_copy() -> None:
     red, and the scenario naming the hole goes with it."""
     scenario = next(f for f in FIXTURES if "xfail" in f)
     assert scenario["xfail"].strip()
-    assert not hasattr(AgentRuntime, scenario["verb"])
+    assert not hasattr(RoomSessions, scenario["verb"])
+    assert not hasattr(SessionHost, scenario["verb"])

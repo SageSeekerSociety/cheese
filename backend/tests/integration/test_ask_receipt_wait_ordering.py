@@ -18,7 +18,8 @@ from sqlalchemy import select, text
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
 from app.domain.agent.harness import CLAUDE_CODE
-from app.domain.agent.harness.claude_code.runtime import ClaudeCodeRuntime
+from app.domain.agent.room.sessions import RoomSessions
+from app.domain.agent.session_host.host import SessionHost
 from app.domain.block.ask_groups import AskGroups, parse_questions
 from app.domain.delivery.agent import instance_for_seat, record_agent, run_attempt
 from app.domain.delivery.ask_receipt_wait import ASK_RECEIPT_WAIT, AskReceiptPending
@@ -175,7 +176,12 @@ def test_ask_correction_retries_once_after_its_group_echo(client, monkeypatch, o
             base_system_prompt="fixture",
             workspace_root="/unused",
             compute=ComputePool(
-                [ClaudeCodeRuntime(SimpleNamespace(name="unused"))], "unused"
+                [
+                    RoomSessions(
+                        SimpleNamespace(name="unused"), CLAUDE_CODE, SessionHost()
+                    )
+                ],
+                "unused",
             ),
         )
         initial = replace(_identity(project, topic, seat), harness=CLAUDE_CODE)

@@ -59,10 +59,8 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
         receipts: ReceiptConsumer | None = None,
         completions: CompletionConsumer | None = None,
         terminations: TerminationConsumer | None = None,
-        pulse: subscription.Pulse | None = None,
-        memory: Callable[[], Awaitable[None]] | None = None,
+        moved: subscription.Moved | None = None,
         input_protocol: int | None = INPUT_PROTOCOL,
-        took: subscription.Took | None = None,
     ):
         super().__init__(
             session,
@@ -73,9 +71,7 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
             receipts=receipts,
             completions=completions,
             terminations=terminations,
-            pulse=pulse,
-            memory=memory,
-            took=took,
+            moved=moved,
         )
         self.session_id = session_id
         self.recipient_handle = recipient_handle

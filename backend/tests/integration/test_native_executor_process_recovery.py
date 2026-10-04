@@ -10,13 +10,13 @@ import os
 import sys
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from app.api.deps import get_chat_service
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
-from app.domain.agent.harness.claude_code.runtime import ClaudeCodeRuntime, Handle
 from app.main import app
 from tests.conftest import settle_turn
 from tests.integration.conftest import (
@@ -29,6 +29,7 @@ from tests.integration.conftest import (
 )
 from tests.integration.test_claude_session_records import _until
 from tests.integration.test_native_batch_ownership import _blocks
+from tests.support.seat_channel import SeatChannel
 from tests.unit.test_claude_runner import Machine, Screen
 
 
@@ -74,52 +75,26 @@ def test_new_full_service_process_reuses_original_native_executor(
             machine, headless_contract, lambda: screen, target_path
         )
 
-    class Channel:
+    class Channel(SeatChannel):
         name = "native-socket-fixture"
-        provisions_machine = False
-        deferred_work = False
-        builds_model_env = False
+        device = "isolated-device"
 
-        def available(self):
-            return True
-
-        async def prepare_topic(self, **kwargs):
-            return True, ""
-
-        async def ensure(self, session, opening, live=None):
+        async def open(self, session, agent, launch):
             nonlocal screen, handle
-            # ``live`` is the seat's handle when this process already confirmed
-            # it — hand it back rather than greet the runner a second time.
-            if live is not None:
-                return live
             if screen is None:
-                screen = Screen(
-                    machine,
-                    env={"CHEESE_AUTHOR": opening.agent_handle or session.agent_handle},
-                )
+                screen = Screen(machine, env={"CHEESE_AUTHOR": agent})
                 status = await asyncio.to_thread(screen.call, "ping")
-                handle = Handle(
-                    session,
-                    "isolated-device",
-                    str(machine.state),
-                    status["session_id"],
-                    opening.agent_handle or session.agent_handle,
-                    tmp_path / "mirror.sqlite",
-                    status["input_protocol"],
-                    frozenset(status.get("capabilities") or ()),
+                handle = SimpleNamespace(
+                    session=session,
+                    agent_handle=agent,
+                    session_id=status["session_id"],
+                    state=str(machine.state),
                 )
-            return handle
 
         async def call(self, held, method, params):
-            assert held is handle
             return await asyncio.to_thread(screen.call, method, params)
 
-        async def images(self, held, images):
-            assert not images
-            return []
-
     before = Channel()
-    before.runtime = ClaudeCodeRuntime(before)
     old = ChatService(
         session_factory=client.test_request_factory,
         base_system_prompt="你是芝士。",
@@ -216,10 +191,9 @@ def test_new_full_service_process_reuses_original_native_executor(
                 "agent": handle.agent_handle,
                 "session_agent": handle.session.agent_handle,
                 "state": handle.state,
+                "placed_state": before.seats[(topic, handle.agent_handle)][1],
+                "root": str(before.root),
                 "native": handle.session_id,
-                "protocol": handle.input_protocol,
-                "capabilities": list(status.get("capabilities") or ()),
-                "mirror": str(handle.mirror),
                 "workspace": str(machine.workspace),
                 "work": first_work,
                 "native_pid": status["pid"],

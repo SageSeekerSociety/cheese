@@ -44,13 +44,13 @@ def _thread(client, room_id: str, title: str = "子活") -> dict:
 def _record_screens(stub_hooks) -> list[str]:
     """每一次「起一块屏幕」的 topic id。起屏幕就是起容器，这是唯一看得见它的地方。"""
     seen: list[str] = []
-    original = stub_hooks.ensure
+    original = stub_hooks.precheck
 
-    async def _spy(session, opening, live=None):
+    async def _spy(session, *, needs_place):
         seen.append(str(session.topic_id))
-        return await original(session, opening, live)
+        return await original(session, needs_place=needs_place)
 
-    stub_hooks.ensure = _spy
+    stub_hooks.precheck = _spy
     return seen
 
 

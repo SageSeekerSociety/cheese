@@ -2,8 +2,9 @@
 it belonged to is not told anything went wrong, is not read in the meantime,
 and is answered as usual when somebody next speaks.
 
-The real Claude Code runtime, mirror and translation, against a scripted
-session (``StubChannel``); the runner going away is the stub's session going.
+The real room sessions, session core, mirror and translation, against a
+scripted session (``StubChannel``); the runner going away is the stub's session
+going.
 """
 
 import asyncio
@@ -11,7 +12,6 @@ import uuid
 
 import pytest
 
-from app.domain.agent.harness import Opening
 from tests.conftest import StubChannel
 from tests.unit.test_driven_liveness import Room, _until, quick_retries
 
@@ -33,7 +33,8 @@ async def _say(room: Room, text: str, teammate: str) -> None:
     await room.runtime.send(
         room.session,
         text,
-        Opening(system_prompt="", agent_handle=teammate),
+        system_prompt="",
+        acting=teammate,
         work_id=uuid.uuid4(),
         on_mark=lambda _: None,
         register_input=room.register_input(text),

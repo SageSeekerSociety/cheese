@@ -16,13 +16,15 @@ from app.domain.agent import gateway as gw
 from app.domain.agent.chat import ChatService
 from app.domain.agent.cloud_provider import CloudChannel
 from app.domain.agent.device_provider import DeviceChannel
-from app.domain.agent.harness.claude_code import ClaudeCodeRuntime
+from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.profiles import (
     TIER_BYO,
     TIER_DEFAULT,
     AgentProfile,
     ProfileRegistry,
 )
+from app.domain.agent.room.sessions import RoomSessions
+from app.domain.agent.session_host.host import SessionHost
 from app.domain.project.repositories import ProjectRepository
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
@@ -43,24 +45,26 @@ def _replace_chat_sleep(monkeypatch, sleep):
         monkeypatch.setattr(module, "asyncio", stub)
 
 
-def _on_a_machine() -> ClaudeCodeRuntime:
+def _on_a_machine() -> RoomSessions:
     """A backend whose machine is somewhere else, so it builds that machine's
     model environment where the machine is."""
-    return ClaudeCodeRuntime(DeviceChannel())
+    return RoomSessions(DeviceChannel(), CLAUDE_CODE, SessionHost())
 
 
-def _leases_a_machine() -> ClaudeCodeRuntime:
+def _leases_a_machine() -> RoomSessions:
     """The Cloud backend, built the way the app wires it."""
-    return ClaudeCodeRuntime(
+    return RoomSessions(
         CloudChannel(
             configured=True,
             ensure_topic_cloud=AsyncMock(),
             read_topic_cloud=AsyncMock(),
-        )
+        ),
+        CLAUDE_CODE,
+        SessionHost(),
     )
 
 
-def _in_this_process() -> ClaudeCodeRuntime:
+def _in_this_process() -> RoomSessions:
     """A backend with no machine of its own: nothing out there will build it a
     model environment, so the platform hands it the resolved profile env."""
     return StubChannel().runtime

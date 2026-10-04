@@ -1,6 +1,6 @@
 {
   "why": "The closed vocabulary every scenario in this directory is written in: the six verbs of the harness contract, the events a harness may produce, and the codes a harness may answer with when it cannot produce one. Both readers load this file first and refuse a scenario that steps outside it — which is what stops the set growing a word only one language understands.",
-  "verbs": ["ensure", "send", "backlog", "deliver", "interrupt", "close"],
+  "verbs": ["ensure", "send", "backlog", "steer", "interrupt", "close"],
   "events": {
     "message": {
       "class": "AgentMessage",

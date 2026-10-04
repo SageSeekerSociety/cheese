@@ -50,6 +50,7 @@ from tests.integration.conftest import (
     registered,
     session_auth_headers,
 )
+from tests.integration.test_central_room_sessions import screen_for
 
 pytestmark = pytest.mark.anyio
 
@@ -151,12 +152,11 @@ async def test_a_session_with_no_hands_runs_in_its_own_scratch_area(
     central = central_over_offline_hands(client, monkeypatch)
 
     client.portal.call(
-        lambda: central.ensure_ready(
-            session=SessionRef(project, topic, "cheese", harness="claude-code"),
-            token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
-            env={},
-            launch=ClaudeLaunch("System"),
-            precheck=Placement("center", 1, "cheese-x", rented=False),
+        lambda: screen_for(
+            central,
+            SessionRef(project, topic, "cheese", harness="claude-code"),
+            ClaudeLaunch("System"),
+            Placement("center", 1, "cheese-x", rented=False),
         )
     )
 
@@ -177,13 +177,7 @@ async def test_ordinary_room_opens_without_executing_on_the_session_host(
     ref = SessionRef(project, topic, "cheese", harness="claude-code")
 
     async def open_room():
-        await central.ensure_ready(
-            session=ref,
-            token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
-            env={},
-            launch=ClaudeLaunch("System"),
-            precheck=await central.precheck(ref, needs_place=True),
-        )
+        await screen_for(central, ref, ClaudeLaunch("System"))
 
     client.portal.call(open_room)
     opened = central._ensure_screen.await_args.kwargs
@@ -321,13 +315,13 @@ class HandsRefused(StubChannel):
         super().__init__()
         self.asked: list[bool] = []
 
-    async def ensure(self, session, opening, live=None):
-        # The turn says whether it needs hands (`Opening.needs_place`); a
-        # channel with no machine to give refuses only the turn that does.
-        self.asked.append(opening.needs_place)
-        if opening.needs_place:
+    async def precheck(self, session, *, needs_place):
+        # The turn says whether it needs hands; a channel with no machine to
+        # give refuses only the turn that does.
+        self.asked.append(needs_place)
+        if needs_place:
             raise ScreenSetupError("没有在线的绑定设备可运行本轮")
-        return await super().ensure(session, opening, live)
+        return await super().precheck(session, needs_place=needs_place)
 
 
 async def test_a_private_chat_answers_while_every_work_machine_is_offline(

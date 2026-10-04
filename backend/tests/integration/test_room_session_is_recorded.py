@@ -25,13 +25,13 @@ class _Screen(StubChannel):
         super().__init__()
         self.new_session_id = session_id
         self._sid = session_id
-        #: 每次 `ensure` 拿到的 resume 指针，按顺序。冷启动是唯一用得上它的
+        #: 每次启动拿到的 resume 指针，按顺序。冷启动是唯一用得上它的
         #: 时刻，所以这就是「这条会话接不接得回去」的全部证据。
         self.resume_asked: list[str | None] = []
 
-    async def ensure(self, session, opening, live=None):
-        self.resume_asked.append(opening.resume_token)
-        return await super().ensure(session, opening, live)
+    async def open(self, session, agent, launch):
+        self.resume_asked.append(launch.resume_session_id)
+        return await super().open(session, agent, launch)
 
     def emit_turn(
         self,

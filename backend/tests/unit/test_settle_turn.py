@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.domain.agent.harness import CLAUDE_CODE, Opening, SessionRef
+from app.domain.agent.harness import CLAUDE_CODE, SessionRef
 from tests import conftest
 from tests.conftest import close_topic_subscriptions, drain_hooks, settle_turn
 
@@ -27,17 +27,17 @@ class Room:
         )
 
     async def open(self) -> uuid.UUID:
+        """A seat whose session said something, read as the room reads it."""
         session = SessionRef(uuid.uuid4(), uuid.uuid4(), "cheese", harness=CLAUDE_CODE)
-        handle = await self.channel.ensure(session, Opening(system_prompt=""))
-        await self.runtime._attach(handle)
+        await self.runtime.ensure(session, system_prompt="")
         self.channel.starts(session.topic_id)
+        self.runtime._listen((session.topic_id, session.agent_handle))
         return session.topic_id
 
 
 async def test_settle_turn_lands_what_the_session_said():
     room = Room()
     topic = await room.open()
-    assert conftest._topics_with_pending_records() == {str(topic)}
 
     await settle_turn(room.service, topic)
 
@@ -96,5 +96,5 @@ async def test_close_topic_subscriptions_stops_the_reader():
 
     await close_topic_subscriptions(room.service, topic)
 
-    assert all(seat[0] != topic for seat in room.runtime.subscriptions)
+    assert all(seat[0] != topic for seat in room.runtime.tasks)
     assert not room.runtime.holds(topic)

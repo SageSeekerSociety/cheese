@@ -235,7 +235,7 @@ class NeverReady(StubChannel):
     """A machine that never gets a session ready: every prompt is assembled,
     and none of them is ever delivered."""
 
-    async def ensure(self, session, opening, live=None):
+    async def precheck(self, session, *, needs_place):
         await asyncio.Event().wait()
 
 
