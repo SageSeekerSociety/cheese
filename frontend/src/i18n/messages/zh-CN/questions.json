@@ -16,7 +16,7 @@
       "willing": "最后，表示你愿意在解决问题的过程中做出努力，例如，通过问“有哪些提示可以给我？”或“我应该检查哪里？”来显示你的积极性和解决问题的决心，通常能得到更好的回答。"
     },
     "errors": {
-      "titleRequired": "问题标题不能为空",
+      "titleRequired": "填写问题标题",
       "titleQuestionMark": "问题标题必须以问号结尾",
       "topicRequired": "至少选择一个话题"
     },
@@ -44,7 +44,7 @@
     "postAnswerTitle": "回答问题",
     "postAnswerPlaceholder": "请输入你的回答",
     "postAnswerSuccess": "发布回答成功",
-    "postAnswerEmpty": "回答内容不能为空",
+    "postAnswerEmpty": "填写回答内容",
     "postAnswerExist": "你已经回答过该问题，点击查看",
     "inviteTitle": "邀请其他人回答，更快获得答案",
     "bounty": "悬赏 {bounty}",

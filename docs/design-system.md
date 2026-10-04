@@ -419,6 +419,57 @@ AI 队友的头像（`CheeseAvatar`）有自己的一组颜色：五档暖色的
 - `--z-overlay` 与 Vuetify 弹窗基值同为 2400：两者同时在场时由 DOM 顺序决出。当前没有一处会同时出现（应用浮层各自独占屏幕），所以保持原值不动；真要叠在一起，把那一处抬到 `--z-overlay-2` 与 `--z-menu` 之间的空档。
 - `z-index` 写在 CSS 里用 token；Vuetify 组件的 `:z-index` 属性只收数字，读不到 CSS 变量，这时在 JS 里留一份带注释的常量（目前只有 `--z-menu` 一份，见 `RichTextToolbar.vue` 的 `MENU_Z`、`CommandPalette.vue` 的 `SHEET_Z`）。
 
+### 3.9 表单与设置行
+
+原则 1、4。表单里**一个字段**写成一个 `BaseField`（`src/components/base/BaseField.vue`），设置页里**一行**写成一个 `SettingsRow`（`src/components/base/SettingsRow.vue`）。两件都只摆位置、挂 aria，控件还是调用处自己的 `v-text-field` / `v-select` / 原生 `<input>`。
+
+**字段：标签在框外。** 不吃控件的浮动标签：outlined 控件的浮动标签骑在边框上，半个字高在框外，两栏叠起来时下面那一栏的标签会压在上面那一栏的边框上（`.claude/rules/frontend.md`）。标签在框外就没有这件事。字号 13px / 500 / `--text`，和 `components/account/AccountField` 一致。
+
+`BaseField` 只做控件做不了的那几件，其余都从插槽属性交给控件：
+
+| 做什么 | 怎么用 |
+|---|---|
+| 标签与控件关联 | 不给 `id` 就生成一个；控件的 `id` 从 `v-slot="{ id }"` 拿 |
+| `aria-describedby` | 提示、报错、字数三行的 id 都拼在里面，`v-bind` 给控件 |
+| `aria-invalid` | 有 `error` 时为 true。Vuetify 自己只挂 `aria-describedby`，不挂这个 |
+| `aria-required` | `required` 时 true。Vuetify 自己也不挂它 |
+| 必填标记 | 标签后一个 `aria-hidden` 的 `*`，加一句只有读屏念的「必填」 |
+| 选填下标 | `optional` 时标签后跟「（选填）」 |
+| 报错那一行 | `error`，`--danger-ink` 写字（`--danger` 只配当标记色） |
+| 字数 | `counter="{ current, max }"`，画成「12/200」 |
+
+```vue
+<BaseField :label="t('…')" required :counter="{ current: n, max: 200 }">
+  <template #default="{ id, describedby, invalid, required }">
+    <v-text-field
+      :id="id"
+      :aria-describedby="describedby"
+      :aria-invalid="invalid"
+      :aria-required="required"
+    />
+  </template>
+</BaseField>
+```
+
+- **有 `maxlength` 就要有字数**。没有字数，粘进来的长文本被悄悄截断，人不知道少了什么。Vuetify 控件给 `counter` 加 `persistent-counter`（常驻，不只在聚焦时出现）；原生 `<input>` 这种控件由 `BaseField` 的 `counter` 画。
+- **必填要有看得见的标记**，不能只靠校验时弹一句报错。`BaseField` 的 `required` 给的是 `*` 加读屏文字「必填」。改用旧栏时当心：Vuetify 控件用的是自己的标签槽（`v-text-field` 的 `#label`），往槽里补文字会改掉标签的可读文字，按标签文字找控件的代码和测试会一起失准。那种地方在槽里放一个空的 `aria-hidden` 标记，用 CSS `::after` 画星号，必填语义交给控件的 `aria-required="true"`（Vuetify 自己不挂它）—— `TaskFormBasicCard` 就是这么做的。
+- 标签、必填 / 选填、报错都只说一遍（§8.5）：已经有 `label` 的控件不要再在外面写一遍同义的标题。
+
+**设置行：一种写法。** 同一种设置行现在有三种写法：`.srow` 的 180px 标签列、`.srow--field` 的 120px，以及各组件自己拿 flex 排的没有固定列的行。新写的一律用 `SettingsRow`：标签和一句说明在左，控件在右。`width` 是控件那一栏的宽：
+
+| `width` | 控件那一栏 | 用在哪 |
+|---|---|---|
+| `text`（默认） | 340px | 一行文本输入 |
+| `select-wide` | 280px | 带说明的下拉 |
+| `select` | 192px | 普通下拉 |
+| `code` | 160px | 短值：数量、标识符 |
+| `list` | 自由宽 | 一列名单、一段多行文本 |
+| `none` | 满宽 | 不留右边的栏，标签在上、控件占满整行 |
+
+- 标签列 180px，和 `styles/settings-card.css` 的 `.srow` 对齐。
+- **容器窄于 672px 时标签换到控件上面**，控件占满整行。判据是这一行有多宽，不是窗口有多宽（设置浮层的内容列、拖动的侧栏都会让窗口宽度答错），所以用容器查询：根元素声明 `container-type: inline-size`，并按 AppPage 的注释补 `width: 100%`——行内尺寸包含之后宽度推不出来。
+- 控件不是表单字段（一串读数加一颗按钮）时不传 `for`，标签就是一行字；是表单字段就传控件的 `id`，标签变成 `<label for>`。
+
 ---
 
 ## 4. 深色模式

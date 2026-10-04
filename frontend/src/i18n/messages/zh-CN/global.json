@@ -1,5 +1,7 @@
 {
   "back": "返回",
+  "required": "必填",
+  "optional": "（选填）",
   "labelWithAside": "{label}（{aside}）",
   "errorBoundary": {
     "message": "无法显示这块内容",

@@ -16,7 +16,7 @@
     "reason": "原因",
     "member": "成员",
     "unknownProject": "未知项目",
-    "unreachable": "无法访问该页面，您可能没有权限或页面不存在",
+    "unreachable": "无法访问该页面，你可能没有权限或页面不存在",
     "yesterday": "昨天 {time}"
   },
   "default": {

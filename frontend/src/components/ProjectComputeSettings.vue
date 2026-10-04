@@ -16,6 +16,7 @@ import ComputeChoiceForm from './ComputeChoiceForm.vue'
 import DeviceSessionsSwitch from './DeviceSessionsSwitch.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import SettingsRow from '@/components/base/SettingsRow.vue'
 
 const props = defineProps<{ projectId: string }>()
 const { supply: cloudSupply, loading: supplyLoading, load: loadSupply } = useCloudSupply(() => props.projectId)
@@ -63,20 +64,23 @@ watch(editing, (open) => {
   <div>
     <v-alert v-if="error" type="error" variant="tonal" class="mb-3">{{ error }}</v-alert>
     <template v-if="state">
-      <div class="default-row" data-testid="project-default">
-        <span class="c-muted">{{ t('work.projectMachine.defaultLabel') }}</span>
-        <span class="default-name">{{ choiceName(state.default) }}</span>
-        <span class="c-muted">{{ choiceDetail(state.default) }}</span>
-        <BaseButton
-          v-if="state.can_manage"
-          kind="secondary"
-          size="sm"
-          class="ml-auto"
-          :disabled="busy"
-          @click="editing = !editing"
-          >{{ editing ? t('work.projectMachine.collapse') : t('work.projectMachine.change') }}</BaseButton
-        >
-      </div>
+      <!-- The label sits outside the value group (SettingsRow); the value, its
+           detail and the change button stay in one line as the row's control. -->
+      <SettingsRow data-testid="project-default" :label="t('work.projectMachine.defaultLabel')" width="list">
+        <div class="default-row">
+          <span class="default-name">{{ choiceName(state.default) }}</span>
+          <span class="c-muted">{{ choiceDetail(state.default) }}</span>
+          <BaseButton
+            v-if="state.can_manage"
+            kind="secondary"
+            size="sm"
+            class="ml-auto"
+            :disabled="busy"
+            @click="editing = !editing"
+            >{{ editing ? t('work.projectMachine.collapse') : t('work.projectMachine.change') }}</BaseButton
+          >
+        </div>
+      </SettingsRow>
       <p class="t-body c-muted mt-1 mb-2">{{ t('work.projectMachine.hint') }}</p>
       <ComputeChoiceForm
         v-if="editing && state.can_manage"
@@ -127,7 +131,9 @@ watch(editing, (open) => {
 <style scoped>
 .default-row {
   display: flex;
+  flex: 1;
   flex-wrap: wrap;
+  min-width: 0;
   align-items: center;
   gap: 8px;
 }

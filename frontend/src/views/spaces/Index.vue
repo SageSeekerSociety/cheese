@@ -171,6 +171,8 @@
         v-model="spaceName"
         autocomplete="off"
         maxlength="255"
+        :counter="255"
+        persistent-counter
         :label="t('spaces.create.name')"
         :placeholder="t('spaces.create.placeholder')"
         :disabled="creating"

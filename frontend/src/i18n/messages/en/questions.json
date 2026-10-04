@@ -44,7 +44,7 @@
     "postAnswerTitle": "Answer this question",
     "postAnswerPlaceholder": "Write your answer",
     "postAnswerSuccess": "Answer posted",
-    "postAnswerEmpty": "Your answer can't be empty",
+    "postAnswerEmpty": "Enter your answer",
     "postAnswerExist": "You've already answered this question — tap to view",
     "inviteTitle": "Invite others to answer and get an answer faster",
     "bounty": "Bounty {bounty}",

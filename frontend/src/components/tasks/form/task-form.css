@@ -43,3 +43,18 @@
 .primary-soft {
   background-color: rgba(var(--v-theme-primary), 0.08);
 }
+
+/* 必填栏标签后面那颗星。和 BaseField 同一个色：--danger-ink 写字（--danger 只配当
+   标记色，浅色下写这个字对比度不够）。
+ *
+ * 星号由 ::after 画出来，标签里那个 span 是空的：标签的可读文字一个字母都不多，
+ * 读屏听到的就是字段名本身（必填这件事由控件自己的 aria-required 说）。真在标签里
+ * 写一颗 `*`，标签文字就变了，外面那些「按标签文字找控件」的代码会一起失准 ——
+ * 这不是理论，发题表单那几条测试就是那样找控件的。 */
+.tf-req {
+  color: var(--danger-ink);
+}
+
+.tf-req::after {
+  content: ' *';
+}

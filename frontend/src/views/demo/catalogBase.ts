@@ -7,11 +7,118 @@
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseField from '@/components/base/BaseField.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
+import SettingsRow from '@/components/base/SettingsRow.vue'
 
 const UI: CatalogNeed[] = ['vuetify']
+const TEXT: CatalogNeed[] = ['i18n']
 
 export const BASE_ENTRIES: CatalogEntry[] = [
+  {
+    id: 'base-field',
+    title: 'BaseField',
+    about: '一个控件的壳：标签在框外、必填/选填标记、提示、报错和字数，id 与 aria 从插槽属性交给控件。',
+    file: 'src/components/base/BaseField.vue',
+    component: BaseField,
+    needs: TEXT,
+    states: [
+      {
+        name: '标签在框外',
+        note: '标签 13/500 --text，和 AccountField 一致。控件放默认插槽。',
+        props: { label: '标题' },
+        slot: '（控件）',
+        expect: '标题',
+      },
+      {
+        name: '必填',
+        note: '一个 aria-hidden 的 *，加一句读屏才念的「必填」。',
+        props: { label: '标题', required: true },
+        slot: '（控件）',
+        expect: '标题',
+      },
+      {
+        name: '选填',
+        note: '标签后面跟一段「（选填）」。',
+        props: { label: '简介', optional: true },
+        slot: '（控件）',
+        expect: '（选填）',
+      },
+      {
+        name: '提示',
+        note: '控件下面那行提示，它的 id 会挂进 aria-describedby。',
+        props: { label: '标题', hint: '最多 20 个字' },
+        slot: '（控件）',
+        expect: '最多 20 个字',
+      },
+      {
+        name: '报错',
+        note: '报错用 --danger-ink 写字，有它时 aria-invalid 为 true。',
+        props: { label: '标题', error: '填写标题' },
+        slot: '（控件）',
+        expect: '填写标题',
+      },
+      {
+        name: '字数',
+        note: 'counter 给 current/max，画成「12/200」。',
+        props: { label: '标题', counter: { current: 12, max: 200 } },
+        slot: '（控件）',
+        expect: '12/200',
+      },
+    ],
+  },
+  {
+    id: 'settings-row',
+    title: 'SettingsRow',
+    about: '设置页的一行：左边标签（+说明），右边控件按预设宽度靠右；容器窄于 672px 时标签换到上面。',
+    file: 'src/components/base/SettingsRow.vue',
+    component: SettingsRow,
+    needs: [],
+    states: [
+      {
+        name: '文本宽度',
+        note: 'text 340px：一行文本输入。宽容器里标签占 180px 一列。',
+        props: { label: '显示名称', width: 'text' },
+        slot: '（控件）',
+        expect: '显示名称',
+      },
+      {
+        name: '下拉宽度',
+        note: 'select-wide 280px / select 192px。',
+        props: { label: '默认模型', width: 'select-wide' },
+        slot: '（控件）',
+        expect: '默认模型',
+      },
+      {
+        name: '带说明',
+        note: '标签下面那句说明用 --muted 12px。',
+        props: { label: '默认模型', description: '新任务用哪一个', width: 'select' },
+        slot: '（控件）',
+        expect: '新任务用哪一个',
+      },
+      {
+        name: '短值',
+        note: 'code 160px：数量、标识符这种短值。',
+        props: { label: '批准人数', width: 'code' },
+        slot: '（控件）',
+        expect: '批准人数',
+      },
+      {
+        name: '自由宽度',
+        note: 'list：控件自己撑满剩下的一栏，一列名单或多行文本用它。',
+        props: { label: '放行名单', width: 'list' },
+        slot: '（控件）',
+        expect: '放行名单',
+      },
+      {
+        name: '满宽',
+        note: 'none：不留右边那一栏，标签在上、控件占满整行。',
+        props: { label: '说明', width: 'none' },
+        slot: '（控件）',
+        expect: '说明',
+      },
+    ],
+  },
   {
     id: 'base-button',
     title: 'BaseButton',
