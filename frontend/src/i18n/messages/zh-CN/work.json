@@ -1034,7 +1034,8 @@
       "fileSnippet": "[文件]",
       "tooMany": "每条消息最多添加 9 个附件",
       "tooLarge": "{name} 超过 10MB，无法上传",
-      "uploadFailed": "文件上传失败",
+      "retry": "重试上传 {name}",
+      "sendBlocked": "有附件上传失败，重试或移除后再发送",
       "addFailed": "添加文件失败"
     },
     "defaultAgentName": "芝士",

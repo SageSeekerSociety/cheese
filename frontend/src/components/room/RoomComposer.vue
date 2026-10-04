@@ -69,6 +69,8 @@ const emit = defineEmits<{
   (e: 'drop-files', event: DragEvent): void
   (e: 'paste', event: ClipboardEvent): void
   (e: 'remove-att', index: number): void
+  /** 上传失败的那一枚按了重试：房间拿着 File 再传一次。 */
+  (e: 'retry-att', index: number): void
   (e: 'clear-reply'): void
   (e: 'add-library-file', path: string): void
 }>()
@@ -359,6 +361,7 @@ defineExpose({
         :atts="atts"
         :topic-id="topic?.id ?? null"
         @remove-att="(i: number) => emit('remove-att', i)"
+        @retry-att="(i: number) => emit('retry-att', i)"
         @clear-reply="emit('clear-reply')"
       />
       <!-- 输入框独占一整行。它旁边并排放按钮时，真正能打字的那块在手机上只剩
