@@ -13,6 +13,7 @@ vi.mock('@/api', async () => ({
   listProjects: vi.fn().mockResolvedValue({ data: [] }),
   getTopicUnread: vi.fn().mockResolvedValue({}),
   getPrivateUnread: vi.fn().mockResolvedValue({}),
+  getTopicNotifyLevels: vi.fn().mockResolvedValue({}),
 }))
 
 import type { Topic } from '@/cx_types'

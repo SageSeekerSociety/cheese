@@ -399,3 +399,47 @@ it('re-reads every project on the resync while the page is shown', async () => {
     vi.useRealTimers()
   }
 })
+
+/** 同一条云端机器，换个身份看：所有者/管理员看得到它的私网地址，普通成员看不到。 */
+function cloudMachineWithIp(): ProjectMachine {
+  return {
+    id: 'm-ip',
+    project_id: 'p1',
+    hostname: 'with-ip',
+    status: 'running',
+    cores: 2,
+    memory_mb: 4096,
+    disk_gb: 20,
+    ai_status: 'ready',
+    ip: '192.168.31.75',
+    device_id: 'device-ip',
+  } as ProjectMachine
+}
+
+function mountAs(role: string, machine: ProjectMachine) {
+  vi.mocked(listProjectMachines).mockImplementation(
+    async (projectId) =>
+      ({ data: projectId === machine.project_id ? [machine] : [] }) as Awaited<ReturnType<typeof listProjectMachines>>
+  )
+  return render(Compute, {
+    global: {
+      plugins: [createVuetify({ components, directives }), i18n],
+      provide: { [teamDataInjectionKey as symbol]: ref({ id: 1, handle: 'crew', role }) },
+    },
+  })
+}
+
+it('shows a cloud machine private address to the owner', async () => {
+  const view = mountAs('OWNER', cloudMachineWithIp())
+  expect(await view.findByText('with-ip')).toBeTruthy()
+  expect(view.getByText('地址：192.168.31.75')).toBeTruthy()
+})
+
+it('shows a plain member the machine but not its private address', async () => {
+  const view = mountAs('MEMBER', cloudMachineWithIp())
+  // 卡片照旧：成员看得到机器本身。
+  expect(await view.findByText('with-ip')).toBeTruthy()
+  // 地址不给看 —— `192.168.x.x` 是机器在网络里的位置，普通成员用不到。
+  expect(view.queryByText(/192\.168\.31\.75/)).toBeNull()
+  expect(view.queryByText(/地址：/)).toBeNull()
+})

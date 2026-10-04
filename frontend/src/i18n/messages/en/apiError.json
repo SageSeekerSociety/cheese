@@ -974,5 +974,6 @@
   "skillImportNothing": "Upload a file or enter an address",
   "skillAdd": "add a skill",
   "skillImport": "import a skill",
-  "skillImportUnreadable": "This file can't be read"
+  "skillImportUnreadable": "This file can't be read",
+  "topicNotifyLevelInvalid": "The notification level must be “all” or “mute”"
 }

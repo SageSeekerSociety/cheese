@@ -49,6 +49,8 @@ const props = defineProps<{
   toggleTitle: string
   /** 这一行的 ⋯ 里有哪几项（要 router 才算得出链接，所以由父级给）。 */
   actions: (topic: Topic) => MenuCommand[]
+  /** 我静音了这间房：未读不计数（父级已经去掉了），行尾留一个静音标记说明为什么。 */
+  muted?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -201,6 +203,14 @@ function onMenuToggle(open: boolean) {
     </v-list-item-title>
     <template #append>
       <TopicRailMembers v-if="marks?.length" :marks="marks" class="me-1" />
+      <v-icon
+        v-if="muted"
+        size="14"
+        class="row-muted me-1"
+        icon="mdi-bell-off-outline"
+        :aria-label="t('work.room.menu.muted')"
+        :title="t('work.room.menu.muted')"
+      />
       <!-- 折叠不能把「有新消息」吞掉：收起来的后代的未读加到本行上。 -->
       <TopicRailBadge
         v-if="row.unreadTotal > 0"
@@ -485,5 +495,9 @@ function onMenuToggle(open: boolean) {
 .topic-rail--page .rename-field :deep(.v-field__input) {
   min-height: 36px;
   font-size: 16px;
+}
+
+.row-muted {
+  color: var(--faint);
 }
 </style>

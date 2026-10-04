@@ -261,7 +261,15 @@ function emitOutboxLeave(el: Element, done: () => void) {
 <template>
   <!-- Message stream — Feishu group chat: left-aligned rows, grouped runs,
            per-row hover action bar, centered system/event lines. -->
-  <div :ref="scrollRef" class="messages flex-grow-1 overflow-y-auto py-2" data-testid="chat-scroll">
+  <!-- Focusable so keyboard users can scroll it with the arrow and page keys (listed in the shortcut sheet). -->
+  <div
+    :ref="scrollRef"
+    class="messages flex-grow-1 overflow-y-auto py-2"
+    data-testid="chat-scroll"
+    tabindex="0"
+    role="region"
+    :aria-label="t('work.room.chat.timelineLabel')"
+  >
     <!-- Screen readers hear one line per newly arrived message (who + the start of it), never the streaming text. -->
     <p class="visually-hidden" role="status" aria-live="polite" data-testid="chat-live">{{ liveAnnouncement }}</p>
     <!-- Single wrapper so a ResizeObserver can watch the timeline's total
@@ -564,5 +572,10 @@ function emitOutboxLeave(el: Element, done: () => void) {
   25% {
     background-color: var(--accent-wash);
   }
+}
+
+.messages:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
 }
 </style>

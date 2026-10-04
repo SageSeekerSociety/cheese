@@ -3,7 +3,8 @@ import 'katex/dist/katex.min.css'
 
 import edjsParser from 'editorjs-parser'
 import katex from 'katex'
-import Prism from 'prismjs'
+
+import Prism from '@/utils/prism'
 
 type NestedListItem = {
   content: string

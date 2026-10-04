@@ -346,7 +346,9 @@ function shortcutLabel(shortcut: string | undefined): string | undefined {
   if (!shortcut) return undefined
   return shortcut
     .split('+')
-    .map((part) => (part === 'mod' ? (isMac ? '⌘' : 'Ctrl') : part === 'shift' ? '⇧' : part.toUpperCase()))
+    .map((part) =>
+      part === 'mod' ? (isMac ? '⌘' : 'Ctrl') : part === 'shift' ? '⇧' : part === 'escape' ? 'Esc' : part.toUpperCase()
+    )
     .join(isMac ? '' : ' ')
 }
 
