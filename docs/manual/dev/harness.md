@@ -17,7 +17,7 @@ covers:
 
 骨架是「谁在跑这条会话」：把平台的一轮翻译成某个 agent 程序（Claude Code、Codex、pi）听得懂的话，再把它的输出翻译回房间的事件。它是一个部署选项，不是模型的属性。
 
-> 讲：骨架是谁、谁在选、注册与不注册的分别、四条硬性要求、能力矩阵、驱动层。不讲：一个会话怎么跑起来、跑在哪台机器，见[一条消息怎么变成芝士的一轮](/dev/turn)；平台工具怎么送到会话里，见[平台工具与会话侧 MCP](/dev/mcp)。
+> 讲：骨架是谁、谁在选、注册与不注册的分别、能力矩阵、驱动层。不讲：一个会话怎么跑起来、跑在哪台机器，见[一条消息怎么变成芝士的一轮](/dev/turn)；平台工具怎么送到会话里，见[平台工具与会话侧 MCP](/dev/mcp)。
 
 ## 谁在选骨架 {#which}
 
@@ -35,28 +35,17 @@ covers:
 
 `HARNESSES`（`harness/__init__.py`）有 `claude-code` 和 `pi` 两条。`codex/` 的适配层也在、也在跑、也有完整的契约夹具和行为声明，只是没注册。
 
-注册表列的是答得出下面四条硬性要求的骨架：答不出的留着代码不注册，能力矩阵里也就不占一列，答出四条的那天回到表里。`deployment_harnesses()` 因此只放注册了的骨架过去。
+`deployment_harnesses()` 只放注册了的骨架过去，没注册的在能力矩阵里也不占一列。
 
-## 四条硬性要求 {#subagents}
-
-派一条活是 agent 对骨架**原生 subagent** 的工具调用，平台这一侧没有「派活」的路径（结论 43）。那条路成立的前提是四条，它们不是能力位：
-
-- 起子 agent，并指定它跑哪个模型
-- 子 agent 的每个事件带可归到卡的线程标识
-- 父线程能改它的指令
-- 父线程能停掉它
-
-pi 核心没有子 agent，四条由平台给它的 extension 和 runner 答：`Task` 在中心机上起第二个 pi，手在同一台执行机、同一个工作区里，模型经平台准入，子会话的每条记录带着线程标识写进会话自己的记录，`SendMessage` 与 `TaskStop` 改它、停它（`harness/pi/subagents.py`）。
-
-`SubagentRequirement` 就是这四条。`Harness.__post_init__` 逐条要一个非空的 `str`：**答不全根本造不出来**，判在构造上而不是判在一条守卫测试上——注册表是一个字面量，一个造得出来的条目总会有人写进去。值只能是一句话，而 `Difference` 是 `StrEnum`、填进来照样是个 `str`，所以 `__post_init__` 认的是类型本身：硬性要求没有「暂缺」那一档。`backend/tests/contract/test_subagent_requirements.py` 还核这两件事：引的路径存在，引的符号真的**参与过代码**（被定义、被赋值、被读）。
+骨架自己的原生 subagent（Claude Code 的 `Agent`，pi 由平台扩展给的 `Task`，见 `harness/pi/subagents.py`）是会话内部的事，和任务无关：一条任务是它自己的一条会话（见[会话](/dev/session)），不是谁起的子 agent。
 
 ## 平台只认这几个动词 {#contract}
 
 骨架之上是会话核心（`agent/session_host/`，`SessionHost`）。它不认识房间、文档和人，对三种骨架都一样：`start` 照一份 `SessionSpec` 起一条会话，`attach` 接上已经在跑的，`send` 交一个输入、`steer` 在干活时插一句、`stop` 停下，`status` 问它在不在干活，`memory` 和 `control` 转给会话的 runner，`read` 把会话说的、做的一条条交出来（说了什么、开始和停下干活、读到了哪条输入、活怎么结束、机器够不够得着、正在写什么，都是 `session_host/reads.py` 的一种）。各骨架只回答自己协议写法不同的地方：怎么起、怎么读、停用哪个调用、收下输入算不算读到，这些写在各自的驱动里（`session_host/driver.py` 的 `Driver`，实现是同目录的 `pi.py`、`claude_code.py`、`codex.py`）。会不会把记忆对账回平台是注册表上的事实（`Harness.keeps_memory`），只经 `session_host.host.keeps_memory` 一处读。
 
-房间、文档里的芝士、个人芝士各自从核心装起来。房间的那一份是 `agent/room/sessions.py` 的 `RoomSessions`：`ensure`、`send`、`backlog`、`steer`、`interrupt`、`close` 这几个动词，加上 `holds` 这类事实；它记房间自己的账（每个座位在干哪件活、干活时插进来的话被哪件活读到、存活规则看的几只钟），再经 `report_to` 交给房间：读到的每一条交给 `room/reads.py` 分到房间各自的账，输入之前和一轮之后对记忆，问房间还有没有输入没被读。四条硬性要求不在这里当动词：平台不起子 agent，它们是骨架的事实，各写一句「怎么做到的」落在 `HARNESSES[harness].subagents` 上。
+房间、文档里的芝士、个人芝士各自从核心装起来。房间的那一份是 `agent/room/sessions.py` 的 `RoomSessions`：`ensure`、`send`、`backlog`、`steer`、`interrupt`、`close` 这几个动词，加上 `holds` 这类事实；它记房间自己的账（每个座位在干哪件活、干活时插进来的话被哪件活读到、存活规则看的几只钟），再经 `report_to` 交给房间：读到的每一条交给 `room/reads.py` 分到房间各自的账，输入之前和一轮之后对记忆，问房间还有没有输入没被读。
 
-旁边几个小协议：`Backlog`（`unread` / `assemble` / `unfinished` / `landed` / `forget`）、`SessionRef`（`(topic, agent_handle, harness)`，`agent_sessions` 的键）。
+旁边几个小协议：`Backlog`（`unread` / `assemble` / `unfinished` / `landed` / `forget`）、`SessionRef`（`(conversation, agent_handle, harness)`，`agent_sessions` 的键；任务的会话带 `task_id`，`topic_id` 仍是它所在的房间）。
 
 ## 能力矩阵：一格都不许空 {#matrix}
 
@@ -97,6 +86,6 @@ pin 的版本号只写一处：那份脚本从每份 `Declaration.pinned_version
 
 ## 骨架能指向什么、一条活用哪个模型 {#models}
 
-`Harness` 的字段：`name`、`label`、`subagents`、`capabilities`、`speaks_gateway`、`carries_subscription`。这几个事实写在骨架上而不是模型上——以前是反过来的（每个模型带一张「允许哪些骨架驱动我」的名单），方向错得付出过代价：加一个骨架要改模型目录，拒绝一个组合时报的错还是关于模型的，而模型对这件事什么意见都没有。`speaks_gateway` 说它说不说平台网关自己那套形状（能，就所有模型都能驱动它）；`carries_subscription` 说它能不能承载 Anthropic 订阅凭据——那份凭据只为**一个**骨架铸造。`capabilities` 是可选能力（`Capability`），和四条硬性要求不同，答不出不妨碍注册，只是要它的地方用不了这个骨架；每一项也写一句「怎么做到的」，由同一份 `test_subagent_requirements.py` 核引文。今天只有一项「远端执行」，Claude Code 和 pi 声明了，Codex 没注册。
+`Harness` 的字段：`name`、`label`、`capabilities`、`speaks_gateway`、`carries_subscription`、`keeps_memory`、`controls` / `executor_controls`。这几个事实写在骨架上而不是模型上——以前是反过来的（每个模型带一张「允许哪些骨架驱动我」的名单），方向错得付出过代价：加一个骨架要改模型目录，拒绝一个组合时报的错还是关于模型的，而模型对这件事什么意见都没有。`speaks_gateway` 说它说不说平台网关自己那套形状（能，就所有模型都能驱动它）；`carries_subscription` 说它能不能承载 Anthropic 订阅凭据——那份凭据只为**一个**骨架铸造。`capabilities` 是可选能力（`Capability`），答不出不妨碍注册，只是要它的地方用不了这个骨架；每一项写一句「怎么做到的」，声明了却说不出的，`Harness.__post_init__` 根本造不出来。今天只有一项「远端执行」，Claude Code 和 pi 声明了，Codex 没注册。
 
 一条活具体用哪个模型由 `backend/app/domain/room_task/binding.py` 的 `resolve()` 定：显式绑在这条活上的 → 队友的 → 调用方给的默认 → 项目主模型，逐个往下；一个都没有就报「当前项目没有可用的默认模型」。各个骨架怎么把平台工具交到模型手里，见[平台工具与会话侧 MCP](/dev/mcp)。
