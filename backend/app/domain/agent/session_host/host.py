@@ -26,7 +26,7 @@ import hashlib
 import logging
 import time
 import uuid
-from collections.abc import AsyncGenerator, Callable, Iterable
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -70,6 +70,7 @@ from app.domain.agent.session_host.contract import (
     SessionRef,
     SessionSpec,
     SessionStatus,
+    StartAbandoned,
 )
 from app.domain.agent.session_host.driver import Driver, Launched, Readers, Wire
 from app.domain.agent.session_host.pi import PiDriver
@@ -85,6 +86,9 @@ logger = logging.getLogger(__name__)
 #: it is written. Far below every timeout on the way: the call's own (660 s),
 #: the connection owner's, and the connector's.
 READ_WAIT_S = 25.0
+#: How often a start waiting for the host's memory looks again, and asks
+#: whether it is still wanted.
+GIVE_UP_CHECK_S = 1.0
 #: How long a reading with nothing owed waits before asking again a runner that
 #: let its idle session go; nobody is waiting on it, and something said to the
 #: session wakes the reading at once.
@@ -251,11 +255,19 @@ class SessionHost:
     # --- starting ------------------------------------------------------------
 
     async def start(
-        self, ref: SessionRef, spec: SessionSpec, access: Access
+        self,
+        ref: SessionRef,
+        spec: SessionSpec,
+        access: Access,
+        *,
+        on_wait: Callable[[], Awaitable[None]] | None = None,
+        give_up: Callable[[], Awaitable[bool]] | None = None,
     ) -> SessionStatus:
         """Have the session running from ``spec``: the one already running,
-        or one started now. Raises ``HostFull`` when the host has no memory for
-        it."""
+        or one started now. A session that is not running waits up to
+        ``spec.host_wait_s`` for the host to have memory for it, telling
+        ``on_wait`` once when it starts waiting; past that it raises
+        ``HostFull``, and ``StartAbandoned`` once ``give_up`` says so."""
         driver = self._driver(ref)
         lock = self._locks.setdefault(ref, asyncio.Lock())
         async with lock:
@@ -269,9 +281,7 @@ class SessionHost:
                 else None
             )
             if known is None and spec.footprint is not None:
-                memory = self._memory or HostMemory(self.hub)
-                if not await memory.can_start(spec.footprint.memory_mb):
-                    raise HostFull("The session host has no memory for another session")
+                await self._wait_for_memory(spec, on_wait, give_up)
             started = time.monotonic()
             launched = await driver.launch(self._wire(), host, ref, spec, access, known)
             if launched is not known:
@@ -308,6 +318,33 @@ class SessionHost:
                 takes_inputs=driver.takes_inputs(
                     {"input_protocol": launched.input_protocol}
                 ),
+            )
+
+    async def _wait_for_memory(
+        self,
+        spec: SessionSpec,
+        on_wait: Callable[[], Awaitable[None]] | None,
+        give_up: Callable[[], Awaitable[bool]] | None,
+    ) -> None:
+        assert spec.footprint is not None
+        # One reading for every start that waits: it is cached
+        # (``admission.READING_TTL_S``), so looking again costs the host nothing.
+        if self._memory is None:
+            self._memory = HostMemory(self.hub)
+        memory = self._memory
+        until = time.monotonic() + spec.host_wait_s
+        told = False
+        while not await memory.can_start(spec.footprint.memory_mb):
+            if time.monotonic() >= until:
+                raise HostFull("The session host has no memory for another session")
+            if give_up is not None and await give_up():
+                raise StartAbandoned("Stopped waiting for the session host")
+            if not told:
+                told = True
+                if on_wait is not None:
+                    await on_wait()
+            await asyncio.sleep(
+                min(GIVE_UP_CHECK_S, max(0.0, until - time.monotonic()))
             )
 
     async def adopt(self, found: list[tuple[SessionRef, Access]]) -> None:

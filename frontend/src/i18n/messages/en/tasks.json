@@ -620,6 +620,9 @@
     "readingDocs": "Reading the docs…",
     "readingTasks": "Looking at your tasks…",
     "today": "Today",
+    "queued": "Queued. It starts when resources free up",
+    "stop": "Stop",
+    "stopped": "Stopped",
     "failed": "Cheese could not answer just now. Try again later.",
     "starters": {
       "basics": "What do I need to know first?",

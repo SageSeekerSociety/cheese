@@ -11,9 +11,10 @@ import type { Block, TodoItem } from '../../cx_types'
 import type { FaceState } from '../../lib/agentFace'
 import type { AskAction, AskFormState } from '../../lib/askPresentation'
 
-import { computed } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { artifactKind, artifactName, askOptions, isImageBlock, replySnippet } from '../../lib/blockDisplay'
+import { foldHeight, overflowsFold } from '../../lib/chatFold'
 import { fileIcon } from '../../lib/fileKind'
 import { renderPlain as renderPlainWith } from '../../lib/renderMessage'
 import { avatarColor, avatarInitial } from '../../utils/avatar'
@@ -114,6 +115,81 @@ const checklist = computed(() => {
   const value = props.block.meta?.checklist
   return value && typeof value === 'object' ? value : null
 })
+
+// ---- 长回复收起 ----
+// 一条很长的队友回复收成一段高度，底下给一颗「展开 / 收起」。要不要收，看渲染后的
+// 高度（lib/chatFold），不看字数：代码块、表格、图片的高度都不是字数能推出来的。
+// 还没落库的那条（正在写、正在送）不收——它的正文每帧都在长。
+const foldEl = ref<HTMLElement | null>(null)
+const foldable = ref(false)
+const expanded = ref(false)
+const foldPx = ref(0)
+let foldObserver: ResizeObserver | null = null
+
+const canFold = computed(() => !props.outgoing && !props.editing)
+const clamped = computed(() => canFold.value && foldable.value && !expanded.value)
+
+// 量的是正文那一层（MarkdownView 的根），不是外面收起来的那层：收起来的那层高度被
+// max-height 钉死，栏窄下来它也不动，观察不到「换个宽度就不用收了」。正文那一层不收，
+// 它一直报真实高度。
+function foldTarget(): HTMLElement | null {
+  return (foldEl.value?.firstElementChild as HTMLElement | null) ?? null
+}
+
+function measureFold() {
+  const el = foldTarget()
+  if (!el || !canFold.value) {
+    foldable.value = false
+    return
+  }
+  const lineHeight = Number.parseFloat(getComputedStyle(el).lineHeight)
+  foldPx.value = foldHeight(lineHeight)
+  foldable.value = overflowsFold(el.scrollHeight, foldPx.value)
+}
+
+function observeFold() {
+  foldObserver?.disconnect()
+  const el = foldTarget()
+  if (foldObserver && el && canFold.value) foldObserver.observe(el)
+  measureFold()
+}
+
+/** 最近的、纵向能滚的祖先——对话栏的 `.messages`。 */
+function scrollParent(el: HTMLElement | null): HTMLElement | null {
+  let node = el?.parentElement ?? null
+  while (node) {
+    const overflowY = getComputedStyle(node).overflowY
+    if (overflowY === 'auto' || overflowY === 'scroll') return node
+    node = node.parentElement
+  }
+  return null
+}
+
+// 展开/收起只改这一条自己的高度，它上面的东西一个像素都没动，滚到哪就还是哪。
+// 会动的只剩一种情况：Chrome 的滚动锚定，或壳里的 ResizeObserver 顺手挪了一下。
+// 量这一行的顶、把差补回去。停在底部的人交给壳钉底，不抢。
+function toggleFold() {
+  const row = foldEl.value?.closest('.im-row') as HTMLElement | null
+  const scroller = scrollParent(foldEl.value)
+  const beforeTop = row?.getBoundingClientRect().top ?? 0
+  const pinned = scroller ? scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80 : false
+  expanded.value = !expanded.value
+  if (row && scroller && !pinned) {
+    void nextTick(() => {
+      requestAnimationFrame(() => {
+        scroller.scrollTop += row.getBoundingClientRect().top - beforeTop
+      })
+    })
+  }
+}
+
+onMounted(() => {
+  if (typeof ResizeObserver !== 'undefined') foldObserver = new ResizeObserver(() => measureFold())
+  observeFold()
+  void nextTick(observeFold)
+})
+watch([() => props.block.content, () => props.editing, canFold], () => void nextTick(observeFold))
+onBeforeUnmount(() => foldObserver?.disconnect())
 
 function renderPlain(text: string): string {
   return renderPlainWith(text, props.refs)
@@ -240,13 +316,32 @@ function renderPlain(text: string): string {
       />
       <template v-else-if="isAgent">
         <!-- 还没落库的那条（正在写、正在送）不带「复制」：它的代码块还在长。 -->
-        <MarkdownView
-          class="im-text md-content"
-          :source="block.content"
-          as="chat"
-          :names="refs"
-          :copy-code="!outgoing"
-        />
+        <div
+          ref="foldEl"
+          class="im-fold"
+          :class="{ 'im-fold-clamped': clamped }"
+          :style="clamped ? { maxHeight: `${foldPx}px` } : undefined"
+        >
+          <MarkdownView
+            class="im-text md-content"
+            :source="block.content"
+            as="chat"
+            :names="refs"
+            :copy-code="!outgoing"
+          />
+          <!-- Fade at the cut edge, so a folded reply reads as "there is more" rather than "it ends here". -->
+          <div v-if="clamped" class="im-fold-fade" aria-hidden="true" />
+        </div>
+        <button
+          v-if="canFold && foldable"
+          type="button"
+          class="im-fold-toggle"
+          :aria-expanded="expanded"
+          @click="toggleFold"
+        >
+          <v-icon size="16">{{ expanded ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
+          {{ expanded ? t('work.room.message.showLess') : t('work.room.message.showMore') }}
+        </button>
         <div v-if="edited" class="im-edited">{{ t('work.room.message.edited') }}</div>
       </template>
       <!-- 现场尊重原文: human text renders verbatim — newlines and
@@ -530,8 +625,8 @@ function renderPlain(text: string): string {
 
 /* Rendered markdown for 芝士's replies (v-html → :deep). */
 /* 行距和人说的话是同一档（room-row.css 的 .im-text）：同一列里两种行距，扫下来
-   就是一段松一段紧。字号折到 14px 是为了让下面那几个 em 的子元素（h1/h2/h3、
-   code）有一个干净的基数。 */
+   就是一段松一段紧。字号折到 15px，下面几个 em 的子元素（h1/h2/h3、code）有一个
+   干净的基数。 */
 .md-content {
   font-size: 15px;
   line-height: var(--lh-15-reading);
@@ -542,20 +637,57 @@ function renderPlain(text: string): string {
 .md-content :deep(p:last-child) {
   margin-bottom: 0;
 }
+/* 标题：一档字号、一档重量，从 h1 到 h6 依次收。以前三档都压成 1.02em，h4/h5/h6
+   干脆没写，浏览器把它们排得比正文还小——一屏里分不出层级。顶到整段开头的标题不再
+   多留一段上边距。 */
 .md-content :deep(h1),
 .md-content :deep(h2),
-.md-content :deep(h3) {
-  font-size: 1.02em;
+.md-content :deep(h3),
+.md-content :deep(h4),
+.md-content :deep(h5),
+.md-content :deep(h6) {
+  margin: 14px 0 6px;
   font-weight: 600;
-  margin: 10px 0 4px;
+  line-height: 1.35;
+  color: var(--ink);
+}
+.md-content :deep(:is(h1, h2, h3, h4, h5, h6):first-child) {
+  margin-top: 0;
+}
+.md-content :deep(h1) {
+  font-size: 1.4em;
+}
+.md-content :deep(h2) {
+  font-size: 1.22em;
+}
+.md-content :deep(h3) {
+  font-size: 1.08em;
+}
+.md-content :deep(h4) {
+  font-size: 1em;
+}
+.md-content :deep(h5) {
+  font-size: 0.94em;
+}
+.md-content :deep(h6) {
+  font-size: 0.88em;
+  color: var(--muted);
 }
 .md-content :deep(ul),
 .md-content :deep(ol) {
   margin: 4px 0;
   padding-left: 20px;
 }
+/* 嵌套的一层缩进一份，段间距比外层小：层次比外层清楚，但不撑出一段空白。 */
+.md-content :deep(li > ul),
+.md-content :deep(li > ol) {
+  margin: 2px 0;
+}
 .md-content :deep(li) {
   margin: 2px 0;
+}
+.md-content :deep(li > p) {
+  margin: 0 0 4px;
 }
 .md-content :deep(li::marker) {
   color: var(--faint);
@@ -596,14 +728,24 @@ function renderPlain(text: string): string {
   border-radius: var(--radius-sm);
   font-size: 0.88em;
 }
-/* 代码块和它右上角的「复制」。按钮悬停时才出现；没有悬停的设备上一直在。 */
+/* 代码块和它右上角的两颗：自动换行、复制。悬停时才出现，没有悬停的设备上一直在。 */
 .md-content :deep(.md-pre) {
   position: relative;
 }
-.md-content :deep(.md-copy) {
+.md-content :deep(.md-pre-bar) {
   position: absolute;
   top: 6px;
   right: 6px;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity var(--dur-quick) var(--ease-standard);
+}
+.md-content :deep(.md-pre:hover .md-pre-bar),
+.md-content :deep(.md-pre-bar:focus-within) {
+  opacity: 1;
+}
+.md-content :deep(.md-code-btn) {
   height: 24px;
   padding: 0 8px;
   border: 1px solid var(--line-2);
@@ -613,20 +755,17 @@ function renderPlain(text: string): string {
   line-height: var(--lh-12);
   color: var(--muted);
   cursor: pointer;
-  opacity: 0;
-  transition:
-    opacity var(--dur-quick) var(--ease-standard),
-    color var(--dur-quick) var(--ease-standard);
+  transition: color var(--dur-quick) var(--ease-standard);
 }
-.md-content :deep(.md-pre:hover .md-copy),
-.md-content :deep(.md-copy:focus-visible) {
-  opacity: 1;
-}
-.md-content :deep(.md-copy:hover) {
+.md-content :deep(.md-code-btn:hover) {
   color: var(--ink);
 }
+/* 换行开着时那颗按钮换个色，看得出这是个「现在生效」的开态（同 .rx-chip--mine）。 */
+.md-content :deep(.md-wrap-btn[aria-pressed='true']) {
+  color: var(--accent-ink);
+}
 @media (hover: none) {
-  .md-content :deep(.md-copy) {
+  .md-content :deep(.md-pre-bar) {
     opacity: 1;
   }
 }
@@ -635,7 +774,15 @@ function renderPlain(text: string): string {
   border: 1px solid var(--line);
   padding: 10px 12px;
   border-radius: var(--radius-md);
+  max-width: 100%;
   overflow-x: auto;
+}
+/* 换行开着（那颗「自动换行」）：长行折进框里，横向滚动让位。默认不换行——一条命令、
+   一段长 URL 站在一行上比折成几截更好读。 */
+.md-content :deep(pre.md-wrap) {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow-x: hidden;
 }
 /* 代码块里的 <code> 是行内元素：它身上的边框会在每一行上各画一个框。 */
 .md-content :deep(pre code) {
@@ -645,8 +792,54 @@ function renderPlain(text: string): string {
 }
 .md-content :deep(blockquote) {
   margin: 6px 0;
-  padding-left: 12px;
+  padding: 2px 0 2px 12px;
   border-left: 2px solid var(--line-2);
   color: var(--muted);
+}
+.md-content :deep(blockquote > :first-child) {
+  margin-top: 0;
+}
+.md-content :deep(blockquote > :last-child) {
+  margin-bottom: 0;
+}
+
+/* 长回复收起（见脚本里的 fold 一段）：一段高度、下切边一条渐隐、底下居中一颗
+   展开/收起。渐隐贴在下切边，收起来时读到的是「下面还有」，不是「到这儿就没了」。 */
+.im-fold {
+  position: relative;
+}
+.im-fold-clamped {
+  overflow: hidden;
+}
+.im-fold-fade {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 56px;
+  pointer-events: none;
+  background: linear-gradient(to bottom, transparent, var(--surface));
+}
+.im-fold-toggle {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  width: fit-content;
+  margin: 6px auto 0;
+  padding: 3px 10px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--text);
+  cursor: pointer;
+  transition:
+    background-color var(--dur-quick) var(--ease-standard),
+    border-color var(--dur-quick) var(--ease-standard);
+}
+.im-fold-toggle:hover {
+  border-color: var(--faint);
+  background: var(--fill);
 }
 </style>

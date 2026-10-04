@@ -17,6 +17,7 @@ import { getAvatarUrl } from '@/utils/materials'
 import { useSpaceData } from '@/composables/useSpaceData'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import { myHandle } from '@/me'
@@ -47,12 +48,18 @@ const spaceId = Number(route.params.spaceId)
 const members = ref<SpaceMember[]>([])
 const keyword = ref('')
 const busy = ref(false)
+// 读失败和「只有管理员、没别的成员」是两件事：失败替换掉这一块，空名单才说「暂无」。
+const failed = ref(false)
+const errorDetail = ref<string | null>(null)
 
 async function refresh() {
+  failed.value = false
+  errorDetail.value = null
   try {
     members.value = (await SpacesApi.listMembers(spaceId)).data.members ?? []
-  } catch {
-    members.value = []
+  } catch (error) {
+    failed.value = true
+    errorDetail.value = error instanceof Error && error.message ? error.message : null
   }
 }
 
@@ -144,7 +151,8 @@ async function transferOwner(row: Row) {
   <PageHeader :title="t('spaces.members.title')" show-on-mobile />
 
   <div class="mem">
-    <div class="mem__bar">
+    <BaseLoadError v-if="failed" :title="t('spaces.members.loadMembersFailed')" :error="errorDetail" @retry="refresh" />
+    <div v-else class="mem__bar">
       <v-text-field
         v-model="keyword"
         autocomplete="off"
@@ -158,7 +166,7 @@ async function transferOwner(row: Row) {
       />
       <span class="mem__count t-num">{{ t('spaces.members.count', { n: rows.length }) }}</span>
     </div>
-    <v-table v-if="filtered.length" density="comfortable" class="mem__table">
+    <v-table v-if="!failed && filtered.length" density="comfortable" class="mem__table">
       <thead>
         <tr>
           <th>{{ t('spaces.members.columns.member') }}</th>
@@ -205,7 +213,7 @@ async function transferOwner(row: Row) {
         </tr>
       </tbody>
     </v-table>
-    <p v-else class="mem__muted">{{ t('spaces.members.empty') }}</p>
+    <p v-else-if="!failed" class="mem__muted">{{ t('spaces.members.empty') }}</p>
   </div>
 </template>
 

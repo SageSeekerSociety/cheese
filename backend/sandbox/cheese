@@ -694,6 +694,12 @@ PLATFORM_TOOLS = ToolTable(
             ["profile"],
         ),
         _tool(
+            "cheese_wait_machine",
+            "工作电脑还在准备时，等它就绪再返回（最多约 11 分钟），返回时说等了多久。"
+            "要等机器就用它，别用 sleep：预热好的机器常常几秒就好，sleep 只会白等。"
+            "文件和命令工具本身也会等，所以只在你想先等好再做别的时候调它。",
+        ),
+        _tool(
             "cheese_note",
             "给同一个 handle 的另一条线程留一张便条。它直接进那条线程正在跑的"
             "那一轮，不进时间线。收件人只能是你自己在这个项目里的另一条线程——"
@@ -2079,6 +2085,16 @@ def _feedback_release(args: dict, host) -> str:
     return f"{item.get('display_id') or args['feedback']} 现在没人领着，别人可以领了。"
 
 
+def _wait_machine(args: dict, host) -> str:
+    """Hands, once the room's machine is ready: one command that does nothing,
+    sent the way every file and command tool's is, so it waits exactly as they
+    do (`executor_transport.acquire`) and fails as they would."""
+    started = datetime.now(UTC)
+    host.wait_machine()
+    waited = round((datetime.now(UTC) - started).total_seconds())
+    return f"工作电脑已就绪（等了 {waited} 秒）。" if waited else "工作电脑已就绪。"
+
+
 _STEPS = {
     "cheese_chat_get": _chat_get,
     "cheese_chat_list": _chat_page("cheese_chat_list"),
@@ -2094,6 +2110,7 @@ _STEPS = {
     "cheese_feedback_get": _feedback_get,
     "cheese_feedback_claim": _feedback_claim,
     "cheese_feedback_release": _feedback_release,
+    "cheese_wait_machine": _wait_machine,
 }
 
 
@@ -2421,6 +2438,9 @@ class LocalHost:
     def read_file(self, path: str) -> bytes:
         with open(os.path.join(self.cwd, path), "rb") as stream:
             return stream.read()
+
+    def wait_machine(self) -> None:
+        """This session runs on its machine: it is there."""
 
     def sync_task(self, task_id: str) -> None:
         result = subprocess.run(

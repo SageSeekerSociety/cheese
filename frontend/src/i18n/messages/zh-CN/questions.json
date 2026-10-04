@@ -23,6 +23,7 @@
     "success": "提问成功"
   },
   "detail": {
+    "loadFailed": "无法加载问题",
     "createdAt": "发布于 {time}",
     "updatedAt": "编辑于 {time}",
     "viewCount": "暂无浏览 | 浏览 1 次 | 浏览 {count} 次",

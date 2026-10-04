@@ -347,8 +347,10 @@ useFocusReturn(ref(true))
   display: flex;
   gap: 4px;
   align-items: center;
-  height: 52px;
-  padding: 0 8px;
+  /* 手机上这层整屏铺开：这条栏钻进刘海，← 和标题会被状态栏压住。让出顶部安全区，
+     栏自己长高那一截（`.so__phone` 跟着往下让同一截）。桌面上 `env()` 是 0。 */
+  height: calc(52px + env(safe-area-inset-top, 0px));
+  padding: env(safe-area-inset-top, 0px) 8px 0;
   border-bottom: 1px solid var(--line);
   background: var(--canvas);
 }
@@ -376,7 +378,7 @@ useFocusReturn(ref(true))
 
 .so__phone {
   position: absolute;
-  inset: 52px 0 0;
+  inset: calc(52px + env(safe-area-inset-top, 0px)) 0 0;
   overflow-y: auto;
 }
 
@@ -385,7 +387,8 @@ useFocusReturn(ref(true))
   flex-direction: column;
   gap: 20px;
   min-height: 100%;
-  padding: 16px;
+  /* 目录页自己铺到底：末尾几条不会被 Home 横杠压住。 */
+  padding: 16px 16px calc(16px + env(safe-area-inset-bottom, 0px));
   box-sizing: border-box;
   background: var(--canvas);
 }
@@ -426,7 +429,8 @@ useFocusReturn(ref(true))
    居中沿用上面那条 margin-inline:auto，这里只改水平内距。 */
 @media (max-width: 959.98px) {
   .so__content {
-    padding: 0 16px;
+    /* 底部让出安全区，最后一行设置不会被 Home 横杠压住。 */
+    padding: 0 16px env(safe-area-inset-bottom, 0px);
   }
 }
 

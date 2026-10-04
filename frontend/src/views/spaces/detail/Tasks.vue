@@ -40,6 +40,12 @@
       <template v-if="publishedLoading && !publishedTasks.length">
         <v-skeleton-loader v-for="index in 3" :key="index" type="list-item-three-line" />
       </template>
+      <BaseLoadError
+        v-else-if="publishedFailed"
+        :title="t('spaces.detail.tasks.loadFailed')"
+        :error="publishedError"
+        @retry="loadPublishedTasks"
+      />
       <v-empty-state
         v-else-if="!visiblePublishedTasks.length"
         icon="mdi-pencil-box-multiple-outline"
@@ -79,7 +85,6 @@ import type { TaskScope, TaskSortKey } from './taskListFilters'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
-import { toast } from 'vuetify-sonner'
 import { storeToRefs } from 'pinia'
 
 import { createEmptyResult, usePaging } from '@/utils/paging'
@@ -91,6 +96,7 @@ import TaskListToolbar from './TaskListToolbar.vue'
 import TaskRow from './TaskRow.vue'
 
 import { useCommands } from '@/commands'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
 import { SpacesApi } from '@/network/api/spaces'
 import { TasksApi } from '@/network/api/tasks'
@@ -241,11 +247,16 @@ const {
 
 const publishedTasks = ref<SpaceMyPublishedTask[]>([])
 const publishedLoading = ref(false)
+// 读失败和「还没发过题」是两件事：失败替换掉这一格，空状态才说「暂无」。
+const publishedFailed = ref(false)
+const publishedError = ref<string | null>(null)
 
 const loadPublishedTasks = async () => {
   const spaceId = Number(route.params.spaceId)
   if (!spaceId) return
   publishedLoading.value = true
+  publishedFailed.value = false
+  publishedError.value = null
   try {
     const { data } = await SpacesApi.getMyPublishedTasks(spaceId, {
       categoryId: selectedCategoryId.value ?? undefined,
@@ -255,7 +266,8 @@ const loadPublishedTasks = async () => {
     publishedTasks.value = data.tasks
   } catch (error) {
     console.error('load my published tasks failed', error)
-    toast.error(t('spaces.detail.tasks.loadFailed'))
+    publishedFailed.value = true
+    publishedError.value = error instanceof Error && error.message ? error.message : null
   } finally {
     publishedLoading.value = false
   }

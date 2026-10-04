@@ -219,6 +219,7 @@ onBeforeUnmount(() => {
               :phase="rewrite.phase.value"
               :kind="rewrite.kind.value"
               :answer="rewrite.answer.value"
+              :stopped="rewrite.stopped.value"
               :changed="rewrite.edits.value.length"
               :busy="rewrite.busy.value"
               commentable

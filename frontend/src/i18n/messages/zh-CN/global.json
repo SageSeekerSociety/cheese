@@ -7,6 +7,10 @@
     "message": "无法显示这块内容",
     "retry": "重试"
   },
+  "loadError": {
+    "title": "加载失败",
+    "retry": "重试"
+  },
   "cancel": "取消",
   "cheese": "知是",
   "copyright": "© {year} 知是",

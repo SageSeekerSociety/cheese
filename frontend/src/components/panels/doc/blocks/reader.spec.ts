@@ -76,6 +76,29 @@ describe('reading Markdown outside the editor', () => {
     expect(host.querySelector('code')?.textContent).toBe('<@zhangsan>')
   })
 
+  it('gives a code block a wrap toggle beside the copy button when asked', () => {
+    const host = show('```\nconst x = 1\n```', { as: 'chat', copyCode: true })
+    const pre = host.querySelector('pre')
+    expect(pre).not.toBeNull()
+    const wrap = host.querySelector<HTMLButtonElement>('.md-wrap-btn')
+    expect(wrap).not.toBeNull()
+    expect(host.querySelector('.md-code-btn')).not.toBeNull()
+
+    wrap?.click()
+    expect(pre?.classList.contains('md-wrap')).toBe(true)
+    expect(wrap?.getAttribute('aria-pressed')).toBe('true')
+
+    wrap?.click()
+    expect(pre?.classList.contains('md-wrap')).toBe(false)
+    expect(wrap?.getAttribute('aria-pressed')).toBe('false')
+  })
+
+  it('leaves a code block bare when its controls were not asked for', () => {
+    const host = show('```\nconst x = 1\n```', { as: 'chat' })
+    expect(host.querySelector('pre')).not.toBeNull()
+    expect(host.querySelector('.md-pre-bar')).toBeNull()
+  })
+
   it('reads as one line of words for a quote', () => {
     const line = plainText(`**结论**：{✓ 通过} {✗ 超时}\n\n${CHART}`, 'chat')
     expect(line).not.toMatch(/[*:{}|]/)

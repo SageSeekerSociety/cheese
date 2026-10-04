@@ -1,8 +1,9 @@
 import type { Block } from '@/cx_types'
 
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { askAnswered, askOptions, askVersion, replySnippet } from './blockDisplay'
+import { loadDocRead } from './docReadLoad'
 
 import { setLocale } from '@/i18n'
 
@@ -26,6 +27,9 @@ function said(author: string, content: string): Block {
 const maps = { mentionNames: { 'cheese-3fa2': '芝士', lixue: '李雪' }, topicTitles: { t9: '第三节图表' } }
 
 describe('replySnippet', () => {
+  // 文档的读法第一次用到才加载；这里说的是加载好以后引用条上的字。
+  beforeAll(() => loadDocRead())
+
   it('引用芝士的话时，引到的是读得到的字，不是 markdown 记号', () => {
     const snippet = replySnippet(said('cheese', '按样本分成了 **A / B / C** 三组，单位统一成 `mg/L`'), maps)
     expect(snippet).toContain('A / B / C')

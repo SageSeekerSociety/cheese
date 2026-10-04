@@ -11,9 +11,11 @@ from app.api.doc_identity import operation_actor
 from app.api.response import ok, page
 from app.api.routes.living_docs import _frozen
 from app.api.routes.topics import DbSession, _actor_in_place
-from app.core.errors import ValidationError
+from app.core.errors import SystemBusyError, ValidationError
+from app.core.redis import get_redis_client
 from app.core.sentences import say
 from app.domain.agent.chat import ChatService
+from app.domain.agent.document import thread
 from app.domain.agent.document.question import answering
 from app.domain.agent.document.thread import hand_to_agent, mentioned_seat
 from app.domain.agent.runtime import announce_stale
@@ -159,3 +161,24 @@ async def reopen(
     resolver: ActorResolverDep,
 ) -> dict:
     return await mutate(db, resolver, topic_id, comment_id, body, "reopen")
+
+
+@router.post("/{topic_id}/comments/{comment_id}/agent/stop")
+async def stop_agent(
+    topic_id: uuid.UUID,
+    comment_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    sessions: Annotated[SessionHost, Depends(get_session_host)],
+) -> dict:
+    """Stop the agent answering this thread: its wait, or the answer being
+    written. Its reply keeps what was written, marked as stopped."""
+    place, _actor, _identity = await member_in_room(db, resolver, topic_id)
+    await db.commit()
+    redis = get_redis_client()
+    if redis is None:
+        raise SystemBusyError(say("docAgentAskUnavailable"))
+    await thread.stop(
+        redis, sessions, project_id=place.project_id, thread_id=comment_id
+    )
+    return ok({})
