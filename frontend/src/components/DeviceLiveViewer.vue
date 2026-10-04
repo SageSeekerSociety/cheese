@@ -162,7 +162,7 @@ onBeforeUnmount(() => {
   position: absolute;
   top: 8px;
   right: 12px;
-  z-index: 1;
+  z-index: var(--z-raised);
   font-size: 12px;
   /* Sits ON the invariant terminal ground above, so it is light-on-dark in both
      themes — tokens here would make it dark-on-dark in the light theme. */

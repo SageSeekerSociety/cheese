@@ -122,7 +122,7 @@ watch(
   top: 0;
   right: -6px;
   bottom: 0;
-  z-index: 4;
+  z-index: var(--z-raised-4);
   width: 11px;
   cursor: col-resize;
 }

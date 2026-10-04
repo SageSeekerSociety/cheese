@@ -334,7 +334,7 @@ const priLabel = (item: FeedbackCard) => (item.priority ? priorityMeta(item.prio
 .aft__head th {
   position: sticky;
   top: 0;
-  z-index: 1;
+  z-index: var(--z-raised);
   box-sizing: border-box;
   height: 36px;
   padding: 0 12px;

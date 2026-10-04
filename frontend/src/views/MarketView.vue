@@ -207,13 +207,10 @@ onMounted(load)
   background: var(--surface);
   display: flex;
   flex-direction: column;
-  transition:
-    box-shadow 0.15s,
-    border-color 0.15s;
+  transition: border-color var(--dur-quick) var(--ease-standard);
 }
 .pool-card:hover {
   border-color: rgba(var(--v-theme-primary), 0.5);
-  box-shadow: var(--shadow-1);
 }
 .pool-card--soon {
   opacity: 0.72;

@@ -42,7 +42,7 @@ const emit = defineEmits<{
   position: absolute;
   bottom: 12px;
   left: 50%;
-  z-index: 5;
+  z-index: var(--z-raised-5);
   display: inline-flex;
   align-items: center;
   gap: 4px;

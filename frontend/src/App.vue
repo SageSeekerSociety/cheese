@@ -849,7 +849,7 @@ function projectAvatar(name: string): string {
   position: fixed;
   top: 10px;
   left: 16px;
-  z-index: 3000; /* 压在顶栏和抽屉之上，和 OfflineBanner 同一档 */
+  z-index: var(--z-banner); /* 压在顶栏和抽屉之上，和 OfflineBanner 同一档 */
   padding: 8px 14px;
   font-size: 14px;
   line-height: var(--lh-14);

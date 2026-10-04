@@ -283,7 +283,7 @@ onBeforeUnmount(() => {
 .rfe--phone .rfe__side {
   position: absolute;
   inset: 0;
-  z-index: 1;
+  z-index: var(--z-raised);
   width: auto;
   border-left: 0;
   background: var(--surface);

@@ -60,7 +60,7 @@ function send(event: KeyboardEvent | MouseEvent) {
 .locator {
   position: sticky;
   bottom: 12px;
-  z-index: 1;
+  z-index: var(--z-raised);
   flex: none;
   margin: 0 12px 12px;
   display: flex;

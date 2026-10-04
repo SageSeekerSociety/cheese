@@ -186,7 +186,7 @@ const onScroll = (e: Event) => {
   backdrop-filter: blur(8px);
   position: sticky;
   top: 0;
-  z-index: 10;
+  z-index: var(--z-sticky);
 
   &.page-header-mobile {
     padding: 0;
