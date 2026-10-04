@@ -341,6 +341,7 @@
   "sandboxWaking": "正在唤醒沙箱",
   "sandboxRestoring": "正在从归档恢复沙箱",
   "sandboxAsleep": "沙箱 {minutes} 分钟没有活动，已休眠。文件都留着，下一条消息会唤醒它。",
+  "sandboxStoppedNoCredits": "额度已用完，沙箱已停止。文件都留着，有了额度后下一条消息会唤醒它。",
   "sandboxArchiveLost": "沙箱的归档已经不在，沙箱从仓库里已推送的内容重新开始",
   "sandboxFailing": "云端沙箱连续失败",
   "sandboxFailingNext": "话题会留在原处，不会自动换到别处。需要有人检查这个沙箱里的连接器和会话，修复后可以重试。",

@@ -5,10 +5,10 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import UsagePlanTag from '@/components/usage/UsagePlanTag.vue'
-import { fmtPoints, fmtResetAt, LINE_KEY, pct, remainingTone, USAGE_LINES } from '@/lib/creditUsage'
+import { fmtPoints, fmtResetAt, LINE_KEY, linesOf, pct, remainingTone } from '@/lib/creditUsage'
 
-// 方案这一块。按月发放的方案：本月用了多少点、还剩多少、什么时候重置，个人页的条按
-// 产品线分三色，团队页是一种颜色。按时间窗口限额的方案没有月额度，每个窗口一行：
+// 方案这一块。按月发放的方案：本月用了多少点、还剩多少、什么时候重置，条按给的几条线
+// 分色：个人页是协作、问答、写作、算力，团队页是协作和算力。按时间窗口限额的方案没有月额度，每个窗口一行：
 // 用了多少、什么时候清零。方案名点开看方案包含什么。
 const props = defineProps<{
   /** `null`：方案按时间窗口限额，看 `windows`。 */
@@ -16,8 +16,8 @@ const props = defineProps<{
   plan: UsagePlan
   /** 「十月」这样的月份名。 */
   month: string
-  /** 本月各产品线用了多少点；给了就画三色条和图例。 */
-  lines?: Record<UsageLine, number> | null
+  /** 本月各条线用了多少点；给了就按线分色画条和图例。 */
+  lines?: Partial<Record<UsageLine, number>> | null
   windows?: UsageWindow[]
   /** 方案之外的额度还剩多少点：方案额度用完后，从这里接着扣。 */
   otherCredits?: number
@@ -39,12 +39,15 @@ function points(n: number): string {
   return fmtPoints(n, locale.value)
 }
 
-/** 三色条每一段的宽度：各产品线用的点数占本月方案额度的比例。 */
+/** 这份用量分的几条线，图例和分色条都按它。 */
+const shown = computed(() => linesOf(props.lines))
+
+/** 分色条每一段的宽度：各条线用的点数占本月方案额度的比例。 */
 const segments = computed(() => {
   const whole = total.value ?? 0
   const share = (n: number) => (whole > 0 ? Math.min(1, n / whole) : 0)
-  if (!props.lines) return [{ line: 'collab' as UsageLine, width: share(used.value ?? 0) }]
-  return USAGE_LINES.map((line) => ({ line, width: share(props.lines?.[line] ?? 0) }))
+  if (!shown.value.length) return [{ line: 'collab' as UsageLine, width: share(used.value ?? 0) }]
+  return shown.value.map((line) => ({ line, width: share(props.lines?.[line] ?? 0) }))
 })
 
 function windowUsed(w: UsageWindow): string {
@@ -93,8 +96,8 @@ function windowUsed(w: UsageWindow): string {
           />
         </div>
       </template>
-      <div v-if="lines" class="upc__legend">
-        <span v-for="line in USAGE_LINES" :key="line" class="upc__key">
+      <div v-if="lines && shown.length" class="upc__legend">
+        <span v-for="line in shown" :key="line" class="upc__key">
           <span :class="`upc__dot upc__seg--${line}`" aria-hidden="true" />
           {{ t(LINE_KEY[line]) }}
           <span class="upc__keypct t-num">{{ t('usage.points', { n: points(lines[line] ?? 0) }) }}</span>
@@ -203,6 +206,10 @@ function windowUsed(w: UsageWindow): string {
 
 .upc__seg--write {
   background: var(--usage-write);
+}
+
+.upc__seg--compute {
+  background: var(--usage-compute);
 }
 
 .upc__legend {

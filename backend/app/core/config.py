@@ -720,6 +720,14 @@ class Settings(BaseSettings):
     # protects the MicroCloud cluster; a session that finds the pool full is told
     # capacity is tight and to try later.
     cloud_pool_max_hosts: int = Field(default=20, ge=1, le=500)
+    # Credits one cloud sandbox costs per hour it runs, from start to idle stop
+    # (usage/compute.py). Unset on purpose: the price is the product owner's to
+    # set, and with none set no cloud sandbox starts, so cloud compute never
+    # runs free by accident. 0 is an explicit "free".
+    cloud_sandbox_credits_per_hour: float | None = Field(default=None, ge=0)
+    # Credits per hour of a whole cloud VM, by spec name, e.g.
+    # `{"4c8g": 30}`. A spec not named here cannot be started.
+    cloud_vm_credits_per_hour: dict[str, float] = Field(default_factory=dict)
     # How long a SETTLED machine may go without being re-checked against
     # MicroCloud by the sweep. Never would let a machine destroyed upstream sit
     # here as `running` forever (which happened, and also consumed the

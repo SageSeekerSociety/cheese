@@ -944,6 +944,7 @@
   "deviceOffline": "设备 {device} 离线",
   "deviceLinkInterrupted": "与设备 {device} 的连接在执行中断开，这次操作的结果未知",
   "cloudBusy": "云端资源紧张，暂时无法准备沙箱，请稍后再试。对话和平台工具仍可用。",
+  "cloudComputeUnpriced": "云端沙箱暂时无法启动：平台还没有设定云端算力的价格。对话和平台工具仍可用。",
   "cloudMembersOnly": "只有项目成员可以使用云端沙箱",
   "envSandboxFailed": "云端沙箱准备失败，尚未就绪。"
 }

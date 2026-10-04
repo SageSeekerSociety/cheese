@@ -63,6 +63,7 @@ from app.domain.machine.repositories import CloudHostRepository, Load
 from app.domain.machine.supply import pick_offering
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import TopicStatus
+from app.domain.usage.compute import admit_start
 
 logger = logging.getLogger("cheese.machine")
 
@@ -218,6 +219,11 @@ class HostPool:
         (``SandboxMustMove`` when it has none); an archived home is placed like
         a new one and keeps its archive, which the caller restores from. Raises
         ``SandboxBusy`` while something else is moving the home.
+
+        Starting a sandbox, a new one, a sleeping one or an archived one, is
+        charged as cloud compute: it raises ``ComputeRefused`` when no price is
+        set or the project's credits are spent. A sandbox already running is
+        not refused, so the turn using it finishes.
         """
         from app.domain.agent_session.models import AgentSession
 
@@ -260,6 +266,8 @@ class HostPool:
                 _touch(home)
                 return host
 
+        if home is None or home.host_id is None or home.stopped_at is not None:
+            await admit_start(self._session, topic.project_id)
         await self._repo.lock_pool()
         home = await self._repo.current_home(session_id)
         if home is not None:

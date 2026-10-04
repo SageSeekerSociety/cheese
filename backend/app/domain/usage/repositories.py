@@ -9,7 +9,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.platform_stats.windows import utc_day
 from app.domain.project.models import Project
-from app.domain.usage.models import ResourceUsage
+from app.domain.usage.models import COMPUTE_ROUTE, ResourceUsage
+
+#: Rows of model calls. A compute charge (``usage.compute``) is a usage row
+#: too, for its credits, but it has no tokens and is no call: every count of
+#: tokens, cost and calls below leaves it out, and only the credit reads of a
+#: team's spend take it in.
+MODEL_CALLS = ResourceUsage.route != COMPUTE_ROUTE
 
 
 def unpriced_tokens() -> Any:
@@ -153,7 +159,7 @@ class UsageRepository:
             attributed_work,
             func.coalesce(unattributed, 0),
             func.coalesce(unpriced, 0),
-        ).where(column == value)
+        ).where(column == value, MODEL_CALLS)
         row = (await self._session.execute(stmt)).one()
         return {
             "input_tokens": int(row[0]),
@@ -233,6 +239,7 @@ class UsageRepository:
         ).where(
             ResourceUsage.created_at >= since,
             ResourceUsage.created_at < until,
+            MODEL_CALLS,
         )
         row = (await self._session.execute(stmt)).one()
         return {
@@ -262,6 +269,7 @@ class UsageRepository:
             .where(
                 ResourceUsage.created_at >= since,
                 ResourceUsage.created_at < until,
+                MODEL_CALLS,
             )
             .group_by(day)
             .order_by(day)
@@ -302,6 +310,7 @@ class UsageRepository:
             .where(
                 ResourceUsage.created_at >= since,
                 ResourceUsage.created_at < until,
+                MODEL_CALLS,
             )
             .group_by(ResourceUsage.model)
             .order_by(func.sum(ResourceUsage.total_tokens).desc())
@@ -337,6 +346,7 @@ class UsageRepository:
             .where(
                 ResourceUsage.created_at >= since,
                 ResourceUsage.created_at < until,
+                MODEL_CALLS,
             )
             .group_by(ResourceUsage.route)
             .order_by(func.sum(ResourceUsage.total_tokens).desc())
@@ -376,6 +386,7 @@ class UsageRepository:
             .where(
                 ResourceUsage.created_at >= since,
                 ResourceUsage.created_at < until,
+                MODEL_CALLS,
             )
             .group_by(ResourceUsage.project_id, Project.name)
             .order_by(func.sum(ResourceUsage.total_tokens).desc())

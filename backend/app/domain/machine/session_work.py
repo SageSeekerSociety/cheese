@@ -63,6 +63,7 @@ from app.domain.project.environment import EnvironmentConfig, pin_environment
 from app.domain.project.services import ProjectService
 from app.domain.topic.models import TopicKind
 from app.domain.topic.services import TopicService
+from app.domain.usage.compute import ComputeRefused
 from app.domain.user.services import user_by_handle
 
 
@@ -1104,7 +1105,7 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
             cloud_host = await pool.place(
                 session_id, actor=allocation_actor, resource_id=work_resource
             )
-        except (CloudKeepsFailing, CloudPoolFull) as refused:
+        except (CloudKeepsFailing, CloudPoolFull, ComputeRefused) as refused:
             await db.commit()
             return {"unavailable": str(refused)}
         except SandboxBusy:

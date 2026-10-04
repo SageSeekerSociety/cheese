@@ -338,6 +338,7 @@ def periodic_jobs(
     chat: "ChatService",
     machines: Sweeper,
     sandboxes: Sweeper,
+    compute: Sweeper,
     sessions: SessionFactory,
 ) -> list[PeriodicRunner]:
     """Every periodic job the platform runs, in one list.
@@ -453,6 +454,15 @@ def periodic_jobs(
             "cloud sandbox lifecycle",
             settings.machine_enroll_interval_seconds,
             sandboxes.sweep,
+        ),
+        # Cloud compute is charged in credits for the time each sandbox runs
+        # (usage/compute.py). Unlike the pool's plumbing it runs with or
+        # without MicroCloud configured: a run that was open when it was
+        # switched off still has to be closed and charged.
+        PeriodicRunner(
+            "cloud compute metering",
+            settings.machine_enroll_interval_seconds,
+            compute.sweep,
         ),
         PeriodicRunner(
             "cloud warm pool",

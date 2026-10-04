@@ -72,6 +72,15 @@ async def tell_asleep(
     )
 
 
+async def tell_unpaid(session: AsyncSession, home: CloudHostHome) -> dict | None:
+    return await _line(
+        session,
+        home,
+        say("sandboxStoppedNoCredits"),
+        {"event_type": "sandbox_asleep", "severity": "warn"},
+    )
+
+
 async def tell_archive_lost(session: AsyncSession, home: CloudHostHome) -> dict | None:
     return await _line(
         session,

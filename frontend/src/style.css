@@ -177,12 +177,13 @@
   --agent-tone-4: #46292a;
 
   /* ---- Credit usage by product line ----
-     The three segments of the personal usage bar and its daily chart: 协作
-     (amber, the product's own colour), 问答 and 写作. Two cool tones that stay
-     apart from amber and from each other in both themes. */
+     The segments of the usage bar and its daily chart: 协作 (amber, the
+     product's own colour), 问答, 写作 and 算力. Cool tones and a muted mauve
+     that stay apart from amber and from each other in both themes. */
   --usage-collab: #f57f17;
   --usage-ask: #2a9d8f;
   --usage-write: #3d5a80;
+  --usage-compute: #8e6c8a;
 
   /* ---- Chart series ----
      The series of a document's chart block, in order. Six hues far enough
@@ -458,6 +459,7 @@
   --usage-collab: #f59a3c;
   --usage-ask: #4fb8aa;
   --usage-write: #7d9cc4;
+  --usage-compute: #b994b4;
 
   --chart-1: #7aa2e3;
   --chart-2: #4fb8aa;

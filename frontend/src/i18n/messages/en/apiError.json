@@ -944,6 +944,7 @@
   "deviceOffline": "Device {device} is offline",
   "deviceLinkInterrupted": "The connection to device {device} dropped mid-operation, so whether it went through is unknown",
   "cloudBusy": "Cloud capacity is tight right now, so no sandbox can be prepared. Try again later. Chat and platform tools still work.",
+  "cloudComputeUnpriced": "Cloud sandboxes can't start yet: the platform hasn't set a price for cloud compute. Chat and platform tools still work.",
   "cloudMembersOnly": "Only project members can use cloud sandboxes",
   "envSandboxFailed": "The cloud sandbox couldn't be prepared and isn't ready."
 }

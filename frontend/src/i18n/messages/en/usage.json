@@ -6,7 +6,8 @@
   "line": {
     "collab": "Collaboration",
     "ask": "Q&A",
-    "write": "Writing"
+    "write": "Writing",
+    "compute": "Compute"
   },
   "period": {
     "label": "This month",
