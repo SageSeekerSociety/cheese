@@ -77,16 +77,50 @@ function linkTo(item: WaitingItem) {
 
 <template>
   <AppPage :title="t('navigation.inbox')">
+    <!-- 零项目时这一页就是新用户的落点（`landingForMember` 把他放在这儿）。原来只有
+         一句「暂无{project}」加两颗按钮，说的是「这里什么都没有」，没告诉他平台上有
+         哪些路可走——团队和项目的入口分别在别的地方，他看不到。现在拆成三条并列的
+         起步路，每条一句话说清进去能得到什么。 -->
     <section v-if="noProjects" class="inbox__start">
       <p class="t-title">{{ t('work.emptyTitle', projectTerm) }}</p>
-      <div class="inbox__start-actions">
-        <BaseButton kind="primary" prepend-icon="mdi-plus" @click="showNewProjectDialog()">
-          {{ t('navigation.newProject', projectTerm) }}
-        </BaseButton>
-        <BaseButton kind="secondary" prepend-icon="mdi-ticket-confirmation-outline" @click="joinOpen = true">
-          {{ t('work.joinAction') }}
-        </BaseButton>
-      </div>
+      <p class="inbox__start-lede">{{ t('work.startPaths.lede') }}</p>
+
+      <ul class="inbox__paths">
+        <li class="inbox__path">
+          <v-icon icon="mdi-folder-plus-outline" size="20" class="inbox__path-icon" />
+          <div class="inbox__path-text">
+            <span class="inbox__path-title">{{ t('work.startPaths.project.title', projectTerm) }}</span>
+            <span class="inbox__path-body">{{ t('work.startPaths.project.body') }}</span>
+          </div>
+          <BaseButton kind="primary" size="sm" @click="showNewProjectDialog()">
+            {{ t('navigation.newProject', projectTerm) }}
+          </BaseButton>
+        </li>
+
+        <li class="inbox__path">
+          <v-icon icon="mdi-ticket-confirmation-outline" size="20" class="inbox__path-icon" />
+          <div class="inbox__path-text">
+            <span class="inbox__path-title">{{ t('work.startPaths.invite.title') }}</span>
+            <span class="inbox__path-body">{{ t('work.startPaths.invite.body') }}</span>
+          </div>
+          <BaseButton kind="secondary" size="sm" @click="joinOpen = true">
+            {{ t('work.startPaths.invite.action') }}
+          </BaseButton>
+        </li>
+
+        <li class="inbox__path">
+          <v-icon icon="mdi-account-group-outline" size="20" class="inbox__path-icon" />
+          <div class="inbox__path-text">
+            <span class="inbox__path-title">{{ t('work.startPaths.teams.title') }}</span>
+            <span class="inbox__path-body">{{ t('work.startPaths.teams.body') }}</span>
+          </div>
+          <BaseButton kind="secondary" size="sm" :to="{ name: 'HomeTeamsExplore' }">
+            {{ t('work.startPaths.teams.action') }}
+          </BaseButton>
+        </li>
+      </ul>
+
+      <p class="inbox__start-note">{{ t('work.startPaths.settingsNote') }}</p>
     </section>
 
     <h2 class="inbox__heading">{{ t('home.inbox.waiting') }}</h2>
@@ -130,11 +164,53 @@ function linkTo(item: WaitingItem) {
   border-radius: var(--radius-lg);
   background: var(--surface);
 }
-.inbox__start-actions {
+.inbox__start-lede {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+.inbox__paths {
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.inbox__path {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 16px;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+.inbox__path:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+.inbox__path-icon {
+  color: var(--muted);
+  flex: none;
+}
+.inbox__path-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.inbox__path-title {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 500;
+}
+.inbox__path-body {
+  color: var(--muted);
+  font-size: 13px;
+}
+.inbox__start-note {
+  margin: 16px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  color: var(--faint);
+  font-size: 12px;
 }
 .inbox__heading {
   margin: 24px 0 8px;

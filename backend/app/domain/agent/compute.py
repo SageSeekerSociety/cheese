@@ -85,6 +85,16 @@ class ComputePool:
                 await previous.close(session)
         self._owners[(session.topic_id, session.agent_handle)] = runtime
 
+    async def dismiss(self, topic_id: uuid.UUID, agent_handle: str) -> None:
+        """Take away the work this agent is doing in this room, on whichever
+        harness holds its seat; what it wrote so far stays. For an agent no
+        longer in the room: whatever it goes on doing, the room turns away."""
+        for runtime in self._runtimes():
+            live = runtime.live.get((topic_id, agent_handle))
+            if live is not None:
+                with contextlib.suppress(DeviceCallError, DeviceOffline):
+                    await runtime.interrupt(live.session)
+
     def default(self) -> "RoomSessions":
         return self._backends[self._default]
 
@@ -292,6 +302,19 @@ class ComputePool:
         this agent's seat in it, when one is named?"""
         return any(
             runtime.holds(topic_id, agent_handle) for runtime in self._runtimes()
+        )
+
+    def holds_conversation(
+        self, topic_id: uuid.UUID, harness: str, conversation: str
+    ) -> bool:
+        """Is that exact conversation still attached somewhere in this room?
+
+        ``holds`` answers for a seat, and a seat outlives its conversations: an
+        Ask answer may enter only the conversation that asked it, never
+        whichever replaced it (``room/sessions.py``)."""
+        return any(
+            runtime.holds_conversation(topic_id, harness, conversation)
+            for runtime in self._runtimes()
         )
 
     async def recover_sessions(
