@@ -42,6 +42,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.background import hold
 from app.core.config import settings
 from app.core.errors import GatewayUnavailableError, NotFoundError
+from app.domain.agent import gateway_catalog
 from app.domain.agent.compute import ComputeProvider
 from app.domain.agent.gateway import LlmGateway
 from app.domain.agent.gateway_spend import Charge, settle
@@ -124,6 +125,24 @@ def _model_policy_call(project, agent=None) -> gate.Call:
         label=choices[bound.model]["label"],
         tier=choices[bound.model]["tier"],
         approver=project.owner_handle or "",
+    )
+
+
+def model_capabilities(*models: str | None) -> str:
+    """``CLAUDE_CODE_MODEL_CAPABILITIES`` for a launch on these models.
+
+    Claude Code puts the skill listing, the environment and the date in
+    system-role messages in the middle of the conversation. A route the
+    gateway marks as losing them (``GatewayModel.mid_conversation_system``)
+    drops them or refuses the whole request, so on those models Claude Code is
+    told to put them in the first user message instead. Every other model keeps
+    its default. Empty when no model needs it."""
+    unsupported = {
+        m.id for m in gateway_catalog.snapshot() if not m.mid_conversation_system
+    }
+    return ";".join(
+        f"{model}=-mid_conv_system"
+        for model in sorted({m for m in models if m} & unsupported)
     )
 
 
@@ -225,6 +244,7 @@ async def _model_kwargs(
         child_model = binding.resolve(
             None, child_choices, default_model=child_default
         ).wire_model
+    capabilities = model_capabilities(model, child_model)
     config_hash = hashlib.sha256(
         # Author identity, chat skills, and native RC arguments are installed
         # at process birth; refresh them together at the next task boundary.
@@ -250,6 +270,7 @@ async def _model_kwargs(
                     "subagent_model": (project.settings or {}).get(
                         "default_subagent_model"
                     ),
+                    "capabilities": capabilities,
                 },
                 sort_keys=True,
             )
@@ -273,6 +294,8 @@ async def _model_kwargs(
         # and the place is recorded under this one.
         "session_agent": agent.handle,
     }
+    if capabilities:
+        kwargs["env"]["CLAUDE_CODE_MODEL_CAPABILITIES"] = capabilities
     if acting_agent is not None:
         kwargs["agent_handle"] = acting_agent
     if environment is not None:

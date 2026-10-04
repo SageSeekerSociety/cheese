@@ -41,6 +41,10 @@ model_list:
       cheese_label: MiMo V2.6 Pro
       supports_reasoning: true
       supports_vision: true
+      # Measured 2026-10-04: a system-role message in the middle of the
+      # conversation is forwarded untouched and the upstream drops it, so
+      # Claude Code is launched to put that content in the first user message.
+      supports_mid_conversation_system: false
 
   - model_name: kimi-k3
     litellm_params:
