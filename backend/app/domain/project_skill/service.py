@@ -8,6 +8,7 @@ from the confirmed revisions; each session launch reads that folder.
 
 from __future__ import annotations
 
+import gzip
 import json
 import re
 import shutil
@@ -399,3 +400,20 @@ def project_skill_names(project_id: uuid.UUID | str | None) -> list[str]:
 def session_skill_files(project_id: uuid.UUID | str | None) -> dict[str, str]:
     """Everything a session in this project gets: the platform's, then its own."""
     return {**native_skill_files(), **project_skill_files(project_id)}
+
+
+def session_skill_bundle(project_id: uuid.UUID | str | None) -> bytes:
+    """``session_skill_files`` as the bytes a session downloads and sha256s.
+
+    The launcher no longer carries the skills inline: the platform skill set
+    alone is ~250KB compressed, and it rode inside every launch script for every
+    session (device_launch). A session instead carries the digest of these bytes
+    and fetches them from the platform only when its machine has never seen that
+    digest. Both sides compute the digest from THIS function, so a change in the
+    files or in the serialization moves the digest and the launch contract with
+    it; the gzip carries no timestamp (``mtime=0``) and the JSON is key-sorted
+    so the same skills always hash to the same address."""
+    payload = json.dumps(
+        session_skill_files(project_id), sort_keys=True, ensure_ascii=False
+    ).encode("utf-8")
+    return gzip.compress(payload, mtime=0)

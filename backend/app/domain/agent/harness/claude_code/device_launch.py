@@ -16,7 +16,6 @@ launch; ``machine_launcher`` owns the other half and joins the two.
 
 import base64
 import dataclasses
-import gzip
 import hashlib
 import json
 import shlex
@@ -32,7 +31,7 @@ from app.domain.agent.harness.claude_code.session_launch import session_settings
 from app.domain.agent.harness.launch import MachineLaunch, MachinePlace
 from app.domain.agent.place import SEATS_DIR, seat_name
 from app.domain.agent.skills import SKILLS_SHIPPED_BEFORE_THE_LIST, shipped_skill_names
-from app.domain.project_skill.service import project_skill_names, session_skill_files
+from app.domain.project_skill.service import project_skill_names, session_skill_bundle
 
 # --- the version this session is pinned to ----------------------------------
 # The runner drives Claude Code over its stream-json pipes, a protocol no
@@ -248,27 +247,69 @@ export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"
         + "\n"
         + project_skill_prune(project, platform)
     )
-    # Compressed: written out as heredocs the skills alone outgrew what one
-    # shell argument may hold, and they only grow. Base64 has no quote in it.
-    skills = base64.b64encode(
-        gzip.compress(json.dumps(session_skill_files(project_id)).encode(), mtime=0)
-    ).decode()
-    skill_setup = f"""{prune}
-python3 - "$CLAUDE_CONFIG_DIR" <<'CHEESE_SKILLS'
-import base64, gzip, json, os, sys
-files = json.loads(gzip.decompress(base64.b64decode("{skills}")))
+    # The skills, by content address. The digest is the sha256 of exactly what
+    # `/connector/skill-bundles/<digest>` serves for this project
+    # (``session_skill_bundle``), so both ends compute it the same way and a
+    # change to the skills moves the digest — and with it the launch contract.
+    #
+    # The bytes are NOT carried inline any more: the platform set alone is
+    # ~250KB compressed and rode inside every launch script for every session,
+    # so a machine that already had them was re-sent them on every launch. The
+    # script instead carries the digest and fetches once per machine, caching
+    # under the MACHINE home ($REAL_HOME, like the pinned claude beside it):
+    # the platform skills are the same for every project and room on the
+    # machine, so a per-session cache would only refetch them per new room.
+    #
+    # A failed fetch is FATAL, deliberately: a session that starts with
+    # silently missing skills looks alive and answers wrong, which is worse than
+    # not starting. curl, the sha256 check and the unpack all have to succeed.
+    # A screen with no CHEESE_API (a probe, a fixture) has no platform to ask
+    # and installs none — that is never a session the platform started.
+    skill_digest = hashlib.sha256(session_skill_bundle(project_id)).hexdigest()
+    skill_setup = f"""_bundle="$REAL_HOME/.cheese/skill-bundles/{skill_digest}.json.gz"
+if [ ! -s "$_bundle" ] && [ -n "${{CHEESE_API:-}}" ]; then
+  mkdir -p "${{_bundle%/*}}" 2>/dev/null || :
+  _new="$_bundle.$$.new"
+  if curl -fsSL --retry 3 --retry-delay 2 -m 300 \\
+      -H "X-Cheese-Token: ${{CHEESE_TOKEN:-}}" \\
+      "${{CHEESE_API%/}}/connector/skill-bundles/{skill_digest}" -o "$_new" \\
+      && python3 -c 'import hashlib,sys;sys.exit(0 if hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest()==sys.argv[2] else 1)' "$_new" "{skill_digest}"; then
+    mv "$_new" "$_bundle"
+  else
+    rm -f "$_new"
+    echo "cheese-launch: could not fetch this project's skills (sha256 {skill_digest}) from ${{CHEESE_API%/}}; refusing to start without them" >&2
+    exit 1
+  fi
+fi
+{prune}
+if [ -s "$_bundle" ]; then
+  python3 - "$CLAUDE_CONFIG_DIR" "$_bundle" "{skill_digest}" <<'CHEESE_SKILLS'
+import gzip, hashlib, json, os, sys
+config, bundle, want = sys.argv[1], sys.argv[2], sys.argv[3]
+blob = open(bundle, "rb").read()
+got = hashlib.sha256(blob).hexdigest()
+if got != want:
+    # A corrupt or truncated cache must not stick: drop it so the NEXT launch
+    # refetches instead of failing on it forever.
+    os.remove(bundle)
+    sys.stderr.write(f"cheese-launch: cached skill bundle is {{got}}, expected {{want}}\\n")
+    sys.exit(1)
+files = json.loads(gzip.decompress(blob))
 for name, content in files.items():
     # An earlier session may have linked the repository's skill of this name
     # here, into the project; the platform's is written in its place, never
     # through the link.
-    top = os.path.join(sys.argv[1], *name.split("/")[:2])
+    top = os.path.join(config, *name.split("/")[:2])
     if os.path.islink(top):
         os.unlink(top)
-    path = os.path.join(sys.argv[1], name)
+    path = os.path.join(config, name)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as out:
         out.write(content)
-CHEESE_SKILLS"""
+CHEESE_SKILLS
+else
+  echo "cheese-launch: no skill bundle cached and no CHEESE_API to fetch one; installing no platform skills" >&2
+fi"""
     settings_json = json.dumps(session_settings(), ensure_ascii=False)
     claude_args = " " + shlex.join(LAUNCH_ARGS)
     pinned_version = CLAUDE_PINNED_VERSION

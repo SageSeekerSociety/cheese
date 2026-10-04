@@ -1,6 +1,7 @@
 """Device launcher: the isolated config, the pinned build, and the runner it starts."""
 
 import contextlib
+import hashlib
 import json
 import os
 import re
@@ -28,6 +29,7 @@ from app.domain.agent.harness.claude_code.session_launch import (
     session_settings,
 )
 from app.domain.agent.harness.launch import MachinePlace
+from app.domain.project_skill.service import session_skill_bundle
 
 PIN = device_launch.CLAUDE_PINNED_VERSION
 STATE = "$HOME/.cheese/harness/p/r/claude-code/deadbeef"
@@ -578,8 +580,18 @@ def test_no_claude_anywhere_is_named_not_started(tmp_path):
     assert not (session / "command").exists()
 
 
-def _fetching_curl(log: Path, version: str = PIN) -> str:
-    """A `curl` that logs its URL and writes a stand-in claude to `-o`."""
+def _fetching_curl(log: Path, version: str = PIN, bundle: Path | None = None) -> str:
+    """A `curl` that logs its URL and writes what it was asked for to `-o`.
+
+    A claude download gets a stand-in binary. When ``bundle`` is given, the
+    skill-bundle URL a launch fetches gets the real bytes back, so the sha256
+    the launcher checks against the digest in its script matches."""
+    serve_bundle = (
+        f'case "$url" in *"/skill-bundles/"*) '
+        f'cat {shlex.quote(str(bundle))} > "$dest"; exit 0 ;; esac\n'
+        if bundle is not None
+        else ""
+    )
     return (
         "#!/bin/sh\n"
         'dest=""; url=""\n'
@@ -588,9 +600,10 @@ def _fetching_curl(log: Path, version: str = PIN) -> str:
         "  shift\n"
         "done\n"
         f'echo "$url" >> {shlex.quote(str(log))}\n'
-        "cat > \"$dest\" <<'AGENT'\n#!/bin/sh\n"
-        f'if [ "$1" = "--version" ]; then echo "{version} (Claude Code)"; fi\n'
-        "AGENT\n"
+        + serve_bundle
+        + "cat > \"$dest\" <<'AGENT'\n#!/bin/sh\n"
+        + f'if [ "$1" = "--version" ]; then echo "{version} (Claude Code)"; fi\n'
+        + "AGENT\n"
     )
 
 
@@ -681,6 +694,17 @@ def _machine(tmp_path, *, api: str = ""):
             (target / name).write_text("fixture")
             (target / name).chmod(0o755)
     return owner, session, work, claude, env
+
+
+def _seed_skill_cache(owner: Path) -> None:
+    """Put this project's skill bundle where a machine that already fetched it
+    keeps it (device_launch addresses the skills by content, and the cache is
+    the hit path). A launch then installs them with no platform to ask."""
+    bundle = session_skill_bundle(None)
+    digest = hashlib.sha256(bundle).hexdigest()
+    cache = owner / ".cheese/skill-bundles" / f"{digest}.json.gz"
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    cache.write_bytes(bundle)
 
 
 def _launch(tmp_path, env, **named):
@@ -826,13 +850,22 @@ def test_hosted_launch_preserves_owner_and_project_while_installing_skills(tmp_p
         skill.parent.mkdir(parents=True)
         skill.write_text("A guide this session no longer gets\n")
     log = tmp_path / "curl.log"
-    (tmp_path / "bin/curl").write_text(_fetching_curl(log))
+    bundle = tmp_path / "skill-bundle.json.gz"
+    bundle.write_bytes(session_skill_bundle(None))
+    (tmp_path / "bin/curl").write_text(_fetching_curl(log, bundle=bundle))
     (tmp_path / "bin/curl").chmod(0o755)
 
     result = _launch(tmp_path, env)
 
     assert result.returncode == 0, result.stderr
-    assert len(log.read_text().splitlines()) == 1
+    urls = log.read_text().splitlines()
+    # Two fetches, one each: the pinned build and this project's skill bundle.
+    # The bundle is content-addressed, so this machine downloads it here and
+    # never again (device_launch), keyed by the digest this launch carried.
+    assert len(urls) == 2
+    digest = hashlib.sha256(bundle.read_bytes()).hexdigest()
+    assert sum(url.endswith(f"/connector/skill-bundles/{digest}") for url in urls) == 1
+    assert any(f"/connector/claude/{PIN}/" in url for url in urls)
     assert {path: path.read_bytes() for path in protected} == before
     assert set(owner.iterdir()) == original_entries | {owner / ".cheese"}
     assert set(work.rglob("*")) == project_entries
@@ -840,6 +873,46 @@ def test_hosted_launch_preserves_owner_and_project_while_installing_skills(tmp_p
     for name in ("cheese", "cheese-docs"):
         assert (seat_of(session) / ".claude/skills" / name / "SKILL.md").is_file()
     assert not any(skill.exists() for skill in retired)
+
+
+def test_a_cached_skill_bundle_is_never_refetched(tmp_path):
+    """Content addressing is the point: a machine that already holds this
+    project's bundle fetches the pinned build and nothing else. The bytes are
+    the same for every room and project on the machine (the platform set), so
+    one launch here spares every later session the download."""
+    owner, session, _work, _claude, env = _machine(
+        tmp_path, api="https://fixture.invalid"
+    )
+    digest = hashlib.sha256(session_skill_bundle(None)).hexdigest()
+    cache = owner / ".cheese/skill-bundles" / f"{digest}.json.gz"
+    cache.parent.mkdir(parents=True)
+    cache.write_bytes(session_skill_bundle(None))
+    log = tmp_path / "curl.log"
+    (tmp_path / "bin/curl").write_text(_fetching_curl(log))
+    (tmp_path / "bin/curl").chmod(0o755)
+
+    result = _launch(tmp_path, env)
+
+    assert result.returncode == 0, result.stderr
+    assert all("/skill-bundles/" not in url for url in log.read_text().splitlines())
+    assert (seat_of(session) / ".claude/skills/cheese/SKILL.md").is_file()
+
+
+def test_a_launch_refuses_to_start_when_the_skills_cannot_be_fetched(tmp_path):
+    """A session that starts with silently missing skills answers wrong, which
+    is worse than one that does not start. So a failed fetch fails configure,
+    loudly, naming the digest it could not get."""
+    _owner, _session, _work, _claude, env = _machine(
+        tmp_path, api="https://fixture.invalid"
+    )
+    (tmp_path / "bin/curl").write_text("#!/bin/sh\nexit 1\n")
+    (tmp_path / "bin/curl").chmod(0o755)
+
+    result = _launch(tmp_path, env)
+
+    assert result.returncode != 0
+    assert "refusing to start without them" in result.stderr
+    assert hashlib.sha256(session_skill_bundle(None)).hexdigest() in result.stderr
 
 
 def test_the_session_the_runner_starts_holds_no_claude_credential(tmp_path):
